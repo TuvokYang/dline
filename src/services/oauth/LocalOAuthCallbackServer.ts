@@ -1,5 +1,6 @@
 import http from "node:http"
-import { OAuthFlowError } from "./types"
+import { renderAuthResultPage } from "./authResultPage"
+import { type OAuthAccountPresentation, OAuthFlowError } from "./types"
 
 export interface LocalOAuthCallbackServerOptions {
 	/** Loopback address the server binds to. */
@@ -13,12 +14,32 @@ export interface LocalOAuthCallbackServerOptions {
 	redirectHost?: string
 	port: number
 	callbackPath: string
-	onCallback: (callbackUri: string) => Promise<void>
+	/**
+	 * Handle the callback and optionally describe the authorized account.
+	 *
+	 * Returning a presentation is optional so a strategy without account
+	 * projection still produces a complete success page.
+	 */
+	onCallback: (callbackUri: string) => Promise<OAuthAccountPresentation | void>
 }
 
-const SUCCESS_HTML = "<!doctype html><html><body><h1>Authentication complete</h1><p>You can close this window.</p></body></html>"
-const FAILURE_HTML =
-	"<!doctype html><html><body><h1>Authentication failed</h1><p>Return to the application and try again.</p></body></html>"
+function renderSuccessPage(account: OAuthAccountPresentation | undefined): string {
+	return renderAuthResultPage({
+		status: "success",
+		title: "Authorization successful",
+		description: "Dline received the authorization result and saved it for this profile.",
+		hint: "Close this window and return to your editor.",
+		...(account ? { account } : {}),
+	})
+}
+
+const FAILURE_HTML = renderAuthResultPage({
+	status: "failure",
+	title: "Authorization failed",
+	description:
+		'Dline could not complete the authorization automatically. Copy this page\'s full address from the browser address bar and paste it into the "Full callback URL" field in Dline to finish signing in.',
+	hint: "If that does not work either, close this window and start the sign-in again.",
+})
 const CALLBACK_RESPONSE_HEADERS = {
 	"Cache-Control": "no-store",
 	Connection: "close",
@@ -43,9 +64,9 @@ export class LocalOAuthCallbackServer {
 				return
 			}
 			try {
-				await options.onCallback(callback.toString())
+				const account = await options.onCallback(callback.toString())
 				response.writeHead(200, CALLBACK_RESPONSE_HEADERS)
-				response.end(SUCCESS_HTML)
+				response.end(renderSuccessPage(account ?? undefined))
 			} catch (error) {
 				const status = error instanceof OAuthFlowError && error.code === "TOKEN_EXCHANGE_FAILED" ? 500 : 400
 				response.writeHead(status, CALLBACK_RESPONSE_HEADERS)

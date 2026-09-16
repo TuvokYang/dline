@@ -5,6 +5,7 @@ import { createOAuthState, createPkceChallenge, createPkceVerifier } from "./pkc
 import {
 	type CancelOAuthFlowInput,
 	type CompleteOAuthCallbackInput,
+	type OAuthAccountPresentation,
 	type OAuthAuthorizationStrategy,
 	OAuthFlowError,
 	type OAuthFlowLease,
@@ -224,7 +225,10 @@ export class LocalOAuthFlowCoordinator<TCredential> {
 					...(this.strategy.callbackRedirectHost !== undefined
 						? { redirectHost: this.strategy.callbackRedirectHost }
 						: {}),
-					onCallback: (callbackUri) => this.complete(flowId, profileId, callbackUri, false).then(() => undefined),
+					onCallback: (callbackUri) =>
+						this.complete(flowId, profileId, callbackUri, false).then((credential) =>
+							this.describeAccount(credential),
+						),
 				})
 			} catch (error) {
 				if (!(error instanceof OAuthFlowError) || error.code !== "CALLBACK_PORT_IN_USE") throw error
@@ -232,6 +236,21 @@ export class LocalOAuthFlowCoordinator<TCredential> {
 			}
 		}
 		throw lastPortError ?? new OAuthFlowError("CALLBACK_SERVER_FAILED", "No OAuth callback port was configured.")
+	}
+
+	/**
+	 * Project a credential onto the callback page presentation.
+	 *
+	 * The authorization already succeeded at this point, so a strategy that fails
+	 * to describe the account degrades to a page without account details instead
+	 * of turning a successful flow into a failure.
+	 */
+	private describeAccount(credential: TCredential): OAuthAccountPresentation | undefined {
+		try {
+			return this.strategy.describeAccount?.(credential)
+		} catch {
+			return undefined
+		}
 	}
 
 	private async settleSuccess(

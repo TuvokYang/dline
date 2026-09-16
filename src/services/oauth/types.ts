@@ -39,6 +39,24 @@ export interface OAuthCodeExchangeInput {
 	redirectUri: string
 }
 
+/**
+ * Provider-neutral account summary rendered on the OAuth callback page.
+ *
+ * Every field is presentation only. A strategy must never place a token, refresh
+ * token, or PKCE secret here, because the value is written into a page served to
+ * the browser that completed the authorization.
+ */
+export interface OAuthAccountPresentation {
+	/** Human-readable provider name, such as "OpenAI Codex". */
+	providerName: string
+	/** Primary account label, usually a display name, email, or account id. */
+	accountName?: string
+	/** Secondary account label, usually the email when a display name exists. */
+	accountDetail?: string
+	/** Subscription or plan label, such as "Pro" or "Team". */
+	planName?: string
+}
+
 export interface OAuthAuthorizationStrategy<TCredential> {
 	readonly strategyId: string
 	readonly callbackPort: number
@@ -51,9 +69,18 @@ export interface OAuthAuthorizationStrategy<TCredential> {
 	 * allow-list registers `localhost` rejects an otherwise equivalent `127.0.0.1` callback.
 	 */
 	readonly callbackRedirectHost?: string
+	/** Provider label rendered on the callback page when the strategy supplies one. */
+	readonly providerDisplayName?: string
 	buildAuthorizationUrl(input: OAuthAuthorizationInput): URL
 	exchangeAuthorizationCode(input: OAuthCodeExchangeInput): Promise<TCredential>
 	refreshCredential?(credential: TCredential): Promise<TCredential>
+	/**
+	 * Project a credential onto the callback page presentation.
+	 *
+	 * Optional so an existing strategy keeps working and simply renders a page
+	 * without account details. Implementations must return presentation data only.
+	 */
+	describeAccount?(credential: TCredential): OAuthAccountPresentation | undefined
 }
 
 export interface OAuthFlowLeaseOwner {

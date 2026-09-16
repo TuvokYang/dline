@@ -8,6 +8,7 @@ const productionFiles = [
 	"FileOAuthFlowLease.ts",
 	"LocalOAuthCallbackServer.ts",
 	"LocalOAuthFlowCoordinator.ts",
+	"authResultPage.ts",
 	"callbackUri.ts",
 	"index.ts",
 	"pkce.ts",

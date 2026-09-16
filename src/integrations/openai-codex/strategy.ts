@@ -1,5 +1,10 @@
 import { type OpenAiOAuthCredentials, parseOpenAiOAuthCredentials } from "@/core/storage/secrets/OpenAiCodexProfileAuthRepository"
-import type { OAuthAuthorizationInput, OAuthAuthorizationStrategy, OAuthCodeExchangeInput } from "@/services/oauth"
+import type {
+	OAuthAccountPresentation,
+	OAuthAuthorizationInput,
+	OAuthAuthorizationStrategy,
+	OAuthCodeExchangeInput,
+} from "@/services/oauth"
 import { fetch as proxyFetch } from "@/shared/net"
 
 /**
@@ -202,8 +207,23 @@ export function resolveOpenAiCodexStoredAccountIdentity(credential: OpenAiOAuthC
 	}
 }
 
+/**
+ * Turn a raw plan claim such as `chatgpt_plan_type` into a display label.
+ *
+ * Upstream reports lowercase, sometimes delimited values like `pro` or
+ * `team_admin`, which read poorly beside a provider name.
+ */
+function formatPlanName(accountType: string): string {
+	return accountType
+		.split(/[\s_-]+/)
+		.filter((segment) => segment.length > 0)
+		.map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+		.join(" ")
+}
+
 export class OpenAiCodexOAuthStrategy implements OAuthAuthorizationStrategy<OpenAiOAuthCredentials> {
 	readonly strategyId = "openai-codex"
+	readonly providerDisplayName = "OpenAI Codex"
 	readonly callbackPort: number
 	readonly callbackPorts: readonly number[]
 	readonly callbackRedirectHost: string | undefined
@@ -261,6 +281,24 @@ export class OpenAiCodexOAuthStrategy implements OAuthAuthorizationStrategy<Open
 			accountId: identity.accountId,
 			accountType: identity.accountType,
 		})
+	}
+
+	/**
+	 * Project the stored identity onto the neutral callback page presentation.
+	 *
+	 * Only labels already derived from token claims are exposed; no access token,
+	 * refresh token, or account id secret reaches the rendered page.
+	 */
+	describeAccount(credential: OpenAiOAuthCredentials): OAuthAccountPresentation {
+		const identity = resolveOpenAiCodexStoredAccountIdentity(credential)
+		const accountName = identity.displayName ?? identity.email ?? identity.accountId
+		const accountDetail = identity.displayName && identity.email ? identity.email : undefined
+		return {
+			providerName: this.providerDisplayName,
+			...(accountName ? { accountName } : {}),
+			...(accountDetail ? { accountDetail } : {}),
+			...(identity.accountType ? { planName: formatPlanName(identity.accountType) } : {}),
+		}
 	}
 
 	async refreshCredential(credential: OpenAiOAuthCredentials): Promise<OpenAiOAuthCredentials> {
