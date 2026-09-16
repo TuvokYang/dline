@@ -13,9 +13,10 @@
 	"license": "ISC",
 	"description": "",
 	"dependencies": {
-		"mintlify": "^4.2.338"
+		"mintlify": "^4.2.894"
 	},
 	"overrides": {
+		"node-fetch": "npm:node-fetch-commonjs@^3.3.2",
 		"tar-fs": "^3.1.1",
 		"js-yaml": "^4.1.1",
 		"tar@<=6.2.1": "6.2.1",

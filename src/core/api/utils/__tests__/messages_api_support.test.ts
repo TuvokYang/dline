@@ -93,7 +93,7 @@ describe("messages_api_support", () => {
 			const converted = convertOpenAIToolsToAnthropicTools(tools)
 
 			expect(converted).to.have.length(1)
-			expect(converted?.[0]?.name).to.equal("valid_tool")
+			expect(converted?.[0]).to.deep.include({ name: "valid_tool" })
 		})
 
 		it("replaces a local web_search function with one hosted Anthropic declaration", () => {
