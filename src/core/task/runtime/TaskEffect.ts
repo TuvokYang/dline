@@ -70,11 +70,22 @@ export interface StartApiEffect {
 	retryContent?: ClineContent[]
 }
 
-/** Execute one canonical tool lifecycle identity. */
+/**
+ * Execute one canonical tool lifecycle identity.
+ *
+ * The turn context travels with the command rather than being re-derived by the
+ * executor. The scheduling decision therefore stays with the reducer, which is
+ * the only place that knows the serial invariant, and the executor stays unaware
+ * of whether the turn runs serially or in parallel.
+ */
 export interface ExecuteToolEffect {
 	id: string
 	type: "EXECUTE_TOOL"
 	dlineTid: string
+	/** Turn that owns this block, used to reject results from a superseded turn. */
+	turnId?: string
+	/** Scheduling mode the reducer resolved for the owning turn. */
+	mode?: "serial" | "parallel"
 }
 
 /** Append a presentation-only timeline message. */

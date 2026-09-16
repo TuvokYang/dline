@@ -613,7 +613,16 @@ function reduceTurn(
 		// this intermediate state without a later barrier.
 		return acceptTurn(state, event.type, state.turn, TaskPhase.EXECUTING, [
 			...coalescedStateEffects(revision),
-			{ id: effectId(revision, 3), type: "EXECUTE_TOOL", dlineTid: block.dlineTid },
+			{
+				id: effectId(revision, 3),
+				type: "EXECUTE_TOOL",
+				dlineTid: block.dlineTid,
+				// The turn identity and mode travel with the command so the executor
+				// never has to look them up, and so a result arriving from a turn the
+				// reducer has already left can be recognised as superseded.
+				turnId: state.turn.turnId,
+				mode: state.turn.mode,
+			},
 		])
 	}
 	if (event.type === "BLOCK_EXECUTION_REJECTED") {
