@@ -1,4 +1,5 @@
 import { strict as assert } from "node:assert"
+import { parseAgentConfigFromYaml } from "@core/task/tools/subagent/AgentConfigLoader"
 import { UpdateSubagentConfigRequest } from "@shared/proto/dline/file"
 import fs from "fs/promises"
 import os from "os"
@@ -81,6 +82,139 @@ describe("updateSubagentConfig", () => {
 		assert.match(content, /skills: \[\]/)
 		assert.match(content, /Prompt body/)
 		expect(fixture.flushPromptFreshnessInvalidation).toHaveBeenCalledOnce()
+	})
+
+	it("drops turn-ending tools when the request bypasses the selection UI", async () => {
+		const directory = await fs.mkdtemp(path.join(os.tmpdir(), "update-subagent-config-"))
+		temporaryDirectories.push(directory)
+		const subagentPath = path.join(directory, "reviewer.yml")
+		await fs.writeFile(
+			subagentPath,
+			"---\nname: reviewer\ndescription: Research agent\ntools:\n  - read_file\n---\nPrompt body\n",
+			"utf8",
+		)
+
+		const fixture = createController()
+		await updateSubagentConfig(
+			fixture.controller,
+			UpdateSubagentConfigRequest.create({
+				subagentPath,
+				tools: ["read_file", "ask_followup_question", "make_plan", "new_task", "attempt_completion"],
+				replaceTools: true,
+			}),
+		)
+
+		const content = await fs.readFile(subagentPath, "utf8")
+		assert.match(content, /tools:\n\s{2}- read_file/)
+		assert.doesNotMatch(content, /ask_followup_question/)
+		assert.doesNotMatch(content, /make_plan/)
+		assert.doesNotMatch(content, /new_task/)
+		// Granted unconditionally at resolution, so it is not a stored choice.
+		assert.doesNotMatch(content, /attempt_completion/)
+	})
+
+	it("drops act_mode_respond, which opens an interaction a subagent has no user for", async () => {
+		const directory = await fs.mkdtemp(path.join(os.tmpdir(), "update-subagent-config-"))
+		temporaryDirectories.push(directory)
+		const subagentPath = path.join(directory, "reviewer.yml")
+		await fs.writeFile(subagentPath, "---\nname: reviewer\ndescription: Research agent\n---\nPrompt body\n", "utf8")
+
+		const fixture = createController()
+		await updateSubagentConfig(
+			fixture.controller,
+			UpdateSubagentConfigRequest.create({
+				subagentPath,
+				tools: ["read_file", "act_mode_respond"],
+				replaceTools: true,
+			}),
+		)
+
+		const content = await fs.readFile(subagentPath, "utf8")
+		assert.doesNotMatch(content, /act_mode_respond/)
+		assert.match(content, /- read_file/)
+	})
+
+	it("stores only what was selected, leaving the always-granted tool out of the document", async () => {
+		const directory = await fs.mkdtemp(path.join(os.tmpdir(), "update-subagent-config-"))
+		temporaryDirectories.push(directory)
+		const subagentPath = path.join(directory, "reviewer.yml")
+		await fs.writeFile(subagentPath, "---\nname: reviewer\ndescription: Research agent\n---\nPrompt body\n", "utf8")
+
+		const fixture = createController()
+		// The UI keeps attempt_completion checked, so it arrives in the request;
+		// persisting it would present an unconditional grant as a stored choice.
+		await updateSubagentConfig(
+			fixture.controller,
+			UpdateSubagentConfigRequest.create({
+				subagentPath,
+				tools: ["read_file", "attempt_completion"],
+				replaceTools: true,
+			}),
+		)
+
+		const content = await fs.readFile(subagentPath, "utf8")
+		assert.match(content, /tools:\n\s{2}- read_file/)
+		assert.doesNotMatch(content, /attempt_completion/)
+	})
+
+	it("rejects an unknown tool name the loader would refuse to read back", async () => {
+		const directory = await fs.mkdtemp(path.join(os.tmpdir(), "update-subagent-config-"))
+		temporaryDirectories.push(directory)
+		const subagentPath = path.join(directory, "reviewer.yml")
+		await fs.writeFile(subagentPath, "---\nname: reviewer\ndescription: Research agent\n---\nPrompt body\n", "utf8")
+
+		const fixture = createController()
+		await updateSubagentConfig(
+			fixture.controller,
+			UpdateSubagentConfigRequest.create({ subagentPath, tools: ["read_file", "not_a_tool"], replaceTools: true }),
+		)
+
+		const content = await fs.readFile(subagentPath, "utf8")
+		assert.doesNotMatch(content, /not_a_tool/)
+		// The document must stay loadable; parseAgentConfigFromYaml throws on
+		// an unknown tool, which would remove the subagent entirely.
+		assert.doesNotThrow(() => parseAgentConfigFromYaml(content))
+	})
+
+	it("removes a forbidden tool already in the document even when the update targets another field", async () => {
+		const directory = await fs.mkdtemp(path.join(os.tmpdir(), "update-subagent-config-"))
+		temporaryDirectories.push(directory)
+		const subagentPath = path.join(directory, "reviewer.yml")
+		await fs.writeFile(
+			subagentPath,
+			"---\nname: reviewer\ndescription: Research agent\ntools:\n  - read_file\n  - make_plan\n---\nPrompt body\n",
+			"utf8",
+		)
+
+		const fixture = createController()
+		// A profile-only update carries no tool intent, but leaving the stored
+		// list untouched would let a hand-edited document keep a tool no save
+		// would ever produce.
+		await updateSubagentConfig(
+			fixture.controller,
+			UpdateSubagentConfigRequest.create({ subagentPath, profile: "reviewer-profile" }),
+		)
+
+		const content = await fs.readFile(subagentPath, "utf8")
+		assert.doesNotMatch(content, /make_plan/)
+		assert.match(content, /- read_file/)
+	})
+
+	it("keeps an explicit empty tool list empty so it still inherits the default allowlist", async () => {
+		const directory = await fs.mkdtemp(path.join(os.tmpdir(), "update-subagent-config-"))
+		temporaryDirectories.push(directory)
+		const subagentPath = path.join(directory, "reviewer.yml")
+		await fs.writeFile(subagentPath, "---\nname: reviewer\ndescription: Research agent\n---\nPrompt body\n", "utf8")
+
+		const fixture = createController()
+		await updateSubagentConfig(
+			fixture.controller,
+			UpdateSubagentConfigRequest.create({ subagentPath, tools: [], replaceTools: true }),
+		)
+
+		const content = await fs.readFile(subagentPath, "utf8")
+		assert.match(content, /tools: \[\]/)
+		assert.doesNotMatch(content, /attempt_completion/)
 	})
 
 	it("keeps YAML frontmatter delimiters on separate lines when updating fields", async () => {

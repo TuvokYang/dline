@@ -10,6 +10,15 @@ export interface CapabilityEntry {
 	readonly contentHash?: string
 	/** Optional privacy-safe fingerprint for the provider-visible native tool identity. */
 	readonly nativeToolHash?: string
+	/**
+	 * Tools this capability is actually permitted to use, when that set is
+	 * enforced rather than advisory.
+	 *
+	 * Advertising it lets the caller choose a capability by what it can do
+	 * instead of dispatching blind. Populated for subagents, whose allowlist is
+	 * enforced at build time; omitted where no such restriction exists.
+	 */
+	readonly tools?: readonly string[]
 }
 
 /**

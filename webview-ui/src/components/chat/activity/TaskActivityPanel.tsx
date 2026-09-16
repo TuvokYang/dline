@@ -310,6 +310,8 @@ export function TaskActivityPanel({
 											{isSubagent ? (
 												<SubagentMetrics
 													cacheHitRate={activity.metrics?.cacheHitRate}
+													contextTokens={activity.metrics?.contextTokens}
+													contextWindow={activity.metrics?.contextWindow}
 													currency={activity.metrics?.currency}
 													finishedAt={activity.finishedAt}
 													inputTokens={activity.metrics?.inputTokens}

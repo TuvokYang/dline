@@ -501,6 +501,9 @@ message ToolInfo {
   string name = 1; // Tool name (e.g., "read_file")
   string description = 2; // Short description of the tool
   bool is_read_only = 3; // Whether the tool is read-only
+  // Enforced regardless of selection. A required tool is always granted, so the
+  // UI presents it as checked and non-interactive rather than as a choice.
+  bool required = 4;
 }
 
 // Response for getAvailableTools operation

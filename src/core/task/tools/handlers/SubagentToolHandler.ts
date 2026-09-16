@@ -547,8 +547,10 @@ async function emitUsage(config: TaskConfig, entries: SubagentStatusItem[]): Pro
 		source: "subagents",
 		tokensIn: entries.reduce((acc, entry) => acc + entry.inputTokens, 0),
 		tokensOut: entries.reduce((acc, entry) => acc + entry.outputTokens, 0),
-		cacheWrites: 0,
-		cacheReads: 0,
+		// Aggregate the reported cache tokens rather than zero: the same card
+		// already shows a cache hit rate, so a zeroed usage row contradicts it.
+		cacheWrites: entries.reduce((acc, entry) => acc + (entry.cacheWriteTokens ?? 0), 0),
+		cacheReads: entries.reduce((acc, entry) => acc + (entry.cacheReadTokens ?? 0), 0),
 		cost: entries.reduce((acc, entry) => acc + entry.totalCost, 0),
 	}
 	await config.callbacks.say("subagent_usage", JSON.stringify(payload))

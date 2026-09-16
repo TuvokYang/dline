@@ -48,6 +48,67 @@ You are a code reviewer.`
 		assert.equal(parsed.systemPrompt, "You are a code reviewer.")
 	})
 
+	it("loads hand-edited config that names turn-ending tools, dropping them instead of failing", () => {
+		const content = `---
+name: code-reviewer
+description: Reviews code for quality and best practices
+tools: read_file, ask_followup_question, make_plan, qna_respond, generate_report, new_task
+---
+
+You are a code reviewer.`
+
+		const parsed = parseAgentConfigFromYaml(content)
+
+		// Only the readable tool survives; the run would stall on any of the rest.
+		assert.deepEqual(parsed.tools, [ClineDefaultTool.FILE_READ])
+	})
+
+	it("keeps attempt_completion when the config names it explicitly", () => {
+		const content = `---
+name: code-reviewer
+description: Reviews code for quality and best practices
+tools: read_file, attempt_completion
+---
+
+You are a code reviewer.`
+
+		const parsed = parseAgentConfigFromYaml(content)
+
+		assert.deepEqual(parsed.tools, [ClineDefaultTool.FILE_READ, ClineDefaultTool.ATTEMPT])
+	})
+
+	it("marks a config whose tools were all rejected, so it is not mistaken for an absent list", () => {
+		const content = `---
+name: code-reviewer
+description: Reviews code for quality and best practices
+tools: ask_followup_question, make_plan
+---
+
+You are a code reviewer.`
+
+		const parsed = parseAgentConfigFromYaml(content)
+
+		// The author asked for a narrow set. Without the marker this is
+		// indistinguishable from "no tools field", which inherits the default
+		// allowlist and would grant more than was requested.
+		assert.deepEqual(parsed.tools, [])
+		assert.equal((parsed as { toolsExplicitlyNarrowed?: boolean }).toolsExplicitlyNarrowed, true)
+	})
+
+	it("does not mark a config that omits the tools field", () => {
+		const content = `---
+name: code-reviewer
+description: Reviews code for quality and best practices
+---
+
+You are a code reviewer.`
+
+		const parsed = parseAgentConfigFromYaml(content)
+
+		assert.deepEqual(parsed.tools, [])
+		assert.equal((parsed as { toolsExplicitlyNarrowed?: boolean }).toolsExplicitlyNarrowed, undefined)
+	})
+
 	it("parses an absolute maxOutputTokens budget", () => {
 		const content = `---
 name: detailed-reviewer

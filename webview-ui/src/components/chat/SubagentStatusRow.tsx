@@ -502,6 +502,8 @@ export default function SubagentStatusRow({ message }: SubagentStatusRowProps) {
 									<SubagentMetrics
 										cacheHitRate={entry.cacheHitRate}
 										className="basis-full pl-8"
+										contextTokens={entry.contextTokens}
+										contextWindow={entry.contextWindow}
 										currency={entry.currency}
 										finishedAt={entry.finishedAt}
 										inputTokens={entry.inputTokens}

@@ -5,6 +5,7 @@
  * Supports incremental updates: scalar fields use proto presence, while
  * repeated fields require an explicit replacement intent.
  */
+import { sanitizeSubagentToolsForPersistence } from "@core/task/tools/subagent/subagent-tool-policy"
 import { Empty } from "@shared/proto/dline/common"
 import { UpdateSubagentConfigRequest } from "@shared/proto/dline/file"
 import { Logger } from "@shared/services/Logger"
@@ -54,8 +55,24 @@ export async function updateSubagentConfig(controller: Controller, request: Upda
 
 	// Repeated proto fields default to empty arrays, so replacement intent must
 	// be explicit to distinguish "preserve" from "clear this list".
+	//
+	// Either way the stored list is brought in line with the policy. The
+	// selection UI hides forbidden tools, but it is not an enforcement boundary:
+	// this RPC is reachable directly, and a document edited by hand can already
+	// contain a tool no save would have produced. Rewriting only on explicit
+	// replacement would let such a document survive every unrelated edit.
 	if (replaceTools) {
-		updatedFrontmatter = upsertYamlListField(updatedFrontmatter, "tools", tools)
+		updatedFrontmatter = upsertYamlListField(updatedFrontmatter, "tools", sanitizeSubagentToolsForPersistence(tools))
+	} else {
+		const existingTools = readYamlListField(updatedFrontmatter, "tools")
+		if (existingTools) {
+			const sanitized = sanitizeSubagentToolsForPersistence(existingTools)
+			// Rewrite only on a real difference, so an untouched document keeps
+			// its original formatting and comments.
+			if (sanitized.length !== existingTools.length || sanitized.some((tool, i) => tool !== existingTools[i])) {
+				updatedFrontmatter = upsertYamlListField(updatedFrontmatter, "tools", sanitized)
+			}
+		}
 	}
 
 	if (replaceSkills) {
@@ -117,10 +134,58 @@ function upsertYamlField(frontmatter: string, fieldName: string, value: string |
 }
 
 /**
+ * Read a YAML list field from the frontmatter.
+ *
+ * Handles the two shapes this document uses: an inline `field: []` and a block
+ * of `  - item` lines. Returns undefined when the field is absent, which is
+ * distinct from an empty list — absent means the caller should not write the
+ * field at all.
+ *
+ * @returns Item values, or undefined when the field does not exist.
+ */
+function readYamlListField(frontmatter: string, fieldName: string): string[] | undefined {
+	const lines = frontmatter.split("\n")
+	const fieldRegex = new RegExp(`^\\s*${escapeRegex(fieldName)}\\s*:`)
+	const fieldIndex = lines.findIndex((line) => fieldRegex.test(line))
+	if (fieldIndex === -1) return undefined
+
+	const inlineValue = lines[fieldIndex].slice(lines[fieldIndex].indexOf(":") + 1).trim()
+	if (inlineValue === "[]") return []
+	if (inlineValue.startsWith("[") && inlineValue.endsWith("]")) {
+		return inlineValue
+			.slice(1, -1)
+			.split(",")
+			.map((item) => unquoteYamlValue(item.trim()))
+			.filter((item) => item.length > 0)
+	}
+
+	const items: string[] = []
+	for (const line of lines.slice(fieldIndex + 1)) {
+		const itemMatch = line.match(/^\s+-\s+(.*)$/)
+		if (itemMatch) {
+			items.push(unquoteYamlValue(itemMatch[1].trim()))
+			continue
+		}
+		// A new top-level key ends the block; blank lines inside it are ignored.
+		if (line.trim() === "") continue
+		break
+	}
+	return items
+}
+
+/** Strip the quoting `escapeYamlValue` may have added. */
+function unquoteYamlValue(value: string): string {
+	if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
+		return value.slice(1, -1).replace(/\\"/g, '"')
+	}
+	return value
+}
+
+/**
  * Upsert a YAML list field in the frontmatter.
  * Replaces the entire list with new values.
  */
-function upsertYamlListField(frontmatter: string, fieldName: string, values: string[]): string {
+function upsertYamlListField(frontmatter: string, fieldName: string, values: readonly string[]): string {
 	const lines = frontmatter.split("\n")
 	const fieldRegex = new RegExp(`^\\s*${escapeRegex(fieldName)}\\s*:`)
 

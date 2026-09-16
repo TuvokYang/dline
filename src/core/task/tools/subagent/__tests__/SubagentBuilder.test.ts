@@ -436,4 +436,43 @@ describe("SubagentBuilder", () => {
 
 		assert.deepEqual(builder.getAllowedTools(), [ClineDefaultTool.LIST_FILES, ClineDefaultTool.ATTEMPT])
 	})
+
+	it("degrades to the reporting tool when every configured tool was rejected", () => {
+		const agentConfig = {
+			name: "narrow-agent",
+			description: "asked for tools policy forbids",
+			tools: [],
+			// The loader sets this when a written list was rejected in full.
+			toolsExplicitlyNarrowed: true,
+			systemPrompt: "narrow prompt",
+		}
+		vi.spyOn(api, "buildApiHandler").mockReturnValue({ getModel: vi.fn(), createMessage: vi.fn() } as never)
+
+		const builder = new SubagentBuilder(createTaskConfig("act", "anthropic"), "narrow-agent", agentConfig)
+
+		// Inheriting the default allowlist here would grant read_file,
+		// list_files, search_files and more to an author who asked for less.
+		assert.deepEqual(builder.getAllowedTools(), [ClineDefaultTool.ATTEMPT])
+	})
+
+	it("still inherits the default allowlist when no tools were configured at all", () => {
+		const agentConfig = {
+			name: "inheriting-agent",
+			description: "no tools field",
+			tools: [],
+			systemPrompt: "inheriting prompt",
+		}
+		vi.spyOn(api, "buildApiHandler").mockReturnValue({ getModel: vi.fn(), createMessage: vi.fn() } as never)
+
+		const builder = new SubagentBuilder(createTaskConfig("act", "anthropic"), "inheriting-agent", agentConfig)
+
+		assert.deepEqual(builder.getAllowedTools(), [
+			ClineDefaultTool.FILE_READ,
+			ClineDefaultTool.LIST_FILES,
+			ClineDefaultTool.SEARCH,
+			ClineDefaultTool.LIST_CODE_DEF,
+			ClineDefaultTool.LOAD_SKILL,
+			ClineDefaultTool.ATTEMPT,
+		])
+	})
 })

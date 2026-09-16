@@ -2,7 +2,15 @@ import type { AssistantMessageContent, ToolUse } from "@core/assistant-message"
 import type { ClineAssistantToolUseBlock } from "@/shared/messages"
 import { ClineDefaultTool } from "@/shared/tools"
 
-const TURN_ENDING_TOOL_NAMES = new Set<string>([
+/**
+ * Single source of turn-ending tool identity.
+ *
+ * A turn-ending tool hands control back to the user, so it must never be
+ * offered as an ordinary selectable capability and must never run alongside
+ * another turn-ending tool. Consumers import this set instead of restating it;
+ * a second literal list is how the selection UI drifted from execution.
+ */
+export const TURN_ENDING_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
 	ClineDefaultTool.ATTEMPT,
 	ClineDefaultTool.ASK,
 	ClineDefaultTool.MAKE_PLAN,

@@ -37,10 +37,15 @@ function normalizeDescription(description: string): string {
  * @returns Markdown list item for the capability.
  */
 function renderEntry(entry: CapabilityEntry): string {
-	return assemblePromptFragments(getPrompt("capabilityCatalog", "entry"), {
+	const line = assemblePromptFragments(getPrompt("capabilityCatalog", "entry"), {
 		NAME: escapeName(entry.name),
 		DESCRIPTION: normalizeDescription(entry.description),
 	})
+
+	// Advertise the enforced tool allowlist when one exists, so the caller can
+	// choose a capability by what it is actually permitted to do.
+	if (!entry.tools || entry.tools.length === 0) return line
+	return `${line}\n  - Tools: ${entry.tools.join(", ")}`
 }
 
 /** Select model-facing purpose and usage guidance for one capability group. */

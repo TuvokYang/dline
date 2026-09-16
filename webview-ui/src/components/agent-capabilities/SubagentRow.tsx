@@ -76,7 +76,17 @@ const SubagentRow: React.FC<SubagentRowProps> = ({ agent, isGlobal, onToggle, on
 		}
 	}, [expanded])
 
-	const toggleTool = (toolName: string) => {
+	// Names the backend marks as always granted, read from the catalogue so the
+	// Webview never has to name a specific tool itself.
+	const requiredToolNames = new Set(
+		toolGroups.flatMap((group) => group.tools.filter((tool) => tool.required).map((tool) => tool.name)),
+	)
+
+	const toggleTool = (toolName: string, required?: boolean) => {
+		// A required tool is granted by policy regardless of selection. Letting it
+		// be unchecked would show a state the backend never honours.
+		if (required) return
+
 		const next = new Set(selectedTools)
 		if (next.has(toolName)) {
 			next.delete(toolName)
@@ -87,7 +97,10 @@ const SubagentRow: React.FC<SubagentRowProps> = ({ agent, isGlobal, onToggle, on
 		FileServiceClient.updateSubagentConfig(
 			UpdateSubagentConfigRequest.create({
 				subagentPath: agent.path,
-				tools: Array.from(next),
+				// Required tools stay checked in the UI but are not part of the
+				// saved selection: the runtime grants them regardless, and storing
+				// one would present a guarantee as an editable preference.
+				tools: Array.from(next).filter((tool) => !requiredToolNames.has(tool)),
 				replaceTools: true,
 			}),
 		).catch((err) => console.error("Failed to save tools:", err))
@@ -215,9 +228,11 @@ const SubagentRow: React.FC<SubagentRowProps> = ({ agent, isGlobal, onToggle, on
 											className="flex items-center gap-1.5 text-xs cursor-pointer hover:bg-text-block-background rounded px-1 py-0.5"
 											key={tool.name}>
 											<input
-												checked={selectedTools.has(tool.name)}
+												checked={tool.required || selectedTools.has(tool.name)}
 												className="w-3 h-3"
-												onChange={() => toggleTool(tool.name)}
+												disabled={tool.required}
+												onChange={() => toggleTool(tool.name, tool.required)}
+												title={tool.required ? "Always enabled for subagents" : undefined}
 												type="checkbox"
 											/>
 											<span className="truncate" title={tool.description}>

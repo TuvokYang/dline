@@ -7,6 +7,7 @@ import * as path from "path"
 import { z } from "zod"
 import { getDlineSubagentsDirectoryPath, getSubagentsScanDirectories } from "@/core/storage/disk"
 import { DEFAULT_SUBAGENT_FILE_NAME, DEFAULT_SUBAGENT_YAML_CONTENT } from "./DefaultSubagentConfig"
+import { rejectForbiddenSubagentTools } from "./subagent-tool-policy"
 
 export const AGENTS_CONFIG_DIRECTORY_NAME = "subagents"
 
@@ -22,6 +23,11 @@ const AgentBaseConfigSchema = z.object({
 	name: z.string().trim().min(1),
 	description: z.string().trim().min(1),
 	tools: z.array(z.nativeEnum(ClineDefaultTool)).default([]),
+	// Set when the author wrote a tool list and policy rejected all of it.
+	// Without this, the resulting empty list is indistinguishable from "no
+	// tools field", and a request to narrow would be read as a request to
+	// inherit — granting more than was asked for.
+	toolsExplicitlyNarrowed: z.boolean().optional(),
 	skills: z.array(z.string().trim().min(1)).optional(),
 	profile: z.string().trim().min(1).nullable().optional(),
 	maxOutputTokens: SubagentOutputTokensSchema.optional(),
@@ -70,11 +76,28 @@ function normalizeToolName(toolName: string): ClineDefaultTool {
 	throw new Error(`Unknown tool '${trimmed}'. Expected a ClineDefaultTool value.`)
 }
 
-function parseTools(tools: string | string[] | undefined): ClineDefaultTool[] {
-	if (!tools) return []
+/**
+ * Parse the configured tool list, dropping tools policy forbids.
+ *
+ * Hand-edited YAML predating the policy may still name a turn-ending tool.
+ * Dropping it here keeps the config loadable rather than failing the whole
+ * subagent, and keeps what is reported to callers equal to what the runner
+ * will actually grant. An empty result still means "inherit the default
+ * allowlist", so the required tool is granted when that list is resolved.
+ */
+function parseTools(tools: string | string[] | undefined): {
+	tools: ClineDefaultTool[]
+	explicitlyNarrowed: boolean
+} {
+	if (!tools) return { tools: [], explicitlyNarrowed: false }
 	const rawTools = Array.isArray(tools) ? tools : tools.split(",")
-	if (rawTools.length === 0) return []
-	return Array.from(new Set(rawTools.map(normalizeToolName)))
+	if (rawTools.length === 0) return { tools: [], explicitlyNarrowed: false }
+
+	const requested = Array.from(new Set(rawTools.map(normalizeToolName)))
+	const permitted = rejectForbiddenSubagentTools(requested)
+	// Every entry was rejected, so the author's intent is known to be narrow
+	// even though nothing survived to express it.
+	return { tools: permitted, explicitlyNarrowed: permitted.length === 0 }
 }
 
 function normalizeSkillName(skillName: string): string {
@@ -96,12 +119,14 @@ export function parseAgentConfigFromYaml(content: string): AgentBaseConfig {
 	const parsedFrontmatter = AgentConfigFrontmatterSchema.parse(data)
 	const systemPrompt = body.trim()
 	if (!systemPrompt) throw new Error("Missing system prompt body in agent config file.")
+	const parsedTools = parseTools(parsedFrontmatter.tools)
 	return AgentBaseConfigSchema.parse({
 		name: parsedFrontmatter.name,
 		description: parsedFrontmatter.description,
 		profile: parsedFrontmatter.profile,
 		maxOutputTokens: parsedFrontmatter.maxOutputTokens,
-		tools: parseTools(parsedFrontmatter.tools),
+		tools: parsedTools.tools,
+		...(parsedTools.explicitlyNarrowed ? { toolsExplicitlyNarrowed: true } : {}),
 		skills: parseSkills(parsedFrontmatter.skills),
 		systemPrompt,
 	}) as AgentBaseConfig

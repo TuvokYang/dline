@@ -7,6 +7,8 @@ interface SubagentMetricsProps {
 	inputTokens: number | undefined
 	outputTokens: number | undefined
 	cacheHitRate?: number
+	contextTokens?: number
+	contextWindow?: number
 	totalCost: number | undefined
 	currency: string | undefined
 	className?: string
@@ -14,6 +16,23 @@ interface SubagentMetricsProps {
 
 function normalizeCount(value: number | undefined): number {
 	return Number.isFinite(value) ? Math.max(0, Math.round(value ?? 0)) : 0
+}
+
+/**
+ * Context usage against the model's window.
+ *
+ * Returns undefined when the window is unknown or non-positive: a percentage of
+ * an unknown denominator would mislead, so the segment is omitted rather than
+ * rendered as zero.
+ */
+function formatContextUsage(contextTokens: number | undefined, contextWindow: number | undefined): string | undefined {
+	if (!Number.isFinite(contextWindow) || (contextWindow ?? 0) <= 0) return undefined
+	if (!Number.isFinite(contextTokens)) return undefined
+
+	const window = contextWindow as number
+	const used = Math.max(0, Math.round(contextTokens as number))
+	const percentage = Math.min(100, Math.round((used / window) * 100))
+	return `Ctx:${formatTokenMetric(used)}/${formatTokenMetric(window)} (${percentage}%)`
 }
 
 export function formatSubagentDuration(startedAt: number | undefined, finishedAt: number | undefined): string {
@@ -42,6 +61,8 @@ export function SubagentMetrics({
 	inputTokens,
 	outputTokens,
 	cacheHitRate,
+	contextTokens,
+	contextWindow,
 	totalCost,
 	currency,
 	className,
@@ -50,6 +71,7 @@ export function SubagentMetrics({
 	const normalizedInputTokens = normalizeCount(inputTokens)
 	const normalizedOutputTokens = normalizeCount(outputTokens)
 	const normalizedCacheHitRate = Number.isFinite(cacheHitRate) ? Math.max(0, Math.min(100, cacheHitRate ?? 0)) : undefined
+	const contextUsage = formatContextUsage(contextTokens, contextWindow)
 	const classes = [
 		"inline-flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10px] text-description tabular-nums",
 		className,
@@ -67,6 +89,12 @@ export function SubagentMetrics({
 			<span>{`Out:${formatTokenMetric(normalizedOutputTokens)}`}</span>
 			{normalizedCacheHitRate !== undefined && (
 				<span>{`Cache:${normalizedCacheHitRate.toFixed(2).replace(/\.00$/, "")}%`}</span>
+			)}
+			{contextUsage !== undefined && (
+				<>
+					<span aria-hidden="true">·</span>
+					<span data-testid="subagent-context-usage">{contextUsage}</span>
+				</>
 			)}
 			<span aria-hidden="true">·</span>
 			<span>{formatSubagentCost(totalCost, currency)}</span>

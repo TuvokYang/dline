@@ -8,6 +8,7 @@ import { ClineDefaultTool } from "@shared/tools"
 import type { TaskConfig } from "../types/TaskConfig"
 import type { AgentBaseConfig } from "./AgentConfigLoader"
 import { DEFAULT_SUBAGENT_ALLOWED_TOOLS, isDefaultSubagentName } from "./DefaultSubagentConfig"
+import { sanitizeSubagentTools } from "./subagent-tool-policy"
 
 export type AgentConfig = Partial<AgentBaseConfig>
 
@@ -51,7 +52,11 @@ export class SubagentBuilder {
 		agentConfig?: AgentBaseConfig,
 	) {
 		this.agentConfig = agentConfig ?? {}
-		this.allowedTools = this.resolveAllowedTools(this.agentConfig.tools, !subagentName || isDefaultSubagentName(subagentName))
+		this.allowedTools = this.resolveAllowedTools(
+			this.agentConfig.tools,
+			!subagentName || isDefaultSubagentName(subagentName),
+			this.agentConfig.toolsExplicitlyNarrowed === true,
+		)
 
 		const apiConfiguration = this.baseConfig.services.stateManager.getApiConfigurationForTask(this.baseConfig.taskId)
 		const profiles = readApiProfiles()
@@ -175,13 +180,22 @@ export class SubagentBuilder {
 
 	/**
 	 * Resolve allowed subagent tools from config and defaults.
+	 *
+	 * Delegates to the shared policy so the enforced allowlist, the capability
+	 * catalogue, and the selection UI cannot drift apart.
+	 *
 	 * @param configuredTools Optional YAML configured tools.
-	 * @returns De-duplicated tool allowlist with attempt_completion enforced.
+	 * @param builtInDefault Whether this run uses the built-in default profile.
+	 * @param explicitlyNarrowed Whether the author wrote a list that policy
+	 *   rejected entirely, which must not be widened back to the default set.
+	 * @returns De-duplicated tool allowlist with the subagent tool policy applied.
 	 */
-	private resolveAllowedTools(configuredTools: ClineDefaultTool[] | undefined, builtInDefault: boolean): ClineDefaultTool[] {
-		const sourceTools = configuredTools && configuredTools.length > 0 ? configuredTools : SUBAGENT_DEFAULT_ALLOWED_TOOLS
-		const boundedTools = builtInDefault ? sourceTools.filter((tool) => tool !== ClineDefaultTool.BASH) : sourceTools
-		return Array.from(new Set([...boundedTools, ClineDefaultTool.ATTEMPT]))
+	private resolveAllowedTools(
+		configuredTools: ClineDefaultTool[] | undefined,
+		builtInDefault: boolean,
+		explicitlyNarrowed: boolean,
+	): ClineDefaultTool[] {
+		return sanitizeSubagentTools(configuredTools, { builtInDefault, explicitlyNarrowed })
 	}
 
 	/**

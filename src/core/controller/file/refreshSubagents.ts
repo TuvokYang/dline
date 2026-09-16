@@ -8,6 +8,8 @@ import {
 } from "@core/storage/settings/capability-scan-result"
 import { pruneCapabilityOrphans, resolveCapabilityToggles } from "@core/storage/settings/capability-toggle-store"
 import { parseAgentConfigFromYaml } from "@core/task/tools/subagent/AgentConfigLoader"
+import { isDefaultSubagentName } from "@core/task/tools/subagent/DefaultSubagentConfig"
+import { sanitizeSubagentTools } from "@core/task/tools/subagent/subagent-tool-policy"
 import { RefreshedSubagents, SubagentInfo } from "@shared/proto/dline/file"
 import fs from "fs/promises"
 import path from "path"
@@ -57,7 +59,15 @@ async function scanSubagentsDirectory(dirPath: string): Promise<CapabilityScanRe
 						description: config.description,
 						path: filePath,
 						enabled: true, // Will be updated with toggle state
-						tools: config.tools,
+						// Report the allowlist the run will actually receive, not the
+						// raw field. An empty field means "inherit the default list",
+						// and forwarding it verbatim made the UI show every tool as
+						// unselected; selecting one would then persist that single
+						// tool and silently discard the inherited ones.
+						tools: sanitizeSubagentTools(config.tools, {
+							builtInDefault: isDefaultSubagentName(config.name),
+							explicitlyNarrowed: config.toolsExplicitlyNarrowed === true,
+						}),
 						skills: config.skills || [],
 						profile: config.profile ?? undefined,
 					}),

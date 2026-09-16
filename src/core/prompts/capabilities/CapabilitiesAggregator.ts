@@ -3,7 +3,8 @@ import type { SkillToggleState } from "@core/context/instructions/user-instructi
 import { discoverAvailableSkills, getSkillContent } from "@core/context/instructions/user-instructions/skills"
 import { getSubagentsScanDirectories, getWorkflowsScanDirectories } from "@core/storage/disk"
 import { parseAgentConfigFromYaml } from "@core/task/tools/subagent/AgentConfigLoader"
-import { DEFAULT_SUBAGENT_CONFIG } from "@core/task/tools/subagent/DefaultSubagentConfig"
+import { DEFAULT_SUBAGENT_CONFIG, isDefaultSubagentName } from "@core/task/tools/subagent/DefaultSubagentConfig"
+import { sanitizeSubagentTools } from "@core/task/tools/subagent/subagent-tool-policy"
 import { CLINE_MCP_TOOL_IDENTIFIER, type McpServer } from "@shared/mcp"
 import type { GlobalInstructionsFile } from "@shared/remote-config/schema"
 import { hashStableJson } from "@shared/stable-json"
@@ -59,6 +60,10 @@ function stableEntries(entries: CapabilityEntry[]): CapabilityEntry[] {
 			description: normalizeDescription(entry.description),
 			...(entry.contentHash === undefined ? {} : { contentHash: entry.contentHash }),
 			...(entry.nativeToolHash === undefined ? {} : { nativeToolHash: entry.nativeToolHash }),
+			// Rebuilding the entry field by field silently drops anything not
+			// listed here, which is how the advertised allowlist went missing
+			// while the renderer and the collector were both correct.
+			...(entry.tools === undefined ? {} : { tools: entry.tools }),
 		})
 	}
 	return Array.from(deduped.values()).sort((a, b) => a.name.localeCompare(b.name))
@@ -214,11 +219,26 @@ async function collectSubagents(input: CollectCapabilitiesInput): Promise<Capabi
 			try {
 				const content = await fs.readFile(filePath, "utf8")
 				const config = parseAgentConfigFromYaml(content)
-				entries.push({ name: config.name, description: config.description, contentHash: hashPromptContent(content) })
+				entries.push({
+					name: config.name,
+					description: config.description,
+					contentHash: hashPromptContent(content),
+					// Advertise the allowlist that will actually be enforced, produced by
+					// the same policy the builder applies, so the caller cannot be told a
+					// capability it will not get.
+					tools: sanitizeSubagentTools(config.tools, {
+						builtInDefault: isDefaultSubagentName(config.name),
+						explicitlyNarrowed: config.toolsExplicitlyNarrowed === true,
+					}),
+				})
 			} catch {}
 		}
 	}
-	entries.push({ name: DEFAULT_SUBAGENT_CONFIG.name, description: DEFAULT_SUBAGENT_CONFIG.description })
+	entries.push({
+		name: DEFAULT_SUBAGENT_CONFIG.name,
+		description: DEFAULT_SUBAGENT_CONFIG.description,
+		tools: sanitizeSubagentTools(DEFAULT_SUBAGENT_CONFIG.tools, { builtInDefault: true }),
+	})
 	return stableEntries(entries)
 }
 

@@ -1,9 +1,11 @@
 import { CLINE_MCP_TOOL_IDENTIFIER } from "@shared/mcp"
 import { hashStableJson } from "@shared/stable-json"
+import { ClineDefaultTool } from "@shared/tools"
 import fs from "fs/promises"
 import os from "os"
 import path from "path"
 import { describe, expect, it, vi } from "vitest"
+import { DEFAULT_SUBAGENT_ALLOWED_TOOLS } from "../../../task/tools/subagent/DefaultSubagentConfig"
 import { hashPromptContent } from "../../system-prompt-cache/hash"
 import { collectCapabilities } from "../CapabilitiesAggregator"
 
@@ -99,6 +101,9 @@ describe("collectCapabilities", () => {
 					contentHash: hashPromptContent(
 						"---\nname: default\ndescription: Customized default research\ntools: []\n---\nCustom default prompt",
 					),
+					// An empty list inherits the default allowlist, minus the command
+					// tool the built-in default never receives.
+					tools: DEFAULT_SUBAGENT_ALLOWED_TOOLS.filter((tool) => tool !== ClineDefaultTool.BASH),
 				},
 				{
 					name: "reviewer",
@@ -106,6 +111,7 @@ describe("collectCapabilities", () => {
 					contentHash: hashPromptContent(
 						"---\nname: reviewer\ndescription: Review code\ntools: []\n---\nReview system prompt",
 					),
+					tools: DEFAULT_SUBAGENT_ALLOWED_TOOLS,
 				},
 			])
 			expect(JSON.stringify(snapshot)).not.toContain("Review system prompt")
@@ -213,7 +219,36 @@ describe("collectCapabilities", () => {
 
 			const snapshot = await collectCapabilities({ cwd })
 
-			expect(snapshot.subagents).toEqual([{ name: "default", description: "Built-in readonly research subagent" }])
+			expect(snapshot.subagents).toEqual([
+				{
+					name: "default",
+					description: "Built-in readonly research subagent",
+					tools: DEFAULT_SUBAGENT_ALLOWED_TOOLS.filter((tool) => tool !== ClineDefaultTool.BASH),
+				},
+			])
+		} finally {
+			await fs.rm(cwd, { recursive: true, force: true })
+		}
+	})
+
+	it("carries the advertised tool allowlist through to the collected snapshot", async () => {
+		const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "dline-capabilities-"))
+		try {
+			const subagentDir = path.join(cwd, ".agents", "subagents")
+			await fs.mkdir(subagentDir, { recursive: true })
+			await fs.writeFile(
+				path.join(subagentDir, "reviewer.yaml"),
+				"---\nname: reviewer\ndescription: Review code\ntools:\n  - read_file\n  - search_files\n---\nReview system prompt",
+				"utf8",
+			)
+
+			const snapshot = await collectCapabilities({ cwd })
+
+			// Asserted on the aggregator's own output rather than a hand-built
+			// entry: normalisation rebuilds every entry, so a renderer-level test
+			// cannot prove the list survives collection.
+			const reviewer = snapshot.subagents.find((entry) => entry.name === "reviewer")
+			expect(reviewer?.tools).toEqual([ClineDefaultTool.FILE_READ, ClineDefaultTool.SEARCH, ClineDefaultTool.ATTEMPT])
 		} finally {
 			await fs.rm(cwd, { recursive: true, force: true })
 		}
