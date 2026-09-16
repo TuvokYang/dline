@@ -54,6 +54,21 @@ function stateEffects(revision: number): TaskEffect[] {
 	]
 }
 
+/**
+ * Projection effects for a transition that no later step depends on having landed.
+ *
+ * Only transitions whose successor state is itself projected may be coalesced:
+ * a block start is immediately followed by the block's own completion, and the
+ * durable barriers around approval, turn completion, cancellation and
+ * termination are unaffected. Every other transition stays durable by default.
+ */
+function coalescedStateEffects(revision: number): TaskEffect[] {
+	return [
+		{ id: effectId(revision, 1), type: "POST_TASK_VIEW", durability: "scheduled" },
+		{ id: effectId(revision, 2), type: "PERSIST_SNAPSHOT", durability: "scheduled" },
+	]
+}
+
 /** Map canonical interactions whose handlers still contain a legacy feedback echo guard. */
 function handlerFeedbackAcknowledgment(
 	kind: NonNullable<TaskRuntimeState["interaction"]>["kind"],
@@ -591,9 +606,13 @@ function reduceTurn(
 			return reject(state, event.type)
 		}
 		const revision = state.revision + 1
+		// A block start is the per-block hot path: with parallel execution one
+		// turn produces many of these, and each one previously forced a full
+		// Webview build and a durable write inside the serialized runtime queue.
+		// The block's own terminal transition is durable, so nothing observes
+		// this intermediate state without a later barrier.
 		return acceptTurn(state, event.type, state.turn, TaskPhase.EXECUTING, [
-			{ id: effectId(revision, 1), type: "POST_TASK_VIEW" },
-			{ id: effectId(revision, 2), type: "PERSIST_SNAPSHOT" },
+			...coalescedStateEffects(revision),
 			{ id: effectId(revision, 3), type: "EXECUTE_TOOL", dlineTid: block.dlineTid },
 		])
 	}

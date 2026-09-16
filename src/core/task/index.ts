@@ -322,9 +322,11 @@ import { type ResumeInput, selectResumeUiTail } from "./resume/ResumeInput"
 import { projectResumeOrdinaryInput } from "./resume/ResumeInteractionContinuation"
 import { createResumeContinuationText } from "./resume/ResumeProvenance"
 import { collectResumeTurnContent } from "./resume/ResumeToolResult"
-import type { TaskEffectPorts } from "./runtime/TaskEffectRunner"
+import type { SnapshotDurability } from "./runtime/TaskEffect"
+import type { ProjectionEffectOrigin, TaskEffectPorts } from "./runtime/TaskEffectRunner"
 import type { TaskEvent } from "./runtime/TaskEvent"
 import { type TaskDispatchResult, TaskRuntime } from "./runtime/TaskRuntime"
+import { TaskRuntimeProjectionScheduler } from "./runtime/TaskRuntimeProjectionScheduler"
 import { createTaskRuntimeState, type TaskRuntimeState } from "./runtime/TaskRuntimeState"
 import { StreamChunkCoordinator } from "./StreamChunkCoordinator"
 import { StreamResponseHandler } from "./StreamResponseHandler"
@@ -616,6 +618,7 @@ export class Task {
 	private readonly presentationScheduler: TaskPresentationScheduler
 	private pendingReasoningText?: string
 	private readonly snapshotPersistence: TaskSnapshotPersistence
+	private readonly projectionScheduler: TaskRuntimeProjectionScheduler
 	private readonly systemPromptCacheService: SystemPromptCacheService
 	private readonly promptFreshnessInvalidationCoordinator: PromptFreshnessInvalidationCoordinator
 	private promptInputWatcherSubscription?: PromptInputWatcherSubscription
@@ -833,8 +836,8 @@ export class Task {
 		this.taskRuntime = new TaskRuntime(
 			createTaskRuntimeState({ taskId: this.taskId }),
 			createInteractionPorts(
-				async (state) => this.publishRuntimeTaskView(state),
-				async (state) => this.emitStateSnapshot(createSnapshot(state)),
+				async (state, durability, origin) => this.publishRuntimeTaskView(state, durability, origin),
+				async (state, durability, origin) => this.emitStateSnapshot(createSnapshot(state), durability, origin),
 				async () => this.abortExecution(),
 				async () => {
 					this.taskState.resetOperationCancellation()
@@ -1033,6 +1036,29 @@ export class Task {
 		this.snapshotPersistence = new TaskSnapshotPersistence({
 			writeSnapshot: this.writeTaskSnapshot.bind(this),
 			onSnapshot: (stage, snapshot, error) => this.taskTelemetry.snapshot(stage, snapshot, error),
+		})
+		this.projectionScheduler = new TaskRuntimeProjectionScheduler({
+			ports: {
+				postView: () => this.postStateToWebview(),
+				scheduleSnapshot: (snapshot) => this.snapshotPersistence.schedule(snapshot),
+				flushSnapshot: () => this.snapshotPersistence.flushNow(),
+				// A coalesced projection has already returned to the runtime, so its
+				// failure is dispatched as the effect that scheduled it rather than
+				// being blamed on whichever transition happens to run next.
+				onDeferredFailure: ({ origin, effectType, error }) => {
+					void this.taskRuntime
+						.dispatch({
+							type: "EFFECT_FAILED",
+							effectId: origin.effectId,
+							effectType,
+							originRevision: origin.originRevision,
+							message: error instanceof Error ? error.message : String(error),
+						})
+						.catch((dispatchError: unknown) => {
+							Logger.warn(`[Task ${taskId}] Failed to report deferred projection failure: ${dispatchError}`)
+						})
+				},
+			},
 		})
 
 		// Initialize taskId first
@@ -1670,13 +1696,23 @@ export class Task {
 		return this.contextWindowIndicator.getSnapshot()
 	}
 
-	/** Publish one committed runtime view after completing any phase-bound indicator transition. */
-	private async publishRuntimeTaskView(state: Readonly<TaskRuntimeState>): Promise<void> {
+	/**
+	 * Publish one committed runtime view after completing any phase-bound indicator transition.
+	 *
+	 * Phase-bound indicator settling stays on the committing transition because it
+	 * reads state that a later coalesced post would no longer observe; only the
+	 * Webview build itself is deferred.
+	 */
+	private async publishRuntimeTaskView(
+		state: Readonly<TaskRuntimeState>,
+		durability: SnapshotDurability = "flushed",
+		origin?: ProjectionEffectOrigin,
+	): Promise<void> {
 		this.apiRateMetricsService.setTaskLoopActive(isTaskRateMetricsLoopActive(state.phase))
 		if (state.phase === TaskPhase.COMPLETED) {
 			await this.settleOrdinaryIndicatorRound()
 		}
-		await this.postStateToWebview()
+		await this.projectionScheduler.postView(durability, origin)
 	}
 
 	/** Synchronize the authoritative indicator after an active runtime scope is durably adopted. */
@@ -4029,11 +4065,22 @@ export class Task {
 	/**
 	 * Persist a task state snapshot to snapshot.json only.
 	 * Called only by the canonical runtime persistence effect.
+	 *
+	 * The reducer classifies each transition: a coalesced one is handed to the
+	 * persistence layer without forcing a write, so a turn with many blocks no
+	 * longer pays one durable write per block inside the runtime queue.
 	 */
-	private async emitStateSnapshot(snapshot: TaskSnapshot): Promise<void> {
+	private async emitStateSnapshot(
+		snapshot: TaskSnapshot,
+		durability: SnapshotDurability = "flushed",
+		origin?: ProjectionEffectOrigin,
+	): Promise<void> {
 		this.latestTaskSnapshot = snapshot
-		this.snapshotPersistence.schedule(snapshot)
-		await this.snapshotPersistence.flushNow()
+		await this.projectionScheduler.persistSnapshot(snapshot, durability, origin)
+		// The history projection is only reconciled once the snapshot it mirrors is
+		// durable, so a coalesced transition defers it to the next barrier rather
+		// than publishing a projection ahead of the state it claims to reflect.
+		if (durability !== "flushed") return
 		if (await this.syncTaskCompletionProjection(snapshot)) {
 			await this.postStateToWebview({ immediate: true })
 		}
@@ -6034,6 +6081,8 @@ export class Task {
 				},
 				() => this.activityStore.dispose(),
 				() => this.taskTelemetry.dispose(),
+				// A coalesced view post must not outlive the task it describes.
+				() => this.projectionScheduler.dispose(),
 			]
 			const asyncCleanups: Array<Promise<void>> = [
 				withTerminateTimeout(taskCancelHookPromise, 5_000, "taskCancelHook"),

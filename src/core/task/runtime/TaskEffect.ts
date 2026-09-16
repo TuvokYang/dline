@@ -17,16 +17,31 @@ export type TaskEffectType =
 	| "START_NEW_TASK"
 	| "START_SUCCESSOR_TASK"
 
+/**
+ * Whether a committed transition must reach its projection before the runtime
+ * queue continues, or may be coalesced with the transitions that follow it.
+ *
+ * Both projections are last-writer-wins, so intermediate states are discardable
+ * as long as a barrier forces the latest one out before anything can depend on
+ * it having landed. Leaving this absent means "flushed": a transition that has
+ * not been classified keeps the durable behaviour.
+ */
+export type SnapshotDurability = "scheduled" | "flushed"
+
 /** Refresh the Webview from the already committed runtime state. */
 export interface PostTaskViewEffect {
 	id: string
 	type: "POST_TASK_VIEW"
+	/** Defaults to "flushed" when absent. */
+	durability?: SnapshotDurability
 }
 
 /** Persist the already committed runtime aggregate. */
 export interface PersistSnapshotEffect {
 	id: string
 	type: "PERSIST_SNAPSHOT"
+	/** Defaults to "flushed" when absent. */
+	durability?: SnapshotDurability
 }
 
 /** Cancel active API, hook, command, and partial tool work. */
