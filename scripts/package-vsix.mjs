@@ -5,12 +5,12 @@
  *
  * Behavior:
  * - On main branch or git tag: packages normally (e.g., dline-5.0.4.vsix)
- * - On feature/development branches: applies the nightly identity
- *   (preview: true, name → dline-nightly, displayName → Dline (Nightly))
+ * - On feature/development branches: applies the insiders identity
+ *   (preview: true, name → dline-insiders, displayName → Dline (Insiders))
  *
  * This script:
  * 1. Checks if current HEAD is on main branch or a git tag
- * 2. If not, backs up package.json and applies nightly modifications
+ * 2. If not, backs up package.json and applies insiders modifications
  * 3. Swaps README.marketplace.md into README.md and runs vsce package
  * 4. Restores README.md and package.json
  */
@@ -28,8 +28,8 @@ const PROJECT_ROOT = path.join(__dirname, "..")
 const PACKAGE_JSON_PATH = path.join(PROJECT_ROOT, "package.json")
 const DIST_DIR = path.join(PROJECT_ROOT, "dist")
 
-const NIGHTLY_SUFFIX = "-nightly"
-const NIGHTLY_DISPLAY_SUFFIX = " (Nightly)"
+const INSIDERS_SUFFIX = "-insiders"
+const INSIDERS_DISPLAY_SUFFIX = " (Insiders)"
 
 /**
  * Get short git hash of current HEAD.
@@ -116,13 +116,13 @@ await withMarketplaceReadme((cleanups) => {
 		const originalName = pkg.name
 		const originalDisplayName = pkg.displayName
 		pkg.preview = true
-		pkg.name = originalName + NIGHTLY_SUFFIX
-		pkg.displayName = originalDisplayName + NIGHTLY_DISPLAY_SUFFIX
+		pkg.name = originalName + INSIDERS_SUFFIX
+		pkg.displayName = originalDisplayName + INSIDERS_DISPLAY_SUFFIX
 		if (pkg.contributes?.viewsContainers?.activitybar?.title) {
-			pkg.contributes.viewsContainers.activitybar.title = originalDisplayName + NIGHTLY_DISPLAY_SUFFIX
+			pkg.contributes.viewsContainers.activitybar.title = originalDisplayName + INSIDERS_DISPLAY_SUFFIX
 		}
 		writePackageJson(pkg)
-		console.log(`[package-vsix] Applied nightly theme: preview=true, name=${pkg.name}`)
+		console.log(`[package-vsix] Applied insiders theme: preview=true, name=${pkg.name}`)
 	}
 
 	// Ensure dist directory exists
