@@ -1,0 +1,87 @@
+---
+title: "Tools"
+sidebarTitle: "Tools"
+description: "Reference for the built-in tools available in the Dline editor extension."
+---
+
+Dline tools are executable functions the model can call while working. The exact set depends on the active Standard or Lite prompt profile, host capabilities, feature toggles, provider support, and task permissions.
+
+## Built-In Tools
+
+### Files and code
+
+| Tool | Description |
+|------|-------------|
+| `read_file` | Read a file or a bounded line range |
+| `write_to_file` | Create a new file |
+| `replace_in_file` | Edit an existing file with exact search/replace blocks |
+| `apply_patch` | Apply a structured patch when that capability is enabled |
+| `search_files` | Search project files with a regular expression |
+| `list_files` | List directory contents |
+| `list_code_definition_names` | List top-level source definitions |
+| `find_references` | Find semantic symbol references through the IDE |
+| `rename` | Rename a symbol through the IDE language service |
+| `replace_text` | Preview and apply a bounded multi-file text replacement |
+
+### Execution and browser
+
+| Tool | Description |
+|------|-------------|
+| `execute_command` | Run a command in the reported shell with approval and policy checks |
+| `kill_command` | Stop a command started by Dline |
+| `browser_action` | Interact with a Puppeteer-controlled browser |
+| `web_fetch` | Fetch and analyze a known URL |
+| `web_search` | Search the web when Web Tools and the selected route are available |
+| `generate_image` | Generate or edit an image when the selected profile supports it |
+
+### Task interaction
+
+| Tool | Description |
+|------|-------------|
+| `ask_followup_question` | Request one required user decision |
+| `qna_respond` | Answer a user question |
+| `make_plan` | Present a complete implementation or design plan |
+| `act_mode_respond` / `status_update` | Publish an execution progress update |
+| `generate_report` | Present a structured report for review |
+| `attempt_completion` | Return the verified final result |
+| `change_todo_list` | Request approval to replace an active checklist |
+
+### Capabilities and delegation
+
+| Tool | Description |
+|------|-------------|
+| `load_skill` / `load_workflow` | Load advertised task instructions or an ordered procedure |
+| `load_mcp` | Load metadata for one advertised MCP tool |
+| `use_mcp_tool` / `access_mcp_resource` | Execute an MCP tool or read an MCP resource |
+| `load_mcp_documentation` | Load guidance for creating an MCP server |
+| `use_subagent` / `use_subagents` | Delegate bounded research to one or more subagents |
+| `spawn_task` | Start an independent first-class task when that capability is available |
+
+The Lite profile intentionally exposes a smaller core set. A tool listed here can still be absent when its feature is disabled or its host/provider requirements are not met.
+
+## Approval and Policy Controls
+
+Dline can run tools with approval or auto-approval, depending on settings/policies. Typical patterns:
+
+- Require approval for risky tools (for example `execute_command` and write/edit operations)
+- Auto-approve low-risk tools (for example read/search operations)
+- Disable specific tools entirely when needed
+
+For approval behavior, see [Auto-approve](/features/auto-approve).
+
+## MCP Tools
+
+Dline can call tools discovered from the global MCP settings file at `~/Documents/dline/settings/mcp_settings.json` and from workspace descriptors under `.agents/mcp/`.
+
+MCP tools are exposed only while the corresponding server and task capability are enabled. Server configuration does not bypass task approval.
+
+See [MCP Overview](/mcp/mcp-overview).
+
+## External Tools
+
+Use MCP servers to add external tools, resources, and prompts. See [MCP Overview](/mcp/mcp-overview) for configuration, workspace descriptors, and security guidance.
+
+## Related
+
+- [Auto-approve](/features/auto-approve)
+- [MCP Overview](/mcp/mcp-overview)

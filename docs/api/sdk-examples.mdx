@@ -1,10 +1,10 @@
 ---
 title: "Code Examples"
 sidebarTitle: "Code Examples"
-description: "Use the Cline API from Python, Node.js, curl, the Cline CLI, and the VS Code extension."
+description: "Use the Dline API from Python, Node.js, curl, and the editor extension."
 ---
 
-The Cline API is OpenAI-compatible, so any library or tool that works with OpenAI also works with the Cline API. Just change the base URL and API key.
+The Dline API is OpenAI-compatible, so any library or tool that works with OpenAI also works with the Dline API. Just change the base URL and API key.
 
 ## curl
 
@@ -38,7 +38,7 @@ curl -X POST https://api.dline.bot/api/v1/chat/completions \
 
 ### OpenAI SDK
 
-The [OpenAI Python SDK](https://github.com/openai/openai-python) works with the Cline API by setting `base_url`:
+The [OpenAI Python SDK](https://github.com/openai/openai-python) works with the Dline API by setting `base_url`:
 
 ```python
 from openai import OpenAI
@@ -149,7 +149,7 @@ print(data["choices"][0]["message"]["content"])
 
 ### OpenAI SDK
 
-The [OpenAI Node.js SDK](https://github.com/openai/openai-node) works with the Cline API by setting `baseURL`:
+The [OpenAI Node.js SDK](https://github.com/openai/openai-node) works with the Dline API by setting `baseURL`:
 
 ```typescript
 import OpenAI from "openai"
@@ -212,50 +212,18 @@ const data = await response.json()
 console.log(data.choices[0].message.content)
 ```
 
-## Cline CLI
+## VS Code Extension
 
-The [Cline CLI](/cli/cli-reference) is the fastest way to use the Cline API from your terminal. It handles authentication, streaming, and tool execution for you.
+The Dline extension handles the API integration for you:
 
-### Setup
-
-```bash
-# Install
-npm install -g @anthropic-ai/cline
-
-# Authenticate with a Cline API key
-cline auth -p cline -k "YOUR_API_KEY" -m anthropic/claude-sonnet-4-6
-```
-
-### Run Tasks
-
-```bash
-# Simple prompt
-cline "Explain what a REST API is."
-
-# Pipe input
-cat README.md | cline "Summarize this document."
-
-# Use a specific model
-cline -m google/gemini-2.5-pro "Analyze this codebase."
-
-# YOLO mode for automation
-cline -y "Run tests and fix failures."
-```
-
-See the [CLI Reference](/cli/cli-reference) for all commands and options.
-
-## VS Code / JetBrains
-
-The Cline extension handles the API integration for you:
-
-1. Open the Cline panel in your editor
-2. Select **Cline** as the provider in the model picker
-3. Sign in with your Cline account
-4. Start chatting or give Cline a task
+1. Open the Dline panel in VS Code
+2. Select **Dline** as the provider in the model picker
+3. Sign in with your Dline account
+4. Start chatting or give Dline a task
 
 Your API key is managed automatically. No manual configuration needed.
 
-For setup instructions, see [Installing Cline](/getting-started/installing-cline) and [Authorizing with Cline](/getting-started/authorizing-with-cline).
+For setup instructions, see [Installing Dline](/getting-started/installing-dline) and [Authorizing with Dline](/getting-started/authorizing-with-dline).
 
 ## Related
 
@@ -268,8 +236,5 @@ For setup instructions, see [Installing Cline](/getting-started/installing-cline
   </Card>
   <Card title="Models" icon="brain" href="/api/models">
     Browse available models.
-  </Card>
-  <Card title="CLI Reference" icon="terminal" href="/cli/cli-reference">
-    Complete Cline CLI command reference.
   </Card>
 </CardGroup>

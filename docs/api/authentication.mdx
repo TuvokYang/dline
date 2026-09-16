@@ -1,10 +1,10 @@
 ---
 title: "Authentication"
 sidebarTitle: "Authentication"
-description: "How to authenticate with the Cline API using API keys or account tokens."
+description: "How to authenticate with the Dline API using API keys or account tokens."
 ---
 
-Every request to the Cline API requires authentication via a Bearer token in the `Authorization` header.
+Every request to the Dline API requires authentication via a Bearer token in the `Authorization` header.
 
 ## Authentication Methods
 
@@ -13,7 +13,7 @@ There are two ways to authenticate:
 | Method | Use case | How to get it |
 |--------|----------|---------------|
 | **API key** | Direct API calls, scripts, CI/CD | Create at [app.dline.bot](https://app.dline.bot) Settings > API Keys |
-| **Account auth token** | Cline extension and CLI | Generated automatically when you sign in |
+| **Account auth token** | Dline extension | Generated automatically when you sign in |
 
 Both methods use the same header format:
 
@@ -43,33 +43,9 @@ API keys are the recommended authentication method for programmatic access.
 
 You can revoke an API key at any time from the same Settings > API Keys page. Deleted keys stop working immediately.
 
-You can also manage keys programmatically through the [Enterprise API](/enterprise-solutions/api-reference#api-keys):
-
-```bash
-# List your keys
-curl https://api.dline.bot/api/v1/api-keys \
-  -H "Authorization: Bearer YOUR_TOKEN"
-
-# Delete a key
-curl -X DELETE https://api.dline.bot/api/v1/api-keys/KEY_ID \
-  -H "Authorization: Bearer YOUR_TOKEN"
-```
-
 ## Account Auth Tokens
 
-When you sign in to the Cline extension (VS Code, JetBrains) or CLI, an account auth token is generated and managed automatically. You do not need to handle these tokens manually.
-
-The Cline CLI uses these tokens when you authenticate via:
-
-```bash
-# Interactive sign-in
-cline auth
-
-# Or quick setup with an API key
-cline auth -p cline -k "YOUR_API_KEY" -m anthropic/claude-sonnet-4-6
-```
-
-See the [CLI Reference](/cli/cli-reference#cline-auth) for all auth options.
+When you sign in to the Dline extension, an account auth token is generated and managed automatically. You do not need to handle this token manually.
 
 ## Security Best Practices
 
@@ -117,21 +93,18 @@ client = OpenAI(
 
 ## Custom Headers
 
-The Cline API accepts optional headers for tracking and identification:
+The Dline API accepts optional headers for tracking and identification:
 
 | Header | Description |
 |--------|-------------|
 | `HTTP-Referer` | Your application's URL. Helps with usage tracking. |
 | `X-Title` | Your application's name. Appears in usage logs. |
-| `X-Task-ID` | A unique task identifier. Used internally by the Cline extension. |
+| `X-Task-ID` | A unique task identifier. Used internally by the Dline extension. |
 
 ## Related
 
-<CardGroup cols={2}>
+<CardGroup cols={1}>
   <Card title="Getting Started" icon="rocket" href="/api/getting-started">
     Create your first API key and make a request.
-  </Card>
-  <Card title="Enterprise API Keys" icon="building" href="/enterprise-solutions/api-reference#api-keys">
-    Manage API keys programmatically.
   </Card>
 </CardGroup>

@@ -1,131 +1,98 @@
 ---
 title: "Config"
 sidebarTitle: "Config"
-description: "Understand where Cline stores configuration and how global and project config work together."
+description: "Understand where Dline stores configuration and how global and project config work together."
 ---
 
-Cline configuration lives in two scopes:
+Dline uses separate roots for durable state, runtime resources, user documents, and project capabilities. These locations have different owners and should not be merged into one configuration directory.
 
-- **Global configuration** in `~/.cline/` (applies globally across all Cline applications, including IDE, CLI, and SDK)
-- **Project configuration** in `.cline/` (applies only to the current workspace)
+## Storage Locations
 
-## Configuration Directory Layout
+### State and data root
 
-Cline stores shared configuration across a few well-known locations. The primary root is `~/.cline/`, with structured app state under `~/.cline/data/`:
-
-```text
-~/.cline/
-  data/
-    settings/
-      providers.json           # API keys and provider configuration
-      global-settings.json     # Global settings
-      cline_mcp_settings.json  # MCP settings
-    teams/                     # Team state
-    sessions/                  # Session data
-    db/                        # SQLite databases (for example cron.db)
-    workflows/                 # Global workflows
-  rules/                       # Global rules
-  hooks/                       # Global hooks
-  skills/                      # Global skills
-  agents/                      # Global agent definitions
-  plugins/                     # Global plugins (.js, .ts)
-  cron/                        # Global cron specs
-```
-
-Additional global search paths supported by the code:
+The default state root is `~/.dline/data/`. It contains canonical settings, workspace state, profile metadata, and secrets:
 
 ```text
-~/Documents/Cline/
-  Rules/                       # Additional global rules
-  Hooks/                       # Additional global hooks
-  Plugins/                     # Additional global plugins
-  Workflows/                   # Additional global workflows
+~/.dline/data/
+├── globalState.json
+├── secrets.json
+├── settings/
+│   ├── settings.json
+│   └── api_profiles.json
+├── secrets/
+│   ├── api_keys.json
+│   └── provider_secrets.json
+└── workspaces/
+    └── <workspace-hash>/
+        ├── workspaceState.json
+        └── settings.json
 ```
 
-Project-level configuration lives in `.cline/` at your repository root:
+Do not edit these files while Dline is running. Settings and profiles use repository-owned update paths so multiple VS Code windows do not overwrite one another with stale snapshots.
+
+### Resource home
+
+The default resource home is `~/.dline/`. It owns resources such as provider metadata, caches, Puppeteer data, and `endpoints.json`:
 
 ```text
-.cline/
-  rules/                       # Project rules
-  skills/                      # Project skills
-  hooks/                       # Lifecycle hooks
-  agents/                      # Project agent definitions
-  plugins/                     # Project plugins
-  cron/                        # Workspace cron specs
+~/.dline/
+├── endpoints.json
+├── providers/
+├── cache/
+└── puppeteer/
 ```
 
-Notes:
+### Documents root
 
-- Global provider settings, global settings, and MCP settings are stored under `~/.cline/data/settings/`.
-- Global workflows resolve from `~/.cline/data/workflows/`.
-- Global rules, hooks, skills, agents, plugins, and cron specs resolve directly under `~/.cline/`.
-- Rules, hooks, plugins, and workflows may also be discovered from `~/Documents/Cline/` for compatibility.
+User-facing task data and global capabilities live under the operating system's Documents directory, normally `~/Documents/dline/`:
 
-## What Goes Where?
-
-- Use **global (`~/.cline/`)** for defaults shared across all Cline applications (IDE, CLI, SDK) on your machine.
-- Use **project (`.cline/`)** for team-shared behavior that should travel with the repo.
-
-Commit `.cline/` files you want to share with your team. Keep secrets out of the repo.
-
-## Configure Through the CLI
-
-Use the interactive config UI:
-
-```bash
-cline config
+```text
+~/Documents/dline/
+├── tasks/
+├── rules/
+├── workflows/
+├── skills/
+├── subagents/
+├── mcp/
+├── hooks/
+├── settings/
+│   └── mcp_settings.json
+└── checkpoints/
 ```
 
-From there, you can view/edit:
+`DLINE_DOCS_DIR` is already the final Dline documents root. When it is set, Dline does not append another `dline` directory.
 
-- Settings (global + workspace)
-- Rules
-- Skills
-- Hooks
+## Project Capabilities
 
-## Useful Configuration Commands
+Repository-scoped capabilities use explicit project paths:
 
-Use a custom configuration directory:
-
-```bash
-cline --config /path/to/custom/config "your task"
+```text
+your-project/
+├── .agents/
+│   ├── rules/
+│   ├── workflows/
+│   ├── skills/
+│   ├── subagents/
+│   └── mcp/
+└── .agentignore
 ```
 
-Or via environment variable:
-
-```bash
-export DLINE_DATA_DIR=/custom/path/to/cline
-cline "your task"
-```
-
-View CLI logs when troubleshooting:
-
-```bash
-cline dev log
-```
+Commit the `.agents/` resources and `.agentignore` policy that are intended for collaborators. Keep credentials out of the repository. Workspace MCP descriptors reject inline secrets in sensitive fields and require environment-variable references.
 
 ## Environment Variables
 
-| Variable | Description |
-|----------|-------------|
-| `DLINE_DATA_DIR` | Custom data directory (replaces `~/.cline/data/`) |
-| `DLINE_HUB_ADDRESS` | Override hub address (default: `127.0.0.1:25463`) |
-| `DLINE_SESSION_BACKEND_MODE` | Force backend mode (`local`, `hub`, `remote`, `auto`) |
-| `DLINE_SANDBOX` | Enable sandbox mode |
-| `DLINE_SANDBOX_DATA_DIR` | Sandbox session storage directory |
-| `DLINE_HOOKS_DIR` | Additional hooks directory |
-| `DLINE_COMMAND_PERMISSIONS` | JSON policy restricting shell commands |
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `DLINE_DIR` | Parent directory for the state/data root; Dline appends `data/` | `~/.dline` |
+| `DLINE_HOME_DIR` | Resource home for providers, cache, Puppeteer data, and endpoints | `~/.dline` |
+| `DLINE_DOCS_DIR` | Complete documents root for tasks and global capabilities | system Documents directory plus `dline` |
+| `DLINE_COMMAND_PERMISSIONS` | JSON policy restricting shell commands | unset |
 
-### DLINE_DATA_DIR
-
-```bash
-export DLINE_DATA_DIR=/custom/path/to/cline
-cline "your task"
-```
+Set path overrides before launching VS Code so the extension host inherits them. For an isolated environment, set all three path variables; overriding only one root does not isolate the others.
 
 ### DLINE_COMMAND_PERMISSIONS
 
-Restrict which shell commands Cline can execute:
+Restrict which shell commands Dline can execute:
 
 ```bash
 export DLINE_COMMAND_PERMISSIONS='{"allow": ["npm *", "git *"], "deny": ["rm -rf *"]}'
@@ -149,17 +116,17 @@ Rules:
 
 ## Related Docs
 
-- [CLI Configuration](/cli/configuration)
-- [Rules](/customization/cline-rules)
+- [Rules](/customization/dline-rules)
 - [Skills](/customization/skills)
-- [Hooks](/customization/hooks)
-- [Plugins](/customization/plugins)
-- [.clineignore](/customization/clineignore)
+- [MCP](/mcp/mcp-overview)
+- [.agentignore](/customization/agentignore)
+- [Hooks roadmap](/customization/hooks)
+- [Plugins roadmap](/customization/plugins)
 
 ## Security Notes
 
 <Warning>
-Only use rules, hooks, skills, and plugins from sources you trust.
+Never commit API keys, provider credentials, or MCP tokens. Review rules, skills, workflows, subagent profiles, and MCP descriptors before enabling resources from another repository.
 </Warning>
 
-Hooks and plugins can execute code. Review them like any other executable artifact before adding them globally or to a project.
+Dline's current public extension surface does not provide a stable third-party plugin or lifecycle-hook installation API. The linked Hooks and Plugins pages describe the planned boundaries rather than an installable contract.

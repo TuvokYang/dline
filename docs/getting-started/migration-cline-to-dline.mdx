@@ -19,7 +19,7 @@ The migration transfers data across **5 paths**, preserving your complete workin
 ~/.cline/data/  →  ~/.dline/data/
 ```
 
-Copies all global state, secrets (API keys), and workspace state. This is the primary storage location shared across all platforms (VS Code, CLI, JetBrains).
+Copies legacy global state, secrets, and workspace state into Dline's current state/data root for the VS Code extension.
 
 ### 2. Custom Endpoints
 
@@ -32,7 +32,7 @@ Transfers any custom API endpoint configurations you've set up.
 ### 3. Task History
 
 ```
-VSCode Global Storage/state/taskHistory.json  →  Documents/Dline/tasks/taskHistory.json
+VS Code Global Storage/state/taskHistory.json  →  Documents/dline/tasks/
 ```
 
 Your complete conversation history, task metadata, and past sessions.
@@ -40,7 +40,7 @@ Your complete conversation history, task metadata, and past sessions.
 ### 4. Individual Task Directories
 
 ```
-VSCode Global Storage/tasks/*/  →  Documents/Dline/tasks/*/
+VS Code Global Storage/tasks/*/  →  Documents/dline/tasks/*/
 ```
 
 All individual task conversation histories, UI messages, and metadata. Migrates all completed tasks.
@@ -48,10 +48,10 @@ All individual task conversation histories, UI messages, and metadata. Migrates 
 ### 5. Documents Directory
 
 ```
-~/Documents/Cline/  →  ~/Documents/Dline/
+~/Documents/Cline/  →  ~/Documents/dline/
 ```
 
-Copies the entire Documents/Cline folder, which may contain custom rules, agents, skills, workflows, MCP configurations, hooks, and other user data.
+Copies the legacy Documents/Cline folder into the current Dline documents root so supported tasks and capability files remain available for later normalization.
 
 ## How It Works
 
@@ -85,10 +85,10 @@ Dline supports the following environment variables for controlling paths and mig
 | Variable | Purpose | Default |
 |---|---|---|
 | `DLINE_HOME_DIR` | Override the home config directory | `~/.dline` |
-| `DLINE_DOCS_DIR` | Override the documents directory | `~/Documents/Dline` |
+| `DLINE_DOCS_DIR` | Override the complete Dline documents root | `~/Documents/dline` |
 | `DLINE_DIR` | Override the shared storage directory (used by `storage-context`) | `~/.dline` |
 
-Setting any of these variables also skips automatic migration, since the paths are customized.
+Setting `DLINE_HOME_DIR` or `DLINE_DOCS_DIR` skips automatic migration. `DLINE_DIR` changes the state/data root but is not, by itself, a migration skip flag.
 
 ## Dline Path Structure
 
@@ -101,16 +101,18 @@ After migration, your Dline data lives in:
   │   ├── secrets.json              # API keys (restricted permissions)
   │   └── workspaces/<hash>/        # Per-workspace state
 
-~/Documents/Dline/                  # User-facing data
-  ├── tasks/                        # Task history & conversations
-  │   ├── taskHistory.json
+~/Documents/dline/                  # Tasks and global capabilities
+  ├── tasks/                        # Task database and per-task files
+  │   ├── taskHistory.db
   │   └── <task-id>/
-  ├── Agents/                       # Sub-agent configurations
-  ├── Rules/                        # Global .clinerules files
-  ├── Skills/                       # Global skills
-  ├── Workflows/                    # Workflow definitions
-  ├── MCP/                          # MCP server configurations
-  └── Hooks/                        # Hook scripts
+  ├── rules/                        # Global rules
+  ├── skills/                       # Global skills
+  ├── workflows/                    # Global workflows
+  ├── subagents/                    # Global subagent profiles
+  ├── mcp/                          # MCP server files
+  ├── hooks/                        # Hook files
+  ├── settings/mcp_settings.json    # MCP connection settings
+  └── checkpoints/                  # Checkpoint repositories
 ```
 
 ## Verifying Migration
@@ -135,7 +137,7 @@ cp -r ~/.cline/data/ ~/.dline/data/
 cp ~/.cline/endpoints.json ~/.dline/endpoints.json
 
 # Documents
-cp -r ~/Documents/Cline/ ~/Documents/Dline/
+cp -r ~/Documents/Cline/ ~/Documents/dline/
 ```
 
 <Note>
@@ -151,7 +153,7 @@ Check if `DLINE_HOME_DIR` or `DLINE_DOCS_DIR` is set in your environment. These 
 Task history migration reads from VSCode's global storage, which is platform-specific. On Windows, this is typically under `%APPDATA%/Code/User/globalStorage/`. If you're using a different editor (Cursor, Windsurf, etc.), the path will differ.
 
 **Missing custom rules or agents?**
-The Documents/Cline directory migration only runs if `~/Documents/Dline/` does not exist yet. If it already exists (e.g., from a previous Dline installation), manually copy the remaining files from `~/Documents/Cline/`.
+The Documents/Cline directory migration only runs if `~/Documents/dline/` does not exist yet. If it already exists from a previous Dline installation, manually copy only the missing files you still need from `~/Documents/Cline/`.
 
 **Rolling back to Cline?**
 Simply uninstall Dline and continue using Cline. All original Cline files remain untouched — nothing needs to be restored.
