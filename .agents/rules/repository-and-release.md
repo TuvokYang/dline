@@ -171,7 +171,31 @@ Until that strategy is approved, the hotfix workflow must stop instead of invent
 - Creating a local tag, pushing it, and replacing a remote tag are separate operations.
 - Never move or overwrite an existing tag without explicit approval and an impact assessment.
 
-## 10. Workflow and skill authoring rules
+## 10. Distribution channels
+
+`npm run vsix` derives the packaged identity from the current branch and the tag pointing at `HEAD`, so a single command produces the correct artifact for each channel. `scripts/package-vsix.mjs` owns this resolution; do not reintroduce a branch-only or tag-only heuristic.
+
+| HEAD | Extension name | Version | Channel |
+| --- | --- | --- | --- |
+| `main` + `vX.Y.Z` | `dline` | `X.Y.Z` from the tag | Production |
+| `dev` + `dev-vX.Y.Z` | `dline-preview` | `X.Y.Z` from the tag | Release candidate |
+| `dev` without a tag | `dline-insiders` | `major.minor.<unix-seconds>` | Rolling build |
+
+The three names are independent Marketplace extensions with independent version sequences. A Marketplace `version` accepts only three numeric segments, so a semver pre-release suffix such as `0.9.4-rc.1` cannot be published; the preview channel therefore reuses the exact tag version and the insiders channel replaces the patch with a timestamp.
+
+Packaging rules:
+
+- A tagged channel is a release candidate, so the tag version, `package.json`, and every changelog language edition must already agree before packaging starts. A missing `## [X.Y.Z]` heading in either edition fails the run.
+- The untagged insiders channel is a rolling build and skips the changelog gate, because it does not represent a documented release.
+- Reject rather than guess: `main` without a tag is the unfinished middle of a promotion, a `vX.Y.Z` tag outside `main` or a `dev-vX.Y.Z` tag outside `dev` means the tag was created on the wrong branch, and any other branch has no channel.
+- Tag formats must be matched exactly (`^v\d+\.\d+\.\d+$` and `^dev-v\d+\.\d+\.\d+$`). An exact-match tag lookup without format validation makes a development tag package a production identity.
+- `package.json` and `README.md` are mutated during packaging and must be restored even when the run aborts.
+
+A deleted Marketplace extension ID cannot be reused, so renaming a channel means creating a new extension entry and losing its installed base. Treat a channel name as a stable public contract.
+
+Packaging is not publishing. Producing a VSIX never implies authorization to publish it; Marketplace publication remains a separate external write under §3.
+
+## 11. Workflow and skill authoring rules
 
 Git, PR, and release instructions must:
 
