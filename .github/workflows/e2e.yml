@@ -8,18 +8,21 @@ permissions:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  DLINE_E2E_RETRIES: "3"
 
 jobs:
     e2e:
-        name: E2E (${{ matrix.runner }})
+        name: E2E (${{ matrix.runner }}, shard ${{ matrix.shard }}/4)
         strategy:
             fail-fast: false
             matrix:
                 runner: [ubuntu, windows, macos]
+                shard: [1, 2, 3, 4]
         runs-on: ${{ matrix.runner }}-latest
-        timeout-minutes: 20
+        timeout-minutes: 60
         env:
             DLINE_E2E_PROFILE: mock-openai
+            DLINE_E2E_RUN_ID: ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.runner }}-${{ matrix.shard }}
         steps:
             - name: Checkout code
               uses: actions/checkout@v6
@@ -39,36 +42,23 @@ jobs:
                   restore-keys: |
                       vscode-${{ runner.os }}-stable-
 
-            # Playwright uses its bundled FFmpeg for retained failure videos.
-            - name: Cache Playwright browsers
-              uses: actions/cache@v5
-              id: playwright-cache
-              with:
-                  path: |
-                      ~/.cache/ms-playwright
-                      ~/Library/Caches/ms-playwright
-                      ~/AppData/Local/ms-playwright
-                  key: playwright-browsers-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
-                  restore-keys: |
-                      playwright-browsers-${{ runner.os }}-
-
             - name: Install xvfb on Linux
               if: matrix.runner == 'ubuntu'
               run: sudo apt-get update && sudo apt-get install -y xvfb
 
             - name: Run E2E tests - Linux
               if: matrix.runner == 'ubuntu'
-              run: xvfb-run -a npm run test:e2e:optimal
+              run: xvfb-run -a npm run test:e2e:optimal -- --shard=${{ matrix.shard }}/4 --retries=${{ env.DLINE_E2E_RETRIES }}
 
             - name: Run E2E tests - Non-Linux
               if: matrix.runner != 'ubuntu'
-              run: npm run test:e2e:optimal
+              run: npm run test:e2e:optimal -- --shard=${{ matrix.shard }}/4 --retries=${{ env.DLINE_E2E_RETRIES }}
 
             - name: Upload failed E2E artifacts
               if: failure()
               uses: actions/upload-artifact@v5
               with:
-                  name: playwright-artifacts-${{ matrix.runner }}-${{ github.sha }}
+                  name: playwright-artifacts-${{ matrix.runner }}-${{ matrix.shard }}-${{ github.sha }}
                   path: tmp/test-result/
                   if-no-files-found: warn
                   include-hidden-files: true
