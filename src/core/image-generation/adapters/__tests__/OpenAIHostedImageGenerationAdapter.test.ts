@@ -1,3 +1,4 @@
+import { GPT_IMAGE_2_5_MODEL_ID, GPT_IMAGE_2_SUBSCRIPTION_MODEL_ID } from "@shared/image-generation"
 import type { ApiProfile } from "@shared/proto/dline/profile"
 import OpenAI from "openai"
 import { describe, expect, it, vi } from "vitest"
@@ -96,16 +97,19 @@ describe("OpenAIHostedImageGenerationAdapter", () => {
 			],
 		})
 		expect((capturedParams?.tools?.[0] as { model?: string }).model).toBe("gpt-image-2")
-		expect(events.filter((event) => event.type === "preview").map((event) => (event.type === "preview" ? event.sequence : -1))).toEqual([
-			0, 1, 2,
-		])
+		expect(
+			events.filter((event) => event.type === "preview").map((event) => (event.type === "preview" ? event.sequence : -1)),
+		).toEqual([0, 1, 2])
 		expect(events.at(-1)).toMatchObject({
 			type: "completed",
 			outputs: [{ source: { kind: "base64", data: "final-image", mimeType: "image/webp" } }],
 		})
 	})
 
-	it("uses the subscription model alias to send a verbatim ratio phrase without an API size constraint", async () => {
+	it.each([
+		GPT_IMAGE_2_5_MODEL_ID,
+		GPT_IMAGE_2_SUBSCRIPTION_MODEL_ID,
+	])("uses subscription model %s to send a verbatim ratio phrase without an API size constraint", async (modelId) => {
 		let capturedParams: OpenAI.Responses.ResponseCreateParamsStreaming | undefined
 		const create = vi.fn(async (params: OpenAI.Responses.ResponseCreateParamsStreaming) => {
 			capturedParams = params
@@ -118,11 +122,11 @@ describe("OpenAIHostedImageGenerationAdapter", () => {
 		})
 		const adapter = new OpenAIHostedImageGenerationAdapter({
 			profile: profile(),
-			modelId: "gpt-image-2-sub",
+			modelId,
 			client: { responses: { create } },
 		})
 
-		await collect(adapter.generate(request({ modelId: "gpt-image-2-sub" }), { signal: new AbortController().signal }))
+		await collect(adapter.generate(request({ modelId }), { signal: new AbortController().signal }))
 
 		expect(capturedParams?.input).toEqual([
 			{

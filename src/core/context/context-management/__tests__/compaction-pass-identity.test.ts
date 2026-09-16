@@ -29,8 +29,8 @@ describe("compaction Pass identity comparison", () => {
 		expect(areCompactionPassIdentitiesEqual(identity, { ...identity, coveredTurnCount: identity.coveredTurnCount + 1 })).toBe(
 			false,
 		)
-		expect(
-			areCompactionPassIdentitiesEqual(identity, { ...identity, summaryBaselineHash: "sha256:other-baseline" }),
-		).toBe(false)
+		expect(areCompactionPassIdentitiesEqual(identity, { ...identity, summaryBaselineHash: "sha256:other-baseline" })).toBe(
+			false,
+		)
 	})
 })

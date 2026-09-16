@@ -1,5 +1,5 @@
-import type { ImageArtifact } from "@core/artifacts/TaskArtifactStore"
 import type { ApiStreamServerToolChunk } from "@core/api/transform/stream"
+import type { ImageArtifact } from "@core/artifacts/TaskArtifactStore"
 import { ServerTool } from "@shared/proto/dline/models/metadata"
 import { describe, expect, it, vi } from "vitest"
 import { HostedImageGenerationLifecycle } from "./HostedImageGenerationLifecycle"
@@ -114,7 +114,9 @@ describe("HostedImageGenerationLifecycle", () => {
 		await lifecycle.consume(chunk("completed", { b64Json: "secret-final", revisedPrompt: "A revised blue owl" }))
 
 		expect(persistPreview.mock.calls.map((call) => call[1])).toEqual([2, 0, 1])
-		expect(updates.at(-2).message.imageGeneration.previews.map((preview: { sequence: number }) => preview.sequence)).toEqual([0, 1, 2])
+		expect(updates.at(-2).message.imageGeneration.previews.map((preview: { sequence: number }) => preview.sequence)).toEqual([
+			0, 1, 2,
+		])
 		expect(updates.at(-1)).toMatchObject({
 			partial: false,
 			message: {

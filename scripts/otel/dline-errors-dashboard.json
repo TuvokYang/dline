@@ -1,0 +1,1026 @@
+{
+	"__inputs": [
+		{
+			"name": "DS_PROMETHEUS",
+			"label": "Prometheus",
+			"description": "Prometheus datasource receiving Dline OTLP metrics",
+			"type": "datasource",
+			"pluginId": "prometheus",
+			"pluginName": "Prometheus"
+		},
+		{
+			"name": "DS_LOKI",
+			"label": "Loki",
+			"description": "Loki datasource receiving Dline OTLP logs",
+			"type": "datasource",
+			"pluginId": "loki",
+			"pluginName": "Loki"
+		},
+		{
+			"name": "DS_TEMPO",
+			"label": "Tempo",
+			"description": "Tempo datasource receiving Dline OTLP traces",
+			"type": "datasource",
+			"pluginId": "tempo",
+			"pluginName": "Tempo"
+		}
+	],
+	"__requires": [
+		{
+			"type": "grafana",
+			"id": "grafana",
+			"name": "Grafana",
+			"version": "10.0.0"
+		},
+		{
+			"type": "datasource",
+			"id": "prometheus",
+			"name": "Prometheus",
+			"version": "1.0.0"
+		},
+		{
+			"type": "datasource",
+			"id": "loki",
+			"name": "Loki",
+			"version": "1.0.0"
+		},
+		{
+			"type": "datasource",
+			"id": "tempo",
+			"name": "Tempo",
+			"version": "1.0.0"
+		},
+		{
+			"type": "panel",
+			"id": "stat",
+			"name": "Stat",
+			"version": ""
+		},
+		{
+			"type": "panel",
+			"id": "timeseries",
+			"name": "Time series",
+			"version": ""
+		},
+		{
+			"type": "panel",
+			"id": "table",
+			"name": "Table",
+			"version": ""
+		},
+		{
+			"type": "panel",
+			"id": "logs",
+			"name": "Logs",
+			"version": ""
+		},
+		{
+			"type": "panel",
+			"id": "traces",
+			"name": "Traces",
+			"version": ""
+		},
+		{
+			"type": "panel",
+			"id": "text",
+			"name": "Text",
+			"version": ""
+		}
+	],
+	"annotations": {
+		"list": [
+			{
+				"builtIn": 1,
+				"datasource": {
+					"type": "grafana",
+					"uid": "-- Grafana --"
+				},
+				"enable": true,
+				"hide": true,
+				"iconColor": "rgba(0, 211, 255, 1)",
+				"name": "Annotations & Alerts",
+				"type": "dashboard"
+			}
+		]
+	},
+	"description": "Dline API and runtime error forensics. Loki panels show correlated task state, durable snapshot and usage fields without raw task content. Paste an exact 32-character trace ID into traceId to render the Tempo waterfall. Production panels exclude explicit live canaries by default.",
+	"editable": true,
+	"fiscalYearStartMonth": 0,
+	"graphTooltip": 1,
+	"id": null,
+	"links": [],
+	"liveNow": false,
+	"panels": [
+		{
+			"datasource": {
+				"type": "prometheus",
+				"uid": "${DS_PROMETHEUS}"
+			},
+			"fieldConfig": {
+				"defaults": {
+					"color": {
+						"mode": "thresholds"
+					},
+					"mappings": [],
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "green",
+								"value": null
+							},
+							{
+								"color": "red",
+								"value": 1
+							}
+						]
+					},
+					"unit": "short"
+				},
+				"overrides": []
+			},
+			"gridPos": {
+				"h": 4,
+				"w": 4,
+				"x": 0,
+				"y": 0
+			},
+			"id": 1,
+			"options": {
+				"colorMode": "value",
+				"graphMode": "area",
+				"justifyMode": "auto",
+				"orientation": "auto",
+				"reduceOptions": {
+					"calcs": [
+						"lastNotNull"
+					],
+					"fields": "",
+					"values": false
+				},
+				"showPercentChange": false,
+				"textMode": "auto",
+				"wideLayout": true
+			},
+			"pluginVersion": "10.0.0",
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "${DS_PROMETHEUS}"
+					},
+					"editorMode": "code",
+					"expr": "sum(increase(dline_runtime_operation_duration_count{canary_id!~\".+\",operation=\"api.request\",outcome=\"failed\",provider=~\"$provider\",model=~\"$model\",api_format=~\"$apiFormat\"}[$__range]))",
+					"instant": true,
+					"legendFormat": "Failures",
+					"range": false,
+					"refId": "A"
+				}
+			],
+			"title": "Failed API Invocations",
+			"type": "stat"
+		},
+		{
+			"datasource": {
+				"type": "prometheus",
+				"uid": "${DS_PROMETHEUS}"
+			},
+			"fieldConfig": {
+				"defaults": {
+					"color": {
+						"mode": "thresholds"
+					},
+					"mappings": [],
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "green",
+								"value": null
+							},
+							{
+								"color": "yellow",
+								"value": 5
+							},
+							{
+								"color": "red",
+								"value": 15
+							}
+						]
+					},
+					"unit": "percent"
+				},
+				"overrides": []
+			},
+			"gridPos": {
+				"h": 4,
+				"w": 4,
+				"x": 4,
+				"y": 0
+			},
+			"id": 2,
+			"options": {
+				"colorMode": "value",
+				"graphMode": "area",
+				"justifyMode": "auto",
+				"orientation": "auto",
+				"reduceOptions": {
+					"calcs": [
+						"lastNotNull"
+					],
+					"fields": "",
+					"values": false
+				},
+				"showPercentChange": false,
+				"textMode": "auto",
+				"wideLayout": true
+			},
+			"pluginVersion": "10.0.0",
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "${DS_PROMETHEUS}"
+					},
+					"editorMode": "code",
+					"expr": "100 * sum(increase(dline_runtime_operation_duration_count{canary_id!~\".+\",operation=\"api.request\",outcome=\"failed\",provider=~\"$provider\",model=~\"$model\",api_format=~\"$apiFormat\"}[$__range])) / sum(increase(dline_runtime_operation_duration_count{canary_id!~\".+\",operation=\"api.request\",outcome=~\"completed|failed\",provider=~\"$provider\",model=~\"$model\",api_format=~\"$apiFormat\"}[$__range]))",
+					"instant": true,
+					"legendFormat": "Failure ratio",
+					"range": false,
+					"refId": "A"
+				}
+			],
+			"title": "API Failure Ratio",
+			"type": "stat"
+		},
+		{
+			"datasource": {
+				"type": "loki",
+				"uid": "${DS_LOKI}"
+			},
+			"fieldConfig": {
+				"defaults": {
+					"color": {
+						"mode": "thresholds"
+					},
+					"mappings": [],
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "green",
+								"value": null
+							},
+							{
+								"color": "red",
+								"value": 1
+							}
+						]
+					},
+					"unit": "short"
+				},
+				"overrides": []
+			},
+			"gridPos": {
+				"h": 4,
+				"w": 4,
+				"x": 8,
+				"y": 0
+			},
+			"id": 3,
+			"options": {
+				"colorMode": "value",
+				"graphMode": "area",
+				"justifyMode": "auto",
+				"orientation": "auto",
+				"reduceOptions": {
+					"calcs": [
+						"lastNotNull"
+					],
+					"fields": "",
+					"values": false
+				},
+				"showPercentChange": false,
+				"textMode": "auto",
+				"wideLayout": true
+			},
+			"pluginVersion": "10.0.0",
+			"targets": [
+				{
+					"datasource": {
+						"type": "loki",
+						"uid": "${DS_LOKI}"
+					},
+					"editorMode": "code",
+					"expr": "sum(count_over_time({service_name=\"dline\",service_instance_id=~\"$instance\"} |= \"api.request.failed\" | telemetry_channel=\"runtime\" | canary_id!~\".+\" | task_snapshot_durable_available=\"false\" | provider=~\"$provider\" | model=~\"$model\" | api_format=~\"$apiFormat\" | error_status=~\"$status\" | error_code=~\"$errorCode\" [$__range]))",
+					"instant": true,
+					"legendFormat": "Missing durable snapshot",
+					"queryType": "instant",
+					"refId": "A"
+				}
+			],
+			"title": "Failures without Durable Snapshot",
+			"type": "stat"
+		},
+		{
+			"datasource": {
+				"type": "loki",
+				"uid": "${DS_LOKI}"
+			},
+			"fieldConfig": {
+				"defaults": {
+					"color": {
+						"mode": "thresholds"
+					},
+					"mappings": [],
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "green",
+								"value": null
+							},
+							{
+								"color": "orange",
+								"value": 1
+							}
+						]
+					},
+					"unit": "short"
+				},
+				"overrides": []
+			},
+			"gridPos": {
+				"h": 4,
+				"w": 4,
+				"x": 12,
+				"y": 0
+			},
+			"id": 4,
+			"options": {
+				"colorMode": "value",
+				"graphMode": "area",
+				"justifyMode": "auto",
+				"orientation": "auto",
+				"reduceOptions": {
+					"calcs": [
+						"lastNotNull"
+					],
+					"fields": "",
+					"values": false
+				},
+				"showPercentChange": false,
+				"textMode": "auto",
+				"wideLayout": true
+			},
+			"pluginVersion": "10.0.0",
+			"targets": [
+				{
+					"datasource": {
+						"type": "loki",
+						"uid": "${DS_LOKI}"
+					},
+					"editorMode": "code",
+					"expr": "sum(count_over_time({service_name=\"dline\",service_instance_id=~\"$instance\"} |= \"api.request.failed\" | telemetry_channel=\"runtime\" | canary_id!~\".+\" | api_request_phase=\"awaiting_first_chunk\" | provider=~\"$provider\" | model=~\"$model\" | api_format=~\"$apiFormat\" | error_status=~\"$status\" | error_code=~\"$errorCode\" [$__range]))",
+					"instant": true,
+					"legendFormat": "Before first chunk",
+					"queryType": "instant",
+					"refId": "A"
+				}
+			],
+			"title": "Failures before First Chunk",
+			"type": "stat"
+		},
+		{
+			"datasource": {
+				"type": "loki",
+				"uid": "${DS_LOKI}"
+			},
+			"fieldConfig": {
+				"defaults": {
+					"color": {
+						"mode": "thresholds"
+					},
+					"mappings": [],
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "green",
+								"value": null
+							},
+							{
+								"color": "red",
+								"value": 1
+							}
+						]
+					},
+					"unit": "short"
+				},
+				"overrides": []
+			},
+			"gridPos": {
+				"h": 4,
+				"w": 4,
+				"x": 16,
+				"y": 0
+			},
+			"id": 5,
+			"options": {
+				"colorMode": "value",
+				"graphMode": "area",
+				"justifyMode": "auto",
+				"orientation": "auto",
+				"reduceOptions": {
+					"calcs": [
+						"lastNotNull"
+					],
+					"fields": "",
+					"values": false
+				},
+				"showPercentChange": false,
+				"textMode": "auto",
+				"wideLayout": true
+			},
+			"pluginVersion": "10.0.0",
+			"targets": [
+				{
+					"datasource": {
+						"type": "loki",
+						"uid": "${DS_LOKI}"
+					},
+					"editorMode": "code",
+					"expr": "sum(count_over_time({service_name=\"dline\",service_instance_id=~\"$instance\"} | telemetry_channel=\"runtime\" | canary_id!~\".+\" | telemetry_severity=~\"error|fatal\" [$__range]))",
+					"instant": true,
+					"legendFormat": "Runtime errors",
+					"queryType": "instant",
+					"refId": "A"
+				}
+			],
+			"title": "Runtime Error / Fatal Logs",
+			"type": "stat"
+		},
+		{
+			"datasource": {
+				"type": "prometheus",
+				"uid": "${DS_PROMETHEUS}"
+			},
+			"fieldConfig": {
+				"defaults": {
+					"color": {
+						"mode": "thresholds"
+					},
+					"mappings": [],
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "blue",
+								"value": null
+							}
+						]
+					},
+					"unit": "ms"
+				},
+				"overrides": []
+			},
+			"gridPos": {
+				"h": 4,
+				"w": 4,
+				"x": 20,
+				"y": 0
+			},
+			"id": 6,
+			"options": {
+				"colorMode": "value",
+				"graphMode": "area",
+				"justifyMode": "auto",
+				"orientation": "auto",
+				"reduceOptions": {
+					"calcs": [
+						"lastNotNull"
+					],
+					"fields": "",
+					"values": false
+				},
+				"showPercentChange": false,
+				"textMode": "auto",
+				"wideLayout": true
+			},
+			"pluginVersion": "10.0.0",
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "${DS_PROMETHEUS}"
+					},
+					"editorMode": "code",
+					"expr": "histogram_quantile(0.95, sum by (le) (rate(dline_runtime_operation_duration_bucket{canary_id!~\".+\",bucket_schema=\"v2\",operation=\"api.request\",outcome=\"failed\",provider=~\"$provider\",model=~\"$model\",api_format=~\"$apiFormat\"}[$__rate_interval])))",
+					"instant": true,
+					"legendFormat": "Failed p95",
+					"range": false,
+					"refId": "A"
+				}
+			],
+			"title": "Failed API p95 Duration",
+			"type": "stat"
+		},
+		{
+			"datasource": {
+				"type": "loki",
+				"uid": "${DS_LOKI}"
+			},
+			"gridPos": {
+				"h": 10,
+				"w": 24,
+				"x": 0,
+				"y": 4
+			},
+			"id": 7,
+			"options": {
+				"dedupStrategy": "none",
+				"enableLogDetails": true,
+				"prettifyLogMessage": false,
+				"showCommonLabels": false,
+				"showLabels": false,
+				"showTime": true,
+				"sortOrder": "Descending",
+				"wrapLogMessage": false
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "loki",
+						"uid": "${DS_LOKI}"
+					},
+					"editorMode": "code",
+					"expr": "{service_name=\"dline\",service_instance_id=~\"$instance\"} |= \"api.request.failed\" | telemetry_channel=\"runtime\" | canary_id!~\".+\" | provider=~\"$provider\" | model=~\"$model\" | api_format=~\"$apiFormat\" | error_status=~\"$status\" | error_code=~\"$errorCode\" | runtime_trace_id=~\"$traceFilter\"",
+					"queryType": "range",
+					"refId": "A"
+				}
+			],
+			"title": "Recent API Failure Logs",
+			"type": "logs"
+		},
+		{
+			"datasource": {
+				"type": "loki",
+				"uid": "${DS_LOKI}"
+			},
+			"fieldConfig": {
+				"defaults": {
+					"custom": {
+						"align": "auto",
+						"cellOptions": {
+							"type": "auto"
+						},
+						"inspect": false
+					},
+					"mappings": [],
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "green",
+								"value": null
+							}
+						]
+					}
+				},
+				"overrides": []
+			},
+			"gridPos": {
+				"h": 10,
+				"w": 12,
+				"x": 0,
+				"y": 14
+			},
+			"id": 8,
+			"options": {
+				"cellHeight": "sm",
+				"footer": {
+					"countRows": false,
+					"fields": "",
+					"reducer": [
+						"sum"
+					],
+					"show": false
+				},
+				"showHeader": true
+			},
+			"pluginVersion": "10.0.0",
+			"targets": [
+				{
+					"datasource": {
+						"type": "loki",
+						"uid": "${DS_LOKI}"
+					},
+					"editorMode": "code",
+					"expr": "sum by (error_fingerprint, error_type, error_code, error_status, provider, task_phase) (count_over_time({service_name=\"dline\",service_instance_id=~\"$instance\"} |= \"api.request.failed\" | telemetry_channel=\"runtime\" | canary_id!~\".+\" | provider=~\"$provider\" | model=~\"$model\" | api_format=~\"$apiFormat\" | error_status=~\"$status\" | error_code=~\"$errorCode\" [$__range]))",
+					"instant": true,
+					"legendFormat": "{{error_fingerprint}}",
+					"queryType": "instant",
+					"refId": "A"
+				}
+			],
+			"title": "API Error Groups",
+			"type": "table"
+		},
+		{
+			"datasource": {
+				"type": "loki",
+				"uid": "${DS_LOKI}"
+			},
+			"fieldConfig": {
+				"defaults": {
+					"color": {
+						"mode": "palette-classic"
+					},
+					"custom": {
+						"axisCenteredZero": false,
+						"axisColorMode": "text",
+						"axisLabel": "",
+						"axisPlacement": "auto",
+						"barAlignment": 0,
+						"drawStyle": "line",
+						"fillOpacity": 16,
+						"gradientMode": "none",
+						"hideFrom": {
+							"legend": false,
+							"tooltip": false,
+							"viz": false
+						},
+						"lineInterpolation": "linear",
+						"lineWidth": 2,
+						"pointSize": 5,
+						"scaleDistribution": {
+							"type": "linear"
+						},
+						"showPoints": "never",
+						"spanNulls": false,
+						"stacking": {
+							"group": "A",
+							"mode": "normal"
+						},
+						"thresholdsStyle": {
+							"mode": "off"
+						}
+					},
+					"mappings": [],
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "green",
+								"value": null
+							}
+						]
+					},
+					"unit": "short"
+				},
+				"overrides": []
+			},
+			"gridPos": {
+				"h": 10,
+				"w": 12,
+				"x": 12,
+				"y": 14
+			},
+			"id": 9,
+			"options": {
+				"legend": {
+					"calcs": [
+						"sum"
+					],
+					"displayMode": "table",
+					"placement": "bottom",
+					"showLegend": true
+				},
+				"tooltip": {
+					"hideZeros": false,
+					"mode": "multi",
+					"sort": "desc"
+				}
+			},
+			"pluginVersion": "10.0.0",
+			"targets": [
+				{
+					"datasource": {
+						"type": "loki",
+						"uid": "${DS_LOKI}"
+					},
+					"editorMode": "code",
+					"expr": "sum by (error_status, task_phase) (count_over_time({service_name=\"dline\",service_instance_id=~\"$instance\"} |= \"api.request.failed\" | telemetry_channel=\"runtime\" | canary_id!~\".+\" | provider=~\"$provider\" | model=~\"$model\" | api_format=~\"$apiFormat\" | error_status=~\"$status\" | error_code=~\"$errorCode\" [$__interval]))",
+					"legendFormat": "status={{error_status}} phase={{task_phase}}",
+					"queryType": "range",
+					"refId": "A"
+				}
+			],
+			"title": "API Failures by Status and Task Phase",
+			"type": "timeseries"
+		},
+		{
+			"datasource": {
+				"type": "loki",
+				"uid": "${DS_LOKI}"
+			},
+			"gridPos": {
+				"h": 12,
+				"w": 24,
+				"x": 0,
+				"y": 24
+			},
+			"id": 10,
+			"options": {
+				"dedupStrategy": "none",
+				"enableLogDetails": true,
+				"prettifyLogMessage": false,
+				"showCommonLabels": false,
+				"showLabels": false,
+				"showTime": true,
+				"sortOrder": "Ascending",
+				"wrapLogMessage": false
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "loki",
+						"uid": "${DS_LOKI}"
+					},
+					"editorMode": "code",
+					"expr": "{service_name=\"dline\",service_instance_id=~\"$instance\"} |~ `^(task\\.(state\\.committed|snapshot\\.(scheduled|persisted|failed)|usage\\.updated|api\\.(started|completed|cancelled)|error)|api\\.request\\.(started|completed|failed|cancelled))$` | telemetry_channel=\"runtime\" | canary_id!~\".+\" | runtime_trace_id=~\"$traceFilter\"",
+					"queryType": "range",
+					"refId": "A"
+				}
+			],
+			"title": "Task / API Timeline for traceFilter",
+			"type": "logs"
+		},
+		{
+			"datasource": {
+				"type": "tempo",
+				"uid": "${DS_TEMPO}"
+			},
+			"fieldConfig": {
+				"defaults": {},
+				"overrides": []
+			},
+			"gridPos": {
+				"h": 16,
+				"w": 24,
+				"x": 0,
+				"y": 36
+			},
+			"id": 11,
+			"options": {},
+			"pluginVersion": "10.0.0",
+			"targets": [
+				{
+					"datasource": {
+						"type": "tempo",
+						"uid": "${DS_TEMPO}"
+					},
+					"query": "$traceId",
+					"queryType": "traceql",
+					"refId": "A"
+				}
+			],
+			"title": "Execution Call-chain Waterfall (exact traceId)",
+			"type": "traces"
+		},
+		{
+			"datasource": {
+				"type": "grafana",
+				"uid": "-- Grafana --"
+			},
+			"gridPos": {
+				"h": 7,
+				"w": 24,
+				"x": 0,
+				"y": 52
+			},
+			"id": 12,
+			"options": {
+				"content": "### Error-forensics workflow\n\n1. Find an `api.request.failed` row and inspect its native trace context or `runtime_trace_id`.\n2. Put that value in `traceFilter` to isolate Task state, snapshot, usage and API events in Loki.\n3. Put the same exact 32-character value in `traceId` to render the Tempo waterfall.\n4. The failed `task.turn` segment ends with failure; the continuation segment starts under the same trace without fabricating a new Task turn.\n\nThe Dashboard does not configure datasource correlations. Configure Tempo Trace-to-logs and Loki derived fields separately if you want one-click navigation. Raw prompts, responses, task snapshot content and credentials are not exported. A missing durable-snapshot field means the snapshot had not successfully persisted when the error was observed; missing is not zero or success.",
+				"mode": "markdown"
+			},
+			"pluginVersion": "10.0.0",
+			"title": "How to Reconstruct an Error",
+			"type": "text"
+		}
+	],
+	"refresh": "30s",
+	"schemaVersion": 41,
+	"tags": [
+		"dline",
+		"opentelemetry",
+		"errors",
+		"traces"
+	],
+	"templating": {
+		"list": [
+			{
+				"allValue": ".*",
+				"current": {
+					"selected": true,
+					"text": "All",
+					"value": "$__all"
+				},
+				"datasource": {
+					"type": "loki",
+					"uid": "${DS_LOKI}"
+				},
+				"definition": "label_values({service_name=\"dline\"}, service_instance_id)",
+				"hide": 0,
+				"includeAll": true,
+				"label": "Log Service Instance",
+				"multi": true,
+				"name": "instance",
+				"options": [],
+				"query": {
+					"query": "label_values({service_name=\"dline\"}, service_instance_id)",
+					"refId": "LokiVariableQueryEditor-Instance"
+				},
+				"refresh": 2,
+				"regex": "",
+				"skipUrlSync": false,
+				"sort": 1,
+				"type": "query"
+			},
+			{
+				"allValue": ".*",
+				"current": {
+					"selected": true,
+					"text": "All",
+					"value": "$__all"
+				},
+				"datasource": {
+					"type": "prometheus",
+					"uid": "${DS_PROMETHEUS}"
+				},
+				"definition": "label_values(dline_runtime_operation_duration_count{canary_id!~\".+\",operation=\"api.request\"}, provider)",
+				"hide": 0,
+				"includeAll": true,
+				"label": "Provider",
+				"multi": true,
+				"name": "provider",
+				"options": [],
+				"query": {
+					"query": "label_values(dline_runtime_operation_duration_count{canary_id!~\".+\",operation=\"api.request\"}, provider)",
+					"refId": "PrometheusVariableQueryEditor-Provider"
+				},
+				"refresh": 2,
+				"regex": "",
+				"skipUrlSync": false,
+				"sort": 1,
+				"type": "query"
+			},
+			{
+				"allValue": ".*",
+				"current": {
+					"selected": true,
+					"text": "All",
+					"value": "$__all"
+				},
+				"datasource": {
+					"type": "prometheus",
+					"uid": "${DS_PROMETHEUS}"
+				},
+				"definition": "label_values(dline_runtime_operation_duration_count{canary_id!~\".+\",operation=\"api.request\",provider=~\"$provider\"}, model)",
+				"hide": 0,
+				"includeAll": true,
+				"label": "Model",
+				"multi": true,
+				"name": "model",
+				"options": [],
+				"query": {
+					"query": "label_values(dline_runtime_operation_duration_count{canary_id!~\".+\",operation=\"api.request\",provider=~\"$provider\"}, model)",
+					"refId": "PrometheusVariableQueryEditor-Model"
+				},
+				"refresh": 2,
+				"regex": "",
+				"skipUrlSync": false,
+				"sort": 1,
+				"type": "query"
+			},
+			{
+				"allValue": ".*",
+				"current": {
+					"selected": true,
+					"text": "All",
+					"value": "$__all"
+				},
+				"datasource": {
+					"type": "prometheus",
+					"uid": "${DS_PROMETHEUS}"
+				},
+				"definition": "label_values(dline_runtime_operation_duration_count{canary_id!~\".+\",operation=\"api.request\",provider=~\"$provider\",model=~\"$model\"}, api_format)",
+				"hide": 0,
+				"includeAll": true,
+				"label": "API Format",
+				"multi": true,
+				"name": "apiFormat",
+				"options": [],
+				"query": {
+					"query": "label_values(dline_runtime_operation_duration_count{canary_id!~\".+\",operation=\"api.request\",provider=~\"$provider\",model=~\"$model\"}, api_format)",
+					"refId": "PrometheusVariableQueryEditor-ApiFormat"
+				},
+				"refresh": 2,
+				"regex": "",
+				"skipUrlSync": false,
+				"sort": 1,
+				"type": "query"
+			},
+			{
+				"current": {
+					"selected": true,
+					"text": ".*",
+					"value": ".*"
+				},
+				"hide": 0,
+				"label": "HTTP Status",
+				"name": "status",
+				"options": [
+					{
+						"selected": true,
+						"text": ".*",
+						"value": ".*"
+					}
+				],
+				"query": ".*",
+				"skipUrlSync": false,
+				"type": "textbox"
+			},
+			{
+				"current": {
+					"selected": true,
+					"text": ".*",
+					"value": ".*"
+				},
+				"hide": 0,
+				"label": "Error Code",
+				"name": "errorCode",
+				"options": [
+					{
+						"selected": true,
+						"text": ".*",
+						"value": ".*"
+					}
+				],
+				"query": ".*",
+				"skipUrlSync": false,
+				"type": "textbox"
+			},
+			{
+				"current": {
+					"selected": true,
+					"text": ".*",
+					"value": ".*"
+				},
+				"hide": 0,
+				"label": "Loki Trace Filter",
+				"name": "traceFilter",
+				"options": [
+					{
+						"selected": true,
+						"text": ".*",
+						"value": ".*"
+					}
+				],
+				"query": ".*",
+				"skipUrlSync": false,
+				"type": "textbox"
+			},
+			{
+				"current": {
+					"selected": true,
+					"text": "00000000000000000000000000000000",
+					"value": "00000000000000000000000000000000"
+				},
+				"hide": 0,
+				"label": "Tempo Trace ID",
+				"name": "traceId",
+				"options": [
+					{
+						"selected": true,
+						"text": "00000000000000000000000000000000",
+						"value": "00000000000000000000000000000000"
+					}
+				],
+				"query": "00000000000000000000000000000000",
+				"skipUrlSync": false,
+				"type": "textbox"
+			}
+		]
+	},
+	"time": {
+		"from": "now-6h",
+		"to": "now"
+	},
+	"timepicker": {},
+	"timezone": "browser",
+	"title": "Dline OTel Errors and Traces",
+	"uid": "dline-otel-errors",
+	"version": 1,
+	"weekStart": ""
+}

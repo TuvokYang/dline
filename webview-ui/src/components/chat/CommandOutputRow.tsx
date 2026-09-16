@@ -4,7 +4,7 @@ import { ClineMessage } from "@shared/ExtensionMessage"
 import AnsiUp from "ansi-to-html"
 import DOMPurify from "dompurify"
 import { BringToFrontIcon, CircleSlashIcon, FolderRootIcon, SendToBackIcon, TerminalIcon } from "lucide-react"
-import { memo, useEffect, useRef } from "react"
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import CodeBlock from "../common/CodeBlock"
@@ -25,6 +25,66 @@ const ANSI_ESCAPE_PATTERN = /\x1b\[[\d;]*[A-Za-z]/
 function hasAnsiSequences(text: string): boolean {
 	return ANSI_ESCAPE_PATTERN.test(text)
 }
+
+/**
+ * Height ceiling for the command text before it collapses.
+ *
+ * A long here-doc or a generated one-liner would otherwise push the output and
+ * the controls far below the fold, so the command claims at most this much of
+ * the viewport and offers a handle to see the rest.
+ */
+const COMMAND_TEXT_MAX_HEIGHT = "40vh"
+
+/**
+ * Render the command text, collapsing it when it would claim too much height.
+ *
+ * Collapsing is decided from the measured element rather than the character
+ * count: wrapping makes the rendered height the only honest signal, and a
+ * command that fits must not grow a handle it does not need.
+ */
+const CollapsibleCommandText = memo(({ command }: { command: string }) => {
+	const scrollRef = useRef<HTMLDivElement>(null)
+	const [isExpanded, setIsExpanded] = useState(false)
+	const [isOverflowing, setIsOverflowing] = useState(false)
+
+	useLayoutEffect(() => {
+		const element = scrollRef.current
+		if (!element) return
+
+		const measure = () => {
+			setIsOverflowing(element.scrollHeight > element.clientHeight + 1)
+		}
+		measure()
+
+		// Wrapping depends on the panel width, so a resize can change the verdict
+		// without the command text changing at all.
+		if (typeof ResizeObserver === "undefined") return
+		const observer = new ResizeObserver(measure)
+		observer.observe(element)
+		return () => observer.disconnect()
+	}, [command])
+
+	const toggle = useCallback(() => setIsExpanded((expanded) => !expanded), [])
+
+	return (
+		<div className={cn("relative", isOverflowing && "mb-2")}>
+			<div
+				className="overflow-y-auto"
+				data-testid="command-text-scroll"
+				ref={scrollRef}
+				style={{ maxHeight: isExpanded ? undefined : COMMAND_TEXT_MAX_HEIGHT }}>
+				<CodeBlock forceWrap={true} source={`${"```"}shell\n${command}\n${"```"}`} />
+			</div>
+			{isOverflowing && (
+				// The surrounding row toggles its own collapsed state on click, so
+				// the handle must not let that click through.
+				<div onClick={(event) => event.stopPropagation()}>
+					<ExpandHandle className="bg-description" isExpanded={isExpanded} onToggle={toggle} />
+				</div>
+			)}
+		</div>
+	)
+})
 
 export const CommandOutputContent = memo(
 	({
@@ -363,7 +423,7 @@ export const CommandOutputRow = memo(
 							"bg-code": exitCode == null || exitCode === undefined,
 						})}
 						data-testid="command-line">
-						<CodeBlock forceWrap={true} source={`${"```"}shell\n${command}\n${"```"}`} />
+						<CollapsibleCommandText command={command} />
 					</div>
 
 					{(output.length > 0 || message.logPath) && (

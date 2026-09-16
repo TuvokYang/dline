@@ -1,9 +1,9 @@
 import type { Resource } from "@opentelemetry/resources"
 import { BatchLogRecordProcessor, type LoggerProvider, type LogRecordProcessor } from "@opentelemetry/sdk-logs"
-import { MeterProvider } from "@opentelemetry/sdk-metrics"
-import { envFlagEnabled } from "@shared/env"
+import { MeterProvider, type MetricReader } from "@opentelemetry/sdk-metrics"
 import { OpenTelemetryClientValidConfig } from "@/shared/services/config/otel-config"
 import { Logger } from "@/shared/services/Logger"
+import { isTelemetryDebugDiagnosticsEnabled } from "../../development-mode"
 import { USAGE_SCOPE_NAME } from "../../otel/scopes"
 import { attachScopedProcessors, detachScope } from "../../otel/shared-logger-provider"
 import { createTelemetryResource } from "../../otel/telemetry-resource"
@@ -33,17 +33,9 @@ export class OpenTelemetryClientProvider {
 	/** Processors this client attached, and therefore this client must close. */
 	private logProcessors: LogRecordProcessor[] = []
 
-	/**
-	 * Check if debug diagnostics are enabled.
-	 * Only log sensitive information (endpoints, headers) when in debug mode.
-	 */
-	private isDebugEnabled(): boolean {
-		return envFlagEnabled(process.env.TEL_DEBUG_DIAGNOSTICS) || envFlagEnabled(process.env.IS_DEV)
-	}
-
 	constructor(config: OpenTelemetryClientValidConfig) {
 		this.config = config
-		const isDebugMode = this.isDebugEnabled()
+		const isDebugMode = isTelemetryDebugDiagnosticsEnabled()
 
 		// Only log endpoint in debug mode (security: avoid exposing infrastructure details)
 		if (isDebugMode) {
@@ -85,7 +77,7 @@ export class OpenTelemetryClientProvider {
 
 	private createMeterProvider(resource: Resource): MeterProvider {
 		const exporters = this.config?.metricsExporter?.split(",").map((type) => type.trim()) ?? []
-		const readers: any[] = []
+		const readers: MetricReader[] = []
 		const interval = this.config?.metricExportInterval || 60000
 		const timeout = Math.min(Math.floor(interval * 0.8), 30000)
 

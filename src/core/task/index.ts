@@ -29,7 +29,9 @@ import { checkContextWindowExceededError } from "@core/context/context-managemen
 import {
 	collectContextWindowRequestPressures,
 	getContextTokens,
+	getLatestReliableContextWindowTokens,
 	readContextTokens,
+	resolveOccupiedContextWindowTokens,
 } from "@core/context/context-management/context-pressure"
 import {
 	type ContextWindowProjection,
@@ -157,7 +159,11 @@ import { findLast, findLastIndex } from "@shared/array"
 import type { ChatContent } from "@shared/ChatContent"
 import { combineApiRequests } from "@shared/combineApiRequests"
 import { combineCommandSequences } from "@shared/combineCommandSequences"
-import type { ContextWindowIndicatorLineage, ContextWindowIndicatorSnapshot } from "@shared/context-window-indicator"
+import {
+	type ContextWindowIndicatorLineage,
+	type ContextWindowIndicatorSnapshot,
+	getContextWindowIndicatorTotalTokens,
+} from "@shared/context-window-indicator"
 import {
 	ClineApiReqCancelReason,
 	ClineApiReqInfo,
@@ -292,6 +298,7 @@ import { MessageStateHandler } from "./message-state"
 import { deriveNewTaskFeedbackContinuation } from "./new-task/new-task-continuation"
 import { buildNewTaskFeedbackContent, findLatestNewTaskFeedback } from "./new-task/new-task-feedback"
 import { createNewTaskHandoff } from "./new-task/new-task-handoff"
+import { TaskTurnTelemetry } from "./observability/task-turn-telemetry"
 import type { ApiRateMetricsQuery, ApiRateMetricsQueryResult } from "./performance/api-rate-metrics-types"
 import type { ApiRateSnapshot } from "./performance/api-rate-tracker"
 import { ApiRequestRoundLifecycle } from "./performance/api-request-round-lifecycle"
@@ -464,6 +471,7 @@ export class Task {
 	// Core task variables
 	readonly taskId: string
 	readonly ulid: string
+	private readonly taskTelemetry: TaskTurnTelemetry
 	/** Task text captured at construction; used before the "task" message exists. */
 	private readonly initialTaskTitle?: string
 	private taskIsFavorited?: boolean
@@ -773,11 +781,12 @@ export class Task {
 		// Determine terminal execution mode and create appropriate terminal manager
 		this.terminalExecutionMode = vscodeTerminalExecutionMode || "vscodeTerminal"
 
+		const windowsProcessTreeProvider = HostProvider.get().windowsProcessTreeProvider
 		// When backgroundExec mode is selected, use StandaloneTerminalManager for hidden execution
 		// Otherwise, use the HostProvider's terminal manager (VSCode terminal in VSCode, standalone in CLI)
 		if (this.terminalExecutionMode === "backgroundExec") {
 			// Import StandaloneTerminalManager for background execution
-			this.terminalManager = new StandaloneTerminalManager()
+			this.terminalManager = new StandaloneTerminalManager(windowsProcessTreeProvider)
 			Logger.info(`[Task ${taskId}] Using StandaloneTerminalManager for backgroundExec mode`)
 		} else {
 			// Use the host-provided terminal manager (VSCode terminal in VSCode environment)
@@ -1015,8 +1024,15 @@ export class Task {
 			reevaluate: () => this.reevaluatePromptFreshness(),
 			publishState: () => this.postStateToWebview({ immediate: true }),
 		})
+		this.taskTelemetry = new TaskTurnTelemetry(
+			this.taskId,
+			() => this.taskRuntime.getState(),
+			() => this.getApiRateSnapshot(),
+		)
+		this.taskRuntime.setCommitObserver((event, state) => this.taskTelemetry.committed(event, state))
 		this.snapshotPersistence = new TaskSnapshotPersistence({
 			writeSnapshot: this.writeTaskSnapshot.bind(this),
+			onSnapshot: (stage, snapshot, error) => this.taskTelemetry.snapshot(stage, snapshot, error),
 		})
 
 		// Initialize taskId first
@@ -1032,6 +1048,7 @@ export class Task {
 		} else {
 			throw new Error("Either historyItem or task/images must be provided")
 		}
+		this.taskTelemetry.registerAlias(this.ulid)
 		this.initialTaskTitle = task ?? historyItem?.task
 
 		this.messageStateHandler = new MessageStateHandler({
@@ -1259,10 +1276,7 @@ export class Task {
 		}
 		const currentProfileRecord = findEnabledProfileByName(currentProfile)
 		const { contextWindow: initialContextWindow } = getContextWindowInfo(this.api)
-		const initialDurableContextTokens =
-			[...this.getContextWindowRequestPressures()]
-				.reverse()
-				.find((pressure) => typeof pressure.contextTokens === "number" && pressure.contextTokens > 0)?.contextTokens ?? 0
+		const initialDurableContextTokens = getLatestReliableContextWindowTokens(this.getContextWindowRequestPressures())
 		this.contextWindowIndicator = new ContextWindowIndicator({
 			taskId: this.taskId,
 			durableContextTokens: initialDurableContextTokens,
@@ -1328,6 +1342,7 @@ export class Task {
 				this.stateManager.getGlobalSettingsKey("terminalCommandHandoffSeconds") ??
 				DEFAULT_TERMINAL_COMMAND_HANDOFF_SECONDS,
 			terminalManager: this.terminalManager,
+			windowsProcessTreeProvider,
 			taskId: this.taskId,
 			ulid: this.ulid,
 		}
@@ -1868,15 +1883,7 @@ export class Task {
 			modelId: input.compactionApi.getModel().id,
 		})
 		const currentIndicator = this.contextWindowIndicator.getSnapshot()
-		const latestProviderTokens =
-			[...this.getContextWindowRequestPressures()]
-				.reverse()
-				.find(
-					(pressure) =>
-						pressure.contextTokensSource === "provider" &&
-						typeof pressure.contextTokens === "number" &&
-						pressure.contextTokens > 0,
-				)?.contextTokens ?? 0
+		const latestProviderTokens = getLatestReliableContextWindowTokens(this.getContextWindowRequestPressures())
 		const segments =
 			latestProviderTokens > 0
 				? projectAuthoritativeContextWindowIndicatorSegments({
@@ -2297,8 +2304,11 @@ export class Task {
 	 */
 	async commitMode(targetMode: Mode, chatContent?: ChatContent): Promise<void> {
 		const sourceMode = this.taskSm.mode
-		const shouldContinueInteraction = this.taskState.isAwaitingPlanResponse
-		if (shouldContinueInteraction && !this.interactionCoordinator.canRespondForModeSwitch()) {
+		const hasModeSwitchInput = Boolean(
+			chatContent?.message?.trim() || chatContent?.images?.length || chatContent?.files?.length,
+		)
+		const shouldContinueInteraction = hasModeSwitchInput && this.interactionCoordinator.canRespondForModeSwitch()
+		if (hasModeSwitchInput && this.taskState.isAwaitingPlanResponse && !shouldContinueInteraction) {
 			throw new Error("The active conversational interaction is no longer available for the mode switch.")
 		}
 		this.taskSm.setMode(targetMode)
@@ -2317,6 +2327,8 @@ export class Task {
 				await this.rebuildApiHandler()
 				throw new Error("The active plan interaction changed during the mode switch.")
 			}
+		} else {
+			this.taskState.didRespondToPlanAskBySwitchingMode = false
 		}
 		await this.stateManager.flushPendingState()
 	}
@@ -2340,14 +2352,17 @@ export class Task {
 	}
 
 	/**
-	 * Report the context window the live indicator already attributes to this task.
+	 * Report context already occupied by the task without rebuilding a target request.
 	 *
-	 * Selecting a Profile only rebinds which handler the task uses, so its advisory
-	 * window check reads the maintained occupancy instead of rebuilding a target
-	 * request. The former projection could throw and therefore blocked the switch.
+	 * The live segmented indicator owns presentation, while the newest persisted provider
+	 * usage closes the short race before its asynchronous projection reaches the Webview.
+	 * Selecting a Profile only rebinds the handler, so this advisory check remains pure.
 	 */
 	getOccupiedContextTokens(): number {
-		return this.contextWindowIndicator.getSnapshot().durableContextTokens
+		return resolveOccupiedContextWindowTokens(
+			getContextWindowIndicatorTotalTokens(this.contextWindowIndicator.getSnapshot()),
+			this.getContextWindowRequestPressures(),
+		)
 	}
 
 	/** Assemble one non-destructive complete target candidate for an explicit context transition. */
@@ -2822,12 +2837,13 @@ export class Task {
 				...cloneDeep(input.targetContinuationHistory ?? []),
 				...continuation,
 			])
+			const providerReadyTargetHistory = this.contextManager.repairProviderMessages(targetHistory)
 			const previousApiReqIndex = findLastIndex(
 				this.messageStateHandler.clineMessages,
 				(message) => message.say === "api_req_started",
 			)
 			const targetInput = await this.buildProviderInput(previousApiReqIndex, requestScope, {
-				apiConversationHistory: targetHistory,
+				apiConversationHistory: providerReadyTargetHistory,
 				applyContextManagement: false,
 				applyCompactionProjection: false,
 				preview: true,
@@ -2889,7 +2905,11 @@ export class Task {
 	}
 
 	/** Present a terminal automatic-compaction failure through the existing API retry interaction. */
-	private async presentTerminalCompactionFailure(operationId: string, apiIndex: number): Promise<void> {
+	private async presentTerminalCompactionFailure(
+		operationId: string,
+		apiIndex: number,
+		retryContent: ClineContent[],
+	): Promise<void> {
 		this.taskState.forceTruncateAvailable = true
 		const errorMessage =
 			this.contextCompactionFailureReasons.get(operationId) ?? "Context compaction failed before completion."
@@ -2918,6 +2938,7 @@ export class Task {
 		const retryId = `retry:${this.taskId}:${this.getRuntimeState().revision}`
 		await this.recoverApiFailure({
 			turnId: retryId,
+			retryContent: cloneDeep(retryContent),
 			interactionId: retryId,
 			apiIndex,
 			presentation: errorMessage,
@@ -3064,7 +3085,7 @@ export class Task {
 		compactionConversationRange?: ClineMessage["compactionConversationRange"],
 	): Promise<ClineMessage> {
 		if (!snapshot.existingTs) throw new Error("Context compaction card is unavailable for durable commit.")
-		const committed = await this.messageStateHandler.commitTransientClineMessage(
+		const committed = await this.messageStateHandler.finalizeClineMessage(
 			this.createContextCompactionMessage(input, snapshot, false, compactionConversationRange),
 		)
 		this.contextCompactionPresentation.markDurable(snapshot)
@@ -3141,8 +3162,9 @@ export class Task {
 			presentation: summary,
 			existingTs,
 		}
+		const runtimeState = this.getRuntimeState()
 		const outcome =
-			this.getRuntimeState().interaction?.status === "awaiting"
+			runtimeState.interaction?.status === "awaiting"
 				? await this.interactionCoordinator.interrupt(review)
 				: await this.interactionCoordinator.open(review)
 		if (outcome.actionId === "confirm_utility") return { action: "accept" }
@@ -3673,7 +3695,12 @@ export class Task {
 		return true
 	}
 
-	/** Consume the one-shot manual takeover at the next retry decision boundary. */
+	/** Observe whether explicit user control owns the current retry sequence. */
+	private hasManualRetryTakeover(): boolean {
+		return this.manualRetryTakeoverActive
+	}
+
+	/** Consume the one-shot manual takeover at the canonical retry decision boundary. */
 	private consumeManualRetryTakeover(): boolean {
 		const active = this.manualRetryTakeoverActive
 		this.manualRetryTakeoverActive = false
@@ -3851,6 +3878,28 @@ export class Task {
 	}
 
 	async handleWebviewAskResponse(askResponse: ClineAskResponse, text?: string, images?: string[], files?: string[]) {
+		const hasFeedback = Boolean(text) || Boolean(images?.length) || Boolean(files?.length)
+		const runtimeState = this.taskRuntime.getState()
+		const isProfileRecoveryInput =
+			askResponse === "messageResponse" &&
+			hasFeedback &&
+			!runtimeState.interaction &&
+			runtimeState.ordinaryInput?.kind === "profile_recovery"
+		if (isProfileRecoveryInput) {
+			const content = await buildUserFeedbackContent(text, images, files)
+			const claimed = await this.dispatchRuntime({
+				type: "PROFILE_RECOVERY_INPUT_RECEIVED",
+				draft: { text: text ?? "", images: images ?? [], files: files ?? [] },
+			})
+			if (!claimed.accepted) {
+				Logger.warn(`[Task ${this.taskId}] Profile recovery input claim was rejected.`)
+				return
+			}
+			this.taskState.userMessageContent.push(...content)
+			this.taskState.userMessageContentReady = true
+			return
+		}
+
 		// Nothing was waiting for this response. Recording it anyway would put
 		// the text into the conversation as user feedback and leave it parked
 		// for the next unrelated question to consume. Input that arrives while
@@ -3879,7 +3928,6 @@ export class Task {
 		const isConversationalResponse = Boolean(
 			activeBlock && CONVERSATIONAL_TOOL_NAMES.has(activeBlock.toolName as ClineDefaultTool),
 		)
-		const hasFeedback = Boolean(text) || Boolean(images?.length) || Boolean(files?.length)
 		if (hasFeedback) {
 			await this.say("user_feedback", text, images, files)
 			this.taskState.ackedFeedback = { response: askResponse, text, images, files }
@@ -4136,7 +4184,14 @@ export class Task {
 	 * that a reload would drop.
 	 */
 	public async mutateInputQueue(mutation: InputQueueMutation): Promise<InputQueueMutationResult> {
-		return this.inputQueueCoordinator.mutate(mutation)
+		const result = await this.inputQueueCoordinator.mutate(mutation)
+		if (result.accepted && this.awaitingQueuedInputInteraction) {
+			// The awaiting callback may have checked an empty queue just before this
+			// mutation committed. Retrying here closes that ordering gap; the queue
+			// coordinator serializes claims and keeps delivery at-most-once.
+			void this.inputQueueCoordinator.deliverAtTurnEnd()
+		}
+		return result
 	}
 
 	/**
@@ -4177,6 +4232,9 @@ export class Task {
 				queuedInputMode: delivery.kind,
 			},
 		})
+		if (this.awaitingQueuedInputInteraction === awaiting) {
+			this.awaitingQueuedInputInteraction = undefined
+		}
 		if (!result.accepted) {
 			Logger.warn(`[inputQueue] Turn-end delivery rejected: ${result.error?.code ?? "unknown"}`)
 		}
@@ -4908,6 +4966,10 @@ export class Task {
 		// conversationHistory (for API) and clineMessages (for webview) need to be in sync
 		// if the extension process were killed, then on restart the clineMessages might not be empty, so we need to set it to [] when we create a new Cline client (otherwise webview would show stale messages from previous session)
 		await this.messageStateHandler.uiMessage?.clear()
+		// Clearing reaches the durable store directly, so aggregates derived from
+		// the previous session would otherwise survive into the first state
+		// publication of this task.
+		this.messageStateHandler.invalidateDerivedAggregates()
 		const uiMessageClearedAt = performance.now()
 		await this.messageStateHandler.apiConversation?.clear()
 		const storesClearedAt = performance.now()
@@ -5971,6 +6033,7 @@ export class Task {
 					if (this.FocusChainManager) this.FocusChainManager.dispose()
 				},
 				() => this.activityStore.dispose(),
+				() => this.taskTelemetry.dispose(),
 			]
 			const asyncCleanups: Array<Promise<void>> = [
 				withTerminateTimeout(taskCancelHookPromise, 5_000, "taskCancelHook"),
@@ -7494,7 +7557,7 @@ export class Task {
 				const isInsufficientCredits = clineError.isErrorType(ClineErrorType.Balance)
 
 				let response: ClineAskResponse
-				const manualRetryTakeover = this.consumeManualRetryTakeover()
+				const manualRetryTakeover = this.hasManualRetryTakeover()
 				// Skip auto-retry after explicit user takeover or for non-recoverable account errors.
 				const shouldRetry =
 					!manualRetryTakeover &&
@@ -7650,6 +7713,34 @@ export class Task {
 	}
 
 	/**
+	 * Keep every mutating tool side effect behind the durable initial checkpoint.
+	 *
+	 * Provider inference and read-only tool presentation may overlap checkpoint
+	 * initialization, but partial edit rendering can already open a DiffView and
+	 * create a worktree placeholder before the finalized tool executes. Gating at
+	 * the Task-to-ToolExecutor boundary keeps both partial and complete paths under
+	 * the same baseline contract.
+	 */
+	private async awaitInitialCheckpointBeforeToolSideEffects(toolName: string): Promise<void> {
+		const checkpointCommit = this.initialCheckpointCommitPromise
+		if (!checkpointCommit || READ_ONLY_TOOLS.includes(toolName as any)) {
+			return
+		}
+
+		await checkpointCommit
+		if (this.initialCheckpointCommitPromise === checkpointCommit) {
+			this.initialCheckpointCommitPromise = undefined
+		}
+	}
+
+	/** Return whether the current assistant turn may have changed workspace files. */
+	private assistantTurnMayModifyWorkspace(): boolean {
+		return this.taskState.assistantMessageContent.some(
+			(block) => block.type === "tool_use" && !READ_ONLY_TOOLS.includes(block.name as any),
+		)
+	}
+
+	/**
 	 * Re-render partial blocks whose content has changed since last presentation,
 	 * and replay complete execution for tool blocks that transitioned from partial
 	 * to non-partial after the presentation index advanced past them.
@@ -7676,6 +7767,7 @@ export class Task {
 				await this.say("text", textBlock.content, undefined, undefined, true, blockTs)
 				this.taskState.lastRenderedPartialByTs.set(blockTs, newSig)
 			} else if (block.type === "tool_use") {
+				await this.awaitInitialCheckpointBeforeToolSideEffects(block.name)
 				await this.toolExecutor.reRenderPartialBlock(block as ToolUse, blockTs)
 				this.taskState.lastRenderedPartialByTs.set(blockTs, newSig)
 			}
@@ -7776,6 +7868,7 @@ export class Task {
 					}
 
 					if (block.partial) {
+						await this.awaitInitialCheckpointBeforeToolSideEffects(block.name)
 						await this.toolExecutor.executeTool(block)
 						if (block.ts !== undefined) {
 							this.taskState.partialToolLifecycleByTs.set(block.ts, "partial-shown")
@@ -7927,10 +8020,7 @@ export class Task {
 				continue
 			}
 
-			if (this.initialCheckpointCommitPromise && !READ_ONLY_TOOLS.includes(tool.name as any)) {
-				await this.initialCheckpointCommitPromise
-				this.initialCheckpointCommitPromise = undefined
-			}
+			await this.awaitInitialCheckpointBeforeToolSideEffects(tool.name)
 
 			const execution = await this.dispatchRuntime({ type: "BLOCK_EXECUTION_STARTED", turnId, dlineTid })
 			if (!execution.accepted) {
@@ -8361,6 +8451,10 @@ export class Task {
 		Logger.debug(`[Task ${this.taskId}] final context-window projection`, {
 			apiIndex,
 			candidateEstimatedTokens,
+			contextWindow,
+			baselineTokens: projection.baselineTokens,
+			pendingDeltaTokens: projection.pendingDeltaTokens,
+			candidateDeltaTokens: projection.candidateDeltaTokens,
 			projectedUsageTokens: projection.projectedUsageTokens,
 			pressureSource: projection.pressureSource,
 			shouldCompact: projection.shouldCompact,
@@ -8635,6 +8729,7 @@ export class Task {
 					))
 		}
 
+		const ordinaryCompactionInput = persistedRequest ? [] : originalUserContent
 		if (shouldCompact && !manualCompactionRequested) {
 			this.ordinaryRequestInputReplay.clear()
 			requestScope.explicitInstructions.cancel()
@@ -8642,11 +8737,11 @@ export class Task {
 			const result = await this.runOrdinaryContextCompaction(
 				operationId,
 				requestScope,
-				persistedRequest ? [] : originalUserContent,
+				ordinaryCompactionInput,
 				includeFileDetails,
 			)
 			if (result === "failed") {
-				await this.presentTerminalCompactionFailure(operationId, apiIndex)
+				await this.presentTerminalCompactionFailure(operationId, apiIndex, ordinaryCompactionInput)
 				return true
 			}
 			this.contextCompactionFailureReasons.delete(operationId)
@@ -8819,6 +8914,7 @@ export class Task {
 				: await this.evaluateFinalContextWindowGuard(userContent, previousApiReqIndex, requestScope, apiIndex)
 			finalProjection = finalGuard.projection
 			candidateEstimatedTokens = finalGuard.candidateEstimatedTokens
+			const ordinaryCompactionInput = persistedRequest ? [] : originalUserContent
 			if (
 				canCompactBeforeAdmission &&
 				useAutoCondense &&
@@ -8835,11 +8931,11 @@ export class Task {
 				const result = await this.runOrdinaryContextCompaction(
 					operationId,
 					requestScope,
-					persistedRequest ? [] : originalUserContent,
+					ordinaryCompactionInput,
 					includeFileDetails,
 				)
 				if (result === "failed") {
-					await this.presentTerminalCompactionFailure(operationId, apiIndex)
+					await this.presentTerminalCompactionFailure(operationId, apiIndex, ordinaryCompactionInput)
 					return true
 				}
 				this.contextCompactionFailureReasons.delete(operationId)
@@ -9219,6 +9315,7 @@ export class Task {
 
 			try {
 				streamCoordinator = new StreamChunkCoordinator(stream, {
+					abortStream: () => requestScope.api.abort?.(),
 					onUsageChunk: (chunk) => {
 						this.streamHandler.setRequestId(chunk.provider_metadata?.response_id)
 						didReceiveUsageChunk = true
@@ -9806,6 +9903,9 @@ export class Task {
 			await this.flushAssistantPresentationOrThrow() // finalization is immediate so no coalesced content remains pending
 			const providerRequestRound = this.ordinaryProviderRequestRounds.get(apiIndex)
 			try {
+				// Persist the canonical assistant tool_use before any handler can publish
+				// side effects or a turn-ending interaction that recovery must explain.
+				await this.messageStateHandler.flushApiConversationHistory()
 				await this.executeFinalizedAssistantTurn({
 					providerRequestRound,
 					contextTokens:
@@ -9870,8 +9970,11 @@ export class Task {
 				// 	this.userMessageContentReady = true
 				// }
 
-				// Save checkpoint after all tools in this response have finished executing
-				await this.checkpointManager?.saveCheckpoint()
+				// Read-only turns cannot change workspace state. Skipping their checkpoint
+				// keeps the next Provider request independent from a still-running initial baseline.
+				if (this.assistantTurnMayModifyWorkspace()) {
+					await this.checkpointManager?.saveCheckpoint()
+				}
 
 				// if the model did not tool use, then we need to tell it to either use a tool or attempt_completion
 				const didToolUse = this.taskState.assistantMessageContent.some((block) => block.type === "tool_use")
@@ -10086,6 +10189,7 @@ export class Task {
 					remoteSkills: remoteConfigSettings.remoteGlobalSkills ?? [],
 					remoteWorkflows: remoteConfigSettings.remoteGlobalWorkflows ?? [],
 				},
+				{ trustedUserText: true },
 			)
 
 			if (needsCheck) {

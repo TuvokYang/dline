@@ -53,6 +53,8 @@ export class RuntimeSignalPipeline implements SignalPipeline {
 		try {
 			this.bus.record({
 				name: signal.name,
+				timestamp: signal.timestamp,
+				monotonicMs: signal.monotonicMs,
 				priority: signalLevelToPriority(signal.level),
 				attributes: signal.attributes,
 				error: signal.error,

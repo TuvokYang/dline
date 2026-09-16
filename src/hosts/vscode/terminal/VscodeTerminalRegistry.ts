@@ -1,5 +1,5 @@
 import * as vscode from "vscode"
-import type { TerminalLaunchConfiguration } from "@/integrations/terminal/types"
+import type { TerminalAcquisitionSource, TerminalLaunchConfiguration } from "@/integrations/terminal/types"
 
 export interface TerminalInfo {
 	terminal: vscode.Terminal
@@ -14,6 +14,12 @@ export interface TerminalInfo {
 		resolve: () => void
 		reject: (error: Error) => void
 	}
+	/**
+	 * Where this terminal came from, as a bounded telemetry dimension. Mirrors
+	 * the host-neutral contract so one acquisition metric stays readable across
+	 * hosts. Set by the manager when it hands the terminal out.
+	 */
+	acquisitionSource?: TerminalAcquisitionSource
 }
 
 // Although vscode.window.terminals provides a list of all open terminals, there's no way to know whether they're busy or not (exitStatus does not provide useful information for most commands). In order to prevent creating too many terminals, we need to keep track of terminals through the life of the extension, as well as session specific terminals for the life of a task (to get latest unretrieved output).

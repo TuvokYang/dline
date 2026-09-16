@@ -126,7 +126,7 @@ describe("StandaloneTerminalManager background command injection state", () => {
 		try {
 			const command = manager.trackBackgroundCommand(process, "npm test", "command_frame_cancel")
 			process.emit("line", "tail", "stdout")
-			assert.equal(manager.cancelBackgroundCommand(command.id), true)
+			assert.equal(await manager.cancelBackgroundCommand(command.id), true)
 
 			assert.equal(
 				await manager.readBackgroundCommandOutput(command.id),
@@ -134,6 +134,41 @@ describe("StandaloneTerminalManager background command injection state", () => {
 			)
 			assert.equal(terminate.mock.calls.length, 1)
 		} finally {
+			await manager.disposeBackgroundCommands()
+			await fs.rm(expectedLogPath, { force: true })
+		}
+	})
+
+	it("waits for asynchronous process termination before reporting cancellation complete", async () => {
+		const manager = new StandaloneTerminalManager()
+		let resolveTermination: (() => void) | undefined
+		const terminate = vi.fn(
+			() =>
+				new Promise<void>((resolve) => {
+					resolveTermination = resolve
+				}),
+		)
+		const process = Object.assign(new EventEmitter(), { terminate }) as unknown as BackgroundCommand["process"]
+		const expectedLogPath = path.join(DlineRuntimeFileManager.getTempDir(), "command_async_cancel.log")
+		await fs.rm(expectedLogPath, { force: true })
+
+		try {
+			const command = manager.trackBackgroundCommand(process, "npm test", "command_async_cancel")
+			let cancellationSettled = false
+			const cancellation = manager.cancelBackgroundCommand(command.id).then((result) => {
+				cancellationSettled = true
+				return result
+			})
+
+			await vi.waitFor(() => assert.equal(terminate.mock.calls.length, 1))
+			assert.equal(command.status, "cancelled")
+			assert.equal(cancellationSettled, false)
+
+			resolveTermination?.()
+			assert.equal(await cancellation, true)
+			assert.equal(cancellationSettled, true)
+		} finally {
+			resolveTermination?.()
 			await manager.disposeBackgroundCommands()
 			await fs.rm(expectedLogPath, { force: true })
 		}

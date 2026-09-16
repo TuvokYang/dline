@@ -16,9 +16,26 @@ import { recordDiagnostic } from "@/services/telemetry/instrumentation/diagnosti
 import { markPerfPhase, recordPerfPhase } from "@/services/telemetry/instrumentation/duration-recorder"
 import { PerfDomain } from "@/services/telemetry/instrumentation/perf-domains"
 import { Logger } from "@/shared/services/Logger"
-import { type VscodeTerminalLease, VscodeTerminalPool, type VscodeTerminalPoolPreparation } from "./VscodeTerminalPool"
+import {
+	type VscodeTerminalLease,
+	VscodeTerminalPool,
+	type VscodeTerminalPoolPreparation,
+	WarmAcquireFailure,
+	type WarmAcquireFailureReason,
+} from "./VscodeTerminalPool"
 import { mergePromise, VscodeTerminalProcess } from "./VscodeTerminalProcess"
 import { TerminalInfo, TerminalRegistry } from "./VscodeTerminalRegistry"
+
+/**
+ * Map an acquire rejection onto a bounded reason.
+ *
+ * The reason travels on the error itself. Anything else reaching this layer is
+ * an unexpected failure whose message is unbounded and must not become a
+ * metric label, so it collapses to a single bucket.
+ */
+function classifyWarmAcquireFailure(error: unknown): WarmAcquireFailureReason | "unknown" {
+	return error instanceof WarmAcquireFailure ? error.reason : "unknown"
+}
 
 /*
 TerminalManager:
@@ -337,9 +354,20 @@ export class VscodeTerminalManager implements ITerminalManager {
 				const lease = await this.pool.acquire(preparation, cwd, this.terminalReuseEnabled ? "reusable" : "consume")
 				this.leases.set(lease.terminalInfo.id, lease)
 				this.terminalIds.add(lease.terminalInfo.id)
+				// A warm hit costs orders of magnitude less than a cold start, so
+				// the caller has to be able to separate the two when it measures
+				// how long acquiring a terminal took.
+				lease.terminalInfo.acquisitionSource = "warm_pool"
 				return lease.terminalInfo as unknown as ITerminalInfo
 			} catch (error) {
 				forceColdCreate = true
+				// The pool exists and was asked for a terminal but could not
+				// supply one, so this command pays the full cold start. Without
+				// this the fallback was visible only in a log line, which left
+				// the warm pool's hit rate unmeasurable.
+				recordDiagnostic(DiagnosticDomain.Terminal, "warm_pool_miss", DiagnosticOutcome.Degraded, {
+					reason: classifyWarmAcquireFailure(error),
+				})
 				Logger.warn("[TerminalPool] operation=fallback reason=warm_acquire_failed")
 			}
 		}
@@ -374,6 +402,7 @@ export class VscodeTerminalManager implements ITerminalManager {
 		if (matchingTerminal) {
 			Logger.log(`[TerminalManager] Found matching terminal ${matchingTerminal.id} in correct cwd`)
 			this.terminalIds.add(matchingTerminal.id)
+			matchingTerminal.acquisitionSource = "registry_reuse"
 			// Cast to ITerminalInfo for interface compatibility
 			return matchingTerminal as unknown as ITerminalInfo
 		}
@@ -423,6 +452,7 @@ export class VscodeTerminalManager implements ITerminalManager {
 					}
 				}
 				this.terminalIds.add(availableTerminal.id)
+				availableTerminal.acquisitionSource = "registry_reuse"
 				// Cast to ITerminalInfo for interface compatibility
 				return availableTerminal as unknown as ITerminalInfo
 			}
@@ -431,6 +461,7 @@ export class VscodeTerminalManager implements ITerminalManager {
 		// If all terminals are busy or don't match shell profile, create a new one with the configured shell
 		const newTerminalInfo = TerminalRegistry.createTerminal(cwd, expectedShellPath, launchConfiguration)
 		this.terminalIds.add(newTerminalInfo.id)
+		newTerminalInfo.acquisitionSource = "cold_start"
 		if (launchConfiguration?.initializationCommand) {
 			try {
 				await this.runCommand(newTerminalInfo as unknown as ITerminalInfo, launchConfiguration.initializationCommand)

@@ -50,6 +50,7 @@ describe("FeatureSettingsSection", () => {
 		const { container } = render(<FeatureSettingsSection renderSectionHeader={() => null} />)
 
 		expect(screen.getByText("Feature Tips")).toBeTruthy()
+		expect(screen.getByRole("switch", { name: "Feature Tips" })).toBeTruthy()
 
 		const editorSection = container.querySelector("#optional-features")
 		const agentSection = container.querySelector("#agent-features")

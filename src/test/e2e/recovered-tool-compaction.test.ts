@@ -132,14 +132,67 @@ async function onlyTaskId(dlineDocsDir: string): Promise<string> {
 }
 
 async function recreateInterruptedStreamingSnapshot(dlineDocsDir: string, taskId: string): Promise<void> {
-	const snapshotPath = path.join(dlineDocsDir, "tasks", taskId, "snapshot.json")
+	const taskDirectory = path.join(dlineDocsDir, "tasks", taskId)
+	const apiHistoryPath = path.join(taskDirectory, "api_conversation_history.jsonl")
+	const uiMessagesPath = path.join(taskDirectory, "ui_messages.jsonl")
+	const snapshotPath = path.join(taskDirectory, "snapshot.json")
+	const apiMessages = (await readFile(apiHistoryPath, "utf8"))
+		.split(/\r?\n/)
+		.filter(Boolean)
+		.map((line) => JSON.parse(line) as PersistedRecord)
+	const pendingAssistant = apiMessages.at(-1)
+	const qnaToolUse = Array.isArray(pendingAssistant?.content)
+		? (pendingAssistant.content.find(
+				(block) => typeof block === "object" && block !== null && (block as PersistedRecord).name === "qna_respond",
+			) as PersistedRecord | undefined)
+		: undefined
+	const functionId = qnaToolUse?.function_id
+	const dlineTid = qnaToolUse?.dline_tid
+	if (pendingAssistant?.role !== "assistant" || typeof functionId !== "string" || typeof dlineTid !== "string") {
+		throw new Error("Expected the setup task to end with a canonical qna_respond assistant message")
+	}
+	const completedApiMessages = [
+		...apiMessages,
+		{
+			role: "user",
+			content: [
+				{
+					type: "tool_result",
+					function_id: functionId,
+					dline_tid: dlineTid,
+					content: [{ type: "text", text: "E2E_RECOVERED_RESUME_SETUP_ACK" }],
+				},
+			],
+			ts: Date.now(),
+		},
+	]
+	await writeFile(apiHistoryPath, `${completedApiMessages.map((message) => JSON.stringify(message)).join("\n")}\n`, "utf8")
+
+	const uiMessages = (await readFile(uiMessagesPath, "utf8"))
+		.split(/\r?\n/)
+		.filter(Boolean)
+		.map((line) => JSON.parse(line) as PersistedRecord)
+	const pendingAsk = uiMessages.at(-1)
+	if (pendingAsk?.type !== "ask" || pendingAsk.ask !== "qna_respond") {
+		throw new Error("Expected the setup task to end with a pending qna_respond UI interaction")
+	}
+	await writeFile(
+		uiMessagesPath,
+		`${uiMessages
+			.slice(0, -1)
+			.map((message) => JSON.stringify(message))
+			.join("\n")}\n`,
+		"utf8",
+	)
+
 	const snapshot = JSON.parse(await readFile(snapshotPath, "utf8")) as PersistedRecord
-	const turn = typeof snapshot.turn === "object" && snapshot.turn !== null ? (snapshot.turn as PersistedRecord) : undefined
-	const turnId = typeof turn?.turnId === "string" ? turn.turnId : `resume-turn:${taskId}`
-	const apiIndex = typeof snapshot.apiIndex === "number" ? snapshot.apiIndex : 0
+	const apiIndex = completedApiMessages.length - 1
+	const turnId = `resume-turn:${taskId}`
 	snapshot.phase = "streaming"
+	snapshot.apiIndex = apiIndex
 	snapshot.revision = typeof snapshot.revision === "number" ? snapshot.revision + 1 : 1
 	snapshot.anchor = { apiIndex, turnId }
+	snapshot.turn = { turnId, assistantApiIndex: apiIndex + 1, mode: "parallel", blocks: [] }
 	delete snapshot.interaction
 	delete snapshot.interruptedInteraction
 	delete snapshot.cancellation
@@ -311,8 +364,13 @@ e2e(
 			const resumed = await openSidebar(resumedApp, helper)
 			await setAutoApproveAction(resumed.sidebar, "Execute safe commands", true)
 			await reopenTask(resumed.page, resumed.sidebar, setupTask)
-			await sendTask(resumed.sidebar, followup)
+			const input = resumed.sidebar.getByTestId("chat-input")
+			await expect(input).toBeEnabled()
+			await input.fill(followup)
+			await input.press("Enter")
+			await expect(input).toHaveValue("")
 			await expect.poll(() => server.getRequestCount("openai-compatible-responses"), { timeout: 120_000 }).toBe(4)
+			await expect(resumed.sidebar.getByText(followup, { exact: true }).last()).toBeVisible({ timeout: 60_000 })
 			await expect(resumed.sidebar.getByText("E2E_RECOVERED_TOOL_COMPACTION_OK", { exact: false }).last()).toBeVisible({
 				timeout: 60_000,
 			})

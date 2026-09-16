@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest"
 import {
-	SecureArtifactUrlDownloader,
 	type SecureArtifactHttpRequest,
 	type SecureArtifactHttpResponse,
+	SecureArtifactUrlDownloader,
 } from "../SecureArtifactUrlDownloader"
 import { ArtifactStoreError } from "../TaskArtifactStore"
 
@@ -21,11 +21,7 @@ async function expectArtifactError(promise: Promise<unknown>, code: ArtifactStor
 	}
 }
 
-function response(
-	statusCode: number,
-	headers: Record<string, string>,
-	chunks: Uint8Array[] = [],
-): SecureArtifactHttpResponse {
+function response(statusCode: number, headers: Record<string, string>, chunks: Uint8Array[] = []): SecureArtifactHttpResponse {
 	return {
 		statusCode,
 		headers,
@@ -49,22 +45,19 @@ describe("SecureArtifactUrlDownloader", () => {
 		"2002:7f00:1::",
 		"fe80::1",
 		"fc00::1",
-	])(
-		"rejects non-public resolved address %s before opening a connection",
-		async (address) => {
-			const request = vi.fn<(input: SecureArtifactHttpRequest) => Promise<SecureArtifactHttpResponse>>()
-			const downloader = new SecureArtifactUrlDownloader({
-				resolveHostname: async () => [{ address, family: address.includes(":") ? 6 : 4 }],
-				request,
-			})
+	])("rejects non-public resolved address %s before opening a connection", async (address) => {
+		const request = vi.fn<(input: SecureArtifactHttpRequest) => Promise<SecureArtifactHttpResponse>>()
+		const downloader = new SecureArtifactUrlDownloader({
+			resolveHostname: async () => [{ address, family: address.includes(":") ? 6 : 4 }],
+			request,
+		})
 
-			await expectArtifactError(
-				downloader.download({ url: new URL("https://images.example.test/generated.png"), maxBytes: 1024 }),
-				"unsafe_artifact_url",
-			)
-			expect(request).not.toHaveBeenCalled()
-		},
-	)
+		await expectArtifactError(
+			downloader.download({ url: new URL("https://images.example.test/generated.png"), maxBytes: 1024 }),
+			"unsafe_artifact_url",
+		)
+		expect(request).not.toHaveBeenCalled()
+	})
 
 	it("pins a validated public address and accepts only bounded supported image responses", async () => {
 		const request = vi.fn(async (input: SecureArtifactHttpRequest) => {
@@ -92,9 +85,7 @@ describe("SecureArtifactUrlDownloader", () => {
 		const request = vi.fn(async () => response(302, { location: "https://internal.example.test/generated.png" }))
 		const downloader = new SecureArtifactUrlDownloader({
 			resolveHostname: async (hostname) =>
-				hostname === "images.example.test"
-					? [{ address: "8.8.8.8", family: 4 }]
-					: [{ address: "10.0.0.5", family: 4 }],
+				hostname === "images.example.test" ? [{ address: "8.8.8.8", family: 4 }] : [{ address: "10.0.0.5", family: 4 }],
 			request,
 		})
 

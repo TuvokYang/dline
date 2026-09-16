@@ -4,6 +4,10 @@ import type { ClineAskResponse } from "@shared/WebviewMessage"
 import { afterEach, describe, it, vi } from "vitest"
 import { BlockPhase } from "../BlockPhaseMachine"
 import type { MessageChannel } from "../MessageChannel"
+import type { TaskEffectPorts } from "../runtime/TaskEffectRunner"
+import type { TaskEvent } from "../runtime/TaskEvent"
+import { TaskRuntime } from "../runtime/TaskRuntime"
+import { createTaskRuntimeState } from "../runtime/TaskRuntimeState"
 import { TaskController } from "../TaskController"
 import { TaskPhase } from "../TaskPhase"
 import type { TaskSnapshot } from "../TaskSnapshot"
@@ -393,6 +397,65 @@ describe("Task.handleWebviewAskResponse", () => {
 		assert.equal(say.mock.calls[0][1], "hello from My lord")
 		assert.equal(userMessageContent.length, 1)
 		assert.equal(saveCheckpoint.mock.calls.length, 0)
+	})
+
+	it("atomically accepts one Profile recovery reply without a pending ask", async () => {
+		const channel = createChannelWithNoWaitingAsk()
+		const controller = new TaskController(channel)
+		const appendSay = vi.fn<TaskEffectPorts["appendSay"]>(async () => undefined)
+		const runtime = new TaskRuntime(
+			{
+				...createTaskRuntimeState({
+					taskId: "task-1",
+					phase: TaskPhase.BETWEEN_TURNS,
+					revision: 5,
+					anchor: { apiIndex: 2 },
+				}),
+				ordinaryInput: { kind: "profile_recovery" },
+			},
+			{
+				postView: async () => undefined,
+				persistSnapshot: async () => undefined,
+				cancelRuntime: async () => undefined,
+				prepareResume: async () => undefined,
+				startApi: async () => undefined,
+				executeTool: async () => undefined,
+				appendSay,
+				appendAsk: async () => ({ uiMessageTs: 100 }),
+				startNewTask: async () => undefined,
+				startSuccessorTask: async () => undefined,
+			},
+		)
+		const userMessageContent: Array<{ type: "text"; text: string }> = []
+		const taskState = { userMessageContent, userMessageContentReady: false }
+		const fakeTask = createFakeTaskForHandleWebviewAskResponse(controller, {
+			taskId: "task-1",
+			taskRuntime: runtime,
+			dispatchRuntime: (event: TaskEvent) => runtime.dispatch(event),
+			taskState,
+		})
+
+		await Task.prototype.handleWebviewAskResponse.call(
+			fakeTask,
+			"messageResponse" as ClineAskResponse,
+			"continue after switching profiles",
+		)
+		assert.equal(vi.mocked(channel.resolve).mock.calls.length, 0)
+
+		await Task.prototype.handleWebviewAskResponse.call(
+			fakeTask,
+			"messageResponse" as ClineAskResponse,
+			"continue after switching profiles",
+		)
+
+		assert.equal(vi.mocked(channel.resolve).mock.calls.length, 1)
+		assert.equal(appendSay.mock.calls.length, 1)
+		assert.equal(appendSay.mock.calls[0][0].taskSay, "user_feedback")
+		assert.equal(appendSay.mock.calls[0][0].presentation, "continue after switching profiles")
+		assert.equal(userMessageContent.length, 1)
+		assert.match(userMessageContent[0].text, /<user_message>\ncontinue after switching profiles\n<\/user_message>/)
+		assert.equal(taskState.userMessageContentReady, true)
+		assert.equal(runtime.getState().ordinaryInput, undefined)
 	})
 
 	/**

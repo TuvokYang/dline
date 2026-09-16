@@ -64,6 +64,7 @@ describe("UsageBar", () => {
 
 	it("renders the tooltip like the details panel without its title or reset actions", async () => {
 		const user = userEvent.setup()
+		const resetCreditExpiresAt = "2030-03-25T00:00:00.000Z"
 		mockedContext.value = {
 			accountUsage: {
 				...usage([
@@ -72,7 +73,7 @@ describe("UsageBar", () => {
 				]),
 				planType: "plus",
 				resetCreditsAvailableCount: 1,
-				resetCredits: [{ id: "credit-a", expiresAt: "2030-03-25T00:00:00.000Z" }],
+				resetCredits: [{ id: "credit-a", expiresAt: resetCreditExpiresAt }],
 			},
 		}
 
@@ -99,7 +100,7 @@ describe("UsageBar", () => {
 		expect(within(tooltip).queryByText("Usage")).not.toBeInTheDocument()
 		expect(within(tooltip).getByText("Reset cards: 1")).toBeInTheDocument()
 		expect(within(tooltip).getByText("Next card expires")).toBeInTheDocument()
-		expect(within(tooltip).getByText(/2030.*3.*25/)).toHaveClass("whitespace-nowrap")
+		expect(within(tooltip).getByText(new Date(resetCreditExpiresAt).toLocaleString())).toHaveClass("whitespace-nowrap")
 		expect(within(tooltip).queryByText("Reset card 1")).not.toBeInTheDocument()
 		expect(within(tooltip).queryByRole("button", { name: "Use reset card 1" })).not.toBeInTheDocument()
 		expect(within(tooltip).getByText(/^Resets /)).toHaveClass("whitespace-nowrap")

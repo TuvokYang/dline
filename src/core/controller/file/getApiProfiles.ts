@@ -8,6 +8,7 @@ import { allProviderModels } from "@core/api/providers/models"
 import { anthropicModels } from "@core/api/providers/models/anthropic"
 import { ModelRegistry } from "@core/model-registry/ModelRegistry"
 import { recordProfileCatalogBaseline } from "@core/profiles/profile-catalog-state"
+import { FileLock } from "@core/storage/backend/jsonl/FileLock"
 import { getDlineDataDir, getDlineHomePath } from "@core/storage/disk"
 import {
 	getAllProviderSecrets,
@@ -86,7 +87,7 @@ function upgradeProfileSchema(profile: ApiProfile): boolean {
 }
 
 let apiProfilesWriteQueue: Promise<void> = Promise.resolve()
-let cleanRewriteInProgress = false
+const cleanRewriteFileLock = new FileLock()
 /**
  * Registry-derived modelInfo drift is repaired on disk at most once per process.
  *
@@ -146,17 +147,25 @@ async function atomicWriteApiProfilesFile(filePath: string, data: string): Promi
 	}
 }
 
-export function writeApiProfilesToFile(filePath: string, profiles: ApiProfile[]): Promise<void> {
-	const write = async () => {
-		await persistProviderSecrets(profiles)
-		const data = JSON.stringify(serializeApiProfilesForStorage(profiles), null, "\t")
-		await fs.mkdir(path.dirname(filePath), { recursive: true })
-		await atomicWriteApiProfilesFile(filePath, data)
-		apiProfilesReadCache = undefined
-	}
+async function persistApiProfilesFile(filePath: string, profiles: ApiProfile[]): Promise<void> {
+	await persistProviderSecrets(profiles)
+	const data = JSON.stringify(serializeApiProfilesForStorage(profiles), null, "\t")
+	await fs.mkdir(path.dirname(filePath), { recursive: true })
+	await atomicWriteApiProfilesFile(filePath, data)
+	apiProfilesReadCache = undefined
+}
+
+function enqueueApiProfilesWrite<T>(write: () => Promise<T>): Promise<T> {
 	const nextWrite = apiProfilesWriteQueue.then(write, write)
-	apiProfilesWriteQueue = nextWrite.catch(() => {})
+	apiProfilesWriteQueue = nextWrite.then(
+		() => undefined,
+		() => undefined,
+	)
 	return nextWrite
+}
+
+export function writeApiProfilesToFile(filePath: string, profiles: ApiProfile[]): Promise<void> {
+	return enqueueApiProfilesWrite(() => persistApiProfilesFile(filePath, profiles))
 }
 
 function findFirstJsonValueEnd(raw: string): number | undefined {
@@ -357,6 +366,7 @@ function normalizeApiProfileWithMigration(profile: unknown): { profile: ApiProfi
 		const legacyContextWindow = providerCapabilities?.contextWindow
 		if (
 			registryCapabilities &&
+			anthropic.customModelEnabled !== true &&
 			!registryCapabilities.contextWindowTiers?.length &&
 			providerCapabilities?.contextWindowTiers?.length
 		) {
@@ -631,23 +641,34 @@ function hydrateApiKeys(profiles: ApiProfile[]): boolean {
 	return migrated
 }
 
-async function cleanRewriteApiProfiles(profiles: ApiProfile[]): Promise<void> {
-	// Debounce guard: prevent concurrent clean rewrites from piling up
-	// when readApiProfiles() (sync, fire-and-forget) triggers multiple
-	// async writes before the first one completes.
-	if (cleanRewriteInProgress) {
-		return
-	}
-	cleanRewriteInProgress = true
+/**
+ * Persist a migrated Catalog only while the disk document still matches the exact snapshot read.
+ * This prevents a slower startup migration from overwriting a newer cross-window mutation.
+ */
+export async function cleanRewriteApiProfiles(rawAtRead: string, profiles: ApiProfile[]): Promise<boolean> {
 	const settingsDir = path.join(getDlineDataDir(), "settings")
 	const filePath = path.join(settingsDir, API_PROFILES_FILE)
 	try {
-		await writeApiProfilesToFile(filePath, profiles)
-		Logger.log("[cleanRewriteApiProfiles] Stripped apiKey fields from api_profiles.json")
+		// Keep the same lock order as ProfileCatalogRepository.mutate:
+		// file lock first, then the process-local writer queue. Reversing these
+		// two boundaries can deadlock a startup rewrite against a live mutation.
+		const rewritten = await cleanRewriteFileLock.withLock(filePath, () =>
+			enqueueApiProfilesWrite(async () => {
+				const currentRaw = await fs.readFile(filePath, "utf8")
+				if (currentRaw !== rawAtRead) return false
+				await persistApiProfilesFile(filePath, profiles)
+				return true
+			}),
+		)
+		if (rewritten) {
+			Logger.log("[cleanRewriteApiProfiles] Stripped apiKey fields from api_profiles.json")
+		} else if (Logger.isDebugEnabled()) {
+			Logger.debug("[cleanRewriteApiProfiles] Skipped stale api_profiles.json snapshot")
+		}
+		return rewritten
 	} catch (err) {
 		Logger.error("[cleanRewriteApiProfiles] Failed:", err)
-	} finally {
-		cleanRewriteInProgress = false
+		return false
 	}
 }
 
@@ -672,19 +693,17 @@ export async function getApiProfiles(controller: Controller, _request: EmptyRequ
 		const modelInfoChanged = await hydrateModelInfoFromRegistry(profiles)
 		const hydrateMs = Math.round(performance.now() - stageStartedAt)
 		if (parsed.recovered) {
-			// Recovered JSON is genuinely damaged on disk and must be repaired now.
-			registryModelInfoRepairedPaths.add(filePath)
-			await writeApiProfilesToFile(filePath, profiles)
+			// Recovered JSON is genuinely damaged on disk and must be repaired now,
+			// unless another writer has already replaced the damaged snapshot.
+			if (await cleanRewriteApiProfiles(raw, profiles)) registryModelInfoRepairedPaths.add(filePath)
 		} else if (parsed.migrated || apiKeysMigrated || providerSecretsMigrated) {
 			// Persist migrations derived from this exact disk snapshot. Request
 			// normalization must never schedule an unrelated Catalog rewrite.
-			registryModelInfoRepairedPaths.add(filePath)
-			await cleanRewriteApiProfiles(profiles)
+			if (await cleanRewriteApiProfiles(raw, profiles)) registryModelInfoRepairedPaths.add(filePath)
 		} else if (modelInfoChanged && !registryModelInfoRepairedPaths.has(filePath)) {
 			// Registry drift only needs to reach disk once per process. Every later
 			// read serves the hydrated in-memory Catalog without waking the watcher.
-			registryModelInfoRepairedPaths.add(filePath)
-			await cleanRewriteApiProfiles(profiles)
+			if (await cleanRewriteApiProfiles(raw, profiles)) registryModelInfoRepairedPaths.add(filePath)
 		}
 		// Flush any pending globalState writes before ensureProfileDefaults
 		// reads planModeProfile/actModeProfile, so it sees the latest values
@@ -991,14 +1010,16 @@ export function readApiProfiles(): ApiProfile[] {
 		const defaultsChanged = applyRegistryModelDefaults(profiles)
 		const modelInfoChanged = applyRegistryModelInfo(profiles) || defaultsChanged
 		if (parsed.recovered || parsed.migrated || apiKeysMigrated || providerSecretsMigrated) {
-			registryModelInfoRepairedPaths.add(filePath)
-			cleanRewriteApiProfiles(profiles)
+			void cleanRewriteApiProfiles(raw, profiles).then((rewritten) => {
+				if (rewritten) registryModelInfoRepairedPaths.add(filePath)
+			})
 		} else if (modelInfoChanged && !registryModelInfoRepairedPaths.has(filePath)) {
 			// This synchronous reader runs on hot paths such as findEnabledProfiles and
 			// profile-reference resolution. Rewriting on every call re-triggered the
 			// Catalog watcher and starved newly opened panels of a settled Catalog.
-			registryModelInfoRepairedPaths.add(filePath)
-			cleanRewriteApiProfiles(profiles)
+			void cleanRewriteApiProfiles(raw, profiles).then((rewritten) => {
+				if (rewritten) registryModelInfoRepairedPaths.add(filePath)
+			})
 		}
 		apiProfilesReadCache = {
 			filePath,

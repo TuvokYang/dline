@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
+import backendConfig from "../../vitest.backend.config"
 import config from "../../vitest.config"
-import webviewConfig from "../../webview-ui/vitest.config"
+import smokeConfig from "../../vitest.smoke.config"
 
 interface TestProjectConfig {
 	test?: {
@@ -23,15 +24,14 @@ interface RootTestConfig {
 }
 
 describe("Vitest project isolation", () => {
-	/** Verifies backend domains and Webview run in bounded recyclable projects. */
-	it("defines bounded backend and webview projects", () => {
+	/** Verifies backend domains remain bounded while the Webview keeps its own project boundary. */
+	it("defines bounded backend projects and the Webview project boundary", () => {
 		const rootConfig = config as RootTestConfig
 		const projects = rootConfig.test?.projects ?? []
 		const backendProjects = projects
 			.slice(0, -1)
 			.filter((project): project is TestProjectConfig => typeof project !== "string")
 		const backendByName = new Map(backendProjects.map((project) => [project.test?.name, project.test]))
-		const webview = (webviewConfig as TestProjectConfig).test
 
 		expect(projects).toHaveLength(6)
 		expect(projects[5]).toBe("webview-ui/vitest.config.ts")
@@ -45,21 +45,31 @@ describe("Vitest project isolation", () => {
 			expect.arrayContaining(["src/core/task/**", "src/core/prompts/**", "src/core/hooks/**"]),
 		)
 		expect(backendByName.get("backend")?.exclude).toContain("src/core/**")
-		expect(webview?.include).toEqual(["src/**/*.test.ts", "src/**/*.test.tsx", "src/**/*.spec.ts", "src/**/*.spec.tsx"])
 
-		for (const project of [...backendProjects.map((entry) => entry.test), webview]) {
-			expect(project?.environment).toBe(project === webview ? "jsdom" : "node")
-			expect(project?.setupFiles).toEqual(project === webview ? ["./src/setupTests.ts"] : ["src/test/setup.ts"])
-			// The two roots pool differently on purpose. Backend runs on worker
-			// threads because a VM context cannot share the Node module cache, so
-			// every file rebuilt the whole module graph and import cost dominated
-			// the suite; `isolate` still gives each file a fresh module registry.
-			// Webview keeps `vmThreads` because its jsdom globals need a real VM
-			// context per file.
-			expect(project?.pool).toBe(project === webview ? "vmThreads" : "threads")
+		for (const project of backendProjects.map((entry) => entry.test)) {
+			expect(project?.environment).toBe("node")
+			expect(project?.setupFiles).toEqual(["src/test/setup.ts"])
+			expect(project?.pool).toBe("threads")
 			expect(project?.maxWorkers).toBe(4)
-			expect(project?.minWorkers).toBe(project === webview ? undefined : 1)
+			expect(project?.minWorkers).toBe(1)
 			expect(project?.vmMemoryLimit).toBeUndefined()
+		}
+	})
+
+	it("keeps backend and smoke entry points independent from the Webview project", () => {
+		const backendProjects = (backendConfig as RootTestConfig).test?.projects ?? []
+		const smokeProjects = (smokeConfig as RootTestConfig).test?.projects ?? []
+		const backendNames = backendProjects.map((project) => (typeof project === "string" ? project : project.test?.name))
+		const smokeProject = smokeProjects[0]
+
+		expect(backendNames).toEqual(["backend-task", "backend-prompts", "backend-hooks", "backend-core", "backend"])
+		expect(backendProjects.every((project) => typeof project !== "string")).toBe(true)
+		expect(smokeProjects).toHaveLength(1)
+		expect(typeof smokeProject).not.toBe("string")
+		if (typeof smokeProject !== "string") {
+			expect(smokeProject?.test?.name).toBe("backend-smoke")
+			expect(smokeProject?.test?.include).toEqual(["src/__tests__/smoke.test.ts"])
+			expect(smokeProject?.test?.environment).toBe("node")
 		}
 	})
 })

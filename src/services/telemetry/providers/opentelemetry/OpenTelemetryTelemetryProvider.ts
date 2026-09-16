@@ -1,4 +1,4 @@
-import { Meter } from "@opentelemetry/api"
+import { Meter, type MetricAdvice, type MetricOptions } from "@opentelemetry/api"
 import type { Logger as OTELLogger } from "@opentelemetry/api-logs"
 import { LoggerProvider } from "@opentelemetry/sdk-logs"
 import { MeterProvider } from "@opentelemetry/sdk-metrics"
@@ -8,12 +8,64 @@ import { getDistinctId, setDistinctId } from "@/services/logging/distinctId"
 import { Setting } from "@/shared/proto/dline/host"
 import { Logger } from "@/shared/services/Logger"
 import type { ClineAccountUserInfo } from "../../../auth/AuthService"
+import { logRecordFields } from "../../otel/log-record"
 import { USAGE_SCOPE_NAME } from "../../otel/scopes"
 import { RuntimeContentPolicy } from "../../runtime/content-policy"
 import { canonicalizeTelemetryProperties } from "../../service/canonicalization"
 import type { ITelemetryProvider, TelemetryProperties, TelemetrySettings } from "../ITelemetryProvider"
 import type { OpenTelemetryClientProvider } from "./OpenTelemetryClientProvider"
 import type { OpenTelemetryTraceProvider } from "./OpenTelemetryTraceProvider"
+
+/**
+ * Bucket bounds for runtime operation durations, in milliseconds.
+ *
+ * The SDK default stops at 10s, and that ceiling was reached in practice: over
+ * 24h, 61,178 samples were recorded for `terminal.execute_complete` and
+ * `tool.execution` but only 44,517 fell at or below 10s. With 27% of samples in
+ * `+Inf`, no quantile above roughly p73 could be resolved, so a p95 read back
+ * as exactly 10000 whether the real value was twelve seconds or four minutes.
+ *
+ * The added bounds extend to ten minutes, which covers a long-running command
+ * or a tool waiting on a slow workspace. The bounds below 10s are kept as the
+ * SDK had them so existing series stay comparable across this change.
+ */
+const OPERATION_DURATION_BUCKETS_MS = [
+	0, 5, 10, 25, 50, 75, 100, 250, 500, 750, 1_000, 2_500, 5_000, 7_500, 10_000,
+	// Beyond the previous ceiling.
+	15_000, 30_000, 60_000, 120_000, 300_000, 600_000,
+]
+
+/** Duration histograms that need the extended ceiling, by metric name. */
+const BUCKET_ADVICE: ReadonlyMap<string, MetricAdvice> = new Map([
+	["dline.runtime.operation.duration", { explicitBucketBoundaries: OPERATION_DURATION_BUCKETS_MS }],
+])
+
+/**
+ * Label identifying which bucket layout a sample was recorded against.
+ *
+ * Extension hosts update independently, so a host running the previous build
+ * keeps exporting the old layout into the same metric name. Quantiles are what
+ * breaks when the two are summed: `le="15000"` exists only in the new layout,
+ * so it counts fewer samples than `le="10000"`, and the monotonicity repair
+ * pushes the estimate toward the highest finite bound. Counts and sums are
+ * unaffected, which is why the metric keeps its name and the layouts are told
+ * apart by a label that only quantile queries need to pin.
+ */
+const BUCKET_SCHEMA_LABEL = "bucket_schema"
+
+/** Bumped whenever a bucket layout above changes, never reused. */
+const BUCKET_SCHEMA_VERSION = "v2"
+
+/**
+ * Bucket advice for one metric, or undefined to keep the SDK default.
+ *
+ * Advice is per metric rather than global: the bounds above are milliseconds,
+ * and applying them to a metric measured in seconds, tokens or bytes would put
+ * every sample in the first bucket.
+ */
+function bucketAdviceFor(name: string): MetricAdvice | undefined {
+	return BUCKET_ADVICE.get(name)
+}
 
 /**
  * OpenTelemetry implementation of the telemetry provider interface.
@@ -25,6 +77,7 @@ export class OpenTelemetryTelemetryProvider implements ITelemetryProvider {
 	private telemetrySettings: TelemetrySettings
 	private userAttributes: Record<string, string> = {}
 	private readonly contentPolicy = new RuntimeContentPolicy()
+	private readonly eventContentPolicy = RuntimeContentPolicy.forEvents()
 	// Lazy instrument caches for metrics
 	private counters = new Map<string, ReturnType<Meter["createCounter"]>>()
 	private histograms = new Map<string, ReturnType<Meter["createHistogram"]>>()
@@ -117,7 +170,7 @@ export class OpenTelemetryTelemetryProvider implements ITelemetryProvider {
 		// Record log event (primary path)
 		if (this.logger) {
 			this.logger.emit({
-				severityText: "INFO",
+				...logRecordFields(properties),
 				body: event,
 				attributes: this.eventAttributes(properties),
 			})
@@ -129,7 +182,7 @@ export class OpenTelemetryTelemetryProvider implements ITelemetryProvider {
 		// bypasses the central consent or host gate.
 		if (this.isEnabled() && this.logger) {
 			this.logger.emit({
-				severityText: "INFO",
+				...logRecordFields(properties),
 				body: event,
 				attributes: this.eventAttributes(properties, true),
 			})
@@ -194,11 +247,16 @@ export class OpenTelemetryTelemetryProvider implements ITelemetryProvider {
 
 	private eventAttributes(properties?: TelemetryProperties, required = false): Record<string, string | number | boolean> {
 		const channel = properties?.telemetry_channel
-		const attributes = this.canonicalAttributes({
-			...(required ? { _required: true } : {}),
-			...properties,
-			...this.userAttributes,
-		})
+		const attributes = {
+			...canonicalizeTelemetryProperties(
+				{
+					...(required ? { _required: true } : {}),
+					...this.userAttributes,
+					...properties,
+				},
+				this.eventContentPolicy,
+			).attributes,
+		}
 		// The persistent installation identifier correlates usage and failures for
 		// one Dline installation. Channel consent is enforced by the registry before
 		// this provider is invoked, so independently disabled channels emit nothing.
@@ -257,15 +315,22 @@ export class OpenTelemetryTelemetryProvider implements ITelemetryProvider {
 			return
 		}
 
+		const advice = bucketAdviceFor(name)
+
 		let histogram = this.histograms.get(name)
 		if (!histogram) {
-			const options = description ? { description } : undefined
+			const options: MetricOptions | undefined =
+				description || advice ? { ...(description ? { description } : {}), ...(advice ? { advice } : {}) } : undefined
 			histogram = this.meter.createHistogram(name, options)
 			this.histograms.set(name, histogram)
 			Logger.debug(`[OTEL] Created histogram: ${name}`)
 		}
 
-		histogram.record(value, this.canonicalAttributes(attributes))
+		const canonical = this.canonicalAttributes(attributes)
+		// Stamped only where bounds were chosen here. A histogram left on the
+		// SDK default has no layout of ours to version, and labelling it would
+		// claim a guarantee this code does not make.
+		histogram.record(value, advice ? { ...canonical, [BUCKET_SCHEMA_LABEL]: BUCKET_SCHEMA_VERSION } : canonical)
 	}
 
 	/**
@@ -344,6 +409,7 @@ export class OpenTelemetryTelemetryProvider implements ITelemetryProvider {
 	public async dispose(): Promise<void> {
 		await Promise.all([this.owner?.dispose(), this.traceProvider?.dispose()])
 		this.contentPolicy.reset()
+		this.eventContentPolicy.reset()
 	}
 
 	/**

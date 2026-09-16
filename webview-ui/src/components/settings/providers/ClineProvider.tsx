@@ -18,12 +18,7 @@ interface ClineProviderProps {
  * The Cline provider configuration component.
  * Delegates model selection to ClineModelPicker.
  */
-export const ClineProvider = ({
-	showModelOptions,
-	isPopup,
-	profile: _profile,
-	onUpdate: _onUpdate,
-}: ClineProviderProps) => {
+export const ClineProvider = ({ showModelOptions, isPopup, profile: _profile, onUpdate: _onUpdate }: ClineProviderProps) => {
 	return (
 		<div>
 			{/* Cline Account Info Card */}

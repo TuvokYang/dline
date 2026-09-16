@@ -235,10 +235,6 @@ export class DeepSeekHandler implements ApiHandler {
 				}
 			}
 
-			if (delta?.tool_calls) {
-				yield* toolCallProcessor.processToolCallDeltas(delta.tool_calls)
-			}
-
 			if (delta && "reasoning_content" in delta && delta.reasoning_content) {
 				if (thinking.enabled) {
 					yield {
@@ -246,6 +242,10 @@ export class DeepSeekHandler implements ApiHandler {
 						reasoning: (delta.reasoning_content as string | undefined) || "",
 					}
 				}
+			}
+
+			if (delta?.tool_calls) {
+				yield* toolCallProcessor.processToolCallDeltas(delta.tool_calls)
 			}
 
 			if (chunk.usage) {

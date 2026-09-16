@@ -130,6 +130,7 @@ export class AnthropicHandler implements ApiHandler {
 				this.client = new Anthropic({
 					apiKey: this.apiKey,
 					baseURL: this.baseUrl || undefined,
+					maxRetries: 0,
 					defaultHeaders: buildExternalBasicHeaders(),
 					fetch: providerFetch,
 				})

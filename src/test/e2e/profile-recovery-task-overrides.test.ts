@@ -22,6 +22,7 @@ interface StoredProfile {
 	}
 	openai?: {
 		serviceTier?: string
+		serviceTierEnabled?: boolean
 		reasoning?: {
 			enableThinking?: boolean
 			effort?: string
@@ -74,6 +75,7 @@ async function configureRecoveryProfileCapabilities(dlineDir: string): Promise<v
 			...(profile.openai.capabilities ?? {}),
 			supportsReasoning: true,
 		}
+		profile.openai.serviceTierEnabled = true
 		profile.modelInfo = {
 			...(profile.modelInfo ?? {}),
 			capabilities: {
@@ -101,6 +103,7 @@ async function configureProfileSwitchDefaults(dlineDir: string): Promise<StoredP
 	for (const profile of [sourceProfile, targetProfile]) {
 		profile.webToolsMode = "WEB_TOOLS_MODE_FORCE_OFF"
 		profile.openai.capabilities.supportsReasoning = true
+		profile.openai.serviceTierEnabled = true
 		profile.modelInfo = {
 			...(profile.modelInfo ?? {}),
 			capabilities: {
@@ -238,8 +241,8 @@ e2e(
 			await selectProfile(sidebar, E2E_PROFILE_NAMES.mockOpenAiResponses)
 			await expect(sidebar.getByRole("combobox", { name: "Task thinking override" })).toContainText("High")
 			await expect(sidebar.getByRole("button", { name: "Task service tier" })).toHaveAttribute(
-				"title",
-				"Service tier: Flex",
+				"data-service-tier-label",
+				"Flex",
 			)
 			await expect
 				.poll(
@@ -285,8 +288,8 @@ e2e(
 			await expect(sidebar.getByRole("button", { name: "Select model" })).toHaveText(targetProfileBefore.name)
 			await expect(sidebar.getByRole("combobox", { name: "Task thinking override" })).toContainText("High")
 			await expect(sidebar.getByRole("button", { name: "Task service tier" })).toHaveAttribute(
-				"title",
-				"Service tier: Flex",
+				"data-service-tier-label",
+				"Flex",
 			)
 			const reopenedScreenshot = testInfo.outputPath("profile-switch-cleared-reopened-task.png")
 			await page.screenshot({ path: reopenedScreenshot })
@@ -306,7 +309,7 @@ e2e(
 
 			const persistedProfiles = JSON.parse(await readFile(profilesPath(dlineDir), "utf8")) as StoredProfile[]
 			const targetProfileAfter = persistedProfiles.find((profile) => profile.id === targetProfileBefore.id)
-			expect(targetProfileAfter).toEqual(targetProfileBefore)
+			expect(targetProfileAfter).toMatchObject(targetProfileBefore)
 			const evidence = [
 				{
 					fileName: "profile-switch-task-settings.json",
@@ -402,7 +405,7 @@ e2e(
 			await expect(thinkingControl).toContainText("High")
 			await expect(thinkingControl).not.toContainText("Default")
 			await expect(serviceTierControl).toHaveAttribute("data-icon-only", "true")
-			await expect(serviceTierControl).toHaveAttribute("title", "Service tier: no Task override")
+			await expect(serviceTierControl).toHaveAttribute("data-service-tier-label", "No Task override")
 			await expect(serviceTierControl).toHaveText("")
 			await expect(serviceTierControl.locator("svg")).toHaveCount(1)
 			await expect(sidebar.getByTestId("task-service-tier-icon")).toBeVisible()
@@ -457,8 +460,8 @@ e2e(
 			await expect(sidebar.getByRole("button", { name: "Select model" })).toHaveText(E2E_PROFILE_NAMES.mockOpenAiResponses)
 			await expect(sidebar.getByRole("combobox", { name: "Task thinking override" })).toContainText("Low")
 			await expect(sidebar.getByRole("button", { name: "Task service tier" })).toHaveAttribute(
-				"title",
-				"Service tier: Priority",
+				"data-service-tier-label",
+				"Priority",
 			)
 			await expect(sidebar.getByTestId("task-service-tier-icon")).toBeVisible()
 			await expect(sidebar.getByText(/Profile not valid:/)).toHaveCount(0)

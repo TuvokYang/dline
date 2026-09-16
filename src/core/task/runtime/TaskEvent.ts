@@ -12,6 +12,7 @@ export type TaskEvent =
 	| { type: "TASK_INITIALIZE_REQUESTED" }
 	| { type: "TASK_INITIALIZED"; anchor: TaskAnchor; hasTask: boolean }
 	| { type: "PROFILE_RECOVERY_COMMITTED"; interactionId: string }
+	| { type: "PROFILE_RECOVERY_INPUT_RECEIVED"; draft: InteractionDraft }
 	| { type: "API_REQUEST_STARTED"; apiIndex: number }
 	| { type: "RESUME_API_CONTINUATION_REQUESTED"; apiIndex: number; draft?: InteractionDraft }
 	| { type: "HOSTED_WEB_REQUEST_CONTINUATION_REQUESTED"; interactionId: string; apiIndex: number }

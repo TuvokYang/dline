@@ -61,10 +61,10 @@ e2e(
 		await sendTask(sidebar, "E2E_ENCRYPTED_INDICATOR_TASK")
 
 		// The activity row must appear even though no reasoning text exists.
-		const waitingRow = sidebar.getByText("Waiting...", { exact: true })
-		await expect(waitingRow).toBeVisible({ timeout: 60_000 })
+		const thinkingRow = sidebar.getByText("Thinking", { exact: true })
+		await expect(thinkingRow).toBeVisible({ timeout: 60_000 })
 		// It must animate, which is the whole point of showing a contentless row.
-		await expect(waitingRow).toHaveClass(/animate-shimmer/)
+		await expect(thinkingRow).toHaveClass(/animate-shimmer/)
 
 		// The opaque payload must never reach the DOM.
 		await expect(sidebar.locator("body")).not.toContainText(ENCRYPTED_PAYLOAD_PREFIX)
@@ -73,7 +73,7 @@ e2e(
 		await expect(sidebar.getByText("E2E_ENCRYPTED_INDICATOR_DONE", { exact: false }).first()).toBeVisible({
 			timeout: 120_000,
 		})
-		await expect(waitingRow).toHaveCount(0, { timeout: 60_000 })
+		await expect(thinkingRow).toHaveCount(0, { timeout: 60_000 })
 		await expect(sidebar.getByText("Thinking", { exact: true })).toHaveCount(0)
 
 		const consumptions = server.getMockConsumptions("openai-compatible-responses")

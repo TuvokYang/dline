@@ -29,7 +29,8 @@ describe("observability bootstrap", () => {
 		configureSignalRecording({ enabled: () => true })
 		recordDurationHistogram(12, { operation: "activation" })
 		recordRuntimeGauge("runtime_cpu_utilization_ratio", 0.5, "CPU")
-		const span = startSignalSpan({ name: "activation.stage" })
+		const startedAt = Date.now()
+		const span = startSignalSpan({ name: "activation.stage", startTime: startedAt })
 		span.setAttribute("stage", "storage")
 		span.end("success")
 		expect(observabilityBootstrapCount()).toBe(3)
@@ -39,8 +40,23 @@ describe("observability bootstrap", () => {
 
 		expect(pipeline.recordHistogram).toHaveBeenCalledOnce()
 		expect(pipeline.recordGauge).toHaveBeenCalledOnce()
-		expect(pipeline.startSpan).toHaveBeenCalledWith({ name: "activation.stage", attributes: { stage: "storage" } })
+		expect(pipeline.startSpan).toHaveBeenCalledWith({
+			name: "activation.stage",
+			attributes: { stage: "storage" },
+			startTime: startedAt,
+			parent: undefined,
+		})
+		expect(pipeline.startSpan.mock.results[0].value.end).toHaveBeenCalledWith("success", expect.any(Number))
 		expect(observabilityBootstrapCount()).toBe(0)
+	})
+
+	it("attaches a span still running when the destination becomes available", () => {
+		const span = startSignalSpan({ name: "open" })
+		const pipeline = target()
+		installObservabilityPipeline(pipeline)
+		span.end("cancelled", 1_789_000_000_123)
+		expect(pipeline.startSpan.mock.results[0].value.end).toHaveBeenCalledWith("cancelled", 1_789_000_000_123)
+		expect(span.active).toBe(false)
 	})
 
 	it("destroys startup measurements when consent is disabled", () => {

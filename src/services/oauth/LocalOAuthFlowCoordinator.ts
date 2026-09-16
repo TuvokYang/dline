@@ -44,6 +44,7 @@ interface PendingFlow<TCredential> {
 export class LocalOAuthFlowCoordinator<TCredential> {
 	private pending: PendingFlow<TCredential> | undefined
 	private lastTimedOutFlow: { flowId: string; profileId: string } | undefined
+	private callbackServerCloseBarrier: Promise<void> = Promise.resolve()
 	private readonly timeoutMs: number
 
 	constructor(
@@ -54,6 +55,8 @@ export class LocalOAuthFlowCoordinator<TCredential> {
 	}
 
 	async startFlow(input: StartOAuthFlowInput): Promise<OAuthFlowStarted<TCredential>> {
+		if (this.pending) throw new OAuthFlowError("FLOW_ALREADY_IN_PROGRESS", "An OAuth authorization flow is already active.")
+		await this.callbackServerCloseBarrier
 		if (this.pending) throw new OAuthFlowError("FLOW_ALREADY_IN_PROGRESS", "An OAuth authorization flow is already active.")
 		const flowId = input.flowId ?? randomUUID()
 		const lease = await this.options.lease.acquire({
@@ -130,12 +133,14 @@ export class LocalOAuthFlowCoordinator<TCredential> {
 	}
 
 	async dispose(): Promise<void> {
-		if (!this.pending) return
-		await this.settleFailure(
-			this.pending,
-			new OAuthFlowError("FLOW_CANCELLED", "The OAuth authorization flow was cancelled.", true),
-			true,
-		)
+		if (this.pending) {
+			await this.settleFailure(
+				this.pending,
+				new OAuthFlowError("FLOW_CANCELLED", "The OAuth authorization flow was cancelled.", true),
+				true,
+			)
+		}
+		await this.callbackServerCloseBarrier
 	}
 
 	private complete(flowId: string, profileId: string, callbackUri: string, waitForServer: boolean): Promise<TCredential> {
@@ -245,10 +250,11 @@ export class LocalOAuthFlowCoordinator<TCredential> {
 
 	private async cleanup(pending: PendingFlow<TCredential>, waitForServer: boolean): Promise<void> {
 		if (this.pending !== pending) return
+		const serverClose = pending.server.close()
+		this.callbackServerCloseBarrier = serverClose.catch(() => undefined)
 		this.pending = undefined
 		clearTimeout(pending.timeout)
 		await pending.lease.release()
-		if (waitForServer) await pending.server.close()
-		else void pending.server.close().catch(() => undefined)
+		if (waitForServer) await serverClose
 	}
 }

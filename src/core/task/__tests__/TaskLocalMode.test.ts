@@ -45,10 +45,11 @@ describe("Task task-local mode", () => {
 			images: ["image"],
 			files: ["file"],
 		})
+		expect(fakeTask.taskState.didRespondToPlanAskBySwitchingMode).toBe(true)
 	})
 
-	/** Continue an awaiting conversational interaction when switching from Act into Plan. */
-	it("continues an awaiting Act interaction in Plan", async () => {
+	/** Switch modes without resolving the awaiting interaction when no user-authored input exists. */
+	it("does not continue an awaiting interaction without input", async () => {
 		const fakeTask = {
 			taskSm: { mode: "act", setMode: vi.fn() },
 			rebuildApiHandler: vi.fn(),
@@ -63,7 +64,9 @@ describe("Task task-local mode", () => {
 		await Task.prototype.commitMode.call(fakeTask, "plan")
 
 		expect(fakeTask.taskSm.setMode).toHaveBeenCalledWith("plan")
-		expect(fakeTask.interactionCoordinator.respondForModeSwitch).toHaveBeenCalledWith({ text: "", images: [], files: [] })
+		expect(fakeTask.rebuildApiHandler).toHaveBeenCalledOnce()
+		expect(fakeTask.interactionCoordinator.canRespondForModeSwitch).not.toHaveBeenCalled()
+		expect(fakeTask.interactionCoordinator.respondForModeSwitch).not.toHaveBeenCalled()
 		expect(fakeTask.taskState.didRespondToPlanAskBySwitchingMode).toBe(false)
 		expect(fakeTask.stateManager.flushPendingState).toHaveBeenCalledOnce()
 	})
@@ -87,9 +90,9 @@ describe("Task task-local mode", () => {
 			stateManager: { flushPendingState: vi.fn() },
 		}
 
-		await expect(Task.prototype.commitMode.call(fakeTask, "act")).rejects.toThrow(
-			"The active plan interaction changed during the mode switch.",
-		)
+		await expect(
+			Task.prototype.commitMode.call(fakeTask, "act", { message: "continue", images: [], files: [] }),
+		).rejects.toThrow("The active plan interaction changed during the mode switch.")
 
 		expect(taskSm.mode).toBe("plan")
 		expect(taskSm.setMode).toHaveBeenNthCalledWith(1, "act")

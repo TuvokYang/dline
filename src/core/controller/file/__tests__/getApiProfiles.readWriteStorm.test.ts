@@ -2,6 +2,7 @@ import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { EmptyRequest } from "@shared/proto/dline/common"
+import { ApiProfile } from "@shared/proto/dline/profile"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 /**
@@ -142,6 +143,26 @@ describe("getApiProfiles read/write storm", () => {
 		expect(cleanRewriteLogs).toHaveLength(0)
 		expect(after.mtimeMs).toBe(before.mtimeMs)
 		expect(after.size).toBe(before.size)
+	})
+
+	it("does not overwrite a Catalog that changed after the migration snapshot was read", async () => {
+		const staleProfiles = [{ id: "legacy", name: "Legacy", provider: "custom-provider", modelId: "legacy-model" }]
+		const filePath = await writeCatalog(staleProfiles)
+		const staleRaw = await fs.readFile(filePath, "utf8")
+		const module = await import("../getApiProfiles")
+		const externalProfiles = [
+			{ id: "external", name: "External", provider: "openai", modelId: "gpt-4o", enabled: true, schemaVersion: 2 },
+		]
+		const externalRaw = JSON.stringify(externalProfiles, null, "\t")
+		await fs.writeFile(filePath, externalRaw, "utf8")
+
+		const rewritten = await module.cleanRewriteApiProfiles(
+			staleRaw,
+			staleProfiles.map((profile) => ApiProfile.fromJSON({ ...profile, enabled: true, schemaVersion: 2 })),
+		)
+
+		expect(rewritten).toBe(false)
+		expect(await fs.readFile(filePath, "utf8")).toBe(externalRaw)
 	})
 
 	it("keeps repeated synchronous reads from rewriting the Catalog", async () => {

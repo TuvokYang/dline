@@ -93,7 +93,7 @@ describe("OpenAIImageGenerationAdapter", () => {
 		})
 	})
 
-		it("uses the 2K landscape default for a single GPT Image 2 PNG generation", async () => {
+	it("uses the 2K landscape default for a single GPT Image 2 PNG generation", async () => {
 		const generate = vi.fn(async () => ({ data: [{ b64_json: IMAGE_BASE64 }] }))
 		const adapter = new OpenAIImageGenerationAdapter({
 			profile: profile(),

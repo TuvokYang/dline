@@ -118,7 +118,6 @@ export const demo = e2e.extend<DemoFixtures>({
 	app: async ({ openVSCode, workspaceType, workspaceDir, multiRootWorkspaceDir, _demoRecordingState }, use, testInfo) => {
 		const workspacePath = workspaceType === "single" ? workspaceDir : multiRootWorkspaceDir
 		const app = await openVSCode(workspacePath, undefined, {
-			recordVideo: false,
 			windowSize: DEMO_VIEWPORT,
 			forceDeviceScaleFactor: 1,
 		})

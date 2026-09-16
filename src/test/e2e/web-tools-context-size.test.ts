@@ -157,10 +157,12 @@ e2e(
 		await expect(openAiCard.getByText("Hosted Web Tools available", { exact: true })).toBeVisible()
 
 		const deepSeekCard = await openProfileEditor(sidebar, E2E_PROFILE_NAMES.mockDeepSeek)
-		// The fixture configures this profile with the OpenAI chat protocol.
+		// The fixture configures this profile with the OpenAI chat protocol, which routes Web Tools locally.
 		await expect(deepSeekCard.getByRole("combobox", { name: "API Format" })).toHaveValue(String(ApiFormat.OPENAI_CHAT))
 		await expect(deepSeekCard.getByRole("combobox", { name: "Web Tools mode" })).toHaveCount(1)
-		await expect(deepSeekCard.getByText("Hosted Web Tools available", { exact: true })).toBeVisible()
+		await expect(
+			deepSeekCard.getByText("Hosted Web Tools unavailable for current model or API Format", { exact: true }),
+		).toBeVisible()
 		await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
 	},
 )
@@ -199,10 +201,25 @@ e2e(
 		})
 
 		await helper.signin(sidebar)
+		const modelSwitcher = sidebar.getByRole("button", { name: "Select model" })
+		if ((await modelSwitcher.innerText()).trim() !== E2E_PROFILE_NAMES.mockOpenAiOfficialResponses) {
+			await modelSwitcher.click()
+			await sidebar.getByRole("option").filter({ hasText: E2E_PROFILE_NAMES.mockOpenAiOfficialResponses }).click()
+		}
+		await expect(modelSwitcher).toHaveText(E2E_PROFILE_NAMES.mockOpenAiOfficialResponses)
 		await sendTask(sidebar, "Use provider-hosted Web Search and return the compressed result.")
+		await expect(sidebar.getByText("Dline wants to search the web for:", { exact: true })).toBeVisible({ timeout: 60_000 })
+		await expect(sidebar.getByText("OpenAI Web Search (Hosted)", { exact: true })).toBeVisible()
+		expect(server.getMockConsumptions("openai-official-responses")).toHaveLength(0)
+		await sidebar.getByRole("contentinfo").getByText("Approve", { exact: true }).click()
+		await expect.poll(() => server.getMockConsumptions("openai-official-responses").length).toBe(1)
 		const searchCard = sidebar.getByTestId("web-search-card").filter({ hasText: query })
 		await expect(searchCard).toBeVisible({ timeout: 60_000 })
 		await expect(searchCard).toContainText("OpenAI Web Search (Hosted)")
+		const detailsToggle = searchCard.getByTestId("web-search-details-toggle")
+		await expect(detailsToggle).toHaveAttribute("aria-expanded", "false")
+		await detailsToggle.click()
+		await expect(detailsToggle).toHaveAttribute("aria-expanded", "true")
 		await expect(searchCard.getByText(resultTitle, { exact: true })).toBeVisible()
 		await expect(searchCard.getByText(resultUrl, { exact: true })).toBeVisible()
 		await expect(searchCard.getByText(resultSnippet, { exact: true })).toBeVisible()
@@ -230,11 +247,10 @@ e2e(
 		const compatibleProfileName = E2E_PROFILE_NAMES.persistence
 		const compatibleCard = await openProfileEditor(sidebar, compatibleProfileName)
 		await openModelConfiguration(compatibleCard)
-		// The merged picker offers an unlisted query as an explicit custom row.
-		const modelInput = compatibleCard.locator('vscode-text-field[placeholder="Search, select, or enter a model ID..."] input')
-		await modelInput.click()
+		// This fixture explicitly enables a custom model ID, so it renders the direct text field rather than the merged picker.
+		const modelInput = compatibleCard.locator('vscode-text-field[placeholder="Enter Model ID..."] input')
 		await modelInput.fill("custom-deepseek-model")
-		await sidebar.getByRole("option", { name: /^custom-deepseek-model( (New|Custom))?$/ }).click()
+		await modelInput.press("Tab")
 		await expect(modelInput).toHaveValue("custom-deepseek-model")
 		await setTextField(compatibleCard, "Context Window Size", "256000")
 		await waitForProfile(
@@ -247,6 +263,7 @@ e2e(
 		const modelSwitcher = sidebar.getByRole("button", { name: "Select model" })
 		await modelSwitcher.click()
 		await sidebar.getByRole("option").filter({ hasText: officialProfileName }).click()
+		await expect(modelSwitcher).toHaveText(officialProfileName)
 		server.enqueueResponses("openai-official-responses", {
 			type: "tool",
 			id: "call_bugfix_001_gpt_context",
@@ -254,6 +271,9 @@ e2e(
 			arguments: { result: "E2E_GPT_CONTEXT_OK" },
 		})
 		await sendTask(sidebar, "Verify the official GPT context projection.")
+		await expect(sidebar.getByText("Dline wants to search the web for:", { exact: true })).toBeVisible({ timeout: 60_000 })
+		await expect(sidebar.getByText("OpenAI Web Search (Hosted)", { exact: true })).toBeVisible()
+		await sidebar.getByRole("contentinfo").getByText("Approve", { exact: true }).click()
 		await expect(sidebar.getByText("E2E_GPT_CONTEXT_OK", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
 		const expandTaskHeader = sidebar.getByLabel("Expand task header")
 		if (await expandTaskHeader.isVisible()) await expandTaskHeader.click()
@@ -262,6 +282,7 @@ e2e(
 
 		await modelSwitcher.click()
 		await sidebar.getByRole("option").filter({ hasText: compatibleProfileName }).click()
+		await expect(modelSwitcher).toHaveText(compatibleProfileName)
 		await expect(contextMaximum).toHaveText("256.0k")
 		await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
 	},

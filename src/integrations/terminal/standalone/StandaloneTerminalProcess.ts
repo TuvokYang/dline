@@ -14,7 +14,6 @@ import { EventEmitter } from "events"
 import * as iconv from "iconv-lite"
 import { terminateProcessTree } from "@/utils/process-termination"
 import { WINDOWS_POWERSHELL_LEGACY_PATH } from "@/utils/shell"
-
 import {
 	isCompilingOutput,
 	MAX_FULL_OUTPUT_SIZE,
@@ -23,6 +22,7 @@ import {
 	PROCESS_HOT_TIMEOUT_NORMAL,
 	TRUNCATE_KEEP_LINES,
 } from "../constants"
+import type { WindowsProcessTreeProvider } from "../process-tree"
 import type {
 	ITerminal,
 	ITerminalProcess,
@@ -123,7 +123,7 @@ export class StandaloneTerminalProcess extends EventEmitter<TerminalProcessEvent
 	/** Whether the process has completed */
 	private isCompleted = false
 
-	constructor() {
+	constructor(private readonly windowsProcessTreeProvider?: WindowsProcessTreeProvider) {
 		super()
 		this.started = new Promise<number>((resolve) => {
 			this.resolveStarted = resolve
@@ -301,9 +301,8 @@ export class StandaloneTerminalProcess extends EventEmitter<TerminalProcessEvent
 				// Spawn the process with special handling for "cmd.exe"
 				this.childProcess = spawn("cmd.exe", shellArgs, shellOptions)
 			} else {
-				// POSIX uses a detached process group. On Windows, detached PowerShell
-				// can exit successfully before executing the supplied command; tree-kill
-				// already terminates the full Windows process tree via taskkill /T /F.
+				// POSIX uses a detached process group. Windows descendants are discovered
+				// through the host-owned process-tree provider during cancellation.
 				this.childProcess = spawn(shell, shellArgs, {
 					...shellOptions,
 					detached: process.platform !== "win32",
@@ -548,9 +547,9 @@ export class StandaloneTerminalProcess extends EventEmitter<TerminalProcessEvent
 	 * Terminate the process and all its children.
 	 *
 	 * Uses terminateProcessTree utility which handles:
-	 * - Cross-platform process tree termination via tree-kill
-	 * - Graceful shutdown with SIGTERM
-	 * - SIGKILL fallback after 2 second timeout
+	 * - Host-owned descendant discovery on Windows
+	 * - Graceful SIGTERM and forceful SIGKILL escalation on POSIX
+	 * - Bounded confirmation that owned processes and streams have closed
 	 */
 	async terminate(): Promise<void> {
 		if (!this.childProcess || this.isCompleted) {
@@ -568,6 +567,7 @@ export class StandaloneTerminalProcess extends EventEmitter<TerminalProcessEvent
 			pid,
 			childProcess: this.childProcess,
 			isCompleted: () => this.isCompleted,
+			windowsProcessTreeProvider: this.windowsProcessTreeProvider,
 		})
 	}
 }

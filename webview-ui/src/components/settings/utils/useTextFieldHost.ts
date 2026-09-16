@@ -26,9 +26,11 @@ function findHost(token: string): HTMLElement | null {
  * unchanged `value` prop does not reset it, which lets the DOM drift from React
  * state and makes a later write append to the stale text.
  *
+ * Pass `syncValue=false` while the user is actively editing so the browser owns
+ * the live value and selection. Re-enable synchronization at commit boundaries.
  * Spread the returned props onto the text field to opt in.
  */
-export function useTextFieldHost(ariaLabel: string | undefined, value: string): TextFieldHostProps {
+export function useTextFieldHost(ariaLabel: string | undefined, value: string, syncValue = true): TextFieldHostProps {
 	const token = useId()
 
 	useEffect(() => {
@@ -57,12 +59,25 @@ export function useTextFieldHost(ariaLabel: string | undefined, value: string): 
 	}, [ariaLabel, token])
 
 	useEffect(() => {
+		if (!syncValue) {
+			return
+		}
+
 		const host = findHost(token)
-		const input = host?.shadowRoot?.querySelector("input")
+		if (!host) {
+			return
+		}
+
+		const valueHost = host as HTMLElement & { value?: string }
+		if (valueHost.value !== value) {
+			valueHost.value = value
+		}
+
+		const input = host instanceof HTMLInputElement ? host : host.shadowRoot?.querySelector("input")
 		if (input && input.value !== value) {
 			input.value = value
 		}
-	}, [token, value])
+	}, [syncValue, token, value])
 
 	return { [HOST_MARKER_ATTRIBUTE]: token }
 }

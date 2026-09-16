@@ -95,7 +95,8 @@ export class ArtifactResolver {
 	): Promise<ImageArtifact[]> {
 		const inputs: StoreImageInput[] = []
 		for (const output of outputs) {
-			if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new Error("Image generation was cancelled.")
+			if (signal?.aborted)
+				throw signal.reason instanceof Error ? signal.reason : new Error("Image generation was cancelled.")
 			inputs.push(await this.normalizeProviderOutput(output, provenance, signal))
 		}
 		return this.store.storeImages(inputs, signal)
@@ -113,15 +114,17 @@ export class ArtifactResolver {
 			providerOutputId: output.id,
 			revisedPrompt: output.revisedPrompt,
 			sourceKind: output.source.kind,
-			...(provenance.parentArtifactIds?.length
-				? { parentArtifactIds: [...new Set(provenance.parentArtifactIds)] }
-				: {}),
+			...(provenance.parentArtifactIds?.length ? { parentArtifactIds: [...new Set(provenance.parentArtifactIds)] } : {}),
 		}
 		switch (output.source.kind) {
 			case "bytes":
 				return { bytes: output.source.bytes, declaredMimeType: output.source.mimeType, provenance: baseProvenance }
 			case "base64":
-				return { bytes: decodeStrictBase64(output.source.data), declaredMimeType: output.source.mimeType, provenance: baseProvenance }
+				return {
+					bytes: decodeStrictBase64(output.source.data),
+					declaredMimeType: output.source.mimeType,
+					provenance: baseProvenance,
+				}
 			case "url": {
 				const url = parseSafeArtifactUrl(output.source.url)
 				if (!this.urlDownloader) {

@@ -298,6 +298,7 @@ e2e(
 			actProfile: sourceProfile,
 			useAutoCondense: false,
 		})
+		const latestMessage = ["E2E_SPLIT_PROFILE_LATEST", "a ".repeat(40_000)].join("\n")
 		server.enqueueResponses(
 			"openai-compatible-responses",
 			{
@@ -310,19 +311,20 @@ e2e(
 			{
 				type: "tool",
 				id: "call_split_profile_source_ready",
-				name: "attempt_completion",
-				arguments: { result: "E2E_SPLIT_PROFILE_SOURCE_READY" },
+				name: "qna_respond",
+				arguments: { response: "E2E_SPLIT_PROFILE_SOURCE_READY" },
 				usage: { inputTokens: 140_000, outputTokens: 100 },
 				expectedRequestIncludes: ["E2E_SPLIT_PROFILE_LATEST"],
 			},
+			{
+				type: "tool",
+				id: "call_split_profile_durable_ready",
+				name: "qna_respond",
+				arguments: { response: "E2E_SPLIT_PROFILE_DURABLE_READY" },
+				usage: { inputTokens: 140_000, outputTokens: 100 },
+				expectedRequestIncludes: ["E2E_SPLIT_PROFILE_DURABLE"],
+			},
 		)
-		server.enqueueResponses("openai-compatible-chat", {
-			type: "tool",
-			id: "call_split_profile_target_summary",
-			name: "summarize_task",
-			arguments: { context: "E2E_SPLIT_PROFILE_TARGET_SUMMARY preserves the task context." },
-			expectedRequestIncludes: ["The current conversation is rapidly running out of context", "E2E_SPLIT_PROFILE_TASK"],
-		})
 		const app = await openVSCode(workspaceDir)
 		try {
 			const { sidebar } = await openSidebar(app, helper)
@@ -330,8 +332,12 @@ e2e(
 			await expect(sidebar.getByText("E2E_SPLIT_PROFILE_HISTORY_READY", { exact: false }).last()).toBeVisible({
 				timeout: 60_000,
 			})
-			await sendTask(sidebar, "E2E_SPLIT_PROFILE_LATEST")
+			await sendTask(sidebar, latestMessage)
 			await expect(sidebar.getByText("E2E_SPLIT_PROFILE_SOURCE_READY", { exact: false }).last()).toBeVisible({
+				timeout: 60_000,
+			})
+			await sendTask(sidebar, "E2E_SPLIT_PROFILE_DURABLE")
+			await expect(sidebar.getByText("E2E_SPLIT_PROFILE_DURABLE_READY", { exact: false }).last()).toBeVisible({
 				timeout: 60_000,
 			})
 			const taskId = await onlyTaskId(dlineDocsDir)
@@ -343,12 +349,12 @@ e2e(
 			await profileOption(sidebar, targetProfile.name).press("Enter")
 
 			const dialog = sidebar.getByRole("dialog")
-			await expect(dialog.getByRole("heading", { name: "Compact context before switching?" })).toBeVisible()
-			await dialog.getByRole("button", { name: "Compact & Switch" }).click()
+			await expect(dialog.getByRole("heading", { name: "Switch to a smaller context window?" })).toBeVisible()
+			await expect(dialog).toContainText("nothing is compacted now")
+			await expect(dialog.getByRole("button", { name: "Compact & Switch" })).toHaveCount(0)
+			await dialog.getByRole("button", { name: "Switch", exact: true }).click()
 			await expect(modelSwitcher).toHaveText(targetProfile.name, { timeout: 60_000 })
-			await expect(sidebar.getByText("E2E_SPLIT_PROFILE_TARGET_SUMMARY", { exact: false }).last()).toBeVisible({
-				timeout: 60_000,
-			})
+			expect(server.getRequestCount("openai-compatible-chat")).toBe(0)
 
 			await expect(modelSwitcher).toBeEnabled()
 			await openProfileMenu(sidebar)

@@ -170,6 +170,9 @@ export function cleanupStateSubscriptions(controller: Controller): StateSubscrip
 	pendingUpdates.delete(controller)
 	debounceTimers.delete(controller)
 	controllerSendChains.delete(controller)
+	// A later subscriber needs a full payload, so the equality guard must not
+	// remember what a detached one already received.
+	lastDeliveredPayloads.delete(controller)
 	return result
 }
 
@@ -226,6 +229,22 @@ export async function sendAccountUsageUpdate(controller: Controller, accountUsag
 	})
 }
 
+/**
+ * Serialized form of the last payload delivered to a controller's subscribers.
+ *
+ * The top-level `stateRevision` advances on every build, so it is replaced by a
+ * constant before comparison: it only lets the Webview reject an out-of-order
+ * snapshot and is not a value the UI renders. Every other field participates,
+ * including `taskViewState.stateRevision`, which the interaction host does use
+ * to decide what it is allowed to act on.
+ */
+const lastDeliveredPayloads = new WeakMap<Controller, string>()
+
+/** Neutralize the revision that changes on every build, leaving the rest intact. */
+function stateIdentity(state: ExtensionState): string {
+	return JSON.stringify({ ...state, stateRevision: 0 })
+}
+
 async function sendStateToSubscribers(
 	controller: Controller,
 	state: ExtensionState,
@@ -248,6 +267,14 @@ async function sendStateToSubscribers(
 				`[StateUpdate] serialization timing: taskId=${controller.task?.taskId ?? "none"}, serializationMs=${serializationMs}, sizeBytes=${stateSizeBytes}, activeTasks=${activeTasks}`,
 			)
 		}
+		// A durable message boundary republishes the whole state even when it
+		// carries no change, and an idle task produces a steady stream of them.
+		// Delivering an identical payload costs every subscriber a full parse
+		// and re-render for nothing.
+		const identity = stateIdentity(state)
+		if (lastDeliveredPayloads.get(controller) === identity) return
+		lastDeliveredPayloads.set(controller, identity)
+
 		recordStateSizeTelemetry(stateSizeBytes)
 		reportOversizedState(controller, state, stateSizeBytes)
 

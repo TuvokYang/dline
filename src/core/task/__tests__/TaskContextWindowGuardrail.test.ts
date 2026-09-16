@@ -121,15 +121,22 @@ describe("Task context-window final admission guard", () => {
 			"await this.runOrdinaryContextCompaction(",
 			persistedProjectionIndex,
 		)
+		const compactionInputDeclaration = "const ordinaryCompactionInput = persistedRequest ? [] : originalUserContent"
+		const coarseCompactionInputIndex = requestMethod.lastIndexOf(compactionInputDeclaration, coarseCompactionRouteIndex)
+		const finalGuardCompactionInputIndex = requestMethod.lastIndexOf(
+			compactionInputDeclaration,
+			finalGuardCompactionRouteIndex,
+		)
 
 		expect(pressureDecisionIndex).toBeGreaterThanOrEqual(0)
+		expect(coarseCompactionInputIndex).toBeGreaterThan(pressureDecisionIndex)
+		expect(coarseCompactionInputIndex).toBeLessThan(coarseCompactionRouteIndex)
 		expect(coarseCompactionRouteIndex).toBeGreaterThan(pressureDecisionIndex)
 		expect(persistedProjectionIndex).toBeGreaterThan(coarseCompactionRouteIndex)
+		expect(requestMethod.slice(coarseCompactionRouteIndex, persistedProjectionIndex)).toContain("ordinaryCompactionInput,")
 		expect(finalGuardCompactionRouteIndex).toBeGreaterThan(persistedProjectionIndex)
-		expect(requestMethod.slice(coarseCompactionRouteIndex, persistedProjectionIndex)).toContain(
-			"persistedRequest ? [] : originalUserContent",
-		)
-		expect(requestMethod.slice(finalGuardCompactionRouteIndex)).toContain("persistedRequest ? [] : originalUserContent")
+		expect(finalGuardCompactionInputIndex).toBeGreaterThan(persistedProjectionIndex)
+		expect(finalGuardCompactionInputIndex).toBeLessThan(finalGuardCompactionRouteIndex)
 		expect(requestMethod.slice(pressureDecisionIndex, coarseCompactionRouteIndex)).not.toContain(
 			"attemptFileReadOptimization(",
 		)
@@ -184,7 +191,8 @@ describe("Task context-window final admission guard", () => {
 		const environmentIndex = method.indexOf("parsedContent.push", loadContextIndex)
 		const backgroundIndex = method.indexOf("await this.appendBackgroundResults(parsedContent", environmentIndex)
 		const historyIndex = method.indexOf("buildTargetCandidateHistory(", backgroundIndex)
-		const providerInputIndex = method.indexOf("this.buildProviderInput(", historyIndex)
+		const repairIndex = method.indexOf("this.contextManager.repairProviderMessages(targetHistory)", historyIndex)
+		const providerInputIndex = method.indexOf("this.buildProviderInput(", repairIndex)
 		const estimateIndex = method.indexOf("estimateContextWindowCandidate(targetInput,", providerInputIndex)
 		const decisionIndex = method.indexOf("decideTargetWindowFitting({", estimateIndex)
 
@@ -192,11 +200,26 @@ describe("Task context-window final admission guard", () => {
 		expect(environmentIndex).toBeGreaterThan(loadContextIndex)
 		expect(backgroundIndex).toBeGreaterThan(environmentIndex)
 		expect(historyIndex).toBeGreaterThan(backgroundIndex)
-		expect(providerInputIndex).toBeGreaterThan(historyIndex)
+		expect(repairIndex).toBeGreaterThan(historyIndex)
+		expect(providerInputIndex).toBeGreaterThan(repairIndex)
+		expect(method).toContain("apiConversationHistory: providerReadyTargetHistory")
 		expect(method).toContain("applyCompactionProjection: false")
 		expect(estimateIndex).toBeGreaterThan(providerInputIndex)
 		expect(decisionIndex).toBeGreaterThan(estimateIndex)
 		expect(method).not.toContain("getContextWindowRequestPressures(")
+	})
+
+	it("uses complete indicator segments and persisted provider occupancy for Profile preflight", async () => {
+		const source = await readFile(taskSourcePath, "utf8")
+		const method = extractMethod(
+			source,
+			"getOccupiedContextTokens(): number",
+			"/** Assemble one non-destructive complete target candidate",
+		)
+
+		expect(method).toContain("getContextWindowIndicatorTotalTokens(this.contextWindowIndicator.getSnapshot())")
+		expect(method).toContain("this.getContextWindowRequestPressures()")
+		expect(method).toContain("resolveOccupiedContextWindowTokens(")
 	})
 
 	it("projects explicit Profile and Mode transitions from reliable pressure plus the complete target candidate", async () => {
@@ -265,7 +288,7 @@ describe("Task context-window final admission guard", () => {
 		expect(commit).toContain("createCompactionConversationRange(state")
 		expect(commit).toContain("this.commitContextCompactionSnapshot(input, snapshot, range)")
 		expect(source).toContain("private async commitContextCompactionSnapshot(")
-		expect(source).toContain("this.messageStateHandler.commitTransientClineMessage(")
+		expect(source).toContain("this.messageStateHandler.finalizeClineMessage(")
 		expect(source).toContain("compactionDurable: partial === false")
 		expect(commit).toContain("this.taskState.targetWindowFittingCommitted = true")
 		expect(commit).not.toContain("overwriteApiConversationHistory(")
@@ -300,6 +323,11 @@ describe("Task context-window final admission guard", () => {
 		expect(presenter).toContain("failed: true")
 		expect(presenter).toContain("await this.recoverApiFailure({")
 		expect(requestMethod.match(/if \(result === "failed"\)/g)).toHaveLength(2)
+		expect(
+			requestMethod.match(
+				/await this\.presentTerminalCompactionFailure\(operationId, apiIndex, ordinaryCompactionInput\)/g,
+			),
+		).toHaveLength(2)
 		expect(requestMethod.match(/if \(result === "cancelled"\) return true/g)).toHaveLength(2)
 		expect(requestMethod.match(/if \(result !== "completed"\) return true/g)).toHaveLength(1)
 	})

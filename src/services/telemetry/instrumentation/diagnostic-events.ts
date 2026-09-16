@@ -35,8 +35,17 @@ export enum DiagnosticDomain {
  * kind stays meaningful after the surrounding implementation is refactored.
  */
 export const DIAGNOSTIC_KINDS = {
-	[DiagnosticDomain.Terminal]: ["warm_pool_miss", "shell_integration_unavailable", "process_terminated", "reuse_rejected"],
-	[DiagnosticDomain.Checkpoint]: ["baseline_rebuilt", "paths_unstageable", "nested_repository_skipped"],
+	[DiagnosticDomain.Terminal]: [
+		"warm_pool_miss",
+		"shell_integration_unavailable",
+		"process_terminated",
+		"reuse_rejected",
+		// Distinct from `warm_pool_miss`: a miss is one command that found the
+		// pool empty, while this is the refill itself failing, which is why the
+		// pool was empty in the first place.
+		"prewarm_failed",
+	],
+	[DiagnosticDomain.Checkpoint]: ["baseline_rebuilt", "paths_unstageable", "nested_repository_skipped", "add_failed"],
 	[DiagnosticDomain.Hook]: ["discovery_cache_miss", "discovery_cache_invalidated", "execution_skipped"],
 	[DiagnosticDomain.Settings]: ["reconcile_conflict", "listener_failure", "broadcast_skipped"],
 	[DiagnosticDomain.Task]: ["history_truncated", "context_window_exceeded", "stream_retry", "resume_interrupted"],

@@ -19,9 +19,8 @@ import { ClineMessage } from "./ExtensionMessage"
  * // Result: [{ type: "say", say: "api_req_started", text: '{"request":"GET /api/data","cost":0.005}', ts: 1000 }]
  */
 export function combineApiRequests(messages: ClineMessage[]): ClineMessage[] {
-	const combinedApiRequests: ClineMessage[] = []
 	// Index combined requests by message timestamp for O(1) lookup during the
-	// final mapping pass. Keep the FIRST combined entry for a duplicated ts to
+	// final output pass. Keep the FIRST combined entry for a duplicated ts to
 	// preserve old semantics.
 	const combinedByTs = new Map<number, ClineMessage>()
 
@@ -53,7 +52,6 @@ export function combineApiRequests(messages: ClineMessage[]): ClineMessage[] {
 		}
 		if (nextFinished >= finishedPositions.length) {
 			// No matching api_req_finished found: keep the original api_req_started.
-			combinedApiRequests.push(msg)
 			continue
 		}
 
@@ -67,7 +65,6 @@ export function combineApiRequests(messages: ClineMessage[]): ClineMessage[] {
 				...finishedRequest,
 			}),
 		}
-		combinedApiRequests.push(combinedMessage)
 		if (!combinedByTs.has(msg.ts)) {
 			combinedByTs.set(msg.ts, combinedMessage)
 		}
@@ -78,14 +75,16 @@ export function combineApiRequests(messages: ClineMessage[]): ClineMessage[] {
 		i = finishedIndex
 	}
 
-	// Replace original api_req_started and remove api_req_finished
-	return messages
-		.filter((msg) => !(msg.type === "say" && msg.say === "api_req_finished"))
-		.map((msg) => {
-			if (msg.type === "say" && msg.say === "api_req_started") {
-				const combinedRequest = combinedByTs.get(msg.ts)
-				return combinedRequest || msg
-			}
-			return msg
-		})
+	// Replace original api_req_started and remove api_req_finished in one
+	// pre-sized pass. Avoiding the unused combined-message array and the
+	// filter().map() intermediate materially reduces GC pressure on long tasks.
+	const result = new Array<ClineMessage>(messages.length - finishedPositions.length)
+	let resultIndex = 0
+	for (const msg of messages) {
+		if (msg.type === "say" && msg.say === "api_req_finished") {
+			continue
+		}
+		result[resultIndex++] = msg.type === "say" && msg.say === "api_req_started" ? (combinedByTs.get(msg.ts) ?? msg) : msg
+	}
+	return result
 }

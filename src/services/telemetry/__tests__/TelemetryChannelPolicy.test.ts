@@ -26,7 +26,7 @@ function registration(
 	}
 }
 
-function spanHandle(end = vi.fn()): TelemetrySpanHandle {
+function spanHandle(end: TelemetrySpanHandle["end"] = vi.fn()): TelemetrySpanHandle {
 	return { active: true, setAttribute: vi.fn(), recordException: vi.fn(), end }
 }
 
@@ -69,7 +69,7 @@ describe("TelemetryChannelPolicy", () => {
 		expect(end).toHaveBeenCalledWith("success", undefined)
 	})
 
-	it("delivers journal capabilities before remote event and trace capabilities", () => {
+	it("journals events and ended spans first while allocating the remote trace identity first", () => {
 		const order: string[] = []
 		const makeRegistration = (name: string, sink: TelemetryProviderRegistration["sink"]): TelemetryProviderRegistration => ({
 			kind: "registration",
@@ -86,8 +86,8 @@ describe("TelemetryChannelPolicy", () => {
 				{
 					kind: "trace",
 					startSpan: () => {
-						order.push(`${name}:trace`)
-						return spanHandle()
+						order.push(`${name}:trace:start`)
+						return spanHandle(() => order.push(`${name}:trace:end`))
 					},
 				},
 			],
@@ -99,7 +99,14 @@ describe("TelemetryChannelPolicy", () => {
 		registry.logEvent("task.started", () => ({}), false)
 		registry.startSpan({ name: "tool.execution" }, "runtime").end("success")
 
-		expect(order).toEqual(["journal:event", "remote:event", "journal:trace", "remote:trace"])
+		expect(order).toEqual([
+			"journal:event",
+			"remote:event",
+			"remote:trace:start",
+			"journal:trace:start",
+			"journal:trace:end",
+			"remote:trace:end",
+		])
 	})
 
 	it("unwraps a composite parent into the matching provider-specific parent handle", () => {

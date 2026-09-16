@@ -132,10 +132,7 @@ describe("CompactionRequestReplay", () => {
 		expect(first.inputHash).toMatch(/^sha256:/)
 
 		expect(
-			replay.prepareOpenAiMaxOutputReplay(
-				12,
-				new OutputLimitExceededError("openai_responses", "max_output_tokens"),
-			),
+			replay.prepareOpenAiMaxOutputReplay(12, new OutputLimitExceededError("openai_responses", "max_output_tokens")),
 		).toBe("replay")
 		const second = replay.beginAttempt(12, "authorization-attempt-1")
 		expect(second).toMatchObject({

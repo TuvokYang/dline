@@ -19,6 +19,7 @@ import { Logger } from "@/shared/services/Logger"
 import { isCommandCompletionSuccessful } from "../command-completion"
 import { DEFAULT_TERMINAL_OUTPUT_LINE_LIMIT } from "../constants"
 import { flushTerminalOutputStream, writeTerminalOutputFrame, writeTerminalOutputText } from "../output-stream"
+import type { WindowsProcessTreeProvider } from "../process-tree"
 import { TerminalOutputFrameScheduler } from "../TerminalOutputFrameScheduler"
 import type {
 	BackgroundCommand,
@@ -76,6 +77,8 @@ function mergePromise(process: StandaloneTerminalProcess, promise: Promise<void>
  * Implements ITerminalManager for compatibility with the Task class.
  */
 export class StandaloneTerminalManager implements ITerminalManager {
+	constructor(private readonly windowsProcessTreeProvider?: WindowsProcessTreeProvider) {}
+
 	/** Registry for tracking terminals */
 	private registry: StandaloneTerminalRegistry = new StandaloneTerminalRegistry()
 
@@ -135,7 +138,7 @@ export class StandaloneTerminalManager implements ITerminalManager {
 		terminalInfo.busy = true
 		terminalInfo.lastCommand = command
 
-		const process = new StandaloneTerminalProcess()
+		const process = new StandaloneTerminalProcess(this.windowsProcessTreeProvider)
 		this.processes.set(terminalInfo.id, process)
 
 		process.once("completed", () => {
@@ -183,6 +186,10 @@ export class StandaloneTerminalManager implements ITerminalManager {
 
 		if (matchingTerminal) {
 			this.terminalIds.add(matchingTerminal.id)
+			// This host has no warm pool, so an acquisition is either a reuse or
+			// a full shell start. Reporting the same dimension as the VS Code
+			// host keeps one acquisition metric readable across both.
+			matchingTerminal.acquisitionSource = "registry_reuse"
 			return matchingTerminal
 		}
 
@@ -199,6 +206,7 @@ export class StandaloneTerminalManager implements ITerminalManager {
 					availableTerminal.terminal.shellIntegration.cwd.fsPath = cwd
 				}
 				this.terminalIds.add(availableTerminal.id)
+				availableTerminal.acquisitionSource = "registry_reuse"
 				return availableTerminal
 			}
 		}
@@ -212,6 +220,7 @@ export class StandaloneTerminalManager implements ITerminalManager {
 			configurationId: expectedConfigurationId,
 		})
 		this.terminalIds.add(newTerminalInfo.id)
+		newTerminalInfo.acquisitionSource = "cold_start"
 		return newTerminalInfo
 	}
 
@@ -770,29 +779,27 @@ export class StandaloneTerminalManager implements ITerminalManager {
 	/**
 	 * Cancel/terminate a specific background command.
 	 * @param id The background command ID to cancel
-	 * @returns true if cancelled, false if not found or already completed
+	 * @returns true after process termination and output drain complete, or false if the command is not running
 	 */
-	cancelBackgroundCommand(id: string): boolean {
+	async cancelBackgroundCommand(id: string): Promise<boolean> {
 		const command = this.backgroundCommands.get(id)
 		if (!command || command.status !== "running") {
 			return false
 		}
 
-		// Clear timeout
+		// Seal the terminal state before termination can emit a late completion or error.
+		command.status = "cancelled"
+
 		const timeout = this.backgroundTimeouts.get(id)
 		if (timeout) {
 			clearTimeout(timeout)
 			this.backgroundTimeouts.delete(id)
 		}
 
-		void this.drainBackgroundOutput(id, ["[CANCELLED] Command cancelled by user"])
-
-		// Terminate process
-		if (command.process && typeof (command.process as any).terminate === "function") {
-			;(command.process as any).terminate()
-		}
-
-		command.status = "cancelled"
+		await Promise.all([
+			this.drainBackgroundOutput(id, ["[CANCELLED] Command cancelled by user"]),
+			Promise.resolve(command.process.terminate?.()),
+		])
 		return true
 	}
 

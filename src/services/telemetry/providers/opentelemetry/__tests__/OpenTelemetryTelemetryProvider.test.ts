@@ -1,6 +1,6 @@
 import { InMemoryLogRecordExporter, LoggerProvider, SimpleLogRecordProcessor } from "@opentelemetry/sdk-logs"
 import { expect } from "chai"
-import { afterEach, beforeEach, describe, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, it, type MockInstance, vi } from "vitest"
 // sinon import removed
 import type { ClineAccountUserInfo } from "@/services/auth/AuthService"
 import * as distinctIdModule from "@/services/logging/distinctId"
@@ -34,8 +34,8 @@ describe("OpenTelemetryTelemetryProvider.identifyUser", () => {
 	let logExporter: InMemoryLogRecordExporter
 	let loggerProvider: LoggerProvider
 	let provider: OpenTelemetryTelemetryProvider
-	let getDistinctIdStub: any /* sinon.SinonStub → vitest */
-	let setDistinctIdStub: any /* sinon.SinonStub → vitest */
+	let getDistinctIdStub: MockInstance<typeof distinctIdModule.getDistinctId>
+	let setDistinctIdStub: MockInstance<typeof distinctIdModule.setDistinctId>
 
 	beforeEach(() => {
 		logExporter = new InMemoryLogRecordExporter()

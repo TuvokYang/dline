@@ -190,7 +190,10 @@ const SlashCommandMenu: React.FC<SlashCommandMenuProps> = ({
 		<div
 			className="absolute bottom-[calc(100%-10px)] left-[15px] right-[15px] overflow-x-hidden z-1000"
 			data-testid="slash-commands-menu"
-			onMouseDown={onMouseDown}>
+			onMouseDown={(event) => {
+				event.preventDefault()
+				onMouseDown()
+			}}>
 			<ScreenReaderAnnounce message={announcement} />
 			<div
 				aria-activedescendant={filteredCommands.length > 0 ? `slash-command-menu-item-${selectedIndex}` : undefined}

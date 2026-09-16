@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
 	totalMessageCount: 0,
 	currentMessages: [] as ClineMessage[],
 	currentFirstItemIndex: 0,
+	setCurrentMessages: undefined as React.Dispatch<React.SetStateAction<ClineMessage[]>> | undefined,
 	virtuosoProps: undefined as VirtuosoTestProps | undefined,
 	scrollToIndex: vi.fn(),
 }))
@@ -32,6 +33,7 @@ vi.mock("@/context/ExtensionStateContext", async () => {
 
 			mocks.currentMessages = clineMessages
 			mocks.currentFirstItemIndex = firstItemIndex
+			mocks.setCurrentMessages = setClineMessages
 
 			return {
 				clineMessages,
@@ -96,6 +98,7 @@ function createScrollBehavior(): ScrollBehavior {
 		scrollContainerRef: React.createRef(),
 		disableAutoScrollRef: { current: false },
 		isAtBottomRef: { current: true },
+		absoluteBottomLoadedRef: { current: true },
 		requestProgrammaticScroll: vi.fn(),
 		cancelProgrammaticScroll: vi.fn(),
 		scrollToBottomSmooth: vi.fn(),
@@ -149,6 +152,7 @@ describe("MessagesArea sliding-window integration", () => {
 		mocks.totalMessageCount = 1000
 		mocks.currentMessages = []
 		mocks.currentFirstItemIndex = 0
+		mocks.setCurrentMessages = undefined
 	})
 
 	afterEach(() => {
@@ -164,6 +168,45 @@ describe("MessagesArea sliding-window integration", () => {
 
 		expect(mocks.virtuosoProps?.initialTopMostItemIndex).toEqual({ index: 199, align: "end" })
 		expect(scrollBehavior.requestProgrammaticScroll).not.toHaveBeenCalled()
+	})
+
+	it("re-follows the loaded bottom when a completion say becomes an ask with the same timestamp and text", async () => {
+		const completionText = "Completion is ready"
+		mocks.initialMessages = [
+			createMessages(0, 1)[0],
+			{
+				ts: 2,
+				type: "say",
+				say: "completion_result",
+				text: completionText,
+				partial: false,
+			} as ClineMessage,
+		]
+		mocks.initialFirstItemIndex = 0
+		mocks.totalMessageCount = 2
+		const scrollBehavior = renderMessagesArea()
+
+		act(() => {
+			mocks.setCurrentMessages?.((messages) => [
+				...messages.slice(0, -1),
+				{
+					...messages.at(-1)!,
+					type: "ask",
+					ask: "completion_result",
+					say: undefined,
+					interactionId: "completion-interaction",
+				},
+			])
+		})
+
+		await waitFor(() => {
+			expect(scrollBehavior.requestProgrammaticScroll).toHaveBeenCalledWith(
+				expect.objectContaining({
+					priority: "layout",
+					retryDelaysMs: [50, 200, 500],
+				}),
+			)
+		})
 	})
 
 	it("does not lose a boundary fetch when two ranges arrive within the old throttle window", async () => {
@@ -218,6 +261,35 @@ describe("MessagesArea sliding-window integration", () => {
 		})
 
 		expect(scrollBehavior.disableAutoScrollRef.current).toBe(true)
+	})
+
+	it("reports whether the loaded window reaches the end of the conversation", () => {
+		// Virtuoso only knows the rows it holds. Sitting at the bottom of a
+		// paged window is not the same as sitting at the end of the
+		// conversation, and bottom restoration has to be able to tell them
+		// apart before it moves the reader.
+		mocks.initialMessages = createMessages(800, 200)
+		mocks.initialFirstItemIndex = 800
+		mocks.totalMessageCount = 1000
+		const loadedToEnd = renderMessagesArea()
+
+		act(() => {
+			mocks.virtuosoProps?.atBottomStateChange?.(true)
+		})
+		expect(loadedToEnd.absoluteBottomLoadedRef.current).toBe(true)
+
+		cleanup()
+
+		// Same rows, but the conversation continues past them.
+		mocks.initialMessages = createMessages(800, 200)
+		mocks.initialFirstItemIndex = 800
+		mocks.totalMessageCount = 2000
+		const loadedMidway = renderMessagesArea()
+
+		act(() => {
+			mocks.virtuosoProps?.atBottomStateChange?.(true)
+		})
+		expect(loadedMidway.absoluteBottomLoadedRef.current).toBe(false)
 	})
 
 	it("does not preload leading history while auto-follow is active", () => {

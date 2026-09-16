@@ -53,14 +53,19 @@ e2e(
 		await sendTask(sidebar, "Read the project README and search the workspace for a few terms.")
 		await expect(sidebar.getByText(completionMarker, { exact: false }).last()).toBeVisible({ timeout: 90_000 })
 
-		// The search row keeps its terms and reports how much it matched.
-		// Overflowing terms collapse into "+N" instead of dropping the query.
-		const searchRow = sidebar.getByText(/^"Test \| Workspace \| extension \+2" in /)
+		// The visible row exposes the complete search target through its accessible name;
+		// responsive fitting of the button text is covered by the component-level width tests.
+		const searchRow = sidebar.getByRole("button", {
+			name: /^"Test \| Workspace \| extension \| testing \| coverage" in workspace\/ \(\d+\+? matches · \d+ files?\)$/,
+		})
 		await expect(searchRow).toBeVisible({ timeout: 30_000 })
-		await expect(searchRow).toHaveText(/\(\d+\+? matches · \d+ files?\)$/)
+		await expect(searchRow).toHaveAttribute(
+			"aria-label",
+			/^"Test \| Workspace \| extension \| testing \| coverage" in workspace\/ \(\d+\+? matches · \d+ files?\)$/,
+		)
 
-		// The read row keeps the file name visible.
-		await expect(sidebar.getByText(/^.*README\.md · lines \d+-\d+$/)).toBeVisible()
+		// The read row exposes its complete target through the visible button's accessible name.
+		await expect(sidebar.getByRole("button", { name: /^README\.md · lines \d+-\d+$/ })).toBeVisible()
 
 		// Hovering a row reveals the untruncated text.
 		await searchRow.hover()

@@ -29,6 +29,8 @@ export enum PerfDomain {
 	PromptFreshness = "prompt_freshness",
 	PromptBuild = "prompt_build",
 	FileLock = "file_lock",
+	BufferedStore = "buffered_store",
+	Tool = "tool",
 	Activation = "activation",
 }
 
@@ -52,7 +54,14 @@ export const PERF_PHASES = {
 		"shell_wait_complete",
 	],
 	[PerfDomain.TerminalPool]: ["warm_process_started", "warm_shell_integration_ready", "prewarm_failed"],
-	[PerfDomain.Checkpoint]: ["existing_shadow_baseline", "add", "commit", "restore"],
+	// `commit_lock` is separate from `commit` on purpose: waiting for the shared
+	// shadow repository and doing the Git work fail for different reasons, and
+	// only the split tells them apart. See CheckpointTracker.ts.
+	// `commit_attempt` covers one whole attempt, `commit_lock` the wait for the
+	// shared shadow repository, and `commit` only the Git work that runs once
+	// exclusive access was granted. An attempt refused the lock never reaches
+	// `commit`, so only `commit_attempt` counts every attempt.
+	[PerfDomain.Checkpoint]: ["existing_shadow_baseline", "add", "commit", "commit_attempt", "commit_lock", "restore"],
 	[PerfDomain.HookDiscovery]: ["file_check", "has_hook_scan", "global_directory", "directories", "workspace_directories"],
 	[PerfDomain.Settings]: ["controller_callback", "sync_callback", "sync_broadcast", "state_flush", "rpc_complete", "rpc_error"],
 	[PerfDomain.SettingsRepository]: ["mutate_complete", "reconcile", "listener", "publish"],
@@ -77,6 +86,16 @@ export const PERF_PHASES = {
 	[PerfDomain.PromptFreshness]: ["drain_complete", "reevaluate"],
 	[PerfDomain.PromptBuild]: ["capability_context"],
 	[PerfDomain.FileLock]: ["acquire"],
+	// A buffered store commits either by appending the new tail or by rewriting
+	// the whole collection. Reporting both under one phase with a `commit`
+	// dimension is what makes an unnoticed fallback to rewriting visible: the
+	// cost of that fallback grows with the history and is otherwise silent.
+	[PerfDomain.BufferedStore]: ["flush_commit"],
+	// Tool duration is reported as the work the tool itself performed. Approval
+	// and command waits are governed by the user and the workspace, so counting
+	// them would make the measurement describe how fast a reviewer clicks rather
+	// than how fast the tool runs.
+	[PerfDomain.Tool]: ["execution"],
 	// Activation reports each startup step as one `stage` sample carrying a
 	// `stage` dimension, plus one total per entry point. The per-step form
 	// mirrors `task_init` so both startup paths aggregate the same way.

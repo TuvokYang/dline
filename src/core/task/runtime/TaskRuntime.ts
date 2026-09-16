@@ -40,6 +40,21 @@ export class TaskRuntime {
 	private readonly observers = new Set<TaskRuntimeObserver>()
 	private readonly deferredEffects = new Map<Promise<TaskDispatchResult>, number>()
 	private queue: Promise<void> = Promise.resolve()
+	private commitObserver?: (event: string, state: Readonly<TaskRuntimeState>) => void
+
+	/** Observation at the commit boundary, independent of delayed effect completion observers. */
+	setCommitObserver(observer: (event: string, state: Readonly<TaskRuntimeState>) => void): void {
+		this.commitObserver = observer
+		this.observeCommit("initialized")
+	}
+
+	private observeCommit(event: string): void {
+		try {
+			this.commitObserver?.(event, this.state)
+		} catch {
+			/* Diagnostics cannot roll back a commit. */
+		}
+	}
 
 	constructor(initialState: TaskRuntimeState, ports: TaskEffectPorts) {
 		this.state = initialState
@@ -49,6 +64,7 @@ export class TaskRuntime {
 	/** Replace runtime state only with an already validated resume aggregate. */
 	restore(state: TaskRuntimeState): void {
 		this.state = state
+		this.observeCommit("restored")
 	}
 
 	/** Return the current committed runtime aggregate. */
@@ -119,6 +135,7 @@ export class TaskRuntime {
 		}
 
 		this.state = result.next
+		this.observeCommit(event.type)
 		const effectState = this.state
 		const deferredEffects = deferReentrantEffects ? result.effects.filter(isReentrantEffect) : []
 		const immediateEffects = deferReentrantEffects

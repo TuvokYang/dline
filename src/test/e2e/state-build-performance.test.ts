@@ -14,6 +14,8 @@ const TURN_1_DONE = "E2E_STATE_BUILD_PERF_TURN_1_DONE"
 // needs ~32K pairs to reach the ~500ms pathological cost of the field logs.
 const TIER_PAIRS = [4_000, 16_000, 32_000]
 
+e2e.use({ stateBuildTimingLogs: true })
+
 interface TierSample {
 	tier: number
 	pairs: number
@@ -22,7 +24,7 @@ interface TierSample {
 }
 
 const STATE_BUILD_LOG_PATTERN =
-	/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}) \[debug\] \[Controller\] getStateToPostToWebview took (\d+)ms for task (\d+)$/
+	/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}) \[debug\] \[StateUpdate\] build timing: taskId=(\d+), buildMs=(\d+), activeTasks=\d+$/
 
 /** Extract getStateToPostToWebview durations logged at or after sinceMs for one task. */
 function parseStateBuildDurations(output: string, taskId: string, sinceMs: number): number[] {
@@ -30,10 +32,10 @@ function parseStateBuildDurations(output: string, taskId: string, sinceMs: numbe
 	for (const line of output.split(/\r?\n/)) {
 		const match = STATE_BUILD_LOG_PATTERN.exec(line)
 		if (!match) continue
-		if (match[3] !== taskId) continue
+		if (match[2] !== taskId) continue
 		const timestampMs = new Date(match[1]!.replace(" ", "T")).getTime()
 		if (timestampMs < sinceMs) continue
-		durations.push(Number(match[2]))
+		durations.push(Number(match[3]))
 	}
 	return durations
 }
@@ -156,25 +158,15 @@ e2e(
 
 			const sinceMs = Date.now()
 			await reopenTask(sidebar, TASK_TEXT)
-			// Wait briefly for state pushes to flush into the Dline Output log.
-			// The log only records builds that took >10ms; after the fix the largest
-			// tier may legitimately produce no entries (builds are sub-10ms), which
-			// is the desired GREEN outcome (maxMs = 0 < 500).
-			// Poll the Dline Output log for state-build durations. Use the
-			// non-blocking reader here: readDlineOutput() itself waits for a log
-			// file to appear (10s), which can throw during VS Code log rotation
-			// right after a reopen and falsely abort the sampling loop.
+			// This test enables the E2E-only state-build timing mirror, so every
+			// completed build is logged without changing the production 100ms slow
+			// operation threshold. Requiring a real sample prevents a vacuous pass.
 			const durationsMs = await E2ETestHelper.waitForValue(async () => {
 				const output = E2ETestHelper.readDlineOutputIfPresent(userDataDir)
 				if (!output) return undefined
 				const parsed = parseStateBuildDurations(output, taskId, sinceMs)
 				return parsed.length > 0 ? parsed : undefined
-			}, 120_000).catch(() => {
-				// No >10ms builds were logged within the window: the tier either
-				// built fast (<10ms logs are suppressed) or reopened without a
-				// state push in time. Treat as extremely fast state builds.
-				return [] as number[]
-			})
+			}, 15_000)
 			samples.push({
 				tier: samples.length + 1,
 				pairs: tierPairs,
@@ -188,19 +180,13 @@ e2e(
 			contentType: "application/json",
 		})
 
-		const [last] = [samples[samples.length - 1]!]
-		// GREEN contract: even at the largest tier, one state build must stay under
-		// the ~500ms pathological bar observed in the field logs (900-2500ms).
-		// The pre-fix code exceeds 500ms here (measured 1794ms), so this assertion
-		// is RED before the fix and GREEN after it. An empty sample (no >10ms builds
-		// logged) means state builds are sub-10ms, which trivially satisfies it.
+		const last = samples.at(-1)!
+		// GREEN contract: even at the largest tier, every observed state build
+		// stays under the ~500ms pathological bar seen in the field (900-2500ms).
+		// The pre-fix code exceeded 500ms here (measured 1794ms).
 		expect(last.maxMs, `largest tier (${last.pairs} pairs) must stay under 500ms per state build`).toBeLessThan(500)
-		// At least one tier must have produced samples, proving the log parsing
-		// pipeline observed real state builds (not a vacuous pass). Reopen timing
-		// can delay or suppress individual tiers, so require only a single hit.
-		const sampledTiers = samples.filter((sample) => sample.durationsMs.length > 0)
-		expect(sampledTiers.length, `at least one tier must produce state build samples`).toBeGreaterThan(0)
-		for (const sample of sampledTiers) {
+		for (const sample of samples) {
+			expect(sample.durationsMs.length, `tier ${sample.pairs} pairs must produce state build samples`).toBeGreaterThan(0)
 			expect(sample.maxMs, `tier ${sample.pairs} pairs must stay under 500ms per state build`).toBeLessThan(500)
 		}
 		await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir, [

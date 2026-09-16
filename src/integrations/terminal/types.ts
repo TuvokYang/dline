@@ -7,6 +7,7 @@
 import type { CommandExecutionMode, CommandStatus, SubagentInjectionState } from "@shared/ExtensionMessage"
 import type { ClineToolResponseContent } from "@shared/messages"
 import type { EventEmitter } from "events"
+import type { WindowsProcessTreeProvider } from "./process-tree"
 
 // =============================================================================
 // Terminal Process Types
@@ -123,7 +124,25 @@ export interface TerminalInfo {
 	pendingCwdChange?: string
 	/** Promise resolver for CWD change completion */
 	cwdResolved?: { resolve: () => void; reject: (err: Error) => void }
+	/**
+	 * Where this terminal came from, as a bounded telemetry dimension.
+	 *
+	 * A warm hit and a cold start differ by seconds, so an acquisition metric
+	 * that cannot separate them reports a meaningless average. Set by the
+	 * manager when it hands the terminal out; absent for terminals created
+	 * before the distinction existed.
+	 */
+	acquisitionSource?: TerminalAcquisitionSource
 }
+
+/** How a terminal handed to a command was obtained. */
+export type TerminalAcquisitionSource =
+	/** Leased from the warm pool, so the shell was already running. */
+	| "warm_pool"
+	/** Reused from the registry without the pool being involved. */
+	| "registry_reuse"
+	/** Created on demand, paying the full shell start cost. */
+	| "cold_start"
 
 /** Complete runtime configuration applied atomically to a terminal manager. */
 export interface TerminalManagerConfiguration {
@@ -503,6 +522,8 @@ export interface CommandExecutorConfig {
 	workspaceRoots?: readonly string[]
 	/** Terminal configuration shared by foreground and background managers. */
 	terminalConfiguration: TerminalManagerConfiguration
+	/** Host-owned Windows process discovery for hidden child-process commands. */
+	windowsProcessTreeProvider?: WindowsProcessTreeProvider
 }
 
 /** Alias for backwards compatibility */

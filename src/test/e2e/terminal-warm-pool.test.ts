@@ -14,6 +14,8 @@ interface AcquireEvent extends TerminalPoolEvent {
 interface TerminalAcquirePerfEvent {
 	activityId: string
 	terminalId: number
+	/** Where the terminal came from; reported as a bounded metric dimension. */
+	source: string
 	durationMs: number
 	index: number
 }
@@ -52,12 +54,13 @@ function parseReleaseEvents(output: string): TerminalPoolEvent[] {
 function parseTerminalAcquirePerfEvents(output: string): TerminalAcquirePerfEvent[] {
 	return [
 		...output.matchAll(
-			/\[TerminalPerf\] phase=terminal_acquired taskId=\S+ activityId=(\S+) terminalId=(\d+) durationMs=(\d+) elapsedMs=\d+/g,
+			/\[TerminalPerf\] phase=terminal_acquired taskId=\S+ activityId=(\S+) terminalId=(\d+) source=(\S+) durationMs=(\d+) elapsedMs=\d+/g,
 		),
 	].map((match) => ({
 		activityId: match[1],
 		terminalId: Number(match[2]),
-		durationMs: Number(match[3]),
+		source: match[3],
+		durationMs: Number(match[4]),
 		index: match.index,
 	}))
 }
@@ -211,6 +214,10 @@ e2e(
 		expect(acquires.every((event) => event.durationMs <= 500)).toBe(true)
 		expect(perfAcquires.map((event) => event.terminalId)).toEqual(acquires.map((event) => event.terminalId))
 		expect(perfAcquires.slice(1).every((event) => event.durationMs <= 500)).toBe(true)
+		// Every command here is served by the pool, so the reported source has
+		// to say so. Without it the acquisition metric mixes warm hits with
+		// cold starts and its percentiles stop meaning anything.
+		expect(perfAcquires.map((event) => event.source)).toEqual(["warm_pool", "warm_pool", "warm_pool"])
 		expect(
 			acquires
 				.slice(1)

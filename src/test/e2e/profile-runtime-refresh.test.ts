@@ -88,9 +88,9 @@ e2e(
 		delete apiKeys[profile.id]
 		await writeFile(apiKeysFile, `${JSON.stringify(apiKeys, null, 2)}\n`, "utf8")
 		await send(sidebar, "E2E_FRESH_PROFILE_MISSING_KEY")
-		await expect(sidebar.getByRole("alert")).toContainText(`credentials for "${profile.name}" are unavailable`, {
-			timeout: 60_000,
-		})
+		await expect(
+			sidebar.getByText(`Profile not valid: credentials for "${profile.name}" are unavailable.`, { exact: true }),
+		).toBeVisible({ timeout: 60_000 })
 		expect(server.getMockConsumptions("openai-compatible-chat")).toHaveLength(2)
 		await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
 	},

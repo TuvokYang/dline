@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useEvent } from "react-use"
 import { ListRange, VirtuosoHandle } from "react-virtuoso"
 import { ScrollBehavior } from "../types/chatTypes"
-import { resolveMessageRowExpanded, toggleMessageRowExpansion } from "../utils/messageUtils"
+import { findGroupedMessageByTs, resolveMessageRowExpanded, toggleMessageRowExpansion } from "../utils/messageUtils"
 import { createScrollArbiter, LAYOUT_SETTLE_RETRY_MS, type ScrollRequest } from "../utils/scrollArbiter"
 
 // Height of the sticky user message header (padding + content)
@@ -37,6 +37,9 @@ export function useScrollBehavior(
 	// Ref mirror of isAtBottom so scroll handlers can read the latest value
 	// without stale-closure issues (Virtuoso atBottomStateChange fires after scroll events)
 	const isAtBottomRef = useRef(false)
+	// Whether the loaded window reaches the end of the conversation. Paged
+	// history means `isAtBottomRef` alone can describe the middle of it.
+	const absoluteBottomLoadedRef = useRef(true)
 	// Throttle timestamp for handleRowHeightChange to prevent scroll jitter
 	const lastRowHeightChangeRef = useRef(0)
 	const pendingAutoScrollRef = useRef(false)
@@ -199,6 +202,45 @@ export function useScrollBehavior(
 
 	const clearAutoScrollRetryTimers = cancelProgrammaticScroll
 
+	/**
+	 * Return to the bottom for a reader who was visually pinned there.
+	 *
+	 * This deliberately ignores `disableAutoScrollRef`. That flag records who
+	 * owns the viewport, not where it sits: an upward nudge, a jump to a
+	 * message or an expanded row all raise it, and only a downward wheel
+	 * landing on the absolute bottom lowers it again. A reader who dragged the
+	 * scrollbar down, or nudged up and came back, is therefore pinned to the
+	 * bottom while the flag still reads "browsing", and every path that asks
+	 * the flag first refuses to restore them.
+	 *
+	 * Ownership is released once, up front, rather than on every attempt.
+	 * A restored panel settles late, so the scroll is retried for half a
+	 * second, and re-clearing the flag each time would let a late attempt take
+	 * the viewport back from a reader who had already grabbed it. Releasing it
+	 * first instead lets the ordinary guard apply to the remaining attempts:
+	 * anything that raises the flag again — a wheel, a jump, an expanded row —
+	 * ends the chain, and a reader who does nothing keeps the settled bottom.
+	 *
+	 * The flag alone cannot end the chain, though. Every writer of it responds
+	 * to an upward wheel or an explicit navigation, so dragging the scrollbar,
+	 * pressing PageUp and touch scrolling leave it untouched. Those gestures do
+	 * move the viewport, so the retries also stop once the reader is no longer
+	 * at the end of the conversation, which Virtuoso reports independently.
+	 */
+	const restoreBottomAfterVisibility = useCallback(() => {
+		disableAutoScrollRef.current = false
+		requestProgrammaticScroll({
+			run: () => performScrollToBottom("auto"),
+			priority: "layout",
+			retryDelaysMs: LAYOUT_SETTLE_RETRY_MS,
+			isStillWanted: () =>
+				!disableAutoScrollRef.current &&
+				document.visibilityState !== "hidden" &&
+				isAtBottomRef.current &&
+				absoluteBottomLoadedRef.current,
+		})
+	}, [absoluteBottomLoadedRef, disableAutoScrollRef, isAtBottomRef, performScrollToBottom, requestProgrammaticScroll])
+
 	const queueAutoScrollToBottom = useCallback(
 		(retryAfterLayout = false) => {
 			if (disableAutoScrollRef.current) {
@@ -292,15 +334,12 @@ export function useScrollBehavior(
 	// scroll when user toggles certain rows
 	const toggleRowExpansion = useCallback(
 		(ts: number) => {
-			const row = groupedMessages.find((candidate) => !Array.isArray(candidate) && candidate.ts === ts)
-			const message = Array.isArray(row) ? undefined : row
+			const location = findGroupedMessageByTs(groupedMessages, ts)
+			const message = location?.message
 			const isCollapsing = resolveMessageRowExpanded(message, expandedRows)
 			const lastGroup = groupedMessages.at(-1)
-			const isLast = Array.isArray(lastGroup) ? lastGroup[0].ts === ts : lastGroup?.ts === ts
-			const secondToLastGroup = groupedMessages.at(-2)
-			const isSecondToLast = Array.isArray(secondToLastGroup)
-				? secondToLastGroup[0].ts === ts
-				: secondToLastGroup?.ts === ts
+			const isLast = location?.groupIndex === groupedMessages.length - 1
+			const isSecondToLast = location?.groupIndex === groupedMessages.length - 2
 
 			const isLastCollapsedApiReq =
 				isLast &&
@@ -397,11 +436,25 @@ export function useScrollBehavior(
 	useEffect(() => {
 		const handleVisibility = () => {
 			if (document.visibilityState === "hidden") {
-				pendingAutoScrollRef.current = !disableAutoScrollRef.current
+				// Snapshot where the viewport physically was, not who owned it.
+				// Reading ownership here is what stranded a reader who was sitting
+				// at the bottom but had touched the scrollbar at some earlier point.
+				//
+				// Both halves are required. Virtuoso only knows the rows it holds,
+				// and history is paged, so being at the bottom of the loaded window
+				// can mean the middle of the conversation. Restoring "the bottom"
+				// there would move the reader somewhere they never asked to be.
+				pendingAutoScrollRef.current = isAtBottomRef.current && absoluteBottomLoadedRef.current
 				return
 			}
 
-			if (!disableAutoScrollRef.current || pendingAutoScrollRef.current) {
+			if (pendingAutoScrollRef.current) {
+				pendingAutoScrollRef.current = false
+				restoreBottomAfterVisibility()
+				return
+			}
+
+			if (!disableAutoScrollRef.current) {
 				queueAutoScrollToBottom(true)
 			}
 		}
@@ -414,13 +467,14 @@ export function useScrollBehavior(
 			document.removeEventListener("visibilitychange", handleVisibility)
 			clearAutoScrollRetryTimers()
 		}
-	}, [clearAutoScrollRetryTimers, queueAutoScrollToBottom])
+	}, [clearAutoScrollRetryTimers, disableAutoScrollRef, isAtBottomRef, queueAutoScrollToBottom, restoreBottomAfterVisibility])
 
 	return {
 		virtuosoRef,
 		scrollContainerRef,
 		disableAutoScrollRef,
 		isAtBottomRef,
+		absoluteBottomLoadedRef,
 		requestProgrammaticScroll,
 		cancelProgrammaticScroll,
 		scrollToBottomSmooth,

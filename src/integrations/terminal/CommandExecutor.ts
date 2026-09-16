@@ -17,6 +17,8 @@ import { randomUUID } from "node:crypto"
 import { DlineRuntimeFileManager } from "@services/runtime-files"
 import { findLastIndex } from "@shared/array"
 import { DEFAULT_TERMINAL_COMMAND_HANDOFF_SECONDS } from "@shared/terminal-settings"
+import { DiagnosticDomain, DiagnosticOutcome } from "@/services/telemetry/instrumentation/diagnostic-events"
+import { recordDiagnostic } from "@/services/telemetry/instrumentation/diagnostic-recorder"
 import { markPerfPhase, recordPerfPhase, startPerfPhase } from "@/services/telemetry/instrumentation/duration-recorder"
 import { PerfDomain } from "@/services/telemetry/instrumentation/perf-domains"
 import { Logger } from "@/shared/services/Logger"
@@ -48,6 +50,20 @@ import type {
 	TerminalOutputLine,
 	TerminalProcessResultPromise,
 } from "./types"
+
+/**
+ * Why a workspace root could not be prewarmed.
+ *
+ * Bounded so it can be a metric dimension. The workspace path and the
+ * underlying error message are both unbounded and stay in the log line.
+ */
+type PrewarmFailureReason =
+	/** The shell environment for this root could not be resolved. */
+	| "environment_unresolved"
+	/** The directory belongs to no workspace root, so there is nothing to warm. */
+	| "no_launch_configuration"
+	/** The pool was asked to warm and refused or threw. */
+	| "ensure_warm_failed"
 
 /**
  * CommandExecutor - Unified command executor for all terminal modes.
@@ -115,7 +131,7 @@ export class CommandExecutor {
 			Logger.info(`[CommandExecutor] Reusing Task's StandaloneTerminalManager for backgroundExec mode`)
 		} else {
 			// Create a standalone manager for background execution support.
-			this.standaloneManager = new StandaloneTerminalManager()
+			this.standaloneManager = new StandaloneTerminalManager(config.windowsProcessTreeProvider)
 			Logger.info(`[CommandExecutor] Created new StandaloneTerminalManager`)
 		}
 		this.configure(config.terminalConfiguration)
@@ -248,13 +264,22 @@ export class CommandExecutor {
 			: shellEnvironmentLoadFailed
 				? undefined
 				: this.createVscodeLaunchConfiguration(workdirectory, shellEnvironment)
-		const acquirePhase = startPerfPhase(PerfDomain.Terminal, "terminal_acquired", { activityId }, { taskId: this.taskId })
+		// Only bounded dimensions are reported. `activityId` and `terminalId`
+		// are identities and are stripped before export, and `elapsedMs` is an
+		// unbounded numeric that would become a Prometheus label; measuring
+		// from the handle covers the acquisition itself, which is what the
+		// histogram is for.
+		const acquirePhase = startPerfPhase(PerfDomain.Terminal, "terminal_acquired", { terminalMode }, { taskId: this.taskId })
 		const terminalAcquireStartedAt = performance.now()
 		const terminalInfo = await manager.getOrCreateTerminal(workdirectory, launchConfiguration)
-		acquirePhase.stop({ terminalId: terminalInfo.id, elapsedMs: Math.round(performance.now() - executeStartedAt) })
+		// A warm hit and a cold start differ by seconds. Without this dimension
+		// the two collapse into one distribution, and a pool that stopped
+		// serving hits would be indistinguishable from one that still does.
+		const acquisitionSource = terminalInfo.acquisitionSource ?? "unknown"
+		acquirePhase.stop({ terminalMode, acquisitionSource })
 		if (Logger.isDebugEnabled()) {
 			Logger.debug(
-				`[TerminalPerf] phase=terminal_acquired taskId=${this.taskId} activityId=${activityId} terminalId=${terminalInfo.id} durationMs=${Math.round(performance.now() - terminalAcquireStartedAt)} elapsedMs=${Math.round(performance.now() - executeStartedAt)}`,
+				`[TerminalPerf] phase=terminal_acquired taskId=${this.taskId} activityId=${activityId} terminalId=${terminalInfo.id} source=${acquisitionSource} durationMs=${Math.round(performance.now() - terminalAcquireStartedAt)} elapsedMs=${Math.round(performance.now() - executeStartedAt)}`,
 			)
 		}
 		if (options?.startInBackground) {
@@ -297,15 +322,17 @@ export class CommandExecutor {
 		this.cancellationOwners.set(activityId, cancellationOwner)
 		if (options?.commandTs) {
 			this.commandMessageTimestamps.set(activityId, options.commandTs)
-			const messages = this.callbacks.getClineMessages() as Array<{ ts?: number }>
-			const commandIndex = messages.findIndex((message) => message.ts === options.commandTs)
-			if (commandIndex !== -1) {
-				await this.callbacks.updateClineMessage(commandIndex, {
-					activityId,
-					commandExecutionMode: executionMode,
-				})
-			}
 		}
+		// Everything from here to the terminal-status listeners must stay
+		// synchronous.
+		//
+		// The command is already running by this point. Process completion is
+		// delivered as an event, and an EventEmitter does not replay events to
+		// listeners attached later, so any `await` before those listeners exist
+		// is a window in which a fast command can finish unobserved. The
+		// activity would then be created in its default running state and never
+		// be told otherwise, which is exactly the activity that sits in the
+		// panel claiming to run long after its command ended.
 		this.callbacks.createCommandActivity?.({
 			activityId,
 			command,
@@ -394,6 +421,23 @@ export class CommandExecutor {
 			})
 			if (cancelled) void this.markCommandMessageCancelled(activityId)
 		})
+
+		// Safe to await now that completion cannot be missed.
+		//
+		// This links the chat command row to its activity. It is presentation
+		// only, so it is deferred past the listener installation above rather
+		// than being allowed to open a gap there. A command that finished during
+		// this await has already recorded its terminal status.
+		if (options?.commandTs) {
+			const messages = this.callbacks.getClineMessages() as Array<{ ts?: number }>
+			const commandIndex = messages.findIndex((message) => message.ts === options.commandTs)
+			if (commandIndex !== -1) {
+				await this.callbacks.updateClineMessage(commandIndex, {
+					activityId,
+					commandExecutionMode: executionMode,
+				})
+			}
+		}
 
 		// Use shared orchestration logic
 		// The StandaloneTerminalManager handles background command tracking internally
@@ -582,23 +626,63 @@ export class CommandExecutor {
 		return result
 	}
 
+	/**
+	 * Fill the warm pool for every workspace root, and report how that went.
+	 *
+	 * A prewarm that silently stops leaves no trace: commands simply start
+	 * paying a cold start again, which reads as the terminal being slow rather
+	 * than as the pool being empty. Each root is reported separately because
+	 * one failing root does not stop the others, and an aggregate would hide
+	 * the one that did fail.
+	 */
 	private async prewarmWorkspaceRoots(): Promise<void> {
-		await Promise.allSettled(
-			this.workspaceRoots.map(async (workspaceRoot) => {
-				let shellEnvironment: ResolvedShellEnvironment | undefined
-				try {
-					shellEnvironment = await this.shellEnvironmentLoader.resolve(
-						workspaceRoot,
-						this.terminalConfiguration.defaultTerminalProfile,
-					)
-				} catch (error) {
-					Logger.error("[ShellEnvironment] Failed to resolve terminal warm-pool configuration", error)
-					return
-				}
-				const launchConfiguration = this.createVscodeLaunchConfiguration(workspaceRoot, shellEnvironment)
-				if (launchConfiguration) await this.terminalManager.ensureWarm?.(workspaceRoot, launchConfiguration)
-			}),
-		)
+		await Promise.allSettled(this.workspaceRoots.map((workspaceRoot) => this.prewarmWorkspaceRoot(workspaceRoot)))
+	}
+
+	private async prewarmWorkspaceRoot(workspaceRoot: string): Promise<void> {
+		const startedAt = performance.now()
+		// Bounded on purpose. The workspace path and the error text are both
+		// unbounded and would become Prometheus labels; the reason is what
+		// separates a configuration fault from a pool that refused to warm.
+		const reportFailure = (reason: PrewarmFailureReason, error?: unknown): void => {
+			recordPerfPhase(
+				PerfDomain.TerminalPool,
+				"prewarm_failed",
+				performance.now() - startedAt,
+				{ reason },
+				{ taskId: this.taskId },
+			)
+			recordDiagnostic(DiagnosticDomain.Terminal, "prewarm_failed", DiagnosticOutcome.Degraded, { reason })
+			if (error !== undefined) {
+				Logger.error(`[ShellEnvironment] Failed to prewarm terminal warm pool: reason=${reason}`, error)
+			}
+		}
+
+		let shellEnvironment: ResolvedShellEnvironment | undefined
+		try {
+			shellEnvironment = await this.shellEnvironmentLoader.resolve(
+				workspaceRoot,
+				this.terminalConfiguration.defaultTerminalProfile,
+			)
+		} catch (error) {
+			reportFailure("environment_unresolved", error)
+			return
+		}
+
+		const launchConfiguration = this.createVscodeLaunchConfiguration(workspaceRoot, shellEnvironment)
+		if (!launchConfiguration) {
+			// Not an error path: a directory outside every workspace root has
+			// nothing to warm. It is still reported, because a pool that warms
+			// nothing at all looks identical to one that was never asked.
+			reportFailure("no_launch_configuration")
+			return
+		}
+
+		try {
+			await this.terminalManager.ensureWarm?.(workspaceRoot, launchConfiguration)
+		} catch (error) {
+			reportFailure("ensure_warm_failed", error)
+		}
 	}
 
 	private createVscodeLaunchConfiguration(
@@ -680,7 +764,7 @@ export class CommandExecutor {
 		const commandTs = this.commandMessageTimestamps.get(activityId)
 		const background = this.standaloneManager.getBackgroundCommand(activityId)
 		if (background?.status === "running") {
-			if (this.standaloneManager.cancelBackgroundCommand(activityId)) {
+			if (await this.standaloneManager.cancelBackgroundCommand(activityId)) {
 				await this.markCommandMessageCancelled(activityId, commandTs)
 				return true
 			}
@@ -760,7 +844,7 @@ export class CommandExecutor {
 		for (const cmd of runningCommands) {
 			if (!this.markCancellationRequested(cmd.id)) continue
 			const commandTs = this.commandMessageTimestamps.get(cmd.id)
-			if (this.standaloneManager.cancelBackgroundCommand(cmd.id)) {
+			if (await this.standaloneManager.cancelBackgroundCommand(cmd.id)) {
 				await this.markCommandMessageCancelled(cmd.id, commandTs)
 				detachedActivityIds.add(cmd.id)
 				cancelled = true

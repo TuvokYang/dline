@@ -129,9 +129,7 @@ describe("DeepSeekProvider", () => {
 		render(<DeepSeekProvider onUpdate={onUpdate} profile={profile} showModelOptions={true} />)
 
 		// The picker lists remote discoveries alongside the local catalog.
-		expect(screen.getByTestId("deepseek-models")).toHaveTextContent(
-			"deepseek-v4-preview,deepseek-v4-pro,deepseek-v4-flash",
-		)
+		expect(screen.getByTestId("deepseek-models")).toHaveTextContent("deepseek-v4-preview,deepseek-v4-pro,deepseek-v4-flash")
 		const format = screen.getByRole("combobox", { name: "API Format" })
 		expect(format).toHaveValue(String(ApiFormat.OPENAI_CHAT))
 		expect(screen.getByRole("option", { name: "OpenAI Chat" })).toBeInTheDocument()

@@ -6,18 +6,16 @@ import { OTLPMetricExporter as OTLPMetricExporterGRPC } from "@opentelemetry/exp
 import { OTLPMetricExporter as OTLPMetricExporterHTTP } from "@opentelemetry/exporter-metrics-otlp-http"
 import { OTLPMetricExporter as OTLPMetricExporterProto } from "@opentelemetry/exporter-metrics-otlp-proto"
 import { ConsoleLogRecordExporter, LogRecordExporter } from "@opentelemetry/sdk-logs"
-import { ConsoleMetricExporter, MetricReader, PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics"
-import { envFlagEnabled } from "@shared/env"
+import {
+	ConsoleMetricExporter,
+	type MetricReader,
+	PeriodicExportingMetricReader,
+	type PushMetricExporter,
+} from "@opentelemetry/sdk-metrics"
 import { Logger } from "@/shared/services/Logger"
+import { isTelemetryDebugDiagnosticsEnabled } from "../../development-mode"
 import { wrapExporterWithDeliveryAccounting } from "../../runtime/transports/delivery-accounting"
 import { wrapLogsExporterWithDiagnostics, wrapMetricsExporterWithDiagnostics } from "./otel-exporter-diagnostics"
-
-/**
- * Check if debug diagnostics are enabled
- */
-function isDebugEnabled(): boolean {
-	return envFlagEnabled(process.env.TEL_DEBUG_DIAGNOSTICS) || envFlagEnabled(process.env.IS_DEV)
-}
 
 /**
  * Create a console log exporter
@@ -46,7 +44,7 @@ export function createOTLPLogExporter(
 	timeoutMs = 30_000,
 ): LogRecordExporter | null {
 	try {
-		let exporter: any = null
+		let exporter: LogRecordExporter | null = null
 		const logsUrl = new URL(endpoint)
 		ensurePathSuffix(logsUrl, "/v1/logs")
 
@@ -77,7 +75,7 @@ export function createOTLPLogExporter(
 
 		wrapExporterWithDeliveryAccounting(exporter, (batch: unknown) => (Array.isArray(batch) ? batch.length : 0), timeoutMs)
 		// Wrap with diagnostics if debug is enabled
-		if (isDebugEnabled()) {
+		if (isTelemetryDebugDiagnosticsEnabled()) {
 			wrapLogsExporterWithDiagnostics(exporter, protocol, logsUrl.toString())
 		}
 
@@ -112,7 +110,7 @@ export function createOTLPMetricReader(
 	headers?: Record<string, string>,
 ): MetricReader | null {
 	try {
-		let exporter: any = null
+		let exporter: PushMetricExporter | null = null
 
 		const metricsUrl = new URL(endpoint)
 		ensurePathSuffix(metricsUrl, "/v1/metrics")
@@ -144,7 +142,7 @@ export function createOTLPMetricReader(
 
 		wrapExporterWithDeliveryAccounting(exporter, (batch: unknown) => (Array.isArray(batch) ? batch.length : 1), timeoutMs)
 		// Wrap with diagnostics if debug is enabled
-		if (isDebugEnabled()) {
+		if (isTelemetryDebugDiagnosticsEnabled()) {
 			wrapMetricsExporterWithDiagnostics(exporter, protocol, metricsUrl.toString())
 		}
 

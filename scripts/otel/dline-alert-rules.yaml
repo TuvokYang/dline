@@ -1,0 +1,380 @@
+# Grafana unified alerting rules for Dline runtime performance.
+#
+# These rules are provisioned, not imported with a dashboard: a dashboard export
+# carries `${DS_PROMETHEUS}` import placeholders, while an alert rule needs the
+# real datasource UID of the instance it runs on. Replace every
+# `REPLACE_WITH_PROMETHEUS_UID` below with the UID from
+# Connections -> Data sources -> Prometheus, then mount this file at
+# /etc/grafana/provisioning/alerting/dline-alert-rules.yaml and restart Grafana.
+#
+# The local docker-compose stack does not mount a provisioning directory, so
+# nothing here takes effect until that mount is added or the rules are recreated
+# through the Grafana UI.
+#
+# Rules are intentionally written against the shared runtime histogram
+# `dline_runtime_operation_duration_*`. Every instrumented phase reports into it
+# and is distinguished by the `operation` label, so a new alert needs no new
+# instrument.
+#
+# Every quantile below pins `bucket_schema`. Extension hosts update
+# independently, so a host on an older build keeps exporting the previous bucket
+# layout into this same metric name. Summing both layouts breaks the estimate:
+# `le="15000"` exists only in the newer layout, counts fewer samples than
+# `le="10000"`, and the monotonicity repair pushes the result toward the highest
+# finite bound — a false page rather than a missed one. Counts and sums do not
+# depend on bucket bounds, so ratio rules deliberately do not pin the label and
+# keep covering every host. When a layout changes, bump the pinned value here
+# and in `OpenTelemetryTelemetryProvider`.
+
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: dline-storage
+    folder: Dline
+    # Slow commits are a sustained condition, not a spike: the evaluation
+    # interval is kept coarse enough that one unlucky flush cannot page.
+    interval: 1m
+    rules:
+      - uid: dline-buffered-store-slow-commit
+        title: Buffered store commit is slow
+        condition: threshold
+        # A commit that outlasts the one second flush interval that scheduled it
+        # means flushes have started to overlap, which is where the cost stops
+        # being absorbed between beats and starts being felt by the user. The
+        # threshold sits below that interval so the alert precedes the overlap.
+        annotations:
+          summary: Buffered store p95 commit duration exceeded 250 ms
+          description: >-
+            The p95 duration of one buffered store commit stayed above 250 ms.
+            Check the commit shape: a rise concentrated in `rewrite` means the
+            store stopped appending and is rewriting the whole collection, whose
+            cost grows with the history. The extension also logs each slow commit
+            with its shape and item count.
+        labels:
+          severity: warning
+          component: storage
+        for: 5m
+        execErrState: OK
+        noDataState: OK
+        isPaused: false
+        data:
+          - refId: p95
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: REPLACE_WITH_PROMETHEUS_UID
+            model:
+              refId: p95
+              editorMode: code
+              instant: true
+              range: false
+              expr: >-
+                histogram_quantile(0.95, sum by (le) (rate(dline_runtime_operation_duration_bucket{canary_id!~".+",bucket_schema="v2",operation="buffered_store.flush_commit"}[5m])))
+          - refId: threshold
+            datasourceUid: __expr__
+            model:
+              refId: threshold
+              type: threshold
+              expression: p95
+              conditions:
+                - evaluator:
+                    type: gt
+                    params:
+                      - 250
+
+      - uid: dline-buffered-store-rewrite-fallback
+        title: Buffered store fell back to rewriting
+        condition: threshold
+        # Appending is the intended commit shape for an append-only history.
+        # Falling back to a full rewrite is silent from the user's point of view
+        # and its cost grows with the collection, so the shape is alerted on
+        # directly rather than waiting for the duration to become visible.
+        annotations:
+          summary: More than 20% of buffered store commits rewrote the whole collection
+          description: >-
+            Commits are expected to append only the new tail. A sustained share of
+            `rewrite` commits means some path is no longer append-only, which
+            makes every flush scale with the size of the collection. Non-tail
+            edits and truncations legitimately rewrite, so brief spikes are
+            expected; a sustained ratio is not.
+        labels:
+          severity: warning
+          component: storage
+        for: 10m
+        execErrState: OK
+        noDataState: OK
+        isPaused: false
+        data:
+          - refId: ratio
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: REPLACE_WITH_PROMETHEUS_UID
+            model:
+              refId: ratio
+              editorMode: code
+              instant: true
+              range: false
+              # Two guards, for two different failure modes. `clamp_min` keeps a
+              # zero denominator from producing a division result at all, and the
+              # trailing `and` requires a real commit rate before the ratio is
+              # allowed to fire: at a handful of commits per ten minutes a single
+              # legitimate rewrite already exceeds 20% while meaning nothing.
+              expr: >-
+                (
+                sum(rate(dline_runtime_operation_duration_count{canary_id!~".+",operation="buffered_store.flush_commit",commit="rewrite"}[10m]))
+                /
+                clamp_min(sum(rate(dline_runtime_operation_duration_count{canary_id!~".+",operation="buffered_store.flush_commit"}[10m])), 0.000001)
+                )
+                and
+                sum(rate(dline_runtime_operation_duration_count{canary_id!~".+",operation="buffered_store.flush_commit"}[10m])) > 0.05
+          - refId: threshold
+            datasourceUid: __expr__
+            model:
+              refId: threshold
+              type: threshold
+              expression: ratio
+              conditions:
+                - evaluator:
+                    type: gt
+                    params:
+                      - 0.2
+
+  - orgId: 1
+    name: dline-tools
+    folder: Dline
+    interval: 1m
+    rules:
+      - uid: dline-tool-execution-slow
+        title: Tool execution is slow
+        condition: threshold
+        # The reported duration is the work the tool itself performed: approval
+        # and command waits are measured separately and subtracted, so this
+        # cannot fire because a reviewer was slow or a build took a long time.
+        annotations:
+          summary: A tool spent more than 5 s of its own work time at p95
+          description: >-
+            One tool's active execution time stayed above 5 s at p95, excluding
+            time spent waiting for user approval and for workspace commands. The
+            `tool` label identifies which one. Tools that produce large output or
+            walk the workspace are the usual candidates; a rise limited to a
+            single tool points at that tool rather than at the runtime.
+        labels:
+          severity: warning
+          component: tools
+        for: 10m
+        execErrState: OK
+        noDataState: OK
+        isPaused: false
+        data:
+          - refId: p95
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: REPLACE_WITH_PROMETHEUS_UID
+            model:
+              refId: p95
+              editorMode: code
+              instant: true
+              range: false
+              # Kept per tool: aggregating across tools would let one
+              # consistently heavy tool hide a regression in every other one.
+              # The series is not collapsed with `max`, which would drop the
+              # `tool` label and leave the alert unable to name the tool its own
+              # description tells the reader to look at. One instance per slow
+              # tool is the intended outcome.
+              expr: >-
+                histogram_quantile(0.95, sum by (le, tool) (rate(dline_runtime_operation_duration_bucket{canary_id!~".+",bucket_schema="v2",operation="tool.execution"}[10m])))
+          - refId: threshold
+            datasourceUid: __expr__
+            model:
+              refId: threshold
+              type: threshold
+              expression: p95
+              conditions:
+                - evaluator:
+                    type: gt
+                    params:
+                      - 5000
+
+  - orgId: 1
+    name: dline-state-publication
+    folder: Dline
+    interval: 1m
+    rules:
+      - uid: dline-settings-publication-slow
+        title: Settings-driven state publication is slow
+        condition: threshold
+        # This phase spans configuring the change and publishing the resulting
+        # state. It runs on every settings and task-history change, and its cost
+        # is paid before anything reaches the Webview, so a regression here is
+        # felt as general UI lag rather than as one slow action.
+        annotations:
+          summary: Settings state publication p95 exceeded 100 ms
+          description: >-
+            Handling one settings or task-history change and publishing the
+            resulting state stayed above 100 ms at p95. This work repeats for
+            every such change, so it usually points at an aggregate being
+            recomputed over the whole conversation instead of being reused while
+            the message sequence is unchanged.
+        labels:
+          severity: warning
+          component: state
+        for: 5m
+        execErrState: OK
+        noDataState: OK
+        isPaused: false
+        data:
+          - refId: p95
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: REPLACE_WITH_PROMETHEUS_UID
+            model:
+              refId: p95
+              editorMode: code
+              instant: true
+              range: false
+              expr: >-
+                histogram_quantile(0.95, sum by (le) (rate(dline_runtime_operation_duration_bucket{canary_id!~".+",bucket_schema="v2",operation="settings.controller_callback"}[5m])))
+          - refId: threshold
+            datasourceUid: __expr__
+            model:
+              refId: threshold
+              type: threshold
+              expression: p95
+              conditions:
+                - evaluator:
+                    type: gt
+                    params:
+                      - 100
+
+  - orgId: 1
+    name: dline-checkpoints
+    folder: Dline
+    interval: 1m
+    rules:
+      - uid: dline-checkpoint-commit-failing
+        title: Checkpoints are failing to be created
+        condition: threshold
+        # Users report checkpoint creation failing when several tasks run at
+        # once. The ratio is built on `checkpoint.commit_attempt`, which reports
+        # once per attempt whatever happens inside, rather than on
+        # `checkpoint.commit`, which covers only the Git work that runs after
+        # exclusive access was granted. An attempt refused the lock never
+        # reaches the Git work, so a ratio built there would go empty precisely
+        # when every attempt is failing — and `noDataState: OK` would keep the
+        # alert silent through a total outage.
+        annotations:
+          summary: More than 10% of checkpoint attempts produced no restore point
+          description: >-
+            Checkpoint attempts are ending without creating a restore point. The
+            `outcome` label separates the causes: `lock_unavailable` means the
+            attempt never obtained the shared shadow repository;
+            `no_restore_point` means it finished but returned no usable hash,
+            normally a staging failure or a commit that reported none, rather
+            than an absence of changes, because a genuine no-change attempt
+            reuses the current shadow HEAD and counts as `created`; `error`
+            means it threw after the lock was obtained, usually in the Git
+            work. For
+            `lock_unavailable`, compare against `checkpoint.commit_lock`, whose
+            `mechanism` label distinguishes the cross-process folder lock from
+            the in-process mutex that serialises tasks in VS Code.
+        labels:
+          severity: warning
+          component: checkpoints
+        for: 10m
+        execErrState: OK
+        noDataState: OK
+        isPaused: false
+        data:
+          - refId: ratio
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: REPLACE_WITH_PROMETHEUS_UID
+            model:
+              refId: ratio
+              editorMode: code
+              instant: true
+              range: false
+              # Same two guards as the rewrite ratio above: `clamp_min` keeps a
+              # zero denominator from producing a result at all, and the
+              # trailing `and` requires a real attempt rate before the ratio may
+              # fire. Checkpoints are far less frequent than store commits, so
+              # the floor is lower; at a handful of attempts per fifteen minutes
+              # one failure already exceeds 10% while meaning nothing.
+              # `bucket_schema` is deliberately not pinned: a count does not
+              # depend on bucket bounds, so the ratio covers hosts on every
+              # build, including those still exporting the previous layout.
+              expr: >-
+                (
+                sum(rate(dline_runtime_operation_duration_count{canary_id!~".+",operation="checkpoint.commit_attempt",outcome=~"lock_unavailable|error|no_restore_point"}[15m]))
+                /
+                clamp_min(sum(rate(dline_runtime_operation_duration_count{canary_id!~".+",operation="checkpoint.commit_attempt"}[15m])), 0.000001)
+                )
+                and
+                sum(rate(dline_runtime_operation_duration_count{canary_id!~".+",operation="checkpoint.commit_attempt"}[15m])) > 0.005
+          - refId: threshold
+            datasourceUid: __expr__
+            model:
+              refId: threshold
+              type: threshold
+              expression: ratio
+              conditions:
+                - evaluator:
+                    type: gt
+                    params:
+                      - 0.1
+
+      - uid: dline-checkpoint-lock-contended
+        title: Checkpoint lock wait is long
+        condition: threshold
+        # The wait for the shared shadow repository is measured apart from the
+        # Git work, because the two fail for different reasons and only the
+        # split tells them apart. A long wait here means tasks are queued behind
+        # each other rather than that Git became slow.
+        annotations:
+          summary: Checkpoint lock p95 wait exceeded 2 s
+          description: >-
+            Tasks are waiting on the shared shadow repository. The `mechanism`
+            label says which primitive: `folder_lock` is the cross-process lock
+            used outside VS Code, `process_mutex` is what actually serialises
+            concurrent tasks inside one VS Code window. A rise concentrated in
+            `process_mutex` means several tasks in the same window are
+            checkpointing against one repository.
+        labels:
+          severity: warning
+          component: checkpoints
+        for: 10m
+        execErrState: OK
+        noDataState: OK
+        isPaused: false
+        data:
+          - refId: p95
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: REPLACE_WITH_PROMETHEUS_UID
+            model:
+              refId: p95
+              editorMode: code
+              instant: true
+              range: false
+              # Kept per mechanism for the same reason the tool rule keeps the
+              # `tool` label: collapsing the series would drop the label the
+              # description tells the reader to look at.
+              expr: >-
+                histogram_quantile(0.95, sum by (le, mechanism) (rate(dline_runtime_operation_duration_bucket{canary_id!~".+",bucket_schema="v2",operation="checkpoint.commit_lock"}[10m])))
+          - refId: threshold
+            datasourceUid: __expr__
+            model:
+              refId: threshold
+              type: threshold
+              expression: p95
+              conditions:
+                - evaluator:
+                    type: gt
+                    params:
+                      - 2000

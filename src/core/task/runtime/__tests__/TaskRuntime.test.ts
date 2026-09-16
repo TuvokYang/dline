@@ -239,11 +239,13 @@ describe("TaskRuntime dispatch", () => {
 				},
 			}),
 		)
+		runtime.setCommitObserver((event, state) => order.push(`commit:${event}:${state.phase}`))
+		order.length = 0
 
 		const result = await runtime.dispatch({ type: "TASK_CANCEL_REQUESTED", source: "user" })
 
 		expect(result.accepted).toBe(true)
-		expect(order).toEqual(["view:cancelling", "cancel", "snapshot"])
+		expect(order).toEqual(["commit:TASK_CANCEL_REQUESTED:cancelling", "view:cancelling", "cancel", "snapshot"])
 	})
 
 	it("serializes concurrent dispatches", async () => {

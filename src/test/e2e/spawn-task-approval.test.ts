@@ -11,9 +11,9 @@ import { E2ETestHelper, e2e } from "./utils/helpers"
  * Code window with the mock API:
  *
  *   1. model emits spawn_task tool call
- *   2. outer block approval (tool_approval) appears -> Approve
- *   3. handler opens its own spawn_task_approval interaction -> Approve
- *   4. task must keep running and reach the queued attempt_completion
+ *   2. handler opens the spawn_task_approval interaction -> Approve
+ *   3. child starts independently with its own matched mock response
+ *   4. parent must keep running and reach the queued attempt_completion
  */
 
 async function sendTask(sidebar: Frame, text: string): Promise<void> {
@@ -23,17 +23,24 @@ async function sendTask(sidebar: Frame, text: string): Promise<void> {
 	await expect(sidebar.getByText(text, { exact: true }).first()).toBeVisible()
 }
 
-/** Click every pending Approve action until none is left or the timeout wins. */
-async function approveUntilGone(sidebar: Frame, limit = 3): Promise<void> {
-	for (let attempt = 0; attempt < limit; attempt++) {
-		const approve = sidebar.getByText("Approve", { exact: true }).first()
-		try {
-			await approve.waitFor({ state: "visible", timeout: 20_000 })
-		} catch {
-			// No approval waiting anymore; the chain settled.
-			return
-		}
-		await approve.click()
+/**
+ * Approve the single spawn interaction.
+ *
+ * The accepted interaction can disappear between pointer down and Playwright's
+ * post-click stability check. Treat that detach as success only when the exact
+ * approval has causally closed; otherwise preserve the original click failure.
+ */
+async function approveSpawnTask(sidebar: Frame): Promise<void> {
+	const approve = sidebar.getByRole("contentinfo").getByText("Approve", { exact: true }).first()
+	await expect(approve).toBeVisible({ timeout: 60_000 })
+	try {
+		await approve.click({ timeout: 5_000 })
+	} catch (error) {
+		const closed = await expect(approve)
+			.toHaveCount(0, { timeout: 20_000 })
+			.then(() => true)
+			.catch(() => false)
+		if (!closed) throw error
 	}
 }
 
@@ -41,34 +48,51 @@ e2e("Spawn task - approval chain closes and the conversation continues", async (
 	e2e.setTimeout(240_000)
 	await helper.signin(sidebar)
 	server.resetOpenAiMock()
+	const parentTask = "Spawn a sub-task for the E2E workspace, then finish."
+	const childTask = "E2E spawned sub-task"
+	const parentCompletion = "E2E_SPAWN_TASK_CONTINUED"
 	server.enqueueOpenAiResponses(
 		{
 			type: "tool",
 			id: "call_spawn_task",
 			name: "spawn_task",
-			arguments: { task: "E2E spawned sub-task", mode: "plan", context: "E2E spawn context" },
+			arguments: { task: childTask, mode: "plan", context: "E2E spawn context" },
+			expectedRequestIncludes: [parentTask],
+			expectedToolResultCount: 0,
+			matchRequestContract: true,
 		},
 		{
 			type: "tool",
 			id: "call_spawn_task_completion",
 			name: "attempt_completion",
-			arguments: { result: "E2E_SPAWN_TASK_CONTINUED" },
+			arguments: { result: parentCompletion },
+			expectedRequestIncludes: [parentTask],
+			expectedToolResults: [{ callId: "call_spawn_task", contentIncludes: "Spawned new PLAN task" }],
+			matchRequestContract: true,
+		},
+		{
+			type: "tool",
+			id: "call_spawned_child_plan",
+			name: "make_plan",
+			arguments: { response: "E2E_SPAWNED_CHILD_READY", needs_more_exploration: false },
+			expectedRequestIncludes: [childTask, "E2E spawn context"],
+			expectedToolResultCount: 0,
+			matchRequestContract: true,
 		},
 	)
 
-	await sendTask(sidebar, "Spawn a sub-task for the E2E workspace, then finish.")
+	await sendTask(sidebar, parentTask)
+	await approveSpawnTask(sidebar)
 
-	// First approval gate must appear (outer block approval for spawn_task).
-	await expect(sidebar.getByText("Approve", { exact: true }).first()).toBeVisible({ timeout: 60_000 })
-
-	// Approve every gate in the chain (outer tool gate, then the handler's
-	// spawn_task_approval). The footer must never remain stuck on Cancel.
-	await approveUntilGone(sidebar)
-
-	// The conversation must continue: the queued completion is reached.
-	await expect(sidebar.getByText("E2E_SPAWN_TASK_CONTINUED", { exact: false }).last()).toBeVisible({
+	// The parent conversation must continue while the child runs independently.
+	await expect(sidebar.getByText(parentCompletion, { exact: false }).last()).toBeVisible({
 		timeout: 60_000,
 	})
+	await expect.poll(() => server.openAiRequestCount, { timeout: 60_000 }).toBe(3)
+	const consumptions = server.getMockConsumptions("openai-compatible-chat")
+	expect(consumptions).toHaveLength(3)
+	expect(consumptions.every((consumption) => consumption.contractError === undefined)).toBe(true)
+
 	// No approval or task-level cancel-only footer may remain.
 	await expect(sidebar.getByText("Approve", { exact: true })).toHaveCount(0)
 	const input = sidebar.getByTestId("chat-input")

@@ -5,6 +5,9 @@ import * as path from "path"
 import simpleGit, { type SimpleGit } from "simple-git"
 import type { FolderLockWithRetryResult } from "@/core/locks/types"
 import { telemetryService } from "@/services/telemetry"
+import { recordPerfPhase } from "@/services/telemetry/instrumentation/duration-recorder"
+import { PerfDomain } from "@/services/telemetry/instrumentation/perf-domains"
+import { runWithSignalSpan, type SignalSpanHandle, startSignalSpan } from "@/services/telemetry/service/pipeline-port"
 import { Logger } from "@/shared/services/Logger"
 import { GitOperations, resolveCheckpointWorktreePath, toLiteralGitPathspec } from "./CheckpointGitOperations"
 import { releaseCheckpointLock, tryAcquireCheckpointLockWithRetry } from "./CheckpointLockUtils"
@@ -16,6 +19,51 @@ import type { TaskFileTracker } from "./TaskFileTracker"
  * Operation types for checkpoint events
  */
 type CheckpointOperation = "CHECKPOINT_INIT" | "CHECKPOINT_COMMIT" | "CHECKPOINT_RESTORE"
+
+/** Which primitive actually serialized a commit on the shared shadow repository. */
+type CheckpointLockMechanism = "folder_lock" | "process_mutex"
+
+/** How a checkpoint lock request resolved; bounded for use as a metric dimension. */
+type CheckpointLockOutcome = "acquired" | "skipped" | "conflicted" | "failed"
+
+/**
+ * How the Git half of a commit ended.
+ *
+ * `none` means the Git work returned without a usable hash. It is not the
+ * "nothing changed" case: that path reuses the current shadow HEAD and reports
+ * `success`. It is reported apart from `success` because the caller treats a
+ * missing restore point as a failed checkpoint, which is the symptom users
+ * report.
+ */
+type CheckpointGitOutcome = "success" | "none" | "error"
+
+/**
+ * How one whole commit attempt ended, from the caller's point of view.
+ *
+ * This is deliberately not the same as the Git outcome. The Git work runs only
+ * once exclusive access to the shared shadow repository has been granted, so an
+ * attempt refused the lock never reports a Git outcome at all. Reporting the
+ * attempt separately is what keeps those refusals countable.
+ *
+ * `no_restore_point` is not the benign "nothing changed" case: when there is
+ * genuinely nothing to commit the current shadow HEAD is reused and returned,
+ * which counts as `created`. It covers the normal returns that produced no
+ * usable hash — staging failures, and a commit that reported none — so this
+ * outcome means the attempt finished without leaving the caller anything to
+ * restore from.
+ */
+type CheckpointAttemptOutcome = "created" | "no_restore_point" | "lock_unavailable" | "error"
+
+/**
+ * Carries back why an attempt failed, for paths that throw.
+ *
+ * The commit body wraps every failure into one generic error before it reaches
+ * the caller, so the thrown value cannot be inspected to tell a refused lock
+ * apart from failed Git work.
+ */
+interface CheckpointAttemptState {
+	lockUnavailable: boolean
+}
 
 type CheckpointChangedFile = {
 	relativePath: string
@@ -275,6 +323,57 @@ class CheckpointTracker {
 	 * - Stage or commit files
 	 */
 	public async commitForFiles(files: string[]): Promise<string | undefined> {
+		// Users report checkpoint creation failing when many tasks run at once,
+		// and the cost is split between waiting for the shared shadow-repository
+		// lock and the Git work itself. One span over both is what makes that
+		// split visible in a trace instead of being inferred from timings.
+		const span = startSignalSpan({
+			name: "checkpoint.commit",
+			attributes: { task_id: this.taskId, explicit_files: files.length > 0 },
+		})
+		// One sample per attempt, whatever happens inside. `checkpoint.commit`
+		// only covers the Git work, which never runs when the lock is refused,
+		// so an attempt that never obtained exclusive access is absent from it
+		// entirely. That gap is the one users report: under concurrent tasks the
+		// checkpoint fails, and the metric that should show it stays empty.
+		const startedAt = performance.now()
+		const attempt: CheckpointAttemptState = { lockUnavailable: false }
+		const report = (outcome: CheckpointAttemptOutcome): void => {
+			span.setAttribute("attempt_outcome", outcome)
+			recordPerfPhase(
+				PerfDomain.Checkpoint,
+				"commit_attempt",
+				performance.now() - startedAt,
+				{ outcome },
+				{ taskId: this.taskId },
+			)
+		}
+		try {
+			const commitHash = await runWithSignalSpan(span, () => this.doCommitForFiles(files, span, attempt))
+			// An absent hash means no checkpoint was created, which the caller
+			// treats as a failed checkpoint. Reporting it as a successful span
+			// would hide exactly the failure this span exists to find.
+			const created = commitHash !== undefined && commitHash !== ""
+			span.setAttribute("created", created)
+			report(created ? "created" : "no_restore_point")
+			span.end(created ? "success" : "failure")
+			return commitHash
+		} catch (error) {
+			span.recordException(error)
+			// Whether the lock was the reason is known only from the state the
+			// body recorded: every failure below is rewrapped into one generic
+			// error before arriving here.
+			report(attempt.lockUnavailable ? "lock_unavailable" : "error")
+			span.end("failure")
+			throw error
+		}
+	}
+
+	private async doCommitForFiles(
+		files: string[],
+		span: SignalSpanHandle,
+		attempt: CheckpointAttemptState,
+	): Promise<string | undefined> {
 		let lockAcquired = false
 
 		// When no explicit files are provided, try to get tracked files from the
@@ -287,10 +386,69 @@ class CheckpointTracker {
 			await this.sendCheckpointSubscriptionEvent("CHECKPOINT_COMMIT", true)
 			const startTime = performance.now()
 
-			const lockResult: FolderLockWithRetryResult = await tryAcquireCheckpointLockWithRetry(this.cwdHash, this.taskId)
+			const lockStartedAt = performance.now()
+			// A child span rather than an attribute on the parent: an attribute
+			// has no extent, so it cannot show a reader where inside the commit
+			// the time went. The waiting and the Git work are the two halves
+			// being told apart, and only spans place them on the waterfall.
+			const lockSpan = startSignalSpan({
+				name: "checkpoint.commit_lock",
+				parent: span,
+				attributes: { task_id: this.taskId, mechanism: "folder_lock" satisfies CheckpointLockMechanism },
+			})
+			let lockResult: FolderLockWithRetryResult
+			try {
+				lockResult = await runWithSignalSpan(lockSpan, () => tryAcquireCheckpointLockWithRetry(this.cwdHash, this.taskId))
+			} catch (error) {
+				// The helper resolves the checkpoint directory before consulting
+				// the lock, and that resolution creates directories, so it can
+				// reject outright. Without this the span would stay open and the
+				// failure would be missing from the lock metric entirely.
+				attempt.lockUnavailable = true
+				lockSpan.setAttribute("outcome", "failed" satisfies CheckpointLockOutcome)
+				lockSpan.recordException(error)
+				lockSpan.end("failure")
+				span.setAttribute("lock_outcome", "failed" satisfies CheckpointLockOutcome)
+				recordPerfPhase(
+					PerfDomain.Checkpoint,
+					"commit_lock",
+					performance.now() - lockStartedAt,
+					{ outcome: "failed" satisfies CheckpointLockOutcome, mechanism: "folder_lock" },
+					{ taskId: this.taskId },
+				)
+				throw error
+			}
+			// Contention for the shared shadow repository is the suspected cause
+			// of the reported failures, so how the lock resolved is reported as
+			// its own bounded outcome rather than folded into the total.
+			// A refusal is reported as `conflicted` only when another holder was
+			// actually seen. The lock layer also reports failure when it could
+			// not be consulted at all, and merging the two would send the reader
+			// looking for contention that never happened.
+			const lockOutcome: CheckpointLockOutcome = lockResult.acquired
+				? "acquired"
+				: lockResult.skipped
+					? "skipped"
+					: lockResult.conflictingLock
+						? "conflicted"
+						: "failed"
+			span.setAttribute("lock_outcome", lockOutcome)
+			lockSpan.setAttribute("outcome", lockOutcome)
+			// `skipped` is not a failed span: in VS Code the folder lock declines
+			// by design and the mutex below does the serializing. Only a refusal
+			// that leaves the caller unable to proceed is a failure.
+			lockSpan.end(lockOutcome === "conflicted" || lockOutcome === "failed" ? "failure" : "success")
+			recordPerfPhase(
+				PerfDomain.Checkpoint,
+				"commit_lock",
+				performance.now() - lockStartedAt,
+				{ outcome: lockOutcome, mechanism: "folder_lock" satisfies CheckpointLockMechanism },
+				{ taskId: this.taskId },
+			)
 
 			// Locking failed due to conflicting lock
 			if (!lockResult.acquired && !lockResult.skipped) {
+				attempt.lockUnavailable = true
 				throw new Error(
 					"Failed to acquire checkpoint folder lock - another Dline instance may be performing checkpoint operations",
 				)
@@ -304,18 +462,60 @@ class CheckpointTracker {
 			// operations on the shared shadow git repository
 			if (!lockResult.acquired && lockResult.skipped) {
 				Logger.trace(`[Task ${this.taskId}] Using process-level mutex for checkpoint commit - VS Code`)
-				const commitHash = await CheckpointMutexRegistry.getInstance().runExclusive(this.cwdHash, async () => {
-					return this.doCommitFiles(filesToCommit)
+				// In VS Code the folder lock returns immediately and this mutex is
+				// what actually serializes concurrent tasks, so the wait measured
+				// above is not the wait users experience. Timing it from the
+				// request to the point the callback gains entry is what makes
+				// contention between tasks visible in this host.
+				const mutexRequestedAt = performance.now()
+				const mutexSpan = startSignalSpan({
+					name: "checkpoint.commit_lock",
+					parent: span,
+					attributes: { task_id: this.taskId, mechanism: "process_mutex" satisfies CheckpointLockMechanism },
 				})
+				let mutexEntered = false
+				try {
+					const commitHash = await CheckpointMutexRegistry.getInstance().runExclusive(this.cwdHash, async () => {
+						mutexEntered = true
+						mutexSpan.setAttribute("outcome", "acquired" satisfies CheckpointLockOutcome)
+						mutexSpan.end("success")
+						recordPerfPhase(
+							PerfDomain.Checkpoint,
+							"commit_lock",
+							performance.now() - mutexRequestedAt,
+							{ outcome: "acquired" satisfies CheckpointLockOutcome, mechanism: "process_mutex" },
+							{ taskId: this.taskId },
+						)
+						return this.runGitWork(filesToCommit, span)
+					})
 
-				const durationMs = Math.round(performance.now() - startTime)
-				await this.sendCheckpointSubscriptionEvent("CHECKPOINT_COMMIT", false, commitHash)
-				telemetryService.captureCheckpointUsage(this.taskId, "commit_created", durationMs)
-				return commitHash
+					const durationMs = Math.round(performance.now() - startTime)
+					await this.sendCheckpointSubscriptionEvent("CHECKPOINT_COMMIT", false, commitHash)
+					telemetryService.captureCheckpointUsage(this.taskId, "commit_created", durationMs)
+					return commitHash
+				} catch (error) {
+					// Only unresolved while the wait itself is what failed. Once
+					// the callback has entered, the span is already closed and
+					// the failure belongs to the Git work, not to the lock.
+					if (!mutexEntered) {
+						attempt.lockUnavailable = true
+						mutexSpan.setAttribute("outcome", "failed" satisfies CheckpointLockOutcome)
+						mutexSpan.recordException(error)
+						mutexSpan.end("failure")
+						recordPerfPhase(
+							PerfDomain.Checkpoint,
+							"commit_lock",
+							performance.now() - mutexRequestedAt,
+							{ outcome: "failed" satisfies CheckpointLockOutcome, mechanism: "process_mutex" },
+							{ taskId: this.taskId },
+						)
+					}
+					throw error
+				}
 			}
 
 			// Standalone/CLI: cross-process lock already held via SqliteLockManager
-			const commitHash = await this.doCommitFiles(filesToCommit)
+			const commitHash = await this.runGitWork(filesToCommit, span)
 
 			const durationMs = Math.round(performance.now() - startTime)
 			await this.sendCheckpointSubscriptionEvent("CHECKPOINT_COMMIT", false, commitHash)
@@ -333,6 +533,41 @@ class CheckpointTracker {
 				Logger.info(`[Task ${this.taskId}] Releasing checkpoint folder lock`)
 				await releaseCheckpointLock(this.cwdHash, this.taskId)
 			}
+		}
+	}
+
+	/**
+	 * Run the Git half of a commit as its own span and duration.
+	 *
+	 * This is the second half of the split the parent span exists to make
+	 * visible: everything measured here happens with exclusive access already
+	 * granted, so a slow sample means the repository work is slow rather than
+	 * that the task was queued behind another one.
+	 */
+	private async runGitWork(files: string[], parent: SignalSpanHandle): Promise<string | undefined> {
+		const startedAt = performance.now()
+		const gitSpan = startSignalSpan({
+			name: "checkpoint.git",
+			parent,
+			attributes: { task_id: this.taskId, staged_files: files.length },
+		})
+		const report = (outcome: CheckpointGitOutcome): void => {
+			gitSpan.setAttribute("outcome", outcome)
+			gitSpan.end(outcome === "error" ? "failure" : "success")
+			recordPerfPhase(PerfDomain.Checkpoint, "commit", performance.now() - startedAt, { outcome }, { taskId: this.taskId })
+		}
+		try {
+			const commitHash = await runWithSignalSpan(gitSpan, () => this.doCommitFiles(files))
+			// Staging that produced nothing is reported apart from a created
+			// commit. Both return normally, but only one leaves the caller with
+			// a restore point, and folding them together would make the failure
+			// users report invisible in this metric.
+			report(commitHash === undefined || commitHash === "" ? "none" : "success")
+			return commitHash
+		} catch (error) {
+			gitSpan.recordException(error)
+			report("error")
+			throw error
 		}
 	}
 

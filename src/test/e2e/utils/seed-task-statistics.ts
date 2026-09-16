@@ -76,7 +76,18 @@ export async function seedTaskStatistics(
 	const legacyStore = await database.openStore(ApiRequestRoundLegacyImportEntity)
 	try {
 		const currentHourStartMs = Math.floor(nowMs / HOUR_MS) * HOUR_MS
-		const completedAtMs = SEEDED_ROUNDS.map((_, index) => currentHourStartMs - (3 - index) * HOUR_MS + 30 * MINUTE_MS)
+		const latestRoundIndex = SEEDED_ROUNDS.length - 1
+		const latestRound = SEEDED_ROUNDS[latestRoundIndex]
+		const latestExecutionTailMs = Math.max(
+			0,
+			(latestRound?.executionDurationMs ?? 0) - (latestRound?.providerDurationMs ?? 0),
+		)
+		const latestProviderCompletedAtMs = currentHourStartMs - latestExecutionTailMs - 1
+		const completedAtMs = SEEDED_ROUNDS.map((_, index) =>
+			index === latestRoundIndex
+				? latestProviderCompletedAtMs
+				: currentHourStartMs - (3 - index) * HOUR_MS + 30 * MINUTE_MS,
+		)
 		const rounds = SEEDED_ROUNDS.map((input, index) => createRound(taskId, index, completedAtMs[index] ?? 0, input))
 		const executions = rounds.map((round, index) => createExecution(round, SEEDED_ROUNDS[index]?.executionDurationMs ?? 1))
 		const activeRecords = createActiveRecords(taskId, rounds, nowMs)

@@ -53,7 +53,9 @@ async function main() {
 	}
 }
 
-execSync("tsc -p ./tsconfig.test.json --outDir out", { encoding: "utf-8" })
+// `--noEmit false` is required: the base tsconfig sets `noEmit` so that a stray
+// `tsc -b` cannot litter the source tree. This build genuinely needs output.
+execSync("tsc -p ./tsconfig.test.json --outDir out --noEmit false", { encoding: "utf-8" })
 
 main().catch((e) => {
 	console.error(e)

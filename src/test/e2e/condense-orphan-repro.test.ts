@@ -107,8 +107,15 @@ async function sendTask(sidebar: Frame, text: string): Promise<void> {
 
 async function attachScreenshot(app: ElectronApplication, name: string): Promise<void> {
 	const screenshotPath = e2e.info().outputPath(`${name}.png`)
-	await (await app.firstWindow()).screenshot({ path: screenshotPath })
-	await e2e.info().attach(name, { path: screenshotPath, contentType: "image/png" })
+	try {
+		await (await app.firstWindow()).screenshot({ path: screenshotPath, timeout: 5_000 })
+		await e2e.info().attach(name, { path: screenshotPath, contentType: "image/png" })
+	} catch (error) {
+		await e2e.info().attach(`${name}-screenshot-error.txt`, {
+			body: Buffer.from(error instanceof Error ? (error.stack ?? error.message) : String(error), "utf8"),
+			contentType: "text/plain",
+		})
+	}
 }
 
 async function attachJson(name: string, value: unknown): Promise<void> {

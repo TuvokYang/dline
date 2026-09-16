@@ -1,4 +1,5 @@
 import type { ClineAccountUserInfo } from "@/services/auth/AuthService"
+import type { SignalSpanContext, SignalSpanHandle } from "../service/pipeline-port"
 import type { ITelemetryProvider, TelemetryProperties, TelemetrySettings } from "./ITelemetryProvider"
 
 /** Consent channel carried by every canonical telemetry signal. */
@@ -48,14 +49,12 @@ export interface TelemetrySpanStartOptions {
 	readonly attributes?: TelemetryProperties
 	readonly parent?: TelemetrySpanHandle
 	readonly startTime?: number
+	readonly root?: boolean
+	/** Journal mirrors may reuse the exporting provider's exact trace identity. */
+	readonly spanContext?: SignalSpanContext
 }
 
-export interface TelemetrySpanHandle {
-	readonly active: boolean
-	setAttribute(name: string, value: string | number | boolean): void
-	recordException(error: unknown): void
-	end(outcome?: "success" | "failure" | "cancelled", endTime?: number): void
-}
+export interface TelemetrySpanHandle extends SignalSpanHandle {}
 
 export interface TraceTelemetryCapability {
 	readonly kind: "trace"

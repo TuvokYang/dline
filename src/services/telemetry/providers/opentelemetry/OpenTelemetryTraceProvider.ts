@@ -1,7 +1,12 @@
-import { context, type Span, SpanStatusCode, type Tracer, trace } from "@opentelemetry/api"
+import { ROOT_CONTEXT, type Span, SpanStatusCode, type Tracer, trace } from "@opentelemetry/api"
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http"
 import { BatchSpanProcessor, NodeTracerProvider, type SpanProcessor } from "@opentelemetry/sdk-trace-node"
+import { epochMillisecondsToHrTime } from "../../otel/log-record"
 import { createTelemetryResource } from "../../otel/telemetry-resource"
+import { RuntimeContentPolicy } from "../../runtime/content-policy"
+import { normalizeRuntimeError } from "../../runtime/error-normalizer"
+import { exceptionAttributes } from "../../runtime/exception-attributes"
+import { currentSignalSpan, runInSpanScope } from "../../service/trace-scope"
 import type { TelemetrySpanHandle, TelemetrySpanStartOptions, TraceTelemetryCapability } from "../capabilities"
 import type { TelemetryProperties } from "../ITelemetryProvider"
 
@@ -12,6 +17,9 @@ export class OpenTelemetryTraceProvider implements TraceTelemetryCapability {
 	readonly kind = "trace" as const
 	private readonly provider: NodeTracerProvider
 	private readonly tracer: Tracer
+	private readonly policy = RuntimeContentPolicy.forEvents()
+	private readonly spans = new Set<OpenTelemetrySpanHandle>()
+	private disposed = false
 
 	constructor(endpoint: string, options: { readonly processor?: SpanProcessor } = {}) {
 		const processor = options.processor ?? createBatchProcessor(endpoint)
@@ -23,14 +31,21 @@ export class OpenTelemetryTraceProvider implements TraceTelemetryCapability {
 	}
 
 	startSpan(options: TelemetrySpanStartOptions): TelemetrySpanHandle {
-		const parent = options.parent instanceof OpenTelemetrySpanHandle ? options.parent.span : undefined
-		const parentContext = parent ? trace.setSpan(context.active(), parent) : context.active()
+		if (this.disposed) return INERT_SPAN
+		const parent = options.root ? undefined : (options.parent ?? currentSignalSpan())
+		const parentContext = parent?.spanContext ? trace.setSpanContext(ROOT_CONTEXT, parent.spanContext) : ROOT_CONTEXT
+		const taskId = taskIdentity(options.attributes) ?? parent?.taskId
 		const span = this.tracer.startSpan(
 			options.name,
-			{ attributes: primitiveAttributes(options.attributes), startTime: options.startTime },
+			{
+				attributes: this.policy.apply({ ...(taskId ? { task_id: taskId } : {}), ...options.attributes }).attributes,
+				startTime: spanTime(options.startTime),
+			},
 			parentContext,
 		)
-		return new OpenTelemetrySpanHandle(span)
+		const handle = new OpenTelemetrySpanHandle(span, taskId, this.policy, () => this.spans.delete(handle))
+		this.spans.add(handle)
+		return handle
 	}
 
 	async forceFlush(): Promise<void> {
@@ -38,23 +53,57 @@ export class OpenTelemetryTraceProvider implements TraceTelemetryCapability {
 	}
 
 	async dispose(): Promise<void> {
-		await this.provider.shutdown()
+		if (this.disposed) return
+		this.disposed = true
+		for (const span of this.spans) {
+			span.setAttribute("interrupted", true)
+			span.end("cancelled")
+		}
+		try {
+			await this.provider.shutdown()
+		} finally {
+			this.policy.reset()
+		}
 	}
 }
 
 class OpenTelemetrySpanHandle implements TelemetrySpanHandle {
-	readonly active = true
 	private ended = false
 
-	constructor(readonly span: Span) {}
+	constructor(
+		readonly span: Span,
+		public taskId: string | undefined,
+		private readonly policy: RuntimeContentPolicy,
+		private readonly onEnd: () => void,
+	) {}
+
+	get active(): boolean {
+		return !this.ended && this.span.isRecording()
+	}
+	get spanContext() {
+		return this.span.spanContext()
+	}
+	run<T>(action: () => T): T {
+		return runInSpanScope(this, action)
+	}
 
 	setAttribute(name: string, value: string | number | boolean): void {
-		if (!this.ended) this.span.setAttribute(name, value)
+		if (this.ended) return
+		this.taskId = taskIdentity({ [name]: value }) ?? this.taskId
+		this.span.setAttributes(this.policy.apply({ [name]: value }).attributes)
 	}
 
 	recordException(error: unknown): void {
 		if (this.ended) return
-		this.span.recordException(error instanceof Error ? error : new Error(String(error)))
+		const normalized = normalizeRuntimeError(error)
+		this.span.addEvent("exception", {
+			...exceptionAttributes(normalized),
+			"exception.fingerprint": normalized.fingerprint,
+		})
+	}
+
+	addEvent(name: string, attributes?: Readonly<Record<string, string | number | boolean>>, timestamp?: number): void {
+		if (!this.ended) this.span.addEvent(name, this.policy.apply(attributes).attributes, spanTime(timestamp))
 	}
 
 	end(outcome: "success" | "failure" | "cancelled" = "success", endTime?: number): void {
@@ -65,7 +114,11 @@ class OpenTelemetrySpanHandle implements TelemetrySpanHandle {
 			code: outcome === "success" ? SpanStatusCode.OK : SpanStatusCode.ERROR,
 			message: outcome === "cancelled" ? "cancelled" : undefined,
 		})
-		this.span.end(endTime)
+		try {
+			this.span.end(spanTime(endTime))
+		} finally {
+			this.onEnd()
+		}
 	}
 }
 
@@ -76,11 +129,19 @@ function createBatchProcessor(endpoint: string): SpanProcessor {
 	return new BatchSpanProcessor(new OTLPTraceExporter({ url: url.toString() }))
 }
 
-function primitiveAttributes(properties?: TelemetryProperties): Record<string, string | number | boolean> | undefined {
-	if (!properties) return undefined
-	const attributes: Record<string, string | number | boolean> = {}
-	for (const [key, value] of Object.entries(properties)) {
-		if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") attributes[key] = value
-	}
-	return attributes
+function taskIdentity(properties?: TelemetryProperties): string | undefined {
+	const value = properties?.task_id ?? properties?.taskId
+	return typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value) ? value : undefined
 }
+
+function spanTime(value?: number): [number, number] | undefined {
+	if (value === undefined) return undefined
+	return epochMillisecondsToHrTime(value >= 1_000_000_000_000 ? value : performance.timeOrigin + value)
+}
+
+const INERT_SPAN: TelemetrySpanHandle = Object.freeze({
+	active: false,
+	setAttribute(): void {},
+	recordException(): void {},
+	end(): void {},
+})

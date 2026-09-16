@@ -51,6 +51,23 @@ describe("TerminalCommandTimeoutSetting", () => {
 		expect(input.value).toBe("42")
 	})
 
+	it("keeps a multi-character draft stable while clearing a validation error", () => {
+		render(<TerminalCommandTimeoutSetting />)
+		const input = screen.getByLabelText("Terminal command timeout (minutes)") as HTMLInputElement
+
+		fireEvent.focus(input)
+		fireEvent.input(input, { target: { value: "0.5" } })
+		expect(screen.getByText("Enter at least 1 minute")).toBeInTheDocument()
+
+		fireEvent.input(input, { target: { value: "4" } })
+		fireEvent.input(input, { target: { value: "42" } })
+
+		expect(input.value).toBe("42")
+		expect(screen.queryByText("Enter at least 1 minute")).not.toBeInTheDocument()
+		fireEvent.blur(input)
+		expect(mocks.updateSetting).toHaveBeenCalledWith("terminalCommandTimeoutSeconds", 2520)
+	})
+
 	it("does not persist values below one minute", () => {
 		render(<TerminalCommandTimeoutSetting />)
 		const input = screen.getByLabelText("Terminal command timeout (minutes)")

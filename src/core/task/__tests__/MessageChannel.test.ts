@@ -89,6 +89,24 @@ describe("MessageChannel.say", () => {
 })
 
 describe("MessageChannel.presentAsk", () => {
+	it("finalizes a transient presentation row before exposing it as a durable ask", async () => {
+		const { channel, clineMessages, flushMessageUpdate } = createMessageChannel()
+		clineMessages.push({ ts: 100, type: "say", say: "tool", text: "partial summary", partial: true })
+
+		await expect(channel.presentAsk("condense", "review summary", 100, "condense-1")).resolves.toBe(100)
+
+		expect(clineMessages).toHaveLength(1)
+		expect(clineMessages[0]).toMatchObject({
+			ts: 100,
+			type: "ask",
+			ask: "condense",
+			text: "review summary",
+			partial: false,
+			interactionId: "condense-1",
+		})
+		expect(flushMessageUpdate).not.toHaveBeenCalled()
+	})
+
 	it("waits for realtime ask delivery before exposing the awaiting interaction", async () => {
 		let releaseDelivery: (() => void) | undefined
 		const delivery = new Promise<void>((resolve) => {
@@ -178,8 +196,10 @@ describe("MessageChannel.presentAsk", () => {
 		assert.deepEqual(clineMessages[0], {
 			ts: messageTs,
 			type: "ask",
+			say: undefined,
 			ask: "tool",
 			text: presentation,
+			partial: false,
 		})
 	})
 

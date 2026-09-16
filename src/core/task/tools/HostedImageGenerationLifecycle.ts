@@ -1,8 +1,8 @@
+import type { ApiStreamServerToolChunk } from "@core/api/transform/stream"
 import type { ArtifactResolver } from "@core/artifacts/ArtifactResolver"
 import { createTaskArtifactResolver, createTaskImagePreviewStore } from "@core/artifacts/runtime"
-import type { TaskImagePreviewStore } from "@core/artifacts/TaskImagePreviewStore"
 import type { ImageArtifact } from "@core/artifacts/TaskArtifactStore"
-import type { ApiStreamServerToolChunk } from "@core/api/transform/stream"
+import type { TaskImagePreviewStore } from "@core/artifacts/TaskImagePreviewStore"
 import type { ImageProviderOutput } from "@core/image-generation/contracts"
 import type { ClineSayTool } from "@shared/ExtensionMessage"
 import {
@@ -69,7 +69,8 @@ function readPreviewResult(result: unknown): { base64: string; sequence: number 
 function promptFromChunk(chunk: ApiStreamServerToolChunk, fallback: string): string {
 	for (const value of [chunk.input, chunk.result]) {
 		if (!isRecord(value)) continue
-		const prompt = textFromUnknown(value.prompt) ?? textFromUnknown(value.revisedPrompt) ?? textFromUnknown(value.revised_prompt)
+		const prompt =
+			textFromUnknown(value.prompt) ?? textFromUnknown(value.revisedPrompt) ?? textFromUnknown(value.revised_prompt)
 		if (prompt) return prompt
 	}
 	return fallback
@@ -118,11 +119,7 @@ export class HostedImageGenerationLifecycle {
 		)
 	}
 
-	private async emit(
-		dlineTid: string,
-		presentation: ImageGenerationPresentationV1,
-		partial: boolean,
-	): Promise<void> {
+	private async emit(dlineTid: string, presentation: ImageGenerationPresentationV1, partial: boolean): Promise<void> {
 		try {
 			await this.options.onUpdate({ dlineTid, partial, message: createMessage(presentation) })
 		} catch {

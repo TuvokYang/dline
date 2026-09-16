@@ -40,15 +40,18 @@ export function useImageGenerationProfiles() {
 		void reload()
 	}, [reload])
 
-	const persist = useCallback((next: ImageGenerationProfile[], clearApiKeyProfileIds: string[] = []) => {
-		setProfiles(next)
-		void FileServiceClient.updateImageGenerationProfiles(
-			UpdateImageGenerationProfilesRequest.create({ profiles: next, clearApiKeyProfileIds }),
-		).catch((caught: unknown) => {
-			setError(caught instanceof Error ? caught : new Error(String(caught)))
-			void reload()
-		})
-	}, [reload])
+	const persist = useCallback(
+		(next: ImageGenerationProfile[], clearApiKeyProfileIds: string[] = []) => {
+			setProfiles(next)
+			void FileServiceClient.updateImageGenerationProfiles(
+				UpdateImageGenerationProfilesRequest.create({ profiles: next, clearApiKeyProfileIds }),
+			).catch((caught: unknown) => {
+				setError(caught instanceof Error ? caught : new Error(String(caught)))
+				void reload()
+			})
+		},
+		[reload],
+	)
 
 	const addProfile = useCallback(() => persist([...profiles, emptyProfile()]), [persist, profiles])
 	const updateProfile = useCallback(
@@ -58,7 +61,10 @@ export function useImageGenerationProfiles() {
 		},
 		[persist, profiles],
 	)
-	const removeProfile = useCallback((id: string) => persist(profiles.filter((profile) => profile.id !== id)), [persist, profiles])
+	const removeProfile = useCallback(
+		(id: string) => persist(profiles.filter((profile) => profile.id !== id)),
+		[persist, profiles],
+	)
 
 	return { profiles, loaded, error, reload, addProfile, updateProfile, removeProfile }
 }

@@ -31,7 +31,7 @@ describe("Task.attemptApiRequest first chunk state", () => {
 		vi.restoreAllMocks()
 	})
 
-	it("keeps the request Web Tools switch frozen while setup awaits and clears first-chunk state on failure", async () => {
+	it("keeps frozen request state and preserves manual retry takeover for outer recovery", async () => {
 		const connectionError = new Error("connection dropped before first chunk")
 		let liveWebToolsEnabled = true
 		const api = {
@@ -108,6 +108,7 @@ describe("Task.attemptApiRequest first chunk state", () => {
 		const ordinaryRequestInputReplay = { get: vi.fn(() => undefined), acknowledge: vi.fn() }
 		const fakeTask = Object.assign(Object.create(Task.prototype), {
 			taskId: "task-first-chunk-failure",
+			manualRetryTakeoverActive: true,
 			ordinaryRequestInputReplay,
 			taskState,
 			pendingSystemPromptRefreshReason: undefined,
@@ -162,6 +163,7 @@ describe("Task.attemptApiRequest first chunk state", () => {
 		expect(beginIndicator.mock.invocationCallOrder[0]).toBeLessThan(api.createMessage.mock.invocationCallOrder[0])
 		expect(receiveIndicator).not.toHaveBeenCalled()
 		expect(rollbackIndicator).toHaveBeenCalledOnce()
+		expect((fakeTask as unknown as { manualRetryTakeoverActive: boolean }).manualRetryTakeoverActive).toBe(true)
 		expect(ordinaryRequestInputReplay.acknowledge).not.toHaveBeenCalled()
 		expect(buildPromptContext).toHaveBeenCalledWith(
 			requestScope.providerInfo,

@@ -185,6 +185,21 @@ describe("AnthropicHandler", () => {
 	})
 
 	describe("createMessage", () => {
+		it("disables SDK retries so Dline owns the retry policy", () => {
+			const handler = new AnthropicHandler({
+				profile: ApiProfile.create({
+					provider: "anthropic",
+					apiKey: "test-api-key",
+					modelId: "claude-sonnet-4-6",
+				}),
+				mode: "act",
+			})
+
+			const client = (handler as unknown as { ensureClient: () => { maxRetries: number } }).ensureClient()
+
+			expect(client.maxRetries).to.equal(0)
+		})
+
 		it("projects hosted web search exactly once and removes the local Anthropic tool", async () => {
 			const handler = new AnthropicHandler({
 				profile: ApiProfile.create({

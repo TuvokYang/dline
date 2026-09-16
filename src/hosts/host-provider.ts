@@ -1,6 +1,7 @@
 import { WebviewProvider } from "@/core/webview"
 import { CommentReviewController } from "@/integrations/editor/CommentReviewController"
 import { DiffViewProvider } from "@/integrations/editor/DiffViewProvider"
+import type { WindowsProcessTreeProvider } from "@/integrations/terminal/process-tree"
 import { ITerminalManager } from "@/integrations/terminal/types"
 import { HostBridgeClientProvider } from "./host-provider-types"
 /**
@@ -23,6 +24,7 @@ export class HostProvider {
 	createDiffViewProvider: DiffViewProviderCreator
 	createCommentReviewController: CommentReviewControllerCreator
 	createTerminalManager: TerminalManagerCreator
+	windowsProcessTreeProvider: WindowsProcessTreeProvider | undefined
 	hostBridge: HostBridgeClientProvider
 
 	// Logs to a user-visible output channel.
@@ -59,11 +61,13 @@ export class HostProvider {
 		getBinaryLocation: (name: string) => Promise<string>,
 		extensionFsPath: string,
 		globalStorageFsPath: string,
+		windowsProcessTreeProvider?: WindowsProcessTreeProvider,
 	) {
 		this.createWebviewProvider = createWebviewProvider
 		this.createDiffViewProvider = createDiffViewProvider
 		this.createCommentReviewController = createCommentReviewController
 		this.createTerminalManager = createTerminalManager
+		this.windowsProcessTreeProvider = windowsProcessTreeProvider
 		this.hostBridge = hostBridge
 		this.logToChannel = logToChannel
 		this.getCallbackUrl = getCallbackUrl
@@ -83,6 +87,7 @@ export class HostProvider {
 		getBinaryLocation: (name: string) => Promise<string>,
 		extensionFsPath: string,
 		globalStorageFsPath: string,
+		windowsProcessTreeProvider?: WindowsProcessTreeProvider,
 	): HostProvider {
 		if (HostProvider.instance) {
 			throw new Error("Host provider has already been initialized.")
@@ -98,6 +103,7 @@ export class HostProvider {
 			getBinaryLocation,
 			extensionFsPath,
 			globalStorageFsPath,
+			windowsProcessTreeProvider,
 		)
 		return HostProvider.instance
 	}

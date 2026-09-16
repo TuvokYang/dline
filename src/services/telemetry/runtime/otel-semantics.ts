@@ -1,6 +1,10 @@
 import type { AnyValue, LogAttributes } from "@opentelemetry/api-logs"
 import { SeverityNumber } from "@opentelemetry/api-logs"
-import { TELEMETRY_MASK_VALUE } from "./content-policy"
+import { RuntimeContentPolicy, TELEMETRY_MASK_VALUE } from "./content-policy"
+import { exceptionAttributes } from "./exception-attributes"
+
+export { EXCEPTION_ATTRIBUTE_KEYS } from "./exception-attributes"
+
 import { RuntimeEventPriority, type RuntimeTelemetryEvent } from "./types"
 
 /**
@@ -36,20 +40,6 @@ export const RUNTIME_ATTRIBUTE_KEYS = {
 	taskId: `${DLINE_PREFIX}task_id`,
 	controllerId: `${DLINE_PREFIX}controller_id`,
 	workspaceId: `${DLINE_PREFIX}workspace_id`,
-} as const
-
-/**
- * Exception attributes follow the OpenTelemetry semantic conventions so that
- * collectors and backends group failures without knowing about Dline.
- */
-export const EXCEPTION_ATTRIBUTE_KEYS = {
-	type: "exception.type",
-	message: "exception.message",
-	stacktrace: "exception.stacktrace",
-	/** Grouping identity. Not a convention key, so it carries our prefix. */
-	fingerprint: `${DLINE_PREFIX}exception.fingerprint`,
-	code: `${DLINE_PREFIX}exception.code`,
-	status: `${DLINE_PREFIX}exception.status`,
 } as const
 
 /**
@@ -125,6 +115,9 @@ export function toUnixNano(timestampMs: number): bigint {
 export interface OtlpLogRecord {
 	readonly timeUnixNano: string
 	readonly observedTimeUnixNano: string
+	readonly traceId?: string
+	readonly spanId?: string
+	readonly flags?: number
 	readonly severityNumber: number
 	readonly severityText: string
 	readonly body: { readonly stringValue: string }
@@ -170,21 +163,13 @@ export function toLogAttributes(event: RuntimeTelemetryEvent): LogAttributes {
 	}
 
 	const { taskId, controllerId, workspaceId } = event.context
-	if (taskId !== undefined) attributes[RUNTIME_ATTRIBUTE_KEYS.taskId] = TELEMETRY_MASK_VALUE
+	if (taskId !== undefined) {
+		attributes[RUNTIME_ATTRIBUTE_KEYS.taskId] = RuntimeContentPolicy.forEvents().apply({ taskId }).attributes.taskId
+	}
 	if (controllerId !== undefined) attributes[RUNTIME_ATTRIBUTE_KEYS.controllerId] = TELEMETRY_MASK_VALUE
 	if (workspaceId !== undefined) attributes[RUNTIME_ATTRIBUTE_KEYS.workspaceId] = TELEMETRY_MASK_VALUE
 
-	if (event.error) {
-		const { name, message, code, status, sourceFrame, fingerprint } = event.error
-		attributes[EXCEPTION_ATTRIBUTE_KEYS.type] = name
-		attributes[EXCEPTION_ATTRIBUTE_KEYS.message] = TELEMETRY_MASK_VALUE
-		attributes[EXCEPTION_ATTRIBUTE_KEYS.fingerprint] = fingerprint
-		if (code !== undefined) attributes[EXCEPTION_ATTRIBUTE_KEYS.code] = code
-		if (status !== undefined) attributes[EXCEPTION_ATTRIBUTE_KEYS.status] = status
-		// Only the project-owned frame is published; a full stack would carry
-		// absolute paths from the user's machine.
-		if (sourceFrame !== undefined) attributes[EXCEPTION_ATTRIBUTE_KEYS.stacktrace] = sourceFrame
-	}
+	if (event.error) Object.assign(attributes, exceptionAttributes(event.error))
 
 	return attributes
 }
@@ -195,6 +180,10 @@ export function toLogAttributes(event: RuntimeTelemetryEvent): LogAttributes {
  * `observedTimeUnixNano` equals `timeUnixNano` because the bus stamps events as
  * it admits them; there is no separate observation step that could drift.
  */
+export function isWarningEvent(event: RuntimeTelemetryEvent): boolean {
+	return event.attributes.logger_level === "warn" || event.attributes.message_level === "warning"
+}
+
 export function toOtlpLogRecord(event: RuntimeTelemetryEvent): OtlpLogRecord {
 	const unixNano = toUnixNano(event.timestamp).toString()
 	const attributes = toLogAttributes(event)
@@ -202,8 +191,11 @@ export function toOtlpLogRecord(event: RuntimeTelemetryEvent): OtlpLogRecord {
 	return {
 		timeUnixNano: unixNano,
 		observedTimeUnixNano: unixNano,
-		severityNumber: toSeverityNumber(event.priority),
-		severityText: toSeverityText(event.priority),
+		...(event.traceContext
+			? { traceId: event.traceContext.traceId, spanId: event.traceContext.spanId, flags: event.traceContext.traceFlags }
+			: {}),
+		severityNumber: isWarningEvent(event) ? SeverityNumber.WARN : toSeverityNumber(event.priority),
+		severityText: isWarningEvent(event) ? "WARN" : toSeverityText(event.priority),
 		body: { stringValue: event.name },
 		attributes: Object.entries(attributes).map(([key, value]) => ({
 			key,

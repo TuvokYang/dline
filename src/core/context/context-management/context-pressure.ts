@@ -122,6 +122,25 @@ export function collectContextWindowRequestPressures(messages: readonly ClineMes
 	return pressures
 }
 
+/** Return the newest reliable provider occupancy after the active compaction boundary. */
+export function getLatestReliableContextWindowTokens(pressures: readonly ContextWindowRequestPressure[]): number {
+	for (let index = pressures.length - 1; index >= 0; index--) {
+		const pressure = pressures[index]
+		if (pressure.contextTokensSource !== "provider") continue
+		const contextTokens = normalizePositiveTokens(pressure.contextTokens)
+		if (contextTokens > 0) return contextTokens
+	}
+	return 0
+}
+
+/** Keep Profile preflight conservative while the live indicator is catching up with persisted provider usage. */
+export function resolveOccupiedContextWindowTokens(
+	indicatorTokens: number,
+	pressures: readonly ContextWindowRequestPressure[],
+): number {
+	return Math.max(normalizePositiveTokens(indicatorTokens), getLatestReliableContextWindowTokens(pressures))
+}
+
 /**
  * Decide whether a mode switch is safe or requires compact confirmation.
  *

@@ -144,6 +144,8 @@ describe("Telemetry system is abstracted and can easily switch between providers
 			assert.ok(logSpy.mock.calls.length === 1, "Log should be called once")
 			const [eventName, properties] = logSpy.mock.calls[0]
 			assert.strictEqual(eventName, "task.created", "Event name should be task.created")
+			assert.ok(properties, "Task created properties should be defined")
+			assert.strictEqual(typeof properties.telemetry_timestamp_ms, "number")
 			assert.deepStrictEqual(
 				properties,
 				{
@@ -153,6 +155,7 @@ describe("Telemetry system is abstracted and can easily switch between providers
 					...MOCK_METADATA,
 					telemetry_channel: "usage",
 					telemetry_severity: "info",
+					telemetry_timestamp_ms: properties.telemetry_timestamp_ms,
 				},
 				"Task created event should include only the expected metadata properties",
 			)
@@ -218,7 +221,11 @@ describe("Telemetry system is abstracted and can easily switch between providers
 
 			assert.strictEqual(eventName1, "task.created", "First provider should receive correct event name")
 			assert.strictEqual(eventName2, "task.created", "Second provider should receive correct event name")
+			assert.ok(properties1, "First provider properties should be defined")
+			assert.ok(properties2, "Second provider properties should be defined")
 
+			assert.strictEqual(typeof properties1.telemetry_timestamp_ms, "number")
+			assert.strictEqual(properties2.telemetry_timestamp_ms, properties1.telemetry_timestamp_ms)
 			const expectedProperties = {
 				ulid: "multi-task-123",
 				apiProvider: "anthropic",
@@ -226,6 +233,7 @@ describe("Telemetry system is abstracted and can easily switch between providers
 				...MOCK_METADATA,
 				telemetry_channel: "usage",
 				telemetry_severity: "info",
+				telemetry_timestamp_ms: properties1.telemetry_timestamp_ms,
 			}
 			assert.deepStrictEqual(properties1, expectedProperties, "First provider should receive correct properties")
 			assert.deepStrictEqual(properties2, expectedProperties, "Second provider should receive correct properties")

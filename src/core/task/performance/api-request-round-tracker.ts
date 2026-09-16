@@ -1,4 +1,5 @@
 import { performance } from "node:perf_hooks"
+import { taskTraceSource } from "@/services/telemetry/service/task-trace-context"
 import { aggregateRoundUsage } from "./api-request-round-aggregator"
 import {
 	API_REQUEST_ROUND_SCHEMA_VERSION,
@@ -162,6 +163,12 @@ export class ApiRequestRoundTracker {
 		state.latestRevision = revision
 		this.enqueue(record)
 		this.options.onChanged?.()
+		taskTraceSource(this.options.taskId)?.event("task.usage.updated", {
+			api_index: handle.apiIndex,
+			task_attempt: handle.taskAttempt,
+			provider_attempt: handle.providerAttempt,
+			usage_quality: "exact",
+		})
 	}
 
 	getSnapshot(): ApiRequestRoundSnapshot {

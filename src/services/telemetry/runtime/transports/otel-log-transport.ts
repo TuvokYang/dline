@@ -1,4 +1,5 @@
-import type { Logger as OtelLogger } from "@opentelemetry/api-logs"
+import { ROOT_CONTEXT, trace } from "@opentelemetry/api"
+import { type Logger as OtelLogger, SeverityNumber } from "@opentelemetry/api-logs"
 import { BatchLogRecordProcessor, type LoggerProvider, type LogRecordProcessor } from "@opentelemetry/sdk-logs"
 import { RUNTIME_SCOPE_NAME, RUNTIME_SCOPE_VERSION } from "@/services/telemetry/otel/scopes"
 import {
@@ -7,7 +8,8 @@ import {
 	detachScope,
 } from "@/services/telemetry/otel/shared-logger-provider"
 import { createOTLPLogExporter } from "@/services/telemetry/providers/opentelemetry/OpenTelemetryExporterFactory"
-import { toLogAttributes, toSeverityNumber, toSeverityText } from "../otel-semantics"
+import { epochMillisecondsToHrTime } from "../../otel/log-record"
+import { isWarningEvent, toLogAttributes, toSeverityNumber, toSeverityText } from "../otel-semantics"
 import type { RuntimeTelemetryEvent } from "../types"
 import { ContentPolicyProcessor } from "./content-policy-processor"
 
@@ -123,10 +125,11 @@ export class OtelLogTransport {
 
 		try {
 			this.logger.emit({
-				timestamp: event.timestamp,
-				observedTimestamp: event.timestamp,
-				severityNumber: toSeverityNumber(event.priority),
-				severityText: toSeverityText(event.priority),
+				timestamp: epochMillisecondsToHrTime(event.timestamp),
+				observedTimestamp: epochMillisecondsToHrTime(Date.now()),
+				context: event.traceContext ? trace.setSpanContext(ROOT_CONTEXT, event.traceContext) : ROOT_CONTEXT,
+				severityNumber: isWarningEvent(event) ? SeverityNumber.WARN : toSeverityNumber(event.priority),
+				severityText: isWarningEvent(event) ? "WARN" : toSeverityText(event.priority),
 				body: event.name,
 				attributes: toLogAttributes(event),
 			})

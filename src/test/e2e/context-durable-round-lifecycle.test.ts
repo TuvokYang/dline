@@ -133,8 +133,12 @@ e2e(
 		await expect(sidebar.getByText("E2E_DURABLE_LIFECYCLE_COMPLETE", { exact: false })).toBeVisible({ timeout: 60_000 })
 		await expect(progress).toHaveAttribute("data-phase", "stable", { timeout: 30_000 })
 		const afterContinuation = await readSegments(sidebar)
-		expect(afterContinuation.durable).toBeGreaterThanOrEqual(duringContinuation.durable)
-		expect(afterContinuation.staged).toBe(0)
+		expect(afterContinuation.active).toBe(0)
+		expect(afterContinuation.durable).toBe(duringContinuation.durable)
+		expect(afterContinuation.staged).toBeGreaterThan(0)
+		expect(
+			afterContinuation.durable + afterContinuation.active + afterContinuation.staged + afterContinuation.environment,
+		).toBe(6_600)
 		await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
 	},
 )

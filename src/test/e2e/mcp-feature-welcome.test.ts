@@ -71,7 +71,7 @@ e2e(
 )
 
 e2e(
-	"Welcome Recent - occupies 70vh and does not expose user scrolling",
+	"Welcome Recent - fits available space and does not expose user scrolling",
 	async ({ dlineDocsDir, helper, openVSCode, userDataDir, workspaceDir }) => {
 		e2e.setTimeout(180_000)
 		const tasksDir = path.join(dlineDocsDir, "tasks")
@@ -92,6 +92,7 @@ e2e(
 		const app = await openVSCode(workspaceDir)
 		try {
 			const opened = await openSidebar(app, helper)
+			await opened.page.getByRole("button", { name: "New Task", exact: true }).click()
 			const recentList = opened.sidebar.locator(".history-preview-list")
 			await expect(recentList).toBeVisible({ timeout: 30_000 })
 			await expect(opened.sidebar.getByText("E2E_WELCOME_LAYOUT_TASK_14", { exact: false })).toBeVisible()
@@ -99,20 +100,28 @@ e2e(
 			const layout = await recentList.evaluate((element) => {
 				const style = getComputedStyle(element)
 				const rect = element.getBoundingClientRect()
+				const rows = [...element.querySelectorAll<HTMLElement>(".history-preview-item")]
 				return {
 					height: rect.height,
-					expectedHeight: window.innerHeight * 0.7,
+					maxHeight: window.innerHeight * 0.7,
 					overflowX: style.overflowX,
 					overflowY: style.overflowY,
 					clientHeight: element.clientHeight,
 					scrollHeight: element.scrollHeight,
 					scrollTop: element.scrollTop,
+					rowCount: rows.length,
+					lastRowBottom: rows.at(-1)?.getBoundingClientRect().bottom,
+					listBottom: rect.bottom,
 				}
 			})
-			expect(Math.abs(layout.height - layout.expectedHeight), JSON.stringify(layout)).toBeLessThanOrEqual(1)
+			expect(layout.height, JSON.stringify(layout)).toBeGreaterThan(0)
+			expect(layout.height, JSON.stringify(layout)).toBeLessThanOrEqual(layout.maxHeight)
 			expect(layout.overflowX).toBe("hidden")
 			expect(layout.overflowY).toBe("hidden")
-			expect(layout.scrollHeight).toBeGreaterThan(layout.clientHeight)
+			expect(layout.scrollHeight).toBe(layout.clientHeight)
+			expect(layout.rowCount).toBeGreaterThan(0)
+			expect(layout.rowCount).toBeLessThan(10)
+			expect(layout.lastRowBottom, JSON.stringify(layout)).toBeLessThanOrEqual(layout.listBottom)
 			expect(layout.scrollTop).toBe(0)
 
 			await recentList.hover()

@@ -4,10 +4,12 @@ import {
 	type RuntimeTelemetryAuthorizationStatus,
 	TelemetryAuthorizationStore,
 } from "@/core/storage/secrets/TelemetryAuthorizationStore"
+import { isTelemetryDevelopmentMode } from "../development-mode"
 import { RuntimeEventRecorder } from "../events/runtime"
 import { recordRuntimeGauge } from "../service/pipeline-port"
 import { DiagnosisPipeline } from "./analysis/diagnosis-pipeline"
 import type { RootCauseDiagnosis } from "./analysis/root-cause-types"
+import { DevRuntimeDiagnostics } from "./dev-diagnostics"
 import { RUNTIME_METRICS, RuntimeSampler, type RuntimeSnapshot } from "./performance/runtime-sampler"
 import { DEFAULT_METRIC_BUDGETS, type PolicyVerdict, ThresholdPolicy } from "./performance/threshold-policy"
 import { RuntimeEventBus } from "./runtime-event-bus"
@@ -95,6 +97,8 @@ export interface RuntimeTelemetryLifecycleOptions {
 	readonly onDiagnosis?: (diagnosis: RootCauseDiagnosis) => void
 	/** Canonical provider-registry sink used by the production composition root. */
 	readonly onEvent?: (event: RuntimeTelemetryEvent) => void
+	/** Supplied by the host composition root; runtime never imports task/controller owners. */
+	readonly activeTaskIds?: () => readonly string[]
 	/**
 	 * Bus to drain.
 	 *
@@ -107,6 +111,7 @@ export interface RuntimeTelemetryLifecycleOptions {
 
 export class RuntimeTelemetryLifecycle {
 	readonly service: RuntimeTelemetryService
+	readonly diagnostics: DevRuntimeDiagnostics
 
 	private readonly options: RuntimeTelemetryLifecycleOptions
 	private readonly bus: RuntimeEventBus
@@ -130,6 +135,10 @@ export class RuntimeTelemetryLifecycle {
 		this.options = options
 		this.bus = options.bus ?? new RuntimeEventBus({ sessionId: options.sessionId, capacity: options.capacity })
 		this.authorization = new TelemetryAuthorizationStore({ dataDir: options.dataDir })
+		this.diagnostics = new DevRuntimeDiagnostics(this.bus, {
+			enabled: () => this.enabled && isTelemetryDevelopmentMode(),
+			activeTaskIds: options.activeTaskIds,
+		})
 		this.sessionCapacity = options.capacity ?? DEFAULT_SESSION_EVENT_CAPACITY
 		const signalPipeline = new RuntimeSignalPipeline(this.bus)
 		const recorder = new RuntimeEventRecorder({
@@ -240,9 +249,12 @@ export class RuntimeTelemetryLifecycle {
 
 	async dispose(): Promise<void> {
 		if (this.disposed) return
-		await this.stop({ revokePairingCode: false })
-		this.disposed = true
-		this.bus.dispose()
+		try {
+			await this.stop({ revokePairingCode: false })
+		} finally {
+			this.disposed = true
+			this.bus.dispose()
+		}
 	}
 
 	private async start(): Promise<void> {
@@ -278,6 +290,7 @@ export class RuntimeTelemetryLifecycle {
 		// Enable before starting the sampler: the service drops events while
 		// disabled, so a verdict arriving first would be silently discarded.
 		this.enabled = true
+		this.diagnostics.phase("telemetry.started", "completed")
 		this.startDiagnosis()
 		this.startSampler()
 		this.startDraining()
@@ -356,6 +369,7 @@ export class RuntimeTelemetryLifecycle {
 		recordRuntimeGauge(RUNTIME_METRICS.cpuUtilizationRatio, snapshot.cpuUtilizationRatio, "CPU utilisation ratio")
 		recordRuntimeGauge(RUNTIME_METRICS.heapGrowthBytes, snapshot.heapGrowthBytes, "Heap growth in bytes")
 		recordRuntimeGauge(RUNTIME_METRICS.rssBytes, snapshot.rssBytes, "Resident set size in bytes")
+		this.diagnostics.snapshot(snapshot)
 	}
 
 	private publishVerdict(verdict: PolicyVerdict): void {
@@ -391,6 +405,7 @@ export class RuntimeTelemetryLifecycle {
 			return
 		}
 
+		this.diagnostics.phase("telemetry.stopping", "started")
 		// Stop sampling first so no new verdict lands after the final flush.
 		this.sampler?.dispose()
 		this.sampler = undefined
@@ -409,21 +424,21 @@ export class RuntimeTelemetryLifecycle {
 		this.diagnosis?.reset()
 		this.diagnosis = undefined
 
-		// Flush before tearing down so events recorded while enabled survive.
-		await this.flush()
-		this.enabled = false
-
-		// Opting out must also drop what the session already collected: the
-		// export reads this history, and a user who turns reporting off does
-		// not expect the next bundle to still carry the session.
-		this.session.length = 0
-
-		const journal = this.journal
-		const transport = this.transport
-		this.journal = undefined
-		this.transport = undefined
-		await Promise.all([journal?.dispose(), transport?.dispose()])
-
-		if (options.revokePairingCode) this.authorization.revokePairingCode()
+		// This marker means producers are drained, not that the process exited.
+		this.diagnostics.phase("telemetry.final_flush", "started")
+		// A forwarding failure must not strand timers or open journals on shutdown.
+		try {
+			await this.flush()
+		} finally {
+			this.diagnostics.reset()
+			this.enabled = false
+			const journal = this.journal
+			const transport = this.transport
+			this.journal = undefined
+			this.transport = undefined
+			this.session.length = 0
+			await Promise.allSettled([journal?.dispose(), transport?.dispose()])
+			if (options.revokePairingCode) this.authorization.revokePairingCode()
+		}
 	}
 }

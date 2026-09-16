@@ -169,7 +169,7 @@ for (const protocolCase of PROTOCOL_CASES) {
 			await input.fill(feedback)
 			await input.press("Enter")
 			await expect(input).toHaveValue("")
-			const feedbackRow = sidebar.locator("span.ph-no-capture:not(button span)").filter({ hasText: feedback })
+			const feedbackRow = sidebar.getByTestId("direct-user-input").filter({ hasText: feedback })
 			await expect(feedbackRow).toHaveCount(1)
 			await expect(feedbackRow).toHaveText(feedback)
 			await expect(sidebar.getByText(completion, { exact: false }).last()).toBeVisible({ timeout: 60_000 })

@@ -4,6 +4,7 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { expect, test } from "@playwright/test"
 import { getOpenAiCodexProfileAuthFileName } from "../../core/storage/secrets/OpenAiCodexProfileAuthPath"
+import { SETTINGS_MIGRATION_VERSION, SETTINGS_MIGRATION_VERSION_KEY } from "../../core/storage/settings/settings-types"
 import { E2E_PROFILE_NAMES, prepareE2EState } from "./utils/api-profile"
 
 interface PreparedProfile {
@@ -284,9 +285,10 @@ test("live E2E profile preprocessing copies only api_profiles.json and secrets/*
 
 		const settings = await readJson<Record<string, unknown>>(path.join(dlineDir, "data", "settings", "settings.json"))
 		expect(settings).toEqual({
-			__settingsMigrationVersion: 1,
+			[SETTINGS_MIGRATION_VERSION_KEY]: SETTINGS_MIGRATION_VERSION,
 			actModeProfile: E2E_PROFILE_NAMES.mockOpenAi,
 			planModeProfile: E2E_PROFILE_NAMES.mockOpenAi,
+			imageGenerationEnabled: false,
 			enableParallelToolCalling: true,
 		})
 

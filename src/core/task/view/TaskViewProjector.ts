@@ -11,6 +11,14 @@ const DISABLED_INPUT: TaskInputViewState = {
 	acceptsFiles: false,
 }
 
+const PROFILE_RECOVERY_INPUT: TaskInputViewState = {
+	enabled: true,
+	acceptsText: true,
+	acceptsImages: true,
+	acceptsFiles: true,
+	enterAction: "reply",
+}
+
 const CANCELLING_ACTION: TaskViewAction = {
 	type: "cancel",
 	label: "Cancel",
@@ -106,11 +114,11 @@ export function projectTaskView(
 		...(diagnostic ? { diagnostic } : {}),
 		...(contextCompaction ? { contextCompaction } : {}),
 		...(forceTruncateAvailable ? { forceTruncateAvailable: true } : {}),
-		// Only an active interaction opens the composer. A working task has
-		// nobody waiting for a reply, so input must go to the queue instead of
-		// being sent into the conversation as an answer to a question that was
-		// never asked.
-		input: interaction?.input ?? { ...DISABLED_INPUT },
+		// Only an active interaction or an explicit recovery admission opens the
+		// composer. Generic working phases still route input through the queue.
+		input:
+			interaction?.input ??
+			(state.ordinaryInput?.kind === "profile_recovery" ? { ...PROFILE_RECOVERY_INPUT } : { ...DISABLED_INPUT }),
 		footer: { actions },
 	}
 }

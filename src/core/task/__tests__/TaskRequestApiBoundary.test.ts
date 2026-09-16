@@ -365,6 +365,20 @@ describe("Task request API boundary", () => {
 		expect(providerMethod).toContain("this.compactionRequestReplay.getProviderInput(apiIndex)")
 	})
 
+	it("flushes the finalized assistant tool turn before executing its tools", async () => {
+		const source = await readFile(taskSourcePath, "utf8")
+		const method = extractMethod(source, "async recursivelyMakeClineRequests(", "async loadContext(")
+		const finalizedTurn = method.indexOf("await this.executeFinalizedAssistantTurn({")
+		const assistantAppend = method.lastIndexOf("await this.messageStateHandler.addToApiConversationHistory({", finalizedTurn)
+		const assistantRole = method.indexOf('role: "assistant"', assistantAppend)
+		const historyFlush = method.indexOf("await this.messageStateHandler.flushApiConversationHistory()", assistantRole)
+
+		expect(assistantAppend).toBeGreaterThanOrEqual(0)
+		expect(assistantRole).toBeGreaterThan(assistantAppend)
+		expect(historyFlush).toBeGreaterThan(assistantRole)
+		expect(finalizedTurn).toBeGreaterThan(historyFlush)
+	})
+
 	it("rejects invalid compaction output before the ordinary continuation path", async () => {
 		const source = await readFile(taskSourcePath, "utf8")
 		const method = extractMethod(source, "async recursivelyMakeClineRequests(", "async loadContext(")

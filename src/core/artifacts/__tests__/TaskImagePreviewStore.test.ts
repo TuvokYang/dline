@@ -5,8 +5,7 @@ import path from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { TaskImagePreviewStore } from "../TaskImagePreviewStore"
 
-const PNG_1X1_BASE64 =
-	"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
+const PNG_1X1_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
 
 describe("TaskImagePreviewStore", () => {
 	let tempDirectory: string
@@ -40,8 +39,9 @@ describe("TaskImagePreviewStore", () => {
 		expect(preview).toMatchObject({ mimeType: "image/png", width: 1, height: 1, sequence: 1 })
 		expect(repeatedBytesPreview).toMatchObject({ mimeType: "image/png", width: 1, height: 1, sequence: 2 })
 		expect(repeatedBytesPreview.id).toBe(preview.id)
-		expect(path.relative(taskDirectory, resolved.absolutePath).split(path.sep).join("/"))
-			.toMatch(/^tmp\/image-previews\/[a-f0-9]{64}$/)
+		expect(path.relative(taskDirectory, resolved.absolutePath).split(path.sep).join("/")).toMatch(
+			/^tmp\/image-previews\/[a-f0-9]{64}$/,
+		)
 		expect(Buffer.from(resolved.bytes).toString("base64")).toBe(PNG_1X1_BASE64)
 		await expect(fs.access(stalePath)).rejects.toThrow()
 

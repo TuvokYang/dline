@@ -40,13 +40,7 @@ export class ProfileChangeCoordinator {
 		const task = controller.task
 		try {
 			if (task) {
-				this.adoptTaskBinding(
-					task.taskSm.planModeProfileId,
-					task.taskSm.planModeProfile,
-					"plan",
-					changes,
-					task.taskSm,
-				)
+				this.adoptTaskBinding(task.taskSm.planModeProfileId, task.taskSm.planModeProfile, "plan", changes, task.taskSm)
 				this.adoptTaskBinding(task.taskSm.actModeProfileId, task.taskSm.actModeProfile, "act", changes, task.taskSm)
 			}
 
@@ -77,10 +71,7 @@ export class ProfileChangeCoordinator {
 				await controller.postStateToWebview()
 			}
 		} catch (error) {
-			Logger.warn(
-				`[ProfileChangeCoordinator] Post-commit notification failed for task ${task?.taskId ?? "none"}`,
-				error,
-			)
+			Logger.warn(`[ProfileChangeCoordinator] Post-commit notification failed for task ${task?.taskId ?? "none"}`, error)
 		}
 	}
 

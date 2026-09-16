@@ -244,23 +244,27 @@ function createProjection(protocol: E2EMockApiProtocol, requestBody: unknown): C
 	} else if (body.instructions !== undefined) {
 		appendSemanticLeaves(systemSegments, "instructions", "system", "instructions", body.instructions)
 		systemPlacement = "instructions"
-		const input = Array.isArray(body.input) ? body.input : []
-		for (const [index, item] of input.entries()) {
-			appendSemanticLeaves(contentSegments, "input", "content", `input[${index}]`, item)
+		if (Array.isArray(body.input)) {
+			for (const [index, item] of body.input.entries()) {
+				appendSemanticLeaves(contentSegments, "input", "content", `input[${index}]`, item)
+			}
+		} else if (body.input !== undefined) {
+			appendSemanticLeaves(contentSegments, "input", "content", "input", body.input)
 		}
-	} else {
-		const input = Array.isArray(body.input) ? body.input : []
+	} else if (Array.isArray(body.input)) {
 		let contentStart = 0
-		for (const [index, item] of input.entries()) {
+		for (const [index, item] of body.input.entries()) {
 			const role = asRecord(item)?.role
 			if (index !== contentStart || role !== "system") break
 			appendSemanticLeaves(systemSegments, "input", "system", `input[${index}]`, item)
 			contentStart++
 			systemPlacement = "input"
 		}
-		for (let index = contentStart; index < input.length; index++) {
-			appendSemanticLeaves(contentSegments, "input", "content", `input[${index}]`, input[index])
+		for (let index = contentStart; index < body.input.length; index++) {
+			appendSemanticLeaves(contentSegments, "input", "content", `input[${index}]`, body.input[index])
 		}
+	} else if (body.input !== undefined) {
+		appendSemanticLeaves(contentSegments, "input", "content", "input", body.input)
 	}
 	appendSemanticLeaves(toolSegments, "tools", "tools", "tools", body.tools ?? [])
 

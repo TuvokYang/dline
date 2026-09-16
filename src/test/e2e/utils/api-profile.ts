@@ -138,10 +138,6 @@ function highReasoning() {
 	return { enableThinking: true, effort: "high", thinkingBudget: 0 }
 }
 
-function budgetReasoning(thinkingBudget: number) {
-	return { enableThinking: true, effort: "", thinkingBudget }
-}
-
 type StoredApiFormat = "OPENAI_CHAT" | "OPENAI_RESPONSES" | "ANTHROPIC_CHAT"
 
 function value(env: NodeJS.ProcessEnv, key: string): string | undefined {
@@ -380,7 +376,7 @@ function anthropicProfile(id: string, name: string, baseUrl: string): StoredApiP
 		usedFor: ["act", "plan", "subagents"],
 		enabled: true,
 		anthropic: {
-			reasoning: budgetReasoning(2_048),
+			reasoning: highReasoning(),
 		},
 	}
 }
@@ -490,6 +486,7 @@ export async function prepareE2EState(options: PrepareE2EStateOptions): Promise<
 		E2E_PROFILE_NAMES.mockOpenAIImage,
 		getE2EOpenAIImageBaseUrl(options.mockBaseUrl),
 	)
+	upsertProfile(profiles, mockImageProfile)
 	apiKeys[`image:${mockImageProfile.id}`] = { apiKey: "dline-e2e-api-key", name: mockImageProfile.name }
 
 	const mockDeepSeekProfile = deepSeekProfile(

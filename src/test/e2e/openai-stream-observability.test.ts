@@ -54,16 +54,22 @@ async function openSidebar(app: ElectronApplication, helper: E2ETestHelper): Pro
 	return sidebar
 }
 
+function escapeForRegExp(value: string): string {
+	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
+
 async function openResponsesProfileEditor(app: ElectronApplication, sidebar: Frame): Promise<Locator> {
 	const page = await app.firstWindow()
 	await page.getByRole("button", { name: "Settings", exact: true }).click()
 	await expect(sidebar.getByRole("heading", { name: "API Configuration" })).toBeVisible()
-	const card = sidebar
-		.getByTestId("api-profile-card")
-		.filter({ has: sidebar.locator(`input[value=${JSON.stringify(E2E_PROFILE_NAMES.mockOpenAiResponses)}]`) })
+	const profileName = E2E_PROFILE_NAMES.mockOpenAiResponses
+	const card = sidebar.getByTestId("api-profile-card").filter({
+		has: sidebar.getByRole("button", { name: new RegExp(`^(Expand|Collapse) ${escapeForRegExp(profileName)}$`) }),
+	})
 	await expect(card).toHaveCount(1)
+	const expandToggle = card.getByRole("button", { name: /^Expand / })
+	if (await expandToggle.isVisible()) await expandToggle.click()
 	const providerSelector = card.locator('select[aria-label="Provider"]')
-	if (!(await providerSelector.isVisible())) await card.getByRole("button").first().press("Enter")
 	await expect(providerSelector).toBeVisible()
 	return card
 }
@@ -273,6 +279,7 @@ function summarizeStoredRateMetrics(records: readonly StoredRateSecondRecord[]):
 
 async function expectRateMetricsDialog(frame: Frame, summary: RateSummary, exerciseResolutions: boolean): Promise<void> {
 	const rate = frame.getByTestId("task-rate-metrics")
+	await expect(rate).toHaveAttribute("aria-label", /(?:^|; )RPM: [1-9]\d*(?:;|$)/, { timeout: 30_000 })
 	const ariaLabel = await rate.getAttribute("aria-label")
 	expect(ariaLabel).toContain("View API rate history")
 	expect(ariaLabel).toMatch(/(?:^|; )RPM: [1-9]\d*(?:;|$)/)

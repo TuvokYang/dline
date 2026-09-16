@@ -164,6 +164,11 @@ function parseSubagentRowData(message: ClineMessage): SubagentRowData | null {
 					context: parsed.context ?? parsed.content ?? structuredItems?.[index]?.context,
 					status: rowStatus,
 					error: errorText,
+					// Carry the run identity when the payload has one so the activity
+					// merge below can supply live figures. These zeros are only the
+					// pre-start placeholder for a row whose run has not been created
+					// yet; once an activity exists it owns every value here.
+					jobId: parsed.jobId ?? structuredItems?.[index]?.jobId,
 					toolCalls: 0,
 					inputTokens: 0,
 					outputTokens: 0,

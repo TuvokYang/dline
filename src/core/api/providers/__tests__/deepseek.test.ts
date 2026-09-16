@@ -11,7 +11,18 @@ import { OutputLimitExceededError } from "../../stream/OutputLimitExceededError"
 import { DeepSeekHandler } from "../deepseek"
 
 interface StreamChunk {
-	choices?: Array<{ delta?: { content?: string; reasoning_content?: string }; finish_reason?: string | null }>
+	choices?: Array<{
+		delta?: {
+			content?: string
+			reasoning_content?: string
+			tool_calls?: Array<{
+				index: number
+				id?: string
+				function?: { name?: string; arguments?: string }
+			}>
+		}
+		finish_reason?: string | null
+	}>
 	usage?: {
 		prompt_tokens?: number
 		completion_tokens?: number
@@ -233,6 +244,56 @@ describe("DeepSeekHandler", () => {
 			} as any)
 
 			expect(create.mock.calls[0]?.[0]?.max_completion_tokens).to.equal(30_000)
+		})
+
+		it("emits reasoning before tool calls when DeepSeek coalesces them in one Chat delta", async () => {
+			const handler = new DeepSeekHandler({
+				profile: ApiProfile.create({
+					provider: "deepseek",
+					apiKey: "test-api-key",
+					modelId: "deepseek-v4-flash",
+					deepseek: BaseProviderConfig.create({
+						apiFormat: ApiFormat.OPENAI_CHAT,
+						reasoning: { effort: "high" },
+					}),
+				}),
+				mode: "act",
+			})
+			const create = vi.fn().mockResolvedValue(
+				createStream([
+					{
+						choices: [
+							{
+								delta: {
+									reasoning_content: "inspect before searching",
+									tool_calls: [
+										{
+											index: 0,
+											id: "call_search",
+											function: { name: "search_files", arguments: '{"path":"."}' },
+										},
+									],
+								},
+							},
+						],
+					},
+				]),
+			)
+			vi.spyOn(handler as unknown as { ensureClient: () => FakeClient }, "ensureClient").mockReturnValue({
+				chat: { completions: { create } },
+			})
+
+			const chunks = await collectChunks(handler)
+
+			expect(chunks).to.deep.equal([
+				{ type: "reasoning", reasoning: "inspect before searching" },
+				{
+					type: "tool_calls",
+					function_id: "call_search",
+					tool_index: 0,
+					tool_call: { function: { name: "search_files", arguments: '{"path":"."}' } },
+				},
+			])
 		})
 
 		it("throws a typed output-limit error for DeepSeek Chat finish_reason length", async () => {

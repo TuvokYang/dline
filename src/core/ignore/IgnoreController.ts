@@ -153,10 +153,28 @@ function collectDirectoryNames(content: string): Set<string> {
  * list and therefore kept re-scanning directories that discovery could never
  * return, turning every write under an ignored directory into wasted work.
  */
+/**
+ * Why a path is excluded from a scan.
+ *
+ * The two reasons carry different authority. `pruned` is a cost decision: the
+ * repository does not track the path, or it is generated output, so walking it
+ * wastes time. `agent-restricted` is a permission decision the workspace stated
+ * in `.agentignore`. A caller may deliberately descend into a pruned path, but
+ * an agent restriction must hold however the path is reached.
+ */
+export type ScanExclusion = "pruned" | "agent-restricted"
+
 export class IgnoreController {
 	private readonly cwd: string
 	/** Repository rules, used by checkpoints. */
 	private readonly gitScope: ScopeState = createScopeState()
+	/**
+	 * Agent rules without the repository rules or the built-in floor.
+	 *
+	 * Kept apart from `permissions.scan` so a deliberate descent can drop the
+	 * cost-driven pruning while the workspace's own restrictions still apply.
+	 */
+	private readonly agentScanScope: ScopeState = createScopeState()
 	/** Agent rules, compiled once per permission. */
 	private readonly permissions: Record<IgnorePermission, ScopeState> = {
 		read: createScopeState(),
@@ -206,6 +224,33 @@ export class IgnoreController {
 	/** Raw repository rules, for callers that mirror git's own visibility. */
 	getRepositoryContent(): string | undefined {
 		return this.gitScope.content
+	}
+
+	/**
+	 * Scan rules stated by the workspace itself, without pruning.
+	 *
+	 * Excludes the repository rules and the built-in directory floor, so a
+	 * caller that deliberately descends into an ignored tree still honours what
+	 * `.agentignore` forbids.
+	 */
+	getAgentScanContent(): string | undefined {
+		return this.agentScanScope.content
+	}
+
+	/**
+	 * Report whether a path may be scanned, and if not, on whose authority.
+	 *
+	 * Returns undefined when scanning is allowed. Callers use the reason to
+	 * decide between descending anyway and refusing: only `pruned` is a cost
+	 * decision the caller is entitled to override.
+	 */
+	describeScanExclusion(targetPath: string, baseDir: string = this.cwd): ScanExclusion | undefined {
+		const resolved = path.resolve(baseDir, targetPath)
+		// The agent rules are checked first: when both apply, the permission
+		// decision is the one the caller must not override.
+		if (!this.matches(this.agentScanScope, resolved, baseDir, true)) return "agent-restricted"
+		if (!this.matches(this.permissions.scan, resolved, baseDir, true)) return "pruned"
+		return undefined
 	}
 
 	/** Report whether one operation is allowed on a file. */
@@ -419,6 +464,9 @@ export class IgnoreController {
 		// built-in floor only restrict scanning: not tracking a path, or it being
 		// generated output, says nothing about whether opening it is allowed.
 		let rules = parsePermissionRules(agentRules)
+		// Captured before pruning is layered in: this is what the workspace
+		// itself forbids, which a deliberate descent must still respect.
+		const agentScanRules = rules.scan
 		rules = withAdditionalRules(rules, "scan", gitContent)
 		rules = withAdditionalRules(rules, "scan", BUILTIN_SCAN_RULES)
 		rules = withAdditionalRules(rules, "write", BUILTIN_WRITE_RULES)
@@ -427,6 +475,7 @@ export class IgnoreController {
 		for (const permission of IGNORE_PERMISSIONS) {
 			if (this.applyRules(this.permissions[permission], rules[permission])) agentChanged = true
 		}
+		if (this.applyRules(this.agentScanScope, agentScanRules)) agentChanged = true
 		const gitChanged = this.applyRules(this.gitScope, gitContent)
 
 		const changed: IgnoreScope[] = []

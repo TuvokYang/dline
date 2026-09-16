@@ -4,8 +4,8 @@ import type { IdentityFactory } from "@core/api/transform/block-identity"
 import type { CompactionPassIdentity } from "@core/context/context-management/target-window-fitting"
 import type { FileContextTracker } from "@core/context/context-tracking/FileContextTracker"
 import type { IgnoreController } from "@core/ignore/IgnoreController"
-import type { CommandPermissionController } from "@core/permissions"
 import type { ImageGenerationService } from "@core/image-generation/ImageGenerationService"
+import type { CommandPermissionController } from "@core/permissions"
 import type { ExplicitInstructionAuthorization, ExplicitInstructionConsumePort } from "@core/task/explicit-instructions/types"
 import type { TaskFileTracker } from "@integrations/checkpoints/TaskFileTracker"
 import type { DiffViewProvider } from "@integrations/editor/DiffViewProvider"
@@ -15,9 +15,10 @@ import type { UrlContentFetcher } from "@services/browser/UrlContentFetcher"
 import type { McpHub } from "@services/mcp/McpHub"
 import type { AutoApprovalSettings } from "@shared/AutoApprovalSettings"
 import type { BrowserSettings } from "@shared/BrowserSettings"
+import type { ClineExtensionContext } from "@shared/cline/context"
 import type { ClineAsk, ClineSay, CommandStatus } from "@shared/ExtensionMessage"
 import type { FocusChainSettings } from "@shared/FocusChainSettings"
-import type { ClineContent } from "@shared/messages/content"
+import type { ClineContent, ClineToolResponseContent } from "@shared/messages/content"
 import type { Mode } from "@shared/storage/types"
 import type { TaskCapabilityToggles } from "@shared/TaskCapabilityToggles"
 import type { ClineDefaultTool } from "@shared/tools"
@@ -125,7 +126,7 @@ export interface TaskConfig {
 	providerRequestRounds?: ProviderRequestRoundPort
 
 	/** VSCode extension context, required by spawn_task to create new webview panels. */
-	controllerContext?: any
+	controllerContext?: ClineExtensionContext
 
 	/** Task-local background subagent job manager. */
 	subagentJobManager?: SubagentJobManager
@@ -185,7 +186,7 @@ export interface TaskCallbacks {
 		paramName: string,
 		relPath?: string,
 		existingTs?: number,
-	) => Promise<any>
+	) => Promise<ClineToolResponseContent>
 
 	executeCommandTool: (
 		command: string,
@@ -206,7 +207,7 @@ export interface TaskCallbacks {
 	postStateToWebview: () => Promise<void>
 	reinitExistingTaskFromId: (taskId: string) => Promise<void>
 	cancelTask: () => Promise<void>
-	updateTaskHistory: (update: any) => Promise<any[]>
+	updateTaskHistory: (update: unknown) => Promise<unknown[]>
 
 	applyLatestBrowserSettings: () => Promise<BrowserSession>
 
@@ -250,38 +251,40 @@ export function interactionId(block: { dline_tid?: string }): string {
 	return block.dline_tid
 }
 
-export function validateTaskConfig(config: any): asserts config is TaskConfig {
-	if (!config) {
-		throw new Error("TaskConfig is null or undefined")
+export function validateTaskConfig(config: unknown): asserts config is TaskConfig {
+	if (!isRecord(config)) {
+		throw new Error("TaskConfig is null, undefined, or not an object")
 	}
 
-	// Validate all expected keys exist
 	for (const key of TASK_CONFIG_KEYS) {
 		if (!(key in config)) {
 			throw new Error(`Missing ${key} in TaskConfig`)
 		}
 	}
 
-	// Special validation for boolean type
 	if (typeof config.strictPlanModeEnabled !== "boolean") {
 		throw new Error("strictPlanModeEnabled must be a boolean in TaskConfig")
 	}
 
-	// Validate services object
-	if (config.services) {
-		for (const key of TASK_SERVICES_KEYS) {
-			if (!(key in config.services)) {
-				throw new Error(`Missing services.${key} in TaskConfig`)
-			}
+	if (!isRecord(config.services)) {
+		throw new Error("services must be an object in TaskConfig")
+	}
+	for (const key of TASK_SERVICES_KEYS) {
+		if (!(key in config.services)) {
+			throw new Error(`Missing services.${key} in TaskConfig`)
 		}
 	}
 
-	// Validate callbacks object
-	if (config.callbacks) {
-		for (const key of TASK_CALLBACKS_KEYS) {
-			if (typeof config.callbacks[key] !== "function") {
-				throw new Error(`Missing or invalid callbacks.${key} in TaskConfig (must be a function)`)
-			}
+	if (!isRecord(config.callbacks)) {
+		throw new Error("callbacks must be an object in TaskConfig")
+	}
+	for (const key of TASK_CALLBACKS_KEYS) {
+		if (typeof config.callbacks[key] !== "function") {
+			throw new Error(`Missing or invalid callbacks.${key} in TaskConfig (must be a function)`)
 		}
 	}
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null
 }

@@ -21,6 +21,8 @@ interface InputSectionProps {
 	onSubmit?: (draft: InteractionDraft) => Promise<AcceptedInteractionSettlement | undefined>
 	onDraftAccepted: (settlement: AcceptedInteractionSettlement) => void
 	submissionScope?: string
+	/** Causal owner used to deduplicate only repeated dispatches of the same submission. */
+	submissionIdentity?: string
 	clineAsk?: ClineAsk
 	/** Queue entries owned by the backend; the composer only renders them. */
 	inputQueue?: readonly InputQueuePanelEntry[]
@@ -60,6 +62,7 @@ export const InputSection: React.FC<InputSectionProps> = ({
 	onSubmit,
 	onDraftAccepted,
 	submissionScope,
+	submissionIdentity,
 	clineAsk,
 	inputQueue,
 	canQueueInput,
@@ -89,24 +92,38 @@ export const InputSection: React.FC<InputSectionProps> = ({
 	} = chatState
 
 	const { isAtBottom, scrollToBottomAuto } = scrollBehavior
+	// React cannot disable the composer between two DOM events dispatched in the
+	// same tick. Claim the causal submission before the first await so a duplicate
+	// event cannot dispatch the same draft, while a successor interaction remains
+	// independently submitable even if the prior RPC is still settling.
+	const directSubmissionsInFlightRef = useRef(new Set<string>())
 	const submitDraft = async (capturedDraft?: ModeSwitchDraft) => {
-		if (submissionScope) await flushPendingTaskSettingsRequests(submissionScope)
-		const draft: InteractionDraft = capturedDraft
-			? {
-					text: capturedDraft.text,
-					images: [...capturedDraft.images],
-					files: [...capturedDraft.files],
-					activeQuote,
-					ownerRevision: currentDraft.ownerRevision,
-				}
-			: currentDraft
-		if (!onSubmit) {
-			await messageHandlers.handleSendMessage(draft.text, draft.images, draft.files)
-			return
-		}
-		const settlement = await onSubmit(draft)
-		if (settlement) {
-			onDraftAccepted(settlement)
+		const directSubmissionKey = `${submissionScope ?? "unscoped"}:${
+			submissionIdentity ?? `draft-${currentDraft.ownerRevision ?? "unowned"}`
+		}`
+		if (directSubmissionsInFlightRef.current.has(directSubmissionKey)) return
+		directSubmissionsInFlightRef.current.add(directSubmissionKey)
+		try {
+			if (submissionScope) await flushPendingTaskSettingsRequests(submissionScope)
+			const draft: InteractionDraft = capturedDraft
+				? {
+						text: capturedDraft.text,
+						images: [...capturedDraft.images],
+						files: [...capturedDraft.files],
+						activeQuote,
+						ownerRevision: currentDraft.ownerRevision,
+					}
+				: currentDraft
+			if (!onSubmit) {
+				await messageHandlers.handleSendMessage(draft.text, draft.images, draft.files)
+				return
+			}
+			const settlement = await onSubmit(draft)
+			if (settlement) {
+				onDraftAccepted(settlement)
+			}
+		} finally {
+			directSubmissionsInFlightRef.current.delete(directSubmissionKey)
 		}
 	}
 	// A blocked send is never retained for replay. Re-enabling the composer only

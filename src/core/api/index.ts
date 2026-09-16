@@ -10,6 +10,7 @@ import { ClineError } from "@/services/error"
 import { ClineStorageMessage } from "@/shared/messages/content"
 import { ClineTool } from "@/shared/tools"
 import { getProfileModelInfo } from "./model-info"
+import { instrumentApiHandler } from "./observability/instrument-api-handler"
 import { AIhubmixHandler } from "./providers/aihubmix"
 import { AnthropicHandler } from "./providers/anthropic"
 import { AskSageHandler } from "./providers/asksage"
@@ -312,11 +313,12 @@ function createHandlerForProvider(ctx: ApiHandlerContext): ApiHandler {
 			throw new Error(`Unknown provider: ${profile.provider}`)
 	}
 	// Inject provider ID so callers can get it without going through global StateManager
-	return Object.assign(handler, {
+	Object.assign(handler, {
 		getProviderId: () => providerId,
 		getWebToolsMode: () => profile.webToolsMode,
 		getDisabledServerTools: () => resolveProfileDisabledServerTools(profile),
 	})
+	return instrumentApiHandler(handler, ctx)
 }
 
 export function resolveProviderFromProfile(profileName?: string): string | undefined {

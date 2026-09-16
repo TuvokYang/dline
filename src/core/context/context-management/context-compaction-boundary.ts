@@ -78,17 +78,21 @@ export function projectContextCompactionBoundary(
 	// Tool results in the protected tail may close a source tool use without making
 	// their user-authored payload eligible for the hidden Pass. The pairing helper
 	// consumes only identity and emits neutral evidence, while the real result stays
-	// in targetContinuationHistory.
+	// in the ordinary continuation owned by the upcoming request.
 	const sourcePairingEvidence = [...collectToolResults(activeBoundaryHistory.slice(sourceEndIndex)), ...pendingBlocks]
 
-	const naturalContinuationStart = pendingCompletesProtectedTurn
-		? activeIndex.protectedStartMessageIndex
-		: Math.min(sourceEndIndex, activeHistory.length)
+	// Tagged conversational feedback starts a new protected round and still needs
+	// the declaring tool use for provider pairing. Plain side-effect results instead
+	// make the completed turn fully replaceable by the accepted summary.
+	const naturalContinuationStart =
+		pendingCompletesProtectedTurn && pendingStartsProtectedRound
+			? activeIndex.protectedStartMessageIndex
+			: Math.min(sourceEndIndex, activeHistory.length)
 	const targetContinuationHistory = activeHistory.filter(
 		(message, messageIndex) =>
 			messageIndex >= naturalContinuationStart ||
 			messageContainsToolUse(message, completedUnpairedFunctionIds) ||
-			messageContainsToolUse(message, pendingResultFunctionIds),
+			(pendingStartsProtectedRound && messageContainsToolUse(message, pendingResultFunctionIds)),
 	)
 
 	const completedSource = completePendingPairings(

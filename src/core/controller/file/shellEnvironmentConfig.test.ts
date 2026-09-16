@@ -10,6 +10,7 @@ import { resolveTerminalProfileId } from "@/utils/shell"
 import {
 	getShellEnvironmentProfile,
 	previewShellEnvironmentProfile,
+	renameShellEnvironmentConfigWithRetry,
 	updateShellEnvironmentProfile,
 } from "./shellEnvironmentConfig"
 
@@ -143,5 +144,37 @@ platforms:
 			getShellEnvironmentProfile({ workspacePath: workspace, profile: "invented-profile-id" }),
 			/Unknown terminal profile/,
 		)
+	})
+})
+
+describe("renameShellEnvironmentConfigWithRetry", () => {
+	it.each(["EPERM", "EBUSY", "EACCES"])("retries a transient %s rename without removing the destination", async (code) => {
+		const sourcePath = "C:\\workspace\\.agents\\bashrc.yml.partial"
+		const destinationPath = "C:\\workspace\\.agents\\bashrc.yml"
+		const renameFile = vi
+			.fn<(sourcePath: string, destinationPath: string) => Promise<void>>()
+			.mockRejectedValueOnce(Object.assign(new Error(`${code}: config locked`), { code }))
+			.mockResolvedValue(undefined)
+		const sleep = vi.fn<(delayMs: number) => Promise<void>>().mockResolvedValue(undefined)
+
+		await renameShellEnvironmentConfigWithRetry(sourcePath, destinationPath, { renameFile, sleep })
+
+		assert.equal(renameFile.mock.calls.length, 2)
+		assert.deepEqual(renameFile.mock.calls[0], [sourcePath, destinationPath])
+		assert.deepEqual(renameFile.mock.calls[1], [sourcePath, destinationPath])
+		assert.deepEqual(sleep.mock.calls, [[10]])
+	})
+
+	it("does not retry a non-lock-related rename failure", async () => {
+		const error = Object.assign(new Error("ENOSPC: disk full"), { code: "ENOSPC" })
+		const renameFile = vi.fn<(sourcePath: string, destinationPath: string) => Promise<void>>().mockRejectedValue(error)
+		const sleep = vi.fn<(delayMs: number) => Promise<void>>().mockResolvedValue(undefined)
+
+		await assert.rejects(
+			renameShellEnvironmentConfigWithRetry("source", "destination", { renameFile, sleep }),
+			(received) => received === error,
+		)
+		assert.equal(renameFile.mock.calls.length, 1)
+		assert.equal(sleep.mock.calls.length, 0)
 	})
 })

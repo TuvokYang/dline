@@ -5,7 +5,7 @@ import * as readline from "readline"
 import { Logger } from "@/shared/services/Logger"
 import { getBinaryLocation } from "@/utils/fs"
 import { AMBIENT_RIPGREP_SCOPE, type RipgrepBudgetScope, ripgrepThreadArgs, withRipgrepSlot } from "./cpu-budget"
-import { createRipgrepIgnoreFile } from "./ignore-file"
+import { createRipgrepIgnoreFile, type RipgrepRuleScope } from "./ignore-file"
 
 /*
 This file provides functionality to perform regex searches on files using ripgrep.
@@ -116,6 +116,22 @@ export async function regexSearchFiles(
 	/** Task the CPU cost is charged to; omitted callers share the ambient scope. */
 	budgetScope: RipgrepBudgetScope = AMBIENT_RIPGREP_SCOPE,
 ): Promise<string> {
+	// Naming a pruned directory is a deliberate descent: pruning bounds the cost
+	// of discovery, and a caller that already narrowed the walk to one ignored
+	// path has bounded it themselves. Searching such a path would otherwise
+	// return zero matches with no indication that anything was skipped, which
+	// reads as "absent" rather than "not searched".
+	//
+	// An `.agentignore` restriction is a permission and is never lifted here.
+	// Probed rather than assumed: a controller without this capability keeps the
+	// previous behaviour, where the full scan rules apply and nothing is lifted.
+	const describeExclusion =
+		typeof ignoreController?.describeScanExclusion === "function"
+			? ignoreController.describeScanExclusion.bind(ignoreController)
+			: undefined
+	const deliberateDescent = describeExclusion?.(directoryPath) === "pruned"
+	const ruleScope: RipgrepRuleScope = deliberateDescent ? "agent-only" : "all"
+
 	const args = [
 		"--json",
 		// Match the picker's budget: without an explicit cap ripgrep opens one
@@ -129,7 +145,14 @@ export async function regexSearchFiles(
 		"1",
 	]
 
-	const ignoreFile = await createRipgrepIgnoreFile(ignoreController)
+	if (deliberateDescent) {
+		// Two filters hide the named path: ripgrep's own reading of `.gitignore`
+		// and the rules handed to it below. Lifting only one leaves the search
+		// silently empty, so both move together.
+		args.push("--no-ignore-vcs", "--hidden")
+	}
+
+	const ignoreFile = await createRipgrepIgnoreFile(ignoreController, ruleScope)
 	args.push(...ignoreFile.args)
 
 	args.push(directoryPath)
@@ -179,20 +202,47 @@ export async function regexSearchFiles(
 	}
 
 	// Safety net for patterns rg's --ignore-file may not evaluate identically.
+	//
+	// A deliberate descent checks the agent rules alone: the combined scan rules
+	// exclude the named directory itself, so applying them here would discard
+	// every match the caller just asked for.
 	const filteredResults = ignoreController
-		? results.filter((result) => ignoreController.validateAccess(result.filePath, "scan"))
+		? results.filter((result) =>
+				deliberateDescent && describeExclusion
+					? describeExclusion(result.filePath) !== "agent-restricted"
+					: ignoreController.validateAccess(result.filePath, "scan"),
+			)
 		: results
 
-	return formatResults(filteredResults, cwd)
+	return formatResults(filteredResults, cwd, deliberateDescent ? directoryPath : undefined)
 }
 
 const MAX_RIPGREP_MB = 0.25
 const MAX_BYTE_SIZE = MAX_RIPGREP_MB * 1024 * 1024 // 0./25MB in bytes
 
-function formatResults(results: SearchResult[], cwd: string): string {
+/**
+ * Announce that pruning was lifted for one explicitly named path.
+ *
+ * Without this the caller cannot tell a search that skipped a tree apart from
+ * one that found nothing in it, which is exactly the confusion that makes an
+ * ignored directory look empty.
+ */
+function describeDescent(descendedInto: string, cwd: string): string {
+	const relative = path.relative(cwd, descendedInto)
+	const shown = relative && !relative.startsWith("..") ? relative.toPosix() : descendedInto.toPosix()
+	return (
+		`Note: '${shown}' is normally pruned from searches (.gitignore or a generated-output directory). ` +
+		`It was searched because you named it directly. Any '.agentignore' restriction still applies.\n\n`
+	)
+}
+
+function formatResults(results: SearchResult[], cwd: string, descendedInto?: string): string {
 	const groupedResults: { [key: string]: SearchResult[] } = {}
 
 	let output = ""
+	if (descendedInto) {
+		output += describeDescent(descendedInto, cwd)
+	}
 	if (results.length >= MAX_RESULTS) {
 		output += `Showing first ${MAX_RESULTS} of ${MAX_RESULTS}+ results. Use a more specific search if necessary.\n\n`
 	} else {

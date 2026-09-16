@@ -14,7 +14,7 @@ import { UnifyStoreCore, type UnifyStoreDriver, type UnifyStoreDriverTransaction
 import { evaluateUnifyStoreQuery, type NormalizedUnifyStoreQuery } from "../core/UnifyStoreQueryEvaluator"
 import { FileLock } from "./FileLock"
 import { createSchemaJsonlRecordCodec, type JsonlRecordCodec } from "./JsonlRecordCodec"
-import { appendJsonl, readJsonl, truncateJsonlTail, writeJsonl } from "./jsonl-utils"
+import { appendJsonl, canAppendJsonl, readJsonl, truncateJsonlTail, writeJsonl } from "./jsonl-utils"
 
 interface JsonlSchemaMetadata {
 	readonly schemaId: string
@@ -181,12 +181,12 @@ class JsonlUnifyStoreDriver<TEntity extends object, TPersisted> implements Unify
 		this.assertOpen()
 		await this.fileLock.withLock(this.dataPath, async () => {
 			this.assertOpen()
-			if (this.appendOnlyInsert) {
+			if (this.appendOnlyInsert && (await canAppendJsonl(this.dataPath))) {
 				assertNoPrimaryConflicts(this.schema, [], records)
-				await appendJsonl(
-					this.dataPath,
-					records.map((record) => this.codec.encode(record)),
-				)
+				// Encoded before the await so the conflict check and the bytes
+				// written describe the same records.
+				const encoded = records.map((record) => this.codec.encode(record))
+				await appendJsonl(this.dataPath, encoded)
 				return
 			}
 			const current = await this.readRecords()
@@ -210,19 +210,69 @@ class JsonlUnifyStoreDriver<TEntity extends object, TPersisted> implements Unify
 		this.assertOpen()
 		return await this.fileLock.withLock(this.dataPath, async () => {
 			this.assertOpen()
-			let working = await this.readRecords()
+			const committed = await this.readRecords()
+			let working = committed
+			// Pins the records this transaction read, so the commit can tell a
+			// pure tail growth from a result whose leading records moved.
+			const committedSnapshot = [...committed]
+			// Query hands the operation the very entities held in `working`, so a
+			// caller can edit one in place. Capturing the keys before the
+			// operation runs keeps them describing what the file actually holds:
+			// an edited key would otherwise move out of the way and let a
+			// duplicate of the original key through. Holding one set across the
+			// whole transaction also replaces the full pass over the collection
+			// that rebuilding it on every insert used to cost.
+			let primaryKeys = collectPrimaryKeys(this.schema, committed)
+			// Tracked separately so a transaction that only grew the tail can be
+			// committed by appending those lines instead of rewriting the whole
+			// file, which for a long conversation meant rewriting tens of
+			// megabytes to add one entry.
+			// Encoded at insert time rather than at commit: the caller keeps a
+			// reference to the record it handed over, and editing it afterwards
+			// would otherwise change what gets written after the conflict check
+			// already passed. The SQLite driver writes during insert, so
+			// capturing here is also what keeps the two backends interchangeable.
+			let appended: TPersisted[] = []
+			let replaced = false
 			const transaction: UnifyStoreDriverTransaction<TEntity> = {
 				query: async (query) => evaluateUnifyStoreQuery(this.schema, working, query),
 				insert: async (records) => {
-					assertNoPrimaryConflicts(this.schema, working, records)
+					assertNoPrimaryConflictsAgainst(this.schema, primaryKeys, records)
+					const encoded = records.map((record) => this.codec.encode(record))
 					working = [...working, ...records]
+					appended = [...appended, ...encoded]
 				},
 				replaceAll: async (records) => {
-					assertNoPrimaryConflicts(this.schema, [], records)
+					primaryKeys = new Set()
+					assertNoPrimaryConflictsAgainst(this.schema, primaryKeys, records)
 					working = [...records]
+					// A replacement invalidates the tail-append shortcut even when
+					// inserts follow it.
+					replaced = true
+					appended = []
 				},
 			}
+			// A throw leaves the file untouched: nothing is written before the
+			// operation returns, on either commit path.
 			const result = await operation(transaction)
+			// Appending is only sound when the committed records this transaction
+			// read are still the exact leading records of the result, and when the
+			// file can physically carry another line. Either check failing means a
+			// rewrite, which always produces a well-formed file. An entity edited
+			// in place is deliberately not written by this path: a store that
+			// never handed the edit back through insert or replaceAll did not ask
+			// for it to be persisted, which is also how the SQLite driver behaves.
+			const canAppend =
+				this.appendOnlyInsert &&
+				!replaced &&
+				appended.length > 0 &&
+				working.length === committedSnapshot.length + appended.length &&
+				committedSnapshot.every((record, index) => working[index] === record) &&
+				(await canAppendJsonl(this.dataPath))
+			if (canAppend) {
+				await appendJsonl(this.dataPath, appended)
+				return result
+			}
 			await this.writeRecords(working)
 			return result
 		})
@@ -309,7 +359,26 @@ function assertNoPrimaryConflicts<TEntity extends object>(
 	current: readonly TEntity[],
 	incoming: readonly TEntity[],
 ): void {
-	const keys = new Set(current.map((record) => primaryKey(schema, record)))
+	assertNoPrimaryConflictsAgainst(schema, collectPrimaryKeys(schema, current), incoming)
+}
+
+function collectPrimaryKeys<TEntity extends object>(schema: EntitySchema<TEntity>, records: readonly TEntity[]): Set<string> {
+	return new Set(records.map((record) => primaryKey(schema, record)))
+}
+
+/**
+ * Reject an incoming batch that repeats a key the set already holds.
+ *
+ * The set is updated in place, so a caller that keeps it across several
+ * batches both pays for one pass over the collection instead of one per batch
+ * and keeps checking against the keys it captured rather than against records
+ * that may have been edited since.
+ */
+function assertNoPrimaryConflictsAgainst<TEntity extends object>(
+	schema: EntitySchema<TEntity>,
+	keys: Set<string>,
+	incoming: readonly TEntity[],
+): void {
 	for (const record of incoming) {
 		const key = primaryKey(schema, record)
 		if (keys.has(key)) throw new Error(`UnifyStore conflict for ${schema.schemaId}`)

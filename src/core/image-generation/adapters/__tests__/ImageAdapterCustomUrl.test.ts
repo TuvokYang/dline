@@ -67,7 +67,9 @@ describe("image adapter custom URL transport", () => {
 		)
 		expect(events.at(-1)?.type).toBe("completed")
 		expect(transport.requests).toHaveLength(1)
-		expect(transport.requests[0]).toMatch(new RegExp(`^${transport.baseUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/v1/images/generations`))
+		expect(transport.requests[0]).toMatch(
+			new RegExp(`^${transport.baseUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/v1/images/generations`),
+		)
 		expect(transport.requests.join(" ")).not.toContain("api.openai.com")
 	})
 

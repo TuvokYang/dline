@@ -482,6 +482,7 @@ describe("Task.processNativeToolCalls", () => {
 		const fakeTask = {
 			taskId: "task-native-qna",
 			initialCheckpointCommitPromise: undefined,
+			awaitInitialCheckpointBeforeToolSideEffects: async () => undefined,
 			reRenderUpdatedPartialBlocks: async () => undefined,
 			isParallelToolCallingEnabled: () => false,
 			dispatchRuntime,
@@ -511,6 +512,100 @@ describe("Task.processNativeToolCalls", () => {
 		expect(dispatchRuntime).not.toHaveBeenCalled()
 		expect(fakeTask.taskState.currentStreamingContentIndex).toBe(0)
 		expect(fakeTask.taskState.partialToolLifecycleByTs.get(200)).toBe("partial-shown")
+	})
+
+	it("waits for the initial checkpoint before presenting a mutating partial native tool", async () => {
+		const partialTool: ToolUse = {
+			type: "tool_use",
+			name: ClineDefaultTool.FILE_NEW,
+			params: { path: "checkpoint-race.txt", content: "content" },
+			partial: true,
+			isNativeToolCall: true,
+			function_id: "call-write",
+			dline_tid: "dline-write",
+			ts: 201,
+		}
+		let resolveCheckpoint!: (value: string | undefined) => void
+		const initialCheckpointCommitPromise = new Promise<string | undefined>((resolve) => {
+			resolveCheckpoint = resolve
+		})
+		const executeTool = vi.fn(async () => undefined)
+		const fakeTask = Object.assign(Object.create(Task.prototype), {
+			taskId: "task-native-write",
+			initialCheckpointCommitPromise,
+			reRenderUpdatedPartialBlocks: async () => undefined,
+			isParallelToolCallingEnabled: () => false,
+			taskController: {
+				hasAnyRejection: () => false,
+				shouldSkip: () => false,
+			},
+			toolExecutor: { executeTool },
+			taskState: {
+				abort: false,
+				assistantMessageContent: [partialTool] as AssistantMessageContent[],
+				currentStreamingContentIndex: 0,
+				didAlreadyUseTool: false,
+				didCompleteReadingStream: false,
+				lastRenderedPartialByTs: new Map<number, string>(),
+				partialToolLifecycleByTs: new Map<number, "partial-shown" | "complete-running" | "complete-done">(),
+				presentAssistantMessageHasPendingUpdates: false,
+				presentAssistantMessageLocked: false,
+				userMessageContentReady: false,
+			},
+		})
+
+		const presentation = Task.prototype.presentAssistantMessage.call(fakeTask as never)
+		await Promise.resolve()
+		expect(executeTool).not.toHaveBeenCalled()
+
+		resolveCheckpoint("initial-checkpoint")
+		await expect(presentation).resolves.toBeUndefined()
+		expect(executeTool).toHaveBeenCalledOnce()
+		expect(executeTool).toHaveBeenCalledWith(partialTool)
+		expect(fakeTask.initialCheckpointCommitPromise).toBeUndefined()
+	})
+
+	it("does not wait for the initial checkpoint before presenting a read-only partial native tool", async () => {
+		const partialTool: ToolUse = {
+			type: "tool_use",
+			name: ClineDefaultTool.FILE_READ,
+			params: { path: "README.md" },
+			partial: true,
+			isNativeToolCall: true,
+			function_id: "call-read",
+			dline_tid: "dline-read",
+			ts: 202,
+		}
+		const initialCheckpointCommitPromise = new Promise<string | undefined>(() => {})
+		const executeTool = vi.fn(async () => undefined)
+		const fakeTask = Object.assign(Object.create(Task.prototype), {
+			taskId: "task-native-read",
+			initialCheckpointCommitPromise,
+			reRenderUpdatedPartialBlocks: async () => undefined,
+			isParallelToolCallingEnabled: () => false,
+			taskController: {
+				hasAnyRejection: () => false,
+				shouldSkip: () => false,
+			},
+			toolExecutor: { executeTool },
+			taskState: {
+				abort: false,
+				assistantMessageContent: [partialTool] as AssistantMessageContent[],
+				currentStreamingContentIndex: 0,
+				didAlreadyUseTool: false,
+				didCompleteReadingStream: false,
+				lastRenderedPartialByTs: new Map<number, string>(),
+				partialToolLifecycleByTs: new Map<number, "partial-shown" | "complete-running" | "complete-done">(),
+				presentAssistantMessageHasPendingUpdates: false,
+				presentAssistantMessageLocked: false,
+				userMessageContentReady: false,
+			},
+		})
+
+		await expect(Task.prototype.presentAssistantMessage.call(fakeTask as never)).resolves.toBeUndefined()
+		expect(executeTool).toHaveBeenCalledOnce()
+		expect(executeTool).toHaveBeenCalledWith(partialTool)
+		expect(fakeTask.initialCheckpointCommitPromise).toBe(initialCheckpointCommitPromise)
 	})
 
 	it("defers a complete XML tool until stream finalization can build the canonical turn", async () => {

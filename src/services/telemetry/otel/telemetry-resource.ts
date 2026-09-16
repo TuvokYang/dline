@@ -1,6 +1,7 @@
 import { Resource } from "@opentelemetry/resources"
 import { ATTR_SERVICE_INSTANCE_ID, ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from "@opentelemetry/semantic-conventions/incubating"
 import { ExtensionRegistryInfo } from "@/registry"
+import { getProcessTelemetrySessionId } from "../journal/session-identity"
 
 /**
  * The single definition of who is producing telemetry.
@@ -38,13 +39,11 @@ export interface TelemetryResourceOptions {
 }
 
 export function createTelemetryResource(options: TelemetryResourceOptions = {}): Resource {
-	const attributes: Record<string, string> = {
+	const attributes: Record<string, string | number> = {
 		[ATTR_SERVICE_NAME]: options.serviceName || ExtensionRegistryInfo.name || FALLBACK_SERVICE_NAME,
 		[ATTR_SERVICE_VERSION]: ExtensionRegistryInfo.version || UNKNOWN_VERSION,
-	}
-
-	if (options.sessionId) {
-		attributes[ATTR_SERVICE_INSTANCE_ID] = options.sessionId
+		[ATTR_SERVICE_INSTANCE_ID]: options.sessionId ?? getProcessTelemetrySessionId(),
+		"process.pid": process.pid,
 	}
 
 	return new Resource(attributes)

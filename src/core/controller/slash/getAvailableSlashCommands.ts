@@ -1,4 +1,5 @@
 import { parseYamlFrontmatter } from "@core/context/instructions/user-instructions/frontmatter"
+import { capabilityResourceId } from "@core/storage/settings/capability-resource-id"
 import { type CapabilityKind, mergeScopedToggles, readScopedToggles } from "@core/storage/settings/capability-toggle-store"
 import { EmptyRequest } from "@shared/proto/dline/common"
 import { SlashCommandInfo, SlashCommandsResponse } from "@shared/proto/dline/slash"
@@ -6,6 +7,7 @@ import { parseTaskCapabilityToggles } from "@shared/TaskCapabilityToggles"
 import fs from "fs/promises"
 import { extractNameFromMdFile, getBuiltInSlashCommands } from "@/shared/slashCommands"
 import { Controller } from ".."
+import { readDiscoveredToggles } from "../file/capability-discovery-cache"
 
 const MAX_DESCRIPTION_LENGTH = 80
 
@@ -16,7 +18,22 @@ const MAX_DESCRIPTION_LENGTH = 80
  * choice visible while an untouched resource keeps its discovered default.
  */
 function localCapabilityToggles(controller: Controller, kind: CapabilityKind): Record<string, boolean> {
-	return mergeScopedToggles(readScopedToggles(controller.stateManager, kind))
+	const overrides = mergeScopedToggles(readScopedToggles(controller.stateManager, kind))
+	const discovered = readDiscoveredToggles(controller, kind)
+
+	// Before the first trustworthy scan, preserve the legacy path-keyed map so
+	// existing commands remain available. Once discovery exists, it is the
+	// resource authority and sparse scope overrides only choose enabled state.
+	if (Object.keys(discovered).length === 0) {
+		return overrides
+	}
+
+	return Object.fromEntries(
+		Object.entries(discovered).map(([resourcePath, enabled]) => {
+			const resourceId = capabilityResourceId(resourcePath)
+			return [resourcePath, overrides[resourceId] ?? overrides[resourcePath] ?? enabled]
+		}),
+	)
 }
 
 /** Truncate a description string if it exceeds the max length */

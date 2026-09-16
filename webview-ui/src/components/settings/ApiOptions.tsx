@@ -82,13 +82,7 @@ export const DropdownContainer = styled.div<{ zIndex?: number }>`
 
 // biome-ignore lint: "vscode" module augmentation removed — not available in webview context
 
-const ApiOptions = ({
-	showModelOptions,
-	apiErrorMessage,
-	modelIdErrorMessage,
-	isPopup,
-	currentMode,
-}: ApiOptionsProps) => {
+const ApiOptions = ({ showModelOptions, apiErrorMessage, modelIdErrorMessage, isPopup, currentMode }: ApiOptionsProps) => {
 	// Use full context state for immediate save payload
 	const { apiConfiguration, remoteConfigSettings } = useExtensionState()
 	const { profiles, updateProfile, addProfile } = useApiProfiles()

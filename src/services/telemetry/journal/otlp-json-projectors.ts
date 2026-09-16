@@ -1,4 +1,6 @@
+import { trace } from "@opentelemetry/api"
 import { version as extensionVersion } from "../../../../package.json"
+import { eventTimestamp, logRecordFields } from "../otel/log-record"
 import type { JournalTelemetrySignal, TelemetryChannel, TelemetrySeverity } from "../providers/capabilities"
 import { readBuildIdentity } from "../runtime/export/build-identity"
 import type { CanonicalTelemetryProperties } from "../service/canonicalization"
@@ -22,6 +24,11 @@ export interface JournalSpanRecord {
 	readonly attributes: Readonly<Record<string, string | number | boolean>>
 	readonly errorType?: string
 	readonly errorFingerprint?: string
+	readonly events?: readonly {
+		name: string
+		timestamp: number
+		attributes: Readonly<Record<string, string | number | boolean>>
+	}[]
 }
 
 export function projectEvent(
@@ -29,6 +36,8 @@ export function projectEvent(
 	canonical: CanonicalTelemetryProperties,
 	meta: JournalRecordMetadata,
 ): unknown {
+	const fields = logRecordFields(signal.properties)
+	const span = fields.context ? trace.getSpanContext(fields.context) : undefined
 	return {
 		resourceLogs: [
 			{
@@ -38,7 +47,9 @@ export function projectEvent(
 						scope: { name: "dline.usage" },
 						logRecords: [
 							{
-								timeUnixNano: unixNano(Date.now()),
+								timeUnixNano: unixNano(eventTimestamp(signal.properties)),
+								observedTimeUnixNano: unixNano(Date.now()),
+								...(span ? { traceId: span.traceId, spanId: span.spanId, flags: span.traceFlags } : {}),
 								severityNumber: severityNumber(signal.severity),
 								severityText: signal.severity.toUpperCase(),
 								body: { stringValue: signal.name },
@@ -126,6 +137,15 @@ export function projectTrace(span: JournalSpanRecord, meta: JournalRecordMetadat
 											],
 										}
 									: {}),
+								...(span.events
+									? {
+											events: span.events.map((event) => ({
+												name: event.name,
+												timeUnixNano: unixNano(event.timestamp),
+												attributes: attributes(event.attributes),
+											})),
+										}
+									: {}),
 								status: {
 									code: span.outcome === "success" ? 1 : 2,
 									...(span.outcome === "cancelled" ? { message: "cancelled" } : {}),
@@ -149,6 +169,8 @@ function resource(meta: JournalRecordMetadata): unknown {
 			"dline.build.symbolicatable": build.symbolicatable,
 			"dline.schema.version": 1,
 			"dline.session.id": meta.sessionId,
+			"service.instance.id": meta.sessionId,
+			"process.pid": process.pid,
 			"dline.sequence": meta.sequence,
 			"dline.channel": meta.channel,
 			"dline.signal.kind": meta.signalKind,

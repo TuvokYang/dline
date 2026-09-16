@@ -1,5 +1,7 @@
 import { createHmac, randomBytes } from "node:crypto"
+import { isTelemetryDevelopmentMode } from "../development-mode"
 import { TELEMETRY_MASK_VALUE } from "../service/pipeline-port"
+import { readErrorIdentifier } from "./exception-attributes"
 import type { RuntimeAttributes, RuntimeAttributeValue } from "./types"
 
 export { TELEMETRY_MASK_VALUE } from "../service/pipeline-port"
@@ -196,8 +198,16 @@ export class RuntimeContentPolicy {
 	private readonly fingerprintKey: Buffer
 	private readonly observedValues = new Map<string, Set<string>>()
 
-	constructor(fingerprintKey: Buffer = randomBytes(32)) {
+	constructor(
+		fingerprintKey: Buffer = randomBytes(32),
+		private readonly options: { readonly preserveTaskIdentity?: boolean } = {},
+	) {
 		this.fingerprintKey = fingerprintKey
+	}
+
+	/** Development correlation is limited to events/traces, never metric dimensions. */
+	static forEvents(fingerprintKey?: Buffer): RuntimeContentPolicy {
+		return new RuntimeContentPolicy(fingerprintKey, { preserveTaskIdentity: isTelemetryDevelopmentMode() })
 	}
 
 	/**
@@ -250,6 +260,33 @@ export class RuntimeContentPolicy {
 	}
 
 	private flatten(key: string, value: unknown, output: FlattenedAttribute[], seen: WeakSet<object>, depth: number): void {
+		if (this.options.preserveTaskIdentity && isTaskIdentityKey(key)) {
+			output.push({
+				key,
+				value,
+				forcedRejection:
+					typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value)
+						? undefined
+						: AttributeRejection.MaskedIdentity,
+			})
+			return
+		}
+		// These exact protocol fields are not response content or source code.
+		if (key === "dline.exception.code") {
+			const code = readErrorIdentifier(value)
+			output.push({ key, value: code ?? TELEMETRY_MASK_VALUE })
+			return
+		}
+		if (key === "http.response.status_code") {
+			output.push({
+				key,
+				value:
+					typeof value === "number" && Number.isInteger(value) && value >= 100 && value <= 599
+						? value
+						: TELEMETRY_MASK_VALUE,
+			})
+			return
+		}
 		const masked = sensitiveRejection(key)
 		if (masked) {
 			output.push({ key, value: TELEMETRY_MASK_VALUE, forcedRejection: masked })
@@ -314,7 +351,10 @@ export class RuntimeContentPolicy {
 		}
 		if (value.length > MAX_ATTRIBUTE_LENGTH) return AttributeRejection.TooLong
 		if (CREDENTIAL_VALUE_PATTERN.test(value)) return AttributeRejection.MaskedCredential
-		if (!isHighCardinalityExempt(key) && this.exceedsCardinality(key, value)) return AttributeRejection.HighCardinality
+		const correlation = this.options.preserveTaskIdentity && isTaskIdentityKey(key)
+		if (!correlation && !isHighCardinalityExempt(key) && this.exceedsCardinality(key, value)) {
+			return AttributeRejection.HighCardinality
+		}
 
 		attributes[key] = value
 		return undefined
@@ -331,6 +371,11 @@ export class RuntimeContentPolicy {
 		seen.add(value)
 		return false
 	}
+}
+
+/** Exact correlation keys only; nested content/credential fields cannot opt out of masking. */
+function isTaskIdentityKey(key: string): boolean {
+	return /^(?:taskId|task_id|dline\.task_id|active_task_ids\.\d+)$/.test(key)
 }
 
 export const runtimeContentPolicyLimits = {

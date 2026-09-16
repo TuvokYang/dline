@@ -42,6 +42,7 @@ export interface RuntimeTelemetryActivationOptions {
 	readonly drainIntervalMs?: number
 	/** Canonical provider-registry sink for runtime events. */
 	readonly onEvent?: RuntimeTelemetryLifecycleOptions["onEvent"]
+	readonly activeTaskIds?: () => readonly string[]
 }
 
 /**
@@ -68,6 +69,7 @@ export async function activateRuntimeTelemetry(options: RuntimeTelemetryActivati
 		samplerIntervalMs: options.samplerIntervalMs,
 		drainIntervalMs: options.drainIntervalMs,
 		onEvent: options.onEvent,
+		activeTaskIds: options.activeTaskIds,
 		// Diagnoses go to the process-wide store the export reads, and are
 		// also recorded as events so the session journal carries the
 		// conclusion next to the evidence it was drawn from.
@@ -125,12 +127,11 @@ export async function deactivateRuntimeTelemetry(): Promise<void> {
 	// `dispose` flushes before closing, so events recorded up to shutdown still
 	// reach the journal. Until it returns the predicate must keep answering for
 	// the pipeline being torn down, so it is uninstalled afterwards.
-	await previous.dispose()
-	// Restoring the default would re-enable recording, so the recorder is
-	// pinned off: after deactivation there is no pipeline to report to.
-	uninstallRuntimeSignalPipeline()
-	// The lifecycle disposed the shared bus it was given; drop the reference so
-	// a later activation builds a fresh one instead of recording into a
-	// disposed queue.
-	setRuntimeTelemetryBus(undefined)
+	try {
+		await previous.dispose()
+	} finally {
+		// Pin recording off even when a sink fails during its final flush.
+		uninstallRuntimeSignalPipeline()
+		setRuntimeTelemetryBus(undefined)
+	}
 }

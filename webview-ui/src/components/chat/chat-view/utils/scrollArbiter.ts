@@ -90,6 +90,15 @@ export function createScrollArbiter(): ScrollArbiter {
 				cancel()
 				return
 			}
+			// Announce that the next scroll write belongs to the application.
+			//
+			// The application and react-virtuoso's own compensation both end up
+			// calling the same scroller method, so a stack captured there names
+			// only the shared exit. `run()` is synchronous and is the single
+			// place every arbitrated scroll passes through, so a mark taken here
+			// lets a diagnostic tell the two apart. No-op unless a harness has
+			// installed the hook.
+			;(window as { __dlineMarkAppScroll?: () => void }).__dlineMarkAppScroll?.()
 			scrollRequest.run()
 			remainingAttempts -= 1
 			if (remainingAttempts === 0 && version === requestVersion) {

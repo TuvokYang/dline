@@ -8,6 +8,7 @@ import { Mode } from "@shared/storage/types"
 import { AtSignIcon, PlusIcon } from "lucide-react"
 import type React from "react"
 import { forwardRef, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { flushSync } from "react-dom"
 import DynamicTextArea from "react-textarea-autosize"
 import styled from "styled-components"
 import ContextMenu from "@/components/chat/ContextMenu"
@@ -885,8 +886,13 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 			(e: React.ChangeEvent<HTMLTextAreaElement>) => {
 				const newValue = e.target.value
 				const newCursorPosition = e.target.selectionStart
-				setInputValue(newValue)
-				setCursorPosition(newCursorPosition)
+				// A backend turn-end render can arrive in the same frame as a DOM input
+				// event. Commit the controlled value before that external render can
+				// reconcile the textarea from the preceding character and drop the key.
+				flushSync(() => {
+					setInputValue(newValue)
+					setCursorPosition(newCursorPosition)
+				})
 				let showMenu = shouldShowContextMenu(newValue, newCursorPosition)
 				const showSlashCommandsMenu = shouldShowSlashCommandsMenu(newValue, newCursorPosition)
 

@@ -34,6 +34,7 @@ interface AcceptedChange {
 	completion?: TaskRuntimeState["completion"] | null
 	turn?: TaskRuntimeState["turn"] | null
 	interaction?: TaskRuntimeState["interaction"] | null
+	ordinaryInput?: TaskRuntimeState["ordinaryInput"] | null
 	interruptedInteraction?: TaskRuntimeState["interruptedInteraction"] | null
 	newTaskConsumed?: TaskRuntimeState["newTaskConsumed"] | null
 	supersededEffectRevision?: number
@@ -159,6 +160,12 @@ function accept(state: TaskRuntimeState, change: AcceptedChange): TransitionResu
 	} else if (change.interaction !== undefined) {
 		next.interaction = change.interaction
 	}
+	if (change.ordinaryInput === null) {
+		delete next.ordinaryInput
+	} else if (change.ordinaryInput !== undefined) {
+		next.ordinaryInput = change.ordinaryInput
+	}
+	if (next.phase !== TaskPhase.BETWEEN_TURNS || next.interaction) delete next.ordinaryInput
 	if (change.interruptedInteraction === null) {
 		delete next.interruptedInteraction
 	} else if (change.interruptedInteraction !== undefined) {
@@ -202,9 +209,11 @@ function acceptInteraction(
 	effects?: TaskEffect[],
 ): TransitionResult {
 	const revision = state.revision + 1
+	const next: TaskRuntimeState = { ...state, revision, anchor, interaction }
+	if (next.phase !== TaskPhase.BETWEEN_TURNS || next.interaction) delete next.ordinaryInput
 	return {
 		accepted: true,
-		next: { ...state, revision, anchor, interaction },
+		next,
 		effects: effects ?? stateEffects(revision),
 	}
 }
@@ -227,6 +236,7 @@ function acceptProfileRecovery(state: TaskRuntimeState, interactionId: string): 
 		phase: TaskPhase.BETWEEN_TURNS,
 		revision,
 		anchor,
+		ordinaryInput: { kind: "profile_recovery" },
 	}
 	delete next.interaction
 	delete next.error
@@ -234,6 +244,36 @@ function acceptProfileRecovery(state: TaskRuntimeState, interactionId: string): 
 		accepted: true,
 		next,
 		effects: stateEffects(revision),
+	}
+}
+
+/** Consume the one ordinary reply admitted after a durable Profile recovery. */
+function acceptProfileRecoveryInput(
+	state: TaskRuntimeState,
+	event: Extract<TaskEvent, { type: "PROFILE_RECOVERY_INPUT_RECEIVED" }>,
+): TransitionResult {
+	if (state.phase !== TaskPhase.BETWEEN_TURNS || state.interaction || state.ordinaryInput?.kind !== "profile_recovery") {
+		return reject(state, event.type)
+	}
+	const revision = state.revision + 1
+	const next = { ...state, revision }
+	delete next.ordinaryInput
+	return {
+		accepted: true,
+		next,
+		effects: [
+			{
+				id: effectId(revision, 1),
+				type: "APPEND_SAY",
+				taskSay: "user_feedback",
+				presentation: event.draft.text,
+				images: event.draft.images,
+				files: event.draft.files,
+				userInputKind: "direct",
+			},
+			{ id: effectId(revision, 2), type: "POST_TASK_VIEW" },
+			{ id: effectId(revision, 3), type: "PERSIST_SNAPSHOT" },
+		],
 	}
 }
 
@@ -645,23 +685,25 @@ function reduceInteractionOpen(
 	}
 	const revision = state.revision + 1
 	const definition = getInteraction(event.kind)
+	const next: TaskRuntimeState = {
+		...state,
+		...(turn ? { turn } : {}),
+		...(approvalBlock || requestApproval ? { phase: TaskPhase.AWAITING_APPROVAL } : {}),
+		revision,
+		anchor: { ...state.anchor, turnId: event.turnId, interactionId: event.interactionId },
+		interaction: {
+			taskId: state.taskId,
+			turnId: event.turnId,
+			interactionId: event.interactionId,
+			kind: event.kind,
+			status: "opening",
+			createdRevision: revision,
+		},
+	}
+	delete next.ordinaryInput
 	return {
 		accepted: true,
-		next: {
-			...state,
-			...(turn ? { turn } : {}),
-			...(approvalBlock || requestApproval ? { phase: TaskPhase.AWAITING_APPROVAL } : {}),
-			revision,
-			anchor: { ...state.anchor, turnId: event.turnId, interactionId: event.interactionId },
-			interaction: {
-				taskId: state.taskId,
-				turnId: event.turnId,
-				interactionId: event.interactionId,
-				kind: event.kind,
-				status: "opening",
-				createdRevision: revision,
-			},
-		},
+		next,
 		effects: [
 			{
 				id: effectId(revision, 1),
@@ -1419,6 +1461,8 @@ export function reduceTask(state: TaskRuntimeState, event: TaskEvent): Transitio
 			return reduceInitialize(state, event)
 		case "PROFILE_RECOVERY_COMMITTED":
 			return acceptProfileRecovery(state, event.interactionId)
+		case "PROFILE_RECOVERY_INPUT_RECEIVED":
+			return acceptProfileRecoveryInput(state, event)
 		case "API_REQUEST_STARTED":
 			return reduceApi(state, event)
 		case "RESUME_API_CONTINUATION_REQUESTED":

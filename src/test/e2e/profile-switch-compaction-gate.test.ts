@@ -70,7 +70,7 @@ async function selectProfile(sidebar: Frame, profileName: string): Promise<void>
 }
 
 e2e(
-	"Profile Compact & Switch - a 372K compaction failure releases the gate and allows switching back to 1M",
+	"Profile switch advisory - persisted 400K occupancy releases the gate and allows switching back to 1M",
 	async ({ dlineDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
 		e2e.setTimeout(240_000)
 		const { sourceProfile, targetProfile } = await configureProfileGateScenario(dlineDir)
@@ -80,7 +80,6 @@ e2e(
 		const question = "E2E_PROFILE_COMPACTION_GATE_QUESTION"
 		const answer = "E2E_PROFILE_COMPACTION_GATE_CONTINUE"
 		const completion = "E2E_PROFILE_COMPACTION_GATE_RECOVERED"
-		const expectedFailure = "E2E_PROFILE_COMPACTION_GATE_400"
 
 		server.resetOpenAiMock()
 		server.enqueueResponses(
@@ -109,14 +108,6 @@ e2e(
 				expectedRequestExcludes: [COMPACT_INSTRUCTION_MARKER],
 			},
 		)
-		server.enqueueResponses("openai-compatible-chat", {
-			type: "error",
-			status: 400,
-			code: "context_length_exceeded",
-			message: expectedFailure,
-			requestId: "req_profile_compaction_gate_400",
-		})
-
 		const app = await openVSCode(workspaceDir)
 		try {
 			const page = await app.firstWindow()
@@ -137,24 +128,19 @@ e2e(
 			await selectProfile(sidebar, targetProfile.name)
 			const modelSwitcher = sidebar.getByRole("button", { name: "Select model" })
 			const confirmation = sidebar.getByRole("dialog")
-			await expect(confirmation.getByRole("heading", { name: "Compact context before switching?" })).toBeVisible()
-			await expect(confirmation).toContainText(`${targetProfile.name} will be activated first`)
-			await confirmation.getByRole("button", { name: "Compact & Switch" }).click()
+			await expect(confirmation.getByRole("heading", { name: "Switch to a smaller context window?" })).toBeVisible()
+			await expect(confirmation).toContainText(`${targetProfile.name} · 372,000 tokens`)
+			await expect(confirmation.getByText("Context in use", { exact: true })).toBeVisible()
+			await expect(confirmation.getByText("400,100 tokens", { exact: true })).toBeVisible()
+			await expect(confirmation).toContainText("nothing is compacted now")
+			await expect(confirmation.getByRole("button", { name: "Compact & Switch" })).toHaveCount(0)
+			await confirmation.getByRole("button", { name: "Switch", exact: true }).click()
 
-			const failure = sidebar.getByRole("dialog")
-			await expect(failure.getByRole("heading", { name: "Context compaction not completed" })).toBeVisible({
-				timeout: 120_000,
-			})
-			await expect(failure).toContainText(`${targetProfile.name} remains active`)
-			await expect(failure).toContainText("Profile switch compaction failed.")
-			await expect(modelSwitcher).toHaveText(targetProfile.name)
+			await expect(modelSwitcher).toHaveText(targetProfile.name, { timeout: 60_000 })
+			await expect(sidebar.getByRole("dialog")).toHaveCount(0)
 			await expect(sidebar.getByText(/Switch failed —/)).toHaveCount(0)
 			await expect(sidebar.getByText("Continue the task after approval to send a message.", { exact: true })).toHaveCount(0)
-			await expect.poll(() => server.getRequestCount("openai-compatible-chat")).toBe(1)
-			await page.waitForTimeout(3_000)
-			expect(server.getRequestCount("openai-compatible-chat")).toBe(1)
-
-			await failure.getByRole("button", { name: "Dismiss" }).click()
+			await expect.poll(() => server.getRequestCount("openai-compatible-chat")).toBe(0)
 			await expect(modelSwitcher).toBeEnabled()
 			await selectProfile(sidebar, sourceProfile.name)
 			await expect(modelSwitcher).toHaveText(sourceProfile.name, { timeout: 60_000 })
@@ -165,13 +151,13 @@ e2e(
 			await input.press("Enter")
 			await expect(sidebar.getByText(completion, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
 			await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(3)
-			expect(server.getRequestCount("openai-compatible-chat")).toBe(1)
+			expect(server.getRequestCount("openai-compatible-chat")).toBe(0)
 			const recoveredRequest = server.getMockConsumptions("openai-compatible-responses")[2]
 			expect(JSON.stringify(recoveredRequest.requestBody)).toContain(answer)
 			expect(JSON.stringify(recoveredRequest.requestBody)).not.toContain(COMPACT_INSTRUCTION_MARKER)
 			expect(recoveredRequest.contractError).toBeUndefined()
 			await expect(sidebar.getByText("Continue the task after approval to send a message.", { exact: true })).toHaveCount(0)
-			await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir, [new RegExp(expectedFailure)])
+			await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
 		} finally {
 			await app.close()
 		}

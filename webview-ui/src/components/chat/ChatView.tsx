@@ -732,6 +732,9 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 									)),
 						)
 					}
+					submissionIdentity={
+						taskViewState?.activeInteraction?.interactionId ?? `draft-${interactionDraft.ownerRevision ?? "unowned"}`
+					}
 					submissionScope={taskId}
 				/>
 			</footer>

@@ -33,8 +33,58 @@ describe("Task Profile recovery runtime", () => {
 		expect(result.accepted).toBe(true)
 		expect(result.next.phase).toBe(TaskPhase.BETWEEN_TURNS)
 		expect(result.next.interaction).toBeUndefined()
+		expect(result.next.ordinaryInput).toEqual({ kind: "profile_recovery" })
 		expect(result.next.anchor).toEqual({ apiIndex: 2, uiMessageTs: 100 })
 		expect(result.effects.map((effect) => effect.type)).toEqual(["POST_TASK_VIEW", "PERSIST_SNAPSHOT"])
+	})
+
+	it("admits exactly one ordinary reply after Profile recovery", () => {
+		const recovered = reduceTask(profileErrorState(), {
+			type: "PROFILE_RECOVERY_COMMITTED",
+			interactionId: "retry-1",
+		})
+		const event = {
+			type: "PROFILE_RECOVERY_INPUT_RECEIVED" as const,
+			draft: { text: "continue with this profile", images: ["image"], files: ["file"] },
+		}
+
+		const claimed = reduceTask(recovered.next, event)
+		const duplicate = reduceTask(claimed.next, event)
+
+		expect(claimed.accepted).toBe(true)
+		expect(claimed.next.revision).toBe(recovered.next.revision + 1)
+		expect(claimed.next.ordinaryInput).toBeUndefined()
+		expect(claimed.effects.map((effect) => effect.type)).toEqual(["APPEND_SAY", "POST_TASK_VIEW", "PERSIST_SNAPSHOT"])
+		expect(claimed.effects[0]).toMatchObject({
+			type: "APPEND_SAY",
+			taskSay: "user_feedback",
+			presentation: "continue with this profile",
+			images: ["image"],
+			files: ["file"],
+			userInputKind: "direct",
+		})
+		expect(duplicate.accepted).toBe(false)
+		expect(duplicate.next).toBe(claimed.next)
+		expect(duplicate.effects).toEqual([])
+	})
+
+	it("clears Profile recovery input admission when another interaction opens", () => {
+		const recovered = reduceTask(profileErrorState(), {
+			type: "PROFILE_RECOVERY_COMMITTED",
+			interactionId: "retry-1",
+		})
+
+		const opened = reduceTask(recovered.next, {
+			type: "INTERACTION_OPEN_REQUESTED",
+			turnId: "followup-turn",
+			interactionId: "followup-1",
+			kind: "followup",
+			presentation: "Need more information",
+		})
+
+		expect(opened.accepted).toBe(true)
+		expect(opened.next.interaction).toMatchObject({ interactionId: "followup-1", kind: "followup" })
+		expect(opened.next.ordinaryInput).toBeUndefined()
 	})
 
 	it("does not clear a non-error interaction", () => {

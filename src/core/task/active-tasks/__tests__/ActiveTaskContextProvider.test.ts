@@ -1,3 +1,4 @@
+import * as path from "node:path"
 import { describe, expect, it } from "vitest"
 import { buildActiveTasksSection } from "../ActiveTaskContextProvider"
 
@@ -12,6 +13,8 @@ interface TestControllerSource {
 	task?: TestTaskSource
 }
 
+const CURRENT_CWD = process.cwd()
+
 /**
  * Create a controller-like source for ActiveTaskContextProvider tests.
  * @param task Active task source exposed by the fake controller.
@@ -23,7 +26,7 @@ function createController(task: TestTaskSource): TestControllerSource {
 
 describe("ActiveTaskContextProvider", () => {
 	it("returns empty text when there are no active tasks", () => {
-		const section = buildActiveTasksSection({ controllers: [], currentCwd: "e:/workspace/vscode/dline" })
+		const section = buildActiveTasksSection({ controllers: [], currentCwd: CURRENT_CWD })
 
 		expect(section).toBe("")
 	})
@@ -36,10 +39,10 @@ describe("ActiveTaskContextProvider", () => {
 					taskId: "task-1",
 					getActiveTaskSummary: () => longSummary,
 					getActiveTaskPhase: () => "awaiting_approval",
-					getActiveTaskEditedFiles: () => ["e:/workspace/vscode/dline/src/core/task/index.ts"],
+					getActiveTaskEditedFiles: () => [path.join(CURRENT_CWD, "src", "core", "task", "index.ts")],
 				}),
 			],
-			currentCwd: "e:/workspace/vscode/dline",
+			currentCwd: CURRENT_CWD,
 		})
 
 		expect(section).toContain("# Active Tasks")
@@ -50,7 +53,7 @@ describe("ActiveTaskContextProvider", () => {
 	})
 
 	it("limits edited files per task", () => {
-		const files = Array.from({ length: 52 }, (_value, index) => `e:/workspace/vscode/dline/src/file-${index}.ts`)
+		const files = Array.from({ length: 52 }, (_value, index) => path.join(CURRENT_CWD, "src", `file-${index}.ts`))
 		const section = buildActiveTasksSection({
 			controllers: [
 				createController({
@@ -60,7 +63,7 @@ describe("ActiveTaskContextProvider", () => {
 					getActiveTaskEditedFiles: () => files,
 				}),
 			],
-			currentCwd: "e:/workspace/vscode/dline",
+			currentCwd: CURRENT_CWD,
 		})
 
 		expect(section).toContain("    - src/file-49.ts")
@@ -84,7 +87,7 @@ describe("ActiveTaskContextProvider", () => {
 					getActiveTaskEditedFiles: () => [],
 				}),
 			],
-			currentCwd: "e:/workspace/vscode/dline",
+			currentCwd: CURRENT_CWD,
 			excludeTaskId: "task-2",
 		})
 

@@ -7,10 +7,10 @@ import {
 	type RmOptions,
 	readdirSync,
 	readFileSync,
-	rmSync,
 	statSync,
 	writeFileSync,
 } from "node:fs"
+import { rm } from "node:fs/promises"
 import * as os from "node:os"
 import * as path from "node:path"
 import { type ElectronApplication, expect, type Frame, type Page, test } from "@playwright/test"
@@ -22,7 +22,10 @@ import { E2E_OUTPUT_ROOT as E2E_OUTPUT_ROOT_PATH, E2E_RUN_ID as E2E_RUN_NAMESPAC
 import {
 	createLaunchIsolation,
 	createWorkerExtensionsDir,
+	ensureDlineVsixInstalled,
 	portableEnvironment,
+	resolveWorkerExtensionsSlot,
+	shouldPreinstallDlineVsix,
 	type VSCodeLaunchIsolation,
 } from "./vscode-launch-isolation"
 import { resolveVSCodeDownloadPlatform, resolveVSCodeDownloadVersion } from "./vscode-version-resolver"
@@ -62,6 +65,7 @@ export interface E2ETestConfigs {
 	workspaceType: "single" | "multi"
 	channel: "stable" | "insiders"
 	forceStaleInitialState: boolean
+	stateBuildTimingLogs: boolean
 	mockConda: boolean
 	isolateOsHome: boolean
 	grpcRecorderEnabled: boolean
@@ -172,9 +176,10 @@ export class E2ETestHelper {
 
 		const findSidebarFrame = async (): Promise<Frame | null> => {
 			// Check cached frame first
-			if (this.cachedFrame && !this.cachedFrame.isDetached()) {
+			if (this.cachedFrame && !this.cachedFrame.page().isClosed() && !this.cachedFrame.isDetached()) {
 				return this.cachedFrame
 			}
+			this.cachedFrame = null
 
 			for (const frame of page.frames()) {
 				if (frame.isDetached()) {
@@ -248,17 +253,18 @@ export class E2ETestHelper {
 	}
 
 	public static async rmForRetries(path: PathLike, options?: RmOptions): Promise<void> {
-		const maxAttempts = 3 // Reduced from 5
-
+		const maxAttempts = 10
 		for (let attempt = 1; attempt <= maxAttempts; attempt++) {
 			try {
-				rmSync(path, options)
+				await rm(path, options)
 				return
 			} catch (error) {
-				if (attempt === maxAttempts) {
-					throw new Error(`Failed to rmSync ${path} after ${maxAttempts} attempts: ${error}`)
+				const code = error instanceof Error && "code" in error ? String(error.code) : undefined
+				const retryable = code === "EBUSY" || code === "ENOTEMPTY" || code === "EPERM"
+				if (!retryable || attempt === maxAttempts) {
+					throw new Error(`Failed to remove ${path} after ${attempt} attempt(s): ${error}`, { cause: error })
 				}
-				await new Promise((resolve) => setTimeout(resolve, 50 * attempt)) // Progressive delay
+				await new Promise((resolve) => setTimeout(resolve, 100 * attempt))
 			}
 		}
 	}
@@ -325,15 +331,17 @@ export class E2ETestHelper {
 
 	public static async runCommandPalette(page: Page, command: string): Promise<void> {
 		await page.keyboard.press("ControlOrMeta+Shift+p")
-		const commandInput = page.locator(".quick-input-widget input").last()
+		const commandPalette = page.locator(".quick-input-widget:visible")
+		await expect(commandPalette).toHaveCount(1)
+		const commandInput = commandPalette.locator("input")
 		await expect(commandInput).toBeVisible()
 		await expect(commandInput).toHaveAttribute("placeholder", /command/i)
-		await commandInput.fill(`> ${command}`)
+		await expect(commandInput).toHaveValue(">")
+		// pressSequentially uses Playwright's keyboard focus path; direct DOM focus can deactivate VS Code QuickInput.
+		await commandInput.pressSequentially(` ${command}`)
 		await expect(commandInput).toHaveAttribute("placeholder", /command/i)
 		await expect(commandInput).toHaveValue(`> ${command}`)
-		const commandOption = page
-			.locator(".quick-input-widget .monaco-list-row")
-			.filter({ has: page.getByText(command, { exact: true }) })
+		const commandOption = commandPalette.locator(".monaco-list-row").filter({ has: page.getByText(command, { exact: true }) })
 		await expect(commandOption).toHaveCount(1)
 		await expect(commandOption).toBeVisible()
 		await commandOption.click()
@@ -464,6 +472,7 @@ export const e2e = test
 		workspaceType: "single",
 		channel: "stable",
 		forceStaleInitialState: [false, { option: true }],
+		stateBuildTimingLogs: [false, { option: true }],
 		mockConda: [false, { option: true }],
 		isolateOsHome: [false, { option: true }],
 		grpcRecorderEnabled: [false, { option: true }],
@@ -484,11 +493,14 @@ export const e2e = test
 		},
 		extensionsDir: [
 			async ({}, use, workerInfo) => {
-				const extensionsDir = createWorkerExtensionsDir(workerInfo.workerIndex)
+				const workerSlot = resolveWorkerExtensionsSlot(workerInfo.workerIndex, workerInfo.parallelIndex)
+				const extensionsDir = createWorkerExtensionsDir(workerSlot)
 				try {
 					await use(extensionsDir)
 				} finally {
-					await E2ETestHelper.rmForRetries(extensionsDir, { recursive: true, force: true })
+					if (!shouldPreinstallDlineVsix()) {
+						await E2ETestHelper.rmForRetries(extensionsDir, { recursive: true, force: true })
+					}
 				}
 			},
 			{ scope: "worker" },
@@ -637,9 +649,6 @@ export const e2e = test
 			workspacePath: string,
 			environmentOverrides?: Readonly<Record<string, string>>,
 			launchOptions?: {
-				recordVideo?: boolean
-				showVideoActions?: boolean
-				recordVideoSize?: { width: number; height: number }
 				windowSize?: { width: number; height: number }
 				forceDeviceScaleFactor?: number
 			},
@@ -655,6 +664,7 @@ export const e2e = test
 				dlineDocsDir,
 				channel,
 				forceStaleInitialState,
+				stateBuildTimingLogs,
 				mockConda,
 				isolateOsHome,
 				grpcRecorderEnabled,
@@ -709,12 +719,15 @@ export const e2e = test
 				)
 			}
 
+			const vsixPath = path.join(E2ETestHelper.CODEBASE_ROOT_DIR, "dist", "e2e.vsix")
 			await use(async (workspacePath: string, environmentOverrides = {}, launchOptions = {}) => {
+				if (installVsix) ensureDlineVsixInstalled(executablePath, extensionsDir, vsixPath)
 				const app = await _electron.launch({
 					executablePath,
 					env: {
 						...electronEnvironment,
 						E2E_TEST: "true",
+						...(stateBuildTimingLogs ? { DLINE_E2E_STATE_BUILD_TIMING: "true" } : {}),
 						// Perf and diagnostic call sites publish to telemetry unconditionally
 						// but mirror to Logger.debug only when debug logging is on. Several
 						// suites assert against those mirrored lines, so raise the level here
@@ -736,27 +749,6 @@ export const e2e = test
 						// IS_DEV: "true",
 						DEV_WORKSPACE_FOLDER: E2ETestHelper.CODEBASE_ROOT_DIR,
 					},
-					recordVideo:
-						launchOptions.recordVideo === false
-							? undefined
-							: {
-									dir: E2ETestHelper.getResultsDir(
-										testInfo.title,
-										"recordings",
-										`${testInfo.testId}-retry-${testInfo.retry}`,
-									),
-									...(launchOptions.recordVideoSize ? { size: launchOptions.recordVideoSize } : {}),
-									...(launchOptions.showVideoActions
-										? {
-												showActions: {
-													cursor: "pointer" as const,
-													duration: 500,
-													// Playwright accepts integers only; zero is ignored and falls back to its 24px CSS default.
-													fontSize: 1,
-												},
-											}
-										: {}),
-								},
 					args: [
 						"--no-sandbox",
 						...(cdpPort !== undefined ? [`--remote-debugging-port=${cdpPort}`] : []),
@@ -773,9 +765,6 @@ export const e2e = test
 						"--skip-release-notes",
 						// User data comes from VSCODE_PORTABLE, which outranks --user-data-dir.
 						`--extensions-dir=${extensionsDir}`,
-						...(installVsix
-							? [`--install-extension=${path.join(E2ETestHelper.CODEBASE_ROOT_DIR, "dist", "e2e.vsix")}`]
-							: []),
 						`--extensionDevelopmentPath=${E2ETestHelper.CODEBASE_ROOT_DIR}`,
 						workspacePath,
 					],

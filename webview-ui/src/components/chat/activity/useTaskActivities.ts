@@ -12,22 +12,53 @@ import { TaskServiceClient } from "@/services/grpc-client"
 let subscribedTaskId: string | undefined
 let unsubscribe: (() => void) | undefined
 let referenceCount = 0
+let resubscribeTimer: ReturnType<typeof setTimeout> | undefined
 const activities = new Map<string, TaskActivity>()
 const listeners = new Set<() => void>()
+
+/**
+ * Delay before re-attaching a stream the backend closed on its own.
+ *
+ * The backend ends this stream immediately when the requested task is not yet
+ * the controller's current task. That window is short, so a small fixed delay
+ * reattaches quickly without spinning if the task never becomes current.
+ */
+const RESUBSCRIBE_DELAY_MS = 500
 
 function notify(): void {
 	for (const listener of listeners) listener()
 }
 
 function stopSubscription(): void {
+	if (resubscribeTimer !== undefined) {
+		clearTimeout(resubscribeTimer)
+		resubscribeTimer = undefined
+	}
 	unsubscribe?.()
 	unsubscribe = undefined
 	subscribedTaskId = undefined
 	activities.clear()
 }
 
+/**
+ * Re-attach after the backend closed the stream by itself.
+ *
+ * Releasing `subscribedTaskId` is not enough on its own: nothing else calls
+ * `ensureSubscription` again while the component stays mounted, so without this
+ * the view would keep rendering whatever snapshot it already had.
+ */
+function scheduleResubscribe(taskId: string): void {
+	if (resubscribeTimer !== undefined || referenceCount <= 0) return
+	resubscribeTimer = setTimeout(() => {
+		resubscribeTimer = undefined
+		if (referenceCount > 0 && !unsubscribe) ensureSubscription(taskId)
+	}, RESUBSCRIBE_DELAY_MS)
+}
+
 function ensureSubscription(taskId: string): void {
 	if (subscribedTaskId === taskId && unsubscribe) return
+	// stopSubscription also clears any pending reattach, so a switch to a
+	// different task cannot be overwritten by a timer from the previous one.
 	stopSubscription()
 	subscribedTaskId = taskId
 	unsubscribe = TaskServiceClient.subscribeToTaskActivities(TaskActivitySubscriptionRequest.create({ taskId }), {
@@ -36,9 +67,22 @@ function ensureSubscription(taskId: string): void {
 			for (const activity of update.activities) activities.set(activity.activityId, activity)
 			notify()
 		},
-		onError: (error) => console.error("Task activity subscription failed", error),
-		onComplete: () => {
+		onError: (error) => {
+			console.error("Task activity subscription failed", error)
+			// Release the identity as well. Keeping it would make every later
+			// ensureSubscription call match the guard above and return early,
+			// leaving this webview permanently without activity updates.
+			if (subscribedTaskId === taskId) subscribedTaskId = undefined
 			unsubscribe = undefined
+			scheduleResubscribe(taskId)
+		},
+		onComplete: () => {
+			// The backend ends this stream immediately when the task is not yet the
+			// controller's current task. That is a startup race rather than a final
+			// state, so the identity is released and the stream is re-attached.
+			if (subscribedTaskId === taskId) subscribedTaskId = undefined
+			unsubscribe = undefined
+			scheduleResubscribe(taskId)
 		},
 	})
 }

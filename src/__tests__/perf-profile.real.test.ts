@@ -49,11 +49,14 @@ function combineApiRequestsReference(messages: ClineMessage[]): ClineMessage[] {
 		})
 }
 
-// Temporary profiling harness: load the real field-log task's ui_messages.jsonl
-// and measure each buildState pipeline step to find the dominant remaining cost.
-const REAL_MESSAGES_PATH = "E:\\yyk\\Documents\\dline\\tasks\\1785646541876\\ui_messages.jsonl"
+// Temporary profiling harness: load an explicitly selected field-log task's
+// ui_messages.jsonl and measure each buildState pipeline step.
+const REAL_MESSAGES_PATH = process.env.DLINE_PERF_PROFILE_MESSAGES_PATH
 
 function loadRealMessages(): ClineMessage[] {
+	if (!REAL_MESSAGES_PATH) {
+		throw new Error("DLINE_PERF_PROFILE_MESSAGES_PATH is required to run the real-task profile")
+	}
 	const raw = readFileSync(REAL_MESSAGES_PATH, "utf8")
 	const lines = raw.split("\n").filter((line) => line.trim().length > 0)
 	return lines.map((line) => JSON.parse(line) as ClineMessage)
@@ -67,7 +70,7 @@ function measure<T>(label: string, fn: () => T): T {
 	return result
 }
 
-describe("real-task buildState pipeline profile", () => {
+describe.skipIf(!REAL_MESSAGES_PATH)("real-task buildState pipeline profile", () => {
 	it("profiles each stage on the 22.7K-message real task", () => {
 		const messages = loadRealMessages()
 		console.log(`[profile] loaded ${messages.length} messages`)

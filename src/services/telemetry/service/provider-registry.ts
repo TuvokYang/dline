@@ -14,6 +14,9 @@ import {
 import type { ITelemetryProvider, TelemetryProperties, TelemetrySettings } from "../providers/ITelemetryProvider"
 import { adaptLegacyTelemetryProvider } from "../providers/LegacyTelemetryProviderAdapter"
 import { TelemetryChannelPolicy } from "./channel-policy"
+import { DeferredSignalSpan } from "./pipeline-port"
+import { taskTraceSource } from "./task-trace-context"
+import { captureSpanLogProperties, currentSignalSpan, runInSpanScope } from "./trace-scope"
 
 /**
  * Owns the set of providers and the fan-out to them.
@@ -101,6 +104,7 @@ export class TelemetryProviderRegistry {
 	private closed = false
 
 	private readonly pending: PendingDelivery[] = []
+	private readonly pendingSpans: Array<{ span: DeferredSignalSpan; channel: TelemetryChannel }> = []
 	private pendingDropped = 0
 	private readonly policy: TelemetryChannelPolicy
 
@@ -142,6 +146,9 @@ export class TelemetryProviderRegistry {
 			return
 		}
 		this.ready = true
+		for (const { span, channel } of this.pendingSpans.splice(0)) {
+			span.attach((options) => this.startSpan(options, channel))
+		}
 
 		const held = this.pending.splice(0, this.pending.length)
 		const dropped = this.pendingDropped
@@ -202,7 +209,8 @@ export class TelemetryProviderRegistry {
 		channel: TelemetryChannel = "usage",
 		severity: TelemetrySeverity = "info",
 	): void {
-		this.dispatch({ kind: "event", channel, severity, event, properties, required })
+		const recorded = { telemetry_timestamp_ms: Date.now(), ...captureSpanLogProperties() }
+		this.dispatch({ kind: "event", channel, severity, event, properties: () => ({ ...recorded, ...properties() }), required })
 	}
 
 	identifyUser(userInfo: ClineAccountUserInfo, properties: PropertiesThunk): void {
@@ -246,25 +254,42 @@ export class TelemetryProviderRegistry {
 	}
 
 	startSpan(options: TelemetrySpanStartOptions, channel: TelemetryChannel = "runtime"): TelemetrySpanHandle {
-		const handles = orderedRegistrations(this.registrations).flatMap((registration) => {
-			try {
-				if (!this.policy.allows({ channel, severity: "info" }, registration)) return []
-				const capability = registration.capabilities.find((entry) => entry.kind === "trace")
-				if (capability?.kind !== "trace") return []
-				const parent =
-					options.parent instanceof CompositeTelemetrySpan
-						? options.parent.forProvider(registration.base.name)
-						: options.parent
-				return [{ providerName: registration.base.name, handle: capability.startSpan({ ...options, parent }) }]
-			} catch (error) {
-				Logger.internalError(
-					`[TelemetryService] Provider ${registration.base.name} failed to start span ${options.name}:`,
-					error,
-				)
-				return []
-			}
-		})
-		return handles.length === 0 ? INERT_SPAN : new CompositeTelemetrySpan(handles)
+		if (this.closed) return INERT_SPAN
+		const taskId = options.attributes?.task_id ?? options.attributes?.taskId
+		const taskParent = typeof taskId === "string" ? taskTraceSource(taskId)?.currentSpan() : undefined
+		options = { ...options, parent: options.root ? undefined : (options.parent ?? currentSignalSpan() ?? taskParent) }
+		if (!this.ready) {
+			const span = new DeferredSignalSpan({ ...options, attributes: primitiveSpanAttributes(options.attributes) })
+			if (this.pendingSpans.length >= PENDING_CAPACITY) this.pendingSpans.shift()?.span.discard()
+			this.pendingSpans.push({ span, channel })
+			return span
+		}
+		// Start the exporting span first so the journal can mirror its native identity.
+		// Neither destination exports until end(); ending remains journal-first.
+		let identity: TelemetrySpanHandle["spanContext"]
+		const handles = orderedRegistrations(this.registrations)
+			.reverse()
+			.flatMap((registration) => {
+				try {
+					if (!this.policy.allows({ channel, severity: "info" }, registration)) return []
+					const capability = registration.capabilities.find((entry) => entry.kind === "trace")
+					if (capability?.kind !== "trace") return []
+					const parent =
+						options.parent instanceof CompositeTelemetrySpan
+							? options.parent.forProvider(registration.base.name)
+							: options.parent
+					const handle = capability.startSpan({ ...options, parent, spanContext: identity })
+					identity ??= handle.spanContext
+					return [{ providerName: registration.base.name, handle }]
+				} catch (error) {
+					Logger.internalError(
+						`[TelemetryService] Provider ${registration.base.name} failed to start span ${options.name}:`,
+						error,
+					)
+					return []
+				}
+			})
+		return handles.length === 0 ? INERT_SPAN : new CompositeTelemetrySpan(handles.reverse())
 	}
 
 	/**
@@ -276,6 +301,7 @@ export class TelemetryProviderRegistry {
 	async dispose(): Promise<void> {
 		this.closed = true
 		this.pending.length = 0
+		for (const { span } of this.pendingSpans.splice(0)) span.discard()
 		this.pendingDropped = 0
 		const registrations = this.registrations
 		this.registrations = []
@@ -485,19 +511,45 @@ interface ProviderSpanHandle {
 }
 
 class CompositeTelemetrySpan implements TelemetrySpanHandle {
-	readonly active = true
+	private ended = false
 	constructor(private readonly handles: readonly ProviderSpanHandle[]) {}
+	get active(): boolean {
+		return !this.ended && this.handles.some(({ handle }) => handle.active)
+	}
+	get spanContext() {
+		return this.handles.find(({ handle }) => handle.spanContext)?.handle.spanContext
+	}
+	get taskId() {
+		return this.handles.find(({ handle }) => handle.taskId)?.handle.taskId
+	}
+	run<T>(action: () => T): T {
+		return runInSpanScope(this, action)
+	}
+	addEvent(name: string, attributes?: Readonly<Record<string, string | number | boolean>>, timestamp?: number): void {
+		if (!this.ended) this.apply((handle) => handle.addEvent?.(name, attributes, timestamp))
+	}
 	forProvider(providerName: string): TelemetrySpanHandle | undefined {
 		return this.handles.find((entry) => entry.providerName === providerName)?.handle
 	}
 	setAttribute(name: string, value: string | number | boolean): void {
-		for (const { handle } of this.handles) handle.setAttribute(name, value)
+		if (!this.ended) this.apply((handle) => handle.setAttribute(name, value))
 	}
 	recordException(error: unknown): void {
-		for (const { handle } of this.handles) handle.recordException(error)
+		if (!this.ended) this.apply((handle) => handle.recordException(error))
 	}
 	end(outcome?: "success" | "failure" | "cancelled", endTime?: number): void {
-		for (const { handle } of this.handles) handle.end(outcome, endTime)
+		if (this.ended) return
+		this.ended = true
+		this.apply((handle) => handle.end(outcome, endTime))
+	}
+	private apply(action: (handle: TelemetrySpanHandle) => void): void {
+		for (const { handle } of this.handles) {
+			try {
+				action(handle)
+			} catch {
+				// A broken sink cannot change the tool outcome or strand another sink's span.
+			}
+		}
 	}
 }
 
@@ -509,6 +561,15 @@ function orderedRegistrations(registrations: readonly TelemetryProviderRegistrat
 
 function normalizeRegistration(provider: TelemetryProviderInput): TelemetryProviderRegistration {
 	return isTelemetryProviderRegistration(provider) ? provider : adaptLegacyTelemetryProvider(provider)
+}
+
+function primitiveSpanAttributes(properties?: TelemetryProperties): Record<string, string | number | boolean> | undefined {
+	if (!properties) return undefined
+	const attributes: Record<string, string | number | boolean> = {}
+	for (const [key, value] of Object.entries(properties)) {
+		if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") attributes[key] = value
+	}
+	return attributes
 }
 
 /** Short identifier used only in failure logs. */

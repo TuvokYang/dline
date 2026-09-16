@@ -2,6 +2,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises"
 import * as path from "node:path"
 import { expect } from "@playwright/test"
 import { E2ETestHelper, e2e } from "./utils/helpers"
+import { countStoredTaskHistory } from "./utils/task-history-store"
 
 const TASK_TEXT = "E2E_TASK_START_LATENCY_TASK"
 const TURN_1_DONE = "E2E_TASK_START_LATENCY_TURN_1_DONE"
@@ -155,23 +156,19 @@ async function seedTaskHistoryIndex(dlineDocsDir: string, taskIds: string[]): Pr
 			isFavorited: false,
 		}),
 	)
-	await writeFile(path.join(dlineDocsDir, "taskHistory.jsonl"), `${lines.join("\n")}\n`, "utf8")
+	await writeFile(path.join(dlineDocsDir, "tasks", "taskHistory.jsonl"), `${lines.join("\n")}\n`, "utf8")
 }
 
 e2e(
 	"Task start latency - a large task history must not stall the first provider request",
-	async ({ dlineDir, dlineDocsDir, helper, server, sidebar, userDataDir, workspaceDir }) => {
+	async ({ dlineDir, dlineDocsDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
 		e2e.setTimeout(300_000)
 
-		// A leftover shadow git repository from an earlier run turns the expensive
-		// "create + stage baseline" path into a cheap reuse, which would mask the
-		// stall this test exists to catch. Always start without one.
+		// Seed before launch so SQLite performs the real one-time history import and
+		// the measurement cannot include filesystem writes still draining from the test.
 		await rm(path.join(dlineDir, "checkpoints"), { recursive: true, force: true })
-
 		await seedWorkspaceFiles(workspaceDir)
 
-		// Seed the profile before signing in so the extension observes the history
-		// on its normal startup path rather than mid-session.
 		const seededTaskIds: string[] = []
 		const seedBaseTs = Date.now() - SEEDED_TASK_COUNT * 60_000
 		for (let index = 0; index < SEEDED_TASK_COUNT; index++) {
@@ -181,102 +178,103 @@ e2e(
 		}
 		await seedTaskHistoryIndex(dlineDocsDir, seededTaskIds)
 
-		await helper.signin(sidebar)
+		const app = await openVSCode(workspaceDir)
+		const page = await app.firstWindow()
+		try {
+			await E2ETestHelper.openClineSidebar(page)
+			const sidebar = await helper.getSidebar(page)
+			await E2ETestHelper.dismissWhatsNewModal(sidebar)
+			await helper.signin(sidebar)
+			await expect.poll(() => countStoredTaskHistory(dlineDocsDir), { timeout: 120_000 }).toBe(SEEDED_TASK_COUNT)
 
-		server.resetOpenAiMock()
-		// A slow start can trigger provider retries; keep the queue stocked so an
-		// exhausted mock never masquerades as a latency failure.
-		server.enqueueResponses(
-			"openai-compatible-chat",
-			{ type: "message", text: TURN_1_DONE },
-			{ type: "message", text: TURN_1_DONE },
-			{ type: "message", text: TURN_1_DONE },
-			{ type: "message", text: TURN_1_DONE },
-			{ type: "message", text: TURN_1_DONE },
-			{ type: "message", text: TURN_1_DONE },
-		)
+			server.resetOpenAiMock()
+			server.enqueueResponses("openai-compatible-chat", {
+				type: "tool",
+				id: "call_task_start_latency_complete",
+				name: "attempt_completion",
+				arguments: { result: TURN_1_DONE },
+			})
 
-		await sidebar.getByTestId("chat-input").fill(TASK_TEXT)
-		const sendClickedAtMs = Date.now()
-		await sidebar.getByTestId("send-button").click()
-		// The checkpoint baseline keeps staging in the background after the request
-		// is sent and competes for IO on a seeded workspace, so allow a generous
-		// window for the reply to render. The assertion below measures the startup
-		// span from the extension log, not from this wait.
-		await expect(sidebar.getByText(TURN_1_DONE, { exact: false }).last()).toBeVisible({ timeout: 240_000 })
+			await sidebar.getByTestId("chat-input").fill(TASK_TEXT)
+			const sendClickedAtMs = Date.now()
+			await sidebar.getByTestId("send-button").click()
+			await expect(sidebar.getByText(TURN_1_DONE, { exact: false }).last()).toBeVisible({ timeout: 240_000 })
+			await expect(sidebar.getByRole("contentinfo").getByText("Start New Task", { exact: true })).toBeVisible({
+				timeout: 240_000,
+			})
 
-		// Reconstruct the startup span from the Dline Output log. The lock line is
-		// the first per-task marker; `attemptApiRequest: start` is the first
-		// provider contact. Everything between them is the silent stall the field
-		// logs show.
-		const measurement = await E2ETestHelper.waitForValue(async () => {
-			const output = E2ETestHelper.readDlineOutputIfPresent(userDataDir)
-			if (!output) return undefined
-			// Anchor on the click so the measurement matches what the user perceives:
-			// the delay between pressing send and the provider actually being called.
-			const requestAtMs = findLogMoment(output, API_REQUEST_PATTERN, sendClickedAtMs)
-			if (requestAtMs === undefined) return undefined
-			const checkpointAtMs = findLogMoment(output, CHECKPOINT_PATTERN, sendClickedAtMs)
-			return {
-				startedAtMs: sendClickedAtMs,
-				requestAtMs,
-				sendToRequestMs: requestAtMs - sendClickedAtMs,
-				sendToCheckpointMs: checkpointAtMs === undefined ? undefined : checkpointAtMs - sendClickedAtMs,
+			const measurement = await E2ETestHelper.waitForValue(async () => {
+				const output = E2ETestHelper.readDlineOutputIfPresent(userDataDir)
+				if (!output) return undefined
+				const requestAtMs = findLogMoment(output, API_REQUEST_PATTERN, sendClickedAtMs)
+				if (requestAtMs === undefined) return undefined
+				const checkpointAtMs = findLogMoment(output, CHECKPOINT_PATTERN, sendClickedAtMs)
+				return {
+					startedAtMs: sendClickedAtMs,
+					requestAtMs,
+					sendToRequestMs: requestAtMs - sendClickedAtMs,
+					sendToCheckpointMs: checkpointAtMs === undefined ? undefined : checkpointAtMs - sendClickedAtMs,
+				}
+			}, 240_000)
+
+			console.log(
+				`[task-start-latency] sendToRequestMs=${measurement.sendToRequestMs} ` +
+					`sendToCheckpointMs=${measurement.sendToCheckpointMs ?? "n/a"} ` +
+					`seededTasks=${SEEDED_TASK_COUNT}`,
+			)
+			const timelineOutput = E2ETestHelper.readDlineOutputIfPresent(userDataDir) ?? ""
+			const timelineMarkers =
+				/Task lock acquired|Creating new CheckpointTracker|Initializing shadow git|Shadow git initialization completed|checkpoint add operation|attemptApiRequest: start|loadContext timing|startTask timing|startTask handoff timing/
+			for (const line of timelineOutput.split(/\r?\n/)) {
+				if (!timelineMarkers.test(line)) continue
+				const timestampMatch = /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})/.exec(line)
+				if (!timestampMatch) continue
+				if (parseLogTimestamp(timestampMatch[1]!) < measurement.startedAtMs) continue
+				console.log(`[task-start-latency][timeline] ${line.trim()}`)
 			}
-		}, 240_000)
-
-		// Print the measurement so both passing and failing runs expose the number;
-		// Playwright discards attachments for passing tests.
-		console.log(
-			`[task-start-latency] sendToRequestMs=${measurement.sendToRequestMs} ` +
-				`sendToCheckpointMs=${measurement.sendToCheckpointMs ?? "n/a"} ` +
-				`seededTasks=${SEEDED_TASK_COUNT}`,
-		)
-		// Emit the startup timeline so the span can be attributed without a debugger.
-		const timelineOutput = E2ETestHelper.readDlineOutputIfPresent(userDataDir) ?? ""
-		const timelineMarkers =
-			/Task lock acquired|Creating new CheckpointTracker|Initializing shadow git|Shadow git initialization completed|checkpoint add operation|attemptApiRequest: start|loadContext timing|startTask timing|startTask handoff timing/
-		for (const line of timelineOutput.split(/\r?\n/)) {
-			if (!timelineMarkers.test(line)) continue
-			const timestampMatch = /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})/.exec(line)
-			if (!timestampMatch) continue
-			if (parseLogTimestamp(timestampMatch[1]!) < measurement.startedAtMs) continue
-			console.log(`[task-start-latency][timeline] ${line.trim()}`)
-		}
-		await e2e.info().attach("task-start-latency.json", {
-			body: Buffer.from(
-				JSON.stringify(
-					{
-						seededTasks: SEEDED_TASK_COUNT,
-						revisionsPerTask: REVISIONS_PER_TASK,
-						preCheckpointBudgetMs: PRE_CHECKPOINT_BUDGET_MS,
-						...measurement,
-					},
-					null,
-					2,
+			await e2e.info().attach("task-start-latency.json", {
+				body: Buffer.from(
+					JSON.stringify(
+						{
+							seededTasks: SEEDED_TASK_COUNT,
+							revisionsPerTask: REVISIONS_PER_TASK,
+							preCheckpointBudgetMs: PRE_CHECKPOINT_BUDGET_MS,
+							...measurement,
+						},
+						null,
+						2,
+					),
+					"utf8",
 				),
-				"utf8",
-			),
-			contentType: "application/json",
-		})
+				contentType: "application/json",
+			})
 
-		// Checkpoint initialization is expected to block, so assert on the startup
-		// work that precedes it. That span must not grow with task history.
-		if (typeof measurement.sendToCheckpointMs !== "number") {
-			throw new Error("The checkpoint start marker was never observed, so the budget would be vacuous")
+			if (typeof measurement.sendToCheckpointMs !== "number") {
+				throw new Error("The checkpoint start marker was never observed, so the budget would be vacuous")
+			}
+			expect(
+				measurement.sendToCheckpointMs,
+				`send to checkpoint start must stay under ${PRE_CHECKPOINT_BUDGET_MS}ms ` +
+					`with ${SEEDED_TASK_COUNT} historical tasks ` +
+					`(measured ${measurement.sendToCheckpointMs}ms, full send-to-request ${measurement.sendToRequestMs}ms)`,
+			).toBeLessThan(PRE_CHECKPOINT_BUDGET_MS)
+
+			await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir, [
+				/e2e_mock_queue_exhausted/i,
+				/No scripted E2E response remains/i,
+				/Dline instance aborted/i,
+				/Error getting latest git commit hash/i,
+			])
+		} catch (error) {
+			const screenshotPath = e2e.info().outputPath("vscode-failure.png")
+			await page.screenshot({ path: screenshotPath, fullPage: true, timeout: 5_000 }).catch(() => undefined)
+			await e2e
+				.info()
+				.attach("vscode-failure.png", { path: screenshotPath, contentType: "image/png" })
+				.catch(() => undefined)
+			throw error
+		} finally {
+			await app.close()
 		}
-		expect(
-			measurement.sendToCheckpointMs,
-			`send to checkpoint start must stay under ${PRE_CHECKPOINT_BUDGET_MS}ms ` +
-				`with ${SEEDED_TASK_COUNT} historical tasks ` +
-				`(measured ${measurement.sendToCheckpointMs}ms, full send-to-request ${measurement.sendToRequestMs}ms)`,
-		).toBeLessThan(PRE_CHECKPOINT_BUDGET_MS)
-
-		await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir, [
-			/e2e_mock_queue_exhausted/i,
-			/No scripted E2E response remains/i,
-			/Dline instance aborted/i,
-			/Error getting latest git commit hash/i,
-		])
 	},
 )

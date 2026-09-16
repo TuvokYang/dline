@@ -41,6 +41,11 @@ export interface TurnState {
 	mode: "serial" | "parallel"
 }
 
+/** One explicitly admitted ordinary input surface without an active interaction. */
+export interface TaskOrdinaryInputAdmission {
+	kind: "profile_recovery"
+}
+
 /** Aggregate runtime state used by the pure task reducer. */
 export interface TaskRuntimeState {
 	taskId: string
@@ -49,6 +54,8 @@ export interface TaskRuntimeState {
 	anchor: TaskAnchor
 	turn?: TurnState
 	interaction?: ActiveInteraction
+	/** Explicit exception that allows one ordinary reply while the task loop waits. */
+	ordinaryInput?: TaskOrdinaryInputAdmission
 	/** Awaiting primary interaction temporarily hidden by one interrupting interaction. */
 	interruptedInteraction?: ActiveInteraction
 	cancellation?: TaskCancellationState

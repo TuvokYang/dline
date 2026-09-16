@@ -753,7 +753,7 @@ export interface ClineAskUseMcpServer {
 
 export interface ClineAskUseSubagents {
 	prompts: string[]
-	items?: Array<{ task: string; context: string; subagentName?: string }>
+	items?: Array<{ task: string; context: string; subagentName?: string; jobId?: string }>
 	kind?: "single" | "batch"
 	subagentName?: string
 	task?: string
@@ -764,6 +764,15 @@ export interface ClineAskUseSubagents {
 	timeoutSeconds?: number
 	error?: string
 	message?: string
+	/**
+	 * Activity identity of the run this row represents, once one exists.
+	 *
+	 * This row is emitted before the run starts, so it carries no live figures of
+	 * its own. Carrying the job id lets the renderer read metrics, controls, and
+	 * status from the owning activity instead of showing a frozen zero snapshot
+	 * when the row outlives its brief pre-start window.
+	 */
+	jobId?: string
 }
 
 export interface ClineMakePlanResponse {

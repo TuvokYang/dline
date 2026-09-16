@@ -52,6 +52,16 @@ const DIAGNOSTIC_MESSAGES = {
 	interaction_anchor_is_say: "Dline found an invalid saved interaction message. The task remains saved for recovery.",
 } as const
 
+/**
+ * Shown when the backend still owns an awaiting interaction but its ask anchor
+ * cannot be matched in the projected messages. The backend anchor is intact in
+ * this case, so it emits no diagnostic, and without this notice the controls
+ * would disappear with no explanation while the task keeps waiting. The text
+ * stays purely descriptive: no recovery action is known to be safe here.
+ */
+const UNRESOLVED_ANCHOR_MESSAGE =
+	"Dline is waiting on a request whose message anchor could not be matched, so its controls are unavailable. The task remains saved for recovery."
+
 async function dispatchTaskAction(view: TaskViewState, action: TaskViewAction): Promise<void> {
 	if (action.type === "retry") {
 		await TaskServiceClient.askResponse(AskResponseRequest.create({ responseType: "retry" }))
@@ -116,16 +126,23 @@ export function InteractionHost({
 					)
 				})}
 			{interaction && (!anchor || !supported) ? (
-				<FooterActions
-					dispatch={dispatch}
-					dispatchTaskAction={taskActionDispatcher}
-					draft={draft}
-					onDraftAccepted={onDraftAccepted}
-					onDraftRejected={onDraftRejected}
-					onSuccessorAccepted={onSuccessorAccepted}
-					successorContext={successorContext}
-					view={taskOnlyView}
-				/>
+				<>
+					{!anchor && !view.diagnostic ? (
+						<div className="mx-3.5 mb-1 text-xs text-(--vscode-errorForeground)" role="alert">
+							{UNRESOLVED_ANCHOR_MESSAGE}
+						</div>
+					) : null}
+					<FooterActions
+						dispatch={dispatch}
+						dispatchTaskAction={taskActionDispatcher}
+						draft={draft}
+						onDraftAccepted={onDraftAccepted}
+						onDraftRejected={onDraftRejected}
+						onSuccessorAccepted={onSuccessorAccepted}
+						successorContext={successorContext}
+						view={taskOnlyView}
+					/>
+				</>
 			) : anchor && presentationKind && isPresentationKind(presentationKind) ? (
 				<>
 					{showTimeline

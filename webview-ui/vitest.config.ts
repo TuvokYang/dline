@@ -1,32 +1,8 @@
-import { resolve } from "node:path"
 import react from "@vitejs/plugin-react-swc"
 import { defineConfig } from "vitest/config"
+import { webviewProjectConfig } from "./vitest.project"
 
 export default defineConfig({
-	root: __dirname,
+	...webviewProjectConfig,
 	plugins: [react()],
-	define: {
-		__PLATFORM__: JSON.stringify("vscode"),
-	},
-	test: {
-		name: "webview",
-		environment: "jsdom",
-		include: ["src/**/*.test.ts", "src/**/*.test.tsx", "src/**/*.spec.ts", "src/**/*.spec.tsx"],
-		globals: true,
-		setupFiles: ["./src/setupTests.ts"],
-		testTimeout: 60_000,
-		clearMocks: false,
-		restoreMocks: false,
-		pool: "vmThreads",
-		maxWorkers: 4,
-	},
-	resolve: {
-		alias: {
-			"@": resolve(__dirname, "./src"),
-			"@components": resolve(__dirname, "./src/components"),
-			"@context": resolve(__dirname, "./src/context"),
-			"@shared": resolve(__dirname, "../src/shared"),
-			"@utils": resolve(__dirname, "./src/utils"),
-		},
-	},
 })

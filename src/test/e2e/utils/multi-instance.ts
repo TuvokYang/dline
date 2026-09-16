@@ -5,7 +5,7 @@ import { downloadAndUnzipVSCode, SilentReporter } from "@vscode/test-electron"
 import { _electron, type ElectronApplication, type Frame, type Page } from "playwright"
 import type { ClineApiServerMock } from "../fixtures/server"
 import { E2ETestHelper } from "./helpers"
-import { createLaunchIsolation, portableEnvironment } from "./vscode-launch-isolation"
+import { createLaunchIsolation, ensureDlineVsixInstalled, portableEnvironment } from "./vscode-launch-isolation"
 import { resolveVSCodeDownloadPlatform, resolveVSCodeDownloadVersion } from "./vscode-version-resolver"
 
 export interface MultiInstanceSurface {
@@ -27,7 +27,6 @@ export interface MultiInstanceLauncherOptions {
 	/** Extension host storage shared by every instance of the current worker. */
 	readonly extensionsDir: string
 	readonly environment?: Readonly<Record<string, string>>
-	readonly recordVideo?: boolean
 	readonly server: ClineApiServerMock
 	readonly testInfo: TestInfo
 	readonly workspaceDir: string
@@ -96,7 +95,6 @@ export class MultiInstanceLauncher {
 	private readonly options: MultiInstanceLauncherOptions
 	private readonly surfaces: MultiInstanceSurface[] = []
 	private executablePath?: string
-	private extensionInstalled = false
 
 	constructor(options: MultiInstanceLauncherOptions) {
 		this.options = options
@@ -121,9 +119,11 @@ export class MultiInstanceLauncher {
 		const { portableRoot, userDataDir } = isolation
 		const controlDirectory = path.join(userDataDir, "task-history-control")
 		const executablePath = await this.getExecutablePath()
-		// The extension is installed once per worker; later instances reuse the unpacked copy.
-		const installExtension = !this.extensionInstalled
-		this.extensionInstalled = true
+		ensureDlineVsixInstalled(
+			executablePath,
+			this.options.extensionsDir,
+			path.join(E2ETestHelper.CODEBASE_ROOT_DIR, "dist", "e2e.vsix"),
+		)
 		const app = await _electron.launch({
 			executablePath,
 			env: {
@@ -147,16 +147,6 @@ export class MultiInstanceLauncher {
 				),
 				DEV_WORKSPACE_FOLDER: E2ETestHelper.CODEBASE_ROOT_DIR,
 			},
-			recordVideo:
-				this.options.recordVideo === false
-					? undefined
-					: {
-							dir: E2ETestHelper.getResultsDir(
-								this.options.testInfo.title,
-								`${label}-recordings`,
-								`${this.options.testInfo.testId}-retry-${this.options.testInfo.retry}`,
-							),
-						},
 			args: [
 				"--no-sandbox",
 				"--disable-updates",
@@ -166,9 +156,6 @@ export class MultiInstanceLauncher {
 				"--skip-release-notes",
 				// User data comes from VSCODE_PORTABLE, which outranks --user-data-dir.
 				`--extensions-dir=${this.options.extensionsDir}`,
-				...(installExtension
-					? [`--install-extension=${path.join(E2ETestHelper.CODEBASE_ROOT_DIR, "dist", "e2e.vsix")}`]
-					: []),
 				`--extensionDevelopmentPath=${E2ETestHelper.CODEBASE_ROOT_DIR}`,
 				this.options.workspaceDir,
 			],

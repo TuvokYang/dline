@@ -55,8 +55,14 @@ async function onlyTaskId(dlineDocsDir: string): Promise<string> {
 async function attachHostedWebScreenshot(page: Page, name: string): Promise<void> {
 	const testInfo = e2e.info()
 	const screenshotPath = testInfo.outputPath(`${name}.png`)
-	await page.screenshot({ path: screenshotPath })
-	await testInfo.attach(name, { path: screenshotPath, contentType: "image/png" })
+	await page.screenshot({ path: screenshotPath, fullPage: false, timeout: 5_000 }).catch(() => undefined)
+	if (
+		await access(screenshotPath)
+			.then(() => true)
+			.catch(() => false)
+	) {
+		await testInfo.attach(name, { path: screenshotPath, contentType: "image/png" })
+	}
 }
 
 async function attachHostedWebResumeEvidence(
@@ -243,7 +249,7 @@ async function reopenTask(sidebar: Frame, taskText: string): Promise<void> {
 	await expect(sidebar.getByText(taskText, { exact: true }).first()).toBeVisible()
 }
 
-async function setAutoApproveAction(sidebar: Frame, label: string, enabled: boolean): Promise<void> {
+async function setAutoApproveAction(sidebar: Frame, label: string, enabled: boolean, dlineDir?: string): Promise<void> {
 	await sidebar.getByLabel("Open auto-approve settings").click()
 	const checkbox = sidebar.locator("vscode-checkbox").filter({ hasText: label })
 	await expect(checkbox).toHaveCount(1)
@@ -253,6 +259,24 @@ async function setAutoApproveAction(sidebar: Frame, label: string, enabled: bool
 	}
 	await expect.poll(isChecked).toBe(enabled)
 	await sidebar.getByLabel("Close auto-approve settings").click()
+
+	if (dlineDir) {
+		const actionKey = label === "Use Web" ? "useWeb" : label === "Use the browser" ? "useBrowser" : undefined
+		if (!actionKey) throw new Error(`Unsupported persisted auto-approve action: ${label}`)
+		await expect
+			.poll(
+				async () => {
+					const content = await readFile(settingsPath(dlineDir), "utf8").catch(() => undefined)
+					if (!content) return undefined
+					const parsed = JSON.parse(content) as {
+						autoApprovalSettings?: { actions?: Record<string, boolean | undefined> }
+					}
+					return parsed.autoApprovalSettings?.actions?.[actionKey]
+				},
+				{ timeout: 30_000 },
+			)
+			.toBe(enabled)
+	}
 }
 
 /**
@@ -467,12 +491,12 @@ e2e(
 		try {
 			const opened = await openSidebar(openVSCode, workspaceDir, helper)
 			app = opened.app
-			await setAutoApproveAction(opened.sidebar, "Use Web", true)
+			await setAutoApproveAction(opened.sidebar, "Use Web", true, dlineDir)
 			await sendTask(opened.sidebar, "Keep working after one manual Hosted Web approval.")
 			await expect(opened.sidebar.getByText(ready, { exact: true })).toBeVisible({ timeout: 60_000 })
 			await expect.poll(() => server.getMockConsumptions("openai-compatible-responses").length).toBe(1)
 
-			await setAutoApproveAction(opened.sidebar, "Use Web", false)
+			await setAutoApproveAction(opened.sidebar, "Use Web", false, dlineDir)
 			const input = opened.sidebar.getByTestId("chat-input")
 			await input.fill(firstReply)
 			await input.press("Enter")
@@ -729,12 +753,8 @@ e2e(
 		try {
 			const opened = await openSidebar(openVSCode, workspaceDir, helper)
 			app = opened.app
+			await setAutoApproveAction(opened.sidebar, "Use Web", true)
 			await sendTask(opened.sidebar, "Create a checkpoint before testing Hosted Web approval Restore.")
-			let approveButton = opened.sidebar.getByRole("contentinfo").getByText("Approve", { exact: true })
-			await expect(approveButton).toBeVisible({ timeout: 60_000 })
-			expect(server.getMockConsumptions("openai-compatible-responses")).toHaveLength(0)
-			expect(server.getSearxngSearchRequests()).toHaveLength(0)
-			await approveButton.click()
 			await expect(opened.sidebar.getByText("E2E_HOSTED_WEB_RESTORE_READY", { exact: true })).toBeVisible({
 				timeout: 60_000,
 			})
@@ -743,10 +763,14 @@ e2e(
 			await expect.poll(() => checkpointLabels.count(), { timeout: 30_000 }).toBeGreaterThan(0)
 			const restoreCheckpointIndex = (await checkpointLabels.count()) - 1
 
+			await setAutoApproveAction(opened.sidebar, "Use Web", false)
 			const input = opened.sidebar.getByTestId("chat-input")
 			await input.fill(pendingDraft)
+			await expect(opened.sidebar.getByTestId("send-button")).toHaveAttribute("aria-disabled", "false", {
+				timeout: 60_000,
+			})
 			await input.press("Enter")
-			approveButton = opened.sidebar.getByRole("contentinfo").getByText("Approve", { exact: true })
+			let approveButton = opened.sidebar.getByRole("contentinfo").getByText("Approve", { exact: true })
 			await expect(approveButton).toBeVisible({ timeout: 60_000 })
 			await expect(opened.sidebar.getByText("OpenAI Web Search (Hosted)", { exact: true }).last()).toBeVisible()
 			expect(server.getMockConsumptions("openai-compatible-responses")).toHaveLength(1)

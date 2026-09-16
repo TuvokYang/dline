@@ -1,7 +1,7 @@
 import fs from "node:fs/promises"
 import path from "node:path"
 import { expect } from "chai"
-import { afterEach, beforeEach, describe, it } from "vitest"
+import { afterEach, beforeEach, describe, it, vi } from "vitest"
 import type { TaskLockService } from "../../../locks/TaskLockService"
 import { TaskDeletionOrchestrator } from "../TaskDeletionOrchestrator"
 
@@ -33,7 +33,7 @@ describe("TaskDeletionOrchestrator", () => {
 	})
 
 	afterEach(() => {
-		// Clean up any stubs or mocks
+		vi.restoreAllMocks()
 	})
 
 	// ──────────────────────────────────────────────
@@ -92,7 +92,7 @@ describe("TaskDeletionOrchestrator", () => {
 		expect(clearCalled).to.be.false
 	})
 
-	it("deletes the Task database, SQLite sidecars, and legacy metrics file", async () => {
+	it("recursively deletes the complete task-owned directory", async () => {
 		const parent = path.join(process.cwd(), "tmp")
 		await fs.mkdir(parent, { recursive: true })
 		const taskDirPath = await fs.mkdtemp(path.join(parent, "task-delete-metrics-"))
@@ -105,27 +105,73 @@ describe("TaskDeletionOrchestrator", () => {
 			taskDirPath,
 		}
 		const databasePath = path.join(taskDirPath, `${taskId}.db`)
-		const metricsPaths = [
+		const nestedArtifactPath = path.join(taskDirPath, "artifacts", "nested", "result.txt")
+		const taskOwnedPaths = [
 			path.join(taskDirPath, "api_rate_metrics.jsonl"),
+			path.join(taskDirPath, "settings.json"),
+			path.join(taskDirPath, "snapshot.json"),
 			databasePath,
 			`${databasePath}-wal`,
 			`${databasePath}-shm`,
+			nestedArtifactPath,
 		]
-		await Promise.all([...Object.values(paths).slice(0, 4), ...metricsPaths].map((filePath) => fs.writeFile(filePath, "x")))
+		await fs.mkdir(path.dirname(nestedArtifactPath), { recursive: true })
+		await Promise.all([...Object.values(paths).slice(0, 4), ...taskOwnedPaths].map((filePath) => fs.writeFile(filePath, "x")))
 		mockController.getTaskWithId = async () => paths
 		mockController.deleteTaskFromState = async () => [taskId]
 
 		try {
 			const result = await orchestrator.deleteSingle(taskId)
 			expect(result.success).to.be.true
-			for (const filePath of metricsPaths) {
-				const exists = await fs.access(filePath).then(
-					() => true,
-					() => false,
-				)
-				expect(exists).to.be.false
-			}
+			const taskDirectoryExists = await fs.access(taskDirPath).then(
+				() => true,
+				() => false,
+			)
+			expect(taskDirectoryExists).to.be.false
 		} finally {
+			await fs.rm(taskDirPath, { recursive: true, force: true })
+		}
+	})
+
+	it("retries a transient Windows EBUSY while deleting the task directory", async () => {
+		const parent = path.join(process.cwd(), "tmp")
+		await fs.mkdir(parent, { recursive: true })
+		const taskDirPath = await fs.mkdtemp(path.join(parent, "task-delete-ebusy-"))
+		const taskId = "task-with-transient-lock"
+		const paths = {
+			apiConversationHistoryFilePath: path.join(taskDirPath, "api.jsonl"),
+			uiMessagesFilePath: path.join(taskDirPath, "ui.jsonl"),
+			contextHistoryFilePath: path.join(taskDirPath, "context.jsonl"),
+			taskMetadataFilePath: path.join(taskDirPath, "metadata.json"),
+			taskDirPath,
+		}
+		await fs.writeFile(paths.taskMetadataFilePath, "x")
+		mockController.getTaskWithId = async () => paths
+		mockController.deleteTaskFromState = async () => [taskId]
+
+		const originalRm = fs.rm
+		let taskDirectoryAttempts = 0
+		vi.spyOn(fs, "rm").mockImplementation(async (target, options) => {
+			if (target === taskDirPath) {
+				taskDirectoryAttempts++
+				if (taskDirectoryAttempts === 1) {
+					throw Object.assign(new Error("resource busy"), { code: "EBUSY" })
+				}
+			}
+			return originalRm(target, options)
+		})
+
+		try {
+			const result = await orchestrator.deleteSingle(taskId)
+			expect(result.success).to.be.true
+			expect(taskDirectoryAttempts).to.equal(2)
+			const taskDirectoryExists = await fs.access(taskDirPath).then(
+				() => true,
+				() => false,
+			)
+			expect(taskDirectoryExists).to.be.false
+		} finally {
+			vi.restoreAllMocks()
 			await fs.rm(taskDirPath, { recursive: true, force: true })
 		}
 	})

@@ -1,6 +1,6 @@
 services:
   otel-lgtm:
-    image: grafana/otel-lgtm:0.32.1
+    image: grafana/otel-lgtm:latest
     container_name: otel-lgtm
     restart: unless-stopped
 

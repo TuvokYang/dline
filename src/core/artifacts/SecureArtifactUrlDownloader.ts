@@ -2,7 +2,7 @@ import dns from "dns/promises"
 import type { IncomingHttpHeaders } from "http"
 import https from "https"
 import { BlockList, isIP } from "net"
-import type { ArtifactUrlDownloadRequest, ArtifactUrlDownloadResult, ArtifactUrlDownloader } from "./ArtifactResolver"
+import type { ArtifactUrlDownloader, ArtifactUrlDownloadRequest, ArtifactUrlDownloadResult } from "./ArtifactResolver"
 import { ArtifactStoreError } from "./TaskArtifactStore"
 
 const DEFAULT_MAX_REDIRECTS = 3
@@ -183,13 +183,18 @@ export class SecureArtifactUrlDownloader implements ArtifactUrlDownloader {
 				}
 				const location = response.headers.location
 				if (!location) {
-					throw new ArtifactStoreError("artifact_io_error", "Provider image redirect did not include a Location header.")
+					throw new ArtifactStoreError(
+						"artifact_io_error",
+						"Provider image redirect did not include a Location header.",
+					)
 				}
 				try {
 					currentUrl = parseCanonicalHttpsUrl(new URL(location, currentUrl))
 				} catch (error) {
 					if (error instanceof ArtifactStoreError) throw error
-					throw new ArtifactStoreError("unsafe_artifact_url", "Provider image redirect URL is invalid.", { cause: error })
+					throw new ArtifactStoreError("unsafe_artifact_url", "Provider image redirect URL is invalid.", {
+						cause: error,
+					})
 				}
 				continue
 			}

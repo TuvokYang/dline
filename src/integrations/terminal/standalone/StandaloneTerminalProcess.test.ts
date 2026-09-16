@@ -152,10 +152,19 @@ describe("StandaloneTerminalProcess output streams", () => {
 	})
 
 	it.runIf(process.platform === "win32")(
-		"executes a long-running Windows PowerShell command and keeps the child alive",
+		"terminates a PowerShell child Node process before its delayed marker write",
 		async () => {
-			const terminalProcess = new StandaloneTerminalProcess()
-			const markerPath = path.join(os.tmpdir(), `dline-powershell-lifecycle-${process.pid}-${Date.now()}.txt`)
+			let childPid: number | undefined
+			const terminalProcess = new StandaloneTerminalProcess({
+				getProcessList: async (rootPid) => {
+					if (childPid === undefined) throw new Error("child PID was not observed")
+					return [
+						{ pid: rootPid, ppid: 0, name: "powershell.exe" },
+						{ pid: childPid, ppid: rootPid, name: "node.exe" },
+					]
+				},
+			})
+			const markerPath = path.join(os.tmpdir(), `dline-powershell-child-${process.pid}-${Date.now()}.txt`)
 			const terminal = new StandaloneTerminal({
 				cwd: process.cwd(),
 				shellPath: WINDOWS_POWERSHELL_LEGACY_PATH,
@@ -164,22 +173,32 @@ describe("StandaloneTerminalProcess output streams", () => {
 			terminalProcess.once("completed", () => {
 				completed = true
 			})
+			const childPidObserved = new Promise<number>((resolve, reject) => {
+				const timeout = setTimeout(() => reject(new Error("timed out waiting for child PID")), 10_000)
+				terminalProcess.on("line", (line) => {
+					const match = line.match(/^DLINE_CHILD_PID=(\d+)$/)
+					if (!match) return
+					clearTimeout(timeout)
+					resolve(Number(match[1]))
+				})
+			})
 
 			try {
-				const escapedMarkerPath = markerPath.replaceAll("'", "''")
+				const escapedMarkerPath = markerPath.replaceAll("\\", "\\\\").replaceAll("'", "\\'")
 				await terminalProcess.run(
 					terminal,
-					`Set-Content -LiteralPath '${escapedMarkerPath}' -Value ready; Start-Sleep -Seconds 30`,
+					`node -e "const fs=require('fs'); console.log('DLINE_CHILD_PID='+process.pid); setTimeout(()=>fs.writeFileSync('${escapedMarkerPath}','unexpected'),2000); setInterval(()=>{},1000)"`,
 				)
-				const deadline = Date.now() + 10_000
-				while (!existsSync(markerPath) && Date.now() < deadline) {
-					await new Promise((resolve) => setTimeout(resolve, 50))
-				}
-
-				assert.equal(existsSync(markerPath), true)
+				childPid = await childPidObserved
 				assert.equal(completed, false)
-			} finally {
+
 				await terminalProcess.terminate()
+				await new Promise((resolve) => setTimeout(resolve, 2_500))
+
+				assert.equal(completed, true)
+				assert.equal(existsSync(markerPath), false)
+			} finally {
+				await terminalProcess.terminate().catch(() => undefined)
 				await rm(markerPath, { force: true })
 			}
 		},

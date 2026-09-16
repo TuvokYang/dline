@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest"
 import {
 	decideModeSwitch,
 	getContextTokens,
+	getLatestReliableContextWindowTokens,
 	readContextTokens,
 	readContextWindowRequestPressure,
+	resolveOccupiedContextWindowTokens,
 } from "../context-pressure"
 import { computeCompactTrigger, computeSummarizeBudget } from "../context-window-utils"
 
@@ -29,9 +31,7 @@ describe("context pressure", () => {
 	/** Preserve estimate provenance until a positive provider usage sample replaces it. */
 	it("reads estimate and provider pressure sources without inventing reliable usage", () => {
 		expect(
-			readContextWindowRequestPressure(
-				JSON.stringify({ estimatedContextTokens: 42_000, contextTokensSource: "estimate" }),
-			),
+			readContextWindowRequestPressure(JSON.stringify({ estimatedContextTokens: 42_000, contextTokensSource: "estimate" })),
 		).toEqual({ estimatedContextTokens: 42_000, contextTokensSource: "estimate" })
 		expect(
 			readContextWindowRequestPressure(
@@ -46,6 +46,19 @@ describe("context pressure", () => {
 			estimatedContextTokens: 42_000,
 			contextTokensSource: "provider",
 		})
+	})
+
+	/** Keep Profile preflight conservative while asynchronous indicator projection catches up. */
+	it("uses the larger live indicator or latest persisted provider occupancy", () => {
+		const pressures = [
+			{ contextTokens: 20_443, contextTokensSource: "provider" },
+			{ estimatedContextTokens: 379_467, contextTokensSource: "estimate" },
+			{ contextTokens: 400_100, contextTokensSource: "provider" },
+		] as const
+
+		expect(getLatestReliableContextWindowTokens(pressures)).toBe(400_100)
+		expect(resolveOccupiedContextWindowTokens(20_633, pressures)).toBe(400_100)
+		expect(resolveOccupiedContextWindowTokens(420_000, pressures)).toBe(420_000)
 	})
 
 	/** Same-profile switches never require compaction confirmation. */

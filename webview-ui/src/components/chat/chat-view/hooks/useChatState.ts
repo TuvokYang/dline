@@ -1,5 +1,5 @@
 import { ClineMessage } from "@shared/ExtensionMessage"
-import { type Dispatch, type SetStateAction, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { type Dispatch, type SetStateAction, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import type { InteractionDraft } from "../../../../task-interaction/types"
 import { ChatState } from "../types/chatTypes"
 
@@ -135,7 +135,9 @@ export function useChatState(messages: ClineMessage[], taskId?: string): ChatSta
 		setIsTextAreaFocused(isFocused)
 	}, [])
 
-	useEffect(() => {
+	// Settle draft ownership before paint so a newly interactive composer cannot
+	// accept text that a later passive ownership reset would clear.
+	useLayoutEffect(() => {
 		if (draftOwnerTaskIdRef.current !== taskId) {
 			const preservesSubmittedWelcomeHistory =
 				draftOwnerTaskIdRef.current === undefined && taskId !== undefined && sendingDisabled

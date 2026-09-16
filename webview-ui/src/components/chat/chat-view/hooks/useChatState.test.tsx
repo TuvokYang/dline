@@ -1,4 +1,5 @@
-import { act, renderHook, waitFor } from "@testing-library/react"
+import { act, render, renderHook, screen, waitFor } from "@testing-library/react"
+import { useLayoutEffect } from "react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { useChatState } from "./useChatState"
 
@@ -35,6 +36,21 @@ describe("useChatState task ownership", () => {
 
 		act(() => result.current.undoInputValue())
 		expect(result.current.inputValue).toBe("submitted task")
+	})
+
+	it("settles task ownership before the switched task accepts a new draft", () => {
+		function TaskDraftProbe({ taskId }: { taskId: string }) {
+			const state = useChatState([], taskId)
+			useLayoutEffect(() => {
+				if (taskId === "task-2") state.setInputValue("task two draft")
+			}, [state.setInputValue, taskId])
+			return <textarea aria-label="Task draft" readOnly value={state.inputValue} />
+		}
+
+		const view = render(<TaskDraftProbe taskId="task-1" />)
+		view.rerender(<TaskDraftProbe taskId="task-2" />)
+
+		expect(screen.getByRole("textbox", { name: "Task draft" })).toHaveValue("task two draft")
 	})
 
 	it("restores a captured successor draft after the successor task becomes active", async () => {

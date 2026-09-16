@@ -52,7 +52,9 @@ describe("image generation persistence boundaries", () => {
 			providerId: "openai",
 			modelId: "gpt-image-2",
 			count: 1,
-			artifacts: [{ id: ARTIFACT_ID, mimeType: "image/png", format: "png" as const, byteLength: 64, width: 1024, height: 1024 }],
+			artifacts: [
+				{ id: ARTIFACT_ID, mimeType: "image/png", format: "png" as const, byteLength: 64, width: 1024, height: 1024 },
+			],
 		}
 		const ui = await UIMessage.open(taskId)
 		await ui.addMessage({

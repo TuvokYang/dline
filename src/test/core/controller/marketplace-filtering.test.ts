@@ -1,13 +1,13 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 import "should"
 import { Controller } from "@core/controller"
+import { StateManager } from "@core/storage/StateManager"
 import type { McpMarketplaceItem } from "@shared/mcp"
 import type { RemoteConfig } from "@shared/remote-config/schema"
 import axios from "axios"
 // sinon import removed
 import { ClineEndpoint, ClineEnv } from "@/config"
 import { HostProvider } from "@/hosts/host-provider"
-import { StateManager } from "@core/storage/StateManager"
 
 /**
  * Unit tests for Controller MCP marketplace filtering with remote config
@@ -147,6 +147,7 @@ describe("Controller Marketplace Filtering", () => {
 			getGlobalStateKey: vi.fn().mockReturnValue(undefined),
 			getGlobalSettingsKey: vi.fn().mockReturnValue(undefined),
 			getWorkspaceStateKey: vi.fn().mockReturnValue(undefined),
+			getScopedCapabilityToggles: vi.fn().mockReturnValue({}),
 			setGlobalState: vi.fn(),
 			setActiveTaskId: vi.fn(),
 			setApiConfiguration: vi.fn(),
@@ -167,6 +168,7 @@ describe("Controller Marketplace Filtering", () => {
 	})
 
 	afterEach(() => {
+		controller?.detachUi()
 		stateManagerStub?.mockRestore?.()
 		axiosGetStub?.mockRestore?.()
 

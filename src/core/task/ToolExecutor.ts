@@ -19,8 +19,11 @@ import { BrowserSession } from "@services/browser/BrowserSession"
 import { UrlContentFetcher } from "@services/browser/UrlContentFetcher"
 import { McpHub } from "@services/mcp/McpHub"
 import { DlineRuntimeFileManager } from "@services/runtime-files/DlineRuntimeFileManager"
-import { startSignalSpan } from "@services/telemetry/service/pipeline-port"
+import { recordPerfPhase } from "@services/telemetry/instrumentation/duration-recorder"
+import { PerfDomain } from "@services/telemetry/instrumentation/perf-domains"
+import { runWithSignalSpan, startSignalSpan } from "@services/telemetry/service/pipeline-port"
 import { DEFAULT_API_PROVIDER } from "@shared/api"
+import type { ClineExtensionContext } from "@shared/cline/context"
 import {
 	describeCodeExecutionOperation,
 	normalizeCodeExecutionErrorCode,
@@ -46,6 +49,7 @@ import { StateManager } from "../storage/StateManager"
 import { WorkspaceRootManager } from "../workspace"
 import type { TaskActivityStore } from "./activity/TaskActivityStore"
 import { isTurnEndingToolName } from "./assistant-message-order"
+import { BlockPhase } from "./BlockPhaseMachine"
 import { serializeDurableToolResult } from "./DurableToolResult"
 import { authorizeExplicitToolExecution } from "./explicit-instructions/explicit-tool-gate"
 import { isExplicitOnlyTool } from "./explicit-instructions/policy"
@@ -70,6 +74,7 @@ import { SubagentJobManager } from "./tools/subagent/SubagentJobManager"
 import { normalizeToolExecutionResult, type ToolPostCommitDirective } from "./tools/ToolExecutionResult"
 import { type IPartialBlockHandler, ToolExecutorCoordinator } from "./tools/ToolExecutorCoordinator"
 import { ToolValidator } from "./tools/ToolValidator"
+import { ToolDurationScope } from "./tools/tool-duration-scope"
 import {
 	type CompactionAttemptGuard,
 	type TaskConfig,
@@ -249,6 +254,8 @@ function buildCodeExecutionMessage(update: HostedServerToolUpdate, providerId: s
 
 export class ToolExecutor {
 	private autoApprover: AutoApprove
+	/** Assigned by the Task composition root after construction. */
+	private _controllerContext?: ClineExtensionContext
 	private coordinator: ToolExecutorCoordinator
 	private subagentJobManager = new SubagentJobManager()
 	private allowedNativeToolNames: ReadonlySet<string> | undefined
@@ -489,6 +496,16 @@ export class ToolExecutor {
 		return this.autoApprover.shouldAutoApproveToolWithPath(blockname, autoApproveActionpath)
 	}
 
+	/**
+	 * Duration scope of the tool currently executing, when one is.
+	 *
+	 * Held on the executor rather than threaded through every handler so the
+	 * approval and command wrappers can find it without changing the tool
+	 * interface. It is saved and restored around each execution, so a tool that
+	 * runs another one restores its parent's scope on the way out.
+	 */
+	private activeDurationScope: ToolDurationScope | undefined
+
 	constructor(
 		// Core Services & Managers
 		private taskState: TaskState,
@@ -549,7 +566,7 @@ export class ToolExecutor {
 			paramName: string,
 			relPath?: string,
 			existingTs?: number,
-		) => Promise<any>,
+		) => Promise<ToolResponse>,
 		private executeCommandTool: (
 			command: string,
 			timeoutSeconds: number | undefined,
@@ -646,13 +663,23 @@ export class ToolExecutor {
 			callbacks: {
 				focusChainForceUpdate: this.focusChainForceUpdate.bind(this),
 				say: this.say,
-				ask: this.ask,
+				// Waiting for the user is not work the tool performed, so the
+				// wrapper is installed once here instead of asking every handler
+				// to remember to exclude its own approval.
+				ask: (...args: Parameters<typeof this.ask>) =>
+					this.activeDurationScope
+						? this.activeDurationScope.excludeWait("approval", () => this.ask(...args))
+						: this.ask(...args),
 				saveCheckpoint: this.saveCheckpoint,
 				postStateToWebview: async () => {},
 				reinitExistingTaskFromId: async () => {},
 				cancelTask: () => this.requestCancellationFromToolEffect(),
 				updateTaskHistory: async () => [],
-				executeCommandTool: this.executeCommandTool,
+				// A command's runtime belongs to the workspace, not to Dline.
+				executeCommandTool: (...args: Parameters<typeof this.executeCommandTool>) =>
+					this.activeDurationScope
+						? this.activeDurationScope.excludeWait("command", () => this.executeCommandTool(...args))
+						: this.executeCommandTool(...args),
 				killCommandTool: this.killCommandTool,
 				cancelRunningCommandTool: this.cancelRunningCommandTool,
 				doesLatestTaskCompletionHaveNewChanges: this.doesLatestTaskCompletionHaveNewChanges,
@@ -672,7 +699,7 @@ export class ToolExecutor {
 			identityFactory: this.identityFactory,
 			activityStore: this.activityStore,
 			providerRequestRounds: this.providerRequestRounds,
-			controllerContext: (this as any)._controllerContext,
+			controllerContext: this._controllerContext,
 			subagentJobManager: this.subagentJobManager,
 		}
 
@@ -710,20 +737,58 @@ export class ToolExecutor {
 			name: "tool.execution",
 			attributes: {
 				tool: block.name,
-				task_id: this.asToolConfig().ulid ?? "",
+				task_id: this.taskId,
 				is_native: block.isNativeToolCall === true,
 				is_partial: block.partial === true,
 			},
 		})
+		// The span already records this boundary, but only as a trace. A metric
+		// is what makes a tool that became slow queryable and alertable, and the
+		// duration it reports has to exclude the waits the user and the
+		// workspace own or it would measure them instead.
+		const scope = new ToolDurationScope()
+		const previousScope = this.activeDurationScope
+		this.activeDurationScope = scope
+		// Partial blocks are streamed presentation updates of a call that has not
+		// finished arriving, so measuring them would flood the histogram with
+		// fragments of one execution.
+		const shouldReport = block.partial !== true
 		try {
-			const handled = await this.execute(block)
+			const handled = await runWithSignalSpan(span, () => this.execute(block))
 			span.setAttribute("handled", handled)
 			span.end(handled ? "success" : "failure")
+			if (shouldReport) this.reportToolDuration(scope, block, handled ? "success" : "failure")
 		} catch (error) {
 			span.recordException(error)
 			span.end("failure")
+			if (shouldReport) this.reportToolDuration(scope, block, "failure")
 			throw error
+		} finally {
+			this.activeDurationScope = previousScope
 		}
+	}
+
+	/**
+	 * Report how long this tool spent working, apart from what it waited on.
+	 *
+	 * The waits are reported as their own dimensions rather than dropped: a call
+	 * whose active time is small but whose approval wait is long is a different
+	 * situation from a fast call, and only the split makes that visible.
+	 */
+	private reportToolDuration(scope: ToolDurationScope, block: ToolUse, outcome: "success" | "failure"): void {
+		const totals = scope.read()
+		// Only bounded dimensions are passed: every entry here becomes a metric
+		// label, so a per-call millisecond value would make almost every
+		// execution its own time series. Whether the call waited at all is the
+		// part worth querying; the exact waits stay on the performance event,
+		// which is not turned into labels.
+		recordPerfPhase(PerfDomain.Tool, "execution", totals.activeMs, {
+			tool: block.name,
+			outcome,
+			is_native: block.isNativeToolCall === true,
+			waited_for_approval: totals.approvalWaitMs > 0,
+			waited_for_command: totals.commandWaitMs > 0,
+		})
 	}
 
 	/** Consume one directive only after the owning runtime block has committed completion. */
@@ -983,6 +1048,9 @@ export class ToolExecutor {
 			// Explicit-only tools must hold pending authority before any partial UI is rendered.
 			if (block.partial) {
 				if (!this.canRenderExplicitTool(block.name)) return true
+				// A block that already owns an approval interaction keeps its durable ask
+				// anchor; a late partial frame must not rewrite that row.
+				if (this.isAwaitingApprovalBlock(block)) return true
 				await this.handlePartialBlock(block, config)
 				return true
 			}
@@ -1101,7 +1169,7 @@ export class ToolExecutor {
 	 */
 	private async runPostToolUseHook(
 		block: ToolUse,
-		toolResult: any,
+		toolResult: ToolResponse,
 		executionSuccess: boolean,
 		executionStartTime: number,
 		hooksEnabled: boolean,
@@ -1201,6 +1269,11 @@ export class ToolExecutor {
 	public async reRenderPartialBlock(block: ToolUse, _existingTs?: number): Promise<void> {
 		if (this.taskState.abort || this.taskController.wasRejected(block.dline_tid || "")) return
 		if (!block.partial) return
+		// Once a block owns an approval interaction, its ask row is the durable
+		// causal anchor the Webview matches against. A partial re-render would
+		// rewrite that same ts as an unfinished row and drop the interactionId,
+		// leaving the approval controls unreachable while the handler still waits.
+		if (this.isAwaitingApprovalBlock(block)) return
 		if (!this.canRenderExplicitTool(block.name)) return
 		if (!this.coordinator.has(block.name)) return
 		const handler = this.coordinator.getHandler(block.name)
@@ -1213,7 +1286,14 @@ export class ToolExecutor {
 			Logger.error(`[reRenderPartialBlock] ${block.name}:`, error)
 		}
 	}
-	private async handleCompleteBlock(block: ToolUse, config: any): Promise<void> {
+
+	/** Return whether this block currently owns an approval interaction that must keep its durable anchor. */
+	private isAwaitingApprovalBlock(block: ToolUse): boolean {
+		const dlineTid = block.dline_tid
+		if (!dlineTid) return false
+		return this.taskController.getPhase(dlineTid) === BlockPhase.AWAITING_APPROVAL
+	}
+	private async handleCompleteBlock(block: ToolUse, config: TaskConfig): Promise<void> {
 		// Check abort flag at the very start to prevent execution after cancellation
 		if (this.taskState.abort) {
 			return

@@ -162,15 +162,32 @@ export class ContextWindowIndicator {
 	/** Refresh dynamic environment occupancy and Provider scope without disturbing an active request lineage. */
 	refreshStable(input: RefreshStableContextWindowIndicatorInput): ContextWindowIndicatorSnapshot {
 		if (this.current.phase !== "stable") return this.getSnapshot()
+		const durableContextTokens =
+			input.durableContextTokens === undefined
+				? this.current.durableContextTokens
+				: normalizeTokens(input.durableContextTokens)
+		const environmentTokens = normalizeTokens(input.environmentTokens)
+		const contextWindow = normalizeTokens(input.contextWindow)
+		// This refresh runs on a timer, so most calls carry the same values as
+		// the last one. Advancing the revision anyway published a snapshot that
+		// differed only in its timestamp, and every consumer treats a new
+		// revision as a change worth rebuilding for.
+		if (
+			this.current.durableContextTokens === durableContextTokens &&
+			this.current.environmentTokens === environmentTokens &&
+			this.current.contextWindow === contextWindow &&
+			this.current.profileId === input.profileId &&
+			this.current.profileName === input.profileName &&
+			this.current.mode === input.mode
+		) {
+			return this.getSnapshot()
+		}
 		this.current = {
 			...this.current,
 			revision: this.current.revision + 1,
-			durableContextTokens:
-				input.durableContextTokens === undefined
-					? this.current.durableContextTokens
-					: normalizeTokens(input.durableContextTokens),
-			environmentTokens: normalizeTokens(input.environmentTokens),
-			contextWindow: normalizeTokens(input.contextWindow),
+			durableContextTokens,
+			environmentTokens,
+			contextWindow,
 			profileId: input.profileId,
 			profileName: input.profileName,
 			mode: input.mode,

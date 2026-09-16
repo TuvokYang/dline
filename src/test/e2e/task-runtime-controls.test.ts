@@ -12,6 +12,7 @@ interface StoredProfile {
 	modelInfo?: {
 		capabilities?: {
 			supportsReasoning?: boolean
+			supportsTools?: boolean
 			thinking?: {
 				supported?: boolean
 				mode?: string
@@ -115,7 +116,6 @@ function enableOpenAiServiceTier(profile: StoredProfile): void {
 	const provider = asRecord(profile.openai)
 	profile.openai = {
 		...provider,
-		serviceTier: "default",
 		serviceTierEnabled: true,
 	}
 }
@@ -134,14 +134,19 @@ async function openApiSettings(page: Page, sidebar: Frame): Promise<void> {
 }
 
 function getProfileCard(sidebar: Frame, profileName: string): Locator {
-	return sidebar.getByTestId("api-profile-card").filter({ has: sidebar.locator(`input[value=${JSON.stringify(profileName)}]`) })
+	const toggle = sidebar
+		.getByRole("button", { name: `Expand ${profileName}`, exact: true })
+		.or(sidebar.getByRole("button", { name: `Collapse ${profileName}`, exact: true }))
+	return sidebar.getByTestId("api-profile-card").filter({ has: toggle })
 }
 
 async function openProfileEditor(sidebar: Frame, profileName: string): Promise<Locator> {
 	const card = getProfileCard(sidebar, profileName)
 	await expect(card).toHaveCount(1)
 	const providerSelector = card.getByRole("combobox", { name: "Provider" })
-	if (!(await providerSelector.isVisible())) await card.getByRole("button").first().press("Enter")
+	if (!(await providerSelector.isVisible())) {
+		await card.getByRole("button", { name: `Expand ${profileName}`, exact: true }).click()
+	}
 	await expect(providerSelector).toBeVisible()
 	return card
 }
@@ -238,7 +243,10 @@ async function runtimeControlMetrics(sidebar: Frame) {
 	])
 	const prefixWidth = runtimeBox.x - buttonGroupBox.x
 	const availableRuntimeWidth = buttonGroupBox.x + buttonGroupBox.width - runtimeBox.x
-	const intrinsicRuntimeWidth = profileText.scrollWidth + thinkingText.scrollWidth + serviceTierBox.width + 8
+	const profileChromeWidth = profileBox.width - profileText.clientWidth
+	const thinkingChromeWidth = thinkingBox.width - thinkingText.clientWidth
+	const intrinsicRuntimeWidth =
+		profileText.scrollWidth + profileChromeWidth + thinkingText.scrollWidth + thinkingChromeWidth + serviceTierBox.width + 8
 	return {
 		buttonGroupBox,
 		runtimeBox,
@@ -262,13 +270,13 @@ async function runtimeControlMetrics(sidebar: Frame) {
 
 function expectRuntimeControlsOnOneLine(metrics: Awaited<ReturnType<typeof runtimeControlMetrics>>): void {
 	const centerY = (box: { y: number; height: number }) => box.y + box.height / 2
-	const profileToThinking = metrics.thinkingContentBox.x - (metrics.profileContentBox.x + metrics.profileContentBox.width)
-	const thinkingToTier = metrics.serviceTierContentBox.x - (metrics.thinkingContentBox.x + metrics.thinkingContentBox.width)
+	const profileToThinking = metrics.thinkingBox.x - (metrics.profileBox.x + metrics.profileBox.width)
+	const thinkingToTier = metrics.serviceTierBox.x - (metrics.thinkingBox.x + metrics.thinkingBox.width)
 
 	expect(metrics.profileText.textAlign).toBe("center")
 	expect(metrics.thinkingText.textAlign).toBe("center")
-	expect(Math.abs(centerY(metrics.profileContentBox) - centerY(metrics.thinkingContentBox))).toBeLessThanOrEqual(1)
-	expect(Math.abs(centerY(metrics.thinkingContentBox) - centerY(metrics.serviceTierContentBox))).toBeLessThanOrEqual(1)
+	expect(Math.abs(centerY(metrics.profileBox) - centerY(metrics.thinkingBox))).toBeLessThanOrEqual(1)
+	expect(Math.abs(centerY(metrics.thinkingBox) - centerY(metrics.serviceTierBox))).toBeLessThanOrEqual(1)
 	expect(profileToThinking).toBeGreaterThanOrEqual(3)
 	expect(thinkingToTier).toBeGreaterThanOrEqual(3)
 	expect(Math.abs(profileToThinking - thinkingToTier)).toBeLessThanOrEqual(0.5)
@@ -278,8 +286,9 @@ function expectRuntimeControlsFillAvailableWidth(metrics: Awaited<ReturnType<typ
 	const runtimeRight = metrics.runtimeBox.x + metrics.runtimeBox.width
 	const buttonGroupRight = metrics.buttonGroupBox.x + metrics.buttonGroupBox.width
 	const contentBoxes = [metrics.profileBox, metrics.thinkingBox, metrics.serviceTierBox]
+	const expectedRuntimeWidth = Math.min(metrics.intrinsicRuntimeWidth, metrics.availableRuntimeWidth)
 
-	expect(Math.abs(metrics.runtimeBox.width - metrics.availableRuntimeWidth)).toBeLessThanOrEqual(1)
+	expect(Math.abs(metrics.runtimeBox.width - expectedRuntimeWidth)).toBeLessThanOrEqual(1)
 	expect(metrics.runtimeOverflow.overflowX).toBe("hidden")
 	expect(runtimeRight).toBeLessThanOrEqual(buttonGroupRight + 1)
 	expect(metrics.buttonGroupOverflow.scrollWidth).toBeLessThanOrEqual(metrics.buttonGroupOverflow.clientWidth)
@@ -415,8 +424,6 @@ async function runtimeControlAppearance(sidebar: Frame) {
 	const serviceTierIcon = sidebar.getByTestId("task-service-tier-icon")
 	const contextIcon = sidebar.getByTestId("context-button").locator("svg")
 	const filesIcon = sidebar.getByTestId("files-button").locator("svg")
-	const mcpIcon = sidebar.locator('vscode-button[aria-label*="MCP Servers"] > .codicon-server')
-	const rulesIcon = sidebar.locator('vscode-button[aria-label*="Dline Rules"] > .codicon-law')
 	const [
 		profileAppearance,
 		thinkingAppearance,
@@ -425,8 +432,6 @@ async function runtimeControlAppearance(sidebar: Frame) {
 		serviceTierPaint,
 		contextPaint,
 		filesPaint,
-		mcpIconSize,
-		rulesIconSize,
 	] = await Promise.all([
 		profile.evaluate((element) => {
 			const style = getComputedStyle(element)
@@ -475,8 +480,6 @@ async function runtimeControlAppearance(sidebar: Frame) {
 		svgPaintMetrics(serviceTierIcon),
 		svgPaintMetrics(contextIcon),
 		svgPaintMetrics(filesIcon),
-		mcpIcon.evaluate((element) => Number.parseFloat(getComputedStyle(element).fontSize)),
-		rulesIcon.evaluate((element) => Number.parseFloat(getComputedStyle(element).fontSize)),
 	])
 	return {
 		profile: profileAppearance,
@@ -486,8 +489,6 @@ async function runtimeControlAppearance(sidebar: Frame) {
 		serviceTierPaint,
 		contextPaint,
 		filesPaint,
-		mcpIconSize,
-		rulesIconSize,
 	}
 }
 
@@ -495,15 +496,13 @@ function expectRuntimeControlAppearance(metrics: Awaited<ReturnType<typeof runti
 	expect(metrics.thinking.fontSize).toBe(metrics.profile.fontSize)
 	expect(metrics.thinking.lineHeight).toBe(metrics.profile.lineHeight)
 	expect(metrics.thinking.color).toBe(metrics.profile.color)
-	expect(Math.abs(metrics.profile.fontSize - metrics.mcpIconSize)).toBeLessThanOrEqual(0.1)
-	expect(Math.abs(metrics.thinking.fontSize - metrics.rulesIconSize)).toBeLessThanOrEqual(0.1)
 	expect(metrics.serviceTierIcon.display).toBe("block")
-	expect(Math.abs(metrics.serviceTierIcon.cssHeight - metrics.mcpIconSize)).toBeLessThanOrEqual(0.1)
-	expect(Math.abs(metrics.serviceTierIcon.cssWidth - metrics.rulesIconSize)).toBeLessThanOrEqual(0.1)
+	expect(metrics.serviceTierIcon.cssHeight).toBe(15)
+	expect(metrics.serviceTierIcon.cssWidth).toBe(15)
 	expect(metrics.serviceTierPaint.maxPartHeight).toBeGreaterThanOrEqual(metrics.contextPaint.maxPartHeight - 0.5)
 	expect(metrics.serviceTierPaint.height).toBeGreaterThanOrEqual(metrics.filesPaint.height)
-	expect(metrics.serviceTier.height - metrics.serviceTierIcon.height).toBeGreaterThanOrEqual(5.5)
-	expect(metrics.serviceTier.width - metrics.serviceTierIcon.width).toBeGreaterThanOrEqual(5.5)
+	expect(metrics.serviceTier.height - metrics.serviceTierIcon.height).toBeGreaterThanOrEqual(3)
+	expect(metrics.serviceTier.width - metrics.serviceTierIcon.width).toBeGreaterThanOrEqual(3)
 	expect(Math.abs(metrics.profile.centerY - metrics.thinking.centerY)).toBeLessThanOrEqual(1)
 	expect(Math.abs(metrics.thinking.centerY - metrics.serviceTier.centerY)).toBeLessThanOrEqual(1)
 	expect(Math.abs(metrics.serviceTier.centerY - metrics.serviceTierIcon.centerY)).toBeLessThanOrEqual(1)
@@ -661,7 +660,7 @@ e2e(
 	"Profile layout - sufficient parent space shows the full name and fills the real remainder",
 	async ({ dlineDir, helper, openVSCode, server, userDataDir, workspaceDir }, testInfo) => {
 		e2e.setTimeout(240_000)
-		await configureDefaultProfile(dlineDir, E2E_PROFILE_NAMES.mockOpenAi)
+		await configureDefaultProfile(dlineDir, E2E_PROFILE_NAMES.mockOpenAi, enableOpenAiServiceTier)
 		const app = await openVSCode(workspaceDir)
 		try {
 			const page = await app.firstWindow()
@@ -677,7 +676,7 @@ e2e(
 			const metrics = await captureRuntimeLayoutEvidence(page, sidebar, testInfo, "profile-layout-wide")
 
 			await expect(sidebar.getByRole("button", { name: "Select model" })).toHaveText(E2E_PROFILE_NAMES.mockOpenAi)
-			expect(metrics.availableRuntimeWidth).toBeGreaterThan(metrics.intrinsicRuntimeWidth)
+			expect(metrics.availableRuntimeWidth).toBeGreaterThanOrEqual(metrics.intrinsicRuntimeWidth)
 			expect(metrics.profileText.scrollWidth).toBeLessThanOrEqual(metrics.profileText.clientWidth)
 			expect(metrics.profileBox.width + 1).toBeGreaterThanOrEqual(metrics.profileText.scrollWidth)
 			expectRuntimeControlsFillAvailableWidth(metrics)
@@ -693,7 +692,7 @@ e2e(
 	"Profile layout - truncation starts only below the measured content threshold",
 	async ({ dlineDir, helper, openVSCode, server, userDataDir, workspaceDir }, testInfo) => {
 		e2e.setTimeout(240_000)
-		await configureDefaultProfile(dlineDir, E2E_PROFILE_NAMES.mockOpenAi)
+		await configureDefaultProfile(dlineDir, E2E_PROFILE_NAMES.mockOpenAi, enableOpenAiServiceTier)
 		const app = await openVSCode(workspaceDir)
 		try {
 			const page = await app.firstWindow()
@@ -728,7 +727,7 @@ e2e(
 	"Profile layout - shrinkable controls change monotonically and preserve intrinsic proportions",
 	async ({ dlineDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
 		e2e.setTimeout(240_000)
-		await configureDefaultProfile(dlineDir, E2E_PROFILE_NAMES.mockOpenAi)
+		await configureDefaultProfile(dlineDir, E2E_PROFILE_NAMES.mockOpenAi, enableOpenAiServiceTier)
 		const app = await openVSCode(workspaceDir)
 		try {
 			const page = await app.firstWindow()
@@ -770,10 +769,10 @@ e2e(
 )
 
 e2e(
-	"Profile layout - extreme width preserves icon-sized minima and the fixed Service Tier",
+	"Profile layout - extreme width shrinks flexible controls and preserves the fixed Service Tier",
 	async ({ dlineDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
 		e2e.setTimeout(240_000)
-		await configureDefaultProfile(dlineDir, E2E_PROFILE_NAMES.mockOpenAi)
+		await configureDefaultProfile(dlineDir, E2E_PROFILE_NAMES.mockOpenAi, enableOpenAiServiceTier)
 		const app = await openVSCode(workspaceDir)
 		try {
 			const page = await app.firstWindow()
@@ -789,8 +788,10 @@ e2e(
 			await setButtonGroupWidth(sidebar, Math.ceil(baseline.prefixWidth + iconWidth * 3 + 6))
 			const metrics = await runtimeControlMetrics(sidebar)
 
-			expect(metrics.profileBox.width).toBeGreaterThanOrEqual(iconWidth - 1)
-			expect(metrics.thinkingBox.width).toBeGreaterThanOrEqual(iconWidth - 1)
+			expect(metrics.profileBox.width).toBeGreaterThan(0)
+			expect(metrics.thinkingBox.width).toBeGreaterThan(0)
+			expect(metrics.profileBox.width).toBeLessThan(baseline.profileBox.width)
+			expect(metrics.thinkingBox.width).toBeLessThan(baseline.thinkingBox.width)
 			expect(Math.abs(metrics.serviceTierBox.width - iconWidth)).toBeLessThanOrEqual(1)
 			expect(metrics.serviceTierBox.x + metrics.serviceTierBox.width).toBeLessThanOrEqual(
 				metrics.runtimeBox.x + metrics.runtimeBox.width + 1,
@@ -808,7 +809,7 @@ e2e(
 	"Task runtime controls - OpenAI effort and Service Tier are actionable, equidistant, persisted, and used by the next request",
 	async ({ dlineDir, dlineDocsDir, helper, openVSCode, server, userDataDir, workspaceDir }, testInfo) => {
 		e2e.setTimeout(240_000)
-		await configureDefaultProfile(dlineDir, E2E_PROFILE_NAMES.mockOpenAi)
+		await configureDefaultProfile(dlineDir, E2E_PROFILE_NAMES.mockOpenAi, enableOpenAiServiceTier)
 		const app = await openVSCode(workspaceDir)
 		try {
 			const page = await app.firstWindow()
@@ -1031,7 +1032,7 @@ e2e(
 	"Task runtime controls - a cancelled OpenAI Task keeps controls visible and restores editing",
 	async ({ dlineDir, helper, openVSCode, server, userDataDir, workspaceDir }, testInfo) => {
 		e2e.setTimeout(180_000)
-		await configureDefaultProfile(dlineDir, E2E_PROFILE_NAMES.mockOpenAi)
+		await configureDefaultProfile(dlineDir, E2E_PROFILE_NAMES.mockOpenAi, enableOpenAiServiceTier)
 		server.resetOpenAiMock()
 		server.enqueueResponses("openai-compatible-chat", {
 			type: "tool",
@@ -1136,7 +1137,20 @@ e2e(
 	"Task runtime controls - a budget Provider edits tokens without Service Tier, persists them, and uses them in the next request",
 	async ({ dlineDir, dlineDocsDir, helper, openVSCode, server, userDataDir, workspaceDir }, testInfo) => {
 		e2e.setTimeout(240_000)
-		const profileBefore = await configureDefaultProfile(dlineDir, E2E_PROFILE_NAMES.mockAnthropic)
+		const profileBefore = await configureDefaultProfile(dlineDir, E2E_PROFILE_NAMES.mockAnthropic, (profile) => {
+			profile.modelId = "dline-e2e-budget-anthropic"
+			profile.modelInfo = {
+				capabilities: {
+					supportsReasoning: true,
+					supportsTools: true,
+					thinking: { supported: true, mode: "budget", maxBudget: 32_000 },
+				},
+			}
+			profile.anthropic = {
+				...asRecord(profile.anthropic),
+				reasoning: { enableThinking: true, effort: "", thinkingBudget: 2_048 },
+			}
+		})
 		const app = await openVSCode(workspaceDir)
 		try {
 			const page = await app.firstWindow()

@@ -1,9 +1,19 @@
 import { access, readdir, readFile, writeFile } from "node:fs/promises"
 import * as path from "node:path"
 import { expect, type Frame, type Locator, type Page } from "@playwright/test"
+import {
+	computeCompactTrigger,
+	computeSummarizeBudget,
+	getEstimationTolerance,
+	shouldCompactProjectedUsage,
+} from "../../core/context/context-management/context-window-utils"
+import type { MockApiConsumption } from "./fixtures/server"
 import { E2E_PROFILE_NAMES } from "./utils/api-profile"
 import { openTab } from "./utils/common"
 import { E2ETestHelper, e2e } from "./utils/helpers"
+
+const DLINE_RELOAD_NOTIFICATION =
+	/Dline v\d+\.\d+\.\d+(?:-[^ ]+)? is installed\. Reload VS Code to finish activating the extension\./
 
 async function selectProfile(frame: Frame, profileName: string): Promise<void> {
 	const modelSwitcher = frame.getByRole("button", { name: "Select model" })
@@ -45,14 +55,20 @@ async function createDlinePanelFromTitleAction(page: Page): Promise<Frame> {
 }
 
 async function dismissExtensionsDisabledNotification(page: Page): Promise<void> {
-	const blockingMessages = [
+	const blockingMessages: Array<string | RegExp> = [
 		"All installed extensions are temporarily disabled.",
-		"Dline v0.9.1 is installed. Reload VS Code to finish activating the extension.",
+		DLINE_RELOAD_NOTIFICATION,
 	]
 	for (const message of blockingMessages) {
 		const notification = page.getByRole("dialog").filter({ hasText: message })
 		const clearButton = notification.getByRole("button", { name: "Clear Notification (Del)", exact: true })
-		if (await clearButton.isVisible()) await clearButton.click()
+		if (!(await clearButton.isVisible())) continue
+		try {
+			await clearButton.evaluate((element) => (element as HTMLElement).click())
+		} catch (error) {
+			if (await clearButton.isVisible().catch(() => false)) throw error
+		}
+		await expect(notification).not.toBeVisible()
 	}
 }
 
@@ -149,6 +165,8 @@ async function configureStressRuntime(dlineDir: string): Promise<void> {
 				planModeProfile: E2E_PROFILE_NAMES.mockOpenAi,
 				useAutoCondense: true,
 				autoCondenseTriggerPercent: STRESS_COMPACTION_TRIGGER_PERCENT,
+				autoCondenseMinReserveTokens: STRESS_COMPACTION_MIN_RESERVE_TOKENS,
+				autoCondenseMaxReserveTokens: STRESS_COMPACTION_MAX_RESERVE_TOKENS,
 				autoCondenseMaxContextTokens: 0,
 			},
 			null,
@@ -180,6 +198,7 @@ interface StressTask {
 	marker: string
 	frame: Frame
 	tab?: Locator
+	taskId?: string
 }
 
 interface StoredStressProfile {
@@ -203,20 +222,26 @@ interface StressTurnPlan {
 	compaction?: {
 		cycle: number
 		triggerTokens: number
-		initialSummaryTokens: number
-		fittedSummaryTokens: number
+		summaryTokens: number
 	}
 }
 
 const STRESS_CONTEXT_WINDOW = 1_000_000
 const STRESS_COMPACTION_TRIGGER_PERCENT = 80
-const STRESS_COMPACTION_TRIGGER_TOKENS = 800_000
-const STRESS_COMPACTION_ESTIMATION_TOLERANCE = 2_000
+const STRESS_COMPACTION_MIN_RESERVE_TOKENS = 5_000
+const STRESS_COMPACTION_MAX_RESERVE_TOKENS = 200_000
+const STRESS_COMPACTION_TRIGGER_TOKENS = computeCompactTrigger(STRESS_CONTEXT_WINDOW, computeSummarizeBudget(), {
+	triggerPercent: STRESS_COMPACTION_TRIGGER_PERCENT,
+	minReserveTokens: STRESS_COMPACTION_MIN_RESERVE_TOKENS,
+	maxReserveTokens: STRESS_COMPACTION_MAX_RESERVE_TOKENS,
+})
+const STRESS_COMPACTION_ESTIMATION_TOLERANCE = getEstimationTolerance()
+const STRESS_PROJECTED_USAGE_TRIGGER_TOKENS = STRESS_COMPACTION_TRIGGER_TOKENS - STRESS_COMPACTION_ESTIMATION_TOLERANCE
+const STRESS_TRIGGER_GUARD_TOKENS = 10_000
 const STRESS_RESPONSE_OUTPUT_TOKENS = 25
 const STRESS_MIN_INCREMENT_TOKENS = 100_000
 const STRESS_MAX_INCREMENT_TOKENS = 200_000
 const STRESS_SUMMARY_CONTEXT_TOKENS = 80_000
-const STRESS_FITTED_SUMMARY_TOKENS = 750_000
 const STRESS_TARGET_CUMULATIVE_INPUT_TOKENS = Number.parseInt(process.env.DLINE_E2E_STRESS_TARGET_INPUT_TOKENS ?? "200000000", 10)
 const STRESS_MIN_COMPACTIONS = Number.parseInt(process.env.DLINE_E2E_STRESS_MIN_COMPACTIONS ?? "2", 10)
 const STRESS_MAX_TURNS = 1_000
@@ -235,6 +260,29 @@ function serializedStressTurnEnvelope(marker: string, turn: number): string {
 	return JSON.stringify(content).slice(1, -1)
 }
 
+function keepStressContextOutOfTriggerAmbiguity(baseContextTokens: number, incrementTokens: number): number {
+	const projectedUsageWithoutPendingTurn = baseContextTokens + incrementTokens + STRESS_RESPONSE_OUTPUT_TOKENS
+	const ambiguousStart = STRESS_PROJECTED_USAGE_TRIGGER_TOKENS - STRESS_TRIGGER_GUARD_TOKENS
+	if (
+		projectedUsageWithoutPendingTurn < ambiguousStart ||
+		projectedUsageWithoutPendingTurn >= STRESS_PROJECTED_USAGE_TRIGGER_TOKENS
+	) {
+		return incrementTokens
+	}
+
+	const increaseToTrigger = STRESS_PROJECTED_USAGE_TRIGGER_TOKENS - projectedUsageWithoutPendingTurn
+	if (incrementTokens + increaseToTrigger <= STRESS_MAX_INCREMENT_TOKENS) {
+		return incrementTokens + increaseToTrigger
+	}
+
+	const decreaseBelowGuard = projectedUsageWithoutPendingTurn - ambiguousStart + 1
+	if (incrementTokens - decreaseBelowGuard >= STRESS_MIN_INCREMENT_TOKENS) {
+		return incrementTokens - decreaseBelowGuard
+	}
+
+	throw new Error("Stress increment cannot be moved outside the compaction trigger guard band")
+}
+
 function createStressTaskPlan(taskIndex: number): StressTaskPlan {
 	const random = createSeededRandom(0xd11e_0000 + taskIndex)
 	const turns: StressTurnPlan[] = []
@@ -243,36 +291,32 @@ function createStressTaskPlan(taskIndex: number): StressTaskPlan {
 	let compactionCount = 0
 
 	for (let turn = 0; turn < STRESS_MAX_TURNS; turn++) {
-		const incrementTokens =
+		let incrementTokens =
 			STRESS_MIN_INCREMENT_TOKENS + Math.floor(random() * (STRESS_MAX_INCREMENT_TOKENS - STRESS_MIN_INCREMENT_TOKENS + 1))
 		const shouldCompact =
 			turns.length > 0 &&
-			currentContextTokens + STRESS_RESPONSE_OUTPUT_TOKENS + STRESS_COMPACTION_ESTIMATION_TOLERANCE >=
-				STRESS_COMPACTION_TRIGGER_TOKENS
+			shouldCompactProjectedUsage(currentContextTokens + STRESS_RESPONSE_OUTPUT_TOKENS, STRESS_COMPACTION_TRIGGER_TOKENS)
 		if (shouldCompact) compactionCount++
 
-		const contextTokens = (shouldCompact ? STRESS_SUMMARY_CONTEXT_TOKENS : currentContextTokens) + incrementTokens
-		const initialSummaryTokens = shouldCompact
-			? Math.min(currentContextTokens + 2_500, STRESS_CONTEXT_WINDOW - 10_000)
-			: undefined
+		const baseContextTokens = shouldCompact ? STRESS_SUMMARY_CONTEXT_TOKENS : currentContextTokens
+		incrementTokens = keepStressContextOutOfTriggerAmbiguity(baseContextTokens, incrementTokens)
+		const contextTokens = baseContextTokens + incrementTokens
+		const summaryTokens = shouldCompact ? Math.min(currentContextTokens + 2_500, STRESS_CONTEXT_WINDOW - 10_000) : undefined
 		turns.push({
 			turn,
 			incrementTokens,
 			contextTokens,
-			...(shouldCompact && initialSummaryTokens !== undefined
+			...(shouldCompact && summaryTokens !== undefined
 				? {
 						compaction: {
 							cycle: compactionCount,
 							triggerTokens: currentContextTokens,
-							initialSummaryTokens,
-							fittedSummaryTokens: STRESS_FITTED_SUMMARY_TOKENS,
+							summaryTokens,
 						},
 					}
 				: {}),
 		})
-		if (shouldCompact && initialSummaryTokens !== undefined) {
-			cumulativeInputTokens += initialSummaryTokens + STRESS_FITTED_SUMMARY_TOKENS
-		}
+		if (shouldCompact && summaryTokens !== undefined) cumulativeInputTokens += summaryTokens
 		cumulativeInputTokens += contextTokens
 		currentContextTokens = contextTokens
 
@@ -303,6 +347,21 @@ function parseApiTimingSamples(output: string): ApiTimingSample[] {
 		totalMs: Number(match[6]),
 		activeTasks: Number(match[7]),
 	}))
+}
+
+function formatMockFailure(consumption: MockApiConsumption): string {
+	const requestText = JSON.stringify(consumption.requestBody)
+	const stressMarkers = [...new Set(requestText.match(/E2E_STRESS_[A-Z0-9_]+/g) ?? [])]
+	return JSON.stringify({
+		receivedAtMs: consumption.receivedAtMs,
+		responseType: consumption.responseType,
+		toolName: consumption.toolName,
+		toolCallId: consumption.toolCallId,
+		contractError: consumption.contractError,
+		requestToolPairing: consumption.requestToolPairing,
+		requestToolResults: consumption.requestToolResults.slice(-3),
+		stressMarkers: stressMarkers.slice(-12),
+	})
 }
 
 function parseControllerDisposeSamples(output: string): ControllerDisposeSample[] {
@@ -341,6 +400,30 @@ async function activateDlinePanel(tab: Locator, frame: Frame): Promise<void> {
 	const frameElement = await frame.frameElement()
 	await frameElement.waitForElementState("visible")
 	await expect(frame.locator("#root")).toBeVisible()
+}
+
+async function activateDlinePanelByFrame(group: Locator, frame: Frame): Promise<void> {
+	const tabs = group.locator(".tabs-container > .tab")
+	for (let index = 0; index < (await tabs.count()); index++) {
+		const tab = tabs.nth(index)
+		await tab.click()
+		try {
+			await frame.getByTestId("chat-input").click({ trial: true, timeout: 1_000 })
+			await expect(tab).toHaveClass(/\bactive\b/)
+			await expect(frame.locator("#root")).toBeVisible()
+			return
+		} catch {
+			// The frame exists but another editor surface still owns pointer events.
+		}
+	}
+	throw new Error("Dline panel tab for the requested frame was not found")
+}
+
+async function clickInDlinePanel(group: Locator, frame: Frame, control: Locator): Promise<void> {
+	await expect(async () => {
+		await activateDlinePanelByFrame(group, frame)
+		await control.click({ timeout: 1_000 })
+	}).toPass({ timeout: 30_000 })
 }
 
 async function findActiveDlineTab(page: Page): Promise<Locator> {
@@ -508,19 +591,16 @@ e2e("Dline task panels preserve independent editor groups across window reload",
 	const editorGroups = page.locator(".editor-group-container")
 	const editorGroupCountBeforeMove = await editorGroups.count()
 	const secondTaskTab = page.locator(`.tab[aria-label*="${secondTask.slice(0, 16)}"]`)
-	// Ctrl+\ is the tab menu's "Split Right" keybinding for the active editor. It creates
-	// an empty editor group but does not move the panel; with a group already open, the
-	// tab menu's "Split & Move" submenu then offers direction-agnostic "Move Right".
+	// Ctrl+\ creates the destination group for this custom editor without moving it. Invoke
+	// VS Code's command directly instead of relying on submenu pointer/keyboard ownership.
 	await secondTaskTab.click()
 	await page.keyboard.press("Control+\\")
 	await expect(editorGroups).toHaveCount(editorGroupCountBeforeMove + 1)
-	await secondTaskTab.click({ button: "right" })
-	const splitAndMove = page.getByRole("menuitem", { name: /Split & Move/i })
-	await expect(splitAndMove).toBeVisible()
-	await splitAndMove.click()
-	const moveRight = page.getByRole("menuitem", { name: /^Move Right$/ })
-	await expect(moveRight).toBeVisible()
-	await moveRight.click()
+	await secondTaskTab.click()
+	// VS Code transfers focus into a selected custom-editor iframe asynchronously.
+	// Let that transfer finish before opening QuickInput so it cannot close the palette afterward.
+	await expect.poll(() => secondPanel.evaluate(() => document.hasFocus())).toBe(true)
+	await E2ETestHelper.runCommandPalette(page, "View: Move Editor into Next Group")
 	await expect(dlineEditorGroups(page, reloadTaskMarkers)).toHaveCount(2)
 
 	await E2ETestHelper.runCommandPalette(page, "Developer: Reload Window")
@@ -586,12 +666,11 @@ e2e(
 
 e2e(
 	"Five tasks repeatedly auto-compact at 1M context and exceed 200M cumulative input tokens",
-	async ({ dlineDir, helper, page, server, userDataDir }, testInfo) => {
+	{ tag: "@pressure" },
+	async ({ dlineDir, dlineDocsDir, helper, page, server, userDataDir }, testInfo) => {
 		e2e.setTimeout(2_400_000)
 		await configureStressRuntime(dlineDir)
-		const reloadNotification = page
-			.getByRole("dialog")
-			.filter({ hasText: "Dline v0.9.1 is installed. Reload VS Code to finish activating the extension." })
+		const reloadNotification = page.getByRole("dialog").filter({ hasText: DLINE_RELOAD_NOTIFICATION })
 		await reloadNotification.getByRole("button", { name: "Reload Window", exact: true }).click()
 		await dismissExtensionsDisabledNotification(page)
 		await E2ETestHelper.openClineSidebar(page)
@@ -631,43 +710,25 @@ e2e(
 		server.resetOpenAiMock()
 		const enqueueStressTurnResponses = (taskIndex: number, task: StressTask, turnPlan: StressTurnPlan): void => {
 			if (turnPlan.compaction) {
-				const initialSummary = `${task.marker}_INITIAL_SUMMARY_${turnPlan.compaction.cycle} preserves the pre-turn task state.`
-				const fittedSummary = `${task.marker}_SUMMARY_${turnPlan.compaction.cycle} preserves the task and pending turn ${turnPlan.turn}.`
-				server.enqueueResponses(
-					"openai-compatible-chat",
-					{
-						type: "tool",
-						id: `call_stress_summary_${taskIndex}_${turnPlan.compaction.cycle}_initial`,
-						name: "summarize_task",
-						arguments: { context: initialSummary },
-						expectedRequestIncludes: [
-							COMPACT_INSTRUCTION_MARKER,
-							serializedStressTurnEnvelope(task.marker, Math.max(0, turnPlan.turn - 1)),
-						],
-						expectedRequestExcludes: [
-							serializedStressTurnEnvelope(task.marker, turnPlan.turn),
-							`${task.marker}_RESPONSE_${turnPlan.turn}`,
-						],
-						matchRequestContract: true,
-						delayMs: 25,
-						usage: { inputTokens: turnPlan.compaction.initialSummaryTokens, outputTokens: 100 },
-					},
-					{
-						type: "tool",
-						id: `call_stress_summary_${taskIndex}_${turnPlan.compaction.cycle}`,
-						name: "summarize_task",
-						arguments: { context: fittedSummary },
-						expectedRequestIncludes: [
-							COMPACT_INSTRUCTION_MARKER,
-							initialSummary,
-							serializedStressTurnEnvelope(task.marker, turnPlan.turn),
-						],
-						expectedRequestExcludes: [`${task.marker}_RESPONSE_${turnPlan.turn}`],
-						matchRequestContract: true,
-						delayMs: 25,
-						usage: { inputTokens: turnPlan.compaction.fittedSummaryTokens, outputTokens: 100 },
-					},
-				)
+				const summary = `${task.marker}_SUMMARY_${turnPlan.compaction.cycle} preserves the task and pending turn ${turnPlan.turn}.`
+				server.enqueueResponses("openai-compatible-chat", {
+					type: "tool",
+					id: `call_stress_summary_${taskIndex}_${turnPlan.compaction.cycle}`,
+					name: "summarize_task",
+					arguments: { context: summary },
+					expectedRequestIncludes: [
+						COMPACT_INSTRUCTION_MARKER,
+						serializedStressTurnEnvelope(task.marker, Math.max(0, turnPlan.turn - 2)),
+					],
+					expectedRequestExcludes: [
+						serializedStressTurnEnvelope(task.marker, turnPlan.turn - 1),
+						serializedStressTurnEnvelope(task.marker, turnPlan.turn),
+						`${task.marker}_RESPONSE_${turnPlan.turn}`,
+					],
+					matchRequestContract: true,
+					delayMs: 25,
+					usage: { inputTokens: turnPlan.compaction.summaryTokens, outputTokens: 100 },
+				})
 			}
 			server.enqueueResponses("openai-compatible-chat", {
 				type: "tool",
@@ -699,11 +760,16 @@ e2e(
 				}
 				const input = task.frame.locator('[data-testid="chat-input"]:visible')
 				const sendButton = task.frame.locator('[data-testid="send-button"]:visible')
+				if (turn > 0) {
+					task.taskId ??= await findTaskIdByHistoryMarker(dlineDocsDir, task.marker)
+					await waitForQnaInteraction(dlineDocsDir, task.taskId)
+				}
 				enqueueStressTurnResponses(plan.taskIndex, task, turnPlan)
-				await input.fill(`${task.marker}_TURN_${turn}`)
+				const turnInput = `${task.marker}_TURN_${turn}`
+				await input.fill(turnInput)
+				await expect(input).toHaveValue(turnInput)
 				await expect(sendButton).not.toHaveClass(/\bdisabled\b/)
-				if (task.kind === "sidebar") await sendButton.click()
-				else await input.press("Enter")
+				await sendButton.press("Enter")
 				await expect(input).toHaveValue("")
 
 				// Serialize provider completion per task so the next feedback binds to the completed qna_respond interaction.
@@ -715,9 +781,18 @@ e2e(
 							)
 							if (unexpectedError)
 								throw new Error(`Webview request failed during stress turn ${turn}: ${unexpectedError}`)
-							const matches = server
-								.getMockConsumptions("openai-compatible-chat")
-								.filter((entry) => entry.toolCallId === `call_stress_${plan.taskIndex}_${turn}`)
+							const consumptions = server.getMockConsumptions("openai-compatible-chat")
+							const unexpectedMockFailure = consumptions.find(
+								(entry) => entry.contractError !== undefined || entry.responseType === "error",
+							)
+							if (unexpectedMockFailure) {
+								throw new Error(
+									`Mock request failed before ${task.marker} turn ${turn}: ${formatMockFailure(unexpectedMockFailure)}`,
+								)
+							}
+							const matches = consumptions.filter(
+								(entry) => entry.toolCallId === `call_stress_${plan.taskIndex}_${turn}`,
+							)
 							if (matches.length > 1) throw new Error(`Duplicate provider response for ${task.marker} turn ${turn}`)
 							if (matches[0]?.contractError) throw new Error(matches[0].contractError)
 							return matches.length === 1
@@ -759,18 +834,10 @@ e2e(
 				expect(taskMatches, `Missing or duplicate request for ${task.marker} turn ${turn}`).toHaveLength(1)
 				expect(taskMatches[0]?.contractError).toBeUndefined()
 				if (turnPlan.compaction) {
-					const initialSummaryMatches = consumptions.filter(
-						(entry) =>
-							entry.toolCallId === `call_stress_summary_${plan.taskIndex}_${turnPlan.compaction?.cycle}_initial`,
-					)
 					const summaryMatches = consumptions.filter(
 						(entry) => entry.toolCallId === `call_stress_summary_${plan.taskIndex}_${turnPlan.compaction?.cycle}`,
 					)
-					expect(initialSummaryMatches, `Missing initial compaction pass for ${task.marker} turn ${turn}`).toHaveLength(
-						1,
-					)
-					expect(summaryMatches, `Missing fitting compaction pass for ${task.marker} turn ${turn}`).toHaveLength(1)
-					expect(initialSummaryMatches[0]?.contractError).toBeUndefined()
+					expect(summaryMatches, `Missing compaction pass for ${task.marker} turn ${turn}`).toHaveLength(1)
 					expect(summaryMatches[0]?.contractError).toBeUndefined()
 				}
 				if (turn === 0) {
@@ -784,7 +851,7 @@ e2e(
 		const elapsedMs = Date.now() - startedAtMs
 		const totalTurns = taskPlans.reduce((sum, plan) => sum + plan.turns.length, 0)
 		const totalCompactions = taskPlans.reduce((sum, plan) => sum + plan.compactionCount, 0)
-		const totalCompactionPasses = totalCompactions * 2
+		const totalCompactionPasses = totalCompactions
 		const totalRequests = totalTurns + totalCompactionPasses
 		await expect.poll(() => server.getRequestCount("openai-compatible-chat")).toBe(totalRequests)
 
@@ -870,9 +937,12 @@ e2e(
 		}
 
 		const output = await E2ETestHelper.readDlineOutput(userDataDir)
-		const apiSamples = parseApiTimingSamples(output).filter((sample) => sample.activeTasks >= tasks.length)
-		const requestsBeforeAllTasksWereActive = tasks.length - 1
-		expect(apiSamples).toHaveLength(totalRequests - requestsBeforeAllTasksWereActive)
+		// Internal compaction requests use their own request path; API timing covers ordinary turn requests only.
+		const allApiSamples = parseApiTimingSamples(output)
+		expect(allApiSamples).toHaveLength(totalTurns)
+		const apiSamples = allApiSamples.filter((sample) => sample.activeTasks >= tasks.length)
+		const timedRequestsBeforeAllTasksWereActive = tasks.length - 1
+		expect(apiSamples).toHaveLength(totalTurns - timedRequestsBeforeAllTasksWereActive)
 		const report = {
 			taskCount: tasks.length,
 			editorTaskCount: editorSurfaces.length,
@@ -892,7 +962,8 @@ e2e(
 			totalCompactions,
 			totalCompactionPasses,
 			totalRequests,
-			requestsBeforeAllTasksWereActive,
+			timedRequests: allApiSamples.length,
+			timedRequestsBeforeAllTasksWereActive,
 			cumulativeInputTokensByTask: tokenTotals,
 			elapsedMs,
 			localPrepareMs: summarizeDurations(apiSamples.map((sample) => sample.localPrepareMs)),
@@ -990,8 +1061,6 @@ e2e(
 		const dlineGroup = page.locator(".editor-group-container").nth(dlineGroupIndex)
 		const panelTabs = dlineGroup.locator(".tabs-container > .tab")
 		await expect(panelTabs).toHaveCount(2)
-		const panelATab = panelTabs.nth(0)
-		const panelBTab = panelTabs.nth(1)
 
 		const panelATask = "E2E_CONCURRENT_CHECKPOINT_PANEL_A"
 		const panelBTask = "E2E_CONCURRENT_CHECKPOINT_PANEL_B"
@@ -1038,7 +1107,7 @@ e2e(
 			},
 		)
 
-		await activateDlinePanel(panelATab, panelA)
+		await activateDlinePanelByFrame(dlineGroup, panelA)
 		await expect(panelA.getByTestId("chat-input")).toBeVisible()
 		await selectProfile(panelA, E2E_PROFILE_NAMES.mockOpenAi)
 		await panelA.getByTestId("chat-input").fill(panelATask)
@@ -1046,12 +1115,12 @@ e2e(
 		await panelA.getByTestId("send-button").click()
 		await expect(panelA.getByTestId("chat-input")).toHaveValue("")
 		await expect(panelA.getByText(panelATask, { exact: true }).first()).toBeVisible()
-		await activateDlinePanel(panelBTab, panelB)
+		await activateDlinePanelByFrame(dlineGroup, panelB)
 		await expect(panelB.getByTestId("chat-input")).toBeVisible()
 		await selectProfile(panelB, E2E_PROFILE_NAMES.mockOpenAiResponses)
 		await panelB.getByTestId("chat-input").fill(panelBTask)
 		const panelBSubmittedAtMs = Date.now()
-		await panelB.getByTestId("send-button").click()
+		await clickInDlinePanel(dlineGroup, panelB, panelB.getByTestId("send-button"))
 		await expect(panelB.getByTestId("chat-input")).toHaveValue("")
 		await expect(panelB.getByText(panelBTask, { exact: true }).first()).toBeVisible()
 
@@ -1078,10 +1147,10 @@ e2e(
 		expect(performance.panelBCommitMs).toBeLessThan(20_000)
 		expect(performance.firstRequestDeltaMs).toBeLessThan(10_000)
 
-		await activateDlinePanel(panelATab, panelA)
+		await activateDlinePanelByFrame(dlineGroup, panelA)
 		await expect(panelA.getByText(panelATask, { exact: true }).first()).toBeVisible()
 		await expect(panelA.locator('vscode-button[aria-label="Start New Task"]')).toBeVisible({ timeout: 60_000 })
-		await activateDlinePanel(panelBTab, panelB)
+		await activateDlinePanelByFrame(dlineGroup, panelB)
 		await expect(panelB.getByText(panelBTask, { exact: true }).first()).toBeVisible()
 		await expect(panelB.locator('vscode-button[aria-label="Start New Task"]')).toBeVisible({ timeout: 60_000 })
 		await expect.poll(() => pathExists(panelAPath)).toBe(true)
@@ -1089,7 +1158,7 @@ e2e(
 		expect(normalizeNewlines(await readFile(panelAPath, "utf8"))).toBe("panel A checkpoint content\n")
 		expect(normalizeNewlines(await readFile(panelBPath, "utf8"))).toBe("panel B checkpoint content\n")
 
-		await activateDlinePanel(panelATab, panelA)
+		await activateDlinePanelByFrame(dlineGroup, panelA)
 		const checkpointLabels = panelA.getByText("Checkpoint", { exact: true })
 		await expect.poll(() => checkpointLabels.count()).toBeGreaterThan(0)
 		const initialCheckpoint = checkpointLabels.first().locator("..").locator("..")
@@ -1103,7 +1172,7 @@ e2e(
 		expect(normalizeNewlines(await readFile(panelBPath, "utf8"))).toBe("panel B checkpoint content\n")
 		await expect(panelA.locator('vscode-button[aria-label="Resume"]')).toBeVisible({ timeout: 30_000 })
 
-		await activateDlinePanel(panelBTab, panelB)
+		await activateDlinePanelByFrame(dlineGroup, panelB)
 		await expect(panelB.getByText(panelBTask, { exact: true }).first()).toBeVisible()
 		await expect(panelB.locator('vscode-button[aria-label="Start New Task"]')).toBeVisible()
 		await expect(panelB.getByRole("button", { name: "Select model" })).toHaveText(E2E_PROFILE_NAMES.mockOpenAiResponses)
@@ -1122,7 +1191,7 @@ e2e(
 		await expect.poll(() => pathExists(panelBPath)).toBe(true)
 		expect(normalizeNewlines(await readFile(panelBPath, "utf8"))).toBe("panel B checkpoint content\n")
 
-		await activateDlinePanel(panelATab, panelA)
+		await activateDlinePanelByFrame(dlineGroup, panelA)
 		const panelAResume = panelA.locator('vscode-button[aria-label="Resume"]')
 		server.enqueueResponses("openai-compatible-chat", {
 			type: "tool",
@@ -1245,7 +1314,7 @@ e2e(
 			await input.fill(task.followUp)
 			await input.press("Enter")
 			await expect(input).toHaveValue("")
-			const feedback = task.frame.locator("span.ph-no-capture:not(button span)").filter({ hasText: task.followUp })
+			const feedback = task.frame.getByTestId(/^(?:user|queued)-input-markdown-scroll$/).filter({ hasText: task.followUp })
 			await expect(feedback).toHaveCount(1)
 			await expect(feedback).toHaveText(task.followUp)
 			await expect.poll(() => server.getRequestCount("openai-compatible-responses"), { timeout: 30_000 }).toBe(index + 4)

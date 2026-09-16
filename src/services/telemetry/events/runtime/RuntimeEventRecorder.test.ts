@@ -28,9 +28,26 @@ describe("RuntimeEventRecorder", () => {
 		recorder.failure("runtime.failed", error)
 
 		expect(received).toEqual([
-			{ name: "runtime.ready", level: "info", attributes: { phase: "ready" }, context: undefined },
-			{ name: "runtime.failed", level: "error", attributes: undefined, error, context: undefined },
+			{
+				name: "runtime.ready",
+				level: "info",
+				timestamp: expect.any(Number),
+				monotonicMs: expect.any(Number),
+				attributes: { phase: "ready" },
+				context: undefined,
+			},
+			{
+				name: "runtime.failed",
+				level: "error",
+				timestamp: expect.any(Number),
+				monotonicMs: expect.any(Number),
+				attributes: undefined,
+				error,
+				context: undefined,
+			},
 		])
+		expect(received[1].timestamp).toBeGreaterThanOrEqual(received[0].timestamp ?? 0)
+		expect(received[1].monotonicMs).toBeGreaterThanOrEqual(received[0].monotonicMs ?? 0)
 	})
 
 	it("does not let invariant events bypass disabled error consent", () => {

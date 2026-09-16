@@ -43,6 +43,25 @@ export interface MessageWindowLimits {
 	trimSideTarget: number
 }
 
+/**
+ * The window is a fixed-size slice, not a growing one.
+ *
+ * Each side keeps between `loadThreshold` and `maxSideBuffer` messages in
+ * reserve. Falling to the lower bound fetches `loadCount`, taking that side
+ * back to the upper bound; rising above the upper bound releases the same
+ * `loadCount`, taking it back to the lower bound. Growth and release are
+ * therefore equal and opposite, so browsing a long conversation slides the
+ * window rather than enlarging it, and the number of mounted rows does not
+ * follow the length of the transcript.
+ *
+ * The gap between the two bounds is the hysteresis: it is exactly one
+ * `loadCount` wide, so a fetch cannot immediately satisfy the release rule
+ * nor a release immediately re-arm the fetch. An earlier configuration
+ * released only `maxSideBuffer - trimSideTarget` — 120 against a fetch of
+ * 200 — which left a net gain of 80 messages on every cycle and let the
+ * window creep upward for the whole session.
+ */
+
 /** One side of the window. */
 export type WindowSide = "leading" | "trailing"
 
@@ -71,7 +90,7 @@ export const DEFAULT_MESSAGE_WINDOW_LIMITS: MessageWindowLimits = {
 	loadCount: 200,
 	loadThreshold: 100,
 	maxSideBuffer: 300,
-	trimSideTarget: 180,
+	trimSideTarget: 100,
 }
 
 /**
@@ -157,7 +176,12 @@ export function planWindowTrim(
 	visible: VisibleMessageRange,
 	limits: MessageWindowLimits = DEFAULT_MESSAGE_WINDOW_LIMITS,
 ): WindowTrim | undefined {
-	if (limits.trimSideTarget <= limits.loadThreshold) {
+	// Releasing below the fetch threshold would re-arm the fetch that the
+	// release just satisfied, so the target may reach that threshold but not
+	// pass it. Landing exactly on it is the intended steady state: the side
+	// is left at the lower bound with a full `loadCount` of headroom before
+	// either rule fires again.
+	if (limits.trimSideTarget < limits.loadThreshold) {
 		return undefined
 	}
 

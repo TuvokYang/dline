@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { ExperimentalFeatureFlag } from "../feature-flags"
-import {
-	environmentVariableNameFor,
-	resolveExperimentalFlag,
-	resolveExperimentalFlags,
-} from "../resolve-experimental-flags"
+import { environmentVariableNameFor, resolveExperimentalFlag, resolveExperimentalFlags } from "../resolve-experimental-flags"
 
 const WEBTOOLS_VAR = "DLINE_EXPERIMENTAL_WEBTOOLS"
 const WORKTREES_VAR = "DLINE_EXPERIMENTAL_WORKTREE_EXP"

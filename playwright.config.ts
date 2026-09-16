@@ -4,6 +4,7 @@ import { E2E_OUTPUT_ROOT } from "./src/test/e2e/utils/run-context"
 const isCI = !!process?.env?.CI
 const isWindow = process?.platform?.startsWith("win")
 const configuredWorkers = process.env.DLINE_E2E_WORKERS?.trim()
+export const PRESSURE_E2E_TAG = /@pressure/
 
 if (configuredWorkers && !/^[1-9]\d*$/.test(configuredWorkers)) {
 	throw new Error(`Invalid DLINE_E2E_WORKERS: ${configuredWorkers}`)
@@ -30,10 +31,16 @@ export default defineConfig({
 		{
 			name: "setup test environment",
 			testMatch: /global\.setup\.ts/,
+			teardown: "teardown test environment",
 		},
 		{
 			name: "e2e tests",
+			grepInvert: PRESSURE_E2E_TAG,
 			dependencies: ["setup test environment"],
+		},
+		{
+			name: "teardown test environment",
+			testMatch: /global\.teardown\.ts/,
 		},
 	],
 })

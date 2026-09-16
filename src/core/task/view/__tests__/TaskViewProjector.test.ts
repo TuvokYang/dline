@@ -335,6 +335,23 @@ describe("projectTaskView", () => {
 		])
 	})
 
+	it("projects one explicitly admitted Profile recovery reply between turns", () => {
+		const state = runtime(TaskPhase.BETWEEN_TURNS)
+		state.ordinaryInput = { kind: "profile_recovery" }
+
+		const view = projectTaskView(state)
+
+		expect(view.activeInteraction).toBeUndefined()
+		expect(view.input).toEqual({
+			enabled: true,
+			acceptsText: true,
+			acceptsImages: true,
+			acceptsFiles: true,
+			enterAction: "reply",
+		})
+		expect(view.footer.actions.map((action) => action.type)).toEqual(["cancel"])
+	})
+
 	// BETWEEN_TURNS is the gap between a finished turn and the next provider
 	// request: the task loop is still running and nobody is waiting for a
 	// reply. Projecting it as ready-for-input let the composer bypass the queue

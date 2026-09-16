@@ -106,6 +106,25 @@ describe("getApiProfiles", () => {
 		expect(profile.anthropic?.capabilities?.contextWindowTiers).to.equal(undefined)
 	})
 
+	it("preserves explicit tiers for a custom Anthropic profile whose id matches a catalog model", () => {
+		const contextWindowTiers = [
+			{ id: "standard", contextWindow: 200_000, label: "200K", apiModelSuffix: undefined },
+			{ id: "long", contextWindow: 1_000_000, label: "1M", apiModelSuffix: undefined },
+		]
+		const profile = normalizeApiProfile({
+			id: "custom-anthropic-window",
+			name: "Custom Anthropic Window",
+			provider: "anthropic",
+			modelId: "claude-sonnet-4-6",
+			anthropic: {
+				customModelEnabled: true,
+				capabilities: { contextWindowTiers },
+			},
+		})
+
+		expect(profile.anthropic?.capabilities?.contextWindowTiers).to.deep.equal(contextWindowTiers)
+	})
+
 	it("migrates a custom tiered Anthropic standalone window into the selected tier", () => {
 		const profile = normalizeApiProfile({
 			id: "custom-tiered-anthropic-window",

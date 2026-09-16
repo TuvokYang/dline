@@ -1,5 +1,5 @@
 import crypto from "node:crypto"
-import fs from "fs/promises"
+import fs, { type FileHandle } from "fs/promises"
 import { fileExistsAtPath } from "@/utils/fs"
 
 /**
@@ -14,6 +14,13 @@ import { fileExistsAtPath } from "@/utils/fs"
  */
 
 const TRIM_START_REGEX = /^\s+/
+/**
+ * Bytes examined when deciding whether a file is a legacy JSON array.
+ *
+ * Enough to pass any realistic run of leading whitespace and a BOM without
+ * reading a file that exists precisely because it is too large to rewrite.
+ */
+const LEGACY_ARRAY_PROBE_BYTES = 64
 const ATOMIC_RENAME_MAX_ATTEMPTS = 3
 const ATOMIC_RENAME_RETRY_DELAYS_MS = [10, 25] as const
 const RETRYABLE_ATOMIC_RENAME_CODES = new Set(["EPERM", "EACCES", "EBUSY"])
@@ -36,6 +43,16 @@ async function renameAtomicFile(sourcePath: string, destinationPath: string): Pr
 /** Check whether file content is a JSON array (starts with '[' after whitespace). */
 function isJsonArray(content: string): boolean {
 	return content.replace(TRIM_START_REGEX, "").startsWith("[")
+}
+
+/**
+ * Drop a leading byte order mark.
+ *
+ * Decoding utf8 leaves the BOM in the string, so a file that carries one would
+ * otherwise fail the array check by a single character.
+ */
+function stripByteOrderMark(content: string): string {
+	return content.charCodeAt(0) === 0xfeff ? content.slice(1) : content
 }
 
 /**
@@ -86,6 +103,48 @@ export async function appendJsonl<T>(filePath: string, entries: T | T[]): Promis
 
 	const lines = `${items.map((item) => JSON.stringify(item)).join("\n")}\n`
 	await fs.appendFile(filePath, lines, "utf8")
+}
+
+/**
+ * Report whether new lines can be concatenated onto this file as-is.
+ *
+ * Reading accepts shapes that appending cannot extend: a legacy JSON array
+ * stays one document, and a final line without its newline would swallow the
+ * next record into itself. Both produce a file that no longer parses, so a
+ * caller that cannot append must rewrite instead.
+ *
+ * Only a short prefix and the final byte are inspected, so this stays cheap on
+ * a file whose whole point is being too large to rewrite.
+ */
+export async function canAppendJsonl(filePath: string): Promise<boolean> {
+	if (!(await fileExistsAtPath(filePath))) return true
+
+	let handle: FileHandle | undefined
+	try {
+		handle = await fs.open(filePath, "r")
+		const { size } = await handle.stat()
+		if (size === 0) return true
+
+		// The reader recognizes a legacy array after leading whitespace and a
+		// BOM, so the same prefix has to be examined here. Judging from the very
+		// first byte alone would classify `\n  [...]` as JSONL and concatenate a
+		// line after the closing bracket, leaving a document that no longer
+		// parses and a history that reads back as empty.
+		const prefixLength = Math.min(size, LEGACY_ARRAY_PROBE_BYTES)
+		const prefix = Buffer.alloc(prefixLength)
+		await handle.read(prefix, 0, prefixLength, 0)
+		if (isJsonArray(stripByteOrderMark(prefix.toString("utf8")))) return false
+
+		const tail = Buffer.alloc(1)
+		await handle.read(tail, 0, 1, size - 1)
+		return tail.toString("utf8") === "\n"
+	} catch {
+		// An unreadable file is never assumed appendable: rewriting is the
+		// recoverable choice, concatenating onto unknown bytes is not.
+		return false
+	} finally {
+		await handle?.close()
+	}
 }
 
 /** Keep the first N JSONL records by scanning only the removed tail. */

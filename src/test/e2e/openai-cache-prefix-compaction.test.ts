@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { expect, type Frame } from "@playwright/test"
 import type { ElectronApplication } from "playwright"
+import { getE2EWorkspaceMcpUrl } from "./fixtures/server/workspace-mcp"
 import { E2E_PROFILE_NAMES } from "./utils/api-profile"
 import { E2ETestHelper, e2e } from "./utils/helpers"
 
@@ -42,8 +43,14 @@ interface StoredProfile {
 
 const PROVIDER_CONTEXT_WINDOW = 472_000
 const AUTO_CONDENSE_TRIGGER_PERCENT = 95
+const AUTO_CONDENSE_TRIGGER_BUFFER_TOKENS = 3_000
 const AUTO_CONDENSE_MAX_CONTEXT_TOKENS = 0
 const MIN_NEAR_TRIGGER_INPUT_TOKENS = 400_000
+const CONSECUTIVE_COMPACTION_TRIGGER_TOKENS =
+	Math.floor((PROVIDER_CONTEXT_WINDOW * AUTO_CONDENSE_TRIGGER_PERCENT) / 100) - AUTO_CONDENSE_TRIGGER_BUFFER_TOKENS
+const CONSECUTIVE_COMPACTION_MAX_TOTAL_INPUT_TOKENS =
+	CONSECUTIVE_COMPACTION_TRIGGER_TOKENS + Math.floor((PROVIDER_CONTEXT_WINDOW - CONSECUTIVE_COMPACTION_TRIGGER_TOKENS) / 2)
+const AUTO_COMPACTION_PROVIDER_INPUT_TOKENS = CONSECUTIVE_COMPACTION_TRIGGER_TOKENS + AUTO_CONDENSE_TRIGGER_BUFFER_TOKENS + 1_000
 const MAX_COMPACTION_DYNAMIC_TAIL_TOKENS = 10_000
 const AUTO_COMPACTION_COUNT = 6
 const ORDINARY_TURN_COUNT = AUTO_COMPACTION_COUNT + 1
@@ -52,7 +59,12 @@ const LATER_TURN_READ_CALLS = 26
 const MIN_SEARCH_CALLS_PER_TURN = 2
 const MAX_SEARCH_CALLS_PER_TURN = 4
 const CORPUS_FILE_CHARS = 57 * 1024
-const LARGE_TURN_EXTRA_FILE_CHARS = Math.floor(CORPUS_FILE_CHARS / 2)
+const SIX_CYCLE_CORPUS_FILE_CHARS = 55 * 1024
+const CONSECUTIVE_CORPUS_FILE_CHARS = 60 * 1024
+// Leave headroom for frozen-prefix growth while keeping the complete provider request above the 446.4K trigger boundary.
+const LARGE_TURN_CORPUS_FILE_CHARS = 56 * 1024
+const LARGE_TURN_EXTRA_FILE_CHARS = 8 * 1024
+const CONSECUTIVE_LARGE_TURN_EXTRA_FILE_CHARS = 512
 const CORPUS_USER_CHARS = 120 * 1024
 const CORPUS_SOURCE_PATH = "dist/extension.js.map"
 const CACHE_SCENARIO_SEED_ENV = "DLINE_E2E_CACHE_SCENARIO_SEED"
@@ -181,10 +193,18 @@ async function configureProfiles(dlineDir: string, maxOutputTokens = 60_000): Pr
 	settings.autoCondenseMaxReserveTokens = 30_000
 	settings.autoCondenseMaxContextTokens = AUTO_CONDENSE_MAX_CONTEXT_TOKENS
 	settings.clineWebToolsEnabled = false
-	await writeFile(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, "utf8")
+	settings.enableCheckpointsSetting = false
+
+	const globalStatePath = path.join(dlineDir, "data", "globalState.json")
+	const globalState = JSON.parse(await readFile(globalStatePath, "utf8")) as Record<string, unknown>
+	globalState.vscodeTerminalExecutionMode = "backgroundExec"
+	await Promise.all([
+		writeFile(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, "utf8"),
+		writeFile(globalStatePath, `${JSON.stringify(globalState, null, 2)}\n`, "utf8"),
+	])
 }
 
-async function createPromptResources(workspaceDir: string): Promise<void> {
+async function createPromptResources(workspaceDir: string, mcpUrl: string): Promise<void> {
 	const rulesDirectory = path.join(workspaceDir, ".agents", "rules")
 	const skillDirectory = path.join(workspaceDir, ".agents", "skills", SKILL_NAME)
 	const workflowDirectory = path.join(workspaceDir, ".agents", "workflows")
@@ -195,9 +215,10 @@ async function createPromptResources(workspaceDir: string): Promise<void> {
 		mkdir(workflowDirectory, { recursive: true }),
 		mkdir(mcpDirectory, { recursive: true }),
 	])
-	const [overviewRules, generalRules, architectureRules] = await Promise.all([
-		readFile(path.join(E2ETestHelper.CODEBASE_ROOT_DIR, ".agents", "rules", "cline-overview.md"), "utf8"),
-		readFile(path.join(E2ETestHelper.CODEBASE_ROOT_DIR, ".agents", "rules", "general.md"), "utf8"),
+	const [overviewRules, generalRules, storageRules, architectureRules] = await Promise.all([
+		readFile(path.join(E2ETestHelper.CODEBASE_ROOT_DIR, ".agents", "rules", "dline-overview.md"), "utf8"),
+		readFile(path.join(E2ETestHelper.CODEBASE_ROOT_DIR, ".agents", "rules", "engineering-guide.md"), "utf8"),
+		readFile(path.join(E2ETestHelper.CODEBASE_ROOT_DIR, ".agents", "rules", "storage.md"), "utf8"),
 		readFile(path.join(E2ETestHelper.CODEBASE_ROOT_DIR, "docs", "prompt-architecture.md"), "utf8"),
 	])
 	await Promise.all([
@@ -209,6 +230,7 @@ async function createPromptResources(workspaceDir: string): Promise<void> {
 				"A profile transition may replace conversation history only; it must not replace the frozen system/tool prefix.",
 				overviewRules,
 				generalRules,
+				storageRules,
 				architectureRules,
 			].join("\n\n"),
 			"utf8",
@@ -241,9 +263,8 @@ async function createPromptResources(workspaceDir: string): Promise<void> {
 				{
 					name: MCP_NAME,
 					description: "Cache-prefix E2E MCP catalog marker",
-					type: "stdio",
-					command: process.execPath,
-					args: [path.join(E2ETestHelper.E2E_TESTS_DIR, "fixtures", "workspace-mcp-server.mjs")],
+					type: "streamableHttp",
+					url: mcpUrl,
 				},
 				null,
 				2,
@@ -253,7 +274,11 @@ async function createPromptResources(workspaceDir: string): Promise<void> {
 	])
 }
 
-async function prepareScenario(workspaceDir: string, seed: number): Promise<RandomizedCacheScenario> {
+async function prepareScenario(
+	workspaceDir: string,
+	seed: number,
+	corpusFileChars = CORPUS_FILE_CHARS,
+): Promise<RandomizedCacheScenario> {
 	const destination = path.join(workspaceDir, "cache-prefix-auto-corpus")
 	await mkdir(destination, { recursive: true })
 	const source = await readFile(path.join(E2ETestHelper.CODEBASE_ROOT_DIR, CORPUS_SOURCE_PATH), "utf8")
@@ -276,7 +301,7 @@ async function prepareScenario(workspaceDir: string, seed: number): Promise<Rand
 		{ key: `user:${turnIndex}`, size: CORPUS_USER_CHARS },
 		...Array.from({ length: uniqueFileCount }, (_, fileIndex) => ({
 			key: `file:${turnIndex}:${fileIndex}`,
-			size: CORPUS_FILE_CHARS,
+			size: corpusFileChars,
 		})),
 	])
 	const requiredCharacters = segments.reduce((total, segment) => total + segment.size, 0)
@@ -310,8 +335,8 @@ async function prepareScenario(workspaceDir: string, seed: number): Promise<Rand
 				path.join(workspaceDir, relativePath),
 				[
 					searchToken,
-					`Source: ${CORPUS_SOURCE_PATH}; character range: ${fileStart}-${fileStart + CORPUS_FILE_CHARS}`,
-					source.slice(fileStart, fileStart + CORPUS_FILE_CHARS),
+					`Source: ${CORPUS_SOURCE_PATH}; character range: ${fileStart}-${fileStart + corpusFileChars}`,
+					source.slice(fileStart, fileStart + corpusFileChars),
 				].join("\n"),
 				"utf8",
 			)
@@ -412,7 +437,9 @@ async function selectRuntimeOverrides(sidebar: Frame, step: RuntimeOverrideStep)
 	await expect(thinking).toBeEnabled()
 	if (!(await thinking.textContent())?.includes(step.thinkingLabel)) {
 		await thinking.click()
-		await sidebar.getByRole("option", { name: step.thinkingLabel, exact: true }).click()
+		const option = sidebar.getByRole("option", { name: step.thinkingLabel, exact: true })
+		await expect(option).toBeVisible()
+		await option.press("Enter")
 	}
 	await expect(thinking).toContainText(step.thinkingLabel)
 
@@ -420,7 +447,11 @@ async function selectRuntimeOverrides(sidebar: Frame, step: RuntimeOverrideStep)
 	await expect(serviceTier).toBeEnabled()
 	if ((await serviceTier.getAttribute("data-service-tier-label")) !== step.serviceTierLabel) {
 		await serviceTier.click()
-		await sidebar.getByRole("option", { name: step.serviceTierLabel, exact: true }).click()
+		const option = sidebar
+			.getByRole("listbox", { name: "Task service tier options" })
+			.getByRole("option", { name: step.serviceTierLabel, exact: true })
+		await expect(option).toBeVisible()
+		await option.press("Enter")
 	}
 	await expect(serviceTier).toHaveAttribute("data-service-tier-label", step.serviceTierLabel)
 }
@@ -437,8 +468,8 @@ e2e(
 	async ({ dlineDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
 		e2e.setTimeout(300_000)
 		await configureProfiles(dlineDir, 1_000)
-		await createPromptResources(workspaceDir)
-		const scenario = await prepareScenario(workspaceDir, resolveScenarioSeed())
+		await createPromptResources(workspaceDir, getE2EWorkspaceMcpUrl(server.baseUrl))
+		const scenario = await prepareScenario(workspaceDir, resolveScenarioSeed(), LARGE_TURN_CORPUS_FILE_CHARS)
 		const turn = scenario.turns[1]
 		const extraRead = scenario.turns[2].toolCalls.find(({ name }) => name === "read_file")
 		if (!extraRead) throw new Error("Missing extra randomized real-file read for the large-turn scenario")
@@ -474,6 +505,7 @@ e2e(
 		})
 
 		const summary = `E2E_LARGE_TURN_SUMMARY_${scenario.seedHex} preserves the complete randomized multi-tool round.`
+		const completion = `E2E_LARGE_TURN_COMPLETE_${scenario.seedHex}`
 		const expectedToolResults = largeTurnToolCalls.map((toolCall) => ({
 			callId: toolCall.id,
 			contentIncludes: toolCall.expectedResultIncludes,
@@ -508,6 +540,16 @@ e2e(
 				requireCompleteToolPairing: true,
 				matchRequestContract: true,
 			},
+			{
+				type: "tool",
+				id: `call_large_turn_complete_${scenario.seedHex}`,
+				name: "attempt_completion",
+				arguments: { result: completion },
+				expectedRequestIncludes: [summary],
+				expectedRequestExcludes: [COMPACTION_MARKER, turn.marker],
+				requireCompleteToolPairing: true,
+				matchRequestContract: true,
+			},
 		)
 
 		const app = await openVSCode(workspaceDir)
@@ -516,14 +558,18 @@ e2e(
 			await waitForPromptCatalog(sidebar)
 			await setAutoApproveRead(sidebar)
 			await send(sidebar, turn.userText)
-			await expect.poll(() => server.getRequestCount("openai-compatible-responses"), { timeout: 180_000 }).toBe(2)
+			await expect.poll(() => server.getRequestCount("openai-compatible-responses"), { timeout: 180_000 }).toBe(3)
+			await expect(sidebar.getByText(completion, { exact: true })).toBeVisible({ timeout: 60_000 })
 			const footer = sidebar.getByRole("contentinfo")
-			await expect(footer.getByText("Retry", { exact: true })).toBeVisible({ timeout: 60_000 })
 			await expect(footer.getByText("Start New Task", { exact: true })).toBeVisible({ timeout: 60_000 })
 
 			const requests = server.getMockConsumptions("openai-compatible-responses")
 			const summaryRequest = requests[1]
-			expect(requests.map(({ responseType, toolName }) => toolName ?? responseType)).toEqual(["tools", "summarize_task"])
+			expect(requests.map(({ responseType, toolName }) => toolName ?? responseType)).toEqual([
+				"tools",
+				"summarize_task",
+				"attempt_completion",
+			])
 			expect(summaryRequest).toMatchObject({ responseType: "tool", toolName: "summarize_task" })
 			expect(summaryRequest.contractError).toBeUndefined()
 			expect(summaryRequest.requestToolPairing.complete).toBe(true)
@@ -545,7 +591,7 @@ e2e(
 	async ({ dlineDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
 		e2e.setTimeout(360_000)
 		await configureProfiles(dlineDir, 1_000)
-		await createPromptResources(workspaceDir)
+		await createPromptResources(workspaceDir, getE2EWorkspaceMcpUrl(server.baseUrl))
 		const scenario = await prepareScenario(workspaceDir, resolveScenarioSeed())
 		const historyTurn = scenario.turns[0]
 		const uniqueReadPaths = new Set<string>()
@@ -701,12 +747,310 @@ e2e(
 )
 
 e2e(
+	"OpenAI cache prefix stays stable across consecutive automatic compactions in one large ordinary turn",
+	async ({ dlineDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
+		e2e.setTimeout(420_000)
+		await configureProfiles(dlineDir)
+		await createPromptResources(workspaceDir, getE2EWorkspaceMcpUrl(server.baseUrl))
+		const scenario = await prepareScenario(workspaceDir, resolveScenarioSeed(), CONSECUTIVE_CORPUS_FILE_CHARS)
+		const historyTurn = scenario.turns[0]
+		const largeTurn = scenario.turns[1]
+		const extraReads = scenario.turns[2].toolCalls.filter(({ name }) => name === "read_file").slice(0, 3)
+		if (extraReads.length !== 3) throw new Error("Missing extra randomized real-file reads for consecutive compaction")
+		const extraSources = await Promise.all(
+			extraReads.map((toolCall) => readFile(path.join(workspaceDir, toolCall.arguments.path), "utf8")),
+		)
+		const shortenedExtraPath = path
+			.join("cache-prefix-auto-corpus", `seed-${scenario.seedHex}-consecutive-extra.json`)
+			.replaceAll("\\", "/")
+		await writeFile(
+			path.join(workspaceDir, shortenedExtraPath),
+			extraSources.map((source) => source.slice(0, CONSECUTIVE_LARGE_TURN_EXTRA_FILE_CHARS)).join("\n"),
+			"utf8",
+		)
+		const largeTurnToolCalls = shuffled(
+			[
+				...largeTurn.toolCalls,
+				{
+					...extraReads[0],
+					id: `call_consecutive_extra_read_${scenario.seedHex}_${hashText(shortenedExtraPath).slice(0, 8)}`,
+					arguments: { path: shortenedExtraPath },
+				},
+			],
+			createSeededRandom(scenario.seed ^ 0x5a5a_a5a5),
+		)
+		expect(largeTurnToolCalls.filter(({ name }) => name === "read_file")).toHaveLength(LATER_TURN_READ_CALLS + 1)
+		const historyReady = `E2E_CONSECUTIVE_CACHE_HISTORY_READY_${scenario.seedHex}`
+		const firstSummary = `E2E_CONSECUTIVE_CACHE_SUMMARY_${scenario.seedHex}_1 preserves the first complete randomized turn.`
+		const secondCompactionCarrySummary = `E2E_CONSECUTIVE_CACHE_SUMMARY_${scenario.seedHex}_2_CARRY preserves ${firstSummary} before the large tool turn.`
+		const secondSummary = `E2E_CONSECUTIVE_CACHE_SUMMARY_${scenario.seedHex}_2 preserves ${secondCompactionCarrySummary} and the completed large tool turn.`
+		const finalReady = `E2E_CONSECUTIVE_CACHE_FINAL_READY_${scenario.seedHex}`
+		const historyToolResults = historyTurn.toolCalls.map((toolCall) => ({
+			callId: toolCall.id,
+			contentIncludes: toolCall.expectedResultIncludes,
+		}))
+		const largeToolResults = largeTurnToolCalls.map((toolCall) => ({
+			callId: toolCall.id,
+			contentIncludes: toolCall.expectedResultIncludes,
+		}))
+		const scenarioPath = e2e.info().outputPath("consecutive-cache-compaction-scenario.json")
+		await writeFile(
+			scenarioPath,
+			`${JSON.stringify({ seed: scenario.seed, seedHex: scenario.seedHex, historyTurn, largeTurn, largeTurnToolCalls }, null, 2)}\n`,
+			"utf8",
+		)
+		await e2e.info().attach("consecutive-cache-compaction-scenario.json", {
+			path: scenarioPath,
+			contentType: "application/json",
+		})
+
+		server.resetOpenAiMock()
+		server.enqueueResponses(
+			"openai-compatible-responses",
+			{
+				type: "tools",
+				tools: historyTurn.toolCalls.map((toolCall) => ({
+					id: toolCall.id,
+					name: toolCall.name,
+					arguments: toolCall.arguments,
+				})),
+				expectedRequestIncludes: [historyTurn.marker, RULE_MARKER, SKILL_NAME, WORKFLOW_NAME, MCP_TOOL_NAME],
+				expectedRequestExcludes: [COMPACTION_MARKER],
+				requireCompleteToolPairing: true,
+				matchRequestContract: true,
+			},
+			{
+				type: "tool",
+				id: `call_consecutive_cache_history_ready_${scenario.seedHex}`,
+				name: "qna_respond",
+				arguments: { response: historyReady },
+				usage: { inputTokens: AUTO_COMPACTION_PROVIDER_INPUT_TOKENS, outputTokens: 100 },
+				expectedToolResults: historyToolResults,
+				expectedRequestExcludes: [COMPACTION_MARKER],
+				requireCompleteToolPairing: true,
+				matchRequestContract: true,
+			},
+			{
+				type: "tool",
+				id: `call_consecutive_cache_summary_${scenario.seedHex}_1`,
+				name: "summarize_task",
+				arguments: { context: firstSummary },
+				expectedRequestIncludes: [
+					COMPACTION_MARKER,
+					RULE_MARKER,
+					SKILL_NAME,
+					WORKFLOW_NAME,
+					MCP_TOOL_NAME,
+					historyTurn.marker,
+				],
+				expectedRequestExcludes: [largeTurn.marker],
+				requireCompleteToolPairing: true,
+				matchRequestContract: true,
+			},
+			{
+				type: "tools",
+				tools: largeTurnToolCalls.map((toolCall) => ({
+					id: toolCall.id,
+					name: toolCall.name,
+					arguments: toolCall.arguments,
+				})),
+				expectedRequestIncludes: [largeTurn.marker, firstSummary, RULE_MARKER, SKILL_NAME, WORKFLOW_NAME, MCP_TOOL_NAME],
+				expectedRequestExcludes: [COMPACTION_MARKER],
+				requireCompleteToolPairing: true,
+				matchRequestContract: true,
+			},
+			{
+				type: "tool",
+				id: `call_consecutive_cache_summary_${scenario.seedHex}_2_carry`,
+				name: "summarize_task",
+				arguments: { context: secondCompactionCarrySummary },
+				expectedRequestIncludes: [COMPACTION_MARKER, RULE_MARKER, SKILL_NAME, WORKFLOW_NAME, MCP_TOOL_NAME, firstSummary],
+				expectedRequestExcludes: [largeTurn.marker],
+				requireCompleteToolPairing: true,
+				matchRequestContract: true,
+			},
+			{
+				type: "tool",
+				id: `call_consecutive_cache_summary_${scenario.seedHex}_2`,
+				name: "summarize_task",
+				arguments: { context: secondSummary },
+				expectedRequestIncludes: [
+					COMPACTION_MARKER,
+					RULE_MARKER,
+					SKILL_NAME,
+					WORKFLOW_NAME,
+					MCP_TOOL_NAME,
+					firstSummary,
+					largeTurn.marker,
+					...largeTurnToolCalls.map(({ expectedResultIncludes }) => expectedResultIncludes),
+				],
+				expectedToolResults: largeToolResults,
+				requireCompleteToolPairing: true,
+				matchRequestContract: true,
+			},
+			{
+				type: "tool",
+				id: `call_consecutive_cache_final_ready_${scenario.seedHex}`,
+				name: "qna_respond",
+				arguments: { response: finalReady },
+				expectedRequestIncludes: [secondSummary],
+				expectedRequestExcludes: [COMPACTION_MARKER],
+				requireCompleteToolPairing: true,
+				matchRequestContract: true,
+			},
+		)
+
+		const app = await openVSCode(workspaceDir)
+		try {
+			const sidebar = await openSidebar(app, helper)
+			await waitForPromptCatalog(sidebar)
+			await setAutoApproveRead(sidebar)
+			await send(sidebar, historyTurn.userText)
+			await expect(sidebar.getByText(historyReady, { exact: true })).toBeVisible({ timeout: 180_000 })
+			await send(sidebar, largeTurn.userText)
+			let terminalState: "pending" | "ready" | "compaction_failure" | "error_retry" = "pending"
+			await expect
+				.poll(
+					async () => {
+						if (await sidebar.getByText(finalReady, { exact: true }).isVisible()) terminalState = "ready"
+						else if ((await sidebar.getByTestId("compaction-failure").count()) > 0)
+							terminalState = "compaction_failure"
+						else if ((await sidebar.getByTestId("error-retry-box").count()) > 0) terminalState = "error_retry"
+						return terminalState
+					},
+					{ timeout: 180_000 },
+				)
+				.not.toBe("pending")
+
+			const requests = server.getMockConsumptions("openai-compatible-responses")
+			const compactDiagnostics = requests.map((request, requestIndex) => {
+				const requestText = JSON.stringify(request.requestBody)
+				return {
+					requestIndex,
+					response: request.toolName ?? request.responseType,
+					contractError: request.contractError,
+					isCompaction: requestText.includes(COMPACTION_MARKER),
+					containsHistoryTurn: requestText.includes(historyTurn.marker),
+					containsLargeTurn: requestText.includes(largeTurn.marker),
+					containsFirstSummary: requestText.includes(firstSummary),
+					containsSecondSummary: requestText.includes(secondSummary),
+					toolPairing: request.requestToolPairing,
+					toolResultCount: request.requestToolResults.length,
+					totalInputTokens: request.cacheDiagnostic?.totalInputTokens,
+					stablePrefixTokens: request.cacheDiagnostic?.stablePrefixTokens,
+				}
+			})
+			const compactDiagnosticsPath = e2e.info().outputPath("consecutive-cache-compaction-requests.json")
+			await writeFile(
+				compactDiagnosticsPath,
+				`${JSON.stringify(
+					{
+						terminalState,
+						expectedTrigger: {
+							historyProviderInputTokens: AUTO_COMPACTION_PROVIDER_INPUT_TOKENS,
+							minimumProjectedUsageTokens: CONSECUTIVE_COMPACTION_TRIGGER_TOKENS,
+						},
+						requests: compactDiagnostics,
+					},
+					null,
+					2,
+				)}\n`,
+				"utf8",
+			)
+			await e2e.info().attach("consecutive-cache-compaction-requests.json", {
+				path: compactDiagnosticsPath,
+				contentType: "application/json",
+			})
+			expect(terminalState).toBe("ready")
+			expect([6, 7]).toContain(requests.length)
+			const requestSequence = requests.map(({ responseType, toolName }) => toolName ?? responseType)
+			expect(requestSequence.slice(0, 4)).toEqual(["tools", "qna_respond", "summarize_task", "tools"])
+			expect(requestSequence.slice(4, -1).every((response) => response === "summarize_task")).toBe(true)
+			expect([1, 2]).toContain(requestSequence.slice(4, -1).length)
+			expect(requestSequence.at(-1)).toBe("qna_respond")
+			expect(requests.every(({ contractError }) => contractError === undefined)).toBe(true)
+			expect(requests.every(({ requestToolPairing }) => requestToolPairing.complete)).toBe(true)
+			const summaryRequests = requests.filter(({ toolName }) => toolName === "summarize_task")
+			expect([2, 3]).toContain(summaryRequests.length)
+			const firstSummaryRequest = summaryRequests[0]
+			const secondSummaryRequest = summaryRequests.at(-1)
+			const finalRequest = requests.at(-1)
+			if (!firstSummaryRequest || !secondSummaryRequest || !finalRequest) {
+				throw new Error("Missing consecutive compaction request sequence")
+			}
+			const firstSummaryRequestText = JSON.stringify(firstSummaryRequest.requestBody)
+			const secondSummaryRequestText = JSON.stringify(secondSummaryRequest.requestBody)
+			const finalRequestText = JSON.stringify(finalRequest.requestBody)
+			expect(firstSummaryRequestText).toContain(historyTurn.marker)
+			expect(firstSummaryRequestText).not.toContain(largeTurn.marker)
+			if (summaryRequests.length === 3) {
+				const carryRequestText = JSON.stringify(summaryRequests[1].requestBody)
+				expect(carryRequestText).toContain(firstSummary)
+				expect(carryRequestText).not.toContain(largeTurn.marker)
+			}
+			expect(secondSummaryRequestText).toContain(firstSummary)
+			expect(secondSummaryRequestText).toContain(largeTurn.marker)
+			for (const marker of largeTurnToolCalls.map(({ expectedResultIncludes }) => expectedResultIncludes)) {
+				expect(secondSummaryRequestText).toContain(marker)
+			}
+			expect(secondSummaryRequest.requestToolResults).toEqual(
+				expect.arrayContaining(
+					largeTurnToolCalls.map((toolCall) =>
+						expect.objectContaining({
+							callId: toolCall.id,
+							content: expect.stringContaining(toolCall.expectedResultIncludes),
+						}),
+					),
+				),
+			)
+			expect(finalRequestText).toContain(secondSummary)
+			expect(finalRequestText).not.toContain(COMPACTION_MARKER)
+
+			const diagnostics = requests.map(({ cacheDiagnostic }) => {
+				if (!cacheDiagnostic) throw new Error("Missing consecutive-compaction OpenAI cache diagnostic")
+				return cacheDiagnostic
+			})
+			const baseline = diagnostics[0]
+			const historyProviderDiagnostic = diagnostics[1]
+			const baselineRequestBody = requests[0].requestBody as { prompt_cache_key?: string }
+			expect(baselineRequestBody.prompt_cache_key).toBeTruthy()
+			expect(baseline.stablePrefixTokens).toBeGreaterThanOrEqual(30_000)
+			for (const [requestIndex, diagnostic] of diagnostics.entries()) {
+				const requestBody = requests[requestIndex].requestBody as { prompt_cache_key?: string }
+				expect(requestBody.prompt_cache_key).toBe(baselineRequestBody.prompt_cache_key)
+				if (requestIndex > 0) {
+					expect(diagnostic.prefixHashMatched).toBe(true)
+					expect(diagnostic.actualPrefixHash).toBe(baseline.actualPrefixHash)
+					expect(diagnostic.stablePrefixTokens).toBe(baseline.stablePrefixTokens)
+					expect(diagnostic.warnings.map(({ code }) => code)).not.toContain("prefix_hash_mismatch")
+				}
+			}
+			expect(historyProviderDiagnostic.totalInputTokens).toBeGreaterThanOrEqual(CONSECUTIVE_COMPACTION_TRIGGER_TOKENS)
+			expect(historyProviderDiagnostic.totalInputTokens).toBeLessThan(PROVIDER_CONTEXT_WINDOW)
+			for (const summaryRequest of [firstSummaryRequest, secondSummaryRequest]) {
+				if (!summaryRequest.cacheDiagnostic) throw new Error("Missing consecutive summary cache diagnostic")
+				expect(summaryRequest.cacheDiagnostic.totalInputTokens).toBeGreaterThanOrEqual(MIN_NEAR_TRIGGER_INPUT_TOKENS)
+				expect(summaryRequest.cacheDiagnostic.totalInputTokens).toBeLessThanOrEqual(
+					CONSECUTIVE_COMPACTION_MAX_TOTAL_INPUT_TOKENS,
+				)
+				expect(summaryRequest.cacheDiagnostic.totalInputTokens).toBeLessThan(PROVIDER_CONTEXT_WINDOW)
+			}
+			await expect(sidebar.getByTestId("error-retry-box")).toHaveCount(0)
+			await expect(sidebar.getByTestId("compaction-failure")).toHaveCount(0)
+			await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
+		} finally {
+			await app.close()
+		}
+	},
+)
+
+e2e(
 	"OpenAI cache prefix stays stable across six randomized automatic compaction operations at 95 percent",
 	async ({ dlineDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
 		e2e.setTimeout(720_000)
 		await configureProfiles(dlineDir)
-		await createPromptResources(workspaceDir)
-		const scenario = await prepareScenario(workspaceDir, resolveScenarioSeed())
+		await createPromptResources(workspaceDir, getE2EWorkspaceMcpUrl(server.baseUrl))
+		const scenario = await prepareScenario(workspaceDir, resolveScenarioSeed(), SIX_CYCLE_CORPUS_FILE_CHARS)
 		const { turns, runtimeOverrides } = scenario
 		expect(turns).toHaveLength(ORDINARY_TURN_COUNT)
 		expect(runtimeOverrides).toHaveLength(ORDINARY_TURN_COUNT)
@@ -774,6 +1118,7 @@ e2e(
 					id: `call_auto_cache_${scenario.seedHex}_turn_${turnIndex + 1}_ready`,
 					name: "qna_respond",
 					arguments: { response: readyMarker(scenario.seedHex, turnIndex + 1) },
+					usage: { inputTokens: AUTO_COMPACTION_PROVIDER_INPUT_TOKENS, outputTokens: 100 },
 					expectedToolResults: turn.toolCalls.map((toolCall) => ({
 						callId: toolCall.id,
 						contentIncludes: toolCall.expectedResultIncludes,

@@ -11,7 +11,9 @@ export interface OpenAIClientFactoryOptions {
 
 function getAzureAudienceScope(baseUrl?: string): string {
 	const url = baseUrl?.toLowerCase() ?? ""
-	return url.includes("azure.us") ? "https://cognitiveservices.azure.us/.default" : "https://cognitiveservices.azure.com/.default"
+	return url.includes("azure.us")
+		? "https://cognitiveservices.azure.us/.default"
+		: "https://cognitiveservices.azure.com/.default"
 }
 
 /** Create an OpenAI SDK client using the complete Profile authentication and transport contract. */

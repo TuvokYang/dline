@@ -1,5 +1,6 @@
 import { ApiFormat } from "@shared/proto/dline/models/metadata"
 import * as assert from "assert"
+import type { ClineAccountUserInfo } from "@/services/auth/AuthService"
 import type { ITelemetryProvider, TelemetryProperties, TelemetrySettings } from "../providers/ITelemetryProvider"
 import { TelemetryMetadata, TelemetryService } from "../TelemetryService"
 
@@ -238,7 +239,14 @@ describe("TelemetryService metrics", () => {
 	it("captureConversationTurnEvent emits counters with cache and cost", () => {
 		const provider = new FakeProvider()
 		const service = createTelemetryService(provider)
-		service.identifyAccount({ id: "user-1" } as any)
+		const account: ClineAccountUserInfo = {
+			id: "user-1",
+			createdAt: "1970-01-01T00:00:00.000Z",
+			displayName: "Test User",
+			email: "test@example.com",
+			organizations: [],
+		}
+		service.identifyAccount(account)
 
 		service.captureConversationTurnEvent("task-2", "openai", "gpt-4", "assistant", "plan", {
 			tokensIn: 150,

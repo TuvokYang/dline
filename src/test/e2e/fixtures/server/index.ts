@@ -12,6 +12,7 @@ import {
 } from "./api"
 import { ClineDataMock } from "./data"
 import { type MockCacheDiagnostic, type MockCacheWarning, OpenAiCacheDiagnostics } from "./openai-cache-diagnostics"
+import { E2E_WORKSPACE_MCP_PATH, handleE2EWorkspaceMcpRequest } from "./workspace-mcp"
 
 const E2E_API_SERVER_HOST = "127.0.0.1"
 
@@ -973,6 +974,7 @@ export class ClineApiServerMock {
 				!path.startsWith("/.test/") &&
 				!path.startsWith("/mock/searxng/") &&
 				!path.startsWith("/mock/web-fetch/") &&
+				path !== E2E_WORKSPACE_MCP_PATH &&
 				path !== "/health" &&
 				path !== "/api/v1/auth/token"
 
@@ -1005,10 +1007,23 @@ export class ClineApiServerMock {
 				const mockModelListTarget = ClineApiServerMock.matchMockModelListRoute(path, method)
 				const mockOpenAIImageRoute =
 					method === "POST" && path === `${E2E_OPENAI_IMAGE_ROUTE.basePath}${E2E_OPENAI_IMAGE_ROUTE.endpoint}`
+				const workspaceMcpRoute = path === E2E_WORKSPACE_MCP_PATH
 				const routeMatch = ClineApiServerMock.matchRoute(path, method)
 
-				if (!mockProviderRoute && !mockModelListTarget && !mockOpenAIImageRoute && !routeMatch.matched) {
+				if (
+					!mockProviderRoute &&
+					!mockModelListTarget &&
+					!mockOpenAIImageRoute &&
+					!workspaceMcpRoute &&
+					!routeMatch.matched
+				) {
 					return sendJson({ error: "Not found" }, 404)
+				}
+
+				if (workspaceMcpRoute) {
+					const body = method === "POST" ? await readBody() : ""
+					await handleE2EWorkspaceMcpRequest(req, res, body ? JSON.parse(body) : undefined)
+					return
 				}
 
 				const { baseRoute, endpoint, params = {} } = routeMatch
@@ -1079,7 +1094,10 @@ export class ClineApiServerMock {
 					}
 					const response = controller.mockOpenAIImageResponses.shift()
 					if (!response) {
-						return sendJson({ error: { message: "No scripted E2E image response remains", code: "e2e_image_queue_exhausted" } }, 500)
+						return sendJson(
+							{ error: { message: "No scripted E2E image response remains", code: "e2e_image_queue_exhausted" } },
+							500,
+						)
 					}
 					controller.mockOpenAIImageConsumptions.push({
 						receivedAtMs: Date.now(),
@@ -1091,7 +1109,12 @@ export class ClineApiServerMock {
 					})
 					return sendJson({
 						created: Math.floor(Date.now() / 1_000),
-						data: [{ b64_json: response.b64Json, ...(response.revisedPrompt ? { revised_prompt: response.revisedPrompt } : {}) }],
+						data: [
+							{
+								b64_json: response.b64Json,
+								...(response.revisedPrompt ? { revised_prompt: response.revisedPrompt } : {}),
+							},
+						],
 					})
 				}
 
@@ -1464,7 +1487,9 @@ export class ClineApiServerMock {
 											type: "image_generation_call",
 											status: "completed",
 											result: scriptedResponse.b64Json,
-											...(scriptedResponse.revisedPrompt ? { revised_prompt: scriptedResponse.revisedPrompt } : {}),
+											...(scriptedResponse.revisedPrompt
+												? { revised_prompt: scriptedResponse.revisedPrompt }
+												: {}),
 										},
 									]
 								: []
@@ -1626,7 +1651,9 @@ export class ClineApiServerMock {
 								writeSse({ type, item_id: hostedImageOutputItem.id, output_index: outputIndex }, type)
 							}
 							if (scriptedResponse.type === "hosted-image-generation") {
-								for (const [partialImageIndex, partialImageB64] of (scriptedResponse.partialImages ?? []).entries()) {
+								for (const [partialImageIndex, partialImageB64] of (
+									scriptedResponse.partialImages ?? []
+								).entries()) {
 									const type = "response.image_generation_call.partial_image"
 									writeSse(
 										{
@@ -1700,7 +1727,10 @@ export class ClineApiServerMock {
 							if (scriptedResponse.afterToolCompletionReasoning) {
 								if (!(await waitForOpenConnection(scriptedResponse.afterToolCompletionDelayMs))) return
 								const reasoningOutputIndex =
-									outputOffset + hostedSearchOutputItems.length + hostedImageOutputItems.length + toolOutputItems.length
+									outputOffset +
+									hostedSearchOutputItems.length +
+									hostedImageOutputItems.length +
+									toolOutputItems.length
 								const postToolReasoningItem = {
 									id: `reasoning_after_tool_${generationId}`,
 									type: "reasoning",

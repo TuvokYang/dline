@@ -132,15 +132,17 @@ async function sendTask(frame: Frame, text: string): Promise<void> {
 
 async function submitNewTaskFeedback(frame: Frame, text: string, action: "button" | "enter"): Promise<void> {
 	const input = frame.getByTestId("chat-input")
+	const regenerateContext = frame.locator('vscode-button[aria-label="Regenerate Context"]')
 	await expect(input).toBeEnabled({ timeout: 60_000 })
+	await expect(regenerateContext).toBeEnabled({ timeout: 60_000 })
 	await input.fill(text)
 	if (action === "button") {
-		await frame.locator('vscode-button[aria-label="Regenerate Context"]').click()
+		await regenerateContext.click()
 	} else {
 		await input.press("Enter")
 	}
 	await expect(input).toHaveValue("")
-	await expect(frame.locator("span.ph-no-capture:not(button span)").filter({ hasText: text })).toHaveCount(1)
+	await expect(frame.getByTestId(/^(?:user|queued)-input-markdown-scroll$/).filter({ hasText: text })).toHaveCount(1)
 }
 
 async function expectNoDecisionButtons(frame: Frame): Promise<void> {

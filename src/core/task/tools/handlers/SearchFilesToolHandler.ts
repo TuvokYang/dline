@@ -165,6 +165,30 @@ export class SearchFilesToolHandler implements IFullyManagedTool {
 		regex: string,
 		filePattern: string | undefined,
 	) {
+		// A `.agentignore` restriction is a permission the workspace stated, so
+		// naming the path directly must not widen it. Refusing here — rather
+		// than returning an empty result — keeps the boundary visible instead of
+		// inviting a shell command that would bypass it.
+		//
+		// The capability is probed rather than assumed: a controller that cannot
+		// report exclusions leaves the decision to the search itself, which still
+		// applies the full scan rules.
+		const ignoreController = config.services.ignoreController
+		const restricted =
+			typeof ignoreController?.describeScanExclusion === "function" &&
+			ignoreController.describeScanExclusion(absolutePath) === "agent-restricted"
+		if (restricted) {
+			return {
+				workspaceName,
+				workspaceResults: formatResponse.searchAgentRestricted(
+					getReadablePath(workspaceRoot || config.cwd, absolutePath),
+				),
+				resultCount: 0,
+				stats: { truncated: false } satisfies SearchStats,
+				success: true,
+			}
+		}
+
 		try {
 			// Use workspace root for relative path calculation, fallback to cwd
 			const basePathForRelative = workspaceRoot || config.cwd

@@ -71,6 +71,30 @@ describe("TaskSnapshot v2 schema", () => {
 		expect(hydrateSnapshot(snapshot)).toEqual(state)
 	})
 
+	it("round-trips the explicit Profile recovery input admission", () => {
+		const state = createTaskRuntimeState({
+			taskId: "task-1",
+			phase: TaskPhase.BETWEEN_TURNS,
+			revision: 8,
+			anchor: { apiIndex: 4 },
+		})
+		state.ordinaryInput = { kind: "profile_recovery" }
+
+		const snapshot = createSnapshot(state, 200)
+		const hydrated = hydrateSnapshot(snapshot)
+
+		expect(snapshot.ordinaryInput).toEqual({ kind: "profile_recovery" })
+		expect(hydrated.ordinaryInput).toEqual({ kind: "profile_recovery" })
+		expect(hydrated.ordinaryInput).not.toBe(snapshot.ordinaryInput)
+	})
+
+	it("rejects an ordinary input admission outside the between-turns recovery boundary", () => {
+		const snapshot = createSnapshot(runtimeState(), 200)
+		snapshot.ordinaryInput = { kind: "profile_recovery" }
+
+		expect(() => hydrateSnapshot(snapshot)).toThrowError("invalid_ordinary_input_admission")
+	})
+
 	it("ignores a legacy persisted Profile validity error during hydration", () => {
 		const snapshot = createSnapshot(runtimeState(), 200)
 		snapshot.profileInvalid = {

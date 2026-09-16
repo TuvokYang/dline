@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto"
-import { redactDiagnosticString } from "@/shared/services/logging/safe-diagnostic-value"
-import { TELEMETRY_MASK_VALUE } from "./content-policy"
+import { TELEMETRY_MASK_VALUE } from "../service/pipeline-port"
+import { readErrorIdentifier } from "./exception-attributes"
 import type { NormalizedRuntimeError } from "./types"
 
 /**
@@ -8,26 +8,12 @@ import type { NormalizedRuntimeError } from "./types"
  * stable enough to group by.
  *
  * Producers catch values from HTTP clients, SDKs, and the platform, so this
- * accepts `unknown`. The fingerprint deliberately excludes task ids, ports,
- * temporary paths, and numbers, because including them would make every
- * occurrence of the same defect look unique.
+ * accepts `unknown`. Fingerprint v2 uses only bounded type/code/status and
+ * source file, never error prose or user content. Exact source lines remain
+ * available separately without fragmenting grouping when code moves.
  */
 
-const MAX_MESSAGE_LENGTH = 200
 const MAX_CAUSE_DEPTH = 3
-
-/**
- * Sources for the volatile substrings removed before fingerprinting.
- *
- * These are pattern sources rather than `RegExp` instances: a shared global
- * regex carries a mutable `lastIndex`, so reusing one across calls would leave
- * later matches unmasked and give two occurrences of one defect different
- * fingerprints.
- */
-const VOLATILE_PATTERN_SOURCES: readonly string[] = [
-	"\\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\b", // uuid
-	"\\d+", // ids, durations, ports, counts
-]
 
 interface ErrorLikeFields {
 	readonly name?: unknown
@@ -37,19 +23,20 @@ interface ErrorLikeFields {
 	readonly statusCode?: unknown
 	readonly stack?: unknown
 	readonly cause?: unknown
+	readonly _error?: unknown
+	readonly response?: unknown
 }
 
 function readString(value: unknown): string | undefined {
 	return typeof value === "string" && value.length > 0 ? value : undefined
 }
 
-function readNumber(value: unknown): number | undefined {
-	return typeof value === "number" && Number.isFinite(value) ? value : undefined
+function readStatus(value: unknown): number | undefined {
+	return typeof value === "number" && Number.isInteger(value) && value >= 100 && value <= 599 ? value : undefined
 }
 
-function truncate(message: string): string {
-	const redacted = redactDiagnosticString(message)
-	return redacted.length <= MAX_MESSAGE_LENGTH ? redacted : `${redacted.slice(0, MAX_MESSAGE_LENGTH)}…`
+function errorFields(value: unknown): ErrorLikeFields {
+	return value !== null && typeof value === "object" ? value : {}
 }
 
 /**
@@ -72,51 +59,35 @@ function extractSourceFrame(stack: string | undefined): string | undefined {
 	return undefined
 }
 
-/** Mask the parts of a message that change between occurrences. */
-function stripVolatile(value: string): string {
-	return VOLATILE_PATTERN_SOURCES.reduce((current, source) => current.replace(new RegExp(source, "gi"), "*"), value)
-}
-
-/**
- * Build a grouping key from the fields that stay constant across occurrences.
- *
- * The message is included with volatile substrings masked, because two
- * failures of the same class often differ only by a path or an id.
- *
- * Only the file part of the frame participates. Including the line number
- * would split one defect's history every time surrounding code shifts, which
- * defeats the purpose of grouping; the exact line stays available on
- * `sourceFrame` for navigation.
- */
-function buildFingerprint(name: string, code: string | undefined, message: string, sourceFrame: string | undefined): string {
+function buildFingerprint(name: string, code?: string, status?: number, sourceFrame?: string): string {
 	const sourceFile = sourceFrame?.replace(/:\d+$/, "")
-	const groupingMaterial = [name, code ?? "-", stripVolatile(message), sourceFile ?? "-"].join("|")
+	const groupingMaterial = ["v2", name, code ?? "-", status ?? "-", sourceFile ?? "-"].join("|")
 	return createHash("sha256").update(groupingMaterial).digest("hex").slice(0, 16)
 }
 
 export function normalizeRuntimeError(value: unknown, depth = 0): NormalizedRuntimeError {
 	if (typeof value === "string") {
-		const fingerprintMessage = truncate(value)
 		return {
 			name: "Error",
 			message: TELEMETRY_MASK_VALUE,
-			fingerprint: buildFingerprint("Error", undefined, fingerprintMessage, undefined),
+			fingerprint: buildFingerprint("Error"),
 		}
 	}
 	if (value === null || typeof value !== "object") {
-		const fingerprintMessage = truncate(String(value))
 		return {
 			name: "NonError",
 			message: TELEMETRY_MASK_VALUE,
-			fingerprint: buildFingerprint("NonError", undefined, fingerprintMessage, undefined),
+			fingerprint: buildFingerprint("NonError"),
 		}
 	}
 
-	const fields = value as ErrorLikeFields
-	const name = readString(fields.name) ?? (value instanceof Error ? value.constructor.name : "Error")
-	const fingerprintMessage = truncate(readString(fields.message) ?? "")
-	const code = readString(fields.code)
-	const status = readNumber(fields.status) ?? readNumber(fields.statusCode)
+	const fields = errorFields(value)
+	const wrapped = errorFields(fields._error)
+	const response = errorFields(fields.response)
+	const name = readErrorIdentifier(fields.name) ?? "Error"
+	const code = readErrorIdentifier(fields.code) ?? readErrorIdentifier(wrapped.code)
+	const status =
+		readStatus(fields.status) ?? readStatus(fields.statusCode) ?? readStatus(wrapped.status) ?? readStatus(response.status)
 	const sourceFrame = extractSourceFrame(readString(fields.stack))
 
 	const cause =
@@ -128,7 +99,7 @@ export function normalizeRuntimeError(value: unknown, depth = 0): NormalizedRunt
 		code,
 		status,
 		sourceFrame,
-		fingerprint: buildFingerprint(name, code, fingerprintMessage, sourceFrame),
+		fingerprint: buildFingerprint(name, code, status, sourceFrame),
 		cause,
 	}
 }

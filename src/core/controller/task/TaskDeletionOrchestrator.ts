@@ -1,12 +1,14 @@
-import path from "node:path"
-import fs from "fs/promises"
+import fs from "node:fs/promises"
 import { OrchestratorController } from "@/core/orchestrator/OrchestratorController"
-import { GlobalFileNames, getDlineCheckpointsDir, getDlineTasksDir } from "@/core/storage/disk"
+import { getDlineCheckpointsDir } from "@/core/storage/disk"
 import { WebviewProviderRegistry } from "@/core/webview/WebviewProviderRegistry"
 import { Logger } from "@/shared/services/Logger"
-import { fileExistsAtPath } from "../../../utils/fs"
 import type { TaskLockService } from "../../locks/TaskLockService"
 import type { Controller } from ".."
+
+const TASK_DIRECTORY_DELETE_MAX_ATTEMPTS = 5
+const TASK_DIRECTORY_DELETE_RETRY_DELAY_MS = 100
+const RETRYABLE_TASK_DIRECTORY_DELETE_CODES = new Set(["EBUSY", "EPERM", "EACCES", "ENOTEMPTY"])
 
 /**
  * Result of deleting a single task.
@@ -81,8 +83,8 @@ export class TaskDeletionOrchestrator {
 	 *   1. Check lock
 	 *   2. Clear active task if it matches
 	 *   3. Remove from state (handles zombie tasks gracefully)
-	 *   4. Delete files and empty directory
-	 *   5. If no tasks remain, clean up global directories
+	 *   4. Delete the task-owned directory
+	 *   5. If no tasks remain, clean up checkpoints
 	 */
 	async deleteSingle(taskId: string): Promise<DeleteSingleResult> {
 		// Phase 1: Lock check
@@ -117,32 +119,9 @@ export class TaskDeletionOrchestrator {
 			// Phase 4: Remove from state
 			const updatedTaskHistory = await this.controller.deleteTaskFromState(taskId)
 
-			// Phase 5: Delete files
-			const taskDatabasePath = path.join(taskPaths.taskDirPath, GlobalFileNames.taskDatabase(taskId))
-			const filePaths = [
-				taskPaths.apiConversationHistoryFilePath,
-				taskPaths.uiMessagesFilePath,
-				taskPaths.contextHistoryFilePath,
-				taskPaths.taskMetadataFilePath,
-				path.join(taskPaths.taskDirPath, GlobalFileNames.taskActivities),
-				path.join(taskPaths.taskDirPath, GlobalFileNames.taskApiRateMetrics),
-				taskDatabasePath,
-				`${taskDatabasePath}-wal`,
-				`${taskDatabasePath}-shm`,
-			]
-			for (const fp of filePaths) {
-				try {
-					await fs.rm(fp, { force: true })
-				} catch {
-					/* already gone */
-				}
-			}
-
-			try {
-				await fs.rmdir(taskPaths.taskDirPath)
-			} catch {
-				/* not empty */
-			}
+			// Phase 5: Delete the complete task-owned directory. This includes
+			// settings, snapshots, artifacts, SQLite sidecars, and future task files.
+			await this.removeTaskDirectory(taskPaths.taskDirPath)
 
 			// Phase 5b: Release file ownership in the global checkpoint registry.
 			// Covers non-active tasks where clearTask() (which normally handles
@@ -154,16 +133,11 @@ export class TaskDeletionOrchestrator {
 				// Best-effort: registry cleanup failure must not block deletion
 			}
 
-			// Phase 6: Global cleanup
+			// Phase 6: Clean up checkpoints when no tasks remain. The tasks root
+			// must survive because TaskHistory keeps tasks/taskHistory.db open.
 			if (updatedTaskHistory.length === 0) {
-				const tasksDir = await getDlineTasksDir()
 				const checkpointsDir = await getDlineCheckpointsDir()
-				if (await fileExistsAtPath(tasksDir)) {
-					await fs.rm(tasksDir, { recursive: true, force: true })
-				}
-				if (await fileExistsAtPath(checkpointsDir)) {
-					await fs.rm(checkpointsDir, { recursive: true, force: true })
-				}
+				await fs.rm(checkpointsDir, { recursive: true, force: true })
 			}
 
 			return { success: true, taskId, skippedLocked: false }
@@ -172,6 +146,39 @@ export class TaskDeletionOrchestrator {
 			Logger.error(`[TaskDeletion] Failed to delete ${taskId}: ${msg}`)
 			return { success: false, taskId, skippedLocked: false, error: msg }
 		}
+	}
+
+	/**
+	 * Remove a task-owned directory, retrying transient Windows filesystem locks.
+	 */
+	private async removeTaskDirectory(taskDirPath: string): Promise<void> {
+		for (let attempt = 1; attempt <= TASK_DIRECTORY_DELETE_MAX_ATTEMPTS; attempt++) {
+			try {
+				await fs.rm(taskDirPath, { recursive: true, force: true })
+				return
+			} catch (error) {
+				const code = this.getFilesystemErrorCode(error)
+				const shouldRetry =
+					code !== undefined &&
+					RETRYABLE_TASK_DIRECTORY_DELETE_CODES.has(code) &&
+					attempt < TASK_DIRECTORY_DELETE_MAX_ATTEMPTS
+				if (!shouldRetry) {
+					throw error
+				}
+
+				const delayMs = TASK_DIRECTORY_DELETE_RETRY_DELAY_MS * attempt
+				Logger.debug(`[TaskDeletion] Retrying directory removal for ${taskDirPath} after ${code} (${delayMs}ms)`)
+				await new Promise<void>((resolve) => setTimeout(resolve, delayMs))
+			}
+		}
+	}
+
+	private getFilesystemErrorCode(error: unknown): string | undefined {
+		if (typeof error !== "object" || error === null || !("code" in error)) {
+			return undefined
+		}
+		const code = (error as { code?: unknown }).code
+		return typeof code === "string" ? code : undefined
 	}
 
 	/**

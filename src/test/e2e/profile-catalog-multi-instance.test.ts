@@ -170,6 +170,11 @@ e2e(
 			const instanceA = await launcher.launch("profile-sort-instance-a")
 			const instanceB = await launcher.launch("profile-sort-instance-b")
 			await Promise.all([openApiSettings(instanceA), openApiSettings(instanceB)])
+			await Promise.all(
+				[instanceA, instanceB].map((surface) =>
+					expect(surface.sidebar.getByRole("button", { name: /^Reorder / }).first()).toBeVisible({ timeout: 30_000 }),
+				),
+			)
 
 			const initialProfiles = await readProfiles(dlineDir)
 			const [activeProfile, overProfile] = initialProfiles
@@ -183,6 +188,7 @@ e2e(
 			await dragHandle.press("Space")
 			await expect(dragHandle).toHaveAttribute("aria-pressed", "true")
 			await dragHandle.press("ArrowDown")
+			await expect(instanceA.sidebar.getByRole("status").filter({ hasText: overProfile.id })).toHaveCount(1)
 			await dragHandle.press("Space")
 
 			await expect

@@ -471,6 +471,94 @@ describe("InputSection deferred task submission", () => {
 		expect(onEnqueue).toHaveBeenCalledWith({ text: "captured", images: ["image"], files: ["file"] })
 	})
 
+	it("allows a successor interaction while the previous submission is still settling", async () => {
+		let resolveFirstSubmit!: () => void
+		let resolveSecondSubmit!: () => void
+		const onSubmit = vi
+			.fn<(draft: InteractionDraft) => Promise<undefined>>()
+			.mockImplementationOnce(
+				() =>
+					new Promise<undefined>((resolve) => {
+						resolveFirstSubmit = () => resolve(undefined)
+					}),
+			)
+			.mockImplementationOnce(
+				() =>
+					new Promise<undefined>((resolve) => {
+						resolveSecondSubmit = () => resolve(undefined)
+					}),
+			)
+			.mockResolvedValue(undefined)
+		const first = props(draft("first"))
+		const { rerender } = render(
+			<InputSection
+				{...first}
+				enabled={true}
+				onSubmit={onSubmit}
+				submissionIdentity="interaction-1"
+				submissionScope="task-1"
+			/>,
+		)
+		const submit = screen.getByRole("button", { name: "Submit" })
+
+		fireEvent.click(submit)
+		fireEvent.click(submit)
+		await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce())
+
+		const second = props({ ...draft("second"), ownerRevision: 2 })
+		rerender(
+			<InputSection
+				{...second}
+				enabled={true}
+				onSubmit={onSubmit}
+				submissionIdentity="interaction-2"
+				submissionScope="task-1"
+			/>,
+		)
+		fireEvent.click(submit)
+		fireEvent.click(submit)
+		await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(2))
+
+		resolveFirstSubmit()
+		await settleEffects()
+		fireEvent.click(submit)
+		expect(onSubmit).toHaveBeenCalledTimes(2)
+
+		resolveSecondSubmit()
+		await settleEffects()
+		fireEvent.click(submit)
+		await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(3))
+	})
+
+	it("ignores a duplicate direct submission until the first one settles", async () => {
+		mocks.flushPendingTaskSettingsRequests.mockClear()
+		let resolveFirstSubmit!: () => void
+		const onSubmit = vi
+			.fn<(draft: InteractionDraft) => Promise<undefined>>()
+			.mockImplementationOnce(
+				() =>
+					new Promise<undefined>((resolve) => {
+						resolveFirstSubmit = () => resolve(undefined)
+					}),
+			)
+			.mockResolvedValue(undefined)
+		const current = props(draft("ready"))
+		render(<InputSection {...current} enabled={true} onSubmit={onSubmit} submissionScope="task-1" />)
+
+		const submit = screen.getByRole("button", { name: "Submit" })
+		fireEvent.click(submit)
+		fireEvent.click(submit)
+
+		await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce())
+		expect(mocks.flushPendingTaskSettingsRequests).toHaveBeenCalledOnce()
+
+		resolveFirstSubmit()
+		await settleEffects()
+		fireEvent.click(submit)
+
+		await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(2))
+	})
+
 	// An enabled composer must still submit normally; removing the replay path
 	// must not disable ordinary sending.
 	it("still submits directly while the input is enabled", async () => {

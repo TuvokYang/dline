@@ -94,6 +94,8 @@ Always adhere to this format for all tool uses to ensure proper parsing and exec
 
 	// SearchFilesToolHandler
 	searchNoResults: "Found 0 results.",
+	searchAgentRestricted:
+		"Search refused: '@PATH@' is restricted by '.agentignore'. This is a permission set by the workspace, not a performance exclusion, so it is not lifted by naming the path directly. Do not attempt to read or search it through the terminal or any other tool.",
 
 	// SummarizeTaskHandler
 	contextCompactionCancelled: "Context compaction was cancelled. Task has been aborted.",

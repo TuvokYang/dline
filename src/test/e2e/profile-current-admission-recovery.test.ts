@@ -50,17 +50,22 @@ async function openApiSettings(page: Page, sidebar: Frame): Promise<void> {
 	await expect(sidebar.getByRole("heading", { name: "API Configuration" })).toBeVisible({ timeout: 30_000 })
 }
 
+function escapeForRegExp(value: string): string {
+	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
+
 function getProfileCard(sidebar: Frame, profileName: string): Locator {
-	return sidebar.getByTestId("api-profile-card").filter({ has: sidebar.locator(`input[value=${JSON.stringify(profileName)}]`) })
+	return sidebar.getByTestId("api-profile-card").filter({
+		has: sidebar.getByRole("button", { name: new RegExp(`^(Expand|Collapse) ${escapeForRegExp(profileName)}$`) }),
+	})
 }
 
 async function openProfileEditor(sidebar: Frame, profileName: string): Promise<Locator> {
 	const card = getProfileCard(sidebar, profileName)
 	await expect(card).toHaveCount(1)
+	const expandToggle = card.getByRole("button", { name: /^Expand / })
+	if (await expandToggle.isVisible()) await expandToggle.click()
 	const providerSelector = card.getByRole("combobox", { name: "Provider" })
-	if (!(await providerSelector.isVisible())) {
-		await card.getByRole("button").first().press("Enter")
-	}
 	await expect(providerSelector).toBeVisible()
 	return card
 }

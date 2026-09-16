@@ -72,11 +72,14 @@ describe("useModeSwitch", () => {
 		vi.useRealTimers()
 	})
 
-	it("assigns conversational mode-switch drafts to the backend transaction", () => {
+	it("assigns mode-switch continuation drafts to the backend transaction", () => {
+		expect(shouldAttachModeSwitchDraft("followup")).toBe(true)
 		expect(shouldAttachModeSwitchDraft("make_plan")).toBe(true)
 		expect(shouldAttachModeSwitchDraft("qna_respond")).toBe(true)
 		expect(shouldAttachModeSwitchDraft("generate_report")).toBe(true)
-		expect(shouldAttachModeSwitchDraft("completion_result")).toBe(false)
+		expect(shouldAttachModeSwitchDraft("status_acknowledgment")).toBe(true)
+		expect(shouldAttachModeSwitchDraft("completion_result")).toBe(true)
+		expect(shouldAttachModeSwitchDraft("api_req_failed")).toBe(false)
 		expect(shouldAttachModeSwitchDraft(undefined)).toBe(false)
 	})
 
@@ -169,6 +172,31 @@ describe("useModeSwitch", () => {
 		rerender({ mode: "act", stateRevision: 3, modeSwitch: { phase: "idle" }, attachDraft: false })
 		expect(onSend).toHaveBeenCalledTimes(1)
 		expect(clearDraft).not.toHaveBeenCalled()
+	})
+
+	/** Clear a backend-owned completion draft without sending it a second time. */
+	it("does not resubmit a completion draft after a direct switch", async () => {
+		vi.mocked(StateServiceClient.togglePlanActModeProto).mockResolvedValueOnce(
+			createResponse(ModeSwitchStatus.MODE_SWITCH_STATUS_SWITCHED),
+		)
+		const { result, rerender } = renderHook(
+			(props: HookProps) =>
+				useModeSwitch({
+					...props,
+					draft: DRAFT,
+					onSend,
+					clearDraft,
+				}),
+			{
+				initialProps: { mode: "act", stateRevision: 1, modeSwitch: { phase: "idle" }, attachDraft: true },
+			},
+		)
+
+		await act(async () => result.current.requestSwitch("plan"))
+		rerender({ mode: "plan", stateRevision: 2, modeSwitch: { phase: "idle" }, attachDraft: true })
+
+		await waitFor(() => expect(clearDraft).toHaveBeenCalledOnce())
+		expect(onSend).not.toHaveBeenCalled()
 	})
 
 	/** Preserve a welcome-screen draft because only an explicit submit may create a Task. */

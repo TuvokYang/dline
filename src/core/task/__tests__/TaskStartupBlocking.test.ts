@@ -65,11 +65,51 @@ describe("Task startup blocking", () => {
 		expect(method).toContain("this.initialCheckpointCommitPromise = persistCommitPromise")
 	})
 
-	it("still awaits the initial checkpoint before a non-read-only tool executes", async () => {
+	it("skips the post-turn workspace checkpoint when every tool is read-only", async () => {
 		const source = await readFile(taskSourcePath, "utf8")
-		const gate = source.indexOf("if (this.initialCheckpointCommitPromise && !READ_ONLY_TOOLS.includes")
-		expect(gate).toBeGreaterThan(-1)
-		const awaitCommit = source.indexOf("await this.initialCheckpointCommitPromise", gate)
-		expect(awaitCommit).toBeGreaterThan(gate)
+		const helperStart = source.indexOf("private assistantTurnMayModifyWorkspace")
+		expect(helperStart).toBeGreaterThan(-1)
+		const helperEnd = source.indexOf("/**", helperStart + 1)
+		const helper = source.slice(helperStart, helperEnd)
+
+		expect(helper).toContain('block.type === "tool_use"')
+		expect(helper).toContain("!READ_ONLY_TOOLS.includes(block.name as any)")
+
+		const checkpointComment = source.indexOf("// Read-only turns cannot change workspace state.")
+		const checkpointGate = source.indexOf("if (this.assistantTurnMayModifyWorkspace())", checkpointComment)
+		const checkpointSave = source.indexOf("await this.checkpointManager?.saveCheckpoint()", checkpointComment)
+		expect(checkpointGate).toBeGreaterThan(checkpointComment)
+		expect(checkpointGate).toBeLessThan(checkpointSave)
+	})
+
+	it("gates mutating partial presentation and finalized execution before ToolExecutor side effects", async () => {
+		const source = await readFile(taskSourcePath, "utf8")
+		const helper = source.indexOf("private async awaitInitialCheckpointBeforeToolSideEffects")
+		expect(helper).toBeGreaterThan(-1)
+		expect(source.indexOf("READ_ONLY_TOOLS.includes(toolName as any)", helper)).toBeGreaterThan(helper)
+
+		const reRenderStart = source.indexOf("private async reRenderUpdatedPartialBlocks", helper)
+		const reRenderGate = source.indexOf("await this.awaitInitialCheckpointBeforeToolSideEffects(block.name)", reRenderStart)
+		const reRenderEffect = source.indexOf("await this.toolExecutor.reRenderPartialBlock", reRenderStart)
+		expect(reRenderGate).toBeGreaterThan(reRenderStart)
+		expect(reRenderGate).toBeLessThan(reRenderEffect)
+
+		const presentationStart = source.indexOf("async presentAssistantMessage(", reRenderStart)
+		const partialGate = source.indexOf(
+			"await this.awaitInitialCheckpointBeforeToolSideEffects(block.name)",
+			presentationStart,
+		)
+		const partialEffect = source.indexOf("await this.toolExecutor.executeTool(block)", presentationStart)
+		expect(partialGate).toBeGreaterThan(presentationStart)
+		expect(partialGate).toBeLessThan(partialEffect)
+
+		const finalizationStart = source.indexOf("private async executeFinalizedAssistantTurn", presentationStart)
+		const finalizationGate = source.indexOf(
+			"await this.awaitInitialCheckpointBeforeToolSideEffects(tool.name)",
+			finalizationStart,
+		)
+		const finalizationEffect = source.indexOf('type: "BLOCK_EXECUTION_STARTED"', finalizationStart)
+		expect(finalizationGate).toBeGreaterThan(finalizationStart)
+		expect(finalizationGate).toBeLessThan(finalizationEffect)
 	})
 })

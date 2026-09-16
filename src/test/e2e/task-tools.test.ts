@@ -25,9 +25,14 @@ async function sendTask(sidebar: Frame, text: string): Promise<void> {
 }
 
 async function expectSingleUserFeedback(sidebar: Frame, text: string): Promise<void> {
-	const feedback = sidebar.locator("span.ph-no-capture:not(button span)").filter({ hasText: text })
+	const feedback = sidebar.getByTestId(/^(?:user|queued)-input-markdown-scroll$/).filter({ hasText: text })
 	await expect(feedback).toHaveCount(1)
 	await expect(feedback).toHaveText(text)
+}
+
+async function expectComposerSendReady(sidebar: Frame): Promise<void> {
+	await expect(sidebar.getByTestId("chat-input")).toBeEnabled()
+	await expect(sidebar.getByTestId("send-button")).toHaveAttribute("aria-disabled", "false")
 }
 
 e2e("Tools - auto-approves a project read and continues with its result", async ({ helper, server, sidebar }) => {
@@ -244,7 +249,7 @@ e2e(
 			const innerBorder = Number.parseFloat(getComputedStyle(firstBody).borderTopWidth)
 			return {
 				cardGap: lowerRect.top - upperRect.bottom,
-				expectedCardGap: Number.parseFloat(getComputedStyle(document.documentElement).fontSize) * 0.75,
+				expectedCardGap: Number.parseFloat(getComputedStyle(document.documentElement).fontSize) * 0.5,
 				outerBorder,
 				innerBorder,
 				outerBorderColor: getComputedStyle(first).borderTopColor,
@@ -318,9 +323,9 @@ e2e(
 	async ({ helper, page, server, sidebar, userDataDir }) => {
 		e2e.setTimeout(180_000)
 		await helper.signin(sidebar)
-		await setAutoApproveAction(sidebar, "Execute safe commands", true)
+		await setAutoApproveAction(sidebar, "Execute safe commands", false)
 		server.resetOpenAiMock()
-		const command = `node -e "console.log('E2E_DRAFT_COMMAND_STARTED'); setTimeout(() => console.log('E2E_DRAFT_COMMAND_FINISHED'), 5000)"`
+		const command = `node -e "console.log('E2E_DRAFT_COMMAND_STARTED'); setTimeout(() => console.log('E2E_DRAFT_COMMAND_FINISHED'), 2000)"`
 		server.enqueueOpenAiResponses(
 			{
 				type: "tool",
@@ -329,7 +334,7 @@ e2e(
 				arguments: {
 					command,
 					workdirectory: ".",
-					requires_approval: false,
+					requires_approval: true,
 					synchronous: true,
 					timeout: 60,
 				},
@@ -355,6 +360,9 @@ e2e(
 		)
 
 		await sendTask(sidebar, "E2E_UNSENT_DRAFT_FOREGROUND_TASK")
+		const approveButton = sidebar.getByText("Approve", { exact: true })
+		await expect(approveButton).toBeVisible({ timeout: 60_000 })
+		await approveButton.click()
 		const copyCommandButton = sidebar.getByRole("button", { name: "Copy command" }).last()
 		await expect(copyCommandButton).toBeVisible({ timeout: 60_000 })
 		const commandActions = copyCommandButton.locator("xpath=ancestor::div[.//button[normalize-space()='Cancel']][1]")
@@ -367,13 +375,13 @@ e2e(
 		await input.pressSequentially(unsentDraft, { delay: 20 })
 		await expect(input).toHaveValue(unsentDraft)
 
-		await expect(sidebar.getByText("E2E_UNSENT_DRAFT_FOREGROUND_DONE", { exact: false }).last()).toBeVisible({
-			timeout: 60_000,
-		})
+		await expect(
+			sidebar.getByTestId("completion-output-scroll").filter({ hasText: "E2E_UNSENT_DRAFT_FOREGROUND_DONE" }),
+		).toBeVisible({ timeout: 60_000 })
 		await page.waitForTimeout(1_000)
 
 		await expect(input).toHaveValue(unsentDraft)
-		const submittedFeedback = sidebar.locator("span.ph-no-capture:not(button span)").filter({ hasText: unsentDraft })
+		const submittedFeedback = sidebar.getByTestId(/^(?:direct|queued)-user-input$/).filter({ hasText: unsentDraft })
 		await expect(submittedFeedback).toHaveCount(0)
 		expect(server.openAiRequestCount).toBe(2)
 		expect(JSON.stringify(server.getOpenAiRequestBodies())).not.toContain(unsentDraft)
@@ -769,14 +777,14 @@ e2e(
 		await sendTask(sidebar, "Reject three approval tools by pressing Enter with feedback.")
 		const input = sidebar.getByTestId("chat-input")
 		await expect(sidebar.getByText("Approve", { exact: true })).toBeVisible({ timeout: 60_000 })
-		await expect(input).toBeEnabled()
+		await expectComposerSendReady(sidebar)
 		await input.fill("E2E_ENTER_READ_FEEDBACK")
 		await input.press("Enter")
 		await expect(input).toHaveValue("")
 		await expectSingleUserFeedback(sidebar, "E2E_ENTER_READ_FEEDBACK")
 		await expect(sidebar.getByText(relativePath, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
 
-		await expect(input).toBeEnabled()
+		await expectComposerSendReady(sidebar)
 		await input.fill("E2E_ENTER_WRITE_FEEDBACK")
 		await input.press("Enter")
 		await expect(input).toHaveValue("")
@@ -790,7 +798,7 @@ e2e(
 			)
 			.toBe(false)
 
-		await expect(input).toBeEnabled()
+		await expectComposerSendReady(sidebar)
 		await input.fill("E2E_ENTER_COMMAND_FEEDBACK")
 		await input.press("Enter")
 		await expect(input).toHaveValue("")
@@ -1316,7 +1324,7 @@ e2e(
 		await expect(sidebar.getByText("E2E_AI_KILL_COMMAND_OK", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
 		await killResult.getByRole("button", { name: "View command activity", exact: true }).click()
 		await expect(sidebar.getByRole("tab", { name: /Activities/ })).toHaveAttribute("aria-selected", "true")
-		const commandActivity = sidebar.getByTestId("activity-item").filter({ hasText: "close-task-background-heartbeat.log" })
+		const commandActivity = sidebar.getByTestId("activity-item").filter({ hasText: "E2E_AI_KILL_STARTED" })
 		await expect(commandActivity).toBeVisible()
 		await expect(commandActivity.getByRole("button", { name: /^Open log file / })).toBeVisible()
 		await expect.poll(() => server.openAiRequestCount).toBe(3)
@@ -1597,14 +1605,18 @@ e2e(
 			}),
 		).toBe(true)
 
-		// Each subagent item bounds its own height; the list wrapper does not scroll.
-		const itemsContainer = subagentCard.locator("..")
-		expect(
-			await itemsContainer.evaluate((element) => {
-				const style = getComputedStyle(element)
-				return { maxHeight: style.maxHeight, overflowY: style.overflowY }
-			}),
-		).toEqual({ maxHeight: "none", overflowY: "visible" })
+		// The list bounds the complete subagent collection at 60vh and owns outer scrolling.
+		const itemsContainer = sidebar.getByTestId("subagent-list-scroll")
+		const itemsLayout = await itemsContainer.evaluate((element) => {
+			const style = getComputedStyle(element)
+			return {
+				maxHeight: Number.parseFloat(style.maxHeight),
+				overflowY: style.overflowY,
+				viewportHeight: window.innerHeight,
+			}
+		})
+		expect(itemsLayout.overflowY).toBe("auto")
+		expect(itemsLayout.maxHeight).toBeCloseTo(itemsLayout.viewportHeight * 0.6, 0)
 		// The card itself is height-bounded (30vh) so a long run cannot grow the chat.
 		const cardLayout = await subagentCard.evaluate((element) => {
 			const style = getComputedStyle(element)

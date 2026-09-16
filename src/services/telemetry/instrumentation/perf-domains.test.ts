@@ -37,6 +37,14 @@ const LEGACY_PHASES: Record<PerfDomain, readonly string[]> = {
 	[PerfDomain.TaskClose]: ["stage"],
 	// [TaskSnapshotPerf] in TaskSnapshotPersistence.ts
 	[PerfDomain.TaskSnapshot]: ["flush_now"],
+	// New in BufferedUnifyStore.ts; no legacy log preceded it, which is why a
+	// commit that rewrote the whole collection stayed invisible until it was
+	// measured by hand.
+	[PerfDomain.BufferedStore]: ["flush_commit"],
+	// New in ToolExecutor.ts; the pre-existing `tool.execution` span records the
+	// same boundary but only as a trace, so a slow tool could not be queried or
+	// alerted on as a metric.
+	[PerfDomain.Tool]: ["execution"],
 	// [ControllerClosePerf] in controller/index.ts
 	[PerfDomain.ControllerClose]: ["stage"],
 	// [ProfilePerf] in ProfileCatalogRepository.ts and getApiProfiles.ts

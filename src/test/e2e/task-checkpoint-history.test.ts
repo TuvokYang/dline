@@ -1,6 +1,6 @@
 import { access, appendFile, readdir, readFile, writeFile } from "node:fs/promises"
 import * as path from "node:path"
-import { expect, type Frame } from "@playwright/test"
+import { expect, type Frame, type Locator } from "@playwright/test"
 import { E2ETestHelper, e2e } from "./utils/helpers"
 
 async function sendTask(sidebar: Frame, text: string): Promise<void> {
@@ -8,6 +8,13 @@ async function sendTask(sidebar: Frame, text: string): Promise<void> {
 	await input.fill(text)
 	await sidebar.getByTestId("send-button").click()
 	await expect(sidebar.getByText(text, { exact: true }).first()).toBeVisible()
+}
+
+async function expectCommandCardReady(sidebar: Frame, command: string): Promise<Locator> {
+	const card = sidebar.getByTestId("command-card").filter({ hasText: command }).last()
+	await expect(card).toBeVisible({ timeout: 30_000 })
+	await expect(card.locator('[aria-label="Copy command"]')).toBeVisible({ timeout: 30_000 })
+	return card
 }
 
 async function setAutoApproveAction(sidebar: Frame, label: string, enabled: boolean): Promise<void> {
@@ -607,7 +614,7 @@ e2e(
 		const taskText = "E2E_PENDING_COMMAND_APPROVAL_HISTORY_TASK"
 		await sendTask(sidebar, taskText)
 		await expect(sidebar.getByText("Approve", { exact: true })).toBeVisible({ timeout: 60_000 })
-		await expect(sidebar.getByRole("button", { name: "Copy command" }).last()).toBeVisible()
+		await expectCommandCardReady(sidebar, command)
 		const [taskId] = await E2ETestHelper.waitForValue(async () => {
 			const ids = await taskDirectoryIds(dlineDocsDir)
 			return ids.length === 1 ? ids : undefined
@@ -627,7 +634,7 @@ e2e(
 		const approveButton = sidebar.getByText("Approve", { exact: true })
 		await expect(approveButton).toBeVisible({ timeout: 30_000 })
 		await expect(sidebar.getByText("Reject", { exact: true })).toBeVisible()
-		await expect(sidebar.getByRole("button", { name: "Copy command" }).last()).toBeVisible()
+		await expectCommandCardReady(sidebar, command)
 		await page.waitForTimeout(750)
 		expect(server.openAiRequestCount).toBe(1)
 
@@ -720,8 +727,8 @@ e2e(
 		const taskFooter = sidebar.getByRole("contentinfo")
 		const resumeButton = taskFooter.getByText("Resume", { exact: true })
 		await expect(resumeButton).toBeVisible({ timeout: 30_000 })
-		await expect(sidebar.getByText("E2E_HISTORY_COMPLETED_COMMAND_STDOUT", { exact: false }).last()).toBeVisible()
-		await expect(sidebar.getByRole("button", { name: "Copy command" }).last()).toBeVisible()
+		const restoredCommandCard = await expectCommandCardReady(sidebar, command)
+		await expect(restoredCommandCard).toContainText("E2E_HISTORY_COMPLETED_COMMAND_STDOUT")
 		await expect(taskFooter.getByText("Approve", { exact: true })).toHaveCount(0)
 		await expect(taskFooter.getByText("Reject", { exact: true })).toHaveCount(0)
 		const expandTaskHeader = sidebar.getByLabel("Expand task header")
@@ -732,11 +739,16 @@ e2e(
 		await expect(sidebar.locator('[title="Maximum context window size for this model"]')).toHaveText(/[1-9]/)
 		const environmentSegment = sidebar.getByTestId("context-window-segment-environment")
 		await expect(environmentSegment).toHaveAttribute("data-tokens", /^[1-9]\d*$/, { timeout: 30_000 })
+		// The stable refresh runs on a timer and no longer advances the revision
+		// when every value it recomputed is unchanged, so a rising revision is no
+		// longer evidence that the restored task is being refreshed. What the
+		// restored indicator must still hold is a recomputed environment
+		// occupancy and a settled phase, which the assertions above establish.
 		const restoredRevision = Number((await progress.getAttribute("data-revision")) ?? 0)
-		await expect
-			.poll(async () => Number((await progress.getAttribute("data-revision")) ?? 0), { timeout: 20_000 })
-			.toBeGreaterThan(restoredRevision)
+		expect(restoredRevision).toBeGreaterThan(0)
 		await page.waitForTimeout(750)
+		await expect(progress).toHaveAttribute("data-phase", "stable")
+		await expect(environmentSegment).toHaveAttribute("data-tokens", /^[1-9]\d*$/)
 		expect(server.openAiRequestCount).toBe(2)
 		await expect(sidebar.getByText("E2E_HISTORY_COMPLETED_COMMAND_CLOSED_MUST_NOT_RENDER", { exact: false })).toHaveCount(0)
 
@@ -1149,6 +1161,21 @@ e2e(
 			const ids = await taskDirectoryIds(dlineDocsDir)
 			return ids.find((id) => !beforeTaskIds.includes(id))
 		}, 30_000)
+		// Closing releases the Webview immediately while command cancellation and
+		// activity persistence finish in the deferred teardown. Wait for that real
+		// terminal write before seeding the crash-recovery fixture back to running,
+		// or the late cancellation can overwrite the synthetic orphan with cancelled.
+		await expect
+			.poll(
+				async () => {
+					const persisted = JSON.parse(
+						await readFile(path.join(dlineDocsDir, "tasks", persistedTaskId, "activities.json"), "utf8"),
+					) as { activities?: Array<{ detail?: string; status?: string }> }
+					return persisted.activities?.find((activity) => activity.detail === command)?.status
+				},
+				{ timeout: 30_000 },
+			)
+			.toBe("cancelled")
 		const activityId = await seedPersistedRunningCommand(dlineDocsDir, persistedTaskId, command)
 		await reopenTask(sidebar, taskText)
 
@@ -1157,7 +1184,8 @@ e2e(
 		await expect(resumeButton).toBeVisible({ timeout: 30_000 })
 		await expect(taskFooter.getByText("Approve", { exact: true })).toHaveCount(0)
 		await expect(taskFooter.getByText("Reject", { exact: true })).toHaveCount(0)
-		await expect(sidebar.getByText("Interrupted", { exact: true }).last()).toBeVisible()
+		const restoredCommandCard = await expectCommandCardReady(sidebar, command)
+		await expect(restoredCommandCard).toContainText("Interrupted")
 		await expect(sidebar.getByRole("button", { name: "Cancel", exact: true })).toHaveCount(0)
 		await expect(sidebar.getByText("E2E_CLOSED_BACKGROUND_COMMAND_MUST_NOT_RENDER", { exact: false })).toHaveCount(0)
 

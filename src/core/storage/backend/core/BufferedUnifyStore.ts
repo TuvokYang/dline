@@ -1,4 +1,9 @@
 import Mutex from "p-mutex"
+import { recordPerfPhase, startPerfPhase } from "@/services/telemetry/instrumentation/duration-recorder"
+import { PerfDomain } from "@/services/telemetry/instrumentation/perf-domains"
+import { runWithSignalSpan, type SignalSpanHandle, startSignalSpan } from "@/services/telemetry/service/pipeline-port"
+import { currentSignalSpan } from "@/services/telemetry/service/trace-scope"
+import { Logger } from "@/shared/services/Logger"
 import type { EntityFieldRef } from "../api/EntitySchema"
 import type {
 	BufferedUnifyStoreChangeListener,
@@ -9,6 +14,31 @@ import { asc } from "../api/UnifyStoreQuery"
 
 const L2_MAX_SIZE = 500
 const DEFAULT_FLUSH_INTERVAL_MS = 1_000
+/**
+ * Duration past which one commit is reported as slow.
+ *
+ * Kept below the default flush interval: a commit that outlasts the timer that
+ * scheduled it means flushes have started to overlap, which is the point where
+ * the cost stops being absorbed between beats and starts being felt.
+ */
+const SLOW_COMMIT_MS = 250
+/** Upper bounds of the reported collection-size bands. */
+const COLLECTION_SIZE_BANDS = [100, 1_000, 10_000, 100_000] as const
+
+/**
+ * Bucket a collection size for reporting.
+ *
+ * The size is what separates "this history is large" from "this store stopped
+ * appending", but reporting it exactly would make almost every commit its own
+ * metric series, since the value grows with the conversation. Bands keep the
+ * distinction while leaving the label set bounded.
+ */
+function collectionSizeBand(count: number): string {
+	for (const bound of COLLECTION_SIZE_BANDS) {
+		if (count < bound) return `<${bound}`
+	}
+	return `>=${COLLECTION_SIZE_BANDS.at(-1)}`
+}
 
 export interface BufferedUnifyStoreMapping<TEntity extends object, TItem extends { ts: number }> {
 	readonly ordinal: EntityFieldRef<TEntity, number>
@@ -50,6 +80,8 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
 	private items: TItem[] = []
 	private persistedItems: TItem[] = []
 	private sortedTimestamps: number[] = []
+	/** Set when a mutation invalidated the index; cleared by ensureTimestampIndex(). */
+	private timestampIndexStale = false
 	private l2Cache = new Map<number, TItem>()
 	private l2AccessOrder: number[] = []
 
@@ -105,6 +137,7 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
 	}
 
 	findTimestampIndex(timestamp: number): number {
+		this.ensureTimestampIndex()
 		let low = 0
 		let high = this.sortedTimestamps.length
 		while (low < high) {
@@ -117,6 +150,7 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
 
 	async getRecent(limit: number): Promise<TItem[]> {
 		if (limit <= 0) return []
+		this.ensureTimestampIndex()
 		const start = Math.max(0, this.sortedTimestamps.length - limit)
 		return this.sortedTimestamps
 			.slice(start)
@@ -126,6 +160,10 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
 
 	async getRange(fromTimestamp: number, toTimestamp: number): Promise<TItem[]> {
 		const result: TItem[] = []
+		// Refresh before the loop rather than relying on findTimestampIndex to do
+		// it, so the bound read below cannot observe a different index than the
+		// start position was computed against.
+		this.ensureTimestampIndex()
 		for (let index = this.findTimestampIndex(fromTimestamp); index < this.sortedTimestamps.length; index++) {
 			const timestamp = this.sortedTimestamps[index]
 			if (timestamp >= toTimestamp) break
@@ -149,7 +187,11 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
 		await this.mutex.withLock(() => {
 			const admitted = this.ensureUniqueAppendTimestamp ? this.withLocallyUniqueTimestamp(item) : item
 			this.items.push(admitted)
-			this.rebuildTimestampIndex()
+			// An append only adds one timestamp, so a materialized index can absorb
+			// it directly. This matters for stores that force unique timestamps:
+			// they must read the index on every append, which would otherwise
+			// rebuild it every time and lose the benefit of deferring.
+			this.insertIntoTimestampIndex(admitted.ts)
 			this.addToL2(admitted.ts, admitted)
 			this.dirty = true
 		})
@@ -182,7 +224,7 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
 		await this.mutex.withLock(() => {
 			if (index >= this.items.length) this.items.push(item)
 			else this.items.splice(Math.max(0, index), 0, item)
-			this.rebuildTimestampIndex()
+			this.invalidateTimestampIndex()
 			this.addToL2(item.ts, item)
 			this.dirty = true
 		})
@@ -193,7 +235,7 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
 		await this.mutex.withLock(() => {
 			this.assertIndex("stageUpdateAt", index)
 			this.items[index] = item
-			this.rebuildTimestampIndex()
+			this.invalidateTimestampIndex()
 			this.addToL2(item.ts, item)
 			this.dirty = true
 		})
@@ -205,7 +247,7 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
 			this.assertIndex("stagePatchAt", index)
 			const item = { ...this.items[index], ...updates }
 			this.items[index] = item
-			this.rebuildTimestampIndex()
+			this.invalidateTimestampIndex()
 			this.addToL2(item.ts, item)
 			this.dirty = true
 			return item
@@ -218,7 +260,7 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
 			const index = this.findLastTimestampIndex(item.ts)
 			if (index >= 0) this.items[index] = item
 			else this.items.push(item)
-			this.rebuildTimestampIndex()
+			this.invalidateTimestampIndex()
 			this.addToL2(item.ts, item)
 			this.dirty = true
 		})
@@ -370,6 +412,75 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
 
 	private async flushLocked(): Promise<void> {
 		if (!this.dirty) return
+		// Attached only to an operation already being traced. A flush also runs
+		// from a repeating timer, and starting a span there would emit a root
+		// trace every interval for every open store while explaining nothing:
+		// the work would have no caller to attribute it to. When a task is
+		// waiting on this commit the span is what shows that wait on its
+		// waterfall, which is the case worth seeing.
+		const span = this.beginFlushSpan()
+		if (!span) {
+			await this.commitLocked()
+			return
+		}
+		try {
+			await runWithSignalSpan(span, () => this.commitLocked(span))
+			span.end("success")
+		} catch (error) {
+			span.recordException(error)
+			span.end("failure")
+			throw error
+		}
+	}
+
+	/**
+	 * Start a flush span only when this commit belongs to a traced operation.
+	 *
+	 * Returning undefined is the common case: the periodic flush has no caller
+	 * to hang under, and an unparented span per interval per store would add
+	 * traces without adding information.
+	 */
+	private beginFlushSpan(): SignalSpanHandle | undefined {
+		const parent = currentSignalSpan()
+		if (!parent) return undefined
+		return startSignalSpan({ name: "storage.flush_commit", parent })
+	}
+
+	private async commitLocked(span?: SignalSpanHandle): Promise<void> {
+		const startedAt = performance.now()
+		try {
+			await this.commitShape(span)
+		} catch (error) {
+			// A periodic flush swallows its rejection, and the success paths
+			// below are the only ones that stop the phase. Without this a write
+			// that keeps failing would report nothing at all: the file-lock
+			// metric would still say it acquired the lock, and the store would
+			// look idle rather than broken.
+			//
+			// Reported as another value of the existing `commit` dimension
+			// rather than as a new label, so failures join the same series
+			// instead of splitting every existing one in two.
+			recordPerfPhase(PerfDomain.BufferedStore, "flush_commit", performance.now() - startedAt, {
+				commit: "error",
+				size: collectionSizeBand(this.items.length),
+			})
+			throw error
+		}
+	}
+
+	private async commitShape(span?: SignalSpanHandle): Promise<void> {
+		// Both commit shapes report under one phase so a silent fall back to
+		// rewriting the whole collection shows up as a shift in the `commit`
+		// dimension instead of only as user-visible slowness.
+		const phase = startPerfPhase(PerfDomain.BufferedStore, "flush_commit")
+		const startedAt = performance.now()
+		// The same two facts the metric carries. A duration alone would leave a
+		// reader unable to tell a large history from a store that stopped
+		// appending, which is the distinction the span exists to show.
+		const describe = (commit: string, size: string): void => {
+			span?.setAttribute("commit", commit)
+			span?.setAttribute("size", size)
+		}
 		const tailAdditions = this.getPureTailAdditions()
 		if (tailAdditions) {
 			await this.store.insert(
@@ -378,18 +489,69 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
 			this.setCommittedState([...this.persistedItems, ...tailAdditions])
 			this.dirty = false
 			this.publishCommittedChange()
+			phase.stop({ commit: "buffered_append", size: collectionSizeBand(this.items.length) })
+			describe("buffered_append", collectionSizeBand(this.items.length))
+			this.reportSlowCommit(startedAt, "buffered_append", this.items.length)
 			return
 		}
 		let merged: TItem[] = []
+		let commit = "rewrite"
+		let appendedCount = 0
 		await this.store.transaction(async (transaction) => {
 			const entities = await transaction.query({ orderBy: [asc(this.mapping.ordinal)] })
 			const committed = entities.map((entity) => this.mapping.toItem(entity))
 			merged = this.mergeWithCommitted(committed)
+			// The merge already ran against the committed state read inside this
+			// transaction, so when it only grew a tail there is nothing to rewrite.
+			// Deciding from `committed` rather than from the local baseline keeps
+			// this correct even when another writer moved ahead of us, and keeps
+			// cross-process timestamp allocation fully intact.
+			const appended = this.suffixAfterUnchangedPrefixOf(committed, merged)
+			if (appended) {
+				commit = "append"
+				appendedCount = appended.length
+				await transaction.insert(appended.map((item, index) => this.mapping.toEntity(item, committed.length + index)))
+				return
+			}
 			await transaction.replaceAll(merged.map((item, ordinal) => this.mapping.toEntity(item, ordinal)))
 		})
 		this.setCommittedState(merged)
 		this.dirty = false
 		this.publishCommittedChange()
+		phase.stop({ commit, size: collectionSizeBand(merged.length) })
+		describe(commit, collectionSizeBand(merged.length))
+		this.reportSlowCommit(startedAt, commit, merged.length)
+	}
+
+	/**
+	 * Log a commit that took long enough to be felt.
+	 *
+	 * Telemetry alone leaves a local user with no way to see why their session
+	 * degraded, and the collection size plus the commit shape is what separates
+	 * "this history is large" from "this store stopped appending".
+	 */
+	private reportSlowCommit(startedAt: number, commit: string, itemCount: number): void {
+		const durationMs = Math.round(performance.now() - startedAt)
+		if (durationMs < SLOW_COMMIT_MS) return
+		// The collection identity is deliberately absent: it derives from a user
+		// file path, and the size plus the commit shape already say whether this
+		// is a large history or a store that stopped appending.
+		Logger.warn(`[BufferedUnifyStore] slow commit: durationMs=${durationMs}, commit=${commit}, items=${itemCount}`)
+	}
+
+	/**
+	 * Return the entries appended after an unchanged prefix, when there are any.
+	 *
+	 * Identity is the only prefix test used here: merging reuses the very
+	 * objects it was given for untouched entries, so a replaced entry always
+	 * breaks reference equality and correctly forces a full rewrite.
+	 */
+	private suffixAfterUnchangedPrefixOf(committed: readonly TItem[], merged: readonly TItem[]): TItem[] | undefined {
+		if (merged.length <= committed.length) return undefined
+		for (let index = 0; index < committed.length; index++) {
+			if (merged[index] !== committed[index]) return undefined
+		}
+		return merged.slice(committed.length)
 	}
 
 	private getPureTailAdditions(): TItem[] | undefined {
@@ -423,6 +585,10 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
 				additions.push({ item: localItem, localIndex })
 				continue
 			}
+			// Staging replaces whole entries, so an untouched entry is still the
+			// very object the baseline captured. Serializing both sides of that
+			// comparison cost a full pass over the history on every flush.
+			if (localItem === baselineItem) continue
 			if (JSON.stringify(localItem) === JSON.stringify(baselineItem)) continue
 			const committedIndex = merged.findIndex((item) => item.ts === localItem.ts)
 			if (committedIndex >= 0) merged[committedIndex] = localItem
@@ -492,7 +658,7 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
 		this.persistedItems = [...items]
 		this.l2Cache.clear()
 		this.l2AccessOrder = []
-		this.rebuildTimestampIndex()
+		this.invalidateTimestampIndex()
 		for (let index = 0; index < Math.min(items.length, L2_MAX_SIZE); index++) {
 			if (items[index].ts > 0) this.addToL2(items[index].ts, items[index])
 		}
@@ -506,11 +672,51 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
 		return item
 	}
 
+	/**
+	 * Mark the timestamp index for rebuilding on the next read.
+	 *
+	 * Sorting eagerly inside every mutation made a burst of staged updates pay
+	 * one full sort each, which on a long conversation dominated streaming. The
+	 * rebuild itself is unchanged and still the only writer of the index, so
+	 * deferring it cannot make a reader observe a partially maintained order.
+	 */
+	private invalidateTimestampIndex(): void {
+		this.timestampIndexStale = true
+	}
+
+	/**
+	 * Add one timestamp to an already materialized index.
+	 *
+	 * A stale index is left alone: the pending rebuild reads `items`, which
+	 * already holds the new entry.
+	 */
+	private insertIntoTimestampIndex(timestamp: number): void {
+		if (this.timestampIndexStale || timestamp <= 0) return
+		this.sortedTimestamps.splice(this.findTimestampIndex(timestamp), 0, timestamp)
+	}
+
+	/** Restore the sorted index before any reader depends on its ordering. */
+	private ensureTimestampIndex(): void {
+		if (!this.timestampIndexStale) return
+		this.timestampIndexStale = false
+		this.rebuildTimestampIndex()
+	}
+
 	private rebuildTimestampIndex(): void {
 		this.sortedTimestamps = this.items
 			.filter((item) => item.ts > 0)
 			.map((item) => item.ts)
 			.sort((left, right) => left - right)
+	}
+
+	/**
+	 * Report whether the index already holds this timestamp.
+	 *
+	 * findTimestampIndex() refreshes a stale index first, so a collision staged
+	 * since the last read is still visible here.
+	 */
+	private hasTimestamp(timestamp: number): boolean {
+		return this.sortedTimestamps[this.findTimestampIndex(timestamp)] === timestamp
 	}
 
 	private addToL2(timestamp: number, item: TItem): void {
@@ -532,9 +738,16 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
 	}
 
 	private withLocallyUniqueTimestamp(item: TItem): TItem {
-		if (!this.sortedTimestamps.includes(item.ts)) return item
+		// Uniqueness is decided against the index, so a run of appends that never
+		// gets read in between must still refresh it here. Skipping this let
+		// consecutive colliding appends all keep the same timestamp.
+		this.ensureTimestampIndex()
+		// Scanning the index linearly here cost a full pass per append, and the
+		// probe loop repeated that pass on every attempt. The index is sorted,
+		// so membership is a binary search.
+		if (!this.hasTimestamp(item.ts)) return item
 		let next = Math.max(item.ts, this.sortedTimestamps.at(-1) ?? item.ts) + 1
-		while (this.sortedTimestamps.includes(next)) next += 1
+		while (this.hasTimestamp(next)) next += 1
 		return { ...item, ts: next }
 	}
 

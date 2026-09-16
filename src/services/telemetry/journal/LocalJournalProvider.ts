@@ -10,7 +10,10 @@ import type {
 } from "../providers/capabilities"
 import type { TelemetryProperties, TelemetrySettings } from "../providers/ITelemetryProvider"
 import { RuntimeContentPolicy } from "../runtime/content-policy"
+import { normalizeRuntimeError } from "../runtime/error-normalizer"
+import { exceptionAttributes } from "../runtime/exception-attributes"
 import { type CanonicalTelemetryProperties, canonicalizeTelemetryProperties } from "../service/canonicalization"
+import { currentSignalSpan, runInSpanScope } from "../service/trace-scope"
 import { type JournalRecoveryFact, JsonlJournalWriter, type JsonlJournalWriterStats } from "./jsonl-journal-writer"
 import { projectEvent, projectMetric, projectTrace } from "./otlp-json-projectors"
 
@@ -27,15 +30,17 @@ export class LocalJournalProvider {
 	readonly name = "LocalJournalProvider"
 	private readonly writer: JsonlJournalWriter
 	private readonly policy: RuntimeContentPolicy
+	private readonly metricPolicy = new RuntimeContentPolicy()
 	private readonly sessionId: string
 	private readonly sequence = { usage: 0, metrics: 0, traces: 0 }
 	private recoveryFacts: readonly JournalRecoveryFact[] = []
 	private disposed = false
+	private readonly spans = new Set<LocalJournalSpanHandle>()
 
 	private constructor(options: LocalJournalProviderOptions) {
 		this.sessionId = options.sessionId
 		this.writer = new JsonlJournalWriter(options)
-		this.policy = new RuntimeContentPolicy(options.fingerprintKey)
+		this.policy = RuntimeContentPolicy.forEvents(options.fingerprintKey)
 	}
 
 	static async create(options: LocalJournalProviderOptions): Promise<LocalJournalProvider> {
@@ -66,7 +71,7 @@ export class LocalJournalProvider {
 		if (this.disposed) return
 		this.flushRecoveryFacts(signal.channel)
 		const source = signal.kind === "event" ? signal.properties : signal.attributes
-		const canonical = canonicalizeTelemetryProperties(source, this.policy)
+		const canonical = canonicalizeTelemetryProperties(source, signal.kind === "event" ? this.policy : this.metricPolicy)
 		if (signal.kind === "event") {
 			const sequence = ++this.sequence.usage
 			this.writer.append(
@@ -96,7 +101,9 @@ export class LocalJournalProvider {
 
 	startSpan(options: TelemetrySpanStartOptions): TelemetrySpanHandle {
 		if (this.disposed) return INERT_SPAN
-		return new LocalJournalSpanHandle(this, options)
+		const span = new LocalJournalSpanHandle(this, options, () => this.spans.delete(span))
+		this.spans.add(span)
+		return span
 	}
 
 	writeSpan(span: LocalJournalSpanRecord): void {
@@ -129,9 +136,14 @@ export class LocalJournalProvider {
 
 	async dispose(): Promise<void> {
 		if (this.disposed) return
+		for (const span of this.spans) {
+			span.setAttribute("interrupted", true)
+			span.end("cancelled")
+		}
 		await this.writer.dispose()
 		this.disposed = true
 		this.policy.reset()
+		this.metricPolicy.reset()
 	}
 
 	private flushRecoveryFacts(channel: TelemetryChannel): void {
@@ -184,25 +196,51 @@ interface LocalJournalSpanRecord {
 	readonly outcome: "success" | "failure" | "cancelled"
 	readonly attributes: TelemetryProperties
 	readonly errorType?: string
+	readonly events: readonly {
+		name: string
+		timestamp: number
+		attributes: Readonly<Record<string, string | number | boolean>>
+	}[]
 }
 
 class LocalJournalSpanHandle implements TelemetrySpanHandle {
-	readonly active = true
 	readonly traceId: string
-	readonly spanId = randomBytes(8).toString("hex")
+	readonly spanId: string
+	readonly taskId: string | undefined
 	private readonly attributes: TelemetryProperties
 	private readonly startedAt: number
 	private errorType: string | undefined
 	private ended = false
+	private readonly policy = RuntimeContentPolicy.forEvents()
+	private readonly events: {
+		name: string
+		timestamp: number
+		attributes: Readonly<Record<string, string | number | boolean>>
+	}[] = []
+	private droppedEvents = 0
 
 	constructor(
 		private readonly owner: LocalJournalProvider,
 		private readonly options: TelemetrySpanStartOptions,
+		private readonly onEnd: () => void,
 	) {
-		const parent = options.parent instanceof LocalJournalSpanHandle ? options.parent : undefined
-		this.traceId = parent?.traceId ?? randomBytes(16).toString("hex")
+		const parent = options.root ? undefined : (options.parent ?? currentSignalSpan())
+		this.traceId = options.spanContext?.traceId ?? parent?.spanContext?.traceId ?? randomBytes(16).toString("hex")
+		this.spanId = options.spanContext?.spanId ?? randomBytes(8).toString("hex")
+		const taskId = options.attributes?.task_id ?? options.attributes?.taskId ?? parent?.taskId
+		this.taskId = typeof taskId === "string" ? taskId : undefined
 		this.attributes = { ...options.attributes }
 		this.startedAt = epochMilliseconds(options.startTime)
+	}
+
+	get active(): boolean {
+		return !this.ended
+	}
+	get spanContext() {
+		return { traceId: this.traceId, spanId: this.spanId, traceFlags: this.options.spanContext?.traceFlags ?? 1 }
+	}
+	run<T>(action: () => T): T {
+		return runInSpanScope(this, action)
 	}
 
 	setAttribute(name: string, value: string | number | boolean): void {
@@ -211,7 +249,15 @@ class LocalJournalSpanHandle implements TelemetrySpanHandle {
 
 	recordException(error: unknown): void {
 		if (this.ended) return
-		this.errorType = error instanceof Error ? error.name : typeof error
+		const normalized = normalizeRuntimeError(error)
+		this.errorType = normalized.name
+		this.addEvent("exception", { ...exceptionAttributes(normalized), "exception.fingerprint": normalized.fingerprint })
+	}
+
+	addEvent(name: string, attributes?: Readonly<Record<string, string | number | boolean>>, timestamp = Date.now()): void {
+		if (this.ended) return
+		if (this.events.length < 128) this.events.push({ name, timestamp, attributes: this.policy.apply(attributes).attributes })
+		else this.droppedEvents += 1
 	}
 
 	end(outcome: "success" | "failure" | "cancelled" = "success", endTime?: number): void {
@@ -226,9 +272,11 @@ class LocalJournalSpanHandle implements TelemetrySpanHandle {
 			startTime: this.startedAt,
 			endTime: epochMilliseconds(endTime),
 			outcome,
-			attributes: this.attributes,
+			attributes: { ...this.attributes, telemetry_dropped_span_events: this.droppedEvents },
 			errorType: this.errorType,
+			events: this.events,
 		})
+		this.onEnd()
 	}
 }
 

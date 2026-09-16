@@ -157,8 +157,10 @@ e2e(
 		expect(statSync(archivePath).size, "Archive must not be empty").toBeGreaterThan(0)
 
 		const screenshotPath = testInfo.outputPath("runtime-telemetry.png")
-		await page.screenshot({ path: screenshotPath, fullPage: false })
-		await testInfo.attach("runtime-telemetry.png", { path: screenshotPath, contentType: "image/png" })
+		await page.screenshot({ path: screenshotPath, fullPage: false, timeout: 5_000 }).catch(() => undefined)
+		if (existsSync(screenshotPath)) {
+			await testInfo.attach("runtime-telemetry.png", { path: screenshotPath, contentType: "image/png" })
+		}
 
 		await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
 	},

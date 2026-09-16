@@ -48,6 +48,8 @@ export const formatResponse = {
 
 	clineIgnoreError: (pathStr: string) => generateToolResponse("executeCommand", "clineIgnoreError", { PATH: pathStr }),
 
+	searchAgentRestricted: (pathStr: string) => generateToolResponse("toolHandlers", "searchAgentRestricted", { PATH: pathStr }),
+
 	permissionDeniedError: (reason: string) =>
 		generateToolResponse("executeCommand", "permissionDeniedError", { REASON: reason }),
 

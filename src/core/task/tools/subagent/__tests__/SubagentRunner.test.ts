@@ -2260,8 +2260,19 @@ describe("SubagentRunner", () => {
 		assert.equal(result.status, "cancelled")
 	})
 
-	it("does not retry after a hosted Web Search chunk has already been yielded", async () => {
-		const createMessage = vi.fn().mockImplementation(async function* () {
+	/** Collect every text block the runner sent as conversation on a given request. */
+	function conversationTextForCall(createMessage: any, callIndex: number): string {
+		const conversation = createMessage.mock.calls[callIndex]?.[1] ?? []
+		return conversation
+			.flatMap((message: any) => (Array.isArray(message.content) ? message.content : []))
+			.filter((block: any) => block?.type === "text")
+			.map((block: any) => block.text)
+			.join("\n")
+	}
+
+	it("does not replay the provider request after a hosted Web Search chunk was yielded", async () => {
+		const createMessage = vi.fn()
+		createMessage.mockImplementationOnce(async function* () {
 			yield {
 				type: "server_tool",
 				function_id: "hosted-search-before-stream-error",
@@ -2270,6 +2281,15 @@ describe("SubagentRunner", () => {
 				input: { query: "Dline retry boundary" },
 			}
 			throw new Error("stream failed after hosted search started")
+		})
+		createMessage.mockImplementationOnce(async function* () {
+			yield { type: "text", text: "" }
+			yield {
+				type: "tool_calls",
+				function_id: "fc-done",
+				dline_tid: "tid-done",
+				tool_call: { function: { name: "attempt_completion", arguments: '{"result":"Reported the failure."}' } },
+			}
 		})
 		stubSystemPrompt(false)
 		vi.spyOn(skills, "discoverSkills").mockResolvedValue([])
@@ -2286,13 +2306,115 @@ describe("SubagentRunner", () => {
 
 		const result = await runner.run("Search once", progress)
 
-		assert.equal(result.status, "failed")
-		assert.equal(createMessage.mock.calls.length, 1)
-		assert.match(result.error || "", /stream failed after hosted search started/i)
+		// The failed attempt is never replayed: the second call is a new turn that
+		// carries the failure notice, not a retry of the same request.
+		assert.equal(createMessage.mock.calls.length, 2)
+		assert.equal(result.status, "completed")
 		const hostedStartedEvents = progress.mock.calls
 			.map(([update]) => update.event)
 			.filter((event) => event?.kind === "tool_call" && event.toolName === "web_search" && event.toolStatus === "started")
 		assert.equal(hostedStartedEvents.length, 1)
+	})
+
+	it("hands a failed hosted call back to the subagent instead of ending the run", async () => {
+		const createMessage = vi.fn()
+		createMessage.mockImplementationOnce(async function* () {
+			yield {
+				type: "server_tool",
+				function_id: "hosted-search-recoverable",
+				tool: ServerTool.WEB_SEARCH,
+				phase: "started",
+				input: { query: "Dline recovery boundary" },
+			}
+			throw new Error("stream failed after hosted search started")
+		})
+		createMessage.mockImplementationOnce(async function* () {
+			yield {
+				type: "tool_calls",
+				function_id: "fc-recovered",
+				dline_tid: "tid-recovered",
+				tool_call: {
+					function: { name: "attempt_completion", arguments: '{"result":"Proceeded without the search."}' },
+				},
+			}
+		})
+		stubSystemPrompt(false)
+		vi.spyOn(skills, "discoverSkills").mockResolvedValue([])
+		vi.spyOn(skills, "getAvailableSkills").mockReturnValue([])
+		stubApiHandler(createMessage, 200_000, true)
+		initializeHostProvider()
+		const runner = new SubagentRunner(createTaskConfig(false, { clineWebToolsEnabled: true }), "web-researcher", {
+			name: "web-researcher",
+			description: "Researches current information on the web.",
+			tools: [ClineDefaultTool.WEB_SEARCH, ClineDefaultTool.ATTEMPT],
+			systemPrompt: "",
+		})
+
+		const result = await runner.run("Search once", vi.fn())
+
+		assert.equal(result.status, "completed")
+		assert.equal(result.result, "Proceeded without the search.")
+		// The model must be told what failed, with the attempted query, so it can
+		// decide whether to retry differently or continue without the result.
+		const secondTurnText = conversationTextForCall(createMessage, 1)
+		assert.match(secondTurnText, /Provider-hosted web search for "Dline recovery boundary" failed/i)
+		assert.match(secondTurnText, /cannot be recovered automatically/i)
+	})
+
+	it("stops recovering once a run exhausts its hosted failure budget", async () => {
+		const failingTurn = async function* () {
+			yield {
+				type: "server_tool",
+				function_id: "hosted-search-always-failing",
+				tool: ServerTool.WEB_SEARCH,
+				phase: "started",
+				input: { query: "never succeeds" },
+			}
+			throw new Error("stream failed after hosted search started")
+		}
+		const createMessage = vi.fn().mockImplementation(failingTurn)
+		stubSystemPrompt(false)
+		vi.spyOn(skills, "discoverSkills").mockResolvedValue([])
+		vi.spyOn(skills, "getAvailableSkills").mockReturnValue([])
+		stubApiHandler(createMessage, 200_000, true)
+		initializeHostProvider()
+		const runner = new SubagentRunner(createTaskConfig(false, { clineWebToolsEnabled: true }), "web-researcher", {
+			name: "web-researcher",
+			description: "Researches current information on the web.",
+			tools: [ClineDefaultTool.WEB_SEARCH, ClineDefaultTool.ATTEMPT],
+			systemPrompt: "",
+		})
+
+		const result = await runner.run("Search forever", vi.fn())
+
+		// Recovery is bounded: a provider failing every attempt must end the run
+		// rather than loop until the turn budget is exhausted.
+		assert.equal(result.status, "failed")
+		assert.equal(createMessage.mock.calls.length, 3)
+		assert.match(result.error || "", /stream failed after hosted search started/i)
+	})
+
+	it("keeps propagating a stream failure when no hosted call was involved", async () => {
+		const createMessage = vi.fn().mockImplementation(async function* () {
+			yield { type: "text", text: "partial" }
+			throw new Error("plain stream failure")
+		})
+		stubSystemPrompt(false)
+		vi.spyOn(skills, "discoverSkills").mockResolvedValue([])
+		vi.spyOn(skills, "getAvailableSkills").mockReturnValue([])
+		stubApiHandler(createMessage, 200_000, true)
+		initializeHostProvider()
+		const runner = new SubagentRunner(createTaskConfig(false, { clineWebToolsEnabled: true }), "web-researcher", {
+			name: "web-researcher",
+			description: "Researches current information on the web.",
+			tools: [ClineDefaultTool.WEB_SEARCH, ClineDefaultTool.ATTEMPT],
+			systemPrompt: "",
+		})
+
+		const result = await runner.run("Do not search", vi.fn())
+
+		assert.equal(result.status, "failed")
+		assert.match(result.error || "", /plain stream failure/i)
 	})
 
 	it("fails context window errors", async () => {

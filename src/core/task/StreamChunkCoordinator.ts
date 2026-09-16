@@ -24,6 +24,8 @@ interface QueueMetrics {
 
 type StreamChunkCoordinatorOptions = {
 	onUsageChunk: (chunk: ApiStreamUsageChunk) => void
+	/** Abort the provider-owned transport when iterator closure alone cannot end it. */
+	abortStream?: () => void
 	onQueueMetrics?: (metrics: QueueMetrics) => void
 	queueMetricsIntervalMs?: number
 }
@@ -35,6 +37,7 @@ export class StreamChunkCoordinator {
 	private readError: unknown
 	private completed = false
 	private stopRequested = false
+	private streamAbortRequested = false
 	private usageOnly = false
 	private waiterResolve: (() => void) | undefined
 	private pumpPromise: Promise<void>
@@ -81,7 +84,20 @@ export class StreamChunkCoordinator {
 		})
 	}
 
+	private abortStream(): void {
+		if (this.completed || this.streamAbortRequested) {
+			return
+		}
+		this.streamAbortRequested = true
+		try {
+			this.options.abortStream?.()
+		} catch (error) {
+			Logger.debug(`[StreamChunkCoordinator] Failed to abort provider stream: ${error}`)
+		}
+	}
+
 	private async closeIterator() {
+		this.abortStream()
 		if (typeof this.iterator.return !== "function") {
 			return
 		}
@@ -105,14 +121,23 @@ export class StreamChunkCoordinator {
 						continue
 					}
 					if (this.usageOnly) {
-						continue
+						// A completed turn-ending tool may still be followed by the final
+						// usage event, but any further presentation content belongs to a
+						// provider continuation Dline will never render. Close the iterator
+						// instead of leaving that request alive while the user already owns
+						// the next interaction.
+						this.stopRequested = true
+						await this.closeIterator()
+						break
 					}
 					this.queue.push(chunk)
 					this.maxQueueDepth = Math.max(this.maxQueueDepth, this.queue.length)
 					this.notifyWaiter()
 				}
 			} catch (error) {
-				this.readError = error
+				if (!this.stopRequested) {
+					this.readError = error
+				}
 			} finally {
 				this.completed = true
 				this.emitQueueMetrics()
@@ -145,11 +170,16 @@ export class StreamChunkCoordinator {
 		}
 	}
 
-	/** Discard queued and future presentation chunks while preserving final Provider usage. */
+	/** Drain final Provider usage, closing the stream if more presentation content follows the turn end. */
 	async drainUsageOnly(): Promise<void> {
 		this.usageOnly = true
+		const hadQueuedPresentationContent = this.queue.length > 0
 		this.queue = []
 		this.notifyWaiter()
+		if (hadQueuedPresentationContent) {
+			await this.stop()
+			return
+		}
 		await this.waitForCompletion()
 	}
 

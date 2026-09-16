@@ -1,6 +1,7 @@
 import { PROVIDER_API_KEY_MAP, readApiProfiles } from "@core/controller/file/getApiProfiles"
 import { type AutoApprovalSettings, DEFAULT_AUTO_APPROVAL_SETTINGS } from "@shared/AutoApprovalSettings"
 import type { ApiConfiguration } from "@shared/api"
+import type { HistoryItem } from "@shared/HistoryItem"
 import {
 	type GlobalState,
 	type GlobalStateAndSettings,
@@ -21,6 +22,7 @@ import {
 import type { StorageContext } from "@shared/storage/storage-context"
 import { taskServiceTierOverrideFromFields } from "@shared/task-provider-overrides"
 import { taskReasoningOverrideFromFields } from "@shared/task-reasoning"
+import deepEqual from "fast-deep-equal"
 import { initializeDistinctId } from "@/services/logging/distinctId"
 import { recordPerfPhase } from "@/services/telemetry/instrumentation/duration-recorder"
 import { PerfDomain } from "@/services/telemetry/instrumentation/perf-domains"
@@ -76,6 +78,19 @@ interface ProfileBindings {
 export type StateSyncEvent =
 	| { readonly source: "settings"; readonly commit: SettingsCommit }
 	| { readonly source: "task_history" }
+
+/**
+ * Attempts allowed when reading the task history back after a disk change.
+ *
+ * The read can fail while another process is mid-commit. Giving up on the
+ * first failure would strand a cross-window update until an unrelated change
+ * happened to arrive, so a few attempts are made before the refresh is
+ * abandoned.
+ */
+const TASK_HISTORY_REFRESH_MAX_ATTEMPTS = 3
+
+/** Base delay between refresh attempts; the wait grows with each attempt. */
+const TASK_HISTORY_REFRESH_RETRY_MS = 200
 
 /**
  * In-memory state manager for fast state access.
@@ -222,18 +237,8 @@ export class StateManager {
 				await importLegacyTaskHistory(taskHistory, storage.taskHistoryPath)
 			}
 			await taskHistory.startWatcher(databasePath)
-			taskHistory.onChange(async () => {
-				// Notify controllers of external task history changes
-				const callbacks = candidate.onSyncExternalChangeCallbacks
-				if (!callbacks) return
-				for (const cb of callbacks) {
-					try {
-						await cb({ source: "task_history" })
-					} catch {
-						/* ignore */
-					}
-				}
-			})
+			const historyStore = taskHistory
+			historyStore.onChange(() => candidate.refreshTaskHistoryFromDisk(historyStore))
 			candidate._taskHistory = taskHistory
 
 			// Populate initial taskHistory cache
@@ -409,6 +414,52 @@ export class StateManager {
 	private disableSettingsFallback(): void {
 		this.settingsFallbackActive = false
 		this.settingsFallbackCache = {}
+	}
+
+	/**
+	 * Pull the task history back in after the database changed on disk.
+	 *
+	 * The watcher fires for this process's own commits as much as for another
+	 * window's, and the signal carries no payload, so the history has to be
+	 * read back to find out whether anything actually changed. Broadcasting
+	 * without that read republished the cache that was already current, which
+	 * is what made an idle task publish state continuously.
+	 *
+	 * The read includes writes still settling in this process. Reading disk
+	 * alone would roll the cache back to the state before a queued write,
+	 * because a metadata update returns its staged row to the caller before
+	 * the transaction commits.
+	 */
+	private async refreshTaskHistoryFromDisk(historyStore: TaskHistory, attempt = 0): Promise<void> {
+		if (this.onSyncExternalChangeCallbacks.size === 0 && !this.onSyncExternalChange) return
+		let history: HistoryItem[]
+		try {
+			history = await historyStore.getDeduplicatedWithPendingWrites()
+		} catch (error) {
+			// Dropping the refresh here would strand a cross-window update
+			// until an unrelated change happened to arrive, so retry within a
+			// bound instead of returning silently.
+			if (attempt + 1 >= TASK_HISTORY_REFRESH_MAX_ATTEMPTS) {
+				Logger.error("[StateManager] Gave up refreshing task history after a disk change:", error)
+				return
+			}
+			Logger.warn(
+				`[StateManager] Retrying task history refresh (attempt ${attempt + 1}/${TASK_HISTORY_REFRESH_MAX_ATTEMPTS}):`,
+				error,
+			)
+			const timer = setTimeout(
+				() => {
+					void this.refreshTaskHistoryFromDisk(historyStore, attempt + 1)
+				},
+				TASK_HISTORY_REFRESH_RETRY_MS * (attempt + 1),
+			)
+			timer.unref?.()
+			return
+		}
+		const previous = this.globalStateCache.taskHistory
+		if (previous && deepEqual(previous, history)) return
+		this.globalStateCache.taskHistory = history
+		await this.notifySyncExternalChange({ source: "task_history" })
 	}
 
 	private async notifySyncExternalChange(event: StateSyncEvent): Promise<void> {

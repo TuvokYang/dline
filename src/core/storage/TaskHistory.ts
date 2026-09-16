@@ -1,4 +1,5 @@
 import chokidar, { FSWatcher } from "chokidar"
+import deepEqual from "fast-deep-equal"
 import { HistoryItem } from "@/shared/HistoryItem"
 import { Logger } from "@/shared/services/Logger"
 import type { UnifyStore, UnifyStoreDatabase } from "./backend/api/UnifyStore"
@@ -54,6 +55,17 @@ export class TaskHistory {
 	 * durability.
 	 */
 	private _pendingWrite: Promise<void> = Promise.resolve()
+	/**
+	 * Rows staged by a queued write that has not settled yet.
+	 *
+	 * `upsertTaskHistory` hands its caller the staged row before the
+	 * transaction commits, so a read that goes straight to disk can still
+	 * observe the previous value. Keeping the staged row here lets a reader
+	 * overlay what this process has already promised.
+	 */
+	private readonly stagedWrites = new Map<string, { item: HistoryItem; sequence: number }>()
+	/** Tells a settled write apart from a later one that superseded it. */
+	private stagedWriteSequence = 0
 
 	constructor(
 		private readonly store: UnifyStore<TaskHistoryRow>,
@@ -90,6 +102,35 @@ export class TaskHistory {
 		return await this.getAll()
 	}
 
+	/**
+	 * Return every entry, newest first, including writes still settling here.
+	 *
+	 * A caller refreshing from a disk change needs this rather than
+	 * `getDeduplicated`. The change that woke it is not necessarily the only
+	 * write in flight, and rebuilding a cache from disk alone would roll back
+	 * a row this process already handed to its own callers.
+	 */
+	async getDeduplicatedWithPendingWrites(): Promise<HistoryItem[]> {
+		const committed = await this.getAll()
+		if (this.stagedWrites.size === 0) return committed
+		const pending = new Map([...this.stagedWrites].map(([id, entry]) => [id, entry.item]))
+		const merged = committed.map((item) => {
+			const staged = pending.get(item.id)
+			if (!staged) return item
+			pending.delete(item.id)
+			return staged
+		})
+		// A task whose first write has not landed yet is absent from disk, so
+		// it has to be added rather than substituted.
+		for (const item of pending.values()) merged.push(item)
+		// Sorted unconditionally rather than only when a row was added: `ts` is
+		// the time of the latest activity, so a staged row that replaced an
+		// existing one has very likely moved. Returning the disk order would
+		// hand the caller a sequence that contradicts what every other read of
+		// this store promises.
+		return merged.sort((left, right) => right.ts - left.ts)
+	}
+
 	/** Return the most recent N entries. */
 	async getRecent(limit: number): Promise<HistoryItem[]> {
 		if (limit <= 0) return []
@@ -118,8 +159,17 @@ export class TaskHistory {
 		return await this.store.transaction(async (transaction) => {
 			const rows = await transaction.query({ where: eq(TaskHistoryRow.storage.fields.id, item.id) })
 			const row = TaskHistoryRow.fromHistoryItem(item, rows[0]?.completionProjection())
+			// Every durable message boundary republishes the whole row, so most
+			// updates carry no change at all. Writing one anyway rewrites the
+			// entire table, and the resulting database change wakes this
+			// process's own watcher, which republishes state to every
+			// controller. Comparing inside the transaction keeps that decision
+			// against the same committed state the write would have replaced.
+			const existingItem = rows[0]?.toHistoryItem()
+			const nextItem = row.toHistoryItem()
+			if (existingItem && isSameHistoryItem(existingItem, nextItem)) return existingItem
 			await transaction.replaceAll([...(await transaction.query()).filter((candidate) => candidate.id !== item.id), row])
-			return row.toHistoryItem()
+			return nextItem
 		})
 	}
 
@@ -233,10 +283,33 @@ export class TaskHistory {
 	 * transaction settles in the background and `flush` joins it.
 	 */
 	async upsertTaskHistory(item: HistoryItem): Promise<HistoryItem> {
+		// Registered before the first await. The caller has already accepted
+		// this item into its own cache, and the store serializes operations, so
+		// a refresh that starts during the lookup below would otherwise read
+		// committed rows without seeing that this write exists and would
+		// publish a cache that rolls the item back.
+		const sequence = ++this.stagedWriteSequence
+		this.stagedWrites.set(item.id, { item, sequence })
 		const existing = await this.findRow(item.id)
 		const staged = TaskHistoryRow.fromHistoryItem(item, existing?.completionProjection()).toHistoryItem()
-		this.trackWrite(this.upsert(item))
+		// Replaced with the reconciled row once the completion projection is
+		// known: an incoming item cannot establish or retract one, so the
+		// provisional entry above may carry a stale verdict.
+		if (this.stagedWrites.get(item.id)?.sequence === sequence) {
+			this.stagedWrites.set(item.id, { item: staged, sequence })
+		}
+		this.trackWrite(this.upsert(item).finally(() => this.releaseStagedWrite(item.id, sequence)))
 		return staged
+	}
+
+	/**
+	 * Drop a staged row once its own write settled.
+	 *
+	 * A later write for the same task supersedes this one while remaining
+	 * uncommitted itself, so only a matching sequence may clear the entry.
+	 */
+	private releaseStagedWrite(id: string, sequence: number): void {
+		if (this.stagedWrites.get(id)?.sequence === sequence) this.stagedWrites.delete(id)
 	}
 
 	/** Let a queued write settle in the background without blocking the caller. */
@@ -356,6 +429,22 @@ export class TaskHistory {
 		await this.store.close()
 		await this.database?.close()
 	}
+}
+
+/**
+ * Report whether two history entries would persist identically.
+ *
+ * Compared through the projected entry rather than a hand-written field list so
+ * a column added later is covered without anyone remembering to extend this;
+ * the projection is the same shape the store round-trips. Key order is stable
+ * because both sides are produced by that one projection.
+ */
+function isSameHistoryItem(left: HistoryItem, right: HistoryItem): boolean {
+	// Compared structurally rather than by serialization: two rows carrying the
+	// same values in a different property order are the same durable row, and
+	// treating them as different would reinstate the rewrite this check exists
+	// to avoid.
+	return deepEqual(left, right)
 }
 
 /**

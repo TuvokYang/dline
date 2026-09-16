@@ -14,6 +14,11 @@
 		"noFallthroughCasesInSwitch": true,
 		"noImplicitOverride": true,
 		"noImplicitReturns": true,
+		// This project is bundled by esbuild; tsc is only used for type checking.
+		// Emitting is opt-in so that an accidental `tsc -b` or `tsc -p .` cannot
+		// scatter .js/.js.map next to the sources (rootDir is the repo root).
+		// Build scripts that genuinely need output must pass `--noEmit false`.
+		"noEmit": true,
 		"noUnusedLocals": false,
 		"resolveJsonModule": true,
 		"rootDir": ".",

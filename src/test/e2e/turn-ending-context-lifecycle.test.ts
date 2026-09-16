@@ -53,7 +53,7 @@ interface ContextWindowVisualState {
 
 const CONTEXT_TOTAL = 630_100
 const CONTEXT_WINDOW = 1_000_000
-const CONTEXT_SEGMENTS = ["durable", "sending", "receiving", "environment"]
+const CONTEXT_SEGMENTS = ["durable", "active", "staged", "environment"]
 
 async function selectProfile(sidebar: Frame, profileName: string): Promise<void> {
 	const modelSwitcher = sidebar.getByRole("button", { name: "Select model" })
@@ -76,7 +76,7 @@ async function submitText(sidebar: Frame, text: string): Promise<void> {
 }
 
 async function expectSingleUserFeedback(sidebar: Frame, text: string): Promise<void> {
-	const feedback = sidebar.locator("span.ph-no-capture:not(button span)").filter({ hasText: text })
+	const feedback = sidebar.getByTestId(/^(?:user|queued)-input-markdown-scroll$/).filter({ hasText: text })
 	await expect(feedback).toHaveCount(1)
 	await expect(feedback).toHaveText(text)
 }

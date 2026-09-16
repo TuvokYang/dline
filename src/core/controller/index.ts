@@ -37,10 +37,9 @@ import { ClineAccountService } from "@services/account/ClineAccountService"
 import { McpHub } from "@services/mcp/McpHub"
 import type { ModelInfo } from "@shared/api"
 import type { ChatContent } from "@shared/ChatContent"
-import { combineApiRequests } from "@shared/combineApiRequests"
-import { combineCommandSequences } from "@shared/combineCommandSequences"
 import { getContextWindowIndicatorTotalTokens } from "@shared/context-window-indicator"
 import type { ExtensionState, Platform } from "@shared/ExtensionMessage"
+import type { ApiMetrics } from "@shared/getApiMetrics"
 import type { HistoryItem } from "@shared/HistoryItem"
 import type { McpMarketplaceCatalog, McpMarketplaceItem, McpServer } from "@shared/mcp"
 import type { ClineUserContent } from "@shared/messages/content"
@@ -108,6 +107,7 @@ import {
 	type WorkspaceHistoryManager,
 	type WorkspaceHistorySession,
 } from "./history/WorkspaceHistoryManager"
+import { projectMcpServersWithToggleOverrides } from "./mcp/mcp-server-toggle-projection"
 import { sendMcpMarketplaceCatalogEvent } from "./mcp/subscribeToMcpMarketplaceCatalog"
 import { ModeSwitchCoordinator } from "./mode-switch/ModeSwitchCoordinator"
 import type { ModeSwitchOperation, ResolvedModeProfile } from "./mode-switch/types"
@@ -121,6 +121,14 @@ import { projectTaskHistory } from "./state/taskHistoryProjection"
 import { prepareHistoryTaskForDisplay, projectHistoryPreparingView } from "./task/history-task-readiness"
 import { startTaskLifecycle } from "./task/task-start-lifecycle"
 import { sendChatButtonClickedEvent } from "./ui/subscribeToChatButtonClicked"
+
+/**
+ * Merge window for ordinary state publications.
+ *
+ * Matches the delivery debounce in subscribeToState so moving coalescing ahead
+ * of the build keeps the user-visible latency ceiling unchanged.
+ */
+const STATE_POST_COALESCE_MS = 50
 
 const ACCOUNT_USAGE_BINDING_SETTINGS = new Set([
 	"mode",
@@ -224,6 +232,20 @@ export class Controller {
 	private readonly profileSwitchCoordinator: ProfileSwitchCoordinator
 	private nextStateRevision = 0
 	private latestStateRevision = 0
+	/** Pending coalescing window for non-immediate state publications. */
+	private pendingStatePostTimer?: ReturnType<typeof setTimeout>
+	/**
+	 * Last history projection, keyed by the array it was computed from.
+	 *
+	 * The cached history is replaced wholesale on every update rather than
+	 * mutated, so the array reference identifies its contents. A state
+	 * publication that carries an unchanged history therefore reuses this
+	 * instead of re-sorting and re-projecting every entry.
+	 */
+	private taskHistoryProjectionCache?: {
+		source: readonly HistoryItem[]
+		items: ReturnType<typeof projectTaskHistory>["items"]
+	}
 
 	/**
 	 * Snapshot the currently effective resource toggles for a newly created task.
@@ -273,10 +295,7 @@ export class Controller {
 
 	private applyWorkspaceMcpServerToggles(servers: readonly McpServer[]): McpServer[] {
 		const toggles = this.stateManager.getWorkspaceStateKey("mcpServersToggles") || {}
-		return servers.map((server) => {
-			if (server.source !== "workspace" || !Object.hasOwn(toggles, server.name)) return server
-			return { ...server, disabled: toggles[server.name] !== true }
-		})
+		return projectMcpServersWithToggleOverrides(servers, toggles)
 	}
 
 	getMcpServersForOwner(): McpServer[] {
@@ -740,6 +759,7 @@ export class Controller {
 	detachUi(): void {
 		if (this.uiDetached) return
 		this.uiDetached = true
+		this.clearPendingStatePost()
 		this.stopAccountUsagePolling()
 		const cleanup = cleanupStateSubscriptions(this)
 		Logger.debug(
@@ -1877,9 +1897,71 @@ export class Controller {
 			this.suppressedStatePostsAfterDetach++
 			return
 		}
+		// Coalescing downstream of the build only saved delivery: every caller in
+		// a burst still paid for a full state build whose result was then
+		// discarded. Merging first makes the build itself happen once per window.
+		if (!options?.immediate) {
+			// buildState() is the only writer of the active task id, so deferring
+			// it would leave task-scoped setting reads pointing at the previous
+			// task for the whole window. An immediate publication builds right
+			// away and needs no such compensation.
+			this.stateManager.setActiveTaskId(this.task?.taskId)
+			this.scheduleCoalescedStatePost()
+			return
+		}
+		this.clearPendingStatePost()
+		await this.publishState(options)
+	}
+
+	/** Build the current state once and hand it to delivery when still current. */
+	private async publishState(options?: PostStateOptions): Promise<void> {
 		const state = await this.getStateToPostToWebview()
 		if (!this.isStateCurrent(state.stateRevision)) return
 		await sendStateUpdate(this, state, this._accountUsage, options)
+	}
+
+	/** Open a merge window so a burst of ordinary updates builds state once. */
+	private scheduleCoalescedStatePost(): void {
+		if (this.pendingStatePostTimer) return
+		this.pendingStatePostTimer = setTimeout(() => {
+			this.pendingStatePostTimer = undefined
+			if (!this.isUiAttached()) return
+			// The window already absorbed the delay, so delivery must not queue
+			// this behind a second debounce of the same length.
+			void this.publishState({ immediate: true })
+		}, STATE_POST_COALESCE_MS)
+	}
+
+	/**
+	 * Project the task history for a state publication, reusing the last result.
+	 *
+	 * The entry cap bounds how many tasks are sent but not how many bytes:
+	 * `HistoryItem.task` holds the verbatim task text, so the projection
+	 * shortens it to an identifying prefix while the full text stays on disk.
+	 * Sorting and projecting the whole list on every publication was pure
+	 * repetition whenever the history itself had not changed.
+	 */
+	private projectTaskHistoryCached(
+		taskHistory: readonly HistoryItem[] | undefined,
+	): ReturnType<typeof projectTaskHistory>["items"] {
+		const source = taskHistory ?? []
+		const cached = this.taskHistoryProjectionCache
+		if (cached && cached.source === source) return cached.items
+		const items = projectTaskHistory(
+			source
+				.filter((item) => item.ts && item.task)
+				.sort((a, b) => b.ts - a.ts)
+				.slice(0, 100), // for now we're only getting the latest 100 tasks, but a better solution here is to only pass in 3 for recent task history, and then get the full task history on demand when going to the task history view (maybe with pagination?)
+		).items
+		this.taskHistoryProjectionCache = { source, items }
+		return items
+	}
+
+	/** Drop a merge window that a newer immediate publication or detach replaces. */
+	private clearPendingStatePost(): void {
+		if (!this.pendingStatePostTimer) return
+		clearTimeout(this.pendingStatePostTimer)
+		this.pendingStatePostTimer = undefined
 	}
 
 	/** Build a monotonic extension state while preserving the public non-optional contract. */
@@ -1994,7 +2076,10 @@ export class Controller {
 		const workflowToggles = this.readLocalCapabilityToggles("workflows")
 
 		const currentTaskItem = this.task?.taskId ? (taskHistory || []).find((item) => item.id === this.task?.taskId) : undefined
-		const rawMessages = [...(this.task?.messageStateHandler.clineMessages || [])]
+		// Read the message list once. The getter merges and sorts transient
+		// entries on every access, so a second read costs another full pass over
+		// a conversation that can hold tens of thousands of messages.
+		const rawMessages = this.task?.messageStateHandler.clineMessages ?? []
 		// Build a synthetic taskTitleMessage for backward compatibility with frontend
 		const taskTitleMessage = rawMessages.find((m) => m.say === "task") ?? rawMessages.at(0)
 		// Separate task header message from body messages. Read the header from the
@@ -2013,12 +2098,7 @@ export class Controller {
 		// bytes: HistoryItem.task holds the verbatim task text, so a workspace
 		// with long tasks rebroadcasts megabytes on every push. Project the text
 		// down to an identifying prefix; the full text stays on disk.
-		const processedTaskHistory = projectTaskHistory(
-			(taskHistory || [])
-				.filter((item) => item.ts && item.task)
-				.sort((a, b) => b.ts - a.ts)
-				.slice(0, 100), // for now we're only getting the latest 100 tasks, but a better solution here is to only pass in 3 for recent task history, and then get the full task history on demand when going to the task history view (maybe with pagination?)
-		).items
+		const processedTaskHistory = this.projectTaskHistoryCached(taskHistory)
 
 		const latestAnnouncementId = getLatestAnnouncementId()
 		const shouldShowAnnouncement = lastShownAnnouncementId !== latestAnnouncementId
@@ -2033,16 +2113,25 @@ export class Controller {
 		// Compute apiMetrics from all messages (not window slice).
 		// These are passed through subscribeToState so the frontend
 		// renders task header stats without depending on clineMessages.
-		const allMessages = this.task?.messageStateHandler.clineMessages || []
-		let metricMessages = allMessages
+		//
+		// The aggregation is memoized against the message mutation revision by
+		// its owner. Recomputing it here per publication re-serialized every
+		// paired API request, whose text carries the whole request body, and
+		// that dominated this build in long conversations.
+		let aggregatedMetrics: ApiMetrics | undefined
 		try {
-			metricMessages = combineApiRequests(combineCommandSequences(allMessages))
+			aggregatedMetrics = this.task?.messageStateHandler.readStateMetrics()
 		} catch (error) {
-			Logger.warn("Failed to combine messages for api metrics:", error)
+			Logger.warn("Failed to aggregate api metrics:", error)
 		}
 		const { getApiMetrics, getLastTaskProgressText } = await import("@shared/getApiMetrics")
 		const apiMetrics = {
-			...getApiMetrics(metricMessages),
+			// Combining parses each paired request as a whole, so a single
+			// malformed entry fails the aggregate outright. The per-message pass
+			// isolates its parsing per entry, so falling back to it keeps the
+			// remaining usage visible: reporting zero tokens for a long
+			// conversation is a worse answer than an approximate total.
+			...(aggregatedMetrics ?? getApiMetrics(rawMessages)),
 			...this.task?.getApiRateSnapshot(),
 		}
 		const contextWindowIndicator = this.task?.getContextWindowIndicator()
@@ -2053,7 +2142,7 @@ export class Controller {
 		// If currentFocusChainChecklist is null, fall back to searching
 		// the full message list (not the window slice) for task_progress.
 		const checklistFromTaskState = this.task?.taskState.currentFocusChainChecklist || null
-		const checklistForState = checklistFromTaskState || getLastTaskProgressText(allMessages)
+		const checklistForState = checklistFromTaskState || getLastTaskProgressText(rawMessages)
 
 		const result: ExtensionState = {
 			stateRevision: revision,
@@ -2197,7 +2286,8 @@ export class Controller {
 		}
 
 		const durationMs = Math.round(performance.now() - startTime)
-		if (durationMs >= 100) {
+		const logEveryStateBuild = process.env.E2E_TEST === "true" && process.env.DLINE_E2E_STATE_BUILD_TIMING === "true"
+		if (durationMs >= 100 || logEveryStateBuild) {
 			let activeTasks = 1
 			try {
 				const { OrchestratorController } = await import("@/core/orchestrator/OrchestratorController")

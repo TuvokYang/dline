@@ -71,6 +71,22 @@ const MAX_INVALID_COMPLETION_RETRIES = 3
  * rather than to fail the run.
  */
 const MAX_CONVERGENCE_REJECTIONS = 2
+/**
+ * How many times one run may hand a hosted-tool stream failure back to the model.
+ *
+ * Recovery returns control to the subagent instead of ending the run, so it needs
+ * a ceiling: a provider failing on every attempt would otherwise loop until the
+ * turn budget ran out.
+ */
+const MAX_HOSTED_SERVER_TOOL_RECOVERIES = 2
+/**
+ * Reasons a hosted call is force-closed. They stay tool-neutral because one
+ * lifecycle carries both web search and code execution, and a single
+ * `finalizeOpen` may close several calls of different tools at once.
+ */
+const HOSTED_SERVER_TOOL_STREAM_FAILED_REASON = "Provider stream failed before this hosted tool call returned a result."
+const HOSTED_SERVER_TOOL_STREAM_ENDED_REASON = "Provider stream ended before this hosted tool call returned a result."
+const HOSTED_SERVER_TOOL_CANCELLED_REASON = "Subagent run cancelled before this hosted tool call returned a result."
 const INITIAL_STREAM_RETRY_DELAYS_MS = [5_000, 8_000, 11_000, 14_000, 17_000] as const
 const MAX_INITIAL_STREAM_ATTEMPTS = INITIAL_STREAM_RETRY_DELAYS_MS.length + 1
 const SUBAGENT_COMPLETION_CALL_EXAMPLE =
@@ -136,6 +152,63 @@ function buildMissingCompletionResultReminder(): string {
 
 function buildCompletionRequiredFailure(): string {
 	return `Subagent did not complete through the required protocol.\n\n${SUBAGENT_COMPLETION_CONTRACT}\n\n${SUBAGENT_COMPLETION_CALL_EXAMPLE}`
+}
+
+/** One provider-hosted call that reached a failed terminal state this round. */
+export interface HostedServerToolFailure {
+	readonly tool: ServerTool
+	readonly query: string
+	readonly error: string
+}
+
+function hostedServerToolLabel(tool: ServerTool): string {
+	return tool === ServerTool.CODE_EXECUTION ? "code execution" : "web search"
+}
+
+/**
+ * Describe failed hosted calls so the model can choose what to do next.
+ *
+ * A provider-hosted call is not replayable, so the runner cannot silently retry
+ * it. Naming the tool, the attempted query, and the provider error gives the
+ * model what it needs to retry differently, switch tools, or proceed without it.
+ */
+export function buildHostedServerToolFailureNotice(failures: readonly HostedServerToolFailure[]): string {
+	const lines = failures.map((failure) => {
+		const label = hostedServerToolLabel(failure.tool)
+		const query = failure.query.trim()
+		const subject = query ? `${label} for "${query}"` : label
+		return `- Provider-hosted ${subject} failed: ${failure.error}`
+	})
+	return [
+		"The provider-hosted tool call(s) below ended without a result, and the response that contained them was lost:",
+		...lines,
+		"",
+		"These results cannot be recovered automatically. Decide how to continue: retry with a different query, use another available tool, or proceed with what you already know. Do not repeat an identical failing call more than once.",
+	].join("\n")
+}
+
+/**
+ * Fold the failure notice into the trailing user message.
+ *
+ * Returns false when the transcript does not end in a user message. The caller
+ * must treat that as a failed recovery rather than continuing, because a run
+ * that resumed without the notice would retry blind. Appending a separate
+ * message is not an option: it would break the user/assistant alternation
+ * providers require.
+ */
+export function appendHostedServerToolFailureNotice(
+	conversation: ClineStorageMessage[],
+	failures: readonly HostedServerToolFailure[],
+): boolean {
+	if (failures.length === 0) return false
+
+	const lastIndex = conversation.length - 1
+	const lastMessage = conversation[lastIndex]
+	if (!lastMessage || lastMessage.role !== "user" || !Array.isArray(lastMessage.content)) return false
+
+	const notice = { type: "text", text: buildHostedServerToolFailureNotice(failures) } as ClineTextContentBlock
+	conversation[lastIndex] = { ...lastMessage, content: [...lastMessage.content, notice] }
+	return true
 }
 
 function buildInvalidCompletionFailure(): string {
@@ -785,6 +858,8 @@ export class SubagentRunner {
 				},
 			]
 
+			let hostedServerToolRecoveries = 0
+
 			while (true) {
 				finishProviderExecution()
 				if (this.shouldAbort()) {
@@ -828,16 +903,49 @@ export class SubagentRunner {
 				const { reasonsHandler, toolUseHandler } = streamHandler.getHandlers()
 				usageState.currentRequest = createEmptyRequestUsageState()
 				const requestUsage = usageState.currentRequest
+				// Every exit from the stream has to settle, including a recovered
+				// hosted-tool failure. Skipping it would drop this request's cost and
+				// leave the next turn's compaction check reading a stale token sample.
+				const settleRequestUsage = (): void => {
+					const calculatedRequestCost =
+						requestUsage.totalCost ??
+						calculateApiCostAnthropic(
+							providerInfo.model.info,
+							requestUsage.inputTokens,
+							requestUsage.outputTokens,
+							requestUsage.cacheWriteTokens,
+							requestUsage.cacheReadTokens,
+						)
+					requestUsage.totalTokens =
+						requestUsage.inputTokens +
+						requestUsage.outputTokens +
+						requestUsage.cacheWriteTokens +
+						requestUsage.cacheReadTokens
+					stats.totalCost += calculatedRequestCost || 0
+					usageState.lastRequest = { ...requestUsage }
+				}
+				let recoveredFromHostedServerToolFailure = false
 
 				let assistantText = ""
 				let assistantTextSignature: string | undefined
 				let requestId: string | undefined
 				const countedHostedServerToolIds = new Set<string>()
+				// Both a provider-sent `failed` phase and a force-close from
+				// `finalizeOpen` emit through this same callback, so collecting here
+				// catches every failure without inspecting lifecycle internals.
+				const failedHostedServerTools: HostedServerToolFailure[] = []
 				const requestWebSearchRoutingPlan = this.completionOnly ? completionWebSearchRoutingPlan : webSearchRoutingPlan
 				activeHostedServerToolLifecycle = new ServerToolLifecycle(requestWebSearchRoutingPlan, true, (update) => {
 					if (!countedHostedServerToolIds.has(update.dlineTid)) {
 						countedHostedServerToolIds.add(update.dlineTid)
 						stats.toolCalls += 1
+					}
+					if (update.status === "failed") {
+						failedHostedServerTools.push({
+							tool: update.tool,
+							query: update.query,
+							error: update.error ?? "The provider reported no error detail.",
+						})
 					}
 					// Report the tool that actually ran: a hardcoded name would attribute
 					// sandbox work to web search in progress output.
@@ -1001,13 +1109,38 @@ export class SubagentRunner {
 						}
 
 						if (this.shouldAbort()) {
-							await activeHostedServerToolLifecycle.finalizeOpen("Subagent hosted web search cancelled.")
+							await activeHostedServerToolLifecycle.finalizeOpen(HOSTED_SERVER_TOOL_CANCELLED_REASON)
 							await this.abort()
 							const error = "Subagent run cancelled."
 							onProgress({ status: "cancelled", error, stats: { ...stats } })
 							return { status: "cancelled", error, retryable: true, stats }
 						}
 					}
+				} catch (streamError) {
+					// A hosted call is unreplayable, so a stream dying after one started
+					// used to end the entire run. Hand the failure back to the model
+					// instead, but only when a hosted call actually failed: every other
+					// error is an internal fault that must keep propagating rather than
+					// be absorbed by this narrow recovery.
+					if (this.shouldAbort()) throw streamError
+
+					// Close first, then decide. A call that was merely open has not
+					// reported a failure yet, so testing the collected failures before
+					// this would miss the very case this recovery exists for. Closing
+					// routes it through the same callback a provider-sent failure uses.
+					await activeHostedServerToolLifecycle.finalizeOpen(HOSTED_SERVER_TOOL_STREAM_FAILED_REASON)
+
+					if (failedHostedServerTools.length === 0) throw streamError
+					if (hostedServerToolRecoveries >= MAX_HOSTED_SERVER_TOOL_RECOVERIES) throw streamError
+					// The assistant message is only pushed after the stream drains, so a
+					// mid-stream failure leaves a trailing user message to fold into.
+					if (!appendHostedServerToolFailureNotice(conversation, failedHostedServerTools)) throw streamError
+
+					hostedServerToolRecoveries += 1
+					recoveredFromHostedServerToolFailure = true
+					Logger.warn(
+						`[SubagentRunner] Provider stream failed after ${failedHostedServerTools.length} hosted tool failure(s); returning control to the subagent model.`,
+					)
 				} finally {
 					if (roundUsageReported && providerRequestRound) {
 						const roundUsage = roundUsageAccumulator.getUsage()
@@ -1032,26 +1165,19 @@ export class SubagentRunner {
 						})
 					}
 				}
-				await activeHostedServerToolLifecycle.finalizeOpen(
-					"Provider stream ended before subagent hosted web search returned a result.",
-				)
+				// Settle before looping so the recovered turn is billed and sampled
+				// exactly like a turn that drained normally.
+				if (recoveredFromHostedServerToolFailure) {
+					settleRequestUsage()
+					continue
+				}
 
-				const calculatedRequestCost =
-					requestUsage.totalCost ??
-					calculateApiCostAnthropic(
-						providerInfo.model.info,
-						requestUsage.inputTokens,
-						requestUsage.outputTokens,
-						requestUsage.cacheWriteTokens,
-						requestUsage.cacheReadTokens,
-					)
-				requestUsage.totalTokens =
-					requestUsage.inputTokens +
-					requestUsage.outputTokens +
-					requestUsage.cacheWriteTokens +
-					requestUsage.cacheReadTokens
-				stats.totalCost += calculatedRequestCost || 0
-				usageState.lastRequest = { ...requestUsage }
+				await activeHostedServerToolLifecycle.finalizeOpen(HOSTED_SERVER_TOOL_STREAM_ENDED_REASON)
+
+				// A clean end needs no notice: the provider already surfaced the failed
+				// call inside the response the model just produced, so the model has
+				// seen it and answered with that knowledge.
+				settleRequestUsage()
 
 				// Keep the most recent narrative so a run that never converges can
 				// still hand back what it had reasoned out.
@@ -1347,9 +1473,7 @@ export class SubagentRunner {
 			}
 		} catch (error) {
 			await activeHostedServerToolLifecycle?.finalizeOpen(
-				this.shouldAbort()
-					? "Subagent hosted web search cancelled."
-					: "Provider stream failed before subagent hosted web search returned a result.",
+				this.shouldAbort() ? HOSTED_SERVER_TOOL_CANCELLED_REASON : HOSTED_SERVER_TOOL_STREAM_FAILED_REASON,
 			)
 			if (this.shouldAbort()) {
 				const cancelledError = "Subagent run cancelled."
@@ -1368,7 +1492,7 @@ export class SubagentRunner {
 			return { status: "failed", error: errorText, retryable, stats }
 		} finally {
 			activeProviderExecution?.finish()
-			await activeHostedServerToolLifecycle?.finalizeOpen("Subagent hosted web search ended without a result.")
+			await activeHostedServerToolLifecycle?.finalizeOpen(HOSTED_SERVER_TOOL_STREAM_ENDED_REASON)
 			this.activeApiAbort = undefined
 			this.activeRetryAbortController = undefined
 			this.interruptionController = undefined

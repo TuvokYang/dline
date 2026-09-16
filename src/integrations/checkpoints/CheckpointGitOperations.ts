@@ -3,15 +3,48 @@ import fs from "fs/promises"
 import * as path from "path"
 import simpleGit, { type SimpleGit } from "simple-git"
 import { getDlineCheckpointsDir } from "@/core/storage/disk"
+import { telemetryService } from "@/services/telemetry"
 import { DiagnosticDomain, DiagnosticOutcome } from "@/services/telemetry/instrumentation/diagnostic-events"
 import { recordDiagnostic } from "@/services/telemetry/instrumentation/diagnostic-recorder"
 import { recordPerfPhase } from "@/services/telemetry/instrumentation/duration-recorder"
 import { PerfDomain } from "@/services/telemetry/instrumentation/perf-domains"
-import { telemetryService } from "@/services/telemetry"
 import { Logger } from "@/shared/services/Logger"
 import { getLfsPatterns, loadWorkspaceIgnoreContent, writeExcludesFile } from "./CheckpointExclusions"
 import { detectCheckpointWorkspaceTopology } from "./CheckpointWorkspaceTopology"
 import { NestedRepositoryBoundaryDetector } from "./NestedRepositoryBoundaryDetector"
+
+/**
+ * Why a checkpoint add did not complete.
+ *
+ * A bounded set, because these values become metric labels. The message of the
+ * underlying error is unbounded and must never be reported as a dimension; it
+ * stays in the log line, which is not subject to cardinality limits.
+ */
+type CheckpointAddFailureReason =
+	/** A caller passed an explicit file list to a mode that stages the whole workspace. */
+	| "invalid_request"
+	/** A tracked path resolved outside the worktree that owns this checkpoint. */
+	| "path_outside_worktree"
+	/** Git refused every batch, so nothing could be staged. */
+	| "staging_rejected"
+	/** Git or the filesystem raised an error that this layer does not classify. */
+	| "git_error"
+
+/** How a checkpoint add ended, as a bounded metric dimension. */
+type CheckpointAddOutcome =
+	/** Every requested path was staged. */
+	| "success"
+	/** Some paths were staged and the rest were reported as unstageable. */
+	| "partial"
+	/**
+	 * Nothing was staged, but nothing could have been: every path belongs to a
+	 * nested repository or is absent from both the worktree and the shadow index.
+	 * Distinct from `failure` so the add rate keeps a complete denominator
+	 * without inflating the failure ratio.
+	 */
+	| "nothing_to_stage"
+	/** Nothing was staged and the caller cannot produce a usable checkpoint. */
+	| "failure"
 
 export interface CheckpointAddResult {
 	success: boolean
@@ -314,18 +347,15 @@ export class GitOperations {
 				await git.commit(`workspace baseline-${taskId}`, { "--no-verify": null })
 				Logger.info(`[Task ${taskId}] Refreshed existing checkpoints shadow baseline`)
 			}
+			// Only bounded dimensions are reported. The stage, detect and commit
+			// durations are unbounded numerics that would each become their own
+			// Prometheus label; they stay in the debug line below, which is not
+			// subject to cardinality limits.
 			recordPerfPhase(
 				PerfDomain.Checkpoint,
 				"existing_shadow_baseline",
 				performance.now() - startedAt,
-				{
-					mode,
-					exclusionsChanged,
-					stageMs,
-					detectMs,
-					commitMs: Math.round(performance.now() - commitStartedAt),
-					staged,
-				},
+				{ mode, exclusionsChanged, staged },
 				{ taskId },
 			)
 			if (Logger.isDebugEnabled()) {
@@ -408,13 +438,40 @@ export class GitOperations {
 		const { git, mode, fileList, taskId } = options
 		const explicitFiles = fileList ?? []
 		const startTime = performance.now()
+		const reportFailure = (reason: CheckpointAddFailureReason, error?: unknown): CheckpointAddResult => {
+			recordPerfPhase(
+				PerfDomain.Checkpoint,
+				"add",
+				performance.now() - startTime,
+				{ mode, outcome: "failure" satisfies CheckpointAddOutcome, reason },
+				{ taskId },
+			)
+			recordDiagnostic(DiagnosticDomain.Checkpoint, "add_failed", DiagnosticOutcome.Failed, { mode, reason }, { taskId })
+			if (error !== undefined) {
+				Logger.error(`[Task ${taskId}] Checkpoint add operation failed (${mode}, ${reason}):`, error)
+			}
+			return { success: false, stagedCount: 0, rejectedPaths: [] }
+		}
+		// Staging nothing is a normal outcome rather than a failure, but it still
+		// has to be reported: without it the add metric loses calls entirely and
+		// the failure ratio is computed against an incomplete denominator.
+		const reportNothingToStage = (rejectedPaths: string[]): CheckpointAddResult => {
+			recordPerfPhase(
+				PerfDomain.Checkpoint,
+				"add",
+				performance.now() - startTime,
+				{ mode, outcome: "nothing_to_stage" satisfies CheckpointAddOutcome },
+				{ taskId },
+			)
+			return { success: true, stagedCount: 0, rejectedPaths }
+		}
 		if (mode === "tracked" && explicitFiles.length === 0) {
 			Logger.error(`[Task ${taskId}] tracked checkpoint add requires explicit files`)
-			return { success: false, stagedCount: 0, rejectedPaths: [] }
+			return reportFailure("invalid_request")
 		}
 		if ((mode === "baseline" || mode === "workspace-scan") && explicitFiles.length > 0) {
 			Logger.error(`[Task ${taskId}] ${mode} checkpoint add must not receive explicit fileList`)
-			return { success: false, stagedCount: 0, rejectedPaths: [] }
+			return reportFailure("invalid_request")
 		}
 		Logger.info(`[Task ${taskId}] Starting checkpoint add operation (${mode})...`)
 		try {
@@ -424,7 +481,7 @@ export class GitOperations {
 				)
 				if (resolvedFiles.some((file) => file === undefined)) {
 					Logger.error(`[Task ${taskId}] Checkpoint add rejected a tracked path outside ${this.cwd}`)
-					return { success: false, stagedCount: 0, rejectedPaths: [] }
+					return reportFailure("path_outside_worktree")
 				}
 				const ownedFiles = resolvedFiles as CheckpointWorktreePath[]
 				const nestedOwnership = await Promise.all(
@@ -449,11 +506,7 @@ export class GitOperations {
 					Logger.debug(
 						`[Task ${taskId}] Checkpoint add staged nothing: all tracked files belong to nested repositories`,
 					)
-					return {
-						success: true,
-						stagedCount: 0,
-						rejectedPaths: nestedFiles.map((file) => file.relative),
-					}
+					return reportNothingToStage(nestedFiles.map((file) => file.relative))
 				}
 
 				const existence = await Promise.all(safeFiles.map((file) => fileExistsAtPath(file.absolute)))
@@ -491,7 +544,7 @@ export class GitOperations {
 					Logger.debug(
 						`[Task ${taskId}] Checkpoint add staged nothing: no tracked path exists in the worktree or shadow index`,
 					)
-					return { success: true, stagedCount: 0, rejectedPaths: unstageablePaths }
+					return reportNothingToStage(unstageablePaths)
 				}
 				const staging = await this.stageInBatches(
 					git,
@@ -499,13 +552,36 @@ export class GitOperations {
 					taskId,
 				)
 				const durationMs = performance.now() - startTime
+				// A batch Git refused still yields a usable checkpoint from the
+				// paths that did stage, so the two are reported as different
+				// outcomes rather than both as plain success.
+				const rejectedPaths = [...unstageablePaths, ...staging.rejectedPaths]
+				const outcome: CheckpointAddOutcome =
+					staging.stagedCount === 0 && rejectedPaths.length > 0
+						? "failure"
+						: rejectedPaths.length > 0
+							? "partial"
+							: "success"
 				recordPerfPhase(
 					PerfDomain.Checkpoint,
 					"add",
 					durationMs,
-					{ mode, staged: staging.stagedCount, rejected: staging.rejectedPaths.length },
+					{
+						mode,
+						outcome,
+						...(outcome === "failure" ? { reason: "staging_rejected" satisfies CheckpointAddFailureReason } : {}),
+					},
 					{ taskId },
 				)
+				if (outcome === "failure") {
+					recordDiagnostic(
+						DiagnosticDomain.Checkpoint,
+						"add_failed",
+						DiagnosticOutcome.Failed,
+						{ mode, reason: "staging_rejected" },
+						{ taskId },
+					)
+				}
 				if (Logger.isDebugEnabled()) {
 					Logger.debug(`Checkpoint add operation completed in ${Math.round(durationMs)}ms`)
 				}
@@ -514,7 +590,7 @@ export class GitOperations {
 					// produces a usable checkpoint once the bad paths are dropped.
 					success: staging.stagedCount > 0 || staging.rejectedPaths.length === 0,
 					stagedCount: staging.stagedCount,
-					rejectedPaths: [...unstageablePaths, ...staging.rejectedPaths],
+					rejectedPaths,
 				}
 			}
 			if (mode === "baseline") {
@@ -527,15 +603,20 @@ export class GitOperations {
 			}
 			await git.add([".", "--ignore-errors"])
 			const durationMs = performance.now() - startTime
-			recordPerfPhase(PerfDomain.Checkpoint, "add", durationMs, { mode, staged: 0, rejected: 0 }, { taskId })
+			recordPerfPhase(
+				PerfDomain.Checkpoint,
+				"add",
+				durationMs,
+				{ mode, outcome: "success" satisfies CheckpointAddOutcome },
+				{ taskId },
+			)
 			if (Logger.isDebugEnabled()) {
 				Logger.debug(`[Task ${taskId}] Checkpoint add operation: staged workspace via ${mode}`)
 				Logger.debug(`Checkpoint add operation completed in ${Math.round(durationMs)}ms`)
 			}
 			return { success: true, stagedCount: 0, rejectedPaths: [] }
 		} catch (error) {
-			Logger.error(`[Task ${taskId}] Checkpoint add operation failed (${mode}):`, error)
-			return { success: false, stagedCount: 0, rejectedPaths: [] }
+			return reportFailure("git_error", error)
 		}
 	}
 

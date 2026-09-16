@@ -146,7 +146,7 @@ async function submitInteractionFeedback(sidebar: Frame, text: string): Promise<
 }
 
 async function expectSingleUserFeedback(sidebar: Frame, text: string): Promise<void> {
-	const feedback = sidebar.locator("span.ph-no-capture:not(button span)").filter({ hasText: text })
+	const feedback = sidebar.getByTestId("direct-user-input").filter({ hasText: text })
 	await expect(feedback).toHaveCount(1)
 	await expect(feedback).toHaveText(text)
 }
@@ -166,14 +166,17 @@ async function exerciseChatAndEditorSurface(page: Page, sidebar: Frame): Promise
 	await expect(actButton).toHaveAttribute("aria-checked", "true")
 
 	await input.fill("/newt")
-	await sidebar.getByText("newtask", { exact: false }).first().click()
+	await sidebar
+		.getByRole("listbox", { name: "Slash commands" })
+		.getByRole("option", { name: /^newtask\b/i })
+		.click()
 	await expect(input).toHaveValue("/cmd:newtask ")
 	await input.press("End")
 	await input.pressSequentially("following text should be preserved", { delay: 10 })
 	await expect(input).toHaveValue("/cmd:newtask following text should be preserved")
 
 	await input.fill("@prob")
-	await sidebar.getByText("Problems", { exact: false }).first().click()
+	await sidebar.getByRole("listbox", { name: "Context mentions" }).getByRole("option", { name: "Problems" }).last().click()
 	await expect(input).toHaveValue("@problems ")
 	await input.press("End")
 	await input.pressSequentially("following text should be preserved", { delay: 10 })
@@ -226,6 +229,12 @@ function parseUsageTitle(title: string): { input: number; output: number; cacheR
 	}
 }
 
+function parseCacheHitRate(label: string): number {
+	const match = label.match(/(?:^|;\s*)Hit:\s*([\d.]+)%(?:;|$)/)
+	if (!match) throw new Error(`Unexpected cache hit label: ${label}`)
+	return Number(match[1])
+}
+
 function parseCompactTokens(text: string): number {
 	const match = text.trim().match(/^(\d+(?:\.\d+)?)([kKmM])?$/)
 	if (!match) throw new Error(`Unexpected compact token value: ${text}`)
@@ -245,18 +254,25 @@ function expectMeasuredUsage(consumptions: readonly MockApiConsumption[]): void 
 		const usage = usageOf(consumption)
 		const requestBytes = Buffer.byteLength(JSON.stringify(consumption.requestBody), "utf8")
 		const measuredInput = totalInputTokens(usage)
-		expect(measuredInput).toBeGreaterThanOrEqual(Math.ceil(requestBytes / 5))
-		expect(measuredInput).toBeLessThanOrEqual(Math.ceil(requestBytes / 3))
+		if (consumption.cacheDiagnostic) {
+			expect(measuredInput).toBe(consumption.cacheDiagnostic.totalInputTokens)
+			expect(usage.cacheWriteTokens ?? 0).toBeGreaterThan(0)
+			expect((usage.cacheReadTokens ?? 0) + (usage.cacheWriteTokens ?? 0)).toBeLessThan(measuredInput)
+		} else {
+			expect(measuredInput).toBe(Math.ceil(requestBytes / 4))
+			expect(usage.cacheReadTokens ?? 0).toBe(0)
+			expect(usage.cacheWriteTokens ?? 0).toBe(0)
+		}
 		expect(usage.inputTokens).toBeGreaterThan(0)
 		expect(usage.outputTokens).toBeGreaterThan(0)
 		expect(usage.outputTokens).toBeLessThan(2_000)
-		expect(usage.cacheWriteTokens ?? 0).toBeGreaterThan(0)
-		expect(usage.cacheReadTokens ?? 0).toBeGreaterThanOrEqual(0)
-		expect((usage.cacheReadTokens ?? 0) + (usage.cacheWriteTokens ?? 0)).toBeLessThan(measuredInput)
 	}
-	expect(usageOf(consumptions[0]).cacheReadTokens).toBe(0)
-	for (const consumption of consumptions.slice(1)) {
-		expect(usageOf(consumption).cacheReadTokens ?? 0).toBeGreaterThan(0)
+	const cacheTracked = consumptions.filter((consumption) => consumption.cacheDiagnostic)
+	if (cacheTracked.length > 0) {
+		expect(usageOf(cacheTracked[0]).cacheReadTokens).toBe(0)
+		for (const consumption of cacheTracked.slice(1)) {
+			expect(usageOf(consumption).cacheReadTokens ?? 0).toBeGreaterThan(0)
+		}
 	}
 }
 
@@ -302,7 +318,8 @@ async function expectContextUsage(
 	expectInRange(displayed.cacheRead, expected.cacheRead)
 	expectInRange(displayed.cacheWrite, expected.cacheWrite)
 
-	const hitRate = Number((await priceTag.innerText()).match(/Hit:\s*([\d.]+)%/)?.[1])
+	await expect(priceTag).toHaveAttribute("aria-label", /(?:^|;\s*)Hit:\s*[\d.]+%(?:;|$)/)
+	const hitRate = parseCacheHitRate((await priceTag.getAttribute("aria-label")) ?? "")
 	expectInRange(hitRate, (expected.cacheRead / expected.input) * 100, 0.01, 0.2)
 }
 
@@ -352,7 +369,7 @@ const protocolCases = [
 		profileName: E2E_PROFILE_NAMES.mockAnthropic,
 		contextWindow: 1_000_000,
 		responseText: "E2E_ANTHROPIC_USAGE_OK",
-		thinking: { mode: "budget" as const, budget: 2_048 },
+		thinking: { mode: "effort" as const, effort: "high" },
 		exposesReasoningSummary: true,
 		replaysReasoningInRequestBody: true,
 		requiresWebSearchApproval: true,
@@ -521,19 +538,22 @@ for (const testCase of protocolCases) {
 			}
 
 			await expect(sidebar.getByText(testCase.responseText, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
+			await expect.poll(() => server.getRequestCount(testCase.target)).toBe(7)
+			await expect(sidebar.getByRole("button", { name: "Thinking...", exact: true })).toHaveCount(0)
 			const thinkingToggles = sidebar.getByRole("button", { name: "Thinking", exact: true })
 			const visibleThinkingGroups = await thinkingToggles.count()
 			if (testCase.exposesReasoningSummary) {
 				expect(visibleThinkingGroups).toBeGreaterThan(0)
 				expect(visibleThinkingGroups).toBeLessThanOrEqual(thinkingTexts.length)
-				await thinkingToggles.last().click()
-				await expect(
-					sidebar.getByRole("button", { name: thinkingTexts[thinkingTexts.length - 1], exact: true }),
-				).toBeVisible()
+				const lastPresentedThinking = sidebar.getByRole("button", {
+					name: thinkingTexts[thinkingTexts.length - 2],
+					exact: true,
+				})
+				if (!(await lastPresentedThinking.isVisible())) await thinkingToggles.last().click()
+				await expect(lastPresentedThinking).toBeVisible()
 			} else {
 				expect(visibleThinkingGroups).toBe(0)
 			}
-			await expect.poll(() => server.getRequestCount(testCase.target)).toBe(7)
 			await page.waitForTimeout(500)
 			expect(server.getRequestCount(testCase.target)).toBe(7)
 			const consumptions = server.getMockConsumptions(testCase.target)
@@ -677,7 +697,7 @@ for (const status of [403, 429, 502] as const) {
 			e2e.setTimeout(180_000)
 			const marker = `E2E_HTTP_${status}`
 			const retryFeedback = `E2E_HTTP_${status}_RETRY_FEEDBACK`
-			const expectedFailureRequestCount = status === 403 ? 1 : status === 429 ? 12 : 4
+			const expectedFailureRequestCount = status === 403 ? 1 : 4
 			server.enqueueResponses(
 				"openai-compatible-chat",
 				...Array.from({ length: 24 }, () => ({
@@ -724,8 +744,8 @@ for (const status of [403, 429, 502] as const) {
 					code: `e2e_http_${status}`,
 					details: { type: "e2e_mock_error" },
 				})
-				await expect(sidebar.getByTestId("error-retry-box")).toHaveCount(0)
-				await expect(sidebar.getByText("Automatic retry stopped", { exact: true })).toHaveCount(0)
+				await expect(errorBox).toContainText("Automatic retry stopped")
+				await expect(errorBox).toContainText("All 3 automatic attempts were used.")
 			}
 
 			const retryButton = sidebar.locator('vscode-button[aria-label="Retry"]')
@@ -812,7 +832,7 @@ e2e(
 		await page.waitForTimeout(1_000)
 
 		await expect(input).toHaveValue(unsentDraft)
-		const submittedFeedback = sidebar.locator("span.ph-no-capture:not(button span)").filter({ hasText: unsentDraft })
+		const submittedFeedback = sidebar.getByTestId(/^(?:direct|queued)-user-input$/).filter({ hasText: unsentDraft })
 		await expect(submittedFeedback).toHaveCount(0)
 		expect(server.openAiRequestCount).toBe(3)
 		expect(JSON.stringify(server.getOpenAiRequestBodies())).not.toContain(unsentDraft)
@@ -1040,7 +1060,7 @@ e2e(
 			})),
 		)
 		await sendTask(sidebar, "Exercise an Anthropic connection failure.")
-		const expectedFailureRequestCount = 12
+		const expectedFailureRequestCount = 4
 		const hostedSearchApproval = sidebar.getByRole("contentinfo").getByText("Approve", { exact: true })
 		const approveNextHostedRequest = async (completedRequestCount: number): Promise<void> => {
 			await expect(hostedSearchApproval).toHaveCount(1, { timeout: 60_000 })
@@ -1068,8 +1088,8 @@ e2e(
 			provider: "anthropic",
 			model: "claude-sonnet-4-6",
 		})
-		await expect(errorBox).toHaveCount(0)
-		await expect(sidebar.getByText("Automatic retry stopped", { exact: true })).toHaveCount(0)
+		await expect(errorBox).toContainText("Automatic retry stopped")
+		await expect(errorBox).toContainText("All 3 automatic attempts were used.")
 		const failures = server.getMockConsumptions("anthropic-messages")
 		expect(failures).toHaveLength(expectedFailureRequestCount)
 		expect(failures.every((entry) => entry.status === 0)).toBe(true)
@@ -1081,7 +1101,10 @@ e2e(
 			arguments: { result: "E2E_ANTHROPIC_CONNECTION_RETRY_OK" },
 		})
 		await sidebar.locator('vscode-button[aria-label="Retry"]').click()
-		await approveNextHostedRequest(expectedFailureRequestCount)
+		await expect(hostedSearchApproval).toHaveCount(0)
+		await expect
+			.poll(() => server.getRequestCount("anthropic-messages"), { timeout: 60_000 })
+			.toBe(expectedFailureRequestCount + 1)
 		await expect(sidebar.getByText("E2E_ANTHROPIC_CONNECTION_RETRY_OK", { exact: false }).last()).toBeVisible({
 			timeout: 60_000,
 		})
@@ -1199,7 +1222,7 @@ e2e(
 		await page.waitForTimeout(1_000)
 
 		await expect(input).toHaveValue(unsentDraft)
-		const submittedFeedback = sidebar.locator("span.ph-no-capture:not(button span)").filter({ hasText: unsentDraft })
+		const submittedFeedback = sidebar.getByTestId(/^(?:direct|queued)-user-input$/).filter({ hasText: unsentDraft })
 		await expect(submittedFeedback).toHaveCount(0)
 		expect(server.getRequestCount("deepseek-chat")).toBe(2)
 		expect(JSON.stringify(server.getMockConsumptions("deepseek-chat").map((entry) => entry.requestBody))).not.toContain(

@@ -18,8 +18,8 @@ import {
 	newTaskToolResponse,
 	reportBugToolResponse,
 } from "../prompts/commands"
-import { mergeScopedToggles, readScopedToggles } from "../storage/settings/capability-toggle-store"
 import { StateManager } from "../storage/StateManager"
+import { mergeScopedToggles, readScopedToggles } from "../storage/settings/capability-toggle-store"
 
 /**
  * Callback type for fetching MCP prompts
@@ -110,6 +110,11 @@ export interface SlashCommandCapabilityContext {
 	remoteWorkflows: GlobalInstructionsFile[]
 }
 
+export interface SlashCommandParseOptions {
+	/** The caller has already isolated text from a trusted user-content tag. */
+	trustedUserText?: boolean
+}
+
 /**
  * Processes text for slash commands and transforms them with appropriate instructions
  * This is called after parseMentions() to process any slash commands in the user's message
@@ -124,6 +129,7 @@ export async function parseSlashCommands(
 	providerInfo?: Readonly<ApiProviderInfo>,
 	mcpPromptFetcher?: McpPromptFetcher,
 	capabilityContext?: SlashCommandCapabilityContext,
+	options?: SlashCommandParseOptions,
 ): Promise<SlashCommandParseResult> {
 	const SUPPORTED_DEFAULT_COMMANDS = ["newtask", "smol", "compact", "newrule", "reportbug", "deep-planning", "explain-changes"]
 	const promptProfile = resolvePromptProfile({
@@ -142,7 +148,9 @@ export async function parseSlashCommands(
 		"explain-changes": explainChangesToolResponse(),
 	}
 
-	const tagPatterns = USER_CONTENT_TAG_PATTERNS.map((regex) => ({ regex }))
+	const tagPatterns = options?.trustedUserText
+		? [{ regex: /^([\s\S]*)$/ }]
+		: USER_CONTENT_TAG_PATTERNS.map((regex) => ({ regex }))
 
 	// Regex to find slash commands anywhere in text (not just at the beginning).
 	// This mirrors how @ mentions work - they can appear anywhere in a message.

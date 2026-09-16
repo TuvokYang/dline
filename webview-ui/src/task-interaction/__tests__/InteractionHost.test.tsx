@@ -240,6 +240,36 @@ describe("InteractionHost", () => {
 		expect(screen.queryByRole("button", { name: "Approve" })).toBeNull()
 	})
 
+	it("explains why an awaiting interaction lost its controls when no anchor matches", () => {
+		// The backend anchor is intact here, so no diagnostic arrives. Without a
+		// local notice the approval row would vanish silently while the task waits.
+		render(<InteractionHost dispatch={vi.fn()} messages={[SAY, { ...ASK, interactionId: undefined }]} view={taskView()} />)
+
+		expect(screen.queryByRole("button", { name: "Approve" })).toBeNull()
+		expect(screen.getByRole("alert")).toHaveTextContent(/message anchor could not be matched/i)
+	})
+
+	it("keeps the backend diagnostic as the only alert when one is supplied", () => {
+		const view = taskView()
+		view.diagnostic = { code: "interaction_anchor_missing", interactionId: "interaction-1" }
+
+		render(<InteractionHost dispatch={vi.fn()} messages={[SAY]} view={view} />)
+
+		const alerts = screen.getAllByRole("alert")
+		expect(alerts).toHaveLength(1)
+		expect(alerts[0]).toHaveTextContent(/could not restore the saved interaction message/i)
+	})
+
+	it("does not warn about anchors once the interaction is resolved", () => {
+		const view = taskView()
+		delete view.activeInteraction
+		view.footer.actions = []
+
+		render(<InteractionHost dispatch={vi.fn()} messages={[SAY]} view={view} />)
+
+		expect(screen.queryByRole("alert")).toBeNull()
+	})
+
 	it("renders a backend interaction diagnostic without inventing an action", () => {
 		const view = taskView()
 		delete view.activeInteraction

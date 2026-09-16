@@ -1,4 +1,5 @@
 import type { ContextWindowIndicatorLineage } from "@shared/context-window-indicator"
+import type { ClineContent } from "@shared/messages"
 import { describe, expect, it, vi } from "vitest"
 import { ContextWindowIndicator } from "../ContextWindowIndicator"
 import { Task } from "../index"
@@ -73,14 +74,18 @@ describe("Task context compaction regressions", () => {
 			this: typeof task,
 			operationId: string,
 			apiIndex: number,
+			retryContent: ClineContent[],
 		) => Promise<void>
+		const retryContent: ClineContent[] = [{ type: "text", text: "latest pending input" }]
 
-		await presentTerminalCompactionFailure.call(task, "operation-1", 79)
+		await presentTerminalCompactionFailure.call(task, "operation-1", 79, retryContent)
 
 		expect(order).toEqual(["release", "recover"])
 		expect(task.say).not.toHaveBeenCalled()
 		expect(task.taskState.autoRetryAttempts).toBe(0)
-		expect(recoverApiFailure).toHaveBeenCalledWith(expect.objectContaining({ apiIndex: 79, persistedRequest: false }))
+		expect(recoverApiFailure).toHaveBeenCalledWith(
+			expect.objectContaining({ apiIndex: 79, persistedRequest: false, retryContent }),
+		)
 	})
 
 	it("marks terminal compaction as exhausted only after the Pass retry budget was actually used", async () => {
@@ -99,9 +104,10 @@ describe("Task context compaction regressions", () => {
 			this: typeof task,
 			operationId: string,
 			apiIndex: number,
+			retryContent: ClineContent[],
 		) => Promise<void>
 
-		await presentTerminalCompactionFailure.call(task, "operation-1", 79)
+		await presentTerminalCompactionFailure.call(task, "operation-1", 79, [])
 
 		expect(task.taskState.autoRetryAttempts).toBe(3)
 		expect(task.say).toHaveBeenCalledWith("error_retry", expect.stringContaining('"failed":true'))

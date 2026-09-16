@@ -17,7 +17,23 @@ import { Logger } from "@/shared/services/Logger"
 export interface RipgrepScanRules {
 	/** Raw scan rules in `.gitignore` syntax, or undefined when none apply. */
 	getIgnoreContent(permission: "scan"): string | undefined
+	/**
+	 * Scan rules stated by the workspace, without repository or built-in pruning.
+	 *
+	 * Optional so a caller that only knows the combined rules still satisfies the
+	 * interface; a deliberate descent needs this narrower set.
+	 */
+	getAgentScanContent?(): string | undefined
 }
+
+/**
+ * Which rules a ripgrep invocation should enforce.
+ *
+ * `all` is the default walk. `agent-only` drops the cost-driven pruning for a
+ * caller that named an ignored path on purpose, while keeping every restriction
+ * the workspace stated in `.agentignore`.
+ */
+export type RipgrepRuleScope = "all" | "agent-only"
 
 /** A materialised ignore file plus the arguments that activate it. */
 export interface RipgrepIgnoreFile {
@@ -40,11 +56,18 @@ const NO_IGNORE_FILE: RipgrepIgnoreFile = {
  * degrades the pruning rather than the search. Callers must `dispose()` once
  * the process has exited.
  */
-export async function createRipgrepIgnoreFile(rules: RipgrepScanRules | undefined): Promise<RipgrepIgnoreFile> {
+export async function createRipgrepIgnoreFile(
+	rules: RipgrepScanRules | undefined,
+	scope: RipgrepRuleScope = "all",
+): Promise<RipgrepIgnoreFile> {
 	// Searching walks the tree, so it follows the scan rules rather than the read
 	// rules: whether a path may be traversed is a different question from whether
 	// its contents may be opened.
-	const content = rules?.getIgnoreContent("scan")
+	//
+	// An agent-only scope keeps the workspace's own restrictions and drops the
+	// pruning, so naming an ignored path can widen what is walked but never what
+	// is permitted.
+	const content = scope === "agent-only" ? rules?.getAgentScanContent?.() : rules?.getIgnoreContent("scan")
 	if (!content) {
 		return NO_IGNORE_FILE
 	}

@@ -211,11 +211,21 @@ describe("combineErrorRetryMessages", () => {
 		expect(combineErrorRetryMessages(messages)).toContainEqual(messages[0])
 	})
 
-	it("retires an exhausted error after the manual retry produces a durable response", () => {
+	it("retires an exhausted error after a same-turn completion result proves recovery", () => {
 		const messages: ClineMessage[] = [
 			exhaustedRetry(),
 			{ type: "say", say: "api_req_started", text: "{}", ts: 2, conversationHistoryIndex: 4 },
-			{ type: "say", say: "completion_result", text: "Recovered", ts: 3, conversationHistoryIndex: 5 },
+			{ type: "say", say: "completion_result", text: "Recovered", ts: 3, conversationHistoryIndex: 4 },
+		]
+
+		expect(combineErrorRetryMessages(messages)).not.toContainEqual(messages[0])
+	})
+
+	it("retires an exhausted error after the same-turn completion presentation becomes an ask", () => {
+		const messages: ClineMessage[] = [
+			exhaustedRetry(),
+			{ type: "say", say: "api_req_started", text: "{}", ts: 2, conversationHistoryIndex: 4 },
+			{ type: "ask", ask: "completion_result", text: "Recovered", ts: 3, conversationHistoryIndex: 4 },
 		]
 
 		expect(combineErrorRetryMessages(messages)).not.toContainEqual(messages[0])

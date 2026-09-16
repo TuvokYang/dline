@@ -1,3 +1,6 @@
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import path from "node:path"
 import { afterEach, beforeEach, describe, it, vi } from "vitest"
 import "should"
 // sinon import removed
@@ -12,6 +15,7 @@ import { createTaskCapabilityToggles, serializeTaskCapabilityToggles } from "../
  * Tests the slash command discovery and filtering functionality
  */
 describe("getAvailableSlashCommands", () => {
+	const temporaryDirectories: string[] = []
 	let mockController: Partial<Controller>
 	let mockStateManager: {
 		getWorkspaceStateKey: any /* sinon.SinonStub → vitest */
@@ -53,8 +57,9 @@ describe("getAvailableSlashCommands", () => {
 		}
 	})
 
-	afterEach(() => {
+	afterEach(async () => {
 		vi.restoreAllMocks()
+		await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })))
 	})
 
 	describe("Base Slash Commands", () => {
@@ -324,6 +329,33 @@ describe("getAvailableSlashCommands", () => {
 			const matches = response.commands.filter((cmd) => cmd.name === "shared-workflow")
 			matches.length.should.equal(1)
 			matches[0].section.should.equal("workflow")
+		})
+	})
+
+	describe("Local Skill Discovery", () => {
+		it("uses discovered skills and frontmatter names without requiring a stored default toggle", async () => {
+			const root = await mkdtemp(path.join(tmpdir(), "dline-slash-skill-"))
+			temporaryDirectories.push(root)
+			const skillDirectory = path.join(root, "folder-name")
+			const skillPath = path.join(skillDirectory, "SKILL.md")
+			await mkdir(skillDirectory, { recursive: true })
+			await writeFile(
+				skillPath,
+				["---", "name: frontmatter-skill", "description: Discovered skill", "---", "Skill body"].join("\n"),
+				"utf8",
+			)
+			mockStateManager.getWorkspaceStateKey.mockImplementation((key: string) =>
+				key === "discoveredSkillsToggles" ? { [skillPath]: true } : null,
+			)
+
+			const response = await getAvailableSlashCommands(mockController as Controller, EmptyRequest.create())
+
+			const skill = response.commands.find((command) => command.name === "frontmatter-skill")
+			skill?.should.not.be.undefined()
+			skill?.section.should.equal("skill")
+			skill?.description.should.equal("Skill: frontmatter-skill")
+			JSON.stringify(response.commands).includes(skillPath).should.be.false()
+			response.commands.some((command) => command.name === "SKILL").should.be.false()
 		})
 	})
 

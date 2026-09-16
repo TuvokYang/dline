@@ -1,5 +1,4 @@
 import { join } from "node:path"
-import { envFlagEnabled } from "@shared/env"
 import { getDlineDataDir } from "@/core/storage/disk"
 import type { ClineAccountUserInfo } from "@/services/auth/AuthService"
 import {
@@ -8,6 +7,7 @@ import {
 	type OpenTelemetryClientValidConfig,
 } from "@/shared/services/config/otel-config"
 import { Logger } from "@/shared/services/Logger"
+import { isTelemetryDevelopmentMode } from "./development-mode"
 import { createLocalJournalRegistration, getProcessTelemetrySessionId, LocalJournalProvider } from "./journal"
 import type { TelemetryProviderInput, TelemetryProviderRegistration, TelemetrySinkDescriptor } from "./providers/capabilities"
 import type { ITelemetryProvider, TelemetryProperties, TelemetrySettings } from "./providers/ITelemetryProvider"
@@ -134,7 +134,7 @@ export class TelemetryProviderFactory {
 					origin: "default",
 					channels: ["usage", "runtime"],
 					endpoint: DEFAULT_LOOPBACK_OTLP_ENDPOINT,
-					enhancement: envFlagEnabled(process.env.IS_DEV) ? "debug" : "standard",
+					enhancement: isTelemetryDevelopmentMode() ? "debug" : "standard",
 				},
 			},
 		]

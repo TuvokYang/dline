@@ -17,7 +17,7 @@ import { RuntimeContentPolicy } from "../content-policy"
  * redact it.
  */
 export class ContentPolicyProcessor implements LogRecordProcessor {
-	constructor(private readonly policy: RuntimeContentPolicy = new RuntimeContentPolicy()) {}
+	constructor(private readonly policy: RuntimeContentPolicy = RuntimeContentPolicy.forEvents()) {}
 
 	/**
 	 * Rewrites the record's attributes in place.

@@ -92,6 +92,14 @@ function createFakeController(messages: ClineMessage[]): Record<string, unknown>
 		// header assertions below do not depend on discovery, so an empty result
 		// keeps the double focused on message sourcing.
 		readLocalCapabilityToggles: () => ({}),
+		// The history projection is memoized per history array by its owner.
+		// This double is not a Controller instance, so the real method has to be
+		// borrowed for the call to resolve.
+		projectTaskHistoryCached: (
+			Controller.prototype as unknown as {
+				projectTaskHistoryCached: (history: unknown) => unknown
+			}
+		).projectTaskHistoryCached,
 		modeSwitchCoordinator: { getSnapshot: () => ({}) },
 		getTaskLockStatus: () => undefined,
 		backgroundCommandRunning: undefined,

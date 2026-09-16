@@ -43,15 +43,23 @@ interface UseModeSwitchResult {
 }
 
 const ACTIVE_PHASES = new Set<ModeSwitchSnapshot["phase"]>(["awaiting_confirmation", "compacting", "committing"])
+const MODE_SWITCH_OWNED_ASKS = new Set<ClineAsk>([
+	"followup",
+	"make_plan",
+	"qna_respond",
+	"generate_report",
+	"status_acknowledgment",
+	"completion_result",
+])
 
 /** Return whether a captured draft contains user-authored content. */
 function hasDraft(draft: ModeSwitchDraft): boolean {
 	return Boolean(draft.text.trim() || draft.images.length || draft.files.length)
 }
 
-/** Return whether an active conversational ask owns the draft submitted with a mode switch. */
+/** Return whether the active interaction owns the draft submitted with a mode switch. */
 export function shouldAttachModeSwitchDraft(clineAsk: ClineAsk | undefined): boolean {
-	return clineAsk === "make_plan" || clineAsk === "qna_respond" || clineAsk === "generate_report"
+	return clineAsk !== undefined && MODE_SWITCH_OWNED_ASKS.has(clineAsk)
 }
 
 /** Convert a shared mode value to its protobuf enum. */

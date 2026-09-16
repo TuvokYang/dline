@@ -387,3 +387,52 @@ it("refreshes dynamic environment and Provider scope only while stable", () => {
 	})
 	expect(ignored).toEqual(sending)
 })
+
+it("keeps the revision and timestamp when a stable refresh carries no change", () => {
+	const indicator = createIndicator()
+	const first = indicator.refreshStable({
+		durableContextTokens: 100,
+		environmentTokens: 45,
+		contextWindow: 2_000,
+		profileName: "profile",
+		mode: "plan",
+		updatedAt: 2,
+	})
+	// This refresh runs on a timer, so an idle task repeats the same values.
+	const repeated = indicator.refreshStable({
+		durableContextTokens: 100,
+		environmentTokens: 45,
+		contextWindow: 2_000,
+		profileName: "profile",
+		mode: "plan",
+		updatedAt: 3,
+	})
+
+	expect(repeated).toEqual(first)
+	expect(repeated.revision).toBe(first.revision)
+	expect(repeated.updatedAt).toBe(2)
+})
+
+it("advances the revision when a stable refresh changes a tracked value", () => {
+	const indicator = createIndicator()
+	const first = indicator.refreshStable({
+		durableContextTokens: 100,
+		environmentTokens: 45,
+		contextWindow: 2_000,
+		profileName: "profile",
+		mode: "plan",
+		updatedAt: 2,
+	})
+	const changed = indicator.refreshStable({
+		durableContextTokens: 100,
+		environmentTokens: 46,
+		contextWindow: 2_000,
+		profileName: "profile",
+		mode: "plan",
+		updatedAt: 3,
+	})
+
+	expect(changed.revision).toBe(first.revision + 1)
+	expect(changed.environmentTokens).toBe(46)
+	expect(changed.updatedAt).toBe(3)
+})

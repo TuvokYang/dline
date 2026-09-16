@@ -8,6 +8,8 @@
  * outcome only, and the content policy rejects anything else.
  */
 
+import type { SignalSpanContext } from "../service/pipeline-port"
+
 /** Severity ordering used when the queue is full and events must be dropped. */
 export enum RuntimeEventPriority {
 	/** Diagnostic detail. First to be dropped under pressure. */
@@ -94,12 +96,17 @@ export interface RuntimeTelemetryEvent {
 	readonly name: string
 	readonly priority: RuntimeEventPriority
 	readonly context: RuntimeTelemetryContext
+	readonly traceContext?: SignalSpanContext
 	readonly attributes: RuntimeAttributes
 	readonly error?: NormalizedRuntimeError
 }
 
 /** What a producer supplies; the bus fills in identity and ordering. */
 export interface RuntimeEventInput {
+	/** Process lifecycle/health must not inherit task or active span identity. */
+	readonly processScoped?: boolean
+	readonly timestamp?: number
+	readonly monotonicMs?: number
 	readonly name: string
 	readonly priority: RuntimeEventPriority
 	readonly attributes?: Readonly<Record<string, unknown>>

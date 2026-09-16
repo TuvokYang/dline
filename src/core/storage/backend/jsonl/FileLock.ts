@@ -33,6 +33,15 @@ const STALE_LOCK_TIMEOUT_MS = 10_000
  */
 const MAX_ACQUIRE_RETRIES = 10
 const ACQUIRE_RETRY_DELAY_MS = 100
+/**
+ * How an acquire ended.
+ *
+ * `timeout` means the bounded retry was exhausted while another owner held the
+ * lock; `error` means the filesystem itself refused the operation. They are
+ * kept apart because contention and a faulty path call for different fixes.
+ */
+type FileLockAcquireOutcome = "acquired" | "timeout" | "error"
+
 const MAX_RELEASE_ATTEMPTS = 5
 const RELEASE_RETRY_DELAYS_MS = [10, 25, 50, 100] as const
 const RETRYABLE_RELEASE_ERROR_CODES = new Set(["EPERM", "EBUSY", "EACCES"])
@@ -128,8 +137,17 @@ export class FileLock {
 		const lockPath = lockPathFor(jsonlPath)
 		const ownerId = randomUUID()
 		const startedAt = performance.now()
+		// Every exit reports, not just the successful one. Reporting only on
+		// success dropped exactly the samples worth seeing: an acquire that
+		// exhausts its retries has waited the longest and is the one that
+		// fails a write, so omitting it made the distribution look healthiest
+		// precisely when contention was worst.
+		const report = (outcome: FileLockAcquireOutcome, durationMs: number): void => {
+			recordPerfPhase(PerfDomain.FileLock, "acquire", durationMs, { outcome, retried: attempt > 1 })
+		}
+		let attempt = 1
 
-		for (let attempt = 1; attempt <= MAX_ACQUIRE_RETRIES; attempt++) {
+		for (; attempt <= MAX_ACQUIRE_RETRIES; attempt++) {
 			const payload: LockPayload = {
 				pid: process.pid,
 				ownerId,
@@ -158,13 +176,19 @@ export class FileLock {
 				const durationMs = Math.round(performance.now() - startedAt)
 				// Telemetry receives every sample so the distribution stays intact; the
 				// 250 ms gate only decides whether a human-readable line is worth writing.
-				recordPerfPhase(PerfDomain.FileLock, "acquire", durationMs, {
-					lockFile: path.basename(lockPath),
-					attempts: attempt,
-					openMs: Math.round(openedAt - openStartedAt),
-					writeMs: Math.round(writtenAt - openedAt),
-					closeMs: Math.round(closedAt - writtenAt),
-				})
+				//
+				// Only bounded dimensions are reported. This runs at roughly 17/s, so
+				// an unbounded value here multiplies faster than anywhere else in the
+				// codebase. The attempt count and the three sub-durations would each
+				// become their own Prometheus label, and the lock file name is not
+				// bounded either: profile-scoped locks embed a profile identity in
+				// the file name, so reporting it would grow with the number of
+				// profiles and leak that identity into metrics. The detail stays in
+				// the debug line below, which is not exported.
+				//
+				// `retried` rather than `contended`: a retry also happens after a
+				// stale lock is broken, which is not contention.
+				report("acquired", durationMs)
 				if (durationMs >= 250 && Logger.isDebugEnabled()) {
 					Logger.debug(
 						`[FileLockPerf] phase=acquire path=${path.basename(lockPath)} attempts=${attempt} openMs=${Math.round(openedAt - openStartedAt)} writeMs=${Math.round(writtenAt - openedAt)} closeMs=${Math.round(closedAt - writtenAt)} durationMs=${durationMs}`,
@@ -172,7 +196,12 @@ export class FileLock {
 				}
 				return
 			} catch (error) {
-				if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error
+				if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+					// A filesystem fault, not contention. It is reported apart
+					// from a timeout because the two call for different fixes.
+					report("error", Math.round(performance.now() - startedAt))
+					throw error
+				}
 			}
 
 			if (!(await isLockActive(lockPath))) {
@@ -180,11 +209,15 @@ export class FileLock {
 				continue
 			}
 			if (attempt === MAX_ACQUIRE_RETRIES) {
+				report("timeout", Math.round(performance.now() - startedAt))
 				throw new Error(`[FileLock] Failed to acquire lock after ${MAX_ACQUIRE_RETRIES} attempts: ${lockPath}`)
 			}
 			await new Promise((r) => setTimeout(r, ACQUIRE_RETRY_DELAY_MS))
 		}
 
+		// Reachable only when every attempt broke a stale lock and none
+		// succeeded, which is still a caller-visible acquire failure.
+		report("timeout", Math.round(performance.now() - startedAt))
 		throw new Error(`[FileLock] Failed to acquire lock after all retries: ${lockPath}`)
 	}
 

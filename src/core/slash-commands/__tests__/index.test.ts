@@ -31,6 +31,30 @@ describe("slash-commands", () => {
 			expect(hasManualCompactionCommand("<task>/newtask then /compact</task>")).to.equal(false)
 			expect(hasManualCompactionCommand("plain /compact text outside a user-content tag")).to.equal(false)
 		})
+
+		it("parses isolated user text only when the caller marks the boundary as trusted", async () => {
+			const result = await parseSlashCommands(
+				"/cmd:compact Preserve the active task.",
+				{},
+				{},
+				"test-ulid",
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				{ trustedUserText: true },
+			)
+
+			expect(result.processedText.trim()).to.equal("Preserve the active task.")
+			expect(result.explicitInstructions).to.deep.equal([
+				{
+					type: "summarize_task",
+					source: "manual_compact_command",
+					targetTool: "summarize_task",
+				},
+			])
+		})
 	})
 
 	describe("formatMcpPromptResponse", () => {

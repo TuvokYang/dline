@@ -277,7 +277,7 @@ describe("Task ordinary context compaction boundary", () => {
 		expect(continuationText).not.toContain("continuation request")
 	})
 
-	it("makes a pending-completed side-effect turn compressible while preserving its ordinary continuation", () => {
+	it("makes a pending-completed side-effect turn compressible without retaining its summarized history payload", () => {
 		const task = createHarness()
 		task.messageStateHandler.apiConversationHistory = [
 			{ role: "user", content: [{ type: "text", text: "older turn" }], ts: 1 },
@@ -316,12 +316,12 @@ describe("Task ordinary context compaction boundary", () => {
 		expect(sourceText).toContain("latest turn")
 		expect(sourceText).toContain("fn-read-latest")
 		expect(sourceText).toContain("large file result")
-		expect(continuationText).toContain("latest turn")
-		expect(continuationText).toContain("fn-read-latest")
+		expect(continuationText).not.toContain("latest turn")
+		expect(continuationText).not.toContain("fn-read-latest")
 		expect(continuationText).not.toContain("large file result")
 	})
 
-	it("pairs pending results for multiple different tools in one view", () => {
+	it("pairs pending results for multiple different tools without retaining the completed turn", () => {
 		const task = createHarness()
 		// Canonical history: user → assistant with TWO tool uses (qna + read_file).
 		task.messageStateHandler.apiConversationHistory[1] = {
@@ -354,7 +354,7 @@ describe("Task ordinary context compaction boundary", () => {
 
 		const boundary = task.getOrdinaryContextCompactionBoundary()
 
-		expect(boundary.targetContinuationHistory).toEqual([task.messageStateHandler.apiConversationHistory[1]])
+		expect(boundary.targetContinuationHistory).toEqual([])
 		expect(boundary.sourceHistory.length).toBe(3)
 		const lastSourceMessage = boundary.sourceHistory[boundary.sourceHistory.length - 1]
 		const results = (lastSourceMessage?.content as ClineContent[]).filter(

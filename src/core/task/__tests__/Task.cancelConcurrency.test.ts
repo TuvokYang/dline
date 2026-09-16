@@ -316,6 +316,7 @@ describe("Task cancellation concurrency", () => {
 			},
 			isParallelToolCallingEnabled: () => false,
 			initialCheckpointCommitPromise: undefined,
+			awaitInitialCheckpointBeforeToolSideEffects: vi.fn(async () => undefined),
 			taskState: {
 				abort: false,
 				assistantMessageContent: [block],
@@ -371,6 +372,7 @@ describe("Task cancellation concurrency", () => {
 			toolExecutor: { isBlockApproved: () => true },
 			isParallelToolCallingEnabled: () => false,
 			initialCheckpointCommitPromise: undefined,
+			awaitInitialCheckpointBeforeToolSideEffects: vi.fn(async () => undefined),
 			taskState: {
 				abort: false,
 				assistantMessageContent: [block],

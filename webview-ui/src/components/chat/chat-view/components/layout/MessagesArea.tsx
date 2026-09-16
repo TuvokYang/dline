@@ -16,12 +16,16 @@ import { isToolGroup } from "../../utils/messageUtils"
 import {
 	DEFAULT_MESSAGE_WINDOW_LIMITS,
 	isWholeConversationLoaded,
+	leadingBuffer,
 	type MessageWindow,
 	planWindowExtensions,
+	trailingBuffer,
 	type VisibleMessageRange,
 } from "../../utils/messageWindowPlan"
 import { buildMessageRowKey, getBottomFollowIntent, mergeMessageWindow } from "../../utils/messageWindowUtils"
+import { advanceRowCoordinate, ROW_INDEX_BASE, type RowCoordinate } from "../../utils/rowCoordinate"
 import { LAYOUT_SETTLE_RETRY_MS } from "../../utils/scrollArbiter"
+import { decideWindowGrowth, SCROLL_SETTLE_MS } from "../../utils/windowGrowthTiming"
 import { createMessageRenderer } from "../messages/MessageRenderer"
 
 const LOAD_COUNT = DEFAULT_MESSAGE_WINDOW_LIMITS.loadCount
@@ -63,6 +67,26 @@ type PendingAnchor = {
 
 type ScrollEdge = "top" | "bottom"
 type UserScrollIntent = { direction: "up" | "down"; recordedAt: number }
+type TailMessageSnapshot = {
+	ts: number
+	contentSignature: string
+	renderSignature: string
+}
+
+function createTailMessageSnapshot(message: ClineMessage | undefined): TailMessageSnapshot | null {
+	if (!message) return null
+	const contentSignature = JSON.stringify([message.partial === true, message.text ?? ""])
+	return {
+		ts: message.ts,
+		contentSignature,
+		renderSignature: JSON.stringify([
+			message.type,
+			message.ask ?? message.say ?? "",
+			message.interactionId ?? "",
+			contentSignature,
+		]),
+	}
+}
 
 export const MessagesArea: React.FC<MessagesAreaProps> = ({
 	task,
@@ -84,6 +108,17 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 	const latestExtensionRangeRef = useRef<VisibleMessageRange | null>(null)
 	const latestVisibleAnchorTsRef = useRef<number | null>(null)
 	const userScrollIntentRef = useRef<UserScrollIntent | null>(null)
+	/** When the reader last moved the viewport, used to defer window growth. */
+	const lastScrollAtRef = useRef<number | null>(null)
+	const deferredGrowthRef = useRef<{ visible: VisibleMessageRange; anchorTs: number | null } | null>(null)
+	const deferredGrowthTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+	/**
+	 * Indirection so the visibility listener can replay a deferred fetch.
+	 *
+	 * That listener is installed once, before the callback it needs exists, and
+	 * must not be re-subscribed on every render.
+	 */
+	const replayDeferredWindowGrowthRef = useRef<(() => void) | null>(null)
 	const [scroller, setScroller] = useState<HTMLElement | null>(null)
 	const scrollerRef = useCallback((element: HTMLElement | Window | null) => {
 		setScroller(element instanceof HTMLElement ? element : null)
@@ -103,7 +138,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 	const [isWebviewHidden, setIsWebviewHidden] = useState(() => document.visibilityState === "hidden")
 	const isWebviewHiddenRef = useRef(isWebviewHidden)
 	isWebviewHiddenRef.current = isWebviewHidden
-	const lastMessageSignatureRef = useRef("")
+	const tailMessageSnapshotRef = useRef<TailMessageSnapshot | null>(null)
 	// A hidden snapshot belongs to exactly one Task and is invalidated on visibility restoration.
 	const cachedVisibleMessagesRef = useRef<{ taskTs: number; rows: (ClineMessage | ClineMessage[])[] } | null>(null)
 
@@ -113,10 +148,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 	clineMessagesLengthRef.current = clineMessages.length
 
 	const lastRawMessage = useMemo(() => clineMessages.at(-1), [clineMessages])
-	const lastMessageSignature = useMemo(() => {
-		if (!lastRawMessage) return ""
-		return `${lastRawMessage.ts}:${lastRawMessage.partial === true ? "partial" : "final"}:${lastRawMessage.text ?? ""}`
-	}, [lastRawMessage])
+	const tailMessageSnapshot = useMemo(() => createTailMessageSnapshot(lastRawMessage), [lastRawMessage])
 
 	// Reset auto-scroll flag when entering a new task so the view scrolls
 	// to the bottom instead of staying wherever the previous task left it.
@@ -131,7 +163,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 		latestExtensionRangeRef.current = null
 		latestVisibleAnchorTsRef.current = null
 		userScrollIntentRef.current = null
-		lastMessageSignatureRef.current = ""
+		tailMessageSnapshotRef.current = null
 		scrollBehavior.cancelProgrammaticScroll()
 	}, [task.ts, scrollBehavior.cancelProgrammaticScroll, scrollBehavior.disableAutoScrollRef])
 
@@ -147,6 +179,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 		cancelProgrammaticScroll,
 		scrolledPastUserMessage,
 		isAtBottomRef,
+		absoluteBottomLoadedRef,
 		showScrollToBottom,
 	} = scrollBehavior
 
@@ -162,6 +195,12 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 			const hidden = document.visibilityState === "hidden"
 			isWebviewHiddenRef.current = hidden
 			setIsWebviewHidden(hidden)
+			// Becoming visible again is the one moment a deferred fetch can be
+			// stranded: range processing was suspended while hidden, and Virtuoso
+			// is not obliged to publish a new range once the view returns. The
+			// scroll that deferred the fetch may also never resume, because the
+			// reader left and came back rather than kept scrolling.
+			if (!hidden) replayDeferredWindowGrowthRef.current?.()
 		}
 
 		handleVisibility()
@@ -205,6 +244,37 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 		})
 	}, [groupedMessages, messageIndexByTs, firstItemIndex])
 
+	// Virtuoso remembers the height it measured for a row by the row's index, and
+	// relies on `firstItemIndex` moving to tell it that those indices now refer to
+	// different rows. This list is windowed — older messages load in ahead of the
+	// ones already on screen — so a row that was measured at index 106 can find
+	// itself at index 297. Reporting a fixed 0 leaves the library no way to carry
+	// the measurement across, so it falls back to its default estimate and
+	// corrects the scroll position once the real height arrives, which is the
+	// jump the reader sees.
+	//
+	// The coordinate below is expressed in *rows*, not messages: filtering and
+	// grouping mean several messages can collapse into one row, so the message
+	// window offset cannot be reused here. It is derived by finding where the
+	// previously known rows ended up in the new list and shifting the origin by
+	// the same amount. A base offset keeps the value positive when history is
+	// prepended.
+	const rowCoordinateRef = useRef<RowCoordinate>({ firstItemIndex: ROW_INDEX_BASE, identities: [] })
+	const rowCoordinate = useMemo(
+		() =>
+			advanceRowCoordinate(
+				rowCoordinateRef.current,
+				renderRows.map((renderRow) => renderRow.row),
+			),
+		[renderRows],
+	)
+	// Committing in a layout effect keeps the ref from being written during
+	// render, which would make the result depend on how many times React chooses
+	// to render.
+	useLayoutEffect(() => {
+		rowCoordinateRef.current = rowCoordinate
+	}, [rowCoordinate])
+
 	const visibleGroupedMessages = useMemo<(ClineMessage | ClineMessage[])[]>(() => {
 		// When the webview is hidden (user switched to another tab), return the
 		// cached snapshot so Virtuoso stays idle instead of re-laying-out invisibly.
@@ -245,6 +315,14 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 
 	const scrollToRowOffset = useCallback(
 		(index: number, align: "start" | "center" | "end" = "start", behavior: "auto" | "smooth" = "smooth") => {
+			// Announce that the next scroll write belongs to the application.
+			//
+			// The pending-anchor restore and sticky navigation reach the list
+			// directly rather than through the scroll arbiter, so without this
+			// the diagnostics see a write with no application mark and attribute
+			// it to the list's own compensation. Reading the mark is test-only;
+			// nothing here changes when it is absent.
+			;(window as { __dlineMarkAppScroll?: () => void }).__dlineMarkAppScroll?.()
 			virtuosoRef.current?.scrollToIndex({
 				index,
 				align,
@@ -370,10 +448,17 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 	useLayoutEffect(() => {
 		const window = currentMessageWindow()
 		const absoluteBottomLoaded = window.start + window.length >= window.total
-		const previousSignature = lastMessageSignatureRef.current
-		const lastMessageTsChanged = previousSignature.split(":", 1)[0] !== String(lastRawMessage?.ts ?? "")
-		const lastMessageContentChanged = previousSignature !== "" && previousSignature !== lastMessageSignature
-		lastMessageSignatureRef.current = lastMessageSignature
+		const previousSnapshot = tailMessageSnapshotRef.current
+		const lastMessageTsChanged = previousSnapshot?.ts !== tailMessageSnapshot?.ts
+		const lastMessageContentChanged =
+			previousSnapshot !== null && previousSnapshot.renderSignature !== tailMessageSnapshot?.renderSignature
+		const renderIdentityChangedWithoutContent =
+			previousSnapshot !== null &&
+			tailMessageSnapshot !== null &&
+			previousSnapshot.ts === tailMessageSnapshot.ts &&
+			previousSnapshot.contentSignature === tailMessageSnapshot.contentSignature &&
+			previousSnapshot.renderSignature !== tailMessageSnapshot.renderSignature
+		tailMessageSnapshotRef.current = tailMessageSnapshot
 
 		const intent = getBottomFollowIntent({
 			disableAutoScroll: disableAutoScrollRef.current,
@@ -382,10 +467,10 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 			lastMessageContentChanged,
 		})
 
-		if (intent === "follow" && previousSignature !== "") {
-			scrollToLoadedEdge("bottom", "auto")
+		if (intent === "follow" && previousSnapshot !== null) {
+			scrollToLoadedEdge("bottom", "auto", renderIdentityChangedWithoutContent)
 		}
-	}, [currentMessageWindow, disableAutoScrollRef, lastRawMessage?.ts, lastMessageSignature, scrollToLoadedEdge])
+	}, [currentMessageWindow, disableAutoScrollRef, scrollToLoadedEdge, tailMessageSnapshot])
 
 	const scrolledPastUserMessageRowOffset = useMemo(() => {
 		if (!scrolledPastUserMessage) return -1
@@ -471,9 +556,16 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 			if (item === EMPTY_PLACEHOLDER_MSG) {
 				return <div style={{ height: 1 }} />
 			}
-			return realRenderer(index, item)
+			// The renderer compares the index against the loaded window to decide
+			// which row is last, so it needs the window-relative position rather
+			// than the coordinate Virtuoso reports. Clamping keeps a negative
+			// offset — possible for one frame while the coordinate catches up with
+			// the data — from making every row look like it is not the last.
+			const localIndex = Math.min(Math.max(index - rowCoordinate.firstItemIndex, 0), visibleGroupedMessages.length - 1)
+			return realRenderer(localIndex, item)
 		}
 	}, [
+		rowCoordinate.firstItemIndex,
 		visibleGroupedMessages,
 		modifiedMessages,
 		expandedRows,
@@ -577,7 +669,40 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 			const window = currentMessageWindow()
 			if (isWholeConversationLoaded(window)) return
 
-			for (const extension of planWindowExtensions(window, visible)) {
+			const planned = planWindowExtensions(window, visible)
+			if (planned.length === 0) return
+
+			// Growing the window at the leading edge inserts rows above the
+			// viewport and releases them from the far side, which moves the
+			// content the reader is looking at. Mid-scroll that is visible as the
+			// transcript sliding, so it waits for the gesture to end.
+			//
+			// Only the leading side is deferrable. The trailing side is how newly
+			// arriving messages become reachable, and holding that back would
+			// leave a live reply stranded outside the loaded window.
+			const deferrable = planned.filter((extension) => extension.side === "leading")
+			const immediate = planned.filter((extension) => extension.side !== "leading")
+
+			const decision =
+				deferrable.length === 0
+					? "run"
+					: decideWindowGrowth({
+							msSinceLastScroll: lastScrollAtRef.current === null ? null : Date.now() - lastScrollAtRef.current,
+							messagesToLeadingEdge: leadingBuffer(window, visible),
+							messagesToTrailingEdge: trailingBuffer(window, visible),
+						})
+
+			const extensions = decision === "defer" ? immediate : planned
+			if (decision === "defer") {
+				// Remembered rather than dropped: the reader may stop scrolling
+				// without Virtuoso publishing another range, and the fetch would
+				// never be asked for again.
+				deferredGrowthRef.current = { visible, anchorTs }
+			} else {
+				deferredGrowthRef.current = null
+			}
+
+			for (const extension of extensions) {
 				if (extension.side === "leading") {
 					if (anchorTs == null) continue
 					void fetchAndMerge(extension.startIndex, extension.count, {
@@ -591,6 +716,45 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 		},
 		[currentMessageWindow, fetchAndMerge],
 	)
+
+	/**
+	 * Replay a deferred extension once the scroll has settled.
+	 *
+	 * Called on every scroll event, so the timer restarts instead of stacking:
+	 * only the last event of a gesture gets to fire.
+	 */
+	const scheduleDeferredWindowGrowth = useCallback(() => {
+		if (deferredGrowthTimerRef.current !== null) clearTimeout(deferredGrowthTimerRef.current)
+		deferredGrowthTimerRef.current = setTimeout(() => {
+			deferredGrowthTimerRef.current = null
+			const deferred = deferredGrowthRef.current
+			if (!deferred) return
+			deferredGrowthRef.current = null
+			requestWindowExtensions(deferred.visible, deferred.anchorTs)
+		}, SCROLL_SETTLE_MS)
+	}, [requestWindowExtensions])
+
+	/** Run a deferred extension straight away, without waiting for the timer. */
+	const replayDeferredWindowGrowth = useCallback(() => {
+		if (deferredGrowthTimerRef.current !== null) {
+			clearTimeout(deferredGrowthTimerRef.current)
+			deferredGrowthTimerRef.current = null
+		}
+		const deferred = deferredGrowthRef.current
+		if (!deferred) return
+		deferredGrowthRef.current = null
+		requestWindowExtensions(deferred.visible, deferred.anchorTs)
+	}, [requestWindowExtensions])
+
+	useLayoutEffect(() => {
+		replayDeferredWindowGrowthRef.current = replayDeferredWindowGrowth
+	}, [replayDeferredWindowGrowth])
+
+	useEffect(() => {
+		return () => {
+			if (deferredGrowthTimerRef.current !== null) clearTimeout(deferredGrowthTimerRef.current)
+		}
+	}, [])
 
 	const jumpToEdge = useCallback(
 		async (edge: ScrollEdge) => {
@@ -647,8 +811,16 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 			if (clineMessagesLengthRef.current === 0) return
 			if (renderRows.length === 0) return
 
-			const localStart = range.startIndex
-			const localEnd = range.endIndex
+			// Virtuoso reports this range in the coordinate given to
+			// `firstItemIndex`, while `renderRows` is indexed from the start of the
+			// loaded window. The range can also arrive a frame before the rows it
+			// describes — or already expressed in window offsets — so it is clamped
+			// rather than discarded: dropping it would silently stall the boundary
+			// fetch that grows the loaded history.
+			const lastRow = renderRows.length - 1
+			const toLocalRow = (index: number) => Math.min(Math.max(index - rowCoordinate.firstItemIndex, 0), lastRow)
+			const localStart = toLocalRow(range.startIndex)
+			const localEnd = toLocalRow(range.endIndex)
 			const firstVisibleRow = renderRows[localStart]
 			const lastVisibleRow = renderRows[localEnd]
 
@@ -696,6 +868,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 			captureBrowsingViewportAnchor,
 			currentMessageWindow,
 			renderRows,
+			rowCoordinate.firstItemIndex,
 			disableAutoScrollRef,
 			setShowScrollToBottom,
 			requestWindowExtensions,
@@ -734,6 +907,11 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 		}
 
 		const onScroll = () => {
+			// Stamped here rather than in the range handler: a range change is a
+			// consequence of scrolling and can also arrive without one, so it
+			// cannot say whether the reader is currently moving the viewport.
+			lastScrollAtRef.current = Date.now()
+			scheduleDeferredWindowGrowth()
 			showButton()
 		}
 
@@ -790,6 +968,9 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 
 						const window = currentMessageWindow()
 						const absoluteBottomLoaded = window.start + window.length >= window.total
+						// Published so bottom restoration can tell the end of the
+						// loaded window apart from the end of the conversation.
+						absoluteBottomLoadedRef.current = absoluteBottomLoaded
 						const userScrollIntent = userScrollIntentRef.current
 						const userReachedBottom =
 							atBottom &&
@@ -812,8 +993,8 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 					components={virtuosoComponents}
 					computeItemKey={computeItemKey}
 					data={visibleGroupedMessages}
-					firstItemIndex={0}
-					increaseViewportBy={{ top: 100, bottom: 100 }}
+					firstItemIndex={rowCoordinate.firstItemIndex}
+					increaseViewportBy={{ top: 400, bottom: 400 }}
 					initialTopMostItemIndex={{ index: Math.max(visibleGroupedMessages.length - 1, 0), align: "end" }}
 					itemContent={itemContent}
 					itemsRendered={scheduleBrowsingViewportAnchorRestore}
@@ -821,6 +1002,15 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 					rangeChanged={handleRangeChanged}
 					ref={virtuosoRef}
 					scrollerRef={scrollerRef}
+					// Browser scroll anchoring stays off.
+					//
+					// Not because the rows are positioned out of flow -- they are
+					// static. The list expresses its virtual space as padding on
+					// the item container, and per CSS Scroll Anchoring a padding
+					// change anywhere between the anchor and the scroll container
+					// is a suppression trigger, so the browser would abandon the
+					// anchor on the very frames that need it. Leaving anchoring on
+					// also competes with the library's own correction.
 					style={{ overflowAnchor: "none" }}
 					totalCount={visibleGroupedMessages.length}
 					totalListHeightChanged={handleMeasuredLayoutChange}

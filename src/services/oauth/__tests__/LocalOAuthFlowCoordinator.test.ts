@@ -4,8 +4,9 @@ import os from "node:os"
 import path from "node:path"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { FileOAuthFlowLease } from "../FileOAuthFlowLease"
+import { LocalOAuthCallbackServer } from "../LocalOAuthCallbackServer"
 import { LocalOAuthFlowCoordinator } from "../LocalOAuthFlowCoordinator"
-import type { OAuthAuthorizationStrategy } from "../types"
+import type { OAuthAuthorizationStrategy, OAuthFlowLease } from "../types"
 
 interface TestCredential {
 	code: string
@@ -16,9 +17,16 @@ class TestStrategy implements OAuthAuthorizationStrategy<TestCredential> {
 	readonly strategyId = "test-oauth"
 	readonly callbackPath = "/oauth/callback"
 
-	readonly callbackPort: number
-	readonly callbackPorts: readonly number[]
+	private configuredCallbackPorts: readonly number[]
 	readonly callbackRedirectHost: string | undefined
+
+	get callbackPort(): number {
+		return this.configuredCallbackPorts[0] ?? 0
+	}
+
+	get callbackPorts(): readonly number[] {
+		return this.configuredCallbackPorts
+	}
 
 	constructor(
 		callbackPorts: number | readonly number[] = 0,
@@ -28,9 +36,12 @@ class TestStrategy implements OAuthAuthorizationStrategy<TestCredential> {
 		}),
 		callbackRedirectHost?: string,
 	) {
-		this.callbackPorts = typeof callbackPorts === "number" ? [callbackPorts] : callbackPorts
-		this.callbackPort = this.callbackPorts[0] ?? 0
+		this.configuredCallbackPorts = typeof callbackPorts === "number" ? [callbackPorts] : callbackPorts
 		this.callbackRedirectHost = callbackRedirectHost
+	}
+
+	useCallbackPortForNextFlow(port: number): void {
+		this.configuredCallbackPorts = [port]
 	}
 
 	buildAuthorizationUrl(input: { redirectUri: string; codeChallenge: string; state: string }): URL {
@@ -61,11 +72,16 @@ describe("LocalOAuthFlowCoordinator", () => {
 	})
 
 	async function createCoordinator(
-		options: { strategy?: TestStrategy; openExternal?: (url: string) => Promise<void>; timeoutMs?: number } = {},
+		options: {
+			strategy?: TestStrategy
+			lease?: OAuthFlowLease
+			openExternal?: (url: string) => Promise<void>
+			timeoutMs?: number
+		} = {},
 	): Promise<LocalOAuthFlowCoordinator<TestCredential>> {
 		tempDir ??= await fs.mkdtemp(path.join(os.tmpdir(), "dline-oauth-flow-"))
 		const coordinator = new LocalOAuthFlowCoordinator(options.strategy ?? new TestStrategy(), {
-			lease: new FileOAuthFlowLease(path.join(tempDir, "flow-lease.json")),
+			lease: options.lease ?? new FileOAuthFlowLease(path.join(tempDir, "flow-lease.json")),
 			openExternal:
 				options.openExternal ??
 				(async (authorizationUrl) => {
@@ -81,18 +97,6 @@ describe("LocalOAuthFlowCoordinator", () => {
 		const authorizationUrl = openedAuthorizationUrls.at(-1)
 		if (!authorizationUrl) throw new Error("expected the authorization URL to be opened")
 		return new URL(authorizationUrl)
-	}
-
-	async function getAvailablePort(): Promise<number> {
-		const server = http.createServer()
-		await new Promise<void>((resolve, reject) => {
-			server.once("error", reject)
-			server.listen(0, "127.0.0.1", resolve)
-		})
-		const address = server.address()
-		if (!address || typeof address === "string") throw new Error("expected TCP address")
-		await new Promise<void>((resolve) => server.close(() => resolve()))
-		return address.port
 	}
 
 	function requestWithAgent(url: string, agent: http.Agent): Promise<{ status: number; headers: http.IncomingHttpHeaders }> {
@@ -148,26 +152,27 @@ describe("LocalOAuthFlowCoordinator", () => {
 	})
 
 	it("publishes the strategy redirect host while still binding the loopback address", async () => {
-		const port = await getAvailablePort()
 		const coordinator = await createCoordinator({
-			strategy: new TestStrategy(port, undefined, "localhost"),
+			strategy: new TestStrategy(0, undefined, "localhost"),
 		})
 		const flow = await coordinator.startFlow({ profileId: "profile-a" })
 		const authorization = lastAuthorizationUrl()
 		const state = authorization.searchParams.get("state")!
+		const callbackPort = Number(new URL(flow.redirectUri).port)
 
-		expect(flow.redirectUri).toBe(`http://localhost:${port}/oauth/callback`)
-		expect(authorization.searchParams.get("redirect_uri")).toBe(`http://localhost:${port}/oauth/callback`)
+		expect(flow.redirectUri).toBe(`http://localhost:${callbackPort}/oauth/callback`)
+		expect(authorization.searchParams.get("redirect_uri")).toBe(flow.redirectUri)
 
-		const response = await fetch(`http://127.0.0.1:${port}/oauth/callback?code=loopback-code&state=${state}`)
+		const response = await fetch(`http://127.0.0.1:${callbackPort}/oauth/callback?code=loopback-code&state=${state}`)
 		expect(response.status).toBe(200)
 		await expect(flow.result).resolves.toMatchObject({ code: "loopback-code" })
 	})
 
 	it("closes a fixed-port callback connection before the next flow starts", async () => {
-		const port = await getAvailablePort()
-		const coordinator = await createCoordinator({ strategy: new TestStrategy(port) })
+		const strategy = new TestStrategy()
+		const coordinator = await createCoordinator({ strategy })
 		const agent = new http.Agent({ keepAlive: true, maxSockets: 1 })
+		let callbackPort: number | undefined
 		try {
 			for (const [profileId, code] of [
 				["profile-a", "browser-code-a"],
@@ -176,6 +181,13 @@ describe("LocalOAuthFlowCoordinator", () => {
 				const flow = await coordinator.startFlow({ profileId })
 				const authorization = lastAuthorizationUrl()
 				const redirectUri = authorization.searchParams.get("redirect_uri")!
+				const currentPort = Number(new URL(redirectUri).port)
+				if (callbackPort === undefined) {
+					callbackPort = currentPort
+					strategy.useCallbackPortForNextFlow(currentPort)
+				} else {
+					expect(currentPort).toBe(callbackPort)
+				}
 				const state = authorization.searchParams.get("state")!
 				const response = await requestWithAgent(`${redirectUri}?code=${code}&state=${state}`, agent)
 
@@ -185,6 +197,55 @@ describe("LocalOAuthFlowCoordinator", () => {
 				await expect(flow.result).resolves.toMatchObject({ code })
 			}
 		} finally {
+			agent.destroy()
+		}
+	})
+
+	it("waits for the previous callback server close barrier before acquiring the next flow lease", async () => {
+		let releaseFirstClose: () => void = () => undefined
+		const firstCloseGate = new Promise<void>((resolve) => {
+			releaseFirstClose = resolve
+		})
+		let markFirstCloseReachedBarrier: () => void = () => undefined
+		const firstCloseReachedBarrier = new Promise<void>((resolve) => {
+			markFirstCloseReachedBarrier = resolve
+		})
+		const originalClose = LocalOAuthCallbackServer.prototype.close
+		let closeCount = 0
+		vi.spyOn(LocalOAuthCallbackServer.prototype, "close").mockImplementation(async function (this: LocalOAuthCallbackServer) {
+			closeCount++
+			if (closeCount === 1) {
+				markFirstCloseReachedBarrier()
+				await firstCloseGate
+			}
+			await originalClose.call(this)
+		})
+		const acquire = vi.fn(async () => ({ release: async () => undefined }))
+		const strategy = new TestStrategy()
+		const coordinator = await createCoordinator({ strategy, lease: { acquire } })
+		const agent = new http.Agent({ keepAlive: true, maxSockets: 1 })
+
+		try {
+			const first = await coordinator.startFlow({ profileId: "profile-a" })
+			const authorization = lastAuthorizationUrl()
+			strategy.useCallbackPortForNextFlow(Number(new URL(first.redirectUri).port))
+			const response = await requestWithAgent(
+				`${authorization.searchParams.get("redirect_uri")}?code=browser-code&state=${authorization.searchParams.get("state")}`,
+				agent,
+			)
+			expect(response.status).toBe(200)
+			await expect(first.result).resolves.toMatchObject({ code: "browser-code" })
+			await firstCloseReachedBarrier
+
+			const nextFlowPromise = coordinator.startFlow({ profileId: "profile-b" })
+			expect(acquire).toHaveBeenCalledTimes(1)
+			releaseFirstClose()
+			const next = await nextFlowPromise
+			expect(acquire).toHaveBeenCalledTimes(2)
+			await coordinator.cancelFlow({ flowId: next.flowId, profileId: next.profileId })
+			await expect(next.result).rejects.toMatchObject({ code: "FLOW_CANCELLED" })
+		} finally {
+			releaseFirstClose()
 			agent.destroy()
 		}
 	})

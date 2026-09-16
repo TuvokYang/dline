@@ -56,6 +56,19 @@ export function toggleMessageRowExpansion(
 	return { ...expandedRows, [message.ts]: !resolveMessageRowExpanded(message, expandedRows) }
 }
 
+/** Locate a message and its virtual row even when it is nested inside a browser-session group. */
+export function findGroupedMessageByTs(
+	groupedMessages: ReadonlyArray<ClineMessage | ClineMessage[]>,
+	ts: number,
+): { groupIndex: number; message: ClineMessage } | undefined {
+	for (let groupIndex = 0; groupIndex < groupedMessages.length; groupIndex++) {
+		const row = groupedMessages[groupIndex]
+		const message = Array.isArray(row) ? row.find((candidate) => candidate.ts === ts) : row?.ts === ts ? row : undefined
+		if (message) return { groupIndex, message }
+	}
+	return undefined
+}
+
 /**
  * Check if a message group is a tool group (array with _isToolGroup marker)
  */

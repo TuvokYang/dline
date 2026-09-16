@@ -13,8 +13,7 @@ import { sendMcpServersUpdate } from "./subscribeToMcpServers"
  */
 export async function toggleMcpServer(controller: Controller, request: ToggleMcpServerRequest): Promise<McpServers> {
 	try {
-		const server = (await controller.getLatestMcpServersForOwner()).find((candidate) => candidate.name === request.serverName)
-		if (server?.source === "workspace") {
+		if (controller.stateManager.hasWorkspaceScope) {
 			controller.setWorkspaceMcpServerEnabled(request.serverName, !request.disabled)
 			await sendMcpServersUpdate()
 		} else {

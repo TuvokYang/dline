@@ -103,7 +103,7 @@ e2e(
 		const retryDraft = "E2E_PROFILE_SWITCH_429_RETRY_DRAFT"
 		const resumeDraft = "E2E_PROFILE_SWITCH_429_RESUME_DRAFT"
 		const completion = "E2E_PROFILE_SWITCH_429_TARGET_OK"
-		const expectedFailureRequestCount = 12
+		const expectedFailureRequestCount = 4
 		server.enqueueResponses(
 			"openai-compatible-chat",
 			...Array.from({ length: 24 }, () => ({

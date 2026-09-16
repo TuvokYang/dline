@@ -77,11 +77,7 @@ describe("StreamChunkCoordinator", () => {
 		}
 	})
 
-	it("drains late usage while discarding content after a turn-ending chunk", async () => {
-		let releaseLateStream: (() => void) | undefined
-		const lateStream = new Promise<void>((resolve) => {
-			releaseLateStream = resolve
-		})
+	it("drains final usage when it immediately follows a turn-ending chunk", async () => {
 		async function* createTurnEndingStream(): ApiStream {
 			yield {
 				type: "tool_calls",
@@ -89,24 +85,59 @@ describe("StreamChunkCoordinator", () => {
 				tool_index: 0,
 				tool_call: { function: { name: "attempt_completion", arguments: "{}" } },
 			}
-			yield { type: "reasoning", reasoning: "must not be presented" }
-			await lateStream
 			yield { type: "usage", inputTokens: 40, outputTokens: 20 }
 		}
 
-		const factory = createIdentityFactory(createSource(["ATTEMPT", "REASONING"]))
+		const factory = createIdentityFactory(createSource(["ATTEMPT"]))
 		const stream = normalizeApiStream(createTurnEndingStream(), createStreamNormalizer(factory))
 		const onUsageChunk = vi.fn()
-		const coordinator = new StreamChunkCoordinator(stream, { onUsageChunk })
+		const abortStream = vi.fn()
+		const coordinator = new StreamChunkCoordinator(stream, { abortStream, onUsageChunk })
 
 		const terminalChunk = await coordinator.nextChunk()
-		const drainPromise = coordinator.drainUsageOnly()
-		releaseLateStream?.()
-		await drainPromise
+		await coordinator.drainUsageOnly()
 
 		expect(terminalChunk?.type).toBe("tool_calls")
 		expect(await coordinator.nextChunk()).toBeUndefined()
 		expect(onUsageChunk).toHaveBeenCalledWith(expect.objectContaining({ inputTokens: 40, outputTokens: 20 }))
+		expect(abortStream).not.toHaveBeenCalled()
+	})
+
+	it("closes the provider stream when presentation content follows a turn-ending chunk", async () => {
+		let releasePostToolContent: (() => void) | undefined
+		let streamClosed = false
+		const postToolContent = new Promise<void>((resolve) => {
+			releasePostToolContent = resolve
+		})
+		async function* createTurnEndingStream(): ApiStream {
+			try {
+				yield {
+					type: "tool_calls",
+					function_id: "call_plan",
+					tool_index: 0,
+					tool_call: { function: { name: "make_plan", arguments: "{}" } },
+				}
+				await postToolContent
+				yield { type: "reasoning", reasoning: "must not be presented" }
+			} finally {
+				streamClosed = true
+			}
+		}
+
+		const factory = createIdentityFactory(createSource(["PLAN", "REASONING"]))
+		const stream = normalizeApiStream(createTurnEndingStream(), createStreamNormalizer(factory))
+		const abortStream = vi.fn()
+		const coordinator = new StreamChunkCoordinator(stream, { abortStream, onUsageChunk: vi.fn() })
+
+		const terminalChunk = await coordinator.nextChunk()
+		const drainPromise = coordinator.drainUsageOnly()
+		releasePostToolContent?.()
+		await drainPromise
+
+		expect(terminalChunk?.type).toBe("tool_calls")
+		expect(abortStream).toHaveBeenCalledOnce()
+		expect(streamClosed).toBe(true)
+		expect(await coordinator.nextChunk()).toBeUndefined()
 	})
 
 	it("receives only canonical chunks after provider stream normalization", async () => {

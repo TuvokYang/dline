@@ -9,6 +9,26 @@ This file records high-signal project conventions that are easy to miss and expe
 - Combine independent search/replace blocks for one file when that keeps the change atomic and reviewable.
 - Preserve unrelated and unknown workspace changes. Do not use formatting or bulk replacement to absorb another task's work.
 
+## Searching ignored directories
+
+`search_files` runs through ripgrep, which honours `.gitignore` plus the scan
+rules compiled by `IgnoreController`. `node_modules`, `dist`, `build`, `out` and
+`tmp` are in the built-in floor (`src/core/ignore/IgnoreController.ts`), so a
+search rooted above them returns nothing from inside them.
+
+Naming such a path directly is treated as a deliberate descent: pruning bounds
+discovery cost, and a caller that already narrowed the walk has bounded it. The
+result then says the path is normally pruned, so an empty search cannot be
+misread as "the symbol does not exist".
+
+An `.agentignore` restriction is a permission, not a cost decision, and is never
+lifted this way. `search_files` refuses those paths and says so; do not reach for
+the terminal to work around it.
+
+`list_files` sets `gitignore: false` and applies only the IgnoreController rules,
+and `read_file` does not filter at all. When a search of a dependency returns
+zero, confirm with `read_file` before concluding the content is absent.
+
 ## Start from real entry points
 
 Before editing, inspect the owning implementation, tests, generated contracts, and package scripts. Common navigation rules:
@@ -24,6 +44,21 @@ Before editing, inspect the owning implementation, tests, generated contracts, a
 - storage: `src/shared/storage/` and `src/core/storage/`.
 
 Check `package.json` before choosing a verification command. Current primary scripts include `check-types`, `lint`, `format`, `test:smoke`, `test:run`, `test:e2e`, `protos`, `package`, and `vsix`.
+
+### Never hand-roll a tsc invocation
+
+Type checking is `npm run check-types`. It already covers the root project and `webview-ui/tsconfig.app.json`; there is no reason to assemble a tsc command by hand.
+
+Two failure modes have repeatedly scattered thousands of `.js`/`.js.map` files through `src/`:
+
+- `tsc -b` is the project-references **build** mode. It is meant to emit. Use `--noEmit` to check.
+- `npm --prefix <dir>` only changes where npm resolves `package.json` and `node_modules`; it does **not** change the process working directory. `npm --prefix webview-ui exec -- tsc -b` therefore runs tsc against the **root** config.
+
+The root `tsconfig.json` now sets `noEmit: true` specifically to make that mistake inert, because `rootDir` is the repo root and there is no `outDir`. Scripts that genuinely need output pass `--noEmit false` explicitly: `scripts/build-tests.js` and the `watch-tests` script. Keep that opt-in; do not remove the guard to make a one-off command work.
+
+To scope a check to another project, pass `-p <path>` from the repo root rather than trying to change directories. When a command must run elsewhere, use the tool's `workdirectory` parameter.
+
+Production bundling is esbuild (`npm run package` → `esbuild.mjs --production`), not tsc, so it is unaffected.
 
 ## Protobuf and ProtoBus
 

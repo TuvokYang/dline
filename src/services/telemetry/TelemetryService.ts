@@ -9,6 +9,7 @@ import { Logger } from "@/shared/services/Logger"
 import { Mode } from "@/shared/storage/types"
 import { version as extensionVersion } from "../../../package.json"
 import { TelemetryContext, type TelemetryMetadata } from "./context/telemetry-context"
+import { telemetryDevelopmentModeMetadata } from "./development-mode"
 import { TELEMETRY_EVENTS, TELEMETRY_METRICS, type TelemetryCategory } from "./events/catalog"
 import { HookEventRecorder, type HookExecutionMetadata, type HookExecutionStatus } from "./events/hook-recorder"
 import { TaskAggregates } from "./events/task-aggregates"
@@ -115,7 +116,7 @@ export class TelemetryService {
 			os_type: os.platform(),
 			os_version: os.version(),
 			is_remote_workspace: false,
-			is_dev: process.env.IS_DEV,
+			is_dev: telemetryDevelopmentModeMetadata(),
 		}
 	}
 
@@ -194,7 +195,7 @@ export class TelemetryService {
 				os_version: os.version(),
 				// `remoteName` is normalized by the host bridge to `undefined` for local workspaces.
 				is_remote_workspace: !!hostVersion.remoteName,
-				is_dev: process.env.IS_DEV,
+				is_dev: telemetryDevelopmentModeMetadata(),
 			})
 		} catch (error) {
 			Logger.error("[TelemetryService] Failed to resolve host metadata:", error)

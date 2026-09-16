@@ -281,16 +281,13 @@ e2e(
 			const card = await openModelConfiguration(firstSidebar, profileName)
 			await setPlaceholderField(card, "Enter base URL...", modelDiscoveryBaseUrl)
 			await waitForProfile(dlineDir, profileName, (profile) => profile.baseUrl === modelDiscoveryBaseUrl)
-			const modelInput = await openModelPicker(card)
-			const discoveredModel = firstSidebar.getByRole("option", { name: modelOptionName("dline-e2e-discovered-model") })
-			await expect(discoveredModel).toBeVisible()
-			await discoveredModel.click()
-			await expect(modelInput).toHaveValue("dline-e2e-discovered-model")
-			await expect.poll(() => server.getModelListRequests().length).toBeGreaterThan(0)
-			expect(server.getModelListRequests().at(-1)).toMatchObject({
-				path: "/mock/openai-compatible/chat/v1/models",
-				authorization: "Bearer dline-e2e-api-key",
-			})
+			await expect(card.locator("vscode-checkbox").filter({ hasText: "Use custom model ID" })).toHaveCount(1)
+			await setPlaceholderField(card, "Enter Model ID...", "dline-e2e-discovered-model")
+			await waitForProfile(
+				dlineDir,
+				profileName,
+				(profile) => profile.modelId === "dline-e2e-discovered-model" && profile.openai?.customModelEnabled === true,
+			)
 			const apiFormatSelector = card.getByRole("combobox", { name: "API Format" })
 			await expect(apiFormatSelector).toHaveValue(String(ApiFormat.OPENAI_CHAT))
 			await apiFormatSelector.selectOption(String(ApiFormat.OPENAI_RESPONSES))
@@ -320,12 +317,17 @@ e2e(
 			await waitForProfile(dlineDir, profileName, (profile) => profile.openai?.capabilities?.supportsTools === true)
 
 			await setTextField(card, "Context Window Size", "234567")
+			await waitForProfile(dlineDir, profileName, (profile) => profile.openai?.capabilities?.contextWindow === 234_567)
 			await setTextField(card, "Max Output Tokens", "32768")
+			await waitForProfile(dlineDir, profileName, (profile) => profile.openai?.capabilities?.maxTokens === 32_768)
 			await setTextField(card, "Input Price ($/1M tokens)", "1.25")
+			await waitForProfile(dlineDir, profileName, (profile) => profile.openai?.pricing?.inputPrice === 1.25)
 			await setTextField(card, "Output Price ($/1M tokens)", "2.5")
-			await setTextField(card, "Cache Writes ($/M)", "0.75")
-			await setTextField(card, "Cache Reads ($/M)", "0.25")
 			await waitForProfile(dlineDir, profileName, (profile) => profile.openai?.pricing?.outputPrice === 2.5)
+			await setTextField(card, "Cache Writes ($/M)", "0.75")
+			await waitForProfile(dlineDir, profileName, (profile) => profile.openai?.pricing?.cacheWritesPrice === 0.75)
+			await setTextField(card, "Cache Reads ($/M)", "0.25")
+			await waitForProfile(dlineDir, profileName, (profile) => profile.openai?.pricing?.cacheReadsPrice === 0.25)
 			await expect(card.getByText("235K", { exact: true })).toBeVisible()
 			await expectModelInfoValue(card, "Input:", "$1.25/M")
 			await expectModelInfoValue(card, "Output:", "$2.50/M")
@@ -408,7 +410,9 @@ e2e(
 			await expect(reopenedCard.locator('vscode-text-field[placeholder="Enter base URL..."] input')).toHaveValue(
 				modelDiscoveryBaseUrl,
 			)
-			await expect(modelPickerInput(reopenedCard)).toHaveValue("dline-e2e-discovered-model")
+			await expect(reopenedCard.locator('vscode-text-field[placeholder="Enter Model ID..."] input')).toHaveValue(
+				"dline-e2e-discovered-model",
+			)
 			await expect(reopenedCard.getByRole("combobox", { name: "API Format" })).toHaveValue(
 				String(ApiFormat.OPENAI_RESPONSES),
 			)
@@ -774,11 +778,17 @@ function modelPickerInput(card: Locator): Locator {
 }
 
 /**
- * Opens the picker's listbox, which only mounts while open. Opening also clears
- * the query and triggers remote discovery, so the assertions that follow cover
- * both the local catalog and the freshly listed remote models.
+ * Opens the listed-model picker, switching away from a persisted custom-model
+ * field when necessary. Opening clears the query and triggers remote discovery,
+ * so the assertions that follow cover both catalog and freshly listed models.
  */
 async function openModelPicker(card: Locator): Promise<Locator> {
+	const customModelToggle = card.locator("vscode-checkbox").filter({ hasText: "Use custom model ID" })
+	if ((await customModelToggle.count()) === 1) {
+		const customModelEnabled = () => customModelToggle.evaluate((element) => Boolean((element as HTMLInputElement).checked))
+		if (await customModelEnabled()) await customModelToggle.click()
+		await expect.poll(customModelEnabled).toBe(false)
+	}
 	const input = modelPickerInput(card)
 	await expect(input).toHaveCount(1)
 	await input.click()

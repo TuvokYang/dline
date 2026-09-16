@@ -1,5 +1,5 @@
 import { createOpenAIClientForProfile } from "@core/api/providers/openai-client-factory"
-import { GPT_IMAGE_2_SUBSCRIPTION_MODEL_ID } from "@shared/image-generation"
+import { GPT_IMAGE_2_5_MODEL_ID, GPT_IMAGE_2_SUBSCRIPTION_MODEL_ID } from "@shared/image-generation"
 import OpenAI from "openai"
 import type {
 	ImageGenerationAdapter,
@@ -53,6 +53,10 @@ function revisedPromptFromItem(item: unknown): string | undefined {
 	return typeof value === "string" && value.trim() ? value : undefined
 }
 
+function usesSubscriptionTransport(modelId: string): boolean {
+	return modelId === GPT_IMAGE_2_5_MODEL_ID || modelId === GPT_IMAGE_2_SUBSCRIPTION_MODEL_ID
+}
+
 /** Executes provider-hosted image generation behind the ordinary generate_image tool. */
 export class OpenAIHostedImageGenerationAdapter implements ImageGenerationAdapter {
 	private readonly profile: ImageGenerationAdapterConfig["profile"]
@@ -93,7 +97,11 @@ export class OpenAIHostedImageGenerationAdapter implements ImageGenerationAdapte
 						outputs: [
 							{
 								id: `openai-hosted-preview-${event.partial_image_index}`,
-								source: { kind: "base64", data: event.partial_image_b64, mimeType: mimeTypeForFormat(request.outputFormat) },
+								source: {
+									kind: "base64",
+									data: event.partial_image_b64,
+									mimeType: mimeTypeForFormat(request.outputFormat),
+								},
 							},
 						],
 					}
@@ -225,7 +233,7 @@ export class OpenAIHostedImageGenerationAdapter implements ImageGenerationAdapte
 					}
 				}),
 		)
-		const isSubscriptionModel = this.imageModelId === GPT_IMAGE_2_SUBSCRIPTION_MODEL_ID
+		const isSubscriptionModel = usesSubscriptionTransport(this.imageModelId)
 		const providerPrompt = isSubscriptionModel
 			? resolveOpenAISubscriptionImagePrompt(request.prompt, request.size, request.aspectRatio).prompt
 			: request.prompt
@@ -235,7 +243,7 @@ export class OpenAIHostedImageGenerationAdapter implements ImageGenerationAdapte
 				content: [{ type: "input_text" as const, text: providerPrompt }, ...referenceContent],
 			},
 		] as OpenAI.Responses.ResponseInput
-		const size = resolveOpenAIImageSize(this.imageModelId, request.size)
+		const size = isSubscriptionModel ? undefined : resolveOpenAIImageSize(this.imageModelId, request.size)
 		const tool = {
 			type: "image_generation",
 			model: isSubscriptionModel ? "gpt-image-2" : this.imageModelId,

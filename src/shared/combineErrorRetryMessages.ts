@@ -25,10 +25,14 @@ function isRecoveredStreamMessage(message: ClineMessage, conversationHistoryInde
 	}
 
 	if (message.type === "ask") {
-		if (message.ask === "followup" && message.partial !== true) {
+		if ((message.ask === "followup" || message.ask === "completion_result") && message.partial !== true) {
 			return Boolean(message.text)
 		}
 		return message.partial === true && message.ask !== undefined
+	}
+
+	if (message.say === "completion_result" && message.partial !== true) {
+		return Boolean(message.text)
 	}
 
 	return (

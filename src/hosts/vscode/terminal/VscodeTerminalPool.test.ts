@@ -15,6 +15,7 @@ class FakeTerminalPoolRuntime implements VscodeTerminalPoolRuntime {
 	private readonly blockedPreparationResolvers = new Map<number, () => void>()
 	readonly blockedPreparationIds = new Set<number>()
 	prepareFailuresRemaining = 0
+	shellIntegrationTimeoutMs: number | undefined
 
 	createTerminal(
 		cwd: string,
@@ -64,10 +65,20 @@ class FakeTerminalPoolRuntime implements VscodeTerminalPoolRuntime {
 		await new Promise<void>((resolve) => this.blockedPreparationResolvers.set(terminal.id, resolve))
 	}
 
+	releaseBlockedPreparation(terminalId: number): void {
+		this.blockedPreparationResolvers.get(terminalId)?.()
+		this.blockedPreparationResolvers.delete(terminalId)
+		this.blockedPreparationIds.delete(terminalId)
+	}
+
 	releaseBlockedPreparations(): void {
-		for (const resolve of this.blockedPreparationResolvers.values()) resolve()
-		this.blockedPreparationResolvers.clear()
-		this.blockedPreparationIds.clear()
+		for (const terminalId of [...this.blockedPreparationResolvers.keys()]) {
+			this.releaseBlockedPreparation(terminalId)
+		}
+	}
+
+	setShellIntegrationTimeout(timeoutMs: number): void {
+		this.shellIntegrationTimeoutMs = timeoutMs
 	}
 
 	async prepareCwd(_terminal: TerminalInfo, cwd: string): Promise<void> {
@@ -178,21 +189,79 @@ describe("VscodeTerminalPool", () => {
 		await warming
 	})
 
-	it("does not wait repeatedly while the same warm batch is still pending", async () => {
+	it("joins an in-flight warm batch and acquires as soon as one terminal is ready", async () => {
 		const runtime = new FakeTerminalPoolRuntime()
 		runtime.blockedPreparationIds.add(1)
 		runtime.blockedPreparationIds.add(2)
 		runtime.blockedPreparationIds.add(3)
-		const pool = new VscodeTerminalPool(runtime, { acquireWaitTimeoutMs: 10 })
+		const pool = new VscodeTerminalPool(runtime, { acquireWaitTimeoutMs: 1_000, maxGlobalTerminals: 3 })
 		pools.push(pool)
 		const target = preparation()
+		const warming = pool.ensureWarm(target)
+		await vi.waitFor(() => assert.equal(pool.getPartitionSnapshot(target).warming, 3))
 
+		const acquiring = pool.acquire(target, target.cwd, "reusable")
+		runtime.releaseBlockedPreparation(2)
+		const lease = await acquiring
+
+		assert.equal(lease.terminalInfo.id, 2)
+		assert.deepEqual(pool.getPartitionSnapshot(target), {
+			warming: 2,
+			ready: 0,
+			leased: 1,
+			draining: false,
+		})
+		runtime.releaseBlockedPreparations()
+		await warming
+	})
+
+	it("uses the configured shell-integration timeout as the foreground warm budget", async () => {
+		vi.useFakeTimers()
+		const runtime = new FakeTerminalPoolRuntime()
+		runtime.blockedPreparationIds.add(1)
+		runtime.blockedPreparationIds.add(2)
+		runtime.blockedPreparationIds.add(3)
+		const pool = new VscodeTerminalPool(runtime, { maxGlobalTerminals: 3 })
+		pools.push(pool)
+		pool.configureShellIntegrationTimeout(1_000)
+		const target = preparation()
+		const warming = pool.ensureWarm(target)
+		let acquireError: unknown
+		const acquiring = pool.acquire(target, target.cwd, "reusable").catch((error: unknown) => {
+			acquireError = error
+			return undefined
+		})
+
+		await vi.advanceTimersByTimeAsync(300)
+		runtime.releaseBlockedPreparation(1)
+		const lease = await acquiring
+
+		assert.equal(runtime.shellIntegrationTimeoutMs, 1_000)
+		assert.equal(acquireError, undefined)
+		assert.equal(lease?.terminalInfo.id, 1)
+		runtime.releaseBlockedPreparations()
+		await warming
+	})
+
+	it("does not reset the wait deadline while the same warm batch remains pending", async () => {
+		vi.useFakeTimers()
+		const runtime = new FakeTerminalPoolRuntime()
+		runtime.blockedPreparationIds.add(1)
+		runtime.blockedPreparationIds.add(2)
+		runtime.blockedPreparationIds.add(3)
+		const pool = new VscodeTerminalPool(runtime, { acquireWaitTimeoutMs: 10, maxGlobalTerminals: 3 })
+		pools.push(pool)
+		const target = preparation()
+		const warming = pool.ensureWarm(target)
+		const firstFailure = assert.rejects(pool.acquire(target, target.cwd, "reusable"), /warm wait timed out/)
+
+		await vi.advanceTimersByTimeAsync(10)
+		await firstFailure
 		await assert.rejects(pool.acquire(target, target.cwd, "reusable"), /warm wait timed out/)
-		await assert.rejects(pool.acquire(target, target.cwd, "reusable"), /warming already pending/)
 		assert.equal(runtime.created.length, 3)
 
 		runtime.releaseBlockedPreparations()
-		await vi.waitFor(() => assert.equal(pool.getPartitionSnapshot(target).ready, 3))
+		await warming
 	})
 
 	it("treats Windows path casing differences as the same cwd", async () => {

@@ -58,6 +58,16 @@ interface MessageStateHandlerParams {
  * which themselves delegate to the backend-neutral buffered storage layer.
  * This class focuses on cross-store coordination and event emission.
  */
+/**
+ * How long a measured task-directory size stays usable.
+ *
+ * The size only labels a history row, but measuring it walks the whole task
+ * directory. A long task reaches hundreds of megabytes across message logs,
+ * activities and checkpoints, so re-walking it on every persisted message put
+ * a full directory scan on the message write path.
+ */
+const TASK_DIRECTORY_SIZE_TTL_MS = 30_000
+
 export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents> {
 	private taskIsFavorited: boolean
 	private checkpointTracker: CheckpointTracker | undefined
@@ -67,6 +77,20 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 	private ulid: string
 	private taskState: TaskState
 	private readonly transientClineMessages = new Map<number, ClineMessage>()
+	/** Bumped by every mutation that can change how messages aggregate. */
+	private messageRevision = 0
+	/** Aggregated metrics reused while the message sequence is unchanged. */
+	private historyMetricsCache?: { revision: number; metrics: ReturnType<typeof getApiMetrics> }
+	/**
+	 * Metrics over the whole sequence, kept apart from the history aggregate.
+	 *
+	 * The history row excludes the leading task message while the state push
+	 * reports every message, so one shared slot would silently change whichever
+	 * surface read it second.
+	 */
+	private stateMetricsCache?: { revision: number; metrics: ReturnType<typeof getApiMetrics> }
+	/** Last measured task-directory size with the time it was taken. */
+	private taskDirectorySizeCache?: { bytes: number; measuredAt: number }
 
 	/** UI messages (clineMessages) — single source of truth for ui_messages.jsonl plus transient presentation overlays. */
 	public readonly uiMessage: UIMessage | undefined
@@ -99,7 +123,23 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 
 	set clineMessages(msgs: ClineMessage[]) {
 		if (!this.uiMessage) return
+		// Replacing the whole sequence changes every derived aggregate, and this
+		// path writes the store directly instead of going through the mutation
+		// funnel, so the revision has to be advanced here.
+		this.bumpMessageRevision()
 		this.uiMessage.overwrite(msgs).catch((e) => Logger.error("set clineMessages failed:", e))
+	}
+
+	/**
+	 * Invalidate aggregates after the durable store was written directly.
+	 *
+	 * Startup clears the store and checkpoint restore truncates it without going
+	 * through the mutation funnel, so a caller that reaches the store on its own
+	 * has to say so. Without it a cached aggregate outlives the messages it was
+	 * computed from and a state publication reports the previous task's totals.
+	 */
+	invalidateDerivedAggregates(): void {
+		this.bumpMessageRevision()
 	}
 
 	/**
@@ -130,6 +170,11 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 	 * Emit a clineMessagesChanged event with the change details
 	 */
 	private emitClineMessagesChanged(change: ClineMessageChange): void {
+		// Every mutation path funnels through here, so invalidating at this single
+		// point keeps message-derived aggregates exact without asking each caller
+		// to remember. A non-tail edit changes the aggregate while leaving the
+		// message count and the tail untouched, so shape-based keys would miss it.
+		this.bumpMessageRevision()
 		this.emit("clineMessagesChanged", change)
 	}
 
@@ -163,7 +208,7 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 			const allMessages = this.clineMessages
 			const persisted = allMessages.filter((m) => !m.partial)
 			if (persisted.length === 0) return
-			const apiMetrics = getApiMetrics(combineApiRequests(combineCommandSequences(allMessages.slice(1))))
+			const apiMetrics = this.readAggregatedMetrics(allMessages)
 			// Read the task header from the in-memory message list instead of
 			// re-reading ui_messages.jsonl on every history-only update: the disk
 			// path bypasses the jsonl cache and does a full read + JSON.parse.
@@ -180,12 +225,7 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 			const apiHistory = this.apiConversationHistory
 			const lastModelInfo = [...apiHistory].reverse().find((msg) => msg.modelInfo !== undefined)
 			const taskDir = await ensureTaskDirectoryExists(this.taskId)
-			let taskDirSize = 0
-			try {
-				taskDirSize = await getFolderSize.loose(taskDir)
-			} catch (error) {
-				Logger.error("Failed to get task directory size:", taskDir, error)
-			}
+			const taskDirSize = await this.readTaskDirectorySize(taskDir)
 			const cwd = await getCwd(getDesktopDir())
 			// Use _updateTaskHistory (constructor-injected callback), NOT this.updateTaskHistory
 			await this._updateTaskHistory({
@@ -212,6 +252,73 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 		} catch (error) {
 			Logger.error("Failed to update task history:", error)
 		}
+	}
+
+	/**
+	 * Aggregate history metrics, reusing the last result while messages are unchanged.
+	 *
+	 * Every persisted message triggers a history update, and the aggregation walks
+	 * the entire conversation. Keying on the mutation revision keeps the result
+	 * exact — any add, update, delete or transient overlay change invalidates it —
+	 * while collapsing the repeated work a single unchanged sequence would cause.
+	 */
+	private readAggregatedMetrics(allMessages: ClineMessage[]): ReturnType<typeof getApiMetrics> {
+		const cached = this.historyMetricsCache
+		if (cached?.revision === this.messageRevision) return cached.metrics
+		const metrics = getApiMetrics(combineApiRequests(combineCommandSequences(allMessages.slice(1))))
+		this.historyMetricsCache = { revision: this.messageRevision, metrics }
+		return metrics
+	}
+
+	/**
+	 * Aggregate metrics over the whole message sequence for a state publication.
+	 *
+	 * The aggregation walks every message and re-serializes each paired API
+	 * request, whose text carries the full request body. A publication burst
+	 * repeated that work per push even though nothing had been appended, which
+	 * is what made a long conversation spend over a hundred milliseconds per
+	 * push. Keying on the mutation revision keeps the result exact while
+	 * collapsing an unchanged sequence to a single computation.
+	 */
+	readStateMetrics(): ReturnType<typeof getApiMetrics> {
+		const cached = this.stateMetricsCache
+		if (cached?.revision === this.messageRevision) return cached.metrics
+		const metrics = getApiMetrics(combineApiRequests(combineCommandSequences(this.clineMessages)))
+		this.stateMetricsCache = { revision: this.messageRevision, metrics }
+		return metrics
+	}
+
+	/**
+	 * Measure the task directory, reusing a recent measurement when one exists.
+	 *
+	 * The value is only a history-row label, so a slightly stale size is
+	 * acceptable; walking a large task directory on every persisted message is
+	 * not. A failed measurement keeps the previous value when one is available
+	 * rather than reporting the task as empty.
+	 */
+	private async readTaskDirectorySize(taskDir: string): Promise<number> {
+		const cached = this.taskDirectorySizeCache
+		if (cached && Date.now() - cached.measuredAt < TASK_DIRECTORY_SIZE_TTL_MS) {
+			return cached.bytes
+		}
+		try {
+			const bytes = await getFolderSize.loose(taskDir)
+			this.taskDirectorySizeCache = { bytes, measuredAt: Date.now() }
+			return bytes
+		} catch (error) {
+			Logger.error("Failed to get task directory size:", taskDir, error)
+			return cached?.bytes ?? 0
+		}
+	}
+
+	/** Invalidate aggregates derived from the message sequence. */
+	private bumpMessageRevision(): void {
+		this.messageRevision++
+	}
+
+	/** Current message mutation revision, exposed for aggregate cache tests. */
+	get messageMutationRevision(): number {
+		return this.messageRevision
 	}
 
 	async updateTaskHistory(): Promise<void> {
@@ -315,6 +422,13 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 			const previousMessage = { ...all[existingIndex] }
 			msg.conversationHistoryIndex = all[existingIndex].conversationHistoryIndex
 			msg.conversationHistoryDeletedRange = all[existingIndex].conversationHistoryDeletedRange
+			// The upsert replaces the whole row, so a presentation refresh that does
+			// not carry the causal identity would silently drop it. The Webview
+			// matches its active interaction against exactly this field, and losing
+			// it leaves an awaiting approval with no reachable anchor.
+			if (msg.interactionId === undefined && all[existingIndex].interactionId !== undefined) {
+				msg.interactionId = all[existingIndex].interactionId
+			}
 
 			await this.uiMessage?.upsertMessage(msg)
 			const freshAll = this.clineMessages

@@ -37,12 +37,18 @@ function expectDerivedUsage(consumption: MockApiConsumption, responseText: strin
 	const inputBytes = Buffer.byteLength(JSON.stringify(consumption.requestBody), "utf8")
 	const outputBytes = Buffer.byteLength(`${reasoning}\n${responseText}`, "utf8")
 	const measuredInput = totalInputTokens(usage)
-	expect(measuredInput).toBeGreaterThanOrEqual(Math.ceil(inputBytes / 5))
-	expect(measuredInput).toBeLessThanOrEqual(Math.ceil(inputBytes / 3))
+	if (consumption.cacheDiagnostic) {
+		const diagnostic = cacheDiagnosticOf(consumption)
+		expect(measuredInput).toBe(diagnostic.totalInputTokens)
+		expect(diagnostic.componentTokenEstimates.content).toBeGreaterThan(0)
+		expect(usage.cacheWriteTokens ?? 0).toBeGreaterThan(0)
+	} else {
+		expect(measuredInput).toBe(Math.ceil(inputBytes / 4))
+		expect(usage.cacheWriteTokens ?? 0).toBe(0)
+	}
 	expect(usage.outputTokens).toBeGreaterThanOrEqual(Math.ceil(outputBytes / 5))
 	expect(usage.outputTokens).toBeLessThanOrEqual(Math.ceil(outputBytes / 3))
 	expect(usage.inputTokens).toBeGreaterThan(0)
-	expect(usage.cacheWriteTokens ?? 0).toBeGreaterThan(0)
 	expect(usage.cacheReadTokens).toBe(0)
 	return usage
 }

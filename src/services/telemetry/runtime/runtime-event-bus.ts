@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto"
+import { currentSignalSpan } from "../service/trace-scope"
 import { RuntimeContentPolicy } from "./content-policy"
 import { RuntimeTelemetryContextHolder } from "./context"
 import { normalizeRuntimeError } from "./error-normalizer"
@@ -74,7 +75,7 @@ export class RuntimeEventBus {
 
 	constructor(options: RuntimeEventBusOptions = {}) {
 		this.capacity = options.capacity ?? DEFAULT_CAPACITY
-		this.policy = options.contentPolicy ?? new RuntimeContentPolicy()
+		this.policy = options.contentPolicy ?? RuntimeContentPolicy.forEvents()
 		this.contextHolder = new RuntimeTelemetryContextHolder(options.sessionId ?? randomUUID())
 		this.monotonicNow = options.monotonicNow ?? (() => performance.now())
 		this.wallNow = options.wallNow ?? (() => Date.now())
@@ -102,14 +103,19 @@ export class RuntimeEventBus {
 		}
 
 		const { attributes } = this.policy.apply(input.attributes)
+		const span = input.processScoped ? undefined : currentSignalSpan()
+		const resolvedContext = input.processScoped
+			? this.contextHolder.sessionContext
+			: this.contextHolder.resolve(input.context)
 		const event: RuntimeTelemetryEvent = {
 			eventId: randomUUID(),
 			sequence: this.nextSequence++,
-			timestamp: this.wallNow(),
-			monotonicMs: this.monotonicNow(),
+			timestamp: input.timestamp ?? this.wallNow(),
+			monotonicMs: input.monotonicMs ?? this.monotonicNow(),
 			name: input.name,
 			priority: input.priority,
-			context: this.contextHolder.resolve(input.context),
+			context: { ...resolvedContext, taskId: resolvedContext.taskId ?? span?.taskId },
+			traceContext: span?.spanContext,
 			attributes,
 			error: input.error === undefined ? undefined : normalizeRuntimeError(input.error),
 		}

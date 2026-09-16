@@ -41,6 +41,9 @@ export interface SignalContext {
 export interface TelemetrySignal {
 	readonly name: string
 	readonly level: SignalLevel
+	/** Original producer clocks, preserved when startup signals are replayed. */
+	readonly timestamp?: number
+	readonly monotonicMs?: number
 	readonly attributes?: SignalAttributes
 	readonly error?: unknown
 	readonly context?: SignalContext
@@ -59,10 +62,22 @@ export interface SignalPipeline {
 /** Low-cardinality scalar attributes accepted by metric and trace backends. */
 export type ObservabilityAttributes = Readonly<Record<string, string | number | boolean>>
 
+export interface SignalSpanContext {
+	readonly traceId: string
+	readonly spanId: string
+	readonly traceFlags: number
+}
+
 export interface SignalSpanHandle {
 	readonly active: boolean
+	readonly spanContext?: SignalSpanContext
+	readonly taskId?: string
+	/** Establish async-local correlation without making the SDK a producer dependency. */
+	run?<T>(action: () => T): T
 	setAttribute(name: string, value: string | number | boolean): void
 	recordException(error: unknown): void
+	/** Instant state change, captured at its source rather than at exporter drain. */
+	addEvent?(name: string, attributes?: ObservabilityAttributes, timestamp?: number): void
 	end(outcome?: "success" | "failure" | "cancelled", endTime?: number): void
 }
 
@@ -71,6 +86,8 @@ export interface SignalSpanStartOptions {
 	readonly attributes?: ObservabilityAttributes
 	readonly parent?: SignalSpanHandle
 	readonly startTime?: number
+	/** Start an independent trace even when a different operation is ambient. */
+	readonly root?: boolean
 }
 
 /** Standard metric/trace destination installed by the process telemetry owner. */
@@ -118,11 +135,7 @@ type ObservabilityBootstrapRecord =
 	  }
 	| {
 			readonly kind: "span"
-			readonly options: SignalSpanStartOptions
-			readonly attributes: ObservabilityAttributes
-			readonly error?: unknown
-			readonly outcome: "success" | "failure" | "cancelled"
-			readonly endTime?: number
+			readonly span: DeferredSignalSpan
 	  }
 
 const observabilityBootstrapBuffer: ObservabilityBootstrapRecord[] = []
@@ -156,6 +169,8 @@ export function installObservabilityPipeline(next: ObservabilityPipeline | undef
 		const held = observabilityBootstrapBuffer.splice(0)
 		if (recordingEnabled()) {
 			for (const record of held) replayObservabilityRecord(next, record)
+		} else {
+			for (const record of held) if (record.kind === "span") record.span.discard()
 		}
 	}
 	return previous
@@ -182,7 +197,16 @@ export function recordRuntimeGauge(name: string, value: number, description: str
 
 /** Start a real span when tracing is installed and authorised. */
 export function startSignalSpan(options: SignalSpanStartOptions): SignalSpanHandle {
-	return observabilityPipeline?.startSpan(options) ?? new BufferedSignalSpan(options)
+	if (!recordingEnabled()) return INERT_SIGNAL_SPAN
+	if (observabilityPipeline) return observabilityPipeline.startSpan(options)
+	const span = new DeferredSignalSpan(options)
+	bufferObservabilityRecord({ kind: "span", span })
+	return span
+}
+
+/** Run work inside a span when supported; business errors propagate unchanged. */
+export function runWithSignalSpan<T>(span: SignalSpanHandle, action: () => T): T {
+	return span.run ? span.run(action) : action()
 }
 
 /**
@@ -193,6 +217,7 @@ export function startSignalSpan(options: SignalSpanStartOptions): SignalSpanHand
  * pipeline lifecycle, not by whichever call site happened to record first.
  */
 export function emitSignal(signal: TelemetrySignal): void {
+	signal = { timestamp: Date.now(), monotonicMs: performance.now(), ...signal }
 	const target = pipeline
 	if (target) {
 		target.accept(signal)
@@ -250,6 +275,7 @@ export function drainBootstrapSignals(): BootstrapSignalDrain {
 export function discardBootstrapSignals(): void {
 	bootstrapBuffer.length = 0
 	bootstrapDropped = 0
+	for (const record of observabilityBootstrapBuffer) if (record.kind === "span") record.span.discard()
 	observabilityBootstrapBuffer.length = 0
 }
 
@@ -263,7 +289,10 @@ export function observabilityBootstrapCount(): number {
 }
 
 function bufferObservabilityRecord(record: ObservabilityBootstrapRecord): void {
-	if (observabilityBootstrapBuffer.length >= BOOTSTRAP_CAPACITY) observabilityBootstrapBuffer.shift()
+	if (observabilityBootstrapBuffer.length >= BOOTSTRAP_CAPACITY) {
+		const evicted = observabilityBootstrapBuffer.shift()
+		if (evicted?.kind === "span") evicted.span.discard()
+	}
 	observabilityBootstrapBuffer.push(record)
 }
 
@@ -275,43 +304,89 @@ function replayObservabilityRecord(target: ObservabilityPipeline, record: Observ
 		case "gauge":
 			target.recordGauge(record.name, record.value, record.attributes, record.description)
 			return
-		case "span": {
-			const span = target.startSpan({ ...record.options, attributes: record.attributes })
-			if (record.error !== undefined) span.recordException(record.error)
-			span.end(record.outcome, record.endTime)
+		case "span":
+			record.span.attach((options) => target.startSpan(options))
 			return
-		}
 	}
 }
 
-class BufferedSignalSpan implements SignalSpanHandle {
-	readonly active = true
+/** Bounded owner buffers this handle at start, so spans still open during attachment are not lost. */
+export class DeferredSignalSpan implements SignalSpanHandle {
 	private readonly attributes: Record<string, string | number | boolean>
+	private readonly options: SignalSpanStartOptions
 	private error: unknown
-	private ended = false
+	private ended: { outcome: "success" | "failure" | "cancelled"; time: number } | undefined
+	private delegate: SignalSpanHandle | undefined
+	private discarded = false
+	private readonly events: { name: string; attributes?: ObservabilityAttributes; timestamp: number }[] = []
+	private droppedEvents = 0
 
-	constructor(private readonly options: SignalSpanStartOptions) {
+	constructor(options: SignalSpanStartOptions) {
+		this.options = { ...options, startTime: options.startTime ?? Date.now() }
 		this.attributes = { ...options.attributes }
 	}
 
+	get active(): boolean {
+		return !this.discarded && !this.ended && (this.delegate?.active ?? true)
+	}
+	get spanContext(): SignalSpanContext | undefined {
+		return this.delegate?.spanContext
+	}
+	get taskId(): string | undefined {
+		return this.delegate?.taskId
+	}
+	run<T>(action: () => T): T {
+		return this.delegate?.run ? this.delegate.run(action) : action()
+	}
+
+	attach(start: (options: SignalSpanStartOptions) => SignalSpanHandle): SignalSpanHandle {
+		if (this.discarded) return INERT_SIGNAL_SPAN
+		if (this.delegate) return this.delegate
+		const parent = this.options.parent instanceof DeferredSignalSpan ? this.options.parent.attach(start) : this.options.parent
+		this.delegate = start({ ...this.options, attributes: this.attributes, parent })
+		for (const event of this.events.splice(0)) this.delegate.addEvent?.(event.name, event.attributes, event.timestamp)
+		if (this.droppedEvents) this.delegate.setAttribute("telemetry_dropped_span_events", this.droppedEvents)
+		if (this.error !== undefined) this.delegate.recordException(this.error)
+		if (this.ended) this.delegate.end(this.ended.outcome, this.ended.time)
+		this.error = undefined
+		return this.delegate
+	}
+
+	discard(): void {
+		this.discarded = true
+		this.error = undefined
+		this.events.length = 0
+	}
+
 	setAttribute(name: string, value: string | number | boolean): void {
-		if (!this.ended) this.attributes[name] = value
+		if (!this.active) return
+		if (this.delegate) this.delegate.setAttribute(name, value)
+		else if (Object.keys(this.attributes).length < 128) this.attributes[name] = value
 	}
 
 	recordException(error: unknown): void {
-		if (!this.ended) this.error = error
+		if (!this.active) return
+		if (this.delegate) this.delegate.recordException(error)
+		else this.error = error
 	}
 
-	end(outcome: "success" | "failure" | "cancelled" = "success", endTime?: number): void {
-		if (this.ended) return
-		this.ended = true
-		bufferObservabilityRecord({
-			kind: "span",
-			options: this.options,
-			attributes: this.attributes,
-			error: this.error,
-			outcome,
-			endTime,
-		})
+	addEvent(name: string, attributes?: ObservabilityAttributes, timestamp = Date.now()): void {
+		if (!this.active) return
+		if (this.delegate) this.delegate.addEvent?.(name, attributes, timestamp)
+		else if (this.events.length < 128) this.events.push({ name, attributes: { ...attributes }, timestamp })
+		else this.droppedEvents += 1
+	}
+
+	end(outcome: "success" | "failure" | "cancelled" = "success", endTime = Date.now()): void {
+		if (!this.active) return
+		this.ended = { outcome, time: endTime }
+		this.delegate?.end(outcome, endTime)
 	}
 }
+
+const INERT_SIGNAL_SPAN: SignalSpanHandle = Object.freeze({
+	active: false,
+	setAttribute(): void {},
+	recordException(): void {},
+	end(): void {},
+})

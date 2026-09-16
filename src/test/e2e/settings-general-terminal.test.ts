@@ -11,6 +11,9 @@ interface StoredSettings {
 	shellIntegrationTimeout?: number
 	terminalCommandTimeoutSeconds?: number
 	terminalOutputLineLimit?: number
+}
+
+interface StoredGlobalState {
 	vscodeTerminalExecutionMode?: string
 }
 
@@ -18,7 +21,7 @@ async function readSettings(dlineDir: string): Promise<StoredSettings> {
 	return JSON.parse(await readFile(path.join(dlineDir, "data", "settings", "settings.json"), "utf8"))
 }
 
-async function readGlobalState(dlineDir: string): Promise<StoredSettings> {
+async function readGlobalState(dlineDir: string): Promise<StoredGlobalState> {
 	return JSON.parse(await readFile(path.join(dlineDir, "data", "globalState.json"), "utf8"))
 }
 
@@ -212,7 +215,7 @@ e2e(
 				}),
 			).toBeVisible()
 			await expect(
-				firstSidebar.getByText("When enabled, Dline will reuse existing terminal windows", { exact: false }),
+				firstSidebar.getByText("When enabled, Dline reuses healthy prewarmed terminals", { exact: false }),
 			).toBeVisible()
 			await expect(
 				firstSidebar.getByText("Choose whether Dline runs commands in the VS Code terminal or a background process.", {
@@ -347,7 +350,7 @@ e2e(
 		await timeoutInput.pressSequentially("15")
 		await expect(timeoutInput).toHaveValue("15")
 		await timeoutInput.press("Tab")
-		await expect.poll(async () => (await readGlobalState(dlineDir)).shellIntegrationTimeout).toBe(15_000)
+		await expect.poll(async () => (await readSettings(dlineDir)).shellIntegrationTimeout).toBe(15_000)
 		await sidebar.page().waitForTimeout(300)
 		const timeoutSamples = await stopSettingControlStabilityObserver(sidebar)
 		const firstFinalValue = timeoutSamples.indexOf("15")
@@ -405,12 +408,12 @@ e2e(
 		await setDropdownValue(sidebar, sidebar.locator("#default-terminal-profile"), "powershell-legacy", "Windows PowerShell")
 		await setShellIntegrationTimeout(sidebar, "15")
 		await expect
-			.poll(async () => await readGlobalState(dlineDir))
+			.poll(async () => await readSettings(dlineDir))
 			.toMatchObject({
 				defaultTerminalProfile: "powershell-legacy",
 				shellIntegrationTimeout: 15_000,
-				vscodeTerminalExecutionMode: "vscodeTerminal",
 			})
+		await expect.poll(async () => (await readGlobalState(dlineDir)).vscodeTerminalExecutionMode).toBe("vscodeTerminal")
 		await returnToChat(sidebar)
 		await configureShellEnvironmentFromChat(sidebar, workspaceDir, "foreground", shellFixture)
 
@@ -463,9 +466,16 @@ e2e(
 		await expect(workingDirectoryRow).toContainText(workspaceDir)
 		await expect(workingDirectoryRow.getByText("Working directory:", { exact: true })).toHaveCount(0)
 
-		await expect(sidebar.getByText("E2E_VSCODE_POWERSHELL_COMPLETE", { exact: false }).last()).toBeVisible({
+		const completionMarker = sidebar.getByText("E2E_VSCODE_POWERSHELL_COMPLETE", { exact: false }).last()
+		await expect(sidebar.getByRole("contentinfo").getByText("Start New Task", { exact: true })).toBeVisible({
 			timeout: 60_000,
 		})
+		if (!(await completionMarker.isVisible())) {
+			const scrollToBottom = sidebar.getByRole("button", { name: "Scroll to bottom", exact: true })
+			await expect(scrollToBottom).toBeVisible()
+			await scrollToBottom.evaluate((element) => (element as HTMLButtonElement).click())
+		}
+		await expect(completionMarker).toBeVisible()
 		await expect.poll(() => server.openAiRequestCount).toBe(2)
 		const continuation = server.getMockConsumptions("openai-compatible-chat")[1]
 		expect(continuation.requestToolResults).toContainEqual(
@@ -478,7 +488,7 @@ e2e(
 		expect(commandResult?.content).not.toContain("HIDDEN_")
 		expect((await readFile(shellFixture.postMarkerPath, "utf8")).trim()).toBe("post-ran")
 		const output = await E2ETestHelper.readDlineOutput(userDataDir)
-		expect(output).toContain("[TerminalManager] Running command")
+		expect(output).toMatch(/\[TerminalPerf\] phase=execute_start[^\r\n]*terminalMode=vscode/)
 		expect(output).toContain("[ShellEnvironment] startupScripts[2] failed")
 		await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir, [/\[ShellEnvironment\] startupScripts\[2\] failed/])
 	},
@@ -495,12 +505,8 @@ e2e(
 		await sidebar.getByTestId("tab-terminal").click()
 		await setDropdownValue(sidebar, sidebar.locator("#terminal-execution-mode"), "backgroundExec", "Background Exec")
 		await setDropdownValue(sidebar, sidebar.locator("#default-terminal-profile"), "powershell-legacy", "Windows PowerShell")
-		await expect
-			.poll(async () => await readGlobalState(dlineDir))
-			.toMatchObject({
-				defaultTerminalProfile: "powershell-legacy",
-				vscodeTerminalExecutionMode: "backgroundExec",
-			})
+		await expect.poll(async () => (await readSettings(dlineDir)).defaultTerminalProfile).toBe("powershell-legacy")
+		await expect.poll(async () => (await readGlobalState(dlineDir)).vscodeTerminalExecutionMode).toBe("backgroundExec")
 		await returnToChat(sidebar)
 		await configureShellEnvironmentFromChat(sidebar, workspaceDir, "background", shellFixture)
 
@@ -571,13 +577,22 @@ e2e(
 		await helper.signin(sidebar)
 		await openSettings(page, sidebar)
 		await sidebar.getByTestId("tab-terminal").click()
+		if (process.platform === "win32") {
+			await setDropdownValue(
+				sidebar,
+				sidebar.locator("#default-terminal-profile"),
+				"powershell-legacy",
+				"Windows PowerShell",
+			)
+			await expect.poll(async () => (await readSettings(dlineDir)).defaultTerminalProfile).toBe("powershell-legacy")
+		}
 		await setRangeValue(sidebar.locator("#terminal-output-limit"), "100")
 		await expect.poll(async () => (await readSettings(dlineDir)).terminalOutputLineLimit).toBe(100)
 		// This case runs through a real VS Code terminal; give shell integration a
 		// generous window so a slow startup does not degrade the command to
 		// method:none and break the "Command executed successfully" contract.
 		await setShellIntegrationTimeout(sidebar, "15")
-		await expect.poll(async () => (await readGlobalState(dlineDir)).shellIntegrationTimeout).toBe(15_000)
+		await expect.poll(async () => (await readSettings(dlineDir)).shellIntegrationTimeout).toBe(15_000)
 		await returnToChat(sidebar)
 		await setAutoApproveAction(sidebar, "Execute safe commands", false)
 
@@ -645,8 +660,11 @@ e2e(
 		expect(log).toContain(`${outputPrefix}219`)
 		expect(log.match(new RegExp(outputPrefix, "g"))).toHaveLength(220)
 		await expect(sidebar.getByRole("button", { name: "Copy command" }).last()).toBeVisible()
+		const completedCommand = sidebar.getByRole("button", { name: command, exact: true })
+		await expect(completedCommand).toBeVisible()
+		await completedCommand.click()
 
-		// A foreground command that moves its complete output to an owned log file must expose
+		// An expanded foreground command that moves its complete output to an owned log file must expose
 		// the same clickable log link as a background command, not plain notice text.
 		const logFileName = logPath.split(/[\\/]/).filter(Boolean).at(-1)
 		if (!logFileName) throw new Error("Bounded command log path did not resolve to a file name")
@@ -675,7 +693,7 @@ e2e(
 		await expect.poll(async () => (await readSettings(dlineDir)).terminalOutputLineLimit).toBe(100)
 		await expect.poll(async () => (await readGlobalState(dlineDir)).vscodeTerminalExecutionMode).toBe("backgroundExec")
 		if (process.platform === "win32") {
-			await expect.poll(async () => (await readGlobalState(dlineDir)).defaultTerminalProfile).toBe("cmd")
+			await expect.poll(async () => (await readSettings(dlineDir)).defaultTerminalProfile).toBe("cmd")
 		}
 		await returnToChat(sidebar)
 		await setAutoApproveAction(sidebar, "Execute safe commands", false)
@@ -879,7 +897,11 @@ e2e(
 		await expect(sidebar.getByText("E2E_AUTO_BACKGROUND_HANDOFF_READY", { exact: true })).toBeVisible({
 			timeout: 60_000,
 		})
-		await sidebar.getByText("Running", { exact: true }).click()
+		const runningStatus = sidebar.getByText("Running", { exact: true })
+		await expect(runningStatus).toBeVisible()
+		// The chat viewport continuously follows background activity output, so invoke
+		// the already-visible header action without waiting for a stationary bounding box.
+		await runningStatus.evaluate((element) => element.parentElement?.click())
 		const collapsedCommand = sidebar.getByRole("button", { name: command, exact: true })
 		await expect(collapsedCommand).toBeVisible()
 		const commandSummary = collapsedCommand.getByTestId("command-output-summary")
@@ -1003,6 +1025,16 @@ e2e(
 			"Its final status will be available only in a later model request.",
 		)
 		expect(handoffConsumption.contractError).toBeUndefined()
+
+		await sidebar.getByRole("tab", { name: /^Activities(?: \d+)?$/ }).click()
+		await sidebar.getByRole("button", { name: "All", exact: true }).first().click()
+		const activity = sidebar.getByTestId("activity-item").filter({ hasText: command })
+		await expect(activity).toHaveCount(1, { timeout: 30_000 })
+		const activityCancelButton = activity.getByRole("button", { name: "Cancel", exact: true })
+		await expect(activityCancelButton).toBeVisible()
+		await activityCancelButton.click()
+		await expect(activity).toContainText(/cancelled/i, { timeout: 30_000 })
+		await expect(activityCancelButton).toHaveCount(0)
 		await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
 	},
 )
@@ -1059,9 +1091,10 @@ e2e(
 		await expect(sidebar.getByTestId("command-execution-mode").last()).toHaveText("Foreground", { timeout: 60_000 })
 		const taskFooter = sidebar.getByRole("contentinfo")
 		await expect(sidebar.getByRole("button", { name: "Move to background" })).toHaveCount(0)
-		const continueInBackground = taskFooter.getByText("Continue in Background", { exact: true })
+		const continueInBackground = taskFooter.locator('vscode-button[aria-label="Continue in Background"]')
+		const taskCancelButton = taskFooter.locator('vscode-button[aria-label="Cancel"]')
 		await expect(continueInBackground).toBeVisible({ timeout: 30_000 })
-		await expect(taskFooter.getByText("Cancel", { exact: true })).toHaveCount(0)
+		await expect(taskCancelButton).toBeVisible()
 		await continueInBackground.click()
 
 		await expect.poll(() => server.openAiRequestCount, { timeout: 60_000 }).toBe(2)
@@ -1086,7 +1119,6 @@ e2e(
 		if (!logPath) throw new Error("Handed-off command Activity did not expose its log path")
 
 		await sidebar.getByRole("tab", { name: "Work", exact: true }).click()
-		const taskCancelButton = taskFooter.getByText("Cancel", { exact: true })
 		await expect(taskCancelButton).toBeVisible({ timeout: 30_000 })
 		await taskCancelButton.click()
 		await expect(taskFooter.getByText("Resume", { exact: true })).toBeVisible({ timeout: 30_000 })

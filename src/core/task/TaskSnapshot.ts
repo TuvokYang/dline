@@ -8,12 +8,13 @@ import type {
 	TaskAnchor,
 	TaskCancellationState,
 	TaskCompletionState,
+	TaskOrdinaryInputAdmission,
 	TaskRuntimeError,
 	TaskRuntimeState,
 	TurnState,
 } from "./runtime/TaskRuntimeState"
 import type { BlockPhase } from "./TaskController"
-import type { TaskPhase } from "./TaskPhase"
+import { TaskPhase } from "./TaskPhase"
 
 /**
  * Type guard that validates an apiIndex is a non-negative integer
@@ -156,6 +157,8 @@ export interface TaskSnapshot {
 	anchor?: TaskAnchor
 	turn?: TurnState
 	interaction?: ActiveInteraction
+	/** Explicit ordinary input admission retained across restart recovery. */
+	ordinaryInput?: TaskOrdinaryInputAdmission
 	interruptedInteraction?: ActiveInteraction
 	cancellation?: TaskCancellationState
 	runtimeError?: TaskRuntimeError
@@ -306,6 +309,14 @@ function cloneInteraction(interaction: ActiveInteraction): ActiveInteraction {
 	}
 }
 
+/** Clone and validate one explicit ordinary-input admission from persisted state. */
+function cloneOrdinaryInputAdmission(admission: TaskOrdinaryInputAdmission): TaskOrdinaryInputAdmission {
+	if ((admission as { kind?: unknown }).kind !== "profile_recovery") {
+		throw new Error("invalid_ordinary_input_admission")
+	}
+	return { kind: "profile_recovery" }
+}
+
 /** Convert runtime state into a complete version 2 persistence snapshot. */
 export function createSnapshot(state: Readonly<TaskRuntimeState>, timestamp = Date.now()): TaskSnapshot {
 	return {
@@ -318,6 +329,7 @@ export function createSnapshot(state: Readonly<TaskRuntimeState>, timestamp = Da
 		anchor: { ...state.anchor },
 		turn: state.turn ? cloneTurn(state.turn) : undefined,
 		interaction: state.interaction ? cloneInteraction(state.interaction) : undefined,
+		ordinaryInput: state.ordinaryInput ? cloneOrdinaryInputAdmission(state.ordinaryInput) : undefined,
 		interruptedInteraction: state.interruptedInteraction ? cloneInteraction(state.interruptedInteraction) : undefined,
 		cancellation: state.cancellation ? { ...state.cancellation } : undefined,
 		runtimeError: state.error ? { ...state.error } : undefined,
@@ -334,6 +346,10 @@ export function hydrateSnapshot(snapshot: TaskSnapshot): TaskRuntimeState {
 	const taskId = requireIdentity(snapshot.taskId, "taskId")
 	const turn = snapshot.turn ? cloneTurn(snapshot.turn) : undefined
 	const interaction = snapshot.interaction ? cloneInteraction(snapshot.interaction) : undefined
+	const ordinaryInput = snapshot.ordinaryInput ? cloneOrdinaryInputAdmission(snapshot.ordinaryInput) : undefined
+	if (ordinaryInput && (snapshot.phase !== TaskPhase.BETWEEN_TURNS || interaction)) {
+		throw new Error("invalid_ordinary_input_admission")
+	}
 	const interruptedInteraction = snapshot.interruptedInteraction ? cloneInteraction(snapshot.interruptedInteraction) : undefined
 	if (snapshot.anchor.turnId) {
 		requireIdentity(snapshot.anchor.turnId, "turnId")
@@ -348,6 +364,7 @@ export function hydrateSnapshot(snapshot: TaskSnapshot): TaskRuntimeState {
 		anchor: { ...snapshot.anchor },
 		turn,
 		interaction,
+		ordinaryInput,
 		interruptedInteraction,
 		cancellation: snapshot.cancellation ? { ...snapshot.cancellation } : undefined,
 		error: snapshot.runtimeError ? { ...snapshot.runtimeError } : undefined,

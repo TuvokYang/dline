@@ -1,25 +1,39 @@
 import { DEFAULT_TERMINAL_COMMAND_TIMEOUT_SECONDS } from "@shared/terminal-settings"
 import { VSCodeTextField } from "@vscode/webview-ui-toolkit/react"
-import { useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { useExtensionState } from "@/context/ExtensionStateContext"
 import { updateSetting } from "./utils/settingsHandlers"
+import { useTextFieldHost } from "./utils/useTextFieldHost"
 
 const TerminalCommandTimeoutSetting = () => {
 	const { terminalCommandTimeoutSeconds } = useExtensionState()
 	const timeoutSeconds = terminalCommandTimeoutSeconds ?? DEFAULT_TERMINAL_COMMAND_TIMEOUT_SECONDS
-	const [inputValue, setInputValue] = useState(String(timeoutSeconds / 60))
+	const initialInputValue = String(timeoutSeconds / 60)
+	const [inputValue, setInputValue] = useState(initialInputValue)
+	const inputValueRef = useRef(initialInputValue)
 	const [inputError, setInputError] = useState<string | null>(null)
-	const isEditing = useRef(false)
+	const [isEditing, setIsEditing] = useState(false)
+	const isEditingRef = useRef(false)
+	const textFieldHostProps = useTextFieldHost("Terminal command timeout (minutes)", inputValue, !isEditing)
+
+	const setDraftValue = useCallback((value: string) => {
+		inputValueRef.current = value
+		setInputValue(value)
+	}, [])
 
 	useEffect(() => {
-		if (!isEditing.current) {
-			setInputValue(String(timeoutSeconds / 60))
+		if (!isEditingRef.current) {
+			setDraftValue(String(timeoutSeconds / 60))
 		}
-	}, [timeoutSeconds])
+	}, [setDraftValue, timeoutSeconds])
 
 	const handleChange = (event: Event) => {
 		const value = (event.target as HTMLInputElement).value
-		setInputValue(value)
+		if (!isEditingRef.current) {
+			isEditingRef.current = true
+			setIsEditing(true)
+		}
+		setDraftValue(value)
 
 		const minutes = Number(value)
 		if (!Number.isFinite(minutes) || minutes < 1) {
@@ -31,16 +45,17 @@ const TerminalCommandTimeoutSetting = () => {
 	}
 
 	const handleBlur = () => {
-		isEditing.current = false
-		const minutes = Number(inputValue)
+		isEditingRef.current = false
+		setIsEditing(false)
+		const minutes = Number(inputValueRef.current)
 		if (!Number.isFinite(minutes) || minutes < 1) {
-			setInputValue(String(timeoutSeconds / 60))
+			setDraftValue(String(timeoutSeconds / 60))
 			setInputError(null)
 			return
 		}
 
 		const nextTimeoutSeconds = Math.round(minutes * 60)
-		setInputValue(String(nextTimeoutSeconds / 60))
+		setDraftValue(String(nextTimeoutSeconds / 60))
 		updateSetting("terminalCommandTimeoutSeconds", nextTimeoutSeconds)
 	}
 
@@ -50,14 +65,15 @@ const TerminalCommandTimeoutSetting = () => {
 				Terminal command timeout (minutes)
 			</label>
 			<VSCodeTextField
+				{...textFieldHostProps}
 				className="w-full"
 				id="terminal-command-timeout"
 				onBlur={handleBlur}
 				onFocus={() => {
-					isEditing.current = true
+					isEditingRef.current = true
+					setIsEditing(true)
 				}}
 				onInput={(event) => handleChange(event as unknown as Event)}
-				value={inputValue}
 			/>
 			{inputError && <div className="text-(--vscode-errorForeground) text-xs mt-1">{inputError}</div>}
 			<p className="text-xs text-(--vscode-descriptionForeground) mt-1">

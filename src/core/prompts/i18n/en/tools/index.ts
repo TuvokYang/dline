@@ -124,6 +124,7 @@ export const toolPromptModules = [
 		planSwitchToActWithMessage: createRuntimeContract("TEXT"),
 		subagentRetryablePaused: createRuntimeContract("SUBAGENT", "REASON", "JOB_ID"),
 		subagentBatchRetryablePaused: createRuntimeContract("COUNT", "TOTAL"),
+		searchAgentRestricted: createRuntimeContract("PATH"),
 	}),
 	defineLegacyModule("useMcpTool", "tools", useMcpTool, {
 		invalidMcpToolArgumentError: createRuntimeContract("SERVER_NAME", "TOOL_NAME"),

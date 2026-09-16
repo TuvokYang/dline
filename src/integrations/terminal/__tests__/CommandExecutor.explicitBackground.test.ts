@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
+import { TaskActivityStore } from "@core/task/activity/TaskActivityStore"
 import { DlineRuntimeFileManager } from "@services/runtime-files"
 import { EventEmitter } from "events"
 import { describe, it, vi } from "vitest"
@@ -96,6 +97,41 @@ function createCallbacks(): CommandExecutorCallbacks {
 		say: vi.fn(async () => undefined),
 		updateBackgroundCommandState: vi.fn(),
 		updateClineMessage: vi.fn(async () => undefined),
+	}
+}
+
+/**
+ * Wire the activity callbacks to a real store.
+ *
+ * A mock pair records calls in whatever order they arrive, which cannot tell a
+ * correct sequence from one where the update was dropped: `create` throws on a
+ * duplicate id and `update` silently discards an unknown one, and only the real
+ * store reproduces both. Returning it lets a test assert the status the panel
+ * would actually show.
+ */
+function createActivityCallbacks(taskId = "task-1"): {
+	store: TaskActivityStore
+	callbacks: Pick<CommandExecutorCallbacks, "createCommandActivity" | "updateCommandActivity">
+} {
+	const store = new TaskActivityStore(taskId)
+	return {
+		store,
+		callbacks: {
+			createCommandActivity: ({ activityId, command, timeoutSeconds, executionMode, cancellationOwner, cancel }) => {
+				store.create({
+					activityId,
+					kind: "command",
+					title: command,
+					executionMode,
+					cancellationOwner,
+					timeoutSeconds,
+					cancel,
+				})
+			},
+			updateCommandActivity: (activityId, patch) => {
+				store.update(activityId, patch)
+			},
+		},
 	}
 }
 
@@ -550,8 +586,15 @@ describe("CommandExecutor explicit background execution", () => {
 		assert.equal(process.terminate.mock.calls.length, 1)
 	})
 
-	it("terminates task-owned detached foreground work exactly once", async () => {
+	it("terminates task-owned detached foreground work exactly once and waits for process exit", async () => {
 		const process = new FakeTerminalProcess()
+		let resolveTermination: (() => void) | undefined
+		process.terminate.mockImplementation(
+			() =>
+				new Promise<void>((resolve) => {
+					resolveTermination = resolve
+				}),
+		)
 		const processPromise = process.asResultPromise()
 		const executor = new CommandExecutor(
 			{
@@ -579,10 +622,10 @@ describe("CommandExecutor explicit background execution", () => {
 		vi.spyOn(standalone, "getRunningBackgroundCommands").mockImplementation((owner) =>
 			command.status === "running" && (!owner || owner === command.cancellationOwner) ? [command] : [],
 		)
-		vi.spyOn(standalone, "cancelBackgroundCommand").mockImplementation(() => {
+		vi.spyOn(standalone, "cancelBackgroundCommand").mockImplementation(async () => {
 			if (command.status !== "running") return false
 			command.status = "cancelled"
-			process.terminate()
+			await process.terminate()
 			return true
 		})
 		const internals = executor as unknown as {
@@ -595,9 +638,18 @@ describe("CommandExecutor explicit background execution", () => {
 		internals.cancellationOwners.set(command.id, "task")
 
 		assert.equal(executor.hasTaskOwnedCommand(), true)
-		assert.equal(await executor.cancelTaskOwnedCommands(), true)
+		let cancellationSettled = false
+		const cancellation = executor.cancelTaskOwnedCommands().then((result) => {
+			cancellationSettled = true
+			return result
+		})
+		await vi.waitFor(() => assert.equal(process.terminate.mock.calls.length, 1))
 		assert.equal(command.status, "cancelled")
-		assert.equal(process.terminate.mock.calls.length, 1)
+		assert.equal(cancellationSettled, false)
+
+		resolveTermination?.()
+		assert.equal(await cancellation, true)
+		assert.equal(cancellationSettled, true)
 		assert.equal(await executor.cancelTaskOwnedCommands(), false)
 		assert.equal(process.terminate.mock.calls.length, 1)
 	})
@@ -666,6 +718,323 @@ describe("CommandExecutor explicit background execution", () => {
 		} finally {
 			await rm(expectedLogPath, { force: true })
 		}
+	})
+
+	it("records a terminal status for a command that finishes while the chat row is still being linked", async () => {
+		// The command is already running before the activity exists. Linking the
+		// chat row to it is asynchronous, and a fast command can finish inside
+		// that gap. Completion arrives as an event and is never replayed, so if
+		// the terminal-status listeners are installed after the await, the
+		// activity is left claiming to run for the rest of the session.
+		const process = new FakeTerminalProcess()
+		const processPromise = process.asResultPromise()
+		const terminalManager = createTerminalManager()
+		vi.mocked(terminalManager.getOrCreateTerminal).mockResolvedValue({
+			id: 1,
+			terminal: {
+				dispose: vi.fn(),
+				hide: vi.fn(),
+				name: "Foreground terminal",
+				processId: Promise.resolve(1),
+				sendText: vi.fn(),
+				show: vi.fn(),
+			},
+			busy: false,
+			lastActive: Date.now(),
+			lastCommand: "",
+		})
+		vi.mocked(terminalManager.runCommand).mockReturnValue(processPromise)
+
+		const activity = createActivityCallbacks()
+		// Hold the chat-row update open, and complete the command while it is
+		// still pending. This is the production ordering: the update waits on
+		// message state and a Webview round trip, either of which can outlast a
+		// short command.
+		let releaseChatRowUpdate!: () => void
+		let signalChatRowUpdateStarted!: () => void
+		const chatRowUpdateGate = new Promise<void>((release) => {
+			releaseChatRowUpdate = release
+		})
+		const chatRowUpdateStarted = new Promise<void>((started) => {
+			signalChatRowUpdateStarted = started
+		})
+		const updateClineMessage = vi.fn(async () => {
+			signalChatRowUpdateStarted()
+			await chatRowUpdateGate
+		})
+
+		const executor = new CommandExecutor(
+			{
+				cwd: "C:\\workspace",
+				taskId: "task-1",
+				terminalExecutionMode: "vscodeTerminal",
+				terminalManager,
+				terminalConfiguration,
+				ulid: "task-ulid",
+			},
+			{
+				...createCallbacks(),
+				getClineMessages: () => [{ ask: "command", text: "fast", ts: 42 }],
+				updateClineMessage,
+				...activity.callbacks,
+			},
+		)
+
+		const execution = executor.execute("fast", undefined, { commandTs: 42 })
+		await chatRowUpdateStarted
+
+		// The activity has to exist before completion can be recorded against it:
+		// the store discards a patch for an unknown id, so an update that raced
+		// ahead of creation would vanish rather than fail loudly.
+		const [runningActivity] = activity.store.list()
+		assert.equal(runningActivity?.status, "running", "the activity must exist while the chat row is still linking")
+
+		process.complete({ exitCode: 0 })
+		releaseChatRowUpdate()
+		process.continue()
+		await execution
+
+		const [finishedActivity] = activity.store.list()
+		assert.equal(
+			finishedActivity?.status,
+			"completed",
+			"a command that finished during the chat-row update must still report a terminal status",
+		)
+	})
+
+	// Skipped pending BUGFIX-069.
+	//
+	// This documents a confirmed defect rather than a passing contract. The
+	// activity records the terminal status, but the chat row and the tool
+	// result do not: instrumenting `updateClineMessage` shows only the activity
+	// link and the running patch, never the terminal patch from
+	// `clearCommandState`.
+	//
+	// The cause is not the listener order inside `orchestrateCommandExecution`.
+	// The orchestrator is called after `CommandExecutor` awaits the chat-row
+	// update, so a command that finishes in that window emits `completed`
+	// before the orchestrator installs any listener, and moving its listeners
+	// earlier was verified not to help. Closing this needs an owned terminal
+	// status that both consumers read, which is a larger change than this
+	// regression pass and is tracked separately.
+	it.skip("reports the same terminal status to the activity, the chat row, and the model", async () => {
+		const process = new FakeTerminalProcess()
+		const processPromise = process.asResultPromise()
+		const terminalManager = createTerminalManager()
+		vi.mocked(terminalManager.getOrCreateTerminal).mockResolvedValue({
+			id: 1,
+			terminal: {
+				dispose: vi.fn(),
+				hide: vi.fn(),
+				name: "Foreground terminal",
+				processId: Promise.resolve(1),
+				sendText: vi.fn(),
+				show: vi.fn(),
+			},
+			busy: false,
+			lastActive: Date.now(),
+			lastCommand: "",
+		})
+		vi.mocked(terminalManager.runCommand).mockReturnValue(processPromise)
+
+		const activity = createActivityCallbacks()
+		// Apply the patches instead of only recording them: the chat row's
+		// terminal status is the value the user reads, and a recording mock
+		// cannot tell an applied status apart from a dropped one.
+		const messages: Array<{ ask?: string; text?: string; ts: number; commandStatus?: string; exitCode?: number }> = [
+			{ ask: "command", text: "fast", ts: 42, commandStatus: "pending" },
+		]
+		let releaseChatRowUpdate!: () => void
+		let signalChatRowUpdateStarted!: () => void
+		const chatRowUpdateGate = new Promise<void>((release) => {
+			releaseChatRowUpdate = release
+		})
+		const chatRowUpdateStarted = new Promise<void>((started) => {
+			signalChatRowUpdateStarted = started
+		})
+		let chatRowLinked = false
+		const updateClineMessage = vi.fn(async (index: number, patch: Record<string, unknown>) => {
+			// Merge the fields before suspending, mirroring
+			// `MessageStateHandler.updateClineMessage`, which delegates to
+			// `uiMessage.updateMessage` and merges per field rather than
+			// writing back a snapshot captured before the await. Applying the
+			// patch after the gate instead would let this mock invent an
+			// overwrite that production cannot produce.
+			Object.assign(messages[index], patch)
+			// Only the activity link is held open, reproducing a chat-row update
+			// that outlives a short command.
+			if (!chatRowLinked) {
+				chatRowLinked = true
+				signalChatRowUpdateStarted()
+				await chatRowUpdateGate
+			}
+		})
+
+		const executor = new CommandExecutor(
+			{
+				cwd: "C:\\workspace",
+				taskId: "task-1",
+				terminalExecutionMode: "vscodeTerminal",
+				terminalManager,
+				terminalConfiguration,
+				ulid: "task-ulid",
+			},
+			{
+				...createCallbacks(),
+				getClineMessages: () => messages,
+				updateClineMessage,
+				...activity.callbacks,
+			},
+		)
+
+		const execution = executor.execute("fast", undefined, { commandTs: 42 })
+		await chatRowUpdateStarted
+
+		process.complete({ exitCode: 0 })
+		releaseChatRowUpdate()
+		process.continue()
+		const result = await execution
+
+		const [finishedActivity] = activity.store.list()
+		assert.equal(finishedActivity?.status, "completed", "the activity must record the terminal status")
+		assert.equal(messages[0].commandStatus, "completed", "the chat row must record the same terminal status")
+		assert.equal(result.completed, true, "the model must be told the command finished, not that it is still running")
+	})
+
+	it("records a failure for a command that errors while the chat row is still being linked", async () => {
+		// Same window as the completion case. Both terminal listeners were moved,
+		// so both need to be held to the same guarantee.
+		const process = new FakeTerminalProcess()
+		const processPromise = process.asResultPromise()
+		const terminalManager = createTerminalManager()
+		vi.mocked(terminalManager.getOrCreateTerminal).mockResolvedValue({
+			id: 1,
+			terminal: {
+				dispose: vi.fn(),
+				hide: vi.fn(),
+				name: "Foreground terminal",
+				processId: Promise.resolve(1),
+				sendText: vi.fn(),
+				show: vi.fn(),
+			},
+			busy: false,
+			lastActive: Date.now(),
+			lastCommand: "",
+		})
+		vi.mocked(terminalManager.runCommand).mockReturnValue(processPromise)
+
+		const activity = createActivityCallbacks()
+		let releaseChatRowUpdate!: () => void
+		let signalChatRowUpdateStarted!: () => void
+		const chatRowUpdateGate = new Promise<void>((release) => {
+			releaseChatRowUpdate = release
+		})
+		const chatRowUpdateStarted = new Promise<void>((started) => {
+			signalChatRowUpdateStarted = started
+		})
+		const updateClineMessage = vi.fn(async () => {
+			signalChatRowUpdateStarted()
+			await chatRowUpdateGate
+		})
+
+		const executor = new CommandExecutor(
+			{
+				cwd: "C:\\workspace",
+				taskId: "task-1",
+				terminalExecutionMode: "vscodeTerminal",
+				terminalManager,
+				terminalConfiguration,
+				ulid: "task-ulid",
+			},
+			{
+				...createCallbacks(),
+				getClineMessages: () => [{ ask: "command", text: "doomed", ts: 42 }],
+				updateClineMessage,
+				...activity.callbacks,
+			},
+		)
+
+		const execution = executor.execute("doomed", undefined, { commandTs: 42 })
+		await chatRowUpdateStarted
+		process.fail(new Error("shell integration stream failed"))
+		releaseChatRowUpdate()
+		await execution.catch(() => undefined)
+
+		const [failedActivity] = activity.store.list()
+		assert.equal(failedActivity?.status, "failed", "an error during the chat-row update must still be recorded")
+	})
+
+	it("cancels a command that is still linking its chat row", async () => {
+		// Moving the activity ahead of the chat-row await opened a window where
+		// the panel can offer cancellation before that link exists. The maps
+		// cancellation depends on are written before the activity, so the request
+		// has to reach the process and end as cancelled rather than completed.
+		const process = new FakeTerminalProcess()
+		const processPromise = process.asResultPromise()
+		const terminalManager = createTerminalManager()
+		vi.mocked(terminalManager.getOrCreateTerminal).mockResolvedValue({
+			id: 1,
+			terminal: {
+				dispose: vi.fn(),
+				hide: vi.fn(),
+				name: "Foreground terminal",
+				processId: Promise.resolve(1),
+				sendText: vi.fn(),
+				show: vi.fn(),
+			},
+			busy: false,
+			lastActive: Date.now(),
+			lastCommand: "",
+		})
+		vi.mocked(terminalManager.runCommand).mockReturnValue(processPromise)
+
+		const activity = createActivityCallbacks()
+		let releaseChatRowUpdate!: () => void
+		let signalChatRowUpdateStarted!: () => void
+		const chatRowUpdateGate = new Promise<void>((release) => {
+			releaseChatRowUpdate = release
+		})
+		const chatRowUpdateStarted = new Promise<void>((started) => {
+			signalChatRowUpdateStarted = started
+		})
+		const updateClineMessage = vi.fn(async () => {
+			signalChatRowUpdateStarted()
+			await chatRowUpdateGate
+		})
+
+		const executor = new CommandExecutor(
+			{
+				cwd: "C:\\workspace",
+				taskId: "task-1",
+				terminalExecutionMode: "vscodeTerminal",
+				terminalManager,
+				terminalConfiguration,
+				ulid: "task-ulid",
+			},
+			{
+				...createCallbacks(),
+				getClineMessages: () => [{ ask: "command", text: "slow", ts: 42 }],
+				updateClineMessage,
+				...activity.callbacks,
+			},
+		)
+
+		const execution = executor.execute("slow", undefined, { commandTs: 42 })
+		await chatRowUpdateStarted
+
+		const [pending] = activity.store.list()
+		assert.ok(pending, "the activity must be cancellable before the chat row is linked")
+		const cancellation = activity.store.cancel([pending.activityId])
+
+		releaseChatRowUpdate()
+		process.complete({ exitCode: 130 })
+		process.continue()
+		await cancellation
+		await execution
+
+		assert.equal(process.terminate.mock.calls.length > 0, true, "cancellation must reach the running process")
+		const [cancelledActivity] = activity.store.list()
+		assert.equal(cancelledActivity?.status, "cancelled", "a cancelled command must not be recorded as completed")
 	})
 
 	it("clears a ready handoff and preserves cancelled state when a synchronous command rejects during termination", async () => {

@@ -27,11 +27,7 @@ import { ReportBugHandler } from "./handlers/ReportBugHandler"
 import { SearchFilesToolHandler } from "./handlers/SearchFilesToolHandler"
 import { SpawnTaskHandler } from "./handlers/SpawnTaskHandler"
 import { StatusUpdateHandler } from "./handlers/StatusUpdateHandler"
-import {
-	restoreSubagentActivityRetry,
-	UseSubagentsToolHandler,
-	UseSubagentToolHandler,
-} from "./handlers/SubagentToolHandler"
+import { restoreSubagentActivityRetry, UseSubagentsToolHandler, UseSubagentToolHandler } from "./handlers/SubagentToolHandler"
 import { SummarizeTaskHandler } from "./handlers/SummarizeTaskHandler"
 import { UseMcpToolHandler } from "./handlers/UseMcpToolHandler"
 import { WebFetchToolHandler } from "./handlers/WebFetchToolHandler"

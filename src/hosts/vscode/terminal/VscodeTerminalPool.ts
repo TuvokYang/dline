@@ -1,11 +1,89 @@
 import { createHash, randomUUID } from "node:crypto"
 import path from "node:path"
 import type { TerminalCompletionDetails, TerminalLaunchConfiguration } from "@/integrations/terminal/types"
+import { DiagnosticDomain, DiagnosticOutcome } from "@/services/telemetry/instrumentation/diagnostic-events"
+import { recordDiagnostic } from "@/services/telemetry/instrumentation/diagnostic-recorder"
 import { Logger } from "@/shared/services/Logger"
 import { arePathsEqual } from "@/utils/path"
 import type { TerminalInfo } from "./VscodeTerminalRegistry"
 
 export const DEFAULT_TERMINAL_STANDBY_COUNT = 3
+
+/**
+ * Why the pool could not hand out a warm terminal.
+ *
+ * A bounded set, because the caller reports it as a metric dimension. It is
+ * carried on the error itself rather than parsed back out of the message:
+ * message text is free to change, and a reworded error would otherwise
+ * silently collapse every reason to `unknown`.
+ */
+export type WarmAcquireFailureReason =
+	/** The partition already has as many leases as it is allowed to hand out. */
+	| "capacity_reached"
+	/** The bounded wait for a warming terminal expired. */
+	| "warm_timeout"
+	/** A previous warm attempt failed and the backoff has not elapsed yet. */
+	| "retry_pending"
+	/** Nothing is ready and nothing is warming, so waiting would be pointless. */
+	| "none_ready"
+	/** The partition is shutting down. */
+	| "partition_draining"
+	/** The pool itself has been disposed. */
+	| "pool_disposed"
+
+/** An acquire failure that names its own reason. */
+export class WarmAcquireFailure extends Error {
+	constructor(
+		readonly reason: WarmAcquireFailureReason,
+		message: string,
+	) {
+		super(message)
+		this.name = "WarmAcquireFailure"
+	}
+}
+
+/**
+ * Why a terminal that could have been reused was retired instead.
+ *
+ * A bounded set, because these values become metric labels. Callers supply the
+ * release reason as free text, so it is mapped onto this set rather than
+ * reported directly.
+ */
+type TerminalReuseRejectionReason =
+	/** The terminal window was closed while the command was running. */
+	| "terminal_disposed"
+	/** No shell integration, so the exit code could not be trusted. */
+	| "no_shell_integration"
+	/** The process raised an error before it completed. */
+	| "process_error"
+	/** The caller reported the terminal as unhealthy without a known reason. */
+	| "unhealthy"
+	/** The partition was draining, so nothing may return to standby. */
+	| "partition_draining"
+	/** The terminal had already been closed by the time it was released. */
+	| "terminal_closed"
+
+const KNOWN_REUSE_REJECTION_REASONS = new Set<TerminalReuseRejectionReason>([
+	"terminal_disposed",
+	"no_shell_integration",
+	"process_error",
+])
+
+function classifyReuseRejection(
+	result: VscodeTerminalReleaseResult,
+	draining: boolean,
+	closed: boolean,
+): TerminalReuseRejectionReason {
+	// Ordered to match the disposal decision, so the reported reason is the one
+	// that actually retired the terminal rather than a later coincidence.
+	if (!result.healthy) {
+		const reported = result.reason as TerminalReuseRejectionReason | undefined
+		return reported !== undefined && KNOWN_REUSE_REJECTION_REASONS.has(reported) ? reported : "unhealthy"
+	}
+	if (draining) return "partition_draining"
+	if (closed) return "terminal_closed"
+	return "unhealthy"
+}
 
 export type VscodeTerminalPoolState = "warming" | "ready" | "leased" | "retiring" | "invalid" | "disposed"
 export type VscodeTerminalReusePolicy = "reusable" | "consume"
@@ -84,11 +162,13 @@ interface TerminalPartition {
 	readonly scopeKey: string
 	preparation: VscodeTerminalPoolPreparation
 	readonly entries: Map<number, PooledTerminal>
+	readonly stateWaiters: Set<() => void>
 	draining: boolean
 	lastActiveAt: number
 	retryAttempt: number
 	retryTimer?: NodeJS.Timeout
 	ensurePromise?: Promise<void>
+	warmDeadlineAt?: number
 }
 
 export interface VscodeTerminalPoolOptions {
@@ -98,7 +178,7 @@ export interface VscodeTerminalPoolOptions {
 	readonly idlePartitionTtlMs?: number
 	readonly cleanupIntervalMs?: number
 	readonly retryDelaysMs?: readonly number[]
-	/** Maximum time one acquire may wait for a newly-started warm batch. */
+	/** Maximum time one acquire may wait for the first terminal in a warm batch to become ready. */
 	readonly acquireWaitTimeoutMs?: number
 }
 
@@ -108,7 +188,8 @@ export class VscodeTerminalPool {
 	private readonly maxGlobalTerminals: number
 	private readonly idlePartitionTtlMs: number
 	private readonly retryDelaysMs: readonly number[]
-	private readonly acquireWaitTimeoutMs: number
+	private readonly hasExplicitAcquireWaitTimeout: boolean
+	private acquireWaitTimeoutMs: number
 	private readonly partitions = new Map<string, TerminalPartition>()
 	private readonly leases = new Map<string, PooledTerminal>()
 	private readonly processByTerminal = new Map<TerminalInfo["terminal"], TerminalProcessCompletionSink>()
@@ -125,6 +206,7 @@ export class VscodeTerminalPool {
 		this.maxGlobalTerminals = options.maxGlobalTerminals ?? 24
 		this.idlePartitionTtlMs = options.idlePartitionTtlMs ?? 10 * 60_000
 		this.retryDelaysMs = options.retryDelaysMs ?? [1_000, 5_000, 30_000]
+		this.hasExplicitAcquireWaitTimeout = options.acquireWaitTimeoutMs !== undefined
 		this.acquireWaitTimeoutMs = options.acquireWaitTimeoutMs ?? 250
 		this.disposables.push(runtime.onDidCloseTerminal((terminal) => this.handleTerminalClosed(terminal)))
 		const startDisposable = runtime.onDidStartTerminalShellExecution?.((event) => event.execution?.read?.())
@@ -139,6 +221,9 @@ export class VscodeTerminalPool {
 
 	configureShellIntegrationTimeout(timeoutMs: number): void {
 		this.runtime.setShellIntegrationTimeout?.(timeoutMs)
+		if (!this.hasExplicitAcquireWaitTimeout) {
+			this.acquireWaitTimeoutMs = Math.max(0, timeoutMs)
+		}
 	}
 
 	registerProcess(terminalInfo: TerminalInfo, process: TerminalProcessCompletionSink): void {
@@ -196,12 +281,17 @@ export class VscodeTerminalPool {
 		}
 
 		const startedAt = performance.now()
+		partition.warmDeadlineAt = Date.now() + this.acquireWaitTimeoutMs
 		const warming = Array.from({ length: deficit }, () => this.warmOne(partition))
 		const pending = Promise.allSettled(warming).then(() => {
-			if (partition.ensurePromise === pending) partition.ensurePromise = undefined
+			if (partition.ensurePromise === pending) {
+				partition.ensurePromise = undefined
+				partition.warmDeadlineAt = undefined
+			}
 			const snapshot = this.snapshot(partition)
 			if (snapshot.ready === this.targetStandby) partition.retryAttempt = 0
 			else this.scheduleWarmRetry(partition)
+			this.notifyPartitionStateChanged(partition)
 			Logger.debug(
 				`[TerminalPool] operation=ensureWarm partition=${partition.key} target=${this.targetStandby} durationMs=${Math.round(performance.now() - startedAt)} ready=${snapshot.ready} warming=${snapshot.warming}`,
 			)
@@ -219,30 +309,18 @@ export class VscodeTerminalPool {
 		const partition = this.getOrCreatePartition(preparation)
 		partition.lastActiveAt = Date.now()
 		if (this.countLeased(partition) >= this.maxConcurrentLeases) {
-			throw new Error(`Terminal partition lease capacity reached: ${partition.key}`)
+			throw new WarmAcquireFailure("capacity_reached", `Terminal partition lease capacity reached: ${partition.key}`)
 		}
-		const selectReady = () => {
-			const ready = [...partition.entries.values()].filter(
-				(entry) =>
-					entry.state === "ready" &&
-					(reusePolicy === "reusable" || entry.userCommandCount === 0) &&
-					!this.runtime.isTerminalClosed(entry.terminalInfo),
-			)
-			return ready.find((candidate) => arePathsEqual(candidate.currentCwd, cwd)) ?? ready[0]
-		}
-		let entry = selectReady()
+		let entry = this.selectReadyTerminal(partition, cwd, reusePolicy)
 		if (!entry) {
-			if (partition.retryTimer) throw new Error(`Terminal warming retry pending: ${partition.key}`)
-			if (partition.ensurePromise) throw new Error(`Terminal warming already pending: ${partition.key}`)
-			const warming = this.ensureWarm(preparation)
-			await this.waitForWarmBatch(warming, partition.key)
-			if (partition.draining) throw new Error(`Terminal partition is draining: ${partition.key}`)
-			if (this.countLeased(partition) >= this.maxConcurrentLeases) {
-				throw new Error(`Terminal partition lease capacity reached: ${partition.key}`)
+			if (partition.retryTimer && !partition.ensurePromise) {
+				throw new WarmAcquireFailure("retry_pending", `Terminal warming retry pending: ${partition.key}`)
 			}
-			entry = selectReady()
+			if (!partition.ensurePromise) void this.ensureWarm(preparation)
+			const deadlineAt = partition.warmDeadlineAt ?? Date.now() + this.acquireWaitTimeoutMs
+			entry = await this.waitForReadyTerminal(partition, cwd, reusePolicy, deadlineAt)
 		}
-		if (!entry) throw new Error(`No ready terminal available for partition ${partition.key}`)
+		if (!entry) throw new WarmAcquireFailure("none_ready", `No ready terminal available for partition ${partition.key}`)
 		const sameCwd = arePathsEqual(entry.currentCwd, cwd)
 
 		const leaseId = randomUUID()
@@ -278,17 +356,24 @@ export class VscodeTerminalPool {
 		entry.terminalInfo.busy = false
 		const partition = entry.partition
 		partition.lastActiveAt = Date.now()
-		const shouldDispose =
-			!result.healthy ||
-			lease.reusePolicy === "consume" ||
-			partition?.draining === true ||
-			this.runtime.isTerminalClosed(entry.terminalInfo)
+		const draining = partition?.draining === true
+		const closed = this.runtime.isTerminalClosed(entry.terminalInfo)
+		const shouldDispose = !result.healthy || lease.reusePolicy === "consume" || draining || closed
 		if (shouldDispose) {
+			// A `consume` lease is always destroyed by contract, so reporting it
+			// would drown the real signal: a terminal the pool expected to keep
+			// and had to throw away instead.
+			if (lease.reusePolicy === "reusable") {
+				recordDiagnostic(DiagnosticDomain.Terminal, "reuse_rejected", DiagnosticOutcome.Degraded, {
+					reason: classifyReuseRejection(result, draining, closed),
+				})
+			}
 			await this.invalidateEntry(entry, result.reason ?? (lease.reusePolicy === "consume" ? "consumed" : "unhealthy"))
 		} else {
 			entry.state = "ready"
 			entry.terminalInfo.lastActive = Date.now()
 			this.trimExcessStandby(partition)
+			this.notifyPartitionStateChanged(partition)
 		}
 		if (partition && !partition.draining) void this.ensureWarm(partition.preparation)
 		Logger.debug(
@@ -348,6 +433,7 @@ export class VscodeTerminalPool {
 				scopeKey,
 				preparation,
 				entries: new Map(),
+				stateWaiters: new Set(),
 				draining: false,
 				lastActiveAt: Date.now(),
 				retryAttempt: 0,
@@ -385,6 +471,7 @@ export class VscodeTerminalPool {
 			terminalInfo.busy = false
 			terminalInfo.lastCommand = ""
 			this.trimExcessStandby(partition)
+			this.notifyPartitionStateChanged(partition)
 			Logger.debug(
 				`[TerminalPool] operation=warm partition=${partition.key} terminalId=${terminalInfo.id} state=ready durationMs=${Math.round(performance.now() - startedAt)}`,
 			)
@@ -411,6 +498,7 @@ export class VscodeTerminalPool {
 		})
 		entry.partition.entries.delete(entry.terminalInfo.id)
 		if (!this.runtime.isTerminalClosed(entry.terminalInfo)) this.runtime.disposeTerminal(entry.terminalInfo)
+		this.notifyPartitionStateChanged(entry.partition)
 	}
 
 	private handleTerminalClosed(terminal: TerminalInfo["terminal"]): void {
@@ -441,6 +529,7 @@ export class VscodeTerminalPool {
 
 	private drainPartition(partition: TerminalPartition): { closedCount: number; busyTerminals: TerminalInfo[] } {
 		partition.draining = true
+		this.notifyPartitionStateChanged(partition)
 		this.partitions.delete(partition.key)
 		if (partition.retryTimer) clearTimeout(partition.retryTimer)
 		let closedCount = 0
@@ -471,25 +560,92 @@ export class VscodeTerminalPool {
 		partition.retryTimer.unref?.()
 	}
 
-	private async waitForWarmBatch(warming: Promise<void>, partitionKey: string): Promise<void> {
-		let timeout: NodeJS.Timeout | undefined
-		try {
-			await Promise.race([
-				warming,
-				new Promise<never>((_, reject) => {
-					timeout = setTimeout(
-						() =>
-							reject(
-								new Error(`Terminal warm wait timed out after ${this.acquireWaitTimeoutMs}ms: ${partitionKey}`),
-							),
-						this.acquireWaitTimeoutMs,
-					)
-					timeout.unref?.()
-				}),
-			])
-		} finally {
-			if (timeout) clearTimeout(timeout)
+	private selectReadyTerminal(
+		partition: TerminalPartition,
+		cwd: string,
+		reusePolicy: VscodeTerminalReusePolicy,
+	): PooledTerminal | undefined {
+		const ready = [...partition.entries.values()].filter(
+			(entry) =>
+				entry.state === "ready" &&
+				(reusePolicy === "reusable" || entry.userCommandCount === 0) &&
+				!this.runtime.isTerminalClosed(entry.terminalInfo),
+		)
+		return ready.find((candidate) => arePathsEqual(candidate.currentCwd, cwd)) ?? ready[0]
+	}
+
+	private async waitForReadyTerminal(
+		partition: TerminalPartition,
+		cwd: string,
+		reusePolicy: VscodeTerminalReusePolicy,
+		deadlineAt: number,
+	): Promise<PooledTerminal> {
+		while (true) {
+			if (this.disposed) throw new WarmAcquireFailure("pool_disposed", "Terminal pool is disposed")
+			if (partition.draining) {
+				throw new WarmAcquireFailure("partition_draining", `Terminal partition is draining: ${partition.key}`)
+			}
+			if (this.countLeased(partition) >= this.maxConcurrentLeases) {
+				throw new WarmAcquireFailure("capacity_reached", `Terminal partition lease capacity reached: ${partition.key}`)
+			}
+
+			const ready = this.selectReadyTerminal(partition, cwd, reusePolicy)
+			if (ready) return ready
+
+			const snapshot = this.snapshot(partition)
+			if (partition.retryTimer && !partition.ensurePromise && snapshot.warming === 0) {
+				throw new WarmAcquireFailure("retry_pending", `Terminal warming retry pending: ${partition.key}`)
+			}
+			if (!partition.ensurePromise && snapshot.warming === 0) {
+				throw new WarmAcquireFailure("none_ready", `No ready terminal available for partition ${partition.key}`)
+			}
+
+			const remainingMs = deadlineAt - Date.now()
+			if (remainingMs <= 0) {
+				throw new WarmAcquireFailure(
+					"warm_timeout",
+					`Terminal warm wait timed out after ${this.acquireWaitTimeoutMs}ms: ${partition.key}`,
+				)
+			}
+			await this.waitForPartitionStateChange(partition, remainingMs)
 		}
+	}
+
+	private waitForPartitionStateChange(partition: TerminalPartition, timeoutMs: number): Promise<void> {
+		return new Promise((resolve, reject) => {
+			let timeout: NodeJS.Timeout | undefined
+			let settled = false
+			const finish = (error?: Error) => {
+				if (settled) return
+				settled = true
+				partition.stateWaiters.delete(onStateChanged)
+				if (timeout) clearTimeout(timeout)
+				if (error) reject(error)
+				else resolve()
+			}
+			const onStateChanged = () => finish()
+			partition.stateWaiters.add(onStateChanged)
+			// This timer, not the deadline check in the acquire loop, is what
+			// expires when nothing changes while waiting. Rejecting with a plain
+			// Error here would leave the caller unable to name the reason, and
+			// the resulting diagnostic would report `unknown` for the most
+			// common warm miss there is.
+			timeout = setTimeout(
+				() =>
+					finish(
+						new WarmAcquireFailure(
+							"warm_timeout",
+							`Terminal warm wait timed out after ${this.acquireWaitTimeoutMs}ms: ${partition.key}`,
+						),
+					),
+				timeoutMs,
+			)
+			timeout.unref?.()
+		})
+	}
+
+	private notifyPartitionStateChanged(partition: TerminalPartition): void {
+		for (const waiter of [...partition.stateWaiters]) waiter()
 	}
 
 	private countGlobalTerminals(): number {

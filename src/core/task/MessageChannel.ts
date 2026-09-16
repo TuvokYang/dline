@@ -266,28 +266,26 @@ export class MessageChannel {
 		this.taskState.lastMessageTs = askTs
 		const messages = this.messageStateHandler.clineMessages
 		const index = messages.findIndex((message) => message.ts === askTs)
+		const existing = index >= 0 ? messages[index] : undefined
 		const commandPresentation = type === "command" ? { commandStatus: "pending" as const, exitCode: undefined } : {}
 		const interactionIdentity = interactionId ? { interactionId } : {}
-		if (index >= 0) {
-			await this.messageStateHandler.updateClineMessage(index, {
-				type: "ask",
-				say: undefined,
-				ask: type,
-				text,
-				partial: false,
-				...interactionIdentity,
-				...commandPresentation,
-			})
+		const askMessage = {
+			ts: askTs,
+			type: "ask" as const,
+			say: undefined,
+			ask: type,
+			text,
+			partial: false,
+			...interactionIdentity,
+			...commandPresentation,
+		}
+		if (existing?.partial === true) {
+			await this.messageStateHandler.finalizeClineMessage({ ...existing, ...askMessage })
+		} else if (index >= 0) {
+			await this.messageStateHandler.updateClineMessage(index, askMessage)
 			await this.messageStateHandler.flushMessageUpdate(index)
 		} else {
-			await this.messageStateHandler.addToClineMessages({
-				ts: askTs,
-				type: "ask",
-				ask: type,
-				text,
-				...interactionIdentity,
-				...commandPresentation,
-			})
+			await this.messageStateHandler.addToClineMessages(askMessage)
 		}
 		await this.messageStateHandler.flushUiMessages()
 		await this.postStateToWebview()

@@ -1,6 +1,7 @@
 import type { ClineMessage, TaskViewState } from "@shared/ExtensionMessage"
 import { describe, expect, it } from "vitest"
 import {
+	findGroupedMessageByTs,
 	groupLowStakesTools,
 	groupMessages,
 	isToolGroup,
@@ -168,6 +169,18 @@ describe("image generation row expansion", () => {
 })
 
 describe("groupMessages", () => {
+	it("finds expandable conversation messages nested in a browser-session row", () => {
+		const reasoning = createReasoningMessage(3, "Browser reasoning")
+		const grouped = groupMessages([
+			{ ts: 1, type: "say", say: "browser_action_launch", text: "https://one.example" },
+			{ ts: 2, type: "say", say: "browser_action_result", text: JSON.stringify({ currentUrl: "https://one.example" }) },
+			reasoning,
+		])
+
+		expect(findGroupedMessageByTs(grouped, reasoning.ts)).toEqual({ groupIndex: 0, message: reasoning })
+		expect(findGroupedMessageByTs(grouped, 999)).toBeUndefined()
+	})
+
 	it("keeps consecutive browser sessions in separate virtual rows", () => {
 		const grouped = groupMessages([
 			{ ts: 1, type: "say", say: "browser_action_launch", text: "https://one.example" },

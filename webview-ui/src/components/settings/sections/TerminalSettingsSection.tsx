@@ -9,6 +9,7 @@ import TerminalCommandTimeoutSetting from "../TerminalCommandTimeoutSetting"
 import TerminalHandoffSecondsSetting from "../TerminalHandoffSecondsSetting"
 import TerminalOutputLineLimitSlider from "../TerminalOutputLineLimitSlider"
 import { updateSetting } from "../utils/settingsHandlers"
+import { useTextFieldHost } from "../utils/useTextFieldHost"
 
 interface TerminalSettingsSectionProps {
 	renderSectionHeader: (tabId: string) => JSX.Element | null
@@ -27,7 +28,13 @@ export const TerminalSettingsSection: React.FC<TerminalSettingsSectionProps> = (
 
 	const [inputValue, setInputValue] = useState((shellIntegrationTimeout / 1000).toString())
 	const [inputError, setInputError] = useState<string | null>(null)
+	const [isEditingShellIntegrationTimeoutValue, setIsEditingShellIntegrationTimeoutValue] = useState(false)
 	const isEditingShellIntegrationTimeout = useRef(false)
+	const shellIntegrationTimeoutHostProps = useTextFieldHost(
+		"Shell integration timeout (seconds)",
+		inputValue,
+		!isEditingShellIntegrationTimeoutValue,
+	)
 
 	useEffect(() => {
 		if (!isEditingShellIntegrationTimeout.current) {
@@ -39,6 +46,10 @@ export const TerminalSettingsSection: React.FC<TerminalSettingsSectionProps> = (
 		const target = event.target as HTMLInputElement
 		const value = target.value
 
+		if (!isEditingShellIntegrationTimeout.current) {
+			isEditingShellIntegrationTimeout.current = true
+			setIsEditingShellIntegrationTimeoutValue(true)
+		}
 		setInputValue(value)
 
 		const seconds = Number.parseFloat(value)
@@ -52,6 +63,7 @@ export const TerminalSettingsSection: React.FC<TerminalSettingsSectionProps> = (
 
 	const handleInputBlur = () => {
 		isEditingShellIntegrationTimeout.current = false
+		setIsEditingShellIntegrationTimeoutValue(false)
 		const seconds = Number.parseFloat(inputValue)
 		if (Number.isNaN(seconds) || seconds <= 0) {
 			setInputValue((shellIntegrationTimeout / 1000).toString())
@@ -119,17 +131,21 @@ export const TerminalSettingsSection: React.FC<TerminalSettingsSectionProps> = (
 
 					<div className="mb-4">
 						<div className="mb-2">
-							<label className="font-medium block mb-1">Shell integration timeout (seconds)</label>
+							<label className="font-medium block mb-1" htmlFor="shell-integration-timeout">
+								Shell integration timeout (seconds)
+							</label>
 							<div className="flex items-center">
 								<VSCodeTextField
+									{...shellIntegrationTimeoutHostProps}
 									className="w-full"
+									id="shell-integration-timeout"
 									onBlur={handleInputBlur}
 									onFocus={() => {
 										isEditingShellIntegrationTimeout.current = true
+										setIsEditingShellIntegrationTimeoutValue(true)
 									}}
 									onInput={(event) => handleTimeoutChange(event as unknown as Event)}
 									placeholder="Enter timeout in seconds"
-									value={inputValue}
 								/>
 							</div>
 							{inputError && <div className="text-(--vscode-errorForeground) text-xs mt-1">{inputError}</div>}

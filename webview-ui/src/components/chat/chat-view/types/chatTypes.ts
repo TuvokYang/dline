@@ -82,6 +82,14 @@ export interface ScrollBehavior {
 	scrollContainerRef: React.RefObject<HTMLDivElement>
 	disableAutoScrollRef: React.MutableRefObject<boolean>
 	isAtBottomRef: React.MutableRefObject<boolean>
+	/**
+	 * Whether the loaded window reaches the last message of the conversation.
+	 *
+	 * `isAtBottomRef` only reports the bottom of the rows Virtuoso currently
+	 * holds. History is paged, so that can be the middle of the conversation.
+	 * Restoring "the bottom" is only meaningful when both are true.
+	 */
+	absoluteBottomLoadedRef: React.MutableRefObject<boolean>
 	requestProgrammaticScroll: (request: ScrollRequest) => void
 	cancelProgrammaticScroll: () => void
 	scrollToBottomSmooth: () => void

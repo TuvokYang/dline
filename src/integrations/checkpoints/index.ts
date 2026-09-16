@@ -716,6 +716,11 @@ export class TaskCheckpointManager implements ICheckpointManager {
 		}
 
 		await this.services.messageStateHandler.uiMessage?.truncateByLineNum(boundary.uiKeepCount)
+		// Truncating writes the durable store directly, so aggregates computed
+		// from the discarded messages have to be dropped with them. Called
+		// optionally: this collaborator is supplied by the task runtime, and a
+		// restore must not fail because a caller provided a narrower one.
+		this.services.messageStateHandler.invalidateDerivedAggregates?.()
 
 		await this.services.contextManager.truncateContextHistory(
 			boundary.contextAnchorTs,

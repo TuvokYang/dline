@@ -22,6 +22,7 @@ import { recordPerfPhase } from "./services/telemetry/instrumentation/duration-r
 import { PerfDomain } from "./services/telemetry/instrumentation/perf-domains"
 import { PostHogClientProvider } from "./services/telemetry/providers/posthog/PostHogClientProvider"
 import { activateRuntimeTelemetry, deactivateRuntimeTelemetry } from "./services/telemetry/runtime/activation"
+import { getRuntimeTelemetryLifecycle } from "./services/telemetry/runtime/host"
 import { forwardRuntimeEvent } from "./services/telemetry/runtime/provider-event-bridge"
 import { cleanupTestMode } from "./services/test/TestMode"
 import { ShowMessageType } from "./shared/proto/dline/host/window"
@@ -162,6 +163,15 @@ export async function initialize(storageContext: StorageContext): Promise<Webvie
 			// error-reporting consent rather than product analytics consent.
 			telemetrySetting: stateManager.getGlobalSettingsKey("errorReportingSetting") ?? "unset",
 			onEvent: (event) => forwardRuntimeEvent(event, telemetryService),
+			activeTaskIds: () =>
+				OrchestratorController.getInstance()
+					.getActiveControllers()
+					.flatMap((controller) => {
+						const task = controller.task
+						return task && !["completed", "aborted", "paused"].includes(task.getActiveTaskPhase())
+							? [task.taskId]
+							: []
+					}),
 		})
 	} catch (error) {
 		Logger.error("[Dline] Failed to start runtime telemetry:", error)
@@ -182,6 +192,7 @@ export async function initialize(storageContext: StorageContext): Promise<Webvie
 	FileContextTracker.cleanupOrphanedWarnings(stateManager)
 
 	telemetryService.captureExtensionActivated()
+	getRuntimeTelemetryLifecycle()?.diagnostics.phase("activation.common_ready", "completed", performance.now() - initStart)
 
 	{
 		const elapsedMs = performance.now() - initStart
@@ -262,56 +273,51 @@ async function checkWorktreeAutoOpen(stateManager: StateManager): Promise<void> 
  * Performs cleanup when Cline is deactivated that is common to all platforms.
  */
 export async function tearDown(): Promise<void> {
-	// Stop diagnostics first so its final flush happens while storage is open.
+	const diagnostics = getRuntimeTelemetryLifecycle()?.diagnostics
+	const observe = (stage: string, action: () => Promise<void>) => (diagnostics ? diagnostics.observe(stage, action) : action())
+	diagnostics?.phase("shutdown", "started")
 	try {
-		await deactivateRuntimeTelemetry()
-	} catch (error) {
-		Logger.error("[Dline] Runtime telemetry shutdown failed:", error)
+		AgentConfigLoader.getInstance()?.dispose()
+		PostHogClientProvider.getInstance().dispose()
+		featureFlagsService.dispose()
+
+		// Keep consent and telemetry alive while controllers finish their tasks.
+		try {
+			await observe("shutdown.state_initial_flush", () => StateManager.get().flushPendingState())
+		} catch (error) {
+			Logger.error("[Dline] Initial StateManager shutdown flush failed:", error)
+		}
+		await observe("shutdown.controllers", () => WebviewProvider.disposeAllInstances())
+		try {
+			await observe("shutdown.task_history", () => flushAllWorkspaceHistoryManagers())
+		} catch (error) {
+			Logger.error("[Dline] Task history shutdown flush failed:", error)
+		}
+		await observe("shutdown.error_service", () => ErrorService.get().dispose())
+		syncWorker().dispose()
+		await observe("shutdown.hooks", () => HookProcessRegistry.terminateAll())
+		HookDiscoveryCache.getInstance().dispose()
+		DlineRuntimeFileManager.stopPeriodicCleanup()
+		try {
+			await observe("shutdown.state_final_flush", () => StateManager.get().flushPendingState())
+		} catch (error) {
+			Logger.error("[Dline] Final StateManager shutdown flush failed:", error)
+		}
+		diagnostics?.phase("shutdown.business_cleanup", "completed")
+	} finally {
+		// Flush even after failed cleanup, before storage removes the consent authority.
+		try {
+			await deactivateRuntimeTelemetry()
+		} catch (error) {
+			Logger.internalError("[Dline] Runtime telemetry shutdown failed:", error)
+		}
+		try {
+			await disposeTelemetryService()
+		} catch (error) {
+			Logger.internalError("[Dline] Telemetry shutdown failed:", error)
+		}
 	}
-
-	AgentConfigLoader.getInstance()?.dispose()
-	PostHogClientProvider.getInstance().dispose()
-	// Awaited so provider construction cannot outlive its owner and leave
-	// sockets or timers with nothing to close them.
-	try {
-		await disposeTelemetryService()
-	} catch (error) {
-		Logger.error("[Dline] Telemetry shutdown failed:", error)
-	}
-	await ErrorService.get().dispose()
-	featureFlagsService.dispose()
-
-	// Flush once before controller disposal so edits made by Settings controls are
-	// durable, then flush again as part of StateManager shutdown for cleanup writes
-	// produced while controllers release their task resources.
-	try {
-		await StateManager.get().flushPendingState()
-	} catch (error) {
-		Logger.error("[Dline] Initial StateManager shutdown flush failed:", error)
-	}
-
-	// Dispose all webview instances
-	await WebviewProvider.disposeAllInstances()
-
-	// Task history writes are queued per workspace and settle off the UI hot
-	// path, so they must be drained here: controllers are gone but the store is
-	// still open, and StateManager.shutdown() closes it.
-	try {
-		await flushAllWorkspaceHistoryManagers()
-	} catch (error) {
-		Logger.error("[Dline] Task history shutdown flush failed:", error)
-	}
-
+	// Telemetry deliberately does not claim that the process exited successfully.
 	await StateManager.shutdown()
-	syncWorker().dispose()
-
-	// Kill any running hook processes to prevent zombies
-	await HookProcessRegistry.terminateAll()
-	// Clean up hook discovery cache
-	HookDiscoveryCache.getInstance().dispose()
-	// Stop periodic temp file cleanup
-	DlineRuntimeFileManager.stopPeriodicCleanup()
-
-	// Clean up test mode
 	cleanupTestMode()
 }

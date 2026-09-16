@@ -50,11 +50,11 @@ const ApiConfigurationSection = ({ renderSectionHeader }: ApiConfigurationSectio
 				)}
 				{loaded && !error && (
 					<ProviderProfileList
-						imageProfiles={imageProfiles.profiles}
-						imageGenerationEnabled={imageGenerationEnabled === true}
 						currentMode={currentTab}
 						editMode={editMode}
 						expandedId={expandedId}
+						imageGenerationEnabled={imageGenerationEnabled === true}
+						imageProfiles={imageProfiles.profiles}
 						onAddProfile={addProfile}
 						onDeleteProfile={removeProfile}
 						onReorderProfiles={reorderProfiles}
@@ -66,23 +66,29 @@ const ApiConfigurationSection = ({ renderSectionHeader }: ApiConfigurationSectio
 					/>
 				)}
 			</Section>
-			{imageGenerationEnabled ? <Section>
-				{!imageProfiles.loaded && !imageProfiles.error ? <div className="py-3 text-sm text-description">Loading image profiles…</div> : null}
-				{imageProfiles.error ? (
-					<div className="py-3 text-sm text-errorForeground">
-						<div>Failed to load image profiles.</div>
-						<button className="mt-2" onClick={() => void imageProfiles.reload()} type="button">Retry</button>
-					</div>
-				) : null}
-				{imageProfiles.loaded && !imageProfiles.error ? (
-					<ImageGenerationProfileList
-						onAdd={imageProfiles.addProfile}
-						onRemove={imageProfiles.removeProfile}
-						onUpdate={imageProfiles.updateProfile}
-						profiles={imageProfiles.profiles}
-					/>
-				) : null}
-			</Section> : null}
+			{imageGenerationEnabled ? (
+				<Section>
+					{!imageProfiles.loaded && !imageProfiles.error ? (
+						<div className="py-3 text-sm text-description">Loading image profiles…</div>
+					) : null}
+					{imageProfiles.error ? (
+						<div className="py-3 text-sm text-errorForeground">
+							<div>Failed to load image profiles.</div>
+							<button className="mt-2" onClick={() => void imageProfiles.reload()} type="button">
+								Retry
+							</button>
+						</div>
+					) : null}
+					{imageProfiles.loaded && !imageProfiles.error ? (
+						<ImageGenerationProfileList
+							onAdd={imageProfiles.addProfile}
+							onRemove={imageProfiles.removeProfile}
+							onUpdate={imageProfiles.updateProfile}
+							profiles={imageProfiles.profiles}
+						/>
+					) : null}
+				</Section>
+			) : null}
 		</div>
 	)
 }

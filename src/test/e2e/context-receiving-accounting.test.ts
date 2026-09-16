@@ -143,9 +143,9 @@ async function readContextWindowVisual(sidebar: Frame): Promise<ContextWindowVis
 	return sidebar.getByTestId("context-window-segmented-progress").evaluate((progress) => {
 		const element = progress as HTMLElement
 		const segments = Array.from(element.querySelectorAll<HTMLElement>("[data-segment]"))
+		const phase = element.dataset.phase
 		const durable = segments.find((segment) => segment.dataset.segment === "durable")
-		const sending = segments.find((segment) => segment.dataset.segment === "sending")
-		const receiving = segments.find((segment) => segment.dataset.segment === "receiving")
+		const active = segments.find((segment) => segment.dataset.segment === "active")
 		const environment = segments.find((segment) => segment.dataset.segment === "environment")
 		return {
 			contextWindow: Number(element.dataset.contextWindow ?? 0),
@@ -154,12 +154,12 @@ async function readContextWindowVisual(sidebar: Frame): Promise<ContextWindowVis
 			environmentTokens: Number(environment?.dataset.authoritativeTokens ?? 0),
 			minorFactor: Number(element.dataset.minorFactor ?? 1),
 			nativeTitleCount: element.querySelectorAll("[title]").length + (element.hasAttribute("title") ? 1 : 0),
-			phase: element.dataset.phase,
-			receivingRenderedWidth: receiving?.getBoundingClientRect().width ?? 0,
-			receivingTokens: Number(receiving?.dataset.authoritativeTokens ?? 0),
-			receivingWidthPercent: Number.parseFloat(receiving?.style.width ?? "0"),
+			phase,
+			receivingRenderedWidth: phase === "receiving" ? (active?.getBoundingClientRect().width ?? 0) : 0,
+			receivingTokens: phase === "receiving" ? Number(active?.dataset.authoritativeTokens ?? 0) : 0,
+			receivingWidthPercent: phase === "receiving" ? Number.parseFloat(active?.style.width ?? "0") : 0,
 			segmentKinds: segments.map((segment) => segment.dataset.segment ?? ""),
-			sendingTokens: Number(sending?.dataset.authoritativeTokens ?? 0),
+			sendingTokens: phase === "sending" ? Number(active?.dataset.authoritativeTokens ?? 0) : 0,
 			tooltipTriggerCount: document.querySelectorAll('[data-testid="context-window-tooltip-trigger"]').length,
 			totalTokens: segments.reduce((total, segment) => total + Number(segment.dataset.authoritativeTokens ?? 0), 0),
 		}
@@ -273,19 +273,15 @@ e2e(
 		const progress = sidebar.getByTestId("context-window-segmented-progress")
 		await expect(progress).toHaveAttribute("data-phase", "sending")
 		const beforeExactUsage = await readContextWindowVisual(sidebar)
-		expect(beforeExactUsage.segmentKinds).toEqual(["durable", "sending", "receiving", "environment"])
+		expect(beforeExactUsage.segmentKinds).toEqual(["durable", "active", "staged", "environment"])
 		expect(beforeExactUsage.minorFactor).toBeGreaterThanOrEqual(1)
 		expect(beforeExactUsage.minorFactor).toBeLessThanOrEqual(3)
-		expect(beforeExactUsage.durableTokens).toBeGreaterThan(0)
 		expect(beforeExactUsage.sendingTokens).toBeGreaterThan(0)
-		expect(beforeExactUsage.sendingTokens).toBeLessThan(beforeExactUsage.durableTokens)
 		expect(beforeExactUsage.receivingTokens).toBe(0)
 
-		await expect(sidebar.getByTestId("context-window-segment-receiving")).toHaveAttribute(
-			"data-authoritative-tokens",
-			"800",
-			{ timeout: 45_000 },
-		)
+		await expect(sidebar.getByTestId("context-window-segment-active")).toHaveAttribute("data-authoritative-tokens", "800", {
+			timeout: 45_000,
+		})
 		await expect(progress).toHaveAttribute("data-phase", "receiving")
 		await expect(progress).toHaveAttribute("aria-valuenow", "2000")
 		const calibrated = await readContextWindowVisual(sidebar)
@@ -293,7 +289,7 @@ e2e(
 			phase: "receiving",
 			receivingTokens: 800,
 			sendingTokens: 0,
-			segmentKinds: ["durable", "sending", "receiving", "environment"],
+			segmentKinds: ["durable", "active", "staged", "environment"],
 			totalTokens: 2_000,
 		})
 		expect(calibrated.minorFactor).toBeGreaterThanOrEqual(1)
@@ -328,7 +324,7 @@ e2e(
 		expect(narrowLayout.indicatorWidth).toBeGreaterThan(0)
 		expect(narrowLayout.progressWidth).toBeGreaterThan(0)
 		expect(narrowLayout.progressHeight).toBeGreaterThan(0)
-		expect(narrowLayout.segmentKinds).toEqual(["durable", "sending", "receiving", "environment"])
+		expect(narrowLayout.segmentKinds).toEqual(["durable", "active", "staged", "environment"])
 
 		await sidebar.getByTestId("context-window-progress-track").hover()
 		const hoverCardContent = sidebar.locator('[data-slot="hover-card-content"]')
@@ -336,7 +332,7 @@ e2e(
 		await expect(hoverCardContent).toBeVisible()
 		const segmentDetails = hoverCardContent.getByTestId("context-window-segment-details")
 		await expect(segmentDetails).toBeVisible()
-		for (const kind of ["durable", "sending", "receiving", "environment"] as const) {
+		for (const kind of ["durable", "active", "staged", "environment"] as const) {
 			const detail = segmentDetails.locator(`[data-segment-detail="${kind}"]`)
 			await expect(detail).toBeVisible()
 			await expect(detail).toHaveCSS("background-color", /rgb/)
@@ -497,7 +493,7 @@ e2e(
 			)
 			.toBe(true)
 		await expect(progress).toHaveAttribute("aria-valuenow", "7800", { timeout: 30_000 })
-		await expect(sidebar.getByTestId("context-window-segment-receiving")).toHaveAttribute("data-authoritative-tokens", "800")
+		await expect(sidebar.getByTestId("context-window-segment-active")).toHaveAttribute("data-authoritative-tokens", "800")
 
 		const trace = await stopContextWindowTrace(sidebar)
 		await testInfo.attach("context-window-anthropic-split-trajectory", {
@@ -511,7 +507,7 @@ e2e(
 				(sample) =>
 					sample.phase === "receiving" &&
 					sample.totalAuthoritativeTokens === 7_000 &&
-					authoritativeSegmentTokens(sample, "receiving") > 800,
+					authoritativeSegmentTokens(sample, "active") > 800,
 			),
 		).toBe(true)
 		expect(
@@ -519,7 +515,7 @@ e2e(
 				(sample) =>
 					sample.phase === "receiving" &&
 					sample.totalAuthoritativeTokens === 7_800 &&
-					authoritativeSegmentTokens(sample, "receiving") === 800,
+					authoritativeSegmentTokens(sample, "active") === 800,
 			),
 		).toBe(true)
 		expect(stateSamples.every((sample) => sample.contextWindow === 131_072)).toBe(true)

@@ -51,6 +51,7 @@ import {
 import { VscodeTerminalManager } from "./hosts/vscode/terminal/VscodeTerminalManager"
 import { VscodeTerminalPool } from "./hosts/vscode/terminal/VscodeTerminalPool"
 import { DefaultVscodeTerminalPoolRuntime } from "./hosts/vscode/terminal/VscodeTerminalPoolRuntime"
+import { VscodeWindowsProcessTreeProvider } from "./hosts/vscode/terminal/VscodeWindowsProcessTreeProvider"
 import { VscodeDiffViewProvider } from "./hosts/vscode/VscodeDiffViewProvider"
 import { VscodeWebviewProvider } from "./hosts/vscode/VscodeWebviewProvider"
 import { exportVSCodeStorageToSharedFiles } from "./hosts/vscode/vscode-to-file-migration"
@@ -58,9 +59,9 @@ import { ExtensionRegistryInfo } from "./registry"
 import { AuthService } from "./services/auth/AuthService"
 import { LogoutReason } from "./services/auth/types"
 import { DlineRuntimeFileManager } from "./services/runtime-files"
+import { telemetryService } from "./services/telemetry"
 import { recordPerfPhase } from "./services/telemetry/instrumentation/duration-recorder"
 import { PerfDomain } from "./services/telemetry/instrumentation/perf-domains"
-import { telemetryService } from "./services/telemetry"
 import { SharedUriHandler, TASK_URI_PATH } from "./services/uri/SharedUriHandler"
 import { ShowMessageType } from "./shared/proto/dline/host/window"
 import { fileExistsAtPath } from "./utils/fs"
@@ -806,6 +807,8 @@ function setupHostProvider(context: ExtensionContext) {
 	const terminalPool = new VscodeTerminalPool(new DefaultVscodeTerminalPoolRuntime())
 	context.subscriptions.push({ dispose: () => terminalPool.dispose() })
 	const createTerminalManager = () => new VscodeTerminalManager(terminalPool)
+	const windowsProcessTreeProvider =
+		process.platform === "win32" ? new VscodeWindowsProcessTreeProvider(vscode.env.appRoot) : undefined
 
 	const getCallbackUrl = async (path: string, _preferredPort?: number) => {
 		const scheme = vscode.env.uriScheme || "vscode"
@@ -833,6 +836,7 @@ function setupHostProvider(context: ExtensionContext) {
 		getBinaryLocation,
 		context.extensionUri.fsPath,
 		context.globalStorageUri.fsPath,
+		windowsProcessTreeProvider,
 	)
 }
 
