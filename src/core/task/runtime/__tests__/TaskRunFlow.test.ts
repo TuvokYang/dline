@@ -133,9 +133,12 @@ describe("TaskRuntime main flow", () => {
 			},
 		})
 
+		// Granting permission releases the slot rather than holding it for the
+		// whole execution; keeping it would make every later approval wait on
+		// this tool finishing.
 		expect(runtime.getState()).toMatchObject({
 			phase: TaskPhase.EXECUTING,
-			turn: { activeDlineTid: "tid-write", blocks: [{ phase: BlockPhase.EXECUTING }] },
+			turn: { activeDlineTid: undefined, executing: ["tid-write"], blocks: [{ phase: BlockPhase.EXECUTING }] },
 			interaction: { status: "resolving" },
 		})
 	})

@@ -147,6 +147,27 @@ function outOfSyncInteractionState(revision: number, total = 1): ExtensionState 
 	} as ExtensionState
 }
 
+/**
+ * Publish a newer extension state while keeping the interaction identity fixed.
+ *
+ * Stale states are dropped by revision, so a retry must carry a newer top-level
+ * revision. The recovery fetch key is derived from the interaction identity, so
+ * bumping that too would silently change the key and stop exercising the
+ * hydrated/in-flight bookkeeping the test is about.
+ */
+function pinnedAnchorState(stateRevision: number, total = 1): ExtensionState {
+	const base = outOfSyncInteractionState(stateRevision, total) as ExtensionState & {
+		taskViewState: { activeInteraction: { stateRevision: number } }
+	}
+	return {
+		...base,
+		taskViewState: {
+			...base.taskViewState,
+			activeInteraction: { ...base.taskViewState.activeInteraction, stateRevision: 1 },
+		},
+	} as ExtensionState
+}
+
 function stateSnapshot(input: { revision: number; total: number }): ExtensionState {
 	return {
 		stateRevision: input.revision,
@@ -454,7 +475,11 @@ describe("ExtensionStateContext persisted message reconciliation", () => {
 			await staleFetch
 		})
 
-		await waitFor(() => expect(TaskServiceClient.fetchMessage).toHaveBeenCalledTimes(2))
+		// The stale response carries a say at the anchor timestamp, but the local
+		// realtime ask wins reconciliation, so the committed window still holds
+		// the anchor. Judging success there means no redundant walk-back is
+		// issued; this assertion previously counted that spurious second fetch.
+		await waitFor(() => expect(TaskServiceClient.fetchMessage).toHaveBeenCalledTimes(1))
 		expect(screen.getByRole("button", { name: "Start New Task" })).toBeVisible()
 	})
 
@@ -628,5 +653,123 @@ describe("ExtensionStateContext persisted message reconciliation", () => {
 
 		await waitFor(() => expect(screen.getAllByText("visible feedback")).toHaveLength(1))
 		expect(screen.queryByText("stale fragment")).toBeNull()
+	})
+
+	it("does not treat an anchor-bearing but disjoint response as a hydrated anchor", async () => {
+		// The local window is the tail; the anchor sits far behind it, so the
+		// walk-back response is dropped by the continuous-window contract even
+		// though it literally contains the anchor. Judging success on the raw
+		// response would record the anchor as hydrated while it is still
+		// unusable, permanently suppressing later recoveries.
+		const tail = convertClineMessageToProto({ ts: 900, type: "say", say: "text", text: "tail message" })
+		const ask = convertClineMessageToProto({
+			ts: 100,
+			type: "ask",
+			ask: "qna_respond",
+			text: "Question",
+			interactionId: "interaction-1",
+		})
+		vi.mocked(TaskServiceClient.fetchMessage)
+			.mockResolvedValueOnce({ messages: [tail], startIndex: 400, totalCount: 401 })
+			.mockResolvedValue({ messages: [ask], startIndex: 0, totalCount: 401 })
+
+		render(
+			<ExtensionStateContextProvider>
+				<InteractionProbe observedTaskIds={[]} />
+			</ExtensionStateContextProvider>,
+		)
+		await waitFor(() => expect(subscriptions.state).toBeDefined())
+
+		act(() => {
+			subscriptions.state?.onResponse({ stateJson: JSON.stringify(pinnedAnchorState(1, 401)) })
+		})
+
+		// The tail arrives first, then recovery walks back and receives the
+		// anchor in a window that cannot be joined to the local one.
+		await waitFor(() =>
+			expect(TaskServiceClient.fetchMessage).toHaveBeenNthCalledWith(2, { referenceIndex: 200, count: 200 }),
+		)
+
+		// Judging success on the raw response would stop here, because that
+		// response does contain the anchor. Recovery must instead keep trying,
+		// since the committed window still cannot resolve the anchor.
+		await waitFor(() => expect(TaskServiceClient.fetchMessage.mock.calls.length).toBeGreaterThan(2))
+		expect(screen.queryByText("Question")).toBeNull()
+		expect(screen.getByRole("alert")).toBeVisible()
+	})
+
+	it("retries a failed anchor recovery instead of suppressing it permanently", async () => {
+		const ask = convertClineMessageToProto({
+			ts: 100,
+			type: "ask",
+			ask: "qna_respond",
+			text: "Question",
+			interactionId: "interaction-1",
+		})
+		// A failed attempt must not be recorded as a hydrated anchor, otherwise
+		// the footer stays disabled for the rest of the task.
+		vi.mocked(TaskServiceClient.fetchMessage)
+			.mockRejectedValueOnce(new Error("transient anchor fetch failure"))
+			.mockResolvedValue({ messages: [ask], startIndex: 0, totalCount: 1 })
+
+		render(
+			<ExtensionStateContextProvider>
+				<InteractionProbe observedTaskIds={[]} />
+			</ExtensionStateContextProvider>,
+		)
+		await waitFor(() => expect(subscriptions.state).toBeDefined())
+
+		act(() => {
+			subscriptions.state?.onResponse({ stateJson: JSON.stringify(pinnedAnchorState(1)) })
+		})
+		await waitFor(() => expect(TaskServiceClient.fetchMessage).toHaveBeenCalledTimes(1))
+		expect(screen.queryByText("Question")).toBeNull()
+
+		act(() => {
+			subscriptions.state?.onResponse({ stateJson: JSON.stringify(pinnedAnchorState(2)) })
+		})
+
+		await waitFor(() => expect(screen.getByText("Question")).toBeVisible())
+	})
+
+	it("does not start a second recovery for an anchor whose fetch is still running", async () => {
+		const ask = convertClineMessageToProto({
+			ts: 100,
+			type: "ask",
+			ask: "qna_respond",
+			text: "Question",
+			interactionId: "interaction-1",
+		})
+		let resolvePending: ((value: { messages: [typeof ask]; startIndex: number; totalCount: number }) => void) | undefined
+		const pending = new Promise<{ messages: [typeof ask]; startIndex: number; totalCount: number }>((resolve) => {
+			resolvePending = resolve
+		})
+		vi.mocked(TaskServiceClient.fetchMessage).mockReturnValueOnce(pending as never)
+
+		render(
+			<ExtensionStateContextProvider>
+				<InteractionProbe observedTaskIds={[]} />
+			</ExtensionStateContextProvider>,
+		)
+		await waitFor(() => expect(subscriptions.state).toBeDefined())
+
+		act(() => {
+			subscriptions.state?.onResponse({ stateJson: JSON.stringify(pinnedAnchorState(1)) })
+		})
+		await waitFor(() => expect(TaskServiceClient.fetchMessage).toHaveBeenCalledTimes(1))
+
+		// Re-publishing the same interaction identity must not fan out a
+		// duplicate request while the first one is still in flight.
+		act(() => {
+			subscriptions.state?.onResponse({ stateJson: JSON.stringify(pinnedAnchorState(2)) })
+		})
+		expect(TaskServiceClient.fetchMessage).toHaveBeenCalledTimes(1)
+
+		await act(async () => {
+			resolvePending?.({ messages: [ask], startIndex: 0, totalCount: 1 })
+			await pending
+		})
+
+		await waitFor(() => expect(screen.getByText("Question")).toBeVisible())
 	})
 })

@@ -263,7 +263,14 @@ Preserve this instruction body exactly.\n`
 		const updatedYaml = await readFile(agentPath, "utf8")
 		const originalBody = originalYaml.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n([\s\S]*)$/)?.[1]?.trim()
 		const updatedBody = updatedYaml.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n([\s\S]*)$/)?.[1]?.trim()
-		expect(updatedYaml).toContain("tools:\n  - read_file\n  - attempt_completion")
+		// A profile-only save still reconciles the stored list with the
+		// persistence policy, which never writes attempt_completion: it is
+		// granted unconditionally at resolution, so storing it would present
+		// an implicit guarantee as an editable preference. The selected tool
+		// survives, and the completion contract is enforced below by the
+		// child actually reporting back.
+		expect(updatedYaml).toContain("tools:\n  - read_file")
+		expect(updatedYaml).not.toContain("- attempt_completion")
 		expect(updatedYaml).toContain("skills: []")
 		expect(updatedBody).toBe(originalBody)
 		expect(updatedYaml).toContain(`profile: "${E2E_PROFILE_NAMES.mockOpenAi}"`)

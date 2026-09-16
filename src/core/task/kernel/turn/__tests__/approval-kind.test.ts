@@ -78,14 +78,20 @@ describe("permission scope", () => {
 })
 
 describe("approval ceiling", () => {
-	it("defaults external file access to manual_only", () => {
-		expect(resolveApprovalCeiling("read_external")).toBe("manual_only")
-		expect(resolveApprovalCeiling("edit_external")).toBe("manual_only")
-	})
-
-	it("defaults in-workspace scopes to auto", () => {
+	it("adds no restriction of its own until one is configured", () => {
+		// A ceiling is a setting the user chooses. Defaulting external access
+		// to manual_only would tighten approval for someone who never asked
+		// for it, so every scope defaults to auto and the toggle still decides.
+		expect(resolveApprovalCeiling("read_external")).toBe("auto")
+		expect(resolveApprovalCeiling("edit_external")).toBe("auto")
 		expect(resolveApprovalCeiling("read_workspace")).toBe("auto")
 		expect(resolveApprovalCeiling("edit_workspace")).toBe("auto")
+	})
+
+	it("makes manual_only reachable for the external scopes it exists for", () => {
+		const configured: ConfigurableCeilings = { read_external: "manual_only", edit_external: "manual_only" }
+		expect(resolveApprovalCeiling("read_external", configured)).toBe("manual_only")
+		expect(resolveApprovalCeiling("edit_external", configured)).toBe("manual_only")
 	})
 
 	it("prefers a configured ceiling over the default", () => {
@@ -141,7 +147,22 @@ describe("approval kind", () => {
 			expect(decision.kind).toBe("automatic")
 		})
 
-		it("requires manual approval for external writes by default", () => {
+		it("requires manual approval for external writes once that ceiling is configured", () => {
+			const decision = resolveApprovalKind({
+				toolName: ClineDefaultTool.FILE_NEW,
+				settings: allApproved(),
+				ceilings: { edit_external: "manual_only" },
+				context: { isExternalPath: true },
+			})
+
+			expect(decision.scope).toBe("edit_external")
+			expect(decision.kind).toBe("manual")
+		})
+
+		it("leaves an external write to its own toggle while no ceiling is configured", () => {
+			// Classifying the scope is not the same as restricting it. Until
+			// the user configures a ceiling, editFilesExternally still decides,
+			// which is what the build did before ceilings existed.
 			const decision = resolveApprovalKind({
 				toolName: ClineDefaultTool.FILE_NEW,
 				settings: allApproved(),
@@ -149,7 +170,7 @@ describe("approval kind", () => {
 			})
 
 			expect(decision.scope).toBe("edit_external")
-			expect(decision.kind).toBe("manual")
+			expect(decision.kind).toBe("automatic")
 		})
 
 		it("routes an ai_approvable scope to the approver when its toggle is off", () => {

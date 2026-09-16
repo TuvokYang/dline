@@ -98,16 +98,18 @@ function ownsItsInteraction(tool: ClineDefaultTool): boolean {
 /**
  * Default ceiling per scope.
  *
- * Reading and writing outside the workspace default to `manual_only`: their
- * effects leave the project, and a blanket approve-all is not a statement about
- * the rest of the filesystem. Everything else defaults to `auto`, preserving
- * today's behaviour where the toggle alone decides.
+ * Every scope defaults to `auto`, which means the ceiling adds no restriction
+ * and the user's existing toggle alone decides. That is deliberate: a ceiling
+ * is a setting the user chooses, so introducing the concept must not silently
+ * tighten approval for someone who never configured one. Reading and writing
+ * outside the workspace are the scopes `manual_only` exists for, but they
+ * reach it by being configured, not by default.
  */
 const DEFAULT_CEILINGS: Record<PermissionScope, ApprovalCeiling> = {
 	read_workspace: "auto",
-	read_external: "manual_only",
+	read_external: "auto",
 	edit_workspace: "auto",
-	edit_external: "manual_only",
+	edit_external: "auto",
 	command_safe: "auto",
 	command_all: "auto",
 	browser: "auto",

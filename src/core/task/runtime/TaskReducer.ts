@@ -8,7 +8,7 @@ import { TaskPhase } from "../TaskPhase"
 import { TaskPhaseMachine } from "../TaskPhaseMachine"
 import type { TaskEffect } from "./TaskEffect"
 import type { TaskEvent } from "./TaskEvent"
-import type { TaskRuntimeState } from "./TaskRuntimeState"
+import type { ManualApprovalOwner, TaskRuntimeState } from "./TaskRuntimeState"
 
 /** Typed rejection returned for an event that is invalid in the current phase. */
 export interface RuntimeEventError {
@@ -492,6 +492,124 @@ function replaceTurnBlock(
 	}
 }
 
+/** Add one block to an ownership set without creating a duplicate entry. */
+function withMember(members: readonly string[], dlineTid: string): string[] {
+	return members.includes(dlineTid) ? [...members] : [...members, dlineTid]
+}
+
+/**
+ * Resolve approval and execution ownership for a turn.
+ *
+ * Ownership is stored explicitly, but three inputs may lack it: a turn restored
+ * from a snapshot written before the split, a turn built by a caller outside
+ * this module, and a caller that claims the approval slot by assigning
+ * `activeDlineTid` directly. All three are reconciled here so the rest of the
+ * reducer can treat ownership as always present.
+ *
+ * `activeDlineTid` is treated as authoritative when it disagrees with the
+ * stored slot, because the only way the two can differ is that a writer outside
+ * this module just set it. Its stage follows from whether the block is already
+ * executing, which is what distinguishes a block asking for permission to start
+ * from one that is running and has asked a question of its own.
+ */
+function deriveTurnOwnership(turn: NonNullable<TaskRuntimeState["turn"]>): {
+	manual: ManualApprovalOwner | undefined
+	automatic: string[]
+	executing: string[]
+} {
+	const live = (dlineTid: string) => {
+		const block = turn.blocks.find((candidate) => candidate.dlineTid === dlineTid)
+		return block !== undefined && !isTerminalBlock(block.phase)
+	}
+
+	// A legacy turn records execution only as a phase. Both executing phases are
+	// recovered so a restart never projects an admitted block as un-admitted.
+	const executing = (
+		turn.executing ??
+		turn.blocks
+			.filter((block) => block.phase === BlockPhase.EXECUTING || block.phase === BlockPhase.AUTO_EXECUTING)
+			.map((block) => block.dlineTid)
+	).filter(live)
+
+	// The legacy reconstruction is deliberately the executing set restricted to
+	// blocks that never needed a user: a block that merely *may* be approved
+	// automatically has not been approved yet, and recording it as approved
+	// would grant permission the old state never expressed.
+	const granted = (turn.approval?.automatic ?? executing.filter((dlineTid) => needsNoApproval(turn, dlineTid))).filter(live)
+
+	const stored = turn.approval?.manual
+	const claimed = turn.activeDlineTid
+	if (claimed === undefined || !live(claimed)) {
+		// An absent or dead projection is a release, including the release
+		// performed by callers outside this module that clear the field
+		// directly and the release implied by a block reaching a terminal phase.
+		return { manual: undefined, automatic: granted, executing }
+	}
+	const manual =
+		stored?.dlineTid === claimed
+			? stored
+			: { dlineTid: claimed, stage: executing.includes(claimed) ? ("in_flight" as const) : ("admission" as const) }
+	// An already-running block that asks a question of its own takes the manual
+	// slot while still executing. Its earlier policy approval no longer
+	// describes it, because the user is deciding this one, so it leaves the
+	// automatic set rather than being recorded in both at once.
+	return { manual, automatic: granted.filter((dlineTid) => dlineTid !== manual.dlineTid), executing }
+}
+
+/**
+ * Whether a turn's ownership is self-consistent.
+ *
+ * These states are contradictions rather than unusual cases: a block cannot be
+ * both waiting for the user and approved by policy, and a block waiting for
+ * permission to start cannot already be executing. Rejecting them here makes
+ * them unreachable through any event rather than merely untested.
+ */
+function hasConsistentOwnership(turn: NonNullable<TaskRuntimeState["turn"]>): boolean {
+	const manual = turn.approval?.manual
+	const automatic = turn.approval?.automatic ?? []
+	const executing = turn.executing ?? []
+
+	if (new Set(automatic).size !== automatic.length || new Set(executing).size !== executing.length) {
+		return false
+	}
+	if (!manual) {
+		return true
+	}
+	if (automatic.includes(manual.dlineTid)) {
+		return false
+	}
+	return manual.stage === "in_flight" || !executing.includes(manual.dlineTid)
+}
+
+/** Whether a block was classified as auto-approvable when the turn was built. */
+function needsNoApproval(turn: NonNullable<TaskRuntimeState["turn"]>, dlineTid: string): boolean {
+	return turn.blocks.find((block) => block.dlineTid === dlineTid)?.requiresApproval === false
+}
+
+/**
+ * Record a block as approved and admitted to execution.
+ *
+ * The manual slot is resolved rather than passed in, so a caller that released
+ * the slot by clearing the projection releases it here too. That is what makes
+ * "release approval and enter execution" a single reduction with no observable
+ * state in between where the block is neither approved nor executing.
+ */
+function withAdmittedBlock(
+	turn: NonNullable<TaskRuntimeState["turn"]>,
+	dlineTid: string,
+	options: { automatic: boolean },
+): NonNullable<TaskRuntimeState["turn"]> {
+	const resolved = deriveTurnOwnership(turn)
+	return {
+		...turn,
+		approval: {
+			manual: resolved.manual,
+			automatic: options.automatic ? withMember(resolved.automatic, dlineTid) : resolved.automatic,
+		},
+		executing: withMember(resolved.executing, dlineTid),
+	}
+}
+
 /** Commit one turn update while preserving or explicitly changing phase. */
 function acceptTurn(
 	state: TaskRuntimeState,
@@ -500,13 +618,26 @@ function acceptTurn(
 	phase: TaskPhase = state.phase,
 	effects?: TaskEffect[],
 ): TransitionResult {
+	// Normalizing on commit is what keeps `activeDlineTid` a projection: every
+	// accepted turn leaves here with the slot, the automatic set, the execution
+	// set and the projection agreeing, whichever of them the caller wrote.
+	const ownership = deriveTurnOwnership(turn)
+	const owned: NonNullable<TaskRuntimeState["turn"]> = {
+		...turn,
+		activeDlineTid: ownership.manual?.dlineTid,
+		approval: { manual: ownership.manual, automatic: ownership.automatic },
+		executing: ownership.executing,
+	}
+	if (!hasConsistentOwnership(owned)) {
+		return reject(state, eventType)
+	}
 	if (phase !== state.phase) {
-		return accept(state, { eventType, phase, turn, anchor: { ...state.anchor, turnId: turn.turnId }, effects })
+		return accept(state, { eventType, phase, turn: owned, anchor: { ...state.anchor, turnId: owned.turnId }, effects })
 	}
 	const revision = state.revision + 1
 	return {
 		accepted: true,
-		next: { ...state, revision, turn, anchor: { ...state.anchor, turnId: turn.turnId } },
+		next: { ...state, revision, turn: owned, anchor: { ...state.anchor, turnId: owned.turnId } },
 		effects: effects ?? stateEffects(revision),
 	}
 }
@@ -563,22 +694,48 @@ function reduceTurn(
 		if (block.requiresApproval) {
 			return acceptTurn(state, event.type, state.turn)
 		}
-		const turn = replaceTurnBlock(state, block.dlineTid, BlockPhase.AUTO_EXECUTING, state.turn.activeDlineTid)
-		return turn ? acceptTurn(state, event.type, turn) : reject(state, event.type)
+		// Approved by policy: admitted without ever occupying the serial slot,
+		// which is what allows any number of these to resolve at once. The slot
+		// is passed through untouched because another block may legitimately
+		// hold it while this one is admitted.
+		const ready = replaceTurnBlock(state, block.dlineTid, BlockPhase.AUTO_EXECUTING, state.turn.activeDlineTid)
+		return ready
+			? acceptTurn(state, event.type, withAdmittedBlock(ready, block.dlineTid, { automatic: true }))
+			: reject(state, event.type)
 	}
 	if (event.type === "BLOCK_APPROVAL_REQUIRED") {
-		if (block.phase !== BlockPhase.STREAMING || state.turn.activeDlineTid) {
+		// Serial approval: a second block cannot be presented while one is
+		// already waiting for the user, because a user can only answer one
+		// question at a time. A block that is executing and asks a question of
+		// its own takes a different path and is not admitted here.
+		if (state.turn.approval?.manual ?? state.turn.activeDlineTid) {
 			return reject(state, event.type)
 		}
-		const turn = replaceTurnBlock(state, block.dlineTid, BlockPhase.AWAITING_APPROVAL, block.dlineTid)
-		return turn ? acceptTurn(state, event.type, turn, TaskPhase.AWAITING_APPROVAL) : reject(state, event.type)
+		if (block.phase !== BlockPhase.STREAMING) {
+			return reject(state, event.type)
+		}
+		const pending = replaceTurnBlock(state, block.dlineTid, BlockPhase.AWAITING_APPROVAL, block.dlineTid)
+		return pending ? acceptTurn(state, event.type, pending, TaskPhase.AWAITING_APPROVAL) : reject(state, event.type)
 	}
 	if (event.type === "BLOCK_APPROVED") {
-		if (block.phase !== BlockPhase.AWAITING_APPROVAL || state.turn.activeDlineTid !== block.dlineTid) {
+		const owner = state.turn.approval?.manual?.dlineTid ?? state.turn.activeDlineTid
+		if (block.phase !== BlockPhase.AWAITING_APPROVAL || owner !== block.dlineTid) {
 			return reject(state, event.type)
 		}
-		const turn = replaceTurnBlock(state, block.dlineTid, BlockPhase.EXECUTING, block.dlineTid)
-		return turn ? acceptTurn(state, event.type, turn, TaskPhase.EXECUTING) : reject(state, event.type)
+		// Releasing the slot and entering execution are one reduction: the slot
+		// is freed the moment permission is granted rather than when the work
+		// finishes, so the next block can be presented while this one runs, and
+		// no intermediate state shows the block as neither approved nor
+		// executing.
+		const approved = replaceTurnBlock(state, block.dlineTid, BlockPhase.EXECUTING, undefined)
+		return approved
+			? acceptTurn(
+					state,
+					event.type,
+					withAdmittedBlock(approved, block.dlineTid, { automatic: false }),
+					TaskPhase.EXECUTING,
+				)
+			: reject(state, event.type)
 	}
 	if (event.type === "BLOCK_REJECTED") {
 		if (block.phase !== BlockPhase.AWAITING_APPROVAL || state.turn.activeDlineTid !== block.dlineTid) {
@@ -632,7 +789,11 @@ function reduceTurn(
 		let afterRejected = false
 		const turn = {
 			...state.turn,
-			activeDlineTid: undefined,
+			// Only the owner may release the slot. With parallel execution the
+			// rejected block is often not the one holding it, and clearing the
+			// projection unconditionally would free another block's live
+			// approval and let a second prompt claim it.
+			activeDlineTid: state.turn.activeDlineTid === block.dlineTid ? undefined : state.turn.activeDlineTid,
 			blocks: state.turn.blocks.map((candidate) => {
 				if (candidate.dlineTid === block.dlineTid) {
 					afterRejected = true
@@ -649,6 +810,10 @@ function reduceTurn(
 	if (block.phase !== BlockPhase.EXECUTING && block.phase !== BlockPhase.AUTO_EXECUTING) {
 		return reject(state, event.type)
 	}
+	// A completed block is terminal, so it leaves the approval slot and the
+	// execution set together. Normalization performs that removal from the
+	// block's own phase, which keeps a single rule for every way a block can
+	// end rather than one clean-up per terminal event.
 	const activeDlineTid = state.turn.activeDlineTid === block.dlineTid ? undefined : state.turn.activeDlineTid
 	const turn = replaceTurnBlock(state, block.dlineTid, BlockPhase.COMPLETED, activeDlineTid)
 	return turn ? acceptTurn(state, event.type, turn, TaskPhase.EXECUTING) : reject(state, event.type)
@@ -880,10 +1045,15 @@ function reduceInteractionResponse(
 		return acceptInteraction(state, result.next, state.anchor, effects)
 	}
 	if (event.response.actionId === "approve") {
-		const nextTurn = replaceTurnBlock(state, block.dlineTid, BlockPhase.EXECUTING, block.dlineTid)
-		if (!nextTurn || !canTransition(state.phase, TaskPhase.EXECUTING)) {
+		// This is the path a real user approval takes, so it must release the
+		// slot exactly like BLOCK_APPROVED. Passing the block as the new owner
+		// would keep it held for the whole execution and block every later
+		// approval, which is the serialization defect this split removes.
+		const approved = replaceTurnBlock(state, block.dlineTid, BlockPhase.EXECUTING, undefined)
+		if (!approved || !canTransition(state.phase, TaskPhase.EXECUTING)) {
 			return reject(state, event.type)
 		}
+		const nextTurn = withAdmittedBlock(approved, block.dlineTid, { automatic: false })
 		return {
 			accepted: true,
 			next: { ...state, revision, phase: TaskPhase.EXECUTING, turn: nextTurn, interaction: result.next },
