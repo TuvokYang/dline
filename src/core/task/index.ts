@@ -273,6 +273,10 @@ import {
 } from "./ContextWindowIndicatorProjection"
 import { detectAvailableCliTools } from "./cli-tool-detector"
 import { buildMistakeLimitContinuationContent } from "./continuation/MistakeLimitContinuation"
+import { ToolCommandLedger } from "./executors/tool/ToolCommandLedger"
+import { createToolDomainRunner } from "./executors/tool/ToolDomainResources"
+import type { UserFacingSurface } from "./executors/tool/ToolDomainSurface"
+import { ToolExecutionDomain } from "./executors/tool/ToolExecutionDomain"
 import { FocusChainManager } from "./focus-chain"
 import { formatFocusChainTaskProgressSection } from "./focus-chain/file-utils"
 import { HistoryResumeMaintenance } from "./history/HistoryResumeMaintenance"
@@ -402,6 +406,26 @@ type ApiRequestTransactionOptions = {
 	logicalApiIndex?: number
 	/** Enter compaction after the complete unsent ordinary candidate crosses the final guard. */
 	forceCompaction?: boolean
+}
+
+/**
+ * Grant a task's own UI capability to its tool domain.
+ *
+ * The main task is the one assembly that legitimately reaches the user, so the
+ * grant is a thin delegation to the members that already own presentation. A
+ * subagent is assembled with a denied surface instead, which removes the
+ * capability by type rather than by overriding individual callbacks.
+ */
+function createTaskUserFacingSurface(task: Task): UserFacingSurface {
+	return {
+		kind: "user_facing",
+		ask: (type, payload, partial) => task.ask(type as ClineAsk, payload, partial),
+		say: async (type, payload, partial) => {
+			await task.say(type as ClineSay, payload, undefined, undefined, partial)
+		},
+		openInteraction: (request) => task.ask((request as { type: ClineAsk }).type, undefined, false),
+		diff: () => task.getDiffSurface(),
+	}
 }
 
 /** Fail fast if dormant runtime effects are dispatched before flow migration. */
@@ -619,6 +643,17 @@ export class Task {
 	private pendingReasoningText?: string
 	private readonly snapshotPersistence: TaskSnapshotPersistence
 	private readonly projectionScheduler: TaskRuntimeProjectionScheduler
+	/**
+	 * The tool execution domain and the ledger that correlates its events.
+	 *
+	 * The domain reports every outcome as an event, while the EXECUTE_TOOL port
+	 * must still settle when the block finishes, so the ledger bridges the two
+	 * without letting the domain learn that anyone is waiting on it.
+	 */
+	private readonly toolDomainLedger = new ToolCommandLedger()
+	private toolDomain?: ToolExecutionDomain
+	/** Monotonic stop generation, so each halt supersedes the previous one. */
+	private toolHaltSequence = 0
 	private readonly systemPromptCacheService: SystemPromptCacheService
 	private readonly promptFreshnessInvalidationCoordinator: PromptFreshnessInvalidationCoordinator
 	private promptInputWatcherSubscription?: PromptInputWatcherSubscription
@@ -921,7 +956,20 @@ export class Task {
 					if (!block) {
 						throw new Error(`Canonical tool block is missing for dlineTid=${effect.dlineTid}`)
 					}
-					await this.toolExecutor.executeTool(block)
+					// The command carries its own identity so a late outcome stays
+					// attributable once several blocks may be in flight at once.
+					const commandId = `${effect.id}:${effect.dlineTid}`
+					const settled = this.toolDomainLedger.track(commandId)
+					this.getToolDomain().handle({
+						commandId,
+						turnId: effect.turnId,
+						dlineTid: effect.dlineTid,
+						mode: effect.mode,
+					})
+					// Awaiting the correlated event, rather than the tool call itself,
+					// keeps a tool failure a failed effect while the domain itself
+					// stays fire-and-forget.
+					await settled
 				},
 				async (effect) => {
 					if (effect.interactionId) {
@@ -5816,8 +5864,10 @@ export class Task {
 				}
 			}
 
-			// Revert diff changes without disposing the provider
-			await this.diffViewProvider.revertChanges()
+			// Stopping the domain is what reverts the diff: routing the reset
+			// through halt keeps "exactly one reset per stop" structural instead
+			// of relying on each cancel path to remember the call.
+			await this.haltToolDomain("cancel")
 
 			// Save state and update UI so the frontend reflects the pause
 			await Promise.all([
@@ -5873,10 +5923,87 @@ export class Task {
 				"checkpointRestore.abortOpenExecutions",
 			)
 
-			await this.diffViewProvider.revertChanges()
+			await this.haltToolDomain("cancel")
 		} finally {
 			this.interactionCoordinator.completeCancellation(cancellationGeneration)
 		}
+	}
+
+	/**
+	 * Build the tool execution domain on first use.
+	 *
+	 * Construction is deferred because the tool executor and command executor
+	 * are assigned after the runtime is created, and an executor that captured
+	 * them too early would hold stale references.
+	 */
+	private getToolDomain(): ToolExecutionDomain {
+		if (!this.toolDomain) {
+			this.toolDomain = new ToolExecutionDomain({
+				runner: createToolDomainRunner({
+					resources: {
+						revertDiff: async () => {
+							await this.diffViewProvider.revertChanges()
+						},
+						// Command cancellation deliberately stays at its existing call
+						// sites: abortExecution already cancels task-owned commands
+						// before halting, and interrupt intentionally leaves running
+						// commands alone. Cancelling here would double-cancel the
+						// first path and change the second.
+						cancelCommand: async () => undefined,
+					},
+					execute: async (command) => {
+						const block = this.taskState.assistantMessageContent.find(
+							(candidate): candidate is ToolUse =>
+								candidate.type === "tool_use" && candidate.dline_tid === command.dlineTid,
+						)
+						if (!block) {
+							throw new Error(`Canonical tool block is missing for dlineTid=${command.dlineTid}`)
+						}
+						await this.toolExecutor.executeTool(block)
+					},
+					onReleaseError: (error) => Logger.error("[toolDomain] Resource release failed (non-fatal):", error),
+				}),
+				sink: this.toolDomainLedger.sink,
+				surface: createTaskUserFacingSurface(this),
+			})
+		}
+		return this.toolDomain
+	}
+
+	/** The editor-visible diff surface, exposed for the tool domain's surface grant. */
+	getDiffSurface(): DiffViewProvider {
+		return this.diffViewProvider
+	}
+
+	/**
+	 * Stop the tool domain and wait for its drain receipt.
+	 *
+	 * A task that never ran a tool has no domain to stop, but the diff still
+	 * has to be reverted, so that case falls back to the provider directly.
+	 *
+	 * The wait is bounded. Cancellation previously never waited on a running
+	 * tool, so an unbounded drain here would let one stuck tool hang the whole
+	 * cancel path; the timeout keeps the stop as responsive as it was before.
+	 */
+	private async haltToolDomain(reason: "cancel" | "terminate" | "detach"): Promise<void> {
+		if (!this.toolDomain) {
+			await this.diffViewProvider.revertChanges()
+			return
+		}
+		this.toolHaltSequence += 1
+		const haltId = `${this.taskId}:halt:${this.toolHaltSequence}`
+		const domain = this.toolDomain
+		try {
+			await withTerminateTimeout(domain.halt({ haltId, reason }), 5_000, "toolDomain.halt")
+		} catch (error) {
+			Logger.error("[toolDomain] Halt did not drain within its budget:", error)
+			// The barrier did not complete, so waiters would otherwise stay
+			// pending behind a tool that never settled.
+			this.toolDomainLedger.releaseAll()
+		}
+		// Only retire this stop. A later halt that arrived while this one was
+		// draining must stay in force, or it would admit work it meant to refuse.
+		domain.rearm(haltId)
 	}
 
 	async terminate(options?: { preserveCompletedState?: boolean }) {

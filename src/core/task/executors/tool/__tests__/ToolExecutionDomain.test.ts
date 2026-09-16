@@ -108,8 +108,12 @@ describe("ToolExecutionDomain command contract", () => {
 				turnId: "turn-1",
 				dlineTid: "tid-a",
 				message: "disk offline",
+				// The original error travels with the event so the runtime can
+				// reject with it and keep the stack the direct call once had.
+				cause: expect.any(Error),
 			},
 		])
+		expect((events[0] as { cause?: Error }).cause?.message).toBe("disk offline")
 	})
 
 	it("carries the reducer's scheduling decision instead of deriving it", async () => {
@@ -242,6 +246,35 @@ describe("ToolExecutionDomain halt contract", () => {
 		// A failed release must not strand the runtime waiting for a receipt.
 		await expect(domain.halt({ haltId: "halt-1", reason: "terminate" })).rejects.toThrow("handle already gone")
 		expect(events).toEqual([{ kind: "tool.halted", haltId: "halt-1" }])
+	})
+})
+
+describe("ToolExecutionDomain rearm generation", () => {
+	it("ignores a rearm naming a stop that a later one superseded", async () => {
+		// Two stops can overlap: a user cancel and a checkpoint restore each halt
+		// the domain. If the first caller's rearm cleared the barrier
+		// unconditionally, the second stop would admit work it meant to refuse.
+		const { events, sink } = createSink()
+		const controllable = createControllableRunner()
+		const domain = new ToolExecutionDomain({ runner: controllable.runner, sink, surface: userFacingSurface() })
+
+		await domain.halt({ haltId: "halt-1", reason: "cancel" })
+		const second = domain.halt({ haltId: "halt-2", reason: "terminate" })
+
+		domain.rearm("halt-1")
+
+		domain.handle(command("tid-late"))
+		await flush()
+		expect(events).toContainEqual(
+			expect.objectContaining({ kind: "tool.rejected", commandId: "cmd-tid-late", reason: "halted" }),
+		)
+
+		await second
+		domain.rearm("halt-2")
+		domain.handle(command("tid-next"))
+		controllable.settle("tid-next")
+		await flush()
+		expect(events).toContainEqual(expect.objectContaining({ kind: "tool.block_result", commandId: "cmd-tid-next" }))
 	})
 })
 

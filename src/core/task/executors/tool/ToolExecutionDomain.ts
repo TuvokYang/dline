@@ -28,7 +28,15 @@ export interface HaltOrder {
 
 export type ToolDomainEvent =
 	| { kind: "tool.block_result"; commandId: string; turnId?: string; dlineTid: string }
-	| { kind: "tool.block_failed"; commandId: string; turnId?: string; dlineTid: string; message: string }
+	| {
+			kind: "tool.block_failed"
+			commandId: string
+			turnId?: string
+			dlineTid: string
+			message: string
+			/** The original failure, so error identity and stack survive the hop. */
+			cause?: unknown
+	  }
 	| { kind: "tool.rejected"; commandId: string; dlineTid: string; reason: "halted" | "superseded" }
 	| { kind: "tool.halted"; haltId: HaltId }
 
@@ -116,6 +124,7 @@ export class ToolExecutionDomain {
 					turnId: command.turnId,
 					dlineTid: command.dlineTid,
 					message: error instanceof Error ? error.message : String(error),
+					cause: error,
 				})
 			})
 			.finally(() => {
@@ -151,8 +160,17 @@ export class ToolExecutionDomain {
 		}
 	}
 
-	/** Re-admit work after a stop, once the runtime starts a new generation. */
-	rearm(): void {
+	/**
+	 * Re-admit work after a stop, once the runtime starts a new generation.
+	 *
+	 * The caller names the stop it is retiring. A later stop that arrived while
+	 * this one was draining must stay in force, otherwise the newer barrier
+	 * would be lifted by the older caller and admit work it intended to refuse.
+	 */
+	rearm(haltId?: HaltId): void {
+		if (haltId !== undefined && this.haltGeneration !== haltId) {
+			return
+		}
 		this.haltGeneration = undefined
 	}
 
