@@ -1,82 +1,47 @@
 # E2E Tests
 
-This directory contains the end-to-end tests for the Cline VS Code extension using Playwright. These tests simulate user interactions with the extension in a real VS Code environment.
+This directory contains Playwright end-to-end tests that exercise Dline inside a real VS Code Electron host.
 
-## Test Structure
+## Test Tiers
 
-The E2E test suite consists of several key components:
+Regular product tests do not live at the `src/test/e2e/` root. Place each scenario in the tier that owns its purpose:
 
-### Test Files
+- **`work/`** - A bounded smoke test and continuous daily user journeys. `playwright.work.config.ts` caps smoke at 60 seconds and each daily journey at 10 minutes.
+- **`functional/`** - Stable, focused black-box regressions for one feature or contract. These tests should prefer visible controls, settings, inputs, outputs, and the minimum required Mock Provider contract.
+- **`dev/`** - Development-only diagnosis, fault injection, and precise regression capture. Use `bug-<behavior>.test.ts`, `feature-<behavior>.test.ts`, or `issue-<number>-<behavior>.test.ts`.
+- **`demo/`** - Marketplace recording scenarios, isolated from normal product gates.
+- **`fixtures/`** - Synthetic workspaces and Mock Provider fixtures.
+- **`utils/`** - Shared setup, worker/test isolation, VS Code launch, and UI helpers.
 
-- **`api-runtime-observability.test.ts`** - Runs each mock provider through multi-turn API, chat composer, and editor integration coverage
-- **`settings-api-profiles.test.ts`** - Covers provider/profile configuration and persistence through the Webview
-- **`task-*.test.ts`** - Covers task tools, lifecycle, checkpoint history, and prompt refresh behavior
-
-### Test Infrastructure
-
-- **`utils/helpers.ts`** - Core test utilities and fixtures including:
-  - `e2e` - Main test fixture for single-root workspace tests
-  - `E2E_WORKSPACE_TYPES` - Workspace variants for tests that cover both single-root and multi-root workspaces
-  - `E2ETestHelper` - Helper class with utilities for VS Code interaction
-- **`utils/common.ts`** - Common utility functions for UI interactions
-- **`utils/global.setup.ts`** - Global test setup and cleanup
-- **`utils/build.mjs`** - Build script for test environment preparation
-
-### Test Fixtures
-
-- **`fixtures/workspace/`** - Single-root workspace test files (HTML, TypeScript, etc.)
-- **`fixtures/workspace_2/`** - Additional workspace with Python provider files
-- **`fixtures/multiroots.code-workspace`** - Multi-root workspace configuration
-- **`fixtures/server/`** - Mock API server for testing Cline's backend interactions
+Use the `@e2e/*` TypeScript alias for imports from `utils/` and `fixtures/`. Product-source imports should use the existing `@core/*`, `@shared/*`, and other project aliases instead of directory-depth-relative paths.
 
 ## Running Tests
 
-### Basic Test Execution
-
-To build the test environment and run all E2E tests:
+The tier scripts build the extension and Webview through their `pre*` hooks before Playwright starts:
 
 ```bash
-npm run test:e2e
+npm run e2e:smoke
+npm run e2e:work
+npm run e2e:functional -- functional/api/api-runtime-observability.test.ts
+npm run e2e:dev -- dev/bug-<behavior>.test.ts
 ```
 
-To run all E2E tests without re-building the test environment (e.g. only test files were updated):
+Use the packaged variants when the scenario must run against `dist/e2e.vsix`:
 
 ```bash
-npm run e2e
+npm run test:e2e:work
+npm run test:e2e:functional -- functional/profiles/settings-api-profiles.test.ts
 ```
 
-### Debug Mode
-
-To run E2E tests in debug mode with Playwright's interactive debugger:
+For focused debugging, keep the tier configuration and append Playwright options:
 
 ```bash
-npm run test:e2e -- --debug
-# Or only run the tests without re-building
-npm run e2e -- --debug
+npm run e2e:dev -- dev/bug-<behavior>.test.ts --debug
+npm run e2e:functional -- functional/tasks/task-runtime-controls.test.ts --headed
+npm run e2e:functional -- --grep "Chat"
 ```
 
-In debug mode, Playwright will:
-- Open a browser window showing the VS Code instance
-- Pause execution at the beginning of each test
-- Allow you to step through test actions
-- Provide a console for inspecting elements and state
-
-### Additional Options
-
-Run specific test files:
-```bash
-npm run e2e -- api-runtime-observability.test.ts
-```
-
-Run tests with specific tags or patterns:
-```bash
-npm run e2e -- --grep "Chat"
-```
-
-Run tests in headed mode (visible browser):
-```bash
-npm run e2e -- --headed
-```
+Do not use the broad legacy runner for routine development when a work or focused functional command proves the changed behavior.
 
 ## Demo Recordings
 
@@ -110,18 +75,15 @@ Use the `e2e` fixture for single-root workspace tests:
 
 ```typescript
 import { expect } from "@playwright/test"
-import { e2e } from "./utils/helpers"
+import { e2e } from "@e2e/utils/helpers"
 
-e2e("Test description", async ({ sidebar, helper, page }) => {
-  // Sign in to Cline
+e2e("Test description", async ({ sidebar, helper }) => {
   await helper.signin(sidebar)
-  
-  // Test interactions
+
   const inputbox = sidebar.getByTestId("chat-input")
-  await inputbox.fill("Hello, Cline!")
+  await inputbox.fill("Hello, Dline!")
   await sidebar.getByTestId("send-button").click()
-  
-  // Assertions
+
   await expect(sidebar.getByText("API Request...")).toBeVisible()
 })
 ```
@@ -129,7 +91,7 @@ e2e("Test description", async ({ sidebar, helper, page }) => {
 For tests that must cover both workspace layouts, iterate over `E2E_WORKSPACE_TYPES`:
 
 ```typescript
-import { E2E_WORKSPACE_TYPES, e2e } from "./utils/helpers"
+import { E2E_WORKSPACE_TYPES, e2e } from "@e2e/utils/helpers"
 
 E2E_WORKSPACE_TYPES.forEach(({ title, workspaceType }) => {
   e2e.extend({ workspaceType })(title, async ({ sidebar, helper }) => {
@@ -142,7 +104,7 @@ E2E_WORKSPACE_TYPES.forEach(({ title, workspaceType }) => {
 
 The test fixtures provide the following objects:
 
-- **`sidebar`** - Playwright Frame object for the Cline extension's sidebar
+- **`sidebar`** - Playwright Frame object for the Dline extension's sidebar
 - **`helper`** - E2ETestHelper instance with utility methods
 - **`page`** - Playwright Page object for the main VS Code window
 - **`app`** - ElectronApplication instance for VS Code
@@ -194,7 +156,7 @@ The `--debug` flag enables Playwright's interactive debugging features:
    ```
 
 2. **Playwright will open:**
-   - A VS Code window with Cline extension loaded
+   - A VS Code window with the Dline extension loaded
    - Playwright Inspector for step-by-step debugging
    - Browser developer tools for element inspection
 
@@ -216,12 +178,12 @@ The test environment includes:
 
 - **VS Code Configuration:**
   - Disabled updates, workspace trust, and welcome screens
-  - Extension development mode with Cline loaded
+  - Extension development mode with Dline loaded
   - Temporary user data and extensions directories
 
 - **Mock API Server:**
   - Binds to an available loopback port for each test
-  - Provides mock responses for Cline API calls
+  - Provides mock responses for Dline API calls
   - Supports authentication, chat completions, and user management
 
 - **Test Workspaces:**
@@ -289,7 +251,7 @@ The test environment includes:
 - `DLINE_E2E_CDP_PORT` - Set the first CDP port; each worker adds its worker index
 
 Each Playwright worker prepares one reusable state template. Mock tests use only generated mock profiles and never read
-`~/.dline/data` or live credential environment variables. `provider-live.test.ts` explicitly enables live preprocessing;
+`~/.dline/data` or live credential environment variables. `functional/harness/provider-live.test.ts` explicitly enables live preprocessing;
 only that mode may copy `secrets/**` and `settings/api_profiles.json`. It never copies `secrets.json`, user settings,
 provider registry files, task history, or other user state. Before each test, the selected template is copied to that
 worker's `%TEMP%/.dline-e2e/worker-N` `DLINE_DIR`; `DLINE_HOME_DIR` uses the same path and `DLINE_DOCS_DIR` uses
