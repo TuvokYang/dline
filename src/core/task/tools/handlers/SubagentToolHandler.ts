@@ -12,12 +12,19 @@ import {
 } from "@shared/ExtensionMessage"
 import { telemetryService } from "@/services/telemetry"
 import { calculateApiUsageStatistics } from "@/shared/api-usage"
+import { Logger } from "@/shared/services/Logger"
 import { ClineDefaultTool } from "@/shared/tools"
 import type { ToolResponse } from "../../index"
 import { showNotificationForApproval } from "../../utils"
-import { listEnabledAgentConfigs, type ResolveAgentConfigOptions, resolveAgentConfig } from "../subagent/AgentConfigLoader"
+import {
+	type AgentBaseConfig,
+	listEnabledAgentConfigs,
+	type ResolveAgentConfigOptions,
+	resolveAgentConfig,
+} from "../subagent/AgentConfigLoader"
 import { DEFAULT_SUBAGENT_NAME, isDefaultSubagentName } from "../subagent/DefaultSubagentConfig"
 import {
+	applyProfileOverride,
 	type PlannedSubagentItem,
 	planSubagentBatch,
 	type RejectedSubagentItem,
@@ -350,6 +357,28 @@ function statsFromActivity(config: TaskConfig, activityId: string): SubagentRunS
 	}
 }
 
+/**
+ * Rebuild the Profile binding a retained item ran with.
+ *
+ * Only an explicit per-item Profile is replayed. When the recipe merely
+ * recorded the subagent's own YAML Profile, the current document is the better
+ * source: reapplying a stale copy would pin the retry to a value the user may
+ * since have changed.
+ *
+ * @param agentConfig Freshly resolved subagent config, absent for the default.
+ * @param subagentName Effective subagent name.
+ * @param profileName Profile recorded on the retry recipe.
+ * @returns Config carrying the Profile the original run used.
+ */
+function applyRecipeProfile(
+	agentConfig: AgentBaseConfig | undefined,
+	subagentName: string,
+	profileName: string | undefined,
+): AgentBaseConfig | undefined {
+	if (!profileName || profileName === agentConfig?.profile) return agentConfig
+	return applyProfileOverride(agentConfig ?? ({ name: subagentName } as AgentBaseConfig), profileName)
+}
+
 /** Rebind a persisted failed subagent activity to a fresh runner after Task reopen. */
 export async function restoreSubagentActivityRetry(config: TaskConfig, activityId: string): Promise<boolean> {
 	const activityStore = config.activityStore
@@ -369,13 +398,18 @@ export async function restoreSubagentActivityRetry(config: TaskConfig, activityI
 		return false
 	}
 	const effectiveSubagentName = resolvedSubagent?.config.name ?? DEFAULT_SUBAGENT_NAME
-	const runner = new SubagentRunner(config, effectiveSubagentName, resolvedSubagent?.config, {
+	// A batch item may have overridden the subagent's own Profile. Replaying
+	// from the subagent config alone would retry on a different model, so the
+	// recorded binding is reapplied before the runner is built.
+	const retryAgentConfig = applyRecipeProfile(resolvedSubagent?.config, effectiveSubagentName, recipe.profileName)
+	const runner = new SubagentRunner(config, effectiveSubagentName, retryAgentConfig, {
 		inheritTaskAbort: false,
 	})
 	const entry: SubagentStatusItem = {
 		index: 1,
 		jobId: activityId,
 		subagentName: effectiveSubagentName,
+		profileName: recipe.profileName,
 		task: recipe.task,
 		prompt: recipe.prompt,
 		background: true,
@@ -458,6 +492,7 @@ function createSubagentActivity(
 			kind: "subagent",
 			schemaVersion: 1,
 			subagentName: entry.subagentName,
+			profileName: entry.profileName,
 			task: entry.task || entry.prompt,
 			prompt: entry.prompt,
 			timeoutSeconds: entry.timeoutSeconds || 0,
@@ -642,9 +677,19 @@ async function runBudgetedSubagent(
 			onProgress: options.onProgress,
 		})
 	} finally {
-		// The runner owns waiting for its own abandoned work; by the time it
-		// has unwound, the slot genuinely reflects freed capacity.
-		slot.release()
+		// An interrupted run resolves while its abandoned tool is still
+		// executing. Releasing here would admit replacement work against
+		// resources that tool still holds, so the slot is returned only once
+		// the runner reports the abandoned work has settled.
+		try {
+			await runner.whenAbandonedWorkSettled()
+		} catch (error) {
+			// The wait is best effort: a stuck abandoned tool must not keep the
+			// slot forever, which would deadlock the remaining items.
+			Logger.warn("[SubagentToolHandler] abandoned subagent tool did not settle cleanly", error)
+		} finally {
+			slot.release()
+		}
 	}
 }
 
@@ -1137,6 +1182,7 @@ export class UseSubagentsToolHandler implements IFullyManagedTool {
 			jobId: item.jobId,
 			prompt: item.prompt,
 			subagentName: item.subagentName,
+			profileName: item.profileName,
 			task: item.task,
 			context: item.context,
 			background: request.options.background,

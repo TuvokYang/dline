@@ -17,6 +17,18 @@ const FLUSH_DELAY_MS = 75
 const MAX_OUTPUT_CHARS = 64 * 1024
 const MAX_EVENT_TEXT_CHARS = 16 * 1024
 const MAX_EVENTS_PER_ACTIVITY = 500
+/**
+ * Ceiling for the single-shot descriptive fields.
+ *
+ * `output` and events were already bounded, but `detail`, `result` and `error`
+ * were not. One call may fan out to 32 subagents, each persisting its own
+ * prompt and final answer, so an unbounded field is multiplied by the batch
+ * width every time the activity file is written. The limit is generous enough
+ * to keep a normal prompt or summary intact and only truncates the outliers
+ * that would otherwise grow task storage without limit.
+ */
+const MAX_TEXT_FIELD_CHARS = 16 * 1024
+const TRUNCATION_NOTICE = "\n… [truncated]"
 const AUTHORIZATION_VALUE_PATTERN = /(\bauthorization\s*[:=]\s*)(?:(?:bearer|basic)\s+)?([^\s,;]+)/gi
 const BEARER_TOKEN_PATTERN = /(\bbearer\s+)([A-Za-z0-9._~+/=-]{8,})/gi
 const SENSITIVE_VALUE_PATTERN = /(api[_-]?key|access[_-]?token|password|secret)(\s*[:=]\s*)([^\s,;]+)/gi
@@ -29,6 +41,23 @@ function redactSensitiveText(text: string): string {
 		.replace(BEARER_TOKEN_PATTERN, "$1[REDACTED]")
 		.replace(SENSITIVE_VALUE_PATTERN, "$1$2[REDACTED]")
 		.replace(KNOWN_SECRET_TOKEN_PATTERN, "[REDACTED]")
+}
+
+/**
+ * Redact and bound one descriptive field.
+ *
+ * The head is kept rather than the tail: a prompt, a summary or an error is
+ * most informative at the start, unlike the streaming `output` log where the
+ * newest lines matter. The marker makes the truncation visible so a reader is
+ * not left believing a clipped value is complete.
+ *
+ * @param text Raw field text.
+ * @returns Redacted text within the field ceiling.
+ */
+function boundFieldText(text: string): string {
+	const safeText = redactSensitiveText(text)
+	if (safeText.length <= MAX_TEXT_FIELD_CHARS) return safeText
+	return `${safeText.slice(0, MAX_TEXT_FIELD_CHARS)}${TRUNCATION_NOTICE}`
 }
 
 type ActivityListener = (update: TaskActivityUpdate) => void | Promise<void>
@@ -134,8 +163,8 @@ export class TaskActivityStore {
 			currentAttempt: 1,
 			createdAt: now,
 			updatedAt: now,
-			title: redactSensitiveText(input.title),
-			detail: input.detail === undefined ? undefined : redactSensitiveText(input.detail),
+			title: boundFieldText(input.title),
+			detail: input.detail === undefined ? undefined : boundFieldText(input.detail),
 			timeoutSeconds: input.timeoutSeconds,
 			parentActivityId: input.parentActivityId,
 			retryRecipe: input.kind === "subagent" ? input.retryRecipe : undefined,
@@ -300,14 +329,14 @@ export class TaskActivityStore {
 		const { metrics, runtime, ...activityPatch } = patch
 		const sanitizedPatch = {
 			...activityPatch,
-			...(activityPatch.title === undefined ? {} : { title: redactSensitiveText(activityPatch.title) }),
-			...(activityPatch.detail === undefined ? {} : { detail: redactSensitiveText(activityPatch.detail) }),
-			...(activityPatch.latestEvent === undefined ? {} : { latestEvent: redactSensitiveText(activityPatch.latestEvent) }),
-			...(activityPatch.result === undefined ? {} : { result: redactSensitiveText(activityPatch.result) }),
-			...(activityPatch.error === undefined ? {} : { error: redactSensitiveText(activityPatch.error) }),
+			...(activityPatch.title === undefined ? {} : { title: boundFieldText(activityPatch.title) }),
+			...(activityPatch.detail === undefined ? {} : { detail: boundFieldText(activityPatch.detail) }),
+			...(activityPatch.latestEvent === undefined ? {} : { latestEvent: boundFieldText(activityPatch.latestEvent) }),
+			...(activityPatch.result === undefined ? {} : { result: boundFieldText(activityPatch.result) }),
+			...(activityPatch.error === undefined ? {} : { error: boundFieldText(activityPatch.error) }),
 			...(activityPatch.retryUnavailableReason === undefined
 				? {}
-				: { retryUnavailableReason: redactSensitiveText(activityPatch.retryUnavailableReason) }),
+				: { retryUnavailableReason: boundFieldText(activityPatch.retryUnavailableReason) }),
 		}
 		Object.assign(activity, sanitizedPatch, { updatedAt: Date.now() })
 		if (runtime && activity.kind === "subagent") {

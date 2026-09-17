@@ -11,6 +11,7 @@ import { afterEach, describe, it, vi, expect as vitestExpect } from "vitest"
 import { TaskActivityStore } from "../../../activity/TaskActivityStore"
 import { TaskState } from "../../../TaskState"
 import * as AgentConfigModule from "../../subagent/AgentConfigLoader"
+import { SubagentBuilder } from "../../subagent/SubagentBuilder"
 import { SubagentRunner, type SubagentRunResult } from "../../subagent/SubagentRunner"
 import type { TaskConfig } from "../../types/TaskConfig"
 import { createUIHelpers } from "../../types/UIHelpers"
@@ -60,6 +61,15 @@ vi.mock("../../subagent/SubagentBuilder", () => ({
 		this.getConfiguredSkills = () => undefined
 	}),
 }))
+
+/**
+ * Read the mocked builder so a test can inspect the agent config a runner was
+ * constructed with. The builder is the point where a resolved Profile becomes
+ * an API handler, so its third argument is the observable binding.
+ */
+function vitestMockedBuilder(): ReturnType<typeof vi.fn> {
+	return SubagentBuilder as unknown as ReturnType<typeof vi.fn>
+}
 
 function createConfig(options?: {
 	autoApproveSafe?: boolean
@@ -1047,6 +1057,90 @@ describe("SubagentToolHandler", () => {
 		await vi.waitFor(() => assert.equal(activityStore.get("subagent-restored")?.status, "completed"))
 		assert.equal(activityStore.get("subagent-restored")?.currentAttempt, 2)
 		assert.equal(activityStore.get("subagent-restored")?.result, "recovered after reopen")
+	})
+
+	it("replays a restored retry with the Profile the batch item originally resolved", async () => {
+		const { config } = createConfig({ autoApproveSafe: true, autoApproveAll: true })
+		config.taskState.abort = true
+		const activityStore = new TaskActivityStore("task-1")
+		activityStore.create({
+			activityId: "subagent-profile-bound",
+			kind: "subagent",
+			executionMode: "background",
+			title: "reviewer",
+			retryRecipe: {
+				kind: "subagent",
+				schemaVersion: 1,
+				subagentName: "reviewer",
+				// The item overrode the subagent's own Profile when it first ran.
+				profileName: "fast-reviewer",
+				task: "review",
+				prompt: "<task>review</task><context>ctx</context>",
+				timeoutSeconds: 30,
+				retryable: true,
+			},
+		})
+		activityStore.update("subagent-profile-bound", { status: "failed", error: "temporary provider failure" })
+		config.activityStore = activityStore
+		// The subagent document now names a different Profile, so replaying from
+		// the document alone would silently move the retry to another model.
+		vi.spyOn(AgentConfigModule, "resolveAgentConfig").mockResolvedValue({
+			config: { name: "reviewer", profile: "slow-reviewer" },
+		} as any)
+		vi.spyOn(SubagentRunner.prototype, "run").mockResolvedValue({
+			status: "completed",
+			result: "recovered on the original Profile",
+			stats: emptyTestStats(),
+		})
+		const builderCallsBefore = vitestMockedBuilder().mock.calls.length
+
+		assert.equal(await restoreSubagentActivityRetry(config, "subagent-profile-bound"), true)
+
+		const restoredConfig = vitestMockedBuilder().mock.calls.at(builderCallsBefore)?.[2]
+		assert.equal(
+			restoredConfig?.profile,
+			"fast-reviewer",
+			"the retry must run on the Profile the item originally resolved",
+		)
+		assert.deepEqual(await activityStore.retry(["subagent-profile-bound"]), ["subagent-profile-bound"])
+		await vi.waitFor(() => assert.equal(activityStore.get("subagent-profile-bound")?.status, "completed"))
+	})
+
+	it("leaves a restored retry on the subagent's current Profile when the item never overrode it", async () => {
+		const { config } = createConfig({ autoApproveSafe: true, autoApproveAll: true })
+		config.taskState.abort = true
+		const activityStore = new TaskActivityStore("task-1")
+		activityStore.create({
+			activityId: "subagent-inherits-profile",
+			kind: "subagent",
+			executionMode: "background",
+			title: "reviewer",
+			retryRecipe: {
+				kind: "subagent",
+				schemaVersion: 1,
+				subagentName: "reviewer",
+				// Recorded from the subagent document rather than an item override.
+				profileName: "slow-reviewer",
+				task: "review",
+				prompt: "<task>review</task><context>ctx</context>",
+				timeoutSeconds: 30,
+				retryable: true,
+			},
+		})
+		activityStore.update("subagent-inherits-profile", { status: "failed", error: "temporary provider failure" })
+		config.activityStore = activityStore
+		vi.spyOn(AgentConfigModule, "resolveAgentConfig").mockResolvedValue({
+			config: { name: "reviewer", profile: "slow-reviewer", model: "current" },
+		} as any)
+		const builderCallsBefore = vitestMockedBuilder().mock.calls.length
+
+		assert.equal(await restoreSubagentActivityRetry(config, "subagent-inherits-profile"), true)
+
+		// The freshly resolved document is passed through untouched, so later
+		// edits to the subagent still take effect on a retry.
+		const restoredConfig = vitestMockedBuilder().mock.calls.at(builderCallsBefore)?.[2]
+		assert.equal(restoredConfig?.profile, "slow-reviewer")
+		assert.equal(restoredConfig?.model, "current", "an unchanged Profile must not replace the resolved document")
 	})
 
 	it("persists why a named subagent retry cannot be restored after Task reopen", async () => {

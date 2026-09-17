@@ -712,6 +712,13 @@ export interface SubagentStatusItem {
 	contextUsagePercentage: number
 	jobId?: string
 	subagentName?: string
+	/**
+	 * Profile this item was resolved to, when one applies.
+	 *
+	 * Shown so a batch that mixes Profiles is readable per item, and recorded
+	 * on the retry recipe so a replay reproduces the same binding.
+	 */
+	profileName?: string
 	task?: string
 	context?: string
 	background?: boolean

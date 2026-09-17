@@ -170,11 +170,14 @@ export function subagentJobId(batchId: string, index: number): string {
  * item's choice travels through the same resolution path as a YAML profile
  * instead of adding a second, parallel way to select a Profile.
  *
+ * Also used when replaying a retained item, so a retry rebuilds the same
+ * binding the original run used rather than re-deriving it.
+ *
  * @param agentConfig Resolved config, absent for the built-in default.
  * @param profile Profile explicitly requested by the item.
  * @returns Config carrying the effective profile.
  */
-function applyProfileOverride(
+export function applyProfileOverride(
 	agentConfig: AgentBaseConfig | undefined,
 	profile: string | undefined,
 ): AgentBaseConfig | undefined {

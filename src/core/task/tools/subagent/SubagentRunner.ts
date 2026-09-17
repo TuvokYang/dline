@@ -506,6 +506,16 @@ export class SubagentRunner {
 	private abortingCommands = false
 	private apiLogRequestIndex = 0
 	private interruptionController: AbortController | undefined
+	/**
+	 * Tool executions the run stopped waiting for but that are still running.
+	 *
+	 * An interrupted run reports `cancelled` immediately while the abandoned
+	 * tool keeps holding a terminal, a file handle or a host request. Treating
+	 * the run as finished at that moment would free a concurrency slot the
+	 * machine has not actually reclaimed, so the abandoned work is tracked and
+	 * the owner of the slot can wait for it.
+	 */
+	private readonly abandonedToolExecutions = new Set<Promise<unknown>>()
 
 	constructor(
 		private baseConfig: TaskConfig,
@@ -575,8 +585,26 @@ export class SubagentRunner {
 		} finally {
 			if (onAbort) signal.removeEventListener("abort", onAbort)
 			// The abandoned tool keeps running; make sure it cannot surface as an
-			// unhandled rejection after the runner has moved on.
-			void Promise.resolve(toolExecution).catch(() => undefined)
+			// unhandled rejection after the runner has moved on, and keep it
+			// observable so the freed slot is not reused before it settles.
+			const settled = Promise.resolve(toolExecution).catch(() => undefined)
+			if (signal.aborted) {
+				this.abandonedToolExecutions.add(settled)
+				void settled.finally(() => this.abandonedToolExecutions.delete(settled))
+			}
+		}
+	}
+
+	/**
+	 * Wait until every tool this run abandoned has stopped.
+	 *
+	 * Resolves immediately when nothing was abandoned, which is the normal
+	 * path. A caller that releases a concurrency permit on the run's behalf
+	 * awaits this first so the reported capacity matches the real one.
+	 */
+	async whenAbandonedWorkSettled(): Promise<void> {
+		while (this.abandonedToolExecutions.size > 0) {
+			await Promise.all([...this.abandonedToolExecutions])
 		}
 	}
 

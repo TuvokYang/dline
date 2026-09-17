@@ -101,6 +101,15 @@ export interface SubagentRetryRecipe {
 	kind: "subagent"
 	schemaVersion: 1
 	subagentName?: string
+	/**
+	 * Profile the item was resolved to when it first ran.
+	 *
+	 * A batch item may override the subagent's own Profile, so replaying from
+	 * the subagent name alone would silently retry on a different model. The
+	 * resolved name is recorded here so a retry after a task reopen reproduces
+	 * the original binding.
+	 */
+	profileName?: string
 	task: string
 	prompt: string
 	timeoutSeconds: number
