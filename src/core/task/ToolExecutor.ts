@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks"
 import path from "node:path"
 import { ApiHandler, resolveProviderFromProfile } from "@core/api"
 import type { WebSearchRoutingPlan } from "@core/api/server-tools"
@@ -59,7 +60,7 @@ import type { InteractionKind } from "./interaction/Interaction"
 import { isInteractionCancellationError } from "./interaction/InteractionCancellationError"
 import type { InteractionOutcome } from "./interaction/InteractionCoordinator"
 import { isTurnEndContinuationHandler, requiresTurnEndContinuation } from "./interaction/TurnEndContinuationRegistry"
-import { checkRepeatedToolCall, LOOP_DETECTION_SOFT_THRESHOLD, toolCallSignature } from "./loop-detection"
+import { LOOP_DETECTION_SOFT_THRESHOLD, recordToolCall, toolCallSignature } from "./loop-detection"
 import { MessageStateHandler } from "./message-state"
 import type { ProviderRequestRoundPort } from "./performance/provider-request-round-port"
 import { resolveRequestWebSearchRoutingPlan } from "./RequestApiScope"
@@ -579,14 +580,18 @@ export class ToolExecutor {
 	}
 
 	/**
-	 * Duration scope of the tool currently executing, when one is.
+	 * Duration scope of the execution the current code is running under.
 	 *
-	 * Held on the executor rather than threaded through every handler so the
-	 * approval and command wrappers can find it without changing the tool
-	 * interface. It is saved and restored around each execution, so a tool that
-	 * runs another one restores its parent's scope on the way out.
+	 * Async-local rather than an instance field, because tools now overlap.
+	 * A single field can only describe one execution, and saving and restoring
+	 * it around each call assumes executions nest: with two blocks in flight
+	 * the one that finishes first would clear the field its sibling is still
+	 * using, so the sibling's remaining approval wait would be counted as its
+	 * own work. Binding the scope to the execution flow instead gives every
+	 * block the scope that belongs to it, however the blocks interleave, and
+	 * still lets a nested tool see its parent's.
 	 */
-	private activeDurationScope: ToolDurationScope | undefined
+	private readonly durationScopes = new AsyncLocalStorage<ToolDurationScope>()
 
 	constructor(
 		// Core Services & Managers
@@ -748,20 +753,22 @@ export class ToolExecutor {
 				// Waiting for the user is not work the tool performed, so the
 				// wrapper is installed once here instead of asking every handler
 				// to remember to exclude its own approval.
-				ask: (...args: Parameters<typeof this.ask>) =>
-					this.activeDurationScope
-						? this.activeDurationScope.excludeWait("approval", () => this.ask(...args))
-						: this.ask(...args),
+				ask: (...args: Parameters<typeof this.ask>) => {
+					const scope = this.durationScopes.getStore()
+					return scope ? scope.excludeWait("approval", () => this.ask(...args)) : this.ask(...args)
+				},
 				saveCheckpoint: this.saveCheckpoint,
 				postStateToWebview: async () => {},
 				reinitExistingTaskFromId: async () => {},
 				cancelTask: () => this.requestCancellationFromToolEffect(),
 				updateTaskHistory: async () => [],
 				// A command's runtime belongs to the workspace, not to Dline.
-				executeCommandTool: (...args: Parameters<typeof this.executeCommandTool>) =>
-					this.activeDurationScope
-						? this.activeDurationScope.excludeWait("command", () => this.executeCommandTool(...args))
-						: this.executeCommandTool(...args),
+				executeCommandTool: (...args: Parameters<typeof this.executeCommandTool>) => {
+					const scope = this.durationScopes.getStore()
+					return scope
+						? scope.excludeWait("command", () => this.executeCommandTool(...args))
+						: this.executeCommandTool(...args)
+				},
 				killCommandTool: this.killCommandTool,
 				cancelRunningCommandTool: this.cancelRunningCommandTool,
 				doesLatestTaskCompletionHaveNewChanges: this.doesLatestTaskCompletionHaveNewChanges,
@@ -829,25 +836,23 @@ export class ToolExecutor {
 		// duration it reports has to exclude the waits the user and the
 		// workspace own or it would measure them instead.
 		const scope = new ToolDurationScope()
-		const previousScope = this.activeDurationScope
-		this.activeDurationScope = scope
 		// Partial blocks are streamed presentation updates of a call that has not
 		// finished arriving, so measuring them would flood the histogram with
 		// fragments of one execution.
 		const shouldReport = block.partial !== true
-		try {
-			const handled = await runWithSignalSpan(span, () => this.execute(block))
-			span.setAttribute("handled", handled)
-			span.end(handled ? "success" : "failure")
-			if (shouldReport) this.reportToolDuration(scope, block, handled ? "success" : "failure")
-		} catch (error) {
-			span.recordException(error)
-			span.end("failure")
-			if (shouldReport) this.reportToolDuration(scope, block, "failure")
-			throw error
-		} finally {
-			this.activeDurationScope = previousScope
-		}
+		return this.durationScopes.run(scope, async () => {
+			try {
+				const handled = await runWithSignalSpan(span, () => this.execute(block))
+				span.setAttribute("handled", handled)
+				span.end(handled ? "success" : "failure")
+				if (shouldReport) this.reportToolDuration(scope, block, handled ? "success" : "failure")
+			} catch (error) {
+				span.recordException(error)
+				span.end("failure")
+				if (shouldReport) this.reportToolDuration(scope, block, "failure")
+				throw error
+			}
+		})
 	}
 
 	/**
@@ -1425,10 +1430,9 @@ export class ToolExecutor {
 			}
 
 			// --- Repeated tool call loop detection ---
-			// Must run BEFORE updating lastToolName/lastToolParams so we compare
-			// against the previous call's values, not the current one.
-			const currentSignature = toolCallSignature(block.params)
-			const loopCheck = checkRepeatedToolCall(this.taskState, block.name, currentSignature)
+			// Comparing against the previous call and becoming the previous
+			// call are one step, so no await can fall between them here.
+			const loopCheck = recordToolCall(this.taskState, block.name, toolCallSignature(block.params))
 
 			if (loopCheck.softWarning) {
 				this.taskState.userMessageContent.push({
@@ -1440,10 +1444,6 @@ export class ToolExecutor {
 			if (loopCheck.hardEscalation) {
 				this.taskState.consecutiveMistakeCount = this.stateManager.getGlobalSettingsKey("maxConsecutiveMistakes")
 			}
-
-			// Update state AFTER comparison
-			this.taskState.lastToolName = block.name
-			this.taskState.lastToolParams = currentSignature
 
 			// Check abort before running PostToolUse hook (success path)
 			if (this.taskState.abort) {

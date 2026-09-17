@@ -1,12 +1,17 @@
 import { describe, it } from "vitest"
 import "should"
-import { checkRepeatedToolCall, toolCallSignature } from "../loop-detection"
+import { recordToolCall, toolCallSignature } from "../loop-detection"
 import { TaskState } from "../TaskState"
 
-/** Simulate a tool call matching production order in ToolExecutor. */
+/**
+ * Simulate a tool call the way ToolExecutor makes it.
+ *
+ * The detector call itself is the production one, so a change to how the
+ * comparison and the state update are ordered is visible here rather than
+ * duplicated into the fixture.
+ */
 function simulateToolCall(state: TaskState, toolName: string, params: Record<string, string>, maxMistakes = 3) {
-	const sig = toolCallSignature(params)
-	const result = checkRepeatedToolCall(state, toolName, sig)
+	const result = recordToolCall(state, toolName, toolCallSignature(params))
 
 	if (result.softWarning) {
 		state.userMessageContent.push({ type: "text", text: `[WARNING] loop detected for ${toolName}` })
@@ -15,8 +20,6 @@ function simulateToolCall(state: TaskState, toolName: string, params: Record<str
 		state.consecutiveMistakeCount = maxMistakes
 	}
 
-	state.lastToolName = toolName
-	state.lastToolParams = sig
 	return result
 }
 
@@ -130,5 +133,28 @@ describe("Loop Detection", () => {
 
 		results[2].softWarning.should.be.true()
 		results[4].hardEscalation.should.be.true()
+	})
+
+	it("records the call it just compared, leaving no half-applied state", () => {
+		// The detector both reads the previous call and becomes it. Callers
+		// used to perform the second half themselves, so the state was only
+		// correct if every call site remembered to — and a call site that let
+		// an await fall between the halves would compare later calls against a
+		// record its own call had never written. Asserting the full state on
+		// return is what makes splitting the step visible: a caller that only
+		// compares leaves lastToolName behind, and this fails.
+		const state = new TaskState()
+
+		const verdict = recordToolCall(state, "read_file", toolCallSignature({ path: "a.ts" }))
+
+		verdict.softWarning.should.be.false()
+		state.lastToolName.should.equal("read_file")
+		state.lastToolParams.should.equal(toolCallSignature({ path: "a.ts" }))
+		state.consecutiveIdenticalToolCount.should.equal(1)
+
+		// The recorded call is what the next comparison sees, so an immediate
+		// repeat counts as identical rather than restarting the run.
+		recordToolCall(state, "read_file", toolCallSignature({ path: "a.ts" }))
+		state.consecutiveIdenticalToolCount.should.equal(2)
 	})
 })

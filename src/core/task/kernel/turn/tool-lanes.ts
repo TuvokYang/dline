@@ -26,18 +26,6 @@ export const LANE_CHECKPOINT = "checkpoint"
 /** The foreground terminal, which is one visible device with ordered output. */
 export const LANE_FOREGROUND_TERMINAL = "foreground-terminal"
 
-/**
- * Unscoped modification of workspace files.
- *
- * Held by executions whose write set cannot be known in advance. A shell
- * command is the case that matters: `sed -i`, `npm install`, `git checkout`
- * and `mv` all rewrite files the block never named, which is why the command
- * handler clears the entire file-read cache afterwards. Path lanes cannot
- * express that, so the command takes the same lane as the file editors and no
- * edit runs beside a command that might be rewriting the very file it holds.
- */
-export const LANE_WORKSPACE_MUTATION = "workspace-mutation"
-
 /** The single user-interaction slot the reducer permits. */
 export const LANE_USER_INTERACTION = "user-interaction"
 
@@ -110,24 +98,26 @@ const STATIC_LANES: Partial<Record<ClineDefaultTool, readonly ToolLane[]>> = {
 	// Every file-editing tool drives the one shared DiffViewProvider. Its
 	// open() overwrites editType, originalContent and isEditing, so two edits
 	// corrupt each other even when their paths differ.
-	//
-	// They also hold the workspace-mutation lane, which is what keeps a shell
-	// command from rewriting the file an edit is in the middle of applying.
-	[ClineDefaultTool.FILE_NEW]: [LANE_DIFF_EDITOR, LANE_WORKSPACE_MUTATION],
-	[ClineDefaultTool.FILE_EDIT]: [LANE_DIFF_EDITOR, LANE_WORKSPACE_MUTATION],
-	[ClineDefaultTool.NEW_RULE]: [LANE_DIFF_EDITOR, LANE_WORKSPACE_MUTATION],
-	[ClineDefaultTool.APPLY_PATCH]: [LANE_DIFF_EDITOR, LANE_WORKSPACE_MUTATION],
-	[ClineDefaultTool.REPLACE_TEXT]: [LANE_DIFF_EDITOR, LANE_WORKSPACE_MUTATION],
-	[ClineDefaultTool.RENAME]: [LANE_DIFF_EDITOR, LANE_WORKSPACE_MUTATION],
+	[ClineDefaultTool.FILE_NEW]: [LANE_DIFF_EDITOR],
+	[ClineDefaultTool.FILE_EDIT]: [LANE_DIFF_EDITOR],
+	[ClineDefaultTool.NEW_RULE]: [LANE_DIFF_EDITOR],
+	[ClineDefaultTool.APPLY_PATCH]: [LANE_DIFF_EDITOR],
+	[ClineDefaultTool.REPLACE_TEXT]: [LANE_DIFF_EDITOR],
+	[ClineDefaultTool.RENAME]: [LANE_DIFF_EDITOR],
 
 	// The browser handler reassigns config.services.browserSession on launch,
 	// so a concurrent action would address a session that no longer exists.
 	[ClineDefaultTool.BROWSER]: [LANE_BROWSER_SESSION],
 
-	// Command execution owns the foreground terminal device, and may rewrite
-	// any workspace file, so it is exclusive with the file editors too.
-	[ClineDefaultTool.BASH]: [LANE_FOREGROUND_TERMINAL, LANE_WORKSPACE_MUTATION],
-	// Killing a command touches no file; it only needs the terminal.
+	// Command execution owns the foreground terminal device.
+	//
+	// A command can also rewrite files it never named, which no lane here can
+	// express. That reach is deliberately not contained by an exclusivity lane:
+	// the prompt discourages it today, and the intended mechanisms are the AI
+	// approver and a command sandbox allowlist. Serialising every command
+	// against every edit would be a large standing cost for a guarantee this
+	// lane cannot actually provide.
+	[ClineDefaultTool.BASH]: [LANE_FOREGROUND_TERMINAL],
 	[ClineDefaultTool.KILL_COMMAND]: [LANE_FOREGROUND_TERMINAL],
 
 	// Both subagent entry points own the same task-level execution flag.
