@@ -16,15 +16,18 @@ const RULE_MARKER = "WORK_SMOKE_RULE_ACTIVE"
 const SKILL_MARKER = "WORK_SMOKE_SKILL_ACTIVE"
 const TASK_TEXT = "WORK_SMOKE_VALIDATE_CORE_CAPABILITIES"
 const COMPLETION = "WORK_SMOKE_CORE_CAPABILITIES_OK"
+const SMOKE_FILE = "work-smoke-checkpoint.txt"
 const INITIAL_CHECKLIST = [
 	"# Work Smoke Focus Chain",
 	"- [x] Settings and Provider",
-	"- [x] Native tool calls",
+	"- [ ] Common programming tools",
 	"- [x] Rules and Skills",
-	"- [x] MCP",
+	"- [ ] MCP",
 	"- [ ] Checkpoint",
 ].join("\n")
-const COMPLETED_CHECKLIST_UPDATE = "- [x] Checkpoint"
+const COMMON_TOOLS_CHECKLIST_UPDATE = "- [x] Common programming tools"
+const FINAL_CHECKLIST_UPDATE = ["- [x] MCP", "- [x] Checkpoint"].join("\n")
+const COMMAND = `node -e "const fs=require('fs'); const value=fs.readFileSync('${SMOKE_FILE}','utf8').trim(); console.log('WORK_SMOKE_COMMAND_'+value)"`
 
 function escapeForRegExp(value: string): string {
 	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
@@ -125,10 +128,55 @@ e2e(
 			TARGET,
 			{
 				type: "tool",
+				id: "call_work_smoke_list",
+				name: "list_files",
+				arguments: { path: ".", recursive: false, task_progress: INITIAL_CHECKLIST },
+				expectedRequestIncludes: [TASK_TEXT, RULE_MARKER, SKILL_MARKER, mcpInternalName, MCP_TOOL_NAME],
+			},
+			{
+				type: "tool",
+				id: "call_work_smoke_search",
+				name: "search_files",
+				arguments: { path: ".", regex: "Test Workspace", file_pattern: "README.md" },
+				expectedToolResults: [{ callId: "call_work_smoke_list", contentIncludes: "README.md" }],
+			},
+			{
+				type: "tool",
 				id: "call_work_smoke_read",
 				name: "read_file",
-				arguments: { path: "README.md", task_progress: INITIAL_CHECKLIST },
-				expectedRequestIncludes: [TASK_TEXT, RULE_MARKER, SKILL_MARKER, mcpInternalName, MCP_TOOL_NAME],
+				arguments: { path: "README.md" },
+				expectedToolResults: [{ callId: "call_work_smoke_search", contentIncludes: "Test Workspace" }],
+			},
+			{
+				type: "tool",
+				id: "call_work_smoke_write",
+				name: "write_to_file",
+				arguments: { path: SMOKE_FILE, content: "WORK_SMOKE_CHECKPOINT_BEFORE\n" },
+				expectedToolResults: [{ callId: "call_work_smoke_read", contentIncludes: "# Test Workspace" }],
+			},
+			{
+				type: "tool",
+				id: "call_work_smoke_replace",
+				name: "replace_in_file",
+				arguments: {
+					path: SMOKE_FILE,
+					diff: "------- SEARCH\nWORK_SMOKE_CHECKPOINT_BEFORE\n=======\nWORK_SMOKE_CHECKPOINT_OK\n+++++++ REPLACE",
+					task_progress: COMMON_TOOLS_CHECKLIST_UPDATE,
+				},
+				expectedToolResults: [{ callId: "call_work_smoke_write", contentIncludes: "successfully saved" }],
+			},
+			{
+				type: "tool",
+				id: "call_work_smoke_command",
+				name: "execute_command",
+				arguments: {
+					command: COMMAND,
+					workdirectory: ".",
+					requires_approval: false,
+					synchronous: true,
+					timeout: 60,
+				},
+				expectedToolResults: [{ callId: "call_work_smoke_replace", contentIncludes: "successfully replaced" }],
 			},
 			{
 				type: "tool",
@@ -138,26 +186,18 @@ e2e(
 					server_name: mcpInternalName,
 					tool_name: MCP_TOOL_NAME,
 					arguments: JSON.stringify({ value: "WORK_SMOKE_MCP_OK" }),
+					task_progress: FINAL_CHECKLIST_UPDATE,
 				},
-				expectedToolResults: [{ callId: "call_work_smoke_read", contentIncludes: "# Test Workspace" }],
-			},
-			{
-				type: "tool",
-				id: "call_work_smoke_write",
-				name: "write_to_file",
-				arguments: {
-					path: "work-smoke-checkpoint.txt",
-					content: "WORK_SMOKE_CHECKPOINT_OK\n",
-					task_progress: COMPLETED_CHECKLIST_UPDATE,
-				},
-				expectedToolResults: [{ callId: "call_work_smoke_mcp", contentIncludes: "WORK_SMOKE_MCP_OK" }],
+				expectedToolResults: [
+					{ callId: "call_work_smoke_command", contentIncludes: "WORK_SMOKE_COMMAND_WORK_SMOKE_CHECKPOINT_OK" },
+				],
 			},
 			{
 				type: "tool",
 				id: "call_work_smoke_complete",
 				name: "attempt_completion",
 				arguments: { result: COMPLETION },
-				expectedToolResults: [{ callId: "call_work_smoke_write", contentIncludes: "successfully saved" }],
+				expectedToolResults: [{ callId: "call_work_smoke_mcp", contentIncludes: "WORK_SMOKE_MCP_OK" }],
 			},
 		)
 
@@ -169,7 +209,7 @@ e2e(
 			await prepareWorkSession(sidebar, helper)
 			await verifySettings(page, sidebar)
 			await verifyCapabilityDiscovery(sidebar)
-			for (const label of ["Read project files", "Edit project files", "Use MCP servers"]) {
+			for (const label of ["Read project files", "Edit project files", "Execute safe commands", "Use MCP servers"]) {
 				await setWorkAutoApproveAction(sidebar, label, true)
 			}
 
@@ -194,12 +234,16 @@ e2e(
 					timeout: 30_000,
 				})
 				.toBeGreaterThan(0)
-			await expect.poll(() => server.getRequestCount(TARGET)).toBe(4)
+			await expect.poll(() => server.getRequestCount(TARGET)).toBe(8)
 			const consumptions = server.getMockConsumptions(TARGET)
 			expect(consumptions.map((entry) => entry.toolName)).toEqual([
+				"list_files",
+				"search_files",
 				"read_file",
-				"use_mcp_tool",
 				"write_to_file",
+				"replace_in_file",
+				"execute_command",
+				"use_mcp_tool",
 				"attempt_completion",
 			])
 			expect(consumptions.every((entry) => entry.contractError === undefined)).toBe(true)

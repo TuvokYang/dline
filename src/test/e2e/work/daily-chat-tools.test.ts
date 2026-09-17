@@ -7,6 +7,10 @@ const TASK_TEXT = "WORK_DAILY_CHAT_TOOLS_TASK"
 const READ_REQUEST = "WORK_DAILY_READ_REQUEST"
 const READ_NOTE = "WORK_DAILY_READ_APPROVAL_NOTE"
 const COMMAND_REQUEST = "WORK_DAILY_COMMAND_REQUEST"
+const EXIT_REQUEST = "WORK_DAILY_EXIT_REQUEST"
+const EXIT_RESUME_NOTE = "WORK_DAILY_EXIT_RESUME_NOTE"
+const EXIT_CLOSED = "WORK_DAILY_EXITED_RESPONSE_MUST_NOT_RENDER"
+const EXIT_RESUMED = "WORK_DAILY_EXIT_RESUME_OK"
 const FINISH_REQUEST = "WORK_DAILY_FINISH_REQUEST"
 const RESUME_NOTE = "WORK_DAILY_RESUME_NOTE"
 const COMPLETE = "WORK_DAILY_CHAT_TOOLS_COMPLETE"
@@ -72,6 +76,29 @@ e2e(
 			},
 			{
 				type: "tool",
+				id: "call_daily_exit_read",
+				name: "read_file",
+				arguments: { path: "README.md" },
+				expectedRequestIncludes: [EXIT_REQUEST],
+			},
+			{
+				type: "tool",
+				id: "call_daily_exit_interrupted",
+				name: "qna_respond",
+				arguments: { response: EXIT_CLOSED },
+				delayMs: 30_000,
+				expectedToolResults: [{ callId: "call_daily_exit_read", contentIncludes: "# Test Workspace" }],
+			},
+			{
+				type: "tool",
+				id: "call_daily_exit_resumed",
+				name: "qna_respond",
+				arguments: { response: EXIT_RESUMED },
+				expectedToolResults: [{ callId: "call_daily_exit_read", contentIncludes: "# Test Workspace" }],
+				expectedRequestIncludes: ["The previous task session was closed and has now been restored.", EXIT_RESUME_NOTE],
+			},
+			{
+				type: "tool",
 				id: "call_daily_cancelled",
 				name: "attempt_completion",
 				arguments: { result: CANCELLED },
@@ -126,8 +153,29 @@ e2e(
 		await expect(commandOutput).toContainText("WORK_DAILY_COMMAND_END")
 		await setWorkAutoApproveAction(sidebar, "Execute safe commands", false)
 
+		await sendWorkMessage(sidebar, EXIT_REQUEST)
+		const exitApprove = footer.getByText("Approve", { exact: true })
+		await expect(exitApprove).toBeVisible({ timeout: 60_000 })
+		await exitApprove.click()
+		await expect.poll(() => server.getRequestCount(TARGET), { timeout: 60_000 }).toBe(7)
+		await expect(sidebar.getByText("Dline read 1 file:", { exact: true }).last()).toBeVisible({ timeout: 30_000 })
+		await sidebar.getByRole("button", { name: "Close Task", exact: true }).click()
+		await E2ETestHelper.dismissWhatsNewModal(sidebar)
+		await page.getByRole("button", { name: "History", exact: true }).click()
+		await E2ETestHelper.dismissWhatsNewModal(sidebar)
+		const interruptedHistoryRow = sidebar.getByText(TASK_TEXT, { exact: true }).last()
+		await expect(interruptedHistoryRow).toBeVisible({ timeout: 30_000 })
+		await interruptedHistoryRow.click()
+		const exitResume = sidebar.getByRole("contentinfo").getByText("Resume", { exact: true })
+		await expect(exitResume).toBeVisible({ timeout: 30_000 })
+		await expect(sidebar.getByText(EXIT_CLOSED, { exact: false })).toHaveCount(0)
+		const exitInput = sidebar.getByTestId("chat-input")
+		await exitInput.fill(EXIT_RESUME_NOTE)
+		await exitResume.click()
+		await expect(sidebar.getByText(EXIT_RESUMED, { exact: true })).toBeVisible({ timeout: 60_000 })
+
 		await sendWorkMessage(sidebar, FINISH_REQUEST)
-		await expect.poll(() => server.getRequestCount(TARGET), { timeout: 30_000 }).toBe(6)
+		await expect.poll(() => server.getRequestCount(TARGET), { timeout: 30_000 }).toBe(9)
 		const cancel = footer.getByText("Cancel", { exact: true })
 		await expect(cancel).toBeVisible({ timeout: 30_000 })
 		await cancel.click()
@@ -157,13 +205,16 @@ e2e(
 		const historyScrollToBottom = sidebar.getByRole("button", { name: "Scroll to bottom", exact: true })
 		if (await historyScrollToBottom.isVisible()) await historyScrollToBottom.click()
 		await expect(sidebar.getByText(COMPLETE, { exact: false }).last()).toBeVisible({ timeout: 30_000 })
-		await expect.poll(() => server.getRequestCount(TARGET)).toBe(7)
+		await expect.poll(() => server.getRequestCount(TARGET)).toBe(10)
 		const consumptions = server.getMockConsumptions(TARGET)
 		expect(consumptions.map((entry) => entry.toolName)).toEqual([
 			"qna_respond",
 			"read_file",
 			"qna_respond",
 			"execute_command",
+			"qna_respond",
+			"read_file",
+			"qna_respond",
 			"qna_respond",
 			"attempt_completion",
 			"attempt_completion",
