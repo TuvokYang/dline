@@ -73,6 +73,7 @@ function createParallelReadPresentation(failingDlineTid?: string) {
 		},
 		toolExecutor: {
 			isBlockApproved: () => true,
+			isTurnFullyAutoApproved: async () => true,
 			executeTool: vi.fn(async () => undefined),
 			takePostCommitDirective: () => undefined,
 		},
@@ -203,6 +204,7 @@ describe("Task.processNativeToolCalls", () => {
 			},
 			toolExecutor: {
 				isBlockApproved: () => true,
+			isTurnFullyAutoApproved: async () => true,
 				executeTool,
 				commitInterruptedToolResult,
 				takePostCommitDirective: () => undefined,
@@ -490,7 +492,7 @@ describe("Task.processNativeToolCalls", () => {
 				hasAnyRejection: () => false,
 				shouldSkip: () => false,
 			},
-			toolExecutor: { executeTool },
+			toolExecutor: { executeTool, isTurnFullyAutoApproved: async () => true },
 			taskRuntime: { getState: () => ({ turn: undefined }) },
 			taskState: {
 				abort: false,
@@ -539,7 +541,7 @@ describe("Task.processNativeToolCalls", () => {
 				hasAnyRejection: () => false,
 				shouldSkip: () => false,
 			},
-			toolExecutor: { executeTool },
+			toolExecutor: { executeTool, isTurnFullyAutoApproved: async () => true },
 			taskState: {
 				abort: false,
 				assistantMessageContent: [partialTool] as AssistantMessageContent[],
@@ -587,7 +589,7 @@ describe("Task.processNativeToolCalls", () => {
 				hasAnyRejection: () => false,
 				shouldSkip: () => false,
 			},
-			toolExecutor: { executeTool },
+			toolExecutor: { executeTool, isTurnFullyAutoApproved: async () => true },
 			taskState: {
 				abort: false,
 				assistantMessageContent: [partialTool] as AssistantMessageContent[],
@@ -633,7 +635,7 @@ describe("Task.processNativeToolCalls", () => {
 				hasAnyRejection: () => false,
 				shouldSkip: () => false,
 			},
-			toolExecutor: { executeTool },
+			toolExecutor: { executeTool, isTurnFullyAutoApproved: async () => true },
 			taskRuntime: { getState: () => ({ turn: undefined }) },
 			taskState: {
 				abort: false,
@@ -678,7 +680,7 @@ describe("Task.processNativeToolCalls", () => {
 			taskController: {
 				hasAnyRejection: () => false,
 			},
-			toolExecutor: { executeTool },
+			toolExecutor: { executeTool, isTurnFullyAutoApproved: async () => true },
 			taskState: {
 				abort: false,
 				assistantMessageContent: [completeTool] as AssistantMessageContent[],

@@ -84,6 +84,7 @@ import {
 import { createUIHelpers } from "./tools/types/UIHelpers"
 import { ToolDisplayUtils } from "./tools/utils/ToolDisplayUtils"
 import { NO_TOOL_RESULT, ToolResultUtils } from "./tools/utils/ToolResultUtils"
+import { readToolPathParam } from "./tools/utils/tool-path-params"
 
 type ToolResponse = ClineToolResponseContent
 
@@ -494,6 +495,87 @@ export class ToolExecutor {
 		autoApproveActionpath: string | undefined,
 	): Promise<boolean> {
 		return this.autoApprover.shouldAutoApproveToolWithPath(blockname, autoApproveActionpath)
+	}
+
+	/**
+	 * Whether a block is certain to execute without opening an interaction.
+	 *
+	 * Auto-approval is not the question. `shouldAutoApproveTool` deliberately
+	 * returns true for tools whose handler presents its own UI, precisely so
+	 * the handler gets far enough to present it, so passing the approval gate
+	 * says nothing about whether a card will appear. The question here is the
+	 * narrower one the pool needs answered, and it is answered per tool by
+	 * following the handler rather than by a single shared policy.
+	 *
+	 * Unlisted tools are treated as interactive. A tool absent from this switch
+	 * is one nobody checked, and the cost of being wrong is asymmetric: a
+	 * needless serial turn is slow, while a missed card suspends the turn.
+	 *
+	 * @param block One finalized tool block.
+	 * @returns True when the block cannot ask the user anything.
+	 */
+	private async willExecuteWithoutInteraction(block: ToolUse): Promise<boolean> {
+		const toolName = block.name as ClineDefaultTool
+		const params = block.params as Record<string, string | undefined> | undefined
+
+		switch (toolName) {
+			// Path-scoped readers and writers ask only when the path-aware gate
+			// refuses, which is the same call their handlers make.
+			case ClineDefaultTool.FILE_READ:
+			case ClineDefaultTool.LIST_FILES:
+			case ClineDefaultTool.LIST_CODE_DEF:
+			case ClineDefaultTool.SEARCH:
+			case ClineDefaultTool.FILE_NEW:
+			case ClineDefaultTool.FILE_EDIT:
+			case ClineDefaultTool.NEW_RULE:
+			case ClineDefaultTool.APPLY_PATCH:
+				return await this.shouldAutoApproveToolWithPath(toolName, readToolPathParam(params))
+
+			// Subagents, MCP, browser, web and image generation consult the
+			// unscoped verdict; their handlers read only the first element of a
+			// tuple, so requiring both halves here would keep fan-out serial.
+			case ClineDefaultTool.USE_SUBAGENT:
+			case ClineDefaultTool.USE_SUBAGENTS:
+			case ClineDefaultTool.MCP_USE:
+			case ClineDefaultTool.MCP_ACCESS:
+			case ClineDefaultTool.BROWSER:
+			case ClineDefaultTool.WEB_FETCH:
+			case ClineDefaultTool.WEB_SEARCH:
+			case ClineDefaultTool.GENERATE_IMAGE: {
+				const verdict = this.shouldAutoApproveTool(toolName)
+				return Array.isArray(verdict) ? verdict[0] === true : verdict === true
+			}
+
+			// Purely local tools with no approval step at all.
+			case ClineDefaultTool.FIND_REFERENCES:
+				return true
+
+			// Everything else — the turn-ending tools, spawn_task, report_bug,
+			// status_update, focus chain edits, and commands, whose approval
+			// also depends on the working directory — can open a card.
+			default:
+				return false
+		}
+	}
+
+	/**
+	 * Whether a turn's blocks can all run without asking the user.
+	 *
+	 * A turn that may open an approval cannot run concurrently: a sibling
+	 * finishing while the card is open advances the runtime revision, and the
+	 * answer the user then gives is refused as stale, leaving the turn
+	 * suspended on an interaction nobody can complete.
+	 *
+	 * @param blocks The finalized tool blocks of one assistant turn.
+	 * @returns True when the whole turn is safe to execute concurrently.
+	 */
+	async isTurnFullyAutoApproved(blocks: readonly ToolUse[]): Promise<boolean> {
+		for (const block of blocks) {
+			if (!(await this.willExecuteWithoutInteraction(block))) {
+				return false
+			}
+		}
+		return true
 	}
 
 	/**

@@ -159,6 +159,7 @@ import { findLast, findLastIndex } from "@shared/array"
 import type { ChatContent } from "@shared/ChatContent"
 import { combineApiRequests } from "@shared/combineApiRequests"
 import { combineCommandSequences } from "@shared/combineCommandSequences"
+import { resolveMaxParallelToolCalls } from "@shared/concurrency-limits"
 import {
 	type ContextWindowIndicatorLineage,
 	type ContextWindowIndicatorSnapshot,
@@ -277,9 +278,12 @@ import { ToolCommandLedger } from "./executors/tool/ToolCommandLedger"
 import { createToolDomainRunner } from "./executors/tool/ToolDomainResources"
 import type { UserFacingSurface } from "./executors/tool/ToolDomainSurface"
 import { ToolExecutionDomain } from "./executors/tool/ToolExecutionDomain"
+import { TurnExecutionPool } from "./executors/tool/TurnExecutionPool"
 import { FocusChainManager } from "./focus-chain"
 import { formatFocusChainTaskProgressSection } from "./focus-chain/file-utils"
 import { HistoryResumeMaintenance } from "./history/HistoryResumeMaintenance"
+import { resolveToolLanes, type ToolLaneContext } from "./kernel/turn/tool-lanes"
+import { declaresWritePath, readToolPathParam } from "./tools/utils/tool-path-params"
 import { TaskCompletionProjector } from "./history/TaskCompletionProjector"
 import type { QueuedInputEntry } from "./input-queue/InputQueue"
 import { InputQueueCoordinator } from "./input-queue/InputQueueCoordinator"
@@ -491,6 +495,56 @@ export function formatUnroutedAskResponse(context: UnroutedAskResponseContext): 
 		`response=${context.response}, hasText=${Boolean(context.text)}, images=${context.images?.length ?? 0}, ` +
 		`files=${context.files?.length ?? 0}, messages=${context.messageCount}, phase=${context.phase}`
 	)
+}
+
+/**
+ * Read the runtime facts that decide which lanes a tool block must hold.
+ *
+ * Kept separate from lane resolution so the pure lane policy never has to
+ * inspect tool parameters, and so "which parameter means what" stays one
+ * readable decision rather than an expression inside the submit call.
+ *
+ * A path is claimed only for the tools that write the file they name. Tools
+ * that reach several files — apply_patch, replace_text, rename — declare no
+ * path here at all, because none of their parameters describes the set they
+ * touch; the diff-editor lane they hold statically is what keeps them from
+ * interleaving, and a partial claim would only look like a stronger guarantee
+ * than it is.
+ *
+ * @param tool The finalized tool block.
+ * @returns Lane context derived from the block's own parameters.
+ */
+function resolveLaneContext(tool: ToolUse): ToolLaneContext {
+	const serverName = tool.params?.server_name
+	const path = readToolPathParam(tool.params as Record<string, string | undefined> | undefined)
+	return {
+		mcpServerName: typeof serverName === "string" ? serverName : undefined,
+		canonicalWritePaths: declaresWritePath(tool.name) && path ? [path] : undefined,
+	}
+}
+
+/**
+ * Stop every block the turn has not started yet.
+ *
+ * Called when a block halts the turn or throws. Cancelling is idempotent and
+ * a block that is already running keeps going, so this removes exactly the
+ * work that would otherwise be admitted into the slot the halting block is
+ * about to free — the blocks the serial loop would never have reached.
+ *
+ * @param pool The pool holding this turn's blocks.
+ * @param toolUses The turn's blocks in assistant order.
+ * @param haltedIndex Position of the block that ended the turn.
+ * @param identityOf The identity each block was submitted under.
+ */
+function cancelBlocksAfter(
+	pool: TurnExecutionPool<"completed" | "halt_turn">,
+	toolUses: readonly ToolUse[],
+	haltedIndex: number,
+	identityOf: (tool: ToolUse, index: number) => string,
+): void {
+	for (let index = haltedIndex + 1; index < toolUses.length; index++) {
+		pool.cancel(identityOf(toolUses[index], index))
+	}
 }
 
 export class Task {
@@ -4767,6 +4821,23 @@ export class Task {
 		return this.activeProviderInputRuntime?.parallelToolsEnabled ?? this.resolveParallelToolCallingEnabled(providerInfo)
 	}
 
+	/**
+	 * How many tool blocks of one turn may execute at once.
+	 *
+	 * Read per admission rather than captured once, so a settings change takes
+	 * effect on the next block instead of the next turn. The toggle is the
+	 * stronger statement: with parallel tool calling off this resolves to 1,
+	 * which is why a stored ceiling cannot reintroduce concurrency.
+	 */
+	private getToolConcurrencyLimit(): number {
+		// An unset or out-of-range ceiling resolves to the shared default
+		// rather than failing the turn, so admission always has a usable
+		// number. `stateManager` is required at runtime but absent from
+		// narrow test doubles, and a missing ceiling is not worth a throw.
+		const configured = (this.stateManager as StateManager | undefined)?.getGlobalSettingsKey("maxParallelToolCalls")
+		return resolveMaxParallelToolCalls(configured, this.isParallelToolCallingEnabled())
+	}
+
 	private async switchToActModeCallback(): Promise<boolean> {
 		return await this.controller.toggleActModeForYoloMode()
 	}
@@ -5927,6 +5998,90 @@ export class Task {
 		} finally {
 			this.interactionCoordinator.completeCancellation(cancellationGeneration)
 		}
+	}
+
+	/**
+	 * Run one turn's tool blocks through a bounded pool.
+	 *
+	 * @see resolveLaneContext for how a block's exclusive resources are derived.
+	 *
+	 * The pool owns admission: how many blocks may run at once, which blocks
+	 * hold conflicting resources, and when a turn-ending block is allowed to
+	 * start. This method only supplies the blocks and interprets the outcomes.
+	 *
+	 * Outcomes are read in assistant order rather than completion order, so a
+	 * fast later block cannot report its halt before an earlier block's. The
+	 * pool is discarded with the turn; it carries no state across turns.
+	 *
+	 * A halt keeps the serial loop's guarantee that nothing later begins. The
+	 * serial loop got this from returning; here the blocks are already
+	 * submitted, so the first halt cancels the rest instead. Cancelling a
+	 * queued block prevents it from ever starting, which is the property that
+	 * matters: a turn the user stopped must not go on editing files. Work that
+	 * had already started is left to finish, because aborting mid-write would
+	 * trade a stopped turn for a corrupted one.
+	 */
+	private async runToolBlocksThroughPool(
+		toolUses: ToolUse[],
+		runBlockLifecycle: (tool: ToolUse) => Promise<"completed" | "halt_turn">,
+	): Promise<"completed" | "halt_turn"> {
+		const pool = new TurnExecutionPool<"completed" | "halt_turn">({
+			limit: () => this.getToolConcurrencyLimit(),
+			name: "turn-tool-pool",
+		})
+		const identityOf = (tool: ToolUse, index: number): string => tool.dline_tid ?? `unkeyed-${index}`
+
+		await Promise.all(
+			toolUses.map((tool, index) =>
+				pool.submit({
+					dlineTid: identityOf(tool, index),
+					index,
+					lanes: resolveToolLanes(tool.name, resolveLaneContext(tool)),
+					isTurnEnding: isTurnEndingToolName(tool.name),
+					run: async (signal) => {
+						// A block cancelled before admission must not start its
+						// side effects merely because a slot became free.
+						if (signal.aborted) {
+							return "halt_turn"
+						}
+						const outcome = await runBlockLifecycle(tool)
+						if (outcome === "halt_turn") {
+							// Stop the turn at this block. Cancelling from
+							// inside the effect reaches the pool before the
+							// slot is released, so no queued block can slip
+							// through in the gap.
+							cancelBlocksAfter(pool, toolUses, index, identityOf)
+						}
+						return outcome
+					},
+				}).then((outcome) => {
+					if (outcome.error !== undefined) {
+						// A throw ends the turn for the same reason a halt
+						// does, and the pool reports it as an outcome rather
+						// than a rejection, so the cancellation is issued here.
+						cancelBlocksAfter(pool, toolUses, index, identityOf)
+					}
+					return outcome
+				}),
+			),
+		)
+
+		// Read in assistant order, not completion order: a fast later block
+		// must not decide the turn's fate ahead of an earlier one.
+		for (const outcome of pool.orderedOutcomes()) {
+			// Cancellation is a halt, not a silent completion. Continuing would
+			// present the turn as though every block had finished its work.
+			if (outcome.cancelled) {
+				return "halt_turn"
+			}
+			if (outcome.error !== undefined) {
+				throw outcome.error instanceof Error ? outcome.error : new Error(String(outcome.error))
+			}
+			if (outcome.value === "halt_turn") {
+				return "halt_turn"
+			}
+		}
+		return "completed"
 	}
 
 	/**
@@ -8159,10 +8314,15 @@ export class Task {
 			throw new Error("Finalized assistant turn does not match the canonical runtime turn")
 		}
 
-		for (const tool of toolUses) {
-			if (this.taskState.abort || this.controller.task?.taskId !== this.taskId) return
+		// One block's whole lifecycle, extracted so it can later be handed to
+		// the turn pool unstarted. The dispatch order inside a block is
+		// unchanged; only who awaits it moves. "halt_turn" reproduces the
+		// original `return`, which abandoned the entire presentation rather
+		// than just this block, so the distinction must survive the move.
+		const runBlockLifecycle = async (tool: ToolUse): Promise<"completed" | "halt_turn"> => {
+			if (this.taskState.abort || this.controller.task?.taskId !== this.taskId) return "halt_turn"
 			const dlineTid = tool.dline_tid
-			if (!dlineTid) continue
+			if (!dlineTid) return "completed"
 
 			let runtimeBlock = this.taskRuntime.getState().turn?.blocks.find((block) => block.dlineTid === dlineTid)
 			if (!runtimeBlock) {
@@ -8171,14 +8331,14 @@ export class Task {
 			if (this.isTerminalRuntimeBlock(runtimeBlock.phase)) {
 				await this.ensureTerminalToolResult(tool, runtimeBlock.phase)
 				this.markFinalizedToolPresented(tool)
-				continue
+				return "completed"
 			}
 
 			if (runtimeBlock.phase === BlockPhase.STREAMING) {
 				const ready = await this.dispatchRuntime({ type: "BLOCK_READY", turnId, dlineTid })
 				if (!ready.accepted) {
 					const state = this.taskRuntime.getState()
-					if (this.taskState.abort || state.phase === TaskPhase.CANCELLING) return
+					if (this.taskState.abort || state.phase === TaskPhase.CANCELLING) return "halt_turn"
 					throw new Error(`Block readiness rejected: ${ready.error?.code ?? "invalid_runtime_event"}`)
 				}
 				runtimeBlock = ready.next.turn?.blocks.find((block) => block.dlineTid === dlineTid)
@@ -8193,7 +8353,7 @@ export class Task {
 			if (this.isTerminalRuntimeBlock(runtimeBlock.phase)) {
 				await this.ensureTerminalToolResult(tool, runtimeBlock.phase)
 				this.markFinalizedToolPresented(tool)
-				continue
+				return "completed"
 			}
 
 			await this.awaitInitialCheckpointBeforeToolSideEffects(tool.name)
@@ -8207,7 +8367,7 @@ export class Task {
 					state.phase === TaskPhase.CANCELLING ||
 					(currentBlock && this.isTerminalRuntimeBlock(currentBlock.phase))
 				) {
-					return
+					return "halt_turn"
 				}
 				if (execution.effectError) {
 					throw new Error(
@@ -8217,29 +8377,50 @@ export class Task {
 				throw new Error(`Block execution rejected: ${execution.error?.code ?? "invalid_runtime_event"}`)
 			}
 
-			if (this.controller.task?.taskId !== this.taskId) return
+			if (this.controller.task?.taskId !== this.taskId) return "halt_turn"
 			runtimeBlock = this.taskRuntime.getState().turn?.blocks.find((block) => block.dlineTid === dlineTid)
 			if (!runtimeBlock) {
 				this.markFinalizedToolPresented(tool)
-				continue
+				return "completed"
 			}
 			if (this.isTerminalRuntimeBlock(runtimeBlock.phase)) {
 				await this.ensureTerminalToolResult(tool, runtimeBlock.phase)
 				this.markFinalizedToolPresented(tool)
-				continue
+				return "completed"
 			}
 			if (this.taskRuntime.getState().phase === TaskPhase.COMPLETED) {
 				this.markFinalizedToolPresented(tool)
-				continue
+				return "completed"
 			}
 
 			const completed = await this.dispatchRuntime({ type: "BLOCK_EXECUTION_COMPLETED", turnId, dlineTid })
 			if (!completed.accepted) {
 				const state = this.taskRuntime.getState()
-				if (this.taskState.abort || state.phase === TaskPhase.CANCELLING) return
+				if (this.taskState.abort || state.phase === TaskPhase.CANCELLING) return "halt_turn"
 				throw new Error(`Block completion rejected: ${completed.error?.code ?? "invalid_runtime_event"}`)
 			}
 			this.markFinalizedToolPresented(tool)
+			return "completed"
+		}
+
+		// Serial turns keep the original loop: one block at a time, and the
+		// first halt abandons the rest. A parallel turn hands the same
+		// lifecycles to the pool, which decides admission by capacity, lane
+		// exclusivity and the turn-ending barrier.
+		// A turn that may open an approval must stay serial. While a card is
+		// open, a sibling finishing would advance the runtime revision and the
+		// user's answer would be refused as stale, suspending the turn. Only a
+		// turn whose every block is already auto-approved may be pooled.
+		const canRunConcurrently =
+			runtimeTurn.mode === "parallel" &&
+			toolUses.length > 1 &&
+			(await this.toolExecutor.isTurnFullyAutoApproved(toolUses))
+		if (!canRunConcurrently) {
+			for (const tool of toolUses) {
+				if ((await runBlockLifecycle(tool)) === "halt_turn") return
+			}
+		} else if ((await this.runToolBlocksThroughPool(toolUses, runBlockLifecycle)) === "halt_turn") {
+			return
 		}
 
 		if (
