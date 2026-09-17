@@ -1,3 +1,4 @@
+import { telemetryService } from "@/services/telemetry"
 import { type AdmissionBlock, type AdmissionRefusal, decideAdmission, poolHasDrained } from "../../kernel/turn/pool-admission"
 import { BoundedGate, type GatePermit } from "../../runtime/concurrency/BoundedGate"
 
@@ -323,6 +324,7 @@ export class TurnExecutionPool<T> {
 		// to hand over a permit immediately. It is still acquired rather than
 		// assumed, because the gate is the single owner of the running count.
 		let permit: GatePermit
+		const admissionRequestedAt = Date.now()
 		try {
 			permit = await this.gate.acquire(entry.controller.signal)
 		} catch {
@@ -333,6 +335,17 @@ export class TurnExecutionPool<T> {
 			this.release(block.dlineTid, undefined)
 			return
 		}
+
+		// Sampled once the permit is in hand: a saturated pool is only
+		// distinguishable from an idle one when the wait and the occupancy that
+		// caused it are reported at the same moment.
+		telemetryService.capturePoolAdmission({
+			pool: "tool",
+			queueWaitMs: Date.now() - admissionRequestedAt,
+			running: this.runningCount,
+			queued: this.queuedCount,
+			limit: this.limit(),
+		})
 
 		if (this.isCancelled(block.dlineTid)) {
 			entry.settle({ dlineTid: block.dlineTid, index: block.index, cancelled: true })
@@ -369,6 +382,15 @@ export class TurnExecutionPool<T> {
 		this.running.delete(dlineTid)
 		permit?.release()
 		this.schedule()
+		// Reported after scheduling so the sample describes the pool a waiting
+		// block now sees, rather than the moment before replacements were let
+		// in; a series built only from admissions would never fall back to zero.
+		telemetryService.recordPoolOccupancy({
+			pool: "tool",
+			running: this.runningCount,
+			queued: this.queuedCount,
+			limit: this.limit(),
+		})
 	}
 
 	private transition(entry: PooledEntry<T>, state: PooledBlockState): void {

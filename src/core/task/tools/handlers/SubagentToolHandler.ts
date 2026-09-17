@@ -678,11 +678,23 @@ async function runBudgetedSubagent(
 		onStarted?: () => void
 	},
 ): Promise<SubagentExecResult> {
+	const admissionRequestedAt = Date.now()
 	const admission = await budget.acquire()
 	if (!admission.admitted) {
 		return { status: "failed", error: admission.message, stats: emptyStats() }
 	}
 	const slot: SubagentSlot = admission.slot
+	// Sampled with the permit in hand and labelled by pool, so a saturated
+	// subagent fan-out is distinguishable from a saturated tool pool and from
+	// a subagent that is simply slow.
+	const budgetState = budget.state()
+	telemetryService.capturePoolAdmission({
+		pool: "subagent",
+		queueWaitMs: Date.now() - admissionRequestedAt,
+		running: budgetState.running,
+		queued: budgetState.queued,
+		limit: budgetState.limit,
+	})
 	options.onStarted?.()
 	try {
 		return await runSubagent({
@@ -721,6 +733,13 @@ async function runBudgetedSubagent(
 			Logger.warn("[SubagentToolHandler] abandoned subagent tool did not settle cleanly", error)
 		} finally {
 			slot.release()
+			const releasedState = budget.state()
+			telemetryService.recordPoolOccupancy({
+				pool: "subagent",
+				running: releasedState.running,
+				queued: releasedState.queued,
+				limit: releasedState.limit,
+			})
 		}
 	}
 }
@@ -1185,6 +1204,17 @@ export class UseSubagentsToolHandler implements IFullyManagedTool {
 			batchId,
 			resolvers: getBatchResolvers(config),
 		})
+		// Recorded against the requested batch rather than the runnable one, and
+		// before the all-rejected exit: how wide a model asks a fan-out to be is
+		// the quantity the pool limit has to answer for, and a batch that failed
+		// planning entirely is still a request that was made. The explicit count
+		// separates a Profile the caller chose per item from one inherited from
+		// the agent's YAML or the parent, which is what tells us whether the new
+		// per-item parameter is used at all.
+		telemetryService.captureSubagentFanout(
+			request.items.length,
+			request.items.filter((item) => item.profile !== undefined).length,
+		)
 		if (planned.length === 0) {
 			// Every item failed resolution, so there is nothing to approve. The
 			// per-item reasons are still what the model needs in order to retry.

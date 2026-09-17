@@ -16,6 +16,7 @@ import { TaskAggregates } from "./events/task-aggregates"
 import { TaskEventRecorder, type TokenUsage } from "./events/task-recorder"
 import {
 	type AiOutputArgs,
+	type ExecutionPool,
 	type StandaloneOutputMethod,
 	TerminalHangStage,
 	TerminalOutputFailureReason,
@@ -46,6 +47,7 @@ export type { TelemetryMetadata } from "./context/telemetry-context"
 export type { TelemetryCategory } from "./events/catalog"
 export type { TokenUsage } from "./events/task-recorder"
 export {
+	type ExecutionPool,
 	type StandaloneOutputMethod,
 	TerminalHangStage,
 	TerminalOutputFailureReason,
@@ -613,6 +615,38 @@ export class TelemetryService {
 		searchSource?: "host_index" | "ripgrep",
 	) {
 		this.tool.captureMentionSearchResults(query, resultCount, searchType, isEmpty, fsContext, searchSource)
+	}
+
+	/**
+	 * Report one admission into an execution pool.
+	 *
+	 * The wait and the occupancy that caused it are reported together: a slow
+	 * tool and a saturated pool are indistinguishable from duration alone.
+	 */
+	public capturePoolAdmission(args: {
+		pool: ExecutionPool
+		queueWaitMs: number
+		running: number
+		queued: number
+		limit: number
+	}) {
+		this.tool.capturePoolAdmission(args)
+	}
+
+	/** Sample a pool's occupancy, queue depth and configured ceiling. */
+	public recordPoolOccupancy(args: { pool: ExecutionPool; running: number; queued: number; limit: number }) {
+		this.tool.recordPoolOccupancy(args)
+	}
+
+	/**
+	 * Report the shape of one subagent batch.
+	 *
+	 * The explicit-profile count is separate from the width because a batch
+	 * that binds Profiles per item loads the pool differently from one that
+	 * inherits a single Profile.
+	 */
+	public captureSubagentFanout(items: number, explicitProfileItems: number) {
+		this.tool.captureSubagentFanout(items, explicitProfileItems)
 	}
 
 	public captureSubagentToggle(enabled: boolean) {
