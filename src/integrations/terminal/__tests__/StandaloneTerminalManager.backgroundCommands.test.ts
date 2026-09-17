@@ -5,7 +5,7 @@ import * as path from "node:path"
 import { DlineRuntimeFileManager } from "@services/runtime-files"
 import { afterEach, describe, it, vi } from "vitest"
 import { StandaloneTerminalManager } from "../standalone/StandaloneTerminalManager"
-import type { BackgroundCommand } from "../types"
+import type { BackgroundCommand, TerminalProcessResultPromise } from "../types"
 
 /**
  * Create a background command record for state transition tests.
@@ -23,7 +23,7 @@ function createCommand(id: string): BackgroundCommand {
 		logFilePath: "logs/command.log",
 		lineCount: 1,
 		injectionState: "pending",
-		process: {} as BackgroundCommand["process"],
+		process: {} as TerminalProcessResultPromise,
 	}
 }
 
@@ -37,7 +37,7 @@ describe("StandaloneTerminalManager background command injection state", () => {
 		vi.setSystemTime(10_000)
 		const manager = new StandaloneTerminalManager()
 		const terminate = vi.fn()
-		const process = Object.assign(new EventEmitter(), { terminate }) as unknown as BackgroundCommand["process"]
+		const process = Object.assign(new EventEmitter(), { terminate }) as unknown as TerminalProcessResultPromise
 
 		try {
 			const command = manager.trackBackgroundCommand(process, "npm test", "command_deadline", [], {
@@ -61,7 +61,7 @@ describe("StandaloneTerminalManager background command injection state", () => {
 
 	it("creates the activity-owned log when background tracking starts", async () => {
 		const manager = new StandaloneTerminalManager()
-		const process = new EventEmitter() as BackgroundCommand["process"]
+		const process = new EventEmitter() as TerminalProcessResultPromise
 		let logFilePath: string | undefined
 		const expectedLogPath = path.join(DlineRuntimeFileManager.getTempDir(), "command_100_1.log")
 		await fs.rm(expectedLogPath, { force: true })
@@ -89,7 +89,7 @@ describe("StandaloneTerminalManager background command injection state", () => {
 
 	it("publishes one output frame and drains it before completion closes the log", async () => {
 		const manager = new StandaloneTerminalManager()
-		const process = new EventEmitter() as BackgroundCommand["process"]
+		const process = new EventEmitter() as TerminalProcessResultPromise
 		const onOutputFrame = vi.fn()
 		const expectedLogPath = path.join(DlineRuntimeFileManager.getTempDir(), "command_frame_completion.log")
 		await fs.rm(expectedLogPath, { force: true })
@@ -119,7 +119,7 @@ describe("StandaloneTerminalManager background command injection state", () => {
 	it("drains pending output before cancellation closes the log", async () => {
 		const manager = new StandaloneTerminalManager()
 		const terminate = vi.fn()
-		const process = Object.assign(new EventEmitter(), { terminate }) as unknown as BackgroundCommand["process"]
+		const process = Object.assign(new EventEmitter(), { terminate }) as unknown as TerminalProcessResultPromise
 		const expectedLogPath = path.join(DlineRuntimeFileManager.getTempDir(), "command_frame_cancel.log")
 		await fs.rm(expectedLogPath, { force: true })
 
@@ -148,7 +148,7 @@ describe("StandaloneTerminalManager background command injection state", () => {
 					resolveTermination = resolve
 				}),
 		)
-		const process = Object.assign(new EventEmitter(), { terminate }) as unknown as BackgroundCommand["process"]
+		const process = Object.assign(new EventEmitter(), { terminate }) as unknown as TerminalProcessResultPromise
 		const expectedLogPath = path.join(DlineRuntimeFileManager.getTempDir(), "command_async_cancel.log")
 		await fs.rm(expectedLogPath, { force: true })
 
@@ -179,7 +179,7 @@ describe("StandaloneTerminalManager background command injection state", () => {
 		vi.setSystemTime(20_000)
 		const manager = new StandaloneTerminalManager()
 		const terminate = vi.fn()
-		const process = Object.assign(new EventEmitter(), { terminate }) as unknown as BackgroundCommand["process"]
+		const process = Object.assign(new EventEmitter(), { terminate }) as unknown as TerminalProcessResultPromise
 		const expectedLogPath = path.join(DlineRuntimeFileManager.getTempDir(), "command_frame_timeout.log")
 		await fs.rm(expectedLogPath, { force: true })
 
@@ -205,7 +205,7 @@ describe("StandaloneTerminalManager background command injection state", () => {
 
 	it("drains pending output when the background process emits an error", async () => {
 		const manager = new StandaloneTerminalManager()
-		const process = new EventEmitter() as BackgroundCommand["process"]
+		const process = new EventEmitter() as TerminalProcessResultPromise
 		const expectedLogPath = path.join(DlineRuntimeFileManager.getTempDir(), "command_frame_error.log")
 		await fs.rm(expectedLogPath, { force: true })
 
@@ -225,7 +225,7 @@ describe("StandaloneTerminalManager background command injection state", () => {
 
 	it("persists small completed background output to its activity-owned log", async () => {
 		const manager = new StandaloneTerminalManager()
-		const process = new EventEmitter() as BackgroundCommand["process"]
+		const process = new EventEmitter() as TerminalProcessResultPromise
 		const expectedLogPath = path.join(DlineRuntimeFileManager.getTempDir(), "command_100_small.log")
 		await fs.rm(expectedLogPath, { force: true })
 
@@ -244,7 +244,7 @@ describe("StandaloneTerminalManager background command injection state", () => {
 
 	it("classifies a background completion without an exit code as an error", async () => {
 		const manager = new StandaloneTerminalManager()
-		const process = new EventEmitter() as BackgroundCommand["process"]
+		const process = new EventEmitter() as TerminalProcessResultPromise
 
 		try {
 			const command = manager.trackBackgroundCommand(process, "npm test", "command_100_2")
@@ -277,7 +277,7 @@ describe("StandaloneTerminalManager background command injection state", () => {
 
 	it("retains the function id and advances the API output baseline to the sent snapshot", async () => {
 		const manager = new StandaloneTerminalManager()
-		const process = new EventEmitter() as BackgroundCommand["process"]
+		const process = new EventEmitter() as TerminalProcessResultPromise
 
 		try {
 			const command = manager.trackBackgroundCommand(process, "npm test", "command_output_delta", [], {

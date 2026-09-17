@@ -615,13 +615,21 @@ describe("CommandExecutor explicit background execution", () => {
 			status: "running",
 			origin: "foreground",
 			cancellationOwner: "task",
+			taskId: "task-1",
 			logFilePath: "C:\\Temp\\detached-1.log",
 			lineCount: 0,
 			process: processPromise,
 		}
-		vi.spyOn(standalone, "getRunningBackgroundCommands").mockImplementation((owner) =>
-			command.status === "running" && (!owner || owner === command.cancellationOwner) ? [command] : [],
-		)
+		vi.spyOn(standalone, "getRunningBackgroundCommands").mockImplementation((scope) => {
+			// Mirror the real manager: owner and task are both exact filters, so a
+			// command only matches a scope that names its own task.
+			const { cancellationOwner, taskId } =
+				typeof scope === "string" ? { cancellationOwner: scope, taskId: undefined } : (scope ?? {})
+			if (command.status !== "running") return []
+			if (cancellationOwner && cancellationOwner !== command.cancellationOwner) return []
+			if (taskId && taskId !== command.taskId) return []
+			return [command]
+		})
 		vi.spyOn(standalone, "cancelBackgroundCommand").mockImplementation(async () => {
 			if (command.status !== "running") return false
 			command.status = "cancelled"

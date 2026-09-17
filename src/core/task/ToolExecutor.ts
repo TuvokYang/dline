@@ -645,7 +645,7 @@ export class ToolExecutor {
 				enabled: this.getFocusChainEnabledForExecution(),
 			},
 			capabilityToggles: this.promptRuntime?.capabilityToggles ?? this.getTaskCapabilityToggles(),
-			interactions: this.interactions,
+			interactions: this.scopedInteractions(),
 			compactionAttemptGuard: this.compactionAttemptGuard,
 			services: {
 				mcpHub: this.mcpHub,
@@ -765,6 +765,28 @@ export class ToolExecutor {
 			throw error
 		} finally {
 			this.activeDurationScope = previousScope
+		}
+	}
+
+	/**
+	 * Expose interactions with the user wait excluded from the tool's duration.
+	 *
+	 * A turn-ending tool finishes its own work when it publishes the interaction;
+	 * everything after that is the user deciding. Measuring until the response
+	 * arrives would report the user's thinking time as tool execution time, which
+	 * is the same reason approval waits are already excluded.
+	 */
+	private scopedInteractions(): TaskInteractionPorts {
+		const interactions = this.interactions
+		// `open` and `complete` both park until the user answers; `say` only waits
+		// for the message to be presented, so it stays inside the active time.
+		// Spreading keeps a later port working without another wrapper.
+		const excludeUserWait = <T>(wait: () => Promise<T>): Promise<T> =>
+			this.activeDurationScope ? this.activeDurationScope.excludeWait("approval", wait) : wait()
+		return {
+			...interactions,
+			open: (request) => excludeUserWait(() => interactions.open(request)),
+			complete: (request) => excludeUserWait(() => interactions.complete(request)),
 		}
 	}
 

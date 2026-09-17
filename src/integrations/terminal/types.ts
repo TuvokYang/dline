@@ -326,11 +326,28 @@ export type CommandOrigin = "explicit_background" | "foreground"
 
 export type CommandCancellationOwner = "explicit" | "task"
 
+/** Ownership filter for selecting background commands across a shared manager. */
+export interface BackgroundCommandScope {
+	/** Restrict to commands cancellable by this lifecycle boundary. */
+	cancellationOwner?: CommandCancellationOwner
+	/** Restrict to commands started by this task. */
+	taskId?: string
+}
+
 export interface BackgroundCommand {
 	/** Unique identifier for the background command */
 	id: string
 	/** Canonical function identity of the execute_command tool call. */
 	functionId?: string
+	/**
+	 * Task that owns this command.
+	 *
+	 * A manager instance can be shared by more than one executor, so owner alone
+	 * does not identify whose lifecycle a command belongs to. An entry without
+	 * this identity belongs to no task and is therefore never selected by a
+	 * task-scoped query.
+	 */
+	taskId?: string
 	/** The command string being executed */
 	command: string
 	/** Timestamp when the command started */
@@ -353,8 +370,15 @@ export interface BackgroundCommand {
 	exitCode?: number
 	/** Context injection lifecycle state for background command visibility */
 	injectionState?: SubagentInjectionState
-	/** The terminal process running the command */
-	process: TerminalProcessResultPromise
+	/**
+	 * The terminal process running the command.
+	 *
+	 * Present while the command can still produce output or be cancelled. Once the
+	 * command reaches a terminal status the manager drops this reference, because
+	 * the tracking entry outlives the command for reporting purposes and would
+	 * otherwise pin the child process and its captured output for the whole task.
+	 */
+	process?: TerminalProcessResultPromise
 }
 
 // =============================================================================

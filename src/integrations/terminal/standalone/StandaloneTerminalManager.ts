@@ -17,12 +17,13 @@ import { getShellForProfile } from "@utils/shell"
 import * as fs from "fs"
 import { Logger } from "@/shared/services/Logger"
 import { isCommandCompletionSuccessful } from "../command-completion"
-import { DEFAULT_TERMINAL_OUTPUT_LINE_LIMIT } from "../constants"
+import { DEFAULT_TERMINAL_OUTPUT_LINE_LIMIT, LOG_STREAM_FINALIZE_TIMEOUT_MS } from "../constants"
 import { flushTerminalOutputStream, writeTerminalOutputFrame, writeTerminalOutputText } from "../output-stream"
 import type { WindowsProcessTreeProvider } from "../process-tree"
 import { TerminalOutputFrameScheduler } from "../TerminalOutputFrameScheduler"
 import type {
 	BackgroundCommand,
+	BackgroundCommandScope,
 	CommandCancellationOwner,
 	CommandOrigin,
 	ITerminalManager,
@@ -70,6 +71,23 @@ function mergePromise(process: StandaloneTerminalProcess, promise: Promise<void>
 	}
 
 	return process as unknown as TerminalProcessResultPromise
+}
+
+/**
+ * Await an operation under a deadline without leaving a pending timer behind.
+ *
+ * @returns true when the operation settled first, false when the budget expired.
+ */
+async function settleWithinBudget(operation: Promise<unknown>, budgetMs: number): Promise<boolean> {
+	let timer: NodeJS.Timeout | undefined
+	const deadline = new Promise<false>((resolve) => {
+		timer = setTimeout(() => resolve(false), budgetMs)
+	})
+	try {
+		return await Promise.race([operation.then(() => true), deadline])
+	} finally {
+		if (timer) clearTimeout(timer)
+	}
 }
 
 /**
@@ -127,6 +145,9 @@ export class StandaloneTerminalManager implements ITerminalManager {
 
 	/** Map of background command ID to timeout handle */
 	private backgroundTimeouts: Map<string, NodeJS.Timeout> = new Map()
+
+	/** The single teardown run, kept so repeated dispose calls await the same work. */
+	private disposal?: Promise<void>
 
 	/**
 	 * Run a command in the specified terminal.
@@ -289,15 +310,31 @@ export class StandaloneTerminalManager implements ITerminalManager {
 	 * Dispose of all terminals and clean up resources.
 	 */
 	disposeAll(): void {
-		// Dispose background commands first without changing the synchronous manager contract.
-		void this.disposeBackgroundCommands()
+		// The synchronous contract cannot await, so callers that need the release to
+		// be finished must use disposeAsync(). Consuming the rejection here keeps a
+		// failing teardown from surfacing as an unhandled rejection.
+		void this.disposeAsync().catch((error) => {
+			Logger.warn(`[StandaloneTerminalManager] Dispose failed: ${error instanceof Error ? error.message : String(error)}`)
+		})
+	}
 
-		// Terminate all processes
-		for (const [_terminalId, process] of this.processes) {
-			if (process?.terminate) {
-				process.terminate()
-			}
-		}
+	/**
+	 * Release every terminal, process and background command owned by this manager.
+	 *
+	 * Termination and log finalization are asynchronous, so a caller that must know
+	 * the child processes and file descriptors are gone awaits this instead of
+	 * {@link disposeAll}. Repeated calls reuse the first run: teardown is a
+	 * one-way transition, and a second pass would race the first one's cleanup.
+	 */
+	disposeAsync(): Promise<void> {
+		this.disposal ??= this.performDisposal()
+		return this.disposal
+	}
+
+	private async performDisposal(): Promise<void> {
+		const terminations = [...this.processes.values()]
+			.filter((process) => process?.terminate)
+			.map((process) => Promise.resolve(process.terminate?.()))
 
 		// Clear all tracking
 		this.terminalIds.clear()
@@ -309,6 +346,16 @@ export class StandaloneTerminalManager implements ITerminalManager {
 		}
 
 		this.registry.clear()
+
+		const results = await Promise.allSettled([this.disposeBackgroundCommands(), ...terminations])
+		for (const result of results) {
+			if (result.status === "rejected") {
+				const reason = result.reason
+				Logger.warn(
+					`[StandaloneTerminalManager] Dispose step failed: ${reason instanceof Error ? reason.message : String(reason)}`,
+				)
+			}
+		}
 	}
 
 	configure(configuration: TerminalManagerConfiguration): TerminalManagerConfigurationResult {
@@ -468,6 +515,7 @@ export class StandaloneTerminalManager implements ITerminalManager {
 			origin: CommandOrigin
 			cancellationOwner: CommandCancellationOwner
 			functionId?: string
+			taskId?: string
 			startedAt?: number
 			deadlineAt?: number
 			existingLogFilePath?: string
@@ -494,6 +542,9 @@ export class StandaloneTerminalManager implements ITerminalManager {
 		const logStream = fs.createWriteStream(logFilePath, { fd: logFd, flags: logFlags, autoClose: true })
 		const logCompletion = new Promise<void>((resolve) => {
 			logStream.once("finish", resolve)
+			// A destroyed stream never emits "finish", so "close" is the only exit
+			// left when the file descriptor is torn down without a normal end().
+			logStream.once("close", resolve)
 			logStream.once("error", (error) => {
 				this.logStreamErrors.set(activityId, error)
 				resolve()
@@ -505,6 +556,7 @@ export class StandaloneTerminalManager implements ITerminalManager {
 		const backgroundCommand: BackgroundCommand = {
 			id: activityId,
 			functionId: ownership.functionId,
+			taskId: ownership.taskId,
 			command,
 			startTime: ownership.startedAt ?? Date.now(),
 			deadlineAt: ownership.deadlineAt,
@@ -677,16 +729,49 @@ export class StandaloneTerminalManager implements ITerminalManager {
 		} finally {
 			this.outputSchedulers.delete(id)
 			this.outputErrorHandlers.delete(id)
+			this.releaseSettledBackgroundCommand(id)
 		}
+	}
+
+	/**
+	 * Drop the runtime process from a settled tracking entry.
+	 *
+	 * The entry itself is retained because the UI and environment details still
+	 * report finished commands, but a terminal command has no further use for its
+	 * process object. Keeping it would pin the child process, its pipes and its
+	 * captured output for the entire task lifetime, since this map is only
+	 * cleared on disposal.
+	 */
+	private releaseSettledBackgroundCommand(id: string): void {
+		const command = this.backgroundCommands.get(id)
+		if (!command || command.status === "running") return
+		command.process = undefined
+		this.logStreamCompletions.delete(id)
+		this.logStreamErrors.delete(id)
 	}
 
 	private async finishBackgroundLog(id: string): Promise<void> {
 		const logStream = this.logStreams.get(id)
+		const completion = this.logStreamCompletions.get(id)
 		if (logStream) {
-			this.logStreams.delete(id)
+			// End the stream before dropping it from the map so a failure below can
+			// never leave a live handle that nothing owns.
 			if (!logStream.destroyed && !logStream.writableEnded) logStream.end()
+			this.logStreams.delete(id)
 		}
-		await this.logStreamCompletions.get(id)
+
+		if (completion && !(await settleWithinBudget(completion, LOG_STREAM_FINALIZE_TIMEOUT_MS))) {
+			// Disposal awaits this call, so a stream that never settles must not be
+			// able to stall task teardown. Destroy the handle and report the failure.
+			logStream?.destroy()
+			// The budget is spent once per command: dropping the completion keeps a
+			// best-effort retry from waiting out a second full timeout on a stream
+			// that has already been given up on.
+			this.logStreamCompletions.delete(id)
+			Logger.warn(`[StandaloneTerminalManager] Timed out flushing background log for ${id}`)
+			throw new Error(`Timed out flushing background command log after ${LOG_STREAM_FINALIZE_TIMEOUT_MS}ms`)
+		}
+
 		const error = this.logStreamErrors.get(id)
 		if (error) throw error
 	}
@@ -761,12 +846,25 @@ export class StandaloneTerminalManager implements ITerminalManager {
 	}
 
 	/**
-	 * Get only running background commands.
+	 * Get only running background commands, optionally narrowed to one owner scope.
+	 *
+	 * Owner and task are independent dimensions: one manager instance can be shared
+	 * by several executors, so filtering by lifecycle owner alone would also select
+	 * commands belonging to another task.
+	 *
+	 * A task-scoped query requires an exact task match. An untagged command belongs
+	 * to no task, and claiming it for whichever task happens to ask would defeat the
+	 * isolation this scope exists for; pass the owner alone to query every task.
 	 */
-	getRunningBackgroundCommands(cancellationOwner?: CommandCancellationOwner): BackgroundCommand[] {
-		return this.getAllBackgroundCommands().filter(
-			(command) => command.status === "running" && (!cancellationOwner || command.cancellationOwner === cancellationOwner),
-		)
+	getRunningBackgroundCommands(scope?: CommandCancellationOwner | BackgroundCommandScope): BackgroundCommand[] {
+		const { cancellationOwner, taskId } =
+			typeof scope === "string" ? { cancellationOwner: scope, taskId: undefined } : (scope ?? {})
+		return this.getAllBackgroundCommands().filter((command) => {
+			if (command.status !== "running") return false
+			if (cancellationOwner && command.cancellationOwner !== cancellationOwner) return false
+			if (taskId && command.taskId !== taskId) return false
+			return true
+		})
 	}
 
 	/**
@@ -787,6 +885,10 @@ export class StandaloneTerminalManager implements ITerminalManager {
 			return false
 		}
 
+		// Capture the process before sealing the state: the drain below settles the
+		// command, which releases the tracked process reference.
+		const process = command.process
+
 		// Seal the terminal state before termination can emit a late completion or error.
 		command.status = "cancelled"
 
@@ -798,7 +900,7 @@ export class StandaloneTerminalManager implements ITerminalManager {
 
 		await Promise.all([
 			this.drainBackgroundOutput(id, ["[CANCELLED] Command cancelled by user"]),
-			Promise.resolve(command.process.terminate?.()),
+			Promise.resolve(process?.terminate?.()),
 		])
 		return true
 	}

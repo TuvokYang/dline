@@ -345,11 +345,7 @@ export class StandaloneTerminalProcess extends EventEmitter<TerminalProcessEvent
 				}
 				this.emitRemainingBuffers()
 
-				// Clear hot timer
-				if (this.hotTimer) {
-					clearTimeout(this.hotTimer)
-					this.isHot = false
-				}
+				this.clearHotTimer()
 
 				// Track terminal execution telemetry with exit code for failure diagnosis
 				const success = code === 0 || code === null
@@ -357,6 +353,12 @@ export class StandaloneTerminalProcess extends EventEmitter<TerminalProcessEvent
 
 				this.emit("completed", { exitCode: this.exitCode, signal: this.signal })
 				this.emit("continue")
+
+				// The process has exited and every buffered byte has been emitted, so the
+				// child handles are pure cost from here on. Release them only after the
+				// terminal events above, because their listeners may still inspect the
+				// process while reacting to completion.
+				this.releaseChildProcess(terminal)
 			})
 
 			// Handle process errors (spawn failures)
@@ -364,6 +366,7 @@ export class StandaloneTerminalProcess extends EventEmitter<TerminalProcessEvent
 				// Track terminal execution error telemetry
 				// method: "child_process_error" already indicates spawn failure
 				telemetryService.captureTerminalExecution(false, "standalone", "child_process_error")
+				this.clearHotTimer()
 				this.emit("error", error)
 			})
 
@@ -421,6 +424,38 @@ export class StandaloneTerminalProcess extends EventEmitter<TerminalProcessEvent
 			const line = this.buffers[stream].slice(0, lineEndIndex).trimEnd()
 			this.emit("line", line, stream)
 			this.buffers[stream] = this.buffers[stream].slice(lineEndIndex + 1)
+		}
+	}
+
+	/** Stop the hot window so a settled process stops holding a live timer. */
+	private clearHotTimer(): void {
+		if (this.hotTimer) {
+			clearTimeout(this.hotTimer)
+			this.hotTimer = null
+		}
+		this.isHot = false
+	}
+
+	/**
+	 * Drop every reference from the exited child process back to this object.
+	 *
+	 * The pipes and the process handle stay open for as long as something reaches
+	 * them, so a settled command would otherwise keep three OS handles per
+	 * invocation until the whole task is disposed. Listeners registered on `this`
+	 * are deliberately left in place: `continue()` documents that background
+	 * tracking keeps consuming "line" events, and those are emitted by this
+	 * emitter rather than by the child process.
+	 */
+	private releaseChildProcess(terminal: ITerminal): void {
+		const childProcess = this.childProcess
+		if (!childProcess) return
+		childProcess.stdout?.removeAllListeners()
+		childProcess.stderr?.removeAllListeners()
+		childProcess.removeAllListeners()
+		this.childProcess = null
+		const terminalRef = terminal as { _process?: ChildProcess | null }
+		if (terminalRef._process === childProcess) {
+			terminalRef._process = null
 		}
 	}
 
@@ -555,6 +590,11 @@ export class StandaloneTerminalProcess extends EventEmitter<TerminalProcessEvent
 		if (!this.childProcess || this.isCompleted) {
 			return
 		}
+
+		// A terminated process produces no further output, so the hot window that
+		// stalls the next API request is meaningless and would only keep this
+		// object reachable for its remaining duration.
+		this.clearHotTimer()
 
 		const pid = this.childProcess.pid
 		if (!pid) {

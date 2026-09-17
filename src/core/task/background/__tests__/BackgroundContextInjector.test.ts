@@ -1,6 +1,11 @@
 import { strict as assert } from "node:assert"
 import { EventEmitter } from "node:events"
-import { type BackgroundCommand, CommandExecutor, StandaloneTerminalManager } from "@integrations/terminal"
+import {
+	type BackgroundCommand,
+	CommandExecutor,
+	StandaloneTerminalManager,
+	type TerminalProcessResultPromise,
+} from "@integrations/terminal"
 import { describe, it } from "vitest"
 import { ToolExecutor } from "../../ToolExecutor"
 import type { SubagentRunStats } from "../../tools/subagent/SubagentExecutor"
@@ -33,7 +38,7 @@ function createCommand(id: string, command: string): BackgroundCommand {
 		logFilePath: `logs/${id}.log`,
 		lineCount: 1,
 		injectionState: "pending",
-		process: {} as BackgroundCommand["process"],
+		process: {} as TerminalProcessResultPromise,
 	}
 }
 
@@ -69,7 +74,7 @@ describe("BackgroundContextInjector", () => {
 				cancellationOwner: "explicit",
 				logFilePath: "logs/command_1.log",
 				lineCount: 1,
-				process: {} as BackgroundCommand["process"],
+				process: {} as TerminalProcessResultPromise,
 			},
 		]
 		const commandExecutor = Object.create(CommandExecutor.prototype) as CommandExecutor
@@ -107,7 +112,7 @@ describe("BackgroundContextInjector", () => {
 				logFilePath: "logs/command_2.log",
 				lineCount: 3,
 				lastApiSentLineCount: 1,
-				process: {} as BackgroundCommand["process"],
+				process: {} as TerminalProcessResultPromise,
 			},
 		]
 
@@ -203,7 +208,7 @@ describe("BackgroundContextInjector", () => {
 	it("injects only metadata and a log path for small completed background output", async () => {
 		const subagentJobManager = new SubagentJobManager()
 		const manager = new StandaloneTerminalManager()
-		const process = new EventEmitter() as BackgroundCommand["process"]
+		const process = new EventEmitter() as TerminalProcessResultPromise
 		const command = manager.trackBackgroundCommand(process, "npm test", "command_small")
 		process.emit("line", "small output", "stdout")
 		process.emit("completed", { exitCode: 0, signal: null })
@@ -289,7 +294,7 @@ describe("BackgroundContextInjector", () => {
 				logFilePath: "logs/command_1.log",
 				lineCount: 12,
 				injectionState: "pending",
-				process: {} as BackgroundCommand["process"],
+				process: {} as TerminalProcessResultPromise,
 			},
 		]
 

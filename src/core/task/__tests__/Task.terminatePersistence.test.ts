@@ -43,7 +43,7 @@ describe("Task termination persistence", () => {
 			...terminationRuntime,
 			taskState: { abort: false, abandoned: false, isStreaming: false, cancelOperations: vi.fn() },
 			getActiveHookExecution: vi.fn(async () => undefined),
-			commandExecutor: { cancelBackgroundCommand: vi.fn(async () => {}) },
+			commandExecutor: { cancelBackgroundCommand: vi.fn(async () => {}), dispose: vi.fn(async () => {}) },
 			stateManager: { getGlobalSettingsKey: vi.fn(() => false) },
 			flushTaskSnapshot: vi.fn(async () => {}),
 			messageStateHandler: {
@@ -115,7 +115,7 @@ describe("Task termination persistence", () => {
 			...terminationRuntime,
 			taskState: { abort: false, abandoned: false, isStreaming: false, cancelOperations: vi.fn() },
 			getActiveHookExecution: vi.fn(async () => undefined),
-			commandExecutor: { cancelBackgroundCommand: vi.fn(async () => {}) },
+			commandExecutor: { cancelBackgroundCommand: vi.fn(async () => {}), dispose: vi.fn(async () => {}) },
 			stateManager: { getGlobalSettingsKey: vi.fn(() => false) },
 			flushTaskSnapshot: vi.fn(async () => {}),
 			messageStateHandler: {
@@ -195,7 +195,7 @@ describe("Task termination persistence", () => {
 			dispatchRuntime,
 			taskState: { abort: false, abandoned: false, isStreaming: false, cancelOperations: vi.fn() },
 			getActiveHookExecution: vi.fn(async () => undefined),
-			commandExecutor: { cancelBackgroundCommand: vi.fn(async () => true) },
+			commandExecutor: { cancelBackgroundCommand: vi.fn(async () => true), dispose: vi.fn(async () => {}) },
 			stateManager: { getGlobalSettingsKey: vi.fn(() => false) },
 			flushTaskSnapshot,
 			messageStateHandler: {
@@ -267,7 +267,7 @@ describe("Task termination persistence", () => {
 			syncRetainedMachines,
 			taskState: { abort: false, abandoned: false, isStreaming: false, cancelOperations: vi.fn() },
 			getActiveHookExecution: vi.fn(async () => undefined),
-			commandExecutor: { cancelBackgroundCommand },
+			commandExecutor: { cancelBackgroundCommand, dispose: vi.fn(async () => {}) },
 			stateManager: { getGlobalSettingsKey: vi.fn(() => false) },
 			flushTaskSnapshot,
 			messageStateHandler: {

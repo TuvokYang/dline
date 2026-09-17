@@ -79,6 +79,15 @@ export const DEFAULT_TERMINAL_OUTPUT_LINE_LIMIT = 500
 /** Foreground grace period before a non-synchronous command is handed to background tracking. */
 export const COMMAND_BACKGROUND_HANDOFF_MS = 10_000
 
+/**
+ * Bounded wait for a background log stream to finish flushing.
+ *
+ * Disposal awaits this flush, so an unbounded wait would turn a stuck write
+ * stream into a stuck task teardown. Exceeding the budget is reported as a log
+ * failure rather than silently dropping the wait.
+ */
+export const LOG_STREAM_FINALIZE_TIMEOUT_MS = 5_000
+
 // =============================================================================
 // Compilation Detection Markers
 // =============================================================================

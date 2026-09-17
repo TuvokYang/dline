@@ -6008,7 +6008,11 @@ export class Task {
 			// must not prevent other resources from being released.
 			const syncCleanups = [
 				() => {
-					this.terminalManager.disposeAll()
+					// A StandaloneTerminalManager is released through the awaited
+					// cleanup below, so disposing it here too would race that work.
+					if (!(this.terminalManager instanceof StandaloneTerminalManager)) {
+						this.terminalManager.disposeAll()
+					}
 				},
 				() => {
 					this.urlContentFetcher.closeBrowser()
@@ -6049,6 +6053,16 @@ export class Task {
 				withTerminateTimeout(this.diffViewProvider.revertChanges(), 5_000, "diffViewProvider.revertChanges"),
 				withTerminateTimeout(this.presentationScheduler.dispose(), 3_000, "presentationScheduler.dispose"),
 				withTerminateTimeout(this.disposePromptInputFileWatcher(), 3_000, "promptInputFileWatcher.dispose"),
+				// Releases the executor's per-activity tracking and, in vscodeTerminal
+				// mode, the standalone manager it created for itself. That manager is
+				// not this.terminalManager, so the sync cleanup above never reaches it.
+				withTerminateTimeout(this.commandExecutor.dispose(), 5_000, "commandExecutor.dispose"),
+				// The standalone manager owns child processes and log descriptors, so
+				// the Task waits for its release instead of leaving it to run detached
+				// past termination.
+				...(this.terminalManager instanceof StandaloneTerminalManager
+					? [withTerminateTimeout(this.terminalManager.disposeAsync(), 5_000, "terminalManager.disposeAsync")]
+					: []),
 			]
 
 			// Run sync cleanups immediately (they are non-blocking)
