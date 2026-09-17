@@ -169,6 +169,22 @@ export class SubagentFanoutBudget {
 		return await work()
 	}
 
+	/**
+	 * Withhold capacity for work that escaped its slot.
+	 *
+	 * A tool abandoned by an interrupted run can outlive the run itself. Its
+	 * slot has to come back or the rest of the batch never starts, but the
+	 * resources are still in use, so the allowance shrinks by one for exactly
+	 * as long as that work runs. Without this the slot would be handed to a
+	 * replacement while the original tool is still holding a terminal or a
+	 * host request, and reported capacity would exceed the real one.
+	 *
+	 * @param until Settles when the escaped work finally stops.
+	 */
+	withholdCapacity(until: Promise<unknown>): void {
+		this.gate.withholdCapacity(until)
+	}
+
 	/** Change notification for a limit that is read from settings. */
 	notifyLimitChanged(): void {
 		this.gate.notifyLimitChanged()

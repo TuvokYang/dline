@@ -633,6 +633,20 @@ export class SubagentRunner {
 	 * @param timeoutMs Maximum time to wait before giving up.
 	 * @returns Whether all abandoned work stopped within the deadline.
 	 */
+	/**
+	 * The abandoned work that has still not stopped.
+	 *
+	 * A caller that gave up waiting uses this to keep accounting honest: the
+	 * permit can go back while the allowance stays reduced until this settles.
+	 *
+	 * @returns A promise settling when every currently abandoned tool stops,
+	 *   or undefined when nothing is outstanding.
+	 */
+	outstandingAbandonedWork(): Promise<unknown> | undefined {
+		if (this.abandonedToolExecutions.size === 0) return undefined
+		return Promise.all([...this.abandonedToolExecutions])
+	}
+
 	async whenAbandonedWorkSettled(timeoutMs = ABANDONED_TOOL_SETTLE_TIMEOUT_MS): Promise<boolean> {
 		const deadline = Date.now() + timeoutMs
 		while (this.abandonedToolExecutions.size > 0) {

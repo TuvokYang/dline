@@ -1,6 +1,7 @@
 import { strict as assert } from "node:assert"
 import { MAX_SUBAGENTS_PER_BATCH } from "@shared/concurrency-limits"
 import { describe, it } from "vitest"
+import type { TaskActivityRecord } from "../TaskActivity"
 import { TaskActivityStore } from "../TaskActivityStore"
 
 /**
@@ -89,6 +90,66 @@ describe("TaskActivityStore bounded payload", () => {
 		const recipe = store.get("item-1")?.retryRecipe
 		assert.ok(!recipe?.task.includes("abcdef0123456789"), "a recipe must not persist a bearer token verbatim")
 		assert.ok(!recipe?.prompt.includes("abcdef0123456789"), "a recipe must not persist an API key verbatim")
+	})
+
+	it("bounds a retry recipe supplied through update rather than creation", () => {
+		// Creation is not the only way a recipe enters the store: a later update
+		// carries one too, and an unbounded one there would be persisted as-is.
+		const store = new TaskActivityStore("task-bounded")
+		createSubagentActivity(store, "item-1", "prompt")
+
+		store.update("item-1", {
+			retryRecipe: {
+				kind: "subagent",
+				schemaVersion: 1,
+				subagentName: "default",
+				task: HUGE,
+				prompt: 'use api_key="abcdef0123456789" for the request',
+				timeoutSeconds: 60,
+				retryable: true,
+			},
+		})
+
+		const recipe = store.get("item-1")?.retryRecipe
+		assert.ok((recipe?.task.length ?? 0) < HUGE.length, "an updated recipe task must be truncated")
+		assert.ok(recipe?.task.endsWith("… [truncated]"), "truncation must be visible on the update path too")
+		assert.ok(!recipe?.prompt.includes("abcdef0123456789"), "an updated recipe must not persist an API key verbatim")
+	})
+
+	it("bounds a raw recipe rehydrated from a persisted activity", async () => {
+		// Activities written before the bound existed are replayed on load. The
+		// store must re-apply the bound instead of trusting the stored document.
+		const persisted: TaskActivityRecord = {
+			activityId: "item-1",
+			taskId: "task-bounded",
+			kind: "subagent",
+			executionMode: "foreground",
+			status: "failed",
+			cancellable: false,
+			createdAt: 1,
+			updatedAt: 2,
+			title: "subagent item-1",
+			events: [],
+			retryRecipe: {
+				kind: "subagent",
+				schemaVersion: 1,
+				subagentName: "default",
+				task: HUGE,
+				prompt: 'use api_key="abcdef0123456789" for the request',
+				timeoutSeconds: 60,
+				retryable: true,
+			},
+		}
+		const store = new TaskActivityStore("task-bounded", {
+			load: async () => [persisted],
+			save: async () => {},
+		})
+
+		await store.hydrate()
+
+		const recipe = store.get("item-1")?.retryRecipe
+		assert.ok((recipe?.task.length ?? 0) < HUGE.length, "a rehydrated recipe task must be truncated")
+		assert.ok(!recipe?.prompt.includes("abcdef0123456789"), "a rehydrated recipe must not keep an API key verbatim")
 	})
 
 	it("bounds the result and error written at completion", () => {

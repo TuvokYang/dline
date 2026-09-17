@@ -101,6 +101,45 @@ describe("SubagentStatusRow", () => {
 		expect(screen.getByText(/do something/)).toBeInTheDocument()
 	})
 
+	it("renders backend-rejected batch items alongside the runnable ones", () => {
+		const msg = makeMsg({
+			ask: "use_subagents",
+			type: "ask",
+			say: undefined,
+			text: JSON.stringify({
+				prompts: ["run the reviewer"],
+				rejected: [{ index: 2, error: "API Profile 'retired-profile' is not enabled." }],
+			}),
+		})
+
+		render(<SubagentStatusRow isLast={true} message={msg} />)
+
+		// Both the runnable item and the refused one must be visible: approving a
+		// batch whose refused members are hidden would misrepresent its scope.
+		expect(screen.getByText(/run the reviewer/)).toBeInTheDocument()
+		expect(screen.getByText(/API Profile 'retired-profile' is not enabled\./)).toBeInTheDocument()
+	})
+
+	it("keeps a rejected item visible when every requested subagent was refused", () => {
+		const msg = makeMsg({
+			ask: "use_subagents",
+			type: "ask",
+			say: undefined,
+			text: JSON.stringify({
+				prompts: ["still-runnable placeholder"],
+				rejected: [
+					{ index: 1, error: "Subagent 'missing-agent' was not found." },
+					{ index: 2, error: "API Profile 'retired-profile' is not enabled." },
+				],
+			}),
+		})
+
+		render(<SubagentStatusRow isLast={true} message={msg} />)
+
+		expect(screen.getByText(/Subagent 'missing-agent' was not found\./)).toBeInTheDocument()
+		expect(screen.getByText(/API Profile 'retired-profile' is not enabled\./)).toBeInTheDocument()
+	})
+
 	it("uses canonical live activity to keep cancellation available after resume", () => {
 		taskActivities.push({
 			activityId: "job-1",

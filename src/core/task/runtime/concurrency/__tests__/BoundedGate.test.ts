@@ -289,6 +289,87 @@ describe("BoundedGate", () => {
 		})
 	})
 
+	describe("withheld capacity", () => {
+		it("lowers the effective limit while abandoned work is still running", async () => {
+			const gate = new BoundedGate({ limit: 2 })
+			let stopAbandoned = () => {}
+			const abandoned = new Promise<void>((resolve) => {
+				stopAbandoned = resolve
+			})
+
+			gate.withholdCapacity(abandoned)
+			expect(gate.limit).toBe(1)
+
+			const held = await gate.acquire()
+			let secondAdmitted = false
+			void gate.acquire().then(() => {
+				secondAdmitted = true
+			})
+			await flush()
+
+			// The second acquire must stay queued: the configured limit is 2 but one
+			// slot is still owned by work that never stopped.
+			expect(secondAdmitted).toBe(false)
+			expect(gate.state.queued).toBe(1)
+			held.release()
+			stopAbandoned()
+		})
+
+		it("restores capacity and admits the waiter once the withheld work settles", async () => {
+			const gate = new BoundedGate({ limit: 1 })
+			let stopAbandoned = () => {}
+			const abandoned = new Promise<void>((resolve) => {
+				stopAbandoned = resolve
+			})
+
+			gate.withholdCapacity(abandoned)
+			expect(gate.limit).toBe(0)
+
+			const waiting = gate.acquire()
+			await flush()
+			expect(gate.state.queued).toBe(1)
+
+			stopAbandoned()
+			const permit = await waiting
+			expect(gate.limit).toBe(1)
+			expect(gate.state.queued).toBe(0)
+			permit.release()
+		})
+
+		it("restores capacity when the withheld work rejects", async () => {
+			const gate = new BoundedGate({ limit: 1 })
+			let failAbandoned = (_reason: unknown) => {}
+			const abandoned = new Promise<void>((_resolve, reject) => {
+				failAbandoned = reject
+			})
+
+			gate.withholdCapacity(abandoned)
+			const waiting = gate.acquire()
+			await flush()
+			expect(gate.state.queued).toBe(1)
+
+			failAbandoned(new Error("tool crashed after abandonment"))
+			const permit = await waiting
+			expect(gate.limit).toBe(1)
+			permit.release()
+		})
+
+		it("never reports a negative limit when more slots are withheld than configured", async () => {
+			const gate = new BoundedGate({ limit: 1 })
+			gate.withholdCapacity(new Promise<void>(() => {}))
+			gate.withholdCapacity(new Promise<void>(() => {}))
+
+			expect(gate.limit).toBe(0)
+
+			let admitted = false
+			void gate.acquire().then(() => {
+				admitted = true
+			})
+			await flush()
+			expect(admitted).toBe(false)
+		})
+	})
+
 	describe("cancellation", () => {
 		it("rejects a waiter whose signal fires before admission", async () => {
 			const gate = new BoundedGate({ limit: 1, name: "tool" })

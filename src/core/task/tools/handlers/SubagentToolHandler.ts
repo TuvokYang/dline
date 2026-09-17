@@ -697,15 +697,18 @@ async function runBudgetedSubagent(
 		// resources that tool still holds, so the slot is returned only once
 		// the runner reports the abandoned work has settled.
 		//
-		// The wait is bounded on purpose. A wedged tool must not hold the slot
-		// forever, because every remaining item in the batch is queued behind
-		// it; reclaiming after the deadline keeps the batch finishing at the
-		// cost of a temporarily optimistic capacity estimate.
+		// The wait is bounded on purpose: a wedged tool must not hold the slot
+		// forever, because every remaining item is queued behind it. Giving up
+		// returns the slot but withholds one unit of allowance until the tool
+		// really stops, so the batch keeps draining without the budget
+		// pretending the resource is free.
 		try {
 			const settled = await runner.whenAbandonedWorkSettled()
 			if (!settled) {
+				const outstanding = runner.outstandingAbandonedWork()
+				if (outstanding) budget.withholdCapacity(outstanding)
 				Logger.warn(
-					"[SubagentToolHandler] reclaimed a subagent slot before its abandoned tool settled; capacity is optimistic until that tool exits",
+					"[SubagentToolHandler] a subagent tool outlived its run; subagent capacity is reduced until it exits",
 				)
 			}
 		} catch (error) {
@@ -1210,6 +1213,25 @@ export class UseSubagentsToolHandler implements IFullyManagedTool {
 		)
 		if (!approved) return formatResponse.toolDenied()
 		config.taskState.consecutiveMistakeCount = 0
+		// Approval can sit open long enough for a Profile to be deleted or
+		// disabled. The builder would silently fall back to the parent Act
+		// Profile, so the binding is confirmed once more against the catalogue
+		// the run will actually use.
+		const staleProfiles = planned.filter(
+			(item) => item.profileName && !getBatchResolvers(config).isProfileUsable(item.profileName),
+		)
+		if (staleProfiles.length > 0) {
+			config.taskState.consecutiveMistakeCount++
+			return formatResponse.toolError(
+				[
+					"No subagent could be started.",
+					...staleProfiles.map(
+						(item) =>
+							`[${item.index}] API Profile '${item.profileName}' became unavailable while this batch was waiting for approval. Re-request it with an enabled Profile.`,
+					),
+				].join("\n"),
+			)
+		}
 		const entries: SubagentStatusItem[] = planned.map((item) => ({
 			index: item.index,
 			jobId: item.jobId,
@@ -1326,7 +1348,13 @@ export class UseSubagentsToolHandler implements IFullyManagedTool {
 				false,
 				block.ts,
 			)
-			return formatResponse.toolResult(backgroundSubagentResult("started", "batch job", batch.batchJobId))
+			// Background items report back later through the job manager, which
+			// only knows about the ones that started. A rejected item would
+			// otherwise never be mentioned again, so it is reported now.
+			const startedNotice = backgroundSubagentResult("started", "batch job", batch.batchJobId)
+			return formatResponse.toolResult(
+				rejected.length === 0 ? startedNotice : `${startedNotice}\n\n${formatRejectedItems(rejected, false)}`,
+			)
 		}
 		config.taskState.isExecutingSubagent = true
 		planned.forEach((item) => {

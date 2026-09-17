@@ -356,6 +356,9 @@ export class TaskActivityStore {
 			...(activityPatch.retryUnavailableReason === undefined
 				? {}
 				: { retryUnavailableReason: boundFieldText(activityPatch.retryUnavailableReason) }),
+			// A patched recipe carries the same free text as a created one and
+			// must not be the path that reintroduces an unbounded prompt.
+			...(activityPatch.retryRecipe === undefined ? {} : { retryRecipe: boundRetryRecipe(activityPatch.retryRecipe) }),
 		}
 		Object.assign(activity, sanitizedPatch, { updatedAt: Date.now() })
 		if (runtime && activity.kind === "subagent") {
@@ -617,7 +620,11 @@ export class TaskActivityStore {
 			error: activity.error === undefined ? undefined : redactSensitiveText(activity.error),
 			runtime: activity.runtime ? { ...activity.runtime } : undefined,
 			metrics: activity.metrics ? { ...activity.metrics } : undefined,
-			retryRecipe: activity.retryRecipe ? { ...activity.retryRecipe } : undefined,
+			// A recipe reaching this point may come from an activity file
+			// written by an older build, so it is bounded here as well as on
+			// the create path; otherwise loading such a file would reintroduce
+			// the raw prompt the ceiling exists to prevent.
+			retryRecipe: activity.retryRecipe ? boundRetryRecipe(activity.retryRecipe) : undefined,
 			retryUnavailableReason:
 				activity.retryUnavailableReason === undefined ? undefined : redactSensitiveText(activity.retryUnavailableReason),
 			events: activity.events.map((event) => this.redactEvent({ ...event })),

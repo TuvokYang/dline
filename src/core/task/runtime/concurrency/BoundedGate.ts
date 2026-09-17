@@ -76,6 +76,14 @@ export class BoundedGate {
 	private waiters: Waiter[] = []
 	private held = 0
 	private nextSeq = 0
+	/**
+	 * Allowance withheld for work that outlived its permit.
+	 *
+	 * Counted separately from `held` because the permit is already gone: the
+	 * work is no longer cancellable through the gate, but it still consumes
+	 * the resource the limit exists to protect.
+	 */
+	private withheld = 0
 
 	constructor(options: BoundedGateOptions) {
 		const { limit } = options
@@ -83,13 +91,43 @@ export class BoundedGate {
 		this.name = options.name ?? "gate"
 	}
 
-	/** Current limit, clamped to a non-negative integer. */
+	/**
+	 * Current admission ceiling.
+	 *
+	 * Capacity withheld for escaped work is subtracted here rather than
+	 * counted as running, so a stuck tool narrows the gate instead of being
+	 * double counted or silently forgiven.
+	 */
 	get limit(): number {
+		return Math.max(0, this.configuredLimit - this.withheld)
+	}
+
+	/** Configured limit, clamped to a non-negative integer. */
+	private get configuredLimit(): number {
 		const raw = this.resolveLimit()
 		if (!Number.isFinite(raw)) {
 			return 0
 		}
 		return Math.max(0, Math.floor(raw))
+	}
+
+	/**
+	 * Withhold one unit of allowance until the given work settles.
+	 *
+	 * Used when a permit must be returned before its work actually stopped:
+	 * the queue keeps draining, but the gate does not pretend the resource is
+	 * free. The allowance returns automatically once the work ends.
+	 *
+	 * @param until Settles when the escaped work stops.
+	 */
+	withholdCapacity(until: Promise<unknown>): void {
+		this.withheld += 1
+		void Promise.resolve(until)
+			.catch(() => undefined)
+			.finally(() => {
+				this.withheld = Math.max(0, this.withheld - 1)
+				this.admitWaiters()
+			})
 	}
 
 	/** Snapshot of running and queued counts. */

@@ -931,6 +931,105 @@ describe("SubagentToolHandler", () => {
 		assert.match(String(result), /were not started/)
 	})
 
+	it("reports rejected items in the tool result of a background mixed batch", async () => {
+		// A background batch returns before the runs finish, so the early tool
+		// result is the only place the model learns an item was refused.
+		const { config } = createConfig({ autoApproveSafe: true, autoApproveAll: true })
+		vi.spyOn(AgentConfigModule, "resolveAgentConfig").mockImplementation(async (_cwd, agentName) =>
+			agentName === "reviewer"
+				? {
+						config: { name: "reviewer", description: "reviewer", tools: [], systemPrompt: "Prompt" },
+						source: "project",
+						path: "/workspace/.agents/subagents/reviewer.yml",
+					}
+				: undefined,
+		)
+		vi.spyOn(AgentConfigModule, "listEnabledAgentConfigs").mockResolvedValue([
+			{
+				config: { name: "reviewer", description: "reviewer", tools: [], systemPrompt: "Prompt" },
+				source: "project",
+				path: "/workspace/.agents/subagents/reviewer.yml",
+			},
+		])
+		vi.spyOn(SubagentRunner.prototype, "run").mockResolvedValue({
+			status: "completed",
+			result: "done",
+			stats: {
+				toolCalls: 1,
+				inputTokens: 1,
+				outputTokens: 1,
+				cacheWriteTokens: 0,
+				cacheReadTokens: 0,
+				totalCost: 0,
+				currency: "USD",
+				contextTokens: 1,
+				contextWindow: 200000,
+				contextUsagePercentage: 0,
+			},
+		})
+
+		const handler = new UseSubagentsToolHandler()
+		const result = await handler.execute(config, {
+			type: "tool_use",
+			name: ClineDefaultTool.USE_SUBAGENTS,
+			params: {
+				subagents: JSON.stringify([
+					{ agent_name: "reviewer", task: "runs", context: "ctx runs" },
+					{ agent_name: "missing", task: "never runs", context: "ctx missing" },
+				]),
+				background: "true",
+			},
+			partial: false,
+			ts: Date.now(),
+		})
+
+		assert.match(String(result), /Started background subagent batch job/)
+		assert.match(String(result), /Unknown or disabled subagent 'missing'/)
+		assert.match(String(result), /were not started/)
+	})
+
+	it("refuses to start a batch whose Profile became unavailable while awaiting approval", async () => {
+		// Planning validates the Profile, but approval can take arbitrarily long.
+		// Re-checking after approval keeps a disabled Profile from silently
+		// falling back to the parent's credentials.
+		const { config, callbacks } = createConfig({ autoApproveSafe: false, autoApproveAll: false })
+		stubEnabledProfiles(["fast-reviewer"])
+		vi.spyOn(AgentConfigModule, "resolveAgentConfig").mockResolvedValue({
+			config: { name: "reviewer", description: "reviewer", tools: [], systemPrompt: "Prompt" },
+			source: "project",
+			path: "/workspace/.agents/subagents/reviewer.yml",
+		})
+		vi.spyOn(AgentConfigModule, "listEnabledAgentConfigs").mockResolvedValue([
+			{
+				config: { name: "reviewer", description: "reviewer", tools: [], systemPrompt: "Prompt" },
+				source: "project",
+				path: "/workspace/.agents/subagents/reviewer.yml",
+			},
+		])
+		// The catalogue loses the Profile exactly while the approval is pending.
+		callbacks.ask.mockImplementation(async () => {
+			stubEnabledProfiles([])
+			return { response: "yesButtonClicked" }
+		})
+		const runSpy = vi.spyOn(SubagentRunner.prototype, "run")
+
+		const handler = new UseSubagentsToolHandler()
+		const result = await handler.execute(config, {
+			type: "tool_use",
+			name: ClineDefaultTool.USE_SUBAGENTS,
+			params: {
+				subagents: JSON.stringify([
+					{ agent_name: "reviewer", task: "runs", context: "ctx runs", profile: "fast-reviewer" },
+				]),
+			},
+			partial: false,
+			ts: Date.now(),
+		})
+
+		assert.match(String(result), /became unavailable while this batch was waiting for approval/)
+		assert.equal(runSpy.mock.calls.length, 0, "no subagent may start with a Profile that is no longer enabled")
+	})
+
 	it("lists default and bounded configured names for an unknown stable subagent", async () => {
 		const { config } = createConfig({ autoApproveSafe: true, autoApproveAll: true })
 		const handler = new UseSubagentToolHandler()
