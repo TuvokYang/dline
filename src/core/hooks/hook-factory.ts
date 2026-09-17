@@ -636,7 +636,7 @@ class StdioHookRunner<Name extends HookName> extends HookRunner<Name> {
  * Combines multiple hook runners and executes them in parallel.
  *
  * Used in multi-root workspaces where both global hooks (from ~/Documents/Cline/Hooks/)
- * and workspace-specific hooks (from each workspace's .clinerules/hooks/) exist for the
+ * and workspace-specific hooks (from each workspace's .agents/hooks/) exist for the
  * same hook type.
  *
  * Behavior:
@@ -839,7 +839,7 @@ export class HookFactory {
 	 * Determines the working directory for a hook script based on its location.
 	 *
 	 * - Global hooks (from ~/Documents/Cline/Hooks/): run from the primary workspace root
-	 * - Workspace hooks (from workspaceRoot/.clinerules/hooks/): run from that specific workspace root
+	 * - Workspace hooks (from workspaceRoot/.agents/hooks/): run from that specific workspace root
 	 *
 	 * This ensures workspace-specific hooks can use relative paths that are meaningful
 	 * within their own workspace context.
@@ -864,7 +864,7 @@ export class HookFactory {
 		}
 
 		// If workspace hook, find which workspace root it belongs to
-		// Workspace hooks are at: workspaceRoot/.clinerules/hooks/
+		// Workspace hooks are at: workspaceRoot/.agents/hooks/
 		// So find the workspace root whose path is a prefix of the containing hooks dir
 		if (containingDir && workspaceRoots) {
 			const workspaceRoot = workspaceRoots.find((root) => containingDir.startsWith(root.path))
@@ -880,7 +880,7 @@ export class HookFactory {
 	/**
 	 * Categorizes hook scripts by their location (global vs workspace).
 	 * Global hooks are located in ~/Documents/Cline/Hooks/
-	 * Workspace hooks are located in workspace .clinerules/hooks/ directories
+	 * Workspace hooks are located in workspace .agents/hooks/ directories
 	 *
 	 * @param scripts Array of hook script paths
 	 * @param hooksDirs Array of hooks directories (passed to avoid redundant fetches)
@@ -909,7 +909,7 @@ export class HookFactory {
 	/**
 	 * @returns A list of paths to scripts for the given hook name.
 	 * Includes both global hooks (from ~/Documents/Cline/Hooks/) and workspace hooks
-	 * (from .clinerules/hooks/ in each workspace root).
+	 * (from .agents/hooks/ in each workspace root).
 	 */
 	private static async findHookScripts(hookName: HookName): Promise<string[]> {
 		const startedAt = performance.now()

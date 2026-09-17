@@ -111,9 +111,9 @@ describe("Shell Path Escaping", () => {
 		})
 
 		it("should handle workspace hooks with spaces in root", () => {
-			const path = "/Users/user/My Example Project/.clinerules/hooks/PreToolUse"
+			const path = "/Users/user/My Example Project/.agents/hooks/PreToolUse"
 			const escaped = escapeShellPath(path)
-			escaped.should.equal("'/Users/user/My Example Project/.clinerules/hooks/PreToolUse'")
+			escaped.should.equal("'/Users/user/My Example Project/.agents/hooks/PreToolUse'")
 		})
 
 		it("should handle paths with newlines (edge case)", () => {
@@ -229,23 +229,23 @@ describe("Shell Path Escaping", () => {
 
 		it("should handle workspace with company name and spaces", () => {
 			setPlatform("darwin")
-			const path = "/Users/user/Projects/ACME Corp Project/.clinerules/hooks/PreToolUse"
+			const path = "/Users/user/Projects/ACME Corp Project/.agents/hooks/PreToolUse"
 			const escaped = escapeShellPath(path)
-			escaped.should.equal("'/Users/user/Projects/ACME Corp Project/.clinerules/hooks/PreToolUse'")
+			escaped.should.equal("'/Users/user/Projects/ACME Corp Project/.agents/hooks/PreToolUse'")
 		})
 
 		it("should handle workspace with version numbers and spaces", () => {
 			setPlatform("darwin")
-			const path = "/Users/user/Projects/My Project v2.0/.clinerules/hooks/PreToolUse"
+			const path = "/Users/user/Projects/My Project v2.0/.agents/hooks/PreToolUse"
 			const escaped = escapeShellPath(path)
-			escaped.should.equal("'/Users/user/Projects/My Project v2.0/.clinerules/hooks/PreToolUse'")
+			escaped.should.equal("'/Users/user/Projects/My Project v2.0/.agents/hooks/PreToolUse'")
 		})
 
 		it("should handle workspace with mixed special characters", () => {
 			setPlatform("darwin")
-			const path = "/Users/user/Projects/Test's (New) Project v2.0/.clinerules/hooks/PreToolUse"
+			const path = "/Users/user/Projects/Test's (New) Project v2.0/.agents/hooks/PreToolUse"
 			const escaped = escapeShellPath(path)
-			escaped.should.equal("'/Users/user/Projects/Test'\\''s (New) Project v2.0/.clinerules/hooks/PreToolUse'")
+			escaped.should.equal("'/Users/user/Projects/Test'\\''s (New) Project v2.0/.agents/hooks/PreToolUse'")
 		})
 	})
 
@@ -253,16 +253,16 @@ describe("Shell Path Escaping", () => {
 		it("should handle multiple roots with spaces (macOS)", () => {
 			setPlatform("darwin")
 			const roots = [
-				"/Users/user/My Frontend Project/.clinerules/hooks/PreToolUse",
-				"/Users/user/My Backend Project/.clinerules/hooks/PreToolUse",
-				"/Users/user/Shared Utils/.clinerules/hooks/PreToolUse",
+				"/Users/user/My Frontend Project/.agents/hooks/PreToolUse",
+				"/Users/user/My Backend Project/.agents/hooks/PreToolUse",
+				"/Users/user/Shared Utils/.agents/hooks/PreToolUse",
 			]
 
 			const escaped = roots.map(escapeShellPath)
 			escaped.should.deepEqual([
-				"'/Users/user/My Frontend Project/.clinerules/hooks/PreToolUse'",
-				"'/Users/user/My Backend Project/.clinerules/hooks/PreToolUse'",
-				"'/Users/user/Shared Utils/.clinerules/hooks/PreToolUse'",
+				"'/Users/user/My Frontend Project/.agents/hooks/PreToolUse'",
+				"'/Users/user/My Backend Project/.agents/hooks/PreToolUse'",
+				"'/Users/user/Shared Utils/.agents/hooks/PreToolUse'",
 			])
 		})
 

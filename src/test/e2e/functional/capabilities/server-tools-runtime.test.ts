@@ -214,7 +214,7 @@ async function configureCancelingPreToolUseHook(
 	errorMessage: string,
 	delaySeconds = 0,
 ): Promise<void> {
-	const hooksDir = path.join(workspaceDir, ".dline", "hooks")
+	const hooksDir = path.join(workspaceDir, ".agents", "hooks")
 	await mkdir(hooksDir, { recursive: true })
 	const output = JSON.stringify({ cancel: true, errorMessage })
 	const delay = delaySeconds > 0 ? `Start-Sleep -Seconds ${delaySeconds}\n` : ""

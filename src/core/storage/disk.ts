@@ -110,7 +110,7 @@ export const GlobalFileNames = {
 	// subagents. Keeping rules in a separate root left them outside the
 	// discovery scan, so a rule placed next to a working workflow never loaded.
 	agentsRulesDir: ".agents/rules",
-	hooksDir: ".dline/hooks",
+	hooksDir: ".agents/hooks",
 	mcpDir: ".dline/mcp",
 	pluginDir: ".dline/plugin",
 	agentsWorkflowsDir: ".agents/workflows",

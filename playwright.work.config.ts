@@ -12,7 +12,7 @@ const isCI = Boolean(process.env.CI)
 
 export default defineConfig({
 	...baseConfig,
-	workers: 4,
+	workers: 1,
 	retries: 0,
 	fullyParallel: false,
 	timeout: WORKFLOW_TIMEOUT_MS,
@@ -36,7 +36,7 @@ export default defineConfig({
 			name: projectName,
 			testMatch: exactWorkTestMatch(fileName),
 			timeout: WORKFLOW_TIMEOUT_MS,
-			retries: isCI ? 1 : 0,
+			retries: 0,
 			grepInvert: PRESSURE_E2E_TAG,
 			dependencies: ["work smoke"],
 		})),
