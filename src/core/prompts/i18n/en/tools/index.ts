@@ -109,6 +109,8 @@ export const toolPromptModules = [
 	defineLegacyModule("statusUpdate", "tools", statusUpdate),
 	defineLegacyModule("subagent", "tools", subagent, {
 		timeoutInstruction: createRuntimeContract("SUBAGENT_TIMEOUT_SECONDS"),
+		description: createRuntimeContract("MAX_SUBAGENTS_PER_BATCH"),
+		subagentsInstruction: createRuntimeContract("MAX_SUBAGENTS_PER_BATCH"),
 	}),
 	defineLegacyModule("toolHandlers", "tools", toolHandlers, {
 		toolError: createRuntimeContract("ERROR"),

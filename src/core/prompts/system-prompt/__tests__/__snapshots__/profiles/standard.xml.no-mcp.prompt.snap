@@ -485,7 +485,7 @@ Parameters:
 - task: (required) Focused task for the subagent.
 - context: (required) Relevant context, constraints, and expected result for the subagent. Include enough context for independent research, but do not use this field to expand or redefine the main task's modification boundary.
 - background: (optional) Optional boolean. Set true to run in background. Defaults to false.
-- timeout: (optional) Optional positive integer timeout in seconds for each subagent. Defaults to 1200.
+- timeout: (optional) Optional positive integer timeout in seconds, applied to every item that does not set its own. Defaults to 1200.
 Usage:
 <use_subagent>
 <agent_name></agent_name>
@@ -496,22 +496,14 @@ Usage:
 </use_subagent>
 
 ## use_subagents
-Description: Run up to five built-in default subagents in parallel. Each subagent gets its own prompt and returns a comprehensive research result with tool and token stats. Use this to preserve the main task's context window by delegating self-contained research. Keep each delegated research boundary independent from the main task's modification boundary: provide only the context needed for investigation, and do not treat files explored or reported by a subagent as authorized write scope. Using one subagent is valid.
+Description: Run up to 32 subagents from one call. Describe each one as an item in the subagents array; items run concurrently up to the configured subagent limit and the rest wait their turn, so a wide batch is accepted in full rather than trimmed. Each subagent returns a comprehensive research result with tool and token stats. Use this to preserve the main task's context window by delegating self-contained research. Keep each delegated research boundary independent from the main task's modification boundary: provide only the context needed for investigation, and do not treat files explored or reported by a subagent as authorized write scope. Using one item is valid.
 Parameters:
-- prompt_1: (required) First subagent prompt. Must include <task> and <context> sections.
-- prompt_2: (optional) Optional second subagent prompt. Must include <task> and <context> sections when provided.
-- prompt_3: (optional) Optional third subagent prompt. Must include <task> and <context> sections when provided.
-- prompt_4: (optional) Optional fourth subagent prompt. Must include <task> and <context> sections when provided.
-- prompt_5: (optional) Optional fifth subagent prompt. Must include <task> and <context> sections when provided.
+- subagents: (required) The subagents to run, 1 to 32 items. Each item is configured independently and needs at least task and context.
 - background: (optional) Optional boolean. Set true to run in background. Defaults to false.
-- timeout: (optional) Optional positive integer timeout in seconds for each subagent. Defaults to 1200.
+- timeout: (optional) Optional positive integer timeout in seconds, applied to every item that does not set its own. Defaults to 1200.
 Usage:
 <use_subagents>
-<prompt_1></prompt_1>
-<prompt_2></prompt_2>
-<prompt_3></prompt_3>
-<prompt_4></prompt_4>
-<prompt_5></prompt_5>
+<subagents></subagents>
 <background></background>
 <timeout></timeout>
 </use_subagents>

@@ -815,7 +815,7 @@
           },
           "timeout": {
             "type": "integer",
-            "description": "Optional positive integer timeout in seconds for each subagent. Defaults to 1200."
+            "description": "Optional positive integer timeout in seconds, applied to every item that does not set its own. Defaults to 1200."
           }
         },
         "required": [
@@ -830,30 +830,46 @@
     "type": "function",
     "function": {
       "name": "use_subagents",
-      "description": "Run up to five built-in default subagents in parallel. Each subagent gets its own prompt and returns a comprehensive research result with tool and token stats. Use this to preserve the main task's context window by delegating self-contained research. Keep each delegated research boundary independent from the main task's modification boundary: provide only the context needed for investigation, and do not treat files explored or reported by a subagent as authorized write scope. Using one subagent is valid.",
+      "description": "Run up to 32 subagents from one call. Describe each one as an item in the subagents array; items run concurrently up to the configured subagent limit and the rest wait their turn, so a wide batch is accepted in full rather than trimmed. Each subagent returns a comprehensive research result with tool and token stats. Use this to preserve the main task's context window by delegating self-contained research. Keep each delegated research boundary independent from the main task's modification boundary: provide only the context needed for investigation, and do not treat files explored or reported by a subagent as authorized write scope. Using one item is valid.",
       "strict": false,
       "parameters": {
         "type": "object",
         "properties": {
-          "prompt_1": {
-            "type": "string",
-            "description": "First subagent prompt. Must include <task> and <context> sections."
-          },
-          "prompt_2": {
-            "type": "string",
-            "description": "Optional second subagent prompt. Must include <task> and <context> sections when provided."
-          },
-          "prompt_3": {
-            "type": "string",
-            "description": "Optional third subagent prompt. Must include <task> and <context> sections when provided."
-          },
-          "prompt_4": {
-            "type": "string",
-            "description": "Optional fourth subagent prompt. Must include <task> and <context> sections when provided."
-          },
-          "prompt_5": {
-            "type": "string",
-            "description": "Optional fifth subagent prompt. Must include <task> and <context> sections when provided."
+          "subagents": {
+            "type": "array",
+            "description": "The subagents to run, 1 to 32 items. Each item is configured independently and needs at least task and context.",
+            "minItems": 1,
+            "maxItems": 32,
+            "items": {
+              "type": "object",
+              "properties": {
+                "agent_name": {
+                  "type": "string",
+                  "description": "Optional advertised subagent name for this item. Omit or use 'default' for the built-in default profile."
+                },
+                "task": {
+                  "type": "string",
+                  "description": "Focused task for this subagent."
+                },
+                "context": {
+                  "type": "string",
+                  "description": "Relevant context, constraints, and expected result for this subagent. Include enough context for independent research, but do not use this field to expand or redefine the main task's modification boundary."
+                },
+                "profile": {
+                  "type": "string",
+                  "description": "Optional API Profile for this item. Naming one binds this subagent to it; if that Profile is unavailable or not enabled for subagents, this item fails instead of quietly running on another one. Omit to use the agent's configured Profile, or the parent Act Profile."
+                },
+                "timeout": {
+                  "type": "integer",
+                  "description": "Optional positive integer timeout in seconds for this item. Omit to use the call's shared timeout. Timing starts when the item begins executing, not when the batch is submitted."
+                }
+              },
+              "required": [
+                "task",
+                "context"
+              ],
+              "additionalProperties": false
+            }
           },
           "background": {
             "type": "boolean",
@@ -861,11 +877,11 @@
           },
           "timeout": {
             "type": "integer",
-            "description": "Optional positive integer timeout in seconds for each subagent. Defaults to 1200."
+            "description": "Optional positive integer timeout in seconds, applied to every item that does not set its own. Defaults to 1200."
           }
         },
         "required": [
-          "prompt_1"
+          "subagents"
         ],
         "additionalProperties": false
       }

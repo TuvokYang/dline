@@ -1,5 +1,6 @@
 import { strict as assert } from "node:assert"
 import { setTimeout as delay } from "node:timers/promises"
+import { MAX_SUBAGENTS_PER_BATCH } from "@shared/concurrency-limits"
 import { ClineSubagentUsageInfo } from "@shared/ExtensionMessage"
 import { createTaskCapabilityToggles } from "@shared/TaskCapabilityToggles"
 import type { TaskActivityEventInput } from "@shared/task-activity"
@@ -214,7 +215,7 @@ describe("SubagentToolHandler", () => {
 			ts: Date.now(),
 		})
 
-		assert.ok(String(result).includes("Missing required parameter: prompt_1"))
+		assert.ok(String(result).includes("Missing required parameter: subagents"))
 		assert.equal(taskState.consecutiveMistakeCount, 1)
 		expect(callbacks.sayAndCreateMissingParamError)
 	})
@@ -227,7 +228,7 @@ describe("SubagentToolHandler", () => {
 			type: "tool_use",
 			name: ClineDefaultTool.USE_SUBAGENTS,
 			params: {
-				prompt_1: "first prompt",
+				subagents: JSON.stringify([{ task: "one", context: "ctx one" }]),
 			},
 			partial: false,
 			ts: Date.now(),
@@ -249,8 +250,10 @@ describe("SubagentToolHandler", () => {
 				type: "tool_use",
 				name: ClineDefaultTool.USE_SUBAGENTS,
 				params: {
-					prompt_1: "first prompt",
-					prompt_2: "second prompt",
+					subagents: JSON.stringify([
+						{ task: "first", context: "ctx first" },
+						{ task: "second", context: "ctx second" },
+					]),
 				},
 				partial: true,
 				ts: Date.now(),
@@ -263,7 +266,10 @@ describe("SubagentToolHandler", () => {
 		})
 
 		const payload = JSON.parse(callbacks.ask.mock.calls[0][1])
-		assert.deepEqual(payload.prompts, ["first prompt", "second prompt"])
+		assert.deepEqual(payload.prompts, [
+			"<task>\nfirst\n</task>\n<context>\nctx first\n</context>",
+			"<task>\nsecond\n</task>\n<context>\nctx second\n</context>",
+		])
 		expect(callbacks.say)
 	})
 
@@ -277,8 +283,10 @@ describe("SubagentToolHandler", () => {
 				type: "tool_use",
 				name: ClineDefaultTool.USE_SUBAGENTS,
 				params: {
-					prompt_1: "first prompt",
-					prompt_2: "second prompt",
+					subagents: JSON.stringify([
+						{ task: "first", context: "ctx first" },
+						{ task: "second", context: "ctx second" },
+					]),
 				},
 				partial: true,
 				ts: Date.now(),
@@ -296,7 +304,10 @@ describe("SubagentToolHandler", () => {
 		)
 
 		const payload = JSON.parse(callbacks.say.mock.calls[0][1])
-		assert.deepEqual(payload.prompts, ["first prompt", "second prompt"])
+		assert.deepEqual(payload.prompts, [
+			"<task>\nfirst\n</task>\n<context>\nctx first\n</context>",
+			"<task>\nsecond\n</task>\n<context>\nctx second\n</context>",
+		])
 		expect(callbacks.ask)
 	})
 
@@ -309,8 +320,10 @@ describe("SubagentToolHandler", () => {
 			type: "tool_use",
 			name: ClineDefaultTool.USE_SUBAGENTS,
 			params: {
-				prompt_1: "<task>one</task><context>ctx one</context>",
-				prompt_2: "<task>two</task><context>ctx two</context>",
+				subagents: JSON.stringify([
+					{ task: "one", context: "ctx one" },
+					{ task: "two", context: "ctx two" },
+				]),
 			},
 			partial: false,
 			ts: Date.now(),
@@ -347,7 +360,7 @@ describe("SubagentToolHandler", () => {
 			type: "tool_use",
 			name: ClineDefaultTool.USE_SUBAGENTS,
 			params: {
-				prompt_1: "<task>one</task><context>ctx one</context>",
+				subagents: JSON.stringify([{ task: "one", context: "ctx one" }]),
 			},
 			partial: false,
 			ts: Date.now(),
@@ -406,9 +419,11 @@ describe("SubagentToolHandler", () => {
 			type: "tool_use",
 			name: ClineDefaultTool.USE_SUBAGENTS,
 			params: {
-				prompt_1: "<task>one</task><context>ctx one</context>",
-				prompt_2: "<task>two</task><context>ctx two</context>",
-				prompt_3: "<task>three</task><context>ctx three</context>",
+				subagents: JSON.stringify([
+					{ task: "one", context: "ctx one" },
+					{ task: "two", context: "ctx two" },
+					{ task: "three", context: "ctx three" },
+				]),
 			},
 			partial: false,
 			ts: Date.now(),
@@ -482,8 +497,10 @@ describe("SubagentToolHandler", () => {
 			type: "tool_use",
 			name: ClineDefaultTool.USE_SUBAGENTS,
 			params: {
-				prompt_1: "<task>succeed</task><context>ctx succeed</context>",
-				prompt_2: "<task>fail</task><context>ctx fail</context>",
+				subagents: JSON.stringify([
+					{ task: "succeed", context: "ctx succeed" },
+					{ task: "fail", context: "ctx fail" },
+				]),
 			},
 			partial: false,
 			ts: Date.now(),
@@ -535,8 +552,10 @@ describe("SubagentToolHandler", () => {
 			type: "tool_use",
 			name: ClineDefaultTool.USE_SUBAGENTS,
 			params: {
-				prompt_1: "<task>stable</task><context>ctx</context>",
-				prompt_2: "<task>retry</task><context>ctx</context>",
+				subagents: JSON.stringify([
+					{ task: "stable", context: "ctx" },
+					{ task: "retry", context: "ctx" },
+				]),
 			},
 			partial: false,
 			ts: Date.now(),
@@ -584,9 +603,11 @@ describe("SubagentToolHandler", () => {
 			type: "tool_use",
 			name: ClineDefaultTool.USE_SUBAGENTS,
 			params: {
-				prompt_1: "<task>one</task><context>ctx one</context>",
-				prompt_2: "<task>two</task><context>ctx two</context>",
-				prompt_3: "<task>three</task><context>ctx three</context>",
+				subagents: JSON.stringify([
+					{ task: "one", context: "ctx one" },
+					{ task: "two", context: "ctx two" },
+					{ task: "three", context: "ctx three" },
+				]),
 			},
 			partial: false,
 			ts: Date.now(),
@@ -1134,7 +1155,7 @@ describe("SubagentToolHandler", () => {
 		const result = await handler.execute(config, {
 			type: "tool_use",
 			name: ClineDefaultTool.USE_SUBAGENTS,
-			params: { prompt_1: "do something" },
+			params: { subagents: JSON.stringify([{ task: "do something", context: "ctx" }]) },
 			partial: false,
 			ts: blockTs,
 		})
@@ -1190,7 +1211,7 @@ describe("SubagentToolHandler", () => {
 		const result = await handler.execute(config, {
 			type: "tool_use",
 			name: ClineDefaultTool.USE_SUBAGENTS,
-			params: { prompt_1: "<task>fast</task><context>ctx</context>", background: "true" },
+			params: { subagents: JSON.stringify([{ task: "fast", context: "ctx" }]), background: "true" },
 			partial: false,
 			ts: Date.now(),
 		})
@@ -1231,11 +1252,12 @@ describe("SubagentToolHandler", () => {
 			type: "tool_use",
 			name: ClineDefaultTool.USE_SUBAGENTS,
 			params: {
-				prompt_1: "<task>1</task><context>ctx 1</context>",
-				prompt_2: "<task>2</task><context>ctx 2</context>",
-				prompt_3: "<task>3</task><context>ctx 3</context>",
-				prompt_4: "<task>4</task><context>ctx 4</context>",
-				prompt_5: "<task>5</task><context>ctx 5</context>",
+				subagents: JSON.stringify(
+					Array.from({ length: MAX_SUBAGENTS_PER_BATCH }, (_unused, index) => ({
+						task: `${index + 1}`,
+						context: `ctx ${index + 1}`,
+					})),
+				),
 			},
 			partial: false,
 			ts: blockTs,

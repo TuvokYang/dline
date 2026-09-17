@@ -763,7 +763,22 @@ export interface ClineAskUseMcpServer {
 
 export interface ClineAskUseSubagents {
 	prompts: string[]
-	items?: Array<{ task: string; context: string; subagentName?: string; jobId?: string }>
+	/**
+	 * Per-item approval detail for a batch.
+	 *
+	 * A batch exists to run differently configured work at once, so the user
+	 * approving it has to see which agent and Profile each item resolved to.
+	 * A single batch-level name would hide exactly the distinction being
+	 * approved, including whichever items bound a different Profile.
+	 */
+	items?: Array<{
+		task: string
+		context: string
+		subagentName?: string
+		/** Profile bound to this item, when one was resolved. */
+		profileName?: string
+		jobId?: string
+	}>
 	kind?: "single" | "batch"
 	subagentName?: string
 	task?: string

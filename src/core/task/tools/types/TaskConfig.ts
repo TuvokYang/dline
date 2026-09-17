@@ -38,6 +38,7 @@ import type { TaskController } from "../../TaskController"
 import type { TaskState } from "../../TaskState"
 import type { AutoApprove } from "../../tools/autoApprove"
 import type { HookExecution } from "../../types/HookExecution"
+import type { SubagentFanoutBudget } from "../subagent/SubagentFanoutBudget"
 import type { SubagentJobManager } from "../subagent/SubagentJobManager"
 import type { ToolExecutorCoordinator } from "../ToolExecutorCoordinator"
 import { TASK_CALLBACKS_KEYS, TASK_CONFIG_KEYS, TASK_SERVICES_KEYS } from "../utils/ToolConstants"
@@ -130,6 +131,14 @@ export interface TaskConfig {
 
 	/** Task-local background subagent job manager. */
 	subagentJobManager?: SubagentJobManager
+
+	/**
+	 * Task-scoped budget bounding how many subagents execute at once.
+	 *
+	 * Held on the task rather than per fan-out call so nested fan-out competes
+	 * for the same allowance instead of multiplying the configured limit.
+	 */
+	subagentFanoutBudget?: SubagentFanoutBudget
 }
 
 /**

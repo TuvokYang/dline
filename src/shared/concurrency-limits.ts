@@ -20,6 +20,16 @@ export const MAX_PARALLEL_SUBAGENTS = 64
 export const MIN_PARALLEL_EXECUTIONS = 1
 
 /**
+ * Largest batch a single `use_subagents` call may request.
+ *
+ * This bounds the shape of one request, not how much runs at once, and the two
+ * are set independently: how many items a call may describe is a prompt and
+ * payload concern, while how many execute together is `maxParallelSubagents`.
+ * A batch may therefore be accepted in full and still queue.
+ */
+export const MAX_SUBAGENTS_PER_BATCH = 32
+
+/**
  * Clamp a configured limit into a usable range.
  *
  * @param value Configured value, possibly absent, fractional or out of range.
