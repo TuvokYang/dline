@@ -140,6 +140,31 @@ describe("SubagentStatusRow", () => {
 		expect(screen.getByText(/API Profile 'retired-profile' is not enabled\./)).toBeInTheDocument()
 	})
 
+	it("orders a mixed batch by the requested position, not the compacted array", () => {
+		// Item 1 was refused, so the runnable array holds only item 2. Ordering
+		// that survivor by its array offset would give it position 1 as well:
+		// the rows would then collide on one index and the refused item would be
+		// listed after the item the model actually requested second.
+		const msg = makeMsg({
+			ask: "use_subagents",
+			type: "ask",
+			say: undefined,
+			text: JSON.stringify({
+				kind: "batch",
+				prompts: ["run the second item"],
+				items: [{ index: 2, task: "second", context: "ctx" }],
+				rejected: [{ index: 1, error: "Subagent 'missing-agent' was not found." }],
+			}),
+		})
+
+		render(<SubagentStatusRow isLast={true} message={msg} />)
+
+		const rows = screen.getAllByTestId("subagent-item")
+		expect(rows).toHaveLength(2)
+		expect(rows[0].textContent).toContain("Subagent 'missing-agent' was not found.")
+		expect(rows[1].textContent).not.toContain("Subagent 'missing-agent' was not found.")
+	})
+
 	it("uses canonical live activity to keep cancellation available after resume", () => {
 		taskActivities.push({
 			activityId: "job-1",

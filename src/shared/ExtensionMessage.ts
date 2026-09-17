@@ -779,6 +779,15 @@ export interface ClineAskUseSubagents {
 	 * approved, including whichever items bound a different Profile.
 	 */
 	items?: Array<{
+		/**
+		 * Position of this item in the original request.
+		 *
+		 * Planning compacts the runnable array, so an array offset no longer
+		 * identifies the requested item. The card orders runnable and rejected
+		 * rows against each other, and only the original position keeps those
+		 * two sets comparable.
+		 */
+		index?: number
 		task: string
 		context: string
 		subagentName?: string

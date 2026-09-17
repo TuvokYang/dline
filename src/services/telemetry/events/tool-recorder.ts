@@ -10,6 +10,16 @@ import type { TaskAggregates } from "./task-aggregates"
 export type TerminalType = "vscode" | "standalone"
 
 /**
+ * Which bounded pool a measurement describes.
+ *
+ * A closed union rather than a free string: this value becomes a metric label,
+ * so an open vocabulary would let a new call site add time series without
+ * review. The two pools are deliberately separate at runtime, and this label is
+ * what keeps them comparable in one query.
+ */
+export type ExecutionPool = "tool" | "subagent"
+
+/**
  * VSCode-specific output capture methods
  */
 export type VscodeOutputMethod = "shell_integration" | "clipboard" | "none"
@@ -419,6 +429,94 @@ export class ToolEventRecorder extends DomainRecorder {
 	 * Records when CLI subagents feature is enabled/disabled by the user
 	 * @param enabled Whether subagents was enabled (true) or disabled (false)
 	 */
+	/**
+	 * Record one admission outcome for a bounded execution pool.
+	 *
+	 * The queue wait is a histogram because it is a duration whose distribution
+	 * matters; occupancy, queue depth and the limit are gauges because only
+	 * their current value is meaningful. Keeping the wait out of the shared
+	 * `tool.execution` histogram is deliberate: a slow tool and a saturated pool
+	 * must remain distinguishable.
+	 *
+	 * @param args.pool Which pool was entered. A closed enumeration, so the
+	 * label cannot grow a series per tool or per agent.
+	 * @param args.queueWaitMs Milliseconds spent waiting for admission.
+	 * @param args.running Holders admitted at the sampling point.
+	 * @param args.queued Waiters still queued at the sampling point.
+	 * @param args.limit Effective admission ceiling at the sampling point.
+	 */
+	capturePoolAdmission(args: {
+		pool: ExecutionPool
+		queueWaitMs: number
+		running: number
+		queued: number
+		limit: number
+	}): void {
+		const attributes = { pool: args.pool }
+		this.sink.recordHistogram(
+			TELEMETRY_METRICS.POOLS.QUEUE_WAIT_SECONDS,
+			args.queueWaitMs / 1000,
+			attributes,
+			"Seconds spent waiting for admission to a bounded execution pool",
+		)
+		this.recordPoolOccupancy(args)
+	}
+
+	/**
+	 * Re-sample a pool's occupancy without recording a queue wait.
+	 *
+	 * Release is the other point where the numbers change, and a gauge that is
+	 * only written on admission would read as permanently saturated once the
+	 * last item is admitted.
+	 *
+	 * @param args.pool Which pool is being sampled.
+	 * @param args.running Holders admitted at the sampling point.
+	 * @param args.queued Waiters still queued at the sampling point.
+	 * @param args.limit Effective admission ceiling at the sampling point.
+	 */
+	recordPoolOccupancy(args: { pool: ExecutionPool; running: number; queued: number; limit: number }): void {
+		const attributes = { pool: args.pool }
+		this.sink.recordGauge(TELEMETRY_METRICS.POOLS.RUNNING, args.running, attributes, "Work currently admitted to the pool")
+		this.sink.recordGauge(TELEMETRY_METRICS.POOLS.QUEUED, args.queued, attributes, "Work waiting for admission to the pool")
+		this.sink.recordGauge(
+			TELEMETRY_METRICS.POOLS.LIMIT,
+			args.limit,
+			attributes,
+			"Effective admission ceiling, after any withheld capacity",
+		)
+	}
+
+	/**
+	 * Record the shape of one subagent batch.
+	 *
+	 * Both figures are values, never labels: a batch may carry up to
+	 * MAX_SUBAGENTS_PER_BATCH items, and a per-width label would add one time
+	 * series per distinct batch size. Profile names are deliberately absent for
+	 * the same reason.
+	 *
+	 * @param items Items the batch actually started.
+	 * @param explicitProfileItems Items that named a Profile through the tool
+	 * parameter, as opposed to inheriting one from YAML or the parent.
+	 */
+	captureSubagentFanout(items: number, explicitProfileItems: number): void {
+		if (!this.sink.isCategoryEnabled("subagents")) {
+			return
+		}
+
+		this.sink.recordHistogram(
+			TELEMETRY_METRICS.SUBAGENT_FANOUT.BATCH_ITEMS,
+			items,
+			undefined,
+			"Subagents started by one batch request",
+		)
+		this.sink.recordHistogram(
+			TELEMETRY_METRICS.SUBAGENT_FANOUT.EXPLICIT_PROFILE_ITEMS,
+			explicitProfileItems,
+			undefined,
+			"Batch items that bound an API Profile through the tool parameter",
+		)
+	}
+
 	captureSubagentToggle(enabled: boolean): void {
 		if (!this.sink.isCategoryEnabled("subagents")) {
 			return

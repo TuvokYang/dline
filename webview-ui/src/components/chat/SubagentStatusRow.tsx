@@ -172,7 +172,11 @@ function parseSubagentRowData(message: ClineMessage): SubagentRowData | null {
 				contextUsagePercentage: 0,
 			}))
 			const runnableRows: SubagentDisplayItem[] = prompts.map((prompt, index) => ({
-				index: index + 1,
+				// Planning compacts the runnable array, so the array offset is not
+				// the requested position. The backend supplies the original index;
+				// the offset is only the fallback for a payload written before that
+				// field existed.
+				index: structuredItems?.[index]?.index ?? index + 1,
 				prompt,
 				subagentName: parsed.subagentName ?? structuredItems?.[index]?.subagentName,
 				task: parsed.task ?? structuredItems?.[index]?.task,

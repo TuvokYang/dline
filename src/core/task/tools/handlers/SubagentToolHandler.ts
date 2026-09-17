@@ -705,11 +705,17 @@ async function runBudgetedSubagent(
 		try {
 			const settled = await runner.whenAbandonedWorkSettled()
 			if (!settled) {
-				const outstanding = runner.outstandingAbandonedWork()
-				if (outstanding) budget.withholdCapacity(outstanding)
-				Logger.warn(
-					"[SubagentToolHandler] a subagent tool outlived its run; subagent capacity is reduced until it exits",
-				)
+				// The claim is one-shot: a runner survives its retries, so a tool
+				// wedged by an earlier attempt is still listed here. Charging it
+				// again would shrink the allowance below the work that is really
+				// outstanding and starve unrelated items.
+				const outstanding = runner.claimOutstandingAbandonedWork()
+				if (outstanding) {
+					budget.withholdCapacity(outstanding)
+					Logger.warn(
+						"[SubagentToolHandler] a subagent tool outlived its run; subagent capacity is reduced until it exits",
+					)
+				}
 			}
 		} catch (error) {
 			Logger.warn("[SubagentToolHandler] abandoned subagent tool did not settle cleanly", error)
@@ -1190,6 +1196,11 @@ export class UseSubagentsToolHandler implements IFullyManagedTool {
 			kind: "batch",
 			prompts,
 			items: planned.map((item) => ({
+				// The runnable array is compacted when planning rejects an item,
+				// so the original request position travels with each entry. The
+				// card orders runnable and rejected rows against each other, and
+				// only the original index keeps those two sets comparable.
+				index: item.index,
 				task: item.task,
 				context: item.context,
 				subagentName: item.subagentName,

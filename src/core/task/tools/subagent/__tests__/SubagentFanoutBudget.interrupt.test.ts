@@ -134,4 +134,74 @@ describe("SubagentRunner abandoned work deadline", () => {
 
 		assert.equal(settled, true)
 	})
+
+	it("charges one wedged tool once, even when a retry reuses the same runner", async () => {
+		// A runner outlives its attempts. If every attempt re-claimed the same
+		// wedged tool, a single stuck tool would keep shrinking the allowance
+		// until unrelated items could never be admitted.
+		const { SubagentRunner } = await import("../SubagentRunner")
+		const runner = Object.create(SubagentRunner.prototype) as {
+			abandonedToolExecutions: Set<Promise<unknown>>
+			claimedAbandonedWork: Set<Promise<unknown>>
+			claimOutstandingAbandonedWork(): Promise<unknown> | undefined
+		}
+		const wedged = new Promise<void>(() => undefined)
+		Object.defineProperty(runner, "abandonedToolExecutions", {
+			value: new Set<Promise<unknown>>([wedged]),
+			writable: true,
+		})
+		Object.defineProperty(runner, "claimedAbandonedWork", {
+			value: new Set<Promise<unknown>>(),
+			writable: true,
+		})
+
+		const firstAttempt = runner.claimOutstandingAbandonedWork()
+		const retryAttempt = runner.claimOutstandingAbandonedWork()
+
+		assert.notEqual(firstAttempt, undefined, "the attempt that gave up must charge the wedged tool")
+		assert.equal(retryAttempt, undefined, "a retry must not charge the same wedged tool again")
+	})
+
+	it("keeps the effective limit at one when a retry re-runs behind one wedged tool", async () => {
+		/** Deterministically drain the microtask queue. */
+		const drain = async (): Promise<void> => {
+			for (let index = 0; index < 8; index++) await Promise.resolve()
+		}
+		const budget = new SubagentFanoutBudget({ limit: 2 })
+		const { SubagentRunner } = await import("../SubagentRunner")
+		const runner = Object.create(SubagentRunner.prototype) as {
+			abandonedToolExecutions: Set<Promise<unknown>>
+			claimedAbandonedWork: Set<Promise<unknown>>
+			claimOutstandingAbandonedWork(): Promise<unknown> | undefined
+		}
+		Object.defineProperty(runner, "abandonedToolExecutions", {
+			value: new Set<Promise<unknown>>([new Promise<void>(() => undefined)]),
+			writable: true,
+		})
+		Object.defineProperty(runner, "claimedAbandonedWork", {
+			value: new Set<Promise<unknown>>(),
+			writable: true,
+		})
+
+		// Two attempts on the same runner both give up waiting for the tool.
+		for (let attempt = 0; attempt < 2; attempt++) {
+			const outstanding = runner.claimOutstandingAbandonedWork()
+			if (outstanding) budget.withholdCapacity(outstanding)
+		}
+		await drain()
+
+		const first = await budget.acquire()
+		assert.equal(first.admitted, true, "one wedged tool must leave one usable slot")
+
+		let secondAdmitted = false
+		const second = budget.acquire().then((admission) => {
+			secondAdmitted = admission.admitted
+		})
+		await drain()
+		assert.equal(secondAdmitted, false, "the wedged tool still holds exactly one unit of the allowance")
+
+		;(first as { slot: SubagentSlot }).slot.release()
+		await second
+		assert.equal(secondAdmitted, true, "returning the real slot must admit the queued item")
+	})
 })

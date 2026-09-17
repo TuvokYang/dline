@@ -524,6 +524,15 @@ export class SubagentRunner {
 	 * the owner of the slot can wait for it.
 	 */
 	private readonly abandonedToolExecutions = new Set<Promise<unknown>>()
+	/**
+	 * Abandoned work whose capacity cost has already been handed to a budget.
+	 *
+	 * A runner outlives its attempts, so a tool wedged during attempt 1 is
+	 * still in `abandonedToolExecutions` when a retry finishes. Without this
+	 * record the retry would charge the same wedged tool a second time and
+	 * shrink the allowance below the work that is genuinely outstanding.
+	 */
+	private readonly claimedAbandonedWork = new Set<Promise<unknown>>()
 
 	constructor(
 		private baseConfig: TaskConfig,
@@ -615,7 +624,10 @@ export class SubagentRunner {
 	private trackAbandonedTool(toolExecution: Promise<unknown>): void {
 		const settled = Promise.resolve(toolExecution).catch(() => undefined)
 		this.abandonedToolExecutions.add(settled)
-		void settled.finally(() => this.abandonedToolExecutions.delete(settled))
+		void settled.finally(() => {
+			this.abandonedToolExecutions.delete(settled)
+			this.claimedAbandonedWork.delete(settled)
+		})
 	}
 
 	/**
@@ -634,17 +646,24 @@ export class SubagentRunner {
 	 * @returns Whether all abandoned work stopped within the deadline.
 	 */
 	/**
-	 * The abandoned work that has still not stopped.
+	 * Take ownership of the abandoned work nobody is accounting for yet.
 	 *
 	 * A caller that gave up waiting uses this to keep accounting honest: the
-	 * permit can go back while the allowance stays reduced until this settles.
+	 * permit can go back while the allowance stays reduced until the returned
+	 * promise settles. The claim is one-shot, because the same wedged tool
+	 * survives into later attempts on this runner and must be charged once,
+	 * not once per attempt.
 	 *
-	 * @returns A promise settling when every currently abandoned tool stops,
-	 *   or undefined when nothing is outstanding.
+	 * @returns A promise settling when every newly claimed tool stops, or
+	 *   undefined when nothing is outstanding beyond what was already claimed.
 	 */
-	outstandingAbandonedWork(): Promise<unknown> | undefined {
-		if (this.abandonedToolExecutions.size === 0) return undefined
-		return Promise.all([...this.abandonedToolExecutions])
+	claimOutstandingAbandonedWork(): Promise<unknown> | undefined {
+		const unclaimed = [...this.abandonedToolExecutions].filter((work) => !this.claimedAbandonedWork.has(work))
+		if (unclaimed.length === 0) return undefined
+		for (const work of unclaimed) {
+			this.claimedAbandonedWork.add(work)
+		}
+		return Promise.all(unclaimed)
 	}
 
 	async whenAbandonedWorkSettled(timeoutMs = ABANDONED_TOOL_SETTLE_TIMEOUT_MS): Promise<boolean> {

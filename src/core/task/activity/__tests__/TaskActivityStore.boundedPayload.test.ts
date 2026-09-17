@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert"
 import { MAX_SUBAGENTS_PER_BATCH } from "@shared/concurrency-limits"
+import type { TaskActivityRecord } from "@shared/task-activity"
 import { describe, it } from "vitest"
-import type { TaskActivityRecord } from "../TaskActivity"
 import { TaskActivityStore } from "../TaskActivityStore"
 
 /**
@@ -120,12 +120,14 @@ describe("TaskActivityStore bounded payload", () => {
 		// Activities written before the bound existed are replayed on load. The
 		// store must re-apply the bound instead of trusting the stored document.
 		const persisted: TaskActivityRecord = {
+			schemaVersion: 2,
 			activityId: "item-1",
 			taskId: "task-bounded",
 			kind: "subagent",
 			executionMode: "foreground",
+			cancellationOwner: "task",
 			status: "failed",
-			cancellable: false,
+			currentAttempt: 1,
 			createdAt: 1,
 			updatedAt: 2,
 			title: "subagent item-1",
