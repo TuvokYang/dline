@@ -78,6 +78,15 @@ interface PooledEntry<T> {
 	block: PooledBlock<T>
 	controller: AbortController
 	state: PooledBlockState
+	/**
+	 * When the block was submitted, used as the origin of its queue wait.
+	 *
+	 * The wait has to be measured from here rather than from the start of
+	 * `start()`: admission is decided in `schedule()`, so by the time `start()`
+	 * runs the gate hands over a permit immediately and a timer opened there
+	 * would report roughly zero no matter how long the block actually queued.
+	 */
+	submittedAt: number
 	settle(outcome: PooledOutcome<T>): void
 }
 
@@ -179,6 +188,7 @@ export class TurnExecutionPool<T> {
 				block,
 				controller: new AbortController(),
 				state: { status: "queued", reason: "limit_reached" },
+				submittedAt: Date.now(),
 				settle: (outcome) => {
 					// Cancellation can reach a block that has already left the
 					// queue but not yet started, so the canceller and the runner
@@ -324,7 +334,6 @@ export class TurnExecutionPool<T> {
 		// to hand over a permit immediately. It is still acquired rather than
 		// assumed, because the gate is the single owner of the running count.
 		let permit: GatePermit
-		const admissionRequestedAt = Date.now()
 		try {
 			permit = await this.gate.acquire(entry.controller.signal)
 		} catch {
@@ -338,10 +347,11 @@ export class TurnExecutionPool<T> {
 
 		// Sampled once the permit is in hand: a saturated pool is only
 		// distinguishable from an idle one when the wait and the occupancy that
-		// caused it are reported at the same moment.
+		// caused it are reported at the same moment. The wait itself is counted
+		// from submission, which is where the block actually started waiting.
 		telemetryService.capturePoolAdmission({
 			pool: "tool",
-			queueWaitMs: Date.now() - admissionRequestedAt,
+			queueWaitMs: Date.now() - entry.submittedAt,
 			running: this.runningCount,
 			queued: this.queuedCount,
 			limit: this.limit(),
