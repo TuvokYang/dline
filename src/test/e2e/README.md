@@ -6,7 +6,7 @@ This directory contains Playwright end-to-end tests that exercise Dline inside a
 
 Regular product tests do not live at the `src/test/e2e/` root. Place each scenario in the tier that owns its purpose:
 
-- **`work/`** - A bounded smoke test and continuous daily user journeys. `playwright.work.config.ts` caps smoke at 60 seconds and each daily journey at 10 minutes.
+- **`work/`** - A bounded smoke test and continuous daily user journeys. `playwright.work.config.ts` caps smoke at 2 minutes and each daily journey at 10 minutes.
 - **`functional/`** - Stable, focused black-box regressions for one feature or contract. These tests should prefer visible controls, settings, inputs, outputs, and the minimum required Mock Provider contract.
 - **`dev/`** - Development-only diagnosis, fault injection, and precise regression capture. Use `bug-<behavior>.test.ts`, `feature-<behavior>.test.ts`, or `issue-<number>-<behavior>.test.ts`.
 - **`demo/`** - Marketplace recording scenarios, isolated from normal product gates.

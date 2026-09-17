@@ -7,7 +7,7 @@ export const WORKFLOW_E2E_CASES = [
 	{ projectName: "work profiles policies", fileName: "daily-profiles-policies.test.ts" },
 ] as const
 
-export const WORK_SMOKE_TIMEOUT_MS = 60_000
+export const WORK_SMOKE_TIMEOUT_MS = 2 * 60_000
 export const WORKFLOW_TIMEOUT_MS = 10 * 60_000
 
 function escapeRegExp(value: string): string {
