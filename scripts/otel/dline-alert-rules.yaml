@@ -276,15 +276,16 @@ groups:
         # permanently wedged tool leaves behind, and nothing in the queue can make
         # progress until the extension host restarts.
         annotations:
-          summary: A pool reported a usable limit of zero while work was queued
+          summary: A pool instance had queued work and no usable limit
           description: >-
-            The pool named by `pool` has queued work and no slot it is allowed to
-            grant. Capacity is withheld when a tool outlives the run that started
-            it, and is only restored when that tool actually exits, so this is the
-            expected signature of work that never terminates rather than of a
-            misconfigured limit. Both gauges are sampled on admission and on
-            release, so the last reported values persist while the pool is stuck —
-            which is what makes the condition visible at all.
+            An instance of the pool named by `pool` has queued work and no slot it
+            is allowed to grant. Capacity is withheld when a tool outlives the run
+            that started it, and is only restored when that tool actually exits, so
+            this is the expected signature of work that never terminates rather
+            than of a misconfigured limit. The per-instance test is done in the
+            process: several pools of the same kind run at once, and their exported
+            queue and limit figures are sums, in which one healthy pool's headroom
+            would cancel out a wedged one's zero.
         labels:
           severity: critical
           component: execution-pools
@@ -303,12 +304,12 @@ groups:
               editorMode: code
               instant: true
               range: false
-              # `max` rather than `min`: one host with a wedged pool is the
-              # incident, and averaging it against healthy hosts would hide it.
-              # The `and` keeps the left-hand queue depth as the value, so the
-              # alert instance carries how much work is stuck behind the zero.
+              # Already a count of wedged instances, so the only aggregation left
+              # is across reporting hosts. `max` rather than `sum` or `avg`: one
+              # host in this state is the incident, a sum would scale the value
+              # with fleet size, and an average would dilute it toward zero.
               expr: >-
-                max by (pool) ((dline_pool_queued{canary_id!~".+"} > 0) and (dline_pool_limit{canary_id!~".+"} == 0))
+                max by (pool) (dline_pool_starved_instances{canary_id!~".+"})
           - refId: threshold
             datasourceUid: __expr__
             model:

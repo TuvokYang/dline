@@ -204,6 +204,7 @@ export const TELEMETRY_METRICS = {
 		RUNNING: "dline.pool.running",
 		QUEUED: "dline.pool.queued",
 		LIMIT: "dline.pool.limit",
+		STARVED_INSTANCES: "dline.pool.starved_instances",
 	},
 	// Fan-out width is recorded as a value, never as a label: a batch may carry
 	// up to MAX_SUBAGENTS_PER_BATCH items, and a per-width time series would add

@@ -465,7 +465,7 @@ export async function restoreSubagentActivityRetry(config: TaskConfig, activityI
 		// same task-scoped budget as a fresh batch; running it unbudgeted lets
 		// several restored activities exceed the configured parallel limit.
 		runner: () =>
-			runBudgetedSubagent(getSubagentFanoutBudget(config), runner, {
+			runBudgetedSubagent(getSubagentFanoutBudget(config), config.ulid, runner, {
 				prompt: recipe.prompt,
 				timeoutSeconds: recipe.timeoutSeconds,
 				onProgress: (update) => applyProgress(config, entry, update),
@@ -664,12 +664,17 @@ async function approveSubagentUse(
  * abandoned tool still holds.
  *
  * @param budget Task-scoped subagent budget.
+ * @param poolInstance Identifies the budget in telemetry. The task's ulid,
+ *   because one gate is shared by every fan-out in the task including nested
+ *   ones; keying by view would count the same state several times. It stays in
+ *   memory and is never exported as a metric label.
  * @param runner Runner for this item.
  * @param options Prompt, timeout, progress and start notification.
  * @returns Terminal execution result, including a refusal reported as failure.
  */
 async function runBudgetedSubagent(
 	budget: SubagentFanoutBudget,
+	poolInstance: string,
 	runner: SubagentRunner,
 	options: {
 		prompt: string
@@ -690,6 +695,7 @@ async function runBudgetedSubagent(
 	const budgetState = budget.state()
 	telemetryService.capturePoolAdmission({
 		pool: "subagent",
+		instance: poolInstance,
 		queueWaitMs: Date.now() - admissionRequestedAt,
 		running: budgetState.running,
 		queued: budgetState.queued,
@@ -736,6 +742,7 @@ async function runBudgetedSubagent(
 			const releasedState = budget.state()
 			telemetryService.recordPoolOccupancy({
 				pool: "subagent",
+				instance: poolInstance,
 				running: releasedState.running,
 				queued: releasedState.queued,
 				limit: releasedState.limit,
@@ -1308,7 +1315,7 @@ export class UseSubagentsToolHandler implements IFullyManagedTool {
 					task: item.task,
 					prompt: item.prompt,
 					runner: () =>
-						runBudgetedSubagent(budget, runnerByBatchPosition[position], {
+						runBudgetedSubagent(budget, config.ulid, runnerByBatchPosition[position], {
 							prompt: item.prompt,
 							timeoutSeconds: item.timeoutSeconds,
 							onProgress: (update) => applyProgress(config, entries[position], update),
@@ -1431,7 +1438,7 @@ export class UseSubagentsToolHandler implements IFullyManagedTool {
 				Promise.all(
 					planned.map((item) => {
 						const entry = entriesByJobId.get(item.jobId) as SubagentStatusItem
-						return runBudgetedSubagent(budget, runnersByJobId.get(item.jobId) as SubagentRunner, {
+						return runBudgetedSubagent(budget, config.ulid, runnersByJobId.get(item.jobId) as SubagentRunner, {
 							prompt: item.prompt,
 							timeoutSeconds: item.timeoutSeconds,
 							onProgress: (update: SubagentProgressUpdate) => applyProgress(config, entry, update),
@@ -1473,7 +1480,7 @@ export class UseSubagentsToolHandler implements IFullyManagedTool {
 				startedAt: entry.startedAt ?? Date.now(),
 				result,
 				runner: () =>
-					runBudgetedSubagent(budget, foregroundRunner, {
+					runBudgetedSubagent(budget, config.ulid, foregroundRunner, {
 						prompt: item.prompt,
 						timeoutSeconds: item.timeoutSeconds,
 						onProgress: (update: SubagentProgressUpdate) => applyProgress(config, entry, update),

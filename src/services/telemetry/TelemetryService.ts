@@ -625,6 +625,7 @@ export class TelemetryService {
 	 */
 	public capturePoolAdmission(args: {
 		pool: ExecutionPool
+		instance: string
 		queueWaitMs: number
 		running: number
 		queued: number
@@ -633,9 +634,25 @@ export class TelemetryService {
 		this.tool.capturePoolAdmission(args)
 	}
 
-	/** Sample a pool's occupancy, queue depth and configured ceiling. */
-	public recordPoolOccupancy(args: { pool: ExecutionPool; running: number; queued: number; limit: number }) {
+	/**
+	 * Sample one pool instance's occupancy, queue depth and effective ceiling.
+	 *
+	 * `instance` separates concurrent pools of the same kind in memory; the
+	 * exported series describe the process, not the instance.
+	 */
+	public recordPoolOccupancy(args: {
+		pool: ExecutionPool
+		instance: string
+		running: number
+		queued: number
+		limit: number
+	}) {
 		this.tool.recordPoolOccupancy(args)
+	}
+
+	/** Drop a pool instance that has gone away, so its last sample stops counting. */
+	public forgetPoolInstance(pool: ExecutionPool, instance: string) {
+		this.tool.forgetPoolInstance(pool, instance)
 	}
 
 	/**
@@ -643,7 +660,8 @@ export class TelemetryService {
 	 *
 	 * The explicit-profile count is separate from the width because a batch
 	 * that binds Profiles per item loads the pool differently from one that
-	 * inherits a single Profile.
+	 * inherits a single Profile. Both describe what was requested, not what
+	 * survived admission.
 	 */
 	public captureSubagentFanout(items: number, explicitProfileItems: number) {
 		this.tool.captureSubagentFanout(items, explicitProfileItems)

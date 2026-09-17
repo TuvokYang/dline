@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 
 const capturePoolAdmission = vi.fn()
 const recordPoolOccupancy = vi.fn()
+const forgetPoolInstance = vi.fn()
 
 // Replaced at the module boundary rather than injected: the pool reaches the
 // telemetry singleton directly, which is the established pattern for handlers
@@ -11,6 +12,7 @@ vi.mock("@/services/telemetry", () => ({
 	telemetryService: {
 		capturePoolAdmission: (...args: unknown[]) => capturePoolAdmission(...args),
 		recordPoolOccupancy: (...args: unknown[]) => recordPoolOccupancy(...args),
+		forgetPoolInstance: (...args: unknown[]) => forgetPoolInstance(...args),
 	},
 }))
 

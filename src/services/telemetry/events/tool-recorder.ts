@@ -20,6 +20,20 @@ export type TerminalType = "vscode" | "standalone"
 export type ExecutionPool = "tool" | "subagent"
 
 /**
+ * The last reported occupancy of one pool instance.
+ *
+ * Deliberately not exported: the identity that keys these entries is a
+ * process-internal detail. Exporting it as a metric label would turn every task
+ * or turn into its own time series, which is exactly the cardinality this
+ * aggregation exists to avoid.
+ */
+interface PoolInstanceState {
+	running: number
+	queued: number
+	limit: number
+}
+
+/**
  * VSCode-specific output capture methods
  */
 export type VscodeOutputMethod = "shell_integration" | "clipboard" | "none"
@@ -70,6 +84,16 @@ export enum TerminalHangStage {
  * keys but not values for exactly this reason.
  */
 export class ToolEventRecorder extends DomainRecorder {
+	/**
+	 * Latest occupancy per pool, keyed by an internal instance identity.
+	 *
+	 * Gauges are last-value-wins per attribute set, so several concurrent pool
+	 * instances sharing the `pool` label would overwrite each other rather than
+	 * add up. Keeping the per-instance figures here lets the exported series
+	 * describe the whole process while the label set stays bounded.
+	 */
+	private readonly poolStates = new Map<ExecutionPool, Map<string, PoolInstanceState>>()
+
 	constructor(
 		sink: TelemetrySignalSink,
 		private readonly aggregates: TaskAggregates,
@@ -426,10 +450,6 @@ export class ToolEventRecorder extends DomainRecorder {
 	}
 
 	/**
-	 * Records when CLI subagents feature is enabled/disabled by the user
-	 * @param enabled Whether subagents was enabled (true) or disabled (false)
-	 */
-	/**
 	 * Record one admission outcome for a bounded execution pool.
 	 *
 	 * The queue wait is a histogram because it is a duration whose distribution
@@ -440,6 +460,8 @@ export class ToolEventRecorder extends DomainRecorder {
 	 *
 	 * @param args.pool Which pool was entered. A closed enumeration, so the
 	 * label cannot grow a series per tool or per agent.
+	 * @param args.instance Identifies the reporting pool within this process.
+	 * Held in memory only; see `recordPoolOccupancy`.
 	 * @param args.queueWaitMs Milliseconds spent waiting for admission.
 	 * @param args.running Holders admitted at the sampling point.
 	 * @param args.queued Waiters still queued at the sampling point.
@@ -447,6 +469,7 @@ export class ToolEventRecorder extends DomainRecorder {
 	 */
 	capturePoolAdmission(args: {
 		pool: ExecutionPool
+		instance: string
 		queueWaitMs: number
 		running: number
 		queued: number
@@ -470,19 +493,105 @@ export class ToolEventRecorder extends DomainRecorder {
 	 * last item is admitted.
 	 *
 	 * @param args.pool Which pool is being sampled.
+	 * @param args.instance Identifies the reporting pool within this process.
+	 * Held in memory only: it keys the aggregate below and is never exported,
+	 * because a task or turn identifier would be an unbounded metric label.
 	 * @param args.running Holders admitted at the sampling point.
 	 * @param args.queued Waiters still queued at the sampling point.
 	 * @param args.limit Effective admission ceiling at the sampling point.
 	 */
-	recordPoolOccupancy(args: { pool: ExecutionPool; running: number; queued: number; limit: number }): void {
+	recordPoolOccupancy(args: { pool: ExecutionPool; instance: string; running: number; queued: number; limit: number }): void {
+		// Pools are per task or per turn, so several report under the same
+		// `pool` label at once. A gauge keyed only by that label keeps the last
+		// writer's numbers, letting an idle task erase a starved one. The
+		// per-instance states are therefore held here and exported as one
+		// process-level figure per pool.
+		const states = this.poolStates.get(args.pool) ?? new Map<string, PoolInstanceState>()
+		if (args.running === 0 && args.queued === 0) {
+			// An idle instance contributes nothing but its ceiling, and pools are
+			// created per task or per turn. Dropping it here is what keeps the
+			// registry bounded over a long session and stops a finished pool's
+			// limit from inflating the process-level sum; the next admission
+			// re-registers it.
+			states.delete(args.instance)
+		} else {
+			states.set(args.instance, { running: args.running, queued: args.queued, limit: args.limit })
+		}
+		this.poolStates.set(args.pool, states)
+
+		let running = 0
+		let queued = 0
+		let limit = 0
+		let starved = 0
+		for (const state of states.values()) {
+			running += state.running
+			queued += state.queued
+			limit += state.limit
+			// A pool with work queued behind a usable limit of zero cannot make
+			// progress until the work that withheld its capacity exits. Counting
+			// those instances is what keeps one wedged pool visible after the
+			// sums above have absorbed it.
+			if (state.queued > 0 && state.limit === 0) {
+				starved += 1
+			}
+		}
+
 		const attributes = { pool: args.pool }
-		this.sink.recordGauge(TELEMETRY_METRICS.POOLS.RUNNING, args.running, attributes, "Work currently admitted to the pool")
-		this.sink.recordGauge(TELEMETRY_METRICS.POOLS.QUEUED, args.queued, attributes, "Work waiting for admission to the pool")
+		this.sink.recordGauge(TELEMETRY_METRICS.POOLS.RUNNING, running, attributes, "Work currently admitted across the pools")
+		this.sink.recordGauge(TELEMETRY_METRICS.POOLS.QUEUED, queued, attributes, "Work waiting for admission across the pools")
 		this.sink.recordGauge(
 			TELEMETRY_METRICS.POOLS.LIMIT,
-			args.limit,
+			limit,
 			attributes,
-			"Effective admission ceiling, after any withheld capacity",
+			"Sum of the effective admission ceilings, after any withheld capacity",
+		)
+		this.sink.recordGauge(
+			TELEMETRY_METRICS.POOLS.STARVED_INSTANCES,
+			starved,
+			attributes,
+			"Pools holding queued work with no usable capacity",
+		)
+	}
+
+	/**
+	 * Stop tracking a pool that has gone away.
+	 *
+	 * A finished task's budget would otherwise keep contributing its last
+	 * sample to the process-level sums forever, and a pool that ended while
+	 * starved would hold the alert open indefinitely.
+	 *
+	 * @param pool Which pool the instance belonged to.
+	 * @param instance The key its samples were recorded under.
+	 */
+	forgetPoolInstance(pool: ExecutionPool, instance: string): void {
+		const states = this.poolStates.get(pool)
+		if (!states?.delete(instance)) {
+			return
+		}
+		// Re-export immediately: leaving the sums at their pre-removal values
+		// until some other pool happens to report would keep a departed pool's
+		// work counted as outstanding.
+		const remaining = [...states.values()]
+		const attributes = { pool }
+		this.sink.recordGauge(
+			TELEMETRY_METRICS.POOLS.RUNNING,
+			remaining.reduce((total, state) => total + state.running, 0),
+			attributes,
+		)
+		this.sink.recordGauge(
+			TELEMETRY_METRICS.POOLS.QUEUED,
+			remaining.reduce((total, state) => total + state.queued, 0),
+			attributes,
+		)
+		this.sink.recordGauge(
+			TELEMETRY_METRICS.POOLS.LIMIT,
+			remaining.reduce((total, state) => total + state.limit, 0),
+			attributes,
+		)
+		this.sink.recordGauge(
+			TELEMETRY_METRICS.POOLS.STARVED_INSTANCES,
+			remaining.filter((state) => state.queued > 0 && state.limit === 0).length,
+			attributes,
 		)
 	}
 
@@ -494,9 +603,13 @@ export class ToolEventRecorder extends DomainRecorder {
 	 * series per distinct batch size. Profile names are deliberately absent for
 	 * the same reason.
 	 *
-	 * @param items Items the batch actually started.
-	 * @param explicitProfileItems Items that named a Profile through the tool
-	 * parameter, as opposed to inheriting one from YAML or the parent.
+	 * Both figures describe what the request asked for, sampled before
+	 * admission and before any per-item rejection, so a batch that is entirely
+	 * refused still reports the width the model attempted.
+	 *
+	 * @param items Items requested by one batch request.
+	 * @param explicitProfileItems Requested items that named a Profile through
+	 * the tool parameter, as opposed to inheriting one from YAML or the parent.
 	 */
 	captureSubagentFanout(items: number, explicitProfileItems: number): void {
 		if (!this.sink.isCategoryEnabled("subagents")) {
@@ -507,13 +620,13 @@ export class ToolEventRecorder extends DomainRecorder {
 			TELEMETRY_METRICS.SUBAGENT_FANOUT.BATCH_ITEMS,
 			items,
 			undefined,
-			"Subagents started by one batch request",
+			"Items requested by one batch request",
 		)
 		this.sink.recordHistogram(
 			TELEMETRY_METRICS.SUBAGENT_FANOUT.EXPLICIT_PROFILE_ITEMS,
 			explicitProfileItems,
 			undefined,
-			"Batch items that bound an API Profile through the tool parameter",
+			"Requested batch items that bound an API Profile through the tool parameter",
 		)
 	}
 

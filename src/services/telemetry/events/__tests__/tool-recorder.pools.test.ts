@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import type { TelemetrySignalSink } from "../../providers/capabilities"
+import type { TelemetrySignalSink } from "../../service/signal-sink"
 import { TELEMETRY_METRICS } from "../catalog"
 import type { TaskAggregates } from "../task-aggregates"
 import { ToolEventRecorder } from "../tool-recorder"
@@ -38,20 +38,20 @@ function createCapturingSink(options: { readonly categoriesEnabled?: boolean } =
 	const measurements: RecordedMeasurement[] = []
 	const events: RecordedEvent[] = []
 	const sink: TelemetrySignalSink = {
-		captureEvent: (name, properties) => {
+		captureEvent: (name: string, properties?: Record<string, unknown>) => {
 			events.push({ name, properties })
 		},
-		recordCounter: (name, value, attributes) => {
+		recordCounter: (name: string, value: number, attributes?: Record<string, unknown>) => {
 			measurements.push({ kind: "counter", name, value, attributes })
 		},
-		recordHistogram: (name, value, attributes) => {
+		recordHistogram: (name: string, value: number, attributes?: Record<string, unknown>) => {
 			measurements.push({ kind: "histogram", name, value, attributes })
 		},
-		recordGauge: (name, value, attributes) => {
+		recordGauge: (name: string, value: number, attributes?: Record<string, unknown>) => {
 			measurements.push({ kind: "gauge", name, value, attributes })
 		},
 		isCategoryEnabled: () => options.categoriesEnabled ?? true,
-	}
+	} as unknown as TelemetrySignalSink
 	return { sink, measurements, events }
 }
 
@@ -68,11 +68,24 @@ function findMeasurement(measurements: readonly RecordedMeasurement[], name: str
 	return measurements.find((entry) => entry.name === name && (pool === undefined || entry.attributes?.pool === pool))
 }
 
+/**
+ * The most recent sample for a gauge.
+ *
+ * Gauges are last-value-wins, so a test that samples several pool instances
+ * must read the newest write. Reading the first would assert against a
+ * superseded value and pass whatever the aggregate ended up being.
+ */
+function latestValue(measurements: readonly RecordedMeasurement[], name: string, pool?: string) {
+	return [...measurements]
+		.reverse()
+		.find((entry) => entry.name === name && (pool === undefined || entry.attributes?.pool === pool))?.value
+}
+
 describe("VER-TASK-007-POOL: pool admission reports a wait and the occupancy that caused it", () => {
 	it("reports the queue wait in seconds and the occupancy at the same sampling point", () => {
 		const { recorder, measurements } = createRecorder()
 
-		recorder.capturePoolAdmission({ pool: "tool", queueWaitMs: 2500, running: 4, queued: 3, limit: 4 })
+		recorder.capturePoolAdmission({ pool: "tool", instance: "turn-1", queueWaitMs: 2500, running: 4, queued: 3, limit: 4 })
 
 		const wait = findMeasurement(measurements, TELEMETRY_METRICS.POOLS.QUEUE_WAIT_SECONDS)
 		// Milliseconds in, seconds out: the metric name ends in `.seconds`, and
@@ -85,38 +98,23 @@ describe("VER-TASK-007-POOL: pool admission reports a wait and the occupancy tha
 		expect(findMeasurement(measurements, TELEMETRY_METRICS.POOLS.LIMIT)?.value).toBe(4)
 	})
 
-	it("distinguishes a saturated pool from an idle one", () => {
-		const saturated = createRecorder()
-		saturated.recorder.capturePoolAdmission({ pool: "tool", queueWaitMs: 9000, running: 4, queued: 6, limit: 4 })
-
-		const idle = createRecorder()
-		idle.recorder.capturePoolAdmission({ pool: "tool", queueWaitMs: 0, running: 1, queued: 0, limit: 4 })
-
-		// Saturation is the pair (running at the limit, work still queued). One
-		// number alone cannot express it: a long wait with an empty queue is a
-		// slow admission, and a full queue with running below the limit is
-		// withheld capacity rather than an undersized limit.
-		const saturatedRunning = findMeasurement(saturated.measurements, TELEMETRY_METRICS.POOLS.RUNNING)?.value
-		const saturatedLimit = findMeasurement(saturated.measurements, TELEMETRY_METRICS.POOLS.LIMIT)?.value
-		const saturatedQueued = findMeasurement(saturated.measurements, TELEMETRY_METRICS.POOLS.QUEUED)?.value
-		expect(saturatedRunning).toBe(saturatedLimit)
-		expect(saturatedQueued).toBeGreaterThan(0)
-
-		const idleRunning = findMeasurement(idle.measurements, TELEMETRY_METRICS.POOLS.RUNNING)?.value as number
-		const idleLimit = findMeasurement(idle.measurements, TELEMETRY_METRICS.POOLS.LIMIT)?.value as number
-		expect(idleRunning).toBeLessThan(idleLimit)
-		expect(findMeasurement(idle.measurements, TELEMETRY_METRICS.POOLS.QUEUED)?.value).toBe(0)
-	})
-
 	it("re-samples occupancy on release without recording another wait", () => {
 		const { recorder, measurements } = createRecorder()
 
-		recorder.recordPoolOccupancy({ pool: "tool", running: 0, queued: 0, limit: 4 })
+		recorder.capturePoolAdmission({ pool: "tool", instance: "turn-1", queueWaitMs: 10, running: 2, queued: 1, limit: 4 })
+		const waitSamples = measurements.filter((entry) => entry.name === TELEMETRY_METRICS.POOLS.QUEUE_WAIT_SECONDS).length
+
+		recorder.recordPoolOccupancy({ pool: "tool", instance: "turn-1", running: 1, queued: 0, limit: 4 })
 
 		// Without a release-side sample the gauges would keep their last
 		// admission values and read as permanently saturated.
-		expect(findMeasurement(measurements, TELEMETRY_METRICS.POOLS.RUNNING)?.value).toBe(0)
-		expect(findMeasurement(measurements, TELEMETRY_METRICS.POOLS.QUEUE_WAIT_SECONDS)).toBeUndefined()
+		expect(latestValue(measurements, TELEMETRY_METRICS.POOLS.RUNNING)).toBe(1)
+		expect(latestValue(measurements, TELEMETRY_METRICS.POOLS.QUEUED)).toBe(0)
+		// Release is not an admission: adding a second wait sample here would
+		// pull every quantile toward zero.
+		expect(measurements.filter((entry) => entry.name === TELEMETRY_METRICS.POOLS.QUEUE_WAIT_SECONDS)).toHaveLength(
+			waitSamples,
+		)
 	})
 })
 
@@ -124,8 +122,15 @@ describe("VER-TASK-007-POOL-ATTRIBUTION: each pool reports its own limit under a
 	it("separates the two pools by label and keeps their limits independent", () => {
 		const { recorder, measurements } = createRecorder()
 
-		recorder.capturePoolAdmission({ pool: "tool", queueWaitMs: 100, running: 8, queued: 0, limit: 8 })
-		recorder.capturePoolAdmission({ pool: "subagent", queueWaitMs: 4000, running: 2, queued: 5, limit: 2 })
+		recorder.capturePoolAdmission({ pool: "tool", instance: "turn-1", queueWaitMs: 100, running: 8, queued: 0, limit: 8 })
+		recorder.capturePoolAdmission({
+			pool: "subagent",
+			instance: "task-1",
+			queueWaitMs: 4000,
+			running: 2,
+			queued: 5,
+			limit: 2,
+		})
 
 		// A saturation incident has to name the limit to lower. Reading back
 		// per pool is what proves the two are not collapsed into one series.
@@ -135,11 +140,72 @@ describe("VER-TASK-007-POOL-ATTRIBUTION: each pool reports its own limit under a
 		expect(findMeasurement(measurements, TELEMETRY_METRICS.POOLS.QUEUED, "subagent")?.value).toBe(5)
 	})
 
+	it("adds up concurrent instances of one pool instead of overwriting them", () => {
+		const { recorder, measurements } = createRecorder()
+
+		recorder.capturePoolAdmission({ pool: "tool", instance: "turn-1", queueWaitMs: 5, running: 2, queued: 4, limit: 4 })
+		recorder.capturePoolAdmission({ pool: "tool", instance: "turn-2", queueWaitMs: 5, running: 1, queued: 0, limit: 4 })
+
+		// Both instances share the `pool` label, so a gauge written per
+		// instance would keep only the second one's numbers and the four
+		// queued items in turn-1 would vanish from the series.
+		expect(latestValue(measurements, TELEMETRY_METRICS.POOLS.RUNNING, "tool")).toBe(3)
+		expect(latestValue(measurements, TELEMETRY_METRICS.POOLS.QUEUED, "tool")).toBe(4)
+		expect(latestValue(measurements, TELEMETRY_METRICS.POOLS.LIMIT, "tool")).toBe(8)
+	})
+
+	it("counts an instance with queued work and no usable capacity as starved", () => {
+		const { recorder, measurements } = createRecorder()
+
+		// An idle instance beside a wedged one: the sums alone cannot express
+		// this, because the idle instance's headroom hides the other's zero.
+		recorder.capturePoolAdmission({ pool: "tool", instance: "turn-1", queueWaitMs: 1, running: 1, queued: 0, limit: 4 })
+		recorder.recordPoolOccupancy({ pool: "tool", instance: "turn-2", running: 0, queued: 3, limit: 0 })
+
+		expect(latestValue(measurements, TELEMETRY_METRICS.POOLS.STARVED_INSTANCES, "tool")).toBe(1)
+		expect(latestValue(measurements, TELEMETRY_METRICS.POOLS.LIMIT, "tool")).toBe(4)
+	})
+
+	it("stops counting a pool instance once it is forgotten", () => {
+		const { recorder, measurements } = createRecorder()
+
+		recorder.capturePoolAdmission({ pool: "tool", instance: "turn-1", queueWaitMs: 1, running: 2, queued: 0, limit: 4 })
+		recorder.recordPoolOccupancy({ pool: "tool", instance: "turn-2", running: 0, queued: 3, limit: 0 })
+
+		recorder.forgetPoolInstance("tool", "turn-2")
+
+		// A finished pool must stop contributing, otherwise its last sample
+		// holds the starvation alert open for the life of the process.
+		expect(latestValue(measurements, TELEMETRY_METRICS.POOLS.STARVED_INSTANCES, "tool")).toBe(0)
+		expect(latestValue(measurements, TELEMETRY_METRICS.POOLS.QUEUED, "tool")).toBe(0)
+		expect(latestValue(measurements, TELEMETRY_METRICS.POOLS.RUNNING, "tool")).toBe(2)
+	})
+
+	it("drops an instance that reports itself idle", () => {
+		const { recorder, measurements } = createRecorder()
+
+		recorder.capturePoolAdmission({ pool: "tool", instance: "turn-1", queueWaitMs: 1, running: 1, queued: 0, limit: 4 })
+		recorder.recordPoolOccupancy({ pool: "tool", instance: "turn-1", running: 0, queued: 0, limit: 4 })
+
+		// Pools are created per turn or per task. Keeping an idle one would
+		// grow the registry for the life of the session and leave its ceiling
+		// inflating the process-level limit after the work ended.
+		expect(latestValue(measurements, TELEMETRY_METRICS.POOLS.RUNNING, "tool")).toBe(0)
+		expect(latestValue(measurements, TELEMETRY_METRICS.POOLS.LIMIT, "tool")).toBe(0)
+	})
+
 	it("uses only the two known pool values as labels", () => {
 		const { recorder, measurements } = createRecorder()
 
-		recorder.capturePoolAdmission({ pool: "tool", queueWaitMs: 1, running: 1, queued: 0, limit: 4 })
-		recorder.capturePoolAdmission({ pool: "subagent", queueWaitMs: 1, running: 1, queued: 0, limit: 4 })
+		recorder.capturePoolAdmission({ pool: "tool", instance: "turn-1", queueWaitMs: 1, running: 1, queued: 0, limit: 4 })
+		recorder.capturePoolAdmission({
+			pool: "subagent",
+			instance: "task-1",
+			queueWaitMs: 1,
+			running: 1,
+			queued: 0,
+			limit: 4,
+		})
 
 		const pools = new Set(measurements.map((entry) => entry.attributes?.pool))
 		// The label set is closed by the ExecutionPool type. Asserting the
@@ -184,14 +250,22 @@ describe("VER-TASK-007-CARDINALITY: counts are values, never labels", () => {
 		}
 	})
 
-	it("keeps agent names, profile names, and ids out of pool attributes", () => {
+	it("keeps agent names, profile names, and instance ids out of pool attributes", () => {
 		const { recorder, measurements } = createRecorder()
 
-		recorder.capturePoolAdmission({ pool: "subagent", queueWaitMs: 1200, running: 3, queued: 9, limit: 3 })
+		recorder.capturePoolAdmission({
+			pool: "subagent",
+			instance: "01JQZ0TASKULID",
+			queueWaitMs: 1200,
+			running: 3,
+			queued: 9,
+			limit: 3,
+		})
 
 		for (const measurement of measurements) {
-			// `pool` is the only permitted key: anything else here would be an
-			// unbounded value promoted to a label.
+			// `pool` is the only permitted key. The instance identity above is
+			// a task ulid: exporting it would create one series per task, which
+			// is exactly what the in-process aggregation exists to prevent.
 			expect(Object.keys(measurement.attributes ?? {})).toEqual(["pool"])
 		}
 	})
@@ -201,7 +275,7 @@ describe("VER-TASK-007-HISTOGRAM: the new measurements keep to their own instrum
 	it("does not write into the shared runtime duration histogram", () => {
 		const { recorder, measurements } = createRecorder()
 
-		recorder.capturePoolAdmission({ pool: "tool", queueWaitMs: 2500, running: 2, queued: 1, limit: 2 })
+		recorder.capturePoolAdmission({ pool: "tool", instance: "turn-1", queueWaitMs: 2500, running: 2, queued: 1, limit: 2 })
 		recorder.captureSubagentFanout(4, 1)
 
 		// The shared histogram's buckets are millisecond durations. A count of
@@ -216,13 +290,14 @@ describe("VER-TASK-007-HISTOGRAM: the new measurements keep to their own instrum
 	it("records occupancy as gauges rather than histogram samples", () => {
 		const { recorder, measurements } = createRecorder()
 
-		recorder.capturePoolAdmission({ pool: "tool", queueWaitMs: 10, running: 2, queued: 1, limit: 2 })
+		recorder.capturePoolAdmission({ pool: "tool", instance: "turn-1", queueWaitMs: 10, running: 2, queued: 1, limit: 2 })
 
 		// Occupancy is a level, not a distribution: recording it as a histogram
 		// would make `rate()` over the bucket counts look like throughput.
 		expect(findMeasurement(measurements, TELEMETRY_METRICS.POOLS.RUNNING)?.kind).toBe("gauge")
 		expect(findMeasurement(measurements, TELEMETRY_METRICS.POOLS.QUEUED)?.kind).toBe("gauge")
 		expect(findMeasurement(measurements, TELEMETRY_METRICS.POOLS.LIMIT)?.kind).toBe("gauge")
+		expect(findMeasurement(measurements, TELEMETRY_METRICS.POOLS.STARVED_INSTANCES)?.kind).toBe("gauge")
 		expect(findMeasurement(measurements, TELEMETRY_METRICS.POOLS.QUEUE_WAIT_SECONDS)?.kind).toBe("histogram")
 	})
 })

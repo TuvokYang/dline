@@ -97,7 +97,17 @@ interface PooledEntry<T> {
  * a drain barrier and a cancellation scope, and reusing one pool across turns
  * would blur all three.
  */
+/**
+ * Distinguishes concurrent pools in telemetry without becoming a metric label.
+ *
+ * Several turns can be in flight at once, and their samples would otherwise
+ * overwrite one another under the shared `pool` label. The counter stays
+ * process-local: it identifies a reporter, never a user or a task.
+ */
+let nextPoolInstanceId = 0
+
 export class TurnExecutionPool<T> {
+	private readonly telemetryInstance = `turn-pool-${++nextPoolInstanceId}`
 	private readonly gate: BoundedGate
 	private readonly limit: () => number
 	private readonly onStateChange?: TurnExecutionPoolOptions["onStateChange"]
@@ -261,6 +271,10 @@ export class TurnExecutionPool<T> {
 		for (const dlineTid of [...this.entries.keys()]) {
 			this.cancel(dlineTid)
 		}
+		// The turn is over, so this pool must stop contributing to the
+		// process-level occupancy. Leaving its last sample behind would keep
+		// finished work counted as outstanding for the life of the process.
+		telemetryService.forgetPoolInstance("tool", this.telemetryInstance)
 	}
 
 	/** Re-run admission after the configured limit changed. */
@@ -351,6 +365,7 @@ export class TurnExecutionPool<T> {
 		// from submission, which is where the block actually started waiting.
 		telemetryService.capturePoolAdmission({
 			pool: "tool",
+			instance: this.telemetryInstance,
 			queueWaitMs: Date.now() - entry.submittedAt,
 			running: this.runningCount,
 			queued: this.queuedCount,
@@ -397,6 +412,7 @@ export class TurnExecutionPool<T> {
 		// in; a series built only from admissions would never fall back to zero.
 		telemetryService.recordPoolOccupancy({
 			pool: "tool",
+			instance: this.telemetryInstance,
 			running: this.runningCount,
 			queued: this.queuedCount,
 			limit: this.limit(),
