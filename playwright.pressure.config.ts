@@ -1,8 +1,9 @@
 import { defineConfig } from "@playwright/test"
-import regularConfig, { PRESSURE_E2E_TAG } from "./playwright.config"
+import { PRESSURE_E2E_TAG } from "./playwright.config"
+import functionalConfig from "./playwright.functional.config"
 
 export default defineConfig({
-	...regularConfig,
+	...functionalConfig,
 	workers: 1,
 	retries: 0,
 	fullyParallel: false,

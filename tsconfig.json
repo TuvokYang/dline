@@ -44,6 +44,9 @@
 			"@generated/*": [
 				"./src/generated/*"
 			],
+			"@e2e/*": [
+				"./src/test/e2e/*"
+			],
 			"@hosts/*": [
 				"./src/hosts/*"
 			],
