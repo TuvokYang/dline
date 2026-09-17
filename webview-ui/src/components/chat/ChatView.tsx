@@ -14,6 +14,7 @@ import { useProviderModels } from "@/components/settings/providers/useProviderMo
 import { useExtensionState } from "@/context/ExtensionStateContext"
 import { useShowNavbar } from "@/context/PlatformContext"
 import { FileServiceClient, TaskServiceClient, UiServiceClient } from "@/services/grpc-client"
+import { createInteractionDispatchGate } from "@/task-interaction/dispatch-gate"
 import { InteractionHost } from "@/task-interaction/InteractionHost"
 import { isPresentationKind } from "@/task-interaction/renderer-registry"
 import {
@@ -88,6 +89,10 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 	const [pendingSuccessorDraft, setPendingSuccessorDraft] = useState<PendingSuccessorDraftTransfer>()
 	const [compactCommandPending, setCompactCommandPending] = useState(false)
 	const compactCommandPendingRef = useRef(false)
+	const dispatchInteraction = useMemo(
+		() => createInteractionDispatchGate(TaskServiceClient.dispatchInteraction.bind(TaskServiceClient)),
+		[],
+	)
 	const [forceTruncateTaskRpcPending, setForceTruncateTaskRpcPending] = useState(false)
 	const forceTruncateTaskRpcPendingRef = useRef(false)
 	const [activityFilters, setActivityFilters] = useState<TaskActivityFilters>(DEFAULT_TASK_ACTIVITY_FILTERS)
@@ -469,7 +474,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 			const settlement = createAcceptedInteractionSettlement(request, capturedDraft)
 			clearOwnedDraft(settlement)
 			try {
-				const response = await TaskServiceClient.dispatchInteraction(request)
+				const response = await dispatchInteraction(request)
 				if (!response.accepted) {
 					restoreRejectedDraft(settlement)
 					return undefined
@@ -480,7 +485,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 				throw error
 			}
 		},
-		[clearOwnedDraft, interactionSynchronized, restoreRejectedDraft, taskViewState],
+		[clearOwnedDraft, dispatchInteraction, interactionSynchronized, restoreRejectedDraft, taskViewState],
 	)
 	const submitOrdinaryTaskDraft = useCallback(
 		async (draft: InteractionDraft): Promise<undefined> => {
@@ -684,7 +689,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 			<footer className="bg-(--vscode-sidebar-background) flex flex-col gap-[0.375rem] mt-3" style={{ gridRow: "2" }}>
 				{task && taskViewState ? (
 					<InteractionHost
-						dispatch={TaskServiceClient.dispatchInteraction.bind(TaskServiceClient)}
+						dispatch={dispatchInteraction}
 						draft={interactionDraft}
 						messages={modifiedMessages}
 						onDraftAccepted={clearOwnedDraft}
