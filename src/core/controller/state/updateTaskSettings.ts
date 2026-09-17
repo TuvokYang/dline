@@ -6,6 +6,14 @@ import { Controller } from ".."
 import { normalizeOpenaiReasoningEffort } from "./reasoningEffort"
 import { prepareTaskRuntimeOverrideUpdate } from "./taskRuntimeOverrides"
 
+// Concurrency ceilings are global-only. They are carried on the shared Settings
+// message, so a Task request can reach them, but writing them per task would be
+// wrong twice over: the value would skip the clamp applied on the global write
+// path, and `getGlobalSettingsKey` prefers the active task's document, so the
+// stale task value would shadow the global one and make a slider change appear
+// to snap back for as long as that task stays open.
+const GLOBAL_ONLY_SETTING_KEYS = new Set(["maxParallelToolCalls", "maxParallelSubagents"])
+
 const TASK_RUNTIME_OVERRIDE_KEYS = new Set([
 	"planModeReasoningOverrideKind",
 	"planModeReasoningOverrideEffort",
@@ -60,7 +68,11 @@ export async function updateTaskSettings(controller: Controller, request: Update
 
 		const filteredSettings = Object.fromEntries(
 			Object.entries(simpleSettings).filter(
-				([key, value]) => key !== "openaiReasoningEffort" && value !== undefined && !TASK_RUNTIME_OVERRIDE_KEYS.has(key),
+				([key, value]) =>
+					key !== "openaiReasoningEffort" &&
+					value !== undefined &&
+					!TASK_RUNTIME_OVERRIDE_KEYS.has(key) &&
+					!GLOBAL_ONLY_SETTING_KEYS.has(key),
 			),
 		)
 

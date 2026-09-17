@@ -12,6 +12,7 @@ import {
 import { BrowserSettings, DEFAULT_BROWSER_SETTINGS } from "@shared/BrowserSettings"
 import { type ChatInputSendShortcut, DEFAULT_CHAT_INPUT_SEND_SHORTCUT } from "@shared/ChatInputSendShortcut"
 import { ClineRulesToggles } from "@shared/cline-rules"
+import { DEFAULT_MAX_PARALLEL_SUBAGENTS, DEFAULT_MAX_PARALLEL_TOOL_CALLS } from "@shared/concurrency-limits"
 import { DEFAULT_FOCUS_CHAIN_SETTINGS, FocusChainSettings } from "@shared/FocusChainSettings"
 import { HistoryItem } from "@shared/HistoryItem"
 import { DEFAULT_MCP_DISPLAY_MODE, McpDisplayMode } from "@shared/McpDisplayMode"
@@ -224,6 +225,15 @@ const USER_SETTINGS_FIELDS = {
 	lazyTeammateModeEnabled: { default: false as boolean },
 	showFeatureTips: { default: true as boolean },
 	showActiveTasksInEnvDetails: { default: true as boolean },
+
+	// Concurrency ceilings. These are two independent budgets: tool calls
+	// contend for local editor, terminal and browser resources, while subagents
+	// contend for provider capacity. Throttling a saturated provider must not
+	// force local tool work to run serially, so neither limit derives from the
+	// other. Both are clamped on read, because a persisted or remote value can
+	// be out of range while the running limit must always be usable.
+	maxParallelToolCalls: { default: DEFAULT_MAX_PARALLEL_TOOL_CALLS as number },
+	maxParallelSubagents: { default: DEFAULT_MAX_PARALLEL_SUBAGENTS as number },
 
 	// OpenTelemetry configuration
 	openTelemetryEnabled: { default: true as boolean },

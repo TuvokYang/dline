@@ -37,6 +37,7 @@ import { ClineAccountService } from "@services/account/ClineAccountService"
 import { McpHub } from "@services/mcp/McpHub"
 import type { ModelInfo } from "@shared/api"
 import type { ChatContent } from "@shared/ChatContent"
+import { resolveMaxParallelSubagents, resolveMaxParallelToolCalls } from "@shared/concurrency-limits"
 import { getContextWindowIndicatorTotalTokens } from "@shared/context-window-indicator"
 import type { ExtensionState, Platform } from "@shared/ExtensionMessage"
 import type { ApiMetrics } from "@shared/getApiMetrics"
@@ -2245,6 +2246,14 @@ export class Controller {
 			remoteConfigSettings: this.stateManager.getRemoteConfigSettings(),
 			nativeToolCallSetting: this.stateManager.getGlobalStateKey("nativeToolCallEnabled"),
 			enableParallelToolCalling: this.stateManager.getGlobalSettingsKey("enableParallelToolCalling"),
+			// Clamped but not toggle-coerced: the projection carries the ceiling
+			// the user configured, and the runtime applies the toggle when it
+			// builds the pool.
+			maxParallelToolCalls: resolveMaxParallelToolCalls(
+				this.stateManager.getGlobalSettingsKey("maxParallelToolCalls"),
+				true,
+			),
+			maxParallelSubagents: resolveMaxParallelSubagents(this.stateManager.getGlobalSettingsKey("maxParallelSubagents")),
 			backgroundEditEnabled: this.stateManager.getGlobalSettingsKey("backgroundEditEnabled"),
 			optOutOfRemoteConfig: this.stateManager.getGlobalSettingsKey("optOutOfRemoteConfig"),
 			doubleCheckCompletionEnabled,

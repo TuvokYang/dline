@@ -169,6 +169,16 @@ export interface ExtensionState {
 	taskCapabilityToggles?: TaskCapabilityToggles
 	nativeToolCallSetting?: boolean
 	enableParallelToolCalling?: boolean
+	/**
+	 * Configured tool-call concurrency ceiling, already clamped to its range.
+	 *
+	 * The parallel-tool-calling toggle is applied at execution time rather than
+	 * here, so that switching the feature off does not overwrite the ceiling the
+	 * user chose and force them to re-enter it.
+	 */
+	maxParallelToolCalls?: number
+	/** Configured subagent concurrency ceiling, already clamped to its range. */
+	maxParallelSubagents?: number
 	backgroundEditEnabled?: boolean
 	optOutOfRemoteConfig?: boolean
 	doubleCheckCompletionEnabled?: boolean

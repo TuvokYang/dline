@@ -7,6 +7,7 @@ import {
 } from "@shared/auto-condense"
 import { DEFAULT_BROWSER_SETTINGS } from "@shared/BrowserSettings"
 import { DEFAULT_CHAT_INPUT_SEND_SHORTCUT } from "@shared/ChatInputSendShortcut"
+import { DEFAULT_MAX_PARALLEL_SUBAGENTS, DEFAULT_MAX_PARALLEL_TOOL_CALLS } from "@shared/concurrency-limits"
 import { type ActiveInteractionView, type ClineMessage, DEFAULT_PLATFORM, type ExtensionState } from "@shared/ExtensionMessage"
 import { DEFAULT_FOCUS_CHAIN_SETTINGS } from "@shared/FocusChainSettings"
 import { DEFAULT_MCP_DISPLAY_MODE } from "@shared/McpDisplayMode"
@@ -405,6 +406,10 @@ export const ExtensionStateContextProvider: React.FC<{
 		hooksEnabled: false,
 		nativeToolCallSetting: false,
 		enableParallelToolCalling: false,
+		// Resolved from the shared policy rather than a literal, so the slider
+		// before hydration shows the same ceiling the runtime would apply.
+		maxParallelToolCalls: DEFAULT_MAX_PARALLEL_TOOL_CALLS,
+		maxParallelSubagents: DEFAULT_MAX_PARALLEL_SUBAGENTS,
 		providersVersion: 0,
 		profileCatalogRevision: 0,
 		taskLockStatus: undefined,

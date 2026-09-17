@@ -86,29 +86,43 @@ export function decideAdmission(input: AdmissionInput): AdmissionResult {
 	// keeps ordering fair without making one busy lane stall unrelated work.
 	const blockedLanes = new Set<ToolLane>()
 
-	// Set once a turn-ending block is admitted. Everything after it waits,
-	// including work that is otherwise eligible: "runs alone" has to mean alone
-	// in both directions, not merely that nothing was running when it started.
-	let turnEndingAdmitted = false
+	// Set once a turn-ending block is reached, whether it was admitted or is
+	// still waiting to drain. Everything after it waits, including work that is
+	// otherwise eligible: "runs alone" has to mean alone in both directions,
+	// not merely that nothing was running when it started. A block that is
+	// merely waiting must hold the line too, or later work would overtake the
+	// very block the barrier exists to isolate.
+	let turnEndingReached = false
+
+	// A turn-ending block already running is the same barrier seen from the
+	// other side. Admission is called again on every submit and completion, so
+	// without this a block submitted after the ending one started would find
+	// free capacity and disjoint lanes, and run beside it.
+	const turnEndingRunning = input.running.some((block) => block.isTurnEnding === true)
 
 	for (const block of ordered) {
+		if (turnEndingRunning) {
+			refuse.push({ block, reason: "awaiting_drain" })
+			continue
+		}
+
 		if (block.isTurnEnding) {
 			// A turn-ending tool hands control back to the user, so nothing may
 			// still be running or outstanding when it starts — and nothing
 			// pending may start beside it either, whether that pending work was
 			// admitted in this pass or merely refused for capacity.
 			const outstanding = occupied > 0 || admit.length > 0 || refuse.length > 0 || input.hasUnfinishedEarlierWork === true
+			turnEndingReached = true
 			if (outstanding) {
 				refuse.push({ block, reason: "awaiting_drain" })
 				continue
 			}
 			admit.push(block)
 			occupied += 1
-			turnEndingAdmitted = true
 			continue
 		}
 
-		if (turnEndingAdmitted) {
+		if (turnEndingReached) {
 			refuse.push({ block, reason: "awaiting_drain" })
 			continue
 		}

@@ -1,3 +1,10 @@
+import {
+	MAX_PARALLEL_SUBAGENTS,
+	MAX_PARALLEL_TOOL_CALLS,
+	MIN_PARALLEL_EXECUTIONS,
+	resolveMaxParallelSubagents,
+	resolveMaxParallelToolCalls,
+} from "@shared/concurrency-limits"
 import type { UpdateSettingsRequest } from "@shared/proto/dline/state"
 import { memo, type ReactNode, useCallback } from "react"
 import { Label } from "@/components/ui/label"
@@ -258,6 +265,8 @@ const FeatureSettingsSection = ({ renderSectionHeader }: FeatureSettingsSectionP
 		remoteConfigSettings,
 		nativeToolCallSetting,
 		enableParallelToolCalling,
+		maxParallelToolCalls,
+		maxParallelSubagents,
 		backgroundEditEnabled,
 		doubleCheckCompletionEnabled,
 		lazyTeammateModeEnabled,
@@ -271,6 +280,14 @@ const FeatureSettingsSection = ({ renderSectionHeader }: FeatureSettingsSectionP
 		},
 		[focusChainSettings],
 	)
+
+	const handleMaxParallelToolCallsChange = useCallback((value: number) => {
+		updateSetting("maxParallelToolCalls", value)
+	}, [])
+
+	const handleMaxParallelSubagentsChange = useCallback((value: number) => {
+		updateSetting("maxParallelSubagents", value)
+	}, [])
 
 	const handleMcpDisplayModeChange = useCallback((value: string) => {
 		if (isMcpDisplayModeValue(value)) {
@@ -349,6 +366,28 @@ const FeatureSettingsSection = ({ renderSectionHeader }: FeatureSettingsSectionP
 												: updateSetting(feature.settingKey, checked)
 										}
 									/>
+									{feature.id === "subagents" && featureState[feature.stateKey] && (
+										<SettingsSlider
+											label={`Max Parallel Subagents (1-${MAX_PARALLEL_SUBAGENTS})`}
+											max={MAX_PARALLEL_SUBAGENTS}
+											min={MIN_PARALLEL_EXECUTIONS}
+											onChange={handleMaxParallelSubagentsChange}
+											step={1}
+											value={resolveMaxParallelSubagents(maxParallelSubagents)}
+											valueWidth="w-6"
+										/>
+									)}
+									{feature.id === "parallel-tool-calling" && featureState[feature.stateKey] && (
+										<SettingsSlider
+											label={`Max Parallel Tool Calls (1-${MAX_PARALLEL_TOOL_CALLS})`}
+											max={MAX_PARALLEL_TOOL_CALLS}
+											min={MIN_PARALLEL_EXECUTIONS}
+											onChange={handleMaxParallelToolCallsChange}
+											step={1}
+											value={resolveMaxParallelToolCalls(maxParallelToolCalls, true)}
+											valueWidth="w-6"
+										/>
+									)}
 									{feature.id === "focus-chain" && featureState[feature.stateKey] && (
 										<SettingsSlider
 											label="Reminder Interval (1-10)"
