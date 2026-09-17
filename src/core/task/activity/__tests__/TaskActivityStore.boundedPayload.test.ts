@@ -42,6 +42,55 @@ describe("TaskActivityStore bounded payload", () => {
 		assert.equal(store.get("item-1")?.detail, prompt)
 	})
 
+	it("bounds the task and prompt copied into a retry recipe", () => {
+		const store = new TaskActivityStore("task-bounded")
+		store.create({
+			activityId: "item-1",
+			kind: "subagent",
+			executionMode: "foreground",
+			title: "subagent item-1",
+			detail: "prompt",
+			retryRecipe: {
+				kind: "subagent",
+				schemaVersion: 1,
+				subagentName: "default",
+				task: HUGE,
+				prompt: HUGE,
+				timeoutSeconds: 60,
+				retryable: true,
+			},
+		})
+
+		const recipe = store.get("item-1")?.retryRecipe
+		assert.ok((recipe?.task.length ?? 0) < HUGE.length, "an oversized recipe task must be truncated")
+		assert.ok((recipe?.prompt.length ?? 0) < HUGE.length, "an oversized recipe prompt must be truncated")
+		assert.ok(recipe?.prompt.endsWith("… [truncated]"), "truncation must be visible in the recipe too")
+	})
+
+	it("redacts secrets carried by a retry recipe", () => {
+		const store = new TaskActivityStore("task-bounded")
+		store.create({
+			activityId: "item-1",
+			kind: "subagent",
+			executionMode: "foreground",
+			title: "subagent item-1",
+			detail: "prompt",
+			retryRecipe: {
+				kind: "subagent",
+				schemaVersion: 1,
+				subagentName: "default",
+				task: "call the API with Authorization: Bearer abcdef0123456789",
+				prompt: 'use api_key="abcdef0123456789" for the request',
+				timeoutSeconds: 60,
+				retryable: true,
+			},
+		})
+
+		const recipe = store.get("item-1")?.retryRecipe
+		assert.ok(!recipe?.task.includes("abcdef0123456789"), "a recipe must not persist a bearer token verbatim")
+		assert.ok(!recipe?.prompt.includes("abcdef0123456789"), "a recipe must not persist an API key verbatim")
+	})
+
 	it("bounds the result and error written at completion", () => {
 		const store = new TaskActivityStore("task-bounded")
 		createSubagentActivity(store, "item-1", "prompt")

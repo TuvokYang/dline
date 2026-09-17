@@ -19,7 +19,7 @@ describe("SubagentFanoutBudget interrupt accounting", () => {
 	}
 
 	interface FakeRunner {
-		whenAbandonedWorkSettled(): Promise<void>
+		whenAbandonedWorkSettled(timeoutMs?: number): Promise<boolean | void>
 	}
 
 	/** A runner whose abandoned tool settles only when the test releases it. */
@@ -81,5 +81,57 @@ describe("SubagentFanoutBudget interrupt accounting", () => {
 		assert.equal(budget.state().running, 0, "the normal path must not hold the slot")
 		const admission = await budget.acquire()
 		assert.equal(admission.admitted, true)
+	})
+
+	it("reclaims the slot when an abandoned tool never settles, so the batch still finishes", async () => {
+		const budget = new SubagentFanoutBudget({ limit: 1 })
+		// A wedged tool: it never settles, so an unbounded wait would strand
+		// every queued item behind this one slot.
+		const wedged: FakeRunner = { whenAbandonedWorkSettled: async () => false }
+
+		await runThenRelease(budget, wedged)
+
+		assert.equal(budget.state().running, 0, "a deadline must return the slot even when the tool is stuck")
+		const replacement = await budget.acquire()
+		assert.equal(replacement.admitted, true, "the remaining batch items must still be admitted")
+	})
+})
+
+/**
+ * The deadline itself belongs to the runner, so it is proven against the real
+ * implementation rather than the stand-in above.
+ */
+describe("SubagentRunner abandoned work deadline", () => {
+	it("reports failure to settle instead of waiting forever", async () => {
+		const { SubagentRunner } = await import("../SubagentRunner")
+		const runner = Object.create(SubagentRunner.prototype) as {
+			abandonedToolExecutions: Set<Promise<unknown>>
+			whenAbandonedWorkSettled(timeoutMs?: number): Promise<boolean>
+		}
+		// A tool that never resolves stands in for a wedged host request.
+		Object.defineProperty(runner, "abandonedToolExecutions", {
+			value: new Set<Promise<unknown>>([new Promise<void>(() => undefined)]),
+			writable: true,
+		})
+
+		const settled = await runner.whenAbandonedWorkSettled(10)
+
+		assert.equal(settled, false, "the wait must expire rather than block the caller forever")
+	})
+
+	it("reports success once the abandoned tool has stopped", async () => {
+		const { SubagentRunner } = await import("../SubagentRunner")
+		const runner = Object.create(SubagentRunner.prototype) as {
+			abandonedToolExecutions: Set<Promise<unknown>>
+			whenAbandonedWorkSettled(timeoutMs?: number): Promise<boolean>
+		}
+		Object.defineProperty(runner, "abandonedToolExecutions", {
+			value: new Set<Promise<unknown>>(),
+			writable: true,
+		})
+
+		const settled = await runner.whenAbandonedWorkSettled(10)
+
+		assert.equal(settled, true)
 	})
 })

@@ -786,6 +786,17 @@ export interface ClineAskUseSubagents {
 		profileName?: string
 		jobId?: string
 	}>
+	/**
+	 * Requested items that failed planning and will not run.
+	 *
+	 * A mixed batch is approved as a whole, so the user has to see that it is
+	 * narrower than the model asked for; dropping these silently would present
+	 * a partial batch as the complete request.
+	 */
+	rejected?: Array<{
+		index: number
+		error: string
+	}>
 	kind?: "single" | "batch"
 	subagentName?: string
 	task?: string

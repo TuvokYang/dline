@@ -60,6 +60,25 @@ function boundFieldText(text: string): string {
 	return `${safeText.slice(0, MAX_TEXT_FIELD_CHARS)}${TRUNCATION_NOTICE}`
 }
 
+/**
+ * Apply the same field ceiling to a retry recipe.
+ *
+ * A recipe carries the task and prompt verbatim so a failed run can be
+ * replayed, and every item of a large batch persists its own copy. Left raw it
+ * would be the one payload that escapes both the ceiling and redaction, so the
+ * stored text is bounded on the way in.
+ *
+ * @param recipe Recipe as supplied by the caller.
+ * @returns Recipe whose free text is redacted and bounded.
+ */
+function boundRetryRecipe(recipe: SubagentRetryRecipe): SubagentRetryRecipe {
+	return {
+		...recipe,
+		task: boundFieldText(recipe.task),
+		prompt: boundFieldText(recipe.prompt),
+	}
+}
+
 type ActivityListener = (update: TaskActivityUpdate) => void | Promise<void>
 type CancelActivity = () => void | Promise<void>
 type ControlActivity = () => boolean | Promise<boolean>
@@ -167,7 +186,7 @@ export class TaskActivityStore {
 			detail: input.detail === undefined ? undefined : boundFieldText(input.detail),
 			timeoutSeconds: input.timeoutSeconds,
 			parentActivityId: input.parentActivityId,
-			retryRecipe: input.kind === "subagent" ? input.retryRecipe : undefined,
+			retryRecipe: input.kind === "subagent" && input.retryRecipe ? boundRetryRecipe(input.retryRecipe) : undefined,
 			events: [],
 		}
 		this.activities.set(activity.activityId, activity)

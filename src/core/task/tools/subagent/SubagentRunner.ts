@@ -481,6 +481,14 @@ function pushSubagentToolResultBlock(
 	})
 }
 
+/**
+ * How long a caller waits for an abandoned tool before reclaiming its slot.
+ *
+ * Long enough for a normal host request or terminal write to unwind, short
+ * enough that one wedged tool cannot stall an entire batch.
+ */
+const ABANDONED_TOOL_SETTLE_TIMEOUT_MS = 30_000
+
 /** Raised when a tool wait is abandoned because the run was interrupted. */
 class SubagentToolInterruptedError extends Error {
 	constructor() {
@@ -572,7 +580,14 @@ export class SubagentRunner {
 		const signal = this.interruptionController?.signal
 		const toolExecution = execute()
 		if (!signal) return toolExecution
-		if (signal.aborted) throw new SubagentToolInterruptedError()
+		// An abort that already happened is still an abandonment: the tool has
+		// started and holds resources. Bailing out before the tracking below
+		// would free the slot while that work continues, so the same path is
+		// taken whether the signal fires before or during the wait.
+		if (signal.aborted) {
+			this.trackAbandonedTool(toolExecution)
+			throw new SubagentToolInterruptedError()
+		}
 		let onAbort: (() => void) | undefined
 		try {
 			return await Promise.race([
@@ -584,15 +599,23 @@ export class SubagentRunner {
 			])
 		} finally {
 			if (onAbort) signal.removeEventListener("abort", onAbort)
-			// The abandoned tool keeps running; make sure it cannot surface as an
-			// unhandled rejection after the runner has moved on, and keep it
-			// observable so the freed slot is not reused before it settles.
-			const settled = Promise.resolve(toolExecution).catch(() => undefined)
-			if (signal.aborted) {
-				this.abandonedToolExecutions.add(settled)
-				void settled.finally(() => this.abandonedToolExecutions.delete(settled))
-			}
+			if (signal.aborted) this.trackAbandonedTool(toolExecution)
 		}
+	}
+
+	/**
+	 * Keep an abandoned tool observable after the run has moved on.
+	 *
+	 * The rejection is swallowed here because nothing is waiting on the result
+	 * any more; the purpose of holding the promise is only to know when the
+	 * work stops.
+	 *
+	 * @param toolExecution The still-running tool call.
+	 */
+	private trackAbandonedTool(toolExecution: Promise<unknown>): void {
+		const settled = Promise.resolve(toolExecution).catch(() => undefined)
+		this.abandonedToolExecutions.add(settled)
+		void settled.finally(() => this.abandonedToolExecutions.delete(settled))
 	}
 
 	/**
@@ -601,11 +624,32 @@ export class SubagentRunner {
 	 * Resolves immediately when nothing was abandoned, which is the normal
 	 * path. A caller that releases a concurrency permit on the run's behalf
 	 * awaits this first so the reported capacity matches the real one.
+	 *
+	 * The wait is bounded: a tool that never settles is exactly the failure
+	 * this mechanism exists for, and blocking forever would stop the remaining
+	 * batch items from ever running. On timeout the caller proceeds and the
+	 * capacity estimate is knowingly optimistic rather than deadlocked.
+	 *
+	 * @param timeoutMs Maximum time to wait before giving up.
+	 * @returns Whether all abandoned work stopped within the deadline.
 	 */
-	async whenAbandonedWorkSettled(): Promise<void> {
+	async whenAbandonedWorkSettled(timeoutMs = ABANDONED_TOOL_SETTLE_TIMEOUT_MS): Promise<boolean> {
+		const deadline = Date.now() + timeoutMs
 		while (this.abandonedToolExecutions.size > 0) {
-			await Promise.all([...this.abandonedToolExecutions])
+			const remaining = deadline - Date.now()
+			if (remaining <= 0) return false
+			let timer: NodeJS.Timeout | undefined
+			const expired = new Promise<"expired">((resolve) => {
+				timer = setTimeout(() => resolve("expired"), remaining)
+			})
+			try {
+				const outcome = await Promise.race([Promise.all([...this.abandonedToolExecutions]), expired])
+				if (outcome === "expired") return false
+			} finally {
+				if (timer) clearTimeout(timer)
+			}
 		}
+		return true
 	}
 
 	private async interruptActiveWork(action: "abort" | "finish"): Promise<void> {

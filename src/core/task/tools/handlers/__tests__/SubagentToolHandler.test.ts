@@ -8,6 +8,7 @@ import { ClineDefaultTool } from "@shared/tools"
 import { expect } from "chai"
 import { afterEach, describe, it, vi, expect as vitestExpect } from "vitest"
 // sinon import removed: using vitest globals
+import * as ApiProfilesModule from "@core/controller/file/getApiProfiles"
 import { TaskActivityStore } from "../../../activity/TaskActivityStore"
 import { TaskState } from "../../../TaskState"
 import * as AgentConfigModule from "../../subagent/AgentConfigLoader"
@@ -61,6 +62,19 @@ vi.mock("../../subagent/SubagentBuilder", () => ({
 		this.getConfiguredSkills = () => undefined
 	}),
 }))
+
+/**
+ * Present a Profile catalogue in which the named Profiles are usable by
+ * subagents. Without this the on-disk catalogue is empty, which is itself the
+ * "Profile no longer available" case.
+ *
+ * @param names Profile names that should resolve and be enabled.
+ */
+function stubEnabledProfiles(names: string[]): void {
+	vi.spyOn(ApiProfilesModule, "readApiProfiles").mockReturnValue(
+		names.map((name) => ({ id: name, name, enabled: true, usedFor: ["subagents"] })) as never,
+	)
+}
 
 /**
  * Read the mocked builder so a test can inspect the agent config a runner was
@@ -808,6 +822,115 @@ describe("SubagentToolHandler", () => {
 		assert.equal(statuses.indexOf("completed") > statuses.indexOf("running"), true)
 	})
 
+	it("refuses a restored retry whose recorded Profile is no longer usable", async () => {
+		const { config } = createConfig({ autoApproveSafe: true, autoApproveAll: true })
+		config.taskState.abort = true
+		const activityStore = new TaskActivityStore("task-1")
+		activityStore.create({
+			activityId: "subagent-dead-profile",
+			kind: "subagent",
+			executionMode: "background",
+			title: "reviewer",
+			retryRecipe: {
+				kind: "subagent",
+				schemaVersion: 1,
+				subagentName: "reviewer",
+				profileName: "deleted-profile",
+				task: "review",
+				prompt: "<task>review</task><context>ctx</context>",
+				timeoutSeconds: 30,
+				retryable: true,
+			},
+		})
+		activityStore.update("subagent-dead-profile", { status: "failed", error: "temporary provider failure" })
+		config.activityStore = activityStore
+		vi.spyOn(AgentConfigModule, "resolveAgentConfig").mockResolvedValue({
+			config: { name: "reviewer", profile: "slow-reviewer" },
+		} as any)
+		// The catalogue no longer contains the Profile the item ran with.
+		stubEnabledProfiles(["slow-reviewer"])
+		const builderCallsBefore = vitestMockedBuilder().mock.calls.length
+
+		assert.equal(
+			await restoreSubagentActivityRetry(config, "subagent-dead-profile"),
+			false,
+			"a retry must not silently fall back to another Profile",
+		)
+		assert.equal(vitestMockedBuilder().mock.calls.length, builderCallsBefore, "no runner may be built")
+		assert.match(
+			String(activityStore.get("subagent-dead-profile")?.retryUnavailableReason),
+			/API Profile 'deleted-profile' is no longer available/,
+		)
+	})
+
+	it("keeps rejected items visible in a mixed batch approval and summary", async () => {
+		// Manual approval is required so the approval payload is observable.
+		const { config, callbacks } = createConfig({ autoApproveSafe: false, autoApproveAll: false })
+		// Only `reviewer` resolves, so the `missing` item is planned out but the
+		// user and the model must still be told it was requested.
+		vi.spyOn(AgentConfigModule, "resolveAgentConfig").mockImplementation(async (_cwd, agentName) =>
+			agentName === "reviewer"
+				? {
+						config: { name: "reviewer", description: "reviewer", tools: [], systemPrompt: "Prompt" },
+						source: "project",
+						path: "/workspace/.agents/subagents/reviewer.yml",
+					}
+				: undefined,
+		)
+		vi.spyOn(AgentConfigModule, "listEnabledAgentConfigs").mockResolvedValue([
+			{
+				config: { name: "reviewer", description: "reviewer", tools: [], systemPrompt: "Prompt" },
+				source: "project",
+				path: "/workspace/.agents/subagents/reviewer.yml",
+			},
+		])
+		vi.spyOn(SubagentRunner.prototype, "run").mockResolvedValue({
+			status: "completed",
+			result: "done",
+			stats: {
+				toolCalls: 1,
+				inputTokens: 1,
+				outputTokens: 1,
+				cacheWriteTokens: 0,
+				cacheReadTokens: 0,
+				totalCost: 0,
+				currency: "USD",
+				contextTokens: 1,
+				contextWindow: 200000,
+				contextUsagePercentage: 0,
+			},
+		})
+
+		const handler = new UseSubagentsToolHandler()
+		const result = await handler.execute(config, {
+			type: "tool_use",
+			name: ClineDefaultTool.USE_SUBAGENTS,
+			params: {
+				subagents: JSON.stringify([
+					{ agent_name: "reviewer", task: "runs", context: "ctx runs" },
+					{ agent_name: "missing", task: "never runs", context: "ctx missing" },
+				]),
+			},
+			partial: false,
+			ts: Date.now(),
+		})
+
+		const approvalCall = callbacks.ask.mock.calls.find(
+			(call: unknown[]) => call[0] === "use_subagents" || call[0] === "tool",
+		)
+		assert.ok(approvalCall, "a mixed batch must still be approved")
+		const approvalPayload = JSON.parse(String(approvalCall[1])) as {
+			items?: unknown[]
+			rejected?: Array<{ index: number; error: string }>
+		}
+		assert.equal(approvalPayload.items?.length, 1, "only the runnable item is approved for execution")
+		assert.equal(approvalPayload.rejected?.length, 1, "the rejected item must remain visible on the approval card")
+		assert.match(String(approvalPayload.rejected?.[0]?.error), /Unknown or disabled subagent 'missing'/)
+
+		assert.match(String(result), /Unknown or disabled subagent 'missing'/)
+		assert.match(String(result), /were not started/)
+	})
+
 	it("lists default and bounded configured names for an unknown stable subagent", async () => {
 		const { config } = createConfig({ autoApproveSafe: true, autoApproveAll: true })
 		const handler = new UseSubagentToolHandler()
@@ -1087,6 +1210,9 @@ describe("SubagentToolHandler", () => {
 		vi.spyOn(AgentConfigModule, "resolveAgentConfig").mockResolvedValue({
 			config: { name: "reviewer", profile: "slow-reviewer" },
 		} as any)
+		// The recorded Profile still has to exist and still be enabled for
+		// subagents, otherwise the retry is refused rather than quietly rerouted.
+		stubEnabledProfiles(["fast-reviewer"])
 		vi.spyOn(SubagentRunner.prototype, "run").mockResolvedValue({
 			status: "completed",
 			result: "recovered on the original Profile",

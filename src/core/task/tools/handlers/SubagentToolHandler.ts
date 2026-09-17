@@ -398,6 +398,19 @@ export async function restoreSubagentActivityRetry(config: TaskConfig, activityI
 		return false
 	}
 	const effectiveSubagentName = resolvedSubagent?.config.name ?? DEFAULT_SUBAGENT_NAME
+	// An explicitly recorded Profile must still be usable. Without this check
+	// the runner silently falls back to the parent Act Profile, so a retry of a
+	// deleted or disabled Profile would quietly run on a different model
+	// instead of telling the user why it cannot be replayed.
+	const overriddenProfile =
+		recipe.profileName && recipe.profileName !== resolvedSubagent?.config.profile ? recipe.profileName : undefined
+	if (overriddenProfile && !getBatchResolvers(config).isProfileUsable(overriddenProfile)) {
+		activityStore?.setRetryUnavailableReason(
+			activityId,
+			`Retry unavailable: API Profile '${overriddenProfile}' is no longer available or not enabled for subagents.`,
+		)
+		return false
+	}
 	// A batch item may have overridden the subagent's own Profile. Replaying
 	// from the subagent config alone would retry on a different model, so the
 	// recorded binding is reapplied before the runner is built.
@@ -448,9 +461,11 @@ export async function restoreSubagentActivityRetry(config: TaskConfig, activityI
 			retryable: true,
 			stats: statsFromActivity(config, activityId),
 		},
+		// A retry after reopen is still subagent work and must queue behind the
+		// same task-scoped budget as a fresh batch; running it unbudgeted lets
+		// several restored activities exceed the configured parallel limit.
 		runner: () =>
-			runSubagent({
-				runner,
+			runBudgetedSubagent(getSubagentFanoutBudget(config), runner, {
 				prompt: recipe.prompt,
 				timeoutSeconds: recipe.timeoutSeconds,
 				onProgress: (update) => applyProgress(config, entry, update),
@@ -681,11 +696,19 @@ async function runBudgetedSubagent(
 		// executing. Releasing here would admit replacement work against
 		// resources that tool still holds, so the slot is returned only once
 		// the runner reports the abandoned work has settled.
+		//
+		// The wait is bounded on purpose. A wedged tool must not hold the slot
+		// forever, because every remaining item in the batch is queued behind
+		// it; reclaiming after the deadline keeps the batch finishing at the
+		// cost of a temporarily optimistic capacity estimate.
 		try {
-			await runner.whenAbandonedWorkSettled()
+			const settled = await runner.whenAbandonedWorkSettled()
+			if (!settled) {
+				Logger.warn(
+					"[SubagentToolHandler] reclaimed a subagent slot before its abandoned tool settled; capacity is optimistic until that tool exits",
+				)
+			}
 		} catch (error) {
-			// The wait is best effort: a stuck abandoned tool must not keep the
-			// slot forever, which would deadlock the remaining items.
 			Logger.warn("[SubagentToolHandler] abandoned subagent tool did not settle cleanly", error)
 		} finally {
 			slot.release()
@@ -695,12 +718,18 @@ async function runBudgetedSubagent(
 
 /**
  * Describe items that never started, for the model.
+ *
+ * The same reasons are used whether the whole batch failed planning or only
+ * some items did: a rejected item that is silently dropped from a mixed batch
+ * reads to the model as work that was requested and then forgotten.
+ *
  * @param rejected Items rejected during planning.
+ * @param wholeBatch True when nothing at all could be started.
  * @returns Actionable multi-line summary.
  */
-function formatRejectedItems(rejected: readonly RejectedSubagentItem[]): string {
+function formatRejectedItems(rejected: readonly RejectedSubagentItem[], wholeBatch: boolean): string {
 	return [
-		"No subagent could be started.",
+		wholeBatch ? "No subagent could be started." : `${rejected.length} requested subagent(s) were not started:`,
 		...rejected.map((item) => `[${item.index}] ${item.error}`),
 	].join("\n")
 }
@@ -1151,7 +1180,7 @@ export class UseSubagentsToolHandler implements IFullyManagedTool {
 			// Every item failed resolution, so there is nothing to approve. The
 			// per-item reasons are still what the model needs in order to retry.
 			config.taskState.consecutiveMistakeCount++
-			return formatResponse.toolError(formatRejectedItems(rejected))
+			return formatResponse.toolError(formatRejectedItems(rejected, true))
 		}
 		const prompts = planned.map((item) => item.prompt)
 		const approvalBody = JSON.stringify({
@@ -1164,6 +1193,10 @@ export class UseSubagentsToolHandler implements IFullyManagedTool {
 				profileName: item.profileName,
 				jobId: item.jobId,
 			})),
+			// The approval card shows what will not run alongside what will, so
+			// the user is not asked to approve a batch that is quietly smaller
+			// than the one the model requested.
+			rejected: rejected.map((item) => ({ index: item.index, error: item.error })),
 			background: request.options.background,
 			timeoutSeconds: request.options.timeoutSeconds,
 		} satisfies ClineAskUseSubagents)
@@ -1451,11 +1484,17 @@ export class UseSubagentsToolHandler implements IFullyManagedTool {
 			}
 		})
 		const retryableCount = results.filter((result) => result?.retryable).length
-		const summary = formatSummary(modelSummaryEntries)
-		if (retryableCount === 0) return formatResponse.toolResult(summary)
-		const retryNotice = getPrompt("toolHandlers", "subagentBatchRetryablePaused")
-			.replace("@COUNT@", String(retryableCount))
-			.replace("@TOTAL@", String(entries.length))
-		return formatResponse.toolResult(`${summary}\n\n${retryNotice}`)
+		// Rejected items are reported with the results. Omitting them would let
+		// the model read the summary as covering everything it asked for.
+		const sections = [formatSummary(modelSummaryEntries)]
+		if (rejected.length > 0) sections.push(formatRejectedItems(rejected, false))
+		if (retryableCount > 0) {
+			sections.push(
+				getPrompt("toolHandlers", "subagentBatchRetryablePaused")
+					.replace("@COUNT@", String(retryableCount))
+					.replace("@TOTAL@", String(entries.length)),
+			)
+		}
+		return formatResponse.toolResult(sections.join("\n\n"))
 	}
 }

@@ -14,6 +14,25 @@ describe("subagent delegation policy", () => {
 		assert.equal(isForbiddenSubagentTool(ClineDefaultTool.USE_SUBAGENTS), true)
 	})
 
+	/**
+	 * This ban is what actually bounds nesting: no delegation tool inside a
+	 * subagent means no nested fan-out can consume the task budget at all. If
+	 * it is ever lifted, the budget must first learn to hand a child view to a
+	 * nested run, so the ban is pinned here rather than left implicit.
+	 */
+	it("is the mechanism that keeps fan-out depth bounded", () => {
+		const grantedToSubagent = sanitizeSubagentTools([ClineDefaultTool.USE_SUBAGENT, ClineDefaultTool.USE_SUBAGENTS])
+
+		assert.ok(
+			!grantedToSubagent.includes(ClineDefaultTool.USE_SUBAGENT),
+			"lifting this requires wiring SubagentFanoutBudget.child() into the nested run",
+		)
+		assert.ok(
+			!grantedToSubagent.includes(ClineDefaultTool.USE_SUBAGENTS),
+			"lifting this requires wiring SubagentFanoutBudget.child() into the nested run",
+		)
+	})
+
 	it("strips delegation from a requested allowlist without discarding the rest", () => {
 		const allowed = sanitizeSubagentTools([
 			ClineDefaultTool.FILE_READ,
