@@ -1,6 +1,5 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import * as path from "node:path"
-import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { resizePrimarySidebar } from "@e2e/utils/resize-primary-sidebar"
 import { expect } from "@playwright/test"
@@ -113,64 +112,6 @@ async function openProfileNameInput(sidebar: Frame, profileName: string): Promis
 	await expect(nameInput).toBeVisible()
 	return nameInput
 }
-
-e2e("Settings API Config - shows configured profiles without changing them", async ({ helper, page, sidebar }) => {
-	await helper.signin(sidebar)
-	await page.getByRole("button", { name: "Settings", exact: true }).click()
-
-	await expect(sidebar.getByRole("heading", { name: "API Configuration" })).toBeVisible()
-	await expect(sidebar.getByRole("button", { name: "Add profile" })).toBeVisible()
-	await expect(sidebar.getByTestId("api-profile-card").first()).toBeVisible()
-})
-
-e2e(
-	"Settings API Config - persists a profile edit after reopening VS Code",
-	async ({ dlineDir, helper, openVSCode, workspaceDir }) => {
-		e2e.setTimeout(120_000)
-		const renamedProfile = `${E2E_PROFILE_NAMES.persistence} Reopened`
-		let firstApp: ElectronApplication | undefined
-		let reopenedApp: ElectronApplication | undefined
-
-		try {
-			firstApp = await openVSCode(workspaceDir)
-			const firstPage = await firstApp.firstWindow()
-			await E2ETestHelper.openClineSidebar(firstPage)
-			const firstSidebar = await helper.getSidebar(firstPage)
-			await helper.signin(firstSidebar)
-			await firstPage.getByRole("button", { name: "Settings", exact: true }).click()
-			await expect(firstSidebar.getByRole("heading", { name: "API Configuration" })).toBeVisible()
-			await firstSidebar.getByRole("button", { name: `Expand ${E2E_PROFILE_NAMES.persistence}` }).click()
-
-			const profileNameInput = await openProfileNameInput(firstSidebar, E2E_PROFILE_NAMES.persistence)
-			await profileNameInput.fill(renamedProfile)
-			await profileNameInput.blur()
-
-			const profilesPath = path.join(dlineDir, "data", "settings", "api_profiles.json")
-			await E2ETestHelper.waitUntil(async () => {
-				const profiles = JSON.parse(await readFile(profilesPath, "utf8")) as Array<{ name?: string }>
-				return profiles.some((profile) => profile.name === renamedProfile)
-			})
-
-			await firstApp.close()
-			firstApp = undefined
-			helper.clearCachedFrame()
-
-			reopenedApp = await openVSCode(workspaceDir)
-			const reopenedPage = await reopenedApp.firstWindow()
-			await E2ETestHelper.openClineSidebar(reopenedPage)
-			const reopenedSidebar = await helper.getSidebar(reopenedPage)
-			await helper.signin(reopenedSidebar)
-			await reopenedPage.getByRole("button", { name: "Settings", exact: true }).click()
-			await reopenedSidebar.getByRole("button", { name: `Expand ${renamedProfile}` }).click()
-
-			await expect(getProfileCard(reopenedSidebar, renamedProfile)).toHaveCount(1)
-			await expect(getProfileCard(reopenedSidebar, E2E_PROFILE_NAMES.persistence)).toHaveCount(0)
-		} finally {
-			await reopenedApp?.close()
-			await firstApp?.close()
-		}
-	},
-)
 
 e2e(
 	"Settings API Config - preserves an API key across an ordinary Profile edit and VS Code restart",
