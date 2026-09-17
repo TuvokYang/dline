@@ -209,8 +209,17 @@ groups:
         # Queue wait is its own instrument rather than another `operation` on the
         # shared runtime histogram, so it does not pin `bucket_schema`: that label
         # is attached only to `dline.runtime.operation.duration`, and pinning it
-        # here would match nothing. The instrument carries no unit, so it keeps
-        # the SDK default bounds, same as the other second-valued metrics.
+        # here would match nothing. Bucket advice is registered per metric in
+        # `OpenTelemetryTelemetryProvider`, and only for that shared millisecond
+        # histogram, so this one keeps the SDK default bounds like the other
+        # second-valued metrics.
+        #
+        # Those defaults matter when changing the threshold below. Their lowest
+        # finite bound is 5, so every wait under five seconds lands in one bucket
+        # and a quantile cannot resolve inside it. 30 sits between the 25 and 50
+        # bounds and interpolates; a threshold of, say, 2 would not be measuring
+        # anything. Lowering it means registering explicit bounds for this metric
+        # first.
         annotations:
           summary: Work waited more than 30 s at p95 for an execution slot
           description: >-
