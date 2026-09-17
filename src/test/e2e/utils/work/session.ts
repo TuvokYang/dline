@@ -34,3 +34,15 @@ export async function setWorkAutoApproveAction(sidebar: Frame, label: string, en
 	await expect.poll(isChecked).toBe(enabled)
 	await sidebar.getByLabel("Close auto-approve settings").click()
 }
+
+export async function openWorkActivities(sidebar: Frame): Promise<Locator> {
+	await sidebar.getByRole("tab", { name: /^Activities(?: \d+)?$/ }).click()
+	const allFilter = sidebar.getByTestId("activity-status-filter-all")
+	if (await allFilter.isVisible()) await allFilter.click()
+	else await sidebar.getByRole("button", { name: "All", exact: true }).first().click()
+	return sidebar.getByTestId("activity-item")
+}
+
+export async function openWorkTab(sidebar: Frame): Promise<void> {
+	await sidebar.getByRole("tab", { name: "Work", exact: true }).click()
+}
