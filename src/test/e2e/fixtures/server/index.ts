@@ -198,6 +198,16 @@ export type OpenAiMockResponse =
 			requestId?: string
 			details?: Readonly<Record<string, string | number | boolean>>
 	  } & MockResponseOptions)
+	| ({
+			type: "responses-stream-error"
+			status: number
+			code: string
+			message: string
+			failureCode?: string
+			failureMessage?: string
+			prefixText?: string
+			requestId?: string
+	  } & MockResponseOptions)
 	| {
 			type: "error"
 			status: number
@@ -825,7 +835,9 @@ export class ClineApiServerMock {
 						})),
 					}
 				: {}),
-			...(response.type === "error" || response.type === "usage-then-error" ? { status: response.status } : {}),
+			...(response.type === "error" || response.type === "usage-then-error" || response.type === "responses-stream-error"
+				? { status: response.status }
+				: {}),
 			...(contractError ? { contractError } : {}),
 			...(thinking ? { thinking } : {}),
 			...(route.protocol !== "openai-chat" &&
@@ -1252,6 +1264,9 @@ export class ClineApiServerMock {
 					if (scriptedResponse.type === "usage-then-error" && protocol !== "anthropic-messages") {
 						throw new Error(`usage-then-error is only supported for anthropic-messages, received ${protocol}`)
 					}
+					if (scriptedResponse.type === "responses-stream-error" && protocol !== "openai-responses") {
+						throw new Error(`responses-stream-error is only supported for openai-responses, received ${protocol}`)
+					}
 					const openAiUsage = toOpenAiUsage(usage)
 					const chatUsage =
 						protocol === "deepseek-chat"
@@ -1518,6 +1533,70 @@ export class ClineApiServerMock {
 							"Cache-Control": "no-cache",
 							Connection: "keep-alive",
 						})
+						if (scriptedResponse.type === "responses-stream-error") {
+							let sequenceNumber = 0
+							if (scriptedResponse.prefixText) {
+								const partialItemId = `item_${generationId}_partial`
+								writeSse(
+									{
+										type: "response.output_item.added",
+										sequence_number: sequenceNumber++,
+										output_index: 0,
+										item: {
+											id: partialItemId,
+											type: "message",
+											status: "in_progress",
+											role: "assistant",
+											content: [],
+										},
+									},
+									"response.output_item.added",
+								)
+								writeSse(
+									{
+										type: "response.output_text.delta",
+										sequence_number: sequenceNumber++,
+										item_id: partialItemId,
+										output_index: 0,
+										content_index: 0,
+										delta: scriptedResponse.prefixText,
+									},
+									"response.output_text.delta",
+								)
+							}
+							writeSse({
+								type: "error",
+								sequence_number: sequenceNumber++,
+								error: {
+									code: scriptedResponse.code,
+									message: scriptedResponse.message,
+									type: "upstream_error",
+									status: scriptedResponse.status,
+								},
+								...(scriptedResponse.requestId ? { request_id: scriptedResponse.requestId } : {}),
+							})
+							writeSse(
+								{
+									type: "response.failed",
+									sequence_number: sequenceNumber,
+									response: {
+										id: generationId,
+										object: "response",
+										created_at: Math.floor(Date.now() / 1000),
+										status: "failed",
+										model,
+										output: [],
+										error: {
+											code: scriptedResponse.failureCode ?? "upstream_error",
+											message: scriptedResponse.failureMessage ?? "Upstream request failed",
+										},
+									},
+								},
+								"response.failed",
+							)
+							res.end()
+							return
+						}
 						if (reasoningItem) {
 							writeSse(
 								{
