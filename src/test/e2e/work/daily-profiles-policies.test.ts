@@ -44,7 +44,7 @@ import {
 	workModelPickerInput,
 	workTaskIdByMarker,
 } from "@e2e/utils/work/profiles-policies"
-import { prepareWorkSession } from "@e2e/utils/work/session"
+import { prepareWorkSession, sendWorkMessage } from "@e2e/utils/work/session"
 import { expect, type Frame, type Page } from "@playwright/test"
 import type { ElectronApplication } from "playwright"
 
@@ -138,7 +138,7 @@ e2e(
 
 		let app: ElectronApplication | undefined
 		try {
-			app = await openVSCode(workspaceDir, { IS_DEV: "true" })
+			app = await openVSCode(workspaceDir)
 			let { page, sidebar } = await openSidebar(app, helper)
 
 			await openWorkSettings(page, sidebar)
@@ -350,7 +350,7 @@ e2e(
 			app = undefined
 			helper.clearCachedFrame()
 
-			app = await openVSCode(workspaceDir, { IS_DEV: "true" })
+			app = await openVSCode(workspaceDir)
 			;({ page, sidebar } = await openSidebar(app, helper))
 			await openWorkSettings(page, sidebar)
 			const reopenedOpenAiCard = await expandWorkProfileCard(sidebar, E2E_PROFILE_NAMES.mockOpenAi)
@@ -399,7 +399,7 @@ e2e(
 				},
 				{ type: "error", status: 500, code: "unexpected_restart_request", message: "Unexpected restart request" },
 			)
-			await sendWorkMessageWithCtrlEnter(sidebar, RESTART_INPUT)
+			await sendWorkMessage(sidebar, RESTART_INPUT)
 			await expect(sidebar.getByText(FINAL_COMPLETE, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
 			await expect.poll(() => server.getRequestCount(ANTHROPIC_TARGET)).toBe(2)
 

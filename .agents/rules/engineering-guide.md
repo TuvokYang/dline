@@ -43,7 +43,18 @@ Before editing, inspect the owning implementation, tests, generated contracts, a
 - prompt profiles/tools: `src/core/prompts/profiles/` and `src/core/prompts/tools/`;
 - storage: `src/shared/storage/` and `src/core/storage/`.
 
-Check `package.json` before choosing a verification command. Current primary scripts include `check-types`, `lint`, `format`, `test:smoke`, `test:run`, `test:e2e`, `protos`, `package`, and `vsix`.
+Check `package.json` before choosing a verification command. Current primary scripts include `check-types`, `lint`, `format`, `test:smoke`, `test:run`, `test:e2e:work`, `protos`, `package`, and `vsix`.
+
+## E2E validation tiers
+
+Load `use-e2e` for test selection and diagnostics, and load `e2e-validation` for the ordered validation procedure.
+
+- `src/test/e2e/work/` is the required continuous gate: one 120-second smoke project plus four single-file, single-top-level-test daily workflows with 600-second hard timeouts. Run the complete local gate with `npm run test:e2e:work`.
+- `src/test/e2e/functional/` holds stable focused black-box regressions. Run only the files or test names required by the changed behavior; full functional execution is reserved for nightly or explicit investigation.
+- `src/test/e2e/dev/` holds fault injection, forensic capture, and narrowly scoped reproduction. It uses one worker, no retries, and retained failure traces, and it never enters required CI or release gates.
+- `playwright.pressure.config.ts` remains the explicit pressure/soak tier. Do not use it as routine completion evidence.
+- Keep `demo/`, `fixtures/`, and `utils/` in their existing roles. Work journeys must not duplicate functional implementation geometry or state matrices.
+- Every E2E process uses a unique `DLINE_E2E_RUN_ID`. Preserve failed artifacts and diagnose the first unmet boundary before increasing a timeout or broadening scope.
 
 ### Never hand-roll a tsc invocation
 

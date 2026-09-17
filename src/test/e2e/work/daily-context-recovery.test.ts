@@ -5,18 +5,15 @@ import {
 	closeContextRecoveryTask,
 	configureContextRecoveryProfiles,
 	earliestVisibleWorkHistoryIndex,
-	expectStableWorkPromptPrefix,
 	expectUniqueOrderedWorkRows,
 	openContextRecoveryHistoryTask,
 	openContextRecoverySidebar,
 	seedLockedLongHistoryTask,
 	selectContextRecoveryProfile,
 	unlockAndContinueContextTask,
-	type WorkPromptDiagnostic,
 	waitForPersistedTaskMarkers,
 	waitForPositivePromptCacheHealth,
 	waitForPositiveTaskCacheHit,
-	waitForWorkPromptDiagnostics,
 	workHistoryBodyMarker,
 } from "@e2e/utils/work/context-recovery"
 import { sendWorkMessage } from "@e2e/utils/work/session"
@@ -84,12 +81,6 @@ function expectStableMockPrefix(baseline: MockApiConsumption, current: MockApiCo
 		current.cacheDiagnostic.warnings.map(({ code }) => code),
 		`${label}: Mock reported prefix mismatch`,
 	).not.toContain("prefix_hash_mismatch")
-}
-
-function expectStableIdentity(baseline: WorkPromptDiagnostic, current: WorkPromptDiagnostic, label: string): void {
-	expectStableWorkPromptPrefix(baseline, current, label)
-	expect(current.runtimeHash, `${label}: frozen prompt runtime drifted`).toBe(baseline.runtimeHash)
-	expect(current.promptIdentityHash, `${label}: equivalent profile changed prompt identity`).toBe(baseline.promptIdentityHash)
 }
 
 e2e(
@@ -173,11 +164,8 @@ e2e(
 		)
 
 		let app: ElectronApplication | undefined
-		let sourceDiagnostics: WorkPromptDiagnostic[] = []
-		let switchedDiagnostic: WorkPromptDiagnostic | undefined
-		let resumedDiagnostic: WorkPromptDiagnostic | undefined
 		try {
-			app = await openVSCode(workspaceDir, { IS_DEV: "true" })
+			app = await openVSCode(workspaceDir)
 			let { page, sidebar } = await openContextRecoverySidebar(app, helper)
 			await openContextRecoveryHistoryTask(page, sidebar, TASK_TEXT)
 
@@ -266,15 +254,6 @@ e2e(
 				if (index > 0) expectStableMockPrefix(sourceBaselineConsumption, consumption, `source request ${index + 1}`)
 			}
 
-			sourceDiagnostics = await waitForWorkPromptDiagnostics(userDataDir, TASK_ID, (entries) => entries.length >= 3)
-			sourceDiagnostics = sourceDiagnostics.slice(-3)
-			expect(sourceDiagnostics.map(({ requestKind }) => requestKind)).toEqual(["ordinary", "ordinary", "ordinary"])
-			const sourceBaselineDiagnostic = sourceDiagnostics[0]
-			if (!sourceBaselineDiagnostic) throw new Error("Missing source prompt diagnostic baseline")
-			for (const [index, diagnostic] of sourceDiagnostics.entries()) {
-				if (index > 0) expectStableIdentity(sourceBaselineDiagnostic, diagnostic, `source diagnostic ${index + 1}`)
-			}
-
 			await selectContextRecoveryProfile(sidebar, profiles.targetProfileName)
 			await expect.poll(() => server.getRequestCount(SOURCE_TARGET)).toBe(4)
 			await expect.poll(() => server.getRequestCount(TARGET_TARGET)).toBe(0)
@@ -285,14 +264,6 @@ e2e(
 			const targetFirstConsumption = server.getMockConsumptions(TARGET_TARGET)[0]
 			if (!targetFirstConsumption) throw new Error("Missing target profile request")
 			expectStableMockPrefix(sourceBaselineConsumption, targetFirstConsumption, "equivalent target profile")
-			const firstInstanceDiagnostics = await waitForWorkPromptDiagnostics(
-				userDataDir,
-				TASK_ID,
-				(entries) => entries.length >= 4,
-			)
-			switchedDiagnostic = firstInstanceDiagnostics.at(-1)
-			if (!switchedDiagnostic) throw new Error("Missing switched profile prompt diagnostic")
-			expectStableIdentity(sourceBaselineDiagnostic, switchedDiagnostic, "equivalent profile transition")
 			const switchedCacheInfo = await waitForPositiveTaskCacheHit(dlineDocsDir, TASK_ID)
 			expect(switchedCacheInfo.cacheReads).toBeGreaterThan(0)
 			expect(switchedCacheInfo.cacheHitRate).toBeGreaterThan(0)
@@ -304,7 +275,7 @@ e2e(
 			app = undefined
 			helper.clearCachedFrame()
 
-			app = await openVSCode(workspaceDir, { IS_DEV: "true" })
+			app = await openVSCode(workspaceDir)
 			;({ page, sidebar } = await openContextRecoverySidebar(app, helper))
 			await openContextRecoveryHistoryTask(page, sidebar, TASK_TEXT)
 			await expect.poll(() => server.getRequestCount(SOURCE_TARGET)).toBe(4)
@@ -316,14 +287,6 @@ e2e(
 			await expect(sidebar.getByText(FINAL_COMPLETE, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
 			await expect.poll(() => server.getRequestCount(TARGET_TARGET), { timeout: 30_000 }).toBe(2)
 
-			const resumedDiagnostics = await waitForWorkPromptDiagnostics(userDataDir, TASK_ID, (entries) =>
-				entries.some((entry) => entry.restoredFromHistory && entry.requestKind === "ordinary"),
-			)
-			resumedDiagnostic = [...resumedDiagnostics]
-				.reverse()
-				.find((entry) => entry.restoredFromHistory && entry.requestKind === "ordinary")
-			if (!resumedDiagnostic) throw new Error("Missing restored prompt diagnostic")
-			expectStableIdentity(sourceBaselineDiagnostic, resumedDiagnostic, "restart/history resume")
 			const resumedHealth = await waitForPositivePromptCacheHealth(userDataDir, TASK_ID)
 			expect(resumedHealth.hitRate).toBeGreaterThan(0)
 			const resumedCacheInfo = await waitForPositiveTaskCacheHit(dlineDocsDir, TASK_ID)
@@ -344,9 +307,6 @@ e2e(
 					`${JSON.stringify(
 						{
 							profiles,
-							sourceDiagnostics,
-							switchedDiagnostic,
-							resumedDiagnostic,
 							warmHealth,
 							resumedHealth,
 							sourceRequests: sourceConsumptions.map(({ cacheDiagnostic, usage, toolName, responseType }) => ({

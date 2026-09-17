@@ -116,8 +116,10 @@ After changes enter `dev`, run and record the checks required by the actual blas
 - TypeScript and generated-code checks;
 - formatting and lint;
 - Smoke and Vitest;
-- applicable Webview, Storybook, or real VS Code E2E tests;
-- production VSIX packaging and content verification;
+- applicable Webview, Storybook, or focused functional E2E tests;
+- one production VSIX packaged before the required E2E gate, then the three-platform work smoke and four daily workflows against that exact artifact;
+- full functional E2E only for nightly or explicit investigation, and no dev-tier E2E in required CI or release gates;
+- VSIX identity, content, and tested-artifact verification;
 - version, lockfile, bilingual changelog, and manifest consistency for a release candidate.
 
 Promotion may be proposed only when the release candidate's required checks pass, blockers are resolved, and the target commit is unambiguous. Passing tests on one feature branch is not equivalent to passing the integrated `dev` gate.
@@ -165,7 +167,7 @@ Until that strategy is approved, the hotfix workflow must stop instead of invent
 
 ## 9. Tag semantics
 
-- A development release tag must match `dev-vX.Y.Z`, point to the exact current `dev` head, and may be pushed only after tag creation is authorized. It triggers the `Publish Draft Release (Dev)` workflow, whose GitHub draft-release job consumes the tested VSIX only after the complete reusable Tests workflow, including full Vitest, three-platform E2E, and package success.
+- A development release tag must match `dev-vX.Y.Z`, point to the exact current `dev` head, and may be pushed only after tag creation is authorized. It triggers the `Publish Draft Release (Dev)` workflow, whose GitHub draft-release job consumes the tested VSIX only after the complete reusable Tests workflow, including full Vitest, one package job, and the three-platform work smoke plus four daily workflows against that same artifact.
 - A `dev-vX.Y.Z` tag is never a production baseline and must not trigger the Production Release or production Marketplace workflow.
 - A production tag must match `vX.Y.Z` and point to a verified `main` commit.
 - Creating a local tag, pushing it, and replacing a remote tag are separate operations.
@@ -223,5 +225,5 @@ After changing a Git workflow or skill, verify at least:
 9. rejection of ordinary development or PR creation from `main`;
 10. rejection of promotion when the `dev` gate fails;
 11. authorized promotion after the complete `dev` gate passes;
-12. `dev-vX.Y.Z` development release tags only from the exact `dev` head, with GitHub draft release creation blocked until full Vitest, three-platform E2E, and package jobs pass;
+12. `dev-vX.Y.Z` development release tags only from the exact `dev` head, with GitHub draft release creation blocked until full Vitest, one package job, and the three-platform work smoke plus four daily workflows pass against the same VSIX;
 13. production tag creation only from the final verified `main` commit.

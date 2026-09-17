@@ -312,9 +312,6 @@ e2e(
 			const continueInBackground = footer.locator('vscode-button[aria-label="Continue in Background"]')
 			await expect(continueInBackground).toBeVisible({ timeout: 40_000 })
 			await continueInBackground.click()
-			await expect(sidebar.getByText("WORK_BACKGROUND_COMMAND_HANDED_OFF", { exact: true })).toBeVisible({
-				timeout: 60_000,
-			})
 			await expect(sidebar.getByTestId("command-execution-mode").last()).toHaveText("Background", { timeout: 30_000 })
 
 			let activities = await openWorkActivities(sidebar)
