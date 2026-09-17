@@ -9,6 +9,7 @@ import { expect } from "chai"
 import { afterEach, describe, it, vi, expect as vitestExpect } from "vitest"
 // sinon import removed: using vitest globals
 import * as ApiProfilesModule from "@core/controller/file/getApiProfiles"
+import { telemetryService } from "@services/telemetry"
 import { TaskActivityStore } from "../../../activity/TaskActivityStore"
 import { TaskState } from "../../../TaskState"
 import * as AgentConfigModule from "../../subagent/AgentConfigLoader"
@@ -1584,5 +1585,88 @@ describe("SubagentToolHandler", () => {
 
 		assert.equal(taskState.consecutiveMistakeCount, 0)
 		assert.ok(String(result).includes("Subagent results"), "should proceed normally with exactly max prompts")
+	})
+
+	it("reports the requested batch width even when every item is refused", async () => {
+		// The metric answers how wide the model asked to fan out. Sampling only
+		// started items would silently drop the batches that were refused,
+		// which are exactly the ones worth seeing.
+		const { config } = createConfig({ autoApproveSafe: true, autoApproveAll: true })
+		// The suite-wide setup already replaces the telemetry singleton, so the
+		// recorded calls are read directly rather than layering a second spy.
+		const fanout = vi.mocked(telemetryService.captureSubagentFanout)
+		fanout.mockClear()
+		vi.spyOn(AgentConfigModule, "resolveAgentConfig").mockResolvedValue(undefined)
+		vi.spyOn(AgentConfigModule, "listEnabledAgentConfigs").mockResolvedValue([])
+
+		const handler = new UseSubagentsToolHandler()
+		await handler.execute(config, {
+			type: "tool_use",
+			name: ClineDefaultTool.USE_SUBAGENTS,
+			params: {
+				subagents: JSON.stringify([
+					{ agent_name: "missing-one", task: "never runs", context: "ctx one" },
+					{ agent_name: "missing-two", task: "never runs", context: "ctx two" },
+				]),
+			},
+			partial: false,
+			ts: Date.now(),
+		})
+
+		assert.deepEqual(fanout.mock.calls, [[2, 0]], "a fully refused batch still reports the width it requested")
+	})
+
+	it("counts only the items that named a Profile through the tool parameter", async () => {
+		// An inherited Profile is the default, so counting it would make the
+		// figure report batch size a second time instead of answering whether
+		// the per-item parameter is used.
+		const { config } = createConfig({ autoApproveSafe: true, autoApproveAll: true })
+		const fanout = vi.mocked(telemetryService.captureSubagentFanout)
+		fanout.mockClear()
+		stubEnabledProfiles(["fast-reviewer"])
+		vi.spyOn(AgentConfigModule, "resolveAgentConfig").mockResolvedValue({
+			config: { name: "reviewer", description: "reviewer", tools: [], systemPrompt: "Prompt" },
+			source: "project",
+			path: "/workspace/.agents/subagents/reviewer.yml",
+		})
+		vi.spyOn(AgentConfigModule, "listEnabledAgentConfigs").mockResolvedValue([
+			{
+				config: { name: "reviewer", description: "reviewer", tools: [], systemPrompt: "Prompt" },
+				source: "project",
+				path: "/workspace/.agents/subagents/reviewer.yml",
+			},
+		])
+		vi.spyOn(SubagentRunner.prototype, "run").mockResolvedValue({
+			status: "completed",
+			result: "done",
+			stats: {
+				toolCalls: 0,
+				inputTokens: 0,
+				outputTokens: 0,
+				cacheWriteTokens: 0,
+				cacheReadTokens: 0,
+				totalCost: 0,
+				currency: "USD",
+				contextTokens: 0,
+				contextWindow: 200000,
+				contextUsagePercentage: 0,
+			},
+		})
+
+		const handler = new UseSubagentsToolHandler()
+		await handler.execute(config, {
+			type: "tool_use",
+			name: ClineDefaultTool.USE_SUBAGENTS,
+			params: {
+				subagents: JSON.stringify([
+					{ agent_name: "reviewer", task: "bound", context: "ctx bound", profile: "fast-reviewer" },
+					{ agent_name: "reviewer", task: "inherits", context: "ctx inherits" },
+				]),
+			},
+			partial: false,
+			ts: Date.now(),
+		})
+
+		assert.deepEqual(fanout.mock.calls, [[2, 1]])
 	})
 })
