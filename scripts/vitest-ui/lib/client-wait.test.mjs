@@ -45,6 +45,32 @@ test("ensureInitialRun dispatches discovered paths after an unknown collection s
 	])
 })
 
+test("ensureInitialRun discovers cold-start specifications before state paths exist", async () => {
+	const reruns = []
+	const client = {
+		getPaths: async () => [],
+		getFiles: async () => [],
+		getTestFiles: async () => [
+			[{ name: "backend", root: "C:/repo" }, "C:/repo/one.test.ts", { pool: "threads" }],
+			[{ name: "webview", root: "C:/repo" }, "C:/repo/two.test.ts", { pool: "threads" }],
+		],
+		startRerun(paths, resetTestNamePattern) {
+			reruns.push({ paths, resetTestNamePattern })
+		},
+	}
+
+	const result = await ensureInitialRun(client, { timeoutMs: 100, pollMs: 0, stablePollCount: 1 })
+
+	assert.equal(result.triggered, true)
+	assert.deepEqual(result.targets, ["C:/repo/one.test.ts", "C:/repo/two.test.ts"])
+	assert.deepEqual(reruns, [
+		{
+			paths: ["C:/repo/one.test.ts", "C:/repo/two.test.ts"],
+			resetTestNamePattern: true,
+		},
+	])
+})
+
 test("ensureInitialRun leaves an already started run unchanged", async () => {
 	let rerunCalls = 0
 	const client = {

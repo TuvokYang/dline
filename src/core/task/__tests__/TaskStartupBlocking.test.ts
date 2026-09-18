@@ -77,7 +77,7 @@ describe("Task startup blocking", () => {
 		const helper = source.slice(helperStart, helperEnd)
 
 		expect(helper).toContain('block.type === "tool_use"')
-		expect(helper).toContain("!READ_ONLY_TOOLS.includes(block.name as any)")
+		expect(helper).toContain("!READ_ONLY_TOOLS.some((readOnlyTool) => readOnlyTool === block.name)")
 
 		const checkpointComment = source.indexOf("// Read-only turns cannot change workspace state.")
 		const checkpointGate = source.indexOf("if (this.assistantTurnMayModifyWorkspace())", checkpointComment)
@@ -172,7 +172,7 @@ describe("Task startup blocking", () => {
 		const postExecutionAbort = source.indexOf("if (this.taskState.abort)", coordinatorExecute)
 		const resultCommit = source.indexOf("await this.commitToolResult(toolResult, block)", coordinatorExecute)
 		const postCommitAbort = source.indexOf("if (this.taskState.abort) return", resultCommit)
-		const loopTracking = source.indexOf("const currentSignature = toolCallSignature", resultCommit)
+		const loopTracking = source.indexOf("const loopCheck = recordToolCall", resultCommit)
 		expect(completeStart).toBeGreaterThan(-1)
 		expect(coordinatorExecute).toBeGreaterThan(completeStart)
 		expect(postExecutionAbort).toBeGreaterThan(coordinatorExecute)
@@ -192,7 +192,9 @@ describe("Task startup blocking", () => {
 		const source = await readFile(taskSourcePath, "utf8")
 		const helper = source.indexOf("private async awaitInitialCheckpointBeforeToolSideEffects")
 		expect(helper).toBeGreaterThan(-1)
-		expect(source.indexOf("READ_ONLY_TOOLS.includes(toolName as any)", helper)).toBeGreaterThan(helper)
+		expect(source.indexOf("READ_ONLY_TOOLS.some((readOnlyTool) => readOnlyTool === toolName)", helper)).toBeGreaterThan(
+			helper,
+		)
 
 		const reRenderStart = source.indexOf("private async reRenderUpdatedPartialBlocks", helper)
 		const reRenderGate = source.indexOf("await this.awaitInitialCheckpointBeforeToolSideEffects(block.name)", reRenderStart)

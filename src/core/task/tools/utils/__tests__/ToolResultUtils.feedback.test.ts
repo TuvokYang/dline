@@ -54,6 +54,32 @@ describe("ToolResultUtils approval feedback", () => {
 		assert.match(feedbackText?.type === "text" ? feedbackText.text : "", /<feedback>\n请继续，但注意边界\n<\/feedback>/)
 	})
 
+	it("keeps keyed approval feedback with its own parallel tool result", () => {
+		const userMessageContent: Parameters<typeof ToolResultUtils.pushToolResult>[2] = []
+		ToolResultUtils.pushAdditionalToolFeedback(
+			userMessageContent,
+			"note for second tool",
+			undefined,
+			undefined,
+			"dline_tid_call-2",
+		)
+
+		ToolResultUtils.pushToolResult("First result.", createBlock("call-1"), userMessageContent, describeTool, undefined)
+
+		assert.equal(userMessageContent.length, 2)
+		assert.equal(userMessageContent[0].type, "tool_result")
+		assert.equal(userMessageContent[1].type, "tool_feedback")
+		if (userMessageContent[0].type !== "tool_result") assert.fail("expected first tool result")
+		expect(JSON.stringify(userMessageContent[0].content)).not.toContain("note for second tool")
+
+		ToolResultUtils.pushToolResult("Second result.", createBlock("call-2"), userMessageContent, describeTool, undefined)
+
+		assert.equal(userMessageContent.length, 2)
+		const secondResult = userMessageContent.find((block) => block.type === "tool_result" && block.function_id === "call-2")
+		if (!secondResult || secondResult.type !== "tool_result") assert.fail("expected second tool result")
+		expect(JSON.stringify(secondResult.content)).toContain("note for second tool")
+	})
+
 	it("does not leak approval feedback as a standalone text block", () => {
 		const userMessageContent: Parameters<typeof ToolResultUtils.pushToolResult>[2] = []
 		ToolResultUtils.pushAdditionalToolFeedback(userMessageContent, "不要单独写入 text", undefined, undefined)

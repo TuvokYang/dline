@@ -1,7 +1,6 @@
 import { resolveProvider } from "@core/api"
 import type { ToolUse } from "@core/assistant-message"
 import { formatResponse } from "@core/prompts/responses"
-import { processFilesIntoText } from "@integrations/misc/extract-text"
 import { createAndOpenGitHubIssue } from "@utils/github-url-utils"
 import * as os from "os"
 import { HostProvider } from "@/hosts/host-provider"
@@ -12,7 +11,6 @@ import type { ToolResponse } from "../../index"
 import type { IPartialBlockHandler, IToolHandler } from "../ToolExecutorCoordinator"
 import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
-import { sayFeedbackOnce } from "../utils/UserFeedbackUtils"
 
 export class ReportBugHandler implements IToolHandler, IPartialBlockHandler {
 	readonly name = ClineDefaultTool.REPORT_BUG
@@ -90,22 +88,13 @@ export class ReportBugHandler implements IToolHandler, IPartialBlockHandler {
 
 		const outcome = block.dline_tid ? config.admissionOutcomes?.get(block.dline_tid) : undefined
 		await config.callbacks.say("tool", bugReportData, undefined, undefined, false, block.ts)
-		const text = outcome?.draft?.text
-		const images = outcome?.draft?.images
-		const reportBugFiles = outcome?.draft?.files
+		const draft = outcome?.draft
 
-		// If the user provided a response, treat it as feedback
-		if (text || (images && images.length > 0) || (reportBugFiles && reportBugFiles.length > 0)) {
-			let fileContentString = ""
-			if (reportBugFiles && reportBugFiles.length > 0) {
-				fileContentString = await processFilesIntoText(reportBugFiles)
-			}
-
-			await sayFeedbackOnce(config, "messageResponse", text, images, reportBugFiles)
+		// If the user provided a response, treat it as feedback and leave its content
+		// to the canonical approval-feedback path that merges it into this tool result.
+		if (draft && (draft.text || draft.images.length > 0 || draft.files.length > 0)) {
 			return formatResponse.toolResult(
-				`The user did not submit the bug, and provided feedback on the Github issue generated instead:\n<feedback>\n${text}\n</feedback>`,
-				images,
-				fileContentString,
+				"The user did not submit the bug and provided feedback on the generated issue instead.",
 			)
 		}
 		// If no response, the user accepted the bug report

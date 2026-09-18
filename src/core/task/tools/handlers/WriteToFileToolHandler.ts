@@ -16,7 +16,6 @@ function runDiffParser(diff: string, originalContent: string, isPartial = false)
 import { getPrompt } from "@core/prompts/i18n"
 import { formatResponse } from "@core/prompts/responses"
 import { resolveWorkspacePath } from "@core/workspace"
-import { processFilesIntoText } from "@integrations/misc/extract-text"
 import { ClineSayTool } from "@shared/ExtensionMessage"
 import { getLastApiReqTotalTokens } from "@shared/getApiMetrics"
 import { fileExistsAtPath } from "@utils/fs"
@@ -32,8 +31,6 @@ import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
 import { captureAccepted, getModelInfo } from "../utils/AiOutputTelemetry"
 import { applyModelContentFixes } from "../utils/ModelContentProcessor"
-import { ToolResultUtils } from "../utils/ToolResultUtils"
-import { sayFeedbackOnce } from "../utils/UserFeedbackUtils"
 
 export class WriteToFileToolHandler implements IFullyManagedTool {
 	readonly name = ClineDefaultTool.FILE_NEW // This handler supports write_to_file, replace_in_file, and new_rule
@@ -218,14 +215,6 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 
 			await config.callbacks.say("tool", completeMessage, undefined, undefined, false, block.ts)
 			const outcome = block.dline_tid ? config.admissionOutcomes?.get(block.dline_tid) : undefined
-			const text = outcome?.draft?.text
-			const images = outcome?.draft?.images
-			const files = outcome?.draft?.files
-			if (text || images?.length || files?.length) {
-				const fileContent = files?.length ? await processFilesIntoText(files) : ""
-				ToolResultUtils.pushAdditionalToolFeedback(config.taskState.userMessageContent, text, images, fileContent)
-				await sayFeedbackOnce(config, "yesButtonClicked", text, images, files)
-			}
 
 			telemetryService.captureToolUsage(
 				config.ulid ?? "",

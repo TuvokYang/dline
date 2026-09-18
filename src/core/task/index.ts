@@ -350,6 +350,7 @@ import { TaskStateManager } from "./TaskStateManager"
 import { withTerminateTimeout } from "./TaskTerminateTimeout"
 import { ToolExecutor } from "./ToolExecutor"
 import { getAdvertisedNativeToolNames } from "./tools/NativeToolAdmission"
+import { ToolResultUtils } from "./tools/utils/ToolResultUtils"
 import { updateApiReqMsg } from "./utils"
 import { buildUserFeedbackContent } from "./utils/buildUserFeedbackContent"
 import { processUserContentTags } from "./utils/processUserContentTags"
@@ -729,6 +730,17 @@ export class Task {
 				})
 				this.toolExecutor.recordAdmissionOutcome(tool, outcome)
 				return outcome
+			},
+			stageFeedback: async (tool, draft) => {
+				const fileContent = draft.files.length > 0 ? await processFilesIntoText(draft.files) : ""
+				ToolResultUtils.pushAdditionalToolFeedback(
+					this.taskState.userMessageContent,
+					draft.text,
+					draft.images,
+					fileContent,
+					tool.dline_tid,
+				)
+				this.taskState.ackedFeedback = undefined
 			},
 		},
 		scheduler: this.turnToolScheduler,

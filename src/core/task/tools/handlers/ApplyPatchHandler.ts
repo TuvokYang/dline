@@ -4,7 +4,6 @@ import { resolve as resolvePath } from "node:path"
 import type { ToolUse } from "@core/assistant-message"
 import { getPrompt } from "@core/prompts/i18n"
 import { resolveWorkspacePath } from "@core/workspace"
-import { processFilesIntoText } from "@integrations/misc/extract-text"
 import type { ClineSayTool } from "@shared/ExtensionMessage"
 import { fileExistsAtPath } from "@utils/fs"
 import { isLocatedInWorkspace } from "@utils/path"
@@ -22,8 +21,6 @@ import { captureAccepted, getModelInfo } from "../utils/AiOutputTelemetry"
 import { type FileOpsResult, FileProviderOperations } from "../utils/FileProviderOperations"
 import { PatchParser } from "../utils/PatchParser"
 import { PathResolver } from "../utils/PathResolver"
-import { ToolResultUtils } from "../utils/ToolResultUtils"
-import { sayFeedbackOnce } from "../utils/UserFeedbackUtils"
 
 interface FileChange {
 	type: PatchActionType
@@ -179,19 +176,6 @@ export class ApplyPatchHandler implements IFullyManagedTool {
 			const applyResults: Record<string, FileOpsResult> = {}
 			const fileOutcomes: ApplyPatchFileOutcome[] = []
 			const admissionOutcome = block.dline_tid ? config.admissionOutcomes?.get(block.dline_tid) : undefined
-			const feedbackText = admissionOutcome?.draft?.text
-			const feedbackImages = admissionOutcome?.draft?.images
-			const feedbackFiles = admissionOutcome?.draft?.files
-			if (feedbackText || feedbackImages?.length || feedbackFiles?.length) {
-				const fileContent = feedbackFiles?.length ? await processFilesIntoText(feedbackFiles) : ""
-				ToolResultUtils.pushAdditionalToolFeedback(
-					config.taskState.userMessageContent,
-					feedbackText,
-					feedbackImages,
-					fileContent,
-				)
-				await sayFeedbackOnce(config, "yesButtonClicked", feedbackText, feedbackImages, feedbackFiles)
-			}
 
 			// Create a mapping from message path to original commit change key
 			// (needed because for move operations, message.path is the new path, but commit.changes key is the old path)

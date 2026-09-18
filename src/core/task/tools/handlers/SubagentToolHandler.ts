@@ -4,7 +4,6 @@ import { readApiProfiles } from "@core/controller/file/getApiProfiles"
 import { resolveProfileReference } from "@core/profiles/profile-binding"
 import { getPrompt } from "@core/prompts/i18n"
 import { formatResponse } from "@core/prompts/responses"
-import { processFilesIntoText } from "@integrations/misc/extract-text"
 import {
 	ClineAskUseSubagents,
 	ClineSaySubagentStatus,
@@ -44,8 +43,6 @@ import { SubagentRunner } from "../subagent/SubagentRunner"
 import type { IFullyManagedTool, IPreparableToolHandler, ToolHandlerPreparationResult } from "../ToolExecutorCoordinator"
 import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
-import { ToolResultUtils } from "../utils/ToolResultUtils"
-import { sayFeedbackOnce } from "../utils/UserFeedbackUtils"
 
 const LATER_REQUEST_RESULT_NOTICE = "Its final result will be available only in a later model request."
 
@@ -632,14 +629,6 @@ async function presentSubagentUse(
 	const currentMode = config.services.stateManager.getGlobalSettingsKey("mode")
 	const provider = resolveProvider(apiConfig, currentMode)
 	const outcome = block.dline_tid ? config.admissionOutcomes?.get(block.dline_tid) : undefined
-	const text = outcome?.draft?.text
-	const images = outcome?.draft?.images
-	const files = outcome?.draft?.files
-	if (text || images?.length || files?.length) {
-		const fileContent = files?.length ? await processFilesIntoText(files) : ""
-		ToolResultUtils.pushAdditionalToolFeedback(config.taskState.userMessageContent, text, images, fileContent)
-		await sayFeedbackOnce(config, "yesButtonClicked", text, images, files)
-	}
 	await config.callbacks.say("use_subagents", approvalBody, undefined, undefined, false, block.ts)
 	captureToolTelemetry(config, toolName, provider, outcome === undefined, true, block.isNativeToolCall)
 }

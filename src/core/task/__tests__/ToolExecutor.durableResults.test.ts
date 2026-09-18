@@ -44,6 +44,7 @@ type ToolExecutorHarness = {
 	execute(block: ToolUse, config?: object): Promise<boolean>
 	commitRestoredToolResult(content: Parameters<typeof ToolResultUtils.pushToolResult>[0], block: ToolUse): Promise<void>
 	pushToolResult: (content: Parameters<typeof ToolResultUtils.pushToolResult>[0], block: ToolUse, isError?: boolean) => void
+	browserSession: { closeBrowser(): Promise<void> }
 }
 
 function requireCanonicalResult(content: Parameters<typeof ToolResultUtils.pushToolResult>[2]): ClineUserToolResultContentBlock {

@@ -23,6 +23,7 @@ export const NO_TOOL_RESULT = "__dline_no_tool_result__"
  */
 interface PendingToolFeedbackBlock {
 	type: "tool_feedback"
+	dlineTid?: string
 	content: ToolResponse
 }
 
@@ -48,11 +49,11 @@ export class ToolResultUtils {
 	 * @param userMessageContent Mutable next-user-message content list.
 	 * @returns Feedback content blocks to append inside the tool_result.
 	 */
-	private static drainPendingFeedback(userMessageContent: ToolResultMessageContent[]): ToolResponse[] {
+	private static drainPendingFeedback(userMessageContent: ToolResultMessageContent[], dlineTid: string): ToolResponse[] {
 		const pendingFeedback: ToolResponse[] = []
 		for (let i = userMessageContent.length - 1; i >= 0; i--) {
 			const block = userMessageContent[i]
-			if (ToolResultUtils.isPendingFeedback(block)) {
+			if (ToolResultUtils.isPendingFeedback(block) && (block.dlineTid === undefined || block.dlineTid === dlineTid)) {
 				pendingFeedback.unshift(block.content)
 				userMessageContent.splice(i, 1)
 			}
@@ -173,7 +174,7 @@ export class ToolResultUtils {
 		coordinator: ToolExecutorCoordinator | undefined,
 		isError?: boolean,
 	): ClineUserToolResultContentBlock {
-		const pendingFeedback = ToolResultUtils.drainPendingFeedback(userMessageContent)
+		const pendingFeedback = ToolResultUtils.drainPendingFeedback(userMessageContent, block.dline_tid)
 		const existingIndex = userMessageContent.findIndex(
 			(item) => item.type === "tool_result" && item.function_id === block.function_id,
 		)
@@ -224,6 +225,7 @@ export class ToolResultUtils {
 		feedback?: string,
 		images?: string[],
 		fileContentString?: string,
+		dlineTid?: string,
 	): void {
 		// Check if we have any meaningful content to add
 		const hasMeaningfulFeedback = feedback && feedback.trim() !== ""
@@ -241,6 +243,10 @@ export class ToolResultUtils {
 			: "The user provided additional content:"
 
 		const content = formatResponse.toolResult(feedbackText, images, hasMeaningfulFileContent ? fileContentString : undefined)
-		userMessageContent.push({ type: "tool_feedback", content } satisfies PendingToolFeedbackBlock)
+		userMessageContent.push({
+			type: "tool_feedback",
+			content,
+			...(dlineTid ? { dlineTid } : {}),
+		} satisfies PendingToolFeedbackBlock)
 	}
 }
