@@ -2,11 +2,11 @@ import type { ToolUse } from "@core/assistant-message"
 import { ClineDefaultTool } from "@shared/tools"
 import { describe, expect, it, vi } from "vitest"
 import { BlockPhase } from "../../../BlockPhaseMachine"
-import { TaskPhase } from "../../../TaskPhase"
 import type { TaskEffectPorts } from "../../../runtime/TaskEffectRunner"
 import type { TaskEvent } from "../../../runtime/TaskEvent"
 import { TaskRuntime } from "../../../runtime/TaskRuntime"
 import { createTaskRuntimeState } from "../../../runtime/TaskRuntimeState"
+import { TaskPhase } from "../../../TaskPhase"
 import { TurnDriver } from "../TurnDriver"
 import type { BlockLifecycleOutcome, TurnDriverSchedulingSession, TurnPostCommitDirective } from "../TurnDriverPort"
 
@@ -95,12 +95,12 @@ describe("TurnDriver post-commit ordering", () => {
 				notifyLimitChanged: vi.fn(),
 				runTurn: vi.fn(
 					async (_tools: ToolUse[], run: (session: TurnDriverSchedulingSession) => Promise<BlockLifecycleOutcome>) =>
-					run({
-						markAdmissionSettled: vi.fn(),
-						markAdmissionUnsettled: vi.fn(),
-						submit: async (_tool, _index, _admission, execute) => execute(new AbortController().signal),
+						run({
+							markAdmissionSettled: vi.fn(),
+							markAdmissionUnsettled: vi.fn(),
+							submit: async (_tool, _index, _admission, execute) => execute(new AbortController().signal),
 						}),
-					),
+				),
 			},
 			provider: { registerExecution: vi.fn() },
 			postCommit: {

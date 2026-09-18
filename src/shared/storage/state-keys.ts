@@ -47,10 +47,10 @@ type FieldDefinition<T> = {
 	default: T // The default value for the field with proper type casting using as (e.g., `true as boolean | undefined`)
 	isAsync?: boolean
 	isComputed?: boolean
-	transform?: (value: any) => T
+	transform?: (value: unknown) => T
 }
 
-type FieldDefinitions = Record<string, FieldDefinition<any>>
+type FieldDefinitions = Record<string, FieldDefinition<unknown>>
 
 export type ConfiguredAPIKeys = Partial<Record<ApiProvider, boolean>>
 const REMOTE_CONFIG_EXTRA_FIELDS = {
@@ -171,7 +171,10 @@ const USER_SETTINGS_FIELDS = {
 	actModeServiceTierOverrideTier: { default: undefined as string | undefined },
 	browserSettings: {
 		default: DEFAULT_BROWSER_SETTINGS as BrowserSettings,
-		transform: (v: any) => ({ ...DEFAULT_BROWSER_SETTINGS, ...v }),
+		transform: (value: unknown) => ({
+			...DEFAULT_BROWSER_SETTINGS,
+			...(value && typeof value === "object" ? value : {}),
+		}),
 	},
 	// Usage and error reporting are consented to separately. The former
 	// `telemetrySetting` covered both at once and is deliberately not migrated:
@@ -364,7 +367,7 @@ export const LocalStateKeys = [
 // ============================================================================
 
 type ExtractDefault<T> = T extends { default: infer U } ? U : never
-type BuildInterface<T extends Record<string, { default: any }>> = { [K in keyof T]: ExtractDefault<T[K]> }
+type BuildInterface<T extends Record<string, { default: unknown }>> = { [K in keyof T]: ExtractDefault<T[K]> }
 
 export type GlobalState = BuildInterface<typeof GLOBAL_STATE_FIELDS>
 export type Settings = BuildInterface<typeof SETTINGS_FIELDS>
@@ -426,16 +429,18 @@ export const isAsyncProperty = (key: string): boolean => ASYNC_PROPERTIES.has(ke
 export const isComputedProperty = (key: string): boolean => COMPUTED_PROPERTIES.has(key)
 
 export const getDefaultValue = <K extends GlobalStateAndSettingsKey>(key: K): GlobalStateAndSettings[K] | undefined => {
-	return ((GLOBAL_STATE_DEFAULTS as any)[key] ?? (SETTINGS_DEFAULTS as any)[key]) as GlobalStateAndSettings[K] | undefined
+	const globalDefaults = GLOBAL_STATE_DEFAULTS as Partial<Record<GlobalStateAndSettingsKey, unknown>>
+	const settingsDefaults = SETTINGS_DEFAULTS as Partial<Record<GlobalStateAndSettingsKey, unknown>>
+	return (globalDefaults[key] ?? settingsDefaults[key]) as GlobalStateAndSettings[K] | undefined
 }
 
 export const hasTransform = (key: string): boolean => key in SETTINGS_TRANSFORMS
 export const applyTransform = <T>(key: string, value: T): T => {
 	const transform = SETTINGS_TRANSFORMS[key]
-	return transform ? transform(value) : value
+	return transform ? (transform(value) as T) : value
 }
 
-function extractDefaults<T extends Record<string, any>>(props: T): Partial<BuildInterface<T>> {
+function extractDefaults<T extends Record<string, { default: unknown }>>(props: T): Partial<BuildInterface<T>> {
 	return Object.fromEntries(
 		Object.entries(props)
 			.map(([key, prop]) => [key, prop.default])
@@ -443,18 +448,22 @@ function extractDefaults<T extends Record<string, any>>(props: T): Partial<Build
 	) as Partial<BuildInterface<T>>
 }
 
-function extractTransforms<T extends Record<string, any>>(props: T): Record<string, (value: any) => any> {
+type FieldTransform = (value: unknown) => unknown
+
+function extractTransforms<T extends FieldDefinitions>(props: T): Record<string, FieldTransform> {
 	return Object.fromEntries(
 		Object.entries(props)
-			.filter(([_, prop]) => "transform" in prop && prop.transform !== undefined)
+			.filter((entry): entry is [string, FieldDefinition<unknown> & { transform: FieldTransform }] =>
+				Boolean(entry[1].transform),
+			)
 			.map(([key, prop]) => [key, prop.transform]),
 	)
 }
 
-function extractMetadata<T extends Record<string, any>>(props: T, field: string): Set<string> {
+function extractMetadata(props: Record<string, object>, field: string): Set<string> {
 	return new Set(
 		Object.entries(props)
-			.filter(([_, prop]) => field in prop && prop[field] === true)
+			.filter(([_, prop]) => field in prop && (prop as Record<string, unknown>)[field] === true)
 			.map(([key]) => key),
 	)
 }

@@ -90,10 +90,7 @@ describe("planSubagentBatch", () => {
 
 		it("lets an explicit item profile win over the agent's configured profile", async () => {
 			const plan = await planSubagentBatch({
-				items: [
-					item({ index: 1, agentName: "reviewer", profile: "gpt" }),
-					item({ index: 2, agentName: "reviewer" }),
-				],
+				items: [item({ index: 1, agentName: "reviewer", profile: "gpt" }), item({ index: 2, agentName: "reviewer" })],
 				batchTimeoutSeconds: 600,
 				batchId: "batch_d",
 				resolvers: resolvers({ resolveAgent: async (name) => agentConfig(name, "yaml-profile") }),

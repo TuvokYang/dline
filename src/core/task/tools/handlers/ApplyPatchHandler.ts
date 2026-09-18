@@ -7,7 +7,7 @@ import { resolveWorkspacePath } from "@core/workspace"
 import { processFilesIntoText } from "@integrations/misc/extract-text"
 import type { ClineSayTool } from "@shared/ExtensionMessage"
 import { fileExistsAtPath } from "@utils/fs"
-import { getReadablePath, isLocatedInWorkspace } from "@utils/path"
+import { isLocatedInWorkspace } from "@utils/path"
 import { applyPatch } from "diff"
 import { telemetryService } from "@/services/telemetry"
 import { BASH_WRAPPERS, DiffError, PATCH_MARKERS, type Patch, PatchActionType, type PatchChunk } from "@/shared/Patch"
@@ -504,17 +504,20 @@ export class ApplyPatchHandler implements IFullyManagedTool {
 					}
 					changes[path] = { type: PatchActionType.ADD, newContent: action.newFile }
 					break
-				case PatchActionType.UPDATE:
+				case PatchActionType.UPDATE: {
+					const originalContent = originalFiles[path]
+					if (originalContent === undefined) throw new DiffError(`UPDATE action has no original content for ${path}`)
 					// Extract starting line numbers from chunks (convert from 0-indexed to 1-indexed)
 					const startLineNumbers = action.chunks.map((chunk) => chunk.origIndex + 1)
 					changes[path] = {
 						type: PatchActionType.UPDATE,
-						oldContent: originalFiles[path],
-						newContent: this.applyChunks(originalFiles[path]!, action.chunks, path),
+						oldContent: originalContent,
+						newContent: this.applyChunks(originalContent, action.chunks, path),
 						movePath: action.movePath,
 						startLineNumbers,
 					}
 					break
+				}
 			}
 		}
 
@@ -579,7 +582,8 @@ export class ApplyPatchHandler implements IFullyManagedTool {
 	 * Call saveFileChange() after approval.
 	 */
 	private async prepareFileChange(change: FileChange, path: string): Promise<void> {
-		const ops = this.providerOps!
+		const ops = this.providerOps
+		if (!ops) throw new Error("ApplyPatch provider operations are not initialized")
 
 		switch (change.type) {
 			case PatchActionType.DELETE:
@@ -609,7 +613,8 @@ export class ApplyPatchHandler implements IFullyManagedTool {
 	 * Saves the changes for a single file after approval.
 	 */
 	private async saveFileChange(change: FileChange, path: string): Promise<FileOpsResult | undefined> {
-		const ops = this.providerOps!
+		const ops = this.providerOps
+		if (!ops) throw new Error("ApplyPatch provider operations are not initialized")
 
 		switch (change.type) {
 			case PatchActionType.DELETE:

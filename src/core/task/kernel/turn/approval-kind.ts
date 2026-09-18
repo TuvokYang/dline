@@ -128,10 +128,7 @@ const FIXED_CEILING_SCOPES: ReadonlySet<PermissionScope> = new Set<PermissionSco
 const UNBOUNDED_READ_TOOLS: ReadonlySet<ClineDefaultTool> = new Set([ClineDefaultTool.FIND_REFERENCES])
 
 /** Edit tools whose provider/runtime fan-out can reach paths absent from the call. */
-const UNBOUNDED_EDIT_TOOLS: ReadonlySet<ClineDefaultTool> = new Set([
-	ClineDefaultTool.RENAME,
-	ClineDefaultTool.REPLACE_TEXT,
-])
+const UNBOUNDED_EDIT_TOOLS: ReadonlySet<ClineDefaultTool> = new Set([ClineDefaultTool.RENAME, ClineDefaultTool.REPLACE_TEXT])
 
 /** Tools that reach the filesystem for reading. */
 const READ_TOOLS: ReadonlySet<ClineDefaultTool> = new Set([
@@ -317,8 +314,7 @@ export function resolveApprovalKind(input: ApprovalKindInput): ApprovalDecision 
 	}
 
 	const blanketGrants = input.blanket?.yoloMode === true || input.blanket?.approveAll === true
-	const scopedToggleGrants =
-		input.context?.isToolAutoApproveEnabled !== false && isScopeToggledOn(scope, input.settings)
+	const scopedToggleGrants = input.context?.isToolAutoApproveEnabled !== false && isScopeToggledOn(scope, input.settings)
 	if (blanketGrants || scopedToggleGrants) {
 		return { kind: "automatic", scope, ceiling }
 	}

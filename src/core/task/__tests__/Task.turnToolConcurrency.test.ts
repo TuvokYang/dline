@@ -1,9 +1,9 @@
 import type { ToolUse } from "@core/assistant-message"
 import { BlockPhase } from "@core/task/BlockPhaseMachine"
 import type { ToolApprovalPresentation, ToolPreflightResult } from "@core/task/executors/tool/ToolPreflight"
-import type { InteractionOutcome } from "@core/task/interaction/InteractionCoordinator"
 import { TurnDriver } from "@core/task/executors/tool/TurnDriver"
 import { TurnToolScheduler } from "@core/task/executors/tool/TurnToolScheduler"
+import type { InteractionOutcome } from "@core/task/interaction/InteractionCoordinator"
 import type { TaskEffectPorts } from "@core/task/runtime/TaskEffectRunner"
 import { TaskRuntime } from "@core/task/runtime/TaskRuntime"
 import { createTaskRuntimeState } from "@core/task/runtime/TaskRuntimeState"
@@ -322,7 +322,9 @@ describe("finalized turn tool concurrency", () => {
 					ceiling: "auto",
 				},
 				presentation:
-					tool.dline_tid === "dline-read-2" ? undefined : { ask: "tool", body: `Approve ${tool.dline_tid}`, notify: false },
+					tool.dline_tid === "dline-read-2"
+						? undefined
+						: { ask: "tool", body: `Approve ${tool.dline_tid}`, notify: false },
 				lanes: [],
 				run: async () => undefined,
 			}),
@@ -371,13 +373,15 @@ describe("finalized turn tool concurrency", () => {
 		["reject" as const, 0],
 		["approve" as const, 1],
 	])("runs target confirmation only after manual action %s", async (actionId, expectedConfirmations) => {
-		const confirm = vi.fn(async (): Promise<ToolPreflightResult<void>> => ({
-			outcome: "admitted",
-			decision: { kind: "manual", scope: "read_workspace", ceiling: "auto" },
-			presentation: { ask: "tool", body: "Approve target", notify: false },
-			lanes: [],
-			run: async () => undefined,
-		}))
+		const confirm = vi.fn(
+			async (): Promise<ToolPreflightResult<void>> => ({
+				outcome: "admitted",
+				decision: { kind: "manual", scope: "read_workspace", ceiling: "auto" },
+				presentation: { ask: "tool", body: "Approve target", notify: false },
+				lanes: [],
+				run: async () => undefined,
+			}),
+		)
 		const { fakeTask } = createTurn({
 			blockCount: 1,
 			parallel: true,

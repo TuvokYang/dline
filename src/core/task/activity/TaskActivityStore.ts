@@ -292,7 +292,9 @@ export class TaskActivityStore {
 		for (const requestedId of activityIds) {
 			if (visited.has(requestedId)) continue
 			const groupIds = [...new Set(this.backgroundGroups.get(requestedId) ?? [requestedId])]
-			groupIds.forEach((activityId) => visited.add(activityId))
+			groupIds.forEach((activityId) => {
+				visited.add(activityId)
+			})
 			const move = this.backgroundMovers.get(requestedId)
 			const isEligibleGroup = () =>
 				Boolean(move) &&

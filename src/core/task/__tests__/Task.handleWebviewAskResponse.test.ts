@@ -92,7 +92,7 @@ function createToolBlock(name: string, functionId: string, ts: number) {
  * handleWebviewAskResponse to work. Uses a real TaskController so
  * the BlockPhaseMachine state changes are real.
  */
-function createFakeTaskForHandleWebviewAskResponse(controller: TaskController, extra: Partial<Record<string, any>> = {}) {
+function createFakeTaskForHandleWebviewAskResponse(controller: TaskController, extra: Partial<Record<string, unknown>> = {}) {
 	return {
 		taskController: controller,
 		taskState: { userMessageContent: [] },

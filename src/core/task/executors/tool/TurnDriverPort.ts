@@ -3,8 +3,8 @@ import type { ClineContent } from "@shared/messages"
 import type { BlockLifecycle, BlockPhase } from "../../BlockPhaseMachine"
 import type { InteractionOutcome } from "../../interaction/InteractionCoordinator"
 import type { ProviderRequestRoundAdmission } from "../../performance/provider-request-round-port"
-import type { TaskDispatchResult } from "../../runtime/TaskRuntime"
 import type { TaskEvent } from "../../runtime/TaskEvent"
+import type { TaskDispatchResult } from "../../runtime/TaskRuntime"
 import type { TaskRuntimeState } from "../../runtime/TaskRuntimeState"
 import type { ToolApprovalPresentation, ToolPreflightAdmission, ToolPreflightResult } from "./ToolPreflight"
 
@@ -40,10 +40,7 @@ export interface TurnDriverTaskPort {
 	isCurrentTask(): boolean
 	getAssistantMessageContent(): readonly AssistantMessageContent[]
 	getAssistantApiIndex(): number
-	buildTurn(
-		assistantApiIndex: number,
-		autoApprove: (toolName: string, dlineTid: string) => boolean,
-	): BlockLifecycle[]
+	buildTurn(assistantApiIndex: number, autoApprove: (toolName: string, dlineTid: string) => boolean): BlockLifecycle[]
 	isParallelToolCallingEnabled(): boolean
 	getPendingUserMessageContent(): readonly ClineContent[]
 	markPartialToolComplete(ts: number): void

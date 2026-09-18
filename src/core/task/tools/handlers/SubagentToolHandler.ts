@@ -15,8 +15,8 @@ import { telemetryService } from "@/services/telemetry"
 import { calculateApiUsageStatistics } from "@/shared/api-usage"
 import { Logger } from "@/shared/services/Logger"
 import { ClineDefaultTool } from "@/shared/tools"
-import type { ToolResponse } from "../../index"
 import type { BackgroundHandoffResult } from "../../activity/TaskActivityStore"
+import type { ToolResponse } from "../../index"
 import {
 	type AgentBaseConfig,
 	listEnabledAgentConfigs,
@@ -37,19 +37,11 @@ import {
 	type SubagentProgressUpdate,
 	type SubagentRunStats,
 } from "../subagent/SubagentExecutor"
-import {
-	getSubagentFanoutBudget,
-	type SubagentFanoutBudget,
-	type SubagentSlot,
-} from "../subagent/SubagentFanoutBudget"
+import { getSubagentFanoutBudget, type SubagentFanoutBudget, type SubagentSlot } from "../subagent/SubagentFanoutBudget"
 import { SubagentJobManager } from "../subagent/SubagentJobManager"
 import { parseUseSubagentRequest, parseUseSubagentsRequest } from "../subagent/SubagentRequestParser"
 import { SubagentRunner } from "../subagent/SubagentRunner"
-import type {
-	IFullyManagedTool,
-	IPreparableToolHandler,
-	ToolHandlerPreparationResult,
-} from "../ToolExecutorCoordinator"
+import type { IFullyManagedTool, IPreparableToolHandler, ToolHandlerPreparationResult } from "../ToolExecutorCoordinator"
 import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
 import { ToolResultUtils } from "../utils/ToolResultUtils"
@@ -923,7 +915,7 @@ export class UseSubagentToolHandler implements IFullyManagedTool, IPreparableToo
 					runBudgetedSubagent(getSubagentFanoutBudget(config), config.ulid, runner, {
 						prompt: request.prompt,
 						timeoutSeconds: request.options.timeoutSeconds,
-				onProgress: (update) => applyProgress(config, entry, update),
+						onProgress: (update) => applyProgress(config, entry, update),
 					}),
 				onCreated: (jobRecord) => {
 					entry.jobId = jobRecord.jobId
@@ -1008,16 +1000,11 @@ export class UseSubagentToolHandler implements IFullyManagedTool, IPreparableToo
 			timeoutSeconds: request.options.timeoutSeconds,
 			runner: async () => {
 				try {
-					const result = await runBudgetedSubagent(
-						getSubagentFanoutBudget(config),
-						config.ulid,
-						foregroundRunner,
-						{
-							prompt: request.prompt,
-							timeoutSeconds: request.options.timeoutSeconds,
-							onProgress: (update) => applyProgress(config, entry, update),
-						},
-					)
+					const result = await runBudgetedSubagent(getSubagentFanoutBudget(config), config.ulid, foregroundRunner, {
+						prompt: request.prompt,
+						timeoutSeconds: request.options.timeoutSeconds,
+						onProgress: (update) => applyProgress(config, entry, update),
+					})
 					resolveRunResult?.(result)
 					return result
 				} catch (error) {
@@ -1471,8 +1458,8 @@ export class UseSubagentsToolHandler implements IFullyManagedTool, IPreparableTo
 					return runBudgetedSubagent(budget, config.ulid, runnersByJobId.get(item.jobId) as SubagentRunner, {
 						prompt: item.prompt,
 						timeoutSeconds: item.timeoutSeconds,
-							onProgress: (update: SubagentProgressUpdate) => applyProgress(config, entry, update),
-							// Only a started item is running; until a slot is
+						onProgress: (update: SubagentProgressUpdate) => applyProgress(config, entry, update),
+						// Only a started item is running; until a slot is
 						// free it stays queued rather than claiming work.
 						onStarted: () => {
 							entry.status = "running"
@@ -1497,101 +1484,103 @@ export class UseSubagentsToolHandler implements IFullyManagedTool, IPreparableTo
 		}
 		const finalizeBatchResults = async (completedResults: SubagentExecResult[], background: boolean): Promise<void> => {
 			completedResults.forEach((result: SubagentExecResult, position) => {
-			const item = planned[position]
-			const entry = entriesByJobId.get(item.jobId) as SubagentStatusItem
-			const foregroundRunner = runnersByJobId.get(item.jobId) as SubagentRunner
-			entry.status = result.status
-			entry.result = result.result
-			entry.error = result.error
-			entry.background = background
-			entry.backgroundHandoffAvailable = false
-			entry.finishedAt = Date.now()
-			applyStats(entry, result.stats)
-			updateActivityFromEntry(config, entry)
-			if (!result.retryable || !entry.jobId) return
-			const retainedManager = getSubagentJobManager(config)
-			retainedManager.retainRetryableJob({
-				jobId: entry.jobId,
-				// The retained recipe keeps this item's own resolution, so a
-				// retry after reopen replays against the agent and Profile that
-				// were chosen, not against whatever the batch defaulted to.
-				subagentName: item.subagentName,
-				task: item.task,
-				prompt: item.prompt,
-				timeoutSeconds: item.timeoutSeconds,
-				startedAt: entry.startedAt ?? Date.now(),
-				result,
-				runner: () =>
-					runBudgetedSubagent(budget, config.ulid, foregroundRunner, {
-						prompt: item.prompt,
-						timeoutSeconds: item.timeoutSeconds,
-						onProgress: (update: SubagentProgressUpdate) => applyProgress(config, entry, update),
-					}),
-				onStatusChange: async (jobRecord) => {
-					entry.status = jobRecord.status
-					entry.result = jobRecord.result
-					entry.error = jobRecord.error
-					entry.background = true
-					if (jobRecord.stats) applyStats(entry, jobRecord.stats)
-					entry.finishedAt = jobRecord.finishedAt
-					updateActivityFromEntry(config, entry)
-					config.activityStore?.setRetry?.(
-						jobRecord.jobId,
-						jobRecord.retryable
-							? async () => {
-									config.activityStore?.setCancel(jobRecord.jobId, () => foregroundRunner.abort())
-									config.activityStore?.setFinish(jobRecord.jobId, () => foregroundRunner.requestFinish("user"))
-									return retainedManager.retryJob(jobRecord.jobId)
-								}
-							: undefined,
-					)
-					await config.callbacks.say(
-						"subagent",
-						JSON.stringify(
-							buildStatusPayload("batch", jobRecord.status, entries, {
-								background: true,
-								timeoutSeconds: request.options.timeoutSeconds,
-								batchJobId: batchId,
-							}),
-						),
-						undefined,
-						undefined,
-						false,
-						block.ts,
-					)
-				},
-			})
-			config.activityStore?.setRetry?.(entry.jobId, async () => {
-				entry.background = true
-				config.activityStore?.update(entry.jobId as string, {
-					executionMode: "background",
-					cancellationOwner: "explicit",
+				const item = planned[position]
+				const entry = entriesByJobId.get(item.jobId) as SubagentStatusItem
+				const foregroundRunner = runnersByJobId.get(item.jobId) as SubagentRunner
+				entry.status = result.status
+				entry.result = result.result
+				entry.error = result.error
+				entry.background = background
+				entry.backgroundHandoffAvailable = false
+				entry.finishedAt = Date.now()
+				applyStats(entry, result.stats)
+				updateActivityFromEntry(config, entry)
+				if (!result.retryable || !entry.jobId) return
+				const retainedManager = getSubagentJobManager(config)
+				retainedManager.retainRetryableJob({
+					jobId: entry.jobId,
+					// The retained recipe keeps this item's own resolution, so a
+					// retry after reopen replays against the agent and Profile that
+					// were chosen, not against whatever the batch defaulted to.
+					subagentName: item.subagentName,
+					task: item.task,
+					prompt: item.prompt,
+					timeoutSeconds: item.timeoutSeconds,
+					startedAt: entry.startedAt ?? Date.now(),
+					result,
+					runner: () =>
+						runBudgetedSubagent(budget, config.ulid, foregroundRunner, {
+							prompt: item.prompt,
+							timeoutSeconds: item.timeoutSeconds,
+							onProgress: (update: SubagentProgressUpdate) => applyProgress(config, entry, update),
+						}),
+					onStatusChange: async (jobRecord) => {
+						entry.status = jobRecord.status
+						entry.result = jobRecord.result
+						entry.error = jobRecord.error
+						entry.background = true
+						if (jobRecord.stats) applyStats(entry, jobRecord.stats)
+						entry.finishedAt = jobRecord.finishedAt
+						updateActivityFromEntry(config, entry)
+						config.activityStore?.setRetry?.(
+							jobRecord.jobId,
+							jobRecord.retryable
+								? async () => {
+										config.activityStore?.setCancel(jobRecord.jobId, () => foregroundRunner.abort())
+										config.activityStore?.setFinish(jobRecord.jobId, () =>
+											foregroundRunner.requestFinish("user"),
+										)
+										return retainedManager.retryJob(jobRecord.jobId)
+									}
+								: undefined,
+						)
+						await config.callbacks.say(
+							"subagent",
+							JSON.stringify(
+								buildStatusPayload("batch", jobRecord.status, entries, {
+									background: true,
+									timeoutSeconds: request.options.timeoutSeconds,
+									batchJobId: batchId,
+								}),
+							),
+							undefined,
+							undefined,
+							false,
+							block.ts,
+						)
+					},
 				})
-				config.activityStore?.setCancel(entry.jobId as string, () => foregroundRunner.abort())
-				config.activityStore?.setFinish(entry.jobId as string, () => foregroundRunner.requestFinish("user"))
-				return retainedManager.retryJob(entry.jobId as string)
+				config.activityStore?.setRetry?.(entry.jobId, async () => {
+					entry.background = true
+					config.activityStore?.update(entry.jobId as string, {
+						executionMode: "background",
+						cancellationOwner: "explicit",
+					})
+					config.activityStore?.setCancel(entry.jobId as string, () => foregroundRunner.abort())
+					config.activityStore?.setFinish(entry.jobId as string, () => foregroundRunner.requestFinish("user"))
+					return retainedManager.retryJob(entry.jobId as string)
+				})
 			})
-		})
-		const finalStatus: ClineSaySubagentStatus["status"] = entries.some((entry) => entry.status === "timeout")
-			? "timeout"
-			: entries.some((entry) => entry.status === "failed")
-				? "failed"
-				: entries.some((entry) => entry.status === "cancelled")
-					? "cancelled"
-					: "completed"
-		await config.callbacks.say(
-			"subagent",
-			JSON.stringify(
-				buildStatusPayload("batch", finalStatus, entries, {
-					background,
-					timeoutSeconds: request.options.timeoutSeconds,
-				}),
-			),
-			undefined,
-			undefined,
-			false,
-			block.ts,
-		)
+			const finalStatus: ClineSaySubagentStatus["status"] = entries.some((entry) => entry.status === "timeout")
+				? "timeout"
+				: entries.some((entry) => entry.status === "failed")
+					? "failed"
+					: entries.some((entry) => entry.status === "cancelled")
+						? "cancelled"
+						: "completed"
+			await config.callbacks.say(
+				"subagent",
+				JSON.stringify(
+					buildStatusPayload("batch", finalStatus, entries, {
+						background,
+						timeoutSeconds: request.options.timeoutSeconds,
+					}),
+				),
+				undefined,
+				undefined,
+				false,
+				block.ts,
+			)
 			await emitUsage(config, entries)
 		}
 		if (handedOff) {

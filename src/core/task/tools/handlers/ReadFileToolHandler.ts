@@ -3,7 +3,7 @@ import { resolveProvider } from "@core/api"
 import { isTaskReadScopePath } from "@core/artifacts/runtime"
 import type { ToolUse } from "@core/assistant-message"
 import { formatResponse } from "@core/prompts/responses"
-import { getWorkspaceBasename, resolveWorkspacePath } from "@core/workspace"
+import { resolveWorkspacePath } from "@core/workspace"
 import { extractFileContent, type FileContentResult } from "@integrations/misc/extract-file-content"
 import { arePathsEqual, getReadablePath, isLocatedInWorkspace } from "@utils/path"
 import { telemetryService } from "@/services/telemetry"
@@ -14,7 +14,6 @@ import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
 import type { ToolValidator } from "../ToolValidator"
 import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
-import { ToolResultUtils } from "../utils/ToolResultUtils"
 
 export const DEFAULT_MAX_LINES = 1000
 const FILE_TRUNCATED_MARKER = "\n\n---\n\n[FILE TRUNCATED:"
@@ -200,20 +199,21 @@ export class ReadFileToolHandler implements IFullyManagedTool {
 			config.taskState.consecutiveMistakeCount++
 			return await config.callbacks.sayAndCreateMissingParamError(this.name, "path", undefined, block.ts)
 		}
+		if (!relPath) throw new Error("Validated read-file path is missing")
 
 		// Check clineignore access
-		const accessValidation = this.validator.checkClineIgnorePath(relPath!)
+		const accessValidation = this.validator.checkClineIgnorePath(relPath)
 		if (!accessValidation.ok) {
 			if (!config.isSubagentExecution) {
 				await config.callbacks.say("clineignore_error", relPath)
 			}
-			return formatResponse.toolError(formatResponse.clineIgnoreError(relPath!))
+			return formatResponse.toolError(formatResponse.clineIgnoreError(relPath))
 		}
 
 		// Resolve the absolute path based on multi-workspace configuration
-		const pathResult = resolveWorkspacePath(config, relPath!, "ReadFileToolHandler.execute")
+		const pathResult = resolveWorkspacePath(config, relPath, "ReadFileToolHandler.execute")
 		const { absolutePath, displayPath } =
-			typeof pathResult === "string" ? { absolutePath: pathResult, displayPath: relPath! } : pathResult
+			typeof pathResult === "string" ? { absolutePath: pathResult, displayPath: relPath } : pathResult
 
 		// Determine workspace context for telemetry
 		const fallbackAbsolutePath = path.resolve(config.cwd, relPath ?? "")
@@ -229,7 +229,7 @@ export class ReadFileToolHandler implements IFullyManagedTool {
 			tool: "readFile",
 			path: getReadablePath(config.cwd, displayPath),
 			content: absolutePath,
-			operationIsLocatedInWorkspace: await isProjectScopedRead(config, relPath!, absolutePath),
+			operationIsLocatedInWorkspace: await isProjectScopedRead(config, relPath, absolutePath),
 		} satisfies ClineSayTool
 
 		void sharedMessageProps
@@ -343,7 +343,7 @@ export class ReadFileToolHandler implements IFullyManagedTool {
 		config.taskState.consecutiveMistakeCount = 0
 
 		// Track file read operation
-		await config.services.fileContextTracker.trackFileContext(relPath!, "read_tool")
+		await config.services.fileContextTracker.trackFileContext(relPath, "read_tool")
 
 		// Cache metadata for deduplication (no content stored �?saves memory)
 		let mtime = 0

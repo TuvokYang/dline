@@ -2,7 +2,7 @@ import { ToolUse } from "@core/assistant-message"
 import { formatResponse } from "@core/prompts/responses"
 import { ToolResponse } from "@core/task"
 import { MAX_TOOL_RESULT_TEXT_BYTES, truncateContent } from "@shared/content-limits"
-import type { ClineUserToolResultContentBlock } from "@/shared/messages/content"
+import type { ClineContent, ClineUserToolResultContentBlock } from "@/shared/messages/content"
 import { Logger } from "@/shared/services/Logger"
 import type { ToolExecutorCoordinator } from "../ToolExecutorCoordinator"
 
@@ -26,6 +26,8 @@ interface PendingToolFeedbackBlock {
 	content: ToolResponse
 }
 
+type ToolResultMessageContent = ClineContent | PendingToolFeedbackBlock
+
 export class ToolResultUtils {
 	// biome-ignore lint/complexity/noStaticOnlyClass: utility class with static methods only
 	private constructor() {}
@@ -46,7 +48,7 @@ export class ToolResultUtils {
 	 * @param userMessageContent Mutable next-user-message content list.
 	 * @returns Feedback content blocks to append inside the tool_result.
 	 */
-	private static drainPendingFeedback(userMessageContent: any[]): ToolResponse[] {
+	private static drainPendingFeedback(userMessageContent: ToolResultMessageContent[]): ToolResponse[] {
 		const pendingFeedback: ToolResponse[] = []
 		for (let i = userMessageContent.length - 1; i >= 0; i--) {
 			const block = userMessageContent[i]
@@ -111,7 +113,7 @@ export class ToolResultUtils {
 	 * @param feedbackContent Feedback entries captured from approval UI.
 	 * @returns Flattened text/image content blocks.
 	 */
-	private static flattenFeedback(feedbackContent: ToolResponse[]): any[] {
+	private static flattenFeedback(feedbackContent: ToolResponse[]): Exclude<ToolResponse, string> {
 		return feedbackContent.flatMap((content) =>
 			Array.isArray(content) ? content : ([{ type: "text", text: content }] as const),
 		)
@@ -130,7 +132,7 @@ export class ToolResultUtils {
 	 * @param userMessageContent Mutable next-user-message content list.
 	 * @returns Index directly after the last existing tool_result, otherwise 0.
 	 */
-	private static findToolResultInsertIndex(userMessageContent: any[]): number {
+	private static findToolResultInsertIndex(userMessageContent: ToolResultMessageContent[]): number {
 		let insertIndex = 0
 		for (let i = 0; i < userMessageContent.length; i++) {
 			if (userMessageContent[i]?.type === "tool_result") {
@@ -166,14 +168,14 @@ export class ToolResultUtils {
 	static pushToolResult(
 		content: ToolResponse,
 		block: ToolUse,
-		userMessageContent: any[],
+		userMessageContent: ToolResultMessageContent[],
 		toolDescription: (block: ToolUse) => string,
 		coordinator: ToolExecutorCoordinator | undefined,
 		isError?: boolean,
 	): ClineUserToolResultContentBlock {
 		const pendingFeedback = ToolResultUtils.drainPendingFeedback(userMessageContent)
 		const existingIndex = userMessageContent.findIndex(
-			(item: any) => item.type === "tool_result" && item.function_id === block.function_id,
+			(item) => item.type === "tool_result" && item.function_id === block.function_id,
 		)
 		const storeResult = (result: ClineUserToolResultContentBlock): ClineUserToolResultContentBlock => {
 			if (existingIndex !== -1) {
@@ -218,7 +220,7 @@ export class ToolResultUtils {
 	 * Push additional tool feedback from user to message content
 	 */
 	static pushAdditionalToolFeedback(
-		userMessageContent: any[],
+		userMessageContent: ToolResultMessageContent[],
 		feedback?: string,
 		images?: string[],
 		fileContentString?: string,

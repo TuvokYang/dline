@@ -370,10 +370,10 @@ export const STANDARD_TOOL_SPECS: readonly Omit<ProfileToolSpec, "profile">[] = 
 		whenFocusTracking,
 	),
 	spec(ClineDefaultTool.USE_SUBAGENT, getPrompt("subagent", "singleDescription"), SINGLE_SUBAGENT_PARAMS, hasSubagents),
-		{
-			...spec(ClineDefaultTool.USE_SUBAGENTS, getPrompt("subagent", "description"), SUBAGENT_PARAMS, hasSubagents),
-			inputSchema: SUBAGENTS_INPUT_SCHEMA,
-		},
+	{
+		...spec(ClineDefaultTool.USE_SUBAGENTS, getPrompt("subagent", "description"), SUBAGENT_PARAMS, hasSubagents),
+		inputSchema: SUBAGENTS_INPUT_SCHEMA,
+	},
 	spec(
 		ClineDefaultTool.STATUS_UPDATE,
 		getPrompt("statusUpdate", "standardDescription"),

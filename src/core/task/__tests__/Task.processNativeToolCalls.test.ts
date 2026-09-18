@@ -64,8 +64,7 @@ function createTurnDriverHarness(options: TurnDriverHarnessOptions): TurnDriver 
 					scope: "read_workspace",
 					ceiling: "auto",
 				},
-				presentation:
-					options.autoApproved === false ? { ask: "tool", body: "Approve tool", notify: false } : undefined,
+				presentation: options.autoApproved === false ? { ask: "tool", body: "Approve tool", notify: false } : undefined,
 				lanes: [],
 				run: async () => undefined,
 			}),
@@ -172,15 +171,19 @@ describe("Task.processNativeToolCalls", () => {
 				ts: 603,
 			},
 		]
-		const runtimeBlocks = toolBlocks.map((block) => ({
-			dlineTid: block.dline_tid!,
-			functionId: block.function_id,
-			toolName: block.name,
-			phase: BlockPhase.STREAMING,
-			ts: block.ts!,
-			requiresApproval: false,
-			conversationHistoryIndex: 1,
-		}))
+		const runtimeBlocks = toolBlocks.map((block) => {
+			assert.ok(block.dline_tid)
+			assert.notEqual(block.ts, undefined)
+			return {
+				dlineTid: block.dline_tid,
+				functionId: block.function_id,
+				toolName: block.name,
+				phase: BlockPhase.STREAMING,
+				ts: block.ts,
+				requiresApproval: false,
+				conversationHistoryIndex: 1,
+			}
+		})
 		const commandExecutor = {
 			execute: vi.fn(async () => ({
 				userRejected: true,

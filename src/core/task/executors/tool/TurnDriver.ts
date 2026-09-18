@@ -4,12 +4,7 @@ import { isTurnEndingToolName } from "../../assistant-message-order"
 import { BlockPhase } from "../../BlockPhaseMachine"
 import { TaskPhase } from "../../TaskPhase"
 import type { ToolPreflightResult } from "./ToolPreflight"
-import type {
-	BlockLifecycleOutcome,
-	FinalizedTurnInput,
-	RuntimeBlockPhase,
-	TurnDriverPorts,
-} from "./TurnDriverPort"
+import type { BlockLifecycleOutcome, FinalizedTurnInput, RuntimeBlockPhase, TurnDriverPorts } from "./TurnDriverPort"
 
 /**
  * Drives one finalized assistant tool turn.
@@ -33,10 +28,12 @@ export class TurnDriver {
 
 	/** Whether the pending next-turn content already contains one exact tool result. */
 	hasPendingToolResult(dlineTid: string, functionId: string): boolean {
-		return this.ports.task.getPendingUserMessageContent().some(
-			(content): content is ClineUserToolResultContentBlock =>
-				content.type === "tool_result" && content.dline_tid === dlineTid && content.function_id === functionId,
-		)
+		return this.ports.task
+			.getPendingUserMessageContent()
+			.some(
+				(content): content is ClineUserToolResultContentBlock =>
+					content.type === "tool_result" && content.dline_tid === dlineTid && content.function_id === functionId,
+			)
 	}
 
 	/** Persist the canonical fallback result for a skipped or cancelled block exactly once. */
@@ -77,7 +74,9 @@ export class TurnDriver {
 
 		const admissions = new Map<string, ToolPreflightResult<void>>()
 		for (const tool of toolUses) {
-			admissions.set(tool.dline_tid!, this.ports.block.prepareAdmission(tool))
+			const dlineTid = tool.dline_tid
+			if (!dlineTid) throw new Error("Finalized assistant turn contains a tool without canonical identity")
+			admissions.set(dlineTid, this.ports.block.prepareAdmission(tool))
 		}
 		const turnId = `turn:${firstDlineTid}`
 		const turnEndInteractionIds = toolUses
@@ -153,7 +152,8 @@ export class TurnDriver {
 			}
 			if (prepared.outcome === "rejected") {
 				const rejected = await this.ports.runtime.dispatch({ type: "BLOCK_ADMISSION_REJECTED", turnId, dlineTid })
-				if (!rejected.accepted) throw new Error(`Block admission rejection was rejected: ${rejected.error?.code ?? "invalid_runtime_event"}`)
+				if (!rejected.accepted)
+					throw new Error(`Block admission rejection was rejected: ${rejected.error?.code ?? "invalid_runtime_event"}`)
 				session.markAdmissionSettled(index)
 				await this.ports.block.commitInterruptedResult(tool, prepared.rejection.message)
 				this.markFinalizedToolPresented(tool)
@@ -165,7 +165,9 @@ export class TurnDriver {
 				if (approvalPrepared.outcome === "rejected") {
 					const rejected = await this.ports.runtime.dispatch({ type: "BLOCK_ADMISSION_REJECTED", turnId, dlineTid })
 					if (!rejected.accepted) {
-						throw new Error(`Block admission rejection was rejected: ${rejected.error?.code ?? "invalid_runtime_event"}`)
+						throw new Error(
+							`Block admission rejection was rejected: ${rejected.error?.code ?? "invalid_runtime_event"}`,
+						)
 					}
 					session.markAdmissionSettled(index)
 					await this.ports.block.commitInterruptedResult(tool, approvalPrepared.rejection.message)
@@ -193,16 +195,17 @@ export class TurnDriver {
 				}
 				return admission
 			}
-			const requiresManualAdmission = (
-				candidate: Extract<ToolPreflightResult<void>, { outcome: "admitted" }>,
-			): boolean => candidate.decision.kind === "manual" || candidate.decision.kind === "ai_approver"
+			const requiresManualAdmission = (candidate: Extract<ToolPreflightResult<void>, { outcome: "admitted" }>): boolean =>
+				candidate.decision.kind === "manual" || candidate.decision.kind === "ai_approver"
 			const confirmForScheduling = async (): Promise<boolean> => {
 				if (!admission.confirm) return true
 				const confirmed = await admission.confirm()
 				if (confirmed.outcome === "rejected") {
 					const rejected = await this.ports.runtime.dispatch({ type: "BLOCK_ADMISSION_REJECTED", turnId, dlineTid })
 					if (!rejected.accepted) {
-						throw new Error(`Block admission rejection was rejected: ${rejected.error?.code ?? "invalid_runtime_event"}`)
+						throw new Error(
+							`Block admission rejection was rejected: ${rejected.error?.code ?? "invalid_runtime_event"}`,
+						)
 					}
 					session.markAdmissionSettled(index)
 					await this.ports.block.commitInterruptedResult(tool, confirmed.rejection.message)
@@ -224,7 +227,8 @@ export class TurnDriver {
 				if (!presentation) throw new Error(`Manual admission is missing approval presentation: tool=${tool.name}`)
 				if (runtimeBlock.phase === BlockPhase.STREAMING) {
 					const required = await this.ports.runtime.dispatch({ type: "BLOCK_APPROVAL_REQUIRED", turnId, dlineTid })
-					if (!required.accepted) throw new Error(`Block approval request rejected: ${required.error?.code ?? "invalid_runtime_event"}`)
+					if (!required.accepted)
+						throw new Error(`Block approval request rejected: ${required.error?.code ?? "invalid_runtime_event"}`)
 				}
 				const approvalOutcome = await this.ports.approval.request(tool, presentation)
 				const approved = approvalOutcome.actionId === "approve" || approvalOutcome.actionId === "confirm_utility"
@@ -235,7 +239,8 @@ export class TurnDriver {
 						turnId,
 						dlineTid,
 					})
-					if (!resolved.accepted) throw new Error(`Block approval resolution rejected: ${resolved.error?.code ?? "invalid_runtime_event"}`)
+					if (!resolved.accepted)
+						throw new Error(`Block approval resolution rejected: ${resolved.error?.code ?? "invalid_runtime_event"}`)
 				}
 				if (!approved) {
 					session.markAdmissionSettled(index)
@@ -348,7 +353,9 @@ export class TurnDriver {
 				}
 				for (let index = firstRejectedIndex + 1; index < toolUses.length; index += 1) {
 					session.markAdmissionSettled(index)
-					const block = this.ports.runtime.getState().turn?.blocks.find((candidate) => candidate.dlineTid === toolUses[index].dline_tid)
+					const block = this.ports.runtime
+						.getState()
+						.turn?.blocks.find((candidate) => candidate.dlineTid === toolUses[index].dline_tid)
 					if (block) await this.ensureTerminalToolResult(toolUses[index], block.phase)
 					this.markFinalizedToolPresented(toolUses[index])
 				}

@@ -29,7 +29,7 @@ export class AccessMcpResourceHandler implements IFullyManagedTool {
 			arguments: undefined,
 		} satisfies ClineAskUseMcpServer)
 
-		await uiHelpers.say("use_mcp_server" as any, partialMessage, undefined, undefined, true, block.ts)
+		await uiHelpers.say("use_mcp_server", partialMessage, undefined, undefined, true, block.ts)
 	}
 
 	async execute(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
@@ -105,7 +105,7 @@ export class AccessMcpResourceHandler implements IFullyManagedTool {
 		// Process the resource result
 		const resourceResultPretty =
 			resourceResult?.contents
-				.map((item: any) => {
+				.map((item) => {
 					if (item.text) {
 						return item.text
 					}

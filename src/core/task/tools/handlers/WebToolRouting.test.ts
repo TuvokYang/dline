@@ -1,8 +1,7 @@
 import { resolveWebSearchRoutingPlan } from "@core/api/server-tools"
 import { PreToolUseHookCancellationError } from "@core/hooks/PreToolUseHookCancellationError"
-import { InteractionCancellationError } from "@core/task/interaction/InteractionCancellationError"
-import { ToolExecutor } from "@core/task/ToolExecutor"
 import { resolveApprovalKind } from "@core/task/kernel/turn/approval-kind"
+import { ToolExecutor } from "@core/task/ToolExecutor"
 import { DEFAULT_AUTO_APPROVAL_SETTINGS } from "@shared/AutoApprovalSettings"
 import { ApiFormat, ServerTool } from "@shared/proto/dline/models/metadata"
 import { WebToolsMode } from "@shared/proto/dline/provider/common"
@@ -12,6 +11,7 @@ import { AuthService } from "@/services/auth/AuthService"
 import type { LocalWebFetchProvider } from "@/services/web-fetch/LocalWebFetchProvider"
 import { type LocalSearchProvider, LocalSearchRegistry } from "@/services/web-search/LocalSearchProvider"
 import type { ToolUse } from "../../../assistant-message"
+import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
 import { ToolHookUtils } from "../utils/ToolHookUtils"
 import { NO_TOOL_RESULT } from "../utils/ToolResultUtils"
@@ -29,6 +29,13 @@ function routingPlan(route: "disabled" | "local" | "hosted") {
 	})
 }
 
+function createSayMock() {
+	return vi.fn(
+		async (_type: string, _text?: string, _images?: string[], _files?: string[], _partial?: boolean, _existingTs?: number) =>
+			undefined,
+	)
+}
+
 function config(webToolsEnabled: boolean, route: "disabled" | "local" | "hosted", includeRoute = true) {
 	const operationAbortController = new AbortController()
 	return {
@@ -40,14 +47,22 @@ function config(webToolsEnabled: boolean, route: "disabled" | "local" | "hosted"
 		webToolsEnabled,
 		services: {
 			stateManager: {
-				getGlobalSettingsKey: (key: string) => (key === "clineWebToolsEnabled" ? webToolsEnabled : undefined),
+				getGlobalSettingsKey: (key: string): unknown => (key === "clineWebToolsEnabled" ? webToolsEnabled : undefined),
+				getSecretKey: vi.fn((_key: string): string | undefined => undefined),
 			},
 		},
 		taskState: { consecutiveMistakeCount: 0, operationSignal: operationAbortController.signal },
+		autoApprovalSettings: { ...DEFAULT_AUTO_APPROVAL_SETTINGS },
 		callbacks: {
 			sayAndCreateMissingParamError: vi.fn(async (_tool: string, parameter: string) => `missing:${parameter}`),
+			say: createSayMock(),
+			shouldAutoApproveTool: vi.fn(() => false),
 		},
-	} as any
+	}
+}
+
+function asTaskConfig(value: ReturnType<typeof config>): TaskConfig {
+	return value as unknown as TaskConfig
 }
 
 function block(name: "web_search" | "web_fetch"): ToolUse {
@@ -99,7 +114,9 @@ describe("local Web Tool routing", () => {
 	it("admits local Web Search for a non-Cline provider when the request plan selects local", async () => {
 		const taskConfig = config(true, "local")
 
-		await expect(new WebSearchToolHandler().execute(taskConfig, block("web_search"))).resolves.toBe("missing:query")
+		await expect(new WebSearchToolHandler().execute(asTaskConfig(taskConfig), block("web_search"))).resolves.toBe(
+			"missing:query",
+		)
 		expect(taskConfig.callbacks.sayAndCreateMissingParamError).toHaveBeenCalledWith("web_search", "query", undefined, 1)
 	})
 
@@ -173,7 +190,7 @@ describe("local Web Tool routing", () => {
 		const getAuthToken = vi.spyOn(AuthService.getInstance(), "getAuthToken")
 		const searchBlock = { ...block("web_search"), params: { query: "DeepSeek hosted search" } } as ToolUse
 
-		const result = await new WebSearchToolHandler().execute(taskConfig, searchBlock)
+		const result = await new WebSearchToolHandler().execute(asTaskConfig(taskConfig), searchBlock)
 
 		expect(String(result)).toContain("disabled")
 		expect(getAuthToken).not.toHaveBeenCalled()
@@ -183,7 +200,7 @@ describe("local Web Tool routing", () => {
 	it("lets the global switch disable local Web Search even with a local plan", async () => {
 		const taskConfig = config(false, "local", false)
 
-		const result = await new WebSearchToolHandler().execute(taskConfig, block("web_search"))
+		const result = await new WebSearchToolHandler().execute(asTaskConfig(taskConfig), block("web_search"))
 
 		expect(String(result)).toContain("disabled")
 		expect(taskConfig.callbacks.sayAndCreateMissingParamError).not.toHaveBeenCalled()
@@ -192,20 +209,24 @@ describe("local Web Tool routing", () => {
 	it("keeps a frozen local Web Search route after the live global switch changes", async () => {
 		const taskConfig = config(false, "local")
 
-		await expect(new WebSearchToolHandler().execute(taskConfig, block("web_search"))).resolves.toBe("missing:query")
+		await expect(new WebSearchToolHandler().execute(asTaskConfig(taskConfig), block("web_search"))).resolves.toBe(
+			"missing:query",
+		)
 		expect(taskConfig.callbacks.sayAndCreateMissingParamError).toHaveBeenCalledWith("web_search", "query", undefined, 1)
 	})
 
 	it("keeps Web Fetch enabled when provider Web Search is Force Off", async () => {
 		const taskConfig = config(true, "disabled")
 
-		await expect(new WebFetchToolHandler().execute(taskConfig, block("web_fetch"))).resolves.toBe("missing:url")
+		await expect(new WebFetchToolHandler().execute(asTaskConfig(taskConfig), block("web_fetch"))).resolves.toBe("missing:url")
 	})
 
 	it("disables Web Fetch when the frozen global Web Tools feature is disabled", async () => {
 		const taskConfig = config(false, "disabled")
 
-		expect(String(await new WebFetchToolHandler().execute(taskConfig, block("web_fetch")))).toContain("disabled")
+		expect(String(await new WebFetchToolHandler().execute(asTaskConfig(taskConfig), block("web_fetch")))).toContain(
+			"disabled",
+		)
 		expect(taskConfig.callbacks.sayAndCreateMissingParamError).not.toHaveBeenCalled()
 	})
 
@@ -252,11 +273,12 @@ describe("local Web Tool routing", () => {
 						: key === "searxngSearchUrl"
 							? "https://search.example.test"
 							: undefined
-		taskConfig.services.stateManager.getSecretKey = (key: string) =>
-			key === "searxngSearchToken" ? "private-token" : undefined
-		taskConfig.autoApprovalSettings = { enableNotifications: false }
+		taskConfig.services.stateManager.getSecretKey = vi.fn((key: string) =>
+			key === "searxngSearchToken" ? "private-token" : undefined,
+		)
+		taskConfig.autoApprovalSettings = { ...DEFAULT_AUTO_APPROVAL_SETTINGS, enableNotifications: false }
 		taskConfig.callbacks.shouldAutoApproveTool = vi.fn(() => true)
-		taskConfig.callbacks.say = vi.fn(async () => undefined)
+		taskConfig.callbacks.say = createSayMock()
 		const search = vi.fn(async () => ({
 			engineId: "searxng" as const,
 			query: "Dline local search",
@@ -273,7 +295,7 @@ describe("local Web Tool routing", () => {
 			params: { query: "Dline local search" },
 		} as ToolUse
 
-		const result = await new WebSearchToolHandler(createRegistry).execute(taskConfig, searchBlock)
+		const result = await new WebSearchToolHandler(createRegistry).execute(asTaskConfig(taskConfig), searchBlock)
 
 		expect(String(result)).toContain("SearXNG search completed")
 		expect(String(result)).toContain("https://example.test/dline")
@@ -284,8 +306,8 @@ describe("local Web Tool routing", () => {
 		})
 		expect(search).toHaveBeenCalledWith({ query: "Dline local search" })
 		expect(taskConfig.callbacks.say).toHaveBeenCalledTimes(2)
-		const approvalPayload = JSON.parse(taskConfig.callbacks.say.mock.calls[0][1])
-		const completedPayload = JSON.parse(taskConfig.callbacks.say.mock.calls[1][1])
+		const approvalPayload = JSON.parse(taskConfig.callbacks.say.mock.calls[0]?.[1] ?? "{}")
+		const completedPayload = JSON.parse(taskConfig.callbacks.say.mock.calls[1]?.[1] ?? "{}")
 		expect(approvalPayload.webSearch).toEqual({
 			schemaVersion: 1,
 			status: "running",
@@ -314,9 +336,9 @@ describe("local Web Tool routing", () => {
 						? "bing"
 						: undefined
 		taskConfig.services.stateManager.getSecretKey = vi.fn()
-		taskConfig.autoApprovalSettings = { enableNotifications: false }
+		taskConfig.autoApprovalSettings = { ...DEFAULT_AUTO_APPROVAL_SETTINGS, enableNotifications: false }
 		taskConfig.callbacks.shouldAutoApproveTool = vi.fn(() => true)
-		taskConfig.callbacks.say = vi.fn(async () => undefined)
+		taskConfig.callbacks.say = createSayMock()
 		const provider: LocalSearchProvider = {
 			descriptor: { id: "bing", label: "Browser / Bing", execution: "dline" },
 			search: vi.fn(async () => {
@@ -325,10 +347,13 @@ describe("local Web Tool routing", () => {
 		}
 		const searchBlock = { ...block("web_search"), params: { query: "Dline timeout" } } as ToolUse
 
-		const result = await new WebSearchToolHandler(() => new LocalSearchRegistry([provider])).execute(taskConfig, searchBlock)
+		const result = await new WebSearchToolHandler(() => new LocalSearchRegistry([provider])).execute(
+			asTaskConfig(taskConfig),
+			searchBlock,
+		)
 
 		expect(String(result)).toContain("navigation timed out")
-		const failedPayload = JSON.parse(taskConfig.callbacks.say.mock.calls[1][1])
+		const failedPayload = JSON.parse(taskConfig.callbacks.say.mock.calls[1]?.[1] ?? "{}")
 		expect(failedPayload.content).toContain("navigation timed out")
 		expect(failedPayload.webSearch).toEqual({
 			schemaVersion: 1,
@@ -345,9 +370,9 @@ describe("local Web Tool routing", () => {
 		taskConfig.services.stateManager.getGlobalSettingsKey = (key: string) =>
 			key === "clineWebToolsEnabled" ? true : key === "localWebSearchEngine" ? "bing" : undefined
 		taskConfig.services.stateManager.getSecretKey = vi.fn()
-		taskConfig.autoApprovalSettings = { enableNotifications: false }
+		taskConfig.autoApprovalSettings = { ...DEFAULT_AUTO_APPROVAL_SETTINGS, enableNotifications: false }
 		taskConfig.callbacks.shouldAutoApproveTool = vi.fn(() => true)
-		taskConfig.callbacks.say = vi.fn(async () => undefined)
+		taskConfig.callbacks.say = createSayMock()
 		const search = vi.fn()
 		const provider: LocalSearchProvider = {
 			descriptor: { id: "bing", label: "Browser / Bing", execution: "dline" },
@@ -363,14 +388,17 @@ describe("local Web Tool routing", () => {
 		const searchBlock = { ...block("web_search"), params: { query: "blocked search" } } as ToolUse
 
 		try {
-			await new WebSearchToolHandler(() => new LocalSearchRegistry([provider])).execute(taskConfig, searchBlock)
+			await new WebSearchToolHandler(() => new LocalSearchRegistry([provider])).execute(
+				asTaskConfig(taskConfig),
+				searchBlock,
+			)
 		} finally {
 			runHook.mockRestore()
 		}
 
 		expect(search).not.toHaveBeenCalled()
 		expect(taskConfig.callbacks.say).toHaveBeenCalledTimes(2)
-		const failedPayload = JSON.parse(taskConfig.callbacks.say.mock.calls[1][1])
+		const failedPayload = JSON.parse(taskConfig.callbacks.say.mock.calls[1]?.[1] ?? "{}")
 		expect(failedPayload.webSearch).toMatchObject({
 			status: "failed",
 			query: "blocked search",
@@ -384,9 +412,9 @@ describe("local Web Tool routing", () => {
 		taskConfig.api.getProviderId = () => "openai"
 		taskConfig.services.stateManager.getGlobalSettingsKey = (key: string) =>
 			key === "clineWebToolsEnabled" ? true : key === "hooksEnabled" ? false : undefined
-		taskConfig.autoApprovalSettings = { enableNotifications: false }
+		taskConfig.autoApprovalSettings = { ...DEFAULT_AUTO_APPROVAL_SETTINGS, enableNotifications: false }
 		taskConfig.callbacks.shouldAutoApproveTool = vi.fn(() => true)
-		taskConfig.callbacks.say = vi.fn(async () => undefined)
+		taskConfig.callbacks.say = createSayMock()
 		const fetch = vi.fn(async () => ({
 			url: "https://example.test/docs",
 			prompt: "Extract the release notes",
@@ -400,7 +428,7 @@ describe("local Web Tool routing", () => {
 			params: { url: "https://example.test/docs", prompt: "Extract the release notes" },
 		} as ToolUse
 
-		const result = await new WebFetchToolHandler(provider).execute(taskConfig, fetchBlock)
+		const result = await new WebFetchToolHandler(provider).execute(asTaskConfig(taskConfig), fetchBlock)
 
 		expect(String(result)).toContain("# Local OpenAI Web Fetch")
 		expect(String(result)).toContain("Extract the release notes")
@@ -410,7 +438,7 @@ describe("local Web Tool routing", () => {
 			signal: taskConfig.taskState.operationSignal,
 		})
 		expect(taskConfig.callbacks.say).toHaveBeenCalledTimes(2)
-		const completedPayload = JSON.parse(taskConfig.callbacks.say.mock.calls[1][1])
+		const completedPayload = JSON.parse(taskConfig.callbacks.say.mock.calls[1]?.[1] ?? "{}")
 		expect(completedPayload.webFetch).toEqual({
 			schemaVersion: 1,
 			status: "completed",
@@ -427,9 +455,9 @@ describe("local Web Tool routing", () => {
 		const taskConfig = config(true, "local")
 		taskConfig.services.stateManager.getGlobalSettingsKey = (key: string) =>
 			key === "clineWebToolsEnabled" ? true : key === "hooksEnabled" ? false : undefined
-		taskConfig.autoApprovalSettings = { enableNotifications: false }
+		taskConfig.autoApprovalSettings = { ...DEFAULT_AUTO_APPROVAL_SETTINGS, enableNotifications: false }
 		taskConfig.callbacks.shouldAutoApproveTool = vi.fn(() => true)
-		taskConfig.callbacks.say = vi.fn(async () => undefined)
+		taskConfig.callbacks.say = createSayMock()
 		const operationAbortController = new AbortController()
 		taskConfig.taskState.operationSignal = operationAbortController.signal
 		const fetch = vi.fn(async () => {
@@ -442,7 +470,9 @@ describe("local Web Tool routing", () => {
 			params: { url: "https://example.test/restore", prompt: "Wait for restore" },
 		} as ToolUse
 
-		await expect(new WebFetchToolHandler(provider).execute(taskConfig, fetchBlock)).resolves.toBe(NO_TOOL_RESULT)
+		await expect(new WebFetchToolHandler(provider).execute(asTaskConfig(taskConfig), fetchBlock)).resolves.toBe(
+			NO_TOOL_RESULT,
+		)
 		expect(taskConfig.callbacks.say).toHaveBeenCalledTimes(1)
 	})
 
@@ -450,9 +480,9 @@ describe("local Web Tool routing", () => {
 		const taskConfig = config(true, "local")
 		taskConfig.services.stateManager.getGlobalSettingsKey = (key: string) =>
 			key === "clineWebToolsEnabled" ? true : undefined
-		taskConfig.autoApprovalSettings = { enableNotifications: false }
+		taskConfig.autoApprovalSettings = { ...DEFAULT_AUTO_APPROVAL_SETTINGS, enableNotifications: false }
 		taskConfig.callbacks.shouldAutoApproveTool = vi.fn(() => true)
-		taskConfig.callbacks.say = vi.fn(async () => undefined)
+		taskConfig.callbacks.say = createSayMock()
 		const fetch = vi.fn()
 		const provider = { fetch } satisfies LocalWebFetchProvider
 		const runHook = vi
@@ -468,14 +498,14 @@ describe("local Web Tool routing", () => {
 		} as ToolUse
 
 		try {
-			await new WebFetchToolHandler(provider).execute(taskConfig, fetchBlock)
+			await new WebFetchToolHandler(provider).execute(asTaskConfig(taskConfig), fetchBlock)
 		} finally {
 			runHook.mockRestore()
 		}
 
 		expect(fetch).not.toHaveBeenCalled()
 		expect(taskConfig.callbacks.say).toHaveBeenCalledTimes(2)
-		const failedPayload = JSON.parse(taskConfig.callbacks.say.mock.calls[1][1])
+		const failedPayload = JSON.parse(taskConfig.callbacks.say.mock.calls[1]?.[1] ?? "{}")
 		expect(failedPayload.webFetch).toMatchObject({
 			status: "failed",
 			url: "https://example.test/blocked",

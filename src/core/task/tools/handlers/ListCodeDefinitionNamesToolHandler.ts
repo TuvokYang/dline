@@ -56,6 +56,7 @@ export class ListCodeDefinitionNamesToolHandler implements IFullyManagedTool {
 			config.taskState.consecutiveMistakeCount++
 			return await config.callbacks.sayAndCreateMissingParamError(this.name, "path", undefined, block.ts)
 		}
+		if (!relDirPath) throw new Error("Validated list-code-definitions path is missing")
 
 		// Run PreToolUse before the first target parse.
 		try {
@@ -75,9 +76,9 @@ export class ListCodeDefinitionNamesToolHandler implements IFullyManagedTool {
 		let displayPath: string
 		let result: string
 		try {
-			const pathResult = resolveWorkspacePath(config, relDirPath!, "ListCodeDefinitionNamesToolHandler.execute")
+			const pathResult = resolveWorkspacePath(config, relDirPath, "ListCodeDefinitionNamesToolHandler.execute")
 			;({ absolutePath, displayPath } =
-				typeof pathResult === "string" ? { absolutePath: pathResult, displayPath: relDirPath! } : pathResult)
+				typeof pathResult === "string" ? { absolutePath: pathResult, displayPath: relDirPath } : pathResult)
 			result = await parseSourceCodeForDefinitionsTopLevel(absolutePath, config.services.ignoreController)
 		} catch (error) {
 			config.taskState.consecutiveMistakeCount++
@@ -106,7 +107,7 @@ export class ListCodeDefinitionNamesToolHandler implements IFullyManagedTool {
 			tool: "listCodeDefinitionNames",
 			path: getReadablePath(config.cwd, displayPath),
 			content: result,
-			operationIsLocatedInWorkspace: await isLocatedInWorkspace(relDirPath!),
+			operationIsLocatedInWorkspace: await isLocatedInWorkspace(relDirPath),
 		}
 
 		const completeMessage = JSON.stringify(sharedMessageProps)

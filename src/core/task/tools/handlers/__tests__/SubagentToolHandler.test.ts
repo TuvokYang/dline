@@ -1,5 +1,9 @@
 import { strict as assert } from "node:assert"
 import { setTimeout as delay } from "node:timers/promises"
+import type { ToolUse } from "@core/assistant-message"
+// sinon import removed: using vitest globals
+import * as ApiProfilesModule from "@core/controller/file/getApiProfiles"
+import { telemetryService } from "@services/telemetry"
 import { MAX_SUBAGENTS_PER_BATCH } from "@shared/concurrency-limits"
 import { ClineSubagentUsageInfo } from "@shared/ExtensionMessage"
 import { createTaskCapabilityToggles } from "@shared/TaskCapabilityToggles"
@@ -7,11 +11,9 @@ import type { TaskActivityEventInput } from "@shared/task-activity"
 import { ClineDefaultTool } from "@shared/tools"
 import { expect } from "chai"
 import { afterEach, describe, it, vi, expect as vitestExpect } from "vitest"
-// sinon import removed: using vitest globals
-import * as ApiProfilesModule from "@core/controller/file/getApiProfiles"
-import { telemetryService } from "@services/telemetry"
 import { TaskActivityStore } from "../../../activity/TaskActivityStore"
 import { TaskState } from "../../../TaskState"
+import type { ResolvedAgentConfig } from "../../subagent/AgentConfigLoader"
 import * as AgentConfigModule from "../../subagent/AgentConfigLoader"
 import { SubagentBuilder } from "../../subagent/SubagentBuilder"
 import { SubagentRunner, type SubagentRunResult } from "../../subagent/SubagentRunner"
@@ -24,21 +26,23 @@ import {
 	UseSubagentToolHandler as UseSubagentToolHandlerImpl,
 } from "../SubagentToolHandler"
 
+type TestToolUse = Omit<ToolUse, "function_id" | "dline_tid"> & Partial<Pick<ToolUse, "function_id" | "dline_tid">>
+
 class UseSubagentsToolHandler extends UseSubagentsToolHandlerImpl {
-	override execute(config: TaskConfig, block: any) {
+	override execute(config: TaskConfig, block: TestToolUse) {
 		return super.execute(config, {
+			...block,
 			function_id: block.function_id ?? "test_subagents_function",
 			dline_tid: block.dline_tid ?? "test_subagents_tid",
-			...block,
 		})
 	}
 
-	override handlePartialBlock(block: any, uiHelpers: any) {
+	override handlePartialBlock(block: TestToolUse, uiHelpers: ReturnType<typeof createUIHelpers>) {
 		return super.handlePartialBlock(
 			{
+				...block,
 				function_id: block.function_id ?? "test_subagents_function",
 				dline_tid: block.dline_tid ?? "test_subagents_tid",
-				...block,
 			},
 			uiHelpers,
 		)
@@ -46,18 +50,24 @@ class UseSubagentsToolHandler extends UseSubagentsToolHandlerImpl {
 }
 
 class UseSubagentToolHandler extends UseSubagentToolHandlerImpl {
-	override execute(config: TaskConfig, block: any) {
+	override execute(config: TaskConfig, block: TestToolUse) {
 		return super.execute(config, {
+			...block,
 			function_id: block.function_id ?? "test_subagent_function",
 			dline_tid: block.dline_tid ?? "test_subagent_tid",
-			...block,
 		})
 	}
 }
 
+type MockSubagentBuilder = {
+	getApiHandler: () => object
+	getAllowedTools: () => never[]
+	getConfiguredSkills: () => undefined
+}
+
 // Mock SubagentBuilder to avoid buildApiHandler (requires API profile config)
 vi.mock("../../subagent/SubagentBuilder", () => ({
-	SubagentBuilder: vi.fn(function (this: any) {
+	SubagentBuilder: vi.fn(function (this: MockSubagentBuilder) {
 		this.getApiHandler = () => ({})
 		this.getAllowedTools = () => []
 		this.getConfiguredSkills = () => undefined
@@ -832,7 +842,9 @@ describe("SubagentToolHandler", () => {
 		config.activityStore = activityStore
 		vi.spyOn(AgentConfigModule, "resolveAgentConfig").mockResolvedValue({
 			config: { name: "reviewer", profile: "slow-reviewer" },
-		} as any)
+			source: "project",
+			path: "test-reviewer.md",
+		} as unknown as ResolvedAgentConfig)
 		// The catalogue no longer contains the Profile the item ran with.
 		stubEnabledProfiles(["slow-reviewer"])
 		const builderCallsBefore = vitestMockedBuilder().mock.calls.length
@@ -1395,7 +1407,9 @@ describe("SubagentToolHandler", () => {
 		// the document alone would silently move the retry to another model.
 		vi.spyOn(AgentConfigModule, "resolveAgentConfig").mockResolvedValue({
 			config: { name: "reviewer", profile: "slow-reviewer" },
-		} as any)
+			source: "project",
+			path: "test-reviewer.md",
+		} as unknown as ResolvedAgentConfig)
 		// The recorded Profile still has to exist and still be enabled for
 		// subagents, otherwise the retry is refused rather than quietly rerouted.
 		stubEnabledProfiles(["fast-reviewer"])
@@ -1409,11 +1423,7 @@ describe("SubagentToolHandler", () => {
 		assert.equal(await restoreSubagentActivityRetry(config, "subagent-profile-bound"), true)
 
 		const restoredConfig = vitestMockedBuilder().mock.calls.at(builderCallsBefore)?.[2]
-		assert.equal(
-			restoredConfig?.profile,
-			"fast-reviewer",
-			"the retry must run on the Profile the item originally resolved",
-		)
+		assert.equal(restoredConfig?.profile, "fast-reviewer", "the retry must run on the Profile the item originally resolved")
 		assert.deepEqual(await activityStore.retry(["subagent-profile-bound"]), ["subagent-profile-bound"])
 		await vi.waitFor(() => assert.equal(activityStore.get("subagent-profile-bound")?.status, "completed"))
 	})
@@ -1443,7 +1453,9 @@ describe("SubagentToolHandler", () => {
 		config.activityStore = activityStore
 		vi.spyOn(AgentConfigModule, "resolveAgentConfig").mockResolvedValue({
 			config: { name: "reviewer", profile: "slow-reviewer", model: "current" },
-		} as any)
+			source: "project",
+			path: "test-reviewer.md",
+		} as unknown as ResolvedAgentConfig)
 		const builderCallsBefore = vitestMockedBuilder().mock.calls.length
 
 		assert.equal(await restoreSubagentActivityRetry(config, "subagent-inherits-profile"), true)

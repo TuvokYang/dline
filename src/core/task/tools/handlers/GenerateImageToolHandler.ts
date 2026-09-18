@@ -10,14 +10,13 @@ import type {
 import { ImageGenerationError } from "@core/image-generation/contracts"
 import { DEFAULT_IMAGE_GENERATION_SIZE } from "@core/image-generation/ImageGenerationSizes"
 import { formatResponse } from "@core/prompts/responses"
-import type { ClineAsk, ClineSayTool } from "@shared/ExtensionMessage"
+import type { ClineSayTool } from "@shared/ExtensionMessage"
 import { IMAGE_GENERATION_PRESENTATION_SCHEMA_VERSION, type ImageGenerationPresentationV1 } from "@shared/image-generation"
 import { ClineDefaultTool } from "@shared/tools"
 import type { ToolResponse } from "../../index"
 import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
 import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
-import { ToolResultUtils } from "../utils/ToolResultUtils"
 
 const BACKGROUNDS = new Set<ImageBackground>(["auto", "opaque", "transparent"])
 const OUTPUT_FORMATS = new Set<ImageOutputFormat>(["png", "jpeg", "webp"])

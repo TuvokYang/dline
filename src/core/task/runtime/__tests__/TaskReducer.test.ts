@@ -1105,6 +1105,12 @@ describe("turn approval and execution ownership", () => {
 		}
 	}
 
+	function requireLegacyBlock(state: ReturnType<typeof streamingTurn>, index: number) {
+		const block = state.turn.blocks[index]
+		if (!block) throw new Error(`Legacy test block is missing at index ${index}`)
+		return block
+	}
+
 	it("rejects a second manual approval while one is already pending", () => {
 		const state = streamingTurn([
 			{ dlineTid: "tid-1", requiresApproval: true },
@@ -1271,7 +1277,7 @@ describe("turn approval and execution ownership", () => {
 	it("adopts a legacy turn that records execution only as a block phase", () => {
 		// A snapshot written before ownership was explicit carries neither set.
 		const legacy = streamingTurn([{ dlineTid: "tid-1", requiresApproval: false }], TaskPhase.EXECUTING)
-		legacy.turn.blocks[0]!.phase = BlockPhase.AUTO_EXECUTING
+		requireLegacyBlock(legacy, 0).phase = BlockPhase.AUTO_EXECUTING
 
 		const result = reduceTask(legacy, { type: "BLOCK_EXECUTION_STARTED", turnId: "turn-1", dlineTid: "tid-1" })
 
@@ -1284,7 +1290,7 @@ describe("turn approval and execution ownership", () => {
 		// It was executing, so it had been approved — but by the user, not by
 		// policy. Recording it as automatic would invent a permission.
 		const legacy = streamingTurn([{ dlineTid: "tid-1", requiresApproval: true }], TaskPhase.EXECUTING)
-		legacy.turn.blocks[0]!.phase = BlockPhase.EXECUTING
+		requireLegacyBlock(legacy, 0).phase = BlockPhase.EXECUTING
 
 		const result = reduceTask(legacy, { type: "BLOCK_EXECUTION_STARTED", turnId: "turn-1", dlineTid: "tid-1" })
 
@@ -1295,7 +1301,7 @@ describe("turn approval and execution ownership", () => {
 
 	it("drops a legacy approval owner that points at a terminal block", () => {
 		const legacy = streamingTurn([{ dlineTid: "tid-1", requiresApproval: true }], TaskPhase.EXECUTING)
-		legacy.turn.blocks[0]!.phase = BlockPhase.COMPLETED
+		requireLegacyBlock(legacy, 0).phase = BlockPhase.COMPLETED
 		legacy.turn.activeDlineTid = "tid-1"
 		legacy.turn.blocks.push({
 			dlineTid: "tid-2",
@@ -1316,7 +1322,7 @@ describe("turn approval and execution ownership", () => {
 
 	it("drops a legacy approval owner that names no block at all", () => {
 		const legacy = streamingTurn([{ dlineTid: "tid-1", requiresApproval: false }], TaskPhase.EXECUTING)
-		legacy.turn.blocks[0]!.phase = BlockPhase.AUTO_EXECUTING
+		requireLegacyBlock(legacy, 0).phase = BlockPhase.AUTO_EXECUTING
 		legacy.turn.activeDlineTid = "tid-missing"
 
 		const result = reduceTask(legacy, { type: "BLOCK_EXECUTION_STARTED", turnId: "turn-1", dlineTid: "tid-1" })
@@ -1333,8 +1339,8 @@ describe("turn approval and execution ownership", () => {
 			],
 			TaskPhase.EXECUTING,
 		)
-		legacy.turn.blocks[0]!.phase = BlockPhase.AUTO_EXECUTING
-		legacy.turn.blocks[1]!.phase = BlockPhase.AUTO_EXECUTING
+		requireLegacyBlock(legacy, 0).phase = BlockPhase.AUTO_EXECUTING
+		requireLegacyBlock(legacy, 1).phase = BlockPhase.AUTO_EXECUTING
 
 		const result = reduceTask(legacy, { type: "BLOCK_EXECUTION_STARTED", turnId: "turn-1", dlineTid: "tid-1" })
 

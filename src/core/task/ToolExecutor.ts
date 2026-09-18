@@ -47,11 +47,11 @@ import { formatResponse } from "../prompts/responses"
 import { StateManager } from "../storage/StateManager"
 import { WorkspaceRootManager } from "../workspace"
 import type { TaskActivityStore } from "./activity/TaskActivityStore"
-import type { ToolAdmissionSnapshot } from "./executors/tool/ToolAdmissionRegistry"
-import { rejectToolCall, type ToolPreflightResult, type ToolSideEffect } from "./executors/tool/ToolPreflight"
 import { isTurnEndingToolName } from "./assistant-message-order"
 import { BlockPhase } from "./BlockPhaseMachine"
 import { serializeDurableToolResult } from "./DurableToolResult"
+import type { ToolAdmissionSnapshot } from "./executors/tool/ToolAdmissionRegistry"
+import { rejectToolCall, type ToolPreflightResult, type ToolSideEffect } from "./executors/tool/ToolPreflight"
 import { authorizeExplicitToolExecution } from "./explicit-instructions/explicit-tool-gate"
 import { isExplicitOnlyTool } from "./explicit-instructions/policy"
 import type { ExplicitInstructionConsumePort } from "./explicit-instructions/types"
@@ -184,7 +184,10 @@ export class ToolExecutor {
 			taskId: this.taskId,
 			cwd: this.cwd,
 			workspaceRoots: workspaceRoots?.map((root) => root.path) ?? [this.cwd],
-			workspaceRootEntries: workspaceRoots?.map((root) => ({ name: root.name || path.basename(root.path), path: root.path })),
+			workspaceRootEntries: workspaceRoots?.map((root) => ({
+				name: root.name || path.basename(root.path),
+				path: root.path,
+			})),
 			primaryWorkspaceRoot: this.workspaceManager?.getPrimaryRoot()?.path,
 			isMultiRootEnabled: this.isMultiRootEnabled,
 			settings: this.stateManager.getGlobalSettingsKey("autoApprovalSettings"),
@@ -552,9 +555,7 @@ export class ToolExecutor {
 	) {
 		this.subagentFanoutBudget = new SubagentFanoutBudget({
 			limit: () =>
-				usableSubagentLimit(
-					resolveMaxParallelSubagents(this.stateManager.getGlobalSettingsKey("maxParallelSubagents")),
-				),
+				usableSubagentLimit(resolveMaxParallelSubagents(this.stateManager.getGlobalSettingsKey("maxParallelSubagents"))),
 		})
 		this.imageGenerationService = createImageGenerationRuntime({
 			taskId: this.taskId,
@@ -566,6 +567,14 @@ export class ToolExecutor {
 		// Initialize the coordinator and register all tool handlers
 		this.coordinator = new ToolExecutorCoordinator()
 		this.registerToolHandlers()
+	}
+
+	setApi(api: ApiHandler): void {
+		this.api = api
+	}
+
+	setControllerContext(controllerContext: ClineExtensionContext | undefined): void {
+		this._controllerContext = controllerContext
 	}
 
 	// Create a properly typed TaskConfig object for handlers

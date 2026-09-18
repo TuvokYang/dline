@@ -18,7 +18,6 @@ import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
 import type { ToolValidator } from "../ToolValidator"
 import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
-import { ToolResultUtils } from "../utils/ToolResultUtils"
 
 /**
  * Match and file counts parsed out of one formatted ripgrep result block.
@@ -331,6 +330,7 @@ export class SearchFilesToolHandler implements IFullyManagedTool {
 			config.taskState.consecutiveMistakeCount++
 			return await config.callbacks.sayAndCreateMissingParamError(this.name, "path", undefined, block.ts)
 		}
+		if (!relDirPath) throw new Error("Validated search-files path is missing")
 
 		if (!regex) {
 			config.taskState.consecutiveMistakeCount++
@@ -344,10 +344,10 @@ export class SearchFilesToolHandler implements IFullyManagedTool {
 		let workspaceHint: string | undefined
 		let searchPaths: ReturnType<SearchFilesToolHandler["determineSearchPaths"]>
 		try {
-			const parsed = parseWorkspaceInlinePath(relDirPath!)
+			const parsed = parseWorkspaceInlinePath(relDirPath)
 			parsedPath = parsed.relPath
 			workspaceHint = parsed.workspaceHint
-			searchPaths = this.determineSearchPaths(config, parsedPath, workspaceHint, relDirPath!)
+			searchPaths = this.determineSearchPaths(config, parsedPath, workspaceHint, relDirPath)
 		} catch (error) {
 			// Tool executed normally — returning a toolError result, not a tool crash.
 			// Do NOT increment consecutiveMistakeCount: the model should see the error
@@ -442,7 +442,7 @@ export class SearchFilesToolHandler implements IFullyManagedTool {
 
 		const sharedMessageProps = {
 			tool: "searchFiles",
-			path: getReadablePath(config.cwd, relDirPath!),
+			path: getReadablePath(config.cwd, relDirPath),
 			content: results,
 			regex: regex,
 			filePattern: filePattern,

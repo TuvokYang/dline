@@ -750,7 +750,12 @@ function reduceTurn(
 		if (block.phase !== BlockPhase.STREAMING) {
 			return reject(state, event.type)
 		}
-		return acceptTurn(state, event.type, rejectBlockAndSkipUnstartedAfter(state.turn, block.dlineTid), TaskPhase.BETWEEN_TURNS)
+		return acceptTurn(
+			state,
+			event.type,
+			rejectBlockAndSkipUnstartedAfter(state.turn, block.dlineTid),
+			TaskPhase.BETWEEN_TURNS,
+		)
 	}
 	if (event.type === "BLOCK_ADMISSION_REVOKED") {
 		const ownership = deriveTurnOwnership(state.turn)
@@ -811,7 +816,12 @@ function reduceTurn(
 		if (block.phase !== BlockPhase.AWAITING_APPROVAL || state.turn.activeDlineTid !== block.dlineTid) {
 			return reject(state, event.type)
 		}
-		return acceptTurn(state, event.type, rejectBlockAndSkipUnstartedAfter(state.turn, block.dlineTid), TaskPhase.BETWEEN_TURNS)
+		return acceptTurn(
+			state,
+			event.type,
+			rejectBlockAndSkipUnstartedAfter(state.turn, block.dlineTid),
+			TaskPhase.BETWEEN_TURNS,
+		)
 	}
 	if (event.type === "BLOCK_EXECUTION_STARTED") {
 		if (block.phase !== BlockPhase.EXECUTING && block.phase !== BlockPhase.AUTO_EXECUTING) {
@@ -871,7 +881,12 @@ function reduceTurn(
 		) {
 			return reject(state, event.type)
 		}
-		return acceptTurn(state, event.type, rejectBlockAndSkipUnstartedAfter(state.turn, block.dlineTid), TaskPhase.BETWEEN_TURNS)
+		return acceptTurn(
+			state,
+			event.type,
+			rejectBlockAndSkipUnstartedAfter(state.turn, block.dlineTid),
+			TaskPhase.BETWEEN_TURNS,
+		)
 	}
 	const executing = deriveTurnOwnership(state.turn).executing
 	if (
@@ -1531,11 +1546,13 @@ function reduceCheckpointRestore(
 					{ id: effectId(revision, 2), type: "START_API", apiIndex: event.apiIndex, draft: event.draft },
 					{ id: effectId(revision, 3), type: "PERSIST_SNAPSHOT" },
 				]
-			: interactionEffects(revision, {
-					interactionId: resume!.interactionId,
-					taskAsk: "resume_task",
-					presentation: resume!.presentation,
-				}),
+			: resume
+				? interactionEffects(revision, {
+						interactionId: resume.interactionId,
+						taskAsk: "resume_task",
+						presentation: resume.presentation,
+					})
+				: [],
 	}
 }
 

@@ -29,7 +29,7 @@ export class UseMcpToolHandler implements IFullyManagedTool {
 			arguments: uiHelpers.removeClosingTag(block, "arguments", mcp_arguments),
 		} satisfies ClineAskUseMcpServer)
 
-		await uiHelpers.say("use_mcp_server" as any, partialMessage, undefined, undefined, true, block.ts)
+		await uiHelpers.say("use_mcp_server", partialMessage, undefined, undefined, true, block.ts)
 	}
 
 	async execute(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
@@ -124,14 +124,14 @@ export class UseMcpToolHandler implements IFullyManagedTool {
 
 			// Process tool result
 			const toolResultImages =
-				toolResult?.content
-					.filter((item: any) => item.type === "image")
-					.map((item: any) => `data:${item.mimeType};base64,${item.data}`) || []
+				toolResult?.content.flatMap((item) =>
+					item.type === "image" ? [`data:${item.mimeType};base64,${item.data}`] : [],
+				) ?? []
 
 			let toolResultText =
 				(toolResult?.isError ? "Error:\n" : "") +
 					toolResult?.content
-						.map((item: any) => {
+						.map((item) => {
 							if (item.type === "text") {
 								return item.text
 							}
@@ -145,7 +145,7 @@ export class UseMcpToolHandler implements IFullyManagedTool {
 						.join("\n\n") || "(No response)"
 
 			// webview extracts images from the text response to display in the UI
-			const toolResultToDisplay = toolResultText + toolResultImages?.map((image: any) => `\n\n${image}`).join("")
+			const toolResultToDisplay = toolResultText + toolResultImages.map((image) => `\n\n${image}`).join("")
 			await config.callbacks.say("mcp_server_response", toolResultToDisplay)
 
 			// Handle model image support

@@ -47,8 +47,19 @@ function admission(lanes: ToolLane[] = []): ToolPreflightAdmission<void> {
 	}
 }
 
+function requireDlineTid(tool: ToolUse): string {
+	if (!tool.dline_tid) throw new Error("Test tool is missing dline_tid")
+	return tool.dline_tid
+}
+
+function requireAdmission(values: readonly ToolPreflightAdmission<void>[], index: number): ToolPreflightAdmission<void> {
+	const value = values[index]
+	if (!value) throw new Error(`Test admission is missing at index ${index}`)
+	return value
+}
+
 function admissionMap(tools: readonly ToolUse[], values: readonly ToolPreflightAdmission<void>[]) {
-	return new Map(tools.map((current, index) => [current.dline_tid!, values[index]!]))
+	return new Map(tools.map((current, index) => [requireDlineTid(current), requireAdmission(values, index)]))
 }
 
 function runThroughPool(
@@ -59,9 +70,11 @@ function runThroughPool(
 ) {
 	return scheduler.runTurn(tools, async (session) => {
 		const outcomes = await Promise.all(
-			tools.map((current, index) =>
-				session.submit(current, index, admissions.get(current.dline_tid!)!, () => runBlock(current)),
-			),
+			tools.map((current, index) => {
+				const admission = admissions.get(requireDlineTid(current))
+				if (!admission) throw new Error(`Test admission is missing at index ${index}`)
+				return session.submit(current, index, admission, () => runBlock(current))
+			}),
 		)
 		return outcomes.includes("halt_turn") ? "halt_turn" : "completed"
 	})
@@ -131,7 +144,9 @@ describe("TurnToolScheduler", () => {
 		const tools = [tool(ClineDefaultTool.FILE_READ, "a"), tool(ClineDefaultTool.FILE_READ, "b")]
 		const execution = runThroughPool(scheduler, tools, admissionMap(tools, [admission(), admission()]), async (current) => {
 			started.push(current.dline_tid)
-			return gates[started.length - 1]!.promise
+			const gate = gates[started.length - 1]
+			if (!gate) throw new Error("Test gate is missing")
+			return gate.promise
 		})
 
 		await flush()
@@ -140,7 +155,9 @@ describe("TurnToolScheduler", () => {
 		scheduler.notifyLimitChanged()
 		await flush()
 		expect(started).toEqual(["a", "b"])
-		gates.forEach((gate) => gate.resolve("completed"))
+		gates.forEach((gate) => {
+			gate.resolve("completed")
+		})
 		await expect(execution).resolves.toBe("completed")
 	})
 
@@ -156,9 +173,7 @@ describe("TurnToolScheduler", () => {
 				endingStarted = true
 				return "completed"
 			})
-			await expect(session.submit(tools[0], 0, admission(), async () => "retry_admission")).resolves.toBe(
-				"retry_admission",
-			)
+			await expect(session.submit(tools[0], 0, admission(), async () => "retry_admission")).resolves.toBe("retry_admission")
 			await flush()
 			expect(endingStarted).toBe(false)
 			session.markAdmissionSettled(0)

@@ -64,17 +64,24 @@ function toWebSocketUrl(baseUrl, token) {
 	return url.toString()
 }
 
-async function getApiToken(baseUrl) {
-	const response = await fetch(baseUrl)
-	if (!response.ok) {
-		throw new Error(`Failed to fetch Vitest UI at ${baseUrl}: ${response.status} ${response.statusText}`)
+async function getApiToken(baseUrl, timeoutMs = 15_000) {
+	const controller = new AbortController()
+	const timeout = setTimeout(() => controller.abort(new Error(`Timed out fetching Vitest UI at ${baseUrl}`)), timeoutMs)
+	timeout.unref?.()
+	try {
+		const response = await fetch(baseUrl, { signal: controller.signal })
+		if (!response.ok) {
+			throw new Error(`Failed to fetch Vitest UI at ${baseUrl}: ${response.status} ${response.statusText}`)
+		}
+		const html = await response.text()
+		const token = html.match(/window\.VITEST_API_TOKEN\s*=\s*"([^"]+)"/)?.[1]
+		if (!token) {
+			throw new Error(`Vitest UI token was not found in ${baseUrl}`)
+		}
+		return token
+	} finally {
+		clearTimeout(timeout)
 	}
-	const html = await response.text()
-	const token = html.match(/window\.VITEST_API_TOKEN\s*=\s*"([^"]+)"/)?.[1]
-	if (!token) {
-		throw new Error(`Vitest UI token was not found in ${baseUrl}`)
-	}
-	return token
 }
 
 function waitForOpen(socket, timeoutMs) {
@@ -115,7 +122,8 @@ export async function connectVitestUi(options = {}) {
 	}
 
 	const baseUrl = normalizeBaseUrl(options.url)
-	const token = await getApiToken(baseUrl)
+	const connectTimeoutMs = options.connectTimeoutMs || 15_000
+	const token = await getApiToken(baseUrl, connectTimeoutMs)
 	const socket = new WebSocket(toWebSocketUrl(baseUrl, token))
 	const state = {
 		lastFinishedAt: 0,
@@ -153,7 +161,7 @@ export async function connectVitestUi(options = {}) {
 		},
 	})
 
-	await waitForOpen(socket, options.connectTimeoutMs ?? 15_000)
+	await waitForOpen(socket, connectTimeoutMs)
 
 	return {
 		baseUrl,
@@ -415,6 +423,46 @@ function inspectCollection(targetPaths, files) {
 		missingPaths,
 		summary: summarizeFiles(files),
 	}
+}
+
+/** Trigger one initial run when Vitest discovered paths but left every collected file unknown. */
+export async function ensureInitialRun(client, { timeoutMs = 15_000, pollMs = 500, stablePollCount = 3 } = {}) {
+	const started = Date.now()
+	let stableSignature
+	let stableCount = 0
+	let lastCollection = inspectCollection([], [])
+
+	while (Date.now() - started < timeoutMs) {
+		const [targetPaths, files] = await Promise.all([client.getPaths(), client.getFiles()])
+		lastCollection = inspectCollection(targetPaths, files)
+		const { summary } = lastCollection
+		const runAlreadyStarted = summary.running + summary.pass + summary.fail + summary.skip > 0
+		const collectionComplete = lastCollection.expectedFileCount > 0 && lastCollection.missingPaths.length === 0
+		const collectionSettled = collectionComplete && summary.unknown === 0
+
+		if (collectionSettled || runAlreadyStarted) {
+			return { triggered: false, collection: lastCollection }
+		}
+
+		if (lastCollection.expectedFileCount > 0 && summary.unknown === summary.total) {
+			const signature = `${lastCollection.expectedFileCount}:${lastCollection.collectedFileCount}:${lastCollection.missingPaths.length}`
+			stableCount = signature === stableSignature ? stableCount + 1 : 1
+			stableSignature = signature
+			if (stableCount >= stablePollCount) {
+				await client.rerun(targetPaths, true)
+				return { triggered: true, collection: lastCollection, targets: targetPaths }
+			}
+		} else {
+			stableSignature = undefined
+			stableCount = 0
+		}
+
+		await new Promise((resolve) => setTimeout(resolve, pollMs))
+	}
+
+	throw new Error(
+		`Vitest UI did not expose a runnable initial collection within ${timeoutMs}ms. Collected ${lastCollection.collectedFileCount}/${lastCollection.expectedFileCount} paths; missing=${lastCollection.missingPaths.length}. Last summary: ${JSON.stringify(lastCollection.summary)}`,
+	)
 }
 
 function assertKnownCollection(collection, { allowUnknown = false } = {}) {

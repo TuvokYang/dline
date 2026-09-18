@@ -62,26 +62,27 @@ export class ListFilesToolHandler implements IFullyManagedTool {
 			config.taskState.consecutiveMistakeCount++
 			return await config.callbacks.sayAndCreateMissingParamError(this.name, "path", undefined, block.ts)
 		}
+		if (!relDirPath) throw new Error("Validated list-files path is missing")
 
 		// Check clineignore access before performing any IO.
 		// Increment the counter so repeated attempts at blocked paths
 		// accumulate toward the yolo-mode mistake limit.
-		const accessValidation = this.validator.checkClineIgnorePath(relDirPath!)
+		const accessValidation = this.validator.checkClineIgnorePath(relDirPath)
 		if (!accessValidation.ok) {
 			config.taskState.consecutiveMistakeCount++
 			if (!config.isSubagentExecution) {
 				await config.callbacks.say("clineignore_error", relDirPath)
 			}
-			return formatResponse.toolError(formatResponse.clineIgnoreError(relDirPath!))
+			return formatResponse.toolError(formatResponse.clineIgnoreError(relDirPath))
 		}
 
 		let absolutePath: string
 		let displayPath: string
 		let usedWorkspaceHint: boolean
 		try {
-			const pathResult = resolveWorkspacePath(config, relDirPath!, "ListFilesToolHandler.execute")
+			const pathResult = resolveWorkspacePath(config, relDirPath, "ListFilesToolHandler.execute")
 			;({ absolutePath, displayPath } =
-				typeof pathResult === "string" ? { absolutePath: pathResult, displayPath: relDirPath! } : pathResult)
+				typeof pathResult === "string" ? { absolutePath: pathResult, displayPath: relDirPath } : pathResult)
 			usedWorkspaceHint = typeof pathResult !== "string"
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : String(error)
@@ -97,7 +98,7 @@ export class ListFilesToolHandler implements IFullyManagedTool {
 			resolutionMethod: (usedWorkspaceHint ? "hint" : "primary_fallback") as "hint" | "primary_fallback",
 		}
 
-		const operationIsLocatedInWorkspace = await isLocatedInWorkspace(relDirPath!)
+		const operationIsLocatedInWorkspace = await isLocatedInWorkspace(relDirPath)
 		const createToolMessage = (content: string) =>
 			JSON.stringify({
 				tool: recursive ? "listFilesRecursive" : "listFilesTopLevel",

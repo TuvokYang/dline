@@ -1,10 +1,7 @@
 import type { ToolUse } from "@core/assistant-message"
 import { CLINE_MCP_TOOL_IDENTIFIER } from "@/shared/mcp"
 import { ClineDefaultTool } from "@/shared/tools"
-import {
-	prepareRegisteredToolAdmission,
-	type ToolAdmissionSnapshot,
-} from "../executors/tool/ToolAdmissionRegistry"
+import { prepareRegisteredToolAdmission, type ToolAdmissionSnapshot } from "../executors/tool/ToolAdmissionRegistry"
 import {
 	rejectToolCall,
 	type ToolApprovalPresentation,

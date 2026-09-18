@@ -5,6 +5,7 @@ import {
 	assertNoUnhandledErrors,
 	classifyFile,
 	createVitestUiIdentity,
+	ensureInitialRun,
 	isSameVitestUiRoot,
 	readKnownFiles,
 	rerunWithScope,
@@ -22,6 +23,43 @@ function file(id, state) {
 		tasks: [],
 	}
 }
+
+test("ensureInitialRun dispatches discovered paths after an unknown collection stays stable", async () => {
+	const reruns = []
+	const client = {
+		getPaths: async () => ["C:/repo/one.test.ts", "C:/repo/two.test.ts"],
+		getFiles: async () => [file("one", "unknown")],
+		rerun: async (paths, resetTestNamePattern) => {
+			reruns.push({ paths, resetTestNamePattern })
+		},
+	}
+
+	const result = await ensureInitialRun(client, { timeoutMs: 100, pollMs: 0, stablePollCount: 2 })
+
+	assert.equal(result.triggered, true)
+	assert.deepEqual(reruns, [
+		{
+			paths: ["C:/repo/one.test.ts", "C:/repo/two.test.ts"],
+			resetTestNamePattern: true,
+		},
+	])
+})
+
+test("ensureInitialRun leaves an already started run unchanged", async () => {
+	let rerunCalls = 0
+	const client = {
+		getPaths: async () => ["C:/repo/one.test.ts", "C:/repo/two.test.ts"],
+		getFiles: async () => [file("one", "pass")],
+		rerun: async () => {
+			rerunCalls++
+		},
+	}
+
+	const result = await ensureInitialRun(client, { timeoutMs: 100, pollMs: 0, stablePollCount: 1 })
+
+	assert.equal(result.triggered, false)
+	assert.equal(rerunCalls, 0)
+})
 
 test("waitForIdle waits until every discovered path has been collected", async () => {
 	const batches = [

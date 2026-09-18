@@ -4,6 +4,7 @@ import {
 	connectVitestUi,
 	DEFAULT_HOST,
 	DEFAULT_PORT,
+	ensureInitialRun,
 	getVitestUiIdentity,
 	isSameVitestUiIdentity,
 	normalizeBaseUrl,
@@ -16,25 +17,30 @@ function sleep(ms) {
 }
 
 /** Return whether the configured Vitest UI endpoint is accepting requests. */
-export async function isReachable(url, fetchImpl = globalThis.fetch) {
+export async function isReachable(url, fetchImpl = globalThis.fetch, timeoutMs = 5_000) {
+	const controller = new AbortController()
+	const timeout = setTimeout(() => controller.abort(), timeoutMs)
+	timeout.unref?.()
 	try {
-		const response = await fetchImpl(url)
+		const response = await fetchImpl(url, { signal: controller.signal })
 		return response.ok
 	} catch {
 		return false
+	} finally {
+		clearTimeout(timeout)
 	}
 }
 
 /** Wait for Vitest UI while also surfacing child startup failures immediately. */
 export async function waitForReachable(
 	url,
-	{ timeoutMs = 60_000, pollMs = 1_000, fetchImpl = globalThis.fetch, getStartupError } = {},
+	{ timeoutMs = 60_000, pollMs = 1_000, requestTimeoutMs = 5_000, fetchImpl = globalThis.fetch, getStartupError } = {},
 ) {
 	const started = Date.now()
 	while (Date.now() - started < timeoutMs) {
 		const startupError = getStartupError?.()
 		if (startupError) throw startupError
-		if (await isReachable(url, fetchImpl)) return
+		if (await isReachable(url, fetchImpl, requestTimeoutMs)) return
 		await sleep(pollMs)
 	}
 	const startupError = getStartupError?.()
@@ -52,6 +58,25 @@ export async function readVitestUiIdentity(url, options = {}) {
 	const client = await connectImpl({ url })
 	try {
 		return await getVitestUiIdentity(client)
+	} finally {
+		client.close()
+	}
+}
+
+/** Ensure a newly started server dispatches an initial run before clients wait for idle. */
+export async function bootstrapVitestUiInitialRun(url, options = {}) {
+	const connectImpl = options.connectImpl || connectVitestUi
+	const client = await connectImpl({
+		url,
+		connectTimeoutMs: options.connectTimeoutMs,
+		rpcTimeoutMs: options.rpcTimeoutMs,
+	})
+	try {
+		return await ensureInitialRun(client, {
+			timeoutMs: options.timeoutMs,
+			pollMs: options.pollMs,
+			stablePollCount: options.stablePollCount,
+		})
 	} finally {
 		client.close()
 	}
@@ -121,13 +146,23 @@ export async function ensureVitestUiServer(options = {}) {
 		await waitForReachable(url, {
 			timeoutMs: Number(env.VITEST_UI_MCP_START_TIMEOUT || 60_000),
 			pollMs: options.pollMs,
+			requestTimeoutMs: Number(env.VITEST_UI_MCP_REQUEST_TIMEOUT || 5_000),
 			fetchImpl,
 			getStartupError: () => startupError,
 		})
 		const identityReader = options.identityReader || readVitestUiIdentity
 		const identity = await identityReader(url, { connectImpl: options.connectImpl })
 		assertMatchingIdentity(url, identity, expectedIdentity)
-		return { url, child, started: true, identity }
+		const initialRunBootstrap = options.initialRunBootstrap || bootstrapVitestUiInitialRun
+		const initialRun = await initialRunBootstrap(url, {
+			connectImpl: options.connectImpl,
+			connectTimeoutMs: Number(env.VITEST_UI_MCP_START_TIMEOUT || 60_000),
+			rpcTimeoutMs: Number(env.VITEST_UI_INITIAL_RUN_RPC_TIMEOUT || 30_000),
+			timeoutMs: Number(env.VITEST_UI_INITIAL_RUN_TIMEOUT || 15_000),
+			pollMs: options.initialRunPollMs,
+			stablePollCount: options.initialRunStablePollCount,
+		})
+		return { url, child, started: true, identity, initialRun }
 	} catch (error) {
 		if (!child.killed && child.exitCode === null) child.kill("SIGTERM")
 		throw error

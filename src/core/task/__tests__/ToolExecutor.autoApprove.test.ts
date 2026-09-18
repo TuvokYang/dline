@@ -1,5 +1,5 @@
 import path from "node:path"
-import { DEFAULT_AUTO_APPROVAL_SETTINGS, type AutoApprovalSettings } from "@shared/AutoApprovalSettings"
+import { type AutoApprovalSettings, DEFAULT_AUTO_APPROVAL_SETTINGS } from "@shared/AutoApprovalSettings"
 import { ClineDefaultTool } from "@shared/tools"
 import { describe, expect, it } from "vitest"
 import type { ToolUse } from "../../assistant-message"
@@ -17,11 +17,7 @@ function makeBlock(name: ClineDefaultTool, params: ToolUse["params"]): ToolUse {
 	}
 }
 
-function decision(
-	name: ClineDefaultTool,
-	params: ToolUse["params"],
-	actions: Partial<AutoApprovalSettings["actions"]>,
-) {
+function decision(name: ClineDefaultTool, params: ToolUse["params"], actions: Partial<AutoApprovalSettings["actions"]>) {
 	const admission = prepareRegisteredToolAdmission({
 		canonicalToolName: name,
 		block: makeBlock(name, params),
@@ -66,10 +62,14 @@ describe("canonical tool admission", () => {
 			decision(ClineDefaultTool.FILE_READ, { path: "src/index.ts" }, { readFiles: true, readFilesExternally: false }),
 		).toMatchObject({ kind: "automatic", scope: "read_workspace" })
 		expect(
-			decision(ClineDefaultTool.FILE_READ, { path: path.resolve("/workspace/secret.txt") }, {
-				readFiles: true,
-				readFilesExternally: false,
-			}),
+			decision(
+				ClineDefaultTool.FILE_READ,
+				{ path: path.resolve("/workspace/secret.txt") },
+				{
+					readFiles: true,
+					readFilesExternally: false,
+				},
+			),
 		).toMatchObject({ kind: "manual", scope: "read_external" })
 	})
 

@@ -154,10 +154,12 @@ export class BrowserToolHandler implements IFullyManagedTool {
 				const browserSession = config.services.browserSession
 				switch (action) {
 					case "click":
-						browserActionResult = await browserSession.click(coordinate!)
+						if (!coordinate) throw new Error("Browser click requires a coordinate")
+						browserActionResult = await browserSession.click(coordinate)
 						break
 					case "type":
-						browserActionResult = await browserSession.type(text!)
+						if (text === undefined) throw new Error("Browser type requires text")
+						browserActionResult = await browserSession.type(text)
 						break
 					case "scroll_down":
 						browserActionResult = await browserSession.scrollDown()

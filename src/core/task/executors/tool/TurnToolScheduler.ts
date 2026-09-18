@@ -1,12 +1,7 @@
 import type { ToolUse } from "@core/assistant-message"
 import { resolveMaxParallelToolCalls } from "@shared/concurrency-limits"
 import { isTurnEndingToolName } from "../../assistant-message-order"
-import type { ToolPreflightAdmission } from "./ToolPreflight"
-import type {
-	BlockLifecycleOutcome,
-	TurnDriverSchedulerPort,
-	TurnDriverSchedulingSession,
-} from "./TurnDriverPort"
+import type { BlockLifecycleOutcome, TurnDriverSchedulerPort, TurnDriverSchedulingSession } from "./TurnDriverPort"
 import { TurnExecutionPool } from "./TurnExecutionPool"
 
 export interface TurnToolSchedulerOptions {
@@ -40,11 +35,7 @@ export class TurnToolScheduler implements TurnDriverSchedulerPort {
 		run: (session: TurnDriverSchedulingSession) => Promise<BlockLifecycleOutcome>,
 	): Promise<BlockLifecycleOutcome> {
 		const pool = new TurnExecutionPool<BlockLifecycleOutcome>({
-			limit: () =>
-				getToolConcurrencyLimit(
-					this.options.readConfiguredLimit(),
-					this.options.isParallelToolCallingEnabled(),
-				),
+			limit: () => getToolConcurrencyLimit(this.options.readConfiguredLimit(), this.options.isParallelToolCallingEnabled()),
 			name: "turn-tool-pool",
 		})
 		const unresolvedAdmissions = toolUses.map(() => true)

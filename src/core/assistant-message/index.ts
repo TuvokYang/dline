@@ -132,7 +132,7 @@ export interface ReasoningStreamContent {
 	/**
 	 * openrouter has various properties that we can pass back unmodified in api requests to preserve reasoning traces
 	 */
-	details?: any
+	details?: unknown
 	/**
 	 * It's used when sending the thinking block back to the  API.
 	 * API expects this in completed form, not as array of deltas.

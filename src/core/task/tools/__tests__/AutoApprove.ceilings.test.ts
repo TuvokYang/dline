@@ -2,14 +2,14 @@ import os from "node:os"
 import path from "node:path"
 import { HostProvider } from "@hosts/host-provider"
 import {
-	DEFAULT_AUTO_APPROVAL_SETTINGS,
 	type ApprovalCeilingSetting,
 	type AutoApprovalSettings,
 	type ConfigurablePermissionScope,
+	DEFAULT_AUTO_APPROVAL_SETTINGS,
 } from "@shared/AutoApprovalSettings"
 import { ClineDefaultTool } from "@shared/tools"
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { resolveApprovalKind, type PermissionScopeContext } from "../../kernel/turn/approval-kind"
+import { type PermissionScopeContext, resolveApprovalKind } from "../../kernel/turn/approval-kind"
 
 afterEach(() => vi.restoreAllMocks())
 
@@ -62,8 +62,7 @@ function autoApprove(options: Options = {}): CanonicalApprovalProbe {
 			const workspaceRoot = (await HostProvider.workspace.getWorkspacePaths({})).paths[0] ?? process.cwd()
 			const absolutePath = path.isAbsolute(candidate) ? path.resolve(candidate) : path.resolve(workspaceRoot, candidate)
 			const relative = path.relative(path.resolve(workspaceRoot), absolutePath)
-			const isExternalPath =
-				relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)
+			const isExternalPath = relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)
 			return granted(toolName, { isExternalPath })
 		},
 	}

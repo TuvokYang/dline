@@ -1,11 +1,6 @@
 import { strict as assert } from "node:assert"
 import { describe, it } from "vitest"
-import {
-	MAX_SUBAGENT_NESTING_DEPTH,
-	SubagentFanoutBudget,
-	type SubagentSlot,
-	usableSubagentLimit,
-} from "../SubagentFanoutBudget"
+import { MAX_SUBAGENT_NESTING_DEPTH, SubagentFanoutBudget, type SubagentSlot, usableSubagentLimit } from "../SubagentFanoutBudget"
 
 /** Let queued microtasks settle so admissions become observable. */
 async function flush(): Promise<void> {

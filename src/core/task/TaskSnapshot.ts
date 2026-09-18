@@ -180,9 +180,27 @@ export interface TaskSnapshot {
 	inputQueue?: QueuedInputEntry[]
 }
 
+type LegacySnapshotSection = Record<string, unknown>
+type LegacyApprovalBlock = LegacySnapshotSection & { functionId?: string; callId?: string }
+type LegacySnapshotRecord = Record<string, unknown> & {
+	awaiting?: LegacySnapshotSection & { activeFunctionId?: string; activeCallId?: string }
+	approval?: LegacySnapshotSection & {
+		blocks?: LegacyApprovalBlock[]
+		activeFunctionId?: string
+		activeCallId?: string
+	}
+	execution?: LegacySnapshotSection & { executingFunctionIds?: string[]; executing?: string[] }
+	resume?: LegacySnapshotSection & {
+		pendingFunctionIds?: string[]
+		pendingToolUseIds?: string[]
+		answeredFunctionIds?: string[]
+		answeredToolUseIds?: string[]
+	}
+}
+
 /** Normalize pre-canonical snapshot identity names at the persistence ingress boundary. */
 export function normalizeLegacyTaskSnapshot(input: unknown): TaskSnapshot {
-	const raw = input as Record<string, any>
+	const raw = input as LegacySnapshotRecord
 	const awaiting = raw.awaiting
 		? {
 				...raw.awaiting,
@@ -193,7 +211,7 @@ export function normalizeLegacyTaskSnapshot(input: unknown): TaskSnapshot {
 	const approval = raw.approval
 		? {
 				...raw.approval,
-				blocks: (raw.approval.blocks ?? []).map((block: Record<string, any>) => ({
+				blocks: (raw.approval.blocks ?? []).map((block) => ({
 					...block,
 					functionId: block.functionId ?? block.callId,
 					callId: undefined,

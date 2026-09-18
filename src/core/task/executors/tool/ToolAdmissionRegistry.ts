@@ -3,12 +3,12 @@ import path from "node:path"
 import { isTaskReadScopePath } from "@core/artifacts/runtime"
 import type { ToolUse } from "@core/assistant-message"
 import type { AutoApprovalSettings } from "@shared/AutoApprovalSettings"
-import { browserActions, type BrowserAction, type ClineAsk, type ClineSayTool } from "@shared/ExtensionMessage"
+import { type BrowserAction, browserActions, type ClineAsk, type ClineSayTool } from "@shared/ExtensionMessage"
 import { ClineDefaultTool } from "@shared/tools"
-import { PATCH_MARKERS } from "@/shared/Patch"
-import { DlineRuntimeFileManager } from "@/services/runtime-files/DlineRuntimeFileManager"
 import { normalizeWorkspaceRelativeInputPath } from "@/core/workspace/utils/normalizeWorkspaceRelativeInputPath"
 import { parseWorkspaceInlinePath } from "@/core/workspace/utils/parseWorkspaceInlinePath"
+import { DlineRuntimeFileManager } from "@/services/runtime-files/DlineRuntimeFileManager"
+import { PATCH_MARKERS } from "@/shared/Patch"
 import type { ConfigurableCeilings, PermissionScopeContext } from "../../kernel/turn/approval-kind"
 import { PATH_SCOPED_TOOLS, resolveLaneContext, type ToolLaneContext } from "../../kernel/turn/tool-lanes"
 import {
@@ -82,13 +82,7 @@ const REQUIRED_PARAMETERS: Partial<Record<ClineDefaultTool, readonly RequiredPar
 	[ClineDefaultTool.USE_SUBAGENTS]: ["subagents"],
 	[ClineDefaultTool.SPAWN_TASK]: ["task", "mode"],
 	[ClineDefaultTool.CHANGE_TODO_LIST]: ["new_plan"],
-	[ClineDefaultTool.REPORT_BUG]: [
-		"title",
-		"what_happened",
-		"steps_to_reproduce",
-		"api_request_output",
-		"additional_context",
-	],
+	[ClineDefaultTool.REPORT_BUG]: ["title", "what_happened", "steps_to_reproduce", "api_request_output", "additional_context"],
 	[ClineDefaultTool.FIND_REFERENCES]: ["file_path", "line", "character"],
 	[ClineDefaultTool.RENAME]: ["file_path", "line", "character", "new_name"],
 	[ClineDefaultTool.REPLACE_TEXT]: ["file_pattern", "find", "replace"],
@@ -211,13 +205,12 @@ function resolveLexicalPath(candidate: string | undefined, snapshot: ToolAdmissi
 		const normalizedPath = normalizeWorkspaceRelativeInputPath(relPath)
 		if (path.isAbsolute(normalizedPath)) return path.resolve(normalizedPath)
 
-		const roots =
-			snapshot.workspaceRootEntries?.length
-				? snapshot.workspaceRootEntries
-				: snapshot.workspaceRoots.map((workspaceRoot) => ({
-						name: path.basename(workspaceRoot),
-						path: workspaceRoot,
-					}))
+		const roots = snapshot.workspaceRootEntries?.length
+			? snapshot.workspaceRootEntries
+			: snapshot.workspaceRoots.map((workspaceRoot) => ({
+					name: path.basename(workspaceRoot),
+					path: workspaceRoot,
+				}))
 		let root = workspaceHint ? roots.find((candidateRoot) => candidateRoot.name === workspaceHint) : undefined
 		if (!root && workspaceHint) {
 			root = roots.find(
@@ -237,7 +230,11 @@ function isTrustedTaskRead(toolName: ClineDefaultTool, absolutePath: string, sna
 	)
 }
 
-function resolveScopeContext(block: ToolUse, toolName: ClineDefaultTool, snapshot: ToolAdmissionSnapshot): PermissionScopeContext {
+function resolveScopeContext(
+	block: ToolUse,
+	toolName: ClineDefaultTool,
+	snapshot: ToolAdmissionSnapshot,
+): PermissionScopeContext {
 	const roots = snapshot.workspaceRoots.length > 0 ? snapshot.workspaceRoots : [snapshot.cwd]
 	const absolutePaths = declaredPaths(block, toolName).map((candidate) => resolveLexicalPath(candidate, snapshot))
 	const requiresApproval = String(parameterValue(block, "requires_approval") ?? "").toLowerCase() === "true"
@@ -277,10 +274,7 @@ interface ConfirmedScopeContext {
 	confirmationFailed: boolean
 }
 
-const DYNAMIC_WRITE_FANOUT_TOOLS = new Set<ClineDefaultTool>([
-	ClineDefaultTool.REPLACE_TEXT,
-	ClineDefaultTool.RENAME,
-])
+const DYNAMIC_WRITE_FANOUT_TOOLS = new Set<ClineDefaultTool>([ClineDefaultTool.REPLACE_TEXT, ClineDefaultTool.RENAME])
 
 async function confirmScopeContext(
 	block: ToolUse,
@@ -317,7 +311,11 @@ async function confirmScopeContext(
 
 function approvalAsk(toolName: ClineDefaultTool, block: ToolUse): ClineAsk {
 	if (toolName === ClineDefaultTool.BASH || toolName === ClineDefaultTool.KILL_COMMAND) return "command"
-	if (toolName === ClineDefaultTool.MCP_USE || toolName === ClineDefaultTool.MCP_ACCESS || toolName === ClineDefaultTool.MCP_DOCS) {
+	if (
+		toolName === ClineDefaultTool.MCP_USE ||
+		toolName === ClineDefaultTool.MCP_ACCESS ||
+		toolName === ClineDefaultTool.MCP_DOCS
+	) {
 		return "use_mcp_server"
 	}
 	if (toolName === ClineDefaultTool.BROWSER && parameterValue(block, "action") === "launch") return "browser_action_launch"
@@ -420,8 +418,7 @@ export function prepareRegisteredToolAdmission<T>(input: RegisteredToolAdmission
 							PATH_SCOPED_TOOLS.has(input.canonicalToolName) && !confirmed.confirmationFailed
 								? confirmed.canonicalPaths
 								: undefined,
-						conservativeWriteFanout:
-							PATH_SCOPED_TOOLS.has(input.canonicalToolName) && confirmed.confirmationFailed,
+						conservativeWriteFanout: PATH_SCOPED_TOOLS.has(input.canonicalToolName) && confirmed.confirmationFailed,
 					}
 					return admissionFor(input.snapshot, confirmed.scope, lanes)
 				}

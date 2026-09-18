@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { EventEmitter } from "node:events"
 import path from "node:path"
 import test from "node:test"
-import { ensureVitestUiServer } from "./managed-server.mjs"
+import { ensureVitestUiServer, isReachable } from "./managed-server.mjs"
 
 function createChild() {
 	const child = new EventEmitter()
@@ -17,6 +17,28 @@ function createChild() {
 	}
 	return child
 }
+
+test("bounds each readiness request instead of waiting forever", async () => {
+	let aborted = false
+	const reachable = await isReachable(
+		"http://localhost:51205/__vitest__/",
+		(_url, { signal }) =>
+			new Promise((_resolve, reject) => {
+				signal.addEventListener(
+					"abort",
+					() => {
+						aborted = true
+						reject(signal.reason)
+					},
+					{ once: true },
+				)
+			}),
+		5,
+	)
+
+	assert.equal(reachable, false)
+	assert.equal(aborted, true)
+})
 
 function createStderr() {
 	let text = ""
@@ -88,6 +110,7 @@ test("starts the local Vitest 4 UI without a shell and waits for readiness", asy
 	const stderr = createStderr()
 	let fetchCalls = 0
 	let spawnCall
+	let initialRunUrl
 	const result = await ensureVitestUiServer({
 		cwd: process.cwd(),
 		execPath: "C:\\Program Files\\nodejs\\node.exe",
@@ -99,6 +122,10 @@ test("starts the local Vitest 4 UI without a shell and waits for readiness", asy
 		},
 		fetchImpl: async () => ({ ok: ++fetchCalls >= 2 }),
 		identityReader: async () => ({ root: process.cwd(), configFile: path.resolve("vitest.config.ts") }),
+		initialRunBootstrap: async (url) => {
+			initialRunUrl = url
+			return { triggered: true, targets: ["one.test.ts"] }
+		},
 		pollMs: 0,
 		stderr: stderr.stream,
 		spawnImpl: (file, args, options) => {
@@ -112,6 +139,8 @@ test("starts the local Vitest 4 UI without a shell and waits for readiness", asy
 	assert.equal(result.url, "http://127.0.0.1:51208/__vitest__/")
 	assert.equal(result.identity.root, process.cwd())
 	assert.equal(result.identity.configFile, path.resolve("vitest.config.ts"))
+	assert.equal(result.initialRun.triggered, true)
+	assert.equal(initialRunUrl, result.url)
 	assert.equal(spawnCall.file, "C:\\Program Files\\nodejs\\node.exe")
 	assert.equal(spawnCall.options.shell, false)
 	assert.equal(

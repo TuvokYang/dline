@@ -14,12 +14,13 @@ const CONVERSATIONAL_TOOLS = [
 ] as const
 
 describe("canonical conversational approval", () => {
-	it.each([undefined, { yoloMode: true }, { approveAll: true }])(
-		"keeps handler-owned interactions out of the outer approval slot under blanket=%j",
-		(blanket) => {
-			for (const toolName of CONVERSATIONAL_TOOLS) {
-				expect(resolveApprovalKind({ toolName, settings: DEFAULT_AUTO_APPROVAL_SETTINGS, blanket }).kind).toBe("none")
-			}
-		},
-	)
+	it.each([
+		undefined,
+		{ yoloMode: true },
+		{ approveAll: true },
+	])("keeps handler-owned interactions out of the outer approval slot under blanket=%j", (blanket) => {
+		for (const toolName of CONVERSATIONAL_TOOLS) {
+			expect(resolveApprovalKind({ toolName, settings: DEFAULT_AUTO_APPROVAL_SETTINGS, blanket }).kind).toBe("none")
+		}
+	})
 })

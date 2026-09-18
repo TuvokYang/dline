@@ -640,13 +640,7 @@ export class TelemetryService {
 	 * `instance` separates concurrent pools of the same kind in memory; the
 	 * exported series describe the process, not the instance.
 	 */
-	public recordPoolOccupancy(args: {
-		pool: ExecutionPool
-		instance: string
-		running: number
-		queued: number
-		limit: number
-	}) {
+	public recordPoolOccupancy(args: { pool: ExecutionPool; instance: string; running: number; queued: number; limit: number }) {
 		this.tool.recordPoolOccupancy(args)
 	}
 

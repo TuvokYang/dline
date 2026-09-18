@@ -96,10 +96,7 @@ describe("SubagentRequestParser", () => {
 
 	it("rejects a subagents value that is not a JSON array", () => {
 		assert.throws(() => parseUseSubagentsRequest({ subagents: "{not json" }), /Expected a JSON array of subagent items/)
-		assert.throws(
-			() => parseUseSubagentsRequest({ subagents: '{"task":"one"}' }),
-			/Expected a JSON array of subagent items/,
-		)
+		assert.throws(() => parseUseSubagentsRequest({ subagents: '{"task":"one"}' }), /Expected a JSON array of subagent items/)
 	})
 
 	it("rejects a missing or empty batch", () => {

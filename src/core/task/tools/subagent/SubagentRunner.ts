@@ -1519,7 +1519,9 @@ export class SubagentRunner {
 								{
 									taskId: subagentConfig.taskId,
 									cwd: subagentConfig.cwd,
-									workspaceRoots: subagentConfig.workspaceManager?.getRoots().map((root) => root.path) ?? [subagentConfig.cwd],
+									workspaceRoots: subagentConfig.workspaceManager?.getRoots().map((root) => root.path) ?? [
+										subagentConfig.cwd,
+									],
 									workspaceRootEntries: subagentConfig.workspaceManager
 										?.getRoots()
 										.map((root) => ({ name: root.name || path.basename(root.path), path: root.path })),
@@ -1529,7 +1531,8 @@ export class SubagentRunner {
 									blanket: {
 										yoloMode: subagentConfig.yoloModeToggled,
 										approveAll:
-											subagentConfig.services.stateManager.getGlobalSettingsKey("autoApproveAllToggled") === true,
+											subagentConfig.services.stateManager.getGlobalSettingsKey("autoApproveAllToggled") ===
+											true,
 									},
 									inheritsApproval: true,
 								},

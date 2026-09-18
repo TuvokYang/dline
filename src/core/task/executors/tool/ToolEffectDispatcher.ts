@@ -19,10 +19,7 @@ export interface ToolEffectDispatcherPorts {
  * Keeping lookup and command construction together prevents the Task effect port
  * from rebuilding execution semantics around the extracted domain.
  */
-export async function dispatchToolExecutionEffect(
-	effect: ToolExecutionEffect,
-	ports: ToolEffectDispatcherPorts,
-): Promise<void> {
+export async function dispatchToolExecutionEffect(effect: ToolExecutionEffect, ports: ToolEffectDispatcherPorts): Promise<void> {
 	const commandId = `${effect.id}:${effect.dlineTid}`
 	const settled = ports.track(commandId)
 	ports.dispatch({

@@ -227,6 +227,7 @@ import {
 	ClineContent,
 	ClineImageContentBlock,
 	ClineMessageModelInfo,
+	type ClineReasoningDetailParam,
 	ClineStorageMessage,
 	ClineTextContentBlock,
 	ClineToolResponseContent,
@@ -276,8 +277,8 @@ import { buildMistakeLimitContinuationContent } from "./continuation/MistakeLimi
 import { ToolCommandLedger } from "./executors/tool/ToolCommandLedger"
 import { createToolDomainRunner } from "./executors/tool/ToolDomainResources"
 import type { UserFacingSurface } from "./executors/tool/ToolDomainSurface"
-import { ToolExecutionDomain } from "./executors/tool/ToolExecutionDomain"
 import { dispatchToolExecutionEffect } from "./executors/tool/ToolEffectDispatcher"
+import { ToolExecutionDomain } from "./executors/tool/ToolExecutionDomain"
 import { TurnDriver } from "./executors/tool/TurnDriver"
 import { TurnToolScheduler } from "./executors/tool/TurnToolScheduler"
 import { FocusChainManager } from "./focus-chain"
@@ -678,7 +679,10 @@ export class Task {
 			getAssistantApiIndex: () => this.messageStateHandler.apiConversationHistory.length - 1,
 			buildTurn: (assistantApiIndex, autoApprove) => {
 				this.taskController.buildTurn(
-					this.taskState.assistantMessageContent.map((block) => ({ ...block, conversationHistoryIndex: assistantApiIndex })),
+					this.taskState.assistantMessageContent.map((block) => ({
+						...block,
+						conversationHistoryIndex: assistantApiIndex,
+					})),
 					autoApprove,
 				)
 				return this.taskController.getBlocks()
@@ -859,11 +863,11 @@ export class Task {
 		this.taskState = new TaskState()
 		this.remoteWorkspaceDetectionPromise = HostProvider.env
 			.getHostVersion({})
-			.then((hostVersion: any) => {
+			.then((hostVersion) => {
 				this.isRemoteWorkspaceEnvironment = isRemoteWorkspaceEnvironment(hostVersion)
 			})
-			.catch((error: any) => {
-				Logger.warn(`[Task ${taskId}] Failed to detect remote workspace state: ${error}`)
+			.catch((error: unknown) => {
+				Logger.warn(`[Task ${taskId}] Failed to detect remote workspace state: ${String(error)}`)
 			})
 			.finally(() => {
 				this.remoteWorkspaceDetectionSettled = true
@@ -1389,7 +1393,7 @@ export class Task {
 			...(this.taskSm.actModeProfile !== undefined && { actModeProfile: this.taskSm.actModeProfile }),
 			ulid: this.ulid,
 			onStreamEstimatedTokens: (tokens) => this.apiRateMetricsService.recordEstimatedTokens(tokens),
-			onRetryAttempt: async (attempt: number, maxRetries: number, delay: number, error: any) => {
+			onRetryAttempt: async (attempt: number, maxRetries: number, delay: number, error: unknown) => {
 				const clineMessages = this.messageStateHandler.clineMessages
 				const lastApiReqStartedIndex = findLastIndex(clineMessages, (m) => m.say === "api_req_started")
 				if (lastApiReqStartedIndex !== -1) {
@@ -1399,7 +1403,7 @@ export class Task {
 							attempt: attempt, // attempt is already 1-indexed from retry.ts
 							maxAttempts: maxRetries, // total attempts
 							delaySec: Math.round(delay / 1000),
-							errorSnippet: error?.message ? `${String(error.message).substring(0, 50)}...` : undefined,
+							errorSnippet: error instanceof Error ? `${error.message.substring(0, 50)}...` : undefined,
 						}
 						// Clear previous cancelReason and streamingFailedMessage if we are retrying
 						delete currentApiReqInfo.cancelReason
@@ -1513,7 +1517,7 @@ export class Task {
 		const commandExecutorCallbacks: CommandExecutorCallbacks = {
 			say: this.say.bind(this) as CommandExecutorCallbacks["say"],
 			ask: async (type: string, text?: string, partial?: boolean, options?: { commandTs?: number }) => {
-				const result = await this.ask(type as ClineAsk, text, partial, options as any)
+				const result = await this.ask(type as ClineAsk, text, partial, options)
 				return {
 					response: result.response,
 					text: result.text,
@@ -1682,7 +1686,7 @@ export class Task {
 		)
 
 		// Inject controller context for spawn_task to create new webview panels
-		;(this.toolExecutor as any)._controllerContext = this.controller?.context
+		this.toolExecutor.setControllerContext(this.controller?.context)
 		this.promptInputFileWatcherInitialization = this.initializePromptInputFileWatcher()
 	}
 
@@ -1792,7 +1796,7 @@ export class Task {
 				? await validateApiProfileCredentials(profileResolution.resolvedApiProfile)
 				: profileResolution.validity
 		if (this.toolExecutor) {
-			;(this.toolExecutor as any).api = this.api
+			this.toolExecutor.setApi(this.api)
 		}
 		if (previousPromptScope !== this.getApiHandlerPromptScope(this.api)) {
 			this.promptCacheHealth.reset("profile_changed")
@@ -4663,8 +4667,9 @@ export class Task {
 			const matches = stored.filter(
 				(candidate) => candidate.dline_tid === lifecycle.dlineTid && candidate.function_id === lifecycle.functionId,
 			)
-			if (matches.length !== 1) throw new Error("resume_turn_tool_identity_mismatch")
-			return this.restoreHandler.storedToRuntime(matches[0]!, lifecycle.ts)
+			const [match] = matches
+			if (!match || matches.length !== 1) throw new Error("resume_turn_tool_identity_mismatch")
+			return this.restoreHandler.storedToRuntime(match, lifecycle.ts)
 		})
 	}
 
@@ -7949,7 +7954,7 @@ export class Task {
 	 */
 	private async awaitInitialCheckpointBeforeToolSideEffects(toolName: string): Promise<void> {
 		const checkpointCommit = this.initialCheckpointCommitPromise
-		if (!checkpointCommit || READ_ONLY_TOOLS.includes(toolName as any)) {
+		if (!checkpointCommit || READ_ONLY_TOOLS.some((readOnlyTool) => readOnlyTool === toolName)) {
 			return
 		}
 
@@ -7962,7 +7967,7 @@ export class Task {
 	/** Return whether the current assistant turn may have changed workspace files. */
 	private assistantTurnMayModifyWorkspace(): boolean {
 		return this.taskState.assistantMessageContent.some(
-			(block) => block.type === "tool_use" && !READ_ONLY_TOOLS.includes(block.name as any),
+			(block) => block.type === "tool_use" && !READ_ONLY_TOOLS.some((readOnlyTool) => readOnlyTool === block.name),
 		)
 	}
 
@@ -9307,7 +9312,7 @@ export class Task {
 					type: "say",
 					say: "reasoning",
 					text: thinking,
-				} as any)
+				})
 				if (finalized) {
 					await sendPartialMessageEvent(this.controller, convertClineMessageToProto(finalized))
 				}
@@ -9854,7 +9859,7 @@ export class Task {
 						type: "text",
 						text: assistantTextOnly,
 						// reasoning_details only exists for cline/openrouter providers
-						reasoning_details: thinkingBlock?.summary as any[],
+						reasoning_details: thinkingBlock?.summary as ClineReasoningDetailParam[] | undefined,
 						signature: assistantTextSignature,
 						provider_metadata: assistantMessageId ? { response_id: assistantMessageId } : undefined,
 					})
@@ -10395,8 +10400,7 @@ export class Task {
 	 */
 	private formatWorkspaceRootsSection(): string {
 		const multiRootEnabled = isMultiRootEnabled(this.stateManager)
-		const hasWorkspaceManager = !!this.workspaceManager
-		const roots = hasWorkspaceManager ? this.workspaceManager!.getRoots() : []
+		const roots = this.workspaceManager?.getRoots() ?? []
 
 		// Only show workspace roots if multi-root is enabled and there are multiple roots
 		if (!multiRootEnabled || roots.length <= 1) {

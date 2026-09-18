@@ -1,6 +1,6 @@
 import { getPrompt } from "@core/prompts/i18n"
 import { isInteractionCancellationError } from "@core/task/interaction/InteractionCancellationError"
-import { ClineAsk, ClineSayTool } from "@shared/ExtensionMessage"
+import { ClineSayTool } from "@shared/ExtensionMessage"
 import { ClineDefaultTool } from "@shared/tools"
 import { DEFAULT_LOCAL_SEARCH_ENGINE, isLocalSearchEngineId, LOCAL_SEARCH_ENGINE_LABELS } from "@shared/web-search"
 import { telemetryService } from "@/services/telemetry"
@@ -13,7 +13,6 @@ import { ToolResponse } from "../.."
 import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
 import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
-import { ToolResultUtils } from "../utils/ToolResultUtils"
 
 type LocalSearchRegistryFactory = (options: LocalSearchRegistryOptions) => LocalSearchRegistry
 

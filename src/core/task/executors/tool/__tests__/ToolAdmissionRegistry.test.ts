@@ -7,10 +7,7 @@ import { ClineDefaultTool } from "@shared/tools"
 import { describe, expect, it, vi } from "vitest"
 import { resolvePermissionScope } from "../../../kernel/turn/approval-kind"
 import { ToolExecutorCoordinator } from "../../../tools/ToolExecutorCoordinator"
-import {
-	prepareRegisteredToolAdmission,
-	type ToolAdmissionSnapshot,
-} from "../ToolAdmissionRegistry"
+import { prepareRegisteredToolAdmission, type ToolAdmissionSnapshot } from "../ToolAdmissionRegistry"
 
 function snapshot(overrides: Partial<ToolAdmissionSnapshot> = {}): ToolAdmissionSnapshot {
 	return {
@@ -281,11 +278,7 @@ describe("ToolAdmissionRegistry", () => {
 	})
 
 	it.each([
-		[
-			ClineDefaultTool.FIND_REFERENCES,
-			{ file_path: "src/a.ts", line: "1", character: "1" },
-			"read_external",
-		],
+		[ClineDefaultTool.FIND_REFERENCES, { file_path: "src/a.ts", line: "1", character: "1" }, "read_external"],
 		[ClineDefaultTool.RENAME, { file_path: "src/a.ts", line: "1", character: "1", new_name: "renamed" }, "edit_external"],
 		[ClineDefaultTool.REPLACE_TEXT, { file_pattern: "src/*.ts", find: "old", replace: "new" }, "edit_external"],
 	] as const)("keeps %s behind its unbounded external scope", (toolName, params, scope) => {

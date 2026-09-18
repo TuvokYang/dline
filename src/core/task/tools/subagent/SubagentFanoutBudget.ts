@@ -211,9 +211,7 @@ function toSlot(permit: GatePermit): SubagentSlot {
  * @returns A limit of at least one.
  */
 export function usableSubagentLimit(configured: number): number {
-	return Number.isFinite(configured) && configured >= MIN_PARALLEL_EXECUTIONS
-		? Math.trunc(configured)
-		: MIN_PARALLEL_EXECUTIONS
+	return Number.isFinite(configured) && configured >= MIN_PARALLEL_EXECUTIONS ? Math.trunc(configured) : MIN_PARALLEL_EXECUTIONS
 }
 
 /**
