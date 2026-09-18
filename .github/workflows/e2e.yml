@@ -2,64 +2,161 @@ name: E2E Tests
 
 on:
   workflow_call:
+    inputs:
+      vsix_artifact_name:
+        description: Name of the packaged VSIX artifact to validate.
+        type: string
+        required: true
 
 permissions:
   contents: read
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  DLINE_E2E_RETRIES: "3"
 
 jobs:
-    e2e:
-        name: E2E (${{ matrix.runner }}, shard ${{ matrix.shard }}/4)
-        strategy:
-            fail-fast: false
-            matrix:
-                runner: [ubuntu, windows, macos]
-                shard: [1, 2, 3, 4]
-        runs-on: ${{ matrix.runner }}-latest
-        timeout-minutes: 60
-        env:
-            DLINE_E2E_PROFILE: mock-openai
-            DLINE_E2E_RUN_ID: ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.runner }}-${{ matrix.shard }}
-        steps:
-            - name: Checkout code
-              uses: actions/checkout@v6
+  work-smoke:
+    name: Work smoke (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu, windows, macos]
+    runs-on: ${{ matrix.runner }}-latest
+    timeout-minutes: 30
+    env:
+      DLINE_E2E_PROFILE: mock-openai
+      DLINE_E2E_RUN_ID: ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.runner }}-smoke
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
 
-            - name: Setup project
-              uses: ./.github/actions/setup-project
-              with:
-                  install-webview: "true"
+      - name: Setup project
+        uses: ./.github/actions/setup-project
+        with:
+          install-webview: "true"
 
-            # Cache VS Code installation
-            - name: Cache VS Code
-              uses: actions/cache@v5
-              id: vscode-cache
-              with:
-                  path: .vscode-test
-                  key: vscode-${{ runner.os }}-stable-${{ hashFiles('.vscode-test.mjs', 'package.json') }}
-                  restore-keys: |
-                      vscode-${{ runner.os }}-stable-
+      - name: Cache VS Code
+        uses: actions/cache@v5
+        with:
+          path: .vscode-test
+          key: vscode-${{ runner.os }}-stable-${{ hashFiles('.vscode-test.mjs', 'package.json') }}
+          restore-keys: |
+            vscode-${{ runner.os }}-stable-
 
-            - name: Install xvfb on Linux
-              if: matrix.runner == 'ubuntu'
-              run: sudo apt-get update && sudo apt-get install -y xvfb
+      - name: Download tested VSIX
+        uses: actions/download-artifact@v6
+        with:
+          name: ${{ inputs.vsix_artifact_name }}
+          path: dist/download
 
-            - name: Run E2E tests - Linux
-              if: matrix.runner == 'ubuntu'
-              run: xvfb-run -a npm run test:e2e:optimal -- --shard=${{ matrix.shard }}/4 --retries=${{ env.DLINE_E2E_RETRIES }}
+      - name: Prepare tested VSIX
+        shell: pwsh
+        run: |
+          $vsix = @(Get-ChildItem -Path "dist/download" -Filter "*.vsix" -File -Recurse)
+          if ($vsix.Count -ne 1) {
+            throw "Expected exactly one VSIX in artifact '${{ inputs.vsix_artifact_name }}'; found $($vsix.Count)"
+          }
+          Copy-Item -LiteralPath $vsix[0].FullName -Destination "dist/e2e.vsix" -Force
 
-            - name: Run E2E tests - Non-Linux
-              if: matrix.runner != 'ubuntu'
-              run: npm run test:e2e:optimal -- --shard=${{ matrix.shard }}/4 --retries=${{ env.DLINE_E2E_RETRIES }}
+      - name: Prepare VS Code and Playwright
+        run: node src/test/e2e/utils/build.mjs
 
-            - name: Upload failed E2E artifacts
-              if: failure()
-              uses: actions/upload-artifact@v5
-              with:
-                  name: playwright-artifacts-${{ matrix.runner }}-${{ matrix.shard }}-${{ github.sha }}
-                  path: tmp/test-result/
-                  if-no-files-found: warn
-                  include-hidden-files: true
-                  retention-days: 7
+      - name: Install xvfb on Linux
+        if: matrix.runner == 'ubuntu'
+        run: sudo apt-get update && sudo apt-get install -y xvfb
+
+      - name: Run work smoke - Linux
+        if: matrix.runner == 'ubuntu'
+        run: xvfb-run -a npx playwright test -c playwright.work.config.ts --project "work smoke"
+
+      - name: Run work smoke - Non-Linux
+        if: matrix.runner != 'ubuntu'
+        run: npx playwright test -c playwright.work.config.ts --project "work smoke"
+
+      - name: Upload failed work smoke artifacts
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: playwright-work-smoke-${{ matrix.runner }}-${{ github.sha }}
+          path: tmp/test-result/
+          if-no-files-found: warn
+          include-hidden-files: true
+          retention-days: 7
+
+  work-daily:
+    name: ${{ matrix.workflow.project }} (${{ matrix.runner }})
+    needs: work-smoke
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu, windows, macos]
+        workflow:
+          - project: work chat tools
+            slug: chat-tools
+          - project: work background subagents
+            slug: background-subagents
+          - project: work context recovery
+            slug: context-recovery
+          - project: work profiles policies
+            slug: profiles-policies
+    runs-on: ${{ matrix.runner }}-latest
+    timeout-minutes: 30
+    env:
+      DLINE_E2E_PROFILE: mock-openai
+      DLINE_E2E_RUN_ID: ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.runner }}-${{ matrix.workflow.slug }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup project
+        uses: ./.github/actions/setup-project
+        with:
+          install-webview: "true"
+
+      - name: Cache VS Code
+        uses: actions/cache@v5
+        with:
+          path: .vscode-test
+          key: vscode-${{ runner.os }}-stable-${{ hashFiles('.vscode-test.mjs', 'package.json') }}
+          restore-keys: |
+            vscode-${{ runner.os }}-stable-
+
+      - name: Download tested VSIX
+        uses: actions/download-artifact@v6
+        with:
+          name: ${{ inputs.vsix_artifact_name }}
+          path: dist/download
+
+      - name: Prepare tested VSIX
+        shell: pwsh
+        run: |
+          $vsix = @(Get-ChildItem -Path "dist/download" -Filter "*.vsix" -File -Recurse)
+          if ($vsix.Count -ne 1) {
+            throw "Expected exactly one VSIX in artifact '${{ inputs.vsix_artifact_name }}'; found $($vsix.Count)"
+          }
+          Copy-Item -LiteralPath $vsix[0].FullName -Destination "dist/e2e.vsix" -Force
+
+      - name: Prepare VS Code and Playwright
+        run: node src/test/e2e/utils/build.mjs
+
+      - name: Install xvfb on Linux
+        if: matrix.runner == 'ubuntu'
+        run: sudo apt-get update && sudo apt-get install -y xvfb
+
+      - name: Run daily workflow - Linux
+        if: matrix.runner == 'ubuntu'
+        run: xvfb-run -a npx playwright test -c playwright.work.config.ts --project "${{ matrix.workflow.project }}" --no-deps
+
+      - name: Run daily workflow - Non-Linux
+        if: matrix.runner != 'ubuntu'
+        run: npx playwright test -c playwright.work.config.ts --project "${{ matrix.workflow.project }}" --no-deps
+
+      - name: Upload failed daily workflow artifacts
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: playwright-work-${{ matrix.workflow.slug }}-${{ matrix.runner }}-${{ github.sha }}
+          path: tmp/test-result/
+          if-no-files-found: warn
+          include-hidden-files: true
+          retention-days: 7

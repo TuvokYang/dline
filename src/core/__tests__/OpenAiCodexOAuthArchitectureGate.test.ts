@@ -39,7 +39,7 @@ describe("OpenAI Codex Profile OAuth architecture gate", () => {
 			source("src/core/api/providers/openai-codex.ts"),
 			source("src/core/controller/file/getApiProfiles.ts"),
 			source("webview-ui/src/components/settings/providers/OpenAiCodexProvider.tsx"),
-			source("src/test/e2e/settings-api-profiles.test.ts"),
+			source("src/test/e2e/functional/profiles/settings-api-profiles.test.ts"),
 		])
 		const production = [manager, provider, profileReader, providerUi].join("\n")
 

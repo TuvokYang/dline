@@ -1,8 +1,7 @@
-import Cerebras from "@cerebras/cerebras_cloud_sdk"
 import { CerebrasModelId, cerebrasDefaultModelId, cerebrasModels, ModelInfo } from "@shared/api"
-import { buildExternalBasicHeaders } from "@/services/EnvUtils"
+import { createOpenAIClient } from "@shared/net"
+import OpenAI from "openai"
 import { ClineStorageMessage } from "@/shared/messages/content"
-import { providerFetch } from "@/shared/net"
 import { ApiHandler, ApiHandlerContext } from "../index"
 import { withRetry } from "../retry"
 import { ApiStream } from "../transform/stream"
@@ -14,7 +13,7 @@ import { ApiStream } from "../transform/stream"
 const CEREBRAS_DEFAULT_MAX_TOKENS = 16_384
 
 export class CerebrasHandler implements ApiHandler {
-	private client: Cerebras | undefined
+	private client: OpenAI | undefined
 
 	constructor(private ctx: ApiHandlerContext) {}
 
@@ -40,9 +39,8 @@ export class CerebrasHandler implements ApiHandler {
 		return this.config?.reasoning?.thinkingBudget ?? 0
 	}
 
-	private ensureClient(): Cerebras {
+	private ensureClient(): OpenAI {
 		if (!this.client) {
-			// Clean and validate the API key
 			const cleanApiKey = this.apiKey?.trim()
 
 			if (!cleanApiKey) {
@@ -50,13 +48,11 @@ export class CerebrasHandler implements ApiHandler {
 			}
 
 			try {
-				const externalHeaders = buildExternalBasicHeaders()
-				this.client = new Cerebras({
+				this.client = createOpenAIClient({
+					baseURL: this.baseUrl || "https://api.cerebras.ai/v1",
 					apiKey: cleanApiKey,
-					timeout: 30000, // 30 second timeout
-					fetch: providerFetch,
+					timeout: 30000,
 					defaultHeaders: {
-						...externalHeaders,
 						"X-Cerebras-3rd-Party-Integration": "cline",
 					},
 				})
@@ -76,10 +72,7 @@ export class CerebrasHandler implements ApiHandler {
 		const client = this.ensureClient()
 
 		// Convert Anthropic messages to Cerebras format
-		const cerebrasMessages: Array<{
-			role: "system" | "user" | "assistant"
-			content: string
-		}> = [{ role: "system", content: systemPrompt }]
+		const cerebrasMessages: OpenAI.Chat.ChatCompletionMessageParam[] = [{ role: "system", content: systemPrompt }]
 
 		// Helper function to strip thinking tags from content
 		const stripThinkingTags = (content: string): string => {
@@ -142,12 +135,9 @@ export class CerebrasHandler implements ApiHandler {
 			// Handle streaming response
 			let reasoning: string | null = null // Track reasoning content for models that support thinking
 
-			for await (const chunk of stream as any) {
-				// Type assertion for the streaming chunk
-				const streamChunk = chunk as any
-
-				if (streamChunk.choices?.[0]?.delta?.content) {
-					const content = streamChunk.choices[0].delta.content
+			for await (const chunk of stream) {
+				if (chunk.choices?.[0]?.delta?.content) {
+					const content = chunk.choices[0].delta.content
 
 					// Handle reasoning models (Qwen and DeepSeek R1 Distill) that use <think> tags
 					if (isReasoningModel) {
@@ -188,16 +178,16 @@ export class CerebrasHandler implements ApiHandler {
 
 				// Handle usage information from Cerebras API
 				// Usage is typically only available in the final chunk
-				if (streamChunk.usage) {
+				if (chunk.usage) {
 					const totalCost = this.calculateCost({
-						inputTokens: streamChunk.usage.prompt_tokens || 0,
-						outputTokens: streamChunk.usage.completion_tokens || 0,
+						inputTokens: chunk.usage.prompt_tokens || 0,
+						outputTokens: chunk.usage.completion_tokens || 0,
 					})
 
 					yield {
 						type: "usage",
-						inputTokens: streamChunk.usage.prompt_tokens || 0,
-						outputTokens: streamChunk.usage.completion_tokens || 0,
+						inputTokens: chunk.usage.prompt_tokens || 0,
+						outputTokens: chunk.usage.completion_tokens || 0,
 						cacheReadTokens: 0,
 						cacheWriteTokens: 0,
 						totalCost,

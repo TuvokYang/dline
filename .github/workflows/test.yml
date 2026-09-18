@@ -139,14 +139,9 @@ jobs:
       - name: Run Vitest
         run: npm run test:run
 
-  e2e:
-    name: E2E
-    needs: vitest
-    uses: ./.github/workflows/e2e.yml
-
   package:
     name: Package VSIX
-    needs: [typecheck, e2e]
+    needs: [typecheck, vitest]
     uses: ./.github/workflows/package.yml
     with:
       profile: ${{ needs.typecheck.outputs.package_profile }}
@@ -157,3 +152,10 @@ jobs:
       OTEL_EXPORTER_OTLP_PROTOCOL: ${{ needs.typecheck.outputs.package_profile == 'release' && secrets.OTEL_EXPORTER_OTLP_PROTOCOL || '' }}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${{ needs.typecheck.outputs.package_profile == 'release' && secrets.OTEL_EXPORTER_OTLP_ENDPOINT || '' }}
       OTEL_EXPORTER_OTLP_HEADERS: ${{ needs.typecheck.outputs.package_profile == 'release' && secrets.OTEL_EXPORTER_OTLP_HEADERS || '' }}
+
+  e2e:
+    name: E2E
+    needs: package
+    uses: ./.github/workflows/e2e.yml
+    with:
+      vsix_artifact_name: dline-vsix-${{ github.sha }}

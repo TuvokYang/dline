@@ -1,0 +1,85 @@
+---
+title: ".agentignore"
+sidebarTitle: ".agentignore"
+description: "Control which project paths Dline may scan, read, write, or execute."
+---
+
+The `.agentignore` file defines path permissions for Dline. Its patterns use `.gitignore` syntax, with optional attributes that can block scanning, reading, writing, or execution independently.
+
+## Why It Matters
+
+Use `.agentignore` to keep generated trees out of discovery, protect secrets from reads, make vendored code read-only, or prevent commands from running in untrusted directories. These rules are enforced by Dline tools even when a task explicitly names a restricted path.
+
+Dline already prunes `.git`, `node_modules`, `dist`, `build`, `out`, and `tmp` during broad scans. Add project-specific rules when you need stricter access control or want to exclude other expensive paths.
+
+## Creating a .agentignore
+
+Create a file named `.agentignore` in your project root:
+
+```text
+# Hide large generated trees from scans, but keep named files accessible
+coverage/ -s
+.next/ -s
+*.map -s
+
+# Keep vendored code readable but prevent edits
+vendor/ -w
+
+# Prevent commands from running in untrusted scripts
+scripts/untrusted/ -x
+
+# A pattern without attributes blocks scan, read, write, and execute
+.env
+.env.*
+secrets/
+```
+
+## Pattern and Permission Syntax
+
+The path portion follows `.gitignore` syntax. Add permission attributes at the end of a line when you only want to remove specific capabilities:
+
+| Rule | Effect |
+|------|--------|
+| `secrets/` | Deny scan, read, write, and execute |
+| `generated/ -s` | Hide from scans and listings; named files remain readable and writable |
+| `vendor/ -w` | Allow reads but deny writes |
+| `scripts/untrusted/ -x` | Deny command execution from the matched path |
+| `private/ -r` | Deny reads while leaving other permissions unchanged |
+| `build/ -sw` | Deny scan and write; compact attributes can be combined |
+| `!audit.log -s` | Re-allow scanning a path excluded by an earlier scan rule |
+
+The attribute letters are `r` (read), `w` (write), `x` (execute), and `s` (scan). Multiple attributes can be written separately (`-s -w`) or together (`-sw`). Lines starting with `#` and blank lines are ignored.
+
+## Choosing Permissions
+
+Match the rule to the actual risk:
+
+- Use `-s` for large dependency, build, coverage, data, binary, or generated-code trees that should stay out of broad discovery but may still need focused reads.
+- Use `-w` for vendored or generated sources that Dline may inspect but must not edit.
+- Use `-x` for directories that must never become a command working directory.
+- Use a plain rule only for secrets or paths that Dline must not scan, read, write, or execute, such as `.env`, credential exports, or private key directories.
+
+Keep active source, project configuration, documentation, and tests accessible unless the repository has a specific policy requiring tighter restrictions.
+
+## How It Works
+
+Dline compiles `.agentignore` independently for scan, read, write, and execute operations. A plain rule applies to all four permissions; an attributed rule applies only to the named permissions.
+
+`.gitignore` and Dline's built-in directory floor only prune broad scans. They do not automatically prevent a named file from being read or edited. By contrast, a restriction declared in `.agentignore` is a workspace permission and remains in force however the path is reached.
+
+<Note>
+`.agentignore` is separate from `.gitignore`. Use `.gitignore` for repository tracking and `.agentignore` for agent access policy. Dline also protects the active `.agentignore` file from its own rules.
+</Note>
+
+## Tips
+
+- Use `-s` when the problem is discovery cost rather than access. This keeps named files available for focused work.
+- Use a plain rule for secrets or paths Dline must not access through any tool.
+- If a tool reports that a path is blocked, inspect the matching pattern and permission attribute before relaxing the rule.
+- Keep rules narrow and review negations carefully; later `.gitignore`-style rules can override earlier rules for the same permission.
+
+## Related
+
+- [Dline Rules](/customization/dline-rules) - Define persistent instructions for Dline
+- [Task Management](/core-workflows/task-management#context-window) - Understand how context windows work
+- [Auto-Compact](/features/auto-compact) - Automatic context compression during long tasks

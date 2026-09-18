@@ -45,7 +45,7 @@ Investigate the requested code paths and return concise, evidence-backed finding
 
 Subagents 默认启用。Dline 会根据任务选择是否委派，你也可以明确要求使用某个具名代理。可在能力设置中管理子代理配置与工具开关。
 
-This setting applies across all editors (VS Code, JetBrains, CLI).
+This setting applies to tasks in the Dline VS Code extension.
 
 ## Using Subagents
 
@@ -134,7 +134,7 @@ Research the requested topic and cite sources. Generate or edit images only when
 
 在这个 API Profile 的图像设置中选择可用的图像源和图像模型，具体选项受服务商与模型能力限制。选择 Independent 时可以关联独立 Image Profile，从而把会话模型与图像模型分开；YAML 不需要、也不支持额外的 `imageProfile` 字段。Web Fetch 是单独开放的抓取工具，没有独立的 Web Fetch Profile。
 
-工具白名单不代替 Web、MCP、图像或文件操作的权限检查。只做代码研究时，保留前一个只读示例即可，不必为所有代理开放全部工具。完整工具含义见[工具参考](/tools-reference/all-cline-tools)，技能配置见[Skills](/customization/skills)。
+工具白名单不代替 Web、MCP、图像或文件操作的权限检查。只做代码研究时，保留前一个只读示例即可，不必为所有代理开放全部工具。完整工具含义见[工具参考](/tools-reference/all-dline-tools)，技能配置见[Skills](/customization/skills)。
 
 ## Auto-Approve Behavior
 

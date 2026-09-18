@@ -303,8 +303,10 @@ namespace Gemini {
 								data: block.source.data,
 							},
 						})
-					} else {
+					} else if (block.source.type === "url") {
 						parts.push({ text: `[Image URL: ${block.source.url}]` })
+					} else {
+						parts.push({ text: `[Provider image file: ${block.source.file_id}]` })
 					}
 				}
 			}

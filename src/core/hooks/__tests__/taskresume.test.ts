@@ -39,7 +39,7 @@ describe("TaskResume Hook", () => {
 
 	describe("Hook Input Format", () => {
 		it("should receive all required taskResume fields", async () => {
-			const hookPath = path.join(tempDir, ".clinerules", "hooks", "TaskResume")
+			const hookPath = path.join(tempDir, ".agents", "hooks", "TaskResume")
 			const hookScript = `#!/usr/bin/env node
 const input = JSON.parse(require('fs').readFileSync(0, 'utf-8'));
 const hasRequiredFields = 
@@ -78,7 +78,7 @@ console.log(JSON.stringify({
 		})
 
 		it("should receive all common hook input fields", async () => {
-			const hookPath = path.join(tempDir, ".clinerules", "hooks", "TaskResume")
+			const hookPath = path.join(tempDir, ".agents", "hooks", "TaskResume")
 			const hookScript = `#!/usr/bin/env node
 const input = JSON.parse(require('fs').readFileSync(0, 'utf-8'));
 const hasAllFields = input.clineVersion && input.hookName && input.timestamp && 
@@ -116,7 +116,7 @@ console.log(JSON.stringify({
 				// mocha this.timeout removed — vitest uses testTimeout config: (WINDOWS_HOOK_TEST_TIMEOUT_MS)
 			}
 
-			const hookPath = path.join(tempDir, ".clinerules", "hooks", "TaskResume")
+			const hookPath = path.join(tempDir, ".agents", "hooks", "TaskResume")
 			const hookScript = `#!/usr/bin/env node
 const input = JSON.parse(require('fs').readFileSync(0, 'utf-8'));
 const lastTs = parseInt(input.taskResume.previousState.lastMessageTs);
@@ -162,7 +162,7 @@ console.log(JSON.stringify({
 				// mocha this.timeout removed — vitest uses testTimeout config: (WINDOWS_HOOK_TEST_TIMEOUT_MS)
 			}
 
-			const hookPath = path.join(tempDir, ".clinerules", "hooks", "TaskResume")
+			const hookPath = path.join(tempDir, ".agents", "hooks", "TaskResume")
 			const hookScript = `#!/usr/bin/env node
 const input = JSON.parse(require('fs').readFileSync(0, 'utf-8'));
 const lastTs = parseInt(input.taskResume.previousState.lastMessageTs);
@@ -196,7 +196,7 @@ console.log(JSON.stringify({
 		})
 
 		it("should handle edge case: future timestamp", async () => {
-			const hookPath = path.join(tempDir, ".clinerules", "hooks", "TaskResume")
+			const hookPath = path.join(tempDir, ".agents", "hooks", "TaskResume")
 			const hookScript = `#!/usr/bin/env node
 const input = JSON.parse(require('fs').readFileSync(0, 'utf-8'));
 const lastTs = parseInt(input.taskResume.previousState.lastMessageTs);
@@ -235,7 +235,7 @@ console.log(JSON.stringify({
 				// mocha this.timeout removed — vitest uses testTimeout config: (WINDOWS_HOOK_TEST_TIMEOUT_MS)
 			}
 
-			const hookPath = path.join(tempDir, ".clinerules", "hooks", "TaskResume")
+			const hookPath = path.join(tempDir, ".agents", "hooks", "TaskResume")
 			const hookScript = `#!/usr/bin/env node
 const input = JSON.parse(require('fs').readFileSync(0, 'utf-8'));
 const count = parseInt(input.taskResume.previousState.messageCount);
@@ -277,7 +277,7 @@ console.log(JSON.stringify({
 		})
 
 		it("should handle zero message count", async () => {
-			const hookPath = path.join(tempDir, ".clinerules", "hooks", "TaskResume")
+			const hookPath = path.join(tempDir, ".agents", "hooks", "TaskResume")
 			const hookScript = `#!/usr/bin/env node
 const input = JSON.parse(require('fs').readFileSync(0, 'utf-8'));
 const count = parseInt(input.taskResume.previousState.messageCount);
@@ -309,7 +309,7 @@ console.log(JSON.stringify({
 
 	describe("State Combination Analysis", () => {
 		it("should analyze combination of long pause and many messages", async () => {
-			const hookPath = path.join(tempDir, ".clinerules", "hooks", "TaskResume")
+			const hookPath = path.join(tempDir, ".agents", "hooks", "TaskResume")
 			const hookScript = `#!/usr/bin/env node
 const input = JSON.parse(require('fs').readFileSync(0, 'utf-8'));
 const lastTs = parseInt(input.taskResume.previousState.lastMessageTs);
@@ -343,7 +343,7 @@ console.log(JSON.stringify({
 		})
 
 		it("should combine context deletion with other state", async () => {
-			const hookPath = path.join(tempDir, ".clinerules", "hooks", "TaskResume")
+			const hookPath = path.join(tempDir, ".agents", "hooks", "TaskResume")
 			const hookScript = `#!/usr/bin/env node
 const input = JSON.parse(require('fs').readFileSync(0, 'utf-8'));
 const deleted = input.taskResume.previousState.conversationHistoryDeleted === 'true';
@@ -378,7 +378,7 @@ console.log(JSON.stringify({
 
 	describe("Error Handling", () => {
 		it("should handle malformed JSON output", async () => {
-			const hookPath = path.join(tempDir, ".clinerules", "hooks", "TaskResume")
+			const hookPath = path.join(tempDir, ".agents", "hooks", "TaskResume")
 			const hookScript = `#!/usr/bin/env node
 console.log("not valid json")`
 
@@ -406,7 +406,7 @@ console.log("not valid json")`
 		})
 
 		it("should handle invalid timestamp gracefully", async () => {
-			const hookPath = path.join(tempDir, ".clinerules", "hooks", "TaskResume")
+			const hookPath = path.join(tempDir, ".agents", "hooks", "TaskResume")
 			const hookScript = `#!/usr/bin/env node
 const input = JSON.parse(require('fs').readFileSync(0, 'utf-8'));
 const lastTs = parseInt(input.taskResume.previousState.lastMessageTs);
@@ -444,7 +444,7 @@ console.log(JSON.stringify({
 		beforeEach(async () => {
 			globalHooksDir = path.join(tempDir, "global-hooks")
 			await fs.mkdir(globalHooksDir, { recursive: true })
-			workspaceHooksDir = path.join(tempDir, ".clinerules", "hooks")
+			workspaceHooksDir = path.join(tempDir, ".agents", "hooks")
 
 			stubHookDirs(sandbox, [globalHooksDir, workspaceHooksDir])
 		})
@@ -458,7 +458,7 @@ console.log(JSON.stringify({
 }))`
 			await writeHookScript(globalHookPath, globalHookScript)
 
-			const workspaceHookPath = path.join(tempDir, ".clinerules", "hooks", "TaskResume")
+			const workspaceHookPath = path.join(tempDir, ".agents", "hooks", "TaskResume")
 			const workspaceHookScript = `#!/usr/bin/env node
 console.log(JSON.stringify({
   cancel: false,
@@ -500,7 +500,7 @@ console.log(JSON.stringify({
 }))`
 			await writeHookScript(globalHookPath, globalHookScript)
 
-			const workspaceHookPath = path.join(tempDir, ".clinerules", "hooks", "TaskResume")
+			const workspaceHookPath = path.join(tempDir, ".agents", "hooks", "TaskResume")
 			const workspaceHookScript = `#!/usr/bin/env node
 const input = JSON.parse(require('fs').readFileSync(0, 'utf-8'));
 const count = parseInt(input.taskResume.previousState.messageCount);

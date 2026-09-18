@@ -259,29 +259,29 @@ describe("Filesystem Utilities", () => {
 		expect(multiExcludeFiles.sort()).toEqual(rootOnlyFiles.sort())
 	})
 
-	it("should exclude .clinerules/hooks directory specifically", async () => {
+	it("should exclude .agents/hooks directory specifically", async () => {
 		// Create a test directory structure
-		const clinerulesDirTest = path.join(tmpDir, "clinerules-hooks-test")
-		const clinerulesDirPath = path.join(clinerulesDirTest, ".clinerules")
+		const agentsDirTest = path.join(tmpDir, "agents-hooks-test")
+		const agentsDirPath = path.join(agentsDirTest, ".agents")
 
-		// Create .clinerules directory and root files
-		await fs.mkdir(clinerulesDirPath, { recursive: true })
-		await fs.writeFile(path.join(clinerulesDirPath, "config.json"), "{}")
-		await fs.writeFile(path.join(clinerulesDirPath, "settings.js"), "// settings")
+		// Create .agents directory and root files
+		await fs.mkdir(agentsDirPath, { recursive: true })
+		await fs.writeFile(path.join(agentsDirPath, "config.json"), "{}")
+		await fs.writeFile(path.join(agentsDirPath, "settings.js"), "// settings")
 
-		// Create .clinerules/workflows directory and files
-		const workflowsDirPath = path.join(clinerulesDirPath, "workflows")
+		// Create .agents/workflows directory and files
+		const workflowsDirPath = path.join(agentsDirPath, "workflows")
 		await fs.mkdir(workflowsDirPath, { recursive: true })
 		await fs.writeFile(path.join(workflowsDirPath, "workflow1.js"), "// workflow1")
 
-		// Create .clinerules/hooks directory and files
-		const hooksDirPath = path.join(clinerulesDirPath, "hooks")
+		// Create .agents/hooks directory and files
+		const hooksDirPath = path.join(agentsDirPath, "hooks")
 		await fs.mkdir(hooksDirPath, { recursive: true })
 		await fs.writeFile(path.join(hooksDirPath, "PreToolUse"), "#!/usr/bin/env bash")
 		await fs.writeFile(path.join(hooksDirPath, "PostToolUse"), "#!/usr/bin/env bash")
 
 		// Get all files WITHOUT exclusion
-		const allFiles = await readDirectory(clinerulesDirPath)
+		const allFiles = await readDirectory(agentsDirPath)
 
 		// Verify all files are included
 		allFiles.length.should.equal(5) // 2 in root + 1 in workflows + 2 in hooks
@@ -289,29 +289,29 @@ describe("Filesystem Utilities", () => {
 		allFiles.some((file) => file.includes("PostToolUse")).should.be.true()
 
 		// Get files WITH hooks directory excluded
-		const filteredFiles = await readDirectory(clinerulesDirPath, [[".clinerules", "hooks"]])
+		const filteredFiles = await readDirectory(agentsDirPath, [[".agents", "hooks"]])
 
 		// Verify hooks files are excluded but others remain
 		filteredFiles.length.should.equal(3) // 2 in root + 1 in workflows
 
 		const expectedFiles = [
-			path.resolve(clinerulesDirPath, "config.json"),
-			path.resolve(clinerulesDirPath, "settings.js"),
+			path.resolve(agentsDirPath, "config.json"),
+			path.resolve(agentsDirPath, "settings.js"),
 			path.resolve(workflowsDirPath, "workflow1.js"),
 		]
 
 		expect(filteredFiles.sort()).toEqual(expectedFiles.sort())
 
 		// Test with multiple exclusions (both workflows and hooks)
-		const multiExcludeFiles = await readDirectory(clinerulesDirPath, [
-			[".clinerules", "workflows"],
-			[".clinerules", "hooks"],
+		const multiExcludeFiles = await readDirectory(agentsDirPath, [
+			[".agents", "workflows"],
+			[".agents", "hooks"],
 		])
 
 		// Verify both workflows and hooks directories are excluded
 		multiExcludeFiles.length.should.equal(2) // only the 2 files in root
 
-		const rootOnlyFiles = [path.resolve(clinerulesDirPath, "config.json"), path.resolve(clinerulesDirPath, "settings.js")]
+		const rootOnlyFiles = [path.resolve(agentsDirPath, "config.json"), path.resolve(agentsDirPath, "settings.js")]
 
 		expect(multiExcludeFiles.sort()).toEqual(rootOnlyFiles.sort())
 	})

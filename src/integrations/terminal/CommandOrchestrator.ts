@@ -372,13 +372,21 @@ export async function orchestrateCommandExecution(
 		outputScheduler.enqueue({ line, stream })
 	})
 
-	// Start timer to detect if waiting for completion takes too long
-	completionTimer = setTimeout(() => {
-		if (!completed) {
-			telemetryService.captureTerminalHang(TerminalHangStage.WAITING_FOR_COMPLETION, terminalType)
+	// Start timer to detect if waiting for completion takes too long.
+	//
+	// A still-running command has not necessarily hung. When a handoff path
+	// exists the command is expected to stay in the foreground until that window
+	// elapses and then continue in the background, so that wait is the designed
+	// behaviour rather than a hang; sampling it reported ordinary long-running
+	// commands as hangs. Only a command that must finish in the foreground, and
+	// that has produced no output at all, is waiting on something stuck.
+	if (!onProceedWhileRunning) {
+		completionTimer = setTimeout(() => {
 			completionTimer = null
-		}
-	}, COMPLETION_TIMEOUT_MS)
+			if (completed || totalLineCount > 0) return
+			telemetryService.captureTerminalHang(TerminalHangStage.WAITING_FOR_COMPLETION, terminalType)
+		}, COMPLETION_TIMEOUT_MS)
+	}
 
 	process.once("completed", (details?: TerminalCompletionDetails) => {
 		completed = true

@@ -5,6 +5,7 @@ const isCI = !!process?.env?.CI
 const isWindow = process?.platform?.startsWith("win")
 const configuredWorkers = process.env.DLINE_E2E_WORKERS?.trim()
 export const PRESSURE_E2E_TAG = /@pressure/
+export const REQUIRED_E2E_MATCH = /^(?!.*[\\/]dev[\\/]).*\.test\.ts$/
 
 if (configuredWorkers && !/^[1-9]\d*$/.test(configuredWorkers)) {
 	throw new Error(`Invalid DLINE_E2E_WORKERS: ${configuredWorkers}`)
@@ -15,7 +16,7 @@ export default defineConfig({
 	retries: 1,
 	forbidOnly: isCI,
 	testDir: "src/test/e2e",
-	testMatch: /.*\.test\.ts/,
+	testMatch: REQUIRED_E2E_MATCH,
 	timeout: isCI || isWindow ? 60000 : 20000,
 	expect: {
 		timeout: isCI || isWindow ? 5000 : 2000,

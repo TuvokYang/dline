@@ -102,6 +102,14 @@ export class CommandExecutor {
 	private nextActivityNumber = 1
 	private nextShellEnvironmentDiagnosticsNumber = 1
 
+	/**
+	 * Whether this executor created its own standalone manager.
+	 *
+	 * A reused manager belongs to the Task, which disposes it on its own schedule.
+	 * Only a manager created here may be torn down by {@link dispose}.
+	 */
+	private readonly ownsStandaloneManager: boolean
+
 	// Track shell integration warnings to determine when to show background terminal suggestion
 	private shellIntegrationWarningTracker: ShellIntegrationWarningTracker = {
 		timestamps: [],
@@ -128,10 +136,12 @@ export class CommandExecutor {
 		if (config.terminalExecutionMode === "backgroundExec" && config.terminalManager instanceof StandaloneTerminalManager) {
 			// Reuse the same instance that Task is using
 			this.standaloneManager = config.terminalManager
+			this.ownsStandaloneManager = false
 			Logger.info(`[CommandExecutor] Reusing Task's StandaloneTerminalManager for backgroundExec mode`)
 		} else {
 			// Create a standalone manager for background execution support.
 			this.standaloneManager = new StandaloneTerminalManager(config.windowsProcessTreeProvider)
+			this.ownsStandaloneManager = true
 			Logger.info(`[CommandExecutor] Created new StandaloneTerminalManager`)
 		}
 		this.configure(config.terminalConfiguration)
@@ -510,6 +520,7 @@ export class CommandExecutor {
 							origin: options?.startInBackground ? "explicit_background" : "foreground",
 							cancellationOwner: "explicit",
 							functionId: options?.functionId,
+							taskId: this.taskId,
 							...timing,
 						},
 						{
@@ -839,7 +850,12 @@ export class CommandExecutor {
 		let cancelled = false
 
 		// 1. Cancel detached background commands owned by this lifecycle.
-		const runningCommands = this.standaloneManager.getRunningBackgroundCommands(cancellationOwner)
+		// The manager may be shared with other tasks, so the task identity is part
+		// of the scope: cancelling this task must never terminate another task's work.
+		const runningCommands = this.standaloneManager.getRunningBackgroundCommands({
+			cancellationOwner,
+			taskId: this.taskId,
+		})
 		const detachedActivityIds = new Set<string>()
 		for (const cmd of runningCommands) {
 			if (!this.markCancellationRequested(cmd.id)) continue
@@ -894,9 +910,41 @@ export class CommandExecutor {
 		return cancelled
 	}
 
+	/**
+	 * Release every resource this executor owns.
+	 *
+	 * The Task disposes the manager it created itself, so only a manager created
+	 * here is torn down. Without this call a `vscodeTerminal` executor would leave
+	 * its own standalone manager, and therefore any child process it spawned,
+	 * unreachable but alive for the remaining lifetime of the extension host.
+	 */
+	async dispose(): Promise<void> {
+		this.processes.clear()
+		this.activityIdsByFunctionId.clear()
+		this.functionIdsByActivityId.clear()
+		this.commandsByActivityId.clear()
+		this.commandMessageTimestamps.clear()
+		this.cancellationOwners.clear()
+		this.cancelledActivityIds.clear()
+		for (const handoff of this.pendingHandoffs.values()) handoff.resolve()
+		this.pendingHandoffs.clear()
+		this.currentProcess = null
+
+		if (!this.ownsStandaloneManager) return
+		try {
+			await this.standaloneManager.disposeAsync()
+		} catch (error) {
+			Logger.error("[CommandExecutor] Failed to dispose standalone terminal manager:", error)
+		}
+	}
+
 	/** Return whether any active command is owned by the Task lifecycle. */
 	hasTaskOwnedCommand(): boolean {
-		if (this.standaloneManager.getRunningBackgroundCommands("task").length > 0) return true
+		const taskOwned = this.standaloneManager.getRunningBackgroundCommands({
+			cancellationOwner: "task",
+			taskId: this.taskId,
+		})
+		if (taskOwned.length > 0) return true
 		const currentActivity = [...this.processes.entries()].find(([, process]) => process === this.currentProcess)
 		return Boolean(currentActivity && this.cancellationOwners.get(currentActivity[0]) === "task")
 	}

@@ -27,41 +27,45 @@ Run commands from the repository root and collect them until the process exits.
 
 | Purpose | Command |
 | --- | --- |
-| Package the E2E VSIX, build fixtures, then run the full production-style suite | `npm run test:e2e` |
-| Run the regular Playwright suite through its npm lifecycle | `npm run e2e` |
-| Run one regular E2E file | `npm run e2e -- src/test/e2e/mode-switch-context.test.ts` |
-| Run one regular test | `npm run e2e -- src/test/e2e/mode-switch-context.test.ts -g "Automatic compaction"` |
-| Run the demo/capture suite | `npm run e2e:demo` |
-| Run one demo file | `npm run e2e:demo -- src/test/e2e/demo/<file>.demo.ts` |
-| Show the VS Code window | `npm run e2e -- <path> --headed` |
-| Open the Playwright debugger | `npm run e2e -- <path> --debug` |
-| List tests without launching VS Code | `npx playwright test -c playwright.config.ts <path> --list` |
+| Run the complete packaged required gate | `npm run test:e2e:work` |
+| Run only the packaged work smoke | `npm run test:e2e:work -- --project "work smoke"` |
+| Run one packaged daily workflow with its smoke dependency | `npm run test:e2e:work -- --project "work chat tools"` |
+| Run one packaged functional file | `npm run test:e2e:functional -- src/test/e2e/functional/<domain>/<file>.test.ts --project "functional e2e tests" --workers=1 --retries=0` |
+| Run one development diagnostic | `npm run e2e:dev -- src/test/e2e/dev/bug-<behavior>.test.ts --project "development e2e tests" --workers=1 --retries=0` |
+| Run the explicit pressure tier | `npm run test:e2e:pressure` |
+| Run one demo/capture file | `npm run e2e:demo -- src/test/e2e/demo/<file>.demo.ts` |
+| List a tier without launching VS Code | `npx playwright test -c <playwright-tier-config> <path> --list` |
 
-`npm run e2e` is not a build-skipping shortcut: npm automatically runs `pree2e`, which regenerates Proto output and rebuilds the Webview and extension bundle. `npm run e2e:demo` likewise runs `pree2e:demo`, which delegates to the same prebuild. Use raw `npx playwright test -c <config>` only when you intentionally want to skip npm lifecycle hooks and have already established that the required build is current.
+The `test:e2e:*` scripts package `dist/e2e.vsix`, prepare VS Code and Playwright, and run the selected config. The `e2e:*` scripts rebuild generated code, the Webview, and the extension bundle but do not package a new VSIX; use them only when the selected test intentionally uses the development extension or a current packaged artifact is already established. Raw `npx playwright test` intentionally skips npm lifecycle hooks.
 
-Start with one test file or one test name. Broaden only when the change crosses multiple protocols, fixtures, or shared components. Do not use `--debug`, `--headed`, or a long-running watcher as a substitute for one-shot verification.
+Start with one test file, one project, or one test name. Broaden only when the change crosses multiple stable contracts. Do not use `--debug`, `--headed`, retries, or a longer timeout as a substitute for one-shot evidence.
 
 ## Test Domains
 
-- **Regular VS Code E2E**: `playwright.config.ts` and `src/test/e2e/**/*.test.ts`; proves extension host, Webview, Task, storage, provider mock, and ProtoBus integration.
-- **Demo/capture E2E**: `playwright.demo.config.ts` and `src/test/e2e/demo/**/*.demo.ts`; optimized for deterministic media or scenario capture and not a substitute for the regular regression suite.
-- **Legacy E2E**: `playwright.legacy.config.ts`; use only for explicitly retained compatibility scenarios.
-- **Storybook**: stories live under `webview-ui/src/**/*.stories.tsx`. Use `npm run storybook` for interactive inspection or `npm --prefix webview-ui run build-storybook` for a bounded static build. Storybook rendering is a Webview component surface, not real VS Code E2E, and there is currently no separate Storybook test-runner script in `package.json`.
+- **Work gate**: `playwright.work.config.ts` and `src/test/e2e/work/`. It contains one 120-second smoke and four 600-second single-file, single-top-level-test daily workflows. This is the required CI and release E2E surface.
+- **Functional regressions**: `playwright.functional.config.ts` and `src/test/e2e/functional/`. Keep tests focused, stable, and black-box; run only affected files or names during implementation. Full functional execution is nightly or explicitly requested.
+- **Development diagnostics**: `playwright.dev.config.ts` and `src/test/e2e/dev/`. Use readable `bug-`, `feature-`, or `issue-<number>-` names for fault injection, forensic capture, and precise reproduction. Dev uses one worker, no retries, retained failure traces, and never enters required CI.
+- **Pressure**: `playwright.pressure.config.ts` is the explicit load/soak tier, not routine completion evidence.
+- **Default compatibility collection**: `playwright.config.ts` collects ordinary work and functional tests while excluding dev. Do not run it as the normal required gate.
+- **Demo/capture E2E**: `playwright.demo.config.ts` and `src/test/e2e/demo/**/*.demo.ts` are for deterministic media or scenario capture, not regression evidence.
+- **Legacy E2E**: `playwright.legacy.config.ts` is only for explicitly retained compatibility scenarios.
+- **Storybook**: stories live under `webview-ui/src/**/*.stories.tsx`. Use `npm run storybook` for interactive inspection or `npm --prefix webview-ui run build-storybook` for a bounded static build.
 
 ## Pre-Run Checks
 
-1. Read `package.json` and the selected Playwright config; do not infer script names, lifecycle hooks, or project names from memory.
-2. Choose regular, demo, legacy, or Storybook validation based on the behavior being proved. Do not report one domain as coverage for another.
-3. Set a unique run ID for parallel or repeatable Playwright runs:
+1. Read `package.json`, the selected tier config, and `src/test/e2e/work/manifest.ts` when work projects are involved. Do not infer commands, lifecycle hooks, project names, or timeouts.
+2. Choose work, functional, dev, pressure, demo, legacy, or Storybook based on the behavior being proved. Do not report one tier as coverage for another.
+3. Set a unique run ID for every Playwright process:
 
 ```powershell
-$env:DLINE_E2E_RUN_ID = "compact-debug-20260807"
-npm run e2e -- src/test/e2e/mode-switch-context.test.ts -g "Manual compaction" --workers=1 --retries=0
+$env:DLINE_E2E_RUN_ID = "functional-task-resume-20260917"
+npm run test:e2e:functional -- src/test/e2e/functional/tasks/history-resume-liveness.test.ts --project "functional e2e tests" --workers=1 --retries=0
 ```
 
 `DLINE_E2E_RUN_ID` may contain only letters, numbers, dots, underscores, and hyphens. If it is not set, the fixture creates a process-unique ID.
 
 4. Do not manually delete the entire `tmp/test-result` directory or temporary directories owned by another run. Global setup cleans only its own run namespace; deleting external directories can cause trace `ENOENT` errors or remove another Task's profile.
+5. Required CI packages one VSIX, then runs work smoke and the four daily projects on Linux, macOS, and Windows against that same artifact. Full functional and dev runs are not substitutes for this gate.
 
 ## Artifact Locations and Isolation
 
@@ -102,7 +106,7 @@ Real VS Code tests use `e2e`, not the base `test` fixture:
 
 ```typescript
 import { expect } from "@playwright/test"
-import { e2e, E2ETestHelper } from "./utils/helpers"
+import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 
 e2e("Task renders the completed result", async ({ helper, sidebar, server, userDataDir }) => {
 	await helper.signin(sidebar)

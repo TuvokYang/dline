@@ -129,7 +129,12 @@ Choose the smallest layer that proves the behavior:
 - pure reducers, codecs, and policies: focused Vitest;
 - controller, storage, prompt, and provider integration: owning Vitest project;
 - Webview behavior: component/Vitest or Storybook Playwright;
-- VS Code host bridge, real task lifecycle, persistence, and VS Code UI: E2E;
+- stable VS Code host, Task lifecycle, persistence, provider, and UI regressions: focused tests under `src/test/e2e/functional/`;
+- continuous user journeys and required CI/release coverage: `src/test/e2e/work/`, with one bounded smoke followed by four independent daily workflows;
+- fault injection, forensic capture, and precise reproductions: `src/test/e2e/dev/`, never the required gate;
+- load and soak behavior: the explicit pressure tier;
 - release behavior: GitHub Actions, VSIX content, and ancestry gates.
+
+The required CI/release gate packages one VSIX, runs the work smoke and four daily workflows on Windows, macOS, and Linux against that same artifact, and publishes only after all cells pass. Full functional E2E is nightly or explicitly requested; dev E2E is development-only.
 
 For lifecycle, persistence, protocol, or tool changes, test failure paths and restart/recovery, not only the successful in-memory path.

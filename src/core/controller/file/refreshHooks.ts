@@ -1,7 +1,7 @@
 import { HookInfo, HooksToggles, WorkspaceHooks } from "@shared/proto/dline/file"
 import fs from "fs/promises"
 import path from "path"
-import { getDlineDocumentsPath } from "@/core/storage/disk"
+import { GlobalFileNames, getDlineDocumentsPath } from "@/core/storage/disk"
 import { HostProvider } from "@/hosts/host-provider"
 import { resolveExistingHookPath, VALID_HOOK_TYPES } from "../../hooks/utils"
 import { Controller } from ".."
@@ -34,7 +34,7 @@ export async function refreshHooks(
 	const workspaceHooksList: WorkspaceHooks[] = []
 
 	for (const workspacePath of workspacePaths.paths) {
-		const workspaceHooksDir = path.join(workspacePath, ".clinerules", "hooks")
+		const workspaceHooksDir = path.join(workspacePath, GlobalFileNames.hooksDir)
 		const hooks: HookInfo[] = []
 
 		for (const hookName of VALID_HOOK_TYPES) {

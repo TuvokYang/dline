@@ -285,7 +285,7 @@ export async function* handleResponsesApiStreamResponse(
 				}
 			}
 			if (chunk.type === "response.function_call_arguments.done") {
-				if (chunk.item_id && chunk.name && chunk.arguments) {
+				if (chunk.item_id && chunk.arguments) {
 					const identity = identityRegistry.requireItem(chunk.item_id)
 					if (!streamedArgumentItems.has(chunk.item_id) && !emittedArgumentSnapshots.has(chunk.item_id)) {
 						emittedArgumentSnapshots.add(chunk.item_id)

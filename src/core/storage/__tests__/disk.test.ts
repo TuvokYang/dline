@@ -77,7 +77,7 @@ describe("disk - hooks functionality", () => {
 
 		it("should return hooks directory when it exists", async () => {
 			const workspaceRoot = path.join(tempDir, "workspace1")
-			const hooksDir = path.join(workspaceRoot, ".dline", "hooks")
+			const hooksDir = path.join(workspaceRoot, ".agents", "hooks")
 			await fs.mkdir(hooksDir, { recursive: true })
 
 			vi.spyOn(StateManager, "get").mockReturnValue({
@@ -92,7 +92,7 @@ describe("disk - hooks functionality", () => {
 
 		it("should not return hooks directory if it's a file instead of directory", async () => {
 			const workspaceRoot = path.join(tempDir, "workspace1")
-			const hooksPath = path.join(workspaceRoot, ".dline", "hooks")
+			const hooksPath = path.join(workspaceRoot, ".agents", "hooks")
 			await fs.mkdir(path.dirname(hooksPath), { recursive: true })
 			await fs.writeFile(hooksPath, "not a directory")
 
@@ -108,8 +108,8 @@ describe("disk - hooks functionality", () => {
 		it("should return multiple hooks directories for multi-root workspace", async () => {
 			const workspaceRoot1 = path.join(tempDir, "workspace1")
 			const workspaceRoot2 = path.join(tempDir, "workspace2")
-			const hooksDir1 = path.join(workspaceRoot1, ".dline", "hooks")
-			const hooksDir2 = path.join(workspaceRoot2, ".dline", "hooks")
+			const hooksDir1 = path.join(workspaceRoot1, ".agents", "hooks")
+			const hooksDir2 = path.join(workspaceRoot2, ".agents", "hooks")
 
 			await fs.mkdir(hooksDir1, { recursive: true })
 			await fs.mkdir(hooksDir2, { recursive: true })
@@ -129,8 +129,8 @@ describe("disk - hooks functionality", () => {
 			const workspaceRoot1 = path.join(tempDir, "workspace1")
 			const workspaceRoot2 = path.join(tempDir, "workspace2")
 			const workspaceRoot3 = path.join(tempDir, "workspace3")
-			const hooksDir1 = path.join(workspaceRoot1, ".dline", "hooks")
-			const hooksDir3 = path.join(workspaceRoot3, ".dline", "hooks")
+			const hooksDir1 = path.join(workspaceRoot1, ".agents", "hooks")
+			const hooksDir3 = path.join(workspaceRoot3, ".agents", "hooks")
 
 			await fs.mkdir(hooksDir1, { recursive: true })
 			await fs.mkdir(workspaceRoot2, { recursive: true })
@@ -145,7 +145,7 @@ describe("disk - hooks functionality", () => {
 			result.length.should.equal(2)
 			result.should.containEql(hooksDir1)
 			result.should.containEql(hooksDir3)
-			result.should.not.containEql(path.join(workspaceRoot2, ".dline", "hooks"))
+			result.should.not.containEql(path.join(workspaceRoot2, ".agents", "hooks"))
 		})
 
 		it("should propagate errors when checking directory fails", async () => {
@@ -168,7 +168,7 @@ describe("disk - hooks functionality", () => {
 
 		it("should use correct path joining for hooks directory", async () => {
 			const workspaceRoot = path.join(tempDir, "workspace1")
-			const expectedHooksDir = path.join(workspaceRoot, ".dline", "hooks")
+			const expectedHooksDir = path.join(workspaceRoot, ".agents", "hooks")
 			await fs.mkdir(expectedHooksDir, { recursive: true })
 
 			vi.spyOn(StateManager, "get").mockReturnValue({
@@ -182,7 +182,7 @@ describe("disk - hooks functionality", () => {
 		it("should handle workspace roots with trailing slashes", async () => {
 			const workspaceRoot = path.join(tempDir, "workspace1")
 			const workspaceRootWithSlash = workspaceRoot + path.sep
-			const hooksDir = path.join(workspaceRoot, ".dline", "hooks")
+			const hooksDir = path.join(workspaceRoot, ".agents", "hooks")
 			await fs.mkdir(hooksDir, { recursive: true })
 
 			vi.spyOn(StateManager, "get").mockReturnValue({

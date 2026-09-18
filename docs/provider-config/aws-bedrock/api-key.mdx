@@ -1,14 +1,14 @@
 ---
 title: "API Key (Simple Setup)"
 sidebarTitle: "API Key"
-description: "Set up AWS Bedrock with Cline using Bedrock API Keys. Simplest setup for individual developers to access frontier provider."
+description: "Set up AWS Bedrock with Dline using Bedrock API Keys. Simplest setup for individual developers to access frontier provider."
 ---
 
 ### Overview
 
 -   **AWS Bedrock:** A fully managed service that offers access to leading generative AI models (e.g., Anthropic Claude, Amazon Nova) through AWS.\
     [Learn more about AWS Bedrock](https://docs.aws.amazon.com/bedrock/latest/userguide/what-is-bedrock.html).
--   **Cline:** A VS Code extension that acts as a coding assistant by integrating with AI models-empowering developers to generate code, debug, and analyze data.
+-   **Dline:** A VS Code extension that acts as a coding assistant by integrating with AI models-empowering developers to generate code, debug, and analyze data.
 -   **Developer Focus:** This guide is tailored for individual developers that want to enable access to frontier models via AWS Bedrock with a simplified setup using API Keys.
 
 ---
@@ -28,7 +28,7 @@ For more detailed instructions check the [documentation](https://docs.aws.amazon
 
 #### 1.2 Create or Modify the Policy
 
-To ensure Cline can interact with AWS Bedrock, your IAM user or role needs specific permissions. While the `AmazonBedrockLimitedAccess` managed policy provides comprehensive access, for a more restricted and secure setup adhering to the principle of least privilege, the following minimal permissions are sufficient for Cline's core model invocation functionality:
+To ensure Dline can interact with AWS Bedrock, your IAM user or role needs specific permissions. While the `AmazonBedrockLimitedAccess` managed policy provides comprehensive access, for a more restricted and secure setup adhering to the principle of least privilege, the following minimal permissions are sufficient for Dline's core model invocation functionality:
 
 -   `bedrock:InvokeModel`
 -   `bedrock:InvokeModelWithResponseStream`
@@ -54,8 +54,8 @@ You can create a custom IAM policy with these permissions and attach it to your 
 
 **Important Considerations:**
 
--   **Model Listing in Cline:** The minimal permissions (`bedrock:InvokeModel`, `bedrock:InvokeModelWithResponseStream`) are sufficient for Cline to _use_ a model if you specify the model ID directly in Cline's settings. If you rely on Cline to dynamically list available Bedrock models, you might need additional permissions like `bedrock:ListFoundationModels`.
--   **AWS Marketplace Subscriptions:** For third-party models (e.g., Anthropic Claude), the **`AmazonBedrockLimitedAccess`** policy grants you the necessary permissions to subscribe via the AWS Marketplace. There is no explicit access to be enabled. For Anthropic models you are still required to submit a First Time Use (FTU) form via the Console. If you get the following message in the Cline chat `[ERROR] Failed to process response: Model use case details have not been submitted for this account. Fill out the Anthropic use case details form before using the model.` then open the [Playground in the AWS Bedrock Console](https://console.aws.amazon.com/bedrock/home?#/text-generation-playground), select any Anthropic model and fill in the form (you might need to send a prompt first)
+-   **Model Listing in Dline:** The minimal permissions (`bedrock:InvokeModel`, `bedrock:InvokeModelWithResponseStream`) are sufficient for Dline to _use_ a model if you specify the model ID directly in Dline's settings. If you rely on Dline to dynamically list available Bedrock models, you might need additional permissions like `bedrock:ListFoundationModels`.
+-   **AWS Marketplace Subscriptions:** For third-party models (e.g., Anthropic Claude), the **`AmazonBedrockLimitedAccess`** policy grants you the necessary permissions to subscribe via the AWS Marketplace. There is no explicit access to be enabled. For Anthropic models you are still required to submit a First Time Use (FTU) form via the Console. If you get the following message in the Dline chat `[ERROR] Failed to process response: Model use case details have not been submitted for this account. Fill out the Anthropic use case details form before using the model.` then open the [Playground in the AWS Bedrock Console](https://console.aws.amazon.com/bedrock/home?#/text-generation-playground), select any Anthropic model and fill in the form (you might need to send a prompt first)
 
 ---
 
@@ -71,20 +71,20 @@ You can create a custom IAM policy with these permissions and attach it to your 
 
 ---
 
-### Step 3: Configure the Cline VS Code Extension
+### Step 3: Configure the Dline VS Code Extension
 
-#### 3.1 Install and Open Cline
+#### 3.1 Install and Open Dline
 
 1. **Install VS Code:**\
    Download from the [VS Code website](https://code.visualstudio.com/).
-2. **Install the Cline Extension:**
+2. **Install the Dline Extension:**
     - Open VS Code.
     - Go to the Extensions Marketplace (`Ctrl+Shift+X` or `Cmd+Shift+X`).
-    - Search for **Cline** and install it.
+    - Search for **Dline** and install it.
 
-#### 3.2 Configure Cline Settings
+#### 3.2 Configure Dline Settings
 
-1. **Open Cline Settings:**
+1. **Open Dline Settings:**
     - Click on the settings ⚙️ to select your API Provider.
 2. **Select AWS Bedrock as the API Provider:**
     - From the API Provider dropdown, choose **AWS Bedrock**.

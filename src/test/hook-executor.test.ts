@@ -114,14 +114,14 @@ setTimeout(() => {
 
 		// Create temporary directory for test hooks
 		baseTempDir = await fs.mkdtemp(path.join(os.tmpdir(), "hook-test-"))
-		// Create .dline/hooks subdirectory structure under the temp workspace root
-		tempDir = path.join(baseTempDir, ".dline", "hooks")
+		// Create .agents/hooks subdirectory structure under the temp workspace root
+		tempDir = path.join(baseTempDir, ".agents", "hooks")
 		await fs.mkdir(tempDir, { recursive: true })
 		testHandler = createTestHandler()
 		_mockMessages = []
 
 		// Mock StateManager to return baseTempDir as workspace root
-		// This allows HookFactory to find hooks in baseTempDir/.clinerules/hooks/
+		// This allows HookFactory to find hooks in baseTempDir/.agents/hooks/.
 		stateManagerStub = vi.spyOn(StateManager, "get").mockReturnValue({
 			getGlobalStateKey: (key: string) => {
 				if (key === "workspaceRoots") {

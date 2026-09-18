@@ -54,7 +54,7 @@ Do not repair a version mismatch directly on `main`. Fix it on `dev` directly, o
 
 ## 3. Complete the integrated dev gate
 
-Use the current project scripts and the actual blast radius. The complete release gate includes:
+Load `e2e-validation`, then use the current project scripts and the actual blast radius. The complete local release gate includes:
 
 ```text
 npm run check-types
@@ -62,11 +62,13 @@ npm run format -- --since=<comparison-base>
 npm run lint
 npm run test:smoke
 npm run test:run
-npm run test:e2e
+npm run test:e2e:work
 npm run vsix
 ```
 
-Equivalent successful CI evidence from the exact `dev` commit may satisfy a check. Record the workflow/run and SHA rather than assuming a feature-branch run covers integrated `dev`.
+`test:e2e:work` is the required local Electron gate. Full functional E2E is not a default release prerequisite; run focused functional files when the release changes their contracts, and reserve full functional execution for nightly or explicit investigation. Dev-tier E2E never satisfies a release gate.
+
+Equivalent successful CI evidence from the exact `dev` commit may satisfy a check. The reusable Tests workflow must package one VSIX before E2E, run the three-platform work smoke and four daily workflows against that exact artifact, and expose the same artifact to release jobs. Record the workflow/run, SHA, and artifact identity rather than assuming a feature-branch run covers integrated `dev`.
 
 Inspect the produced VSIX identity, version, release channel, and required packaged assets. A failed or incomplete gate blocks promotion.
 
@@ -115,8 +117,8 @@ Pushing `vX.Y.Z` triggers `.github/workflows/release.yml` (`Production Release`)
 
 1. verifies tag format, package version, and `main` ancestry;
 2. calls `.github/workflows/test.yml` with the `release` package profile;
-3. runs TypeScript, Biome/protobuf lint, smoke, Vitest, E2E, and VSIX packaging;
-4. creates or updates the non-draft, non-prerelease GitHub Release with the tested `dline-X.Y.Z.vsix`.
+3. runs TypeScript, Biome/protobuf lint, smoke, and Vitest, then packages one VSIX and runs the three-platform work smoke plus four daily workflows against that artifact;
+4. creates or updates the non-draft, non-prerelease GitHub Release with the same tested `dline-X.Y.Z.vsix`.
 
 After that workflow succeeds, `.github/workflows/publish-vscode-marketplace.yml` verifies the triggering workflow, release asset, tag ancestry, tested-artifact SHA-256, VSIX identity, version, and release channel before entering the protected Marketplace environment.
 

@@ -48,7 +48,7 @@ describe("HookProcess", () => {
 
 	it("keeps Unix launch behavior unchanged", async () => {
 		await withPlatform("linux", async () => {
-			const config = await getHookLaunchConfig("/tmp/.clinerules/hooks/PreToolUse")
+			const config = await getHookLaunchConfig("/tmp/.agents/hooks/PreToolUse")
 			config.args.should.deepEqual([])
 			config.shell.should.equal(true)
 			config.detached.should.equal(true)

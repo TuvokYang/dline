@@ -67,7 +67,7 @@ npm run lint
 npm run test:smoke
 ```
 
-Run focused Vitest, E2E, Storybook, or package checks required by the changed release surface. Review the final diff and ensure only intended release-preparation files and approved companion changes are present.
+Run focused Vitest, functional E2E, Storybook, or package checks required by the changed release surface. When preparing the exact integrated release candidate, load `e2e-validation` and run `npm run test:e2e:work`; do not substitute full functional or dev-tier E2E for the required work gate. Review the final diff and ensure only intended release-preparation files and approved companion changes are present.
 
 ## 5. Commit and PR boundaries
 
@@ -79,7 +79,7 @@ chore(release): prepare X.Y.Z
 
 Push and PR creation require separate authorization. If an ordinary PR is created, its head must be an independent release-preparation branch and its base must be `dev`; direct `dev` work is not itself submitted as a PR source.
 
-Do not create `vX.Y.Z` here. A `dev-vX.Y.Z` development release tag may be created only after the prepared commit is the exact `dev` head, its target SHA is explicit, and tag creation is separately authorized. Pushing the tag triggers `Publish Draft Release (Dev)`; GitHub draft release creation remains blocked until the complete reusable Tests workflow, including full Vitest, three-platform E2E, and package success, produces the tested VSIX.
+Do not create `vX.Y.Z` here. A `dev-vX.Y.Z` development release tag may be created only after the prepared commit is the exact `dev` head, its target SHA is explicit, and tag creation is separately authorized. Pushing the tag triggers `Publish Draft Release (Dev)`; GitHub draft release creation remains blocked until the complete reusable Tests workflow finishes full Vitest, packages one VSIX, and runs the three-platform work smoke plus four daily workflows against that same artifact.
 
 ## 6. After merge to dev
 

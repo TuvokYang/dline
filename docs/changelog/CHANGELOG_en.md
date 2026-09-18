@@ -1,4 +1,4 @@
-English | [中文版](../../CHANGELOG.md)
+English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 
 # Changelog
 

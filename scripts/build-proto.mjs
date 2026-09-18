@@ -1,12 +1,11 @@
 #!/usr/bin/env node
 
 import chalk from "chalk"
-import { execFileSync, execSync } from "child_process"
+import { execFileSync } from "child_process"
 import fsSync from "fs"
 import * as fs from "fs/promises"
 import { globby } from "globby"
 import { createRequire } from "module"
-import os from "os"
 import * as path from "path"
 import { rmrf, writeFileWithMkdirs } from "./file-utils.mjs"
 import { main as generateHostBridgeClient } from "./generate-host-bridge-client.mjs"
@@ -14,17 +13,21 @@ import { main as generateProtoBusSetup } from "./generate-protobus-setup.mjs"
 
 const require = createRequire(import.meta.url)
 const isWindows = process.platform === "win32"
-const GRPC_TOOLS_PROTOC = path.join(require.resolve("grpc-tools"), "../bin", isWindows ? "protoc.exe" : "protoc")
+const PROTOC_PACKAGE_DIR = path.dirname(require.resolve("protoc/package.json"))
+const PROTOC_ASSETS = JSON.parse(fsSync.readFileSync(path.join(PROTOC_PACKAGE_DIR, "assets.json"), "utf8"))
+const protocAsset = PROTOC_ASSETS.find((asset) => asset.platform === process.platform && asset.arch === process.arch)
+const PACKAGE_PROTOC = protocAsset ? path.join(PROTOC_PACKAGE_DIR, "bin", protocAsset.executable) : undefined
 // Legacy compatibility: some older/local Windows setups provision protoc into tmp-protoc.
-// Prefer that path when present, but fall back to the grpc-tools bundled binary used by CI/npm installs.
 const LEGACY_WINDOWS_PROTOC = path.resolve("tmp-protoc/bin/protoc.exe")
-const PROTOC = isWindows && fsSync.existsSync(LEGACY_WINDOWS_PROTOC) ? LEGACY_WINDOWS_PROTOC : GRPC_TOOLS_PROTOC
+const PROTOC = isWindows && fsSync.existsSync(LEGACY_WINDOWS_PROTOC) ? LEGACY_WINDOWS_PROTOC : PACKAGE_PROTOC
 
-if (!fsSync.existsSync(PROTOC)) {
-	const windowsHint = isWindows
-		? ` Neither ${LEGACY_WINDOWS_PROTOC} nor the grpc-tools bundled protoc at ${GRPC_TOOLS_PROTOC} exists.`
-		: ""
-	console.error(chalk.red(`protoc not found at ${PROTOC}.${windowsHint}`))
+if (!PROTOC || !fsSync.existsSync(PROTOC)) {
+	const supportedPlatforms = PROTOC_ASSETS.map((asset) => `${asset.platform}/${asset.arch}`).join(", ")
+	console.error(
+		chalk.red(
+			`protoc is unavailable for ${process.platform}/${process.arch}. Supported package targets: ${supportedPlatforms}.`,
+		),
+	)
 	process.exit(1)
 }
 
@@ -79,9 +82,6 @@ export * from "../../index.dline.host"
 
 async function compileProtos() {
 	console.log(chalk.bold.blue("Compiling Protocol Buffers..."))
-
-	// Check for Apple Silicon compatibility before proceeding
-	checkAppleSiliconCompatibility()
 
 	// Create output directories if they don't exist
 	for (const dir of [TS_OUT_DIR, GRPC_JS_OUT_DIR, NICE_JS_OUT_DIR, DESCRIPTOR_OUT_DIR]) {
@@ -353,36 +353,6 @@ async function cleanup() {
 	]
 	for (const file of [...oldhostbridgefiles, ...oldprotobusfiles]) {
 		await rmrf(file)
-	}
-}
-
-// Check for Apple Silicon compatibility
-function checkAppleSiliconCompatibility() {
-	// Only run check on macOS
-	if (process.platform !== "darwin") {
-		return
-	}
-
-	// Check if running on Apple Silicon
-	const cpuArchitecture = os.arch()
-	if (cpuArchitecture === "arm64") {
-		try {
-			// Check if Rosetta is installed
-			const rosettaCheck = execSync('/usr/bin/pgrep oahd || echo "NOT_INSTALLED"').toString().trim()
-
-			if (rosettaCheck === "NOT_INSTALLED") {
-				console.log(chalk.yellow("Detected Apple Silicon (ARM64) architecture."))
-				console.log(
-					chalk.red("Rosetta 2 is NOT installed. The npm version of protoc is not compatible with Apple Silicon."),
-				)
-				console.log(chalk.cyan("Please install Rosetta 2 using the following command:"))
-				console.log(chalk.cyan("  softwareupdate --install-rosetta --agree-to-license"))
-				console.log(chalk.red("Aborting build process."))
-				process.exit(1)
-			}
-		} catch (_error) {
-			console.log(chalk.yellow("Could not determine Rosetta installation status. Proceeding anyway."))
-		}
 	}
 }
 

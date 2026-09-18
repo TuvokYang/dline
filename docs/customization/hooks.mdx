@@ -1,7 +1,36 @@
 ---
 title: "Hooks"
 sidebarTitle: "Hooks"
-description: "See details under SDK Hooks page."
+description: "Planned lifecycle integration contract for future Dline plugins."
 ---
 
-See details under [SDK Plugins](/sdk/plugins).
+<Warning>
+  Hooks are a planned plugin capability. Current releases do not expose a stable public hook schema or plugin API.
+</Warning>
+
+## Planned Role
+
+Hooks will let plugins observe or participate in selected Dline lifecycle boundaries without owning the task lifecycle itself. The runtime remains responsible for approvals, cancellation, persistence, recovery, and user-visible state.
+
+## Design Constraints
+
+The future hook contract is expected to provide:
+
+- versioned event names and payload schemas;
+- explicit read-only or side-effecting capability declarations;
+- deterministic ordering where order affects behavior;
+- finite timeouts, cancellation propagation, and cleanup;
+- sanitized errors that do not expose secrets or unnecessary user data;
+- restart behavior that distinguishes completed, failed, cancelled, and interrupted work;
+- host-neutral events that do not require direct VS Code API access.
+
+A hook must not grant itself approval, mutate unrelated task state, or create a second lifecycle beside Dline's runtime state machine.
+
+## Current Alternatives
+
+Use [Rules](/customization/dline-rules) and [Skills](/customization/skills) for reusable behavior guidance. Use [MCP](/mcp/mcp-overview) when you need external tools, resources, or prompts.
+
+## Related
+
+- [Plugins](/customization/plugins)
+- [MCP Overview](/mcp/mcp-overview)
