@@ -17,16 +17,31 @@ export type TaskEffectType =
 	| "START_NEW_TASK"
 	| "START_SUCCESSOR_TASK"
 
+/**
+ * Whether a committed transition must reach its projection before the runtime
+ * queue continues, or may be coalesced with the transitions that follow it.
+ *
+ * Both projections are last-writer-wins, so intermediate states are discardable
+ * as long as a barrier forces the latest one out before anything can depend on
+ * it having landed. Leaving this absent means "flushed": a transition that has
+ * not been classified keeps the durable behaviour.
+ */
+export type SnapshotDurability = "scheduled" | "flushed"
+
 /** Refresh the Webview from the already committed runtime state. */
 export interface PostTaskViewEffect {
 	id: string
 	type: "POST_TASK_VIEW"
+	/** Defaults to "flushed" when absent. */
+	durability?: SnapshotDurability
 }
 
 /** Persist the already committed runtime aggregate. */
 export interface PersistSnapshotEffect {
 	id: string
 	type: "PERSIST_SNAPSHOT"
+	/** Defaults to "flushed" when absent. */
+	durability?: SnapshotDurability
 }
 
 /** Cancel active API, hook, command, and partial tool work. */
@@ -55,11 +70,22 @@ export interface StartApiEffect {
 	retryContent?: ClineContent[]
 }
 
-/** Execute one canonical tool lifecycle identity. */
+/**
+ * Execute one canonical tool lifecycle identity.
+ *
+ * The turn context travels with the command rather than being re-derived by the
+ * executor. The scheduling decision therefore stays with the reducer, which is
+ * the only place that knows the serial invariant, and the executor stays unaware
+ * of whether the turn runs serially or in parallel.
+ */
 export interface ExecuteToolEffect {
 	id: string
 	type: "EXECUTE_TOOL"
 	dlineTid: string
+	/** Turn that owns this block, used to reject results from a superseded turn. */
+	turnId?: string
+	/** Scheduling mode the reducer resolved for the owning turn. */
+	mode?: "serial" | "parallel"
 }
 
 /** Append a presentation-only timeline message. */

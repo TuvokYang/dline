@@ -15,7 +15,14 @@ describe("Task Profile admission", () => {
 			stateManager: {
 				getGlobalSettingsKey: vi.fn(() => ({ version: settingsVersion, actions: { useWeb: false } })),
 			},
-			toolExecutor: { isAutoApproved: vi.fn(() => false) },
+			toolExecutor: {
+				prepareAdmission: vi.fn(() => ({
+					outcome: "admitted",
+					decision: { kind: "manual", scope: "web", ceiling: "auto" },
+					lanes: [],
+					run: async () => undefined,
+				})),
+			},
 			ordinaryRequestInputReplay: { get: vi.fn(() => undefined) },
 			compactionRequestReplay: { getProviderInput: vi.fn(() => undefined) },
 			interactionCoordinator: { releaseApiContinuationForRequestGate, open },

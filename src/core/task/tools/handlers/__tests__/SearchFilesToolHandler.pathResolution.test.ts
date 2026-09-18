@@ -14,38 +14,11 @@ import { SearchFilesToolHandler } from "../SearchFilesToolHandler"
 
 function createMockConfig(cwd: string, overrides: Partial<TaskConfig> = {}): TaskConfig {
 	return {
-		taskId: "test-task",
-		ulid: "test-ulid",
 		cwd,
-		mode: "act" as any,
-		strictPlanModeEnabled: false,
-		yoloModeToggled: false,
-		doubleCheckCompletionEnabled: false,
-		vscodeTerminalExecutionMode: "vscodeTerminal",
-		enableParallelToolCalling: false,
-		isSubagentExecution: false,
 		isMultiRootEnabled: false,
-		taskState: {} as any,
-		taskController: { rejectActiveBlock: () => {}, reset: () => {}, hasAnyRejection: () => false } as any,
-		messageState: {} as any,
-		api: {} as any,
-		services: {} as any,
-		autoApprovalSettings: {} as any,
-		autoApprover: {} as any,
-		browserSettings: {} as any,
-		focusChainSettings: {} as any,
-		interactions: {} as any,
-		callbacks: {} as any,
-		coordinator: {} as any,
-		identityFactory: {
-			/** Return a stable function identity for this fixture. */
-			nextFunctionId: () => "dline_function_search_test",
-			/** Return a stable trace identity for this fixture. */
-			nextTraceId: () => "dline_tid_search_test",
-		},
 		...overrides,
 		capabilityToggles: overrides.capabilityToggles ?? createTaskCapabilityToggles({}),
-	}
+	} as unknown as TaskConfig
 }
 
 type DetermineSearchPathsFn = (
@@ -55,10 +28,17 @@ type DetermineSearchPathsFn = (
 	originalPath: string,
 ) => Array<{ absolutePath: string; workspaceName?: string; workspaceRoot?: string }>
 
+type SearchFilesHandlerTestAccess = { determineSearchPaths: DetermineSearchPathsFn }
+
+function createDetermineSearchPaths(): DetermineSearchPathsFn {
+	const validator = {} as unknown as ConstructorParameters<typeof SearchFilesToolHandler>[0]
+	const handler = new SearchFilesToolHandler(validator)
+	return (handler as unknown as SearchFilesHandlerTestAccess).determineSearchPaths.bind(handler)
+}
+
 describe("SearchFilesToolHandler path resolution", () => {
 	it("should NOT prepend cwd for absolute Windows path", () => {
-		const handler = new SearchFilesToolHandler({} as any)
-		const fn = (handler as any).determineSearchPaths.bind(handler) as DetermineSearchPathsFn
+		const fn = createDetermineSearchPaths()
 		const cwd = path.resolve("e:\\cline_test")
 		const config = createMockConfig(cwd)
 		const absPath = path.resolve("e:\\cline_test")
@@ -73,8 +53,7 @@ describe("SearchFilesToolHandler path resolution", () => {
 		if (process.platform === "win32") {
 			return
 		}
-		const handler = new SearchFilesToolHandler({} as any)
-		const fn = (handler as any).determineSearchPaths.bind(handler) as DetermineSearchPathsFn
+		const fn = createDetermineSearchPaths()
 		const cwd = "/home/user/project"
 		const config = createMockConfig(cwd)
 		const absPath = "/tmp/test_dir"
@@ -86,8 +65,7 @@ describe("SearchFilesToolHandler path resolution", () => {
 	})
 
 	it("should resolve relative path against cwd", () => {
-		const handler = new SearchFilesToolHandler({} as any)
-		const fn = (handler as any).determineSearchPaths.bind(handler) as DetermineSearchPathsFn
+		const fn = createDetermineSearchPaths()
 		const cwd = path.resolve("e:\\workspace\\test")
 		const config = createMockConfig(cwd)
 
@@ -98,8 +76,7 @@ describe("SearchFilesToolHandler path resolution", () => {
 	})
 
 	it("should NOT prepend cwd for absolute path with double backslashes (XML encoded)", () => {
-		const handler = new SearchFilesToolHandler({} as any)
-		const fn = (handler as any).determineSearchPaths.bind(handler) as DetermineSearchPathsFn
+		const fn = createDetermineSearchPaths()
 		const cwd = "e:\\cline_test"
 		const config = createMockConfig(cwd)
 		const rawPath = "e:\\\\cline_test"
@@ -123,8 +100,7 @@ describe("SearchFilesToolHandler path resolution", () => {
 		if (process.platform !== "win32") {
 			return
 		}
-		const handler = new SearchFilesToolHandler({} as any)
-		const fn = (handler as any).determineSearchPaths.bind(handler) as DetermineSearchPathsFn
+		const fn = createDetermineSearchPaths()
 		const cwd = path.resolve("e:\\workspace\\test")
 		const config = createMockConfig(cwd)
 		const expectedPath = path.resolve("e:\\workspace")
@@ -136,8 +112,7 @@ describe("SearchFilesToolHandler path resolution", () => {
 	})
 
 	it("should handle @workspace_name:absolute_path in single-root mode", () => {
-		const handler = new SearchFilesToolHandler({} as any)
-		const fn = (handler as any).determineSearchPaths.bind(handler) as DetermineSearchPathsFn
+		const fn = createDetermineSearchPaths()
 		const cwd = "e:\\cline_test"
 		const config = createMockConfig(cwd)
 		// AI sends @workspace_name:absolute_path to target specific workspace

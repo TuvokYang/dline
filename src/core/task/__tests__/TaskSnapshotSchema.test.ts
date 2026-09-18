@@ -11,7 +11,11 @@ function focusChainTurn(): TurnState {
 		turnId: "turn-1",
 		assistantApiIndex: 4,
 		mode: "serial",
+		// The block is waiting for the user, so it owns the serial approval
+		// slot and `activeDlineTid` projects that owner.
 		activeDlineTid: "tid-1",
+		approval: { manual: { dlineTid: "tid-1", stage: "admission" }, automatic: [] },
+		executing: [],
 		blocks: [
 			{
 				dlineTid: "tid-1",
@@ -69,6 +73,118 @@ describe("TaskSnapshot v2 schema", () => {
 			interaction: { kind: "change_todo_list", status: "awaiting" },
 		})
 		expect(hydrateSnapshot(snapshot)).toEqual(state)
+	})
+
+	// ── Legacy turn ownership migration ──
+	//
+	// Snapshots written before approval and execution ownership were separate
+	// carry only `activeDlineTid` plus block phases. Each reachable shape is
+	// asserted so none falls through to an undefined result.
+
+	/** Build a pre-split turn: no ownership fields, only phases. */
+	function legacyTurn(
+		blocks: Array<{ dlineTid: string; phase: BlockPhase; requiresApproval: boolean }>,
+		activeDlineTid?: string,
+	): TurnState {
+		return {
+			turnId: "turn-1",
+			assistantApiIndex: 4,
+			mode: "serial",
+			activeDlineTid,
+			blocks: blocks.map((block, index) => ({
+				dlineTid: block.dlineTid,
+				functionId: `call-${index + 1}`,
+				toolName: block.requiresApproval ? "write_to_file" : "read_file",
+				phase: block.phase,
+				ts: 100 + index,
+				requiresApproval: block.requiresApproval,
+				conversationHistoryIndex: 4 + index,
+			})),
+		}
+	}
+
+	/** Hydrate a legacy turn through a real snapshot round trip. */
+	function hydrateLegacyTurn(turn: TurnState) {
+		const state: TaskRuntimeState = {
+			taskId: "task-1",
+			phase: TaskPhase.EXECUTING,
+			revision: 7,
+			anchor: { apiIndex: 4, turnId: "turn-1" },
+			turn,
+		}
+		return hydrateSnapshot(createSnapshot(state, 200)).turn
+	}
+
+	it("hydrates a legacy approval owner that points at an executing block into the execution set", () => {
+		// The block was already approved before the restart, so presenting it
+		// for approval again would ask the user to approve the same work twice.
+		const turn = hydrateLegacyTurn(
+			legacyTurn([{ dlineTid: "tid-1", phase: BlockPhase.EXECUTING, requiresApproval: true }], "tid-1"),
+		)
+
+		expect(turn?.executing).toEqual(["tid-1"])
+		expect(turn?.approval?.manual).toBeUndefined()
+		expect(turn?.activeDlineTid).toBeUndefined()
+	})
+
+	it("hydrates a legacy awaiting block as the manual approval owner", () => {
+		const turn = hydrateLegacyTurn(
+			legacyTurn([{ dlineTid: "tid-1", phase: BlockPhase.AWAITING_APPROVAL, requiresApproval: true }], "tid-1"),
+		)
+
+		expect(turn?.approval?.manual).toEqual({ dlineTid: "tid-1", stage: "admission" })
+		expect(turn?.activeDlineTid).toBe("tid-1")
+		expect(turn?.executing).toEqual([])
+	})
+
+	it("keeps an in-flight manual owner whose block is already executing", () => {
+		// The slot has two stages. An executing block holding it for a question
+		// raised mid-flight is a live owner, so dropping it on restart would let
+		// a second prompt be admitted while the first is still outstanding.
+		const legacy = legacyTurn([{ dlineTid: "tid-1", phase: BlockPhase.EXECUTING, requiresApproval: true }], "tid-1")
+		const turn = hydrateLegacyTurn({
+			...legacy,
+			approval: { manual: { dlineTid: "tid-1", stage: "in_flight" }, automatic: [] },
+			executing: ["tid-1"],
+		})
+
+		expect(turn?.approval?.manual).toEqual({ dlineTid: "tid-1", stage: "in_flight" })
+		expect(turn?.activeDlineTid).toBe("tid-1")
+		expect(turn?.executing).toEqual(["tid-1"])
+	})
+
+	it("drops a legacy approval owner that names no block", () => {
+		const turn = hydrateLegacyTurn(
+			legacyTurn([{ dlineTid: "tid-1", phase: BlockPhase.AUTO_EXECUTING, requiresApproval: false }], "tid-missing"),
+		)
+
+		expect(turn?.activeDlineTid).toBeUndefined()
+		expect(turn?.approval?.manual).toBeUndefined()
+	})
+
+	it("drops a legacy approval owner that points at a terminal block", () => {
+		const turn = hydrateLegacyTurn(
+			legacyTurn([{ dlineTid: "tid-1", phase: BlockPhase.COMPLETED, requiresApproval: true }], "tid-1"),
+		)
+
+		expect(turn?.activeDlineTid).toBeUndefined()
+		expect(turn?.executing).toEqual([])
+	})
+
+	it("hydrates a legacy turn carrying several executing blocks", () => {
+		// The single-valued field could not name more than one, so a restart
+		// must recover them from phases or silently forget the rest.
+		const turn = hydrateLegacyTurn(
+			legacyTurn([
+				{ dlineTid: "tid-1", phase: BlockPhase.AUTO_EXECUTING, requiresApproval: false },
+				{ dlineTid: "tid-2", phase: BlockPhase.EXECUTING, requiresApproval: true },
+				{ dlineTid: "tid-3", phase: BlockPhase.AUTO_EXECUTING, requiresApproval: false },
+			]),
+		)
+
+		expect(turn?.executing).toEqual(["tid-1", "tid-2", "tid-3"])
+		// Only the blocks that never needed a user are policy-approved.
+		expect(turn?.approval?.automatic).toEqual(["tid-1", "tid-3"])
 	})
 
 	it("round-trips the explicit Profile recovery input admission", () => {

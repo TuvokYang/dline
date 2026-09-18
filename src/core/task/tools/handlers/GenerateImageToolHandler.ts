@@ -10,14 +10,13 @@ import type {
 import { ImageGenerationError } from "@core/image-generation/contracts"
 import { DEFAULT_IMAGE_GENERATION_SIZE } from "@core/image-generation/ImageGenerationSizes"
 import { formatResponse } from "@core/prompts/responses"
-import type { ClineAsk, ClineSayTool } from "@shared/ExtensionMessage"
+import type { ClineSayTool } from "@shared/ExtensionMessage"
 import { IMAGE_GENERATION_PRESENTATION_SCHEMA_VERSION, type ImageGenerationPresentationV1 } from "@shared/image-generation"
 import { ClineDefaultTool } from "@shared/tools"
 import type { ToolResponse } from "../../index"
 import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
 import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
-import { ToolResultUtils } from "../utils/ToolResultUtils"
 
 const BACKGROUNDS = new Set<ImageBackground>(["auto", "opaque", "transparent"])
 const OUTPUT_FORMATS = new Set<ImageOutputFormat>(["png", "jpeg", "webp"])
@@ -112,11 +111,7 @@ export class GenerateImageToolHandler implements IFullyManagedTool {
 			count: Number.isSafeInteger(count) && count > 0 ? count : 1,
 		})
 		const message = JSON.stringify(presentation)
-		if (uiHelpers.shouldAutoApproveTool(this.name)) {
-			await uiHelpers.say("tool", message, undefined, undefined, true, block.ts)
-		} else {
-			uiHelpers.ask("tool" as ClineAsk, message, true, { existingTs: block.ts }).catch(() => undefined)
-		}
+		await uiHelpers.say("tool", message, undefined, undefined, true, block.ts)
 	}
 
 	async execute(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
@@ -190,12 +185,7 @@ export class GenerateImageToolHandler implements IFullyManagedTool {
 			}
 			const presentation = createToolPresentation(activePresentation)
 			const message = JSON.stringify(presentation)
-			if (config.callbacks.shouldAutoApproveTool(this.name)) {
-				await config.callbacks.say("tool", message, undefined, undefined, false, block.ts)
-			} else {
-				const approved = await ToolResultUtils.askApprovalAndPushFeedback("tool", message, config, block.ts)
-				if (!approved) return formatResponse.toolDenied()
-			}
+			await config.callbacks.say("tool", message, undefined, undefined, false, block.ts)
 
 			config.taskState.consecutiveMistakeCount = 0
 			activePresentation = { ...activePresentation, status: "started" }

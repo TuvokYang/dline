@@ -65,6 +65,16 @@ function config(
 		isSubagentExecution: false,
 		taskState: Object.assign(new TaskState(), { lastToolName: "read_file" }),
 		interactions: { open, complete: open, say: vi.fn(async () => undefined) },
+		admissionOutcomes: new Map([
+			[
+				`tid-${ClineDefaultTool.CHANGE_TODO_LIST}`,
+				{
+					actionId: outcome.actionId,
+					draft: { text: outcome.text ?? "", images: [], files: [] },
+					selection: outcome.selection ? { values: outcome.selection } : undefined,
+				},
+			],
+		]),
 		callbacks: {
 			askAsk: vi.fn(async () => {
 				throw new Error("legacy ask must not be called")
@@ -130,16 +140,16 @@ describe("handler interaction matrix", () => {
 		expect(taskConfig.interactions.open).not.toHaveBeenCalled()
 	})
 
-	it("opens spawn approval as spawn_task_approval", async () => {
+	it("does not open spawn approval inside the admitted handler", async () => {
 		const taskConfig = config({ actionId: "reject" })
 		await new SpawnTaskHandler().execute(
 			taskConfig,
 			block(ClineDefaultTool.SPAWN_TASK, { task: "Child", mode: "plan", context: "Context" }),
 		)
-		expect(taskConfig.interactions.open).toHaveBeenCalledWith(expect.objectContaining({ kind: "spawn_task_approval" }))
+		expect(taskConfig.interactions.open).not.toHaveBeenCalled()
 	})
 
-	it("opens manual command approval as command_approval without legacy ask", async () => {
+	it("executes an admitted command without opening another approval", async () => {
 		const taskConfig = config({ actionId: "approve" })
 		Object.assign(taskConfig, {
 			api: { getModel: vi.fn(() => ({ id: "test-model" })) },
@@ -169,13 +179,8 @@ describe("handler interaction matrix", () => {
 			block(ClineDefaultTool.BASH, { command: "echo ok", requires_approval: "true" }),
 		)
 
-		expect(taskConfig.interactions.open).toHaveBeenCalledWith(
-			expect.objectContaining({
-				kind: "command_approval",
-				presentation: expect.stringContaining(`echo ok\n\nWorking directory: ${await fs.realpath(process.cwd())}`),
-			}),
-		)
-		expect(taskConfig.callbacks.ask).not.toHaveBeenCalled()
+		expect(taskConfig.interactions.open).not.toHaveBeenCalled()
+		expect(taskConfig.callbacks.executeCommandTool).toHaveBeenCalled()
 	})
 
 	it("forces external workdirectories through approval and executes without a cd prefix", async () => {
@@ -221,12 +226,7 @@ describe("handler interaction matrix", () => {
 			)
 
 			const canonicalDirectory = await fs.realpath(externalDirectory)
-			expect(taskConfig.interactions.open).toHaveBeenCalledWith(
-				expect.objectContaining({
-					kind: "command_approval",
-					presentation: expect.stringContaining(`Working directory: ${canonicalDirectory}`),
-				}),
-			)
+			expect(taskConfig.interactions.open).not.toHaveBeenCalled()
 			expect(taskConfig.callbacks.executeCommandTool).toHaveBeenCalledWith(
 				"echo ok",
 				expect.any(Number),
@@ -370,9 +370,7 @@ describe("handler interaction matrix", () => {
 			taskConfig,
 			block(ClineDefaultTool.CHANGE_TODO_LIST, { new_plan: "# Plan\n- [ ] First\n- [ ] Second", reason: "Change" }),
 		)
-		expect(taskConfig.interactions.open).toHaveBeenCalledWith(
-			expect.objectContaining({ kind: "change_todo_list", interactionId: `tid-${ClineDefaultTool.CHANGE_TODO_LIST}` }),
-		)
+		expect(taskConfig.interactions.open).not.toHaveBeenCalled()
 		expect(focusChainForceUpdate).toHaveBeenCalledWith("# Plan\n- [ ] Second")
 	})
 })

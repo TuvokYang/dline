@@ -1,16 +1,14 @@
 import { resolveProvider } from "@core/api"
 import type { ToolUse } from "@core/assistant-message"
 import { formatResponse } from "@core/prompts/responses"
-import { ClineAsk, ClineAskUseMcpServer } from "@shared/ExtensionMessage"
+import { ClineAskUseMcpServer } from "@shared/ExtensionMessage"
 import { telemetryService } from "@/services/telemetry"
 import { truncateContent } from "@/shared/content-limits"
 import { ClineDefaultTool } from "@/shared/tools"
 import type { ToolResponse } from "../../index"
-import { showNotificationForApproval } from "../../utils"
 import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
 import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
-import { ToolResultUtils } from "../utils/ToolResultUtils"
 
 export class AccessMcpResourceHandler implements IFullyManagedTool {
 	readonly name = ClineDefaultTool.MCP_ACCESS
@@ -31,19 +29,7 @@ export class AccessMcpResourceHandler implements IFullyManagedTool {
 			arguments: undefined,
 		} satisfies ClineAskUseMcpServer)
 
-		// Check if tool should be auto-approved (access_mcp_resource uses general auto-approval)
-		const shouldAutoApprove = uiHelpers.shouldAutoApproveTool(block.name)
-
-		const existingTs = block.ts
-		if (shouldAutoApprove) {
-			await uiHelpers.say("use_mcp_server" as any, partialMessage, undefined, undefined, true, existingTs)
-		} else {
-			uiHelpers
-				.ask("use_mcp_server" as ClineAsk, partialMessage, true, {
-					existingTs,
-				})
-				.catch(() => {})
-		}
+		await uiHelpers.say("use_mcp_server", partialMessage, undefined, undefined, true, block.ts)
 	}
 
 	async execute(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
@@ -87,61 +73,17 @@ export class AccessMcpResourceHandler implements IFullyManagedTool {
 			arguments: undefined,
 		} satisfies ClineAskUseMcpServer)
 
-		const shouldAutoApprove = config.callbacks.shouldAutoApproveTool(block.name)
-
-		if (shouldAutoApprove) {
-			// Auto-approval flow
-			const existingTs = block.ts
-			await config.callbacks.say("use_mcp_server", completeMessage, undefined, undefined, false, existingTs)
-
-			// Capture telemetry
-			telemetryService.captureToolUsage(
-				config.ulid ?? "",
-				block.name,
-				config.api.getModel().id,
-				provider ?? "",
-				true,
-				true,
-				undefined,
-				block.isNativeToolCall,
-			)
-		} else {
-			// Manual approval flow
-			const notificationMessage = `Dline wants to access ${uri || "unknown resource"} on ${server_name || "unknown server"}`
-
-			// Show notification
-			showNotificationForApproval(notificationMessage, config.autoApprovalSettings.enableNotifications)
-
-			const didApprove = await ToolResultUtils.askApprovalAndPushFeedback(
-				"use_mcp_server",
-				completeMessage,
-				config,
-				block.ts,
-			)
-			if (!didApprove) {
-				telemetryService.captureToolUsage(
-					config.ulid ?? "",
-					block.name,
-					config.api.getModel().id,
-					provider ?? "",
-					false,
-					false,
-					undefined,
-					block.isNativeToolCall,
-				)
-				return formatResponse.toolDenied()
-			}
-			telemetryService.captureToolUsage(
-				config.ulid ?? "",
-				block.name,
-				config.api.getModel().id,
-				provider ?? "",
-				false,
-				true,
-				undefined,
-				block.isNativeToolCall,
-			)
-		}
+		await config.callbacks.say("use_mcp_server", completeMessage, undefined, undefined, false, block.ts)
+		telemetryService.captureToolUsage(
+			config.ulid ?? "",
+			block.name,
+			config.api.getModel().id,
+			provider ?? "",
+			!block.dline_tid || !config.admissionOutcomes?.has(block.dline_tid),
+			true,
+			undefined,
+			block.isNativeToolCall,
+		)
 
 		// Run PreToolUse hook after approval but before execution
 		try {
@@ -163,7 +105,7 @@ export class AccessMcpResourceHandler implements IFullyManagedTool {
 		// Process the resource result
 		const resourceResultPretty =
 			resourceResult?.contents
-				.map((item: any) => {
+				.map((item) => {
 					if (item.text) {
 						return item.text
 					}

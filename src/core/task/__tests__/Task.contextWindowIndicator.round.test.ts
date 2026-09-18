@@ -14,6 +14,7 @@ import { estimateContextWindowIndicatorSegments } from "../ContextWindowIndicato
 import { ContextWindowReceivingTracker } from "../ContextWindowReceivingTracker"
 import type { CompactionProviderInput } from "../compaction/CompactionRequestReplay"
 import { Task } from "../index"
+import { TaskRuntimeProjectionScheduler } from "../runtime/TaskRuntimeProjectionScheduler"
 import { createTaskRuntimeState, type TaskRuntimeState } from "../runtime/TaskRuntimeState"
 import { TaskPhase } from "../TaskPhase"
 
@@ -24,7 +25,7 @@ interface RoundTaskHarness {
 	ordinaryContextIndicatorLineageByApiIndex: Map<number, ContextWindowIndicatorLineage>
 	ordinaryContextIndicatorReceivingByApiIndex: Map<number, ContextWindowReceivingTracker>
 	apiRateMetricsService: { setTaskLoopActive: ReturnType<typeof vi.fn> }
-	postStateToWebview: ReturnType<typeof vi.fn>
+	postStateToWebview: ReturnType<typeof vi.fn<(options?: { immediate?: boolean }) => Promise<void>>>
 	getContextWindowIndicatorProfile(mode: string, profileName?: string): { profileId?: string; profileName?: string }
 	getContextWindowRequestPressures(): Array<{
 		contextTokens?: number
@@ -69,6 +70,20 @@ function createHarness(durableContextTokens = 100): RoundTaskHarness {
 		getContextWindowIndicatorProfile: vi.fn(() => ({})),
 		getContextWindowRequestPressures: vi.fn(() => []),
 	}) as RoundTaskHarness
+	// Views reach the Webview through the projection scheduler. The port resolves
+	// postStateToWebview at call time so a test that replaces the mock afterwards
+	// still observes what was published.
+	Object.assign(harness, {
+		projectionScheduler: new TaskRuntimeProjectionScheduler({
+			ports: {
+				postView: async () => {
+					await harness.postStateToWebview()
+				},
+				scheduleSnapshot: () => {},
+				flushSnapshot: async () => {},
+			},
+		}),
+	})
 	return harness
 }
 

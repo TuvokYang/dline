@@ -1,24 +1,25 @@
+import { DEFAULT_AUTO_APPROVAL_SETTINGS } from "@shared/AutoApprovalSettings"
 import { ClineDefaultTool } from "@shared/tools"
 import { describe, expect, it } from "vitest"
-import { AutoApprove } from "../autoApprove"
+import { resolveApprovalKind } from "../../kernel/turn/approval-kind"
 
-function autoApprove(generateImages?: boolean): AutoApprove {
-	return new AutoApprove({
-		getGlobalSettingsKey: (key: string) => {
-			if (key === "yoloModeToggled" || key === "autoApproveAllToggled") return false
-			if (key === "autoApprovalSettings") return { actions: { generateImages } }
-			return undefined
+function decision(generateImages?: boolean) {
+	return resolveApprovalKind({
+		toolName: ClineDefaultTool.GENERATE_IMAGE,
+		settings: {
+			...DEFAULT_AUTO_APPROVAL_SETTINGS,
+			actions: { ...DEFAULT_AUTO_APPROVAL_SETTINGS.actions, generateImages },
 		},
-	} as never)
+	})
 }
 
-describe("AutoApprove generate_image", () => {
+describe("canonical generate_image approval", () => {
 	it("defaults to manual approval when the dedicated field is absent", () => {
-		expect(autoApprove().shouldAutoApproveTool(ClineDefaultTool.GENERATE_IMAGE)).toBe(false)
+		expect(decision().kind).toBe("manual")
 	})
 
 	it("uses only the dedicated generateImages permission", () => {
-		expect(autoApprove(true).shouldAutoApproveTool(ClineDefaultTool.GENERATE_IMAGE)).toBe(true)
-		expect(autoApprove(false).shouldAutoApproveTool(ClineDefaultTool.GENERATE_IMAGE)).toBe(false)
+		expect(decision(true).kind).toBe("automatic")
+		expect(decision(false).kind).toBe("manual")
 	})
 })

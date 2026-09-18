@@ -1,9 +1,14 @@
+import type { ToolUse } from "@core/assistant-message"
 import type { ResolvedPromptRuntime } from "@core/prompts/system-prompt-cache/FrozenPromptRuntime"
+import type { ToolAdmissionSnapshot } from "@core/task/executors/tool/ToolAdmissionRegistry"
+import type { ToolPreflightResult, ToolSideEffect } from "@core/task/executors/tool/ToolPreflight"
 import { ToolExecutor } from "@core/task/ToolExecutor"
+import { SubagentFanoutBudget } from "@core/task/tools/subagent/SubagentFanoutBudget"
 import type { TaskConfig } from "@core/task/tools/types/TaskConfig"
 import type { BrowserSettings } from "@shared/BrowserSettings"
 import { ServerTool } from "@shared/proto/dline/models/metadata"
 import { createTaskCapabilityToggles } from "@shared/TaskCapabilityToggles"
+import { ClineDefaultTool } from "@shared/tools"
 import { describe, expect, it, vi } from "vitest"
 import { HOSTED_WEB_SEARCH_ROUTING_PLAN } from "../../prompts/__tests__/web-search-routing-fixtures"
 
@@ -54,6 +59,8 @@ function buildExecutor(): ToolExecutor {
 		autoApprover: {},
 		interactions: {},
 		coordinator: {},
+		subagentFanoutBudget: new SubagentFanoutBudget({ limit: 1 }),
+		preparedEffects: new Map(),
 		getTaskCapabilityToggles: () => createTaskCapabilityToggles({ mcpServers: { live: false } }),
 		identityFactory: {},
 		activityStore: {},
@@ -105,6 +112,55 @@ describe("ToolExecutor frozen prompt runtime", () => {
 		expect(config.subagentsEnabled).toBe(true)
 		expect(config.capabilityToggles.mcpServers).toEqual({ frozen: true })
 		expect(config.browserSettings).toMatchObject({ disableToolUse: false, viewport: { width: 1280, height: 800 } })
+	})
+
+	it("injects one task-scoped subagent budget into every newly built handler config", () => {
+		const executor = buildExecutor()
+		const asToolConfig = (ToolExecutor.prototype as unknown as { asToolConfig(): TaskConfig }).asToolConfig
+
+		const first = asToolConfig.call(executor)
+		const second = asToolConfig.call(executor)
+
+		expect(first).not.toBe(second)
+		expect(first.subagentFanoutBudget).toBe(second.subagentFanoutBudget)
+	})
+
+	it("executes the exact unstarted closure retained by Admission once", async () => {
+		const executor = buildExecutor()
+		const internals = executor as unknown as {
+			coordinator: {
+				prepareAdmission: (
+					block: ToolUse,
+					snapshot: ToolAdmissionSnapshot,
+					run: ToolSideEffect<void>,
+				) => ToolPreflightResult<void>
+			}
+		}
+		const executeTool = vi.spyOn(executor, "executeTool").mockImplementation(async () => undefined)
+		internals.coordinator = {
+			prepareAdmission: (_block: ToolUse, _snapshot: ToolAdmissionSnapshot, run: ToolSideEffect<void>) => ({
+				outcome: "admitted",
+				decision: { kind: "automatic", scope: "read_workspace", ceiling: "auto" },
+				lanes: [],
+				run,
+			}),
+		}
+		const block: ToolUse = {
+			type: "tool_use" as const,
+			name: ClineDefaultTool.FILE_READ,
+			params: { path: "src/a.ts" },
+			partial: false,
+			function_id: "function-prepared",
+			dline_tid: "dline-prepared",
+			ts: 1,
+		}
+
+		const admission = executor.prepareAdmission(block)
+		expect(admission.outcome).toBe("admitted")
+		expect(executeTool).not.toHaveBeenCalled()
+		await executor.runPreparedAdmission(block.dline_tid)
+		expect(executeTool).toHaveBeenCalledOnce()
+		await expect(executor.runPreparedAdmission(block.dline_tid)).rejects.toThrow("Prepared tool effect is missing")
 	})
 
 	it("clears a previous complete runtime when a legacy Web-only request is configured", () => {

@@ -17,6 +17,18 @@ const FLUSH_DELAY_MS = 75
 const MAX_OUTPUT_CHARS = 64 * 1024
 const MAX_EVENT_TEXT_CHARS = 16 * 1024
 const MAX_EVENTS_PER_ACTIVITY = 500
+/**
+ * Ceiling for the single-shot descriptive fields.
+ *
+ * `output` and events were already bounded, but `detail`, `result` and `error`
+ * were not. One call may fan out to 32 subagents, each persisting its own
+ * prompt and final answer, so an unbounded field is multiplied by the batch
+ * width every time the activity file is written. The limit is generous enough
+ * to keep a normal prompt or summary intact and only truncates the outliers
+ * that would otherwise grow task storage without limit.
+ */
+const MAX_TEXT_FIELD_CHARS = 16 * 1024
+const TRUNCATION_NOTICE = "\n… [truncated]"
 const AUTHORIZATION_VALUE_PATTERN = /(\bauthorization\s*[:=]\s*)(?:(?:bearer|basic)\s+)?([^\s,;]+)/gi
 const BEARER_TOKEN_PATTERN = /(\bbearer\s+)([A-Za-z0-9._~+/=-]{8,})/gi
 const SENSITIVE_VALUE_PATTERN = /(api[_-]?key|access[_-]?token|password|secret)(\s*[:=]\s*)([^\s,;]+)/gi
@@ -31,9 +43,53 @@ function redactSensitiveText(text: string): string {
 		.replace(KNOWN_SECRET_TOKEN_PATTERN, "[REDACTED]")
 }
 
+/**
+ * Redact and bound one descriptive field.
+ *
+ * The head is kept rather than the tail: a prompt, a summary or an error is
+ * most informative at the start, unlike the streaming `output` log where the
+ * newest lines matter. The marker makes the truncation visible so a reader is
+ * not left believing a clipped value is complete.
+ *
+ * @param text Raw field text.
+ * @returns Redacted text within the field ceiling.
+ */
+function boundFieldText(text: string): string {
+	const safeText = redactSensitiveText(text)
+	if (safeText.length <= MAX_TEXT_FIELD_CHARS) return safeText
+	return `${safeText.slice(0, MAX_TEXT_FIELD_CHARS)}${TRUNCATION_NOTICE}`
+}
+
+/**
+ * Apply the same field ceiling to a retry recipe.
+ *
+ * A recipe carries the task and prompt verbatim so a failed run can be
+ * replayed, and every item of a large batch persists its own copy. Left raw it
+ * would be the one payload that escapes both the ceiling and redaction, so the
+ * stored text is bounded on the way in.
+ *
+ * @param recipe Recipe as supplied by the caller.
+ * @returns Recipe whose free text is redacted and bounded.
+ */
+function boundRetryRecipe(recipe: SubagentRetryRecipe): SubagentRetryRecipe {
+	return {
+		...recipe,
+		task: boundFieldText(recipe.task),
+		prompt: boundFieldText(recipe.prompt),
+	}
+}
+
 type ActivityListener = (update: TaskActivityUpdate) => void | Promise<void>
 type CancelActivity = () => void | Promise<void>
 type ControlActivity = () => boolean | Promise<boolean>
+export type BackgroundHandoffResult =
+	| boolean
+	| {
+			accepted: boolean
+			rollback?: () => void | Promise<void>
+			commit?: () => void | Promise<void>
+	  }
+type MoveActivity = () => Promise<BackgroundHandoffResult>
 
 export interface TaskActivityPersistencePort {
 	load(): Promise<TaskActivityRecord[]>
@@ -46,7 +102,9 @@ export interface CreateTaskActivityInput {
 	executionMode: TaskActivityExecutionMode
 	cancellationOwner?: TaskActivityCancellationOwner
 	title: string
-	continueInBackground?: () => Promise<boolean>
+	continueInBackground?: MoveActivity
+	/** Activity identities that must transfer ownership with this activity. */
+	backgroundGroupIds?: string[]
 	detail?: string
 	timeoutSeconds?: number
 	parentActivityId?: string
@@ -63,7 +121,8 @@ export class TaskActivityStore {
 	private readonly cancellers = new Map<string, CancelActivity>()
 	private readonly finishers = new Map<string, ControlActivity>()
 	private readonly retriers = new Map<string, ControlActivity>()
-	private readonly backgroundMovers = new Map<string, () => Promise<boolean>>()
+	private readonly backgroundMovers = new Map<string, MoveActivity>()
+	private readonly backgroundGroups = new Map<string, readonly string[]>()
 	private readonly listeners = new Map<ActivityListener, Promise<void>>()
 	private readonly dirtyIds = new Set<string>()
 	private readonly persistedRecoveryCandidateIds = new Set<string>()
@@ -134,18 +193,21 @@ export class TaskActivityStore {
 			currentAttempt: 1,
 			createdAt: now,
 			updatedAt: now,
-			title: redactSensitiveText(input.title),
-			detail: input.detail === undefined ? undefined : redactSensitiveText(input.detail),
+			title: boundFieldText(input.title),
+			detail: input.detail === undefined ? undefined : boundFieldText(input.detail),
 			timeoutSeconds: input.timeoutSeconds,
 			parentActivityId: input.parentActivityId,
-			retryRecipe: input.kind === "subagent" ? input.retryRecipe : undefined,
+			retryRecipe: input.kind === "subagent" && input.retryRecipe ? boundRetryRecipe(input.retryRecipe) : undefined,
 			events: [],
 		}
 		this.activities.set(activity.activityId, activity)
 		if (input.cancel) this.cancellers.set(activity.activityId, input.cancel)
 		if (input.finish) this.finishers.set(activity.activityId, input.finish)
 		if (input.retry) this.retriers.set(activity.activityId, input.retry)
-		if (input.continueInBackground) this.backgroundMovers.set(activity.activityId, input.continueInBackground)
+		if (input.continueInBackground) {
+			this.backgroundMovers.set(activity.activityId, input.continueInBackground)
+			this.backgroundGroups.set(activity.activityId, input.backgroundGroupIds ?? [activity.activityId])
+		}
 		this.appendEvent(input.activityId, { kind: "status", status: activity.status, text: "Activity started" }, true)
 		return this.clone(activity)
 	}
@@ -226,21 +288,73 @@ export class TaskActivityStore {
 	/** Move eligible foreground activities into explicit background ownership. */
 	async moveToBackground(activityIds: string[]): Promise<string[]> {
 		const moved: string[] = []
-		for (const activityId of activityIds) {
-			const activity = this.activities.get(activityId)
-			const move = this.backgroundMovers.get(activityId)
-			if (!activity || !move || activity.status !== "running" || activity.executionMode !== "foreground") continue
-			try {
-				if (!(await move())) continue
-				this.update(activityId, {
-					executionMode: "background",
-					cancellationOwner: "explicit",
-					latestEvent: "Continuing in background",
+		const visited = new Set<string>()
+		for (const requestedId of activityIds) {
+			if (visited.has(requestedId)) continue
+			const groupIds = [...new Set(this.backgroundGroups.get(requestedId) ?? [requestedId])]
+			groupIds.forEach((activityId) => {
+				visited.add(activityId)
+			})
+			const move = this.backgroundMovers.get(requestedId)
+			const isEligibleGroup = () =>
+				Boolean(move) &&
+				groupIds.every((activityId) => {
+					const activity = this.activities.get(activityId)
+					return (
+						activity?.status === "running" &&
+						activity.executionMode === "foreground" &&
+						this.backgroundMovers.get(activityId) === move
+					)
 				})
-				this.backgroundMovers.delete(activityId)
-				moved.push(activityId)
+			if (!move || !isEligibleGroup()) continue
+			let result: BackgroundHandoffResult | undefined
+			let ownershipSnapshots: Array<{
+				activityId: string
+				executionMode: TaskActivityExecutionMode
+				cancellationOwner: TaskActivityCancellationOwner
+				latestEvent?: string
+			}> = []
+			try {
+				result = await move()
+				const accepted = typeof result === "boolean" ? result : result.accepted
+				if (!accepted) continue
+				if (!isEligibleGroup()) {
+					if (typeof result !== "boolean") await result.rollback?.()
+					continue
+				}
+				ownershipSnapshots = groupIds.map((activityId) => {
+					const activity = this.activities.get(activityId) as TaskActivityRecord
+					return {
+						activityId,
+						executionMode: activity.executionMode,
+						cancellationOwner: activity.cancellationOwner,
+						latestEvent: activity.latestEvent,
+					}
+				})
+				for (const activityId of groupIds) {
+					this.update(activityId, {
+						executionMode: "background",
+						cancellationOwner: "explicit",
+						latestEvent: "Continuing in background",
+					})
+				}
+				for (const activityId of groupIds) {
+					this.backgroundMovers.delete(activityId)
+					this.backgroundGroups.delete(activityId)
+				}
+				if (typeof result !== "boolean") await result.commit?.()
+				moved.push(...groupIds)
 			} catch (error) {
-				Logger.warn("[TaskActivityStore] Failed to move activity to background", error)
+				for (const snapshot of ownershipSnapshots) {
+					const activity = this.activities.get(snapshot.activityId)
+					if (!activity) continue
+					activity.executionMode = snapshot.executionMode
+					activity.cancellationOwner = snapshot.cancellationOwner
+					activity.latestEvent = snapshot.latestEvent
+					this.markDirty(snapshot.activityId, true)
+				}
+				if (result && typeof result !== "boolean") await result.rollback?.()
+				Logger.warn("[TaskActivityStore] Failed to move activity group to background", error)
 			}
 		}
 		return moved
@@ -300,14 +414,17 @@ export class TaskActivityStore {
 		const { metrics, runtime, ...activityPatch } = patch
 		const sanitizedPatch = {
 			...activityPatch,
-			...(activityPatch.title === undefined ? {} : { title: redactSensitiveText(activityPatch.title) }),
-			...(activityPatch.detail === undefined ? {} : { detail: redactSensitiveText(activityPatch.detail) }),
-			...(activityPatch.latestEvent === undefined ? {} : { latestEvent: redactSensitiveText(activityPatch.latestEvent) }),
-			...(activityPatch.result === undefined ? {} : { result: redactSensitiveText(activityPatch.result) }),
-			...(activityPatch.error === undefined ? {} : { error: redactSensitiveText(activityPatch.error) }),
+			...(activityPatch.title === undefined ? {} : { title: boundFieldText(activityPatch.title) }),
+			...(activityPatch.detail === undefined ? {} : { detail: boundFieldText(activityPatch.detail) }),
+			...(activityPatch.latestEvent === undefined ? {} : { latestEvent: boundFieldText(activityPatch.latestEvent) }),
+			...(activityPatch.result === undefined ? {} : { result: boundFieldText(activityPatch.result) }),
+			...(activityPatch.error === undefined ? {} : { error: boundFieldText(activityPatch.error) }),
 			...(activityPatch.retryUnavailableReason === undefined
 				? {}
-				: { retryUnavailableReason: redactSensitiveText(activityPatch.retryUnavailableReason) }),
+				: { retryUnavailableReason: boundFieldText(activityPatch.retryUnavailableReason) }),
+			// A patched recipe carries the same free text as a created one and
+			// must not be the path that reintroduces an unbounded prompt.
+			...(activityPatch.retryRecipe === undefined ? {} : { retryRecipe: boundRetryRecipe(activityPatch.retryRecipe) }),
 		}
 		Object.assign(activity, sanitizedPatch, { updatedAt: Date.now() })
 		if (runtime && activity.kind === "subagent") {
@@ -569,7 +686,11 @@ export class TaskActivityStore {
 			error: activity.error === undefined ? undefined : redactSensitiveText(activity.error),
 			runtime: activity.runtime ? { ...activity.runtime } : undefined,
 			metrics: activity.metrics ? { ...activity.metrics } : undefined,
-			retryRecipe: activity.retryRecipe ? { ...activity.retryRecipe } : undefined,
+			// A recipe reaching this point may come from an activity file
+			// written by an older build, so it is bounded here as well as on
+			// the create path; otherwise loading such a file would reintroduce
+			// the raw prompt the ceiling exists to prevent.
+			retryRecipe: activity.retryRecipe ? boundRetryRecipe(activity.retryRecipe) : undefined,
 			retryUnavailableReason:
 				activity.retryUnavailableReason === undefined ? undefined : redactSensitiveText(activity.retryUnavailableReason),
 			events: activity.events.map((event) => this.redactEvent({ ...event })),

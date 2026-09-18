@@ -807,4 +807,86 @@ describe("TaskActivityStore", () => {
 		})
 		expect(await store.moveToBackground(["subagent-foreground"])).toEqual([])
 	})
+
+	it("does not start a grouped handoff when any activity is missing", async () => {
+		const move = vi.fn(async () => true)
+		const store = new TaskActivityStore("task-1")
+		store.create({
+			activityId: "batch-1",
+			kind: "subagent",
+			executionMode: "foreground",
+			title: "batch item",
+			continueInBackground: move,
+			backgroundGroupIds: ["batch-1", "batch-2"],
+		})
+
+		expect(await store.moveToBackground(["batch-1"])).toEqual([])
+		expect(move).not.toHaveBeenCalled()
+		expect(store.get("batch-1")?.executionMode).toBe("foreground")
+	})
+
+	it("rolls back every grouped activity when an ownership update fails", async () => {
+		const rollback = vi.fn(async () => undefined)
+		const move = vi.fn(async () => ({ accepted: true, rollback }))
+		const store = new TaskActivityStore("task-1")
+		for (const activityId of ["batch-1", "batch-2"]) {
+			store.create({
+				activityId,
+				kind: "subagent",
+				executionMode: "foreground",
+				title: activityId,
+				continueInBackground: move,
+				backgroundGroupIds: ["batch-1", "batch-2"],
+			})
+		}
+		const originalUpdate = store.update.bind(store)
+		let updateCount = 0
+		vi.spyOn(store, "update").mockImplementation((activityId, patch) => {
+			updateCount += 1
+			if (updateCount === 2) throw new Error("second update failed")
+			originalUpdate(activityId, patch)
+		})
+
+		expect(await store.moveToBackground(["batch-1"])).toEqual([])
+		expect(rollback).toHaveBeenCalledOnce()
+		expect(store.list().map((activity) => activity.executionMode)).toEqual(["foreground", "foreground"])
+	})
+
+	it("preserves terminal progress when a grouped activity finishes during handoff publication", async () => {
+		let releaseMove: (() => void) | undefined
+		const moverGate = new Promise<void>((resolve) => {
+			releaseMove = resolve
+		})
+		const rollback = vi.fn(async () => undefined)
+		const commit = vi.fn(async () => undefined)
+		const move = vi.fn(async () => {
+			await moverGate
+			return { accepted: true, rollback, commit }
+		})
+		const store = new TaskActivityStore("task-1")
+		for (const activityId of ["batch-1", "batch-2"]) {
+			store.create({
+				activityId,
+				kind: "subagent",
+				executionMode: "foreground",
+				title: activityId,
+				continueInBackground: move,
+				backgroundGroupIds: ["batch-1", "batch-2"],
+			})
+		}
+
+		const handoff = store.moveToBackground(["batch-1"])
+		await Promise.resolve()
+		store.update("batch-2", { status: "completed", result: "finished during publication" })
+		releaseMove?.()
+
+		expect(await handoff).toEqual([])
+		expect(rollback).toHaveBeenCalledOnce()
+		expect(commit).not.toHaveBeenCalled()
+		expect(store.get("batch-2")).toMatchObject({
+			status: "completed",
+			result: "finished during publication",
+			executionMode: "foreground",
+		})
+	})
 })

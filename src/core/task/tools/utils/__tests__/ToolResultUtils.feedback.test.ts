@@ -1,8 +1,7 @@
 import { strict as assert } from "node:assert"
 import type { ToolUse } from "@core/assistant-message"
-import type { TaskConfig } from "@core/task/tools/types/TaskConfig"
 import { MAX_TOOL_RESULT_TEXT_BYTES } from "@shared/content-limits"
-import { describe, expect, it, vi } from "vitest"
+import { describe, expect, it } from "vitest"
 import { ToolResultUtils } from "../ToolResultUtils"
 
 /**
@@ -35,7 +34,7 @@ function describeTool(block: ToolUse): string {
 
 describe("ToolResultUtils approval feedback", () => {
 	it("merges approval feedback into the following native tool_result", () => {
-		const userMessageContent: any[] = []
+		const userMessageContent: Parameters<typeof ToolResultUtils.pushToolResult>[2] = []
 		ToolResultUtils.pushAdditionalToolFeedback(userMessageContent, "请继续，但注意边界", undefined, undefined)
 
 		ToolResultUtils.pushToolResult("File written.", createBlock(), userMessageContent, describeTool, undefined)
@@ -47,12 +46,16 @@ describe("ToolResultUtils approval feedback", () => {
 		assert.equal(toolResult.dline_tid, "dline_tid_call-1")
 		assert.equal("tool_use_id" in toolResult, false)
 		assert.equal("item_id" in toolResult, false)
-		assert.match(toolResult.content[0].text, /\[write_to_file\] Result:\nFile written\./)
-		assert.match(toolResult.content[1].text, /<feedback>\n请继续，但注意边界\n<\/feedback>/)
+		assert.ok(Array.isArray(toolResult.content))
+		const [resultText, feedbackText] = toolResult.content
+		assert.equal(resultText?.type, "text")
+		assert.equal(feedbackText?.type, "text")
+		assert.match(resultText?.type === "text" ? resultText.text : "", /\[write_to_file\] Result:\nFile written\./)
+		assert.match(feedbackText?.type === "text" ? feedbackText.text : "", /<feedback>\n请继续，但注意边界\n<\/feedback>/)
 	})
 
 	it("does not leak approval feedback as a standalone text block", () => {
-		const userMessageContent: any[] = []
+		const userMessageContent: Parameters<typeof ToolResultUtils.pushToolResult>[2] = []
 		ToolResultUtils.pushAdditionalToolFeedback(userMessageContent, "不要单独写入 text", undefined, undefined)
 
 		assert.equal(userMessageContent.length, 1)
@@ -71,7 +74,7 @@ describe("ToolResultUtils approval feedback", () => {
 	})
 
 	it("bounds every canonical result independently across parallel tool calls", () => {
-		const userMessageContent: any[] = []
+		const userMessageContent: Parameters<typeof ToolResultUtils.pushToolResult>[2] = []
 
 		ToolResultUtils.pushToolResult(
 			"😀".repeat(100_000),
@@ -90,44 +93,15 @@ describe("ToolResultUtils approval feedback", () => {
 
 		expect(userMessageContent).toHaveLength(2)
 		for (const result of userMessageContent) {
-			const text = result.content[0].text as string
+			assert.equal(result.type, "tool_result")
+			if (result.type !== "tool_result") throw new Error("Expected canonical tool result")
+			assert.ok(Array.isArray(result.content))
+			const firstBlock = result.content[0]
+			assert.equal(firstBlock?.type, "text")
+			const text = firstBlock?.type === "text" ? firstBlock.text : ""
 			expect(Buffer.byteLength(text, "utf8")).toBeLessThanOrEqual(MAX_TOOL_RESULT_TEXT_BYTES)
 			expect(text).toContain("[FILE TRUNCATED:")
 		}
 		expect(userMessageContent[1]).toMatchObject({ function_id: "call-large-b", dline_tid: "dline_tid_call-large-b" })
-	})
-
-	it("does not render duplicate user_feedback when approval response was already acked", async () => {
-		const userMessageContent: any[] = []
-		const say = vi.fn(async () => undefined)
-		const config = {
-			isSubagentExecution: false,
-			callbacks: {
-				ask: vi.fn(async () => ({ response: "yesButtonClicked", text: "审批补充", images: [], files: [] })),
-				say,
-			},
-			taskState: {
-				userMessageContent,
-				ackedFeedback: {
-					response: "yesButtonClicked",
-					text: "审批补充",
-					images: [],
-					files: [],
-				},
-			},
-			taskController: {
-				rejectActiveBlock: vi.fn(),
-			},
-		} as unknown as TaskConfig
-
-		const approved = await ToolResultUtils.askApprovalAndPushFeedback("tool" as never, "{}", config)
-
-		assert.equal(approved, true)
-		expect(say).not.toHaveBeenCalledWith("user_feedback", "审批补充", [], [])
-		assert.equal(config.taskState.ackedFeedback, undefined)
-		assert.equal(userMessageContent.length, 1)
-		assert.equal(userMessageContent[0].type, "tool_feedback")
-		ToolResultUtils.pushToolResult("Approved.", createBlock(), userMessageContent, describeTool, undefined)
-		assert.match(userMessageContent[0].content[1].text, /<feedback>\n审批补充\n<\/feedback>/)
 	})
 })

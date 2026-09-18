@@ -191,6 +191,28 @@ export const TELEMETRY_METRICS = {
 		CALLS_TOTAL: "dline.tool.calls.total",
 		CALLS_PER_TASK: "dline.tool.calls.per_task",
 	},
+	// Pool measurements are attributed by a `pool` label rather than split into
+	// separate metric names, so one dashboard query compares the tool pool with
+	// the subagent pool and a saturation incident names the limit to lower.
+	//
+	// Occupancy, queue depth and the limit are gauges sampled at admission and
+	// release. The queue wait is the only duration here; it is deliberately a
+	// separate histogram from `tool.execution`, whose buckets describe tool work
+	// rather than time spent waiting for a slot.
+	POOLS: {
+		QUEUE_WAIT_SECONDS: "dline.pool.queue_wait.seconds",
+		RUNNING: "dline.pool.running",
+		QUEUED: "dline.pool.queued",
+		LIMIT: "dline.pool.limit",
+		STARVED_INSTANCES: "dline.pool.starved_instances",
+	},
+	// Fan-out width is recorded as a value, never as a label: a batch may carry
+	// up to MAX_SUBAGENTS_PER_BATCH items, and a per-width time series would add
+	// one series per distinct batch size.
+	SUBAGENT_FANOUT: {
+		BATCH_ITEMS: "dline.subagent.fanout.items",
+		EXPLICIT_PROFILE_ITEMS: "dline.subagent.fanout.explicit_profile_items",
+	},
 	ERRORS: {
 		TOTAL: "dline.errors.total",
 		PER_TASK: "dline.errors.per_task",

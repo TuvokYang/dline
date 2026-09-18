@@ -1,18 +1,16 @@
 import { resolveProvider } from "@core/api"
 import type { ToolUse } from "@core/assistant-message"
-import { getWorkspaceBasename, resolveWorkspacePath } from "@core/workspace"
+import { resolveWorkspacePath } from "@core/workspace"
 import { parseSourceCodeForDefinitionsTopLevel } from "@services/tree-sitter"
 import { getReadablePath, isLocatedInWorkspace } from "@utils/path"
 import { formatResponse } from "@/core/prompts/responses"
 import { telemetryService } from "@/services/telemetry"
 import { ClineDefaultTool } from "@/shared/tools"
 import type { ToolResponse } from "../../index"
-import { showNotificationForApproval } from "../../utils"
 import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
 import type { ToolValidator } from "../ToolValidator"
 import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
-import { ToolResultUtils } from "../utils/ToolResultUtils"
 
 export class ListCodeDefinitionNamesToolHandler implements IFullyManagedTool {
 	readonly name = ClineDefaultTool.LIST_CODE_DEF
@@ -41,17 +39,7 @@ export class ListCodeDefinitionNamesToolHandler implements IFullyManagedTool {
 
 		const partialMessage = JSON.stringify(sharedMessageProps)
 
-		// Handle auto-approval vs manual approval for partial
-		const existingTs = block.ts
-		if (await uiHelpers.shouldAutoApproveToolWithPath(block.name, relPath)) {
-			await uiHelpers.say("tool", partialMessage, undefined, undefined, true, existingTs)
-		} else {
-			uiHelpers
-				.ask("tool", partialMessage, true, {
-					existingTs,
-				})
-				.catch(() => {})
-		}
+		await uiHelpers.say("tool", partialMessage, undefined, undefined, true, block.ts)
 	}
 
 	async execute(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
@@ -68,6 +56,17 @@ export class ListCodeDefinitionNamesToolHandler implements IFullyManagedTool {
 			config.taskState.consecutiveMistakeCount++
 			return await config.callbacks.sayAndCreateMissingParamError(this.name, "path", undefined, block.ts)
 		}
+		if (!relDirPath) throw new Error("Validated list-code-definitions path is missing")
+
+		// Run PreToolUse before the first target parse.
+		try {
+			const { ToolHookUtils } = await import("../utils/ToolHookUtils")
+			await ToolHookUtils.runPreToolUseIfEnabled(config, block)
+		} catch (error) {
+			const { PreToolUseHookCancellationError } = await import("@core/hooks/PreToolUseHookCancellationError")
+			if (error instanceof PreToolUseHookCancellationError) return formatResponse.toolDenied()
+			throw error
+		}
 
 		// Resolve the path and execute the parse operation inside a single
 		// try/catch so that failures in either step (e.g. bad workspace hint,
@@ -77,9 +76,9 @@ export class ListCodeDefinitionNamesToolHandler implements IFullyManagedTool {
 		let displayPath: string
 		let result: string
 		try {
-			const pathResult = resolveWorkspacePath(config, relDirPath!, "ListCodeDefinitionNamesToolHandler.execute")
+			const pathResult = resolveWorkspacePath(config, relDirPath, "ListCodeDefinitionNamesToolHandler.execute")
 			;({ absolutePath, displayPath } =
-				typeof pathResult === "string" ? { absolutePath: pathResult, displayPath: relDirPath! } : pathResult)
+				typeof pathResult === "string" ? { absolutePath: pathResult, displayPath: relDirPath } : pathResult)
 			result = await parseSourceCodeForDefinitionsTopLevel(absolutePath, config.services.ignoreController)
 		} catch (error) {
 			config.taskState.consecutiveMistakeCount++
@@ -108,76 +107,24 @@ export class ListCodeDefinitionNamesToolHandler implements IFullyManagedTool {
 			tool: "listCodeDefinitionNames",
 			path: getReadablePath(config.cwd, displayPath),
 			content: result,
-			operationIsLocatedInWorkspace: await isLocatedInWorkspace(relDirPath!),
+			operationIsLocatedInWorkspace: await isLocatedInWorkspace(relDirPath),
 		}
 
 		const completeMessage = JSON.stringify(sharedMessageProps)
 
-		const shouldAutoApprove =
-			config.isSubagentExecution || (await config.callbacks.shouldAutoApproveToolWithPath(block.name, relDirPath))
-		if (shouldAutoApprove) {
-			// Auto-approval flow
-			if (!config.isSubagentExecution) {
-				const existingTs = block.ts
-				await config.callbacks.say("tool", completeMessage, undefined, undefined, false, existingTs)
-			}
-
-			// Capture telemetry
-			telemetryService.captureToolUsage(
-				config.ulid ?? "",
-				block.name,
-				config.api.getModel().id,
-				provider ?? "",
-				true,
-				true,
-				undefined,
-				block.isNativeToolCall,
-			)
-		} else {
-			// Manual approval flow
-			const notificationMessage = `Dline wants to analyze code definitions in ${getWorkspaceBasename(absolutePath, "ListCodeDefinitionNamesToolHandler.notification")}`
-
-			// Show notification
-			showNotificationForApproval(notificationMessage, config.autoApprovalSettings.enableNotifications)
-
-			const didApprove = await ToolResultUtils.askApprovalAndPushFeedback("tool", completeMessage, config, block.ts)
-			if (!didApprove) {
-				telemetryService.captureToolUsage(
-					config.ulid ?? "",
-					block.name,
-					config.api.getModel().id,
-					provider ?? "",
-					false,
-					false,
-					undefined,
-					block.isNativeToolCall,
-				)
-				return formatResponse.toolDenied()
-			}
-			telemetryService.captureToolUsage(
-				config.ulid ?? "",
-				block.name,
-				config.api.getModel().id,
-				provider ?? "",
-				false,
-				true,
-				undefined,
-				block.isNativeToolCall,
-			)
+		if (!config.isSubagentExecution) {
+			await config.callbacks.say("tool", completeMessage, undefined, undefined, false, block.ts)
 		}
-
-		// Run PreToolUse hook after approval but before execution
-		try {
-			const { ToolHookUtils } = await import("../utils/ToolHookUtils")
-			await ToolHookUtils.runPreToolUseIfEnabled(config, block)
-		} catch (error) {
-			const { PreToolUseHookCancellationError } = await import("@core/hooks/PreToolUseHookCancellationError")
-			if (error instanceof PreToolUseHookCancellationError) {
-				return formatResponse.toolDenied()
-			}
-			throw error
-		}
-
+		telemetryService.captureToolUsage(
+			config.ulid ?? "",
+			block.name,
+			config.api.getModel().id,
+			provider ?? "",
+			!block.dline_tid || !config.admissionOutcomes?.has(block.dline_tid),
+			true,
+			undefined,
+			block.isNativeToolCall,
+		)
 		return result
 	}
 }

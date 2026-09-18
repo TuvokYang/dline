@@ -66,3 +66,30 @@ export function checkRepeatedToolCall(state: TaskState, toolName: string, curren
 		hardEscalation: state.consecutiveIdenticalToolCount === LOOP_DETECTION_HARD_THRESHOLD,
 	}
 }
+
+/**
+ * Compare one call against the previous one and become the previous one.
+ *
+ * Detection is a sequence, not a predicate: it reads the last call, decides,
+ * and then replaces it. Callers had to perform the second half themselves,
+ * which is a contract a caller can only get wrong — and the risk grew once
+ * tools began executing concurrently, because a caller that let an `await`
+ * fall between the two halves would compare later calls against a record its
+ * own call had not yet written. Joining them removes the possibility rather
+ * than relying on every call site to preserve it; no caller has a reason to
+ * observe the state in between.
+ *
+ * This is a synchronous run-to-completion step, so the two halves cannot be
+ * separated by another block once they are here.
+ *
+ * @param state Task state holding the detector's cross-call fields.
+ * @param toolName The tool being called.
+ * @param currentSignature Canonical signature of its parameters.
+ * @returns Which thresholds this call crossed.
+ */
+export function recordToolCall(state: TaskState, toolName: string, currentSignature: string): LoopDetectionResult {
+	const result = checkRepeatedToolCall(state, toolName, currentSignature)
+	state.lastToolName = toolName
+	state.lastToolParams = currentSignature
+	return result
+}

@@ -3,19 +3,17 @@ import { resolveProvider } from "@core/api"
 import { isTaskReadScopePath } from "@core/artifacts/runtime"
 import type { ToolUse } from "@core/assistant-message"
 import { formatResponse } from "@core/prompts/responses"
-import { getWorkspaceBasename, resolveWorkspacePath } from "@core/workspace"
+import { resolveWorkspacePath } from "@core/workspace"
 import { extractFileContent, type FileContentResult } from "@integrations/misc/extract-file-content"
 import { arePathsEqual, getReadablePath, isLocatedInWorkspace } from "@utils/path"
 import { telemetryService } from "@/services/telemetry"
 import { ClineSayTool } from "@/shared/ExtensionMessage"
 import { ClineDefaultTool } from "@/shared/tools"
 import type { ToolResponse } from "../../index"
-import { showNotificationForApproval } from "../../utils"
 import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
 import type { ToolValidator } from "../ToolValidator"
 import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
-import { ToolResultUtils } from "../utils/ToolResultUtils"
 
 export const DEFAULT_MAX_LINES = 1000
 const FILE_TRUNCATED_MARKER = "\n\n---\n\n[FILE TRUNCATED:"
@@ -184,17 +182,7 @@ export class ReadFileToolHandler implements IFullyManagedTool {
 
 		const partialMessage = JSON.stringify(sharedMessageProps)
 
-		// Handle auto-approval vs manual approval for partial
-		const existingTs = block.ts
-		if (await uiHelpers.shouldAutoApproveToolWithPath(block.name, relPath)) {
-			await uiHelpers.say("tool", partialMessage, undefined, undefined, true, existingTs)
-		} else {
-			uiHelpers
-				.ask("tool", partialMessage, true, {
-					existingTs,
-				})
-				.catch(() => {})
-		}
+		await uiHelpers.say("tool", partialMessage, undefined, undefined, true, block.ts)
 	}
 
 	async execute(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
@@ -211,20 +199,21 @@ export class ReadFileToolHandler implements IFullyManagedTool {
 			config.taskState.consecutiveMistakeCount++
 			return await config.callbacks.sayAndCreateMissingParamError(this.name, "path", undefined, block.ts)
 		}
+		if (!relPath) throw new Error("Validated read-file path is missing")
 
 		// Check clineignore access
-		const accessValidation = this.validator.checkClineIgnorePath(relPath!)
+		const accessValidation = this.validator.checkClineIgnorePath(relPath)
 		if (!accessValidation.ok) {
 			if (!config.isSubagentExecution) {
 				await config.callbacks.say("clineignore_error", relPath)
 			}
-			return formatResponse.toolError(formatResponse.clineIgnoreError(relPath!))
+			return formatResponse.toolError(formatResponse.clineIgnoreError(relPath))
 		}
 
 		// Resolve the absolute path based on multi-workspace configuration
-		const pathResult = resolveWorkspacePath(config, relPath!, "ReadFileToolHandler.execute")
+		const pathResult = resolveWorkspacePath(config, relPath, "ReadFileToolHandler.execute")
 		const { absolutePath, displayPath } =
-			typeof pathResult === "string" ? { absolutePath: pathResult, displayPath: relPath! } : pathResult
+			typeof pathResult === "string" ? { absolutePath: pathResult, displayPath: relPath } : pathResult
 
 		// Determine workspace context for telemetry
 		const fallbackAbsolutePath = path.resolve(config.cwd, relPath ?? "")
@@ -240,61 +229,20 @@ export class ReadFileToolHandler implements IFullyManagedTool {
 			tool: "readFile",
 			path: getReadablePath(config.cwd, displayPath),
 			content: absolutePath,
-			operationIsLocatedInWorkspace: await isProjectScopedRead(config, relPath!, absolutePath),
+			operationIsLocatedInWorkspace: await isProjectScopedRead(config, relPath, absolutePath),
 		} satisfies ClineSayTool
 
-		const completeMessage = JSON.stringify(sharedMessageProps)
-
-		const shouldAutoApprove =
-			config.isSubagentExecution || (await config.callbacks.shouldAutoApproveToolWithPath(block.name, relPath))
-		if (shouldAutoApprove) {
-			// Auto-approval flow (completed read is announced after extractFileContent so line range is known)
-			// The complete message is emitted later via emitReadFileToolUiComplete
-			// with the block's ts so the partial row gets replaced in-place.
-
-			// Capture telemetry
-			telemetryService.captureToolUsage(
-				config.ulid ?? "",
-				block.name,
-				config.api.getModel().id,
-				provider ?? "",
-				true,
-				true,
-				workspaceContext,
-				block.isNativeToolCall,
-			)
-		} else {
-			// Manual approval flow
-			const notificationMessage = `Dline wants to read ${getWorkspaceBasename(absolutePath, "ReadFileToolHandler.notification")}`
-
-			// Show notification
-			showNotificationForApproval(notificationMessage, config.autoApprovalSettings.enableNotifications)
-
-			const didApprove = await ToolResultUtils.askApprovalAndPushFeedback("tool", completeMessage, config, block.ts)
-			if (!didApprove) {
-				telemetryService.captureToolUsage(
-					config.ulid ?? "",
-					block.name,
-					config.api.getModel().id,
-					provider ?? "",
-					false,
-					false,
-					workspaceContext,
-					block.isNativeToolCall,
-				)
-				return formatResponse.toolDenied()
-			}
-			telemetryService.captureToolUsage(
-				config.ulid ?? "",
-				block.name,
-				config.api.getModel().id,
-				provider ?? "",
-				false,
-				true,
-				workspaceContext,
-				block.isNativeToolCall,
-			)
-		}
+		void sharedMessageProps
+		telemetryService.captureToolUsage(
+			config.ulid ?? "",
+			block.name,
+			config.api.getModel().id,
+			provider ?? "",
+			!block.dline_tid || !config.admissionOutcomes?.has(block.dline_tid),
+			true,
+			workspaceContext,
+			block.isNativeToolCall,
+		)
 
 		// Run PreToolUse hook after approval but before execution
 		try {
@@ -395,7 +343,7 @@ export class ReadFileToolHandler implements IFullyManagedTool {
 		config.taskState.consecutiveMistakeCount = 0
 
 		// Track file read operation
-		await config.services.fileContextTracker.trackFileContext(relPath!, "read_tool")
+		await config.services.fileContextTracker.trackFileContext(relPath, "read_tool")
 
 		// Cache metadata for deduplication (no content stored �?saves memory)
 		let mtime = 0

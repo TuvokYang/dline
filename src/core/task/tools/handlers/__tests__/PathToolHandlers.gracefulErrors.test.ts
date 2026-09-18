@@ -2,7 +2,7 @@ import { strict as assert } from "node:assert"
 import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
-import { AGENT_IGNORE_FILE } from "@core/ignore/IgnoreController"
+import { AGENT_IGNORE_FILE, type IgnoreController } from "@core/ignore/IgnoreController"
 import { ClineDefaultTool } from "@shared/tools"
 import * as pathUtils from "@utils/path"
 import { afterEach, beforeEach, describe, it, vi } from "vitest"
@@ -29,6 +29,8 @@ import { SearchFilesToolHandler } from "../SearchFilesToolHandler"
  */
 
 let tmpDir: string
+
+type SearchFilesHandlerTestAccess = { determineSearchPaths: () => never }
 
 function createConfig() {
 	const taskState = new TaskState()
@@ -111,7 +113,7 @@ function createConfig() {
 		coordinator: { getHandler: vi.fn() },
 	} as unknown as TaskConfig
 
-	const validator = new ToolValidator({ validateAccess: () => true } as any)
+	const validator = new ToolValidator({ validateAccess: () => true } as unknown as IgnoreController)
 
 	return { config, callbacks, taskState, validator }
 }
@@ -119,10 +121,7 @@ function createConfig() {
 // ─── ListCodeDefinitionNamesToolHandler ─────────────────────────────────────
 
 describe("ListCodeDefinitionNamesToolHandler.execute – error recovery", () => {
-	let sandbox: any /* sinon.SinonSandbox → vitest */
-
 	beforeEach(async () => {
-		sandbox = { mockRestore: () => {} }
 		tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "cline-listdef-test-"))
 		vi.spyOn(pathUtils, "isLocatedInWorkspace").mockResolvedValue(true)
 	})
@@ -271,10 +270,7 @@ describe("ListCodeDefinitionNamesToolHandler.execute – error recovery", () => 
 // ─── ListFilesToolHandler ───────────────────────────────────────────────────
 
 describe("ListFilesToolHandler.execute – error recovery", () => {
-	let sandbox: any /* sinon.SinonSandbox → vitest */
-
 	beforeEach(async () => {
-		sandbox = { mockRestore: () => {} }
 		tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "cline-listfiles-test-"))
 		vi.spyOn(pathUtils, "isLocatedInWorkspace").mockResolvedValue(true)
 	})
@@ -385,27 +381,10 @@ describe("ListFilesToolHandler.execute – error recovery", () => {
 		assert.equal(taskState.consecutiveMistakeCount, 0)
 	})
 
-	it("does not list files before manual approval", async () => {
-		const { config, callbacks, validator } = createConfig()
-		config.isSubagentExecution = false
-		config.taskController = { rejectActiveBlock: vi.fn() } as unknown as TaskConfig["taskController"]
-		callbacks.shouldAutoApproveToolWithPath.mockResolvedValue(false)
-		callbacks.ask.mockResolvedValue({ response: "noButtonClicked" })
-		const listFilesModule = await import("@services/glob/list-files")
-		const listSpy = vi.spyOn(listFilesModule, "listFiles")
-		const handler = new ListFilesToolHandler(validator)
-
-		const result = await handler.execute(config, makeBlock("manual-dir"))
-
-		assert.equal(typeof result, "string")
-		assert.ok((result as string).includes("denied"))
-		assert.equal(listSpy.mock.calls.length, 0)
-	})
-
 	it("increments consecutiveMistakeCount on ignore denial", async () => {
 		const { config, taskState } = createConfig()
 		// Create a validator whose ignoreController blocks all paths
-		const blockingValidator = new ToolValidator({ validateAccess: () => false } as any)
+		const blockingValidator = new ToolValidator({ validateAccess: () => false } as unknown as IgnoreController)
 		const handler = new ListFilesToolHandler(blockingValidator)
 
 		const result = await handler.execute(config, makeBlock("blocked-dir"))
@@ -417,7 +396,7 @@ describe("ListFilesToolHandler.execute – error recovery", () => {
 
 	it("accumulates ignore denials across repeated calls", async () => {
 		const { config, taskState } = createConfig()
-		const blockingValidator = new ToolValidator({ validateAccess: () => false } as any)
+		const blockingValidator = new ToolValidator({ validateAccess: () => false } as unknown as IgnoreController)
 		const handler = new ListFilesToolHandler(blockingValidator)
 
 		await handler.execute(config, makeBlock("blocked-1"))
@@ -430,10 +409,7 @@ describe("ListFilesToolHandler.execute – error recovery", () => {
 // ─── SearchFilesToolHandler ─────────────────────────────────────────────────
 
 describe("SearchFilesToolHandler.execute – error recovery", () => {
-	let sandbox: any /* sinon.SinonSandbox → vitest */
-
 	beforeEach(async () => {
-		sandbox = { mockRestore: () => {} }
 		tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "cline-search-test-"))
 		vi.spyOn(pathUtils, "isLocatedInWorkspace").mockResolvedValue(true)
 	})
@@ -526,7 +502,7 @@ describe("SearchFilesToolHandler.execute – error recovery", () => {
 		const handler = new SearchFilesToolHandler(validator)
 
 		// Stub determineSearchPaths to throw (simulating a bad workspace config)
-		vi.spyOn(handler as any, "determineSearchPaths").mockImplementation(() => {
+		vi.spyOn(handler as unknown as SearchFilesHandlerTestAccess, "determineSearchPaths").mockImplementation(() => {
 			throw new Error("invalid workspace hint")
 		})
 
@@ -543,7 +519,7 @@ describe("SearchFilesToolHandler.execute – error recovery", () => {
 		const { config, taskState, validator } = createConfig()
 		const handler = new SearchFilesToolHandler(validator)
 
-		vi.spyOn(handler as any, "determineSearchPaths").mockImplementation(() => {
+		vi.spyOn(handler as unknown as SearchFilesHandlerTestAccess, "determineSearchPaths").mockImplementation(() => {
 			throw new Error("boom")
 		})
 

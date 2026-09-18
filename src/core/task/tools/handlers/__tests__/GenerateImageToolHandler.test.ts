@@ -5,14 +5,7 @@ import { ImageGenerationError } from "@core/image-generation/contracts"
 import { ClineDefaultTool } from "@shared/tools"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import type { TaskConfig } from "../../types/TaskConfig"
-import { ToolResultUtils } from "../../utils/ToolResultUtils"
 import { GenerateImageToolHandler } from "../GenerateImageToolHandler"
-
-vi.mock("../../utils/ToolResultUtils", () => ({
-	ToolResultUtils: {
-		askApprovalAndPushFeedback: vi.fn(async () => true),
-	},
-}))
 
 const artifact: ImageArtifact = {
 	schemaVersion: 1,
@@ -76,7 +69,6 @@ function createConfig(autoApprove: boolean) {
 		api: { getModel: () => ({ id: "chat-model" }) },
 		services: { imageGenerationService: { resolveProfile, generate } },
 		callbacks: {
-			shouldAutoApproveTool: vi.fn(() => autoApprove),
 			say,
 			ask: vi.fn(async () => ({ response: "yesButtonClicked" })),
 			sayAndCreateMissingParamError: vi.fn(async () => "missing"),
@@ -87,15 +79,6 @@ function createConfig(autoApprove: boolean) {
 
 describe("GenerateImageToolHandler", () => {
 	beforeEach(() => vi.clearAllMocks())
-
-	it("does not invoke the paid service when manual approval is denied", async () => {
-		vi.mocked(ToolResultUtils.askApprovalAndPushFeedback).mockResolvedValueOnce(false)
-		const { config, generate } = createConfig(false)
-
-		await new GenerateImageToolHandler().execute(config, block)
-
-		expect(generate).not.toHaveBeenCalled()
-	})
 
 	it("strictly parses provider-neutral parameters and returns only safe artifact metadata", async () => {
 		const { config, generate, resolveProfile, say } = createConfig(true)

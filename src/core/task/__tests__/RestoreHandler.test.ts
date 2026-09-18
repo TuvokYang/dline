@@ -33,6 +33,15 @@ function createStoredTool(id: string, name: string, input: Record<string, unknow
  * Tests for RestoreHandler — validates all restore modes and replayPendingTools.
  */
 describe("RestoreHandler", () => {
+	function asyncAdmission(kind: "automatic" | "manual"): RestoreContext["prepareAdmission"] {
+		return () => ({
+			outcome: "admitted",
+			decision: { kind, scope: "read_workspace", ceiling: "auto" },
+			lanes: [],
+			run: async () => undefined,
+		})
+	}
+
 	function createMockContext(overrides: Partial<RestoreContext> = {}): RestoreContext {
 		return {
 			taskState: {} as RestoreContext["taskState"],
@@ -51,7 +60,7 @@ describe("RestoreHandler", () => {
 			presentAssistantMessage: async () => {},
 			recursivelyMakeClineRequests: async () => false,
 			postStateToWebview: async () => {},
-			shouldAutoApproveTool: () => false,
+			prepareAdmission: asyncAdmission("manual"),
 			...overrides,
 		}
 	}
@@ -268,14 +277,14 @@ describe("RestoreHandler", () => {
 		assert.ok(overwriteCalled, "Expected overwriteApiConversationHistory to be called")
 	})
 
-	it("replayPendingTools builds turn with the current auto-approval predicate", async () => {
+	it("replayPendingTools rebuilds turn ownership from canonical Admission", async () => {
 		let autoApproveResult: boolean | undefined
 		const ctx = createMockContext({
 			controller: {
 				transitionRequired: () => ({}) as ReturnType<RestoreContext["controller"]["transitionRequired"]>,
 				reset: () => {},
 				buildTurn: (_blocks: ToolUse[], autoApprove: (toolName: string, callId: string) => boolean) => {
-					autoApproveResult = autoApprove("read_file", "call_1")
+					autoApproveResult = autoApprove("read_file", "tid_1")
 				},
 				phase: "idle",
 			} as unknown as RestoreContext["controller"],
@@ -284,7 +293,7 @@ describe("RestoreHandler", () => {
 				overwriteApiConversationHistory: async () => {},
 				clineMessages: [],
 			} as unknown as RestoreContext["messageStateHandler"],
-			shouldAutoApproveTool: (toolName, callId) => toolName === "read_file" && callId === "call_1",
+			prepareAdmission: asyncAdmission("automatic"),
 		})
 
 		const handler = new RestoreHandler(ctx)

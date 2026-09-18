@@ -3,6 +3,7 @@ import type { ICheckpointManager } from "@integrations/checkpoints/types"
 import type { ClineDefaultTool } from "@shared/tools"
 import type { ClineAssistantToolUseBlock, ClineContent, ClineStorageMessage } from "@/shared/messages"
 import { orderTurnEndingContentBlocks } from "./assistant-message-order"
+import type { ToolPreflightResult } from "./executors/tool/ToolPreflight"
 import type { MessageStateHandler } from "./message-state"
 import type { TaskController } from "./TaskController"
 import { TaskPhase } from "./TaskPhase"
@@ -19,8 +20,8 @@ export interface RestoreContext {
 	presentAssistantMessage: () => Promise<void>
 	recursivelyMakeClineRequests: (content: ClineContent[]) => Promise<boolean>
 	postStateToWebview: () => Promise<void>
-	/** Auto-approval predicate matching Task.shouldAutoApproveTool signature */
-	shouldAutoApproveTool: (toolName: string, dlineTid: string) => boolean
+	/** Canonical pure Admission preparation used to rebuild approval ownership. */
+	prepareAdmission: (block: ToolUse) => ToolPreflightResult<void>
 }
 
 export interface PendingToolUseState {
@@ -205,7 +206,14 @@ export class RestoreHandler {
 		taskState.presentAssistantMessageHasPendingUpdates = false
 
 		controller.reset()
-		controller.buildTurn(runtimeToolUses, this.ctx.shouldAutoApproveTool)
+		const admissions = new Map(runtimeToolUses.map((block) => [block.dline_tid, this.ctx.prepareAdmission(block)]))
+		controller.buildTurn(runtimeToolUses, (_toolName, dlineTid) => {
+			const admission = admissions.get(dlineTid)
+			return (
+				admission?.outcome === "admitted" &&
+				(admission.decision.kind === "automatic" || admission.decision.kind === "none")
+			)
+		})
 
 		controller.transitionRequired(TaskPhase.EXECUTING, {
 			apiIndex: pending.assistantIndex,

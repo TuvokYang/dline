@@ -14,12 +14,10 @@ import { ClineSayTool } from "@/shared/ExtensionMessage"
 import { Logger } from "@/shared/services/Logger"
 import { ClineDefaultTool } from "@/shared/tools"
 import type { ToolResponse } from "../../index"
-import { showNotificationForApproval } from "../../utils"
 import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
 import type { ToolValidator } from "../ToolValidator"
 import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
-import { ToolResultUtils } from "../utils/ToolResultUtils"
 
 /**
  * Match and file counts parsed out of one formatted ripgrep result block.
@@ -313,17 +311,7 @@ export class SearchFilesToolHandler implements IFullyManagedTool {
 
 		const partialMessage = JSON.stringify(sharedMessageProps)
 
-		// Handle auto-approval vs manual approval for partial
-		const existingTs = block.ts
-		if (await uiHelpers.shouldAutoApproveToolWithPath(block.name, relPath)) {
-			await uiHelpers.say("tool", partialMessage, undefined, undefined, true, existingTs)
-		} else {
-			uiHelpers
-				.ask("tool", partialMessage, true, {
-					existingTs,
-				})
-				.catch(() => {})
-		}
+		await uiHelpers.say("tool", partialMessage, undefined, undefined, true, block.ts)
 	}
 
 	async execute(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
@@ -342,6 +330,7 @@ export class SearchFilesToolHandler implements IFullyManagedTool {
 			config.taskState.consecutiveMistakeCount++
 			return await config.callbacks.sayAndCreateMissingParamError(this.name, "path", undefined, block.ts)
 		}
+		if (!relDirPath) throw new Error("Validated search-files path is missing")
 
 		if (!regex) {
 			config.taskState.consecutiveMistakeCount++
@@ -355,10 +344,10 @@ export class SearchFilesToolHandler implements IFullyManagedTool {
 		let workspaceHint: string | undefined
 		let searchPaths: ReturnType<SearchFilesToolHandler["determineSearchPaths"]>
 		try {
-			const parsed = parseWorkspaceInlinePath(relDirPath!)
+			const parsed = parseWorkspaceInlinePath(relDirPath)
 			parsedPath = parsed.relPath
 			workspaceHint = parsed.workspaceHint
-			searchPaths = this.determineSearchPaths(config, parsedPath, workspaceHint, relDirPath!)
+			searchPaths = this.determineSearchPaths(config, parsedPath, workspaceHint, relDirPath)
 		} catch (error) {
 			// Tool executed normally — returning a toolError result, not a tool crash.
 			// Do NOT increment consecutiveMistakeCount: the model should see the error
@@ -399,6 +388,16 @@ export class SearchFilesToolHandler implements IFullyManagedTool {
 				undefined, // TODO: could calculate primary workspace index
 				true,
 			)
+		}
+
+		// Run PreToolUse before the first target search.
+		try {
+			const { ToolHookUtils } = await import("../utils/ToolHookUtils")
+			await ToolHookUtils.runPreToolUseIfEnabled(config, block)
+		} catch (error) {
+			const { PreToolUseHookCancellationError } = await import("@core/hooks/PreToolUseHookCancellationError")
+			if (error instanceof PreToolUseHookCancellationError) return formatResponse.toolDenied()
+			throw error
 		}
 
 		// Execute searches in all relevant workspaces in parallel
@@ -443,7 +442,7 @@ export class SearchFilesToolHandler implements IFullyManagedTool {
 
 		const sharedMessageProps = {
 			tool: "searchFiles",
-			path: getReadablePath(config.cwd, relDirPath!),
+			path: getReadablePath(config.cwd, relDirPath),
 			content: results,
 			regex: regex,
 			filePattern: filePattern,
@@ -455,71 +454,19 @@ export class SearchFilesToolHandler implements IFullyManagedTool {
 
 		const completeMessage = JSON.stringify(sharedMessageProps)
 
-		const shouldAutoApprove =
-			config.isSubagentExecution || (await config.callbacks.shouldAutoApproveToolWithPath(block.name, relDirPath))
-		if (shouldAutoApprove) {
-			// Auto-approval flow
-			if (!config.isSubagentExecution) {
-				const existingTs = block.ts
-				await config.callbacks.say("tool", completeMessage, undefined, undefined, false, existingTs)
-			}
-
-			// Capture telemetry
-			telemetryService.captureToolUsage(
-				config.ulid ?? "",
-				block.name,
-				config.api.getModel().id,
-				provider ?? "",
-				true,
-				true,
-				workspaceContext,
-				block.isNativeToolCall,
-			)
-		} else {
-			// Manual approval flow
-			const notificationMessage = `Dline wants to search files for ${regex}`
-
-			// Show notification
-			showNotificationForApproval(notificationMessage, config.autoApprovalSettings.enableNotifications)
-
-			const didApprove = await ToolResultUtils.askApprovalAndPushFeedback("tool", completeMessage, config, block.ts)
-			if (!didApprove) {
-				telemetryService.captureToolUsage(
-					config.ulid ?? "",
-					block.name,
-					config.api.getModel().id,
-					provider ?? "",
-					false,
-					false,
-					workspaceContext,
-					block.isNativeToolCall,
-				)
-				return formatResponse.toolDenied()
-			}
-			telemetryService.captureToolUsage(
-				config.ulid ?? "",
-				block.name,
-				config.api.getModel().id,
-				provider ?? "",
-				false,
-				true,
-				workspaceContext,
-				block.isNativeToolCall,
-			)
+		if (!config.isSubagentExecution) {
+			await config.callbacks.say("tool", completeMessage, undefined, undefined, false, block.ts)
 		}
-
-		// Run PreToolUse hook after approval but before execution
-		try {
-			const { ToolHookUtils } = await import("../utils/ToolHookUtils")
-			await ToolHookUtils.runPreToolUseIfEnabled(config, block)
-		} catch (error) {
-			const { PreToolUseHookCancellationError } = await import("@core/hooks/PreToolUseHookCancellationError")
-			if (error instanceof PreToolUseHookCancellationError) {
-				return formatResponse.toolDenied()
-			}
-			throw error
-		}
-
+		telemetryService.captureToolUsage(
+			config.ulid ?? "",
+			block.name,
+			config.api.getModel().id,
+			provider ?? "",
+			!block.dline_tid || !config.admissionOutcomes?.has(block.dline_tid),
+			true,
+			workspaceContext,
+			block.isNativeToolCall,
+		)
 		return results
 	}
 }

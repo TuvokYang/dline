@@ -481,6 +481,14 @@ function pushSubagentToolResultBlock(
 	})
 }
 
+/**
+ * How long a caller waits for an abandoned tool before reclaiming its slot.
+ *
+ * Long enough for a normal host request or terminal write to unwind, short
+ * enough that one wedged tool cannot stall an entire batch.
+ */
+const ABANDONED_TOOL_SETTLE_TIMEOUT_MS = 30_000
+
 /** Raised when a tool wait is abandoned because the run was interrupted. */
 class SubagentToolInterruptedError extends Error {
 	constructor() {
@@ -506,6 +514,25 @@ export class SubagentRunner {
 	private abortingCommands = false
 	private apiLogRequestIndex = 0
 	private interruptionController: AbortController | undefined
+	/**
+	 * Tool executions the run stopped waiting for but that are still running.
+	 *
+	 * An interrupted run reports `cancelled` immediately while the abandoned
+	 * tool keeps holding a terminal, a file handle or a host request. Treating
+	 * the run as finished at that moment would free a concurrency slot the
+	 * machine has not actually reclaimed, so the abandoned work is tracked and
+	 * the owner of the slot can wait for it.
+	 */
+	private readonly abandonedToolExecutions = new Set<Promise<unknown>>()
+	/**
+	 * Abandoned work whose capacity cost has already been handed to a budget.
+	 *
+	 * A runner outlives its attempts, so a tool wedged during attempt 1 is
+	 * still in `abandonedToolExecutions` when a retry finishes. Without this
+	 * record the retry would charge the same wedged tool a second time and
+	 * shrink the allowance below the work that is genuinely outstanding.
+	 */
+	private readonly claimedAbandonedWork = new Set<Promise<unknown>>()
 
 	constructor(
 		private baseConfig: TaskConfig,
@@ -562,7 +589,14 @@ export class SubagentRunner {
 		const signal = this.interruptionController?.signal
 		const toolExecution = execute()
 		if (!signal) return toolExecution
-		if (signal.aborted) throw new SubagentToolInterruptedError()
+		// An abort that already happened is still an abandonment: the tool has
+		// started and holds resources. Bailing out before the tracking below
+		// would free the slot while that work continues, so the same path is
+		// taken whether the signal fires before or during the wait.
+		if (signal.aborted) {
+			this.trackAbandonedTool(toolExecution)
+			throw new SubagentToolInterruptedError()
+		}
 		let onAbort: (() => void) | undefined
 		try {
 			return await Promise.race([
@@ -574,10 +608,81 @@ export class SubagentRunner {
 			])
 		} finally {
 			if (onAbort) signal.removeEventListener("abort", onAbort)
-			// The abandoned tool keeps running; make sure it cannot surface as an
-			// unhandled rejection after the runner has moved on.
-			void Promise.resolve(toolExecution).catch(() => undefined)
+			if (signal.aborted) this.trackAbandonedTool(toolExecution)
 		}
+	}
+
+	/**
+	 * Keep an abandoned tool observable after the run has moved on.
+	 *
+	 * The rejection is swallowed here because nothing is waiting on the result
+	 * any more; the purpose of holding the promise is only to know when the
+	 * work stops.
+	 *
+	 * @param toolExecution The still-running tool call.
+	 */
+	private trackAbandonedTool(toolExecution: Promise<unknown>): void {
+		const settled = Promise.resolve(toolExecution).catch(() => undefined)
+		this.abandonedToolExecutions.add(settled)
+		void settled.finally(() => {
+			this.abandonedToolExecutions.delete(settled)
+			this.claimedAbandonedWork.delete(settled)
+		})
+	}
+
+	/**
+	 * Wait until every tool this run abandoned has stopped.
+	 *
+	 * Resolves immediately when nothing was abandoned, which is the normal
+	 * path. A caller that releases a concurrency permit on the run's behalf
+	 * awaits this first so the reported capacity matches the real one.
+	 *
+	 * The wait is bounded: a tool that never settles is exactly the failure
+	 * this mechanism exists for, and blocking forever would stop the remaining
+	 * batch items from ever running. On timeout the caller proceeds and the
+	 * capacity estimate is knowingly optimistic rather than deadlocked.
+	 *
+	 * @param timeoutMs Maximum time to wait before giving up.
+	 * @returns Whether all abandoned work stopped within the deadline.
+	 */
+	/**
+	 * Take ownership of the abandoned work nobody is accounting for yet.
+	 *
+	 * A caller that gave up waiting uses this to keep accounting honest: the
+	 * permit can go back while the allowance stays reduced until the returned
+	 * promise settles. The claim is one-shot, because the same wedged tool
+	 * survives into later attempts on this runner and must be charged once,
+	 * not once per attempt.
+	 *
+	 * @returns A promise settling when every newly claimed tool stops, or
+	 *   undefined when nothing is outstanding beyond what was already claimed.
+	 */
+	claimOutstandingAbandonedWork(): Promise<unknown> | undefined {
+		const unclaimed = [...this.abandonedToolExecutions].filter((work) => !this.claimedAbandonedWork.has(work))
+		if (unclaimed.length === 0) return undefined
+		for (const work of unclaimed) {
+			this.claimedAbandonedWork.add(work)
+		}
+		return Promise.all(unclaimed)
+	}
+
+	async whenAbandonedWorkSettled(timeoutMs = ABANDONED_TOOL_SETTLE_TIMEOUT_MS): Promise<boolean> {
+		const deadline = Date.now() + timeoutMs
+		while (this.abandonedToolExecutions.size > 0) {
+			const remaining = deadline - Date.now()
+			if (remaining <= 0) return false
+			let timer: NodeJS.Timeout | undefined
+			const expired = new Promise<"expired">((resolve) => {
+				timer = setTimeout(() => resolve("expired"), remaining)
+			})
+			try {
+				const outcome = await Promise.race([Promise.all([...this.abandonedToolExecutions]), expired])
+				if (outcome === "expired") return false
+			} finally {
+				if (timer) clearTimeout(timer)
+			}
+		}
+		return true
 	}
 
 	private async interruptActiveWork(action: "abort" | "finish"): Promise<void> {
@@ -1400,7 +1505,7 @@ export class SubagentRunner {
 						webSearchRoutingPlan,
 						imageGenerationService,
 					)
-					const handler = this.baseConfig.coordinator.getHandler(toolName)
+					const handler = subagentConfig.coordinator.getHandler(toolName)
 					let toolResult: unknown
 					let toolError: string | undefined
 
@@ -1409,9 +1514,40 @@ export class SubagentRunner {
 						toolResult = formatResponse.toolError(toolError)
 					} else {
 						try {
-							toolResult = await this.executeToolWithInterruption(() =>
-								handler.execute(subagentConfig, toolCallBlock),
+							let admission = subagentConfig.coordinator.prepareAdmission(
+								toolCallBlock,
+								{
+									taskId: subagentConfig.taskId,
+									cwd: subagentConfig.cwd,
+									workspaceRoots: subagentConfig.workspaceManager?.getRoots().map((root) => root.path) ?? [
+										subagentConfig.cwd,
+									],
+									workspaceRootEntries: subagentConfig.workspaceManager
+										?.getRoots()
+										.map((root) => ({ name: root.name || path.basename(root.path), path: root.path })),
+									primaryWorkspaceRoot: subagentConfig.workspaceManager?.getPrimaryRoot()?.path,
+									isMultiRootEnabled: subagentConfig.isMultiRootEnabled,
+									settings: subagentConfig.autoApprovalSettings,
+									blanket: {
+										yoloMode: subagentConfig.yoloModeToggled,
+										approveAll:
+											subagentConfig.services.stateManager.getGlobalSettingsKey("autoApproveAllToggled") ===
+											true,
+									},
+									inheritsApproval: true,
+								},
+								() => handler.execute(subagentConfig, toolCallBlock),
 							)
+							if (admission.outcome === "admitted" && admission.confirm) admission = await admission.confirm()
+							if (admission.outcome === "rejected") {
+								throw new Error(admission.rejection.message)
+							}
+							if (admission.decision.kind !== "none" && admission.decision.kind !== "automatic") {
+								throw new Error(
+									`Tool '${toolName}' requires ${admission.decision.kind} approval for ${admission.decision.scope}, which is unavailable inside a subagent run.`,
+								)
+							}
+							toolResult = await this.executeToolWithInterruption(admission.run)
 						} catch (error) {
 							// An interrupted wait is not a tool failure: fall through to the
 							// abort check below so the run reports `cancelled`.

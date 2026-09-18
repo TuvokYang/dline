@@ -75,11 +75,9 @@ export const toolParamNames = [
 	"to_ref",
 	"skill_name",
 	"name",
-	"prompt_1",
-	"prompt_2",
-	"prompt_3",
-	"prompt_4",
-	"prompt_5",
+	// The batch subagent tool takes one structured list. Over XML it arrives as
+	// JSON text, because that transport carries every parameter as a string.
+	"subagents",
 	"start_line",
 	"end_line",
 	"show_metadata",
@@ -134,7 +132,7 @@ export interface ReasoningStreamContent {
 	/**
 	 * openrouter has various properties that we can pass back unmodified in api requests to preserve reasoning traces
 	 */
-	details?: any
+	details?: unknown
 	/**
 	 * It's used when sending the thinking block back to the  API.
 	 * API expects this in completed form, not as array of deltas.

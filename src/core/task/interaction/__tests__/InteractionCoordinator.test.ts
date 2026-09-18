@@ -306,8 +306,18 @@ describe("InteractionCoordinator", () => {
 	})
 
 	it.each([
-		{ actionId: "approve" as const, expectedPhase: BlockPhase.EXECUTING, siblingPhase: BlockPhase.STREAMING },
-		{ actionId: "reject" as const, expectedPhase: BlockPhase.REJECTED, siblingPhase: BlockPhase.SKIPPED },
+		{
+			actionId: "approve" as const,
+			expectedPhase: BlockPhase.EXECUTING,
+			initialSiblingPhase: BlockPhase.STREAMING,
+			siblingPhase: BlockPhase.STREAMING,
+		},
+		{
+			actionId: "reject" as const,
+			expectedPhase: BlockPhase.REJECTED,
+			initialSiblingPhase: BlockPhase.AUTO_EXECUTING,
+			siblingPhase: BlockPhase.SKIPPED,
+		},
 	])("propagates detached approval action $actionId into the canonical runtime block", async (testCase) => {
 		const turnId = "turn-tools"
 		const interactionId = "tid-write"
@@ -316,6 +326,11 @@ describe("InteractionCoordinator", () => {
 			assistantApiIndex: 2,
 			mode: "serial",
 			activeDlineTid: interactionId,
+			approval: {
+				manual: { dlineTid: interactionId, stage: "admission" },
+				automatic: testCase.actionId === "reject" ? ["tid-second"] : [],
+			},
+			executing: [],
 			blocks: [
 				{
 					dlineTid: interactionId,
@@ -330,7 +345,7 @@ describe("InteractionCoordinator", () => {
 					dlineTid: "tid-second",
 					functionId: "function-second",
 					toolName: "execute_command",
-					phase: BlockPhase.STREAMING,
+					phase: testCase.initialSiblingPhase,
 					ts: 101,
 					requiresApproval: true,
 					conversationHistoryIndex: 2,
@@ -373,6 +388,51 @@ describe("InteractionCoordinator", () => {
 			{ dlineTid: "tid-second", phase: testCase.siblingPhase },
 		])
 		expect(runtime.getState().interaction).toBeUndefined()
+	})
+
+	it("accepts the opening revision after an unrelated sibling advances runtime state", async () => {
+		const turnId = "turn-tools"
+		const interactionId = "tid-write"
+		const hydrated = hydrateAwaitingInteraction({
+			kind: "tool_approval",
+			phase: TaskPhase.AWAITING_APPROVAL,
+			turnId,
+			interactionId,
+			turn: {
+				turnId,
+				assistantApiIndex: 2,
+				mode: "parallel",
+				activeDlineTid: interactionId,
+				blocks: [
+					{
+						dlineTid: interactionId,
+						functionId: "function-write",
+						toolName: "write_to_file",
+						phase: BlockPhase.AWAITING_APPROVAL,
+						ts: 100,
+						requiresApproval: true,
+						conversationHistoryIndex: 2,
+					},
+				],
+			},
+		})
+		const openingRevision = hydrated.interaction?.createdRevision ?? hydrated.revision
+		hydrated.revision += 2
+		const runtime = new TaskRuntime(hydrated, createPorts())
+		const coordinator = new InteractionCoordinator(runtime)
+		coordinator.registerDetachedContinuation(vi.fn(async () => undefined))
+
+		const result = await coordinator.respond({
+			taskId: "task-1",
+			turnId,
+			interactionId,
+			actionId: "approve",
+			stateRevision: openingRevision,
+			draft: { text: "", images: [], files: [] },
+		})
+
+		expect(result.accepted).toBe(true)
+		expect(runtime.getState().turn?.blocks[0]).toMatchObject({ phase: BlockPhase.EXECUTING })
 	})
 
 	it("commits detached completion feedback through the completion event", async () => {

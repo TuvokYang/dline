@@ -12,6 +12,7 @@ import { describe, expect, it } from "vitest"
  */
 describe("Task startup blocking", () => {
 	const taskSourcePath = path.resolve(__dirname, "../index.ts")
+	const turnDriverSourcePath = path.resolve(__dirname, "../executors/tool/TurnDriver.ts")
 
 	async function readStartTaskBody(): Promise<string> {
 		const source = await readFile(taskSourcePath, "utf8")
@@ -103,12 +104,13 @@ describe("Task startup blocking", () => {
 		expect(partialGate).toBeGreaterThan(presentationStart)
 		expect(partialGate).toBeLessThan(partialEffect)
 
-		const finalizationStart = source.indexOf("private async executeFinalizedAssistantTurn", presentationStart)
-		const finalizationGate = source.indexOf(
-			"await this.awaitInitialCheckpointBeforeToolSideEffects(tool.name)",
+		const turnDriverSource = await readFile(turnDriverSourcePath, "utf8")
+		const finalizationStart = turnDriverSource.indexOf("async execute(")
+		const finalizationGate = turnDriverSource.indexOf(
+			"await this.ports.block.awaitInitialCheckpoint(tool.name)",
 			finalizationStart,
 		)
-		const finalizationEffect = source.indexOf('type: "BLOCK_EXECUTION_STARTED"', finalizationStart)
+		const finalizationEffect = turnDriverSource.indexOf('type: "BLOCK_EXECUTION_STARTED"', finalizationStart)
 		expect(finalizationGate).toBeGreaterThan(finalizationStart)
 		expect(finalizationGate).toBeLessThan(finalizationEffect)
 	})

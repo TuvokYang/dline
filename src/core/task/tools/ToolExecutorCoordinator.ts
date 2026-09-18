@@ -1,6 +1,13 @@
 import type { ToolUse } from "@core/assistant-message"
 import { CLINE_MCP_TOOL_IDENTIFIER } from "@/shared/mcp"
 import { ClineDefaultTool } from "@/shared/tools"
+import { prepareRegisteredToolAdmission, type ToolAdmissionSnapshot } from "../executors/tool/ToolAdmissionRegistry"
+import {
+	rejectToolCall,
+	type ToolApprovalPresentation,
+	type ToolPreflightResult,
+	type ToolSideEffect,
+} from "../executors/tool/ToolPreflight"
 import { AccessMcpResourceHandler } from "./handlers/AccessMcpResourceHandler"
 import { ActModeRespondHandler } from "./handlers/ActModeRespondHandler"
 import { ApplyPatchHandler } from "./handlers/ApplyPatchHandler"
@@ -48,8 +55,17 @@ export interface IPartialBlockHandler {
 	handlePartialBlock(block: ToolUse, uiHelpers: StronglyTypedUIHelpers): Promise<void>
 }
 
+export type ToolHandlerPreparationResult =
+	| { outcome: "prepared"; presentation: ToolApprovalPresentation }
+	| { outcome: "rejected"; message: string }
+
+export interface IPreparableToolHandler extends IToolHandler {
+	prepare(config: TaskConfig, block: ToolUse): Promise<ToolHandlerPreparationResult>
+	discardPrepared(block: ToolUse): void
+}
+
 export interface IFullyManagedTool extends IToolHandler, IPartialBlockHandler {
-	// Marker interface for tools that handle their own complete approval flow
+	// Legacy marker name retained for compatibility; partial methods are presentation-only.
 }
 
 /**
@@ -81,6 +97,7 @@ export class SharedToolHandler implements IFullyManagedTool {
  */
 export class ToolExecutorCoordinator {
 	private handlers = new Map<string, IToolHandler>()
+	private readonly preparedHandlers = new Map<string, { handler: IPreparableToolHandler; block: ToolUse }>()
 
 	private readonly toolHandlersMap: Record<ClineDefaultTool, (v: ToolValidator) => IToolHandler | undefined> = {
 		[ClineDefaultTool.ASK]: (_v: ToolValidator) => new AskFollowupQuestionToolHandler(),
@@ -157,17 +174,63 @@ export class ToolExecutorCoordinator {
 	 * Get a handler for the given tool name
 	 */
 	getHandler(toolName: string): IToolHandler | undefined {
-		// HACK: Normalize MCP tool names to the standard handler
-		if (toolName.includes(CLINE_MCP_TOOL_IDENTIFIER)) {
-			toolName = ClineDefaultTool.MCP_USE
-		}
-
-		const staticHandler = this.handlers.get(toolName)
+		const staticHandler = this.handlers.get(this.canonicalToolName(toolName))
 		if (staticHandler) {
 			return staticHandler
 		}
 
 		return undefined
+	}
+
+	/** Prepare one registry-owned admission without starting the handler. */
+	prepareAdmission<T>(
+		block: ToolUse,
+		snapshot: ToolAdmissionSnapshot,
+		run: ToolSideEffect<T>,
+		snapshotProvider?: () => ToolAdmissionSnapshot,
+	): ToolPreflightResult<T> {
+		const canonicalToolName = this.canonicalToolName(block.name)
+		const handler = this.handlers.get(canonicalToolName)
+		if (!handler) {
+			return rejectToolCall({
+				reason: "unsupported_tool",
+				message: `No handler registered for tool: ${block.name}`,
+			})
+		}
+		return prepareRegisteredToolAdmission({
+			canonicalToolName: canonicalToolName as ClineDefaultTool,
+			block,
+			description: handler.getDescription(block),
+			snapshot,
+			snapshotProvider,
+			run,
+		})
+	}
+
+	async prepareExecution(config: TaskConfig, block: ToolUse): Promise<ToolHandlerPreparationResult | undefined> {
+		const handler = this.getHandler(block.name)
+		if (!handler || !("prepare" in handler) || !("discardPrepared" in handler)) return undefined
+		const preparation = await (handler as IPreparableToolHandler).prepare(config, block)
+		if (preparation.outcome === "prepared" && block.dline_tid) {
+			this.preparedHandlers.set(block.dline_tid, { handler: handler as IPreparableToolHandler, block })
+		}
+		return preparation
+	}
+
+	discardPreparedExecution(dlineTid: string): void {
+		const prepared = this.preparedHandlers.get(dlineTid)
+		if (!prepared) return
+		this.preparedHandlers.delete(dlineTid)
+		prepared.handler.discardPrepared(prepared.block)
+	}
+
+	/** Registered names exposed for exhaustive admission coverage tests. */
+	getRegisteredToolNames(): string[] {
+		return Array.from(this.handlers.keys())
+	}
+
+	private canonicalToolName(toolName: string): string {
+		return toolName.includes(CLINE_MCP_TOOL_IDENTIFIER) ? ClineDefaultTool.MCP_USE : toolName
 	}
 
 	/**
@@ -178,6 +241,7 @@ export class ToolExecutorCoordinator {
 		if (!handler) {
 			throw new Error(`No handler registered for tool: ${block.name}`)
 		}
+		if (block.dline_tid) this.preparedHandlers.delete(block.dline_tid)
 		return handler.execute(config, block)
 	}
 }

@@ -3,7 +3,9 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import "should"
+import type { ToolUse } from "@core/assistant-message"
 import { ClineDefaultTool } from "@/shared/tools"
+import type { TaskConfig } from "../../types/TaskConfig"
 import { SpawnTaskHandler } from "../SpawnTaskHandler"
 
 const spawnMocks = vi.hoisted(() => ({
@@ -51,7 +53,7 @@ describe("SpawnTaskHandler", () => {
 		})
 
 		it("should return description with spawn_task tag", () => {
-			const desc = handler.getDescription({ name: "spawn_task" } as any)
+			const desc = handler.getDescription({ name: "spawn_task" } as unknown as ToolUse)
 			desc.should.match(/\[spawn_task\]/)
 		})
 	})
@@ -71,9 +73,9 @@ describe("SpawnTaskHandler", () => {
 					say: async () => {},
 				},
 				services: { stateManager: {} },
-			} as any
+			} as unknown as TaskConfig
 
-			await handler.execute(config, { name: "spawn_task", params: {} } as any)
+			await handler.execute(config, { name: "spawn_task", params: {} } as unknown as ToolUse)
 			called.should.be.true()
 			config.taskState.consecutiveMistakeCount.should.equal(1)
 		})
@@ -93,13 +95,13 @@ describe("SpawnTaskHandler", () => {
 					say: async () => {},
 				},
 				services: { stateManager: {} },
-			} as any
+			} as unknown as TaskConfig
 
 			await handler.execute(config, {
 				name: "spawn_task",
 				dline_tid: "tid-reset",
 				params: { task: "Test task", mode: "plan" },
-			} as any)
+			} as unknown as ToolUse)
 			config.taskState.consecutiveMistakeCount.should.equal(0)
 		})
 
@@ -108,13 +110,13 @@ describe("SpawnTaskHandler", () => {
 			const config = {
 				taskState: { consecutiveMistakeCount: 0 },
 				callbacks: { sayAndCreateMissingParamError },
-			} as any
+			} as unknown as TaskConfig
 
 			const result = await handler.execute(config, {
 				name: "spawn_task",
 				dline_tid: "tid-missing-mode",
 				params: { task: "Test task" },
-			} as any)
+			} as unknown as ToolUse)
 
 			expect(result).toBe("Missing mode error")
 			expect(config.taskState.consecutiveMistakeCount).toBe(1)
@@ -126,78 +128,17 @@ describe("SpawnTaskHandler", () => {
 			const config = {
 				taskState: { consecutiveMistakeCount: 0 },
 				interactions: { open },
-			} as any
+			} as unknown as TaskConfig
 
 			const result = await handler.execute(config, {
 				name: "spawn_task",
 				dline_tid: "tid-invalid-mode",
 				params: { task: "Test task", mode: "review" },
-			} as any)
+			} as unknown as ToolUse)
 
 			expect(result).toMatch(/Invalid mode 'review'/)
 			expect(config.taskState.consecutiveMistakeCount).toBe(1)
 			expect(open).not.toHaveBeenCalled()
-		})
-	})
-
-	describe("execute — user denies spawn", () => {
-		it("should return toolDenied when user clicks no", async () => {
-			const config = {
-				taskId: "parent-1",
-				taskState: { consecutiveMistakeCount: 0 },
-				taskController: { rejectActiveBlock: () => {} },
-				interactions: {
-					open: async () => ({ actionId: "reject" }),
-				},
-				callbacks: {
-					ask: async () => ({
-						response: "noButtonClicked",
-						text: undefined,
-						images: undefined,
-					}),
-					say: async () => {},
-				},
-				services: { stateManager: {} },
-			} as any
-
-			const result = await handler.execute(config, {
-				name: "spawn_task",
-				dline_tid: "tid-deny",
-				params: { task: "Test task", mode: "plan" },
-			} as any)
-
-			result.should.match(/denied|not approved/i)
-		})
-
-		it("should return feedback when user provided text instead of approving", async () => {
-			const config = {
-				taskId: "parent-1",
-				taskState: { consecutiveMistakeCount: 0 },
-				taskController: { rejectActiveBlock: () => {} },
-				interactions: {
-					open: async () => ({
-						actionId: "reject",
-						draft: { text: "I want to modify the task first", images: [], files: [] },
-					}),
-				},
-				callbacks: {
-					ask: async () => ({
-						response: "text",
-						text: "I want to modify the task first",
-						images: undefined,
-					}),
-					say: async () => {},
-				},
-				services: { stateManager: {} },
-			} as any
-
-			const result = await handler.execute(config, {
-				name: "spawn_task",
-				dline_tid: "tid-feedback",
-				params: { task: "Test task", mode: "act", context: "some context" },
-			} as any)
-
-			result.should.match(/feedback/)
 		})
 	})
 
@@ -220,12 +161,10 @@ describe("SpawnTaskHandler", () => {
 				await options?.beforeStart?.("child-1")
 				return "child-1"
 			})
-			const open = vi.fn(async () => ({ actionId: "approve" }))
 			const config = {
 				taskId: "parent-1",
 				mode: "plan",
 				taskState: { consecutiveMistakeCount: 0, abort: false },
-				interactions: { open },
 				callbacks: { say: async () => {} },
 				services: {
 					stateManager: {
@@ -236,25 +175,19 @@ describe("SpawnTaskHandler", () => {
 					},
 				},
 				controllerContext: {},
-			} as any
+			} as unknown as TaskConfig
 
 			const execution = handler.execute(config, {
 				name: "spawn_task",
 				dline_tid: "tid-background",
 				params: { task: "Background child", mode: requestedMode, context: "Context" },
-			} as any)
+			} as unknown as ToolUse)
 			const result = await Promise.race([
 				execution,
 				new Promise<string>((resolve) => setTimeout(() => resolve("SPAWN_BLOCKED"), 25)),
 			])
 
 			expect(result).not.toBe("SPAWN_BLOCKED")
-			expect(open).toHaveBeenCalledWith(
-				expect.objectContaining({
-					kind: "spawn_task_approval",
-					presentation: JSON.stringify({ task: "Background child", mode: requestedMode, context: "Context" }),
-				}),
-			)
 			expect(result).toContain(`${requestedMode.toUpperCase()} task`)
 			expect(result).toContain("child-1")
 			expect(spawnMocks.initTask).toHaveBeenCalledWith(
@@ -284,13 +217,13 @@ describe("SpawnTaskHandler", () => {
 					},
 				},
 				controllerContext: {},
-			} as any
+			} as unknown as TaskConfig
 
 			const result = await handler.execute(config, {
 				name: "spawn_task",
 				dline_tid: "tid-init-error",
 				params: { task: "Failing child", mode: "plan" },
-			} as any)
+			} as unknown as ToolUse)
 
 			expect(result).toMatch(/init failed/i)
 			expect(spawnMocks.disposePanel).toHaveBeenCalledOnce()
@@ -311,13 +244,13 @@ describe("SpawnTaskHandler", () => {
 				},
 				services: { stateManager: {} },
 				controllerContext: undefined,
-			} as any
+			} as unknown as TaskConfig
 
 			const result = await handler.execute(config, {
 				name: "spawn_task",
 				dline_tid: "tid-error",
 				params: { task: "Test task", mode: "plan" },
-			} as any)
+			} as unknown as ToolUse)
 
 			result.should.match(/spawn task failed/i)
 		})

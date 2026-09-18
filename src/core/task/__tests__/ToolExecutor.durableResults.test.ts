@@ -5,6 +5,7 @@ import { ApiFormat, ServerTool } from "@shared/proto/dline/models/metadata"
 import { WebToolsMode } from "@shared/proto/dline/provider/common"
 import { ClineDefaultTool } from "@shared/tools"
 import { describe, expect, it, vi } from "vitest"
+import type { ClineUserToolResultContentBlock } from "@/shared/messages/content"
 import { InteractionCancellationError } from "../interaction/InteractionCancellationError"
 import { ToolExecutor } from "../ToolExecutor"
 import { ToolResultUtils } from "../tools/utils/ToolResultUtils"
@@ -38,8 +39,20 @@ interface HarnessOptions {
 	webSearchRoutingPlan?: WebSearchRoutingPlan
 }
 
+type ToolExecutorHarness = {
+	execute(block: ToolUse, config?: object): Promise<boolean>
+	commitRestoredToolResult(content: Parameters<typeof ToolResultUtils.pushToolResult>[0], block: ToolUse): Promise<void>
+	pushToolResult: (content: Parameters<typeof ToolResultUtils.pushToolResult>[0], block: ToolUse, isError?: boolean) => void
+}
+
+function requireCanonicalResult(content: Parameters<typeof ToolResultUtils.pushToolResult>[2]): ClineUserToolResultContentBlock {
+	const result = content.find((item): item is ClineUserToolResultContentBlock => item.type === "tool_result")
+	assert.ok(result)
+	return result
+}
+
 function createHarness(options: HarnessOptions = {}) {
-	const userMessageContent: any[] = []
+	const userMessageContent: Parameters<typeof ToolResultUtils.pushToolResult>[2] = []
 	const say = vi.fn(async () => 1)
 	const updateFCListFromToolResponse = vi.fn(async () => undefined)
 	const partialRender = vi.fn(async () => undefined)
@@ -55,7 +68,7 @@ function createHarness(options: HarnessOptions = {}) {
 			return "tool completed"
 		}),
 	}
-	const executor = Object.create(ToolExecutor.prototype) as any
+	const executor = Object.create(ToolExecutor.prototype) as ToolExecutorHarness
 	Object.assign(executor, {
 		taskState: {
 			abort: false,
@@ -92,7 +105,7 @@ function createHarness(options: HarnessOptions = {}) {
 
 	// The production method is an instance field. Install the same implementation
 	// without constructing the executor's unrelated VS Code services.
-	executor.pushToolResult = (content: any, block: ToolUse, isError?: boolean) =>
+	executor.pushToolResult = (content, block, isError) =>
 		ToolResultUtils.pushToolResult(
 			content,
 			block,
@@ -163,7 +176,6 @@ describe("ToolExecutor durable tool results", () => {
 		})
 		const block = createBlock("task_progress", { task_progress: "- [x] Inspect runtime state" })
 
-		expect(executor.isBlockApproved(block)).toBe(true)
 		await executor.execute(block, {})
 
 		expect(coordinator.execute).not.toHaveBeenCalled()
@@ -216,7 +228,6 @@ describe("ToolExecutor durable tool results", () => {
 		const { coordinator, executor, say } = createHarness({ allowedNativeToolNames: [] })
 		const block = createBlock(ClineDefaultTool.FILE_READ)
 
-		expect(executor.isBlockApproved(block)).toBe(true)
 		const handled = await executor.execute(block, {})
 
 		expect(handled).toBe(true)
@@ -329,7 +340,6 @@ describe("ToolExecutor durable tool results", () => {
 		})
 		const block = createBlock("not_registered", {})
 
-		expect(executor.isBlockApproved(block)).toBe(true)
 		const handled = await executor.execute(block, {})
 
 		expect(handled).toBe(true)
@@ -345,7 +355,7 @@ describe("ToolExecutor durable tool results", () => {
 		await executor.commitRestoredToolResult("File written.", block)
 
 		assert.equal(userMessageContent.length, 1)
-		const canonical = userMessageContent[0]
+		const canonical = requireCanonicalResult(userMessageContent)
 		const rows = partialResultRows(say)
 		assert.equal(rows.length, 1)
 		expect(JSON.parse(rows[0])).toEqual({
@@ -355,8 +365,12 @@ describe("ToolExecutor durable tool results", () => {
 			content: canonical.content,
 			is_error: null,
 		})
-		expect(canonical.content[0].text).toContain("[write_to_file] Result:\nFile written.")
-		expect(canonical.content[1].text).toContain("keep the public API stable")
+		assert.ok(Array.isArray(canonical.content))
+		const [resultText, feedbackText] = canonical.content
+		assert.equal(resultText?.type, "text")
+		assert.equal(feedbackText?.type, "text")
+		expect(resultText?.type === "text" ? resultText.text : "").toContain("[write_to_file] Result:\nFile written.")
+		expect(feedbackText?.type === "text" ? feedbackText.text : "").toContain("keep the public API stable")
 	})
 
 	it("replaces an interrupted result with restored structured completion feedback", async () => {
@@ -381,7 +395,7 @@ describe("ToolExecutor durable tool results", () => {
 			dline_tid: block.dline_tid,
 			content: [{ type: "text", text: "The user provided restored completion feedback." }],
 		})
-		expect(userMessageContent[0].is_error).not.toBe(true)
+		expect(requireCanonicalResult(userMessageContent).is_error).not.toBe(true)
 		expect(JSON.parse(partialResultRows(say).at(-1) ?? "null")).toMatchObject({
 			function_id: block.function_id,
 			dline_tid: block.dline_tid,
@@ -419,7 +433,7 @@ describe("ToolExecutor durable tool results", () => {
 		const rows = partialResultRows(say)
 		assert.equal(rows.length, 1)
 		const persisted = JSON.parse(rows[0])
-		const canonical = userMessageContent.find((item) => item.type === "tool_result")
+		const canonical = requireCanonicalResult(userMessageContent)
 		expect(persisted).toEqual({
 			version: 1,
 			function_id: canonical.function_id,

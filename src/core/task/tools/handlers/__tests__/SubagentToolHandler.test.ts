@@ -1,15 +1,21 @@
 import { strict as assert } from "node:assert"
 import { setTimeout as delay } from "node:timers/promises"
+import type { ToolUse } from "@core/assistant-message"
+// sinon import removed: using vitest globals
+import * as ApiProfilesModule from "@core/controller/file/getApiProfiles"
+import { telemetryService } from "@services/telemetry"
+import { MAX_SUBAGENTS_PER_BATCH } from "@shared/concurrency-limits"
 import { ClineSubagentUsageInfo } from "@shared/ExtensionMessage"
 import { createTaskCapabilityToggles } from "@shared/TaskCapabilityToggles"
 import type { TaskActivityEventInput } from "@shared/task-activity"
 import { ClineDefaultTool } from "@shared/tools"
 import { expect } from "chai"
 import { afterEach, describe, it, vi, expect as vitestExpect } from "vitest"
-// sinon import removed: using vitest globals
 import { TaskActivityStore } from "../../../activity/TaskActivityStore"
 import { TaskState } from "../../../TaskState"
+import type { ResolvedAgentConfig } from "../../subagent/AgentConfigLoader"
 import * as AgentConfigModule from "../../subagent/AgentConfigLoader"
+import { SubagentBuilder } from "../../subagent/SubagentBuilder"
 import { SubagentRunner, type SubagentRunResult } from "../../subagent/SubagentRunner"
 import type { TaskConfig } from "../../types/TaskConfig"
 import { createUIHelpers } from "../../types/UIHelpers"
@@ -20,21 +26,23 @@ import {
 	UseSubagentToolHandler as UseSubagentToolHandlerImpl,
 } from "../SubagentToolHandler"
 
+type TestToolUse = Omit<ToolUse, "function_id" | "dline_tid"> & Partial<Pick<ToolUse, "function_id" | "dline_tid">>
+
 class UseSubagentsToolHandler extends UseSubagentsToolHandlerImpl {
-	override execute(config: TaskConfig, block: any) {
+	override execute(config: TaskConfig, block: TestToolUse) {
 		return super.execute(config, {
+			...block,
 			function_id: block.function_id ?? "test_subagents_function",
 			dline_tid: block.dline_tid ?? "test_subagents_tid",
-			...block,
 		})
 	}
 
-	override handlePartialBlock(block: any, uiHelpers: any) {
+	override handlePartialBlock(block: TestToolUse, uiHelpers: ReturnType<typeof createUIHelpers>) {
 		return super.handlePartialBlock(
 			{
+				...block,
 				function_id: block.function_id ?? "test_subagents_function",
 				dline_tid: block.dline_tid ?? "test_subagents_tid",
-				...block,
 			},
 			uiHelpers,
 		)
@@ -42,29 +50,58 @@ class UseSubagentsToolHandler extends UseSubagentsToolHandlerImpl {
 }
 
 class UseSubagentToolHandler extends UseSubagentToolHandlerImpl {
-	override execute(config: TaskConfig, block: any) {
+	override execute(config: TaskConfig, block: TestToolUse) {
 		return super.execute(config, {
+			...block,
 			function_id: block.function_id ?? "test_subagent_function",
 			dline_tid: block.dline_tid ?? "test_subagent_tid",
-			...block,
 		})
 	}
 }
 
+type MockSubagentBuilder = {
+	getApiHandler: () => object
+	getAllowedTools: () => never[]
+	getConfiguredSkills: () => undefined
+}
+
 // Mock SubagentBuilder to avoid buildApiHandler (requires API profile config)
 vi.mock("../../subagent/SubagentBuilder", () => ({
-	SubagentBuilder: vi.fn(function (this: any) {
+	SubagentBuilder: vi.fn(function (this: MockSubagentBuilder) {
 		this.getApiHandler = () => ({})
 		this.getAllowedTools = () => []
 		this.getConfiguredSkills = () => undefined
 	}),
 }))
 
+/**
+ * Present a Profile catalogue in which the named Profiles are usable by
+ * subagents. Without this the on-disk catalogue is empty, which is itself the
+ * "Profile no longer available" case.
+ *
+ * @param names Profile names that should resolve and be enabled.
+ */
+function stubEnabledProfiles(names: string[]): void {
+	vi.spyOn(ApiProfilesModule, "readApiProfiles").mockReturnValue(
+		names.map((name) => ({ id: name, name, enabled: true, usedFor: ["subagents"] })) as never,
+	)
+}
+
+/**
+ * Read the mocked builder so a test can inspect the agent config a runner was
+ * constructed with. The builder is the point where a resolved Profile becomes
+ * an API handler, so its third argument is the observable binding.
+ */
+function vitestMockedBuilder(): ReturnType<typeof vi.fn> {
+	return SubagentBuilder as unknown as ReturnType<typeof vi.fn>
+}
+
 function createConfig(options?: {
 	autoApproveSafe?: boolean
 	autoApproveAll?: boolean
 	taskAskResponse?: "yesButtonClicked" | "noButtonClicked"
 	subagentsEnabled?: boolean
+	maxParallelSubagents?: number
 }) {
 	const taskState = new TaskState()
 	const askResponse = options?.taskAskResponse ?? "yesButtonClicked"
@@ -136,6 +173,9 @@ function createConfig(options?: {
 					}
 					if (key === "subagentsEnabled") {
 						return subagentsEnabled
+					}
+					if (key === "maxParallelSubagents") {
+						return options?.maxParallelSubagents
 					}
 					return undefined
 				},
@@ -214,7 +254,7 @@ describe("SubagentToolHandler", () => {
 			ts: Date.now(),
 		})
 
-		assert.ok(String(result).includes("Missing required parameter: prompt_1"))
+		assert.ok(String(result).includes("Missing required parameter: subagents"))
 		assert.equal(taskState.consecutiveMistakeCount, 1)
 		expect(callbacks.sayAndCreateMissingParamError)
 	})
@@ -227,7 +267,7 @@ describe("SubagentToolHandler", () => {
 			type: "tool_use",
 			name: ClineDefaultTool.USE_SUBAGENTS,
 			params: {
-				prompt_1: "first prompt",
+				subagents: JSON.stringify([{ task: "one", context: "ctx one" }]),
 			},
 			partial: false,
 			ts: Date.now(),
@@ -239,7 +279,7 @@ describe("SubagentToolHandler", () => {
 		)
 	})
 
-	it("streams partial use_subagents approval as ask when not auto-approved", async () => {
+	it("streams partial use_subagents as presentation without opening approval", async () => {
 		const { config, callbacks } = createConfig({ autoApproveSafe: false, autoApproveAll: false })
 		const handler = new UseSubagentsToolHandler()
 		const uiHelpers = createUIHelpers(config)
@@ -249,8 +289,10 @@ describe("SubagentToolHandler", () => {
 				type: "tool_use",
 				name: ClineDefaultTool.USE_SUBAGENTS,
 				params: {
-					prompt_1: "first prompt",
-					prompt_2: "second prompt",
+					subagents: JSON.stringify([
+						{ task: "first", context: "ctx first" },
+						{ task: "second", context: "ctx second" },
+					]),
 				},
 				partial: true,
 				ts: Date.now(),
@@ -258,12 +300,21 @@ describe("SubagentToolHandler", () => {
 			uiHelpers,
 		)
 
-		vitestExpect(callbacks.ask).toHaveBeenCalledWith("use_subagents", vitestExpect.any(String), true, {
-			existingTs: vitestExpect.any(Number),
-		})
+		vitestExpect(callbacks.say).toHaveBeenCalledWith(
+			"use_subagents",
+			vitestExpect.any(String),
+			undefined,
+			undefined,
+			true,
+			vitestExpect.any(Number),
+		)
+		vitestExpect(callbacks.ask).not.toHaveBeenCalled()
 
-		const payload = JSON.parse(callbacks.ask.mock.calls[0][1])
-		assert.deepEqual(payload.prompts, ["first prompt", "second prompt"])
+		const payload = JSON.parse(callbacks.say.mock.calls[0][1])
+		assert.deepEqual(payload.prompts, [
+			"<task>\nfirst\n</task>\n<context>\nctx first\n</context>",
+			"<task>\nsecond\n</task>\n<context>\nctx second\n</context>",
+		])
 		expect(callbacks.say)
 	})
 
@@ -277,8 +328,10 @@ describe("SubagentToolHandler", () => {
 				type: "tool_use",
 				name: ClineDefaultTool.USE_SUBAGENTS,
 				params: {
-					prompt_1: "first prompt",
-					prompt_2: "second prompt",
+					subagents: JSON.stringify([
+						{ task: "first", context: "ctx first" },
+						{ task: "second", context: "ctx second" },
+					]),
 				},
 				partial: true,
 				ts: Date.now(),
@@ -296,31 +349,11 @@ describe("SubagentToolHandler", () => {
 		)
 
 		const payload = JSON.parse(callbacks.say.mock.calls[0][1])
-		assert.deepEqual(payload.prompts, ["first prompt", "second prompt"])
+		assert.deepEqual(payload.prompts, [
+			"<task>\nfirst\n</task>\n<context>\nctx first\n</context>",
+			"<task>\nsecond\n</task>\n<context>\nctx second\n</context>",
+		])
 		expect(callbacks.ask)
-	})
-
-	it("uses one approval for the full batch and stops on denial", async () => {
-		const { config, callbacks } = createConfig({ taskAskResponse: "noButtonClicked" })
-		const runStub = vi.spyOn(SubagentRunner.prototype, "run")
-		const handler = new UseSubagentsToolHandler()
-
-		const result = await handler.execute(config, {
-			type: "tool_use",
-			name: ClineDefaultTool.USE_SUBAGENTS,
-			params: {
-				prompt_1: "<task>one</task><context>ctx one</context>",
-				prompt_2: "<task>two</task><context>ctx two</context>",
-			},
-			partial: false,
-			ts: Date.now(),
-		})
-
-		assert.equal(result, "The user denied this operation.")
-		expect(config.taskController.rejectActiveBlock as any /* sinon.SinonStub → vitest */)
-		expect(callbacks.ask)
-		assert.equal(callbacks.ask.mock.calls[0][0], "use_subagents")
-		expect(runStub)
 	})
 
 	it("uses read-file auto-approve level (safe only) for approval bypass", async () => {
@@ -347,7 +380,7 @@ describe("SubagentToolHandler", () => {
 			type: "tool_use",
 			name: ClineDefaultTool.USE_SUBAGENTS,
 			params: {
-				prompt_1: "<task>one</task><context>ctx one</context>",
+				subagents: JSON.stringify([{ task: "one", context: "ctx one" }]),
 			},
 			partial: false,
 			ts: Date.now(),
@@ -406,9 +439,11 @@ describe("SubagentToolHandler", () => {
 			type: "tool_use",
 			name: ClineDefaultTool.USE_SUBAGENTS,
 			params: {
-				prompt_1: "<task>one</task><context>ctx one</context>",
-				prompt_2: "<task>two</task><context>ctx two</context>",
-				prompt_3: "<task>three</task><context>ctx three</context>",
+				subagents: JSON.stringify([
+					{ task: "one", context: "ctx one" },
+					{ task: "two", context: "ctx two" },
+					{ task: "three", context: "ctx three" },
+				]),
 			},
 			partial: false,
 			ts: Date.now(),
@@ -482,8 +517,10 @@ describe("SubagentToolHandler", () => {
 			type: "tool_use",
 			name: ClineDefaultTool.USE_SUBAGENTS,
 			params: {
-				prompt_1: "<task>succeed</task><context>ctx succeed</context>",
-				prompt_2: "<task>fail</task><context>ctx fail</context>",
+				subagents: JSON.stringify([
+					{ task: "succeed", context: "ctx succeed" },
+					{ task: "fail", context: "ctx fail" },
+				]),
 			},
 			partial: false,
 			ts: Date.now(),
@@ -535,8 +572,10 @@ describe("SubagentToolHandler", () => {
 			type: "tool_use",
 			name: ClineDefaultTool.USE_SUBAGENTS,
 			params: {
-				prompt_1: "<task>stable</task><context>ctx</context>",
-				prompt_2: "<task>retry</task><context>ctx</context>",
+				subagents: JSON.stringify([
+					{ task: "stable", context: "ctx" },
+					{ task: "retry", context: "ctx" },
+				]),
 			},
 			partial: false,
 			ts: Date.now(),
@@ -584,9 +623,11 @@ describe("SubagentToolHandler", () => {
 			type: "tool_use",
 			name: ClineDefaultTool.USE_SUBAGENTS,
 			params: {
-				prompt_1: "<task>one</task><context>ctx one</context>",
-				prompt_2: "<task>two</task><context>ctx two</context>",
-				prompt_3: "<task>three</task><context>ctx three</context>",
+				subagents: JSON.stringify([
+					{ task: "one", context: "ctx one" },
+					{ task: "two", context: "ctx two" },
+					{ task: "three", context: "ctx three" },
+				]),
 			},
 			partial: false,
 			ts: Date.now(),
@@ -777,6 +818,228 @@ describe("SubagentToolHandler", () => {
 		assert.equal(statuses.indexOf("completed") > statuses.indexOf("running"), true)
 	})
 
+	it("refuses a restored retry whose recorded Profile is no longer usable", async () => {
+		const { config } = createConfig({ autoApproveSafe: true, autoApproveAll: true })
+		config.taskState.abort = true
+		const activityStore = new TaskActivityStore("task-1")
+		activityStore.create({
+			activityId: "subagent-dead-profile",
+			kind: "subagent",
+			executionMode: "background",
+			title: "reviewer",
+			retryRecipe: {
+				kind: "subagent",
+				schemaVersion: 1,
+				subagentName: "reviewer",
+				profileName: "deleted-profile",
+				task: "review",
+				prompt: "<task>review</task><context>ctx</context>",
+				timeoutSeconds: 30,
+				retryable: true,
+			},
+		})
+		activityStore.update("subagent-dead-profile", { status: "failed", error: "temporary provider failure" })
+		config.activityStore = activityStore
+		vi.spyOn(AgentConfigModule, "resolveAgentConfig").mockResolvedValue({
+			config: { name: "reviewer", profile: "slow-reviewer" },
+			source: "project",
+			path: "test-reviewer.md",
+		} as unknown as ResolvedAgentConfig)
+		// The catalogue no longer contains the Profile the item ran with.
+		stubEnabledProfiles(["slow-reviewer"])
+		const builderCallsBefore = vitestMockedBuilder().mock.calls.length
+
+		assert.equal(
+			await restoreSubagentActivityRetry(config, "subagent-dead-profile"),
+			false,
+			"a retry must not silently fall back to another Profile",
+		)
+		assert.equal(vitestMockedBuilder().mock.calls.length, builderCallsBefore, "no runner may be built")
+		assert.match(
+			String(activityStore.get("subagent-dead-profile")?.retryUnavailableReason),
+			/API Profile 'deleted-profile' is no longer available/,
+		)
+	})
+
+	it("keeps rejected items visible in a mixed batch approval and summary", async () => {
+		// Manual approval is required so the approval payload is observable.
+		const { config, callbacks } = createConfig({ autoApproveSafe: false, autoApproveAll: false })
+		// Only `reviewer` resolves, so the `missing` item is planned out but the
+		// user and the model must still be told it was requested.
+		vi.spyOn(AgentConfigModule, "resolveAgentConfig").mockImplementation(async (_cwd, agentName) =>
+			agentName === "reviewer"
+				? {
+						config: { name: "reviewer", description: "reviewer", tools: [], systemPrompt: "Prompt" },
+						source: "project",
+						path: "/workspace/.agents/subagents/reviewer.yml",
+					}
+				: undefined,
+		)
+		vi.spyOn(AgentConfigModule, "listEnabledAgentConfigs").mockResolvedValue([
+			{
+				config: { name: "reviewer", description: "reviewer", tools: [], systemPrompt: "Prompt" },
+				source: "project",
+				path: "/workspace/.agents/subagents/reviewer.yml",
+			},
+		])
+		vi.spyOn(SubagentRunner.prototype, "run").mockResolvedValue({
+			status: "completed",
+			result: "done",
+			stats: {
+				toolCalls: 1,
+				inputTokens: 1,
+				outputTokens: 1,
+				cacheWriteTokens: 0,
+				cacheReadTokens: 0,
+				totalCost: 0,
+				currency: "USD",
+				contextTokens: 1,
+				contextWindow: 200000,
+				contextUsagePercentage: 0,
+			},
+		})
+
+		const handler = new UseSubagentsToolHandler()
+		const result = await handler.execute(config, {
+			type: "tool_use",
+			name: ClineDefaultTool.USE_SUBAGENTS,
+			params: {
+				subagents: JSON.stringify([
+					{ agent_name: "reviewer", task: "runs", context: "ctx runs" },
+					{ agent_name: "missing", task: "never runs", context: "ctx missing" },
+				]),
+			},
+			partial: false,
+			ts: Date.now(),
+		})
+
+		const approvalCall = callbacks.say.mock.calls.find((call: unknown[]) => call[0] === "use_subagents")
+		assert.ok(approvalCall, "an admitted mixed batch must still be presented")
+		const approvalPayload = JSON.parse(String(approvalCall[1])) as {
+			items?: unknown[]
+			rejected?: Array<{ index: number; error: string }>
+		}
+		assert.equal(approvalPayload.items?.length, 1, "only the runnable item is approved for execution")
+		assert.equal(approvalPayload.rejected?.length, 1, "the rejected item must remain visible on the approval card")
+		assert.match(String(approvalPayload.rejected?.[0]?.error), /Unknown or disabled subagent 'missing'/)
+
+		assert.match(String(result), /Unknown or disabled subagent 'missing'/)
+		assert.match(String(result), /were not started/)
+	})
+
+	it("reports rejected items in the tool result of a background mixed batch", async () => {
+		// A background batch returns before the runs finish, so the early tool
+		// result is the only place the model learns an item was refused.
+		const { config } = createConfig({ autoApproveSafe: true, autoApproveAll: true })
+		vi.spyOn(AgentConfigModule, "resolveAgentConfig").mockImplementation(async (_cwd, agentName) =>
+			agentName === "reviewer"
+				? {
+						config: { name: "reviewer", description: "reviewer", tools: [], systemPrompt: "Prompt" },
+						source: "project",
+						path: "/workspace/.agents/subagents/reviewer.yml",
+					}
+				: undefined,
+		)
+		vi.spyOn(AgentConfigModule, "listEnabledAgentConfigs").mockResolvedValue([
+			{
+				config: { name: "reviewer", description: "reviewer", tools: [], systemPrompt: "Prompt" },
+				source: "project",
+				path: "/workspace/.agents/subagents/reviewer.yml",
+			},
+		])
+		vi.spyOn(SubagentRunner.prototype, "run").mockResolvedValue({
+			status: "completed",
+			result: "done",
+			stats: {
+				toolCalls: 1,
+				inputTokens: 1,
+				outputTokens: 1,
+				cacheWriteTokens: 0,
+				cacheReadTokens: 0,
+				totalCost: 0,
+				currency: "USD",
+				contextTokens: 1,
+				contextWindow: 200000,
+				contextUsagePercentage: 0,
+			},
+		})
+
+		const handler = new UseSubagentsToolHandler()
+		const result = await handler.execute(config, {
+			type: "tool_use",
+			name: ClineDefaultTool.USE_SUBAGENTS,
+			params: {
+				subagents: JSON.stringify([
+					{ agent_name: "reviewer", task: "runs", context: "ctx runs" },
+					{ agent_name: "missing", task: "never runs", context: "ctx missing" },
+				]),
+				background: "true",
+			},
+			partial: false,
+			ts: Date.now(),
+		})
+
+		assert.match(String(result), /Started background subagent batch job/)
+		assert.match(String(result), /Unknown or disabled subagent 'missing'/)
+		assert.match(String(result), /were not started/)
+	})
+
+	it("executes the frozen batch plan when the Profile catalogue changes after preparation", async () => {
+		// The approved object is the prepared agent/profile binding. A later
+		// catalogue change must not re-plan or silently fall back to another Profile.
+		const { config, callbacks } = createConfig({ autoApproveSafe: false, autoApproveAll: false })
+		stubEnabledProfiles(["fast-reviewer"])
+		vi.spyOn(AgentConfigModule, "resolveAgentConfig").mockResolvedValue({
+			config: { name: "reviewer", description: "reviewer", tools: [], systemPrompt: "Prompt" },
+			source: "project",
+			path: "/workspace/.agents/subagents/reviewer.yml",
+		})
+		vi.spyOn(AgentConfigModule, "listEnabledAgentConfigs").mockResolvedValue([
+			{
+				config: { name: "reviewer", description: "reviewer", tools: [], systemPrompt: "Prompt" },
+				source: "project",
+				path: "/workspace/.agents/subagents/reviewer.yml",
+			},
+		])
+		// Simulate the catalogue changing after Admission but before the run starts.
+		callbacks.say.mockImplementation(async (type: string) => {
+			if (type === "use_subagents") stubEnabledProfiles([])
+			return undefined
+		})
+		const runSpy = vi.spyOn(SubagentRunner.prototype, "run").mockResolvedValue({
+			status: "completed",
+			result: "frozen plan completed",
+			stats: {
+				toolCalls: 0,
+				inputTokens: 0,
+				outputTokens: 0,
+				cacheWriteTokens: 0,
+				cacheReadTokens: 0,
+				totalCost: 0,
+				currency: "USD",
+				contextTokens: 0,
+				contextWindow: 200000,
+				contextUsagePercentage: 0,
+			},
+		})
+
+		const handler = new UseSubagentsToolHandler()
+		const result = await handler.execute(config, {
+			type: "tool_use",
+			name: ClineDefaultTool.USE_SUBAGENTS,
+			params: {
+				subagents: JSON.stringify([
+					{ agent_name: "reviewer", task: "runs", context: "ctx runs", profile: "fast-reviewer" },
+				]),
+			},
+			partial: false,
+			ts: Date.now(),
+		})
+
+		assert.match(String(result), /frozen plan completed/)
+		assert.equal(runSpy.mock.calls.length, 1, "execution must consume the plan that was prepared before approval")
+	})
+
 	it("lists default and bounded configured names for an unknown stable subagent", async () => {
 		const { config } = createConfig({ autoApproveSafe: true, autoApproveAll: true })
 		const handler = new UseSubagentToolHandler()
@@ -858,8 +1121,8 @@ describe("SubagentToolHandler", () => {
 		assert.deepEqual(config.subagentJobManager?.listInjectableResults(), [])
 	})
 
-	it("hands a running foreground subagent to the background without blocking the parent tool turn", async () => {
-		const { config } = createConfig({ autoApproveSafe: true, autoApproveAll: true })
+	it("hands a running foreground subagent to the background while retaining its task-scoped budget slot", async () => {
+		const { config } = createConfig({ autoApproveSafe: true, autoApproveAll: true, maxParallelSubagents: 1 })
 		let activityInput: { continueInBackground?: () => Promise<boolean> } | undefined
 		const createActivity = vi.fn((input: { continueInBackground?: () => Promise<boolean> }) => {
 			activityInput = input
@@ -870,11 +1133,11 @@ describe("SubagentToolHandler", () => {
 			appendEvent: vi.fn(),
 		} as unknown as TaskConfig["activityStore"]
 		const handler = new UseSubagentToolHandler()
-		let resolveRun!: (result: SubagentRunResult) => void
-		vi.spyOn(SubagentRunner.prototype, "run").mockImplementation(
+		const runResolvers: Array<(result: SubagentRunResult) => void> = []
+		const runStub = vi.spyOn(SubagentRunner.prototype, "run").mockImplementation(
 			() =>
 				new Promise<SubagentRunResult>((resolve) => {
-					resolveRun = resolve
+					runResolvers.push(resolve)
 				}),
 		)
 
@@ -892,8 +1155,20 @@ describe("SubagentToolHandler", () => {
 		const result = await execution
 		assert.match(String(result), /Continued background subagent job: subagent_/)
 		assert.match(String(result), /final result will be available only in a later model request/i)
+		assert.equal(config.subagentFanoutBudget?.state().running, 1)
 
-		resolveRun({
+		const second = await handler.execute(config, {
+			type: "tool_use",
+			name: ClineDefaultTool.USE_SUBAGENT,
+			params: { task: "second review", context: "ctx", background: "true" },
+			partial: false,
+			ts: Date.now() + 1,
+		})
+		assert.match(String(second), /Started background subagent job: subagent_/)
+		await delay(0)
+		assert.equal(runStub.mock.calls.length, 1, "background handoff must not release the subagent budget slot")
+
+		runResolvers[0]?.({
 			status: "completed",
 			result: "background completion",
 			stats: {
@@ -909,7 +1184,84 @@ describe("SubagentToolHandler", () => {
 				contextUsagePercentage: 0,
 			},
 		})
+		for (let attempt = 0; attempt < 10 && runStub.mock.calls.length < 2; attempt += 1) await delay(0)
+		assert.equal(runStub.mock.calls.length, 2, "queued single subagent should start only after the handed-off runner ends")
+		runResolvers[1]?.({
+			status: "completed",
+			result: "second completion",
+			stats: {
+				toolCalls: 0,
+				inputTokens: 0,
+				outputTokens: 0,
+				cacheWriteTokens: 0,
+				cacheReadTokens: 0,
+				totalCost: 0,
+				currency: "USD",
+				contextTokens: 0,
+				contextWindow: 200000,
+				contextUsagePercentage: 0,
+			},
+		})
 		await delay(0)
+	})
+
+	it("hands a foreground batch to the background atomically without releasing its subagent slot", async () => {
+		const { config } = createConfig({ autoApproveSafe: true, autoApproveAll: true, maxParallelSubagents: 1 })
+		const activityStore = new TaskActivityStore(config.taskId)
+		config.activityStore = activityStore
+		const runResolvers: Array<(result: SubagentRunResult) => void> = []
+		vi.spyOn(SubagentRunner.prototype, "run").mockImplementation(
+			() => new Promise<SubagentRunResult>((resolve) => runResolvers.push(resolve)),
+		)
+		const handler = new UseSubagentsToolHandler()
+		const execution = handler.execute(config, {
+			type: "tool_use",
+			name: ClineDefaultTool.USE_SUBAGENTS,
+			params: {
+				subagents: JSON.stringify([
+					{ task: "first", context: "ctx-1" },
+					{ task: "second", context: "ctx-2" },
+				]),
+			},
+			partial: false,
+			ts: Date.now(),
+		})
+		for (let attempt = 0; attempt < 20 && activityStore.list().length < 2; attempt += 1) await delay(0)
+		assert.equal(runResolvers.length, 1, "the second batch item should queue behind the shared budget")
+		const foregroundIds = activityStore.list().map((activity) => activity.activityId)
+		assert.equal(foregroundIds.length, 2)
+		assert.deepEqual(await activityStore.moveToBackground([foregroundIds[0]]), foregroundIds)
+		const result = await execution
+		assert.match(String(result), /Continued background subagent batch job: subagent_batch_/)
+		assert.equal(config.subagentFanoutBudget?.state().running, 1)
+		assert.equal(
+			activityStore.list().filter((activity) => activity.executionMode === "background").length,
+			2,
+			"all batch activities must transfer ownership together",
+		)
+
+		const completed = (label: string): SubagentRunResult => ({
+			status: "completed",
+			result: label,
+			stats: {
+				toolCalls: 0,
+				inputTokens: 0,
+				outputTokens: 0,
+				cacheWriteTokens: 0,
+				cacheReadTokens: 0,
+				totalCost: 0,
+				currency: "USD",
+				contextTokens: 0,
+				contextWindow: 200000,
+				contextUsagePercentage: 0,
+			},
+		})
+		runResolvers[0]?.(completed("first complete"))
+		for (let attempt = 0; attempt < 20 && runResolvers.length < 2; attempt += 1) await delay(0)
+		assert.equal(runResolvers.length, 2, "handoff must keep the first budget slot until its runner stops")
+		runResolvers[1]?.(completed("second complete"))
+		for (let attempt = 0; attempt < 20 && config.subagentFanoutBudget?.state().running !== 0; attempt += 1) await delay(0)
+		assert.equal(config.subagentFanoutBudget?.state().running, 0)
 	})
 
 	it("registers soft Finish and exposes Retry only after a retryable background failure", async () => {
@@ -1028,6 +1380,93 @@ describe("SubagentToolHandler", () => {
 		assert.equal(activityStore.get("subagent-restored")?.result, "recovered after reopen")
 	})
 
+	it("replays a restored retry with the Profile the batch item originally resolved", async () => {
+		const { config } = createConfig({ autoApproveSafe: true, autoApproveAll: true })
+		config.taskState.abort = true
+		const activityStore = new TaskActivityStore("task-1")
+		activityStore.create({
+			activityId: "subagent-profile-bound",
+			kind: "subagent",
+			executionMode: "background",
+			title: "reviewer",
+			retryRecipe: {
+				kind: "subagent",
+				schemaVersion: 1,
+				subagentName: "reviewer",
+				// The item overrode the subagent's own Profile when it first ran.
+				profileName: "fast-reviewer",
+				task: "review",
+				prompt: "<task>review</task><context>ctx</context>",
+				timeoutSeconds: 30,
+				retryable: true,
+			},
+		})
+		activityStore.update("subagent-profile-bound", { status: "failed", error: "temporary provider failure" })
+		config.activityStore = activityStore
+		// The subagent document now names a different Profile, so replaying from
+		// the document alone would silently move the retry to another model.
+		vi.spyOn(AgentConfigModule, "resolveAgentConfig").mockResolvedValue({
+			config: { name: "reviewer", profile: "slow-reviewer" },
+			source: "project",
+			path: "test-reviewer.md",
+		} as unknown as ResolvedAgentConfig)
+		// The recorded Profile still has to exist and still be enabled for
+		// subagents, otherwise the retry is refused rather than quietly rerouted.
+		stubEnabledProfiles(["fast-reviewer"])
+		vi.spyOn(SubagentRunner.prototype, "run").mockResolvedValue({
+			status: "completed",
+			result: "recovered on the original Profile",
+			stats: emptyTestStats(),
+		})
+		const builderCallsBefore = vitestMockedBuilder().mock.calls.length
+
+		assert.equal(await restoreSubagentActivityRetry(config, "subagent-profile-bound"), true)
+
+		const restoredConfig = vitestMockedBuilder().mock.calls.at(builderCallsBefore)?.[2]
+		assert.equal(restoredConfig?.profile, "fast-reviewer", "the retry must run on the Profile the item originally resolved")
+		assert.deepEqual(await activityStore.retry(["subagent-profile-bound"]), ["subagent-profile-bound"])
+		await vi.waitFor(() => assert.equal(activityStore.get("subagent-profile-bound")?.status, "completed"))
+	})
+
+	it("leaves a restored retry on the subagent's current Profile when the item never overrode it", async () => {
+		const { config } = createConfig({ autoApproveSafe: true, autoApproveAll: true })
+		config.taskState.abort = true
+		const activityStore = new TaskActivityStore("task-1")
+		activityStore.create({
+			activityId: "subagent-inherits-profile",
+			kind: "subagent",
+			executionMode: "background",
+			title: "reviewer",
+			retryRecipe: {
+				kind: "subagent",
+				schemaVersion: 1,
+				subagentName: "reviewer",
+				// Recorded from the subagent document rather than an item override.
+				profileName: "slow-reviewer",
+				task: "review",
+				prompt: "<task>review</task><context>ctx</context>",
+				timeoutSeconds: 30,
+				retryable: true,
+			},
+		})
+		activityStore.update("subagent-inherits-profile", { status: "failed", error: "temporary provider failure" })
+		config.activityStore = activityStore
+		vi.spyOn(AgentConfigModule, "resolveAgentConfig").mockResolvedValue({
+			config: { name: "reviewer", profile: "slow-reviewer", model: "current" },
+			source: "project",
+			path: "test-reviewer.md",
+		} as unknown as ResolvedAgentConfig)
+		const builderCallsBefore = vitestMockedBuilder().mock.calls.length
+
+		assert.equal(await restoreSubagentActivityRetry(config, "subagent-inherits-profile"), true)
+
+		// The freshly resolved document is passed through untouched, so later
+		// edits to the subagent still take effect on a retry.
+		const restoredConfig = vitestMockedBuilder().mock.calls.at(builderCallsBefore)?.[2]
+		assert.equal(restoredConfig?.profile, "slow-reviewer")
+		assert.equal(restoredConfig?.model, "current", "an unchanged Profile must not replace the resolved document")
+	})
+
 	it("persists why a named subagent retry cannot be restored after Task reopen", async () => {
 		const { config } = createConfig({ autoApproveSafe: true, autoApproveAll: true })
 		const persisted: Array<ReturnType<TaskActivityStore["list"]>> = []
@@ -1126,7 +1565,7 @@ describe("SubagentToolHandler", () => {
 		)
 	})
 
-	it("replaces partial message when subagents are disabled with prompts in payload", async () => {
+	it("rejects a disabled batch before opening or replacing presentation", async () => {
 		const { config, callbacks, taskState } = createConfig({ subagentsEnabled: false })
 		const handler = new UseSubagentsToolHandler()
 		const blockTs = Date.now()
@@ -1134,23 +1573,18 @@ describe("SubagentToolHandler", () => {
 		const result = await handler.execute(config, {
 			type: "tool_use",
 			name: ClineDefaultTool.USE_SUBAGENTS,
-			params: { prompt_1: "do something" },
+			params: { subagents: JSON.stringify([{ task: "do something", context: "ctx" }]) },
 			partial: false,
 			ts: blockTs,
 		})
 
 		assert.ok((result as string).includes("disabled"))
 		assert.equal(taskState.consecutiveMistakeCount, 0)
-		const allUseCalls = callbacks.say.mock.calls
-		const useSubagentsCall = allUseCalls.find((c) => c[0] === "use_subagents")
-		assert.ok(useSubagentsCall, "should have called say with use_subagents")
-		assert.equal(useSubagentsCall[4], false) // partial=false
-		assert.equal(useSubagentsCall[5], blockTs) // existingTs = block.ts
-		const payload = JSON.parse(useSubagentsCall[1])
-		assert.ok(Array.isArray(payload.prompts))
-		assert.equal(payload.prompts.length, 0) // empty prompts, error card via message
-		assert.equal(payload.error, "subagentsDisabled")
-		assert.ok(payload.message && payload.message.length > 0, "should include error message")
+		assert.equal(
+			callbacks.say.mock.calls.some((call) => call[0] === "use_subagents"),
+			false,
+			"invalid Admission must not open a handler-owned presentation",
+		)
 	})
 
 	it("keeps fast background batch completion mapped to item entries", async () => {
@@ -1190,7 +1624,7 @@ describe("SubagentToolHandler", () => {
 		const result = await handler.execute(config, {
 			type: "tool_use",
 			name: ClineDefaultTool.USE_SUBAGENTS,
-			params: { prompt_1: "<task>fast</task><context>ctx</context>", background: "true" },
+			params: { subagents: JSON.stringify([{ task: "fast", context: "ctx" }]), background: "true" },
 			partial: false,
 			ts: Date.now(),
 		})
@@ -1231,11 +1665,12 @@ describe("SubagentToolHandler", () => {
 			type: "tool_use",
 			name: ClineDefaultTool.USE_SUBAGENTS,
 			params: {
-				prompt_1: "<task>1</task><context>ctx 1</context>",
-				prompt_2: "<task>2</task><context>ctx 2</context>",
-				prompt_3: "<task>3</task><context>ctx 3</context>",
-				prompt_4: "<task>4</task><context>ctx 4</context>",
-				prompt_5: "<task>5</task><context>ctx 5</context>",
+				subagents: JSON.stringify(
+					Array.from({ length: MAX_SUBAGENTS_PER_BATCH }, (_unused, index) => ({
+						task: `${index + 1}`,
+						context: `ctx ${index + 1}`,
+					})),
+				),
 			},
 			partial: false,
 			ts: blockTs,
@@ -1243,5 +1678,88 @@ describe("SubagentToolHandler", () => {
 
 		assert.equal(taskState.consecutiveMistakeCount, 0)
 		assert.ok(String(result).includes("Subagent results"), "should proceed normally with exactly max prompts")
+	})
+
+	it("reports the requested batch width even when every item is refused", async () => {
+		// The metric answers how wide the model asked to fan out. Sampling only
+		// started items would silently drop the batches that were refused,
+		// which are exactly the ones worth seeing.
+		const { config } = createConfig({ autoApproveSafe: true, autoApproveAll: true })
+		// The suite-wide setup already replaces the telemetry singleton, so the
+		// recorded calls are read directly rather than layering a second spy.
+		const fanout = vi.mocked(telemetryService.captureSubagentFanout)
+		fanout.mockClear()
+		vi.spyOn(AgentConfigModule, "resolveAgentConfig").mockResolvedValue(undefined)
+		vi.spyOn(AgentConfigModule, "listEnabledAgentConfigs").mockResolvedValue([])
+
+		const handler = new UseSubagentsToolHandler()
+		await handler.execute(config, {
+			type: "tool_use",
+			name: ClineDefaultTool.USE_SUBAGENTS,
+			params: {
+				subagents: JSON.stringify([
+					{ agent_name: "missing-one", task: "never runs", context: "ctx one" },
+					{ agent_name: "missing-two", task: "never runs", context: "ctx two" },
+				]),
+			},
+			partial: false,
+			ts: Date.now(),
+		})
+
+		assert.deepEqual(fanout.mock.calls, [[2, 0]], "a fully refused batch still reports the width it requested")
+	})
+
+	it("counts only the items that named a Profile through the tool parameter", async () => {
+		// An inherited Profile is the default, so counting it would make the
+		// figure report batch size a second time instead of answering whether
+		// the per-item parameter is used.
+		const { config } = createConfig({ autoApproveSafe: true, autoApproveAll: true })
+		const fanout = vi.mocked(telemetryService.captureSubagentFanout)
+		fanout.mockClear()
+		stubEnabledProfiles(["fast-reviewer"])
+		vi.spyOn(AgentConfigModule, "resolveAgentConfig").mockResolvedValue({
+			config: { name: "reviewer", description: "reviewer", tools: [], systemPrompt: "Prompt" },
+			source: "project",
+			path: "/workspace/.agents/subagents/reviewer.yml",
+		})
+		vi.spyOn(AgentConfigModule, "listEnabledAgentConfigs").mockResolvedValue([
+			{
+				config: { name: "reviewer", description: "reviewer", tools: [], systemPrompt: "Prompt" },
+				source: "project",
+				path: "/workspace/.agents/subagents/reviewer.yml",
+			},
+		])
+		vi.spyOn(SubagentRunner.prototype, "run").mockResolvedValue({
+			status: "completed",
+			result: "done",
+			stats: {
+				toolCalls: 0,
+				inputTokens: 0,
+				outputTokens: 0,
+				cacheWriteTokens: 0,
+				cacheReadTokens: 0,
+				totalCost: 0,
+				currency: "USD",
+				contextTokens: 0,
+				contextWindow: 200000,
+				contextUsagePercentage: 0,
+			},
+		})
+
+		const handler = new UseSubagentsToolHandler()
+		await handler.execute(config, {
+			type: "tool_use",
+			name: ClineDefaultTool.USE_SUBAGENTS,
+			params: {
+				subagents: JSON.stringify([
+					{ agent_name: "reviewer", task: "bound", context: "ctx bound", profile: "fast-reviewer" },
+					{ agent_name: "reviewer", task: "inherits", context: "ctx inherits" },
+				]),
+			},
+			partial: false,
+			ts: Date.now(),
+		})
+
+		assert.deepEqual(fanout.mock.calls, [[2, 1]])
 	})
 })

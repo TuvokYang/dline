@@ -1,7 +1,10 @@
 import { resolveProvider } from "@core/api"
 import type { ToolUse } from "@core/assistant-message"
+import { readApiProfiles } from "@core/controller/file/getApiProfiles"
+import { resolveProfileReference } from "@core/profiles/profile-binding"
 import { getPrompt } from "@core/prompts/i18n"
 import { formatResponse } from "@core/prompts/responses"
+import { processFilesIntoText } from "@integrations/misc/extract-text"
 import {
 	ClineAskUseSubagents,
 	ClineSaySubagentStatus,
@@ -10,27 +13,75 @@ import {
 } from "@shared/ExtensionMessage"
 import { telemetryService } from "@/services/telemetry"
 import { calculateApiUsageStatistics } from "@/shared/api-usage"
+import { Logger } from "@/shared/services/Logger"
 import { ClineDefaultTool } from "@/shared/tools"
+import type { BackgroundHandoffResult } from "../../activity/TaskActivityStore"
 import type { ToolResponse } from "../../index"
-import { showNotificationForApproval } from "../../utils"
-import { listEnabledAgentConfigs, type ResolveAgentConfigOptions, resolveAgentConfig } from "../subagent/AgentConfigLoader"
+import {
+	type AgentBaseConfig,
+	listEnabledAgentConfigs,
+	type ResolveAgentConfigOptions,
+	resolveAgentConfig,
+} from "../subagent/AgentConfigLoader"
 import { DEFAULT_SUBAGENT_NAME, isDefaultSubagentName } from "../subagent/DefaultSubagentConfig"
+import {
+	applyProfileOverride,
+	type PlannedSubagentItem,
+	planSubagentBatch,
+	type RejectedSubagentItem,
+	type SubagentBatchResolvers,
+} from "../subagent/SubagentBatchPlanner"
 import {
 	runSubagent,
 	type SubagentExecResult,
 	type SubagentProgressUpdate,
 	type SubagentRunStats,
 } from "../subagent/SubagentExecutor"
+import { getSubagentFanoutBudget, type SubagentFanoutBudget, type SubagentSlot } from "../subagent/SubagentFanoutBudget"
 import { SubagentJobManager } from "../subagent/SubagentJobManager"
 import { parseUseSubagentRequest, parseUseSubagentsRequest } from "../subagent/SubagentRequestParser"
 import { SubagentRunner } from "../subagent/SubagentRunner"
-import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
+import type { IFullyManagedTool, IPreparableToolHandler, ToolHandlerPreparationResult } from "../ToolExecutorCoordinator"
 import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
 import { ToolResultUtils } from "../utils/ToolResultUtils"
+import { sayFeedbackOnce } from "../utils/UserFeedbackUtils"
 
-const PROMPT_KEYS = ["prompt_1", "prompt_2", "prompt_3", "prompt_4", "prompt_5"] as const
 const LATER_REQUEST_RESULT_NOTICE = "Its final result will be available only in a later model request."
+
+/**
+ * Summarise a partially streamed batch for the approval row.
+ *
+ * The array is normally still truncated mid-token while it streams, so parsing
+ * is attempted but not required. When it fails the raw fragment is shown as one
+ * entry: the user needs to see that a batch is arriving and be able to stop it,
+ * which an empty row would not convey.
+ *
+ * @param streamed Raw `subagents` text received so far.
+ * @returns One preview line per item, or a single line for the raw fragment.
+ */
+function previewBatchPrompts(streamed: string): string[] {
+	try {
+		const decoded = JSON.parse(streamed)
+		if (Array.isArray(decoded)) {
+			return decoded
+				.map((item) => {
+					if (!item || typeof item !== "object") return undefined
+					const entry = item as Record<string, unknown>
+					const task = typeof entry.task === "string" ? entry.task.trim() : ""
+					const context = typeof entry.context === "string" ? entry.context.trim() : ""
+					const parts = [task && `<task>\n${task}\n</task>`, context && `<context>\n${context}\n</context>`].filter(
+						Boolean,
+					)
+					return parts.length > 0 ? parts.join("\n") : undefined
+				})
+				.filter((prompt): prompt is string => !!prompt)
+		}
+	} catch {
+		// Incomplete JSON is the expected case while streaming, not an error.
+	}
+	return [streamed]
+}
 
 function backgroundSubagentResult(kind: "started" | "continued", target: "job" | "batch job", id: string): string {
 	const verb = kind === "started" ? "Started" : "Continued"
@@ -45,6 +96,27 @@ function backgroundSubagentResult(kind: "started" | "continued", target: "job" |
 export function getSubagentJobManager(config: TaskConfig): SubagentJobManager {
 	config.subagentJobManager ??= new SubagentJobManager()
 	return config.subagentJobManager
+}
+
+/**
+ * Build the lookups the batch planner needs from current task state.
+ *
+ * Resolution is injected rather than imported by the planner so the precedence
+ * rules can be tested without a workspace on disk or a Profile catalogue.
+ *
+ * @param config Current task config.
+ * @returns Agent and Profile lookups bound to this task.
+ */
+function getBatchResolvers(config: TaskConfig): SubagentBatchResolvers {
+	return {
+		resolveAgent: async (agentName) => (await resolveAgentConfig(config.cwd, agentName, getResolveOptions(config)))?.config,
+		isProfileUsable: (profileName) => {
+			const resolution = resolveProfileReference(readApiProfiles(), profileName)
+			if (resolution.status !== "resolved") return false
+			return resolution.profile.enabled && resolution.profile.usedFor.includes("subagents")
+		},
+		listAgentNames: () => getAvailableSubagentNames(config),
+	}
 }
 
 /**
@@ -283,6 +355,28 @@ function statsFromActivity(config: TaskConfig, activityId: string): SubagentRunS
 	}
 }
 
+/**
+ * Rebuild the Profile binding a retained item ran with.
+ *
+ * Only an explicit per-item Profile is replayed. When the recipe merely
+ * recorded the subagent's own YAML Profile, the current document is the better
+ * source: reapplying a stale copy would pin the retry to a value the user may
+ * since have changed.
+ *
+ * @param agentConfig Freshly resolved subagent config, absent for the default.
+ * @param subagentName Effective subagent name.
+ * @param profileName Profile recorded on the retry recipe.
+ * @returns Config carrying the Profile the original run used.
+ */
+function applyRecipeProfile(
+	agentConfig: AgentBaseConfig | undefined,
+	subagentName: string,
+	profileName: string | undefined,
+): AgentBaseConfig | undefined {
+	if (!profileName || profileName === agentConfig?.profile) return agentConfig
+	return applyProfileOverride(agentConfig ?? ({ name: subagentName } as AgentBaseConfig), profileName)
+}
+
 /** Rebind a persisted failed subagent activity to a fresh runner after Task reopen. */
 export async function restoreSubagentActivityRetry(config: TaskConfig, activityId: string): Promise<boolean> {
 	const activityStore = config.activityStore
@@ -302,13 +396,31 @@ export async function restoreSubagentActivityRetry(config: TaskConfig, activityI
 		return false
 	}
 	const effectiveSubagentName = resolvedSubagent?.config.name ?? DEFAULT_SUBAGENT_NAME
-	const runner = new SubagentRunner(config, effectiveSubagentName, resolvedSubagent?.config, {
+	// An explicitly recorded Profile must still be usable. Without this check
+	// the runner silently falls back to the parent Act Profile, so a retry of a
+	// deleted or disabled Profile would quietly run on a different model
+	// instead of telling the user why it cannot be replayed.
+	const overriddenProfile =
+		recipe.profileName && recipe.profileName !== resolvedSubagent?.config.profile ? recipe.profileName : undefined
+	if (overriddenProfile && !getBatchResolvers(config).isProfileUsable(overriddenProfile)) {
+		activityStore?.setRetryUnavailableReason(
+			activityId,
+			`Retry unavailable: API Profile '${overriddenProfile}' is no longer available or not enabled for subagents.`,
+		)
+		return false
+	}
+	// A batch item may have overridden the subagent's own Profile. Replaying
+	// from the subagent config alone would retry on a different model, so the
+	// recorded binding is reapplied before the runner is built.
+	const retryAgentConfig = applyRecipeProfile(resolvedSubagent?.config, effectiveSubagentName, recipe.profileName)
+	const runner = new SubagentRunner(config, effectiveSubagentName, retryAgentConfig, {
 		inheritTaskAbort: false,
 	})
 	const entry: SubagentStatusItem = {
 		index: 1,
 		jobId: activityId,
 		subagentName: effectiveSubagentName,
+		profileName: recipe.profileName,
 		task: recipe.task,
 		prompt: recipe.prompt,
 		background: true,
@@ -347,9 +459,11 @@ export async function restoreSubagentActivityRetry(config: TaskConfig, activityI
 			retryable: true,
 			stats: statsFromActivity(config, activityId),
 		},
+		// A retry after reopen is still subagent work and must queue behind the
+		// same task-scoped budget as a fresh batch; running it unbudgeted lets
+		// several restored activities exceed the configured parallel limit.
 		runner: () =>
-			runSubagent({
-				runner,
+			runBudgetedSubagent(getSubagentFanoutBudget(config), config.ulid, runner, {
 				prompt: recipe.prompt,
 				timeoutSeconds: recipe.timeoutSeconds,
 				onProgress: (update) => applyProgress(config, entry, update),
@@ -374,9 +488,10 @@ function createSubagentActivity(
 	executionMode: "foreground" | "background",
 	cancel: () => Promise<void>,
 	parentActivityId?: string,
-	continueInBackground?: () => Promise<boolean>,
+	continueInBackground?: () => Promise<BackgroundHandoffResult>,
 	finish?: () => Promise<boolean>,
 	retry?: () => Promise<boolean>,
+	backgroundGroupIds?: string[],
 ): void {
 	if (!entry.jobId) return
 	config.activityStore?.create({
@@ -391,6 +506,7 @@ function createSubagentActivity(
 			kind: "subagent",
 			schemaVersion: 1,
 			subagentName: entry.subagentName,
+			profileName: entry.profileName,
 			task: entry.task || entry.prompt,
 			prompt: entry.prompt,
 			timeoutSeconds: entry.timeoutSeconds || 0,
@@ -398,6 +514,7 @@ function createSubagentActivity(
 		},
 		cancel,
 		continueInBackground,
+		backgroundGroupIds,
 		finish,
 		retry,
 	})
@@ -504,37 +621,142 @@ function captureToolTelemetry(
 	)
 }
 
-/**
- * Ask for approval unless auto-approval is enabled.
- * @param config Current task config.
- * @param block Tool use block.
- * @param toolName Tool name being approved.
- * @param askType Ask message type.
- * @param approvalBody Approval payload.
- * @param label Notification label.
- * @returns True when execution is approved.
- */
-async function approveSubagentUse(
+/** Present an admitted subagent request and consume optional approval feedback. */
+async function presentSubagentUse(
 	config: TaskConfig,
 	block: ToolUse,
 	toolName: ClineDefaultTool,
-	askType: "use_subagents",
 	approvalBody: string,
-	label: string,
-): Promise<boolean> {
+): Promise<void> {
 	const apiConfig = config.services.stateManager.getApiConfiguration()
 	const currentMode = config.services.stateManager.getGlobalSettingsKey("mode")
 	const provider = resolveProvider(apiConfig, currentMode)
-	const autoApproveResult = config.autoApprover?.shouldAutoApproveTool(toolName)
-	const [autoApproveSafe] = Array.isArray(autoApproveResult) ? autoApproveResult : [autoApproveResult, false]
-	if (autoApproveSafe) {
-		captureToolTelemetry(config, toolName, provider, true, true, block.isNativeToolCall)
-		return true
+	const outcome = block.dline_tid ? config.admissionOutcomes?.get(block.dline_tid) : undefined
+	const text = outcome?.draft?.text
+	const images = outcome?.draft?.images
+	const files = outcome?.draft?.files
+	if (text || images?.length || files?.length) {
+		const fileContent = files?.length ? await processFilesIntoText(files) : ""
+		ToolResultUtils.pushAdditionalToolFeedback(config.taskState.userMessageContent, text, images, fileContent)
+		await sayFeedbackOnce(config, "yesButtonClicked", text, images, files)
 	}
-	showNotificationForApproval(label, config.autoApprovalSettings.enableNotifications)
-	const didApprove = await ToolResultUtils.askApprovalAndPushFeedback(askType, approvalBody, config, block.ts)
-	captureToolTelemetry(config, toolName, provider, false, didApprove, block.isNativeToolCall)
-	return didApprove
+	await config.callbacks.say("use_subagents", approvalBody, undefined, undefined, false, block.ts)
+	captureToolTelemetry(config, toolName, provider, outcome === undefined, true, block.isNativeToolCall)
+}
+
+/**
+ * Run one subagent against the task-scoped budget.
+ *
+ * The slot is taken before the run starts and returned only once the run has
+ * actually stopped. That is deliberately not the same as the promise settling:
+ * a runner interrupted while a tool is still executing resolves early, and
+ * freeing the slot then would admit replacement work against resources the
+ * abandoned tool still holds.
+ *
+ * @param budget Task-scoped subagent budget.
+ * @param poolInstance Identifies the budget in telemetry. The task's ulid,
+ *   because one gate is shared by every fan-out in the task including nested
+ *   ones; keying by view would count the same state several times. It stays in
+ *   memory and is never exported as a metric label.
+ * @param runner Runner for this item.
+ * @param options Prompt, timeout, progress and start notification.
+ * @returns Terminal execution result, including a refusal reported as failure.
+ */
+async function runBudgetedSubagent(
+	budget: SubagentFanoutBudget,
+	poolInstance: string,
+	runner: SubagentRunner,
+	options: {
+		prompt: string
+		timeoutSeconds: number
+		onProgress: (update: SubagentProgressUpdate) => void
+		onStarted?: () => void
+	},
+): Promise<SubagentExecResult> {
+	const admissionRequestedAt = Date.now()
+	const admission = await budget.acquire()
+	if (!admission.admitted) {
+		return { status: "failed", error: admission.message, stats: emptyStats() }
+	}
+	const slot: SubagentSlot = admission.slot
+	// Sampled with the permit in hand and labelled by pool, so a saturated
+	// subagent fan-out is distinguishable from a saturated tool pool and from
+	// a subagent that is simply slow.
+	const budgetState = budget.state()
+	telemetryService.capturePoolAdmission({
+		pool: "subagent",
+		instance: poolInstance,
+		queueWaitMs: Date.now() - admissionRequestedAt,
+		running: budgetState.running,
+		queued: budgetState.queued,
+		limit: budgetState.limit,
+	})
+	options.onStarted?.()
+	try {
+		return await runSubagent({
+			runner,
+			prompt: options.prompt,
+			timeoutSeconds: options.timeoutSeconds,
+			onProgress: options.onProgress,
+		})
+	} finally {
+		// An interrupted run resolves while its abandoned tool is still
+		// executing. Releasing here would admit replacement work against
+		// resources that tool still holds, so the slot is returned only once
+		// the runner reports the abandoned work has settled.
+		//
+		// The wait is bounded on purpose: a wedged tool must not hold the slot
+		// forever, because every remaining item is queued behind it. Giving up
+		// returns the slot but withholds one unit of allowance until the tool
+		// really stops, so the batch keeps draining without the budget
+		// pretending the resource is free.
+		try {
+			const settled = await runner.whenAbandonedWorkSettled()
+			if (!settled) {
+				// The claim is one-shot: a runner survives its retries, so a tool
+				// wedged by an earlier attempt is still listed here. Charging it
+				// again would shrink the allowance below the work that is really
+				// outstanding and starve unrelated items.
+				const outstanding = runner.claimOutstandingAbandonedWork()
+				if (outstanding) {
+					budget.withholdCapacity(outstanding)
+					Logger.warn(
+						"[SubagentToolHandler] a subagent tool outlived its run; subagent capacity is reduced until it exits",
+					)
+				}
+			}
+		} catch (error) {
+			Logger.warn("[SubagentToolHandler] abandoned subagent tool did not settle cleanly", error)
+		} finally {
+			slot.release()
+			const releasedState = budget.state()
+			telemetryService.recordPoolOccupancy({
+				pool: "subagent",
+				instance: poolInstance,
+				running: releasedState.running,
+				queued: releasedState.queued,
+				limit: releasedState.limit,
+			})
+		}
+	}
+}
+
+/**
+ * Describe items that never started, for the model.
+ *
+ * The same reasons are used whether the whole batch failed planning or only
+ * some items did: a rejected item that is silently dropped from a mixed batch
+ * reads to the model as work that was requested and then forgotten.
+ *
+ * @param rejected Items rejected during planning.
+ * @param wholeBatch True when nothing at all could be started.
+ * @returns Actionable multi-line summary.
+ */
+function formatRejectedItems(rejected: readonly RejectedSubagentItem[], wholeBatch: boolean): string {
+	return [
+		wholeBatch ? "No subagent could be started." : `${rejected.length} requested subagent(s) were not started:`,
+		...rejected.map((item) => `[${item.index}] ${item.error}`),
+	].join("\n")
 }
 
 /**
@@ -556,8 +778,28 @@ async function emitUsage(config: TaskConfig, entries: SubagentStatusItem[]): Pro
 	await config.callbacks.say("subagent_usage", JSON.stringify(payload))
 }
 
-export class UseSubagentToolHandler implements IFullyManagedTool {
+interface PreparedSingleSubagentExecution {
+	request: ReturnType<typeof parseUseSubagentRequest>
+	resolvedSubagent: Awaited<ReturnType<typeof resolveAgentConfig>>
+	effectiveSubagentName: string
+	approvalBody: string
+}
+
+interface PreparedBatchSubagentExecution {
+	request: ReturnType<typeof parseUseSubagentsRequest>
+	batchId: string
+	planned: PlannedSubagentItem[]
+	rejected: RejectedSubagentItem[]
+	approvalBody: string
+}
+
+function preparedExecutionKey(block: ToolUse): string {
+	return block.dline_tid ?? block.function_id ?? String(block.ts)
+}
+
+export class UseSubagentToolHandler implements IFullyManagedTool, IPreparableToolHandler {
 	readonly name = ClineDefaultTool.USE_SUBAGENT
+	private readonly preparedExecutions = new Map<string, PreparedSingleSubagentExecution>()
 
 	/**
 	 * Describe stable single subagent execution.
@@ -585,39 +827,28 @@ export class UseSubagentToolHandler implements IFullyManagedTool {
 			task,
 			context,
 		}
-		const autoApproveResult = uiHelpers.shouldAutoApproveTool(this.name)
-		const [shouldAutoApprove] = Array.isArray(autoApproveResult) ? autoApproveResult : [autoApproveResult, false]
-		if (shouldAutoApprove) {
-			await uiHelpers.say("use_subagents", JSON.stringify(payload), undefined, undefined, true, block.ts)
-			return
-		}
-		uiHelpers.ask("use_subagents", JSON.stringify(payload), true, { existingTs: block.ts }).catch(() => undefined)
+		await uiHelpers.say("use_subagents", JSON.stringify(payload), undefined, undefined, true, block.ts)
 	}
 
-	/**
-	 * Execute stable single subagent requests.
-	 * @param config Current task config.
-	 * @param block Tool block.
-	 * @returns Tool response for the model.
-	 */
-	async execute(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
+	async prepare(config: TaskConfig, block: ToolUse): Promise<ToolHandlerPreparationResult> {
 		if (!(config.subagentsEnabled ?? config.services.stateManager.getGlobalSettingsKey("subagentsEnabled"))) {
-			return formatResponse.toolError(getPrompt("toolHandlers", "subagentsDisabled"))
+			return { outcome: "rejected", message: getPrompt("toolHandlers", "subagentsDisabled") }
 		}
 		let request: ReturnType<typeof parseUseSubagentRequest>
 		try {
 			request = parseUseSubagentRequest(block.params)
 		} catch (error) {
 			config.taskState.consecutiveMistakeCount++
-			return formatResponse.toolError(error instanceof Error ? error.message : String(error))
+			return { outcome: "rejected", message: error instanceof Error ? error.message : String(error) }
 		}
 		const usesDefault = isDefaultSubagentName(request.agentName)
 		const resolvedSubagent = await resolveAgentConfig(config.cwd, request.agentName, getResolveOptions(config))
 		if (!usesDefault && !resolvedSubagent) {
 			const available = await getAvailableSubagentNames(config)
-			return formatResponse.toolError(
-				`Unknown or disabled subagent '${request.agentName}'. Available subagents: ${available.join(", ")}.`,
-			)
+			return {
+				outcome: "rejected",
+				message: `Unknown or disabled subagent '${request.agentName}'. Available subagents: ${available.join(", ")}.`,
+			}
 		}
 		const effectiveSubagentName = resolvedSubagent?.config.name ?? DEFAULT_SUBAGENT_NAME
 		const approvalBody = JSON.stringify({
@@ -629,15 +860,36 @@ export class UseSubagentToolHandler implements IFullyManagedTool {
 			background: request.options.background,
 			timeoutSeconds: request.options.timeoutSeconds,
 		} satisfies ClineAskUseSubagents)
-		const approved = await approveSubagentUse(
-			config,
-			block,
-			this.name,
-			"use_subagents",
+		this.preparedExecutions.set(preparedExecutionKey(block), {
+			request,
+			resolvedSubagent,
+			effectiveSubagentName,
 			approvalBody,
-			`Dline wants to use the '${effectiveSubagentName}' subagent`,
-		)
-		if (!approved) return formatResponse.toolDenied()
+		})
+		return { outcome: "prepared", presentation: { ask: "tool", body: approvalBody, notify: false } }
+	}
+
+	discardPrepared(block: ToolUse): void {
+		this.preparedExecutions.delete(preparedExecutionKey(block))
+	}
+
+	/**
+	 * Execute stable single subagent requests.
+	 * @param config Current task config.
+	 * @param block Tool block.
+	 * @returns Tool response for the model.
+	 */
+	async execute(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
+		let prepared = this.preparedExecutions.get(preparedExecutionKey(block))
+		if (!prepared) {
+			const preparation = await this.prepare(config, block)
+			if (preparation.outcome === "rejected") return formatResponse.toolError(preparation.message)
+			prepared = this.preparedExecutions.get(preparedExecutionKey(block))
+		}
+		if (!prepared) return formatResponse.toolError("Prepared subagent execution is unavailable.")
+		this.preparedExecutions.delete(preparedExecutionKey(block))
+		const { request, resolvedSubagent, effectiveSubagentName, approvalBody } = prepared
+		await presentSubagentUse(config, block, this.name, approvalBody)
 
 		const entry: SubagentStatusItem = {
 			index: 1,
@@ -660,8 +912,7 @@ export class UseSubagentToolHandler implements IFullyManagedTool {
 				prompt: request.prompt,
 				timeoutSeconds: request.options.timeoutSeconds,
 				runner: () =>
-					runSubagent({
-						runner,
+					runBudgetedSubagent(getSubagentFanoutBudget(config), config.ulid, runner, {
 						prompt: request.prompt,
 						timeoutSeconds: request.options.timeoutSeconds,
 						onProgress: (update) => applyProgress(config, entry, update),
@@ -749,8 +1000,7 @@ export class UseSubagentToolHandler implements IFullyManagedTool {
 			timeoutSeconds: request.options.timeoutSeconds,
 			runner: async () => {
 				try {
-					const result = await runSubagent({
-						runner: foregroundRunner,
+					const result = await runBudgetedSubagent(getSubagentFanoutBudget(config), config.ulid, foregroundRunner, {
 						prompt: request.prompt,
 						timeoutSeconds: request.options.timeoutSeconds,
 						onProgress: (update) => applyProgress(config, entry, update),
@@ -909,8 +1159,9 @@ export class UseSubagentToolHandler implements IFullyManagedTool {
 	}
 }
 
-export class UseSubagentsToolHandler implements IFullyManagedTool {
+export class UseSubagentsToolHandler implements IFullyManagedTool, IPreparableToolHandler {
 	readonly name = ClineDefaultTool.USE_SUBAGENTS
+	private readonly preparedExecutions = new Map<string, PreparedBatchSubagentExecution>()
 
 	/**
 	 * Describe stable batch subagent execution.
@@ -927,18 +1178,63 @@ export class UseSubagentsToolHandler implements IFullyManagedTool {
 	 * @param uiHelpers UI helper methods.
 	 */
 	async handlePartialBlock(block: ToolUse, uiHelpers: StronglyTypedUIHelpers): Promise<void> {
-		const prompts = PROMPT_KEYS.map((key) => uiHelpers.removeClosingTag(block, key, readParam(block.params[key])))
-			.map((prompt) => prompt?.trim())
-			.filter((prompt): prompt is string => !!prompt)
+		// A streaming batch is incomplete by definition, so the array is usually
+		// unparseable text. Showing the raw fragment is still better than showing
+		// nothing: the user sees the call taking shape and can stop it early.
+		const streamed = uiHelpers.removeClosingTag(block, "subagents", readParam(block.params.subagents))?.trim()
+		const prompts = streamed ? previewBatchPrompts(streamed) : []
 		if (prompts.length === 0) return
 		const partialMessage = JSON.stringify({ kind: "batch", prompts } satisfies ClineAskUseSubagents)
-		const autoApproveResult = uiHelpers.shouldAutoApproveTool(this.name)
-		const [shouldAutoApprove] = Array.isArray(autoApproveResult) ? autoApproveResult : [autoApproveResult, false]
-		if (shouldAutoApprove) {
-			await uiHelpers.say("use_subagents", partialMessage, undefined, undefined, true, block.ts)
-			return
+		await uiHelpers.say("use_subagents", partialMessage, undefined, undefined, true, block.ts)
+	}
+
+	async prepare(config: TaskConfig, block: ToolUse): Promise<ToolHandlerPreparationResult> {
+		if (!(config.subagentsEnabled ?? config.services.stateManager.getGlobalSettingsKey("subagentsEnabled"))) {
+			return { outcome: "rejected", message: getPrompt("toolHandlers", "subagentsDisabled") }
 		}
-		uiHelpers.ask("use_subagents", partialMessage, true, { existingTs: block.ts }).catch(() => undefined)
+		let request: ReturnType<typeof parseUseSubagentsRequest>
+		try {
+			request = parseUseSubagentsRequest(block.params)
+		} catch (error) {
+			config.taskState.consecutiveMistakeCount++
+			return { outcome: "rejected", message: error instanceof Error ? error.message : String(error) }
+		}
+		const batchId = `subagent_batch_${block.function_id || block.ts}`
+		const { planned, rejected } = await planSubagentBatch({
+			items: request.items,
+			batchTimeoutSeconds: request.options.timeoutSeconds,
+			batchId,
+			resolvers: getBatchResolvers(config),
+		})
+		telemetryService.captureSubagentFanout(
+			request.items.length,
+			request.items.filter((item) => item.profile !== undefined).length,
+		)
+		if (planned.length === 0) {
+			config.taskState.consecutiveMistakeCount++
+			return { outcome: "rejected", message: formatRejectedItems(rejected, true) }
+		}
+		const approvalBody = JSON.stringify({
+			kind: "batch",
+			prompts: planned.map((item) => item.prompt),
+			items: planned.map((item) => ({
+				index: item.index,
+				task: item.task,
+				context: item.context,
+				subagentName: item.subagentName,
+				profileName: item.profileName,
+				jobId: item.jobId,
+			})),
+			rejected: rejected.map((item) => ({ index: item.index, error: item.error })),
+			background: request.options.background,
+			timeoutSeconds: request.options.timeoutSeconds,
+		} satisfies ClineAskUseSubagents)
+		this.preparedExecutions.set(preparedExecutionKey(block), { request, batchId, planned, rejected, approvalBody })
+		return { outcome: "prepared", presentation: { ask: "tool", body: approvalBody, notify: false } }
+	}
+
+	discardPrepared(block: ToolUse): void {
+		this.preparedExecutions.delete(preparedExecutionKey(block))
 	}
 
 	/**
@@ -948,100 +1244,84 @@ export class UseSubagentsToolHandler implements IFullyManagedTool {
 	 * @returns Tool response for the model.
 	 */
 	async execute(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
-		if (!(config.subagentsEnabled ?? config.services.stateManager.getGlobalSettingsKey("subagentsEnabled"))) {
-			await config.callbacks.say(
-				"use_subagents",
-				JSON.stringify({
-					prompts: [],
-					error: "subagentsDisabled",
-					message: getPrompt("toolHandlers", "subagentsDisabled"),
-				}),
-				undefined,
-				undefined,
-				false,
-				block.ts,
-			)
-			return formatResponse.toolError(getPrompt("toolHandlers", "subagentsDisabled"))
+		let prepared = this.preparedExecutions.get(preparedExecutionKey(block))
+		if (!prepared) {
+			const preparation = await this.prepare(config, block)
+			if (preparation.outcome === "rejected") return formatResponse.toolError(preparation.message)
+			prepared = this.preparedExecutions.get(preparedExecutionKey(block))
 		}
-		let request: ReturnType<typeof parseUseSubagentsRequest>
-		try {
-			request = parseUseSubagentsRequest(block.params)
-		} catch (error) {
-			config.taskState.consecutiveMistakeCount++
-			return formatResponse.toolError(error instanceof Error ? error.message : String(error))
-		}
-		const resolvedDefaultSubagent = await resolveAgentConfig(config.cwd, DEFAULT_SUBAGENT_NAME, getResolveOptions(config))
-		const effectiveSubagentName = resolvedDefaultSubagent?.config.name ?? DEFAULT_SUBAGENT_NAME
-		const prompts = request.items.map((item) => item.prompt)
-		const approvalBody = JSON.stringify({
-			kind: "batch",
-			prompts,
-			items: request.items.map((item) => ({
-				task: item.task,
-				context: item.context,
-				subagentName: effectiveSubagentName,
-			})),
-			background: request.options.background,
-			timeoutSeconds: request.options.timeoutSeconds,
-		} satisfies ClineAskUseSubagents)
-		const approved = await approveSubagentUse(
-			config,
-			block,
-			this.name,
-			"use_subagents",
-			approvalBody,
-			request.items.length === 1 ? "Dline wants to use a subagent" : `Dline wants to use ${request.items.length} subagents`,
-		)
-		if (!approved) return formatResponse.toolDenied()
+		if (!prepared) return formatResponse.toolError("Prepared subagent batch execution is unavailable.")
+		this.preparedExecutions.delete(preparedExecutionKey(block))
+		const { request, batchId, planned, rejected, approvalBody } = prepared
+		await presentSubagentUse(config, block, this.name, approvalBody)
 		config.taskState.consecutiveMistakeCount = 0
-		const entries: SubagentStatusItem[] = request.items.map((item) => ({
+		const entries: SubagentStatusItem[] = planned.map((item) => ({
 			index: item.index,
+			jobId: item.jobId,
 			prompt: item.prompt,
-			subagentName: effectiveSubagentName,
+			subagentName: item.subagentName,
+			profileName: item.profileName,
 			task: item.task,
 			context: item.context,
 			background: request.options.background,
-			backgroundHandoffAvailable: false,
-			timeoutSeconds: request.options.timeoutSeconds,
+			backgroundHandoffAvailable: !request.options.background,
+			timeoutSeconds: item.timeoutSeconds,
 			injectionState: "pending",
-			status: "running",
+			// A wider batch than the budget allows starts queued rather than
+			// running, so the row does not claim work that has not begun.
+			status: "pending",
 			...emptyStats(),
 		}))
+		// Runners are addressed by job id: rejected items make the executing set
+		// sparse, so array position is not a usable identity.
+		const runnersByJobId = new Map<string, SubagentRunner>(
+			planned.map((item) => [item.jobId, new SubagentRunner(config, item.subagentName, item.agentConfig)]),
+		)
+		const entriesByJobId = new Map<string, SubagentStatusItem>(entries.map((entry) => [entry.jobId as string, entry]))
+		const budget = getSubagentFanoutBudget(config)
 		if (request.options.background) {
-			const runners = request.items.map(
-				() => new SubagentRunner(config, effectiveSubagentName, resolvedDefaultSubagent?.config),
-			)
+			// The manager assigns its own job ids for background work, so the
+			// planned id is only the key used to reach this item's runner here.
+			const runnerByBatchPosition = planned.map((item) => runnersByJobId.get(item.jobId) as SubagentRunner)
 			const batch = getSubagentJobManager(config).startBatch({
 				timeoutSeconds: request.options.timeoutSeconds,
-				items: request.items.map((item, index) => ({
-					subagentName: effectiveSubagentName,
+				items: planned.map((item, position) => ({
+					subagentName: item.subagentName,
 					task: item.task,
 					prompt: item.prompt,
 					runner: () =>
-						runSubagent({
-							runner: runners[index],
+						runBudgetedSubagent(budget, config.ulid, runnerByBatchPosition[position], {
 							prompt: item.prompt,
-							timeoutSeconds: request.options.timeoutSeconds,
-							onProgress: (update) => applyProgress(config, entries[index], update),
+							timeoutSeconds: item.timeoutSeconds,
+							onProgress: (update) => applyProgress(config, entries[position], update),
 						}),
 				})),
 				onCreated: (batchRecord) => {
-					entries.forEach((entry, index) => {
-						entry.jobId = batchRecord.itemJobIds[index]
+					entries.forEach((entry, position) => {
+						// Rebind identity to the manager's id and keep the runner
+						// map addressable under it, so cancel, finish and retry
+						// resolve by id rather than by array position.
+						const runner = runnerByBatchPosition[position]
+						const managedJobId = batchRecord.itemJobIds[position]
+						entriesByJobId.delete(entry.jobId as string)
+						runnersByJobId.delete(entry.jobId as string)
+						entry.jobId = managedJobId
 						entry.startedAt = batchRecord.startedAt
+						entriesByJobId.set(managedJobId, entry)
+						runnersByJobId.set(managedJobId, runner)
 						createSubagentActivity(
 							config,
 							entry,
 							"background",
-							() => runners[index].abort(),
+							() => runner.abort(),
 							batchRecord.batchJobId,
 							undefined,
-							() => runners[index].requestFinish("user"),
+							() => runner.requestFinish("user"),
 						)
 					})
 				},
 				onStatusChange: async (jobRecord, batchRecord) => {
-					const entry = entries.find((candidate) => candidate.jobId === jobRecord.jobId)
+					const entry = entriesByJobId.get(jobRecord.jobId)
 					if (entry) {
 						entry.status = jobRecord.status
 						entry.result = jobRecord.result
@@ -1049,14 +1329,13 @@ export class UseSubagentsToolHandler implements IFullyManagedTool {
 						if (jobRecord.stats) applyStats(entry, jobRecord.stats)
 						entry.finishedAt = jobRecord.finishedAt
 						updateActivityFromEntry(config, entry)
+						const runner = runnersByJobId.get(jobRecord.jobId)
 						config.activityStore?.setRetry?.(
 							jobRecord.jobId,
-							jobRecord.retryable
+							jobRecord.retryable && runner
 								? async () => {
-										config.activityStore?.setCancel(jobRecord.jobId, () => runners[entry.index - 1].abort())
-										config.activityStore?.setFinish(jobRecord.jobId, () =>
-											runners[entry.index - 1].requestFinish("user"),
-										)
+										config.activityStore?.setCancel(jobRecord.jobId, () => runner.abort())
+										config.activityStore?.setFinish(jobRecord.jobId, () => runner.requestFinish("user"))
 										return getSubagentJobManager(config).retryJob(jobRecord.jobId)
 									}
 								: undefined,
@@ -1092,24 +1371,70 @@ export class UseSubagentsToolHandler implements IFullyManagedTool {
 				false,
 				block.ts,
 			)
-			return formatResponse.toolResult(backgroundSubagentResult("started", "batch job", batch.batchJobId))
+			// Background items report back later through the job manager, which
+			// only knows about the ones that started. A rejected item would
+			// otherwise never be mentioned again, so it is reported now.
+			const startedNotice = backgroundSubagentResult("started", "batch job", batch.batchJobId)
+			return formatResponse.toolResult(
+				rejected.length === 0 ? startedNotice : `${startedNotice}\n\n${formatRejectedItems(rejected, false)}`,
+			)
 		}
 		config.taskState.isExecutingSubagent = true
-		const foregroundRunners = request.items.map(
-			() => new SubagentRunner(config, effectiveSubagentName, resolvedDefaultSubagent?.config),
-		)
-		const foregroundBatchId = `subagent_batch_fg_${block.function_id || block.ts}`
-		entries.forEach((entry, index) => {
-			entry.jobId = `${foregroundBatchId}_${index + 1}`
-			entry.startedAt = Date.now()
+		let isContinuedInBackground = false
+		let resolveHandoff: (() => void) | undefined
+		const handoffPromise = new Promise<void>((resolve) => {
+			resolveHandoff = resolve
+		})
+		const continueBatchInBackground = async (): Promise<BackgroundHandoffResult> => {
+			if (isContinuedInBackground || !entries.some((entry) => entry.status === "pending" || entry.status === "running")) {
+				return false
+			}
+			const rollback = async () => {
+				isContinuedInBackground = false
+				for (const entry of entries) {
+					entry.background = false
+					entry.backgroundHandoffAvailable = true
+				}
+			}
+			isContinuedInBackground = true
+			for (const entry of entries) {
+				entry.background = true
+				entry.backgroundHandoffAvailable = false
+			}
+			try {
+				await config.callbacks.say(
+					"subagent",
+					JSON.stringify(
+						buildStatusPayload("batch", "running", entries, {
+							background: true,
+							timeoutSeconds: request.options.timeoutSeconds,
+							batchJobId: batchId,
+						}),
+					),
+					undefined,
+					undefined,
+					false,
+					block.ts,
+				)
+			} catch (error) {
+				await rollback()
+				throw error
+			}
+			return { accepted: true, rollback, commit: () => resolveHandoff?.() }
+		}
+		planned.forEach((item) => {
+			const entry = entriesByJobId.get(item.jobId) as SubagentStatusItem
+			const runner = runnersByJobId.get(item.jobId) as SubagentRunner
 			createSubagentActivity(
 				config,
 				entry,
 				"foreground",
-				() => foregroundRunners[index].abort(),
-				foregroundBatchId,
+				() => runner.abort(),
+				batchId,
+				continueBatchInBackground,
+				() => runner.requestFinish("user"),
 				undefined,
-				() => foregroundRunners[index].requestFinish("user"),
+				entries.flatMap((candidate) => (candidate.jobId ? [candidate.jobId] : [])),
 			)
 		})
 		await config.callbacks.say(
@@ -1118,6 +1443,7 @@ export class UseSubagentsToolHandler implements IFullyManagedTool {
 				buildStatusPayload("batch", "running", entries, {
 					background: false,
 					timeoutSeconds: request.options.timeoutSeconds,
+					batchJobId: batchId,
 				}),
 			),
 			undefined,
@@ -1125,114 +1451,148 @@ export class UseSubagentsToolHandler implements IFullyManagedTool {
 			false,
 			block.ts,
 		)
-		let results: SubagentExecResult[]
-		try {
-			results = await Promise.all(
-				request.items.map((item, index) =>
-					runSubagent({
-						runner: foregroundRunners[index],
+		const runResultsPromise = budget.awaitChildren(() =>
+			Promise.all(
+				planned.map((item) => {
+					const entry = entriesByJobId.get(item.jobId) as SubagentStatusItem
+					return runBudgetedSubagent(budget, config.ulid, runnersByJobId.get(item.jobId) as SubagentRunner, {
 						prompt: item.prompt,
-						timeoutSeconds: request.options.timeoutSeconds,
-						onProgress: (update: SubagentProgressUpdate) => applyProgress(config, entries[index], update),
-					}),
-				),
-			)
+						timeoutSeconds: item.timeoutSeconds,
+						onProgress: (update: SubagentProgressUpdate) => applyProgress(config, entry, update),
+						// Only a started item is running; until a slot is
+						// free it stays queued rather than claiming work.
+						onStarted: () => {
+							entry.status = "running"
+							entry.startedAt = Date.now()
+							updateActivityFromEntry(config, entry)
+						},
+					})
+				}),
+			),
+		)
+		let results: SubagentExecResult[] = []
+		let handedOff = false
+		try {
+			const outcome = await Promise.race([
+				runResultsPromise.then((completedResults) => ({ kind: "completed" as const, results: completedResults })),
+				handoffPromise.then(() => ({ kind: "background" as const })),
+			])
+			if (outcome.kind === "background") handedOff = true
+			else results = outcome.results
 		} finally {
 			config.taskState.isExecutingSubagent = false
 		}
-		results.forEach((result: SubagentExecResult, index) => {
-			const entry = entries[index]
-			entry.status = result.status
-			entry.result = result.result
-			entry.error = result.error
-			entry.finishedAt = Date.now()
-			applyStats(entry, result.stats)
-			updateActivityFromEntry(config, entry)
-			if (!result.retryable || !entry.jobId) return
-			const retainedManager = getSubagentJobManager(config)
-			retainedManager.retainRetryableJob({
-				jobId: entry.jobId,
-				subagentName: effectiveSubagentName,
-				task: request.items[index].task,
-				prompt: request.items[index].prompt,
-				timeoutSeconds: request.options.timeoutSeconds,
-				startedAt: entry.startedAt ?? Date.now(),
-				result,
-				runner: () =>
-					runSubagent({
-						runner: foregroundRunners[index],
-						prompt: request.items[index].prompt,
-						timeoutSeconds: request.options.timeoutSeconds,
-						onProgress: (update: SubagentProgressUpdate) => applyProgress(config, entry, update),
-					}),
-				onStatusChange: async (jobRecord) => {
-					entry.status = jobRecord.status
-					entry.result = jobRecord.result
-					entry.error = jobRecord.error
-					entry.background = true
-					if (jobRecord.stats) applyStats(entry, jobRecord.stats)
-					entry.finishedAt = jobRecord.finishedAt
-					updateActivityFromEntry(config, entry)
-					config.activityStore?.setRetry?.(
-						jobRecord.jobId,
-						jobRecord.retryable
-							? async () => {
-									config.activityStore?.setCancel(jobRecord.jobId, () => foregroundRunners[index].abort())
-									config.activityStore?.setFinish(jobRecord.jobId, () =>
-										foregroundRunners[index].requestFinish("user"),
-									)
-									return retainedManager.retryJob(jobRecord.jobId)
-								}
-							: undefined,
-					)
-					await config.callbacks.say(
-						"subagent",
-						JSON.stringify(
-							buildStatusPayload("batch", jobRecord.status, entries, {
-								background: true,
-								timeoutSeconds: request.options.timeoutSeconds,
-								batchJobId: foregroundBatchId,
-							}),
-						),
-						undefined,
-						undefined,
-						false,
-						block.ts,
-					)
-				},
-			})
-			config.activityStore?.setRetry?.(entry.jobId, async () => {
-				entry.background = true
-				config.activityStore?.update(entry.jobId as string, {
-					executionMode: "background",
-					cancellationOwner: "explicit",
+		const finalizeBatchResults = async (completedResults: SubagentExecResult[], background: boolean): Promise<void> => {
+			completedResults.forEach((result: SubagentExecResult, position) => {
+				const item = planned[position]
+				const entry = entriesByJobId.get(item.jobId) as SubagentStatusItem
+				const foregroundRunner = runnersByJobId.get(item.jobId) as SubagentRunner
+				entry.status = result.status
+				entry.result = result.result
+				entry.error = result.error
+				entry.background = background
+				entry.backgroundHandoffAvailable = false
+				entry.finishedAt = Date.now()
+				applyStats(entry, result.stats)
+				updateActivityFromEntry(config, entry)
+				if (!result.retryable || !entry.jobId) return
+				const retainedManager = getSubagentJobManager(config)
+				retainedManager.retainRetryableJob({
+					jobId: entry.jobId,
+					// The retained recipe keeps this item's own resolution, so a
+					// retry after reopen replays against the agent and Profile that
+					// were chosen, not against whatever the batch defaulted to.
+					subagentName: item.subagentName,
+					task: item.task,
+					prompt: item.prompt,
+					timeoutSeconds: item.timeoutSeconds,
+					startedAt: entry.startedAt ?? Date.now(),
+					result,
+					runner: () =>
+						runBudgetedSubagent(budget, config.ulid, foregroundRunner, {
+							prompt: item.prompt,
+							timeoutSeconds: item.timeoutSeconds,
+							onProgress: (update: SubagentProgressUpdate) => applyProgress(config, entry, update),
+						}),
+					onStatusChange: async (jobRecord) => {
+						entry.status = jobRecord.status
+						entry.result = jobRecord.result
+						entry.error = jobRecord.error
+						entry.background = true
+						if (jobRecord.stats) applyStats(entry, jobRecord.stats)
+						entry.finishedAt = jobRecord.finishedAt
+						updateActivityFromEntry(config, entry)
+						config.activityStore?.setRetry?.(
+							jobRecord.jobId,
+							jobRecord.retryable
+								? async () => {
+										config.activityStore?.setCancel(jobRecord.jobId, () => foregroundRunner.abort())
+										config.activityStore?.setFinish(jobRecord.jobId, () =>
+											foregroundRunner.requestFinish("user"),
+										)
+										return retainedManager.retryJob(jobRecord.jobId)
+									}
+								: undefined,
+						)
+						await config.callbacks.say(
+							"subagent",
+							JSON.stringify(
+								buildStatusPayload("batch", jobRecord.status, entries, {
+									background: true,
+									timeoutSeconds: request.options.timeoutSeconds,
+									batchJobId: batchId,
+								}),
+							),
+							undefined,
+							undefined,
+							false,
+							block.ts,
+						)
+					},
 				})
-				config.activityStore?.setCancel(entry.jobId as string, () => foregroundRunners[index].abort())
-				config.activityStore?.setFinish(entry.jobId as string, () => foregroundRunners[index].requestFinish("user"))
-				return retainedManager.retryJob(entry.jobId as string)
+				config.activityStore?.setRetry?.(entry.jobId, async () => {
+					entry.background = true
+					config.activityStore?.update(entry.jobId as string, {
+						executionMode: "background",
+						cancellationOwner: "explicit",
+					})
+					config.activityStore?.setCancel(entry.jobId as string, () => foregroundRunner.abort())
+					config.activityStore?.setFinish(entry.jobId as string, () => foregroundRunner.requestFinish("user"))
+					return retainedManager.retryJob(entry.jobId as string)
+				})
 			})
-		})
-		const finalStatus: ClineSaySubagentStatus["status"] = entries.some((entry) => entry.status === "timeout")
-			? "timeout"
-			: entries.some((entry) => entry.status === "failed")
-				? "failed"
-				: entries.some((entry) => entry.status === "cancelled")
-					? "cancelled"
-					: "completed"
-		await config.callbacks.say(
-			"subagent",
-			JSON.stringify(
-				buildStatusPayload("batch", finalStatus, entries, {
-					background: false,
-					timeoutSeconds: request.options.timeoutSeconds,
-				}),
-			),
-			undefined,
-			undefined,
-			false,
-			block.ts,
-		)
-		await emitUsage(config, entries)
+			const finalStatus: ClineSaySubagentStatus["status"] = entries.some((entry) => entry.status === "timeout")
+				? "timeout"
+				: entries.some((entry) => entry.status === "failed")
+					? "failed"
+					: entries.some((entry) => entry.status === "cancelled")
+						? "cancelled"
+						: "completed"
+			await config.callbacks.say(
+				"subagent",
+				JSON.stringify(
+					buildStatusPayload("batch", finalStatus, entries, {
+						background,
+						timeoutSeconds: request.options.timeoutSeconds,
+					}),
+				),
+				undefined,
+				undefined,
+				false,
+				block.ts,
+			)
+			await emitUsage(config, entries)
+		}
+		if (handedOff) {
+			void runResultsPromise
+				.then((completedResults) => finalizeBatchResults(completedResults, true))
+				.catch((error) => Logger.error("[SubagentToolHandler] background batch finalization failed", error))
+			const continuedNotice = backgroundSubagentResult("continued", "batch job", batchId)
+			return formatResponse.toolResult(
+				rejected.length === 0 ? continuedNotice : `${continuedNotice}\n\n${formatRejectedItems(rejected, false)}`,
+			)
+		}
+		await finalizeBatchResults(results, false)
 		const modelSummaryEntries = entries.map((entry, index) => {
 			const result = results[index]
 			if (!result?.retryable) return entry
@@ -1242,11 +1602,17 @@ export class UseSubagentsToolHandler implements IFullyManagedTool {
 			}
 		})
 		const retryableCount = results.filter((result) => result?.retryable).length
-		const summary = formatSummary(modelSummaryEntries)
-		if (retryableCount === 0) return formatResponse.toolResult(summary)
-		const retryNotice = getPrompt("toolHandlers", "subagentBatchRetryablePaused")
-			.replace("@COUNT@", String(retryableCount))
-			.replace("@TOTAL@", String(entries.length))
-		return formatResponse.toolResult(`${summary}\n\n${retryNotice}`)
+		// Rejected items are reported with the results. Omitting them would let
+		// the model read the summary as covering everything it asked for.
+		const sections = [formatSummary(modelSummaryEntries)]
+		if (rejected.length > 0) sections.push(formatRejectedItems(rejected, false))
+		if (retryableCount > 0) {
+			sections.push(
+				getPrompt("toolHandlers", "subagentBatchRetryablePaused")
+					.replace("@COUNT@", String(retryableCount))
+					.replace("@TOTAL@", String(entries.length)),
+			)
+		}
+		return formatResponse.toolResult(sections.join("\n\n"))
 	}
 }

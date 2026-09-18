@@ -8,6 +8,7 @@ import {
 	MAX_AUTO_CONDENSE_TRIGGER_PERCENT,
 	MIN_AUTO_CONDENSE_TRIGGER_PERCENT,
 } from "@shared/auto-condense"
+import { resolveMaxParallelSubagents, resolveMaxParallelToolCalls } from "@shared/concurrency-limits"
 import { Empty } from "@shared/proto/dline/common"
 import { PlanActMode, McpDisplayMode as ProtoMcpDisplayMode, UpdateSettingsRequest } from "@shared/proto/dline/state"
 import type { SettingsKey } from "@shared/storage/state-keys"
@@ -440,6 +441,27 @@ export async function updateSettings(controller: Controller, request: UpdateSett
 
 		if (request.enableParallelToolCalling !== undefined) {
 			controller.stateManager.setGlobalState("enableParallelToolCalling", !!request.enableParallelToolCalling)
+			controller.task?.notifyToolConcurrencyLimitChanged()
+		}
+
+		// Clamp on the way in as well as on the way out. Storing an out-of-range
+		// value would leave the persisted document disagreeing with every reader
+		// of it, and a later build that widened the range would silently adopt a
+		// limit the user never chose.
+		if (request.maxParallelToolCalls !== undefined) {
+			controller.stateManager.setGlobalState(
+				"maxParallelToolCalls",
+				resolveMaxParallelToolCalls(request.maxParallelToolCalls, true),
+			)
+			controller.task?.notifyToolConcurrencyLimitChanged()
+		}
+
+		if (request.maxParallelSubagents !== undefined) {
+			controller.stateManager.setGlobalState(
+				"maxParallelSubagents",
+				resolveMaxParallelSubagents(request.maxParallelSubagents),
+			)
+			controller.task?.notifySubagentConcurrencyLimitChanged()
 		}
 
 		if (request.optOutOfRemoteConfig !== undefined) {

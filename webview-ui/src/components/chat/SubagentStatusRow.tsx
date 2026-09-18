@@ -154,30 +154,52 @@ function parseSubagentRowData(message: ClineMessage): SubagentRowData | null {
 			// so the frontend does not show a stale pending state.
 			const rowStatus = parsed.error ? "failed" : "pending"
 			const errorText = parsed.message || parsed.error
+			// Items the backend refused during planning are shown alongside the
+			// runnable ones. Dropping them would present a batch that is
+			// quietly narrower than the one being approved.
+			const rejectedRows: SubagentDisplayItem[] = (parsed.rejected ?? []).map((rejected) => ({
+				index: rejected.index,
+				prompt: rejected.error,
+				status: "failed",
+				error: rejected.error,
+				toolCalls: 0,
+				inputTokens: 0,
+				outputTokens: 0,
+				totalCost: 0,
+				currency: "",
+				contextTokens: 0,
+				contextWindow: 0,
+				contextUsagePercentage: 0,
+			}))
+			const runnableRows: SubagentDisplayItem[] = prompts.map((prompt, index) => ({
+				// Planning compacts the runnable array, so the array offset is not
+				// the requested position. The backend supplies the original index;
+				// the offset is only the fallback for a payload written before that
+				// field existed.
+				index: structuredItems?.[index]?.index ?? index + 1,
+				prompt,
+				subagentName: parsed.subagentName ?? structuredItems?.[index]?.subagentName,
+				task: parsed.task ?? structuredItems?.[index]?.task,
+				context: parsed.context ?? parsed.content ?? structuredItems?.[index]?.context,
+				status: rowStatus,
+				error: errorText,
+				// Carry the run identity when the payload has one so the activity
+				// merge below can supply live figures. These zeros are only the
+				// pre-start placeholder for a row whose run has not been created
+				// yet; once an activity exists it owns every value here.
+				jobId: parsed.jobId ?? structuredItems?.[index]?.jobId,
+				toolCalls: 0,
+				inputTokens: 0,
+				outputTokens: 0,
+				totalCost: 0,
+				currency: "",
+				contextTokens: 0,
+				contextWindow: 0,
+				contextUsagePercentage: 0,
+			}))
 			return {
 				status: rowStatus,
-				items: prompts.map((prompt, index) => ({
-					index: index + 1,
-					prompt,
-					subagentName: parsed.subagentName ?? structuredItems?.[index]?.subagentName,
-					task: parsed.task ?? structuredItems?.[index]?.task,
-					context: parsed.context ?? parsed.content ?? structuredItems?.[index]?.context,
-					status: rowStatus,
-					error: errorText,
-					// Carry the run identity when the payload has one so the activity
-					// merge below can supply live figures. These zeros are only the
-					// pre-start placeholder for a row whose run has not been created
-					// yet; once an activity exists it owns every value here.
-					jobId: parsed.jobId ?? structuredItems?.[index]?.jobId,
-					toolCalls: 0,
-					inputTokens: 0,
-					outputTokens: 0,
-					totalCost: 0,
-					currency: "",
-					contextTokens: 0,
-					contextWindow: 0,
-					contextUsagePercentage: 0,
-				})),
+				items: [...runnableRows, ...rejectedRows].sort((left, right) => left.index - right.index),
 			}
 		}
 

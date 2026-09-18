@@ -1,6 +1,6 @@
 import { getPrompt } from "@core/prompts/i18n"
 import { isInteractionCancellationError } from "@core/task/interaction/InteractionCancellationError"
-import { ClineAsk, ClineSayTool } from "@shared/ExtensionMessage"
+import { ClineSayTool } from "@shared/ExtensionMessage"
 import { ClineDefaultTool } from "@shared/tools"
 import { DEFAULT_LOCAL_SEARCH_ENGINE, isLocalSearchEngineId, LOCAL_SEARCH_ENGINE_LABELS } from "@shared/web-search"
 import { telemetryService } from "@/services/telemetry"
@@ -10,11 +10,9 @@ import { parsePartialArrayString } from "@/shared/array"
 import { ToolUse } from "../../../assistant-message"
 import { formatResponse } from "../../../prompts/responses"
 import { ToolResponse } from "../.."
-import { showNotificationForApproval } from "../../utils"
 import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
 import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
-import { ToolResultUtils } from "../utils/ToolResultUtils"
 
 type LocalSearchRegistryFactory = (options: LocalSearchRegistryOptions) => LocalSearchRegistry
 
@@ -84,13 +82,7 @@ export class WebSearchToolHandler implements IFullyManagedTool {
 
 		const partialMessage = JSON.stringify(sharedMessageProps)
 
-		// For partial blocks, use exact-ts tracking for precise UI message replacement
-		const existingTs = block.ts
-		uiHelpers
-			.ask("tool" as ClineAsk, partialMessage, true, {
-				existingTs,
-			})
-			.catch(() => {})
+		await uiHelpers.say("tool", partialMessage, undefined, undefined, true, block.ts)
 	}
 
 	async execute(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
@@ -173,51 +165,17 @@ export class WebSearchToolHandler implements IFullyManagedTool {
 			terminalMessage = sharedMessageProps
 			const completeMessage = JSON.stringify(sharedMessageProps)
 
-			if (config.callbacks.shouldAutoApproveTool(this.name)) {
-				// Auto-approve flow
-				const existingTs = block.ts
-				await config.callbacks.say("tool", completeMessage, undefined, undefined, false, existingTs)
-				telemetryService.captureToolUsage(
-					config.ulid ?? "",
-					"web_search",
-					config.api.getModel().id,
-					provider ?? "",
-					true,
-					true,
-					undefined,
-					block.isNativeToolCall,
-				)
-			} else {
-				// Manual approval flow
-				showNotificationForApproval(
-					`Dline wants to search for: ${query}`,
-					config.autoApprovalSettings.enableNotifications,
-				)
-				const didApprove = await ToolResultUtils.askApprovalAndPushFeedback("tool", completeMessage, config, block.ts)
-				if (!didApprove) {
-					telemetryService.captureToolUsage(
-						config.ulid ?? "",
-						block.name,
-						config.api.getModel().id,
-						provider ?? "",
-						false,
-						false,
-						undefined,
-						block.isNativeToolCall,
-					)
-					return formatResponse.toolDenied()
-				}
-				telemetryService.captureToolUsage(
-					config.ulid ?? "",
-					block.name,
-					config.api.getModel().id,
-					provider ?? "",
-					false,
-					true,
-					undefined,
-					block.isNativeToolCall,
-				)
-			}
+			await config.callbacks.say("tool", completeMessage, undefined, undefined, false, block.ts)
+			telemetryService.captureToolUsage(
+				config.ulid ?? "",
+				"web_search",
+				config.api.getModel().id,
+				provider ?? "",
+				!block.dline_tid || !config.admissionOutcomes?.has(block.dline_tid),
+				true,
+				undefined,
+				block.isNativeToolCall,
+			)
 
 			// Run PreToolUse hook after approval but before execution
 			try {

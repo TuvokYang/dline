@@ -7,6 +7,7 @@ import type { MessageChannel } from "../MessageChannel"
 import type { TaskEffectPorts } from "../runtime/TaskEffectRunner"
 import type { TaskEvent } from "../runtime/TaskEvent"
 import { TaskRuntime } from "../runtime/TaskRuntime"
+import { TaskRuntimeProjectionScheduler } from "../runtime/TaskRuntimeProjectionScheduler"
 import { createTaskRuntimeState } from "../runtime/TaskRuntimeState"
 import { TaskController } from "../TaskController"
 import { TaskPhase } from "../TaskPhase"
@@ -24,6 +25,28 @@ import type { TaskSnapshot } from "../TaskSnapshot"
 
 type TaskSnapshotEmitter = {
 	emitStateSnapshot(snapshot: TaskSnapshot): Promise<void>
+}
+
+/** Minimal persistence surface the projection scheduler drives. */
+interface FakeSnapshotPersistence {
+	schedule(snapshot: TaskSnapshot): void
+	flushNow(): Promise<void>
+}
+
+/**
+ * Build the real projection scheduler over a test persistence double.
+ *
+ * emitStateSnapshot reaches persistence through the scheduler, so these tests
+ * keep asserting the durable path end to end instead of a stubbed indirection.
+ */
+function schedulerOver(snapshotPersistence: FakeSnapshotPersistence): TaskRuntimeProjectionScheduler {
+	return new TaskRuntimeProjectionScheduler({
+		ports: {
+			postView: async () => {},
+			scheduleSnapshot: (snapshot) => snapshotPersistence.schedule(snapshot),
+			flushSnapshot: () => snapshotPersistence.flushNow(),
+		},
+	})
 }
 
 // ── Helpers ──
@@ -69,7 +92,7 @@ function createToolBlock(name: string, functionId: string, ts: number) {
  * handleWebviewAskResponse to work. Uses a real TaskController so
  * the BlockPhaseMachine state changes are real.
  */
-function createFakeTaskForHandleWebviewAskResponse(controller: TaskController, extra: Partial<Record<string, any>> = {}) {
+function createFakeTaskForHandleWebviewAskResponse(controller: TaskController, extra: Partial<Record<string, unknown>> = {}) {
 	return {
 		taskController: controller,
 		taskState: { userMessageContent: [] },
@@ -122,19 +145,21 @@ describe("Task.handleWebviewAskResponse", () => {
 		const scheduledSnapshots: TaskSnapshot[] = []
 		const persistenceOrder: string[] = []
 		const say = vi.fn(async () => 123)
+		const snapshotPersistence = {
+			schedule: (snapshot: TaskSnapshot) => {
+				persistenceOrder.push("schedule")
+				scheduledSnapshots.push(snapshot)
+			},
+			flushNow: vi.fn(async () => {
+				persistenceOrder.push("flush")
+			}),
+		}
 		const fakeTask = {
 			say,
 			syncTaskCompletionProjection: vi.fn(async () => false),
 			postStateToWebview: vi.fn(async () => {}),
-			snapshotPersistence: {
-				schedule: (snapshot: TaskSnapshot) => {
-					persistenceOrder.push("schedule")
-					scheduledSnapshots.push(snapshot)
-				},
-				flushNow: vi.fn(async () => {
-					persistenceOrder.push("flush")
-				}),
-			},
+			snapshotPersistence,
+			projectionScheduler: schedulerOver(snapshotPersistence),
 		}
 		const snapshot: TaskSnapshot = { phase: TaskPhase.STREAMING, apiIndex: 2, timestamp: 300 }
 
@@ -155,16 +180,18 @@ describe("Task.handleWebviewAskResponse", () => {
 		const postStateToWebview = vi.fn(async (_options?: { immediate?: boolean }) => {
 			order.push("push")
 		})
+		const snapshotPersistence = {
+			schedule: () => order.push("schedule"),
+			flushNow: vi.fn(async () => {
+				order.push("flush")
+			}),
+		}
 		const fakeTask = {
 			syncTaskCompletionProjection: vi.fn(async (snapshot: TaskSnapshot) =>
 				sync({ phase: snapshot.phase, revision: snapshot.revision ?? -1, completion: snapshot.completion }),
 			),
-			snapshotPersistence: {
-				schedule: () => order.push("schedule"),
-				flushNow: vi.fn(async () => {
-					order.push("flush")
-				}),
-			},
+			snapshotPersistence,
+			projectionScheduler: schedulerOver(snapshotPersistence),
 			completionProjector: { sync },
 			postStateToWebview,
 		}
@@ -192,14 +219,16 @@ describe("Task.handleWebviewAskResponse", () => {
 
 	it("does not project completion when canonical snapshot persistence fails", async () => {
 		const sync = vi.fn(async () => true)
+		const snapshotPersistence = {
+			schedule: vi.fn(),
+			flushNow: vi.fn(async () => {
+				throw new Error("snapshot write failed")
+			}),
+		}
 		const fakeTask = {
 			syncTaskCompletionProjection: vi.fn(async () => sync()),
-			snapshotPersistence: {
-				schedule: vi.fn(),
-				flushNow: vi.fn(async () => {
-					throw new Error("snapshot write failed")
-				}),
-			},
+			snapshotPersistence,
+			projectionScheduler: schedulerOver(snapshotPersistence),
 			completionProjector: { sync },
 			postStateToWebview: vi.fn(async () => {}),
 		}
@@ -228,18 +257,20 @@ describe("Task.handleWebviewAskResponse", () => {
 			releaseFlush = resolve
 		})
 		let flushStarted = false
+		const snapshotPersistence = {
+			schedule: (snapshot: TaskSnapshot) => {
+				scheduledSnapshots.push(snapshot)
+			},
+			flushNow: vi.fn(async () => {
+				flushStarted = true
+				await flushGate
+			}),
+		}
 		const fakeTask = {
 			syncTaskCompletionProjection: vi.fn(async () => false),
 			postStateToWebview: vi.fn(async () => {}),
-			snapshotPersistence: {
-				schedule: (snapshot: TaskSnapshot) => {
-					scheduledSnapshots.push(snapshot)
-				},
-				flushNow: vi.fn(async () => {
-					flushStarted = true
-					await flushGate
-				}),
-			},
+			snapshotPersistence,
+			projectionScheduler: schedulerOver(snapshotPersistence),
 		}
 		const snapshot: TaskSnapshot = {
 			phase: TaskPhase.AWAITING_APPROVAL,

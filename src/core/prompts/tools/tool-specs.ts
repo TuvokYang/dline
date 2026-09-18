@@ -1,3 +1,4 @@
+import { MAX_SUBAGENTS_PER_BATCH } from "../../../shared/concurrency-limits"
 import { GPT_IMAGE_1_MODEL_ID, GPT_IMAGE_2_MODEL_ID, GPT_IMAGE_2_SUBSCRIPTION_MODEL_ID } from "../../../shared/image-generation"
 import { ClineDefaultTool } from "../../../shared/tools"
 import { getPrompt } from "../i18n"
@@ -139,14 +140,46 @@ const SINGLE_SUBAGENT_PARAMS = [
 	param("timeout", false, getPrompt("subagent", "timeoutInstruction"), "integer"),
 ]
 const SUBAGENT_PARAMS = [
-	param("prompt_1", true, getPrompt("subagent", "prompt1Instruction")),
-	param("prompt_2", false, getPrompt("subagent", "prompt2Instruction")),
-	param("prompt_3", false, getPrompt("subagent", "prompt3Instruction")),
-	param("prompt_4", false, getPrompt("subagent", "prompt4Instruction")),
-	param("prompt_5", false, getPrompt("subagent", "prompt5Instruction")),
+	param("subagents", true, getPrompt("subagent", "subagentsInstruction"), "array"),
 	param("background", false, getPrompt("subagent", "backgroundInstruction"), "boolean"),
 	param("timeout", false, getPrompt("subagent", "timeoutInstruction"), "integer"),
 ]
+
+/**
+ * Element shape for the batch tool's one structured parameter.
+ *
+ * A plain parameter descriptor can say a value is an array but not what the
+ * array holds, so the batch tool supplies its own schema. Declaring the item
+ * fields here is what lets a provider validate a malformed batch before it
+ * reaches the parser, instead of the model discovering the shape by failing.
+ */
+const SUBAGENTS_INPUT_SCHEMA = {
+	type: "object",
+	properties: {
+		subagents: {
+			type: "array",
+			description: getPrompt("subagent", "subagentsInstruction"),
+			minItems: 1,
+			maxItems: MAX_SUBAGENTS_PER_BATCH,
+			items: {
+				type: "object",
+				properties: {
+					agent_name: { type: "string", description: getPrompt("subagent", "itemAgentNameInstruction") },
+					task: { type: "string", description: getPrompt("subagent", "itemTaskInstruction") },
+					context: { type: "string", description: getPrompt("subagent", "itemContextInstruction") },
+					profile: { type: "string", description: getPrompt("subagent", "itemProfileInstruction") },
+					timeout: { type: "integer", description: getPrompt("subagent", "itemTimeoutInstruction") },
+				},
+				required: ["task", "context"],
+				additionalProperties: false,
+			},
+		},
+		background: { type: "boolean", description: getPrompt("subagent", "backgroundInstruction") },
+		timeout: { type: "integer", description: getPrompt("subagent", "timeoutInstruction") },
+	},
+	required: ["subagents"],
+	additionalProperties: false,
+}
 
 export const STANDARD_TOOL_SPECS: readonly Omit<ProfileToolSpec, "profile">[] = [
 	spec(ClineDefaultTool.FILE_NEW, getPrompt("writeToFile", "standardDescription"), [
@@ -337,7 +370,10 @@ export const STANDARD_TOOL_SPECS: readonly Omit<ProfileToolSpec, "profile">[] = 
 		whenFocusTracking,
 	),
 	spec(ClineDefaultTool.USE_SUBAGENT, getPrompt("subagent", "singleDescription"), SINGLE_SUBAGENT_PARAMS, hasSubagents),
-	spec(ClineDefaultTool.USE_SUBAGENTS, getPrompt("subagent", "description"), SUBAGENT_PARAMS, hasSubagents),
+	{
+		...spec(ClineDefaultTool.USE_SUBAGENTS, getPrompt("subagent", "description"), SUBAGENT_PARAMS, hasSubagents),
+		inputSchema: SUBAGENTS_INPUT_SCHEMA,
+	},
 	spec(
 		ClineDefaultTool.STATUS_UPDATE,
 		getPrompt("statusUpdate", "standardDescription"),

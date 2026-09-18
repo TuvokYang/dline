@@ -1,10 +1,6 @@
-import { resolveProvider } from "@core/api"
 import type { ClineAsk, ClineSay } from "@shared/ExtensionMessage"
-import type { ClineDefaultTool } from "@shared/tools"
 import type { ClineAskResponse } from "@shared/WebviewMessage"
-import { telemetryService } from "@/services/telemetry"
 import type { ToolParamName, ToolUse } from "../../../assistant-message"
-import { showNotificationForApproval } from "../../utils"
 import { removeClosingTag } from "../utils/ToolConstants"
 import type { TaskConfig } from "./TaskConfig"
 
@@ -40,15 +36,6 @@ export interface StronglyTypedUIHelpers {
 	// Utility methods
 	removeClosingTag: (block: ToolUse, tag: ToolParamName, text?: string) => string
 
-	// Approval methods
-	shouldAutoApproveTool: (toolName: ClineDefaultTool) => boolean | [boolean, boolean]
-	shouldAutoApproveToolWithPath: (toolName: ClineDefaultTool, path?: string) => Promise<boolean>
-	askApproval: (messageType: ClineAsk, message: string) => Promise<boolean>
-
-	// Telemetry and notifications
-	captureTelemetry: (toolName: ClineDefaultTool, autoApproved: boolean, approved: boolean, isNativeToolCall?: boolean) => void
-	showNotificationIfEnabled: (message: string) => void
-
 	// Config access - returns the proper typed config
 	getConfig: () => TaskConfig
 }
@@ -61,32 +48,6 @@ export function createUIHelpers(config: TaskConfig): StronglyTypedUIHelpers {
 		say: config.callbacks.say,
 		ask: config.callbacks.ask,
 		removeClosingTag: (block: ToolUse, tag: ToolParamName, text?: string) => removeClosingTag(block, tag, text),
-		shouldAutoApproveTool: (toolName: ClineDefaultTool) => config.autoApprover.shouldAutoApproveTool(toolName),
-		shouldAutoApproveToolWithPath: config.callbacks.shouldAutoApproveToolWithPath,
-		askApproval: async (messageType: ClineAsk, message: string): Promise<boolean> => {
-			const { response } = await config.callbacks.ask(messageType, message, false)
-			return response === "yesButtonClicked"
-		},
-		captureTelemetry: (toolName: ClineDefaultTool, autoApproved: boolean, approved: boolean, isNativeToolCall?: boolean) => {
-			// Extract provider information for telemetry
-			const apiConfig = config.services.stateManager.getApiConfiguration()
-			const currentMode = config.services.stateManager.getGlobalSettingsKey("mode")
-			const provider = resolveProvider(apiConfig, currentMode)
-
-			telemetryService.captureToolUsage(
-				config.ulid ?? "",
-				toolName,
-				config.api.getModel().id,
-				provider ?? "",
-				autoApproved,
-				approved,
-				undefined,
-				isNativeToolCall,
-			)
-		},
-		showNotificationIfEnabled: (message: string) => {
-			showNotificationForApproval(message, config.autoApprovalSettings.enableNotifications)
-		},
 		getConfig: () => config,
 	}
 }

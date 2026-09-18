@@ -248,6 +248,8 @@ message Settings {
   optional string image_profile_id = 238;
   optional string usage_reporting_setting = 250;
   optional string error_reporting_setting = 251;
+  optional int32 max_parallel_tool_calls = 252;
+  optional int32 max_parallel_subagents = 253;
 }
 
 // Account usage quota for rate-limited providers (e.g., Codex, Copilot)
@@ -522,6 +524,8 @@ message UpdateSettingsRequest {
   optional string image_profile_id = 60;
   optional string usage_reporting_setting = 61;
   optional string error_reporting_setting = 62;
+  optional int32 max_parallel_tool_calls = 63;
+  optional int32 max_parallel_subagents = 64;
 }
 
 message UpdateTerminalConnectionTimeoutRequest {

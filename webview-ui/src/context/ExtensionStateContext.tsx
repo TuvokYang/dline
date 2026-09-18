@@ -7,6 +7,7 @@ import {
 } from "@shared/auto-condense"
 import { DEFAULT_BROWSER_SETTINGS } from "@shared/BrowserSettings"
 import { DEFAULT_CHAT_INPUT_SEND_SHORTCUT } from "@shared/ChatInputSendShortcut"
+import { DEFAULT_MAX_PARALLEL_SUBAGENTS, DEFAULT_MAX_PARALLEL_TOOL_CALLS } from "@shared/concurrency-limits"
 import { type ActiveInteractionView, type ClineMessage, DEFAULT_PLATFORM, type ExtensionState } from "@shared/ExtensionMessage"
 import { DEFAULT_FOCUS_CHAIN_SETTINGS } from "@shared/FocusChainSettings"
 import { DEFAULT_MCP_DISPLAY_MODE } from "@shared/McpDisplayMode"
@@ -405,6 +406,10 @@ export const ExtensionStateContextProvider: React.FC<{
 		hooksEnabled: false,
 		nativeToolCallSetting: false,
 		enableParallelToolCalling: false,
+		// Resolved from the shared policy rather than a literal, so the slider
+		// before hydration shows the same ceiling the runtime would apply.
+		maxParallelToolCalls: DEFAULT_MAX_PARALLEL_TOOL_CALLS,
+		maxParallelSubagents: DEFAULT_MAX_PARALLEL_SUBAGENTS,
 		providersVersion: 0,
 		profileCatalogRevision: 0,
 		taskLockStatus: undefined,
@@ -452,7 +457,12 @@ export const ExtensionStateContextProvider: React.FC<{
 	const messageFetchGenerationRef = useRef(0)
 	const prevRefetchTaskViewKeyRef = useRef<string | undefined>(initialTaskViewKey)
 	const prevHistoryTaskViewKeyRef = useRef<string | undefined>(initialTaskViewKey)
+	// Separating these two is the fix for a footer that stayed permanently
+	// unusable: one records that an anchor was successfully hydrated, the other
+	// only that a recovery is currently running. Collapsing them made a failed
+	// attempt look like a completed one.
 	const lastInteractionFetchKeyRef = useRef<string | undefined>(undefined)
+	const inFlightInteractionFetchRef = useRef<string | undefined>(undefined)
 	const projectedInteraction = state.taskViewState?.activeInteraction
 	const projectedInteractionAnchorPresent = projectedInteraction
 		? hasExactInteractionAnchor(clineMessages, projectedInteraction)
@@ -467,8 +477,17 @@ export const ExtensionStateContextProvider: React.FC<{
 
 		const fetchLatestWindow = (scheduledTaskViewKey: string | undefined, expectedInteraction?: ActiveInteractionView) => {
 			const scheduledGeneration = messageFetchGenerationRef.current
-			if (expectedInteraction) {
-				lastInteractionFetchKeyRef.current = interactionFetchKey(scheduledTaskViewKey, expectedInteraction)
+			// The key records that this interaction's anchor is now *hydrated*,
+			// so it is written only once the committed window actually contains
+			// the anchor. Recording it here, before the request, would mark a
+			// failed recovery as done and suppress every later attempt, leaving
+			// the footer permanently unusable.
+			const expectedKey = expectedInteraction ? interactionFetchKey(scheduledTaskViewKey, expectedInteraction) : undefined
+			// Guards this fetch chain against re-entry while it is still running,
+			// without claiming the anchor was recovered.
+			const inFlightKey = expectedKey
+			if (inFlightKey) {
+				inFlightInteractionFetchRef.current = inFlightKey
 			}
 			const retryDelaysMs = [100, 300, 750] as const
 			const retryLatest = async (attempt: number, retryLatestAtStart: boolean): Promise<void> => {
@@ -519,11 +538,26 @@ export const ExtensionStateContextProvider: React.FC<{
 						responseTotal,
 					)
 					commitMessageWindow(reconciled.messages, reconciled.startIndex)
-					if (expectedInteraction && !hasExactInteractionAnchor(converted, expectedInteraction)) {
-						if (startIndex > 0) {
+					if (expectedInteraction) {
+						// The response may contain the anchor and still be
+						// rejected by the continuous-window contract when it does
+						// not touch the local window. Only the committed window
+						// makes the anchor consumable, so success is judged there
+						// rather than on the raw response.
+						if (hasExactInteractionAnchor(reconciled.messages, expectedInteraction)) {
+							lastInteractionFetchKeyRef.current = expectedKey
+							if (inFlightKey && inFlightInteractionFetchRef.current === inFlightKey) {
+								inFlightInteractionFetchRef.current = undefined
+							}
+						} else if (startIndex > 0) {
 							await fetchAttempt(Math.max(0, startIndex - 200), false)
 						} else if (retryLatestAtStart) {
 							await fetchAttempt(-1, false)
+						} else if (inFlightKey && inFlightInteractionFetchRef.current === inFlightKey) {
+							// Every page was walked without recovering the anchor.
+							// Releasing the in-flight marker lets a later viewport
+							// change try again instead of failing permanently.
+							inFlightInteractionFetchRef.current = undefined
 						}
 					}
 				} catch {
@@ -535,6 +569,14 @@ export const ExtensionStateContextProvider: React.FC<{
 						clineMessagesRef.current.length === 0
 					) {
 						await retryLatest(bootstrapRetryAttempt, retryLatestAtStart)
+						return
+					}
+					// A failed request ends this chain, so the in-flight marker
+					// has to be released here too. Leaving it set would suppress
+					// every later recovery exactly like a successful hydration,
+					// which is the failure mode this split was introduced to fix.
+					if (inFlightKey && inFlightInteractionFetchRef.current === inFlightKey) {
+						inFlightInteractionFetchRef.current = undefined
 					}
 				}
 			}
@@ -551,6 +593,7 @@ export const ExtensionStateContextProvider: React.FC<{
 			}
 			refetchLockRef.current = false
 			lastInteractionFetchKeyRef.current = undefined
+			inFlightInteractionFetchRef.current = undefined
 			bootstrapResolvedRef.current = false
 			firstItemIndexRef.current = 0
 			setClineMessages([])
@@ -573,6 +616,7 @@ export const ExtensionStateContextProvider: React.FC<{
 			setFirstItemIndex(0)
 			prevTotalRef.current = 0
 			lastInteractionFetchKeyRef.current = undefined
+			inFlightInteractionFetchRef.current = undefined
 			bootstrapResolvedRef.current = false
 			return
 		}
@@ -672,7 +716,13 @@ export const ExtensionStateContextProvider: React.FC<{
 		const activeInteraction = projectedInteraction
 		if (activeInteraction && !projectedInteractionAnchorPresent && !refetchLockRef.current) {
 			const expectedFetchKey = interactionFetchKey(currentTaskViewKeyRef.current, activeInteraction)
-			if (lastInteractionFetchKeyRef.current !== expectedFetchKey) {
+			// Recovery is skipped only when this anchor was already hydrated or a
+			// recovery for it is still running. A previously failed attempt no
+			// longer counts, so browsing away and back can recover the footer
+			// instead of leaving it permanently disabled.
+			const alreadyHydrated = lastInteractionFetchKeyRef.current === expectedFetchKey
+			const alreadyRunning = inFlightInteractionFetchRef.current === expectedFetchKey
+			if (!alreadyHydrated && !alreadyRunning) {
 				fetchLatestWindow(currentTaskViewKeyRef.current, activeInteraction)
 			}
 		}

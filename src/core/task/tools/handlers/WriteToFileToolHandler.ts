@@ -15,7 +15,7 @@ function runDiffParser(diff: string, originalContent: string, isPartial = false)
 
 import { getPrompt } from "@core/prompts/i18n"
 import { formatResponse } from "@core/prompts/responses"
-import { getWorkspaceBasename, resolveWorkspacePath } from "@core/workspace"
+import { resolveWorkspacePath } from "@core/workspace"
 import { processFilesIntoText } from "@integrations/misc/extract-text"
 import { ClineSayTool } from "@shared/ExtensionMessage"
 import { getLastApiReqTotalTokens } from "@shared/getApiMetrics"
@@ -26,12 +26,11 @@ import { telemetryService } from "@/services/telemetry"
 import { Logger } from "@/shared/services/Logger"
 import { ClineDefaultTool } from "@/shared/tools"
 import type { ToolResponse } from "../../index"
-import { showNotificationForApproval } from "../../utils"
 import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
 import type { ToolValidator } from "../ToolValidator"
-import { interactionId, interactionTurnId, type TaskConfig } from "../types/TaskConfig"
+import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
-import { captureAccepted, captureRejected, getModelInfo } from "../utils/AiOutputTelemetry"
+import { captureAccepted, getModelInfo } from "../utils/AiOutputTelemetry"
 import { applyModelContentFixes } from "../utils/ModelContentProcessor"
 import { ToolResultUtils } from "../utils/ToolResultUtils"
 import { sayFeedbackOnce } from "../utils/UserFeedbackUtils"
@@ -63,127 +62,21 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 
 	async handlePartialBlock(block: ToolUse, uiHelpers: StronglyTypedUIHelpers): Promise<void> {
 		const rawRelPath = block.params.path || block.params.absolutePath
-		const rawContent = block.params.content // for write_to_file
-		const rawDiff = block.params.diff // for replace_in_file
+		if (!rawRelPath) return
 
-		// Need at least a path to show the tool row
-		if (!rawRelPath) {
-			return
-		}
-
-		const config = uiHelpers.getConfig()
+		const rawContent = block.params.content
+		const rawDiff = block.params.diff
 		const relPath = uiHelpers.removeClosingTag(block, block.params.path ? "path" : "absolutePath", rawRelPath)
-		const _editType = config.services.diffViewProvider.editType
-
-		// For replace_in_file: use DiffParser for real-time parsing + matching
-		// For write_to_file: simple "+ " prefix on all content lines
-		const existingTs = block.ts
-		const diffParser =
-			block.name === "replace_in_file" && rawDiff
-				? new DiffParser(config.services.diffViewProvider.originalContent || "", true)
-				: null
-
-		if (diffParser && rawDiff) {
-			for (const line of rawDiff.split("\n")) {
-				diffParser.processLine(line)
-			}
-		}
-
-		const partialBlocks = diffParser?.getResult().blocks ?? []
-		const contentArr = rawDiff
-			? partialBlocks
-					.filter((b) => !b.hasError || b.rawText.trim())
-					.map((b) =>
-						b.hasError
-							? b.rawText
-							: `- ${b.searchText.replace(/\n/g, "\n- ")}\n+ ${b.replaceText.replace(/\n/g, "\n+ ")}`,
-					)
-			: rawContent != null
-				? [
-						rawContent
-							.split("\n")
-							.map((l) => `+ ${l}`)
-							.join("\n"),
-					]
-				: []
-		const webviewStartLines = diffParser ? partialBlocks.map((b) => b.startLine) : [1]
-		const blockErrors: (string | undefined)[] | undefined = diffParser
-			? partialBlocks.map((b) => streamingBlockError(b))
-			: undefined
-
-		const shellMessage: ClineSayTool = {
+		const content = rawDiff ?? rawContent ?? ""
+		const message: ClineSayTool = {
 			tool: block.name === "replace_in_file" ? "editedExistingFile" : "newFileCreated",
-			path: getReadablePath(config.cwd, relPath),
-			content: contentArr,
-			startLineNumbers: webviewStartLines,
-			blockErrors,
-			operationIsLocatedInWorkspace: await isLocatedInWorkspace(relPath),
+			path: relPath,
+			content: content
+				.split("\n")
+				.map((line) => `${block.name === "replace_in_file" ? "" : "+ "}${line}`)
+				.join("\n"),
 		}
-		const shellJson = JSON.stringify(shellMessage)
-		const hasStreamingError = blockErrors?.some((error) => error !== undefined) === true
-
-		await uiHelpers.say("tool", shellJson, undefined, undefined, true, existingTs)
-
-		// A delimiter error is already conclusive, so building the diff would only
-		// fail again and overwrite the card with a second, noisier message.
-		if (hasStreamingError) {
-			return
-		}
-
-		// Only try diff construction if both path and diff/content are available.
-		const hasContent = block.name === "replace_in_file" ? !!rawDiff : rawContent != null
-		if (!hasContent) {
-			return
-		}
-
-		const result = await this.validateAndPrepareFileOperation(config, block, rawRelPath, rawDiff, rawContent)
-		if (!result) {
-			return
-		}
-
-		try {
-			const { absolutePath, newContent } = result
-
-			// Update the partial message with final line numbers from parseDiff
-			if (block.name === "replace_in_file" && rawDiff) {
-				const diffResult = runDiffParser(rawDiff, config.services.diffViewProvider.originalContent || "", true)
-				const validBlocks = diffResult.blocks.filter((b) => !b.hasError || b.rawText.trim())
-				const blockContents = validBlocks.map((b) =>
-					b.hasError
-						? b.rawText
-						: `- ${b.searchText.replace(/\n/g, "\n- ")}\n+ ${b.replaceText.replace(/\n/g, "\n+ ")}`,
-				)
-				// Still streaming: the same filter as the first partial say above.
-				// Reporting the full error set here and the filtered set on the next
-				// chunk made SEARCH_NOT_FOUND appear and disappear repeatedly, which
-				// the webview renders as a diff card collapsing and expanding.
-				const updatedMessage: ClineSayTool = {
-					...shellMessage,
-					content: blockContents,
-					startLineNumbers: validBlocks.map((b) => b.startLine),
-					blockErrors: validBlocks.map((b) => streamingBlockError(b)),
-				}
-				const updatedJson = JSON.stringify(updatedMessage)
-				if (await uiHelpers.shouldAutoApproveToolWithPath(block.name, relPath)) {
-					await uiHelpers.say("tool", updatedJson, undefined, undefined, true, existingTs)
-				} else {
-					uiHelpers.ask("tool", updatedJson, true, { existingTs }).catch(() => {})
-				}
-			}
-
-			// Open editor and stream content in real-time
-			if (!config.services.diffViewProvider.isEditing) {
-				await config.services.diffViewProvider.open(absolutePath, { displayPath: relPath })
-			}
-			await config.services.diffViewProvider.update(newContent, false)
-		} catch (error) {
-			Logger.warn(
-				`WriteToFileToolHandler.handlePartialBlock: revertChanges after error, path=${rawRelPath}, error=${(error as Error)?.message}`,
-			)
-			await config.services.diffViewProvider.revertChanges()
-			await config.services.diffViewProvider.reset()
-			throw error
-		}
+		await uiHelpers.say("tool", JSON.stringify(message), undefined, undefined, true, block.ts)
 	}
 
 	async execute(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
@@ -310,7 +203,7 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 			if (!config.services.diffViewProvider.isEditing) {
 				// show gui message before showing edit animation
 				const partialMessage = JSON.stringify(sharedMessageProps)
-				await config.callbacks.ask("tool", partialMessage, true, { existingTs: block.ts }).catch(() => {}) // sending true for partial even though it's not a partial, this shows the edit row before the content is streamed into the editor
+				await config.callbacks.say("tool", partialMessage, undefined, undefined, true, block.ts)
 				await config.services.diffViewProvider.open(absolutePath, { displayPath: relPath })
 			}
 			await config.services.diffViewProvider.update(newContent, true)
@@ -323,154 +216,40 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 				operationIsLocatedInWorkspace: await isLocatedInWorkspace(relPath),
 			} satisfies ClineSayTool)
 
-			if (await config.callbacks.shouldAutoApproveToolWithPath(block.name, relPath)) {
-				// Auto-approval flow: use block.ts for exact-ts update
-				const existingTs = block.ts
-				await config.callbacks.say("tool", completeMessage, undefined, undefined, false, existingTs)
-
-				// Capture telemetry
-				telemetryService.captureToolUsage(
-					config.ulid ?? "",
-					block.name,
-					modelId,
-					providerId,
-					true,
-					true,
-					workspaceContext,
-					block.isNativeToolCall,
-				)
-
-				// Capture AI output accepted telemetry with line diff stats
-				captureAccepted({
-					ulid: config.ulid ?? "",
-					tool: block.name,
-					source: "agent",
-					beforeContent: config.services.diffViewProvider.originalContent || "",
-					afterContent: newContent,
-					providerId,
-					modelId,
-					filesCreated: fileExists ? 0 : 1,
-				})
-
-				// we need an artificial delay to let the diagnostics catch up to the changes
-				await setTimeoutPromise(3_500)
-			} else {
-				// Manual approval flow with detailed feedback handling
-				const notificationMessage = `Dline wants to ${fileExists ? "edit" : "create"} ${getWorkspaceBasename(relPath, "WriteToFile.notification")}`
-
-				// Show notification
-				showNotificationForApproval(notificationMessage, config.autoApprovalSettings.enableNotifications)
-
-				// Need a more customized tool response for file edits to highlight the fact that the file was not updated (particularly important for deepseek)
-
-				const outcome = await config.interactions.open({
-					turnId: interactionTurnId(block),
-					interactionId: interactionId(block),
-					kind: "tool_approval",
-					presentation: completeMessage,
-					existingTs: block.ts,
-				})
-				const text = outcome.draft?.text
-				const images = outcome.draft?.images
-				const files = outcome.draft?.files
-
-				if (outcome.actionId !== "approve") {
-					// Handle rejection with detailed messages
-					const fileDeniedNote = fileExists
-						? getPrompt("toolHandlers", "writeToFileNotUpdated")
-						: getPrompt("toolHandlers", "writeToFileNotCreated")
-
-					// Process user feedback if provided (with file content processing)
-					if (text || (images && images.length > 0) || (files && files.length > 0)) {
-						let fileContentString = ""
-						if (files && files.length > 0) {
-							fileContentString = await processFilesIntoText(files)
-						}
-
-						// Push additional tool feedback using existing utilities
-						ToolResultUtils.pushAdditionalToolFeedback(
-							config.taskState.userMessageContent,
-							text,
-							images,
-							fileContentString,
-						)
-						await sayFeedbackOnce(config, "noButtonClicked", text, images, files)
-					}
-
-					// // Clean up the diff view when operation is rejected
-					// await config.services.diffViewProvider.revertChanges()
-					// await config.services.diffViewProvider.reset()
-
-					config.taskController.rejectActiveBlock()
-					telemetryService.captureToolUsage(
-						config.ulid ?? "",
-						block.name,
-						modelId,
-						providerId,
-						false,
-						false,
-						workspaceContext,
-						block.isNativeToolCall,
-					)
-
-					// Capture AI output rejected telemetry with line diff stats
-					captureRejected({
-						ulid: config.ulid ?? "",
-						tool: block.name,
-						source: "agent",
-						beforeContent: config.services.diffViewProvider.originalContent || "",
-						afterContent: newContent,
-						providerId,
-						modelId,
-						filesCreated: fileExists ? 0 : 1,
-					})
-
-					Logger.warn(`WriteToFileToolHandler.execute: revertChanges after user rejection, path=${relPath}`)
-					await config.services.diffViewProvider.revertChanges()
-					return `The user denied this operation. ${fileDeniedNote}`
-				}
-				// User hit the approve button, and may have provided feedback
-				if (text || (images && images.length > 0) || (files && files.length > 0)) {
-					let fileContentString = ""
-					if (files && files.length > 0) {
-						fileContentString = await processFilesIntoText(files)
-					}
-
-					// Push additional tool feedback using existing utilities
-					ToolResultUtils.pushAdditionalToolFeedback(
-						config.taskState.userMessageContent,
-						text,
-						images,
-						fileContentString,
-					)
-					await sayFeedbackOnce(config, "yesButtonClicked", text, images, files)
-				}
-
-				telemetryService.captureToolUsage(
-					config.ulid ?? "",
-					block.name,
-					modelId,
-					providerId,
-					false,
-					true,
-					workspaceContext,
-					block.isNativeToolCall,
-				)
-
-				// Capture AI output accepted telemetry with line diff stats (manual approval)
-				captureAccepted({
-					ulid: config.ulid ?? "",
-					tool: block.name,
-					source: "agent",
-					beforeContent: config.services.diffViewProvider.originalContent || "",
-					afterContent: newContent,
-					providerId,
-					modelId,
-					filesCreated: fileExists ? 0 : 1,
-				})
+			await config.callbacks.say("tool", completeMessage, undefined, undefined, false, block.ts)
+			const outcome = block.dline_tid ? config.admissionOutcomes?.get(block.dline_tid) : undefined
+			const text = outcome?.draft?.text
+			const images = outcome?.draft?.images
+			const files = outcome?.draft?.files
+			if (text || images?.length || files?.length) {
+				const fileContent = files?.length ? await processFilesIntoText(files) : ""
+				ToolResultUtils.pushAdditionalToolFeedback(config.taskState.userMessageContent, text, images, fileContent)
+				await sayFeedbackOnce(config, "yesButtonClicked", text, images, files)
 			}
 
-			// Run PreToolUse hook after approval but before execution
+			telemetryService.captureToolUsage(
+				config.ulid ?? "",
+				block.name,
+				modelId,
+				providerId,
+				outcome === undefined,
+				true,
+				workspaceContext,
+				block.isNativeToolCall,
+			)
+			captureAccepted({
+				ulid: config.ulid ?? "",
+				tool: block.name,
+				source: "agent",
+				beforeContent: config.services.diffViewProvider.originalContent || "",
+				afterContent: newContent,
+				providerId,
+				modelId,
+				filesCreated: fileExists ? 0 : 1,
+			})
+			await setTimeoutPromise(3_500)
+
+			// Run PreToolUse hook after admission but before execution
 			try {
 				const { ToolHookUtils } = await import("../utils/ToolHookUtils")
 				await ToolHookUtils.runPreToolUseIfEnabled(config, block)

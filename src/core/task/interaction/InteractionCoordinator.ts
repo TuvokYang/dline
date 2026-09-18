@@ -225,7 +225,8 @@ export class InteractionCoordinator {
 			currentInteraction.taskId === response.taskId &&
 			currentInteraction.turnId === response.turnId &&
 			currentInteraction.interactionId === response.interactionId &&
-			response.stateRevision === current.revision
+			response.stateRevision >= currentInteraction.createdRevision &&
+			response.stateRevision <= current.revision
 		const detachedContinuation = this.detachedContinuation
 		if (
 			!waiterOwnsContinuation &&

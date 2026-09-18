@@ -1,9 +1,9 @@
+import { AsyncLocalStorage } from "node:async_hooks"
 import path from "node:path"
 import { ApiHandler, resolveProviderFromProfile } from "@core/api"
 import type { WebSearchRoutingPlan } from "@core/api/server-tools"
 import type { IdentityFactory } from "@core/api/transform/block-identity"
 import type { ApiStreamServerToolChunk } from "@core/api/transform/stream"
-import { isTaskReadScopePath } from "@core/artifacts/runtime"
 import { FileContextTracker } from "@core/context/context-tracking/FileContextTracker"
 import { getHookModelContext } from "@core/hooks/hook-model-context"
 import { getHooksEnabledSafe } from "@core/hooks/hooks-utils"
@@ -18,7 +18,6 @@ import type { CommandCancellationResult, CommandExecutionOptions, CommandExecuti
 import { BrowserSession } from "@services/browser/BrowserSession"
 import { UrlContentFetcher } from "@services/browser/UrlContentFetcher"
 import { McpHub } from "@services/mcp/McpHub"
-import { DlineRuntimeFileManager } from "@services/runtime-files/DlineRuntimeFileManager"
 import { recordPerfPhase } from "@services/telemetry/instrumentation/duration-recorder"
 import { PerfDomain } from "@services/telemetry/instrumentation/perf-domains"
 import { runWithSignalSpan, startSignalSpan } from "@services/telemetry/service/pipeline-port"
@@ -30,6 +29,7 @@ import {
 	normalizeCodeExecutionOutput,
 	normalizeHostedCodeExecutionOperation,
 } from "@shared/code-execution-tools"
+import { resolveMaxParallelSubagents } from "@shared/concurrency-limits"
 import { ClineAsk, ClineSay, ClineSayTool, type CommandStatus } from "@shared/ExtensionMessage"
 import { ClineContent, type ClineToolResponseContent, type ClineUserToolResultContentBlock } from "@shared/messages/content"
 import { ServerTool } from "@shared/proto/dline/models/metadata"
@@ -41,7 +41,6 @@ import { ClineDefaultTool, toolUseNames } from "@shared/tools"
 import { ClineAskResponse } from "@shared/WebviewMessage"
 import { normalizeWebSearchItems } from "@shared/web-tools"
 import { isParallelToolCallingEnabled, modelDoesntSupportWebp } from "@/utils/model-utils"
-import { isLocatedInPath } from "@/utils/path"
 import { ToolUse } from "../assistant-message"
 import { ContextManager } from "../context/context-management/ContextManager"
 import { formatResponse } from "../prompts/responses"
@@ -51,6 +50,8 @@ import type { TaskActivityStore } from "./activity/TaskActivityStore"
 import { isTurnEndingToolName } from "./assistant-message-order"
 import { BlockPhase } from "./BlockPhaseMachine"
 import { serializeDurableToolResult } from "./DurableToolResult"
+import type { ToolAdmissionSnapshot } from "./executors/tool/ToolAdmissionRegistry"
+import { rejectToolCall, type ToolPreflightResult, type ToolSideEffect } from "./executors/tool/ToolPreflight"
 import { authorizeExplicitToolExecution } from "./explicit-instructions/explicit-tool-gate"
 import { isExplicitOnlyTool } from "./explicit-instructions/policy"
 import type { ExplicitInstructionConsumePort } from "./explicit-instructions/types"
@@ -59,17 +60,17 @@ import type { InteractionKind } from "./interaction/Interaction"
 import { isInteractionCancellationError } from "./interaction/InteractionCancellationError"
 import type { InteractionOutcome } from "./interaction/InteractionCoordinator"
 import { isTurnEndContinuationHandler, requiresTurnEndContinuation } from "./interaction/TurnEndContinuationRegistry"
-import { checkRepeatedToolCall, LOOP_DETECTION_SOFT_THRESHOLD, toolCallSignature } from "./loop-detection"
+import { LOOP_DETECTION_SOFT_THRESHOLD, recordToolCall, toolCallSignature } from "./loop-detection"
 import { MessageStateHandler } from "./message-state"
 import type { ProviderRequestRoundPort } from "./performance/provider-request-round-port"
 import { resolveRequestWebSearchRoutingPlan } from "./RequestApiScope"
 import { TaskController } from "./TaskController"
 import { TaskState } from "./TaskState"
 import { canonicalizeAttemptCompletionParams } from "./tools/attempt-completion-params"
-import { AutoApprove } from "./tools/autoApprove"
 import { type HostedImageGenerationContext, HostedImageGenerationLifecycle } from "./tools/HostedImageGenerationLifecycle"
 import { isInternalNativeToolName, normalizeNativeToolName } from "./tools/NativeToolAdmission"
 import { type HostedServerToolUpdate, ServerToolLifecycle } from "./tools/ServerToolLifecycle"
+import { SubagentFanoutBudget, usableSubagentLimit } from "./tools/subagent/SubagentFanoutBudget"
 import { SubagentJobManager } from "./tools/subagent/SubagentJobManager"
 import { normalizeToolExecutionResult, type ToolPostCommitDirective } from "./tools/ToolExecutionResult"
 import { type IPartialBlockHandler, ToolExecutorCoordinator } from "./tools/ToolExecutorCoordinator"
@@ -88,105 +89,6 @@ import { NO_TOOL_RESULT, ToolResultUtils } from "./tools/utils/ToolResultUtils"
 type ToolResponse = ClineToolResponseContent
 
 export { canonicalizeAttemptCompletionParams } from "./tools/attempt-completion-params"
-
-/**
- * Resolve whether a tool use should be auto-approved from tool params.
- * @param toolName Tool name from the assistant block.
- * @param params Tool parameters from the assistant block.
- * @param autoApproveResult Auto-approve setting result for the tool.
- * @returns True when the block should skip manual approval.
- */
-export function isToolUseAutoApproved(
-	toolName: ClineDefaultTool,
-	params: ToolUse["params"] | undefined,
-	autoApproveResult: boolean | [boolean, boolean],
-): boolean {
-	if (toolName === ClineDefaultTool.BASH) {
-		const [autoApproveSafe, autoApproveAll] = Array.isArray(autoApproveResult)
-			? autoApproveResult
-			: [autoApproveResult, false]
-		const requiresApprovalRaw = params?.requires_approval
-		const requiresApprovalPerLLM = requiresApprovalRaw?.toLowerCase() === "true"
-		return (!requiresApprovalPerLLM && autoApproveSafe) || (requiresApprovalPerLLM && autoApproveSafe && autoApproveAll)
-	}
-
-	if (Array.isArray(autoApproveResult)) {
-		return autoApproveResult[0] || autoApproveResult[1]
-	}
-	return !!autoApproveResult
-}
-
-interface BlockApproveOptions {
-	cwd: string
-	autoApproveResult: boolean | [boolean, boolean]
-	workspaceRoots?: string[]
-	taskId?: string
-}
-
-const PATH_AUTO_APPROVE_TOOLS = new Set<ClineDefaultTool>([
-	ClineDefaultTool.FILE_READ,
-	ClineDefaultTool.LIST_FILES,
-	ClineDefaultTool.LIST_CODE_DEF,
-	ClineDefaultTool.SEARCH,
-])
-
-/**
- * Extract the filesystem path parameter used for path-scoped auto-approval.
- * @param block Tool use block emitted by the assistant.
- * @returns Path parameter when the tool is path-scoped, otherwise undefined.
- */
-function getApprovePath(block: ToolUse): string | undefined {
-	if (!PATH_AUTO_APPROVE_TOOLS.has(block.name)) {
-		return undefined
-	}
-	return block.params?.path
-}
-
-/**
- * Resolve whether a path-scoped tool use is inside the workspace roots.
- * @param cwd Primary workspace path.
- * @param toolPath Tool path parameter supplied by the assistant.
- * @param workspaceRoots Optional workspace roots for multi-root workspaces.
- * @returns True when the resolved path is inside any workspace root.
- */
-function isLocalPath(
-	cwd: string,
-	toolName: ClineDefaultTool,
-	toolPath: string,
-	workspaceRoots?: string[],
-	taskId?: string,
-): boolean {
-	const absolutePath = path.isAbsolute(toolPath) ? path.resolve(toolPath) : path.resolve(cwd, toolPath)
-	const roots = workspaceRoots && workspaceRoots.length > 0 ? workspaceRoots : [cwd]
-	const isTaskScopedRead =
-		toolName === ClineDefaultTool.FILE_READ && taskId !== undefined && isTaskReadScopePath(taskId, absolutePath)
-	return (
-		DlineRuntimeFileManager.isManagedPath(absolutePath) ||
-		isTaskScopedRead ||
-		roots.some((root) => isLocatedInPath(root, absolutePath))
-	)
-}
-
-/**
- * Resolve whether a complete tool block should skip manual approval.
- * @param block Complete tool use block with params.
- * @param options Workspace and auto-approval settings for this task.
- * @returns True when the block is safe to auto-execute.
- */
-export function isBlockAutoApproved(block: ToolUse, options: BlockApproveOptions): boolean {
-	const toolPath = getApprovePath(block)
-	if (!toolPath) {
-		return PATH_AUTO_APPROVE_TOOLS.has(block.name)
-			? false
-			: isToolUseAutoApproved(block.name, block.params, options.autoApproveResult)
-	}
-
-	const [autoApproveLocal, autoApproveExternal] = Array.isArray(options.autoApproveResult)
-		? options.autoApproveResult
-		: [options.autoApproveResult, false]
-	const isLocal = isLocalPath(options.cwd, block.name, toolPath, options.workspaceRoots, options.taskId)
-	return (isLocal && autoApproveLocal) || (!isLocal && autoApproveLocal && autoApproveExternal)
-}
 
 /** Present one hosted Web Search call. */
 function buildWebSearchMessage(update: HostedServerToolUpdate, providerId: string, providerLabel: string): ClineSayTool {
@@ -253,11 +155,12 @@ function buildCodeExecutionMessage(update: HostedServerToolUpdate, providerId: s
 }
 
 export class ToolExecutor {
-	private autoApprover: AutoApprove
 	/** Assigned by the Task composition root after construction. */
 	private _controllerContext?: ClineExtensionContext
 	private coordinator: ToolExecutorCoordinator
 	private subagentJobManager = new SubagentJobManager()
+	private readonly subagentFanoutBudget: SubagentFanoutBudget
+	private readonly preparedEffects = new Map<string, ToolSideEffect<void>>()
 	private allowedNativeToolNames: ReadonlySet<string> | undefined
 	private webToolsEnabled: boolean | undefined
 	private webSearchRoutingPlan: WebSearchRoutingPlan | undefined
@@ -266,39 +169,99 @@ export class ToolExecutor {
 	private hostedServerToolLifecycle: ServerToolLifecycle | undefined
 	private hostedImageGenerationLifecycle: HostedImageGenerationLifecycle | undefined
 	private readonly postCommitDirectives = new Map<string, ToolPostCommitDirective>()
+	private readonly admissionOutcomes = new Map<string, InteractionOutcome>()
 	private readonly imageGenerationService: ImageGenerationService
 
-	/** Public accessor for auto-approve logic used by TaskController.buildTurn(). */
-	public isAutoApproved(toolName: ClineDefaultTool, params?: ToolUse["params"]): boolean {
-		const result = this.autoApprover.shouldAutoApproveTool(toolName)
-		return isToolUseAutoApproved(toolName, params, result)
+	private buildAdmissionSnapshot(block: ToolUse): ToolAdmissionSnapshot {
+		const mcpToolAutoApprove =
+			block.name === ClineDefaultTool.MCP_USE
+				? (this.mcpHub.connections
+						?.find((connection) => connection.server.name === block.params.server_name)
+						?.server.tools?.find((tool) => tool.name === block.params.tool_name)?.autoApprove ?? true)
+				: undefined
+		const workspaceRoots = this.workspaceManager?.getRoots()
+		return {
+			taskId: this.taskId,
+			cwd: this.cwd,
+			workspaceRoots: workspaceRoots?.map((root) => root.path) ?? [this.cwd],
+			workspaceRootEntries: workspaceRoots?.map((root) => ({
+				name: root.name || path.basename(root.path),
+				path: root.path,
+			})),
+			primaryWorkspaceRoot: this.workspaceManager?.getPrimaryRoot()?.path,
+			isMultiRootEnabled: this.isMultiRootEnabled,
+			settings: this.stateManager.getGlobalSettingsKey("autoApprovalSettings"),
+			blanket: {
+				yoloMode: this.stateManager.getGlobalSettingsKey("yoloModeToggled") === true,
+				approveAll: this.stateManager.getGlobalSettingsKey("autoApproveAllToggled") === true,
+			},
+			mcpToolAutoApprove,
+		}
 	}
 
-	/** Public block-scoped accessor used by TaskController.buildTurn(). */
-	public isBlockApproved(block: ToolUse): boolean {
-		// Invalid and internal native calls must enter execution so they can be
-		// closed with a paired result instead of becoming orphan approval blocks.
-		if (
-			block.isNativeToolCall &&
-			(isInternalNativeToolName(block.name) || !this.isNativeToolAdmitted(block.name) || !this.coordinator.has(block.name))
-		) {
-			return true
+	/** Prepare one pure admission and retain execution as an unstarted closure. */
+	public prepareAdmission(block: ToolUse): ToolPreflightResult<void> {
+		const snapshot = this.buildAdmissionSnapshot(block)
+		const initialAdmission = this.coordinator.prepareAdmission(
+			block,
+			snapshot,
+			() => this.executeTool(block),
+			() => this.buildAdmissionSnapshot(block),
+		)
+		const isSubagentTool = block.name === ClineDefaultTool.USE_SUBAGENT || block.name === ClineDefaultTool.USE_SUBAGENTS
+		const admission =
+			initialAdmission.outcome === "admitted" && isSubagentTool
+				? {
+						...initialAdmission,
+						prepareApproval: async (): Promise<ToolPreflightResult<void>> => {
+							const preparation = await this.coordinator.prepareExecution(this.asToolConfig(), block)
+							if (!preparation) return initialAdmission
+							if (preparation.outcome === "rejected") {
+								return rejectToolCall({ reason: "invalid_parameters", message: preparation.message })
+							}
+							const refreshPreparedDecision = () => {
+								const refreshed = initialAdmission.refreshDecision?.() ?? initialAdmission
+								return {
+									...refreshed,
+									presentation: preparation.presentation,
+									prepareApproval: undefined,
+									refreshDecision: refreshPreparedDecision,
+								}
+							}
+							return {
+								...initialAdmission,
+								presentation: preparation.presentation,
+								prepareApproval: undefined,
+								refreshDecision: refreshPreparedDecision,
+							}
+						},
+					}
+				: initialAdmission
+		if (block.dline_tid) {
+			if (admission.outcome === "admitted") this.preparedEffects.set(block.dline_tid, admission.run)
+			else this.preparedEffects.delete(block.dline_tid)
 		}
-		// Registered handlers own their approval transaction. The canonical runtime
-		// must start the handler so it can present the matching interaction and wait
-		// for the user's causal response; gating here would prevent that interaction
-		// from ever being rendered.
-		if (this.coordinator.has(block.name)) {
-			return true
-		}
-		const result = this.autoApprover.shouldAutoApproveTool(block.name)
-		const workspaceRoots = this.workspaceManager?.getRoots().map((root) => root.path)
-		return isBlockAutoApproved(block, {
-			cwd: this.cwd,
-			autoApproveResult: result,
-			workspaceRoots,
-			taskId: this.taskId,
-		})
+		return admission
+	}
+
+	/** Execute exactly the effect retained by the current Admission. */
+	public async runPreparedAdmission(dlineTid: string): Promise<void> {
+		const run = this.preparedEffects.get(dlineTid)
+		if (!run) throw new Error(`Prepared tool effect is missing for dlineTid=${dlineTid}`)
+		this.preparedEffects.delete(dlineTid)
+		await run()
+	}
+
+	/** Forget an approved-but-unstarted effect after cancellation, rejection or suppression. */
+	public discardPreparedAdmission(dlineTid: string): void {
+		this.preparedEffects.delete(dlineTid)
+		this.coordinator.discardPreparedExecution(dlineTid)
+	}
+
+	/** Retain one structured manual-admission outcome until the approved handler consumes it. */
+	public recordAdmissionOutcome(block: ToolUse, outcome: InteractionOutcome): void {
+		if (!block.dline_tid) throw new Error(`Admission outcome is missing canonical identity: tool=${block.name}`)
+		this.admissionOutcomes.set(block.dline_tid, outcome)
 	}
 
 	/**
@@ -307,6 +270,11 @@ export class ToolExecutor {
 	 */
 	public getSubagentJobManager(): SubagentJobManager {
 		return this.subagentJobManager
+	}
+
+	/** Wake queued task-scoped subagents after their live limit changes. */
+	public notifySubagentConcurrencyLimitChanged(): void {
+		this.subagentFanoutBudget.notifyLimitChanged()
 	}
 
 	/** Rebind one persisted failed subagent before the Activity Retry action runs. */
@@ -484,27 +452,19 @@ export class ToolExecutor {
 		return message
 	}
 
-	// Auto-approval methods using the AutoApprove class
-	private shouldAutoApproveTool(toolName: ClineDefaultTool): boolean | [boolean, boolean] {
-		return this.autoApprover.shouldAutoApproveTool(toolName)
-	}
-
-	private async shouldAutoApproveToolWithPath(
-		blockname: ClineDefaultTool,
-		autoApproveActionpath: string | undefined,
-	): Promise<boolean> {
-		return this.autoApprover.shouldAutoApproveToolWithPath(blockname, autoApproveActionpath)
-	}
-
 	/**
-	 * Duration scope of the tool currently executing, when one is.
+	 * Duration scope of the execution the current code is running under.
 	 *
-	 * Held on the executor rather than threaded through every handler so the
-	 * approval and command wrappers can find it without changing the tool
-	 * interface. It is saved and restored around each execution, so a tool that
-	 * runs another one restores its parent's scope on the way out.
+	 * Async-local rather than an instance field, because tools now overlap.
+	 * A single field can only describe one execution, and saving and restoring
+	 * it around each call assumes executions nest: with two blocks in flight
+	 * the one that finishes first would clear the field its sibling is still
+	 * using, so the sibling's remaining approval wait would be counted as its
+	 * own work. Binding the scope to the execution flow instead gives every
+	 * block the scope that belongs to it, however the blocks interleave, and
+	 * still lets a nested tool see its parent's.
 	 */
-	private activeDurationScope: ToolDurationScope | undefined
+	private readonly durationScopes = new AsyncLocalStorage<ToolDurationScope>()
 
 	constructor(
 		// Core Services & Managers
@@ -593,7 +553,10 @@ export class ToolExecutor {
 			updates: { text?: string; exitCode?: number; commandStatus?: CommandStatus },
 		) => Promise<void>,
 	) {
-		this.autoApprover = new AutoApprove(this.stateManager, this.taskId)
+		this.subagentFanoutBudget = new SubagentFanoutBudget({
+			limit: () =>
+				usableSubagentLimit(resolveMaxParallelSubagents(this.stateManager.getGlobalSettingsKey("maxParallelSubagents"))),
+		})
 		this.imageGenerationService = createImageGenerationRuntime({
 			taskId: this.taskId,
 			ulid: this.ulid,
@@ -604,6 +567,14 @@ export class ToolExecutor {
 		// Initialize the coordinator and register all tool handlers
 		this.coordinator = new ToolExecutorCoordinator()
 		this.registerToolHandlers()
+	}
+
+	setApi(api: ApiHandler): void {
+		this.api = api
+	}
+
+	setControllerContext(controllerContext: ClineExtensionContext | undefined): void {
+		this._controllerContext = controllerContext
 	}
 
 	// Create a properly typed TaskConfig object for handlers
@@ -632,7 +603,6 @@ export class ToolExecutor {
 			messageState: this.messageStateHandler,
 			api: this.api,
 			autoApprovalSettings: this.stateManager.getGlobalSettingsKey("autoApprovalSettings"),
-			autoApprover: this.autoApprover,
 			browserSettings: this.promptRuntime
 				? {
 						...this.stateManager.getGlobalSettingsKey("browserSettings"),
@@ -646,6 +616,7 @@ export class ToolExecutor {
 			},
 			capabilityToggles: this.promptRuntime?.capabilityToggles ?? this.getTaskCapabilityToggles(),
 			interactions: this.scopedInteractions(),
+			admissionOutcomes: this.admissionOutcomes,
 			compactionAttemptGuard: this.compactionAttemptGuard,
 			services: {
 				mcpHub: this.mcpHub,
@@ -666,27 +637,27 @@ export class ToolExecutor {
 				// Waiting for the user is not work the tool performed, so the
 				// wrapper is installed once here instead of asking every handler
 				// to remember to exclude its own approval.
-				ask: (...args: Parameters<typeof this.ask>) =>
-					this.activeDurationScope
-						? this.activeDurationScope.excludeWait("approval", () => this.ask(...args))
-						: this.ask(...args),
+				ask: (...args: Parameters<typeof this.ask>) => {
+					const scope = this.durationScopes.getStore()
+					return scope ? scope.excludeWait("approval", () => this.ask(...args)) : this.ask(...args)
+				},
 				saveCheckpoint: this.saveCheckpoint,
 				postStateToWebview: async () => {},
 				reinitExistingTaskFromId: async () => {},
 				cancelTask: () => this.requestCancellationFromToolEffect(),
 				updateTaskHistory: async () => [],
 				// A command's runtime belongs to the workspace, not to Dline.
-				executeCommandTool: (...args: Parameters<typeof this.executeCommandTool>) =>
-					this.activeDurationScope
-						? this.activeDurationScope.excludeWait("command", () => this.executeCommandTool(...args))
-						: this.executeCommandTool(...args),
+				executeCommandTool: (...args: Parameters<typeof this.executeCommandTool>) => {
+					const scope = this.durationScopes.getStore()
+					return scope
+						? scope.excludeWait("command", () => this.executeCommandTool(...args))
+						: this.executeCommandTool(...args)
+				},
 				killCommandTool: this.killCommandTool,
 				cancelRunningCommandTool: this.cancelRunningCommandTool,
 				doesLatestTaskCompletionHaveNewChanges: this.doesLatestTaskCompletionHaveNewChanges,
 				updateFCListFromToolResponse: this.updateFCListFromToolResponse,
 				sayAndCreateMissingParamError: this.sayAndCreateMissingParamError,
-				shouldAutoApproveTool: this.shouldAutoApproveTool.bind(this),
-				shouldAutoApproveToolWithPath: this.shouldAutoApproveToolWithPath.bind(this),
 				applyLatestBrowserSettings: this.applyLatestBrowserSettings.bind(this),
 				switchToActMode: this.switchToActMode,
 				setActiveHookExecution: this.setActiveHookExecution,
@@ -701,6 +672,7 @@ export class ToolExecutor {
 			providerRequestRounds: this.providerRequestRounds,
 			controllerContext: this._controllerContext,
 			subagentJobManager: this.subagentJobManager,
+			subagentFanoutBudget: this.subagentFanoutBudget,
 		}
 
 		// Validate the config at runtime to catch any missing properties
@@ -747,25 +719,25 @@ export class ToolExecutor {
 		// duration it reports has to exclude the waits the user and the
 		// workspace own or it would measure them instead.
 		const scope = new ToolDurationScope()
-		const previousScope = this.activeDurationScope
-		this.activeDurationScope = scope
 		// Partial blocks are streamed presentation updates of a call that has not
 		// finished arriving, so measuring them would flood the histogram with
 		// fragments of one execution.
 		const shouldReport = block.partial !== true
-		try {
-			const handled = await runWithSignalSpan(span, () => this.execute(block))
-			span.setAttribute("handled", handled)
-			span.end(handled ? "success" : "failure")
-			if (shouldReport) this.reportToolDuration(scope, block, handled ? "success" : "failure")
-		} catch (error) {
-			span.recordException(error)
-			span.end("failure")
-			if (shouldReport) this.reportToolDuration(scope, block, "failure")
-			throw error
-		} finally {
-			this.activeDurationScope = previousScope
-		}
+		return this.durationScopes.run(scope, async () => {
+			try {
+				const handled = await runWithSignalSpan(span, () => this.execute(block))
+				span.setAttribute("handled", handled)
+				span.end(handled ? "success" : "failure")
+				if (shouldReport) this.reportToolDuration(scope, block, handled ? "success" : "failure")
+			} catch (error) {
+				span.recordException(error)
+				span.end("failure")
+				if (shouldReport) this.reportToolDuration(scope, block, "failure")
+				throw error
+			} finally {
+				if (block.dline_tid) this.admissionOutcomes.delete(block.dline_tid)
+			}
+		})
 	}
 
 	/**
@@ -781,8 +753,10 @@ export class ToolExecutor {
 		// `open` and `complete` both park until the user answers; `say` only waits
 		// for the message to be presented, so it stays inside the active time.
 		// Spreading keeps a later port working without another wrapper.
-		const excludeUserWait = <T>(wait: () => Promise<T>): Promise<T> =>
-			this.activeDurationScope ? this.activeDurationScope.excludeWait("approval", wait) : wait()
+		const excludeUserWait = <T>(wait: () => Promise<T>): Promise<T> => {
+			const scope = this.durationScopes.getStore()
+			return scope ? scope.excludeWait("approval", wait) : wait()
+		}
 		return {
 			...interactions,
 			open: (request) => excludeUserWait(() => interactions.open(request)),
@@ -843,6 +817,7 @@ export class ToolExecutor {
 
 	/** Close an interrupted tool pairing without replaying an unknown side effect. */
 	public async commitInterruptedToolResult(block: ToolUse, reason: string): Promise<void> {
+		if (block.dline_tid) this.discardPreparedAdmission(block.dline_tid)
 		await this.commitToolResult(formatResponse.toolError(reason), block, true)
 	}
 
@@ -1365,10 +1340,9 @@ export class ToolExecutor {
 			}
 
 			// --- Repeated tool call loop detection ---
-			// Must run BEFORE updating lastToolName/lastToolParams so we compare
-			// against the previous call's values, not the current one.
-			const currentSignature = toolCallSignature(block.params)
-			const loopCheck = checkRepeatedToolCall(this.taskState, block.name, currentSignature)
+			// Comparing against the previous call and becoming the previous
+			// call are one step, so no await can fall between them here.
+			const loopCheck = recordToolCall(this.taskState, block.name, toolCallSignature(block.params))
 
 			if (loopCheck.softWarning) {
 				this.taskState.userMessageContent.push({
@@ -1380,10 +1354,6 @@ export class ToolExecutor {
 			if (loopCheck.hardEscalation) {
 				this.taskState.consecutiveMistakeCount = this.stateManager.getGlobalSettingsKey("maxConsecutiveMistakes")
 			}
-
-			// Update state AFTER comparison
-			this.taskState.lastToolName = block.name
-			this.taskState.lastToolParams = currentSignature
 
 			// Check abort before running PostToolUse hook (success path)
 			if (this.taskState.abort) {

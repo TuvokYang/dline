@@ -3,11 +3,9 @@ import { ClineDefaultTool } from "@/shared/tools"
 import { ToolUse } from "../../../assistant-message"
 import { formatResponse } from "../../../prompts/responses"
 import { ToolResponse } from "../.."
-import { showNotificationForApproval } from "../../utils"
 import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
 import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
-import { ToolResultUtils } from "../utils/ToolResultUtils"
 
 export class BrowserToolHandler implements IFullyManagedTool {
 	readonly name = ClineDefaultTool.BROWSER
@@ -29,23 +27,14 @@ export class BrowserToolHandler implements IFullyManagedTool {
 
 		// Handle partial block streaming - exact original logic
 		if (action === "launch") {
-			const existingTs = block.ts
-			if (uiHelpers.shouldAutoApproveTool(block.name)) {
-				await uiHelpers.say(
-					"browser_action_launch",
-					uiHelpers.removeClosingTag(block, "url", url),
-					undefined,
-					undefined,
-					true,
-					existingTs,
-				)
-			} else {
-				uiHelpers
-					.ask("browser_action_launch", uiHelpers.removeClosingTag(block, "url", url), true, {
-						existingTs,
-					})
-					.catch(() => {})
-			}
+			await uiHelpers.say(
+				"browser_action_launch",
+				uiHelpers.removeClosingTag(block, "url", url),
+				undefined,
+				undefined,
+				true,
+				block.ts,
+			)
 		} else {
 			await uiHelpers.say(
 				this.name,
@@ -95,29 +84,9 @@ export class BrowserToolHandler implements IFullyManagedTool {
 				}
 				config.taskState.consecutiveMistakeCount = 0
 
-				// Handle approval flow for launch using callbacks
-				const autoApprover = config.autoApprover || { shouldAutoApproveTool: () => false }
-				if (autoApprover.shouldAutoApproveTool(block.name)) {
-					const existingTs = block.ts
-					await config.callbacks.say("browser_action_launch", url, undefined, undefined, false, existingTs)
-				} else {
-					// Show notification for approval if enabled
-					showNotificationForApproval(
-						`Dline wants to use a browser and launch ${url}`,
-						config.autoApprovalSettings.enableNotifications,
-					)
-					const didApprove = await ToolResultUtils.askApprovalAndPushFeedback(
-						"browser_action_launch",
-						url,
-						config,
-						block.ts,
-					)
-					if (!didApprove) {
-						return formatResponse.toolDenied()
-					}
-				}
+				await config.callbacks.say("browser_action_launch", url, undefined, undefined, false, block.ts)
 
-				// Run PreToolUse hook after approval but before execution
+				// Run PreToolUse hook after admission but before execution
 				try {
 					const { ToolHookUtils } = await import("../utils/ToolHookUtils")
 					await ToolHookUtils.runPreToolUseIfEnabled(config, block)
@@ -185,10 +154,12 @@ export class BrowserToolHandler implements IFullyManagedTool {
 				const browserSession = config.services.browserSession
 				switch (action) {
 					case "click":
-						browserActionResult = await browserSession.click(coordinate!)
+						if (!coordinate) throw new Error("Browser click requires a coordinate")
+						browserActionResult = await browserSession.click(coordinate)
 						break
 					case "type":
-						browserActionResult = await browserSession.type(text!)
+						if (text === undefined) throw new Error("Browser type requires text")
+						browserActionResult = await browserSession.type(text)
 						break
 					case "scroll_down":
 						browserActionResult = await browserSession.scrollDown()

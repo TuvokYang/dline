@@ -1,18 +1,10 @@
-import { strict as assert } from "node:assert"
-import os from "node:os"
 import path from "node:path"
-import { getTaskArtifactDirectory } from "@core/artifacts/runtime"
+import { type AutoApprovalSettings, DEFAULT_AUTO_APPROVAL_SETTINGS } from "@shared/AutoApprovalSettings"
 import { ClineDefaultTool } from "@shared/tools"
-import { describe, it } from "vitest"
+import { describe, expect, it } from "vitest"
 import type { ToolUse } from "../../assistant-message"
-import { isBlockAutoApproved, isToolUseAutoApproved } from "../ToolExecutor"
+import { prepareRegisteredToolAdmission } from "../executors/tool/ToolAdmissionRegistry"
 
-/**
- * Build a complete tool-use block for auto-approval tests.
- * @param name Tool name under test.
- * @param params Tool params supplied by the assistant.
- * @returns Complete ToolUse block accepted by production helpers.
- */
 function makeBlock(name: ClineDefaultTool, params: ToolUse["params"]): ToolUse {
 	return {
 		type: "tool_use",
@@ -25,112 +17,76 @@ function makeBlock(name: ClineDefaultTool, params: ToolUse["params"]): ToolUse {
 	}
 }
 
-describe("isToolUseAutoApproved", () => {
-	it("requires manual approval for command when LLM requires approval and only safe auto-approve is enabled", () => {
-		const autoApproved = isToolUseAutoApproved(ClineDefaultTool.BASH, { requires_approval: "true" }, [true, false])
+function decision(name: ClineDefaultTool, params: ToolUse["params"], actions: Partial<AutoApprovalSettings["actions"]>) {
+	const admission = prepareRegisteredToolAdmission({
+		canonicalToolName: name,
+		block: makeBlock(name, params),
+		description: `[${name}]`,
+		snapshot: {
+			taskId: "task-auto-approval",
+			cwd: path.resolve("/workspace/project"),
+			workspaceRoots: [path.resolve("/workspace/project")],
+			settings: {
+				...DEFAULT_AUTO_APPROVAL_SETTINGS,
+				actions: { ...DEFAULT_AUTO_APPROVAL_SETTINGS.actions, ...actions },
+				enableNotifications: false,
+			},
+			blanket: {},
+		},
+		run: async () => undefined,
+	})
+	if (admission.outcome !== "admitted") throw new Error(admission.rejection.message)
+	return admission.decision
+}
 
-		assert.equal(autoApproved, false)
+describe("canonical tool admission", () => {
+	it("distinguishes safe and explicitly risky commands", () => {
+		expect(
+			decision(
+				ClineDefaultTool.BASH,
+				{ command: "echo ok", requires_approval: "false" },
+				{ executeSafeCommands: true, executeAllCommands: false },
+			).kind,
+		).toBe("automatic")
+		expect(
+			decision(
+				ClineDefaultTool.BASH,
+				{ command: "rm -rf build", requires_approval: "true" },
+				{ executeSafeCommands: true, executeAllCommands: false },
+			).kind,
+		).toBe("manual")
 	})
 
-	it("auto-approves command when LLM does not require approval and safe auto-approve is enabled", () => {
-		const autoApproved = isToolUseAutoApproved(ClineDefaultTool.BASH, { requires_approval: "false" }, [true, false])
-
-		assert.equal(autoApproved, true)
+	it("classifies workspace and external read scopes before deciding", () => {
+		expect(
+			decision(ClineDefaultTool.FILE_READ, { path: "src/index.ts" }, { readFiles: true, readFilesExternally: false }),
+		).toMatchObject({ kind: "automatic", scope: "read_workspace" })
+		expect(
+			decision(
+				ClineDefaultTool.FILE_READ,
+				{ path: path.resolve("/workspace/secret.txt") },
+				{
+					readFiles: true,
+					readFilesExternally: false,
+				},
+			),
+		).toMatchObject({ kind: "manual", scope: "read_external" })
 	})
 
-	it("auto-approves command when LLM requires approval and all command auto-approve is enabled", () => {
-		const autoApproved = isToolUseAutoApproved(ClineDefaultTool.BASH, { requires_approval: "true" }, [true, true])
-
-		assert.equal(autoApproved, true)
-	})
-
-	it("requires manual approval for read_file outside workspace when external reads are disabled", () => {
-		const cwd = path.resolve("/workspace/project")
-		const externalPath = path.resolve("/workspace/secret.txt")
-		const autoApproved = isBlockAutoApproved(makeBlock(ClineDefaultTool.FILE_READ, { path: externalPath }), {
-			cwd,
-			autoApproveResult: [true, false],
+	it("rejects a command whose explicit approval classification is missing", () => {
+		const admission = prepareRegisteredToolAdmission({
+			canonicalToolName: ClineDefaultTool.BASH,
+			block: makeBlock(ClineDefaultTool.BASH, { command: "echo ok" }),
+			description: "[execute_command]",
+			snapshot: {
+				taskId: "task-auto-approval",
+				cwd: path.resolve("/workspace/project"),
+				workspaceRoots: [path.resolve("/workspace/project")],
+				settings: DEFAULT_AUTO_APPROVAL_SETTINGS,
+				blanket: {},
+			},
+			run: async () => undefined,
 		})
-
-		assert.equal(autoApproved, false)
-	})
-
-	it("uses path scope for read-only auto-approval settings", () => {
-		const cwd = path.resolve("/workspace/project")
-		const tools = [
-			ClineDefaultTool.FILE_READ,
-			ClineDefaultTool.LIST_FILES,
-			ClineDefaultTool.SEARCH,
-			ClineDefaultTool.LIST_CODE_DEF,
-		]
-
-		for (const toolName of tools) {
-			const localApproved = isBlockAutoApproved(makeBlock(toolName, { path: "src/index.ts" }), {
-				cwd,
-				autoApproveResult: [true, false],
-			})
-			const externalDenied = isBlockAutoApproved(makeBlock(toolName, { path: path.resolve("/workspace/secret.txt") }), {
-				cwd,
-				autoApproveResult: [true, false],
-			})
-			const externalApproved = isBlockAutoApproved(makeBlock(toolName, { path: path.resolve("/workspace/secret.txt") }), {
-				cwd,
-				autoApproveResult: [true, true],
-			})
-			const missingPathDenied = isBlockAutoApproved(makeBlock(toolName, {}), {
-				cwd,
-				autoApproveResult: [true, true],
-			})
-
-			assert.equal(localApproved, true, `${toolName} local path should be auto-approved`)
-			assert.equal(externalDenied, false, `${toolName} external path should require approval`)
-			assert.equal(externalApproved, true, `${toolName} external path should honor external auto-approval`)
-			assert.equal(missingPathDenied, false, `${toolName} missing path should require approval`)
-		}
-	})
-
-	it("treats only Dline-owned temp paths as project-scoped file access", () => {
-		const cwd = path.resolve(os.tmpdir(), "workspace", "project")
-		const dlineTempFile = path.resolve(os.tmpdir(), "dline", "command_1.log")
-		const siblingTempFile = path.resolve(os.tmpdir(), "dline-other", "command_1.log")
-
-		assert.equal(
-			isBlockAutoApproved(makeBlock(ClineDefaultTool.FILE_READ, { path: dlineTempFile }), {
-				cwd,
-				autoApproveResult: [true, false],
-			}),
-			true,
-		)
-		assert.equal(
-			isBlockAutoApproved(makeBlock(ClineDefaultTool.FILE_READ, { path: dlineTempFile }), {
-				cwd,
-				autoApproveResult: [false, true],
-			}),
-			false,
-		)
-		assert.equal(
-			isBlockAutoApproved(makeBlock(ClineDefaultTool.FILE_READ, { path: siblingTempFile }), {
-				cwd,
-				autoApproveResult: [true, false],
-			}),
-			false,
-		)
-	})
-
-	it("treats only the current task artifacts and tmp as project-scoped read_file paths", () => {
-		const cwd = path.resolve("/workspace/project")
-		const taskId = "task-read-scope"
-		const taskDirectory = getTaskArtifactDirectory(taskId)
-		const options = { cwd, taskId, autoApproveResult: [true, false] as [boolean, boolean] }
-		const artifactPath = path.join(taskDirectory, "artifacts", "images", "generated.png")
-		const previewPath = path.join(taskDirectory, "tmp", "image-previews", "preview")
-		const taskHistoryPath = path.join(taskDirectory, "ui_messages.jsonl")
-		const otherTaskArtifactPath = path.join(getTaskArtifactDirectory("another-task"), "artifacts", "images", "generated.png")
-
-		assert.equal(isBlockAutoApproved(makeBlock(ClineDefaultTool.FILE_READ, { path: artifactPath }), options), true)
-		assert.equal(isBlockAutoApproved(makeBlock(ClineDefaultTool.FILE_READ, { path: previewPath }), options), true)
-		assert.equal(isBlockAutoApproved(makeBlock(ClineDefaultTool.FILE_READ, { path: taskHistoryPath }), options), false)
-		assert.equal(isBlockAutoApproved(makeBlock(ClineDefaultTool.FILE_READ, { path: otherTaskArtifactPath }), options), false)
-		assert.equal(isBlockAutoApproved(makeBlock(ClineDefaultTool.LIST_FILES, { path: artifactPath }), options), false)
+		expect(admission).toMatchObject({ outcome: "rejected", rejection: { reason: "invalid_parameters" } })
 	})
 })

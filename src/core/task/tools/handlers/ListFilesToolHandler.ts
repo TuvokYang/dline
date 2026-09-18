@@ -2,18 +2,16 @@ import path from "node:path"
 import { resolveProvider } from "@core/api"
 import type { ToolUse } from "@core/assistant-message"
 import { formatResponse } from "@core/prompts/responses"
-import { getWorkspaceBasename, resolveWorkspacePath } from "@core/workspace"
+import { resolveWorkspacePath } from "@core/workspace"
 import { listFiles } from "@services/glob/list-files"
 import { arePathsEqual, getReadablePath, isLocatedInWorkspace } from "@utils/path"
 import { telemetryService } from "@/services/telemetry"
 import { ClineDefaultTool } from "@/shared/tools"
 import type { ToolResponse } from "../../index"
-import { showNotificationForApproval } from "../../utils"
 import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
 import type { ToolValidator } from "../ToolValidator"
 import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
-import { ToolResultUtils } from "../utils/ToolResultUtils"
 
 export class ListFilesToolHandler implements IFullyManagedTool {
 	readonly name = ClineDefaultTool.LIST_FILES
@@ -45,17 +43,7 @@ export class ListFilesToolHandler implements IFullyManagedTool {
 
 		const partialMessage = JSON.stringify(sharedMessageProps)
 
-		// Handle auto-approval vs manual approval for partial
-		const existingTs = block.ts
-		if (await uiHelpers.shouldAutoApproveToolWithPath(block.name, relPath)) {
-			await uiHelpers.say("tool", partialMessage, undefined, undefined, true, existingTs)
-		} else {
-			uiHelpers
-				.ask("tool", partialMessage, true, {
-					existingTs,
-				})
-				.catch(() => {})
-		}
+		await uiHelpers.say("tool", partialMessage, undefined, undefined, true, block.ts)
 	}
 
 	async execute(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
@@ -74,26 +62,27 @@ export class ListFilesToolHandler implements IFullyManagedTool {
 			config.taskState.consecutiveMistakeCount++
 			return await config.callbacks.sayAndCreateMissingParamError(this.name, "path", undefined, block.ts)
 		}
+		if (!relDirPath) throw new Error("Validated list-files path is missing")
 
 		// Check clineignore access before performing any IO.
 		// Increment the counter so repeated attempts at blocked paths
 		// accumulate toward the yolo-mode mistake limit.
-		const accessValidation = this.validator.checkClineIgnorePath(relDirPath!)
+		const accessValidation = this.validator.checkClineIgnorePath(relDirPath)
 		if (!accessValidation.ok) {
 			config.taskState.consecutiveMistakeCount++
 			if (!config.isSubagentExecution) {
 				await config.callbacks.say("clineignore_error", relDirPath)
 			}
-			return formatResponse.toolError(formatResponse.clineIgnoreError(relDirPath!))
+			return formatResponse.toolError(formatResponse.clineIgnoreError(relDirPath))
 		}
 
 		let absolutePath: string
 		let displayPath: string
 		let usedWorkspaceHint: boolean
 		try {
-			const pathResult = resolveWorkspacePath(config, relDirPath!, "ListFilesToolHandler.execute")
+			const pathResult = resolveWorkspacePath(config, relDirPath, "ListFilesToolHandler.execute")
 			;({ absolutePath, displayPath } =
-				typeof pathResult === "string" ? { absolutePath: pathResult, displayPath: relDirPath! } : pathResult)
+				typeof pathResult === "string" ? { absolutePath: pathResult, displayPath: relDirPath } : pathResult)
 			usedWorkspaceHint = typeof pathResult !== "string"
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : String(error)
@@ -109,7 +98,7 @@ export class ListFilesToolHandler implements IFullyManagedTool {
 			resolutionMethod: (usedWorkspaceHint ? "hint" : "primary_fallback") as "hint" | "primary_fallback",
 		}
 
-		const operationIsLocatedInWorkspace = await isLocatedInWorkspace(relDirPath!)
+		const operationIsLocatedInWorkspace = await isLocatedInWorkspace(relDirPath)
 		const createToolMessage = (content: string) =>
 			JSON.stringify({
 				tool: recursive ? "listFilesRecursive" : "listFilesTopLevel",
@@ -118,35 +107,7 @@ export class ListFilesToolHandler implements IFullyManagedTool {
 				operationIsLocatedInWorkspace,
 			})
 
-		const approvalMessage = createToolMessage("")
-
-		const shouldAutoApprove =
-			config.isSubagentExecution || (await config.callbacks.shouldAutoApproveToolWithPath(block.name, relDirPath))
-		let wasAutoApproved = false
-		if (shouldAutoApprove) {
-			wasAutoApproved = true
-		} else {
-			// Manual approval flow
-			const notificationMessage = `Dline wants to view directory ${getWorkspaceBasename(absolutePath, "ListFilesToolHandler.notification")}/`
-
-			// Show notification
-			showNotificationForApproval(notificationMessage, config.autoApprovalSettings.enableNotifications)
-
-			const didApprove = await ToolResultUtils.askApprovalAndPushFeedback("tool", approvalMessage, config, block.ts)
-			if (!didApprove) {
-				telemetryService.captureToolUsage(
-					config.ulid ?? "",
-					block.name,
-					config.api.getModel().id,
-					provider ?? "",
-					false,
-					false,
-					workspaceContext,
-					block.isNativeToolCall,
-				)
-				return formatResponse.toolDenied()
-			}
-		}
+		const wasAutoApproved = !block.dline_tid || !config.admissionOutcomes?.has(block.dline_tid)
 
 		// Run PreToolUse hook after approval but before execution
 		try {

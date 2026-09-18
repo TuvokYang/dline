@@ -1,5 +1,7 @@
 import type { ToolUse } from "@core/assistant-message"
 import { Task } from "@core/task"
+import { TurnDriver } from "@core/task/executors/tool/TurnDriver"
+import { TurnToolScheduler } from "@core/task/executors/tool/TurnToolScheduler"
 import { InteractionCoordinator } from "@core/task/interaction/InteractionCoordinator"
 import type { TaskEffectPorts } from "@core/task/runtime/TaskEffectRunner"
 import type { TaskEvent } from "@core/task/runtime/TaskEvent"
@@ -39,11 +41,81 @@ function makeToolBlock(): ToolUse {
 }
 
 function invokeFinalizedTurn(task: Task): Promise<void> {
-	return (
-		Task.prototype as unknown as {
-			executeFinalizedAssistantTurn(): Promise<void>
+	const harness = task as unknown as {
+		taskId: string
+		controller: { task?: { taskId: string } }
+		taskRuntime: TaskRuntime
+		dispatchRuntime(event: TaskEvent): ReturnType<TaskRuntime["dispatch"]>
+		messageStateHandler: { apiConversationHistory: unknown[] }
+		taskController: { buildTurn(...args: unknown[]): void; getBlocks(): unknown[] }
+		toolExecutor: {
+			commitInterruptedToolResult?(tool: ToolUse, reason: string): Promise<void>
 		}
-	).executeFinalizedAssistantTurn.call(task)
+		isParallelToolCallingEnabled(): boolean
+		awaitInitialCheckpointBeforeToolSideEffects(toolName: string): Promise<void>
+		taskState: {
+			abort: boolean
+			assistantMessageContent: ToolUse[]
+			userMessageContent?: []
+			userMessageContentReady: boolean
+			partialToolLifecycleByTs: Map<number, string>
+		}
+	}
+	const scheduler = new TurnToolScheduler({
+		readConfiguredLimit: () => undefined,
+		isParallelToolCallingEnabled: () => harness.isParallelToolCallingEnabled(),
+	})
+	const driver = new TurnDriver({
+		task: {
+			getTaskId: () => harness.taskId,
+			isAborted: () => harness.taskState.abort,
+			isCurrentTask: () => harness.controller.task?.taskId === harness.taskId,
+			getAssistantMessageContent: () => harness.taskState.assistantMessageContent,
+			getAssistantApiIndex: () => harness.messageStateHandler.apiConversationHistory.length - 1,
+			buildTurn: (assistantApiIndex, autoApprove) => {
+				harness.taskController.buildTurn(
+					harness.taskState.assistantMessageContent.map((block) => ({
+						...block,
+						conversationHistoryIndex: assistantApiIndex,
+					})),
+					autoApprove,
+				)
+				return harness.taskController.getBlocks() as never[]
+			},
+			isParallelToolCallingEnabled: () => harness.isParallelToolCallingEnabled(),
+			getPendingUserMessageContent: () => harness.taskState.userMessageContent ?? [],
+			markPartialToolComplete: (ts) => harness.taskState.partialToolLifecycleByTs.set(ts, "complete-done"),
+			recordToolCall: vi.fn(),
+			markUserMessageContentReady: () => {
+				harness.taskState.userMessageContentReady = true
+			},
+			applyCompactionFit: vi.fn(),
+		},
+		runtime: {
+			getState: () => harness.taskRuntime.getState(),
+			dispatch: (event) => harness.dispatchRuntime(event),
+		},
+		block: {
+			prepareAdmission: () => ({
+				outcome: "admitted",
+				decision: { kind: "automatic", scope: "read_workspace", ceiling: "auto" },
+				lanes: [],
+				run: async () => undefined,
+			}),
+			commitInterruptedResult: (tool, reason) =>
+				harness.toolExecutor.commitInterruptedToolResult?.(tool, reason) ?? Promise.resolve(),
+			awaitInitialCheckpoint: (toolName) => harness.awaitInitialCheckpointBeforeToolSideEffects(toolName),
+		},
+		approval: { request: vi.fn(async () => ({ actionId: "approve" as const })) },
+		scheduler,
+		provider: { registerExecution: vi.fn() },
+		postCommit: {
+			takeDirective: () => undefined,
+			startSuccessor: vi.fn(async () => undefined),
+		},
+	})
+	Object.assign(harness, { turnDriver: driver })
+	return driver.execute()
 }
 
 describe("Task cancellation concurrency", () => {
@@ -311,9 +383,7 @@ describe("Task cancellation concurrency", () => {
 					},
 				],
 			},
-			toolExecutor: {
-				isBlockApproved: () => true,
-			},
+			toolExecutor: {},
 			isParallelToolCallingEnabled: () => false,
 			initialCheckpointCommitPromise: undefined,
 			awaitInitialCheckpointBeforeToolSideEffects: vi.fn(async () => undefined),
@@ -323,9 +393,6 @@ describe("Task cancellation concurrency", () => {
 				userMessageContentReady: false,
 				partialToolLifecycleByTs: new Map(),
 			},
-			isTerminalRuntimeBlock: (phase: BlockPhase) =>
-				[BlockPhase.COMPLETED, BlockPhase.REJECTED, BlockPhase.SKIPPED, BlockPhase.CANCELLED].includes(phase),
-			markFinalizedToolPresented: vi.fn(),
 		} as unknown as Task
 
 		await expect(invokeFinalizedTurn(fakeTask)).resolves.toBeUndefined()
@@ -369,7 +436,7 @@ describe("Task cancellation concurrency", () => {
 					},
 				],
 			},
-			toolExecutor: { isBlockApproved: () => true },
+			toolExecutor: {},
 			isParallelToolCallingEnabled: () => false,
 			initialCheckpointCommitPromise: undefined,
 			awaitInitialCheckpointBeforeToolSideEffects: vi.fn(async () => undefined),
@@ -379,9 +446,6 @@ describe("Task cancellation concurrency", () => {
 				userMessageContentReady: false,
 				partialToolLifecycleByTs: new Map(),
 			},
-			isTerminalRuntimeBlock: (phase: BlockPhase) =>
-				[BlockPhase.COMPLETED, BlockPhase.REJECTED, BlockPhase.SKIPPED, BlockPhase.CANCELLED].includes(phase),
-			markFinalizedToolPresented: vi.fn(),
 		} as unknown as Task
 
 		await expect(invokeFinalizedTurn(fakeTask)).rejects.toThrow(expectedError)

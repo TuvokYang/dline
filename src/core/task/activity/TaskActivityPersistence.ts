@@ -47,6 +47,9 @@ function sanitizeActivity(value: unknown, taskId: string): TaskActivityRecord | 
 					kind: "subagent" as const,
 					schemaVersion: 1 as const,
 					subagentName: typeof value.retryRecipe.subagentName === "string" ? value.retryRecipe.subagentName : undefined,
+					// Absent on records written before per-item Profiles existed;
+					// those retries fall back to normal resolution.
+					profileName: typeof value.retryRecipe.profileName === "string" ? value.retryRecipe.profileName : undefined,
 					task: value.retryRecipe.task,
 					prompt: value.retryRecipe.prompt,
 					timeoutSeconds: value.retryRecipe.timeoutSeconds,

@@ -58,7 +58,6 @@ function createConfig(options?: {
 		callbacks: {
 			ask,
 			say,
-			shouldAutoApproveToolWithPath: vi.fn().mockResolvedValue(true),
 		},
 	} as unknown as TaskConfig
 
@@ -73,16 +72,11 @@ function createConfig(options?: {
  */
 function createHelpers(config: TaskConfig): StronglyTypedUIHelpers {
 	return {
-		say: vi.fn(),
+		say: config.callbacks.say,
 		ask: config.callbacks.ask,
 		removeClosingTag: vi.fn(),
-		shouldAutoApproveTool: vi.fn(),
-		shouldAutoApproveToolWithPath: vi.fn(),
-		askApproval: vi.fn(),
-		captureTelemetry: vi.fn(),
-		showNotificationIfEnabled: vi.fn(),
 		getConfig: () => config,
-	} as unknown as StronglyTypedUIHelpers
+	} as StronglyTypedUIHelpers
 }
 
 /**
@@ -106,8 +100,8 @@ describe("ApplyPatchHandler result rendering", () => {
 })
 
 describe("ApplyPatchHandler partial rendering", () => {
-	it("uses block ts for partial preview ask updates", async () => {
-		const { config, ask } = createConfig()
+	it("uses block ts for partial presentation updates", async () => {
+		const { config, say } = createConfig()
 		const handler = new ApplyPatchHandler(createValidator())
 		const blockTs = 123456
 
@@ -124,7 +118,7 @@ describe("ApplyPatchHandler partial rendering", () => {
 			createHelpers(config),
 		)
 
-		expect(ask).toHaveBeenCalledWith("tool", expect.any(String), true, { existingTs: blockTs })
+		expect(say).toHaveBeenCalledWith("tool", expect.any(String), undefined, undefined, true, blockTs)
 	})
 })
 

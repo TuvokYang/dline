@@ -36,8 +36,8 @@ import type { MessageStateHandler } from "../../message-state"
 import type { ProviderRequestRoundPort } from "../../performance/provider-request-round-port"
 import type { TaskController } from "../../TaskController"
 import type { TaskState } from "../../TaskState"
-import type { AutoApprove } from "../../tools/autoApprove"
 import type { HookExecution } from "../../types/HookExecution"
+import type { SubagentFanoutBudget } from "../subagent/SubagentFanoutBudget"
 import type { SubagentJobManager } from "../subagent/SubagentJobManager"
 import type { ToolExecutorCoordinator } from "../ToolExecutorCoordinator"
 import { TASK_CALLBACKS_KEYS, TASK_CONFIG_KEYS, TASK_SERVICES_KEYS } from "../utils/ToolConstants"
@@ -105,13 +105,14 @@ export interface TaskConfig {
 
 	// Settings
 	autoApprovalSettings: AutoApprovalSettings
-	autoApprover: AutoApprove
 	browserSettings: BrowserSettings
 	focusChainSettings: FocusChainSettings
 	capabilityToggles: TaskCapabilityToggles
 
 	// Typed interaction boundary
 	interactions: TaskInteractionPorts
+	/** Structured manual-admission outcomes keyed by canonical block identity. */
+	admissionOutcomes?: ReadonlyMap<string, InteractionOutcome>
 
 	// Callbacks (strongly typed)
 	callbacks: TaskCallbacks
@@ -130,6 +131,14 @@ export interface TaskConfig {
 
 	/** Task-local background subagent job manager. */
 	subagentJobManager?: SubagentJobManager
+
+	/**
+	 * Task-scoped budget bounding how many subagents execute at once.
+	 *
+	 * Held on the task rather than per fan-out call so nested fan-out competes
+	 * for the same allowance instead of multiplying the configured limit.
+	 */
+	subagentFanoutBudget?: SubagentFanoutBudget
 }
 
 /**
@@ -199,9 +208,6 @@ export interface TaskCallbacks {
 	doesLatestTaskCompletionHaveNewChanges: () => Promise<boolean>
 
 	updateFCListFromToolResponse: (taskProgress: string | undefined) => Promise<void>
-
-	shouldAutoApproveTool: (toolName: ClineDefaultTool) => boolean | [boolean, boolean]
-	shouldAutoApproveToolWithPath: (toolName: ClineDefaultTool, path?: string) => Promise<boolean>
 
 	// Additional callbacks for task management
 	postStateToWebview: () => Promise<void>

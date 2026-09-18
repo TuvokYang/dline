@@ -1,6 +1,9 @@
 import type { ClineAsk } from "@shared/ExtensionMessage"
 import cloneDeep from "clone-deep"
 import type { BlockLifecycle } from "./BlockPhaseMachine"
+// The enum is needed as a value here to classify hydrated block phases; the
+// type-only re-export from TaskController cannot be used for that.
+import { BlockPhase as BlockPhaseValue } from "./BlockPhaseMachine"
 import type { QueuedInputEntry } from "./input-queue/InputQueue"
 import type { ActiveInteraction } from "./interaction/InteractionReducer"
 import type { NewTaskConsumedState } from "./new-task/new-task-handoff"
@@ -177,9 +180,27 @@ export interface TaskSnapshot {
 	inputQueue?: QueuedInputEntry[]
 }
 
+type LegacySnapshotSection = Record<string, unknown>
+type LegacyApprovalBlock = LegacySnapshotSection & { functionId?: string; callId?: string }
+type LegacySnapshotRecord = Record<string, unknown> & {
+	awaiting?: LegacySnapshotSection & { activeFunctionId?: string; activeCallId?: string }
+	approval?: LegacySnapshotSection & {
+		blocks?: LegacyApprovalBlock[]
+		activeFunctionId?: string
+		activeCallId?: string
+	}
+	execution?: LegacySnapshotSection & { executingFunctionIds?: string[]; executing?: string[] }
+	resume?: LegacySnapshotSection & {
+		pendingFunctionIds?: string[]
+		pendingToolUseIds?: string[]
+		answeredFunctionIds?: string[]
+		answeredToolUseIds?: string[]
+	}
+}
+
 /** Normalize pre-canonical snapshot identity names at the persistence ingress boundary. */
 export function normalizeLegacyTaskSnapshot(input: unknown): TaskSnapshot {
-	const raw = input as Record<string, any>
+	const raw = input as LegacySnapshotRecord
 	const awaiting = raw.awaiting
 		? {
 				...raw.awaiting,
@@ -190,7 +211,7 @@ export function normalizeLegacyTaskSnapshot(input: unknown): TaskSnapshot {
 	const approval = raw.approval
 		? {
 				...raw.approval,
-				blocks: (raw.approval.blocks ?? []).map((block: Record<string, any>) => ({
+				blocks: (raw.approval.blocks ?? []).map((block) => ({
 					...block,
 					functionId: block.functionId ?? block.callId,
 					callId: undefined,
@@ -244,6 +265,72 @@ function cloneBlock(block: BlockLifecycle): BlockLifecycle {
 	return { ...block }
 }
 
+/**
+ * Reconstruct approval and execution ownership for a hydrated turn.
+ *
+ * Every historical shape reaches this function, and each is decided explicitly
+ * rather than left to fall through:
+ *
+ *   - ownership already present: kept as written, filtered to live blocks;
+ *   - no ownership, `activeDlineTid` naming an awaiting block: the manual slot,
+ *     which is what `BlockPhaseMachine.restoreTurn` requires;
+ *   - no ownership, `activeDlineTid` naming an executing block: the execution
+ *     set, because the block was approved before the restart and must not be
+ *     presented for approval a second time;
+ *   - `activeDlineTid` naming a terminal or unknown block: dropped, since a
+ *     finished block owns nothing;
+ *   - several executing blocks: all recorded, so a restart does not silently
+ *     forget the ones the single-valued field could not name.
+ */
+function hydrateTurnOwnership(
+	turn: TurnState,
+	blocks: BlockLifecycle[],
+): Pick<TurnState, "activeDlineTid" | "approval" | "executing"> {
+	const terminal = new Set([
+		BlockPhaseValue.COMPLETED,
+		BlockPhaseValue.REJECTED,
+		BlockPhaseValue.SKIPPED,
+		BlockPhaseValue.CANCELLED,
+	])
+	const find = (dlineTid: string) => blocks.find((block) => block.dlineTid === dlineTid)
+	const live = (dlineTid: string) => {
+		const block = find(dlineTid)
+		return block !== undefined && !terminal.has(block.phase)
+	}
+
+	const executing = (
+		turn.executing ??
+		blocks
+			.filter((block) => block.phase === BlockPhaseValue.EXECUTING || block.phase === BlockPhaseValue.AUTO_EXECUTING)
+			.map((block) => block.dlineTid)
+	).filter(live)
+
+	const automatic = (
+		turn.approval?.automatic ?? executing.filter((dlineTid) => find(dlineTid)?.requiresApproval === false)
+	).filter(live)
+
+	const claimed = turn.approval?.manual?.dlineTid ?? turn.activeDlineTid
+	const claimedPhase = claimed ? find(claimed)?.phase : undefined
+	// A slot survives a restart in either of its two stages: a block still
+	// awaiting the first approval, or an already-executing block holding the
+	// slot for a question it raised mid-flight. Accepting only the awaiting
+	// phase would drop a live in-flight owner and let a second prompt be
+	// admitted while the first is still outstanding.
+	const heldInFlight =
+		turn.approval?.manual?.stage === "in_flight" &&
+		(claimedPhase === BlockPhaseValue.EXECUTING || claimedPhase === BlockPhaseValue.AUTO_EXECUTING)
+	const owner =
+		claimed && live(claimed) && (claimedPhase === BlockPhaseValue.AWAITING_APPROVAL || heldInFlight)
+			? { dlineTid: claimed, stage: heldInFlight ? ("in_flight" as const) : ("admission" as const) }
+			: undefined
+
+	return {
+		activeDlineTid: owner?.dlineTid,
+		approval: { manual: owner, automatic: automatic.filter((dlineTid) => dlineTid !== owner?.dlineTid) },
+		executing,
+	}
+}
+
 /** Clone canonical turn state and validate every identity. */
 function cloneTurn(turn: TurnState): TurnState {
 	const turnId = requireIdentity(turn.turnId, "turnId")
@@ -251,7 +338,7 @@ function cloneTurn(turn: TurnState): TurnState {
 	if (turn.activeDlineTid) {
 		requireIdentity(turn.activeDlineTid, "dlineTid")
 	}
-	return { ...turn, turnId, blocks }
+	return { ...turn, turnId, blocks, ...hydrateTurnOwnership(turn, blocks) }
 }
 
 /** Clone one consumed New Task identity without retaining successor payload. */

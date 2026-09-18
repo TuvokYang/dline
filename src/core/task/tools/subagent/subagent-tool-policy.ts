@@ -14,22 +14,44 @@ export const REQUIRED_SUBAGENT_TOOL = ClineDefaultTool.ATTEMPT
 const KNOWN_TOOL_NAMES: ReadonlySet<ClineDefaultTool> = new Set(Object.values(ClineDefaultTool))
 
 /**
+ * Delegation tools, which a subagent must not call.
+ *
+ * A subagent that can delegate can fan out again, and each level multiplies the
+ * width of the level above it. The task-scoped budget bounds how many run at
+ * once, but it cannot bound the shape of the tree: a deep chain fills the
+ * budget with parents waiting on children rather than with work.
+ *
+ * Delegation is therefore a capability of the main task. A subagent that needs
+ * more work done reports back and lets the task decide.
+ */
+const DELEGATION_TOOL_NAMES: ReadonlySet<ClineDefaultTool> = new Set([
+	ClineDefaultTool.USE_SUBAGENT,
+	ClineDefaultTool.USE_SUBAGENTS,
+])
+
+/**
  * Tools a subagent must never be given.
  *
- * Two overlapping sets disqualify a tool, and both matter:
+ * Three overlapping sets disqualify a tool, and each matters:
  *
  * - `TURN_ENDING_TOOL_NAMES` hands control back to the user and ends the turn.
  * - `CONVERSATIONAL_TOOL_NAMES` opens a UI interaction and awaits user input.
  *   `act_mode_respond` is in this set but not the first, because it continues
  *   the turn; it still addresses a user the subagent does not have.
+ * - `DELEGATION_TOOL_NAMES` starts another fan-out from inside one.
  *
- * Either way the subagent is left waiting on a person who will never answer.
- * Both are derived rather than restated, minus the one tool the subagent needs
- * in order to finish.
+ * The first two leave the subagent waiting on a person who will never answer;
+ * the third lets one call expand without a bound on its shape. The first two
+ * are derived rather than restated, minus the one tool the subagent needs in
+ * order to finish.
  */
 export function isForbiddenSubagentTool(tool: string): boolean {
 	if (tool === REQUIRED_SUBAGENT_TOOL) return false
-	return TURN_ENDING_TOOL_NAMES.has(tool) || CONVERSATIONAL_TOOL_NAMES.has(tool as ClineDefaultTool)
+	return (
+		TURN_ENDING_TOOL_NAMES.has(tool) ||
+		CONVERSATIONAL_TOOL_NAMES.has(tool as ClineDefaultTool) ||
+		DELEGATION_TOOL_NAMES.has(tool as ClineDefaultTool)
+	)
 }
 
 /**

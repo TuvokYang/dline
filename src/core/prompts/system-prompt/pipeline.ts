@@ -1,3 +1,4 @@
+import { MAX_SUBAGENTS_PER_BATCH } from "@shared/concurrency-limits"
 import { DEFAULT_SUBAGENT_TIMEOUT_SECONDS } from "@shared/subagent-settings"
 import { DEFAULT_TERMINAL_COMMAND_TIMEOUT_SECONDS } from "@shared/terminal-settings"
 import { getShellForProfile } from "@utils/shell"
@@ -45,6 +46,7 @@ const COMPLETE_TEMPLATE_ENV_KEYS = [
 	"BROWSER_VIEWPORT_WIDTH",
 	"BROWSER_VIEWPORT_HEIGHT",
 	"SUBAGENT_TIMEOUT_SECONDS",
+	"MAX_SUBAGENTS_PER_BATCH",
 	"TERMINAL_COMMAND_TIMEOUT_SECONDS",
 ] as const
 
@@ -192,6 +194,7 @@ export function prepareSystemRuntimeEnv(context: SystemPromptContext, config: Sy
 		BROWSER_VIEWPORT_WIDTH: String(context.browserSettings?.viewport.width ?? 0),
 		BROWSER_VIEWPORT_HEIGHT: String(context.browserSettings?.viewport.height ?? 0),
 		SUBAGENT_TIMEOUT_SECONDS: String(DEFAULT_SUBAGENT_TIMEOUT_SECONDS),
+		MAX_SUBAGENTS_PER_BATCH: String(MAX_SUBAGENTS_PER_BATCH),
 		TERMINAL_COMMAND_TIMEOUT_SECONDS: String(
 			context.terminalCommandTimeoutSeconds ?? DEFAULT_TERMINAL_COMMAND_TIMEOUT_SECONDS,
 		),

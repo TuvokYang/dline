@@ -169,6 +169,16 @@ export interface ExtensionState {
 	taskCapabilityToggles?: TaskCapabilityToggles
 	nativeToolCallSetting?: boolean
 	enableParallelToolCalling?: boolean
+	/**
+	 * Configured tool-call concurrency ceiling, already clamped to its range.
+	 *
+	 * The parallel-tool-calling toggle is applied at execution time rather than
+	 * here, so that switching the feature off does not overwrite the ceiling the
+	 * user chose and force them to re-enter it.
+	 */
+	maxParallelToolCalls?: number
+	/** Configured subagent concurrency ceiling, already clamped to its range. */
+	maxParallelSubagents?: number
 	backgroundEditEnabled?: boolean
 	optOutOfRemoteConfig?: boolean
 	doubleCheckCompletionEnabled?: boolean
@@ -702,6 +712,13 @@ export interface SubagentStatusItem {
 	contextUsagePercentage: number
 	jobId?: string
 	subagentName?: string
+	/**
+	 * Profile this item was resolved to, when one applies.
+	 *
+	 * Shown so a batch that mixes Profiles is readable per item, and recorded
+	 * on the retry recipe so a replay reproduces the same binding.
+	 */
+	profileName?: string
 	task?: string
 	context?: string
 	background?: boolean
@@ -753,7 +770,42 @@ export interface ClineAskUseMcpServer {
 
 export interface ClineAskUseSubagents {
 	prompts: string[]
-	items?: Array<{ task: string; context: string; subagentName?: string; jobId?: string }>
+	/**
+	 * Per-item approval detail for a batch.
+	 *
+	 * A batch exists to run differently configured work at once, so the user
+	 * approving it has to see which agent and Profile each item resolved to.
+	 * A single batch-level name would hide exactly the distinction being
+	 * approved, including whichever items bound a different Profile.
+	 */
+	items?: Array<{
+		/**
+		 * Position of this item in the original request.
+		 *
+		 * Planning compacts the runnable array, so an array offset no longer
+		 * identifies the requested item. The card orders runnable and rejected
+		 * rows against each other, and only the original position keeps those
+		 * two sets comparable.
+		 */
+		index?: number
+		task: string
+		context: string
+		subagentName?: string
+		/** Profile bound to this item, when one was resolved. */
+		profileName?: string
+		jobId?: string
+	}>
+	/**
+	 * Requested items that failed planning and will not run.
+	 *
+	 * A mixed batch is approved as a whole, so the user has to see that it is
+	 * narrower than the model asked for; dropping these silently would present
+	 * a partial batch as the complete request.
+	 */
+	rejected?: Array<{
+		index: number
+		error: string
+	}>
 	kind?: "single" | "batch"
 	subagentName?: string
 	task?: string

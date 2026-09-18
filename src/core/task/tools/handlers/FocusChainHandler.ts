@@ -4,8 +4,7 @@ import { ClineDefaultTool } from "@/shared/tools"
 import { hasChecklistTitle, hasValidTodoItem } from "../../focus-chain/file-utils"
 import type { ToolResponse } from "../../index"
 import type { IToolHandler } from "../ToolExecutorCoordinator"
-import { interactionId, interactionTurnId, type TaskConfig } from "../types/TaskConfig"
-import { sayFeedbackOnce } from "../utils/UserFeedbackUtils"
+import type { TaskConfig } from "../types/TaskConfig"
 
 /**
  * Handles focus chain change tool.
@@ -26,43 +25,8 @@ export class FocusChainHandler implements IToolHandler {
 			return getPrompt("focusChain", "focusChainChangeMissing")
 		}
 
-		// Check auto-approval
-		if (config.autoApprovalSettings.actions.focusChain) {
-			await config.callbacks.focusChainForceUpdate(newPlan)
-
-			// Send tool say message so webview renders the focus chain change with "Auto Approved" label
-			const toolMessage = JSON.stringify({
-				tool: "focusChainChanged",
-				path: newPlan,
-				content: reason,
-			})
-			await config.callbacks.say("tool", toolMessage)
-
-			return getPrompt("focusChain", "focusChainChangeApproved")
-		}
-
-		const askData = JSON.stringify({ plan: newPlan, reason })
-		const outcome = await config.interactions.open({
-			turnId: interactionTurnId(block),
-			interactionId: interactionId(block),
-			kind: "change_todo_list",
-			presentation: askData,
-			existingTs: block.ts,
-		})
-		const responseText = outcome.draft?.text
-		const images = outcome.draft?.images
-		const files = outcome.draft?.files
-		const isApproved = outcome.actionId === "approve"
-
-		if (!isApproved) {
-			// Write user_feedback before denying so the AI sees the user's input
-			if (responseText || (images && images.length > 0) || (files && files.length > 0)) {
-				await sayFeedbackOnce(config, "noButtonClicked", responseText, images, files)
-			}
-			return getPrompt("focusChain", "focusChainChangeDenied")
-		}
-
-		const approvedPlan = this.selectPlan(newPlan, outcome.selection?.values ?? [])
+		const outcome = block.dline_tid ? config.admissionOutcomes?.get(block.dline_tid) : undefined
+		const approvedPlan = outcome ? this.selectPlan(newPlan, outcome.selection?.values ?? []) : newPlan
 
 		// Clean approvedPlan for focus chain file:
 		// - Remove "[-] - " lines (rejected items)
@@ -74,6 +38,14 @@ export class FocusChainHandler implements IToolHandler {
 			return getPrompt("focusChain", "focusChainChangeNoItemsApproved")
 		}
 		await config.callbacks.focusChainForceUpdate(focusChainPlan)
+		await config.callbacks.say(
+			"tool",
+			JSON.stringify({ tool: "focusChainChanged", path: focusChainPlan, content: reason }),
+			undefined,
+			undefined,
+			false,
+			block.ts,
+		)
 		return getPrompt("focusChain", "focusChainChangeApproved")
 	}
 

@@ -6,8 +6,7 @@ import type { Mode } from "@shared/storage/types"
 import { ClineDefaultTool } from "@/shared/tools"
 import type { ToolResponse } from "../../index"
 import type { IToolHandler } from "../ToolExecutorCoordinator"
-import { interactionId, interactionTurnId, type TaskConfig } from "../types/TaskConfig"
-import { sayFeedbackOnce } from "../utils/UserFeedbackUtils"
+import type { TaskConfig } from "../types/TaskConfig"
 
 /** Reports whether a tool-provided startup mode is supported. */
 function isSpawnTaskMode(value: string | undefined): value is Mode {
@@ -47,33 +46,6 @@ export class SpawnTaskHandler implements IToolHandler {
 		}
 
 		config.taskState.consecutiveMistakeCount = 0
-
-		const approvalBody = JSON.stringify({ task: taskDescription, mode: requestedMode, context: contextParam })
-		const outcome = await config.interactions.open({
-			turnId: interactionTurnId(block),
-			interactionId: interactionId(block),
-			kind: "spawn_task_approval",
-			presentation: approvalBody,
-			existingTs: block.ts,
-		})
-		const text = outcome.draft?.text
-		const images = outcome.draft?.images
-		const files = outcome.draft?.files
-
-		if (outcome.actionId !== "approve") {
-			// Reject the active block to update the approval state machine
-			// and cascade SKIPPED to subsequent approval-requiring blocks.
-			config.taskController.rejectActiveBlock()
-			// Handle user feedback if provided
-			if (text || (images && images.length > 0) || (files && files.length > 0)) {
-				await sayFeedbackOnce(config, "noButtonClicked", text, images, files)
-				return formatResponse.toolResult(
-					`The user provided feedback instead of spawning a task:\n<feedback>\n${text}\n</feedback>`,
-					images,
-				)
-			}
-			return formatResponse.toolDenied()
-		}
 
 		// Check if parent task was aborted before starting async spawn operations
 		if (config.taskState.abort) {

@@ -1,0 +1,143 @@
+---
+title: "Task Tool Execution Domain"
+description: "How a task's tool blocks run: the reducer decides, the executor performs, and the two meet only through commands and events."
+---
+
+The tool execution domain owns how a task's tool blocks actually run. It is the
+first executor extracted from the Task god object along the target runtime
+architecture: the reducer decides, the executor performs, and the two only meet
+through commands and events.
+
+Source: `src/core/task/executors/tool/`.
+
+## Why a domain rather than relocated methods
+
+An earlier attempt moved tool-related methods out of `src/core/task/index.ts`
+one by one. It stalled: members such as the assistant-message presenter serve
+streaming and tool preview in the same function body, and the finalized turn
+also performs provider accounting, context-compaction bookkeeping and successor
+task handoff. Splitting by member either dragged unrelated duties along or left
+the tool work behind.
+
+Splitting by responsibility removes the conflict. The mixed members stay where
+they are and act as orchestration; the tool work leaves as a command.
+
+## The command
+
+The reducer emits one fully parameterised command per admitted block:
+
+```ts
+interface ToolRunCommand {
+	commandId: string
+	turnId?: string
+	dlineTid: string
+	mode?: "serial" | "parallel"
+}
+```
+
+`mode` is resolved by the reducer, which is the only place that knows the serial
+invariant. The executor never inspects it to make a scheduling decision — it
+receives either one block at a time or a batch, and runs what it is given.
+`turnId` travels along so a result belonging to a turn the reducer has already
+left can be recognised instead of silently applied.
+
+This replaces a bare effect that carried only a block identity, which forced the
+receiving side to look the rest up and made a stale result indistinguishable
+from a current one.
+
+## The executor contract
+
+```ts
+handle(command: ToolRunCommand): void
+halt(order: HaltOrder): Promise<void>
+```
+
+Three properties matter:
+
+**`handle` returns immediately.** The caller is the serialized runtime dispatch
+path; awaiting a tool there would block every later event behind the slowest
+tool.
+
+**Every outcome becomes an event.** Success emits `tool.block_result`, a thrown
+tool emits `tool.block_failed`, and a command arriving after a stop emits
+`tool.rejected`. Nothing escapes as an unhandled rejection, and the executor
+never writes state directly.
+
+**`halt` is a drain barrier, not a hint.** The receipt `tool.halted` is emitted
+only after in-flight work has settled and owned resources have been released.
+After it, the domain produces nothing further. Results produced before the stop
+are dropped rather than applied, so a cancelled turn cannot be resurrected by a
+tool that happened to finish during teardown.
+
+## Resource ownership
+
+The domain owns the workspace resources it uses, and `release` is the single
+disposer:
+
+```ts
+interface OwnedToolResources {
+	revertDiff(): Promise<void>
+	cancelCommand(): Promise<void>
+}
+```
+
+Previously the same duty was spread across the abort, interrupt, terminate and
+provider-retry paths, each of which had to remember to revert the diff. A missed
+path left an editor open; a duplicated path reverted twice. Routing every stop
+through one release makes "exactly one reset per stop" structural: the domain
+guarantees a single release per halt generation, and a repeated cancel with the
+same `haltId` is a no-op.
+
+A failing release is reported but never rethrown, because the runtime still needs
+the receipt to know the domain is quiet. Both resets are attempted even when the
+first fails, so one stuck handle cannot strand the other resource open.
+
+## Capability by assembly
+
+UI-bound capability is granted when the domain is assembled, not checked inside
+each handler:
+
+```ts
+type ToolDomainSurface = UserFacingSurface | DeniedSurface
+```
+
+A main task is assembled with a user-facing surface. A detached execution — a
+subagent, for example — is assembled with a denied surface, and then `ask`,
+`say`, `openInteraction` and the visible diff simply do not exist for it.
+
+The distinction matters because the alternative is enumeration. Overriding a
+known list of callbacks protects only the members someone remembered to
+override, and every new callback or handler reopens the question. Withholding
+the surface removes the capability itself, so a handler that later acquires a UI
+need still cannot reach the main task.
+
+Denial is explicit rather than a silent no-op: work that genuinely needs a user
+fails loudly with `SurfaceDeniedError`, naming the capability and the reason,
+instead of appearing to succeed while its output lands in the wrong place.
+
+Denying the surface does not disable the work. A detached execution still writes
+files; it just does not render.
+
+## Relationship to the wider runtime convergence
+
+This domain is an advance implementation of one executor in the target
+architecture, not a replacement for it. Scope delivered here:
+
+- the tool domain and the `tool.*` command and event vocabulary;
+- resource ownership and the halt receipt for this domain only.
+
+Still owned by the broader runtime convergence work: the unified kernel, the
+event loop replacing the current runtime dispatch, and the provider, dialog,
+compose, background and cotask executors.
+
+## Testing
+
+Behaviour is covered by focused unit tests in
+`src/core/task/executors/tool/__tests__/`:
+
+- `handle` returns before a block settles, and a batch runs concurrently;
+- a thrown tool becomes a failure event rather than an escaping rejection;
+- the halt receipt follows the drain, and pre-stop results are dropped;
+- repeated cancel releases resources exactly once, while a new halt generation
+  releases again;
+- a denied surface refuses every capability yet still executes tools.

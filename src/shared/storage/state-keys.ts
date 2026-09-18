@@ -12,6 +12,7 @@ import {
 import { BrowserSettings, DEFAULT_BROWSER_SETTINGS } from "@shared/BrowserSettings"
 import { type ChatInputSendShortcut, DEFAULT_CHAT_INPUT_SEND_SHORTCUT } from "@shared/ChatInputSendShortcut"
 import { ClineRulesToggles } from "@shared/cline-rules"
+import { DEFAULT_MAX_PARALLEL_SUBAGENTS, DEFAULT_MAX_PARALLEL_TOOL_CALLS } from "@shared/concurrency-limits"
 import { DEFAULT_FOCUS_CHAIN_SETTINGS, FocusChainSettings } from "@shared/FocusChainSettings"
 import { HistoryItem } from "@shared/HistoryItem"
 import { DEFAULT_MCP_DISPLAY_MODE, McpDisplayMode } from "@shared/McpDisplayMode"
@@ -46,10 +47,10 @@ type FieldDefinition<T> = {
 	default: T // The default value for the field with proper type casting using as (e.g., `true as boolean | undefined`)
 	isAsync?: boolean
 	isComputed?: boolean
-	transform?: (value: any) => T
+	transform?: (value: unknown) => T
 }
 
-type FieldDefinitions = Record<string, FieldDefinition<any>>
+type FieldDefinitions = Record<string, FieldDefinition<unknown>>
 
 export type ConfiguredAPIKeys = Partial<Record<ApiProvider, boolean>>
 const REMOTE_CONFIG_EXTRA_FIELDS = {
@@ -170,7 +171,10 @@ const USER_SETTINGS_FIELDS = {
 	actModeServiceTierOverrideTier: { default: undefined as string | undefined },
 	browserSettings: {
 		default: DEFAULT_BROWSER_SETTINGS as BrowserSettings,
-		transform: (v: any) => ({ ...DEFAULT_BROWSER_SETTINGS, ...v }),
+		transform: (value: unknown) => ({
+			...DEFAULT_BROWSER_SETTINGS,
+			...(value && typeof value === "object" ? value : {}),
+		}),
 	},
 	// Usage and error reporting are consented to separately. The former
 	// `telemetrySetting` covered both at once and is deliberately not migrated:
@@ -224,6 +228,15 @@ const USER_SETTINGS_FIELDS = {
 	lazyTeammateModeEnabled: { default: false as boolean },
 	showFeatureTips: { default: true as boolean },
 	showActiveTasksInEnvDetails: { default: true as boolean },
+
+	// Concurrency ceilings. These are two independent budgets: tool calls
+	// contend for local editor, terminal and browser resources, while subagents
+	// contend for provider capacity. Throttling a saturated provider must not
+	// force local tool work to run serially, so neither limit derives from the
+	// other. Both are clamped on read, because a persisted or remote value can
+	// be out of range while the running limit must always be usable.
+	maxParallelToolCalls: { default: DEFAULT_MAX_PARALLEL_TOOL_CALLS as number },
+	maxParallelSubagents: { default: DEFAULT_MAX_PARALLEL_SUBAGENTS as number },
 
 	// OpenTelemetry configuration
 	openTelemetryEnabled: { default: true as boolean },
@@ -354,7 +367,7 @@ export const LocalStateKeys = [
 // ============================================================================
 
 type ExtractDefault<T> = T extends { default: infer U } ? U : never
-type BuildInterface<T extends Record<string, { default: any }>> = { [K in keyof T]: ExtractDefault<T[K]> }
+type BuildInterface<T extends Record<string, { default: unknown }>> = { [K in keyof T]: ExtractDefault<T[K]> }
 
 export type GlobalState = BuildInterface<typeof GLOBAL_STATE_FIELDS>
 export type Settings = BuildInterface<typeof SETTINGS_FIELDS>
@@ -416,16 +429,18 @@ export const isAsyncProperty = (key: string): boolean => ASYNC_PROPERTIES.has(ke
 export const isComputedProperty = (key: string): boolean => COMPUTED_PROPERTIES.has(key)
 
 export const getDefaultValue = <K extends GlobalStateAndSettingsKey>(key: K): GlobalStateAndSettings[K] | undefined => {
-	return ((GLOBAL_STATE_DEFAULTS as any)[key] ?? (SETTINGS_DEFAULTS as any)[key]) as GlobalStateAndSettings[K] | undefined
+	const globalDefaults = GLOBAL_STATE_DEFAULTS as Partial<Record<GlobalStateAndSettingsKey, unknown>>
+	const settingsDefaults = SETTINGS_DEFAULTS as Partial<Record<GlobalStateAndSettingsKey, unknown>>
+	return (globalDefaults[key] ?? settingsDefaults[key]) as GlobalStateAndSettings[K] | undefined
 }
 
 export const hasTransform = (key: string): boolean => key in SETTINGS_TRANSFORMS
 export const applyTransform = <T>(key: string, value: T): T => {
 	const transform = SETTINGS_TRANSFORMS[key]
-	return transform ? transform(value) : value
+	return transform ? (transform(value) as T) : value
 }
 
-function extractDefaults<T extends Record<string, any>>(props: T): Partial<BuildInterface<T>> {
+function extractDefaults<T extends Record<string, { default: unknown }>>(props: T): Partial<BuildInterface<T>> {
 	return Object.fromEntries(
 		Object.entries(props)
 			.map(([key, prop]) => [key, prop.default])
@@ -433,18 +448,22 @@ function extractDefaults<T extends Record<string, any>>(props: T): Partial<Build
 	) as Partial<BuildInterface<T>>
 }
 
-function extractTransforms<T extends Record<string, any>>(props: T): Record<string, (value: any) => any> {
+type FieldTransform = (value: unknown) => unknown
+
+function extractTransforms<T extends FieldDefinitions>(props: T): Record<string, FieldTransform> {
 	return Object.fromEntries(
 		Object.entries(props)
-			.filter(([_, prop]) => "transform" in prop && prop.transform !== undefined)
+			.filter((entry): entry is [string, FieldDefinition<unknown> & { transform: FieldTransform }] =>
+				Boolean(entry[1].transform),
+			)
 			.map(([key, prop]) => [key, prop.transform]),
 	)
 }
 
-function extractMetadata<T extends Record<string, any>>(props: T, field: string): Set<string> {
+function extractMetadata(props: Record<string, object>, field: string): Set<string> {
 	return new Set(
 		Object.entries(props)
-			.filter(([_, prop]) => field in prop && prop[field] === true)
+			.filter(([_, prop]) => field in prop && (prop as Record<string, unknown>)[field] === true)
 			.map(([key]) => key),
 	)
 }

@@ -2,6 +2,7 @@ import type {
 	AppendAskEffect,
 	AppendSayEffect,
 	ExecuteToolEffect,
+	SnapshotDurability,
 	StartApiEffect,
 	StartNewTaskEffect,
 	StartSuccessorTaskEffect,
@@ -15,9 +16,19 @@ export interface InteractionAnchorResult {
 }
 
 /** Explicit infrastructure ports used by the task effect runner. */
+/** Identity of the effect requesting a projection, so deferred work stays attributable. */
+export interface ProjectionEffectOrigin {
+	effectId: string
+	originRevision: number
+}
+
 export interface TaskEffectPorts {
-	postView(state: Readonly<TaskRuntimeState>): Promise<void>
-	persistSnapshot(state: Readonly<TaskRuntimeState>): Promise<void>
+	postView(state: Readonly<TaskRuntimeState>, durability: SnapshotDurability, origin: ProjectionEffectOrigin): Promise<void>
+	persistSnapshot(
+		state: Readonly<TaskRuntimeState>,
+		durability: SnapshotDurability,
+		origin: ProjectionEffectOrigin,
+	): Promise<void>
 	cancelRuntime(): Promise<void>
 	prepareResume(): Promise<void>
 	startApi(effect: StartApiEffect): Promise<void>
@@ -65,10 +76,16 @@ export class TaskEffectRunner {
 	private async runOne(effect: TaskEffect, state: Readonly<TaskRuntimeState>): Promise<InteractionAnchorResult | undefined> {
 		switch (effect.type) {
 			case "POST_TASK_VIEW":
-				await this.ports.postView(state)
+				await this.ports.postView(state, effect.durability ?? "flushed", {
+					effectId: effect.id,
+					originRevision: state.revision,
+				})
 				return
 			case "PERSIST_SNAPSHOT":
-				await this.ports.persistSnapshot(state)
+				await this.ports.persistSnapshot(state, effect.durability ?? "flushed", {
+					effectId: effect.id,
+					originRevision: state.revision,
+				})
 				return
 			case "CANCEL_RUNTIME":
 				await this.ports.cancelRuntime()

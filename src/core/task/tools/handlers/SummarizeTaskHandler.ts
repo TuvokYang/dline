@@ -1,3 +1,4 @@
+import path from "node:path"
 import { resolveProvider } from "@core/api"
 import type { ToolUse } from "@core/assistant-message"
 import { getCompactionPassIdentity } from "@core/context/context-management/target-window-fitting"
@@ -14,6 +15,7 @@ import { ClineSayTool } from "@shared/ExtensionMessage"
 import { telemetryService } from "@/services/telemetry"
 import { Logger } from "@/shared/services/Logger"
 import { ClineDefaultTool } from "@/shared/tools"
+import { prepareRegisteredToolAdmission } from "../../executors/tool/ToolAdmissionRegistry"
 import type { ToolResponse } from "../../index"
 import type { IPartialBlockHandler, IToolHandler } from "../ToolExecutorCoordinator"
 import type { ToolValidator } from "../ToolValidator"
@@ -188,17 +190,46 @@ export class SummarizeTaskHandler implements IToolHandler, IPartialBlockHandler 
 						continue
 					}
 
-					// Only process if auto-approved (respects workspace/outside-workspace settings)
-					if (await config.callbacks.shouldAutoApproveToolWithPath(ClineDefaultTool.FILE_READ, relPath)) {
-						try {
-							// Resolve path (handles multi-root workspaces)
+					// Optional enrichment never opens another prompt. The complete target I/O
+					// effect stays inside the retained Admission closure, and canonical
+					// confirmation returns the exact closure that is allowed to execute.
+					let readAdmission = prepareRegisteredToolAdmission({
+						canonicalToolName: ClineDefaultTool.FILE_READ,
+						block: { ...block, name: ClineDefaultTool.FILE_READ, params: { path: relPath } },
+						description: `[read_file for '${relPath}']`,
+						snapshot: {
+							taskId: config.taskId,
+							cwd: config.cwd,
+							workspaceRoots: config.workspaceManager?.getRoots().map((root) => root.path) ?? [config.cwd],
+							workspaceRootEntries: config.workspaceManager
+								?.getRoots()
+								.map((root) => ({ name: root.name || path.basename(root.path), path: root.path })),
+							primaryWorkspaceRoot: config.workspaceManager?.getPrimaryRoot()?.path,
+							isMultiRootEnabled: config.isMultiRootEnabled,
+							settings: config.autoApprovalSettings,
+							blanket: {
+								yoloMode: config.yoloModeToggled,
+								approveAll: config.services.stateManager.getGlobalSettingsKey("autoApproveAllToggled") === true,
+							},
+							inheritsApproval: config.isSubagentExecution,
+						},
+						run: async () => {
 							const pathResult = resolveWorkspacePath(config, relPath, "SummarizeTaskHandler")
 							const { absolutePath, displayPath } =
 								typeof pathResult === "string" ? { absolutePath: pathResult, displayPath: relPath } : pathResult
-
-							// Read file content, we dont allow images to be read here
-							// This throws if an image or if we can't read the file, implicitly skipping
 							const fileContent = await extractFileContent(absolutePath, false)
+							return { displayPath, fileContent }
+						},
+					})
+					if (readAdmission.outcome === "admitted" && readAdmission.confirm) {
+						readAdmission = await readAdmission.confirm()
+					}
+					if (
+						readAdmission.outcome === "admitted" &&
+						(readAdmission.decision.kind === "automatic" || readAdmission.decision.kind === "none")
+					) {
+						try {
+							const { displayPath, fileContent } = await readAdmission.run()
 
 							// Check if adding this file would exceed character limit
 							if (totalChars + fileContent.text.length > MAX_CHARS) {
