@@ -229,6 +229,29 @@ export async function sendAccountUsageUpdate(controller: Controller, accountUsag
 	})
 }
 
+/** A monotonic partial state update applied only after the Webview has hydrated a full snapshot. */
+export type ExtensionStatePatch = {
+	__dlineStatePatch: true
+	stateRevision: number
+} & Partial<Omit<ExtensionState, "stateRevision">>
+
+/**
+ * Send a small interaction-critical patch without waiting behind a full state build or delivery queue.
+ * Older full snapshots may still arrive, but the Webview rejects them by `stateRevision`.
+ */
+export async function sendStatePatch(
+	controller: Controller,
+	patch: Omit<ExtensionStatePatch, "__dlineStatePatch">,
+	accountUsage?: AccountUsage,
+): Promise<void> {
+	if (!controller.isUiAttached()) return
+	const payload: ExtensionStatePatch = { ...patch, __dlineStatePatch: true }
+	const stateJson = JSON.stringify(payload)
+	const stateSizeBytes = Buffer.byteLength(stateJson, "utf8")
+	recordStateSizeTelemetry(stateSizeBytes)
+	await sendPayloadToSubscribers(controller, stateJson, accountUsage, stateSizeBytes)
+}
+
 /**
  * Serialized form of the last payload delivered to a controller's subscribers.
  *

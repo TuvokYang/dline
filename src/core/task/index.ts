@@ -516,6 +516,7 @@ export class Task {
 	private resumeCoordinator: ResumeCoordinator
 	private readonly historyResumeMaintenance: HistoryResumeMaintenance
 	private historyPreparationPending = false
+	private controllerDetached = false
 	private readonly restoredFromHistory: boolean
 	private latestOrdinaryCompactionDiagnostic?: CompactionProviderDiagnosticSnapshot
 
@@ -588,12 +589,11 @@ export class Task {
 	public checkpointManager?: ICheckpointManager
 	private initialCheckpointCommitPromise?: Promise<string | undefined>
 	/**
-	 * The initial checkpoint baseline is committed off the request path, but its
-	 * hash still has to reach the message store. Terminate closes that store as a
-	 * durability boundary, so the continuation is tracked here and awaited before
-	 * the close rather than being left to race it.
+	 * Serializes only checkpoint-hash writes that have already entered the message
+	 * store boundary. Baseline Git work may outlive the Task, but terminate marks the
+	 * Task aborted first and waits this chain before closing the store.
 	 */
-	private initialCheckpointPersistPromise?: Promise<void>
+	private checkpointHashPersistenceChain: Promise<void> = Promise.resolve()
 	private ignoreController: IgnoreController
 	private commandPermissionController: CommandPermissionController
 	private toolExecutor: ToolExecutor
@@ -875,7 +875,10 @@ export class Task {
 		this.controller = controller
 		this.mcpHub = mcpHub
 		this.updateTaskHistory = updateTaskHistory
-		this.postStateToWebview = postStateToWebview
+		this.postStateToWebview = async (options) => {
+			if (this.controllerDetached) return
+			await postStateToWebview(options)
+		}
 		this.apiRateMetricsService = new TaskApiRateMetricsService({
 			repository: new TaskApiRateMetricsRepository({ taskId }),
 			taskId,
@@ -985,11 +988,13 @@ export class Task {
 				async (state, durability, origin) => this.emitStateSnapshot(createSnapshot(state), durability, origin),
 				async () => this.abortExecution(),
 				async () => {
+					if (this.controllerDetached) return
 					this.taskState.resetOperationCancellation()
 					this.taskState.abort = false
 					this.taskState.autoRetryAttempts = 0
 				},
 				async (effect) => {
+					if (this.controllerDetached) return
 					this.taskState.resetOperationCancellation()
 					this.taskState.abort = false
 					const hasRetryDraft = Boolean(
@@ -1152,13 +1157,19 @@ export class Task {
 				await this.snapshotPersistence.flushNow()
 				await this.syncTaskCompletionProjection(result.snapshot)
 			},
+			reportPersistenceFailure: (error) => {
+				Logger.warn(
+					`[Task ${this.taskId}] Historical interaction persistence failed; the stopped state will be reconstructed on reopen:`,
+					error,
+				)
+			},
 			hydrate: async (result) => {
 				this.taskRuntime.restore(hydrateSnapshot(result.snapshot))
 				this.syncRetainedMachines()
 			},
 			publishView: async () => {
 				this.historyPreparationPending = false
-				await this.postStateToWebview({ immediate: true })
+				await this.controller.postTaskViewPatchToWebview()
 			},
 		})
 		this.systemPromptCacheService = new SystemPromptCacheService({ taskId: this.taskId })
@@ -1241,7 +1252,10 @@ export class Task {
 
 		// Create MessageChannel (message engine) and TaskController (central hub)
 		const channel = new MessageChannel({
-			pushMessage: (msg) => sendPartialMessageEvent(this.controller, convertClineMessageToProto(msg)),
+			pushMessage: (msg) => {
+				if (this.controllerDetached) return
+				return sendPartialMessageEvent(this.controller, convertClineMessageToProto(msg))
+			},
 			syncState: async () => {
 				await this.postStateToWebview()
 			},
@@ -4584,10 +4598,10 @@ export class Task {
 		}
 	}
 
-	/** Attach a durable ask row to a Resume/Completion interaction synthesized from history. */
-	private async presentSynthesizedHistoryInteraction(snapshot: TaskSnapshot): Promise<void> {
+	/** Register a durable ask row for a Resume/Completion interaction synthesized from history. */
+	private presentSynthesizedHistoryInteraction(snapshot: TaskSnapshot): Promise<void> {
 		const interaction = snapshot.interaction
-		if (!interaction || interaction.anchor || interaction.status !== "opening") return
+		if (!interaction || interaction.anchor || interaction.status !== "opening") return Promise.resolve()
 
 		let presentation = ""
 		let existingTs: number | undefined
@@ -4604,12 +4618,13 @@ export class Task {
 			}
 		}
 
-		const messageTs = await this.taskController.channel.presentAsk(
+		const registered = this.taskController.channel.beginSynthesizedHistoryAsk(
 			getInteraction(interaction.kind).taskAsk,
 			presentation,
 			existingTs,
 			interaction.interactionId,
 		)
+		const messageTs = registered.askTs
 		interaction.status = "awaiting"
 		interaction.anchor = { messageTs, messageType: "ask" }
 		snapshot.anchor = {
@@ -4619,6 +4634,7 @@ export class Task {
 			interactionId: interaction.interactionId,
 		}
 		snapshot.timestamp = Date.now()
+		return registered.persistence
 	}
 
 	/** Locate the original turn-end block from runtime memory or canonical persisted assistant history. */
@@ -4682,9 +4698,9 @@ export class Task {
 	/** Consume one history-only interaction after its causal response has been durably accepted. */
 	private async continueRestoredInteraction(context: DetachedInteractionContinuationContext): Promise<void> {
 		try {
-			if (!context.isCurrent()) return
+			if (!context.isCurrent() || this.controllerDetached) return
 			await this.waitForTaskHeaderCompactionSettlement()
-			if (!context.isCurrent()) return
+			if (!context.isCurrent() || this.controllerDetached) return
 			const state = this.taskRuntime.getState()
 			if (context.interaction.kind === "hosted_web_approval") {
 				const apiIndex = hostedWebApprovalApiIndex(this.taskId, context.interaction.interactionId)
@@ -4808,15 +4824,22 @@ export class Task {
 	}
 
 	private async persistCheckpointHashToMessage(messageIndex: number, commitHash: string): Promise<void> {
-		// The baseline commit runs off the request path, so the task may already be
-		// tearing down by the time it returns. Writing then would hit a closed store,
-		// and the hash has no reader left anyway.
+		// Register the write synchronously before the first await. Terminate can then
+		// mark the Task aborted and wait for exactly the store work that already began,
+		// without waiting for a slow baseline commit that has not reached this boundary.
 		if (this.taskState.abort) return
-		await this.messageStateHandler.updateClineMessage(messageIndex, {
-			lastCheckpointHash: commitHash,
-		})
-		await this.messageStateHandler.flushMessageUpdate(messageIndex)
-		await this.postStateToWebview()
+		const persistence = this.checkpointHashPersistenceChain
+			.catch(() => undefined)
+			.then(async () => {
+				if (this.taskState.abort) return
+				await this.messageStateHandler.updateClineMessage(messageIndex, {
+					lastCheckpointHash: commitHash,
+				})
+				await this.messageStateHandler.flushMessageUpdate(messageIndex)
+				await this.postStateToWebview()
+			})
+		this.checkpointHashPersistenceChain = persistence.catch(() => undefined)
+		await persistence
 	}
 
 	/**
@@ -5053,6 +5076,17 @@ export class Task {
 			)
 		}
 		this.syncRetainedMachines()
+	}
+
+	/** Fence every continuation and publication synchronously when the Controller releases this Task surface. */
+	public fenceControllerDetachment(): void {
+		if (this.controllerDetached) return
+		this.controllerDetached = true
+		this.interactionCoordinator.fence("task_detached")
+		this.taskState.activeHookExecution?.abortController.abort()
+		this.taskState.abort = true
+		this.taskState.cancelOperations("task_detached")
+		this.api?.abort?.()
 	}
 
 	/** Mark an interactive historical Task as visible but not yet dispatchable. */
@@ -6259,9 +6293,9 @@ export class Task {
 			const asyncCleanups: Array<Promise<void>> = [
 				withTerminateTimeout(taskCancelHookPromise, 5_000, "taskCancelHook"),
 				withTerminateTimeout(
-					this.initialCheckpointPersistPromise ?? Promise.resolve(),
+					this.checkpointHashPersistenceChain ?? Promise.resolve(),
 					5_000,
-					"initialCheckpointPersist",
+					"checkpointHashPersistence",
 				),
 				withTerminateTimeout(this.apiRateMetricsService.dispose(), 5_000, "apiRateMetricsService.dispose"),
 				withTerminateTimeout(this.apiRequestRoundLifecycle.close(), 5_000, "apiRequestRoundLifecycle.close"),
@@ -7999,6 +8033,7 @@ export class Task {
 				this.taskState.lastRenderedPartialByTs.set(blockTs, newSig)
 			} else if (block.type === "tool_use") {
 				await this.awaitInitialCheckpointBeforeToolSideEffects(block.name)
+				if (this.taskState.abort) return
 				await this.toolExecutor.reRenderPartialBlock(block as ToolUse, blockTs)
 				this.taskState.lastRenderedPartialByTs.set(blockTs, newSig)
 			}
@@ -8100,6 +8135,8 @@ export class Task {
 
 					if (block.partial) {
 						await this.awaitInitialCheckpointBeforeToolSideEffects(block.name)
+						if (this.taskState.abort) return
+						if (context && !context.isCurrent()) return
 						await this.toolExecutor.executeTool(block)
 						if (block.ts !== undefined) {
 							this.taskState.partialToolLifecycleByTs.set(block.ts, "partial-shown")
@@ -8665,13 +8702,11 @@ export class Task {
 					return commitHash
 				})
 				this.initialCheckpointCommitPromise = persistCommitPromise
-				// Terminate waits on this so the hash either lands before the store
-				// closes or is skipped; either way it never writes into a closed store.
-				this.initialCheckpointPersistPromise = persistCommitPromise
-					.catch((error) => {
-						Logger.error(`[TaskCheckpointManager] Failed to create checkpoint commit for task ${this.taskId}:`, error)
-					})
-					.then(() => undefined)
+				// Observe baseline failures even when no mutating tool ever awaits the
+				// commit. Hash persistence owns its own store-bound chain above.
+				void persistCommitPromise.catch((error) => {
+					Logger.error(`[TaskCheckpointManager] Failed to create checkpoint commit for task ${this.taskId}:`, error)
+				})
 			}
 		} else if (
 			isFirstRequest &&

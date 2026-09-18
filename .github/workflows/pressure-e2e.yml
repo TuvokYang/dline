@@ -1,0 +1,55 @@
+name: Pressure E2E
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pressure-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  pressure-e2e:
+    name: Five-task compaction pressure
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      DLINE_E2E_PROFILE: mock-openai
+      DLINE_E2E_RUN_ID: pressure-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup project
+        uses: ./.github/actions/setup-project
+        with:
+          install-webview: "true"
+
+      - name: Cache VS Code
+        uses: actions/cache@v5
+        with:
+          path: .vscode-test
+          key: vscode-${{ runner.os }}-stable-${{ hashFiles('.vscode-test.mjs', 'package.json') }}
+          restore-keys: |
+            vscode-${{ runner.os }}-stable-
+
+      - name: Install xvfb
+        run: sudo apt-get update && sudo apt-get install -y xvfb
+
+      - name: Run pressure E2E
+        run: xvfb-run -a npm run test:e2e:pressure -- --workers=1 --retries=0
+
+      - name: Upload failed pressure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: pressure-e2e-artifacts-${{ github.sha }}
+          path: tmp/test-result/
+          if-no-files-found: warn
+          include-hidden-files: true
+          retention-days: 7

@@ -150,6 +150,98 @@ describe("ResumeCoordinator", () => {
 		])
 	})
 
+	it("publishes the stopped interaction while ask persistence is still in flight", async () => {
+		const order: string[] = []
+		let releasePresentation!: () => void
+		const presentationGate = new Promise<void>((resolve) => {
+			releasePresentation = resolve
+		})
+		const coordinator = new ResumeCoordinator({
+			...ports(order),
+			presentInteraction: async (result) => {
+				order.push(`present-start:${result.entry.type}`)
+				await presentationGate
+				order.push(`present-end:${result.entry.type}`)
+			},
+		})
+
+		const preparation = coordinator.prepare("task-1")
+		await vi.waitFor(() => expect(order).toContain("publish:show_resume_interaction"))
+
+		expect(order).toEqual([
+			"load:task-1",
+			"present-start:show_resume_interaction",
+			"persist:paused",
+			"hydrate:paused",
+			"publish:show_resume_interaction",
+		])
+
+		releasePresentation()
+		await expect(preparation).resolves.toMatchObject({ snapshot: { phase: TaskPhase.PAUSED } })
+		expect(order.at(-1)).toBe("present-end:show_resume_interaction")
+	})
+
+	it("publishes the stopped interaction while ordered snapshot persistence is still in flight", async () => {
+		const order: string[] = []
+		let releasePersistence!: () => void
+		const persistenceGate = new Promise<void>((resolve) => {
+			releasePersistence = resolve
+		})
+		const coordinator = new ResumeCoordinator({
+			...ports(order),
+			persist: async (result) => {
+				order.push(`persist-start:${result.snapshot.phase}`)
+				await persistenceGate
+				order.push(`persist-end:${result.snapshot.phase}`)
+			},
+		})
+
+		const preparation = coordinator.prepare("task-1")
+		await vi.waitFor(() => expect(order).toContain("publish:show_resume_interaction"))
+
+		expect(order).toEqual([
+			"load:task-1",
+			"present:show_resume_interaction",
+			"persist-start:paused",
+			"hydrate:paused",
+			"publish:show_resume_interaction",
+		])
+
+		releasePersistence()
+		await expect(preparation).resolves.toMatchObject({ snapshot: { phase: TaskPhase.PAUSED } })
+		expect(order.at(-1)).toBe("persist-end:paused")
+	})
+
+	it("keeps the published interaction usable when its reconstructable snapshot refresh fails", async () => {
+		const order: string[] = []
+		const persistenceError = new Error("snapshot refresh failed")
+		const reportPersistenceFailure = vi.fn()
+		const coordinator = new ResumeCoordinator({
+			...ports(order),
+			persist: async () => {
+				order.push("persist:start")
+				throw persistenceError
+			},
+			reportPersistenceFailure,
+		})
+
+		await expect(coordinator.prepare("task-1")).resolves.toMatchObject({
+			snapshot: { phase: TaskPhase.PAUSED },
+		})
+
+		expect(order).toEqual([
+			"load:task-1",
+			"present:show_resume_interaction",
+			"persist:start",
+			"hydrate:paused",
+			"publish:show_resume_interaction",
+		])
+		expect(reportPersistenceFailure).toHaveBeenCalledWith(
+			persistenceError,
+			expect.objectContaining({ snapshot: expect.objectContaining({ phase: TaskPhase.PAUSED }) }),
+		)
+	})
+
 	it("coalesces concurrent preparation for the same task", async () => {
 		const order: string[] = []
 		let release!: () => void

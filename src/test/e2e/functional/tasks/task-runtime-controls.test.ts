@@ -347,8 +347,12 @@ async function selectThinkingOverride(sidebar: Frame, optionName: string): Promi
 	await expect(control).toBeVisible()
 	await expect(control).toBeEnabled()
 	await control.click()
-	await expect(sidebar.getByRole("option", { name: "Profile", exact: true })).toHaveCount(0)
-	await sidebar.getByRole("option", { name: optionName, exact: true }).click()
+	const options = sidebar.getByRole("listbox", { name: "Task thinking override options" })
+	await expect(options).toBeVisible()
+	await expect(options.getByRole("option", { name: "Profile", exact: true })).toHaveCount(0)
+	const option = options.getByRole("option", { name: optionName, exact: true })
+	await expect(option).toBeVisible()
+	await option.click()
 	await expect(control).toContainText(optionName)
 }
 
@@ -382,7 +386,11 @@ async function captureRuntimeControls(page: Page, sidebar: Frame, testInfo: Test
 	await testInfo.attach(`${name}-vscode`, { path: pagePath, contentType: "image/png" })
 
 	const controlsPath = testInfo.outputPath(`${name}-controls.png`)
-	await sidebar.locator("[data-chat-input-runtime-controls]").screenshot({ path: controlsPath })
+	const controls = sidebar.locator("[data-chat-input-runtime-controls]")
+	await expect(controls).toBeVisible()
+	const controlsBox = await controls.boundingBox()
+	if (!controlsBox) throw new Error("Runtime controls have no visible screenshot bounds")
+	await page.screenshot({ path: controlsPath, clip: controlsBox })
 	await testInfo.attach(`${name}-controls`, { path: controlsPath, contentType: "image/png" })
 }
 

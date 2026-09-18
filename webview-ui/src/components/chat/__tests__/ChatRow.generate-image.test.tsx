@@ -199,14 +199,14 @@ describe("ChatRow image generation rendering", () => {
 			"overscroll-x-contain",
 		)
 		expect(partialImage.parentElement).toHaveClass("w-full")
-		expect(partialImage.parentElement).toHaveStyle({ maxHeight: "60vh" })
+		expect(partialImage.parentElement?.style.maxHeight).toBe("60vh")
 		unmount()
 
 		render(<TestableChatRowContent {...baseProps} message={message} />)
 		const finalImage = await screen.findByRole("img", { name: "Generated image 1" })
 		expect(finalImage.closest("[data-testid='image-generation-artifacts']")).toHaveClass("grid-cols-1")
 		expect(finalImage.closest("[data-testid='image-generation-artifacts']")).not.toHaveClass("sm:grid-cols-2")
-		expect(finalImage.parentElement).toHaveStyle({ maxHeight: "60vh" })
+		expect(finalImage.parentElement?.style.maxHeight).toBe("60vh")
 	})
 
 	it("opens from the image, toggles fit mode, copies, references, and collapses", async () => {

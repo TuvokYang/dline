@@ -33,6 +33,12 @@ function createUiMessageStub(rows: DurableRow[]) {
 			durable.push(message as unknown as DurableRow)
 			return message
 		},
+		updateMessage: async (index: number, updates: Partial<ClineMessage>) => {
+			const updated = { ...durable[index], ...updates } as unknown as DurableRow
+			durable[index] = updated
+			return updated as unknown as ClineMessage
+		},
+		flush: async () => {},
 		truncateByLineNum: async (count: number) => {
 			durable.length = Math.min(durable.length, count)
 		},
@@ -138,5 +144,27 @@ describe("chat restore boundary with an in-flight compaction card", () => {
 
 		expect(handler.clearTransientClineMessages()).toEqual([])
 		expect(handler.durableClineMessages.map((message) => message.ts)).toEqual([10, 20])
+	})
+
+	it("replaces an existing durable row behind a registered history ask", async () => {
+		const { handler } = createHandler([{ ts: 10, partial: false }])
+		const registered = handler.beginDurableClineMessage({
+			ts: 10,
+			type: "ask",
+			ask: "completion_result",
+			text: "done",
+			partial: false,
+			interactionId: "completion-1",
+		})
+
+		expect(handler.clineMessages).toEqual([
+			expect.objectContaining({ ts: 10, type: "ask", ask: "completion_result", interactionId: "completion-1" }),
+		])
+
+		await registered.persistence
+		expect(handler.clearTransientClineMessages()).toEqual([])
+		expect(handler.durableClineMessages).toEqual([
+			expect.objectContaining({ ts: 10, type: "ask", ask: "completion_result", interactionId: "completion-1" }),
+		])
 	})
 })

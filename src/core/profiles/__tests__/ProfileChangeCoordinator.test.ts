@@ -90,6 +90,34 @@ describe("ProfileChangeCoordinator", () => {
 		expect(coordinator.revision).to.equal(1)
 	})
 
+	it("broadcasts a pure reorder even when no profile fields change", async () => {
+		const controller = createController("first-profile", "first-profile", "first-id")
+		const coordinator = new ProfileChangeCoordinator(() => [controller])
+		const first = { id: "first-id", name: "first-profile", provider: "openai" } as ApiProfile
+		const second = { id: "second-id", name: "second-profile", provider: "anthropic" } as ApiProfile
+
+		await coordinator.publish([first, second], [second, first])
+
+		expect((controller.task?.flushPromptFreshnessInvalidation as ReturnType<typeof vi.fn>).mock.calls).to.deep.equal([
+			["profile_catalog"],
+		])
+		expect((controller.postStateToWebview as ReturnType<typeof vi.fn>).mock.calls).to.have.length(1)
+		expect((controller.stateManager.setGlobalState as ReturnType<typeof vi.fn>).mock.calls).to.have.length(0)
+		expect(coordinator.revision).to.equal(1)
+	})
+
+	it("does not broadcast an unchanged Catalog", async () => {
+		const controller = createController("profile", "profile", "profile-id")
+		const coordinator = new ProfileChangeCoordinator(() => [controller])
+		const profiles = [{ id: "profile-id", name: "profile", provider: "openai" }] as ApiProfile[]
+
+		await coordinator.publish(profiles, structuredClone(profiles))
+
+		expect((controller.task?.flushPromptFreshnessInvalidation as ReturnType<typeof vi.fn>).mock.calls).to.have.length(0)
+		expect((controller.postStateToWebview as ReturnType<typeof vi.fn>).mock.calls).to.have.length(0)
+		expect(coordinator.revision).to.equal(0)
+	})
+
 	it("adopts a renamed display name without rebuilding the current handler", async () => {
 		const controller = createController("old-profile", "old-profile", "profile-id")
 		const coordinator = new ProfileChangeCoordinator(() => [controller])

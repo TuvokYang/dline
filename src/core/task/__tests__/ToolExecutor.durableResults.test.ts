@@ -27,6 +27,7 @@ function createBlock(
 }
 
 interface HarnessOptions {
+	aborted?: boolean
 	rejected?: boolean
 	strictPlan?: boolean
 	throwFromTool?: boolean
@@ -71,7 +72,7 @@ function createHarness(options: HarnessOptions = {}) {
 	const executor = Object.create(ToolExecutor.prototype) as ToolExecutorHarness
 	Object.assign(executor, {
 		taskState: {
-			abort: false,
+			abort: options.aborted === true,
 			consecutiveMistakeCount: 0,
 			didAlreadyUseTool: false,
 			userMessageContent,
@@ -146,6 +147,21 @@ function webSearchCards(say: ReturnType<typeof vi.fn>): Array<Record<string, unk
 }
 
 describe("ToolExecutor durable tool results", () => {
+	it("does not enter browser or partial handler side effects after the Task aborts", async () => {
+		const { coordinator, executor, partialRender } = createHarness({
+			aborted: true,
+			allowedNativeToolNames: [ClineDefaultTool.FILE_READ],
+		})
+		const block = createBlock()
+		block.partial = true
+
+		await executor.execute(block, {})
+
+		expect(executor.browserSession.closeBrowser).not.toHaveBeenCalled()
+		expect(partialRender).not.toHaveBeenCalled()
+		expect(coordinator.execute).not.toHaveBeenCalled()
+	})
+
 	it("does not render an unauthorized partial summarize_task block", async () => {
 		const { executor, partialRender } = createHarness()
 		const block = createBlock(ClineDefaultTool.SUMMARIZE_TASK, { context: "UNAUTHORIZED_SUMMARY_MUST_NOT_RENDER" })

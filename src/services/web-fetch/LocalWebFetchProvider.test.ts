@@ -57,6 +57,27 @@ describe("BrowserWebFetchProvider", () => {
 		expect(fetcher.closeBrowser).toHaveBeenCalledOnce()
 	})
 
+	it("includes browser cleanup in the total fetch budget", async () => {
+		vi.useFakeTimers()
+		try {
+			const fetcher = contentFetcher()
+			fetcher.closeBrowser.mockImplementationOnce(() => new Promise(() => undefined))
+			const provider = new BrowserWebFetchProvider(() => fetcher)
+			const fetching = provider.fetch({
+				url: "https://example.test/cleanup",
+				prompt: "Read the page",
+				timeoutMs: 10,
+			})
+
+			const rejection = expect(fetching).rejects.toThrow("Web fetch timed out after 1 seconds")
+			await vi.advanceTimersByTimeAsync(10)
+			await rejection
+			expect(fetcher.closeBrowser).toHaveBeenCalledOnce()
+		} finally {
+			vi.useRealTimers()
+		}
+	})
+
 	it("forwards external cancellation and closes the browser", async () => {
 		const fetcher = contentFetcher()
 		fetcher.urlToMarkdown.mockImplementationOnce(() => new Promise(() => undefined))

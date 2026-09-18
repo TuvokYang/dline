@@ -73,7 +73,8 @@ vi.mock("react-virtuoso", async () => {
 })
 
 vi.mock("@/components/chat/task-header/StickyUserMessage", () => ({
-	StickyUserMessage: () => null,
+	StickyUserMessage: ({ isVisible }: { isVisible: boolean }) =>
+		isVisible ? <button aria-label="Sticky user message">Sticky user message</button> : null,
 }))
 
 vi.mock("../messages/MessageRenderer", () => ({
@@ -158,6 +159,15 @@ describe("MessagesArea sliding-window integration", () => {
 	afterEach(() => {
 		cleanup()
 		vi.useRealTimers()
+	})
+
+	it("keeps the sticky overlay transparent outside the visible message", () => {
+		const scrollBehavior = createScrollBehavior()
+		scrollBehavior.scrolledPastUserMessage = createMessages(0, 1)[0]
+		renderMessagesArea(scrollBehavior)
+
+		const stickyMessage = screen.getByRole("button", { name: "Sticky user message" })
+		expect(stickyMessage.parentElement).toHaveClass("pointer-events-none")
 	})
 
 	it("initializes a loaded tail at the absolute bottom without a visible retry chain", () => {

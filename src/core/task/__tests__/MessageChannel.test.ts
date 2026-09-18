@@ -6,7 +6,11 @@ import type { MessageStateHandler } from "../message-state"
 import type { TaskState } from "../TaskState"
 
 function createMessageChannel(
-	options: { pushMessage?: (message: ClineMessage) => void | Promise<void>; syncState?: () => Promise<void> } = {},
+	options: {
+		pushMessage?: (message: ClineMessage) => void | Promise<void>
+		syncState?: () => Promise<void>
+		durableCommit?: (message: ClineMessage) => Promise<ClineMessage>
+	} = {},
 ) {
 	const clineMessages: ClineMessage[] = []
 	const taskState = {
@@ -53,6 +57,15 @@ function createMessageChannel(
 					clineMessages.push(message)
 				}
 				return message
+			},
+			beginDurableClineMessage: (message: ClineMessage) => {
+				const index = clineMessages.findIndex((candidate) => candidate.ts === message.ts)
+				if (index >= 0) clineMessages[index] = message
+				else clineMessages.push(message)
+				return {
+					message,
+					persistence: options.durableCommit?.(message) ?? Promise.resolve(message),
+				}
 			},
 		} as unknown as MessageStateHandler,
 		taskState,
@@ -105,6 +118,34 @@ describe("MessageChannel.presentAsk", () => {
 			interactionId: "condense-1",
 		})
 		expect(flushMessageUpdate).not.toHaveBeenCalled()
+	})
+
+	it("registers a synthesized history ask before a slow durable commit completes", async () => {
+		let releaseCommit!: (message: ClineMessage) => void
+		const commitGate = new Promise<ClineMessage>((resolve) => {
+			releaseCommit = resolve
+		})
+		const durableCommit = vi.fn(async () => await commitGate)
+		const pushMessage = vi.fn(async () => {})
+		const { channel, clineMessages } = createMessageChannel({ durableCommit, pushMessage })
+
+		const registered = channel.beginSynthesizedHistoryAsk("resume_task", "", undefined, "resume-1")
+
+		expect(durableCommit).toHaveBeenCalledOnce()
+		expect(clineMessages).toEqual([
+			expect.objectContaining({
+				ts: registered.askTs,
+				type: "ask",
+				ask: "resume_task",
+				interactionId: "resume-1",
+				partial: false,
+			}),
+		])
+		expect(pushMessage).not.toHaveBeenCalled()
+
+		releaseCommit(clineMessages[0])
+		await registered.persistence
+		expect(pushMessage).toHaveBeenCalledWith(clineMessages[0])
 	})
 
 	it("waits for realtime ask delivery before exposing the awaiting interaction", async () => {

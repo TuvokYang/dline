@@ -127,6 +127,7 @@ export class InteractionCoordinator {
 	private detachedContinuation?: DetachedInteractionContinuation
 	private continuationGeneration = 0
 	private readonly activeCancellationGenerations = new Set<number>()
+	private permanentlyFenced = false
 
 	constructor(
 		private readonly runtime: TaskRuntime,
@@ -155,6 +156,17 @@ export class InteractionCoordinator {
 		}
 		this.waitingInteractionRejectors.clear()
 		return generation
+	}
+
+	/** Permanently invalidate every continuation after the owning Task leaves its Controller. */
+	fence(reason = "task_detached"): void {
+		if (this.permanentlyFenced) return
+		this.permanentlyFenced = true
+		this.continuationGeneration++
+		for (const reject of this.waitingInteractionRejectors.values()) {
+			reject(new InteractionCancellationError(reason))
+		}
+		this.waitingInteractionRejectors.clear()
 	}
 
 	/** Cancel only the live waiter owned by one interaction without fencing unrelated continuations. */
@@ -440,7 +452,9 @@ export class InteractionCoordinator {
 
 	/** Return whether asynchronous work still belongs to the latest non-cancelling generation. */
 	private isCurrentGeneration(generation: number): boolean {
-		return generation === this.continuationGeneration && this.activeCancellationGenerations.size === 0
+		return (
+			!this.permanentlyFenced && generation === this.continuationGeneration && this.activeCancellationGenerations.size === 0
+		)
 	}
 
 	/** Reject a response whose continuation lost admission to a newer cancellation transaction. */

@@ -37,6 +37,12 @@ export interface MessageStateHandlerEvents {
 	clineMessagesChanged: [change: ClineMessageChange]
 }
 
+/** A UI row that is already visible in memory and registered in the durable write order. */
+export interface RegisteredClineMessagePersistence {
+	readonly message: ClineMessage
+	readonly persistence: Promise<ClineMessage>
+}
+
 interface MessageStateHandlerParams {
 	taskId: string
 	ulid: string
@@ -554,11 +560,59 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 
 	/** Commit a new transient row durably before exposing it as durable in memory. */
 	async commitTransientClineMessage(message: ClineMessage): Promise<ClineMessage> {
+		return await this.commitTransientClineMessageByTimestamp(message, false)
+	}
+
+	/**
+	 * Make a complete row visible immediately and synchronously register its durable write.
+	 *
+	 * Calling the returned persistence Promise is not what starts the write: the backing
+	 * store mutex is entered before this method returns. Later message writes therefore
+	 * queue behind this row even when the physical commit is delayed by a file lock.
+	 */
+	beginDurableClineMessage(message: ClineMessage): RegisteredClineMessagePersistence {
+		const existing = this.clineMessages.find((candidate) => candidate.ts === message.ts)
+		const prepared: ClineMessage = {
+			...existing,
+			...message,
+			partial: false,
+			conversationHistoryIndex:
+				existing?.conversationHistoryIndex ?? message.conversationHistoryIndex ?? this.apiConversationHistory.length - 1,
+			conversationHistoryDeletedRange:
+				existing?.conversationHistoryDeletedRange ??
+				message.conversationHistoryDeletedRange ??
+				this.taskState.conversationHistoryDeletedRange,
+		}
+		this.upsertTransientClineMessage(prepared)
+		return {
+			message: prepared,
+			persistence: this.commitTransientClineMessageByTimestamp(prepared, true),
+		}
+	}
+
+	/** Persist one transient row, optionally replacing the durable row with the same timestamp. */
+	private async commitTransientClineMessageByTimestamp(
+		message: ClineMessage,
+		allowDurableReplacement: boolean,
+	): Promise<ClineMessage> {
 		const transient = this.transientClineMessages.get(message.ts)
 		if (!transient) throw new Error(`Transient message ${message.ts} is unavailable for durable commit`)
-		if (this.uiMessage?.getByTs(message.ts)) throw new Error(`Durable message ${message.ts} already exists`)
-		const committed = await this.uiMessage?.appendDurable({ ...message, partial: false })
-		if (!committed) throw new Error("UI message store is unavailable for durable commit")
+		const uiMessage = this.uiMessage
+		if (!uiMessage) throw new Error("UI message store is unavailable for durable commit")
+
+		const durableIndex = uiMessage.getByTs(message.ts) ? uiMessage.findIndexByTs(message.ts) : -1
+		if (!allowDurableReplacement && durableIndex >= 0) {
+			throw new Error(`Durable message ${message.ts} already exists`)
+		}
+
+		let committed: ClineMessage
+		if (durableIndex >= 0) {
+			committed = await uiMessage.updateMessage(durableIndex, { ...message, partial: false })
+			await uiMessage.flush()
+		} else {
+			committed = await uiMessage.appendDurable({ ...message, partial: false })
+		}
+
 		this.transientClineMessages.delete(message.ts)
 		const messages = this.clineMessages
 		const index = messages.findIndex((candidate) => candidate.ts === message.ts)

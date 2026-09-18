@@ -167,8 +167,13 @@ async function selectThinkingOverride(sidebar: Frame, optionName: string): Promi
 	await expect(control).toBeVisible()
 	await expect(control).toBeEnabled()
 	await control.click()
-	await expect(sidebar.getByRole("option", { name: "Profile", exact: true })).toHaveCount(0)
-	await sidebar.getByRole("option", { name: optionName, exact: true }).click()
+	const options = sidebar.getByRole("listbox", { name: "Task thinking override options" })
+	await expect(options).toBeVisible()
+	await expect(options.getByRole("option", { name: "Profile", exact: true })).toHaveCount(0)
+	const option = options.getByRole("option", { name: optionName, exact: true })
+	await expect(option).toBeVisible()
+	await option.click()
+	await expect(control).toContainText(optionName)
 }
 
 async function selectServiceTier(sidebar: Frame, optionName: string): Promise<void> {

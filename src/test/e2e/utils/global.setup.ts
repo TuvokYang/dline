@@ -22,6 +22,7 @@ setup("setup test environment", async ({}, testInfo) => {
 		E2ETestHelper.rmForRetries(E2ETestHelper.DLINE_DIR_ROOT, { recursive: true, force: true }),
 		E2ETestHelper.rmForRetries(E2ETestHelper.DLINE_DOCS_DIR_ROOT, { recursive: true, force: true }),
 		E2ETestHelper.rmForRetries(E2ETestHelper.DLINE_STATE_TEMPLATE_DIR_ROOT, { recursive: true, force: true }),
+		E2ETestHelper.rmForRetries(E2ETestHelper.PUPPETEER_CACHE_DIR, { recursive: true, force: true }),
 		E2ETestHelper.rmForRetries(E2E_EXTENSIONS_ROOT, { recursive: true, force: true }),
 	])
 

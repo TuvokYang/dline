@@ -97,7 +97,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 	const forceTruncateTaskRpcPendingRef = useRef(false)
 	const [activityFilters, setActivityFilters] = useState<TaskActivityFilters>(DEFAULT_TASK_ACTIVITY_FILTERS)
 	const task = taskTitleMessage
-	const taskId = task ? (taskViewState?.taskId ?? currentTaskItem?.id) : undefined
+	const taskId = taskViewState?.taskId ?? currentTaskItem?.id
 	const contextCompactionActive = taskViewState?.contextCompaction?.active === true
 	const { activeCount } = useTaskActivities(taskId)
 	useEffect(() => {

@@ -223,7 +223,7 @@ const McpResponseDisplay: React.FC<McpResponseDisplayProps> = ({ responseText })
 
 	try {
 		return (
-			<ResponseContainer data-testid="mcp-response-card">
+			<ResponseContainer data-testid="mcp-response-card" style={{ maxHeight: TOOL_RESPONSE_MAX_HEIGHT }}>
 				<ResponseHeader
 					onClick={toggleExpand}
 					style={{
@@ -250,7 +250,7 @@ const McpResponseDisplay: React.FC<McpResponseDisplayProps> = ({ responseText })
 				</ResponseHeader>
 
 				{isExpanded && (
-					<div className="response-content" data-testid="mcp-response-content">
+					<div className="response-content" data-testid="mcp-response-content" style={{ overflowY: "auto" }}>
 						{renderContent()}
 					</div>
 				)}
@@ -260,7 +260,7 @@ const McpResponseDisplay: React.FC<McpResponseDisplayProps> = ({ responseText })
 		console.log("Error rendering MCP response - falling back to plain text") // Restored comment
 		// Fallback for critical rendering errors
 		return (
-			<ResponseContainer data-testid="mcp-response-card">
+			<ResponseContainer data-testid="mcp-response-card" style={{ maxHeight: TOOL_RESPONSE_MAX_HEIGHT }}>
 				<ResponseHeader onClick={toggleExpand}>
 					<div className="header-title">
 						{isExpanded ? (
@@ -272,7 +272,7 @@ const McpResponseDisplay: React.FC<McpResponseDisplayProps> = ({ responseText })
 					</div>
 				</ResponseHeader>
 				{isExpanded && (
-					<div className="response-content" data-testid="mcp-response-content">
+					<div className="response-content" data-testid="mcp-response-content" style={{ overflowY: "auto" }}>
 						<div style={{ color: "var(--vscode-errorForeground)" }}>Error parsing response:</div>
 						<UrlText>{responseText}</UrlText>
 					</div>

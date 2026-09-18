@@ -1,0 +1,16 @@
+name: Feature CI Validation
+
+on:
+  push:
+    branches:
+      - feature/ci-parallel-vitest-release-gate
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: Tests
+    uses: ./.github/workflows/test.yml
+    with:
+      package_profile: ci

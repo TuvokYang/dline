@@ -272,6 +272,7 @@ export class TurnDriver {
 			}
 
 			await this.ports.block.awaitInitialCheckpoint(tool.name)
+			if (this.ports.task.isAborted()) return "halt_turn"
 
 			if (admission.decision.kind === "automatic" && admission.manualApprovalSatisfied !== true) {
 				const currentAdmission = admission.refreshDecision?.() ?? admission

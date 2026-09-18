@@ -13,6 +13,9 @@ import { describe, expect, it } from "vitest"
 describe("Task startup blocking", () => {
 	const taskSourcePath = path.resolve(__dirname, "../index.ts")
 	const turnDriverSourcePath = path.resolve(__dirname, "../executors/tool/TurnDriver.ts")
+	const toolExecutorSourcePath = path.resolve(__dirname, "../ToolExecutor.ts")
+	const controllerSourcePath = path.resolve(__dirname, "../../controller/index.ts")
+	const interactionCoordinatorSourcePath = path.resolve(__dirname, "../interaction/InteractionCoordinator.ts")
 
 	async function readStartTaskBody(): Promise<string> {
 		const source = await readFile(taskSourcePath, "utf8")
@@ -83,6 +86,108 @@ describe("Task startup blocking", () => {
 		expect(checkpointGate).toBeLessThan(checkpointSave)
 	})
 
+	it("fences interactions, publications, providers and tools before the Controller detaches Task ownership", async () => {
+		const [taskSource, controllerSource, interactionSource] = await Promise.all([
+			readFile(taskSourcePath, "utf8"),
+			readFile(controllerSourcePath, "utf8"),
+			readFile(interactionCoordinatorSourcePath, "utf8"),
+		])
+		const fenceMethod = taskSource.indexOf("public fenceControllerDetachment(): void")
+		const ownershipFence = taskSource.indexOf("this.controllerDetached = true", fenceMethod)
+		const interactionFence = taskSource.indexOf('this.interactionCoordinator.fence("task_detached")', fenceMethod)
+		const hookAbort = taskSource.indexOf("this.taskState.activeHookExecution?.abortController.abort()", fenceMethod)
+		const abortFence = taskSource.indexOf("this.taskState.abort = true", fenceMethod)
+		expect(fenceMethod).toBeGreaterThan(-1)
+		expect(ownershipFence).toBeGreaterThan(fenceMethod)
+		expect(interactionFence).toBeGreaterThan(ownershipFence)
+		expect(hookAbort).toBeGreaterThan(interactionFence)
+		expect(abortFence).toBeGreaterThan(hookAbort)
+		expect(taskSource.indexOf('this.taskState.cancelOperations("task_detached")', fenceMethod)).toBeGreaterThan(abortFence)
+		expect(taskSource.indexOf("this.api?.abort?.()", fenceMethod)).toBeGreaterThan(abortFence)
+
+		const continuation = taskSource.indexOf("private async continueRestoredInteraction(")
+		const continuationFence = taskSource.indexOf("if (!context.isCurrent() || this.controllerDetached) return", continuation)
+		const abortReset = taskSource.indexOf("this.taskState.abort = false", continuation)
+		expect(continuationFence).toBeGreaterThan(continuation)
+		expect(continuationFence).toBeLessThan(abortReset)
+
+		const publishWrapper = taskSource.indexOf("this.postStateToWebview = async (options)")
+		const publishFence = taskSource.indexOf("if (this.controllerDetached) return", publishWrapper)
+		const realtimePush = taskSource.indexOf("pushMessage: (msg) => {")
+		const realtimePushFence = taskSource.indexOf("if (this.controllerDetached) return", realtimePush)
+		expect(publishWrapper).toBeGreaterThan(-1)
+		expect(publishFence).toBeGreaterThan(publishWrapper)
+		expect(realtimePush).toBeGreaterThan(-1)
+		expect(realtimePushFence).toBeGreaterThan(realtimePush)
+
+		const permanentFence = interactionSource.indexOf("fence(reason =")
+		expect(permanentFence).toBeGreaterThan(-1)
+		expect(interactionSource.indexOf("this.permanentlyFenced = true", permanentFence)).toBeGreaterThan(permanentFence)
+		expect(interactionSource.indexOf("!this.permanentlyFenced", permanentFence)).toBeGreaterThan(permanentFence)
+
+		const fenceCall = controllerSource.indexOf("task?.fenceControllerDetachment()")
+		const detach = controllerSource.indexOf("this.task = undefined", fenceCall)
+		expect(fenceCall).toBeGreaterThan(-1)
+		expect(detach).toBeGreaterThan(fenceCall)
+	})
+
+	it("keeps ToolExecutor abort guards ahead of telemetry, canonicalization, browser and handler side effects", async () => {
+		const source = await readFile(toolExecutorSourcePath, "utf8")
+		const publicStart = source.indexOf("public async executeTool(block: ToolUse)")
+		const publicAbort = source.indexOf("if (this.taskState.abort) return", publicStart)
+		const spanStart = source.indexOf("const span = startSignalSpan", publicStart)
+		expect(publicStart).toBeGreaterThan(-1)
+		expect(publicAbort).toBeGreaterThan(publicStart)
+		expect(publicAbort).toBeLessThan(spanStart)
+
+		const privateStart = source.indexOf("private async execute(block: ToolUse")
+		const privateAbort = source.indexOf("if (this.taskState.abort) return true", privateStart)
+		const canonicalize = source.indexOf("canonicalizeAttemptCompletionParams(block)", privateStart)
+		const browserClose = source.indexOf("await this.browserSession.closeBrowser()", privateStart)
+		const postBrowserAbort = source.indexOf("if (this.taskState.abort) return true", browserClose)
+		const partialHandler = source.indexOf("await this.handlePartialBlock(block, config)", browserClose)
+		const completeHandler = source.indexOf("await this.handleCompleteBlock(block, config)", browserClose)
+		expect(privateStart).toBeGreaterThan(-1)
+		expect(privateAbort).toBeGreaterThan(privateStart)
+		expect(privateAbort).toBeLessThan(canonicalize)
+		expect(privateAbort).toBeLessThan(browserClose)
+		expect(postBrowserAbort).toBeGreaterThan(browserClose)
+		expect(postBrowserAbort).toBeLessThan(partialHandler)
+		expect(postBrowserAbort).toBeLessThan(completeHandler)
+
+		const hookMethod = source.indexOf("private async runPostToolUseHook(")
+		const hookImport = source.indexOf('await import("../hooks/hook-executor")', hookMethod)
+		const postImportAbort = source.indexOf("if (this.taskState.abort) return false", hookImport)
+		const hookExecution = source.indexOf("const postToolResult = await executeHook(", hookImport)
+		const postExecutionHookAbort = source.indexOf("if (this.taskState.abort) return false", hookExecution)
+		const hookResultHandling = source.indexOf("if (postToolResult.cancel === true)", hookExecution)
+		expect(hookMethod).toBeGreaterThan(-1)
+		expect(postImportAbort).toBeGreaterThan(hookImport)
+		expect(postImportAbort).toBeLessThan(hookExecution)
+		expect(postExecutionHookAbort).toBeGreaterThan(hookExecution)
+		expect(postExecutionHookAbort).toBeLessThan(hookResultHandling)
+
+		const completeStart = source.indexOf("private async handleCompleteBlock(")
+		const coordinatorExecute = source.indexOf("await this.coordinator.execute(config, block)", completeStart)
+		const postExecutionAbort = source.indexOf("if (this.taskState.abort)", coordinatorExecute)
+		const resultCommit = source.indexOf("await this.commitToolResult(toolResult, block)", coordinatorExecute)
+		const postCommitAbort = source.indexOf("if (this.taskState.abort) return", resultCommit)
+		const loopTracking = source.indexOf("const currentSignature = toolCallSignature", resultCommit)
+		expect(completeStart).toBeGreaterThan(-1)
+		expect(coordinatorExecute).toBeGreaterThan(completeStart)
+		expect(postExecutionAbort).toBeGreaterThan(coordinatorExecute)
+		expect(postExecutionAbort).toBeLessThan(resultCommit)
+		expect(postCommitAbort).toBeGreaterThan(resultCommit)
+		expect(postCommitAbort).toBeLessThan(loopTracking)
+
+		const successHook = source.indexOf("await this.runPostToolUseHook(", loopTracking)
+		const postHookAbort = source.indexOf("if (this.taskState.abort) return", successHook)
+		const hookCancellation = source.indexOf("if (hookRequestedCancel)", successHook)
+		expect(successHook).toBeGreaterThan(loopTracking)
+		expect(postHookAbort).toBeGreaterThan(successHook)
+		expect(postHookAbort).toBeLessThan(hookCancellation)
+	})
+
 	it("gates mutating partial presentation and finalized execution before ToolExecutor side effects", async () => {
 		const source = await readFile(taskSourcePath, "utf8")
 		const helper = source.indexOf("private async awaitInitialCheckpointBeforeToolSideEffects")
@@ -91,18 +196,22 @@ describe("Task startup blocking", () => {
 
 		const reRenderStart = source.indexOf("private async reRenderUpdatedPartialBlocks", helper)
 		const reRenderGate = source.indexOf("await this.awaitInitialCheckpointBeforeToolSideEffects(block.name)", reRenderStart)
+		const reRenderAbortFence = source.indexOf("if (this.taskState.abort) return", reRenderGate)
 		const reRenderEffect = source.indexOf("await this.toolExecutor.reRenderPartialBlock", reRenderStart)
 		expect(reRenderGate).toBeGreaterThan(reRenderStart)
-		expect(reRenderGate).toBeLessThan(reRenderEffect)
+		expect(reRenderAbortFence).toBeGreaterThan(reRenderGate)
+		expect(reRenderAbortFence).toBeLessThan(reRenderEffect)
 
 		const presentationStart = source.indexOf("async presentAssistantMessage(", reRenderStart)
 		const partialGate = source.indexOf(
 			"await this.awaitInitialCheckpointBeforeToolSideEffects(block.name)",
 			presentationStart,
 		)
+		const partialAbortFence = source.indexOf("if (this.taskState.abort) return", partialGate)
 		const partialEffect = source.indexOf("await this.toolExecutor.executeTool(block)", presentationStart)
 		expect(partialGate).toBeGreaterThan(presentationStart)
-		expect(partialGate).toBeLessThan(partialEffect)
+		expect(partialAbortFence).toBeGreaterThan(partialGate)
+		expect(partialAbortFence).toBeLessThan(partialEffect)
 
 		const turnDriverSource = await readFile(turnDriverSourcePath, "utf8")
 		const finalizationStart = turnDriverSource.indexOf("async execute(")
@@ -110,8 +219,13 @@ describe("Task startup blocking", () => {
 			"await this.ports.block.awaitInitialCheckpoint(tool.name)",
 			finalizationStart,
 		)
+		const finalizationAbortFence = turnDriverSource.indexOf(
+			'if (this.ports.task.isAborted()) return "halt_turn"',
+			finalizationGate,
+		)
 		const finalizationEffect = turnDriverSource.indexOf('type: "BLOCK_EXECUTION_STARTED"', finalizationStart)
 		expect(finalizationGate).toBeGreaterThan(finalizationStart)
-		expect(finalizationGate).toBeLessThan(finalizationEffect)
+		expect(finalizationAbortFence).toBeGreaterThan(finalizationGate)
+		expect(finalizationAbortFence).toBeLessThan(finalizationEffect)
 	})
 })

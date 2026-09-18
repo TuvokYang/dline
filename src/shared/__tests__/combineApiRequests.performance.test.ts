@@ -22,14 +22,14 @@ const RATIO_THRESHOLD = 3.2
 /**
  * Smallest baseline a doubling ratio is computed from.
  *
- * Below this the measurement is dominated by scheduling noise rather than the
- * work being measured: with the linear implementation `t(1000)` lands around
- * 1ms, so a single preemption while the suite runs its workers in parallel
- * moves the ratio past the threshold without anything having regressed. The
- * absolute assertions above still bound real growth, so skipping a too-small
- * baseline drops noise rather than coverage.
+ * Below this the measurement is dominated by scheduling and GC noise rather
+ * than the work being measured. Shared CI runners have produced 6ms baselines
+ * whose paired sample was preempted long enough to look quadratic, while the
+ * 8000-pair hard limit remained two orders of magnitude below the regression
+ * threshold. The absolute assertion still bounds real growth, so skipping a
+ * sub-10ms baseline drops noise rather than coverage.
  */
-const MIN_RATIO_BASELINE_MS = 5
+const MIN_RATIO_BASELINE_MS = 10
 
 function buildPairedApiRequestMessages(pairCount: number): ClineMessage[] {
 	const messages: ClineMessage[] = []

@@ -98,6 +98,12 @@ jobs:
           else
             base="HEAD^"
           fi
+
+          if ! git rev-parse --verify "$base^{commit}" >/dev/null 2>&1; then
+            echo "::warning::Biome comparison base $base is unavailable; checking from the current history root"
+            base="$(git rev-list --max-parents=0 HEAD | tail -n 1)"
+          fi
+
           git rev-parse --verify "$base^{commit}"
           echo "value=$base" >> "$GITHUB_OUTPUT"
 
@@ -123,10 +129,32 @@ jobs:
         run: npm run test:smoke
 
   vitest:
-    name: Vitest
+    name: Vitest (${{ matrix.project }})
     needs: smoke
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - project: backend-task
+            config: vitest.backend.config.ts
+            install_webview: "false"
+          - project: backend-prompts
+            config: vitest.backend.config.ts
+            install_webview: "false"
+          - project: backend-hooks
+            config: vitest.backend.config.ts
+            install_webview: "false"
+          - project: backend-core
+            config: vitest.backend.config.ts
+            install_webview: "false"
+          - project: backend
+            config: vitest.backend.config.ts
+            install_webview: "false"
+          - project: webview
+            config: webview-ui/vitest.config.ts
+            install_webview: "true"
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -134,14 +162,25 @@ jobs:
       - name: Setup project
         uses: ./.github/actions/setup-project
         with:
-          install-webview: "true"
+          install-webview: ${{ matrix.install_webview }}
 
-      - name: Run Vitest
-        run: npm run test:run
+      - name: Generate Protobuf code
+        run: npm run protos
+
+      - name: Run Vitest project
+        env:
+          VITEST_CONFIG: ${{ matrix.config }}
+          VITEST_PROJECT: ${{ matrix.project }}
+        run: npx vitest run --config "$VITEST_CONFIG" --project "$VITEST_PROJECT"
+
+  e2e:
+    name: E2E
+    needs: vitest
+    uses: ./.github/workflows/e2e.yml
 
   package:
     name: Package VSIX
-    needs: [typecheck, vitest]
+    needs: [typecheck, e2e]
     uses: ./.github/workflows/package.yml
     with:
       profile: ${{ needs.typecheck.outputs.package_profile }}
@@ -152,10 +191,3 @@ jobs:
       OTEL_EXPORTER_OTLP_PROTOCOL: ${{ needs.typecheck.outputs.package_profile == 'release' && secrets.OTEL_EXPORTER_OTLP_PROTOCOL || '' }}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${{ needs.typecheck.outputs.package_profile == 'release' && secrets.OTEL_EXPORTER_OTLP_ENDPOINT || '' }}
       OTEL_EXPORTER_OTLP_HEADERS: ${{ needs.typecheck.outputs.package_profile == 'release' && secrets.OTEL_EXPORTER_OTLP_HEADERS || '' }}
-
-  e2e:
-    name: E2E
-    needs: package
-    uses: ./.github/workflows/e2e.yml
-    with:
-      vsix_artifact_name: dline-vsix-${{ github.sha }}

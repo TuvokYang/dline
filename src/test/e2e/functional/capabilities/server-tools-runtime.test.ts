@@ -5,6 +5,7 @@ import { getE2EMockProviderBaseUrl } from "@e2e/fixtures/server/api"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { expect, type Frame, type Locator, type Page } from "@playwright/test"
+import { type BrowserSettings, DEFAULT_BROWSER_SETTINGS } from "@shared/BrowserSettings"
 import { ServerTool } from "@shared/proto/dline/models/metadata"
 import type { ElectronApplication } from "playwright"
 // @ts-expect-error puppeteer-chromium-resolver does not publish TypeScript declarations.
@@ -105,7 +106,7 @@ async function attachHostedWebResumeEvidence(
 	}
 }
 
-async function prepareWebFetchBrowser(dlineHomeDir: string): Promise<void> {
+async function prepareWebFetchBrowser(dlineDir: string, dlineHomeDir: string): Promise<void> {
 	const workerDirectoryName = path.basename(path.dirname(dlineHomeDir))
 	const seedDir = path.join(E2ETestHelper.PUPPETEER_CACHE_DIR, workerDirectoryName)
 	const prepareSeed = async (): Promise<void> => {
@@ -123,6 +124,19 @@ async function prepareWebFetchBrowser(dlineHomeDir: string): Promise<void> {
 	const testPuppeteerDir = path.join(dlineHomeDir, "puppeteer")
 	await rm(testPuppeteerDir, { recursive: true, force: true })
 	await cp(seedDir, testPuppeteerDir, { recursive: true })
+
+	const settings = JSON.parse(await readFile(settingsPath(dlineDir), "utf8")) as Record<string, unknown>
+	const browserSettings = (settings.browserSettings ?? {}) as Partial<BrowserSettings>
+	settings.browserSettings = {
+		...DEFAULT_BROWSER_SETTINGS,
+		...browserSettings,
+		viewport: {
+			...DEFAULT_BROWSER_SETTINGS.viewport,
+			...browserSettings.viewport,
+		},
+		customArgs: "--no-sandbox",
+	} satisfies BrowserSettings
+	await writeFile(settingsPath(dlineDir), `${JSON.stringify(settings, null, 2)}\n`, "utf8")
 }
 
 async function prepareRuntimeProfile(
@@ -1360,6 +1374,7 @@ e2e(
 			mode: "WEB_TOOLS_MODE_FORCE_LOCAL",
 			supportsWebSearch: true,
 		})
+		await prepareWebFetchBrowser(dlineDir, dlineHomeDir)
 		const url = `${server.baseUrl}/mock/web-fetch/page`
 		const prompt = "Return the local Web Fetch page content within the product budget"
 		const completion = "E2E_RESPONSES_MANUAL_WEB_FETCH_TERMINAL"
@@ -1435,7 +1450,7 @@ for (const testCase of webFetchCases) {
 				mode: "WEB_TOOLS_MODE_AUTO",
 				supportsWebSearch: true,
 			})
-			await prepareWebFetchBrowser(dlineHomeDir)
+			await prepareWebFetchBrowser(dlineDir, dlineHomeDir)
 			const url = `${server.baseUrl}/mock/web-fetch/page`
 			const prompt = "Extract the local Web Fetch marker"
 			const completion = `E2E_${testCase.target.toUpperCase().replaceAll("-", "_")}_WEB_FETCH_OK`
@@ -1518,7 +1533,7 @@ e2e(
 			mode: "WEB_TOOLS_MODE_FORCE_LOCAL",
 			supportsWebSearch: true,
 		})
-		await prepareWebFetchBrowser(dlineHomeDir)
+		await prepareWebFetchBrowser(dlineDir, dlineHomeDir)
 		const warmUrl = `${server.baseUrl}/mock/web-fetch/page`
 		const delayedUrl = `${server.baseUrl}/mock/web-fetch/page?delayMs=30000`
 		const resumeDraft = "E2E_WEB_FETCH_RESTORE_FIRST_RESUME_DRAFT"
@@ -1694,7 +1709,7 @@ e2e(
 			mode: "WEB_TOOLS_MODE_AUTO",
 			supportsWebSearch: true,
 		})
-		await prepareWebFetchBrowser(dlineHomeDir)
+		await prepareWebFetchBrowser(dlineDir, dlineHomeDir)
 		const url = "http://127.0.0.1:1/e2e-web-fetch-failure"
 		const prompt = "Extract content from the intentionally unreachable page"
 		const taskText = "Attempt the unreachable local Web Fetch, report its error, then finish."

@@ -249,6 +249,17 @@ describe("InteractionHost", () => {
 		expect(screen.getByRole("alert")).toHaveTextContent(/message anchor could not be matched/i)
 	})
 
+	it("renders verified interaction actions in footer-only mode before the message window catches up", () => {
+		const view = taskView()
+		if (!view.activeInteraction) throw new Error("Expected active interaction")
+		view.activeInteraction.anchorVerified = true
+
+		render(<InteractionHost dispatch={vi.fn()} messages={[SAY]} showTimeline={false} view={view} />)
+
+		expect(screen.getByRole("button", { name: "Approve" })).toHaveAttribute("aria-disabled", "false")
+		expect(screen.queryByRole("alert")).toBeNull()
+	})
+
 	it("keeps the backend diagnostic as the only alert when one is supplied", () => {
 		const view = taskView()
 		view.diagnostic = { code: "interaction_anchor_missing", interactionId: "interaction-1" }

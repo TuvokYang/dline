@@ -115,6 +115,12 @@ let apiProfilesReadCache:
 	  }
 	| undefined
 
+/** Invalidate the process-local synchronous Catalog cache after a known disk commit. */
+export function invalidateApiProfilesReadCache(filePath?: string): void {
+	if (filePath && apiProfilesReadCache?.filePath !== filePath) return
+	apiProfilesReadCache = undefined
+}
+
 const ATOMIC_WRITE_RENAME_RETRY_DELAYS_MS = [20, 50, 100, 200, 500]
 
 function isRetryableRenameError(error: unknown): boolean {
@@ -152,7 +158,7 @@ async function persistApiProfilesFile(filePath: string, profiles: ApiProfile[]):
 	const data = JSON.stringify(serializeApiProfilesForStorage(profiles), null, "\t")
 	await fs.mkdir(path.dirname(filePath), { recursive: true })
 	await atomicWriteApiProfilesFile(filePath, data)
-	apiProfilesReadCache = undefined
+	invalidateApiProfilesReadCache(filePath)
 }
 
 function enqueueApiProfilesWrite<T>(write: () => Promise<T>): Promise<T> {
@@ -1030,9 +1036,7 @@ export function readApiProfiles(): ApiProfile[] {
 		}
 		return profiles
 	} catch {
-		if (apiProfilesReadCache?.filePath === filePath) {
-			apiProfilesReadCache = undefined
-		}
+		invalidateApiProfilesReadCache(filePath)
 		return []
 	}
 }

@@ -1,4 +1,5 @@
 import {
+	chmodSync,
 	cpSync,
 	existsSync,
 	mkdirSync,
@@ -21,6 +22,7 @@ import { type E2EProfileMode, type PreparedE2EState, prepareE2EState } from "./a
 import { E2E_OUTPUT_ROOT as E2E_OUTPUT_ROOT_PATH, E2E_RUN_ID as E2E_RUN_NAMESPACE } from "./run-context"
 import {
 	createLaunchIsolation,
+	createVSCodeExtensionLaunchArguments,
 	createWorkerExtensionsDir,
 	ensureDlineVsixInstalled,
 	portableEnvironment,
@@ -91,7 +93,8 @@ export class E2ETestHelper {
 	public static readonly DLINE_DIR_ROOT = path.join(os.tmpdir(), ".dline-e2e", E2E_RUN_NAMESPACE)
 	public static readonly DLINE_DOCS_DIR_ROOT = path.join(os.tmpdir(), "dline-e2e", E2E_RUN_NAMESPACE)
 	public static readonly DLINE_STATE_TEMPLATE_DIR_ROOT = path.join(os.tmpdir(), ".dline-e2e-template", E2E_RUN_NAMESPACE)
-	public static readonly PUPPETEER_CACHE_DIR = path.join(E2ETestHelper.CODEBASE_ROOT_DIR, "tmp", "e2e-puppeteer-cache")
+	public static readonly PUPPETEER_CACHE_ROOT = path.join(E2ETestHelper.CODEBASE_ROOT_DIR, "tmp", "e2e-puppeteer-cache")
+	public static readonly PUPPETEER_CACHE_DIR = path.join(E2ETestHelper.PUPPETEER_CACHE_ROOT, E2E_RUN_NAMESPACE)
 
 	// Instance properties for caching
 	private cachedFrame: Frame | null = null
@@ -477,7 +480,7 @@ export const e2e = test
 		isolateOsHome: [false, { option: true }],
 		grpcRecorderEnabled: [false, { option: true }],
 		grpcUnaryFaults: [undefined, { option: true }],
-		installVsix: [true, { option: true }],
+		installVsix: [shouldPreinstallDlineVsix(), { option: true }],
 		devWebview: [false, { option: true }],
 	})
 	.extend<E2ETestDirectories, E2EWorkerFixtures>({
@@ -712,16 +715,30 @@ export const e2e = test
 					if (name.toLowerCase() === "path") delete electronEnvironment[name]
 				}
 				electronEnvironment.PATH = [userDataDir, inheritedPath].filter(Boolean).join(path.delimiter)
-				writeFileSync(
-					path.join(userDataDir, "conda.cmd"),
-					'@echo off\r\nif /I "%1"=="info" if /I "%2"=="--envs" if /I "%3"=="--json" (\r\n  echo {"envs":["C:\\\\fake-conda","C:\\\\fake-envs\\\\dline"],"envs_details":{"C:\\\\fake-conda":{"name":"base","active":true,"base":true},"C:\\\\fake-envs\\\\dline":{"name":"dline","active":false,"base":false}}}\r\n  exit /b 0\r\n)\r\nexit /b 1\r\n',
-					"utf8",
-				)
+				if (process.platform === "win32") {
+					writeFileSync(
+						path.join(userDataDir, "conda.cmd"),
+						'@echo off\r\nif /I "%1"=="info" if /I "%2"=="--envs" if /I "%3"=="--json" (\r\n  echo {"envs":["C:\\\\fake-conda","C:\\\\fake-envs\\\\dline"],"envs_details":{"C:\\\\fake-conda":{"name":"base","active":true,"base":true},"C:\\\\fake-envs\\\\dline":{"name":"dline","active":false,"base":false}}}\r\n  exit /b 0\r\n)\r\nexit /b 1\r\n',
+						"utf8",
+					)
+				} else {
+					const mockCondaPath = path.join(userDataDir, "conda")
+					writeFileSync(
+						mockCondaPath,
+						'#!/bin/sh\nif [ "$1" = "info" ] && [ "$2" = "--envs" ] && [ "$3" = "--json" ]; then\n  printf \'%s\\n\' \'{"envs":["/opt/fake-conda","/opt/fake-envs/dline"],"envs_details":{"/opt/fake-conda":{"name":"base","active":true,"base":true},"/opt/fake-envs/dline":{"name":"dline","active":false,"base":false}}}\'\n  exit 0\nfi\nexit 1\n',
+						"utf8",
+					)
+					chmodSync(mockCondaPath, 0o755)
+				}
 			}
 
 			const vsixPath = path.join(E2ETestHelper.CODEBASE_ROOT_DIR, "dist", "e2e.vsix")
 			await use(async (workspacePath: string, environmentOverrides = {}, launchOptions = {}) => {
 				if (installVsix) ensureDlineVsixInstalled(executablePath, extensionsDir, vsixPath)
+				const extensionLaunchArguments = createVSCodeExtensionLaunchArguments(
+					extensionsDir,
+					installVsix ? undefined : E2ETestHelper.CODEBASE_ROOT_DIR,
+				)
 				const app = await _electron.launch({
 					executablePath,
 					env: {
@@ -760,12 +777,10 @@ export const e2e = test
 						...(launchOptions.forceDeviceScaleFactor !== undefined
 							? [`--force-device-scale-factor=${launchOptions.forceDeviceScaleFactor}`]
 							: []),
-						"--disable-extensions", // Run VS Code with all extensions disabled other than the one under test.
 						"--skip-welcome",
 						"--skip-release-notes",
 						// User data comes from VSCODE_PORTABLE, which outranks --user-data-dir.
-						`--extensions-dir=${extensionsDir}`,
-						`--extensionDevelopmentPath=${E2ETestHelper.CODEBASE_ROOT_DIR}`,
+						...extensionLaunchArguments,
 						workspacePath,
 					],
 				})

@@ -224,7 +224,7 @@ e2e(
 )
 
 e2e(
-	"Named YAML subagent - profile-only updates preserve configuration and enforce completion recovery",
+	"Named YAML subagent - profile-only updates canonicalize persisted tools and enforce completion recovery",
 	async ({ helper, page, server, sidebar, userDataDir, workspaceDir }) => {
 		e2e.setTimeout(240_000)
 		await helper.signin(sidebar)

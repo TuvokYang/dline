@@ -34,6 +34,12 @@ export interface AskResult {
 	askTs?: number
 }
 
+/** A synthesized history ask whose durable write has already entered message ordering. */
+export interface RegisteredAskPresentation {
+	readonly askTs: number
+	readonly persistence: Promise<void>
+}
+
 /**
  * A point in an ask's life that has to be recoverable from a log.
  *
@@ -115,6 +121,22 @@ export class MessageChannel {
 
 	private async postStateToWebview(): Promise<void> {
 		await this.syncState()
+	}
+
+	/** Build the canonical complete ask row shared by ordinary and recovered presentation paths. */
+	private createAskMessage(type: ClineAsk, text: string | undefined, askTs: number, interactionId?: string): ClineMessage {
+		const commandPresentation = type === "command" ? { commandStatus: "pending" as const, exitCode: undefined } : {}
+		const interactionIdentity = interactionId ? { interactionId } : {}
+		return {
+			ts: askTs,
+			type: "ask",
+			say: undefined,
+			ask: type,
+			text,
+			partial: false,
+			...interactionIdentity,
+			...commandPresentation,
+		}
 	}
 
 	private shouldMessageInvalidateAsk(message: ClineMessage): boolean {
@@ -261,24 +283,41 @@ export class MessageChannel {
 		return ts
 	}
 
+	/**
+	 * Register an ask synthesized while opening history without waiting for its physical commit.
+	 *
+	 * The message-state boundary installs an in-memory overlay and enters the backing
+	 * store mutex before this method returns. A TaskView patch may therefore expose the
+	 * interaction immediately while every later UI-message write remains ordered after it.
+	 */
+	beginSynthesizedHistoryAsk(
+		type: ClineAsk,
+		text?: string,
+		existingTs?: number,
+		interactionId?: string,
+	): RegisteredAskPresentation {
+		const askTs = existingTs ?? this.genTs()
+		this.taskState.lastMessageTs = askTs
+		const existing = this.messageStateHandler.clineMessages.find((message) => message.ts === askTs)
+		const registered = this.messageStateHandler.beginDurableClineMessage({
+			...existing,
+			...this.createAskMessage(type, text, askTs, interactionId),
+		})
+		return {
+			askTs,
+			persistence: registered.persistence.then(async (persisted) => {
+				await this.pushMessage(persisted)
+			}),
+		}
+	}
+
 	async presentAsk(type: ClineAsk, text?: string, existingTs?: number, interactionId?: string): Promise<number> {
 		const askTs = existingTs ?? this.genTs()
 		this.taskState.lastMessageTs = askTs
 		const messages = this.messageStateHandler.clineMessages
 		const index = messages.findIndex((message) => message.ts === askTs)
 		const existing = index >= 0 ? messages[index] : undefined
-		const commandPresentation = type === "command" ? { commandStatus: "pending" as const, exitCode: undefined } : {}
-		const interactionIdentity = interactionId ? { interactionId } : {}
-		const askMessage = {
-			ts: askTs,
-			type: "ask" as const,
-			say: undefined,
-			ask: type,
-			text,
-			partial: false,
-			...interactionIdentity,
-			...commandPresentation,
-		}
+		const askMessage = this.createAskMessage(type, text, askTs, interactionId)
 		if (existing?.partial === true) {
 			await this.messageStateHandler.finalizeClineMessage({ ...existing, ...askMessage })
 		} else if (index >= 0) {

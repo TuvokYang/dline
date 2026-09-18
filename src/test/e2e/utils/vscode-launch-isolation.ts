@@ -62,6 +62,20 @@ export function resolveWorkerExtensionsSlot(
 	return shouldPreinstallDlineVsix(environment) ? parallelIndex : workerIndex
 }
 
+/**
+ * Build launch arguments that select exactly one extension source.
+ *
+ * Packaged runs load the VSIX from the isolated extension directory. Source runs disable installed
+ * extensions and load the checkout through `--extensionDevelopmentPath` instead.
+ */
+export function createVSCodeExtensionLaunchArguments(extensionsDir: string, extensionDevelopmentPath?: string): string[] {
+	return [
+		...(extensionDevelopmentPath ? ["--disable-extensions"] : []),
+		`--extensions-dir=${extensionsDir}`,
+		...(extensionDevelopmentPath ? [`--extensionDevelopmentPath=${extensionDevelopmentPath}`] : []),
+	]
+}
+
 /** Build the isolated arguments shared by every VS Code CLI installation path. */
 export function createVSCodeExtensionInstallArguments(extensionsDir: string, vsixPath: string): string[] {
 	return [

@@ -550,14 +550,20 @@ e2e(
 		await expect(profileCard.getByText("Invalid credential", { exact: true })).toHaveCount(0)
 		await expect(profileCard.getByRole("textbox", { name: /API Key|Access Token|Refresh Token|OAuth JSON/i })).toHaveCount(0)
 
+		let previousCardWidth = 0
 		for (const sidebarWidth of [320, 480, 700]) {
-			const actualSidebarWidth = await resizePrimarySidebar(page, sidebarWidth)
+			await resizePrimarySidebar(page, sidebarWidth)
 			const cardBox = await profileCard.boundingBox()
+			const containerBox = await profileCard.locator("..").boundingBox()
 			expect(cardBox, "Codex Profile card should have a bounding box").not.toBeNull()
-			expect(
-				cardBox?.width ?? 0,
-				`Codex Profile card should grow with the ${sidebarWidth}px sidebar`,
-			).toBeGreaterThanOrEqual(actualSidebarWidth - 195)
+			expect(containerBox, "Codex Profile card container should have a bounding box").not.toBeNull()
+			expect(cardBox?.width ?? 0, "Codex Profile card should fill its available content width").toBeGreaterThanOrEqual(
+				(containerBox?.width ?? 0) - 1,
+			)
+			expect(cardBox?.width ?? 0, `Codex Profile card should grow with the ${sidebarWidth}px sidebar`).toBeGreaterThan(
+				previousCardWidth,
+			)
+			previousCardWidth = cardBox?.width ?? 0
 			const layout = await sidebar.evaluate(() => ({
 				clientWidth: document.documentElement.clientWidth,
 				scrollWidth: document.documentElement.scrollWidth,

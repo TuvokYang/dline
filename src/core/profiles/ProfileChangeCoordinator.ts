@@ -27,10 +27,10 @@ export class ProfileChangeCoordinator {
 	 * @param nextProfiles Profiles persisted by the successful write.
 	 */
 	async publish(oldProfiles: ApiProfile[], nextProfiles: ApiProfile[]): Promise<void> {
+		const catalogChanged = JSON.stringify(oldProfiles) !== JSON.stringify(nextProfiles)
+		if (!catalogChanged) return
+
 		const changes = this.buildChanges(oldProfiles, nextProfiles)
-		if (changes.size === 0) {
-			return
-		}
 		this.#revision += 1
 
 		await Promise.all(this.getControllers().map((controller) => this.publishToController(controller, changes)))

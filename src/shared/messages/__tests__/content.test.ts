@@ -16,4 +16,11 @@ describe("message image source helpers", () => {
 		expect(imageSourceToUrl(source)).to.equal(source.url)
 		expect(imageSourceMediaType(source)).to.equal("remote URL")
 	})
+
+	it("rejects provider file image sources at the URL conversion boundary", () => {
+		const source = { type: "file", file_id: "file_123" } as const
+
+		expect(() => imageSourceToUrl(source)).to.throw("Provider file image sources cannot be replayed as URLs")
+		expect(imageSourceMediaType(source)).to.equal("provider file")
+	})
 })
