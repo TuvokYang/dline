@@ -451,6 +451,24 @@ describe("reduceTask lifecycle events", () => {
 		expect(result.next).toBe(state)
 	})
 
+	it("accepts the interaction revision that opened the request after unrelated state advances", () => {
+		const initial = awaitingInteraction()
+		const state = { ...initial, revision: initial.revision + 2 }
+		const result = reduceTask(state, {
+			type: "INTERACTION_RESPONDED",
+			response: {
+				taskId: "task-1",
+				turnId: "turn-1",
+				interactionId: "interaction-1",
+				actionId: "approve",
+				stateRevision: initial.interaction?.createdRevision ?? initial.revision,
+				draft: { text: "", images: [], files: [] },
+			},
+		})
+
+		expect(result.accepted).toBe(true)
+	})
+
 	it("rejects interaction payload mismatch without mutation", () => {
 		const state = awaitingInteraction()
 		const result = reduceTask(state, {

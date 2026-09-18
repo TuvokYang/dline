@@ -5,7 +5,7 @@ import type { InteractionOutcome } from "../../interaction/InteractionCoordinato
 import type { ProviderRequestRoundAdmission } from "../../performance/provider-request-round-port"
 import type { TaskDispatchResult } from "../../runtime/TaskRuntime"
 import type { TaskEvent } from "../../runtime/TaskEvent"
-import type { TaskRuntimeState, TurnState } from "../../runtime/TaskRuntimeState"
+import type { TaskRuntimeState } from "../../runtime/TaskRuntimeState"
 import type { ToolApprovalPresentation, ToolPreflightAdmission, ToolPreflightResult } from "./ToolPreflight"
 
 /** Outcome of one block's lifecycle. */
@@ -70,19 +70,28 @@ export interface TurnDriverApprovalPort {
 	request(tool: ToolUse, presentation: ToolApprovalPresentation): Promise<InteractionOutcome>
 }
 
+/** One live scheduling session for a finalized turn. */
+export interface TurnDriverSchedulingSession {
+	/** Admission settled without pool execution, such as rejection or durable skip. */
+	markAdmissionSettled(index: number): void
+	/** A pooled block was revoked and returned to Admission before its permit is released. */
+	markAdmissionUnsettled(index: number): void
+	/** Submit one approved block with its final confirmed lanes. */
+	submit(
+		tool: ToolUse,
+		index: number,
+		admission: ToolPreflightAdmission<void>,
+		run: (signal: AbortSignal) => Promise<BlockLifecycleOutcome>,
+	): Promise<BlockLifecycleOutcome>
+}
+
 /** Scheduling is owned by the turn pool, not by the driver. */
 export interface TurnDriverSchedulerPort {
-	canRunConcurrently(
-		turn: TurnState,
-		toolUses: readonly ToolUse[],
-		admissions: ReadonlyMap<string, ToolPreflightResult<void>>,
-	): boolean
 	cancelActiveTurn(): void
 	notifyLimitChanged(): void
-	runThroughPool(
+	runTurn(
 		toolUses: ToolUse[],
-		admissions: ReadonlyMap<string, ToolPreflightResult<void>>,
-		runBlock: (tool: ToolUse) => Promise<BlockLifecycleOutcome>,
+		run: (session: TurnDriverSchedulingSession) => Promise<BlockLifecycleOutcome>,
 	): Promise<BlockLifecycleOutcome>
 }
 

@@ -10,7 +10,7 @@ import { DlineRuntimeFileManager } from "@/services/runtime-files/DlineRuntimeFi
 import { normalizeWorkspaceRelativeInputPath } from "@/core/workspace/utils/normalizeWorkspaceRelativeInputPath"
 import { parseWorkspaceInlinePath } from "@/core/workspace/utils/parseWorkspaceInlinePath"
 import type { ConfigurableCeilings, PermissionScopeContext } from "../../kernel/turn/approval-kind"
-import { resolveLaneContext } from "../../kernel/turn/tool-lanes"
+import { PATH_SCOPED_TOOLS, resolveLaneContext, type ToolLaneContext } from "../../kernel/turn/tool-lanes"
 import {
 	admitToolCall,
 	rejectToolCall,
@@ -40,6 +40,10 @@ export interface RegisteredToolAdmissionInput<T> {
 	block: ToolUse
 	description: string
 	snapshot: ToolAdmissionSnapshot
+	/** Live settings snapshot used only to refresh the approval decision. */
+	snapshotProvider?: () => ToolAdmissionSnapshot
+	/** Tool-specific payload already frozen before approval. */
+	presentation?: ToolApprovalPresentation
 	run: ToolSideEffect<T>
 }
 
@@ -267,29 +271,47 @@ async function canonicalizePath(target: string): Promise<string | undefined> {
 	}
 }
 
+interface ConfirmedScopeContext {
+	scope: PermissionScopeContext
+	canonicalPaths: string[]
+	confirmationFailed: boolean
+}
+
+const DYNAMIC_WRITE_FANOUT_TOOLS = new Set<ClineDefaultTool>([
+	ClineDefaultTool.REPLACE_TEXT,
+	ClineDefaultTool.RENAME,
+])
+
 async function confirmScopeContext(
 	block: ToolUse,
 	toolName: ClineDefaultTool,
 	snapshot: ToolAdmissionSnapshot,
-): Promise<PermissionScopeContext> {
+): Promise<ConfirmedScopeContext> {
 	const lexical = resolveScopeContext(block, toolName, snapshot)
-	const absolutePaths = declaredPaths(block, toolName)
+	const declared = DYNAMIC_WRITE_FANOUT_TOOLS.has(toolName) ? [] : declaredPaths(block, toolName)
+	const absolutePaths = declared
 		.map((candidate) => resolveLexicalPath(candidate, snapshot))
 		.filter((candidate): candidate is string => candidate !== undefined)
-	if (absolutePaths.length === 0) return lexical
+	if (absolutePaths.length === 0) return { scope: lexical, canonicalPaths: [], confirmationFailed: false }
 
 	const canonicalPaths = await Promise.all(absolutePaths.map(canonicalizePath))
-	if (canonicalPaths.some((candidate) => candidate === undefined)) return { ...lexical, isExternalPath: true }
+	if (canonicalPaths.some((candidate) => candidate === undefined)) {
+		return { scope: { ...lexical, isExternalPath: true }, canonicalPaths: [], confirmationFailed: true }
+	}
+	const resolvedPaths = canonicalPaths.filter((candidate): candidate is string => candidate !== undefined)
 	const roots = snapshot.workspaceRoots.length > 0 ? snapshot.workspaceRoots : [snapshot.cwd]
 	const canonicalRoots = await Promise.all(roots.map(async (root) => (await canonicalizePath(root)) ?? path.resolve(root)))
 	return {
-		...lexical,
-		isExternalPath: canonicalPaths.some(
-			(canonicalPath) =>
-				canonicalPath !== undefined &&
-				!isTrustedTaskRead(toolName, canonicalPath, snapshot) &&
-				!canonicalRoots.some((root) => isInsideRoot(canonicalPath, root)),
-		),
+		scope: {
+			...lexical,
+			isExternalPath: resolvedPaths.some(
+				(canonicalPath) =>
+					!isTrustedTaskRead(toolName, canonicalPath, snapshot) &&
+					!canonicalRoots.some((root) => isInsideRoot(canonicalPath, root)),
+			),
+		},
+		canonicalPaths: resolvedPaths,
+		confirmationFailed: false,
 	}
 }
 
@@ -352,32 +374,62 @@ export function prepareRegisteredToolAdmission<T>(input: RegisteredToolAdmission
 	if (invalid) {
 		return rejectToolCall({ reason: "invalid_parameters", message: invalid })
 	}
-	const lanes = resolveLaneContext({ ...input.block, name: input.canonicalToolName })
-	const presentation = buildPresentation(
-		input.canonicalToolName,
-		input.block,
-		input.description,
-		input.snapshot.settings.enableNotifications,
-		input.snapshot,
-	)
-	let confirm: (() => Promise<ToolPreflightAdmission<T>>) | undefined
-	const admissionFor = (scope: PermissionScopeContext): ToolPreflightAdmission<T> =>
-		admitToolCall(
+	const presentation =
+		input.presentation ??
+		buildPresentation(
+			input.canonicalToolName,
+			input.block,
+			input.description,
+			input.snapshot.settings.enableNotifications,
+			input.snapshot,
+		)
+	const baseLaneContext = resolveLaneContext({ ...input.block, name: input.canonicalToolName })
+	const admissionFor = (
+		snapshot: ToolAdmissionSnapshot,
+		scope: PermissionScopeContext,
+		lanes: ToolLaneContext,
+		confirm?: () => Promise<ToolPreflightResult<T>>,
+	): ToolPreflightAdmission<T> => {
+		const refreshDecision = () => admissionFor(input.snapshotProvider?.() ?? snapshot, scope, lanes)
+		return admitToolCall(
 			{
 				toolName: input.canonicalToolName,
-				settings: input.snapshot.settings,
-				ceilings: input.snapshot.settings.ceilings as ConfigurableCeilings | undefined,
+				settings: snapshot.settings,
+				ceilings: snapshot.settings.ceilings as ConfigurableCeilings | undefined,
 				scope,
 				lanes,
-				blanket: input.snapshot.blanket,
-				inheritsApproval: input.snapshot.inheritsApproval,
+				blanket: snapshot.blanket,
+				inheritsApproval: snapshot.inheritsApproval,
 			},
 			input.run,
 			presentation,
 			confirm,
+			refreshDecision,
 		)
-	if (declaredPaths(input.block, input.canonicalToolName).length > 0) {
-		confirm = async () => admissionFor(await confirmScopeContext(input.block, input.canonicalToolName, input.snapshot))
 	}
-	return admissionFor(resolveScopeContext(input.block, input.canonicalToolName, input.snapshot))
+	const declared = DYNAMIC_WRITE_FANOUT_TOOLS.has(input.canonicalToolName)
+		? []
+		: declaredPaths(input.block, input.canonicalToolName)
+	const confirm =
+		declared.length > 0
+			? async () => {
+					const confirmed = await confirmScopeContext(input.block, input.canonicalToolName, input.snapshot)
+					const lanes: ToolLaneContext = {
+						...baseLaneContext,
+						canonicalWritePaths:
+							PATH_SCOPED_TOOLS.has(input.canonicalToolName) && !confirmed.confirmationFailed
+								? confirmed.canonicalPaths
+								: undefined,
+						conservativeWriteFanout:
+							PATH_SCOPED_TOOLS.has(input.canonicalToolName) && confirmed.confirmationFailed,
+					}
+					return admissionFor(input.snapshot, confirmed.scope, lanes)
+				}
+			: undefined
+	return admissionFor(
+		input.snapshot,
+		resolveScopeContext(input.block, input.canonicalToolName, input.snapshot),
+		baseLaneContext,
+		confirm,
+	)
 }

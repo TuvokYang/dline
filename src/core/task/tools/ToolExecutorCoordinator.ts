@@ -5,7 +5,12 @@ import {
 	prepareRegisteredToolAdmission,
 	type ToolAdmissionSnapshot,
 } from "../executors/tool/ToolAdmissionRegistry"
-import { rejectToolCall, type ToolPreflightResult, type ToolSideEffect } from "../executors/tool/ToolPreflight"
+import {
+	rejectToolCall,
+	type ToolApprovalPresentation,
+	type ToolPreflightResult,
+	type ToolSideEffect,
+} from "../executors/tool/ToolPreflight"
 import { AccessMcpResourceHandler } from "./handlers/AccessMcpResourceHandler"
 import { ActModeRespondHandler } from "./handlers/ActModeRespondHandler"
 import { ApplyPatchHandler } from "./handlers/ApplyPatchHandler"
@@ -53,6 +58,15 @@ export interface IPartialBlockHandler {
 	handlePartialBlock(block: ToolUse, uiHelpers: StronglyTypedUIHelpers): Promise<void>
 }
 
+export type ToolHandlerPreparationResult =
+	| { outcome: "prepared"; presentation: ToolApprovalPresentation }
+	| { outcome: "rejected"; message: string }
+
+export interface IPreparableToolHandler extends IToolHandler {
+	prepare(config: TaskConfig, block: ToolUse): Promise<ToolHandlerPreparationResult>
+	discardPrepared(block: ToolUse): void
+}
+
 export interface IFullyManagedTool extends IToolHandler, IPartialBlockHandler {
 	// Legacy marker name retained for compatibility; partial methods are presentation-only.
 }
@@ -86,6 +100,7 @@ export class SharedToolHandler implements IFullyManagedTool {
  */
 export class ToolExecutorCoordinator {
 	private handlers = new Map<string, IToolHandler>()
+	private readonly preparedHandlers = new Map<string, { handler: IPreparableToolHandler; block: ToolUse }>()
 
 	private readonly toolHandlersMap: Record<ClineDefaultTool, (v: ToolValidator) => IToolHandler | undefined> = {
 		[ClineDefaultTool.ASK]: (_v: ToolValidator) => new AskFollowupQuestionToolHandler(),
@@ -175,6 +190,7 @@ export class ToolExecutorCoordinator {
 		block: ToolUse,
 		snapshot: ToolAdmissionSnapshot,
 		run: ToolSideEffect<T>,
+		snapshotProvider?: () => ToolAdmissionSnapshot,
 	): ToolPreflightResult<T> {
 		const canonicalToolName = this.canonicalToolName(block.name)
 		const handler = this.handlers.get(canonicalToolName)
@@ -189,8 +205,26 @@ export class ToolExecutorCoordinator {
 			block,
 			description: handler.getDescription(block),
 			snapshot,
+			snapshotProvider,
 			run,
 		})
+	}
+
+	async prepareExecution(config: TaskConfig, block: ToolUse): Promise<ToolHandlerPreparationResult | undefined> {
+		const handler = this.getHandler(block.name)
+		if (!handler || !("prepare" in handler) || !("discardPrepared" in handler)) return undefined
+		const preparation = await (handler as IPreparableToolHandler).prepare(config, block)
+		if (preparation.outcome === "prepared" && block.dline_tid) {
+			this.preparedHandlers.set(block.dline_tid, { handler: handler as IPreparableToolHandler, block })
+		}
+		return preparation
+	}
+
+	discardPreparedExecution(dlineTid: string): void {
+		const prepared = this.preparedHandlers.get(dlineTid)
+		if (!prepared) return
+		this.preparedHandlers.delete(dlineTid)
+		prepared.handler.discardPrepared(prepared.block)
 	}
 
 	/** Registered names exposed for exhaustive admission coverage tests. */
@@ -210,6 +244,7 @@ export class ToolExecutorCoordinator {
 		if (!handler) {
 			throw new Error(`No handler registered for tool: ${block.name}`)
 		}
+		if (block.dline_tid) this.preparedHandlers.delete(block.dline_tid)
 		return handler.execute(config, block)
 	}
 }

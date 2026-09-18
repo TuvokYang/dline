@@ -648,6 +648,7 @@ function acceptTurn(
 	turn: NonNullable<TaskRuntimeState["turn"]>,
 	phase: TaskPhase = state.phase,
 	effects?: TaskEffect[],
+	interaction: TaskRuntimeState["interaction"] = state.interaction,
 ): TransitionResult {
 	// Normalizing on commit is what keeps `activeDlineTid` a projection: every
 	// accepted turn leaves here with the slot, the automatic set, the execution
@@ -663,12 +664,19 @@ function acceptTurn(
 		return reject(state, eventType)
 	}
 	if (phase !== state.phase) {
-		return accept(state, { eventType, phase, turn: owned, anchor: { ...state.anchor, turnId: owned.turnId }, effects })
+		return accept(state, {
+			eventType,
+			phase,
+			turn: owned,
+			interaction,
+			anchor: { ...state.anchor, turnId: owned.turnId },
+			effects,
+		})
 	}
 	const revision = state.revision + 1
 	return {
 		accepted: true,
-		next: { ...state, revision, turn: owned, anchor: { ...state.anchor, turnId: owned.turnId } },
+		next: { ...state, revision, turn: owned, interaction, anchor: { ...state.anchor, turnId: owned.turnId } },
 		effects: effects ?? stateEffects(revision),
 	}
 }
@@ -1081,7 +1089,7 @@ function reduceInteractionResponse(
 	state: TaskRuntimeState,
 	event: Extract<TaskEvent, { type: "INTERACTION_RESPONDED" }>,
 ): TransitionResult {
-	if (!state.interaction || event.response.stateRevision !== state.revision) {
+	if (!state.interaction || event.response.stateRevision > state.revision) {
 		return reject(state, event.type, "stale_interaction")
 	}
 	const result = reduceInteraction(state.interaction, event.response)
@@ -1128,26 +1136,14 @@ function reduceInteractionResponse(
 		}
 	}
 	if (event.response.actionId === "reject") {
-		let afterRejected = false
-		const nextTurn = {
-			...turn,
-			activeDlineTid: undefined,
-			blocks: turn.blocks.map((candidate) => {
-				if (candidate.dlineTid === block.dlineTid) {
-					afterRejected = true
-					return { ...candidate, phase: BlockPhase.REJECTED }
-				}
-				if (afterRejected && candidate.phase === BlockPhase.STREAMING) {
-					return { ...candidate, phase: BlockPhase.SKIPPED }
-				}
-				return candidate
-			}),
-		}
-		return {
-			accepted: true,
-			next: { ...state, revision, phase: TaskPhase.BETWEEN_TURNS, turn: nextTurn, interaction: result.next },
+		return acceptTurn(
+			state,
+			event.type,
+			rejectBlockAndSkipUnstartedAfter(turn, block.dlineTid),
+			TaskPhase.BETWEEN_TURNS,
 			effects,
-		}
+			result.next,
+		)
 	}
 	return acceptInteraction(state, result.next, state.anchor, effects)
 }

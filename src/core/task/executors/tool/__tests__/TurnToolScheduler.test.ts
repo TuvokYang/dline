@@ -51,6 +51,22 @@ function admissionMap(tools: readonly ToolUse[], values: readonly ToolPreflightA
 	return new Map(tools.map((current, index) => [current.dline_tid!, values[index]!]))
 }
 
+function runThroughPool(
+	scheduler: TurnToolScheduler,
+	tools: ToolUse[],
+	admissions: ReadonlyMap<string, ToolPreflightAdmission<void>>,
+	runBlock: (tool: ToolUse) => Promise<"completed" | "halt_turn" | "retry_admission">,
+) {
+	return scheduler.runTurn(tools, async (session) => {
+		const outcomes = await Promise.all(
+			tools.map((current, index) =>
+				session.submit(current, index, admissions.get(current.dline_tid!)!, () => runBlock(current)),
+			),
+		)
+		return outcomes.includes("halt_turn") ? "halt_turn" : "completed"
+	})
+}
+
 describe("TurnToolScheduler", () => {
 	it("persists cancellation for every running and queued block", async () => {
 		const cancelled: string[] = []
@@ -62,7 +78,8 @@ describe("TurnToolScheduler", () => {
 			},
 		})
 		const tools = [tool(ClineDefaultTool.FILE_READ, "a"), tool(ClineDefaultTool.FILE_READ, "b")]
-		const execution = scheduler.runThroughPool(
+		const execution = runThroughPool(
+			scheduler,
 			tools,
 			admissionMap(tools, [admission(), admission()]),
 			async () => new Promise(() => {}),
@@ -84,7 +101,8 @@ describe("TurnToolScheduler", () => {
 		const second = deferred<"completed">()
 		const started: string[] = []
 		const tools = [tool(ClineDefaultTool.FILE_READ, "a"), tool(ClineDefaultTool.FILE_READ, "b")]
-		const execution = scheduler.runThroughPool(
+		const execution = runThroughPool(
+			scheduler,
 			tools,
 			admissionMap(tools, [admission([LANE_DIFF_EDITOR]), admission([LANE_DIFF_EDITOR])]),
 			async (current) => {
@@ -111,7 +129,7 @@ describe("TurnToolScheduler", () => {
 		const gates = [deferred<"completed">(), deferred<"completed">()]
 		const started: string[] = []
 		const tools = [tool(ClineDefaultTool.FILE_READ, "a"), tool(ClineDefaultTool.FILE_READ, "b")]
-		const execution = scheduler.runThroughPool(tools, admissionMap(tools, [admission(), admission()]), async (current) => {
+		const execution = runThroughPool(scheduler, tools, admissionMap(tools, [admission(), admission()]), async (current) => {
 			started.push(current.dline_tid)
 			return gates[started.length - 1]!.promise
 		})
@@ -124,6 +142,29 @@ describe("TurnToolScheduler", () => {
 		expect(started).toEqual(["a", "b"])
 		gates.forEach((gate) => gate.resolve("completed"))
 		await expect(execution).resolves.toBe("completed")
+	})
+
+	it("keeps turn-ending fenced when earlier pooled work returns to Admission", async () => {
+		const scheduler = new TurnToolScheduler({
+			readConfiguredLimit: () => 1,
+			isParallelToolCallingEnabled: () => true,
+		})
+		const tools = [tool(ClineDefaultTool.FILE_READ, "earlier"), tool(ClineDefaultTool.ATTEMPT, "ending")]
+		let endingStarted = false
+		await scheduler.runTurn(tools, async (session) => {
+			const ending = session.submit(tools[1], 1, admission(), async () => {
+				endingStarted = true
+				return "completed"
+			})
+			await expect(session.submit(tools[0], 0, admission(), async () => "retry_admission")).resolves.toBe(
+				"retry_admission",
+			)
+			await flush()
+			expect(endingStarted).toBe(false)
+			session.markAdmissionSettled(0)
+			await expect(ending).resolves.toBe("completed")
+			return "completed"
+		})
 	})
 
 	it("latches turn-ending and reports every later sibling as skipped", async () => {
@@ -140,7 +181,8 @@ describe("TurnToolScheduler", () => {
 			tool(ClineDefaultTool.ATTEMPT, "later-ending"),
 		]
 		const started: string[] = []
-		const execution = scheduler.runThroughPool(
+		const execution = runThroughPool(
+			scheduler,
 			tools,
 			admissionMap(tools, [admission(), admission(), admission()]),
 			async (current) => {

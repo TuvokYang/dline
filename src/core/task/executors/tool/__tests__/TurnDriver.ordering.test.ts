@@ -8,7 +8,7 @@ import type { TaskEvent } from "../../../runtime/TaskEvent"
 import { TaskRuntime } from "../../../runtime/TaskRuntime"
 import { createTaskRuntimeState } from "../../../runtime/TaskRuntimeState"
 import { TurnDriver } from "../TurnDriver"
-import type { TurnPostCommitDirective } from "../TurnDriverPort"
+import type { BlockLifecycleOutcome, TurnDriverSchedulingSession, TurnPostCommitDirective } from "../TurnDriverPort"
 
 function effectPorts(): TaskEffectPorts {
 	return {
@@ -91,10 +91,16 @@ describe("TurnDriver post-commit ordering", () => {
 			},
 			approval: { request: vi.fn(async () => ({ actionId: "approve" as const })) },
 			scheduler: {
-				canRunConcurrently: () => false,
 				cancelActiveTurn: vi.fn(),
 				notifyLimitChanged: vi.fn(),
-				runThroughPool: vi.fn(async () => "completed" as const),
+				runTurn: vi.fn(
+					async (_tools: ToolUse[], run: (session: TurnDriverSchedulingSession) => Promise<BlockLifecycleOutcome>) =>
+					run({
+						markAdmissionSettled: vi.fn(),
+						markAdmissionUnsettled: vi.fn(),
+						submit: async (_tool, _index, _admission, execute) => execute(new AbortController().signal),
+						}),
+					),
 			},
 			provider: { registerExecution: vi.fn() },
 			postCommit: {

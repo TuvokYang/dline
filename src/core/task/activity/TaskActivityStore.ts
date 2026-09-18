@@ -82,6 +82,14 @@ function boundRetryRecipe(recipe: SubagentRetryRecipe): SubagentRetryRecipe {
 type ActivityListener = (update: TaskActivityUpdate) => void | Promise<void>
 type CancelActivity = () => void | Promise<void>
 type ControlActivity = () => boolean | Promise<boolean>
+export type BackgroundHandoffResult =
+	| boolean
+	| {
+			accepted: boolean
+			rollback?: () => void | Promise<void>
+			commit?: () => void | Promise<void>
+	  }
+type MoveActivity = () => Promise<BackgroundHandoffResult>
 
 export interface TaskActivityPersistencePort {
 	load(): Promise<TaskActivityRecord[]>
@@ -94,7 +102,9 @@ export interface CreateTaskActivityInput {
 	executionMode: TaskActivityExecutionMode
 	cancellationOwner?: TaskActivityCancellationOwner
 	title: string
-	continueInBackground?: () => Promise<boolean>
+	continueInBackground?: MoveActivity
+	/** Activity identities that must transfer ownership with this activity. */
+	backgroundGroupIds?: string[]
 	detail?: string
 	timeoutSeconds?: number
 	parentActivityId?: string
@@ -111,7 +121,8 @@ export class TaskActivityStore {
 	private readonly cancellers = new Map<string, CancelActivity>()
 	private readonly finishers = new Map<string, ControlActivity>()
 	private readonly retriers = new Map<string, ControlActivity>()
-	private readonly backgroundMovers = new Map<string, () => Promise<boolean>>()
+	private readonly backgroundMovers = new Map<string, MoveActivity>()
+	private readonly backgroundGroups = new Map<string, readonly string[]>()
 	private readonly listeners = new Map<ActivityListener, Promise<void>>()
 	private readonly dirtyIds = new Set<string>()
 	private readonly persistedRecoveryCandidateIds = new Set<string>()
@@ -193,7 +204,10 @@ export class TaskActivityStore {
 		if (input.cancel) this.cancellers.set(activity.activityId, input.cancel)
 		if (input.finish) this.finishers.set(activity.activityId, input.finish)
 		if (input.retry) this.retriers.set(activity.activityId, input.retry)
-		if (input.continueInBackground) this.backgroundMovers.set(activity.activityId, input.continueInBackground)
+		if (input.continueInBackground) {
+			this.backgroundMovers.set(activity.activityId, input.continueInBackground)
+			this.backgroundGroups.set(activity.activityId, input.backgroundGroupIds ?? [activity.activityId])
+		}
 		this.appendEvent(input.activityId, { kind: "status", status: activity.status, text: "Activity started" }, true)
 		return this.clone(activity)
 	}
@@ -274,21 +288,71 @@ export class TaskActivityStore {
 	/** Move eligible foreground activities into explicit background ownership. */
 	async moveToBackground(activityIds: string[]): Promise<string[]> {
 		const moved: string[] = []
-		for (const activityId of activityIds) {
-			const activity = this.activities.get(activityId)
-			const move = this.backgroundMovers.get(activityId)
-			if (!activity || !move || activity.status !== "running" || activity.executionMode !== "foreground") continue
-			try {
-				if (!(await move())) continue
-				this.update(activityId, {
-					executionMode: "background",
-					cancellationOwner: "explicit",
-					latestEvent: "Continuing in background",
+		const visited = new Set<string>()
+		for (const requestedId of activityIds) {
+			if (visited.has(requestedId)) continue
+			const groupIds = [...new Set(this.backgroundGroups.get(requestedId) ?? [requestedId])]
+			groupIds.forEach((activityId) => visited.add(activityId))
+			const move = this.backgroundMovers.get(requestedId)
+			const isEligibleGroup = () =>
+				Boolean(move) &&
+				groupIds.every((activityId) => {
+					const activity = this.activities.get(activityId)
+					return (
+						activity?.status === "running" &&
+						activity.executionMode === "foreground" &&
+						this.backgroundMovers.get(activityId) === move
+					)
 				})
-				this.backgroundMovers.delete(activityId)
-				moved.push(activityId)
+			if (!move || !isEligibleGroup()) continue
+			let result: BackgroundHandoffResult | undefined
+			let ownershipSnapshots: Array<{
+				activityId: string
+				executionMode: TaskActivityExecutionMode
+				cancellationOwner: TaskActivityCancellationOwner
+				latestEvent?: string
+			}> = []
+			try {
+				result = await move()
+				const accepted = typeof result === "boolean" ? result : result.accepted
+				if (!accepted) continue
+				if (!isEligibleGroup()) {
+					if (typeof result !== "boolean") await result.rollback?.()
+					continue
+				}
+				ownershipSnapshots = groupIds.map((activityId) => {
+					const activity = this.activities.get(activityId) as TaskActivityRecord
+					return {
+						activityId,
+						executionMode: activity.executionMode,
+						cancellationOwner: activity.cancellationOwner,
+						latestEvent: activity.latestEvent,
+					}
+				})
+				for (const activityId of groupIds) {
+					this.update(activityId, {
+						executionMode: "background",
+						cancellationOwner: "explicit",
+						latestEvent: "Continuing in background",
+					})
+				}
+				for (const activityId of groupIds) {
+					this.backgroundMovers.delete(activityId)
+					this.backgroundGroups.delete(activityId)
+				}
+				if (typeof result !== "boolean") await result.commit?.()
+				moved.push(...groupIds)
 			} catch (error) {
-				Logger.warn("[TaskActivityStore] Failed to move activity to background", error)
+				for (const snapshot of ownershipSnapshots) {
+					const activity = this.activities.get(snapshot.activityId)
+					if (!activity) continue
+					activity.executionMode = snapshot.executionMode
+					activity.cancellationOwner = snapshot.cancellationOwner
+					activity.latestEvent = snapshot.latestEvent
+					this.markDirty(snapshot.activityId, true)
+				}
+				if (result && typeof result !== "boolean") await result.rollback?.()
+				Logger.warn("[TaskActivityStore] Failed to move activity group to background", error)
 			}
 		}
 		return moved

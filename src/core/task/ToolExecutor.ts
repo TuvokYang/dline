@@ -48,7 +48,7 @@ import { StateManager } from "../storage/StateManager"
 import { WorkspaceRootManager } from "../workspace"
 import type { TaskActivityStore } from "./activity/TaskActivityStore"
 import type { ToolAdmissionSnapshot } from "./executors/tool/ToolAdmissionRegistry"
-import type { ToolPreflightResult, ToolSideEffect } from "./executors/tool/ToolPreflight"
+import { rejectToolCall, type ToolPreflightResult, type ToolSideEffect } from "./executors/tool/ToolPreflight"
 import { isTurnEndingToolName } from "./assistant-message-order"
 import { BlockPhase } from "./BlockPhaseMachine"
 import { serializeDurableToolResult } from "./DurableToolResult"
@@ -172,8 +172,7 @@ export class ToolExecutor {
 	private readonly admissionOutcomes = new Map<string, InteractionOutcome>()
 	private readonly imageGenerationService: ImageGenerationService
 
-	/** Prepare one pure admission and retain execution as an unstarted closure. */
-	public prepareAdmission(block: ToolUse): ToolPreflightResult<void> {
+	private buildAdmissionSnapshot(block: ToolUse): ToolAdmissionSnapshot {
 		const mcpToolAutoApprove =
 			block.name === ClineDefaultTool.MCP_USE
 				? (this.mcpHub.connections
@@ -181,7 +180,7 @@ export class ToolExecutor {
 						?.server.tools?.find((tool) => tool.name === block.params.tool_name)?.autoApprove ?? true)
 				: undefined
 		const workspaceRoots = this.workspaceManager?.getRoots()
-		const snapshot: ToolAdmissionSnapshot = {
+		return {
 			taskId: this.taskId,
 			cwd: this.cwd,
 			workspaceRoots: workspaceRoots?.map((root) => root.path) ?? [this.cwd],
@@ -195,7 +194,46 @@ export class ToolExecutor {
 			},
 			mcpToolAutoApprove,
 		}
-		const admission = this.coordinator.prepareAdmission(block, snapshot, () => this.executeTool(block))
+	}
+
+	/** Prepare one pure admission and retain execution as an unstarted closure. */
+	public prepareAdmission(block: ToolUse): ToolPreflightResult<void> {
+		const snapshot = this.buildAdmissionSnapshot(block)
+		const initialAdmission = this.coordinator.prepareAdmission(
+			block,
+			snapshot,
+			() => this.executeTool(block),
+			() => this.buildAdmissionSnapshot(block),
+		)
+		const isSubagentTool = block.name === ClineDefaultTool.USE_SUBAGENT || block.name === ClineDefaultTool.USE_SUBAGENTS
+		const admission =
+			initialAdmission.outcome === "admitted" && isSubagentTool
+				? {
+						...initialAdmission,
+						prepareApproval: async (): Promise<ToolPreflightResult<void>> => {
+							const preparation = await this.coordinator.prepareExecution(this.asToolConfig(), block)
+							if (!preparation) return initialAdmission
+							if (preparation.outcome === "rejected") {
+								return rejectToolCall({ reason: "invalid_parameters", message: preparation.message })
+							}
+							const refreshPreparedDecision = () => {
+								const refreshed = initialAdmission.refreshDecision?.() ?? initialAdmission
+								return {
+									...refreshed,
+									presentation: preparation.presentation,
+									prepareApproval: undefined,
+									refreshDecision: refreshPreparedDecision,
+								}
+							}
+							return {
+								...initialAdmission,
+								presentation: preparation.presentation,
+								prepareApproval: undefined,
+								refreshDecision: refreshPreparedDecision,
+							}
+						},
+					}
+				: initialAdmission
 		if (block.dline_tid) {
 			if (admission.outcome === "admitted") this.preparedEffects.set(block.dline_tid, admission.run)
 			else this.preparedEffects.delete(block.dline_tid)
@@ -214,6 +252,7 @@ export class ToolExecutor {
 	/** Forget an approved-but-unstarted effect after cancellation, rejection or suppression. */
 	public discardPreparedAdmission(dlineTid: string): void {
 		this.preparedEffects.delete(dlineTid)
+		this.coordinator.discardPreparedExecution(dlineTid)
 	}
 
 	/** Retain one structured manual-admission outcome until the approved handler consumes it. */

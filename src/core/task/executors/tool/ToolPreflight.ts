@@ -71,14 +71,21 @@ export interface ToolPreflightAdmission<T> {
 	 * begun without depending on a shared version counter.
 	 */
 	run: ToolSideEffect<T>
+	/** Optional input-only preparation that must finish before a manual approval is presented. */
+	prepareApproval?: () => Promise<ToolPreflightResult<T>>
 	/**
-	 * Optional pre-effect scope confirmation.
+	 * Optional pre-scheduling scope confirmation.
 	 *
 	 * Admission itself stays target-I/O free. Filesystem-backed calls may attach
-	 * this unstarted closure so aliases can be canonicalized after scheduling but
-	 * before execution; the returned Admission is the one that must execute.
+	 * this unstarted closure so aliases and final lanes are canonicalized before
+	 * the execution pool reserves a lane or permit. The returned Admission is the
+	 * one that must execute.
 	 */
-	confirm?: () => Promise<ToolPreflightAdmission<T>>
+	confirm?: () => Promise<ToolPreflightResult<T>>
+	/** True when a human already approved this exact call before target confirmation. */
+	manualApprovalSatisfied?: boolean
+	/** Recompute only the live approval decision while preserving run and lanes. */
+	refreshDecision?: () => ToolPreflightAdmission<T>
 }
 
 /** A call that cannot proceed. */
@@ -122,7 +129,8 @@ export function admitToolCall<T>(
 	input: ToolPreflightInput,
 	run: ToolSideEffect<T>,
 	presentation?: ToolApprovalPresentation,
-	confirm?: () => Promise<ToolPreflightAdmission<T>>,
+	confirm?: () => Promise<ToolPreflightResult<T>>,
+	refreshDecision?: () => ToolPreflightAdmission<T>,
 ): ToolPreflightAdmission<T> {
 	// The runtime facts that classify a call are named `scope` here and
 	// `context` on the resolver, so they must be mapped rather than spread.
@@ -149,5 +157,6 @@ export function admitToolCall<T>(
 		lanes: resolveToolLanes(input.toolName, input.lanes ?? {}),
 		run,
 		confirm,
+		refreshDecision,
 	}
 }

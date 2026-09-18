@@ -306,27 +306,94 @@ describe("finalized turn tool concurrency", () => {
 		])
 	})
 
-	it("runs a turn that may ask for approval serially", async () => {
-		const recorder = createOverlapRecorder()
+	it("runs automatic work while manual admission waits and releases the manual slot before its effect ends", async () => {
+		let approveFirst: ((outcome: InteractionOutcome) => void) | undefined
+		let finishFirstEffect: (() => void) | undefined
+		const started: string[] = []
+		const approvalCalls: string[] = []
 		const { fakeTask } = createTurn({
-			blockCount: 4,
+			blockCount: 3,
 			parallel: true,
-			// The turn is not known to be auto-approved, so an approval card
-			// may open. A sibling finishing while it is open would advance the
-			// runtime revision and the user's answer would be refused as
-			// stale, suspending the turn. Such a turn must stay serial.
-			autoApproved: false,
-			executeTool: async (effect) => {
-				const entered = recorder.enter(effect.dlineTid)
-				recorder.releaseAll()
-				await entered
+			prepareAdmission: (tool) => ({
+				outcome: "admitted",
+				decision: {
+					kind: tool.dline_tid === "dline-read-2" ? "automatic" : "manual",
+					scope: "read_workspace",
+					ceiling: "auto",
+				},
+				presentation:
+					tool.dline_tid === "dline-read-2" ? undefined : { ask: "tool", body: `Approve ${tool.dline_tid}`, notify: false },
+				lanes: [],
+				run: async () => undefined,
+			}),
+			requestApproval: (tool) => {
+				approvalCalls.push(tool.dline_tid ?? "")
+				if (tool.dline_tid !== "dline-read-1") return Promise.resolve({ actionId: "approve" as const })
+				return new Promise<InteractionOutcome>((resolve) => {
+					approveFirst = resolve
+				})
+			},
+			executeTool: async ({ dlineTid }) => {
+				started.push(dlineTid)
+				if (dlineTid === "dline-read-1") {
+					await new Promise<void>((resolve) => {
+						finishFirstEffect = resolve
+					})
+				}
 			},
 		})
 
-		await expect(runTurn(fakeTask)).resolves.toBeUndefined()
+		const turn = runTurn(fakeTask)
+		for (let attempt = 0; attempt < 20 && !approvalCalls.includes("dline-read-1"); attempt += 1) {
+			await new Promise<void>((resolve) => setImmediate(resolve))
+		}
+		for (let attempt = 0; attempt < 20 && !started.includes("dline-read-2"); attempt += 1) {
+			await new Promise<void>((resolve) => setImmediate(resolve))
+		}
+		expect(started).toContain("dline-read-2")
+		expect(started).not.toContain("dline-read-1")
 
-		expect(recorder.peak).toBe(1)
-		expect(recorder.admitted).toHaveLength(4)
+		approveFirst?.({ actionId: "approve" })
+		for (
+			let attempt = 0;
+			attempt < 20 && (!started.includes("dline-read-1") || !approvalCalls.includes("dline-read-3"));
+			attempt += 1
+		) {
+			await new Promise<void>((resolve) => setImmediate(resolve))
+		}
+		expect(started).toContain("dline-read-1")
+		expect(approvalCalls).toEqual(["dline-read-1", "dline-read-3"])
+		finishFirstEffect?.()
+		await expect(turn).resolves.toBeUndefined()
+	})
+
+	it.each([
+		["reject" as const, 0],
+		["approve" as const, 1],
+	])("runs target confirmation only after manual action %s", async (actionId, expectedConfirmations) => {
+		const confirm = vi.fn(async (): Promise<ToolPreflightResult<void>> => ({
+			outcome: "admitted",
+			decision: { kind: "manual", scope: "read_workspace", ceiling: "auto" },
+			presentation: { ask: "tool", body: "Approve target", notify: false },
+			lanes: [],
+			run: async () => undefined,
+		}))
+		const { fakeTask } = createTurn({
+			blockCount: 1,
+			parallel: true,
+			prepareAdmission: () => ({
+				outcome: "admitted",
+				decision: { kind: "manual", scope: "read_workspace", ceiling: "auto" },
+				presentation: { ask: "tool", body: "Approve target", notify: false },
+				lanes: [],
+				run: async () => undefined,
+				confirm,
+			}),
+			requestApproval: async () => ({ actionId }),
+		})
+
+		await expect(runTurn(fakeTask)).resolves.toBeUndefined()
+		expect(confirm).toHaveBeenCalledTimes(expectedConfirmations)
 	})
 
 	it("re-resolves a queued automatic grant after permit acquisition and returns it to manual admission", async () => {
@@ -336,13 +403,17 @@ describe("finalized turn tool concurrency", () => {
 			releaseFirst = resolve
 		})
 		const started: string[] = []
-		const prepareAdmission = vi.fn((tool: ToolUse): ToolPreflightResult<void> => ({
-			outcome: "admitted",
-			decision: { kind: automatic ? "automatic" : "manual", scope: "read_workspace", ceiling: "auto" },
-			presentation: automatic ? undefined : { ask: "tool", body: `Approve ${tool.dline_tid}`, notify: false },
-			lanes: [],
-			run: async () => undefined,
-		}))
+		const prepareAdmission = vi.fn((tool: ToolUse): ToolPreflightResult<void> => {
+			const current = (): Extract<ToolPreflightResult<void>, { outcome: "admitted" }> => ({
+				outcome: "admitted",
+				decision: { kind: automatic ? "automatic" : "manual", scope: "read_workspace", ceiling: "auto" },
+				presentation: automatic ? undefined : { ask: "tool", body: `Approve ${tool.dline_tid}`, notify: false },
+				lanes: [],
+				run: async () => undefined,
+				refreshDecision: current,
+			})
+			return current()
+		})
 		const { fakeTask, requestApproval, runtime } = createTurn({
 			blockCount: 2,
 			parallel: true,

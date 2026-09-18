@@ -244,7 +244,6 @@ describe("Task.processNativeToolCalls", () => {
 				getBlocks: () => runtimeBlocks,
 			},
 			toolExecutor: {
-				isBlockApproved: () => true,
 				executeTool,
 				commitInterruptedToolResult,
 				takePostCommitDirective: () => undefined,

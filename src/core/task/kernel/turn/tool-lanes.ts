@@ -40,6 +40,9 @@ export const LANE_USER_INTERACTION = "user-interaction"
  */
 export const LANE_MCP_NOTIFICATIONS = "mcp-notifications"
 
+/** Conservative lane for write fan-out whose final targets are discovered at execution time. */
+export const LANE_DYNAMIC_WRITE_FANOUT = "dynamic-write-fanout"
+
 /**
  * The task-level subagent execution flag.
  *
@@ -85,6 +88,8 @@ export interface ToolLaneContext {
 	 * lane would be hiding that rather than solving it.
 	 */
 	canonicalWritePaths?: readonly string[]
+	/** Fall back to one global write lane when canonical targets cannot be confirmed. */
+	conservativeWriteFanout?: boolean
 }
 
 /** Minimal structural input accepted by the pure lane resolver. */
@@ -93,20 +98,11 @@ export interface ToolLaneBlock {
 	params?: Record<string, unknown>
 }
 
-const PATH_WRITING_TOOLS: ReadonlySet<string> = new Set([
-	ClineDefaultTool.FILE_NEW,
-	ClineDefaultTool.FILE_EDIT,
-	ClineDefaultTool.NEW_RULE,
-])
-
 /** Derive lane context from one finalized tool block without touching its target. */
 export function resolveLaneContext(tool: ToolLaneBlock): ToolLaneContext {
 	const serverName = tool.params?.server_name
-	const pathCandidate = tool.params?.path ?? tool.params?.absolutePath
-	const declaredPath = typeof pathCandidate === "string" && pathCandidate.length > 0 ? pathCandidate : undefined
 	return {
 		mcpServerName: typeof serverName === "string" ? serverName : undefined,
-		canonicalWritePaths: PATH_WRITING_TOOLS.has(tool.name) && declaredPath ? [declaredPath] : undefined,
 	}
 }
 
@@ -125,8 +121,8 @@ const STATIC_LANES: Partial<Record<ClineDefaultTool, readonly ToolLane[]>> = {
 	[ClineDefaultTool.FILE_EDIT]: [LANE_DIFF_EDITOR],
 	[ClineDefaultTool.NEW_RULE]: [LANE_DIFF_EDITOR],
 	[ClineDefaultTool.APPLY_PATCH]: [LANE_DIFF_EDITOR],
-	[ClineDefaultTool.REPLACE_TEXT]: [LANE_DIFF_EDITOR],
-	[ClineDefaultTool.RENAME]: [LANE_DIFF_EDITOR],
+	[ClineDefaultTool.REPLACE_TEXT]: [LANE_DIFF_EDITOR, LANE_DYNAMIC_WRITE_FANOUT],
+	[ClineDefaultTool.RENAME]: [LANE_DIFF_EDITOR, LANE_DYNAMIC_WRITE_FANOUT],
 
 	// The browser handler reassigns config.services.browserSession on launch,
 	// so a concurrent action would address a session that no longer exists.
@@ -190,6 +186,7 @@ export function resolveToolLanes(toolName: string, context: ToolLaneContext = {}
 			lanes.add(writePathLane(writePath))
 		}
 	}
+	if (context.conservativeWriteFanout) lanes.add(LANE_DYNAMIC_WRITE_FANOUT)
 
 	return Array.from(lanes)
 }

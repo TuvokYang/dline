@@ -1,9 +1,12 @@
 import type { ToolUse } from "@core/assistant-message"
 import { resolveMaxParallelToolCalls } from "@shared/concurrency-limits"
 import { isTurnEndingToolName } from "../../assistant-message-order"
-import type { TurnState } from "../../runtime/TaskRuntimeState"
-import type { ToolPreflightAdmission, ToolPreflightResult } from "./ToolPreflight"
-import type { BlockLifecycleOutcome, TurnDriverSchedulerPort } from "./TurnDriverPort"
+import type { ToolPreflightAdmission } from "./ToolPreflight"
+import type {
+	BlockLifecycleOutcome,
+	TurnDriverSchedulerPort,
+	TurnDriverSchedulingSession,
+} from "./TurnDriverPort"
 import { TurnExecutionPool } from "./TurnExecutionPool"
 
 export interface TurnToolSchedulerOptions {
@@ -32,28 +35,9 @@ export class TurnToolScheduler implements TurnDriverSchedulerPort {
 		this.activePool?.notifyLimitChanged()
 	}
 
-	canRunConcurrently(
-		turn: TurnState,
-		toolUses: readonly ToolUse[],
-		admissions: ReadonlyMap<string, ToolPreflightResult<void>>,
-	): boolean {
-		return (
-			turn.mode === "parallel" &&
-			toolUses.length > 1 &&
-			toolUses.every((tool) => {
-				const admission = tool.dline_tid ? admissions.get(tool.dline_tid) : undefined
-				return (
-					admission?.outcome === "admitted" &&
-					(admission.decision.kind === "none" || admission.decision.kind === "automatic")
-				)
-			})
-		)
-	}
-
-	async runThroughPool(
+	async runTurn(
 		toolUses: ToolUse[],
-		admissions: ReadonlyMap<string, ToolPreflightResult<void>>,
-		runBlockLifecycle: (tool: ToolUse) => Promise<BlockLifecycleOutcome>,
+		run: (session: TurnDriverSchedulingSession) => Promise<BlockLifecycleOutcome>,
 	): Promise<BlockLifecycleOutcome> {
 		const pool = new TurnExecutionPool<BlockLifecycleOutcome>({
 			limit: () =>
@@ -63,65 +47,56 @@ export class TurnToolScheduler implements TurnDriverSchedulerPort {
 				),
 			name: "turn-tool-pool",
 		})
-		const identityOf = (tool: ToolUse, index: number): string => tool.dline_tid ?? `unkeyed-${index}`
-		const admissionFor = (tool: ToolUse, index: number): ToolPreflightAdmission<void> => {
-			const dlineTid = identityOf(tool, index)
-			const admission = admissions.get(dlineTid)
-			if (admission?.outcome !== "admitted") {
-				throw new Error(`Pool scheduling requires an admitted block: dlineTid=${dlineTid}`)
-			}
-			return admission
+		const unresolvedAdmissions = toolUses.map(() => true)
+		const firstTurnEndingIndex = toolUses.findIndex((tool) => isTurnEndingToolName(tool.name))
+		const updateTurnEndingFence = () => {
+			pool.setUnfinishedEarlierWork(
+				firstTurnEndingIndex >= 0 && unresolvedAdmissions.slice(0, firstTurnEndingIndex).some(Boolean),
+			)
+		}
+		updateTurnEndingFence()
+		const session: TurnDriverSchedulingSession = {
+			markAdmissionSettled: (index) => {
+				unresolvedAdmissions[index] = false
+				updateTurnEndingFence()
+			},
+			markAdmissionUnsettled: (index) => {
+				unresolvedAdmissions[index] = true
+				updateTurnEndingFence()
+			},
+			submit: async (tool, index, admission, runBlock) => {
+				const dlineTid = tool.dline_tid ?? `unkeyed-${index}`
+				const pendingOutcome = pool.submit({
+					dlineTid,
+					index,
+					lanes: admission.lanes,
+					isTurnEnding: isTurnEndingToolName(tool.name),
+					run: async (signal) => {
+						if (signal.aborted) return "halt_turn"
+						const value = await runBlock(signal)
+						if (value === "retry_admission") session.markAdmissionUnsettled(index)
+						if (value === "halt_turn") pool.cancelBlocksAfter(index)
+						return value
+					},
+				})
+				unresolvedAdmissions[index] = false
+				updateTurnEndingFence()
+				const outcome = await pendingOutcome
+				if (outcome.error !== undefined) {
+					pool.cancelBlocksAfter(index)
+					throw outcome.error instanceof Error ? outcome.error : new Error(String(outcome.error))
+				}
+				if (outcome.skipped) await this.options.onBlockSkipped?.(outcome.dlineTid)
+				if (outcome.cancelled) {
+					await this.options.onBlockCancelled?.(outcome.dlineTid)
+					return "halt_turn"
+				}
+				return outcome.value ?? "completed"
+			},
 		}
 		this.activePool = pool
 		try {
-			const outcomes = await Promise.all(
-				toolUses.map((tool, index) =>
-					pool
-						.submit({
-							dlineTid: identityOf(tool, index),
-							index,
-							lanes: admissionFor(tool, index).lanes,
-							isTurnEnding: isTurnEndingToolName(tool.name),
-							run: async (signal) => {
-								if (signal.aborted) return "halt_turn"
-								const outcome = await runBlockLifecycle(tool)
-								if (outcome === "halt_turn") pool.cancelBlocksAfter(index)
-								return outcome
-							},
-						})
-						.then(async (outcome) => {
-							if (outcome.error !== undefined) pool.cancelBlocksAfter(index)
-							// Terminal pool state is durable before the turn-ending or
-							// cancelled sibling settles, closing the restart window where a
-							// private pool outcome could otherwise be replayed as live work.
-							if (outcome.skipped) await this.options.onBlockSkipped?.(outcome.dlineTid)
-							if (outcome.cancelled) await this.options.onBlockCancelled?.(outcome.dlineTid)
-							return outcome
-						}),
-				),
-			)
-
-			let retryAdmission = false
-			let haltTurn = false
-			let firstError: unknown
-			for (const outcome of outcomes) {
-				if (outcome.skipped) continue
-				if (outcome.cancelled) {
-					haltTurn = true
-					continue
-				}
-				if (outcome.error !== undefined) {
-					firstError ??= outcome.error
-					continue
-				}
-				if (outcome.value === "halt_turn") haltTurn = true
-				if (outcome.value === "retry_admission") retryAdmission = true
-			}
-			if (firstError !== undefined) {
-				throw firstError instanceof Error ? firstError : new Error(String(firstError))
-			}
-			if (haltTurn) return "halt_turn"
-			return retryAdmission ? "retry_admission" : "completed"
+			return await run(session)
 		} finally {
 			if (this.activePool === pool) this.activePool = undefined
 		}

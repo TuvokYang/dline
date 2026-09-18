@@ -126,101 +126,140 @@ export class TurnDriver {
 			throw new Error("Finalized assistant turn does not match the canonical runtime turn")
 		}
 
-		const runBlockLifecycle = async (tool: ToolUse): Promise<BlockLifecycleOutcome> => {
-			if (this.ports.task.isAborted() || !this.ports.task.isCurrentTask()) return "halt_turn"
+		let manualAdmissionTail: Promise<void> = Promise.resolve()
+		const withManualAdmissionSlot = <T>(work: () => Promise<T>): Promise<T> => {
+			const run = manualAdmissionTail.then(work, work)
+			manualAdmissionTail = run.then(
+				() => undefined,
+				() => undefined,
+			)
+			return run
+		}
+		const resolveBlockAdmission = async (
+			tool: ToolUse,
+			index: number,
+			prepared: ToolPreflightResult<void>,
+			session: import("./TurnDriverPort").TurnDriverSchedulingSession,
+		): Promise<ToolPreflightResult<void> | undefined> => {
 			const dlineTid = tool.dline_tid
-			if (!dlineTid) return "completed"
-
+			if (!dlineTid) return undefined
 			let runtimeBlock = this.ports.runtime.getState().turn?.blocks.find((block) => block.dlineTid === dlineTid)
-			if (!runtimeBlock) {
-				throw new Error(`Canonical runtime block is missing for tool=${tool.name}`)
-			}
+			if (!runtimeBlock) throw new Error(`Canonical runtime block is missing for tool=${tool.name}`)
 			if (this.isTerminalRuntimeBlock(runtimeBlock.phase)) {
+				session.markAdmissionSettled(index)
 				await this.ensureTerminalToolResult(tool, runtimeBlock.phase)
 				this.markFinalizedToolPresented(tool)
-				return "completed"
+				return undefined
 			}
-
-			let admission = admissions.get(dlineTid)
-			if (!admission) {
-				throw new Error(`Prepared admission is missing for tool=${tool.name}`)
-			}
-			if (admission.outcome === "rejected") {
+			if (prepared.outcome === "rejected") {
 				const rejected = await this.ports.runtime.dispatch({ type: "BLOCK_ADMISSION_REJECTED", turnId, dlineTid })
-				if (!rejected.accepted) {
-					const state = this.ports.runtime.getState()
-					if (this.ports.task.isAborted() || state.phase === TaskPhase.CANCELLING) return "halt_turn"
-					throw new Error(`Block admission rejection was rejected: ${rejected.error?.code ?? "invalid_runtime_event"}`)
-				}
-				await this.ports.block.commitInterruptedResult(tool, admission.rejection.message)
+				if (!rejected.accepted) throw new Error(`Block admission rejection was rejected: ${rejected.error?.code ?? "invalid_runtime_event"}`)
+				session.markAdmissionSettled(index)
+				await this.ports.block.commitInterruptedResult(tool, prepared.rejection.message)
 				this.markFinalizedToolPresented(tool)
-				return "completed"
+				return undefined
 			}
-
-			if (admission.confirm) {
-				admission = await admission.confirm()
-				admissions.set(dlineTid, admission)
-			}
-			if (
-				runtimeBlock.phase === BlockPhase.AUTO_EXECUTING &&
-				admission.decision.kind !== "automatic" &&
-				admission.decision.kind !== "none"
-			) {
-				const reclassified = await this.ports.runtime.dispatch({ type: "BLOCK_ADMISSION_REVOKED", turnId, dlineTid })
-				if (!reclassified.accepted) {
-					throw new Error(`Block admission reclassification was rejected: ${reclassified.error?.code ?? "invalid_runtime_event"}`)
+			let admission = prepared
+			if (admission.prepareApproval) {
+				const approvalPrepared = await admission.prepareApproval()
+				if (approvalPrepared.outcome === "rejected") {
+					const rejected = await this.ports.runtime.dispatch({ type: "BLOCK_ADMISSION_REJECTED", turnId, dlineTid })
+					if (!rejected.accepted) {
+						throw new Error(`Block admission rejection was rejected: ${rejected.error?.code ?? "invalid_runtime_event"}`)
+					}
+					session.markAdmissionSettled(index)
+					await this.ports.block.commitInterruptedResult(tool, approvalPrepared.rejection.message)
+					this.markFinalizedToolPresented(tool)
+					return undefined
 				}
-				return "retry_admission"
+				admission = approvalPrepared
 			}
-
-			if (runtimeBlock.phase === BlockPhase.STREAMING) {
-				if (admission.decision.kind === "manual" || admission.decision.kind === "ai_approver") {
-					const presentation = admission.presentation
-					if (!presentation) {
-						throw new Error(`Manual admission is missing approval presentation: tool=${tool.name}`)
-					}
-					const required = await this.ports.runtime.dispatch({ type: "BLOCK_APPROVAL_REQUIRED", turnId, dlineTid })
-					if (!required.accepted) {
+			admissions.set(dlineTid, admission)
+			const resolveReadyState = async (): Promise<ToolPreflightResult<void> | undefined> => {
+				runtimeBlock = this.ports.runtime.getState().turn?.blocks.find((block) => block.dlineTid === dlineTid)
+				if (!runtimeBlock || this.isTerminalRuntimeBlock(runtimeBlock.phase)) {
+					session.markAdmissionSettled(index)
+					if (runtimeBlock) await this.ensureTerminalToolResult(tool, runtimeBlock.phase)
+					this.markFinalizedToolPresented(tool)
+					return undefined
+				}
+				if (runtimeBlock.phase === BlockPhase.STREAMING) {
+					const ready = await this.ports.runtime.dispatch({ type: "BLOCK_READY", turnId, dlineTid })
+					if (!ready.accepted) {
 						const state = this.ports.runtime.getState()
-						if (this.ports.task.isAborted() || state.phase === TaskPhase.CANCELLING) return "halt_turn"
-						throw new Error(`Block approval request rejected: ${required.error?.code ?? "invalid_runtime_event"}`)
+						if (this.ports.task.isAborted() || state.phase === TaskPhase.CANCELLING) return undefined
+						throw new Error(`Block readiness rejected: ${ready.error?.code ?? "invalid_runtime_event"}`)
 					}
-
-					const approvalOutcome = await this.ports.approval.request(tool, presentation)
-					const approved = approvalOutcome.actionId === "approve" || approvalOutcome.actionId === "confirm_utility"
+				}
+				return admission
+			}
+			const requiresManualAdmission = (
+				candidate: Extract<ToolPreflightResult<void>, { outcome: "admitted" }>,
+			): boolean => candidate.decision.kind === "manual" || candidate.decision.kind === "ai_approver"
+			const confirmForScheduling = async (): Promise<boolean> => {
+				if (!admission.confirm) return true
+				const confirmed = await admission.confirm()
+				if (confirmed.outcome === "rejected") {
+					const rejected = await this.ports.runtime.dispatch({ type: "BLOCK_ADMISSION_REJECTED", turnId, dlineTid })
+					if (!rejected.accepted) {
+						throw new Error(`Block admission rejection was rejected: ${rejected.error?.code ?? "invalid_runtime_event"}`)
+					}
+					session.markAdmissionSettled(index)
+					await this.ports.block.commitInterruptedResult(tool, confirmed.rejection.message)
+					this.markFinalizedToolPresented(tool)
+					return false
+				}
+				admission = confirmed
+				admissions.set(dlineTid, admission)
+				return true
+			}
+			if (!requiresManualAdmission(admission)) {
+				if (!(await confirmForScheduling())) return undefined
+				if (!requiresManualAdmission(admission)) return resolveReadyState()
+			}
+			return withManualAdmissionSlot(async () => {
+				runtimeBlock = this.ports.runtime.getState().turn?.blocks.find((block) => block.dlineTid === dlineTid)
+				if (!runtimeBlock || this.isTerminalRuntimeBlock(runtimeBlock.phase)) return resolveReadyState()
+				const presentation = admission.presentation
+				if (!presentation) throw new Error(`Manual admission is missing approval presentation: tool=${tool.name}`)
+				if (runtimeBlock.phase === BlockPhase.STREAMING) {
+					const required = await this.ports.runtime.dispatch({ type: "BLOCK_APPROVAL_REQUIRED", turnId, dlineTid })
+					if (!required.accepted) throw new Error(`Block approval request rejected: ${required.error?.code ?? "invalid_runtime_event"}`)
+				}
+				const approvalOutcome = await this.ports.approval.request(tool, presentation)
+				const approved = approvalOutcome.actionId === "approve" || approvalOutcome.actionId === "confirm_utility"
+				runtimeBlock = this.ports.runtime.getState().turn?.blocks.find((block) => block.dlineTid === dlineTid)
+				if (runtimeBlock?.phase === BlockPhase.AWAITING_APPROVAL) {
 					const resolved = await this.ports.runtime.dispatch({
 						type: approved ? "BLOCK_APPROVED" : "BLOCK_REJECTED",
 						turnId,
 						dlineTid,
 					})
-					if (!resolved.accepted) {
-						const state = this.ports.runtime.getState()
-						if (this.ports.task.isAborted() || state.phase === TaskPhase.CANCELLING) return "halt_turn"
-						throw new Error(`Block approval resolution rejected: ${resolved.error?.code ?? "invalid_runtime_event"}`)
-					}
-					if (!approved) {
-						await this.ports.block.commitInterruptedResult(tool, "The tool was rejected by the user.")
-						this.markFinalizedToolPresented(tool)
-						return "completed"
-					}
-					runtimeBlock = resolved.next.turn?.blocks.find((block) => block.dlineTid === dlineTid)
-				} else {
-					const ready = await this.ports.runtime.dispatch({ type: "BLOCK_READY", turnId, dlineTid })
-					if (!ready.accepted) {
-						const state = this.ports.runtime.getState()
-						if (this.ports.task.isAborted() || state.phase === TaskPhase.CANCELLING) return "halt_turn"
-						throw new Error(`Block readiness rejected: ${ready.error?.code ?? "invalid_runtime_event"}`)
-					}
-					runtimeBlock = ready.next.turn?.blocks.find((block) => block.dlineTid === dlineTid)
+					if (!resolved.accepted) throw new Error(`Block approval resolution rejected: ${resolved.error?.code ?? "invalid_runtime_event"}`)
 				}
-			}
+				if (!approved) {
+					session.markAdmissionSettled(index)
+					await this.ports.block.commitInterruptedResult(tool, "The tool was rejected by the user.")
+					this.markFinalizedToolPresented(tool)
+					return undefined
+				}
+				if (!(await confirmForScheduling())) return undefined
+				admission = { ...admission, confirm: undefined, manualApprovalSatisfied: true }
+				admissions.set(dlineTid, admission)
+				return admission
+			})
+		}
 
-			if (!runtimeBlock) {
-				throw new Error(`Canonical runtime block disappeared for tool=${tool.name}`)
-			}
-			if (runtimeBlock.requiresApproval && runtimeBlock.phase === BlockPhase.STREAMING) {
-				throw new Error(`Tool handler cannot start its approval interaction: tool=${tool.name}`)
-			}
+		const runBlockLifecycle = async (
+			tool: ToolUse,
+			admission: import("./ToolPreflight").ToolPreflightAdmission<void>,
+		): Promise<BlockLifecycleOutcome> => {
+			if (this.ports.task.isAborted() || !this.ports.task.isCurrentTask()) return "halt_turn"
+			const dlineTid = tool.dline_tid
+			if (!dlineTid) return "completed"
+
+			let runtimeBlock = this.ports.runtime.getState().turn?.blocks.find((block) => block.dlineTid === dlineTid)
+			if (!runtimeBlock) throw new Error(`Canonical runtime block is missing for tool=${tool.name}`)
 			if (this.isTerminalRuntimeBlock(runtimeBlock.phase)) {
 				await this.ensureTerminalToolResult(tool, runtimeBlock.phase)
 				this.markFinalizedToolPresented(tool)
@@ -229,13 +268,10 @@ export class TurnDriver {
 
 			await this.ports.block.awaitInitialCheckpoint(tool.name)
 
-			if (admission.decision.kind === "automatic") {
-				let currentAdmission = this.ports.block.prepareAdmission(tool)
-				if (currentAdmission.outcome === "admitted" && currentAdmission.confirm) {
-					currentAdmission = await currentAdmission.confirm()
-				}
+			if (admission.decision.kind === "automatic" && admission.manualApprovalSatisfied !== true) {
+				const currentAdmission = admission.refreshDecision?.() ?? admission
 				admissions.set(dlineTid, currentAdmission)
-				if (currentAdmission.outcome !== "admitted" || currentAdmission.decision.kind !== "automatic") {
+				if (currentAdmission.decision.kind !== "automatic") {
 					const revoked = await this.ports.runtime.dispatch({ type: "BLOCK_ADMISSION_REVOKED", turnId, dlineTid })
 					if (!revoked.accepted) {
 						const state = this.ports.runtime.getState()
@@ -291,24 +327,37 @@ export class TurnDriver {
 			return "completed"
 		}
 
-		while (true) {
-			const currentTurn = this.ports.runtime.getState().turn
-			if (!currentTurn || currentTurn.turnId !== turnId) {
-				throw new Error("Canonical runtime turn disappeared before scheduling")
-			}
-			let outcome: BlockLifecycleOutcome = "completed"
-			if (!this.ports.scheduler.canRunConcurrently(currentTurn, toolUses, admissions)) {
-				for (const tool of toolUses) {
-					outcome = await runBlockLifecycle(tool)
-					if (outcome !== "completed") break
+		const outcome = await this.ports.scheduler.runTurn(toolUses, async (session) => {
+			const processBlock = async (tool: ToolUse, index: number): Promise<BlockLifecycleOutcome> => {
+				let prepared = admissions.get(tool.dline_tid ?? "")
+				if (!prepared) throw new Error(`Prepared admission is missing for tool=${tool.name}`)
+				while (true) {
+					const resolved = await resolveBlockAdmission(tool, index, prepared, session)
+					if (!resolved || resolved.outcome === "rejected") return "completed"
+					prepared = resolved
+					const executionOutcome = await session.submit(tool, index, resolved, () => runBlockLifecycle(tool, resolved))
+					if (executionOutcome !== "retry_admission") return executionOutcome
+					prepared = admissions.get(tool.dline_tid ?? "") ?? resolved
 				}
-			} else {
-				outcome = await this.ports.scheduler.runThroughPool(toolUses, admissions, runBlockLifecycle)
 			}
-			if (outcome === "halt_turn") return
-			if (outcome === "retry_admission") continue
-			break
-		}
+			const firstRejectedIndex = toolUses.findIndex((tool) => admissions.get(tool.dline_tid ?? "")?.outcome === "rejected")
+			if (firstRejectedIndex >= 0) {
+				for (let index = 0; index <= firstRejectedIndex; index += 1) {
+					const blockOutcome = await processBlock(toolUses[index], index)
+					if (blockOutcome === "halt_turn") return blockOutcome
+				}
+				for (let index = firstRejectedIndex + 1; index < toolUses.length; index += 1) {
+					session.markAdmissionSettled(index)
+					const block = this.ports.runtime.getState().turn?.blocks.find((candidate) => candidate.dlineTid === toolUses[index].dline_tid)
+					if (block) await this.ensureTerminalToolResult(toolUses[index], block.phase)
+					this.markFinalizedToolPresented(toolUses[index])
+				}
+				return "completed"
+			}
+			const outcomes = await Promise.all(toolUses.map((tool, index) => processBlock(tool, index)))
+			return outcomes.includes("halt_turn") ? "halt_turn" : "completed"
+		})
+		if (outcome === "halt_turn") return
 
 		if (compactionFitInput) this.ports.task.applyCompactionFit(compactionFitInput)
 

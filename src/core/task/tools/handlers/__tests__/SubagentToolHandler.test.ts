@@ -972,9 +972,9 @@ describe("SubagentToolHandler", () => {
 		assert.match(String(result), /were not started/)
 	})
 
-	it("refuses to start a batch whose Profile becomes unavailable before execution", async () => {
-		// Planning validates the Profile. Re-checking immediately before start
-		// keeps a disabled Profile from silently falling back to parent credentials.
+	it("executes the frozen batch plan when the Profile catalogue changes after preparation", async () => {
+		// The approved object is the prepared agent/profile binding. A later
+		// catalogue change must not re-plan or silently fall back to another Profile.
 		const { config, callbacks } = createConfig({ autoApproveSafe: false, autoApproveAll: false })
 		stubEnabledProfiles(["fast-reviewer"])
 		vi.spyOn(AgentConfigModule, "resolveAgentConfig").mockResolvedValue({
@@ -994,7 +994,22 @@ describe("SubagentToolHandler", () => {
 			if (type === "use_subagents") stubEnabledProfiles([])
 			return undefined
 		})
-		const runSpy = vi.spyOn(SubagentRunner.prototype, "run")
+		const runSpy = vi.spyOn(SubagentRunner.prototype, "run").mockResolvedValue({
+			status: "completed",
+			result: "frozen plan completed",
+			stats: {
+				toolCalls: 0,
+				inputTokens: 0,
+				outputTokens: 0,
+				cacheWriteTokens: 0,
+				cacheReadTokens: 0,
+				totalCost: 0,
+				currency: "USD",
+				contextTokens: 0,
+				contextWindow: 200000,
+				contextUsagePercentage: 0,
+			},
+		})
 
 		const handler = new UseSubagentsToolHandler()
 		const result = await handler.execute(config, {
@@ -1009,8 +1024,8 @@ describe("SubagentToolHandler", () => {
 			ts: Date.now(),
 		})
 
-		assert.match(String(result), /became unavailable while this batch was waiting for approval/)
-		assert.equal(runSpy.mock.calls.length, 0, "no subagent may start with a Profile that is no longer enabled")
+		assert.match(String(result), /frozen plan completed/)
+		assert.equal(runSpy.mock.calls.length, 1, "execution must consume the plan that was prepared before approval")
 	})
 
 	it("lists default and bounded configured names for an unknown stable subagent", async () => {
@@ -1176,6 +1191,65 @@ describe("SubagentToolHandler", () => {
 			},
 		})
 		await delay(0)
+	})
+
+	it("hands a foreground batch to the background atomically without releasing its subagent slot", async () => {
+		const { config } = createConfig({ autoApproveSafe: true, autoApproveAll: true, maxParallelSubagents: 1 })
+		const activityStore = new TaskActivityStore(config.taskId)
+		config.activityStore = activityStore
+		const runResolvers: Array<(result: SubagentRunResult) => void> = []
+		vi.spyOn(SubagentRunner.prototype, "run").mockImplementation(
+			() => new Promise<SubagentRunResult>((resolve) => runResolvers.push(resolve)),
+		)
+		const handler = new UseSubagentsToolHandler()
+		const execution = handler.execute(config, {
+			type: "tool_use",
+			name: ClineDefaultTool.USE_SUBAGENTS,
+			params: {
+				subagents: JSON.stringify([
+					{ task: "first", context: "ctx-1" },
+					{ task: "second", context: "ctx-2" },
+				]),
+			},
+			partial: false,
+			ts: Date.now(),
+		})
+		for (let attempt = 0; attempt < 20 && activityStore.list().length < 2; attempt += 1) await delay(0)
+		assert.equal(runResolvers.length, 1, "the second batch item should queue behind the shared budget")
+		const foregroundIds = activityStore.list().map((activity) => activity.activityId)
+		assert.equal(foregroundIds.length, 2)
+		assert.deepEqual(await activityStore.moveToBackground([foregroundIds[0]]), foregroundIds)
+		const result = await execution
+		assert.match(String(result), /Continued background subagent batch job: subagent_batch_/)
+		assert.equal(config.subagentFanoutBudget?.state().running, 1)
+		assert.equal(
+			activityStore.list().filter((activity) => activity.executionMode === "background").length,
+			2,
+			"all batch activities must transfer ownership together",
+		)
+
+		const completed = (label: string): SubagentRunResult => ({
+			status: "completed",
+			result: label,
+			stats: {
+				toolCalls: 0,
+				inputTokens: 0,
+				outputTokens: 0,
+				cacheWriteTokens: 0,
+				cacheReadTokens: 0,
+				totalCost: 0,
+				currency: "USD",
+				contextTokens: 0,
+				contextWindow: 200000,
+				contextUsagePercentage: 0,
+			},
+		})
+		runResolvers[0]?.(completed("first complete"))
+		for (let attempt = 0; attempt < 20 && runResolvers.length < 2; attempt += 1) await delay(0)
+		assert.equal(runResolvers.length, 2, "handoff must keep the first budget slot until its runner stops")
+		runResolvers[1]?.(completed("second complete"))
+		for (let attempt = 0; attempt < 20 && config.subagentFanoutBudget?.state().running !== 0; attempt += 1) await delay(0)
+		assert.equal(config.subagentFanoutBudget?.state().running, 0)
 	})
 
 	it("registers soft Finish and exposes Retry only after a retryable background failure", async () => {
@@ -1479,7 +1553,7 @@ describe("SubagentToolHandler", () => {
 		)
 	})
 
-	it("replaces partial message when subagents are disabled with prompts in payload", async () => {
+	it("rejects a disabled batch before opening or replacing presentation", async () => {
 		const { config, callbacks, taskState } = createConfig({ subagentsEnabled: false })
 		const handler = new UseSubagentsToolHandler()
 		const blockTs = Date.now()
@@ -1494,16 +1568,11 @@ describe("SubagentToolHandler", () => {
 
 		assert.ok((result as string).includes("disabled"))
 		assert.equal(taskState.consecutiveMistakeCount, 0)
-		const allUseCalls = callbacks.say.mock.calls
-		const useSubagentsCall = allUseCalls.find((c) => c[0] === "use_subagents")
-		assert.ok(useSubagentsCall, "should have called say with use_subagents")
-		assert.equal(useSubagentsCall[4], false) // partial=false
-		assert.equal(useSubagentsCall[5], blockTs) // existingTs = block.ts
-		const payload = JSON.parse(useSubagentsCall[1])
-		assert.ok(Array.isArray(payload.prompts))
-		assert.equal(payload.prompts.length, 0) // empty prompts, error card via message
-		assert.equal(payload.error, "subagentsDisabled")
-		assert.ok(payload.message && payload.message.length > 0, "should include error message")
+		assert.equal(
+			callbacks.say.mock.calls.some((call) => call[0] === "use_subagents"),
+			false,
+			"invalid Admission must not open a handler-owned presentation",
+		)
 	})
 
 	it("keeps fast background batch completion mapped to item entries", async () => {

@@ -1,4 +1,4 @@
-import type { ToolResponse } from "@core/task"
+import type { ClineToolResponseContent as ToolResponse } from "@shared/messages/content"
 
 /**
  * Approval feedback belonging to one specific tool execution.
