@@ -1,15 +1,11 @@
 import type { ToolUse } from "@core/assistant-message"
 import { getPrompt } from "@core/prompts/i18n"
 import { formatResponse } from "@core/prompts/responses"
-import { processFilesIntoText } from "@integrations/misc/extract-text"
-import { showSystemNotification } from "@integrations/notifications"
 import { ClineDefaultTool } from "@/shared/tools"
-import { NEW_TASK_FEEDBACK_CONTINUATION_MARKER } from "../../new-task/new-task-continuation"
 import type { ToolHandlerResult } from "../ToolExecutionResult"
 import type { IPartialBlockHandler, IToolHandler } from "../ToolExecutorCoordinator"
-import { interactionId, interactionTurnId, type TaskConfig } from "../types/TaskConfig"
+import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
-import { sayFeedbackOnce } from "../utils/UserFeedbackUtils"
 
 export class NewTaskHandler implements IToolHandler, IPartialBlockHandler {
 	readonly name = ClineDefaultTool.NEW_TASK
@@ -23,7 +19,7 @@ export class NewTaskHandler implements IToolHandler, IPartialBlockHandler {
 	 */
 	async handlePartialBlock(block: ToolUse, uiHelpers: StronglyTypedUIHelpers): Promise<void> {
 		const context = uiHelpers.removeClosingTag(block, "context", block.params.context)
-		await uiHelpers.ask(this.name, context, true, { existingTs: block.ts }).catch(() => {})
+		await uiHelpers.say("tool", context, undefined, undefined, true, block.ts)
 	}
 
 	async execute(config: TaskConfig, block: ToolUse): Promise<ToolHandlerResult> {
@@ -36,51 +32,14 @@ export class NewTaskHandler implements IToolHandler, IPartialBlockHandler {
 		}
 
 		config.taskState.consecutiveMistakeCount = 0
-
-		// Show notification if enabled
-		if (config.autoApprovalSettings.enableNotifications) {
-			showSystemNotification({
-				subtitle: "Dline wants to start a new task...",
-				message: `Dline is suggesting to start a new task with: ${context}`,
-			})
+		return {
+			response: formatResponse.toolResult(getPrompt("toolHandlers", "newTaskCreated")),
+			postCommit: {
+				type: "start_successor_task",
+				context,
+				functionId: block.function_id,
+				dlineTid: block.dline_tid,
+			},
 		}
-
-		const outcome = await config.interactions.open({
-			turnId: interactionTurnId(block),
-			interactionId: interactionId(block),
-			kind: "new_task",
-			presentation: context,
-			existingTs: block.ts,
-		})
-		if (outcome.actionId === "approve") {
-			return {
-				response: formatResponse.toolResult(getPrompt("toolHandlers", "newTaskCreated")),
-				postCommit: {
-					type: "start_successor_task",
-					context,
-					functionId: block.function_id,
-					dlineTid: block.dline_tid,
-				},
-			}
-		}
-
-		if (outcome.actionId !== "reject") {
-			throw new Error(`Unsupported New Task action: ${outcome.actionId}`)
-		}
-
-		const text = outcome.draft?.text ?? ""
-		const images = outcome.draft?.images
-		const newTaskFiles = outcome.draft?.files
-		let fileContentString = ""
-		if (newTaskFiles && newTaskFiles.length > 0) {
-			fileContentString = await processFilesIntoText(newTaskFiles)
-		}
-
-		await sayFeedbackOnce(config, "noButtonClicked", text, images, newTaskFiles)
-		return formatResponse.toolResult(
-			`${NEW_TASK_FEEDBACK_CONTINUATION_MARKER}\nThe user provided feedback instead of creating a new task:\n<feedback>\n${text}\n</feedback>`,
-			images,
-			fileContentString,
-		)
 	}
 }

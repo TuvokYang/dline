@@ -1,6 +1,7 @@
 import { strict as assert } from "node:assert"
 import { describe, it } from "vitest"
 import { SubagentFanoutBudget, type SubagentSlot } from "../SubagentFanoutBudget"
+import { SubagentRunner } from "../SubagentRunner"
 
 /**
  * A runner interrupted while a tool is still executing resolves early: the run
@@ -103,7 +104,6 @@ describe("SubagentFanoutBudget interrupt accounting", () => {
  */
 describe("SubagentRunner abandoned work deadline", () => {
 	it("reports failure to settle instead of waiting forever", async () => {
-		const { SubagentRunner } = await import("../SubagentRunner")
 		const runner = Object.create(SubagentRunner.prototype) as {
 			abandonedToolExecutions: Set<Promise<unknown>>
 			whenAbandonedWorkSettled(timeoutMs?: number): Promise<boolean>
@@ -120,7 +120,6 @@ describe("SubagentRunner abandoned work deadline", () => {
 	})
 
 	it("reports success once the abandoned tool has stopped", async () => {
-		const { SubagentRunner } = await import("../SubagentRunner")
 		const runner = Object.create(SubagentRunner.prototype) as {
 			abandonedToolExecutions: Set<Promise<unknown>>
 			whenAbandonedWorkSettled(timeoutMs?: number): Promise<boolean>
@@ -139,7 +138,6 @@ describe("SubagentRunner abandoned work deadline", () => {
 		// A runner outlives its attempts. If every attempt re-claimed the same
 		// wedged tool, a single stuck tool would keep shrinking the allowance
 		// until unrelated items could never be admitted.
-		const { SubagentRunner } = await import("../SubagentRunner")
 		const runner = Object.create(SubagentRunner.prototype) as {
 			abandonedToolExecutions: Set<Promise<unknown>>
 			claimedAbandonedWork: Set<Promise<unknown>>
@@ -168,7 +166,6 @@ describe("SubagentRunner abandoned work deadline", () => {
 			for (let index = 0; index < 8; index++) await Promise.resolve()
 		}
 		const budget = new SubagentFanoutBudget({ limit: 2 })
-		const { SubagentRunner } = await import("../SubagentRunner")
 		const runner = Object.create(SubagentRunner.prototype) as {
 			abandonedToolExecutions: Set<Promise<unknown>>
 			claimedAbandonedWork: Set<Promise<unknown>>

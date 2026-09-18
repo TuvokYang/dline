@@ -1,6 +1,9 @@
-import type { AssistantMessageContent, ToolUse } from "@core/assistant-message"
-import { Task } from "@core/task"
+import type { ToolUse } from "@core/assistant-message"
 import { BlockPhase } from "@core/task/BlockPhaseMachine"
+import type { ToolApprovalPresentation, ToolPreflightResult } from "@core/task/executors/tool/ToolPreflight"
+import type { InteractionOutcome } from "@core/task/interaction/InteractionCoordinator"
+import { TurnDriver } from "@core/task/executors/tool/TurnDriver"
+import { TurnToolScheduler } from "@core/task/executors/tool/TurnToolScheduler"
 import type { TaskEffectPorts } from "@core/task/runtime/TaskEffectRunner"
 import { TaskRuntime } from "@core/task/runtime/TaskRuntime"
 import { createTaskRuntimeState } from "@core/task/runtime/TaskRuntimeState"
@@ -55,6 +58,8 @@ interface TurnOptions {
 	params?: Record<string, string>
 	/** Whether the whole turn is known to need no user approval. */
 	autoApproved?: boolean
+	prepareAdmission?: (tool: ToolUse) => ToolPreflightResult<void>
+	requestApproval?: (tool: ToolUse, presentation: ToolApprovalPresentation) => Promise<InteractionOutcome>
 }
 
 /**
@@ -76,6 +81,8 @@ function createTurn({
 	toolName = ClineDefaultTool.LIST_FILES,
 	params,
 	autoApproved = true,
+	prepareAdmission,
+	requestApproval,
 }: TurnOptions) {
 	const toolBlocks: ToolUse[] = Array.from({ length: blockCount }, (_, index) => ({
 		type: "tool_use",
@@ -117,52 +124,57 @@ function createTurn({
 		ports,
 	)
 
-	const fakeTask = Object.assign(Object.create(Task.prototype), {
-		taskId: "task-concurrency",
-		controller: { task: { taskId: "task-concurrency" } },
-		initialCheckpointCommitPromise: undefined,
-		reRenderUpdatedPartialBlocks: async () => undefined,
+	const scheduler = new TurnToolScheduler({
+		readConfiguredLimit: () => configuredLimit,
 		isParallelToolCallingEnabled: () => parallel,
-		stateManager: {
-			getGlobalSettingsKey: (key: string) => (key === "maxParallelToolCalls" ? configuredLimit : undefined),
+	})
+	const requestApprovalSpy = vi.fn(requestApproval ?? (async () => ({ actionId: "approve" as const })))
+	const driver = new TurnDriver({
+		task: {
+			getTaskId: () => "task-concurrency",
+			isAborted: () => false,
+			isCurrentTask: () => true,
+			getAssistantMessageContent: () => toolBlocks,
+			getAssistantApiIndex: () => 1,
+			buildTurn: () => runtimeBlocks,
+			isParallelToolCallingEnabled: () => parallel,
+			getPendingUserMessageContent: () => [],
+			markPartialToolComplete: vi.fn(),
+			recordToolCall: vi.fn(),
+			markUserMessageContentReady: vi.fn(),
+			applyCompactionFit: vi.fn(),
 		},
-		dispatchRuntime: runtime.dispatch.bind(runtime),
-		taskController: {
-			buildTurn: vi.fn(),
-			getBlocks: () => runtimeBlocks,
-			hasAnyRejection: () => false,
-			shouldSkip: () => false,
+		runtime: {
+			getState: () => runtime.getState(),
+			dispatch: (event) => runtime.dispatch(event),
 		},
-		toolExecutor: {
-			isBlockApproved: () => true,
-			executeTool: vi.fn(async () => undefined),
-			takePostCommitDirective: () => undefined,
-			isTurnFullyAutoApproved: async () => autoApproved,
+		block: {
+			prepareAdmission:
+				prepareAdmission ??
+				(() => ({
+					outcome: "admitted",
+					decision: { kind: autoApproved ? "automatic" : "manual", scope: "read_workspace", ceiling: "auto" },
+					presentation: autoApproved ? undefined : { ask: "tool", body: "Approve tool", notify: false },
+					lanes: [],
+					run: async () => undefined,
+				})),
+			commitInterruptedResult: vi.fn(async () => undefined),
+			awaitInitialCheckpoint: vi.fn(async () => undefined),
 		},
-		taskRuntime: runtime,
-		messageStateHandler: { apiConversationHistory: [{ role: "user" }, { role: "assistant" }] },
-		taskState: {
-			abort: false,
-			assistantMessageContent: toolBlocks as AssistantMessageContent[],
-			currentStreamingContentIndex: 0,
-			didAlreadyUseTool: false,
-			didCompleteReadingStream: true,
-			lastRenderedPartialByTs: new Map<number, string>(),
-			partialToolLifecycleByTs: new Map<number, "partial-shown" | "complete-running" | "complete-done">(),
-			presentAssistantMessageHasPendingUpdates: false,
-			presentAssistantMessageLocked: false,
-			userMessageContentReady: false,
+		approval: { request: requestApprovalSpy },
+		scheduler,
+		provider: { registerExecution: vi.fn() },
+		postCommit: {
+			takeDirective: () => undefined,
+			startSuccessor: vi.fn(async () => undefined),
 		},
-		markFinalizedToolPresented: vi.fn(),
 	})
 
-	return { fakeTask, runtime, ports }
+	return { fakeTask: driver, runtime, ports, requestApproval: requestApprovalSpy }
 }
 
-function runTurn(fakeTask: unknown): Promise<void> {
-	return (
-		Task.prototype as unknown as { executeFinalizedAssistantTurn: () => Promise<void> }
-	).executeFinalizedAssistantTurn.call(fakeTask)
+function runTurn(driver: unknown): Promise<void> {
+	return (driver as TurnDriver).execute()
 }
 
 describe("finalized turn tool concurrency", () => {
@@ -266,6 +278,34 @@ describe("finalized turn tool concurrency", () => {
 		expect(runtime.getState().turn?.blocks.every((block) => block.phase === BlockPhase.COMPLETED)).toBe(true)
 	})
 
+	it("commits a rejected Admission before any later sibling can start", async () => {
+		const started: string[] = []
+		const { fakeTask, runtime } = createTurn({
+			blockCount: 3,
+			parallel: true,
+			prepareAdmission: (tool) =>
+				tool.dline_tid === "dline-read-1"
+					? { outcome: "rejected", rejection: { reason: "invalid_parameters", message: "invalid first tool" } }
+					: {
+							outcome: "admitted",
+							decision: { kind: "automatic", scope: "read_workspace", ceiling: "auto" },
+							lanes: [],
+							run: async () => undefined,
+						},
+			executeTool: async ({ dlineTid }) => {
+				started.push(dlineTid)
+			},
+		})
+
+		await expect(runTurn(fakeTask)).resolves.toBeUndefined()
+		expect(started).toEqual([])
+		expect(runtime.getState().turn?.blocks.map((block) => block.phase)).toEqual([
+			BlockPhase.REJECTED,
+			BlockPhase.SKIPPED,
+			BlockPhase.SKIPPED,
+		])
+	})
+
 	it("runs a turn that may ask for approval serially", async () => {
 		const recorder = createOverlapRecorder()
 		const { fakeTask } = createTurn({
@@ -287,6 +327,46 @@ describe("finalized turn tool concurrency", () => {
 
 		expect(recorder.peak).toBe(1)
 		expect(recorder.admitted).toHaveLength(4)
+	})
+
+	it("re-resolves a queued automatic grant after permit acquisition and returns it to manual admission", async () => {
+		let automatic = true
+		let releaseFirst: (() => void) | undefined
+		const firstStarted = new Promise<void>((resolve) => {
+			releaseFirst = resolve
+		})
+		const started: string[] = []
+		const prepareAdmission = vi.fn((tool: ToolUse): ToolPreflightResult<void> => ({
+			outcome: "admitted",
+			decision: { kind: automatic ? "automatic" : "manual", scope: "read_workspace", ceiling: "auto" },
+			presentation: automatic ? undefined : { ask: "tool", body: `Approve ${tool.dline_tid}`, notify: false },
+			lanes: [],
+			run: async () => undefined,
+		}))
+		const { fakeTask, requestApproval, runtime } = createTurn({
+			blockCount: 2,
+			parallel: true,
+			configuredLimit: 1,
+			prepareAdmission,
+			executeTool: async ({ dlineTid }) => {
+				started.push(dlineTid)
+				if (dlineTid === "dline-read-1") await firstStarted
+			},
+		})
+
+		const turn = runTurn(fakeTask)
+		await vi.waitFor(() => expect(started).toEqual(["dline-read-1"]))
+		automatic = false
+		releaseFirst?.()
+		await expect(turn).resolves.toBeUndefined()
+
+		expect(started).toEqual(["dline-read-1", "dline-read-2"])
+		expect(requestApproval).toHaveBeenCalledTimes(1)
+		expect(requestApproval).toHaveBeenCalledWith(
+			expect.objectContaining({ dline_tid: "dline-read-2" }),
+			expect.objectContaining({ body: "Approve dline-read-2" }),
+		)
+		expect(runtime.getState().turn?.blocks.every((block) => block.phase === BlockPhase.COMPLETED)).toBe(true)
 	})
 
 	it("settles every block exactly once when one fails mid-turn", async () => {

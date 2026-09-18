@@ -140,67 +140,6 @@ describe("SpawnTaskHandler", () => {
 		})
 	})
 
-	describe("execute — user denies spawn", () => {
-		it("should return toolDenied when user clicks no", async () => {
-			const config = {
-				taskId: "parent-1",
-				taskState: { consecutiveMistakeCount: 0 },
-				taskController: { rejectActiveBlock: () => {} },
-				interactions: {
-					open: async () => ({ actionId: "reject" }),
-				},
-				callbacks: {
-					ask: async () => ({
-						response: "noButtonClicked",
-						text: undefined,
-						images: undefined,
-					}),
-					say: async () => {},
-				},
-				services: { stateManager: {} },
-			} as any
-
-			const result = await handler.execute(config, {
-				name: "spawn_task",
-				dline_tid: "tid-deny",
-				params: { task: "Test task", mode: "plan" },
-			} as any)
-
-			result.should.match(/denied|not approved/i)
-		})
-
-		it("should return feedback when user provided text instead of approving", async () => {
-			const config = {
-				taskId: "parent-1",
-				taskState: { consecutiveMistakeCount: 0 },
-				taskController: { rejectActiveBlock: () => {} },
-				interactions: {
-					open: async () => ({
-						actionId: "reject",
-						draft: { text: "I want to modify the task first", images: [], files: [] },
-					}),
-				},
-				callbacks: {
-					ask: async () => ({
-						response: "text",
-						text: "I want to modify the task first",
-						images: undefined,
-					}),
-					say: async () => {},
-				},
-				services: { stateManager: {} },
-			} as any
-
-			const result = await handler.execute(config, {
-				name: "spawn_task",
-				dline_tid: "tid-feedback",
-				params: { task: "Test task", mode: "act", context: "some context" },
-			} as any)
-
-			result.should.match(/feedback/)
-		})
-	})
-
 	describe("execute — approved spawn", () => {
 		it.each([
 			["plan", "parent-plan-profile"],
@@ -220,12 +159,10 @@ describe("SpawnTaskHandler", () => {
 				await options?.beforeStart?.("child-1")
 				return "child-1"
 			})
-			const open = vi.fn(async () => ({ actionId: "approve" }))
 			const config = {
 				taskId: "parent-1",
 				mode: "plan",
 				taskState: { consecutiveMistakeCount: 0, abort: false },
-				interactions: { open },
 				callbacks: { say: async () => {} },
 				services: {
 					stateManager: {
@@ -249,12 +186,6 @@ describe("SpawnTaskHandler", () => {
 			])
 
 			expect(result).not.toBe("SPAWN_BLOCKED")
-			expect(open).toHaveBeenCalledWith(
-				expect.objectContaining({
-					kind: "spawn_task_approval",
-					presentation: JSON.stringify({ task: "Background child", mode: requestedMode, context: "Context" }),
-				}),
-			)
 			expect(result).toContain(`${requestedMode.toUpperCase()} task`)
 			expect(result).toContain("child-1")
 			expect(spawnMocks.initTask).toHaveBeenCalledWith(

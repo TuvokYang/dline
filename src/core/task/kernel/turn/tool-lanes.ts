@@ -87,6 +87,29 @@ export interface ToolLaneContext {
 	canonicalWritePaths?: readonly string[]
 }
 
+/** Minimal structural input accepted by the pure lane resolver. */
+export interface ToolLaneBlock {
+	name: string
+	params?: Record<string, unknown>
+}
+
+const PATH_WRITING_TOOLS: ReadonlySet<string> = new Set([
+	ClineDefaultTool.FILE_NEW,
+	ClineDefaultTool.FILE_EDIT,
+	ClineDefaultTool.NEW_RULE,
+])
+
+/** Derive lane context from one finalized tool block without touching its target. */
+export function resolveLaneContext(tool: ToolLaneBlock): ToolLaneContext {
+	const serverName = tool.params?.server_name
+	const pathCandidate = tool.params?.path ?? tool.params?.absolutePath
+	const declaredPath = typeof pathCandidate === "string" && pathCandidate.length > 0 ? pathCandidate : undefined
+	return {
+		mcpServerName: typeof serverName === "string" ? serverName : undefined,
+		canonicalWritePaths: PATH_WRITING_TOOLS.has(tool.name) && declaredPath ? [declaredPath] : undefined,
+	}
+}
+
 /**
  * Lanes held by every built-in tool, before runtime context is applied.
  *

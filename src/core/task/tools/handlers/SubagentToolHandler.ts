@@ -4,6 +4,7 @@ import { readApiProfiles } from "@core/controller/file/getApiProfiles"
 import { resolveProfileReference } from "@core/profiles/profile-binding"
 import { getPrompt } from "@core/prompts/i18n"
 import { formatResponse } from "@core/prompts/responses"
+import { processFilesIntoText } from "@integrations/misc/extract-text"
 import {
 	ClineAskUseSubagents,
 	ClineSaySubagentStatus,
@@ -15,7 +16,6 @@ import { calculateApiUsageStatistics } from "@/shared/api-usage"
 import { Logger } from "@/shared/services/Logger"
 import { ClineDefaultTool } from "@/shared/tools"
 import type { ToolResponse } from "../../index"
-import { showNotificationForApproval } from "../../utils"
 import {
 	type AgentBaseConfig,
 	listEnabledAgentConfigs,
@@ -48,6 +48,7 @@ import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
 import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
 import { ToolResultUtils } from "../utils/ToolResultUtils"
+import { sayFeedbackOnce } from "../utils/UserFeedbackUtils"
 
 const LATER_REQUEST_RESULT_NOTICE = "Its final result will be available only in a later model request."
 
@@ -621,37 +622,27 @@ function captureToolTelemetry(
 	)
 }
 
-/**
- * Ask for approval unless auto-approval is enabled.
- * @param config Current task config.
- * @param block Tool use block.
- * @param toolName Tool name being approved.
- * @param askType Ask message type.
- * @param approvalBody Approval payload.
- * @param label Notification label.
- * @returns True when execution is approved.
- */
-async function approveSubagentUse(
+/** Present an admitted subagent request and consume optional approval feedback. */
+async function presentSubagentUse(
 	config: TaskConfig,
 	block: ToolUse,
 	toolName: ClineDefaultTool,
-	askType: "use_subagents",
 	approvalBody: string,
-	label: string,
-): Promise<boolean> {
+): Promise<void> {
 	const apiConfig = config.services.stateManager.getApiConfiguration()
 	const currentMode = config.services.stateManager.getGlobalSettingsKey("mode")
 	const provider = resolveProvider(apiConfig, currentMode)
-	const autoApproveResult = config.autoApprover?.shouldAutoApproveTool(toolName)
-	const [autoApproveSafe] = Array.isArray(autoApproveResult) ? autoApproveResult : [autoApproveResult, false]
-	if (autoApproveSafe) {
-		captureToolTelemetry(config, toolName, provider, true, true, block.isNativeToolCall)
-		return true
+	const outcome = block.dline_tid ? config.admissionOutcomes?.get(block.dline_tid) : undefined
+	const text = outcome?.draft?.text
+	const images = outcome?.draft?.images
+	const files = outcome?.draft?.files
+	if (text || images?.length || files?.length) {
+		const fileContent = files?.length ? await processFilesIntoText(files) : ""
+		ToolResultUtils.pushAdditionalToolFeedback(config.taskState.userMessageContent, text, images, fileContent)
+		await sayFeedbackOnce(config, "yesButtonClicked", text, images, files)
 	}
-	showNotificationForApproval(label, config.autoApprovalSettings.enableNotifications)
-	const didApprove = await ToolResultUtils.askApprovalAndPushFeedback(askType, approvalBody, config, block.ts)
-	captureToolTelemetry(config, toolName, provider, false, didApprove, block.isNativeToolCall)
-	return didApprove
+	await config.callbacks.say("use_subagents", approvalBody, undefined, undefined, false, block.ts)
+	captureToolTelemetry(config, toolName, provider, outcome === undefined, true, block.isNativeToolCall)
 }
 
 /**
@@ -817,13 +808,7 @@ export class UseSubagentToolHandler implements IFullyManagedTool {
 			task,
 			context,
 		}
-		const autoApproveResult = uiHelpers.shouldAutoApproveTool(this.name)
-		const [shouldAutoApprove] = Array.isArray(autoApproveResult) ? autoApproveResult : [autoApproveResult, false]
-		if (shouldAutoApprove) {
-			await uiHelpers.say("use_subagents", JSON.stringify(payload), undefined, undefined, true, block.ts)
-			return
-		}
-		uiHelpers.ask("use_subagents", JSON.stringify(payload), true, { existingTs: block.ts }).catch(() => undefined)
+		await uiHelpers.say("use_subagents", JSON.stringify(payload), undefined, undefined, true, block.ts)
 	}
 
 	/**
@@ -861,15 +846,7 @@ export class UseSubagentToolHandler implements IFullyManagedTool {
 			background: request.options.background,
 			timeoutSeconds: request.options.timeoutSeconds,
 		} satisfies ClineAskUseSubagents)
-		const approved = await approveSubagentUse(
-			config,
-			block,
-			this.name,
-			"use_subagents",
-			approvalBody,
-			`Dline wants to use the '${effectiveSubagentName}' subagent`,
-		)
-		if (!approved) return formatResponse.toolDenied()
+		await presentSubagentUse(config, block, this.name, approvalBody)
 
 		const entry: SubagentStatusItem = {
 			index: 1,
@@ -892,8 +869,7 @@ export class UseSubagentToolHandler implements IFullyManagedTool {
 				prompt: request.prompt,
 				timeoutSeconds: request.options.timeoutSeconds,
 				runner: () =>
-					runSubagent({
-						runner,
+					runBudgetedSubagent(getSubagentFanoutBudget(config), config.ulid, runner, {
 						prompt: request.prompt,
 						timeoutSeconds: request.options.timeoutSeconds,
 						onProgress: (update) => applyProgress(config, entry, update),
@@ -981,12 +957,16 @@ export class UseSubagentToolHandler implements IFullyManagedTool {
 			timeoutSeconds: request.options.timeoutSeconds,
 			runner: async () => {
 				try {
-					const result = await runSubagent({
-						runner: foregroundRunner,
-						prompt: request.prompt,
-						timeoutSeconds: request.options.timeoutSeconds,
-						onProgress: (update) => applyProgress(config, entry, update),
-					})
+					const result = await runBudgetedSubagent(
+						getSubagentFanoutBudget(config),
+						config.ulid,
+						foregroundRunner,
+						{
+							prompt: request.prompt,
+							timeoutSeconds: request.options.timeoutSeconds,
+							onProgress: (update) => applyProgress(config, entry, update),
+						},
+					)
 					resolveRunResult?.(result)
 					return result
 				} catch (error) {
@@ -1166,13 +1146,7 @@ export class UseSubagentsToolHandler implements IFullyManagedTool {
 		const prompts = streamed ? previewBatchPrompts(streamed) : []
 		if (prompts.length === 0) return
 		const partialMessage = JSON.stringify({ kind: "batch", prompts } satisfies ClineAskUseSubagents)
-		const autoApproveResult = uiHelpers.shouldAutoApproveTool(this.name)
-		const [shouldAutoApprove] = Array.isArray(autoApproveResult) ? autoApproveResult : [autoApproveResult, false]
-		if (shouldAutoApprove) {
-			await uiHelpers.say("use_subagents", partialMessage, undefined, undefined, true, block.ts)
-			return
-		}
-		uiHelpers.ask("use_subagents", partialMessage, true, { existingTs: block.ts }).catch(() => undefined)
+		await uiHelpers.say("use_subagents", partialMessage, undefined, undefined, true, block.ts)
 	}
 
 	/**
@@ -1251,15 +1225,7 @@ export class UseSubagentsToolHandler implements IFullyManagedTool {
 			background: request.options.background,
 			timeoutSeconds: request.options.timeoutSeconds,
 		} satisfies ClineAskUseSubagents)
-		const approved = await approveSubagentUse(
-			config,
-			block,
-			this.name,
-			"use_subagents",
-			approvalBody,
-			planned.length === 1 ? "Dline wants to use a subagent" : `Dline wants to use ${planned.length} subagents`,
-		)
-		if (!approved) return formatResponse.toolDenied()
+		await presentSubagentUse(config, block, this.name, approvalBody)
 		config.taskState.consecutiveMistakeCount = 0
 		// Approval can sit open long enough for a Profile to be deleted or
 		// disabled. The builder would silently fall back to the parent Act

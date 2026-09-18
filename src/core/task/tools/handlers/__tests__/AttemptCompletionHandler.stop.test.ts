@@ -50,7 +50,6 @@ function createConfig(
 			getModel: () => ({ id: "test-model", info: { supportsImages: false } }),
 		} as unknown as TaskConfig["api"],
 		autoApprovalSettings: { enableNotifications: false } as unknown as TaskConfig["autoApprovalSettings"],
-		autoApprover: { shouldAutoApproveTool: vi.fn().mockReturnValue([true, true]) } as unknown as TaskConfig["autoApprover"],
 		browserSettings: {} as unknown as TaskConfig["browserSettings"],
 		focusChainSettings: { enabled: false } as unknown as TaskConfig["focusChainSettings"],
 		services: {

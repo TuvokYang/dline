@@ -441,6 +441,7 @@ export async function updateSettings(controller: Controller, request: UpdateSett
 
 		if (request.enableParallelToolCalling !== undefined) {
 			controller.stateManager.setGlobalState("enableParallelToolCalling", !!request.enableParallelToolCalling)
+			controller.task?.notifyToolConcurrencyLimitChanged()
 		}
 
 		// Clamp on the way in as well as on the way out. Storing an out-of-range
@@ -452,6 +453,7 @@ export async function updateSettings(controller: Controller, request: UpdateSett
 				"maxParallelToolCalls",
 				resolveMaxParallelToolCalls(request.maxParallelToolCalls, true),
 			)
+			controller.task?.notifyToolConcurrencyLimitChanged()
 		}
 
 		if (request.maxParallelSubagents !== undefined) {
@@ -459,6 +461,7 @@ export async function updateSettings(controller: Controller, request: UpdateSett
 				"maxParallelSubagents",
 				resolveMaxParallelSubagents(request.maxParallelSubagents),
 			)
+			controller.task?.notifySubagentConcurrencyLimitChanged()
 		}
 
 		if (request.optOutOfRemoteConfig !== undefined) {

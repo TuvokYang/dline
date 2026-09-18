@@ -91,6 +91,7 @@ function createConfig(options?: {
 	autoApproveAll?: boolean
 	taskAskResponse?: "yesButtonClicked" | "noButtonClicked"
 	subagentsEnabled?: boolean
+	maxParallelSubagents?: number
 }) {
 	const taskState = new TaskState()
 	const askResponse = options?.taskAskResponse ?? "yesButtonClicked"
@@ -162,6 +163,9 @@ function createConfig(options?: {
 					}
 					if (key === "subagentsEnabled") {
 						return subagentsEnabled
+					}
+					if (key === "maxParallelSubagents") {
+						return options?.maxParallelSubagents
 					}
 					return undefined
 				},
@@ -265,7 +269,7 @@ describe("SubagentToolHandler", () => {
 		)
 	})
 
-	it("streams partial use_subagents approval as ask when not auto-approved", async () => {
+	it("streams partial use_subagents as presentation without opening approval", async () => {
 		const { config, callbacks } = createConfig({ autoApproveSafe: false, autoApproveAll: false })
 		const handler = new UseSubagentsToolHandler()
 		const uiHelpers = createUIHelpers(config)
@@ -286,11 +290,17 @@ describe("SubagentToolHandler", () => {
 			uiHelpers,
 		)
 
-		vitestExpect(callbacks.ask).toHaveBeenCalledWith("use_subagents", vitestExpect.any(String), true, {
-			existingTs: vitestExpect.any(Number),
-		})
+		vitestExpect(callbacks.say).toHaveBeenCalledWith(
+			"use_subagents",
+			vitestExpect.any(String),
+			undefined,
+			undefined,
+			true,
+			vitestExpect.any(Number),
+		)
+		vitestExpect(callbacks.ask).not.toHaveBeenCalled()
 
-		const payload = JSON.parse(callbacks.ask.mock.calls[0][1])
+		const payload = JSON.parse(callbacks.say.mock.calls[0][1])
 		assert.deepEqual(payload.prompts, [
 			"<task>\nfirst\n</task>\n<context>\nctx first\n</context>",
 			"<task>\nsecond\n</task>\n<context>\nctx second\n</context>",
@@ -334,31 +344,6 @@ describe("SubagentToolHandler", () => {
 			"<task>\nsecond\n</task>\n<context>\nctx second\n</context>",
 		])
 		expect(callbacks.ask)
-	})
-
-	it("uses one approval for the full batch and stops on denial", async () => {
-		const { config, callbacks } = createConfig({ taskAskResponse: "noButtonClicked" })
-		const runStub = vi.spyOn(SubagentRunner.prototype, "run")
-		const handler = new UseSubagentsToolHandler()
-
-		const result = await handler.execute(config, {
-			type: "tool_use",
-			name: ClineDefaultTool.USE_SUBAGENTS,
-			params: {
-				subagents: JSON.stringify([
-					{ task: "one", context: "ctx one" },
-					{ task: "two", context: "ctx two" },
-				]),
-			},
-			partial: false,
-			ts: Date.now(),
-		})
-
-		assert.equal(result, "The user denied this operation.")
-		expect(config.taskController.rejectActiveBlock as any /* sinon.SinonStub → vitest */)
-		expect(callbacks.ask)
-		assert.equal(callbacks.ask.mock.calls[0][0], "use_subagents")
-		expect(runStub)
 	})
 
 	it("uses read-file auto-approve level (safe only) for approval bypass", async () => {
@@ -916,10 +901,8 @@ describe("SubagentToolHandler", () => {
 			ts: Date.now(),
 		})
 
-		const approvalCall = callbacks.ask.mock.calls.find(
-			(call: unknown[]) => call[0] === "use_subagents" || call[0] === "tool",
-		)
-		assert.ok(approvalCall, "a mixed batch must still be approved")
+		const approvalCall = callbacks.say.mock.calls.find((call: unknown[]) => call[0] === "use_subagents")
+		assert.ok(approvalCall, "an admitted mixed batch must still be presented")
 		const approvalPayload = JSON.parse(String(approvalCall[1])) as {
 			items?: unknown[]
 			rejected?: Array<{ index: number; error: string }>
@@ -989,10 +972,9 @@ describe("SubagentToolHandler", () => {
 		assert.match(String(result), /were not started/)
 	})
 
-	it("refuses to start a batch whose Profile became unavailable while awaiting approval", async () => {
-		// Planning validates the Profile, but approval can take arbitrarily long.
-		// Re-checking after approval keeps a disabled Profile from silently
-		// falling back to the parent's credentials.
+	it("refuses to start a batch whose Profile becomes unavailable before execution", async () => {
+		// Planning validates the Profile. Re-checking immediately before start
+		// keeps a disabled Profile from silently falling back to parent credentials.
 		const { config, callbacks } = createConfig({ autoApproveSafe: false, autoApproveAll: false })
 		stubEnabledProfiles(["fast-reviewer"])
 		vi.spyOn(AgentConfigModule, "resolveAgentConfig").mockResolvedValue({
@@ -1007,10 +989,10 @@ describe("SubagentToolHandler", () => {
 				path: "/workspace/.agents/subagents/reviewer.yml",
 			},
 		])
-		// The catalogue loses the Profile exactly while the approval is pending.
-		callbacks.ask.mockImplementation(async () => {
-			stubEnabledProfiles([])
-			return { response: "yesButtonClicked" }
+		// Simulate the catalogue changing after Admission but before the run starts.
+		callbacks.say.mockImplementation(async (type: string) => {
+			if (type === "use_subagents") stubEnabledProfiles([])
+			return undefined
 		})
 		const runSpy = vi.spyOn(SubagentRunner.prototype, "run")
 
@@ -1112,8 +1094,8 @@ describe("SubagentToolHandler", () => {
 		assert.deepEqual(config.subagentJobManager?.listInjectableResults(), [])
 	})
 
-	it("hands a running foreground subagent to the background without blocking the parent tool turn", async () => {
-		const { config } = createConfig({ autoApproveSafe: true, autoApproveAll: true })
+	it("hands a running foreground subagent to the background while retaining its task-scoped budget slot", async () => {
+		const { config } = createConfig({ autoApproveSafe: true, autoApproveAll: true, maxParallelSubagents: 1 })
 		let activityInput: { continueInBackground?: () => Promise<boolean> } | undefined
 		const createActivity = vi.fn((input: { continueInBackground?: () => Promise<boolean> }) => {
 			activityInput = input
@@ -1124,11 +1106,11 @@ describe("SubagentToolHandler", () => {
 			appendEvent: vi.fn(),
 		} as unknown as TaskConfig["activityStore"]
 		const handler = new UseSubagentToolHandler()
-		let resolveRun!: (result: SubagentRunResult) => void
-		vi.spyOn(SubagentRunner.prototype, "run").mockImplementation(
+		const runResolvers: Array<(result: SubagentRunResult) => void> = []
+		const runStub = vi.spyOn(SubagentRunner.prototype, "run").mockImplementation(
 			() =>
 				new Promise<SubagentRunResult>((resolve) => {
-					resolveRun = resolve
+					runResolvers.push(resolve)
 				}),
 		)
 
@@ -1146,10 +1128,40 @@ describe("SubagentToolHandler", () => {
 		const result = await execution
 		assert.match(String(result), /Continued background subagent job: subagent_/)
 		assert.match(String(result), /final result will be available only in a later model request/i)
+		assert.equal(config.subagentFanoutBudget?.state().running, 1)
 
-		resolveRun({
+		const second = await handler.execute(config, {
+			type: "tool_use",
+			name: ClineDefaultTool.USE_SUBAGENT,
+			params: { task: "second review", context: "ctx", background: "true" },
+			partial: false,
+			ts: Date.now() + 1,
+		})
+		assert.match(String(second), /Started background subagent job: subagent_/)
+		await delay(0)
+		assert.equal(runStub.mock.calls.length, 1, "background handoff must not release the subagent budget slot")
+
+		runResolvers[0]?.({
 			status: "completed",
 			result: "background completion",
+			stats: {
+				toolCalls: 0,
+				inputTokens: 0,
+				outputTokens: 0,
+				cacheWriteTokens: 0,
+				cacheReadTokens: 0,
+				totalCost: 0,
+				currency: "USD",
+				contextTokens: 0,
+				contextWindow: 200000,
+				contextUsagePercentage: 0,
+			},
+		})
+		for (let attempt = 0; attempt < 10 && runStub.mock.calls.length < 2; attempt += 1) await delay(0)
+		assert.equal(runStub.mock.calls.length, 2, "queued single subagent should start only after the handed-off runner ends")
+		runResolvers[1]?.({
+			status: "completed",
+			result: "second completion",
 			stats: {
 				toolCalls: 0,
 				inputTokens: 0,

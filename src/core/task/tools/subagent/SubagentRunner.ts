@@ -1505,7 +1505,7 @@ export class SubagentRunner {
 						webSearchRoutingPlan,
 						imageGenerationService,
 					)
-					const handler = this.baseConfig.coordinator.getHandler(toolName)
+					const handler = subagentConfig.coordinator.getHandler(toolName)
 					let toolResult: unknown
 					let toolError: string | undefined
 
@@ -1514,9 +1514,37 @@ export class SubagentRunner {
 						toolResult = formatResponse.toolError(toolError)
 					} else {
 						try {
-							toolResult = await this.executeToolWithInterruption(() =>
-								handler.execute(subagentConfig, toolCallBlock),
+							let admission = subagentConfig.coordinator.prepareAdmission(
+								toolCallBlock,
+								{
+									taskId: subagentConfig.taskId,
+									cwd: subagentConfig.cwd,
+									workspaceRoots: subagentConfig.workspaceManager?.getRoots().map((root) => root.path) ?? [subagentConfig.cwd],
+									workspaceRootEntries: subagentConfig.workspaceManager
+										?.getRoots()
+										.map((root) => ({ name: root.name || path.basename(root.path), path: root.path })),
+									primaryWorkspaceRoot: subagentConfig.workspaceManager?.getPrimaryRoot()?.path,
+									isMultiRootEnabled: subagentConfig.isMultiRootEnabled,
+									settings: subagentConfig.autoApprovalSettings,
+									blanket: {
+										yoloMode: subagentConfig.yoloModeToggled,
+										approveAll:
+											subagentConfig.services.stateManager.getGlobalSettingsKey("autoApproveAllToggled") === true,
+									},
+									inheritsApproval: true,
+								},
+								() => handler.execute(subagentConfig, toolCallBlock),
 							)
+							if (admission.outcome === "admitted" && admission.confirm) admission = await admission.confirm()
+							if (admission.outcome === "rejected") {
+								throw new Error(admission.rejection.message)
+							}
+							if (admission.decision.kind !== "none" && admission.decision.kind !== "automatic") {
+								throw new Error(
+									`Tool '${toolName}' requires ${admission.decision.kind} approval for ${admission.decision.scope}, which is unavailable inside a subagent run.`,
+								)
+							}
+							toolResult = await this.executeToolWithInterruption(admission.run)
 						} catch (error) {
 							// An interrupted wait is not a tool failure: fall through to the
 							// abort check below so the run reports `cancelled`.

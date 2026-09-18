@@ -3,10 +3,8 @@ import type { ClineAsk } from "@shared/ExtensionMessage"
 import {
 	type ApprovalDecision,
 	type ConfigurableCeilings,
-	isApprovalRevoked,
 	type PermissionScopeContext,
 	resolveApprovalKind,
-	resolvePermissionScope,
 } from "../../kernel/turn/approval-kind"
 import { resolveToolLanes, type ToolLane, type ToolLaneContext } from "../../kernel/turn/tool-lanes"
 
@@ -68,11 +66,19 @@ export interface ToolPreflightAdmission<T> {
 	/**
 	 * The side effect, deliberately not started.
 	 *
-	 * Returning it unstarted is what makes revocation meaningful: the approval
-	 * can be re-checked immediately before this runs, so tightening a setting
-	 * still takes effect on work that has not begun.
+	 * Returning it unstarted lets the caller resolve approval again immediately
+	 * before this runs, so tightening a setting still affects work that has not
+	 * begun without depending on a shared version counter.
 	 */
 	run: ToolSideEffect<T>
+	/**
+	 * Optional pre-effect scope confirmation.
+	 *
+	 * Admission itself stays target-I/O free. Filesystem-backed calls may attach
+	 * this unstarted closure so aliases can be canonicalized after scheduling but
+	 * before execution; the returned Admission is the one that must execute.
+	 */
+	confirm?: () => Promise<ToolPreflightAdmission<T>>
 }
 
 /** A call that cannot proceed. */
@@ -116,6 +122,7 @@ export function admitToolCall<T>(
 	input: ToolPreflightInput,
 	run: ToolSideEffect<T>,
 	presentation?: ToolApprovalPresentation,
+	confirm?: () => Promise<ToolPreflightAdmission<T>>,
 ): ToolPreflightAdmission<T> {
 	// The runtime facts that classify a call are named `scope` here and
 	// `context` on the resolver, so they must be mapped rather than spread.
@@ -127,17 +134,11 @@ export function admitToolCall<T>(
 		settings: input.settings,
 		ceilings: input.ceilings,
 		context: input.scope,
+		inheritsApproval: input.inheritsApproval,
 		blanket: input.blanket,
 	}
 
-	const decision = input.inheritsApproval
-		? ({
-				kind: "none",
-				scope: resolvePermissionScope(input.toolName, input.scope),
-				ceiling: "auto",
-				policyVersion: input.settings.version,
-			} satisfies ApprovalDecision)
-		: resolveApprovalKind(resolverInput)
+	const decision = resolveApprovalKind(resolverInput)
 
 	return {
 		outcome: "admitted",
@@ -147,20 +148,6 @@ export function admitToolCall<T>(
 		presentation: decision.kind === "manual" || decision.kind === "ai_approver" ? presentation : undefined,
 		lanes: resolveToolLanes(input.toolName, input.lanes ?? {}),
 		run,
+		confirm,
 	}
-}
-
-/**
- * Whether an admission granted earlier must be decided again.
- *
- * Checked immediately before the closure starts rather than when it was queued,
- * because the gap between the two is exactly where a settings change would
- * otherwise be ignored.
- *
- * @param admission Admission produced earlier.
- * @param currentPolicyVersion Policy version in force now.
- * @returns True when the block must return to the approval stage.
- */
-export function admissionIsRevoked<T>(admission: ToolPreflightAdmission<T>, currentPolicyVersion: number): boolean {
-	return isApprovalRevoked(admission.decision, currentPolicyVersion)
 }

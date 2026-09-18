@@ -167,7 +167,7 @@ describe("TurnExecutionPool turn barrier", () => {
 		expect(ending.started).toBe(true)
 	})
 
-	it("refuses work submitted after a turn-ending block already started", async () => {
+	it("permanently skips work submitted after a turn-ending block starts", async () => {
 		const pool = new TurnExecutionPool<string>({ limit: 4 })
 		const ending = trackedBlock("z", 0, [], true)
 		void pool.submit(ending)
@@ -175,33 +175,41 @@ describe("TurnExecutionPool turn barrier", () => {
 		await flush()
 		expect(ending.started).toBe(true)
 
-		// The turn-ending block runs alone in both directions. Capacity is free
-		// and the lanes are disjoint, so only the barrier can hold this back.
+		// The barrier is latched for the turn: settling the ending block must not
+		// reopen execution for a later sibling that the model placed after it.
 		const late = trackedBlock("a", 1)
-		void pool.submit(late)
+		const lateResult = pool.submit(late)
 
 		await flush()
 		expect(late.started).toBe(false)
-
 		ending.settle("z-done")
 		await flush()
-		expect(late.started).toBe(true)
+
+		const outcome = await lateResult
+		expect(late.started).toBe(false)
+		expect(outcome.cancelled).toBe(false)
+		expect(outcome.skipped).toBe(true)
 	})
 
-	it("does not let work overtake a turn-ending block that is still waiting", async () => {
+	it("does not let work overtake a waiting turn-ending block and skips it once the barrier starts", async () => {
 		const pool = new TurnExecutionPool<string>({ limit: 4 })
 		const running = trackedBlock("a", 0)
 		const ending = trackedBlock("z", 1, [], true)
 		const behind = trackedBlock("b", 2)
 		void pool.submit(running)
 		void pool.submit(ending)
-		void pool.submit(behind)
+		const behindResult = pool.submit(behind)
 
 		await flush()
-		// The ending block is refused for drain rather than admitted, and the
-		// block ordered after it must not be promoted past it.
 		expect(ending.started).toBe(false)
 		expect(behind.started).toBe(false)
+
+		running.settle("a-done")
+		await flush()
+		expect(ending.started).toBe(true)
+		expect((await behindResult).skipped).toBe(true)
+		expect(behind.started).toBe(false)
+		ending.settle("z-done")
 	})
 
 	it("keeps the barrier closed while work outside the pool is outstanding", async () => {

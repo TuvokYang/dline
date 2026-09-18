@@ -2,6 +2,8 @@ import { resolveWebSearchRoutingPlan } from "@core/api/server-tools"
 import { PreToolUseHookCancellationError } from "@core/hooks/PreToolUseHookCancellationError"
 import { InteractionCancellationError } from "@core/task/interaction/InteractionCancellationError"
 import { ToolExecutor } from "@core/task/ToolExecutor"
+import { resolveApprovalKind } from "@core/task/kernel/turn/approval-kind"
+import { DEFAULT_AUTO_APPROVAL_SETTINGS } from "@shared/AutoApprovalSettings"
 import { ApiFormat, ServerTool } from "@shared/proto/dline/models/metadata"
 import { WebToolsMode } from "@shared/proto/dline/provider/common"
 import { ClineDefaultTool } from "@shared/tools"
@@ -10,7 +12,6 @@ import { AuthService } from "@/services/auth/AuthService"
 import type { LocalWebFetchProvider } from "@/services/web-fetch/LocalWebFetchProvider"
 import { type LocalSearchProvider, LocalSearchRegistry } from "@/services/web-search/LocalSearchProvider"
 import type { ToolUse } from "../../../assistant-message"
-import { AutoApprove } from "../autoApprove"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
 import { ToolHookUtils } from "../utils/ToolHookUtils"
 import { NO_TOOL_RESULT } from "../utils/ToolResultUtils"
@@ -61,56 +62,34 @@ function block(name: "web_search" | "web_fetch"): ToolUse {
 	} as ToolUse
 }
 
-describe("Web Tool auto-approval", () => {
+describe("Web Tool admission", () => {
 	it("uses an independent Web permission instead of the Browser permission", () => {
+		const browserOnly = {
+			...DEFAULT_AUTO_APPROVAL_SETTINGS,
+			enabled: true,
+			actions: { ...DEFAULT_AUTO_APPROVAL_SETTINGS.actions, useBrowser: true, useWeb: false },
+		}
+		expect(resolveApprovalKind({ toolName: ClineDefaultTool.BROWSER, settings: browserOnly }).kind).toBe("automatic")
+		expect(resolveApprovalKind({ toolName: ClineDefaultTool.WEB_SEARCH, settings: browserOnly }).kind).toBe("manual")
+		expect(resolveApprovalKind({ toolName: ClineDefaultTool.WEB_FETCH, settings: browserOnly }).kind).toBe("manual")
+
+		const webOnly = {
+			...browserOnly,
+			actions: { ...browserOnly.actions, useBrowser: false, useWeb: true },
+		}
+		expect(resolveApprovalKind({ toolName: ClineDefaultTool.BROWSER, settings: webOnly }).kind).toBe("manual")
+		expect(resolveApprovalKind({ toolName: ClineDefaultTool.WEB_SEARCH, settings: webOnly }).kind).toBe("automatic")
+		expect(resolveApprovalKind({ toolName: ClineDefaultTool.WEB_FETCH, settings: webOnly }).kind).toBe("automatic")
+	})
+
+	it("defaults a missing Web permission to manual instead of inheriting Browser approval", () => {
 		const settings = {
-			actions: {
-				useBrowser: true,
-				useWeb: false,
-			},
+			...DEFAULT_AUTO_APPROVAL_SETTINGS,
+			enabled: true,
+			actions: { ...DEFAULT_AUTO_APPROVAL_SETTINGS.actions, useBrowser: true, useWeb: undefined },
 		}
-		const stateManager = {
-			getGlobalSettingsKey: vi.fn((key: string) => (key === "autoApprovalSettings" ? settings : false)),
-		}
-		const autoApprove = new AutoApprove(stateManager as any)
-
-		expect(autoApprove.shouldAutoApproveTool(ClineDefaultTool.BROWSER)).toBe(true)
-		expect(autoApprove.shouldAutoApproveTool(ClineDefaultTool.WEB_SEARCH)).toBe(false)
-		expect(autoApprove.shouldAutoApproveTool(ClineDefaultTool.WEB_FETCH)).toBe(false)
-
-		settings.actions.useBrowser = false
-		settings.actions.useWeb = true
-
-		expect(autoApprove.shouldAutoApproveTool(ClineDefaultTool.BROWSER)).toBe(false)
-		expect(autoApprove.shouldAutoApproveTool(ClineDefaultTool.WEB_SEARCH)).toBe(true)
-		expect(autoApprove.shouldAutoApproveTool(ClineDefaultTool.WEB_FETCH)).toBe(true)
-	})
-
-	it("defaults a missing Web permission to false instead of inheriting Browser approval", () => {
-		const stateManager = {
-			getGlobalSettingsKey: vi.fn((key: string) =>
-				key === "autoApprovalSettings" ? { actions: { useBrowser: true } } : false,
-			),
-		}
-		const autoApprove = new AutoApprove(stateManager as any)
-
-		expect(autoApprove.shouldAutoApproveTool(ClineDefaultTool.WEB_SEARCH)).toBe(false)
-		expect(autoApprove.shouldAutoApproveTool(ClineDefaultTool.WEB_FETCH)).toBe(false)
-	})
-
-	it("does not let legacy Auto Approve All bypass the independent Web permission", () => {
-		const stateManager = {
-			getGlobalSettingsKey: vi.fn((key: string) => {
-				if (key === "autoApproveAllToggled") return true
-				if (key === "autoApprovalSettings") return { actions: { useBrowser: true, useWeb: false } }
-				return false
-			}),
-		}
-		const autoApprove = new AutoApprove(stateManager as any)
-
-		expect(autoApprove.shouldAutoApproveTool(ClineDefaultTool.BROWSER)).toBe(true)
-		expect(autoApprove.shouldAutoApproveTool(ClineDefaultTool.WEB_SEARCH)).toBe(false)
-		expect(autoApprove.shouldAutoApproveTool(ClineDefaultTool.WEB_FETCH)).toBe(false)
+		expect(resolveApprovalKind({ toolName: ClineDefaultTool.WEB_SEARCH, settings }).kind).toBe("manual")
+		expect(resolveApprovalKind({ toolName: ClineDefaultTool.WEB_FETCH, settings }).kind).toBe("manual")
 	})
 })
 
@@ -140,9 +119,6 @@ describe("local Web Tool routing", () => {
 			stateManager: {
 				getGlobalSettingsKey: (key: string) => (key === "clineWebToolsEnabled" ? true : undefined),
 			},
-			autoApprover: new AutoApprove({
-				getGlobalSettingsKey: () => ({ actions: { useWeb: true } }),
-			} as any),
 		}) as ToolExecutor
 		const resolveForExecution = (
 			ToolExecutor.prototype as unknown as {
@@ -178,9 +154,6 @@ describe("local Web Tool routing", () => {
 							? { actions: { useWeb: false } }
 							: undefined,
 			},
-			autoApprover: new AutoApprove({
-				getGlobalSettingsKey: (key: string) => (key === "autoApprovalSettings" ? { actions: { useWeb: false } } : false),
-			} as any),
 		}) as ToolExecutor
 		const resolveForExecution = (
 			ToolExecutor.prototype as unknown as {
@@ -236,17 +209,12 @@ describe("local Web Tool routing", () => {
 		expect(taskConfig.callbacks.sayAndCreateMissingParamError).not.toHaveBeenCalled()
 	})
 
-	it("waits for a non-empty URL before rendering partial Web Fetch approval", async () => {
-		const ask = vi.fn<StronglyTypedUIHelpers["ask"]>(async () => ({ response: "yesButtonClicked" }))
+	it("waits for a non-empty URL before rendering partial Web Fetch presentation", async () => {
+		const say = vi.fn<StronglyTypedUIHelpers["say"]>(async () => undefined)
 		const uiHelpers: StronglyTypedUIHelpers = {
-			say: vi.fn(async () => undefined),
-			ask,
+			say,
+			ask: vi.fn(async () => ({ response: "yesButtonClicked" as const })),
 			removeClosingTag: (_block: ToolUse, _parameter: string, value?: string) => value ?? "",
-			shouldAutoApproveTool: vi.fn(() => false),
-			shouldAutoApproveToolWithPath: vi.fn(async () => false),
-			askApproval: vi.fn(async () => false),
-			captureTelemetry: vi.fn(),
-			showNotificationIfEnabled: vi.fn(),
 			getConfig: vi.fn(() => {
 				throw new Error("getConfig should not be called while rendering a partial Web Fetch block")
 			}),
@@ -255,14 +223,14 @@ describe("local Web Tool routing", () => {
 		const fetchBlock = block("web_fetch")
 
 		await handler.handlePartialBlock(fetchBlock, uiHelpers)
-		expect(ask).not.toHaveBeenCalled()
+		expect(say).not.toHaveBeenCalled()
 
 		const url = "https://example.test/streamed-url"
 		await handler.handlePartialBlock({ ...fetchBlock, params: { url } } as ToolUse, uiHelpers)
 
-		expect(ask).toHaveBeenCalledOnce()
-		const serializedPayload = ask.mock.calls[0]?.[1]
-		if (!serializedPayload) throw new Error("Expected Web Fetch approval payload")
+		expect(say).toHaveBeenCalledOnce()
+		const serializedPayload = say.mock.calls[0]?.[1]
+		if (!serializedPayload) throw new Error("Expected Web Fetch presentation payload")
 		const payload = JSON.parse(serializedPayload)
 		expect(payload).toMatchObject({
 			tool: "webFetch",
@@ -370,38 +338,6 @@ describe("local Web Tool routing", () => {
 			error: "Browser / Bing search failed: navigation timed out",
 		})
 		expect(taskConfig.callbacks.say.mock.calls[1][5]).toBe(searchBlock.ts)
-	})
-
-	it("preserves a pending local Web Search approval when task termination cancels the waiter", async () => {
-		const taskConfig = config(true, "local")
-		taskConfig.services.stateManager.getGlobalSettingsKey = (key: string) =>
-			key === "clineWebToolsEnabled"
-				? true
-				: key === "hooksEnabled"
-					? false
-					: key === "localWebSearchEngine"
-						? "bing"
-						: undefined
-		taskConfig.services.stateManager.getSecretKey = vi.fn()
-		taskConfig.autoApprovalSettings = { enableNotifications: false }
-		taskConfig.callbacks.shouldAutoApproveTool = vi.fn(() => false)
-		taskConfig.callbacks.say = vi.fn(async () => undefined)
-		const cancellation = new InteractionCancellationError("task_terminated")
-		taskConfig.callbacks.ask = vi.fn(async () => {
-			throw cancellation
-		})
-		const search = vi.fn()
-		const provider: LocalSearchProvider = {
-			descriptor: { id: "bing", label: "Browser / Bing", execution: "dline" },
-			search,
-		}
-		const searchBlock = { ...block("web_search"), params: { query: "pending search" } } as ToolUse
-
-		await expect(
-			new WebSearchToolHandler(() => new LocalSearchRegistry([provider])).execute(taskConfig, searchBlock),
-		).rejects.toBe(cancellation)
-		expect(search).not.toHaveBeenCalled()
-		expect(taskConfig.callbacks.say).not.toHaveBeenCalled()
 	})
 
 	it("terminates the local Web Search card when PreToolUse cancels execution", async () => {

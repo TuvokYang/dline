@@ -159,7 +159,6 @@ import { findLast, findLastIndex } from "@shared/array"
 import type { ChatContent } from "@shared/ChatContent"
 import { combineApiRequests } from "@shared/combineApiRequests"
 import { combineCommandSequences } from "@shared/combineCommandSequences"
-import { resolveMaxParallelToolCalls } from "@shared/concurrency-limits"
 import {
 	type ContextWindowIndicatorLineage,
 	type ContextWindowIndicatorSnapshot,
@@ -278,12 +277,12 @@ import { ToolCommandLedger } from "./executors/tool/ToolCommandLedger"
 import { createToolDomainRunner } from "./executors/tool/ToolDomainResources"
 import type { UserFacingSurface } from "./executors/tool/ToolDomainSurface"
 import { ToolExecutionDomain } from "./executors/tool/ToolExecutionDomain"
-import { TurnExecutionPool } from "./executors/tool/TurnExecutionPool"
+import { dispatchToolExecutionEffect } from "./executors/tool/ToolEffectDispatcher"
+import { TurnDriver } from "./executors/tool/TurnDriver"
+import { TurnToolScheduler } from "./executors/tool/TurnToolScheduler"
 import { FocusChainManager } from "./focus-chain"
 import { formatFocusChainTaskProgressSection } from "./focus-chain/file-utils"
 import { HistoryResumeMaintenance } from "./history/HistoryResumeMaintenance"
-import { resolveToolLanes, type ToolLaneContext } from "./kernel/turn/tool-lanes"
-import { declaresWritePath, readToolPathParam } from "./tools/utils/tool-path-params"
 import { TaskCompletionProjector } from "./history/TaskCompletionProjector"
 import type { QueuedInputEntry } from "./input-queue/InputQueue"
 import { InputQueueCoordinator } from "./input-queue/InputQueueCoordinator"
@@ -497,56 +496,6 @@ export function formatUnroutedAskResponse(context: UnroutedAskResponseContext): 
 	)
 }
 
-/**
- * Read the runtime facts that decide which lanes a tool block must hold.
- *
- * Kept separate from lane resolution so the pure lane policy never has to
- * inspect tool parameters, and so "which parameter means what" stays one
- * readable decision rather than an expression inside the submit call.
- *
- * A path is claimed only for the tools that write the file they name. Tools
- * that reach several files — apply_patch, replace_text, rename — declare no
- * path here at all, because none of their parameters describes the set they
- * touch; the diff-editor lane they hold statically is what keeps them from
- * interleaving, and a partial claim would only look like a stronger guarantee
- * than it is.
- *
- * @param tool The finalized tool block.
- * @returns Lane context derived from the block's own parameters.
- */
-function resolveLaneContext(tool: ToolUse): ToolLaneContext {
-	const serverName = tool.params?.server_name
-	const path = readToolPathParam(tool.params as Record<string, string | undefined> | undefined)
-	return {
-		mcpServerName: typeof serverName === "string" ? serverName : undefined,
-		canonicalWritePaths: declaresWritePath(tool.name) && path ? [path] : undefined,
-	}
-}
-
-/**
- * Stop every block the turn has not started yet.
- *
- * Called when a block halts the turn or throws. Cancelling is idempotent and
- * a block that is already running keeps going, so this removes exactly the
- * work that would otherwise be admitted into the slot the halting block is
- * about to free — the blocks the serial loop would never have reached.
- *
- * @param pool The pool holding this turn's blocks.
- * @param toolUses The turn's blocks in assistant order.
- * @param haltedIndex Position of the block that ended the turn.
- * @param identityOf The identity each block was submitted under.
- */
-function cancelBlocksAfter(
-	pool: TurnExecutionPool<"completed" | "halt_turn">,
-	toolUses: readonly ToolUse[],
-	haltedIndex: number,
-	identityOf: (tool: ToolUse, index: number) => string,
-): void {
-	for (let index = haltedIndex + 1; index < toolUses.length; index++) {
-		pool.cancel(identityOf(toolUses[index], index))
-	}
-}
-
 export class Task {
 	// Core task variables
 	readonly taskId: string
@@ -706,8 +655,111 @@ export class Task {
 	 */
 	private readonly toolDomainLedger = new ToolCommandLedger()
 	private toolDomain?: ToolExecutionDomain
-	/** Monotonic stop generation, so each halt supersedes the previous one. */
-	private toolHaltSequence = 0
+	private readonly turnToolScheduler = new TurnToolScheduler({
+		readConfiguredLimit: () => this.stateManager.getGlobalSettingsKey("maxParallelToolCalls"),
+		isParallelToolCallingEnabled: () => this.isParallelToolCallingEnabled(),
+		onBlockCancelled: async (dlineTid) => {
+			this.toolExecutor?.discardPreparedAdmission(dlineTid)
+			const turnId = this.taskRuntime.getState().turn?.turnId
+			if (turnId) await this.dispatchRuntime({ type: "BLOCK_EXECUTION_CANCELLED", turnId, dlineTid })
+		},
+		onBlockSkipped: async (dlineTid) => {
+			this.toolExecutor?.discardPreparedAdmission(dlineTid)
+			const turnId = this.taskRuntime.getState().turn?.turnId
+			if (turnId) await this.dispatchRuntime({ type: "BLOCK_EXECUTION_SKIPPED", turnId, dlineTid })
+		},
+	})
+	private readonly turnDriver = new TurnDriver({
+		task: {
+			getTaskId: () => this.taskId,
+			isAborted: () => this.taskState.abort,
+			isCurrentTask: () => this.controller.task?.taskId === this.taskId,
+			getAssistantMessageContent: () => this.taskState.assistantMessageContent,
+			getAssistantApiIndex: () => this.messageStateHandler.apiConversationHistory.length - 1,
+			buildTurn: (assistantApiIndex, autoApprove) => {
+				this.taskController.buildTurn(
+					this.taskState.assistantMessageContent.map((block) => ({ ...block, conversationHistoryIndex: assistantApiIndex })),
+					autoApprove,
+				)
+				return this.taskController.getBlocks()
+			},
+			isParallelToolCallingEnabled: () => this.isParallelToolCallingEnabled(),
+			getPendingUserMessageContent: () => this.taskState.userMessageContent,
+			markPartialToolComplete: (ts) => this.taskState.partialToolLifecycleByTs.set(ts, "complete-done"),
+			recordToolCall: (functionId, toolName) => Session.get().updateToolCall(functionId, toolName),
+			markUserMessageContentReady: () => {
+				this.taskState.userMessageContentReady = true
+			},
+			applyCompactionFit: (input) => {
+				if (
+					this.taskState.currentlySummarizing &&
+					this.taskState.isInternalContextCompactionRequest &&
+					!this.taskState.targetWindowFittingState
+				) {
+					this.taskState.compactionFittingRequired = shouldContinueCompactionFitting(input)
+				}
+			},
+		},
+		runtime: {
+			getState: () => this.taskRuntime.getState(),
+			dispatch: (event) => this.dispatchRuntime(event),
+		},
+		block: {
+			prepareAdmission: (tool) => this.toolExecutor.prepareAdmission(tool),
+			commitInterruptedResult: (tool, reason) => this.toolExecutor.commitInterruptedToolResult(tool, reason),
+			awaitInitialCheckpoint: (toolName) => this.awaitInitialCheckpointBeforeToolSideEffects(toolName),
+		},
+		approval: {
+			request: async (tool, presentation) => {
+				const kind = this.getApprovalInteractionKind(presentation.ask)
+				const state = this.taskRuntime.getState()
+				if (!kind || !state.turn || !tool.dline_tid) {
+					throw new Error(`Approval presentation cannot be mapped to a canonical interaction: tool=${tool.name}`)
+				}
+				const outcome = await this.interactionCoordinator.open({
+					turnId: state.turn.turnId,
+					interactionId: tool.dline_tid,
+					kind,
+					presentation: presentation.body,
+					existingTs: tool.ts,
+				})
+				this.toolExecutor.recordAdmissionOutcome(tool, outcome)
+				return outcome
+			},
+		},
+		scheduler: this.turnToolScheduler,
+		provider: {
+			registerExecution: (admission, registration) => {
+				this.activeProviderExecutionTurns.set(admission, registration)
+				for (const interactionId of registration.turnEndInteractionIds) {
+					this.turnEndProviderExecutions.set(interactionId, {
+						turnId: registration.turnId,
+						toolCount: registration.toolCount,
+						admission,
+					})
+				}
+			},
+		},
+		postCommit: {
+			takeDirective: (dlineTid) => this.toolExecutor.takePostCommitDirective(dlineTid),
+			startSuccessor: async (directive) => {
+				const approvedSource = { functionId: directive.functionId, dlineTid: directive.dlineTid }
+				const feedback = findLatestNewTaskFeedback({
+					apiHistory: this.messageStateHandler.apiConversationHistory,
+					uiHistory: this.messageStateHandler.clineMessages,
+					approvedSource,
+				})
+				const initialUserContent = await buildNewTaskFeedbackContent(feedback)
+				const successor = await this.taskRuntime.dispatchAtAdmission({
+					type: "TASK_SUCCESSOR_REQUESTED",
+					handoff: createNewTaskHandoff(directive, this.taskSm, initialUserContent),
+				})
+				if (!successor.accepted) {
+					throw new Error(`Task successor rejected: ${successor.error?.code ?? "invalid_runtime_event"}`)
+				}
+			},
+		},
+	})
 	private readonly systemPromptCacheService: SystemPromptCacheService
 	private readonly promptFreshnessInvalidationCoordinator: PromptFreshnessInvalidationCoordinator
 	private promptInputWatcherSubscription?: PromptInputWatcherSubscription
@@ -1002,29 +1054,11 @@ export class Task {
 							effect.contentTransform === "mistake_limit" || Boolean(effect.retryContent?.length),
 					})
 				},
-				async (effect) => {
-					const block = this.taskState.assistantMessageContent.find(
-						(candidate): candidate is ToolUse =>
-							candidate.type === "tool_use" && candidate.dline_tid === effect.dlineTid,
-					)
-					if (!block) {
-						throw new Error(`Canonical tool block is missing for dlineTid=${effect.dlineTid}`)
-					}
-					// The command carries its own identity so a late outcome stays
-					// attributable once several blocks may be in flight at once.
-					const commandId = `${effect.id}:${effect.dlineTid}`
-					const settled = this.toolDomainLedger.track(commandId)
-					this.getToolDomain().handle({
-						commandId,
-						turnId: effect.turnId,
-						dlineTid: effect.dlineTid,
-						mode: effect.mode,
-					})
-					// Awaiting the correlated event, rather than the tool call itself,
-					// keeps a tool failure a failed effect while the domain itself
-					// stays fire-and-forget.
-					await settled
-				},
+				(effect) =>
+					dispatchToolExecutionEffect(effect, {
+						track: (commandId) => this.toolDomainLedger.track(commandId),
+						dispatch: (command) => this.getToolDomain().handle(command),
+					}),
 				async (effect) => {
 					if (effect.interactionId) {
 						await this.taskController.channel.presentSay(
@@ -1254,8 +1288,9 @@ export class Task {
 			presentAssistantMessage: this.presentAssistantMessage.bind(this),
 			recursivelyMakeClineRequests: this.recursivelyMakeClineRequests.bind(this),
 			postStateToWebview: this.postStateToWebview,
-			shouldAutoApproveTool: (toolName: string, _dlineTid: string) => {
-				return this.toolExecutor?.isAutoApproved(toolName as any) ?? false
+			prepareAdmission: (block) => {
+				if (!this.toolExecutor) throw new Error("ToolExecutor is unavailable during pending-tool restore")
+				return this.toolExecutor.prepareAdmission(block)
 			},
 		})
 
@@ -4633,33 +4668,6 @@ export class Task {
 		})
 	}
 
-	/** Return whether the pending next-turn content already contains one exact tool result. */
-	private hasPendingToolResult(dlineTid: string, functionId: string): boolean {
-		return this.taskState.userMessageContent.some(
-			(content): content is ClineUserToolResultContentBlock =>
-				content.type === "tool_result" && content.dline_tid === dlineTid && content.function_id === functionId,
-		)
-	}
-
-	/** Persist the canonical fallback result for a skipped or cancelled terminal block exactly once. */
-	private async ensureTerminalToolResult(block: ToolUse, phase: BlockPhase): Promise<void> {
-		const reason =
-			phase === BlockPhase.SKIPPED
-				? "The tool was skipped after an earlier interaction was rejected."
-				: phase === BlockPhase.CANCELLED
-					? "The tool was cancelled before a durable result was recorded."
-					: undefined
-		if (!reason) return
-
-		const { dline_tid: dlineTid, function_id: functionId } = block
-		if (!dlineTid || !functionId) {
-			throw new Error(`Terminal tool block is missing canonical identity: tool=${block.name}`)
-		}
-		if (this.hasPendingToolResult(dlineTid, functionId)) return
-
-		await this.toolExecutor.commitInterruptedToolResult(block, reason)
-	}
-
 	/** Wait until a Task Header compaction has committed and cleared its request classification flags. */
 	private async waitForTaskHeaderCompactionSettlement(): Promise<void> {
 		const settlement = this.taskHeaderCompactionSettlement
@@ -4744,7 +4752,7 @@ export class Task {
 				if (!context.isCurrent()) return
 			}
 
-			if (!this.hasPendingToolResult(lifecycle.dlineTid, lifecycle.functionId)) {
+			if (!this.turnDriver.hasPendingToolResult(lifecycle.dlineTid, lifecycle.functionId)) {
 				await this.toolExecutor.commitInterruptedToolResult(
 					block,
 					"The tool continuation ended without a durable result. Its side effect was not replayed.",
@@ -4756,14 +4764,14 @@ export class Task {
 
 				const terminalBlock = blocks.find((item) => item.dline_tid === candidate.dlineTid)
 				if (!terminalBlock) throw new Error("resume_terminal_block_missing")
-				await this.ensureTerminalToolResult(terminalBlock, candidate.phase)
+				await this.turnDriver.ensureTerminalToolResult(terminalBlock, candidate.phase)
 				if (!context.isCurrent()) return
 			}
 
 			const currentBlock = this.taskRuntime
 				.getState()
 				.turn?.blocks.find((candidate) => candidate.dlineTid === lifecycle?.dlineTid)
-			if (currentBlock && !this.isTerminalRuntimeBlock(currentBlock.phase)) {
+			if (currentBlock && !this.turnDriver.isTerminalRuntimeBlock(currentBlock.phase)) {
 				const completed = await this.dispatchRuntime({
 					type: "BLOCK_EXECUTION_COMPLETED",
 					turnId: turn.turnId,
@@ -4776,7 +4784,7 @@ export class Task {
 			await context.resolve()
 			if (!context.isCurrent()) return
 			this.syncRetainedMachines(false)
-			await this.executeFinalizedAssistantTurn()
+			await this.turnDriver.execute()
 			if (!context.isCurrent()) return
 			if (this.taskRuntime.getState().phase === TaskPhase.CANCELLING) return
 			this.taskState.userMessageContent.push({ type: "text", text: createResumeContinuationText() })
@@ -4819,23 +4827,6 @@ export class Task {
 
 	private isParallelToolCallingEnabled(providerInfo = this.getCurrentProviderInfo()): boolean {
 		return this.activeProviderInputRuntime?.parallelToolsEnabled ?? this.resolveParallelToolCallingEnabled(providerInfo)
-	}
-
-	/**
-	 * How many tool blocks of one turn may execute at once.
-	 *
-	 * Read per admission rather than captured once, so a settings change takes
-	 * effect on the next block instead of the next turn. The toggle is the
-	 * stronger statement: with parallel tool calling off this resolves to 1,
-	 * which is why a stored ceiling cannot reintroduce concurrency.
-	 */
-	private getToolConcurrencyLimit(): number {
-		// An unset or out-of-range ceiling resolves to the shared default
-		// rather than failing the turn, so admission always has a usable
-		// number. `stateManager` is required at runtime but absent from
-		// narrow test doubles, and a missing ceiling is not worth a throw.
-		const configured = (this.stateManager as StateManager | undefined)?.getGlobalSettingsKey("maxParallelToolCalls")
-		return resolveMaxParallelToolCalls(configured, this.isParallelToolCallingEnabled())
 	}
 
 	private async switchToActModeCallback(): Promise<boolean> {
@@ -5844,6 +5835,14 @@ export class Task {
 	 * The task can be resumed later via resume().
 	 * Called when the user clicks the cancel button.
 	 */
+	notifyToolConcurrencyLimitChanged(): void {
+		this.turnToolScheduler.notifyLimitChanged()
+	}
+
+	notifySubagentConcurrencyLimitChanged(): void {
+		this.toolExecutor?.notifySubagentConcurrencyLimitChanged()
+	}
+
 	async abortExecution() {
 		try {
 			this.invalidatePreparedProviderInputs()
@@ -5855,6 +5854,7 @@ export class Task {
 			const shouldRunTaskCancelHook = await this.shouldRunTaskCancelHook()
 
 			this.taskState.abort = true
+			this.turnToolScheduler.cancelActiveTurn()
 			this.taskState.cancelOperations("task_cancelled")
 			this.api?.abort?.()
 			this.presentationScheduler.reset()
@@ -5938,7 +5938,7 @@ export class Task {
 			// Stopping the domain is what reverts the diff: routing the reset
 			// through halt keeps "exactly one reset per stop" structural instead
 			// of relying on each cancel path to remember the call.
-			await this.haltToolDomain("cancel")
+			await this.getToolDomain().haltToolDomain("cancel")
 
 			// Save state and update UI so the frontend reflects the pause
 			await Promise.all([
@@ -5994,94 +5994,10 @@ export class Task {
 				"checkpointRestore.abortOpenExecutions",
 			)
 
-			await this.haltToolDomain("cancel")
+			await this.getToolDomain().haltToolDomain("cancel")
 		} finally {
 			this.interactionCoordinator.completeCancellation(cancellationGeneration)
 		}
-	}
-
-	/**
-	 * Run one turn's tool blocks through a bounded pool.
-	 *
-	 * @see resolveLaneContext for how a block's exclusive resources are derived.
-	 *
-	 * The pool owns admission: how many blocks may run at once, which blocks
-	 * hold conflicting resources, and when a turn-ending block is allowed to
-	 * start. This method only supplies the blocks and interprets the outcomes.
-	 *
-	 * Outcomes are read in assistant order rather than completion order, so a
-	 * fast later block cannot report its halt before an earlier block's. The
-	 * pool is discarded with the turn; it carries no state across turns.
-	 *
-	 * A halt keeps the serial loop's guarantee that nothing later begins. The
-	 * serial loop got this from returning; here the blocks are already
-	 * submitted, so the first halt cancels the rest instead. Cancelling a
-	 * queued block prevents it from ever starting, which is the property that
-	 * matters: a turn the user stopped must not go on editing files. Work that
-	 * had already started is left to finish, because aborting mid-write would
-	 * trade a stopped turn for a corrupted one.
-	 */
-	private async runToolBlocksThroughPool(
-		toolUses: ToolUse[],
-		runBlockLifecycle: (tool: ToolUse) => Promise<"completed" | "halt_turn">,
-	): Promise<"completed" | "halt_turn"> {
-		const pool = new TurnExecutionPool<"completed" | "halt_turn">({
-			limit: () => this.getToolConcurrencyLimit(),
-			name: "turn-tool-pool",
-		})
-		const identityOf = (tool: ToolUse, index: number): string => tool.dline_tid ?? `unkeyed-${index}`
-
-		await Promise.all(
-			toolUses.map((tool, index) =>
-				pool.submit({
-					dlineTid: identityOf(tool, index),
-					index,
-					lanes: resolveToolLanes(tool.name, resolveLaneContext(tool)),
-					isTurnEnding: isTurnEndingToolName(tool.name),
-					run: async (signal) => {
-						// A block cancelled before admission must not start its
-						// side effects merely because a slot became free.
-						if (signal.aborted) {
-							return "halt_turn"
-						}
-						const outcome = await runBlockLifecycle(tool)
-						if (outcome === "halt_turn") {
-							// Stop the turn at this block. Cancelling from
-							// inside the effect reaches the pool before the
-							// slot is released, so no queued block can slip
-							// through in the gap.
-							cancelBlocksAfter(pool, toolUses, index, identityOf)
-						}
-						return outcome
-					},
-				}).then((outcome) => {
-					if (outcome.error !== undefined) {
-						// A throw ends the turn for the same reason a halt
-						// does, and the pool reports it as an outcome rather
-						// than a rejection, so the cancellation is issued here.
-						cancelBlocksAfter(pool, toolUses, index, identityOf)
-					}
-					return outcome
-				}),
-			),
-		)
-
-		// Read in assistant order, not completion order: a fast later block
-		// must not decide the turn's fate ahead of an earlier one.
-		for (const outcome of pool.orderedOutcomes()) {
-			// Cancellation is a halt, not a silent completion. Continuing would
-			// present the turn as though every block had finished its work.
-			if (outcome.cancelled) {
-				return "halt_turn"
-			}
-			if (outcome.error !== undefined) {
-				throw outcome.error instanceof Error ? outcome.error : new Error(String(outcome.error))
-			}
-			if (outcome.value === "halt_turn") {
-				return "halt_turn"
-			}
-		}
-		return "completed"
 	}
 
 	/**
@@ -6107,19 +6023,15 @@ export class Task {
 						cancelCommand: async () => undefined,
 					},
 					execute: async (command) => {
-						const block = this.taskState.assistantMessageContent.find(
-							(candidate): candidate is ToolUse =>
-								candidate.type === "tool_use" && candidate.dline_tid === command.dlineTid,
-						)
-						if (!block) {
-							throw new Error(`Canonical tool block is missing for dlineTid=${command.dlineTid}`)
-						}
-						await this.toolExecutor.executeTool(block)
+						await this.toolExecutor.runPreparedAdmission(command.dlineTid)
 					},
 					onReleaseError: (error) => Logger.error("[toolDomain] Resource release failed (non-fatal):", error),
 				}),
 				sink: this.toolDomainLedger.sink,
 				surface: createTaskUserFacingSurface(this),
+				identityPrefix: this.taskId,
+				releaseFallback: () => this.toolDomainLedger.releaseAll(),
+				onHaltFailure: (error) => Logger.error("[toolDomain] Halt did not drain within its budget:", error),
 			})
 		}
 		return this.toolDomain
@@ -6128,37 +6040,6 @@ export class Task {
 	/** The editor-visible diff surface, exposed for the tool domain's surface grant. */
 	getDiffSurface(): DiffViewProvider {
 		return this.diffViewProvider
-	}
-
-	/**
-	 * Stop the tool domain and wait for its drain receipt.
-	 *
-	 * A task that never ran a tool has no domain to stop, but the diff still
-	 * has to be reverted, so that case falls back to the provider directly.
-	 *
-	 * The wait is bounded. Cancellation previously never waited on a running
-	 * tool, so an unbounded drain here would let one stuck tool hang the whole
-	 * cancel path; the timeout keeps the stop as responsive as it was before.
-	 */
-	private async haltToolDomain(reason: "cancel" | "terminate" | "detach"): Promise<void> {
-		if (!this.toolDomain) {
-			await this.diffViewProvider.revertChanges()
-			return
-		}
-		this.toolHaltSequence += 1
-		const haltId = `${this.taskId}:halt:${this.toolHaltSequence}`
-		const domain = this.toolDomain
-		try {
-			await withTerminateTimeout(domain.halt({ haltId, reason }), 5_000, "toolDomain.halt")
-		} catch (error) {
-			Logger.error("[toolDomain] Halt did not drain within its budget:", error)
-			// The barrier did not complete, so waiters would otherwise stay
-			// pending behind a tool that never settled.
-			this.toolDomainLedger.releaseAll()
-		}
-		// Only retire this stop. A later halt that arrived while this one was
-		// draining must stay in force, or it would admit work it meant to refuse.
-		domain.rearm(haltId)
 	}
 
 	async terminate(options?: { preserveCompletedState?: boolean }) {
@@ -6447,7 +6328,7 @@ export class Task {
 
 		const state = this.taskRuntime.getState()
 		const runtimeBlock = state.turn?.blocks.find((block) => block.dlineTid === commandBlock.dline_tid)
-		if (!state.turn || !runtimeBlock || this.isTerminalRuntimeBlock(runtimeBlock.phase)) return
+		if (!state.turn || !runtimeBlock || this.turnDriver.isTerminalRuntimeBlock(runtimeBlock.phase)) return
 
 		const rejected = await this.dispatchRuntime({
 			type: "BLOCK_EXECUTION_REJECTED",
@@ -8193,7 +8074,7 @@ export class Task {
 				}
 				case "tool_use":
 					// Partial tools may stream UI immediately. Complete tools wait until
-					// stream finalization and are executed by executeFinalizedAssistantTurn().
+					// stream finalization and are executed by the extracted turn driver.
 					if (!block.partial && !this.taskState.didCompleteReadingStream) {
 						return
 					}
@@ -8234,247 +8115,6 @@ export class Task {
 		} else if (!didAdvance && this.taskState.presentAssistantMessageHasPendingUpdates) {
 			await this.presentAssistantMessage(context)
 		}
-	}
-
-	/** Execute one fully persisted assistant tool turn exactly once. */
-	private async executeFinalizedAssistantTurn(compactionFitInput?: {
-		contextTokens: number
-		contextWindow: number
-		providerRequestRound?: ProviderRequestRoundAdmission
-	}): Promise<void> {
-		const providerRequestRound = compactionFitInput?.providerRequestRound
-		const toolUses = this.taskState.assistantMessageContent.filter(
-			(block): block is ToolUse => block.type === "tool_use" && !block.partial,
-		)
-		if (toolUses.length === 0) {
-			providerRequestRound?.completeProviderOnly()
-			this.taskState.userMessageContentReady = true
-			return
-		}
-
-		const firstDlineTid = toolUses[0]?.dline_tid
-		if (!firstDlineTid || toolUses.some((block) => !block.dline_tid || !block.function_id)) {
-			throw new Error("Finalized assistant turn contains a tool without canonical identity")
-		}
-
-		const turnId = `turn:${firstDlineTid}`
-		const turnEndInteractionIds = toolUses
-			.filter((tool) => isTurnEndingToolName(tool.name))
-			.flatMap((tool) => (tool.dline_tid ? [tool.dline_tid] : []))
-		if (providerRequestRound) {
-			this.activeProviderExecutionTurns.set(providerRequestRound, {
-				turnId,
-				toolCount: toolUses.length,
-				turnEndInteractionIds,
-			})
-			for (const interactionId of turnEndInteractionIds) {
-				this.turnEndProviderExecutions.set(interactionId, {
-					turnId,
-					toolCount: toolUses.length,
-					admission: providerRequestRound,
-				})
-			}
-		}
-		let runtimeTurn = this.taskRuntime.getState().turn
-		if (!runtimeTurn || runtimeTurn.turnId !== turnId) {
-			const assistantApiIndex = this.messageStateHandler.apiConversationHistory.length - 1
-			this.taskController.buildTurn(
-				this.taskState.assistantMessageContent.map((block) => ({
-					...block,
-					conversationHistoryIndex: assistantApiIndex,
-				})),
-				(_toolName, dlineTid) => {
-					const candidate = toolUses.find((block) => block.dline_tid === dlineTid)
-					return candidate ? this.toolExecutor.isBlockApproved(candidate) : false
-				},
-			)
-			const blocks = this.taskController.getBlocks()
-			const created = await this.dispatchRuntime({
-				type: "TURN_CREATED",
-				turnId,
-				assistantApiIndex,
-				mode: this.isParallelToolCallingEnabled() ? "parallel" : "serial",
-				blocks: blocks.map(({ phase: _phase, ...block }) => block),
-			})
-			if (!created.accepted) {
-				const state = this.taskRuntime.getState()
-				if (this.taskState.abort || state.phase === TaskPhase.CANCELLING) return
-				throw new Error(`Turn creation rejected: ${created.error?.code ?? "invalid_runtime_event"}`)
-			}
-			runtimeTurn = created.next.turn
-		}
-
-		if (
-			!runtimeTurn ||
-			toolUses.some((tool) => {
-				const runtimeBlock = runtimeTurn?.blocks.find((block) => block.dlineTid === tool.dline_tid)
-				return !runtimeBlock || runtimeBlock.functionId !== tool.function_id
-			})
-		) {
-			throw new Error("Finalized assistant turn does not match the canonical runtime turn")
-		}
-
-		// One block's whole lifecycle, extracted so it can later be handed to
-		// the turn pool unstarted. The dispatch order inside a block is
-		// unchanged; only who awaits it moves. "halt_turn" reproduces the
-		// original `return`, which abandoned the entire presentation rather
-		// than just this block, so the distinction must survive the move.
-		const runBlockLifecycle = async (tool: ToolUse): Promise<"completed" | "halt_turn"> => {
-			if (this.taskState.abort || this.controller.task?.taskId !== this.taskId) return "halt_turn"
-			const dlineTid = tool.dline_tid
-			if (!dlineTid) return "completed"
-
-			let runtimeBlock = this.taskRuntime.getState().turn?.blocks.find((block) => block.dlineTid === dlineTid)
-			if (!runtimeBlock) {
-				throw new Error(`Canonical runtime block is missing for tool=${tool.name}`)
-			}
-			if (this.isTerminalRuntimeBlock(runtimeBlock.phase)) {
-				await this.ensureTerminalToolResult(tool, runtimeBlock.phase)
-				this.markFinalizedToolPresented(tool)
-				return "completed"
-			}
-
-			if (runtimeBlock.phase === BlockPhase.STREAMING) {
-				const ready = await this.dispatchRuntime({ type: "BLOCK_READY", turnId, dlineTid })
-				if (!ready.accepted) {
-					const state = this.taskRuntime.getState()
-					if (this.taskState.abort || state.phase === TaskPhase.CANCELLING) return "halt_turn"
-					throw new Error(`Block readiness rejected: ${ready.error?.code ?? "invalid_runtime_event"}`)
-				}
-				runtimeBlock = ready.next.turn?.blocks.find((block) => block.dlineTid === dlineTid)
-			}
-
-			if (!runtimeBlock) {
-				throw new Error(`Canonical runtime block disappeared for tool=${tool.name}`)
-			}
-			if (runtimeBlock.requiresApproval && runtimeBlock.phase === BlockPhase.STREAMING) {
-				throw new Error(`Tool handler cannot start its approval interaction: tool=${tool.name}`)
-			}
-			if (this.isTerminalRuntimeBlock(runtimeBlock.phase)) {
-				await this.ensureTerminalToolResult(tool, runtimeBlock.phase)
-				this.markFinalizedToolPresented(tool)
-				return "completed"
-			}
-
-			await this.awaitInitialCheckpointBeforeToolSideEffects(tool.name)
-
-			const execution = await this.dispatchRuntime({ type: "BLOCK_EXECUTION_STARTED", turnId, dlineTid })
-			if (!execution.accepted) {
-				const state = this.taskRuntime.getState()
-				const currentBlock = state.turn?.blocks.find((block) => block.dlineTid === dlineTid)
-				if (
-					this.taskState.abort ||
-					state.phase === TaskPhase.CANCELLING ||
-					(currentBlock && this.isTerminalRuntimeBlock(currentBlock.phase))
-				) {
-					return "halt_turn"
-				}
-				if (execution.effectError) {
-					throw new Error(
-						`Block execution effect failed (${execution.effectError.effectType}, ${execution.effectError.effectId}): ${execution.effectError.message}`,
-					)
-				}
-				throw new Error(`Block execution rejected: ${execution.error?.code ?? "invalid_runtime_event"}`)
-			}
-
-			if (this.controller.task?.taskId !== this.taskId) return "halt_turn"
-			runtimeBlock = this.taskRuntime.getState().turn?.blocks.find((block) => block.dlineTid === dlineTid)
-			if (!runtimeBlock) {
-				this.markFinalizedToolPresented(tool)
-				return "completed"
-			}
-			if (this.isTerminalRuntimeBlock(runtimeBlock.phase)) {
-				await this.ensureTerminalToolResult(tool, runtimeBlock.phase)
-				this.markFinalizedToolPresented(tool)
-				return "completed"
-			}
-			if (this.taskRuntime.getState().phase === TaskPhase.COMPLETED) {
-				this.markFinalizedToolPresented(tool)
-				return "completed"
-			}
-
-			const completed = await this.dispatchRuntime({ type: "BLOCK_EXECUTION_COMPLETED", turnId, dlineTid })
-			if (!completed.accepted) {
-				const state = this.taskRuntime.getState()
-				if (this.taskState.abort || state.phase === TaskPhase.CANCELLING) return "halt_turn"
-				throw new Error(`Block completion rejected: ${completed.error?.code ?? "invalid_runtime_event"}`)
-			}
-			this.markFinalizedToolPresented(tool)
-			return "completed"
-		}
-
-		// Serial turns keep the original loop: one block at a time, and the
-		// first halt abandons the rest. A parallel turn hands the same
-		// lifecycles to the pool, which decides admission by capacity, lane
-		// exclusivity and the turn-ending barrier.
-		// A turn that may open an approval must stay serial. While a card is
-		// open, a sibling finishing would advance the runtime revision and the
-		// user's answer would be refused as stale, suspending the turn. Only a
-		// turn whose every block is already auto-approved may be pooled.
-		const canRunConcurrently =
-			runtimeTurn.mode === "parallel" &&
-			toolUses.length > 1 &&
-			(await this.toolExecutor.isTurnFullyAutoApproved(toolUses))
-		if (!canRunConcurrently) {
-			for (const tool of toolUses) {
-				if ((await runBlockLifecycle(tool)) === "halt_turn") return
-			}
-		} else if ((await this.runToolBlocksThroughPool(toolUses, runBlockLifecycle)) === "halt_turn") {
-			return
-		}
-
-		if (
-			compactionFitInput &&
-			this.taskState.currentlySummarizing &&
-			this.taskState.isInternalContextCompactionRequest &&
-			!this.taskState.targetWindowFittingState
-		) {
-			this.taskState.compactionFittingRequired = shouldContinueCompactionFitting(compactionFitInput)
-		}
-
-		const finalState = this.taskRuntime.getState()
-		const finalTurn = finalState.turn
-		if (
-			finalState.phase !== TaskPhase.COMPLETED &&
-			finalTurn?.turnId === turnId &&
-			finalTurn.blocks.every((block) => this.isTerminalRuntimeBlock(block.phase))
-		) {
-			const completed = await this.dispatchRuntime({ type: "TURN_COMPLETED", turnId })
-			if (!completed.accepted) {
-				const state = this.taskRuntime.getState()
-				if (this.taskState.abort || state.phase === TaskPhase.CANCELLING) return
-				throw new Error(`Turn completion rejected: ${completed.error?.code ?? "invalid_runtime_event"}`)
-			}
-		}
-
-		const postCommitDirectives = toolUses.flatMap((tool) => {
-			const directive = this.toolExecutor.takePostCommitDirective(tool.dline_tid)
-			return directive ? [directive] : []
-		})
-		if (postCommitDirectives.length > 1) {
-			throw new Error("A finalized assistant turn produced multiple post-commit directives")
-		}
-		const postCommitDirective = postCommitDirectives[0]
-		if (postCommitDirective?.type === "start_successor_task") {
-			const approvedSource = {
-				functionId: postCommitDirective.functionId,
-				dlineTid: postCommitDirective.dlineTid,
-			}
-			const feedback = findLatestNewTaskFeedback({
-				apiHistory: this.messageStateHandler.apiConversationHistory,
-				uiHistory: this.messageStateHandler.clineMessages,
-				approvedSource,
-			})
-			const initialUserContent = await buildNewTaskFeedbackContent(feedback)
-			const successor = await this.taskRuntime.dispatchAtAdmission({
-				type: "TASK_SUCCESSOR_REQUESTED",
-				handoff: createNewTaskHandoff(postCommitDirective, this.taskSm, initialUserContent),
-			})
-			if (!successor.accepted) {
-				throw new Error(`Task successor rejected: ${successor.error?.code ?? "invalid_runtime_event"}`)
-			}
-		}
-		this.taskState.userMessageContentReady = true
 	}
 
 	private completeProviderExecutionAtAwaitingUser(turnId: string, interactionId: string): void {
@@ -8550,22 +8190,6 @@ export class Task {
 		return { toolCount, completedToolCount, failedToolCount, cancelledToolCount }
 	}
 
-	private isTerminalRuntimeBlock(phase: BlockPhase): boolean {
-		return (
-			phase === BlockPhase.COMPLETED ||
-			phase === BlockPhase.REJECTED ||
-			phase === BlockPhase.SKIPPED ||
-			phase === BlockPhase.CANCELLED
-		)
-	}
-
-	private markFinalizedToolPresented(tool: ToolUse): void {
-		if (tool.ts !== undefined) {
-			this.taskState.partialToolLifecycleByTs.set(tool.ts, "complete-done")
-		}
-		Session.get().updateToolCall(tool.function_id, tool.name)
-	}
-
 	/** Present one request-local Profile admission failure without locking future sends. */
 	private async presentApiProfileAdmissionFailure(
 		userContent: ClineContent[],
@@ -8634,7 +8258,18 @@ export class Task {
 		await beforeApiRequestStarted?.()
 		const autoApprovalSettings = this.stateManager.getGlobalSettingsKey("autoApprovalSettings")
 		const settingsVersion = autoApprovalSettings.version ?? 1
-		const webSearchAutoApproved = this.toolExecutor.isAutoApproved(ClineDefaultTool.WEB_SEARCH)
+		const hostedWebAdmission = this.toolExecutor.prepareAdmission({
+			type: "tool_use",
+			name: ClineDefaultTool.WEB_SEARCH,
+			params: { query: "Hosted Web Search" },
+			partial: false,
+			ts: Date.now(),
+			function_id: `hosted-web:${this.taskId}:${apiIndex}`,
+			dline_tid: `hosted-web:${this.taskId}:${apiIndex}`,
+		})
+		const webSearchAutoApproved =
+			hostedWebAdmission.outcome === "admitted" &&
+			(hostedWebAdmission.decision.kind === "automatic" || hostedWebAdmission.decision.kind === "none")
 		const hostedApprovalLeased = this.taskState.hostedWebApprovalLeaseVersion === settingsVersion
 		const hostedApprovalSatisfied = webSearchAutoApproved || hostedApprovalLeased
 		const routingPlan =
@@ -10263,7 +9898,7 @@ export class Task {
 				// Persist the canonical assistant tool_use before any handler can publish
 				// side effects or a turn-ending interaction that recovery must explain.
 				await this.messageStateHandler.flushApiConversationHistory()
-				await this.executeFinalizedAssistantTurn({
+				await this.turnDriver.execute({
 					providerRequestRound,
 					contextTokens:
 						taskMetrics.inputTokens +

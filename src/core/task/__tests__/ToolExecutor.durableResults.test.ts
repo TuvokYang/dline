@@ -163,7 +163,6 @@ describe("ToolExecutor durable tool results", () => {
 		})
 		const block = createBlock("task_progress", { task_progress: "- [x] Inspect runtime state" })
 
-		expect(executor.isBlockApproved(block)).toBe(true)
 		await executor.execute(block, {})
 
 		expect(coordinator.execute).not.toHaveBeenCalled()
@@ -216,7 +215,6 @@ describe("ToolExecutor durable tool results", () => {
 		const { coordinator, executor, say } = createHarness({ allowedNativeToolNames: [] })
 		const block = createBlock(ClineDefaultTool.FILE_READ)
 
-		expect(executor.isBlockApproved(block)).toBe(true)
 		const handled = await executor.execute(block, {})
 
 		expect(handled).toBe(true)
@@ -329,7 +327,6 @@ describe("ToolExecutor durable tool results", () => {
 		})
 		const block = createBlock("not_registered", {})
 
-		expect(executor.isBlockApproved(block)).toBe(true)
 		const handled = await executor.execute(block, {})
 
 		expect(handled).toBe(true)

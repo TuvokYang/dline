@@ -41,6 +41,8 @@ export type PooledBlockState =
 	| { status: "settled" }
 	/** Aborted before or during execution. */
 	| { status: "cancelled" }
+	/** Suppressed because an earlier turn-ending block closed the turn. */
+	| { status: "skipped" }
 
 /** Outcome of one pooled block. */
 export interface PooledOutcome<T> {
@@ -52,6 +54,8 @@ export interface PooledOutcome<T> {
 	error?: unknown
 	/** True when the block was cancelled rather than run. */
 	cancelled: boolean
+	/** True when an earlier turn-ending block made this call unreachable. */
+	skipped?: boolean
 }
 
 /** Construction options for a turn execution pool. */
@@ -116,6 +120,8 @@ export class TurnExecutionPool<T> {
 	private readonly running = new Map<string, AdmissionBlock>()
 	private readonly outcomes: PooledOutcome<T>[] = []
 	private hasUnfinishedEarlierWork = false
+	/** Once set, no later sibling in this turn may start. */
+	private turnEndingIndex?: number
 	private disposed = false
 
 	constructor(options: TurnExecutionPoolOptions) {
@@ -215,7 +221,11 @@ export class TurnExecutionPool<T> {
 			}
 			this.entries.set(block.dlineTid, entry)
 			this.pending.push(block)
-			this.schedule()
+			if (this.turnEndingIndex !== undefined && block.index > this.turnEndingIndex) {
+				this.skip(block.dlineTid)
+			} else {
+				this.schedule()
+			}
 		})
 	}
 
@@ -231,7 +241,12 @@ export class TurnExecutionPool<T> {
 	 */
 	cancel(dlineTid: string): void {
 		const entry = this.entries.get(dlineTid)
-		if (!entry || entry.state.status === "settled" || entry.state.status === "cancelled") {
+		if (
+			!entry ||
+			entry.state.status === "settled" ||
+			entry.state.status === "cancelled" ||
+			entry.state.status === "skipped"
+		) {
 			return
 		}
 
@@ -275,6 +290,30 @@ export class TurnExecutionPool<T> {
 		// process-level occupancy. Leaving its last sample behind would keep
 		// finished work counted as outstanding for the life of the process.
 		telemetryService.forgetPoolInstance("tool", this.telemetryInstance)
+	}
+
+	/** Cancel every block after the block that halted the turn. */
+	cancelBlocksAfter(haltedIndex: number): void {
+		for (const entry of this.entries.values()) {
+			if (entry.block.index > haltedIndex) this.cancel(entry.block.dlineTid)
+		}
+	}
+
+	/** Permanently suppress every later sibling after a turn-ending block starts. */
+	private skipBlocksAfter(endingIndex: number): void {
+		for (const entry of this.entries.values()) {
+			if (entry.block.index > endingIndex) this.skip(entry.block.dlineTid)
+		}
+	}
+
+	private skip(dlineTid: string): void {
+		const entry = this.entries.get(dlineTid)
+		if (!entry || entry.state.status !== "queued") return
+		const index = this.pending.findIndex((candidate) => candidate.dlineTid === dlineTid)
+		if (index >= 0) this.pending.splice(index, 1)
+		this.transition(entry, { status: "skipped" })
+		entry.settle({ dlineTid, index: entry.block.index, cancelled: false, skipped: true })
+		this.release(dlineTid, undefined)
 	}
 
 	/** Re-run admission after the configured limit changed. */
@@ -359,45 +398,46 @@ export class TurnExecutionPool<T> {
 			return
 		}
 
-		// Sampled once the permit is in hand: a saturated pool is only
-		// distinguishable from an idle one when the wait and the occupancy that
-		// caused it are reported at the same moment. The wait itself is counted
-		// from submission, which is where the block actually started waiting.
-		telemetryService.capturePoolAdmission({
-			pool: "tool",
-			instance: this.telemetryInstance,
-			queueWaitMs: Date.now() - entry.submittedAt,
-			running: this.runningCount,
-			queued: this.queuedCount,
-			limit: this.limit(),
-		})
-
-		if (this.isCancelled(block.dlineTid)) {
-			entry.settle({ dlineTid: block.dlineTid, index: block.index, cancelled: true })
-			this.release(block.dlineTid, permit)
-			return
-		}
-
-		this.transition(entry, { status: "running" })
-
 		try {
-			const value = await block.run(entry.controller.signal)
+			// Sampled once the permit is in hand: a saturated pool is only
+			// distinguishable from an idle one when wait and occupancy are reported together.
+			telemetryService.capturePoolAdmission({
+				pool: "tool",
+				instance: this.telemetryInstance,
+				queueWaitMs: Date.now() - entry.submittedAt,
+				running: this.runningCount,
+				queued: this.queuedCount,
+				limit: this.limit(),
+			})
+
 			if (this.isCancelled(block.dlineTid)) {
 				entry.settle({ dlineTid: block.dlineTid, index: block.index, cancelled: true })
-			} else {
-				this.transition(entry, { status: "settled" })
-				entry.settle({ dlineTid: block.dlineTid, index: block.index, value, cancelled: false })
+				return
 			}
-		} catch (error) {
-			if (this.isCancelled(block.dlineTid)) {
-				entry.settle({ dlineTid: block.dlineTid, index: block.index, cancelled: true })
-			} else {
-				// A failing block is an outcome, not an exception: the turn still
-				// needs a result for every call the model made.
-				this.transition(entry, { status: "settled" })
-				entry.settle({ dlineTid: block.dlineTid, index: block.index, error, cancelled: false })
+
+			if (block.isTurnEnding) {
+				this.turnEndingIndex = Math.min(this.turnEndingIndex ?? block.index, block.index)
+				this.skipBlocksAfter(this.turnEndingIndex)
+			}
+			this.transition(entry, { status: "running" })
+			try {
+				const value = await block.run(entry.controller.signal)
+				if (this.isCancelled(block.dlineTid)) {
+					entry.settle({ dlineTid: block.dlineTid, index: block.index, cancelled: true })
+				} else {
+					this.transition(entry, { status: "settled" })
+					entry.settle({ dlineTid: block.dlineTid, index: block.index, value, cancelled: false })
+				}
+			} catch (error) {
+				if (this.isCancelled(block.dlineTid)) {
+					entry.settle({ dlineTid: block.dlineTid, index: block.index, cancelled: true })
+				} else {
+					this.transition(entry, { status: "settled" })
+					entry.settle({ dlineTid: block.dlineTid, index: block.index, error, cancelled: false })
+				}
 			}
 		} finally {
+			// Every acquired permit has exactly one release owner.
 			this.release(block.dlineTid, permit)
 		}
 	}

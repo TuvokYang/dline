@@ -32,11 +32,15 @@ export type TaskEvent =
 			blocks: Array<Omit<BlockLifecycle, "phase">>
 	  }
 	| { type: "BLOCK_READY"; turnId: string; dlineTid: string }
+	| { type: "BLOCK_ADMISSION_REJECTED"; turnId: string; dlineTid: string }
+	| { type: "BLOCK_ADMISSION_REVOKED"; turnId: string; dlineTid: string }
 	| { type: "BLOCK_APPROVAL_REQUIRED"; turnId: string; dlineTid: string }
 	| { type: "BLOCK_APPROVED"; turnId: string; dlineTid: string }
 	| { type: "BLOCK_REJECTED"; turnId: string; dlineTid: string }
 	| { type: "BLOCK_EXECUTION_STARTED"; turnId: string; dlineTid: string }
 	| { type: "BLOCK_EXECUTION_REJECTED"; turnId: string; dlineTid: string }
+	| { type: "BLOCK_EXECUTION_CANCELLED"; turnId: string; dlineTid: string }
+	| { type: "BLOCK_EXECUTION_SKIPPED"; turnId: string; dlineTid: string }
 	| { type: "BLOCK_EXECUTION_COMPLETED"; turnId: string; dlineTid: string }
 	| { type: "TURN_COMPLETED"; turnId: string }
 	| { type: "APPROVAL_REQUIRED"; turnId: string; interactionId: string }

@@ -2,7 +2,6 @@ import { resolveProvider } from "@core/api"
 import type { ToolUse } from "@core/assistant-message"
 import { formatResponse } from "@core/prompts/responses"
 import { processFilesIntoText } from "@integrations/misc/extract-text"
-import { showSystemNotification } from "@integrations/notifications"
 import { createAndOpenGitHubIssue } from "@utils/github-url-utils"
 import * as os from "os"
 import { HostProvider } from "@/hosts/host-provider"
@@ -11,7 +10,7 @@ import { Logger } from "@/shared/services/Logger"
 import { ClineDefaultTool } from "@/shared/tools"
 import type { ToolResponse } from "../../index"
 import type { IPartialBlockHandler, IToolHandler } from "../ToolExecutorCoordinator"
-import { interactionId, interactionTurnId, type TaskConfig } from "../types/TaskConfig"
+import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
 import { sayFeedbackOnce } from "../utils/UserFeedbackUtils"
 
@@ -31,7 +30,7 @@ export class ReportBugHandler implements IToolHandler, IPartialBlockHandler {
 			additional_context: uiHelpers.removeClosingTag(block, "additional_context", block.params.additional_context),
 		})
 
-		await uiHelpers.ask(this.name, partialMessage, true, { existingTs: block.ts }).catch(() => {})
+		await uiHelpers.say("tool", partialMessage, undefined, undefined, true, block.ts)
 	}
 
 	async execute(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
@@ -65,14 +64,6 @@ export class ReportBugHandler implements IToolHandler, IPartialBlockHandler {
 
 		config.taskState.consecutiveMistakeCount = 0
 
-		// Show notification if enabled
-		if (config.autoApprovalSettings.enableNotifications) {
-			showSystemNotification({
-				subtitle: "Dline wants to create a github issue...",
-				message: `Dline is suggesting to create a github issue with the title: ${title}`,
-			})
-		}
-
 		// Derive system information values algorithmically
 		const operatingSystem = `${os.platform()} ${os.release()}`
 		const currentMode = config.mode
@@ -97,16 +88,11 @@ export class ReportBugHandler implements IToolHandler, IPartialBlockHandler {
 			cline_version: clineVersion,
 		})
 
-		const outcome = await config.interactions.open({
-			turnId: interactionTurnId(block),
-			interactionId: interactionId(block),
-			kind: "report_bug",
-			presentation: bugReportData,
-			existingTs: block.ts,
-		})
-		const text = outcome.draft?.text
-		const images = outcome.draft?.images
-		const reportBugFiles = outcome.draft?.files
+		const outcome = block.dline_tid ? config.admissionOutcomes?.get(block.dline_tid) : undefined
+		await config.callbacks.say("tool", bugReportData, undefined, undefined, false, block.ts)
+		const text = outcome?.draft?.text
+		const images = outcome?.draft?.images
+		const reportBugFiles = outcome?.draft?.files
 
 		// If the user provided a response, treat it as feedback
 		if (text || (images && images.length > 0) || (reportBugFiles && reportBugFiles.length > 0)) {

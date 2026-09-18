@@ -1,6 +1,5 @@
 import { strict as assert } from "node:assert"
 import type { ToolUse } from "@core/assistant-message"
-import type { TaskConfig } from "@core/task/tools/types/TaskConfig"
 import { MAX_TOOL_RESULT_TEXT_BYTES } from "@shared/content-limits"
 import { describe, expect, it, vi } from "vitest"
 import { ToolResultUtils } from "../ToolResultUtils"
@@ -95,39 +94,5 @@ describe("ToolResultUtils approval feedback", () => {
 			expect(text).toContain("[FILE TRUNCATED:")
 		}
 		expect(userMessageContent[1]).toMatchObject({ function_id: "call-large-b", dline_tid: "dline_tid_call-large-b" })
-	})
-
-	it("does not render duplicate user_feedback when approval response was already acked", async () => {
-		const userMessageContent: any[] = []
-		const say = vi.fn(async () => undefined)
-		const config = {
-			isSubagentExecution: false,
-			callbacks: {
-				ask: vi.fn(async () => ({ response: "yesButtonClicked", text: "审批补充", images: [], files: [] })),
-				say,
-			},
-			taskState: {
-				userMessageContent,
-				ackedFeedback: {
-					response: "yesButtonClicked",
-					text: "审批补充",
-					images: [],
-					files: [],
-				},
-			},
-			taskController: {
-				rejectActiveBlock: vi.fn(),
-			},
-		} as unknown as TaskConfig
-
-		const approved = await ToolResultUtils.askApprovalAndPushFeedback("tool" as never, "{}", config)
-
-		assert.equal(approved, true)
-		expect(say).not.toHaveBeenCalledWith("user_feedback", "审批补充", [], [])
-		assert.equal(config.taskState.ackedFeedback, undefined)
-		assert.equal(userMessageContent.length, 1)
-		assert.equal(userMessageContent[0].type, "tool_feedback")
-		ToolResultUtils.pushToolResult("Approved.", createBlock(), userMessageContent, describeTool, undefined)
-		assert.match(userMessageContent[0].content[1].text, /<feedback>\n审批补充\n<\/feedback>/)
 	})
 })

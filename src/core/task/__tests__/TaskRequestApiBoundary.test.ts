@@ -368,7 +368,7 @@ describe("Task request API boundary", () => {
 	it("flushes the finalized assistant tool turn before executing its tools", async () => {
 		const source = await readFile(taskSourcePath, "utf8")
 		const method = extractMethod(source, "async recursivelyMakeClineRequests(", "async loadContext(")
-		const finalizedTurn = method.indexOf("await this.executeFinalizedAssistantTurn({")
+		const finalizedTurn = method.indexOf("await this.turnDriver.execute({")
 		const assistantAppend = method.lastIndexOf("await this.messageStateHandler.addToApiConversationHistory({", finalizedTurn)
 		const assistantRole = method.indexOf('role: "assistant"', assistantAppend)
 		const historyFlush = method.indexOf("await this.messageStateHandler.flushApiConversationHistory()", assistantRole)
@@ -382,7 +382,7 @@ describe("Task request API boundary", () => {
 	it("rejects invalid compaction output before the ordinary continuation path", async () => {
 		const source = await readFile(taskSourcePath, "utf8")
 		const method = extractMethod(source, "async recursivelyMakeClineRequests(", "async loadContext(")
-		const finalizedTurn = method.indexOf("await this.executeFinalizedAssistantTurn({")
+		const finalizedTurn = method.indexOf("await this.turnDriver.execute({")
 		const invalidOutput = method.indexOf(
 			"this.taskState.isInternalContextCompactionRequest || this.taskState.isManualContextCompactionRequest",
 			finalizedTurn,

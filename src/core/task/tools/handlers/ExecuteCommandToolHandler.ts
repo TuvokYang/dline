@@ -4,18 +4,15 @@ import { getPrompt } from "@core/prompts/i18n"
 import { formatResponse } from "@core/prompts/responses"
 import { WorkspacePathAdapter } from "@core/workspace/WorkspacePathAdapter"
 import { processFilesIntoText } from "@integrations/misc/extract-text"
-import { showApprovalNotification, showSystemNotification } from "@integrations/notifications"
+import { showSystemNotification } from "@integrations/notifications"
 import type { CommandExecutionOutcome } from "@integrations/terminal"
-import { findLastIndex } from "@shared/array"
-import { COMMAND_REQ_APP_STRING } from "@shared/combineCommandSequences"
-import { ClineAsk } from "@shared/ExtensionMessage"
 import { DEFAULT_TERMINAL_COMMAND_TIMEOUT_SECONDS, MIN_TERMINAL_COMMAND_TIMEOUT_SECONDS } from "@shared/terminal-settings"
 import { arePathsEqual } from "@utils/path"
 import { telemetryService } from "@/services/telemetry"
 import { ClineDefaultTool } from "@/shared/tools"
 import type { ToolResponse } from "../../index"
 import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
-import { interactionId, interactionTurnId, type TaskConfig } from "../types/TaskConfig"
+import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
 import { applyModelContentFixes } from "../utils/ModelContentProcessor"
 import { ToolResultUtils } from "../utils/ToolResultUtils"
@@ -57,18 +54,14 @@ export class ExecuteCommandToolHandler implements IFullyManagedTool {
 			return
 		}
 
-		// Check if this should be auto-approved to determine UI flow
-		const shouldAutoApprove = uiHelpers.shouldAutoApproveTool(this.name)
-
-		if (shouldAutoApprove) {
-			// For auto-approved commands, we can't partially stream a say prematurely
-			// since it may become an ask based on the requires_approval parameter
-			// So we wait for the complete block
-			return
-		}
-		await uiHelpers
-			.ask("command" as ClineAsk, uiHelpers.removeClosingTag(block, "command", command), true, { existingTs: block.ts })
-			.catch(() => {})
+		await uiHelpers.say(
+			"command",
+			uiHelpers.removeClosingTag(block, "command", command),
+			undefined,
+			undefined,
+			true,
+			block.ts,
+		)
 	}
 
 	async execute(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
@@ -78,7 +71,6 @@ export class ExecuteCommandToolHandler implements IFullyManagedTool {
 
 		let command: string | undefined = block.params.command
 		const requiresApprovalRaw: string | undefined = block.params.requires_approval
-		const requiresApprovalPerLLM = requiresApprovalRaw?.toLowerCase() === "true"
 		const timeoutParam: string | undefined = block.params.timeout
 		const backgroundParam: string | undefined = block.params.background
 		const synchronousParam: string | undefined = block.params.synchronous
@@ -179,7 +171,6 @@ export class ExecuteCommandToolHandler implements IFullyManagedTool {
 			return formatResponse.toolError(message)
 		}
 		const executionDir = resolvedWorkdirectory.path
-		const requiresExternalWorkdirectoryApproval = !resolvedWorkdirectory.isWithinWorkspace
 
 		// Check command permission validation (DLINE_COMMAND_PERMISSIONS env var)
 		const permissionResult = config.services.commandPermissionController.validateCommand(actualCommand)
@@ -220,15 +211,6 @@ export class ExecuteCommandToolHandler implements IFullyManagedTool {
 			return formatResponse.toolError(formatResponse.clineIgnoreError(ignoredFileAttemptedToAccess))
 		}
 
-		let didAutoApprove = false
-
-		// If the model says this command is safe and auto approval for safe commands is true, execute the command
-		// If the model says the command is risky, but *BOTH* auto approve settings are true, execute the command
-		const autoApproveResult = config.autoApprover?.shouldAutoApproveTool(block.name)
-		const [autoApproveSafe, autoApproveAll] = Array.isArray(autoApproveResult)
-			? autoApproveResult
-			: [autoApproveResult, false]
-
 		// Determine workspace context for telemetry
 		const resolvedRoot = config.workspaceManager?.resolvePathToRoot(executionDir)
 		const primaryRoot = config.workspaceManager?.getPrimaryRoot()?.path ?? config.cwd
@@ -257,99 +239,39 @@ export class ExecuteCommandToolHandler implements IFullyManagedTool {
 			)
 		}
 
-		if (
-			!requiresExternalWorkdirectoryApproval &&
-			(config.isSubagentExecution ||
-				(!requiresApprovalPerLLM && autoApproveSafe) ||
-				(requiresApprovalPerLLM && autoApproveSafe && autoApproveAll))
-		) {
-			// Auto-approve flow: render the execution directory the same way the manual
-			// approval presentation does, so the workdirectory row is shown consistently.
-			if (!config.isSubagentExecution) {
-				const existingTs = block.ts
-				await config.callbacks.say(
-					"command",
-					`${actualCommand}\n\nWorking directory: ${executionDir}`,
-					undefined,
-					undefined,
-					false,
-					existingTs,
-				)
-			}
-			didAutoApprove = true
-			telemetryService.captureToolUsage(
-				config.ulid ?? "",
-				block.name,
-				config.api.getModel().id,
-				provider ?? "",
-				true,
-				true,
-				workspaceContext,
-				block.isNativeToolCall,
-			)
-		} else {
-			const approvalPresentation = `${actualCommand}\n\nWorking directory: ${executionDir}`
-			const requiresExplicitApproval = requiresExternalWorkdirectoryApproval || (autoApproveSafe && requiresApprovalPerLLM)
-			// Manual approval flow
-			void showApprovalNotification(
-				{ message: approvalPresentation, requiresExplicitApproval },
-				config.autoApprovalSettings.enableNotifications,
-			)
-
-			const outcome = await config.interactions.open({
-				turnId: interactionTurnId(block),
-				interactionId: interactionId(block),
-				kind: "command_approval",
-				presentation: `${approvalPresentation}${requiresExplicitApproval ? COMMAND_REQ_APP_STRING : ""}`,
-				existingTs: block.ts,
-			})
-			const text = outcome.draft?.text
-			const images = outcome.draft?.images
-			const files = outcome.draft?.files
-			if (text || images?.length || files?.length) {
-				const fileContent = files?.length ? await processFilesIntoText(files) : ""
-				ToolResultUtils.pushAdditionalToolFeedback(config.taskState.userMessageContent, text, images, fileContent)
-				await sayFeedbackOnce(
-					config,
-					outcome.actionId === "approve" ? "yesButtonClicked" : "noButtonClicked",
-					text,
-					images,
-					files,
-				)
-			}
-			const didApprove = outcome.actionId === "approve"
-			if (!didApprove) {
-				// Mark the command ask message as skipped so the UI shows the correct status
-				const msgs = config.messageState.clineMessages
-				const cmdIdx = findLastIndex(msgs, (m: any) => m.ask === "command" || m.say === "command")
-				if (cmdIdx !== -1) {
-					await config.callbacks.updateClineMessage(cmdIdx, { commandStatus: "skipped" })
-				}
-				telemetryService.captureToolUsage(
-					config.ulid ?? "",
-					block.name,
-					config.api.getModel().id,
-					provider ?? "",
-					false,
-					false,
-					workspaceContext,
-					block.isNativeToolCall,
-				)
-				return formatResponse.toolDenied()
-			}
-			telemetryService.captureToolUsage(
-				config.ulid ?? "",
-				block.name,
-				config.api.getModel().id,
-				provider ?? "",
-				false,
-				true,
-				workspaceContext,
-				block.isNativeToolCall,
-			)
+		const admissionOutcome = block.dline_tid ? config.admissionOutcomes?.get(block.dline_tid) : undefined
+		const text = admissionOutcome?.draft?.text
+		const images = admissionOutcome?.draft?.images
+		const files = admissionOutcome?.draft?.files
+		if (text || images?.length || files?.length) {
+			const fileContent = files?.length ? await processFilesIntoText(files) : ""
+			ToolResultUtils.pushAdditionalToolFeedback(config.taskState.userMessageContent, text, images, fileContent)
+			await sayFeedbackOnce(config, "yesButtonClicked", text, images, files)
 		}
 
-		// Run PreToolUse hook after approval but before execution
+		if (!config.isSubagentExecution) {
+			await config.callbacks.say(
+				"command",
+				`${actualCommand}\n\nWorking directory: ${executionDir}`,
+				undefined,
+				undefined,
+				false,
+				block.ts,
+			)
+		}
+		const wasAutoApproved = admissionOutcome === undefined
+		telemetryService.captureToolUsage(
+			config.ulid ?? "",
+			block.name,
+			config.api.getModel().id,
+			provider ?? "",
+			wasAutoApproved,
+			true,
+			workspaceContext,
+			block.isNativeToolCall,
+		)
+
+		// Run PreToolUse hook after admission but before execution
 		try {
 			const { ToolHookUtils } = await import("../utils/ToolHookUtils")
 			await ToolHookUtils.runPreToolUseIfEnabled(config, block)
@@ -361,9 +283,9 @@ export class ExecuteCommandToolHandler implements IFullyManagedTool {
 			throw error
 		}
 
-		// Setup timeout notification for long-running auto-approved commands
+		// Setup timeout notification for long-running automatically admitted commands
 		let timeoutId: NodeJS.Timeout | undefined
-		if (didAutoApprove && config.autoApprovalSettings.enableNotifications && !config.isSubagentExecution) {
+		if (wasAutoApproved && config.autoApprovalSettings.enableNotifications && !config.isSubagentExecution) {
 			// if the command was auto-approved, and it's long running we need to notify the user after some time has passed without proceeding
 			timeoutId = setTimeout(() => {
 				showSystemNotification({

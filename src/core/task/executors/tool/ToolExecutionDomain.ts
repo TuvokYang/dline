@@ -55,6 +55,14 @@ export interface ToolExecutionDomainOptions {
 	readonly runner: ToolDomainRunner
 	readonly sink: ToolDomainEventSink
 	readonly surface: ToolDomainSurface
+	/** Stable identity used to mint stop generations. */
+	readonly identityPrefix?: string
+	/** Maximum time the caller waits for one stop generation to drain. */
+	readonly haltBudgetMs?: number
+	/** Release waiters when a drain cannot produce its normal receipt. */
+	readonly releaseFallback?: () => void
+	/** Report a bounded halt failure without coupling the domain to a logger. */
+	readonly onHaltFailure?: (error: unknown) => void
 }
 
 export class ToolExecutionDomain {
@@ -63,6 +71,11 @@ export class ToolExecutionDomain {
 	private readonly runner: ToolDomainRunner
 	private readonly sink: ToolDomainEventSink
 	private readonly surface: ToolDomainSurface
+	private readonly identityPrefix: string
+	private readonly haltBudgetMs: number
+	private readonly releaseFallback: () => void
+	private readonly onHaltFailure: (error: unknown) => void
+	private toolHaltSequence = 0
 
 	/** In-flight work, keyed by commandId so a late result can be attributed. */
 	private readonly inFlight = new Map<string, Promise<void>>()
@@ -78,6 +91,10 @@ export class ToolExecutionDomain {
 		this.runner = options.runner
 		this.sink = options.sink
 		this.surface = options.surface
+		this.identityPrefix = options.identityPrefix ?? "tool-domain"
+		this.haltBudgetMs = options.haltBudgetMs ?? 5_000
+		this.releaseFallback = options.releaseFallback ?? (() => undefined)
+		this.onHaltFailure = options.onHaltFailure ?? (() => undefined)
 	}
 
 	/** True when this assembly cannot reach a user at all. */
@@ -157,6 +174,39 @@ export class ToolExecutionDomain {
 		} finally {
 			this.inFlight.clear()
 			this.sink.emit({ kind: "tool.halted", haltId: order.haltId })
+		}
+	}
+
+	/**
+	 * Stop the domain under its own generation, budget and fallback policy.
+	 *
+	 * The caller names only why it is stopping. The domain owns every detail
+	 * needed to make the stop bounded and to release correlated waiters when a
+	 * stuck effect cannot produce the ordinary drain receipt.
+	 */
+	async haltToolDomain(reason: HaltOrder["reason"]): Promise<void> {
+		this.toolHaltSequence += 1
+		const haltId = `${this.identityPrefix}:halt:${this.toolHaltSequence}`
+		let timeout: ReturnType<typeof setTimeout> | undefined
+		try {
+			const drained = await Promise.race([
+				this.halt({ haltId, reason }).then(() => true),
+				new Promise<false>((resolve) => {
+					timeout = setTimeout(() => resolve(false), this.haltBudgetMs)
+				}),
+			])
+			if (!drained) {
+				const error = new Error(`Tool domain halt timed out after ${this.haltBudgetMs}ms`)
+				this.onHaltFailure(error)
+				this.releaseFallback()
+			}
+		} catch (error) {
+			this.onHaltFailure(error)
+			this.releaseFallback()
+		} finally {
+			if (timeout) clearTimeout(timeout)
+			// Retire only this generation. A newer stop remains authoritative.
+			this.rearm(haltId)
 		}
 	}
 

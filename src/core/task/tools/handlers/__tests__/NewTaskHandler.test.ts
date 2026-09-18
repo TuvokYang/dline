@@ -92,30 +92,6 @@ describe("NewTaskHandler", () => {
 		})
 	})
 
-	it("returns feedback continuation for reject with text and attachments", async () => {
-		const config = createConfig({
-			actionId: "reject",
-			text: "Keep the migration constraints",
-			images: ["image-1"],
-			files: ["file-1"],
-		})
-
-		const result = await new NewTaskHandler().execute(config, createBlock("Initial context"))
-
-		expect(result).not.toHaveProperty("postCommit")
-		expect(JSON.stringify(result)).toContain("The user provided feedback instead of creating a new task")
-		expect(JSON.stringify(result)).toContain("Keep the migration constraints")
-	})
-
-	it("treats an empty reject as feedback instead of confirming task creation", async () => {
-		const config = createConfig({ actionId: "reject" })
-
-		const result = await new NewTaskHandler().execute(config, createBlock("Initial context"))
-
-		expect(result).not.toHaveProperty("postCommit")
-		expect(JSON.stringify(result)).toContain("The user provided feedback instead of creating a new task")
-	})
-
 	it("keeps the existing missing-context error path", async () => {
 		const config = createConfig({ actionId: "approve" })
 

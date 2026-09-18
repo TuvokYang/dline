@@ -4,7 +4,6 @@ import { ApiHandler, resolveProviderFromProfile } from "@core/api"
 import type { WebSearchRoutingPlan } from "@core/api/server-tools"
 import type { IdentityFactory } from "@core/api/transform/block-identity"
 import type { ApiStreamServerToolChunk } from "@core/api/transform/stream"
-import { isTaskReadScopePath } from "@core/artifacts/runtime"
 import { FileContextTracker } from "@core/context/context-tracking/FileContextTracker"
 import { getHookModelContext } from "@core/hooks/hook-model-context"
 import { getHooksEnabledSafe } from "@core/hooks/hooks-utils"
@@ -19,7 +18,6 @@ import type { CommandCancellationResult, CommandExecutionOptions, CommandExecuti
 import { BrowserSession } from "@services/browser/BrowserSession"
 import { UrlContentFetcher } from "@services/browser/UrlContentFetcher"
 import { McpHub } from "@services/mcp/McpHub"
-import { DlineRuntimeFileManager } from "@services/runtime-files/DlineRuntimeFileManager"
 import { recordPerfPhase } from "@services/telemetry/instrumentation/duration-recorder"
 import { PerfDomain } from "@services/telemetry/instrumentation/perf-domains"
 import { runWithSignalSpan, startSignalSpan } from "@services/telemetry/service/pipeline-port"
@@ -31,6 +29,7 @@ import {
 	normalizeCodeExecutionOutput,
 	normalizeHostedCodeExecutionOperation,
 } from "@shared/code-execution-tools"
+import { resolveMaxParallelSubagents } from "@shared/concurrency-limits"
 import { ClineAsk, ClineSay, ClineSayTool, type CommandStatus } from "@shared/ExtensionMessage"
 import { ClineContent, type ClineToolResponseContent, type ClineUserToolResultContentBlock } from "@shared/messages/content"
 import { ServerTool } from "@shared/proto/dline/models/metadata"
@@ -42,13 +41,14 @@ import { ClineDefaultTool, toolUseNames } from "@shared/tools"
 import { ClineAskResponse } from "@shared/WebviewMessage"
 import { normalizeWebSearchItems } from "@shared/web-tools"
 import { isParallelToolCallingEnabled, modelDoesntSupportWebp } from "@/utils/model-utils"
-import { isLocatedInPath } from "@/utils/path"
 import { ToolUse } from "../assistant-message"
 import { ContextManager } from "../context/context-management/ContextManager"
 import { formatResponse } from "../prompts/responses"
 import { StateManager } from "../storage/StateManager"
 import { WorkspaceRootManager } from "../workspace"
 import type { TaskActivityStore } from "./activity/TaskActivityStore"
+import type { ToolAdmissionSnapshot } from "./executors/tool/ToolAdmissionRegistry"
+import type { ToolPreflightResult, ToolSideEffect } from "./executors/tool/ToolPreflight"
 import { isTurnEndingToolName } from "./assistant-message-order"
 import { BlockPhase } from "./BlockPhaseMachine"
 import { serializeDurableToolResult } from "./DurableToolResult"
@@ -67,10 +67,10 @@ import { resolveRequestWebSearchRoutingPlan } from "./RequestApiScope"
 import { TaskController } from "./TaskController"
 import { TaskState } from "./TaskState"
 import { canonicalizeAttemptCompletionParams } from "./tools/attempt-completion-params"
-import { AutoApprove } from "./tools/autoApprove"
 import { type HostedImageGenerationContext, HostedImageGenerationLifecycle } from "./tools/HostedImageGenerationLifecycle"
 import { isInternalNativeToolName, normalizeNativeToolName } from "./tools/NativeToolAdmission"
 import { type HostedServerToolUpdate, ServerToolLifecycle } from "./tools/ServerToolLifecycle"
+import { SubagentFanoutBudget, usableSubagentLimit } from "./tools/subagent/SubagentFanoutBudget"
 import { SubagentJobManager } from "./tools/subagent/SubagentJobManager"
 import { normalizeToolExecutionResult, type ToolPostCommitDirective } from "./tools/ToolExecutionResult"
 import { type IPartialBlockHandler, ToolExecutorCoordinator } from "./tools/ToolExecutorCoordinator"
@@ -85,110 +85,10 @@ import {
 import { createUIHelpers } from "./tools/types/UIHelpers"
 import { ToolDisplayUtils } from "./tools/utils/ToolDisplayUtils"
 import { NO_TOOL_RESULT, ToolResultUtils } from "./tools/utils/ToolResultUtils"
-import { readToolPathParam } from "./tools/utils/tool-path-params"
 
 type ToolResponse = ClineToolResponseContent
 
 export { canonicalizeAttemptCompletionParams } from "./tools/attempt-completion-params"
-
-/**
- * Resolve whether a tool use should be auto-approved from tool params.
- * @param toolName Tool name from the assistant block.
- * @param params Tool parameters from the assistant block.
- * @param autoApproveResult Auto-approve setting result for the tool.
- * @returns True when the block should skip manual approval.
- */
-export function isToolUseAutoApproved(
-	toolName: ClineDefaultTool,
-	params: ToolUse["params"] | undefined,
-	autoApproveResult: boolean | [boolean, boolean],
-): boolean {
-	if (toolName === ClineDefaultTool.BASH) {
-		const [autoApproveSafe, autoApproveAll] = Array.isArray(autoApproveResult)
-			? autoApproveResult
-			: [autoApproveResult, false]
-		const requiresApprovalRaw = params?.requires_approval
-		const requiresApprovalPerLLM = requiresApprovalRaw?.toLowerCase() === "true"
-		return (!requiresApprovalPerLLM && autoApproveSafe) || (requiresApprovalPerLLM && autoApproveSafe && autoApproveAll)
-	}
-
-	if (Array.isArray(autoApproveResult)) {
-		return autoApproveResult[0] || autoApproveResult[1]
-	}
-	return !!autoApproveResult
-}
-
-interface BlockApproveOptions {
-	cwd: string
-	autoApproveResult: boolean | [boolean, boolean]
-	workspaceRoots?: string[]
-	taskId?: string
-}
-
-const PATH_AUTO_APPROVE_TOOLS = new Set<ClineDefaultTool>([
-	ClineDefaultTool.FILE_READ,
-	ClineDefaultTool.LIST_FILES,
-	ClineDefaultTool.LIST_CODE_DEF,
-	ClineDefaultTool.SEARCH,
-])
-
-/**
- * Extract the filesystem path parameter used for path-scoped auto-approval.
- * @param block Tool use block emitted by the assistant.
- * @returns Path parameter when the tool is path-scoped, otherwise undefined.
- */
-function getApprovePath(block: ToolUse): string | undefined {
-	if (!PATH_AUTO_APPROVE_TOOLS.has(block.name)) {
-		return undefined
-	}
-	return block.params?.path
-}
-
-/**
- * Resolve whether a path-scoped tool use is inside the workspace roots.
- * @param cwd Primary workspace path.
- * @param toolPath Tool path parameter supplied by the assistant.
- * @param workspaceRoots Optional workspace roots for multi-root workspaces.
- * @returns True when the resolved path is inside any workspace root.
- */
-function isLocalPath(
-	cwd: string,
-	toolName: ClineDefaultTool,
-	toolPath: string,
-	workspaceRoots?: string[],
-	taskId?: string,
-): boolean {
-	const absolutePath = path.isAbsolute(toolPath) ? path.resolve(toolPath) : path.resolve(cwd, toolPath)
-	const roots = workspaceRoots && workspaceRoots.length > 0 ? workspaceRoots : [cwd]
-	const isTaskScopedRead =
-		toolName === ClineDefaultTool.FILE_READ && taskId !== undefined && isTaskReadScopePath(taskId, absolutePath)
-	return (
-		DlineRuntimeFileManager.isManagedPath(absolutePath) ||
-		isTaskScopedRead ||
-		roots.some((root) => isLocatedInPath(root, absolutePath))
-	)
-}
-
-/**
- * Resolve whether a complete tool block should skip manual approval.
- * @param block Complete tool use block with params.
- * @param options Workspace and auto-approval settings for this task.
- * @returns True when the block is safe to auto-execute.
- */
-export function isBlockAutoApproved(block: ToolUse, options: BlockApproveOptions): boolean {
-	const toolPath = getApprovePath(block)
-	if (!toolPath) {
-		return PATH_AUTO_APPROVE_TOOLS.has(block.name)
-			? false
-			: isToolUseAutoApproved(block.name, block.params, options.autoApproveResult)
-	}
-
-	const [autoApproveLocal, autoApproveExternal] = Array.isArray(options.autoApproveResult)
-		? options.autoApproveResult
-		: [options.autoApproveResult, false]
-	const isLocal = isLocalPath(options.cwd, block.name, toolPath, options.workspaceRoots, options.taskId)
-	return (isLocal && autoApproveLocal) || (!isLocal && autoApproveLocal && autoApproveExternal)
-}
 
 /** Present one hosted Web Search call. */
 function buildWebSearchMessage(update: HostedServerToolUpdate, providerId: string, providerLabel: string): ClineSayTool {
@@ -255,11 +155,12 @@ function buildCodeExecutionMessage(update: HostedServerToolUpdate, providerId: s
 }
 
 export class ToolExecutor {
-	private autoApprover: AutoApprove
 	/** Assigned by the Task composition root after construction. */
 	private _controllerContext?: ClineExtensionContext
 	private coordinator: ToolExecutorCoordinator
 	private subagentJobManager = new SubagentJobManager()
+	private readonly subagentFanoutBudget: SubagentFanoutBudget
+	private readonly preparedEffects = new Map<string, ToolSideEffect<void>>()
 	private allowedNativeToolNames: ReadonlySet<string> | undefined
 	private webToolsEnabled: boolean | undefined
 	private webSearchRoutingPlan: WebSearchRoutingPlan | undefined
@@ -268,39 +169,57 @@ export class ToolExecutor {
 	private hostedServerToolLifecycle: ServerToolLifecycle | undefined
 	private hostedImageGenerationLifecycle: HostedImageGenerationLifecycle | undefined
 	private readonly postCommitDirectives = new Map<string, ToolPostCommitDirective>()
+	private readonly admissionOutcomes = new Map<string, InteractionOutcome>()
 	private readonly imageGenerationService: ImageGenerationService
 
-	/** Public accessor for auto-approve logic used by TaskController.buildTurn(). */
-	public isAutoApproved(toolName: ClineDefaultTool, params?: ToolUse["params"]): boolean {
-		const result = this.autoApprover.shouldAutoApproveTool(toolName)
-		return isToolUseAutoApproved(toolName, params, result)
+	/** Prepare one pure admission and retain execution as an unstarted closure. */
+	public prepareAdmission(block: ToolUse): ToolPreflightResult<void> {
+		const mcpToolAutoApprove =
+			block.name === ClineDefaultTool.MCP_USE
+				? (this.mcpHub.connections
+						?.find((connection) => connection.server.name === block.params.server_name)
+						?.server.tools?.find((tool) => tool.name === block.params.tool_name)?.autoApprove ?? true)
+				: undefined
+		const workspaceRoots = this.workspaceManager?.getRoots()
+		const snapshot: ToolAdmissionSnapshot = {
+			taskId: this.taskId,
+			cwd: this.cwd,
+			workspaceRoots: workspaceRoots?.map((root) => root.path) ?? [this.cwd],
+			workspaceRootEntries: workspaceRoots?.map((root) => ({ name: root.name || path.basename(root.path), path: root.path })),
+			primaryWorkspaceRoot: this.workspaceManager?.getPrimaryRoot()?.path,
+			isMultiRootEnabled: this.isMultiRootEnabled,
+			settings: this.stateManager.getGlobalSettingsKey("autoApprovalSettings"),
+			blanket: {
+				yoloMode: this.stateManager.getGlobalSettingsKey("yoloModeToggled") === true,
+				approveAll: this.stateManager.getGlobalSettingsKey("autoApproveAllToggled") === true,
+			},
+			mcpToolAutoApprove,
+		}
+		const admission = this.coordinator.prepareAdmission(block, snapshot, () => this.executeTool(block))
+		if (block.dline_tid) {
+			if (admission.outcome === "admitted") this.preparedEffects.set(block.dline_tid, admission.run)
+			else this.preparedEffects.delete(block.dline_tid)
+		}
+		return admission
 	}
 
-	/** Public block-scoped accessor used by TaskController.buildTurn(). */
-	public isBlockApproved(block: ToolUse): boolean {
-		// Invalid and internal native calls must enter execution so they can be
-		// closed with a paired result instead of becoming orphan approval blocks.
-		if (
-			block.isNativeToolCall &&
-			(isInternalNativeToolName(block.name) || !this.isNativeToolAdmitted(block.name) || !this.coordinator.has(block.name))
-		) {
-			return true
-		}
-		// Registered handlers own their approval transaction. The canonical runtime
-		// must start the handler so it can present the matching interaction and wait
-		// for the user's causal response; gating here would prevent that interaction
-		// from ever being rendered.
-		if (this.coordinator.has(block.name)) {
-			return true
-		}
-		const result = this.autoApprover.shouldAutoApproveTool(block.name)
-		const workspaceRoots = this.workspaceManager?.getRoots().map((root) => root.path)
-		return isBlockAutoApproved(block, {
-			cwd: this.cwd,
-			autoApproveResult: result,
-			workspaceRoots,
-			taskId: this.taskId,
-		})
+	/** Execute exactly the effect retained by the current Admission. */
+	public async runPreparedAdmission(dlineTid: string): Promise<void> {
+		const run = this.preparedEffects.get(dlineTid)
+		if (!run) throw new Error(`Prepared tool effect is missing for dlineTid=${dlineTid}`)
+		this.preparedEffects.delete(dlineTid)
+		await run()
+	}
+
+	/** Forget an approved-but-unstarted effect after cancellation, rejection or suppression. */
+	public discardPreparedAdmission(dlineTid: string): void {
+		this.preparedEffects.delete(dlineTid)
+	}
+
+	/** Retain one structured manual-admission outcome until the approved handler consumes it. */
+	public recordAdmissionOutcome(block: ToolUse, outcome: InteractionOutcome): void {
+		if (!block.dline_tid) throw new Error(`Admission outcome is missing canonical identity: tool=${block.name}`)
+		this.admissionOutcomes.set(block.dline_tid, outcome)
 	}
 
 	/**
@@ -309,6 +228,11 @@ export class ToolExecutor {
 	 */
 	public getSubagentJobManager(): SubagentJobManager {
 		return this.subagentJobManager
+	}
+
+	/** Wake queued task-scoped subagents after their live limit changes. */
+	public notifySubagentConcurrencyLimitChanged(): void {
+		this.subagentFanoutBudget.notifyLimitChanged()
 	}
 
 	/** Rebind one persisted failed subagent before the Activity Retry action runs. */
@@ -486,99 +410,6 @@ export class ToolExecutor {
 		return message
 	}
 
-	// Auto-approval methods using the AutoApprove class
-	private shouldAutoApproveTool(toolName: ClineDefaultTool): boolean | [boolean, boolean] {
-		return this.autoApprover.shouldAutoApproveTool(toolName)
-	}
-
-	private async shouldAutoApproveToolWithPath(
-		blockname: ClineDefaultTool,
-		autoApproveActionpath: string | undefined,
-	): Promise<boolean> {
-		return this.autoApprover.shouldAutoApproveToolWithPath(blockname, autoApproveActionpath)
-	}
-
-	/**
-	 * Whether a block is certain to execute without opening an interaction.
-	 *
-	 * Auto-approval is not the question. `shouldAutoApproveTool` deliberately
-	 * returns true for tools whose handler presents its own UI, precisely so
-	 * the handler gets far enough to present it, so passing the approval gate
-	 * says nothing about whether a card will appear. The question here is the
-	 * narrower one the pool needs answered, and it is answered per tool by
-	 * following the handler rather than by a single shared policy.
-	 *
-	 * Unlisted tools are treated as interactive. A tool absent from this switch
-	 * is one nobody checked, and the cost of being wrong is asymmetric: a
-	 * needless serial turn is slow, while a missed card suspends the turn.
-	 *
-	 * @param block One finalized tool block.
-	 * @returns True when the block cannot ask the user anything.
-	 */
-	private async willExecuteWithoutInteraction(block: ToolUse): Promise<boolean> {
-		const toolName = block.name as ClineDefaultTool
-		const params = block.params as Record<string, string | undefined> | undefined
-
-		switch (toolName) {
-			// Path-scoped readers and writers ask only when the path-aware gate
-			// refuses, which is the same call their handlers make.
-			case ClineDefaultTool.FILE_READ:
-			case ClineDefaultTool.LIST_FILES:
-			case ClineDefaultTool.LIST_CODE_DEF:
-			case ClineDefaultTool.SEARCH:
-			case ClineDefaultTool.FILE_NEW:
-			case ClineDefaultTool.FILE_EDIT:
-			case ClineDefaultTool.NEW_RULE:
-			case ClineDefaultTool.APPLY_PATCH:
-				return await this.shouldAutoApproveToolWithPath(toolName, readToolPathParam(params))
-
-			// Subagents, MCP, browser, web and image generation consult the
-			// unscoped verdict; their handlers read only the first element of a
-			// tuple, so requiring both halves here would keep fan-out serial.
-			case ClineDefaultTool.USE_SUBAGENT:
-			case ClineDefaultTool.USE_SUBAGENTS:
-			case ClineDefaultTool.MCP_USE:
-			case ClineDefaultTool.MCP_ACCESS:
-			case ClineDefaultTool.BROWSER:
-			case ClineDefaultTool.WEB_FETCH:
-			case ClineDefaultTool.WEB_SEARCH:
-			case ClineDefaultTool.GENERATE_IMAGE: {
-				const verdict = this.shouldAutoApproveTool(toolName)
-				return Array.isArray(verdict) ? verdict[0] === true : verdict === true
-			}
-
-			// Purely local tools with no approval step at all.
-			case ClineDefaultTool.FIND_REFERENCES:
-				return true
-
-			// Everything else — the turn-ending tools, spawn_task, report_bug,
-			// status_update, focus chain edits, and commands, whose approval
-			// also depends on the working directory — can open a card.
-			default:
-				return false
-		}
-	}
-
-	/**
-	 * Whether a turn's blocks can all run without asking the user.
-	 *
-	 * A turn that may open an approval cannot run concurrently: a sibling
-	 * finishing while the card is open advances the runtime revision, and the
-	 * answer the user then gives is refused as stale, leaving the turn
-	 * suspended on an interaction nobody can complete.
-	 *
-	 * @param blocks The finalized tool blocks of one assistant turn.
-	 * @returns True when the whole turn is safe to execute concurrently.
-	 */
-	async isTurnFullyAutoApproved(blocks: readonly ToolUse[]): Promise<boolean> {
-		for (const block of blocks) {
-			if (!(await this.willExecuteWithoutInteraction(block))) {
-				return false
-			}
-		}
-		return true
-	}
-
 	/**
 	 * Duration scope of the execution the current code is running under.
 	 *
@@ -680,7 +511,12 @@ export class ToolExecutor {
 			updates: { text?: string; exitCode?: number; commandStatus?: CommandStatus },
 		) => Promise<void>,
 	) {
-		this.autoApprover = new AutoApprove(this.stateManager, this.taskId)
+		this.subagentFanoutBudget = new SubagentFanoutBudget({
+			limit: () =>
+				usableSubagentLimit(
+					resolveMaxParallelSubagents(this.stateManager.getGlobalSettingsKey("maxParallelSubagents")),
+				),
+		})
 		this.imageGenerationService = createImageGenerationRuntime({
 			taskId: this.taskId,
 			ulid: this.ulid,
@@ -719,7 +555,6 @@ export class ToolExecutor {
 			messageState: this.messageStateHandler,
 			api: this.api,
 			autoApprovalSettings: this.stateManager.getGlobalSettingsKey("autoApprovalSettings"),
-			autoApprover: this.autoApprover,
 			browserSettings: this.promptRuntime
 				? {
 						...this.stateManager.getGlobalSettingsKey("browserSettings"),
@@ -733,6 +568,7 @@ export class ToolExecutor {
 			},
 			capabilityToggles: this.promptRuntime?.capabilityToggles ?? this.getTaskCapabilityToggles(),
 			interactions: this.interactions,
+			admissionOutcomes: this.admissionOutcomes,
 			compactionAttemptGuard: this.compactionAttemptGuard,
 			services: {
 				mcpHub: this.mcpHub,
@@ -774,8 +610,6 @@ export class ToolExecutor {
 				doesLatestTaskCompletionHaveNewChanges: this.doesLatestTaskCompletionHaveNewChanges,
 				updateFCListFromToolResponse: this.updateFCListFromToolResponse,
 				sayAndCreateMissingParamError: this.sayAndCreateMissingParamError,
-				shouldAutoApproveTool: this.shouldAutoApproveTool.bind(this),
-				shouldAutoApproveToolWithPath: this.shouldAutoApproveToolWithPath.bind(this),
 				applyLatestBrowserSettings: this.applyLatestBrowserSettings.bind(this),
 				switchToActMode: this.switchToActMode,
 				setActiveHookExecution: this.setActiveHookExecution,
@@ -790,6 +624,7 @@ export class ToolExecutor {
 			providerRequestRounds: this.providerRequestRounds,
 			controllerContext: this._controllerContext,
 			subagentJobManager: this.subagentJobManager,
+			subagentFanoutBudget: this.subagentFanoutBudget,
 		}
 
 		// Validate the config at runtime to catch any missing properties
@@ -851,6 +686,8 @@ export class ToolExecutor {
 				span.end("failure")
 				if (shouldReport) this.reportToolDuration(scope, block, "failure")
 				throw error
+			} finally {
+				if (block.dline_tid) this.admissionOutcomes.delete(block.dline_tid)
 			}
 		})
 	}
@@ -908,6 +745,7 @@ export class ToolExecutor {
 
 	/** Close an interrupted tool pairing without replaying an unknown side effect. */
 	public async commitInterruptedToolResult(block: ToolUse, reason: string): Promise<void> {
+		if (block.dline_tid) this.discardPreparedAdmission(block.dline_tid)
 		await this.commitToolResult(formatResponse.toolError(reason), block, true)
 	}
 

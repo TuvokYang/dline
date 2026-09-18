@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert"
-import { afterEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 vi.mock("@/config", () => ({
 	ClineEndpoint: {
@@ -33,6 +33,7 @@ import { PromptProfile } from "@core/prompts/profiles/types"
 import * as systemPromptFacade from "@core/prompts/system-prompt"
 import type { SystemPromptContext } from "@core/prompts/system-prompt/context"
 import type { TaskConfig } from "@core/task/tools/types/TaskConfig"
+import { DEFAULT_AUTO_APPROVAL_SETTINGS } from "@shared/AutoApprovalSettings"
 import type { GlobalInstructionsFile } from "@shared/remote-config/schema"
 import { HostProvider } from "@/hosts/host-provider"
 import { ApiFormat, ServerTool } from "@/shared/proto/dline/models/metadata"
@@ -40,6 +41,10 @@ import { Logger } from "@/shared/services/Logger"
 import { createTaskCapabilityToggles } from "@/shared/TaskCapabilityToggles"
 import { ClineDefaultTool } from "@/shared/tools"
 import { TaskState } from "../../../TaskState"
+import { GenerateImageToolHandler } from "../../handlers/GenerateImageToolHandler"
+import { ListCodeDefinitionNamesToolHandler } from "../../handlers/ListCodeDefinitionNamesToolHandler"
+import { ListFilesToolHandler } from "../../handlers/ListFilesToolHandler"
+import { ReadFileToolHandler } from "../../handlers/ReadFileToolHandler"
 import { SubagentBuilder } from "../SubagentBuilder"
 import { SubagentRunner } from "../SubagentRunner"
 
@@ -259,6 +264,10 @@ function createContextApi(contextWindow: number): ReturnType<typeof coreApi.buil
 }
 
 describe("SubagentRunner", () => {
+	beforeEach(() => {
+		vi.spyOn(ListFilesToolHandler.prototype, "execute").mockResolvedValue("ok")
+	})
+
 	afterEach(() => {
 		HostProvider.reset()
 		vi.restoreAllMocks()
@@ -306,15 +315,10 @@ describe("SubagentRunner", () => {
 		const derivedImageService = { hasAvailableProfile: vi.fn(() => true) }
 		const withProfileResolver = vi.fn(() => derivedImageService)
 		config.services.imageGenerationService.withProfileResolver = withProfileResolver as never
-		const executeGenerateImage = vi.fn(async (toolConfig: TaskConfig) => {
+		const executeGenerateImage = vi.spyOn(GenerateImageToolHandler.prototype, "execute").mockImplementation(async (toolConfig) => {
 			expect(toolConfig.services.imageGenerationService).toBe(derivedImageService)
 			return "generated"
 		})
-		config.coordinator.getHandler = vi.fn((toolName) =>
-			toolName === ClineDefaultTool.GENERATE_IMAGE
-				? ({ execute: executeGenerateImage, getDescription: () => "generate_image" } as never)
-				: undefined,
-		)
 		const runner = new SubagentRunner(config, "image-agent", {
 			name: "image-agent",
 			description: "image subagent",
@@ -330,6 +334,52 @@ describe("SubagentRunner", () => {
 		expect(promptContext?.imageGenerationAvailable).toBe(true)
 		expect(promptContext?.disableTools).not.toContain(ClineDefaultTool.GENERATE_IMAGE)
 		expect(executeGenerateImage).toHaveBeenCalledOnce()
+	})
+
+	it("fails closed when inherited subagent approval hits a manual-only external scope", async () => {
+		let requestRound = 0
+		const createMessage = vi.fn().mockImplementation(async function* () {
+			requestRound += 1
+			yield {
+				type: "tool_calls",
+				function_id: requestRound === 1 ? "read-external" : "complete-after-denial",
+				tool_call: {
+					function: {
+						name: requestRound === 1 ? ClineDefaultTool.FILE_READ : ClineDefaultTool.ATTEMPT,
+						arguments: JSON.stringify(requestRound === 1 ? { path: "../outside.txt" } : { result: "done" }),
+					},
+				},
+			}
+		})
+		stubSystemPrompt(false)
+		vi.spyOn(skills, "discoverSkills").mockResolvedValue([])
+		vi.spyOn(skills, "getAvailableSkills").mockReturnValue([])
+		stubApiHandler(createMessage)
+		initializeHostProvider()
+		const executeRead = vi.spyOn(ReadFileToolHandler.prototype, "execute")
+		const config = createTaskConfig(false)
+		config.cwd = "/workspace"
+		config.autoApprovalSettings = {
+			...DEFAULT_AUTO_APPROVAL_SETTINGS,
+			actions: {
+				...DEFAULT_AUTO_APPROVAL_SETTINGS.actions,
+				readFiles: true,
+				readFilesExternally: true,
+			},
+			ceilings: { read_external: "manual_only" },
+		}
+		const runner = new SubagentRunner(config, "policy-agent", {
+			name: "policy-agent",
+			description: "Exercises inherited tool admission.",
+			tools: [ClineDefaultTool.FILE_READ, ClineDefaultTool.ATTEMPT],
+			systemPrompt: "",
+		})
+
+		const result = await runner.run("Read outside the workspace", () => {})
+
+		assert.equal(result.status, "completed", result.error)
+		assert.equal(result.result, "done")
+		expect(executeRead).not.toHaveBeenCalled()
 	})
 
 	it.each([
@@ -627,12 +677,9 @@ describe("SubagentRunner", () => {
 
 	it("reports cancellation after a tool result as cancelled", async () => {
 		const config = createTaskConfig(true)
-		config.coordinator.getHandler = vi.fn().mockReturnValue({
-			execute: vi.fn().mockImplementation(async () => {
-				config.taskState.abort = true
-				return "ok"
-			}),
-			getDescription: vi.fn().mockReturnValue("list_files"),
+		vi.mocked(ListFilesToolHandler.prototype.execute).mockImplementation(async () => {
+			config.taskState.abort = true
+			return "ok"
 		})
 		const createMessage = vi.fn().mockImplementation(async function* () {
 			yield {
@@ -1073,7 +1120,8 @@ describe("SubagentRunner", () => {
 	})
 
 	it("stops the current attempt at attempt_completion before executing later tool calls", async () => {
-		const executeListFiles = vi.fn().mockResolvedValue("must not run")
+		const executeListFiles = vi.mocked(ListFilesToolHandler.prototype.execute)
+		executeListFiles.mockResolvedValue("must not run")
 		const createMessage = vi.fn().mockImplementationOnce(async function* () {
 			yield {
 				type: "tool_calls",
@@ -1094,13 +1142,6 @@ describe("SubagentRunner", () => {
 		stubApiHandler(createMessage)
 		initializeHostProvider()
 		const config = createTaskConfig(true)
-		config.coordinator.getHandler = vi
-			.fn()
-			.mockImplementation((toolName) =>
-				toolName === ClineDefaultTool.LIST_FILES
-					? { execute: executeListFiles, getDescription: vi.fn().mockReturnValue("list_files") }
-					: undefined,
-			)
 		const progress = vi.fn()
 
 		const result = await new SubagentRunner(config).run("Complete before later tools", progress)
@@ -1258,17 +1299,10 @@ describe("SubagentRunner", () => {
 		stubApiHandler(createMessage)
 		initializeHostProvider()
 		const config = createTaskConfig(true)
-		config.coordinator.getHandler = vi.fn().mockImplementation((toolName: ClineDefaultTool) =>
-			toolName === ClineDefaultTool.LIST_FILES
-				? {
-						execute: vi.fn().mockImplementation(async () => {
-							assert.equal(await runner.requestFinish("user"), true)
-							return "ok"
-						}),
-						getDescription: vi.fn().mockReturnValue("list_files"),
-					}
-				: undefined,
-		)
+		vi.mocked(ListFilesToolHandler.prototype.execute).mockImplementation(async () => {
+			assert.equal(await runner.requestFinish("user"), true)
+			return "ok"
+		})
 		runner = new SubagentRunner(config)
 
 		const result = await runner.run("Explore then finish", () => {})
@@ -2221,13 +2255,10 @@ describe("SubagentRunner", () => {
 		const toolHasStarted = new Promise<void>((resolve) => {
 			toolStarted = resolve
 		})
-		config.coordinator.getHandler = vi.fn().mockReturnValue({
-			execute: vi.fn().mockImplementation(() => {
-				toolStarted()
-				// Never settles: the tool is wedged.
-				return new Promise<string>(() => {})
-			}),
-			getDescription: vi.fn().mockReturnValue("list_code_definition_names"),
+		vi.spyOn(ListCodeDefinitionNamesToolHandler.prototype, "execute").mockImplementation(() => {
+			toolStarted()
+			// Never settles: the tool is wedged.
+			return new Promise<string>(() => {})
 		})
 		const createMessage = vi.fn().mockImplementation(async function* () {
 			yield {

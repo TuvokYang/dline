@@ -2,7 +2,9 @@ import { strict as assert } from "node:assert"
 import type { AssistantMessageContent, TextStreamContent, ToolUse } from "@core/assistant-message"
 import { registerPartialMessageCallback } from "@core/controller/ui/subscribeToPartialMessage"
 import { Task } from "@core/task"
-import { BlockPhase } from "@core/task/BlockPhaseMachine"
+import { type BlockLifecycle, BlockPhase } from "@core/task/BlockPhaseMachine"
+import { TurnDriver } from "@core/task/executors/tool/TurnDriver"
+import { TurnToolScheduler } from "@core/task/executors/tool/TurnToolScheduler"
 import type { TaskEffectPorts } from "@core/task/runtime/TaskEffectRunner"
 import type { TaskEvent } from "@core/task/runtime/TaskEvent"
 import { TaskRuntime } from "@core/task/runtime/TaskRuntime"
@@ -12,6 +14,73 @@ import type { ClineMessage } from "@shared/ExtensionMessage"
 import type { ClineContent } from "@shared/messages/content"
 import { ClineDefaultTool } from "@shared/tools"
 import { describe, expect, it, vi } from "vitest"
+
+interface TurnDriverHarnessOptions {
+	taskId?: string
+	toolBlocks: readonly ToolUse[]
+	runtime?: TaskRuntime
+	runtimeBlocks?: BlockLifecycle[]
+	parallel?: boolean
+	configuredLimit?: number
+	autoApproved?: boolean
+	userMessageContent?: ClineContent[]
+	commitInterruptedResult?: (tool: ToolUse, reason: string) => Promise<void>
+	awaitInitialCheckpoint?: (toolName: string) => Promise<void>
+}
+
+function createTurnDriverHarness(options: TurnDriverHarnessOptions): TurnDriver {
+	const scheduler = new TurnToolScheduler({
+		readConfiguredLimit: () => options.configuredLimit,
+		isParallelToolCallingEnabled: () => options.parallel ?? false,
+	})
+	const requireRuntime = (): TaskRuntime => {
+		if (!options.runtime) throw new Error("TurnDriver test harness requires a runtime for execute()")
+		return options.runtime
+	}
+	return new TurnDriver({
+		task: {
+			getTaskId: () => options.taskId ?? "task-turn-driver-harness",
+			isAborted: () => false,
+			isCurrentTask: () => true,
+			getAssistantMessageContent: () => options.toolBlocks,
+			getAssistantApiIndex: () => 1,
+			buildTurn: () => options.runtimeBlocks ?? [],
+			isParallelToolCallingEnabled: () => options.parallel ?? false,
+			getPendingUserMessageContent: () => options.userMessageContent ?? [],
+			markPartialToolComplete: vi.fn(),
+			recordToolCall: vi.fn(),
+			markUserMessageContentReady: vi.fn(),
+			applyCompactionFit: vi.fn(),
+		},
+		runtime: {
+			getState: () => requireRuntime().getState(),
+			dispatch: (event) => requireRuntime().dispatch(event),
+		},
+		block: {
+			prepareAdmission: () => ({
+				outcome: "admitted",
+				decision: {
+					kind: options.autoApproved === false ? "manual" : "automatic",
+					scope: "read_workspace",
+					ceiling: "auto",
+				},
+				presentation:
+					options.autoApproved === false ? { ask: "tool", body: "Approve tool", notify: false } : undefined,
+				lanes: [],
+				run: async () => undefined,
+			}),
+			commitInterruptedResult: options.commitInterruptedResult ?? vi.fn(async () => undefined),
+			awaitInitialCheckpoint: options.awaitInitialCheckpoint ?? vi.fn(async () => undefined),
+		},
+		approval: { request: vi.fn(async () => ({ actionId: "approve" as const })) },
+		scheduler,
+		provider: { registerExecution: vi.fn() },
+		postCommit: {
+			takeDirective: () => undefined,
+			startSuccessor: vi.fn(async () => undefined),
+		},
+	})
+}
 
 function createParallelReadPresentation(failingDlineTid?: string) {
 	const toolBlocks: ToolUse[] = Array.from({ length: 4 }, (_, index) => ({
@@ -58,43 +127,15 @@ function createParallelReadPresentation(failingDlineTid?: string) {
 		}),
 		ports,
 	)
-	const fakeTask = Object.assign(Object.create(Task.prototype), {
+	const driver = createTurnDriverHarness({
 		taskId: "task-parallel-read",
-		controller: { task: { taskId: "task-parallel-read" } },
-		initialCheckpointCommitPromise: undefined,
-		reRenderUpdatedPartialBlocks: async () => undefined,
-		isParallelToolCallingEnabled: () => true,
-		dispatchRuntime: runtime.dispatch.bind(runtime),
-		taskController: {
-			buildTurn: vi.fn(),
-			getBlocks: () => runtimeBlocks,
-			hasAnyRejection: () => false,
-			shouldSkip: () => false,
-		},
-		toolExecutor: {
-			isBlockApproved: () => true,
-			isTurnFullyAutoApproved: async () => true,
-			executeTool: vi.fn(async () => undefined),
-			takePostCommitDirective: () => undefined,
-		},
-		taskRuntime: runtime,
-		messageStateHandler: { apiConversationHistory: [{ role: "user" }, { role: "assistant" }] },
-		taskState: {
-			abort: false,
-			assistantMessageContent: toolBlocks as AssistantMessageContent[],
-			currentStreamingContentIndex: 0,
-			didAlreadyUseTool: false,
-			didCompleteReadingStream: true,
-			lastRenderedPartialByTs: new Map<number, string>(),
-			partialToolLifecycleByTs: new Map<number, "partial-shown" | "complete-running" | "complete-done">(),
-			presentAssistantMessageHasPendingUpdates: false,
-			presentAssistantMessageLocked: false,
-			userMessageContentReady: false,
-		},
-		markFinalizedToolPresented: vi.fn(),
+		toolBlocks,
+		runtime,
+		runtimeBlocks,
+		parallel: true,
 	})
 
-	return { executeTool, fakeTask, postView, runtime }
+	return { executeTool, fakeTask: driver, postView, runtime }
 }
 
 describe("Task.processNativeToolCalls", () => {
@@ -204,7 +245,6 @@ describe("Task.processNativeToolCalls", () => {
 			},
 			toolExecutor: {
 				isBlockApproved: () => true,
-			isTurnFullyAutoApproved: async () => true,
 				executeTool,
 				commitInterruptedToolResult,
 				takePostCommitDirective: () => undefined,
@@ -219,9 +259,16 @@ describe("Task.processNativeToolCalls", () => {
 			markFinalizedToolPresented: vi.fn(),
 		})
 
-		await (
-			Task.prototype as unknown as { executeFinalizedAssistantTurn: () => Promise<void> }
-		).executeFinalizedAssistantTurn.call(fakeTask)
+		const turnDriver = createTurnDriverHarness({
+			taskId: "task-command-rejection",
+			toolBlocks,
+			runtime,
+			runtimeBlocks,
+			userMessageContent,
+			commitInterruptedResult: commitInterruptedToolResult,
+		})
+		Object.assign(fakeTask, { turnDriver })
+		await turnDriver.execute()
 
 		expect(commandExecutor.execute).toHaveBeenCalledOnce()
 		expect(executeTool).toHaveBeenCalledTimes(1)
@@ -259,25 +306,21 @@ describe("Task.processNativeToolCalls", () => {
 			ts: 604,
 		}
 		const commitInterruptedToolResult = vi.fn(async () => undefined)
-		const fakeTask = Object.assign(Object.create(Task.prototype), {
-			toolExecutor: { commitInterruptedToolResult },
-			taskState: {
-				userMessageContent: [
-					{
-						type: "tool_result",
-						function_id: block.function_id,
-						dline_tid: block.dline_tid,
-						content: [{ type: "text", text: "existing durable result" }],
-					},
-				] as ClineContent[],
+		const userMessageContent = [
+			{
+				type: "tool_result",
+				function_id: block.function_id,
+				dline_tid: block.dline_tid,
+				content: [{ type: "text", text: "existing durable result" }],
 			},
+		] as ClineContent[]
+		const turnDriver = createTurnDriverHarness({
+			toolBlocks: [block],
+			userMessageContent,
+			commitInterruptedResult: commitInterruptedToolResult,
 		})
 
-		await (
-			Task.prototype as unknown as {
-				ensureTerminalToolResult(block: ToolUse, phase: BlockPhase): Promise<void>
-			}
-		).ensureTerminalToolResult.call(fakeTask, block, BlockPhase.SKIPPED)
+		await turnDriver.ensureTerminalToolResult(block, BlockPhase.SKIPPED)
 
 		expect(commitInterruptedToolResult).not.toHaveBeenCalled()
 	})
@@ -492,7 +535,7 @@ describe("Task.processNativeToolCalls", () => {
 				hasAnyRejection: () => false,
 				shouldSkip: () => false,
 			},
-			toolExecutor: { executeTool, isTurnFullyAutoApproved: async () => true },
+			toolExecutor: { executeTool },
 			taskRuntime: { getState: () => ({ turn: undefined }) },
 			taskState: {
 				abort: false,
@@ -541,7 +584,7 @@ describe("Task.processNativeToolCalls", () => {
 				hasAnyRejection: () => false,
 				shouldSkip: () => false,
 			},
-			toolExecutor: { executeTool, isTurnFullyAutoApproved: async () => true },
+			toolExecutor: { executeTool },
 			taskState: {
 				abort: false,
 				assistantMessageContent: [partialTool] as AssistantMessageContent[],
@@ -589,7 +632,7 @@ describe("Task.processNativeToolCalls", () => {
 				hasAnyRejection: () => false,
 				shouldSkip: () => false,
 			},
-			toolExecutor: { executeTool, isTurnFullyAutoApproved: async () => true },
+			toolExecutor: { executeTool },
 			taskState: {
 				abort: false,
 				assistantMessageContent: [partialTool] as AssistantMessageContent[],
@@ -635,7 +678,7 @@ describe("Task.processNativeToolCalls", () => {
 				hasAnyRejection: () => false,
 				shouldSkip: () => false,
 			},
-			toolExecutor: { executeTool, isTurnFullyAutoApproved: async () => true },
+			toolExecutor: { executeTool },
 			taskRuntime: { getState: () => ({ turn: undefined }) },
 			taskState: {
 				abort: false,
@@ -680,7 +723,7 @@ describe("Task.processNativeToolCalls", () => {
 			taskController: {
 				hasAnyRejection: () => false,
 			},
-			toolExecutor: { executeTool, isTurnFullyAutoApproved: async () => true },
+			toolExecutor: { executeTool },
 			taskState: {
 				abort: false,
 				assistantMessageContent: [completeTool] as AssistantMessageContent[],
@@ -707,11 +750,7 @@ describe("Task.processNativeToolCalls", () => {
 	it("preserves the real execute-tool failure for the fourth parallel read block", async () => {
 		const { executeTool, fakeTask, postView, runtime } = createParallelReadPresentation("dline-read-4")
 
-		await expect(
-			(
-				Task.prototype as unknown as { executeFinalizedAssistantTurn: () => Promise<void> }
-			).executeFinalizedAssistantTurn.call(fakeTask),
-		).rejects.toThrow("read_file result persistence failed")
+		await expect((fakeTask as TurnDriver).execute()).rejects.toThrow("read_file result persistence failed")
 		expect(executeTool).toHaveBeenCalledTimes(4)
 		expect(runtime.getState().phase).toBe(TaskPhase.PAUSED)
 		// TURN_CREATED + three completed blocks + fourth READY/STARTED + EFFECT_FAILED.
@@ -721,11 +760,7 @@ describe("Task.processNativeToolCalls", () => {
 	it("completes four auto-approved parallel read blocks in one canonical turn", async () => {
 		const { executeTool, fakeTask, postView, runtime } = createParallelReadPresentation()
 
-		await expect(
-			(
-				Task.prototype as unknown as { executeFinalizedAssistantTurn: () => Promise<void> }
-			).executeFinalizedAssistantTurn.call(fakeTask),
-		).resolves.toBeUndefined()
+		await expect((fakeTask as TurnDriver).execute()).resolves.toBeUndefined()
 
 		expect(executeTool.mock.calls.map(([effect]) => effect.dlineTid)).toEqual([
 			"dline-read-1",

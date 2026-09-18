@@ -1,7 +1,7 @@
 import type { AutoApprovalSettings } from "@shared/AutoApprovalSettings"
 import { ClineDefaultTool } from "@shared/tools"
 import { describe, expect, it, vi } from "vitest"
-import { admissionIsRevoked, admitToolCall, rejectToolCall, type ToolPreflightInput } from "../ToolPreflight"
+import { admitToolCall, rejectToolCall, type ToolPreflightInput } from "../ToolPreflight"
 
 /** Build approval settings with only the named actions enabled. */
 function settings(actions: Partial<AutoApprovalSettings["actions"]> = {}, version = 1): AutoApprovalSettings {
@@ -159,6 +159,19 @@ describe("ToolPreflight ceilings", () => {
 		expect(admission.decision.kind).toBe("automatic")
 	})
 
+	it("keeps manual_only above inherited parent approval", () => {
+		const admission = admitToolCall(
+			readInput({
+				inheritsApproval: true,
+				scope: { isExternalPath: true },
+				ceilings: { read_external: "manual_only" },
+			}),
+			async () => undefined,
+		)
+
+		expect(admission.decision).toMatchObject({ kind: "manual", scope: "read_external", ceiling: "manual_only" })
+	})
+
 	it("classifies an inherited call by its real path rather than defaulting the scope", () => {
 		// The inherited branch reports the scope for diagnostics. Spreading the
 		// input instead of mapping scope to context would silently label an
@@ -173,37 +186,18 @@ describe("ToolPreflight ceilings", () => {
 	})
 })
 
-describe("ToolPreflight revocation", () => {
-	it("revokes an automatic approval when the policy version changed before the effect started", () => {
-		const admission = admitToolCall(readInput({ settings: settings({ readFiles: true }, 1) }), async () => undefined)
-
-		expect(admissionIsRevoked(admission, 1)).toBe(false)
-		expect(admissionIsRevoked(admission, 2)).toBe(true)
-	})
-
-	it("does not revoke an approval the user granted personally", () => {
-		const admission = admitToolCall(readInput({ settings: settings({}, 1) }), async () => undefined)
-
-		// The user decided this one; a settings change does not withdraw it.
-		expect(admission.decision.kind).toBe("manual")
-		expect(admissionIsRevoked(admission, 2)).toBe(false)
-	})
-
-	it("revokes when a ceiling tightened, not only when a toggle flipped", () => {
-		const granted = admitToolCall(readInput({ settings: settings({ readFiles: true }, 3) }), async () => undefined)
-
-		// Tightening is expressed as a new policy version, so a ceiling change
-		// is as effective as disabling the toggle.
-		expect(granted.decision.kind).toBe("automatic")
-		expect(admissionIsRevoked(granted, 4)).toBe(true)
-
-		const redecided = admitToolCall(
+describe("ToolPreflight re-resolution", () => {
+	it("re-resolves the same call from current permission state without a version counter", () => {
+		const granted = admitToolCall(readInput({ settings: settings({ readFiles: true }) }), async () => undefined)
+		const tightened = admitToolCall(
 			readInput({
-				settings: settings({ readFiles: true }, 4),
+				settings: settings({ readFiles: true }),
 				ceilings: { read_workspace: "manual_only" },
 			}),
-			async () => undefined,
+			granted.run,
 		)
-		expect(redecided.decision.kind).toBe("manual")
+
+		expect(granted.decision.kind).toBe("automatic")
+		expect(tightened.decision.kind).toBe("manual")
 	})
 })

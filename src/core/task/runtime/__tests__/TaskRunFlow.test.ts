@@ -133,12 +133,11 @@ describe("TaskRuntime main flow", () => {
 			},
 		})
 
-		// Granting permission releases the slot rather than holding it for the
-		// whole execution; keeping it would make every later approval wait on
-		// this tool finishing.
+		// Granting permission releases the slot without claiming execution; the
+		// pool owns the later BLOCK_EXECUTION_STARTED transition.
 		expect(runtime.getState()).toMatchObject({
 			phase: TaskPhase.EXECUTING,
-			turn: { activeDlineTid: undefined, executing: ["tid-write"], blocks: [{ phase: BlockPhase.EXECUTING }] },
+			turn: { activeDlineTid: undefined, executing: [], blocks: [{ phase: BlockPhase.EXECUTING }] },
 			interaction: { status: "resolving" },
 		})
 	})

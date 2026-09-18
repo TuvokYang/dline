@@ -1,34 +1,72 @@
 import os from "node:os"
 import path from "node:path"
 import { HostProvider } from "@hosts/host-provider"
-import type { ApprovalCeilingSetting, ConfigurablePermissionScope } from "@shared/AutoApprovalSettings"
+import {
+	DEFAULT_AUTO_APPROVAL_SETTINGS,
+	type ApprovalCeilingSetting,
+	type AutoApprovalSettings,
+	type ConfigurablePermissionScope,
+} from "@shared/AutoApprovalSettings"
 import { ClineDefaultTool } from "@shared/tools"
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { AutoApprove } from "../autoApprove"
+import { resolveApprovalKind, type PermissionScopeContext } from "../../kernel/turn/approval-kind"
 
 afterEach(() => vi.restoreAllMocks())
 
 interface Options {
-	actions?: Record<string, boolean>
+	actions?: Partial<AutoApprovalSettings["actions"]>
 	ceilings?: Partial<Record<ConfigurablePermissionScope, ApprovalCeilingSetting>>
 	yolo?: boolean
 	approveAll?: boolean
 }
 
-/** Build an AutoApprove over a stubbed settings store. */
-function autoApprove(options: Options = {}): AutoApprove {
-	return new AutoApprove({
-		getGlobalSettingsKey: (key: string) => {
-			if (key === "yoloModeToggled") return options.yolo === true
-			if (key === "autoApproveAllToggled") return options.approveAll === true
-			if (key === "autoApprovalSettings") {
-				return { actions: options.actions ?? {}, ceilings: options.ceilings }
+interface CanonicalApprovalProbe {
+	shouldAutoApproveTool(toolName: ClineDefaultTool): boolean | [boolean, boolean]
+	shouldAutoApproveToolWithPath(toolName: ClineDefaultTool, candidate: string | undefined): Promise<boolean>
+}
+
+/** Exercise the canonical resolver while retaining the legacy test matrix shape. */
+function autoApprove(options: Options = {}): CanonicalApprovalProbe {
+	const settings: AutoApprovalSettings = {
+		...DEFAULT_AUTO_APPROVAL_SETTINGS,
+		actions: { ...DEFAULT_AUTO_APPROVAL_SETTINGS.actions, ...options.actions },
+		ceilings: options.ceilings,
+	}
+	const granted = (toolName: ClineDefaultTool, context: PermissionScopeContext = {}) => {
+		const decision = resolveApprovalKind({
+			toolName,
+			settings,
+			ceilings: options.ceilings,
+			context,
+			blanket: { yoloMode: options.yolo, approveAll: options.approveAll },
+		})
+		return decision.kind === "automatic" || decision.kind === "none"
+	}
+	return {
+		shouldAutoApproveTool(toolName) {
+			if (
+				toolName === ClineDefaultTool.FILE_READ ||
+				toolName === ClineDefaultTool.FILE_NEW ||
+				toolName === ClineDefaultTool.USE_SUBAGENT ||
+				toolName === ClineDefaultTool.USE_SUBAGENTS
+			) {
+				return [granted(toolName), granted(toolName, { isExternalPath: true })]
 			}
-			return undefined
+			if (toolName === ClineDefaultTool.BASH) {
+				return [granted(toolName, { isSafeCommand: true }), granted(toolName, { isSafeCommand: false })]
+			}
+			return granted(toolName)
 		},
-		// Consulted by the multi-root check inside the path-based gate.
-		getGlobalStateKey: (key: string) => (key === "multiRootEnabled" ? false : undefined),
-	} as never)
+		async shouldAutoApproveToolWithPath(toolName, candidate) {
+			if (!candidate) return false
+			const workspaceRoot = (await HostProvider.workspace.getWorkspacePaths({})).paths[0] ?? process.cwd()
+			const absolutePath = path.isAbsolute(candidate) ? path.resolve(candidate) : path.resolve(workspaceRoot, candidate)
+			const relative = path.relative(path.resolve(workspaceRoot), absolutePath)
+			const isExternalPath =
+				relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)
+			return granted(toolName, { isExternalPath })
+		},
+	}
 }
 
 /** Read the in-workspace element of a possibly paired approval result. */
@@ -41,7 +79,7 @@ function external(result: boolean | [boolean, boolean]): boolean {
 	return Array.isArray(result) ? result[1] : false
 }
 
-describe("AutoApprove ceilings — default compatibility", () => {
+describe("Canonical approval ceilings — default compatibility", () => {
 	it("leaves every built-in tool's approval unchanged when no ceiling is configured", () => {
 		const enabled = autoApprove({
 			actions: {
@@ -90,7 +128,7 @@ describe("AutoApprove ceilings — default compatibility", () => {
 	})
 })
 
-describe("AutoApprove ceilings — enforcement", () => {
+describe("Canonical approval ceilings — enforcement", () => {
 	it("forces manual approval for a scope set to manual_only even when its toggle is on", () => {
 		const approver = autoApprove({
 			actions: { editFiles: true, editFilesExternally: true },
@@ -154,7 +192,7 @@ describe("AutoApprove ceilings — enforcement", () => {
 	})
 })
 
-describe("AutoApprove ceilings — path-based approval", () => {
+describe("Canonical approval ceilings — path-based approval", () => {
 	/** Point workspace resolution at a stable directory for the path gate. */
 	function stubWorkspace(): void {
 		vi.spyOn(HostProvider.workspace, "getWorkspacePaths").mockResolvedValue({

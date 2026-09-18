@@ -2,13 +2,9 @@ import { ToolUse } from "@core/assistant-message"
 import { formatResponse } from "@core/prompts/responses"
 import { ToolResponse } from "@core/task"
 import { MAX_TOOL_RESULT_TEXT_BYTES, truncateContent } from "@shared/content-limits"
-import { processFilesIntoText } from "@/integrations/misc/extract-text"
-import { ClineAsk } from "@/shared/ExtensionMessage"
 import type { ClineUserToolResultContentBlock } from "@/shared/messages/content"
 import { Logger } from "@/shared/services/Logger"
 import type { ToolExecutorCoordinator } from "../ToolExecutorCoordinator"
-import { TaskConfig } from "../types/TaskConfig"
-import { sayFeedbackOnce } from "./UserFeedbackUtils"
 
 /**
  * Sentinel tool response meaning "the tool turn must not emit a tool_result".
@@ -244,40 +240,5 @@ export class ToolResultUtils {
 
 		const content = formatResponse.toolResult(feedbackText, images, hasMeaningfulFileContent ? fileContentString : undefined)
 		userMessageContent.push({ type: "tool_feedback", content } satisfies PendingToolFeedbackBlock)
-	}
-
-	/**
-	 * Handles tool approval flow and processes any user feedback
-	 */
-	static async askApprovalAndPushFeedback(type: ClineAsk, completeMessage: string, config: TaskConfig, existingTs?: number) {
-		if (config.isSubagentExecution) {
-			return true
-		}
-
-		const { response, text, images, files } = await config.callbacks.ask(
-			type,
-			completeMessage,
-			false,
-			existingTs !== undefined ? { existingTs } : undefined,
-		)
-
-		if (text || (images && images.length > 0) || (files && files.length > 0)) {
-			let fileContentString = ""
-			if (files && files.length > 0) {
-				fileContentString = await processFilesIntoText(files)
-			}
-
-			ToolResultUtils.pushAdditionalToolFeedback(config.taskState.userMessageContent, text, images, fileContentString)
-			await sayFeedbackOnce(config, response, text, images, files)
-		}
-
-		if (response !== "yesButtonClicked") {
-			// Only explicit approve button click runs the tool.
-			// "noButtonClicked" = reject, "messageResponse" = typed text without clicking.
-			config.taskController.rejectActiveBlock() // Prevent further tool uses in this message
-			return false
-		}
-		// "yesButtonClicked" — explicit approval; feedback has already been saved above.
-		return true
 	}
 }

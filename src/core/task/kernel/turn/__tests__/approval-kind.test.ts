@@ -1,13 +1,7 @@
 import { type AutoApprovalSettings, DEFAULT_AUTO_APPROVAL_SETTINGS } from "@shared/AutoApprovalSettings"
 import { ClineDefaultTool } from "@shared/tools"
 import { describe, expect, it } from "vitest"
-import {
-	type ConfigurableCeilings,
-	isApprovalRevoked,
-	resolveApprovalCeiling,
-	resolveApprovalKind,
-	resolvePermissionScope,
-} from "../approval-kind"
+import { type ConfigurableCeilings, resolveApprovalCeiling, resolveApprovalKind, resolvePermissionScope } from "../approval-kind"
 
 /** Settings with every per-scope toggle on. */
 function allApproved(version = 1): AutoApprovalSettings {
@@ -281,47 +275,5 @@ describe("approval kind", () => {
 			const input = { toolName: ClineDefaultTool.FILE_EDIT, settings: allApproved() }
 			expect(resolveApprovalKind(input)).toEqual(resolveApprovalKind(input))
 		})
-
-		it("carries the policy version the decision was made under", () => {
-			const decision = resolveApprovalKind({ toolName: ClineDefaultTool.FILE_READ, settings: allApproved(7) })
-			expect(decision.policyVersion).toBe(7)
-		})
-	})
-})
-
-describe("revocation", () => {
-	it("revokes an automatic approval after the policy changes", () => {
-		const decision = resolveApprovalKind({ toolName: ClineDefaultTool.FILE_EDIT, settings: allApproved(3) })
-		expect(decision.kind).toBe("automatic")
-
-		expect(isApprovalRevoked(decision, 3)).toBe(false)
-		// Tightening any setting bumps the version, so a queued closure is
-		// re-decided under the policy in force now.
-		expect(isApprovalRevoked(decision, 4)).toBe(true)
-	})
-
-	it("does not revoke a manual approval", () => {
-		const decision = resolveApprovalKind({
-			toolName: ClineDefaultTool.FILE_EDIT,
-			settings: noneApproved(3),
-		})
-
-		expect(decision.kind).toBe("manual")
-		// A human already decided; a settings change does not withdraw that.
-		expect(isApprovalRevoked(decision, 9)).toBe(false)
-	})
-
-	it("re-resolves a revoked block as manual under a tightened ceiling", () => {
-		const granted = resolveApprovalKind({ toolName: ClineDefaultTool.FILE_EDIT, settings: allApproved(1) })
-		expect(granted.kind).toBe("automatic")
-		expect(isApprovalRevoked(granted, 2)).toBe(true)
-
-		const reResolved = resolveApprovalKind({
-			toolName: ClineDefaultTool.FILE_EDIT,
-			settings: allApproved(2),
-			ceilings: { edit_workspace: "manual_only" },
-		})
-
-		expect(reResolved.kind).toBe("manual")
 	})
 })

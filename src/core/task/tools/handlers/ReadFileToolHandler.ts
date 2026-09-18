@@ -10,7 +10,6 @@ import { telemetryService } from "@/services/telemetry"
 import { ClineSayTool } from "@/shared/ExtensionMessage"
 import { ClineDefaultTool } from "@/shared/tools"
 import type { ToolResponse } from "../../index"
-import { showNotificationForApproval } from "../../utils"
 import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
 import type { ToolValidator } from "../ToolValidator"
 import type { TaskConfig } from "../types/TaskConfig"
@@ -184,17 +183,7 @@ export class ReadFileToolHandler implements IFullyManagedTool {
 
 		const partialMessage = JSON.stringify(sharedMessageProps)
 
-		// Handle auto-approval vs manual approval for partial
-		const existingTs = block.ts
-		if (await uiHelpers.shouldAutoApproveToolWithPath(block.name, relPath)) {
-			await uiHelpers.say("tool", partialMessage, undefined, undefined, true, existingTs)
-		} else {
-			uiHelpers
-				.ask("tool", partialMessage, true, {
-					existingTs,
-				})
-				.catch(() => {})
-		}
+		await uiHelpers.say("tool", partialMessage, undefined, undefined, true, block.ts)
 	}
 
 	async execute(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
@@ -243,58 +232,17 @@ export class ReadFileToolHandler implements IFullyManagedTool {
 			operationIsLocatedInWorkspace: await isProjectScopedRead(config, relPath!, absolutePath),
 		} satisfies ClineSayTool
 
-		const completeMessage = JSON.stringify(sharedMessageProps)
-
-		const shouldAutoApprove =
-			config.isSubagentExecution || (await config.callbacks.shouldAutoApproveToolWithPath(block.name, relPath))
-		if (shouldAutoApprove) {
-			// Auto-approval flow (completed read is announced after extractFileContent so line range is known)
-			// The complete message is emitted later via emitReadFileToolUiComplete
-			// with the block's ts so the partial row gets replaced in-place.
-
-			// Capture telemetry
-			telemetryService.captureToolUsage(
-				config.ulid ?? "",
-				block.name,
-				config.api.getModel().id,
-				provider ?? "",
-				true,
-				true,
-				workspaceContext,
-				block.isNativeToolCall,
-			)
-		} else {
-			// Manual approval flow
-			const notificationMessage = `Dline wants to read ${getWorkspaceBasename(absolutePath, "ReadFileToolHandler.notification")}`
-
-			// Show notification
-			showNotificationForApproval(notificationMessage, config.autoApprovalSettings.enableNotifications)
-
-			const didApprove = await ToolResultUtils.askApprovalAndPushFeedback("tool", completeMessage, config, block.ts)
-			if (!didApprove) {
-				telemetryService.captureToolUsage(
-					config.ulid ?? "",
-					block.name,
-					config.api.getModel().id,
-					provider ?? "",
-					false,
-					false,
-					workspaceContext,
-					block.isNativeToolCall,
-				)
-				return formatResponse.toolDenied()
-			}
-			telemetryService.captureToolUsage(
-				config.ulid ?? "",
-				block.name,
-				config.api.getModel().id,
-				provider ?? "",
-				false,
-				true,
-				workspaceContext,
-				block.isNativeToolCall,
-			)
-		}
+		void sharedMessageProps
+		telemetryService.captureToolUsage(
+			config.ulid ?? "",
+			block.name,
+			config.api.getModel().id,
+			provider ?? "",
+			!block.dline_tid || !config.admissionOutcomes?.has(block.dline_tid),
+			true,
+			workspaceContext,
+			block.isNativeToolCall,
+		)
 
 		// Run PreToolUse hook after approval but before execution
 		try {

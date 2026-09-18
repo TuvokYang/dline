@@ -60,10 +60,10 @@ export interface AutoApprovalSettings {
 	/**
 	 * Per-scope automation ceilings.
 	 *
-	 * Sparse and absent by default: an unset scope uses its declared default, so
-	 * introducing ceilings does not change the approval outcome for any existing
-	 * user. `read_external` and `edit_external` default to `manual_only` because
-	 * their effects leave the project.
+	 * Sparse and absent by default: every unset scope uses the compatibility
+	 * default `auto`, so introducing ceilings does not change the approval outcome
+	 * for any existing user. External read/write scopes remain separately
+	 * configurable and become `manual_only` only when the user configures them so.
 	 *
 	 * A ceiling constrains only the scope a call is classified into. It does not
 	 * inspect command text, so it makes no claim about what a command or a

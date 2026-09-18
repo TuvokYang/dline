@@ -56,14 +56,6 @@ export interface ApprovalDecision {
 	kind: ApprovalKind
 	scope: PermissionScope
 	ceiling: ApprovalCeiling
-	/**
-	 * Policy version the decision was made under.
-	 *
-	 * An automatic approval is only valid for the permission state that granted
-	 * it. Carrying the version lets a queued closure be re-evaluated before it
-	 * starts, so tightening a setting revokes an approval that has not yet run.
-	 */
-	policyVersion: number
 }
 
 /**
@@ -77,6 +69,8 @@ export interface PermissionScopeContext {
 	isExternalPath?: boolean
 	/** True when the command matched the safe-command classifier. */
 	isSafeCommand?: boolean
+	/** Optional tool-local gate applied in addition to its permission-scope toggle. */
+	isToolAutoApproveEnabled?: boolean
 }
 
 /** Scopes whose ceiling the user may configure. */
@@ -130,6 +124,15 @@ const DEFAULT_CEILINGS: Record<PermissionScope, ApprovalCeiling> = {
  */
 const FIXED_CEILING_SCOPES: ReadonlySet<PermissionScope> = new Set<PermissionScope>(["conversational"])
 
+/** Read tools whose provider/runtime fan-out can reach paths absent from the call. */
+const UNBOUNDED_READ_TOOLS: ReadonlySet<ClineDefaultTool> = new Set([ClineDefaultTool.FIND_REFERENCES])
+
+/** Edit tools whose provider/runtime fan-out can reach paths absent from the call. */
+const UNBOUNDED_EDIT_TOOLS: ReadonlySet<ClineDefaultTool> = new Set([
+	ClineDefaultTool.RENAME,
+	ClineDefaultTool.REPLACE_TEXT,
+])
+
 /** Tools that reach the filesystem for reading. */
 const READ_TOOLS: ReadonlySet<ClineDefaultTool> = new Set([
 	ClineDefaultTool.FILE_READ,
@@ -137,6 +140,10 @@ const READ_TOOLS: ReadonlySet<ClineDefaultTool> = new Set([
 	ClineDefaultTool.LIST_FILES,
 	ClineDefaultTool.LIST_CODE_DEF,
 	ClineDefaultTool.FIND_REFERENCES,
+	ClineDefaultTool.LOAD_SKILL,
+	ClineDefaultTool.LOAD_WORKFLOW,
+	ClineDefaultTool.SUMMARIZE_TASK,
+	ClineDefaultTool.GENERATE_EXPLANATION,
 ])
 
 /** Tools that mutate files. */
@@ -154,11 +161,16 @@ const DIRECT_SCOPES: Partial<Record<ClineDefaultTool, PermissionScope>> = {
 	[ClineDefaultTool.BROWSER]: "browser",
 	[ClineDefaultTool.WEB_FETCH]: "web",
 	[ClineDefaultTool.WEB_SEARCH]: "web",
+	[ClineDefaultTool.REPORT_BUG]: "web",
 	[ClineDefaultTool.MCP_USE]: "mcp",
 	[ClineDefaultTool.MCP_ACCESS]: "mcp",
+	[ClineDefaultTool.MCP_DOCS]: "mcp",
+	[ClineDefaultTool.LOAD_MCP]: "mcp",
 	[ClineDefaultTool.GENERATE_IMAGE]: "generate_image",
 	[ClineDefaultTool.TODO]: "focus_chain",
 	[ClineDefaultTool.CHANGE_TODO_LIST]: "focus_chain",
+	[ClineDefaultTool.NEW_TASK]: "subagent",
+	[ClineDefaultTool.SPAWN_TASK]: "subagent",
 	[ClineDefaultTool.USE_SUBAGENT]: "subagent",
 	[ClineDefaultTool.USE_SUBAGENTS]: "subagent",
 }
@@ -173,6 +185,8 @@ const DIRECT_SCOPES: Partial<Record<ClineDefaultTool, PermissionScope>> = {
 export function resolvePermissionScope(toolName: string, context: PermissionScopeContext = {}): PermissionScope {
 	const tool = toolName as ClineDefaultTool
 
+	if (UNBOUNDED_READ_TOOLS.has(tool)) return "read_external"
+	if (UNBOUNDED_EDIT_TOOLS.has(tool)) return "edit_external"
 	if (READ_TOOLS.has(tool)) {
 		return context.isExternalPath ? "read_external" : "read_workspace"
 	}
@@ -249,6 +263,8 @@ export interface ApprovalKindInput {
 	settings: AutoApprovalSettings
 	ceilings?: ConfigurableCeilings
 	context?: PermissionScopeContext
+	/** The enclosing tool approval may satisfy this nested call when the ceiling permits it. */
+	inheritsApproval?: boolean
 	/**
 	 * Blanket approval switches held outside `AutoApprovalSettings`.
 	 *
@@ -273,54 +289,41 @@ export interface ApprovalKindInput {
  * per-scope toggles, blanket switches, or the AI approver:
  *
  *   1. a `manual_only` ceiling forces manual approval;
- *   2. tools that present their own interaction have no approval stage;
- *   3. a blanket switch or an enabled per-scope toggle grants automatic approval;
- *   4. an `ai_approvable` ceiling routes the block to the AI approver;
- *   5. otherwise the user decides manually.
+ *   2. an inherited parent approval removes the nested approval stage;
+ *   3. tools that present their own interaction have no approval stage;
+ *   4. a blanket switch or an enabled per-scope toggle grants automatic approval;
+ *   5. an `ai_approvable` ceiling routes the block to the AI approver;
+ *   6. otherwise the user decides manually.
  *
  * Step 2 cannot conflict with step 1, because the scope those tools resolve to
  * has a fixed ceiling that the user cannot raise or lower.
  *
  * @param input Tool identity, settings, ceilings, blanket switches and context.
- * @returns The decision, including the policy version it was made under.
+ * @returns The approval decision under the supplied permission state.
  */
 export function resolveApprovalKind(input: ApprovalKindInput): ApprovalDecision {
 	const tool = input.toolName as ClineDefaultTool
 	const scope = resolvePermissionScope(input.toolName, input.context)
 	const ceiling = resolveApprovalCeiling(scope, input.ceilings)
-	const policyVersion = input.settings.version
 
 	if (ceiling === "manual_only") {
-		return { kind: "manual", scope, ceiling, policyVersion }
+		return { kind: "manual", scope, ceiling }
+	}
+	if (input.inheritsApproval === true) {
+		return { kind: "none", scope, ceiling }
 	}
 	if (ownsItsInteraction(tool)) {
-		return { kind: "none", scope, ceiling, policyVersion }
+		return { kind: "none", scope, ceiling }
 	}
 
 	const blanketGrants = input.blanket?.yoloMode === true || input.blanket?.approveAll === true
-	if (blanketGrants || isScopeToggledOn(scope, input.settings)) {
-		return { kind: "automatic", scope, ceiling, policyVersion }
+	const scopedToggleGrants =
+		input.context?.isToolAutoApproveEnabled !== false && isScopeToggledOn(scope, input.settings)
+	if (blanketGrants || scopedToggleGrants) {
+		return { kind: "automatic", scope, ceiling }
 	}
 	if (ceiling === "ai_approvable") {
-		return { kind: "ai_approver", scope, ceiling, policyVersion }
+		return { kind: "ai_approver", scope, ceiling }
 	}
-	return { kind: "manual", scope, ceiling, policyVersion }
-}
-
-/**
- * Whether an approval granted earlier is still valid.
- *
- * An automatic approval is only valid for the permission state that granted it.
- * Comparing versions before a queued closure starts is what makes tightening a
- * setting take effect on work that has not yet begun.
- *
- * @param decision Approval decision made earlier.
- * @param currentPolicyVersion Policy version in force now.
- * @returns True when the decision must be made again.
- */
-export function isApprovalRevoked(decision: ApprovalDecision, currentPolicyVersion: number): boolean {
-	if (decision.kind !== "automatic") {
-		return false
-	}
-	return decision.policyVersion !== currentPolicyVersion
+	return { kind: "manual", scope, ceiling }
 }

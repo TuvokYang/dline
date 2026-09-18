@@ -1118,10 +1118,47 @@ describe("turn approval and execution ownership", () => {
 		}, state)
 
 		expect(admitted.turn?.approval?.automatic).toEqual(["tid-1", "tid-2", "tid-3"])
-		expect(admitted.turn?.executing).toEqual(["tid-1", "tid-2", "tid-3"])
+		expect(admitted.turn?.executing).toEqual([])
 		// No automatic approval may consume the single user-facing slot.
 		expect(admitted.turn?.approval?.manual).toBeUndefined()
 		expect(admitted.turn?.activeDlineTid).toBeUndefined()
+	})
+
+	it("returns an approved-but-unstarted automatic block to admission when its grant is revoked", () => {
+		const state = streamingTurn([{ dlineTid: "tid-1", requiresApproval: false }])
+		const admitted = reduceTask(state, { type: "BLOCK_READY", turnId: "turn-1", dlineTid: "tid-1" })
+
+		expect(admitted.next.turn?.approval?.automatic).toEqual(["tid-1"])
+		expect(admitted.next.turn?.executing).toEqual([])
+		const revoked = reduceTask(admitted.next, {
+			type: "BLOCK_ADMISSION_REVOKED",
+			turnId: "turn-1",
+			dlineTid: "tid-1",
+		})
+
+		expect(revoked).toMatchObject({ accepted: true, next: { phase: TaskPhase.STREAMING } })
+		expect(revoked.next.turn?.blocks[0]?.phase).toBe(BlockPhase.STREAMING)
+		expect(revoked.next.turn?.approval?.automatic).toEqual([])
+		expect(revoked.next.turn?.executing).toEqual([])
+	})
+
+	it("does not revoke an automatic block after execution has started", () => {
+		const state = streamingTurn([{ dlineTid: "tid-1", requiresApproval: false }])
+		const admitted = reduceTask(state, { type: "BLOCK_READY", turnId: "turn-1", dlineTid: "tid-1" })
+		const running = reduceTask(admitted.next, {
+			type: "BLOCK_EXECUTION_STARTED",
+			turnId: "turn-1",
+			dlineTid: "tid-1",
+		})
+
+		const revoked = reduceTask(running.next, {
+			type: "BLOCK_ADMISSION_REVOKED",
+			turnId: "turn-1",
+			dlineTid: "tid-1",
+		})
+
+		expect(revoked).toMatchObject({ accepted: false, error: { code: "invalid_runtime_event" } })
+		expect(revoked.next.turn?.executing).toEqual(["tid-1"])
 	})
 
 	it("releases the approval slot when approval is granted, not when execution ends", () => {
@@ -1134,17 +1171,17 @@ describe("turn approval and execution ownership", () => {
 		const approved = reduceTask(pending.next, { type: "BLOCK_APPROVED", turnId: "turn-1", dlineTid: "tid-1" })
 
 		expect(approved).toMatchObject({ accepted: true })
-		// Release and execution entry happen in the same reduction.
+		// Approval releases the slot but does not claim execution ownership.
 		expect(approved.next.turn?.approval?.manual).toBeUndefined()
-		expect(approved.next.turn?.executing).toEqual(["tid-1"])
+		expect(approved.next.turn?.executing).toEqual([])
 		expect(approved.next.turn?.blocks[0]?.phase).toBe(BlockPhase.EXECUTING)
 
-		// The approved block is still running, yet the next one can be presented.
+		// The approved block may still be queued, yet the next one can be presented.
 		const next = reduceTask(approved.next, { type: "BLOCK_APPROVAL_REQUIRED", turnId: "turn-1", dlineTid: "tid-2" })
 
 		expect(next).toMatchObject({ accepted: true })
 		expect(next.next.turn?.approval?.manual).toEqual({ dlineTid: "tid-2", stage: "admission" })
-		expect(next.next.turn?.executing).toEqual(["tid-1"])
+		expect(next.next.turn?.executing).toEqual([])
 	})
 
 	it("does not let one block's execution rejection release another block's slot", () => {
@@ -1155,7 +1192,8 @@ describe("turn approval and execution ownership", () => {
 			{ dlineTid: "tid-1", requiresApproval: false },
 			{ dlineTid: "tid-2", requiresApproval: true },
 		])
-		const running = reduceTask(state, { type: "BLOCK_READY", turnId: "turn-1", dlineTid: "tid-1" })
+		const admitted = reduceTask(state, { type: "BLOCK_READY", turnId: "turn-1", dlineTid: "tid-1" })
+		const running = reduceTask(admitted.next, { type: "BLOCK_EXECUTION_STARTED", turnId: "turn-1", dlineTid: "tid-1" })
 		const owned = reduceTask(running.next, { type: "BLOCK_APPROVAL_REQUIRED", turnId: "turn-1", dlineTid: "tid-2" })
 		expect(owned.next.turn?.approval?.manual).toEqual({ dlineTid: "tid-2", stage: "admission" })
 
@@ -1176,12 +1214,27 @@ describe("turn approval and execution ownership", () => {
 
 	it("drops a block from both ownership sets when it completes", () => {
 		const state = streamingTurn([{ dlineTid: "tid-1", requiresApproval: false }])
-		const running = reduceTask(state, { type: "BLOCK_READY", turnId: "turn-1", dlineTid: "tid-1" })
+		const admitted = reduceTask(state, { type: "BLOCK_READY", turnId: "turn-1", dlineTid: "tid-1" })
+		const running = reduceTask(admitted.next, { type: "BLOCK_EXECUTION_STARTED", turnId: "turn-1", dlineTid: "tid-1" })
 		const done = reduceTask(running.next, { type: "BLOCK_EXECUTION_COMPLETED", turnId: "turn-1", dlineTid: "tid-1" })
 
 		expect(done).toMatchObject({ accepted: true })
 		expect(done.next.turn?.executing).toEqual([])
 		expect(done.next.turn?.approval?.automatic).toEqual([])
+	})
+
+	it.each([
+		["BLOCK_EXECUTION_CANCELLED" as const, BlockPhase.CANCELLED],
+		["BLOCK_EXECUTION_SKIPPED" as const, BlockPhase.SKIPPED],
+	])("commits %s as a terminal phase and clears approved-but-unstarted ownership", (type, phase) => {
+		const state = streamingTurn([{ dlineTid: "tid-1", requiresApproval: false }])
+		const admitted = reduceTask(state, { type: "BLOCK_READY", turnId: "turn-1", dlineTid: "tid-1" })
+		const terminal = reduceTask(admitted.next, { type, turnId: "turn-1", dlineTid: "tid-1" })
+
+		expect(terminal).toMatchObject({ accepted: true })
+		expect(terminal.next.turn?.blocks[0]?.phase).toBe(phase)
+		expect(terminal.next.turn?.executing).toEqual([])
+		expect(terminal.next.turn?.approval?.automatic).toEqual([])
 	})
 
 	it("keeps activeDlineTid equal to the manual approval owner", () => {

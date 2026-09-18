@@ -48,6 +48,8 @@ function executingTurnState(blockCount: number): TurnState {
 				phase: BlockPhase.AUTO_EXECUTING,
 			})),
 			activeDlineTid: undefined,
+			approval: { automatic: Array.from({ length: blockCount }, (_, index) => `tid-${index}`) },
+			executing: [],
 		},
 	} as unknown as TurnState
 }
@@ -85,6 +87,8 @@ describe("snapshot durability is decided by the reducer", () => {
 	it.each<[string, TaskEvent]>([
 		["approval presentation", { type: "BLOCK_APPROVAL_REQUIRED", turnId: "turn-1", dlineTid: "tid-0" }],
 		["block completion", { type: "BLOCK_EXECUTION_COMPLETED", turnId: "turn-1", dlineTid: "tid-0" }],
+		["block cancellation", { type: "BLOCK_EXECUTION_CANCELLED", turnId: "turn-1", dlineTid: "tid-0" }],
+		["turn-ending sibling suppression", { type: "BLOCK_EXECUTION_SKIPPED", turnId: "turn-1", dlineTid: "tid-0" }],
 	])("keeps %s durable", (_label, event) => {
 		const base = executingTurnState(1)
 		const state =
@@ -97,7 +101,7 @@ describe("snapshot durability is decided by the reducer", () => {
 							blocks: [{ ...blockAt(0), phase: BlockPhase.STREAMING, requiresApproval: true }],
 						},
 					} as TaskRuntimeState)
-				: base
+				: ({ ...base, turn: { ...base.turn, executing: ["tid-0"] } } as TaskRuntimeState)
 
 		const result = reduceTask(state, event)
 

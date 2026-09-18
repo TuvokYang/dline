@@ -587,12 +587,12 @@ function needsNoApproval(turn: NonNullable<TaskRuntimeState["turn"]>, dlineTid: 
 }
 
 /**
- * Record a block as approved and admitted to execution.
+ * Record a block as approved but not yet started.
  *
- * The manual slot is resolved rather than passed in, so a caller that released
- * the slot by clearing the projection releases it here too. That is what makes
- * "release approval and enter execution" a single reduction with no observable
- * state in between where the block is neither approved nor executing.
+ * Approval and execution are separate ownership boundaries: the manual slot is
+ * released here, while `executing` changes only when BLOCK_EXECUTION_STARTED is
+ * accepted. This durable gap is where pool admission and policy re-resolution
+ * happen without misreporting the effect as already running.
  */
 function withAdmittedBlock(
 	turn: NonNullable<TaskRuntimeState["turn"]>,
@@ -606,7 +606,38 @@ function withAdmittedBlock(
 			manual: resolved.manual,
 			automatic: options.automatic ? withMember(resolved.automatic, dlineTid) : resolved.automatic,
 		},
-		executing: withMember(resolved.executing, dlineTid),
+		// BLOCK_READY can be applied to a caller-built turn with no ownership
+		// fields. Its just-updated execution phase is not legacy evidence that the
+		// effect already started, so admission materializes an explicit empty set.
+		executing: turn.executing ?? [],
+	}
+}
+
+/** Reject one block and skip every later block whose effect has not started. */
+function rejectBlockAndSkipUnstartedAfter(
+	turn: NonNullable<TaskRuntimeState["turn"]>,
+	dlineTid: string,
+): NonNullable<TaskRuntimeState["turn"]> {
+	const executing = new Set(deriveTurnOwnership(turn).executing)
+	let afterRejected = false
+	return {
+		...turn,
+		activeDlineTid: turn.activeDlineTid === dlineTid ? undefined : turn.activeDlineTid,
+		blocks: turn.blocks.map((candidate) => {
+			if (candidate.dlineTid === dlineTid) {
+				afterRejected = true
+				return { ...candidate, phase: BlockPhase.REJECTED }
+			}
+			if (
+				afterRejected &&
+				candidate.dlineTid !== turn.activeDlineTid &&
+				!executing.has(candidate.dlineTid) &&
+				!isTerminalBlock(candidate.phase)
+			) {
+				return { ...candidate, phase: BlockPhase.SKIPPED }
+			}
+			return candidate
+		}),
 	}
 }
 
@@ -651,11 +682,15 @@ function reduceTurn(
 			type:
 				| "TURN_CREATED"
 				| "BLOCK_READY"
+				| "BLOCK_ADMISSION_REJECTED"
+				| "BLOCK_ADMISSION_REVOKED"
 				| "BLOCK_APPROVAL_REQUIRED"
 				| "BLOCK_APPROVED"
 				| "BLOCK_REJECTED"
 				| "BLOCK_EXECUTION_STARTED"
 				| "BLOCK_EXECUTION_REJECTED"
+				| "BLOCK_EXECUTION_CANCELLED"
+				| "BLOCK_EXECUTION_SKIPPED"
 				| "BLOCK_EXECUTION_COMPLETED"
 				| "TURN_COMPLETED"
 		}
@@ -703,6 +738,33 @@ function reduceTurn(
 			? acceptTurn(state, event.type, withAdmittedBlock(ready, block.dlineTid, { automatic: true }))
 			: reject(state, event.type)
 	}
+	if (event.type === "BLOCK_ADMISSION_REJECTED") {
+		if (block.phase !== BlockPhase.STREAMING) {
+			return reject(state, event.type)
+		}
+		return acceptTurn(state, event.type, rejectBlockAndSkipUnstartedAfter(state.turn, block.dlineTid), TaskPhase.BETWEEN_TURNS)
+	}
+	if (event.type === "BLOCK_ADMISSION_REVOKED") {
+		const ownership = deriveTurnOwnership(state.turn)
+		if (
+			block.phase !== BlockPhase.AUTO_EXECUTING ||
+			ownership.executing.includes(block.dlineTid) ||
+			!ownership.automatic.includes(block.dlineTid)
+		) {
+			return reject(state, event.type)
+		}
+		const revoked = replaceTurnBlock(state, block.dlineTid, BlockPhase.STREAMING, state.turn.activeDlineTid)
+		return revoked
+			? acceptTurn(state, event.type, {
+					...revoked,
+					approval: {
+						manual: ownership.manual,
+						automatic: ownership.automatic.filter((dlineTid) => dlineTid !== block.dlineTid),
+					},
+					executing: ownership.executing,
+				})
+			: reject(state, event.type)
+	}
 	if (event.type === "BLOCK_APPROVAL_REQUIRED") {
 		// Serial approval: a second block cannot be presented while one is
 		// already waiting for the user, because a user can only answer one
@@ -741,34 +803,27 @@ function reduceTurn(
 		if (block.phase !== BlockPhase.AWAITING_APPROVAL || state.turn.activeDlineTid !== block.dlineTid) {
 			return reject(state, event.type)
 		}
-		let afterRejected = false
-		const turn = {
-			...state.turn,
-			activeDlineTid: undefined,
-			blocks: state.turn.blocks.map((candidate) => {
-				if (candidate.dlineTid === block.dlineTid) {
-					afterRejected = true
-					return { ...candidate, phase: BlockPhase.REJECTED }
-				}
-				if (afterRejected && candidate.phase === BlockPhase.STREAMING) {
-					return { ...candidate, phase: BlockPhase.SKIPPED }
-				}
-				return candidate
-			}),
-		}
-		return acceptTurn(state, event.type, turn, TaskPhase.BETWEEN_TURNS)
+		return acceptTurn(state, event.type, rejectBlockAndSkipUnstartedAfter(state.turn, block.dlineTid), TaskPhase.BETWEEN_TURNS)
 	}
 	if (event.type === "BLOCK_EXECUTION_STARTED") {
 		if (block.phase !== BlockPhase.EXECUTING && block.phase !== BlockPhase.AUTO_EXECUTING) {
 			return reject(state, event.type)
 		}
+		const ownership = deriveTurnOwnership(state.turn)
+		// A legacy snapshot has no explicit execution set, so its executing phase is
+		// only a compatibility projection. Accepting start once materializes the new
+		// ownership field; only an explicit set can prove a duplicate start.
+		if (state.turn.executing !== undefined && ownership.executing.includes(block.dlineTid)) {
+			return reject(state, event.type)
+		}
+		const started = { ...state.turn, executing: withMember(ownership.executing, block.dlineTid) }
 		const revision = state.revision + 1
 		// A block start is the per-block hot path: with parallel execution one
 		// turn produces many of these, and each one previously forced a full
 		// Webview build and a durable write inside the serialized runtime queue.
 		// The block's own terminal transition is durable, so nothing observes
 		// this intermediate state without a later barrier.
-		return acceptTurn(state, event.type, state.turn, TaskPhase.EXECUTING, [
+		return acceptTurn(state, event.type, started, TaskPhase.EXECUTING, [
 			...coalescedStateEffects(revision),
 			{
 				id: effectId(revision, 3),
@@ -782,32 +837,39 @@ function reduceTurn(
 			},
 		])
 	}
-	if (event.type === "BLOCK_EXECUTION_REJECTED") {
-		if (block.phase !== BlockPhase.EXECUTING && block.phase !== BlockPhase.AUTO_EXECUTING) {
+	if (event.type === "BLOCK_EXECUTION_CANCELLED" || event.type === "BLOCK_EXECUTION_SKIPPED") {
+		if (isTerminalBlock(block.phase) || block.phase === BlockPhase.AWAITING_APPROVAL) {
 			return reject(state, event.type)
 		}
-		let afterRejected = false
-		const turn = {
-			...state.turn,
-			// Only the owner may release the slot. With parallel execution the
-			// rejected block is often not the one holding it, and clearing the
-			// projection unconditionally would free another block's live
-			// approval and let a second prompt claim it.
-			activeDlineTid: state.turn.activeDlineTid === block.dlineTid ? undefined : state.turn.activeDlineTid,
-			blocks: state.turn.blocks.map((candidate) => {
-				if (candidate.dlineTid === block.dlineTid) {
-					afterRejected = true
-					return { ...candidate, phase: BlockPhase.REJECTED }
-				}
-				if (afterRejected && candidate.phase === BlockPhase.STREAMING) {
-					return { ...candidate, phase: BlockPhase.SKIPPED }
-				}
-				return candidate
-			}),
-		}
-		return acceptTurn(state, event.type, turn, TaskPhase.BETWEEN_TURNS)
+		const ownership = deriveTurnOwnership(state.turn)
+		const terminalPhase = event.type === "BLOCK_EXECUTION_CANCELLED" ? BlockPhase.CANCELLED : BlockPhase.SKIPPED
+		const terminal = replaceTurnBlock(state, block.dlineTid, terminalPhase, state.turn.activeDlineTid)
+		return terminal
+			? acceptTurn(state, event.type, {
+					...terminal,
+					approval: {
+						manual: ownership.manual?.dlineTid === block.dlineTid ? undefined : ownership.manual,
+						automatic: ownership.automatic.filter((dlineTid) => dlineTid !== block.dlineTid),
+					},
+					executing: ownership.executing.filter((dlineTid) => dlineTid !== block.dlineTid),
+				})
+			: reject(state, event.type)
 	}
-	if (block.phase !== BlockPhase.EXECUTING && block.phase !== BlockPhase.AUTO_EXECUTING) {
+	if (event.type === "BLOCK_EXECUTION_REJECTED") {
+		const executing = deriveTurnOwnership(state.turn).executing
+		if (
+			(block.phase !== BlockPhase.EXECUTING && block.phase !== BlockPhase.AUTO_EXECUTING) ||
+			!executing.includes(block.dlineTid)
+		) {
+			return reject(state, event.type)
+		}
+		return acceptTurn(state, event.type, rejectBlockAndSkipUnstartedAfter(state.turn, block.dlineTid), TaskPhase.BETWEEN_TURNS)
+	}
+	const executing = deriveTurnOwnership(state.turn).executing
+	if (
+		(block.phase !== BlockPhase.EXECUTING && block.phase !== BlockPhase.AUTO_EXECUTING) ||
+		!executing.includes(block.dlineTid)
+	) {
 		return reject(state, event.type)
 	}
 	// A completed block is terminal, so it leaves the approval slot and the
@@ -863,7 +925,12 @@ function reduceInteractionOpen(
 	const approvalBlock = approvalKinds.has(event.kind)
 		? state.turn?.blocks.find((block) => block.dlineTid === event.interactionId)
 		: undefined
-	if (approvalBlock && approvalBlock.phase !== BlockPhase.AUTO_EXECUTING && approvalBlock.phase !== BlockPhase.EXECUTING) {
+	if (
+		approvalBlock &&
+		approvalBlock.phase !== BlockPhase.AWAITING_APPROVAL &&
+		approvalBlock.phase !== BlockPhase.AUTO_EXECUTING &&
+		approvalBlock.phase !== BlockPhase.EXECUTING
+	) {
 		return reject(state, event.type)
 	}
 	if (approvalBlock && state.turn?.activeDlineTid && state.turn.activeDlineTid !== approvalBlock.dlineTid) {
@@ -1673,11 +1740,15 @@ export function reduceTask(state: TaskRuntimeState, event: TaskEvent): Transitio
 			return reduceResumeBlocks(state, event)
 		case "TURN_CREATED":
 		case "BLOCK_READY":
+		case "BLOCK_ADMISSION_REJECTED":
+		case "BLOCK_ADMISSION_REVOKED":
 		case "BLOCK_APPROVAL_REQUIRED":
 		case "BLOCK_APPROVED":
 		case "BLOCK_REJECTED":
 		case "BLOCK_EXECUTION_STARTED":
 		case "BLOCK_EXECUTION_REJECTED":
+		case "BLOCK_EXECUTION_CANCELLED":
+		case "BLOCK_EXECUTION_SKIPPED":
 		case "BLOCK_EXECUTION_COMPLETED":
 		case "TURN_COMPLETED":
 			return reduceTurn(state, event)

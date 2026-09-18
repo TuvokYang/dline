@@ -385,23 +385,6 @@ describe("ListFilesToolHandler.execute – error recovery", () => {
 		assert.equal(taskState.consecutiveMistakeCount, 0)
 	})
 
-	it("does not list files before manual approval", async () => {
-		const { config, callbacks, validator } = createConfig()
-		config.isSubagentExecution = false
-		config.taskController = { rejectActiveBlock: vi.fn() } as unknown as TaskConfig["taskController"]
-		callbacks.shouldAutoApproveToolWithPath.mockResolvedValue(false)
-		callbacks.ask.mockResolvedValue({ response: "noButtonClicked" })
-		const listFilesModule = await import("@services/glob/list-files")
-		const listSpy = vi.spyOn(listFilesModule, "listFiles")
-		const handler = new ListFilesToolHandler(validator)
-
-		const result = await handler.execute(config, makeBlock("manual-dir"))
-
-		assert.equal(typeof result, "string")
-		assert.ok((result as string).includes("denied"))
-		assert.equal(listSpy.mock.calls.length, 0)
-	})
-
 	it("increments consecutiveMistakeCount on ignore denial", async () => {
 		const { config, taskState } = createConfig()
 		// Create a validator whose ignoreController blocks all paths

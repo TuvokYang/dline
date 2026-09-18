@@ -1,6 +1,11 @@
 import type { ToolUse } from "@core/assistant-message"
 import { CLINE_MCP_TOOL_IDENTIFIER } from "@/shared/mcp"
 import { ClineDefaultTool } from "@/shared/tools"
+import {
+	prepareRegisteredToolAdmission,
+	type ToolAdmissionSnapshot,
+} from "../executors/tool/ToolAdmissionRegistry"
+import { rejectToolCall, type ToolPreflightResult, type ToolSideEffect } from "../executors/tool/ToolPreflight"
 import { AccessMcpResourceHandler } from "./handlers/AccessMcpResourceHandler"
 import { ActModeRespondHandler } from "./handlers/ActModeRespondHandler"
 import { ApplyPatchHandler } from "./handlers/ApplyPatchHandler"
@@ -49,7 +54,7 @@ export interface IPartialBlockHandler {
 }
 
 export interface IFullyManagedTool extends IToolHandler, IPartialBlockHandler {
-	// Marker interface for tools that handle their own complete approval flow
+	// Legacy marker name retained for compatibility; partial methods are presentation-only.
 }
 
 /**
@@ -157,17 +162,44 @@ export class ToolExecutorCoordinator {
 	 * Get a handler for the given tool name
 	 */
 	getHandler(toolName: string): IToolHandler | undefined {
-		// HACK: Normalize MCP tool names to the standard handler
-		if (toolName.includes(CLINE_MCP_TOOL_IDENTIFIER)) {
-			toolName = ClineDefaultTool.MCP_USE
-		}
-
-		const staticHandler = this.handlers.get(toolName)
+		const staticHandler = this.handlers.get(this.canonicalToolName(toolName))
 		if (staticHandler) {
 			return staticHandler
 		}
 
 		return undefined
+	}
+
+	/** Prepare one registry-owned admission without starting the handler. */
+	prepareAdmission<T>(
+		block: ToolUse,
+		snapshot: ToolAdmissionSnapshot,
+		run: ToolSideEffect<T>,
+	): ToolPreflightResult<T> {
+		const canonicalToolName = this.canonicalToolName(block.name)
+		const handler = this.handlers.get(canonicalToolName)
+		if (!handler) {
+			return rejectToolCall({
+				reason: "unsupported_tool",
+				message: `No handler registered for tool: ${block.name}`,
+			})
+		}
+		return prepareRegisteredToolAdmission({
+			canonicalToolName: canonicalToolName as ClineDefaultTool,
+			block,
+			description: handler.getDescription(block),
+			snapshot,
+			run,
+		})
+	}
+
+	/** Registered names exposed for exhaustive admission coverage tests. */
+	getRegisteredToolNames(): string[] {
+		return Array.from(this.handlers.keys())
+	}
+
+	private canonicalToolName(toolName: string): string {
+		return toolName.includes(CLINE_MCP_TOOL_IDENTIFIER) ? ClineDefaultTool.MCP_USE : toolName
 	}
 
 	/**

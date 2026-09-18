@@ -309,6 +309,17 @@ describe("Task restored turn-end continuation", () => {
 			hasPendingToolResult: (
 				Task.prototype as unknown as { hasPendingToolResult(dlineTid: string, functionId: string): boolean }
 			).hasPendingToolResult,
+			turnDriver: {
+				hasPendingToolResult: (dlineTid: string, functionId: string) =>
+					taskState.userMessageContent.some(
+						(content) => content.dline_tid === dlineTid && content.function_id === functionId,
+					),
+				isTerminalRuntimeBlock: (phase: BlockPhase) =>
+					[BlockPhase.COMPLETED, BlockPhase.REJECTED, BlockPhase.SKIPPED, BlockPhase.CANCELLED].includes(phase),
+				execute: async () => {
+					sequence.push("turn-finalized")
+				},
+			},
 			dispatchRuntime: runtime.dispatch.bind(runtime),
 			toolExecutor: {
 				continueTurnEndInteraction: vi.fn(async () => {
@@ -335,9 +346,6 @@ describe("Task restored turn-end continuation", () => {
 				sequence.push("compaction-settled")
 			},
 			syncRetainedMachines: () => sequence.push("machines-synced"),
-			executeFinalizedAssistantTurn: async () => {
-				sequence.push("turn-finalized")
-			},
 			recursivelyMakeClineRequests: async () => {
 				sequence.push("next-api")
 				return false

@@ -14,12 +14,11 @@ import { BASH_WRAPPERS, DiffError, PATCH_MARKERS, type Patch, PatchActionType, t
 import { preserveEscaping } from "@/shared/string"
 import { ClineDefaultTool } from "@/shared/tools"
 import type { ToolResponse } from "../../index"
-import { showNotificationForApproval } from "../../utils"
 import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
 import type { ToolValidator } from "../ToolValidator"
-import { interactionId, interactionTurnId, type TaskConfig } from "../types/TaskConfig"
+import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
-import { captureAccepted, captureRejected, getModelInfo } from "../utils/AiOutputTelemetry"
+import { captureAccepted, getModelInfo } from "../utils/AiOutputTelemetry"
 import { type FileOpsResult, FileProviderOperations } from "../utils/FileProviderOperations"
 import { PatchParser } from "../utils/PatchParser"
 import { PathResolver } from "../utils/PathResolver"
@@ -59,7 +58,7 @@ export const PatchClineSayMap = {
 	[PatchActionType.ADD]: "newFileCreated",
 	[PatchActionType.DELETE]: "fileDeleted",
 	[PatchActionType.UPDATE]: "editedExistingFile",
-}
+} as const
 
 export class ApplyPatchHandler implements IFullyManagedTool {
 	readonly name = ClineDefaultTool.APPLY_PATCH
@@ -84,147 +83,43 @@ export class ApplyPatchHandler implements IFullyManagedTool {
 
 	async handlePartialBlock(block: ToolUse, uiHelpers: StronglyTypedUIHelpers): Promise<void> {
 		const rawInput = block.params.input
-		if (!rawInput) {
-			return
-		}
-
-		try {
-			const allFiles = this.extractAllFiles(rawInput)
-			if (allFiles.length === 0) {
-				return
-			}
-
-			const config = uiHelpers.getConfig()
-			this.initializeHelpers(config)
-
-			// Preview the first file being edited
-			await this.previewPatchStream(rawInput, uiHelpers, block.ts).catch(() => {})
-		} catch {
-			// Wait for more data if parsing fails
-		}
-	}
-
-	private async previewPatchStream(rawInput: string, uiHelpers: StronglyTypedUIHelpers, blockTs?: number): Promise<void> {
-		const config = uiHelpers.getConfig()
-		const provider = config.services.diffViewProvider
-		this.initializeHelpers(config)
+		if (!rawInput) return
 
 		const lines = this.stripBashWrapper(rawInput.split("\n"))
-
-		// Extract the first operation path and type
 		let targetPath: string | undefined
 		let actionType: PatchActionType | undefined
 		let contentStartIndex = -1
-
-		for (let i = 0; i < lines.length; i++) {
-			const line = lines[i]
-			if (line.startsWith(PATCH_MARKERS.ADD)) {
-				provider.editType = "modify"
-				targetPath = line.substring(PATCH_MARKERS.ADD.length).trim()
-				actionType = PatchActionType.ADD
-				contentStartIndex = i + 1
-				break
-			}
-			if (line.startsWith(PATCH_MARKERS.UPDATE)) {
-				provider.editType = "modify"
-				targetPath = line.substring(PATCH_MARKERS.UPDATE.length).trim()
-				actionType = PatchActionType.UPDATE
-				contentStartIndex = i + 1
-				break
-			}
-			if (line.startsWith(PATCH_MARKERS.DELETE)) {
-				targetPath = line.substring(PATCH_MARKERS.DELETE.length).trim()
-				actionType = PatchActionType.DELETE
-				contentStartIndex = i + 1
-				break
-			}
-		}
-
-		if (!targetPath || targetPath.length === 0 || targetPath.includes("***") || !actionType) {
-			return
-		}
-
-		// Check for move marker
-		let movePath: string | undefined
-		if (actionType === PatchActionType.UPDATE && contentStartIndex >= 0) {
-			const nextLine = lines[contentStartIndex]
-			if (nextLine?.startsWith(PATCH_MARKERS.MOVE)) {
-				movePath = nextLine.substring(PATCH_MARKERS.MOVE.length).trim()
-				contentStartIndex++
-			}
-		}
-
-		// For ADD operations, ensure we have content
-		if (actionType === PatchActionType.ADD) {
-			if (contentStartIndex < 0 || contentStartIndex >= lines.length) {
-				return
-			}
-			const contentLines = lines.slice(contentStartIndex)
-			if (contentLines.length === 0 || (contentLines.length === 1 && contentLines[0] === "")) {
-				return
-			}
-		}
-
-		const finalPath = movePath || targetPath
-		const targetResolution = await this.pathResolver?.resolveAndValidate(finalPath, "ApplyPatchHandler.previewPatch")
-		if (!targetResolution) {
-			return
-		}
-
-		await config.callbacks
-			.ask(
-				"tool",
-				JSON.stringify({
-					tool: PatchClineSayMap[actionType],
-					path: getReadablePath(config.cwd, finalPath),
-					content: rawInput,
-					operationIsLocatedInWorkspace: await isLocatedInWorkspace(finalPath),
-				}),
-				true,
-				blockTs !== undefined ? { existingTs: blockTs } : undefined,
-			)
-			.catch(() => {}) // sending true for partial even though it's not a partial, this shows the edit row before the content is streamed into the editor
-
-		const stream: { content: string | undefined } = { content: undefined }
-
-		switch (actionType) {
-			case PatchActionType.ADD: {
-				const contentLines = lines.slice(contentStartIndex)
-				stream.content = contentLines
-					.filter((l) => l.startsWith("+"))
-					.map((l) => l.substring(1))
-					.join("\n")
-				break
-			}
-			case PatchActionType.UPDATE: {
-				const sourceResolution = await this.pathResolver?.resolveAndValidate(
-					targetPath,
-					"ApplyPatchHandler.previewPatch.source",
-				)
-				if (!sourceResolution) {
-					return
+		for (let index = 0; index < lines.length; index++) {
+			const line = lines[index]
+			for (const [marker, type] of [
+				[PATCH_MARKERS.ADD, PatchActionType.ADD],
+				[PATCH_MARKERS.UPDATE, PatchActionType.UPDATE],
+				[PATCH_MARKERS.DELETE, PatchActionType.DELETE],
+			] as const) {
+				if (line.startsWith(marker)) {
+					targetPath = line.substring(marker.length).trim()
+					actionType = type
+					contentStartIndex = index + 1
+					break
 				}
-
-				const originalContent = provider.originalContent
-				if (originalContent === undefined) {
-					return
-				}
-
-				// For streaming preview, just show original content - full application happens in execute
-				stream.content = originalContent
-				break
 			}
-			case PatchActionType.DELETE:
-				stream.content = ""
-				provider.editType = "modify"
-				break
-			default:
-				return
+			if (targetPath) break
 		}
+		if (!targetPath || !actionType || targetPath.includes("***")) return
 
-		if (stream.content === undefined) {
-			return
+		let displayPath = targetPath
+		if (actionType === PatchActionType.UPDATE) {
+			const moveLine = lines[contentStartIndex]
+			if (moveLine?.startsWith(PATCH_MARKERS.MOVE)) {
+				displayPath = moveLine.substring(PATCH_MARKERS.MOVE.length).trim() || targetPath
+			}
 		}
+		const message: ClineSayTool = {
+			tool: PatchClineSayMap[actionType],
+			path: displayPath,
+			content: rawInput,
+		}
+		await uiHelpers.say("tool", JSON.stringify(message), undefined, undefined, true, block.ts)
 	}
 
 	async execute(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
@@ -283,6 +178,20 @@ export class ApplyPatchHandler implements IFullyManagedTool {
 			const finalResponses = []
 			const applyResults: Record<string, FileOpsResult> = {}
 			const fileOutcomes: ApplyPatchFileOutcome[] = []
+			const admissionOutcome = block.dline_tid ? config.admissionOutcomes?.get(block.dline_tid) : undefined
+			const feedbackText = admissionOutcome?.draft?.text
+			const feedbackImages = admissionOutcome?.draft?.images
+			const feedbackFiles = admissionOutcome?.draft?.files
+			if (feedbackText || feedbackImages?.length || feedbackFiles?.length) {
+				const fileContent = feedbackFiles?.length ? await processFilesIntoText(feedbackFiles) : ""
+				ToolResultUtils.pushAdditionalToolFeedback(
+					config.taskState.userMessageContent,
+					feedbackText,
+					feedbackImages,
+					fileContent,
+				)
+				await sayFeedbackOnce(config, "yesButtonClicked", feedbackText, feedbackImages, feedbackFiles)
+			}
 
 			// Create a mapping from message path to original commit change key
 			// (needed because for move operations, message.path is the new path, but commit.changes key is the old path)
@@ -295,7 +204,7 @@ export class ApplyPatchHandler implements IFullyManagedTool {
 				}
 			}
 
-			// For each file: prepare, get approval, then save
+			// Admission covers the whole patch. Prepare and save each file under that grant.
 			for (const message of messages) {
 				const messagePath = message.path
 				if (!messagePath) {
@@ -319,18 +228,9 @@ export class ApplyPatchHandler implements IFullyManagedTool {
 
 				// Prepare the change for this file (open and update, but don't save)
 				await this.prepareFileChange(change, operationPath)
+				await this.presentAcceptedChange(config, block, message, rawInput, change, admissionOutcome === undefined)
 
-				// Get approval
-				const approved = await this.handleApproval(config, block, message, rawInput, change)
-				if (!approved) {
-					this.config = undefined
-					config.taskController.rejectActiveBlock()
-					await provider.revertChanges()
-					await provider.reset()
-					return getPrompt("toolHandlers", "patchDenied")
-				}
-
-				// Save the changes for this file after approval
+				// Save the changes for this file after admission
 				const fileResult = await this.saveFileChange(change, operationPath)
 				if (fileResult) {
 					// For move operations, we need to handle both old and new paths
@@ -764,21 +664,16 @@ export class ApplyPatchHandler implements IFullyManagedTool {
 		return summaries
 	}
 
-	private async handleApproval(
+	private async presentAcceptedChange(
 		config: TaskConfig,
 		block: ToolUse,
 		message: ClineSayTool,
 		rawInput: string,
-		change?: FileChange,
-	): Promise<boolean> {
-		const patch = { ...message, content: rawInput }
-		const completeMessage = JSON.stringify(patch)
-		const shouldAutoApprove = await config.callbacks.shouldAutoApproveToolWithPath(block.name, message.path)
-
-		// Extract provider info for telemetry
+		change: FileChange | undefined,
+		wasAutoApproved: boolean,
+	): Promise<void> {
+		const completeMessage = JSON.stringify({ ...message, content: rawInput })
 		const { providerId, modelId } = getModelInfo(config)
-
-		// Determine file-level operation counts from the change type
 		const fileOps = change
 			? {
 					filesCreated: change.type === PatchActionType.ADD ? 1 : 0,
@@ -787,94 +682,26 @@ export class ApplyPatchHandler implements IFullyManagedTool {
 				}
 			: { filesCreated: 0, filesDeleted: 0, filesMoved: 0 }
 
-		if (shouldAutoApprove) {
-			const existingTs = block.ts
-			await config.callbacks.say("tool", completeMessage, undefined, undefined, false, existingTs)
-			telemetryService.captureToolUsage(
-				config.ulid ?? "",
-				this.name,
-				modelId,
-				providerId,
-				true,
-				true,
-				undefined,
-				block.isNativeToolCall,
-			)
-			captureAccepted({
-				ulid: config.ulid ?? "",
-				tool: this.name,
-				source: "agent",
-				beforeContent: change?.oldContent || "",
-				afterContent: change?.newContent || "",
-				providerId,
-				modelId,
-				...fileOps,
-			})
-			return true
-		}
-
-		showNotificationForApproval(`Dline wants to edit '${message.path}'`, config.autoApprovalSettings.enableNotifications)
-
-		const outcome = await config.interactions.open({
-			turnId: interactionTurnId(block),
-			interactionId: interactionId(block),
-			kind: "tool_approval",
-			presentation: completeMessage,
-			existingTs: block.ts,
-		})
-		const text = outcome.draft?.text
-		const images = outcome.draft?.images
-		const files = outcome.draft?.files
-
-		if (text || images?.length || files?.length) {
-			const fileContent = files?.length ? await processFilesIntoText(files) : ""
-			ToolResultUtils.pushAdditionalToolFeedback(config.taskState.userMessageContent, text, images, fileContent)
-			await sayFeedbackOnce(
-				config,
-				outcome.actionId === "approve" ? "yesButtonClicked" : "noButtonClicked",
-				text,
-				images,
-				files,
-			)
-		}
-
-		const approved = outcome.actionId === "approve"
-		if (!approved) config.taskController.rejectActiveBlock()
+		await config.callbacks.say("tool", completeMessage, undefined, undefined, false, block.ts)
 		telemetryService.captureToolUsage(
 			config.ulid ?? "",
 			this.name,
 			modelId,
 			providerId,
-			false,
-			approved,
+			wasAutoApproved,
+			true,
 			undefined,
 			block.isNativeToolCall,
 		)
-
-		if (approved) {
-			captureAccepted({
-				ulid: config.ulid ?? "",
-				tool: this.name,
-				source: "agent",
-				beforeContent: change?.oldContent || "",
-				afterContent: change?.newContent || "",
-				providerId,
-				modelId,
-				...fileOps,
-			})
-		} else {
-			captureRejected({
-				ulid: config.ulid ?? "",
-				tool: this.name,
-				source: "agent",
-				beforeContent: change?.oldContent || "",
-				afterContent: change?.newContent || "",
-				providerId,
-				modelId,
-				...fileOps,
-			})
-		}
-
-		return approved
+		captureAccepted({
+			ulid: config.ulid ?? "",
+			tool: this.name,
+			source: "agent",
+			beforeContent: change?.oldContent || "",
+			afterContent: change?.newContent || "",
+			providerId,
+			modelId,
+			...fileOps,
+		})
 	}
 }

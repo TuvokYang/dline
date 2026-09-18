@@ -3,17 +3,11 @@ import { ClineDefaultTool } from "@shared/tools"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import type { TaskConfig } from "../../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../../types/UIHelpers"
-import { ToolResultUtils } from "../../utils/ToolResultUtils"
 import { UseMcpToolHandler } from "../UseMcpToolHandler"
 
 vi.mock("@core/api", () => ({ resolveProvider: () => "openai" }))
 vi.mock("@/services/telemetry", () => ({ telemetryService: { captureToolUsage: vi.fn() } }))
 vi.mock("../../utils/ToolHookUtils", () => ({ ToolHookUtils: { runPreToolUseIfEnabled: vi.fn(async () => {}) } }))
-vi.mock("../../utils/ToolResultUtils", () => ({
-	ToolResultUtils: {
-		askApprovalAndPushFeedback: vi.fn(async () => true),
-	},
-}))
 
 const block: ToolUse = {
 	type: "tool_use",
@@ -52,7 +46,6 @@ function createConfig(globalEnabled: boolean, toolEnabled: boolean): TaskConfig 
 			},
 		},
 		callbacks: {
-			shouldAutoApproveTool: vi.fn(() => globalEnabled),
 			say: vi.fn(async () => undefined),
 			ask: vi.fn(async () => ({ response: "yesButtonClicked" })),
 			sayAndCreateMissingParamError: vi.fn(async () => "missing"),
@@ -74,23 +67,23 @@ describe("UseMcpToolHandler auto-approval", () => {
 		vi.clearAllMocks()
 	})
 
-	it("uses the per-tool disable for partial presentation", async () => {
+	it("keeps partial MCP rendering presentation-only", async () => {
 		const config = createConfig(true, false)
 		const helpers = createHelpers(config)
 		const handler = new UseMcpToolHandler()
 
 		await handler.handlePartialBlock(block, helpers)
 
-		expect(helpers.ask).toHaveBeenCalledOnce()
-		expect(helpers.say).not.toHaveBeenCalled()
+		expect(helpers.say).toHaveBeenCalledOnce()
+		expect(helpers.ask).not.toHaveBeenCalled()
 	})
 
-	it("does not let a per-tool allow bypass the global MCP switch", async () => {
+	it("executes only after the caller has satisfied Admission", async () => {
 		const config = createConfig(false, true)
 		const handler = new UseMcpToolHandler()
 
 		await handler.execute(config, block)
 
-		expect(ToolResultUtils.askApprovalAndPushFeedback).toHaveBeenCalledOnce()
+		expect(config.services.mcpHub.callTool).toHaveBeenCalledWith("docs", "search", {}, "ulid-1")
 	})
 })
