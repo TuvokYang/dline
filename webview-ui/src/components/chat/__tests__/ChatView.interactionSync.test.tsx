@@ -236,6 +236,17 @@ describe("ChatView interaction anchor synchronization", () => {
 		mocks.chatState.restoreDraft.mockClear()
 	})
 
+	it("keeps the active draft owner while the task title projection is temporarily unavailable", () => {
+		const rendered = renderChat([ASK])
+		expect(mocks.useChatState).toHaveBeenLastCalledWith([ASK], "task-1")
+
+		mocks.useChatState.mockClear()
+		mocks.extensionState = { ...mocks.extensionState, taskTitleMessage: undefined }
+		rendered.rerender(chatView())
+
+		expect(mocks.useChatState).toHaveBeenLastCalledWith([ASK], "task-1")
+	})
+
 	it("submits an ordinary between-turns request without an active interaction", async () => {
 		const view = taskView()
 		view.phase = "between_turns"

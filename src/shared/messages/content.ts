@@ -42,13 +42,16 @@ export interface ClineTextContentBlock extends Anthropic.TextBlockParam, ClineSh
 
 export interface ClineImageContentBlock extends Anthropic.ImageBlockParam, ClineSharedMessageParam {}
 
-export function imageSourceToUrl(source: ClineImageContentBlock["source"]): string {
+/** Image source accepted at replay/conversion boundaries, including provider-managed files. */
+export type ClineReplayImageSource = ClineImageContentBlock["source"] | { type: "file"; file_id: string }
+
+export function imageSourceToUrl(source: ClineReplayImageSource): string {
 	if (source.type === "url") return source.url
 	if (source.type === "base64") return `data:${source.media_type};base64,${source.data}`
-	throw new Error("Provider file image sources cannot be converted to portable URLs")
+	throw new Error("Provider file image sources cannot be replayed as URLs")
 }
 
-export function imageSourceMediaType(source: ClineImageContentBlock["source"]): string {
+export function imageSourceMediaType(source: ClineReplayImageSource): string {
 	if (source.type === "base64") return source.media_type
 	return source.type === "url" ? "remote URL" : "provider file"
 }

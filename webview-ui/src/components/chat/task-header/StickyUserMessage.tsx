@@ -44,7 +44,7 @@ export const StickyUserMessage: React.FC<StickyUserMessageProps> = memo(
 			<div
 				aria-label={`Scroll to your message: ${messageText}`}
 				className={cn(
-					"relative flex items-center px-2.5 pt-2 pb-2 cursor-pointer select-none",
+					"pointer-events-auto relative flex items-center px-2.5 pt-2 pb-2 cursor-pointer select-none",
 					"backdrop-blur-sm",
 					"hover:brightness-110",
 				)}

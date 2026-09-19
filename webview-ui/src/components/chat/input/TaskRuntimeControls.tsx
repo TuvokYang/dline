@@ -149,7 +149,13 @@ export function TaskRuntimeControls() {
 								</div>
 							</TooltipTrigger>
 						</Tooltip>
-						<SelectContent align="start" className="min-w-28" position="popper" side="top" sideOffset={4}>
+						<SelectContent
+							align="start"
+							aria-label="Task thinking override options"
+							className="min-w-28"
+							position="popper"
+							side="top"
+							sideOffset={4}>
 							{supportsEffort &&
 								effortLevels.map((effort) => (
 									<SelectItem key={effort} value={`effort:${effort}`}>

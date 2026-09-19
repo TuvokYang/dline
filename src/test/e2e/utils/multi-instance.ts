@@ -1,11 +1,11 @@
-import { cpSync, existsSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs"
+import { cpSync, existsSync, readdirSync, readFileSync, statSync } from "node:fs"
 import * as path from "node:path"
 import type { TestInfo } from "@playwright/test"
 import { downloadAndUnzipVSCode, SilentReporter } from "@vscode/test-electron"
 import { _electron, type ElectronApplication, type Frame, type Page } from "playwright"
 import type { ClineApiServerMock } from "../fixtures/server"
 import { E2ETestHelper } from "./helpers"
-import { createLaunchIsolation, ensureDlineVsixInstalled, portableEnvironment } from "./vscode-launch-isolation"
+import { createLaunchIsolation, createVSCodeExtensionLaunchArguments, portableEnvironment } from "./vscode-launch-isolation"
 import { resolveVSCodeDownloadPlatform, resolveVSCodeDownloadVersion } from "./vscode-version-resolver"
 
 export interface MultiInstanceSurface {
@@ -119,11 +119,6 @@ export class MultiInstanceLauncher {
 		const { portableRoot, userDataDir } = isolation
 		const controlDirectory = path.join(userDataDir, "task-history-control")
 		const executablePath = await this.getExecutablePath()
-		ensureDlineVsixInstalled(
-			executablePath,
-			this.options.extensionsDir,
-			path.join(E2ETestHelper.CODEBASE_ROOT_DIR, "dist", "e2e.vsix"),
-		)
 		const app = await _electron.launch({
 			executablePath,
 			env: {
@@ -151,12 +146,10 @@ export class MultiInstanceLauncher {
 				"--no-sandbox",
 				"--disable-updates",
 				"--disable-workspace-trust",
-				"--disable-extensions",
 				"--skip-welcome",
 				"--skip-release-notes",
 				// User data comes from VSCODE_PORTABLE, which outranks --user-data-dir.
-				`--extensions-dir=${this.options.extensionsDir}`,
-				`--extensionDevelopmentPath=${E2ETestHelper.CODEBASE_ROOT_DIR}`,
+				...createVSCodeExtensionLaunchArguments(this.options.extensionsDir, E2ETestHelper.CODEBASE_ROOT_DIR),
 				this.options.workspaceDir,
 			],
 		})
@@ -180,7 +173,7 @@ export class MultiInstanceLauncher {
 		for (const surface of [...this.surfaces].reverse()) {
 			await attachFailureArtifacts(surface, this.options.testInfo).catch(() => undefined)
 			await surface.app.close().catch(() => undefined)
-			rmSync(surface.portableRoot, { recursive: true, force: true })
+			await E2ETestHelper.rmForRetries(surface.portableRoot, { recursive: true, force: true })
 		}
 		this.surfaces.length = 0
 	}

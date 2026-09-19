@@ -470,9 +470,11 @@ describe("chat input TaskRuntimeControls", () => {
 			"rounded-sm",
 			"hover:bg-toolbar-hover",
 		)
-		expect(screen.getByTestId("task-service-tier-icon")).toHaveAttribute("data-service-tier-icon", "priority")
-		expect(screen.getByTestId("task-service-tier-icon")).toHaveClass("text-foreground")
-		expect(screen.getByTestId("task-service-tier-icon")).toHaveStyle({ height: "15px", width: "15px" })
+		const serviceTierIcon = screen.getByTestId("task-service-tier-icon")
+		expect(serviceTierIcon).toHaveAttribute("data-service-tier-icon", "priority")
+		expect(serviceTierIcon).toHaveClass("text-foreground")
+		expect(serviceTierIcon.style.height).toBe("15px")
+		expect(serviceTierIcon.style.width).toBe("15px")
 		expect(screen.queryByText("Tier")).not.toBeInTheDocument()
 		expect(screen.queryByText("Thinking", { exact: true })).not.toBeInTheDocument()
 		expect(container.querySelector('[data-chat-input-slot="thinking"]')).toHaveClass(
@@ -544,13 +546,11 @@ describe("chat input TaskRuntimeControls", () => {
 			const icon = screen.getByTestId("task-service-tier-icon")
 			expect(icon).toHaveAttribute("data-service-tier-icon", tier)
 			expect(icon).toHaveClass("text-foreground")
-			expect(icon).toHaveStyle({
-				display: "block",
-				flex: "0 0 auto",
-				fontSize: "inherit",
-				height: "15px",
-				width: "15px",
-			})
+			expect(icon.style.display).toBe("block")
+			expect(icon.style.flex).toBe("0 0 auto")
+			expect(icon.style.fontSize).toBe("inherit")
+			expect(icon.style.height).toBe("15px")
+			expect(icon.style.width).toBe("15px")
 			expect(icon).toHaveAttribute("fill", "none")
 			expect(icon).toHaveAttribute("stroke", "currentColor")
 			expect(icon).toHaveAttribute("stroke-width", "2")
@@ -584,13 +584,11 @@ describe("chat input TaskRuntimeControls", () => {
 		expect(ultrafastControl).toHaveClass("size-[18.5px]", "items-center", "justify-center")
 		expect(ultrafastIcon).toHaveAttribute("data-service-tier-icon", "ultrafast")
 		expect(ultrafastIcon).toHaveClass("text-foreground")
-		expect(ultrafastIcon).toHaveStyle({
-			display: "block",
-			flex: "0 0 auto",
-			fontSize: "inherit",
-			height: "15px",
-			width: "15px",
-		})
+		expect(ultrafastIcon.style.display).toBe("block")
+		expect(ultrafastIcon.style.flex).toBe("0 0 auto")
+		expect(ultrafastIcon.style.fontSize).toBe("inherit")
+		expect(ultrafastIcon.style.height).toBe("15px")
+		expect(ultrafastIcon.style.width).toBe("15px")
 		expect(ultrafastIcon).toHaveAttribute("fill", "none")
 		expect(ultrafastIcon).toHaveAttribute("stroke", "currentColor")
 		expect(ultrafastIcon).toHaveAttribute("stroke-linecap", "round")
@@ -614,6 +612,7 @@ describe("chat input TaskRuntimeControls", () => {
 		render(<TaskRuntimeControls />)
 
 		await user.click(screen.getByRole("combobox", { name: "Task thinking override" }))
+		expect(screen.getByRole("listbox", { name: "Task thinking override options" })).toBeVisible()
 		await user.click(screen.getByRole("option", { name: "Low" }))
 		await waitFor(() => expect(mocks.updateTaskSettings).toHaveBeenCalledTimes(1))
 		expect(screen.getByRole("combobox", { name: "Task thinking override" })).toHaveTextContent("Low")

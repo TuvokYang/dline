@@ -163,8 +163,10 @@ describe("Controller Marketplace Filtering", () => {
 			data: mockMarketplaceData,
 		})
 
-		// Create controller instance
+		// These tests exercise marketplace data filtering only. Detach immediately so
+		// Controller state publication does not outlive the deliberately minimal fixture.
 		controller = new Controller(mockContext)
+		controller.detachUi()
 	})
 
 	afterEach(() => {

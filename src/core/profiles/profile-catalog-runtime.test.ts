@@ -19,12 +19,13 @@ describe("handleExternalProfileCatalogCommit", () => {
 		})
 
 		await handleExternalProfileCatalogCommit(previous, profiles, {
+			invalidateReadCache: () => order.push("invalidate"),
 			advanceRevision: () => order.push("advance"),
 			reconcile,
 			publish,
 		})
 
-		expect(order).toEqual(["advance", "reconcile", "publish"])
+		expect(order).toEqual(["invalidate", "advance", "reconcile", "publish"])
 		expect(reconcile).toHaveBeenCalledWith(previous, profiles)
 		expect(publish).toHaveBeenCalledWith(previous, profiles)
 	})

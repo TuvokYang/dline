@@ -29,7 +29,7 @@ describe("McpResponseDisplay height boundary", () => {
 	it("caps the whole response at 60vh and scrolls the response content vertically", () => {
 		render(<McpResponseDisplay responseText={Array.from({ length: 200 }, (_, index) => `line ${index}`).join("\n")} />)
 
-		expect(screen.getByTestId("mcp-response-card")).toHaveStyle({ maxHeight: "60vh" })
-		expect(screen.getByTestId("mcp-response-content")).toHaveStyle({ overflowY: "auto" })
+		expect(screen.getByTestId("mcp-response-card").style.maxHeight).toBe("60vh")
+		expect(screen.getByTestId("mcp-response-content").style.overflowY).toBe("auto")
 	})
 })

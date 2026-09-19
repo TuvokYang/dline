@@ -231,6 +231,7 @@ export class TurnDriver {
 						throw new Error(`Block approval request rejected: ${required.error?.code ?? "invalid_runtime_event"}`)
 				}
 				const approvalOutcome = await this.ports.approval.request(tool, presentation)
+				if (approvalOutcome.draft) await this.ports.approval.stageFeedback(tool, approvalOutcome.draft)
 				const approved = approvalOutcome.actionId === "approve" || approvalOutcome.actionId === "confirm_utility"
 				runtimeBlock = this.ports.runtime.getState().turn?.blocks.find((block) => block.dlineTid === dlineTid)
 				if (runtimeBlock?.phase === BlockPhase.AWAITING_APPROVAL) {
@@ -272,6 +273,7 @@ export class TurnDriver {
 			}
 
 			await this.ports.block.awaitInitialCheckpoint(tool.name)
+			if (this.ports.task.isAborted()) return "halt_turn"
 
 			if (admission.decision.kind === "automatic" && admission.manualApprovalSatisfied !== true) {
 				const currentAdmission = admission.refreshDecision?.() ?? admission

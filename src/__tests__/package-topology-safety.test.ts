@@ -56,6 +56,13 @@ describe("package topology safety", () => {
 		).not.toBe(true)
 	})
 
+	it("skips duplicate Marketplace versions across release workflow reruns", async () => {
+		const marketplaceWorkflow = await readProjectFile(".github/workflows/publish-vscode-marketplace.yml")
+
+		expect(marketplaceWorkflow).toContain("group: vscode-marketplace-${{ github.event.workflow_run.head_sha }}")
+		expect(marketplaceWorkflow).toContain('"$VSCE_BIN" publish --skip-duplicate --packagePath "$vsix_path"')
+	})
+
 	it("disables dependency scanning in every extension packaging entry point", async () => {
 		const packageJson = JSON.parse(await readProjectFile("package.json")) as RootPackageJson
 		expect(packageJson.scripts?.["test:e2e:build"]).toContain("--no-dependencies")

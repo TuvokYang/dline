@@ -12,7 +12,7 @@ import axios from "axios"
 import JSON5 from "json5"
 import OpenAI from "openai"
 import { buildExternalBasicHeaders } from "@/services/EnvUtils"
-import { ClineStorageMessage } from "@/shared/messages/content"
+import { type ClineReplayImageSource, ClineStorageMessage } from "@/shared/messages/content"
 import { getAxiosSettings } from "@/shared/net"
 import { Logger } from "@/shared/services/Logger"
 import { ApiHandler, ApiHandlerContext } from "../"
@@ -285,6 +285,21 @@ namespace Gemini {
 		return result
 	}
 
+	function convertImageSourceToGeminiPart(source: ClineReplayImageSource) {
+		if (source.type === "base64") {
+			return {
+				inlineData: {
+					mimeType: source.media_type,
+					data: source.data,
+				},
+			}
+		}
+		if (source.type === "url") {
+			return { text: `[Image URL: ${source.url}]` }
+		}
+		return { text: `[Provider image file: ${source.file_id}]` }
+	}
+
 	function convertAnthropicMessageToGemini(message: ClineStorageMessage) {
 		const role = message.role === "assistant" ? "model" : "user"
 		const parts = []
@@ -296,18 +311,7 @@ namespace Gemini {
 				if (block.type === "text") {
 					parts.push({ text: block.text })
 				} else if (block.type === "image") {
-					if (block.source.type === "base64") {
-						parts.push({
-							inlineData: {
-								mimeType: block.source.media_type,
-								data: block.source.data,
-							},
-						})
-					} else if (block.source.type === "url") {
-						parts.push({ text: `[Image URL: ${block.source.url}]` })
-					} else {
-						parts.push({ text: `[Provider image file: ${block.source.file_id}]` })
-					}
+					parts.push(convertImageSourceToGeminiPart(block.source))
 				}
 			}
 		}

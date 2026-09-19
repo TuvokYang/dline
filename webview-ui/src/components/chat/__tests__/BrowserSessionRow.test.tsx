@@ -104,7 +104,9 @@ describe("BrowserSessionRow", () => {
 		const reasoning = screen.getByTestId("conversation-message-3")
 		const response = screen.getByTestId("conversation-message-4")
 
-		expect(frame).toHaveStyle({ maxHeight: "60vh", overflowY: "auto", overscrollBehavior: "contain" })
+		expect(frame.style.maxHeight).toBe("60vh")
+		expect(frame.style.overflowY).toBe("auto")
+		expect(frame.style.overscrollBehavior).toBe("contain")
 		expect(previous.compareDocumentPosition(url) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
 		expect(browserAction.compareDocumentPosition(reasoning) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
 		expect(reasoning.compareDocumentPosition(response) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)

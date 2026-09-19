@@ -264,4 +264,6 @@ jobs:
             exit 1
           fi
 
-          "$VSCE_BIN" publish --packagePath "$vsix_path"
+          # A successful release workflow can be rerun for the same SHA. The pinned
+          # VSCE checks the published version first and skips the write when it exists.
+          "$VSCE_BIN" publish --skip-duplicate --packagePath "$vsix_path"

@@ -364,10 +364,10 @@ describe("disk - JSONL task history", () => {
 
 		it("should preserve special characters", async () => {
 			const items = [
-				item("sp-1", "Test\nwith\nnewlines"),
-				item("sp-2", "Test\twith\ttabs"),
-				item("sp-3", "Test with unicode: 日本語 中文 한국어"),
-				item("sp-4", "Test with emojis: 😀🎉🚀"),
+				item("sp-1", "Test\nwith\nnewlines", { ts: 400 }),
+				item("sp-2", "Test\twith\ttabs", { ts: 300 }),
+				item("sp-3", "Test with unicode: 日本語 中文 한국어", { ts: 200 }),
+				item("sp-4", "Test with emojis: 😀🎉🚀", { ts: 100 }),
 			]
 			await writeTaskHistoryToState(items)
 			const r = await readTaskHistoryFromState()

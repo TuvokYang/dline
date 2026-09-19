@@ -47,7 +47,7 @@ export interface OAuthCodeExchangeInput {
  * the browser that completed the authorization.
  */
 export interface OAuthAccountPresentation {
-	/** Human-readable provider name, such as "OpenAI Codex". */
+	/** Human-readable provider name rendered on the callback page. */
 	providerName: string
 	/** Primary account label, usually a display name, email, or account id. */
 	accountName?: string

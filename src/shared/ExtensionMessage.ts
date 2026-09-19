@@ -503,6 +503,8 @@ export interface ActiveInteractionView {
 	taskAsk: ClineAsk
 	presentationKind: string
 	askMessageTs: number
+	/** Backend registered the exact ask anchor in durable write order even if the Webview window has not loaded it yet. */
+	anchorVerified?: boolean
 }
 
 /** Footer content owned exclusively by the backend task projection. */

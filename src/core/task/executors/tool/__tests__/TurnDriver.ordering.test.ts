@@ -89,7 +89,10 @@ describe("TurnDriver post-commit ordering", () => {
 				commitInterruptedResult: vi.fn(async () => undefined),
 				awaitInitialCheckpoint: vi.fn(async () => undefined),
 			},
-			approval: { request: vi.fn(async () => ({ actionId: "approve" as const })) },
+			approval: {
+				request: vi.fn(async () => ({ actionId: "approve" as const })),
+				stageFeedback: vi.fn(async () => undefined),
+			},
 			scheduler: {
 				cancelActiveTurn: vi.fn(),
 				notifyLimitChanged: vi.fn(),

@@ -77,7 +77,9 @@ jobs:
     timeout-minutes: 15
     environment: publish
     permissions:
+      attestations: write
       contents: write
+      id-token: write
     steps:
       - name: Checkout tested tag
         uses: actions/checkout@v6
@@ -123,6 +125,11 @@ jobs:
           echo "$sha256  $vsix_path"
           echo "path=$vsix_path" >> "$GITHUB_OUTPUT"
           echo "sha256=$sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Attest tested VSIX provenance
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: ${{ steps.vsix.outputs.path }}
 
       - name: Build release notes from changelog
         env:

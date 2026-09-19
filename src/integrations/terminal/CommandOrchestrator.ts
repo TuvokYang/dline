@@ -126,13 +126,10 @@ export async function orchestrateCommandExecution(
 			}
 		}
 	}
-	// Find the first pending command (by array order, FIFO) to mark it as running
+	const didCancelViaUi = false
 	const initialCmdIndex = initialMessages.findIndex(
 		(m) => (m.ask === "command" || m.say === "command") && (m as any).commandStatus === "pending",
 	)
-	if (initialCmdIndex !== -1) {
-		await callbacks.updateClineMessage(initialCmdIndex, { commandStatus: "running" })
-	}
 
 	const clearCommandState = async (details?: TerminalCompletionDetails, didError = false) => {
 		callbacks.updateBackgroundCommandState(false)
@@ -165,8 +162,12 @@ export async function orchestrateCommandExecution(
 		}
 	}
 
+	let pendingCompletion: { details?: TerminalCompletionDetails } | undefined
+	let processCompletion: ((details?: TerminalCompletionDetails) => void) | undefined
 	process.once("completed", (details) => {
 		void clearCommandState(details)
+		if (processCompletion) processCompletion(details)
+		else pendingCompletion = { details }
 	})
 	process.once("error", () => {
 		void clearCommandState(undefined, true)
@@ -175,11 +176,16 @@ export async function orchestrateCommandExecution(
 		void clearCommandState(undefined, true)
 	})
 
+	// Completion listeners must exist before the first asynchronous presentation
+	// update. EventEmitter does not replay a fast process completion.
+	if (initialCmdIndex !== -1) {
+		await callbacks.updateClineMessage(initialCmdIndex, { commandStatus: "running" })
+	}
+
 	let userFeedback: { text?: string; images?: string[]; files?: string[] } | undefined
 	// Command output is presentation state, not an interaction. Stream it from
 	// the first chunk; a blocking command_output ask has no canonical response
 	// and used to hold every later chunk until process completion.
-	const didCancelViaUi = false
 	let backgroundTrackingResult: OrchestrationResult | null = null // Set when background tracking returns early
 	// Track one bounded partial presentation, updated at most once per output frame.
 	let partialSayOutputTs: number | undefined
@@ -388,7 +394,7 @@ export async function orchestrateCommandExecution(
 		}, COMPLETION_TIMEOUT_MS)
 	}
 
-	process.once("completed", (details?: TerminalCompletionDetails) => {
+	processCompletion = (details?: TerminalCompletionDetails) => {
 		completed = true
 		completionDetails = details
 		// Clear the completion timer
@@ -409,7 +415,12 @@ export async function orchestrateCommandExecution(
 			}
 			Logger.error(`[CommandOrchestrator] Failed to finalize terminal output: ${error}`)
 		})
-	})
+	}
+	if (pendingCompletion) {
+		const { details } = pendingCompletion
+		pendingCompletion = undefined
+		processCompletion(details)
+	}
 	process.once("error", () => undefined)
 
 	process.once("no_shell_integration", async () => {

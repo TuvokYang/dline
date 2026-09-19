@@ -99,6 +99,9 @@ export function InteractionHost({
 	const successorContext = interaction?.kind === "new_task" ? anchor?.text : undefined
 	const presentationKind = interaction?.presentationKind
 	const supported = presentationKind ? isPresentationKind(presentationKind) : false
+	const canRenderVerifiedFooter = Boolean(
+		interaction && !anchor && !showTimeline && supported && interaction.anchorVerified && interaction.kind !== "new_task",
+	)
 	const taskActionDispatcher = (action: TaskViewAction) => dispatchTaskAction(view, action)
 	const taskOnlyView: TaskViewState = {
 		...view,
@@ -125,7 +128,7 @@ export function InteractionHost({
 						<AskView key={`${message.ts}:${message.interactionId ?? ""}:${index}`} message={message} />
 					)
 				})}
-			{interaction && (!anchor || !supported) ? (
+			{interaction && (!anchor || !supported) && !canRenderVerifiedFooter ? (
 				<>
 					{!anchor && !view.diagnostic ? (
 						<div className="mx-3.5 mb-1 text-xs text-(--vscode-errorForeground)" role="alert">
@@ -143,6 +146,16 @@ export function InteractionHost({
 						view={taskOnlyView}
 					/>
 				</>
+			) : canRenderVerifiedFooter ? (
+				<FooterActions
+					dispatch={dispatch}
+					dispatchTaskAction={taskActionDispatcher}
+					draft={draft}
+					onDraftAccepted={onDraftAccepted}
+					onDraftRejected={onDraftRejected}
+					onSuccessorAccepted={onSuccessorAccepted}
+					view={view}
+				/>
 			) : anchor && presentationKind && isPresentationKind(presentationKind) ? (
 				<>
 					{showTimeline

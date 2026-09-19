@@ -825,7 +825,7 @@ describe("CommandExecutor explicit background execution", () => {
 	// earlier was verified not to help. Closing this needs an owned terminal
 	// status that both consumers read, which is a larger change than this
 	// regression pass and is tracked separately.
-	it.skip("reports the same terminal status to the activity, the chat row, and the model", async () => {
+	it("reports the same terminal status to the activity, the chat row, and the model", async () => {
 		const process = new FakeTerminalProcess()
 		const processPromise = process.asResultPromise()
 		const terminalManager = createTerminalManager()
@@ -870,8 +870,9 @@ describe("CommandExecutor explicit background execution", () => {
 			// overwrite that production cannot produce.
 			Object.assign(messages[index], patch)
 			// Only the activity link is held open, reproducing a chat-row update
-			// that outlives a short command.
-			if (!chatRowLinked) {
+			// that outlives a short command. The orchestrator's running patch must
+			// remain free to install completion ownership first.
+			if (!chatRowLinked && "activityId" in patch) {
 				chatRowLinked = true
 				signalChatRowUpdateStarted()
 				await chatRowUpdateGate

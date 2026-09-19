@@ -432,23 +432,6 @@ export class CommandExecutor {
 			if (cancelled) void this.markCommandMessageCancelled(activityId)
 		})
 
-		// Safe to await now that completion cannot be missed.
-		//
-		// This links the chat command row to its activity. It is presentation
-		// only, so it is deferred past the listener installation above rather
-		// than being allowed to open a gap there. A command that finished during
-		// this await has already recorded its terminal status.
-		if (options?.commandTs) {
-			const messages = this.callbacks.getClineMessages() as Array<{ ts?: number }>
-			const commandIndex = messages.findIndex((message) => message.ts === options.commandTs)
-			if (commandIndex !== -1) {
-				await this.callbacks.updateClineMessage(commandIndex, {
-					activityId,
-					commandExecutionMode: executionMode,
-				})
-			}
-		}
-
 		// Use shared orchestration logic
 		// The StandaloneTerminalManager handles background command tracking internally
 		let backgroundCommand: BackgroundCommand | undefined
@@ -581,6 +564,20 @@ export class CommandExecutor {
 			showShellIntegrationSuggestion: this.shouldShowBackgroundTerminalSuggestion(),
 			terminalType: useStandalone ? "standalone" : "vscode",
 		})
+
+		// Link presentation only after orchestration owns the terminal completion.
+		// A fast command can finish while this Webview-facing update is pending.
+		if (options?.commandTs) {
+			const messages = this.callbacks.getClineMessages() as Array<{ ts?: number }>
+			const commandIndex = messages.findIndex((message) => message.ts === options.commandTs)
+			if (commandIndex !== -1) {
+				await this.callbacks.updateClineMessage(commandIndex, {
+					activityId,
+					commandExecutionMode: executionMode,
+				})
+			}
+		}
+
 		let result: Awaited<typeof execution>
 		try {
 			result = await execution

@@ -34,6 +34,7 @@ export function ProviderUsage({ profileId, enabled }: { profileId: string; enabl
 			<div className="flex min-w-0 items-center gap-1">
 				<button
 					aria-expanded={expanded}
+					aria-label={`Usage ${summary}`}
 					className="flex min-h-7 min-w-0 flex-1 items-center gap-1 rounded-xs border-0 bg-transparent px-1 text-left text-xs text-foreground hover:bg-toolbar-hover disabled:cursor-default disabled:opacity-60"
 					disabled={!canExpand}
 					onClick={() => setExpanded((value) => !value)}

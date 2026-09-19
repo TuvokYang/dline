@@ -39,7 +39,7 @@ import type { ModelInfo } from "@shared/api"
 import type { ChatContent } from "@shared/ChatContent"
 import { resolveMaxParallelSubagents, resolveMaxParallelToolCalls } from "@shared/concurrency-limits"
 import { getContextWindowIndicatorTotalTokens } from "@shared/context-window-indicator"
-import type { ExtensionState, Platform } from "@shared/ExtensionMessage"
+import type { ClineMessage, ExtensionState, Platform, TaskViewState } from "@shared/ExtensionMessage"
 import type { ApiMetrics } from "@shared/getApiMetrics"
 import type { HistoryItem } from "@shared/HistoryItem"
 import type { McpMarketplaceCatalog, McpMarketplaceItem, McpServer } from "@shared/mcp"
@@ -117,7 +117,7 @@ import { appendClineStealthModels } from "./models/refreshOpenRouterModels"
 import { ProfileSwitchCoordinator } from "./profile-switch/ProfileSwitchCoordinator"
 import type { ProfileSwitchOperation, ResolvedProfileTarget } from "./profile-switch/types"
 import { projectFocusChainHistory } from "./state/focusChainHistoryProjection"
-import { cleanupStateSubscriptions, sendAccountUsageUpdate, sendStateUpdate } from "./state/subscribeToState"
+import { cleanupStateSubscriptions, sendAccountUsageUpdate, sendStatePatch, sendStateUpdate } from "./state/subscribeToState"
 import { projectTaskHistory } from "./state/taskHistoryProjection"
 import { prepareHistoryTaskForDisplay, projectHistoryPreparingView } from "./task/history-task-readiness"
 import { startTaskLifecycle } from "./task/task-start-lifecycle"
@@ -1914,6 +1914,25 @@ export class Controller {
 		await this.publishState(options)
 	}
 
+	/** Publish the interaction-critical Task view without paying for a full ExtensionState build. */
+	async postTaskViewPatchToWebview(): Promise<void> {
+		if (this.uiDetached || this.disposed || !this.task) {
+			this.suppressedStatePostsAfterDetach++
+			return
+		}
+		this.stateManager.setActiveTaskId(this.task.taskId)
+		const stateRevision = ++this.nextStateRevision
+		this.latestStateRevision = Math.max(this.latestStateRevision, stateRevision)
+		await sendStatePatch(
+			this,
+			{
+				stateRevision,
+				taskViewState: this.projectCurrentTaskViewState(),
+			},
+			this._accountUsage,
+		)
+	}
+
 	/** Build the current state once and hand it to delivery when still current. */
 	private async publishState(options?: PostStateOptions): Promise<void> {
 		const state = await this.getStateToPostToWebview()
@@ -1963,6 +1982,38 @@ export class Controller {
 		if (!this.pendingStatePostTimer) return
 		clearTimeout(this.pendingStatePostTimer)
 		this.pendingStatePostTimer = undefined
+	}
+
+	/** Project the active Task and confirm its exact durable interaction anchor when available. */
+	private projectCurrentTaskViewState(messages?: readonly ClineMessage[]): TaskViewState | undefined {
+		const task = this.task
+		if (!task) return undefined
+		const runtimeState = task.getRuntimeState()
+		if (task.isHistoryPreparationPending?.()) {
+			return projectHistoryPreparingView(runtimeState)
+		}
+		const commandHandoffActivityId = task.getReadyBackgroundHandoffActivityId()
+		const view = projectTaskView(runtimeState, {
+			autoRetryActive: task.hasAutoRetrySequence(),
+			autoRetryPending: task.hasPendingAutoRetry(),
+			contextCompactionOperationId: task.getContextCompactionOperationId(),
+			forceTruncateAvailable: task.isForceTruncateAvailable(),
+			commandHandoffActivityId,
+			commandHandoffRequested: commandHandoffActivityId
+				? task.isBackgroundHandoffRequested(commandHandoffActivityId)
+				: false,
+		})
+		const interaction = view.activeInteraction
+		if (!interaction) return view
+		const candidates = messages ?? task.messageStateHandler.clineMessages
+		const matchingAnchors = candidates.filter(
+			(message) =>
+				message.type === "ask" &&
+				message.ts === interaction.askMessageTs &&
+				message.interactionId === interaction.interactionId &&
+				message.ask === interaction.taskAsk,
+		)
+		return matchingAnchors.length === 1 ? { ...view, activeInteraction: { ...interaction, anchorVerified: true } } : view
 	}
 
 	/** Build a monotonic extension state while preserving the public non-optional contract. */
@@ -2273,25 +2324,7 @@ export class Controller {
 			 */
 			inputQueue: this.task?.getInputQueueSnapshot?.() ?? [],
 			/** Complete interaction view projected only from canonical runtime state. */
-			taskViewState: this.task
-				? (() => {
-						const runtimeState = this.task.getRuntimeState()
-						if (this.task.isHistoryPreparationPending?.()) {
-							return projectHistoryPreparingView(runtimeState)
-						}
-						const commandHandoffActivityId = this.task.getReadyBackgroundHandoffActivityId()
-						return projectTaskView(runtimeState, {
-							autoRetryActive: this.task.hasAutoRetrySequence(),
-							autoRetryPending: this.task.hasPendingAutoRetry(),
-							contextCompactionOperationId: this.task.getContextCompactionOperationId(),
-							forceTruncateAvailable: this.task.isForceTruncateAvailable(),
-							commandHandoffActivityId,
-							commandHandoffRequested: commandHandoffActivityId
-								? this.task.isBackgroundHandoffRequested(commandHandoffActivityId)
-								: false,
-						})
-					})()
-				: undefined,
+			taskViewState: this.projectCurrentTaskViewState(rawMessages),
 		}
 
 		const durationMs = Math.round(performance.now() - startTime)
@@ -2669,6 +2702,7 @@ export class Controller {
 		// between the task view and the recent-tasks view purely from `this.task`,
 		// so releasing the reference here is what returns the user to Recent; every
 		// remaining step is durability work that no longer has a visible effect.
+		task?.fenceControllerDetachment()
 		this.task = undefined
 		this.workspaceHistorySession = undefined
 		this.restartAccountUsagePolling()

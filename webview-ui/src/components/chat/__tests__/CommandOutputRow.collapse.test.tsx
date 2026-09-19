@@ -60,7 +60,7 @@ describe("CommandOutputRow command text collapsing", () => {
 		render(<CommandOutputRow {...baseProps} message={{ ...baseProps.message, text: "echo long" }} />)
 
 		const scroll = screen.getByTestId("command-text-scroll")
-		expect(scroll).toHaveStyle({ maxHeight: "40vh" })
+		expect(scroll.style.maxHeight).toBe("40vh")
 		expect(screen.getByTestId("expand-handle")).toBeInTheDocument()
 	})
 

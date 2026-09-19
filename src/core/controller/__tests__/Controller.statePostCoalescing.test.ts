@@ -1,3 +1,4 @@
+import type { TaskViewState } from "@shared/ExtensionMessage"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { Controller } from "../index"
 
@@ -9,10 +10,11 @@ vi.mock(import("../state/subscribeToState"), async (importOriginal) => ({
 		hadDebounceTimer: false,
 		hadSendChain: false,
 	})),
+	sendStatePatch: vi.fn(async () => undefined),
 	sendStateUpdate: vi.fn(async () => undefined),
 }))
 
-import { sendStateUpdate } from "../state/subscribeToState"
+import { sendStatePatch, sendStateUpdate } from "../state/subscribeToState"
 
 type BuildSpy = ReturnType<typeof vi.fn>
 
@@ -54,6 +56,7 @@ function createController(taskId?: string): { controller: Controller; buildState
 
 describe("Controller state publication coalescing", () => {
 	beforeEach(() => {
+		vi.mocked(sendStatePatch).mockClear()
 		vi.mocked(sendStateUpdate).mockClear()
 	})
 
@@ -92,6 +95,21 @@ describe("Controller state publication coalescing", () => {
 		} finally {
 			vi.useRealTimers()
 		}
+	})
+
+	it("publishes an interaction-critical Task view without building full state", async () => {
+		const { controller, buildState, setActiveTaskId } = createController("task-a")
+		const taskViewState = { taskId: "task-a", stateRevision: 7 } as TaskViewState
+		vi.spyOn(
+			controller as unknown as { projectCurrentTaskViewState(): TaskViewState | undefined },
+			"projectCurrentTaskViewState",
+		).mockReturnValue(taskViewState)
+
+		await controller.postTaskViewPatchToWebview()
+
+		expect(setActiveTaskId).toHaveBeenCalledWith("task-a")
+		expect(buildState).not.toHaveBeenCalled()
+		expect(sendStatePatch).toHaveBeenCalledWith(controller, { stateRevision: 1, taskViewState }, undefined)
 	})
 
 	it("lets an immediate publication supersede a pending merge window", async () => {

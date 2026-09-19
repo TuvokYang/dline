@@ -92,7 +92,13 @@ function MessageProbe() {
 	)
 }
 
-function InteractionProbe({ observedTaskIds }: { observedTaskIds: Array<string | undefined> }) {
+function InteractionProbe({
+	observedTaskIds,
+	showTimeline = true,
+}: {
+	observedTaskIds: Array<string | undefined>
+	showTimeline?: boolean
+}) {
 	const { clineMessages, currentTaskItem, taskViewState } = useExtensionState()
 	const chatState = useChatState(clineMessages, currentTaskItem?.id)
 
@@ -116,6 +122,7 @@ function InteractionProbe({ observedTaskIds }: { observedTaskIds: Array<string |
 						files: chatState.selectedFiles,
 					}}
 					messages={clineMessages}
+					showTimeline={showTimeline}
 					view={taskViewState}
 				/>
 			) : null}
@@ -179,9 +186,9 @@ function stateSnapshot(input: { revision: number; total: number }): ExtensionSta
 	} as ExtensionState
 }
 
-function resumeInteractionState(revision: number): ExtensionState {
+function resumeInteractionState(revision: number, total = 1): ExtensionState {
 	return {
-		...stateSnapshot({ revision, total: 1 }),
+		...stateSnapshot({ revision, total }),
 		taskViewState: {
 			taskId: "task-1",
 			phase: "paused",
@@ -285,6 +292,60 @@ describe("ExtensionStateContext persisted message reconciliation", () => {
 		expect(observed.every((entry) => entry.global === initialGlobal && entry.task === initialTask)).toBe(true)
 	})
 
+	it("applies a verified TaskView patch without waiting for the persisted message window", async () => {
+		vi.mocked(TaskServiceClient.fetchMessage).mockReturnValue(new Promise(() => {}))
+		const preparingState = {
+			...stateSnapshot({ revision: 1, total: 1 }),
+			taskViewState: {
+				taskId: "task-1",
+				phase: "paused",
+				stateRevision: 1,
+				input: { enabled: false, acceptsText: false, acceptsImages: false, acceptsFiles: false },
+				footer: {
+					actions: [
+						{
+							type: "resume",
+							label: "Resume",
+							appearance: "primary",
+							enabled: false,
+							payloadPolicy: "draft",
+							dispatchTarget: "interaction",
+						},
+					],
+				},
+			},
+		} as ExtensionState
+		render(
+			<ExtensionStateContextProvider>
+				<InteractionProbe observedTaskIds={[]} showTimeline={false} />
+			</ExtensionStateContextProvider>,
+		)
+		await waitFor(() => expect(subscriptions.state).toBeDefined())
+		act(() => {
+			subscriptions.state?.onResponse({ stateJson: JSON.stringify(preparingState) })
+		})
+		await waitFor(() => expect(screen.getByRole("button", { name: "Resume" })).toHaveAttribute("aria-disabled", "true"))
+
+		const completed = completionInteractionState(2)
+		if (!completed.taskViewState?.activeInteraction) throw new Error("Expected active completion interaction")
+		completed.taskViewState.activeInteraction.anchorVerified = true
+		act(() => {
+			subscriptions.state?.onResponse({
+				stateJson: JSON.stringify({
+					__dlineStatePatch: true,
+					stateRevision: 2,
+					taskViewState: completed.taskViewState,
+				}),
+			})
+		})
+
+		await waitFor(() =>
+			expect(screen.getByRole("button", { name: "Start New Task" })).toHaveAttribute("aria-disabled", "false"),
+		)
+		expect(screen.getByTestId("active-task-id")).toHaveTextContent("task-1")
+		expect(TaskServiceClient.fetchMessage).toHaveBeenCalledOnce()
+	})
+
 	it("dispatches anchored Resume without clearing the active task identity or draft", async () => {
 		const resumeAsk = convertClineMessageToProto({
 			ts: 100,
@@ -346,6 +407,56 @@ describe("ExtensionStateContext persisted message reconciliation", () => {
 
 		await waitFor(() => expect(screen.getByText("persisted history")).toBeVisible())
 		expect(TaskServiceClient.fetchMessage).toHaveBeenCalledTimes(2)
+	})
+
+	it("retries a Resume history window when consecutive responses are empty despite a positive total", async () => {
+		const url = "http://127.0.0.1:1851/mock/web-fetch/page"
+		const errorMessage = "E2E Web Fetch blocked by PreToolUse hook"
+		const failedWebFetch = convertClineMessageToProto({
+			ts: 90,
+			type: "say",
+			say: "tool",
+			text: JSON.stringify({
+				tool: "webFetch",
+				path: url,
+				content: `Web fetch failed: ${errorMessage}`,
+				operationIsLocatedInWorkspace: false,
+				webFetch: {
+					schemaVersion: 1,
+					status: "failed",
+					url,
+					prompt: "This fetch must be blocked before provider execution",
+					error: errorMessage,
+				},
+			}),
+		})
+		const resumeAsk = convertClineMessageToProto({
+			ts: 100,
+			type: "ask",
+			ask: "resume_task",
+			text: "",
+			interactionId: "resume-1",
+		})
+		vi.mocked(TaskServiceClient.fetchMessage)
+			.mockResolvedValueOnce({ messages: [], startIndex: 0, totalCount: 2 })
+			.mockResolvedValueOnce({ messages: [], startIndex: 0, totalCount: 2 })
+			.mockResolvedValueOnce({ messages: [failedWebFetch, resumeAsk], startIndex: 0, totalCount: 2 })
+		render(
+			<ExtensionStateContextProvider>
+				<MessageProbe />
+			</ExtensionStateContextProvider>,
+		)
+		await waitFor(() => expect(subscriptions.state).toBeDefined())
+
+		act(() => {
+			subscriptions.state?.onResponse({ stateJson: JSON.stringify(resumeInteractionState(1, 2)) })
+		})
+
+		await waitFor(() => expect(screen.getByTestId("web-fetch-card")).toBeVisible())
+		expect(screen.getByTestId("web-fetch-card")).toHaveTextContent(url)
+		expect(screen.getByTestId("web-fetch-card")).toHaveTextContent(errorMessage)
+		expect(screen.queryByTestId("web-fetch-results")).not.toBeInTheDocument()
+		expect(TaskServiceClient.fetchMessage).toHaveBeenCalledTimes(3)
 	})
 
 	it("retries an ordinary history window after the first fetch throws", async () => {

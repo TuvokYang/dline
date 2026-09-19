@@ -100,12 +100,13 @@ describe("Task termination persistence", () => {
 		expect(updateTaskHistory).not.toHaveBeenCalled()
 	})
 
-	it("does not wait for physical History metadata while closing", async () => {
+	it("does not wait for physical History metadata or an unfinished initial checkpoint baseline while closing", async () => {
 		const historyUpdate = deferred()
 		const updateTaskHistory = vi.fn(() => historyUpdate.promise)
 		const publishTaskHistoryClose = vi.fn()
 		const terminationRuntime = createTerminationRuntime(TaskPhase.CANCELLING)
 		const fakeTask = {
+			initialCheckpointCommitPromise: new Promise<string | undefined>(() => undefined),
 			promptFreshnessInvalidationCoordinator: { dispose: vi.fn() },
 			disposePromptInputFileWatcher: vi.fn(async () => {}),
 			invalidatePreparedProviderInputs: vi.fn(),

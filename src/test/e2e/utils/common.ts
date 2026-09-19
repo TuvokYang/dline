@@ -9,8 +9,9 @@ export const openTab = async (_page: Page, tabName: string) => {
 
 export const addSelectedCodeToDline = async (_page: Page) => {
 	const editor = _page.getByRole("textbox", { name: "The editor is not accessible" })
-	const action = _page.locator(".monaco-list-row").filter({ has: _page.getByText("Add to Dline", { exact: true }) })
-	const emptyMenu = _page.getByRole("listbox", { name: /Show Code Actions/ }).locator(".message", {
+	const action = _page.getByRole("option", { name: "Add to Dline, Quick Fix" })
+	const codeActionTrigger = _page.getByRole("listbox", { name: /Show Code Actions/ })
+	const emptyMenu = codeActionTrigger.locator(".message", {
 		hasText: "No code actions available",
 	})
 
@@ -18,12 +19,20 @@ export const addSelectedCodeToDline = async (_page: Page) => {
 		await editor.focus()
 		await editor.press("ControlOrMeta+a")
 		await _page.keyboard.press("ControlOrMeta+.")
+		let clickedVisibleTrigger = false
 
 		await expect
 			.poll(
 				async () => {
 					if ((await action.count()) > 0) return "action"
 					if (await emptyMenu.isVisible()) return "empty"
+					// VS Code can reveal the Code Action lightbulb without expanding its
+					// menu after the keyboard shortcut. A single normal click completes
+					// the same user interaction without hiding a missing provider result.
+					if (!clickedVisibleTrigger && (await codeActionTrigger.isVisible())) {
+						clickedVisibleTrigger = true
+						await codeActionTrigger.click()
+					}
 					return "pending"
 				},
 				{ message: "Expected the Code Action menu to show Add to Dline or an explicit empty result" },

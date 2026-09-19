@@ -3,7 +3,6 @@ import type { ToolUse } from "@core/assistant-message"
 import { getPrompt } from "@core/prompts/i18n"
 import { formatResponse } from "@core/prompts/responses"
 import { WorkspacePathAdapter } from "@core/workspace/WorkspacePathAdapter"
-import { processFilesIntoText } from "@integrations/misc/extract-text"
 import { showSystemNotification } from "@integrations/notifications"
 import type { CommandExecutionOutcome } from "@integrations/terminal"
 import { DEFAULT_TERMINAL_COMMAND_TIMEOUT_SECONDS, MIN_TERMINAL_COMMAND_TIMEOUT_SECONDS } from "@shared/terminal-settings"
@@ -15,8 +14,6 @@ import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
 import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
 import { applyModelContentFixes } from "../utils/ModelContentProcessor"
-import { ToolResultUtils } from "../utils/ToolResultUtils"
-import { sayFeedbackOnce } from "../utils/UserFeedbackUtils"
 import { parseCommandExecutionOptions } from "./command-execution-options"
 import { resolveCommandWorkdirectory } from "./command-workdirectory"
 
@@ -240,14 +237,6 @@ export class ExecuteCommandToolHandler implements IFullyManagedTool {
 		}
 
 		const admissionOutcome = block.dline_tid ? config.admissionOutcomes?.get(block.dline_tid) : undefined
-		const text = admissionOutcome?.draft?.text
-		const images = admissionOutcome?.draft?.images
-		const files = admissionOutcome?.draft?.files
-		if (text || images?.length || files?.length) {
-			const fileContent = files?.length ? await processFilesIntoText(files) : ""
-			ToolResultUtils.pushAdditionalToolFeedback(config.taskState.userMessageContent, text, images, fileContent)
-			await sayFeedbackOnce(config, "yesButtonClicked", text, images, files)
-		}
 
 		if (!config.isSubagentExecution) {
 			await config.callbacks.say(

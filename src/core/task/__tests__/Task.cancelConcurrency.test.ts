@@ -106,7 +106,10 @@ function invokeFinalizedTurn(task: Task): Promise<void> {
 				harness.toolExecutor.commitInterruptedToolResult?.(tool, reason) ?? Promise.resolve(),
 			awaitInitialCheckpoint: (toolName) => harness.awaitInitialCheckpointBeforeToolSideEffects(toolName),
 		},
-		approval: { request: vi.fn(async () => ({ actionId: "approve" as const })) },
+		approval: {
+			request: vi.fn(async () => ({ actionId: "approve" as const })),
+			stageFeedback: vi.fn(async () => undefined),
+		},
 		scheduler,
 		provider: { registerExecution: vi.fn() },
 		postCommit: {

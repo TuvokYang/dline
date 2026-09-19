@@ -54,6 +54,42 @@ describe("useApiProfiles", () => {
 		expect(result.current.profiles[0]?.id).to.equal(profileId)
 	})
 
+	it("keeps an optimistic reorder while a revision reload predates its durable commit", async () => {
+		let revision = 301
+		const first = ApiProfile.create({ id: "first", name: "First" })
+		const second = ApiProfile.create({ id: "second", name: "Second" })
+		let resolveUpdate!: (value: object) => void
+		mocks.getApiProfiles
+			.mockResolvedValueOnce({ profiles: [first, second] })
+			.mockResolvedValueOnce({ profiles: [first, second] })
+			.mockResolvedValueOnce({ profiles: [second, first] })
+		mocks.updateApiProfiles.mockReturnValueOnce(
+			new Promise((resolve) => {
+				resolveUpdate = resolve
+			}),
+		)
+		const wrapper = ({ children }: PropsWithChildren) =>
+			React.createElement(
+				ExtensionStateContext.Provider,
+				{ value: { profileCatalogRevision: revision } as ExtensionStateContextType },
+				children,
+			)
+		const { result, rerender } = renderHook(() => useApiProfiles(), { wrapper })
+
+		await waitFor(() => expect(result.current.profiles.map(({ id }) => id)).to.deep.equal(["first", "second"]))
+		act(() => result.current.reorderProfiles("first", "second"))
+		expect(result.current.profiles.map(({ id }) => id)).to.deep.equal(["second", "first"])
+
+		revision = 302
+		rerender()
+		await waitFor(() => expect(mocks.getApiProfiles).toHaveBeenCalledTimes(2))
+		expect(result.current.profiles.map(({ id }) => id)).to.deep.equal(["second", "first"])
+
+		await act(async () => resolveUpdate({}))
+		await waitFor(() => expect(mocks.getApiProfiles).toHaveBeenCalledTimes(3))
+		expect(result.current.profiles.map(({ id }) => id)).to.deep.equal(["second", "first"])
+	})
+
 	it("reloads the shared Catalog when profileCatalogRevision changes", async () => {
 		let revision = 101
 		mocks.getApiProfiles

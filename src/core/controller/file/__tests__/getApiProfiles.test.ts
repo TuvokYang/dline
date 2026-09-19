@@ -13,6 +13,7 @@ import { expect } from "chai"
 import { afterEach, beforeEach, describe, it, vi } from "vitest"
 import {
 	getApiProfiles,
+	invalidateApiProfilesReadCache,
 	normalizeApiProfile,
 	readApiProfiles,
 	serializeApiProfilesForStorage,
@@ -1235,6 +1236,31 @@ describe("getApiProfiles", () => {
 			ApiProfile.create({ ...firstProfiles[0], id: "profile-2", name: "updated profile" }),
 		])
 		expect(readApiProfiles()[0].id).to.equal("profile-2")
+		expect(readFileSpy.mock.calls).to.have.length(2)
+	})
+
+	it("invalidates the synchronous read cache only for the matching Catalog path", async () => {
+		const settingsDir = path.join(process.env.DLINE_DIR!, "data", "settings")
+		const storedProfilesPath = path.join(settingsDir, "api_profiles.json")
+		await fs.mkdir(settingsDir, { recursive: true })
+		await writeApiProfilesToFile(storedProfilesPath, [
+			ApiProfile.create({
+				id: "profile-1",
+				name: "deepseek profile",
+				provider: "deepseek",
+				modelId: "deepseek-v4-pro",
+				enabled: true,
+			}),
+		])
+		const readFileSpy = vi.spyOn(fsSync, "readFileSync")
+
+		expect(readApiProfiles()[0].id).to.equal("profile-1")
+		invalidateApiProfilesReadCache(path.join(settingsDir, "other.json"))
+		expect(readApiProfiles()[0].id).to.equal("profile-1")
+		expect(readFileSpy.mock.calls).to.have.length(1)
+
+		invalidateApiProfilesReadCache(storedProfilesPath)
+		expect(readApiProfiles()[0].id).to.equal("profile-1")
 		expect(readFileSpy.mock.calls).to.have.length(2)
 	})
 })

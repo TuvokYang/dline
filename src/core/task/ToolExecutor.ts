@@ -705,6 +705,7 @@ export class ToolExecutor {
 	 * Main entry point for tool execution - called by Task class
 	 */
 	public async executeTool(block: ToolUse): Promise<void> {
+		if (this.taskState.abort) return
 		const span = startSignalSpan({
 			name: "tool.execution",
 			attributes: {
@@ -812,12 +813,14 @@ export class ToolExecutor {
 
 	/** Commit a restored handler result to both the next API turn and the durable UI result ledger. */
 	public async commitRestoredToolResult(content: ToolResponse, block: ToolUse): Promise<void> {
+		if (this.taskState.abort) return
 		await this.commitToolResult(content, block)
 	}
 
 	/** Close an interrupted tool pairing without replaying an unknown side effect. */
 	public async commitInterruptedToolResult(block: ToolUse, reason: string): Promise<void> {
 		if (block.dline_tid) this.discardPreparedAdmission(block.dline_tid)
+		if (this.taskState.abort) return
 		await this.commitToolResult(formatResponse.toolError(reason), block, true)
 	}
 
@@ -943,6 +946,7 @@ export class ToolExecutor {
 	 * @returns true if the tool was handled (even if execution failed), false if not registered
 	 */
 	private async execute(block: ToolUse, config: TaskConfig = this.asToolConfig()): Promise<boolean> {
+		if (this.taskState.abort) return true
 		canonicalizeAttemptCompletionParams(block)
 
 		try {
@@ -953,6 +957,7 @@ export class ToolExecutor {
 					const hasTodoUpdate = focusChainEnabled && typeof taskProgress === "string" && hasValidTodoItem(taskProgress)
 					if (hasTodoUpdate) {
 						await this.updateFCListFromToolResponse(taskProgress)
+						if (this.taskState.abort) return true
 					}
 					await this.commitToolResult(
 						hasTodoUpdate
@@ -1040,6 +1045,7 @@ export class ToolExecutor {
 			// Close browser for non-browser tools
 			if (block.name !== "browser_action") {
 				await this.browserSession.closeBrowser()
+				if (this.taskState.abort) return true
 			}
 
 			// Explicit-only tools must hold pending authority before any partial UI is rendered.
@@ -1172,6 +1178,7 @@ export class ToolExecutor {
 		hooksEnabled: boolean,
 	): Promise<boolean> {
 		const { executeHook } = await import("../hooks/hook-executor")
+		if (this.taskState.abort) return false
 
 		const executionTimeMs = Date.now() - executionStartTime
 
@@ -1196,11 +1203,13 @@ export class ToolExecutor {
 			model: getHookModelContext(this.api, this.stateManager),
 			toolName: block.name,
 		})
+		if (this.taskState.abort) return false
 
 		// Handle cancellation request
 		if (postToolResult.cancel === true) {
 			const errorMessage = postToolResult.errorMessage || "Hook requested task cancellation"
 			await this.say("error", errorMessage)
+			if (this.taskState.abort) return false
 			return true
 		}
 
@@ -1323,6 +1332,7 @@ export class ToolExecutor {
 				!isAllItemsCompleted(fcChecklist)
 			) {
 				const { getPrompt } = await import("../prompts/i18n")
+				if (this.taskState.abort) return
 				const blockMsg = getPrompt("focusChain", "attemptCompletionBlocked")
 				const fullMsg = `${blockMsg}\n\nCurrent checklist:\n${fcChecklist}`
 				toolResult = formatResponse.toolError(fullMsg)
@@ -1331,12 +1341,16 @@ export class ToolExecutor {
 			} else {
 				// Execute the actual tool
 				const executionResult = normalizeToolExecutionResult(await this.coordinator.execute(config, block))
+				if (this.taskState.abort) {
+					return
+				}
 				toolResult = executionResult.response
 				postCommitDirective = executionResult.postCommit
 			}
 			toolWasExecuted = true
 			if (toolResult !== NO_TOOL_RESULT) {
 				await this.commitToolResult(toolResult, block)
+				if (this.taskState.abort) return
 			}
 
 			// --- Repeated tool call loop detection ---
@@ -1370,6 +1384,7 @@ export class ToolExecutor {
 					executionStartTime,
 					hooksEnabled, // always true here - already checked by caller
 				)
+				if (this.taskState.abort) return
 				if (hookRequestedCancel) {
 					void config.callbacks.cancelTask().catch((error: unknown) => {
 						Logger.error("[ToolExecutor] PostToolUse cancellation failed:", error)
@@ -1396,6 +1411,7 @@ export class ToolExecutor {
 					executionStartTime,
 					hooksEnabled, // always true here - already checked by caller
 				)
+				if (this.taskState.abort) throw error
 				if (hookRequestedCancel) {
 					void config.callbacks.cancelTask().catch((cancelError: unknown) => {
 						Logger.error("[ToolExecutor] PostToolUse cancellation failed:", cancelError)
@@ -1408,8 +1424,8 @@ export class ToolExecutor {
 			throw error
 		}
 
-		// Early return if hook requested cancellation
-		if (shouldCancelAfterHook) {
+		// Early return if hook requested cancellation or the Task lost ownership while the hook was running.
+		if (shouldCancelAfterHook || this.taskState.abort) {
 			return
 		}
 
@@ -1422,6 +1438,7 @@ export class ToolExecutor {
 			hasValidTodoItem(taskProgress)
 		) {
 			await this.updateFCListFromToolResponse(taskProgress)
+			if (this.taskState.abort) return
 		}
 		if (postCommitDirective) {
 			if (this.postCommitDirectives.has(block.dline_tid)) {

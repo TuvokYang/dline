@@ -48,7 +48,18 @@ import { canAppendRealtimeMessage, isMessageWindowOverfull, reconcileMessageWind
 const getTaskViewKey = (taskId?: string, taskTitleMessageTs?: number) =>
 	taskId ?? (taskTitleMessageTs != null ? `task-title:${taskTitleMessageTs}` : undefined)
 
-/** Decide whether an incoming full state snapshot may replace current Webview state. */
+type ExtensionStatePatch = {
+	__dlineStatePatch: true
+	stateRevision: number
+} & Partial<Omit<ExtensionState, "stateRevision">>
+
+type ExtensionStatePayload = ExtensionState | ExtensionStatePatch
+
+function isExtensionStatePatch(payload: ExtensionStatePayload): payload is ExtensionStatePatch {
+	return "__dlineStatePatch" in payload && payload.__dlineStatePatch === true
+}
+
+/** Decide whether an incoming full state snapshot or patch may replace current Webview state. */
 export function shouldAcceptState(currentRevision: number, incomingRevision?: number): boolean {
 	if (incomingRevision === undefined) return currentRevision === 0
 	return incomingRevision > currentRevision
@@ -465,7 +476,7 @@ export const ExtensionStateContextProvider: React.FC<{
 	const inFlightInteractionFetchRef = useRef<string | undefined>(undefined)
 	const projectedInteraction = state.taskViewState?.activeInteraction
 	const projectedInteractionAnchorPresent = projectedInteraction
-		? hasExactInteractionAnchor(clineMessages, projectedInteraction)
+		? projectedInteraction.anchorVerified === true || hasExactInteractionAnchor(clineMessages, projectedInteraction)
 		: true
 	const localTailMessage = clineMessages.at(-1)
 
@@ -517,7 +528,6 @@ export const ExtensionStateContextProvider: React.FC<{
 					const converted = resp.messages.map((message) => convertProtoToClineMessage(message))
 					const responseTotal = Number(resp.totalCount ?? 0)
 					if (
-						!expectedInteraction &&
 						referenceIndex === -1 &&
 						converted.length === 0 &&
 						!bootstrapResolvedRef.current &&
@@ -562,7 +572,6 @@ export const ExtensionStateContextProvider: React.FC<{
 					}
 				} catch {
 					if (
-						!expectedInteraction &&
 						referenceIndex === -1 &&
 						total > 0 &&
 						!bootstrapResolvedRef.current &&
@@ -781,6 +790,7 @@ export const ExtensionStateContextProvider: React.FC<{
 	// References to store subscription cancellation functions
 	const stateSubscriptionRef = useRef<(() => void) | null>(null)
 	const stateRevisionRef = useRef(0)
+	const hydratedStateRef = useRef(false)
 
 	const mcpButtonUnsubscribeRef = useRef<(() => void) | null>(null)
 	const historyButtonClickedSubscriptionRef = useRef<(() => void) | null>(null)
@@ -822,24 +832,31 @@ export const ExtensionStateContextProvider: React.FC<{
 				}
 				if (response.stateJson) {
 					try {
-						const stateData = JSON.parse(response.stateJson) as ExtensionState
+						const stateData = JSON.parse(response.stateJson) as ExtensionStatePayload
+						const isPatch = isExtensionStatePatch(stateData)
+						if (isPatch && !hydratedStateRef.current) {
+							return
+						}
 						if (!shouldAcceptState(stateRevisionRef.current, stateData.stateRevision)) {
 							return
 						}
 						stateRevisionRef.current = stateData.stateRevision ?? 0
+						if (!isPatch) hydratedStateRef.current = true
 						setState((prevState) => {
+							const { __dlineStatePatch: _patchMarker, ...stateFields } = stateData as ExtensionStatePatch
 							// Versioning logic for autoApprovalSettings
-							const incomingVersion = stateData.autoApprovalSettings?.version ?? 1
+							const incomingVersion = stateFields.autoApprovalSettings?.version ?? 1
 							const currentVersion = prevState.autoApprovalSettings?.version ?? 1
 							const shouldUpdateAutoApproval = incomingVersion > currentVersion
 
 							const newState = {
-								...stateData,
+								...(isPatch ? prevState : {}),
+								...stateFields,
 								accountUsage: protoToAccountUsage(response.accountUsage),
 								autoApprovalSettings: shouldUpdateAutoApproval
-									? stateData.autoApprovalSettings
+									? stateFields.autoApprovalSettings
 									: prevState.autoApprovalSettings,
-							}
+							} as ExtensionState
 
 							// Update welcome screen state based on API configuration if welcome view not in progress
 							if (!newState.welcomeViewCompleted && !showWelcome) {

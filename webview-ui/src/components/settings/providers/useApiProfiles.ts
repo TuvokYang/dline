@@ -34,7 +34,25 @@ let sharedSelectionQueue: Promise<void> = Promise.resolve()
  * current response from one that would revert that write.
  */
 let sharedLocalWriteGeneration = 0
+/** Latest local write generation whose RPC has either committed or failed. */
+let sharedSettledWriteGeneration = 0
+/** A rejected stale read or failed write requires one fresh read after local writes settle. */
+let sharedNeedsPostWriteReload = false
 const profileListeners = new Set<() => void>()
+
+/** Reject Catalog reads that could predate an optimistic local write or its settlement. */
+export function shouldAdoptProfileLoad(
+	requestLocalGeneration: number,
+	requestSettledGeneration: number,
+	currentLocalGeneration: number,
+	currentSettledGeneration: number,
+): boolean {
+	return (
+		requestLocalGeneration === currentLocalGeneration &&
+		requestSettledGeneration === currentSettledGeneration &&
+		currentLocalGeneration === currentSettledGeneration
+	)
+}
 
 function notifyProfileListeners(): void {
 	for (const listener of profileListeners) listener()
@@ -54,7 +72,7 @@ function loadSharedProfiles(catalogRevision?: number, force = false): Promise<Ap
 	if (sharedLoadPromise) {
 		return sharedLoadPromise.then(
 			() =>
-				catalogRevision !== undefined && sharedCatalogRevision !== catalogRevision
+				force || (catalogRevision !== undefined && sharedCatalogRevision !== catalogRevision)
 					? loadSharedProfiles(catalogRevision, true)
 					: sharedProfiles,
 			// The in-flight request failed. Do not inherit that rejection: this caller
@@ -74,6 +92,7 @@ function loadSharedProfiles(catalogRevision?: number, force = false): Promise<Ap
 	}
 
 	const writeGenerationAtRequest = sharedLocalWriteGeneration
+	const settledGenerationAtRequest = sharedSettledWriteGeneration
 	const request = FileServiceClient.getApiProfiles({} as EmptyRequest)
 		.then((response: ApiProfilesResponse) => {
 			sharedLoaded = true
@@ -85,8 +104,17 @@ function loadSharedProfiles(catalogRevision?: number, force = false): Promise<Ap
 			// read leaving and its response arriving, that response predates the edit
 			// and adopting it would silently undo it. The edit is already queued for
 			// the backend, so local state stays authoritative until a later read.
-			if (sharedLocalWriteGeneration === writeGenerationAtRequest) {
+			if (
+				shouldAdoptProfileLoad(
+					writeGenerationAtRequest,
+					settledGenerationAtRequest,
+					sharedLocalWriteGeneration,
+					sharedSettledWriteGeneration,
+				)
+			) {
 				sharedProfiles = response.profiles || []
+			} else {
+				sharedNeedsPostWriteReload = true
 			}
 			notifyProfileListeners()
 			return sharedProfiles
@@ -107,18 +135,27 @@ function loadSharedProfiles(catalogRevision?: number, force = false): Promise<Ap
 	return request
 }
 
-function persistSharedProfiles(profiles: ApiProfile[], clearApiKeyProfileIds: readonly string[] = []): void {
+function persistSharedProfiles(profiles: ApiProfile[], clearApiKeyProfileIds: readonly string[], writeGeneration: number): void {
+	const settle = (): void => {
+		sharedSettledWriteGeneration = Math.max(sharedSettledWriteGeneration, writeGeneration)
+		if (sharedSettledWriteGeneration === sharedLocalWriteGeneration && sharedNeedsPostWriteReload) {
+			sharedNeedsPostWriteReload = false
+			void loadSharedProfiles(undefined, true).catch(() => undefined)
+		}
+	}
 	sharedPersistQueue = sharedPersistQueue
 		.catch(() => undefined)
 		.then(async () => {
 			await FileServiceClient.updateApiProfiles(
 				UpdateApiProfilesRequest.create({ profiles, clearApiKeyProfileIds: [...clearApiKeyProfileIds] }),
 			)
+			settle()
 		})
 		.catch((error: unknown) => {
+			sharedNeedsPostWriteReload = true
+			settle()
 			sharedLoadError = error instanceof Error ? error : new Error(String(error))
 			notifyProfileListeners()
-			void loadSharedProfiles(undefined, true).catch(() => undefined)
 		})
 }
 
@@ -219,9 +256,9 @@ export function useApiProfiles() {
 
 	const persist = useCallback((profiles: ApiProfile[], clearApiKeyProfileIds: readonly string[] = []) => {
 		if (!sharedLoaded) return
-		sharedLocalWriteGeneration += 1
+		const writeGeneration = ++sharedLocalWriteGeneration
 		replaceSharedProfiles(profiles)
-		persistSharedProfiles(profiles, clearApiKeyProfileIds)
+		persistSharedProfiles(profiles, clearApiKeyProfileIds, writeGeneration)
 	}, [])
 
 	const addProfile = useCallback((): string | undefined => {

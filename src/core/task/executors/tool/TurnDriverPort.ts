@@ -2,6 +2,7 @@ import type { AssistantMessageContent, ToolUse } from "@core/assistant-message"
 import type { ClineContent } from "@shared/messages"
 import type { BlockLifecycle, BlockPhase } from "../../BlockPhaseMachine"
 import type { InteractionOutcome } from "../../interaction/InteractionCoordinator"
+import type { InteractionDraft } from "../../interaction/InteractionResponse"
 import type { ProviderRequestRoundAdmission } from "../../performance/provider-request-round-port"
 import type { TaskEvent } from "../../runtime/TaskEvent"
 import type { TaskDispatchResult } from "../../runtime/TaskRuntime"
@@ -65,6 +66,7 @@ export interface TurnDriverBlockPort {
 /** Manual approval presentation is injected so the driver owns sequencing, not UI details. */
 export interface TurnDriverApprovalPort {
 	request(tool: ToolUse, presentation: ToolApprovalPresentation): Promise<InteractionOutcome>
+	stageFeedback(tool: ToolUse, draft: InteractionDraft): Promise<void>
 }
 
 /** One live scheduling session for a finalized turn. */

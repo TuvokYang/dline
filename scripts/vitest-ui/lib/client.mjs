@@ -174,6 +174,9 @@ export async function connectVitestUi(options = {}) {
 		async getPaths() {
 			return rpc.call("getPaths")
 		},
+		async getTestFiles() {
+			return rpc.call("getTestFiles")
+		},
 		async getConfig() {
 			return rpc.call("getConfig")
 		},
@@ -182,6 +185,9 @@ export async function connectVitestUi(options = {}) {
 		},
 		async rerun(filepaths, resetTestNamePattern = true) {
 			return rpc.call("rerun", filepaths, resetTestNamePattern)
+		},
+		startRerun(filepaths, resetTestNamePattern = true) {
+			rpc.notify("rerun", filepaths, resetTestNamePattern)
 		},
 		async rerunTask(taskId) {
 			return rpc.call("rerunTask", taskId)
@@ -425,15 +431,33 @@ function inspectCollection(targetPaths, files) {
 	}
 }
 
-/** Trigger one initial run when Vitest discovered paths but left every collected file unknown. */
+function testFilePaths(specifications) {
+	return [
+		...new Set(
+			(specifications || []).flatMap((specification) => {
+				const moduleId = Array.isArray(specification) ? specification[1] : undefined
+				return typeof moduleId === "string" && moduleId.length > 0 ? [moduleId] : []
+			}),
+		),
+	]
+}
+
+/** Trigger one initial run after Vitest discovers either state paths or cold-start specifications. */
 export async function ensureInitialRun(client, { timeoutMs = 15_000, pollMs = 500, stablePollCount = 3 } = {}) {
 	const started = Date.now()
+	let discoveredPaths = []
 	let stableSignature
 	let stableCount = 0
 	let lastCollection = inspectCollection([], [])
 
 	while (Date.now() - started < timeoutMs) {
-		const [targetPaths, files] = await Promise.all([client.getPaths(), client.getFiles()])
+		const [statePaths, files] = await Promise.all([client.getPaths(), client.getFiles()])
+		if (statePaths.length > 0) {
+			discoveredPaths = statePaths
+		} else if (discoveredPaths.length === 0 && typeof client.getTestFiles === "function") {
+			discoveredPaths = testFilePaths(await client.getTestFiles())
+		}
+		const targetPaths = statePaths.length > 0 ? statePaths : discoveredPaths
 		lastCollection = inspectCollection(targetPaths, files)
 		const { summary } = lastCollection
 		const runAlreadyStarted = summary.running + summary.pass + summary.fail + summary.skip > 0
@@ -449,7 +473,11 @@ export async function ensureInitialRun(client, { timeoutMs = 15_000, pollMs = 50
 			stableCount = signature === stableSignature ? stableCount + 1 : 1
 			stableSignature = signature
 			if (stableCount >= stablePollCount) {
-				await client.rerun(targetPaths, true)
+				if (typeof client.startRerun === "function") {
+					client.startRerun(targetPaths, true)
+				} else {
+					await client.rerun(targetPaths, true)
+				}
 				return { triggered: true, collection: lastCollection, targets: targetPaths }
 			}
 		} else {

@@ -214,4 +214,39 @@ describe("InteractionCoordinator cancellation fence", () => {
 		expect(runtime.getState().interaction).toBeUndefined()
 		coordinator.completeCancellation(cancellationGeneration)
 	})
+
+	it("permanently fences interaction waiters and future responses after Controller detachment", async () => {
+		const runtime = new TaskRuntime(
+			createTaskRuntimeState({ taskId: "task-1", phase: TaskPhase.STREAMING, anchor: { apiIndex: 1 } }),
+			createPorts(),
+		)
+		const coordinator = new InteractionCoordinator(runtime)
+		const turnId = "turn:detached"
+		const interactionId = "interaction:detached"
+		const waiting = coordinator.open({
+			turnId,
+			interactionId,
+			kind: "qna_response",
+			presentation: "Question",
+		})
+
+		await vi.waitFor(() => expect(runtime.getState().interaction?.status).toBe("awaiting"))
+		coordinator.fence("task_detached")
+		coordinator.fence("task_detached")
+
+		await expect(waiting).rejects.toMatchObject({
+			name: "InteractionCancellationError",
+			reason: "task_detached",
+		})
+		const result = await coordinator.respond({
+			taskId: "task-1",
+			turnId,
+			interactionId,
+			actionId: "reply",
+			stateRevision: runtime.getState().revision,
+			draft: { text: "must not continue", images: [], files: [] },
+		})
+		expect(result).toMatchObject({ accepted: false, error: { code: "stale_interaction" } })
+		expect(runtime.getState().interaction).toMatchObject({ interactionId, status: "awaiting" })
+	})
 })

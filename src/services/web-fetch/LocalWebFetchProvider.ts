@@ -90,8 +90,11 @@ export class BrowserWebFetchProvider implements LocalWebFetchProvider {
 			throw new Error("Web fetch timeout must be a positive finite number")
 		}
 		const cancellation = createCancellationScope(request.signal, timeoutMs)
+		let response: LocalWebFetchResponse | undefined
+		let operationFailed = false
+		let operationError: unknown
 		try {
-			return await waitForAbort(
+			response = await waitForAbort(
 				(async () => {
 					await fetcher.launchBrowser(cancellation.signal)
 					const content = await fetcher.urlToMarkdown(request.url, cancellation.signal)
@@ -108,9 +111,27 @@ export class BrowserWebFetchProvider implements LocalWebFetchProvider {
 				})(),
 				cancellation.signal,
 			)
+		} catch (error) {
+			operationFailed = true
+			operationError = error
+		}
+
+		const closePromise = fetcher.closeBrowser()
+		let closeFailed = false
+		let closeError: unknown
+		try {
+			await waitForAbort(closePromise, cancellation.signal)
+		} catch (error) {
+			closeFailed = true
+			closeError = error
+			void closePromise.catch(() => undefined)
 		} finally {
 			cancellation.dispose()
-			await fetcher.closeBrowser()
 		}
+
+		if (operationFailed) throw operationError
+		if (closeFailed) throw closeError
+		if (!response) throw new Error("Web fetch completed without a response")
+		return response
 	}
 }

@@ -129,6 +129,7 @@ function createTurn({
 		isParallelToolCallingEnabled: () => parallel,
 	})
 	const requestApprovalSpy = vi.fn(requestApproval ?? (async () => ({ actionId: "approve" as const })))
+	const stageFeedbackSpy = vi.fn(async () => undefined)
 	const driver = new TurnDriver({
 		task: {
 			getTaskId: () => "task-concurrency",
@@ -161,7 +162,7 @@ function createTurn({
 			commitInterruptedResult: vi.fn(async () => undefined),
 			awaitInitialCheckpoint: vi.fn(async () => undefined),
 		},
-		approval: { request: requestApprovalSpy },
+		approval: { request: requestApprovalSpy, stageFeedback: stageFeedbackSpy },
 		scheduler,
 		provider: { registerExecution: vi.fn() },
 		postCommit: {
@@ -170,7 +171,7 @@ function createTurn({
 		},
 	})
 
-	return { fakeTask: driver, runtime, ports, requestApproval: requestApprovalSpy }
+	return { fakeTask: driver, runtime, ports, requestApproval: requestApprovalSpy, stageFeedback: stageFeedbackSpy }
 }
 
 function runTurn(driver: unknown): Promise<void> {
@@ -311,7 +312,7 @@ describe("finalized turn tool concurrency", () => {
 		let finishFirstEffect: (() => void) | undefined
 		const started: string[] = []
 		const approvalCalls: string[] = []
-		const { fakeTask } = createTurn({
+		const { fakeTask, stageFeedback } = createTurn({
 			blockCount: 3,
 			parallel: true,
 			prepareAdmission: (tool) => ({
@@ -355,7 +356,8 @@ describe("finalized turn tool concurrency", () => {
 		expect(started).toContain("dline-read-2")
 		expect(started).not.toContain("dline-read-1")
 
-		approveFirst?.({ actionId: "approve" })
+		const approvalDraft = { text: "read this with the note", images: [], files: [] }
+		approveFirst?.({ actionId: "approve", draft: approvalDraft })
 		for (
 			let attempt = 0;
 			attempt < 20 && (!started.includes("dline-read-1") || !approvalCalls.includes("dline-read-3"));
@@ -364,6 +366,7 @@ describe("finalized turn tool concurrency", () => {
 			await new Promise<void>((resolve) => setImmediate(resolve))
 		}
 		expect(started).toContain("dline-read-1")
+		expect(stageFeedback).toHaveBeenCalledWith(expect.objectContaining({ dline_tid: "dline-read-1" }), approvalDraft)
 		expect(approvalCalls).toEqual(["dline-read-1", "dline-read-3"])
 		finishFirstEffect?.()
 		await expect(turn).resolves.toBeUndefined()
