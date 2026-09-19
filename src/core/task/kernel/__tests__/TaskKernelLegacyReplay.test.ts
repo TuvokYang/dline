@@ -181,13 +181,37 @@ describe("task kernel legacy replay", () => {
 				blockId: "b1",
 				interactionId: "b1",
 				kind: "tool_approval",
+				presentationRef: "approval:b1",
+				actionRules: [
+					{ actionId: "approve", payloadPolicy: "draft" },
+					{ actionId: "reject", payloadPolicy: "draft" },
+				],
+			},
+			{
+				type: "dialog.prepared",
+				generation: 0,
+				interactionId: "b1",
+				journalRef: "journal:0:1",
+				receiverGeneration: 0,
+			},
+			{ type: "dialog.presented", generation: 0, interactionId: "b1" },
+			{
+				type: "dialog.responded",
+				generation: 0,
+				taskId: "task-1",
+				turnId: "turn-1",
+				interactionId: "b1",
+				stateRevision: 3,
+				receiverGeneration: 0,
+				actionId: "reject",
+				draftRef: "draft:reject",
 			},
 			{ type: "approval.responded", generation: 0, turnId: "turn-1", blockId: "b1", interactionId: "b1", approved: false },
 		])
 
 		expect(projectKernelTurn(kernel.states[1])).toEqual(projectLegacyTurn(legacy.states[1]))
-		expect(projectKernelTurn(kernel.states[2])).toEqual(projectLegacyTurn(legacy.states[2]))
-		expect(kernel.states[2].flow.phase).toBe("waiting")
+		expect(projectKernelTurn(kernel.states.at(-1)!)).toEqual(projectLegacyTurn(legacy.states[2]))
+		expect(kernel.states.at(-1)?.flow.phase).toBe("waiting")
 		expect(kernel.commands.filter((command) => command.type === "tool.run")).toEqual([])
 	})
 })

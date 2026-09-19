@@ -5,69 +5,94 @@ export interface DialogReduction {
 	readonly commands: readonly Command[]
 }
 
-type DialogProgressEvent = Extract<TaskEvent, { type: "dialog.prepared" | "dialog.presented" | "dialog.responded" }>
+type DialogProgressEvent = Extract<
+	TaskEvent,
+	{ type: "dialog.prepared" | "dialog.presented" | "dialog.responded" | "dialog.reopened" }
+>
+
+type DialogRequestEvent = Extract<TaskEvent, { type: "dialog.requested" | "dialog.interrupt_requested" | "approval.requested" }>
+
+function createInteraction(event: DialogRequestEvent, createdRevision: number): DialogInteraction {
+	return {
+		interactionId: event.interactionId,
+		turnId: event.turnId,
+		kind: event.kind,
+		status: "planned",
+		createdRevision,
+		presentationRef: event.presentationRef,
+		actionRules: event.actionRules,
+		blockId: "blockId" in event ? event.blockId : undefined,
+	}
+}
 
 function updateInteraction(
 	interaction: DialogInteraction | undefined,
 	event: DialogProgressEvent,
+	createdRevision: number,
 ): DialogInteraction | undefined {
 	if (!interaction || interaction.interactionId !== event.interactionId) return interaction
-	if (event.type === "dialog.prepared")
+	if (event.type === "dialog.prepared") {
 		return { ...interaction, status: "prepared", journalRef: event.journalRef, receiverGeneration: event.receiverGeneration }
-	if (event.type === "dialog.presented") return { ...interaction, status: "presented" }
-	return { ...interaction, status: "responded", payloadRef: event.payloadRef, actionId: event.actionId }
+	}
+	if (event.type === "dialog.presented") return { ...interaction, status: "awaiting" }
+	if (event.type === "dialog.reopened") return { ...interaction, status: "awaiting", createdRevision }
+	return {
+		...interaction,
+		status: "resolving",
+		acceptedResponse: {
+			actionId: event.actionId,
+			stateRevision: event.stateRevision,
+			receiverGeneration: event.receiverGeneration,
+			draftRef: event.draftRef,
+			selectionRef: event.selectionRef,
+		},
+	}
 }
 
-export function reduceDialog(state: DialogSlice, event: TaskEvent): DialogReduction {
+export function reduceDialog(state: DialogSlice, event: TaskEvent, nextRevision: number): DialogReduction {
 	if (event.type === "dialog.requested") {
-		const interaction: DialogInteraction = {
-			interactionId: event.interactionId,
-			kind: event.kind,
-			status: "planned",
-			blockId: event.blockId,
-		}
-		return event.blockId
-			? { state: { ...state, approvalsByBlock: { ...state.approvalsByBlock, [event.blockId]: interaction } }, commands: [] }
-			: { state: { ...state, primary: interaction }, commands: [] }
+		return { state: { ...state, primary: createInteraction(event, nextRevision) }, commands: [] }
 	}
-	if (event.type === "approval.requested") {
-		const interaction: DialogInteraction = {
-			interactionId: event.interactionId,
-			kind: event.kind,
-			status: "planned",
-			blockId: event.blockId,
-		}
+	if (event.type === "dialog.interrupt_requested") {
 		return {
-			state: { ...state, approvalsByBlock: { ...state.approvalsByBlock, [event.blockId]: interaction } },
+			state: { ...state, primary: createInteraction(event, nextRevision), interrupted: state.primary },
 			commands: [],
 		}
 	}
-	if (event.type === "approval.responded") {
-		const current = state.approvalsByBlock[event.blockId]
-		return current?.interactionId === event.interactionId
-			? {
-					state: {
-						...state,
-						approvalsByBlock: { ...state.approvalsByBlock, [event.blockId]: { ...current, status: "responded" } },
-					},
-					commands: [],
-				}
-			: { state, commands: [] }
+	if (event.type === "approval.requested") {
+		return {
+			state: {
+				...state,
+				approvalsByBlock: {
+					...state.approvalsByBlock,
+					[event.blockId]: createInteraction(event, nextRevision),
+				},
+			},
+			commands: [],
+		}
 	}
 	if (event.type === "dialog.resolved") {
-		const primary = state.primary?.interactionId === event.interactionId ? undefined : state.primary
+		const resolvingPrimary = state.primary?.interactionId === event.interactionId
+		const primary = resolvingPrimary ? state.interrupted : state.primary
+		const interrupted = resolvingPrimary ? undefined : state.interrupted
 		const approvalsByBlock = Object.fromEntries(
 			Object.entries(state.approvalsByBlock).filter(([, interaction]) => interaction.interactionId !== event.interactionId),
 		)
-		return { state: { ...state, primary, approvalsByBlock }, commands: [] }
+		return { state: { ...state, primary, interrupted, approvalsByBlock }, commands: [] }
 	}
-	if (event.type !== "dialog.prepared" && event.type !== "dialog.presented" && event.type !== "dialog.responded")
+	if (
+		event.type !== "dialog.prepared" &&
+		event.type !== "dialog.presented" &&
+		event.type !== "dialog.responded" &&
+		event.type !== "dialog.reopened"
+	) {
 		return { state, commands: [] }
-	const primary = updateInteraction(state.primary, event)
+	}
+	const primary = updateInteraction(state.primary, event, nextRevision)
 	const approvalsByBlock = Object.fromEntries(
 		Object.entries(state.approvalsByBlock).map(([blockId, interaction]) => [
 			blockId,
-			updateInteraction(interaction, event) ?? interaction,
+			updateInteraction(interaction, event, nextRevision) ?? interaction,
 		]),
 	)
 	return { state: { ...state, primary, approvalsByBlock }, commands: [] }

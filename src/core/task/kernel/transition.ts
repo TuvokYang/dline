@@ -19,11 +19,20 @@ function commandBase(state: TaskState, sequence: number) {
 
 type ValidationFailure = { readonly reason: RejectReason; readonly message: string }
 
-function hasInteraction(state: TaskState, interactionId: string): boolean {
-	return (
-		state.dialog.primary?.interactionId === interactionId ||
-		Object.values(state.dialog.approvalsByBlock).some((interaction) => interaction.interactionId === interactionId)
-	)
+function findInteraction(state: TaskState, interactionId: string) {
+	if (state.dialog.primary?.interactionId === interactionId) return state.dialog.primary
+	if (state.dialog.interrupted?.interactionId === interactionId) return state.dialog.interrupted
+	return Object.values(state.dialog.approvalsByBlock).find((interaction) => interaction.interactionId === interactionId)
+}
+
+function hasRequiredPayload(
+	policy: "none" | "draft" | "selection" | "draft_and_selection",
+	event: Extract<TaskEvent, { type: "dialog.responded" }>,
+): boolean {
+	if (policy === "none") return true
+	if (policy === "draft") return event.draftRef !== undefined
+	if (policy === "selection") return event.selectionRef !== undefined
+	return event.draftRef !== undefined && event.selectionRef !== undefined
 }
 
 function validateEvent(state: TaskState, event: TaskEvent): ValidationFailure | undefined {
@@ -78,10 +87,15 @@ function validateEvent(state: TaskState, event: TaskEvent): ValidationFailure | 
 	}
 	if (event.type === "approval.responded") {
 		const block = state.turn.blocks.find((candidate) => candidate.blockId === event.blockId)
-		if (state.turn.turnId !== event.turnId || !block)
+		const interaction = state.dialog.approvalsByBlock[event.blockId]
+		if (state.turn.turnId !== event.turnId || !block || interaction?.interactionId !== event.interactionId)
 			return { reason: "identity_mismatch", message: `Approval block ${event.blockId} is not active` }
-		if (state.turn.manualApprovalBlockId !== event.blockId || block.phase !== "awaiting_approval")
-			return { reason: "phase_invalid", message: `Block ${event.blockId} is not awaiting approval` }
+		if (
+			state.turn.manualApprovalBlockId !== event.blockId ||
+			block.phase !== "awaiting_approval" ||
+			interaction.status !== "resolving"
+		)
+			return { reason: "phase_invalid", message: `Block ${event.blockId} is not awaiting a resolved approval` }
 	}
 	if (event.type === "approval.evaluated") {
 		const block = state.turn.blocks.find((candidate) => candidate.blockId === event.blockId)
@@ -92,18 +106,65 @@ function validateEvent(state: TaskState, event: TaskEvent): ValidationFailure | 
 				message: `Block ${event.blockId} cannot be policy-approved from ${block.phase}`,
 			}
 	}
-	if (event.type === "dialog.requested") {
-		if (hasInteraction(state, event.interactionId))
+	if (event.type === "dialog.requested" || event.type === "dialog.interrupt_requested") {
+		if (findInteraction(state, event.interactionId))
 			return { reason: "duplicate", message: `Interaction ${event.interactionId} already exists` }
+		if (event.type === "dialog.requested" && state.dialog.primary)
+			return { reason: "phase_invalid", message: `Primary interaction ${state.dialog.primary.interactionId} is active` }
+		if (
+			event.type === "dialog.interrupt_requested" &&
+			(state.dialog.primary?.status !== "awaiting" || state.dialog.interrupted)
+		)
+			return { reason: "phase_invalid", message: "Only one awaiting primary interaction can be interrupted" }
 	}
+	if (event.type === "approval.requested" && findInteraction(state, event.interactionId))
+		return { reason: "duplicate", message: `Interaction ${event.interactionId} already exists` }
 	if (
 		event.type === "dialog.prepared" ||
 		event.type === "dialog.presented" ||
 		event.type === "dialog.responded" ||
+		event.type === "dialog.reopened" ||
 		event.type === "dialog.resolved"
 	) {
-		if (!hasInteraction(state, event.interactionId))
-			return { reason: "identity_mismatch", message: `Interaction ${event.interactionId} is not active` }
+		const interaction = findInteraction(state, event.interactionId)
+		if (!interaction) return { reason: "identity_mismatch", message: `Interaction ${event.interactionId} is not active` }
+		if (event.type === "dialog.prepared" && interaction.status !== "planned")
+			return {
+				reason: interaction.status === "prepared" ? "duplicate" : "phase_invalid",
+				message: "Interaction is not planned",
+			}
+		if (event.type === "dialog.presented" && interaction.status !== "prepared")
+			return {
+				reason: interaction.status === "awaiting" ? "duplicate" : "phase_invalid",
+				message: "Interaction is not prepared",
+			}
+		if (event.type === "dialog.reopened" && interaction.status !== "resolving")
+			return { reason: "phase_invalid", message: "Only a resolving interaction can be reopened" }
+		if (
+			event.type === "dialog.resolved" &&
+			interaction.status !== "resolving" &&
+			!(interaction.status === "awaiting" && interaction.acceptedResponse)
+		)
+			return { reason: "phase_invalid", message: "Interaction has no committed response to resolve" }
+		if (event.type === "dialog.responded") {
+			if (
+				event.taskId !== state.taskId ||
+				event.turnId !== interaction.turnId ||
+				event.stateRevision < interaction.createdRevision ||
+				event.stateRevision > state.revision ||
+				event.receiverGeneration !== interaction.receiverGeneration
+			)
+				return { reason: "identity_mismatch", message: "Interaction response is outside its causal window" }
+			if (interaction.status !== "awaiting")
+				return {
+					reason: interaction.status === "resolving" ? "duplicate" : "phase_invalid",
+					message: "Interaction is not awaiting response",
+				}
+			const rule = interaction.actionRules.find((candidate) => candidate.actionId === event.actionId)
+			if (!rule) return { reason: "identity_mismatch", message: `Action ${event.actionId} is not valid` }
+			if (!hasRequiredPayload(rule.payloadPolicy, event))
+				return { reason: "phase_invalid", message: `Action ${event.actionId} is missing required payload` }
+		}
 	}
 	if (event.type === "lifecycle.open" && state.flow.phase !== "idle")
 		return { reason: "phase_invalid", message: `Task cannot open from ${state.flow.phase}` }
@@ -124,7 +185,7 @@ function deriveCommands(previous: TaskState, next: TaskState, event: TaskEvent):
 			},
 		]
 	}
-	if (event.type === "approval.requested" || event.type === "dialog.requested") {
+	if (event.type === "approval.requested" || event.type === "dialog.requested" || event.type === "dialog.interrupt_requested") {
 		return [{ ...commandBase(next, 0), type: "dialog.prepare", interactionId: event.interactionId, kind: event.kind }]
 	}
 	if (event.type === "dialog.prepared") {
@@ -153,12 +214,12 @@ export function transition(state: TaskState, event: TaskEvent): TransitionResult
 	const invalid = validateEvent(state, event)
 	if (invalid) return reject(state, invalid.reason, invalid.message)
 
+	const nextRevision = state.revision + 1
 	const flow = reduceFlow(state.flow, event)
 	const turn = reduceTurn(state.turn, event)
-	const dialog = reduceDialog(state.dialog, event)
+	const dialog = reduceDialog(state.dialog, event, nextRevision)
 	const intake = reduceIntake(state.intake, event)
 	const halt = reduceHalt(state.halt, event)
-	const nextRevision = state.revision + 1
 	let next: TaskState = {
 		...state,
 		revision: nextRevision,

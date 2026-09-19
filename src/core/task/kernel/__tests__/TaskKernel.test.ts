@@ -83,7 +83,18 @@ describe("task kernel", () => {
 	it("reveals a dialog only after the prepared event is committed", () => {
 		const state: TaskState = {
 			...createInitialTaskState("task-1"),
-			dialog: { primary: { interactionId: "i-1", kind: "question", status: "planned" }, approvalsByBlock: {} },
+			dialog: {
+				primary: {
+					interactionId: "i-1",
+					turnId: "turn-1",
+					kind: "question",
+					status: "planned",
+					createdRevision: 0,
+					presentationRef: "question:1",
+					actionRules: [{ actionId: "reply", payloadPolicy: "draft" }],
+				},
+				approvalsByBlock: {},
+			},
 		}
 		const result = accepted(
 			transition(state, {
@@ -121,16 +132,43 @@ describe("task kernel", () => {
 		const snapshot: TaskState = {
 			...createInitialTaskState("task-1"),
 			revision: 8,
-			turn: { mode: "parallel", blocks: [], automaticApprovalBlockIds: [], executingBlockIds: ["block-1"] },
+			turn: {
+				turnId: "turn-1",
+				mode: "parallel",
+				blocks: [
+					{
+						blockId: "block-1",
+						index: 0,
+						phase: "executing",
+						attempt: "attempt-1",
+						lanes: [],
+						turnEnding: false,
+					},
+				],
+				automaticApprovalBlockIds: [],
+				executingBlockIds: ["block-1"],
+			},
 			dialog: {
-				primary: { interactionId: "i-1", kind: "question", status: "prepared", journalRef: "journal:1" },
+				primary: {
+					interactionId: "i-1",
+					turnId: "turn-1",
+					kind: "question",
+					status: "prepared",
+					createdRevision: 7,
+					presentationRef: "question:1",
+					actionRules: [{ actionId: "reply", payloadPolicy: "draft" }],
+					journalRef: "journal:1",
+					receiverGeneration: 0,
+				},
 				approvalsByBlock: {},
 			},
 		}
 		const result = hydrate({ taskId: "task-1", snapshot, journalTail: { epoch: 1, seq: 12 }, openReason: "crash_recovery" })
 		expect(result.kind).toBe("ready")
 		if (result.kind !== "ready") return
+		expect(result.form).toBe("interrupted")
 		expect(result.state.turn.executingBlockIds).toEqual([])
+		expect(result.state.turn.blocks[0].phase).toBe("cancelled")
 		expect(result.initialCommands).toHaveLength(1)
 		expect(result.initialCommands[0]).toMatchObject({ type: "dialog.reveal", interactionId: "i-1" })
 	})

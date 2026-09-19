@@ -33,6 +33,8 @@ export interface FlowState {
 	readonly phase: FlowPhase
 	readonly error?: string
 	readonly completionId?: string
+	readonly terminalReason?: "consumed"
+	readonly consumedRef?: string
 }
 
 export interface KernelBlock {
@@ -53,15 +55,33 @@ export interface TurnSlice {
 	readonly executingBlockIds: readonly BlockId[]
 }
 
+export type DialogPayloadPolicy = "none" | "draft" | "selection" | "draft_and_selection"
+
+export interface DialogActionRule {
+	readonly actionId: string
+	readonly payloadPolicy: DialogPayloadPolicy
+}
+
+export interface DialogAcceptedResponse {
+	readonly actionId: string
+	readonly stateRevision: number
+	readonly receiverGeneration: number
+	readonly draftRef?: string
+	readonly selectionRef?: string
+}
+
 export interface DialogInteraction {
 	readonly interactionId: InteractionId
+	readonly turnId: TurnId
 	readonly kind: string
-	readonly status: "planned" | "prepared" | "presented" | "responded"
+	readonly status: "planned" | "prepared" | "awaiting" | "resolving"
+	readonly createdRevision: number
+	readonly presentationRef: string
+	readonly actionRules: readonly DialogActionRule[]
 	readonly journalRef?: string
 	readonly receiverGeneration?: number
 	readonly blockId?: BlockId
-	readonly payloadRef?: string
-	readonly actionId?: string
+	readonly acceptedResponse?: DialogAcceptedResponse
 }
 
 export interface DialogSlice {
@@ -127,13 +147,17 @@ export type ToolEvent = EventBase & {
 	readonly blockId: BlockId
 	readonly message?: string
 }
+interface DialogRequestEvent extends EventBase {
+	readonly interactionId: InteractionId
+	readonly turnId: TurnId
+	readonly kind: string
+	readonly presentationRef: string
+	readonly actionRules: readonly DialogActionRule[]
+	readonly blockId?: BlockId
+}
+
 export type DialogEvent =
-	| (EventBase & {
-			readonly type: "dialog.requested"
-			readonly interactionId: InteractionId
-			readonly kind: string
-			readonly blockId?: BlockId
-	  })
+	| (DialogRequestEvent & { readonly type: "dialog.requested" | "dialog.interrupt_requested" })
 	| (EventBase & {
 			readonly type: "dialog.prepared"
 			readonly interactionId: InteractionId
@@ -143,10 +167,16 @@ export type DialogEvent =
 	| (EventBase & { readonly type: "dialog.presented"; readonly interactionId: InteractionId })
 	| (EventBase & {
 			readonly type: "dialog.responded"
+			readonly taskId: TaskId
+			readonly turnId: TurnId
 			readonly interactionId: InteractionId
-			readonly payloadRef?: string
-			readonly actionId?: string
+			readonly stateRevision: number
+			readonly receiverGeneration: number
+			readonly actionId: string
+			readonly draftRef?: string
+			readonly selectionRef?: string
 	  })
+	| (EventBase & { readonly type: "dialog.reopened"; readonly interactionId: InteractionId })
 	| (EventBase & { readonly type: "dialog.resolved"; readonly interactionId: InteractionId })
 export type BackgroundEvent = EventBase & {
 	readonly type: "background.ready"
@@ -170,6 +200,8 @@ export type ApprovalEvent =
 			readonly blockId: BlockId
 			readonly interactionId: InteractionId
 			readonly kind: string
+			readonly presentationRef: string
+			readonly actionRules: readonly DialogActionRule[]
 	  })
 	| (EventBase & {
 			readonly type: "approval.responded"
@@ -291,9 +323,12 @@ export interface HydrateInput {
 	readonly journalTail: { readonly epoch: number; readonly seq: number }
 	readonly openReason: "resume" | "crash_recovery" | "checkpoint_restore" | "new"
 }
+export type HydrateForm = "interrupted" | "completed" | "error" | "consumed" | "new"
+
 export type HydrateResult =
 	| {
 			readonly kind: "ready"
+			readonly form: HydrateForm
 			readonly state: TaskState
 			readonly initialCommands: readonly Command[]
 			readonly diagnostics: readonly Diagnostic[]

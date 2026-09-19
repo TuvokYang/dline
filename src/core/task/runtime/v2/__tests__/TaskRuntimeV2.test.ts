@@ -47,7 +47,10 @@ describe("TaskRuntimeV2", () => {
 			type: "dialog.requested",
 			generation: 0,
 			interactionId: "i-1",
+			turnId: "turn-1",
 			kind: "question",
+			presentationRef: "question:1",
+			actionRules: [{ actionId: "reply", payloadPolicy: "draft" }],
 		})
 		expect(requested.kind).toBe("accepted")
 		await dialog.waitForCommandCount(1)

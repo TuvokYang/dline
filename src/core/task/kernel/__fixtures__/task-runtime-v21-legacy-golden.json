@@ -1,0 +1,157 @@
+{
+	"schema": "dline.task-runtime.legacy-golden/v1",
+	"frozen_at": "2026-09-19",
+	"source_commit": "b8627525b103ac05fbd6700e242460466dc64900",
+	"scenarios": [
+		{
+			"id": "dialog.reply.accept",
+			"input": {
+				"identity": "matching",
+				"state_revision": "within_window",
+				"action": "reply",
+				"draft": true
+			},
+			"expected": {
+				"accepted": true,
+				"status": "resolving",
+				"commands": []
+			}
+		},
+		{
+			"id": "dialog.identity.reject",
+			"input": {
+				"identity": "wrong_task",
+				"state_revision": "within_window",
+				"action": "reply",
+				"draft": true
+			},
+			"expected": {
+				"accepted": false,
+				"state_changed": false,
+				"commands": []
+			}
+		},
+		{
+			"id": "dialog.payload.reject",
+			"input": {
+				"identity": "matching",
+				"state_revision": "within_window",
+				"action": "reply",
+				"draft": false
+			},
+			"expected": {
+				"accepted": false,
+				"state_changed": false,
+				"commands": []
+			}
+		},
+		{
+			"id": "dialog.interrupt.restore",
+			"input": {
+				"primary": "awaiting",
+				"interrupt": "condense",
+				"nested_interrupt": false
+			},
+			"expected": {
+				"resolved_primary": "restored",
+				"restored_status": "awaiting",
+				"interrupted": null
+			}
+		},
+		{
+			"id": "hydrate.interrupted",
+			"input": {
+				"flow": "running",
+				"dialog": null
+			},
+			"expected": {
+				"form": "interrupted",
+				"flow": "paused",
+				"commands": [
+					"dialog.prepare"
+				],
+				"automatic_execution": false
+			}
+		},
+		{
+			"id": "hydrate.completed",
+			"input": {
+				"flow": "completed",
+				"completion_identity": true,
+				"dialog": "prepared"
+			},
+			"expected": {
+				"form": "completed",
+				"flow": "completed",
+				"commands": [
+					"dialog.reveal"
+				],
+				"automatic_execution": false
+			}
+		},
+		{
+			"id": "hydrate.error",
+			"input": {
+				"flow": "error",
+				"error_detail": true,
+				"dialog": "prepared"
+			},
+			"expected": {
+				"form": "error",
+				"flow": "error",
+				"commands": [
+					"dialog.reveal"
+				],
+				"automatic_execution": false
+			}
+		},
+		{
+			"id": "hydrate.consumed",
+			"input": {
+				"flow": "terminated",
+				"terminal_reason": "consumed",
+				"consumed_identity": true
+			},
+			"expected": {
+				"form": "consumed",
+				"dialog": null,
+				"commands": [],
+				"automatic_execution": false
+			}
+		},
+		{
+			"id": "checkpoint.combined",
+			"input": {
+				"workspace": "success",
+				"snapshot": "valid"
+			},
+			"expected": {
+				"order": [
+					"stop",
+					"resolve",
+					"workspace",
+					"conversation",
+					"save"
+				],
+				"outbox": [
+					"dialog.prepare"
+				]
+			}
+		},
+		{
+			"id": "checkpoint.invalid",
+			"input": {
+				"snapshot": "task_identity_mismatch"
+			},
+			"expected": {
+				"order": [
+					"stop",
+					"resolve"
+				],
+				"workspace_mutated": false,
+				"conversation_mutated": false,
+				"vault_mutated": false
+			}
+		}
+	]
+}
