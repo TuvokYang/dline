@@ -15,7 +15,7 @@ function runtime(vault: ControlledVault, executors: RecordingExecutor[]) {
 }
 
 describe("TaskRuntimeV2", () => {
-	it("commits multiple events in memory without awaiting persistence or execution", async () => {
+	it("commits multiple events in memory while keeping one active compose owner", async () => {
 		const vault = new ControlledVault()
 		const compose = new RecordingExecutor("compose")
 		const subject = runtime(vault, [compose])
@@ -36,7 +36,7 @@ describe("TaskRuntimeV2", () => {
 		expect(vault.saves.map((snapshot) => snapshot.state.revision)).toEqual([1, 2])
 		vault.resolve(1)
 		await subject.waitForQuiescence()
-		expect(compose.commands.map((command) => command.originRevision)).toEqual([1, 2])
+		expect(compose.commands.map((command) => command.originRevision)).toEqual([1])
 	})
 
 	it("routes dialog.prepare before durability and dialog.reveal after it", async () => {

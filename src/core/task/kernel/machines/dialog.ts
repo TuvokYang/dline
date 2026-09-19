@@ -71,6 +71,27 @@ export function reduceDialog(state: DialogSlice, event: TaskEvent, nextRevision:
 			commands: [],
 		}
 	}
+	if ((event.type === "provider.failed" || event.type === "compose.failed") && !state.primary) {
+		const interactionId = `error:${event.type}:${nextRevision}`
+		return {
+			state: {
+				...state,
+				primary: {
+					interactionId,
+					turnId: event.turnId ?? `error:${nextRevision}`,
+					kind: "error_retry",
+					status: "planned",
+					createdRevision: nextRevision,
+					presentationRef: interactionId,
+					actionRules: [
+						{ actionId: "retry", payloadPolicy: "draft" },
+						{ actionId: "start_new_task", payloadPolicy: "draft" },
+					],
+				},
+			},
+			commands: [],
+		}
+	}
 	if (event.type === "dialog.resolved") {
 		const resolvingPrimary = state.primary?.interactionId === event.interactionId
 		const primary = resolvingPrimary ? state.interrupted : state.primary

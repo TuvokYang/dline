@@ -106,6 +106,51 @@ function validateEvent(state: TaskState, event: TaskEvent): ValidationFailure | 
 				message: `Block ${event.blockId} cannot be policy-approved from ${block.phase}`,
 			}
 	}
+	if (event.type === "compose.completed" || event.type === "compose.failed") {
+		const owner = state.flow.compose
+		if (!owner || owner.commandId !== event.commandId || owner.originRevision !== event.originRevision)
+			return { reason: "identity_mismatch", message: `Compose feedback ${event.commandId} is not active` }
+		if (owner.status !== "running")
+			return { reason: "duplicate", message: `Compose command ${event.commandId} already settled` }
+		if (state.halt.status === "stopping" || state.flow.phase === "paused" || state.flow.phase === "terminated")
+			return { reason: "phase_invalid", message: "Compose feedback arrived after task halt" }
+		if (event.type === "compose.completed" && event.draftRef.length === 0)
+			return { reason: "identity_mismatch", message: "Compose completion has no draft reference" }
+	}
+	if (event.type === "provider.turn_ready" || event.type === "provider.failed") {
+		const owner = state.flow.provider
+		if (!owner || owner.commandId !== event.commandId || owner.originRevision !== event.originRevision)
+			return { reason: "identity_mismatch", message: `Provider feedback ${event.commandId} is not active` }
+		if (owner.status !== "running")
+			return { reason: "duplicate", message: `Provider command ${event.commandId} already settled` }
+		if (state.halt.status === "stopping" || state.flow.phase === "paused" || state.flow.phase === "terminated")
+			return { reason: "phase_invalid", message: "Provider feedback arrived after task halt" }
+	}
+	if (event.type === "compaction.requested") {
+		const current = state.flow.compaction
+		if (current && (current.status === "scheduled" || current.status === "running"))
+			return { reason: "duplicate", message: `Compaction ${current.compactionId} is already active` }
+		if (current?.compactionId === event.compactionId && current.attempt === event.attempt)
+			return { reason: "stale_attempt", message: `Compaction attempt ${event.attempt} was already consumed` }
+	}
+	if (
+		event.type === "compaction.started" ||
+		event.type === "compaction.completed" ||
+		event.type === "compaction.failed" ||
+		event.type === "compaction.expired"
+	) {
+		const current = state.flow.compaction
+		if (!current || current.compactionId !== event.compactionId)
+			return { reason: "identity_mismatch", message: `Compaction ${event.compactionId} is not active` }
+		if (current.attempt !== event.attempt)
+			return { reason: "stale_attempt", message: `Compaction attempt ${event.attempt} is stale` }
+		const expected = event.type === "compaction.started" ? "scheduled" : "running"
+		if (current.status !== expected)
+			return {
+				reason: ["completed", "failed", "expired"].includes(current.status) ? "duplicate" : "phase_invalid",
+				message: `Compaction ${event.compactionId} cannot accept ${event.type} from ${current.status}`,
+			}
+	}
 	if (event.type === "dialog.requested" || event.type === "dialog.interrupt_requested") {
 		if (findInteraction(state, event.interactionId))
 			return { reason: "duplicate", message: `Interaction ${event.interactionId} already exists` }
@@ -173,6 +218,33 @@ function validateEvent(state: TaskState, event: TaskEvent): ValidationFailure | 
 
 const TERMINAL_BLOCK_PHASES = new Set(["completed", "failed", "rejected", "skipped", "cancelled"])
 
+function allBlocksTerminal(state: TaskState): boolean {
+	return state.turn.blocks.length > 0 && state.turn.blocks.every((block) => TERMINAL_BLOCK_PHASES.has(block.phase))
+}
+
+function hasActiveRound(state: TaskState): boolean {
+	return state.flow.compose?.status === "running" || state.flow.provider?.status === "running"
+}
+
+function applyCommandOwnership(state: TaskState, commands: readonly Command[]): TaskState {
+	let flow = state.flow
+	for (const command of commands) {
+		if (command.type === "compose.round") {
+			flow = {
+				...flow,
+				compose: { commandId: command.commandId, originRevision: command.originRevision, status: "running" },
+			}
+		}
+		if (command.type === "provider.start") {
+			flow = {
+				...flow,
+				provider: { commandId: command.commandId, originRevision: command.originRevision, status: "running" },
+			}
+		}
+	}
+	return flow === state.flow ? state : { ...state, flow }
+}
+
 function deriveCommands(previous: TaskState, next: TaskState, event: TaskEvent): readonly Command[] {
 	if (event.type === "user.cancel" || event.type === "user.terminate") {
 		return [
@@ -200,8 +272,44 @@ function deriveCommands(previous: TaskState, next: TaskState, event: TaskEvent):
 			return [{ ...commandBase(next, 0), type: "tool.run", turnId: next.turn.turnId, blockIds: [event.blockId] }]
 		}
 	}
-	if (event.type === "user.submit" && previous.flow.phase !== "terminated") {
+	if (event.type === "user.submit" && previous.flow.phase !== "terminated" && !hasActiveRound(previous)) {
 		return [{ ...commandBase(next, 0), type: "compose.round", turnId: next.turn.turnId, admittedEntryIds: [event.entryId] }]
+	}
+	if (
+		(event.type === "tool.completed" || event.type === "tool.failed" || event.type === "tool.cancelled") &&
+		!allBlocksTerminal(previous) &&
+		allBlocksTerminal(next) &&
+		!hasActiveRound(previous)
+	) {
+		return [{ ...commandBase(next, 0), type: "compose.round", turnId: next.turn.turnId, admittedEntryIds: [] }]
+	}
+	if (event.type === "compose.completed") {
+		return [{ ...commandBase(next, 0), type: "provider.start", draftRef: event.draftRef, turnId: event.turnId }]
+	}
+	if (event.type === "compaction.requested") {
+		return [
+			{
+				...commandBase(next, 0),
+				type: "compaction.run",
+				compactionId: event.compactionId,
+				attempt: event.attempt,
+				contextRef: event.contextRef,
+			},
+		]
+	}
+	if (
+		(event.type === "provider.failed" || event.type === "compose.failed") &&
+		!previous.dialog.primary &&
+		next.dialog.primary
+	) {
+		return [
+			{
+				...commandBase(next, 0),
+				type: "dialog.prepare",
+				interactionId: next.dialog.primary.interactionId,
+				kind: next.dialog.primary.kind,
+			},
+		]
 	}
 	return []
 }
@@ -230,7 +338,20 @@ export function transition(state: TaskState, event: TaskEvent): TransitionResult
 		halt: halt.state,
 	}
 	if (halt.state.status === "stopping" && halt.state.pending.length === 0) {
-		next = { ...next, flow: { phase: halt.state.target }, halt: { status: "idle", generation: halt.state.generation } }
+		next = {
+			...next,
+			flow: {
+				...next.flow,
+				phase: halt.state.target,
+				compose:
+					next.flow.compose?.status === "running" ? { ...next.flow.compose, status: "cancelled" } : next.flow.compose,
+				provider:
+					next.flow.provider?.status === "running"
+						? { ...next.flow.provider, status: "cancelled" }
+						: next.flow.provider,
+			},
+			halt: { status: "idle", generation: halt.state.generation },
+		}
 	}
 	if (
 		event.type === "approval.responded" &&
@@ -248,6 +369,7 @@ export function transition(state: TaskState, event: TaskEvent): TransitionResult
 		...halt.commands,
 		...deriveCommands(state, next, event),
 	]
+	next = applyCommandOwnership(next, commands)
 	return { kind: "accepted", state: next, commands }
 }
 

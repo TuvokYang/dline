@@ -29,12 +29,30 @@ export type ParticipantId =
 	| "cotask"
 	| "spawn"
 
+export interface CommandFlowState {
+	readonly commandId: CommandId
+	readonly originRevision: number
+	readonly status: "running" | "completed" | "failed" | "cancelled"
+}
+
+export interface CompactionFlowState {
+	readonly compactionId: string
+	readonly attempt: AttemptId
+	readonly contextRef: string
+	readonly status: "scheduled" | "running" | "completed" | "failed" | "expired"
+	readonly resultRef?: string
+	readonly message?: string
+}
+
 export interface FlowState {
 	readonly phase: FlowPhase
 	readonly error?: string
 	readonly completionId?: string
 	readonly terminalReason?: "consumed"
 	readonly consumedRef?: string
+	readonly compose?: CommandFlowState
+	readonly provider?: CommandFlowState
+	readonly compaction?: CompactionFlowState
 }
 
 export interface KernelBlock {
@@ -136,11 +154,18 @@ export type UserEvent =
 	| (EventBase & { readonly type: "user.submit"; readonly entryId: EntryId; readonly payloadRef: string })
 	| (EventBase & { readonly type: "user.cancel"; readonly haltId: HaltId })
 	| (EventBase & { readonly type: "user.terminate"; readonly haltId: HaltId })
-export type ProviderEvent = EventBase & {
-	readonly type: "provider.turn_ready" | "provider.failed"
-	readonly turnId: TurnId
-	readonly message?: string
+interface CommandFeedbackEvent extends EventBase {
+	readonly commandId: CommandId
+	readonly originRevision: number
 }
+
+export type ProviderEvent =
+	| (CommandFeedbackEvent & {
+			readonly type: "provider.turn_ready"
+			readonly turnId: TurnId
+			readonly finalPayloadRef?: string
+	  })
+	| (CommandFeedbackEvent & { readonly type: "provider.failed"; readonly turnId?: TurnId; readonly message: string })
 export type ToolEvent = EventBase & {
 	readonly type: "tool.started" | "tool.completed" | "tool.failed" | "tool.cancelled"
 	readonly turnId: TurnId
@@ -183,16 +208,33 @@ export type BackgroundEvent = EventBase & {
 	readonly entryId: EntryId
 	readonly payloadRef: string
 }
-export type ComposeEvent = EventBase & {
-	readonly type: "compose.completed" | "compose.failed"
-	readonly draftRef?: string
-	readonly message?: string
-}
-export type CompactionEvent = EventBase & {
-	readonly type: "compaction.started" | "compaction.completed" | "compaction.failed" | "compaction.expired"
-	readonly compactionId: string
-	readonly message?: string
-}
+export type ComposeEvent =
+	| (CommandFeedbackEvent & { readonly type: "compose.completed"; readonly draftRef: string; readonly turnId?: TurnId })
+	| (CommandFeedbackEvent & { readonly type: "compose.failed"; readonly message: string; readonly turnId?: TurnId })
+export type CompactionEvent =
+	| (EventBase & {
+			readonly type: "compaction.requested"
+			readonly compactionId: string
+			readonly attempt: AttemptId
+			readonly contextRef: string
+	  })
+	| (EventBase & {
+			readonly type: "compaction.started"
+			readonly compactionId: string
+			readonly attempt: AttemptId
+	  })
+	| (EventBase & {
+			readonly type: "compaction.completed"
+			readonly compactionId: string
+			readonly attempt: AttemptId
+			readonly resultRef: string
+	  })
+	| (EventBase & {
+			readonly type: "compaction.failed" | "compaction.expired"
+			readonly compactionId: string
+			readonly attempt: AttemptId
+			readonly message: string
+	  })
 export type ApprovalEvent =
 	| (EventBase & {
 			readonly type: "approval.requested"
@@ -253,7 +295,11 @@ interface CommandBase {
 	readonly generation: number
 }
 
-export type ProviderStartCommand = CommandBase & { readonly type: "provider.start"; readonly draftRef: string }
+export type ProviderStartCommand = CommandBase & {
+	readonly type: "provider.start"
+	readonly draftRef: string
+	readonly turnId?: TurnId
+}
 export type ToolRunCommand = CommandBase & {
 	readonly type: "tool.run"
 	readonly turnId: TurnId
