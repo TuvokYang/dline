@@ -1044,6 +1044,7 @@ export class Controller {
 			if (historyItem) {
 				if (this.taskLockAcquired) taskInstance.beginHistoryPreparation()
 				const remainsCurrent = await prepareHistoryTaskForDisplay({
+					taskId: initializedTaskId,
 					displayHistory: () => taskInstance.displayHistory(),
 					prepareFromHistory: (prepareOptions) => taskInstance.prepareFromHistory(prepareOptions),
 					hasTaskLock: this.taskLockAcquired,
