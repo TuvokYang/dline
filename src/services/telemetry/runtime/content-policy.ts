@@ -1,4 +1,5 @@
 import { createHmac, randomBytes } from "node:crypto"
+import { redactDiagnosticString } from "@/shared/services/logging/safe-diagnostic-value"
 import { isTelemetryDevelopmentMode } from "../development-mode"
 import { TELEMETRY_MASK_VALUE } from "../service/pipeline-port"
 import { readErrorIdentifier } from "./exception-attributes"
@@ -120,6 +121,7 @@ const HIGH_CARDINALITY_EXEMPT_SEGMENTS = new Set([
 ])
 
 const PROTOTYPE_KEYS = new Set(["__proto__", "constructor", "prototype"])
+const DEVELOPMENT_DIAGNOSTIC_KEYS = new Set(["diagnostic_message", "diagnostic_exception_message", "diagnostic_logger_message"])
 const CREDENTIAL_VALUE_PATTERN = /\b(?:Bearer|Basic)\s+[^\s"'}]+|\b(?:sk|pk|ghp|github_pat)_[A-Za-z0-9_-]{12,}/i
 
 /** Long safe identifiers such as model IDs and capability names remain queryable. */
@@ -144,6 +146,11 @@ export enum AttributeRejection {
 export interface AttributePolicyResult {
 	readonly attributes: RuntimeAttributes
 	readonly rejections: ReadonlyMap<string, AttributeRejection>
+}
+
+interface RuntimeContentPolicyOptions {
+	readonly preserveTaskIdentity?: boolean
+	readonly preserveDevelopmentDiagnostics?: boolean
 }
 
 function normalizeKeyPart(key: string): string {
@@ -200,14 +207,18 @@ export class RuntimeContentPolicy {
 
 	constructor(
 		fingerprintKey: Buffer = randomBytes(32),
-		private readonly options: { readonly preserveTaskIdentity?: boolean } = {},
+		private readonly options: RuntimeContentPolicyOptions = {},
 	) {
 		this.fingerprintKey = fingerprintKey
 	}
 
 	/** Development correlation is limited to events/traces, never metric dimensions. */
 	static forEvents(fingerprintKey?: Buffer): RuntimeContentPolicy {
-		return new RuntimeContentPolicy(fingerprintKey, { preserveTaskIdentity: isTelemetryDevelopmentMode() })
+		const developmentMode = isTelemetryDevelopmentMode()
+		return new RuntimeContentPolicy(fingerprintKey, {
+			preserveTaskIdentity: developmentMode,
+			preserveDevelopmentDiagnostics: developmentMode,
+		})
 	}
 
 	/**
@@ -349,6 +360,10 @@ export class RuntimeContentPolicy {
 		if (typeof value !== "string") {
 			return AttributeRejection.UnsupportedType
 		}
+		if (this.options.preserveDevelopmentDiagnostics && isDevelopmentDiagnosticKey(key)) {
+			attributes[key] = truncateDevelopmentDiagnostic(redactDiagnosticString(value))
+			return undefined
+		}
 		if (value.length > MAX_ATTRIBUTE_LENGTH) return AttributeRejection.TooLong
 		if (CREDENTIAL_VALUE_PATTERN.test(value)) return AttributeRejection.MaskedCredential
 		const correlation = this.options.preserveTaskIdentity && isTaskIdentityKey(key)
@@ -371,6 +386,16 @@ export class RuntimeContentPolicy {
 		seen.add(value)
 		return false
 	}
+}
+
+function isDevelopmentDiagnosticKey(key: string): boolean {
+	return DEVELOPMENT_DIAGNOSTIC_KEYS.has(key) || /^diagnostic_logger_args\.\d+$/.test(key)
+}
+
+function truncateDevelopmentDiagnostic(value: string): string {
+	if (value.length <= MAX_ATTRIBUTE_LENGTH) return value
+	const suffix = `… [truncated chars=${value.length}]`
+	return `${value.slice(0, MAX_ATTRIBUTE_LENGTH - suffix.length)}${suffix}`
 }
 
 /** Exact correlation keys only; nested content/credential fields cannot opt out of masking. */

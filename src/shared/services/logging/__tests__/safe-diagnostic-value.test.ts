@@ -7,6 +7,13 @@ describe("redactDiagnosticString", () => {
 		expect(redactDiagnosticString("Authorization: Basic dXNlcjpwYXNz")).toBe("Authorization: Basic [REDACTED]")
 	})
 
+	it("redacts labeled credentials and common token prefixes", () => {
+		expect(redactDiagnosticString('apiKey="sk-live-123456" token=ghp_1234567890123456')).toBe(
+			'apiKey="[REDACTED]" token=[REDACTED]',
+		)
+		expect(redactDiagnosticString("client_secret: top-secret-value")).toBe("client_secret: [REDACTED]")
+	})
+
 	it("leaves ordinary diagnostics untouched", () => {
 		expect(redactDiagnosticString("request failed after 3 retries")).toBe("request failed after 3 retries")
 	})
