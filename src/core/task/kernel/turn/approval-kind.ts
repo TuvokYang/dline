@@ -1,5 +1,20 @@
-import type { AutoApprovalSettings } from "@shared/AutoApprovalSettings"
-import { ClineDefaultTool, CONVERSATIONAL_TOOL_NAMES } from "@shared/tools"
+import { KERNEL_CONVERSATIONAL_TOOL_IDS, KernelToolId } from "./tool-identities"
+
+export interface AutoApprovalSettingsLike {
+	actions: {
+		readFiles?: boolean
+		readFilesExternally?: boolean
+		editFiles?: boolean
+		editFilesExternally?: boolean
+		executeSafeCommands?: boolean
+		executeAllCommands?: boolean
+		useBrowser?: boolean
+		useWeb?: boolean
+		useMcp?: boolean
+		generateImages?: boolean
+		focusChain?: boolean
+	}
+}
 
 /**
  * Permission scope a tool call is classified into.
@@ -85,8 +100,8 @@ export type ConfigurableCeilings = Partial<Record<PermissionScope, ApprovalCeili
  * the conversational set because it likewise owns whether to block, which is
  * the same rule the existing runtime applies.
  */
-function ownsItsInteraction(tool: ClineDefaultTool): boolean {
-	return tool === ClineDefaultTool.STATUS_UPDATE || CONVERSATIONAL_TOOL_NAMES.has(tool)
+function ownsItsInteraction(tool: KernelToolId): boolean {
+	return tool === KernelToolId.STATUS_UPDATE || KERNEL_CONVERSATIONAL_TOOL_IDS.has(tool)
 }
 
 /**
@@ -125,51 +140,51 @@ const DEFAULT_CEILINGS: Record<PermissionScope, ApprovalCeiling> = {
 const FIXED_CEILING_SCOPES: ReadonlySet<PermissionScope> = new Set<PermissionScope>(["conversational"])
 
 /** Read tools whose provider/runtime fan-out can reach paths absent from the call. */
-const UNBOUNDED_READ_TOOLS: ReadonlySet<ClineDefaultTool> = new Set([ClineDefaultTool.FIND_REFERENCES])
+const UNBOUNDED_READ_TOOLS: ReadonlySet<KernelToolId> = new Set([KernelToolId.FIND_REFERENCES])
 
 /** Edit tools whose provider/runtime fan-out can reach paths absent from the call. */
-const UNBOUNDED_EDIT_TOOLS: ReadonlySet<ClineDefaultTool> = new Set([ClineDefaultTool.RENAME, ClineDefaultTool.REPLACE_TEXT])
+const UNBOUNDED_EDIT_TOOLS: ReadonlySet<KernelToolId> = new Set([KernelToolId.RENAME, KernelToolId.REPLACE_TEXT])
 
 /** Tools that reach the filesystem for reading. */
-const READ_TOOLS: ReadonlySet<ClineDefaultTool> = new Set([
-	ClineDefaultTool.FILE_READ,
-	ClineDefaultTool.SEARCH,
-	ClineDefaultTool.LIST_FILES,
-	ClineDefaultTool.LIST_CODE_DEF,
-	ClineDefaultTool.FIND_REFERENCES,
-	ClineDefaultTool.LOAD_SKILL,
-	ClineDefaultTool.LOAD_WORKFLOW,
-	ClineDefaultTool.SUMMARIZE_TASK,
-	ClineDefaultTool.GENERATE_EXPLANATION,
+const READ_TOOLS: ReadonlySet<KernelToolId> = new Set([
+	KernelToolId.FILE_READ,
+	KernelToolId.SEARCH,
+	KernelToolId.LIST_FILES,
+	KernelToolId.LIST_CODE_DEF,
+	KernelToolId.FIND_REFERENCES,
+	KernelToolId.LOAD_SKILL,
+	KernelToolId.LOAD_WORKFLOW,
+	KernelToolId.SUMMARIZE_TASK,
+	KernelToolId.GENERATE_EXPLANATION,
 ])
 
 /** Tools that mutate files. */
-const EDIT_TOOLS: ReadonlySet<ClineDefaultTool> = new Set([
-	ClineDefaultTool.FILE_NEW,
-	ClineDefaultTool.FILE_EDIT,
-	ClineDefaultTool.NEW_RULE,
-	ClineDefaultTool.APPLY_PATCH,
-	ClineDefaultTool.REPLACE_TEXT,
-	ClineDefaultTool.RENAME,
+const EDIT_TOOLS: ReadonlySet<KernelToolId> = new Set([
+	KernelToolId.FILE_NEW,
+	KernelToolId.FILE_EDIT,
+	KernelToolId.NEW_RULE,
+	KernelToolId.APPLY_PATCH,
+	KernelToolId.REPLACE_TEXT,
+	KernelToolId.RENAME,
 ])
 
 /** Direct scope assignments for tools whose scope needs no runtime context. */
-const DIRECT_SCOPES: Partial<Record<ClineDefaultTool, PermissionScope>> = {
-	[ClineDefaultTool.BROWSER]: "browser",
-	[ClineDefaultTool.WEB_FETCH]: "web",
-	[ClineDefaultTool.WEB_SEARCH]: "web",
-	[ClineDefaultTool.REPORT_BUG]: "web",
-	[ClineDefaultTool.MCP_USE]: "mcp",
-	[ClineDefaultTool.MCP_ACCESS]: "mcp",
-	[ClineDefaultTool.MCP_DOCS]: "mcp",
-	[ClineDefaultTool.LOAD_MCP]: "mcp",
-	[ClineDefaultTool.GENERATE_IMAGE]: "generate_image",
-	[ClineDefaultTool.TODO]: "focus_chain",
-	[ClineDefaultTool.CHANGE_TODO_LIST]: "focus_chain",
-	[ClineDefaultTool.NEW_TASK]: "subagent",
-	[ClineDefaultTool.SPAWN_TASK]: "subagent",
-	[ClineDefaultTool.USE_SUBAGENT]: "subagent",
-	[ClineDefaultTool.USE_SUBAGENTS]: "subagent",
+const DIRECT_SCOPES: Partial<Record<KernelToolId, PermissionScope>> = {
+	[KernelToolId.BROWSER]: "browser",
+	[KernelToolId.WEB_FETCH]: "web",
+	[KernelToolId.WEB_SEARCH]: "web",
+	[KernelToolId.REPORT_BUG]: "web",
+	[KernelToolId.MCP_USE]: "mcp",
+	[KernelToolId.MCP_ACCESS]: "mcp",
+	[KernelToolId.MCP_DOCS]: "mcp",
+	[KernelToolId.LOAD_MCP]: "mcp",
+	[KernelToolId.GENERATE_IMAGE]: "generate_image",
+	[KernelToolId.TODO]: "focus_chain",
+	[KernelToolId.CHANGE_TODO_LIST]: "focus_chain",
+	[KernelToolId.NEW_TASK]: "subagent",
+	[KernelToolId.SPAWN_TASK]: "subagent",
+	[KernelToolId.USE_SUBAGENT]: "subagent",
+	[KernelToolId.USE_SUBAGENTS]: "subagent",
 }
 
 /**
@@ -180,7 +195,7 @@ const DIRECT_SCOPES: Partial<Record<ClineDefaultTool, PermissionScope>> = {
  * @returns The scope whose ceiling and toggle govern this call.
  */
 export function resolvePermissionScope(toolName: string, context: PermissionScopeContext = {}): PermissionScope {
-	const tool = toolName as ClineDefaultTool
+	const tool = toolName as KernelToolId
 
 	if (UNBOUNDED_READ_TOOLS.has(tool)) return "read_external"
 	if (UNBOUNDED_EDIT_TOOLS.has(tool)) return "edit_external"
@@ -190,7 +205,7 @@ export function resolvePermissionScope(toolName: string, context: PermissionScop
 	if (EDIT_TOOLS.has(tool)) {
 		return context.isExternalPath ? "edit_external" : "edit_workspace"
 	}
-	if (tool === ClineDefaultTool.BASH || tool === ClineDefaultTool.KILL_COMMAND) {
+	if (tool === KernelToolId.BASH || tool === KernelToolId.KILL_COMMAND) {
 		return context.isSafeCommand ? "command_safe" : "command_all"
 	}
 
@@ -218,7 +233,7 @@ export function resolveApprovalCeiling(scope: PermissionScope, configured: Confi
  * introduces no second permission store. A scope with no corresponding flag is
  * not auto-approvable by toggle.
  */
-function isScopeToggledOn(scope: PermissionScope, settings: AutoApprovalSettings): boolean {
+function isScopeToggledOn(scope: PermissionScope, settings: AutoApprovalSettingsLike): boolean {
 	const actions = settings.actions
 	switch (scope) {
 		case "read_workspace":
@@ -257,7 +272,7 @@ function isScopeToggledOn(scope: PermissionScope, settings: AutoApprovalSettings
 /** Inputs to one approval decision. */
 export interface ApprovalKindInput {
 	toolName: string
-	settings: AutoApprovalSettings
+	settings: AutoApprovalSettingsLike
 	ceilings?: ConfigurableCeilings
 	context?: PermissionScopeContext
 	/** The enclosing tool approval may satisfy this nested call when the ceiling permits it. */
@@ -299,7 +314,7 @@ export interface ApprovalKindInput {
  * @returns The approval decision under the supplied permission state.
  */
 export function resolveApprovalKind(input: ApprovalKindInput): ApprovalDecision {
-	const tool = input.toolName as ClineDefaultTool
+	const tool = input.toolName as KernelToolId
 	const scope = resolvePermissionScope(input.toolName, input.context)
 	const ceiling = resolveApprovalCeiling(scope, input.ceilings)
 

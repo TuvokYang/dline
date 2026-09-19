@@ -98,7 +98,7 @@ const FORBIDDEN_PREFIXES = [
 ]
 
 /** Import specifiers the kernel is allowed to depend on. */
-const ALLOWED_EXACT = new Set(["@shared/tools", "@shared/AutoApprovalSettings"])
+const ALLOWED_EXACT = new Set<string>()
 
 describe("kernel purity", () => {
 	it("finds the kernel modules", () => {
@@ -108,10 +108,8 @@ describe("kernel purity", () => {
 	})
 
 	it("detects the imports the kernel actually declares", () => {
-		// Guards the scanner: a regex that matched nothing would make every
-		// assertion below pass without reading a single import.
 		const approvalKind = path.join(KERNEL_DIR, "approval-kind.ts")
-		expect(importSpecifiers(approvalKind)).toContain("@shared/tools")
+		expect(importSpecifiers(approvalKind)).toContain("./tool-identities")
 	})
 
 	it("recognises every import form a forbidden dependency could use", () => {
