@@ -22,7 +22,21 @@ function legacyBlock(): BlockLifecycle {
 }
 
 function kernelBlock(): KernelBlock {
-	return { blockId: "b1", index: 0, phase: "pending", attempt: "attempt-b1-1", lanes: [], turnEnding: false }
+	return {
+		blockId: "b1",
+		index: 0,
+		phase: "pending",
+		attempt: "attempt-b1-1",
+		lanes: [],
+		turnEnding: false,
+		policy: {
+			commandId: "policy:b1",
+			originRevision: 0,
+			status: "running",
+			interactionId: "policy:b1",
+			policyRevision: 1,
+		},
+	}
 }
 
 function legacyTurn(): TaskRuntimeState {
@@ -43,7 +57,14 @@ function kernelTurn(): TaskState {
 	return {
 		...createInitialTaskState("task-1"),
 		flow: { phase: "running" },
-		turn: { turnId: "turn-1", mode: "serial", blocks: [kernelBlock()], automaticApprovalBlockIds: [], executingBlockIds: [] },
+		turn: {
+			turnId: "turn-1",
+			mode: "serial",
+			blocks: [kernelBlock()],
+			manualApprovalBlockIds: [],
+			automaticApprovalBlockIds: [],
+			executingBlockIds: [],
+		},
 	}
 }
 
@@ -70,7 +91,12 @@ describe("TaskRuntimeV2 legacy replay", () => {
 		expect(subject.getState().halt.status).toBe("stopping")
 		expect(legacyStopping.next.phase).toBe(TaskPhase.CANCELLING)
 		for (const participantId of ALL_HALT_PARTICIPANTS)
-			await subject.submit({ type: "halt.halted", generation: 0, haltId: "halt-1", participantId })
+			await subject.submit({
+				type: "halt.halted",
+				generation: subject.getState().generation,
+				haltId: "halt-1",
+				participantId,
+			})
 		await subject.waitForQuiescence()
 		expect(subject.getState().flow.phase).toBe("paused")
 		expect(legacyPaused.next.phase).toBe(TaskPhase.PAUSED)
@@ -91,7 +117,11 @@ describe("TaskRuntimeV2 legacy replay", () => {
 		await subject.submit({
 			type: "approval.evaluated",
 			generation: 0,
+			commandId: "policy:b1",
+			originRevision: 0,
 			attempt: "attempt-b1-1",
+			interactionId: "policy:b1",
+			policyRevision: 1,
 			blockId: "b1",
 			approved: true,
 		})

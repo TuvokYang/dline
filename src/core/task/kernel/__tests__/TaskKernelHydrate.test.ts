@@ -22,7 +22,14 @@ function base(): TaskState {
 		...createInitialTaskState("task-1"),
 		revision: 4,
 		flow: { phase: "running" },
-		turn: { turnId: "turn-1", mode: "serial", blocks: [], automaticApprovalBlockIds: [], executingBlockIds: [] },
+		turn: {
+			turnId: "turn-1",
+			mode: "serial",
+			blocks: [],
+			manualApprovalBlockIds: [],
+			automaticApprovalBlockIds: [],
+			executingBlockIds: [],
+		},
 	}
 }
 

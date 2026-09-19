@@ -73,7 +73,7 @@ export function normalizeCommand(command: Command): CommandAction {
 		case "provider.start":
 			return { kind: "provider" }
 		case "tool.run":
-			return { kind: "tool", blockIds: command.blockIds, turnId: command.turnId }
+			return { kind: "tool", blockIds: command.blocks.map((block) => block.blockId), turnId: command.turnId }
 		case "dialog.prepare":
 			return { kind: "dialog_prepare", interactionId: command.interactionId }
 		case "dialog.reveal":

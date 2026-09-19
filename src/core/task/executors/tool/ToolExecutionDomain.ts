@@ -86,6 +86,7 @@ export class ToolExecutionDomain {
 	 * drain barrier rather than a hint.
 	 */
 	private haltGeneration: HaltId | undefined
+	private haltOperation: { readonly haltId: HaltId; readonly completion: Promise<void> } | undefined
 
 	constructor(options: ToolExecutionDomainOptions) {
 		this.runner = options.runner
@@ -158,22 +159,26 @@ export class ToolExecutionDomain {
 	 * resources have been released, so the runtime can treat `tool.halted` as
 	 * proof that nothing further will arrive from this domain.
 	 */
-	async halt(order: HaltOrder): Promise<void> {
-		// A repeated stop is a no-op rather than a second release, which is what
-		// keeps the single-disposer guarantee true under re-entrant cancel.
-		if (this.haltGeneration === order.haltId) {
-			return
-		}
-		this.haltGeneration = order.haltId
+	halt(order: HaltOrder): Promise<void> {
+		const existing = this.haltOperation
+		if (existing?.haltId === order.haltId) return existing.completion
+		this.fence(order.haltId)
+		const previous = existing?.completion.catch(() => undefined) ?? Promise.resolve()
+		const completion = previous.then(() => this.drainHalt(order))
+		this.haltOperation = { haltId: order.haltId, completion }
+		return completion
+	}
 
-		const pending = [...this.inFlight.values()]
-		await Promise.allSettled(pending)
-
+	private async drainHalt(order: HaltOrder): Promise<void> {
+		const pending = [...this.inFlight.entries()]
+		await Promise.allSettled(pending.map(([, work]) => work))
 		try {
 			await this.runner.release(order)
 		} finally {
-			this.inFlight.clear()
-			this.sink.emit({ kind: "tool.halted", haltId: order.haltId })
+			for (const [commandId, work] of pending) {
+				if (this.inFlight.get(commandId) === work) this.inFlight.delete(commandId)
+			}
+			if (this.haltGeneration === order.haltId) this.sink.emit({ kind: "tool.halted", haltId: order.haltId })
 		}
 	}
 
@@ -188,8 +193,9 @@ export class ToolExecutionDomain {
 		this.toolHaltSequence += 1
 		const haltId = `${this.identityPrefix}:halt:${this.toolHaltSequence}`
 		let timeout: ReturnType<typeof setTimeout> | undefined
+		let drained = false
 		try {
-			const drained = await Promise.race([
+			drained = await Promise.race([
 				this.halt({ haltId, reason }).then(() => true),
 				new Promise<false>((resolve) => {
 					timeout = setTimeout(() => resolve(false), this.haltBudgetMs)
@@ -205,9 +211,14 @@ export class ToolExecutionDomain {
 			this.releaseFallback()
 		} finally {
 			if (timeout) clearTimeout(timeout)
-			// Retire only this generation. A newer stop remains authoritative.
-			this.rearm(haltId)
+			// A timed-out generation remains fenced until its real drain completes.
+			if (drained) this.rearm(haltId)
 		}
+	}
+
+	/** Establish the stop fence synchronously before orchestration awaits another participant. */
+	fence(haltId: HaltId): void {
+		this.haltGeneration = haltId
 	}
 
 	/**
@@ -222,6 +233,7 @@ export class ToolExecutionDomain {
 			return
 		}
 		this.haltGeneration = undefined
+		if (haltId === undefined || this.haltOperation?.haltId === haltId) this.haltOperation = undefined
 	}
 
 	get inFlightCount(): number {

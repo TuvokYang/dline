@@ -35,7 +35,14 @@ function kernelTurnState(blocks: KernelBlock[]): TaskState {
 	return {
 		...createInitialTaskState("task-1"),
 		flow: { phase: "running" },
-		turn: { turnId: "turn-1", mode: "serial", blocks, automaticApprovalBlockIds: [], executingBlockIds: [] },
+		turn: {
+			turnId: "turn-1",
+			mode: "serial",
+			blocks,
+			manualApprovalBlockIds: [],
+			automaticApprovalBlockIds: [],
+			executingBlockIds: [],
+		},
 	}
 }
 
@@ -104,7 +111,7 @@ function projectLegacyBlock(block: BlockLifecycle, executing: ReadonlySet<string
 function projectKernelTurn(state: TaskState) {
 	return {
 		blocks: state.turn.blocks.map((block) => ({ blockId: block.blockId, phase: block.phase })),
-		manual: state.turn.manualApprovalBlockId,
+		manual: state.turn.manualApprovalBlockIds[0],
 		automatic: [...state.turn.automaticApprovalBlockIds].sort(),
 		executing: [...state.turn.executingBlockIds].sort(),
 	}
@@ -120,7 +127,7 @@ describe("task kernel legacy replay", () => {
 			{ type: "user.cancel", generation: 0, haltId: "halt-1" },
 			...ALL_HALT_PARTICIPANTS.map((participantId) => ({
 				type: "halt.halted" as const,
-				generation: 0,
+				generation: 1,
 				haltId: "halt-1",
 				participantId,
 			})),
@@ -151,17 +158,46 @@ describe("task kernel legacy replay", () => {
 			{ type: "BLOCK_EXECUTION_STARTED", turnId: "turn-1", dlineTid: "b1" },
 			{ type: legacyTerminal, turnId: "turn-1", dlineTid: "b1" },
 		])
-		const kernel = runKernel(kernelTurnState([kernelBlock("b1", 0)]), [
-			{ type: "approval.evaluated", generation: 0, attempt: "attempt-b1-1", blockId: "b1", approved: true },
-			{ type: "tool.started", generation: 0, attempt: "attempt-b1-1", turnId: "turn-1", blockId: "b1" },
-			{ type: kernelTerminal, generation: 0, attempt: "attempt-b1-1", turnId: "turn-1", blockId: "b1" },
-		])
+		const policyCommandId = "policy:b1"
+		const kernel = runKernel(
+			kernelTurnState([
+				{
+					...kernelBlock("b1", 0),
+					policy: {
+						commandId: policyCommandId,
+						originRevision: 0,
+						status: "running",
+						interactionId: "policy:b1",
+						policyRevision: 1,
+					},
+				},
+			]),
+			[
+				{
+					type: "approval.evaluated",
+					generation: 0,
+					commandId: policyCommandId,
+					originRevision: 0,
+					attempt: "attempt-b1-1",
+					interactionId: "policy:b1",
+					policyRevision: 1,
+					blockId: "b1",
+					approved: true,
+				},
+				{ type: "tool.started", generation: 0, attempt: "attempt-b1-1", turnId: "turn-1", blockId: "b1" },
+				{ type: kernelTerminal, generation: 0, attempt: "attempt-b1-1", turnId: "turn-1", blockId: "b1" },
+			],
+		)
 
 		for (const index of [1, 2, 3])
 			expect(projectKernelTurn(kernel.states[index])).toEqual(projectLegacyTurn(legacy.states[index]))
 		expect(legacy.effects.filter((effect) => effect.type === "EXECUTE_TOOL")).toHaveLength(1)
 		expect(kernel.commands.filter((command) => command.type === "tool.run")).toEqual([
-			expect.objectContaining({ type: "tool.run", turnId: "turn-1", blockIds: ["b1"] }),
+			expect.objectContaining({
+				type: "tool.run",
+				turnId: "turn-1",
+				blocks: [expect.objectContaining({ blockId: "b1", attempt: "attempt-b1-1" })],
+			}),
 		])
 	})
 
@@ -190,11 +226,19 @@ describe("task kernel legacy replay", () => {
 			{
 				type: "dialog.prepared",
 				generation: 0,
+				commandId: "task-1:1:0",
+				originRevision: 1,
 				interactionId: "b1",
 				journalRef: "journal:0:1",
 				receiverGeneration: 0,
 			},
-			{ type: "dialog.presented", generation: 0, interactionId: "b1" },
+			{
+				type: "dialog.presented",
+				generation: 0,
+				commandId: "task-1:2:0",
+				originRevision: 2,
+				interactionId: "b1",
+			},
 			{
 				type: "dialog.responded",
 				generation: 0,

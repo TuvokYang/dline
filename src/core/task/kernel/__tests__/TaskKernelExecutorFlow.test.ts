@@ -17,7 +17,14 @@ function running(): TaskState {
 	return {
 		...createInitialTaskState("task-1"),
 		flow: { phase: "running" },
-		turn: { turnId: "turn-1", mode: "serial", blocks: [], automaticApprovalBlockIds: [], executingBlockIds: [] },
+		turn: {
+			turnId: "turn-1",
+			mode: "serial",
+			blocks: [],
+			manualApprovalBlockIds: [],
+			automaticApprovalBlockIds: [],
+			executingBlockIds: [],
+		},
 	}
 }
 
@@ -57,6 +64,7 @@ describe("task kernel executor flow", () => {
 				turnId: "turn-1",
 				mode: "serial",
 				blocks: [block("b1", 0, "completed"), block("b2", 1, "executing")],
+				manualApprovalBlockIds: [],
 				automaticApprovalBlockIds: [],
 				executingBlockIds: ["b2"],
 			},
@@ -148,7 +156,7 @@ describe("task kernel executor flow", () => {
 			turnId: "turn-1",
 			draftRef: "draft:late",
 		})
-		expect(late).toMatchObject({ kind: "rejected", reason: "phase_invalid" })
+		expect(late).toMatchObject({ kind: "rejected", reason: "generation_mismatch" })
 	})
 
 	it("tracks compaction retry attempts and rejects late feedback", () => {
@@ -203,12 +211,49 @@ describe("task kernel executor flow", () => {
 		expect(late.state).toBe(state)
 	})
 
-	it("accepts lifecycle spawn success/failure feedback as kernel events", () => {
-		const spawned = accepted(transition(running(), { type: "lifecycle.spawned", generation: 0 }))
-		expect(spawned.state.flow.phase).toBe("running")
-		const failed = accepted(
-			transition(spawned.state, { type: "lifecycle.spawn_failed", generation: 0, message: "spawn failed" }),
+	it("accepts only causally owned lifecycle spawn feedback", () => {
+		const requested = accepted(
+			transition(running(), {
+				type: "lifecycle.spawn_requested",
+				generation: 0,
+				spawnAttempt: "spawn-1",
+				handoffRef: "handoff:1",
+			}),
 		)
-		expect(failed.state.flow).toMatchObject({ phase: "error", error: "spawn failed" })
+		const command = requested.commands[0]
+		if (command?.type !== "task.spawn") throw new Error("expected task.spawn")
+		const spawned = accepted(
+			transition(requested.state, {
+				type: "lifecycle.spawned",
+				generation: 0,
+				commandId: command.commandId,
+				originRevision: command.originRevision,
+				spawnAttempt: command.spawnAttempt,
+				childTaskId: "child-1",
+			}),
+		)
+		expect(spawned.state.flow.spawn).toMatchObject({ status: "completed", childTaskId: "child-1" })
+
+		const second = accepted(
+			transition(spawned.state, {
+				type: "lifecycle.spawn_requested",
+				generation: 0,
+				spawnAttempt: "spawn-2",
+				handoffRef: "handoff:2",
+			}),
+		)
+		const secondCommand = second.commands[0]
+		if (secondCommand?.type !== "task.spawn") throw new Error("expected second task.spawn")
+		const failed = accepted(
+			transition(second.state, {
+				type: "lifecycle.spawn_failed",
+				generation: 0,
+				commandId: secondCommand.commandId,
+				originRevision: secondCommand.originRevision,
+				spawnAttempt: secondCommand.spawnAttempt,
+				message: "spawn failed",
+			}),
+		)
+		expect(failed.state.flow).toMatchObject({ phase: "error", error: "spawn failed", spawn: { status: "failed" } })
 	})
 })

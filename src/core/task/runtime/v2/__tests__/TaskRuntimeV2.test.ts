@@ -56,9 +56,14 @@ describe("TaskRuntimeV2", () => {
 		await dialog.waitForCommandCount(1)
 		expect(dialog.commands.map((command) => command.type)).toEqual(["dialog.prepare"])
 
+		if (requested.kind !== "accepted") throw new Error(requested.diagnostic.message)
+		const prepare = requested.commands[0]
+		if (prepare?.type !== "dialog.prepare") throw new Error("expected dialog.prepare")
 		const prepared = await subject.submit({
 			type: "dialog.prepared",
 			generation: 0,
+			commandId: prepare.commandId,
+			originRevision: prepare.originRevision,
 			interactionId: "i-1",
 			journalRef: "j-1",
 			receiverGeneration: 1,

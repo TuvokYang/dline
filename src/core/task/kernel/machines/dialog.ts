@@ -7,7 +7,7 @@ export interface DialogReduction {
 
 type DialogProgressEvent = Extract<
 	TaskEvent,
-	{ type: "dialog.prepared" | "dialog.presented" | "dialog.responded" | "dialog.reopened" }
+	{ type: "dialog.prepared" | "dialog.presented" | "dialog.failed" | "dialog.responded" | "dialog.reopened" }
 >
 
 type DialogRequestEvent = Extract<TaskEvent, { type: "dialog.requested" | "dialog.interrupt_requested" | "approval.requested" }>
@@ -32,9 +32,33 @@ function updateInteraction(
 ): DialogInteraction | undefined {
 	if (!interaction || interaction.interactionId !== event.interactionId) return interaction
 	if (event.type === "dialog.prepared") {
-		return { ...interaction, status: "prepared", journalRef: event.journalRef, receiverGeneration: event.receiverGeneration }
+		return {
+			...interaction,
+			status: "prepared",
+			journalRef: event.journalRef,
+			receiverGeneration: event.receiverGeneration,
+			prepare: interaction.prepare && { ...interaction.prepare, status: "completed" },
+		}
 	}
-	if (event.type === "dialog.presented") return { ...interaction, status: "awaiting" }
+	if (event.type === "dialog.presented")
+		return {
+			...interaction,
+			status: "awaiting",
+			reveal: interaction.reveal && { ...interaction.reveal, status: "completed" },
+		}
+	if (event.type === "dialog.failed") {
+		return {
+			...interaction,
+			status: "failed",
+			failure: { stage: event.stage, message: event.message },
+			prepare:
+				event.stage === "prepare" && interaction.prepare
+					? { ...interaction.prepare, status: "failed" }
+					: interaction.prepare,
+			reveal:
+				event.stage === "reveal" && interaction.reveal ? { ...interaction.reveal, status: "failed" } : interaction.reveal,
+		}
+	}
 	if (event.type === "dialog.reopened") return { ...interaction, status: "awaiting", createdRevision }
 	return {
 		...interaction,
@@ -92,6 +116,10 @@ export function reduceDialog(state: DialogSlice, event: TaskEvent, nextRevision:
 			commands: [],
 		}
 	}
+	if (event.type === "approval.evaluated") {
+		const { [event.blockId]: _resolved, ...approvalsByBlock } = state.approvalsByBlock
+		return { state: { ...state, approvalsByBlock }, commands: [] }
+	}
 	if (event.type === "dialog.resolved") {
 		const resolvingPrimary = state.primary?.interactionId === event.interactionId
 		const primary = resolvingPrimary ? state.interrupted : state.primary
@@ -104,6 +132,7 @@ export function reduceDialog(state: DialogSlice, event: TaskEvent, nextRevision:
 	if (
 		event.type !== "dialog.prepared" &&
 		event.type !== "dialog.presented" &&
+		event.type !== "dialog.failed" &&
 		event.type !== "dialog.responded" &&
 		event.type !== "dialog.reopened"
 	) {

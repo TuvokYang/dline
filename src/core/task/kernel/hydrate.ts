@@ -54,7 +54,7 @@ function validateSnapshot(input: HydrateInput, snapshot: TaskState): HydrateResu
 	const ownedBlockIds = [
 		...snapshot.turn.executingBlockIds,
 		...snapshot.turn.automaticApprovalBlockIds,
-		...(snapshot.turn.manualApprovalBlockId ? [snapshot.turn.manualApprovalBlockId] : []),
+		...snapshot.turn.manualApprovalBlockIds,
 	]
 	if (ownedBlockIds.some((blockId) => !blockIds.has(blockId)))
 		return readOnly("snapshot_invalid", "unknown_block_owner", "Snapshot ownership references an unknown block")
@@ -134,8 +134,9 @@ function recoveryInteraction(state: TaskState, form: Exclude<HydrateForm, "new" 
 }
 
 function normalizeInteraction(interaction: DialogInteraction, generation: number): DialogInteraction {
-	if (interaction.status !== "resolving") return { ...interaction, receiverGeneration: generation }
-	return { ...interaction, status: "awaiting", receiverGeneration: generation }
+	const normalized = { ...interaction, receiverGeneration: generation, prepare: undefined, reveal: undefined }
+	if (interaction.status !== "resolving") return normalized
+	return { ...normalized, status: "awaiting" }
 }
 
 function normalizeState(
@@ -168,7 +169,7 @@ function normalizeState(
 			blocks,
 			executingBlockIds: [],
 			automaticApprovalBlockIds: [],
-			manualApprovalBlockId: snapshot.turn.manualApprovalBlockId,
+			manualApprovalBlockIds: snapshot.turn.manualApprovalBlockIds,
 		},
 		dialog: {
 			primary: snapshot.dialog.primary ? normalizeInteraction(snapshot.dialog.primary, generation) : undefined,
@@ -185,7 +186,7 @@ function normalizeState(
 	if (form === "consumed") {
 		state = {
 			...state,
-			turn: { ...state.turn, manualApprovalBlockId: undefined },
+			turn: { ...state.turn, manualApprovalBlockIds: [] },
 			dialog: { approvalsByBlock: {} },
 		}
 		return { state, diagnostics: [] }
@@ -200,6 +201,17 @@ function normalizeState(
 	}
 }
 
+function dialogCommandInput(interaction: DialogInteraction) {
+	return {
+		interactionId: interaction.interactionId,
+		turnId: interaction.turnId,
+		kind: interaction.kind,
+		presentationRef: interaction.presentationRef,
+		actionRules: interaction.actionRules,
+		blockId: interaction.blockId,
+	}
+}
+
 function initialCommands(state: TaskState): readonly Command[] {
 	return [state.dialog.primary, ...Object.values(state.dialog.approvalsByBlock)]
 		.filter((interaction): interaction is DialogInteraction => interaction !== undefined)
@@ -209,19 +221,53 @@ function initialCommands(state: TaskState): readonly Command[] {
 				originRevision: state.revision,
 				generation: state.generation,
 			}
-			if (interaction.status === "planned")
-				return [{ ...base, type: "dialog.prepare", interactionId: interaction.interactionId, kind: interaction.kind }]
-			if (interaction.status === "prepared" && interaction.journalRef)
+			if (interaction.status === "planned") return [{ ...base, type: "dialog.prepare", ...dialogCommandInput(interaction) }]
+			if (interaction.status === "prepared" && interaction.journalRef && interaction.receiverGeneration !== undefined)
 				return [
 					{
 						...base,
 						type: "dialog.reveal",
-						interactionId: interaction.interactionId,
+						...dialogCommandInput(interaction),
 						journalRef: interaction.journalRef,
+						receiverGeneration: interaction.receiverGeneration,
 					},
 				]
 			return []
 		})
+}
+
+function installDialogCommandOwners(state: TaskState, commands: readonly Command[]): TaskState {
+	const ownership = new Map(
+		commands
+			.filter(
+				(command): command is Extract<Command, { type: "dialog.prepare" | "dialog.reveal" }> =>
+					command.type === "dialog.prepare" || command.type === "dialog.reveal",
+			)
+			.map((command) => [command.interactionId, command] as const),
+	)
+	const own = (interaction: DialogInteraction | undefined): DialogInteraction | undefined => {
+		if (!interaction) return undefined
+		const command = ownership.get(interaction.interactionId)
+		if (!command) return interaction
+		return {
+			...interaction,
+			[command.type === "dialog.prepare" ? "prepare" : "reveal"]: {
+				commandId: command.commandId,
+				originRevision: command.originRevision,
+				status: "running",
+			},
+		}
+	}
+	return {
+		...state,
+		dialog: {
+			primary: own(state.dialog.primary),
+			interrupted: own(state.dialog.interrupted),
+			approvalsByBlock: Object.fromEntries(
+				Object.entries(state.dialog.approvalsByBlock).map(([blockId, interaction]) => [blockId, own(interaction)!]),
+			),
+		},
+	}
 }
 
 export function hydrate(input: HydrateInput): HydrateResult {
@@ -233,11 +279,12 @@ export function hydrate(input: HydrateInput): HydrateResult {
 	if (invalid) return invalid
 	const form = classify(input.snapshot)
 	const normalized = normalizeState(input.snapshot, form)
+	const commands = form === "consumed" ? [] : initialCommands(normalized.state)
 	return {
 		kind: "ready",
 		form,
-		state: normalized.state,
-		initialCommands: form === "consumed" ? [] : initialCommands(normalized.state),
+		state: installDialogCommandOwners(normalized.state, commands),
+		initialCommands: commands,
 		diagnostics: normalized.diagnostics,
 	}
 }

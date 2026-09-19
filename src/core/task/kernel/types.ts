@@ -44,6 +44,18 @@ export interface CompactionFlowState {
 	readonly message?: string
 }
 
+export interface SpawnFlowState extends CommandFlowState {
+	readonly spawnAttempt: AttemptId
+	readonly handoffRef: string
+	readonly childTaskId?: TaskId
+	readonly message?: string
+}
+
+export interface PolicyEvaluationState extends CommandFlowState {
+	readonly interactionId: InteractionId
+	readonly policyRevision: number
+}
+
 export interface FlowState {
 	readonly phase: FlowPhase
 	readonly error?: string
@@ -53,6 +65,7 @@ export interface FlowState {
 	readonly compose?: CommandFlowState
 	readonly provider?: CommandFlowState
 	readonly compaction?: CompactionFlowState
+	readonly spawn?: SpawnFlowState
 }
 
 export interface KernelBlock {
@@ -62,13 +75,14 @@ export interface KernelBlock {
 	readonly attempt: AttemptId
 	readonly lanes: readonly string[]
 	readonly turnEnding: boolean
+	readonly policy?: PolicyEvaluationState
 }
 
 export interface TurnSlice {
 	readonly turnId?: TurnId
 	readonly mode: "serial" | "parallel"
 	readonly blocks: readonly KernelBlock[]
-	readonly manualApprovalBlockId?: BlockId
+	readonly manualApprovalBlockIds: readonly BlockId[]
 	readonly automaticApprovalBlockIds: readonly BlockId[]
 	readonly executingBlockIds: readonly BlockId[]
 }
@@ -92,7 +106,7 @@ export interface DialogInteraction {
 	readonly interactionId: InteractionId
 	readonly turnId: TurnId
 	readonly kind: string
-	readonly status: "planned" | "prepared" | "awaiting" | "resolving"
+	readonly status: "planned" | "prepared" | "awaiting" | "resolving" | "failed"
 	readonly createdRevision: number
 	readonly presentationRef: string
 	readonly actionRules: readonly DialogActionRule[]
@@ -100,6 +114,9 @@ export interface DialogInteraction {
 	readonly receiverGeneration?: number
 	readonly blockId?: BlockId
 	readonly acceptedResponse?: DialogAcceptedResponse
+	readonly prepare?: CommandFlowState
+	readonly reveal?: CommandFlowState
+	readonly failure?: { readonly stage: "prepare" | "reveal"; readonly message: string }
 }
 
 export interface DialogSlice {
@@ -183,13 +200,19 @@ interface DialogRequestEvent extends EventBase {
 
 export type DialogEvent =
 	| (DialogRequestEvent & { readonly type: "dialog.requested" | "dialog.interrupt_requested" })
-	| (EventBase & {
+	| (CommandFeedbackEvent & {
 			readonly type: "dialog.prepared"
 			readonly interactionId: InteractionId
 			readonly journalRef: string
 			readonly receiverGeneration: number
 	  })
-	| (EventBase & { readonly type: "dialog.presented"; readonly interactionId: InteractionId })
+	| (CommandFeedbackEvent & { readonly type: "dialog.presented"; readonly interactionId: InteractionId })
+	| (CommandFeedbackEvent & {
+			readonly type: "dialog.failed"
+			readonly interactionId: InteractionId
+			readonly stage: "prepare" | "reveal"
+			readonly message: string
+	  })
 	| (EventBase & {
 			readonly type: "dialog.responded"
 			readonly taskId: TaskId
@@ -246,15 +269,27 @@ export type ApprovalEvent =
 			readonly actionRules: readonly DialogActionRule[]
 	  })
 	| (EventBase & {
+			readonly type: "approval.evaluation_requested"
+			readonly turnId: TurnId
+			readonly blockId: BlockId
+			readonly interactionId: InteractionId
+			readonly policyRevision: number
+			readonly riskFacts: Readonly<Record<string, string | number | boolean>>
+			readonly attempt: AttemptId
+	  })
+	| (EventBase & {
 			readonly type: "approval.responded"
 			readonly turnId: TurnId
 			readonly blockId: BlockId
 			readonly interactionId: InteractionId
 			readonly approved: boolean
 	  })
-	| (EventBase & {
+	| (CommandFeedbackEvent & {
 			readonly type: "approval.evaluated" | "approval.failed"
+			readonly interactionId: InteractionId
 			readonly blockId: BlockId
+			readonly policyRevision: number
+			readonly attempt: AttemptId
 			readonly approved?: boolean
 			readonly message?: string
 	  })
@@ -264,17 +299,26 @@ export type HaltEvent = EventBase & {
 	readonly haltId: HaltId
 	readonly participantId: ParticipantId
 }
-export type LifecycleEvent = EventBase & {
-	readonly type:
-		| "lifecycle.open"
-		| "lifecycle.close"
-		| "lifecycle.spawned"
-		| "lifecycle.spawn_failed"
-		| "lifecycle.halt_timeout"
-	readonly haltId?: HaltId
-	readonly participantId?: ParticipantId
-	readonly message?: string
-}
+export type LifecycleEvent =
+	| (EventBase & { readonly type: "lifecycle.open" | "lifecycle.close" })
+	| (EventBase & {
+			readonly type: "lifecycle.spawn_requested"
+			readonly spawnAttempt: AttemptId
+			readonly handoffRef: string
+			readonly haltId?: HaltId
+	  })
+	| (CommandFeedbackEvent & {
+			readonly type: "lifecycle.spawned" | "lifecycle.spawn_failed"
+			readonly spawnAttempt: AttemptId
+			readonly childTaskId?: TaskId
+			readonly message?: string
+	  })
+	| (EventBase & {
+			readonly type: "lifecycle.halt_timeout"
+			readonly haltId: HaltId
+			readonly participantId?: ParticipantId
+			readonly message?: string
+	  })
 
 export type TaskEvent =
 	| UserEvent
@@ -300,14 +344,35 @@ export type ProviderStartCommand = CommandBase & {
 	readonly draftRef: string
 	readonly turnId?: TurnId
 }
+export interface ToolRunBlock {
+	readonly blockId: BlockId
+	readonly attempt: AttemptId
+	readonly index: number
+	readonly lanes: readonly string[]
+	readonly turnEnding: boolean
+}
 export type ToolRunCommand = CommandBase & {
 	readonly type: "tool.run"
 	readonly turnId: TurnId
-	readonly blockIds: readonly BlockId[]
+	readonly mode: "serial" | "parallel"
+	readonly blocks: readonly ToolRunBlock[]
+}
+interface DialogCommandInput {
+	readonly interactionId: InteractionId
+	readonly turnId: TurnId
+	readonly kind: string
+	readonly presentationRef: string
+	readonly actionRules: readonly DialogActionRule[]
+	readonly blockId?: BlockId
 }
 export type DialogCommand =
-	| (CommandBase & { readonly type: "dialog.prepare"; readonly interactionId: InteractionId; readonly kind: string })
-	| (CommandBase & { readonly type: "dialog.reveal"; readonly interactionId: InteractionId; readonly journalRef: string })
+	| (CommandBase & DialogCommandInput & { readonly type: "dialog.prepare" })
+	| (CommandBase &
+			DialogCommandInput & {
+				readonly type: "dialog.reveal"
+				readonly journalRef: string
+				readonly receiverGeneration: number
+			})
 export type ComposeRoundCommand = CommandBase & {
 	readonly type: "compose.round"
 	readonly turnId?: TurnId
@@ -325,6 +390,7 @@ export type ApprovalEvaluateCommand = CommandBase & {
 	readonly blockId: BlockId
 	readonly policyRevision: number
 	readonly riskFacts: Readonly<Record<string, string | number | boolean>>
+	readonly attempt: AttemptId
 }
 export type HaltStopCommand = CommandBase & {
 	readonly type: "halt.stop"
@@ -387,7 +453,7 @@ export function createInitialTaskState(taskId: TaskId): TaskState {
 		revision: 0,
 		generation: 0,
 		flow: { phase: "idle" },
-		turn: { mode: "serial", blocks: [], automaticApprovalBlockIds: [], executingBlockIds: [] },
+		turn: { mode: "serial", blocks: [], manualApprovalBlockIds: [], automaticApprovalBlockIds: [], executingBlockIds: [] },
 		dialog: { approvalsByBlock: {} },
 		intake: { queued: [], background: [], coTask: [] },
 		halt: { status: "idle", generation: 0 },

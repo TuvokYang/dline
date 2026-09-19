@@ -3,7 +3,7 @@ import { reduceFlow } from "./machines/flow"
 import { ALL_HALT_PARTICIPANTS, reduceHalt } from "./machines/halt"
 import { reduceIntake } from "./machines/intake"
 import { reduceTurn } from "./machines/turn"
-import type { Command, Diagnostic, RejectReason, TaskEvent, TaskState, TransitionResult } from "./types"
+import type { Command, Diagnostic, DialogInteraction, RejectReason, TaskEvent, TaskState, TransitionResult } from "./types"
 
 function reject(state: TaskState, reason: RejectReason, message: string): TransitionResult {
 	return { kind: "rejected", state, reason, diagnostic: { code: reason, message } }
@@ -23,6 +23,34 @@ function findInteraction(state: TaskState, interactionId: string) {
 	if (state.dialog.primary?.interactionId === interactionId) return state.dialog.primary
 	if (state.dialog.interrupted?.interactionId === interactionId) return state.dialog.interrupted
 	return Object.values(state.dialog.approvalsByBlock).find((interaction) => interaction.interactionId === interactionId)
+}
+
+function updateInteraction(
+	state: TaskState,
+	interactionId: string,
+	update: (interaction: DialogInteraction) => DialogInteraction,
+): TaskState {
+	const primary = state.dialog.primary?.interactionId === interactionId ? update(state.dialog.primary) : state.dialog.primary
+	const interrupted =
+		state.dialog.interrupted?.interactionId === interactionId ? update(state.dialog.interrupted) : state.dialog.interrupted
+	const approvalsByBlock = Object.fromEntries(
+		Object.entries(state.dialog.approvalsByBlock).map(([blockId, interaction]) => [
+			blockId,
+			interaction.interactionId === interactionId ? update(interaction) : interaction,
+		]),
+	)
+	return { ...state, dialog: { primary, interrupted, approvalsByBlock } }
+}
+
+function dialogCommandInput(interaction: DialogInteraction) {
+	return {
+		interactionId: interaction.interactionId,
+		turnId: interaction.turnId,
+		kind: interaction.kind,
+		presentationRef: interaction.presentationRef,
+		actionRules: interaction.actionRules,
+		blockId: interaction.blockId,
+	}
 }
 
 function hasRequiredPayload(
@@ -80,8 +108,6 @@ function validateEvent(state: TaskState, event: TaskEvent): ValidationFailure | 
 	if (event.type === "approval.requested") {
 		if (state.turn.turnId !== event.turnId || !state.turn.blocks.some((block) => block.blockId === event.blockId))
 			return { reason: "identity_mismatch", message: `Approval block ${event.blockId} is not active` }
-		if (state.turn.manualApprovalBlockId)
-			return { reason: "phase_invalid", message: `Approval slot is owned by ${state.turn.manualApprovalBlockId}` }
 		if (state.turn.blocks.find((block) => block.blockId === event.blockId)?.phase !== "pending")
 			return { reason: "phase_invalid", message: `Block ${event.blockId} is not pending` }
 	}
@@ -91,19 +117,50 @@ function validateEvent(state: TaskState, event: TaskEvent): ValidationFailure | 
 		if (state.turn.turnId !== event.turnId || !block || interaction?.interactionId !== event.interactionId)
 			return { reason: "identity_mismatch", message: `Approval block ${event.blockId} is not active` }
 		if (
-			state.turn.manualApprovalBlockId !== event.blockId ||
+			!state.turn.manualApprovalBlockIds.includes(event.blockId) ||
 			block.phase !== "awaiting_approval" ||
 			interaction.status !== "resolving"
 		)
 			return { reason: "phase_invalid", message: `Block ${event.blockId} is not awaiting a resolved approval` }
+		const decision =
+			interaction.acceptedResponse?.actionId === "approve"
+				? true
+				: interaction.acceptedResponse?.actionId === "reject"
+					? false
+					: undefined
+		if (decision !== undefined && decision !== event.approved)
+			return { reason: "identity_mismatch", message: "Approval result does not match the accepted dialog action" }
 	}
-	if (event.type === "approval.evaluated") {
+	if (event.type === "approval.evaluation_requested") {
 		const block = state.turn.blocks.find((candidate) => candidate.blockId === event.blockId)
-		if (!block) return { reason: "identity_mismatch", message: `Policy block ${event.blockId} is not active` }
+		if (state.turn.turnId !== event.turnId || !block)
+			return { reason: "identity_mismatch", message: `Policy block ${event.blockId} is not active` }
+		if (block.attempt !== event.attempt)
+			return { reason: "stale_attempt", message: `Policy attempt ${event.attempt} is stale` }
+		if (block.policy?.status === "running")
+			return { reason: "duplicate", message: `Policy evaluation for ${event.blockId} is already active` }
 		if (block.phase !== "pending")
+			return { reason: "phase_invalid", message: `Block ${event.blockId} cannot request policy from ${block.phase}` }
+	}
+	if (event.type === "approval.evaluated" || event.type === "approval.failed") {
+		const block = state.turn.blocks.find((candidate) => candidate.blockId === event.blockId)
+		const owner = block?.policy
+		if (
+			!block ||
+			block.attempt !== event.attempt ||
+			!owner ||
+			owner.commandId !== event.commandId ||
+			owner.originRevision !== event.originRevision ||
+			owner.interactionId !== event.interactionId ||
+			owner.policyRevision !== event.policyRevision
+		)
+			return { reason: "identity_mismatch", message: `Policy feedback ${event.commandId} is not active` }
+		if (owner.status !== "running")
+			return { reason: "duplicate", message: `Policy command ${event.commandId} already settled` }
+		if (block.phase !== "pending" && block.phase !== "awaiting_approval")
 			return {
-				reason: block.phase === "ready" ? "duplicate" : "phase_invalid",
-				message: `Block ${event.blockId} cannot be policy-approved from ${block.phase}`,
+				reason: "phase_invalid",
+				message: `Block ${event.blockId} cannot accept policy feedback from ${block.phase}`,
 			}
 	}
 	if (event.type === "compose.completed" || event.type === "compose.failed") {
@@ -167,12 +224,24 @@ function validateEvent(state: TaskState, event: TaskEvent): ValidationFailure | 
 	if (
 		event.type === "dialog.prepared" ||
 		event.type === "dialog.presented" ||
+		event.type === "dialog.failed" ||
 		event.type === "dialog.responded" ||
 		event.type === "dialog.reopened" ||
 		event.type === "dialog.resolved"
 	) {
 		const interaction = findInteraction(state, event.interactionId)
 		if (!interaction) return { reason: "identity_mismatch", message: `Interaction ${event.interactionId} is not active` }
+		if (state.dialog.interrupted?.interactionId === event.interactionId)
+			return { reason: "phase_invalid", message: `Interaction ${event.interactionId} is interrupted` }
+		if (event.type === "dialog.prepared" || event.type === "dialog.presented" || event.type === "dialog.failed") {
+			const stage =
+				event.type === "dialog.prepared" ? "prepare" : event.type === "dialog.presented" ? "reveal" : event.stage
+			const owner = stage === "prepare" ? interaction.prepare : interaction.reveal
+			if (!owner || owner.commandId !== event.commandId || owner.originRevision !== event.originRevision)
+				return { reason: "identity_mismatch", message: `Dialog feedback ${event.commandId} is not active` }
+			if (owner.status !== "running")
+				return { reason: "duplicate", message: `Dialog command ${event.commandId} already settled` }
+		}
 		if (event.type === "dialog.prepared" && interaction.status !== "planned")
 			return {
 				reason: interaction.status === "prepared" ? "duplicate" : "phase_invalid",
@@ -211,6 +280,25 @@ function validateEvent(state: TaskState, event: TaskEvent): ValidationFailure | 
 				return { reason: "phase_invalid", message: `Action ${event.actionId} is missing required payload` }
 		}
 	}
+	if (event.type === "lifecycle.spawn_requested") {
+		if (state.flow.spawn?.status === "running")
+			return { reason: "duplicate", message: `Spawn ${state.flow.spawn.spawnAttempt} is already active` }
+		if (state.halt.status === "stopping" || state.flow.phase === "paused" || state.flow.phase === "terminated")
+			return { reason: "phase_invalid", message: "Task cannot spawn while halted" }
+	}
+	if (event.type === "lifecycle.spawned" || event.type === "lifecycle.spawn_failed") {
+		const owner = state.flow.spawn
+		if (
+			!owner ||
+			owner.commandId !== event.commandId ||
+			owner.originRevision !== event.originRevision ||
+			owner.spawnAttempt !== event.spawnAttempt
+		)
+			return { reason: "identity_mismatch", message: `Spawn feedback ${event.commandId} is not active` }
+		if (owner.status !== "running") return { reason: "duplicate", message: `Spawn ${event.spawnAttempt} already settled` }
+		if (state.halt.status === "stopping" || state.flow.phase === "paused" || state.flow.phase === "terminated")
+			return { reason: "phase_invalid", message: "Spawn feedback arrived after task halt" }
+	}
 	if (event.type === "lifecycle.open" && state.flow.phase !== "idle")
 		return { reason: "phase_invalid", message: `Task cannot open from ${state.flow.phase}` }
 	return undefined
@@ -227,22 +315,75 @@ function hasActiveRound(state: TaskState): boolean {
 }
 
 function applyCommandOwnership(state: TaskState, commands: readonly Command[]): TaskState {
-	let flow = state.flow
+	let next = state
 	for (const command of commands) {
 		if (command.type === "compose.round") {
-			flow = {
-				...flow,
-				compose: { commandId: command.commandId, originRevision: command.originRevision, status: "running" },
+			next = {
+				...next,
+				flow: {
+					...next.flow,
+					compose: { commandId: command.commandId, originRevision: command.originRevision, status: "running" },
+				},
 			}
 		}
 		if (command.type === "provider.start") {
-			flow = {
-				...flow,
-				provider: { commandId: command.commandId, originRevision: command.originRevision, status: "running" },
+			next = {
+				...next,
+				flow: {
+					...next.flow,
+					provider: { commandId: command.commandId, originRevision: command.originRevision, status: "running" },
+				},
+			}
+		}
+		if (command.type === "dialog.prepare" || command.type === "dialog.reveal") {
+			next = updateInteraction(next, command.interactionId, (interaction) => ({
+				...interaction,
+				[command.type === "dialog.prepare" ? "prepare" : "reveal"]: {
+					commandId: command.commandId,
+					originRevision: command.originRevision,
+					status: "running",
+				},
+			}))
+		}
+		if (command.type === "approval.evaluate") {
+			next = {
+				...next,
+				turn: {
+					...next.turn,
+					blocks: next.turn.blocks.map((block) =>
+						block.blockId === command.blockId
+							? {
+									...block,
+									policy: {
+										commandId: command.commandId,
+										originRevision: command.originRevision,
+										status: "running",
+										interactionId: command.interactionId,
+										policyRevision: command.policyRevision,
+									},
+								}
+							: block,
+					),
+				},
+			}
+		}
+		if (command.type === "task.spawn") {
+			next = {
+				...next,
+				flow: {
+					...next.flow,
+					spawn: {
+						commandId: command.commandId,
+						originRevision: command.originRevision,
+						status: "running",
+						spawnAttempt: command.spawnAttempt,
+						handoffRef: command.handoffRef,
+					},
+				},
 			}
 		}
 	}
-	return flow === state.flow ? state : { ...state, flow }
+	return next
 }
 
 function deriveCommands(previous: TaskState, next: TaskState, event: TaskEvent): readonly Command[] {
@@ -258,18 +399,57 @@ function deriveCommands(previous: TaskState, next: TaskState, event: TaskEvent):
 		]
 	}
 	if (event.type === "approval.requested" || event.type === "dialog.requested" || event.type === "dialog.interrupt_requested") {
-		return [{ ...commandBase(next, 0), type: "dialog.prepare", interactionId: event.interactionId, kind: event.kind }]
+		const interaction = findInteraction(next, event.interactionId)
+		return interaction ? [{ ...commandBase(next, 0), type: "dialog.prepare", ...dialogCommandInput(interaction) }] : []
 	}
 	if (event.type === "dialog.prepared") {
+		const interaction = findInteraction(next, event.interactionId)
+		return interaction?.journalRef && interaction.receiverGeneration !== undefined
+			? [
+					{
+						...commandBase(next, 0),
+						type: "dialog.reveal",
+						...dialogCommandInput(interaction),
+						journalRef: interaction.journalRef,
+						receiverGeneration: interaction.receiverGeneration,
+					},
+				]
+			: []
+	}
+	if (event.type === "approval.evaluation_requested") {
 		return [
-			{ ...commandBase(next, 0), type: "dialog.reveal", interactionId: event.interactionId, journalRef: event.journalRef },
+			{
+				...commandBase(next, 0),
+				type: "approval.evaluate",
+				interactionId: event.interactionId,
+				blockId: event.blockId,
+				policyRevision: event.policyRevision,
+				riskFacts: event.riskFacts,
+				attempt: event.attempt,
+			},
 		]
 	}
 	if ((event.type === "approval.evaluated" || event.type === "approval.responded") && event.approved) {
 		const before = previous.turn.blocks.find((block) => block.blockId === event.blockId)
 		const after = next.turn.blocks.find((block) => block.blockId === event.blockId)
-		if (before?.phase !== "ready" && after?.phase === "ready" && next.turn.turnId) {
-			return [{ ...commandBase(next, 0), type: "tool.run", turnId: next.turn.turnId, blockIds: [event.blockId] }]
+		if (before?.phase !== "ready" && after?.phase === "ready" && next.turn.turnId && after) {
+			return [
+				{
+					...commandBase(next, 0),
+					type: "tool.run",
+					turnId: next.turn.turnId,
+					mode: next.turn.mode,
+					blocks: [
+						{
+							blockId: after.blockId,
+							attempt: after.attempt,
+							index: after.index,
+							lanes: after.lanes,
+							turnEnding: after.turnEnding,
+						},
+					],
+				},
+			]
 		}
 	}
 	if (event.type === "user.submit" && previous.flow.phase !== "terminated" && !hasActiveRound(previous)) {
@@ -297,19 +477,23 @@ function deriveCommands(previous: TaskState, next: TaskState, event: TaskEvent):
 			},
 		]
 	}
+	if (event.type === "lifecycle.spawn_requested") {
+		return [
+			{
+				...commandBase(next, 0),
+				type: "task.spawn",
+				spawnAttempt: event.spawnAttempt,
+				handoffRef: event.handoffRef,
+				haltId: event.haltId,
+			},
+		]
+	}
 	if (
 		(event.type === "provider.failed" || event.type === "compose.failed") &&
 		!previous.dialog.primary &&
 		next.dialog.primary
 	) {
-		return [
-			{
-				...commandBase(next, 0),
-				type: "dialog.prepare",
-				interactionId: next.dialog.primary.interactionId,
-				kind: next.dialog.primary.kind,
-			},
-		]
+		return [{ ...commandBase(next, 0), type: "dialog.prepare", ...dialogCommandInput(next.dialog.primary) }]
 	}
 	return []
 }
@@ -331,6 +515,7 @@ export function transition(state: TaskState, event: TaskEvent): TransitionResult
 	let next: TaskState = {
 		...state,
 		revision: nextRevision,
+		generation: event.type === "user.cancel" || event.type === "user.terminate" ? state.generation + 1 : state.generation,
 		flow: flow.state,
 		turn: turn.state,
 		dialog: dialog.state,
@@ -349,8 +534,30 @@ export function transition(state: TaskState, event: TaskEvent): TransitionResult
 					next.flow.provider?.status === "running"
 						? { ...next.flow.provider, status: "cancelled" }
 						: next.flow.provider,
+				spawn: next.flow.spawn?.status === "running" ? { ...next.flow.spawn, status: "cancelled" } : next.flow.spawn,
+			},
+			turn: {
+				...next.turn,
+				blocks: next.turn.blocks.map((block) =>
+					block.policy?.status === "running"
+						? { ...block, policy: { ...block.policy, status: "cancelled" as const } }
+						: block,
+				),
 			},
 			halt: { status: "idle", generation: halt.state.generation },
+		}
+	}
+	if (event.type === "approval.responded") {
+		next = {
+			...next,
+			dialog: {
+				...next.dialog,
+				approvalsByBlock: Object.fromEntries(
+					Object.entries(next.dialog.approvalsByBlock).filter(([blockId]) =>
+						next.turn.blocks.some((block) => block.blockId === blockId && block.phase === "awaiting_approval"),
+					),
+				),
+			},
 		}
 	}
 	if (

@@ -25,9 +25,9 @@ function rejectAndSkipLater(blocks: readonly KernelBlock[], blockId: string): re
 function clearOwnership(
 	state: TurnSlice,
 	blockId: string,
-): Pick<TurnSlice, "manualApprovalBlockId" | "automaticApprovalBlockIds" | "executingBlockIds"> {
+): Pick<TurnSlice, "manualApprovalBlockIds" | "automaticApprovalBlockIds" | "executingBlockIds"> {
 	return {
-		manualApprovalBlockId: state.manualApprovalBlockId === blockId ? undefined : state.manualApprovalBlockId,
+		manualApprovalBlockIds: state.manualApprovalBlockIds.filter((id) => id !== blockId),
 		automaticApprovalBlockIds: state.automaticApprovalBlockIds.filter((id) => id !== blockId),
 		executingBlockIds: state.executingBlockIds.filter((id) => id !== blockId),
 	}
@@ -71,33 +71,58 @@ export function reduceTurn(state: TurnSlice, event: TaskEvent): TurnReduction {
 			state: {
 				...state,
 				blocks: replaceBlock(state.blocks, event.blockId, "awaiting_approval"),
-				manualApprovalBlockId: event.blockId,
+				manualApprovalBlockIds: Array.from(new Set([...state.manualApprovalBlockIds, event.blockId])),
 			},
 			commands: [],
 		}
 	}
 	if (event.type === "approval.responded") {
-		if (state.turnId !== event.turnId || state.manualApprovalBlockId !== event.blockId) return { state, commands: [] }
+		if (state.turnId !== event.turnId || !state.manualApprovalBlockIds.includes(event.blockId)) return { state, commands: [] }
+		const decidedBlocks = event.approved
+			? replaceBlock(state.blocks, event.blockId, "ready")
+			: rejectAndSkipLater(state.blocks, event.blockId)
+		const terminalized = new Set(
+			decidedBlocks
+				.filter((block) => block.phase === "rejected" || block.phase === "skipped")
+				.map((block) => block.blockId),
+		)
+		terminalized.add(event.blockId)
 		return {
 			state: {
 				...state,
-				blocks: event.approved
-					? replaceBlock(state.blocks, event.blockId, "ready")
-					: rejectAndSkipLater(state.blocks, event.blockId),
-				manualApprovalBlockId: undefined,
-				automaticApprovalBlockIds: state.automaticApprovalBlockIds.filter((id) => id !== event.blockId),
+				blocks: decidedBlocks.map((block) =>
+					terminalized.has(block.blockId) && block.policy?.status === "running"
+						? { ...block, policy: { ...block.policy, status: "cancelled" as const } }
+						: block,
+				),
+				manualApprovalBlockIds: state.manualApprovalBlockIds.filter((id) => !terminalized.has(id)),
+				automaticApprovalBlockIds: state.automaticApprovalBlockIds.filter((id) => !terminalized.has(id)),
 			},
 			commands: [],
 		}
 	}
-	if (event.type === "approval.evaluated") {
+	if (event.type === "approval.evaluated" || event.type === "approval.failed") {
 		return {
 			state: {
 				...state,
-				blocks: replaceBlock(state.blocks, event.blockId, event.approved ? "ready" : "rejected"),
-				automaticApprovalBlockIds: event.approved
-					? Array.from(new Set([...state.automaticApprovalBlockIds, event.blockId]))
-					: state.automaticApprovalBlockIds.filter((id) => id !== event.blockId),
+				blocks: state.blocks.map((block) => {
+					if (block.blockId !== event.blockId) return block
+					if (event.type === "approval.failed")
+						return { ...block, policy: block.policy && { ...block.policy, status: "failed" as const } }
+					return {
+						...block,
+						phase: event.approved ? ("ready" as const) : ("rejected" as const),
+						policy: block.policy && { ...block.policy, status: "completed" as const },
+					}
+				}),
+				manualApprovalBlockIds:
+					event.type === "approval.evaluated"
+						? state.manualApprovalBlockIds.filter((id) => id !== event.blockId)
+						: state.manualApprovalBlockIds,
+				automaticApprovalBlockIds:
+					event.type === "approval.evaluated" && event.approved
+						? Array.from(new Set([...state.automaticApprovalBlockIds, event.blockId]))
+						: state.automaticApprovalBlockIds.filter((id) => id !== event.blockId),
 			},
 			commands: [],
 		}

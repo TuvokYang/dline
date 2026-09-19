@@ -42,8 +42,26 @@ export function reduceFlow(state: FlowState, event: TaskEvent): FlowReduction {
 				commands: [],
 			}
 		case "approval.failed":
+		case "dialog.failed":
+			return { state: { ...state, phase: "error", error: event.message }, commands: [] }
+		case "lifecycle.spawned":
+			return {
+				state: {
+					...state,
+					spawn: state.spawn && { ...state.spawn, status: "completed", childTaskId: event.childTaskId },
+				},
+				commands: [],
+			}
 		case "lifecycle.spawn_failed":
-			return { state: { ...state, phase: "error", error: event.message ?? event.type }, commands: [] }
+			return {
+				state: {
+					...state,
+					phase: "error",
+					error: event.message ?? event.type,
+					spawn: state.spawn && { ...state.spawn, status: "failed", message: event.message },
+				},
+				commands: [],
+			}
 		case "compaction.requested":
 			return {
 				state: {

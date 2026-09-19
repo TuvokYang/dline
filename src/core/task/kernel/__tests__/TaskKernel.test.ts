@@ -29,6 +29,7 @@ describe("task kernel", () => {
 				turnId: "turn-1",
 				mode: "serial",
 				blocks: [{ blockId: "block-1", index: 0, phase: "ready", attempt: "attempt-1", lanes: [], turnEnding: false }],
+				manualApprovalBlockIds: [],
 				automaticApprovalBlockIds: ["block-1"],
 				executingBlockIds: [],
 			},
@@ -92,6 +93,7 @@ describe("task kernel", () => {
 					createdRevision: 0,
 					presentationRef: "question:1",
 					actionRules: [{ actionId: "reply", payloadPolicy: "draft" }],
+					prepare: { commandId: "prepare-1", originRevision: 0, status: "running" },
 				},
 				approvalsByBlock: {},
 			},
@@ -100,6 +102,8 @@ describe("task kernel", () => {
 			transition(state, {
 				type: "dialog.prepared",
 				generation: 0,
+				commandId: "prepare-1",
+				originRevision: 0,
 				interactionId: "i-1",
 				journalRef: "journal:1",
 				receiverGeneration: 3,
@@ -116,10 +120,19 @@ describe("task kernel", () => {
 		expect(state.halt.status).toBe("stopping")
 		if (state.halt.status !== "stopping") throw new Error("expected stopping")
 		for (const participantId of [...state.halt.pending]) {
-			state = accepted(transition(state, { type: "halt.halted", generation: 0, haltId: "halt-1", participantId })).state
+			state = accepted(
+				transition(state, { type: "halt.halted", generation: state.generation, haltId: "halt-1", participantId }),
+			).state
 		}
 		expect(state.flow.phase).toBe("paused")
 		expect(state.halt.status).toBe("idle")
+		const restored = hydrate({
+			taskId: "task-1",
+			snapshot: state,
+			journalTail: { epoch: 0, seq: 0 },
+			openReason: "crash_recovery",
+		})
+		expect(restored.kind).toBe("ready")
 	})
 
 	it("rejects a snapshot that belongs to another task", () => {
@@ -145,6 +158,7 @@ describe("task kernel", () => {
 						turnEnding: false,
 					},
 				],
+				manualApprovalBlockIds: [],
 				automaticApprovalBlockIds: [],
 				executingBlockIds: ["block-1"],
 			},

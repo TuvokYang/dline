@@ -18,19 +18,43 @@ function command(type: Command["type"], revision: number): Command {
 		case "provider.start":
 			return { ...base, type, draftRef: "draft" }
 		case "dialog.prepare":
-			return { ...base, type, interactionId: "i-1", kind: "question" }
+			return {
+				...base,
+				type,
+				interactionId: "i-1",
+				turnId: "turn-1",
+				kind: "question",
+				presentationRef: "question:1",
+				actionRules: [],
+			}
 		case "dialog.reveal":
-			return { ...base, type, interactionId: "i-1", journalRef: "j-1" }
+			return {
+				...base,
+				type,
+				interactionId: "i-1",
+				turnId: "turn-1",
+				kind: "question",
+				presentationRef: "question:1",
+				actionRules: [],
+				journalRef: "j-1",
+				receiverGeneration: 0,
+			}
 		case "halt.stop":
 			return { ...base, type, haltId: "h-1", participantIds: ["provider"], reason: "cancel" }
 		case "tool.run":
-			return { ...base, type, turnId: "turn-1", blockIds: ["b-1"] }
+			return {
+				...base,
+				type,
+				turnId: "turn-1",
+				mode: "serial",
+				blocks: [{ blockId: "b-1", attempt: "a-1", index: 0, lanes: [], turnEnding: false }],
+			}
 		case "compose.round":
 			return { ...base, type, admittedEntryIds: ["e-1"] }
 		case "compaction.run":
 			return { ...base, type, compactionId: "c-1", attempt: "a-1", contextRef: "ctx-1" }
 		case "approval.evaluate":
-			return { ...base, type, interactionId: "i-1", blockId: "b-1", policyRevision: 1, riskFacts: {} }
+			return { ...base, type, interactionId: "i-1", blockId: "b-1", policyRevision: 1, riskFacts: {}, attempt: "a-1" }
 		case "task.spawn":
 			return { ...base, type, spawnAttempt: "a-1", handoffRef: "handoff-1" }
 		default:
