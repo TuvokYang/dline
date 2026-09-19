@@ -1,12 +1,12 @@
-name: Publish Production Registries
+name: Production Release
 
 on:
-  workflow_run:
-    workflows:
-      # Must match the display name in .github/workflows/release.yml.
-      - Production Release
-    types:
-      - completed
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Validated production tag to release (vX.Y.Z).
+        type: string
+        required: true
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -16,192 +16,156 @@ permissions:
   contents: read
 
 concurrency:
-  group: vscode-marketplace-${{ github.event.workflow_run.head_sha }}
+  group: production-release-${{ inputs.tag }}
   cancel-in-progress: false
 
 jobs:
-  verify-release:
-    name: Verify tested GitHub release
-    if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'push'
+  release:
+    name: Publish validated GitHub release
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
+    environment: publish
+    permissions:
+      actions: read
+      attestations: write
+      contents: write
+      id-token: write
     outputs:
-      tag: ${{ steps.release.outputs.tag }}
-      version: ${{ steps.release.outputs.version }}
-      asset_name: ${{ steps.release.outputs.asset_name }}
+      commit_sha: ${{ steps.validation.outputs.commit_sha }}
+      asset_name: ${{ steps.validation.outputs.asset_name }}
       sha256: ${{ steps.vsix.outputs.sha256 }}
     steps:
-      - name: Verify triggering workflow and GitHub release
-        id: release
+      - name: Checkout validated tag
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Verify tag and successful production validation
+        id: validation
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
-          RELEASE_TAG: ${{ github.event.workflow_run.head_branch }}
-          SOURCE_REPOSITORY: ${{ github.event.workflow_run.head_repository.full_name }}
-          SOURCE_WORKFLOW_PATH: ${{ github.event.workflow_run.path }}
+          TAG: ${{ inputs.tag }}
         shell: bash
         run: |
           set -euo pipefail
 
-          if [[ "$SOURCE_REPOSITORY" != "$GITHUB_REPOSITORY" ]]; then
-            echo "Error: refusing a release workflow from '$SOURCE_REPOSITORY'."
+          if [[ ! "$TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            echo "Error: production tag must match vX.Y.Z, got '$TAG'."
             exit 1
           fi
-          if [[ "$SOURCE_WORKFLOW_PATH" != ".github/workflows/release.yml" ]]; then
-            echo "Error: unexpected source workflow path '$SOURCE_WORKFLOW_PATH'."
-            exit 1
-          fi
-          if [[ ! "$RELEASE_TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
-            echo "Error: production release tag must match vX.Y.Z, got '$RELEASE_TAG'."
-            exit 1
-          fi
-
           version="${BASH_REMATCH[1]}"
-          asset_name="dline-${version}.vsix"
-          release_json=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}")
-
-          if [[ "$(jq -r '.draft' <<<"$release_json")" != "false" ]]; then
-            echo "Error: GitHub release '$RELEASE_TAG' is still a draft."
-            exit 1
-          fi
-          if [[ "$(jq -r '.prerelease' <<<"$release_json")" != "false" ]]; then
-            echo "Error: GitHub release '$RELEASE_TAG' is marked as a prerelease."
+          package_version=$(node -p "require('./package.json').version")
+          if [[ "$version" != "$package_version" ]]; then
+            echo "Error: tag version '$version' does not match package version '$package_version'."
             exit 1
           fi
 
-          asset_count=$(jq --arg asset "$asset_name" '[.assets[] | select(.name == $asset)] | length' <<<"$release_json")
-          asset_state=$(jq -r --arg asset "$asset_name" '.assets[] | select(.name == $asset) | .state' <<<"$release_json")
-          asset_size=$(jq -r --arg asset "$asset_name" '.assets[] | select(.name == $asset) | .size' <<<"$release_json")
-          if [[ "$asset_count" -ne 1 || "$asset_state" != "uploaded" || "$asset_size" -le 0 ]]; then
-            echo "Error: release must contain one uploaded, non-empty asset named '$asset_name'."
+          tag_sha=$(git rev-parse "${TAG}^{commit}")
+          main_sha=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')
+          compare_json=$(gh api "repos/${GITHUB_REPOSITORY}/compare/${tag_sha}...${main_sha}")
+          if [[ "$(jq -r '.merge_base_commit.sha' <<<"$compare_json")" != "$tag_sha" ]]; then
+            echo "Error: production tag '$TAG' is not an ancestor of main '$main_sha'."
             exit 1
           fi
 
-          tag_ref_json=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}")
-          raw_tag_sha=$(jq -r '.object.sha' <<<"$tag_ref_json")
-          object_type=$(jq -r '.object.type' <<<"$tag_ref_json")
-          object_sha="$raw_tag_sha"
-          for _ in 1 2 3 4 5; do
-            if [[ "$object_type" == "commit" ]]; then
-              break
-            fi
-            if [[ "$object_type" != "tag" ]]; then
-              echo "Error: tag '$RELEASE_TAG' resolves to unsupported object type '$object_type'."
-              exit 1
-            fi
-            tag_object_json=$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${object_sha}")
-            object_type=$(jq -r '.object.type' <<<"$tag_object_json")
-            object_sha=$(jq -r '.object.sha' <<<"$tag_object_json")
-          done
-          if [[ "$object_type" != "commit" ]]; then
-            echo "Error: release tag '$RELEASE_TAG' did not resolve to a commit."
-            exit 1
-          fi
-          if [[ "$object_sha" != "$RELEASE_SHA" && "$raw_tag_sha" != "$RELEASE_SHA" ]]; then
-            echo "Error: release tag does not resolve to tested object '$RELEASE_SHA'."
-            exit 1
-          fi
-          release_commit_sha="$object_sha"
-
-          main_ref_json=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main")
-          main_sha=$(jq -r '.object.sha' <<<"$main_ref_json")
-          compare_json=$(gh api "repos/${GITHUB_REPOSITORY}/compare/${release_commit_sha}...${main_sha}")
-          merge_base_sha=$(jq -r '.merge_base_commit.sha' <<<"$compare_json")
-          if [[ "$merge_base_sha" != "$release_commit_sha" ]]; then
-            echo "Error: tested release commit '$release_commit_sha' is not an ancestor of main '$main_sha'."
+          validation_run_id=$(gh api --paginate \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/release.yml/runs?event=push&status=success&per_page=100" \
+            --jq ".workflow_runs[] | select(.head_sha == \"$tag_sha\" and .head_branch == \"$TAG\") | .id" | head -n 1)
+          if [[ -z "$validation_run_id" ]]; then
+            echo "Error: no successful Production Release Validation run exists for '$TAG' at '$tag_sha'."
             exit 1
           fi
 
-          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "commit_sha=$tag_sha" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "asset_name=$asset_name" >> "$GITHUB_OUTPUT"
+          echo "asset_name=dline-${version}.vsix" >> "$GITHUB_OUTPUT"
+          echo "validation_run_id=$validation_run_id" >> "$GITHUB_OUTPUT"
 
-      - name: Download tested VSIX artifact
+      - name: Download validated VSIX artifact
         uses: actions/download-artifact@v6
         with:
-          name: dline-vsix-${{ github.event.workflow_run.head_sha }}
+          name: dline-vsix-${{ steps.validation.outputs.commit_sha }}
           path: tested-artifact
           github-token: ${{ github.token }}
-          run-id: ${{ github.event.workflow_run.id }}
+          run-id: ${{ steps.validation.outputs.validation_run_id }}
 
-      - name: Download VSIX from GitHub release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ steps.release.outputs.tag }}
-          ASSET_NAME: ${{ steps.release.outputs.asset_name }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          gh release download "$RELEASE_TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            --pattern "$ASSET_NAME" \
-            --dir release-artifact
-
-      - name: Verify tested and released VSIX
+      - name: Verify validated production VSIX
         id: vsix
         env:
-          VERSION: ${{ steps.release.outputs.version }}
-          ASSET_NAME: ${{ steps.release.outputs.asset_name }}
+          VERSION: ${{ steps.validation.outputs.version }}
+          ASSET_NAME: ${{ steps.validation.outputs.asset_name }}
         shell: bash
         run: |
           set -euo pipefail
           tested_vsix="tested-artifact/$ASSET_NAME"
-          released_vsix="release-artifact/$ASSET_NAME"
           manifest_path="$RUNNER_TEMP/vsix-package.json"
 
           if [[ ! -s "$tested_vsix" ]]; then
-            echo "Error: tested VSIX '$tested_vsix' is missing or empty."
+            echo "Error: validated VSIX '$tested_vsix' is missing or empty."
             exit 1
           fi
-          if [[ ! -s "$released_vsix" ]]; then
-            echo "Error: released VSIX '$released_vsix' is missing or empty."
-            exit 1
-          fi
-
-          tested_sha=$(sha256sum "$tested_vsix" | cut -d' ' -f1)
-          released_sha=$(sha256sum "$released_vsix" | cut -d' ' -f1)
-          if [[ "$tested_sha" != "$released_sha" ]]; then
-            echo "Error: GitHub Release VSIX does not match the artifact that passed the release tests."
-            echo "Tested:  $tested_sha"
-            echo "Released: $released_sha"
-            exit 1
-          fi
-
-          if ! unzip -p "$tested_vsix" extension/package.json > "$manifest_path"; then
-            echo "Error: VSIX does not contain extension/package.json."
-            exit 1
-          fi
+          unzip -p "$tested_vsix" extension/package.json > "$manifest_path"
           if ! jq -e --arg version "$VERSION" '
             .name == "dline" and
             .publisher == "tuvokyang" and
             .version == $version and
             (.preview != true)
           ' "$manifest_path" >/dev/null; then
-            echo "Error: VSIX identity, version, or release channel does not match the production release."
+            echo "Error: validated VSIX does not match the production release."
             jq '{name, publisher, version, preview}' "$manifest_path"
             exit 1
           fi
 
+          tested_sha=$(sha256sum "$tested_vsix" | cut -d' ' -f1)
           echo "$tested_sha  $tested_vsix"
+          echo "path=$tested_vsix" >> "$GITHUB_OUTPUT"
           echo "sha256=$tested_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Attest validated VSIX provenance
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: ${{ steps.vsix.outputs.path }}
+
+      - name: Create or update production release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          VSIX_PATH: ${{ steps.vsix.outputs.path }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$TAG" \
+              --draft=false \
+              --prerelease=false \
+              --title "Dline ${TAG}" \
+              --repo "$GITHUB_REPOSITORY"
+            gh release upload "$TAG" "$VSIX_PATH" --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" "$VSIX_PATH" \
+              --verify-tag \
+              --generate-notes \
+              --title "Dline ${TAG}" \
+              --repo "$GITHUB_REPOSITORY"
+          fi
 
       - name: Upload verified registry package
         uses: actions/upload-artifact@v5
         with:
-          name: registry-vsix-${{ github.event.workflow_run.head_sha }}
-          path: tested-artifact/${{ steps.release.outputs.asset_name }}
+          name: registry-vsix-${{ steps.validation.outputs.commit_sha }}
+          path: tested-artifact/${{ steps.validation.outputs.asset_name }}
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
 
   publish-registries:
     name: Publish production registries
-    needs: verify-release
+    needs: release
     uses: ./.github/workflows/publish-vsix-registries.yml
     with:
-      artifact_name: registry-vsix-${{ github.event.workflow_run.head_sha }}
-      asset_name: ${{ needs.verify-release.outputs.asset_name }}
-      expected_sha256: ${{ needs.verify-release.outputs.sha256 }}
+      artifact_name: registry-vsix-${{ needs.release.outputs.commit_sha }}
+      asset_name: ${{ needs.release.outputs.asset_name }}
+      expected_sha256: ${{ needs.release.outputs.sha256 }}
     secrets: inherit

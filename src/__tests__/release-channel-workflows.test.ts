@@ -45,14 +45,30 @@ describe("release channel workflows", () => {
 		expect(packageScript).toContain('argument === "--out"')
 	})
 
-	it("packages dev tags as preview and production tags as production", async () => {
+	it("packages dev tags as preview and validates production tags without publishing them", async () => {
 		const previewWorkflow = await readProjectFile(".github/workflows/release-draft.yml")
-		const productionWorkflow = await readProjectFile(".github/workflows/release.yml")
+		const validationWorkflow = await readProjectFile(".github/workflows/release.yml")
 
 		expect(previewWorkflow).toContain("package_channel: preview")
 		expect(previewWorkflow).toContain('.name == "dline-preview"')
 		expect(previewWorkflow).toContain("(.preview == true)")
-		expect(productionWorkflow).toContain("package_channel: production")
+		expect(validationWorkflow).toContain("name: Production Release Validation")
+		expect(validationWorkflow).toContain("package_channel: production")
+		expect(validationWorkflow).toContain('DLINE_E2E_INSTALL_VSIX: "1"')
+		expect(validationWorkflow).toContain('cp "${assets[0]}" dist/e2e.vsix')
+		expect(validationWorkflow).toContain("playwright.functional.config.ts")
+		expect(validationWorkflow).not.toContain("gh release create")
+	})
+
+	it("requires a successful validation before a manager manually publishes production", async () => {
+		const productionWorkflow = await readProjectFile(".github/workflows/publish-vscode-marketplace.yml")
+
+		expect(productionWorkflow).toContain("workflow_dispatch:")
+		expect(productionWorkflow).toContain("tag:")
+		expect(productionWorkflow).toContain("actions/workflows/release.yml/runs?event=push&status=success")
+		expect(productionWorkflow).toContain("no successful Production Release Validation run exists")
+		expect(productionWorkflow).toContain("gh release create")
+		expect(productionWorkflow).toContain("uses: ./.github/workflows/publish-vsix-registries.yml")
 	})
 
 	it("publishes only a successful current dev artifact as Insiders", async () => {
@@ -74,6 +90,11 @@ describe("release channel workflows", () => {
 		expect(registryWorkflow).toContain("DLINE_VSCODE_OVSX_PAT")
 		expect(registryWorkflow).toContain("@vscode/vsce@3.9.2")
 		expect(registryWorkflow).toContain("ovsx@1.2.0")
+		expect(registryWorkflow).toContain("for attempt in 1 2 3")
+		expect(registryWorkflow).toContain("RequestBlockedException|Concurrency")
+		const ovsxInstall = registryWorkflow.slice(registryWorkflow.indexOf("Install pinned Open VSX CLI"))
+		expect(ovsxInstall).toContain("--include=optional")
+		expect(ovsxInstall).not.toContain("--omit=optional")
 		expect(registryWorkflow.match(/EXPECTED_SHA256: \$\{\{ inputs\.expected_sha256 \}\}/g)).toHaveLength(2)
 		expect(registryWorkflow.match(/name: \$\{\{ inputs\.artifact_name \}\}/g)).toHaveLength(2)
 		expect(productionWorkflow).toContain("uses: ./.github/workflows/publish-vsix-registries.yml")

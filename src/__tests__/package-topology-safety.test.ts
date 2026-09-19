@@ -60,7 +60,7 @@ describe("package topology safety", () => {
 		const productionWorkflow = await readProjectFile(".github/workflows/publish-vscode-marketplace.yml")
 		const registryWorkflow = await readProjectFile(".github/workflows/publish-vsix-registries.yml")
 
-		expect(productionWorkflow).toContain("group: vscode-marketplace-${{ github.event.workflow_run.head_sha }}")
+		expect(productionWorkflow).toContain("group: production-release-${{ inputs.tag }}")
 		expect(productionWorkflow).toContain("uses: ./.github/workflows/publish-vsix-registries.yml")
 		expect(registryWorkflow).toContain('"$VSCE_BIN" publish --skip-duplicate --packagePath "$vsix_path"')
 		expect(registryWorkflow).toContain('"$OVSX_BIN" publish "$vsix_path" --skip-duplicate')
