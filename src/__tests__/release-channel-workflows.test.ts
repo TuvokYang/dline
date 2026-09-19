@@ -17,6 +17,7 @@ describe("release channel workflows", () => {
 			".github/workflows/release.yml",
 			".github/workflows/release-draft.yml",
 			".github/workflows/publish-vscode-marketplace.yml",
+			".github/workflows/publish-production-release.yml",
 			".github/workflows/publish-insiders.yml",
 			".github/workflows/publish-vsix-registries.yml",
 		]) {
@@ -33,62 +34,93 @@ describe("release channel workflows", () => {
 		expect(testsWorkflow).toContain("channel: ${{ needs.typecheck.outputs.package_channel }}")
 	})
 
-	it("routes every workflow package through the channel-aware VSIX entry point", async () => {
+	it("routes every package through the shared cross-platform VSCE API worker", async () => {
 		const packageWorkflow = await readProjectFile(".github/workflows/package.yml")
 		const packageScript = await readProjectFile("scripts/package-vsix.mjs")
+		const packageDevScript = await readProjectFile("scripts/package-dev.mjs")
+		const packageAdapter = await readProjectFile("scripts/vsix-packager.mjs")
 
 		expect(packageWorkflow).toContain('node scripts/package-vsix.mjs --channel "$CHANNEL" --out')
 		expect(packageWorkflow).toContain("node scripts/package-vsix.mjs --channel production --out")
-		expect(packageWorkflow).not.toContain("npm exec -- vsce package")
-		expect(packageScript).toContain('["auto", "ci", "production", "preview", "insiders"]')
-		expect(packageScript).toContain('argument === "--channel"')
-		expect(packageScript).toContain('argument === "--out"')
+		expect(packageWorkflow).toContain("source_ref:")
+		expect(packageWorkflow).toContain("artifact_key:")
+		expect(packageWorkflow).toContain("commit_sha:")
+		expect(packageWorkflow).toContain("sha256:")
+		expect(packageScript).toContain('mode: "build-and-pack"')
+		expect(packageDevScript).toContain('mode: "pack-only"')
+		expect(packageAdapter).toContain("execFileSync(process.execPath")
+		expect(packageAdapter).toContain("await createVSIX(packageOptions)")
+		expect(packageAdapter).toContain("await packVSIX(packageOptions)")
+		expect(packageAdapter).toMatch(/dependencies:\s*false/)
+		expect(`${packageWorkflow}\n${packageScript}\n${packageDevScript}`).not.toContain("npx.cmd")
 	})
 
-	it("packages dev tags as preview and validates production tags without publishing them", async () => {
+	it("publishes dev tags as public Preview prereleases and fully validated production tags automatically", async () => {
 		const previewWorkflow = await readProjectFile(".github/workflows/release-draft.yml")
-		const validationWorkflow = await readProjectFile(".github/workflows/release.yml")
+		const productionWorkflow = await readProjectFile(".github/workflows/release.yml")
 
+		expect(previewWorkflow).toContain("name: Publish Preview Release")
 		expect(previewWorkflow).toContain("package_channel: preview")
+		expect(previewWorkflow).toContain('expected_asset_name="dline-preview-${VERSION}.vsix"')
 		expect(previewWorkflow).toContain('.name == "dline-preview"')
 		expect(previewWorkflow).toContain("(.preview == true)")
-		expect(validationWorkflow).toContain("name: Production Release Validation")
-		expect(validationWorkflow).toContain("git fetch origin main --no-tags")
-		expect(validationWorkflow).toContain("main_sha=$(git rev-parse origin/main)")
-		expect(validationWorkflow).toContain('if [[ "$tag_sha" != "$main_sha" ]]; then')
-		expect(validationWorkflow).toContain("must point to current main head")
-		expect(validationWorkflow).toContain("package_channel: production")
-		expect(validationWorkflow).toContain('DLINE_E2E_INSTALL_VSIX: "1"')
-		expect(validationWorkflow).toContain('cp "${assets[0]}" dist/e2e.vsix')
-		expect(validationWorkflow).toContain("playwright.functional.config.ts")
-		expect(validationWorkflow).not.toContain("gh release create")
+		expect(previewWorkflow).toContain("--draft=false")
+		expect(previewWorkflow).toContain("--prerelease")
+
+		expect(productionWorkflow).toContain("name: Production Release Validation")
+		expect(productionWorkflow).toContain("group: production-release-${{ github.ref_name }}")
+		expect(productionWorkflow).toContain('main_sha=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main"')
+		expect(productionWorkflow).toContain('if [[ "$tag_sha" != "$main_sha" ]]; then')
+		expect(productionWorkflow).toContain("package_channel: production")
+		expect(productionWorkflow).toContain('DLINE_E2E_INSTALL_VSIX: "1"')
+		expect(productionWorkflow).toContain('cp "${assets[0]}" dist/e2e.vsix')
+		expect(productionWorkflow).toContain("playwright.functional.config.ts")
+		expect(productionWorkflow).toContain("Automatically publish validated production release")
+		expect(productionWorkflow).toContain("uses: ./.github/workflows/publish-production-release.yml")
+		expect(productionWorkflow).toContain("artifact_name: dline-vsix-${{ needs.verify-tag.outputs.commit_sha }}")
 	})
 
-	it("requires a successful validation before a manager manually publishes production", async () => {
-		const productionWorkflow = await readProjectFile(".github/workflows/publish-vscode-marketplace.yml")
+	it("lets a manager publish a freshly built production VSIX without depending on validation results", async () => {
+		const manualWorkflow = await readProjectFile(".github/workflows/publish-vscode-marketplace.yml")
 
-		expect(productionWorkflow).toContain("workflow_dispatch:")
-		expect(productionWorkflow.match(/if: github\.repository == 'TuvokYang\/dline'/g)).toHaveLength(2)
-		expect(productionWorkflow).toContain("tag:")
-		expect(productionWorkflow).toContain("actions/workflows/release.yml/runs?event=push&status=success")
-		expect(productionWorkflow).toContain("no successful Production Release Validation run exists")
-		expect(productionWorkflow).toContain("gh release create")
-		expect(productionWorkflow).toContain("uses: ./.github/workflows/publish-vsix-registries.yml")
+		expect(manualWorkflow).toContain("name: Production Release (Manual Override)")
+		expect(manualWorkflow).toContain("workflow_dispatch:")
+		expect(manualWorkflow).toContain("group: production-release-${{ inputs.tag }}")
+		expect(manualWorkflow).toContain("reason:")
+		expect(manualWorkflow).toContain("Build fresh production VSIX")
+		expect(manualWorkflow).toContain("source_ref: ${{ needs.validate.outputs.tag }}")
+		expect(manualWorkflow).toContain("artifact_key: ${{ needs.validate.outputs.commit_sha }}")
+		expect(manualWorkflow).toContain("uses: ./.github/workflows/publish-production-release.yml")
+		expect(manualWorkflow).not.toContain("actions/workflows/release.yml/runs")
+		expect(manualWorkflow).not.toContain("no successful Production Release Validation run exists")
 	})
 
-	it("publishes only a successful current dev artifact as Insiders", async () => {
+	it("publishes only the successful current dev artifact as a per-commit Insiders draft and to registries", async () => {
 		const insidersWorkflow = await readProjectFile(".github/workflows/publish-insiders.yml")
 
 		expect(insidersWorkflow).toContain("github.event.workflow_run.conclusion == 'success'")
 		expect(insidersWorkflow).toContain("github.event.workflow_run.head_branch == 'dev'")
 		expect(insidersWorkflow).toContain('current_dev_sha=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/dev"')
 		expect(insidersWorkflow).toContain('.name == "dline-insiders"')
+		expect(insidersWorkflow).toContain('echo "release_tag=insiders-$TESTED_SHA"')
+		expect(insidersWorkflow).toContain("Publish per-commit Insiders draft")
+		expect(insidersWorkflow).toContain('--target "$COMMIT_SHA"')
+		expect(insidersWorkflow).toContain("--draft")
 		expect(insidersWorkflow).toContain("uses: ./.github/workflows/publish-vsix-registries.yml")
 	})
 
-	it("publishes the same verified VSIX to Marketplace and Open VSX", async () => {
+	it("funnels both production paths through one idempotent GitHub and registry publisher", async () => {
+		const automaticWorkflow = await readProjectFile(".github/workflows/release.yml")
+		const manualWorkflow = await readProjectFile(".github/workflows/publish-vscode-marketplace.yml")
+		const productionPublisher = await readProjectFile(".github/workflows/publish-production-release.yml")
 		const registryWorkflow = await readProjectFile(".github/workflows/publish-vsix-registries.yml")
-		const productionWorkflow = await readProjectFile(".github/workflows/publish-vscode-marketplace.yml")
+
+		expect(automaticWorkflow).toContain("uses: ./.github/workflows/publish-production-release.yml")
+		expect(manualWorkflow).toContain("uses: ./.github/workflows/publish-production-release.yml")
+		expect(productionPublisher).toContain("gh release edit")
+		expect(productionPublisher).toContain("gh release create")
+		expect(productionPublisher).toContain('gh release upload "$TAG" "$VSIX_PATH" --clobber')
+		expect(productionPublisher).toContain("uses: ./.github/workflows/publish-vsix-registries.yml")
 
 		expect(registryWorkflow.match(/name: dline-release/g)).toHaveLength(2)
 		expect(registryWorkflow.match(/if: github\.repository == 'TuvokYang\/dline'/g)).toHaveLength(2)
@@ -103,6 +135,5 @@ describe("release channel workflows", () => {
 		expect(ovsxInstall).not.toContain("--omit=optional")
 		expect(registryWorkflow.match(/EXPECTED_SHA256: \$\{\{ inputs\.expected_sha256 \}\}/g)).toHaveLength(2)
 		expect(registryWorkflow.match(/name: \$\{\{ inputs\.artifact_name \}\}/g)).toHaveLength(2)
-		expect(productionWorkflow).toContain("uses: ./.github/workflows/publish-vsix-registries.yml")
 	})
 })

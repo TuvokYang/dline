@@ -56,12 +56,18 @@ describe("package topology safety", () => {
 		).not.toBe(true)
 	})
 
-	it("publishes one verified artifact idempotently to both extension registries", async () => {
-		const productionWorkflow = await readProjectFile(".github/workflows/publish-vscode-marketplace.yml")
+	it("publishes one verified production artifact idempotently through either serialized path", async () => {
+		const automaticWorkflow = await readProjectFile(".github/workflows/release.yml")
+		const manualWorkflow = await readProjectFile(".github/workflows/publish-vscode-marketplace.yml")
+		const productionPublisher = await readProjectFile(".github/workflows/publish-production-release.yml")
 		const registryWorkflow = await readProjectFile(".github/workflows/publish-vsix-registries.yml")
 
-		expect(productionWorkflow).toContain("group: production-release-${{ inputs.tag }}")
-		expect(productionWorkflow).toContain("uses: ./.github/workflows/publish-vsix-registries.yml")
+		expect(automaticWorkflow).toContain("group: production-release-${{ github.ref_name }}")
+		expect(manualWorkflow).toContain("group: production-release-${{ inputs.tag }}")
+		expect(automaticWorkflow).toContain("uses: ./.github/workflows/publish-production-release.yml")
+		expect(manualWorkflow).toContain("uses: ./.github/workflows/publish-production-release.yml")
+		expect(productionPublisher).toContain('gh release upload "$TAG" "$VSIX_PATH" --clobber')
+		expect(productionPublisher).toContain("uses: ./.github/workflows/publish-vsix-registries.yml")
 		expect(registryWorkflow).toContain('"$VSCE_BIN" publish --skip-duplicate --packagePath "$vsix_path"')
 		expect(registryWorkflow).toContain('"$OVSX_BIN" publish "$vsix_path" --skip-duplicate')
 		expect(registryWorkflow.match(/name: \$\{\{ inputs\.artifact_name \}\}/g)).toHaveLength(2)
@@ -72,9 +78,12 @@ describe("package topology safety", () => {
 		expect(packageJson.scripts?.["test:e2e:build"]).toContain("--no-dependencies")
 
 		const packageDev = await readProjectFile("scripts/package-dev.mjs")
-		expect(packageDev).toMatch(/dependencies:\s*false/)
-
 		const packageVsix = await readProjectFile("scripts/package-vsix.mjs")
+		const packageAdapter = await readProjectFile("scripts/vsix-packager.mjs")
+		expect(packageDev).toContain('mode: "pack-only"')
+		expect(packageVsix).toContain('mode: "build-and-pack"')
+		expect(packageAdapter).toMatch(/dependencies:\s*false/)
+		expect(packageAdapter).toContain("execFileSync(process.execPath")
 		expectDirectVsceCommandsToDisableDependencyScanning(packageVsix, "scripts/package-vsix.mjs")
 
 		const publishNightly = await readProjectFile("scripts/publish-nightly.mjs")

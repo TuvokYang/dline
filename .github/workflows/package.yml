@@ -13,6 +13,32 @@ on:
         type: string
         required: false
         default: ci
+      source_ref:
+        description: Optional branch, tag, or SHA to package instead of the caller SHA.
+        type: string
+        required: false
+        default: ""
+      artifact_key:
+        description: Optional stable key used in the uploaded artifact name.
+        type: string
+        required: false
+        default: ""
+    outputs:
+      artifact_name:
+        description: Uploaded workflow artifact name.
+        value: ${{ jobs.package-ci.outputs.artifact_name || jobs.package-release.outputs.artifact_name }}
+      asset_name:
+        description: VSIX filename inside the artifact.
+        value: ${{ jobs.package-ci.outputs.asset_name || jobs.package-release.outputs.asset_name }}
+      version:
+        description: Version read from the packaged extension manifest.
+        value: ${{ jobs.package-ci.outputs.version || jobs.package-release.outputs.version }}
+      commit_sha:
+        description: Exact packaged commit SHA.
+        value: ${{ jobs.package-ci.outputs.commit_sha || jobs.package-release.outputs.commit_sha }}
+      sha256:
+        description: SHA-256 of the packaged VSIX.
+        value: ${{ jobs.package-ci.outputs.sha256 || jobs.package-release.outputs.sha256 }}
     secrets:
       TELEMETRY_SERVICE_API_KEY:
         required: false
@@ -43,6 +69,7 @@ jobs:
         env:
           PROFILE: ${{ inputs.profile }}
           CHANNEL: ${{ inputs.channel }}
+          ARTIFACT_KEY: ${{ inputs.artifact_key }}
         run: |
           set -euo pipefail
           if [[ "$PROFILE" != "ci" && "$PROFILE" != "release" ]]; then
@@ -61,6 +88,10 @@ jobs:
             echo "Error: the production channel requires the release profile"
             exit 1
           fi
+          if [[ -n "$ARTIFACT_KEY" && ! "$ARTIFACT_KEY" =~ ^[A-Za-z0-9._-]+$ ]]; then
+            echo "Error: artifact_key may contain only letters, numbers, '.', '_', and '-'."
+            exit 1
+          fi
 
   package-ci:
     name: Package tested VSIX
@@ -68,10 +99,17 @@ jobs:
     if: inputs.profile == 'ci'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    outputs:
+      artifact_name: ${{ steps.package.outputs.artifact_name }}
+      asset_name: ${{ steps.package.outputs.filename }}
+      version: ${{ steps.artifact.outputs.version }}
+      commit_sha: ${{ steps.package.outputs.commit_sha }}
+      sha256: ${{ steps.artifact.outputs.sha256 }}
     steps:
       - name: Checkout code with LFS assets
         uses: actions/checkout@v6
         with:
+          ref: ${{ inputs.source_ref || github.sha }}
           fetch-depth: 0
           fetch-tags: true
           lfs: true
@@ -97,10 +135,13 @@ jobs:
         shell: bash
         env:
           CHANNEL: ${{ inputs.channel }}
+          ARTIFACT_KEY: ${{ inputs.artifact_key }}
         run: |
           set -euo pipefail
           version=$(node -p "require('./package.json').version")
-          short_sha="${GITHUB_SHA:0:12}"
+          commit_sha=$(git rev-parse HEAD)
+          short_sha="${commit_sha:0:12}"
+          artifact_key="${ARTIFACT_KEY:-$commit_sha}"
           case "$CHANNEL" in
             ci)
               filename="dline-ci-${version}-${short_sha}.vsix"
@@ -117,6 +158,8 @@ jobs:
               ;;
           esac
           echo "filename=$filename" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=dline-vsix-$artifact_key" >> "$GITHUB_OUTPUT"
+          echo "commit_sha=$commit_sha" >> "$GITHUB_OUTPUT"
 
       - name: Build channel VSIX
         env:
@@ -124,10 +167,22 @@ jobs:
           DLINE_ENVIRONMENT: production
         run: node scripts/package-vsix.mjs --channel "$CHANNEL" --out "dist/${{ steps.package.outputs.filename }}"
 
+      - name: Inspect packaged VSIX
+        id: artifact
+        env:
+          VSIX_PATH: dist/${{ steps.package.outputs.filename }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest_path="$RUNNER_TEMP/vsix-package.json"
+          unzip -p "$VSIX_PATH" extension/package.json > "$manifest_path"
+          echo "version=$(jq -r '.version' "$manifest_path")" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(sha256sum "$VSIX_PATH" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
       - name: Upload tested VSIX
         uses: actions/upload-artifact@v5
         with:
-          name: dline-vsix-${{ github.sha }}
+          name: ${{ steps.package.outputs.artifact_name }}
           path: dist/${{ steps.package.outputs.filename }}
           if-no-files-found: error
           retention-days: 14
@@ -139,10 +194,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: publish
+    outputs:
+      artifact_name: ${{ steps.package.outputs.artifact_name }}
+      asset_name: ${{ steps.package.outputs.filename }}
+      version: ${{ steps.artifact.outputs.version }}
+      commit_sha: ${{ steps.package.outputs.commit_sha }}
+      sha256: ${{ steps.artifact.outputs.sha256 }}
     steps:
       - name: Checkout code with LFS assets
         uses: actions/checkout@v6
         with:
+          ref: ${{ inputs.source_ref || github.sha }}
           fetch-depth: 0
           fetch-tags: true
           lfs: true
@@ -165,10 +227,17 @@ jobs:
 
       - name: Resolve VSIX filename
         id: package
+        env:
+          ARTIFACT_KEY: ${{ inputs.artifact_key }}
         shell: bash
         run: |
+          set -euo pipefail
           version=$(node -p "require('./package.json').version")
+          commit_sha=$(git rev-parse HEAD)
+          artifact_key="${ARTIFACT_KEY:-$commit_sha}"
           echo "filename=dline-${version}.vsix" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=dline-vsix-$artifact_key" >> "$GITHUB_OUTPUT"
+          echo "commit_sha=$commit_sha" >> "$GITHUB_OUTPUT"
 
       - name: Build production VSIX
         env:
@@ -183,10 +252,22 @@ jobs:
           OTEL_EXPORTER_OTLP_HEADERS: ${{ secrets.OTEL_EXPORTER_OTLP_HEADERS }}
         run: node scripts/package-vsix.mjs --channel production --out "dist/${{ steps.package.outputs.filename }}"
 
+      - name: Inspect packaged VSIX
+        id: artifact
+        env:
+          VSIX_PATH: dist/${{ steps.package.outputs.filename }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest_path="$RUNNER_TEMP/vsix-package.json"
+          unzip -p "$VSIX_PATH" extension/package.json > "$manifest_path"
+          echo "version=$(jq -r '.version' "$manifest_path")" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(sha256sum "$VSIX_PATH" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
       - name: Upload release VSIX
         uses: actions/upload-artifact@v5
         with:
-          name: dline-vsix-${{ github.sha }}
+          name: ${{ steps.package.outputs.artifact_name }}
           path: dist/${{ steps.package.outputs.filename }}
           if-no-files-found: error
           retention-days: 14

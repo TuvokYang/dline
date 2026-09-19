@@ -1,0 +1,132 @@
+name: Publish Production Release Artifact
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        type: string
+        required: true
+      version:
+        type: string
+        required: true
+      commit_sha:
+        type: string
+        required: true
+      artifact_name:
+        type: string
+        required: true
+      asset_name:
+        type: string
+        required: true
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  release:
+    name: Publish production GitHub release
+    if: github.repository == 'TuvokYang/dline'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: publish
+    permissions:
+      actions: read
+      attestations: write
+      contents: write
+      id-token: write
+    outputs:
+      sha256: ${{ steps.vsix.outputs.sha256 }}
+    steps:
+      - name: Download production VSIX
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: release-artifact
+
+      - name: Verify production VSIX
+        id: vsix
+        env:
+          TAG: ${{ inputs.tag }}
+          VERSION: ${{ inputs.version }}
+          COMMIT_SHA: ${{ inputs.commit_sha }}
+          ASSET_NAME: ${{ inputs.asset_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          vsix_path="release-artifact/$ASSET_NAME"
+          manifest_path="$RUNNER_TEMP/vsix-package.json"
+          if [[ "$TAG" != "v$VERSION" ]]; then
+            echo "Error: production tag '$TAG' does not match version '$VERSION'."
+            exit 1
+          fi
+          if [[ ! "$COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Error: production commit SHA must be a full lowercase Git SHA."
+            exit 1
+          fi
+          if [[ "$ASSET_NAME" != "dline-${VERSION}.vsix" ]]; then
+            echo "Error: production asset must be named 'dline-${VERSION}.vsix'."
+            exit 1
+          fi
+          if [[ ! -s "$vsix_path" ]]; then
+            echo "Error: production VSIX '$vsix_path' is missing or empty."
+            exit 1
+          fi
+          unzip -p "$vsix_path" extension/package.json > "$manifest_path"
+          if ! jq -e --arg version "$VERSION" '
+            .name == "dline" and
+            .publisher == "tuvokyang" and
+            .version == $version and
+            (.preview != true)
+          ' "$manifest_path" >/dev/null; then
+            echo "Error: VSIX does not match the production release."
+            jq '{name, publisher, version, preview}' "$manifest_path"
+            exit 1
+          fi
+          sha256=$(sha256sum "$vsix_path" | cut -d' ' -f1)
+          echo "$sha256  $vsix_path"
+          echo "path=$vsix_path" >> "$GITHUB_OUTPUT"
+          echo "sha256=$sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Attest production VSIX provenance
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: ${{ steps.vsix.outputs.path }}
+
+      - name: Create or update stable GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          VSIX_PATH: ${{ steps.vsix.outputs.path }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$TAG" --draft=false --prerelease=false --title "Dline ${TAG}" --repo "$GITHUB_REPOSITORY"
+            gh release upload "$TAG" "$VSIX_PATH" --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" "$VSIX_PATH" --verify-tag --generate-notes --title "Dline ${TAG}" --repo "$GITHUB_REPOSITORY"
+          fi
+
+      - name: Upload verified registry package
+        uses: actions/upload-artifact@v5
+        with:
+          name: registry-vsix-${{ inputs.commit_sha }}
+          path: release-artifact/${{ inputs.asset_name }}
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  publish-registries:
+    name: Publish production registries
+    needs: release
+    if: github.repository == 'TuvokYang/dline'
+    uses: ./.github/workflows/publish-vsix-registries.yml
+    with:
+      artifact_name: registry-vsix-${{ inputs.commit_sha }}
+      asset_name: ${{ inputs.asset_name }}
+      expected_sha256: ${{ needs.release.outputs.sha256 }}
+    secrets: inherit

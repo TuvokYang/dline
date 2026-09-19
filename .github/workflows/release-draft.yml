@@ -1,4 +1,4 @@
-name: Publish Draft Release (Dev)
+name: Publish Preview Release
 
 on:
   push:
@@ -12,7 +12,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: dev-draft-release-${{ github.ref }}
+  group: preview-release-${{ github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -72,12 +72,13 @@ jobs:
       package_channel: preview
 
   release:
-    name: Publish GitHub draft release
+    name: Publish public Preview prerelease
     needs: [verify-tag, tests]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: publish
     permissions:
+      actions: read
       attestations: write
       contents: write
       id-token: write
@@ -85,13 +86,14 @@ jobs:
       - name: Checkout tested tag
         uses: actions/checkout@v6
         with:
+          ref: ${{ needs.verify-tag.outputs.commit_sha }}
           fetch-depth: 0
           fetch-tags: true
 
       - name: Download tested VSIX
         uses: actions/download-artifact@v8
         with:
-          name: dline-vsix-${{ github.sha }}
+          name: dline-vsix-${{ needs.verify-tag.outputs.commit_sha }}
           path: release-artifact
 
       - name: Verify tested VSIX identity
@@ -109,6 +111,11 @@ jobs:
           fi
 
           vsix_path="${assets[0]}"
+          expected_asset_name="dline-preview-${VERSION}.vsix"
+          if [[ "$(basename "$vsix_path")" != "$expected_asset_name" ]]; then
+            echo "Error: Preview asset must be named '$expected_asset_name'."
+            exit 1
+          fi
           manifest_path="$RUNNER_TEMP/vsix-package.json"
           unzip -p "$vsix_path" extension/package.json > "$manifest_path"
           if ! jq -e --arg version "$VERSION" '
@@ -150,7 +157,7 @@ jobs:
             exit 1
           fi
 
-      - name: Create or update GitHub draft release
+      - name: Create or update public Preview prerelease
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.verify-tag.outputs.tag }}
@@ -160,12 +167,12 @@ jobs:
         run: |
           set -euo pipefail
 
-          title="Dline ${VERSION} Development Release"
+          title="Dline ${VERSION} Preview"
           notes_path="$RUNNER_TEMP/release-notes.md"
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release edit "$TAG" \
-              --draft \
-              --prerelease=false \
+              --draft=false \
+              --prerelease \
               --title "$title" \
               --notes-file "$notes_path" \
               --repo "$GITHUB_REPOSITORY"
@@ -173,7 +180,7 @@ jobs:
           else
             gh release create "$TAG" "$VSIX_PATH" \
               --verify-tag \
-              --draft \
+              --prerelease \
               --title "$title" \
               --notes-file "$notes_path" \
               --repo "$GITHUB_REPOSITORY"

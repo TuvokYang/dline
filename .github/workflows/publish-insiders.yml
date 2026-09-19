@@ -30,7 +30,10 @@ jobs:
     timeout-minutes: 10
     outputs:
       eligible: ${{ steps.trigger.outputs.eligible }}
+      commit_sha: ${{ steps.trigger.outputs.commit_sha }}
+      release_tag: ${{ steps.trigger.outputs.release_tag }}
       asset_name: ${{ steps.vsix.outputs.asset_name }}
+      version: ${{ steps.vsix.outputs.version }}
       sha256: ${{ steps.vsix.outputs.sha256 }}
     steps:
       - name: Verify triggering workflow and current dev head
@@ -61,6 +64,8 @@ jobs:
           fi
 
           echo "eligible=true" >> "$GITHUB_OUTPUT"
+          echo "commit_sha=$TESTED_SHA" >> "$GITHUB_OUTPUT"
+          echo "release_tag=insiders-$TESTED_SHA" >> "$GITHUB_OUTPUT"
 
       - name: Download tested VSIX artifact
         if: steps.trigger.outputs.eligible == 'true'
@@ -99,9 +104,11 @@ jobs:
             exit 1
           fi
 
+          version=$(jq -r '.version' "$manifest_path")
           sha256=$(sha256sum "$vsix_path" | cut -d' ' -f1)
           echo "$sha256  $vsix_path"
           echo "asset_name=$asset_name" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "sha256=$sha256" >> "$GITHUB_OUTPUT"
 
       - name: Upload verified registry package
@@ -113,6 +120,81 @@ jobs:
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
+
+  publish-draft:
+    name: Publish per-commit Insiders draft
+    needs: verify-insiders
+    if: needs.verify-insiders.outputs.eligible == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Download verified Insiders VSIX
+        uses: actions/download-artifact@v8
+        with:
+          name: registry-vsix-${{ needs.verify-insiders.outputs.commit_sha }}
+          path: release-artifact
+
+      - name: Verify draft asset
+        env:
+          ASSET_NAME: ${{ needs.verify-insiders.outputs.asset_name }}
+          EXPECTED_SHA256: ${{ needs.verify-insiders.outputs.sha256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          vsix_path="release-artifact/$ASSET_NAME"
+          if [[ ! -s "$vsix_path" ]]; then
+            echo "Error: verified Insiders VSIX '$vsix_path' is missing or empty."
+            exit 1
+          fi
+          actual_sha256=$(sha256sum "$vsix_path" | cut -d' ' -f1)
+          if [[ "$actual_sha256" != "$EXPECTED_SHA256" ]]; then
+            echo "Error: Insiders draft asset changed after verification."
+            exit 1
+          fi
+
+      - name: Create or update maintainers-only draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.verify-insiders.outputs.release_tag }}
+          COMMIT_SHA: ${{ needs.verify-insiders.outputs.commit_sha }}
+          VERSION: ${{ needs.verify-insiders.outputs.version }}
+          ASSET_NAME: ${{ needs.verify-insiders.outputs.asset_name }}
+          SHA256: ${{ needs.verify-insiders.outputs.sha256 }}
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          vsix_path="release-artifact/$ASSET_NAME"
+          notes_path="$RUNNER_TEMP/insiders-notes.md"
+          cat > "$notes_path" <<EOF
+          Automated Insiders build for dev commit \`$COMMIT_SHA\`.
+
+          - Extension version: \`$VERSION\`
+          - SHA-256: \`$SHA256\`
+          - Validated Tests run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}
+          EOF
+          title="Dline Insiders ${COMMIT_SHA:0:12}"
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$RELEASE_TAG" \
+              --draft \
+              --prerelease \
+              --target "$COMMIT_SHA" \
+              --title "$title" \
+              --notes-file "$notes_path" \
+              --repo "$GITHUB_REPOSITORY"
+            gh release upload "$RELEASE_TAG" "$vsix_path" --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$RELEASE_TAG" "$vsix_path" \
+              --target "$COMMIT_SHA" \
+              --draft \
+              --prerelease \
+              --title "$title" \
+              --notes-file "$notes_path" \
+              --repo "$GITHUB_REPOSITORY"
+          fi
 
   publish-registries:
     name: Publish Insiders registries

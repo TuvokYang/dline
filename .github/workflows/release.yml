@@ -12,13 +12,17 @@ permissions:
   contents: read
 
 concurrency:
-  group: production-release-validation-${{ github.ref }}
+  group: production-release-${{ github.ref_name }}
   cancel-in-progress: false
 
 jobs:
   verify-tag:
     name: Verify production release tag
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.verify.outputs.tag }}
+      version: ${{ steps.verify.outputs.version }}
+      commit_sha: ${{ steps.verify.outputs.commit_sha }}
     steps:
       - name: Checkout repository history
         uses: actions/checkout@v6
@@ -27,6 +31,9 @@ jobs:
           fetch-tags: true
 
       - name: Verify tag, version, and main branch head
+        id: verify
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           tag="$GITHUB_REF_NAME"
@@ -42,13 +49,15 @@ jobs:
             exit 1
           fi
 
-          git fetch origin main --no-tags
           tag_sha=$(git rev-parse "${tag}^{commit}")
-          main_sha=$(git rev-parse origin/main)
+          main_sha=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')
           if [[ "$tag_sha" != "$main_sha" ]]; then
             echo "Error: production tag '$tag' must point to current main head '$main_sha', got '$tag_sha'"
             exit 1
           fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$tag_version" >> "$GITHUB_OUTPUT"
+          echo "commit_sha=$tag_sha" >> "$GITHUB_OUTPUT"
 
   tests:
     name: Test and package release
@@ -67,7 +76,7 @@ jobs:
 
   functional-e2e:
     name: Full functional E2E (ubuntu)
-    needs: tests
+    needs: [verify-tag, tests]
     runs-on: ubuntu-latest
     timeout-minutes: 240
     env:
@@ -77,6 +86,8 @@ jobs:
     steps:
       - name: Checkout validated tag
         uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.verify-tag.outputs.commit_sha }}
 
       - name: Setup project
         uses: ./.github/actions/setup-project
@@ -87,7 +98,7 @@ jobs:
       - name: Download production VSIX
         uses: actions/download-artifact@v8
         with:
-          name: dline-vsix-${{ github.sha }}
+          name: dline-vsix-${{ needs.verify-tag.outputs.commit_sha }}
           path: validated-vsix
 
       - name: Verify and normalize tested VSIX
@@ -144,3 +155,20 @@ jobs:
           if-no-files-found: warn
           include-hidden-files: true
           retention-days: 14
+
+  publish:
+    name: Automatically publish validated production release
+    needs: [verify-tag, tests, functional-e2e]
+    permissions:
+      actions: read
+      attestations: write
+      contents: write
+      id-token: write
+    uses: ./.github/workflows/publish-production-release.yml
+    with:
+      tag: ${{ needs.verify-tag.outputs.tag }}
+      version: ${{ needs.verify-tag.outputs.version }}
+      commit_sha: ${{ needs.verify-tag.outputs.commit_sha }}
+      artifact_name: dline-vsix-${{ needs.verify-tag.outputs.commit_sha }}
+      asset_name: dline-${{ needs.verify-tag.outputs.version }}.vsix
+    secrets: inherit

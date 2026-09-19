@@ -14,17 +14,24 @@
  * | preview      | dline-preview    | X.Y.Z (from `dev-vX.Y.Z`)  |
  * | insiders     | dline-insiders   | major.minor.<unix seconds> |
  *
+ * GitHub distribution follows the same channel contract:
+ * - untagged main runs CI only and is rejected by automatic release packaging;
+ * - vX.Y.Z publishes stable assets after full validation or a manager override;
+ * - dev-vX.Y.Z publishes a public Preview prerelease;
+ * - untagged dev publishes a per-commit maintainers-only Insiders draft and registries.
+ *
  * Tagged channels require the tag, package.json, and both changelogs to agree.
  * The rolling insiders channel replaces the patch with a timestamp and skips
  * the changelog gate. package.json and README.md are restored even when
  * packaging aborts.
  */
 
-import { execFileSync, execSync } from "node:child_process"
+import { execSync } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { withMarketplaceReadme } from "./marketplace-readme.mjs"
+import { packageVsix } from "./vsix-packager.mjs"
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -37,6 +44,7 @@ const CHANGELOG_PATHS = [path.join(PROJECT_ROOT, "CHANGELOG.md"), path.join(PROJ
 
 const PRODUCTION_TAG_PATTERN = /^v(\d+\.\d+\.\d+)$/
 const DEV_TAG_PATTERN = /^dev-v(\d+\.\d+\.\d+)$/
+const INSIDERS_DRAFT_TAG_PATTERN = /^insiders-[0-9a-f]{40}$/
 
 const PREVIEW_SUFFIX = "-preview"
 const PREVIEW_DISPLAY_SUFFIX = " (Preview)"
@@ -67,11 +75,29 @@ function getGitHash() {
 }
 
 /**
- * Get the tag that points exactly at HEAD.
- * @returns {string|null} Tag name, or null when HEAD carries no tag.
+ * Get the public release tag that points exactly at HEAD.
+ *
+ * Per-commit Insiders drafts use an internal `insiders-<SHA>` release tag.
+ * Ignore those tags so rerunning an Insiders package remains valid and a later
+ * dev-vX.Y.Z tag on the same commit is selected deterministically.
+ *
+ * @returns {string|null} Public or unsupported tag name, or null when HEAD has only internal draft tags.
  */
 function getExactTag() {
-	return tryGit("git describe --tags --exact-match")
+	const rawTags = tryGit("git tag --points-at HEAD")
+	if (!rawTags) return null
+
+	const tags = rawTags.split(/\r?\n/).filter(Boolean)
+	const unsupportedTags = tags.filter(
+		(tag) => !PRODUCTION_TAG_PATTERN.test(tag) && !DEV_TAG_PATTERN.test(tag) && !INSIDERS_DRAFT_TAG_PATTERN.test(tag),
+	)
+	if (unsupportedTags.length > 0) return unsupportedTags[0]
+
+	const releaseTags = tags.filter((tag) => PRODUCTION_TAG_PATTERN.test(tag) || DEV_TAG_PATTERN.test(tag))
+	if (releaseTags.length > 1) {
+		fail(`HEAD has multiple public release tags: ${releaseTags.join(", ")}. Keep exactly one release channel tag.`)
+	}
+	return releaseTags[0] ?? null
 }
 
 /**
@@ -306,7 +332,7 @@ console.log(`[package-vsix] Tag: ${tag ?? "(none)"}`)
 console.log(`[package-vsix] Channel: ${channel}`)
 console.log(`[package-vsix] Version: ${version}`)
 
-await withMarketplaceReadme((cleanups) => {
+await withMarketplaceReadme(async (cleanups) => {
 	const originalContent = fs.readFileSync(PACKAGE_JSON_PATH, "utf-8")
 	const pkg = JSON.parse(originalContent)
 
@@ -329,14 +355,11 @@ await withMarketplaceReadme((cleanups) => {
 		fs.mkdirSync(destinationDirectory, { recursive: true })
 	}
 
-	const vsceArgs = ["vsce", "package", "--no-dependencies", "--allow-package-secrets", "sendgrid"]
-	if (resolvedOutputPath) {
-		vsceArgs.push("--out", resolvedOutputPath)
-	}
-	console.log(`[package-vsix] Running: npx ${vsceArgs.map((argument) => JSON.stringify(argument)).join(" ")}`)
-	execFileSync(process.platform === "win32" ? "npx.cmd" : "npx", vsceArgs, {
+	console.log(`[package-vsix] Packaging through the VSCE API${resolvedOutputPath ? `: ${resolvedOutputPath}` : ""}`)
+	await packageVsix({
 		cwd: PROJECT_ROOT,
-		stdio: "inherit",
+		mode: "build-and-pack",
+		packagePath: resolvedOutputPath,
 	})
 	console.log("[package-vsix] Package completed successfully!")
 })

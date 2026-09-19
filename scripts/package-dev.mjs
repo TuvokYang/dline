@@ -17,22 +17,16 @@
 
 import { execSync } from "node:child_process"
 import fs from "node:fs"
-import { createRequire } from "node:module"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { withMarketplaceReadme } from "./marketplace-readme.mjs"
+import { packageVsix } from "./vsix-packager.mjs"
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
-const require = createRequire(import.meta.url)
 
 const PROJECT_ROOT = path.join(__dirname, "..")
 const PACKAGE_JSON_PATH = path.join(PROJECT_ROOT, "package.json")
-const _DIST_DIR = path.join(PROJECT_ROOT, "dist")
-const { pack: packVSIX } = require(path.join(PROJECT_ROOT, "node_modules", "@vscode", "vsce", "out", "package.js"))
-
-const _NIGHTLY_SUFFIX = "-nightly"
-const _NIGHTLY_DISPLAY_SUFFIX = " (Nightly)"
 
 /**
  * Get short git hash of current HEAD.
@@ -156,14 +150,16 @@ await withMarketplaceReadme(async (cleanups) => {
 		})
 	}
 
-	// 2. Pack the already-built files. createVSIX() cannot be used here because
-	// it always runs vscode:prepublish and would overwrite dist with a production build.
+	// 2. Pack the already-built files without running vscode:prepublish, which
+	// would overwrite dist with a production bundle.
 	assertDevBundle()
-	console.log("[package-dev] Creating VSIX...")
-	const { packagePath } = await packVSIX({
+	const packageManifest = JSON.parse(fs.readFileSync(PACKAGE_JSON_PATH, "utf-8"))
+	const expectedPackagePath = path.join(PROJECT_ROOT, `${packageManifest.name}-${packageManifest.version}.vsix`)
+	console.log("[package-dev] Creating VSIX through the shared VSCE API adapter...")
+	const { packagePath } = await packageVsix({
 		cwd: PROJECT_ROOT,
-		// The extension and Webview are bundled; dependency scanning only re-adds duplicate package files.
-		dependencies: false,
+		mode: "pack-only",
+		packagePath: expectedPackagePath,
 	})
 	const packageSizeMb = fs.statSync(packagePath).size / 1_000_000
 	console.log(`[package-dev] Package completed: ${packagePath} (${packageSizeMb.toFixed(2)} MB)`)

@@ -1,10 +1,14 @@
-name: Production Release
+name: Production Release (Manual Override)
 
 on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Validated production tag to release (vX.Y.Z).
+        description: Production tag to publish (vX.Y.Z).
+        type: string
+        required: true
+      reason:
+        description: Reason for bypassing or replacing the automatic release path.
         type: string
         required: true
 
@@ -20,40 +24,38 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
-    name: Publish validated GitHub release
+  validate:
+    name: Validate manual production release request
     if: github.repository == 'TuvokYang/dline'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    environment: publish
-    permissions:
-      actions: read
-      attestations: write
-      contents: write
-      id-token: write
+    timeout-minutes: 10
     outputs:
+      tag: ${{ steps.validation.outputs.tag }}
+      version: ${{ steps.validation.outputs.version }}
       commit_sha: ${{ steps.validation.outputs.commit_sha }}
-      asset_name: ${{ steps.validation.outputs.asset_name }}
-      sha256: ${{ steps.vsix.outputs.sha256 }}
     steps:
-      - name: Checkout validated tag
+      - name: Checkout requested tag
         uses: actions/checkout@v6
         with:
           ref: ${{ inputs.tag }}
           fetch-depth: 0
           fetch-tags: true
 
-      - name: Verify tag and successful production validation
+      - name: Verify tag and main ancestry
         id: validation
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.tag }}
+          REASON: ${{ inputs.reason }}
         shell: bash
         run: |
           set -euo pipefail
-
           if [[ ! "$TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
             echo "Error: production tag must match vX.Y.Z, got '$TAG'."
+            exit 1
+          fi
+          if [[ -z "${REASON// }" ]]; then
+            echo "Error: a manual override reason is required."
             exit 1
           fi
           version="${BASH_REMATCH[1]}"
@@ -62,7 +64,6 @@ jobs:
             echo "Error: tag version '$version' does not match package version '$package_version'."
             exit 1
           fi
-
           tag_sha=$(git rev-parse "${TAG}^{commit}")
           main_sha=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')
           compare_json=$(gh api "repos/${GITHUB_REPOSITORY}/compare/${tag_sha}...${main_sha}")
@@ -70,104 +71,41 @@ jobs:
             echo "Error: production tag '$TAG' is not an ancestor of main '$main_sha'."
             exit 1
           fi
-
-          validation_run_id=$(gh api --paginate \
-            "repos/${GITHUB_REPOSITORY}/actions/workflows/release.yml/runs?event=push&status=success&per_page=100" \
-            --jq ".workflow_runs[] | select(.head_sha == \"$tag_sha\" and .head_branch == \"$TAG\") | .id" | head -n 1)
-          if [[ -z "$validation_run_id" ]]; then
-            echo "Error: no successful Production Release Validation run exists for '$TAG' at '$tag_sha'."
-            exit 1
-          fi
-
-          echo "commit_sha=$tag_sha" >> "$GITHUB_OUTPUT"
+          echo "::warning::Manual production override requested: $REASON"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "asset_name=dline-${version}.vsix" >> "$GITHUB_OUTPUT"
-          echo "validation_run_id=$validation_run_id" >> "$GITHUB_OUTPUT"
+          echo "commit_sha=$tag_sha" >> "$GITHUB_OUTPUT"
 
-      - name: Download validated VSIX artifact
-        uses: actions/download-artifact@v8
-        with:
-          name: dline-vsix-${{ steps.validation.outputs.commit_sha }}
-          path: tested-artifact
-          github-token: ${{ github.token }}
-          run-id: ${{ steps.validation.outputs.validation_run_id }}
-
-      - name: Verify validated production VSIX
-        id: vsix
-        env:
-          VERSION: ${{ steps.validation.outputs.version }}
-          ASSET_NAME: ${{ steps.validation.outputs.asset_name }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          tested_vsix="tested-artifact/$ASSET_NAME"
-          manifest_path="$RUNNER_TEMP/vsix-package.json"
-
-          if [[ ! -s "$tested_vsix" ]]; then
-            echo "Error: validated VSIX '$tested_vsix' is missing or empty."
-            exit 1
-          fi
-          unzip -p "$tested_vsix" extension/package.json > "$manifest_path"
-          if ! jq -e --arg version "$VERSION" '
-            .name == "dline" and
-            .publisher == "tuvokyang" and
-            .version == $version and
-            (.preview != true)
-          ' "$manifest_path" >/dev/null; then
-            echo "Error: validated VSIX does not match the production release."
-            jq '{name, publisher, version, preview}' "$manifest_path"
-            exit 1
-          fi
-
-          tested_sha=$(sha256sum "$tested_vsix" | cut -d' ' -f1)
-          echo "$tested_sha  $tested_vsix"
-          echo "path=$tested_vsix" >> "$GITHUB_OUTPUT"
-          echo "sha256=$tested_sha" >> "$GITHUB_OUTPUT"
-
-      - name: Attest validated VSIX provenance
-        uses: actions/attest-build-provenance@v3
-        with:
-          subject-path: ${{ steps.vsix.outputs.path }}
-
-      - name: Create or update production release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ inputs.tag }}
-          VSIX_PATH: ${{ steps.vsix.outputs.path }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release edit "$TAG" \
-              --draft=false \
-              --prerelease=false \
-              --title "Dline ${TAG}" \
-              --repo "$GITHUB_REPOSITORY"
-            gh release upload "$TAG" "$VSIX_PATH" --clobber --repo "$GITHUB_REPOSITORY"
-          else
-            gh release create "$TAG" "$VSIX_PATH" \
-              --verify-tag \
-              --generate-notes \
-              --title "Dline ${TAG}" \
-              --repo "$GITHUB_REPOSITORY"
-          fi
-
-      - name: Upload verified registry package
-        uses: actions/upload-artifact@v5
-        with:
-          name: registry-vsix-${{ steps.validation.outputs.commit_sha }}
-          path: tested-artifact/${{ steps.validation.outputs.asset_name }}
-          if-no-files-found: error
-          retention-days: 7
-          compression-level: 0
-
-  publish-registries:
-    name: Publish production registries
-    needs: release
-    if: github.repository == 'TuvokYang/dline'
-    uses: ./.github/workflows/publish-vsix-registries.yml
+  package:
+    name: Build fresh production VSIX
+    needs: validate
+    uses: ./.github/workflows/package.yml
     with:
-      artifact_name: registry-vsix-${{ needs.release.outputs.commit_sha }}
-      asset_name: ${{ needs.release.outputs.asset_name }}
-      expected_sha256: ${{ needs.release.outputs.sha256 }}
+      profile: release
+      channel: production
+      source_ref: ${{ needs.validate.outputs.tag }}
+      artifact_key: ${{ needs.validate.outputs.commit_sha }}
+    secrets:
+      TELEMETRY_SERVICE_API_KEY: ${{ secrets.TELEMETRY_SERVICE_API_KEY }}
+      ERROR_SERVICE_API_KEY: ${{ secrets.ERROR_SERVICE_API_KEY }}
+      OTEL_TELEMETRY_ENABLED: ${{ secrets.OTEL_TELEMETRY_ENABLED }}
+      OTEL_EXPORTER_OTLP_PROTOCOL: ${{ secrets.OTEL_EXPORTER_OTLP_PROTOCOL }}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${{ secrets.OTEL_EXPORTER_OTLP_ENDPOINT }}
+      OTEL_EXPORTER_OTLP_HEADERS: ${{ secrets.OTEL_EXPORTER_OTLP_HEADERS }}
+
+  publish:
+    name: Publish manual production release
+    needs: [validate, package]
+    permissions:
+      actions: read
+      attestations: write
+      contents: write
+      id-token: write
+    uses: ./.github/workflows/publish-production-release.yml
+    with:
+      tag: ${{ needs.validate.outputs.tag }}
+      version: ${{ needs.validate.outputs.version }}
+      commit_sha: ${{ needs.validate.outputs.commit_sha }}
+      artifact_name: ${{ needs.package.outputs.artifact_name }}
+      asset_name: ${{ needs.package.outputs.asset_name }}
     secrets: inherit
