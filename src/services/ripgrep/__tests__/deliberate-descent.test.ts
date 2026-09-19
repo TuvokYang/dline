@@ -52,7 +52,7 @@ function stubRipgrepProcess(lines: readonly string[]): childProcess.ChildProcess
 		for (const line of lines) stdout.push(`${line}\n`)
 		stdout.push(null)
 		stderr.push(null)
-		proc.emit("exit", 0)
+		proc.emit("close", 0, null)
 	})
 
 	return proc
