@@ -1,0 +1,163 @@
+name: Publish VSIX Registries
+
+on:
+  workflow_call:
+    inputs:
+      artifact_name:
+        description: Name of the verified workflow artifact containing the VSIX.
+        type: string
+        required: true
+      asset_name:
+        description: Exact VSIX filename inside the artifact.
+        type: string
+        required: true
+      expected_sha256:
+        description: SHA-256 recorded by the verification job.
+        type: string
+        required: true
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  publish-marketplace:
+    name: Publish VS Code Marketplace
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: dline-release
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Install pinned VSCE
+        id: vsce
+        shell: bash
+        run: |
+          set -euo pipefail
+          tool_root="$RUNNER_TEMP/vsce"
+          npm install \
+            --prefix "$tool_root" \
+            --ignore-scripts \
+            --omit=optional \
+            --no-audit \
+            --no-fund \
+            @vscode/vsce@3.9.2
+          vsce_bin="$tool_root/node_modules/.bin/vsce"
+          "$vsce_bin" --version
+          echo "bin=$vsce_bin" >> "$GITHUB_OUTPUT"
+
+      - name: Download verified VSIX
+        uses: actions/download-artifact@v6
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: release-artifact
+
+      - name: Publish VSIX
+        env:
+          VSCE_PAT: ${{ secrets.DLINE_VSCODE_RELEASE_PUBLISH_PAT }}
+          ASSET_NAME: ${{ inputs.asset_name }}
+          EXPECTED_SHA256: ${{ inputs.expected_sha256 }}
+          VSCE_BIN: ${{ steps.vsce.outputs.bin }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          vsix_path="release-artifact/$ASSET_NAME"
+
+          if [[ -z "${VSCE_PAT:-}" ]]; then
+            echo "Error: DLINE_VSCODE_RELEASE_PUBLISH_PAT is not configured in the dline-release environment."
+            exit 1
+          fi
+          if [[ ! -x "$VSCE_BIN" ]]; then
+            echo "Error: pinned VSCE executable '$VSCE_BIN' is unavailable."
+            exit 1
+          fi
+          if [[ ! -s "$vsix_path" ]]; then
+            echo "Error: verified VSIX '$vsix_path' is missing or empty."
+            exit 1
+          fi
+
+          actual_sha256=$(sha256sum "$vsix_path" | cut -d' ' -f1)
+          if [[ "$actual_sha256" != "$EXPECTED_SHA256" ]]; then
+            echo "Error: Marketplace package changed after verification."
+            echo "Expected: $EXPECTED_SHA256"
+            echo "Actual:   $actual_sha256"
+            exit 1
+          fi
+
+          "$VSCE_BIN" publish --skip-duplicate --packagePath "$vsix_path"
+
+  publish-open-vsx:
+    name: Publish Open VSX
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: dline-release
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Install pinned Open VSX CLI
+        id: ovsx
+        shell: bash
+        run: |
+          set -euo pipefail
+          tool_root="$RUNNER_TEMP/ovsx"
+          npm install \
+            --prefix "$tool_root" \
+            --ignore-scripts \
+            --omit=optional \
+            --no-audit \
+            --no-fund \
+            ovsx@1.2.0
+          ovsx_bin="$tool_root/node_modules/.bin/ovsx"
+          "$ovsx_bin" --version
+          echo "bin=$ovsx_bin" >> "$GITHUB_OUTPUT"
+
+      - name: Download verified VSIX
+        uses: actions/download-artifact@v6
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: release-artifact
+
+      - name: Publish VSIX
+        env:
+          OVSX_PAT: ${{ secrets.DLINE_VSCODE_OVSX_PAT }}
+          ASSET_NAME: ${{ inputs.asset_name }}
+          EXPECTED_SHA256: ${{ inputs.expected_sha256 }}
+          OVSX_BIN: ${{ steps.ovsx.outputs.bin }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          vsix_path="release-artifact/$ASSET_NAME"
+
+          if [[ -z "${OVSX_PAT:-}" ]]; then
+            echo "Error: DLINE_VSCODE_OVSX_PAT is not configured in the dline-release environment."
+            exit 1
+          fi
+          if [[ ! -x "$OVSX_BIN" ]]; then
+            echo "Error: pinned Open VSX executable '$OVSX_BIN' is unavailable."
+            exit 1
+          fi
+          if [[ ! -s "$vsix_path" ]]; then
+            echo "Error: verified VSIX '$vsix_path' is missing or empty."
+            exit 1
+          fi
+
+          actual_sha256=$(sha256sum "$vsix_path" | cut -d' ' -f1)
+          if [[ "$actual_sha256" != "$EXPECTED_SHA256" ]]; then
+            echo "Error: Open VSX package changed after verification."
+            echo "Expected: $EXPECTED_SHA256"
+            echo "Actual:   $actual_sha256"
+            exit 1
+          fi
+
+          "$OVSX_BIN" publish "$vsix_path" --skip-duplicate

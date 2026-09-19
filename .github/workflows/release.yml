@@ -55,6 +55,7 @@ jobs:
     uses: ./.github/workflows/test.yml
     with:
       package_profile: release
+      package_channel: production
     secrets:
       TELEMETRY_SERVICE_API_KEY: ${{ secrets.TELEMETRY_SERVICE_API_KEY }}
       ERROR_SERVICE_API_KEY: ${{ secrets.ERROR_SERVICE_API_KEY }}

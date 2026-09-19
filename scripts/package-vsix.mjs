@@ -1,30 +1,26 @@
 #!/usr/bin/env node
 
 /**
- * Production VSIX packaging script.
+ * Channel-aware VSIX packaging script.
  *
- * The packaged identity is derived from the branch and the tag that points at
- * HEAD, so one command produces the right artifact for each release channel:
+ * Local invocations derive the channel from the branch and exact tag at HEAD.
+ * CI can pass `--channel` explicitly so pull-request packages remain neutral
+ * while dev, preview, and production runs receive their public identities:
  *
- * | HEAD                    | name             | version                    |
- * | ----------------------- | ---------------- | -------------------------- |
- * | main + `vX.Y.Z`         | dline            | X.Y.Z (from the tag)       |
- * | dev + `dev-vX.Y.Z`      | dline-preview    | X.Y.Z (from the tag)       |
- * | dev without a tag       | dline-insiders   | major.minor.<unix seconds> |
+ * | Channel      | name             | version                    |
+ * | ------------ | ---------------- | -------------------------- |
+ * | ci           | dline            | package.json version       |
+ * | production   | dline            | X.Y.Z (from `vX.Y.Z`)      |
+ * | preview      | dline-preview    | X.Y.Z (from `dev-vX.Y.Z`)  |
+ * | insiders     | dline-insiders   | major.minor.<unix seconds> |
  *
- * A tagged channel is a release candidate, so the tag version, package.json,
- * and both changelogs must already agree before anything is packaged. The
- * untagged insiders channel is a rolling build, so it replaces the patch with a
- * timestamp instead and skips the changelog gate.
- *
- * Any other combination is rejected rather than guessed: `main` without a tag is
- * the unfinished middle of a promotion, and a production tag outside `main` (or
- * a dev tag outside `dev`) means the tag was created on the wrong branch.
- *
- * package.json and README.md are restored even when packaging aborts.
+ * Tagged channels require the tag, package.json, and both changelogs to agree.
+ * The rolling insiders channel replaces the patch with a timestamp and skips
+ * the changelog gate. package.json and README.md are restored even when
+ * packaging aborts.
  */
 
-import { execSync } from "node:child_process"
+import { execFileSync, execSync } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -46,6 +42,7 @@ const PREVIEW_SUFFIX = "-preview"
 const PREVIEW_DISPLAY_SUFFIX = " (Preview)"
 const INSIDERS_SUFFIX = "-insiders"
 const INSIDERS_DISPLAY_SUFFIX = " (Insiders)"
+const SUPPORTED_CHANNELS = new Set(["auto", "ci", "production", "preview", "insiders"])
 
 /**
  * Run a git command and return its trimmed output.
@@ -150,6 +147,17 @@ function assertReleaseVersionConsistency(tag, tagVersion, packageVersion) {
 }
 
 /**
+ * Create the monotonically increasing Marketplace-compatible insiders version.
+ *
+ * @param {string} packageVersion Version currently in package.json.
+ * @returns {string}
+ */
+function createInsidersVersion(packageVersion) {
+	const [major, minor] = packageVersion.split(".")
+	return `${major}.${minor}.${Math.floor(Date.now() / 1000)}`
+}
+
+/**
  * Resolve which channel the current HEAD belongs to.
  *
  * @param {string} packageVersion Version currently in package.json.
@@ -189,20 +197,88 @@ function resolveChannel(packageVersion) {
 		fail(`Branch '${branch ?? "detached HEAD"}' has no packaging channel. Package from main, dev, or a release tag.`)
 	}
 
-	const [major, minor] = packageVersion.split(".")
-	return { channel: "insiders", version: `${major}.${minor}.${Math.floor(Date.now() / 1000)}`, tag: null }
+	return { channel: "insiders", version: createInsidersVersion(packageVersion), tag: null }
+}
+
+/**
+ * Resolve an explicitly requested CI channel without relying on checkout mode.
+ *
+ * @param {string} requestedChannel Requested channel.
+ * @param {string} packageVersion Version currently in package.json.
+ * @returns {{channel: "ci"|"production"|"preview"|"insiders", version: string, tag: string|null}}
+ */
+function resolveRequestedChannel(requestedChannel, packageVersion) {
+	if (requestedChannel === "auto") {
+		return resolveChannel(packageVersion)
+	}
+
+	const tag = getExactTag()
+	if (requestedChannel === "ci") {
+		return { channel: "ci", version: packageVersion, tag }
+	}
+	if (requestedChannel === "insiders") {
+		if (tag !== null) {
+			fail(`Insiders packaging requires an untagged commit, but HEAD has tag '${tag}'.`)
+		}
+		return { channel: "insiders", version: createInsidersVersion(packageVersion), tag: null }
+	}
+
+	const pattern = requestedChannel === "production" ? PRODUCTION_TAG_PATTERN : DEV_TAG_PATTERN
+	const match = tag?.match(pattern)
+	if (!match) {
+		const expected = requestedChannel === "production" ? "vX.Y.Z" : "dev-vX.Y.Z"
+		fail(`${requestedChannel} packaging requires an exact ${expected} tag at HEAD.`)
+	}
+	assertReleaseVersionConsistency(tag, match[1], packageVersion)
+	return { channel: requestedChannel, version: match[1], tag }
+}
+
+/**
+ * Parse CLI options used by CI and local packaging.
+ *
+ * @param {string[]} argv Command-line arguments.
+ * @returns {{requestedChannel: string, outputPath: string|null}}
+ */
+function parseArguments(argv) {
+	let requestedChannel = "auto"
+	let outputPath = null
+
+	for (let index = 0; index < argv.length; index += 1) {
+		const argument = argv[index]
+		if (argument === "--channel") {
+			requestedChannel = argv[index + 1]
+			index += 1
+		} else if (argument === "--out") {
+			outputPath = argv[index + 1]
+			index += 1
+		} else if (argument === "--help" || argument === "-h") {
+			console.log("Usage: npm run vsix -- [--channel auto|ci|insiders|preview|production] [--out <path>]")
+			process.exit(0)
+		} else {
+			fail(`Unknown argument '${argument}'.`)
+		}
+	}
+
+	if (!requestedChannel || !SUPPORTED_CHANNELS.has(requestedChannel)) {
+		fail(`Unsupported channel '${requestedChannel ?? ""}'.`)
+	}
+	if (argv.includes("--out") && !outputPath) {
+		fail("--out requires a path.")
+	}
+
+	return { requestedChannel, outputPath }
 }
 
 /**
  * Apply a channel identity to a package manifest in place.
  *
  * @param {object} pkg Parsed package.json.
- * @param {"production"|"preview"|"insiders"} channel Target channel.
+ * @param {"ci"|"production"|"preview"|"insiders"} channel Target channel.
  * @param {string} version Version to publish.
  * @returns {boolean} True when the manifest was modified.
  */
 function applyChannelIdentity(pkg, channel, version) {
-	if (channel === "production") return false
+	if (channel === "ci" || channel === "production") return false
 
 	const suffix = channel === "preview" ? PREVIEW_SUFFIX : INSIDERS_SUFFIX
 	const displaySuffix = channel === "preview" ? PREVIEW_DISPLAY_SUFFIX : INSIDERS_DISPLAY_SUFFIX
@@ -220,8 +296,10 @@ function applyChannelIdentity(pkg, channel, version) {
 
 // --- Main ---
 
+const { requestedChannel, outputPath } = parseArguments(process.argv.slice(2))
 const packageVersion = readPackageJson().version
-const { channel, version, tag } = resolveChannel(packageVersion)
+const { channel, version, tag } = resolveRequestedChannel(requestedChannel, packageVersion)
+const resolvedOutputPath = outputPath ? (path.isAbsolute(outputPath) ? outputPath : path.join(PROJECT_ROOT, outputPath)) : null
 
 console.log(`[package-vsix] Git hash: ${getGitHash()}`)
 console.log(`[package-vsix] Tag: ${tag ?? "(none)"}`)
@@ -243,20 +321,22 @@ await withMarketplaceReadme((cleanups) => {
 		writePackageJson(pkg)
 		console.log(`[package-vsix] Applied ${channel} identity: name=${pkg.name}, version=${pkg.version}`)
 	} else {
-		console.log(`[package-vsix] Packaging production identity: name=${pkg.name}, version=${pkg.version}`)
+		console.log(`[package-vsix] Packaging ${channel} identity: name=${pkg.name}, version=${pkg.version}`)
 	}
 
-	// Ensure dist directory exists
-	if (!fs.existsSync(DIST_DIR)) {
-		fs.mkdirSync(DIST_DIR, { recursive: true })
+	const destinationDirectory = resolvedOutputPath ? path.dirname(resolvedOutputPath) : DIST_DIR
+	if (!fs.existsSync(destinationDirectory)) {
+		fs.mkdirSync(destinationDirectory, { recursive: true })
 	}
 
-	const vsceCmd = "npx vsce package --no-dependencies --allow-package-secrets sendgrid"
-	console.log(`[package-vsix] Running: ${vsceCmd}`)
-	execSync(vsceCmd, {
+	const vsceArgs = ["vsce", "package", "--no-dependencies", "--allow-package-secrets", "sendgrid"]
+	if (resolvedOutputPath) {
+		vsceArgs.push("--out", resolvedOutputPath)
+	}
+	console.log(`[package-vsix] Running: npx ${vsceArgs.map((argument) => JSON.stringify(argument)).join(" ")}`)
+	execFileSync(process.platform === "win32" ? "npx.cmd" : "npx", vsceArgs, {
 		cwd: PROJECT_ROOT,
 		stdio: "inherit",
-		shell: true,
 	})
 	console.log("[package-vsix] Package completed successfully!")
 })

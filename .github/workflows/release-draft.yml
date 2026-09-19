@@ -69,6 +69,7 @@ jobs:
     uses: ./.github/workflows/test.yml
     with:
       package_profile: ci
+      package_channel: preview
 
   release:
     name: Publish GitHub draft release
@@ -111,10 +112,10 @@ jobs:
           manifest_path="$RUNNER_TEMP/vsix-package.json"
           unzip -p "$vsix_path" extension/package.json > "$manifest_path"
           if ! jq -e --arg version "$VERSION" '
-            .name == "dline" and
+            .name == "dline-preview" and
             .publisher == "tuvokyang" and
             .version == $version and
-            (.preview != true)
+            (.preview == true)
           ' "$manifest_path" >/dev/null; then
             echo "Error: tested VSIX identity or version does not match the development release"
             jq '{name, publisher, version, preview}' "$manifest_path"

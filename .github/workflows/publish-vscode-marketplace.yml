@@ -1,4 +1,4 @@
-name: Publish VS Code Marketplace
+name: Publish Production Registries
 
 on:
   workflow_run:
@@ -187,83 +187,21 @@ jobs:
           echo "$tested_sha  $tested_vsix"
           echo "sha256=$tested_sha" >> "$GITHUB_OUTPUT"
 
-      - name: Upload verified Marketplace package
+      - name: Upload verified registry package
         uses: actions/upload-artifact@v5
         with:
-          name: vscode-marketplace-vsix-${{ github.event.workflow_run.head_sha }}
+          name: registry-vsix-${{ github.event.workflow_run.head_sha }}
           path: tested-artifact/${{ steps.release.outputs.asset_name }}
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
 
-  publish-marketplace:
-    name: Publish VS Code Marketplace
+  publish-registries:
+    name: Publish production registries
     needs: verify-release
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    environment:
-      name: dline-release
-    steps:
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: 22
-
-      - name: Install pinned VSCE
-        id: vsce
-        shell: bash
-        run: |
-          set -euo pipefail
-          tool_root="$RUNNER_TEMP/vsce"
-          npm install \
-            --prefix "$tool_root" \
-            --ignore-scripts \
-            --omit=optional \
-            --no-audit \
-            --no-fund \
-            @vscode/vsce@3.9.2
-          vsce_bin="$tool_root/node_modules/.bin/vsce"
-          "$vsce_bin" --version
-          echo "bin=$vsce_bin" >> "$GITHUB_OUTPUT"
-
-      - name: Download verified Marketplace package
-        uses: actions/download-artifact@v6
-        with:
-          name: vscode-marketplace-vsix-${{ github.event.workflow_run.head_sha }}
-          path: release-artifact
-
-      - name: Publish VSIX
-        env:
-          VSCE_PAT: ${{ secrets.DLINE_VSCODE_RELEASE_PUBLISH_PAT }}
-          ASSET_NAME: ${{ needs.verify-release.outputs.asset_name }}
-          EXPECTED_SHA256: ${{ needs.verify-release.outputs.sha256 }}
-          VSCE_BIN: ${{ steps.vsce.outputs.bin }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          vsix_path="release-artifact/$ASSET_NAME"
-
-          if [[ -z "${VSCE_PAT:-}" ]]; then
-            echo "Error: DLINE_VSCODE_RELEASE_PUBLISH_PAT is not configured in the dline-release environment."
-            exit 1
-          fi
-          if [[ ! -x "$VSCE_BIN" ]]; then
-            echo "Error: pinned VSCE executable '$VSCE_BIN' is unavailable."
-            exit 1
-          fi
-          if [[ ! -s "$vsix_path" ]]; then
-            echo "Error: verified VSIX '$vsix_path' is missing or empty."
-            exit 1
-          fi
-
-          actual_sha256=$(sha256sum "$vsix_path" | cut -d' ' -f1)
-          if [[ "$actual_sha256" != "$EXPECTED_SHA256" ]]; then
-            echo "Error: Marketplace package changed after verification."
-            echo "Expected: $EXPECTED_SHA256"
-            echo "Actual:   $actual_sha256"
-            exit 1
-          fi
-
-          # A successful release workflow can be rerun for the same SHA. The pinned
-          # VSCE checks the published version first and skips the write when it exists.
-          "$VSCE_BIN" publish --skip-duplicate --packagePath "$vsix_path"
+    uses: ./.github/workflows/publish-vsix-registries.yml
+    with:
+      artifact_name: registry-vsix-${{ github.event.workflow_run.head_sha }}
+      asset_name: ${{ needs.verify-release.outputs.asset_name }}
+      expected_sha256: ${{ needs.verify-release.outputs.sha256 }}
+    secrets: inherit

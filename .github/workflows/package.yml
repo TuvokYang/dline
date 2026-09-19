@@ -8,6 +8,11 @@ on:
         type: string
         required: false
         default: ci
+      channel:
+        description: VSIX identity channel.
+        type: string
+        required: false
+        default: ci
     secrets:
       TELEMETRY_SERVICE_API_KEY:
         required: false
@@ -30,16 +35,30 @@ env:
 
 jobs:
   validate-profile:
-    name: Validate package profile
+    name: Validate package settings
     runs-on: ubuntu-latest
     steps:
-      - name: Validate profile
+      - name: Validate profile and channel
         shell: bash
         env:
           PROFILE: ${{ inputs.profile }}
+          CHANNEL: ${{ inputs.channel }}
         run: |
+          set -euo pipefail
           if [[ "$PROFILE" != "ci" && "$PROFILE" != "release" ]]; then
             echo "Error: package profile must be 'ci' or 'release'"
+            exit 1
+          fi
+          if [[ "$CHANNEL" != "ci" && "$CHANNEL" != "insiders" && "$CHANNEL" != "preview" && "$CHANNEL" != "production" ]]; then
+            echo "Error: package channel must be 'ci', 'insiders', 'preview', or 'production'"
+            exit 1
+          fi
+          if [[ "$PROFILE" == "release" && "$CHANNEL" != "production" ]]; then
+            echo "Error: the release profile requires the production channel"
+            exit 1
+          fi
+          if [[ "$PROFILE" == "ci" && "$CHANNEL" == "production" ]]; then
+            echo "Error: the production channel requires the release profile"
             exit 1
           fi
 
@@ -53,6 +72,8 @@ jobs:
       - name: Checkout code with LFS assets
         uses: actions/checkout@v6
         with:
+          fetch-depth: 0
+          fetch-tags: true
           lfs: true
 
       - name: Setup project
@@ -74,15 +95,34 @@ jobs:
       - name: Resolve VSIX filename
         id: package
         shell: bash
+        env:
+          CHANNEL: ${{ inputs.channel }}
         run: |
+          set -euo pipefail
           version=$(node -p "require('./package.json').version")
           short_sha="${GITHUB_SHA:0:12}"
-          echo "filename=dline-${version}-${short_sha}.vsix" >> "$GITHUB_OUTPUT"
+          case "$CHANNEL" in
+            ci)
+              filename="dline-ci-${version}-${short_sha}.vsix"
+              ;;
+            insiders)
+              filename="dline-insiders-${short_sha}.vsix"
+              ;;
+            preview)
+              filename="dline-preview-${version}.vsix"
+              ;;
+            *)
+              echo "Error: unsupported CI package channel '$CHANNEL'"
+              exit 1
+              ;;
+          esac
+          echo "filename=$filename" >> "$GITHUB_OUTPUT"
 
-      - name: Build production VSIX
+      - name: Build channel VSIX
         env:
+          CHANNEL: ${{ inputs.channel }}
           DLINE_ENVIRONMENT: production
-        run: npm exec -- vsce package --no-dependencies --allow-package-secrets sendgrid --out "dist/${{ steps.package.outputs.filename }}"
+        run: node scripts/package-vsix.mjs --channel "$CHANNEL" --out "dist/${{ steps.package.outputs.filename }}"
 
       - name: Upload tested VSIX
         uses: actions/upload-artifact@v5
@@ -103,6 +143,8 @@ jobs:
       - name: Checkout code with LFS assets
         uses: actions/checkout@v6
         with:
+          fetch-depth: 0
+          fetch-tags: true
           lfs: true
 
       - name: Setup project
@@ -139,7 +181,7 @@ jobs:
           OTEL_EXPORTER_OTLP_PROTOCOL: ${{ secrets.OTEL_EXPORTER_OTLP_PROTOCOL }}
           OTEL_EXPORTER_OTLP_ENDPOINT: ${{ secrets.OTEL_EXPORTER_OTLP_ENDPOINT }}
           OTEL_EXPORTER_OTLP_HEADERS: ${{ secrets.OTEL_EXPORTER_OTLP_HEADERS }}
-        run: npm exec -- vsce package --no-dependencies --allow-package-secrets sendgrid --out "dist/${{ steps.package.outputs.filename }}"
+        run: node scripts/package-vsix.mjs --channel production --out "dist/${{ steps.package.outputs.filename }}"
 
       - name: Upload release VSIX
         uses: actions/upload-artifact@v5

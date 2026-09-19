@@ -1,0 +1,126 @@
+name: Publish Insiders
+
+on:
+  workflow_run:
+    workflows:
+      # Must match the display name in .github/workflows/test.yml.
+      - Tests
+    types:
+      - completed
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+concurrency:
+  group: publish-insiders
+  cancel-in-progress: false
+
+jobs:
+  verify-insiders:
+    name: Verify tested Insiders VSIX
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'dev'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      eligible: ${{ steps.trigger.outputs.eligible }}
+      asset_name: ${{ steps.vsix.outputs.asset_name }}
+      sha256: ${{ steps.vsix.outputs.sha256 }}
+    steps:
+      - name: Verify triggering workflow and current dev head
+        id: trigger
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
+          SOURCE_REPOSITORY: ${{ github.event.workflow_run.head_repository.full_name }}
+          SOURCE_WORKFLOW_PATH: ${{ github.event.workflow_run.path }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "eligible=false" >> "$GITHUB_OUTPUT"
+
+          if [[ "$SOURCE_REPOSITORY" != "$GITHUB_REPOSITORY" ]]; then
+            echo "Error: refusing a Tests run from '$SOURCE_REPOSITORY'."
+            exit 1
+          fi
+          if [[ "$SOURCE_WORKFLOW_PATH" != ".github/workflows/test.yml" ]]; then
+            echo "Error: unexpected source workflow path '$SOURCE_WORKFLOW_PATH'."
+            exit 1
+          fi
+
+          current_dev_sha=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/dev" --jq '.object.sha')
+          if [[ "$TESTED_SHA" != "$current_dev_sha" ]]; then
+            echo "::notice::Skipping superseded Insiders run '$TESTED_SHA'; current dev is '$current_dev_sha'."
+            exit 0
+          fi
+
+          echo "eligible=true" >> "$GITHUB_OUTPUT"
+
+      - name: Download tested VSIX artifact
+        if: steps.trigger.outputs.eligible == 'true'
+        uses: actions/download-artifact@v6
+        with:
+          name: dline-vsix-${{ github.event.workflow_run.head_sha }}
+          path: tested-artifact
+          github-token: ${{ github.token }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: Verify Insiders identity
+        if: steps.trigger.outputs.eligible == 'true'
+        id: vsix
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mapfile -t assets < <(find tested-artifact -maxdepth 1 -type f -name '*.vsix' -print)
+          if [[ "${#assets[@]}" -ne 1 ]]; then
+            echo "Error: expected exactly one tested VSIX, found ${#assets[@]}"
+            exit 1
+          fi
+
+          vsix_path="${assets[0]}"
+          asset_name=$(basename "$vsix_path")
+          manifest_path="$RUNNER_TEMP/vsix-package.json"
+          unzip -p "$vsix_path" extension/package.json > "$manifest_path"
+          if ! jq -e '
+            .name == "dline-insiders" and
+            .publisher == "tuvokyang" and
+            (.preview == true) and
+            (.version | test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))
+          ' "$manifest_path" >/dev/null; then
+            echo "Error: tested VSIX identity or version does not match the Insiders channel."
+            jq '{name, publisher, version, preview}' "$manifest_path"
+            exit 1
+          fi
+
+          sha256=$(sha256sum "$vsix_path" | cut -d' ' -f1)
+          echo "$sha256  $vsix_path"
+          echo "asset_name=$asset_name" >> "$GITHUB_OUTPUT"
+          echo "sha256=$sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Upload verified registry package
+        if: steps.trigger.outputs.eligible == 'true'
+        uses: actions/upload-artifact@v5
+        with:
+          name: registry-vsix-${{ github.event.workflow_run.head_sha }}
+          path: tested-artifact/${{ steps.vsix.outputs.asset_name }}
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  publish-registries:
+    name: Publish Insiders registries
+    needs: verify-insiders
+    if: needs.verify-insiders.outputs.eligible == 'true'
+    uses: ./.github/workflows/publish-vsix-registries.yml
+    with:
+      artifact_name: registry-vsix-${{ github.event.workflow_run.head_sha }}
+      asset_name: ${{ needs.verify-insiders.outputs.asset_name }}
+      expected_sha256: ${{ needs.verify-insiders.outputs.sha256 }}
+    secrets: inherit

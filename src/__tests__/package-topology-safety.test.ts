@@ -56,11 +56,15 @@ describe("package topology safety", () => {
 		).not.toBe(true)
 	})
 
-	it("skips duplicate Marketplace versions across release workflow reruns", async () => {
-		const marketplaceWorkflow = await readProjectFile(".github/workflows/publish-vscode-marketplace.yml")
+	it("publishes one verified artifact idempotently to both extension registries", async () => {
+		const productionWorkflow = await readProjectFile(".github/workflows/publish-vscode-marketplace.yml")
+		const registryWorkflow = await readProjectFile(".github/workflows/publish-vsix-registries.yml")
 
-		expect(marketplaceWorkflow).toContain("group: vscode-marketplace-${{ github.event.workflow_run.head_sha }}")
-		expect(marketplaceWorkflow).toContain('"$VSCE_BIN" publish --skip-duplicate --packagePath "$vsix_path"')
+		expect(productionWorkflow).toContain("group: vscode-marketplace-${{ github.event.workflow_run.head_sha }}")
+		expect(productionWorkflow).toContain("uses: ./.github/workflows/publish-vsix-registries.yml")
+		expect(registryWorkflow).toContain('"$VSCE_BIN" publish --skip-duplicate --packagePath "$vsix_path"')
+		expect(registryWorkflow).toContain('"$OVSX_BIN" publish "$vsix_path" --skip-duplicate')
+		expect(registryWorkflow.match(/name: \$\{\{ inputs\.artifact_name \}\}/g)).toHaveLength(2)
 	})
 
 	it("disables dependency scanning in every extension packaging entry point", async () => {

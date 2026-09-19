@@ -13,6 +13,11 @@ on:
         type: string
         required: false
         default: ci
+      package_channel:
+        description: VSIX identity channel. Auto maps direct dev pushes to insiders and other direct runs to ci.
+        type: string
+        required: false
+        default: auto
     secrets:
       TELEMETRY_SERVICE_API_KEY:
         required: false
@@ -43,7 +48,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
-      package_profile: ${{ steps.package-profile.outputs.value }}
+      package_profile: ${{ steps.package-settings.outputs.profile }}
+      package_channel: ${{ steps.package-settings.outputs.channel }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -56,18 +62,46 @@ jobs:
       - name: Check types
         run: npm run check-types
 
-      - name: Resolve package profile
-        id: package-profile
+      - name: Resolve package settings
+        id: package-settings
         shell: bash
         env:
           REQUESTED_PROFILE: ${{ inputs.package_profile }}
+          REQUESTED_CHANNEL: ${{ inputs.package_channel }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref }}
         run: |
+          set -euo pipefail
+
           profile="${REQUESTED_PROFILE:-ci}"
           if [[ "$profile" != "ci" && "$profile" != "release" ]]; then
             echo "Error: package profile must be 'ci' or 'release'"
             exit 1
           fi
-          echo "value=$profile" >> "$GITHUB_OUTPUT"
+
+          channel="${REQUESTED_CHANNEL:-auto}"
+          if [[ "$channel" == "auto" ]]; then
+            if [[ "$EVENT_NAME" == "push" && "$REF_NAME" == "refs/heads/dev" ]]; then
+              channel="insiders"
+            else
+              channel="ci"
+            fi
+          fi
+          if [[ "$channel" != "ci" && "$channel" != "insiders" && "$channel" != "preview" && "$channel" != "production" ]]; then
+            echo "Error: package channel must be 'auto', 'ci', 'insiders', 'preview', or 'production'"
+            exit 1
+          fi
+          if [[ "$profile" == "release" && "$channel" != "production" ]]; then
+            echo "Error: the release package profile requires the production channel"
+            exit 1
+          fi
+          if [[ "$profile" == "ci" && "$channel" == "production" ]]; then
+            echo "Error: the production channel requires the release package profile"
+            exit 1
+          fi
+
+          echo "profile=$profile" >> "$GITHUB_OUTPUT"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
 
   biome:
     name: Biome
@@ -184,6 +218,7 @@ jobs:
     uses: ./.github/workflows/package.yml
     with:
       profile: ${{ needs.typecheck.outputs.package_profile }}
+      channel: ${{ needs.typecheck.outputs.package_channel }}
     secrets:
       TELEMETRY_SERVICE_API_KEY: ${{ needs.typecheck.outputs.package_profile == 'release' && secrets.TELEMETRY_SERVICE_API_KEY || '' }}
       ERROR_SERVICE_API_KEY: ${{ needs.typecheck.outputs.package_profile == 'release' && secrets.ERROR_SERVICE_API_KEY || '' }}
