@@ -74,7 +74,7 @@ jobs:
       id-token: write
     steps:
       - name: Download tested VSIX
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v8
         with:
           name: dline-vsix-${{ github.sha }}
           path: release-artifact

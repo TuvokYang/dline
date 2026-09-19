@@ -64,7 +64,7 @@ jobs:
 
       - name: Download tested VSIX artifact
         if: steps.trigger.outputs.eligible == 'true'
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v8
         with:
           name: dline-vsix-${{ github.event.workflow_run.head_sha }}
           path: tested-artifact

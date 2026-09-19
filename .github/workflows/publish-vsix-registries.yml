@@ -54,7 +54,7 @@ jobs:
           echo "bin=$vsce_bin" >> "$GITHUB_OUTPUT"
 
       - name: Download verified VSIX
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v8
         with:
           name: ${{ inputs.artifact_name }}
           path: release-artifact
@@ -123,7 +123,7 @@ jobs:
           echo "bin=$ovsx_bin" >> "$GITHUB_OUTPUT"
 
       - name: Download verified VSIX
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v8
         with:
           name: ${{ inputs.artifact_name }}
           path: release-artifact
