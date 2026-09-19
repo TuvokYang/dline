@@ -53,6 +53,10 @@ describe("release channel workflows", () => {
 		expect(previewWorkflow).toContain('.name == "dline-preview"')
 		expect(previewWorkflow).toContain("(.preview == true)")
 		expect(validationWorkflow).toContain("name: Production Release Validation")
+		expect(validationWorkflow).toContain("git fetch origin main --no-tags")
+		expect(validationWorkflow).toContain("main_sha=$(git rev-parse origin/main)")
+		expect(validationWorkflow).toContain('if [[ "$tag_sha" != "$main_sha" ]]; then')
+		expect(validationWorkflow).toContain("must point to current main head")
 		expect(validationWorkflow).toContain("package_channel: production")
 		expect(validationWorkflow).toContain('DLINE_E2E_INSTALL_VSIX: "1"')
 		expect(validationWorkflow).toContain('cp "${assets[0]}" dist/e2e.vsix')
@@ -64,6 +68,7 @@ describe("release channel workflows", () => {
 		const productionWorkflow = await readProjectFile(".github/workflows/publish-vscode-marketplace.yml")
 
 		expect(productionWorkflow).toContain("workflow_dispatch:")
+		expect(productionWorkflow.match(/if: github\.repository == 'TuvokYang\/dline'/g)).toHaveLength(2)
 		expect(productionWorkflow).toContain("tag:")
 		expect(productionWorkflow).toContain("actions/workflows/release.yml/runs?event=push&status=success")
 		expect(productionWorkflow).toContain("no successful Production Release Validation run exists")
@@ -86,6 +91,7 @@ describe("release channel workflows", () => {
 		const productionWorkflow = await readProjectFile(".github/workflows/publish-vscode-marketplace.yml")
 
 		expect(registryWorkflow.match(/name: dline-release/g)).toHaveLength(2)
+		expect(registryWorkflow.match(/if: github\.repository == 'TuvokYang\/dline'/g)).toHaveLength(2)
 		expect(registryWorkflow).toContain("DLINE_VSCODE_RELEASE_PUBLISH_PAT")
 		expect(registryWorkflow).toContain("DLINE_VSCODE_OVSX_PAT")
 		expect(registryWorkflow).toContain("@vscode/vsce@3.9.2")

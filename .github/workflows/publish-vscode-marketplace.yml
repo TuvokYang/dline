@@ -22,6 +22,7 @@ concurrency:
 jobs:
   release:
     name: Publish validated GitHub release
+    if: github.repository == 'TuvokYang/dline'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: publish
@@ -84,7 +85,7 @@ jobs:
           echo "validation_run_id=$validation_run_id" >> "$GITHUB_OUTPUT"
 
       - name: Download validated VSIX artifact
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v8
         with:
           name: dline-vsix-${{ steps.validation.outputs.commit_sha }}
           path: tested-artifact
@@ -163,6 +164,7 @@ jobs:
   publish-registries:
     name: Publish production registries
     needs: release
+    if: github.repository == 'TuvokYang/dline'
     uses: ./.github/workflows/publish-vsix-registries.yml
     with:
       artifact_name: registry-vsix-${{ needs.release.outputs.commit_sha }}

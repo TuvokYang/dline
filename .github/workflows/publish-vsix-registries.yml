@@ -26,6 +26,7 @@ env:
 jobs:
   publish-marketplace:
     name: Publish VS Code Marketplace
+    if: github.repository == 'TuvokYang/dline'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment:
@@ -54,7 +55,7 @@ jobs:
           echo "bin=$vsce_bin" >> "$GITHUB_OUTPUT"
 
       - name: Download verified VSIX
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v8
         with:
           name: ${{ inputs.artifact_name }}
           path: release-artifact
@@ -112,6 +113,7 @@ jobs:
 
   publish-open-vsx:
     name: Publish Open VSX
+    if: github.repository == 'TuvokYang/dline'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment:
@@ -140,7 +142,7 @@ jobs:
           echo "bin=$ovsx_bin" >> "$GITHUB_OUTPUT"
 
       - name: Download verified VSIX
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v8
         with:
           name: ${{ inputs.artifact_name }}
           path: release-artifact

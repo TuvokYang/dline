@@ -26,7 +26,7 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - name: Verify tag, version, and main ancestry
+      - name: Verify tag, version, and main branch head
         shell: bash
         run: |
           tag="$GITHUB_REF_NAME"
@@ -44,8 +44,9 @@ jobs:
 
           git fetch origin main --no-tags
           tag_sha=$(git rev-parse "${tag}^{commit}")
-          if ! git merge-base --is-ancestor "$tag_sha" origin/main; then
-            echo "Error: production tag '$tag' does not point to a commit on main"
+          main_sha=$(git rev-parse origin/main)
+          if [[ "$tag_sha" != "$main_sha" ]]; then
+            echo "Error: production tag '$tag' must point to current main head '$main_sha', got '$tag_sha'"
             exit 1
           fi
 
@@ -84,7 +85,7 @@ jobs:
           include-optional: "true"
 
       - name: Download production VSIX
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v8
         with:
           name: dline-vsix-${{ github.sha }}
           path: validated-vsix
