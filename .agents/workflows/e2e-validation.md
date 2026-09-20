@@ -14,6 +14,7 @@ Load `use-e2e` before executing this workflow.
 - Read `package.json`, the selected Playwright config, and the owning test files.
 - Identify the changed behavior, the smallest observable acceptance boundary, and whether a packaged VSIX is required.
 - Stop if another active task has uncommitted changes in the selected test's implementation, fixture, config, or artifact path; resume after that owner finishes or the user decides how to isolate the run.
+- Run `npm run e2e:lock:status` before a build. `dist/` is shared by every tier, so a build is refused while another build or test run owns it. Wait for the reported holder instead of deleting `dist/.e2e-lock/`.
 
 ## 1. Select the tier
 
@@ -31,25 +32,29 @@ Set a unique `DLINE_E2E_RUN_ID` containing the task, behavior, and date. Use `--
 
 Preserve existing `tmp/test-result/<run-id>/` artifacts. Never delete another run's output or shared temporary state.
 
+The run ID does not isolate `dist/`. To run more than one tier at the same time, build once and then start read-only runs against that build; do not start a second command that rebuilds.
+
 ## 3. Execute the bounded command
 
 Use the current package scripts:
 
 ```text
-# Complete required packaged gate
+# Complete required gate
 npm run test:e2e:work
 
-# One packaged work project; its configured dependencies still run
+# One work project; its configured dependencies still run
 npm run test:e2e:work -- --project "<work-project>"
 
-# One packaged functional file or name
+# One functional file or name
 npm run test:e2e:functional -- <functional-file> --project "functional e2e tests" --workers=1 --retries=0
 
 # One development diagnostic
 npm run e2e:dev -- <dev-file> --project "development e2e tests" --workers=1 --retries=0
 ```
 
-Use raw `npx playwright test -c <config>` only when the required build or VSIX artifact is already current and skipping npm lifecycle hooks is intentional. In CI, download the package job's VSIX, normalize it to `dist/e2e.vsix`, and run only `playwright.work.config.ts`; do not rebuild a second VSIX inside E2E jobs.
+The work and functional tiers run in source mode against the `pree2e` dev bundle. Use `test:e2e`, `test:e2e:optimal`, or `test:e2e:pressure` when the acceptance target is the installed VSIX itself.
+
+Use raw `npx playwright test -c <config>` only when the required build or VSIX artifact is already current and skipping npm lifecycle hooks is intentional; note that it also bypasses the `dist/` lock, so never pair it with a concurrent build. In CI, download the package job's VSIX, normalize it to `dist/e2e.vsix`, and run only `playwright.work.config.ts`; do not rebuild a second VSIX inside E2E jobs.
 
 ## 4. Diagnose failures before changing code
 

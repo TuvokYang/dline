@@ -26,7 +26,7 @@ npm run e2e:functional -- functional/api/api-runtime-observability.test.ts
 npm run e2e:dev -- dev/bug-<behavior>.test.ts
 ```
 
-Use the packaged variants when the scenario must run against `dist/e2e.vsix`:
+The `test:e2e:*` variants add the VS Code and Playwright download step. `test:e2e:work` and `test:e2e:functional` still run in source mode; only `test:e2e`, `test:e2e:optimal`, and `test:e2e:pressure` install `dist/e2e.vsix`:
 
 ```bash
 npm run test:e2e:work
@@ -42,6 +42,31 @@ npm run e2e:functional -- --grep "Chat"
 ```
 
 Do not use the broad legacy runner for routine development when a work or focused functional command proves the changed behavior.
+
+### Extension Source Per Tier
+
+Which extension a tier loads is decided by `PACKAGED_E2E_LIFECYCLES` in `utils/vscode-launch-isolation.ts`:
+
+| Mode | Scripts | Extension source |
+| --- | --- | --- |
+| Source | `e2e:*`, `test:e2e:work`, `test:e2e:functional` | The checkout, via `--extensionDevelopmentPath`, using the dev bundle built by `pree2e` |
+| Packaged | `test:e2e`, `test:e2e:optimal`, `test:e2e:pressure` | `dist/e2e.vsix`, installed once per worker slot |
+
+`vsce package` runs `vscode:prepublish`, so a packaged run replaces `dist/extension.js` with a production bundle. Set `DLINE_E2E_INSTALL_VSIX=1` to force packaged mode when a current VSIX already exists.
+
+### Running Tiers Concurrently
+
+Run IDs isolate artifacts, extension directories, and Dline state, but `dist/` is a fixed path shared by every tier. `scripts/with-dist-lock.mjs` guards it with a reader/writer lock under `dist/.e2e-lock/`: builds take the exclusive side, Playwright runs take the shared side.
+
+One build at a time; many runs may share one build. To run tiers in parallel, build once and then start read-only runs:
+
+```bash
+npm run pree2e                                                   # or: npm run test:e2e:build
+DLINE_E2E_RUN_ID=work npx playwright test -c playwright.work.config.ts &
+DLINE_E2E_RUN_ID=func npx playwright test -c playwright.functional.config.ts &
+```
+
+A refused command names the holding PID, run ID, and command. Inspect holders with `npm run e2e:lock:status`. Entries from a crashed run are pruned automatically on the next attempt, so do not delete `dist/.e2e-lock/` while another run is active.
 
 ## Demo Recordings
 

@@ -73,6 +73,51 @@ describe("package topology safety", () => {
 		expect(registryWorkflow.match(/name: \$\{\{ inputs\.artifact_name \}\}/g)).toHaveLength(2)
 	})
 
+	it("serializes builds against concurrent runs of the shared dist output", async () => {
+		const packageJson = JSON.parse(await readProjectFile("package.json")) as RootPackageJson
+		const scripts = packageJson.scripts ?? {}
+
+		// dist/ is the one piece of E2E state that is not run-scoped, so every
+		// script that writes it must take the exclusive side and every script that
+		// reads it must take the shared side.
+		expect(scripts["pree2e"]).toContain("--exclusive")
+		expect(scripts["test:e2e:build"]).toContain("--exclusive")
+		for (const scriptName of [
+			"e2e",
+			"e2e:smoke",
+			"e2e:work",
+			"e2e:functional",
+			"e2e:dev",
+			"e2e:pressure",
+			"e2e:demo",
+			"e2e:legacy",
+		]) {
+			expect(scripts[scriptName], `${scriptName} must take the shared dist lock`).toContain("--shared")
+		}
+
+		// A packaged tier must not also rebuild through pree2e; the VSIX build and
+		// the bundle build would each claim dist/ and deadlock the other.
+		for (const scriptName of ["test:e2e", "test:e2e:optimal", "test:e2e:pressure"]) {
+			expect(scripts[scriptName], `${scriptName} must build the VSIX once`).toContain("npm run test:e2e:build")
+			expect(scripts[scriptName], `${scriptName} must not chain a tier rebuild`).not.toMatch(
+				/npm run e2e:(work|functional)\b/,
+			)
+		}
+
+		// Source-mode tiers intentionally reuse the pree2e bundle instead of
+		// packaging a VSIX that their fixture would never install.
+		for (const scriptName of ["test:e2e:work", "test:e2e:functional"]) {
+			expect(scripts[scriptName], `${scriptName} must not package an unused VSIX`).not.toContain("test:e2e:build")
+			expect(scripts[scriptName]).toContain("npm run e2e:prepare")
+		}
+
+		const lockRunner = await readProjectFile("scripts/with-dist-lock.mjs")
+		expect(lockRunner).toContain("acquireDistLock")
+
+		// The lock lives inside dist/, which vsce packages verbatim.
+		expect(await readProjectFile(".vscodeignore")).toContain("dist/.e2e-lock/")
+	})
+
 	it("disables dependency scanning in every extension packaging entry point", async () => {
 		const packageJson = JSON.parse(await readProjectFile("package.json")) as RootPackageJson
 		expect(packageJson.scripts?.["test:e2e:build"]).toContain("--no-dependencies")
@@ -86,9 +131,9 @@ describe("package topology safety", () => {
 		expect(packageAdapter).toContain("execFileSync(process.execPath")
 		expectDirectVsceCommandsToDisableDependencyScanning(packageVsix, "scripts/package-vsix.mjs")
 
-		const publishNightly = await readProjectFile("scripts/publish-nightly.mjs")
-		expect(publishNightly).toContain('"--no-dependencies"')
-		expect(publishNightly).not.toMatch(/WorkspaceSelfLink|workspace self-link/i)
+		const publishInsiders = await readProjectFile("scripts/publish-insiders.mjs")
+		expect(publishInsiders).toContain('"--no-dependencies"')
+		expect(publishInsiders).not.toMatch(/WorkspaceSelfLink|workspace self-link/i)
 
 		const publishMarketplace = await readProjectFile("scripts/publish-marketplace.mjs")
 		expect(publishMarketplace).toContain('"--no-dependencies"')

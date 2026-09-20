@@ -112,6 +112,29 @@ function getCurrentBranch() {
 }
 
 /**
+ * Git ref the packaged README should link against.
+ *
+ * The marketplace README is authored with `/blob/main/` links, which are correct
+ * only for a production build. A preview or insiders VSIX ships code from `dev`,
+ * so those links must resolve to the packaged revision instead of the default
+ * branch; otherwise the changelog and translated README describe a different
+ * build, and a document that exists only on `dev` 404s.
+ *
+ * A tag is preferred because it is immutable. A rolling insiders build has no
+ * tag, so it falls back to the exact commit rather than the moving branch.
+ *
+ * @param {"ci"|"production"|"preview"|"insiders"} channel Resolved channel.
+ * @param {string|null} tag Release tag at HEAD, when present.
+ * @returns {string|null} Ref to link against, or null to keep authored links.
+ */
+function resolveDocumentationRef(channel, tag) {
+	if (channel === "production") return tag
+	if (tag) return tag
+	const commit = tryGit("git rev-parse HEAD")
+	return commit ?? getCurrentBranch()
+}
+
+/**
  * Read and parse package.json.
  * @returns {object}
  */
@@ -327,39 +350,45 @@ const packageVersion = readPackageJson().version
 const { channel, version, tag } = resolveRequestedChannel(requestedChannel, packageVersion)
 const resolvedOutputPath = outputPath ? (path.isAbsolute(outputPath) ? outputPath : path.join(PROJECT_ROOT, outputPath)) : null
 
+const documentationRef = resolveDocumentationRef(channel, tag)
+
 console.log(`[package-vsix] Git hash: ${getGitHash()}`)
 console.log(`[package-vsix] Tag: ${tag ?? "(none)"}`)
 console.log(`[package-vsix] Channel: ${channel}`)
 console.log(`[package-vsix] Version: ${version}`)
+console.log(`[package-vsix] Documentation ref: ${documentationRef ?? "(authored default)"}`)
 
-await withMarketplaceReadme(async (cleanups) => {
-	const originalContent = fs.readFileSync(PACKAGE_JSON_PATH, "utf-8")
-	const pkg = JSON.parse(originalContent)
+await withMarketplaceReadme(
+	async (cleanups) => {
+		const originalContent = fs.readFileSync(PACKAGE_JSON_PATH, "utf-8")
+		const pkg = JSON.parse(originalContent)
 
-	// Register restoration before mutating package.json so signals during
-	// vscode:prepublish or vsce packaging restore both temporary files.
-	cleanups.defer(() => {
-		console.log("[package-vsix] Restoring original package.json")
-		fs.writeFileSync(PACKAGE_JSON_PATH, originalContent)
-	})
+		// Register restoration before mutating package.json so signals during
+		// vscode:prepublish or vsce packaging restore both temporary files.
+		cleanups.defer(() => {
+			console.log("[package-vsix] Restoring original package.json")
+			fs.writeFileSync(PACKAGE_JSON_PATH, originalContent)
+		})
 
-	if (applyChannelIdentity(pkg, channel, version)) {
-		writePackageJson(pkg)
-		console.log(`[package-vsix] Applied ${channel} identity: name=${pkg.name}, version=${pkg.version}`)
-	} else {
-		console.log(`[package-vsix] Packaging ${channel} identity: name=${pkg.name}, version=${pkg.version}`)
-	}
+		if (applyChannelIdentity(pkg, channel, version)) {
+			writePackageJson(pkg)
+			console.log(`[package-vsix] Applied ${channel} identity: name=${pkg.name}, version=${pkg.version}`)
+		} else {
+			console.log(`[package-vsix] Packaging ${channel} identity: name=${pkg.name}, version=${pkg.version}`)
+		}
 
-	const destinationDirectory = resolvedOutputPath ? path.dirname(resolvedOutputPath) : DIST_DIR
-	if (!fs.existsSync(destinationDirectory)) {
-		fs.mkdirSync(destinationDirectory, { recursive: true })
-	}
+		const destinationDirectory = resolvedOutputPath ? path.dirname(resolvedOutputPath) : DIST_DIR
+		if (!fs.existsSync(destinationDirectory)) {
+			fs.mkdirSync(destinationDirectory, { recursive: true })
+		}
 
-	console.log(`[package-vsix] Packaging through the VSCE API${resolvedOutputPath ? `: ${resolvedOutputPath}` : ""}`)
-	await packageVsix({
-		cwd: PROJECT_ROOT,
-		mode: "build-and-pack",
-		packagePath: resolvedOutputPath,
-	})
-	console.log("[package-vsix] Package completed successfully!")
-})
+		console.log(`[package-vsix] Packaging through the VSCE API${resolvedOutputPath ? `: ${resolvedOutputPath}` : ""}`)
+		await packageVsix({
+			cwd: PROJECT_ROOT,
+			mode: "build-and-pack",
+			packagePath: resolvedOutputPath,
+		})
+		console.log("[package-vsix] Package completed successfully!")
+	},
+	{ ref: documentationRef },
+)
