@@ -68,7 +68,16 @@ describe("task kernel", () => {
 			transition(state, { type: "user.submit", generation: 0, entryId: "entry-1", payloadRef: "payload-1" }),
 		)
 		expect(result.state.revision).toBe(1)
-		expect(result.state.intake.queued).toEqual([{ entryId: "entry-1", payloadRef: "payload-1", state: "accepted" }])
+		expect(result.state.intake.queued).toEqual([
+			{
+				entryId: "entry-1",
+				payloadRef: "payload-1",
+				source: "user",
+				mode: "queued",
+				sequence: 1,
+				state: "reserved",
+			},
+		])
 		expect(result.commands).toEqual([
 			{
 				commandId: "task-1:1:0",

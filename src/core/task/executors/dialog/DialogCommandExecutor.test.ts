@@ -11,6 +11,7 @@ const input = {
 	kind: "followup",
 	presentationRef: "question:1",
 	actionRules: [{ actionId: "reply", payloadPolicy: "draft" as const }],
+	prepareKey: "dialog.prepare:i-1",
 }
 
 function prepare(): Extract<DialogCommand, { type: "dialog.prepare" }> {
@@ -25,6 +26,7 @@ function reveal(): Extract<DialogCommand, { type: "dialog.reveal" }> {
 		type: "dialog.reveal",
 		journalRef: "journal:0:1",
 		receiverGeneration: 4,
+		revealKey: "dialog.reveal:i-1:4",
 	}
 }
 
@@ -32,8 +34,13 @@ describe("DialogCommandExecutor", () => {
 	it("registers preparation before feedback and reveals only after the durable command arrives", async () => {
 		const events: TaskEvent[] = []
 		const port = {
-			prepare: vi.fn(async () => ({ journalRef: "journal:0:1", receiverGeneration: 4 })),
-			reveal: vi.fn(async () => undefined),
+			prepare: vi.fn(async () => ({
+				journalRef: "journal:0:1",
+				journalWatermark: { epoch: 0, seq: 1 },
+				receiverGeneration: 4,
+				disposition: "created" as const,
+			})),
+			reveal: vi.fn(async () => ({ disposition: "revealed" as const })),
 		}
 		const executor = new DialogCommandExecutor(port, {
 			submit: async (event) => (events.push(event), { kind: "accepted" as const }),
@@ -53,8 +60,13 @@ describe("DialogCommandExecutor", () => {
 		const dismiss = vi.fn(async () => undefined)
 		const executor = new DialogCommandExecutor(
 			{
-				prepare: async () => ({ journalRef: "journal:0:1", receiverGeneration: 4 }),
-				reveal: async () => undefined,
+				prepare: async () => ({
+					journalRef: "journal:0:1",
+					journalWatermark: { epoch: 0, seq: 1 },
+					receiverGeneration: 4,
+					disposition: "existing" as const,
+				}),
+				reveal: async () => ({ disposition: "already_revealed" as const }),
 				dismiss,
 			},
 			{ submit: async () => ({ kind: "rejected" as const }) },
@@ -75,7 +87,7 @@ describe("DialogCommandExecutor", () => {
 					throw error
 				},
 				reveal: async ({ signal }) =>
-					new Promise<void>((_, reject) =>
+					new Promise<{ disposition: "revealed" }>((_, reject) =>
 						signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true }),
 					),
 			},

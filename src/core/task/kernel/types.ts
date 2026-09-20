@@ -7,6 +7,11 @@ export type HaltId = string
 export type EntryId = string
 export type CommandId = string
 
+export interface JournalWatermark {
+	readonly epoch: number
+	readonly seq: number
+}
+
 export type FlowPhase = "idle" | "initializing" | "running" | "waiting" | "paused" | "completed" | "error" | "terminated"
 export type BlockPhase =
 	| "pending"
@@ -33,6 +38,17 @@ export interface CommandFlowState {
 	readonly commandId: CommandId
 	readonly originRevision: number
 	readonly status: "running" | "completed" | "failed" | "cancelled"
+}
+
+export interface ComposeFlowState extends CommandFlowState {
+	readonly admittedEntryIds: readonly EntryId[]
+	readonly turnId?: TurnId
+}
+
+export interface ProviderFlowState extends CommandFlowState {
+	readonly turnId?: TurnId
+	readonly finalPayloadRef?: string
+	readonly journalWatermark?: JournalWatermark
 }
 
 export interface CompactionFlowState {
@@ -62,8 +78,8 @@ export interface FlowState {
 	readonly completionId?: string
 	readonly terminalReason?: "consumed"
 	readonly consumedRef?: string
-	readonly compose?: CommandFlowState
-	readonly provider?: CommandFlowState
+	readonly compose?: ComposeFlowState
+	readonly provider?: ProviderFlowState
 	readonly compaction?: CompactionFlowState
 	readonly spawn?: SpawnFlowState
 }
@@ -111,7 +127,10 @@ export interface DialogInteraction {
 	readonly presentationRef: string
 	readonly actionRules: readonly DialogActionRule[]
 	readonly journalRef?: string
+	readonly journalWatermark?: JournalWatermark
 	readonly receiverGeneration?: number
+	readonly prepareKey?: string
+	readonly revealKey?: string
 	readonly blockId?: BlockId
 	readonly acceptedResponse?: DialogAcceptedResponse
 	readonly prepare?: CommandFlowState
@@ -128,8 +147,11 @@ export interface DialogSlice {
 export interface IntakeEntry {
 	readonly entryId: EntryId
 	readonly payloadRef: string
+	readonly source: "user" | "background" | "cotask"
+	readonly mode: "queued" | "steering"
+	readonly sequence: number
 	readonly state: "accepted" | "reserved" | "included" | "consumed" | "released" | "uncertain"
-	readonly journalWatermark?: { readonly epoch: number; readonly seq: number }
+	readonly journalWatermark?: JournalWatermark
 }
 
 export interface IntakeSlice {
@@ -160,6 +182,7 @@ export interface TaskState {
 	readonly dialog: DialogSlice
 	readonly intake: IntakeSlice
 	readonly halt: HaltSlice
+	readonly journalWatermark?: JournalWatermark
 }
 
 interface EventBase {
@@ -168,7 +191,13 @@ interface EventBase {
 }
 
 export type UserEvent =
-	| (EventBase & { readonly type: "user.submit"; readonly entryId: EntryId; readonly payloadRef: string })
+	| (EventBase & {
+			readonly type: "user.submit"
+			readonly entryId: EntryId
+			readonly payloadRef: string
+			readonly mode?: "queued" | "steering"
+			readonly sequence?: number
+	  })
 	| (EventBase & { readonly type: "user.cancel"; readonly haltId: HaltId })
 	| (EventBase & { readonly type: "user.terminate"; readonly haltId: HaltId })
 interface CommandFeedbackEvent extends EventBase {
@@ -180,7 +209,8 @@ export type ProviderEvent =
 	| (CommandFeedbackEvent & {
 			readonly type: "provider.turn_ready"
 			readonly turnId: TurnId
-			readonly finalPayloadRef?: string
+			readonly finalPayloadRef: string
+			readonly journalWatermark: JournalWatermark
 	  })
 	| (CommandFeedbackEvent & { readonly type: "provider.failed"; readonly turnId?: TurnId; readonly message: string })
 export type ToolEvent = EventBase & {
@@ -204,6 +234,7 @@ export type DialogEvent =
 			readonly type: "dialog.prepared"
 			readonly interactionId: InteractionId
 			readonly journalRef: string
+			readonly journalWatermark?: JournalWatermark
 			readonly receiverGeneration: number
 	  })
 	| (CommandFeedbackEvent & { readonly type: "dialog.presented"; readonly interactionId: InteractionId })
@@ -230,6 +261,7 @@ export type BackgroundEvent = EventBase & {
 	readonly type: "background.ready"
 	readonly entryId: EntryId
 	readonly payloadRef: string
+	readonly sequence?: number
 }
 export type ComposeEvent =
 	| (CommandFeedbackEvent & { readonly type: "compose.completed"; readonly draftRef: string; readonly turnId?: TurnId })
@@ -293,7 +325,12 @@ export type ApprovalEvent =
 			readonly approved?: boolean
 			readonly message?: string
 	  })
-export type CoTaskEvent = EventBase & { readonly type: "cotask.received"; readonly entryId: EntryId; readonly payloadRef: string }
+export type CoTaskEvent = EventBase & {
+	readonly type: "cotask.received"
+	readonly entryId: EntryId
+	readonly payloadRef: string
+	readonly sequence?: number
+}
 export type HaltEvent = EventBase & {
 	readonly type: "halt.halted" | "halt.failed"
 	readonly haltId: HaltId
@@ -364,6 +401,7 @@ interface DialogCommandInput {
 	readonly presentationRef: string
 	readonly actionRules: readonly DialogActionRule[]
 	readonly blockId?: BlockId
+	readonly prepareKey: string
 }
 export type DialogCommand =
 	| (CommandBase & DialogCommandInput & { readonly type: "dialog.prepare" })
@@ -372,6 +410,7 @@ export type DialogCommand =
 				readonly type: "dialog.reveal"
 				readonly journalRef: string
 				readonly receiverGeneration: number
+				readonly revealKey: string
 			})
 export type ComposeRoundCommand = CommandBase & {
 	readonly type: "compose.round"
@@ -420,6 +459,7 @@ export type RejectReason =
 	| "identity_mismatch"
 	| "duplicate"
 	| "stale_attempt"
+	| "capacity_exceeded"
 	| "unknown_event"
 export interface Diagnostic {
 	readonly code: string
@@ -457,5 +497,6 @@ export function createInitialTaskState(taskId: TaskId): TaskState {
 		dialog: { approvalsByBlock: {} },
 		intake: { queued: [], background: [], coTask: [] },
 		halt: { status: "idle", generation: 0 },
+		journalWatermark: { epoch: 0, seq: 0 },
 	}
 }

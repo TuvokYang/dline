@@ -15,7 +15,13 @@ export function reduceFlow(state: FlowState, event: TaskEvent): FlowReduction {
 					...state,
 					phase: "running",
 					error: undefined,
-					provider: state.provider && { ...state.provider, status: "completed" },
+					provider: state.provider && {
+						...state.provider,
+						status: "completed",
+						turnId: event.turnId,
+						finalPayloadRef: event.finalPayloadRef,
+						journalWatermark: event.journalWatermark,
+					},
 				},
 				commands: [],
 			}

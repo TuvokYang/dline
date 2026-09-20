@@ -51,7 +51,7 @@ describe("executor loop integration", () => {
 	it("runs dialog prepare and reveal through the immediate/durable outbox phases", async () => {
 		let runtime!: TaskRuntimeV2
 		const events = { submit: (event: Parameters<TaskRuntimeV2["submit"]>[0]) => runtime.submit(event) }
-		const reveal = vi.fn(async () => undefined)
+		const reveal = vi.fn(async () => ({ disposition: "revealed" as const }))
 		runtime = new TaskRuntimeV2({
 			initialState: { ...createInitialTaskState("task-1"), flow: { phase: "running" } },
 			vault: new InMemoryStateVault(),
@@ -59,7 +59,15 @@ describe("executor loop integration", () => {
 			publications: new InMemoryCommandPublicationStore(),
 			executors: [
 				new DialogCommandExecutor(
-					{ prepare: async () => ({ journalRef: "journal:0:1", receiverGeneration: 0 }), reveal },
+					{
+						prepare: async () => ({
+							journalRef: "journal:0:1",
+							journalWatermark: { epoch: 0, seq: 1 },
+							receiverGeneration: 0,
+							disposition: "created" as const,
+						}),
+						reveal,
+					},
 					events,
 				),
 			],

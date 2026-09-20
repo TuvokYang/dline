@@ -29,7 +29,7 @@ export class TaskRuntimeV2 implements RuntimeFacade {
 		this.commits = new CommitPipeline(options.vault, options.taskView, options.diagnostics)
 		this.outbox = new DurableCommandOutbox(this.router, options.publications, options.diagnostics)
 		this.events = new EventLoop(options.initialState, this.commits, this.outbox)
-		if (options.restoredOutbox) this.outbox.restore(options.restoredOutbox)
+		if (options.restoredOutbox) this.outbox.restore(options.restoredOutbox, options.initialState.generation)
 	}
 
 	getState(): Readonly<TaskState> {

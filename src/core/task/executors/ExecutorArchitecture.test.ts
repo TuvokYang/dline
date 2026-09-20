@@ -3,12 +3,15 @@ import { Project } from "ts-morph"
 import { describe, expect, it } from "vitest"
 
 const ROOT = path.resolve(__dirname)
-const DOMAINS = ["provider", "compose", "compaction", "tool", "dialog", "policy", "halt", "spawn"]
+const DOMAINS = ["provider", "compose", "compaction", "tool", "dialog", "policy", "halt", "spawn", "background", "cotask"]
 const project = new Project({
 	tsConfigFilePath: path.resolve(ROOT, "../../../../tsconfig.json"),
 	skipAddingFilesFromTsConfig: true,
 })
-project.addSourceFilesAtPaths(DOMAINS.map((domain) => path.join(ROOT, domain, "**/*.ts")))
+project.addSourceFilesAtPaths([
+	...DOMAINS.map((domain) => path.join(ROOT, domain, "**/*.ts")),
+	path.join(ROOT, "inbound", "**/*.ts"),
+])
 
 const production = project
 	.getSourceFiles()

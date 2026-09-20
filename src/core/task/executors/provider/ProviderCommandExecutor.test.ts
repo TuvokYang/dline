@@ -69,6 +69,7 @@ describe("ProviderCommandExecutor", () => {
 				originRevision: 2,
 				turnId: "turn-request",
 				finalPayloadRef: "payload:final",
+				journalWatermark: { epoch: 0, seq: 1 },
 			},
 		])
 	})

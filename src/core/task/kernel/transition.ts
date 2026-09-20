@@ -1,9 +1,18 @@
 import { reduceDialog } from "./machines/dialog"
 import { reduceFlow } from "./machines/flow"
 import { ALL_HALT_PARTICIPANTS, reduceHalt } from "./machines/halt"
-import { reduceIntake } from "./machines/intake"
+import { intakeHasCapacity, reduceIntake, reserveIntakeEntries } from "./machines/intake"
 import { reduceTurn } from "./machines/turn"
-import type { Command, Diagnostic, DialogInteraction, RejectReason, TaskEvent, TaskState, TransitionResult } from "./types"
+import type {
+	Command,
+	Diagnostic,
+	DialogInteraction,
+	JournalWatermark,
+	RejectReason,
+	TaskEvent,
+	TaskState,
+	TransitionResult,
+} from "./types"
 
 function reject(state: TaskState, reason: RejectReason, message: string): TransitionResult {
 	return { kind: "rejected", state, reason, diagnostic: { code: reason, message } }
@@ -50,7 +59,15 @@ function dialogCommandInput(interaction: DialogInteraction) {
 		presentationRef: interaction.presentationRef,
 		actionRules: interaction.actionRules,
 		blockId: interaction.blockId,
+		prepareKey: interaction.prepareKey ?? `dialog.prepare:${interaction.interactionId}`,
 	}
+}
+
+function maxWatermark(current: JournalWatermark | undefined, incoming: JournalWatermark): JournalWatermark {
+	if (!current) return incoming
+	return current.epoch > incoming.epoch || (current.epoch === incoming.epoch && current.seq >= incoming.seq)
+		? current
+		: incoming
 }
 
 function hasRequiredPayload(
@@ -73,6 +90,7 @@ function validateEvent(state: TaskState, event: TaskEvent): ValidationFailure | 
 					: state.intake.coTask
 		if (entries.some((entry) => entry.entryId === event.entryId))
 			return { reason: "duplicate", message: `Entry ${event.entryId} already exists` }
+		if (!intakeHasCapacity(entries)) return { reason: "capacity_exceeded", message: "Intake box capacity exceeded" }
 	}
 	if ((event.type === "user.cancel" || event.type === "user.terminate") && state.halt.status === "stopping") {
 		return { reason: "duplicate", message: `Halt ${state.halt.haltId} is already in progress` }
@@ -322,8 +340,15 @@ function applyCommandOwnership(state: TaskState, commands: readonly Command[]): 
 				...next,
 				flow: {
 					...next.flow,
-					compose: { commandId: command.commandId, originRevision: command.originRevision, status: "running" },
+					compose: {
+						commandId: command.commandId,
+						originRevision: command.originRevision,
+						status: "running",
+						admittedEntryIds: command.admittedEntryIds,
+						turnId: command.turnId,
+					},
 				},
+				intake: reserveIntakeEntries(next.intake, command.admittedEntryIds),
 			}
 		}
 		if (command.type === "provider.start") {
@@ -331,7 +356,12 @@ function applyCommandOwnership(state: TaskState, commands: readonly Command[]): 
 				...next,
 				flow: {
 					...next.flow,
-					provider: { commandId: command.commandId, originRevision: command.originRevision, status: "running" },
+					provider: {
+						commandId: command.commandId,
+						originRevision: command.originRevision,
+						status: "running",
+						turnId: command.turnId,
+					},
 				},
 			}
 		}
@@ -412,6 +442,9 @@ function deriveCommands(previous: TaskState, next: TaskState, event: TaskEvent):
 						...dialogCommandInput(interaction),
 						journalRef: interaction.journalRef,
 						receiverGeneration: interaction.receiverGeneration,
+						revealKey:
+							interaction.revealKey ??
+							`dialog.reveal:${interaction.interactionId}:${interaction.receiverGeneration}`,
 					},
 				]
 			: []
@@ -452,7 +485,15 @@ function deriveCommands(previous: TaskState, next: TaskState, event: TaskEvent):
 			]
 		}
 	}
-	if (event.type === "user.submit" && previous.flow.phase !== "terminated" && !hasActiveRound(previous)) {
+	if (
+		(event.type === "user.submit" || event.type === "background.ready" || event.type === "cotask.received") &&
+		previous.flow.phase !== "terminated" &&
+		!hasActiveRound(previous)
+	) {
+		if (event.type !== "user.submit" && ["idle", "paused", "completed"].includes(previous.flow.phase)) {
+			const interaction = next.dialog.primary
+			return interaction ? [{ ...commandBase(next, 0), type: "dialog.prepare", ...dialogCommandInput(interaction) }] : []
+		}
 		return [{ ...commandBase(next, 0), type: "compose.round", turnId: next.turn.turnId, admittedEntryIds: [event.entryId] }]
 	}
 	if (
@@ -498,6 +539,28 @@ function deriveCommands(previous: TaskState, next: TaskState, event: TaskEvent):
 	return []
 }
 
+function installArrivalWakeup(state: TaskState, event: TaskEvent, nextRevision: number): TaskState {
+	if (event.type !== "background.ready" && event.type !== "cotask.received") return state
+	if (!["idle", "paused", "completed"].includes(state.flow.phase) || state.dialog.primary) return state
+	const interactionId = `arrival:${event.type}:${event.entryId}:${nextRevision}`
+	return {
+		...state,
+		dialog: {
+			...state.dialog,
+			primary: {
+				interactionId,
+				turnId: state.turn.turnId ?? `arrival:${event.entryId}`,
+				kind: "background_wakeup",
+				status: "planned",
+				createdRevision: nextRevision,
+				presentationRef: event.payloadRef,
+				actionRules: [{ actionId: "resume", payloadPolicy: "none" }],
+				prepareKey: `dialog.prepare:${interactionId}`,
+			},
+		},
+	}
+}
+
 export function transition(state: TaskState, event: TaskEvent): TransitionResult {
 	if (event.generation !== state.generation)
 		return reject(state, "generation_mismatch", `Event generation ${event.generation} does not match ${state.generation}`)
@@ -510,7 +573,10 @@ export function transition(state: TaskState, event: TaskEvent): TransitionResult
 	const flow = reduceFlow(state.flow, event)
 	const turn = reduceTurn(state.turn, event)
 	const dialog = reduceDialog(state.dialog, event, nextRevision)
-	const intake = reduceIntake(state.intake, event)
+	const intake = reduceIntake(state.intake, event, {
+		admittedEntryIds: state.flow.compose?.admittedEntryIds,
+		journalWatermark: state.journalWatermark,
+	})
 	const halt = reduceHalt(state.halt, event)
 	let next: TaskState = {
 		...state,
@@ -521,7 +587,14 @@ export function transition(state: TaskState, event: TaskEvent): TransitionResult
 		dialog: dialog.state,
 		intake: intake.state,
 		halt: halt.state,
+		journalWatermark:
+			event.type === "provider.turn_ready"
+				? maxWatermark(state.journalWatermark, event.journalWatermark)
+				: event.type === "dialog.prepared" && event.journalWatermark
+					? maxWatermark(state.journalWatermark, event.journalWatermark)
+					: state.journalWatermark,
 	}
+	next = installArrivalWakeup(next, event, nextRevision)
 	if (halt.state.status === "stopping" && halt.state.pending.length === 0) {
 		next = {
 			...next,

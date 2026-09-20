@@ -4,14 +4,20 @@ import { executorFailure, type HaltOrder, type HaltParticipant, isExecutionAbort
 
 export interface DialogPreparationResult {
 	readonly journalRef: string
+	readonly journalWatermark: { readonly epoch: number; readonly seq: number }
 	readonly receiverGeneration: number
+	readonly disposition: "created" | "existing"
+}
+
+export interface DialogRevealResult {
+	readonly disposition: "revealed" | "already_revealed"
 }
 
 export interface DialogExecutionPort {
 	prepare(
 		input: DialogCommand & { readonly type: "dialog.prepare"; readonly signal: AbortSignal },
 	): Promise<DialogPreparationResult>
-	reveal(input: DialogCommand & { readonly type: "dialog.reveal"; readonly signal: AbortSignal }): Promise<void>
+	reveal(input: DialogCommand & { readonly type: "dialog.reveal"; readonly signal: AbortSignal }): Promise<DialogRevealResult>
 	dismiss?(
 		input: DialogCommand & { readonly type: "dialog.reveal"; readonly signal: AbortSignal; readonly reason: string },
 	): Promise<void>
@@ -73,6 +79,7 @@ export class DialogCommandExecutor implements CommandExecutor, HaltParticipant {
 					originRevision: command.originRevision,
 					interactionId: command.interactionId,
 					journalRef: result.journalRef,
+					journalWatermark: result.journalWatermark,
 					receiverGeneration: result.receiverGeneration,
 				})
 				return

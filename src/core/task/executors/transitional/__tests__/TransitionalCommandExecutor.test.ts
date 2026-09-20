@@ -37,6 +37,7 @@ const COMMANDS: Command[] = [
 		kind: "q",
 		presentationRef: "p",
 		actionRules: [],
+		prepareKey: "dialog.prepare:i",
 	},
 	{
 		commandId: "4",
@@ -48,8 +49,10 @@ const COMMANDS: Command[] = [
 		kind: "q",
 		presentationRef: "p",
 		actionRules: [],
+		prepareKey: "dialog.prepare:i",
 		journalRef: "j",
 		receiverGeneration: 0,
+		revealKey: "dialog.reveal:i:0",
 	},
 	{ commandId: "5", originRevision: 1, generation: 0, type: "compose.round", admittedEntryIds: [] },
 	{

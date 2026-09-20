@@ -22,6 +22,7 @@ function createInteraction(event: DialogRequestEvent, createdRevision: number): 
 		presentationRef: event.presentationRef,
 		actionRules: event.actionRules,
 		blockId: "blockId" in event ? event.blockId : undefined,
+		prepareKey: `dialog.prepare:${event.interactionId}`,
 	}
 }
 
@@ -36,7 +37,9 @@ function updateInteraction(
 			...interaction,
 			status: "prepared",
 			journalRef: event.journalRef,
+			journalWatermark: event.journalWatermark,
 			receiverGeneration: event.receiverGeneration,
+			revealKey: `dialog.reveal:${event.interactionId}:${event.receiverGeneration}`,
 			prepare: interaction.prepare && { ...interaction.prepare, status: "completed" },
 		}
 	}

@@ -47,9 +47,14 @@ export class ProviderCommandExecutor implements CommandExecutor {
 		const controller = new AbortController()
 		this.active.set(command.commandId, controller)
 		try {
-			let finalChunk: Extract<ProviderExecutionChunk, { kind: "final" }> | undefined
+			let finalResult:
+				| {
+						readonly chunk: Extract<ProviderExecutionChunk, { kind: "final" }>
+						readonly journalWatermark: { readonly epoch: number; readonly seq: number }
+				  }
+				| undefined
 			try {
-				finalChunk = await this.consume(command, controller.signal)
+				finalResult = await this.consume(command, controller.signal)
 			} catch (error) {
 				if (isExecutionAbort(error, controller.signal)) return
 				await this.events.submit({
@@ -62,14 +67,15 @@ export class ProviderCommandExecutor implements CommandExecutor {
 				})
 				return
 			}
-			if (!finalChunk || controller.signal.aborted) return
+			if (!finalResult || controller.signal.aborted) return
 			await this.events.submit({
 				type: "provider.turn_ready",
 				generation: command.generation,
 				commandId: command.commandId,
 				originRevision: command.originRevision,
-				turnId: finalChunk.turnId,
-				finalPayloadRef: finalChunk.payloadRef,
+				turnId: finalResult.chunk.turnId,
+				finalPayloadRef: finalResult.chunk.payloadRef,
+				journalWatermark: finalResult.journalWatermark,
 			})
 		} finally {
 			this.active.delete(command.commandId)
@@ -91,7 +97,13 @@ export class ProviderCommandExecutor implements CommandExecutor {
 	private async consume(
 		command: ProviderStartCommand,
 		signal: AbortSignal,
-	): Promise<Extract<ProviderExecutionChunk, { kind: "final" }> | undefined> {
+	): Promise<
+		| {
+				readonly chunk: Extract<ProviderExecutionChunk, { kind: "final" }>
+				readonly journalWatermark: { readonly epoch: number; readonly seq: number }
+		  }
+		| undefined
+	> {
 		let finalChunk: Extract<ProviderExecutionChunk, { kind: "final" }> | undefined
 		let transientId: string | undefined
 		for await (const chunk of this.port.start({ draftRef: command.draftRef, turnId: command.turnId, signal })) {
@@ -131,9 +143,21 @@ export class ProviderCommandExecutor implements CommandExecutor {
 		}
 		if (signal.aborted) return undefined
 		if (!finalChunk) throw new Error("MissingFinalChunk")
-		if (finalChunk.transientId) await this.journal.finalizeTransient(finalChunk.transientId, finalChunk.payloadRef)
-		else await this.journal.append(finalChunk.payloadRef)
+		const journalInput = {
+			operationId: `provider.final:${command.commandId}`,
+			payloadRef: finalChunk.payloadRef,
+			source: "provider" as const,
+			causation: {
+				commandId: command.commandId,
+				originRevision: command.originRevision,
+				generation: command.generation,
+				turnId: finalChunk.turnId,
+			},
+		}
+		const appended = finalChunk.transientId
+			? await this.journal.finalizeTransient({ ...journalInput, transientId: finalChunk.transientId })
+			: await this.journal.append(journalInput)
 		if (signal.aborted) return undefined
-		return finalChunk
+		return { chunk: finalChunk, journalWatermark: appended.watermark }
 	}
 }

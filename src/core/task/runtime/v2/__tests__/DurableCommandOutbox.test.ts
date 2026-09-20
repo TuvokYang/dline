@@ -26,6 +26,7 @@ function command(type: Command["type"], revision: number): Command {
 				kind: "question",
 				presentationRef: "question:1",
 				actionRules: [],
+				prepareKey: "dialog.prepare:i-1",
 			}
 		case "dialog.reveal":
 			return {
@@ -36,8 +37,10 @@ function command(type: Command["type"], revision: number): Command {
 				kind: "question",
 				presentationRef: "question:1",
 				actionRules: [],
+				prepareKey: "dialog.prepare:i-1",
 				journalRef: "j-1",
 				receiverGeneration: 0,
+				revealKey: "dialog.reveal:i-1:0",
 			}
 		case "halt.stop":
 			return { ...base, type, haltId: "h-1", participantIds: ["provider"], reason: "cancel" }
@@ -107,6 +110,35 @@ describe("DurableCommandOutbox", () => {
 		providerReceipt.gate.resolve()
 		await outbox.whenIdle()
 		expect(provider.commands).toEqual([])
+	})
+
+	it("marks an effect complete only after executor completion", async () => {
+		const provider = new RecordingExecutor("provider", false)
+		const publications = new InMemoryCommandPublicationStore()
+		const outbox = new DurableCommandOutbox(new CommandRouter([provider]), publications)
+		const pending = receipt(1)
+		const durable = command("provider.start", 1)
+		outbox.enqueue([durable], pending.receipt)
+		pending.gate.resolve()
+		await provider.waitForCommandCount(1)
+		expect(await publications.has(durable.commandId)).toBe(false)
+		provider.completions[0].resolve()
+		await outbox.whenIdle()
+		expect(await publications.has(durable.commandId)).toBe(true)
+	})
+
+	it("deduplicates restored effects and filters stale generations", async () => {
+		const dialog = new RecordingExecutor("dialog")
+		const outbox = new DurableCommandOutbox(new CommandRouter([dialog]), new InMemoryCommandPublicationStore())
+		const current = command("dialog.reveal", 1)
+		const duplicate = {
+			...command("dialog.reveal", 2),
+			revealKey: (current as Extract<Command, { type: "dialog.reveal" }>).revealKey,
+		}
+		const stale = { ...command("dialog.reveal", 3), generation: 1 }
+		outbox.restore([current, duplicate, stale], 0)
+		await outbox.whenIdle()
+		expect(dialog.commands).toEqual([current])
 	})
 
 	it("does not publish when durability fails and skips already published recovery entries", async () => {

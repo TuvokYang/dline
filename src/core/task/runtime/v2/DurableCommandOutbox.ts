@@ -13,6 +13,12 @@ function isImmediate(command: Command): boolean {
 	return command.type === "dialog.prepare" || command.type === "halt.stop"
 }
 
+export function commandEffectKey(command: Command): string {
+	if (command.type === "dialog.prepare") return command.prepareKey
+	if (command.type === "dialog.reveal") return command.revealKey
+	return command.commandId
+}
+
 export class DurableCommandOutbox {
 	private readonly pending: PendingCommand[] = []
 	private drainPromise: Promise<void> | undefined
@@ -48,13 +54,19 @@ export class DurableCommandOutbox {
 		this.scheduleDrain()
 	}
 
-	restore(commands: readonly Command[]): void {
-		for (const command of commands)
+	restore(commands: readonly Command[], generation?: number): void {
+		const known = new Set(this.pending.map((entry) => commandEffectKey(entry.command)))
+		for (const command of commands) {
+			if (generation !== undefined && command.generation !== generation) continue
+			const effectKey = commandEffectKey(command)
+			if (known.has(effectKey)) continue
+			known.add(effectKey)
 			this.pending.push({
 				command,
 				receipt: { revision: command.originRevision, durable: Promise.resolve() },
 				fenced: false,
 			})
+		}
 		this.scheduleDrain()
 	}
 
@@ -116,9 +128,11 @@ export class DurableCommandOutbox {
 					this.pending.shift()
 					continue
 				}
-				if (!(await this.publications.has(entry.command.commandId))) {
-					this.router.dispatch(entry.command)
-					await this.publications.mark(entry.command)
+				const effectKey = commandEffectKey(entry.command)
+				if (!(await this.publications.has(effectKey))) {
+					const dispatch = this.router.dispatch(entry.command)
+					await dispatch.completion
+					await this.publications.mark(entry.command, effectKey)
 				}
 			} catch (error) {
 				this.diagnostics?.record({

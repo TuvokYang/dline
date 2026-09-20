@@ -134,6 +134,7 @@ describe("task kernel executor flow", () => {
 				originRevision: provider.originRevision,
 				turnId: "turn-1",
 				finalPayloadRef: "answer:1",
+				journalWatermark: { epoch: 0, seq: 1 },
 			}),
 		)
 		const duplicate = transition(ready.state, {

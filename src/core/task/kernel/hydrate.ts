@@ -6,26 +6,22 @@ import type {
 	HydrateForm,
 	HydrateInput,
 	HydrateResult,
+	JournalWatermark,
 	TaskState,
 } from "./types"
 import { createInitialTaskState } from "./types"
-
-interface JournalPosition {
-	readonly epoch: number
-	readonly seq: number
-}
 
 function readOnly(reason: string, code: string, message: string): HydrateResult {
 	return { kind: "read_only", reason, diagnostics: [{ code, message }] }
 }
 
-function parseJournalRef(ref: string): JournalPosition | undefined {
+function parseJournalRef(ref: string): JournalWatermark | undefined {
 	const match = ref.match(/^journal:(?:(\d+):)?(\d+)$/)
 	if (!match) return undefined
 	return { epoch: Number(match[1] ?? 0), seq: Number(match[2]) }
 }
 
-function isAfter(position: JournalPosition, tail: JournalPosition): boolean {
+function isAfter(position: JournalWatermark, tail: JournalWatermark): boolean {
 	return position.epoch > tail.epoch || (position.epoch === tail.epoch && position.seq > tail.seq)
 }
 
@@ -42,6 +38,8 @@ function validateSnapshot(input: HydrateInput, snapshot: TaskState): HydrateResu
 		return readOnly("snapshot_invalid", "invalid_revision", "Snapshot revision is invalid")
 	if (!Number.isInteger(snapshot.generation) || snapshot.generation < 0 || snapshot.halt.generation !== snapshot.generation)
 		return readOnly("snapshot_invalid", "invalid_generation", "Snapshot generation is inconsistent")
+	if (snapshot.journalWatermark && isAfter(snapshot.journalWatermark, input.journalTail))
+		return readOnly("snapshot_invalid", "journal_ahead_of_tail", "Snapshot journal watermark is ahead of journal tail")
 
 	const blockIds = new Set<string>()
 	const indexes = new Set<number>()
@@ -109,6 +107,7 @@ function recoveryInteraction(state: TaskState, form: Exclude<HydrateForm, "new" 
 			createdRevision: state.revision,
 			presentationRef: `completion:${state.flow.completionId}`,
 			actionRules: [action("reply", "draft"), action("start_new_task", "draft")],
+			prepareKey: `dialog.prepare:${interactionId}`,
 		}
 	}
 	if (form === "error") {
@@ -120,6 +119,7 @@ function recoveryInteraction(state: TaskState, form: Exclude<HydrateForm, "new" 
 			createdRevision: state.revision,
 			presentationRef: `error:${state.revision}`,
 			actionRules: [action("retry", "draft"), action("start_new_task", "draft")],
+			prepareKey: `dialog.prepare:${interactionId}`,
 		}
 	}
 	return {
@@ -130,11 +130,19 @@ function recoveryInteraction(state: TaskState, form: Exclude<HydrateForm, "new" 
 		createdRevision: state.revision,
 		presentationRef: `resume:${state.taskId}:${state.revision}`,
 		actionRules: [action("resume", "draft")],
+		prepareKey: `dialog.prepare:${interactionId}`,
 	}
 }
 
 function normalizeInteraction(interaction: DialogInteraction, generation: number): DialogInteraction {
-	const normalized = { ...interaction, receiverGeneration: generation, prepare: undefined, reveal: undefined }
+	const normalized = {
+		...interaction,
+		receiverGeneration: generation,
+		prepareKey: interaction.prepareKey ?? `dialog.prepare:${interaction.interactionId}`,
+		revealKey: interaction.journalRef ? `dialog.reveal:${interaction.interactionId}:${generation}` : undefined,
+		prepare: undefined,
+		reveal: undefined,
+	}
 	if (interaction.status !== "resolving") return normalized
 	return { ...normalized, status: "awaiting" }
 }
@@ -155,10 +163,18 @@ function normalizeState(
 			normalizeInteraction(interaction, generation),
 		]),
 	)
-	const normalizeEntries = (entries: TaskState["intake"]["queued"]) =>
-		entries.map((entry) =>
-			entry.state === "reserved" || entry.state === "included" ? { ...entry, state: "uncertain" as const } : entry,
-		)
+	const normalizeEntries = (entries: TaskState["intake"]["queued"] = []) =>
+		entries.map((entry) => {
+			if (entry.state !== "reserved" && entry.state !== "included" && entry.state !== "uncertain") return entry
+			if (!entry.journalWatermark) return { ...entry, state: "uncertain" as const }
+			return {
+				...entry,
+				state: isAfter(entry.journalWatermark, snapshot.journalWatermark ?? { epoch: 0, seq: 0 })
+					? ("released" as const)
+					: ("consumed" as const),
+			}
+		})
+	const legacyIntake = snapshot.intake ?? { queued: [], background: [], coTask: [] }
 	let state: TaskState = {
 		...snapshot,
 		revision,
@@ -177,11 +193,12 @@ function normalizeState(
 			approvalsByBlock,
 		},
 		intake: {
-			queued: normalizeEntries(snapshot.intake.queued),
-			background: normalizeEntries(snapshot.intake.background),
-			coTask: normalizeEntries(snapshot.intake.coTask),
+			queued: normalizeEntries(legacyIntake.queued),
+			background: normalizeEntries(legacyIntake.background),
+			coTask: normalizeEntries(legacyIntake.coTask),
 		},
 		halt: { status: "idle", generation },
+		journalWatermark: snapshot.journalWatermark ?? { epoch: 0, seq: 0 },
 	}
 	if (form === "consumed") {
 		state = {
@@ -209,6 +226,7 @@ function dialogCommandInput(interaction: DialogInteraction) {
 		presentationRef: interaction.presentationRef,
 		actionRules: interaction.actionRules,
 		blockId: interaction.blockId,
+		prepareKey: interaction.prepareKey ?? `dialog.prepare:${interaction.interactionId}`,
 	}
 }
 
@@ -230,6 +248,9 @@ function initialCommands(state: TaskState): readonly Command[] {
 						...dialogCommandInput(interaction),
 						journalRef: interaction.journalRef,
 						receiverGeneration: interaction.receiverGeneration,
+						revealKey:
+							interaction.revealKey ??
+							`dialog.reveal:${interaction.interactionId}:${interaction.receiverGeneration}`,
 					},
 				]
 			return []
