@@ -27,7 +27,7 @@ import { settingsAffectPromptFreshness } from "@core/prompts/system-prompt-cache
 import * as SecretsManager from "@core/storage/secrets"
 import { capabilityResourceId } from "@core/storage/settings/capability-resource-id"
 import { type CapabilityKind, mergeScopedToggles, readScopedToggles } from "@core/storage/settings/capability-toggle-store"
-import { projectTaskView } from "@core/task/view/TaskViewProjector"
+import { projectMissingInteractionAnchor, projectTaskView } from "@core/task/view/TaskViewProjector"
 import { detectWorkspaceRoots } from "@core/workspace/detection"
 import { setupWorkspaceManager } from "@core/workspace/setup"
 import type { WorkspaceRootManager } from "@core/workspace/WorkspaceRootManager"
@@ -42,11 +42,12 @@ import { getContextWindowIndicatorTotalTokens } from "@shared/context-window-ind
 import type { ClineMessage, ExtensionState, Platform, TaskViewState } from "@shared/ExtensionMessage"
 import type { ApiMetrics } from "@shared/getApiMetrics"
 import type { HistoryItem } from "@shared/HistoryItem"
+import { matchesActiveInteractionAnchor } from "@shared/interaction-anchor"
 import type { McpMarketplaceCatalog, McpMarketplaceItem, McpServer } from "@shared/mcp"
 import type { ClineUserContent } from "@shared/messages/content"
 import type { ModeSwitchRequestResult } from "@shared/mode-switch"
 import type { ProfileSwitchRequestResult } from "@shared/profile-switch"
-import type { TaskLockStatus } from "@shared/proto/dline/task"
+import { type DispatchInteractionRequest, DispatchInteractionResponse, type TaskLockStatus } from "@shared/proto/dline/task"
 import { type Settings } from "@shared/storage/state-keys"
 import type { Mode } from "@shared/storage/types"
 import {
@@ -102,6 +103,7 @@ import { clearRemoteConfig } from "../storage/remote-config/utils"
 import { type PersistenceErrorEvent, StateManager } from "../storage/StateManager"
 import { UIMessage } from "../storage/UIMessage"
 import { Task } from "../task"
+import { isInteractionActionType } from "../task/interaction/Interaction"
 import { readDiscoveredToggles } from "./file/capability-discovery-cache"
 import {
 	getWorkspaceHistoryManager,
@@ -119,6 +121,7 @@ import type { ProfileSwitchOperation, ResolvedProfileTarget } from "./profile-sw
 import { projectFocusChainHistory } from "./state/focusChainHistoryProjection"
 import { cleanupStateSubscriptions, sendAccountUsageUpdate, sendStatePatch, sendStateUpdate } from "./state/subscribeToState"
 import { projectTaskHistory } from "./state/taskHistoryProjection"
+import { HistoryDisplaySession } from "./task/HistoryDisplaySession"
 import { prepareHistoryTaskForDisplay, projectHistoryPreparingView } from "./task/history-task-readiness"
 import { startTaskLifecycle } from "./task/task-start-lifecycle"
 import { sendChatButtonClickedEvent } from "./ui/subscribeToChatButtonClicked"
@@ -154,6 +157,8 @@ type InitTaskOptions = {
 	onBackgroundError?: (error: unknown, taskId: string) => Promise<void> | void
 	/** Internal lifecycle transaction already removed the previous Task. */
 	skipInitialClear?: boolean
+	/** Promote a lightweight historical display into the interactive Task runtime. */
+	activateHistory?: boolean
 }
 
 type PostStateOptions = {
@@ -187,6 +192,7 @@ export class Controller {
 	private static taskCompletionBackfillScheduled = false
 
 	task?: Task
+	private historyDisplaySession?: HistoryDisplaySession
 
 	mcpHub: McpHub
 	readonly mcpOwnerId = randomUUID()
@@ -751,6 +757,47 @@ export class Controller {
 	- https://vscode-docs.readthedocs.io/en/stable/extensions/patterns-and-principles/
 	- https://github.com/microsoft/vscode-extension-samples/blob/main/webview-sample/src/extension.ts
 	*/
+	/** Return the task identity owned by either the interactive runtime or lightweight history display. */
+	getCurrentTaskId(): string | undefined {
+		return this.task?.taskId ?? this.historyDisplaySession?.taskId
+	}
+
+	/** Return whether this Controller already owns a visible task surface. */
+	hasActiveTaskSurface(): boolean {
+		return this.getCurrentTaskId() !== undefined
+	}
+
+	/** Return the current visible message sequence for state projection. */
+	getCurrentTaskMessages(): readonly ClineMessage[] {
+		return this.task?.messageStateHandler.clineMessages ?? this.historyDisplaySession?.getMessages() ?? []
+	}
+
+	getCurrentTaskMessageCount(): number {
+		return this.task?.messageStateHandler.clineMessages.length ?? this.historyDisplaySession?.getMessageCount() ?? 0
+	}
+
+	async fetchCurrentTaskMessages(
+		referenceIndex: number,
+		count: number,
+	): Promise<{ messages: ClineMessage[]; totalCount: number; startIndex: number }> {
+		const historyDisplay = this.historyDisplaySession
+		if (historyDisplay) return await historyDisplay.fetchMessages(referenceIndex, count)
+
+		const messages = [...(this.task?.messageStateHandler.clineMessages ?? [])]
+		const totalCount = messages.length
+		const pageSize = Math.max(0, Math.trunc(count))
+		const startIndex =
+			referenceIndex === -1
+				? Math.max(0, totalCount - pageSize)
+				: Math.max(0, Math.min(Math.trunc(referenceIndex), totalCount))
+		return { messages: messages.slice(startIndex, Math.min(startIndex + pageSize, totalCount)), totalCount, startIndex }
+	}
+
+	/** Return whether the current surface is a lightweight history display. */
+	hasHistoryDisplaySession(): boolean {
+		return this.historyDisplaySession !== undefined
+	}
+
 	/** Return whether this controller can still accept UI subscriptions and updates. */
 	isUiAttached(): boolean {
 		return !this.uiDetached && !this.disposed
@@ -908,6 +955,10 @@ export class Controller {
 		if (!options?.skipInitialClear) {
 			await this.clearTask()
 			logInitStage("initial_clear")
+		}
+
+		if (historyItem && !options?.activateHistory) {
+			return this.initHistoryDisplaySession(historyItem, options)
 		}
 
 		const autoApprovalSettings = this.stateManager.getGlobalSettingsKey("autoApprovalSettings")
@@ -1101,6 +1152,88 @@ export class Controller {
 		void this.persistPanelStateIfNeeded(initializedTaskId)
 
 		return initializedTaskId
+	}
+
+	private async initHistoryDisplaySession(historyItem: HistoryItem, options?: InitTaskOptions): Promise<string> {
+		const session = new HistoryDisplaySession(historyItem)
+		this.historyDisplaySession = session
+		const publishReadyHistory = async () => {
+			if (this.historyDisplaySession !== session) return
+			await this.postStateToWebview({ immediate: true })
+			await options?.onHistoryTaskReadyToDisplay?.()
+		}
+		const remainsCurrent = await prepareHistoryTaskForDisplay({
+			taskId: session.taskId,
+			displayHistory: () => session.load(),
+			prepareFromHistory: async () => undefined,
+			hasTaskLock: false,
+			isCurrent: () => this.historyDisplaySession === session,
+			onPreparingToDisplay: options?.onHistoryTaskPreparingToDisplay,
+			onReadyToDisplay: publishReadyHistory,
+		})
+		if (!remainsCurrent) return session.taskId
+
+		await new Promise((resolve) => setTimeout(resolve, 0))
+		if (this.historyDisplaySession !== session) return session.taskId
+		void this.syncPanelTitle()
+		void this.persistPanelStateIfNeeded(session.taskId)
+		return session.taskId
+	}
+
+	/** Promote the exact lightweight history interaction into the canonical Task runtime. */
+	async dispatchHistoryDisplayInteraction(
+		request: DispatchInteractionRequest,
+	): Promise<DispatchInteractionResponse | undefined> {
+		const session = this.historyDisplaySession
+		if (!session) return undefined
+		if (!isInteractionActionType(request.actionId)) {
+			return DispatchInteractionResponse.create({ accepted: false, result: "invalid_action" })
+		}
+		const actionId = request.actionId
+		if (!session.accepts(request)) {
+			return DispatchInteractionResponse.create({ accepted: false, result: "stale_interaction" })
+		}
+
+		return this.runTaskLifecycleOperation(async () => {
+			if (this.historyDisplaySession !== session || !session.accepts(request)) {
+				return DispatchInteractionResponse.create({ accepted: false, result: "stale_interaction" })
+			}
+			this.historyDisplaySession = undefined
+			try {
+				await session.dispose()
+				await this.initTask(undefined, undefined, undefined, session.historyItem, undefined, {
+					skipInitialClear: true,
+					activateHistory: true,
+				})
+				const task = this.task
+				const interaction = task?.getRuntimeState().interaction
+				if (!task || !interaction || interaction.status !== "awaiting") {
+					return DispatchInteractionResponse.create({ accepted: false, result: "invalid_runtime_event" })
+				}
+				const result = await task.dispatchRuntime({
+					type: "INTERACTION_RESPONDED",
+					response: {
+						taskId: task.taskId,
+						turnId: interaction.turnId,
+						interactionId: interaction.interactionId,
+						actionId,
+						stateRevision: task.getRuntimeState().revision,
+						draft: request.draft
+							? { text: request.draft.text, images: [...request.draft.images], files: [...request.draft.files] }
+							: undefined,
+						selection: request.selection ? { values: [...request.selection.values] } : undefined,
+					},
+				})
+				if (!result.accepted) {
+					return DispatchInteractionResponse.create({ accepted: false, result: "invalid_runtime_event" })
+				}
+				await task.waitForInteractionSettlement(interaction.interactionId)
+				return DispatchInteractionResponse.create({ accepted: true, result: "accepted" })
+			} catch (error) {
+				Logger.error(`[HistoryDisplay] Failed to promote task ${session.taskId}:`, error)
+				return DispatchInteractionResponse.create({ accepted: false, result: "invalid_runtime_event" })
+			}
+		})
 	}
 
 	async reinitExistingTaskFromId(taskId: string) {
@@ -1571,10 +1704,10 @@ export class Controller {
 	 * chain progress suffix can never be dropped by a caller passing raw text.
 	 */
 	async syncPanelTitle(): Promise<void> {
-		if (this.uiDetached || this.disposed || !this.task) {
+		if (this.uiDetached || this.disposed || !this.getCurrentTaskId()) {
 			return
 		}
-		const resolvedTitle = this.task.getPanelTitle()
+		const resolvedTitle = this.task?.getPanelTitle() ?? this.historyDisplaySession?.historyItem.task ?? "Dline"
 		try {
 			const { WebviewProviderRegistry } = await import("@/core/webview/WebviewProviderRegistry")
 			const { VscodeWebviewPanelProvider } = await import("@/hosts/vscode/VscodeWebviewPanelProvider")
@@ -1907,7 +2040,7 @@ export class Controller {
 			// it would leave task-scoped setting reads pointing at the previous
 			// task for the whole window. An immediate publication builds right
 			// away and needs no such compensation.
-			this.stateManager.setActiveTaskId(this.task?.taskId)
+			this.stateManager.setActiveTaskId(this.getCurrentTaskId())
 			this.scheduleCoalescedStatePost()
 			return
 		}
@@ -1917,11 +2050,11 @@ export class Controller {
 
 	/** Publish the interaction-critical Task view without paying for a full ExtensionState build. */
 	async postTaskViewPatchToWebview(): Promise<void> {
-		if (this.uiDetached || this.disposed || !this.task) {
+		if (this.uiDetached || this.disposed || !this.getCurrentTaskId()) {
 			this.suppressedStatePostsAfterDetach++
 			return
 		}
-		this.stateManager.setActiveTaskId(this.task.taskId)
+		this.stateManager.setActiveTaskId(this.getCurrentTaskId())
 		const stateRevision = ++this.nextStateRevision
 		this.latestStateRevision = Math.max(this.latestStateRevision, stateRevision)
 		await sendStatePatch(
@@ -1987,6 +2120,8 @@ export class Controller {
 
 	/** Project the active Task and confirm its exact durable interaction anchor when available. */
 	private projectCurrentTaskViewState(messages?: readonly ClineMessage[]): TaskViewState | undefined {
+		const historyDisplay = this.historyDisplaySession
+		if (historyDisplay) return historyDisplay.getViewState()
 		const task = this.task
 		if (!task) return undefined
 		const runtimeState = task.getRuntimeState()
@@ -2005,16 +2140,12 @@ export class Controller {
 				: false,
 		})
 		const interaction = view.activeInteraction
-		if (!interaction) return view
+		if (!interaction || interaction.status !== "awaiting") return view
 		const candidates = messages ?? task.messageStateHandler.clineMessages
-		const matchingAnchors = candidates.filter(
-			(message) =>
-				message.type === "ask" &&
-				message.ts === interaction.askMessageTs &&
-				message.interactionId === interaction.interactionId &&
-				message.ask === interaction.taskAsk,
-		)
-		return matchingAnchors.length === 1 ? { ...view, activeInteraction: { ...interaction, anchorVerified: true } } : view
+		const matchingAnchors = candidates.filter((message) => matchesActiveInteractionAnchor(message, interaction))
+		return matchingAnchors.length === 1
+			? { ...view, activeInteraction: { ...interaction, anchorVerified: true } }
+			: projectMissingInteractionAnchor(view)
 	}
 
 	/** Build a monotonic extension state while preserving the public non-optional contract. */
@@ -2038,8 +2169,9 @@ export class Controller {
 		const startTime = performance.now()
 		// Ensure per-task settings isolation: set active task before reading
 		// any settings that depend on task-level overrides (apiConfiguration, mode, etc.).
-		if (this.task?.taskId) {
-			this.stateManager.setActiveTaskId(this.task.taskId)
+		const surfaceTaskId = this.getCurrentTaskId()
+		if (surfaceTaskId) {
+			this.stateManager.setActiveTaskId(surfaceTaskId)
 		} else {
 			this.stateManager.setActiveTaskId(undefined)
 		}
@@ -2076,7 +2208,10 @@ export class Controller {
 		const focusChainSettings = this.stateManager.getGlobalSettingsKey("focusChainSettings")
 		const preferredLanguage = this.stateManager.getGlobalSettingsKey("preferredLanguage")
 		const chatInputSendShortcut = this.stateManager.getGlobalSettingsKey("chatInputSendShortcut")
-		const mode = this.task?.taskSm?.mode ?? this.stateManager.getGlobalSettingsKey("mode")
+		const mode =
+			this.task?.taskSm?.mode ??
+			this.historyDisplaySession?.historyItem.mode ??
+			this.stateManager.getGlobalSettingsKey("mode")
 		const strictPlanModeEnabled = this.stateManager.getGlobalSettingsKey("strictPlanModeEnabled")
 		const yoloModeToggled = this.stateManager.getGlobalSettingsKey("yoloModeToggled")
 		const useAutoCondense = this.stateManager.getGlobalSettingsKey("useAutoCondense")
@@ -2128,13 +2263,16 @@ export class Controller {
 		const localAgentsRulesToggles = this.readLocalCapabilityToggles("agentsRules")
 		const workflowToggles = this.readLocalCapabilityToggles("workflows")
 
-		const currentTaskItem = this.task?.taskId ? (taskHistory || []).find((item) => item.id === this.task?.taskId) : undefined
+		const currentTaskItem = surfaceTaskId ? (taskHistory || []).find((item) => item.id === surfaceTaskId) : undefined
 		// Read the message list once. The getter merges and sorts transient
 		// entries on every access, so a second read costs another full pass over
 		// a conversation that can hold tens of thousands of messages.
-		const rawMessages = this.task?.messageStateHandler.clineMessages ?? []
-		// Build a synthetic taskTitleMessage for backward compatibility with frontend
-		const taskTitleMessage = rawMessages.find((m) => m.say === "task") ?? rawMessages.at(0)
+		const rawMessages = [...this.getCurrentTaskMessages()]
+		// Build a synthetic taskTitleMessage for backward compatibility with frontend.
+		// A history display retains only the latest message window, so its first
+		// durable message is read separately rather than forcing a full history load.
+		const taskTitleMessage =
+			this.historyDisplaySession?.getTaskTitleMessage() ?? rawMessages.find((m) => m.say === "task") ?? rawMessages.at(0)
 		// Separate task header message from body messages. Read the header from the
 		// in-memory message list instead of re-reading ui_messages.jsonl on every
 		// state push: getTaskHeaderText() bypasses the jsonl cache and performs a
@@ -2143,10 +2281,13 @@ export class Controller {
 		const _taskHeaderText = taskTitleMessage?.text ?? ""
 		// totalMessageCount now includes the task message (matching fetchMessage behavior)
 		// so the frontend can detect when scrolled to the absolute top (index 0)
-		const totalMessageCount = rawMessages.length
-		// firstItemIndex is managed by fetchMessage; default to latest window on init
-		const firstItemIndex = Math.max(0, totalMessageCount - 100)
-		const checkpointManagerErrorMessage = this.task?.taskState.checkpointManagerErrorMessage
+		const totalMessageCount = this.getCurrentTaskMessageCount()
+		// firstItemIndex is managed by fetchMessage; the history display already
+		// holds the latest bounded window rather than the complete file.
+		const firstItemIndex = Math.max(0, totalMessageCount - rawMessages.length)
+		const checkpointManagerErrorMessage =
+			this.task?.taskState.checkpointManagerErrorMessage ??
+			this.historyDisplaySession?.historyItem.checkpointManagerErrorMessage
 		// The entry cap below bounds how many tasks are sent but not how many
 		// bytes: HistoryItem.task holds the verbatim task text, so a workspace
 		// with long tasks rebroadcasts megabytes on every push. Project the text
@@ -2172,10 +2313,23 @@ export class Controller {
 		// paired API request, whose text carries the whole request body, and
 		// that dominated this build in long conversations.
 		let aggregatedMetrics: ApiMetrics | undefined
-		try {
-			aggregatedMetrics = this.task?.messageStateHandler.readStateMetrics()
-		} catch (error) {
-			Logger.warn("Failed to aggregate api metrics:", error)
+		const historyItem = this.historyDisplaySession?.historyItem
+		if (historyItem) {
+			aggregatedMetrics = {
+				totalTokensIn: historyItem.tokensIn,
+				totalTokensOut: historyItem.tokensOut,
+				totalCacheWrites: historyItem.cacheWrites,
+				totalCacheReads: historyItem.cacheReads,
+				totalCost: historyItem.totalCost,
+				cacheHitRate: historyItem.cacheHitRate,
+				currency: historyItem.currency,
+			}
+		} else {
+			try {
+				aggregatedMetrics = this.task?.messageStateHandler.readStateMetrics()
+			} catch (error) {
+				Logger.warn("Failed to aggregate api metrics:", error)
+			}
 		}
 		const { getApiMetrics, getLastTaskProgressText } = await import("@shared/getApiMetrics")
 		const apiMetrics = {
@@ -2339,7 +2493,7 @@ export class Controller {
 				// Unit and CLI contexts may not initialize the VS Code orchestrator.
 			}
 			Logger.debug(
-				`[StateUpdate] build timing: taskId=${this.task?.taskId ?? "none"}, buildMs=${durationMs}, activeTasks=${activeTasks}`,
+				`[StateUpdate] build timing: taskId=${surfaceTaskId ?? "none"}, buildMs=${durationMs}, activeTasks=${activeTasks}`,
 			)
 		}
 		return result
@@ -2607,6 +2761,9 @@ export class Controller {
 	 * @returns TaskLockStatus if in read-only mode, undefined otherwise
 	 */
 	private getTaskLockStatus(): TaskLockStatus | undefined {
+		if (this.historyDisplaySession?.isLocked()) {
+			return { isLocked: true, lockedBy: "", lockedAt: 0, isStale: false } as TaskLockStatus
+		}
 		if (!this.task?.taskId) {
 			return undefined
 		}
@@ -2669,7 +2826,8 @@ export class Controller {
 		const startedAt = performance.now()
 		let stageStartedAt = startedAt
 		const task = this.task
-		const taskId = task?.taskId
+		const historyDisplay = this.historyDisplaySession
+		const taskId = task?.taskId ?? historyDisplay?.taskId
 		const logCloseStage = (phase: string, details = "") => {
 			const now = performance.now()
 			recordPerfPhase(
@@ -2705,6 +2863,7 @@ export class Controller {
 		// remaining step is durability work that no longer has a visible effect.
 		task?.fenceControllerDetachment()
 		this.task = undefined
+		this.historyDisplaySession = undefined
 		this.workspaceHistorySession = undefined
 		this.restartAccountUsagePolling()
 		if (!options?.suppressPostState) {
@@ -2712,7 +2871,10 @@ export class Controller {
 			logCloseStage("detached_state_publish")
 		}
 
-		const teardown = this.teardownDetachedTask(task, taskId, options?.preserveCompletedState === true, logCloseStage)
+		const teardown = Promise.all([
+			historyDisplay?.dispose(),
+			task ? this.teardownDetachedTask(task, taskId, options?.preserveCompletedState === true, logCloseStage) : undefined,
+		]).then(() => undefined)
 		if (options?.deferTeardown) {
 			const pending = teardown.finally(() => {
 				if (this.pendingTaskTeardown === pending) {

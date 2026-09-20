@@ -127,8 +127,8 @@ const FIXED_CEILING_SCOPES: ReadonlySet<PermissionScope> = new Set<PermissionSco
 /** Read tools whose provider/runtime fan-out can reach paths absent from the call. */
 const UNBOUNDED_READ_TOOLS: ReadonlySet<ClineDefaultTool> = new Set([ClineDefaultTool.FIND_REFERENCES])
 
-/** Edit tools whose provider/runtime fan-out can reach paths absent from the call. */
-const UNBOUNDED_EDIT_TOOLS: ReadonlySet<ClineDefaultTool> = new Set([ClineDefaultTool.RENAME, ClineDefaultTool.REPLACE_TEXT])
+/** Edit tools whose provider/runtime fan-out cannot be enumerated before execution. */
+const UNBOUNDED_EDIT_TOOLS: ReadonlySet<ClineDefaultTool> = new Set([ClineDefaultTool.RENAME])
 
 /** Tools that reach the filesystem for reading. */
 const READ_TOOLS: ReadonlySet<ClineDefaultTool> = new Set([

@@ -696,6 +696,7 @@ function reduceTurn(
 				| "BLOCK_APPROVED"
 				| "BLOCK_REJECTED"
 				| "BLOCK_EXECUTION_STARTED"
+				| "RESTORED_BLOCK_EXECUTION_STARTED"
 				| "BLOCK_EXECUTION_REJECTED"
 				| "BLOCK_EXECUTION_CANCELLED"
 				| "BLOCK_EXECUTION_SKIPPED"
@@ -823,7 +824,7 @@ function reduceTurn(
 			TaskPhase.BETWEEN_TURNS,
 		)
 	}
-	if (event.type === "BLOCK_EXECUTION_STARTED") {
+	if (event.type === "BLOCK_EXECUTION_STARTED" || event.type === "RESTORED_BLOCK_EXECUTION_STARTED") {
 		if (block.phase !== BlockPhase.EXECUTING && block.phase !== BlockPhase.AUTO_EXECUTING) {
 			return reject(state, event.type)
 		}
@@ -835,6 +836,9 @@ function reduceTurn(
 			return reject(state, event.type)
 		}
 		const started = { ...state.turn, executing: withMember(ownership.executing, block.dlineTid) }
+		if (event.type === "RESTORED_BLOCK_EXECUTION_STARTED") {
+			return acceptTurn(state, event.type, started, TaskPhase.EXECUTING)
+		}
 		const revision = state.revision + 1
 		// A block start is the per-block hot path: with parallel execution one
 		// turn produces many of these, and each one previously forced a full
@@ -1759,6 +1763,7 @@ export function reduceTask(state: TaskRuntimeState, event: TaskEvent): Transitio
 		case "BLOCK_APPROVED":
 		case "BLOCK_REJECTED":
 		case "BLOCK_EXECUTION_STARTED":
+		case "RESTORED_BLOCK_EXECUTION_STARTED":
 		case "BLOCK_EXECUTION_REJECTED":
 		case "BLOCK_EXECUTION_CANCELLED":
 		case "BLOCK_EXECUTION_SKIPPED":

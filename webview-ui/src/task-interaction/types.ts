@@ -1,4 +1,5 @@
 import type { ClineMessage, TaskViewActionType, TaskViewState } from "@shared/ExtensionMessage"
+import { matchesActiveInteractionAnchor } from "@shared/interaction-anchor"
 import type { DispatchInteractionRequest, DispatchInteractionResponse } from "@shared/proto/dline/task"
 
 /** Complete Webview draft snapshot owned by the chat composition root. */
@@ -109,13 +110,7 @@ export function findActiveInteractionAnchor(messages: readonly ClineMessage[], v
 	if (!interaction) {
 		return undefined
 	}
-	const matches = messages.filter(
-		(message) =>
-			message.type === "ask" &&
-			message.ts === interaction.askMessageTs &&
-			message.interactionId === interaction.interactionId &&
-			message.ask === interaction.taskAsk,
-	)
+	const matches = messages.filter((message) => matchesActiveInteractionAnchor(message, interaction))
 	return matches.length === 1 ? matches[0] : undefined
 }
 

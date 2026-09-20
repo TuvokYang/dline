@@ -54,8 +54,18 @@ describe("fetchMessage durable user_feedback integration", () => {
 		await uiMessage.flush()
 
 		const reopened = await UIMessage.open(taskId)
+		const persistedMessages = [...reopened.getAll()]
 		const response = await fetchMessage(
-			{ task: { messageStateHandler: { clineMessages: [...reopened.getAll()] } } } as never,
+			{
+				fetchCurrentTaskMessages: async (referenceIndex: number, count: number) => {
+					const startIndex = referenceIndex === -1 ? Math.max(0, persistedMessages.length - count) : referenceIndex
+					return {
+						messages: persistedMessages.slice(startIndex, startIndex + count),
+						totalCount: persistedMessages.length,
+						startIndex,
+					}
+				},
+			} as never,
 			FetchMessageRequest.create({ referenceIndex: -1, count: 20 }),
 		)
 		const messages = response.messages.map(convertProtoToClineMessage)

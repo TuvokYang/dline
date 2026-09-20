@@ -175,9 +175,9 @@ export class ToolExecutor {
 	private buildAdmissionSnapshot(block: ToolUse): ToolAdmissionSnapshot {
 		const mcpToolAutoApprove =
 			block.name === ClineDefaultTool.MCP_USE
-				? (this.mcpHub.connections
+				? this.mcpHub.connections
 						?.find((connection) => connection.server.name === block.params.server_name)
-						?.server.tools?.find((tool) => tool.name === block.params.tool_name)?.autoApprove ?? true)
+						?.server.tools?.find((tool) => tool.name === block.params.tool_name)?.autoApprove === true
 				: undefined
 		const workspaceRoots = this.workspaceManager?.getRoots()
 		return {

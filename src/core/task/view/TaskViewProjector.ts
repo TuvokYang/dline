@@ -38,6 +38,19 @@ const RETRY_PENDING_ACTION: TaskViewAction = {
 	dispatchTarget: "task",
 }
 
+/** Remove interaction controls when the durable presentation anchor is unavailable or incomplete. */
+export function projectMissingInteractionAnchor(view: TaskViewState): TaskViewState {
+	const interaction = view.activeInteraction
+	if (!interaction) return view
+	return {
+		...view,
+		activeInteraction: undefined,
+		diagnostic: { code: "interaction_anchor_missing", interactionId: interaction.interactionId },
+		input: { ...DISABLED_INPUT },
+		footer: { actions: view.footer.actions.filter((action) => action.dispatchTarget === "task") },
+	}
+}
+
 export interface TaskViewProjectionOptions {
 	autoRetryActive?: boolean
 	autoRetryPending?: boolean

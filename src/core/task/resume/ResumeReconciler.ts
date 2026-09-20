@@ -415,7 +415,8 @@ function reconcilePersistedInteraction(
 	retainInteractionWithContinuation(snapshot, interactionId, latest.kind, diagnostics)
 }
 
-function stopWithoutChangingInteraction(snapshot: TaskSnapshot): void {
+/** Restore the user-visible phase after a system stop while preserving its durable interaction. */
+export function normalizeStoppedTaskSnapshot(snapshot: TaskSnapshot): void {
 	snapshot.cancellation = undefined
 	if (snapshot.interaction) {
 		if (snapshot.phase === TaskPhase.CANCELLING) {
@@ -570,7 +571,7 @@ export function reconcileResume(input: ResumeInput): ResumeResult {
 	reconcilePersistedInteraction(next, prepared.uiTail, folded.answeredDlineTids, prepared.apiHistory, diagnostics)
 	clearStaleApprovalOwner(next)
 	restorePresentedCompletion(next, input.uiHistory ?? prepared.uiTail)
-	stopWithoutChangingInteraction(next)
+	normalizeStoppedTaskSnapshot(next)
 
 	if (next.interaction) {
 		if (next.interaction.status === "opening" && next.interaction.anchor) next.interaction.status = "awaiting"

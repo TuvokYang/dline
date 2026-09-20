@@ -11,7 +11,7 @@ import { createTaskRuntimeState } from "@core/task/runtime/TaskRuntimeState"
 import { TaskPhase } from "@core/task/TaskPhase"
 import { ClineDefaultTool } from "@shared/tools"
 import { describe, expect, it, vi } from "vitest"
-import { BlockPhase } from "../BlockPhaseMachine"
+import { type BlockLifecycle, BlockPhase } from "../BlockPhaseMachine"
 
 function runtimePorts(): TaskEffectPorts {
 	return {
@@ -217,6 +217,52 @@ describe("Task restored turn-end continuation", () => {
 		expect(continuation).toHaveBeenCalledOnce()
 	})
 
+	it("claims restored manual approval execution ownership exactly once", async () => {
+		const interactionId = "approval-execution-owner"
+		const turnId = `turn:${interactionId}`
+		const lifecycle: BlockLifecycle = {
+			dlineTid: interactionId,
+			functionId: "approval-execution-function",
+			toolName: ClineDefaultTool.FILE_READ,
+			phase: BlockPhase.EXECUTING,
+			ts: 100,
+			requiresApproval: true,
+			conversationHistoryIndex: 1,
+		}
+		const runtime = new TaskRuntime(
+			{
+				...createTaskRuntimeState({ taskId: "task-1", phase: TaskPhase.EXECUTING, revision: 9 }),
+				turn: {
+					turnId,
+					assistantApiIndex: 1,
+					mode: "serial",
+					blocks: [lifecycle],
+					approval: { automatic: [] },
+					executing: [],
+				},
+			},
+			runtimePorts(),
+		)
+		const fakeTask = {
+			taskRuntime: runtime,
+			dispatchRuntime: runtime.dispatch.bind(runtime),
+		} as unknown as Task
+		const ensureStarted = (
+			Task.prototype as unknown as {
+				ensureRestoredBlockExecutionStarted(turnId: string, lifecycle: BlockLifecycle): Promise<BlockLifecycle>
+			}
+		).ensureRestoredBlockExecutionStarted
+
+		const started = await ensureStarted.call(fakeTask, turnId, lifecycle)
+		const revision = runtime.getState().revision
+		const repeated = await ensureStarted.call(fakeTask, turnId, started)
+
+		expect(started.phase).toBe(BlockPhase.EXECUTING)
+		expect(repeated).toEqual(started)
+		expect(runtime.getState().turn?.executing).toEqual([interactionId])
+		expect(runtime.getState().revision).toBe(revision)
+	})
+
 	it("commits a restored turn-end result before resolving and starting the next request", async () => {
 		const interactionId = "qna-history-interaction"
 		const turnId = `turn:${interactionId}`
@@ -273,6 +319,7 @@ describe("Task restored turn-end continuation", () => {
 			runtimePorts(),
 		)
 		const sequence: string[] = []
+		let nextRequestContent: unknown[] = []
 		let releaseCompaction: (() => void) | undefined
 		const compactionSettlement = new Promise<void>((resolve) => {
 			releaseCompaction = resolve
@@ -306,6 +353,11 @@ describe("Task restored turn-end continuation", () => {
 			},
 			restoredTurnToolBlocks: (Task.prototype as unknown as { restoredTurnToolBlocks(turn: unknown): ToolUse[] })
 				.restoredTurnToolBlocks,
+			ensureRestoredBlockExecutionStarted: (
+				Task.prototype as unknown as {
+					ensureRestoredBlockExecutionStarted(turnId: string, lifecycle: BlockLifecycle): Promise<BlockLifecycle>
+				}
+			).ensureRestoredBlockExecutionStarted,
 			hasPendingToolResult: (
 				Task.prototype as unknown as { hasPendingToolResult(dlineTid: string, functionId: string): boolean }
 			).hasPendingToolResult,
@@ -324,13 +376,13 @@ describe("Task restored turn-end continuation", () => {
 			toolExecutor: {
 				continueTurnEndInteraction: vi.fn(async () => {
 					sequence.push("handler-continuation")
-					return "continued tool result"
+					return "<feedback>continue</feedback>"
 				}),
 				commitRestoredToolResult: vi.fn(async (_result: unknown, block: ToolUse) => {
 					sequence.push("result-committed")
 					taskState.userMessageContent.push({
 						type: "tool_result",
-						content: "continued tool result",
+						content: "<feedback>continue</feedback>",
 						function_id: block.function_id,
 						dline_tid: block.dline_tid,
 					})
@@ -346,7 +398,8 @@ describe("Task restored turn-end continuation", () => {
 				sequence.push("compaction-settled")
 			},
 			syncRetainedMachines: () => sequence.push("machines-synced"),
-			recursivelyMakeClineRequests: async () => {
+			recursivelyMakeClineRequests: async (content: unknown[]) => {
+				nextRequestContent = [...content]
 				sequence.push("next-api")
 				return false
 			},
@@ -388,6 +441,9 @@ describe("Task restored turn-end continuation", () => {
 		expect(runtime.getState().interaction).toBeUndefined()
 		expect(runtime.getState().turn?.blocks[0]?.phase).toBe(BlockPhase.COMPLETED)
 		expect(taskState.abort).toBe(false)
+		const serializedRequest = JSON.stringify(nextRequestContent)
+		expect(serializedRequest).toContain("The previous task session was closed and has now been restored.")
+		expect(serializedRequest.split("<feedback>continue</feedback>")).toHaveLength(2)
 	})
 
 	it("stops a detached continuation at the cancellation generation boundary", async () => {
@@ -484,6 +540,11 @@ describe("Task restored turn-end continuation", () => {
 			},
 			restoredTurnToolBlocks: (Task.prototype as unknown as { restoredTurnToolBlocks(turn: unknown): ToolUse[] })
 				.restoredTurnToolBlocks,
+			ensureRestoredBlockExecutionStarted: (
+				Task.prototype as unknown as {
+					ensureRestoredBlockExecutionStarted(turnId: string, lifecycle: BlockLifecycle): Promise<BlockLifecycle>
+				}
+			).ensureRestoredBlockExecutionStarted,
 			hasPendingToolResult: (
 				Task.prototype as unknown as { hasPendingToolResult(dlineTid: string, functionId: string): boolean }
 			).hasPendingToolResult,

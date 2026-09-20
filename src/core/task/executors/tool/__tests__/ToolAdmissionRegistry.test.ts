@@ -186,6 +186,85 @@ describe("ToolAdmissionRegistry", () => {
 		}
 	})
 
+	it("keeps confirmed project replace_text targets under project edit approval", async () => {
+		const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), "dline-replace-text-project-"))
+		try {
+			const workspaceDir = path.join(temporaryRoot, "workspace")
+			await fs.mkdir(path.join(workspaceDir, "src"), { recursive: true })
+			await fs.writeFile(path.join(workspaceDir, "src", "target.ts"), "const oldName = 1\n", "utf8")
+			const run = vi.fn(async () => undefined)
+			const result = prepareRegisteredToolAdmission({
+				canonicalToolName: ClineDefaultTool.REPLACE_TEXT,
+				block: block(ClineDefaultTool.REPLACE_TEXT, {
+					file_pattern: "src/*.ts",
+					find: "oldName",
+					replace: "newName",
+				}),
+				description: "replace project text",
+				snapshot: snapshot({
+					cwd: workspaceDir,
+					workspaceRoots: [workspaceDir],
+					settings: {
+						...snapshot().settings,
+						actions: { ...snapshot().settings.actions, editFiles: true, editFilesExternally: false },
+					},
+				}),
+				run,
+			})
+
+			expect(result).toMatchObject({ outcome: "admitted", decision: { kind: "automatic", scope: "edit_workspace" } })
+			if (result.outcome !== "admitted" || !result.confirm) throw new Error("expected replace_text scope confirmation")
+			const confirmed = await result.confirm()
+			if (confirmed.outcome !== "admitted") throw new Error("expected confirmed replace_text admission")
+			expect(confirmed.decision).toMatchObject({ kind: "automatic", scope: "edit_workspace" })
+			expect(run).not.toHaveBeenCalled()
+		} finally {
+			await fs.rm(temporaryRoot, { recursive: true, force: true })
+		}
+	})
+
+	it("reclassifies replace_text targets reached through a workspace junction before execution", async () => {
+		const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), "dline-replace-text-junction-"))
+		try {
+			const workspaceDir = path.join(temporaryRoot, "workspace")
+			const externalDir = path.join(temporaryRoot, "external")
+			const linkedDir = path.join(workspaceDir, "linked-outside")
+			await fs.mkdir(workspaceDir)
+			await fs.mkdir(externalDir)
+			await fs.writeFile(path.join(externalDir, "target.ts"), "const oldName = 1\n", "utf8")
+			await fs.symlink(externalDir, linkedDir, process.platform === "win32" ? "junction" : "dir")
+			const run = vi.fn(async () => undefined)
+			const result = prepareRegisteredToolAdmission({
+				canonicalToolName: ClineDefaultTool.REPLACE_TEXT,
+				block: block(ClineDefaultTool.REPLACE_TEXT, {
+					file_pattern: "linked-outside/*.ts",
+					find: "oldName",
+					replace: "newName",
+				}),
+				description: "replace linked text",
+				snapshot: snapshot({
+					cwd: workspaceDir,
+					workspaceRoots: [workspaceDir],
+					settings: {
+						...snapshot().settings,
+						actions: { ...snapshot().settings.actions, editFiles: true, editFilesExternally: false },
+						ceilings: { edit_external: "manual_only" },
+					},
+				}),
+				run,
+			})
+
+			expect(result).toMatchObject({ outcome: "admitted", decision: { kind: "automatic", scope: "edit_workspace" } })
+			if (result.outcome !== "admitted" || !result.confirm) throw new Error("expected replace_text scope confirmation")
+			const confirmed = await result.confirm()
+			if (confirmed.outcome !== "admitted") throw new Error("expected confirmed replace_text admission")
+			expect(confirmed.decision).toMatchObject({ kind: "manual", scope: "edit_external", ceiling: "manual_only" })
+			expect(run).not.toHaveBeenCalled()
+		} finally {
+			await fs.rm(temporaryRoot, { recursive: true, force: true })
+		}
+	})
+
 	it("classifies every apply_patch target before exposing the retained effect", async () => {
 		const run = vi.fn(async () => undefined)
 		const result = prepareRegisteredToolAdmission({
@@ -262,10 +341,9 @@ describe("ToolAdmissionRegistry", () => {
 		expect(run).not.toHaveBeenCalled()
 	})
 
-	it("uses external scopes for tools whose runtime can fan out beyond declared paths", () => {
+	it("uses external scopes for tools whose runtime targets cannot be enumerated before execution", () => {
 		expect(resolvePermissionScope(ClineDefaultTool.FIND_REFERENCES)).toBe("read_external")
 		expect(resolvePermissionScope(ClineDefaultTool.RENAME)).toBe("edit_external")
-		expect(resolvePermissionScope(ClineDefaultTool.REPLACE_TEXT)).toBe("edit_external")
 		expect(resolvePermissionScope(ClineDefaultTool.KILL_COMMAND)).toBe("command_all")
 		expect(resolvePermissionScope(ClineDefaultTool.MCP_DOCS)).toBe("mcp")
 		expect(resolvePermissionScope(ClineDefaultTool.LOAD_MCP)).toBe("mcp")
@@ -280,7 +358,6 @@ describe("ToolAdmissionRegistry", () => {
 	it.each([
 		[ClineDefaultTool.FIND_REFERENCES, { file_path: "src/a.ts", line: "1", character: "1" }, "read_external"],
 		[ClineDefaultTool.RENAME, { file_path: "src/a.ts", line: "1", character: "1", new_name: "renamed" }, "edit_external"],
-		[ClineDefaultTool.REPLACE_TEXT, { file_pattern: "src/*.ts", find: "old", replace: "new" }, "edit_external"],
 	] as const)("keeps %s behind its unbounded external scope", (toolName, params, scope) => {
 		const run = vi.fn(async () => undefined)
 		const result = prepareRegisteredToolAdmission({
@@ -337,6 +414,13 @@ describe("ToolAdmissionRegistry", () => {
 			...snapshot().settings,
 			actions: { ...snapshot().settings.actions, useMcp: true },
 		}
+		const unresolvedTool = prepareRegisteredToolAdmission({
+			canonicalToolName: ClineDefaultTool.MCP_USE,
+			block: block(ClineDefaultTool.MCP_USE, { server_name: "docs", tool_name: "search" }),
+			description: "use MCP",
+			snapshot: snapshot({ settings }),
+			run: async () => undefined,
+		})
 		const disabledTool = prepareRegisteredToolAdmission({
 			canonicalToolName: ClineDefaultTool.MCP_USE,
 			block: block(ClineDefaultTool.MCP_USE, { server_name: "docs", tool_name: "search" }),
@@ -352,6 +436,7 @@ describe("ToolAdmissionRegistry", () => {
 			run: async () => undefined,
 		})
 
+		expect(unresolvedTool).toMatchObject({ outcome: "admitted", decision: { kind: "manual", scope: "mcp" } })
 		expect(disabledTool).toMatchObject({ outcome: "admitted", decision: { kind: "manual", scope: "mcp" } })
 		expect(blanket).toMatchObject({ outcome: "admitted", decision: { kind: "automatic", scope: "mcp" } })
 	})

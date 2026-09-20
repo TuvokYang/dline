@@ -266,7 +266,7 @@ import {
 import { buildActiveTasksSection } from "./active-tasks/ActiveTaskContextProvider"
 import { isTurnEndingToolName, orderTurnEndingContentBlocks, orderTurnEndingNativeToolBlocks } from "./assistant-message-order"
 import { getRetryDelay, getStreamRetryDecision, MAX_AUTO_RETRY_ATTEMPTS } from "./auto-retry"
-import { BlockPhase } from "./BlockPhaseMachine"
+import { type BlockLifecycle, BlockPhase } from "./BlockPhaseMachine"
 import { buildTaskBackgroundEnvironmentSection, buildTaskBackgroundResults } from "./background/BackgroundContextInjector"
 import {
 	estimateContextWindowIndicatorSegments,
@@ -4707,6 +4707,21 @@ export class Task {
 		if (settlement) await settlement
 	}
 
+	/** Claim execution ownership for a manually approved restored block before running it. */
+	private async ensureRestoredBlockExecutionStarted(turnId: string, lifecycle: BlockLifecycle): Promise<BlockLifecycle> {
+		const state = this.taskRuntime.getState()
+		if (lifecycle.phase !== BlockPhase.EXECUTING || state.turn?.executing?.includes(lifecycle.dlineTid)) return lifecycle
+		const started = await this.dispatchRuntime({
+			type: "RESTORED_BLOCK_EXECUTION_STARTED",
+			turnId,
+			dlineTid: lifecycle.dlineTid,
+		})
+		if (!started.accepted) throw new Error("resume_interaction_execution_restore_rejected")
+		const current = started.next.turn?.blocks.find((candidate) => candidate.dlineTid === lifecycle.dlineTid)
+		if (!current) throw new Error("resume_interaction_block_missing_after_execution_start")
+		return current
+	}
+
 	/** Consume one history-only interaction after its causal response has been durably accepted. */
 	private async continueRestoredInteraction(context: DetachedInteractionContinuationContext): Promise<void> {
 		try {
@@ -4769,9 +4784,12 @@ export class Task {
 				lifecycle = started.next.turn?.blocks.find((candidate) => candidate.dlineTid === lifecycle?.dlineTid)
 				if (!lifecycle) throw new Error("resume_interaction_block_missing_after_start")
 			}
+			lifecycle = await this.ensureRestoredBlockExecutionStarted(turn.turnId, lifecycle)
+			if (!context.isCurrent()) return
 
 			const continuation = getInteraction(context.interaction.kind).continuation
-			if (continuation === "handler" || continuation === "completion") {
+			const draftEmbeddedInToolResult = continuation === "handler" || continuation === "completion"
+			if (draftEmbeddedInToolResult) {
 				const toolResult = await this.toolExecutor.continueTurnEndInteraction(
 					context.interaction.kind,
 					block,
@@ -4820,7 +4838,14 @@ export class Task {
 			await this.turnDriver.execute()
 			if (!context.isCurrent()) return
 			if (this.taskRuntime.getState().phase === TaskPhase.CANCELLING) return
-			this.taskState.userMessageContent.push({ type: "text", text: createResumeContinuationText() })
+			const continuationDraft = draftEmbeddedInToolResult ? undefined : context.outcome.draft
+			this.taskState.userMessageContent.push(
+				...(await buildUserFeedbackContent(
+					createResumeContinuationText(continuationDraft?.text),
+					continuationDraft?.images,
+					continuationDraft?.files,
+				)),
+			)
 			await this.recursivelyMakeClineRequests(this.taskState.userMessageContent)
 		} catch (error) {
 			const detail = error instanceof Error ? (error.stack ?? error.message) : String(error)

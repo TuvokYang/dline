@@ -8,23 +8,10 @@ import { Controller } from "../index"
  * can confirm it has scrolled to the absolute top (index 0).
  */
 export async function fetchMessage(controller: Controller, request: FetchMessageRequest): Promise<FetchMessageResponse> {
-	const messages = controller.task?.messageStateHandler.clineMessages || []
-	const total = messages.length
-
-	const referenceIndex = Number(request.referenceIndex)
-	const count = Number(request.count)
-
-	let result: typeof messages
-	let startIndex = -1
-	if (referenceIndex === -1) {
-		// -1 means fetch the last `count` messages
-		startIndex = Math.max(0, total - count)
-		result = messages.slice(startIndex)
-	} else {
-		startIndex = Math.max(0, Math.min(referenceIndex, total))
-		const endIndex = Math.min(startIndex + count, total)
-		result = messages.slice(startIndex, endIndex)
+	const page = await controller.fetchCurrentTaskMessages(Number(request.referenceIndex), Number(request.count))
+	return {
+		messages: page.messages.map(convertClineMessageToProto),
+		totalCount: page.totalCount,
+		startIndex: page.startIndex,
 	}
-
-	return { messages: result.map(convertClineMessageToProto), totalCount: total, startIndex }
 }

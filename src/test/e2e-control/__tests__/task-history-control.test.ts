@@ -85,4 +85,32 @@ describe("startTaskHistoryControl", () => {
 		expect(JSON.parse(content as string)).toMatchObject({ id: requestId, success: true })
 		expect(updatedIds).toEqual(["task-2"])
 	})
+
+	it("returns an immediate extension-host runtime health sample", async () => {
+		controlDirectory = await mkdtemp(path.join(tmpdir(), "dline-task-history-control-"))
+		const { controller } = createControllerStub()
+		handle = await startTaskHistoryControl(controller, controlDirectory)
+
+		const requestId = "runtime-health"
+		const requestPath = path.join(controlDirectory, `${requestId}.request.json`)
+		const responsePath = path.join(controlDirectory, `${requestId}.response.json`)
+		await fs.writeFile(requestPath, `${JSON.stringify({ id: requestId, action: "runtime-health" })}\n`, "utf8")
+
+		const content = await waitForResponse(responsePath, 10_000)
+		expect(content, "the control channel never wrote a response").toBeDefined()
+		const response = JSON.parse(content as string)
+		expect(response).toMatchObject({ id: requestId, success: true })
+		expect(response.runtimeHealth).toMatchObject({
+			capturedAtMs: expect.any(Number),
+			eventLoopDelayMs: expect.any(Number),
+			heapUsedBytes: expect.any(Number),
+			heapTotalBytes: expect.any(Number),
+			rssBytes: expect.any(Number),
+			externalBytes: expect.any(Number),
+			arrayBuffersBytes: expect.any(Number),
+			uptimeSeconds: expect.any(Number),
+		})
+		expect(response.runtimeHealth.rssBytes).toBeGreaterThan(0)
+		expect(response.runtimeHealth.eventLoopDelayMs).toBeGreaterThanOrEqual(0)
+	})
 })

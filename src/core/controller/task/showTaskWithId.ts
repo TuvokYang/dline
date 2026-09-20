@@ -21,6 +21,10 @@ export async function showTaskWithId(controller: Controller, request: StringRequ
 			await controller.postStateToWebview({ immediate: true })
 			await sendChatButtonClickedEvent(controller)
 		}
+		const revealReadyHistoryTask = async () => {
+			didNavigate = true
+			await sendChatButtonClickedEvent(controller)
+		}
 
 		// First check if task exists in global state for faster access
 		const taskHistory = controller.stateManager.getGlobalStateKey("taskHistory")
@@ -31,7 +35,7 @@ export async function showTaskWithId(controller: Controller, request: StringRequ
 			// Always initialize the task with the history item
 			await controller.initTask(undefined, undefined, undefined, historyItem, undefined, {
 				onHistoryTaskPreparingToDisplay: navigateToHistoryTask,
-				onHistoryTaskReadyToDisplay: navigateToHistoryTask,
+				onHistoryTaskReadyToDisplay: revealReadyHistoryTask,
 			})
 			if (!didNavigate) {
 				await sendChatButtonClickedEvent(controller)
@@ -60,7 +64,7 @@ export async function showTaskWithId(controller: Controller, request: StringRequ
 		// Initialize the task with the fetched item
 		await controller.initTask(undefined, undefined, undefined, fetchedItem, undefined, {
 			onHistoryTaskPreparingToDisplay: navigateToHistoryTask,
-			onHistoryTaskReadyToDisplay: navigateToHistoryTask,
+			onHistoryTaskReadyToDisplay: revealReadyHistoryTask,
 		})
 		if (!didNavigate) {
 			await sendChatButtonClickedEvent(controller)

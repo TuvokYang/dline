@@ -1236,6 +1236,21 @@ describe("turn approval and execution ownership", () => {
 		expect(approved.next.turn?.approval?.automatic).toEqual([])
 	})
 
+	it("restores execution ownership without scheduling a duplicate tool effect", () => {
+		const state = streamingTurn([{ dlineTid: "tid-1", requiresApproval: true }])
+		const pending = reduceTask(state, { type: "BLOCK_APPROVAL_REQUIRED", turnId: "turn-1", dlineTid: "tid-1" })
+		const approved = reduceTask(pending.next, { type: "BLOCK_APPROVED", turnId: "turn-1", dlineTid: "tid-1" })
+		const restored = reduceTask(approved.next, {
+			type: "RESTORED_BLOCK_EXECUTION_STARTED",
+			turnId: "turn-1",
+			dlineTid: "tid-1",
+		})
+
+		expect(restored.accepted).toBe(true)
+		expect(restored.next.turn?.executing).toEqual(["tid-1"])
+		expect(restored.effects).not.toContainEqual(expect.objectContaining({ type: "EXECUTE_TOOL" }))
+	})
+
 	it("drops a block from both ownership sets when it completes", () => {
 		const state = streamingTurn([{ dlineTid: "tid-1", requiresApproval: false }])
 		const admitted = reduceTask(state, { type: "BLOCK_READY", turnId: "turn-1", dlineTid: "tid-1" })

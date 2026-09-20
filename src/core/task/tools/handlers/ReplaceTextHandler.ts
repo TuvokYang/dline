@@ -2,12 +2,12 @@ import * as fs from "node:fs"
 import type { ToolUse } from "@core/assistant-message"
 import { getPrompt, renderPrompt } from "@core/prompts/i18n"
 import { getReadablePath } from "@utils/path"
-import { glob } from "fast-glob"
 import { ClineDefaultTool } from "@/shared/tools"
 import type { ToolResponse } from "../../index"
 import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
 import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
+import { findReplaceTextFiles } from "../utils/replace-text-files"
 
 interface MatchRecord {
 	filePath: string
@@ -69,7 +69,7 @@ export class ReplaceTextHandler implements IFullyManagedTool {
 
 		try {
 			const searchRegex = literal ? buildLiteralRegex(find) : buildRegex(find)
-			const files = await findFiles(config.cwd, filePattern)
+			const files = await findReplaceTextFiles(config.cwd, filePattern)
 
 			if (!files.length) {
 				const result = renderPrompt("replaceText", "noFilesMatched", { PATTERN: filePattern })
@@ -179,18 +179,6 @@ export class ReplaceTextHandler implements IFullyManagedTool {
 			return result
 		}
 	}
-}
-
-/**
- * Find files matching a glob pattern relative to cwd.
- */
-async function findFiles(cwd: string, filePattern: string): Promise<string[]> {
-	return glob(filePattern, {
-		cwd,
-		absolute: true,
-		dot: true,
-		ignore: ["node_modules/**", ".git/**", "dist/**", "build/**"],
-	})
 }
 
 function parseBooleanParam(value: unknown, defaultValue: boolean): boolean {

@@ -39,11 +39,11 @@ export async function dispatchInteraction(
 	controller: Controller,
 	request: DispatchInteractionRequest,
 ): Promise<DispatchInteractionResponse> {
-	if (!controller.task) {
-		return response(false, "missing_task")
-	}
 	if (!isInteractionActionType(request.actionId)) {
 		return response(false, "invalid_action")
+	}
+	if (!controller.task) {
+		return (await controller.dispatchHistoryDisplayInteraction(request)) ?? response(false, "missing_task")
 	}
 
 	const interactionResponse: InteractionResponse = {

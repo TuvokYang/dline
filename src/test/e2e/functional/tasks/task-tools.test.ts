@@ -3,7 +3,7 @@ import * as path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { startFooterActionStabilityObserver, stopFooterActionStabilityObserver } from "@e2e/utils/ui-stability"
-import { expect, type Frame } from "@playwright/test"
+import { expect, type Frame, type Page } from "@playwright/test"
 
 async function setAutoApproveAction(sidebar: Frame, label: string, enabled: boolean): Promise<void> {
 	await sidebar.getByLabel("Open auto-approve settings").click()
@@ -15,6 +15,18 @@ async function setAutoApproveAction(sidebar: Frame, label: string, enabled: bool
 	}
 	await expect.poll(isChecked).toBe(enabled)
 	await sidebar.getByLabel("Close auto-approve settings").click()
+}
+
+async function selectBackgroundExecTerminalMode(page: Page, sidebar: Frame): Promise<void> {
+	await page.getByRole("button", { name: "Settings", exact: true }).click()
+	await expect(sidebar.getByRole("heading", { name: "API Configuration" })).toBeVisible({ timeout: 30_000 })
+	await sidebar.getByTestId("tab-terminal").click()
+	const dropdown = sidebar.locator("#terminal-execution-mode")
+	await dropdown.click()
+	await sidebar.getByRole("option", { name: "Background Exec", exact: true }).click()
+	await expect.poll(() => dropdown.evaluate((element) => (element as HTMLSelectElement).value)).toBe("backgroundExec")
+	await sidebar.getByRole("button", { name: "Done", exact: true }).click()
+	await expect(sidebar.getByTestId("chat-input")).toBeVisible()
 }
 
 async function sendTask(sidebar: Frame, text: string): Promise<void> {
@@ -1178,6 +1190,111 @@ e2e(
 				content: expect.stringContaining("Command was cancelled by the user."),
 			}),
 		)
+		await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
+	},
+)
+
+e2e(
+	"Tools - background command cancellation drains tail output emitted during termination",
+	async ({ dlineDocsDir, helper, page, server, sidebar, userDataDir, workspaceDir }) => {
+		e2e.setTimeout(180_000)
+		await helper.signin(sidebar)
+		await selectBackgroundExecTerminalMode(page, sidebar)
+		await setAutoApproveAction(sidebar, "Execute safe commands", false)
+
+		const emittedPath = path.join(workspaceDir, "e2e-terminal-tail.emitted")
+		const parentScriptPath = path.join(workspaceDir, "e2e-terminal-tail-parent.cjs")
+		await writeFile(
+			parentScriptPath,
+			`const fs = require("node:fs")\nconst emitted = ${JSON.stringify(emittedPath)}\nlet sequence = 0\nconsole.log("E2E_TERMINAL_CANCEL_DRAIN_STARTED")\nsetInterval(() => {\n  sequence += 1\n  fs.writeSync(1, \`E2E_TERMINAL_CANCEL_TAIL_\${sequence}\\n\`)\n  fs.writeFileSync(emitted, String(sequence))\n}, 1)\n`,
+			"utf8",
+		)
+
+		server.resetOpenAiMock()
+		server.enqueueOpenAiResponses(
+			{
+				type: "tool",
+				id: "call_background_cancel_drain",
+				name: "execute_command",
+				arguments: {
+					command: "node e2e-terminal-tail-parent.cjs",
+					workdirectory: ".",
+					requires_approval: true,
+					background: true,
+					timeout: 60,
+				},
+			},
+			{
+				type: "tool",
+				id: "call_background_cancel_drain_ready",
+				name: "qna_respond",
+				arguments: { response: "E2E_TERMINAL_CANCEL_DRAIN_READY" },
+				expectedToolResults: [
+					{ callId: "call_background_cancel_drain", contentIncludes: "Command is running in the background." },
+				],
+			},
+			{
+				type: "tool",
+				id: "call_background_cancel_drain_complete",
+				name: "attempt_completion",
+				arguments: { result: "E2E_TERMINAL_CANCEL_DRAIN_COMPLETE" },
+			},
+		)
+
+		await sendTask(sidebar, "Start the terminal drain cancellation fixture.")
+		const approveButton = sidebar.getByText("Approve", { exact: true })
+		await expect(approveButton).toBeVisible({ timeout: 60_000 })
+		await approveButton.click()
+		await expect(sidebar.getByText("E2E_TERMINAL_CANCEL_DRAIN_READY", { exact: true })).toBeVisible({ timeout: 60_000 })
+
+		const copyCommandButton = sidebar.getByRole("button", { name: "Copy command" }).last()
+		const commandActions = copyCommandButton.locator("xpath=ancestor::div[.//button[normalize-space()='Cancel']][1]")
+		const commandCancelButton = commandActions.getByRole("button", { name: "Cancel", exact: true })
+		await expect(commandCancelButton).toBeVisible({ timeout: 30_000 })
+		await commandCancelButton.click()
+		await expect(commandCancelButton).toHaveCount(0, { timeout: 30_000 })
+		await expect.poll(async () => Number(await readFile(emittedPath, "utf8")), { timeout: 10_000 }).toBeGreaterThan(0)
+		await page.waitForTimeout(500)
+		const emittedSequence = Number(await readFile(emittedPath, "utf8"))
+
+		const input = sidebar.getByTestId("chat-input")
+		await input.fill("E2E_TERMINAL_CANCEL_DRAIN_FEEDBACK")
+		await input.press("Enter")
+		await expect(sidebar.getByText("E2E_TERMINAL_CANCEL_DRAIN_COMPLETE", { exact: false }).last()).toBeVisible({
+			timeout: 60_000,
+		})
+
+		const taskId = await E2ETestHelper.waitForValue(async () => {
+			const entries = await readdir(path.join(dlineDocsDir, "tasks"), { withFileTypes: true }).catch(() => [])
+			const ids = entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name)
+			return ids.length === 1 ? ids[0] : undefined
+		}, 30_000)
+		if (!taskId) throw new Error("Terminal drain E2E task directory was not created")
+		const persistedActivity = await E2ETestHelper.waitForValue(async () => {
+			const persisted = JSON.parse(await readFile(path.join(dlineDocsDir, "tasks", taskId, "activities.json"), "utf8")) as {
+				activities?: Array<{ detail?: string; output?: string; status?: string }>
+			}
+			const activity = persisted.activities?.find((candidate) => candidate.detail === "node e2e-terminal-tail-parent.cjs")
+			return activity?.status === "cancelled" && activity.output ? activity : undefined
+		}, 30_000)
+		if (!persistedActivity) throw new Error("Cancelled terminal activity was not persisted")
+		expect(persistedActivity.output).toContain("E2E_TERMINAL_CANCEL_DRAIN_STARTED")
+		const capturedSequences = [...persistedActivity.output.matchAll(/E2E_TERMINAL_CANCEL_TAIL_(\d+)/g)].map((match) =>
+			Number(match[1]),
+		)
+		expect(capturedSequences.length).toBeGreaterThan(0)
+		const capturedSequence = Math.max(...capturedSequences)
+		// The child updates the marker only after stdout accepts a line. A kill can land
+		// between that stdout write and the marker write, so captured output may lead by one,
+		// but it must never trail any line the child confirmed as emitted.
+		expect(capturedSequence).toBeGreaterThanOrEqual(emittedSequence)
+		expect(capturedSequences).toEqual(Array.from({ length: capturedSequence }, (_, index) => index + 1))
+
+		const continuation = server.getMockConsumptions("openai-compatible-chat")[2]
+		expect(continuation.contractError).toBeUndefined()
+		const continuationRequest = JSON.stringify(continuation.requestBody)
+		expect(continuationRequest).toContain("# Background Results")
+		expect(continuationRequest).toContain("cancelled")
 		await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
 	},
 )

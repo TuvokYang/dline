@@ -166,6 +166,34 @@ async function readTaskSnapshot(
 	return JSON.parse(await readFile(path.join(dlineDocsDir, "tasks", taskId, "snapshot.json"), "utf8"))
 }
 
+/** Simulate a late incomplete stream replacing the durable approval presentation. */
+async function markPersistedApprovalAnchorPartial(dlineDocsDir: string, taskId: string): Promise<void> {
+	const taskDir = path.join(dlineDocsDir, "tasks", taskId)
+	const snapshot = JSON.parse(await readFile(path.join(taskDir, "snapshot.json"), "utf8")) as {
+		interaction?: { interactionId?: string; anchor?: { messageTs?: number } }
+	}
+	const interactionId = snapshot.interaction?.interactionId
+	const messageTs = snapshot.interaction?.anchor?.messageTs
+	if (!interactionId || typeof messageTs !== "number") {
+		throw new Error("Expected a persisted approval interaction with a message anchor")
+	}
+
+	const messagesPath = path.join(taskDir, "ui_messages.jsonl")
+	const messages = (await readFile(messagesPath, "utf8"))
+		.split(/\r?\n/)
+		.filter(Boolean)
+		.map((line) => JSON.parse(line) as Record<string, unknown>)
+	const anchor = messages.find(
+		(message) => message.type === "ask" && message.ts === messageTs && message.interactionId === interactionId,
+	)
+	if (!anchor) {
+		throw new Error("Expected the persisted approval ask owned by the active interaction")
+	}
+	anchor.partial = true
+	anchor.text = JSON.stringify({ tool: "readFile", path: "" })
+	await writeFile(messagesPath, `${messages.map((message) => JSON.stringify(message)).join("\n")}\n`, "utf8")
+}
+
 async function simulateIncompleteTurnEndContinuation(dlineDocsDir: string, taskId: string): Promise<void> {
 	const taskDir = path.join(dlineDocsDir, "tasks", taskId)
 	const uiMessagesPath = path.join(taskDir, "ui_messages.jsonl")
@@ -512,6 +540,43 @@ e2e(
 		const continuation = JSON.stringify(server.getOpenAiRequestBodies()[1])
 		expect(continuation).toContain("# Test Workspace")
 		expect(continuation).toContain("E2E_RESTORED_APPROVAL_DRAFT")
+		await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
+	},
+)
+
+e2e(
+	"History - a partial approval anchor exposes no approval or cancellation actions",
+	async ({ dlineDocsDir, helper, page, server, sidebar, userDataDir }) => {
+		e2e.setTimeout(180_000)
+		await helper.signin(sidebar)
+		await setAutoApproveAction(sidebar, "Read project files", false)
+		server.resetOpenAiMock()
+		server.enqueueOpenAiResponses({
+			type: "tool",
+			id: "call_history_partial_approval",
+			name: "read_file",
+			arguments: { path: "README.md" },
+		})
+
+		const taskText = "E2E_PARTIAL_APPROVAL_ANCHOR_TASK"
+		await sendTask(sidebar, taskText)
+		await expect(sidebar.getByText("Approve", { exact: true })).toBeVisible({ timeout: 60_000 })
+		const [taskId] = await E2ETestHelper.waitForValue(async () => {
+			const ids = await taskDirectoryIds(dlineDocsDir)
+			return ids.length === 1 ? ids : undefined
+		})
+
+		await closeCurrentTask(sidebar)
+		await markPersistedApprovalAnchorPartial(dlineDocsDir, taskId)
+		await reopenTask(sidebar, taskText)
+
+		const taskFooter = sidebar.getByRole("contentinfo")
+		await expect(taskFooter.getByText("Approve", { exact: true })).toHaveCount(0)
+		await expect(taskFooter.getByText("Reject", { exact: true })).toHaveCount(0)
+		await expect(taskFooter.getByText("Cancel", { exact: true })).toHaveCount(0)
+		await expect(sidebar.getByRole("alert")).toContainText(/controls are unavailable|saved interaction message/i)
+		await page.waitForTimeout(500)
+		expect(server.openAiRequestCount).toBe(1)
 		await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
 	},
 )

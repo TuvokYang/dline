@@ -8,21 +8,49 @@ import { Logger } from "@/shared/services/Logger"
 const REQUEST_SUFFIX = ".request.json"
 const RESPONSE_SUFFIX = ".response.json"
 
-interface TaskHistoryControlRequest {
-	id: string
-	action: "update-and-flush"
-	item: HistoryItem
+export interface RuntimeHealthSample {
+	capturedAtMs: number
+	eventLoopDelayMs: number
+	heapUsedBytes: number
+	heapTotalBytes: number
+	rssBytes: number
+	externalBytes: number
+	arrayBuffersBytes: number
+	uptimeSeconds: number
 }
 
-interface TaskHistoryControlResponse {
+export type TaskHistoryControlRequest =
+	| { id: string; action: "update-and-flush"; item: HistoryItem }
+	| { id: string; action: "runtime-health" }
+
+export type TaskHistoryControlRequestInput = { action: "update-and-flush"; item: HistoryItem } | { action: "runtime-health" }
+
+export interface TaskHistoryControlResponse {
 	id: string
 	success: boolean
 	updateDurationMs?: number
+	runtimeHealth?: RuntimeHealthSample
 	error?: string
 }
 
 export interface TaskHistoryControlHandle {
 	dispose(): Promise<void>
+}
+
+async function captureRuntimeHealth(): Promise<RuntimeHealthSample> {
+	const scheduledAt = performance.now()
+	await new Promise<void>((resolve) => setImmediate(resolve))
+	const memory = process.memoryUsage()
+	return {
+		capturedAtMs: Date.now(),
+		eventLoopDelayMs: Math.max(0, performance.now() - scheduledAt),
+		heapUsedBytes: memory.heapUsed,
+		heapTotalBytes: memory.heapTotal,
+		rssBytes: memory.rss,
+		externalBytes: memory.external,
+		arrayBuffersBytes: memory.arrayBuffers,
+		uptimeSeconds: process.uptime(),
+	}
 }
 
 /**
@@ -49,14 +77,23 @@ export async function startTaskHistoryControl(
 		let response: TaskHistoryControlResponse
 		try {
 			request = JSON.parse(await fs.readFile(requestPath, "utf8")) as TaskHistoryControlRequest
-			if (!request.id || request.action !== "update-and-flush" || !request.item?.id) {
-				throw new Error("Invalid TaskHistory E2E control request")
+			if (!request.id) throw new Error("Invalid TaskHistory E2E control request")
+			switch (request.action) {
+				case "update-and-flush": {
+					if (!request.item?.id) throw new Error("Invalid TaskHistory E2E control request")
+					const startedAt = performance.now()
+					await controller.updateTaskHistory(request.item)
+					const updateDurationMs = performance.now() - startedAt
+					await controller.stateManager.taskHistory.flush()
+					response = { id: request.id, success: true, updateDurationMs }
+					break
+				}
+				case "runtime-health":
+					response = { id: request.id, success: true, runtimeHealth: await captureRuntimeHealth() }
+					break
+				default:
+					throw new Error("Invalid TaskHistory E2E control request")
 			}
-			const startedAt = performance.now()
-			await controller.updateTaskHistory(request.item)
-			const updateDurationMs = performance.now() - startedAt
-			await controller.stateManager.taskHistory.flush()
-			response = { id: request.id, success: true, updateDurationMs }
 		} catch (error) {
 			response = {
 				id: request?.id ?? path.basename(requestPath),

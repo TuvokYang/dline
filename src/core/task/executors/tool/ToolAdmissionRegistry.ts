@@ -11,6 +11,7 @@ import { DlineRuntimeFileManager } from "@/services/runtime-files/DlineRuntimeFi
 import { PATCH_MARKERS } from "@/shared/Patch"
 import type { ConfigurableCeilings, PermissionScopeContext } from "../../kernel/turn/approval-kind"
 import { PATH_SCOPED_TOOLS, resolveLaneContext, type ToolLaneContext } from "../../kernel/turn/tool-lanes"
+import { findReplaceTextFiles } from "../../tools/utils/replace-text-files"
 import {
 	admitToolCall,
 	rejectToolCall,
@@ -246,7 +247,7 @@ function resolveScopeContext(
 				!roots.some((root) => isInsideRoot(absolutePath, root)),
 		),
 		isSafeCommand: toolName === ClineDefaultTool.BASH ? !requiresApproval : false,
-		isToolAutoApproveEnabled: toolName === ClineDefaultTool.MCP_USE ? snapshot.mcpToolAutoApprove : undefined,
+		isToolAutoApproveEnabled: toolName === ClineDefaultTool.MCP_USE ? snapshot.mcpToolAutoApprove === true : undefined,
 	}
 }
 
@@ -282,10 +283,21 @@ async function confirmScopeContext(
 	snapshot: ToolAdmissionSnapshot,
 ): Promise<ConfirmedScopeContext> {
 	const lexical = resolveScopeContext(block, toolName, snapshot)
-	const declared = DYNAMIC_WRITE_FANOUT_TOOLS.has(toolName) ? [] : declaredPaths(block, toolName)
-	const absolutePaths = declared
-		.map((candidate) => resolveLexicalPath(candidate, snapshot))
-		.filter((candidate): candidate is string => candidate !== undefined)
+	let absolutePaths: string[]
+	try {
+		if (toolName === ClineDefaultTool.REPLACE_TEXT) {
+			const filePattern = parameterValue(block, "file_pattern")
+			absolutePaths =
+				typeof filePattern === "string" && filePattern.trim() ? await findReplaceTextFiles(snapshot.cwd, filePattern) : []
+		} else {
+			const declared = DYNAMIC_WRITE_FANOUT_TOOLS.has(toolName) ? [] : declaredPaths(block, toolName)
+			absolutePaths = declared
+				.map((candidate) => resolveLexicalPath(candidate, snapshot))
+				.filter((candidate): candidate is string => candidate !== undefined)
+		}
+	} catch {
+		return { scope: { ...lexical, isExternalPath: true }, canonicalPaths: [], confirmationFailed: true }
+	}
 	if (absolutePaths.length === 0) return { scope: lexical, canonicalPaths: [], confirmationFailed: false }
 
 	const canonicalPaths = await Promise.all(absolutePaths.map(canonicalizePath))
@@ -409,7 +421,7 @@ export function prepareRegisteredToolAdmission<T>(input: RegisteredToolAdmission
 		? []
 		: declaredPaths(input.block, input.canonicalToolName)
 	const confirm =
-		declared.length > 0
+		declared.length > 0 || input.canonicalToolName === ClineDefaultTool.REPLACE_TEXT
 			? async () => {
 					const confirmed = await confirmScopeContext(input.block, input.canonicalToolName, input.snapshot)
 					const lanes: ToolLaneContext = {

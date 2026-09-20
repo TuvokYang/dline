@@ -55,7 +55,9 @@ describe("permission scope", () => {
 
 	it("separates workspace and external edits", () => {
 		expect(resolvePermissionScope(ClineDefaultTool.FILE_EDIT)).toBe("edit_workspace")
+		expect(resolvePermissionScope(ClineDefaultTool.REPLACE_TEXT)).toBe("edit_workspace")
 		expect(resolvePermissionScope(ClineDefaultTool.APPLY_PATCH, { isExternalPath: true })).toBe("edit_external")
+		expect(resolvePermissionScope(ClineDefaultTool.REPLACE_TEXT, { isExternalPath: true })).toBe("edit_external")
 	})
 
 	it("separates safe and unclassified commands", () => {

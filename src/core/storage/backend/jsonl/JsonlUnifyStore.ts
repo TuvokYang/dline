@@ -94,6 +94,7 @@ export async function openBufferedJsonlStore<TItem extends { ts: number }>(
 		bufferOptions: {
 			...options,
 			subscriptionKey: normalizeSubscriptionKey(filePath),
+			storeKind: bufferedStoreKind(options.schemaId),
 			truncateTail: (keepCount, expectedCount) =>
 				fileLock.withLock(filePath, () => truncateJsonlTail(filePath, keepCount, expectedCount)),
 		},
@@ -255,6 +256,9 @@ class JsonlUnifyStoreDriver<TEntity extends object, TPersisted> implements Unify
 			// A throw leaves the file untouched: nothing is written before the
 			// operation returns, on either commit path.
 			const result = await operation(transaction)
+			// A query-only transaction, including a buffered logical no-op, must
+			// leave the physical file untouched just like the SQLite backend.
+			if (!replaced && appended.length === 0) return result
 			// Appending is only sound when the committed records this transaction
 			// read are still the exact leading records of the result, and when the
 			// file can physically carry another line. Either check failing means a
@@ -432,6 +436,12 @@ function isTimestampedItem<TItem extends { ts: number }>(value: unknown): value 
 		typeof (value as { ts?: unknown }).ts === "number" &&
 		Number.isFinite((value as { ts: number }).ts)
 	)
+}
+
+function bufferedStoreKind(schemaId: string): string {
+	if (schemaId === "ui-message") return "ui_message"
+	if (schemaId === "api-conversation-message") return "api_conversation"
+	return "other"
 }
 
 function normalizeSubscriptionKey(filePath: string): string {

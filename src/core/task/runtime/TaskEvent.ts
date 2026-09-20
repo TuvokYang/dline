@@ -38,6 +38,7 @@ export type TaskEvent =
 	| { type: "BLOCK_APPROVED"; turnId: string; dlineTid: string }
 	| { type: "BLOCK_REJECTED"; turnId: string; dlineTid: string }
 	| { type: "BLOCK_EXECUTION_STARTED"; turnId: string; dlineTid: string }
+	| { type: "RESTORED_BLOCK_EXECUTION_STARTED"; turnId: string; dlineTid: string }
 	| { type: "BLOCK_EXECUTION_REJECTED"; turnId: string; dlineTid: string }
 	| { type: "BLOCK_EXECUTION_CANCELLED"; turnId: string; dlineTid: string }
 	| { type: "BLOCK_EXECUTION_SKIPPED"; turnId: string; dlineTid: string }

@@ -3,7 +3,7 @@ import type { ActiveInteraction } from "../../interaction/InteractionReducer"
 import type { TaskRuntimeState } from "../../runtime/TaskRuntimeState"
 import { TaskPhase } from "../../TaskPhase"
 import { projectInteraction } from "../InteractionProjector"
-import { projectTaskView } from "../TaskViewProjector"
+import { projectMissingInteractionAnchor, projectTaskView } from "../TaskViewProjector"
 
 /** Create runtime state with one optional active interaction. */
 function runtime(phase: TaskPhase, interaction?: ActiveInteraction): TaskRuntimeState {
@@ -74,6 +74,17 @@ describe("projectTaskView", () => {
 		expect(view.footer.actions.map((action) => action.type)).toEqual(["approve", "reject"])
 		expect(view.footer.actions.every((action) => action.dispatchTarget === "interaction")).toBe(true)
 		expect(view.activeInteraction).toMatchObject({ askMessageTs: 100, taskAsk: "tool" })
+	})
+
+	it("fails closed when an awaiting interaction loses its complete ask anchor", () => {
+		const view = projectMissingInteractionAnchor(
+			projectTaskView(runtime(TaskPhase.AWAITING_APPROVAL, active("tool_approval"))),
+		)
+
+		expect(view.activeInteraction).toBeUndefined()
+		expect(view.input).toEqual({ enabled: false, acceptsText: false, acceptsImages: false, acceptsFiles: false })
+		expect(view.footer.actions).toEqual([])
+		expect(view.diagnostic).toEqual({ code: "interaction_anchor_missing", interactionId: "interaction-1" })
 	})
 
 	it("projects Hosted Web request approval with tool presentation and approval actions", () => {

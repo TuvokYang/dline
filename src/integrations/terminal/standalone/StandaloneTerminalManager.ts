@@ -137,6 +137,9 @@ export class StandaloneTerminalManager implements ITerminalManager {
 	/** Shared lifecycle close operation for each detached command. */
 	private outputDrainCompletions: Map<string, Promise<void>> = new Map()
 
+	/** Commands whose public status is terminal while their process can still emit close-tail output. */
+	private terminatingBackgroundCommands: Set<string> = new Set()
+
 	/** First log stream error observed for each detached command. */
 	private logStreamErrors: Map<string, Error> = new Map()
 
@@ -603,7 +606,7 @@ export class StandaloneTerminalManager implements ITerminalManager {
 		this.outputSchedulers.set(activityId, outputScheduler)
 		for (const output of existingOutput) outputScheduler.enqueue(output)
 		process.on("line", (line: string, stream: TerminalOutputStream = "combined") => {
-			if (backgroundCommand.status !== "running") return
+			if (backgroundCommand.status !== "running" && !this.terminatingBackgroundCommands.has(activityId)) return
 			backgroundCommand.lineCount += 1
 			outputScheduler.enqueue({ line, stream })
 		})
@@ -889,7 +892,9 @@ export class StandaloneTerminalManager implements ITerminalManager {
 		// command, which releases the tracked process reference.
 		const process = command.process
 
-		// Seal the terminal state before termination can emit a late completion or error.
+		// Seal the public terminal state before termination can emit a late completion or error,
+		// while retaining line admission until the process-close boundary flushes every stdio tail.
+		this.terminatingBackgroundCommands.add(id)
 		command.status = "cancelled"
 
 		const timeout = this.backgroundTimeouts.get(id)
@@ -898,10 +903,18 @@ export class StandaloneTerminalManager implements ITerminalManager {
 			this.backgroundTimeouts.delete(id)
 		}
 
-		await Promise.all([
-			this.drainBackgroundOutput(id, ["[CANCELLED] Command cancelled by user"]),
-			Promise.resolve(process?.terminate?.()),
-		])
+		process?.resumeOutput?.()
+		try {
+			// terminate() resolves only after the child close event has flushed decoder and line buffers.
+			// Closing the scheduler before this boundary would reject those final admitted lines.
+			await Promise.resolve(process?.terminate?.())
+		} finally {
+			try {
+				await this.drainBackgroundOutput(id, ["[CANCELLED] Command cancelled by user"])
+			} finally {
+				this.terminatingBackgroundCommands.delete(id)
+			}
+		}
 		return true
 	}
 
@@ -938,6 +951,7 @@ export class StandaloneTerminalManager implements ITerminalManager {
 		const drains = pendingIds.map((id) => this.drainBackgroundOutput(id))
 		await Promise.all([...this.outputDrainCompletions.values(), ...drains])
 		this.outputDrainCompletions.clear()
+		this.terminatingBackgroundCommands.clear()
 		this.logStreams.clear()
 		this.logStreamCompletions.clear()
 		this.logStreamErrors.clear()
