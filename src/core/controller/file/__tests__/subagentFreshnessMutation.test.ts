@@ -1,3 +1,4 @@
+import { createSessionFixture } from "@core/task/session/__fixtures__/active-task-session"
 import { CreateSubagentRequest, DeleteSubagentRequest } from "@shared/proto/dline/file"
 import fs from "fs/promises"
 import os from "os"
@@ -46,7 +47,7 @@ describe("Subagent freshness mutations", () => {
 					mutateScopedCapabilityToggles: vi.fn().mockResolvedValue(localToggles),
 					setWorkspaceState: vi.fn(),
 				},
-				task: { flushPromptFreshnessInvalidation },
+				task: createSessionFixture({ owners: { prompt: { flush: flushPromptFreshnessInvalidation } } }),
 				postStateToWebview,
 			} as never,
 			flushPromptFreshnessInvalidation,

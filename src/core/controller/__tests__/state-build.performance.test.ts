@@ -1,5 +1,6 @@
 import { readJsonl } from "@core/storage/backend/jsonl/jsonl-utils"
 import { getTaskHeaderText } from "@core/storage/disk"
+import { createSessionFixture } from "@core/task/session/__fixtures__/active-task-session"
 import type { ClineMessage, ExtensionState } from "@shared/ExtensionMessage"
 import { describe, expect, it, vi } from "vitest"
 import { Controller } from "../index"
@@ -53,32 +54,22 @@ function buildMessages(count: number): ClineMessage[] {
 /** Minimal Controller-shaped object exposing every field buildState touches. */
 function createFakeController(messages: ClineMessage[]): Record<string, unknown> {
 	return {
-		task: {
+		task: createSessionFixture({
 			taskId: "test-task-1",
-			taskSm: {
-				planModeProfile: undefined,
-				actModeProfile: undefined,
-				mode: "act",
-				taskCapabilityToggles: undefined,
+			owners: {
+				settings: {
+					planModeProfile: undefined,
+					actModeProfile: undefined,
+					mode: "act",
+					taskCapabilityToggles: undefined,
+				},
+				messages: {
+					clineMessages: messages,
+					readStateMetrics: () => undefined,
+				},
+				apiRateSnapshot: () => ({}),
 			},
-			messageStateHandler: { clineMessages: messages },
-			taskState: {
-				checkpointManagerErrorMessage: undefined,
-				currentFocusChainChecklist: null,
-				focusChainHistory: null,
-			},
-			getRuntimeState: () => ({}),
-			getApiRateSnapshot: () => ({}),
-			getContextWindowIndicator: () => undefined,
-			getPromptCacheHealth: () => undefined,
-			getPromptFreshness: () => undefined,
-			getReadyBackgroundHandoffActivityId: () => undefined,
-			getContextCompactionOperationId: () => undefined,
-			isBackgroundHandoffRequested: () => false,
-			isForceTruncateAvailable: () => false,
-			hasAutoRetrySequence: () => false,
-			hasPendingAutoRetry: () => false,
-		},
+		}),
 		stateManager: {
 			setActiveTaskId: vi.fn(),
 			getApiConfiguration: () => ({}),

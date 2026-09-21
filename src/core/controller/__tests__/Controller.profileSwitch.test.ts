@@ -4,6 +4,7 @@ import { ContextTransitionEngine } from "@core/controller/context-transition/Con
 import { ContextTransitionLease } from "@core/controller/context-transition/ContextTransitionLease"
 import * as profileCatalog from "@core/controller/file/getApiProfiles"
 import type { ProfileSwitchCoordinator } from "@core/controller/profile-switch/ProfileSwitchCoordinator"
+import { createSessionFixture } from "@core/task/session/__fixtures__/active-task-session"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 /** Verify the production Profile transition factory preserves the pending draft across preflight and compaction. */
@@ -52,15 +53,19 @@ describe("Controller Profile switch integration", () => {
 		const getOccupiedContextTokens = vi.fn(() => 128_001)
 		const compact = vi.fn(async () => "completed" as const)
 		const release = vi.fn()
-		const commitProfileBindings = vi.fn(async () => undefined)
+		const setProfileIdentityBindings = vi.fn()
+		const rebuild = vi.fn(async () => undefined)
 		const restartAccountUsagePolling = vi.fn()
 		const fakeController = {
-			task: {
+			task: createSessionFixture({
 				taskId: "task-1",
-				getMode: () => "act" as const,
-				getOccupiedContextTokens,
-				commitProfileBindings,
-			},
+				owners: {
+					settings: { mode: "act" as const, setProfileIdentityBindings },
+					api: { rebuild },
+				},
+			}),
+			// Occupancy is read by the Controller from the live indicator.
+			getOccupiedContextTokens,
 			profileTransitionEngine: new ContextTransitionEngine({
 				lease: new ContextTransitionLease(),
 				compaction: {
@@ -107,23 +112,28 @@ describe("Controller Profile switch integration", () => {
 		})
 		expect(compact).not.toHaveBeenCalled()
 		expect(release).not.toHaveBeenCalled()
-		expect(commitProfileBindings).toHaveBeenCalledWith({ profileId: "target-id", profileName: "target-profile" }, ["act"])
+		// Adopting a Profile also drops the previous Profile's runtime overrides.
+		expect(setProfileIdentityBindings).toHaveBeenCalledWith(
+			{ act: { profileId: "target-id", profileName: "target-profile" } },
+			{ clearRuntimeOverrides: true },
+		)
+		expect(rebuild).toHaveBeenCalledWith({ abortPrevious: true })
 		expect(restartAccountUsagePolling).toHaveBeenCalledOnce()
 	})
 
 	it("switches Profiles while a Mode transition still owns its own transaction", async () => {
-		const commitProfileBindings = vi.fn(async () => undefined)
+		const setProfileIdentityBindings = vi.fn()
+		const rebuild = vi.fn(async () => undefined)
 		const restartAccountUsagePolling = vi.fn()
 		const fakeController = {
-			task: {
+			task: createSessionFixture({
 				taskId: "task-1",
-				getMode: () => "act" as const,
-				getOccupiedContextTokens: () => 0,
-				commitProfileBindings,
-				compactForTransition: vi.fn(async () => "completed" as const),
-				completeContextCompaction: vi.fn(async () => undefined),
-				abortContextCompaction: vi.fn(async () => undefined),
-			},
+				owners: {
+					settings: { mode: "act" as const, setProfileIdentityBindings },
+					api: { rebuild },
+				},
+			}),
+			getOccupiedContextTokens: () => 0,
 			resolveTaskProfileName: vi.fn(() => "source-profile"),
 			// An unresolved target degrades to a direct switch, which is exactly the
 			// path that must stay reachable while another transition is in flight.
@@ -162,7 +172,10 @@ describe("Controller Profile switch integration", () => {
 		})
 
 		expect(result.status).toBe("switched")
-		expect(commitProfileBindings).toHaveBeenCalledWith({ profileId: "target-id", profileName: "target-profile" }, ["act"])
+		expect(setProfileIdentityBindings).toHaveBeenCalledWith(
+			{ act: { profileId: "target-id", profileName: "target-profile" } },
+			{ clearRuntimeOverrides: true },
+		)
 		expect(restartAccountUsagePolling).toHaveBeenCalledOnce()
 	})
 })

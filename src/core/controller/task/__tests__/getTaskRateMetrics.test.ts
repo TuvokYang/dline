@@ -1,4 +1,5 @@
 import type { TaskRateMetricsQuery, TaskRateMetricsQueryResult } from "@core/task/performance/task-rate-metrics-types"
+import { createSessionFixture } from "@core/task/session/__fixtures__/active-task-session"
 import {
 	GetTaskRateMetricsRequest,
 	TaskRateMetricsResolution,
@@ -15,8 +16,11 @@ interface RateMetricsTask {
 	queryTaskRateMetrics(query: TaskRateMetricsQuery): Promise<TaskRateMetricsQueryResult>
 }
 
-function controller(task?: RateMetricsTask): { task?: RateMetricsTask } {
-	return task ? { task } : {}
+/** Publish the query through `owners.queryRateMetrics`, the boundary the handler reads. */
+function controller(task?: RateMetricsTask) {
+	return task
+		? { task: createSessionFixture({ taskId: task.taskId, owners: { queryRateMetrics: task.queryTaskRateMetrics } }) }
+		: {}
 }
 
 function request(overrides: Partial<GetTaskRateMetricsRequest> = {}): GetTaskRateMetricsRequest {

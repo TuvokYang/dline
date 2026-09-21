@@ -1,3 +1,4 @@
+import { createSessionFixture } from "@core/task/session/__fixtures__/active-task-session"
 import { RetryTaskActivitiesRequest } from "@shared/proto/dline/task"
 import { describe, expect, it, vi } from "vitest"
 import { retryTaskActivities } from "../retryTaskActivities"
@@ -5,20 +6,23 @@ import { retryTaskActivities } from "../retryTaskActivities"
 describe("retryTaskActivities", () => {
 	it("restores a persisted retry control before retrying a reopened activity", async () => {
 		let liveRetryControl = false
-		const hasLiveRetryControl = vi.fn(() => liveRetryControl)
-		const isRetryable = vi.fn(() => true)
 		const restoreSubagentActivityRetry = vi.fn(async () => {
 			liveRetryControl = true
 			return true
 		})
 		const retry = vi.fn(async (activityIds: string[]) => (liveRetryControl ? activityIds : []))
-		const controller = {
-			task: {
-				taskId: "task-1",
-				activityStore: { hasLiveRetryControl, isRetryable, retry },
-				restoreSubagentActivityRetry,
+		const session = createSessionFixture({
+			taskId: "task-1",
+			owners: {
+				activities: {
+					hasLiveRetryControl: vi.fn(() => liveRetryControl),
+					isRetryable: vi.fn(() => true),
+					retry,
+				},
+				toolExecution: { restoreSubagentActivityRetry },
 			},
-		}
+		})
+		const controller = { task: session }
 
 		const response = await retryTaskActivities(
 			controller as never,
@@ -34,17 +38,18 @@ describe("retryTaskActivities", () => {
 	it("does not rebuild a retry control that is already live", async () => {
 		const restoreSubagentActivityRetry = vi.fn(async () => true)
 		const retry = vi.fn(async (activityIds: string[]) => activityIds)
-		const controller = {
-			task: {
-				taskId: "task-1",
-				activityStore: {
+		const session = createSessionFixture({
+			taskId: "task-1",
+			owners: {
+				activities: {
 					hasLiveRetryControl: vi.fn(() => true),
 					isRetryable: vi.fn(() => true),
 					retry,
 				},
-				restoreSubagentActivityRetry,
+				toolExecution: { restoreSubagentActivityRetry },
 			},
-		}
+		})
+		const controller = { task: session }
 
 		const response = await retryTaskActivities(
 			controller as never,

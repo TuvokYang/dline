@@ -38,7 +38,7 @@ describe("OpenAI Codex Profile runtime invalidation architecture", () => {
 		expect(method).toContain("selectedProfile.profile.id !== event.profileId")
 		expect(method).toContain("accountUsageCoordinator.deleteByPrefix(`${event.profileId}:`)")
 		expect(method).toContain("this.restartAccountUsagePolling()")
-		expect(method).toContain("await this.task?.rebuildApiHandler({ abortPrevious: true })")
+		expect(method).toContain("await this.task?.owners.api.rebuild({ abortPrevious: true })")
 	})
 
 	it("aborts an in-flight usage handler and supports target cache eviction", async () => {

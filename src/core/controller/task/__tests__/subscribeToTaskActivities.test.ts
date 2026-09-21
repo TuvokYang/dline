@@ -1,3 +1,4 @@
+import { createSessionFixture } from "@core/task/session/__fixtures__/active-task-session"
 import { TaskActivitySubscriptionRequest, TaskActivityUpdate } from "@shared/proto/dline/task"
 import { describe, expect, it, vi } from "vitest"
 import { TaskActivityStore } from "../../../task/activity/TaskActivityStore"
@@ -44,8 +45,10 @@ describe("subscribeToTaskActivities", () => {
 			streamedUpdates.push(update)
 		})
 
+		const session = createSessionFixture({ taskId: "task-1", owners: { activities: activityStore } })
+
 		await subscribeToTaskActivities(
-			{ task: { taskId: "task-1", activityStore } } as never,
+			{ task: session } as never,
 			TaskActivitySubscriptionRequest.create({ taskId: "task-1" }),
 			responseStream,
 		)

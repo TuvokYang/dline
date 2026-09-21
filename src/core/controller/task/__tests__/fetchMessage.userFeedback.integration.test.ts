@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
+import { createSessionFixture } from "@core/task/session/__fixtures__/active-task-session"
 import { FetchMessageRequest } from "@shared/proto/dline/task"
 import { convertProtoToClineMessage } from "@shared/proto-conversions/cline-message"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
@@ -54,8 +55,12 @@ describe("fetchMessage durable user_feedback integration", () => {
 		await uiMessage.flush()
 
 		const reopened = await UIMessage.open(taskId)
+		const session = createSessionFixture({
+			taskId,
+			owners: { messages: { clineMessages: [...reopened.getAll()] } },
+		})
 		const response = await fetchMessage(
-			{ task: { messageStateHandler: { clineMessages: [...reopened.getAll()] } } } as never,
+			{ task: session } as never,
 			FetchMessageRequest.create({ referenceIndex: -1, count: 20 }),
 		)
 		const messages = response.messages.map(convertProtoToClineMessage)

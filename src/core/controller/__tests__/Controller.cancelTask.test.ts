@@ -1,4 +1,5 @@
 import { strict as assert } from "node:assert"
+import { createSessionFixture } from "@core/task/session/__fixtures__/active-task-session"
 import { describe, it, vi } from "vitest"
 import { Controller } from "../index"
 
@@ -9,13 +10,13 @@ import { Controller } from "../index"
  */
 function createCancelController(): {
 	controller: Pick<Controller, "cancelTask">
-	requestCancellation: ReturnType<typeof vi.fn>
+	cancel: ReturnType<typeof vi.fn>
 	updateBackgroundCommandState: ReturnType<typeof vi.fn>
 } {
-	const requestCancellation = vi.fn(async () => ({ accepted: true }))
+	const cancel = vi.fn(async () => ({ kind: "accepted" as const }))
 	const updateBackgroundCommandState = vi.fn()
 	const controller = {
-		task: { taskId: "task-1", requestCancellation },
+		task: createSessionFixture({ taskId: "task-1", session: { task: { cancel } } }),
 		cancelInProgress: false,
 		updateBackgroundCommandState,
 		cancelTask: Controller.prototype.cancelTask,
@@ -23,18 +24,20 @@ function createCancelController(): {
 
 	return {
 		controller: controller as unknown as Pick<Controller, "cancelTask">,
-		requestCancellation,
+		cancel,
 		updateBackgroundCommandState,
 	}
 }
 
 describe("Controller.cancelTask", () => {
 	it("dispatches one cancellation transaction without reading task flags or messages", async () => {
-		const { controller, requestCancellation, updateBackgroundCommandState } = createCancelController()
+		const { controller, cancel, updateBackgroundCommandState } = createCancelController()
 
 		await controller.cancelTask()
 
-		assert.equal(requestCancellation.mock.calls.length, 1)
+		assert.equal(cancel.mock.calls.length, 1)
+		// Cancellation carries its own halt identity rather than a task flag.
+		assert.equal(typeof cancel.mock.calls[0][0], "string")
 		assert.deepEqual(updateBackgroundCommandState.mock.calls, [[false]])
 	})
 })

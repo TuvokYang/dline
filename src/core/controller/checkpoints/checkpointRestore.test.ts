@@ -1,39 +1,37 @@
+import { createSessionFixture } from "@core/task/session/__fixtures__/active-task-session"
 import { CheckpointRestoreRequest } from "@shared/proto/dline/checkpoints"
 import { describe, expect, it, vi } from "vitest"
 import { checkpointRestore } from "./checkpointRestore"
 
-interface RestoreControllerHarness {
-	task: {
-		taskState: { isInitialized: boolean }
-		interrupt: ReturnType<typeof vi.fn>
-		checkpointManager: { restoreCheckpoint: ReturnType<typeof vi.fn> }
+/**
+ * Chat restore cancels the live turn through the Task facade; the checkpoint
+ * owner performs the file restore. Both are observed separately here.
+ */
+function createController() {
+	const cancel = vi.fn(async () => ({ kind: "accepted" as const }))
+	const restoreCheckpoint = vi.fn().mockResolvedValue({})
+	const controller = {
+		task: createSessionFixture({
+			session: { task: { cancel } },
+			owners: { checkpoints: { restoreCheckpoint } },
+		}),
 	}
-}
 
-function createController(): RestoreControllerHarness {
-	return {
-		task: {
-			taskState: { isInitialized: true },
-			interrupt: vi.fn().mockResolvedValue(undefined),
-			checkpointManager: {
-				restoreCheckpoint: vi.fn().mockResolvedValue({}),
-			},
-		},
-	}
+	return { controller, cancel, restoreCheckpoint }
 }
 
 describe("checkpointRestore controller", () => {
 	it("restores files without interrupting the active chat runtime", async () => {
-		const controller = createController()
+		const { controller, cancel, restoreCheckpoint } = createController()
 
 		await checkpointRestore(controller as never, CheckpointRestoreRequest.create({ number: 42, restoreType: "workspace" }))
 
-		expect(controller.task.interrupt).not.toHaveBeenCalled()
-		expect(controller.task.checkpointManager.restoreCheckpoint).toHaveBeenCalledWith(42, "workspace", undefined, undefined)
+		expect(cancel).not.toHaveBeenCalled()
+		expect(restoreCheckpoint).toHaveBeenCalledWith(42, "workspace", undefined, undefined)
 	})
 
 	it("ignores deprecated compaction restore identity and uses the ordinary task restore transaction", async () => {
-		const controller = createController()
+		const { controller, cancel, restoreCheckpoint } = createController()
 
 		await checkpointRestore(
 			controller as never,
@@ -47,16 +45,16 @@ describe("checkpointRestore controller", () => {
 			}),
 		)
 
-		expect(controller.task.interrupt).toHaveBeenCalledOnce()
-		expect(controller.task.checkpointManager.restoreCheckpoint).toHaveBeenCalledWith(42, "task", undefined, undefined)
+		expect(cancel).toHaveBeenCalledOnce()
+		expect(restoreCheckpoint).toHaveBeenCalledWith(42, "task", undefined, undefined)
 	})
 
 	it.each(["task", "taskAndWorkspace"] as const)("interrupts runtime before %s restore", async (restoreType) => {
-		const controller = createController()
+		const { controller, cancel, restoreCheckpoint } = createController()
 
 		await checkpointRestore(controller as never, CheckpointRestoreRequest.create({ number: 42, restoreType }))
 
-		expect(controller.task.interrupt).toHaveBeenCalledOnce()
-		expect(controller.task.checkpointManager.restoreCheckpoint).toHaveBeenCalledWith(42, restoreType, undefined, undefined)
+		expect(cancel).toHaveBeenCalledOnce()
+		expect(restoreCheckpoint).toHaveBeenCalledWith(42, restoreType, undefined, undefined)
 	})
 })

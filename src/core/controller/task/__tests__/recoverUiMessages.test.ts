@@ -1,3 +1,4 @@
+import { createSessionFixture } from "@core/task/session/__fixtures__/active-task-session"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import type { ClineMessage } from "@/shared/ExtensionMessage"
 import type { ClineStorageMessage } from "@/shared/messages/content"
@@ -60,18 +61,9 @@ describe("recoverUiMessages", () => {
 	})
 
 	it("preserves canonical interaction identity without starting an interactive resume", async () => {
-		const displayHistory = vi.fn().mockResolvedValue(undefined)
-		const resumeFromHistory = vi.fn().mockResolvedValue(undefined)
 		const postStateToWebview = vi.fn().mockResolvedValue(undefined)
-		const controller = {
-			task: {
-				taskId: "task-1",
-				displayHistory,
-				resumeFromHistory,
-				taskState: {},
-			},
-			postStateToWebview,
-		}
+		const session = createSessionFixture({ taskId: "task-1" })
+		const controller = { task: session, postStateToWebview }
 
 		await recoverUiMessages(controller as never)
 
@@ -82,8 +74,11 @@ describe("recoverUiMessages", () => {
 			ask: "qna_respond",
 			interactionId: "interaction-qna-1",
 		})
-		expect(displayHistory).toHaveBeenCalledOnce()
-		expect(resumeFromHistory).not.toHaveBeenCalled()
+		// Recovery re-reads the durable store; it must not drive the task facade.
+		expect(session.owners.messages.reloadFromStore).toHaveBeenCalledOnce()
+		expect(session.task.start).not.toHaveBeenCalled()
+		expect(session.task.respond).not.toHaveBeenCalled()
+		expect(session.task.submitInput).not.toHaveBeenCalled()
 		expect(postStateToWebview).toHaveBeenCalledOnce()
 	})
 
@@ -107,12 +102,7 @@ describe("recoverUiMessages", () => {
 			},
 		])
 		const controller = {
-			task: {
-				taskId: "task-1",
-				displayHistory: vi.fn().mockResolvedValue(undefined),
-				resumeFromHistory: vi.fn().mockResolvedValue(undefined),
-				taskState: {},
-			},
+			task: createSessionFixture({ taskId: "task-1" }),
 			postStateToWebview: vi.fn().mockResolvedValue(undefined),
 		}
 

@@ -1,3 +1,4 @@
+import { createSessionFixture } from "@core/task/session/__fixtures__/active-task-session"
 import { ApiProfile } from "@shared/proto/dline/profile"
 import { UpdateTaskSettingsRequest } from "@shared/proto/dline/state"
 import { createTaskCapabilityToggles, serializeTaskCapabilityToggles } from "@shared/TaskCapabilityToggles"
@@ -71,7 +72,13 @@ function createController() {
 				return undefined
 			}),
 		},
-		task: { taskId: "task-1", rebuildApiHandler, flushPromptFreshnessInvalidation },
+		task: createSessionFixture({
+			taskId: "task-1",
+			owners: {
+				api: { rebuild: rebuildApiHandler },
+				prompt: { flush: flushPromptFreshnessInvalidation },
+			},
+		}),
 		restartAccountUsagePolling: vi.fn(),
 		postStateToWebview,
 	} as unknown as Controller
