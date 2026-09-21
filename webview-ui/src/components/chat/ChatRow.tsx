@@ -536,13 +536,19 @@ export const ChatRowContent = memo(
 
 		// Auto-collapse when command completes (once per command)
 		useEffect(() => {
-			if (isCommandMessage && isCommandCompleted && !autoCollapsedCommands.has(message.ts)) {
+			// A command row is streamed before it has any status, and a missing
+			// status reads as "completed" so legacy rows still collapse. Those two
+			// rules meet on a partial row, which would collapse the command before
+			// it ever ran and latch that choice for the rest of its life, hiding
+			// every later state behind the one-line summary. Only a settled row
+			// can be finished.
+			if (isCommandMessage && !message.partial && isCommandCompleted && !autoCollapsedCommands.has(message.ts)) {
 				autoCollapsedCommands.add(message.ts)
 				commandCollapsedCache.set(message.ts, true)
 				// Force re-render to pick up the collapsed state
 				setCommandCollapseTick((t) => t + 1)
 			}
-		}, [isCommandMessage, isCommandCompleted, message.ts])
+		}, [isCommandMessage, message.partial, isCommandCompleted, message.ts])
 
 		// Auto-expand when command starts executing (only if running > 500ms)
 		useEffect(() => {

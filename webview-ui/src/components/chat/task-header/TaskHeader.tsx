@@ -43,7 +43,7 @@ interface TaskHeaderProps {
 	forceTruncateTaskDisabled?: boolean
 	requestsPerMinute?: number
 	tokensPerMinute?: number
-	onClose: () => void
+	onClose: () => Promise<void>
 	onCompactTask?: () => Promise<boolean>
 	onForceTruncateTask?: () => Promise<boolean>
 }

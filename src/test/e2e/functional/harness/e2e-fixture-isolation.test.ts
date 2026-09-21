@@ -62,6 +62,8 @@ test("E2E fixture preinstalls the packaged extension only for production-style l
 	expect(shouldPreinstallDlineVsix({ npm_lifecycle_event: "test:e2e:pressure" })).toBe(true)
 	expect(shouldPreinstallDlineVsix({ npm_lifecycle_event: "test:e2e:build" })).toBe(false)
 	expect(shouldPreinstallDlineVsix({ npm_lifecycle_event: "test:e2e:ui" })).toBe(false)
+	expect(shouldPreinstallDlineVsix({ DLINE_E2E_INSTALL_VSIX: "1", npm_lifecycle_event: undefined })).toBe(true)
+	expect(shouldPreinstallDlineVsix({ DLINE_E2E_INSTALL_VSIX: "0", npm_lifecycle_event: "e2e" })).toBe(false)
 	expect(shouldPreinstallDlineVsix({ npm_lifecycle_event: "e2e:smoke" })).toBe(false)
 	expect(shouldPreinstallDlineVsix({ npm_lifecycle_event: "e2e:work" })).toBe(false)
 	expect(shouldPreinstallDlineVsix({ npm_lifecycle_event: "e2e" })).toBe(false)

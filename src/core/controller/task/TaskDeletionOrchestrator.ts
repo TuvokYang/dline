@@ -206,7 +206,7 @@ export class TaskDeletionOrchestrator {
 	 * @returns The local controller when it is known in this process.
 	 */
 	private findLocalController(taskId: string): Controller | undefined {
-		if (this.controller.task?.taskId === taskId) {
+		if (this.controller.getCurrentTaskId() === taskId) {
 			return this.controller
 		}
 		return this.deps.getControllerForTask?.(taskId) ?? this.findRegisteredController(taskId)
@@ -236,7 +236,7 @@ export class TaskDeletionOrchestrator {
 		const panels = WebviewProviderRegistry.getPanels()
 		for (const provider of panels) {
 			try {
-				if (provider.hasController() && provider.controller.task?.taskId === taskId) {
+				if (provider.hasController() && provider.controller.getCurrentTaskId() === taskId) {
 					Logger.debug(`[TaskDeletion] Closing panel for deleted task ${taskId}`)
 					provider.dispose()
 				}

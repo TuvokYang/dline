@@ -1,5 +1,38 @@
-import { describe, expect, it, vi } from "vitest"
+import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-node"
+import { afterEach, describe, expect, it, vi } from "vitest"
+import { OpenTelemetryTraceProvider } from "@/services/telemetry/providers/opentelemetry/OpenTelemetryTraceProvider"
+import {
+	configureSignalRecording,
+	installObservabilityPipeline,
+	resetSignalRecording,
+} from "@/services/telemetry/service/pipeline-port"
 import { prepareHistoryTaskForDisplay, projectHistoryPreparingView } from "../history-task-readiness"
+
+const cleanup: Array<() => void | Promise<void>> = []
+
+afterEach(async () => {
+	for (const action of cleanup.splice(0).reverse()) await action()
+	installObservabilityPipeline(undefined)
+	resetSignalRecording()
+})
+
+function setupTraceExporter(): {
+	readonly exporter: InMemorySpanExporter
+	readonly provider: OpenTelemetryTraceProvider
+} {
+	const exporter = new InMemorySpanExporter()
+	const provider = new OpenTelemetryTraceProvider("http://127.0.0.1:4318", {
+		processor: new SimpleSpanProcessor(exporter),
+	})
+	configureSignalRecording({ enabled: () => true })
+	installObservabilityPipeline({
+		startSpan: (options) => provider.startSpan(options),
+		recordGauge: () => {},
+		recordHistogram: () => {},
+	})
+	cleanup.push(() => provider.dispose())
+	return { exporter, provider }
+}
 
 describe("history task readiness", () => {
 	it("projects a visible but non-dispatchable Resume action while preparing", () => {
@@ -9,6 +42,29 @@ describe("history task readiness", () => {
 		expect(view.input.enabled).toBe(false)
 		expect(view.footer.actions).toEqual([
 			expect.objectContaining({ type: "resume", label: "Resume", enabled: false, dispatchTarget: "interaction" }),
+		])
+	})
+
+	it("records one bounded root span across display and interactive preparation", async () => {
+		const { exporter, provider } = setupTraceExporter()
+
+		await prepareHistoryTaskForDisplay({
+			taskId: "task-1",
+			displayHistory: async () => undefined,
+			prepareFromHistory: async (options) => options.onReadyToDisplay?.(),
+			hasTaskLock: true,
+			isCurrent: () => true,
+			onReadyToDisplay: async () => undefined,
+		})
+		await provider.forceFlush()
+
+		const span = exporter.getFinishedSpans().find((candidate) => candidate.name === "task.history_prepare")
+		expect(span?.attributes).toMatchObject({ has_task_lock: true, current: true, outcome: "success" })
+		expect(span?.events.map((event) => event.name)).toEqual([
+			"task.history_prepare.preparing",
+			"task.history_prepare.displayed",
+			"task.history_prepare.ready",
+			"task.history_prepare.prepared",
 		])
 	})
 
@@ -28,6 +84,7 @@ describe("history task readiness", () => {
 		const prepareFromHistory = vi.fn(async () => undefined)
 
 		const readiness = prepareHistoryTaskForDisplay({
+			taskId: "task-1",
 			displayHistory,
 			prepareFromHistory,
 			hasTaskLock: true,
@@ -57,6 +114,7 @@ describe("history task readiness", () => {
 
 		await expect(
 			prepareHistoryTaskForDisplay({
+				taskId: "task-1",
 				displayHistory,
 				prepareFromHistory,
 				hasTaskLock: true,
@@ -80,6 +138,7 @@ describe("history task readiness", () => {
 
 		await expect(
 			prepareHistoryTaskForDisplay({
+				taskId: "task-1",
 				displayHistory,
 				prepareFromHistory,
 				hasTaskLock: true,
@@ -99,6 +158,7 @@ describe("history task readiness", () => {
 
 		await expect(
 			prepareHistoryTaskForDisplay({
+				taskId: "task-1",
 				displayHistory,
 				prepareFromHistory,
 				hasTaskLock: false,

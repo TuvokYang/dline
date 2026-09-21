@@ -1,12 +1,16 @@
-name: Publish VS Code Marketplace
+name: Production Release (Manual Override)
 
 on:
-  workflow_run:
-    workflows:
-      # Must match the display name in .github/workflows/release.yml.
-      - Production Release
-    types:
-      - completed
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Production tag to publish (vX.Y.Z).
+        type: string
+        required: true
+      reason:
+        description: Reason for bypassing or replacing the automatic release path.
+        type: string
+        required: true
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -16,254 +20,92 @@ permissions:
   contents: read
 
 concurrency:
-  group: vscode-marketplace-${{ github.event.workflow_run.head_sha }}
+  group: production-release-${{ inputs.tag }}
   cancel-in-progress: false
 
 jobs:
-  verify-release:
-    name: Verify tested GitHub release
-    if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'push'
+  validate:
+    name: Validate manual production release request
+    if: github.repository == 'TuvokYang/dline'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
-      tag: ${{ steps.release.outputs.tag }}
-      version: ${{ steps.release.outputs.version }}
-      asset_name: ${{ steps.release.outputs.asset_name }}
-      sha256: ${{ steps.vsix.outputs.sha256 }}
+      tag: ${{ steps.validation.outputs.tag }}
+      version: ${{ steps.validation.outputs.version }}
+      commit_sha: ${{ steps.validation.outputs.commit_sha }}
     steps:
-      - name: Verify triggering workflow and GitHub release
-        id: release
+      - name: Checkout requested tag
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Verify tag and main ancestry
+        id: validation
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
-          RELEASE_TAG: ${{ github.event.workflow_run.head_branch }}
-          SOURCE_REPOSITORY: ${{ github.event.workflow_run.head_repository.full_name }}
-          SOURCE_WORKFLOW_PATH: ${{ github.event.workflow_run.path }}
+          TAG: ${{ inputs.tag }}
+          REASON: ${{ inputs.reason }}
         shell: bash
         run: |
           set -euo pipefail
-
-          if [[ "$SOURCE_REPOSITORY" != "$GITHUB_REPOSITORY" ]]; then
-            echo "Error: refusing a release workflow from '$SOURCE_REPOSITORY'."
+          if [[ ! "$TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            echo "Error: production tag must match vX.Y.Z, got '$TAG'."
             exit 1
           fi
-          if [[ "$SOURCE_WORKFLOW_PATH" != ".github/workflows/release.yml" ]]; then
-            echo "Error: unexpected source workflow path '$SOURCE_WORKFLOW_PATH'."
+          if [[ -z "${REASON// }" ]]; then
+            echo "Error: a manual override reason is required."
             exit 1
           fi
-          if [[ ! "$RELEASE_TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
-            echo "Error: production release tag must match vX.Y.Z, got '$RELEASE_TAG'."
-            exit 1
-          fi
-
           version="${BASH_REMATCH[1]}"
-          asset_name="dline-${version}.vsix"
-          release_json=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}")
-
-          if [[ "$(jq -r '.draft' <<<"$release_json")" != "false" ]]; then
-            echo "Error: GitHub release '$RELEASE_TAG' is still a draft."
+          package_version=$(node -p "require('./package.json').version")
+          if [[ "$version" != "$package_version" ]]; then
+            echo "Error: tag version '$version' does not match package version '$package_version'."
             exit 1
           fi
-          if [[ "$(jq -r '.prerelease' <<<"$release_json")" != "false" ]]; then
-            echo "Error: GitHub release '$RELEASE_TAG' is marked as a prerelease."
+          tag_sha=$(git rev-parse "${TAG}^{commit}")
+          main_sha=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')
+          compare_json=$(gh api "repos/${GITHUB_REPOSITORY}/compare/${tag_sha}...${main_sha}")
+          if [[ "$(jq -r '.merge_base_commit.sha' <<<"$compare_json")" != "$tag_sha" ]]; then
+            echo "Error: production tag '$TAG' is not an ancestor of main '$main_sha'."
             exit 1
           fi
-
-          asset_count=$(jq --arg asset "$asset_name" '[.assets[] | select(.name == $asset)] | length' <<<"$release_json")
-          asset_state=$(jq -r --arg asset "$asset_name" '.assets[] | select(.name == $asset) | .state' <<<"$release_json")
-          asset_size=$(jq -r --arg asset "$asset_name" '.assets[] | select(.name == $asset) | .size' <<<"$release_json")
-          if [[ "$asset_count" -ne 1 || "$asset_state" != "uploaded" || "$asset_size" -le 0 ]]; then
-            echo "Error: release must contain one uploaded, non-empty asset named '$asset_name'."
-            exit 1
-          fi
-
-          tag_ref_json=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}")
-          raw_tag_sha=$(jq -r '.object.sha' <<<"$tag_ref_json")
-          object_type=$(jq -r '.object.type' <<<"$tag_ref_json")
-          object_sha="$raw_tag_sha"
-          for _ in 1 2 3 4 5; do
-            if [[ "$object_type" == "commit" ]]; then
-              break
-            fi
-            if [[ "$object_type" != "tag" ]]; then
-              echo "Error: tag '$RELEASE_TAG' resolves to unsupported object type '$object_type'."
-              exit 1
-            fi
-            tag_object_json=$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${object_sha}")
-            object_type=$(jq -r '.object.type' <<<"$tag_object_json")
-            object_sha=$(jq -r '.object.sha' <<<"$tag_object_json")
-          done
-          if [[ "$object_type" != "commit" ]]; then
-            echo "Error: release tag '$RELEASE_TAG' did not resolve to a commit."
-            exit 1
-          fi
-          if [[ "$object_sha" != "$RELEASE_SHA" && "$raw_tag_sha" != "$RELEASE_SHA" ]]; then
-            echo "Error: release tag does not resolve to tested object '$RELEASE_SHA'."
-            exit 1
-          fi
-          release_commit_sha="$object_sha"
-
-          main_ref_json=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main")
-          main_sha=$(jq -r '.object.sha' <<<"$main_ref_json")
-          compare_json=$(gh api "repos/${GITHUB_REPOSITORY}/compare/${release_commit_sha}...${main_sha}")
-          merge_base_sha=$(jq -r '.merge_base_commit.sha' <<<"$compare_json")
-          if [[ "$merge_base_sha" != "$release_commit_sha" ]]; then
-            echo "Error: tested release commit '$release_commit_sha' is not an ancestor of main '$main_sha'."
-            exit 1
-          fi
-
-          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "::warning::Manual production override requested: $REASON"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "asset_name=$asset_name" >> "$GITHUB_OUTPUT"
+          echo "commit_sha=$tag_sha" >> "$GITHUB_OUTPUT"
 
-      - name: Download tested VSIX artifact
-        uses: actions/download-artifact@v6
-        with:
-          name: dline-vsix-${{ github.event.workflow_run.head_sha }}
-          path: tested-artifact
-          github-token: ${{ github.token }}
-          run-id: ${{ github.event.workflow_run.id }}
+  package:
+    name: Build fresh production VSIX
+    needs: validate
+    uses: ./.github/workflows/package.yml
+    with:
+      profile: release
+      channel: production
+      source_ref: ${{ needs.validate.outputs.tag }}
+      artifact_key: ${{ needs.validate.outputs.commit_sha }}
+    secrets:
+      TELEMETRY_SERVICE_API_KEY: ${{ secrets.TELEMETRY_SERVICE_API_KEY }}
+      ERROR_SERVICE_API_KEY: ${{ secrets.ERROR_SERVICE_API_KEY }}
+      OTEL_TELEMETRY_ENABLED: ${{ secrets.OTEL_TELEMETRY_ENABLED }}
+      OTEL_EXPORTER_OTLP_PROTOCOL: ${{ secrets.OTEL_EXPORTER_OTLP_PROTOCOL }}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${{ secrets.OTEL_EXPORTER_OTLP_ENDPOINT }}
+      OTEL_EXPORTER_OTLP_HEADERS: ${{ secrets.OTEL_EXPORTER_OTLP_HEADERS }}
 
-      - name: Download VSIX from GitHub release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ steps.release.outputs.tag }}
-          ASSET_NAME: ${{ steps.release.outputs.asset_name }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          gh release download "$RELEASE_TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            --pattern "$ASSET_NAME" \
-            --dir release-artifact
-
-      - name: Verify tested and released VSIX
-        id: vsix
-        env:
-          VERSION: ${{ steps.release.outputs.version }}
-          ASSET_NAME: ${{ steps.release.outputs.asset_name }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          tested_vsix="tested-artifact/$ASSET_NAME"
-          released_vsix="release-artifact/$ASSET_NAME"
-          manifest_path="$RUNNER_TEMP/vsix-package.json"
-
-          if [[ ! -s "$tested_vsix" ]]; then
-            echo "Error: tested VSIX '$tested_vsix' is missing or empty."
-            exit 1
-          fi
-          if [[ ! -s "$released_vsix" ]]; then
-            echo "Error: released VSIX '$released_vsix' is missing or empty."
-            exit 1
-          fi
-
-          tested_sha=$(sha256sum "$tested_vsix" | cut -d' ' -f1)
-          released_sha=$(sha256sum "$released_vsix" | cut -d' ' -f1)
-          if [[ "$tested_sha" != "$released_sha" ]]; then
-            echo "Error: GitHub Release VSIX does not match the artifact that passed the release tests."
-            echo "Tested:  $tested_sha"
-            echo "Released: $released_sha"
-            exit 1
-          fi
-
-          if ! unzip -p "$tested_vsix" extension/package.json > "$manifest_path"; then
-            echo "Error: VSIX does not contain extension/package.json."
-            exit 1
-          fi
-          if ! jq -e --arg version "$VERSION" '
-            .name == "dline" and
-            .publisher == "tuvokyang" and
-            .version == $version and
-            (.preview != true)
-          ' "$manifest_path" >/dev/null; then
-            echo "Error: VSIX identity, version, or release channel does not match the production release."
-            jq '{name, publisher, version, preview}' "$manifest_path"
-            exit 1
-          fi
-
-          echo "$tested_sha  $tested_vsix"
-          echo "sha256=$tested_sha" >> "$GITHUB_OUTPUT"
-
-      - name: Upload verified Marketplace package
-        uses: actions/upload-artifact@v5
-        with:
-          name: vscode-marketplace-vsix-${{ github.event.workflow_run.head_sha }}
-          path: tested-artifact/${{ steps.release.outputs.asset_name }}
-          if-no-files-found: error
-          retention-days: 7
-          compression-level: 0
-
-  publish-marketplace:
-    name: Publish VS Code Marketplace
-    needs: verify-release
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    environment:
-      name: dline-release
-    steps:
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: 22
-
-      - name: Install pinned VSCE
-        id: vsce
-        shell: bash
-        run: |
-          set -euo pipefail
-          tool_root="$RUNNER_TEMP/vsce"
-          npm install \
-            --prefix "$tool_root" \
-            --ignore-scripts \
-            --omit=optional \
-            --no-audit \
-            --no-fund \
-            @vscode/vsce@3.9.2
-          vsce_bin="$tool_root/node_modules/.bin/vsce"
-          "$vsce_bin" --version
-          echo "bin=$vsce_bin" >> "$GITHUB_OUTPUT"
-
-      - name: Download verified Marketplace package
-        uses: actions/download-artifact@v6
-        with:
-          name: vscode-marketplace-vsix-${{ github.event.workflow_run.head_sha }}
-          path: release-artifact
-
-      - name: Publish VSIX
-        env:
-          VSCE_PAT: ${{ secrets.DLINE_VSCODE_RELEASE_PUBLISH_PAT }}
-          ASSET_NAME: ${{ needs.verify-release.outputs.asset_name }}
-          EXPECTED_SHA256: ${{ needs.verify-release.outputs.sha256 }}
-          VSCE_BIN: ${{ steps.vsce.outputs.bin }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          vsix_path="release-artifact/$ASSET_NAME"
-
-          if [[ -z "${VSCE_PAT:-}" ]]; then
-            echo "Error: DLINE_VSCODE_RELEASE_PUBLISH_PAT is not configured in the dline-release environment."
-            exit 1
-          fi
-          if [[ ! -x "$VSCE_BIN" ]]; then
-            echo "Error: pinned VSCE executable '$VSCE_BIN' is unavailable."
-            exit 1
-          fi
-          if [[ ! -s "$vsix_path" ]]; then
-            echo "Error: verified VSIX '$vsix_path' is missing or empty."
-            exit 1
-          fi
-
-          actual_sha256=$(sha256sum "$vsix_path" | cut -d' ' -f1)
-          if [[ "$actual_sha256" != "$EXPECTED_SHA256" ]]; then
-            echo "Error: Marketplace package changed after verification."
-            echo "Expected: $EXPECTED_SHA256"
-            echo "Actual:   $actual_sha256"
-            exit 1
-          fi
-
-          # A successful release workflow can be rerun for the same SHA. The pinned
-          # VSCE checks the published version first and skips the write when it exists.
-          "$VSCE_BIN" publish --skip-duplicate --packagePath "$vsix_path"
+  publish:
+    name: Publish manual production release
+    needs: [validate, package]
+    permissions:
+      actions: read
+      attestations: write
+      contents: write
+      id-token: write
+    uses: ./.github/workflows/publish-production-release.yml
+    with:
+      tag: ${{ needs.validate.outputs.tag }}
+      version: ${{ needs.validate.outputs.version }}
+      commit_sha: ${{ needs.validate.outputs.commit_sha }}
+      artifact_name: ${{ needs.package.outputs.artifact_name }}
+      asset_name: ${{ needs.package.outputs.asset_name }}
+    secrets: inherit

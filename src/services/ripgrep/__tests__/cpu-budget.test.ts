@@ -172,6 +172,38 @@ describe("ripgrep concurrency gates", () => {
 		expect(activeRipgrepProcesses()).toBe(0)
 	})
 
+	it("removes an aborted queued caller before it can start", async () => {
+		resetRipgrepCpuBudgetForTesting(4) // task budget 1 -> one process at a time
+		resetRipgrepSlotsForTesting()
+		const scope = taskRipgrepScope("task-1")
+		const first = deferred()
+		const firstRun = withRipgrepSlot(scope, () => first.promise)
+		await settleMicrotasks()
+
+		const controller = new AbortController()
+		const timeoutError = new Error("search timed out")
+		let queuedRan = false
+		const queuedRun = withRipgrepSlot(
+			scope,
+			async () => {
+				queuedRan = true
+			},
+			controller.signal,
+		)
+		const queuedOutcome = queuedRun.catch((error: unknown) => error)
+		await settleMicrotasks()
+
+		controller.abort(timeoutError)
+		expect(await queuedOutcome).toBe(timeoutError)
+		first.resolve()
+		await firstRun
+		await settleMicrotasks()
+
+		expect(queuedRan).toBe(false)
+		expect(activeRipgrepProcessesForScope(scope)).toBe(0)
+		expect(activeRipgrepProcesses()).toBe(0)
+	})
+
 	it("admits a queued caller as soon as a slot frees up", async () => {
 		resetRipgrepCpuBudgetForTesting(4) // task budget 1 -> one process at a time
 		resetRipgrepSlotsForTesting()

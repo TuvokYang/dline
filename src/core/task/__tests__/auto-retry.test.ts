@@ -1,6 +1,13 @@
 import { strict as assert } from "node:assert"
 import { describe, it } from "vitest"
-import { getStreamRetryDecision, runDelayedStreamRetry, waitRetryDelay } from "../auto-retry"
+import {
+	AUTO_RETRY_DELAYS_MS,
+	getRetryDelay,
+	getStreamRetryDecision,
+	MAX_AUTO_RETRY_ATTEMPTS,
+	runDelayedStreamRetry,
+	waitRetryDelay,
+} from "../auto-retry"
 
 describe("auto retry recovery", () => {
 	it("stops the delayed retry when the task is aborted", async () => {
@@ -32,10 +39,33 @@ describe("auto retry recovery", () => {
 		assert.equal(dispatched, false)
 	})
 
+	it("schedules every attempt on the declared backoff", () => {
+		assert.equal(MAX_AUTO_RETRY_ATTEMPTS, 5)
+		assert.deepEqual(
+			Array.from({ length: MAX_AUTO_RETRY_ATTEMPTS }, (_unused, index) => getRetryDelay(index + 1)),
+			[3_000, 5_000, 7_000, 15_000, 30_000],
+		)
+	})
+
+	it("clamps attempts outside the schedule to its bounds", () => {
+		assert.equal(getRetryDelay(0), AUTO_RETRY_DELAYS_MS[0])
+		assert.equal(getRetryDelay(MAX_AUTO_RETRY_ATTEMPTS + 3), AUTO_RETRY_DELAYS_MS[MAX_AUTO_RETRY_ATTEMPTS - 1])
+	})
+
+	it("keeps retrying until the declared attempt budget is spent", () => {
+		const decision = getStreamRetryDecision({
+			isSpendLimitError: false,
+			autoRetryAttempts: MAX_AUTO_RETRY_ATTEMPTS - 1,
+		})
+
+		assert.equal(decision.shouldRetry, true)
+		assert.equal(decision.shouldPrompt, false)
+	})
+
 	it("prompts api failure recovery after stream retries are exhausted", () => {
 		const decision = getStreamRetryDecision({
 			isSpendLimitError: false,
-			autoRetryAttempts: 3,
+			autoRetryAttempts: MAX_AUTO_RETRY_ATTEMPTS,
 		})
 
 		assert.equal(decision.shouldPrompt, true)
@@ -45,7 +75,7 @@ describe("auto retry recovery", () => {
 	it("does not prompt retry recovery for spend limit streaming failures", () => {
 		const decision = getStreamRetryDecision({
 			isSpendLimitError: true,
-			autoRetryAttempts: 3,
+			autoRetryAttempts: MAX_AUTO_RETRY_ATTEMPTS,
 		})
 
 		assert.equal(decision.shouldPrompt, false)

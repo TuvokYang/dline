@@ -27,18 +27,47 @@ Run commands from the repository root and collect them until the process exits.
 
 | Purpose | Command |
 | --- | --- |
-| Run the complete packaged required gate | `npm run test:e2e:work` |
-| Run only the packaged work smoke | `npm run test:e2e:work -- --project "work smoke"` |
-| Run one packaged daily workflow with its smoke dependency | `npm run test:e2e:work -- --project "work chat tools"` |
-| Run one packaged functional file | `npm run test:e2e:functional -- src/test/e2e/functional/<domain>/<file>.test.ts --project "functional e2e tests" --workers=1 --retries=0` |
+| Run the complete required gate | `npm run test:e2e:work` |
+| Run only the work smoke | `npm run test:e2e:work -- --project "work smoke"` |
+| Run one daily workflow with its smoke dependency | `npm run test:e2e:work -- --project "work chat tools"` |
+| Run one functional file | `npm run test:e2e:functional -- src/test/e2e/functional/<domain>/<file>.test.ts --project "functional e2e tests" --workers=1 --retries=0` |
 | Run one development diagnostic | `npm run e2e:dev -- src/test/e2e/dev/bug-<behavior>.test.ts --project "development e2e tests" --workers=1 --retries=0` |
-| Run the explicit pressure tier | `npm run test:e2e:pressure` |
+| Run the explicit packaged pressure tier | `npm run test:e2e:pressure` |
 | Run one demo/capture file | `npm run e2e:demo -- src/test/e2e/demo/<file>.demo.ts` |
+| Inspect who currently owns `dist/` | `npm run e2e:lock:status` |
 | List a tier without launching VS Code | `npx playwright test -c <playwright-tier-config> <path> --list` |
 
-The `test:e2e:*` scripts package `dist/e2e.vsix`, prepare VS Code and Playwright, and run the selected config. The `e2e:*` scripts rebuild generated code, the Webview, and the extension bundle but do not package a new VSIX; use them only when the selected test intentionally uses the development extension or a current packaged artifact is already established. Raw `npx playwright test` intentionally skips npm lifecycle hooks.
+### Source mode versus packaged mode
+
+The extension source a tier loads is decided by `PACKAGED_E2E_LIFECYCLES` in `src/test/e2e/utils/vscode-launch-isolation.ts`, not by the script name:
+
+- **Packaged mode** (`test:e2e`, `test:e2e:optimal`, `test:e2e:pressure`): builds `dist/e2e.vsix` and installs it per worker slot. `vsce package` runs `vscode:prepublish`, so `dist/extension.js` becomes a production bundle.
+- **Source mode** (`e2e:*`, `test:e2e:work`, `test:e2e:functional`): the `pree2e` hook builds generated code, the Webview, and a dev bundle, then VS Code loads the checkout through `--extensionDevelopmentPath`.
+
+`test:e2e:work` and `test:e2e:functional` are source mode with the VS Code and Playwright download step added; they deliberately do not package a VSIX their fixture would never install. Set `DLINE_E2E_INSTALL_VSIX=1` to force packaged mode when a current `dist/e2e.vsix` already exists.
+
+Raw `npx playwright test` intentionally skips npm lifecycle hooks and the `dist/` lock; use it only when the artifact is already current.
 
 Start with one test file, one project, or one test name. Broaden only when the change crosses multiple stable contracts. Do not use `--debug`, `--headed`, retries, or a longer timeout as a substitute for one-shot evidence.
+
+### The dist/ build lock
+
+Every E2E resource is run-scoped through `DLINE_E2E_RUN_ID` except `dist/`, which has a fixed path. `scripts/with-dist-lock.mjs` therefore guards it with a reader/writer lock under `dist/.e2e-lock/`: builds take the exclusive side and Playwright runs take the shared side.
+
+This means:
+
+- One build at a time. A second build is refused while a build or any test run owns `dist/`.
+- Several test runs may share one prepared build concurrently.
+- A build is refused while test runs are still reading, because rebuilding would swap the bundle underneath them.
+
+To run tiers concurrently, prepare once and then start read-only runs:
+
+```powershell
+npm run test:e2e:build          # or: npm run pree2e
+$env:DLINE_E2E_RUN_ID = "concurrent-a"; npx playwright test -c playwright.work.config.ts
+```
+
+When a command is refused, the error names the holding PID, run ID, and command. Run `npm run e2e:lock:status` to inspect holders; entries left by a crashed run are pruned automatically on the next attempt, so never delete `dist/.e2e-lock/` while another run is active.
 
 ## Test Domains
 
@@ -96,7 +125,9 @@ System temp/dline-e2e/<run-id>/worker-<index>/test-<test-id>-retry-<n>/...
 - The mock server uses a dynamic loopback port; each test calls `resetOpenAiMock()` to clear response queues and consumptions.
 - Do not assume identical test titles share an artifact directory; recording paths must include test identity and retry.
 
-If two independent E2E processes still interfere while both start at `worker-0`, first check whether `DLINE_E2E_RUN_ID` was reused and whether code is cleaning a fixed root outside the current run namespace.
+`dist/` is the deliberate exception: it is a fixed path shared by every tier, which is why it is serialized by the build lock rather than namespaced. Treat it as a single shared artifact, not as run-scoped state.
+
+If two independent E2E processes still interfere while both start at `worker-0`, first check whether `DLINE_E2E_RUN_ID` was reused and whether code is cleaning a fixed root outside the current run namespace. If the symptom instead looks like the wrong extension build - a production bundle in a dev run, an assertion failing against code that is not in the checkout - check `npm run e2e:lock:status` and whether a concurrent build rewrote `dist/`.
 
 ## Writing E2E Tests
 

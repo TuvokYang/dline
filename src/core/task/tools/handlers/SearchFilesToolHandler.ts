@@ -1,7 +1,7 @@
 import { resolveProvider } from "@core/api"
 import type { ToolUse } from "@core/assistant-message"
 import { getPrompt } from "@core/prompts/i18n"
-import { regexSearchFiles } from "@services/ripgrep"
+import { RipgrepSearchTimeoutError, regexSearchFiles } from "@services/ripgrep"
 import { taskRipgrepScope } from "@services/ripgrep/cpu-budget"
 import { arePathsEqual, getReadablePath, isLocatedInWorkspace } from "@utils/path"
 import * as path from "path"
@@ -220,6 +220,7 @@ export class SearchFilesToolHandler implements IFullyManagedTool {
 				resultCount: 0,
 				stats: { truncated: false } satisfies SearchStats,
 				success: false,
+				failureMessage: error instanceof RipgrepSearchTimeoutError ? error.message : undefined,
 			}
 		}
 	}
@@ -235,6 +236,7 @@ export class SearchFilesToolHandler implements IFullyManagedTool {
 			resultCount: number
 			stats: SearchStats
 			success: boolean
+			failureMessage?: string
 		}>,
 		searchPaths: Array<{ absolutePath: string; workspaceName?: string }>,
 	): string {
@@ -272,6 +274,10 @@ export class SearchFilesToolHandler implements IFullyManagedTool {
 
 		// If all searches failed, return a clear error message instead of misleading "Found 0 results."
 		if (!anySuccess) {
+			const timeoutMessages = [...new Set(searchResults.map((result) => result.failureMessage).filter(Boolean))]
+			if (timeoutMessages.length > 0) {
+				return `Search failed: ${timeoutMessages.join(" ")}`
+			}
 			const failedPaths = searchPaths.map((p) => p.absolutePath).join(", ")
 			return `Search failed: unable to search in ${failedPaths}. This may be caused by ripgrep not being available or the search path not being accessible. Try a different directory path or check the tool requirements.`
 		}

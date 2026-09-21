@@ -57,8 +57,12 @@ function projectInteractionInput(dialog: CanonicalDialogProjection, kind: Intera
 export function adaptCanonicalTaskView(view: CanonicalTaskViewProjection, messages: readonly ClineMessage[] = []): TaskViewState {
 	const dialog = view.primary ?? view.approvals[0]
 	const kind = dialog ? interactionKind(dialog.kind) : undefined
+	// A still-partial row means the reveal never finished, so it cannot anchor a
+	// dispatchable interaction.
 	const anchors = dialog
-		? messages.filter((message) => message.type === "ask" && message.interactionId === dialog.interactionId)
+		? messages.filter(
+				(message) => message.type === "ask" && message.interactionId === dialog.interactionId && !message.partial,
+			)
 		: []
 	const anchor = anchors.length === 1 ? anchors[0] : undefined
 	const definition = kind ? getInteraction(kind) : undefined
@@ -91,7 +95,10 @@ export function adaptCanonicalTaskView(view: CanonicalTaskViewProjection, messag
 		payloadPolicy: "none",
 		dispatchTarget: "task",
 	}))
-	const input = dialog && kind ? projectInteractionInput(dialog, kind) : DISABLED_INPUT
+	// Without its anchor row the dialog has nothing to pin its controls to, so the
+	// surface falls back to task-level affordances instead of orphaned buttons.
+	const anchored = Boolean(dialog && anchor)
+	const input = dialog && kind && anchored ? projectInteractionInput(dialog, kind) : DISABLED_INPUT
 	return {
 		taskId: view.taskId,
 		phase: taskViewPhase(view),
@@ -104,6 +111,6 @@ export function adaptCanonicalTaskView(view: CanonicalTaskViewProjection, messag
 			? { contextCompaction: { active: true as const, operationId: view.compaction.compactionId } }
 			: {}),
 		input,
-		footer: { actions: interactionActions.length > 0 ? interactionActions : taskActions },
+		footer: { actions: anchored && interactionActions.length > 0 ? interactionActions : taskActions },
 	}
 }

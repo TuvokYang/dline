@@ -11,6 +11,7 @@ import { DlineRuntimeFileManager } from "@/services/runtime-files/DlineRuntimeFi
 import { PATCH_MARKERS } from "@/shared/Patch"
 import type { ConfigurableCeilings, PermissionScopeContext } from "../../kernel/turn/approval-kind"
 import { PATH_SCOPED_TOOLS, resolveLaneContext, type ToolLaneContext } from "../../kernel/turn/tool-lanes"
+import { findReplaceTextFiles } from "../../tools/utils/replace-text-files"
 import {
 	admitToolCall,
 	rejectToolCall,
@@ -246,7 +247,7 @@ function resolveScopeContext(
 				!roots.some((root) => isInsideRoot(absolutePath, root)),
 		),
 		isSafeCommand: toolName === ClineDefaultTool.BASH ? !requiresApproval : false,
-		isToolAutoApproveEnabled: toolName === ClineDefaultTool.MCP_USE ? snapshot.mcpToolAutoApprove : undefined,
+		isToolAutoApproveEnabled: toolName === ClineDefaultTool.MCP_USE ? snapshot.mcpToolAutoApprove === true : undefined,
 	}
 }
 
@@ -274,6 +275,14 @@ interface ConfirmedScopeContext {
 	confirmationFailed: boolean
 }
 
+/**
+ * Tools whose final write set is discovered while they execute.
+ *
+ * Their declared path still identifies the target the call addresses, so it
+ * classifies the permission scope. What it cannot do is enumerate the files
+ * they will touch, so they never contribute canonical write-path lanes and
+ * fall back to the conservative fan-out lane instead.
+ */
 const DYNAMIC_WRITE_FANOUT_TOOLS = new Set<ClineDefaultTool>([ClineDefaultTool.REPLACE_TEXT, ClineDefaultTool.RENAME])
 
 async function confirmScopeContext(
@@ -282,10 +291,23 @@ async function confirmScopeContext(
 	snapshot: ToolAdmissionSnapshot,
 ): Promise<ConfirmedScopeContext> {
 	const lexical = resolveScopeContext(block, toolName, snapshot)
-	const declared = DYNAMIC_WRITE_FANOUT_TOOLS.has(toolName) ? [] : declaredPaths(block, toolName)
-	const absolutePaths = declared
-		.map((candidate) => resolveLexicalPath(candidate, snapshot))
-		.filter((candidate): candidate is string => candidate !== undefined)
+	// `rename` edits whatever the language server resolves while it runs, so its
+	// declared file identifies the target it is charged to but not its write set.
+	const anchorIsNotTheWriteSet = toolName === ClineDefaultTool.RENAME
+	let absolutePaths: string[]
+	try {
+		if (toolName === ClineDefaultTool.REPLACE_TEXT) {
+			const filePattern = parameterValue(block, "file_pattern")
+			absolutePaths =
+				typeof filePattern === "string" && filePattern.trim() ? await findReplaceTextFiles(snapshot.cwd, filePattern) : []
+		} else {
+			absolutePaths = declaredPaths(block, toolName)
+				.map((candidate) => resolveLexicalPath(candidate, snapshot))
+				.filter((candidate): candidate is string => candidate !== undefined)
+		}
+	} catch {
+		return { scope: { ...lexical, isExternalPath: true }, canonicalPaths: [], confirmationFailed: true }
+	}
 	if (absolutePaths.length === 0) return { scope: lexical, canonicalPaths: [], confirmationFailed: false }
 
 	const canonicalPaths = await Promise.all(absolutePaths.map(canonicalizePath))
@@ -304,7 +326,9 @@ async function confirmScopeContext(
 					!canonicalRoots.some((root) => isInsideRoot(canonicalPath, root)),
 			),
 		},
-		canonicalPaths: resolvedPaths,
+		// The anchor was canonicalized to classify the scope; reporting it as the
+		// write set would understate which files actually need a lane.
+		canonicalPaths: anchorIsNotTheWriteSet ? [] : resolvedPaths,
 		confirmationFailed: false,
 	}
 }
@@ -405,11 +429,12 @@ export function prepareRegisteredToolAdmission<T>(input: RegisteredToolAdmission
 			refreshDecision,
 		)
 	}
-	const declared = DYNAMIC_WRITE_FANOUT_TOOLS.has(input.canonicalToolName)
-		? []
-		: declaredPaths(input.block, input.canonicalToolName)
+	// A declared path is confirmed before scheduling so an alias resolves to the
+	// scope that actually governs the call. replace_text names a pattern rather
+	// than a path, so it confirms on its own.
+	const declared = declaredPaths(input.block, input.canonicalToolName)
 	const confirm =
-		declared.length > 0
+		declared.length > 0 || input.canonicalToolName === ClineDefaultTool.REPLACE_TEXT
 			? async () => {
 					const confirmed = await confirmScopeContext(input.block, input.canonicalToolName, input.snapshot)
 					const lanes: ToolLaneContext = {

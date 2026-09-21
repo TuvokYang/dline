@@ -44,6 +44,32 @@ export class ExecuteCommandToolHandler implements IFullyManagedTool {
 		return `[${block.name} for '${block.params.command}'${workdirectory}]`
 	}
 
+	/**
+	 * Mark this command's own row as never having run.
+	 *
+	 * The row is created as `pending` and only the execution path moves it on,
+	 * so a refused command would otherwise stay pending forever and keep
+	 * offering a Cancel button for work that will never start.
+	 *
+	 * The row is matched by the block's canonical interaction id rather than by
+	 * position: a turn may carry several command rows, and the most recent one
+	 * can belong to a sibling that is still running.
+	 */
+	async presentDenial(config: TaskConfig, block: ToolUse): Promise<void> {
+		if (block.name === ClineDefaultTool.KILL_COMMAND) return
+		const interactionId = block.dline_tid
+		if (!interactionId) return
+		const messages = config.messageState.clineMessages
+		const index = messages.findIndex(
+			(message) =>
+				(message.ask === "command" || message.say === "command") &&
+				message.interactionId === interactionId &&
+				message.commandStatus === "pending",
+		)
+		if (index === -1) return
+		await config.callbacks.updateClineMessage(index, { commandStatus: "skipped" })
+	}
+
 	async handlePartialBlock(block: ToolUse, uiHelpers: StronglyTypedUIHelpers): Promise<void> {
 		if (block.name === ClineDefaultTool.KILL_COMMAND) return
 		const command = block.params.command

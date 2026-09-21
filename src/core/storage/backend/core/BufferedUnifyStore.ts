@@ -51,6 +51,7 @@ export interface BufferedUnifyStoreOptions<TItem extends { ts: number }> {
 	readonly flushIntervalMs?: number
 	readonly ensureUniqueAppendTimestamp?: boolean
 	readonly subscriptionKey: string
+	readonly storeKind?: string
 	readonly acceptInitialItem?: (item: TItem) => boolean
 	readonly truncateTail?: (keepCount: number, expectedCount: number) => Promise<void>
 }
@@ -72,6 +73,7 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
 	private readonly ownedListeners = new Set<BufferedUnifyStoreChangeListener>()
 	private readonly acceptInitialItem: (item: TItem) => boolean
 	private readonly truncateTail?: (keepCount: number, expectedCount: number) => Promise<void>
+	private readonly storeKind: string
 	private flushTimer: ReturnType<typeof setInterval> | undefined
 	private closing = false
 	private closed = false
@@ -95,6 +97,7 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
 		this.subscriptionState = getSubscriptionState(options.subscriptionKey)
 		this.acceptInitialItem = options.acceptInitialItem ?? (() => true)
 		this.truncateTail = options.truncateTail
+		this.storeKind = options.storeKind ?? "other"
 	}
 
 	static async open<TEntity extends object, TItem extends { ts: number }>(options: {
@@ -463,6 +466,8 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
 			recordPerfPhase(PerfDomain.BufferedStore, "flush_commit", performance.now() - startedAt, {
 				commit: "error",
 				size: collectionSizeBand(this.items.length),
+				store_kind: this.storeKind,
+				rewrite_reason: "error",
 			})
 			throw error
 		}
@@ -477,9 +482,11 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
 		// The same two facts the metric carries. A duration alone would leave a
 		// reader unable to tell a large history from a store that stopped
 		// appending, which is the distinction the span exists to show.
-		const describe = (commit: string, size: string): void => {
+		const describe = (commit: string, size: string, rewriteReason: string): void => {
 			span?.setAttribute("commit", commit)
 			span?.setAttribute("size", size)
+			span?.setAttribute("store_kind", this.storeKind)
+			span?.setAttribute("rewrite_reason", rewriteReason)
 		}
 		const tailAdditions = this.getPureTailAdditions()
 		if (tailAdditions) {
@@ -489,18 +496,30 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
 			this.setCommittedState([...this.persistedItems, ...tailAdditions])
 			this.dirty = false
 			this.publishCommittedChange()
-			phase.stop({ commit: "buffered_append", size: collectionSizeBand(this.items.length) })
-			describe("buffered_append", collectionSizeBand(this.items.length))
+			phase.stop({
+				commit: "buffered_append",
+				size: collectionSizeBand(this.items.length),
+				store_kind: this.storeKind,
+				rewrite_reason: "none",
+			})
+			describe("buffered_append", collectionSizeBand(this.items.length), "none")
 			this.reportSlowCommit(startedAt, "buffered_append", this.items.length)
 			return
 		}
 		let merged: TItem[] = []
 		let commit = "rewrite"
-		let appendedCount = 0
+		let rewriteReason = "patch"
+		let committedChange = true
 		await this.store.transaction(async (transaction) => {
 			const entities = await transaction.query({ orderBy: [asc(this.mapping.ordinal)] })
 			const committed = entities.map((entity) => this.mapping.toItem(entity))
 			merged = this.mergeWithCommitted(committed)
+			if (this.isSameCommittedSequence(committed, merged)) {
+				commit = "noop"
+				rewriteReason = "no_change"
+				committedChange = false
+				return
+			}
 			// The merge already ran against the committed state read inside this
 			// transaction, so when it only grew a tail there is nothing to rewrite.
 			// Deciding from `committed` rather than from the local baseline keeps
@@ -509,17 +528,23 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
 			const appended = this.suffixAfterUnchangedPrefixOf(committed, merged)
 			if (appended) {
 				commit = "append"
-				appendedCount = appended.length
+				rewriteReason = "none"
 				await transaction.insert(appended.map((item, index) => this.mapping.toEntity(item, committed.length + index)))
 				return
 			}
+			rewriteReason = this.classifyRewriteReason(committed, merged)
 			await transaction.replaceAll(merged.map((item, ordinal) => this.mapping.toEntity(item, ordinal)))
 		})
 		this.setCommittedState(merged)
 		this.dirty = false
-		this.publishCommittedChange()
-		phase.stop({ commit, size: collectionSizeBand(merged.length) })
-		describe(commit, collectionSizeBand(merged.length))
+		if (committedChange) this.publishCommittedChange()
+		phase.stop({
+			commit,
+			size: collectionSizeBand(merged.length),
+			store_kind: this.storeKind,
+			rewrite_reason: rewriteReason,
+		})
+		describe(commit, collectionSizeBand(merged.length), rewriteReason)
 		this.reportSlowCommit(startedAt, commit, merged.length)
 	}
 
@@ -546,6 +571,17 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
 	 * objects it was given for untouched entries, so a replaced entry always
 	 * breaks reference equality and correctly forces a full rewrite.
 	 */
+	private isSameCommittedSequence(committed: readonly TItem[], merged: readonly TItem[]): boolean {
+		return committed.length === merged.length && committed.every((item, index) => item === merged[index])
+	}
+
+	private classifyRewriteReason(committed: readonly TItem[], merged: readonly TItem[]): string {
+		if (merged.length < committed.length) return "remove"
+		if (merged.length > committed.length) return "insert_or_merge"
+		if (committed.some((item, index) => item.ts !== merged[index]?.ts)) return "reorder"
+		return "patch"
+	}
+
 	private suffixAfterUnchangedPrefixOf(committed: readonly TItem[], merged: readonly TItem[]): TItem[] | undefined {
 		if (merged.length <= committed.length) return undefined
 		for (let index = 0; index < committed.length; index++) {

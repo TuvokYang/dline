@@ -17,6 +17,7 @@ describe("TaskDeletionOrchestrator", () => {
 	beforeEach(() => {
 		mockController = {
 			task: undefined,
+			getCurrentTaskId: () => mockController.task?.taskId,
 			clearTask: async () => {},
 			getTaskWithId: async (_id: string) => {
 				throw new Error("Task not found")

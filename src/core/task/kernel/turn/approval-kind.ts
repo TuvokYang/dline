@@ -31,6 +31,7 @@ export type PermissionScope =
 	| "edit_external"
 	| "command_safe"
 	| "command_all"
+	| "terminate_command"
 	| "browser"
 	| "web"
 	| "mcp"
@@ -105,6 +106,21 @@ function ownsItsInteraction(tool: KernelToolId): boolean {
 }
 
 /**
+ * Tools that only withdraw an effect the user already approved.
+ *
+ * Terminating a command cannot reach anything the command was not already
+ * allowed to reach; it takes that reach away. Sharing the command scopes made
+ * stopping harder to authorize than starting, so a user who declined broad
+ * command approval had to approve each termination too — exactly backwards,
+ * since that is the user most likely to want the command stopped. Like
+ * interaction ownership this is a fixed property of the tool, which is why the
+ * scope it resolves to has a fixed ceiling rather than a configurable one.
+ */
+function withdrawsAnApprovedEffect(tool: KernelToolId): boolean {
+	return tool === KernelToolId.KILL_COMMAND
+}
+
+/**
  * Default ceiling per scope.
  *
  * Every scope defaults to `auto`, which means the ceiling adds no restriction
@@ -121,6 +137,7 @@ const DEFAULT_CEILINGS: Record<PermissionScope, ApprovalCeiling> = {
 	edit_external: "auto",
 	command_safe: "auto",
 	command_all: "auto",
+	terminate_command: "auto",
 	browser: "auto",
 	web: "auto",
 	mcp: "auto",
@@ -136,16 +153,24 @@ const DEFAULT_CEILINGS: Record<PermissionScope, ApprovalCeiling> = {
  * `conversational` covers tools that present their own interaction. A
  * `manual_only` ceiling on such a tool would be unsatisfiable rather than
  * strict, so the ceiling is not configurable and the conflict cannot arise.
+ *
+ * `terminate_command` covers withdrawing an already approved effect. A ceiling
+ * there would only make a command harder to stop than it was to start, which
+ * is a restriction that protects nothing.
  */
-const FIXED_CEILING_SCOPES: ReadonlySet<PermissionScope> = new Set<PermissionScope>(["conversational"])
+const FIXED_CEILING_SCOPES: ReadonlySet<PermissionScope> = new Set<PermissionScope>(["conversational", "terminate_command"])
 
-/** Read tools whose provider/runtime fan-out can reach paths absent from the call. */
-const UNBOUNDED_READ_TOOLS: ReadonlySet<KernelToolId> = new Set([KernelToolId.FIND_REFERENCES])
-
-/** Edit tools whose provider/runtime fan-out can reach paths absent from the call. */
-const UNBOUNDED_EDIT_TOOLS: ReadonlySet<KernelToolId> = new Set([KernelToolId.RENAME, KernelToolId.REPLACE_TEXT])
-
-/** Tools that reach the filesystem for reading. */
+/**
+ * Tools that reach the filesystem for reading.
+ *
+ * A symbol tool such as `find_references` belongs here even though its result
+ * can name files the call never did. Scope answers "what is this call allowed
+ * to address", which is the declared target; it does not bound what a language
+ * server reports back. Classifying the tool as external regardless of its
+ * target only moved a permitted workspace read onto the "read all files"
+ * toggle, which withheld nothing while making the workspace ceiling
+ * unreachable for it.
+ */
 const READ_TOOLS: ReadonlySet<KernelToolId> = new Set([
 	KernelToolId.FILE_READ,
 	KernelToolId.SEARCH,
@@ -158,7 +183,14 @@ const READ_TOOLS: ReadonlySet<KernelToolId> = new Set([
 	KernelToolId.GENERATE_EXPLANATION,
 ])
 
-/** Tools that mutate files. */
+/**
+ * Tools that mutate files.
+ *
+ * `rename` and `replace_text` discover their full write set at execution time.
+ * That fan-out is contained by the dynamic write lane in `tool-lanes`, which
+ * serialises them against other edits; approval classifies the target the call
+ * declares, exactly as it does for a single-file edit.
+ */
 const EDIT_TOOLS: ReadonlySet<KernelToolId> = new Set([
 	KernelToolId.FILE_NEW,
 	KernelToolId.FILE_EDIT,
@@ -178,6 +210,7 @@ const DIRECT_SCOPES: Partial<Record<KernelToolId, PermissionScope>> = {
 	[KernelToolId.MCP_ACCESS]: "mcp",
 	[KernelToolId.MCP_DOCS]: "mcp",
 	[KernelToolId.LOAD_MCP]: "mcp",
+	[KernelToolId.KILL_COMMAND]: "terminate_command",
 	[KernelToolId.GENERATE_IMAGE]: "generate_image",
 	[KernelToolId.TODO]: "focus_chain",
 	[KernelToolId.CHANGE_TODO_LIST]: "focus_chain",
@@ -197,15 +230,13 @@ const DIRECT_SCOPES: Partial<Record<KernelToolId, PermissionScope>> = {
 export function resolvePermissionScope(toolName: string, context: PermissionScopeContext = {}): PermissionScope {
 	const tool = toolName as KernelToolId
 
-	if (UNBOUNDED_READ_TOOLS.has(tool)) return "read_external"
-	if (UNBOUNDED_EDIT_TOOLS.has(tool)) return "edit_external"
 	if (READ_TOOLS.has(tool)) {
 		return context.isExternalPath ? "read_external" : "read_workspace"
 	}
 	if (EDIT_TOOLS.has(tool)) {
 		return context.isExternalPath ? "edit_external" : "edit_workspace"
 	}
-	if (tool === KernelToolId.BASH || tool === KernelToolId.KILL_COMMAND) {
+	if (tool === KernelToolId.BASH) {
 		return context.isSafeCommand ? "command_safe" : "command_all"
 	}
 
@@ -324,7 +355,7 @@ export function resolveApprovalKind(input: ApprovalKindInput): ApprovalDecision 
 	if (input.inheritsApproval === true) {
 		return { kind: "none", scope, ceiling }
 	}
-	if (ownsItsInteraction(tool)) {
+	if (ownsItsInteraction(tool) || withdrawsAnApprovedEffect(tool)) {
 		return { kind: "none", scope, ceiling }
 	}
 

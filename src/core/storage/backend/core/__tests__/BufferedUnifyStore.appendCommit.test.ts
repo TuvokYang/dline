@@ -71,6 +71,31 @@ describe("BufferedUnifyStore append commit", () => {
 		}
 	})
 
+	it("skips a physical rewrite when a staged patch makes no logical change", async () => {
+		const filePath = createFixturePath()
+		const seed = await openStore(filePath)
+		await seed.append({ ts: 10, value: "a" })
+		await seed.append({ ts: 20, value: "b" })
+		await seed.flush()
+		await seed.close()
+
+		const store = await openStore(filePath)
+		try {
+			const before = statSync(filePath)
+			await store.stagePatchAt(0, { value: "a" })
+			await store.flush()
+			const after = statSync(filePath)
+
+			expect(after.ino).toBe(before.ino)
+			expect(readRows(filePath)).toEqual([
+				{ ts: 10, value: "a" },
+				{ ts: 20, value: "b" },
+			])
+		} finally {
+			await store.close()
+		}
+	})
+
 	it("still rewrites when an existing entry changes", async () => {
 		const filePath = createFixturePath()
 		const seed = await openStore(filePath)

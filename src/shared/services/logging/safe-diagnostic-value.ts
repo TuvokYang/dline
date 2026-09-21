@@ -93,6 +93,11 @@ const ERROR_IDENTITY_KEYS = new Set(["code", "errno", "status", "statuscode", "s
 const ERROR_MESSAGE_KEY = "message"
 
 const AUTHORIZATION_VALUE_PATTERN = /\b(?:Bearer|Basic)\s+[^\s"'}]+/gi
+const LABELED_CREDENTIAL_PATTERN =
+	/\b(api[-_ ]?key|x[-_ ]?api[-_ ]?key|access[-_ ]?token|refresh[-_ ]?token|id[-_ ]?token|client[-_ ]?secret|password|private[-_ ]?key|proxy[-_ ]?authorization|credential|secret|session|cookie|set[-_ ]?cookie|token)\b(\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,;}\]]+)/gi
+const TOKEN_VALUE_PATTERN =
+	/\b(?:sk-[A-Za-z0-9_-]{8,}|sk_[A-Za-z0-9_-]{8,}|pk_[A-Za-z0-9_-]{8,}|ghp_[A-Za-z0-9_-]{8,}|github_pat_[A-Za-z0-9_-]{8,}|xox[baprs]-[A-Za-z0-9-]{8,}|AIza[A-Za-z0-9_-]{16,}|AKIA[A-Z0-9]{12,})\b/g
+const PRIVATE_KEY_PATTERN = /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g
 const MAX_STRING_LENGTH = 512
 const MAX_DEPTH = 6
 
@@ -125,7 +130,18 @@ function isContentKey(key: string, inErrorShape: boolean): boolean {
  */
 export function redactDiagnosticString(value: string): string {
 	AUTHORIZATION_VALUE_PATTERN.lastIndex = 0
-	return value.replace(AUTHORIZATION_VALUE_PATTERN, (match) => `${match.slice(0, match.indexOf(" ") + 1)}[REDACTED]`)
+	LABELED_CREDENTIAL_PATTERN.lastIndex = 0
+	TOKEN_VALUE_PATTERN.lastIndex = 0
+	PRIVATE_KEY_PATTERN.lastIndex = 0
+
+	return value
+		.replace(PRIVATE_KEY_PATTERN, "[REDACTED PRIVATE KEY]")
+		.replace(AUTHORIZATION_VALUE_PATTERN, (match) => `${match.slice(0, match.indexOf(" ") + 1)}[REDACTED]`)
+		.replace(LABELED_CREDENTIAL_PATTERN, (_match, key: string, separator: string, credential: string) => {
+			const quote = credential.startsWith('"') ? '"' : credential.startsWith("'") ? "'" : ""
+			return `${key}${separator}${quote}[REDACTED]${quote}`
+		})
+		.replace(TOKEN_VALUE_PATTERN, "[REDACTED]")
 }
 
 /**
@@ -215,6 +231,6 @@ export function formatDiagnosticArgument(value: unknown): string {
 	try {
 		return JSON.stringify(toSafeDiagnosticValue(value)) ?? String(value)
 	} catch {
-		return String(value)
+		return redactDiagnosticString(String(value))
 	}
 }

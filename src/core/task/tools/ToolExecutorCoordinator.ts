@@ -1,4 +1,5 @@
 import type { ToolUse } from "@core/assistant-message"
+import { formatResponse } from "@core/prompts/responses"
 import { CLINE_MCP_TOOL_IDENTIFIER } from "@/shared/mcp"
 import { ClineDefaultTool } from "@/shared/tools"
 import { prepareRegisteredToolAdmission, type ToolAdmissionSnapshot } from "../executors/tool/ToolAdmissionRegistry"
@@ -55,6 +56,31 @@ export interface IPartialBlockHandler {
 	handlePartialBlock(block: ToolUse, uiHelpers: StronglyTypedUIHelpers): Promise<void>
 }
 
+/**
+ * A handler that can explain what a user rejection left behind.
+ *
+ * The driver owns the generic denial wording, but only the handler knows
+ * whether its target survived unchanged, so it may extend that wording.
+ */
+export interface IDenialDescribingToolHandler extends IToolHandler {
+	describeDenial(config: TaskConfig, block: ToolUse): Promise<string>
+}
+
+/**
+ * A handler that owns how its own row looks once the user refuses it.
+ *
+ * `describeDenial` tells the model what the refusal left behind; this reports
+ * the same fact to the user. Both stay with the handler because only it knows
+ * which row it created and which terminal state that row should show.
+ *
+ * An implementation must locate its row by the block's canonical identity. A
+ * turn can hold several rows of the same kind, so searching for the most recent
+ * one would retitle a sibling that is still awaiting its own answer.
+ */
+export interface IDenialPresentingToolHandler extends IToolHandler {
+	presentDenial(config: TaskConfig, block: ToolUse): Promise<void>
+}
+
 export type ToolHandlerPreparationResult =
 	| { outcome: "prepared"; presentation: ToolApprovalPresentation }
 	| { outcome: "rejected"; message: string }
@@ -86,8 +112,37 @@ export class SharedToolHandler implements IFullyManagedTool {
 		return this.baseHandler.execute(config, block)
 	}
 
+	async describeDenial(config: TaskConfig, block: ToolUse): Promise<string> {
+		return describeToolDenial(this.baseHandler, config, block)
+	}
+
+	async presentDenial(config: TaskConfig, block: ToolUse): Promise<void> {
+		await presentToolDenial(this.baseHandler, config, block)
+	}
+
 	async handlePartialBlock(block: ToolUse, uiHelpers: StronglyTypedUIHelpers): Promise<void> {
 		return this.baseHandler.handlePartialBlock(block, uiHelpers)
+	}
+}
+
+/** Resolve the denial wording a handler reports, falling back to the generic denial. */
+export async function describeToolDenial(handler: IToolHandler | undefined, config: TaskConfig, block: ToolUse): Promise<string> {
+	if (handler && "describeDenial" in handler) {
+		return (handler as IDenialDescribingToolHandler).describeDenial(config, block)
+	}
+	return formatResponse.toolDenied()
+}
+
+/**
+ * Let a handler move its own row to a refused terminal state.
+ *
+ * Most tools present a refusal through the generic denial row and opt out by
+ * not implementing this, so an absent hook is the normal case rather than a
+ * missing one.
+ */
+export async function presentToolDenial(handler: IToolHandler | undefined, config: TaskConfig, block: ToolUse): Promise<void> {
+	if (handler && "presentDenial" in handler) {
+		await (handler as IDenialPresentingToolHandler).presentDenial(config, block)
 	}
 }
 

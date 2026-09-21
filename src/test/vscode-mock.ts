@@ -84,6 +84,15 @@ export const version = "1.103.0"
 
 export const workspace = {
 	textDocuments,
+	onDidChangeConfiguration: (
+		_listener: (event: unknown) => void,
+		_thisArg?: unknown,
+		disposables?: Array<{ dispose(): void }>,
+	) => {
+		const disposable = { dispose: () => undefined }
+		disposables?.push(disposable)
+		return disposable
+	},
 	async openTextDocument(input: string | MockUri) {
 		const uri = toUri(input)
 		const existingDocument = findDocument(uri)

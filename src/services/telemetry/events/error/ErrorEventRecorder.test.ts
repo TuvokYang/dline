@@ -1,13 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { Logger } from "@/shared/services/Logger"
-import { TELEMETRY_MASK_VALUE } from "../../runtime/content-policy"
+import { RuntimeContentPolicy, TELEMETRY_MASK_VALUE } from "../../runtime/content-policy"
 import type { RuntimeEventRecorderPort } from "../runtime"
 import { ErrorEventRecorder } from "./ErrorEventRecorder"
 import { installLoggerTelemetryBridge } from "./LoggerTelemetryBridge"
 
-function harness() {
+function harness(developmentMode = false) {
 	const record = vi.fn<RuntimeEventRecorderPort["record"]>()
-	return { record, recorder: new ErrorEventRecorder({ record }) }
+	return { record, recorder: new ErrorEventRecorder({ record }, { developmentMode }) }
 }
 
 describe("ErrorEventRecorder", () => {
@@ -35,6 +35,58 @@ describe("ErrorEventRecorder", () => {
 			level: "error",
 			attributes: { message: TELEMETRY_MASK_VALUE, message_level: "warning", status: 503 },
 		})
+	})
+
+	it("keeps production message fields fully masked", () => {
+		const { record, recorder } = harness(false)
+		const dispose = installLoggerTelemetryBridge(recorder, { developmentMode: false })
+		vi.spyOn(Logger as unknown as { output: (message: string) => void }, "output").mockImplementation(() => undefined)
+
+		Logger.warn("request failed apiKey=sk-live-123456", { token: "ghp_1234567890123456" })
+		dispose()
+
+		const attributes = record.mock.calls[0]?.[0].attributes
+		expect(attributes).toEqual(
+			expect.objectContaining({
+				message: TELEMETRY_MASK_VALUE,
+				logger_message: TELEMETRY_MASK_VALUE,
+			}),
+		)
+		expect(attributes).not.toHaveProperty("diagnostic_message")
+		expect(attributes).not.toHaveProperty("diagnostic_logger_message")
+		expect(attributes).not.toHaveProperty("diagnostic_logger_args")
+	})
+
+	it("retains sanitized logger diagnostics only in development mode", () => {
+		const { record, recorder } = harness(true)
+		const dispose = installLoggerTelemetryBridge(recorder, { developmentMode: true })
+		vi.spyOn(Logger as unknown as { output: (message: string) => void }, "output").mockImplementation(() => undefined)
+
+		Logger.warn("request failed Authorization: Bearer sk-live-123456", {
+			status: 401,
+			apiKey: "sk-live-abcdef",
+			token: "ghp_1234567890123456",
+		})
+		dispose()
+
+		const attributes = record.mock.calls[0]?.[0].attributes
+		expect(attributes).toEqual(
+			expect.objectContaining({
+				message: TELEMETRY_MASK_VALUE,
+				logger_message: TELEMETRY_MASK_VALUE,
+				diagnostic_message: "request failed Authorization: Bearer [REDACTED]",
+				diagnostic_logger_message: "request failed Authorization: Bearer [REDACTED]",
+				diagnostic_logger_args: ['{"status":401,"apiKey":"[REDACTED]","token":"[REDACTED]"}'],
+			}),
+		)
+
+		const policy = new RuntimeContentPolicy(Buffer.alloc(32), { preserveDevelopmentDiagnostics: true })
+		const exported = policy.apply(attributes).attributes
+		expect(exported.diagnostic_message).toBe("request failed Authorization: Bearer [REDACTED]")
+		expect(exported.diagnostic_logger_message).toBe("request failed Authorization: Bearer [REDACTED]")
+		expect(exported["diagnostic_logger_args.0"]).toContain("[REDACTED]")
+		expect(JSON.stringify(exported)).not.toContain("sk-live")
+		expect(JSON.stringify(exported)).not.toContain("ghp_")
 	})
 
 	it("bridges only structured warn/error records and ignores internal diagnostics", () => {

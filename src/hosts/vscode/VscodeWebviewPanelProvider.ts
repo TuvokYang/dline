@@ -147,8 +147,10 @@ export class VscodeWebviewPanelProvider extends WebviewProvider {
 
 		Logger.log(`[VscodeWebviewPanelProvider] Restoring panel for task ${taskId}`)
 		try {
-			const taskWithId = await provider.controller.getTaskWithId(taskId)
-			const title = normalizeTaskPanelTitle(taskWithId.historyItem.task || "Dline")
+			const historyItem =
+				provider.controller.stateManager.getGlobalStateKey("taskHistory").find((item) => item.id === taskId) ??
+				(await provider.controller.getTaskWithId(taskId)).historyItem
+			const title = normalizeTaskPanelTitle(historyItem.task || "Dline")
 			panel.title = title
 			// Persist state on next webviewReady
 			provider.setPendingTaskId(taskId)
@@ -157,7 +159,7 @@ export class VscodeWebviewPanelProvider extends WebviewProvider {
 				await sendChatButtonClickedEvent(provider.controller)
 			}
 			void provider.controller
-				.initTask(undefined, undefined, undefined, taskWithId.historyItem, undefined, {
+				.initTask(undefined, undefined, undefined, historyItem, undefined, {
 					onHistoryTaskReadyToDisplay: revealRestoredTask,
 				})
 				.then(() => {

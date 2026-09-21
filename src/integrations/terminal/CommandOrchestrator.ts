@@ -15,12 +15,12 @@
 
 import { formatResponse } from "@core/prompts/responses"
 import { processFilesIntoText } from "@integrations/misc/extract-text"
-import { DlineRuntimeFileManager } from "@services/runtime-files"
 import { TerminalHangStage, telemetryService } from "@services/telemetry"
 import * as fs from "fs"
 import { formatCommandLogNotice, formatLargeOutputLogNotice } from "@/shared/command-log-notice"
 import { Logger } from "@/shared/services/Logger"
 import { isCommandCompletionSuccessful } from "./command-completion"
+import { resolveCommandLogPath } from "./command-log-path"
 import { appendCommandLogPath } from "./command-result"
 import { COMPLETION_TIMEOUT_MS, DEFAULT_TERMINAL_OUTPUT_LINE_LIMIT, MAX_BYTES_BEFORE_FILE } from "./constants"
 import { formatTerminalOutput, splitTerminalOutput, writeTerminalOutputFrame } from "./output-stream"
@@ -69,6 +69,7 @@ export async function orchestrateCommandExecution(
 		terminalType = "vscode",
 		suppressUserInteraction = false,
 		activityId,
+		taskId,
 	} = options
 
 	const say = async (
@@ -238,7 +239,7 @@ export async function orchestrateCommandExecution(
 		if (isWritingToFile) return
 		isWritingToFile = true
 		const largeOutputStem = activityId ?? `large-output-${cmdTs ?? Date.now()}`
-		largeOutputLogPath = DlineRuntimeFileManager.createTempFilePath(largeOutputStem)
+		largeOutputLogPath = resolveCommandLogPath(taskId, largeOutputStem)
 		const logFd = fs.openSync(largeOutputLogPath, "w")
 		largeOutputLogStream = fs.createWriteStream(largeOutputLogPath, { fd: logFd, flags: "w", autoClose: true })
 		largeOutputLogCompletion = new Promise<void>((resolve) => {

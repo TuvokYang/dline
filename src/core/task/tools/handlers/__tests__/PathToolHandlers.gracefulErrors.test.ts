@@ -3,6 +3,7 @@ import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { AGENT_IGNORE_FILE, type IgnoreController } from "@core/ignore/IgnoreController"
+import { RipgrepSearchTimeoutError } from "@services/ripgrep"
 import { ClineDefaultTool } from "@shared/tools"
 import * as pathUtils from "@utils/path"
 import { afterEach, beforeEach, describe, it, vi } from "vitest"
@@ -545,6 +546,20 @@ describe("SearchFilesToolHandler.execute – error recovery", () => {
 
 		// Tool result error (not a tool crash) — counter should NOT increment
 		assert.equal(typeof result, "string")
+		assert.equal(taskState.consecutiveMistakeCount, 0)
+	})
+
+	it("returns an actionable message when ripgrep reaches the search deadline", async () => {
+		const { config, taskState, validator } = createConfig()
+		const handler = new SearchFilesToolHandler(validator)
+		const ripgrepModule = await import("@services/ripgrep")
+		vi.spyOn(ripgrepModule, "regexSearchFiles").mockRejectedValue(new RipgrepSearchTimeoutError())
+
+		const result = await handler.execute(config, makeBlock(".", "pattern", "*"))
+
+		assert.equal(typeof result, "string")
+		assert.match(result as string, /timed out after 10 minutes/i)
+		assert.match(result as string, /Narrow the search path or file_pattern/)
 		assert.equal(taskState.consecutiveMistakeCount, 0)
 	})
 

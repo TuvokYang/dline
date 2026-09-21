@@ -16,12 +16,16 @@ async function readPackageVsix(): Promise<string> {
 }
 
 describe("package-vsix release channels", () => {
-	it("recognises only the two supported release tag formats", async () => {
+	it("recognises only the two public release tag formats and filters internal Insiders draft tags", async () => {
 		const source = await readPackageVsix()
 
 		expect(source).toContain("/^v(\\d+\\.\\d+\\.\\d+)$/")
 		expect(source).toContain("/^dev-v(\\d+\\.\\d+\\.\\d+)$/")
-		// A bare exact-match check would accept dev-v* as a production tag.
+		expect(source).toContain("/^insiders-[0-9a-f]{40}$/")
+		expect(source).toContain('tryGit("git tag --points-at HEAD")')
+		expect(source).toContain("INSIDERS_DRAFT_TAG_PATTERN.test(tag)")
+		// Selecting from all exact tags prevents an internal draft tag from masking dev-vX.Y.Z.
+		expect(source).not.toContain("git describe --tags --exact-match")
 		expect(source).not.toMatch(/function isOnTag\b/)
 	})
 

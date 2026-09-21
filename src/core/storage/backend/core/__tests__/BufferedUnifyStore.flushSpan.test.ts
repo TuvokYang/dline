@@ -130,7 +130,32 @@ describe("BufferedUnifyStore flush span", () => {
 			await store.append({ ts: 10, value: "a" })
 			await runInSpanScope(parent, () => store.flush())
 
-			expect(flushSpans()[0]?.attributes).toMatchObject({ commit: "buffered_append", size: "<100" })
+			expect(flushSpans()[0]?.attributes).toMatchObject({
+				commit: "buffered_append",
+				size: "<100",
+				store_kind: "other",
+				rewrite_reason: "none",
+			})
+		} finally {
+			await store.close()
+		}
+	})
+
+	it("reports the bounded reason for a full rewrite", async () => {
+		const store = await openStore(createFixturePath())
+		const parent = fakeSpan("caller", { name: "caller", attributes: {}, ended: false })
+
+		try {
+			await store.append({ ts: 10, value: "a" })
+			await store.flush()
+			await store.stagePatchAt(0, { value: "edited" })
+			await runInSpanScope(parent, () => store.flush())
+
+			expect(flushSpans()[0]?.attributes).toMatchObject({
+				commit: "rewrite",
+				store_kind: "other",
+				rewrite_reason: "patch",
+			})
 		} finally {
 			await store.close()
 		}

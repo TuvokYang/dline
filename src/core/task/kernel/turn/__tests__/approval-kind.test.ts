@@ -1,5 +1,5 @@
 import { type AutoApprovalSettings, DEFAULT_AUTO_APPROVAL_SETTINGS } from "@shared/AutoApprovalSettings"
-import { ClineDefaultTool } from "@shared/tools"
+import { ClineDefaultTool, READ_ONLY_TOOLS } from "@shared/tools"
 import { describe, expect, it } from "vitest"
 import { type ConfigurableCeilings, resolveApprovalCeiling, resolveApprovalKind, resolvePermissionScope } from "../approval-kind"
 
@@ -55,7 +55,9 @@ describe("permission scope", () => {
 
 	it("separates workspace and external edits", () => {
 		expect(resolvePermissionScope(ClineDefaultTool.FILE_EDIT)).toBe("edit_workspace")
+		expect(resolvePermissionScope(ClineDefaultTool.REPLACE_TEXT)).toBe("edit_workspace")
 		expect(resolvePermissionScope(ClineDefaultTool.APPLY_PATCH, { isExternalPath: true })).toBe("edit_external")
+		expect(resolvePermissionScope(ClineDefaultTool.REPLACE_TEXT, { isExternalPath: true })).toBe("edit_external")
 	})
 
 	it("separates safe and unclassified commands", () => {
@@ -68,6 +70,33 @@ describe("permission scope", () => {
 		expect(resolvePermissionScope(ClineDefaultTool.MCP_USE)).toBe("mcp")
 		expect(resolvePermissionScope(ClineDefaultTool.WEB_FETCH)).toBe("web")
 		expect(resolvePermissionScope(ClineDefaultTool.USE_SUBAGENTS)).toBe("subagent")
+	})
+
+	// A symbol tool is classified by the file the call actually names, like
+	// every other path-scoped tool. Classifying it as external regardless of
+	// that path made the user's workspace toggle unreachable: the call was
+	// charged to the "read all files" permission even when the target was a
+	// file the user had already permitted, and no ceiling on the workspace
+	// scope could ever apply to it.
+	it("classifies symbol tools by their declared target, not by their result fan-out", () => {
+		expect(resolvePermissionScope(ClineDefaultTool.FIND_REFERENCES)).toBe("read_workspace")
+		expect(resolvePermissionScope(ClineDefaultTool.RENAME)).toBe("edit_workspace")
+	})
+
+	it("still charges symbol tools to the external scope when their target is outside the workspace", () => {
+		expect(resolvePermissionScope(ClineDefaultTool.FIND_REFERENCES, { isExternalPath: true })).toBe("read_external")
+		expect(resolvePermissionScope(ClineDefaultTool.RENAME, { isExternalPath: true })).toBe("edit_external")
+	})
+
+	// Two independent classifications of the same tool cannot disagree about
+	// whether it writes. READ_ONLY_TOOLS is consumed as "safe to run beside the
+	// checkpoint commit", so a member resolving to an edit scope would mean one
+	// of the two lists is wrong.
+	it("never resolves a declared read-only tool to an edit scope", () => {
+		for (const tool of READ_ONLY_TOOLS) {
+			expect(resolvePermissionScope(tool), tool).not.toMatch(/^edit_/)
+			expect(resolvePermissionScope(tool, { isExternalPath: true }), tool).not.toMatch(/^edit_/)
+		}
 	})
 })
 
@@ -205,6 +234,51 @@ describe("approval kind", () => {
 		})
 	})
 
+	describe("symbol tools", () => {
+		// This is the user-visible contract the misclassification broke: the
+		// permission the user granted for project files has to cover a symbol
+		// lookup in a project file.
+		it("are covered by the workspace toggle the user actually granted", () => {
+			const settings = noneApproved()
+			settings.actions.readFiles = true
+
+			expect(resolveApprovalKind({ toolName: ClineDefaultTool.FIND_REFERENCES, settings }).kind).toBe("automatic")
+		})
+
+		it("stay manual for a workspace rename until the edit toggle is granted", () => {
+			const settings = noneApproved()
+			settings.actions.readFiles = true
+
+			expect(resolveApprovalKind({ toolName: ClineDefaultTool.RENAME, settings }).kind).toBe("manual")
+
+			settings.actions.editFiles = true
+			expect(resolveApprovalKind({ toolName: ClineDefaultTool.RENAME, settings }).kind).toBe("automatic")
+		})
+
+		it("remain constrained by the ceiling on the scope they resolve to", () => {
+			const decision = resolveApprovalKind({
+				toolName: ClineDefaultTool.FIND_REFERENCES,
+				settings: allApproved(),
+				ceilings: { read_workspace: "manual_only" },
+			})
+
+			expect(decision).toMatchObject({ kind: "manual", scope: "read_workspace", ceiling: "manual_only" })
+		})
+
+		it("keep the external target behind the external toggle", () => {
+			const settings = noneApproved()
+			settings.actions.readFiles = true
+
+			expect(
+				resolveApprovalKind({
+					toolName: ClineDefaultTool.FIND_REFERENCES,
+					settings,
+					context: { isExternalPath: true },
+				}).kind,
+			).toBe("manual")
+		})
+	})
+
 	describe("command scopes", () => {
 		it("lets approve-all cover safe commands", () => {
 			const settings = noneApproved()
@@ -220,6 +294,37 @@ describe("approval kind", () => {
 			settings.actions.executeSafeCommands = true
 
 			expect(resolveApprovalKind({ toolName: ClineDefaultTool.BASH, settings }).kind).toBe("manual")
+		})
+	})
+
+	describe("terminating a command", () => {
+		it("needs no approval even when every command toggle is off", () => {
+			// The command being terminated was approved when it started, and
+			// stopping it cannot reach anything that command could not already
+			// reach. Sharing the command scopes made stopping harder to
+			// authorize than starting, which is backwards.
+			const decision = resolveApprovalKind({
+				toolName: ClineDefaultTool.KILL_COMMAND,
+				settings: noneApproved(),
+			})
+
+			expect(decision.kind).toBe("none")
+		})
+
+		it("no longer borrows the scope of the command it stops", () => {
+			expect(resolvePermissionScope(ClineDefaultTool.KILL_COMMAND)).toBe("terminate_command")
+			// The classifier for safe commands does not apply to it at all.
+			expect(resolvePermissionScope(ClineDefaultTool.KILL_COMMAND, { isSafeCommand: true })).toBe("terminate_command")
+		})
+
+		it("cannot be restricted by a ceiling on the commands it stops", () => {
+			const decision = resolveApprovalKind({
+				toolName: ClineDefaultTool.KILL_COMMAND,
+				settings: noneApproved(),
+				ceilings: { command_all: "manual_only", command_safe: "manual_only" },
+			})
+
+			expect(decision.kind).toBe("none")
 		})
 	})
 

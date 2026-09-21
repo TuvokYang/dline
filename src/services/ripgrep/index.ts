@@ -5,7 +5,7 @@ import * as readline from "readline"
 import { Logger } from "@/shared/services/Logger"
 import { getBinaryLocation } from "@/utils/fs"
 import { AMBIENT_RIPGREP_SCOPE, type RipgrepBudgetScope, ripgrepThreadArgs, withRipgrepSlot } from "./cpu-budget"
-import { createRipgrepIgnoreFile, type RipgrepRuleScope } from "./ignore-file"
+import { createRipgrepIgnoreFile, type RipgrepIgnoreFile, type RipgrepRuleScope } from "./ignore-file"
 
 /*
 This file provides functionality to perform regex searches on files using ripgrep.
@@ -59,51 +59,109 @@ interface SearchResult {
 
 const MAX_RESULTS = 300
 
-async function execRipgrep(args: string[], scope: RipgrepBudgetScope): Promise<string> {
-	const binPath: string = await getBinaryLocation("rg")
+/** Hard upper bound for one search, including CPU-slot waiting. */
+export const RIPGREP_SEARCH_TIMEOUT_MS = 10 * 60 * 1000
 
-	// Held until the search settles so the shared CPU budget covers the whole
-	// lifetime of the process, not just its creation.
-	return withRipgrepSlot(scope, () => runRipgrep(binPath, args))
+export class RipgrepSearchTimeoutError extends Error {
+	readonly code = "ripgrep_search_timeout"
+
+	constructor(readonly timeoutMs: number = RIPGREP_SEARCH_TIMEOUT_MS) {
+		super(
+			`Search timed out after ${Math.ceil(timeoutMs / 60_000)} minutes. ` +
+				"Narrow the search path or file_pattern; a search this broad indicates the search strategy needs to change.",
+		)
+		this.name = "RipgrepSearchTimeoutError"
+	}
 }
 
-function runRipgrep(binPath: string, args: string[]): Promise<string> {
+function signalReason(signal: AbortSignal): Error {
+	return signal.reason instanceof Error ? signal.reason : new Error("Ripgrep search aborted")
+}
+
+async function execRipgrep(args: string[], scope: RipgrepBudgetScope, signal: AbortSignal): Promise<string> {
+	const binPath: string = await getBinaryLocation("rg")
+	if (signal.aborted) throw signalReason(signal)
+
+	// Held until the search settles so the shared CPU budget covers the whole
+	// lifetime of the process, not just its creation. Passing the signal into the
+	// gate also removes a timed-out waiter before it can spawn orphaned work.
+	return withRipgrepSlot(scope, () => runRipgrep(binPath, args, signal), signal)
+}
+
+function runRipgrep(binPath: string, args: string[], signal: AbortSignal): Promise<string> {
 	return new Promise((resolve, reject) => {
 		const rgProcess = childProcess.spawn(binPath, args)
-		// cross-platform alternative to head, which is ripgrep author's recommendation for limiting output.
 		const rl = readline.createInterface({
 			input: rgProcess.stdout,
-			crlfDelay: Number.POSITIVE_INFINITY, // treat \r\n as a single line break even if it's split across chunks. This ensures consistent behavior across different operating systems.
+			crlfDelay: Number.POSITIVE_INFINITY,
 		})
 
 		let output = ""
+		let errorOutput = ""
 		let lineCount = 0
-		const maxLines = MAX_RESULTS * 5 // limiting ripgrep output with max lines since there's no other way to limit results. it's okay that we're outputting as json, since we're parsing it line by line and ignore anything that's not part of a match. This assumes each result is at most 5 lines.
+		let stoppingForOutputLimit = false
+		let settled = false
+		const maxLines = MAX_RESULTS * 5
 
-		rl.on("line", (line) => {
+		const cleanup = () => {
+			signal.removeEventListener("abort", handleAbort)
+			rl.off("line", handleLine)
+			rgProcess.stderr.off("data", handleStderr)
+			rgProcess.off("close", handleClose)
+			rgProcess.off("error", handleError)
+		}
+		const settle = (error?: Error) => {
+			if (settled) return
+			settled = true
+			cleanup()
+			rl.close()
+			if (error) reject(error)
+			else resolve(output)
+		}
+		const handleLine = (line: string) => {
 			if (lineCount < maxLines) {
 				output += `${line}\n`
 				lineCount++
-			} else {
-				rl.close()
-				rgProcess.kill()
+				return
 			}
-		})
-
-		let errorOutput = ""
-		rgProcess.stderr.on("data", (data) => {
+			if (stoppingForOutputLimit) return
+			stoppingForOutputLimit = true
+			try {
+				rgProcess.kill("SIGTERM")
+			} catch (error) {
+				Logger.warn(`Failed to stop ripgrep after reaching the output limit: ${error}`)
+			}
+		}
+		const handleStderr = (data: Buffer) => {
 			errorOutput += data.toString()
-		})
-		rl.on("close", () => {
-			if (errorOutput) {
-				reject(new Error(`ripgrep process error: ${errorOutput}`))
-			} else {
-				resolve(output)
+		}
+		const handleClose = () => {
+			settle(errorOutput ? new Error(`ripgrep process error: ${errorOutput}`) : undefined)
+		}
+		const handleError = (error: Error) => {
+			settle(new Error(`ripgrep process error: ${error.message}`))
+		}
+		const handleAbort = () => {
+			if (settled) return
+			settled = true
+			cleanup()
+			try {
+				rgProcess.kill("SIGKILL")
+			} catch (error) {
+				Logger.warn(`Failed to kill timed-out ripgrep process: ${error}`)
 			}
-		})
-		rgProcess.on("error", (error) => {
-			reject(new Error(`ripgrep process error: ${error.message}`))
-		})
+			rl.close()
+			rgProcess.stdout.destroy()
+			rgProcess.stderr.destroy()
+			reject(signalReason(signal))
+		}
+
+		rl.on("line", handleLine)
+		rgProcess.stderr.on("data", handleStderr)
+		rgProcess.on("close", handleClose)
+		rgProcess.on("error", handleError)
+		signal.addEventListener("abort", handleAbort, { once: true })
+		if (signal.aborted) handleAbort()
 	})
 }
 
@@ -132,6 +190,9 @@ export async function regexSearchFiles(
 	const deliberateDescent = describeExclusion?.(directoryPath) === "pruned"
 	const ruleScope: RipgrepRuleScope = deliberateDescent ? "agent-only" : "all"
 
+	const normalizedFilePattern = filePattern?.trim()
+	const hasRestrictiveFilePattern =
+		normalizedFilePattern !== undefined && !["", "*", "**", "**/*"].includes(normalizedFilePattern)
 	const args = [
 		"--json",
 		// Match the picker's budget: without an explicit cap ripgrep opens one
@@ -139,8 +200,7 @@ export async function regexSearchFiles(
 		...ripgrepThreadArgs(),
 		"-e",
 		regex,
-		"--glob",
-		filePattern || "*",
+		...(hasRestrictiveFilePattern ? ["--glob", normalizedFilePattern] : []),
 		"--context",
 		"1",
 	]
@@ -152,18 +212,23 @@ export async function regexSearchFiles(
 		args.push("--no-ignore-vcs", "--hidden")
 	}
 
-	const ignoreFile = await createRipgrepIgnoreFile(ignoreController, ruleScope)
-	args.push(...ignoreFile.args)
-
-	args.push(directoryPath)
-
+	const timeoutController = new AbortController()
+	const timeoutError = new RipgrepSearchTimeoutError()
+	const timeout = setTimeout(() => timeoutController.abort(timeoutError), RIPGREP_SEARCH_TIMEOUT_MS)
+	timeout.unref()
+	let ignoreFile: RipgrepIgnoreFile | undefined
 	let output: string
 	try {
-		output = await execRipgrep(args, budgetScope)
+		ignoreFile = await createRipgrepIgnoreFile(ignoreController, ruleScope)
+		args.push(...ignoreFile.args)
+		args.push(directoryPath)
+		output = await execRipgrep(args, budgetScope, timeoutController.signal)
 	} catch (error) {
+		if (error instanceof RipgrepSearchTimeoutError) throw error
 		throw Error("Error calling ripgrep", { cause: error })
 	} finally {
-		await ignoreFile.dispose()
+		clearTimeout(timeout)
+		await ignoreFile?.dispose()
 	}
 	const results: SearchResult[] = []
 	let currentResult: Partial<SearchResult> | null = null

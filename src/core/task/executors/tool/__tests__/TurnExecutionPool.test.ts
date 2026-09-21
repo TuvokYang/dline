@@ -212,6 +212,29 @@ describe("TurnExecutionPool turn barrier", () => {
 		ending.settle("z-done")
 	})
 
+	it("retires queued work after a refused block without disturbing running work", async () => {
+		const pool = new TurnExecutionPool<string>({ limit: 1 })
+		const refused = trackedBlock("a", 0)
+		const queued = trackedBlock("b", 1)
+		void pool.submit(refused)
+		const queuedResult = pool.submit(queued)
+
+		await flush()
+		expect(refused.started).toBe(true)
+		expect(queued.started).toBe(false)
+
+		// A refusal stops work that has not begun, and only that work: the block
+		// already running owns its own result and must not be retired with it.
+		pool.cancelBlocksAfter(0)
+		await flush()
+
+		const outcome = await queuedResult
+		expect(outcome.cancelled).toBe(true)
+		expect(queued.started).toBe(false)
+		expect(refused.started).toBe(true)
+		refused.settle("a-done")
+	})
+
 	it("keeps the barrier closed while work outside the pool is outstanding", async () => {
 		const pool = new TurnExecutionPool<string>({ limit: 4 })
 		pool.setUnfinishedEarlierWork(true)

@@ -140,13 +140,49 @@ export function taskRipgrepScope(taskId: string | undefined): RipgrepBudgetScope
 }
 
 /** Waiters queued behind a busy scope, released FIFO. */
+type RipgrepWaiter = () => void
+
 interface ScopeState {
 	active: number
-	readonly waiters: Array<() => void>
+	readonly waiters: RipgrepWaiter[]
+}
+
+function abortReason(signal: AbortSignal): Error {
+	return signal.reason instanceof Error ? signal.reason : new Error("Ripgrep slot wait aborted")
+}
+
+function waitForSlot(waiters: RipgrepWaiter[], grant: () => void, signal?: AbortSignal): Promise<void> {
+	if (signal?.aborted) {
+		return Promise.reject(abortReason(signal))
+	}
+
+	return new Promise<void>((resolve, reject) => {
+		let settled = false
+		const cleanup = () => signal?.removeEventListener("abort", handleAbort)
+		const waiter = () => {
+			if (settled) return
+			settled = true
+			cleanup()
+			grant()
+			resolve()
+		}
+		const handleAbort = () => {
+			if (settled) return
+			settled = true
+			const index = waiters.indexOf(waiter)
+			if (index >= 0) waiters.splice(index, 1)
+			cleanup()
+			reject(abortReason(signal!))
+		}
+
+		waiters.push(waiter)
+		signal?.addEventListener("abort", handleAbort, { once: true })
+		if (signal?.aborted) handleAbort()
+	})
 }
 
 const scopes = new Map<RipgrepBudgetScope, ScopeState>()
-const workspaceWaiters: Array<() => void> = []
+const workspaceWaiters: RipgrepWaiter[] = []
 let workspaceActive = 0
 
 /** Processes currently running across all scopes. Exposed for tests. */
@@ -169,16 +205,21 @@ export function activeRipgrepProcessesForScope(scope: RipgrepBudgetScope): numbe
  * Acquisition order is always task-then-workspace. A uniform order is what
  * keeps the two gates deadlock-free; releasing happens in the reverse order.
  */
-export async function withRipgrepSlot<T>(scope: RipgrepBudgetScope, spawnAndWait: () => Promise<T>): Promise<T> {
-	await acquireScopeSlot(scope)
+export async function withRipgrepSlot<T>(
+	scope: RipgrepBudgetScope,
+	spawnAndWait: () => Promise<T>,
+	signal?: AbortSignal,
+): Promise<T> {
+	await acquireScopeSlot(scope, signal)
 	try {
-		await acquireWorkspaceSlot()
+		await acquireWorkspaceSlot(signal)
 	} catch (error) {
 		releaseScopeSlot(scope)
 		throw error
 	}
 
 	try {
+		if (signal?.aborted) throw abortReason(signal)
 		return await spawnAndWait()
 	} finally {
 		releaseWorkspaceSlot()
@@ -186,7 +227,8 @@ export async function withRipgrepSlot<T>(scope: RipgrepBudgetScope, spawnAndWait
 	}
 }
 
-function acquireScopeSlot(scope: RipgrepBudgetScope): Promise<void> {
+function acquireScopeSlot(scope: RipgrepBudgetScope, signal?: AbortSignal): Promise<void> {
+	if (signal?.aborted) return Promise.reject(abortReason(signal))
 	const { maxProcessesPerTask } = getRipgrepCpuBudget()
 	let state = scopes.get(scope)
 	if (!state) {
@@ -199,12 +241,13 @@ function acquireScopeSlot(scope: RipgrepBudgetScope): Promise<void> {
 		return Promise.resolve()
 	}
 
-	return new Promise<void>((resolve) => {
-		state.waiters.push(() => {
+	return waitForSlot(
+		state.waiters,
+		() => {
 			state.active++
-			resolve()
-		})
-	})
+		},
+		signal,
+	)
 }
 
 function releaseScopeSlot(scope: RipgrepBudgetScope): void {
@@ -225,19 +268,21 @@ function releaseScopeSlot(scope: RipgrepBudgetScope): void {
 	}
 }
 
-function acquireWorkspaceSlot(): Promise<void> {
+function acquireWorkspaceSlot(signal?: AbortSignal): Promise<void> {
+	if (signal?.aborted) return Promise.reject(abortReason(signal))
 	const { maxProcessesPerWorkspace } = getRipgrepCpuBudget()
 	if (workspaceActive < maxProcessesPerWorkspace) {
 		workspaceActive++
 		return Promise.resolve()
 	}
 
-	return new Promise<void>((resolve) => {
-		workspaceWaiters.push(() => {
+	return waitForSlot(
+		workspaceWaiters,
+		() => {
 			workspaceActive++
-			resolve()
-		})
-	})
+		},
+		signal,
+	)
 }
 
 function releaseWorkspaceSlot(): void {

@@ -23,6 +23,7 @@ const DLINE_EXTENSION_DIRECTORY_PATTERN = /^tuvokyang\.dline-/i
 export const E2E_VSIX_INSTALL_TIMEOUT_MS = 120_000
 const INSTALL_DIAGNOSTIC_LIMIT = 4_000
 const PACKAGED_E2E_LIFECYCLES = new Set(["test:e2e", "test:e2e:optimal", "test:e2e:pressure"])
+type PackagedE2EEnvironment = Pick<NodeJS.ProcessEnv, "DLINE_E2E_INSTALL_VSIX" | "npm_lifecycle_event">
 
 export interface VSCodeExtensionInstallInvocation {
 	readonly command: string
@@ -44,7 +45,8 @@ function hasInstalledDlineVsix(extensionsDir: string): boolean {
 }
 
 /** Whether the current npm lifecycle builds the packaged VSIX before running Playwright. */
-export function shouldPreinstallDlineVsix(environment: Pick<NodeJS.ProcessEnv, "npm_lifecycle_event"> = process.env): boolean {
+export function shouldPreinstallDlineVsix(environment: PackagedE2EEnvironment = process.env): boolean {
+	if (environment.DLINE_E2E_INSTALL_VSIX?.trim() === "1") return true
 	return PACKAGED_E2E_LIFECYCLES.has(environment.npm_lifecycle_event?.trim() ?? "")
 }
 
@@ -57,7 +59,7 @@ export function shouldPreinstallDlineVsix(environment: Pick<NodeJS.ProcessEnv, "
 export function resolveWorkerExtensionsSlot(
 	workerIndex: number,
 	parallelIndex: number,
-	environment: Pick<NodeJS.ProcessEnv, "npm_lifecycle_event"> = process.env,
+	environment: PackagedE2EEnvironment = process.env,
 ): number {
 	return shouldPreinstallDlineVsix(environment) ? parallelIndex : workerIndex
 }

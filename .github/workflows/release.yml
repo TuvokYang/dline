@@ -1,4 +1,4 @@
-name: Production Release
+name: Production Release Validation
 
 on:
   push:
@@ -12,13 +12,17 @@ permissions:
   contents: read
 
 concurrency:
-  group: production-release-${{ github.ref }}
+  group: production-release-${{ github.ref_name }}
   cancel-in-progress: false
 
 jobs:
   verify-tag:
     name: Verify production release tag
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.verify.outputs.tag }}
+      version: ${{ steps.verify.outputs.version }}
+      commit_sha: ${{ steps.verify.outputs.commit_sha }}
     steps:
       - name: Checkout repository history
         uses: actions/checkout@v6
@@ -26,7 +30,10 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - name: Verify tag, version, and main ancestry
+      - name: Verify tag, version, and main branch head
+        id: verify
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           tag="$GITHUB_REF_NAME"
@@ -42,12 +49,15 @@ jobs:
             exit 1
           fi
 
-          git fetch origin main --no-tags
           tag_sha=$(git rev-parse "${tag}^{commit}")
-          if ! git merge-base --is-ancestor "$tag_sha" origin/main; then
-            echo "Error: production tag '$tag' does not point to a commit on main"
+          main_sha=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')
+          if [[ "$tag_sha" != "$main_sha" ]]; then
+            echo "Error: production tag '$tag' must point to current main head '$main_sha', got '$tag_sha'"
             exit 1
           fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$tag_version" >> "$GITHUB_OUTPUT"
+          echo "commit_sha=$tag_sha" >> "$GITHUB_OUTPUT"
 
   tests:
     name: Test and package release
@@ -55,6 +65,7 @@ jobs:
     uses: ./.github/workflows/test.yml
     with:
       package_profile: release
+      package_channel: production
     secrets:
       TELEMETRY_SERVICE_API_KEY: ${{ secrets.TELEMETRY_SERVICE_API_KEY }}
       ERROR_SERVICE_API_KEY: ${{ secrets.ERROR_SERVICE_API_KEY }}
@@ -63,43 +74,101 @@ jobs:
       OTEL_EXPORTER_OTLP_ENDPOINT: ${{ secrets.OTEL_EXPORTER_OTLP_ENDPOINT }}
       OTEL_EXPORTER_OTLP_HEADERS: ${{ secrets.OTEL_EXPORTER_OTLP_HEADERS }}
 
-  release:
-    name: Publish GitHub production release
-    needs: tests
+  functional-e2e:
+    name: Full functional E2E (ubuntu)
+    needs: [verify-tag, tests]
     runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      DLINE_E2E_INSTALL_VSIX: "1"
+      DLINE_E2E_PROFILE: mock-openai
+      DLINE_E2E_RUN_ID: production-functional-${{ github.run_id }}-${{ github.run_attempt }}-ubuntu
+    steps:
+      - name: Checkout validated tag
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.verify-tag.outputs.commit_sha }}
+
+      - name: Setup project
+        uses: ./.github/actions/setup-project
+        with:
+          install-webview: "true"
+          include-optional: "true"
+
+      - name: Download production VSIX
+        uses: actions/download-artifact@v8
+        with:
+          name: dline-vsix-${{ needs.verify-tag.outputs.commit_sha }}
+          path: validated-vsix
+
+      - name: Verify and normalize tested VSIX
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t assets < <(find validated-vsix -maxdepth 1 -type f -name '*.vsix' -print)
+          if [[ "${#assets[@]}" -ne 1 ]]; then
+            echo "Error: expected exactly one tested VSIX, found ${#assets[@]}"
+            exit 1
+          fi
+
+          version="${GITHUB_REF_NAME#v}"
+          manifest_path="$RUNNER_TEMP/vsix-package.json"
+          unzip -p "${assets[0]}" extension/package.json > "$manifest_path"
+          if ! jq -e --arg version "$version" '
+            .name == "dline" and
+            .publisher == "tuvokyang" and
+            .version == $version and
+            (.preview != true)
+          ' "$manifest_path" >/dev/null; then
+            echo "Error: tested VSIX does not match the production channel."
+            jq '{name, publisher, version, preview}' "$manifest_path"
+            exit 1
+          fi
+
+          mkdir -p dist
+          cp "${assets[0]}" dist/e2e.vsix
+          sha256sum dist/e2e.vsix
+
+      - name: Cache VS Code
+        uses: actions/cache@v5
+        with:
+          path: .vscode-test
+          key: vscode-${{ runner.os }}-stable-${{ hashFiles('.vscode-test.mjs', 'package.json') }}
+          restore-keys: |
+            vscode-${{ runner.os }}-stable-
+
+      - name: Prepare VS Code and Playwright
+        run: node src/test/e2e/utils/build.mjs
+
+      - name: Install xvfb
+        run: sudo apt-get update && sudo apt-get install -y xvfb
+
+      - name: Run complete functional E2E suite
+        run: xvfb-run -a npx playwright test -c playwright.functional.config.ts --project "functional e2e tests"
+
+      - name: Upload failed functional artifacts
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: playwright-functional-production-ubuntu-${{ github.sha }}
+          path: tmp/test-result/
+          if-no-files-found: warn
+          include-hidden-files: true
+          retention-days: 14
+
+  publish:
+    name: Automatically publish validated production release
+    needs: [verify-tag, tests, functional-e2e]
     permissions:
+      actions: read
       attestations: write
       contents: write
       id-token: write
-    steps:
-      - name: Download tested VSIX
-        uses: actions/download-artifact@v6
-        with:
-          name: dline-vsix-${{ github.sha }}
-          path: release-artifact
-
-      - name: Attest tested VSIX provenance
-        uses: actions/attest-build-provenance@v3
-        with:
-          subject-path: release-artifact/*.vsix
-
-      - name: Create or update production release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
-        shell: bash
-        run: |
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release edit "$TAG" \
-              --draft=false \
-              --prerelease=false \
-              --title "Dline ${TAG}" \
-              --repo "$GITHUB_REPOSITORY"
-            gh release upload "$TAG" release-artifact/*.vsix --clobber --repo "$GITHUB_REPOSITORY"
-          else
-            gh release create "$TAG" release-artifact/*.vsix \
-              --verify-tag \
-              --generate-notes \
-              --title "Dline ${TAG}" \
-              --repo "$GITHUB_REPOSITORY"
-          fi
+    uses: ./.github/workflows/publish-production-release.yml
+    with:
+      tag: ${{ needs.verify-tag.outputs.tag }}
+      version: ${{ needs.verify-tag.outputs.version }}
+      commit_sha: ${{ needs.verify-tag.outputs.commit_sha }}
+      artifact_name: dline-vsix-${{ needs.verify-tag.outputs.commit_sha }}
+      asset_name: dline-${{ needs.verify-tag.outputs.version }}.vsix
+    secrets: inherit

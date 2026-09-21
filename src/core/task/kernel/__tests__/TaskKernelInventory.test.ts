@@ -109,6 +109,7 @@ const EXPECTED_TASK_INDEX_CONSUMERS = [] as const
 
 const EXPECTED_TASK_VIEW_FILES = [
 	"src/core/controller/index.ts",
+	"src/core/controller/task/HistoryDisplaySession.ts",
 	"src/core/controller/task/TaskViewMessageAdapter.ts",
 	"src/core/controller/task/history-task-readiness.ts",
 	"src/shared/ExtensionMessage.ts",

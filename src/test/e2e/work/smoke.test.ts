@@ -221,9 +221,27 @@ e2e(
 			await input.fill(`${await input.inputValue()}${TASK_TEXT}`)
 			await sidebar.getByTestId("send-button").click()
 
-			await expect(sidebar.getByText(COMPLETION, { exact: false }).last()).toBeVisible({
-				timeout: 60_000,
-			})
+			// A fully discovered per-tool grant may execute automatically. If discovery
+			// is still incomplete, admission fails closed and presents manual approval.
+			// Both paths must preserve the same complete server/tool identity and result.
+			const mcpApprove = sidebar.getByRole("contentinfo").getByText("Approve", { exact: true })
+			const completion = sidebar.getByText(COMPLETION, { exact: false }).last()
+			await expect
+				.poll(
+					async () =>
+						(await mcpApprove.isVisible()) ? "approval" : (await completion.isVisible()) ? "completion" : "pending",
+					{
+						timeout: 60_000,
+					},
+				)
+				.toMatch(/approval|completion/)
+			if (await mcpApprove.isVisible()) {
+				await expect(sidebar.getByText(mcpInternalName, { exact: false })).toBeVisible()
+				await expect(sidebar.getByText(MCP_TOOL_NAME, { exact: false })).toBeVisible()
+				await mcpApprove.click()
+			}
+
+			await expect(completion).toBeVisible({ timeout: 60_000 })
 			await expect(sidebar.getByLabel("Expand focus chain")).toBeVisible({ timeout: 30_000 })
 			await expect(sidebar.getByTitle("Work Smoke Focus Chain")).toContainText("5/5")
 			await expect

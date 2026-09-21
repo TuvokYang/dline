@@ -3,8 +3,24 @@ import path from "path"
 import { ClineMessage } from "@/shared/ExtensionMessage"
 import type { BufferedUnifyStore } from "./backend/api/UnifyStore"
 import { openBufferedJsonlStore } from "./backend/jsonl/JsonlUnifyStore"
-import { readJsonl } from "./backend/jsonl/jsonl-utils"
+import { readJsonl, writeJsonl } from "./backend/jsonl/jsonl-utils"
 import { dedupeClineMessagesByTs, ensureTaskDirectoryExists, GlobalFileNames } from "./disk"
+import { UIMessageWindowReader } from "./UIMessageWindowReader"
+
+async function ensureUiMessageFile(taskId: string): Promise<string> {
+	const dir = await ensureTaskDirectoryExists(taskId)
+	const filePath = path.join(dir, GlobalFileNames.uiMessages)
+	if (await fileExistsAtPath(filePath)) return filePath
+
+	for (const legacyName of ["ui_messages.json", "claude_messages.json"]) {
+		const legacyPath = path.join(dir, legacyName)
+		if (!(await fileExistsAtPath(legacyPath))) continue
+		const legacyMessages = dedupeClineMessagesByTs(await readJsonl<ClineMessage>(legacyPath))
+		if (legacyMessages.length > 0) await writeJsonl(filePath, legacyMessages)
+		break
+	}
+	return filePath
+}
 
 /**
  * UI messages store backed by ui_messages.jsonl.
@@ -18,33 +34,23 @@ export class UIMessage {
 		this.store = store
 	}
 
-	/** Open (or create) the ui_messages.jsonl for a given task. */
+	/** Open (or create) the writable ui_messages.jsonl for a given task. */
 	static async open(taskId: string): Promise<UIMessage> {
-		const dir = await ensureTaskDirectoryExists(taskId)
-		const filePath = path.join(dir, GlobalFileNames.uiMessages)
-		const targetExists = await fileExistsAtPath(filePath)
+		const filePath = await ensureUiMessageFile(taskId)
 		const store = await openBufferedJsonlStore<ClineMessage>(filePath, {
 			schemaId: "ui-message",
 			acceptInitialItem: (message) => message.ts > 0,
 		})
-
-		if (!targetExists) {
-			for (const legacyName of ["ui_messages.json", "claude_messages.json"]) {
-				const legacyPath = path.join(dir, legacyName)
-				if (!(await fileExistsAtPath(legacyPath))) continue
-				const legacyMessages = dedupeClineMessagesByTs(await readJsonl<ClineMessage>(legacyPath))
-				if (legacyMessages.length > 0) {
-					await store.mutate((current) => (current.length > 0 ? dedupeClineMessagesByTs(current) : legacyMessages))
-				}
-				break
-			}
-		}
-
 		const stored = store.getAll()
 		if (new Set(stored.map((message) => message.ts)).size !== stored.length) {
 			await store.mutate((current) => dedupeClineMessagesByTs(current))
 		}
 		return new UIMessage(store)
+	}
+
+	/** Open a bounded read-only historical window without materializing every message body. */
+	static async openWindow(taskId: string): Promise<UIMessageWindowReader> {
+		return await UIMessageWindowReader.open(await ensureUiMessageFile(taskId))
 	}
 
 	// ── Read ──

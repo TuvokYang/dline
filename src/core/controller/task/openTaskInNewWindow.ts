@@ -24,16 +24,22 @@ export async function openTaskInNewWindow(controller: Controller, request: Strin
 	try {
 		// Dynamically import to avoid circular deps at module load time
 		const { VscodeWebviewPanelProvider } = await import("@/hosts/vscode/VscodeWebviewPanelProvider")
-		// Get the task from history to extract its title.
-		// Truncation is owned by normalizeTaskPanelTitle in the panel entry points.
-		const taskWithId = await controller.getTaskWithId(taskId)
-		const title = taskWithId.historyItem.task || "Dline"
+		// Prefer the already loaded history metadata. Falling back to getTaskWithId
+		// parses the complete API history, which is unnecessary for panel display.
+		const historyItem =
+			controller.stateManager.getGlobalStateKey("taskHistory").find((item) => item.id === taskId) ??
+			(await controller.getTaskWithId(taskId)).historyItem
+		const title = historyItem.task || "Dline"
 
 		// Try to reuse an existing idle panel (has controller but no active task)
 		let panelProvider: any
 		const existingPanels = WebviewProviderRegistry.getPanels()
 		for (const panel of existingPanels) {
-			if (panel instanceof VscodeWebviewPanelProvider && panel.hasController() && !panel.controller.task) {
+			if (
+				panel instanceof VscodeWebviewPanelProvider &&
+				panel.hasController() &&
+				!panel.controller.hasActiveTaskSurface()
+			) {
 				panelProvider = panel
 				break
 			}
@@ -45,7 +51,7 @@ export async function openTaskInNewWindow(controller: Controller, request: Strin
 			panelProvider.setPendingTaskId(taskId)
 			panelProvider.updateTitle(title)
 			void panelProvider.controller
-				.initTask(undefined, undefined, undefined, taskWithId.historyItem, undefined, {
+				.initTask(undefined, undefined, undefined, historyItem, undefined, {
 					onHistoryTaskReadyToDisplay: () => sendChatButtonClickedEvent(panelProvider.controller),
 				})
 				.then(() => {
@@ -62,7 +68,7 @@ export async function openTaskInNewWindow(controller: Controller, request: Strin
 
 			// Initialize the task from history
 			void panelProvider.controller
-				.initTask(undefined, undefined, undefined, taskWithId.historyItem, undefined, {
+				.initTask(undefined, undefined, undefined, historyItem, undefined, {
 					onHistoryTaskReadyToDisplay: () => sendChatButtonClickedEvent(panelProvider.controller),
 				})
 				.then(() => {

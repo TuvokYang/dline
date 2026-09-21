@@ -136,9 +136,9 @@ describe("dispatchInteraction", () => {
 		expect(host.respond).not.toHaveBeenCalled()
 	})
 
-	it("returns missing task without dispatch", async () => {
+	it("returns missing task when no runtime and no history display own the interaction", async () => {
 		const result = await dispatchInteraction(
-			{} as never,
+			{ dispatchHistoryDisplayInteraction: async () => undefined } as never,
 			DispatchInteractionRequest.create({ taskId: "task-1", turnId: "turn-1", interactionId: "interaction-1" }),
 		)
 		expect(result).toMatchObject({ accepted: false, result: "missing_task" })

@@ -31,7 +31,8 @@ export async function dispatchInteraction(
 	request: DispatchInteractionRequest,
 ): Promise<DispatchInteractionResponse> {
 	const session = controller.task
-	if (!session) return response(false, "missing_task")
+	// A closed task can still own a durable interaction rendered from history.
+	if (!session) return (await controller.dispatchHistoryDisplayInteraction(request)) ?? response(false, "missing_task")
 	const state = session.state()
 	if (request.taskId !== session.taskId || request.stateRevision !== state.revision) return response(false, "stale_interaction")
 	const primary = state.dialog.primary?.interactionId === request.interactionId ? state.dialog.primary : undefined

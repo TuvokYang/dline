@@ -50,6 +50,8 @@ Check `package.json` before choosing a verification command. Current primary scr
 Load `use-e2e` for test selection and diagnostics, and load `e2e-validation` for the ordered validation procedure.
 
 - `src/test/e2e/work/` is the required continuous gate: one 120-second smoke project plus four single-file, single-top-level-test daily workflows with 600-second hard timeouts. Run the complete local gate with `npm run test:e2e:work`.
+- `dist/` is the one E2E resource that is not run-scoped. `scripts/with-dist-lock.mjs` guards it with a reader/writer lock: builds are exclusive, Playwright runs are shared. To run tiers concurrently, build once and then start read-only runs; inspect holders with `npm run e2e:lock:status` rather than deleting `dist/.e2e-lock/`.
+- Whether a tier installs the packaged VSIX is decided by `PACKAGED_E2E_LIFECYCLES` in `src/test/e2e/utils/vscode-launch-isolation.ts`. `test:e2e:work` and `test:e2e:functional` run in source mode against the `pree2e` dev bundle; adding a VSIX build to them would ship a production bundle into a source-mode run without changing what is tested.
 - `src/test/e2e/functional/` holds stable focused black-box regressions. Run only the files or test names required by the changed behavior; full functional execution is reserved for nightly or explicit investigation.
 - `src/test/e2e/dev/` holds fault injection, forensic capture, and narrowly scoped reproduction. It uses one worker, no retries, and retained failure traces, and it never enters required CI or release gates.
 - `playwright.pressure.config.ts` remains the explicit pressure/soak tier. Do not use it as routine completion evidence.

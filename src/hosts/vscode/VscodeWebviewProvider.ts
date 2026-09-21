@@ -20,10 +20,22 @@ export class VscodeWebviewProvider extends WebviewProvider implements vscode.Web
 	public static readonly SIDEBAR_ID = ExtensionRegistryInfo.views.Sidebar
 
 	private webview?: vscode.WebviewView
-	private disposables: vscode.Disposable[] = []
+	private readonly providerDisposables: vscode.Disposable[] = []
+	private viewDisposables: vscode.Disposable[] = []
+	private viewGeneration = 0
 
 	constructor(context: ClineExtensionContext, options?: { deferController?: boolean }) {
 		super(context, { ...options, isSidebar: true })
+		vscode.workspace.onDidChangeConfiguration(
+			async (event) => {
+				if (event?.affectsConfiguration("cline.mcpMarketplace.enabled")) {
+					const controller = await this.controllerReady
+					await controller.postStateToWebview()
+				}
+			},
+			null,
+			this.providerDisposables,
+		)
 	}
 
 	override getWebviewUrl(path: string) {
@@ -56,8 +68,12 @@ export class VscodeWebviewProvider extends WebviewProvider implements vscode.Web
 	 * @returns A promise that resolves when the webview has been fully initialized
 	 */
 	public async resolveWebviewView(webviewView: vscode.WebviewView): Promise<void> {
-		// Restore global instance reference that may have been cleared by a previous dispose
-		this.restoreInstance()
+		// One provider outlives multiple WebviewView instances. Release only the
+		// previous view bindings; the Controller and provider-level listeners live on.
+		this.disposeViewBindings()
+		const generation = ++this.viewGeneration
+		const viewDisposables: vscode.Disposable[] = []
+		this.viewDisposables = viewDisposables
 		this.webview = webviewView
 
 		webviewView.webview.options = {
@@ -67,6 +83,7 @@ export class VscodeWebviewProvider extends WebviewProvider implements vscode.Web
 		}
 
 		const controller = await this.startupReady
+		if (!this.isActiveView(webviewView, generation)) return
 		if (!controller) {
 			webviewView.webview.html = this.getStartupFailureHtml()
 			Logger.error("[VscodeWebviewProvider] Rendering storage initialization failure view", this.getStartupFailure())
@@ -76,7 +93,7 @@ export class VscodeWebviewProvider extends WebviewProvider implements vscode.Web
 
 		// Register before assigning HTML because cached/HMR webviews can post
 		// webviewReady and initial gRPC subscriptions during navigation.
-		this.setWebviewMessageListener(webviewView.webview)
+		this.setWebviewMessageListener(webviewView.webview, webviewView, generation, viewDisposables)
 
 		webviewView.webview.html = shouldUseWebviewHmr(this.context.extensionMode)
 			? await this.getHMRHtmlContent()
@@ -93,6 +110,7 @@ export class VscodeWebviewProvider extends WebviewProvider implements vscode.Web
 		// WebviewPanel is not currently used in the extension
 		webviewView.onDidChangeVisibility(
 			async () => {
+				if (!this.isActiveView(webviewView, generation)) return
 				const controller = await this.controllerReady
 				controller.setAccountUsagePollingEnabled(this.webview?.visible ?? false)
 				if (this.webview?.visible) {
@@ -101,7 +119,7 @@ export class VscodeWebviewProvider extends WebviewProvider implements vscode.Web
 				}
 			},
 			null,
-			this.disposables,
+			viewDisposables,
 		)
 
 		// Listen for when the view is disposed
@@ -109,27 +127,13 @@ export class VscodeWebviewProvider extends WebviewProvider implements vscode.Web
 		// Only clean UI bindings — the Controller and task should continue running.
 		webviewView.onDidDispose(
 			() => {
+				if (this.webview !== webviewView || this.viewGeneration !== generation) return
 				void this.controllerReady.then((controller) => controller.setAccountUsagePollingEnabled(false))
 				this.webview = undefined
-				while (this.disposables.length) {
-					this.disposables.pop()?.dispose()
-				}
+				this.disposeViewBindings()
 			},
 			null,
-			this.disposables,
-		)
-
-		// Listen for configuration changes
-		vscode.workspace.onDidChangeConfiguration(
-			async (e) => {
-				if (e?.affectsConfiguration("cline.mcpMarketplace.enabled")) {
-					// Update state when marketplace tab setting changes
-					const controller = await this.controllerReady
-					await controller.postStateToWebview()
-				}
-			},
-			null,
-			this.disposables,
+			viewDisposables,
 		)
 
 		// Push current state to the newly created webview for UI sync.
@@ -191,13 +195,19 @@ export class VscodeWebviewProvider extends WebviewProvider implements vscode.Web
 	 *
 	 * @param webview The webview instance to attach the message listener to
 	 */
-	private setWebviewMessageListener(webview: vscode.Webview) {
+	private setWebviewMessageListener(
+		webview: vscode.Webview,
+		webviewView: vscode.WebviewView,
+		generation: number,
+		disposables: vscode.Disposable[],
+	) {
 		webview.onDidReceiveMessage(
 			(message) => {
+				if (!this.isActiveView(webviewView, generation)) return
 				this.handleWebviewMessage(message)
 			},
 			null,
-			this.disposables,
+			disposables,
 		)
 	}
 
@@ -240,18 +250,39 @@ export class VscodeWebviewProvider extends WebviewProvider implements vscode.Web
 	 * @returns A thenable that resolves to a boolean indicating success, or undefined if the webview is not available
 	 */
 	private async postMessageToWebview(message: ExtensionMessage): Promise<boolean | undefined> {
-		return this.webview?.webview.postMessage(message)
+		const webview = this.webview
+		const generation = this.viewGeneration
+		if (!webview) {
+			Logger.warn("[VscodeWebviewProvider] Webview message delivery skipped", {
+				reason: "no_active_view",
+				messageType: message.type,
+				generation,
+			})
+			return undefined
+		}
+		const delivered = await webview.webview.postMessage(message)
+		if (!delivered) {
+			Logger.warn("[VscodeWebviewProvider] Webview message delivery failed", {
+				reason: "post_message_rejected",
+				messageType: message.type,
+				generation,
+			})
+		}
+		return delivered
+	}
+
+	private isActiveView(webviewView: vscode.WebviewView, generation: number): boolean {
+		return this.webview === webviewView && this.viewGeneration === generation
+	}
+
+	private disposeViewBindings(): void {
+		while (this.viewDisposables.length) this.viewDisposables.pop()?.dispose()
 	}
 
 	override async dispose() {
-		// WebviewView doesn't have a dispose method, it's managed by VSCode
-		// We just need to clean up our disposables
-		while (this.disposables.length) {
-			const x = this.disposables.pop()
-			if (x) {
-				x.dispose()
-			}
-		}
+		this.disposeViewBindings()
+		while (this.providerDisposables.length) this.providerDisposables.pop()?.dispose()
+		this.webview = undefined
 		// Await parent dispose so Controller.clearTask() → terminate()
 		// completes before the webview is fully torn down. Without await,
 		// the async dispose chain is fire-and-forget and errors / resource

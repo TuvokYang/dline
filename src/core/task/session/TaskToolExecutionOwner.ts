@@ -170,9 +170,9 @@ export class TaskToolExecutionOwner implements ProductionToolConfigFactory {
 		const workspaceRoots = this.options.workspaceManager?.getRoots()
 		const mcpToolAutoApprove =
 			block.name === ClineDefaultTool.MCP_USE
-				? (this.options.services.mcpHub.connections
+				? this.options.services.mcpHub.connections
 						?.find((connection) => connection.server.name === block.params.server_name)
-						?.server.tools?.find((tool) => tool.name === block.params.tool_name)?.autoApprove ?? true)
+						?.server.tools?.find((tool) => tool.name === block.params.tool_name)?.autoApprove === true
 				: undefined
 		return {
 			taskId: this.options.taskId,

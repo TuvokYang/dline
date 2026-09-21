@@ -1,41 +1,41 @@
 #!/usr/bin/env node
 
 /**
- * Nightly publish script for VS Code extension
+ * Insiders publish script for VS Code extension
  * Converts package.json to testing version, packages, publishes, and restores
  *
  * This script:
  * 1. Backs up the original package.json
  * 2. Updates package.json with:
  *    - New version (major.minor.timestamp format)
- *    - Changes name to "dline-nightly"
- *    - Changes displayName to "Dline (Nightly)"
+ *    - Changes name to "dline-insiders"
+ *    - Changes displayName to "Dline (Insiders)"
  * 3. Packages the extension as a .vsix file
  * 4. Publishes to OpenVSX Registry (if OVSX_PAT is set)
  * 5. Restores the original package.json
  *
  * Channels:
  *   By default, the extension is published to the RELEASE channel of
- *   `dline-nightly`. Pass --pre-release to instead publish to the pre-release
- *   channel of `dline-nightly` (used for manual publishes from feature
+ *   `dline-insiders`. Pass --pre-release to instead publish to the pre-release
+ *   channel of `dline-insiders` (used for manual publishes from feature
  *   branches that need tester opt-in via "Switch to Pre-Release Version").
  *
  *   Note on version ordering: because VS Code serves pre-release users
  *   whichever version is highest across *both* channels, the pre-release
  *   build only stays selected while its version number is greater than
- *   the latest release nightly. Since both channels use
+ *   the latest release insiders build. Since both channels use
  *   `major.minor.<unix-timestamp>`, the most recently published build
  *   wins. When this script is used for a manual pre-release publish, the
- *   scheduled release nightly workflow will eventually publish a newer
+ *   scheduled release insiders workflow will eventually publish a newer
  *   timestamp and pull pre-release users forward onto release - which is
  *   the desired behavior once an experimental branch is abandoned, but
  *   means ongoing previews require re-publishing from the branch at
- *   least as often as the scheduled release nightly runs.
+ *   least as often as the scheduled release insiders build runs.
  *
  * Usage:
- *   npm run publish:marketplace:nightly                    # release channel
- *   npm run publish:marketplace:nightly -- --pre-release   # pre-release channel
- *   npm run publish:marketplace:nightly -- --dry-run       # package only
+ *   npm run publish:marketplace:insiders                    # release channel
+ *   npm run publish:marketplace:insiders -- --pre-release   # pre-release channel
+ *   npm run publish:marketplace:insiders -- --dry-run       # package only
  *
  * Environment variables:
  *   OVSX_PAT  - Personal Access Token for OpenVSX Registry
@@ -72,10 +72,10 @@ const log = {
 
 // Configuration
 const config = {
-	// The name and display name for the nightly version
-	nightlyName: "dline-nightly",
+	// The name and display name for the insiders version
+	insidersName: "dline-insiders",
 	originalName: "dline",
-	nightlyDisplayName: "Dline (Nightly)",
+	insidersDisplayName: "Dline (Insiders)",
 	projectRoot: path.join(__dirname, ".."),
 	get packageJsonPath() {
 		return path.join(this.projectRoot, "package.json")
@@ -87,12 +87,12 @@ const config = {
 		return path.join(this.projectRoot, "dist")
 	},
 	get vsixPath() {
-		return path.join(this.distDir, "dline-nightly.vsix")
+		return path.join(this.distDir, "dline-insiders.vsix")
 	},
 }
 
 // Utility class for managing the publish process
-class NightlyPublisher {
+class InsidersPublisher {
 	constructor() {
 		this.originalPackageJson = null
 		this.hasBackup = false
@@ -169,12 +169,34 @@ class NightlyPublisher {
 	 * Swap README.marketplace.md into README.md so the .vsix is packaged with
 	 * the marketplace-flavored README. vsce reads README.md from disk at
 	 * `vsce package` time and there's no flag to redirect it.
+	 *
+	 * An insiders build ships code from dev, so the README's /blob/main/ links
+	 * are pinned to the packaged commit; otherwise the bundled changelog and
+	 * translated README would describe the default branch instead of this build.
 	 */
 	swapMarketplaceReadme() {
-		const result = swapInMarketplaceReadme()
+		const result = swapInMarketplaceReadme({ ref: this.resolveDocumentationRef() })
 		this.didSwapMarketplaceReadme = !result.skipped
 		if (this.didSwapMarketplaceReadme) {
 			log.info("Swapped README.marketplace.md into README.md for packaging")
+		}
+	}
+
+	/**
+	 * Exact commit this insiders build is built from.
+	 *
+	 * @returns {string|null} Commit SHA, or null when it cannot be determined.
+	 */
+	resolveDocumentationRef() {
+		try {
+			return execFileSync("git", ["rev-parse", "HEAD"], {
+				cwd: config.projectRoot,
+				encoding: "utf-8",
+			}).trim()
+		} catch {
+			// Without a resolvable commit the authored links remain correct enough
+			// to publish; a broken swap would be worse than default-branch links.
+			return null
 		}
 	}
 
@@ -213,12 +235,12 @@ class NightlyPublisher {
 	}
 
 	/**
-	 * Update package.json with nightly configuration
+	 * Update package.json with insiders configuration
 	 */
 	updatePackageJson() {
-		// Replace any occurrences cline. or claude-dev with nightly name
+		// Replace any occurrences cline. or claude-dev with insiders name
 		const rawContent = fs.readFileSync(config.packageJsonPath, "utf-8")
-		const content = rawContent.replaceAll("claude-dev", config.nightlyName).replaceAll('"cline.', `"${config.nightlyName}.`)
+		const content = rawContent.replaceAll("claude-dev", config.insidersName).replaceAll('"cline.', `"${config.insidersName}.`)
 
 		const pkg = JSON.parse(content)
 		const currentVersion = pkg.version
@@ -234,12 +256,12 @@ class NightlyPublisher {
 
 		// Update package.json fields
 		pkg.version = newVersion
-		pkg.name = config.nightlyName
-		pkg.displayName = config.nightlyDisplayName
-		pkg.contributes.viewsContainers.activitybar.title = config.nightlyDisplayName
+		pkg.name = config.insidersName
+		pkg.displayName = config.insidersDisplayName
+		pkg.contributes.viewsContainers.activitybar.title = config.insidersDisplayName
 
 		// Save updated package.json
-		log.info("Updating package.json for nightly build")
+		log.info("Updating package.json for insiders build")
 		fs.writeFileSync(config.packageJsonPath, JSON.stringify(pkg, null, "\t"))
 
 		return newVersion
@@ -320,7 +342,7 @@ class NightlyPublisher {
 	async run({ isDryRun = false, isPreRelease = false } = {}) {
 		try {
 			const channelLabel = isPreRelease ? " (pre-release channel)" : " (release channel)"
-			log.info(`Starting nightly publish process${channelLabel}${isDryRun ? " (dry run)" : ""}`)
+			log.info(`Starting insiders publish process${channelLabel}${isDryRun ? " (dry run)" : ""}`)
 
 			// Step 1: Check dependencies
 			this.checkDependencies()
@@ -347,7 +369,7 @@ class NightlyPublisher {
 			}
 
 			// Summary
-			log.info(`Nightly publish process completed successfully${isDryRun ? " (dry run)" : ""}`)
+			log.info(`Insiders publish process completed successfully${isDryRun ? " (dry run)" : ""}`)
 			log.info(`Package created for v${newVersion}: ${config.vsixPath}`)
 
 			if (!isDryRun && !openVSXPublished) {
@@ -368,7 +390,7 @@ class NightlyPublisher {
 }
 
 // Handle cleanup on process exit
-const publisher = new NightlyPublisher()
+const publisher = new InsidersPublisher()
 
 process.on("exit", () => {
 	publisher.restorePackageJson()
@@ -403,13 +425,13 @@ const showHelp = args.includes("--help") || args.includes("-h")
 
 if (showHelp) {
 	console.log(`
-Nightly publish script for VS Code extension
+Insiders publish script for VS Code extension
 
 Usage:
-  npm run publish:marketplace:nightly [options]
+  npm run publish:marketplace:insiders [options]
 
 Options:
-  --pre-release    Publish to the pre-release channel of dline-nightly.
+  --pre-release    Publish to the pre-release channel of dline-insiders.
                    Default is the release channel.
   --dry-run, -n    Run without actually publishing (package only)
   --help, -h       Show this help message
@@ -418,10 +440,10 @@ Environment variables:
   OVSX_PAT         Personal Access Token for OpenVSX Registry
 
 Examples:
-  npm run publish:marketplace:nightly                      # Release channel publish
-  npm run publish:marketplace:nightly -- --pre-release     # Pre-release channel publish
-  npm run publish:marketplace:nightly -- --dry-run         # Package only
-  OVSX_PAT="token" npm run publish:marketplace:nightly     # Publish to Open VSX
+  npm run publish:marketplace:insiders                      # Release channel publish
+  npm run publish:marketplace:insiders -- --pre-release     # Pre-release channel publish
+  npm run publish:marketplace:insiders -- --dry-run         # Package only
+  OVSX_PAT="token" npm run publish:marketplace:insiders     # Publish to Open VSX
 `)
 	process.exit(0)
 }

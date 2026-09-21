@@ -102,6 +102,9 @@ e2e-build.mjs
 e2e.vsix
 test-results/
 .playwright-mcp/
+# Cross-process guard for the shared dist/ build output. It is live exactly when
+# an E2E build packages dist/, so it must never become extension content.
+dist/.e2e-lock/
 
 # Ignore SDK and temp files
 tmp_sdk_check/

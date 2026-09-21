@@ -176,10 +176,17 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 		activeQuote,
 		ownerRevision: draftRevisionRef.current,
 	}
+	const taskSessionRef = useRef({ taskId, epoch: 0 })
+	if (taskSessionRef.current.taskId !== taskId) {
+		taskSessionRef.current = { taskId, epoch: taskSessionRef.current.epoch + 1 }
+	}
+	const sessionEpoch = taskSessionRef.current.epoch
 	const currentTaskIdRef = useRef(taskId)
 	const currentDraftRef = useRef(interactionDraft)
+	const latestMessagesRef = useRef(messages)
 	currentTaskIdRef.current = taskId
 	currentDraftRef.current = interactionDraft
+	latestMessagesRef.current = messages
 	const clearOwnedDraft = useCallback(
 		(settlement: AcceptedInteractionSettlement): void => {
 			if (!canApplyAcceptedInteractionSettlement(currentTaskIdRef.current, currentDraftRef.current, settlement)) {
@@ -192,13 +199,18 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 		},
 		[setActiveQuote, setInputValue, setSelectedFiles, setSelectedImages],
 	)
-	// Pairs with clearOwnedDraft: every submit path clears optimistically, so a
-	// refused or failed dispatch has to hand the draft back. Restoring is only
-	// safe while the composer is still empty; anything typed during the round
-	// trip is newer and keeps priority.
+	// A rejected dispatch can restore only a still-empty draft in the same
+	// mounted task session, unless feedback for that interaction has already
+	// been committed. A resumed task may reuse its id after a close.
 	const restoreRejectedDraft = useCallback(
-		(settlement: AcceptedInteractionSettlement): void => {
-			if (!canRestoreRejectedInteractionDraft(currentTaskIdRef.current, currentDraftRef.current, settlement)) {
+		(settlement: AcceptedInteractionSettlement, submissionEpoch: number): void => {
+			if (
+				!canRestoreRejectedInteractionDraft(currentTaskIdRef.current, currentDraftRef.current, settlement, {
+					currentEpoch: taskSessionRef.current.epoch,
+					submissionEpoch,
+					messages: latestMessagesRef.current,
+				})
+			) {
 				return
 			}
 			setInputValue(settlement.draft.text)
@@ -472,16 +484,17 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 				return undefined
 			}
 			const settlement = createAcceptedInteractionSettlement(request, capturedDraft)
+			const submissionEpoch = taskSessionRef.current.epoch
 			clearOwnedDraft(settlement)
 			try {
 				const response = await dispatchInteraction(request)
 				if (!response.accepted) {
-					restoreRejectedDraft(settlement)
+					restoreRejectedDraft(settlement, submissionEpoch)
 					return undefined
 				}
 				return settlement
 			} catch (error: unknown) {
-				restoreRejectedDraft(settlement)
+				restoreRejectedDraft(settlement, submissionEpoch)
 				throw error
 			}
 		},
@@ -508,6 +521,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 				stateRevision: view.stateRevision,
 				draft: capturedDraft,
 			}
+			const submissionEpoch = taskSessionRef.current.epoch
 			clearOwnedDraft(settlement)
 			try {
 				await TaskServiceClient.askResponse(
@@ -519,7 +533,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 					}),
 				)
 			} catch (error: unknown) {
-				restoreRejectedDraft(settlement)
+				restoreRejectedDraft(settlement, submissionEpoch)
 				throw error
 			}
 			return undefined
@@ -693,7 +707,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 						draft={interactionDraft}
 						messages={modifiedMessages}
 						onDraftAccepted={clearOwnedDraft}
-						onDraftRejected={restoreRejectedDraft}
+						onDraftRejected={(settlement) => restoreRejectedDraft(settlement, sessionEpoch)}
 						onSuccessorAccepted={retainSuccessorDraft}
 						showTimeline={false}
 						view={taskViewState}

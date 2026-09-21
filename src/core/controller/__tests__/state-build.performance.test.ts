@@ -25,12 +25,6 @@ vi.mock("@/integrations/openai-codex/oauth", () => ({
 	openAiCodexOAuthManager: { isAuthenticated: oauthMocks.isAuthenticated },
 }))
 
-// The full task-view projection needs a complete runtime state; header sourcing
-// under test does not depend on it, so stub the projector output.
-vi.mock("@/core/task/view/TaskViewProjector", () => ({
-	projectTaskView: vi.fn(() => undefined),
-}))
-
 // Environment singletons that are not part of the header-sourcing behavior.
 vi.mock("@/services/logging/distinctId", () => ({
 	getDistinctId: () => "test-distinct-id",
@@ -83,6 +77,11 @@ function createFakeController(messages: ClineMessage[]): Record<string, unknown>
 		// header assertions below do not depend on discovery, so an empty result
 		// keeps the double focused on message sourcing.
 		readLocalCapabilityToggles: () => ({}),
+		// Surface identity and message sourcing are themselves under test, so the
+		// real accessors are borrowed rather than stubbed.
+		getCurrentTaskId: Controller.prototype.getCurrentTaskId,
+		getCurrentTaskMessages: Controller.prototype.getCurrentTaskMessages,
+		getCurrentTaskMessageCount: Controller.prototype.getCurrentTaskMessageCount,
 		// The task-view projection is unrelated to header sourcing and requires
 		// canonical runtime state that this focused double intentionally omits.
 		projectCurrentTaskViewState: () => undefined,

@@ -34,12 +34,71 @@ const projectRoot = path.join(__dirname, "..")
 const README_PATH = path.join(projectRoot, "README.md")
 const MARKETPLACE_PATH = path.join(projectRoot, "README.marketplace.md")
 const BACKUP_PATH = path.join(projectRoot, ".README.github.bak")
+const PACKAGE_JSON_PATH = path.join(projectRoot, "package.json")
+
+/**
+ * Branch the marketplace README links are authored against.
+ *
+ * The source document is written for readers browsing the repository default
+ * branch, so every self-referencing link is committed as `/blob/main/...`.
+ */
+const AUTHORED_REF = "main"
 
 function readFile(p) {
 	return fs.readFileSync(p, "utf-8")
 }
 
-export function swapIn() {
+/** @param {string} value */
+function escapeRegExp(value) {
+	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
+
+/**
+ * Repository web URL declared by the manifest, without a `.git` suffix.
+ *
+ * @returns {string|null} Normalized URL, or null when the manifest declares none.
+ */
+function readRepositoryUrl() {
+	const manifest = JSON.parse(readFile(PACKAGE_JSON_PATH))
+	const url = typeof manifest.repository === "string" ? manifest.repository : manifest.repository?.url
+	if (!url) return null
+	return url
+		.replace(/^git\+/, "")
+		.replace(/\.git$/, "")
+		.replace(/\/$/, "")
+}
+
+/**
+ * Point this repository's own documentation links at the ref being packaged.
+ *
+ * A VSIX built from `dev` still carried `/blob/main/` links, so "变更日志" and
+ * "English" resolved against the default branch rather than the code that was
+ * actually shipped. Preview and Insiders readers then saw documentation for a
+ * different revision, and a link to a file that only exists on the packaged
+ * branch resolved to a 404.
+ *
+ * Only links whose prefix matches the manifest repository are rewritten, so
+ * references to third-party repositories that legitimately contain `/blob/main/`
+ * are left untouched.
+ *
+ * @param {string} content Marketplace README source.
+ * @param {string|null} repositoryUrl Repository URL from the manifest.
+ * @param {string|null} ref Branch, tag, or commit to link against.
+ * @returns {string} Content with self-referencing links pinned to `ref`.
+ */
+export function rewriteRepositoryRefs(content, repositoryUrl, ref) {
+	if (!ref || !repositoryUrl || ref === AUTHORED_REF) return content
+	const pattern = new RegExp(`(${escapeRegExp(repositoryUrl)}/(?:blob|raw|tree)/)${AUTHORED_REF}(?=[/#?]|$)`, "g")
+	return content.replace(pattern, `$1${ref}`)
+}
+
+/**
+ * Swap the marketplace README into place.
+ *
+ * @param {{ ref?: string|null }} [options] `ref` pins self-referencing links to
+ *   the packaged branch, tag, or commit. Omit it to publish the authored links.
+ */
+export function swapIn(options = {}) {
 	if (!fs.existsSync(MARKETPLACE_PATH)) {
 		throw new Error(`Missing ${MARKETPLACE_PATH}. The marketplace README must exist before publishing.`)
 	}
@@ -47,7 +106,11 @@ export function swapIn() {
 		throw new Error(`Missing ${README_PATH}. Cannot swap in marketplace README.`)
 	}
 
-	if (readFile(README_PATH) === readFile(MARKETPLACE_PATH)) {
+	const desiredContent = rewriteRepositoryRefs(readFile(MARKETPLACE_PATH), readRepositoryUrl(), options.ref ?? null)
+
+	// Compare against the content this call would write, so an outer wrapper that
+	// already swapped with the same ref is still detected as a no-op.
+	if (readFile(README_PATH) === desiredContent) {
 		return { skipped: true }
 	}
 
@@ -59,7 +122,7 @@ export function swapIn() {
 	}
 
 	fs.copyFileSync(README_PATH, BACKUP_PATH)
-	fs.copyFileSync(MARKETPLACE_PATH, README_PATH)
+	fs.writeFileSync(README_PATH, desiredContent)
 	return { skipped: false }
 }
 
@@ -82,17 +145,18 @@ export function restore() {
  *
  * @template T
  * @param {(cleanups: import("./signal-safe-cleanup.mjs").SynchronousCleanupStack) => T | Promise<T>} work
- * @param {Parameters<typeof withSignalSafeCleanup>[1]} [options]
+ * @param {Parameters<typeof withSignalSafeCleanup>[1] & { ref?: string|null }} [options]
  * @returns {Promise<T>}
  */
-export async function withMarketplaceReadme(work, options) {
+export async function withMarketplaceReadme(work, options = {}) {
+	const { ref = null, ...cleanupOptions } = options
 	return withSignalSafeCleanup(async (cleanups) => {
-		const swapped = !swapIn().skipped
+		const swapped = !swapIn({ ref }).skipped
 		if (swapped) {
 			cleanups.defer(() => restore())
 		}
 		return work(cleanups)
-	}, options)
+	}, cleanupOptions)
 }
 
 const invokedAsCli = process.argv[1] && path.resolve(process.argv[1]) === path.resolve(__filename)

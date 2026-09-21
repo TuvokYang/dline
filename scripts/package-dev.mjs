@@ -17,22 +17,16 @@
 
 import { execSync } from "node:child_process"
 import fs from "node:fs"
-import { createRequire } from "node:module"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { withMarketplaceReadme } from "./marketplace-readme.mjs"
+import { packageVsix } from "./vsix-packager.mjs"
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
-const require = createRequire(import.meta.url)
 
 const PROJECT_ROOT = path.join(__dirname, "..")
 const PACKAGE_JSON_PATH = path.join(PROJECT_ROOT, "package.json")
-const _DIST_DIR = path.join(PROJECT_ROOT, "dist")
-const { pack: packVSIX } = require(path.join(PROJECT_ROOT, "node_modules", "@vscode", "vsce", "out", "package.js"))
-
-const _NIGHTLY_SUFFIX = "-nightly"
-const _NIGHTLY_DISPLAY_SUFFIX = " (Nightly)"
 
 /**
  * Get short git hash of current HEAD.
@@ -100,9 +94,15 @@ const onTag = isOnTag()
 const onMain = isOnMainBranch()
 const hash = getGitHash()
 
+// The marketplace README links to /blob/main/. A dev VSIX is built from an
+// arbitrary branch, so pin those links to the exact commit being packaged;
+// otherwise the bundled documentation describes main rather than this build.
+const documentationRef = onMain ? null : hash
+
 console.log(`[package-dev] Git hash: ${hash}`)
 console.log(`[package-dev] On tag: ${onTag}`)
 console.log(`[package-dev] On main branch: ${onMain}`)
+console.log(`[package-dev] Documentation ref: ${documentationRef ?? "(authored default)"}`)
 
 /**
  * Verify the built bundle is a dev build right before packing.
@@ -126,45 +126,50 @@ function assertDevBundle() {
 	console.log("[package-dev] Verified dist/extension.js is a dev bundle.")
 }
 
-await withMarketplaceReadme(async (cleanups) => {
-	if (onTag || onMain) {
-		console.log("[package-dev] On main branch or tag, packaging with original version...")
-	} else {
-		const originalContent = fs.readFileSync(PACKAGE_JSON_PATH, "utf-8")
-		const pkg = JSON.parse(originalContent)
-		const originalVersion = pkg.version
+await withMarketplaceReadme(
+	async (cleanups) => {
+		if (onTag || onMain) {
+			console.log("[package-dev] On main branch or tag, packaging with original version...")
+		} else {
+			const originalContent = fs.readFileSync(PACKAGE_JSON_PATH, "utf-8")
+			const pkg = JSON.parse(originalContent)
+			const originalVersion = pkg.version
 
-		// Register restoration before mutating package.json so signals during any
-		// subsequent build or pack step restore both temporary files.
-		cleanups.defer(() => {
-			console.log(`[package-dev] Restoring original version: ${originalVersion}`)
-			fs.writeFileSync(PACKAGE_JSON_PATH, originalContent)
-		})
-		pkg.version = `${pkg.version}-${hash}`
-		writePackageJson(pkg)
-		console.log(`[package-dev] Modified version: ${originalVersion} → ${pkg.version}`)
-	}
+			// Register restoration before mutating package.json so signals during any
+			// subsequent build or pack step restore both temporary files.
+			cleanups.defer(() => {
+				console.log(`[package-dev] Restoring original version: ${originalVersion}`)
+				fs.writeFileSync(PACKAGE_JSON_PATH, originalContent)
+			})
+			pkg.version = `${pkg.version}-${hash}`
+			writePackageJson(pkg)
+			console.log(`[package-dev] Modified version: ${originalVersion} → ${pkg.version}`)
+		}
 
-	// 1. Run the same validation and Webview build as vscode:prepublish,
-	// then produce a dev extension bundle with IS_DEV=true and source maps.
-	console.log("[package-dev] Building extension in dev mode...")
-	for (const command of ["npm run check-types", "npm run build:webview", "npm run lint", "node esbuild.mjs"]) {
-		execSync(command, {
+		// 1. Run the same validation and Webview build as vscode:prepublish,
+		// then produce a dev extension bundle with IS_DEV=true and source maps.
+		console.log("[package-dev] Building extension in dev mode...")
+		for (const command of ["npm run check-types", "npm run build:webview", "npm run lint", "node esbuild.mjs"]) {
+			execSync(command, {
+				cwd: PROJECT_ROOT,
+				stdio: "inherit",
+				shell: true,
+			})
+		}
+
+		// 2. Pack the already-built files without running vscode:prepublish, which
+		// would overwrite dist with a production bundle.
+		assertDevBundle()
+		const packageManifest = JSON.parse(fs.readFileSync(PACKAGE_JSON_PATH, "utf-8"))
+		const expectedPackagePath = path.join(PROJECT_ROOT, `${packageManifest.name}-${packageManifest.version}.vsix`)
+		console.log("[package-dev] Creating VSIX through the shared VSCE API adapter...")
+		const { packagePath } = await packageVsix({
 			cwd: PROJECT_ROOT,
-			stdio: "inherit",
-			shell: true,
+			mode: "pack-only",
+			packagePath: expectedPackagePath,
 		})
-	}
-
-	// 2. Pack the already-built files. createVSIX() cannot be used here because
-	// it always runs vscode:prepublish and would overwrite dist with a production build.
-	assertDevBundle()
-	console.log("[package-dev] Creating VSIX...")
-	const { packagePath } = await packVSIX({
-		cwd: PROJECT_ROOT,
-		// The extension and Webview are bundled; dependency scanning only re-adds duplicate package files.
-		dependencies: false,
-	})
-	const packageSizeMb = fs.statSync(packagePath).size / 1_000_000
-	console.log(`[package-dev] Package completed: ${packagePath} (${packageSizeMb.toFixed(2)} MB)`)
-})
+		const packageSizeMb = fs.statSync(packagePath).size / 1_000_000
+		console.log(`[package-dev] Package completed: ${packagePath} (${packageSizeMb.toFixed(2)} MB)`)
+	},
+	{ ref: documentationRef },
+)

@@ -37,8 +37,8 @@ function renderRetry(failed = false) {
 				say: "error_retry",
 				text: JSON.stringify({
 					attempt: 1,
-					maxAttempts: 3,
-					delaySeconds: 2,
+					maxAttempts: 5,
+					delaySeconds: 3,
 					errorMessage: "Connection error.",
 					failed,
 				}),
@@ -60,16 +60,16 @@ describe("ChatRow automatic retry status", () => {
 	it("keeps retry details semantically separated for copying", () => {
 		renderRetry()
 
-		expect(screen.getByTestId("error-retry-countdown").textContent).toBe("Attempt 1 of 3 Next retry in 2s")
+		expect(screen.getByTestId("error-retry-countdown").textContent).toBe("Attempt 1 of 5 Next retry in 3s")
 	})
 
 	it("shows an in-progress state instead of scheduled zero seconds after the deadline", () => {
 		renderRetry()
 
-		act(() => vi.advanceTimersByTime(2_000))
+		act(() => vi.advanceTimersByTime(3_000))
 
 		expect(screen.getByText("Automatic retry in progress", { exact: true })).toBeVisible()
-		expect(screen.getByTestId("error-retry-countdown").textContent).toBe("Attempt 1 of 3 Retrying now")
+		expect(screen.getByTestId("error-retry-countdown").textContent).toBe("Attempt 1 of 5 Retrying now")
 		expect(screen.queryByText(/0s/)).toBeNull()
 	})
 
@@ -77,6 +77,6 @@ describe("ChatRow automatic retry status", () => {
 		renderRetry(true)
 
 		expect(screen.getByText("Automatic retry stopped", { exact: true })).toBeVisible()
-		expect(screen.getByTestId("error-retry-countdown").textContent).toBe("All 3 automatic attempts were used.")
+		expect(screen.getByTestId("error-retry-countdown").textContent).toBe("All 5 automatic attempts were used.")
 	})
 })

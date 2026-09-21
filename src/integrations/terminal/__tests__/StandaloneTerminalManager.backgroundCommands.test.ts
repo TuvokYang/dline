@@ -1,6 +1,7 @@
 import { strict as assert } from "node:assert"
 import { EventEmitter } from "node:events"
 import fs from "node:fs/promises"
+import os from "node:os"
 import * as path from "node:path"
 import { DlineRuntimeFileManager } from "@services/runtime-files"
 import { afterEach, describe, it, vi } from "vitest"
@@ -87,6 +88,35 @@ describe("StandaloneTerminalManager background command injection state", () => {
 		}
 	})
 
+	it("writes the owned log into the task temp storage when a task owns the command", async () => {
+		const documentsRoot = await fs.mkdtemp(path.join(os.tmpdir(), "dline-background-log-docs-"))
+		vi.stubEnv("DLINE_DOCS_DIR", documentsRoot)
+		const manager = new StandaloneTerminalManager()
+		const process = new EventEmitter() as TerminalProcessResultPromise
+
+		try {
+			const command = manager.trackBackgroundCommand(process, "npm test", "command_task_owned", [], {
+				origin: "explicit_background",
+				cancellationOwner: "explicit",
+				taskId: "task-owning-log",
+			})
+
+			assert.equal(
+				command.logFilePath,
+				path.join(documentsRoot, "tasks", "task-owning-log", "tmp", "command-logs", "command_task_owned.log"),
+			)
+
+			process.emit("line", "one", "stdout")
+			process.emit("completed", { exitCode: 0, signal: null })
+
+			assert.equal(await manager.readBackgroundCommandOutput(command.id), "[O] one\n")
+		} finally {
+			await manager.disposeBackgroundCommands()
+			vi.unstubAllEnvs()
+			await fs.rm(documentsRoot, { recursive: true, force: true })
+		}
+	})
+
 	it("publishes one output frame and drains it before completion closes the log", async () => {
 		const manager = new StandaloneTerminalManager()
 		const process = new EventEmitter() as TerminalProcessResultPromise
@@ -169,6 +199,37 @@ describe("StandaloneTerminalManager background command injection state", () => {
 			assert.equal(cancellationSettled, true)
 		} finally {
 			resolveTermination?.()
+			await manager.disposeBackgroundCommands()
+			await fs.rm(expectedLogPath, { force: true })
+		}
+	})
+
+	it("admits and drains tail output emitted while cancellation waits for process close", async () => {
+		const manager = new StandaloneTerminalManager()
+		const emitter = new EventEmitter()
+		const terminate = vi.fn(async () => {
+			await Promise.resolve()
+			emitter.emit("line", "termination tail", "stdout")
+			emitter.emit("completed", { exitCode: null, signal: "SIGTERM" })
+		})
+		const process = Object.assign(emitter, { terminate }) as unknown as TerminalProcessResultPromise
+		const expectedLogPath = path.join(DlineRuntimeFileManager.getTempDir(), "command_cancel_close_tail.log")
+		await fs.rm(expectedLogPath, { force: true })
+
+		try {
+			const command = manager.trackBackgroundCommand(process, "npm test", "command_cancel_close_tail")
+			process.emit("line", "before cancel", "stdout")
+
+			assert.equal(await manager.cancelBackgroundCommand(command.id), true)
+
+			assert.equal(command.status, "cancelled")
+			assert.equal(command.lineCount, 2)
+			assert.equal(
+				await manager.readBackgroundCommandOutput(command.id),
+				"[O] before cancel\n[O] termination tail\n\n[CANCELLED] Command cancelled by user\n",
+			)
+			assert.equal(terminate.mock.calls.length, 1)
+		} finally {
 			await manager.disposeBackgroundCommands()
 			await fs.rm(expectedLogPath, { force: true })
 		}

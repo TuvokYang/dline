@@ -234,6 +234,14 @@ describe("InteractionHost", () => {
 		expect(screen.queryByRole("button", { name: "Approve" })).toBeNull()
 	})
 
+	it("withholds controls when the exact approval anchor is still partial", () => {
+		render(<InteractionHost dispatch={vi.fn()} messages={[SAY, { ...ASK, partial: true }]} view={taskView()} />)
+
+		expect(screen.queryByRole("button", { name: "Approve" })).toBeNull()
+		expect(screen.queryByRole("button", { name: "Reject" })).toBeNull()
+		expect(screen.getByRole("alert")).toHaveTextContent(/message anchor could not be matched/i)
+	})
+
 	it("withholds controls when the exact anchor identity is duplicated", () => {
 		render(<InteractionHost dispatch={vi.fn()} messages={[ASK, { ...ASK, text: "Duplicate ask" }]} view={taskView()} />)
 
