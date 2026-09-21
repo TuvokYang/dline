@@ -74,6 +74,8 @@ service TaskService {
   rpc moveCommandToBackground(MoveCommandToBackgroundRequest) returns (MoveCommandToBackgroundResponse);
   // Applies one user-driven change to the task input queue
   rpc mutateInputQueue(MutateInputQueueRequest) returns (MutateInputQueueResponse);
+  // Stores an oversized composer paste as a task-owned input resource
+  rpc createInputTextResource(CreateInputTextResourceRequest) returns (CreateInputTextResourceResponse);
 }
 
 // Request message for creating a new task
@@ -366,6 +368,26 @@ message MutateInputQueueRequest {
 message MutateInputQueueResponse {
   bool accepted = 1;
   string result = 2;
+}
+
+// Composer text that exceeds the inline budget and must become a file
+message CreateInputTextResourceRequest {
+  string text = 1;
+  // File extension the editor should open the stored copy with
+  optional string extension = 2;
+}
+
+// Task-owned resource created from composer input
+message CreateInputTextResourceResponse {
+  bool created = 1;
+  // Why the text stayed inline; the composer keeps the original paste
+  string result = 2;
+  optional string resource_id = 3;
+  optional string absolute_path = 4;
+  optional string display_name = 5;
+  optional int32 line_count = 6;
+  optional int64 byte_size = 7;
+  optional string content_hash = 8;
 }
 
 // Request for executing a quick win task

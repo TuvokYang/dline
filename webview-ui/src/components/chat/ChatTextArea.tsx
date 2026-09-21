@@ -26,6 +26,7 @@ import { useTaskCapabilityToggles } from "@/hooks/useTaskCapabilityToggles"
 import { cn } from "@/lib/utils"
 import { FileServiceClient, SlashServiceClient } from "@/services/grpc-client"
 import { renderSemanticHighlightHtml } from "@/services/input-semantics/highlight"
+import { storeOversizedPaste } from "@/services/input-semantics/paste-resource"
 import { useInputSemanticCatalog } from "@/services/input-semantics/useInputSemanticCatalog"
 import { shouldSendChatInput } from "@/utils/chat-input-shortcut"
 import {
@@ -1045,6 +1046,20 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 					return
 				}
 
+				// An oversized paste becomes a task-owned file so it stays readable
+				// and is not repeated in every later provider request.
+				if (
+					!shouldDisableFilesAndImages &&
+					selectedImages.length + selectedFiles.length < MAX_IMAGES_AND_FILES_PER_MESSAGE
+				) {
+					const stored = await storeOversizedPaste(pastedText)
+					if (stored) {
+						e.preventDefault()
+						setSelectedFiles((previousFiles) => [...previousFiles, stored.absolutePath])
+						return
+					}
+				}
+
 				const acceptedTypes = ["png", "jpeg", "webp"] // supported by anthropic and openrouter (jpg is just a file extension but the image will be recognized as jpeg)
 				const imageItems = Array.from(items).filter((item) => {
 					const [type, subtype] = item.type.split("/")
@@ -1102,6 +1117,7 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 			[
 				shouldDisableFilesAndImages,
 				setSelectedImages,
+				setSelectedFiles,
 				selectedImages,
 				selectedFiles,
 				cursorPosition,
