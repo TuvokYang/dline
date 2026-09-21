@@ -28,6 +28,8 @@ export const TaskTempSection = {
 	ImagePreviews: "image-previews",
 	/** Images materialized for the editor image viewer. */
 	ImageViewer: "image-viewer",
+	/** Authoritative copies of the resources one task's input carried. */
+	InputResources: "input-resources",
 } as const
 
 export type TaskTempSection = (typeof TaskTempSection)[keyof typeof TaskTempSection]
@@ -121,6 +123,28 @@ export function resolveTaskTempLogPath(taskId: string, section: TaskTempSection,
 
 	const directory = ensureTaskTempSectionSync(taskId, section)
 	const filePath = path.join(directory, `${stableStem}.log`)
+	if (path.dirname(path.resolve(filePath)) !== path.resolve(directory)) {
+		throw new Error(`Task temp file escapes its section: ${stableStem}`)
+	}
+	return filePath
+}
+
+/**
+ * Resolve a deterministic path from a stable identity and extension.
+ *
+ * Input resources keep the extension their content implies, so the editor opens
+ * them with the language the user pasted. The caller owns uniqueness.
+ */
+export function resolveTaskTempFilePath(taskId: string, section: TaskTempSection, stableStem: string, extension: string): string {
+	if (!FILE_STEM_PATTERN.test(stableStem)) {
+		throw new Error(`Invalid task temp file stem: ${stableStem}`)
+	}
+	if (!/^[A-Za-z0-9]{1,16}$/.test(extension)) {
+		throw new Error(`Invalid task temp file extension: ${extension}`)
+	}
+
+	const directory = ensureTaskTempSectionSync(taskId, section)
+	const filePath = path.join(directory, `${stableStem}.${extension}`)
 	if (path.dirname(path.resolve(filePath)) !== path.resolve(directory)) {
 		throw new Error(`Task temp file escapes its section: ${stableStem}`)
 	}
