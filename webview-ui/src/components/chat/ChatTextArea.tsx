@@ -1,5 +1,5 @@
 import { DEFAULT_CHAT_INPUT_SEND_SHORTCUT, getChatInputSendShortcutLabel } from "@shared/ChatInputSendShortcut"
-import { mentionRegex, mentionRegexGlobal } from "@shared/context-mentions"
+import { mentionRegex } from "@shared/context-mentions"
 import type { ClineAsk } from "@shared/ExtensionMessage"
 import { EmptyRequest, StringRequest } from "@shared/proto/dline/common"
 import { FileSearchRequest, FileSearchType, RefreshedDlineToggles, RelativePathsRequest } from "@shared/proto/dline/file"
@@ -25,6 +25,8 @@ import { usePlatform } from "@/context/PlatformContext"
 import { useTaskCapabilityToggles } from "@/hooks/useTaskCapabilityToggles"
 import { cn } from "@/lib/utils"
 import { FileServiceClient, SlashServiceClient } from "@/services/grpc-client"
+import { renderSemanticHighlightHtml } from "@/services/input-semantics/highlight"
+import { useInputSemanticCatalog } from "@/services/input-semantics/useInputSemanticCatalog"
 import { shouldSendChatInput } from "@/utils/chat-input-shortcut"
 import {
 	ContextMenuOptionType,
@@ -45,8 +47,6 @@ import {
 	sectionToPrefix,
 	shouldShowSlashCommandsMenu,
 	slashCommandDeleteRegex,
-	slashCommandRegexGlobal,
-	validateSlashCommand,
 } from "@/utils/slash-commands"
 import ClineRulesToggleModal from "../agent-capabilities/ClineRulesToggleModal"
 import { ChatInputRuntimeControls } from "./input/ChatInputRuntimeControls"
@@ -359,6 +359,7 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 		const textAreaRef = useRef<HTMLTextAreaElement | null>(null)
 		const [isMouseDownOnMenu, setIsMouseDownOnMenu] = useState(false)
 		const highlightLayerRef = useRef<HTMLDivElement>(null)
+		const semanticCatalog = useInputSemanticCatalog()
 		const [selectedMenuIndex, setSelectedMenuIndex] = useState(-1)
 		const [selectedType, setSelectedType] = useState<ContextMenuOptionType | null>(null)
 		const [justDeletedSpaceAfterMention, setJustDeletedSpaceAfterMention] = useState(false)
@@ -1129,63 +1130,14 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 				return
 			}
 
-			let processedText = textAreaRef.current.value
-
-			processedText = processedText
-				.replace(/\n$/, "\n\n")
-				.replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" })[c] || c)
-				// highlight @mentions
-				.replace(mentionRegexGlobal, '<mark class="mention-context-textarea-highlight">$&</mark>')
-
-			// Highlight only the FIRST valid /slash-command in the text
-			// Only one slash command is processed per message, so we only highlight the first one
-			slashCommandRegexGlobal.lastIndex = 0
-			let hasHighlightedSlashCommand = false
-			processedText = processedText.replace(slashCommandRegexGlobal, (match, prefix, command) => {
-				// Only highlight the first valid slash command
-				if (hasHighlightedSlashCommand) {
-					return match
-				}
-
-				// Extract just the command name (without the slash)
-				const commandName = command.substring(1)
-				const isValidCommand = validateSlashCommand(
-					commandName,
-					effectiveLocalWorkflowToggles,
-					effectiveGlobalWorkflowToggles,
-					effectiveRemoteWorkflowToggles,
-					remoteConfigSettings?.remoteGlobalWorkflows,
-					effectiveMcpServers,
-					effectiveLocalSkillsToggles,
-					effectiveGlobalSkillsToggles,
-					remoteConfigSettings?.remoteGlobalSkills,
-					effectiveRemoteSkillsToggles,
-					undefined,
-					availableSkillCommands,
-				)
-
-				if (isValidCommand) {
-					hasHighlightedSlashCommand = true
-					// Keep the prefix (whitespace or empty) and wrap the command in highlight
-					return `${prefix}<mark class="mention-context-textarea-highlight">${command}</mark>`
-				}
-				return match
-			})
-
-			highlightLayerRef.current.innerHTML = processedText
+			// The highlight comes from the same catalog and lexer the task admits
+			// with, so an entity stops looking active exactly when it stops acting
+			// as one: an unknown mention, or anything a lifecycle barrier moved
+			// into the pre-message.
+			highlightLayerRef.current.innerHTML = renderSemanticHighlightHtml(textAreaRef.current.value, semanticCatalog)
 			highlightLayerRef.current.scrollTop = textAreaRef.current.scrollTop
 			highlightLayerRef.current.scrollLeft = textAreaRef.current.scrollLeft
-		}, [
-			effectiveLocalWorkflowToggles,
-			effectiveGlobalWorkflowToggles,
-			effectiveRemoteWorkflowToggles,
-			effectiveMcpServers,
-			effectiveLocalSkillsToggles,
-			effectiveGlobalSkillsToggles,
-			effectiveRemoteSkillsToggles,
-			remoteConfigSettings,
-			availableSkillCommands,
-		])
+		}, [semanticCatalog])
 
 		useLayoutEffect(() => {
 			updateHighlights()
