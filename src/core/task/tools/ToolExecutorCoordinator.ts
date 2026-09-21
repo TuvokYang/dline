@@ -66,6 +66,21 @@ export interface IDenialDescribingToolHandler extends IToolHandler {
 	describeDenial(config: TaskConfig, block: ToolUse): Promise<string>
 }
 
+/**
+ * A handler that owns how its own row looks once the user refuses it.
+ *
+ * `describeDenial` tells the model what the refusal left behind; this reports
+ * the same fact to the user. Both stay with the handler because only it knows
+ * which row it created and which terminal state that row should show.
+ *
+ * An implementation must locate its row by the block's canonical identity. A
+ * turn can hold several rows of the same kind, so searching for the most recent
+ * one would retitle a sibling that is still awaiting its own answer.
+ */
+export interface IDenialPresentingToolHandler extends IToolHandler {
+	presentDenial(config: TaskConfig, block: ToolUse): Promise<void>
+}
+
 export type ToolHandlerPreparationResult =
 	| { outcome: "prepared"; presentation: ToolApprovalPresentation }
 	| { outcome: "rejected"; message: string }
@@ -101,6 +116,10 @@ export class SharedToolHandler implements IFullyManagedTool {
 		return describeToolDenial(this.baseHandler, config, block)
 	}
 
+	async presentDenial(config: TaskConfig, block: ToolUse): Promise<void> {
+		await presentToolDenial(this.baseHandler, config, block)
+	}
+
 	async handlePartialBlock(block: ToolUse, uiHelpers: StronglyTypedUIHelpers): Promise<void> {
 		return this.baseHandler.handlePartialBlock(block, uiHelpers)
 	}
@@ -112,6 +131,19 @@ export async function describeToolDenial(handler: IToolHandler | undefined, conf
 		return (handler as IDenialDescribingToolHandler).describeDenial(config, block)
 	}
 	return formatResponse.toolDenied()
+}
+
+/**
+ * Let a handler move its own row to a refused terminal state.
+ *
+ * Most tools present a refusal through the generic denial row and opt out by
+ * not implementing this, so an absent hook is the normal case rather than a
+ * missing one.
+ */
+export async function presentToolDenial(handler: IToolHandler | undefined, config: TaskConfig, block: ToolUse): Promise<void> {
+	if (handler && "presentDenial" in handler) {
+		await (handler as IDenialPresentingToolHandler).presentDenial(config, block)
+	}
 }
 
 /**

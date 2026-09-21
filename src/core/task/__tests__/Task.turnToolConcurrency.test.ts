@@ -162,6 +162,7 @@ function createTurn({
 				})),
 			commitInterruptedResult: vi.fn(async () => undefined),
 			describeDenial: vi.fn(async () => formatResponse.toolDenied()),
+			presentDenial: vi.fn(async () => undefined),
 			awaitInitialCheckpoint: vi.fn(async () => undefined),
 		},
 		approval: { request: requestApprovalSpy, stageFeedback: stageFeedbackSpy },

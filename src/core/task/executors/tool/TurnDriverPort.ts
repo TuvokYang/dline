@@ -12,6 +12,15 @@ import type { ToolApprovalPresentation, ToolPreflightAdmission, ToolPreflightRes
 /** Outcome of one block's lifecycle. */
 export type BlockLifecycleOutcome = "completed" | "halt_turn" | "retry_admission"
 
+/**
+ * Outcome of submitting one block to the pool.
+ *
+ * `suppressed` is distinct from `completed`: the pool retired the block without
+ * running it, so it has produced no result of its own and the caller still owes
+ * it a durable one.
+ */
+export type BlockSubmissionOutcome = BlockLifecycleOutcome | "suppressed"
+
 /** Input retained from the provider round while its tool turn executes. */
 export interface FinalizedTurnInput {
 	contextTokens: number
@@ -63,6 +72,14 @@ export interface TurnDriverBlockPort {
 	awaitInitialCheckpoint(toolName: string): Promise<void>
 	/** The denial wording for one rejected tool, including any tool-specific state note. */
 	describeDenial(tool: ToolUse): Promise<string>
+	/**
+	 * Let one rejected tool move its own presentation row to a refused state.
+	 *
+	 * The driver owns the turn, not the rows a tool created, so a tool that
+	 * shows live progress reports its own refusal here instead of leaving a row
+	 * that still claims to be waiting to start.
+	 */
+	presentDenial(tool: ToolUse): Promise<void>
 }
 
 /** Manual approval presentation is injected so the driver owns sequencing, not UI details. */
@@ -73,6 +90,17 @@ export interface TurnDriverApprovalPort {
 
 /** One live scheduling session for a finalized turn. */
 export interface TurnDriverSchedulingSession {
+	/**
+	 * Stop every later block that has not started, after one was refused.
+	 *
+	 * The halt is one-way and never suspends a caller: work already running
+	 * finishes and reports its real result, while work still queued is retired
+	 * by the pool. Blocks that never reached the pool observe it through
+	 * `isHaltedBefore`.
+	 */
+	haltAfter(index: number): void
+	/** Whether a halt raised earlier in this turn now suppresses this block. */
+	isHaltedBefore(index: number): boolean
 	/** Admission settled without pool execution, such as rejection or durable skip. */
 	markAdmissionSettled(index: number): void
 	/** A pooled block was revoked and returned to Admission before its permit is released. */
@@ -82,14 +110,22 @@ export interface TurnDriverSchedulingSession {
 		tool: ToolUse,
 		index: number,
 		admission: ToolPreflightAdmission<void>,
-		run: (signal: AbortSignal) => Promise<BlockLifecycleOutcome>,
-	): Promise<BlockLifecycleOutcome>
+		run: (signal: AbortSignal) => Promise<BlockSubmissionOutcome>,
+	): Promise<BlockSubmissionOutcome>
 }
 
 /** Scheduling is owned by the turn pool, not by the driver. */
 export interface TurnDriverSchedulerPort {
 	cancelActiveTurn(): void
 	notifyLimitChanged(): void
+	/**
+	 * Retire one block that never reached the pool.
+	 *
+	 * Blocks the pool owns are retired by its own skip path. A block suppressed
+	 * before submission has no pool entry, so it reports through the same
+	 * handler to keep one durable skip outcome for the turn.
+	 */
+	reportSkipped(dlineTid: string): Promise<void>
 	runTurn(
 		toolUses: ToolUse[],
 		run: (session: TurnDriverSchedulingSession) => Promise<BlockLifecycleOutcome>,

@@ -106,6 +106,7 @@ function invokeFinalizedTurn(task: Task): Promise<void> {
 			commitInterruptedResult: (tool, reason) =>
 				harness.toolExecutor.commitInterruptedToolResult?.(tool, reason) ?? Promise.resolve(),
 			describeDenial: async () => formatResponse.toolDenied(),
+			presentDenial: async () => undefined,
 			awaitInitialCheckpoint: (toolName) => harness.awaitInitialCheckpointBeforeToolSideEffects(toolName),
 		},
 		approval: {

@@ -297,6 +297,37 @@ describe("approval kind", () => {
 		})
 	})
 
+	describe("terminating a command", () => {
+		it("needs no approval even when every command toggle is off", () => {
+			// The command being terminated was approved when it started, and
+			// stopping it cannot reach anything that command could not already
+			// reach. Sharing the command scopes made stopping harder to
+			// authorize than starting, which is backwards.
+			const decision = resolveApprovalKind({
+				toolName: ClineDefaultTool.KILL_COMMAND,
+				settings: noneApproved(),
+			})
+
+			expect(decision.kind).toBe("none")
+		})
+
+		it("no longer borrows the scope of the command it stops", () => {
+			expect(resolvePermissionScope(ClineDefaultTool.KILL_COMMAND)).toBe("terminate_command")
+			// The classifier for safe commands does not apply to it at all.
+			expect(resolvePermissionScope(ClineDefaultTool.KILL_COMMAND, { isSafeCommand: true })).toBe("terminate_command")
+		})
+
+		it("cannot be restricted by a ceiling on the commands it stops", () => {
+			const decision = resolveApprovalKind({
+				toolName: ClineDefaultTool.KILL_COMMAND,
+				settings: noneApproved(),
+				ceilings: { command_all: "manual_only", command_safe: "manual_only" },
+			})
+
+			expect(decision.kind).toBe("none")
+		})
+	})
+
 	describe("subagent scope", () => {
 		it("follows the read-file toggles, matching the existing runtime policy", () => {
 			// The current AutoApprovalPolicy governs use_subagent(s) with the

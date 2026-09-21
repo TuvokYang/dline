@@ -344,7 +344,7 @@ describe("ToolAdmissionRegistry", () => {
 	it("classifies every remaining tool by the resource class it reaches", () => {
 		expect(resolvePermissionScope(ClineDefaultTool.FIND_REFERENCES)).toBe("read_workspace")
 		expect(resolvePermissionScope(ClineDefaultTool.RENAME)).toBe("edit_workspace")
-		expect(resolvePermissionScope(ClineDefaultTool.KILL_COMMAND)).toBe("command_all")
+		expect(resolvePermissionScope(ClineDefaultTool.KILL_COMMAND)).toBe("terminate_command")
 		expect(resolvePermissionScope(ClineDefaultTool.MCP_DOCS)).toBe("mcp")
 		expect(resolvePermissionScope(ClineDefaultTool.LOAD_MCP)).toBe("mcp")
 		expect(resolvePermissionScope(ClineDefaultTool.LOAD_SKILL)).toBe("read_workspace")

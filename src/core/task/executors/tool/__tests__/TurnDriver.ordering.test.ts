@@ -89,6 +89,7 @@ describe("TurnDriver post-commit ordering", () => {
 				}),
 				commitInterruptedResult: vi.fn(async () => undefined),
 				describeDenial: vi.fn(async () => formatResponse.toolDenied()),
+				presentDenial: vi.fn(async () => undefined),
 				awaitInitialCheckpoint: vi.fn(async () => undefined),
 			},
 			approval: {
@@ -98,9 +99,12 @@ describe("TurnDriver post-commit ordering", () => {
 			scheduler: {
 				cancelActiveTurn: vi.fn(),
 				notifyLimitChanged: vi.fn(),
+				reportSkipped: vi.fn(async () => undefined),
 				runTurn: vi.fn(
 					async (_tools: ToolUse[], run: (session: TurnDriverSchedulingSession) => Promise<BlockLifecycleOutcome>) =>
 						run({
+							haltAfter: vi.fn(),
+							isHaltedBefore: () => false,
 							markAdmissionSettled: vi.fn(),
 							markAdmissionUnsettled: vi.fn(),
 							submit: async (_tool, _index, _admission, execute) => execute(new AbortController().signal),
@@ -136,6 +140,7 @@ describe("TurnDriver post-commit ordering", () => {
 			effectPorts(),
 		)
 		const commitInterruptedResult = vi.fn(async () => undefined)
+		const presentDenial = vi.fn(async () => undefined)
 		const run = vi.fn(async () => undefined)
 		const driver = new TurnDriver({
 			task: {
@@ -173,6 +178,7 @@ describe("TurnDriver post-commit ordering", () => {
 				}),
 				commitInterruptedResult,
 				describeDenial: vi.fn(async () => formatResponse.toolDenied()),
+				presentDenial,
 				awaitInitialCheckpoint: vi.fn(async () => undefined),
 			},
 			approval: {
@@ -182,12 +188,15 @@ describe("TurnDriver post-commit ordering", () => {
 			scheduler: {
 				cancelActiveTurn: vi.fn(),
 				notifyLimitChanged: vi.fn(),
+				reportSkipped: vi.fn(async () => undefined),
 				runTurn: vi.fn(
 					async (
 						_tools: ToolUse[],
 						runTurn: (session: TurnDriverSchedulingSession) => Promise<BlockLifecycleOutcome>,
 					) =>
 						runTurn({
+							haltAfter: vi.fn(),
+							isHaltedBefore: () => false,
 							markAdmissionSettled: vi.fn(),
 							markAdmissionUnsettled: vi.fn(),
 							submit: async (_tool, _index, _admission, execute) => execute(new AbortController().signal),
@@ -202,5 +211,8 @@ describe("TurnDriver post-commit ordering", () => {
 
 		expect(run).not.toHaveBeenCalled()
 		expect(commitInterruptedResult).toHaveBeenCalledWith(tool, formatResponse.toolDenied())
+		// The model learns the tool was denied; the row the tool is showing has
+		// to reach a matching terminal state instead of waiting forever.
+		expect(presentDenial).toHaveBeenCalledWith(tool)
 	})
 })

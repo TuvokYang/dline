@@ -154,6 +154,7 @@ export class TurnDriver {
 				const rejected = await this.ports.runtime.dispatch({ type: "BLOCK_ADMISSION_REJECTED", turnId, dlineTid })
 				if (!rejected.accepted)
 					throw new Error(`Block admission rejection was rejected: ${rejected.error?.code ?? "invalid_runtime_event"}`)
+				session.haltAfter(index)
 				session.markAdmissionSettled(index)
 				await this.ports.block.commitInterruptedResult(tool, prepared.rejection.message)
 				this.markFinalizedToolPresented(tool)
@@ -169,6 +170,7 @@ export class TurnDriver {
 							`Block admission rejection was rejected: ${rejected.error?.code ?? "invalid_runtime_event"}`,
 						)
 					}
+					session.haltAfter(index)
 					session.markAdmissionSettled(index)
 					await this.ports.block.commitInterruptedResult(tool, approvalPrepared.rejection.message)
 					this.markFinalizedToolPresented(tool)
@@ -207,6 +209,7 @@ export class TurnDriver {
 							`Block admission rejection was rejected: ${rejected.error?.code ?? "invalid_runtime_event"}`,
 						)
 					}
+					session.haltAfter(index)
 					session.markAdmissionSettled(index)
 					await this.ports.block.commitInterruptedResult(tool, confirmed.rejection.message)
 					this.markFinalizedToolPresented(tool)
@@ -244,11 +247,19 @@ export class TurnDriver {
 						throw new Error(`Block approval resolution rejected: ${resolved.error?.code ?? "invalid_runtime_event"}`)
 				}
 				if (!approved) {
+					// The user declined, so nothing later in this turn may still
+					// begin. Work already running keeps its real result; the pool
+					// retires what it has not started.
+					session.haltAfter(index)
 					session.markAdmissionSettled(index)
 					// A user rejection is the denial the model is told about everywhere
 					// else, so it must reuse that canonical wording instead of a second
 					// literal only this path produces.
 					await this.ports.block.commitInterruptedResult(tool, await this.ports.block.describeDenial(tool))
+					// The model now has its result; the user still sees whatever row
+					// the tool was showing, which for a live tool is a state that
+					// will never be reached.
+					await this.ports.block.presentDenial(tool)
 					this.markFinalizedToolPresented(tool)
 					return undefined
 				}
@@ -261,8 +272,10 @@ export class TurnDriver {
 
 		const runBlockLifecycle = async (
 			tool: ToolUse,
+			index: number,
+			session: import("./TurnDriverPort").TurnDriverSchedulingSession,
 			admission: import("./ToolPreflight").ToolPreflightAdmission<void>,
-		): Promise<BlockLifecycleOutcome> => {
+		): Promise<import("./TurnDriverPort").BlockSubmissionOutcome> => {
 			if (this.ports.task.isAborted() || !this.ports.task.isCurrentTask()) return "halt_turn"
 			const dlineTid = tool.dline_tid
 			if (!dlineTid) return "completed"
@@ -296,6 +309,11 @@ export class TurnDriver {
 			if (!execution.accepted) {
 				const state = this.ports.runtime.getState()
 				const currentBlock = state.turn?.blocks.find((block) => block.dlineTid === dlineTid)
+				// An earlier block was refused and closed the turn, so this one is
+				// not starting for a reason the turn already knows. It is reported
+				// as suppressed rather than as a halt, which would abandon the
+				// remaining blocks without a durable result.
+				if (session.isHaltedBefore(index)) return "suppressed"
 				if (
 					this.ports.task.isAborted() ||
 					state.phase === TaskPhase.CANCELLING ||
@@ -318,6 +336,10 @@ export class TurnDriver {
 				return "completed"
 			}
 			if (this.isTerminalRuntimeBlock(runtimeBlock.phase)) {
+				// The effect ran but its own outcome refused the block, so the
+				// rest of the turn must stop for the same reason a refused
+				// admission does.
+				if (runtimeBlock.phase === BlockPhase.REJECTED) session.haltAfter(index)
 				await this.ensureTerminalToolResult(tool, runtimeBlock.phase)
 				this.markFinalizedToolPresented(tool)
 				return "completed"
@@ -338,16 +360,78 @@ export class TurnDriver {
 		}
 
 		const outcome = await this.ports.scheduler.runTurn(toolUses, async (session) => {
+			const suppressHaltedBlock = async (tool: ToolUse, index: number): Promise<void> => {
+				session.markAdmissionSettled(index)
+				const dlineTid = tool.dline_tid
+				// The durable result below reads the block's phase to choose its
+				// wording, so a block the pool has not already retired is moved to
+				// its terminal phase here rather than left to a host callback.
+				//
+				// The skip report itself is not conditional on that: it also drives
+				// the presentation a suppressed tool shows, which a block retired
+				// inside the pool still needs.
+				if (dlineTid) {
+					const current = this.ports.runtime
+						.getState()
+						.turn?.blocks.find((candidate) => candidate.dlineTid === dlineTid)
+					if (current && !this.isTerminalRuntimeBlock(current.phase)) {
+						await this.ports.runtime.dispatch({ type: "BLOCK_EXECUTION_SKIPPED", turnId, dlineTid })
+					}
+					await this.ports.scheduler.reportSkipped(dlineTid)
+				}
+				const block = this.ports.runtime.getState().turn?.blocks.find((candidate) => candidate.dlineTid === dlineTid)
+				if (block) await this.ensureTerminalToolResult(tool, block.phase)
+				this.markFinalizedToolPresented(tool)
+			}
 			const processBlock = async (tool: ToolUse, index: number): Promise<BlockLifecycleOutcome> => {
 				let prepared = admissions.get(tool.dline_tid ?? "")
 				if (!prepared) throw new Error(`Prepared admission is missing for tool=${tool.name}`)
-				while (true) {
-					const resolved = await resolveBlockAdmission(tool, index, prepared, session)
-					if (!resolved || resolved.outcome === "rejected") return "completed"
-					prepared = resolved
-					const executionOutcome = await session.submit(tool, index, resolved, () => runBlockLifecycle(tool, resolved))
-					if (executionOutcome !== "retry_admission") return executionOutcome
-					prepared = admissions.get(tool.dline_tid ?? "") ?? resolved
+				// An admission that is abandoned rather than settled would leave the
+				// turn-ending fence believing earlier work is still outstanding, so
+				// every exit from here settles, including aborts and failures.
+				let settled = false
+				try {
+					while (true) {
+						// A block refused earlier in this turn may never begin. Work
+						// already submitted is retired by the pool; this covers the
+						// blocks that had not reached it yet.
+						if (session.isHaltedBefore(index)) {
+							settled = true
+							await suppressHaltedBlock(tool, index)
+							return "completed"
+						}
+						const resolved = await resolveBlockAdmission(tool, index, prepared, session)
+						// Admission can await the user, so a halt may have been
+						// raised while this block was resolving. Re-checking here
+						// is what keeps the guard meaningful for siblings that had
+						// already passed the entry check.
+						if (session.isHaltedBefore(index)) {
+							settled = true
+							await suppressHaltedBlock(tool, index)
+							return "completed"
+						}
+						if (!resolved || resolved.outcome === "rejected") {
+							settled = true
+							return "completed"
+						}
+						prepared = resolved
+						settled = true
+						const executionOutcome = await session.submit(tool, index, resolved, () =>
+							runBlockLifecycle(tool, index, session, resolved),
+						)
+						// The pool retired the block without running it, so it owes
+						// no result of its own and is reported through the single
+						// suppression exit.
+						if (executionOutcome === "suppressed") {
+							await suppressHaltedBlock(tool, index)
+							return "completed"
+						}
+						if (executionOutcome !== "retry_admission") return executionOutcome
+						settled = false
+						prepared = admissions.get(tool.dline_tid ?? "") ?? resolved
+					}
+				} finally {
+					if (!settled) session.markAdmissionSettled(index)
 				}
 			}
 			const firstRejectedIndex = toolUses.findIndex((tool) => admissions.get(tool.dline_tid ?? "")?.outcome === "rejected")
@@ -357,12 +441,7 @@ export class TurnDriver {
 					if (blockOutcome === "halt_turn") return blockOutcome
 				}
 				for (let index = firstRejectedIndex + 1; index < toolUses.length; index += 1) {
-					session.markAdmissionSettled(index)
-					const block = this.ports.runtime
-						.getState()
-						.turn?.blocks.find((candidate) => candidate.dlineTid === toolUses[index].dline_tid)
-					if (block) await this.ensureTerminalToolResult(toolUses[index], block.phase)
-					this.markFinalizedToolPresented(toolUses[index])
+					await suppressHaltedBlock(toolUses[index], index)
 				}
 				return "completed"
 			}

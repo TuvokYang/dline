@@ -189,6 +189,19 @@ describe("TaskRuntime main flow", () => {
 		expect(runtime.getState().turn?.blocks[1]?.phase).toBe(BlockPhase.STREAMING)
 
 		await dispatch(runtime, sequence, { type: "BLOCK_REJECTED", turnId: "turn-2", dlineTid: "tid-first" })
+
+		// Rejection commits the refused block alone. Its siblings are still live
+		// and own their own transition, because deciding here which of them had
+		// started would mean reading an execution set that concurrent blocks are
+		// still changing.
+		expect(runtime.getState().turn?.blocks.map((block) => block.phase)).toEqual([
+			BlockPhase.REJECTED,
+			BlockPhase.STREAMING,
+			BlockPhase.STREAMING,
+		])
+
+		await dispatch(runtime, sequence, { type: "BLOCK_EXECUTION_SKIPPED", turnId: "turn-2", dlineTid: "tid-second" })
+		await dispatch(runtime, sequence, { type: "BLOCK_EXECUTION_SKIPPED", turnId: "turn-2", dlineTid: "tid-read" })
 		await dispatch(runtime, sequence, { type: "TURN_COMPLETED", turnId: "turn-2" })
 
 		expect(runtime.getState().turn?.blocks.map((block) => block.phase)).toEqual([

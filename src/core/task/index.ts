@@ -713,6 +713,7 @@ export class Task {
 			prepareAdmission: (tool) => this.toolExecutor.prepareAdmission(tool),
 			commitInterruptedResult: (tool, reason) => this.toolExecutor.commitInterruptedToolResult(tool, reason),
 			describeDenial: (tool) => this.toolExecutor.describeToolDenial(tool),
+			presentDenial: (tool) => this.toolExecutor.presentToolDenial(tool),
 			awaitInitialCheckpoint: (toolName) => this.awaitInitialCheckpointBeforeToolSideEffects(toolName),
 		},
 		approval: {

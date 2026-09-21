@@ -71,6 +71,7 @@ function createTurnDriverHarness(options: TurnDriverHarnessOptions): TurnDriver 
 			}),
 			commitInterruptedResult: options.commitInterruptedResult ?? vi.fn(async () => undefined),
 			describeDenial: vi.fn(async () => formatResponse.toolDenied()),
+			presentDenial: vi.fn(async () => undefined),
 			awaitInitialCheckpoint: options.awaitInitialCheckpoint ?? vi.fn(async () => undefined),
 		},
 		approval: {

@@ -613,31 +613,25 @@ function withAdmittedBlock(
 	}
 }
 
-/** Reject one block and skip every later block whose effect has not started. */
-function rejectBlockAndSkipUnstartedAfter(
-	turn: NonNullable<TaskRuntimeState["turn"]>,
-	dlineTid: string,
-): NonNullable<TaskRuntimeState["turn"]> {
-	const executing = new Set(deriveTurnOwnership(turn).executing)
-	let afterRejected = false
+/**
+ * Reject one block, leaving every sibling to reach its own terminal phase.
+ *
+ * Stopping the rest of the turn is a scheduling decision, not a state rewrite.
+ * The pool already owns it: `cancelBlocksAfter` retires the entries it has not
+ * started, as a single writer over a queue it alone mutates. Cascading here as
+ * well would make two writers per block, and would have to guess which
+ * siblings had started by reading an execution set that concurrent blocks are
+ * still changing — a guess whose answer depends on how quickly the user
+ * clicked. A block that did run reports what it did; one that never started is
+ * retired by the pool and reports that instead.
+ */
+function rejectBlock(turn: NonNullable<TaskRuntimeState["turn"]>, dlineTid: string): NonNullable<TaskRuntimeState["turn"]> {
 	return {
 		...turn,
 		activeDlineTid: turn.activeDlineTid === dlineTid ? undefined : turn.activeDlineTid,
-		blocks: turn.blocks.map((candidate) => {
-			if (candidate.dlineTid === dlineTid) {
-				afterRejected = true
-				return { ...candidate, phase: BlockPhase.REJECTED }
-			}
-			if (
-				afterRejected &&
-				candidate.dlineTid !== turn.activeDlineTid &&
-				!executing.has(candidate.dlineTid) &&
-				!isTerminalBlock(candidate.phase)
-			) {
-				return { ...candidate, phase: BlockPhase.SKIPPED }
-			}
-			return candidate
-		}),
+		blocks: turn.blocks.map((candidate) =>
+			candidate.dlineTid === dlineTid ? { ...candidate, phase: BlockPhase.REJECTED } : candidate,
+		),
 	}
 }
 
@@ -751,12 +745,7 @@ function reduceTurn(
 		if (block.phase !== BlockPhase.STREAMING) {
 			return reject(state, event.type)
 		}
-		return acceptTurn(
-			state,
-			event.type,
-			rejectBlockAndSkipUnstartedAfter(state.turn, block.dlineTid),
-			TaskPhase.BETWEEN_TURNS,
-		)
+		return acceptTurn(state, event.type, rejectBlock(state.turn, block.dlineTid), TaskPhase.BETWEEN_TURNS)
 	}
 	if (event.type === "BLOCK_ADMISSION_REVOKED") {
 		const ownership = deriveTurnOwnership(state.turn)
@@ -817,12 +806,7 @@ function reduceTurn(
 		if (block.phase !== BlockPhase.AWAITING_APPROVAL || state.turn.activeDlineTid !== block.dlineTid) {
 			return reject(state, event.type)
 		}
-		return acceptTurn(
-			state,
-			event.type,
-			rejectBlockAndSkipUnstartedAfter(state.turn, block.dlineTid),
-			TaskPhase.BETWEEN_TURNS,
-		)
+		return acceptTurn(state, event.type, rejectBlock(state.turn, block.dlineTid), TaskPhase.BETWEEN_TURNS)
 	}
 	if (event.type === "BLOCK_EXECUTION_STARTED" || event.type === "RESTORED_BLOCK_EXECUTION_STARTED") {
 		if (block.phase !== BlockPhase.EXECUTING && block.phase !== BlockPhase.AUTO_EXECUTING) {
@@ -885,12 +869,7 @@ function reduceTurn(
 		) {
 			return reject(state, event.type)
 		}
-		return acceptTurn(
-			state,
-			event.type,
-			rejectBlockAndSkipUnstartedAfter(state.turn, block.dlineTid),
-			TaskPhase.BETWEEN_TURNS,
-		)
+		return acceptTurn(state, event.type, rejectBlock(state.turn, block.dlineTid), TaskPhase.BETWEEN_TURNS)
 	}
 	const executing = deriveTurnOwnership(state.turn).executing
 	if (
@@ -1155,14 +1134,7 @@ function reduceInteractionResponse(
 		}
 	}
 	if (event.response.actionId === "reject") {
-		return acceptTurn(
-			state,
-			event.type,
-			rejectBlockAndSkipUnstartedAfter(turn, block.dlineTid),
-			TaskPhase.BETWEEN_TURNS,
-			effects,
-			result.next,
-		)
+		return acceptTurn(state, event.type, rejectBlock(turn, block.dlineTid), TaskPhase.BETWEEN_TURNS, effects, result.next)
 	}
 	return acceptInteraction(state, result.next, state.anchor, effects)
 }
