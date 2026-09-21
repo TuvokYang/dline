@@ -1,3 +1,4 @@
+import { Logger } from "@shared/services/Logger"
 import type { HaltStopCommand, ParticipantId, TaskEvent } from "../kernel"
 
 export type TaskEventSubmission = { readonly kind: "accepted" } | { readonly kind: "rejected" }
@@ -28,8 +29,17 @@ export function isExecutionAbort(_error: unknown, signal: AbortSignal): boolean 
 	return signal.aborted
 }
 
+/**
+ * Report one executor failure.
+ *
+ * The returned text enters the conversation, so it carries only a sanitized
+ * failure kind. The original error is logged instead, because a bare error name
+ * cannot explain why a provider, tool or compaction execution failed.
+ */
 export function executorFailure(domain: string, error: unknown): string {
 	const candidate = error instanceof Error ? error.name : "unknown"
 	const safeKind = /^[A-Za-z0-9_.-]{1,64}$/.test(candidate) ? candidate : "unknown"
-	return `${domain} execution failed (${safeKind})`
+	const failure = `${domain} execution failed (${safeKind})`
+	Logger.error(failure, error)
+	return failure
 }

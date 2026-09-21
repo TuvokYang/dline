@@ -9,7 +9,7 @@ import {
 	type TaskPersistencePorts,
 } from "./TaskExecutorAssembly"
 import { openTaskPersistence, type TaskPersistenceAssembly } from "./TaskPersistenceAssembly"
-import { TaskShell } from "./TaskShell"
+import { type TaskInputPresentationPort, TaskShell } from "./TaskShell"
 
 export interface TaskExecutionFactoryContext {
 	readonly initialState: TaskState
@@ -23,6 +23,8 @@ export interface OpenTaskShellOptions {
 	readonly taskView: TaskViewPort
 	readonly diagnostics?: RuntimeDiagnosticSink
 	readonly persistence?: TaskPersistenceAssembly
+	/** Shows accepted submissions in chat; absent in headless assemblies. */
+	readonly inputPresentation?: TaskInputPresentationPort
 }
 
 export type OpenTaskShellResult =
@@ -75,7 +77,7 @@ export async function openTaskShell(options: OpenTaskShellOptions): Promise<Open
 	return {
 		kind: "ready",
 		form: restored.form,
-		shell: new TaskShell(assembly.runtime, assembly.halt),
+		shell: new TaskShell(assembly.runtime, assembly.halt, options.inputPresentation),
 		runtime: assembly.runtime,
 		assembly,
 		payloads: persistence.payloads,

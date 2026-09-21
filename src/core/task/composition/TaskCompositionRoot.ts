@@ -41,6 +41,7 @@ export interface TaskCompositionOptions {
 	readonly taskView: TaskViewPort
 	readonly diagnostics?: RuntimeDiagnosticSink
 	readonly persistence?: OpenTaskShellOptions["persistence"]
+	readonly inputPresentation?: OpenTaskShellOptions["inputPresentation"]
 }
 
 export type TaskCompositionResult =

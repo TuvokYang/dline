@@ -30,6 +30,7 @@ import { createRequestApiScope } from "../RequestApiScope"
 import type { ActiveTaskSession } from "../session/ActiveTaskSession"
 import { TaskApiHandlerOwner } from "../session/TaskApiHandlerOwner"
 import { TaskEnvironmentOwner } from "../session/TaskEnvironmentOwner"
+import { TaskInputPresenter } from "../session/TaskInputPresenter"
 import { TaskInteractionOwner } from "../session/TaskInteractionOwner"
 import { TaskProviderRequestFactory } from "../session/TaskProviderRequestFactory"
 import { openActiveTaskSession } from "../session/TaskSessionFactory"
@@ -248,6 +249,7 @@ export class TaskSessionCompositionService {
 			taskView: options.taskView,
 			owners,
 			inputAdmission: this.composeInputAdmission(options, taskIncarnationId, tool.services, api, settings),
+			inputPresentation: new TaskInputPresenter(persistence.payloads, messages),
 			services: {
 				provider: new DefaultProductionProviderService({ requests: providerRequests }),
 				tool: new DefaultProductionToolExecutionService({ config: toolExecution, runtime: toolRuntime }),

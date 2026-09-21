@@ -12,10 +12,16 @@ export interface TaskHaltRearmPort {
 	rearm(haltId: string): Promise<void>
 }
 
+/** Shows an accepted submission as the user's own chat row. */
+export interface TaskInputPresentationPort {
+	present(input: TaskInput): Promise<void>
+}
+
 export class TaskShell {
 	constructor(
 		private readonly runtime: RuntimeFacade,
 		private readonly halt: TaskHaltRearmPort,
+		private readonly presentation?: TaskInputPresentationPort,
 	) {}
 
 	async start(input: TaskInput): Promise<EventSubmissionResult> {
@@ -24,8 +30,8 @@ export class TaskShell {
 		return this.submitInput(input)
 	}
 
-	submitInput(input: TaskInput): Promise<EventSubmissionResult> {
-		return this.runtime.submit({
+	async submitInput(input: TaskInput): Promise<EventSubmissionResult> {
+		const submitted = await this.runtime.submit({
 			type: "user.submit",
 			generation: this.runtime.getState().generation,
 			entryId: input.entryId,
@@ -33,6 +39,10 @@ export class TaskShell {
 			mode: input.mode,
 			sequence: input.sequence,
 		})
+		// The chat row follows acceptance, so a refused submission never leaves a
+		// message for an entry the task does not own.
+		if (submitted.kind !== "rejected") await this.presentation?.present(input)
+		return submitted
 	}
 
 	async respond(action: TaskUiAction): Promise<EventSubmissionResult> {
