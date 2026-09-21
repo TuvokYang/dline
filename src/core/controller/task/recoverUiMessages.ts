@@ -242,14 +242,14 @@ export async function recoverUiMessages(controller: Controller, taskId?: string)
 	// 5. If controller has an active task for this ID, reload it to show recovered messages
 	if (controller?.task?.taskId === id) {
 		try {
-			await controller.task.displayHistory()
+			controller.task.owners.messages.reloadFromStore()
 			// Reload focus chain checklist from disk so TODOs reflect recovered state
 			const fcPath = path.join(taskDir, `focus_chain_taskid_${id}.md`)
 			try {
 				const fcContent = await fs.readFile(fcPath, "utf-8")
 				if (fcContent.trim()) {
 					const checklist = extractFocusChainListFromText(fcContent) || fcContent
-					controller.task.taskState.currentFocusChainChecklist = checklist
+					controller.task.owners.toolState.currentFocusChainChecklist = checklist
 				}
 			} catch {
 				// Focus chain file may not exist — that's OK

@@ -195,13 +195,13 @@ export async function updateTaskSettings(controller: Controller, request: Update
 				taskRuntimeOverrideChanged: taskRuntimeOverrideUpdate.changed,
 				mode: mode ?? "(unchanged)",
 			})
-			await controller.task.rebuildApiHandler()
+			await controller.task.owners.api.rebuild({ abortPrevious: true })
 			if (taskProfileChanged || taskModeChanged) {
 				controller.restartAccountUsagePolling()
 			}
 		}
 		if (taskCapabilityTogglesChanged && controller.task && controller.task.taskId === taskId) {
-			await controller.task.flushPromptFreshnessInvalidation("task_capability_toggle")
+			await controller.task.owners.prompt.flush("task_capability_toggle")
 			promptFreshnessPublished = true
 		}
 	}

@@ -1,10 +1,10 @@
 import { ToolUse } from "@core/assistant-message"
 import { formatResponse } from "@core/prompts/responses"
-import { ToolResponse } from "@core/task"
 import { MAX_TOOL_RESULT_TEXT_BYTES, truncateContent } from "@shared/content-limits"
 import type { ClineContent, ClineUserToolResultContentBlock } from "@/shared/messages/content"
 import { Logger } from "@/shared/services/Logger"
 import type { ToolExecutorCoordinator } from "../ToolExecutorCoordinator"
+import type { ToolResponse } from "../ToolResponse"
 
 /**
  * Sentinel tool response meaning "the tool turn must not emit a tool_result".

@@ -32,9 +32,9 @@ export async function mutateInputQueue(
 	request: MutateInputQueueRequest,
 ): Promise<MutateInputQueueResponse> {
 	const task = controller.task
-	if (!task || (request.taskId && task.taskId !== request.taskId)) {
+	if (!task || (request.taskId && task.taskId !== request.taskId) || !task.owners.inputQueue) {
 		return MutateInputQueueResponse.create({ accepted: false, result: "missing_task" })
 	}
-	const outcome = await task.mutateInputQueue(toMutation(request))
+	const outcome = await task.owners.inputQueue.mutate(toMutation(request))
 	return MutateInputQueueResponse.create(outcome)
 }

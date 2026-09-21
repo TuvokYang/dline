@@ -1,4 +1,7 @@
 export type * from "./contracts"
+export { FileCommandPublicationStore } from "./FileCommandPublicationStore"
+export { FileTaskPayloadStore, type TaskPayloadStore } from "./FileTaskPayloadStore"
+export { FileTaskStateVault } from "./FileTaskStateVault"
 export {
 	InMemoryCommandPublicationStore,
 	InMemoryConversationJournal,

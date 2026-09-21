@@ -24,6 +24,7 @@ interface SayRecorder {
 
 function createMockConfig(recorder: SayRecorder): TaskConfig {
 	return {
+		blockState: { rejectActiveBlock: () => {}, reset: () => {}, hasAnyRejection: () => false },
 		taskId: "test-task",
 		ulid: "test-ulid",
 		cwd: CWD,
@@ -36,7 +37,6 @@ function createMockConfig(recorder: SayRecorder): TaskConfig {
 		isSubagentExecution: false,
 		isMultiRootEnabled: false,
 		taskState: {} as any,
-		taskController: { rejectActiveBlock: () => {}, reset: () => {}, hasAnyRejection: () => false } as any,
 		messageState: {} as any,
 		api: {} as any,
 		services: { taskFileTracker: { trackModification: () => {} } } as any,

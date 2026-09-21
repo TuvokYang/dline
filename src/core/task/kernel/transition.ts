@@ -479,6 +479,7 @@ function deriveCommands(previous: TaskState, next: TaskState, event: TaskEvent):
 							index: after.index,
 							lanes: after.lanes,
 							turnEnding: after.turnEnding,
+							invocationRef: after.invocationRef,
 						},
 					],
 				},
@@ -494,7 +495,14 @@ function deriveCommands(previous: TaskState, next: TaskState, event: TaskEvent):
 			const interaction = next.dialog.primary
 			return interaction ? [{ ...commandBase(next, 0), type: "dialog.prepare", ...dialogCommandInput(interaction) }] : []
 		}
-		return [{ ...commandBase(next, 0), type: "compose.round", turnId: next.turn.turnId, admittedEntryIds: [event.entryId] }]
+		return [
+			{
+				...commandBase(next, 0),
+				type: "compose.round",
+				turnId: next.turn.blocks.length > 0 ? next.turn.turnId : undefined,
+				admittedEntryIds: [event.entryId],
+			},
+		]
 	}
 	if (
 		(event.type === "tool.completed" || event.type === "tool.failed" || event.type === "tool.cancelled") &&
@@ -506,6 +514,50 @@ function deriveCommands(previous: TaskState, next: TaskState, event: TaskEvent):
 	}
 	if (event.type === "compose.completed") {
 		return [{ ...commandBase(next, 0), type: "provider.start", draftRef: event.draftRef, turnId: event.turnId }]
+	}
+	if (event.type === "provider.turn_ready") {
+		const commands: Command[] = []
+		let sequence = 0
+		const readyBlocks = next.turn.blocks.filter((block) => block.phase === "ready")
+		if (readyBlocks.length > 0) {
+			commands.push({
+				...commandBase(next, sequence++),
+				type: "tool.run",
+				turnId: event.turnId,
+				mode: next.turn.mode,
+				blocks: readyBlocks.map((block) => ({
+					blockId: block.blockId,
+					attempt: block.attempt,
+					index: block.index,
+					lanes: block.lanes,
+					turnEnding: block.turnEnding,
+					invocationRef: block.invocationRef,
+				})),
+			})
+		}
+		for (const block of event.turnPlan.blocks) {
+			if (block.approval.kind === "manual") {
+				const interaction = next.dialog.approvalsByBlock[block.blockId]
+				if (interaction)
+					commands.push({
+						...commandBase(next, sequence++),
+						type: "dialog.prepare",
+						...dialogCommandInput(interaction),
+					})
+			}
+			if (block.approval.kind === "automatic") {
+				commands.push({
+					...commandBase(next, sequence++),
+					type: "approval.evaluate",
+					interactionId: block.approval.interactionId,
+					blockId: block.blockId,
+					policyRevision: block.approval.policyRevision,
+					riskFacts: block.approval.riskFacts,
+					attempt: block.attempt,
+				})
+			}
+		}
+		return commands
 	}
 	if (event.type === "compaction.requested") {
 		return [

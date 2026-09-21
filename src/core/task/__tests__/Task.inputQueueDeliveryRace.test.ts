@@ -1,53 +1,52 @@
-import { Task } from "@core/task"
+import { type TaskInputQueuePorts, TaskInputQueueService } from "@core/task/input-queue/TaskInputQueueService"
 import { describe, expect, it, vi } from "vitest"
+
+type SubmitInteraction = TaskInputQueuePorts["submitInteraction"]
+
+function createService(submitInteraction: SubmitInteraction) {
+	let service!: TaskInputQueueService
+	service = new TaskInputQueueService({
+		taskId: "task-1",
+		currentRevision: () => 7,
+		persistQueue: async () => service.recordSnapshotWriteOutcome("written"),
+		publishProjection: async () => undefined,
+		submitInteraction,
+		appendUserContent: () => undefined,
+		presentDeliveredInput: async () => undefined,
+	})
+	return service
+}
 
 describe("Task input queue turn-end delivery", () => {
 	it("retries delivery when a queue mutation lands after the awaiting callback", async () => {
-		const deliverAtTurnEnd = vi.fn(async () => undefined)
-		const mutate = vi.fn(async () => ({ accepted: true, result: "queued-input-1" }))
-		const task = {
-			awaitingQueuedInputInteraction: { turnId: "turn-1", interactionId: "interaction-1" },
-			inputQueueCoordinator: { deliverAtTurnEnd, mutate },
-		}
+		const submitInteraction = vi.fn<SubmitInteraction>(async () => ({ accepted: true }))
+		const service = createService(submitInteraction)
+		service.markAwaitingUser({ turnId: "turn-1", interactionId: "interaction-1" })
 
-		const result = await Task.prototype.mutateInputQueue.call(task as never, {
-			enqueue: { draft: { text: "rapid feedback" } },
-		})
+		const result = await service.mutate({ enqueue: { draft: { text: "rapid feedback" } } })
 
-		expect(result).toEqual({ accepted: true, result: "queued-input-1" })
-		expect(deliverAtTurnEnd).toHaveBeenCalledOnce()
+		expect(result.accepted).toBe(true)
+		await vi.waitFor(() => expect(submitInteraction).toHaveBeenCalledOnce())
+		expect(submitInteraction.mock.calls[0]?.[0].interactionId).toBe("interaction-1")
 	})
 
 	it("clears only the awaiting target settled by a queue delivery", async () => {
-		type AwaitingTarget = { turnId: string; interactionId: string }
-		const awaiting: AwaitingTarget = { turnId: "turn-1", interactionId: "interaction-1" }
-		const task: {
-			awaitingQueuedInputInteraction?: AwaitingTarget
-			dispatchRuntime: ReturnType<typeof vi.fn>
-			renderQueuedInputBlocks: ReturnType<typeof vi.fn>
-			taskId: string
-			taskRuntime: { getState(): { revision: number } }
-		} = {
-			awaitingQueuedInputInteraction: awaiting,
-			dispatchRuntime: vi.fn(async () => ({ accepted: true })),
-			renderQueuedInputBlocks: vi.fn(() => ["rapid feedback"]),
-			taskId: "task-1",
-			taskRuntime: { getState: () => ({ revision: 7 }) },
-		}
-		const answerTurnEndWithQueuedInput = (
-			Task.prototype as unknown as {
-				answerTurnEndWithQueuedInput(delivery: unknown): Promise<boolean>
-			}
-		).answerTurnEndWithQueuedInput
+		let settleFirst!: (result: { accepted: boolean }) => void
+		const submitInteraction = vi
+			.fn<SubmitInteraction>()
+			.mockImplementationOnce(() => new Promise((resolve) => (settleFirst = resolve)))
+			.mockResolvedValue({ accepted: true })
+		const service = createService(submitInteraction)
+		service.markAwaitingUser({ turnId: "turn-1", interactionId: "interaction-1" })
+		await service.mutate({ enqueue: { draft: { text: "first feedback" } } })
+		await vi.waitFor(() => expect(submitInteraction).toHaveBeenCalledOnce())
 
-		const accepted = await answerTurnEndWithQueuedInput.call(task, {
-			entries: [{ text: "rapid feedback" }],
-			files: [],
-			images: [],
-			kind: "queued",
-		})
+		service.markAwaitingUser({ turnId: "turn-2", interactionId: "interaction-2" })
+		settleFirst({ accepted: true })
+		await vi.waitFor(() => expect(service.snapshot()).toHaveLength(0))
+		await service.mutate({ enqueue: { draft: { text: "second feedback" } } })
 
-		expect(accepted).toBe(true)
-		expect(task.awaitingQueuedInputInteraction).toBeUndefined()
+		await vi.waitFor(() => expect(submitInteraction).toHaveBeenCalledTimes(2))
+		expect(submitInteraction.mock.calls[1]?.[0].interactionId).toBe("interaction-2")
 	})
 })

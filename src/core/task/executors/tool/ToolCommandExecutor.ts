@@ -1,5 +1,5 @@
 import type { Command, ToolRunCommand as KernelToolRunCommand, ToolRunBlock } from "../../kernel"
-import type { CommandExecutor } from "../../runtime/v2"
+import type { CommandExecutor } from "../../runtime"
 import { executorFailure, type HaltOrder, type HaltParticipant, type TaskEventSink } from "../contracts"
 import {
 	type ToolRunCommand as DomainToolRunCommand,
@@ -7,6 +7,7 @@ import {
 	ToolExecutionDomain,
 	type ToolExecutionDomainOptions,
 } from "./ToolExecutionDomain"
+import type { TurnToolScheduler } from "./TurnToolScheduler"
 
 interface PendingBlock {
 	readonly command: KernelToolRunCommand
@@ -14,7 +15,10 @@ interface PendingBlock {
 	resolve(): void
 }
 
-export type ToolCommandExecutorOptions = Omit<ToolExecutionDomainOptions, "sink">
+export type ToolCommandExecutorOptions = Omit<ToolExecutionDomainOptions, "sink"> & {
+	/** Task-scoped WS-072 scheduler deciding when an approved block may start. */
+	readonly scheduler: TurnToolScheduler
+}
 
 /** Adapts kernel tool commands to the single WS-072 tool execution domain. */
 export class ToolCommandExecutor implements CommandExecutor, HaltParticipant {
@@ -22,6 +26,7 @@ export class ToolCommandExecutor implements CommandExecutor, HaltParticipant {
 	readonly id = "tool" as const
 
 	private readonly toolDomain: ToolExecutionDomain
+	private readonly scheduler: TurnToolScheduler
 	private readonly pending = new Map<string, PendingBlock>()
 	private readonly executions = new Set<Promise<void>>()
 	private readonly feedback = new Set<Promise<void>>()
@@ -32,8 +37,10 @@ export class ToolCommandExecutor implements CommandExecutor, HaltParticipant {
 		options: ToolCommandExecutorOptions,
 		private readonly events: TaskEventSink,
 	) {
+		const { scheduler, ...domainOptions } = options
+		this.scheduler = scheduler
 		this.toolDomain = new ToolExecutionDomain({
-			...options,
+			...domainOptions,
 			sink: {
 				emit: (event) => {
 					const handling = this.handleDomainEvent(event)
@@ -56,6 +63,9 @@ export class ToolCommandExecutor implements CommandExecutor, HaltParticipant {
 	fence(order: HaltOrder): void {
 		this.fencedHaltId = order.haltId
 		this.toolDomain.fence(order.haltId)
+		// Queued blocks must never start behind the fence; running ones are
+		// settled by the domain drain, which reports them as cancelled.
+		this.scheduler.cancelActiveTurn()
 	}
 
 	stop(order: HaltOrder): Promise<void> {
@@ -78,6 +88,46 @@ export class ToolCommandExecutor implements CommandExecutor, HaltParticipant {
 	}
 
 	private async executeBlock(command: KernelToolRunCommand, block: ToolRunBlock): Promise<void> {
+		const domainCommand: DomainToolRunCommand = {
+			commandId: `${command.commandId}:${block.blockId}:${block.attempt}`,
+			turnId: command.turnId,
+			dlineTid: block.blockId,
+			mode: command.mode,
+			invocationRef: block.invocationRef,
+		}
+		const outcome = await this.scheduler.schedule({
+			turnId: command.turnId,
+			mode: command.mode,
+			block,
+			run: (signal) => this.runAdmittedBlock(command, block, domainCommand, signal),
+		})
+		// A block the domain already owns is settled by its own outcome event
+		// or by the halt receipt; reporting it here would double-count it.
+		if (this.pending.has(domainCommand.commandId)) return
+		const entry: PendingBlock = { command, block, resolve: () => undefined }
+		if (outcome.error !== undefined) {
+			await this.submitTerminal(entry, "tool.failed", executorFailure("tool", outcome.error))
+		} else if (outcome.skipped) {
+			await this.submitTerminal(entry, "tool.cancelled", "Skipped because an earlier tool call ended the turn")
+		} else if (outcome.cancelled) {
+			await this.submitTerminal(entry, "tool.cancelled")
+		}
+	}
+
+	/**
+	 * Start one block the pool just admitted.
+	 *
+	 * `tool.started` is submitted here rather than at scheduling time so the
+	 * kernel's `executing` phase means the effect is really running, not merely
+	 * waiting for capacity or a lane.
+	 */
+	private async runAdmittedBlock(
+		command: KernelToolRunCommand,
+		block: ToolRunBlock,
+		domainCommand: DomainToolRunCommand,
+		signal: AbortSignal,
+	): Promise<void> {
+		if (signal.aborted || this.fencedHaltId) return
 		const started = await this.events.submit({
 			type: "tool.started",
 			generation: command.generation,
@@ -85,14 +135,7 @@ export class ToolCommandExecutor implements CommandExecutor, HaltParticipant {
 			turnId: command.turnId,
 			blockId: block.blockId,
 		})
-		if (started.kind === "rejected" || this.fencedHaltId) return
-
-		const domainCommand: DomainToolRunCommand = {
-			commandId: `${command.commandId}:${block.blockId}:${block.attempt}`,
-			turnId: command.turnId,
-			dlineTid: block.blockId,
-			mode: command.mode,
-		}
+		if (started.kind === "rejected" || signal.aborted || this.fencedHaltId) return
 		const settled = new Promise<void>((resolve) => {
 			this.pending.set(domainCommand.commandId, { command, block, resolve })
 		})

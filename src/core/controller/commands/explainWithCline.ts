@@ -31,7 +31,7 @@ export async function explainWithCline(
 	}
 
 	await controller.initTask(prompt)
-	telemetryService.captureButtonClick("codeAction_explainCode", controller.task?.ulid)
+	telemetryService.captureButtonClick("codeAction_explainCode", controller.task?.owners.identity.taskIncarnationId)
 
 	return {}
 }

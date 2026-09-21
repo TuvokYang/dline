@@ -28,7 +28,17 @@ describe("task kernel", () => {
 			turn: {
 				turnId: "turn-1",
 				mode: "serial",
-				blocks: [{ blockId: "block-1", index: 0, phase: "ready", attempt: "attempt-1", lanes: [], turnEnding: false }],
+				blocks: [
+					{
+						blockId: "block-1",
+						index: 0,
+						phase: "ready",
+						attempt: "attempt-1",
+						invocationRef: "invocation:block-1",
+						lanes: [],
+						turnEnding: false,
+					},
+				],
 				manualApprovalBlockIds: [],
 				automaticApprovalBlockIds: ["block-1"],
 				executingBlockIds: [],
@@ -163,6 +173,7 @@ describe("task kernel", () => {
 						index: 0,
 						phase: "executing",
 						attempt: "attempt-1",
+						invocationRef: "invocation:block-1",
 						lanes: [],
 						turnEnding: false,
 					},

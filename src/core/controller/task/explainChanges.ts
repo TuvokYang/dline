@@ -1,4 +1,4 @@
-import CheckpointTracker from "@integrations/checkpoints/CheckpointTracker"
+import type CheckpointTracker from "@integrations/checkpoints/CheckpointTracker"
 import { resolveCompletionDiffBaseHash } from "@integrations/checkpoints/completion-diff"
 import { Empty } from "@shared/proto/dline/common"
 import { ExplainChangesRequest } from "@shared/proto/dline/task"
@@ -40,7 +40,7 @@ export async function explainChanges(controller: Controller, request: ExplainCha
 			return Empty.create({})
 		}
 
-		const checkpointManager = controller.task.checkpointManager as any
+		const checkpointManager = controller.task.owners.checkpoints
 		if (!checkpointManager) {
 			HostProvider.window.showMessage({
 				type: ShowMessageType.ERROR,
@@ -50,8 +50,8 @@ export async function explainChanges(controller: Controller, request: ExplainCha
 			return Empty.create({})
 		}
 
-		// Check if checkpoints are enabled
-		if (!checkpointManager.config?.enableCheckpoints) {
+		// Checkpoints can be disabled per task; the owner then has no tracker to diff against.
+		if (!controller.stateManager.getGlobalSettingsKey("enableCheckpointsSetting")) {
 			HostProvider.window.showMessage({
 				type: ShowMessageType.INFORMATION,
 				message: "Checkpoints are disabled in settings. Cannot review changes.",
@@ -60,20 +60,11 @@ export async function explainChanges(controller: Controller, request: ExplainCha
 			return Empty.create({})
 		}
 
-		// Get message state handler
-		const messageStateHandler = checkpointManager.services?.messageStateHandler
-		if (!messageStateHandler) {
-			HostProvider.window.showMessage({
-				type: ShowMessageType.ERROR,
-				message: "Message state handler not available",
-			})
-			relinquishButton()
-			return Empty.create({})
-		}
+		const messageStateHandler = controller.task.owners.messages
 
 		// Find the message
 		const clineMessages = messageStateHandler.clineMessages
-		const messageIndex = clineMessages.findIndex((m: any) => m.ts === request.messageTs)
+		const messageIndex = clineMessages.findIndex((m) => m.ts === request.messageTs)
 		const message = clineMessages[messageIndex]
 
 		if (!message) {
@@ -89,34 +80,9 @@ export async function explainChanges(controller: Controller, request: ExplainCha
 			return Empty.create({})
 		}
 
-		// Initialize checkpoint tracker if needed (same logic as presentMultifileDiff)
-		if (
-			!checkpointManager.state?.checkpointTracker &&
-			checkpointManager.config?.enableCheckpoints &&
-			!checkpointManager.state?.checkpointManagerErrorMessage
-		) {
-			try {
-				const workspacePath = await checkpointManager.getWorkspacePath()
-				checkpointManager.state.checkpointTracker = await CheckpointTracker.create(
-					checkpointManager.task.taskId,
-					checkpointManager.config.enableCheckpoints,
-					workspacePath,
-				)
-				messageStateHandler.setCheckpointTracker(checkpointManager.state.checkpointTracker)
-			} catch (error) {
-				const errorMessage = error instanceof Error ? error.message : "Unknown error"
-				Logger.error(`[explainChanges] Failed to initialize checkpoint tracker:`, errorMessage)
-				checkpointManager.state.checkpointManagerErrorMessage = errorMessage
-				HostProvider.window.showMessage({
-					type: ShowMessageType.ERROR,
-					message: errorMessage,
-				})
-				relinquishButton()
-				return Empty.create({})
-			}
-		}
-
-		const checkpointTracker = checkpointManager.state?.checkpointTracker as CheckpointTracker | undefined
+		// The owner performs single-flight tracker initialization; a failure is
+		// already reported to the user through the checkpoint error message.
+		const checkpointTracker: CheckpointTracker | undefined = await checkpointManager.checkpointTrackerCheckAndInit?.()
 		if (!checkpointTracker) {
 			Logger.error(`[explainChanges] Checkpoint tracker not available`)
 			HostProvider.window.showMessage({
@@ -178,8 +144,12 @@ export async function explainChanges(controller: Controller, request: ExplainCha
 			await openDiffView("Explain Changes", changedFiles)
 		}
 
-		// Capture reference to the task for abort checking
-		const task = controller.task
+		// Capture the session so streaming stops when this task incarnation halts.
+		const session = controller.task
+		const isHalted = () => {
+			const phase = session.state().flow.phase
+			return phase === "terminated" || phase === "error" || phase === "completed" || phase === "paused"
+		}
 
 		// Stream AI explanation comments and add them as they arrive
 		// Each comment will open its virtual doc and scroll to show the comment (if 3+ files)
@@ -209,11 +179,11 @@ export async function explainChanges(controller: Controller, request: ExplainCha
 				commentController.endStreamingComment()
 			},
 			// shouldAbort: Check if task was cancelled
-			() => task?.taskState?.abort === true,
+			isHalted,
 		)
 
 		// Check if we were aborted during streaming
-		if (task?.taskState?.abort) {
+		if (isHalted()) {
 			// Close diff views and clear comments when cancelled
 			commentController.clearAllComments()
 			await commentController.closeDiffViews()

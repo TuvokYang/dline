@@ -4,8 +4,8 @@ import { formatResponse } from "@core/prompts/responses"
 import type { Mode } from "@shared/storage/types"
 
 import { ClineDefaultTool } from "@/shared/tools"
-import type { ToolResponse } from "../../index"
 import type { IToolHandler } from "../ToolExecutorCoordinator"
+import type { ToolResponse } from "../ToolResponse"
 import type { TaskConfig } from "../types/TaskConfig"
 
 /** Reports whether a tool-provided startup mode is supported. */

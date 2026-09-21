@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto"
 import { CheckpointRestoreRequest } from "@shared/proto/dline/checkpoints"
 import { Empty } from "@shared/proto/dline/common"
 import pWaitFor from "p-wait-for"
@@ -10,7 +11,7 @@ import { Controller } from ".."
 export async function checkpointRestore(controller: Controller, request: CheckpointRestoreRequest): Promise<Empty> {
 	if (request.number) {
 		// wait for messages to be loaded
-		await pWaitFor(() => controller.task?.taskState.isInitialized === true, {
+		await pWaitFor(() => controller.task !== undefined, {
 			timeout: 3_000,
 		}).catch((error) => {
 			Logger.log("Failed to init new Dline instance to restore checkpoint", error)
@@ -25,13 +26,13 @@ export async function checkpointRestore(controller: Controller, request: Checkpo
 		// Chat restore owns stream termination because it rewinds persisted conversation state.
 		if (request.restoreType !== "workspace") {
 			try {
-				await controller.task?.interrupt()
+				if (controller.task) await controller.task.task.cancel(randomUUID())
 			} catch (error) {
 				Logger.error("[checkpointRestore] interrupt failed (non-fatal):", error)
 			}
 		}
 
-		await controller.task?.checkpointManager?.restoreCheckpoint(
+		await controller.task?.owners.checkpoints?.restoreCheckpoint(
 			request.number,
 			request.restoreType as ClineCheckpointRestore,
 			request.offset,

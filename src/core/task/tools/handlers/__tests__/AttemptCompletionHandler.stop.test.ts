@@ -39,9 +39,6 @@ function createConfig(
 			})),
 			say: vi.fn(async () => undefined),
 		},
-		taskController: {
-			rejectActiveBlock: vi.fn(),
-		} as unknown as TaskConfig["taskController"],
 		messageState: {
 			clineMessages,
 			updateClineMessage: vi.fn().mockResolvedValue(undefined),

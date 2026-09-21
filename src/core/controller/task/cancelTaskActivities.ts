@@ -10,6 +10,6 @@ export async function cancelTaskActivities(
 	if (!task || task.taskId !== request.taskId) {
 		return CancelTaskActivitiesResponse.create({ cancelledActivityIds: [] })
 	}
-	const cancelledActivityIds = await task.activityStore.cancel(request.activityIds)
+	const cancelledActivityIds = await task.owners.activities.cancel(request.activityIds)
 	return CancelTaskActivitiesResponse.create({ cancelledActivityIds })
 }

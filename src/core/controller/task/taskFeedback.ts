@@ -16,8 +16,8 @@ export async function taskFeedback(controller: Controller, request: StringReques
 	}
 
 	try {
-		if (controller.task?.ulid) {
-			telemetryService.captureTaskFeedback(controller.task.ulid, request.value as any)
+		if (controller.task?.owners.identity.taskIncarnationId) {
+			telemetryService.captureTaskFeedback(controller.task.owners.identity.taskIncarnationId, request.value as any)
 		} else {
 			Logger.warn("taskFeedback: No active task to receive feedback")
 		}

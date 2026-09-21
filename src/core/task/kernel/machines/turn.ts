@@ -34,6 +34,35 @@ function clearOwnership(
 }
 
 export function reduceTurn(state: TurnSlice, event: TaskEvent): TurnReduction {
+	if (event.type === "provider.turn_ready") {
+		const blocks: readonly KernelBlock[] = event.turnPlan.blocks.map((block) => ({
+			blockId: block.blockId,
+			index: block.index,
+			phase:
+				block.approval.kind === "manual"
+					? "awaiting_approval"
+					: block.approval.kind === "automatic"
+						? "pending"
+						: "ready",
+			attempt: block.attempt,
+			lanes: block.lanes,
+			turnEnding: block.turnEnding,
+			invocationRef: block.invocationRef,
+		}))
+		return {
+			state: {
+				turnId: event.turnId,
+				mode: event.turnPlan.mode,
+				blocks,
+				manualApprovalBlockIds: event.turnPlan.blocks
+					.filter((block) => block.approval.kind === "manual")
+					.map((block) => block.blockId),
+				automaticApprovalBlockIds: [],
+				executingBlockIds: [],
+			},
+			commands: [],
+		}
+	}
 	if (
 		event.type === "tool.started" ||
 		event.type === "tool.completed" ||

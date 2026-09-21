@@ -3,7 +3,7 @@ import type { Command, JournalWatermark, TaskState } from "../kernel"
 export type { JournalWatermark } from "../kernel"
 
 export type JournalEntryKind = "message" | "tombstone" | "truncate_boundary" | "supersede_range" | "checkpoint_marker" | "rebase"
-export type JournalSource = "provider" | "dialog" | "intake" | "system"
+export type JournalSource = "provider" | "tool" | "dialog" | "intake" | "system"
 
 export interface JournalCausation {
 	readonly commandId?: string

@@ -9,8 +9,8 @@ import type { LocalSearchRegistry, LocalSearchResultItem } from "@/services/web-
 import { parsePartialArrayString } from "@/shared/array"
 import { ToolUse } from "../../../assistant-message"
 import { formatResponse } from "../../../prompts/responses"
-import { ToolResponse } from "../.."
 import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
+import type { ToolResponse } from "../ToolResponse"
 import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
 

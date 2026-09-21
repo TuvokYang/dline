@@ -4,7 +4,7 @@ import { Project } from "ts-morph"
 import { describe, expect, it } from "vitest"
 
 const TASK_ROOT = path.resolve(__dirname, "../..")
-const ROOTS = [path.join(TASK_ROOT, "kernel"), path.join(TASK_ROOT, "shell"), path.join(TASK_ROOT, "view/v2")]
+const ROOTS = [path.join(TASK_ROOT, "kernel"), path.join(TASK_ROOT, "shell"), path.join(TASK_ROOT, "view/canonical")]
 const project = new Project({
 	tsConfigFilePath: path.resolve(TASK_ROOT, "../../../tsconfig.json"),
 	skipAddingFilesFromTsConfig: true,
@@ -30,25 +30,19 @@ describe("TASK-103 module architecture", () => {
 		expect(oversized).toEqual([])
 	})
 
-	it("keeps shell and view-v2 dependencies directed toward kernel/stores", () => {
-		const violations = production.flatMap((source) => {
-			const sourcePath = normalized(source.getFilePath())
-			return source.getImportDeclarations().flatMap((declaration) => {
-				const resolved = declaration.getModuleSpecifierSourceFile()
-				if (!resolved) return []
-				const targetPath = normalized(resolved.getFilePath())
-				if (sourcePath.includes("/view/v2/") && !targetPath.includes("/kernel/"))
-					return [`${sourcePath} -> ${targetPath}`]
-				if (
-					sourcePath.includes("/shell/") &&
-					!targetPath.includes("/kernel/") &&
-					!targetPath.includes("/stores/") &&
-					!targetPath.includes("/shell/")
-				)
-					return [`${sourcePath} -> ${targetPath}`]
-				return []
-			})
-		})
+	it("keeps the canonical view dependent only on kernel facts and its own projection model", () => {
+		const violations = production
+			.filter((source) => normalized(source.getFilePath()).includes("/view/canonical/"))
+			.flatMap((source) =>
+				source.getImportDeclarations().flatMap((declaration) => {
+					const resolved = declaration.getModuleSpecifierSourceFile()
+					if (!resolved) return []
+					const targetPath = normalized(resolved.getFilePath())
+					return targetPath.includes("/kernel/") || targetPath.includes("/view/canonical/")
+						? []
+						: [`${normalized(source.getFilePath())} -> ${targetPath}`]
+				}),
+			)
 		expect(violations).toEqual([])
 	})
 

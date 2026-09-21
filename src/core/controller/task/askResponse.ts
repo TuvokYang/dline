@@ -1,56 +1,63 @@
 import { Empty } from "@shared/proto/dline/common"
-import { AskResponseRequest } from "@shared/proto/dline/task"
+import { AskResponseRequest, DispatchInteractionRequest } from "@shared/proto/dline/task"
 import { Logger } from "@/shared/services/Logger"
-import { ClineAskResponse } from "../../../shared/WebviewMessage"
 import { Controller } from ".."
+import { dispatchInteraction } from "./dispatchInteraction"
 
-/**
- * Handles a response from the webview for a previous ask operation
- *
- * @param controller The controller instance
- * @param request The request containing response type, optional text and optional images
- * @returns Empty response
- */
+function selectAction(responseType: string, actionIds: readonly string[]): string | undefined {
+	const preferences =
+		responseType === "yesButtonClicked" || responseType === "retry"
+			? ["approve", "acknowledge", "resume", "retry", "process_anyway", "confirm_utility", "start_new_task"]
+			: responseType === "noButtonClicked"
+				? ["reject", "stop"]
+				: ["reply", "resume", "retry", "acknowledge"]
+	return preferences.find((candidate) => actionIds.includes(candidate)) ?? actionIds[0]
+}
+
+/** Compatibility adapter that routes legacy asks into canonical interaction or intake events. */
 export async function askResponse(controller: Controller, request: AskResponseRequest): Promise<Empty> {
 	try {
-		if (!controller.task) {
+		const session = controller.task
+		if (!session) {
 			Logger.warn("askResponse: No active task to receive response")
 			return Empty.create()
 		}
-
-		// Automatic API retry waits have no active interaction identity yet. Keep
-		// their explicit override on the legacy transport so the Webview can
-		// trigger the pending retry without resolving an unrelated tool ask.
-		if (request.responseType === "retry") {
-			controller.task.overridePendingAutoRetry()
+		const state = session.state()
+		const interaction =
+			state.dialog.primary?.status === "awaiting"
+				? state.dialog.primary
+				: Object.values(state.dialog.approvalsByBlock).find((candidate) => candidate.status === "awaiting")
+		if (!interaction) {
+			if (request.responseType === "messageResponse" && (request.text || request.images.length || request.files.length)) {
+				const input = await session.inputs.materialize({
+					text: request.text,
+					images: [...request.images],
+					files: [...request.files],
+				})
+				await session.task.submitInput(input)
+			}
 			return Empty.create()
 		}
-
-		// Map the string responseType to the ClineAskResponse enum
-		let responseType: ClineAskResponse
-		switch (request.responseType) {
-			case "yesButtonClicked":
-				responseType = "yesButtonClicked"
-				break
-			case "noButtonClicked":
-				responseType = "noButtonClicked"
-				break
-			case "messageResponse":
-				responseType = "messageResponse"
-				break
-			default:
-				Logger.warn(`askResponse: Unknown response type: ${request.responseType}`)
-				return Empty.create()
-		}
-
-		// The causal interaction RPC owns all projected TaskViewState responses.
-		// This endpoint remains only for legacy callers that do not carry interaction identity.
-		if (controller.task.getRuntimeState().interaction) {
-			Logger.warn("askResponse: Ignoring legacy response for an active causal interaction")
-			return Empty.create()
-		}
-		await controller.task.handleWebviewAskResponse(responseType, request.text, request.images, request.files)
-
+		const actionId = selectAction(
+			request.responseType,
+			interaction.actionRules.map((rule) => rule.actionId),
+		)
+		if (!actionId) return Empty.create()
+		await dispatchInteraction(
+			controller,
+			DispatchInteractionRequest.create({
+				taskId: session.taskId,
+				turnId: interaction.turnId,
+				interactionId: interaction.interactionId,
+				actionId,
+				stateRevision: state.revision,
+				draft: {
+					text: request.text,
+					images: [...request.images],
+					files: [...request.files],
+				},
+			}),
+		)
 		return Empty.create()
 	} catch (error) {
 		Logger.error("Error in askResponse handler:", error)

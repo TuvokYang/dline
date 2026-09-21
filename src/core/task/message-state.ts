@@ -13,7 +13,6 @@ import { getCwd, getDesktopDir } from "@/utils/path"
 import { ApiConversation } from "../storage/ApiConversation"
 import { ensureTaskDirectoryExists } from "../storage/disk"
 import { UIMessage } from "../storage/UIMessage"
-import { TaskState } from "./TaskState"
 
 // Event types for clineMessages changes
 export type ClineMessageChangeType = "add" | "update" | "delete" | "set"
@@ -43,13 +42,20 @@ export interface RegisteredClineMessagePersistence {
 	readonly persistence: Promise<ClineMessage>
 }
 
-interface MessageStateHandlerParams {
+export interface MessageTaskMetadataSource {
+	readonly conversationHistoryDeletedRange?: HistoryItem["conversationHistoryDeletedRange"]
+	readonly checkpointManagerErrorMessage?: string
+}
+
+export interface MessageStateHandlerParams {
 	taskId: string
 	ulid: string
 	taskIsFavorited?: boolean
 	updateTaskHistory: (historyItem: HistoryItem) => Promise<HistoryItem[]>
 	publishTaskHistoryClose?: () => void
-	taskState: TaskState
+	metadata?: MessageTaskMetadataSource
+	/** Structural compatibility for callers being migrated off legacy TaskState. */
+	taskState?: MessageTaskMetadataSource
 	checkpointManagerErrorMessage?: string
 	/** UI messages store — optional for tests (memory-only mode). */
 	uiMessage?: UIMessage
@@ -81,7 +87,7 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 	private readonly _publishTaskHistoryClose: () => void
 	private taskId: string
 	private ulid: string
-	private taskState: TaskState
+	private readonly metadata: MessageTaskMetadataSource
 	private readonly transientClineMessages = new Map<number, ClineMessage>()
 	/** Bumped by every mutation that can change how messages aggregate. */
 	private messageRevision = 0
@@ -108,7 +114,7 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 		super()
 		this.taskId = params.taskId
 		this.ulid = params.ulid
-		this.taskState = params.taskState
+		this.metadata = params.metadata ?? params.taskState ?? {}
 		this.taskIsFavorited = params.taskIsFavorited ?? false
 		this._updateTaskHistory = params.updateTaskHistory
 		this._publishTaskHistoryClose = params.publishTaskHistoryClose ?? (() => {})
@@ -248,9 +254,9 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 				size: taskDirSize,
 				shadowGitConfigWorkTree: await this.checkpointTracker?.getShadowGitConfigWorkTree(),
 				cwdOnTaskInitialization: cwd,
-				conversationHistoryDeletedRange: this.taskState.conversationHistoryDeletedRange,
+				conversationHistoryDeletedRange: this.metadata.conversationHistoryDeletedRange,
 				isFavorited: this.taskIsFavorited,
-				checkpointManagerErrorMessage: this.taskState.checkpointManagerErrorMessage,
+				checkpointManagerErrorMessage: this.metadata.checkpointManagerErrorMessage,
 				modelId: lastModelInfo?.modelInfo?.modelId,
 				providerId: lastModelInfo?.modelInfo?.providerId,
 				mode: lastModelInfo?.modelInfo?.mode,
@@ -397,7 +403,7 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 		// Set cross-store context before persisting. Callers may provide an
 		// explicit index when replaying or responding to historical asks.
 		msg.conversationHistoryIndex = msg.conversationHistoryIndex ?? this.apiConversationHistory.length - 1
-		msg.conversationHistoryDeletedRange = this.taskState.conversationHistoryDeletedRange
+		msg.conversationHistoryDeletedRange = this.metadata.conversationHistoryDeletedRange
 
 		// Persist via UIMessage store (cache + disk, Mutex-protected)
 		await this.uiMessage?.addMessage(msg)
@@ -451,7 +457,7 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 		}
 
 		msg.conversationHistoryIndex = msg.conversationHistoryIndex ?? this.apiConversationHistory.length - 1
-		msg.conversationHistoryDeletedRange = this.taskState.conversationHistoryDeletedRange
+		msg.conversationHistoryDeletedRange = this.metadata.conversationHistoryDeletedRange
 
 		// Find insertion point in ascending ts order
 		let insertIndex = all.length
@@ -493,7 +499,7 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 			msg.conversationHistoryDeletedRange = all[existingIndex].conversationHistoryDeletedRange
 		} else {
 			msg.conversationHistoryIndex = msg.conversationHistoryIndex ?? this.apiConversationHistory.length - 1
-			msg.conversationHistoryDeletedRange = this.taskState.conversationHistoryDeletedRange
+			msg.conversationHistoryDeletedRange = this.metadata.conversationHistoryDeletedRange
 		}
 
 		msg.partial = false
@@ -581,7 +587,7 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 			conversationHistoryDeletedRange:
 				existing?.conversationHistoryDeletedRange ??
 				message.conversationHistoryDeletedRange ??
-				this.taskState.conversationHistoryDeletedRange,
+				this.metadata.conversationHistoryDeletedRange,
 		}
 		this.upsertTransientClineMessage(prepared)
 		return {

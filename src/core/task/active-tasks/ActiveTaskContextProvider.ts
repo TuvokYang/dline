@@ -3,15 +3,16 @@ import * as path from "path"
 const SUMMARY_LIMIT = 128
 const MAX_EDITED_FILES = 50
 
-export interface ActiveTaskSource {
+/** One active task described for environment details, independent of any runtime class. */
+export interface ActiveTaskDescriptor {
 	taskId: string
-	getActiveTaskSummary(): string
-	getActiveTaskPhase(): string
-	getActiveTaskEditedFiles(): string[]
+	summary: string
+	phase: string
+	editedFiles: string[]
 }
 
 export interface ActiveTaskControllerSource {
-	task?: ActiveTaskSource
+	describeActiveTask?(): ActiveTaskDescriptor | undefined
 }
 
 export interface ActiveTasksSectionOptions {
@@ -28,8 +29,8 @@ export interface ActiveTasksSectionOptions {
  */
 export function buildActiveTasksSection(options: ActiveTasksSectionOptions): string {
 	const tasks = options.controllers
-		.map((controller) => controller.task)
-		.filter(isActiveTaskSource)
+		.map((controller) => controller.describeActiveTask?.())
+		.filter(isActiveTaskDescriptor)
 		.filter((task) => task.taskId !== options.excludeTaskId)
 	if (tasks.length === 0) {
 		return ""
@@ -38,28 +39,21 @@ export function buildActiveTasksSection(options: ActiveTasksSectionOptions): str
 	const lines = ["# Active Tasks"]
 	for (const task of tasks) {
 		lines.push(`- id: ${task.taskId}`)
-		lines.push(`  summary: ${truncateSummary(task.getActiveTaskSummary())}`)
-		lines.push(`  phase: ${task.getActiveTaskPhase()}`)
-		appendEditedFiles(lines, task.getActiveTaskEditedFiles(), options.currentCwd)
+		lines.push(`  summary: ${truncateSummary(task.summary)}`)
+		lines.push(`  phase: ${task.phase}`)
+		appendEditedFiles(lines, task.editedFiles, options.currentCwd)
 	}
 
 	return lines.join("\n")
 }
 
 /**
- * Check whether a value exposes the active task summary interface.
- * @param value Unknown value from a controller.
+ * Check whether a controller produced a renderable active task description.
+ * @param value Descriptor returned by a controller, if any.
  * @returns True when the value can be formatted as an active task.
  */
-function isActiveTaskSource(value: unknown): value is ActiveTaskSource {
-	const candidate = value as Partial<ActiveTaskSource> | undefined
-	return (
-		candidate !== undefined &&
-		typeof candidate.taskId === "string" &&
-		typeof candidate.getActiveTaskSummary === "function" &&
-		typeof candidate.getActiveTaskPhase === "function" &&
-		typeof candidate.getActiveTaskEditedFiles === "function"
-	)
+function isActiveTaskDescriptor(value: ActiveTaskDescriptor | undefined): value is ActiveTaskDescriptor {
+	return value !== undefined && typeof value.taskId === "string"
 }
 
 /**

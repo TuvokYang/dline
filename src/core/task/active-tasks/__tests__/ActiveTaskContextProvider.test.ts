@@ -1,27 +1,20 @@
 import * as path from "node:path"
 import { describe, expect, it } from "vitest"
-import { buildActiveTasksSection } from "../ActiveTaskContextProvider"
-
-interface TestTaskSource {
-	taskId: string
-	getActiveTaskSummary(): string
-	getActiveTaskPhase(): string
-	getActiveTaskEditedFiles(): string[]
-}
+import { type ActiveTaskDescriptor, buildActiveTasksSection } from "../ActiveTaskContextProvider"
 
 interface TestControllerSource {
-	task?: TestTaskSource
+	describeActiveTask?(): ActiveTaskDescriptor | undefined
 }
 
 const CURRENT_CWD = process.cwd()
 
 /**
  * Create a controller-like source for ActiveTaskContextProvider tests.
- * @param task Active task source exposed by the fake controller.
+ * @param task Active task description exposed by the fake controller.
  * @returns Controller-like object consumed by the provider.
  */
-function createController(task: TestTaskSource): TestControllerSource {
-	return { task }
+function createController(task: ActiveTaskDescriptor): TestControllerSource {
+	return { describeActiveTask: () => task }
 }
 
 describe("ActiveTaskContextProvider", () => {
@@ -37,9 +30,9 @@ describe("ActiveTaskContextProvider", () => {
 			controllers: [
 				createController({
 					taskId: "task-1",
-					getActiveTaskSummary: () => longSummary,
-					getActiveTaskPhase: () => "awaiting_approval",
-					getActiveTaskEditedFiles: () => [path.join(CURRENT_CWD, "src", "core", "task", "index.ts")],
+					summary: longSummary,
+					phase: "awaiting_approval",
+					editedFiles: [path.join(CURRENT_CWD, "src", "core", "task", "index.ts")],
 				}),
 			],
 			currentCwd: CURRENT_CWD,
@@ -55,14 +48,7 @@ describe("ActiveTaskContextProvider", () => {
 	it("limits edited files per task", () => {
 		const files = Array.from({ length: 52 }, (_value, index) => path.join(CURRENT_CWD, "src", `file-${index}.ts`))
 		const section = buildActiveTasksSection({
-			controllers: [
-				createController({
-					taskId: "task-1",
-					getActiveTaskSummary: () => "short task",
-					getActiveTaskPhase: () => "streaming",
-					getActiveTaskEditedFiles: () => files,
-				}),
-			],
+			controllers: [createController({ taskId: "task-1", summary: "short task", phase: "running", editedFiles: files })],
 			currentCwd: CURRENT_CWD,
 		})
 
@@ -74,18 +60,8 @@ describe("ActiveTaskContextProvider", () => {
 	it("excludes task when excludeTaskId matches", () => {
 		const section = buildActiveTasksSection({
 			controllers: [
-				createController({
-					taskId: "task-1",
-					getActiveTaskSummary: () => "keep me",
-					getActiveTaskPhase: () => "streaming",
-					getActiveTaskEditedFiles: () => [],
-				}),
-				createController({
-					taskId: "task-2",
-					getActiveTaskSummary: () => "exclude me",
-					getActiveTaskPhase: () => "idle",
-					getActiveTaskEditedFiles: () => [],
-				}),
+				createController({ taskId: "task-1", summary: "keep me", phase: "running", editedFiles: [] }),
+				createController({ taskId: "task-2", summary: "exclude me", phase: "idle", editedFiles: [] }),
 			],
 			currentCwd: CURRENT_CWD,
 			excludeTaskId: "task-2",

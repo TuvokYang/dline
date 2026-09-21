@@ -77,6 +77,24 @@ function updateInteraction(
 }
 
 export function reduceDialog(state: DialogSlice, event: TaskEvent, nextRevision: number): DialogReduction {
+	if (event.type === "provider.turn_ready") {
+		const approvalsByBlock = { ...state.approvalsByBlock }
+		for (const block of event.turnPlan.blocks) {
+			if (block.approval.kind !== "manual") continue
+			approvalsByBlock[block.blockId] = {
+				interactionId: block.approval.interactionId,
+				turnId: event.turnId,
+				kind: "tool_approval",
+				status: "planned",
+				createdRevision: nextRevision,
+				presentationRef: block.approval.presentationRef,
+				actionRules: block.approval.actionRules,
+				blockId: block.blockId,
+				prepareKey: `dialog.prepare:${block.approval.interactionId}`,
+			}
+		}
+		return { state: { ...state, approvalsByBlock }, commands: [] }
+	}
 	if (event.type === "dialog.requested") {
 		return { state: { ...state, primary: createInteraction(event, nextRevision) }, commands: [] }
 	}

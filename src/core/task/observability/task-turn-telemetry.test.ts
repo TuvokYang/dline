@@ -6,8 +6,8 @@ import {
 	installObservabilityPipeline,
 	resetSignalRecording,
 } from "@/services/telemetry/service/pipeline-port"
-import { createTaskRuntimeState, type TaskRuntimeState } from "../runtime/TaskRuntimeState"
-import { TaskPhase } from "../TaskPhase"
+import type { TaskState } from "../kernel"
+import { createRunningTaskState } from "../kernel/__fixtures__/task-state"
 import { TaskTurnTelemetry } from "./task-turn-telemetry"
 
 const cleanup: Array<() => void | Promise<void>> = []
@@ -36,21 +36,8 @@ function setupTraceExporter(): {
 	return { exporter, provider }
 }
 
-function streamingState(turnId: string, revision: number): TaskRuntimeState {
-	return {
-		...createTaskRuntimeState({
-			taskId: "task-1",
-			phase: TaskPhase.STREAMING,
-			revision,
-			anchor: { apiIndex: revision, turnId },
-		}),
-		turn: {
-			turnId,
-			assistantApiIndex: revision,
-			mode: "serial",
-			blocks: [],
-		},
-	}
+function streamingState(turnId: string, revision: number): TaskState {
+	return createRunningTaskState({ taskId: "task-1", turnId, revision })
 }
 
 describe("TaskTurnTelemetry", () => {

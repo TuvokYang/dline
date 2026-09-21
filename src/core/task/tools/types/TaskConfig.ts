@@ -27,16 +27,16 @@ import { WorkspaceRootManager } from "@/core/workspace"
 import type { ContextManager } from "../../../context/context-management/ContextManager"
 import type { StateManager } from "../../../storage/StateManager"
 import type { TaskActivityStore } from "../../activity/TaskActivityStore"
+import type { ToolBlockStatePort } from "../../executors/tool/ToolBlockStatePort"
 import type {
 	CompleteInteractionRequest,
 	InteractionOutcome,
 	OpenInteractionRequest,
-} from "../../interaction/InteractionCoordinator"
+} from "../../interaction/InteractionProtocol"
 import type { MessageStateHandler } from "../../message-state"
 import type { ProviderRequestRoundPort } from "../../performance/provider-request-round-port"
-import type { TaskController } from "../../TaskController"
-import type { TaskState } from "../../TaskState"
 import type { HookExecution } from "../../types/HookExecution"
+import type { ToolHandlerState } from "../state/ToolHandlerState"
 import type { SubagentFanoutBudget } from "../subagent/SubagentFanoutBudget"
 import type { SubagentJobManager } from "../subagent/SubagentJobManager"
 import type { ToolExecutorCoordinator } from "../ToolExecutorCoordinator"
@@ -95,8 +95,8 @@ export interface TaskConfig {
 	isMultiRootEnabled?: boolean
 
 	// State management
-	taskState: TaskState
-	taskController: TaskController
+	taskState: ToolHandlerState
+	blockState: ToolBlockStatePort
 	messageState: MessageStateHandler
 
 	// API and services

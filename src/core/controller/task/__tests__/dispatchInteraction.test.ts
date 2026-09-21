@@ -1,60 +1,60 @@
+import { createInitialTaskState, type TaskState } from "@core/task/kernel"
 import { DispatchInteractionRequest } from "@shared/proto/dline/task"
 import { describe, expect, it, vi } from "vitest"
-import type { TaskEvent } from "../../../task/runtime/TaskEvent"
 import { dispatchInteraction } from "../dispatchInteraction"
 
-interface DispatchTask {
-	dispatchRuntime(event: TaskEvent): Promise<{
-		accepted: boolean
-		error?: { code: string }
-	}>
-	waitForInteractionSettlement?: (interactionId: string) => Promise<void>
+function state(kind = "followup", actionId = "reply"): TaskState {
+	return {
+		...createInitialTaskState("task-1"),
+		revision: 12,
+		generation: 3,
+		flow: { phase: "paused" },
+		dialog: {
+			approvalsByBlock: {},
+			primary: {
+				interactionId: "interaction-1",
+				turnId: "turn-1",
+				kind,
+				status: "awaiting",
+				createdRevision: 11,
+				presentationRef: "presentation-1",
+				receiverGeneration: 3,
+				actionRules: [{ actionId, payloadPolicy: "draft" }],
+			},
+		},
+	}
 }
 
-/** Create a controller-shaped test boundary with one optional task. */
-function controller(task?: DispatchTask): { task?: DispatchTask } {
-	return task ? { task: { waitForInteractionSettlement: async () => {}, ...task } } : {}
+function controller(taskState: TaskState = state()) {
+	const resolve = vi.fn()
+	const respond = vi.fn(async () => ({
+		kind: "accepted" as const,
+		state: taskState,
+		commands: [],
+		receipt: { revision: taskState.revision, durable: Promise.resolve() },
+	}))
+	const put = vi.fn(async (_payload: Uint8Array) => `payload-${put.mock.calls.length}`)
+	return {
+		value: {
+			task: {
+				taskId: "task-1",
+				state: () => taskState,
+				task: { respond },
+				payloads: { put },
+				owners: { interactions: { resolve } },
+			},
+		},
+		respond,
+		put,
+		resolve,
+	}
 }
 
 describe("dispatchInteraction", () => {
-	it("maps one causal request to one runtime event", async () => {
-		const dispatchRuntime = vi.fn(async () => ({ accepted: true }))
-		const request = DispatchInteractionRequest.create({
-			taskId: "task-1",
-			turnId: "turn-1",
-			interactionId: "interaction-1",
-			actionId: "approve",
-			stateRevision: 12,
-			draft: { text: "use smaller steps", images: [], files: [] },
-			selection: { values: ["item-1"] },
-		})
-
-		const result = await dispatchInteraction(controller({ dispatchRuntime }) as never, request)
-
-		expect(dispatchRuntime).toHaveBeenCalledOnce()
-		expect(dispatchRuntime).toHaveBeenCalledWith({
-			type: "INTERACTION_RESPONDED",
-			response: {
-				taskId: "task-1",
-				turnId: "turn-1",
-				interactionId: "interaction-1",
-				actionId: "approve",
-				stateRevision: 12,
-				draft: { text: "use smaller steps", images: [], files: [] },
-				selection: { values: ["item-1"] },
-			},
-		})
-		expect(result).toMatchObject({ accepted: true, result: "accepted" })
-	})
-
-	it("waits for the accepted interaction continuation before returning", async () => {
-		let releaseSettlement: (() => void) | undefined
-		const settlement = new Promise<void>((resolve) => {
-			releaseSettlement = resolve
-		})
-		const waitForInteractionSettlement = vi.fn(() => settlement)
-		const resultPromise = dispatchInteraction(
-			controller({ dispatchRuntime: vi.fn(async () => ({ accepted: true })), waitForInteractionSettlement }) as never,
+	it("materializes payloads and submits one canonical dialog response", async () => {
+		const host = controller()
+		const result = await dispatchInteraction(
+			host.value as never,
 			DispatchInteractionRequest.create({
 				taskId: "task-1",
 				turnId: "turn-1",
@@ -62,40 +62,66 @@ describe("dispatchInteraction", () => {
 				actionId: "reply",
 				stateRevision: 12,
 				draft: { text: "next turn", images: [], files: [] },
+				selection: { values: ["item-1"] },
 			}),
 		)
-		let resolved = false
-		void resultPromise.then(() => {
-			resolved = true
-		})
 
-		await Promise.resolve()
-		expect(waitForInteractionSettlement).toHaveBeenCalledWith("interaction-1")
-		expect(resolved).toBe(false)
-		releaseSettlement?.()
-		await expect(resultPromise).resolves.toMatchObject({ accepted: true, result: "accepted" })
+		expect(host.put).toHaveBeenCalledTimes(2)
+		expect(host.respond).toHaveBeenCalledWith({
+			type: "dialog.respond",
+			taskId: "task-1",
+			turnId: "turn-1",
+			interactionId: "interaction-1",
+			stateRevision: 12,
+			receiverGeneration: 3,
+			actionId: "reply",
+			draftRef: "payload-1",
+			selectionRef: "payload-2",
+		})
+		expect(host.resolve).toHaveBeenCalledWith("interaction-1", {
+			actionId: "reply",
+			draft: { text: "next turn", images: [], files: [] },
+			selection: { values: ["item-1"] },
+		})
+		expect(result).toMatchObject({ accepted: true, result: "accepted" })
 	})
 
-	it("returns stale interaction from runtime rejection", async () => {
-		const dispatchRuntime = vi.fn(async () => ({ accepted: false, error: { code: "stale_interaction" } }))
-		const result = await dispatchInteraction(
-			controller({ dispatchRuntime }) as never,
+	it("maps a block-scoped approval to approval.respond", async () => {
+		const taskState = state("tool_approval", "approve")
+		const approval = taskState.dialog.primary!
+		const scoped = { ...taskState, dialog: { approvalsByBlock: { "block-1": { ...approval, blockId: "block-1" } } } }
+		const host = controller(scoped)
+
+		await dispatchInteraction(
+			host.value as never,
 			DispatchInteractionRequest.create({
 				taskId: "task-1",
-				turnId: "turn-old",
+				turnId: "turn-1",
 				interactionId: "interaction-1",
 				actionId: "approve",
 				stateRevision: 12,
 			}),
 		)
 
-		expect(result).toMatchObject({ accepted: false, result: "stale_interaction" })
+		expect(host.respond).toHaveBeenCalledWith(
+			expect.objectContaining({ type: "approval.respond", blockId: "block-1", approved: true }),
+		)
 	})
 
-	it("rejects an unsupported action before runtime dispatch", async () => {
-		const dispatchRuntime = vi.fn(async () => ({ accepted: true }))
-		const result = await dispatchInteraction(
-			controller({ dispatchRuntime }) as never,
+	it("rejects stale identity and unsupported actions before shell submission", async () => {
+		const host = controller()
+		const stale = await dispatchInteraction(
+			host.value as never,
+			DispatchInteractionRequest.create({
+				taskId: "task-1",
+				turnId: "turn-1",
+				interactionId: "interaction-1",
+				actionId: "reply",
+				stateRevision: 11,
+			}),
+		)
+		const invalid = await dispatchInteraction(
+			host.value as never,
 			DispatchInteractionRequest.create({
 				taskId: "task-1",
 				turnId: "turn-1",
@@ -105,38 +131,16 @@ describe("dispatchInteraction", () => {
 			}),
 		)
 
-		expect(result).toMatchObject({ accepted: false, result: "invalid_action" })
-		expect(dispatchRuntime).not.toHaveBeenCalled()
-	})
-
-	it("normalizes payload rejection for the public protocol", async () => {
-		const dispatchRuntime = vi.fn(async () => ({ accepted: false, error: { code: "invalid_interaction_payload" } }))
-		const result = await dispatchInteraction(
-			controller({ dispatchRuntime }) as never,
-			DispatchInteractionRequest.create({
-				taskId: "task-1",
-				turnId: "turn-1",
-				interactionId: "interaction-1",
-				actionId: "approve",
-				stateRevision: 12,
-			}),
-		)
-
-		expect(result).toMatchObject({ accepted: false, result: "invalid_payload" })
+		expect(stale).toMatchObject({ accepted: false, result: "stale_interaction" })
+		expect(invalid).toMatchObject({ accepted: false, result: "invalid_action" })
+		expect(host.respond).not.toHaveBeenCalled()
 	})
 
 	it("returns missing task without dispatch", async () => {
 		const result = await dispatchInteraction(
-			controller() as never,
-			DispatchInteractionRequest.create({
-				taskId: "task-1",
-				turnId: "turn-1",
-				interactionId: "interaction-1",
-				actionId: "approve",
-				stateRevision: 12,
-			}),
+			{} as never,
+			DispatchInteractionRequest.create({ taskId: "task-1", turnId: "turn-1", interactionId: "interaction-1" }),
 		)
-
 		expect(result).toMatchObject({ accepted: false, result: "missing_task" })
 	})
 })

@@ -160,7 +160,7 @@ export async function updateApiConfiguration(controller: Controller, request: Up
 		// Update the task's API handler if there's an active task
 		if (controller.task) {
 			// Refresh the active handler and canonical Profile validity after explicit configuration updates.
-			await controller.task.rebuildApiHandler()
+			await controller.task.owners.api.rebuild({ abortPrevious: true })
 		}
 		controller.restartAccountUsagePolling()
 

@@ -3,16 +3,12 @@ import type { ClineMessage } from "@/shared/ExtensionMessage"
 
 vi.unmock("@integrations/checkpoints")
 
-import { TaskRuntime } from "@/core/task/runtime/TaskRuntime"
-import { createTaskRuntimeState } from "@/core/task/runtime/TaskRuntimeState"
-import { TaskPhase } from "@/core/task/TaskPhase"
-import { TaskState } from "@/core/task/TaskState"
-import { projectTaskView } from "@/core/task/view/TaskViewProjector"
+import { DefaultToolHandlerState } from "@/core/task/tools/state/ToolHandlerState"
 import { createTaskCheckpointManager } from "../index"
 
 interface RestoreHarness {
 	manager: ReturnType<typeof createTaskCheckpointManager>
-	taskState: TaskState & { taskId: string; askId: string }
+	taskState: DefaultToolHandlerState
 	resetHead: ReturnType<typeof vi.fn>
 	restoreFiles: ReturnType<typeof vi.fn>
 	restoreChatRuntime: ReturnType<typeof vi.fn>
@@ -26,15 +22,12 @@ interface RestoreHarness {
 }
 
 function createHarness(messages: ClineMessage[], trackedFiles?: string[], apiHistoryLength = 2): RestoreHarness {
-	const taskState = Object.assign(new TaskState(), {
-		taskId: "task-1",
+	const taskState = Object.assign(new DefaultToolHandlerState(), {
 		userMessageContent: [{ type: "text", text: "active user content" }],
 		assistantMessageContent: [{ type: "text", text: "active assistant content" }],
 		userMessageContentReady: true,
 		lastMessageTs: 99,
-		askId: "task-1",
 		consecutiveMistakeCount: 3,
-		autoRetryAttempts: 2,
 		consecutiveIdenticalToolCount: 4,
 		lastToolName: "replace_in_file",
 		lastToolParams: "stale-params",
@@ -126,7 +119,6 @@ describe("TaskCheckpointManager restore isolation", () => {
 			userMessageContentReady: true,
 			lastMessageTs: 99,
 			consecutiveMistakeCount: 3,
-			autoRetryAttempts: 2,
 			consecutiveIdenticalToolCount: 4,
 			lastToolName: "replace_in_file",
 			lastToolParams: "stale-params",
@@ -192,34 +184,6 @@ describe("TaskCheckpointManager restore isolation", () => {
 		expect(harness.resetHead).not.toHaveBeenCalled()
 	})
 
-	it("projects the restored chat Resume as an interaction continuation instead of a task reload", async () => {
-		const harness = createHarness([
-			{ ts: 42, type: "say", say: "text", conversationHistoryIndex: 0 },
-			{ ts: 43, type: "say", say: "text" },
-		])
-		const runtime = new TaskRuntime(createTaskRuntimeState({ taskId: "task-1", phase: TaskPhase.STREAMING, revision: 3 }), {
-			postView: async () => {},
-			persistSnapshot: async () => {},
-			cancelRuntime: async () => {},
-			prepareResume: async () => {},
-			startApi: async () => {},
-			executeTool: async () => {},
-			appendSay: async () => {},
-			appendAsk: async () => ({ uiMessageTs: 100 }),
-			startNewTask: async () => {},
-		})
-		harness.restoreChatRuntime.mockImplementationOnce(async ({ apiIndex }: { apiIndex: number }) => {
-			await runtime.dispatch({ type: "CHECKPOINT_CHAT_RESTORED", apiIndex })
-		})
-
-		await harness.manager.restoreCheckpoint(42, "task")
-
-		const view = projectTaskView(runtime.getState())
-		expect(view.activeInteraction).toMatchObject({ kind: "resume", status: "awaiting" })
-		expect(view.footer.actions).toEqual([expect.objectContaining({ type: "resume" })])
-		expect(view.footer.actions[0]?.dispatchTarget).not.toBe("task")
-	})
-
 	it("restores chat into a canonical paused runtime without auto-resuming", async () => {
 		const harness = createHarness([
 			{ ts: 42, type: "say", say: "text", conversationHistoryIndex: 0 },
@@ -243,7 +207,6 @@ describe("TaskCheckpointManager restore isolation", () => {
 
 		expect(harness.taskState).toMatchObject({
 			consecutiveMistakeCount: 0,
-			autoRetryAttempts: 0,
 			consecutiveIdenticalToolCount: 0,
 			lastToolName: "",
 			lastToolParams: "",

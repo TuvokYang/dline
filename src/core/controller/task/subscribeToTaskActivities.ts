@@ -131,12 +131,12 @@ export async function subscribeToTaskActivities(
 		return
 	}
 
-	const unsubscribe = task.activityStore.subscribe(async (update) => {
+	const unsubscribe = task.owners.activities.subscribe(async (update) => {
 		await responseStream(
 			toProtoUpdate(update, (activityId) => ({
-				cancellable: task.activityStore.isCancellable(activityId),
-				finishable: task.activityStore.isFinishable(activityId),
-				retryable: task.activityStore.isRetryable(activityId),
+				cancellable: task.owners.activities.isCancellable(activityId),
+				finishable: task.owners.activities.isFinishable(activityId),
+				retryable: task.owners.activities.isRetryable(activityId),
 			})),
 			false,
 			update.sequence,

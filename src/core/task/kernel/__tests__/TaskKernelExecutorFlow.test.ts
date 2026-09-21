@@ -10,7 +10,15 @@ function accepted(result: TransitionResult): Extract<TransitionResult, { kind: "
 }
 
 function block(blockId: string, index: number, phase: KernelBlock["phase"]): KernelBlock {
-	return { blockId, index, phase, attempt: `attempt-${blockId}`, lanes: [], turnEnding: false }
+	return {
+		blockId,
+		index,
+		phase,
+		attempt: `attempt-${blockId}`,
+		invocationRef: `invocation:${blockId}`,
+		lanes: [],
+		turnEnding: false,
+	}
 }
 
 function running(): TaskState {
@@ -135,6 +143,7 @@ describe("task kernel executor flow", () => {
 				turnId: "turn-1",
 				finalPayloadRef: "answer:1",
 				journalWatermark: { epoch: 0, seq: 1 },
+				turnPlan: { mode: "serial", blocks: [] },
 			}),
 		)
 		const duplicate = transition(ready.state, {

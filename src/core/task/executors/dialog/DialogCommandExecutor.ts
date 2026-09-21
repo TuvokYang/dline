@@ -1,5 +1,5 @@
 import type { Command, DialogCommand } from "../../kernel"
-import type { CommandExecutor } from "../../runtime/v2"
+import type { CommandExecutor } from "../../runtime"
 import { executorFailure, type HaltOrder, type HaltParticipant, isExecutionAbort, type TaskEventSink } from "../contracts"
 
 export interface DialogPreparationResult {

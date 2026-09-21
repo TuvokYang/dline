@@ -570,7 +570,10 @@ export async function activate(context: vscode.ExtensionContext) {
 
 			// Send show webview event with preserveEditorFocus flag
 			sendShowWebviewEvent(webview.controller, preserveEditorFocus)
-			telemetryService.captureButtonClick("command_focusChatInput", webview.controller?.task?.ulid)
+			telemetryService.captureButtonClick(
+				"command_focusChatInput",
+				webview.controller?.task?.owners.identity.taskIncarnationId,
+			)
 		}),
 	)
 

@@ -54,28 +54,20 @@ describe("TASK-103 legacy authority migration inventory", () => {
 			syncRetainedMachines: calledFiles("syncRetainedMachines"),
 			taskRuntimeRestore: calledFiles("restore", (text) => text.endsWith("taskRuntime")),
 		}).toEqual({
-			transitionRequired: ["src/core/task/RestoreHandler.ts", "src/core/task/index.ts"],
-			buildTurn: [
-				"src/core/task/RestoreHandler.ts",
-				"src/core/task/TaskController.ts",
-				"src/core/task/executors/tool/TurnDriver.ts",
-				"src/core/task/index.ts",
-			],
-			advance: ["src/core/task/BlockPhaseMachine.ts", "src/core/task/TaskController.ts"],
-			rejectActiveBlock: ["src/core/task/TaskController.ts", "src/core/task/index.ts"],
-			completeActiveBlock: ["src/core/task/TaskController.ts", "src/core/task/index.ts"],
-			restoreTurnFromSnapshot: ["src/core/task/RestoreHandler.ts", "src/core/task/index.ts"],
-			syncRetainedMachines: ["src/core/task/index.ts"],
-			taskRuntimeRestore: ["src/core/task/index.ts"],
+			transitionRequired: [],
+			buildTurn: [],
+			advance: ["src/core/task/BlockPhaseMachine.ts"],
+			rejectActiveBlock: [],
+			completeActiveBlock: [],
+			restoreTurnFromSnapshot: [],
+			syncRetainedMachines: [],
+			taskRuntimeRestore: [],
 		})
 	})
 
 	it("freezes every production taskState.abort consumer file for TASK-107", () => {
 		expect(taskStateAbortFiles()).toEqual([
-			"src/core/controller/task/explainChanges.ts",
 			"src/core/task/MessageChannel.ts",
-			"src/core/task/ToolExecutor.ts",
-			"src/core/task/index.ts",
 			"src/core/task/tools/handlers/GenerateExplanationToolHandler.ts",
 			"src/core/task/tools/handlers/SpawnTaskHandler.ts",
 			"src/core/task/tools/subagent/SubagentRunner.ts",

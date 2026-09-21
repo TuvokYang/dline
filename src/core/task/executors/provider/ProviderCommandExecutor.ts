@@ -1,7 +1,7 @@
-import type { Command, ProviderStartCommand } from "../../kernel"
-import type { CommandExecutor } from "../../runtime/v2"
+import type { Command, ProviderStartCommand, ProviderTurnPlan } from "../../kernel"
+import type { CommandExecutor } from "../../runtime"
 import type { ConversationJournal, TaskViewPort } from "../../stores"
-import { executorFailure, isExecutionAbort, type TaskEventSink } from "../contracts"
+import { executorFailure, type HaltOrder, type HaltParticipant, isExecutionAbort, type TaskEventSink } from "../contracts"
 
 export type ProviderExecutionChunk =
 	| {
@@ -16,6 +16,7 @@ export type ProviderExecutionChunk =
 			readonly turnId: string
 			readonly payloadRef: string
 			readonly transientId?: string
+			readonly turnPlan: ProviderTurnPlan
 	  }
 
 export interface ProviderExecutionInput {
@@ -29,9 +30,16 @@ export interface ProviderExecutionPort {
 	recordUsage?(usage: Readonly<Record<string, number>>): void
 }
 
-export class ProviderCommandExecutor implements CommandExecutor {
+interface ActiveProviderCommand {
+	readonly controller: AbortController
+	readonly completion: Promise<void>
+}
+
+export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant {
 	readonly domain = "provider" as const
-	private readonly active = new Map<string, AbortController>()
+	readonly id = "provider" as const
+	private readonly active = new Map<string, ActiveProviderCommand>()
+	private fencedHaltId: string | undefined
 
 	constructor(
 		private readonly taskId: string,
@@ -41,57 +49,76 @@ export class ProviderCommandExecutor implements CommandExecutor {
 		private readonly events: TaskEventSink,
 	) {}
 
-	async execute(command: Command): Promise<void> {
-		if (command.type !== "provider.start") throw new Error(`Provider executor cannot run ${command.type}`)
-		if (this.active.size > 0) throw new Error("Provider execution is already active")
+	execute(command: Command): Promise<void> {
+		if (command.type !== "provider.start") return Promise.reject(new Error(`Provider executor cannot run ${command.type}`))
+		if (this.fencedHaltId) return Promise.resolve()
+		if (this.active.size > 0) return Promise.reject(new Error("Provider execution is already active"))
 		const controller = new AbortController()
-		this.active.set(command.commandId, controller)
-		try {
-			let finalResult:
-				| {
-						readonly chunk: Extract<ProviderExecutionChunk, { kind: "final" }>
-						readonly journalWatermark: { readonly epoch: number; readonly seq: number }
-				  }
-				| undefined
-			try {
-				finalResult = await this.consume(command, controller.signal)
-			} catch (error) {
-				if (isExecutionAbort(error, controller.signal)) return
-				await this.events.submit({
-					type: "provider.failed",
-					generation: command.generation,
-					commandId: command.commandId,
-					originRevision: command.originRevision,
-					turnId: command.turnId,
-					message: executorFailure("provider", error),
-				})
-				return
-			}
-			if (!finalResult || controller.signal.aborted) return
-			await this.events.submit({
-				type: "provider.turn_ready",
-				generation: command.generation,
-				commandId: command.commandId,
-				originRevision: command.originRevision,
-				turnId: finalResult.chunk.turnId,
-				finalPayloadRef: finalResult.chunk.payloadRef,
-				journalWatermark: finalResult.journalWatermark,
-			})
-		} finally {
-			this.active.delete(command.commandId)
-		}
+		const completion = this.run(command, controller).finally(() => this.active.delete(command.commandId))
+		this.active.set(command.commandId, { controller, completion })
+		return completion
+	}
+
+	fence(order: HaltOrder): void {
+		this.fencedHaltId = order.haltId
+	}
+
+	stop(order: HaltOrder): void {
+		this.cancelAll(`provider_${order.reason}`)
+	}
+
+	async drain(_order: HaltOrder): Promise<void> {
+		await Promise.allSettled([...this.active.values()].map((active) => active.completion))
+	}
+
+	rearm(haltId: string): void {
+		if (this.fencedHaltId === haltId) this.fencedHaltId = undefined
 	}
 
 	cancel(commandId: string, reason = "provider_cancelled"): boolean {
-		const controller = this.active.get(commandId)
-		if (!controller) return false
-		controller.abort(reason)
+		const active = this.active.get(commandId)
+		if (!active) return false
+		active.controller.abort(reason)
 		return true
 	}
 
 	cancelAll(reason = "provider_cancelled"): number {
-		for (const controller of this.active.values()) controller.abort(reason)
+		for (const active of this.active.values()) active.controller.abort(reason)
 		return this.active.size
+	}
+
+	private async run(command: ProviderStartCommand, controller: AbortController): Promise<void> {
+		let finalResult:
+			| {
+					readonly chunk: Extract<ProviderExecutionChunk, { kind: "final" }>
+					readonly journalWatermark: { readonly epoch: number; readonly seq: number }
+			  }
+			| undefined
+		try {
+			finalResult = await this.consume(command, controller.signal)
+		} catch (error) {
+			if (isExecutionAbort(error, controller.signal)) return
+			await this.events.submit({
+				type: "provider.failed",
+				generation: command.generation,
+				commandId: command.commandId,
+				originRevision: command.originRevision,
+				turnId: command.turnId,
+				message: executorFailure("provider", error),
+			})
+			return
+		}
+		if (!finalResult || controller.signal.aborted) return
+		await this.events.submit({
+			type: "provider.turn_ready",
+			generation: command.generation,
+			commandId: command.commandId,
+			originRevision: command.originRevision,
+			turnId: finalResult.chunk.turnId,
+			finalPayloadRef: finalResult.chunk.payloadRef,
+			journalWatermark: finalResult.journalWatermark,
+			turnPlan: finalResult.chunk.turnPlan,
+		})
 	}
 
 	private async consume(

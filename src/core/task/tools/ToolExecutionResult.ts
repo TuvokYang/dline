@@ -1,4 +1,4 @@
-import type { ToolResponse } from "@core/task"
+import type { ToolResponse } from "./ToolResponse"
 
 /** Data-only successor directive executed only after the canonical tool result and turn are closed. */
 export interface StartSuccessorTaskPostCommitDirective {

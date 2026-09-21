@@ -2,7 +2,7 @@ import { strict as assert } from "node:assert"
 import { ClineDefaultTool } from "@shared/tools"
 import { describe, it } from "vitest"
 import type { ToolUse } from "../../assistant-message"
-import { canonicalizeAttemptCompletionParams } from "../ToolExecutor"
+import { canonicalizeAttemptCompletionParams } from "../tools/attempt-completion-params"
 
 describe("ToolExecutor canonicalization", () => {
 	it("canonicalizes attempt_completion response into result", () => {

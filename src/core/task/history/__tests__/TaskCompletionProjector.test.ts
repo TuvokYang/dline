@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from "vitest"
-import { TaskPhase } from "../../TaskPhase"
+import { createInitialTaskState, type TaskState } from "../../kernel"
 import { TaskCompletionProjector } from "../TaskCompletionProjector"
 
-function runtimeState(phase: TaskPhase, revision: number, completionId?: string) {
+function runtimeState(phase: TaskState["flow"]["phase"], revision: number, completionId?: string): TaskState {
 	return {
-		phase,
+		...createInitialTaskState("task-1"),
 		revision,
-		completion: completionId ? { completionId } : undefined,
+		flow: { phase, ...(completionId ? { completionId } : {}) },
 	}
 }
 
@@ -15,10 +15,10 @@ describe("TaskCompletionProjector", () => {
 		const persist = vi.fn(async () => true)
 		const projector = new TaskCompletionProjector({ taskId: "task-1", persist })
 
-		await expect(projector.sync(runtimeState(TaskPhase.STREAMING, 1))).resolves.toBe(false)
-		await expect(projector.sync(runtimeState(TaskPhase.COMPLETED, 2, "completion-1"))).resolves.toBe(true)
-		await expect(projector.sync(runtimeState(TaskPhase.COMPLETED, 3, "completion-1"))).resolves.toBe(false)
-		await expect(projector.sync(runtimeState(TaskPhase.STREAMING, 4))).resolves.toBe(true)
+		await expect(projector.sync(runtimeState("running", 1))).resolves.toBe(false)
+		await expect(projector.sync(runtimeState("completed", 2, "completion-1"))).resolves.toBe(true)
+		await expect(projector.sync(runtimeState("completed", 3, "completion-1"))).resolves.toBe(false)
+		await expect(projector.sync(runtimeState("running", 4))).resolves.toBe(true)
 
 		expect(persist.mock.calls).toEqual([
 			[{ taskId: "task-1", isCompleted: true, revision: 2 }],
@@ -30,10 +30,10 @@ describe("TaskCompletionProjector", () => {
 		const persist = vi.fn(async () => true)
 		const projector = new TaskCompletionProjector({ taskId: "task-1", persist })
 
-		await expect(projector.sync(runtimeState(TaskPhase.COMPLETED, 2, "completion-1"))).resolves.toBe(true)
-		await expect(projector.sync(runtimeState(TaskPhase.COMPLETED, 5, "completion-1"))).resolves.toBe(false)
-		await expect(projector.sync(runtimeState(TaskPhase.STREAMING, 4))).resolves.toBe(false)
-		await expect(projector.sync(runtimeState(TaskPhase.STREAMING, 6))).resolves.toBe(true)
+		await expect(projector.sync(runtimeState("completed", 2, "completion-1"))).resolves.toBe(true)
+		await expect(projector.sync(runtimeState("completed", 5, "completion-1"))).resolves.toBe(false)
+		await expect(projector.sync(runtimeState("running", 4))).resolves.toBe(false)
+		await expect(projector.sync(runtimeState("running", 6))).resolves.toBe(true)
 
 		expect(persist.mock.calls).toEqual([
 			[{ taskId: "task-1", isCompleted: true, revision: 2 }],
@@ -45,7 +45,7 @@ describe("TaskCompletionProjector", () => {
 		const persist = vi.fn(async () => true)
 		const projector = new TaskCompletionProjector({ taskId: "task-1", persist })
 
-		await expect(projector.sync(runtimeState(TaskPhase.COMPLETED, 2))).resolves.toBe(false)
+		await expect(projector.sync(runtimeState("completed", 2))).resolves.toBe(false)
 		expect(persist).not.toHaveBeenCalled()
 	})
 
@@ -57,22 +57,22 @@ describe("TaskCompletionProjector", () => {
 			persist,
 		})
 
-		await expect(projector.sync(runtimeState(TaskPhase.COMPLETED, 6, "completion-1"))).resolves.toBe(false)
-		await expect(projector.sync(runtimeState(TaskPhase.PAUSED, 7))).resolves.toBe(true)
+		await expect(projector.sync(runtimeState("completed", 6, "completion-1"))).resolves.toBe(false)
+		await expect(projector.sync(runtimeState("paused", 7))).resolves.toBe(true)
 		expect(persist).toHaveBeenCalledExactlyOnceWith({ taskId: "task-1", isCompleted: false, revision: 7 })
 	})
 
 	it("retries a failed persistence instead of accepting an in-memory-only projection", async () => {
 		const persist = vi.fn().mockRejectedValueOnce(new Error("disk unavailable")).mockResolvedValueOnce(true)
 		const projector = new TaskCompletionProjector({ taskId: "task-1", persist })
-		const completed = runtimeState(TaskPhase.COMPLETED, 2, "completion-1")
+		const completed = runtimeState("completed", 2, "completion-1")
 
 		await expect(projector.sync(completed)).rejects.toThrow("disk unavailable")
 		await expect(projector.sync(completed)).resolves.toBe(true)
 		expect(persist).toHaveBeenCalledTimes(2)
 	})
 
-	it("keeps a completed projection while a reopened task walks its startup phases", async () => {
+	it("keeps a completed projection while a reopened task is not yet hydrated", async () => {
 		const persist = vi.fn(async () => true)
 		const projector = new TaskCompletionProjector({
 			taskId: "task-1",
@@ -80,17 +80,14 @@ describe("TaskCompletionProjector", () => {
 			persist,
 		})
 
-		// A reopened task restarts its runtime revisions from zero and passes
-		// through startup phases before its canonical state is hydrated.
-		await expect(projector.sync(runtimeState(TaskPhase.IDLE, 0))).resolves.toBe(false)
-		await expect(projector.sync(runtimeState(TaskPhase.INITIALIZING, 1))).resolves.toBe(false)
-		await expect(projector.sync(runtimeState(TaskPhase.RESUMING, 2))).resolves.toBe(false)
-		await expect(projector.sync(runtimeState(TaskPhase.COMPLETED, 3, "completion-1"))).resolves.toBe(false)
+		await expect(projector.sync(runtimeState("idle", 0))).resolves.toBe(false)
+		await expect(projector.sync(runtimeState("initializing", 1))).resolves.toBe(false)
+		await expect(projector.sync(runtimeState("completed", 2, "completion-1"))).resolves.toBe(false)
 
 		expect(persist).not.toHaveBeenCalled()
 	})
 
-	it("keeps a completed projection while the session shuts down", async () => {
+	it("keeps a completed projection while the session terminates", async () => {
 		const persist = vi.fn(async () => true)
 		const projector = new TaskCompletionProjector({
 			taskId: "task-1",
@@ -98,11 +95,7 @@ describe("TaskCompletionProjector", () => {
 			persist,
 		})
 
-		// Closing a finished Task moves it through CANCELLING, and an abort ends
-		// in ABORTED. Neither retracts the completion that already happened.
-		await expect(projector.sync(runtimeState(TaskPhase.CANCELLING, 13))).resolves.toBe(false)
-		await expect(projector.sync(runtimeState(TaskPhase.ABORTED, 14))).resolves.toBe(false)
-
+		await expect(projector.sync(runtimeState("terminated", 13))).resolves.toBe(false)
 		expect(persist).not.toHaveBeenCalled()
 	})
 
@@ -114,16 +107,14 @@ describe("TaskCompletionProjector", () => {
 			persist,
 		})
 
-		await expect(projector.sync(runtimeState(TaskPhase.STREAMING, 2))).resolves.toBe(true)
-
-		// A revision of 2 would be rejected as stale by the durable store.
+		await expect(projector.sync(runtimeState("running", 2))).resolves.toBe(true)
 		expect(persist).toHaveBeenCalledExactlyOnceWith({ taskId: "task-1", isCompleted: false, revision: 13 })
 	})
 
 	it("does not advance the local projection when storage rejects a stale update", async () => {
 		const persist = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true)
 		const projector = new TaskCompletionProjector({ taskId: "task-1", persist })
-		const completed = runtimeState(TaskPhase.COMPLETED, 2, "completion-1")
+		const completed = runtimeState("completed", 2, "completion-1")
 
 		await expect(projector.sync(completed)).resolves.toBe(false)
 		await expect(projector.sync(completed)).resolves.toBe(true)

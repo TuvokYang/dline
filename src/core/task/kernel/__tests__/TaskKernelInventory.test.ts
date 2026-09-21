@@ -83,82 +83,34 @@ const EXPECTED_TASK_FIELDS = [
 	"toolDomain",
 	"turnToolScheduler",
 	"turnDriver",
-	"systemPromptCacheService",
-	"promptFreshnessInvalidationCoordinator",
-	"promptInputWatcherSubscription",
-	"promptInputFileWatcherInitialization",
-	"promptFreshnessDisposed",
+	"promptLifecycle",
 	"latestTaskSnapshot",
-	"inputQueueCoordinator",
-	"awaitingQueuedInputInteraction",
-	"pendingSystemPromptRefreshReason",
+	"inputQueue",
 	"activeProviderInputRuntime",
 	"promptCacheHealth",
 	"apiRateMetricsService",
 	"apiRequestRoundLifecycle",
+	"providerRequestRounds",
 	"taskRateMetricsQueryService",
-	"ordinaryProviderRequestRounds",
-	"activeProviderExecutionTurns",
-	"turnEndProviderExecutions",
-	"nextAuxiliaryProviderRoundApiIndex",
 	"apiRateMetricsInitialization",
 	"pendingBackgroundResultIds",
-	"pendingBackgroundCommandLineCounts",
-	"pendingRecentlyModifiedFilesSnapshot",
+	"environmentProjection",
 	"ordinaryRequestInputReplay",
 	"ordinaryContextIndicatorLineageByApiIndex",
 	"ordinaryContextIndicatorReceivingByApiIndex",
 	"contextCompactionIndicatorReceivingByAttemptId",
-	"pendingAutoRetry",
-	"autoRetrySequenceActive",
-	"manualRetryTakeoverActive",
+	"autoRetry",
 	"presentationSchedulingDisabled",
 	"restoreHandler",
 	"lastGeneratedMessageTs",
 ] as const
 
-const EXPECTED_TASK_INDEX_CONSUMERS = [
-	"src/core/controller/index.ts",
-	"src/core/task/interaction/TurnEndContinuationRegistry.ts",
-	"src/core/task/tools/ToolExecutionResult.ts",
-	"src/core/task/tools/handlers/AccessMcpResourceHandler.ts",
-	"src/core/task/tools/handlers/ActModeRespondHandler.ts",
-	"src/core/task/tools/handlers/ApplyPatchHandler.ts",
-	"src/core/task/tools/handlers/AskFollowupQuestionToolHandler.ts",
-	"src/core/task/tools/handlers/AttemptCompletionHandler.ts",
-	"src/core/task/tools/handlers/BrowserToolHandler.ts",
-	"src/core/task/tools/handlers/ExecuteCommandToolHandler.ts",
-	"src/core/task/tools/handlers/FindReferencesHandler.ts",
-	"src/core/task/tools/handlers/FocusChainHandler.ts",
-	"src/core/task/tools/handlers/GenerateExplanationToolHandler.ts",
-	"src/core/task/tools/handlers/GenerateImageToolHandler.ts",
-	"src/core/task/tools/handlers/GenerateReportHandler.ts",
-	"src/core/task/tools/handlers/ListCodeDefinitionNamesToolHandler.ts",
-	"src/core/task/tools/handlers/ListFilesToolHandler.ts",
-	"src/core/task/tools/handlers/LoadMcpDocumentationHandler.ts",
-	"src/core/task/tools/handlers/MakePlanHandler.ts",
-	"src/core/task/tools/handlers/QnaRespondHandler.ts",
-	"src/core/task/tools/handlers/ReadFileToolHandler.ts",
-	"src/core/task/tools/handlers/RenameSymbolHandler.ts",
-	"src/core/task/tools/handlers/ReplaceTextHandler.ts",
-	"src/core/task/tools/handlers/ReportBugHandler.ts",
-	"src/core/task/tools/handlers/SearchFilesToolHandler.ts",
-	"src/core/task/tools/handlers/SpawnTaskHandler.ts",
-	"src/core/task/tools/handlers/StatusUpdateHandler.ts",
-	"src/core/task/tools/handlers/SubagentToolHandler.ts",
-	"src/core/task/tools/handlers/SummarizeTaskHandler.ts",
-	"src/core/task/tools/handlers/UseMcpToolHandler.ts",
-	"src/core/task/tools/handlers/WebFetchToolHandler.ts",
-	"src/core/task/tools/handlers/WebSearchToolHandler.ts",
-	"src/core/task/tools/handlers/WriteToFileToolHandler.ts",
-	"src/core/task/tools/utils/ToolResultUtils.ts",
-] as const
+const EXPECTED_TASK_INDEX_CONSUMERS = [] as const
 
 const EXPECTED_TASK_VIEW_FILES = [
 	"src/core/controller/index.ts",
+	"src/core/controller/task/TaskViewMessageAdapter.ts",
 	"src/core/controller/task/history-task-readiness.ts",
-	"src/core/task/view/TaskViewProjector.ts",
-	"src/core/task/view/TaskViewState.ts",
 	"src/shared/ExtensionMessage.ts",
 	"webview-ui/src/components/chat/ChatRow.tsx",
 	"webview-ui/src/components/chat/ChatView.tsx",
@@ -185,19 +137,6 @@ function productionFiles(directory: string): string[] {
 		if (relative.includes("/__tests__/") || /\.(?:test|spec)\.[jt]sx?$/.test(entry)) return []
 		return statSync(absolute).isDirectory() ? productionFiles(absolute) : /\.[jt]sx?$/.test(entry) ? [absolute] : []
 	})
-}
-
-function taskFields(): string[] {
-	const source = readFileSync(TASK_INDEX, "utf8")
-	const classStart = source.indexOf("export class Task")
-	if (classStart < 0) throw new Error("Task class not found")
-	const classSource = stripComments(source.slice(classStart))
-	return Array.from(
-		classSource.matchAll(
-			/^\t(?:(?:public|private|protected)\s+)?(?:(?:static|readonly|declare)\s+)*([A-Za-z_$][\w$]*)[!?]?\s*(?::|=)/gm,
-		),
-		(match) => match[1],
-	).sort()
 }
 
 function resolvesTaskIndex(importer: string, specifier: string): boolean {
@@ -231,9 +170,13 @@ function taskViewFiles(): string[] {
 }
 
 describe("TASK-101 machine inventories", () => {
-	it("locks the activation-baseline Task instance fields", () => {
-		expect(taskFields()).toEqual([...EXPECTED_TASK_FIELDS].sort())
-		expect(taskFields()).toHaveLength(109)
+	it("confirms the activation-baseline god Task class was dissolved by TASK-107", () => {
+		// EXPECTED_TASK_FIELDS remains the frozen TASK-101 record of what the
+		// god class owned; the thin index must never grow that class back.
+		const source = readFileSync(TASK_INDEX, "utf8")
+		expect(source.includes("export class Task")).toBe(false)
+		expect(source.split("\n").length).toBeLessThan(1000)
+		expect(EXPECTED_TASK_FIELDS).toHaveLength(97)
 	})
 
 	it("locks direct, barrel-resolved and dynamic production consumers of task index", () => {

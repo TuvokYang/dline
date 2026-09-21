@@ -59,7 +59,14 @@ function userFacingSurface(): UserFacingSurface {
 }
 
 function command(dlineTid: string, overrides: Partial<ToolRunCommand> = {}): ToolRunCommand {
-	return { commandId: `cmd-${dlineTid}`, turnId: "turn-1", dlineTid, mode: "parallel", ...overrides }
+	return {
+		commandId: `cmd-${dlineTid}`,
+		turnId: "turn-1",
+		dlineTid,
+		mode: "parallel",
+		invocationRef: `invocation:${dlineTid}`,
+		...overrides,
+	}
 }
 
 /** Let the microtask queue drain so settled promises reach their handlers. */

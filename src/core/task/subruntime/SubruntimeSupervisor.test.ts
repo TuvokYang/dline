@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { ResourceBroker } from "../resources"
-import { deferred } from "../runtime/v2/deferred"
+import { deferred } from "../runtime/deferred"
 import { SubruntimeSupervisor } from "./SubruntimeSupervisor"
 
 describe("SubruntimeSupervisor", () => {

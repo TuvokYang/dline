@@ -16,35 +16,31 @@ function createController(planProfile: string, actProfile: string, profileId?: s
 	const postStateToWebview = vi.fn().mockResolvedValue(undefined)
 	return {
 		task: {
-			taskSm: {
-				planModeProfile: planProfile,
-				actModeProfile: actProfile,
-				planModeProfileId: profileId,
-				actModeProfileId: profileId,
-				mode: "act",
-				setPlanModeProfile: vi.fn(function (this: ProfileBindingFixture, value: string) {
-					this.planModeProfile = value
-				}),
-				setActModeProfile: vi.fn(function (this: ProfileBindingFixture, value: string) {
-					this.actModeProfile = value
-				}),
-				adoptProfileIdentity: vi.fn(function (
-					this: ProfileBindingFixture,
-					mode: "plan" | "act",
-					id: string,
-					name: string,
-				) {
-					if (mode === "plan") {
-						this.planModeProfileId = id
-						this.planModeProfile = name
-					} else {
-						this.actModeProfileId = id
-						this.actModeProfile = name
-					}
-				}),
+			owners: {
+				settings: {
+					planModeProfile: planProfile,
+					actModeProfile: actProfile,
+					planModeProfileId: profileId,
+					actModeProfileId: profileId,
+					mode: "act",
+					adoptProfileIdentity: vi.fn(function (
+						this: ProfileBindingFixture,
+						mode: "plan" | "act",
+						id: string,
+						name: string,
+					) {
+						if (mode === "plan") {
+							this.planModeProfileId = id
+							this.planModeProfile = name
+						} else {
+							this.actModeProfileId = id
+							this.actModeProfile = name
+						}
+					}),
+				},
+				api: { rebuild: vi.fn() },
+				prompt: { flush: vi.fn(async () => postStateToWebview()) },
 			},
-			rebuildApiHandler: vi.fn(),
-			flushPromptFreshnessInvalidation: vi.fn(async () => postStateToWebview()),
 		},
 		stateManager: {
 			getGlobalSettingsKey: vi.fn((key: string) => {
@@ -67,6 +63,16 @@ function createController(planProfile: string, actProfile: string, profileId?: s
 	} as unknown as Controller
 }
 
+/** Read the api-handler rebuild calls recorded by one controller fixture. */
+function rebuildCalls(controller: Controller): unknown[][] {
+	return (controller.task?.owners.api.rebuild as ReturnType<typeof vi.fn>).mock.calls
+}
+
+/** Read the prompt freshness flush calls recorded by one controller fixture. */
+function flushCalls(controller: Controller): unknown[][] {
+	return (controller.task?.owners.prompt.flush as ReturnType<typeof vi.fn>).mock.calls
+}
+
 /** Verify catalog commits refresh views without mutating active runtime handlers. */
 describe("ProfileChangeCoordinator", () => {
 	it("broadcasts ordinary profile edits without rebuilding active handlers", async () => {
@@ -80,10 +86,8 @@ describe("ProfileChangeCoordinator", () => {
 		await coordinator.publish(oldProfiles, nextProfiles)
 
 		for (const controller of [first, second, third]) {
-			expect((controller.task?.rebuildApiHandler as ReturnType<typeof vi.fn>).mock.calls).to.have.length(0)
-			expect((controller.task?.flushPromptFreshnessInvalidation as ReturnType<typeof vi.fn>).mock.calls).to.deep.equal([
-				["profile_catalog"],
-			])
+			expect(rebuildCalls(controller)).to.have.length(0)
+			expect(flushCalls(controller)).to.deep.equal([["profile_catalog"]])
 			expect((controller.restartAccountUsagePolling as ReturnType<typeof vi.fn>).mock.calls).to.have.length(0)
 			expect((controller.postStateToWebview as ReturnType<typeof vi.fn>).mock.calls).to.have.length(1)
 		}
@@ -98,9 +102,7 @@ describe("ProfileChangeCoordinator", () => {
 
 		await coordinator.publish([first, second], [second, first])
 
-		expect((controller.task?.flushPromptFreshnessInvalidation as ReturnType<typeof vi.fn>).mock.calls).to.deep.equal([
-			["profile_catalog"],
-		])
+		expect(flushCalls(controller)).to.deep.equal([["profile_catalog"]])
 		expect((controller.postStateToWebview as ReturnType<typeof vi.fn>).mock.calls).to.have.length(1)
 		expect((controller.stateManager.setGlobalState as ReturnType<typeof vi.fn>).mock.calls).to.have.length(0)
 		expect(coordinator.revision).to.equal(1)
@@ -113,7 +115,7 @@ describe("ProfileChangeCoordinator", () => {
 
 		await coordinator.publish(profiles, structuredClone(profiles))
 
-		expect((controller.task?.flushPromptFreshnessInvalidation as ReturnType<typeof vi.fn>).mock.calls).to.have.length(0)
+		expect(flushCalls(controller)).to.have.length(0)
 		expect((controller.postStateToWebview as ReturnType<typeof vi.fn>).mock.calls).to.have.length(0)
 		expect(coordinator.revision).to.equal(0)
 	})
@@ -126,9 +128,9 @@ describe("ProfileChangeCoordinator", () => {
 
 		await coordinator.publish(oldProfiles, nextProfiles)
 
-		expect(controller.task?.taskSm.planModeProfile).to.equal("renamed-profile")
-		expect(controller.task?.taskSm.actModeProfile).to.equal("renamed-profile")
-		expect((controller.task?.rebuildApiHandler as ReturnType<typeof vi.fn>).mock.calls).to.have.length(0)
+		expect(controller.task?.owners.settings.planModeProfile).to.equal("renamed-profile")
+		expect(controller.task?.owners.settings.actModeProfile).to.equal("renamed-profile")
+		expect(rebuildCalls(controller)).to.have.length(0)
 	})
 
 	it("adopts a rename by stable id when the legacy task name is stale", async () => {
@@ -139,9 +141,9 @@ describe("ProfileChangeCoordinator", () => {
 
 		await coordinator.publish(oldProfiles, nextProfiles)
 
-		expect(controller.task?.taskSm.planModeProfile).to.equal("renamed-profile")
-		expect(controller.task?.taskSm.actModeProfile).to.equal("renamed-profile")
-		expect((controller.task?.rebuildApiHandler as ReturnType<typeof vi.fn>).mock.calls).to.have.length(0)
+		expect(controller.task?.owners.settings.planModeProfile).to.equal("renamed-profile")
+		expect(controller.task?.owners.settings.actModeProfile).to.equal("renamed-profile")
+		expect(rebuildCalls(controller)).to.have.length(0)
 	})
 
 	it("reads canonical global bindings instead of promoting an active Task override", async () => {
@@ -157,16 +159,14 @@ describe("ProfileChangeCoordinator", () => {
 
 		await coordinator.publish(oldProfiles, nextProfiles)
 
-		expect(controller.task?.taskSm.planModeProfile).to.equal("renamed-task-profile")
-		expect(controller.task?.taskSm.actModeProfile).to.equal("renamed-task-profile")
+		expect(controller.task?.owners.settings.planModeProfile).to.equal("renamed-task-profile")
+		expect(controller.task?.owners.settings.actModeProfile).to.equal("renamed-task-profile")
 		expect((controller.stateManager.setGlobalState as ReturnType<typeof vi.fn>).mock.calls).to.have.length(0)
 	})
 
 	it("treats post-commit Task freshness publication as best-effort", async () => {
 		const controller = createController("profile", "profile", "profile-id")
-		;(controller.task?.flushPromptFreshnessInvalidation as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
-			new Error("publish failed"),
-		)
+		;(controller.task?.owners.prompt.flush as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("publish failed"))
 		const coordinator = new ProfileChangeCoordinator(() => [controller])
 		const oldProfiles = [{ id: "profile-id", name: "profile", modelId: "old-model" }] as ApiProfile[]
 		const nextProfiles = [{ id: "profile-id", name: "profile", modelId: "new-model" }] as ApiProfile[]
@@ -174,7 +174,7 @@ describe("ProfileChangeCoordinator", () => {
 		await coordinator.publish(oldProfiles, nextProfiles)
 
 		expect(coordinator.revision).to.equal(1)
-		expect((controller.task?.rebuildApiHandler as ReturnType<typeof vi.fn>).mock.calls).to.have.length(0)
+		expect(rebuildCalls(controller)).to.have.length(0)
 	})
 
 	it("keeps deleted profile bindings unchanged instead of selecting a fallback", async () => {
@@ -187,8 +187,8 @@ describe("ProfileChangeCoordinator", () => {
 
 		await coordinator.publish(oldProfiles, nextProfiles)
 
-		expect(controller.task?.taskSm.planModeProfile).to.equal("deleted-profile")
-		expect(controller.task?.taskSm.actModeProfile).to.equal("deleted-profile")
-		expect((controller.task?.rebuildApiHandler as ReturnType<typeof vi.fn>).mock.calls).to.have.length(0)
+		expect(controller.task?.owners.settings.planModeProfile).to.equal("deleted-profile")
+		expect(controller.task?.owners.settings.actModeProfile).to.equal("deleted-profile")
+		expect(rebuildCalls(controller)).to.have.length(0)
 	})
 })

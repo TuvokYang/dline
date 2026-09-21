@@ -85,7 +85,6 @@ function config(
 			updateClineMessage: vi.fn(async () => undefined),
 		} as unknown as TaskConfig["callbacks"],
 		messageState: { clineMessages: [], updateTaskHistory: vi.fn(async () => []) } as unknown as TaskConfig["messageState"],
-		taskController: { rejectActiveBlock: vi.fn() } as unknown as TaskConfig["taskController"],
 		autoApprovalSettings: { actions: { focusChain: false } } as TaskConfig["autoApprovalSettings"],
 	} as unknown as TaskConfig
 }

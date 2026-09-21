@@ -1,5 +1,5 @@
 import type { Command, HaltStopCommand, ParticipantId } from "../../kernel"
-import type { CommandExecutor } from "../../runtime/v2"
+import type { CommandExecutor } from "../../runtime"
 import { executorFailure, type HaltOrder, type HaltParticipant, type TaskEventSink } from "../contracts"
 
 export interface HaltCommandExecutorOptions {

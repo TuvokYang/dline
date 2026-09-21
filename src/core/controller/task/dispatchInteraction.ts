@@ -1,5 +1,6 @@
-import { isInteractionActionType } from "@core/task/interaction/Interaction"
-import type { InteractionResponse } from "@core/task/interaction/InteractionResponse"
+import type { InteractionOutcome } from "@core/task/interaction/InteractionProtocol"
+import { encodeTaskPayload } from "@core/task/stores/payload/TaskPayloadCodec"
+import type { DialogDraftEnvelope, DialogSelectionEnvelope } from "@core/task/stores/payload/TaskPayloadEnvelopes"
 import { type DispatchInteractionRequest, DispatchInteractionResponse } from "@shared/proto/dline/task"
 import type { Controller } from ".."
 
@@ -13,54 +14,83 @@ type DispatchInteractionResult =
 	| "missing_task"
 	| "invalid_runtime_event"
 
-/** Create one protocol response without throwing for expected rejection. */
 function response(accepted: boolean, result: DispatchInteractionResult): DispatchInteractionResponse {
 	return DispatchInteractionResponse.create({ accepted, result })
 }
 
-/** Normalize one internal runtime rejection for the public protocol. */
-function normalizeResult(code: string | undefined): DispatchInteractionResult {
-	if (code === "invalid_interaction_payload") {
-		return "invalid_payload"
-	}
-	switch (code) {
-		case "stale_interaction":
-		case "invalid_action":
-		case "duplicate_response":
-		case "invalid_runtime_event":
-			return code
-		default:
-			return "invalid_runtime_event"
-	}
+function normalizeResult(reason: string): DispatchInteractionResult {
+	if (reason === "identity_mismatch" || reason === "generation_mismatch" || reason === "stale_attempt")
+		return "stale_interaction"
+	if (reason === "duplicate") return "duplicate_response"
+	return "invalid_runtime_event"
 }
 
-/** Dispatch one causally identified Webview interaction response. */
+/** Dispatch one causally identified Webview interaction response through the canonical Task shell. */
 export async function dispatchInteraction(
 	controller: Controller,
 	request: DispatchInteractionRequest,
 ): Promise<DispatchInteractionResponse> {
-	if (!controller.task) {
-		return response(false, "missing_task")
-	}
-	if (!isInteractionActionType(request.actionId)) {
-		return response(false, "invalid_action")
-	}
+	const session = controller.task
+	if (!session) return response(false, "missing_task")
+	const state = session.state()
+	if (request.taskId !== session.taskId || request.stateRevision !== state.revision) return response(false, "stale_interaction")
+	const primary = state.dialog.primary?.interactionId === request.interactionId ? state.dialog.primary : undefined
+	const approvalEntry = Object.entries(state.dialog.approvalsByBlock).find(
+		([, interaction]) => interaction.interactionId === request.interactionId,
+	)
+	const interaction = primary ?? approvalEntry?.[1]
+	if (!interaction || interaction.turnId !== request.turnId || interaction.status !== "awaiting")
+		return response(false, "stale_interaction")
+	if (!interaction.actionRules.some((rule) => rule.actionId === request.actionId)) return response(false, "invalid_action")
+	if (interaction.receiverGeneration === undefined) return response(false, "invalid_runtime_event")
 
-	const interactionResponse: InteractionResponse = {
-		taskId: request.taskId,
-		turnId: request.turnId,
-		interactionId: request.interactionId,
-		actionId: request.actionId,
-		stateRevision: request.stateRevision,
+	const draftRef = request.draft
+		? await session.payloads.put(
+				encodeTaskPayload<DialogDraftEnvelope>({
+					kind: "dialog_draft",
+					text: request.draft.text,
+					images: [...request.draft.images],
+					files: [...request.draft.files],
+				}),
+			)
+		: undefined
+	const selectionRef = request.selection
+		? await session.payloads.put(
+				encodeTaskPayload<DialogSelectionEnvelope>({ kind: "dialog_selection", values: [...request.selection.values] }),
+			)
+		: undefined
+	const result = approvalEntry
+		? await session.task.respond({
+				type: "approval.respond",
+				taskId: session.taskId,
+				turnId: interaction.turnId,
+				interactionId: interaction.interactionId,
+				stateRevision: state.revision,
+				receiverGeneration: interaction.receiverGeneration,
+				blockId: approvalEntry[0],
+				approved: request.actionId === "approve",
+				draftRef,
+				selectionRef,
+			})
+		: await session.task.respond({
+				type: "dialog.respond",
+				taskId: session.taskId,
+				turnId: interaction.turnId,
+				interactionId: interaction.interactionId,
+				stateRevision: state.revision,
+				receiverGeneration: interaction.receiverGeneration,
+				actionId: request.actionId,
+				draftRef,
+				selectionRef,
+			})
+	if (result.kind === "rejected") return response(false, normalizeResult(result.reason))
+	const outcome: InteractionOutcome = {
+		actionId: request.actionId as InteractionOutcome["actionId"],
 		draft: request.draft
 			? { text: request.draft.text, images: [...request.draft.images], files: [...request.draft.files] }
 			: undefined,
 		selection: request.selection ? { values: [...request.selection.values] } : undefined,
 	}
-	const result = await controller.task.dispatchRuntime({ type: "INTERACTION_RESPONDED", response: interactionResponse })
-	if (!result.accepted) {
-		return response(false, normalizeResult(result.error?.code))
-	}
-	await controller.task.waitForInteractionSettlement(request.interactionId)
+	session.owners.interactions.resolve(request.interactionId, outcome)
 	return response(true, "accepted")
 }

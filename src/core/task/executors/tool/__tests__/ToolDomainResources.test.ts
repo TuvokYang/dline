@@ -81,7 +81,13 @@ describe("tool domain resource release", () => {
 		const execute = vi.fn(async () => undefined)
 		const runner = createToolDomainRunner({ resources: createResources(), execute })
 
-		await runner.runBlock({ commandId: "cmd-1", dlineTid: "tid-a", turnId: "turn-1", mode: "serial" })
+		await runner.runBlock({
+			commandId: "cmd-1",
+			dlineTid: "tid-a",
+			turnId: "turn-1",
+			mode: "serial",
+			invocationRef: "invocation:cmd-1",
+		})
 
 		expect(execute).toHaveBeenCalledWith(expect.objectContaining({ dlineTid: "tid-a", mode: "serial" }))
 	})

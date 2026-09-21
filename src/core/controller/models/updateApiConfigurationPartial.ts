@@ -42,7 +42,7 @@ export async function updateApiConfigurationPartial(
 		// Update storage and task API handler
 		controller.stateManager.setApiConfiguration(updatedConfig)
 		if (controller.task) {
-			await controller.task.rebuildApiHandler()
+			await controller.task.owners.api.rebuild({ abortPrevious: true })
 		}
 		controller.restartAccountUsagePolling()
 

@@ -9,7 +9,7 @@ import { Mode } from "../../../shared/storage/types"
 import { writeFile } from "../../../utils/fs"
 import { ensureTaskDirectoryExists } from "../../storage/disk"
 import { StateManager } from "../../storage/StateManager"
-import { TaskState } from "../TaskState"
+import type { ToolConversationState } from "../tools/state/ToolHandlerState"
 import {
 	appendToFocusChainHistory,
 	createFocusChainMarkdownContent,
@@ -38,9 +38,26 @@ export interface FocusChainProjectionOptions {
 	didSwitchFromPlan?: boolean
 }
 
+export interface FocusChainState
+	extends Pick<
+		ToolConversationState,
+		| "apiRequestCount"
+		| "apiRequestsSinceLastTodoUpdate"
+		| "currentFocusChainChecklist"
+		| "currentInProgressItemIndex"
+		| "todoListWasUpdatedByUser"
+		| "didRespondToPlanAskBySwitchingMode"
+		| "focusChainRejectionMessage"
+		| "focusChainHistory"
+		| "hasWarnedSkipOrder"
+		| "blockNextToolCalls"
+	> {
+	consecutiveMistakeCount: number
+}
+
 export interface FocusChainDependencies {
 	taskId: string
-	taskState: TaskState
+	taskState: FocusChainState
 	getMode: () => Mode
 	stateManager: StateManager
 	postStateToWebview: () => Promise<void>
@@ -50,7 +67,7 @@ export interface FocusChainDependencies {
 
 export class FocusChainManager {
 	private taskId: string
-	private taskState: TaskState
+	private taskState: FocusChainState
 	private stateManager: StateManager
 	private getMode: () => Mode
 	private postStateToWebview: () => Promise<void>

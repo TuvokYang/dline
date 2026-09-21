@@ -19,7 +19,6 @@ import { ShowMessageType } from "@/shared/proto/dline/host/window"
 import { Logger } from "@/shared/services/Logger"
 import { retryWithBackoff } from "@/utils/retry"
 import { MessageStateHandler } from "../../core/task/message-state"
-import { TaskState } from "../../core/task/TaskState"
 import type { ClineContent } from "../../shared/messages/content"
 import { type ChatRestoreBoundary, resolveChatRestoreBoundary } from "./chat-restore-boundary"
 import { resolveCompletionDiffBaseHash } from "./completion-diff"
@@ -58,12 +57,34 @@ interface CheckpointManagerConfig {
 		workspacePath: string,
 	) => Promise<CheckpointTracker | undefined>
 }
+/**
+ * The exact mutable runtime state a checkpoint restore must clear.
+ *
+ * Declared here as a narrow port so the manager stays independent of whichever
+ * class owns those fields; restore must be able to cancel a pending ask and
+ * drop half-built turn content without importing the task runtime.
+ */
+export interface CheckpointRuntimeState {
+	userMessageContent: unknown[]
+	assistantMessageContent: unknown[]
+	userMessageContentReady: boolean
+	lastMessageTs?: number
+	askResponseText?: string
+	askResponseImages?: string[]
+	askResponseFiles?: string[]
+	isAwaitingPlanResponse: boolean
+	didRespondToPlanAskBySwitchingMode: boolean
+	conversationHistoryDeletedRange?: [number, number]
+	checkpointManagerErrorMessage?: string
+	resetMistakeLimitState(): void
+}
+
 interface CheckpointManagerServices {
 	readonly fileContextTracker: FileContextTracker
 	readonly contextManager: ContextManager
 	readonly diffViewProvider: DiffViewProvider
 	readonly messageStateHandler: MessageStateHandler
-	readonly taskState: TaskState
+	readonly taskState: CheckpointRuntimeState
 	readonly taskFileTracker?: import("./TaskFileTracker").TaskFileTracker
 	readonly workspaceManager?: WorkspaceRootManager
 }
@@ -116,7 +137,7 @@ export class TaskCheckpointManager implements ICheckpointManager {
 	private readonly config: CheckpointManagerConfig
 	private readonly services: CheckpointManagerServices
 	private readonly callbacks: CheckpointManagerCallbacks
-	private readonly taskState: TaskState
+	private readonly taskState: CheckpointRuntimeState
 
 	private state: CheckpointManagerInternalState
 

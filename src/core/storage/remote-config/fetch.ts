@@ -58,7 +58,7 @@ function getRemotePromptInputProjection(controller: Controller): string {
 
 async function publishRemotePromptInputChange(controller: Controller, before: string): Promise<void> {
 	if (controller.task && getRemotePromptInputProjection(controller) !== before) {
-		await controller.task.flushPromptFreshnessInvalidation("remote_config")
+		await controller.task.owners.prompt.flush("remote_config")
 		return
 	}
 	await controller.postStateToWebview()

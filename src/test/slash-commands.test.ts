@@ -246,14 +246,16 @@ describe("getAvailableSlashCommands", () => {
 				"task-disabled-workflow": true,
 			})
 			mockController.task = {
-				taskSm: {
-					taskCapabilityToggles: serializeTaskCapabilityToggles(
-						createTaskCapabilityToggles({
-							remoteWorkflowToggles: { "task-disabled-workflow": false },
-						}),
-					),
+				owners: {
+					settings: {
+						taskCapabilityToggles: serializeTaskCapabilityToggles(
+							createTaskCapabilityToggles({
+								remoteWorkflowToggles: { "task-disabled-workflow": false },
+							}),
+						),
+					},
 				},
-			} as Controller["task"]
+			} as unknown as Controller["task"]
 
 			const response = await getAvailableSlashCommands(mockController as Controller, EmptyRequest.create())
 

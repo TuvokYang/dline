@@ -10,6 +10,6 @@ export async function finishTaskActivities(
 	if (!task || task.taskId !== request.taskId) {
 		return FinishTaskActivitiesResponse.create({ finishedActivityIds: [] })
 	}
-	const finishedActivityIds = await task.activityStore.finish(request.activityIds)
+	const finishedActivityIds = await task.owners.activities.finish(request.activityIds)
 	return FinishTaskActivitiesResponse.create({ finishedActivityIds })
 }

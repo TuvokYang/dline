@@ -1,6 +1,6 @@
 import type { WebSearchRoutingPlan } from "@core/api/server-tools"
 import type { ClineSayTool } from "@shared/ExtensionMessage"
-import type { InteractionOutcome, OpenInteractionRequest } from "./InteractionCoordinator"
+import type { InteractionOutcome, OpenInteractionRequest } from "./InteractionProtocol"
 
 export interface HostedWebApprovalInput {
 	readonly taskId: string

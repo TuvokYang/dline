@@ -12,6 +12,36 @@ export interface JournalWatermark {
 	readonly seq: number
 }
 
+export type ProviderTurnApproval =
+	| { readonly kind: "none" }
+	| {
+			readonly kind: "manual"
+			readonly interactionId: InteractionId
+			readonly presentationRef: string
+			readonly actionRules: readonly DialogActionRule[]
+	  }
+	| {
+			readonly kind: "automatic"
+			readonly interactionId: InteractionId
+			readonly policyRevision: number
+			readonly riskFacts: Readonly<Record<string, string | number | boolean>>
+	  }
+
+export interface ProviderTurnBlockPlan {
+	readonly blockId: BlockId
+	readonly attempt: AttemptId
+	readonly index: number
+	readonly lanes: readonly string[]
+	readonly turnEnding: boolean
+	readonly invocationRef: string
+	readonly approval: ProviderTurnApproval
+}
+
+export interface ProviderTurnPlan {
+	readonly mode: "serial" | "parallel"
+	readonly blocks: readonly ProviderTurnBlockPlan[]
+}
+
 export type FlowPhase = "idle" | "initializing" | "running" | "waiting" | "paused" | "completed" | "error" | "terminated"
 export type BlockPhase =
 	| "pending"
@@ -91,6 +121,7 @@ export interface KernelBlock {
 	readonly attempt: AttemptId
 	readonly lanes: readonly string[]
 	readonly turnEnding: boolean
+	readonly invocationRef: string
 	readonly policy?: PolicyEvaluationState
 }
 
@@ -211,6 +242,7 @@ export type ProviderEvent =
 			readonly turnId: TurnId
 			readonly finalPayloadRef: string
 			readonly journalWatermark: JournalWatermark
+			readonly turnPlan: ProviderTurnPlan
 	  })
 	| (CommandFeedbackEvent & { readonly type: "provider.failed"; readonly turnId?: TurnId; readonly message: string })
 export type ToolEvent = EventBase & {
@@ -387,6 +419,7 @@ export interface ToolRunBlock {
 	readonly index: number
 	readonly lanes: readonly string[]
 	readonly turnEnding: boolean
+	readonly invocationRef: string
 }
 export type ToolRunCommand = CommandBase & {
 	readonly type: "tool.run"

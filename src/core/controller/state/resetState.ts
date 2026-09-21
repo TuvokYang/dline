@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto"
 import { Empty } from "@shared/proto/dline/common"
 import { ResetStateRequest } from "@shared/proto/dline/state"
 import { resetGlobalState, resetWorkspaceState } from "@/core/storage/utils/state-helpers"
@@ -30,7 +31,7 @@ export async function resetState(controller: Controller, request: ResetStateRequ
 		}
 
 		if (controller.task) {
-			controller.task.terminate()
+			await controller.task.dispose(randomUUID())
 			controller.task = undefined
 		}
 

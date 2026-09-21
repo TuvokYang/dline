@@ -15,7 +15,6 @@ import { calculateApiUsageStatistics } from "@/shared/api-usage"
 import { Logger } from "@/shared/services/Logger"
 import { ClineDefaultTool } from "@/shared/tools"
 import type { BackgroundHandoffResult } from "../../activity/TaskActivityStore"
-import type { ToolResponse } from "../../index"
 import {
 	type AgentBaseConfig,
 	listEnabledAgentConfigs,
@@ -41,6 +40,7 @@ import { SubagentJobManager } from "../subagent/SubagentJobManager"
 import { parseUseSubagentRequest, parseUseSubagentsRequest } from "../subagent/SubagentRequestParser"
 import { SubagentRunner } from "../subagent/SubagentRunner"
 import type { IFullyManagedTool, IPreparableToolHandler, ToolHandlerPreparationResult } from "../ToolExecutorCoordinator"
+import type { ToolResponse } from "../ToolResponse"
 import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
 

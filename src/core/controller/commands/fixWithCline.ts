@@ -16,6 +16,6 @@ export async function fixWithCline(controller: Controller, request: CommandConte
 	)
 	Logger.log("fixWithCline", request.selectedText, request.filePath, request.language, problemsString)
 
-	telemetryService.captureButtonClick("codeAction_fixWithCline", controller.task?.ulid)
+	telemetryService.captureButtonClick("codeAction_fixWithCline", controller.task?.owners.identity.taskIncarnationId)
 	return {}
 }

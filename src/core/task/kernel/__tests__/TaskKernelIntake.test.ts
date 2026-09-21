@@ -46,6 +46,7 @@ describe("task kernel intake", () => {
 				turnId: "turn-1",
 				finalPayloadRef: "answer:1",
 				journalWatermark: { epoch: 0, seq: 4 },
+				turnPlan: { mode: "serial", blocks: [] },
 			}),
 		)
 		expect(ready.state.intake.queued[0]).toMatchObject({ state: "consumed", journalWatermark: { epoch: 0, seq: 4 } })

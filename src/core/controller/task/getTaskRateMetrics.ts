@@ -31,7 +31,11 @@ export async function getTaskRateMetrics(
 		throw new Error("Task rate metrics query requires a valid time range")
 	}
 
-	const result = await task.queryTaskRateMetrics({
+	const queryRateMetrics = task.owners.queryRateMetrics
+	if (!queryRateMetrics) {
+		throw new Error("Task rate metrics query requires an initialized metrics owner")
+	}
+	const result = await queryRateMetrics({
 		resolution: toDomainResolution(request.resolution),
 		startMs: request.startMs,
 		endMs: request.endMs,

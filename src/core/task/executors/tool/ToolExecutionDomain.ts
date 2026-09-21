@@ -14,6 +14,7 @@ export interface ToolRunCommand {
 	readonly commandId: string
 	readonly turnId?: string
 	readonly dlineTid: string
+	readonly invocationRef: string
 	/** Resolved by the reducer; the domain does not re-derive it. */
 	readonly mode?: "serial" | "parallel"
 }

@@ -46,7 +46,13 @@ describe("ProviderCommandExecutor", () => {
 							payloadRef: "payload:partial",
 							projection: { text: "partial" },
 						},
-						{ kind: "final", transientId: "stream-1", turnId: "turn-request", payloadRef: "payload:final" },
+						{
+							kind: "final",
+							transientId: "stream-1",
+							turnId: "turn-request",
+							payloadRef: "payload:final",
+							turnPlan: { mode: "serial", blocks: [] },
+						},
 						{ kind: "usage", usage: { inputTokens: 10, outputTokens: 2 } },
 					]),
 				recordUsage: usage,
@@ -70,6 +76,7 @@ describe("ProviderCommandExecutor", () => {
 				turnId: "turn-request",
 				finalPayloadRef: "payload:final",
 				journalWatermark: { epoch: 0, seq: 1 },
+				turnPlan: { mode: "serial", blocks: [] },
 			},
 		])
 	})
@@ -79,7 +86,17 @@ describe("ProviderCommandExecutor", () => {
 		const journal = new InMemoryConversationJournal()
 		const executor = new ProviderCommandExecutor(
 			"task-1",
-			{ start: () => chunks([{ kind: "final", turnId: "turn-other", payloadRef: "payload:final" }]) },
+			{
+				start: () =>
+					chunks([
+						{
+							kind: "final",
+							turnId: "turn-other",
+							payloadRef: "payload:final",
+							turnPlan: { mode: "serial", blocks: [] },
+						},
+					]),
+			},
 			journal,
 			new InMemoryTaskViewPort(),
 			recorded.sink,
@@ -103,7 +120,12 @@ describe("ProviderCommandExecutor", () => {
 			{
 				start: () =>
 					chunks([
-						{ kind: "final", turnId: "turn-1", payloadRef: "payload:final" },
+						{
+							kind: "final",
+							turnId: "turn-1",
+							payloadRef: "payload:final",
+							turnPlan: { mode: "serial", blocks: [] },
+						},
 						{ kind: "partial", transientId: "late", payloadRef: "payload:late" },
 					]),
 			},

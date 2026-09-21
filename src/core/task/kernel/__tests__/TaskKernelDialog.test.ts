@@ -1,7 +1,4 @@
 import { describe, expect, it } from "vitest"
-import type { ActiveInteraction } from "../../interaction/InteractionReducer"
-import { reduceInteraction } from "../../interaction/InteractionReducer"
-import type { InteractionResponse } from "../../interaction/InteractionResponse"
 import { transition } from "../transition"
 import type { TaskEvent, TaskState, TransitionResult } from "../types"
 import { createInitialTaskState } from "../types"
@@ -89,54 +86,6 @@ function response(stateRevision: number, interactionId = "i-1"): Extract<TaskEve
 }
 
 describe("task kernel causal dialog", () => {
-	it("matches the legacy reducer for accepted and rejected response classes", () => {
-		const state = openQuestion(runningState())
-		const legacy: ActiveInteraction = {
-			taskId: "task-1",
-			turnId: "turn-1",
-			interactionId: "i-1",
-			kind: "followup",
-			status: "awaiting",
-			createdRevision: 1,
-		}
-		const scenarios: InteractionResponse[] = [
-			{
-				taskId: "task-1",
-				turnId: "turn-1",
-				interactionId: "i-1",
-				stateRevision: 3,
-				actionId: "reply",
-				draft: { text: "", images: [], files: [] },
-			},
-			{
-				taskId: "wrong",
-				turnId: "turn-1",
-				interactionId: "i-1",
-				stateRevision: 3,
-				actionId: "reply",
-				draft: { text: "", images: [], files: [] },
-			},
-			{
-				taskId: "task-1",
-				turnId: "turn-1",
-				interactionId: "i-1",
-				stateRevision: 0,
-				actionId: "reply",
-				draft: { text: "", images: [], files: [] },
-			},
-			{ taskId: "task-1", turnId: "turn-1", interactionId: "i-1", stateRevision: 3, actionId: "reply" },
-		]
-		for (const candidate of scenarios) {
-			const legacyResult = reduceInteraction(legacy, candidate)
-			const kernelResult = transition(state, {
-				...response(candidate.stateRevision),
-				taskId: candidate.taskId,
-				draftRef: candidate.draft ? "draft:1" : undefined,
-			})
-			expect(kernelResult.kind === "accepted").toBe(legacyResult.accepted)
-		}
-	})
-
 	it("accepts the opening revision after unrelated revisions and rejects duplicate responses", () => {
 		let state = openQuestion(runningState())
 		state = accepted(
@@ -155,6 +104,7 @@ describe("task kernel causal dialog", () => {
 			index,
 			phase: "pending" as const,
 			attempt: `attempt:${blockId}`,
+			invocationRef: `invocation:${blockId}`,
 			lanes: [],
 			turnEnding: false,
 		})

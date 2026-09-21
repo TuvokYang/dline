@@ -1,9 +1,9 @@
 import type { ToolUse } from "@core/assistant-message"
-import type { ToolResponse } from "../index"
 import type { IToolHandler } from "../tools/ToolExecutorCoordinator"
+import type { ToolResponse } from "../tools/ToolResponse"
 import type { TaskConfig } from "../tools/types/TaskConfig"
 import type { InteractionKind } from "./Interaction"
-import type { InteractionOutcome } from "./InteractionCoordinator"
+import type { InteractionOutcome } from "./InteractionProtocol"
 import { getInteraction } from "./InteractionRegistry"
 
 export interface TurnEndContinuationHandler extends IToolHandler {

@@ -40,8 +40,20 @@ export class ProfileChangeCoordinator {
 		const task = controller.task
 		try {
 			if (task) {
-				this.adoptTaskBinding(task.taskSm.planModeProfileId, task.taskSm.planModeProfile, "plan", changes, task.taskSm)
-				this.adoptTaskBinding(task.taskSm.actModeProfileId, task.taskSm.actModeProfile, "act", changes, task.taskSm)
+				this.adoptTaskBinding(
+					task.owners.settings.planModeProfileId,
+					task.owners.settings.planModeProfile,
+					"plan",
+					changes,
+					task.owners.settings,
+				)
+				this.adoptTaskBinding(
+					task.owners.settings.actModeProfileId,
+					task.owners.settings.actModeProfile,
+					"act",
+					changes,
+					task.owners.settings,
+				)
 			}
 
 			this.adoptGlobalBinding(
@@ -66,7 +78,7 @@ export class ProfileChangeCoordinator {
 			// Catalog edits must not replace a running handler. They can still
 			// change prompt-visible image tool availability for the bound Profile.
 			if (task) {
-				await task.flushPromptFreshnessInvalidation("profile_catalog")
+				await task.owners.prompt.flush("profile_catalog")
 			} else {
 				await controller.postStateToWebview()
 			}

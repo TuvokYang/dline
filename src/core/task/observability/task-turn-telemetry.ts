@@ -9,9 +9,9 @@ import {
 	startSignalSpan,
 } from "@/services/telemetry/service/pipeline-port"
 import { registerTaskTraceSource, type TaskTraceSource } from "@/services/telemetry/service/task-trace-context"
+import type { TaskState } from "../kernel"
 import type { ApiRateSnapshot } from "../performance/api-rate-tracker"
-import type { TaskRuntimeState } from "../runtime/TaskRuntimeState"
-import type { TaskSnapshot } from "../TaskSnapshot"
+import type { DurableTaskSnapshot } from "../stores"
 
 const SEGMENT_EVENT_LIMIT = 96
 
@@ -30,7 +30,7 @@ export class TaskTurnTelemetry implements TaskTraceSource {
 
 	constructor(
 		private readonly taskId: string,
-		private readonly readState: () => Readonly<TaskRuntimeState>,
+		private readonly readState: () => Readonly<TaskState>,
 		private readonly readUsage: () => ApiRateSnapshot,
 	) {
 		this.registerAlias(taskId)
@@ -48,16 +48,16 @@ export class TaskTurnTelemetry implements TaskTraceSource {
 		const state = this.readState()
 		const result: Record<string, string | number | boolean> = {
 			task_state_available: true,
-			task_phase: state.phase,
+			task_phase: state.flow.phase,
 			task_revision: state.revision,
-			task_api_index: state.anchor.apiIndex,
-			task_turn_available: Boolean(state.turn?.turnId ?? state.anchor.turnId),
+			task_api_index: state.journalWatermark?.seq ?? -1,
+			task_turn_available: Boolean(state.turn.turnId),
 			task_turn_segment: this.segment,
-			task_block_count: state.turn?.blocks.length ?? 0,
-			task_interaction_kind: state.interaction?.kind ?? "none",
-			task_interaction_status: state.interaction?.status ?? "none",
-			task_cancellation_source: state.cancellation?.source ?? "none",
-			task_effect_error: state.error?.effectType ?? "none",
+			task_block_count: state.turn.blocks.length,
+			task_interaction_kind: state.dialog.primary?.kind ?? "none",
+			task_interaction_status: state.dialog.primary?.status ?? "none",
+			task_cancellation_source: state.halt.status === "stopping" ? state.halt.target : "none",
+			task_effect_error: state.flow.error ?? "none",
 			task_snapshot_durable_available: this.durableRevision !== undefined,
 			task_usage_available: false,
 		}
@@ -88,10 +88,10 @@ export class TaskTurnTelemetry implements TaskTraceSource {
 	}
 
 	/** Called synchronously at state commit, before effects or persistence can delay the observation. */
-	committed(event: string, state: Readonly<TaskRuntimeState>): void {
+	committed(event: string, state: Readonly<TaskState>): void {
 		this.safely(() => {
 			if (!this.enabled()) return
-			const key = state.turn?.turnId ?? state.anchor.turnId ?? `pre-turn:${state.anchor.apiIndex}`
+			const key = state.turn.turnId ?? `pre-turn:${state.revision}`
 			if (key !== this.turnKey) {
 				this.span?.end("success")
 				this.turnKey = key
@@ -99,27 +99,29 @@ export class TaskTurnTelemetry implements TaskTraceSource {
 				this.start("turn_changed")
 			}
 			this.event("task.state.committed", { task_event: event })
-			if (event === "EFFECT_FAILED") this.failure(undefined, { task_event: event })
-			if (["completed", "aborted", "paused"].includes(state.phase)) {
-				this.span?.end(state.phase === "aborted" ? "cancelled" : "success")
+			if (event.endsWith(".failed")) this.failure(undefined, { task_event: event })
+			if (["completed", "error", "paused", "terminated"].includes(state.flow.phase)) {
+				this.span?.end(
+					state.flow.phase === "terminated" ? "cancelled" : state.flow.phase === "error" ? "failure" : "success",
+				)
 			}
 		})
 	}
 
-	snapshot(stage: "scheduled" | "persisted" | "failed", snapshot: TaskSnapshot, error?: unknown): void {
+	snapshot(stage: "scheduled" | "persisted" | "failed", snapshot: DurableTaskSnapshot, error?: unknown): void {
 		this.safely(() => {
 			if (stage === "persisted") {
-				this.durableRevision = snapshot.revision
-				this.durableTimestamp = snapshot.timestamp
+				this.durableRevision = snapshot.state.revision
+				this.durableTimestamp = Date.now()
 			}
 			const attributes = {
-				snapshot_phase: snapshot.phase,
-				snapshot_revision: snapshot.revision ?? -1,
-				snapshot_timestamp: snapshot.timestamp,
+				snapshot_phase: snapshot.state.flow.phase,
+				snapshot_revision: snapshot.state.revision,
+				snapshot_timestamp: this.durableTimestamp ?? -1,
 			}
 			this.event(`task.snapshot.${stage}`, attributes)
 			if (stage === "failed") this.failure(error, attributes)
-			if (stage === "persisted" && ["completed", "aborted", "paused"].includes(this.readState().phase))
+			if (stage === "persisted" && ["completed", "paused", "terminated"].includes(this.readState().flow.phase))
 				this.span?.end("success")
 		})
 	}

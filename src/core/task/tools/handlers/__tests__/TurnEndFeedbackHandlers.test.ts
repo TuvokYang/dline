@@ -71,7 +71,7 @@ function createConfig(text: string): TaskConfig {
 		enableParallelToolCalling: false,
 		isSubagentExecution: false,
 		taskState,
-		taskController: {} as TaskConfig["taskController"],
+		blockState: {} as TaskConfig["blockState"],
 		messageState: Object.assign(Object.create(null), {
 			clineMessages: [],
 			updateTaskHistory: vi.fn(async () => []),

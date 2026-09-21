@@ -1,15 +1,17 @@
+import { requestTaskCompaction } from "@core/task/compaction/TaskCompactionRequest"
 import { type CompactTaskRequest, CompactTaskResponse } from "@shared/proto/dline/task"
 import type { Controller } from ".."
 
 /** Handle one task-local context compaction request without consuming an interaction response. */
 export async function compactTask(controller: Controller, request: CompactTaskRequest): Promise<CompactTaskResponse> {
-	const task = controller.task
-	if (!task || task.taskId !== request.taskId) {
+	const session = controller.task
+	if (!session || session.taskId !== request.taskId) {
 		return CompactTaskResponse.create({ accepted: false, result: "missing_task" })
 	}
 
-	const result = request.forceTruncate
-		? await task.forceTruncateTask(request.stateRevision)
-		: await task.compactTask(request.stateRevision)
+	const result = await requestTaskCompaction(session, {
+		stateRevision: request.stateRevision,
+		mode: request.forceTruncate ? "force_truncate" : "summarize",
+	})
 	return CompactTaskResponse.create(result)
 }

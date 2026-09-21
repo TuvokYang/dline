@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest"
 import { createInitialTaskState } from "../kernel"
 import { ALL_HALT_PARTICIPANTS } from "../kernel/machines/halt"
-import { TaskRuntimeV2 } from "../runtime/v2"
+import { TaskRuntime } from "../runtime"
 import { InMemoryCommandPublicationStore, InMemoryConversationJournal, InMemoryStateVault, InMemoryTaskViewPort } from "../stores"
 import { CompactionCommandExecutor } from "./compaction"
 import { ComposeCommandExecutor } from "./compose"
@@ -12,21 +12,26 @@ import { ProviderCommandExecutor } from "./provider"
 import { SpawnCoordinator } from "./spawn"
 
 describe("executor loop integration", () => {
-	it("runs two compose to provider rounds through TaskRuntimeV2", async () => {
+	it("runs two compose to provider rounds through TaskRuntime", async () => {
 		const vault = new InMemoryStateVault()
 		const taskView = new InMemoryTaskViewPort()
 		const journal = new InMemoryConversationJournal()
 		const compose = vi.fn(async ({ admittedEntryIds }) => ({ draftRef: `draft:${admittedEntryIds.join(",")}` }))
 		let turn = 0
-		let runtime!: TaskRuntimeV2
-		const events = { submit: (event: Parameters<TaskRuntimeV2["submit"]>[0]) => runtime.submit(event) }
+		let runtime!: TaskRuntime
+		const events = { submit: (event: Parameters<TaskRuntime["submit"]>[0]) => runtime.submit(event) }
 		const provider = vi.fn(({ draftRef }: { draftRef: string }) => ({
 			async *[Symbol.asyncIterator]() {
 				turn += 1
-				yield { kind: "final" as const, turnId: `turn-${turn}`, payloadRef: `answer:${draftRef}` }
+				yield {
+					kind: "final" as const,
+					turnId: `turn-${turn}`,
+					payloadRef: `answer:${draftRef}`,
+					turnPlan: { mode: "serial" as const, blocks: [] },
+				}
 			},
 		}))
-		runtime = new TaskRuntimeV2({
+		runtime = new TaskRuntime({
 			initialState: createInitialTaskState("task-1"),
 			vault,
 			taskView,
@@ -49,10 +54,10 @@ describe("executor loop integration", () => {
 	})
 
 	it("runs dialog prepare and reveal through the immediate/durable outbox phases", async () => {
-		let runtime!: TaskRuntimeV2
-		const events = { submit: (event: Parameters<TaskRuntimeV2["submit"]>[0]) => runtime.submit(event) }
+		let runtime!: TaskRuntime
+		const events = { submit: (event: Parameters<TaskRuntime["submit"]>[0]) => runtime.submit(event) }
 		const reveal = vi.fn(async () => ({ disposition: "revealed" as const }))
-		runtime = new TaskRuntimeV2({
+		runtime = new TaskRuntime({
 			initialState: { ...createInitialTaskState("task-1"), flow: { phase: "running" } },
 			vault: new InMemoryStateVault(),
 			taskView: new InMemoryTaskViewPort(),
@@ -87,17 +92,27 @@ describe("executor loop integration", () => {
 	})
 
 	it("runs policy evaluation and publishes the resulting tool command", async () => {
-		let runtime!: TaskRuntimeV2
+		let runtime!: TaskRuntime
 		const toolCommands: string[] = []
-		const events = { submit: (event: Parameters<TaskRuntimeV2["submit"]>[0]) => runtime.submit(event) }
-		runtime = new TaskRuntimeV2({
+		const events = { submit: (event: Parameters<TaskRuntime["submit"]>[0]) => runtime.submit(event) }
+		runtime = new TaskRuntime({
 			initialState: {
 				...createInitialTaskState("task-1"),
 				flow: { phase: "running" },
 				turn: {
 					turnId: "turn-1",
 					mode: "parallel",
-					blocks: [{ blockId: "b1", index: 0, phase: "pending", attempt: "a1", lanes: [], turnEnding: false }],
+					blocks: [
+						{
+							blockId: "b1",
+							index: 0,
+							phase: "pending",
+							attempt: "a1",
+							invocationRef: "invocation:b1",
+							lanes: [],
+							turnEnding: false,
+						},
+					],
 					manualApprovalBlockIds: [],
 					automaticApprovalBlockIds: [],
 					executingBlockIds: [],
@@ -126,13 +141,13 @@ describe("executor loop integration", () => {
 		expect(toolCommands).toEqual(["tool.run"])
 	})
 
-	it("runs the nine-participant halt barrier and spawn lease through TaskRuntimeV2", async () => {
-		let runtime!: TaskRuntimeV2
-		const events = { submit: (event: Parameters<TaskRuntimeV2["submit"]>[0]) => runtime.submit(event) }
+	it("runs the nine-participant halt barrier and spawn lease through TaskRuntime", async () => {
+		let runtime!: TaskRuntime
+		const events = { submit: (event: Parameters<TaskRuntime["submit"]>[0]) => runtime.submit(event) }
 		const participants = ALL_HALT_PARTICIPANTS.map(
 			(id) => new CallbackHaltParticipant({ id, fence: () => undefined, drain: async () => undefined }),
 		)
-		runtime = new TaskRuntimeV2({
+		runtime = new TaskRuntime({
 			initialState: { ...createInitialTaskState("task-1"), flow: { phase: "running" } },
 			vault: new InMemoryStateVault(),
 			taskView: new InMemoryTaskViewPort(),
@@ -163,10 +178,10 @@ describe("executor loop integration", () => {
 		expect(runtime.getState().flow.phase).toBe("paused")
 	})
 
-	it("runs an attempt-scoped compaction command through TaskRuntimeV2", async () => {
-		let runtime!: TaskRuntimeV2
-		const events = { submit: (event: Parameters<TaskRuntimeV2["submit"]>[0]) => runtime.submit(event) }
-		runtime = new TaskRuntimeV2({
+	it("runs an attempt-scoped compaction command through TaskRuntime", async () => {
+		let runtime!: TaskRuntime
+		const events = { submit: (event: Parameters<TaskRuntime["submit"]>[0]) => runtime.submit(event) }
+		runtime = new TaskRuntime({
 			initialState: createInitialTaskState("task-1"),
 			vault: new InMemoryStateVault(),
 			taskView: new InMemoryTaskViewPort(),

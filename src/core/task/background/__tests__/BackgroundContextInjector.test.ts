@@ -7,10 +7,13 @@ import {
 	type TerminalProcessResultPromise,
 } from "@integrations/terminal"
 import { describe, it } from "vitest"
-import { ToolExecutor } from "../../ToolExecutor"
 import type { SubagentRunStats } from "../../tools/subagent/SubagentExecutor"
 import { SubagentJobManager } from "../../tools/subagent/SubagentJobManager"
-import { BackgroundContextInjector, buildTaskBackgroundSection } from "../BackgroundContextInjector"
+import {
+	BackgroundContextInjector,
+	type BackgroundSubagentProvider,
+	buildTaskBackgroundSection,
+} from "../BackgroundContextInjector"
 
 /**
  * Wait for queued background job promises to settle.
@@ -83,12 +86,10 @@ describe("BackgroundContextInjector", () => {
 		}
 		commandState.standaloneManager = { getAllBackgroundCommands: () => commands }
 		const subagentJobManager = new SubagentJobManager()
-		const toolExecutor = Object.create(ToolExecutor.prototype) as ToolExecutor
-		const toolState = toolExecutor as unknown as { subagentJobManager: SubagentJobManager }
-		toolState.subagentJobManager = subagentJobManager
+		const subagentProvider: BackgroundSubagentProvider = { getSubagentJobManager: () => subagentJobManager }
 
 		assert.deepEqual(commandExecutor.listBackgroundCommands(), commands)
-		assert.equal(toolExecutor.getSubagentJobManager(), subagentJobManager)
+		assert.equal(subagentProvider.getSubagentJobManager(), subagentJobManager)
 	})
 
 	it("builds task background section from task-local providers", async () => {

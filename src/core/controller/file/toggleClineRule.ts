@@ -59,11 +59,16 @@ export async function toggleClineRule(controller: Controller, request: ToggleCli
 	}
 
 	// Track rule toggle telemetry with current task context
-	if (controller.task?.ulid) {
+	if (controller.task?.owners.identity.taskIncarnationId) {
 		// Extract just the filename for privacy (no full paths)
 		const ruleFileName = getWorkspaceBasename(rulePath, "Controller.toggleClineRule")
 		const isGlobal = scope === RuleScope.GLOBAL
-		telemetryService.captureClineRuleToggled(controller.task.ulid, ruleFileName, enabled, isGlobal)
+		telemetryService.captureClineRuleToggled(
+			controller.task.owners.identity.taskIncarnationId,
+			ruleFileName,
+			enabled,
+			isGlobal,
+		)
 	}
 
 	// Get the current state to return in the response
