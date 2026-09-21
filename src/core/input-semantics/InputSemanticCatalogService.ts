@@ -1,8 +1,4 @@
-import {
-	BUILTIN_INPUT_SEMANTICS,
-	type InputSemanticCatalog,
-	type InputSemanticDescriptor,
-} from "@shared/input-semantics/catalog"
+import { BUILTIN_INPUT_SEMANTICS, type InputSemanticCatalog, type InputSemanticDescriptor } from "@shared/input-semantics/catalog"
 
 /** Discovered workspace capabilities that extend the built-in semantic set. */
 export interface CapabilityInventory {
@@ -12,15 +8,16 @@ export interface CapabilityInventory {
 }
 
 export interface CapabilityInventoryPort {
-	/** Read the currently enabled capabilities. Discovery is read-only and must not mutate toggles. */
-	readInventory(): CapabilityInventory
+	/**
+	 * Read the currently enabled capabilities.
+	 *
+	 * Discovery reaches workspace files and MCP connections, so it is
+	 * asynchronous and strictly read-only: it must never mutate a toggle.
+	 */
+	readInventory(): Promise<CapabilityInventory>
 }
 
-function capabilityDescriptor(
-	id: string,
-	trigger: string,
-	authorizes: string | undefined,
-): InputSemanticDescriptor {
+function capabilityDescriptor(id: string, trigger: string, authorizes: string | undefined): InputSemanticDescriptor {
 	return {
 		id,
 		kind: "command",
@@ -56,33 +53,40 @@ function sameDescriptors(left: readonly InputSemanticDescriptor[], right: readon
 	return left.every((descriptor, index) => JSON.stringify(descriptor) === JSON.stringify(right[index]))
 }
 
+/** Pre-discovery baseline: the built-ins are always valid, capabilities are not yet known. */
+const UNDISCOVERED_REVISION = 0
+
 /**
  * Core owner of the input semantic catalog.
  *
  * The revision is the contract the Webview and admission share: it advances
  * only when the descriptor set actually changed, so a consumer can cache a
- * projection and still detect a capability that was withdrawn.
+ * projection and still detect a capability that was withdrawn. Revision 0 means
+ * discovery has not run yet, so a consumer can tell "no capabilities" apart
+ * from "not asked yet".
  */
 export class InputSemanticCatalogService {
-	private catalog: InputSemanticCatalog
-
-	constructor(private readonly port: CapabilityInventoryPort) {
-		this.catalog = { revision: 1, descriptors: this.compose() }
+	private catalog: InputSemanticCatalog = {
+		revision: UNDISCOVERED_REVISION,
+		descriptors: BUILTIN_INPUT_SEMANTICS,
 	}
+
+	constructor(private readonly port: CapabilityInventoryPort) {}
 
 	current(): InputSemanticCatalog {
 		return this.catalog
 	}
 
 	/** Recompute the descriptor set and return the catalog, advancing the revision only on a real change. */
-	refresh(): InputSemanticCatalog {
-		const descriptors = this.compose()
-		if (sameDescriptors(descriptors, this.catalog.descriptors)) return this.catalog
+	async refresh(): Promise<InputSemanticCatalog> {
+		const descriptors = await this.compose()
+		const published = this.catalog.revision !== UNDISCOVERED_REVISION
+		if (published && sameDescriptors(descriptors, this.catalog.descriptors)) return this.catalog
 		this.catalog = { revision: this.catalog.revision + 1, descriptors }
 		return this.catalog
 	}
 
-	private compose(): readonly InputSemanticDescriptor[] {
-		return [...BUILTIN_INPUT_SEMANTICS, ...projectInventory(this.port.readInventory())]
+	private async compose(): Promise<readonly InputSemanticDescriptor[]> {
+		return [...BUILTIN_INPUT_SEMANTICS, ...projectInventory(await this.port.readInventory())]
 	}
 }

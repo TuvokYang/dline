@@ -5,7 +5,7 @@ import { type CapabilityInventory, InputSemanticCatalogService } from "../InputS
 function port(inventory: CapabilityInventory) {
 	const state = { inventory }
 	return {
-		port: { readInventory: () => state.inventory },
+		port: { readInventory: async () => state.inventory },
 		set(next: CapabilityInventory) {
 			state.inventory = next
 		},
@@ -15,11 +15,20 @@ function port(inventory: CapabilityInventory) {
 const empty: CapabilityInventory = { skills: [], workflows: [], mcpPrompts: [] }
 
 describe("InputSemanticCatalogService", () => {
-	it("publishes the built-in descriptors and the discovered capabilities under one revision", () => {
+	it("exposes the built-ins at revision 0 before discovery has run", () => {
+		const service = new InputSemanticCatalogService(port(empty).port)
+
+		const catalog = service.current()
+
+		expect(catalog.revision).toBe(0)
+		expect(catalog.descriptors).toEqual(BUILTIN_INPUT_SEMANTICS)
+	})
+
+	it("publishes the built-in descriptors and the discovered capabilities under one revision", async () => {
 		const source = port({ skills: ["work-smoke-health"], workflows: ["release"], mcpPrompts: [] })
 		const service = new InputSemanticCatalogService(source.port)
 
-		const catalog = service.current()
+		const catalog = await service.refresh()
 
 		expect(catalog.revision).toBe(1)
 		expect(catalog.descriptors).toHaveLength(BUILTIN_INPUT_SEMANTICS.length + 2)
@@ -33,31 +42,33 @@ describe("InputSemanticCatalogService", () => {
 		)
 	})
 
-	it("keeps the revision stable when discovery reports the same capabilities", () => {
+	it("keeps the revision stable when discovery reports the same capabilities", async () => {
 		const source = port({ skills: ["a"], workflows: [], mcpPrompts: [] })
 		const service = new InputSemanticCatalogService(source.port)
 
-		const refreshed = service.refresh()
+		await service.refresh()
+		const refreshed = await service.refresh()
 
 		expect(refreshed.revision).toBe(1)
 		expect(refreshed).toBe(service.current())
 	})
 
-	it("advances the revision when a capability is withdrawn so a cached consumer refreshes", () => {
+	it("advances the revision when a capability is withdrawn so a cached consumer refreshes", async () => {
 		const source = port({ skills: ["a"], workflows: [], mcpPrompts: [] })
 		const service = new InputSemanticCatalogService(source.port)
 
+		await service.refresh()
 		source.set(empty)
-		const refreshed = service.refresh()
+		const refreshed = await service.refresh()
 
 		expect(refreshed.revision).toBe(2)
 		expect(refreshed.descriptors.some((descriptor) => descriptor.id === "command.skill.a")).toBe(false)
 	})
 
-	it("addresses an MCP prompt by server and prompt identity", () => {
+	it("addresses an MCP prompt by server and prompt identity", async () => {
 		const source = port({ skills: [], workflows: [], mcpPrompts: [{ server: "work-smoke-mcp", prompt: "echo" }] })
 
-		const catalog = new InputSemanticCatalogService(source.port).current()
+		const catalog = await new InputSemanticCatalogService(source.port).refresh()
 
 		expect(catalog.descriptors).toContainEqual(
 			expect.objectContaining({
