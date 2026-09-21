@@ -7,6 +7,7 @@ import { ProviderJournalMessageMaterializer } from "../executors/provider/servic
 import type { PreparedProviderRequest, ProviderRequestFactory } from "../executors/provider/service/ProviderRequest"
 import type { ProductionToolHandlerRuntime } from "../executors/tool/production/ProductionToolHandlerRuntime"
 import type { ToolAdmissionSnapshot } from "../executors/tool/ToolAdmissionRegistry"
+import type { TaskTurnAuthority } from "../explicit-instructions/TurnAuthority"
 import type { TaskPromptContextOwner } from "../prompt/TaskPromptContextOwner"
 import type { TaskPromptLifecycle } from "../prompt/TaskPromptLifecycle"
 import { createRequestApiScope } from "../RequestApiScope"
@@ -22,6 +23,7 @@ export interface TaskProviderRequestFactoryOptions {
 	readonly promptContext: TaskPromptContextOwner
 	readonly prompt: TaskPromptLifecycle
 	readonly messages: ProviderJournalMessageMaterializer
+	readonly authority: TaskTurnAuthority
 	readonly tools: ProductionToolHandlerRuntime
 	readonly readAdmissionSnapshot: (block: ToolUse) => ToolAdmissionSnapshot
 }
@@ -59,6 +61,13 @@ export class TaskProviderRequestFactory implements ProviderRequestFactory {
 		const serverTools = Object.freeze([
 			...new Set([...runtime.webSearchRoutingPlan.serverTools, ...requestScope.hostedImageGenerationPlan.serverTools]),
 		])
+		const turnId = draft.turnId ?? randomUUID()
+		// Authority is derived from the durable admitted input, so a recovered or
+		// retried turn grants exactly what the user named and nothing more.
+		const authority = this.options.authority.grant(
+			turnId,
+			await this.options.messages.collectAuthority(draft.inputPayloadRefs),
+		)
 		return {
 			api,
 			systemPrompt: frozen.text,
@@ -69,7 +78,8 @@ export class TaskProviderRequestFactory implements ProviderRequestFactory {
 			// The frozen prompt already resolved the setting against provider
 			// capability; scheduling must agree with what the model was told.
 			mode: runtime.parallelToolsEnabled ? "parallel" : "serial",
-			turnId: draft.turnId ?? randomUUID(),
+			turnId,
+			...(authority === undefined ? {} : { authority }),
 			planTool: (tool: ToolUse) => this.options.tools.plan(tool, this.options.readAdmissionSnapshot(tool)),
 		}
 	}

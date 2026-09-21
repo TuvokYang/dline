@@ -17,9 +17,9 @@ const document: SemanticInputDocument = {
 }
 
 function recordingPayloads() {
-	const stored: string[] = []
+	const stored: Uint8Array[] = []
 	const payloads = {
-		put: async (payload: string) => {
+		put: async (payload: Uint8Array) => {
 			stored.push(payload)
 			return `ref-${stored.length}`
 		},

@@ -20,6 +20,7 @@ import { DefaultProductionProviderService } from "../executors/provider/service/
 import { ProviderJournalMessageMaterializer } from "../executors/provider/service/ProviderJournalMessageMaterializer"
 import { DefaultProductionToolExecutionService } from "../executors/tool/production/DefaultProductionToolExecutionService"
 import { ProductionToolHandlerRuntime } from "../executors/tool/production/ProductionToolHandlerRuntime"
+import { TaskTurnAuthority } from "../explicit-instructions/TurnAuthority"
 import type { TaskState } from "../kernel"
 import { MessageStateHandler } from "../message-state"
 import { TaskPromptContextOwner } from "../prompt/TaskPromptContextOwner"
@@ -166,6 +167,9 @@ export class TaskSessionCompositionService {
 			readState,
 		})
 		const toolRuntime = new ProductionToolHandlerRuntime(new ToolValidator(options.prompt.ignoreController))
+		// One owner per task session: the provider request grants the turn's
+		// authority and the tool gate reads it back under the same turn identity.
+		const turnAuthority = new TaskTurnAuthority()
 		const toolExecution = new TaskToolExecutionOwner({
 			taskId: options.taskId,
 			taskIncarnationId,
@@ -182,6 +186,7 @@ export class TaskSessionCompositionService {
 			callbacks: tool.callbacks,
 			readState,
 			readCapabilityToggles: options.prompt.readCapabilityToggles,
+			readTurnAuthority: (turnId) => turnAuthority.read(turnId),
 			workspaceManager: options.prompt.workspaceManager,
 			providerRequestRounds: tool.providerRequestRounds,
 			controllerContext: tool.controllerContext,
@@ -213,6 +218,7 @@ export class TaskSessionCompositionService {
 			promptContext,
 			prompt,
 			messages: new ProviderJournalMessageMaterializer(persistence.payloads),
+			authority: turnAuthority,
 			tools: toolRuntime,
 			readAdmissionSnapshot: (block) => toolExecution.readAdmissionSnapshot(block),
 		})

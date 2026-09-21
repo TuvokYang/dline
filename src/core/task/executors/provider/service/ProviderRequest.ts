@@ -1,6 +1,7 @@
 import type { ApiHandler } from "@core/api"
 import type { ToolUse } from "@core/assistant-message"
 import type { ClineStorageMessage } from "@shared/messages/content"
+import type { ExplicitTurnAuthority } from "../../../explicit-instructions/TurnAuthority"
 import type { ProviderTurnApproval } from "../../../kernel"
 import type { ProviderDraftEnvelope } from "../../../stores/payload/TaskPayloadEnvelopes"
 
@@ -20,6 +21,13 @@ export interface PreparedProviderRequest {
 	readonly nativeTools: boolean
 	readonly mode: "serial" | "parallel"
 	readonly turnId: string
+	/**
+	 * One-shot authority the admitted input of this turn granted, if any.
+	 *
+	 * The request owns it because the turn it authorizes is the turn being sent;
+	 * abandoning the request must withdraw it rather than leave it pending.
+	 */
+	readonly authority?: ExplicitTurnAuthority
 	planTool(tool: ToolUse): PlannedProviderTool
 }
 

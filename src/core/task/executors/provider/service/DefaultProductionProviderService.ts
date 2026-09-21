@@ -88,7 +88,12 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 		const nativeTools = new Map<string, PendingNativeTool>()
 		const apiStream = request.api.createMessage(request.systemPrompt, request.messages, request.tools, request.options)
 		const stream = normalizeApiStream(apiStream, createStreamNormalizer(this.identities))
-		const abort = () => request.api.abort?.()
+		// Abandoning the stream also withdraws the turn's one-shot authority, so a
+		// cancelled command cannot authorize a tool in a later turn.
+		const abort = () => {
+			request.api.abort?.()
+			request.authority?.cancel()
+		}
 		input.signal.addEventListener("abort", abort, { once: true })
 
 		try {

@@ -9,6 +9,7 @@ import {
 	type ToolPreflightResult,
 	type ToolSideEffect,
 } from "../executors/tool/ToolPreflight"
+import { authorizeExplicitToolExecution } from "../explicit-instructions/explicit-tool-gate"
 import { AccessMcpResourceHandler } from "./handlers/AccessMcpResourceHandler"
 import { ActModeRespondHandler } from "./handlers/ActModeRespondHandler"
 import { ApplyPatchHandler } from "./handlers/ApplyPatchHandler"
@@ -297,6 +298,20 @@ export class ToolExecutorCoordinator {
 			throw new Error(`No handler registered for tool: ${block.name}`)
 		}
 		if (block.dline_tid) this.preparedHandlers.delete(block.dline_tid)
-		return handler.execute(config, block)
+		return handler.execute(this.authorize(config, handler.name), block)
+	}
+
+	/**
+	 * Consume the turn's one-shot authority for an explicit-only tool.
+	 *
+	 * The gate runs once per invocation so a handler that requires explicit
+	 * authorization sees exactly one consumed authorization. A tool that was
+	 * never granted authority keeps its own refusal: the gate does not invent a
+	 * denial for tools whose authority is produced elsewhere.
+	 */
+	private authorize(config: TaskConfig, tool: ClineDefaultTool): TaskConfig {
+		const gated = authorizeExplicitToolExecution(tool, config.explicitInstructions)
+		if (!gated.ok || !gated.authorization) return config
+		return { ...config, explicitInstructionAuthorization: gated.authorization }
 	}
 }

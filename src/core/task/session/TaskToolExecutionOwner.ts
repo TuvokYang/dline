@@ -17,6 +17,7 @@ import type { ProductionToolHandlerRuntime } from "../executors/tool/production/
 import type { ToolAdmissionSnapshot } from "../executors/tool/ToolAdmissionRegistry"
 import type { ToolBlockStatePort } from "../executors/tool/ToolBlockStatePort"
 import { TurnToolScheduler } from "../executors/tool/TurnToolScheduler"
+import type { ExplicitInstructionConsumePort } from "../explicit-instructions/types"
 import type { TaskState } from "../kernel"
 import type { MessageStateHandler } from "../message-state"
 import type { ProviderRequestRoundPort } from "../performance/provider-request-round-port"
@@ -43,6 +44,8 @@ export interface TaskToolExecutionOwnerOptions {
 	readonly callbacks: TaskCallbacks
 	readonly readState: () => Readonly<TaskState>
 	readonly readCapabilityToggles: () => TaskCapabilityToggles
+	/** One-shot authority granted by the turn a block belongs to, if any. */
+	readonly readTurnAuthority: (turnId: string | undefined) => ExplicitInstructionConsumePort | undefined
 	readonly workspaceManager?: WorkspaceRootManager
 	readonly providerRequestRounds?: ProviderRequestRoundPort
 	readonly controllerContext?: ClineExtensionContext
@@ -118,7 +121,9 @@ export class TaskToolExecutionOwner implements ProductionToolConfigFactory {
 	 * the task, which lets retry and recovery paths reuse the same contract
 	 * without inventing a synthetic tool command.
 	 */
-	create(input: Pick<ProductionToolConfigFactoryInput, "coordinator">): TaskConfig {
+	create(
+		input: Pick<ProductionToolConfigFactoryInput, "coordinator"> & Partial<Pick<ProductionToolConfigFactoryInput, "command">>,
+	): TaskConfig {
 		const api = this.options.api.current()
 		const mode = this.options.settings.mode
 		const requestScope = createRequestApiScope(
@@ -154,6 +159,10 @@ export class TaskToolExecutionOwner implements ProductionToolConfigFactory {
 			browserSettings: this.options.stateManager.getGlobalSettingsKey("browserSettings"),
 			focusChainSettings: this.options.stateManager.getGlobalSettingsKey("focusChainSettings"),
 			capabilityToggles: this.options.readCapabilityToggles(),
+			// An explicit-only tool may run only with the authority of the turn that
+			// admitted the command; a restored retry carries no command and no turn,
+			// so it is denied instead of inheriting someone else's authorization.
+			explicitInstructions: this.options.readTurnAuthority(input.command?.turnId),
 			interactions: this.options.interactions,
 			callbacks: this.options.callbacks,
 			coordinator: input.coordinator,

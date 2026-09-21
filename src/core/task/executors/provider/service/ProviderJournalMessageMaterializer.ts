@@ -1,5 +1,6 @@
 import type { ClineContent, ClineStorageMessage } from "@shared/messages/content"
 import { parseDurableToolResult } from "../../../DurableToolResult"
+import type { ExplicitInstructionDeclaration } from "../../../explicit-instructions/types"
 import type { TaskPayloadStore } from "../../../stores"
 import { decodeTaskPayload } from "../../../stores/payload/TaskPayloadCodec"
 import type {
@@ -30,6 +31,23 @@ function textMessage(text: string): ClineStorageMessage {
 /** Rebuilds the provider conversation exclusively from the append-only journal payload sequence. */
 export class ProviderJournalMessageMaterializer {
 	constructor(private readonly payloads: TaskPayloadStore) {}
+
+	/**
+	 * Collect the one-shot authority the admitted inputs of this turn granted.
+	 *
+	 * Authority is read from the same durable payloads the conversation is built
+	 * from, so a replayed or recovered turn carries the same authorization the
+	 * user granted when they named the command.
+	 */
+	async collectAuthority(payloadRefs: readonly string[]): Promise<readonly ExplicitInstructionDeclaration[]> {
+		const declarations: ExplicitInstructionDeclaration[] = []
+		for (const payloadRef of payloadRefs) {
+			const payload = decodeTaskPayload<JournalPayload>(await this.payloads.read(payloadRef))
+			if (payload.kind !== "user_input") continue
+			declarations.push(...((payload as UserInputEnvelope).explicitInstructions ?? []))
+		}
+		return declarations
+	}
 
 	async materialize(payloadRefs: readonly string[]): Promise<ClineStorageMessage[]> {
 		const messages: ClineStorageMessage[] = []
