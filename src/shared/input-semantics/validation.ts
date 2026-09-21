@@ -20,6 +20,8 @@ export type SemanticInputDiagnosticCode =
 	| "semantic_input_parser_unsupported"
 	| "semantic_input_catalog_stale"
 	| "semantic_input_node_invalid"
+	| "semantic_input_command_unknown"
+	| "semantic_input_command_disabled"
 	| "semantic_input_resource_missing"
 	| "semantic_input_resource_invalid"
 	| "semantic_input_lifecycle_barrier_invalid"

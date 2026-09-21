@@ -46,7 +46,9 @@ export class ProviderJournalMessageMaterializer {
 			case "user_input": {
 				const input = payload as UserInputEnvelope
 				const content = await buildUserFeedbackContent(
-					input.text,
+					// The admitted projection carries the expanded commands and mentions;
+					// raw text is only the mirror the chat row renders.
+					input.admittedText ?? input.text,
 					input.images === undefined ? undefined : [...input.images],
 					input.files === undefined ? undefined : [...input.files],
 				)

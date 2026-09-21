@@ -1,12 +1,23 @@
+import type { SemanticInputDocument } from "@shared/input-semantics/document"
 import type { ClineAssistantContent } from "@shared/messages/content"
+import type { ExplicitInstructionDeclaration } from "../../explicit-instructions/types"
 import type { ProviderTurnApproval, ProviderTurnPlan } from "../../kernel"
 
 export interface UserInputEnvelope {
 	readonly kind: "user_input"
+	/** What the user sees: the raw submission text, used for the chat row and history. */
 	readonly text?: string
 	readonly images?: readonly string[]
 	readonly files?: readonly string[]
 	readonly context?: string
+	/** The submitted structure, kept so a later stage addresses nodes by identity. */
+	readonly semanticInput?: SemanticInputDocument
+	/** The admitted ordered projection sent to the provider, when admission ran. */
+	readonly admittedText?: string
+	/** Tools the user authorized by naming a command. */
+	readonly authorizedTools?: readonly string[]
+	/** Declarations the provider request registers before an authorized tool may run. */
+	readonly explicitInstructions?: readonly ExplicitInstructionDeclaration[]
 }
 
 export interface DialogDraftEnvelope {

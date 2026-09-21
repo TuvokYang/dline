@@ -1,6 +1,11 @@
 import { randomUUID } from "node:crypto"
 import type { Controller } from "@core/controller"
+import { inputSemanticCatalogService } from "@core/controller/slash/input-semantic-catalog"
 import type { IgnoreController } from "@core/ignore/IgnoreController"
+import { LegacyInputAdapter } from "@core/input-semantics/LegacyInputAdapter"
+import { SemanticInputAdmissionService } from "@core/input-semantics/SemanticInputAdmissionService"
+import { TaskCommandExpander, TaskMentionResolver } from "@core/input-semantics/TaskEntityResolvers"
+import { TaskSemanticInputAdmission } from "@core/input-semantics/TaskSemanticInputAdmission"
 import type { StateManager } from "@core/storage/StateManager"
 import type { WorkspaceRootManager } from "@core/workspace/WorkspaceRootManager"
 import type { McpHub } from "@services/mcp/McpHub"
@@ -236,6 +241,7 @@ export class TaskSessionCompositionService {
 			persistence,
 			taskView: options.taskView,
 			owners,
+			inputAdmission: this.composeInputAdmission(options, taskIncarnationId, tool.services, api, settings),
 			services: {
 				provider: new DefaultProductionProviderService({ requests: providerRequests }),
 				tool: new DefaultProductionToolExecutionService({ config: toolExecution, runtime: toolRuntime }),
@@ -279,5 +285,62 @@ export class TaskSessionCompositionService {
 		session = opened.session
 		interactions.bind(session)
 		return session
+	}
+
+	/**
+	 * Build the admission this task uses for every submission.
+	 *
+	 * The catalog is the controller's, so the revision the Webview composed
+	 * against and the revision Core reviews against are the same fact.
+	 */
+	private composeInputAdmission(
+		options: OpenTaskSessionCompositionOptions,
+		taskIncarnationId: string,
+		services: Awaited<ReturnType<TaskSessionHostFactory["create"]>>["services"],
+		api: TaskApiHandlerOwner,
+		settings: TaskStateManager,
+	): TaskSemanticInputAdmission {
+		// Command expansion only reads the provider identity; the request scope is
+		// the canonical way this composition derives it from the current handler.
+		const readProviderInfo = () =>
+			createRequestApiScope(
+				api.current(),
+				settings.mode,
+				options.stateManager.getGlobalSettingsKey("customPrompt"),
+				options.stateManager.getGlobalSettingsKey("clineWebToolsEnabled") === true,
+				undefined,
+				options.stateManager.getCanonicalSettingsKey("imageGenerationEnabled") === true,
+			).providerInfo
+		const catalog = () => inputSemanticCatalogService(options.prompt.controller).current()
+		const admission = new SemanticInputAdmissionService({
+			catalog,
+			mentions: new TaskMentionResolver(() => ({
+				cwd: options.cwd,
+				urlContentFetcher: services.urlContentFetcher,
+				fileContextTracker: services.fileContextTracker,
+				workspaceManager: options.prompt.workspaceManager,
+			})),
+			commands: new TaskCommandExpander(() => {
+				const toggles = options.prompt.readCapabilityToggles()
+				const remoteConfig = options.stateManager.getRemoteConfigSettings()
+				return {
+					localWorkflowToggles: toggles.localWorkflowToggles,
+					globalWorkflowToggles: toggles.globalWorkflowToggles,
+					taskIncarnationId,
+					focusChainSettings: options.stateManager.getGlobalSettingsKey("focusChainSettings"),
+					providerInfo: readProviderInfo(),
+					capabilityContext: {
+						cwd: options.cwd,
+						capabilityToggles: toggles,
+						remoteSkills: remoteConfig?.remoteGlobalSkills ?? [],
+						remoteWorkflows: remoteConfig?.remoteGlobalWorkflows ?? [],
+					},
+				}
+			}),
+		})
+		return new TaskSemanticInputAdmission(
+			new LegacyInputAdapter(catalog, () => `${options.taskId}:doc:${randomUUID()}`),
+			admission,
+		)
 	}
 }

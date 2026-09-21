@@ -12,6 +12,8 @@ export interface SemanticCommandInvocation {
 	readonly commandId: string
 	readonly canonicalName: string
 	readonly namespace: SlashCommandNamespace
+	/** Exactly what the user typed, so expansion never reconstructs the trigger. */
+	readonly sourceText: string
 }
 
 export interface SemanticCommandPlan {
@@ -29,6 +31,7 @@ function invocationOf(node: SlashCommandInputNode): SemanticCommandInvocation {
 		commandId: node.commandId,
 		canonicalName: node.canonicalName,
 		namespace: node.namespace,
+		sourceText: node.sourceText,
 	}
 }
 
