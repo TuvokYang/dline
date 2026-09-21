@@ -14,7 +14,6 @@
  */
 
 import { randomUUID } from "node:crypto"
-import { DlineRuntimeFileManager } from "@services/runtime-files"
 import { findLastIndex } from "@shared/array"
 import { DEFAULT_TERMINAL_COMMAND_HANDOFF_SECONDS } from "@shared/terminal-settings"
 import { DiagnosticDomain, DiagnosticOutcome } from "@/services/telemetry/instrumentation/diagnostic-events"
@@ -24,6 +23,7 @@ import { PerfDomain } from "@/services/telemetry/instrumentation/perf-domains"
 import { Logger } from "@/shared/services/Logger"
 import { orchestrateCommandExecution } from "./CommandOrchestrator"
 import { isCommandCompletionSuccessful } from "./command-completion"
+import { resolveShellDiagnosticsPath } from "./command-log-path"
 import { appendCommandLogPath } from "./command-result"
 import { formatTerminalOutput } from "./output-stream"
 import {
@@ -246,7 +246,8 @@ export class CommandExecutor {
 					shellEnvironment.postCommand),
 		)
 		const diagnosticsPath = hasShellCommands
-			? DlineRuntimeFileManager.createTempFilePath(
+			? resolveShellDiagnosticsPath(
+					this.taskId,
 					`shell_environment_${this.ulid}_${Date.now()}_${this.nextShellEnvironmentDiagnosticsNumber++}`,
 				)
 			: undefined
@@ -458,6 +459,7 @@ export class CommandExecutor {
 		}
 		const execution = orchestrateCommandExecution(process, manager, this.callbacks, {
 			activityId,
+			taskId: this.taskId,
 			isCancellationRequested: () => this.cancelledActivityIds.has(activityId),
 			command,
 			timeoutSeconds,
@@ -703,7 +705,8 @@ export class CommandExecutor {
 		const createInitialization =
 			shellEnvironment && shellEnvironment.startupScripts.length > 0
 				? () => {
-						const diagnosticsPath = DlineRuntimeFileManager.createTempFilePath(
+						const diagnosticsPath = resolveShellDiagnosticsPath(
+							this.taskId,
 							`shell_environment_${this.ulid}_${Date.now()}_${this.nextShellEnvironmentDiagnosticsNumber++}`,
 						)
 						const command = buildTerminalInitializationCommand(

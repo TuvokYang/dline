@@ -106,6 +106,7 @@ import {
 } from "@core/storage/disk"
 import { TaskLegacyStorageCleaner } from "@core/storage/TaskLegacyStorageCleaner"
 import type { FrozenSystemPromptCache, SystemPromptRefreshReason } from "@core/storage/task-context-types"
+import { pruneTaskCommandLogs } from "@core/storage/task-temp"
 import { TaskActivityPersistence } from "@core/task/activity/TaskActivityPersistence"
 import { TaskActivityStore } from "@core/task/activity/TaskActivityStore"
 import { ensureApiMessages, ensureUserContent } from "@core/task/api-context"
@@ -1256,7 +1257,10 @@ export class Task {
 			apiConversation,
 		})
 		this.historyResumeMaintenance = new HistoryResumeMaintenance({
-			cleanupLegacyStorage: () => this.cleanLegacyTaskStorage(),
+			cleanupLegacyStorage: async () => {
+				await this.cleanLegacyTaskStorage()
+				await this.pruneOwnedCommandLogs()
+			},
 			repairEncryptedReasoning: () => this.repairPersistedEncryptedReasoning(),
 			recoverInterruptedActivities: () => this.activityStore.recoverInterruptedActivities(),
 			patchInterruptedCommandCards: (activityIds) => this.patchInterruptedCommandCards(activityIds),
@@ -5828,6 +5832,28 @@ export class Task {
 			}
 		} catch (error) {
 			Logger.warn(`[Task ${this.taskId}] Failed to clean legacy task storage:`, error)
+		}
+	}
+
+	/**
+	 * Bound this task's own command logs.
+	 *
+	 * Runs while the task holds its lock and before this session writes new logs.
+	 * Command logs stay readable across sessions because chat rows and Activities
+	 * keep a clickable path to them, so they are trimmed only when the task
+	 * exceeds its size budget, instead of being expired or cleared like the
+	 * other task temp sections.
+	 */
+	private async pruneOwnedCommandLogs(): Promise<void> {
+		try {
+			const result = await pruneTaskCommandLogs(this.taskId)
+			if (result.deletedCount > 0) {
+				Logger.info(
+					`[Task ${this.taskId}] Pruned ${result.deletedCount} command log(s), freed ${Math.round(result.freedBytes / 1024)}KB`,
+				)
+			}
+		} catch (error) {
+			Logger.warn(`[Task ${this.taskId}] Failed to prune task command logs:`, error)
 		}
 	}
 

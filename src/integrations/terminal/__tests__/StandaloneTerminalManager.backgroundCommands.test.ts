@@ -1,6 +1,7 @@
 import { strict as assert } from "node:assert"
 import { EventEmitter } from "node:events"
 import fs from "node:fs/promises"
+import os from "node:os"
 import * as path from "node:path"
 import { DlineRuntimeFileManager } from "@services/runtime-files"
 import { afterEach, describe, it, vi } from "vitest"
@@ -84,6 +85,35 @@ describe("StandaloneTerminalManager background command injection state", () => {
 		} finally {
 			await manager.disposeBackgroundCommands()
 			await fs.rm(expectedLogPath, { force: true })
+		}
+	})
+
+	it("writes the owned log into the task temp storage when a task owns the command", async () => {
+		const documentsRoot = await fs.mkdtemp(path.join(os.tmpdir(), "dline-background-log-docs-"))
+		vi.stubEnv("DLINE_DOCS_DIR", documentsRoot)
+		const manager = new StandaloneTerminalManager()
+		const process = new EventEmitter() as TerminalProcessResultPromise
+
+		try {
+			const command = manager.trackBackgroundCommand(process, "npm test", "command_task_owned", [], {
+				origin: "explicit_background",
+				cancellationOwner: "explicit",
+				taskId: "task-owning-log",
+			})
+
+			assert.equal(
+				command.logFilePath,
+				path.join(documentsRoot, "tasks", "task-owning-log", "tmp", "command-logs", "command_task_owned.log"),
+			)
+
+			process.emit("line", "one", "stdout")
+			process.emit("completed", { exitCode: 0, signal: null })
+
+			assert.equal(await manager.readBackgroundCommandOutput(command.id), "[O] one\n")
+		} finally {
+			await manager.disposeBackgroundCommands()
+			vi.unstubAllEnvs()
+			await fs.rm(documentsRoot, { recursive: true, force: true })
 		}
 	})
 

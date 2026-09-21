@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto"
 import fs from "node:fs/promises"
 import path from "node:path"
+import { getTaskTempSectionDirectoryFor, TaskTempSection } from "@core/storage/task-temp"
 import { imageSize } from "image-size"
 import { ArtifactStoreError } from "./TaskArtifactStore"
 
@@ -62,7 +63,7 @@ export class TaskImagePreviewStore {
 		if (!path.isAbsolute(taskDirectory)) {
 			throw new ArtifactStoreError("invalid_configuration", "Image preview task directory must be absolute.")
 		}
-		this.previewRoot = path.join(path.resolve(taskDirectory), "tmp", "image-previews")
+		this.previewRoot = getTaskTempSectionDirectoryFor(taskDirectory, TaskTempSection.ImagePreviews)
 	}
 
 	async persistPreview(requestId: string, sequence: number, base64: string): Promise<ImagePreview> {

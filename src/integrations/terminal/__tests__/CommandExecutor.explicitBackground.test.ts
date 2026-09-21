@@ -3,11 +3,11 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { TaskActivityStore } from "@core/task/activity/TaskActivityStore"
-import { DlineRuntimeFileManager } from "@services/runtime-files"
 import { EventEmitter } from "events"
-import { describe, it, vi } from "vitest"
+import { afterAll, beforeAll, describe, it, vi } from "vitest"
 import { Logger } from "@/shared/services/Logger"
 import { CommandExecutor } from "../CommandExecutor"
+import { resolveCommandLogPath } from "../command-log-path"
 import { StandaloneTerminalManager } from "../standalone/StandaloneTerminalManager"
 import type {
 	BackgroundCommand,
@@ -26,6 +26,19 @@ const terminalConfiguration: TerminalManagerConfiguration = {
 	terminalOutputLineLimit: 500,
 	defaultTerminalProfile: "default",
 }
+
+/** Command logs belong to their task, so the suite owns an isolated documents root. */
+let documentsRoot: string
+
+beforeAll(async () => {
+	documentsRoot = await mkdtemp(path.join(os.tmpdir(), "dline-command-executor-docs-"))
+	vi.stubEnv("DLINE_DOCS_DIR", documentsRoot)
+})
+
+afterAll(async () => {
+	vi.unstubAllEnvs()
+	await rm(documentsRoot, { recursive: true, force: true })
+})
 
 class FakeTerminalProcess extends EventEmitter<TerminalProcessEvents> {
 	isHot = false
@@ -699,7 +712,7 @@ describe("CommandExecutor explicit background execution", () => {
 				updateCommandActivity,
 			},
 		)
-		const expectedLogPath = DlineRuntimeFileManager.createTempFilePath("command_77_1")
+		const expectedLogPath = resolveCommandLogPath("task-1", "command_77_1")
 
 		try {
 			const execution = executor.execute("watch", undefined, { commandTs: 77, functionId: "call-watch" })
@@ -722,6 +735,7 @@ describe("CommandExecutor explicit background execution", () => {
 			expect(updateCommandActivity).not.toHaveBeenCalledWith("command_77_1", expect.objectContaining({ status: "failed" }))
 			expect(updateClineMessage).not.toHaveBeenCalledWith(0, expect.objectContaining({ commandStatus: "failed" }))
 			expect(result.logFilePath).toBe(expectedLogPath)
+			expect(expectedLogPath).toBe(path.join(documentsRoot, "tasks", "task-1", "tmp", "command-logs", "command_77_1.log"))
 			expect((result.result as string).split("\n").at(-1)).toBe(`Full output saved to: ${expectedLogPath}`)
 		} finally {
 			await rm(expectedLogPath, { force: true })

@@ -1,6 +1,5 @@
 import { EnvironmentMetadataEntry, TaskMetadata } from "@core/context/context-tracking/ContextTrackerTypes"
 import type { FrozenPromptBuilderInfo, TaskContextCache } from "@core/storage/task-context-types"
-import { execa } from "@packages/execa"
 import { ClineMessage } from "@shared/ExtensionMessage"
 import { envFlagEnabled } from "@shared/env"
 import { HistoryItem } from "@shared/HistoryItem"
@@ -23,6 +22,25 @@ import type { ClineStorageMessage } from "@/shared/messages/content"
 import { normalizeLegacyConversation } from "@/shared/messages/legacy-identity-migration"
 import { Logger } from "@/shared/services/Logger"
 import { appendJsonl, readJsonl, writeJsonl } from "./backend/jsonl/jsonl-utils"
+import {
+	getDlineDataDir,
+	getDlineDocumentsPath,
+	getDlineDocumentsPathSync,
+	getDlineHomePath,
+	getDocumentsPath,
+	warmupDocumentsPathCache,
+} from "./documents-path"
+
+// Storage roots live in a leaf module so low-level owners can resolve them
+// without importing this module's host and Webview dependencies.
+export {
+	getDlineDataDir,
+	getDlineDocumentsPath,
+	getDlineDocumentsPathSync,
+	getDlineHomePath,
+	getDocumentsPath,
+	warmupDocumentsPathCache,
+}
 
 const ATOMIC_WRITE_RENAME_MAX_ATTEMPTS = 5
 const ATOMIC_WRITE_RENAME_RETRY_DELAYS_MS = [10, 25, 50, 100]
@@ -127,83 +145,6 @@ export const GlobalFileNames = {
 	taskMetadata: "task_metadata.json",
 	mcpMarketplaceCatalog: "mcp_marketplace_catalog.json",
 	remoteConfig: (orgId: string) => `remote_config_${orgId}.json`,
-}
-
-let cachedDocumentsPath: string | undefined
-
-export async function getDocumentsPath(): Promise<string> {
-	if (cachedDocumentsPath) return cachedDocumentsPath
-
-	if (process.platform === "win32") {
-		try {
-			const { stdout: docsPath } = await execa("powershell", [
-				"-NoProfile",
-				"-Command",
-				"[System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::MyDocuments)",
-			])
-			if (docsPath.trim()) {
-				cachedDocumentsPath = docsPath.trim()
-				return cachedDocumentsPath
-			}
-		} catch {
-			Logger.error("Failed to retrieve Windows Documents path.")
-		}
-	} else if (process.platform === "linux") {
-		try {
-			await execa("which", ["xdg-user-dir"])
-			const { stdout } = await execa("xdg-user-dir", ["DOCUMENTS"])
-			if (stdout.trim()) {
-				cachedDocumentsPath = stdout.trim()
-				return cachedDocumentsPath
-			}
-		} catch {
-			Logger.error("Failed to retrieve XDG Documents path.")
-		}
-	}
-
-	cachedDocumentsPath = path.join(os.homedir(), "Documents")
-	return cachedDocumentsPath
-}
-
-export function getDlineHomePath(): string {
-	if (process.env.DLINE_HOME_DIR) return process.env.DLINE_HOME_DIR
-	return path.join(os.homedir(), ".dline")
-}
-
-/**
- * Get the Dline data directory path.
- * Used by StateManager for secrets/state storage and api_profiles.
- *
- * Priority: DLINE_DIR (secrets/test override) → ~/.dline
- * Note: DLINE_DIR is separate from DLINE_HOME_DIR — the former is for
- * secrets/sensitive data that may be redirected during testing, while the
- * latter is for the main .dline directory (providers, rules, etc.).
- */
-export function getDlineDataDir(): string {
-	const dlineDir = process.env.DLINE_DIR || path.join(os.homedir(), ".dline")
-	return path.join(dlineDir, "data")
-}
-export function getDlineDocumentsPathSync(): string {
-	if (process.env.DLINE_DOCS_DIR) return process.env.DLINE_DOCS_DIR
-	if (cachedDocumentsPath) return path.join(cachedDocumentsPath, "dline")
-	return path.join(os.homedir(), "Documents", "dline")
-}
-
-/**
- * Prime the Documents path cache at startup so synchronous consumers
- * (getDlineDocumentsPathSync) use the correct system Documents directory.
- * Call once during extension initialization, before any filesystem operations.
- */
-export async function warmupDocumentsPathCache(): Promise<void> {
-	await getDocumentsPath()
-}
-let cachedDlineDocumentsPath: string | undefined
-
-export async function getDlineDocumentsPath(): Promise<string> {
-	if (process.env.DLINE_DOCS_DIR) return process.env.DLINE_DOCS_DIR
-	if (cachedDlineDocumentsPath) return cachedDlineDocumentsPath
-	cachedDlineDocumentsPath = path.join(await getDocumentsPath(), "dline")
-	return cachedDlineDocumentsPath
 }
 
 export async function ensureTaskDirectoryExists(taskId: string): Promise<string> {

@@ -563,6 +563,8 @@ export type FullCommandExecutorConfig = CommandExecutorConfig
 export interface OrchestrationOptions {
 	/** Stable identity shared by command activity and owned log files. */
 	activityId?: string
+	/** Owning task identity, used to place owned log files under the task temp storage. */
+	taskId?: string
 	/** Return whether this command is in the canonical cancellation transaction. */
 	isCancellationRequested?: () => boolean
 	/** The command being executed */

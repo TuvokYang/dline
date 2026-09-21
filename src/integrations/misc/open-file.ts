@@ -2,6 +2,7 @@ import { createHash } from "node:crypto"
 import { existsSync } from "node:fs"
 import fs from "node:fs/promises"
 import { TextDecoder } from "node:util"
+import { getTaskTempSectionDirectoryFor, TaskTempSection } from "@core/storage/task-temp"
 import * as path from "path"
 import { HostProvider } from "@/hosts/host-provider"
 import { ShowMessageType } from "@/shared/proto/dline/host/window"
@@ -95,7 +96,7 @@ export async function materializeTaskImageViewer(dataUri: string, taskDirectory:
 	}
 	const extension = IMAGE_VIEWER_EXTENSIONS[mimeType]
 	const hash = createHash("sha256").update(imageBuffer).digest("hex")
-	const viewerRoot = path.join(path.resolve(taskDirectory), "tmp", "image-viewer")
+	const viewerRoot = getTaskTempSectionDirectoryFor(taskDirectory, TaskTempSection.ImageViewer)
 	const viewerFilePath = path.join(viewerRoot, `${hash}.${extension}`)
 	await initializeViewerRoot(viewerRoot)
 	await fs.writeFile(viewerFilePath, imageBuffer)
