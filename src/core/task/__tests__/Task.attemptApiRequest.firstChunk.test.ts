@@ -5,6 +5,7 @@ import type { RequestApiScope } from "@core/task/RequestApiScope"
 import type { ClineStorageMessage } from "@shared/messages"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { ErrorService } from "@/services/error"
+import { MAX_AUTO_RETRY_ATTEMPTS } from "../auto-retry"
 import { Task } from "../index"
 import { OrdinaryRequestInputReplay } from "../OrdinaryRequestInputReplay"
 
@@ -68,7 +69,7 @@ describe("Task.attemptApiRequest first chunk state", () => {
 		const taskState = {
 			abort: false,
 			apiRequestCount: 1,
-			autoRetryAttempts: 3,
+			autoRetryAttempts: MAX_AUTO_RETRY_ATTEMPTS,
 			conversationHistoryDeletedRange: undefined,
 			didAutomaticallyRetryFailedApiRequest: false,
 			isWaitingForFirstChunk: false,
@@ -243,7 +244,7 @@ describe("Task.attemptApiRequest first chunk state", () => {
 		const taskState = {
 			abort: false,
 			apiRequestCount: 1,
-			autoRetryAttempts: 3,
+			autoRetryAttempts: MAX_AUTO_RETRY_ATTEMPTS,
 			conversationHistoryDeletedRange: undefined,
 			didAutomaticallyRetryFailedApiRequest: false,
 			isWaitingForFirstChunk: false,
@@ -550,7 +551,7 @@ describe("Task.attemptApiRequest first chunk state", () => {
 		const taskState = {
 			abort: false,
 			apiRequestCount: 1,
-			autoRetryAttempts: 3,
+			autoRetryAttempts: MAX_AUTO_RETRY_ATTEMPTS,
 			conversationHistoryDeletedRange: undefined,
 			didAutomaticallyRetryFailedApiRequest: false,
 			isWaitingForFirstChunk: false,
