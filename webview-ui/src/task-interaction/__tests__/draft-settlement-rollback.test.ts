@@ -66,6 +66,42 @@ describe("rejected interaction draft rollback", () => {
 		expect(canRestoreRejectedInteractionDraft("task-2", clearedDraft(4), settlement)).toBe(false)
 	})
 
+	it("does not restore an old response into a resumed session of the same task", () => {
+		const settlement = createAcceptedInteractionSettlement(dispatchedRequest, submittedDraft())
+
+		expect(
+			canRestoreRejectedInteractionDraft("task-1", clearedDraft(4), settlement, {
+				submissionEpoch: 1,
+				currentEpoch: 3,
+				messages: [],
+			}),
+		).toBe(false)
+	})
+
+	it("does not restore feedback already committed for the same interaction", () => {
+		const settlement = createAcceptedInteractionSettlement(dispatchedRequest, submittedDraft())
+
+		expect(
+			canRestoreRejectedInteractionDraft("task-1", clearedDraft(4), settlement, {
+				submissionEpoch: 1,
+				currentEpoch: 1,
+				messages: [{ ts: 9, type: "say", say: "user_feedback", interactionId: "interaction-1" }],
+			}),
+		).toBe(false)
+	})
+
+	it("restores a genuine rejection in the same session without matching feedback", () => {
+		const settlement = createAcceptedInteractionSettlement(dispatchedRequest, submittedDraft())
+
+		expect(
+			canRestoreRejectedInteractionDraft("task-1", clearedDraft(4), settlement, {
+				submissionEpoch: 1,
+				currentEpoch: 1,
+				messages: [{ ts: 9, type: "say", say: "user_feedback", interactionId: "interaction-2" }],
+			}),
+		).toBe(true)
+	})
+
 	it("carries the submitted draft so the owner can restore it verbatim", () => {
 		const draft = submittedDraft()
 		const settlement = createAcceptedInteractionSettlement(dispatchedRequest, captureInteractionDraft(draft))

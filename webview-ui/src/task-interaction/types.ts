@@ -84,6 +84,13 @@ function isEmptyInteractionDraft(draft: InteractionDraft): boolean {
 	return draft.text === "" && draft.images.length === 0 && draft.files.length === 0
 }
 
+/** Local evidence used to fence a delayed rollback without guessing from feedback text. */
+export interface DraftRollbackEvidence {
+	currentEpoch: number
+	submissionEpoch: number
+	messages: readonly ClineMessage[]
+}
+
 /**
  * Guard the rollback that follows a rejected dispatch.
  *
@@ -97,7 +104,18 @@ export function canRestoreRejectedInteractionDraft(
 	currentTaskId: string | undefined,
 	currentDraft: InteractionDraft,
 	settlement: AcceptedInteractionSettlement,
+	evidence?: DraftRollbackEvidence,
 ): boolean {
+	if (evidence?.currentEpoch !== evidence?.submissionEpoch) return false
+	if (
+		settlement.interactionId &&
+		evidence?.messages.some(
+			(message) =>
+				message.type === "say" && message.say === "user_feedback" && message.interactionId === settlement.interactionId,
+		)
+	) {
+		return false
+	}
 	return currentTaskId === settlement.taskId && isEmptyInteractionDraft(currentDraft)
 }
 

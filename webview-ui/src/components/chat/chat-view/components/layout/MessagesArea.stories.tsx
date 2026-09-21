@@ -18,7 +18,7 @@ const INITIAL_MESSAGES: ClineMessage[] = Array.from({ length: 80 }, (_, index) =
 }))
 const HANDLERS: MessageHandlers = {
 	handleSendMessage: async () => {},
-	handleTaskCloseButtonClick: () => {},
+	handleTaskCloseButtonClick: async () => {},
 	startNewTask: async () => {},
 }
 const selectOption = async () => {}

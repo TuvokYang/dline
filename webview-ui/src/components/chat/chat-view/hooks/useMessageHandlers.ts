@@ -108,13 +108,11 @@ export function useMessageHandlers(
 	)
 
 	const startNewTask = useCallback(async () => {
-		setActiveQuote(null)
 		await TaskServiceClient.clearTask(EmptyRequest.create({}))
+		setActiveQuote(null)
 	}, [setActiveQuote])
 
-	const handleTaskCloseButtonClick = useCallback(() => {
-		void startNewTask()
-	}, [startNewTask])
+	const handleTaskCloseButtonClick = useCallback(() => startNewTask(), [startNewTask])
 
 	return {
 		handleSendMessage,

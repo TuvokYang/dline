@@ -38,6 +38,7 @@ const mocks = vi.hoisted(() => {
 		askResponse: vi.fn(async () => ({})),
 		dispatchInteraction: vi.fn(async () => ({ accepted: true, result: "accepted" })),
 		compactTask: vi.fn(async () => ({ accepted: true, result: "accepted" })),
+		footerRejected: undefined as ((settlement: AcceptedInteractionSettlement) => void) | undefined,
 		useChatState: vi.fn(() => chatState),
 	}
 })
@@ -67,7 +68,12 @@ vi.mock("@/services/grpc-client", () => ({
 		subscribeToShowWebview: vi.fn(() => () => undefined),
 	},
 }))
-vi.mock("@/task-interaction/InteractionHost", () => ({ InteractionHost: () => null }))
+vi.mock("@/task-interaction/InteractionHost", () => ({
+	InteractionHost: ({ onDraftRejected }: { onDraftRejected: (settlement: AcceptedInteractionSettlement) => void }) => {
+		mocks.footerRejected = onDraftRejected
+		return null
+	},
+}))
 vi.mock("../activity/TaskActivityPanel", () => ({
 	DEFAULT_TASK_ACTIVITY_FILTERS: { statuses: ["active"], kinds: [] },
 	TaskActivityPanel: () => null,
@@ -216,6 +222,25 @@ function renderChat(
 	return render(chatView())
 }
 
+function closeAndResume(rendered: ReturnType<typeof render>): void {
+	mocks.extensionState = {
+		...mocks.extensionState,
+		clineMessages: [],
+		taskViewState: undefined,
+		currentTaskItem: undefined,
+		taskTitleMessage: undefined,
+	}
+	rendered.rerender(chatView())
+	mocks.extensionState = {
+		...mocks.extensionState,
+		clineMessages: [ASK],
+		taskViewState: taskView(),
+		currentTaskItem: { id: "task-1", task: "Task", ts: 1 },
+		taskTitleMessage: { ts: 1, type: "say", say: "task", text: "Task" },
+	}
+	rendered.rerender(chatView())
+}
+
 describe("ChatView interaction anchor synchronization", () => {
 	beforeEach(() => {
 		mocks.askResponse.mockReset()
@@ -234,6 +259,7 @@ describe("ChatView interaction anchor synchronization", () => {
 		mocks.chatState.setSelectedImages.mockClear()
 		mocks.chatState.setSelectedFiles.mockClear()
 		mocks.chatState.restoreDraft.mockClear()
+		mocks.footerRejected = undefined
 	})
 
 	it("keeps the active draft owner while the task title projection is temporarily unavailable", () => {
@@ -523,6 +549,87 @@ describe("ChatView interaction anchor synchronization", () => {
 		await waitFor(() => expect(mocks.dispatchInteraction).toHaveBeenCalledOnce())
 
 		expect(mocks.chatState.setInputValue).toHaveBeenCalledWith("")
+		expect(mocks.chatState.setInputValue).not.toHaveBeenCalledWith("draft")
+	})
+
+	it("restores a genuine rejection while the same task session still owns an empty composer", async () => {
+		let resolveDispatch!: (response: { accepted: boolean; result: string }) => void
+		mocks.dispatchInteraction.mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					resolveDispatch = resolve
+				}),
+		)
+		const rendered = renderChat([ASK])
+
+		fireEvent.click(screen.getByRole("button", { name: "Invoke Enter" }))
+		mocks.chatState.inputValue = ""
+		rendered.rerender(chatView())
+		mocks.chatState.setInputValue.mockClear()
+
+		await act(async () => resolveDispatch({ accepted: false, result: "rejected" }))
+		expect(mocks.chatState.setInputValue).toHaveBeenCalledWith("draft")
+	})
+
+	it("does not restore an old rejected response after closing and resuming the same task", async () => {
+		let resolveDispatch!: (response: { accepted: boolean; result: string }) => void
+		mocks.dispatchInteraction.mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					resolveDispatch = resolve
+				}),
+		)
+		const rendered = renderChat([ASK])
+
+		fireEvent.click(screen.getByRole("button", { name: "Invoke Enter" }))
+		mocks.chatState.inputValue = ""
+		closeAndResume(rendered)
+		mocks.chatState.setInputValue.mockClear()
+
+		await act(async () => resolveDispatch({ accepted: false, result: "rejected" }))
+		expect(mocks.chatState.setInputValue).not.toHaveBeenCalledWith("draft")
+	})
+
+	it("does not restore an acknowledged interaction when its RPC settles as rejected", async () => {
+		let resolveDispatch!: (response: { accepted: boolean; result: string }) => void
+		mocks.dispatchInteraction.mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					resolveDispatch = resolve
+				}),
+		)
+		const rendered = renderChat([ASK])
+
+		fireEvent.click(screen.getByRole("button", { name: "Invoke Enter" }))
+		mocks.chatState.inputValue = ""
+		mocks.extensionState = {
+			...mocks.extensionState,
+			clineMessages: [ASK, { ts: 200, type: "say", say: "user_feedback", interactionId: "interaction-1" }],
+		}
+		rendered.rerender(chatView())
+		mocks.chatState.setInputValue.mockClear()
+
+		await act(async () => resolveDispatch({ accepted: false, result: "rejected" }))
+		expect(mocks.chatState.setInputValue).not.toHaveBeenCalledWith("draft")
+	})
+
+	it("fences a footer rejection with the session that rendered its submission", () => {
+		const rendered = renderChat([ASK])
+		const rejectOldFooter = mocks.footerRejected
+		expect(rejectOldFooter).toBeDefined()
+		mocks.chatState.inputValue = ""
+		closeAndResume(rendered)
+		mocks.chatState.setInputValue.mockClear()
+
+		act(() =>
+			rejectOldFooter?.({
+				taskId: "task-1",
+				turnId: "turn-1",
+				interactionId: "interaction-1",
+				stateRevision: 8,
+				draft: { text: "draft", images: [], files: [] },
+			}),
+		)
 		expect(mocks.chatState.setInputValue).not.toHaveBeenCalledWith("draft")
 	})
 

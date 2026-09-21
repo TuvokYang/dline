@@ -70,7 +70,7 @@ export interface ChatState {
  */
 export interface MessageHandlers {
 	handleSendMessage: (text: string, images: string[], files: string[]) => Promise<void>
-	handleTaskCloseButtonClick: () => void
+	handleTaskCloseButtonClick: () => Promise<void>
 	startNewTask: () => Promise<void>
 }
 
