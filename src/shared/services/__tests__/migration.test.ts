@@ -58,6 +58,24 @@ describe("Cline to Dline migration", () => {
 		secondResult.migrated.should.be.false()
 	})
 
+	it("migrates Cline documents but leaves task history behind", async () => {
+		const oldDocuments = path.join(documentsDir, "Cline")
+		fs.mkdirSync(path.join(oldDocuments, "rules"), { recursive: true })
+		fs.writeFileSync(path.join(oldDocuments, "rules", "house.md"), "rule")
+		fs.mkdirSync(path.join(oldDocuments, "tasks", "1700000000000"), { recursive: true })
+		fs.writeFileSync(path.join(oldDocuments, "tasks", "taskHistory.json"), "[]")
+		fs.writeFileSync(path.join(oldDocuments, "tasks", "1700000000000", "ui_messages.json"), "[]")
+
+		const result = await migrateFromClineToDline({ homeDir, documentsDir, dlineDocumentsDir })
+
+		result.migrated.should.be.true()
+		// Plain documents still carry over.
+		fs.existsSync(path.join(dlineDocumentsDir, "rules", "house.md")).should.be.true()
+		// Task history does not: the current runtime cannot open a Cline task,
+		// so importing one would only produce entries that fail to resume.
+		fs.existsSync(path.join(dlineDocumentsDir, "tasks")).should.be.false()
+	})
+
 	it("does not migrate a legacy directory into a non-empty target", async () => {
 		const oldDataDir = path.join(homeDir, ".cline", "data")
 		const newDataDir = path.join(homeDir, ".dline", "data")

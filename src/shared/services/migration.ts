@@ -27,6 +27,19 @@ interface MigrationStep {
 
 const IGNORED_EMPTY_DIR_ENTRIES = new Set([".DS_Store", "Thumbs.db", "desktop.ini"])
 
+/**
+ * Documents entries that are deliberately not carried over from Cline.
+ *
+ * Task history is no longer portable. Dline indexes tasks in a SQLite database
+ * and stores per-task runtime state - canonical turn and interaction identity,
+ * snapshots, activities - that a Cline task directory simply does not contain.
+ * Copying those directories produced entries that the current runtime cannot
+ * open or resume, so the data is left where it is rather than imported into a
+ * shape it no longer fits. Settings, rules, workflows, and MCP configuration
+ * are still plain documents and continue to migrate.
+ */
+const NON_MIGRATABLE_DOCUMENT_ENTRIES = new Set(["tasks"])
+
 async function directoryHasContent(dir: string): Promise<boolean> {
 	if (!(await isDirectory(dir))) {
 		return false
@@ -61,19 +74,27 @@ async function shouldCopyFile(src: string, dest: string): Promise<boolean> {
 	return (await fileExistsAtPath(src)) && !(await fileExistsAtPath(dest))
 }
 
-async function copyDirIntoEmptyTarget(src: string, dest: string): Promise<void> {
+async function copyDirIntoEmptyTarget(
+	src: string,
+	dest: string,
+	skippedTopLevelEntries: ReadonlySet<string> = new Set(),
+): Promise<void> {
 	if (!(await isEmptyDirectoryTarget(dest))) {
 		throw new Error(`Migration destination is not empty: ${dest}`)
 	}
 
-	await copyDirContents(src, dest)
+	await copyDirContents(src, dest, skippedTopLevelEntries)
 }
 
-async function copyDirContents(src: string, dest: string): Promise<void> {
+async function copyDirContents(
+	src: string,
+	dest: string,
+	skippedTopLevelEntries: ReadonlySet<string> = new Set(),
+): Promise<void> {
 	await fs.mkdir(dest, { recursive: true })
 
 	for (const entry of await fs.readdir(src, { withFileTypes: true })) {
-		if (IGNORED_EMPTY_DIR_ENTRIES.has(entry.name)) {
+		if (IGNORED_EMPTY_DIR_ENTRIES.has(entry.name) || skippedTopLevelEntries.has(entry.name)) {
 			continue
 		}
 
@@ -278,12 +299,12 @@ async function buildMigrationPlan(options: ClineToDlineMigrationOptions = {}): P
 
 	if (await shouldCopyDirectory(paths.oldDocuments, paths.newDocuments)) {
 		steps.push({
-			detail: "Documents/Cline/ -> Documents/Dline/",
+			detail: "Documents/Cline/ -> Documents/Dline/ (excluding task history)",
 			run: async () => {
 				if (!(await shouldCopyDirectory(paths.oldDocuments, paths.newDocuments))) {
 					return false
 				}
-				await copyDirIntoEmptyTarget(paths.oldDocuments, paths.newDocuments)
+				await copyDirIntoEmptyTarget(paths.oldDocuments, paths.newDocuments, NON_MIGRATABLE_DOCUMENT_ENTRIES)
 				return true
 			},
 		})

@@ -46,7 +46,7 @@ The generated `.vsix` is written to the repository root. See [CONTRIBUTING.md](C
 
 **Requirements**: VS Code 1.134.0 or newer.
 
-**Migrating from Cline**: on first launch, existing Cline data (settings, MCP configuration, task history) is copied into the Dline directory. The original data is neither modified nor deleted, so both extensions can coexist.
+**Migrating from Cline**: on first launch, existing Cline data (settings, MCP configuration, rules, and workflows) is copied into the Dline directory. The original data is neither modified nor deleted, so both extensions can coexist. Task history is no longer migrated: Dline's task index and per-task runtime state are no longer compatible with Cline, so imported entries could not be opened or resumed and are left in place.
 
 ## Quick Start
 
