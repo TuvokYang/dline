@@ -712,6 +712,7 @@ export class Task {
 		block: {
 			prepareAdmission: (tool) => this.toolExecutor.prepareAdmission(tool),
 			commitInterruptedResult: (tool, reason) => this.toolExecutor.commitInterruptedToolResult(tool, reason),
+			describeDenial: (tool) => this.toolExecutor.describeToolDenial(tool),
 			awaitInitialCheckpoint: (toolName) => this.awaitInitialCheckpointBeforeToolSideEffects(toolName),
 		},
 		approval: {
@@ -1009,6 +1010,9 @@ export class Task {
 					if (this.controllerDetached) return
 					this.taskState.resetOperationCancellation()
 					this.taskState.abort = false
+					// The accepted continuation replaces the failure it recovers from,
+					// so the superseded card is retired before the new attempt starts.
+					await this.clearSupersededApiFailurePresentation()
 					const hasRetryDraft = Boolean(
 						effect.draft?.text?.trim() || effect.draft?.images?.length || effect.draft?.files?.length,
 					)
@@ -3843,6 +3847,56 @@ export class Task {
 		await this.messageStateHandler.removeMessagesByTs(retryMessageTimestamps)
 	}
 
+	/**
+	 * Retire the failure presentation that an accepted continuation supersedes.
+	 *
+	 * A new attempt owns the only visible failure state, so the previous retry
+	 * card and the failure details attached to the request row are removed
+	 * instead of accumulating one more identical card per recovery. A request
+	 * row that failed for another reason, such as user cancellation, keeps its
+	 * own outcome.
+	 */
+	private async clearSupersededApiFailurePresentation(): Promise<void> {
+		await this.clearAutoRetryMessages()
+		const requestIndex = findLastIndex(this.messageStateHandler.clineMessages, (message) => message.say === "api_req_started")
+		if (requestIndex === -1) return
+		let requestInfo: ClineApiReqInfo
+		try {
+			requestInfo = JSON.parse(this.messageStateHandler.clineMessages[requestIndex].text || "{}")
+		} catch {
+			return
+		}
+		if (requestInfo.streamingFailedMessage === undefined && requestInfo.retryStatus === undefined) return
+		delete requestInfo.streamingFailedMessage
+		delete requestInfo.retryStatus
+		if (requestInfo.cancelReason === "streaming_failed") delete requestInfo.cancelReason
+		await this.messageStateHandler.updateClineMessage(requestIndex, { text: JSON.stringify(requestInfo) })
+		await this.messageStateHandler.flushMessageUpdate(requestIndex)
+	}
+
+	/**
+	 * Present the current attempt of one automatic retry sequence.
+	 *
+	 * Retry status is a single live card, not an append-only log: every attempt
+	 * replaces the previous card so the chat shows one countdown instead of one
+	 * stacked failure card per attempt or per recovered sequence. The card is
+	 * re-created at the end of the transcript rather than rewritten in place,
+	 * because a card left behind an `api_req_started` row is treated as a
+	 * completed attempt and hidden, which would drop the countdown.
+	 */
+	private async sayAutoRetryStatus(status: { attempt: number; delay: number; errorMessage: string }): Promise<void> {
+		await this.clearAutoRetryMessages()
+		await this.say(
+			"error_retry",
+			JSON.stringify({
+				attempt: status.attempt,
+				maxAttempts: MAX_AUTO_RETRY_ATTEMPTS,
+				delaySeconds: status.delay / 1000,
+				errorMessage: status.errorMessage,
+			}),
+		)
+	}
+
 	/** Mark the latest automatic-retry card as exhausted before opening manual recovery. */
 	private async markAutoRetryExhausted(errorMessage: string): Promise<void> {
 		const retryMessageIndex = findLastIndex(
@@ -4035,15 +4089,7 @@ export class Task {
 				clearContent: true,
 			})
 			const delay = getRetryDelay(this.taskState.autoRetryAttempts)
-			await this.say(
-				"error_retry",
-				JSON.stringify({
-					attempt: this.taskState.autoRetryAttempts,
-					maxAttempts: MAX_AUTO_RETRY_ATTEMPTS,
-					delaySeconds: delay / 1000,
-					errorMessage,
-				}),
-			)
+			await this.sayAutoRetryStatus({ attempt: this.taskState.autoRetryAttempts, delay, errorMessage })
 			const taskId = this.taskId
 			const retryAttempts = this.taskState.autoRetryAttempts
 			this.scheduleAutoRetry(
@@ -7899,15 +7945,11 @@ export class Task {
 					await this.postStateToWebview()
 
 					response = "yesButtonClicked"
-					await this.say(
-						"error_retry",
-						JSON.stringify({
-							attempt: this.taskState.autoRetryAttempts,
-							maxAttempts: 3,
-							delaySeconds: delay / 1000,
-							errorMessage: streamingFailedMessage,
-						}),
-					)
+					await this.sayAutoRetryStatus({
+						attempt: this.taskState.autoRetryAttempts,
+						delay,
+						errorMessage: streamingFailedMessage,
+					})
 
 					// Clear streamingFailedMessage now that error_retry contains it
 					// This prevents showing the error in both ErrorRow and error_retry
@@ -9747,15 +9789,11 @@ export class Task {
 						const delay = getRetryDelay(this.taskState.autoRetryAttempts)
 
 						// API Request component is updated to show error message, we then display retry information underneath that...
-						await this.say(
-							"error_retry",
-							JSON.stringify({
-								attempt: this.taskState.autoRetryAttempts,
-								maxAttempts: 3,
-								delaySeconds: delay / 1000,
-								errorMessage,
-							}),
-						)
+						await this.sayAutoRetryStatus({
+							attempt: this.taskState.autoRetryAttempts,
+							delay,
+							errorMessage,
+						})
 
 						const taskId = this.taskId
 						const retryAttempts = this.taskState.autoRetryAttempts
@@ -10139,22 +10177,17 @@ export class Task {
 				const noResponseErrorMessage = "No assistant message was received. Would you like to retry the request?"
 				const manualRetryTakeover = this.consumeManualRetryTakeover()
 
-				if (!manualRetryTakeover && this.taskState.autoRetryAttempts < 3) {
-					// Auto-retry enabled with max 3 attempts: automatically approve the retry
+				if (!manualRetryTakeover && this.taskState.autoRetryAttempts < MAX_AUTO_RETRY_ATTEMPTS) {
+					// Automatically approve the retry while attempts remain.
 					this.taskState.autoRetryAttempts++
 
-					// Calculate delay: 2s, 4s, 8s
 					const delay = getRetryDelay(this.taskState.autoRetryAttempts)
 					response = "yesButtonClicked"
-					await this.say(
-						"error_retry",
-						JSON.stringify({
-							attempt: this.taskState.autoRetryAttempts,
-							maxAttempts: 3,
-							delaySeconds: delay / 1000,
-							errorMessage: noResponseErrorMessage,
-						}),
-					)
+					await this.sayAutoRetryStatus({
+						attempt: this.taskState.autoRetryAttempts,
+						delay,
+						errorMessage: noResponseErrorMessage,
+					})
 					if (!(await this.waitForAutoRetry(delay))) {
 						throw new Error("Dline instance aborted")
 					}

@@ -1,4 +1,5 @@
 import type { ToolUse } from "@core/assistant-message"
+import { formatResponse } from "@core/prompts/responses"
 import { Task } from "@core/task"
 import { TurnDriver } from "@core/task/executors/tool/TurnDriver"
 import { TurnToolScheduler } from "@core/task/executors/tool/TurnToolScheduler"
@@ -104,6 +105,7 @@ function invokeFinalizedTurn(task: Task): Promise<void> {
 			}),
 			commitInterruptedResult: (tool, reason) =>
 				harness.toolExecutor.commitInterruptedToolResult?.(tool, reason) ?? Promise.resolve(),
+			describeDenial: async () => formatResponse.toolDenied(),
 			awaitInitialCheckpoint: (toolName) => harness.awaitInitialCheckpointBeforeToolSideEffects(toolName),
 		},
 		approval: {

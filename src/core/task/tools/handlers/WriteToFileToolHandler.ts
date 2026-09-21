@@ -51,6 +51,28 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 
 	constructor(private validator: ToolValidator) {}
 
+	/**
+	 * Explain what a rejected edit left on disk.
+	 *
+	 * A denied write is not only refused, it also leaves the target in a known
+	 * state. Reporting that state keeps the model from assuming a partial edit
+	 * landed and retrying against content that was never written.
+	 */
+	async describeDenial(config: TaskConfig, block: ToolUse): Promise<string> {
+		const rawRelPath = block.params.path || block.params.absolutePath
+		if (!rawRelPath) return formatResponse.toolDenied()
+		const pathResult = resolveWorkspacePath(config, rawRelPath, "WriteToFileToolHandler.describeDenial")
+		const absolutePath = typeof pathResult === "string" ? pathResult : pathResult.absolutePath
+		const fileExists =
+			config.services.diffViewProvider.editType !== undefined
+				? config.services.diffViewProvider.editType === "modify"
+				: await fileExistsAtPath(absolutePath)
+		const note = fileExists
+			? getPrompt("toolHandlers", "writeToFileNotUpdated")
+			: getPrompt("toolHandlers", "writeToFileNotCreated")
+		return `${formatResponse.toolDenied()} ${note}`
+	}
+
 	getDescription(block: ToolUse): string {
 		const rawPath = block.params.path || block.params.absolutePath || ""
 		const basename = rawPath ? rawPath.replace(/^.*[/\\]/, "") : rawPath

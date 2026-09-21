@@ -341,9 +341,9 @@ describe("ToolAdmissionRegistry", () => {
 		expect(run).not.toHaveBeenCalled()
 	})
 
-	it("uses external scopes for tools whose runtime targets cannot be enumerated before execution", () => {
-		expect(resolvePermissionScope(ClineDefaultTool.FIND_REFERENCES)).toBe("read_external")
-		expect(resolvePermissionScope(ClineDefaultTool.RENAME)).toBe("edit_external")
+	it("classifies every remaining tool by the resource class it reaches", () => {
+		expect(resolvePermissionScope(ClineDefaultTool.FIND_REFERENCES)).toBe("read_workspace")
+		expect(resolvePermissionScope(ClineDefaultTool.RENAME)).toBe("edit_workspace")
 		expect(resolvePermissionScope(ClineDefaultTool.KILL_COMMAND)).toBe("command_all")
 		expect(resolvePermissionScope(ClineDefaultTool.MCP_DOCS)).toBe("mcp")
 		expect(resolvePermissionScope(ClineDefaultTool.LOAD_MCP)).toBe("mcp")
@@ -355,10 +355,45 @@ describe("ToolAdmissionRegistry", () => {
 		expect(resolvePermissionScope(ClineDefaultTool.REPORT_BUG)).toBe("web")
 	})
 
+	// The workspace toggle the user granted has to reach a symbol tool aimed at
+	// a workspace file. Charging it to the external permission instead withheld
+	// nothing, because the language server's result set was never what the
+	// approval gated.
 	it.each([
-		[ClineDefaultTool.FIND_REFERENCES, { file_path: "src/a.ts", line: "1", character: "1" }, "read_external"],
-		[ClineDefaultTool.RENAME, { file_path: "src/a.ts", line: "1", character: "1", new_name: "renamed" }, "edit_external"],
-	] as const)("keeps %s behind its unbounded external scope", (toolName, params, scope) => {
+		[ClineDefaultTool.FIND_REFERENCES, { file_path: "src/a.ts", line: "1", character: "1" }, "read_workspace"],
+		[ClineDefaultTool.RENAME, { file_path: "src/a.ts", line: "1", character: "1", new_name: "renamed" }, "edit_workspace"],
+	] as const)("admits %s under the workspace permission its target belongs to", async (toolName, params, scope) => {
+		const run = vi.fn(async () => undefined)
+		const result = prepareRegisteredToolAdmission({
+			canonicalToolName: toolName,
+			block: block(toolName, params),
+			description: `run ${toolName}`,
+			snapshot: snapshot({
+				settings: {
+					...snapshot().settings,
+					actions: {
+						...snapshot().settings.actions,
+						readFiles: true,
+						readFilesExternally: false,
+						editFiles: true,
+						editFilesExternally: false,
+					},
+				},
+			}),
+			run,
+		})
+
+		expect(result).toMatchObject({ outcome: "admitted", decision: { kind: "automatic", scope } })
+		if (result.outcome !== "admitted" || !result.confirm) throw new Error("expected scope confirmation")
+		const confirmed = await result.confirm()
+		expect(confirmed).toMatchObject({ outcome: "admitted", decision: { kind: "automatic", scope } })
+		expect(run).not.toHaveBeenCalled()
+	})
+
+	it.each([
+		[ClineDefaultTool.FIND_REFERENCES, { file_path: "src/a.ts", line: "1", character: "1" }, "read_workspace"],
+		[ClineDefaultTool.RENAME, { file_path: "src/a.ts", line: "1", character: "1", new_name: "renamed" }, "edit_workspace"],
+	] as const)("keeps %s behind a ceiling configured on the scope it resolves to", (toolName, params, scope) => {
 		const run = vi.fn(async () => undefined)
 		const result = prepareRegisteredToolAdmission({
 			canonicalToolName: toolName,
@@ -374,7 +409,7 @@ describe("ToolAdmissionRegistry", () => {
 						editFiles: true,
 						editFilesExternally: true,
 					},
-					ceilings: { read_external: "manual_only", edit_external: "manual_only" },
+					ceilings: { read_workspace: "manual_only", edit_workspace: "manual_only" },
 				},
 			}),
 			run,

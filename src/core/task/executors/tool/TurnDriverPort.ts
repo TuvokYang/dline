@@ -61,6 +61,8 @@ export interface TurnDriverBlockPort {
 	prepareAdmission(tool: ToolUse): ToolPreflightResult<void>
 	commitInterruptedResult(tool: ToolUse, reason: string): Promise<void>
 	awaitInitialCheckpoint(toolName: string): Promise<void>
+	/** The denial wording for one rejected tool, including any tool-specific state note. */
+	describeDenial(tool: ToolUse): Promise<string>
 }
 
 /** Manual approval presentation is injected so the driver owns sequencing, not UI details. */

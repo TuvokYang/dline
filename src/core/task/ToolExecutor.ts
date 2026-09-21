@@ -73,7 +73,7 @@ import { type HostedServerToolUpdate, ServerToolLifecycle } from "./tools/Server
 import { SubagentFanoutBudget, usableSubagentLimit } from "./tools/subagent/SubagentFanoutBudget"
 import { SubagentJobManager } from "./tools/subagent/SubagentJobManager"
 import { normalizeToolExecutionResult, type ToolPostCommitDirective } from "./tools/ToolExecutionResult"
-import { type IPartialBlockHandler, ToolExecutorCoordinator } from "./tools/ToolExecutorCoordinator"
+import { describeToolDenial, type IPartialBlockHandler, ToolExecutorCoordinator } from "./tools/ToolExecutorCoordinator"
 import { ToolValidator } from "./tools/ToolValidator"
 import { ToolDurationScope } from "./tools/tool-duration-scope"
 import {
@@ -815,6 +815,11 @@ export class ToolExecutor {
 	public async commitRestoredToolResult(content: ToolResponse, block: ToolUse): Promise<void> {
 		if (this.taskState.abort) return
 		await this.commitToolResult(content, block)
+	}
+
+	/** The denial wording for a rejected tool, including any tool-specific state note. */
+	public async describeToolDenial(block: ToolUse): Promise<string> {
+		return describeToolDenial(this.coordinator.getHandler(block.name), this.asToolConfig(), block)
 	}
 
 	/** Close an interrupted tool pairing without replaying an unknown side effect. */

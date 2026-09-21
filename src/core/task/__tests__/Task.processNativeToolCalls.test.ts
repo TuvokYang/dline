@@ -1,6 +1,7 @@
 import { strict as assert } from "node:assert"
 import type { AssistantMessageContent, TextStreamContent, ToolUse } from "@core/assistant-message"
 import { registerPartialMessageCallback } from "@core/controller/ui/subscribeToPartialMessage"
+import { formatResponse } from "@core/prompts/responses"
 import { Task } from "@core/task"
 import { type BlockLifecycle, BlockPhase } from "@core/task/BlockPhaseMachine"
 import { TurnDriver } from "@core/task/executors/tool/TurnDriver"
@@ -69,6 +70,7 @@ function createTurnDriverHarness(options: TurnDriverHarnessOptions): TurnDriver 
 				run: async () => undefined,
 			}),
 			commitInterruptedResult: options.commitInterruptedResult ?? vi.fn(async () => undefined),
+			describeDenial: vi.fn(async () => formatResponse.toolDenied()),
 			awaitInitialCheckpoint: options.awaitInitialCheckpoint ?? vi.fn(async () => undefined),
 		},
 		approval: {

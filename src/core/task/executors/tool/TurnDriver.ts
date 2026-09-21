@@ -245,7 +245,10 @@ export class TurnDriver {
 				}
 				if (!approved) {
 					session.markAdmissionSettled(index)
-					await this.ports.block.commitInterruptedResult(tool, "The tool was rejected by the user.")
+					// A user rejection is the denial the model is told about everywhere
+					// else, so it must reuse that canonical wording instead of a second
+					// literal only this path produces.
+					await this.ports.block.commitInterruptedResult(tool, await this.ports.block.describeDenial(tool))
 					this.markFinalizedToolPresented(tool)
 					return undefined
 				}

@@ -1,4 +1,5 @@
 import type { ToolUse } from "@core/assistant-message"
+import { formatResponse } from "@core/prompts/responses"
 import { BlockPhase } from "@core/task/BlockPhaseMachine"
 import type { ToolApprovalPresentation, ToolPreflightResult } from "@core/task/executors/tool/ToolPreflight"
 import { TurnDriver } from "@core/task/executors/tool/TurnDriver"
@@ -160,6 +161,7 @@ function createTurn({
 					run: async () => undefined,
 				})),
 			commitInterruptedResult: vi.fn(async () => undefined),
+			describeDenial: vi.fn(async () => formatResponse.toolDenied()),
 			awaitInitialCheckpoint: vi.fn(async () => undefined),
 		},
 		approval: { request: requestApprovalSpy, stageFeedback: stageFeedbackSpy },

@@ -23,7 +23,7 @@ async function sendTask(sidebar: Frame, text: string): Promise<void> {
 }
 
 e2e(
-	"write_to_file creates a sibling external file before external-edit approval",
+	"write_to_file leaves a sibling external file untouched until external-edit approval",
 	async ({ helper, server, sidebar, userDataDir, workspaceDir }) => {
 		e2e.setTimeout(180_000)
 		await helper.signin(sidebar)
@@ -63,13 +63,15 @@ e2e(
 		await expect(approveButton).toBeVisible({ timeout: 60_000 })
 		await expect(rejectButton).toBeVisible()
 
+		// Admission classifies the call without touching its target, so an
+		// external path must still be absent while its approval is pending.
 		await expect
 			.poll(() =>
 				readFile(externalPath, "utf8")
 					.then((content) => ({ exists: true, content }))
 					.catch(() => ({ exists: false, content: undefined })),
 			)
-			.toEqual({ exists: true, content: "" })
+			.toEqual({ exists: false, content: undefined })
 
 		await rejectButton.click()
 		await expect(sidebar.getByText("E2E_EXTERNAL_WRITE_REJECTED", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
@@ -85,7 +87,7 @@ e2e(
 )
 
 e2e(
-	"write_to_file follows a project junction to a sibling external directory without external-edit approval",
+	"write_to_file charges a project junction to external-edit approval by its canonical target",
 	async ({ helper, server, sidebar, userDataDir, workspaceDir }) => {
 		e2e.setTimeout(180_000)
 		await helper.signin(sidebar)
@@ -107,38 +109,49 @@ e2e(
 				name: "write_to_file",
 				arguments: {
 					absolutePath: linkedPath,
-					content: "E2E_JUNCTION_EXTERNAL_WRITE_BYPASSED_APPROVAL\n",
+					content: "E2E_JUNCTION_EXTERNAL_WRITE_MUST_WAIT_FOR_APPROVAL\n",
 				},
 			},
 			{
 				type: "tool",
 				id: "call_junction_external_write_completion",
 				name: "attempt_completion",
-				arguments: { result: "E2E_JUNCTION_EXTERNAL_WRITE_COMPLETE" },
+				arguments: { result: "E2E_JUNCTION_EXTERNAL_WRITE_REJECTED" },
 				expectedToolResults: [
 					{
 						callId: "call_junction_external_write",
-						contentIncludes: "The content was successfully saved",
+						contentIncludes: "The user denied this operation.",
 					},
 				],
 			},
 		)
 
 		await sendTask(sidebar, "Write through the requested project path and finish.")
-		await expect(sidebar.getByText("E2E_JUNCTION_EXTERNAL_WRITE_COMPLETE", { exact: false }).last()).toBeVisible({
+
+		// The declared path is lexically inside the workspace, so only realpath
+		// confirmation can charge it to the external scope it actually reaches.
+		const rejectButton = sidebar.getByText("Reject", { exact: true })
+		await expect(rejectButton).toBeVisible({ timeout: 60_000 })
+		await expect(sidebar.getByText("Approve", { exact: true })).toBeVisible()
+		await expect
+			.poll(() =>
+				readFile(externalPath, "utf8")
+					.then(() => true)
+					.catch(() => false),
+			)
+			.toBe(false)
+
+		await rejectButton.click()
+		await expect(sidebar.getByText("E2E_JUNCTION_EXTERNAL_WRITE_REJECTED", { exact: false }).last()).toBeVisible({
 			timeout: 60_000,
 		})
-		await expect(sidebar.getByText("Approve", { exact: true })).toHaveCount(0)
-		await expect(sidebar.getByText("Reject", { exact: true })).toHaveCount(0)
 		await expect
-			.poll(async () => (await readFile(externalPath, "utf8")).replaceAll("\r\n", "\n"))
-			.toBe("E2E_JUNCTION_EXTERNAL_WRITE_BYPASSED_APPROVAL\n")
-		const output = await E2ETestHelper.readDlineOutput(userDataDir)
-		expect(output).toMatch(/Checkpoint add rejected a tracked path outside/i)
-		expect(output).toMatch(/Failed to stage 1 tracked file\(s\).*Skipping commit/i)
-		await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir, [
-			/Checkpoint add rejected a tracked path outside/i,
-			/Failed to stage 1 tracked file\(s\).*Skipping commit/i,
-		])
+			.poll(() =>
+				readFile(externalPath, "utf8")
+					.then(() => true)
+					.catch(() => false),
+			)
+			.toBe(false)
+		await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
 	},
 )

@@ -1,4 +1,5 @@
 import type { ToolUse } from "@core/assistant-message"
+import { formatResponse } from "@core/prompts/responses"
 import { ClineDefaultTool } from "@shared/tools"
 import { describe, expect, it, vi } from "vitest"
 import { BlockPhase } from "../../../BlockPhaseMachine"
@@ -87,6 +88,7 @@ describe("TurnDriver post-commit ordering", () => {
 					run: async () => undefined,
 				}),
 				commitInterruptedResult: vi.fn(async () => undefined),
+				describeDenial: vi.fn(async () => formatResponse.toolDenied()),
 				awaitInitialCheckpoint: vi.fn(async () => undefined),
 			},
 			approval: {
@@ -117,5 +119,88 @@ describe("TurnDriver post-commit ordering", () => {
 		expect(sequence.indexOf("TURN_COMPLETED")).toBeGreaterThanOrEqual(0)
 		expect(sequence.indexOf("START_SUCCESSOR")).toBeGreaterThan(sequence.indexOf("TURN_COMPLETED"))
 		expect(startSuccessor).toHaveBeenCalledWith(directive)
+	})
+
+	it("reports a user rejection with the canonical tool denial wording", async () => {
+		const tool: ToolUse = {
+			type: "tool_use",
+			name: ClineDefaultTool.FILE_READ,
+			params: { path: "README.md" },
+			partial: false,
+			ts: 20,
+			function_id: "function-rejected-read",
+			dline_tid: "dline-rejected-read",
+		}
+		const runtime = new TaskRuntime(
+			createTaskRuntimeState({ taskId: "task-2", phase: TaskPhase.STREAMING, anchor: { apiIndex: 1 } }),
+			effectPorts(),
+		)
+		const commitInterruptedResult = vi.fn(async () => undefined)
+		const run = vi.fn(async () => undefined)
+		const driver = new TurnDriver({
+			task: {
+				getTaskId: () => "task-2",
+				isAborted: () => false,
+				isCurrentTask: () => true,
+				getAssistantMessageContent: () => [tool],
+				getAssistantApiIndex: () => 1,
+				buildTurn: () => [
+					{
+						dlineTid: tool.dline_tid,
+						functionId: tool.function_id,
+						toolName: tool.name,
+						phase: BlockPhase.STREAMING,
+						ts: tool.ts,
+						requiresApproval: true,
+						conversationHistoryIndex: 1,
+					},
+				],
+				isParallelToolCallingEnabled: () => false,
+				getPendingUserMessageContent: () => [],
+				markPartialToolComplete: vi.fn(),
+				recordToolCall: vi.fn(),
+				markUserMessageContentReady: vi.fn(),
+				applyCompactionFit: vi.fn(),
+			},
+			runtime: { getState: () => runtime.getState(), dispatch: (event: TaskEvent) => runtime.dispatch(event) },
+			block: {
+				prepareAdmission: () => ({
+					outcome: "admitted",
+					decision: { kind: "manual", scope: "read_workspace", ceiling: "manual_only" },
+					lanes: [],
+					presentation: { ask: "tool", body: "{}", notify: false },
+					run,
+				}),
+				commitInterruptedResult,
+				describeDenial: vi.fn(async () => formatResponse.toolDenied()),
+				awaitInitialCheckpoint: vi.fn(async () => undefined),
+			},
+			approval: {
+				request: vi.fn(async () => ({ actionId: "reject" as const })),
+				stageFeedback: vi.fn(async () => undefined),
+			},
+			scheduler: {
+				cancelActiveTurn: vi.fn(),
+				notifyLimitChanged: vi.fn(),
+				runTurn: vi.fn(
+					async (
+						_tools: ToolUse[],
+						runTurn: (session: TurnDriverSchedulingSession) => Promise<BlockLifecycleOutcome>,
+					) =>
+						runTurn({
+							markAdmissionSettled: vi.fn(),
+							markAdmissionUnsettled: vi.fn(),
+							submit: async (_tool, _index, _admission, execute) => execute(new AbortController().signal),
+						}),
+				),
+			},
+			provider: { registerExecution: vi.fn() },
+			postCommit: { takeDirective: () => undefined, startSuccessor: vi.fn() },
+		})
+
+		await driver.execute()
+
+		expect(run).not.toHaveBeenCalled()
+		expect(commitInterruptedResult).toHaveBeenCalledWith(tool, formatResponse.toolDenied())
 	})
 })

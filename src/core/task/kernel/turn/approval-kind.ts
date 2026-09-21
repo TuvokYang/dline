@@ -124,13 +124,17 @@ const DEFAULT_CEILINGS: Record<PermissionScope, ApprovalCeiling> = {
  */
 const FIXED_CEILING_SCOPES: ReadonlySet<PermissionScope> = new Set<PermissionScope>(["conversational"])
 
-/** Read tools whose provider/runtime fan-out can reach paths absent from the call. */
-const UNBOUNDED_READ_TOOLS: ReadonlySet<ClineDefaultTool> = new Set([ClineDefaultTool.FIND_REFERENCES])
-
-/** Edit tools whose provider/runtime fan-out cannot be enumerated before execution. */
-const UNBOUNDED_EDIT_TOOLS: ReadonlySet<ClineDefaultTool> = new Set([ClineDefaultTool.RENAME])
-
-/** Tools that reach the filesystem for reading. */
+/**
+ * Tools that reach the filesystem for reading.
+ *
+ * A symbol tool such as `find_references` belongs here even though its result
+ * can name files the call never did. Scope answers "what is this call allowed
+ * to address", which is the declared target; it does not bound what a language
+ * server reports back. Classifying the tool as external regardless of its
+ * target only moved a permitted workspace read onto the "read all files"
+ * toggle, which withheld nothing while making the workspace ceiling
+ * unreachable for it.
+ */
 const READ_TOOLS: ReadonlySet<ClineDefaultTool> = new Set([
 	ClineDefaultTool.FILE_READ,
 	ClineDefaultTool.SEARCH,
@@ -143,7 +147,14 @@ const READ_TOOLS: ReadonlySet<ClineDefaultTool> = new Set([
 	ClineDefaultTool.GENERATE_EXPLANATION,
 ])
 
-/** Tools that mutate files. */
+/**
+ * Tools that mutate files.
+ *
+ * `rename` and `replace_text` discover their full write set at execution time.
+ * That fan-out is contained by the dynamic write lane in `tool-lanes`, which
+ * serialises them against other edits; approval classifies the target the call
+ * declares, exactly as it does for a single-file edit.
+ */
 const EDIT_TOOLS: ReadonlySet<ClineDefaultTool> = new Set([
 	ClineDefaultTool.FILE_NEW,
 	ClineDefaultTool.FILE_EDIT,
@@ -182,8 +193,6 @@ const DIRECT_SCOPES: Partial<Record<ClineDefaultTool, PermissionScope>> = {
 export function resolvePermissionScope(toolName: string, context: PermissionScopeContext = {}): PermissionScope {
 	const tool = toolName as ClineDefaultTool
 
-	if (UNBOUNDED_READ_TOOLS.has(tool)) return "read_external"
-	if (UNBOUNDED_EDIT_TOOLS.has(tool)) return "edit_external"
 	if (READ_TOOLS.has(tool)) {
 		return context.isExternalPath ? "read_external" : "read_workspace"
 	}

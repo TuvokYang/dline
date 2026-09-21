@@ -1,4 +1,5 @@
 import type { ToolUse } from "@core/assistant-message"
+import { formatResponse } from "@core/prompts/responses"
 import { CLINE_MCP_TOOL_IDENTIFIER } from "@/shared/mcp"
 import { ClineDefaultTool } from "@/shared/tools"
 import { prepareRegisteredToolAdmission, type ToolAdmissionSnapshot } from "../executors/tool/ToolAdmissionRegistry"
@@ -55,6 +56,16 @@ export interface IPartialBlockHandler {
 	handlePartialBlock(block: ToolUse, uiHelpers: StronglyTypedUIHelpers): Promise<void>
 }
 
+/**
+ * A handler that can explain what a user rejection left behind.
+ *
+ * The driver owns the generic denial wording, but only the handler knows
+ * whether its target survived unchanged, so it may extend that wording.
+ */
+export interface IDenialDescribingToolHandler extends IToolHandler {
+	describeDenial(config: TaskConfig, block: ToolUse): Promise<string>
+}
+
 export type ToolHandlerPreparationResult =
 	| { outcome: "prepared"; presentation: ToolApprovalPresentation }
 	| { outcome: "rejected"; message: string }
@@ -86,9 +97,21 @@ export class SharedToolHandler implements IFullyManagedTool {
 		return this.baseHandler.execute(config, block)
 	}
 
+	async describeDenial(config: TaskConfig, block: ToolUse): Promise<string> {
+		return describeToolDenial(this.baseHandler, config, block)
+	}
+
 	async handlePartialBlock(block: ToolUse, uiHelpers: StronglyTypedUIHelpers): Promise<void> {
 		return this.baseHandler.handlePartialBlock(block, uiHelpers)
 	}
+}
+
+/** Resolve the denial wording a handler reports, falling back to the generic denial. */
+export async function describeToolDenial(handler: IToolHandler | undefined, config: TaskConfig, block: ToolUse): Promise<string> {
+	if (handler && "describeDenial" in handler) {
+		return (handler as IDenialDescribingToolHandler).describeDenial(config, block)
+	}
+	return formatResponse.toolDenied()
 }
 
 /**
