@@ -29,8 +29,14 @@ jobs:
     if: github.repository == 'TuvokYang/dline'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # One registry being unavailable must not withhold the release from the
+    # other. The aggregate gate below derives the stage conclusion from the two
+    # reported statuses, so this job reports its outcome instead of imposing it.
+    continue-on-error: true
     environment:
       name: dline-release
+    outputs:
+      status: ${{ steps.publish.outputs.status }}
     steps:
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -61,6 +67,7 @@ jobs:
           path: release-artifact
 
       - name: Publish VSIX
+        id: publish
         env:
           VSCE_PAT: ${{ secrets.DLINE_VSCODE_RELEASE_PUBLISH_PAT }}
           ASSET_NAME: ${{ inputs.asset_name }}
@@ -71,25 +78,30 @@ jobs:
           set -euo pipefail
           vsix_path="release-artifact/$ASSET_NAME"
 
-          if [[ -z "${VSCE_PAT:-}" ]]; then
-            echo "Error: DLINE_VSCODE_RELEASE_PUBLISH_PAT is not configured in the dline-release environment."
+          # Record the registry outcome before aborting: the aggregate gate reads
+          # these statuses, so an unreported failure would be indistinguishable
+          # from a registry that was never attempted.
+          fail() {
+            echo "status=failed" >> "$GITHUB_OUTPUT"
+            echo "Error: $1"
             exit 1
+          }
+
+          if [[ -z "${VSCE_PAT:-}" ]]; then
+            fail "DLINE_VSCODE_RELEASE_PUBLISH_PAT is not configured in the dline-release environment."
           fi
           if [[ ! -x "$VSCE_BIN" ]]; then
-            echo "Error: pinned VSCE executable '$VSCE_BIN' is unavailable."
-            exit 1
+            fail "pinned VSCE executable '$VSCE_BIN' is unavailable."
           fi
           if [[ ! -s "$vsix_path" ]]; then
-            echo "Error: verified VSIX '$vsix_path' is missing or empty."
-            exit 1
+            fail "verified VSIX '$vsix_path' is missing or empty."
           fi
 
           actual_sha256=$(sha256sum "$vsix_path" | cut -d' ' -f1)
           if [[ "$actual_sha256" != "$EXPECTED_SHA256" ]]; then
-            echo "Error: Marketplace package changed after verification."
             echo "Expected: $EXPECTED_SHA256"
             echo "Actual:   $actual_sha256"
-            exit 1
+            fail "Marketplace package changed after verification."
           fi
 
           for attempt in 1 2 3; do
@@ -100,10 +112,11 @@ jobs:
             echo "$publish_output"
 
             if [[ "$publish_status" -eq 0 ]]; then
+              echo "status=published" >> "$GITHUB_OUTPUT"
               exit 0
             fi
             if [[ "$attempt" -eq 3 ]] || ! grep -Eq 'RequestBlockedException|Concurrency' <<<"$publish_output"; then
-              exit "$publish_status"
+              fail "Marketplace publish failed with exit status $publish_status."
             fi
 
             retry_delay=$((attempt * 30))
@@ -111,13 +124,19 @@ jobs:
             sleep "$retry_delay"
           done
 
+          fail "Marketplace publish exhausted every retry attempt."
+
   publish-open-vsx:
     name: Publish Open VSX
     if: github.repository == 'TuvokYang/dline'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # Reported, not imposed: see publish-marketplace.
+    continue-on-error: true
     environment:
       name: dline-release
+    outputs:
+      status: ${{ steps.publish.outputs.status }}
     steps:
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -148,6 +167,7 @@ jobs:
           path: release-artifact
 
       - name: Publish VSIX
+        id: publish
         env:
           OVSX_PAT: ${{ secrets.DLINE_VSCODE_OVSX_PAT }}
           ASSET_NAME: ${{ inputs.asset_name }}
@@ -158,25 +178,78 @@ jobs:
           set -euo pipefail
           vsix_path="release-artifact/$ASSET_NAME"
 
-          if [[ -z "${OVSX_PAT:-}" ]]; then
-            echo "Error: DLINE_VSCODE_OVSX_PAT is not configured in the dline-release environment."
+          # Record the registry outcome before aborting: the aggregate gate reads
+          # these statuses, so an unreported failure would be indistinguishable
+          # from a registry that was never attempted.
+          fail() {
+            echo "status=failed" >> "$GITHUB_OUTPUT"
+            echo "Error: $1"
             exit 1
+          }
+
+          if [[ -z "${OVSX_PAT:-}" ]]; then
+            fail "DLINE_VSCODE_OVSX_PAT is not configured in the dline-release environment."
           fi
           if [[ ! -x "$OVSX_BIN" ]]; then
-            echo "Error: pinned Open VSX executable '$OVSX_BIN' is unavailable."
-            exit 1
+            fail "pinned Open VSX executable '$OVSX_BIN' is unavailable."
           fi
           if [[ ! -s "$vsix_path" ]]; then
-            echo "Error: verified VSIX '$vsix_path' is missing or empty."
-            exit 1
+            fail "verified VSIX '$vsix_path' is missing or empty."
           fi
 
           actual_sha256=$(sha256sum "$vsix_path" | cut -d' ' -f1)
           if [[ "$actual_sha256" != "$EXPECTED_SHA256" ]]; then
-            echo "Error: Open VSX package changed after verification."
             echo "Expected: $EXPECTED_SHA256"
             echo "Actual:   $actual_sha256"
+            fail "Open VSX package changed after verification."
+          fi
+
+          set +e
+          "$OVSX_BIN" publish "$vsix_path" --skip-duplicate
+          publish_status=$?
+          set -e
+          if [[ "$publish_status" -ne 0 ]]; then
+            fail "Open VSX publish failed with exit status $publish_status."
+          fi
+          echo "status=published" >> "$GITHUB_OUTPUT"
+
+  require-one-registry:
+    name: Require one published registry
+    needs: [publish-marketplace, publish-open-vsx]
+    # always(): both publish jobs tolerate their own failure, so this gate must
+    # still run to decide whether the release reached any registry at all.
+    if: always() && github.repository == 'TuvokYang/dline'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Evaluate registry publication
+        env:
+          MARKETPLACE_STATUS: ${{ needs.publish-marketplace.outputs.status }}
+          OPEN_VSX_STATUS: ${{ needs.publish-open-vsx.outputs.status }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          published=()
+          failed=()
+          # An empty status means the job aborted before it could report, which
+          # counts as that registry failing rather than as a silent success.
+          for entry in "marketplace=${MARKETPLACE_STATUS:-unreported}" "open-vsx=${OPEN_VSX_STATUS:-unreported}"; do
+            registry="${entry%%=*}"
+            status="${entry#*=}"
+            if [[ "$status" == "published" ]]; then
+              published+=("$registry")
+            else
+              failed+=("${registry}:${status}")
+            fi
+          done
+
+          if [[ "${#failed[@]}" -gt 0 ]]; then
+            echo "::warning::Registry publish incomplete: ${failed[*]}"
+          fi
+          if [[ "${#published[@]}" -eq 0 ]]; then
+            echo "Error: no registry accepted the release (${failed[*]}); inspect both publish jobs."
             exit 1
           fi
 
-          "$OVSX_BIN" publish "$vsix_path" --skip-duplicate
+          echo "Release published to: ${published[*]}"

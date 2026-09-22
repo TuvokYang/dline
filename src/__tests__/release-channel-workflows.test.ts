@@ -136,4 +136,33 @@ describe("release channel workflows", () => {
 		expect(registryWorkflow.match(/EXPECTED_SHA256: \$\{\{ inputs\.expected_sha256 \}\}/g)).toHaveLength(2)
 		expect(registryWorkflow.match(/name: \$\{\{ inputs\.artifact_name \}\}/g)).toHaveLength(2)
 	})
+
+	it("tolerates one failing registry and fails the stage only when neither accepted the release", async () => {
+		const registryWorkflow = (await readProjectFile(".github/workflows/publish-vsix-registries.yml")) as string
+		const parsed = load(registryWorkflow) as {
+			jobs: Record<string, { "continue-on-error"?: boolean; outputs?: Record<string, string>; needs?: string[] }>
+		}
+
+		// Each registry absorbs its own failure, so one outage cannot withhold the
+		// release from the registry that is still reachable.
+		for (const jobName of ["publish-marketplace", "publish-open-vsx"]) {
+			const job = parsed.jobs[jobName]
+			expect(job?.["continue-on-error"], `${jobName} must not fail the stage by itself`).toBe(true)
+			expect(job?.outputs?.status, `${jobName} must report its outcome`).toBe("${{ steps.publish.outputs.status }}")
+		}
+
+		// The aggregate gate is the only place that decides the stage conclusion,
+		// and it must still run when a publish job failed.
+		const gate = parsed.jobs["require-one-registry"]
+		expect(gate?.needs).toEqual(["publish-marketplace", "publish-open-vsx"])
+		expect(registryWorkflow).toContain("if: always() && github.repository == 'TuvokYang/dline'")
+		expect(registryWorkflow).toContain('if [[ "${#published[@]}" -eq 0 ]]; then')
+
+		// An aborted job reports nothing, which must count as that registry
+		// failing rather than as a silent success.
+		expect(registryWorkflow).toContain('"marketplace=${MARKETPLACE_STATUS:-unreported}"')
+		expect(registryWorkflow).toContain('"open-vsx=${OPEN_VSX_STATUS:-unreported}"')
+		expect(registryWorkflow.match(/echo "status=published" >> "\$GITHUB_OUTPUT"/g)).toHaveLength(2)
+		expect(registryWorkflow.match(/echo "status=failed" >> "\$GITHUB_OUTPUT"/g)).toHaveLength(2)
+	})
 })
