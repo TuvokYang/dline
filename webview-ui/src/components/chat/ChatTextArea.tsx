@@ -238,7 +238,6 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 			modeSwitch,
 			stateRevision,
 			apiConfiguration,
-			openRouterModels,
 			platform,
 			chatInputSendShortcut,
 			localWorkflowToggles,

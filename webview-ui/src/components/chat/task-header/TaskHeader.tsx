@@ -1,7 +1,7 @@
 import type { ModelPricing } from "@shared/api"
 import { ClineMessage } from "@shared/ExtensionMessage"
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react"
-import React, { useCallback, useLayoutEffect, useMemo, useState } from "react"
+import React, { useCallback, useLayoutEffect, useState } from "react"
 import Thumbnails from "@/components/common/Thumbnails"
 import { useExtensionState } from "@/context/ExtensionStateContext"
 import { cn } from "@/lib/utils"
