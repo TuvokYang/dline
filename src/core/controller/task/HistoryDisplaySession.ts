@@ -129,6 +129,11 @@ export class HistoryDisplaySession {
 		this.locked = true
 	}
 
+	/** Leave read-only mode after this instance takes the task lock over. */
+	markUnlocked(): void {
+		this.locked = false
+	}
+
 	isLocked(): boolean {
 		return this.locked
 	}

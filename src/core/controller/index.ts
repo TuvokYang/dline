@@ -1157,6 +1157,22 @@ export class Controller {
 	private async initHistoryDisplaySession(historyItem: HistoryItem, options?: InitTaskOptions): Promise<string> {
 		const session = new HistoryDisplaySession(historyItem)
 		this.historyDisplaySession = session
+
+		// A lightweight display still has to report the durable facts a user acts
+		// on. Task settings carry the Profile this task is bound to, and the lock
+		// file decides whether this surface is read-only. Skipping them made the
+		// model switcher fall back to the global Profile and dropped the read-only
+		// banner, even though another instance still held the task.
+		//
+		// Both are small independent reads, so they are started here and awaited
+		// alongside the message window: resolving them in sequence before the
+		// window would add their latency to the first visible frame. Neither
+		// promise rejects, because both helpers report their own failures.
+		const durableFacts = Promise.all([
+			this.stateManager.loadTaskSettings(session.taskId),
+			this.isTaskLockedByAnotherInstance(session.taskId),
+		])
+
 		const publishReadyHistory = async () => {
 			if (this.historyDisplaySession !== session) return
 			await this.postStateToWebview({ immediate: true })
@@ -1164,7 +1180,14 @@ export class Controller {
 		}
 		const remainsCurrent = await prepareHistoryTaskForDisplay({
 			taskId: session.taskId,
-			displayHistory: () => session.load(),
+			displayHistory: async () => {
+				const [[, lockedByAnotherInstance]] = await Promise.all([durableFacts, session.load()])
+				if (this.historyDisplaySession !== session || !lockedByAnotherInstance) return
+				session.markLocked()
+				this.startLockPoll(session.taskId)
+			},
+			// This surface owns no Task runtime, so there is never a canonical
+			// history preparation to run. It is unrelated to the task lock.
 			prepareFromHistory: async () => undefined,
 			hasTaskLock: false,
 			isCurrent: () => this.historyDisplaySession === session,
@@ -1199,6 +1222,10 @@ export class Controller {
 				return DispatchInteractionResponse.create({ accepted: false, result: "stale_interaction" })
 			}
 			this.historyDisplaySession = undefined
+			// A read-only display may own a lock poll. initTask acquires the lock
+			// itself, so leaving that round armed would let it take the same lock
+			// concurrently and then activate a surface this promotion replaced.
+			this.stopLockPoll()
 			try {
 				await session.dispose()
 				await this.initTask(undefined, undefined, undefined, session.historyItem, undefined, {
@@ -2644,7 +2671,13 @@ export class Controller {
 	private startLockPoll(taskId: string) {
 		this.stopLockPoll()
 		const generation = this.lockPollGeneration
-		const isCurrentRound = () => generation === this.lockPollGeneration && !this.disposed && !this.taskLockAcquired
+		// `taskLockAcquired` tracks the interactive runtime only. A read-only
+		// history display owns no Task, so a round stays valid while that session
+		// is still the current surface waiting for the lock to be released.
+		const awaitsReadOnlyHistoryLock = () =>
+			this.historyDisplaySession?.taskId === taskId && this.historyDisplaySession.isLocked()
+		const isCurrentRound = () =>
+			generation === this.lockPollGeneration && !this.disposed && (!this.taskLockAcquired || awaitsReadOnlyHistoryLock())
 		this.lockPollTimer = setInterval(async () => {
 			if (!isCurrentRound()) return
 			try {
@@ -2729,6 +2762,14 @@ export class Controller {
 		this.stopLockPoll()
 		this.startLockHeartbeat(taskId)
 
+		// A lightweight history display owns the read-only projection itself, so
+		// clearing the lock has to reach the session too. Without this the banner
+		// and the disabled footer survive an unlock that already succeeded.
+		const historyDisplay = this.historyDisplaySession
+		if (historyDisplay?.taskId === taskId) {
+			historyDisplay.markUnlocked()
+		}
+
 		// Publish the stopped interaction state after the task becomes writable.
 		if (this.task) {
 			try {
@@ -2751,6 +2792,28 @@ export class Controller {
 		this.lockHeartbeatTimer = setInterval(() => {
 			this.lockService.touchTaskLock(taskId).catch(() => {})
 		}, 60000)
+	}
+
+	/**
+	 * Report whether a live lock on this task belongs to a different instance.
+	 *
+	 * A stale lock is not ownership: `checkTaskLock` releases it and reports the
+	 * task as unlocked, so this instance may take it over. A lock this instance
+	 * already holds is also not a conflict.
+	 *
+	 * @param taskId Task whose lock file should be inspected.
+	 * @returns True when another live instance owns the task.
+	 */
+	private async isTaskLockedByAnotherInstance(taskId: string): Promise<boolean> {
+		try {
+			const status = await this.lockService.checkTaskLock(taskId)
+			return status.isLocked && status.lockedBy !== this.lockService.instanceAddress
+		} catch (error) {
+			// Failing open here would silently drop the read-only guard, so treat an
+			// unreadable lock as unlocked only after reporting it.
+			Logger.error(`[Lock] Failed to read lock state for task ${taskId}:`, error)
+			return false
+		}
 	}
 
 	/**
