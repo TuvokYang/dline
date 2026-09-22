@@ -73,6 +73,29 @@ describe("validateSemanticInputDocument", () => {
 		expect(diagnostic.documentId).toBe("doc-1")
 	})
 
+	it("keeps an unrecognized command shape submittable, because it is content and not intent", () => {
+		const doc = document([
+			{
+				kind: "slash_command",
+				entityId: "e1",
+				commandId: "",
+				sourceText: "/skills:not-installed",
+				canonicalName: "skills:not-installed",
+				namespace: "cmd",
+				compositionMode: "composable",
+				state: "unresolved",
+			},
+		])
+
+		expect(validateSemanticInputDocument(doc)).toEqual([])
+	})
+
+	it("rejects an active command that carries no catalog identity", () => {
+		const doc = document([{ ...compact, commandId: "" }])
+
+		expect(codes(validateSemanticInputDocument(doc))).toEqual(["semantic_input_node_invalid"])
+	})
+
 	it("rejects a reused entity id, because editing and queueing address nodes by identity", () => {
 		const doc = document([compact, { ...compact, compositionMode: "composable" }])
 

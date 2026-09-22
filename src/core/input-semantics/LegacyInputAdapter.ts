@@ -21,13 +21,13 @@ export interface LegacyInput {
  */
 export class LegacyInputAdapter {
 	constructor(
-		private readonly catalog: () => InputSemanticCatalog,
+		private readonly catalog: () => Promise<InputSemanticCatalog>,
 		private readonly nextDocumentId: () => string,
 	) {}
 
-	adapt(input: LegacyInput): SemanticInputDocument {
+	async adapt(input: LegacyInput): Promise<SemanticInputDocument> {
 		return lexSemanticInput(input.text ?? "", {
-			catalog: this.catalog(),
+			catalog: await this.catalog(),
 			documentId: this.nextDocumentId(),
 			// A legacy client has no way to confirm a candidate, so its text keeps
 			// the behaviour users already rely on: a typed command activates.

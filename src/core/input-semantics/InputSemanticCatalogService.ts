@@ -71,10 +71,29 @@ export class InputSemanticCatalogService {
 		descriptors: BUILTIN_INPUT_SEMANTICS,
 	}
 
+	private firstDiscovery?: Promise<InputSemanticCatalog>
+
 	constructor(private readonly port: CapabilityInventoryPort) {}
 
 	current(): InputSemanticCatalog {
 		return this.catalog
+	}
+
+	/**
+	 * Return a catalog that has seen discovery at least once.
+	 *
+	 * A submission may arrive before any consumer asked for the catalog. Lexing
+	 * against the pre-discovery baseline would silently demote a real skill,
+	 * workflow or MCP prompt to plain text, so the first caller waits for one
+	 * discovery instead. Later callers reuse the published catalog, and the
+	 * in-flight promise is shared so a burst of submissions triggers one pass.
+	 */
+	async discovered(): Promise<InputSemanticCatalog> {
+		if (this.catalog.revision !== UNDISCOVERED_REVISION) return this.catalog
+		this.firstDiscovery ??= this.refresh().finally(() => {
+			this.firstDiscovery = undefined
+		})
+		return this.firstDiscovery
 	}
 
 	/** Recompute the descriptor set and return the catalog, advancing the revision only on a real change. */

@@ -39,8 +39,12 @@ function nodeIdentityProblem(node: SemanticInputNode): string | undefined {
 	if (!isIdentifiedNode(node)) return undefined
 	if (!node.entityId) return "node is missing a stable entity id"
 	if (isSlashCommandNode(node)) {
-		if (!node.commandId) return "slash command node is missing a catalog command id"
 		if (!node.canonicalName) return "slash command node is missing a canonical name"
+		// A command shape the catalog does not know stays inert content: it carries
+		// no catalog identity, and only an active entity must resolve to one.
+		if (isActiveEntity(node) && !node.commandId) {
+			return "active slash command node is missing a catalog command id"
+		}
 		return undefined
 	}
 	if (isMentionNode(node)) {

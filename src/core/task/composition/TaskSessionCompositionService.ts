@@ -299,7 +299,10 @@ export class TaskSessionCompositionService {
 	 * Build the admission this task uses for every submission.
 	 *
 	 * The catalog is the controller's, so the revision the Webview composed
-	 * against and the revision Core reviews against are the same fact.
+	 * against and the revision Core reviews against are the same fact. Lexing
+	 * waits for the first discovery, because a submission can arrive before any
+	 * consumer asked for the catalog and an undiscovered skill would otherwise
+	 * be demoted to plain text.
 	 */
 	private composeInputAdmission(
 		options: OpenTaskSessionCompositionOptions,
@@ -319,9 +322,9 @@ export class TaskSessionCompositionService {
 				undefined,
 				options.stateManager.getCanonicalSettingsKey("imageGenerationEnabled") === true,
 			).providerInfo
-		const catalog = () => inputSemanticCatalogService(options.prompt.controller).current()
+		const service = () => inputSemanticCatalogService(options.prompt.controller)
 		const admission = new SemanticInputAdmissionService({
-			catalog,
+			catalog: () => service().current(),
 			mentions: new TaskMentionResolver(() => ({
 				cwd: options.cwd,
 				urlContentFetcher: services.urlContentFetcher,
@@ -347,7 +350,10 @@ export class TaskSessionCompositionService {
 			}),
 		})
 		return new TaskSemanticInputAdmission(
-			new LegacyInputAdapter(catalog, () => `${options.taskId}:doc:${randomUUID()}`),
+			new LegacyInputAdapter(
+				() => service().discovered(),
+				() => `${options.taskId}:doc:${randomUUID()}`,
+			),
 			admission,
 		)
 	}

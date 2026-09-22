@@ -25,7 +25,10 @@ function approval(block: ToolUse, result: ReturnType<ToolExecutorCoordinator["pr
 			kind: "automatic",
 			interactionId,
 			policyRevision: 0,
-			riskFacts: { scope: result.decision.scope, ceiling: result.decision.ceiling },
+			// The policy re-resolves the decision from value facts alone, so the tool
+			// identity must travel with them; without it the adapter cannot tell which
+			// permission scope the settings snapshot applies to.
+			riskFacts: { toolName: block.name, scope: result.decision.scope, ceiling: result.decision.ceiling },
 		}
 	}
 	return {

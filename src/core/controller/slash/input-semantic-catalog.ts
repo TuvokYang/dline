@@ -1,10 +1,12 @@
 import type { InputSemanticCatalog } from "@shared/input-semantics/catalog"
 import { EmptyRequest } from "@shared/proto/dline/common"
+import { Logger } from "@shared/services/Logger"
 import {
 	type CapabilityInventory,
 	type CapabilityInventoryPort,
 	InputSemanticCatalogService,
 } from "@/core/input-semantics/InputSemanticCatalogService"
+import { refreshRules } from "../file/refreshRules"
 import type { Controller } from "../index"
 import { getAvailableSlashCommands } from "./getAvailableSlashCommands"
 
@@ -44,13 +46,36 @@ export function capabilityInventoryFrom(
 	}
 }
 
-/** Reads the capabilities this controller already advertises for autocomplete. */
+/**
+ * Reads the capabilities this controller advertises for autocomplete.
+ *
+ * Discovery runs first: slash-command listing reads the last trustworthy scan,
+ * and before any scan exists a real workspace skill or workflow would be absent.
+ * A submission that arrives in a fresh window would then lex a genuine command
+ * as plain text, so the inventory owns that scan instead of hoping it already ran.
+ */
 class ControllerCapabilityInventory implements CapabilityInventoryPort {
 	constructor(private readonly controller: Controller) {}
 
 	async readInventory(): Promise<CapabilityInventory> {
+		await this.scanCapabilities()
 		const { commands } = await getAvailableSlashCommands(this.controller, EmptyRequest.create({}))
 		return capabilityInventoryFrom(commands, this.controller.getMcpServersForOwner())
+	}
+
+	/**
+	 * Run the shared capability scan.
+	 *
+	 * `refreshRules` already coalesces concurrent callers, so a submission that
+	 * races the capability panel joins the in-flight scan. A failed scan must not
+	 * block admission; listing then falls back to the stored toggles.
+	 */
+	private async scanCapabilities(): Promise<void> {
+		try {
+			await refreshRules(this.controller, EmptyRequest.create({}))
+		} catch (error) {
+			Logger.warn(`[InputSemanticCatalog] capability discovery failed: ${error}`)
+		}
 	}
 }
 

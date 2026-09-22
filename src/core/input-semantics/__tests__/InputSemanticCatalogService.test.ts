@@ -3,11 +3,19 @@ import { describe, expect, it } from "vitest"
 import { type CapabilityInventory, InputSemanticCatalogService } from "../InputSemanticCatalogService"
 
 function port(inventory: CapabilityInventory) {
-	const state = { inventory }
+	const state = { inventory, reads: 0 }
 	return {
-		port: { readInventory: async () => state.inventory },
+		port: {
+			readInventory: async () => {
+				state.reads += 1
+				return state.inventory
+			},
+		},
 		set(next: CapabilityInventory) {
 			state.inventory = next
+		},
+		get reads() {
+			return state.reads
 		},
 	}
 }
@@ -22,6 +30,28 @@ describe("InputSemanticCatalogService", () => {
 
 		expect(catalog.revision).toBe(0)
 		expect(catalog.descriptors).toEqual(BUILTIN_INPUT_SEMANTICS)
+	})
+
+	it("runs discovery once when a submission needs a catalog that was never discovered", async () => {
+		const source = port({ skills: ["work-smoke-health"], workflows: [], mcpPrompts: [] })
+		const service = new InputSemanticCatalogService(source.port)
+
+		const [first, second] = await Promise.all([service.discovered(), service.discovered()])
+
+		expect(source.reads).toBe(1)
+		expect(first.revision).toBe(1)
+		expect(second).toBe(first)
+		expect(first.descriptors.some((descriptor) => descriptor.id === "command.skill.work-smoke-health")).toBe(true)
+	})
+
+	it("reuses the published catalog instead of rediscovering on every submission", async () => {
+		const source = port({ skills: ["a"], workflows: [], mcpPrompts: [] })
+		const service = new InputSemanticCatalogService(source.port)
+
+		await service.discovered()
+		await service.discovered()
+
+		expect(source.reads).toBe(1)
 	})
 
 	it("publishes the built-in descriptors and the discovered capabilities under one revision", async () => {
