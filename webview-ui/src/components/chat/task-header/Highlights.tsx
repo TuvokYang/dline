@@ -18,12 +18,15 @@ function renderSegment(segment: SemanticHighlightSegment, index: number, withSha
 		// addresses the target without it.
 		const target = segment.text.replace(/^@/, "")
 		return (
-			<span
-				className={`${highlightClass(withShadow)} cursor-pointer`}
+			// A button rather than a span: opening a mention is an action, so it
+			// has to be reachable and activatable from the keyboard.
+			<button
+				className={`${highlightClass(withShadow)} cursor-pointer bg-transparent border-0 p-0 font-inherit`}
 				key={`mention-${index}`}
-				onClick={() => FileServiceClient.openMention(StringRequest.create({ value: target }))}>
+				onClick={() => FileServiceClient.openMention(StringRequest.create({ value: target }))}
+				type="button">
 				{segment.text}
-			</span>
+			</button>
 		)
 	}
 	return (
