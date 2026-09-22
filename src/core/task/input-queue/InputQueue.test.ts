@@ -1,8 +1,23 @@
+import type { SemanticInputDocument } from "@shared/input-semantics/document"
 import { describe, expect, it } from "vitest"
 import { INPUT_QUEUE_LIMIT, InputQueue } from "./InputQueue"
 
 function draft(text: string) {
 	return { text, images: [], files: [] }
+}
+
+/** A document the shared validator accepts, so the queue keeps it. */
+function semanticInput(overrides: Partial<SemanticInputDocument> = {}): SemanticInputDocument {
+	return {
+		schemaVersion: 1,
+		parserVersion: "1.0.0",
+		catalogRevision: "3",
+		documentId: "doc-1",
+		rawText: "A",
+		nodes: [{ kind: "text", text: "A" }],
+		resources: [],
+		...overrides,
+	}
 }
 
 /** Enqueue and fail loudly if the queue rejected the draft, so a silent limit hit never masks a broken expectation. */
@@ -13,6 +28,70 @@ function enqueued(queue: InputQueue, text: string): string {
 }
 
 describe("InputQueue", () => {
+	// The composed structure is what delivery acts on. Re-deriving it from
+	// `text` is exactly the string-matching this replaced, so an entry has to
+	// carry it and a reload has to prove it is still valid.
+	describe("retained semantic input", () => {
+		it("keeps the composed structure with the entry it belongs to", () => {
+			const queue = new InputQueue()
+
+			queue.enqueue({ ...draft("A"), semanticInput: semanticInput() })
+			queue.enqueue(draft("B"))
+
+			expect(queue.list().map((entry) => entry.semanticInput?.documentId)).toEqual(["doc-1", undefined])
+		})
+
+		it("marks a restored structure stale so delivery revalidates it", () => {
+			const queue = InputQueue.fromSerialized([
+				{ id: "a", text: "A", images: [], files: [], mode: "queued", sequence: 0, semanticInput: semanticInput() },
+			])
+
+			expect(queue.list()[0].semanticInput?.documentId).toBe("doc-1")
+			expect(queue.list()[0].semanticInputStale).toBe(true)
+		})
+
+		it("keeps the text deliverable when the persisted structure no longer validates", () => {
+			const queue = InputQueue.fromSerialized([
+				{
+					id: "a",
+					text: "A",
+					images: [],
+					files: [],
+					mode: "queued",
+					sequence: 0,
+					semanticInput: semanticInput({ schemaVersion: 99 as 1 }),
+				},
+			])
+
+			expect(queue.list()[0].text).toBe("A")
+			expect(queue.list()[0].semanticInput).toBeUndefined()
+			expect(queue.list()[0].semanticInputStale).toBeUndefined()
+		})
+
+		it("replaces the structure when the user commits an edit", () => {
+			const queue = InputQueue.fromSerialized([
+				{ id: "a", text: "A", images: [], files: [], mode: "queued", sequence: 0, semanticInput: semanticInput() },
+			])
+			queue.beginEdit("a")
+
+			queue.commitEdit("a", { ...draft("A edited"), semanticInput: semanticInput({ documentId: "doc-2" }) })
+
+			expect(queue.list()[0].semanticInput?.documentId).toBe("doc-2")
+			expect(queue.list()[0].semanticInputStale).toBeUndefined()
+		})
+
+		it("drops the structure when an edit commits plain text over it", () => {
+			const queue = new InputQueue()
+			const id = queue.enqueue({ ...draft("A"), semanticInput: semanticInput() })
+			if (!id) throw new Error("queue rejected the draft")
+			queue.beginEdit(id)
+
+			queue.commitEdit(id, draft("A edited"))
+
+			expect(queue.list()[0].semanticInput).toBeUndefined()
+		})
+	})
+
 	// Persisted state is untrusted input: a corrupted or hand-edited file can
 	// repeat an id. Ids address entries individually, so a duplicate makes one
 	// claim, removal or commit act on someone else's text.

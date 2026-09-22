@@ -1,3 +1,4 @@
+import type { SemanticInputDocument } from "@shared/input-semantics/document"
 import type { InputQueue, InputQueueDraft } from "./InputQueue"
 
 /** Draft as it arrives from the transport, where optional fields may be absent. */
@@ -6,6 +7,7 @@ interface WireDraft {
 	images?: readonly string[]
 	files?: readonly string[]
 	activeQuote?: string
+	semanticInput?: SemanticInputDocument
 }
 
 /**
@@ -42,6 +44,9 @@ function toDraft(wire: WireDraft | undefined): InputQueueDraft {
 		images: wire?.images ?? [],
 		files: wire?.files ?? [],
 		activeQuote: wire?.activeQuote || undefined,
+		// Already decoded and validated at the transport boundary; the queue
+		// stores the structure rather than deriving it from `text` again.
+		semanticInput: wire?.semanticInput,
 	}
 }
 

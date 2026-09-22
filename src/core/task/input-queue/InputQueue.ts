@@ -10,6 +10,8 @@
  */
 
 import { INPUT_QUEUE_LIMIT, type InputQueueMode, type QueuedInputEntry } from "@shared/InputQueue"
+import type { SemanticInputDocument } from "@shared/input-semantics/document"
+import { validateSemanticInputDocument } from "@shared/input-semantics/validation"
 
 export type { InputQueueMode, QueuedInputEntry }
 export { INPUT_QUEUE_LIMIT }
@@ -20,6 +22,8 @@ export interface InputQueueDraft {
 	images: readonly string[]
 	files: readonly string[]
 	activeQuote?: string
+	/** The composed structure, retained so delivery never re-parses `text`. */
+	semanticInput?: SemanticInputDocument
 }
 
 /**
@@ -55,17 +59,37 @@ function wasDelivering(value: unknown): boolean {
 	return typeof value === "object" && value !== null && (value as Record<string, unknown>).delivering === true
 }
 
+/**
+ * Rebuild the retained structure, or report that this entry is text only.
+ *
+ * A persisted document was written by an older schema or catalog, so it is
+ * validated rather than trusted. An undecodable one is dropped instead of
+ * failing the entry: the user's text is still deliverable, and keeping a
+ * document that no longer validates would let delivery act on a structure the
+ * current catalog does not agree with.
+ */
+function normalizeSemanticInput(value: unknown): SemanticInputDocument | undefined {
+	if (!value || typeof value !== "object") return undefined
+	const candidate = value as SemanticInputDocument
+	return validateSemanticInputDocument(candidate).length === 0 ? candidate : undefined
+}
+
 /** Rebuild one entry from untrusted persisted input. */
 function normalizeEntry(value: unknown, index: number): QueuedInputEntry | undefined {
 	if (!value || typeof value !== "object") return undefined
 	const raw = value as Record<string, unknown>
 	if (typeof raw.text !== "string") return undefined
+	const semanticInput = normalizeSemanticInput(raw.semanticInput)
 	return {
 		id: typeof raw.id === "string" && raw.id ? raw.id : createEntryId(),
 		text: raw.text,
 		images: normalizeStrings(raw.images),
 		files: normalizeStrings(raw.files),
 		...(typeof raw.activeQuote === "string" ? { activeQuote: raw.activeQuote } : {}),
+		...(semanticInput === undefined ? {} : { semanticInput }),
+		// Every restored document was composed against an earlier catalog
+		// revision, so delivery must revalidate before acting on it.
+		...(semanticInput === undefined ? {} : { semanticInputStale: true }),
 		mode: normalizeMode(raw.mode),
 		// A reloaded task has no composer holding the content, so a persisted
 		// editing gate would strand the entry permanently. Always clear it.
@@ -246,6 +270,7 @@ export class InputQueue {
 			images: [...draft.images],
 			files: [...draft.files],
 			...(draft.activeQuote ? { activeQuote: draft.activeQuote } : {}),
+			...(draft.semanticInput === undefined ? {} : { semanticInput: draft.semanticInput }),
 			mode: "queued",
 			sequence: this.sequenceCounter++,
 		}
@@ -317,6 +342,11 @@ export class InputQueue {
 			images: [...draft.images],
 			files: [...draft.files],
 			...(draft.activeQuote ? { activeQuote: draft.activeQuote } : { activeQuote: undefined }),
+			// A commit replaces the structure wholesale, so a document the user
+			// just recomposed is current again and an edit that dropped it must
+			// not leave the previous structure behind.
+			semanticInput: draft.semanticInput,
+			semanticInputStale: undefined,
 			editing: false,
 		}
 		this.replace(id, updated)

@@ -1,3 +1,4 @@
+import type { SemanticInputDocument } from "@shared/input-semantics/document"
 import type { InputQueue, QueuedInputEntry } from "./InputQueue"
 
 /**
@@ -23,6 +24,14 @@ export interface QueueDelivery {
 	readonly text: string
 	readonly images: readonly string[]
 	readonly files: readonly string[]
+	/**
+	 * The retained structure of each entry, in delivery order.
+	 *
+	 * Kept per entry rather than merged: two steering entries own their own
+	 * commands and resources, and flattening them would lose which input a
+	 * resource or lifecycle barrier belongs to.
+	 */
+	readonly documents: readonly (SemanticInputDocument | undefined)[]
 	/** Discard the entries once the delivery is known to have landed. */
 	commit(): void
 	/** Return the entries to the user's queue when delivery failed. */
@@ -61,6 +70,7 @@ function buildDelivery(queue: InputQueue, kind: QueueDelivery["kind"], entries: 
 		text: blocks.join("\n\n"),
 		images: entries.flatMap((entry) => [...entry.images]),
 		files: entries.flatMap((entry) => [...entry.files]),
+		documents: entries.map((entry) => entry.semanticInput),
 		commit: () => queue.commitClaim(ids),
 		restore: () => queue.releaseClaim(ids),
 		reclaim: () => queue.reclaim(ids),

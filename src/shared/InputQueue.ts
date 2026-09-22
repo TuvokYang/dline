@@ -6,6 +6,8 @@
  * `shared` so the Webview never has to import from `core`.
  */
 
+import type { SemanticInputDocument } from "./input-semantics/document"
+
 /** Maximum number of retained entries. Enqueue is refused beyond this. */
 export const INPUT_QUEUE_LIMIT = 32
 
@@ -24,6 +26,22 @@ export interface QueuedInputEntry {
 	readonly images: readonly string[]
 	readonly files: readonly string[]
 	readonly activeQuote?: string
+	/**
+	 * The structure the user composed, kept so delivery addresses nodes by
+	 * identity instead of parsing `text` again.
+	 *
+	 * Absent for an entry composed by a client that submits text only, and for
+	 * an entry restored from a file whose document no longer decodes. Both cases
+	 * stay deliverable as plain text rather than being dropped.
+	 */
+	readonly semanticInput?: SemanticInputDocument
+	/**
+	 * Set when the retained document no longer matches the current catalog.
+	 *
+	 * A stale entry must not silently change meaning on delivery, so the flag
+	 * travels to the Webview and the delivery path revalidates before sending.
+	 */
+	readonly semanticInputStale?: boolean
 	readonly mode: InputQueueMode
 	/** Blocks delivery of this entry only, while the user edits it. */
 	readonly editing?: boolean

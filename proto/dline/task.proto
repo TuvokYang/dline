@@ -311,6 +311,8 @@ message InputQueueDraft {
   repeated string images = 2;
   repeated string files = 3;
   optional string active_quote = 4;
+  // Structured input; see NewTaskRequest.semantic_input.
+  optional SemanticInputDocument semantic_input = 5;
 }
 
 // Adds a draft to the back of the queue as a queued entry
