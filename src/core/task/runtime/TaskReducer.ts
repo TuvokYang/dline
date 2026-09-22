@@ -1123,15 +1123,24 @@ function reduceInteractionResponse(
 		// would keep it held for the whole execution and block every later
 		// approval, which is the serialization defect this split removes.
 		const approved = replaceTurnBlock(state, block.dlineTid, BlockPhase.EXECUTING, undefined)
-		if (!approved || !canTransition(state.phase, TaskPhase.EXECUTING)) {
+		if (!approved) {
 			return reject(state, event.type)
 		}
-		const nextTurn = withAdmittedBlock(approved, block.dlineTid, { automatic: false })
-		return {
-			accepted: true,
-			next: { ...state, revision, phase: TaskPhase.EXECUTING, turn: nextTurn, interaction: result.next },
+		// Granting permission is one transition reached from two entry points:
+		// this response and BLOCK_APPROVED, which a non-interactive approver
+		// also resolves through. Both commit through acceptTurn so there is a
+		// single rule for the phase and for ownership normalization. Deciding
+		// the phase here instead made approval depend on whether a sibling of
+		// the same parallel turn happened to be executing, because entering
+		// execution from execution is not a phase change the machine lists.
+		return acceptTurn(
+			state,
+			event.type,
+			withAdmittedBlock(approved, block.dlineTid, { automatic: false }),
+			TaskPhase.EXECUTING,
 			effects,
-		}
+			result.next,
+		)
 	}
 	if (event.response.actionId === "reject") {
 		return acceptTurn(state, event.type, rejectBlock(turn, block.dlineTid), TaskPhase.BETWEEN_TURNS, effects, result.next)

@@ -316,7 +316,11 @@ describe("InteractionCoordinator", () => {
 			actionId: "reject" as const,
 			expectedPhase: BlockPhase.REJECTED,
 			initialSiblingPhase: BlockPhase.AUTO_EXECUTING,
-			siblingPhase: BlockPhase.SKIPPED,
+			// A refusal retires siblings the pool has not started; one that is
+			// already running keeps reporting what it actually did. The reducer
+			// deliberately writes no sibling phase here, so a started block stays
+			// in its own phase until its own terminal event arrives.
+			siblingPhase: BlockPhase.AUTO_EXECUTING,
 		},
 	])("propagates detached approval action $actionId into the canonical runtime block", async (testCase) => {
 		const turnId = "turn-tools"

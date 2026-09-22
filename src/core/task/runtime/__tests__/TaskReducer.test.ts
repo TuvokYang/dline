@@ -1363,3 +1363,170 @@ describe("turn approval and execution ownership", () => {
 		expect(result.next.turn?.executing).toEqual(["tid-1", "tid-2"])
 	})
 })
+
+// ── Approval reachability is independent of sibling execution ──
+
+describe("manual approval under concurrent automatic execution", () => {
+	/**
+	 * Reproduce the parallel turn a user actually approves in: one block needs
+	 * no approval and is already running, which puts the task in EXECUTING,
+	 * while a second block holds the single manual slot and waits for an answer.
+	 */
+	function parallelTurnAwaitingApproval(): TaskRuntimeState {
+		const base = createTaskRuntimeState({
+			taskId: "task-1",
+			phase: TaskPhase.STREAMING,
+			revision: 4,
+			anchor: { apiIndex: 0, turnId: "turn-1" },
+		})
+		const turn = {
+			turnId: "turn-1",
+			assistantApiIndex: 2,
+			mode: "parallel" as const,
+			activeDlineTid: undefined as string | undefined,
+			blocks: [
+				{
+					dlineTid: "auto-1",
+					functionId: "call-1",
+					toolName: "read_file",
+					phase: BlockPhase.STREAMING,
+					ts: 1,
+					requiresApproval: false,
+					conversationHistoryIndex: 0,
+				},
+				{
+					dlineTid: "manual-1",
+					functionId: "call-2",
+					toolName: "write_to_file",
+					phase: BlockPhase.STREAMING,
+					ts: 2,
+					requiresApproval: true,
+					conversationHistoryIndex: 0,
+				},
+			],
+		}
+
+		// Drive the same event order the runtime produces, so the state under
+		// test is reachable rather than hand-written.
+		const ready = reduceTask({ ...base, turn }, { type: "BLOCK_READY", turnId: "turn-1", dlineTid: "auto-1" })
+		expect(ready).toMatchObject({ accepted: true })
+		const required = reduceTask(ready.next, { type: "BLOCK_APPROVAL_REQUIRED", turnId: "turn-1", dlineTid: "manual-1" })
+		expect(required).toMatchObject({ accepted: true })
+		const running = reduceTask(required.next, {
+			type: "BLOCK_EXECUTION_STARTED",
+			turnId: "turn-1",
+			dlineTid: "auto-1",
+		})
+		expect(running).toMatchObject({ accepted: true, next: { phase: TaskPhase.EXECUTING } })
+
+		const state = running.next
+		return {
+			...state,
+			interaction: {
+				taskId: "task-1",
+				turnId: "turn-1",
+				interactionId: "manual-1",
+				kind: "tool_approval",
+				status: "awaiting",
+				createdRevision: state.revision,
+				anchor: { messageTs: 200, messageType: "ask" },
+			},
+		}
+	}
+
+	/**
+	 * Build the response a user click produces for the pending manual block.
+	 *
+	 * Both approval actions declare a `draft` payload policy, so the draft is
+	 * part of a well-formed response even when the user typed nothing.
+	 */
+	function approvalResponse(state: TaskRuntimeState, actionId: "approve" | "reject") {
+		return {
+			type: "INTERACTION_RESPONDED" as const,
+			response: {
+				taskId: "task-1",
+				turnId: "turn-1",
+				interactionId: "manual-1",
+				actionId,
+				stateRevision: state.revision,
+				draft: { text: "", images: [], files: [] },
+			},
+		}
+	}
+
+	it("accepts a manual approval while a sibling automatic block is executing", () => {
+		const state = parallelTurnAwaitingApproval()
+		expect(state.phase).toBe(TaskPhase.EXECUTING)
+		expect(state.turn?.executing).toEqual(["auto-1"])
+		expect(state.turn?.approval?.manual).toEqual({ dlineTid: "manual-1", stage: "admission" })
+
+		const result = reduceTask(state, approvalResponse(state, "approve"))
+
+		expect(result).toMatchObject({ accepted: true, next: { phase: TaskPhase.EXECUTING } })
+		expect(result.next.interaction?.status).toBe("resolving")
+	})
+
+	it("releases the manual slot and starts the approved block without disturbing the running one", () => {
+		const state = parallelTurnAwaitingApproval()
+
+		const result = reduceTask(state, approvalResponse(state, "approve"))
+
+		expect(result.accepted).toBe(true)
+		// The slot is freed the moment permission is granted, so a later block
+		// can be presented while this one runs.
+		expect(result.next.turn?.approval?.manual).toBeUndefined()
+		expect(result.next.turn?.activeDlineTid).toBeUndefined()
+		expect(result.next.turn?.blocks.find((block) => block.dlineTid === "manual-1")?.phase).toBe(BlockPhase.EXECUTING)
+		// Approval and execution are separate ownership boundaries: the block is
+		// approved but not yet started, so it joins `executing` only when
+		// BLOCK_EXECUTION_STARTED is accepted.
+		expect(result.next.turn?.executing).toEqual(["auto-1"])
+		const started = reduceTask(result.next, { type: "BLOCK_EXECUTION_STARTED", turnId: "turn-1", dlineTid: "manual-1" })
+		expect(started).toMatchObject({ accepted: true })
+		expect(started.next.turn?.executing).toEqual(["auto-1", "manual-1"])
+		// The sibling that was already running is untouched throughout.
+		expect(started.next.turn?.blocks.find((block) => block.dlineTid === "auto-1")?.phase).toBe(BlockPhase.AUTO_EXECUTING)
+	})
+
+	it("keeps the persisted draft effect order when an approval carries feedback", () => {
+		const state = parallelTurnAwaitingApproval()
+		const response = approvalResponse(state, "approve")
+
+		const result = reduceTask(state, {
+			...response,
+			response: { ...response.response, draft: { text: "Approval note", images: [], files: [] } },
+		})
+
+		expect(result.accepted).toBe(true)
+		expect(result.effects.map((effect) => effect.type)).toEqual(["APPEND_SAY", "POST_TASK_VIEW", "PERSIST_SNAPSHOT"])
+		expect(result.effects[0]).toMatchObject({ type: "APPEND_SAY", interactionId: "manual-1", presentation: "Approval note" })
+	})
+
+	it("still rejects the block from the same state, leaving the running sibling alone", () => {
+		const state = parallelTurnAwaitingApproval()
+
+		const result = reduceTask(state, approvalResponse(state, "reject"))
+
+		expect(result).toMatchObject({ accepted: true, next: { phase: TaskPhase.BETWEEN_TURNS } })
+		expect(result.next.turn?.blocks.find((block) => block.dlineTid === "manual-1")?.phase).toBe(BlockPhase.REJECTED)
+		expect(result.next.turn?.executing).toEqual(["auto-1"])
+	})
+
+	it("reaches the same committed state through BLOCK_APPROVED, proving one shared rule", () => {
+		// Approval has two entry points that must agree: a user response and the
+		// approver-facing event a future AI approver also resolves through. A
+		// difference here is what let one of them be rejected while the other
+		// succeeded from the identical state.
+		const state = parallelTurnAwaitingApproval()
+
+		const viaInteraction = reduceTask(state, approvalResponse(state, "approve"))
+		const viaBlockEvent = reduceTask(state, { type: "BLOCK_APPROVED", turnId: "turn-1", dlineTid: "manual-1" })
+
+		expect(viaInteraction.accepted).toBe(true)
+		expect(viaBlockEvent.accepted).toBe(true)
+		expect(viaInteraction.next.phase).toBe(viaBlockEvent.next.phase)
+		expect(viaInteraction.next.turn?.executing).toEqual(viaBlockEvent.next.turn?.executing)
+		expect(viaInteraction.next.turn?.approval).toEqual(viaBlockEvent.next.turn?.approval)
+		expect(viaInteraction.next.turn?.blocks).toEqual(viaBlockEvent.next.turn?.blocks)
+	})
+})
