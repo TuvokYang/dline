@@ -1,76 +1,62 @@
-import { mentionRegexGlobal } from "@shared/context-mentions"
+import type { InputSemanticCatalog } from "@shared/input-semantics/catalog"
 import { StringRequest } from "@shared/proto/dline/common"
 import { FileServiceClient } from "@/services/grpc-client"
-import { validateSlashCommand } from "@/utils/slash-commands"
+import { type SemanticHighlightSegment, segmentSentMessage } from "@/services/input-semantics/highlight"
+import { useInputSemanticCatalog } from "@/services/input-semantics/useInputSemanticCatalog"
 
-// Optimized highlighting functions
-const highlightSlashCommands = (text: string, withShadow = true) => {
-	const match = text.match(/^\s*\/([a-zA-Z0-9_-]+)(\s*|$)/)
-	if (!match || validateSlashCommand(match[1]) !== "full") {
-		return text
-	}
-
-	const commandName = match[1]
-	const commandEndIndex = match[0].length
-	const beforeCommand = text.substring(0, text.indexOf("/"))
-	const afterCommand = match[2] + text.substring(commandEndIndex)
-
-	return [
-		beforeCommand,
-		<span className={withShadow ? "mention-context-highlight-with-shadow" : "mention-context-highlight"} key="slashCommand">
-			/{commandName}
-		</span>,
-		afterCommand,
-	]
+function highlightClass(withShadow: boolean): string {
+	return withShadow ? "mention-context-highlight-with-shadow" : "mention-context-highlight"
 }
 
-export const highlightMentions = (text: string, withShadow = true) => {
-	if (!mentionRegexGlobal.test(text)) {
-		return text
+/** Render one segment, keeping a mention clickable and everything else plain. */
+function renderSegment(segment: SemanticHighlightSegment, index: number, withShadow: boolean): JSX.Element | string {
+	if (!segment.active || segment.role === "text") {
+		return segment.text
 	}
-
-	const parts = text.split(mentionRegexGlobal)
-	const result: (string | JSX.Element)[] = []
-
-	for (let i = 0; i < parts.length; i++) {
-		if (i % 2 === 0) {
-			if (parts[i]) {
-				result.push(parts[i])
-			}
-		} else {
-			result.push(
-				<span
-					className={`${withShadow ? "mention-context-highlight-with-shadow" : "mention-context-highlight"} cursor-pointer`}
-					key={`mention-${Math.floor(i / 2)}`}
-					onClick={() => FileServiceClient.openMention(StringRequest.create({ value: parts[i] }))}>
-					@{parts[i]}
-				</span>,
-			)
-		}
+	if (segment.role === "mention") {
+		// The lexer keeps the leading `@` in the source text, while openMention
+		// addresses the target without it.
+		const target = segment.text.replace(/^@/, "")
+		return (
+			<span
+				className={`${highlightClass(withShadow)} cursor-pointer`}
+				key={`mention-${index}`}
+				onClick={() => FileServiceClient.openMention(StringRequest.create({ value: target }))}>
+				{segment.text}
+			</span>
+		)
 	}
-
-	return result.length === 1 ? result[0] : result
+	return (
+		<span className={highlightClass(withShadow)} key={`command-${index}`}>
+			{segment.text}
+		</span>
+	)
 }
 
-export const highlightText = (text?: string, withShadow = true) => {
+/**
+ * Highlight an already-sent message from the shared input semantics.
+ *
+ * The catalog is passed in rather than read here so this stays a pure render of
+ * one text: the same message is shown in several places, and each caller already
+ * subscribes to the catalog it should be read against.
+ */
+export function highlightTextWithCatalog(
+	text: string | undefined,
+	catalog: InputSemanticCatalog,
+	withShadow = true,
+): (string | JSX.Element)[] | string | undefined {
 	if (!text) {
 		return text
 	}
-
-	const slashResult = highlightSlashCommands(text, withShadow)
-
-	if (slashResult === text) {
-		return highlightMentions(text, withShadow)
+	const segments = segmentSentMessage(text, catalog)
+	if (!segments.some((segment) => segment.active && segment.role !== "text")) {
+		return text
 	}
+	return segments.map((segment, index) => renderSegment(segment, index, withShadow))
+}
 
-	if (Array.isArray(slashResult) && slashResult.length === 3) {
-		const [beforeCommand, commandElement, afterCommand] = slashResult as [string, JSX.Element, string]
-		const mentionResult = highlightMentions(afterCommand, withShadow)
-
-		return Array.isArray(mentionResult)
-			? [beforeCommand, commandElement, ...mentionResult]
-			: [beforeCommand, commandElement, mentionResult]
-	}
-
-	return slashResult
+/** Hook form for components that render sent text without threading the catalog. */
+export function useHighlightedText(text: string | undefined, withShadow = true) {
+	const catalog = useInputSemanticCatalog()
+	return highlightTextWithCatalog(text, catalog, withShadow)
 }

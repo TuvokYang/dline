@@ -20,6 +20,9 @@ export interface SemanticHighlightSegment {
 /** The composer lexes on every keystroke, so its document identity is fixed. */
 const COMPOSER_DOCUMENT_ID = "composer"
 
+/** Already-sent text is read for display only, so its identity is separate. */
+const HISTORY_DOCUMENT_ID = "history"
+
 function escapeHtml(text: string): string {
 	return text.replace(/[<>&]/g, (character) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" })[character] ?? character)
 }
@@ -31,8 +34,12 @@ function escapeHtml(text: string): string {
  * sees highlighted is what the task admits: a command after a lifecycle barrier
  * is shown as literal text because that is how it will be sent.
  */
-export function segmentSemanticInput(rawText: string, catalog: InputSemanticCatalog): readonly SemanticHighlightSegment[] {
-	const document = lexSemanticInput(rawText, { catalog, documentId: COMPOSER_DOCUMENT_ID, activation: "auto" })
+export function segmentSemanticInput(
+	rawText: string,
+	catalog: InputSemanticCatalog,
+	documentId: string = COMPOSER_DOCUMENT_ID,
+): readonly SemanticHighlightSegment[] {
+	const document = lexSemanticInput(rawText, { catalog, documentId, activation: "auto" })
 	const plan = planSemanticCommands(document)
 	// The barrier is a command the task will run, so it stays an entity; only the
 	// nodes it pushed into the pre-message become literal text.
@@ -46,6 +53,17 @@ export function segmentSemanticInput(rawText: string, catalog: InputSemanticCata
 		}
 		return { text: node.kind === "text" ? node.text : "", role: "text" as const, active: false }
 	})
+}
+
+/**
+ * Split already-sent text with the same semantics the task applied to it.
+ *
+ * History rendering used to run its own slash regex and command lookup, so a
+ * literal `/compact` in a sent message could be highlighted as a command the
+ * task never ran. Reading the shared lexer keeps display and admission aligned.
+ */
+export function segmentSentMessage(rawText: string, catalog: InputSemanticCatalog): readonly SemanticHighlightSegment[] {
+	return segmentSemanticInput(rawText, catalog, HISTORY_DOCUMENT_ID)
 }
 
 /** Render the composer highlight layer from the shared semantic segments. */

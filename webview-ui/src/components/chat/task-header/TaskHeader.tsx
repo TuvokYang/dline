@@ -14,7 +14,7 @@ import RefreshPromptButton from "./buttons/RefreshPromptButton"
 import { CheckpointError } from "./CheckpointError"
 import ContextWindow from "./ContextWindow"
 import { FocusChain } from "./FocusChain"
-import { highlightText } from "./Highlights"
+import { useHighlightedText } from "./Highlights"
 import { PromptCacheHealthBanner } from "./PromptCacheHealthBanner"
 import { TaskRateMetrics } from "./rate-metrics/TaskRateMetrics"
 import SpawnedTasksBar from "./SpawnedTasksBar"
@@ -92,7 +92,7 @@ const TaskHeader: React.FC<TaskHeaderProps> = ({
 	const [isTextOverflowing, setIsTextOverflowing] = useState(false)
 	const highlightedTextRef = React.useRef<HTMLDivElement>(null)
 
-	const highlightedText = useMemo(() => highlightText(task.text, false), [task.text])
+	const highlightedText = useHighlightedText(task.text, false)
 
 	// Check if text overflows the container (i.e., needs clamping)
 	useLayoutEffect(() => {

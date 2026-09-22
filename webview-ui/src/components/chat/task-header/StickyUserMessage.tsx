@@ -1,7 +1,7 @@
 import { ClineMessage } from "@shared/ExtensionMessage"
 import React, { memo, useCallback } from "react"
 import { cn } from "@/lib/utils"
-import { highlightText } from "./Highlights"
+import { useHighlightedText } from "./Highlights"
 
 interface StickyUserMessageProps {
 	readonly lastUserMessage: ClineMessage | null
@@ -33,12 +33,15 @@ export const StickyUserMessage: React.FC<StickyUserMessageProps> = memo(
 			[onScrollToMessage],
 		)
 
+		const messageText = lastUserMessage?.text?.trim()
+		// Highlighted before the visibility check: reading the semantic catalog is
+		// a hook, so it cannot sit behind a conditional return.
+		const highlightedText = useHighlightedText(messageText, false)
+
 		// Don't render if no user message or not visible
-		if (!lastUserMessage?.text || !isVisible) {
+		if (!messageText || !isVisible) {
 			return null
 		}
-
-		const messageText = lastUserMessage.text.trim()
 
 		return (
 			<div
@@ -64,7 +67,7 @@ export const StickyUserMessage: React.FC<StickyUserMessageProps> = memo(
 						"overflow-hidden text-ellipsis whitespace-nowrap",
 						"ph-no-capture",
 					)}>
-					{highlightText(messageText, false)}
+					{highlightedText}
 				</div>
 			</div>
 		)

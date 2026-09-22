@@ -14,7 +14,6 @@ const CompactTaskButton: React.FC<{
 			<TooltipTrigger
 				aria-disabled={disabled}
 				aria-label="Compact task"
-				disabled={disabled}
 				className={cn(
 					buttonVariants({ variant: "icon", size: "icon" }),
 					"!overflow-visible !min-h-6",
@@ -22,6 +21,7 @@ const CompactTaskButton: React.FC<{
 					disabled && "opacity-50 cursor-not-allowed pointer-events-none",
 					className,
 				)}
+				disabled={disabled}
 				onClick={(e) => {
 					e.preventDefault()
 					e.stopPropagation()
