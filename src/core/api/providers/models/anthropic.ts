@@ -51,6 +51,26 @@ function adaptiveThinking(effortLevels: readonly string[]): ThinkingConfig {
 }
 
 export const anthropicModels: Record<string, ModelInfo> = {
+	"claude-opus-5-5": {
+		id: "claude-opus-5-5",
+		name: "claude-opus-5-5",
+		capabilities: {
+			supportsTools: true,
+			tools: [ServerTool.WEB_SEARCH],
+			maxTokens: 128_000,
+			contextWindow: 1_000_000,
+			supportsImages: true,
+			supportsPromptCache: true,
+			supportsReasoning: true,
+			thinking: adaptiveThinking(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS),
+		},
+		pricing: {
+			inputPrice: 4.0,
+			outputPrice: 20.0,
+			cacheWritesPrice: 5.0,
+			cacheReadsPrice: 0.2,
+		},
+	},
 	"claude-opus-5": {
 		id: "claude-opus-5",
 		name: "claude-opus-5",
@@ -264,7 +284,7 @@ export const anthropicModels: Record<string, ModelInfo> = {
 // Anthropic model suffix and capability constants
 export const CLAUDE_SONNET_1M_SUFFIX = ":1m"
 export const ANTHROPIC_FAST_MODE_SUFFIX = ":fast"
-export const anthropicDefaultModelId = "claude-opus-4-8"
+export const anthropicDefaultModelId = "claude-opus-5-5"
 export const ANTHROPIC_MIN_THINKING_BUDGET = 1_024
 export const ANTHROPIC_MAX_THINKING_BUDGET = 6_000
 
