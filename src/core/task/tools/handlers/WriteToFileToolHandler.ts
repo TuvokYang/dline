@@ -1,7 +1,7 @@
 import path from "node:path"
 import { setTimeout as setTimeoutPromise } from "node:timers/promises"
 import type { ToolUse } from "@core/assistant-message"
-import { DiffParser, type DiffResult } from "@core/assistant-message/diff"
+import { DiffParser, type DiffResult, type ParsedBlock } from "@core/assistant-message/diff"
 
 /** Run a full diff parse (process all lines + finalize) and return the result. */
 function runDiffParser(diff: string, originalContent: string, isPartial = false): DiffResult {
@@ -83,17 +83,38 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 		const rawRelPath = block.params.path || block.params.absolutePath
 		if (!rawRelPath) return
 
+		const config = uiHelpers.getConfig()
 		const rawContent = block.params.content
 		const rawDiff = block.params.diff
 		const relPath = uiHelpers.removeClosingTag(block, block.params.path ? "path" : "absolutePath", rawRelPath)
-		const content = rawDiff ?? rawContent ?? ""
+
+		// The streamed card must use the same projection as the final card.
+		// Sending the raw SEARCH/REPLACE text here made the webview colour the
+		// delimiter lines instead of the content, because it classifies a line
+		// by its first character.
+		const partialBlocks =
+			block.name === "replace_in_file" && rawDiff
+				? runDiffParser(rawDiff, config.services.diffViewProvider.originalContent || "", true).blocks
+				: []
+
+		const contentArr = rawDiff
+			? partialBlocks.filter((b) => !isConclusiveStreamingError(b) || b.rawText.trim()).map(projectStreamingBlock)
+			: rawContent != null
+				? [
+						rawContent
+							.split("\n")
+							.map((line) => `+ ${line}`)
+							.join("\n"),
+					]
+				: []
+
 		const message: ClineSayTool = {
 			tool: block.name === "replace_in_file" ? "editedExistingFile" : "newFileCreated",
-			path: relPath,
-			content: content
-				.split("\n")
-				.map((line) => `${block.name === "replace_in_file" ? "" : "+ "}${line}`)
-				.join("\n"),
+			path: getReadablePath(config.cwd, relPath),
+			content: contentArr,
+			startLineNumbers: rawDiff ? partialBlocks.map((b) => b.startLine) : [1],
+			blockErrors: rawDiff ? partialBlocks.map((b) => streamingBlockError(b)) : undefined,
+			operationIsLocatedInWorkspace: await isLocatedInWorkspace(relPath),
 		}
 		await uiHelpers.say("tool", JSON.stringify(message), undefined, undefined, true, block.ts)
 	}
@@ -664,6 +685,39 @@ function streamingBlockError(block: { hasError: boolean; errorCode?: string }): 
 		return undefined
 	}
 	return STREAMING_DELIMITER_ERRORS.has(block.errorCode) ? diffCodeToBrief(block.errorCode) : undefined
+}
+
+/**
+ * Report whether a streamed block already failed for a reason a later chunk cannot undo.
+ *
+ * Only delimiter syntax is decidable from the streamed text alone. A match
+ * failure is not: the file content may not be loaded yet, and the model may
+ * still be streaming the lines that would match.
+ *
+ * @param block Parsed diff block from an in-flight tool argument stream.
+ * @returns True when the block is conclusively broken.
+ */
+function isConclusiveStreamingError(block: { hasError: boolean; errorCode?: string }): boolean {
+	return block.hasError && !!block.errorCode && STREAMING_DELIMITER_ERRORS.has(block.errorCode)
+}
+
+/**
+ * Project one streamed block into the "- old / + new" lines the webview colours.
+ *
+ * A conclusively broken block keeps its raw text so the malformed markers stay
+ * inspectable. Every other block is projected optimistically, which keeps the
+ * card stable: a block that has not matched yet must not flip between projected
+ * and raw output on consecutive chunks, because the webview renders that flip
+ * as the diff card collapsing and expanding.
+ *
+ * @param block Parsed diff block from an in-flight tool argument stream.
+ * @returns Webview line projection for the block.
+ */
+function projectStreamingBlock(block: ParsedBlock): string {
+	if (isConclusiveStreamingError(block)) {
+		return block.rawText
+	}
+	return `- ${block.searchText.replace(/\n/g, "\n- ")}\n+ ${block.replaceText.replace(/\n/g, "\n+ ")}`
 }
 
 /** Map DiffErrorCode (from DIFF_ERROR_CODE in diff.ts) to a brief one-line message for webview display. */
