@@ -1,4 +1,5 @@
 import type { ClineAsk } from "@shared/ExtensionMessage"
+import type { SemanticInputDocument } from "@shared/input-semantics/document"
 import type { ModeSwitchSnapshot } from "@shared/mode-switch"
 import { ModeSwitchOperationRequest, ModeSwitchStatus, PlanActMode, TogglePlanActModeRequest } from "@shared/proto/dline/state"
 import type { Mode } from "@shared/storage/types"
@@ -10,6 +11,14 @@ export interface ModeSwitchDraft {
 	text: string
 	images: string[]
 	files: string[]
+	/**
+	 * The structure the composer held when the switch started.
+	 *
+	 * Captured with the text so confirming the switch submits the same input the
+	 * user composed, including node order and any lifecycle barrier, instead of
+	 * a re-parse of the captured string.
+	 */
+	semanticInput?: SemanticInputDocument
 }
 
 interface PendingSwitch {
@@ -73,6 +82,9 @@ function cloneDraft(draft: ModeSwitchDraft): ModeSwitchDraft {
 		text: draft.text,
 		images: [...draft.images],
 		files: [...draft.files],
+		// The document is immutable once composed, so the captured reference is
+		// already a stable snapshot of the structure.
+		...(draft.semanticInput === undefined ? {} : { semanticInput: draft.semanticInput }),
 	}
 }
 

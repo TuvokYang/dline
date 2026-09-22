@@ -21,10 +21,21 @@ interface HookProps {
 	attachDraft: boolean
 }
 
+// The captured draft carries its structure, so every assertion that the same
+// draft is resubmitted also proves the composed nodes survive the switch.
 const DRAFT: ModeSwitchDraft = {
 	text: "draft text",
 	images: ["image-data"],
 	files: ["file-path"],
+	semanticInput: {
+		schemaVersion: 1,
+		parserVersion: "1.0.0",
+		catalogRevision: "3",
+		documentId: "doc-mode-switch",
+		rawText: "draft text",
+		nodes: [{ kind: "text", text: "draft text" }],
+		resources: [],
+	},
 }
 
 /** Create a transaction snapshot for one operation and phase. */
