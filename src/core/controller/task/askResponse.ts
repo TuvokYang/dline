@@ -1,8 +1,24 @@
+import type { SemanticInputDocument } from "@shared/input-semantics/document"
 import { Empty } from "@shared/proto/dline/common"
 import { AskResponseRequest, DispatchInteractionRequest } from "@shared/proto/dline/task"
+import { fromProtoSemanticInputDocument } from "@shared/proto-conversions/input-semantics/document"
 import { Logger } from "@/shared/services/Logger"
 import { Controller } from ".."
 import { dispatchInteraction } from "./dispatchInteraction"
+
+/**
+ * Decode the submitted structure, or report that this response is text only.
+ *
+ * An undecodable document is dropped and diagnosed: admission would reject it
+ * anyway, and the user's text remains a valid response on its own.
+ */
+function decodeSemanticInput(request: AskResponseRequest): SemanticInputDocument | undefined {
+	if (!request.semanticInput) return undefined
+	const decoded = fromProtoSemanticInputDocument(request.semanticInput)
+	if (decoded.ok) return decoded.document
+	Logger.warn(`askResponse: dropping undecodable semantic input (${decoded.diagnostic.code})`)
+	return undefined
+}
 
 function selectAction(responseType: string, actionIds: readonly string[]): string | undefined {
 	const preferences =
@@ -23,6 +39,7 @@ export async function askResponse(controller: Controller, request: AskResponseRe
 			return Empty.create()
 		}
 		const state = session.state()
+		const semanticInput = decodeSemanticInput(request)
 		const interaction =
 			state.dialog.primary?.status === "awaiting"
 				? state.dialog.primary
@@ -33,6 +50,7 @@ export async function askResponse(controller: Controller, request: AskResponseRe
 					text: request.text,
 					images: [...request.images],
 					files: [...request.files],
+					...(semanticInput === undefined ? {} : { semanticInput }),
 				})
 				await session.task.submitInput(input)
 			}
@@ -55,6 +73,7 @@ export async function askResponse(controller: Controller, request: AskResponseRe
 					text: request.text,
 					images: [...request.images],
 					files: [...request.files],
+					...(semanticInput === undefined ? {} : { semanticInput: request.semanticInput }),
 				},
 			}),
 		)

@@ -25,6 +25,13 @@ export interface DialogDraftEnvelope {
 	readonly text: string
 	readonly images: readonly string[]
 	readonly files: readonly string[]
+	/**
+	 * The structure this reply was composed as, when the client submitted one.
+	 *
+	 * Persisted with the draft so a recovered interaction keeps the structure the
+	 * user confirmed instead of re-deriving commands and mentions from `text`.
+	 */
+	readonly semanticInput?: SemanticInputDocument
 }
 
 export interface DialogSelectionEnvelope {

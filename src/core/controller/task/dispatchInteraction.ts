@@ -1,7 +1,10 @@
 import type { InteractionOutcome } from "@core/task/interaction/InteractionProtocol"
 import { encodeTaskPayload } from "@core/task/stores/payload/TaskPayloadCodec"
 import type { DialogDraftEnvelope, DialogSelectionEnvelope } from "@core/task/stores/payload/TaskPayloadEnvelopes"
+import type { SemanticInputDocument } from "@shared/input-semantics/document"
 import { type DispatchInteractionRequest, DispatchInteractionResponse } from "@shared/proto/dline/task"
+import { fromProtoSemanticInputDocument } from "@shared/proto-conversions/input-semantics/document"
+import { Logger } from "@shared/services/Logger"
 import type { Controller } from ".."
 
 /** Stable protocol outcomes for expected interaction response races. */
@@ -16,6 +19,21 @@ type DispatchInteractionResult =
 
 function response(accepted: boolean, result: DispatchInteractionResult): DispatchInteractionResponse {
 	return DispatchInteractionResponse.create({ accepted, result })
+}
+
+/**
+ * Decode the structure submitted with a reply, or report text only.
+ *
+ * Dropped rather than stored raw: the persisted draft is what a recovered
+ * interaction replays, so it must not hold a structure no stage can validate.
+ */
+function decodeDraftDocument(request: DispatchInteractionRequest): SemanticInputDocument | undefined {
+	const wire = request.draft?.semanticInput
+	if (!wire) return undefined
+	const decoded = fromProtoSemanticInputDocument(wire)
+	if (decoded.ok) return decoded.document
+	Logger.warn(`dispatchInteraction: dropping undecodable semantic input (${decoded.diagnostic.code})`)
+	return undefined
 }
 
 function normalizeResult(reason: string): DispatchInteractionResult {
@@ -45,6 +63,7 @@ export async function dispatchInteraction(
 	if (!interaction.actionRules.some((rule) => rule.actionId === request.actionId)) return response(false, "invalid_action")
 	if (interaction.receiverGeneration === undefined) return response(false, "invalid_runtime_event")
 
+	const draftDocument = decodeDraftDocument(request)
 	const draftRef = request.draft
 		? await session.payloads.put(
 				encodeTaskPayload<DialogDraftEnvelope>({
@@ -52,6 +71,7 @@ export async function dispatchInteraction(
 					text: request.draft.text,
 					images: [...request.draft.images],
 					files: [...request.draft.files],
+					...(draftDocument === undefined ? {} : { semanticInput: draftDocument }),
 				}),
 			)
 		: undefined
@@ -88,7 +108,12 @@ export async function dispatchInteraction(
 	const outcome: InteractionOutcome = {
 		actionId: request.actionId as InteractionOutcome["actionId"],
 		draft: request.draft
-			? { text: request.draft.text, images: [...request.draft.images], files: [...request.draft.files] }
+			? {
+					text: request.draft.text,
+					images: [...request.draft.images],
+					files: [...request.draft.files],
+					...(draftDocument === undefined ? {} : { semanticInput: draftDocument }),
+				}
 			: undefined,
 		selection: request.selection ? { values: [...request.selection.values] } : undefined,
 	}

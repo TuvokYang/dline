@@ -2,6 +2,7 @@ import { getPrompt } from "@core/prompts/i18n"
 import { formatResponse } from "@core/prompts/responses"
 import { processFilesIntoText } from "@integrations/misc/extract-text"
 import type { QueuedInputEntry } from "@shared/InputQueue"
+import type { SemanticInputDocument } from "@shared/input-semantics/document"
 import type { ClineContent } from "@shared/messages"
 import { Logger } from "@shared/services/Logger"
 import { InputQueueCoordinator } from "./InputQueueCoordinator"
@@ -26,7 +27,12 @@ export interface TaskInputQueuePorts {
 		readonly interactionId: string
 		readonly actionId: "reply"
 		readonly stateRevision: number
-		readonly draft: { readonly text: string; readonly images: string[]; readonly files: string[] }
+		readonly draft: {
+			readonly text: string
+			readonly images: string[]
+			readonly files: string[]
+			readonly semanticInput?: SemanticInputDocument
+		}
 		readonly presentationDraft: { readonly text: string; readonly images: string[]; readonly files: string[] }
 		readonly userInputKind: "queued"
 		readonly queuedInputMode: QueueDelivery["kind"]
@@ -119,13 +125,19 @@ export class TaskInputQueueService {
 		const awaiting = this.awaitingInteraction
 		if (!awaiting) return false
 		const modelBlocks = this.renderModelBlocks(delivery)
+		const document = deliveredDocument(delivery)
 		const result = await this.ports.submitInteraction({
 			taskId: this.ports.taskId,
 			turnId: awaiting.turnId,
 			interactionId: awaiting.interactionId,
 			actionId: "reply",
 			stateRevision: this.ports.currentRevision(),
-			draft: { text: modelBlocks.join("\n\n"), images: [...delivery.images], files: [...delivery.files] },
+			draft: {
+				text: modelBlocks.join("\n\n"),
+				images: [...delivery.images],
+				files: [...delivery.files],
+				...(document === undefined ? {} : { semanticInput: document }),
+			},
 			presentationDraft: {
 				text: delivery.entries.map((entry) => entry.text).join("\n\n"),
 				images: [...delivery.images],
@@ -155,6 +167,20 @@ export class TaskInputQueueService {
 		const description = escapeXmlAttribute(getPrompt("inputQueue", "auxiliaryAlignmentV1", "en"))
 		return delivery.blocks.map((block) => `<user_message description="${description}">\n${block}\n</user_message>`)
 	}
+}
+
+/**
+ * The structure of a delivery that carries exactly one document.
+ *
+ * A batch of several steering entries has no single structure: merging them
+ * would invent a document the user never composed, and node identities from
+ * different entries would collide. Those batches deliver as text, and each
+ * entry keeps its own document on the delivery for a later stage that addresses
+ * entries individually.
+ */
+function deliveredDocument(delivery: QueueDelivery): SemanticInputDocument | undefined {
+	const documents = delivery.documents.filter((document): document is SemanticInputDocument => document !== undefined)
+	return delivery.documents.length === 1 ? documents[0] : undefined
 }
 
 function escapeXmlAttribute(value: string): string {

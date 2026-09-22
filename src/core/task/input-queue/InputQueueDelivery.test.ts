@@ -1,11 +1,29 @@
+import type { SemanticInputDocument } from "@shared/input-semantics/document"
 import { describe, expect, it } from "vitest"
 import { InputQueue } from "./InputQueue"
 import { takeQueueDelivery } from "./InputQueueDelivery"
 
-function queueWith(drafts: Array<{ text: string; steering?: boolean; editing?: boolean }>): InputQueue {
+function semanticInput(documentId: string): SemanticInputDocument {
+	return {
+		schemaVersion: 1,
+		parserVersion: "1.0.0",
+		catalogRevision: "3",
+		documentId,
+		rawText: "",
+		nodes: [{ kind: "text", text: "" }],
+		resources: [],
+	}
+}
+
+function queueWith(drafts: Array<{ text: string; steering?: boolean; editing?: boolean; documentId?: string }>): InputQueue {
 	const queue = new InputQueue()
 	for (const draft of drafts) {
-		const id = queue.enqueue({ text: draft.text, images: [], files: [] })
+		const id = queue.enqueue({
+			text: draft.text,
+			images: [],
+			files: [],
+			...(draft.documentId === undefined ? {} : { semanticInput: semanticInput(draft.documentId) }),
+		})
 		if (!id) throw new Error("enqueue rejected")
 		if (draft.steering) queue.toggleMode(id)
 		if (draft.editing) queue.beginEdit(id)
@@ -26,6 +44,20 @@ describe("takeQueueDelivery", () => {
 		expect(delivery?.kind).toBe("queued")
 		expect(delivery?.entries.map((entry) => entry.text)).toEqual(["first"])
 		expect(queue.list().map((entry) => entry.text)).toEqual(["second"])
+	})
+
+	// Each entry owns its own structure. A batch that merged them would invent a
+	// document the user never composed and collide node identities.
+	it("carries each entry's structure in delivery order", () => {
+		const queue = queueWith([
+			{ text: "first", steering: true, documentId: "doc-1" },
+			{ text: "second", steering: true },
+			{ text: "third", steering: true, documentId: "doc-3" },
+		])
+
+		const delivery = takeQueueDelivery(queue, "tool-round")
+
+		expect(delivery?.documents.map((document) => document?.documentId)).toEqual(["doc-1", undefined, "doc-3"])
 	})
 
 	it("holds queued entries back between tool rounds", () => {
