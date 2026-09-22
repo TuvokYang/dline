@@ -11,9 +11,23 @@ interface DispatchTask {
 	waitForInteractionSettlement?: (interactionId: string) => Promise<void>
 }
 
-/** Create a controller-shaped test boundary with one optional task. */
-function controller(task?: DispatchTask): { task?: DispatchTask } {
-	return task ? { task: { waitForInteractionSettlement: async () => {}, ...task } } : {}
+interface DispatchController {
+	task?: DispatchTask
+	dispatchHistoryDisplayInteraction: () => Promise<undefined>
+}
+
+/**
+ * Create a controller-shaped test boundary with one optional task.
+ *
+ * Without a task the Controller first offers the request to its lightweight
+ * history display, so the double must expose that boundary and decline it to
+ * reach the missing-task outcome.
+ */
+function controller(task?: DispatchTask): DispatchController {
+	return {
+		...(task ? { task: { waitForInteractionSettlement: async () => {}, ...task } } : {}),
+		dispatchHistoryDisplayInteraction: async () => undefined,
+	}
 }
 
 describe("dispatchInteraction", () => {

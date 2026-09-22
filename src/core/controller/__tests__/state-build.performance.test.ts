@@ -50,6 +50,16 @@ function buildMessages(count: number): ClineMessage[] {
 	return messages
 }
 
+/**
+ * Borrow one real Controller accessor for a non-Controller double.
+ *
+ * The double is a plain object, so the method has to be taken from the
+ * prototype for `buildState.call` to resolve it.
+ */
+function controllerAccessor(name: "getCurrentTaskId" | "getCurrentTaskMessages" | "getCurrentTaskMessageCount"): unknown {
+	return (Controller.prototype as unknown as Record<string, unknown>)[name]
+}
+
 /** Minimal Controller-shaped object exposing every field buildState touches. */
 function createFakeController(messages: ClineMessage[]): Record<string, unknown> {
 	return {
@@ -103,6 +113,13 @@ function createFakeController(messages: ClineMessage[]): Record<string, unknown>
 				projectTaskHistoryCached: (history: unknown) => unknown
 			}
 		).projectTaskHistoryCached,
+		// buildState reads the active surface through these accessors rather than
+		// reaching into `task` directly. Borrowing the real implementations keeps
+		// the double honest about where the identity and messages come from, and
+		// keeps it valid when the Controller changes how it resolves them.
+		getCurrentTaskId: controllerAccessor("getCurrentTaskId"),
+		getCurrentTaskMessages: controllerAccessor("getCurrentTaskMessages"),
+		getCurrentTaskMessageCount: controllerAccessor("getCurrentTaskMessageCount"),
 		modeSwitchCoordinator: { getSnapshot: () => ({}) },
 		getTaskLockStatus: () => undefined,
 		backgroundCommandRunning: undefined,

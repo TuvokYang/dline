@@ -180,12 +180,12 @@ describe("dist build lock", () => {
 	})
 
 	it("recovers from entries left behind by a crashed run", async () => {
-		// PID 1 is never this repository's build on any supported platform, and a
-		// corrupt entry is what a process killed mid-write leaves behind.
-		await writeStaleEntry(
-			WRITER_ENTRY_PATH,
-			`${JSON.stringify({ pid: 1, runId: "crashed", command: "killed build", startedAt: "2026-01-01T00:00:00.000Z" })}\n`,
-		)
+		// Staging a holder that acquires without releasing and then exits leaves a
+		// writer entry owned by a PID that is genuinely gone. A hard-coded PID
+		// cannot express that: PID 1 exists on Linux, and an unprivileged
+		// `kill(1, 0)` reports EPERM, which the lock correctly reads as alive.
+		// A corrupt entry is what a process killed mid-write leaves behind.
+		await acquireAndExit("exclusive", "crashed", false)
 		await writeStaleEntry(path.join(READERS_DIR, "crashed-reader.json"), "{ truncated")
 
 		const recovered = await runWithLock("--exclusive", "dist-lock-after-crash")

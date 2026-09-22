@@ -17,6 +17,9 @@ describe("TaskDeletionOrchestrator", () => {
 	beforeEach(() => {
 		mockController = {
 			task: undefined,
+			// Lock release resolves the owning surface through this identity, which
+			// covers both an interactive task and a lightweight history display.
+			getCurrentTaskId: () => undefined,
 			clearTask: async () => {},
 			getTaskWithId: async (_id: string) => {
 				throw new Error("Task not found")
