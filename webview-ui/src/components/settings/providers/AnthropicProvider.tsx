@@ -27,6 +27,7 @@ import { RemotelyConfiguredInputWrapper } from "../common/RemotelyConfiguredInpu
 import { ProfileField } from "../profile-ui"
 import ThinkingControl from "../ThinkingControl"
 import { ANTHROPIC_THINKING_DISPLAY_DESCRIPTION, ANTHROPIC_THINKING_DISPLAY_SELECTOR_OPTIONS } from "./anthropicThinkingDisplay"
+import { ClaudeCodeIdentitySection } from "./shared/ClaudeCodeIdentitySection"
 import { useProviderModelOptions } from "./useProviderModelOptions"
 
 const StyledCheckbox = styled(VSCodeCheckbox)`
@@ -281,6 +282,11 @@ export const AnthropicProvider = ({ showModelOptions, isPopup, profile, onUpdate
 						pricingTiersEnabled={pc.pricingTiersEnabled === true}
 						// Official models show registry tiers editable; custom models can add their own tiers.
 						tiersEditable={true}
+					/>
+
+					<ClaudeCodeIdentitySection
+						config={pc.claudeCodeIdentity}
+						onChange={(claudeCodeIdentity) => onUpdate({ anthropic: { ...pc, claudeCodeIdentity } })}
 					/>
 
 					<ModelInfoView isPopup={isPopup} modelInfo={modelInfo} selectedModelId={modelId} />

@@ -89,7 +89,6 @@ export class VertexHandler implements ApiHandler {
 		const modelId = rawModelId.endsWith(CLAUDE_SONNET_1M_SUFFIX)
 			? rawModelId.slice(0, -CLAUDE_SONNET_1M_SUFFIX.length)
 			: rawModelId
-		const enable1mContextWindow = rawModelId.endsWith(CLAUDE_SONNET_1M_SUFFIX)
 
 		// For Gemini models, use the GeminiHandler
 		if (!rawModelId.includes("claude")) {
@@ -152,17 +151,7 @@ export class VertexHandler implements ApiHandler {
 		}
 
 		const stream = await observeProviderStream(
-			() =>
-				clientAnthropic.beta.messages.create(
-					requestBody as any,
-					enable1mContextWindow
-						? {
-								headers: {
-									"anthropic-beta": "context-1m-2025-08-07",
-								},
-							}
-						: undefined,
-				) as unknown as PromiseLike<AsyncIterable<any>>,
+			() => clientAnthropic.beta.messages.create(requestBody as any) as unknown as PromiseLike<AsyncIterable<any>>,
 		)
 
 		const lastStartedToolCall = { id: "", name: "", arguments: "" }

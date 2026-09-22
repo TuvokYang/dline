@@ -4,6 +4,7 @@ import { ApiProfile } from "@shared/proto/dline/profile"
 import { expect } from "chai"
 import should from "should"
 import { afterEach, describe, it, vi } from "vitest"
+import { CLAUDE_CODE_FINGERPRINT_HEADERS, CLAUDE_CODE_SDK_VERSION } from "@/integrations/anthropic-claude-code/client-headers"
 import type { ApiRequestOptions } from "../../index"
 import { ANTHROPIC_FAST_MODE_BETA, AnthropicHandler } from "../anthropic"
 
@@ -540,15 +541,13 @@ describe("AnthropicHandler", () => {
 
 			expect(standardCreate)
 			const requestBody = standardCreate.mock.calls[0][0] as { model: string; thinking: { type: string } }
-			const requestOptions = standardCreate.mock.calls[0][1] as { headers: Record<string, string> }
+			const requestOptions = standardCreate.mock.calls[0][1] as { headers: Record<string, string> } | undefined
 			requestBody.model.should.equal("vendor-tiered:1m")
 			expect(handler.getModel().info.capabilities?.contextWindow).to.equal(1_500_000)
 			requestBody.thinking.should.deepEqual({ type: "adaptive" })
-			requestOptions.should.deepEqual({
-				headers: {
-					"anthropic-beta": "context-1m-2025-08-07",
-				},
-			})
+			// The suffix still selects the long-context model, but Anthropic retired the
+			// context-1m beta on 2026-04-30, so no beta header accompanies it any more.
+			should(requestOptions).equal(undefined)
 		})
 
 		it.each([
@@ -903,6 +902,141 @@ describe("AnthropicHandler", () => {
 			const requestBody = standardCreate.mock.calls[0]?.[0] as { model?: unknown; max_tokens?: unknown } | undefined
 			expect(requestBody?.model).to.equal(customModelId)
 			expect(requestBody?.max_tokens).to.equal(12_345)
+		})
+	})
+
+	describe("claude code billing attribution", () => {
+		const BILLING_PREFIX = "x-anthropic-billing-header:"
+
+		type SystemBlock = { type?: string; text?: string; cache_control?: unknown }
+
+		// `ApiProfile.create` takes an exact-shape generic, so a helper that
+		// forwards a caller-supplied literal has to build the profile first and
+		// then attach the nested config.
+		type AnthropicConfig = NonNullable<ApiProfile["anthropic"]>
+
+		let lastRequestOptions: { headers?: Record<string, string> } | undefined
+
+		const runWithProfileConfig = async (
+			anthropic: Partial<AnthropicConfig>,
+			modelId = "claude-sonnet-4-6",
+		): Promise<SystemBlock[]> => {
+			const profile = ApiProfile.create({ provider: "anthropic", apiKey: "test-api-key", modelId })
+			profile.anthropic = { ...ApiProfile.create({}).anthropic, ...anthropic } as AnthropicConfig
+			const handler = new AnthropicHandler({ profile, mode: "act" })
+			const standardCreate = vi.fn().mockResolvedValue(createAsyncIterable())
+			vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
+				messages: { create: standardCreate },
+				beta: { messages: { _client: {}, create: vi.fn().mockResolvedValue(createAsyncIterable()) } },
+			})
+
+			for await (const _chunk of handler.createMessage("system prompt", [
+				{ role: "user", content: "Hello, world! This is a test message" },
+			])) {
+			}
+
+			lastRequestOptions = standardCreate.mock.calls[0]?.[1] as { headers?: Record<string, string> } | undefined
+			return (standardCreate.mock.calls[0]?.[0] as { system?: SystemBlock[] })?.system ?? []
+		}
+
+		it("omits the attribution block when the toggle is absent", async () => {
+			const system = await runWithProfileConfig({})
+
+			expect(system).to.deep.equal([{ text: "system prompt", type: "text", cache_control: { type: "ephemeral" } }])
+		})
+
+		it("omits the attribution block when the toggle is explicitly off", async () => {
+			const system = await runWithProfileConfig({ claudeCodeIdentity: { enabled: false } })
+
+			expect(system).to.deep.equal([{ text: "system prompt", type: "text", cache_control: { type: "ephemeral" } }])
+		})
+
+		it("prepends the attribution block when the toggle is on", async () => {
+			const system = await runWithProfileConfig({
+				claudeCodeIdentity: { enabled: true, clientVersionOverride: "2.1.280" },
+			})
+
+			expect(system).to.have.length(2)
+			expect(system[0]?.type).to.equal("text")
+			expect(system[0]?.text).to.match(
+				/^x-anthropic-billing-header: cc_version=2\.1\.280\.[0-9a-f]{3}; cc_entrypoint=cli;$/,
+			)
+			// The cache breakpoint must stay on the system prompt, so the block
+			// itself carries no cache_control.
+			expect(system[0]).to.not.have.property("cache_control")
+			expect(system[1]).to.deep.equal({ text: "system prompt", type: "text", cache_control: { type: "ephemeral" } })
+		})
+
+		it("applies the entrypoint override", async () => {
+			const system = await runWithProfileConfig({
+				claudeCodeIdentity: { enabled: true, clientVersionOverride: "2.1.181", entrypointOverride: "claude-vscode" },
+			})
+
+			expect(system[0]?.text).to.contain("; cc_entrypoint=claude-vscode;")
+		})
+
+		it("prepends the attribution block on the uncached branch too", async () => {
+			// supportsPromptCache=false selects the second request-body branch,
+			// which builds its own system array.
+			const system = await runWithProfileConfig({
+				capabilities: { supportsPromptCache: false },
+				claudeCodeIdentity: { enabled: true, clientVersionOverride: "2.1.280" },
+			})
+
+			expect(system).to.have.length(2)
+			expect(system[0]?.text).to.contain(BILLING_PREFIX)
+			expect(system[1]).to.deep.equal({ text: "system prompt", type: "text" })
+		})
+
+		it("keeps the uncached branch unchanged when the toggle is off", async () => {
+			const system = await runWithProfileConfig({ capabilities: { supportsPromptCache: false } })
+
+			expect(system).to.deep.equal([{ text: "system prompt", type: "text" }])
+		})
+
+		it("sends no request options at all when the toggle is off", async () => {
+			// Not merely "no identity header": the whole options argument stays
+			// absent, so a disabled toggle leaves the request byte-identical to
+			// one built before this feature existed and the client default
+			// User-Agent survives.
+			await runWithProfileConfig({})
+
+			should(lastRequestOptions).equal(undefined)
+		})
+
+		it("declares the Claude Code user agent when the toggle is on", async () => {
+			await runWithProfileConfig({ claudeCodeIdentity: { enabled: true, clientVersionOverride: "2.1.280" } })
+
+			expect(lastRequestOptions?.headers?.["User-Agent"]).to.equal("claude-cli/2.1.280 (external, cli)")
+			expect(lastRequestOptions?.headers?.["X-App"]).to.equal("cli")
+			expect(lastRequestOptions?.headers?.["X-Stainless-Lang"]).to.equal("js")
+		})
+
+		it("keeps the user agent version identical to the attribution cc_version", async () => {
+			// Upstream compares the two; sub2api rewrites the block to match the
+			// user agent precisely because a mismatch marks a third-party client.
+			const system = await runWithProfileConfig({
+				claudeCodeIdentity: { enabled: true, clientVersionOverride: "2.1.280" },
+			})
+
+			const declaredVersion = /^claude-cli\/(\d+\.\d+\.\d+) /.exec(lastRequestOptions?.headers?.["User-Agent"] ?? "")?.[1]
+			const attributedVersion = /cc_version=(\d+\.\d+\.\d+)\./.exec(system[0]?.text ?? "")?.[1]
+			expect(declaredVersion).to.equal("2.1.280")
+			expect(attributedVersion).to.equal(declaredVersion)
+		})
+
+		it("sends the fingerprint headers as one coherent client identity", async () => {
+			// Upstream rejects a partial identity, so the headers ship together
+			// or not at all.
+			await runWithProfileConfig({ claudeCodeIdentity: { enabled: true, clientVersionOverride: "2.1.280" } })
+
+			should(lastRequestOptions?.headers).deepEqual({
+				"User-Agent": "claude-cli/2.1.280 (external, cli)",
+				...CLAUDE_CODE_FINGERPRINT_HEADERS,
+			})
+			// Captured together from one Claude Code release, so a bare CLI bump
+			// that leaves the SDK version behind is itself a detectable mismatch.
+			expect(lastRequestOptions?.headers?.["X-Stainless-Package-Version"]).to.equal(CLAUDE_CODE_SDK_VERSION)
 		})
 	})
 })

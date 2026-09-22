@@ -18,9 +18,15 @@ import {
 	resolveClaudeThinkingDisplay,
 	supportsClaudeForcedToolUse,
 } from "@shared/utils/reasoning-support"
+import {
+	type BillingAttributionMessage,
+	buildBillingAttributionBlock,
+} from "@/integrations/anthropic-claude-code/billing-attribution"
+import { buildClaudeCodeClientHeaders } from "@/integrations/anthropic-claude-code/client-headers"
 import { buildExternalBasicHeaders } from "@/services/EnvUtils"
 import { ClineStorageMessage } from "@/shared/messages/content"
 import { ApiFormat, ServerTool } from "@/shared/proto/dline/models/metadata"
+import { getClaudeCodeClientVersionResolver } from "../../model-registry/remote/vendors/claude-code-client-version"
 import { ApiHandler, ApiHandlerContext, type ApiRequestOptions } from "../index"
 import { withRetry } from "../retry"
 import { sanitizeAnthropicMessages } from "../transform/anthropic-format"
@@ -54,6 +60,42 @@ export class AnthropicHandler implements ApiHandler {
 	}
 	private get thinkingBudgetTokens() {
 		return this.config?.reasoning?.thinkingBudget ?? 0
+	}
+	private get billingAttributionEnabled() {
+		return this.config?.claudeCodeIdentity?.enabled === true
+	}
+
+	/**
+	 * Build the optional Claude Code identity for one request.
+	 *
+	 * Returns nothing when the toggle is off so the request stays byte-identical
+	 * to one built without this feature. A missing or unusable client version
+	 * also yields nothing: declaring a malformed version is worse than not
+	 * declaring one.
+	 *
+	 * The attribution block and the headers are produced from a single resolved
+	 * version on purpose. Upstream compares the User-Agent against the block's
+	 * `cc_version`, so two independent resolutions could disagree across a cache
+	 * expiry and mark the request as a third-party client.
+	 */
+	private async buildClaudeCodeIdentity(
+		messages: readonly BillingAttributionMessage[],
+	): Promise<{ systemBlocks: Array<{ type: "text"; text: string }>; headers: Record<string, string> }> {
+		const empty = { systemBlocks: [], headers: {} }
+		if (!this.billingAttributionEnabled) return empty
+		const identity = this.config?.claudeCodeIdentity
+		const override = identity?.clientVersionOverride?.trim()
+		const clientVersion = override || (await getClaudeCodeClientVersionResolver().resolve()).version
+		try {
+			return {
+				systemBlocks: [
+					buildBillingAttributionBlock({ messages, clientVersion, entrypoint: identity?.entrypointOverride }),
+				],
+				headers: buildClaudeCodeClientHeaders(clientVersion),
+			}
+		} catch {
+			return empty
+		}
 	}
 
 	/** This handler always speaks the Anthropic Messages protocol. */
@@ -155,12 +197,7 @@ export class AnthropicHandler implements ApiHandler {
 
 		const useFastMode = model.id.endsWith(ANTHROPIC_FAST_MODE_SUFFIX)
 		const modelId = useFastMode ? model.id.slice(0, -ANTHROPIC_FAST_MODE_SUFFIX.length) : model.id
-		const selectedTier = selectContextTier(model.info.capabilities, this.config?.enableLongContext !== false)
 		const apiModelId = this.resolveApiModelId(model.id, model.info)
-		const enable1mContextWindow = Boolean(selectedTier?.apiModelSuffix)
-		const fastModeBetas = enable1mContextWindow
-			? [ANTHROPIC_FAST_MODE_BETA, "context-1m-2025-08-07"]
-			: [ANTHROPIC_FAST_MODE_BETA]
 		const createFastModeMessage = (
 			body: AnthropicMessageCreateParamsStreaming,
 		): Promise<AsyncIterable<BetaRawMessageStreamEvent>> => {
@@ -170,9 +207,20 @@ export class AnthropicHandler implements ApiHandler {
 				) => Promise<AsyncIterable<BetaRawMessageStreamEvent>>
 			)({
 				...body,
-				betas: fastModeBetas,
+				betas: [ANTHROPIC_FAST_MODE_BETA],
 				speed: "fast",
 			})
+		}
+
+		/**
+		 * Builds the per-request options.
+		 *
+		 * Identity headers are per-request rather than client defaults because
+		 * the declared version is resolved asynchronously and must match the
+		 * attribution block built for this same request.
+		 */
+		const requestOptions = (identityHeaders: Record<string, string>) => {
+			return Object.keys(identityHeaders).length > 0 ? { headers: identityHeaders } : undefined
 		}
 
 		const budget_tokens = this.thinkingBudgetTokens
@@ -244,6 +292,11 @@ export class AnthropicHandler implements ApiHandler {
 
 		if (model.info.capabilities?.supportsPromptCache) {
 			const anthropicMessages = sanitizeAnthropicMessages(messages, true)
+			// The attribution block leads the system array, matching real client
+			// traffic. It carries no cache_control of its own, so the breakpoint
+			// stays on the system prompt below.
+			const claudeCodeIdentity = await this.buildClaudeCodeIdentity(anthropicMessages)
+			const attributionBlocks = claudeCodeIdentity.systemBlocks
 			const requestBody: AnthropicMessageCreateParamsStreaming & Record<string, unknown> = {
 				model: apiModelId,
 				thinking: thinkingConfig,
@@ -253,6 +306,7 @@ export class AnthropicHandler implements ApiHandler {
 				// Adaptive Claude models do not support temperature.
 				temperature: isAdaptiveThinkingModel ? undefined : reasoningOn ? undefined : 0,
 				system: [
+					...attributionBlocks,
 					{
 						text: systemPrompt,
 						type: "text",
@@ -282,17 +336,17 @@ export class AnthropicHandler implements ApiHandler {
 
 			stream = useFastMode
 				? await createFastModeMessage(requestBody)
-				: await client.messages.create(
-						requestBody,
-						enable1mContextWindow ? { headers: { "anthropic-beta": "context-1m-2025-08-07" } } : undefined,
-					)
+				: await client.messages.create(requestBody, requestOptions(claudeCodeIdentity.headers))
 		} else {
+			const anthropicMessages = sanitizeAnthropicMessages(messages, false)
+			const claudeCodeIdentity = await this.buildClaudeCodeIdentity(anthropicMessages)
+			const attributionBlocks = claudeCodeIdentity.systemBlocks
 			const requestBody: AnthropicMessageCreateParamsStreaming & Record<string, unknown> = {
 				model: apiModelId,
 				max_tokens: maxOutputTokens,
 				temperature: isAdaptiveThinkingModel ? undefined : reasoningOn ? undefined : 0,
-				system: [{ text: systemPrompt, type: "text" }],
-				messages: sanitizeAnthropicMessages(messages, false),
+				system: [...attributionBlocks, { text: systemPrompt, type: "text" }],
+				messages: anthropicMessages,
 				tools: nativeToolsOn ? requestTools : undefined,
 				tool_choice: thinkingEnabled ? undefined : { type: "auto" },
 				stream: true,
@@ -304,10 +358,7 @@ export class AnthropicHandler implements ApiHandler {
 
 			stream = useFastMode
 				? await createFastModeMessage(requestBody)
-				: await client.messages.create(
-						requestBody,
-						enable1mContextWindow ? { headers: { "anthropic-beta": "context-1m-2025-08-07" } } : undefined,
-					)
+				: await client.messages.create(requestBody, requestOptions(claudeCodeIdentity.headers))
 		}
 
 		yield* handleAnthropicMessagesApiStreamResponse(stream)
