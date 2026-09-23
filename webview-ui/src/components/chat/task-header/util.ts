@@ -2,20 +2,9 @@ import type { ModelPricing } from "@shared/api"
 import { ClineMessage } from "@shared/ExtensionMessage"
 import { COLOR_BEIGE, COLOR_BLUE, COLOR_DARK_GRAY, COLOR_GRAY, COLOR_GREEN, COLOR_PURPLE, COLOR_WHITE } from "../colors"
 
-const isNonZeroPrice = (price: number | undefined): boolean => price !== undefined && price !== 0
+export { formatTokenMetric } from "@/utils/format"
 
-export const formatTokenMetric = (tokens: number): string => {
-	if (tokens >= 1_000_000_000) {
-		return `${(tokens / 1_000_000_000).toFixed(2)}B`
-	}
-	if (tokens >= 1_000_000) {
-		return `${(tokens / 1_000_000).toFixed(2)}M`
-	}
-	if (tokens >= 1_000) {
-		return `${(tokens / 1_000).toFixed(1)}K`
-	}
-	return tokens.toString()
-}
+const isNonZeroPrice = (price: number | undefined): boolean => price !== undefined && price !== 0
 
 export const hasNonZeroModelPricing = (pricing: ModelPricing | undefined): boolean => {
 	if (!pricing) {

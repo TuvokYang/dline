@@ -143,8 +143,10 @@ export const UsageBar = () => {
 	// so it is dropped rather than rendered as a number the user would act on.
 	const quotas = usage.quotas?.filter(isReadableUsageQuota) ?? []
 	const effectiveQuota = selectChatInputUsageQuota(quotas)
+	// The provider names its own window: a calendar week and a rolling seven
+	// days are different things, so the bar no longer derives "7d" from a type.
 	const summary = effectiveQuota
-		? `${effectiveQuota.type === "5hour" ? "5h:" : effectiveQuota.type === "weekly" ? "7d:" : `${effectiveQuota.label}:`} ${usageRemainingPercent(effectiveQuota).toFixed(0)}%`
+		? `${effectiveQuota.shortLabel ?? effectiveQuota.label}: ${usageRemainingPercent(effectiveQuota).toFixed(0)}%`
 		: !usage.planType && usage.remainingBalance !== undefined
 			? formatProviderUsageCurrency(usage.currency, usage.remainingBalance)
 			: undefined

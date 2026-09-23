@@ -84,9 +84,10 @@ describe("UsageBar", () => {
 				profileId: "profile-a",
 				providerId: "openai-codex",
 				currency: "",
+				// Codex supplies its own compact labels; the bar no longer derives them.
 				quotas: [
-					{ type: "5hour", label: "5 hour", used: 0, limit: 100 },
-					{ type: "weekly", label: "7 day", used: 22, limit: 100 },
+					{ type: "5hour", label: "5 hour", shortLabel: "5h", used: 0, limit: 100 },
+					{ type: "weekly", label: "7 day", shortLabel: "7d", used: 22, limit: 100 },
 				],
 				resetCreditsAvailableCount: 1,
 				resetCredits: [{ id: "credit-a", expiresAt: "2030-03-25T00:00:00.000Z" }],
@@ -111,8 +112,8 @@ describe("UsageBar", () => {
 				providerId: "openai-codex",
 				currency: "",
 				quotas: [
-					{ type: "5hour", label: "5 hour", used: 95, limit: 100 },
-					{ type: "weekly", label: "7 day", used: 83, limit: 100 },
+					{ type: "5hour", label: "5 hour", shortLabel: "5h", used: 95, limit: 100 },
+					{ type: "weekly", label: "7 day", shortLabel: "7d", used: 83, limit: 100 },
 				],
 			},
 		}

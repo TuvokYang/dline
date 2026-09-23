@@ -173,11 +173,25 @@ export function parseOpenAiCodexResetCreditResult(value: unknown): OpenAiCodexRe
 	return { outcome: outcome as OpenAiCodexResetOutcome, windowsReset }
 }
 
+/**
+ * Compact label for the chat input bar.
+ *
+ * Codex windows are rolling durations, so the weekly one is "7d" rather than a
+ * calendar week. Windows without an established abbreviation fall back to
+ * their full label in the UI.
+ */
+function windowShortLabel(type: OpenAiCodexUsageWindow["type"]): string | undefined {
+	if (type === "5hour") return "5h"
+	if (type === "weekly") return "7d"
+	return undefined
+}
+
 export function toAccountUsage(snapshot: OpenAiCodexUsageSnapshot | undefined): AccountUsageData | undefined {
 	if (!snapshot) return undefined
 	const quotas: AccountUsageQuotaData[] = snapshot.windows.map((window) => ({
 		type: window.type,
 		label: window.label,
+		...(windowShortLabel(window.type) ? { shortLabel: windowShortLabel(window.type) } : {}),
 		used: window.usedPercent,
 		limit: 100,
 		windowSeconds: window.limitWindowSeconds,

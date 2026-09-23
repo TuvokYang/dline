@@ -6728,6 +6728,28 @@ export class Task {
 		}
 	}
 
+	/**
+	 * Count a finished request against the Profile that served it, so usage
+	 * surfaces can show today's tokens for subscriptions that report none.
+	 * Input matches the task header: fresh input plus cache reads and writes.
+	 */
+	private recordProfileDailyTokens(usage: {
+		inputTokens: number
+		outputTokens: number
+		cacheWriteTokens: number
+		cacheReadTokens: number
+	}): void {
+		if (this.controllerDetached) return
+		const profileId = this.taskSm.mode === "plan" ? this.taskSm.planModeProfileId : this.taskSm.actModeProfileId
+		if (!profileId) return
+		void this.controller
+			.recordProfileTokenUsage(profileId, {
+				inputTokens: usage.inputTokens + usage.cacheWriteTokens + usage.cacheReadTokens,
+				outputTokens: usage.outputTokens,
+			})
+			.catch((error) => Logger.debug(`[Task ${this.taskId}] Failed to record daily Profile tokens: ${error}`))
+	}
+
 	private getCurrentProviderInfo(): ApiProviderInfo {
 		const model = this.api.getModel()
 		const mode = this.taskSm.mode
@@ -9251,6 +9273,7 @@ export class Task {
 					cacheReadTokens: finalUsage.cacheReadTokens,
 					thoughtsTokens: finalUsage.thoughtsTokens,
 				})
+				this.recordProfileDailyTokens(finalUsage)
 				const rateMetrics = this.apiRateMetricsService.getSnapshot()
 				telemetryService.captureTokenUsage(
 					this.ulid,

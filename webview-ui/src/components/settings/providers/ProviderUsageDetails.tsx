@@ -10,6 +10,7 @@ import {
 	AlertDialogHeader,
 	AlertDialogTitle,
 } from "@/components/common/AlertDialog"
+import { formatTokenMetric } from "@/utils/format"
 
 export type ProviderUsageProgressTone = "success" | "warning" | "caution" | "danger"
 
@@ -152,6 +153,11 @@ export interface ProviderUsageDetailsProps {
 	readonly resetting: boolean
 	readonly resetError?: string
 	readonly showResetActions?: boolean
+	/**
+	 * Show the snapshot age above the details. The settings card already shows
+	 * it on its header row, so it opts out rather than repeating the line.
+	 */
+	readonly showRetrievedAt?: boolean
 	readonly resetCreditsDisplay?: "full" | "summary"
 	readonly consumeResetCredit: (creditId: string) => Promise<AccountUsageResetResult | undefined>
 }
@@ -162,6 +168,7 @@ export function ProviderUsageDetails({
 	resetting,
 	resetError,
 	showResetActions = true,
+	showRetrievedAt = true,
 	resetCreditsDisplay = "full",
 	consumeResetCredit,
 }: ProviderUsageDetailsProps) {
@@ -182,7 +189,7 @@ export function ProviderUsageDetails({
 
 	// Shown by both the chat tooltip and the expanded menu, because the reading
 	// is only as current as the last refresh in either surface.
-	const retrievedAt = formatUsageRetrievedAt(usage.retrievedAt)
+	const retrievedAt = showRetrievedAt ? formatUsageRetrievedAt(usage.retrievedAt) : undefined
 
 	return (
 		<>
@@ -204,16 +211,17 @@ export function ProviderUsageDetails({
 				) : null}
 				{usage.dailyInputTokens !== undefined || usage.dailyOutputTokens !== undefined ? (
 					<div className="grid grid-cols-2 gap-2 text-description">
-						<span>Today In: {usage.dailyInputTokens ?? 0}</span>
-						<span>Today Out: {usage.dailyOutputTokens ?? 0}</span>
+						<span>Today In: {formatTokenMetric(usage.dailyInputTokens ?? 0)}</span>
+						<span>Today Out: {formatTokenMetric(usage.dailyOutputTokens ?? 0)}</span>
 					</div>
 				) : null}
 				{/* Filtered like the chat bar: an unusable reading rendered as
 				    "0% remaining" would claim the window is exhausted. */}
-				{usage.quotas?.filter(isReadableUsageQuota).map((quota) => {
+				{usage.quotas?.filter(isReadableUsageQuota).map((quota, index) => {
 					const resetAt = formatTime(quota.resetAt)
 					return (
-						<div className="flex flex-col gap-1" key={`${quota.type}:${quota.label}`}>
+						// Two scoped caps may share a display name, so position disambiguates.
+						<div className="flex flex-col gap-1" key={`${quota.type}:${quota.label}:${index}`}>
 							<div className="flex items-center justify-between gap-2">
 								<span>{quota.label}</span>
 								<span className="font-medium text-foreground">

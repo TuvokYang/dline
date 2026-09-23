@@ -37,6 +37,12 @@ vi.mock("@/services/grpc-client", () => ({
 	WebServiceClient: { openInBrowser: mocks.openInBrowser },
 }))
 
+// The usage panel shows the snapshot the Controller published before reading
+// on its own, so it needs the shared state this test does not otherwise mount.
+vi.mock("@/context/ExtensionStateContext", () => ({
+	useExtensionState: () => ({ accountUsage: undefined }),
+}))
+
 vi.mock("./useProviderModelOptions", () => ({
 	useProviderModelOptions: () => ({
 		models: {},
@@ -152,7 +158,10 @@ describe("OpenAiCodexProvider OAUTH control", () => {
 		expect(accountCard).toContainElement(signOut)
 		expect(signInAgain).toHaveClass("bg-button-background")
 		expect(signOut).toHaveClass("text-error")
-		await waitFor(() => expect(mocks.getUsage).toHaveBeenCalledWith({ profileId: "profile-a" }))
+		// The Controller reads usage once when the Profile becomes active. The
+		// panel remounts on every expand and tab switch, so it shows that
+		// snapshot and reads only when the user refreshes.
+		expect(mocks.getUsage).not.toHaveBeenCalled()
 	})
 
 	it("opens the OAUTH dialog immediately and then shows the transient authorization URI", async () => {

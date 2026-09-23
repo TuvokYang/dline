@@ -261,6 +261,11 @@ message UsageQuota {
   optional string reset_at = 5;       // ISO timestamp
   optional string reset_label = 6;    // Human-readable reset description
   optional int64 window_seconds = 7;  // Duration of the quota window
+  // Compact label for space-constrained surfaces such as the chat input bar.
+  // Providers name their windows differently (a calendar week versus a rolling
+  // seven days), so the provider supplies it rather than the UI deriving one
+  // from `type`.
+  optional string short_label = 8;
 }
 
 // Provider-owned reset credit exposed through the shared usage capability.

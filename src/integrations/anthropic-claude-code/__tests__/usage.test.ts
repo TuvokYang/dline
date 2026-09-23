@@ -1,4 +1,28 @@
 import { describe, expect, it } from "vitest"
+import { toAccountUsage as toClaudeAccountUsage } from "../usage"
+
+/**
+ * A per-model weekly cap stops that model family only; the shared five-hour and
+ * weekly windows are what block the whole subscription.
+ */
+describe("Claude Code subscription blocking", () => {
+	const shared = { fiveHour: { utilization: 20 }, sevenDay: { utilization: 3 } }
+
+	it("keeps the subscription usable when only a model-scoped cap is exhausted", () => {
+		const usage = toClaudeAccountUsage({ ...shared, scopedWeekly: [{ modelName: "Fable", utilization: 100 }] })
+
+		expect(usage.limitReached).toBe(false)
+		expect(usage.allowed).toBe(true)
+	})
+
+	it("blocks the subscription when a shared window is exhausted", () => {
+		const usage = toClaudeAccountUsage({ ...shared, sevenDay: { utilization: 100 } })
+
+		expect(usage.limitReached).toBe(true)
+		expect(usage.allowed).toBe(false)
+	})
+})
+
 import { ClaudeCodeUsageClient, ClaudeCodeUsageError, parseClaudeCodeUsage, toAccountUsage } from "../usage"
 
 /**
@@ -10,7 +34,20 @@ import { ClaudeCodeUsageClient, ClaudeCodeUsageError, parseClaudeCodeUsage, toAc
 const UPSTREAM_SNAPSHOT = {
 	five_hour: { utilization: 12.5, resets_at: "2026-07-03T10:00:00Z" },
 	seven_day: { utilization: 34, resets_at: "2026-07-08T00:00:00Z" },
-	seven_day_overage_included: { utilization: 56, resets_at: "2026-07-08T03:00:00Z" },
+	// The legacy per-family fields are always null now; the caps live in limits[].
+	seven_day_opus: null,
+	seven_day_sonnet: null,
+	limits: [
+		{ kind: "session", percent: 12, resets_at: "2026-07-03T10:00:00Z", scope: null, is_active: false },
+		{ kind: "weekly_all", percent: 34, resets_at: "2026-07-08T00:00:00Z", scope: null, is_active: false },
+		{
+			kind: "weekly_scoped",
+			percent: 43,
+			resets_at: "2026-07-08T00:00:00Z",
+			scope: { model: { id: null, display_name: "Fable" } },
+			is_active: true,
+		},
+	],
 }
 
 describe("parseClaudeCodeUsage", () => {
@@ -19,7 +56,18 @@ describe("parseClaudeCodeUsage", () => {
 
 		expect(snapshot.fiveHour).toEqual({ utilization: 12.5, resetsAt: "2026-07-03T10:00:00Z" })
 		expect(snapshot.sevenDay).toEqual({ utilization: 34, resetsAt: "2026-07-08T00:00:00Z" })
-		expect(snapshot.sevenDayOverageIncluded).toEqual({ utilization: 56, resetsAt: "2026-07-08T03:00:00Z" })
+		expect(snapshot.scopedWeekly).toEqual([{ modelName: "Fable", utilization: 43, resetsAt: "2026-07-08T00:00:00Z" }])
+	})
+
+	it("skips a scoped cap that names no model or carries no usable percentage", () => {
+		const snapshot = parseClaudeCodeUsage({
+			limits: [
+				{ kind: "weekly_scoped", percent: 10, scope: null },
+				{ kind: "weekly_scoped", percent: "10", scope: { model: { display_name: "Fable" } } },
+			],
+		})
+
+		expect(snapshot.scopedWeekly).toBeUndefined()
 	})
 
 	it("keeps a window that reports no reset instant", () => {
@@ -50,17 +98,10 @@ describe("toAccountUsage", () => {
 		// The chat usage bar and the settings summary both branch on these exact
 		// type strings, so a differently spelled type renders as an unnamed
 		// window and never wins the "most constrained" selection.
-		expect(quotas.map((quota) => quota.type)).toEqual(["5hour", "weekly", "weekly_overage_included"])
-		expect(quotas.map((quota) => quota.label)).toEqual(["5 hour", "7 day", "7 day (overage)"])
-	})
-
-	it("projects the weekly allowance reserved for the Fable family", () => {
-		// Upstream still keys it `seven_day_opus`, and dropping it hid the
-		// window a Fable conversation actually spends, which runs out well
-		// before the general weekly one.
-		const quotas = toAccountUsage(parseClaudeCodeUsage({ seven_day_opus: { utilization: 62 } })).quotas ?? []
-
-		expect(quotas).toEqual([{ type: "weekly_fable", label: "Fable this week", used: 62, limit: 100, windowSeconds: 604_800 }])
+		expect(quotas.map((quota) => quota.type)).toEqual(["5hour", "weekly", "weekly_scoped"])
+		// Claude counts calendar weeks, so it says "week" where Codex says "7 day".
+		expect(quotas.map((quota) => quota.label)).toEqual(["5 hour", "This week", "Fable this week"])
+		expect(quotas.map((quota) => quota.shortLabel)).toEqual(["5h", "week", "Fable week"])
 	})
 
 	it("reports utilization against the full percentage scale with the window length", () => {
@@ -69,6 +110,7 @@ describe("toAccountUsage", () => {
 		expect(quotas[0]).toEqual({
 			type: "5hour",
 			label: "5 hour",
+			shortLabel: "5h",
 			used: 12.5,
 			limit: 100,
 			windowSeconds: 18_000,

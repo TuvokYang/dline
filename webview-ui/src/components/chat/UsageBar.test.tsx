@@ -43,6 +43,10 @@ function usage(quotas: NonNullable<AccountUsageData["quotas"]>): AccountUsageDat
 	}
 }
 
+/** Codex windows as its provider projects them, with the compact labels it supplies. */
+const codexFiveHour = { type: "5hour", label: "5 hour", shortLabel: "5h" } as const
+const codexSevenDay = { type: "weekly", label: "7 day", shortLabel: "7d" } as const
+
 describe("UsageBar", () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
@@ -52,8 +56,8 @@ describe("UsageBar", () => {
 	it("prefers the active five-hour window once it is below 100% remaining", () => {
 		mockedContext.value = {
 			accountUsage: usage([
-				{ type: "5hour", label: "5 hour", used: 20, limit: 100 },
-				{ type: "weekly", label: "7 day", used: 83, limit: 100 },
+				{ ...codexFiveHour, used: 20, limit: 100 },
+				{ ...codexSevenDay, used: 83, limit: 100 },
 			]),
 		}
 
@@ -65,8 +69,8 @@ describe("UsageBar", () => {
 	it("drops a quota whose reading is unusable rather than reporting it as exhausted", () => {
 		mockedContext.value = {
 			accountUsage: usage([
-				{ type: "5hour", label: "5 hour", used: Number.NaN, limit: 100 },
-				{ type: "weekly", label: "7 day", used: 40, limit: 100 },
+				{ ...codexFiveHour, used: Number.NaN, limit: 100 },
+				{ ...codexSevenDay, used: 40, limit: 100 },
 			]),
 		}
 
@@ -81,18 +85,44 @@ describe("UsageBar", () => {
 
 	it("surfaces an exhausted window instead of the five-hour headroom that does not block", () => {
 		mockedContext.value = {
-			accountUsage: usage([
-				{ type: "5hour", label: "5 hour", used: 20, limit: 100 },
-				{ type: "weekly", label: "7 day", used: 3, limit: 100 },
-				{ type: "weekly_overage_included", label: "7 day (overage)", used: 100, limit: 100 },
-			]),
+			accountUsage: {
+				...usage([
+					{ type: "5hour", label: "5 hour", shortLabel: "5h", used: 20, limit: 100 },
+					{ type: "weekly", label: "This week", shortLabel: "week", used: 3, limit: 100 },
+					{ type: "weekly_scoped", label: "Fable this week", shortLabel: "Fable week", used: 100, limit: 100 },
+				]),
+				providerId: "claude-code",
+			},
 		}
 
 		render(<UsageBar />)
 
 		// The exhausted window is what blocks the next request, so reporting
 		// "5h: 80%" here would contradict the account's own blocked state.
-		expect(screen.getByRole("button", { name: "Provider usage" })).toHaveTextContent("7 day (overage): 0%")
+		expect(screen.getByRole("button", { name: "Provider usage" })).toHaveTextContent("Fable week: 0%")
+	})
+
+	it("names each window the way its provider does", () => {
+		// A Claude week is a calendar week and a Codex window is a rolling seven
+		// days; the bar shows the provider's own abbreviation for either.
+		mockedContext.value = {
+			accountUsage: {
+				...usage([{ type: "weekly", label: "This week", shortLabel: "week", used: 30, limit: 100 }]),
+				providerId: "claude-code",
+			},
+		}
+
+		render(<UsageBar />)
+
+		expect(screen.getByRole("button", { name: "Provider usage" })).toHaveTextContent("week: 70%")
+	})
+
+	it("falls back to the full label when the provider supplies no abbreviation", () => {
+		mockedContext.value = { accountUsage: usage([{ type: "monthly", label: "Monthly", used: 10, limit: 100 }]) }
+
+		render(<UsageBar />)
+
+		expect(screen.getByRole("button", { name: "Provider usage" })).toHaveTextContent("Monthly: 90%")
 	})
 
 	it("renders the tooltip like the details panel without its title or reset actions", async () => {
@@ -173,13 +203,13 @@ describe("UsageBar", () => {
 
 	it("applies the explicit refresh response without waiting for a state-stream update", async () => {
 		mockedContext.value = {
-			accountUsage: usage([{ type: "5hour", label: "5 hour", used: 20, limit: 100 }]),
+			accountUsage: usage([{ ...codexFiveHour, used: 20, limit: 100 }]),
 		}
 		usageServiceMocks.getProviderUsage.mockResolvedValue({
 			profileId: "profile-a",
 			providerId: "openai-codex",
 			currency: "",
-			quotas: [{ type: "5hour", label: "5 hour", used: 40, limit: 100 }],
+			quotas: [{ ...codexFiveHour, used: 40, limit: 100 }],
 		})
 
 		render(<UsageBar />)

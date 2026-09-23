@@ -682,6 +682,10 @@ e2e(
 			const accountCard = account.locator("..")
 			await expect(accountCard.getByRole("button", { name: "Sign in again" })).toBeVisible()
 			await expect(accountCard.getByRole("button", { name: "Sign out" })).toBeVisible()
+			// Subscription usage is read on demand: opening the settings card
+			// must not spend a read, only the explicit refresh does.
+			expect(server.usageRequests).toHaveLength(0)
+			await card.getByRole("button", { name: "Refresh Provider usage" }).click()
 			await expect.poll(() => server.usageRequests.length).toBeGreaterThan(0)
 			await expect.poll(() => server.resetCreditListRequests.length).toBeGreaterThan(0)
 			expect(server.usageRequests.at(-1)).toEqual({ authorization: `Bearer ${accessToken}`, accountId })

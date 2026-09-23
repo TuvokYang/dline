@@ -1,10 +1,13 @@
 import { createHash, randomUUID } from "node:crypto"
 import type { Anthropic } from "@anthropic-ai/sdk"
 import { accountUsageCoordinator } from "@core/account-usage/AccountUsageCoordinator"
+import { addDailyTokens, readDailyTokens, type TokenIncrement } from "@core/account-usage/daily-token-ledger"
 import {
 	allowsAccountUsagePolling,
+	applyLocalDailyTokens,
 	decideAccountUsageRead,
 	decorateProviderAccountUsage,
+	isSubscriptionUsage,
 } from "@core/account-usage/provider-usage"
 import {
 	type AccountUsage,
@@ -451,6 +454,33 @@ export class Controller {
 		return resolution.status === "resolved" && resolution.profile.id === profileId
 	}
 
+	/** Today's locally counted tokens for one Profile. */
+	private readLocalDailyTokens(profileId: string): TokenIncrement {
+		return readDailyTokens(this.stateManager.getGlobalStateKey("profileDailyTokenUsage"), profileId, new Date())
+	}
+
+	/**
+	 * Count one completed request against its Profile's daily totals.
+	 *
+	 * Subscription endpoints report percentages only, so this is where today's
+	 * token counts come from. The published snapshot is refreshed from the
+	 * ledger without reading the provider again, so the counts stay current
+	 * while the quota windows keep their last-read values.
+	 */
+	async recordProfileTokenUsage(profileId: string, increment: TokenIncrement): Promise<void> {
+		if (!profileId || (increment.inputTokens <= 0 && increment.outputTokens <= 0)) return
+		const ledger = this.stateManager.getGlobalStateKey("profileDailyTokenUsage")
+		this.stateManager.setGlobalState("profileDailyTokenUsage", addDailyTokens(ledger, profileId, increment, new Date()))
+		const published = this._accountUsage
+		// Balance providers report their own daily counts; only a subscription
+		// snapshot carries counts that came from this ledger.
+		if (!published || published.profileId !== profileId || !isSubscriptionUsage(published)) return
+		const { dailyInputTokens: _input, dailyOutputTokens: _output, ...withoutLocalCounts } = published
+		const refreshed = applyLocalDailyTokens(withoutLocalCounts, this.readLocalDailyTokens(profileId))
+		this._accountUsage = refreshed
+		await sendAccountUsageUpdate(this, refreshed)
+	}
+
 	/** Publish a shared snapshot only when its Profile is still active for the current mode. */
 	async publishAccountUsageSnapshot(profileId: string, usage: AccountUsage): Promise<void> {
 		if (!this.isActiveProviderUsageProfile(profileId)) return
@@ -477,6 +507,7 @@ export class Controller {
 			const usage = decorateProviderAccountUsage(
 				target.profile,
 				target.handler.getAccountUsage ? await target.handler.getAccountUsage() : undefined,
+				this.readLocalDailyTokens(target.profile.id),
 			) ?? {
 				profileId: target.profile.id,
 				providerId: target.profile.provider,
@@ -505,6 +536,7 @@ export class Controller {
 			const usage = decorateProviderAccountUsage(
 				target.profile,
 				target.handler.getAccountUsage ? await target.handler.getAccountUsage() : undefined,
+				this.readLocalDailyTokens(target.profile.id),
 			) ?? {
 				profileId: target.profile.id,
 				providerId: target.profile.provider,
@@ -2621,7 +2653,8 @@ export class Controller {
 				return
 			}
 			const loadAccountUsage = handler.getAccountUsage!.bind(handler)
-			const getAccountUsage = async () => decorateProviderAccountUsage(profile, await loadAccountUsage())
+			const getAccountUsage = async () =>
+				decorateProviderAccountUsage(profile, await loadAccountUsage(), this.readLocalDailyTokens(profile.id))
 			this.accountUsageHandler = handler
 			let usage: AccountUsage | undefined
 			try {

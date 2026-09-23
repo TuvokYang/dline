@@ -74,6 +74,7 @@ export function ProviderUsage({
 						consumeResetCredit={state.consumeResetCredit}
 						resetError={state.resetError}
 						resetting={state.resetting}
+						showRetrievedAt={false}
 						usage={usage}
 					/>
 				</div>

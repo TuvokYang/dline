@@ -20,6 +20,7 @@ function protoToQuota(proto?: ProtoUsageQuota): AccountUsageQuotaData | undefine
 		windowSeconds: proto.windowSeconds ?? undefined,
 		resetAt: proto.resetAt ?? undefined,
 		resetLabel: proto.resetLabel ?? undefined,
+		shortLabel: proto.shortLabel || undefined,
 	}
 }
 
@@ -38,6 +39,7 @@ function quotaToProto(data?: AccountUsageQuotaData): ProtoUsageQuota | undefined
 		windowSeconds: data.windowSeconds,
 		resetAt: data.resetAt,
 		resetLabel: data.resetLabel,
+		shortLabel: data.shortLabel,
 	}
 }
 
@@ -79,6 +81,9 @@ export function protoToAccountUsage(proto?: ProtoAccountUsage): AccountUsageData
 		limitReached: proto.limitReached ?? undefined,
 		quotas: proto.quotas?.map(protoToQuota).filter(Boolean) as AccountUsageQuotaData[] | undefined,
 		...decodeResetCreditSupport(proto),
+		// The snapshot is held until refreshed, so its read time must survive
+		// the transport or every surface loses the "Updated … ago" line.
+		retrievedAt: proto.retrievedAt || undefined,
 		isAvailable: proto.isAvailable ?? undefined,
 		dailyInputTokens: proto.dailyInputTokens ?? undefined,
 		dailyOutputTokens: proto.dailyOutputTokens ?? undefined,

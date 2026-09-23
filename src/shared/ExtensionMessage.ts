@@ -266,6 +266,13 @@ export interface AccountUsageQuotaData {
 	windowSeconds?: number
 	resetAt?: string
 	resetLabel?: string
+	/**
+	 * Compact label for space-constrained surfaces such as the chat input bar.
+	 *
+	 * Supplied by the provider because providers name their windows
+	 * differently: a calendar week is not a rolling seven days.
+	 */
+	shortLabel?: string
 }
 
 export interface CompactionConversationRange {

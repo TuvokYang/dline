@@ -1,5 +1,6 @@
 import {
 	allowsAccountUsagePolling,
+	applyLocalDailyTokens,
 	decideAccountUsageRead,
 	decorateProviderAccountUsage,
 } from "@core/account-usage/provider-usage"
@@ -119,5 +120,32 @@ describe("account usage read time", () => {
 
 	it("reports nothing for an absent snapshot", () => {
 		expect(decorateProviderAccountUsage(profile, undefined)).toBeUndefined()
+	})
+})
+
+/**
+ * Subscription endpoints report percentages only, so today's token counts for
+ * them come from Dline's own ledger. Balance providers report their own.
+ */
+describe("local daily tokens", () => {
+	const today = { inputTokens: 1_500, outputTokens: 80 }
+	const quota = { type: "5hour", label: "5 hour", used: 10, limit: 100 }
+
+	it("fills a subscription snapshot from the local ledger", () => {
+		const usage = applyLocalDailyTokens({ currency: "USD", quotas: [quota] }, today)
+
+		expect(usage).toMatchObject({ dailyInputTokens: 1_500, dailyOutputTokens: 80 })
+	})
+
+	it("leaves a balance snapshot's own daily counts untouched", () => {
+		const balance = { currency: "CNY", remainingBalance: 10, dailyInputTokens: 9, dailyOutputTokens: 1 }
+
+		expect(applyLocalDailyTokens(balance, today)).toBe(balance)
+	})
+
+	it("does not invent counts for a balance provider that reports none", () => {
+		const balance = { currency: "CNY", remainingBalance: 10 }
+
+		expect(applyLocalDailyTokens(balance, today)).toBe(balance)
 	})
 })

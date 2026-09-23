@@ -70,3 +70,25 @@ describe("account usage reset-credit presence", () => {
 		expect(protoToAccountUsage(reencoded)?.resetCreditsAvailableCount).toBeUndefined()
 	})
 })
+
+describe("account usage snapshot fields", () => {
+	it("carries the read time across the transport so surfaces can state the snapshot age", () => {
+		const decoded = protoToAccountUsage(accountUsageToProto({ currency: "USD", retrievedAt: "2026-09-23T12:00:00.000Z" }))
+
+		expect(decoded?.retrievedAt).toBe("2026-09-23T12:00:00.000Z")
+	})
+
+	it("carries a provider's short window label, and leaves an absent one absent", () => {
+		const decoded = protoToAccountUsage(
+			accountUsageToProto({
+				currency: "USD",
+				quotas: [
+					{ type: "weekly", label: "This week", shortLabel: "week", used: 10, limit: 100 },
+					{ type: "monthly", label: "Monthly", used: 10, limit: 100 },
+				],
+			}),
+		)
+
+		expect(decoded?.quotas?.map((quota) => quota.shortLabel)).toEqual(["week", undefined])
+	})
+})

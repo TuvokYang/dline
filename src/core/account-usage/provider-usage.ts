@@ -1,5 +1,6 @@
 import type { AccountUsage, ApiHandler } from "@core/api"
 import type { ApiProfile } from "@shared/proto/dline/profile"
+import type { TokenIncrement } from "./daily-token-ledger"
 
 /** The handler surface the polling policy depends on. */
 type AccountUsageSource = Pick<ApiHandler, "getAccountUsage" | "supportsAccountUsagePolling">
@@ -49,12 +50,41 @@ export function decideAccountUsageRead(
  * able to state its own age. A provider that reports its own retrieval time
  * keeps it.
  */
-export function decorateProviderAccountUsage(profile: ApiProfile, usage: AccountUsage | undefined): AccountUsage | undefined {
+export function decorateProviderAccountUsage(
+	profile: ApiProfile,
+	usage: AccountUsage | undefined,
+	localDailyTokens?: TokenIncrement,
+): AccountUsage | undefined {
 	if (!usage) return undefined
+	return applyLocalDailyTokens(
+		{
+			...usage,
+			profileId: profile.id,
+			providerId: profile.provider,
+			retrievedAt: usage.retrievedAt ?? new Date().toISOString(),
+		},
+		localDailyTokens,
+	)
+}
+
+/** A subscription reports quota windows or a plan, never a balance-style token count. */
+export function isSubscriptionUsage(usage: AccountUsage): boolean {
+	return Boolean(usage.planType) || (usage.quotas?.length ?? 0) > 0
+}
+
+/**
+ * Fill today's token counts for a subscription from Dline's own ledger.
+ *
+ * A subscription endpoint reports percentages only, so the counts come from
+ * the requests Dline itself sent. A provider that reports its own daily
+ * counts keeps them, and balance providers are left untouched.
+ */
+export function applyLocalDailyTokens(usage: AccountUsage, localDailyTokens: TokenIncrement | undefined): AccountUsage {
+	if (!localDailyTokens || !isSubscriptionUsage(usage)) return usage
+	if (usage.dailyInputTokens !== undefined || usage.dailyOutputTokens !== undefined) return usage
 	return {
 		...usage,
-		profileId: profile.id,
-		providerId: profile.provider,
-		retrievedAt: usage.retrievedAt ?? new Date().toISOString(),
+		dailyInputTokens: localDailyTokens.inputTokens,
+		dailyOutputTokens: localDailyTokens.outputTokens,
 	}
 }

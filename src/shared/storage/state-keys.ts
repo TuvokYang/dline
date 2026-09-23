@@ -77,6 +77,13 @@ const GLOBAL_STATE_FIELDS = {
 	taskHistory: { default: [] as HistoryItem[], isAsync: true },
 	userInfo: { default: undefined as UserInfo | undefined },
 	favoritedModelIds: { default: [] as string[] },
+	/**
+	 * Tokens Dline's own requests consumed today, per Profile ID. Subscription
+	 * providers report no token counts, so usage surfaces show these instead.
+	 */
+	profileDailyTokenUsage: {
+		default: {} as Record<string, { day: string; inputTokens: number; outputTokens: number }>,
+	},
 	mcpMarketplaceEnabled: { default: true as boolean },
 	mcpResponsesCollapsed: { default: false as boolean },
 	terminalReuseEnabled: { default: true as boolean },

@@ -1,5 +1,5 @@
 import type { AccountUsageData, AccountUsageQuotaData } from "@/shared/ExtensionMessage"
-import { fetch as proxyFetch } from "@/shared/net"
+import { fetch } from "@/shared/net"
 import { CLAUDE_CODE_OAUTH_BETA } from "./beta-headers"
 import { buildClaudeCodeClientHeaders } from "./client-headers"
 import { resolveClaudeCodeRuntimeConfig } from "./runtime-config"
@@ -28,16 +28,15 @@ const SEVEN_DAY_SECONDS = 7 * 24 * 60 * 60
  */
 const FIVE_HOUR_QUOTA_TYPE = "5hour"
 const WEEKLY_QUOTA_TYPE = "weekly"
-const WEEKLY_OVERAGE_QUOTA_TYPE = "weekly_overage_included"
 /**
- * The weekly allowance reserved for the most capable model family.
+ * A weekly cap that applies to one model family, such as Fable.
  *
- * Upstream still keys it `seven_day_opus`, but it is the window a Fable
- * conversation spends, and it runs out well before the general weekly one. It
- * is a separate identity because exhausting it blocks that family while the
- * other windows still have room.
+ * Upstream reports these only inside `limits[]` as `weekly_scoped` entries; the
+ * legacy `seven_day_opus` and `seven_day_sonnet` fields are now always null.
+ * Exhausting one blocks that family while the other windows still have room.
  */
-const WEEKLY_FABLE_QUOTA_TYPE = "weekly_fable"
+const WEEKLY_SCOPED_QUOTA_TYPE = "weekly_scoped"
+const WEEKLY_SCOPED_LIMIT_KIND = "weekly_scoped"
 
 export interface ClaudeCodeUsageWindow {
 	/** Percentage of the window already consumed. */
@@ -46,12 +45,15 @@ export interface ClaudeCodeUsageWindow {
 	readonly resetsAt?: string
 }
 
+/** A weekly cap scoped to one model family, named as upstream displays it. */
+export interface ClaudeCodeScopedWindow extends ClaudeCodeUsageWindow {
+	readonly modelName: string
+}
+
 export interface ClaudeCodeUsageSnapshot {
 	readonly fiveHour?: ClaudeCodeUsageWindow
 	readonly sevenDay?: ClaudeCodeUsageWindow
-	readonly sevenDayOverageIncluded?: ClaudeCodeUsageWindow
-	/** Weekly allowance for the most capable family, keyed `seven_day_opus`. */
-	readonly sevenDayFable?: ClaudeCodeUsageWindow
+	readonly scopedWeekly?: readonly ClaudeCodeScopedWindow[]
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -73,19 +75,50 @@ export function parseClaudeCodeUsage(value: unknown): ClaudeCodeUsageSnapshot {
 	if (!isRecord(value)) return {}
 	const fiveHour = parseWindow(value.five_hour)
 	const sevenDay = parseWindow(value.seven_day)
-	const sevenDayOverageIncluded = parseWindow(value.seven_day_overage_included)
-	const sevenDayFable = parseWindow(value.seven_day_opus)
+	const scopedWeekly = parseScopedWeekly(value.limits)
 	return {
 		...(fiveHour ? { fiveHour } : {}),
 		...(sevenDay ? { sevenDay } : {}),
-		...(sevenDayOverageIncluded ? { sevenDayOverageIncluded } : {}),
-		...(sevenDayFable ? { sevenDayFable } : {}),
+		...(scopedWeekly.length > 0 ? { scopedWeekly } : {}),
 	}
 }
 
+/**
+ * Read the per-family weekly caps from `limits[]`.
+ *
+ * Each entry is `{ kind, percent, resets_at, scope: { model: { display_name } } }`.
+ * An entry without a usable percentage or model name says nothing a user can
+ * act on, so it is skipped rather than rendered as a nameless window.
+ */
+function parseScopedWeekly(value: unknown): ClaudeCodeScopedWindow[] {
+	if (!Array.isArray(value)) return []
+	return value.flatMap((entry) => {
+		if (!isRecord(entry) || entry.kind !== WEEKLY_SCOPED_LIMIT_KIND) return []
+		const percent = entry.percent
+		if (typeof percent !== "number" || !Number.isFinite(percent)) return []
+		const scope = isRecord(entry.scope) ? entry.scope : undefined
+		const model = isRecord(scope?.model) ? scope.model : undefined
+		const modelName = typeof model?.display_name === "string" ? model.display_name.trim() : ""
+		if (modelName.length === 0) return []
+		const resetsAt = entry.resets_at
+		return [
+			{
+				modelName,
+				utilization: percent,
+				...(typeof resetsAt === "string" && resetsAt.length > 0 ? { resetsAt } : {}),
+			},
+		]
+	})
+}
+
+/**
+ * Claude counts calendar weeks, so its weekly windows read "week" rather than
+ * the rolling "7 day" a Codex window uses.
+ */
 function toQuota(
 	type: string,
 	label: string,
+	shortLabel: string,
 	windowSeconds: number,
 	window: ClaudeCodeUsageWindow | undefined,
 ): AccountUsageQuotaData | undefined {
@@ -93,6 +126,7 @@ function toQuota(
 	return {
 		type,
 		label,
+		shortLabel,
 		// The shared quota shape is used/limit, and upstream reports only a
 		// percentage, so the limit is the full percentage scale.
 		used: window.utilization,
@@ -111,15 +145,23 @@ function toQuota(
  */
 export function toAccountUsage(snapshot: ClaudeCodeUsageSnapshot): AccountUsageData {
 	const quotas = [
-		toQuota(FIVE_HOUR_QUOTA_TYPE, "5 hour", FIVE_HOUR_SECONDS, snapshot.fiveHour),
-		toQuota(WEEKLY_QUOTA_TYPE, "7 day", SEVEN_DAY_SECONDS, snapshot.sevenDay),
-		// The overage window is what actually gates a subscription that has one,
-		// so parsing it and then dropping it would hide the binding limit.
-		toQuota(WEEKLY_OVERAGE_QUOTA_TYPE, "7 day (overage)", SEVEN_DAY_SECONDS, snapshot.sevenDayOverageIncluded),
-		toQuota(WEEKLY_FABLE_QUOTA_TYPE, "Fable this week", SEVEN_DAY_SECONDS, snapshot.sevenDayFable),
+		toQuota(FIVE_HOUR_QUOTA_TYPE, "5 hour", "5h", FIVE_HOUR_SECONDS, snapshot.fiveHour),
+		toQuota(WEEKLY_QUOTA_TYPE, "This week", "week", SEVEN_DAY_SECONDS, snapshot.sevenDay),
+		...(snapshot.scopedWeekly ?? []).map((window) =>
+			toQuota(
+				WEEKLY_SCOPED_QUOTA_TYPE,
+				`${window.modelName} this week`,
+				`${window.modelName} week`,
+				SEVEN_DAY_SECONDS,
+				window,
+			),
+		),
 	].filter((quota): quota is AccountUsageQuotaData => quota !== undefined)
 
-	const limitReached = quotas.some((quota) => quota.used >= quota.limit)
+	// Only the shared windows block the whole subscription. A per-model weekly
+	// cap stops that model family alone, the way sub2api records it as a model
+	// rate limit rather than an account limit, so it stays a visible bar.
+	const limitReached = quotas.some((quota) => quota.type !== WEEKLY_SCOPED_QUOTA_TYPE && quota.used >= quota.limit)
 	return {
 		// A subscription has no per-request balance, so no currency amount applies.
 		currency: "USD",
@@ -131,7 +173,7 @@ export function toAccountUsage(snapshot: ClaudeCodeUsageSnapshot): AccountUsageD
 }
 
 export interface ClaudeCodeUsageClientOptions {
-	fetchImpl?: typeof proxyFetch
+	fetchImpl?: typeof fetch
 	usageUrl?: string
 }
 
@@ -147,11 +189,11 @@ export class ClaudeCodeUsageError extends Error {
 
 /** Reads the subscription usage snapshot for one access token. */
 export class ClaudeCodeUsageClient {
-	private readonly fetchImpl: typeof proxyFetch
+	private readonly fetchImpl: typeof fetch
 	private readonly usageUrl: string
 
 	constructor(options: ClaudeCodeUsageClientOptions = {}) {
-		this.fetchImpl = options.fetchImpl ?? proxyFetch
+		this.fetchImpl = options.fetchImpl ?? fetch
 		this.usageUrl = options.usageUrl ?? CLAUDE_CODE_USAGE_URL
 	}
 

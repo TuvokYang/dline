@@ -7,7 +7,7 @@ import type {
 	OAuthCodeExchangeInput,
 	ParsedManualOAuthCode,
 } from "@/services/oauth"
-import { fetch as proxyFetch } from "@/shared/net"
+import { fetch } from "@/shared/net"
 import { resolveClaudeCodeRuntimeConfig } from "./runtime-config"
 
 /**
@@ -75,7 +75,7 @@ export interface ClaudeCodeOAuthConfiguration {
 
 export interface ClaudeCodeOAuthStrategyOptions {
 	configuration?: Partial<ClaudeCodeOAuthConfiguration>
-	fetchImpl?: typeof proxyFetch
+	fetchImpl?: typeof fetch
 	now?: () => number
 }
 
@@ -147,7 +147,7 @@ export class ClaudeCodeOAuthStrategy implements OAuthAuthorizationStrategy<Claud
 	readonly callbackPath: string
 	readonly manualRedirectUri: string
 	private readonly configuration: ClaudeCodeOAuthConfiguration
-	private readonly fetchImpl: typeof proxyFetch
+	private readonly fetchImpl: typeof fetch
 	private readonly now: () => number
 
 	constructor(options: ClaudeCodeOAuthStrategyOptions = {}) {
@@ -157,7 +157,7 @@ export class ClaudeCodeOAuthStrategy implements OAuthAuthorizationStrategy<Claud
 		this.callbackRedirectHost = this.configuration.callbackRedirectHost
 		this.callbackPath = this.configuration.callbackPath
 		this.manualRedirectUri = this.configuration.manualRedirectUri
-		this.fetchImpl = options.fetchImpl ?? proxyFetch
+		this.fetchImpl = options.fetchImpl ?? fetch
 		this.now = options.now ?? Date.now
 	}
 

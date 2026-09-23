@@ -2,6 +2,7 @@ import type { AccountUsageData } from "@shared/ExtensionMessage"
 import { AccountUsageResetCreditRequest, type AccountUsageResetResult, ProviderUsageRequest } from "@shared/proto/dline/account"
 import { protoToAccountUsage } from "@shared/proto-conversions/account-usage-conversion"
 import { useCallback, useEffect, useRef, useState } from "react"
+import { useExtensionState } from "@/context/ExtensionStateContext"
 import { AccountServiceClient } from "@/services/grpc-client"
 
 export const USAGE_POLL_INTERVAL_MS = 60_000
@@ -12,7 +13,9 @@ export interface ProviderUsageOptions {
 	 *
 	 * A provider whose usage endpoint is billed against the same subscription
 	 * that serves conversations opts out of the timer, matching the handler's
-	 * own polling declaration. The explicit refresh stays available either way.
+	 * own polling declaration. On demand also means no read on mount: the
+	 * Controller already reads such a Profile once when it becomes active, so
+	 * the panel shows that published snapshot and reads only on refresh.
 	 */
 	readonly pollIntervalMs?: number | null
 }
@@ -28,10 +31,33 @@ export interface ProviderUsageState {
 	readonly consumeResetCredit: (creditId: string) => Promise<AccountUsageResetResult | undefined>
 }
 
+/**
+ * A snapshot this panel read itself, bound to the Controller snapshot that was
+ * current when it arrived. Once the Controller publishes a different snapshot
+ * for the same Profile, that one is newer and the local read is discarded.
+ */
+interface LocalUsageRead {
+	readonly profileId: string
+	readonly publishedAtRead: AccountUsageData | undefined
+	readonly value: AccountUsageData
+}
+
 /** Profile-scoped client for the shared provider usage capability. */
 export function useProviderUsage(profileId: string, enabled: boolean, options: ProviderUsageOptions = {}): ProviderUsageState {
 	const pollIntervalMs = options.pollIntervalMs === undefined ? USAGE_POLL_INTERVAL_MS : options.pollIntervalMs
-	const [usage, setUsage] = useState<AccountUsageData>()
+	const readsOnDemand = pollIntervalMs === null
+	const { accountUsage } = useExtensionState()
+	const publishedUsage = accountUsage?.profileId === profileId ? accountUsage : undefined
+	const [localRead, setLocalRead] = useState<LocalUsageRead>()
+	const publishedRef = useRef(publishedUsage)
+	publishedRef.current = publishedUsage
+	const usage =
+		localRead && localRead.profileId === profileId && localRead.publishedAtRead === publishedUsage
+			? localRead.value
+			: publishedUsage
+	const setUsage = useCallback((value: AccountUsageData | undefined) => {
+		setLocalRead(value?.profileId ? { profileId: value.profileId, publishedAtRead: publishedRef.current, value } : undefined)
+	}, [])
 	const [loading, setLoading] = useState(false)
 	const [refreshing, setRefreshing] = useState(false)
 	const [resetting, setResetting] = useState(false)
@@ -89,7 +115,7 @@ export function useProviderUsage(profileId: string, enabled: boolean, options: P
 				setRefreshing(false)
 			}
 		}
-	}, [enabled, profileId])
+	}, [enabled, profileId, setUsage])
 
 	useEffect(() => {
 		requestSequence.current += 1
@@ -100,9 +126,11 @@ export function useProviderUsage(profileId: string, enabled: boolean, options: P
 		setLoading(false)
 		setRefreshing(false)
 		setPollingStopped(false)
-		if (!enabled) return
+		// Mounting is not a reason to spend a metered read: the panel remounts on
+		// every expand and tab switch, which is what kept re-reading usage.
+		if (!enabled || readsOnDemand) return
 		void refresh()
-	}, [enabled, refresh])
+	}, [enabled, readsOnDemand, refresh])
 
 	useEffect(() => {
 		if (!enabled || pollingStopped || pollIntervalMs === null) return
@@ -138,7 +166,7 @@ export function useProviderUsage(profileId: string, enabled: boolean, options: P
 				if (mounted.current && profileRef.current === requestProfileId) setResetting(false)
 			}
 		},
-		[enabled, profileId, resetting],
+		[enabled, profileId, resetting, setUsage],
 	)
 
 	return { usage, loading, refreshing, resetting, error, resetError, refresh, consumeResetCredit }
