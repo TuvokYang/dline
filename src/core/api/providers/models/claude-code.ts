@@ -3,89 +3,85 @@
  * Extracted from api.ts claudeCodeModels (lines 428-526).
  * Each entry spreads an anthropicModels value with overrides — all spreads are inlined here.
  */
-import type { ModelInfo } from "@shared/api"
+import type { ModelInfo, ThinkingConfig } from "@shared/api"
+import {
+	ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS,
+	ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS_WITHOUT_XHIGH,
+} from "@shared/utils/reasoning-support"
 
-// Inlined from api.ts: CLAUDE_SONNET_1M_TIERS
-const CLAUDE_SONNET_1M_TIERS = [
-	{
-		contextWindow: 200000,
-		inputPrice: 3.0,
-		outputPrice: 15,
-		cacheWritesPrice: 3.75,
-		cacheReadsPrice: 0.3,
-	},
-	{
-		contextWindow: Number.MAX_SAFE_INTEGER,
-		inputPrice: 6,
-		outputPrice: 22.5,
-		cacheWritesPrice: 7.5,
-		cacheReadsPrice: 0.6,
-	},
-]
+/**
+ * Adaptive-thinking metadata, mirroring the Anthropic catalog.
+ *
+ * The handler reads this to decide whether a request carries an effort level or
+ * an explicit token budget; a model that declares neither would be sent the
+ * wrong shape and rejected.
+ */
+function adaptiveThinking(effortLevels: readonly string[]): ThinkingConfig {
+	return { supported: true, mode: "effort", effortLevels: [...effortLevels] }
+}
 
-// Inlined from api.ts: CLAUDE_OPUS_1M_TIERS
-const CLAUDE_OPUS_1M_TIERS = [
-	{
-		contextWindow: 200000,
-		inputPrice: 5.0,
-		outputPrice: 25,
-		cacheWritesPrice: 6.25,
-		cacheReadsPrice: 0.5,
-	},
-	{
-		contextWindow: Number.MAX_SAFE_INTEGER,
-		inputPrice: 10,
-		outputPrice: 37.5,
-		cacheWritesPrice: 12.5,
-		cacheReadsPrice: 1.0,
-	},
-]
+/**
+ * Capabilities shared by every adaptive-thinking model.
+ *
+ * Adaptive thinking stays on, and thinking cannot be combined with a forced
+ * tool choice, so these models reject `tool_choice: any` with an error instead
+ * of degrading to an automatic choice. Declaring it here keeps the rule with
+ * the thinking mode that causes it, rather than repeating it per model.
+ */
+function adaptiveThinkingCapabilities(effortLevels: readonly string[]): {
+	thinking: ThinkingConfig
+	supportsForcedToolUse: boolean
+} {
+	return { thinking: adaptiveThinking(effortLevels), supportsForcedToolUse: false }
+}
 
+/**
+ * Models available to a Claude Code subscription.
+ *
+ * Entries mirror the Anthropic catalog and are pruned against the published
+ * model lifecycle. A retired model is removed rather than left selectable,
+ * because the API rejects it outright instead of degrading, so offering it
+ * would only turn a stale selection into a failed request.
+ *
+ * The beta-gated 1M context variants stay absent, since that window was sold
+ * as metered extra usage. A model whose native window is already 1M keeps it,
+ * which is a different thing from opting into the retired beta.
+ *
+ * Every model declares `supportsTools`, because the request now reaches the
+ * Messages API directly. The server-side `tools` list stays empty for the same
+ * reason the metered variants are absent.
+ */
 export const claudeCodeModels: Record<string, ModelInfo> = {
-	// sonnet → ...anthropicModels["claude-sonnet-4-5-20250929"]
-	sonnet: {
-		id: "sonnet",
+	// claude-opus-5-5 → ...anthropicModels["claude-opus-5-5"]
+	"claude-opus-5-5": {
+		id: "claude-opus-5-5",
 		capabilities: {
-			maxTokens: 64_000,
-			contextWindow: 200_000,
-			supportsImages: false,
-			supportsPromptCache: false,
-			supportsReasoning: true,
-		},
-		pricing: {
-			inputPrice: 3.0,
-			outputPrice: 15.0,
-			cacheWritesPrice: 3.75,
-			cacheReadsPrice: 0.3,
-		},
-	},
-	// sonnet[1m] → ...anthropicModels["claude-sonnet-4-5-20250929:1m"]
-	"sonnet[1m]": {
-		id: "sonnet[1m]",
-		capabilities: {
-			maxTokens: 64_000,
-			contextWindow: 1_000_000,
-			supportsImages: false,
-			supportsPromptCache: false,
-			supportsReasoning: true,
-		},
-		pricing: {
-			inputPrice: 3.0,
-			outputPrice: 15.0,
-			cacheWritesPrice: 3.75,
-			cacheReadsPrice: 0.3,
-			tiers: CLAUDE_SONNET_1M_TIERS,
-		},
-	},
-	// opus → ...anthropicModels["claude-opus-4-7"]
-	opus: {
-		id: "opus",
-		capabilities: {
+			...adaptiveThinkingCapabilities(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS),
 			maxTokens: 128_000,
-			contextWindow: 200_000,
-			supportsImages: false,
-			supportsPromptCache: false,
+			contextWindow: 1_000_000,
+			supportsImages: true,
+			supportsPromptCache: true,
 			supportsReasoning: true,
+			supportsTools: true,
+		},
+		pricing: {
+			inputPrice: 4.0,
+			outputPrice: 20.0,
+			cacheWritesPrice: 5.0,
+			cacheReadsPrice: 0.2,
+		},
+	},
+	// claude-opus-5 → ...anthropicModels["claude-opus-5"]
+	"claude-opus-5": {
+		id: "claude-opus-5",
+		capabilities: {
+			...adaptiveThinkingCapabilities(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS),
+			maxTokens: 128_000,
+			contextWindow: 1_000_000,
+			supportsImages: true,
+			supportsPromptCache: true,
+			supportsReasoning: true,
+			supportsTools: true,
 		},
 		pricing: {
 			inputPrice: 5.0,
@@ -94,22 +90,42 @@ export const claudeCodeModels: Record<string, ModelInfo> = {
 			cacheReadsPrice: 0.5,
 		},
 	},
-	// opus[1m] → ...anthropicModels["claude-opus-4-7:1m"]
-	"opus[1m]": {
-		id: "opus[1m]",
+	// claude-opus-4-8 → ...anthropicModels["claude-opus-4-8"]
+	"claude-opus-4-8": {
+		id: "claude-opus-4-8",
 		capabilities: {
+			...adaptiveThinkingCapabilities(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS),
 			maxTokens: 128_000,
 			contextWindow: 1_000_000,
-			supportsImages: false,
-			supportsPromptCache: false,
+			supportsImages: true,
+			supportsPromptCache: true,
 			supportsReasoning: true,
+			supportsTools: true,
 		},
 		pricing: {
 			inputPrice: 5.0,
 			outputPrice: 25.0,
 			cacheWritesPrice: 6.25,
 			cacheReadsPrice: 0.5,
-			tiers: CLAUDE_OPUS_1M_TIERS,
+		},
+	},
+	// claude-sonnet-5 → ...anthropicModels["claude-sonnet-5"]
+	"claude-sonnet-5": {
+		id: "claude-sonnet-5",
+		capabilities: {
+			...adaptiveThinkingCapabilities(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS),
+			maxTokens: 128_000,
+			contextWindow: 1_000_000,
+			supportsImages: true,
+			supportsPromptCache: true,
+			supportsReasoning: true,
+			supportsTools: true,
+		},
+		pricing: {
+			inputPrice: 2.0,
+			outputPrice: 10.0,
+			cacheWritesPrice: 2.5,
+			cacheReadsPrice: 0.2,
 		},
 	},
 	// claude-haiku-4-5-20251001 → ...anthropicModels["claude-haiku-4-5-20251001"]
@@ -118,9 +134,10 @@ export const claudeCodeModels: Record<string, ModelInfo> = {
 		capabilities: {
 			maxTokens: 64_000,
 			contextWindow: 200_000,
-			supportsImages: false,
-			supportsPromptCache: false,
+			supportsImages: true,
+			supportsPromptCache: true,
 			supportsReasoning: true,
+			supportsTools: true,
 		},
 		pricing: {
 			inputPrice: 1,
@@ -133,35 +150,19 @@ export const claudeCodeModels: Record<string, ModelInfo> = {
 	"claude-sonnet-4-6": {
 		id: "claude-sonnet-4-6",
 		capabilities: {
-			maxTokens: 64_000,
-			contextWindow: 200_000,
-			supportsImages: false,
-			supportsPromptCache: false,
-			supportsReasoning: true,
-		},
-		pricing: {
-			inputPrice: 3.0,
-			outputPrice: 15.0,
-			cacheWritesPrice: 3.75,
-			cacheReadsPrice: 0.3,
-		},
-	},
-	// claude-sonnet-4-6[1m] → ...anthropicModels["claude-sonnet-4-6:1m"]
-	"claude-sonnet-4-6[1m]": {
-		id: "claude-sonnet-4-6[1m]",
-		capabilities: {
-			maxTokens: 64_000,
+			...adaptiveThinkingCapabilities(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS_WITHOUT_XHIGH),
+			maxTokens: 128_000,
 			contextWindow: 1_000_000,
-			supportsImages: false,
-			supportsPromptCache: false,
+			supportsImages: true,
+			supportsPromptCache: true,
 			supportsReasoning: true,
+			supportsTools: true,
 		},
 		pricing: {
 			inputPrice: 3.0,
 			outputPrice: 15.0,
 			cacheWritesPrice: 3.75,
 			cacheReadsPrice: 0.3,
-			tiers: CLAUDE_SONNET_1M_TIERS,
 		},
 	},
 	// claude-sonnet-4-5-20250929 → ...anthropicModels["claude-sonnet-4-5-20250929"]
@@ -170,44 +171,10 @@ export const claudeCodeModels: Record<string, ModelInfo> = {
 		capabilities: {
 			maxTokens: 64_000,
 			contextWindow: 200_000,
-			supportsImages: false,
-			supportsPromptCache: false,
+			supportsImages: true,
+			supportsPromptCache: true,
 			supportsReasoning: true,
-		},
-		pricing: {
-			inputPrice: 3.0,
-			outputPrice: 15.0,
-			cacheWritesPrice: 3.75,
-			cacheReadsPrice: 0.3,
-		},
-	},
-	// claude-sonnet-4-5-20250929[1m] → ...anthropicModels["claude-sonnet-4-5-20250929:1m"]
-	"claude-sonnet-4-5-20250929[1m]": {
-		id: "claude-sonnet-4-5-20250929[1m]",
-		capabilities: {
-			maxTokens: 64_000,
-			contextWindow: 1_000_000,
-			supportsImages: false,
-			supportsPromptCache: false,
-			supportsReasoning: true,
-		},
-		pricing: {
-			inputPrice: 3.0,
-			outputPrice: 15.0,
-			cacheWritesPrice: 3.75,
-			cacheReadsPrice: 0.3,
-			tiers: CLAUDE_SONNET_1M_TIERS,
-		},
-	},
-	// claude-sonnet-4-20250514 → ...anthropicModels["claude-sonnet-4-20250514"]
-	"claude-sonnet-4-20250514": {
-		id: "claude-sonnet-4-20250514",
-		capabilities: {
-			maxTokens: 64_000,
-			contextWindow: 200_000,
-			supportsImages: false,
-			supportsPromptCache: false,
-			supportsReasoning: true,
+			supportsTools: true,
 		},
 		pricing: {
 			inputPrice: 3.0,
@@ -220,70 +187,38 @@ export const claudeCodeModels: Record<string, ModelInfo> = {
 	"claude-opus-4-6": {
 		id: "claude-opus-4-6",
 		capabilities: {
-			maxTokens: 128_000,
-			contextWindow: 200_000,
-			supportsImages: false,
-			supportsPromptCache: false,
-			supportsReasoning: true,
-		},
-		pricing: {
-			inputPrice: 5.0,
-			outputPrice: 25.0,
-			cacheWritesPrice: 6.25,
-			cacheReadsPrice: 0.5,
-		},
-	},
-	// claude-opus-4-6[1m] → ...anthropicModels["claude-opus-4-6:1m"]
-	"claude-opus-4-6[1m]": {
-		id: "claude-opus-4-6[1m]",
-		capabilities: {
+			...adaptiveThinkingCapabilities(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS_WITHOUT_XHIGH),
 			maxTokens: 128_000,
 			contextWindow: 1_000_000,
-			supportsImages: false,
-			supportsPromptCache: false,
+			supportsImages: true,
+			supportsPromptCache: true,
 			supportsReasoning: true,
+			supportsTools: true,
 		},
 		pricing: {
 			inputPrice: 5.0,
 			outputPrice: 25.0,
 			cacheWritesPrice: 6.25,
 			cacheReadsPrice: 0.5,
-			tiers: CLAUDE_OPUS_1M_TIERS,
 		},
 	},
 	// claude-opus-4-7 → ...anthropicModels["claude-opus-4-7"]
 	"claude-opus-4-7": {
 		id: "claude-opus-4-7",
 		capabilities: {
-			maxTokens: 128_000,
-			contextWindow: 200_000,
-			supportsImages: false,
-			supportsPromptCache: false,
-			supportsReasoning: true,
-		},
-		pricing: {
-			inputPrice: 5.0,
-			outputPrice: 25.0,
-			cacheWritesPrice: 6.25,
-			cacheReadsPrice: 0.5,
-		},
-	},
-	// claude-opus-4-7[1m] → ...anthropicModels["claude-opus-4-7:1m"]
-	"claude-opus-4-7[1m]": {
-		id: "claude-opus-4-7[1m]",
-		capabilities: {
+			...adaptiveThinkingCapabilities(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS),
 			maxTokens: 128_000,
 			contextWindow: 1_000_000,
-			supportsImages: false,
-			supportsPromptCache: false,
+			supportsImages: true,
+			supportsPromptCache: true,
 			supportsReasoning: true,
+			supportsTools: true,
 		},
 		pricing: {
 			inputPrice: 5.0,
 			outputPrice: 25.0,
 			cacheWritesPrice: 6.25,
 			cacheReadsPrice: 0.5,
-			tiers: CLAUDE_OPUS_1M_TIERS,
 		},
 	},
 	// claude-opus-4-5-20251101 → ...anthropicModels["claude-opus-4-5-20251101"]
@@ -292,9 +227,10 @@ export const claudeCodeModels: Record<string, ModelInfo> = {
 		capabilities: {
 			maxTokens: 64_000,
 			contextWindow: 200_000,
-			supportsImages: false,
-			supportsPromptCache: false,
+			supportsImages: true,
+			supportsPromptCache: true,
 			supportsReasoning: true,
+			supportsTools: true,
 		},
 		pricing: {
 			inputPrice: 5.0,
@@ -303,74 +239,7 @@ export const claudeCodeModels: Record<string, ModelInfo> = {
 			cacheReadsPrice: 0.5,
 		},
 	},
-	// claude-opus-4-1-20250805 → ...anthropicModels["claude-opus-4-1-20250805"]
-	"claude-opus-4-1-20250805": {
-		id: "claude-opus-4-1-20250805",
-		capabilities: {
-			maxTokens: 32_000,
-			contextWindow: 200_000,
-			supportsImages: false,
-			supportsPromptCache: false,
-			supportsReasoning: true,
-		},
-		pricing: {
-			inputPrice: 15.0,
-			outputPrice: 75.0,
-			cacheWritesPrice: 18.75,
-			cacheReadsPrice: 1.5,
-		},
-	},
-	// claude-opus-4-20250514 → ...anthropicModels["claude-opus-4-20250514"]
-	"claude-opus-4-20250514": {
-		id: "claude-opus-4-20250514",
-		capabilities: {
-			maxTokens: 32_000,
-			contextWindow: 200_000,
-			supportsImages: false,
-			supportsPromptCache: false,
-			supportsReasoning: true,
-		},
-		pricing: {
-			inputPrice: 15.0,
-			outputPrice: 75.0,
-			cacheWritesPrice: 18.75,
-			cacheReadsPrice: 1.5,
-		},
-	},
-	// claude-3-7-sonnet-20250219 → ...anthropicModels["claude-3-7-sonnet-20250219"]
-	"claude-3-7-sonnet-20250219": {
-		id: "claude-3-7-sonnet-20250219",
-		capabilities: {
-			maxTokens: 128_000,
-			contextWindow: 200_000,
-			supportsImages: false,
-			supportsPromptCache: false,
-			supportsReasoning: true,
-		},
-		pricing: {
-			inputPrice: 3.0,
-			outputPrice: 15.0,
-			cacheWritesPrice: 3.75,
-			cacheReadsPrice: 0.3,
-		},
-	},
-	// claude-3-5-haiku-20241022 → ...anthropicModels["claude-3-5-haiku-20241022"]
-	"claude-3-5-haiku-20241022": {
-		id: "claude-3-5-haiku-20241022",
-		capabilities: {
-			maxTokens: 8192,
-			contextWindow: 200_000,
-			supportsImages: true,
-			supportsPromptCache: false,
-		},
-		pricing: {
-			inputPrice: 0.8,
-			outputPrice: 4.0,
-			cacheWritesPrice: 1.0,
-			cacheReadsPrice: 0.08,
-		},
-	},
 }
 
 /** Default model ID for Claude Code provider */
-export const claudeCodeDefaultModelId = "claude-sonnet-4-5-20250929"
+export const claudeCodeDefaultModelId = "claude-opus-5-5"

@@ -1,22 +1,12 @@
 import { ClaudeCodeProviderConfig } from "@shared/proto/dline/provider/claude_code"
-import { DebouncedTextField } from "../common/DebouncedTextField"
+import { canDisableClaudeAdaptiveThinking, isClaudeAdaptiveThinkingEnabledByDefault } from "@shared/utils/reasoning-support"
 import { ModelInfoView } from "../common/ModelInfoView"
 import { ModelSelector } from "../common/ModelSelector"
-import ThinkingBudgetSlider from "../ThinkingBudgetSlider"
+import ThinkingControl from "../ThinkingControl"
+import { ANTHROPIC_THINKING_DISPLAY_DESCRIPTION, ANTHROPIC_THINKING_DISPLAY_SELECTOR_OPTIONS } from "./anthropicThinkingDisplay"
+import { ClaudeCodeOAuthControl } from "./ClaudeCodeOAuthControl"
 import type { ApiProfile } from "./ProviderProfile"
 import { useProviderModels } from "./useProviderModels"
-
-const SUPPORTED_CLAUDE_CODE_THINKING_MODELS = [
-	"claude-sonnet-4-6",
-	"sonnet",
-	"sonnet[1m]",
-	"claude-opus-4-7[1m]",
-	"claude-sonnet-4-6[1m]",
-	"claude-sonnet-4-5-20250929[1m]",
-	"claude-opus-4-6[1m]",
-	"opus",
-	"opus[1m]",
-]
 
 interface ClaudeCodeProviderProps {
 	showModelOptions: boolean
@@ -26,8 +16,10 @@ interface ClaudeCodeProviderProps {
 }
 
 /**
- * The Claude Code provider configuration component.
- * All data sourced from ApiProfile. claudeCodePath stored in providerConfig.
+ * Claude Code provider settings.
+ *
+ * Claude Code is a subscription, so this panel owns an OAuth session rather
+ * than an API key or a local CLI path.
  */
 export const ClaudeCodeProvider = ({ showModelOptions, isPopup, profile, onUpdate }: ClaudeCodeProviderProps) => {
 	const {
@@ -41,19 +33,19 @@ export const ClaudeCodeProvider = ({ showModelOptions, isPopup, profile, onUpdat
 	const modelInfo =
 		profile.modelInfo ?? (profile.modelId ? claudeCodeModels[profile.modelId] : undefined) ?? claudeCodeModelInfoSaneDefaults
 
+	// The request shape follows the model's declared thinking mode: an adaptive
+	// model takes an effort level and rejects a token budget, and the reverse
+	// holds for a budget model. Reading the mode keeps this panel from offering
+	// a control whose value the request would have to discard.
+	const thinking = modelInfo?.capabilities?.thinking
+	const effortOptions = thinking?.effortLevels ?? []
+	const adaptiveThinkingSupported = thinking?.supported === true && thinking.mode === "effort" && effortOptions.length > 0
+	const budgetThinkingSupported = thinking?.mode === "budget" && thinking.maxBudget !== undefined
+
 	return (
 		<div>
-			<DebouncedTextField
-				initialValue={pc.claudeCodePath ?? ""}
-				onChange={(value) => onUpdate({ claudeCode: { ...pc, claudeCodePath: value } })}
-				placeholder="Default: claude"
-				style={{ width: "100%", marginTop: 3 }}
-				type="text">
-				<span style={{ fontWeight: 500 }}>Claude Code CLI Path</span>
-			</DebouncedTextField>
-			<p style={{ fontSize: "12px", marginTop: 3, color: "var(--vscode-descriptionForeground)" }}>
-				Path to the Claude Code CLI.
-			</p>
+			<ClaudeCodeOAuthControl profileId={profile.id} />
+
 			{showModelOptions && (
 				<>
 					<ModelSelector
@@ -65,26 +57,30 @@ export const ClaudeCodeProvider = ({ showModelOptions, isPopup, profile, onUpdat
 						}}
 						selectedModelId={modelId}
 					/>
-					{(modelId === "sonnet" || modelId === "opus") && (
-						<p
-							style={{
-								fontSize: "12px",
-								marginBottom: 2,
-								marginTop: 2,
-								color: "var(--vscode-descriptionForeground)",
-							}}>
-							Use the latest version of {modelId} by default.
-						</p>
-					)}
-					{SUPPORTED_CLAUDE_CODE_THINKING_MODELS.includes(modelId) && (
-						<ThinkingBudgetSlider
-							maxBudget={modelInfo?.capabilities?.thinking?.maxBudget}
-							onThinkingBudgetTokensChange={(v) =>
-								onUpdate({
-									claudeCode: { ...pc, reasoning: { effort: pc.reasoning?.effort ?? "", thinkingBudget: v } },
-								})
+					{/* Driven by catalog metadata rather than a model ID list, which
+					    went stale as soon as the catalog changed. Both branches
+					    offer the display choice, because it belongs to the thinking
+					    block itself rather than to one of the two modes. */}
+					{(adaptiveThinkingSupported || budgetThinkingSupported) && (
+						<ThinkingControl
+							defaultEffort={adaptiveThinkingSupported ? "high" : undefined}
+							defaultEnabled={adaptiveThinkingSupported && isClaudeAdaptiveThinkingEnabledByDefault(modelId)}
+							disableSupported={canDisableClaudeAdaptiveThinking(modelId)}
+							displayDescription={ANTHROPIC_THINKING_DISPLAY_DESCRIPTION}
+							displayLabel="Thinking Display"
+							displayOptions={ANTHROPIC_THINKING_DISPLAY_SELECTOR_OPTIONS}
+							effortDescription={
+								canDisableClaudeAdaptiveThinking(modelId)
+									? "Use None to disable adaptive thinking. Higher effort increases response detail and token usage."
+									: "Adaptive thinking is always enabled for this model. Higher effort increases response detail and token usage."
 							}
-							thinkingBudgetTokens={pc.reasoning?.thinkingBudget ?? 0}
+							effortLabel="Adaptive Thinking"
+							effortOptions={effortOptions}
+							maxBudget={thinking?.maxBudget}
+							mode={adaptiveThinkingSupported ? "effort-only" : "budget-only"}
+							onReasoningConfigUpdate={(reasoning) => onUpdate({ claudeCode: { ...pc, reasoning } })}
+							reasoningConfig={pc.reasoning}
+							showModeSelector={false}
 						/>
 					)}
 					<ModelInfoView isPopup={isPopup} modelInfo={modelInfo} selectedModelId={modelId} />

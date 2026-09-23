@@ -3,8 +3,13 @@ import { getProviderLabel as resolveProviderLabel } from "@shared/providers/prov
 import type { RemoteConfigFields } from "@shared/storage/state-keys"
 import type { ApiProfile } from "@/components/settings/providers/ProviderProfile"
 
-/** Providers that are always available regardless of configuration */
-const ALWAYS_AVAILABLE: ApiProvider[] = ["cline", "openai-codex", "vscode-lm"]
+/**
+ * Providers that are always available regardless of configuration.
+ *
+ * Subscription providers sign in from their own settings panel rather than
+ * through a credential field, so a profile is selectable before sign-in.
+ */
+const ALWAYS_AVAILABLE: ApiProvider[] = ["cline", "openai-codex", "claude-code", "vscode-lm"]
 
 /**
  * Check whether a profile has the minimum required credentials for its provider.
@@ -80,9 +85,9 @@ function isProfileConfigured(profile: ApiProfile): boolean {
 		case "litellm":
 			return !!(profile.baseUrl || profile.apiKey || profile.modelId)
 
-		// Claude Code: requires path in oneof claudeCode config
+		// Claude Code: a subscription OAuth session, not a stored credential field
 		case "claude-code":
-			return !!profile.claudeCode?.claudeCodePath
+			return true
 
 		// OCA: requires baseUrl
 		case "oca":

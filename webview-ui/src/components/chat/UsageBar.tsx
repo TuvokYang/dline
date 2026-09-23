@@ -9,6 +9,7 @@ import { useExtensionState } from "@/context/ExtensionStateContext"
 import { AccountServiceClient } from "@/services/grpc-client"
 import {
 	formatProviderUsageCurrency,
+	isReadableUsageQuota,
 	ProviderUsageDetails,
 	selectEffectiveUsageQuota,
 	usageRemainingPercent,
@@ -53,12 +54,23 @@ function calculateUsageClickMenuPosition(
 
 const ignoreResetCredit = async (_creditId: string): Promise<AccountUsageResetResult | undefined> => undefined
 
+/**
+ * Choose the one quota this bar can show.
+ *
+ * The five-hour window is the one a user acts on most often, so it wins while
+ * it is the binding constraint. It must not win once another window is
+ * exhausted: that window is what actually blocks the next request, and showing
+ * plenty of five-hour headroom instead would contradict the blocked state.
+ */
 function selectChatInputUsageQuota(quotas: readonly AccountUsageQuotaData[]): AccountUsageQuotaData | undefined {
+	const mostConstrainedQuota = selectEffectiveUsageQuota(quotas)
+	if (mostConstrainedQuota && usageRemainingPercent(mostConstrainedQuota) <= 0) {
+		return mostConstrainedQuota
+	}
 	const activeFiveHourQuota = quotas.find(
-		(quota) =>
-			quota.type === "5hour" && Number.isFinite(quota.limit) && quota.limit > 0 && usageRemainingPercent(quota) < 100,
+		(quota) => quota.type === "5hour" && isReadableUsageQuota(quota) && usageRemainingPercent(quota) < 100,
 	)
-	return activeFiveHourQuota ?? selectEffectiveUsageQuota(quotas)
+	return activeFiveHourQuota ?? mostConstrainedQuota
 }
 
 /** Existing account usage surface, enhanced by provider-owned capability data. */
@@ -127,7 +139,9 @@ export const UsageBar = () => {
 
 	const usage = refreshOverlay && refreshOverlay.source === accountUsage ? refreshOverlay.value : accountUsage
 	if (!usage) return null
-	const quotas = usage.quotas?.filter((quota) => quota.limit > 0) ?? []
+	// A quota without a usable bound or reading says nothing about the account,
+	// so it is dropped rather than rendered as a number the user would act on.
+	const quotas = usage.quotas?.filter(isReadableUsageQuota) ?? []
 	const effectiveQuota = selectChatInputUsageQuota(quotas)
 	const summary = effectiveQuota
 		? `${effectiveQuota.type === "5hour" ? "5h:" : effectiveQuota.type === "weekly" ? "7d:" : `${effectiveQuota.label}:`} ${usageRemainingPercent(effectiveQuota).toFixed(0)}%`

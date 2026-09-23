@@ -62,6 +62,39 @@ describe("UsageBar", () => {
 		expect(screen.getByRole("button", { name: "Provider usage" })).toHaveTextContent("5h: 80%")
 	})
 
+	it("drops a quota whose reading is unusable rather than reporting it as exhausted", () => {
+		mockedContext.value = {
+			accountUsage: usage([
+				{ type: "5hour", label: "5 hour", used: Number.NaN, limit: 100 },
+				{ type: "weekly", label: "7 day", used: 40, limit: 100 },
+			]),
+		}
+
+		render(<UsageBar />)
+
+		// An unreadable quota says nothing about the account. Reporting it as 0%
+		// would both render "NaN%" and claim the account is blocked.
+		const bar = screen.getByRole("button", { name: "Provider usage" })
+		expect(bar).toHaveTextContent("7d: 60%")
+		expect(bar).not.toHaveTextContent("NaN")
+	})
+
+	it("surfaces an exhausted window instead of the five-hour headroom that does not block", () => {
+		mockedContext.value = {
+			accountUsage: usage([
+				{ type: "5hour", label: "5 hour", used: 20, limit: 100 },
+				{ type: "weekly", label: "7 day", used: 3, limit: 100 },
+				{ type: "weekly_overage_included", label: "7 day (overage)", used: 100, limit: 100 },
+			]),
+		}
+
+		render(<UsageBar />)
+
+		// The exhausted window is what blocks the next request, so reporting
+		// "5h: 80%" here would contradict the account's own blocked state.
+		expect(screen.getByRole("button", { name: "Provider usage" })).toHaveTextContent("7 day (overage): 0%")
+	})
+
 	it("renders the tooltip like the details panel without its title or reset actions", async () => {
 		const user = userEvent.setup()
 		const resetCreditExpiresAt = "2030-03-25T00:00:00.000Z"

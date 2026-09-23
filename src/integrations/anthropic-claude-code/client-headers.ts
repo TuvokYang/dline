@@ -27,9 +27,10 @@ export const CLAUDE_CODE_SDK_VERSION = "0.112.1"
 /**
  * Stainless SDK headers sent alongside the User-Agent.
  *
- * `X-Stainless-Retry-Count` and `X-Stainless-Timeout` are deliberately omitted:
- * they describe a specific in-flight attempt, and Dline's retry policy differs
- * from the CLI's, so a fixed value would contradict the observable request.
+ * `X-Stainless-Retry-Count` and `X-Stainless-Timeout` are deliberately absent
+ * here: they describe a specific in-flight attempt, so a fixed value would
+ * contradict the observable request. The SDK still emits the real retry count
+ * on its own, which is exactly the behaviour a genuine client shows.
  */
 export const CLAUDE_CODE_FINGERPRINT_HEADERS: Readonly<Record<string, string>> = Object.freeze({
 	"X-Stainless-Lang": "js",

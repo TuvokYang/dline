@@ -8,6 +8,7 @@ import type { ProviderRemoteSource } from "../model-source"
 import { aiHubMixModelSource } from "./aihubmix"
 import { anthropicModelSource } from "./anthropic"
 import { basetenModelSource } from "./baseten"
+import { claudeCodeModelSource } from "./claude-code"
 import { clineModelSource } from "./cline"
 import { deepSeekModelSource } from "./deepseek"
 import { groqModelSource } from "./groq"
@@ -28,6 +29,7 @@ export const MODEL_SOURCES: readonly ProviderRemoteSource[] = [
 	aiHubMixModelSource,
 	anthropicModelSource,
 	basetenModelSource,
+	claudeCodeModelSource,
 	clineModelSource,
 	deepSeekModelSource,
 	groqModelSource,

@@ -7,11 +7,15 @@ import {
 	providerUsageRemainingLabel,
 	selectEffectiveUsageQuota,
 } from "./ProviderUsageDetails"
-import { useProviderUsage } from "./useProviderUsage"
+import { type ProviderUsageOptions, useProviderUsage } from "./useProviderUsage"
 
 /** Reusable Profile-scoped settings surface for providers that expose usage capabilities. */
-export function ProviderUsage({ profileId, enabled }: { profileId: string; enabled: boolean }) {
-	const state = useProviderUsage(profileId, enabled)
+export function ProviderUsage({
+	profileId,
+	enabled,
+	pollIntervalMs,
+}: { profileId: string; enabled: boolean } & ProviderUsageOptions) {
+	const state = useProviderUsage(profileId, enabled, { pollIntervalMs })
 	const [expanded, setExpanded] = useState(false)
 	const usage = state.usage
 	const effectiveQuota = selectEffectiveUsageQuota(usage?.quotas ?? [])

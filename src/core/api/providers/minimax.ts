@@ -2,6 +2,7 @@ import { Anthropic } from "@anthropic-ai/sdk"
 import { Tool as AnthropicTool } from "@anthropic-ai/sdk/resources/index"
 import { Stream as AnthropicStream } from "@anthropic-ai/sdk/streaming"
 import { providerFetch } from "@shared/net"
+import { resolveForcedToolUseSupport } from "@shared/utils/reasoning-support"
 import { buildExternalBasicHeaders } from "@/services/EnvUtils"
 import { MinimaxModelId, ModelInfo, minimaxDefaultModelId, minimaxModels } from "@/shared/api"
 import { ClineStorageMessage } from "@/shared/messages/content"
@@ -81,8 +82,16 @@ export class MinimaxHandler implements ApiHandler {
 			thinking: reasoningOn ? { type: "enabled", budget_tokens: budget_tokens } : undefined,
 			// "Thinking isn't compatible with temperature, top_p, or top_k modifications"
 			temperature: reasoningOn ? undefined : 1.0, // MiniMax recommends 1.0, range is (0.0, 1.0]
-			// NOTE: Forcing tool use when tools are provided will result in error when thinking is also enabled.
-			tool_choice: nativeToolsOn && !reasoningOn ? { type: "any" } : undefined,
+			// A model that rejects forcing fails the whole request rather than
+			// degrading, and thinking cannot be combined with a forced choice.
+			tool_choice:
+				nativeToolsOn && resolveForcedToolUseSupport(model.id, model.info.capabilities)
+					? reasoningOn
+						? undefined
+						: { type: "any" }
+					: nativeToolsOn
+						? { type: "auto" }
+						: undefined,
 		})
 
 		const lastStartedToolCall = { id: "", name: "", arguments: "" }

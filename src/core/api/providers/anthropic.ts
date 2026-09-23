@@ -16,7 +16,7 @@ import {
 	isClaudeOpusAdaptiveThinkingModel,
 	resolveClaudeOpusAdaptiveThinking,
 	resolveClaudeThinkingDisplay,
-	supportsClaudeForcedToolUse,
+	resolveForcedToolUseSupport,
 } from "@shared/utils/reasoning-support"
 import {
 	type BillingAttributionMessage,
@@ -234,9 +234,9 @@ export class AnthropicHandler implements ApiHandler {
 		// `tool_choice: any` only admits client tools, so forcing it would make a merged
 		// hosted server tool unreachable for the whole request.
 		const hostedServerToolsOn = (options?.serverTools?.length ?? 0) > 0
-		// Fable 5.1 rejects a forced tool choice outright, so it must fall back to auto
-		// rather than inheriting the adaptive-thinking branch that forces `any`.
-		const forcedToolUseOn = supportsClaudeForcedToolUse(modelId)
+		// A model that rejects a forced tool choice fails the whole request rather
+		// than degrading to an automatic one, so its own declaration decides this.
+		const forcedToolUseOn = resolveForcedToolUseSupport(modelId, model.info.capabilities)
 		const reasoningOn =
 			requestedThinkingEnabled && (model.info.capabilities?.supportsReasoning ?? false) && budget_tokens !== 0
 
@@ -321,12 +321,13 @@ export class AnthropicHandler implements ApiHandler {
 				// - none: disables tool use, even if tools are provided. Claude will not call any tools.
 				// - auto: allows Claude to decide whether to call any provided tools or not. This is the default value when tools are provided.
 				// - any: tells Claude that it must use one of the provided tools, but doesn't force a particular tool.
-				// Manual extended thinking cannot force tools, but adaptive thinking supports tool_choice.
+				// Thinking cannot be combined with forced tool use, so a thinking
+				// request leaves the choice to the API default.
 				tool_choice: !localNativeToolsOn
 					? undefined
 					: hostedServerToolsOn || !forcedToolUseOn
 						? { type: "auto" }
-						: !thinkingEnabled || isAdaptiveThinkingModel
+						: !thinkingEnabled
 							? { type: "any" }
 							: undefined,
 			}

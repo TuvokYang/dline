@@ -79,7 +79,10 @@ describe("OpenAI Codex OAuth flow integration", () => {
 		const openedUrls: string[] = []
 		const tokenRequests: string[] = []
 		const strategy = new OpenAiCodexOAuthStrategy({
-			configuration: { callbackPort: 0, tokenEndpoint: "https://token.example.test" },
+			// `callbackPorts` overrides `callbackPort` during binding, so the
+			// production ports must be replaced too; otherwise the test binds 1455
+			// and fails on hosts that reserve it.
+			configuration: { callbackPort: 0, callbackPorts: [0], tokenEndpoint: "https://token.example.test" },
 			now: () => NOW,
 			fetchImpl: vi.fn(async (_input, init) => {
 				const body = String(init?.body)

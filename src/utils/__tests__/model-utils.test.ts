@@ -85,10 +85,11 @@ describe("isClaude4PlusModelFamily", () => {
 		isClaude4PlusModelFamily("claude-4-sonnet").should.equal(true)
 	})
 
-	it("should return true for Claude Code short aliases (sonnet, opus)", () => {
-		// These are used by ClaudeCodeHandler.getModel() and should be recognized as Claude 4+
-		isClaude4PlusModelFamily("sonnet").should.equal(true)
-		isClaude4PlusModelFamily("opus").should.equal(true)
+	it("should return false for bare Claude Code CLI selectors", () => {
+		// The subscription catalog no longer offers these; a bare selector names
+		// no version, so it cannot be claimed as Claude 4+.
+		isClaude4PlusModelFamily("sonnet").should.equal(false)
+		isClaude4PlusModelFamily("opus").should.equal(false)
 	})
 
 	it("should return false for Claude 3.x models", () => {

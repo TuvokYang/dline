@@ -1,461 +1,126 @@
-import { afterEach, beforeEach, describe, it, vi } from "vitest"
-import "should"
 import { ClaudeCodeHandler } from "@core/api/providers/claude-code"
+import { claudeCodeModels } from "@core/api/providers/models/claude-code"
+import type { ModelInfo } from "@shared/api"
 import { ApiProfile } from "@shared/proto/dline/profile"
-import { ClineStorageMessage } from "@/shared/messages/content"
+import { describe, expect, it } from "vitest"
 
-describe("ClaudeCodeHandler", () => {
-	let handler: ClaudeCodeHandler
-	let sandbox: any /* sinon.SinonSandbox → vitest */
+function createHandler(modelId?: string): ClaudeCodeHandler {
+	return new ClaudeCodeHandler({
+		profile: ApiProfile.create({ provider: "claude-code", ...(modelId ? { modelId } : {}) }),
+		mode: "act",
+	})
+}
 
-	beforeEach(() => {
-		sandbox = { mockRestore: () => {} }
-		handler = new ClaudeCodeHandler({
-			profile: ApiProfile.create({
-				provider: "claude-code",
-				modelId: "claude-opus-4-1-20250805",
-				claudeCode: { claudeCodePath: "/mock/path" },
-			}),
-			mode: "act",
-		})
+/** Build a handler for a model whose metadata the Profile carries itself. */
+function createHandlerWithModelInfo(modelId: string, modelInfo: Partial<ModelInfo>): ClaudeCodeHandler {
+	return new ClaudeCodeHandler({
+		profile: ApiProfile.create({ provider: "claude-code", modelId, modelInfo: modelInfo as never }),
+		mode: "act",
+	})
+}
+
+describe("ClaudeCodeHandler model resolution", () => {
+	it("returns the configured model", () => {
+		expect(createHandler("claude-sonnet-4-5-20250929").getModel().id).toBe("claude-sonnet-4-5-20250929")
 	})
 
-	afterEach(() => {
-		vi.restoreAllMocks()
+	it("falls back to the default model when none is configured", () => {
+		const model = createHandler().getModel()
+
+		expect(typeof model.id).toBe("string")
+		expect(model.id.length).toBeGreaterThan(0)
+		expect(model.info).toBeTypeOf("object")
 	})
 
-	describe("token counting", () => {
-		it("should correctly handle token usage from assistant messages", async () => {
-			// The 'input_tokens' field represents the TOTAL number of input tokens used.
-			// See https://docs.anthropic.com/en/api/messages#usage-object
+	it.each([
+		["claude-opus-5-5", 1_000_000],
+		["claude-opus-4-7", 1_000_000],
+		["claude-sonnet-4-6", 1_000_000],
+		["claude-sonnet-4-5-20250929", 200_000],
+		["claude-haiku-4-5-20251001", 200_000],
+	])("resolves %s to a %i token context window", (modelId, contextWindow) => {
+		const model = createHandler(modelId).getModel()
 
-			// Mock the runClaudeCode function
-			const runClaudeCodeModule = await import("@/integrations/claude-code/run")
-			const runClaudeCodeStub = vi.spyOn(runClaudeCodeModule, "runClaudeCode")
-
-			// Create a proper async generator mock for the Claude Code response
-			async function* mockGenerator() {
-				// First yield the system init
-				yield {
-					type: "system",
-					subtype: "init",
-					apiKeySource: "api",
-				}
-
-				// Yield assistant message with usage data
-				// Example: If base input is 70 tokens, cache read is 20, and cache creation is 10,
-				// then input_tokens from Anthropic API will be 100 (70 + 20 + 10)
-				yield {
-					type: "assistant",
-					message: {
-						content: [
-							{
-								type: "text",
-								text: "Test response",
-							},
-						],
-						usage: {
-							input_tokens: 100, // Total including cache (per Anthropic docs)
-							output_tokens: 50,
-							cache_read_input_tokens: 20, // Already included in input_tokens
-							cache_creation_input_tokens: 10, // Already included in input_tokens
-						},
-						stop_reason: "end_turn",
-					},
-				}
-
-				// Yield result with cost
-				yield {
-					type: "result",
-					result: {},
-					total_cost_usd: 0.005,
-				}
-			}
-
-			runClaudeCodeStub.mockReturnValue(mockGenerator() as any)
-
-			const systemPrompt = "You are a helpful assistant."
-			const messages: ClineStorageMessage[] = [{ role: "user", content: "Hello" }]
-
-			const usageData: any[] = []
-
-			// Collect the results
-			for await (const chunk of handler.createMessage(systemPrompt, messages)) {
-				if (chunk.type === "usage") {
-					usageData.push({
-						inputTokens: chunk.inputTokens,
-						outputTokens: chunk.outputTokens,
-						cacheReadTokens: chunk.cacheReadTokens,
-						cacheWriteTokens: chunk.cacheWriteTokens,
-						totalCost: chunk.totalCost,
-					})
-				}
-			}
-
-			// Verify token counting follows Anthropic API specification
-			usageData.should.have.length(1)
-			usageData[0].should.deepEqual({
-				inputTokens: 70, // Normalized non-cache input tokens
-				outputTokens: 50,
-				cacheReadTokens: 20,
-				cacheWriteTokens: 10,
-				totalCost: 0.005,
-			})
-
-			// The shared usage convention stores cache tokens separately from non-cache input.
-			usageData[0].inputTokens.should.equal(70)
-			;(usageData[0].inputTokens + usageData[0].cacheReadTokens + usageData[0].cacheWriteTokens).should.equal(100)
-		})
-
-		it("should handle missing usage fields with nullish coalescing", async () => {
-			// Mock the runClaudeCode function
-			const runClaudeCodeModule = await import("@/integrations/claude-code/run")
-			const runClaudeCodeStub = vi.spyOn(runClaudeCodeModule, "runClaudeCode")
-
-			// Create a proper async generator mock with missing/undefined usage fields
-			async function* mockGenerator() {
-				yield {
-					type: "assistant",
-					message: {
-						content: [
-							{
-								type: "text",
-								text: "Test response",
-							},
-						],
-						usage: {
-							input_tokens: 100,
-							output_tokens: 50,
-							// cache fields are undefined/missing
-						},
-						stop_reason: "end_turn",
-					},
-				}
-
-				yield {
-					type: "result",
-					result: {},
-					total_cost_usd: 0.005,
-				}
-			}
-
-			runClaudeCodeStub.mockReturnValue(mockGenerator() as any)
-
-			const systemPrompt = "You are a helpful assistant."
-			const messages: ClineStorageMessage[] = [{ role: "user", content: "Hello" }]
-
-			const usageData: any[] = []
-
-			// Collect the results
-			for await (const chunk of handler.createMessage(systemPrompt, messages)) {
-				if (chunk.type === "usage") {
-					usageData.push({
-						inputTokens: chunk.inputTokens,
-						outputTokens: chunk.outputTokens,
-						cacheReadTokens: chunk.cacheReadTokens,
-						cacheWriteTokens: chunk.cacheWriteTokens,
-					})
-				}
-			}
-
-			// Verify that undefined cache tokens default to 0
-			usageData.should.have.length(1)
-			usageData[0].should.deepEqual({
-				inputTokens: 100,
-				outputTokens: 50,
-				cacheReadTokens: 0, // Should default to 0
-				cacheWriteTokens: 0, // Should default to 0
-			})
-		})
-
-		it("should handle completely missing usage object", async () => {
-			// Mock the runClaudeCode function
-			const runClaudeCodeModule = await import("@/integrations/claude-code/run")
-			const runClaudeCodeStub = vi.spyOn(runClaudeCodeModule, "runClaudeCode")
-
-			// Create a proper async generator mock with missing usage object
-			async function* mockGenerator() {
-				yield {
-					type: "assistant",
-					message: {
-						content: [
-							{
-								type: "text",
-								text: "Test response",
-							},
-						],
-						// usage is undefined
-						usage: undefined,
-						stop_reason: "end_turn",
-					},
-				}
-
-				// Need to yield a result chunk to trigger usage data emission
-				yield {
-					type: "result",
-					result: {},
-					total_cost_usd: 0,
-				}
-			}
-
-			runClaudeCodeStub.mockReturnValue(mockGenerator() as any)
-
-			const systemPrompt = "You are a helpful assistant."
-			const messages: ClineStorageMessage[] = [{ role: "user", content: "Hello" }]
-
-			const usageData: any[] = []
-
-			// Collect the results
-			for await (const chunk of handler.createMessage(systemPrompt, messages)) {
-				if (chunk.type === "usage") {
-					usageData.push({
-						inputTokens: chunk.inputTokens,
-						outputTokens: chunk.outputTokens,
-						cacheReadTokens: chunk.cacheReadTokens,
-						cacheWriteTokens: chunk.cacheWriteTokens,
-					})
-				}
-			}
-
-			// All token counts should default to 0 when usage is undefined
-			usageData.should.have.length(1)
-			usageData[0].should.deepEqual({
-				inputTokens: 0,
-				outputTokens: 0,
-				cacheReadTokens: 0,
-				cacheWriteTokens: 0,
-			})
-		})
+		expect(model.id).toBe(modelId)
+		expect(model.info.capabilities?.contextWindow).toBe(contextWindow)
 	})
 
-	describe("error handling", () => {
-		it("should not crash when assistant message has empty content array", async () => {
-			const runClaudeCodeModule = await import("@/integrations/claude-code/run")
-			const runClaudeCodeStub = vi.spyOn(runClaudeCodeModule, "runClaudeCode")
-
-			async function* mockGenerator() {
-				yield {
-					type: "assistant",
-					message: {
-						content: [], // empty content — triggered TypeError in older code
-						usage: {
-							input_tokens: 10,
-							output_tokens: 0,
-						},
-						stop_reason: "end_turn",
-					},
-				}
-
-				yield {
-					type: "result",
-					result: {},
-					total_cost_usd: 0,
-				}
-			}
-
-			runClaudeCodeStub.mockReturnValue(mockGenerator() as any)
-
-			const chunks: any[] = []
-			// Should not throw
-			for await (const chunk of handler.createMessage("system", [{ role: "user", content: "hi" }])) {
-				chunks.push(chunk)
-			}
-
-			const usageChunk = chunks.find((c) => c.type === "usage")
-			usageChunk.should.be.ok()
-			usageChunk.inputTokens.should.equal(10)
-		})
-
-		it("should throw when result has is_error=true (e.g. rate limit with no assistant message)", async () => {
-			const runClaudeCodeModule = await import("@/integrations/claude-code/run")
-			const runClaudeCodeStub = vi.spyOn(runClaudeCodeModule, "runClaudeCode")
-
-			async function* mockGenerator() {
-				yield {
-					type: "system",
-					subtype: "init",
-					apiKeySource: "none",
-				}
-
-				yield {
-					type: "system",
-					subtype: "rate_limit_event",
-					message: "Rate limit hit",
-					retryAfterSeconds: 30,
-				}
-
-				// No assistant message — CLI hit rate limit and gave up
-				yield {
-					type: "result",
-					subtype: "error",
-					is_error: true,
-					result: "Rate limit exceeded",
-					total_cost_usd: 0,
-					duration_ms: 1000,
-					duration_api_ms: 500,
-					num_turns: 0,
-					session_id: "test",
-				}
-			}
-
-			runClaudeCodeStub.mockReturnValue(mockGenerator() as any)
-
-			let thrownError: Error | undefined
-			try {
-				for await (const _ of handler.createMessage("system", [{ role: "user", content: "hi" }])) {
-					// consume
-				}
-			} catch (err) {
-				thrownError = err as Error
-			}
-
-			thrownError?.message.should.containEql("Rate limit exceeded")
-		})
-
-		it("should ignore rate_limit_event system messages without throwing", async () => {
-			const runClaudeCodeModule = await import("@/integrations/claude-code/run")
-			const runClaudeCodeStub = vi.spyOn(runClaudeCodeModule, "runClaudeCode")
-
-			async function* mockGenerator() {
-				yield {
-					type: "system",
-					subtype: "init",
-					apiKeySource: "none",
-				}
-
-				// Newer Claude Code CLI emits this during rate limiting
-				yield {
-					type: "system",
-					subtype: "rate_limit_event",
-					message: "Rate limit hit, retrying...",
-					retryAfterSeconds: 30,
-				}
-
-				yield {
-					type: "assistant",
-					message: {
-						content: [{ type: "text", text: "Response after retry" }],
-						usage: { input_tokens: 20, output_tokens: 10 },
-						stop_reason: "end_turn",
-					},
-				}
-
-				yield {
-					type: "result",
-					result: {},
-					total_cost_usd: 0,
-				}
-			}
-
-			runClaudeCodeStub.mockReturnValue(mockGenerator() as any)
-
-			const textChunks: string[] = []
-			for await (const chunk of handler.createMessage("system", [{ role: "user", content: "hi" }])) {
-				if (chunk.type === "text") textChunks.push(chunk.text)
-			}
-
-			textChunks.should.deepEqual(["Response after retry"])
-		})
+	it("defaults to the current flagship model", () => {
+		expect(createHandler().getModel().id).toBe("claude-opus-5-5")
 	})
 
-	describe("getModel", () => {
-		it("should return the correct model when specified", () => {
-			const handler = new ClaudeCodeHandler({
-				profile: ApiProfile.create({ provider: "claude-code", modelId: "claude-sonnet-4-5-20250929" }),
-				mode: "act",
-			})
+	// The settings page can offer a remotely discovered model that the bundled
+	// catalog does not know. Substituting the default here would silently bill
+	// a different model than the one the user selected, so a configured ID has
+	// to survive even when it is absent from the catalog.
+	it("keeps a selected model the bundled catalog does not know", () => {
+		expect(createHandler("claude-opus-9-1-20991231").getModel().id).toBe("claude-opus-9-1-20991231")
+	})
 
-			const model = handler.getModel()
-			model.id.should.equal("claude-sonnet-4-5-20250929")
-		})
+	it("keeps the Profile metadata of a remotely discovered model", () => {
+		const model = createHandlerWithModelInfo("claude-opus-9-1-20991231", {
+			id: "claude-opus-9-1-20991231",
+			capabilities: { contextWindow: 500_000, maxTokens: 64_000 },
+		}).getModel()
 
-		it("should support Opus 4.6 1m model id", () => {
-			const handler = new ClaudeCodeHandler({
-				profile: ApiProfile.create({ provider: "claude-code", modelId: "claude-opus-4-6[1m]" }),
-				mode: "act",
-			})
+		expect(model.id).toBe("claude-opus-9-1-20991231")
+		expect(model.info.capabilities?.contextWindow).toBe(500_000)
+		expect(model.info.capabilities?.maxTokens).toBe(64_000)
+	})
 
-			const model = handler.getModel()
-			model.id.should.equal("claude-opus-4-6[1m]")
-			model.info?.capabilities?.contextWindow?.should.equal(1_000_000)
-		})
+	// The metered 1M window and the CLI's bare selectors are not part of a
+	// subscription, so offering either would let the user pick a model whose
+	// requests the plan cannot satisfy.
+	it("offers neither long-context variants nor CLI aliases", () => {
+		const offered = Object.keys(claudeCodeModels)
 
-		it("should support Opus 4.7 model id", () => {
-			const handler = new ClaudeCodeHandler({
-				profile: ApiProfile.create({ provider: "claude-code", modelId: "claude-opus-4-7" }),
-				mode: "act",
-			})
+		expect(offered.filter((id) => id.includes("[1m]"))).toEqual([])
+		expect(offered).not.toContain("sonnet")
+		expect(offered).not.toContain("opus")
+	})
 
-			const model = handler.getModel()
-			model.id.should.equal("claude-opus-4-7")
-			model.info?.capabilities?.contextWindow?.should.equal(200_000)
-		})
+	// Anthropic retires a model outright: requests to it fail rather than
+	// degrade, so a retired entry in the picker is a guaranteed failed request
+	// dressed up as a choice.
+	it("offers no model Anthropic has already retired", () => {
+		const retired = [
+			"claude-opus-4-1-20250805",
+			"claude-opus-4-20250514",
+			"claude-sonnet-4-20250514",
+			"claude-3-7-sonnet-20250219",
+			"claude-3-5-haiku-20241022",
+			"claude-3-haiku-20240307",
+		]
 
-		it("should support Opus 4.7 1m model id", () => {
-			const handler = new ClaudeCodeHandler({
-				profile: ApiProfile.create({ provider: "claude-code", modelId: "claude-opus-4-7[1m]" }),
-				mode: "act",
-			})
+		expect(Object.keys(claudeCodeModels).filter((id) => retired.includes(id))).toEqual([])
+	})
+})
 
-			const model = handler.getModel()
-			model.id.should.equal("claude-opus-4-7[1m]")
-			model.info?.capabilities?.contextWindow?.should.equal(1_000_000)
-		})
+describe("ClaudeCodeHandler subscription capabilities", () => {
+	// The former CLI transport could not carry image blocks and disabled prompt
+	// caching. Direct Messages API access removes both limits, so a regression
+	// back to the CLI-era metadata would silently degrade the provider.
+	it("no longer declares the CLI-era image and prompt-cache restrictions", () => {
+		const capabilities = createHandler("claude-sonnet-4-5-20250929").getModel().info.capabilities
 
-		it("should support Opus 1m alias model id", () => {
-			const handler = new ClaudeCodeHandler({
-				profile: ApiProfile.create({ provider: "claude-code", modelId: "opus[1m]" }),
-				mode: "act",
-			})
+		expect(capabilities?.supportsImages).toBe(true)
+		expect(capabilities?.supportsPromptCache).toBe(true)
+	})
 
-			const model = handler.getModel()
-			model.id.should.equal("opus[1m]")
-			model.info?.capabilities?.contextWindow?.should.equal(1_000_000)
-		})
+	// The CLI parsed tool calls itself, so the catalog never declared native tool
+	// support. Over HTTP an undeclared capability means no tools reach the
+	// request and the model can only answer in prose.
+	it("declares native tool support for every offered model", () => {
+		const withoutTools = Object.entries(claudeCodeModels)
+			.filter(([, info]) => info.capabilities?.supportsTools !== true)
+			.map(([id]) => id)
 
-		it("should support Sonnet 1m alias model id", () => {
-			const handler = new ClaudeCodeHandler({
-				profile: ApiProfile.create({ provider: "claude-code", modelId: "sonnet[1m]" }),
-				mode: "act",
-			})
+		expect(withoutTools).toEqual([])
+	})
 
-			const model = handler.getModel()
-			model.id.should.equal("sonnet[1m]")
-			model.info?.capabilities?.contextWindow?.should.equal(1_000_000)
-		})
+	it("declares an output budget beyond the former CLI cap", () => {
+		const capabilities = createHandler("claude-sonnet-4-5-20250929").getModel().info.capabilities
 
-		it("should support Sonnet 4.5 1m model id", () => {
-			const handler = new ClaudeCodeHandler({
-				profile: ApiProfile.create({ provider: "claude-code", modelId: "claude-sonnet-4-5-20250929[1m]" }),
-				mode: "act",
-			})
-
-			const model = handler.getModel()
-			model.id.should.equal("claude-sonnet-4-5-20250929[1m]")
-			model.info?.capabilities?.contextWindow?.should.equal(1_000_000)
-		})
-
-		it("should support Sonnet 4.6 1m model id", () => {
-			const handler = new ClaudeCodeHandler({
-				profile: ApiProfile.create({ provider: "claude-code", modelId: "claude-sonnet-4-6[1m]" }),
-				mode: "act",
-			})
-
-			const model = handler.getModel()
-			model.id.should.equal("claude-sonnet-4-6[1m]")
-			model.info?.capabilities?.contextWindow?.should.equal(1_000_000)
-		})
-
-		it("should return default model when not specified", () => {
-			const handler = new ClaudeCodeHandler({
-				profile: ApiProfile.create({ provider: "claude-code" }),
-				mode: "act",
-			})
-
-			const model = handler.getModel()
-			// The default model should be set
-			model.id.should.be.type("string")
-			model.info.should.be.type("object")
-		})
+		expect(capabilities?.maxTokens ?? 0).toBeGreaterThan(8192)
 	})
 })

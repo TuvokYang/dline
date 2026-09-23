@@ -286,6 +286,30 @@ describe("provider tool projector", () => {
 		expect(tool).toMatchObject({ name: ClineDefaultTool.FILE_READ, input_schema: { required: ["path"] } })
 	})
 
+	it("projects every Anthropic-protocol provider to the same input-schema shape", () => {
+		// These providers post to the Anthropic Messages API, which rejects a tool
+		// whose `type` is not one of its own tags. Projecting by provider name
+		// alone let claude-code fall through to the OpenAI function wrapper and
+		// fail upstream with `Input tag 'function' ... does not match`.
+		const anthropicProtocolProviders = ["anthropic", "claude-code", "bedrock", "minimax"]
+		const reference = findTool(
+			new ToolPromptGenerator().generate(PromptProfile.Standard, {
+				...BASE_CONTEXT,
+				providerInfo: { ...BASE_CONTEXT.providerInfo, providerId: "anthropic" },
+			}),
+			ClineDefaultTool.FILE_READ,
+		)
+
+		for (const providerId of anthropicProtocolProviders) {
+			const context = { ...BASE_CONTEXT, providerInfo: { ...BASE_CONTEXT.providerInfo, providerId } }
+			const tool = findTool(new ToolPromptGenerator().generate(PromptProfile.Standard, context), ClineDefaultTool.FILE_READ)
+
+			expect(tool, providerId).toEqual(reference)
+			expect(tool, providerId).not.toHaveProperty("type", "function")
+			expect(tool, providerId).not.toHaveProperty("function")
+		}
+	})
+
 	it("includes dependency-gated parameters only when their tool dependency is enabled", () => {
 		const enabledContext = { ...BASE_CONTEXT, focusChainSettings: { enabled: true, remindClineInterval: 6 } }
 		const disabledContext = { ...BASE_CONTEXT, focusChainSettings: { enabled: false, remindClineInterval: 6 } }

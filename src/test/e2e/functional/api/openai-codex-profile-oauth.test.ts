@@ -551,7 +551,14 @@ function codexEnvironment(
 		DLINE_E2E_OPENAI_CODEX_API_BASE_URL: `${server.baseUrl}/codex`,
 		DLINE_E2E_OPENAI_CODEX_USAGE_URL: `${server.baseUrl}/usage`,
 		DLINE_E2E_OPENAI_CODEX_OAUTH_MODE: mode,
-		...(options.callbackPorts ? { DLINE_E2E_OPENAI_CODEX_CALLBACK_PORTS: options.callbackPorts.join(",") } : {}),
+		// Default to an OS-assigned port rather than the production callback ports.
+		// Those are fixed because the provider registered them, but a test host may
+		// have them reserved or occupied, which fails the sign-in while the callback
+		// server starts and reports a defect the product does not have. The mock
+		// authorization endpoint echoes back whichever `redirect_uri` it receives,
+		// so the flow under test is unchanged. A test that is specifically about
+		// port selection still passes its own ports.
+		DLINE_E2E_OPENAI_CODEX_CALLBACK_PORTS: (options.callbackPorts ?? [0]).join(","),
 		...(options.timeoutMs ? { DLINE_E2E_OPENAI_CODEX_OAUTH_TIMEOUT_MS: String(options.timeoutMs) } : {}),
 	}
 }
@@ -1110,6 +1117,18 @@ e2e(
 
 			await sidebar.getByRole("button", { name: "Done", exact: true }).click()
 			await selectProfile(sidebar, profile.name)
+			// End the turn on the first reply. The default mock response carries no
+			// tool call, so the agent loop would legitimately keep requesting and the
+			// request count would depend on loop timing rather than on the credential
+			// under test.
+			server.enqueueCodexResponseEvents(
+				codexConversationEvents(`CODEX_E2E_${accountId}`, "manual_json", false, {
+					itemId: "fc_manual_json_complete",
+					callId: "call_manual_json_complete",
+					name: "attempt_completion",
+					arguments: JSON.stringify({ result: `CODEX_E2E_${accountId}` }),
+				}),
+			)
 			await send(sidebar, "Run manually imported Codex Profile", `CODEX_E2E_${accountId}`)
 			await expect.poll(() => server.codexRequests.length).toBe(1)
 			expect(server.codexRequests[0]).toMatchObject({ authorization: `Bearer ${accessToken}`, accountId })

@@ -5,11 +5,19 @@ package dline.provider;
 import "dline/models/metadata.proto";
 import "dline/provider/common.proto";
 
-/** Claude Code CLI-specific provider configuration. */
+/**
+ * Claude Code subscription provider configuration.
+ *
+ * Requests go directly to the Messages API with a subscription OAuth
+ * credential, so there is no local CLI to locate and no per-token pricing to
+ * apply. Field 4 (pricing) and field 5 (claude_code_path) are reserved because
+ * older clients may still send them.
+ */
 message ClaudeCodeProviderConfig {
+  reserved 4, 5;
+  reserved "pricing", "claude_code_path";
+
   ReasoningConfig reasoning = 1;
   bool custom_model_enabled = 2;
   dline.models.ModelCapabilities capabilities = 3;
-  dline.models.ModelPricing pricing = 4;
-  string claude_code_path = 5;
 }

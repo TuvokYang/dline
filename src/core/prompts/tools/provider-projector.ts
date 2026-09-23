@@ -123,6 +123,16 @@ function toGoogle(
 	}
 }
 
+/**
+ * Providers that post to the Anthropic Messages API.
+ *
+ * The projection follows the wire protocol, not the vendor: that API validates
+ * each tool by its `type` tag and rejects the OpenAI function wrapper, so any
+ * provider speaking it needs the input-schema shape regardless of how its
+ * credentials or catalog are obtained.
+ */
+const ANTHROPIC_PROTOCOL_PROVIDERS: ReadonlySet<string> = new Set(["anthropic", "claude-code", "bedrock", "minimax"])
+
 /** Projects one canonical profile spec to the active provider schema. */
 export function projectTool(
 	spec: ProfileToolSpec,
@@ -130,7 +140,7 @@ export function projectTool(
 	enabledToolIds: ReadonlySet<ClineDefaultTool>,
 ): ClineTool {
 	const providerId = context.providerInfo.providerId
-	if (providerId === "anthropic" || providerId === "bedrock" || providerId === "minimax") {
+	if (ANTHROPIC_PROTOCOL_PROVIDERS.has(providerId)) {
 		return toAnthropic(spec, context, enabledToolIds)
 	}
 	if (providerId === "gemini" || (providerId === "vertex" && context.providerInfo.model.id.includes("gemini"))) {

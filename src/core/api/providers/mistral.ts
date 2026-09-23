@@ -2,6 +2,7 @@ import { Mistral } from "@mistralai/mistralai"
 import { HTTPClient } from "@mistralai/mistralai/lib/http"
 import { Tool as MistralTool } from "@mistralai/mistralai/models/components/tool"
 import { MistralModelId, ModelInfo, mistralDefaultModelId, mistralModels } from "@shared/api"
+import { resolveForcedToolUseSupport } from "@shared/utils/reasoning-support"
 import type { ChatCompletionTool as OpenAITool } from "openai/resources/chat/completions"
 import { buildExternalBasicHeaders } from "@/services/EnvUtils"
 import { ClineStorageMessage } from "@/shared/messages/content"
@@ -90,15 +91,20 @@ export class MistralHandler implements ApiHandler {
 	@withRetry()
 	async *createMessage(systemPrompt: string, messages: ClineStorageMessage[], tools?: OpenAITool[]): ApiStream {
 		const client = this.ensureClient()
+		const model = this.getModel()
+		const nativeToolsOn = (tools?.length ?? 0) > 0
+		// A model that rejects a forced choice fails the whole request rather than
+		// degrading to an automatic one.
+		const forcedToolUseOn = resolveForcedToolUseSupport(model.id, model.info.capabilities)
 		const stream = await client.chat
 			.stream({
-				model: this.getModel().id,
+				model: model.id,
 				// max_completion_tokens: this.getModel().info.capabilities?.maxTokens,
 				temperature: 0,
 				messages: [{ role: "system", content: systemPrompt }, ...convertToMistralMessages(messages)],
 				stream: true,
-				tools: tools?.length ? (tools as MistralTool[]) : undefined,
-				toolChoice: tools?.length ? "any" : undefined,
+				tools: nativeToolsOn ? (tools as MistralTool[]) : undefined,
+				toolChoice: nativeToolsOn ? (forcedToolUseOn ? "any" : "auto") : undefined,
 			})
 			.catch((err) => {
 				// The Mistal SDK uses statusCode instead of status

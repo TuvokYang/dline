@@ -248,12 +248,21 @@ describe("AnthropicHandler", () => {
 			expect(handler.supportsServerTool(ServerTool.WEB_SEARCH)).to.equal(true)
 		})
 
+		// A model that accepts forcing keeps it, so giving the hosted-tool rule a
+		// wider reach than it needs would let the model answer in prose where a
+		// tool call is required. Every catalog model is adaptive now, so this
+		// declares a budget-mode one rather than asserting on a model that would
+		// refuse forcing for its own unrelated reason.
 		it("still forces a tool choice when the request carries no hosted server tools", async () => {
 			const handler = new AnthropicHandler({
 				profile: ApiProfile.create({
 					provider: "anthropic",
 					apiKey: "test-api-key",
-					modelId: "claude-sonnet-4-6",
+					modelId: "claude-budget-mode-model",
+					anthropic: {
+						customModelEnabled: true,
+						capabilities: { supportsTools: true, thinking: { supported: true, mode: "budget", maxBudget: 8_192 } },
+					},
 				}),
 				mode: "act",
 			})
@@ -284,6 +293,42 @@ describe("AnthropicHandler", () => {
 				},
 			])
 			expect(standardCreate.mock.calls[0]?.[0]?.tool_choice).to.deep.equal({ type: "any" })
+		})
+
+		// Adaptive thinking is effectively always on, and thinking cannot be
+		// combined with forced tool use, so upstream answers
+		// `tool_choice: type "tool" and "any" are not supported for this model`
+		// instead of degrading to an automatic choice.
+		it("never forces a tool choice on an adaptive-thinking model", async () => {
+			const handler = new AnthropicHandler({
+				profile: ApiProfile.create({
+					provider: "anthropic",
+					apiKey: "test-api-key",
+					modelId: "claude-opus-5-5",
+				}),
+				mode: "act",
+			})
+			const standardCreate = vi.fn().mockResolvedValue(createAsyncIterable())
+			vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
+				messages: { create: standardCreate },
+				beta: { messages: { _client: {}, create: vi.fn().mockResolvedValue(createAsyncIterable()) } },
+			})
+
+			for await (const _chunk of handler.createMessage(
+				"system prompt",
+				[{ role: "user", content: "Read" }],
+				[
+					{
+						name: "read_file",
+						description: "Read",
+						input_schema: { type: "object", properties: {} },
+					},
+				],
+			)) {
+			}
+
+			expect(standardCreate.mock.calls[0]?.[0]?.model).to.equal("claude-opus-5-5")
+			expect(standardCreate.mock.calls[0]?.[0]?.tool_choice).to.deep.equal({ type: "auto" })
 		})
 
 		it("never forces a tool choice on Fable 5.1, which rejects forced tool use", async () => {

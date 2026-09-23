@@ -42,6 +42,14 @@ export interface DeepSeekAdaptiveThinkingSettings {
 	effort?: DeepSeekReasoningEffort
 }
 
+/**
+ * Report whether adaptive thinking starts on for a model.
+ *
+ * Deliberately narrower than {@link isClaudeAdaptiveThinkingModel}: the 4.6
+ * generation supports adaptive thinking but leaves it off until the user asks
+ * for it, while the 5 series starts with it on. The two answers differ, so they
+ * stay separate predicates rather than one shared list.
+ */
 export function isClaudeAdaptiveThinkingEnabledByDefault(modelId?: string): boolean {
 	const id = modelId?.toLowerCase()
 	return (
@@ -55,30 +63,82 @@ export function canDisableClaudeAdaptiveThinking(modelId?: string): boolean {
 	return modelId?.toLowerCase().includes("claude-fable-5") !== true
 }
 
-/**
- * Report whether a Claude model still accepts a forced tool choice.
- *
- * Fable 5.1 rejects forced tool use with an error instead of degrading to an
- * automatic choice, so any caller that would otherwise send `tool_choice: any`
- * (including OpenAI-compatible layers mapping `required`) must ask here first.
- */
-export function supportsClaudeForcedToolUse(modelId?: string): boolean {
-	return modelId?.toLowerCase().includes("claude-fable-5-1") !== true
+/** Model capabilities this resolution reads; a subset of `ModelCapabilities`. */
+interface ForcedToolUseCapabilities {
+	supportsForcedToolUse?: boolean
+	thinking?: { mode?: string }
 }
 
-export function isClaudeOpusAdaptiveThinkingModel(modelId?: string): boolean {
+/**
+ * Report whether a model accepts a forced tool choice such as `tool_choice: any`.
+ *
+ * Models that reject it answer `tool_choice: type "tool" and "any" are not
+ * supported for this model` and fail the whole generation, so the decision has
+ * to be right before the request is sent rather than recovered afterwards.
+ *
+ * The model's own declaration wins. Only when one is missing does this infer,
+ * and only for Claude: adaptive thinking there stays on, and thinking cannot be
+ * combined with forced tool use. That inference is deliberately not applied to
+ * other vendors, whose effort-mode thinking carries no such restriction, so an
+ * undeclared non-Claude model keeps the forced choice it has always sent.
+ */
+export function resolveForcedToolUseSupport(modelId?: string, capabilities?: ForcedToolUseCapabilities): boolean {
+	if (capabilities?.supportsForcedToolUse !== undefined) {
+		return capabilities.supportsForcedToolUse
+	}
+	if (!isClaudeModelId(modelId)) {
+		return true
+	}
+	if (capabilities?.thinking?.mode !== undefined) {
+		return capabilities.thinking.mode !== "effort"
+	}
+	// The request path already decides which models take an effort level, so
+	// reusing that answer keeps one model from being forceable here and
+	// adaptive there. A second list drifts apart from it silently.
+	return !isClaudeAdaptiveThinkingModel(modelId)
+}
+
+/** Identify a Claude model, whose forced-tool-use rules this module encodes. */
+function isClaudeModelId(modelId?: string): boolean {
+	return modelId?.toLowerCase().includes("claude") === true
+}
+
+/** Claude releases from 4.6 onward, whose generation keeps adaptive thinking on. */
+const CLAUDE_ADAPTIVE_GENERATION_VERSIONS = ["4-6", "4.6", "4-7", "4.7", "4-8", "4.8"] as const
+
+/**
+ * Identify a Claude model whose generation keeps adaptive thinking on.
+ *
+ * This covers the whole generation rather than one family: Sonnet 4.6 behaves
+ * like Opus 4.6 here, and a check that named only Opus would disagree with the
+ * catalogs that declare both adaptive. Model IDs are matched loosely because the
+ * same model reaches us renamed by Vertex, Bedrock, and OpenRouter.
+ */
+export function isClaudeAdaptiveThinkingModel(modelId?: string): boolean {
 	if (!modelId) {
 		return false
 	}
 
 	const id = modelId.toLowerCase()
-	// Fable 5, Opus 5, Opus 4.6/4.7/4.8, and Sonnet 5 support adaptive thinking
 	if (id.includes("claude-fable-5") || id.includes("claude-opus-5") || id.includes("claude-sonnet-5")) {
 		return true
 	}
-	const adaptiveVersions = ["4-6", "4.6", "4-7", "4.7", "4-8", "4.8"]
-	return adaptiveVersions.some((version) => id.includes(`claude-opus-${version}`) || id.includes(`claude-${version}-opus`))
+	return CLAUDE_ADAPTIVE_GENERATION_VERSIONS.some(
+		(version) =>
+			id.includes(`claude-opus-${version}`) ||
+			id.includes(`claude-sonnet-${version}`) ||
+			id.includes(`claude-${version}-opus`) ||
+			id.includes(`claude-${version}-sonnet`),
+	)
 }
+
+/**
+ * Historical name for {@link isClaudeAdaptiveThinkingModel}.
+ *
+ * Kept because several provider request paths import it; the rule was never
+ * Opus-only, so the name is the part that was wrong.
+ */
+export const isClaudeOpusAdaptiveThinkingModel = isClaudeAdaptiveThinkingModel
 
 export function resolveClaudeOpusAdaptiveThinking(
 	reasoningEffort?: string,

@@ -3,7 +3,11 @@ import { AnthropicVertex } from "@anthropic-ai/vertex-sdk"
 import { FunctionDeclaration as GoogleTool } from "@google/genai"
 import { CLAUDE_SONNET_1M_SUFFIX, ModelInfo, VertexModelId, vertexDefaultModelId, vertexModels } from "@shared/api"
 import { observeProviderStream } from "@shared/provider-attempt-observer"
-import { isClaudeOpusAdaptiveThinkingModel, resolveClaudeOpusAdaptiveThinking } from "@shared/utils/reasoning-support"
+import {
+	isClaudeOpusAdaptiveThinkingModel,
+	resolveClaudeOpusAdaptiveThinking,
+	resolveForcedToolUseSupport,
+} from "@shared/utils/reasoning-support"
 import { buildExternalBasicHeaders } from "@/services/EnvUtils"
 import { ClineStorageMessage } from "@/shared/messages/content"
 import { ClineTool } from "@/shared/tools"
@@ -143,8 +147,15 @@ export class VertexHandler implements ApiHandler {
 			// - none: disables tool use, even if tools are provided. Claude will not call any tools.
 			// - auto: allows Claude to decide whether to call any provided tools or not. This is the default value when tools are provided.
 			// - any: tells Claude that it must use one of the provided tools, but doesn’t force a particular tool.
-			// NOTE: Forcing tool use when tools are provided will result in error when thinking is also enabled.
-			tool_choice: nativeToolsOn && !thinkingEnabled ? { type: "any" } : undefined,
+			// A model that rejects forcing fails the whole request rather than
+			// degrading, and thinking cannot be combined with a forced choice.
+			tool_choice: !nativeToolsOn
+				? undefined
+				: !resolveForcedToolUseSupport(modelId, model.info.capabilities)
+					? { type: "auto" }
+					: !thinkingEnabled
+						? { type: "any" }
+						: undefined,
 		}
 		if (outputConfig) {
 			requestBody.output_config = outputConfig

@@ -18,7 +18,10 @@ import Mutex from "p-mutex"
 import { hashPromptContent } from "./hash"
 import { buildPromptFreshnessBaseline, comparePromptFreshness } from "./PromptFreshnessProjection"
 
-export const SYSTEM_PROMPT_CONTRACT_VERSION = 5
+// 6: claude-code tools were frozen in the OpenAI function shape, which the
+// Anthropic Messages API rejects. The provider identity is unchanged, so only
+// a contract bump discards those stored projections for an in-flight task.
+export const SYSTEM_PROMPT_CONTRACT_VERSION = 6
 
 export interface BuiltSystemPrompt {
 	readonly systemPrompt: string

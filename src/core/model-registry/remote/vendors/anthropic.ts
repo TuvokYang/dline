@@ -49,9 +49,11 @@ function readPromptCacheSupport(raw: unknown): boolean | undefined {
 }
 
 export class AnthropicModelSource extends ModelListingSource {
-	readonly providerId = "anthropic"
-	readonly providerName = "Anthropic"
-	override readonly requiresApiKey = true
+	// Declared as the contract types rather than literals so a vendor that
+	// shares this wire format can subclass it with its own identity.
+	readonly providerId: string = "anthropic"
+	readonly providerName: string = "Anthropic"
+	override readonly requiresApiKey: boolean = true
 	/** The listing supplements the built-in catalog; it must not drop local pricing. */
 	override readonly reconciliation: ProviderModelReconciliationMode = "overlay-remote"
 	protected override readonly defaultBaseUrl = "https://api.anthropic.com"

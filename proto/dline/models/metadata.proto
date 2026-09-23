@@ -57,6 +57,11 @@ message ModelCapabilities {
   // Whether the model can consume screenshots and operate browser_action.
   // Omitted legacy metadata falls back to supports_images.
   optional bool supports_browser_action = 13;
+  // Whether the model accepts a forced tool choice such as Anthropic
+  // `tool_choice: any`. Models that reject it fail the whole request rather
+  // than degrading to an automatic choice. Omitted metadata is inferred from
+  // the declared thinking mode.
+  optional bool supports_forced_tool_use = 14;
 }
 
 /** Pricing tier for context-window-based tiered models. */

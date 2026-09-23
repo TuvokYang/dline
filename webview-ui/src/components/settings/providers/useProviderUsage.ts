@@ -4,7 +4,18 @@ import { protoToAccountUsage } from "@shared/proto-conversions/account-usage-con
 import { useCallback, useEffect, useRef, useState } from "react"
 import { AccountServiceClient } from "@/services/grpc-client"
 
-const USAGE_POLL_INTERVAL_MS = 60_000
+export const USAGE_POLL_INTERVAL_MS = 60_000
+
+export interface ProviderUsageOptions {
+	/**
+	 * How often to re-read the snapshot, or `null` to read it only on demand.
+	 *
+	 * A provider whose usage endpoint is billed against the same subscription
+	 * that serves conversations opts out of the timer, matching the handler's
+	 * own polling declaration. The explicit refresh stays available either way.
+	 */
+	readonly pollIntervalMs?: number | null
+}
 
 export interface ProviderUsageState {
 	readonly usage?: AccountUsageData
@@ -18,13 +29,15 @@ export interface ProviderUsageState {
 }
 
 /** Profile-scoped client for the shared provider usage capability. */
-export function useProviderUsage(profileId: string, enabled: boolean): ProviderUsageState {
+export function useProviderUsage(profileId: string, enabled: boolean, options: ProviderUsageOptions = {}): ProviderUsageState {
+	const pollIntervalMs = options.pollIntervalMs === undefined ? USAGE_POLL_INTERVAL_MS : options.pollIntervalMs
 	const [usage, setUsage] = useState<AccountUsageData>()
 	const [loading, setLoading] = useState(false)
 	const [refreshing, setRefreshing] = useState(false)
 	const [resetting, setResetting] = useState(false)
 	const [error, setError] = useState<string>()
 	const [resetError, setResetError] = useState<string>()
+	const [pollingStopped, setPollingStopped] = useState(false)
 	const profileRef = useRef(profileId)
 	const usageRef = useRef<AccountUsageData>()
 	const requestSequence = useRef(0)
@@ -56,10 +69,18 @@ export function useProviderUsage(profileId: string, enabled: boolean): ProviderU
 				return undefined
 			}
 			setUsage(nextUsage)
+			// A read that succeeds proves the credential and the network are
+			// working again, so a timer stopped by an earlier failure resumes.
+			setPollingStopped(false)
 			return nextUsage
 		} catch {
 			if (mounted.current && sequence === requestSequence.current && profileRef.current === requestProfileId) {
 				setError("Provider usage could not be loaded.")
+				// A failed read is most often a rejected credential, which a timer
+				// cannot resolve. Repeating it would spend the account's own
+				// request budget on an outcome that only signing in again fixes,
+				// so recovery is left to the explicit refresh.
+				setPollingStopped(true)
 			}
 			return undefined
 		} finally {
@@ -78,11 +99,16 @@ export function useProviderUsage(profileId: string, enabled: boolean): ProviderU
 		setResetError(undefined)
 		setLoading(false)
 		setRefreshing(false)
+		setPollingStopped(false)
 		if (!enabled) return
 		void refresh()
-		const interval = window.setInterval(() => void refresh(), USAGE_POLL_INTERVAL_MS)
-		return () => window.clearInterval(interval)
 	}, [enabled, refresh])
+
+	useEffect(() => {
+		if (!enabled || pollingStopped || pollIntervalMs === null) return
+		const interval = window.setInterval(() => void refresh(), pollIntervalMs)
+		return () => window.clearInterval(interval)
+	}, [enabled, pollingStopped, pollIntervalMs, refresh])
 
 	const consumeResetCredit = useCallback(
 		async (creditId: string): Promise<AccountUsageResetResult | undefined> => {

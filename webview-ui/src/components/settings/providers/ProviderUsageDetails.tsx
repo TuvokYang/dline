@@ -29,8 +29,20 @@ export function formatProviderUsageCurrency(currency: string | undefined, amount
 	}
 }
 
+/**
+ * Report whether a quota carries a percentage that can be shown.
+ *
+ * A quota missing a usable bound or reading says nothing about the account, and
+ * `Math.min`/`Math.max` propagate NaN rather than clamping it. Reporting such a
+ * quota as 0% would claim it is exhausted, so callers drop it instead of
+ * turning missing data into a definite state.
+ */
+export function isReadableUsageQuota(quota: AccountUsageQuotaData): boolean {
+	return Number.isFinite(quota.limit) && quota.limit > 0 && Number.isFinite(quota.used)
+}
+
 export function usageRemainingPercent(quota: AccountUsageQuotaData): number {
-	if (!Number.isFinite(quota.limit) || quota.limit <= 0) return 0
+	if (!isReadableUsageQuota(quota)) return 0
 	return Math.max(0, Math.min(100, ((quota.limit - quota.used) / quota.limit) * 100))
 }
 
@@ -39,15 +51,13 @@ export function usageUsedPercent(quota: AccountUsageQuotaData): number {
 }
 
 export function selectEffectiveUsageQuota(quotas: readonly AccountUsageQuotaData[]): AccountUsageQuotaData | undefined {
-	return quotas
-		.filter((quota) => Number.isFinite(quota.limit) && quota.limit > 0)
-		.sort((left, right) => {
-			const remainingDifference = usageRemainingPercent(left) - usageRemainingPercent(right)
-			if (remainingDifference !== 0) return remainingDifference
-			if (left.type === "5hour") return -1
-			if (right.type === "5hour") return 1
-			return 0
-		})[0]
+	return quotas.filter(isReadableUsageQuota).sort((left, right) => {
+		const remainingDifference = usageRemainingPercent(left) - usageRemainingPercent(right)
+		if (remainingDifference !== 0) return remainingDifference
+		if (left.type === "5hour") return -1
+		if (right.type === "5hour") return 1
+		return 0
+	})[0]
 }
 
 export function providerUsageProgressTone(remainingPercent: number): ProviderUsageProgressTone {
