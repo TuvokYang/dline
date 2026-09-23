@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto"
 import type { Anthropic } from "@anthropic-ai/sdk"
 import { accountUsageCoordinator } from "@core/account-usage/AccountUsageCoordinator"
-import { decorateProviderAccountUsage } from "@core/account-usage/provider-usage"
+import { allowsAccountUsagePolling, decorateProviderAccountUsage } from "@core/account-usage/provider-usage"
 import {
 	type AccountUsage,
 	type AccountUsageResetResult,
@@ -103,6 +103,7 @@ import { clearRemoteConfig } from "../storage/remote-config/utils"
 import { type PersistenceErrorEvent, StateManager } from "../storage/StateManager"
 import { UIMessage } from "../storage/UIMessage"
 import { Task } from "../task"
+import type { TaskActivityStore } from "../task/activity/TaskActivityStore"
 import { isInteractionActionType } from "../task/interaction/Interaction"
 import { readDiscoveredToggles } from "./file/capability-discovery-cache"
 import {
@@ -760,6 +761,13 @@ export class Controller {
 	/** Return the task identity owned by either the interactive runtime or lightweight history display. */
 	getCurrentTaskId(): string | undefined {
 		return this.task?.taskId ?? this.historyDisplaySession?.taskId
+	}
+
+	/** Return the activity store owned by the exact visible task surface. */
+	getCurrentTaskActivityStore(taskId: string): TaskActivityStore | undefined {
+		if (this.task?.taskId === taskId) return this.task.activityStore
+		if (this.historyDisplaySession?.taskId === taskId) return this.historyDisplaySession.activityStore
+		return undefined
 	}
 
 	/** Return whether this Controller already owns a visible task surface. */
@@ -2593,11 +2601,12 @@ export class Controller {
 				await sendAccountUsageUpdate(this, undefined)
 			}
 			const handler = buildApiHandler(apiConfig, mode)
-			if (!handler.getAccountUsage) {
+			if (!allowsAccountUsagePolling(handler)) {
+				handler.abort?.()
 				await clearStaleUsage()
 				return
 			}
-			const loadAccountUsage = handler.getAccountUsage.bind(handler)
+			const loadAccountUsage = handler.getAccountUsage!.bind(handler)
 			const getAccountUsage = async () => decorateProviderAccountUsage(profile, await loadAccountUsage())
 			this.accountUsageHandler = handler
 			let usage: AccountUsage | undefined
