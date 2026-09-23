@@ -289,6 +289,10 @@ message AccountUsage {
   optional bool limit_reached = 15;
   repeated AccountUsageResetCredit reset_credits = 16;
   optional uint32 reset_credits_available_count = 17;
+  // ISO timestamp of the read that produced this snapshot. A snapshot is kept
+  // until the user refreshes it, so the surfaces state its age rather than
+  // implying the numbers are current.
+  optional string retrieved_at = 18;
 }
 
 message State {

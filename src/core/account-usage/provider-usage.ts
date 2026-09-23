@@ -16,12 +16,45 @@ export function allowsAccountUsagePolling(handler: AccountUsageSource): boolean 
 	return Boolean(handler.getAccountUsage) && handler.supportsAccountUsagePolling !== false
 }
 
-/** Attach the Profile identity owned by the service boundary to a provider snapshot. */
+/** What a scheduled tick should do with one Profile's usage capability. */
+export type AccountUsageReadDecision = "skip" | "read"
+
+/**
+ * Decide whether this tick should read usage for `profileKey`.
+ *
+ * Refusing the timer is not the same as refusing to be read. The chat input bar
+ * renders only from the snapshot the Controller publishes, so a provider that
+ * was never read leaves it with nothing to show. An opted-out provider is
+ * therefore read once per Profile and skipped afterwards, which keeps the bar
+ * populated without spending the subscription budget that also serves
+ * conversations.
+ *
+ * @param alreadyReadKey Profile key already read outside the timer, if any.
+ */
+export function decideAccountUsageRead(
+	handler: AccountUsageSource,
+	profileKey: string,
+	alreadyReadKey: string | undefined,
+): AccountUsageReadDecision {
+	if (!handler.getAccountUsage) return "skip"
+	if (allowsAccountUsagePolling(handler)) return "read"
+	return alreadyReadKey === profileKey ? "skip" : "read"
+}
+
+/**
+ * Attach the Profile identity and read time owned by the service boundary.
+ *
+ * The timestamp is stamped here because every read passes through this
+ * function, and a snapshot that is held until the user refreshes it has to be
+ * able to state its own age. A provider that reports its own retrieval time
+ * keeps it.
+ */
 export function decorateProviderAccountUsage(profile: ApiProfile, usage: AccountUsage | undefined): AccountUsage | undefined {
 	if (!usage) return undefined
 	return {
 		...usage,
 		profileId: profile.id,
 		providerId: profile.provider,
+		retrievedAt: usage.retrievedAt ?? new Date().toISOString(),
 	}
 }

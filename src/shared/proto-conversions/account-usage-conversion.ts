@@ -132,6 +132,7 @@ export function accountUsageToProto(data?: AccountUsageData): ProtoAccountUsage 
 		resetCredits:
 			(data.resetCredits?.map(resetCreditToProto).filter(Boolean) as ProtoAccountUsageResetCredit[] | undefined) ?? [],
 		resetCreditsAvailableCount: data.resetCreditsAvailableCount,
+		retrievedAt: data.retrievedAt,
 		isAvailable: data.isAvailable,
 		dailyInputTokens: data.dailyInputTokens,
 		dailyOutputTokens: data.dailyOutputTokens,

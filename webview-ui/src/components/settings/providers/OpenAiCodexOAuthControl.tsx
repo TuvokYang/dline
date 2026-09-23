@@ -164,7 +164,10 @@ export function OpenAiCodexOAuthControl({
 							<div className="mt-0.5 truncate">{accountEmail}</div>
 						) : null}
 						{accountExpiry ? <div className="mt-0.5 truncate">Sign-in expires {accountExpiry}</div> : null}
-						<OpenAiCodexUsage enabled profileId={profileId} />
+						{/* Read on demand like Claude Code: the usage endpoint is
+						    billed against the subscription that serves
+						    conversations, so a timer would spend that budget. */}
+						<OpenAiCodexUsage enabled pollIntervalMs={null} profileId={profileId} />
 					</div>
 				) : null}
 			</div>

@@ -29,6 +29,15 @@ const SEVEN_DAY_SECONDS = 7 * 24 * 60 * 60
 const FIVE_HOUR_QUOTA_TYPE = "5hour"
 const WEEKLY_QUOTA_TYPE = "weekly"
 const WEEKLY_OVERAGE_QUOTA_TYPE = "weekly_overage_included"
+/**
+ * The weekly allowance reserved for the most capable model family.
+ *
+ * Upstream still keys it `seven_day_opus`, but it is the window a Fable
+ * conversation spends, and it runs out well before the general weekly one. It
+ * is a separate identity because exhausting it blocks that family while the
+ * other windows still have room.
+ */
+const WEEKLY_FABLE_QUOTA_TYPE = "weekly_fable"
 
 export interface ClaudeCodeUsageWindow {
 	/** Percentage of the window already consumed. */
@@ -41,6 +50,8 @@ export interface ClaudeCodeUsageSnapshot {
 	readonly fiveHour?: ClaudeCodeUsageWindow
 	readonly sevenDay?: ClaudeCodeUsageWindow
 	readonly sevenDayOverageIncluded?: ClaudeCodeUsageWindow
+	/** Weekly allowance for the most capable family, keyed `seven_day_opus`. */
+	readonly sevenDayFable?: ClaudeCodeUsageWindow
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -63,10 +74,12 @@ export function parseClaudeCodeUsage(value: unknown): ClaudeCodeUsageSnapshot {
 	const fiveHour = parseWindow(value.five_hour)
 	const sevenDay = parseWindow(value.seven_day)
 	const sevenDayOverageIncluded = parseWindow(value.seven_day_overage_included)
+	const sevenDayFable = parseWindow(value.seven_day_opus)
 	return {
 		...(fiveHour ? { fiveHour } : {}),
 		...(sevenDay ? { sevenDay } : {}),
 		...(sevenDayOverageIncluded ? { sevenDayOverageIncluded } : {}),
+		...(sevenDayFable ? { sevenDayFable } : {}),
 	}
 }
 
@@ -103,6 +116,7 @@ export function toAccountUsage(snapshot: ClaudeCodeUsageSnapshot): AccountUsageD
 		// The overage window is what actually gates a subscription that has one,
 		// so parsing it and then dropping it would hide the binding limit.
 		toQuota(WEEKLY_OVERAGE_QUOTA_TYPE, "7 day (overage)", SEVEN_DAY_SECONDS, snapshot.sevenDayOverageIncluded),
+		toQuota(WEEKLY_FABLE_QUOTA_TYPE, "Fable this week", SEVEN_DAY_SECONDS, snapshot.sevenDayFable),
 	].filter((quota): quota is AccountUsageQuotaData => quota !== undefined)
 
 	const limitReached = quotas.some((quota) => quota.used >= quota.limit)

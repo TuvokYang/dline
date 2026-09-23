@@ -1,7 +1,11 @@
 import { createHash, randomUUID } from "node:crypto"
 import type { Anthropic } from "@anthropic-ai/sdk"
 import { accountUsageCoordinator } from "@core/account-usage/AccountUsageCoordinator"
-import { allowsAccountUsagePolling, decorateProviderAccountUsage } from "@core/account-usage/provider-usage"
+import {
+	allowsAccountUsagePolling,
+	decideAccountUsageRead,
+	decorateProviderAccountUsage,
+} from "@core/account-usage/provider-usage"
 import {
 	type AccountUsage,
 	type AccountUsageResetResult,
@@ -416,6 +420,13 @@ export class Controller {
 	// Account usage data (refreshed every 60s, zero overhead on state push)
 	private _accountUsage?: AccountUsage
 	private accountUsageProfileKey?: string
+	/**
+	 * Profile key whose usage was already read outside the timer.
+	 *
+	 * A provider that refuses polling still has one snapshot worth showing, so
+	 * the read happens once per Profile instead of on every tick.
+	 */
+	private accountUsageSingleReadKey?: string
 	// Disposal function returned by StateManager.registerCallbacks().
 	// Invoked in dispose() to unregister this controller from global
 	// state-change notifications so closed windows don't keep receiving them.
@@ -2601,9 +2612,12 @@ export class Controller {
 				await sendAccountUsageUpdate(this, undefined)
 			}
 			const handler = buildApiHandler(apiConfig, mode)
-			if (!allowsAccountUsagePolling(handler)) {
+			if (decideAccountUsageRead(handler, profileKey, this.accountUsageSingleReadKey) === "skip") {
 				handler.abort?.()
-				await clearStaleUsage()
+				// Only a provider that cannot report usage at all invalidates the
+				// published snapshot; a skipped repeat must keep showing the one
+				// reading this Profile already produced.
+				if (!handler.getAccountUsage) await clearStaleUsage()
 				return
 			}
 			const loadAccountUsage = handler.getAccountUsage!.bind(handler)
@@ -2625,6 +2639,10 @@ export class Controller {
 				await clearStaleUsage()
 				return
 			}
+			// Marked only once a reading actually arrived. Marking before the
+			// request would turn a first failure, or a view hidden mid-request,
+			// into a Profile that is never read again.
+			if (!allowsAccountUsagePolling(handler)) this.accountUsageSingleReadKey = profileKey
 			if (JSON.stringify(this._accountUsage) === JSON.stringify(usage)) {
 				return
 			}
@@ -2654,6 +2672,9 @@ export class Controller {
 		const hadUsage = this._accountUsage !== undefined
 		this._accountUsage = undefined
 		this.accountUsageProfileKey = undefined
+		// A restart follows a Profile or credential change, so the one allowed
+		// read is owed again even to a provider that refuses the timer.
+		this.accountUsageSingleReadKey = undefined
 		if (hadUsage) {
 			void sendAccountUsageUpdate(this, undefined)
 		}

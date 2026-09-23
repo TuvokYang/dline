@@ -236,6 +236,13 @@ export interface AccountUsageData {
 	/** Optional provider-owned reset credits exposed through the shared usage capability. */
 	resetCredits?: AccountUsageResetCreditData[]
 	resetCreditsAvailableCount?: number
+	/**
+	 * ISO timestamp of the read that produced this snapshot.
+	 *
+	 * A snapshot is held until the user refreshes it, so the surfaces state its
+	 * age instead of implying the numbers are current.
+	 */
+	retrievedAt?: string
 	isAvailable?: boolean
 	dailyInputTokens?: number
 	dailyOutputTokens?: number

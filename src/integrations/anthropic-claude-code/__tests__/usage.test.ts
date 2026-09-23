@@ -54,6 +54,15 @@ describe("toAccountUsage", () => {
 		expect(quotas.map((quota) => quota.label)).toEqual(["5 hour", "7 day", "7 day (overage)"])
 	})
 
+	it("projects the weekly allowance reserved for the Fable family", () => {
+		// Upstream still keys it `seven_day_opus`, and dropping it hid the
+		// window a Fable conversation actually spends, which runs out well
+		// before the general weekly one.
+		const quotas = toAccountUsage(parseClaudeCodeUsage({ seven_day_opus: { utilization: 62 } })).quotas ?? []
+
+		expect(quotas).toEqual([{ type: "weekly_fable", label: "Fable this week", used: 62, limit: 100, windowSeconds: 604_800 }])
+	})
+
 	it("reports utilization against the full percentage scale with the window length", () => {
 		const quotas = toAccountUsage(parseClaudeCodeUsage(UPSTREAM_SNAPSHOT)).quotas ?? []
 

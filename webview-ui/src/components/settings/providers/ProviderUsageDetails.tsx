@@ -50,6 +50,26 @@ export function usageUsedPercent(quota: AccountUsageQuotaData): number {
 	return 100 - usageRemainingPercent(quota)
 }
 
+/**
+ * Describe when a usage snapshot was read.
+ *
+ * The snapshot is held until the user refreshes it, so every surface showing
+ * the numbers also states their age; otherwise an hours-old reading looks
+ * current. Relative wording is used because the exact clock time matters less
+ * than whether the reading is stale.
+ */
+export function formatUsageRetrievedAt(retrievedAt: string | undefined, now: number = Date.now()): string | undefined {
+	if (!retrievedAt) return undefined
+	const readingTime = Date.parse(retrievedAt)
+	if (!Number.isFinite(readingTime)) return undefined
+	const elapsedMinutes = Math.floor((now - readingTime) / 60_000)
+	if (elapsedMinutes < 1) return "Updated just now"
+	if (elapsedMinutes < 60) return `Updated ${elapsedMinutes}m ago`
+	const elapsedHours = Math.floor(elapsedMinutes / 60)
+	if (elapsedHours < 24) return `Updated ${elapsedHours}h ago`
+	return `Updated ${Math.floor(elapsedHours / 24)}d ago`
+}
+
 export function selectEffectiveUsageQuota(quotas: readonly AccountUsageQuotaData[]): AccountUsageQuotaData | undefined {
 	return quotas.filter(isReadableUsageQuota).sort((left, right) => {
 		const remainingDifference = usageRemainingPercent(left) - usageRemainingPercent(right)
@@ -160,9 +180,14 @@ export function ProviderUsageDetails({
 		setSelectedCreditId(undefined)
 	}
 
+	// Shown by both the chat tooltip and the expanded menu, because the reading
+	// is only as current as the last refresh in either surface.
+	const retrievedAt = formatUsageRetrievedAt(usage.retrievedAt)
+
 	return (
 		<>
 			<div className="flex flex-col gap-2 text-xs">
+				{retrievedAt ? <span className="text-[10px] text-description">{retrievedAt}</span> : null}
 				{usage.planType ? (
 					<div className="flex items-center justify-between gap-2">
 						<span className="text-description">Plan</span>
@@ -183,7 +208,9 @@ export function ProviderUsageDetails({
 						<span>Today Out: {usage.dailyOutputTokens ?? 0}</span>
 					</div>
 				) : null}
-				{usage.quotas?.map((quota) => {
+				{/* Filtered like the chat bar: an unusable reading rendered as
+				    "0% remaining" would claim the window is exhausted. */}
+				{usage.quotas?.filter(isReadableUsageQuota).map((quota) => {
 					const resetAt = formatTime(quota.resetAt)
 					return (
 						<div className="flex flex-col gap-1" key={`${quota.type}:${quota.label}`}>

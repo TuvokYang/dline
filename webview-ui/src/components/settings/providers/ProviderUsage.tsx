@@ -3,6 +3,7 @@ import { useState } from "react"
 import { cn } from "@/lib/utils"
 import {
 	formatProviderUsageCurrency,
+	formatUsageRetrievedAt,
 	ProviderUsageDetails,
 	providerUsageRemainingLabel,
 	selectEffectiveUsageQuota,
@@ -29,6 +30,9 @@ export function ProviderUsage({
 				: !usage?.planType && usage?.remainingBalance !== undefined
 					? formatProviderUsageCurrency(usage.currency, usage.remainingBalance)
 					: "No usage data"
+	// The snapshot is held until refreshed, so its age is shown next to it
+	// rather than letting an old reading look current.
+	const retrievedAt = formatUsageRetrievedAt(usage?.retrievedAt)
 
 	return (
 		<div
@@ -54,6 +58,7 @@ export function ProviderUsage({
 					<span className="shrink-0 font-medium">Usage</span>
 					<span className="truncate text-description">{summary}</span>
 				</button>
+				{retrievedAt ? <span className="shrink-0 text-[10px] text-description">{retrievedAt}</span> : null}
 				<button
 					aria-label="Refresh Provider usage"
 					className="flex size-6 shrink-0 items-center justify-center rounded-xs border-0 bg-transparent text-description hover:bg-toolbar-hover hover:text-foreground disabled:opacity-50"
