@@ -16,7 +16,15 @@ type CapabilityCheckField =
 	| "supportsPromptCache"
 	| "supportsTools"
 	| "hostedWebSearchEnabled"
+	| "hostedWebFetchEnabled"
 	| "supportsBrowserAction"
+
+type HostedToolCheckField = "hostedWebSearchEnabled" | "hostedWebFetchEnabled"
+
+const HOSTED_TOOL_BY_CHECK: Readonly<Record<HostedToolCheckField, ServerTool>> = {
+	hostedWebSearchEnabled: ServerTool.WEB_SEARCH,
+	hostedWebFetchEnabled: ServerTool.WEB_FETCH,
+}
 
 const fieldControlClass = "min-h-7 w-full"
 
@@ -55,6 +63,7 @@ interface ModelConfigurationProps {
 			| "supportsPromptCache"
 			| "supportsTools"
 			| "hostedWebSearch"
+			| "hostedWebFetch"
 			| "supportsBrowserAction"
 			| "temperature"
 		>
@@ -129,6 +138,7 @@ export const ModelConfiguration = ({
 				"supportsPromptCache",
 				"supportsTools",
 				"hostedWebSearchEnabled",
+				"hostedWebFetchEnabled",
 				"supportsBrowserAction",
 			] as const) {
 				const expected = pending[field]
@@ -141,7 +151,8 @@ export const ModelConfiguration = ({
 						case "supportsTools":
 							return capabilities.supportsTools ?? defaults?.capabilities?.supportsTools ?? false
 						case "hostedWebSearchEnabled":
-							return isServerToolEnabled(ServerTool.WEB_SEARCH, disabledServerTools)
+						case "hostedWebFetchEnabled":
+							return isServerToolEnabled(HOSTED_TOOL_BY_CHECK[field], disabledServerTools)
 						case "supportsBrowserAction":
 							return capabilities.supportsBrowserAction ?? defaults?.capabilities?.supportsBrowserAction ?? false
 					}
@@ -206,14 +217,14 @@ export const ModelConfiguration = ({
 	}
 
 	/**
-	 * Toggle the hosted Web Search switch. This writes the profile-owned disable
+	 * Toggle one hosted web tool switch. This writes the profile-owned disable
 	 * list and never the model's capability declaration, so turning the switch off
 	 * and on again cannot erase what the model is actually able to do.
 	 */
-	const updateHostedWebSearchCheck = (value: boolean) => {
-		setDraftChecks((draft) => ({ ...draft, hostedWebSearchEnabled: value }))
-		setPendingChecks((pending) => ({ ...pending, hostedWebSearchEnabled: value }))
-		onDisabledServerToolsUpdate?.(withServerToolSwitch(disabledServerTools, ServerTool.WEB_SEARCH, value))
+	const updateHostedToolCheck = (field: HostedToolCheckField, value: boolean) => {
+		setDraftChecks((draft) => ({ ...draft, [field]: value }))
+		setPendingChecks((pending) => ({ ...pending, [field]: value }))
+		onDisabledServerToolsUpdate?.(withServerToolSwitch(disabledServerTools, HOSTED_TOOL_BY_CHECK[field], value))
 	}
 
 	/** Persist context tier changes while keeping the editor responsive before profile echo. */
@@ -257,9 +268,13 @@ export const ModelConfiguration = ({
 	const supportsPromptCache = draftChecks.supportsPromptCache ?? capabilities.supportsPromptCache ?? true
 	const supportsTools =
 		draftChecks.supportsTools ?? capabilities.supportsTools ?? defaults?.capabilities?.supportsTools ?? false
-	const modelDeclaresHostedWebSearch = declaredServerTools(defaults?.capabilities).includes(ServerTool.WEB_SEARCH)
+	const modelServerTools = declaredServerTools(defaults?.capabilities)
+	const modelDeclaresHostedWebSearch = modelServerTools.includes(ServerTool.WEB_SEARCH)
 	const hostedWebSearchEnabled =
 		draftChecks.hostedWebSearchEnabled ?? isServerToolEnabled(ServerTool.WEB_SEARCH, disabledServerTools)
+	const modelDeclaresHostedWebFetch = modelServerTools.includes(ServerTool.WEB_FETCH)
+	const hostedWebFetchEnabled =
+		draftChecks.hostedWebFetchEnabled ?? isServerToolEnabled(ServerTool.WEB_FETCH, disabledServerTools)
 	const supportsBrowserAction =
 		draftChecks.supportsBrowserAction ??
 		capabilities.supportsBrowserAction ??
@@ -270,6 +285,7 @@ export const ModelConfiguration = ({
 		capabilityFields.includes("supportsPromptCache") ||
 		capabilityFields.includes("supportsTools") ||
 		capabilityFields.includes("hostedWebSearch") ||
+		capabilityFields.includes("hostedWebFetch") ||
 		capabilityFields.includes("supportsBrowserAction") ||
 		capabilityFields.includes("temperature")
 	const hasCapabilityFields =
@@ -309,11 +325,29 @@ export const ModelConfiguration = ({
 								checked={modelDeclaresHostedWebSearch && hostedWebSearchEnabled}
 								disabled={!modelDeclaresHostedWebSearch}
 								onChange={(e: Event | React.FormEvent<HTMLElement>) =>
-									updateHostedWebSearchCheck((e.target as HTMLInputElement | null)?.checked === true)
+									updateHostedToolCheck(
+										"hostedWebSearchEnabled",
+										(e.target as HTMLInputElement | null)?.checked === true,
+									)
 								}>
 								{modelDeclaresHostedWebSearch
 									? "Use hosted Web Search"
 									: "Use hosted Web Search (not offered by this model)"}
+							</VSCodeCheckbox>
+						) : null}
+						{capabilityFields.includes("hostedWebFetch") ? (
+							<VSCodeCheckbox
+								checked={modelDeclaresHostedWebFetch && hostedWebFetchEnabled}
+								disabled={!modelDeclaresHostedWebFetch}
+								onChange={(e: Event | React.FormEvent<HTMLElement>) =>
+									updateHostedToolCheck(
+										"hostedWebFetchEnabled",
+										(e.target as HTMLInputElement | null)?.checked === true,
+									)
+								}>
+								{modelDeclaresHostedWebFetch
+									? "Use hosted Web Fetch"
+									: "Use hosted Web Fetch (not offered by this model)"}
 							</VSCodeCheckbox>
 						) : null}
 						{capabilityFields.includes("supportsBrowserAction") ? (

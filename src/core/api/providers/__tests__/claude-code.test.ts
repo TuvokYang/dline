@@ -1,6 +1,7 @@
 import { ClaudeCodeHandler } from "@core/api/providers/claude-code"
 import { claudeCodeModels } from "@core/api/providers/models/claude-code"
 import type { ModelInfo } from "@shared/api"
+import { ServerTool } from "@shared/proto/dline/models/metadata"
 import { ApiProfile } from "@shared/proto/dline/profile"
 import { describe, expect, it } from "vitest"
 
@@ -21,7 +22,7 @@ function createHandlerWithModelInfo(modelId: string, modelInfo: Partial<ModelInf
 
 describe("ClaudeCodeHandler model resolution", () => {
 	it("returns the configured model", () => {
-		expect(createHandler("claude-sonnet-4-5-20250929").getModel().id).toBe("claude-sonnet-4-5-20250929")
+		expect(createHandler("claude-sonnet-5").getModel().id).toBe("claude-sonnet-5")
 	})
 
 	it("falls back to the default model when none is configured", () => {
@@ -34,10 +35,10 @@ describe("ClaudeCodeHandler model resolution", () => {
 
 	it.each([
 		["claude-opus-5-5", 1_000_000],
-		["claude-opus-4-7", 1_000_000],
+		["claude-opus-5", 1_000_000],
+		["claude-fable-5-1", 1_000_000],
+		["claude-sonnet-5", 1_000_000],
 		["claude-sonnet-4-6", 1_000_000],
-		["claude-sonnet-4-5-20250929", 200_000],
-		["claude-haiku-4-5-20251001", 200_000],
 	])("resolves %s to a %i token context window", (modelId, contextWindow) => {
 		const model = createHandler(modelId).getModel()
 
@@ -94,6 +95,44 @@ describe("ClaudeCodeHandler model resolution", () => {
 
 		expect(Object.keys(claudeCodeModels).filter((id) => retired.includes(id))).toEqual([])
 	})
+
+	// The catalog is the whole subscription offer; the remote listing only
+	// refreshes these entries and never adds others.
+	it("offers exactly the subscription model set", () => {
+		expect(Object.keys(claudeCodeModels)).toEqual([
+			"claude-opus-5-5",
+			"claude-fable-5-1",
+			"claude-sonnet-5",
+			"claude-fable-5",
+			"claude-opus-5",
+			"claude-opus-4-8",
+			"claude-opus-4-7",
+			"claude-opus-4-6",
+			"claude-sonnet-4-6",
+		])
+	})
+
+	// A subscription reaches the same Messages API, so an undeclared hosted tool
+	// would silently route every search or fetch through the local fallback instead.
+	it("declares hosted web search and web fetch for every offered model", () => {
+		const withoutHostedWebTools = Object.entries(claudeCodeModels)
+			.filter(
+				([, info]) =>
+					info.capabilities?.tools?.includes(ServerTool.WEB_SEARCH) !== true ||
+					info.capabilities?.tools?.includes(ServerTool.WEB_FETCH) !== true,
+			)
+			.map(([id]) => id)
+
+		expect(withoutHostedWebTools).toEqual([])
+	})
+
+	it("lets the handler carry hosted web search and web fetch", () => {
+		const handler = createHandler()
+
+		expect(handler.supportsServerTool(ServerTool.WEB_SEARCH)).toBe(true)
+		expect(handler.supportsServerTool(ServerTool.WEB_FETCH)).toBe(true)
+		expect(handler.supportsServerTool(ServerTool.CODE_EXECUTION)).toBe(false)
+	})
 })
 
 describe("ClaudeCodeHandler subscription capabilities", () => {
@@ -101,7 +140,7 @@ describe("ClaudeCodeHandler subscription capabilities", () => {
 	// caching. Direct Messages API access removes both limits, so a regression
 	// back to the CLI-era metadata would silently degrade the provider.
 	it("no longer declares the CLI-era image and prompt-cache restrictions", () => {
-		const capabilities = createHandler("claude-sonnet-4-5-20250929").getModel().info.capabilities
+		const capabilities = createHandler("claude-sonnet-5").getModel().info.capabilities
 
 		expect(capabilities?.supportsImages).toBe(true)
 		expect(capabilities?.supportsPromptCache).toBe(true)
@@ -119,7 +158,7 @@ describe("ClaudeCodeHandler subscription capabilities", () => {
 	})
 
 	it("declares an output budget beyond the former CLI cap", () => {
-		const capabilities = createHandler("claude-sonnet-4-5-20250929").getModel().info.capabilities
+		const capabilities = createHandler("claude-sonnet-5").getModel().info.capabilities
 
 		expect(capabilities?.maxTokens ?? 0).toBeGreaterThan(8192)
 	})

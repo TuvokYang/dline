@@ -300,6 +300,46 @@ describe("ModelConfiguration", () => {
 		expect(onCapabilitiesUpdate).not.toHaveBeenCalled()
 	})
 
+	it("switches hosted Web Fetch independently of hosted Web Search", () => {
+		const onCapabilitiesUpdate = vi.fn()
+		const onDisabledServerToolsUpdate = vi.fn()
+
+		render(
+			<ModelConfiguration
+				defaults={{ capabilities: { tools: [ServerTool.WEB_SEARCH, ServerTool.WEB_FETCH] } as ModelCapabilities }}
+				disabledServerTools={[ServerTool.WEB_SEARCH]}
+				fields={{ capabilities: ["hostedWebSearch", "hostedWebFetch"] }}
+				onCapabilitiesUpdate={onCapabilitiesUpdate}
+				onDisabledServerToolsUpdate={onDisabledServerToolsUpdate}
+				onPricingUpdate={vi.fn()}
+			/>,
+		)
+
+		fireEvent.click(screen.getByRole("button", { name: /Model Configuration/i }))
+		expect(screen.getByLabelText("Use hosted Web Search")).not.toBeChecked()
+		expect(screen.getByLabelText("Use hosted Web Fetch")).toBeChecked()
+		fireEvent.click(screen.getByLabelText("Use hosted Web Fetch"))
+
+		expect(onDisabledServerToolsUpdate).toHaveBeenCalledWith([ServerTool.WEB_SEARCH, ServerTool.WEB_FETCH])
+		expect(onCapabilitiesUpdate).not.toHaveBeenCalled()
+	})
+
+	it("labels hosted Web Fetch as unavailable when the model does not declare it", () => {
+		render(
+			<ModelConfiguration
+				defaults={{ capabilities: { tools: [ServerTool.WEB_SEARCH] } as ModelCapabilities }}
+				fields={{ capabilities: ["hostedWebFetch"] }}
+				onCapabilitiesUpdate={vi.fn()}
+				onDisabledServerToolsUpdate={vi.fn()}
+				onPricingUpdate={vi.fn()}
+			/>,
+		)
+
+		fireEvent.click(screen.getByRole("button", { name: /Model Configuration/i }))
+		expect(screen.getByLabelText("Use hosted Web Fetch (not offered by this model)")).not.toBeChecked()
+		expect(screen.queryByLabelText("Use hosted Web Fetch")).not.toBeInTheDocument()
+	})
+
 	it("re-enables a hosted tool by clearing it from the disable list", () => {
 		const onDisabledServerToolsUpdate = vi.fn()
 

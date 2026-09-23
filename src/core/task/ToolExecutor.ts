@@ -121,6 +121,52 @@ function buildWebSearchMessage(update: HostedServerToolUpdate, providerId: strin
 	}
 }
 
+/** Read the fetched URL from the provider call input, falling back to the result. */
+function hostedFetchUrl(update: HostedServerToolUpdate): string {
+	for (const candidate of [update.input, update.result]) {
+		if (candidate && typeof candidate === "object" && !Array.isArray(candidate)) {
+			const url = (candidate as { url?: unknown }).url
+			if (typeof url === "string" && url.trim().length > 0) return url.trim()
+		}
+	}
+	return update.query
+}
+
+/** Name a hosted fetch failure by the provider's error code, which says why the URL was refused. */
+function hostedFetchError(update: HostedServerToolUpdate): string | undefined {
+	if (update.status !== "failed") return update.error
+	const detail = update.errorDetail
+	if (detail && typeof detail === "object" && !Array.isArray(detail)) {
+		const code = (detail as { error_code?: unknown }).error_code
+		if (typeof code === "string" && code.length > 0) return `${update.error ?? "Web fetch failed"} (${code})`
+	}
+	return update.error
+}
+
+/** Present one hosted Web Fetch call in the same row shape as a local fetch. */
+function buildWebFetchMessage(update: HostedServerToolUpdate, providerId: string, providerLabel: string): ClineSayTool {
+	const url = hostedFetchUrl(update)
+	const error = hostedFetchError(update)
+	return {
+		tool: "webFetch",
+		path: url,
+		content: update.status === "failed" ? `Web fetch failed: ${error ?? url}` : `Fetching URL: ${url}`,
+		operationIsLocatedInWorkspace: false,
+		webFetch: {
+			schemaVersion: 1,
+			status: update.status === "failed" ? "failed" : update.status === "completed" ? "completed" : "running",
+			source: {
+				id: `${providerId}-hosted`,
+				label: `${providerLabel} Web Fetch`,
+				execution: "hosted",
+				provider: providerId,
+			},
+			url,
+			...(error === undefined ? {} : { error }),
+		},
+	}
+}
+
 /**
  * Present one provider-hosted sandbox run.
  *
@@ -322,7 +368,9 @@ export class ToolExecutor {
 			const message =
 				update.tool === ServerTool.CODE_EXECUTION
 					? buildCodeExecutionMessage(update, providerId, providerLabel)
-					: buildWebSearchMessage(update, providerId, providerLabel)
+					: update.tool === ServerTool.WEB_FETCH
+						? buildWebFetchMessage(update, providerId, providerLabel)
+						: buildWebSearchMessage(update, providerId, providerLabel)
 			const messageTs = await this.say(
 				"tool",
 				JSON.stringify(message),

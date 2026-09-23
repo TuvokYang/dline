@@ -1,6 +1,10 @@
 import { Anthropic } from "@anthropic-ai/sdk"
 import type { BetaRawMessageStreamEvent } from "@anthropic-ai/sdk/resources/beta/messages/messages"
-import type { CodeExecutionTool20260120, WebSearchTool20260318 } from "@anthropic-ai/sdk/resources/messages/messages"
+import type {
+	CodeExecutionTool20260120,
+	WebFetchTool20260318,
+	WebSearchTool20260318,
+} from "@anthropic-ai/sdk/resources/messages/messages"
 import { Tool as AnthropicTool, type ToolUnion as AnthropicToolUnion } from "@anthropic-ai/sdk/resources/messages/messages"
 import type { ChatCompletionTool as OpenAITool } from "openai/resources/chat/completions"
 import { ServerTool } from "@/shared/proto/dline/models/metadata"
@@ -33,9 +37,32 @@ const anthropicCodeExecutionTool = (): CodeExecutionTool20260120 => ({
 	allowed_callers: directCallerOnly(),
 })
 
-function getServerToolUsage(usage: { server_tool_use?: { web_search_requests?: number } | null }) {
+/**
+ * Hosted page fetch, invoked by the model rather than through the sandbox.
+ *
+ * Direct-only also keeps dynamic filtering off: filtering runs the fetch inside the
+ * sandbox, which this request never declares on the model's behalf.
+ */
+const anthropicWebFetchTool = (): WebFetchTool20260318 => ({
+	type: "web_fetch_20260318",
+	name: "web_fetch",
+	allowed_callers: directCallerOnly(),
+})
+
+interface AnthropicServerToolUsage {
+	server_tool_use?: { web_search_requests?: number; web_fetch_requests?: number } | null
+}
+
+function getServerToolUsage(usage: AnthropicServerToolUsage) {
 	const webSearchRequests = usage.server_tool_use?.web_search_requests
-	return typeof webSearchRequests === "number" ? { webSearchRequests } : undefined
+	const webFetchRequests = usage.server_tool_use?.web_fetch_requests
+	const hasSearch = typeof webSearchRequests === "number"
+	const hasFetch = typeof webFetchRequests === "number"
+	if (!hasSearch && !hasFetch) return undefined
+	return {
+		...(hasSearch ? { webSearchRequests } : {}),
+		...(hasFetch ? { webFetchRequests } : {}),
+	}
 }
 
 /**
@@ -47,6 +74,7 @@ function getServerToolUsage(usage: { server_tool_use?: { web_search_requests?: n
  */
 const SERVER_TOOL_BY_PROVIDER_NAME: Readonly<Record<string, ServerTool>> = {
 	web_search: ServerTool.WEB_SEARCH,
+	web_fetch: ServerTool.WEB_FETCH,
 	code_execution: ServerTool.CODE_EXECUTION,
 	bash_code_execution: ServerTool.CODE_EXECUTION,
 	text_editor_code_execution: ServerTool.CODE_EXECUTION,
@@ -85,21 +113,33 @@ function isSandboxIssuedCall(caller: unknown): boolean {
 	)
 }
 
-/** Merge resolved hosted declarations with local Anthropic tools without exposing duplicate web search mechanisms. */
+/** Local tool names that a hosted tool replaces while it is declared. */
+const LOCAL_TOOL_REPLACED_BY_HOSTED: ReadonlyArray<readonly [ServerTool, string]> = [
+	[ServerTool.WEB_SEARCH, "web_search"],
+	[ServerTool.WEB_FETCH, "web_fetch"],
+]
+
+/** Names of local tools that must be withheld because a hosted tool of the same name is declared. */
+function localToolsReplacedByHosted(serverTools?: readonly ServerTool[]): ReadonlySet<string> {
+	return new Set(LOCAL_TOOL_REPLACED_BY_HOSTED.filter(([tool]) => serverTools?.includes(tool) === true).map(([, name]) => name))
+}
+
+/** Merge resolved hosted declarations with local Anthropic tools without exposing two tools of one name. */
 export function mergeAnthropicServerTools(
 	tools?: readonly AnthropicTool[],
 	serverTools?: readonly ServerTool[],
 ): AnthropicToolUnion[] | undefined {
-	const hostedWebSearch = serverTools?.includes(ServerTool.WEB_SEARCH) === true
-	const merged: AnthropicToolUnion[] = (tools ?? [])
-		.filter((tool) => !hostedWebSearch || tool.name !== "web_search")
-		.map((tool) => ({ ...tool }))
+	const replaced = localToolsReplacedByHosted(serverTools)
+	const merged: AnthropicToolUnion[] = (tools ?? []).filter((tool) => !replaced.has(tool.name)).map((tool) => ({ ...tool }))
 
-	if (hostedWebSearch) {
+	if (serverTools?.includes(ServerTool.WEB_SEARCH) === true) {
 		merged.push(anthropicWebSearchTool())
 	}
 	if (serverTools?.includes(ServerTool.CODE_EXECUTION) === true) {
 		merged.push(anthropicCodeExecutionTool())
+	}
+	if (serverTools?.includes(ServerTool.WEB_FETCH) === true) {
+		merged.push(anthropicWebFetchTool())
 	}
 
 	return merged.length > 0 ? merged : undefined
@@ -200,6 +240,19 @@ export async function* handleAnthropicMessagesApiStreamResponse(stream: AsyncIte
 							type: "server_tool",
 							function_id: chunk.content_block.tool_use_id,
 							tool: ServerTool.WEB_SEARCH,
+							phase: failed ? "failed" : "completed",
+							...(failed ? { error: result } : { result }),
+						}
+						break
+					}
+					case "web_fetch_tool_result": {
+						if (!startedServerToolCallIds.delete(chunk.content_block.tool_use_id)) break
+						const result = chunk.content_block.content
+						const failed = result.type === "web_fetch_tool_result_error"
+						yield {
+							type: "server_tool",
+							function_id: chunk.content_block.tool_use_id,
+							tool: ServerTool.WEB_FETCH,
 							phase: failed ? "failed" : "completed",
 							...(failed ? { error: result } : { result }),
 						}
@@ -318,7 +371,7 @@ export function convertOpenAIToolsToAnthropicTools(
 	tools?: OpenAITool[],
 	serverTools?: readonly ServerTool[],
 ): AnthropicToolUnion[] | undefined {
-	const hostedWebSearch = serverTools?.includes(ServerTool.WEB_SEARCH) === true
+	const replaced = localToolsReplacedByHosted(serverTools)
 
 	const anthropicTools: AnthropicTool[] = []
 
@@ -326,7 +379,7 @@ export function convertOpenAIToolsToAnthropicTools(
 		if (tool?.type !== "function" || !tool.function?.name) {
 			continue
 		}
-		if (hostedWebSearch && tool.function.name === "web_search") {
+		if (replaced.has(tool.function.name)) {
 			continue
 		}
 

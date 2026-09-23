@@ -71,7 +71,7 @@ export const anthropicModels: Record<string, ModelInfo> = {
 		name: "claude-opus-5-5",
 		capabilities: {
 			supportsTools: true,
-			tools: [ServerTool.WEB_SEARCH],
+			tools: [ServerTool.WEB_SEARCH, ServerTool.WEB_FETCH],
 			maxTokens: 128_000,
 			contextWindow: 1_000_000,
 			supportsImages: true,
@@ -91,7 +91,7 @@ export const anthropicModels: Record<string, ModelInfo> = {
 		name: "claude-opus-5",
 		capabilities: {
 			supportsTools: true,
-			tools: [ServerTool.WEB_SEARCH],
+			tools: [ServerTool.WEB_SEARCH, ServerTool.WEB_FETCH],
 			maxTokens: 128_000,
 			contextWindow: 1_000_000,
 			supportsImages: true,
@@ -113,7 +113,7 @@ export const anthropicModels: Record<string, ModelInfo> = {
 			"Current Claude Fable model. Adaptive thinking is always on, forced tool use is rejected, and thinking blocks are invalidated when earlier turns are edited.",
 		capabilities: {
 			supportsTools: true,
-			tools: [ServerTool.WEB_SEARCH],
+			tools: [ServerTool.WEB_SEARCH, ServerTool.WEB_FETCH],
 			maxTokens: 128_000,
 			contextWindow: 1_000_000,
 			supportsImages: true,
@@ -135,7 +135,7 @@ export const anthropicModels: Record<string, ModelInfo> = {
 		description: "Legacy Claude Fable model. Use claude-fable-5-1 for current Fable capabilities.",
 		capabilities: {
 			supportsTools: true,
-			tools: [ServerTool.WEB_SEARCH],
+			tools: [ServerTool.WEB_SEARCH, ServerTool.WEB_FETCH],
 			maxTokens: 128_000,
 			contextWindow: 1_000_000,
 			supportsImages: true,
@@ -155,7 +155,7 @@ export const anthropicModels: Record<string, ModelInfo> = {
 		name: "claude-opus-4-8",
 		capabilities: {
 			supportsTools: true,
-			tools: [ServerTool.WEB_SEARCH],
+			tools: [ServerTool.WEB_SEARCH, ServerTool.WEB_FETCH],
 			maxTokens: 128_000,
 			contextWindow: 1_000_000,
 			supportsImages: true,
@@ -175,7 +175,7 @@ export const anthropicModels: Record<string, ModelInfo> = {
 		name: "claude-sonnet-5",
 		capabilities: {
 			supportsTools: true,
-			tools: [ServerTool.WEB_SEARCH],
+			tools: [ServerTool.WEB_SEARCH, ServerTool.WEB_FETCH],
 			maxTokens: 128_000,
 			contextWindow: 1_000_000,
 			supportsImages: true,
@@ -195,7 +195,7 @@ export const anthropicModels: Record<string, ModelInfo> = {
 		name: "claude-sonnet-4-6",
 		capabilities: {
 			supportsTools: true,
-			tools: [ServerTool.WEB_SEARCH],
+			tools: [ServerTool.WEB_SEARCH, ServerTool.WEB_FETCH],
 			maxTokens: 128_000,
 			contextWindow: 1_000_000,
 			supportsImages: true,
@@ -215,7 +215,7 @@ export const anthropicModels: Record<string, ModelInfo> = {
 		name: "claude-opus-4-6",
 		capabilities: {
 			supportsTools: true,
-			tools: [ServerTool.WEB_SEARCH],
+			tools: [ServerTool.WEB_SEARCH, ServerTool.WEB_FETCH],
 			maxTokens: 128_000,
 			contextWindow: 1_000_000,
 			supportsImages: true,
@@ -237,7 +237,7 @@ export const anthropicModels: Record<string, ModelInfo> = {
 			"Anthropic fast mode for Claude Opus 5. Same model and capabilities with higher output token speed at premium pricing. Requires fast mode access on your Anthropic account.",
 		capabilities: {
 			supportsTools: true,
-			tools: [ServerTool.WEB_SEARCH],
+			tools: [ServerTool.WEB_SEARCH, ServerTool.WEB_FETCH],
 			maxTokens: 128_000,
 			contextWindow: 1_000_000,
 			supportsImages: true,
@@ -259,7 +259,7 @@ export const anthropicModels: Record<string, ModelInfo> = {
 			"Anthropic fast mode for Claude Opus 4.8. Same model and capabilities with higher output token speed at premium pricing. Requires fast mode access on your Anthropic account.",
 		capabilities: {
 			supportsTools: true,
-			tools: [ServerTool.WEB_SEARCH],
+			tools: [ServerTool.WEB_SEARCH, ServerTool.WEB_FETCH],
 			maxTokens: 128_000,
 			contextWindow: 1_000_000,
 			supportsImages: true,
@@ -279,7 +279,7 @@ export const anthropicModels: Record<string, ModelInfo> = {
 		name: "claude-opus-4-7",
 		capabilities: {
 			supportsTools: true,
-			tools: [ServerTool.WEB_SEARCH],
+			tools: [ServerTool.WEB_SEARCH, ServerTool.WEB_FETCH],
 			maxTokens: 128_000,
 			contextWindow: 1_000_000,
 			supportsImages: true,

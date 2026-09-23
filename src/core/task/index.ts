@@ -1,6 +1,6 @@
 import { ApiHandler, ApiProviderInfo, buildApiHandlerFromProfile, resolveProviderFromProfile } from "@core/api"
 import { recordProviderAdapterInput, recordProviderAdapterOutput } from "@core/api/debug/api-conversation-log"
-import type { WebSearchRoutingPlan } from "@core/api/server-tools"
+import { hasHostedWebRoute, type WebSearchRoutingPlan } from "@core/api/server-tools"
 import { createIdentityFactory } from "@core/api/transform/block-identity"
 import { ApiStream } from "@core/api/transform/stream"
 import { createStreamNormalizer, normalizeApiStream } from "@core/api/transform/stream-identity-normalizer"
@@ -290,7 +290,7 @@ import type { QueuedInputEntry } from "./input-queue/InputQueue"
 import { InputQueueCoordinator } from "./input-queue/InputQueueCoordinator"
 import type { QueueDelivery } from "./input-queue/InputQueueDelivery"
 import type { InputQueueMutation, InputQueueMutationResult } from "./input-queue/InputQueueMutation"
-import { hostedWebApprovalApiIndex, requestHostedWebApproval } from "./interaction/HostedWebApproval"
+import { hostedWebApprovalApiIndex, hostedWebCapabilityLabel, requestHostedWebApproval } from "./interaction/HostedWebApproval"
 import type { InteractionKind } from "./interaction/Interaction"
 import { isInteractionCancellationError } from "./interaction/InteractionCancellationError"
 import { type DetachedInteractionContinuationContext, InteractionCoordinator } from "./interaction/InteractionCoordinator"
@@ -8460,7 +8460,7 @@ export class Task {
 			this.ordinaryRequestInputReplay.get(apiIndex)?.runtime?.webSearchRoutingPlan ??
 			this.compactionRequestReplay.getProviderInput(apiIndex)?.runtime?.webSearchRoutingPlan ??
 			requestScope.webSearchRoutingPlan
-		if (routingPlan.route === "hosted" && !hostedApprovalSatisfied) {
+		if (hasHostedWebRoute(routingPlan) && !hostedApprovalSatisfied) {
 			await this.interactionCoordinator.releaseApiContinuationForRequestGate()
 		}
 		const approvalRequestedAt = performance.now()
@@ -8476,6 +8476,7 @@ export class Task {
 		// only the second one is a defect.
 		Logger.debug(
 			`[Task ${this.taskId}] requestGate phase=approval apiIndex=${apiIndex} route=${routingPlan.route} ` +
+				`fetchRoute=${routingPlan.webFetchRoute} ` +
 				`autoApproved=${hostedApprovalSatisfied} approved=${approval.approved} required=${approval.required} ` +
 				`waitedMs=${Math.round(performance.now() - approvalRequestedAt)}`,
 		)
@@ -8490,7 +8491,7 @@ export class Task {
 				apiIndex,
 				turnId: interactionId,
 				interactionId,
-				presentation: "Hosted Web Search was rejected. Resume when you are ready to continue without this request.",
+				presentation: `Hosted ${hostedWebCapabilityLabel(routingPlan)} was rejected. Resume when you are ready to continue without this request.`,
 			})
 			if (!rejected.accepted) {
 				throw new Error(`Hosted Web rejection recovery rejected: ${rejected.error?.code ?? "invalid_runtime_event"}`)
@@ -9705,19 +9706,17 @@ export class Task {
 				if (shouldDrainUsageOnly) {
 					await streamCoordinator.drainUsageOnly()
 					await this.toolExecutor.finalizeServerToolCalls(
-						"Provider stream ended before hosted web search returned a result.",
+						"Provider stream ended before the hosted tool returned a result.",
 					)
 				} else if (shouldInterruptStream) {
 					await streamCoordinator.stop()
 					await this.toolExecutor.finalizeServerToolCalls(
-						this.taskState.abort
-							? "Provider-hosted web search cancelled."
-							: "Provider-hosted web search interrupted.",
+						this.taskState.abort ? "Provider-hosted tool cancelled." : "Provider-hosted tool interrupted.",
 					)
 				} else {
 					await streamCoordinator.waitForCompletion()
 					await this.toolExecutor.finalizeServerToolCalls(
-						"Provider stream ended before hosted web search returned a result.",
+						"Provider stream ended before the hosted tool returned a result.",
 					)
 				}
 				// Flush any usage updates that were already executing/queued during streaming.
@@ -9747,8 +9746,8 @@ export class Task {
 				}
 				await this.toolExecutor.finalizeServerToolCalls(
 					this.taskState.abort
-						? "Provider-hosted web search cancelled."
-						: "Provider stream failed before hosted web search returned a result.",
+						? "Provider-hosted tool cancelled."
+						: "Provider stream failed before the hosted tool returned a result.",
 				)
 				// abandoned happens when extension is no longer waiting for the cline instance to finish aborting (error is thrown here when any function in the for loop throws due to this.abort)
 				if (this.taskState.abort) {
@@ -9906,8 +9905,8 @@ export class Task {
 					try {
 						await this.toolExecutor.finalizeServerToolCalls(
 							this.taskState.abort
-								? "Provider-hosted web search cancelled."
-								: "Provider stream ended before hosted web search returned a result.",
+								? "Provider-hosted tool cancelled."
+								: "Provider stream ended before the hosted tool returned a result.",
 						)
 					} finally {
 						this.taskState.isStreaming = false

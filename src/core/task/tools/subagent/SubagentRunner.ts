@@ -1,7 +1,12 @@
 import * as path from "node:path"
 import type { ApiHandler, buildApiHandler } from "@core/api"
 import { recordProviderAdapterInput, recordProviderAdapterOutput } from "@core/api/debug/api-conversation-log"
-import type { WebSearchRoutingPlan } from "@core/api/server-tools"
+import {
+	disableWebFetchRoute,
+	disableWebSearchRoute,
+	disableWebSearchRoutingPlan,
+	type WebSearchRoutingPlan,
+} from "@core/api/server-tools"
 import { isOutputLimitExceededError } from "@core/api/stream/OutputLimitExceededError"
 import { createIdentityFactory, type IdentityFactory } from "@core/api/transform/block-identity"
 import type { ApiProviderStreamChunk } from "@core/api/transform/stream"
@@ -12,6 +17,7 @@ import { discoverAvailableSkills } from "@core/context/instructions/user-instruc
 import { createImageProfileResolverForProfile } from "@core/image-generation/runtime"
 import { formatResponse } from "@core/prompts/responses"
 import { getSystemPrompt, type SystemPromptContext } from "@core/prompts/system-prompt"
+import { type ConfigurableCeilings, resolveApprovalKind } from "@core/task/kernel/turn/approval-kind"
 import type { ProviderRequestRoundAdmission } from "@core/task/performance/provider-request-round-port"
 import { resolveRequestWebSearchRoutingPlan } from "@core/task/RequestApiScope"
 import { StreamResponseHandler } from "@core/task/StreamResponseHandler"
@@ -829,8 +835,7 @@ export class SubagentRunner {
 			const webToolsEnabled =
 				this.baseConfig.webToolsEnabled ??
 				this.baseConfig.services.stateManager.getGlobalSettingsKey("clineWebToolsEnabled") === true
-			const webSearchAllowed = this.allowedTools.includes(ClineDefaultTool.WEB_SEARCH)
-			const webSearchRoutingPlan = resolveRequestWebSearchRoutingPlan(api, webToolsEnabled && webSearchAllowed)
+			const webSearchRoutingPlan = this.resolveAllowedWebRoutingPlan(api, webToolsEnabled)
 			const completionWebSearchRoutingPlan = resolveRequestWebSearchRoutingPlan(api, false)
 			stats.contextWindow = providerInfo.model.info.capabilities?.contextWindow || 0
 			stats.currency = providerInfo.model.info.pricing?.currency || "USD"
@@ -1054,7 +1059,12 @@ export class SubagentRunner {
 					}
 					// Report the tool that actually ran: a hardcoded name would attribute
 					// sandbox work to web search in progress output.
-					const toolName = update.tool === ServerTool.CODE_EXECUTION ? "code_execution" : "web_search"
+					const toolName =
+						update.tool === ServerTool.CODE_EXECUTION
+							? "code_execution"
+							: update.tool === ServerTool.WEB_FETCH
+								? "web_fetch"
+								: "web_search"
 					onProgress({
 						stats: { ...stats },
 						latestToolCall: toolName,
@@ -1634,6 +1644,41 @@ export class SubagentRunner {
 			this.interruptionController = undefined
 			this.running = false
 		}
+	}
+
+	/**
+	 * Resolve the web tool routes this subagent may use.
+	 *
+	 * Hosted tools are declared to the provider directly, bypassing the local tool
+	 * filter and tool admission, so each web tool the allowlist omits is withdrawn
+	 * from the plan here. Either allowed tool keeps the plan live, so a fetch-only
+	 * subagent still fetches.
+	 */
+	private resolveAllowedWebRoutingPlan(api: ApiHandler, webToolsEnabled: boolean): WebSearchRoutingPlan {
+		const searchAllowed = this.allowedTools.includes(ClineDefaultTool.WEB_SEARCH)
+		const fetchAllowed = this.allowedTools.includes(ClineDefaultTool.WEB_FETCH)
+		const resolved = resolveRequestWebSearchRoutingPlan(api, webToolsEnabled && (searchAllowed || fetchAllowed))
+		if (!this.inheritsWebApproval()) return disableWebSearchRoutingPlan(resolved)
+		const withSearch = searchAllowed ? resolved : disableWebSearchRoute(resolved)
+		return fetchAllowed ? withSearch : disableWebFetchRoute(withSearch)
+	}
+
+	/**
+	 * Whether the approval that launched this subagent covers its web tools.
+	 *
+	 * Local web tools meet a `manual_only` web ceiling at admission and fail closed.
+	 * Hosted tools never pass admission, so the same ceiling must withdraw them here
+	 * or a subagent would run provider-hosted web access the user reserved for manual approval.
+	 */
+	private inheritsWebApproval(): boolean {
+		const settings = this.baseConfig.autoApprovalSettings
+		const decision = resolveApprovalKind({
+			toolName: ClineDefaultTool.WEB_FETCH,
+			settings,
+			ceilings: settings.ceilings as ConfigurableCeilings | undefined,
+			inheritsApproval: true,
+		})
+		return decision.kind === "none" || decision.kind === "automatic"
 	}
 
 	private createSubagentTaskConfig(

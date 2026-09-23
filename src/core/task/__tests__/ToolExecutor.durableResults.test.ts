@@ -1,5 +1,6 @@
 import { strict as assert } from "node:assert"
 import { resolveWebSearchRoutingPlan, type WebSearchRoutingPlan } from "@core/api/server-tools"
+import type { ApiStreamServerToolChunk } from "@core/api/transform/stream"
 import type { ToolUse } from "@core/assistant-message"
 import { ApiFormat, ServerTool } from "@shared/proto/dline/models/metadata"
 import { WebToolsMode } from "@shared/proto/dline/provider/common"
@@ -459,4 +460,60 @@ describe("ToolExecutor durable tool results", () => {
 			is_error: true,
 		})
 	})
+
+	it("renders a provider-hosted Web Fetch row that names the provider error code", async () => {
+		const plan = resolveWebSearchRoutingPlan({
+			enabled: true,
+			modelInfo: { capabilities: { tools: [ServerTool.WEB_FETCH] } },
+			selectedApiFormat: ApiFormat.ANTHROPIC_CHAT,
+			localAvailable: true,
+			remoteAdapterAvailable: true,
+			remoteWebFetchAdapterAvailable: true,
+		})
+		const { executor, say } = createHarness({ providerId: "anthropic" })
+		const hosted = executor as unknown as {
+			hostedServerToolMessageTs: Map<string, number>
+			setWebSearchRoutingPlan(plan: WebSearchRoutingPlan, webToolsEnabled: boolean): void
+			consumeServerToolChunk(chunk: ApiStreamServerToolChunk): Promise<boolean>
+		}
+		hosted.hostedServerToolMessageTs = new Map()
+		hosted.setWebSearchRoutingPlan(plan, true)
+		const fetchChunk = {
+			type: "server_tool",
+			function_id: "srvtoolu_fetch",
+			dline_tid: "trace-fetch",
+			tool: ServerTool.WEB_FETCH,
+		} as const
+
+		await hosted.consumeServerToolChunk({ ...fetchChunk, phase: "started", input: { url: "https://example.com/doc" } })
+		await hosted.consumeServerToolChunk({
+			...fetchChunk,
+			phase: "failed",
+			error: { type: "web_fetch_tool_result_error", error_code: "url_not_accessible" },
+		})
+
+		expect(hostedToolRows(say)).toEqual([
+			expect.objectContaining({
+				tool: "webFetch",
+				path: "https://example.com/doc",
+				webFetch: expect.objectContaining({
+					status: "running",
+					source: expect.objectContaining({ execution: "hosted", provider: "anthropic" }),
+					url: "https://example.com/doc",
+				}),
+			}),
+			expect.objectContaining({
+				tool: "webFetch",
+				path: "https://example.com/doc",
+				webFetch: expect.objectContaining({
+					status: "failed",
+					error: "Provider-hosted web fetch failed (url_not_accessible)",
+				}),
+			}),
+		])
+	})
 })
+
+function hostedToolRows(say: ReturnType<typeof vi.fn>): unknown[] {
+	return say.mock.calls.filter(([type]) => type === "tool").map(([, text]) => JSON.parse(String(text)))
+}

@@ -35,6 +35,16 @@ describe("Profile summary indicators", () => {
 		for (const iconContainer of group.querySelectorAll("li > span")) expect(iconContainer).toHaveClass("size-5")
 	})
 
+	it("shows hosted Web Fetch as its own capability", () => {
+		render(
+			<ProfileCapabilityIcons
+				capabilities={{ tools: [ServerTool.WEB_SEARCH, ServerTool.WEB_FETCH] } as ModelCapabilities}
+			/>,
+		)
+		expect(screen.getByLabelText("Web search")).toBeInTheDocument()
+		expect(screen.getByLabelText("Web fetch")).toBeInTheDocument()
+	})
+
 	it("omits capabilities that are false or unknown", () => {
 		render(<ProfileCapabilityIcons capabilities={{ supportsImages: true } as ModelCapabilities} />)
 		expect(screen.getByLabelText("Image input")).toBeInTheDocument()

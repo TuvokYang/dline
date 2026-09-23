@@ -5,8 +5,8 @@ import type { TaskEffectPorts } from "../../runtime/TaskEffectRunner"
 import { TaskRuntime } from "../../runtime/TaskRuntime"
 import { createTaskRuntimeState } from "../../runtime/TaskRuntimeState"
 import { TaskPhase } from "../../TaskPhase"
-import { hostedWebApprovalApiIndex, requestHostedWebApproval } from "../HostedWebApproval"
-import { InteractionCoordinator } from "../InteractionCoordinator"
+import { hostedWebApprovalApiIndex, hostedWebCapabilityLabel, requestHostedWebApproval } from "../HostedWebApproval"
+import { InteractionCoordinator, type InteractionOutcome } from "../InteractionCoordinator"
 
 const HOSTED_WEB_PLAN = resolveWebSearchRoutingPlan({
 	enabled: true,
@@ -156,6 +156,53 @@ describe("Hosted Web Search request approval", () => {
 			),
 		).resolves.toEqual({ required: false, approved: true })
 		expect(open).not.toHaveBeenCalled()
+	})
+
+	it("requires request approval when only Web Fetch is hosted and names it in the card", async () => {
+		const fetchOnlyPlan = resolveWebSearchRoutingPlan({
+			enabled: true,
+			modelInfo: { capabilities: { tools: [ServerTool.WEB_FETCH] } },
+			selectedApiFormat: ApiFormat.ANTHROPIC_CHAT,
+			localAvailable: true,
+			remoteAdapterAvailable: true,
+			remoteWebFetchAdapterAvailable: true,
+		})
+		expect(fetchOnlyPlan).toMatchObject({ route: "local", webFetchRoute: "hosted" })
+		expect(hostedWebCapabilityLabel(fetchOnlyPlan)).toBe("Web Fetch")
+		const open = vi.fn(async () => ({ actionId: "approve" }) as InteractionOutcome)
+
+		await expect(
+			requestHostedWebApproval(
+				{ open },
+				{
+					taskId: "task-1",
+					apiIndex: 6,
+					providerId: "anthropic",
+					routingPlan: fetchOnlyPlan,
+					autoApproved: false,
+				},
+			),
+		).resolves.toEqual({ required: true, approved: true })
+		expect(open).toHaveBeenCalledWith(
+			expect.objectContaining({
+				kind: "hosted_web_approval",
+				presentation: expect.stringContaining("Anthropic provider-hosted Web Fetch"),
+			}),
+		)
+	})
+
+	it("names both hosted web tools when search and fetch are hosted together", () => {
+		const bothPlan = resolveWebSearchRoutingPlan({
+			enabled: true,
+			modelInfo: { capabilities: { tools: [ServerTool.WEB_SEARCH, ServerTool.WEB_FETCH] } },
+			selectedApiFormat: ApiFormat.ANTHROPIC_CHAT,
+			localAvailable: true,
+			remoteAdapterAvailable: true,
+			remoteWebFetchAdapterAvailable: true,
+		})
+
+		expect(hostedWebCapabilityLabel(bothPlan)).toBe("Web Search and Web Fetch")
+		expect(hostedWebCapabilityLabel(HOSTED_WEB_PLAN)).toBe("Web Search")
 	})
 
 	it("does not apply the hosted request gate to a local route", async () => {

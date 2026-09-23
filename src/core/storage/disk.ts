@@ -635,7 +635,7 @@ function isKnownApiFormat(value: unknown): value is ApiFormat {
 }
 
 function isKnownServerTool(value: unknown): value is ServerTool {
-	return value === ServerTool.WEB_SEARCH
+	return value === ServerTool.WEB_SEARCH || value === ServerTool.WEB_FETCH
 }
 
 /** Normalize the legacy prompt profile name before validating a persisted cache. */

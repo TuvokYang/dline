@@ -215,8 +215,38 @@ describe("local Web Tool routing", () => {
 		expect(taskConfig.callbacks.sayAndCreateMissingParamError).toHaveBeenCalledWith("web_search", "query", undefined, 1)
 	})
 
-	it("keeps Web Fetch enabled when provider Web Search is Force Off", async () => {
+	it("refuses local Web Fetch when the provider Web Tools mode is Off", async () => {
 		const taskConfig = config(true, "disabled")
+
+		expect(String(await new WebFetchToolHandler().execute(asTaskConfig(taskConfig), block("web_fetch")))).toContain(
+			"not available for this request",
+		)
+		expect(taskConfig.callbacks.sayAndCreateMissingParamError).not.toHaveBeenCalled()
+	})
+
+	it("refuses local Web Fetch while the provider hosts Web Fetch for this request", async () => {
+		const taskConfig = {
+			...config(true, "local"),
+			webSearchRoutingPlan: resolveWebSearchRoutingPlan({
+				enabled: true,
+				modelInfo: { capabilities: { tools: [ServerTool.WEB_SEARCH, ServerTool.WEB_FETCH] } },
+				selectedApiFormat: ApiFormat.ANTHROPIC_CHAT,
+				localAvailable: true,
+				remoteAdapterAvailable: true,
+				remoteWebFetchAdapterAvailable: true,
+			}),
+		}
+		expect(taskConfig.webSearchRoutingPlan.webFetchRoute).toBe("hosted")
+
+		expect(String(await new WebFetchToolHandler().execute(asTaskConfig(taskConfig), block("web_fetch")))).toContain(
+			"not available for this request",
+		)
+		expect(taskConfig.callbacks.sayAndCreateMissingParamError).not.toHaveBeenCalled()
+	})
+
+	it("runs local Web Fetch when the request routes Web Fetch locally", async () => {
+		const taskConfig = config(true, "local")
+		expect(taskConfig.webSearchRoutingPlan?.webFetchRoute).toBe("local")
 
 		await expect(new WebFetchToolHandler().execute(asTaskConfig(taskConfig), block("web_fetch"))).resolves.toBe("missing:url")
 	})

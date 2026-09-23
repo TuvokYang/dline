@@ -268,6 +268,7 @@ export const AnthropicProvider = ({ showModelOptions, isPopup, profile, onUpdate
 								...(contextWindowTiersEnabled ? (["contextWindowTiers"] as const) : []),
 								"supportsImages",
 								"hostedWebSearch",
+								"hostedWebFetch",
 								"supportsBrowserAction",
 								"supportsPromptCache",
 								"supportsTools",

@@ -22,13 +22,13 @@ import { ClaudeCodeUsageClient, toAccountUsage } from "@/integrations/anthropic-
 import { ClaudeCodeModelId, claudeCodeDefaultModelId, claudeCodeModels, type ModelInfo } from "@/shared/api"
 import type { AccountUsageData } from "@/shared/ExtensionMessage"
 import { ClineStorageMessage } from "@/shared/messages/content"
-import { ApiFormat } from "@/shared/proto/dline/models/metadata"
+import { ApiFormat, ServerTool } from "@/shared/proto/dline/models/metadata"
 import { getClaudeCodeClientVersionResolver } from "../../model-registry/remote/vendors/claude-code-client-version"
 import { type ApiHandler, type ApiHandlerContext, type ApiRequestOptions } from ".."
 import { withRetry } from "../retry"
 import { sanitizeAnthropicMessages } from "../transform/anthropic-format"
 import { type ApiStream } from "../transform/stream"
-import { handleAnthropicMessagesApiStreamResponse } from "../utils/messages_api_support"
+import { handleAnthropicMessagesApiStreamResponse, mergeAnthropicServerTools } from "../utils/messages_api_support"
 
 /**
  * Effort levels the Messages API accepts for adaptive thinking.
@@ -92,6 +92,15 @@ export class ClaudeCodeHandler implements ApiHandler {
 	/** This handler always speaks the Anthropic Messages protocol. */
 	getSelectedApiFormat(): ApiFormat {
 		return ApiFormat.ANTHROPIC_CHAT
+	}
+
+	/**
+	 * Hosted web search and web fetch are served by the same Messages API the
+	 * anthropic provider uses, so the model's declared `tools` decide whether
+	 * either one is used.
+	 */
+	supportsServerTool(tool: ServerTool): boolean {
+		return tool === ServerTool.WEB_SEARCH || tool === ServerTool.WEB_FETCH
 	}
 
 	/**
@@ -201,9 +210,17 @@ export class ClaudeCodeHandler implements ApiHandler {
 	 * A model that rejects forcing fails the whole request rather than degrading,
 	 * so its own declaration decides this. Manual extended thinking cannot be
 	 * combined with a forced choice either, which leaves the API default.
+	 * `tool_choice: any` only admits client tools, so forcing it while a hosted
+	 * tool is merged would make that tool unreachable.
 	 */
-	private resolveToolChoice(model: { id: string; info: ModelInfo }, reasoning: ClaudeCodeReasoning) {
-		if (!resolveForcedToolUseSupport(model.id, model.info.capabilities)) return { type: "auto" as const }
+	private resolveToolChoice(
+		model: { id: string; info: ModelInfo },
+		reasoning: ClaudeCodeReasoning,
+		hostedServerToolsOn: boolean,
+	) {
+		if (hostedServerToolsOn || !resolveForcedToolUseSupport(model.id, model.info.capabilities)) {
+			return { type: "auto" as const }
+		}
 		if (!reasoning.enabled) return { type: "any" as const }
 		return undefined
 	}
@@ -249,7 +266,9 @@ export class ClaudeCodeHandler implements ApiHandler {
 		const identity = await this.buildIdentity(anthropicMessages)
 
 		const reasoning = this.resolveReasoning(model.id, model.info)
-		const nativeToolsOn = tools !== undefined && tools.length > 0
+		const localToolsOn = tools !== undefined && tools.length > 0
+		const requestTools = mergeAnthropicServerTools(tools, options?.serverTools)
+		const hostedServerToolsOn = (options?.serverTools?.length ?? 0) > 0
 
 		const maxOutputTokens =
 			options?.generation?.purpose === "compaction"
@@ -276,8 +295,8 @@ export class ClaudeCodeHandler implements ApiHandler {
 			messages: anthropicMessages,
 			stream: true,
 			...(reasoning.thinking ? { thinking: reasoning.thinking } : {}),
-			...(nativeToolsOn ? { tools } : {}),
-			...(nativeToolsOn ? { tool_choice: this.resolveToolChoice(model, reasoning) } : {}),
+			...(requestTools ? { tools: requestTools } : {}),
+			...(localToolsOn ? { tool_choice: this.resolveToolChoice(model, reasoning, hostedServerToolsOn) } : {}),
 		}
 		if (reasoning.outputConfig) {
 			requestBody.output_config = reasoning.outputConfig

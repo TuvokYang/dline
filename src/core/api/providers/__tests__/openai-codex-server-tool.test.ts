@@ -624,6 +624,7 @@ describe("OpenAiCodexHandler hosted Web Search", () => {
 			{
 				type: "5hour",
 				label: "5 hour",
+				shortLabel: "5h",
 				used: 25,
 				limit: 100,
 				windowSeconds: 18_000,

@@ -285,7 +285,7 @@ describe("AnthropicProvider", () => {
 		expect(screen.getByText("max:64000")).toBeInTheDocument()
 		expect(screen.getByText("input:0.5")).toBeInTheDocument()
 		expect(screen.getByTestId("capability-fields")).toHaveTextContent(
-			"supportsImages,hostedWebSearch,supportsBrowserAction,supportsPromptCache",
+			"supportsImages,hostedWebSearch,hostedWebFetch,supportsBrowserAction,supportsPromptCache",
 		)
 
 		fireEvent.click(screen.getByText("Update Cache"))

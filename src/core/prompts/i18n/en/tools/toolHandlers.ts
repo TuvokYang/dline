@@ -73,6 +73,8 @@ Always adhere to this format for all tool uses to ensure proper parsing and exec
 
 	// WebFetchToolHandler
 	webToolsDisabled: "Dline web tools are currently disabled.",
+	webFetchNotRoutedLocally:
+		"Dline local web_fetch is not available for this request. Web Fetch is provider-hosted or unavailable under the current Web Tools mode.",
 
 	// WebSearchToolHandler
 	webSearchDisabled: "Dline web tools are currently disabled.",

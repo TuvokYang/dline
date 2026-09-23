@@ -7,22 +7,20 @@ function jsonResponse(body: unknown, status = 200): Response {
 	return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } })
 }
 
-function listingPayload(modelId: string): unknown {
+function listingPayload(...modelIds: string[]): unknown {
 	return {
-		data: [
-			{
-				type: "model",
-				id: modelId,
-				display_name: "Claude Listing Model",
-				max_input_tokens: 400_000,
-				max_tokens: 96_000,
-				capabilities: {
-					image_input: { supported: true },
-					thinking: { supported: true },
-					context_management: { prompt_caching: { supported: true } },
-				},
+		data: modelIds.map((modelId) => ({
+			type: "model",
+			id: modelId,
+			display_name: "Claude Listing Model",
+			max_input_tokens: 400_000,
+			max_tokens: 96_000,
+			capabilities: {
+				image_input: { supported: true },
+				thinking: { supported: true },
+				context_management: { prompt_caching: { supported: true } },
 			},
-		],
+		})),
 		has_more: false,
 	}
 }
@@ -51,13 +49,13 @@ describe("ClaudeCodeModelSource", () => {
 		const models = await mockFetchForTesting(
 			async (input: RequestInfo | URL, init?: RequestInit) => {
 				requests.push({ url: String(input), headers: new Headers(init?.headers) })
-				return jsonResponse(listingPayload("claude-opus-5-5"))
+				return jsonResponse(listingPayload("claude-opus-5"))
 			},
 			async () => source.fetchModels({ profileId: "profile-a" }),
 		)
 
-		expect(Object.keys(models)).toEqual(["claude-opus-5-5"])
-		expect(models["claude-opus-5-5"].capabilities).toMatchObject({
+		expect(Object.keys(models)).toEqual(["claude-opus-5"])
+		expect(models["claude-opus-5"].capabilities).toMatchObject({
 			contextWindow: 400_000,
 			maxTokens: 96_000,
 			supportsImages: true,
@@ -84,7 +82,7 @@ describe("ClaudeCodeModelSource", () => {
 		const models = await mockFetchForTesting(
 			async () => {
 				calls++
-				return jsonResponse(listingPayload("claude-opus-5-5"))
+				return jsonResponse(listingPayload("claude-opus-5"))
 			},
 			async () => source.fetchModels({}),
 		)
@@ -103,7 +101,7 @@ describe("ClaudeCodeModelSource", () => {
 		const models = await mockFetchForTesting(
 			async () => {
 				calls++
-				return jsonResponse(listingPayload("claude-opus-5-5"))
+				return jsonResponse(listingPayload("claude-opus-5"))
 			},
 			async () => source.fetchModels({ profileId: "profile-a" }),
 		)
@@ -122,14 +120,27 @@ describe("ClaudeCodeModelSource", () => {
 				authorizations.push(new Headers(init?.headers).get("Authorization") ?? "")
 				return authorizations.length === 1
 					? jsonResponse({ error: { type: "authentication_error" } }, 401)
-					: jsonResponse(listingPayload("claude-sonnet-4-5-20250929"))
+					: jsonResponse(listingPayload("claude-sonnet-5"))
 			},
 			async () => source.fetchModels({ profileId: "profile-a" }),
 		)
 
 		expect(registry.forceRefresh).toHaveBeenCalledWith("profile-a")
 		expect(authorizations).toEqual(["Bearer access-a", "Bearer access-b"])
-		expect(Object.keys(models)).toEqual(["claude-sonnet-4-5-20250929"])
+		expect(Object.keys(models)).toEqual(["claude-sonnet-5"])
+	})
+
+	// Superseded generations stay callable upstream, but the subscription
+	// catalog dropped them on purpose; a refresh must not bring them back.
+	it("keeps only the models the subscription catalog offers", async () => {
+		const source = new ClaudeCodeModelSource(sessionRegistryStub() as never, versionSourceStub("2.1.280"))
+
+		const models = await mockFetchForTesting(
+			async () => jsonResponse(listingPayload("claude-opus-5", "claude-opus-4-8", "claude-sonnet-4-5-20250929")),
+			async () => source.fetchModels({ profileId: "profile-a" }),
+		)
+
+		expect(Object.keys(models)).toEqual(["claude-opus-5", "claude-opus-4-8"])
 	})
 
 	it("propagates a non-authentication failure instead of hiding it as an empty catalog", async () => {

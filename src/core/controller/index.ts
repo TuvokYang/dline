@@ -1268,7 +1268,12 @@ export class Controller {
 			return DispatchInteractionResponse.create({ accepted: false, result: "stale_interaction" })
 		}
 
-		return this.runTaskLifecycleOperation(async () => {
+		// The lifecycle lock covers only the promotion itself. A restored handler
+		// continuation keeps driving the Task loop until the next user interaction,
+		// so waiting for it under the lock would block Close and every later
+		// lifecycle operation for as long as the Task stays open.
+		let settlement: Promise<void> | undefined
+		const response = await this.runTaskLifecycleOperation(async () => {
 			if (this.historyDisplaySession !== session || !session.accepts(request)) {
 				return DispatchInteractionResponse.create({ accepted: false, result: "stale_interaction" })
 			}
@@ -1305,13 +1310,15 @@ export class Controller {
 				if (!result.accepted) {
 					return DispatchInteractionResponse.create({ accepted: false, result: "invalid_runtime_event" })
 				}
-				await task.waitForInteractionSettlement(interaction.interactionId)
+				settlement = task.waitForInteractionSettlement(interaction.interactionId)
 				return DispatchInteractionResponse.create({ accepted: true, result: "accepted" })
 			} catch (error) {
 				Logger.error(`[HistoryDisplay] Failed to promote task ${session.taskId}:`, error)
 				return DispatchInteractionResponse.create({ accepted: false, result: "invalid_runtime_event" })
 			}
 		})
+		await settlement
+		return response
 	}
 
 	async reinitExistingTaskFromId(taskId: string) {

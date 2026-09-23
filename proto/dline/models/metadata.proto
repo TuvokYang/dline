@@ -38,6 +38,9 @@ enum ServerTool {
   // from inside this sandbox, so declaring it also selects the web search version.
   CODE_EXECUTION = 2;
   IMAGE_GENERATION = 3;
+  // Provider-run page fetch. Routed by the same Web Tools mode as WEB_SEARCH;
+  // while hosted, it replaces the local web_fetch tool of the same name.
+  WEB_FETCH = 4;
 }
 
 /** Model capability flags and limits. */

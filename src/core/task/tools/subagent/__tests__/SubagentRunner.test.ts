@@ -283,6 +283,31 @@ function stubApiHandler(
 	} as never)
 }
 
+/** Stubs a handler whose model declares and whose adapter carries the given hosted tools. */
+function stubHostedToolsApiHandler(createMessage: ReturnType<typeof vi.fn>, tools: readonly ServerTool[]) {
+	vi.spyOn(coreApi, "buildApiHandler").mockReturnValue({
+		abort: vi.fn(),
+		getProviderId: () => "anthropic",
+		supportsServerTool: (tool: ServerTool) => tools.includes(tool),
+		getModel: () => ({
+			id: "anthropic/claude-sonnet-4.5",
+			info: {
+				contextWindow: 200_000,
+				apiFormats: [ApiFormat.ANTHROPIC_CHAT],
+				supportsPromptCache: true,
+				capabilities: {
+					contextWindow: 200_000,
+					supportsImages: false,
+					supportsPromptCache: true,
+					supportsTools: true,
+					tools: [...tools],
+				},
+			},
+		}),
+		createMessage,
+	} as never)
+}
+
 function createContextApi(contextWindow: number): ReturnType<typeof coreApi.buildApiHandler> {
 	return {
 		getModel: () => ({
@@ -690,6 +715,77 @@ describe("SubagentRunner", () => {
 		assert.equal(hostedEvents[1].kind, "tool_result")
 		assert.equal(hostedEvents[1].toolStatus, "completed")
 		expect(config.coordinator.getHandler).not.toHaveBeenCalledWith(ClineDefaultTool.WEB_SEARCH)
+	})
+
+	it.each([
+		{ allowed: [ClineDefaultTool.WEB_FETCH], serverTools: [ServerTool.WEB_FETCH] },
+		{ allowed: [ClineDefaultTool.WEB_SEARCH], serverTools: [ServerTool.WEB_SEARCH] },
+	])("declares only the hosted web tools in the allowlist $allowed", async ({ allowed, serverTools }) => {
+		const createMessage = vi.fn().mockImplementation(async function* () {
+			yield {
+				type: "tool_calls",
+				function_id: "complete-with-allowed-web-tools",
+				tool_call: {
+					function: {
+						name: ClineDefaultTool.ATTEMPT,
+						arguments: JSON.stringify({ result: "done" }),
+					},
+				},
+			}
+		})
+		stubSystemPrompt(false)
+		vi.spyOn(skills, "discoverSkills").mockResolvedValue([])
+		vi.spyOn(skills, "getAvailableSkills").mockReturnValue([])
+		stubHostedToolsApiHandler(createMessage, [ServerTool.WEB_SEARCH, ServerTool.WEB_FETCH])
+		initializeHostProvider()
+
+		const result = await new SubagentRunner(createTaskConfig(false, { clineWebToolsEnabled: true }), "web-researcher", {
+			name: "web-researcher",
+			description: "Researches current information on the web.",
+			tools: [...allowed, ClineDefaultTool.ATTEMPT],
+			systemPrompt: "",
+		}).run("Use only the allowed web tool", () => {})
+
+		assert.equal(result.status, "completed", result.error)
+		assert.deepEqual(createMessage.mock.calls[0][3], { serverTools, retryOwner: "subagent" })
+	})
+
+	it("withholds hosted web tools when the web ceiling reserves them for manual approval", async () => {
+		// Hosted tools bypass tool admission, so the ceiling that fails a local web
+		// tool closed inside a subagent must keep the hosted ones off the request.
+		const createMessage = vi.fn().mockImplementation(async function* () {
+			yield {
+				type: "tool_calls",
+				function_id: "complete-without-hosted-web",
+				tool_call: {
+					function: {
+						name: ClineDefaultTool.ATTEMPT,
+						arguments: JSON.stringify({ result: "done" }),
+					},
+				},
+			}
+		})
+		stubSystemPrompt(false)
+		vi.spyOn(skills, "discoverSkills").mockResolvedValue([])
+		vi.spyOn(skills, "getAvailableSkills").mockReturnValue([])
+		stubHostedToolsApiHandler(createMessage, [ServerTool.WEB_SEARCH, ServerTool.WEB_FETCH])
+		initializeHostProvider()
+		const config = createTaskConfig(false, { clineWebToolsEnabled: true })
+		config.autoApprovalSettings = {
+			...DEFAULT_AUTO_APPROVAL_SETTINGS,
+			actions: { ...DEFAULT_AUTO_APPROVAL_SETTINGS.actions, useWeb: true },
+			ceilings: { web: "manual_only" },
+		}
+
+		const result = await new SubagentRunner(config, "web-researcher", {
+			name: "web-researcher",
+			description: "Researches current information on the web.",
+			tools: [ClineDefaultTool.WEB_SEARCH, ClineDefaultTool.WEB_FETCH, ClineDefaultTool.ATTEMPT],
+			systemPrompt: "",
+		}).run("Do not use hosted web tools", () => {})
+
+		assert.equal(result.status, "completed", result.error)
+		assert.deepEqual(createMessage.mock.calls[0][3], { serverTools: [], retryOwner: "subagent" })
 	})
 
 	it("reports cancellation between API turns as cancelled", async () => {

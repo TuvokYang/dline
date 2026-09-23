@@ -104,7 +104,7 @@ export class AnthropicHandler implements ApiHandler {
 	}
 
 	supportsServerTool(tool: ServerTool): boolean {
-		return tool === ServerTool.WEB_SEARCH || tool === ServerTool.CODE_EXECUTION
+		return tool === ServerTool.WEB_SEARCH || tool === ServerTool.CODE_EXECUTION || tool === ServerTool.WEB_FETCH
 	}
 
 	private contextWindowTiersEnabled(modelId: string): boolean {

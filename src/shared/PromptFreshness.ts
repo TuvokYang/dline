@@ -17,7 +17,7 @@ export type PromptFreshnessChangeKind =
 
 /** Stable, content-safe projection persisted beside one frozen prompt. */
 export interface PromptFreshnessBaseline {
-	readonly schemaVersion: 3
+	readonly schemaVersion: 4
 	readonly providerId: string
 	readonly modelId: string
 	readonly promptProfile: "standard" | "lite"
@@ -29,6 +29,7 @@ export interface PromptFreshnessBaseline {
 	readonly browserViewport: string
 	readonly webToolsEnabled: boolean
 	readonly webSearchRoute: string
+	readonly webFetchRoute: string
 	readonly focusChainEnabled: boolean
 	readonly rulesHash: string
 	readonly subagentsEnabled: boolean

@@ -1,5 +1,6 @@
-import type { WebSearchRoutingPlan } from "@core/api/server-tools"
+import { hasHostedWebRoute, isHostedToolRouted, type WebSearchRoutingPlan } from "@core/api/server-tools"
 import type { ClineSayTool } from "@shared/ExtensionMessage"
+import { ServerTool } from "@shared/proto/dline/models/metadata"
 import type { InteractionOutcome, OpenInteractionRequest } from "./InteractionCoordinator"
 
 export interface HostedWebApprovalInput {
@@ -47,10 +48,23 @@ export function hostedWebApprovalApiIndex(taskId: string, interactionId: string)
 	return Number.isSafeInteger(apiIndex) ? apiIndex : undefined
 }
 
-/** Project a request-level Hosted Web Search approval into the existing Web Search card. */
-export function hostedWebApprovalPresentation(providerId: string): string {
+/**
+ * Name the provider-hosted web tools one request would run.
+ *
+ * Web Search and Web Fetch route independently, so the approval must name what the
+ * request actually declares rather than assume search.
+ */
+export function hostedWebCapabilityLabel(routingPlan: WebSearchRoutingPlan): string {
+	const names: string[] = []
+	if (isHostedToolRouted(routingPlan, ServerTool.WEB_SEARCH)) names.push("Web Search")
+	if (isHostedToolRouted(routingPlan, ServerTool.WEB_FETCH)) names.push("Web Fetch")
+	return names.length === 0 ? "Web Search" : names.join(" and ")
+}
+
+/** Project a request-level hosted web approval into the existing Web Search card. */
+export function hostedWebApprovalPresentation(providerId: string, routingPlan: WebSearchRoutingPlan): string {
 	const label = providerLabel(providerId)
-	const capability = `${label} provider-hosted Web Search`
+	const capability = `${label} provider-hosted ${hostedWebCapabilityLabel(routingPlan)}`
 	return JSON.stringify({
 		tool: "webSearch",
 		path: `Allow ${capability} for this request`,
@@ -70,12 +84,12 @@ export function hostedWebApprovalPresentation(providerId: string): string {
 	} satisfies ClineSayTool)
 }
 
-/** Wait for request-level approval without changing the already selected search route. */
+/** Wait for request-level approval without changing the already selected web tool routes. */
 export async function requestHostedWebApproval(
 	port: HostedWebApprovalPort,
 	input: HostedWebApprovalInput,
 ): Promise<HostedWebApprovalDecision> {
-	if (input.routingPlan.route !== "hosted" || input.autoApproved) {
+	if (!hasHostedWebRoute(input.routingPlan) || input.autoApproved) {
 		return { required: false, approved: true }
 	}
 
@@ -84,7 +98,7 @@ export async function requestHostedWebApproval(
 		turnId: interactionId,
 		interactionId,
 		kind: "hosted_web_approval",
-		presentation: hostedWebApprovalPresentation(input.providerId),
+		presentation: hostedWebApprovalPresentation(input.providerId, input.routingPlan),
 	})
 	return { required: true, approved: outcome.actionId === "approve" }
 }

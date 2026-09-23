@@ -89,8 +89,9 @@ export function buildPromptFreshnessBaseline(
 	const subagentsVisible = standardProfile && context.subagentsEnabled === true
 	const browserEnabled = context.supportsBrowserUse === true && context.browserSettings?.disableToolUse !== true
 	const viewport = browserEnabled ? context.browserSettings?.viewport : undefined
+	const webToolsVisible = standardProfile && context.clineWebToolsEnabled === true
 	return {
-		schemaVersion: 3,
+		schemaVersion: 4,
 		providerId: context.providerInfo.providerId,
 		modelId: context.providerInfo.model.id,
 		promptProfile: context.promptProfile,
@@ -100,11 +101,9 @@ export function buildPromptFreshnessBaseline(
 		imageModelId: context.imageModelId ?? "",
 		browserEnabled,
 		browserViewport: viewport ? `${viewport.width}x${viewport.height}` : "disabled",
-		webToolsEnabled: standardProfile && context.clineWebToolsEnabled === true,
-		webSearchRoute:
-			standardProfile && context.clineWebToolsEnabled === true
-				? (context.webSearchRoutingPlan?.route ?? "none")
-				: "disabled",
+		webToolsEnabled: webToolsVisible,
+		webSearchRoute: webToolsVisible ? (context.webSearchRoutingPlan?.route ?? "none") : "disabled",
+		webFetchRoute: webToolsVisible ? (context.webSearchRoutingPlan?.webFetchRoute ?? "none") : "disabled",
 		focusChainEnabled: standardProfile && context.focusChainSettings?.enabled === true,
 		rulesHash: hashPromptVisibleRules(context),
 		subagentsEnabled: subagentsVisible,
@@ -146,7 +145,11 @@ export function comparePromptFreshness(
 	if (frozen.browserEnabled !== current.browserEnabled || frozen.browserViewport !== current.browserViewport) {
 		addChange(changes, "browser", "Browser settings changed")
 	}
-	if (frozen.webToolsEnabled !== current.webToolsEnabled || frozen.webSearchRoute !== current.webSearchRoute) {
+	if (
+		frozen.webToolsEnabled !== current.webToolsEnabled ||
+		frozen.webSearchRoute !== current.webSearchRoute ||
+		frozen.webFetchRoute !== current.webFetchRoute
+	) {
 		addChange(changes, "web_tools", "Web tools changed")
 	}
 	if (frozen.focusChainEnabled !== current.focusChainEnabled) addChange(changes, "focus_chain", "Focus Chain changed")

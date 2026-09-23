@@ -6,7 +6,7 @@
  * so the request carries the Profile's OAuth access token plus the Claude Code
  * client identity, and upstream rejects the token without the OAuth beta.
  */
-import { claudeCodeDefaultModelId } from "@core/api/providers/models/claude-code"
+import { claudeCodeDefaultModelId, claudeCodeModels } from "@core/api/providers/models/claude-code"
 import { CLAUDE_CODE_OAUTH_BETA } from "@integrations/anthropic-claude-code/beta-headers"
 import { buildClaudeCodeClientHeaders } from "@integrations/anthropic-claude-code/client-headers"
 import { getClaudeCodeProfileSessionRegistry } from "@integrations/anthropic-claude-code/registry"
@@ -62,12 +62,13 @@ export class ClaudeCodeModelSource extends AnthropicModelSource {
 
 		for (let attempt = 0; attempt < 2; attempt++) {
 			try {
-				return await super.fetchModels({
+				const listed = await super.fetchModels({
 					...context,
 					profileId,
 					apiKey: accessToken,
 					vendorCredentials: { clientVersion: version },
 				})
+				return offeredModelsOnly(listed)
 			} catch (error) {
 				const unauthorized = error instanceof Error && /status 401\b/.test(error.message)
 				if (!unauthorized || attempt > 0) throw error
@@ -90,6 +91,17 @@ export class ClaudeCodeModelSource extends AnthropicModelSource {
 			...(context.apiKey ? { Authorization: `Bearer ${context.apiKey}` } : {}),
 		}
 	}
+}
+
+/**
+ * Keep only the models the subscription catalog offers.
+ *
+ * The listing returns every model the account can still call, including
+ * superseded generations. Those were removed from the catalog on purpose, so a
+ * refresh must not re-add them; the listing only refreshes metadata here.
+ */
+function offeredModelsOnly(listed: Record<string, ModelInfo>): Record<string, ModelInfo> {
+	return Object.fromEntries(Object.entries(listed).filter(([modelId]) => modelId in claudeCodeModels))
 }
 
 export const claudeCodeModelSource = new ClaudeCodeModelSource()

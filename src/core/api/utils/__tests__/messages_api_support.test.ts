@@ -117,6 +117,44 @@ describe("messages_api_support", () => {
 			])
 		})
 
+		it("replaces a local web_fetch function with one hosted Anthropic declaration", () => {
+			const converted = convertOpenAIToolsToAnthropicTools(
+				[
+					{
+						type: "function",
+						function: { name: "web_fetch", description: "Local fetch", parameters: { type: "object" } },
+					},
+					{
+						type: "function",
+						function: { name: "read_file", description: "Read", parameters: { type: "object" } },
+					},
+				],
+				[ServerTool.WEB_FETCH],
+			)
+
+			expect(converted).to.deep.equal([
+				{ name: "read_file", description: "Read", input_schema: { type: "object" } },
+				{ type: "web_fetch_20260318", name: "web_fetch", allowed_callers: ["direct"] },
+			])
+		})
+
+		it("keeps the local web_fetch function while only search is hosted", () => {
+			const converted = convertOpenAIToolsToAnthropicTools(
+				[
+					{
+						type: "function",
+						function: { name: "web_fetch", description: "Local fetch", parameters: { type: "object" } },
+					},
+				],
+				[ServerTool.WEB_SEARCH],
+			)
+
+			expect(converted).to.deep.equal([
+				{ name: "web_fetch", description: "Local fetch", input_schema: { type: "object" } },
+				{ type: "web_search_20260318", name: "web_search", allowed_callers: ["direct"] },
+			])
+		})
+
 		it("keeps an Anthropic local web_search tool unless hosted search was selected", () => {
 			const localTool = {
 				name: "web_search",
@@ -360,7 +398,7 @@ describe("messages_api_support", () => {
 					outputTokens: 0,
 					cacheWriteTokens: undefined,
 					cacheReadTokens: undefined,
-					serverToolUsage: { webSearchRequests: 1 },
+					serverToolUsage: { webSearchRequests: 1, webFetchRequests: 0 },
 				},
 				{
 					type: "server_tool",
@@ -440,6 +478,127 @@ describe("messages_api_support", () => {
 						type: "web_search_tool_result",
 						tool_use_id: "srv_web_orphan",
 						content: [],
+						caller: { type: "direct" },
+					},
+				},
+			])
+
+			expect(chunks).to.deep.equal([])
+		})
+
+		it("emits a hosted web fetch lifecycle and fetch usage without local tool_calls", async () => {
+			const result = {
+				type: "web_fetch_result",
+				url: "https://example.com/page",
+				content: {
+					type: "document",
+					source: { type: "text", media_type: "text/plain", data: "page body" },
+					title: "Page",
+				},
+				retrieved_at: "2026-09-24T00:00:00Z",
+			}
+			const chunks = await collectChunks([
+				{
+					type: "content_block_start",
+					index: 0,
+					content_block: {
+						type: "server_tool_use",
+						id: "srv_fetch_1",
+						name: "web_fetch",
+						input: {},
+						caller: { type: "direct" },
+					},
+				},
+				{
+					type: "content_block_delta",
+					index: 0,
+					delta: { type: "input_json_delta", partial_json: '{"url":"https://example.com/page"}' },
+				},
+				{ type: "content_block_stop", index: 0 },
+				{
+					type: "content_block_start",
+					index: 1,
+					content_block: {
+						type: "web_fetch_tool_result",
+						tool_use_id: "srv_fetch_1",
+						content: result,
+						caller: { type: "direct" },
+					},
+				},
+				{
+					type: "message_delta",
+					delta: { stop_reason: "end_turn", stop_sequence: null },
+					usage: { output_tokens: 5, server_tool_use: { web_search_requests: 0, web_fetch_requests: 1 } },
+				},
+			])
+
+			expect(chunks).to.deep.equal([
+				{ type: "server_tool", function_id: "srv_fetch_1", tool: ServerTool.WEB_FETCH, phase: "started", input: {} },
+				{
+					type: "server_tool",
+					function_id: "srv_fetch_1",
+					tool: ServerTool.WEB_FETCH,
+					phase: "in_progress",
+					input: { url: "https://example.com/page" },
+				},
+				{ type: "server_tool", function_id: "srv_fetch_1", tool: ServerTool.WEB_FETCH, phase: "completed", result },
+				{
+					type: "usage",
+					inputTokens: 0,
+					outputTokens: 5,
+					serverToolUsage: { webSearchRequests: 0, webFetchRequests: 1 },
+				},
+			])
+			expect(chunks.some((chunk) => chunk.type === "tool_calls")).to.equal(false)
+		})
+
+		it("maps a hosted web fetch error code to a failed server_tool event", async () => {
+			const error = { type: "web_fetch_tool_result_error", error_code: "url_not_in_prior_context" }
+			const chunks = await collectChunks([
+				{
+					type: "content_block_start",
+					index: 0,
+					content_block: {
+						type: "server_tool_use",
+						id: "srv_fetch_error",
+						name: "web_fetch",
+						input: { url: "https://unseen.example.com" },
+						caller: { type: "direct" },
+					},
+				},
+				{
+					type: "content_block_start",
+					index: 1,
+					content_block: {
+						type: "web_fetch_tool_result",
+						tool_use_id: "srv_fetch_error",
+						content: error,
+						caller: { type: "direct" },
+					},
+				},
+			])
+
+			expect(chunks).to.deep.equal([
+				{
+					type: "server_tool",
+					function_id: "srv_fetch_error",
+					tool: ServerTool.WEB_FETCH,
+					phase: "started",
+					input: { url: "https://unseen.example.com" },
+				},
+				{ type: "server_tool", function_id: "srv_fetch_error", tool: ServerTool.WEB_FETCH, phase: "failed", error },
+			])
+		})
+
+		it("ignores an orphan hosted web fetch result", async () => {
+			const chunks = await collectChunks([
+				{
+					type: "content_block_start",
+					index: 0,
+					content_block: {
+						type: "web_fetch_tool_result",
+						tool_use_id: "srv_fetch_orphan",
+						content: { type: "web_fetch_tool_result_error", error_code: "unavailable" },
 						caller: { type: "direct" },
 					},
 				},
