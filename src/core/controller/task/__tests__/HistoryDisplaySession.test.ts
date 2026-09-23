@@ -8,6 +8,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { ensureTaskDirectoryExists, GlobalFileNames } from "@/core/storage/disk"
 import { UIMessage } from "@/core/storage/UIMessage"
 import { UIMessageWindowReader } from "@/core/storage/UIMessageWindowReader"
+import { TaskActivityPersistence } from "@/core/task/activity/TaskActivityPersistence"
+import { TaskActivityStore } from "@/core/task/activity/TaskActivityStore"
 import type { TaskRuntimeState } from "@/core/task/runtime/TaskRuntimeState"
 import { TaskPhase } from "@/core/task/TaskPhase"
 import { createSnapshot } from "@/core/task/TaskSnapshot"
@@ -95,6 +97,38 @@ describe("HistoryDisplaySession", () => {
 			expect(session.accepts(requestFor(session))).toBe(true)
 			expect(session.accepts(requestFor(session, { stateRevision: 1 }))).toBe(false)
 			expect(session.accepts(requestFor(session, { interactionId: "stale-interaction" }))).toBe(false)
+		} finally {
+			await session.dispose()
+		}
+	})
+
+	it("hydrates persisted activities for the lightweight history surface", async () => {
+		const taskId = "history-activities"
+		await seedMessages(taskId, [{ ts: 10, type: "say", say: "task", text: "Original task" }])
+		const persistedStore = new TaskActivityStore(taskId, new TaskActivityPersistence(taskId))
+		persistedStore.create({
+			activityId: "history-subagent",
+			kind: "subagent",
+			executionMode: "foreground",
+			title: "history review",
+		})
+		persistedStore.update("history-subagent", {
+			status: "cancelled",
+			metrics: { toolCalls: 4, inputTokens: 40, outputTokens: 8 },
+		})
+		await persistedStore.waitForPersistence()
+		persistedStore.dispose()
+		const session = new HistoryDisplaySession(createHistoryItem(taskId))
+
+		try {
+			await session.load()
+			expect(session.activityStore.list()).toEqual([
+				expect.objectContaining({
+					activityId: "history-subagent",
+					status: "cancelled",
+					metrics: expect.objectContaining({ toolCalls: 4, inputTokens: 40, outputTokens: 8 }),
+				}),
+			])
 		} finally {
 			await session.dispose()
 		}

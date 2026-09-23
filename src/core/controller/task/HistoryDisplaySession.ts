@@ -7,6 +7,8 @@ import type { DispatchInteractionRequest } from "@shared/proto/dline/task"
 import { ensureTaskDirectoryExists, GlobalFileNames } from "@/core/storage/disk"
 import { UIMessage } from "@/core/storage/UIMessage"
 import type { UIMessageWindowPage, UIMessageWindowReader } from "@/core/storage/UIMessageWindowReader"
+import { TaskActivityPersistence } from "@/core/task/activity/TaskActivityPersistence"
+import { TaskActivityStore } from "@/core/task/activity/TaskActivityStore"
 import type { ActiveInteraction } from "@/core/task/interaction/InteractionReducer"
 import { getInteraction } from "@/core/task/interaction/InteractionRegistry"
 import { normalizeStoppedTaskSnapshot } from "@/core/task/resume/ResumeReconciler"
@@ -19,15 +21,16 @@ import { projectHistoryPreparingView } from "./history-task-readiness"
 /**
  * Lightweight owner for a historical surface before the user resumes execution.
  *
- * It deliberately owns only the UI history needed to render the panel and a
- * snapshot-derived interaction projection. API history, Task runtime services,
- * locks, terminals, browser sessions, and orchestrator registration are created
- * only when the user dispatches an action and the Controller promotes the
- * session into a real Task.
+ * It deliberately owns only the durable UI history and activity snapshot needed
+ * to render the panel, plus a snapshot-derived interaction projection. API
+ * history, Task runtime services, locks, terminals, browser sessions, and
+ * orchestrator registration are created only when the user dispatches an action
+ * and the Controller promotes the session into a real Task.
  */
 const HISTORY_MESSAGE_WINDOW_SIZE = 200
 
 export class HistoryDisplaySession {
+	readonly activityStore: TaskActivityStore
 	private messageReader?: UIMessageWindowReader
 	private messages: ClineMessage[] = []
 	private durableMessageCount = 0
@@ -39,6 +42,7 @@ export class HistoryDisplaySession {
 	private disposed = false
 
 	constructor(readonly historyItem: HistoryItem) {
+		this.activityStore = new TaskActivityStore(historyItem.id, new TaskActivityPersistence(historyItem.id))
 		this.viewState = projectHistoryPreparingView({ taskId: historyItem.id, phase: TaskPhase.IDLE, revision: 0 })
 	}
 
@@ -64,6 +68,7 @@ export class HistoryDisplaySession {
 				reader.getLatest(HISTORY_MESSAGE_WINDOW_SIZE),
 				this.readSnapshot(),
 				reader.getPage(0, 1),
+				this.activityStore.hydrate(),
 			])
 			if (this.disposed) return
 
@@ -159,6 +164,7 @@ export class HistoryDisplaySession {
 
 	async dispose(): Promise<void> {
 		this.disposed = true
+		this.activityStore.dispose()
 		const reader = this.messageReader
 		this.messageReader = undefined
 		this.messages = []

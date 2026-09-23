@@ -118,32 +118,46 @@ function toProtoUpdate(
 	})
 }
 
-/** Subscribe to the active task's lightweight activity stream. */
+/** Subscribe to the visible task surface's lightweight activity stream. */
 export async function subscribeToTaskActivities(
 	controller: Controller,
 	request: TaskActivitySubscriptionRequest,
 	responseStream: StreamingResponseHandler<ProtoTaskActivityUpdate>,
 	requestId?: string,
 ): Promise<void> {
-	const task = controller.task
-	if (!task || task.taskId !== request.taskId) {
-		await responseStream(ProtoTaskActivityUpdate.create({ sequence: 0, snapshot: true, activities: [] }), false)
+	const activityStore = controller.getCurrentTaskActivityStore(request.taskId)
+	if (!activityStore) {
+		await responseStream(ProtoTaskActivityUpdate.create({ sequence: 0, snapshot: true, activities: [] }), true)
 		return
 	}
 
-	const unsubscribe = task.activityStore.subscribe(async (update) => {
-		await responseStream(
-			toProtoUpdate(update, (activityId) => ({
-				cancellable: task.activityStore.isCancellable(activityId),
-				finishable: task.activityStore.isFinishable(activityId),
-				retryable: task.activityStore.isRetryable(activityId),
-			})),
-			false,
-			update.sequence,
-		)
-	})
-	if (requestId) {
-		getRequestRegistry().registerRequest(
+	const interactive = controller.task?.taskId === request.taskId
+	const requestRegistry = getRequestRegistry()
+	let completed = false
+	const unsubscribe = activityStore.subscribe(
+		async (update) => {
+			await responseStream(
+				toProtoUpdate(update, (activityId) => ({
+					cancellable: interactive && activityStore.isCancellable(activityId),
+					finishable: interactive && activityStore.isFinishable(activityId),
+					retryable: interactive && activityStore.isRetryable(activityId),
+				})),
+				false,
+				update.sequence,
+			)
+		},
+		async () => {
+			if (completed) return
+			completed = true
+			try {
+				await responseStream(ProtoTaskActivityUpdate.create({ sequence: 0, snapshot: false, activities: [] }), true)
+			} finally {
+				if (requestId) requestRegistry.cancelRequest(requestId)
+			}
+		},
+	)
+	if (requestId && !completed) {
+		requestRegistry.registerRequest(
 			requestId,
 			unsubscribe,
 			{ type: "task_activity_subscription", taskId: request.taskId },
