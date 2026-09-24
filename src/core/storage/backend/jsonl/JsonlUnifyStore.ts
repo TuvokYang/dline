@@ -196,6 +196,14 @@ class JsonlUnifyStoreDriver<TEntity extends object, TPersisted> implements Unify
 		})
 	}
 
+	async upsert(records: readonly TEntity[]): Promise<void> {
+		this.assertOpen()
+		await this.fileLock.withLock(this.dataPath, async () => {
+			this.assertOpen()
+			await this.writeRecords(upsertRecords(this.schema, await this.readRecords(), records))
+		})
+	}
+
 	async replaceAll(records: readonly TEntity[]): Promise<void> {
 		this.assertOpen()
 		await this.fileLock.withLock(this.dataPath, async () => {
@@ -242,6 +250,13 @@ class JsonlUnifyStoreDriver<TEntity extends object, TPersisted> implements Unify
 					const encoded = records.map((record) => this.codec.encode(record))
 					working = [...working, ...records]
 					appended = [...appended, ...encoded]
+				},
+				upsert: async (records) => {
+					working = upsertRecords(this.schema, working, records)
+					primaryKeys = collectPrimaryKeys(this.schema, working)
+					// An in-place replacement cannot be expressed as a tail append.
+					replaced = true
+					appended = []
 				},
 				replaceAll: async (records) => {
 					primaryKeys = new Set()
@@ -364,6 +379,26 @@ function assertNoPrimaryConflicts<TEntity extends object>(
 	incoming: readonly TEntity[],
 ): void {
 	assertNoPrimaryConflictsAgainst(schema, collectPrimaryKeys(schema, current), incoming)
+}
+
+function upsertRecords<TEntity extends object>(
+	schema: EntitySchema<TEntity>,
+	current: readonly TEntity[],
+	records: readonly TEntity[],
+): TEntity[] {
+	const next = [...current]
+	const indexByKey = new Map(next.map((record, index) => [primaryKey(schema, record), index]))
+	for (const record of records) {
+		const key = primaryKey(schema, record)
+		const existing = indexByKey.get(key)
+		if (existing === undefined) {
+			indexByKey.set(key, next.length)
+			next.push(record)
+		} else {
+			next[existing] = record
+		}
+	}
+	return next
 }
 
 function collectPrimaryKeys<TEntity extends object>(schema: EntitySchema<TEntity>, records: readonly TEntity[]): Set<string> {

@@ -65,6 +65,51 @@ export function runUnifyStoreConformance(harness: UnifyStoreConformanceHarness):
 		}
 	})
 
+	it("upserts by primary key, keeping unrelated records and letting the last duplicate win", async () => {
+		try {
+			const store = await open("upsert")
+			await store.insert([
+				new ConformanceEntity("a", "g", 10, 1, "old-a"),
+				new ConformanceEntity("b", "g", 20, 1, "keep-b"),
+			])
+			await store.upsert([
+				new ConformanceEntity("a", "g", 10, 2, "new-a"),
+				new ConformanceEntity("c", "g", 30, 1, "first-c"),
+				new ConformanceEntity("c", "g", 30, 2, "last-c"),
+			])
+			await store.transaction(async (transaction) => {
+				await transaction.upsert([new ConformanceEntity("b", "g", 20, 3, "tx-b")])
+			})
+
+			const { records } = await store.query()
+			expect(records.map((record) => [record.id, record.revision, record.value])).toEqual([
+				["a", 2, "new-a"],
+				["b", 3, "tx-b"],
+				["c", 2, "last-c"],
+			])
+		} finally {
+			await closeOpened()
+		}
+	})
+
+	it("rolls back upserts made inside a failed transaction", async () => {
+		try {
+			const store = await open("upsert-rollback")
+			await store.insert([new ConformanceEntity("a", "g", 10, 1, "old-a")])
+			await expect(
+				store.transaction(async (transaction) => {
+					await transaction.upsert([new ConformanceEntity("a", "g", 10, 2, "new-a")])
+					throw new Error("abort")
+				}),
+			).rejects.toThrow("abort")
+
+			const { records } = await store.query()
+			expect(records.map((record) => record.value)).toEqual(["old-a"])
+		} finally {
+			await closeOpened()
+		}
+	})
+
 	it("uses schema default order and allows explicit order override", async () => {
 		try {
 			const store = await open("ordering")

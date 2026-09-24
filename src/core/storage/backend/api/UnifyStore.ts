@@ -15,6 +15,8 @@ export interface UnifyStoreResult<TEntity extends object> {
 export interface UnifyStoreTransaction<TEntity extends object> {
 	query(query?: UnifyStoreQuery<TEntity>): Promise<TEntity[]>
 	insert(records: readonly TEntity[]): Promise<void>
+	/** Insert records or replace the stored record with the same primary key; later duplicates in one batch win. */
+	upsert(records: readonly TEntity[]): Promise<void>
 	replaceAll(records: readonly TEntity[]): Promise<void>
 }
 
@@ -26,6 +28,8 @@ export interface UnifyStoreTransaction<TEntity extends object> {
 export interface UnifyStore<TEntity extends object> {
 	query(query?: UnifyStoreQuery<TEntity>): Promise<UnifyStoreResult<TEntity>>
 	insert(records: readonly TEntity[]): Promise<void>
+	/** Insert records or replace the stored record with the same primary key; later duplicates in one batch win. */
+	upsert(records: readonly TEntity[]): Promise<void>
 	replaceAll(records: readonly TEntity[]): Promise<void>
 	transaction<TResult>(operation: (transaction: UnifyStoreTransaction<TEntity>) => TResult | Promise<TResult>): Promise<TResult>
 	stats(): Promise<UnifyStoreStats>
@@ -40,6 +44,22 @@ export interface UnifyStoreDatabase {
 
 export interface UnifyStoreBackend {
 	open(location: string): Promise<UnifyStoreDatabase>
+}
+
+/** Transactional access to several collections of one physical database. */
+export interface UnifyStoreDatabaseTransaction {
+	store<TEntity extends object>(entity: StoredEntityClass<TEntity>): UnifyStoreTransaction<TEntity>
+}
+
+/**
+ * A database whose collections can be changed together: every write made through
+ * `transaction` commits or rolls back as one unit.
+ *
+ * The operation must only use the transaction handle. Calling a store opened from the
+ * same database inside the operation waits for the transaction and never completes.
+ */
+export interface TransactionalUnifyStoreDatabase extends UnifyStoreDatabase {
+	transaction<TResult>(operation: (transaction: UnifyStoreDatabaseTransaction) => TResult | Promise<TResult>): Promise<TResult>
 }
 
 export interface BufferedUnifyStoreChange {

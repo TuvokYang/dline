@@ -1,7 +1,20 @@
 import type { DatabaseSync } from "node:sqlite"
 import type { EntitySchema, EntityValues, StoredEntityClass } from "../api/EntitySchema"
-import type { UnifyStore, UnifyStoreBackend, UnifyStoreDatabase, UnifyStoreResult, UnifyStoreStats } from "../api/UnifyStore"
-import { UnifyStoreCore, type UnifyStoreDriver, type UnifyStoreDriverTransaction } from "../core/UnifyStoreCore"
+import type {
+	TransactionalUnifyStoreDatabase,
+	UnifyStore,
+	UnifyStoreBackend,
+	UnifyStoreDatabaseTransaction,
+	UnifyStoreResult,
+	UnifyStoreStats,
+	UnifyStoreTransaction,
+} from "../api/UnifyStore"
+import {
+	createValidatedTransaction,
+	UnifyStoreCore,
+	type UnifyStoreDriver,
+	type UnifyStoreDriverTransaction,
+} from "../core/UnifyStoreCore"
 import type { NormalizedUnifyStoreQuery } from "../core/UnifyStoreQueryEvaluator"
 import { type SqliteDatabaseLease, SqliteDatabaseRegistry } from "./SqliteDatabaseRegistry"
 import type { SqliteMigration } from "./SqliteMigrationRegistry"
@@ -51,7 +64,7 @@ interface PragmaRow {
 }
 
 export class SqliteUnifyStoreBackend implements UnifyStoreBackend {
-	async open(location: string): Promise<UnifyStoreDatabase> {
+	async open(location: string): Promise<TransactionalUnifyStoreDatabase> {
 		const lease = await registry.acquire(location, {
 			applicationId: APPLICATION_ID,
 			migrations: UNIFY_STORE_MIGRATIONS,
@@ -60,7 +73,7 @@ export class SqliteUnifyStoreBackend implements UnifyStoreBackend {
 	}
 }
 
-class SqliteUnifyStoreDatabase implements UnifyStoreDatabase {
+class SqliteUnifyStoreDatabase implements TransactionalUnifyStoreDatabase {
 	private closed = false
 	private closePromise: Promise<void> | undefined
 
@@ -83,6 +96,45 @@ class SqliteUnifyStoreDatabase implements UnifyStoreDatabase {
 		return new UnifyStoreCore(entity.storage, new SqliteUnifyStoreDriver(this.lease, entity.storage))
 	}
 
+	/**
+	 * Runs one `BEGIN IMMEDIATE` transaction across every collection of this file.
+	 * Collections must have been opened with `openStore` beforehand, because creating a
+	 * table inside the transaction would need a nested transaction.
+	 */
+	async transaction<TResult>(
+		operation: (transaction: UnifyStoreDatabaseTransaction) => TResult | Promise<TResult>,
+	): Promise<TResult> {
+		this.assertOpen()
+		return await this.lease.withLock(async () => {
+			this.assertOpen()
+			const database = this.lease.database
+			const stores = new Map<string, UnifyStoreTransaction<object>>()
+			database.exec("BEGIN IMMEDIATE")
+			try {
+				const result = await operation({
+					store: <TEntity extends object>(entity: StoredEntityClass<TEntity>): UnifyStoreTransaction<TEntity> => {
+						const schema = entity.storage
+						const cached = stores.get(schema.schemaId)
+						if (cached) return cached as unknown as UnifyStoreTransaction<TEntity>
+						if (!hasEntitySchema(database, schema)) {
+							throw new Error(
+								`UnifyStore collection ${schema.schemaId} must be opened before a database transaction`,
+							)
+						}
+						const store = createValidatedTransaction(schema, createSqliteDriverTransaction(database, schema))
+						stores.set(schema.schemaId, store as unknown as UnifyStoreTransaction<object>)
+						return store
+					},
+				})
+				database.exec("COMMIT")
+				return result
+			} catch (error) {
+				rollbackPreservingOriginal(database)
+				throw error
+			}
+		})
+	}
+
 	close(): Promise<void> {
 		this.closePromise ??= Promise.resolve().then(() => {
 			this.closed = true
@@ -93,6 +145,18 @@ class SqliteUnifyStoreDatabase implements UnifyStoreDatabase {
 
 	private assertOpen(): void {
 		if (this.closed) throw new Error("SQLite UnifyStore database is closed")
+	}
+}
+
+function createSqliteDriverTransaction<TEntity extends object>(
+	database: DatabaseSync,
+	schema: EntitySchema<TEntity>,
+): UnifyStoreDriverTransaction<TEntity> {
+	return {
+		query: async (query) => selectEntities(database, schema, query),
+		insert: async (records) => insertEntities(database, schema, records),
+		upsert: async (records) => upsertEntities(database, schema, records),
+		replaceAll: async (records) => replaceAllEntities(database, schema, records),
 	}
 }
 
@@ -124,6 +188,14 @@ class SqliteUnifyStoreDriver<TEntity extends object> implements UnifyStoreDriver
 		})
 	}
 
+	async upsert(records: readonly TEntity[]): Promise<void> {
+		this.assertOpen()
+		await this.lease.withLock(() => {
+			this.assertOpen()
+			transactionSync(this.database, () => upsertEntities(this.database, this.schema, records))
+		})
+	}
+
 	async replaceAll(records: readonly TEntity[]): Promise<void> {
 		this.assertOpen()
 		await this.lease.withLock(() => {
@@ -140,12 +212,7 @@ class SqliteUnifyStoreDriver<TEntity extends object> implements UnifyStoreDriver
 			this.assertOpen()
 			this.database.exec("BEGIN IMMEDIATE")
 			try {
-				const transaction: UnifyStoreDriverTransaction<TEntity> = {
-					query: async (query) => selectEntities(this.database, this.schema, query),
-					insert: async (records) => insertEntities(this.database, this.schema, records),
-					replaceAll: async (records) => replaceAllEntities(this.database, this.schema, records),
-				}
-				const result = await operation(transaction)
+				const result = await operation(createSqliteDriverTransaction(this.database, this.schema))
 				this.database.exec("COMMIT")
 				return result
 			} catch (error) {
@@ -234,6 +301,38 @@ function insertEntities<TEntity extends object>(
 	const columns = schema.columnEntries.map(({ name }) => quoteIdentifier(name)).join(", ")
 	const placeholders = schema.columnEntries.map(() => "?").join(", ")
 	const statement = database.prepare(`INSERT INTO ${table} (${columns}) VALUES (${placeholders})`)
+	for (const entity of entities) {
+		const values = schema.dehydrate(entity)
+		try {
+			statement.run(...schema.columnEntries.map(({ name, column }) => encodeSqliteValue(column.kind, values[name])))
+		} catch (error) {
+			if (/constraint/i.test(String(error))) throw new Error(`UnifyStore conflict for ${schema.schemaId}`, { cause: error })
+			throw error
+		}
+	}
+}
+
+/**
+ * `ON CONFLICT(primary key) DO UPDATE` rather than `INSERT OR REPLACE`: the latter deletes any
+ * row that collides on another unique column, silently dropping unrelated records.
+ */
+function upsertEntities<TEntity extends object>(
+	database: DatabaseSync,
+	schema: EntitySchema<TEntity>,
+	entities: readonly TEntity[],
+): void {
+	if (entities.length === 0) return
+	const table = quoteIdentifier(physicalTableName(schema.schemaId))
+	const columns = schema.columnEntries.map(({ name }) => quoteIdentifier(name))
+	const primaryNames = new Set(schema.primaryFields.map((field) => field.name))
+	const conflictTarget = schema.primaryFields.map((field) => quoteIdentifier(field.name)).join(", ")
+	const updates = schema.columnEntries
+		.filter(({ name }) => !primaryNames.has(name))
+		.map(({ name }) => `${quoteIdentifier(name)} = excluded.${quoteIdentifier(name)}`)
+	const onConflict = updates.length > 0 ? `DO UPDATE SET ${updates.join(", ")}` : "DO NOTHING"
+	const statement = database.prepare(
+		`INSERT INTO ${table} (${columns.join(", ")}) VALUES (${columns.map(() => "?").join(", ")}) ON CONFLICT (${conflictTarget}) ${onConflict}`,
+	)
 	for (const entity of entities) {
 		const values = schema.dehydrate(entity)
 		try {

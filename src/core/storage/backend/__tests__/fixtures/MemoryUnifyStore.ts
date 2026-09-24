@@ -109,6 +109,16 @@ class MemoryUnifyStoreDriver<TEntity extends object> implements UnifyStoreDriver
 		})
 	}
 
+	async upsert(records: readonly TEntity[]): Promise<void> {
+		this.assertOpen()
+		await this.state.mutex.withLock(() => {
+			this.assertOpen()
+			const next = cloneRows(this.state.rows)
+			upsertRows(this.schema, next, records)
+			this.state.rows = next
+		})
+	}
+
 	async replaceAll(records: readonly TEntity[]): Promise<void> {
 		this.assertOpen()
 		await this.state.mutex.withLock(() => {
@@ -129,6 +139,7 @@ class MemoryUnifyStoreDriver<TEntity extends object> implements UnifyStoreDriver
 			const transaction: UnifyStoreDriverTransaction<TEntity> = {
 				query: async (query) => evaluateUnifyStoreQuery(this.schema, hydrateRows(this.schema, working), query),
 				insert: async (records) => appendRows(this.schema, working, records),
+				upsert: async (records) => upsertRows(this.schema, working, records),
 				replaceAll: async (records) => {
 					const replacement: Array<Record<string, unknown>> = []
 					appendRows(this.schema, replacement, records)
@@ -155,6 +166,25 @@ class MemoryUnifyStoreDriver<TEntity extends object> implements UnifyStoreDriver
 
 	private assertOpen(): void {
 		if (this.closed) throw new Error("Memory UnifyStore driver is closed")
+	}
+}
+
+function upsertRows<TEntity extends object>(
+	schema: EntitySchema<TEntity>,
+	rows: Array<Record<string, unknown>>,
+	records: readonly TEntity[],
+): void {
+	const indexByKey = new Map(rows.map((row, index) => [primaryKey(schema, row), index]))
+	for (const record of records) {
+		const row = structuredClone(schema.dehydrate(record) as Record<string, unknown>)
+		const key = primaryKey(schema, row)
+		const existing = indexByKey.get(key)
+		if (existing === undefined) {
+			indexByKey.set(key, rows.length)
+			rows.push(row)
+		} else {
+			rows[existing] = row
+		}
 	}
 }
 

@@ -45,6 +45,7 @@ function failTransactionInsert(
 	return {
 		query: (query) => store.query(query),
 		insert: (records) => store.insert(records),
+		upsert: (records) => store.upsert(records),
 		replaceAll: (records) => store.replaceAll(records),
 		transaction: <TResult>(
 			operation: (transaction: UnifyStoreTransaction<ApiRequestRoundLegacyImportEntity>) => TResult | Promise<TResult>,
@@ -56,6 +57,7 @@ function failTransactionInsert(
 						await transaction.insert(records)
 						throw new Error("forced legacy import rollback")
 					},
+					upsert: (records) => transaction.upsert(records),
 					replaceAll: (records) => transaction.replaceAll(records),
 				}),
 			),
