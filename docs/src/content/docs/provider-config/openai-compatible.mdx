@@ -1,0 +1,58 @@
+---
+title: OpenAI 兼容服务
+description: 通过 OpenAI 服务商的自定义 Base URL，把 Dline 接入 Azure OpenAI 和其他兼容 OpenAI API 的服务。
+---
+
+import { Aside, Steps } from "@astrojs/starlight/components"
+
+很多模型服务商都提供与 OpenAI API 兼容的接口，例如 Together AI、Perplexity、各类自建网关和 Azure OpenAI。Dline 通过 **OpenAI** 服务商加上自定义 Base URL 接入这些服务。
+
+官方 OpenAI API 的配置见 [OpenAI / ChatGPT 订阅](/provider-config/openai/)。Ollama 和 LM Studio 有专门的服务商，见[本地运行模型](/running-models-locally/overview/)。
+
+## 基本配置
+
+接入兼容服务需要三项信息：
+
+- **Base URL**：服务商提供的 API 地址，不是 `https://api.openai.com/v1`。
+- **API Key**：从该服务商获取的密钥。
+- **Model ID**：要使用的模型标识符。
+
+<Steps>
+
+1. 点击 Dline 面板标题栏的 **Settings** 按钮。
+
+2. 在 **API Provider** 中选择 **OpenAI**。
+
+3. 勾选 **Use custom base URL**，填写服务商的 API 地址。
+
+4. 把服务商的 Key 粘贴到 **OpenAI API Key** 输入框。
+
+5. 在 **Model** 中选择模型；列表里没有目标模型时，勾选 **Use custom model ID** 并在 **Model ID** 中手动输入。
+
+</Steps>
+
+<Aside>
+不同服务商的模型 ID 各不相同，请以服务商文档为准。
+</Aside>
+
+## 高级选项
+
+- **API Format：** 选择请求使用的接口格式，需与服务端支持的格式一致。
+- **Model Configuration：** 为自定义模型填写最大输出 token、上下文窗口、图片支持、工具调用支持以及输入 / 输出价格，让 Dline 正确选择提示词配置和计算费用。
+- **Custom Headers：** 点击 **Add Header** 添加服务商要求的额外请求头。
+- **Use explicit prompt cache controls：** 仅在服务端支持 `prompt_cache_breakpoint` 时开启；请求被拒绝时，当前任务会回退到自动缓存。
+
+## Azure OpenAI
+
+- 在 **Use custom base URL** 中填写 Azure OpenAI 资源的地址。
+- 需要指定 API 版本时，勾选 **Set Azure API version** 并填写版本，默认 `2024-10-01-preview`。
+- 勾选 **Use Azure Identity Authentication** 可以使用现有的 Azure 托管身份认证。它不会主动发起登录，只会复用已有的认证状态（例如 `az login`）。
+
+## 故障排查
+
+| 问题 | 处理方式 |
+| --- | --- |
+| 提示 API Key 无效 | 确认 Key 输入正确，且属于当前 Base URL 对应的服务商。 |
+| 提示模型不存在 | 确认模型 ID 有效，并且该模型在当前 Base URL 下可用。 |
+| 连接失败 | 检查 Base URL、本机能否访问该服务，以及防火墙和代理设置，参见[网络与代理](/troubleshooting/networking-and-proxies/)。 |
+| 输出异常 | 换一个模型试试，或检查 **Model Configuration** 中的能力参数是否与模型一致。 |

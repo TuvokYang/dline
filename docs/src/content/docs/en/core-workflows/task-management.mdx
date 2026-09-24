@@ -1,0 +1,88 @@
+---
+title: Task Management
+description: Create, browse, search, resume, and delete Dline tasks, and read the usage and context information in the task header.
+---
+
+import { Aside } from "@astrojs/starlight/components"
+
+Every conversation in Dline is a **task**. A task keeps its full conversation record, so you can reopen it, continue it, or delete it at any time.
+
+## How tasks are stored
+
+- Each task has its own folder that stores the UI messages and the conversation sent to the model separately.
+- The index of all tasks lives in `<documents-root>/tasks/taskHistory.db` (`<documents-root>` defaults to `dline` inside your system Documents folder and can be overridden with `DLINE_DOCS_DIR`).
+- After context compaction, what is sent to the model gets shorter, but the stored conversation record stays complete.
+
+## Starting a new task
+
+- Click **+** in the Dline panel title bar (tooltip **New Task**);
+- or type `/newtask` in the input box to have Dline turn the current task's key points into the starting point of a new task; see [Using slash commands](/en/core-workflows/using-commands/).
+
+Keeping one goal per task usually works better: the context stays focused, and changes are easier to roll back and review.
+
+## Task header
+
+While a task runs, the top of the panel shows usage information:
+
+- **In** / **Out**: input and output tokens;
+- **RPM**, **TPM**, **Hit**: request rate, token rate, and cache hit rate, shown when the data is available;
+- **Cost**: shown only when the current model has non-zero pricing. It comes from the value the provider reports or is estimated from model pricing, and is not your provider's final bill.
+
+Expand the task header to see a context usage bar with the tokens used and the model's context window size. Hover over the bar to open the **Context Window** panel with **Used**, **Remaining**, **Total**, and a percentage.
+
+The **×** (**Close Task**) on the right of the task header closes the current task.
+
+### Focus Chain
+
+**Focus Chain** is on by default (**Settings → Features → Focus Chain**, "Maintain context focus across interactions"). When it is on, Dline keeps a to-do list for the task below the task header: the current item, completed/total count, and an expandable full list.
+
+## Task history
+
+Click the **History** button in the panel title bar to open the task history.
+
+Each row shows the beginning of the task, the last activity time, and usage information. Expand a row to see **Tokens**, **Model** (when available), **Size**, and an **Export** button. Click a row to reopen that task.
+
+### Search, sort, and filter
+
+- **Search box** ("Fuzzy search history..."): fuzzy-matches the beginning of each task; it does not search replies, code, or file names.
+- **Sort**: **Newest**, **Oldest**, **Most Expensive**, **Most Tokens**, **Most Relevant** (requires a search query).
+- **Filter**: **Workspace Only** (tasks from the current workspace) and **Favorites Only** (favorited tasks).
+
+### Actions on a task
+
+| Action | Description |
+|---|---|
+| **Add to favorites** / **Remove from favorites** | Favorite or unfavorite the task |
+| **Delete** | Delete the task. A favorited task cannot be deleted individually |
+| **Open in New Window** | Open the task in a new window |
+| **Export** | Export the task from the expanded row |
+
+### Bulk deletion
+
+The bottom of the history view offers **Select All**, **Select None**, **Delete Selected**, and **Delete All History**:
+
+- **Delete Selected** deletes every selected task, **including favorites**;
+- **Delete All History** asks whether to **Delete All Except Favorites** or **Delete Everything**.
+
+<Aside type="caution">
+Deleting the last task or choosing **Delete Everything** also deletes all checkpoint data; see [Checkpoints](/en/core-workflows/checkpoints/).
+</Aside>
+
+## Resuming a task
+
+After you open a task from history:
+
+- an interrupted task shows **Resume** at the bottom; click it to continue. Resuming only loads the saved state; it does not resend requests or rerun tools automatically.
+- a completed task shows **Start New Task**; you can also keep sending messages in the input box.
+
+## When the context grows
+
+Longer conversations use more context. You can:
+
+- turn on [Auto compact](/en/features/auto-compact/) to summarize older conversation automatically when the context nears its limit;
+- compact manually with `/compact` or `/smol`;
+- carry the key points into a new task with `/newtask`.
+
+Without auto compact, Dline optimizes repeated file reads and removes older conversation turns near the limit (always keeping the first turn).
+
+Excluding irrelevant files with [.agentignore](/en/customization/agentignore/) also reduces unrelated content that Dline pulls in while searching and reading.

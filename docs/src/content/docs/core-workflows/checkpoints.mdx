@@ -1,0 +1,122 @@
+---
+title: 检查点
+description: Dline 用独立的影子 Git 仓库为工作区保存快照，让你比较、回滚文件和对话，而不影响项目自身的 Git 历史。
+---
+
+import { Aside } from "@astrojs/starlight/components"
+
+检查点（Checkpoint）是 Dline 在任务进行中为工作区保存的快照。你可以查看某个检查点之后发生了哪些变化，也可以把文件、对话或两者一起回滚到该检查点。
+
+<Aside type="tip">
+检查点默认开启，可在 **Settings → Features → Checkpoints** 中关闭，该选项的说明为 “Save progress at key points for easy rollback”。
+</Aside>
+
+## 工作原理：影子 Git 仓库
+
+Dline 不会在你的项目仓库中提交任何内容，而是为每个工作区维护一个独立的“影子” Git 仓库：
+
+| 项目 | 说明 |
+|---|---|
+| 存储位置 | `<documents-root>/checkpoints/<工作区路径哈希>/.git`。`<documents-root>` 默认是系统“文档”目录下的 `dline`，可用环境变量 `DLINE_DOCS_DIR` 覆盖 |
+| 工作树 | 影子仓库的 `core.worktree` 指向你的项目目录，因此它直接读取和恢复项目文件 |
+| 提交身份 | 使用独立的提交者身份 **Dline Checkpoint**，并关闭提交签名；不会读取或修改你的 Git 用户配置 |
+| 共享范围 | 同一工作区的所有任务共享一个影子仓库；每个检查点提交都带有所属任务的标识 |
+
+因此，检查点**不会**在项目仓库中创建提交、分支或暂存改动。但恢复检查点的目的就是改写工作区文件，请阅读下文的[恢复规则](#restore-rules)。
+
+<Aside>
+使用检查点需要本机已安装 Git。未安装时任务顶部会显示 “Git must be installed to use checkpoints.”。
+</Aside>
+
+## 何时保存检查点
+
+- **任务开始时**：第一次请求会为工作区建立基线快照。之后第一个可能修改工作区的工具会等待基线完成；只读工具可以与它并行执行。
+- **每一轮可能修改工作区的助手回复之后**：只要这一轮包含只读列表之外的工具（例如写文件、替换文本、执行命令），Dline 就会保存一个检查点。只读工具包括 `read_file`、`list_files`、`search_files`、`list_code_definition_names`、`find_references`、`web_search`、`web_fetch`、`load_skill`、`load_workflow`、浏览器与提问类工具等。
+- **任务完成时**：完成结果会获得自己的检查点，供 **View Changes** 使用。
+
+检查点按“轮”保存，而不是每次工具调用各保存一个。如果暂存后发现没有任何变化，检查点会复用当前快照。
+
+## 快照包含哪些文件
+
+| 情况 | 暂存方式 |
+|---|---|
+| 新建或重新打开的影子仓库 | 扫描整个工作区建立基线（应用下文的排除规则） |
+| 写文件、替换文本、应用补丁等编辑工具 | 暂存这些工具记录的文件路径。这些路径会被强制加入，**即使它们匹配 `.gitignore` 或内置排除规则** |
+| 执行过命令、但没有明确记录的文件 | 先检查工作区状态，再扫描工作区中符合规则的变化 |
+
+扫描工作区时会排除：
+
+- **内置排除**：`.git/`；构建与依赖目录（如 `node_modules/`、`dist/`、`build/`、`out/`、`bin/`、`obj/`、`vendor/`、`venv/`、`coverage/`、`.vscode/`、`.idea/`）；图片、音视频等媒体文件（如 `*.png`、`*.jpg`、`*.gif`、`*.mp4`、`*.mp3`）；缓存与日志（如 `*.log`、`*.lock`、`*.tmp`）；环境配置（如 `*.env*`、`*.local`）；压缩包与二进制（如 `*.zip`、`*.exe`、`*.dll`）；数据库文件；地理数据文件（包括 `*.csv`）。
+- **Git LFS 文件**：项目根目录 `.gitattributes` 中带 `filter=lfs` 的模式。
+- **项目的 `.gitignore`**。
+- **嵌套仓库**：工作区内其他 Git 仓库或子模块的目录。
+
+<Aside type="caution">
+`.agentignore` 只限制 Dline 读写哪些文件，**不影响**检查点的排除规则。反过来，检查点也不能保证覆盖所有未跟踪文件：被排除的文件和嵌套仓库中的文件不会进入快照，恢复时也不会被还原。
+</Aside>
+
+## 比较变化
+
+把鼠标悬停在聊天中的 **Checkpoint** 标记上，会出现 **Compare** 与 **Restore** 两个按钮。
+
+- **Compare**：在编辑器中打开标题为 “Changes since snapshot” 的多文件差异视图，比较的是**该检查点与当前工作区**，因此会包含该检查点之后的所有改动，而不只是紧接着的那一步。
+- **View Changes**：任务完成后，完成结果下方的按钮会打开 “New changes”，显示与上一次完成（或任务开始）相比，本任务新产生的改动。
+
+<span id="restore-checkpoints"></span>
+
+## 恢复检查点
+
+点击 **Restore** 打开恢复菜单：
+
+| 选项 | 菜单说明 | 效果 |
+|---|---|---|
+| **Restore Files & Task** | Revert files and clear messages after this point | 恢复文件，并删除该点之后的消息 |
+| **Restore Files Only**（在 **More options** 中） | Revert files to this checkpoint | 只恢复文件，对话保持不变 |
+| **Restore Task Only**（在 **More options** 中） | Clear messages after this point | 只删除该点之后的消息、API 对话记录和上下文，文件保持不变 |
+
+如果该检查点没有可用的文件快照，或者它是上下文压缩产生的检查点（显示为 “Compaction checkpoint”），菜单只提供 **Restore Task Only**。
+
+文件恢复成功后，对应标记会显示为 **Checkpoint (restored)**，此时该检查点的 **Restore Files Only** 不可再次点击；之后保存新检查点时，该状态会被清除。
+
+<span id="restore-rules"></span>
+
+### 恢复规则
+
+文件恢复并不是简单地把整个项目“回到过去”，具体范围取决于本任务改过哪些文件：
+
+- **本任务通过编辑工具修改过文件时**：只恢复这些文件。检查点中存在的文件还原为当时的内容；检查点中不存在的文件（例如之后新建的文件）会被**删除**。其他文件保持不变。
+- **本任务没有记录任何被编辑的文件时**（例如只通过命令改动了工作区）：对影子仓库执行 `git reset --hard`，快照所跟踪的所有文件都会回到该检查点，影响范围可能更大。
+- **Restore Files & Task 中文件恢复失败时**：对话仍会被恢复，同时显示文件恢复的错误信息。
+
+<Aside type="caution">
+恢复会覆盖相关文件在该检查点之后的全部修改，包括你手动做的修改。如果你在任务期间也编辑过这些文件，请先用 **Compare** 确认，或者先用项目自己的 Git 提交保存工作。
+</Aside>
+
+## 编辑已发送的消息
+
+点击对话中你发送过的消息即可编辑。修改文本后会出现两个按钮：
+
+- **Restore Chat**：把对话恢复到这条消息之前，并用编辑后的文本继续任务。在编辑框中按 `Enter` 等同于点击此按钮，按 `Esc` 取消编辑。
+- **Restore All**：同时把对话和工作区文件恢复到该检查点。当前版本中，编辑后的文本只会由 **Restore Chat** 发送。
+
+如果文本没有改动，两个按钮都不会执行恢复。任务顶部显示检查点错误时，**Restore All** 不会出现。
+
+## 限制与常见提示
+
+| 情况 | 行为 |
+|---|---|
+| 没有打开工作区 | 显示 “No workspace detected. Please open Dline in a workspace to use checkpoints.” |
+| 工作区根目录正好是用户主目录、桌面、文档或下载目录 | 不能使用检查点，提示 “Cannot use checkpoints in … directory”；请改为打开具体的项目文件夹 |
+| 多根工作区 | 显示 “Checkpoints are not currently supported in multi-root workspaces.”，该任务不创建检查点 |
+| 初始化较慢 | 15 秒后提示可能是大型仓库；长时间未完成会提示初始化超时 |
+| 初始化失败 | 任务顶部显示错误，提供 **Retry Checkpoints**，部分情况下还提供 **Disable Checkpoints** |
+
+## 存储与清理
+
+- 删除**单个**任务时，只删除该任务自己的目录；工作区共享的影子仓库会保留，供其他任务使用。
+- 删除**最后一个**任务，或在历史记录中使用 **Delete All History** 并选择 **Delete Everything** 时，整个 `checkpoints` 目录都会被删除。选择 **Delete All Except Favorites** 时检查点目录会保留。
+- 没有单独的“清除检查点”按钮。
+
+## 与自动批准配合
+
+检查点提供了回滚手段，但不会替你审查改动。如果为文件编辑或命令开启了[自动批准](/features/auto-approve/)，建议在任务完成后用 **View Changes** 或 **Compare** 检查结果，再决定是否恢复。

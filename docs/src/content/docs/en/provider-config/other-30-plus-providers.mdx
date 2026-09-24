@@ -1,0 +1,293 @@
+---
+title: Other providers
+description: Quick reference for the other model providers Dline supports, all of which share the same setup flow.
+---
+
+import { Steps } from "@astrojs/starlight/components"
+
+This page covers the remaining providers that follow the same setup pattern. Use the table of contents on the right to jump to a provider.
+
+## Shared setup flow
+
+<Steps>
+
+1. Click the **Settings** button in the Dline panel title bar.
+
+2. Choose the provider under **API Provider**.
+
+3. Paste your API key or token into the matching credential field.
+
+4. Select a model under **Model**.
+
+</Steps>
+
+See [Authorization and model setup](/en/getting-started/authorizing-with-dline/) for the full flow.
+
+## AIHubMix
+
+An OpenAI-compatible model aggregator that gives you one API for multiple model backends.
+
+**Website:** [aihubmix.com](https://aihubmix.com/)
+
+1. Sign up for or sign in to an AIHubMix account.
+2. Generate an API key in the dashboard.
+3. In Dline, choose **AIHubMix** and paste the key.
+
+## AskSage
+
+An AI access platform for enterprise and government users, with compliance-oriented controls.
+
+**Website:** [asksage.ai](https://www.asksage.ai/)
+
+1. Sign in to AskSage and create API credentials.
+2. Confirm that your workspace or organization has model access enabled.
+3. In Dline, choose **AskSage** and enter the key.
+
+## Baseten
+
+Hosted model APIs and deployment infrastructure for production inference.
+
+**Website:** [baseten.co](https://www.baseten.co/products/model-apis/)
+
+1. Create a Baseten account and open the API keys page.
+2. Generate an API key with the required permissions.
+3. In Dline, choose **Baseten** and paste the key.
+
+## Cerebras
+
+Very fast hosted inference for supported model families.
+
+**Website:** [cloud.cerebras.ai](https://cloud.cerebras.ai/)
+
+1. Sign in to Cerebras Cloud.
+2. Create or retrieve an API key.
+3. In Dline, choose **Cerebras** and enter the key.
+
+## Dify.ai
+
+A workflow-centric AI platform with app and pipeline orchestration.
+
+**Website:** [dify.ai](https://dify.ai/)
+
+1. Create a Dify workspace and an API credential.
+2. Confirm that your Dify endpoint and provider settings are active.
+3. In Dline, choose **Dify.ai** and paste the key.
+
+## Doubao
+
+ByteDance's Doubao model family, usually accessed through Volcengine. It appears as **ByteDance Doubao** under **API Provider**.
+
+**Website:** [volcengine.com](https://www.volcengine.com/)
+
+1. Sign in to Volcengine and enable model access.
+2. Generate API credentials for the Doubao endpoints.
+3. In Dline, choose **ByteDance Doubao** and paste the credentials.
+
+## Fireworks AI
+
+Performance-focused hosted inference for open models.
+
+**Website:** [fireworks.ai](https://fireworks.ai/)
+
+1. Create a Fireworks account.
+2. Generate an API key in your project or account settings.
+3. In Dline, choose **Fireworks AI** and enter the key.
+
+## GCP Vertex AI
+
+Google Cloud's enterprise model platform, with IAM and project-level governance.
+
+**Website:** [cloud.google.com/vertex-ai](https://cloud.google.com/vertex-ai)
+
+1. Prepare a GCP project with Vertex AI enabled.
+2. Configure authentication (a service account or application default credentials).
+3. In Dline, choose **GCP Vertex AI**, fill in **Google Cloud Project ID**, and pick a region under **Google Cloud Region**.
+
+## Groq
+
+Low-latency inference for supported model families.
+
+**Website:** [groq.com](https://groq.com/)
+
+1. Sign in to the Groq Console.
+2. Create an API key.
+3. In Dline, choose **Groq** and paste the key.
+
+## HiCap
+
+An OpenAI-compatible model service with multimodal support.
+
+**Website:** [hicap.ai](https://hicap.ai)
+
+1. Create a HiCap account.
+2. Generate an API key or token.
+3. In Dline, choose **HiCap** and enter the credential.
+
+## Huawei Cloud MaaS
+
+Model-as-a-service access within Huawei Cloud.
+
+**Website:** [huaweicloud.com](https://www.huaweicloud.com/)
+
+1. Sign in to Huawei Cloud and open the MaaS service.
+2. Create API credentials for model access.
+3. In Dline, choose **Huawei Cloud MaaS** and add the credentials.
+
+## Hugging Face
+
+Hosted inference for open-source models.
+
+**Website:** [huggingface.co](https://huggingface.co/)
+
+1. Sign in to Hugging Face.
+2. Create an access token with inference permissions.
+3. In Dline, choose **Hugging Face** and paste the token.
+
+## LiteLLM
+
+A proxy gateway that gives you one interface to many model providers.
+
+**Docs:** [docs.litellm.ai](https://docs.litellm.ai/docs/)
+
+1. Start a LiteLLM proxy and note its address and API key.
+2. In Dline, choose **LiteLLM**, enter the proxy address under **Base URL (optional)** (default `http://localhost:4000`), and enter the key under **API Key**.
+3. Search for, select, or type a model ID under **Model**.
+
+## Mistral
+
+Direct API access to Mistral's model lineup.
+
+**Website:** [mistral.ai](https://mistral.ai/)
+
+1. Sign up for or sign in to a Mistral platform account.
+2. Generate an API key.
+3. In Dline, choose **Mistral** and paste the key.
+
+## Moonshot
+
+API access to the Kimi model family.
+
+**Website:** [platform.moonshot.ai](https://platform.moonshot.ai/)
+
+1. Sign in to the Moonshot platform.
+2. Create an API key in account settings.
+3. In Dline, choose **Moonshot** and enter the key.
+
+## Nebius AI Studio
+
+Managed hosted model APIs.
+
+**Website:** [studio.nebius.com](https://studio.nebius.com/)
+
+1. Sign up for or sign in to Nebius AI Studio.
+2. Generate API credentials.
+3. In Dline, choose **Nebius AI Studio** and provide the credentials.
+
+## Nous Research
+
+Access to the Hermes model family.
+
+**Website:** [nousresearch.com](https://nousresearch.com/)
+
+1. Get access credentials for the Nous-hosted endpoints.
+2. Confirm which model IDs your account can use.
+3. In Dline, choose **Nous Research** and add the credentials.
+
+## Oracle Code Assist
+
+AI coding assistance through the Oracle Cloud Infrastructure (OCI) Generative AI service.
+
+**Website:** [oracle.com](https://www.oracle.com/application-development/code-assist/)
+
+1. Prepare an OCI account.
+2. Enable the OCI Generative AI service in your tenancy.
+3. In Dline, choose **Oracle Code Assist** and fill in **OCA Base URL** and **OCA API Key**.
+
+## Qwen Code
+
+Coding-oriented access to Qwen models.
+
+**Website:** [chat.qwen.ai](https://chat.qwen.ai/)
+
+1. Sign in to the Qwen platform.
+2. Obtain API access credentials.
+3. In Dline, choose **Qwen Code** and enter the credential.
+
+## Requesty
+
+Multi-provider routing behind a single API.
+
+**Website:** [requesty.ai](https://www.requesty.ai/)
+
+1. Sign up for or sign in to Requesty.
+2. Generate an API key.
+3. In Dline, choose **Requesty** and paste the key.
+
+## SambaNova
+
+Hosted inference and enterprise AI platform capabilities.
+
+**Website:** [sambanova.ai](https://sambanova.ai/)
+
+1. Sign up for or sign in to a SambaNova account.
+2. Create an API key or token.
+3. In Dline, choose **SambaNova** and enter the credentials.
+
+## SAP AI Core
+
+SAP's enterprise AI platform for model integration and governance.
+
+**Website:** [SAP AI Core](https://help.sap.com/docs/sap-ai-core/sap-ai-core-service-guide/what-is-sap-ai-core)
+
+1. Set up SAP AI Core / Generative AI Hub access.
+2. Prepare your service key and endpoint credentials.
+3. In Dline, choose **SAP AI Core** and provide the required values.
+
+## Together
+
+Hosted inference for many popular open models.
+
+**Website:** [together.ai](https://together.ai/)
+
+1. Sign up for or sign in to a Together account.
+2. Generate an API key.
+3. In Dline, choose **Together** and paste the key.
+
+## Vercel AI Gateway
+
+One API for multiple upstream model providers.
+
+**Website:** [vercel.com](https://vercel.com/)
+
+1. Sign in to Vercel and open AI Gateway.
+2. Create a Gateway API key.
+3. In Dline, choose **Vercel AI Gateway** and add the key.
+
+## VS Code Language Model API
+
+Lets Dline use the built-in language models available in your VS Code installation. It appears as **GitHub Copilot** under **API Provider**.
+
+**Docs:** [VS Code Language Model API](https://code.visualstudio.com/api/extension-guides/language-model)
+
+1. Make sure language models are available in your VS Code installation.
+2. In Dline, choose **GitHub Copilot**. No API key or other configuration is needed.
+
+## W&B Inference
+
+Hosted inference from Weights & Biases.
+
+**Website:** [wandb.ai](https://wandb.ai/)
+
+1. Sign in to W&B and create an API key on the [settings page](https://wandb.ai/settings).
+2. In Dline, choose **W&B Inference** and paste the key into the **W&B API Key** field.
+3. Select a model under **Model**.
+
+## xAI (Grok)
+
+Grok models through the xAI API platform. It appears as **xAI** under **API Provider**.
+
+**Website:** [x.ai](https://x.ai/)
+
+1. Sign in to the xAI platform.
+2. Generate an API key.
+3. In Dline, choose **xAI** and paste the key.

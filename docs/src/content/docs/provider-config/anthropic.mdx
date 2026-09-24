@@ -1,0 +1,83 @@
+---
+title: Anthropic / Claude Code
+description: 使用 Anthropic API Key 或 Claude 订阅（Claude Code）在 Dline 中调用 Claude 模型。
+---
+
+import { Aside, Steps } from "@astrojs/starlight/components"
+
+**官网：** [anthropic.com](https://www.anthropic.com/)
+
+Dline 提供两种使用 Claude 的方式：
+
+- **Anthropic**：使用 Anthropic API Key，按 token 计费。
+- **Claude Code**：使用 Claude Pro / Max 订阅登录，消耗订阅额度。
+
+## Anthropic API Key
+
+### 获取 API Key
+
+<Steps>
+
+1. 访问 [Anthropic Console](https://console.anthropic.com/)，注册或登录账号。
+
+2. 打开 [API keys](https://console.anthropic.com/settings/keys) 页面。
+
+3. 点击 **Create Key**，为 Key 起一个便于识别的名称，例如 `Dline`。
+
+4. 立即复制并妥善保存 Key，页面关闭后将无法再次查看。
+
+</Steps>
+
+### 在 Dline 中配置
+
+通用步骤见[授权与模型配置](/getting-started/authorizing-with-dline/)。
+
+<Steps>
+
+1. 点击 Dline 面板标题栏的 **Settings** 按钮。
+
+2. 在 **API Provider** 中选择 **Anthropic**。
+
+3. 把 Key 粘贴到 **Anthropic API Key** 输入框。
+
+4. 在 **Model** 中搜索或选择 Claude 模型。
+
+5. （可选）需要走代理网关时，勾选 **Use custom base URL** 并填写地址。默认地址为 `https://api.anthropic.com`，大多数用户不需要修改。
+
+</Steps>
+
+## Claude Code（订阅）
+
+已有 Claude Pro / Max 订阅时，可以用订阅账号直接登录，无需管理 API Key。
+
+<Steps>
+
+1. 打开 Dline 设置，在 **API Provider** 中选择 **Claude Code**。
+
+2. 点击 **Sign in**，在 **Sign in to Claude** 对话框打开的浏览器页面中完成授权。浏览器无法自动返回时，把 Claude 页面给出的内容粘贴回对话框。
+
+3. 状态显示 **Signed in** 后，在 **Model** 中选择模型。
+
+</Steps>
+
+- 请求消耗订阅额度，不按 API token 计费。
+- 登录失效时状态会显示 **Sign-in expired**，点击 **Sign in again** 重新授权即可。
+
+## 思考模式
+
+支持思考的 Claude 模型会在模型选择下方显示思考设置：
+
+- **自适应思考模型**：在 **Adaptive Thinking** 中选择思考强度；强度越高，回答越详细，消耗的 token 也越多。
+- **预算思考模型**：设置思考 token 预算。
+- **Thinking Display**：控制思考内容的展示方式。
+
+思考内容会计入 token 消耗。工作机制、与工具调用和提示缓存的交互以及计费规则，见 [Anthropic 扩展思考文档](https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking)。
+
+## 提示
+
+- **提示缓存：** Claude 模型支持[提示缓存](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching)，可以显著降低重复请求的费用和延迟。
+- **价格：** 最新价格见 [Anthropic 定价页](https://www.anthropic.com/pricing)。
+
+<Aside type="caution">
+Anthropic 按[用量等级](https://docs.anthropic.com/en/api/rate-limits#requirements-to-advance-tier)限制请求速率。频繁触发限流时，可以联系 Anthropic 提升等级，或改用 [OpenRouter](/provider-config/openrouter/)、[Requesty](/provider-config/other-30-plus-providers/#requesty) 等聚合服务商调用 Claude。
+</Aside>

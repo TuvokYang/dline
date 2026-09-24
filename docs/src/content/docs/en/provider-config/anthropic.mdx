@@ -1,0 +1,83 @@
+---
+title: Anthropic / Claude Code
+description: Use an Anthropic API key or a Claude subscription (Claude Code) to run Claude models in Dline.
+---
+
+import { Aside, Steps } from "@astrojs/starlight/components"
+
+**Website:** [anthropic.com](https://www.anthropic.com/)
+
+Dline offers two ways to use Claude:
+
+- **Anthropic**: use an Anthropic API key, billed per token.
+- **Claude Code**: sign in with a Claude Pro / Max subscription and consume its quota.
+
+## Anthropic API key
+
+### Get an API key
+
+<Steps>
+
+1. Go to the [Anthropic Console](https://console.anthropic.com/) and sign up or sign in.
+
+2. Open the [API keys](https://console.anthropic.com/settings/keys) page.
+
+3. Click **Create Key** and give the key a recognizable name, such as `Dline`.
+
+4. Copy the key immediately and store it securely. You cannot view it again after closing the page.
+
+</Steps>
+
+### Configure Dline
+
+See [Authorization and model setup](/en/getting-started/authorizing-with-dline/) for the general flow.
+
+<Steps>
+
+1. Click the **Settings** button in the Dline panel title bar.
+
+2. Set **API Provider** to **Anthropic**.
+
+3. Paste the key into the **Anthropic API Key** field.
+
+4. Search for or select a Claude model under **Model**.
+
+5. (Optional) To route requests through a gateway, check **Use custom base URL** and enter the address. The default is `https://api.anthropic.com`, and most users never change it.
+
+</Steps>
+
+## Claude Code (subscription)
+
+If you already have a Claude Pro / Max subscription, sign in with it directly and skip API key management.
+
+<Steps>
+
+1. Open Dline settings and set **API Provider** to **Claude Code**.
+
+2. Click **Sign in** and complete authorization in the browser page opened by the **Sign in to Claude** dialog. If the browser cannot return automatically, paste what Claude gives you back into the dialog.
+
+3. When the status shows **Signed in**, select a model under **Model**.
+
+</Steps>
+
+- Requests consume your subscription quota instead of API token billing.
+- When the sign-in lapses, the status shows **Sign-in expired**. Click **Sign in again** to reauthorize.
+
+## Thinking
+
+Claude models that support thinking show thinking settings below the model selector:
+
+- **Adaptive thinking models**: choose a thinking effort under **Adaptive Thinking**. Higher effort produces more detailed answers and uses more tokens.
+- **Budget thinking models**: set a thinking token budget.
+- **Thinking Display**: controls how thinking content is shown.
+
+Thinking content counts toward token usage. For how it works, how it interacts with tool use and prompt caching, and how it is billed, see [Anthropic's extended thinking documentation](https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking).
+
+## Tips
+
+- **Prompt caching:** Claude models support [prompt caching](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching), which can significantly reduce cost and latency for repeated requests.
+- **Pricing:** See the [Anthropic pricing page](https://www.anthropic.com/pricing) for current rates.
+
+<Aside type="caution">
+Anthropic limits request rates by [usage tier](https://docs.anthropic.com/en/api/rate-limits#requirements-to-advance-tier). If you hit rate limits often, ask Anthropic to raise your tier, or call Claude through an aggregator such as [OpenRouter](/en/provider-config/openrouter/) or [Requesty](/en/provider-config/other-30-plus-providers/#requesty).
+</Aside>

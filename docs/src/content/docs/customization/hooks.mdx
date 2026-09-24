@@ -1,0 +1,96 @@
+---
+title: Hooks
+description: 在任务生命周期和工具调用的关键节点运行自定义脚本。
+---
+
+import { Aside } from "@astrojs/starlight/components"
+
+钩子（Hook）是按事件命名的脚本。Dline 在任务生命周期和工具调用的特定节点运行它，通过标准输入传入 JSON，并读取脚本在标准输出中返回的 JSON。你可以用钩子记录审计日志、校验工具参数、向对话注入上下文，或在条件不满足时取消任务。
+
+## 启用钩子
+
+钩子由 **Settings → Features** 中的 **Hooks** 开关控制（“Enable lifecycle and tool hooks during task execution.”），默认开启。关闭后，能力面板中的 **Hooks** 标签也会隐藏。
+
+## 钩子位置
+
+| 范围 | 路径 |
+|---|---|
+| 全局 | `<documents-root>/hooks/` |
+| 工作区 | `<workspace>/.agents/hooks/` |
+
+`<documents-root>` 默认是操作系统“文档”目录下的 `dline` 文件夹；设置 `DLINE_DOCS_DIR` 后，以该变量的值作为根目录。全局和工作区中存在同名钩子时，两者都会运行，结果合并处理。
+
+## 文件命名
+
+文件名必须与事件名完全一致（区分大小写）：
+
+- **macOS / Linux**：无扩展名的可执行文件，例如 `PreToolUse`，需要有执行权限。`.ps1` 文件会被忽略。
+- **Windows**：PowerShell 脚本 `<事件名>.ps1`，例如 `PreToolUse.ps1`。Dline 以 `-NoProfile -NonInteractive -ExecutionPolicy Bypass` 参数运行它，无扩展名的文件会被忽略。
+
+## 事件
+
+| 事件 | 触发时机 |
+|---|---|
+| `PreToolUse` | 工具执行之前 |
+| `PostToolUse` | 工具执行之后 |
+| `UserPromptSubmit` | 用户提交消息时 |
+| `TaskStart` | 任务开始时 |
+| `TaskCancel` | 任务被取消时 |
+| `TaskComplete` | 任务完成时 |
+| `Notification` | Dline 发出通知时 |
+| `PreCompact` | 压缩上下文之前 |
+
+## 输入
+
+Dline 通过标准输入传入一个 JSON 对象，字段名使用 camelCase。公共字段包括：
+
+- `clineVersion`、`hookName`、`timestamp`、`taskId`；
+- `workspaceRoots`：工作区根目录列表；
+- `userId`：匿名的用户或设备标识；
+- `model`：包含 `provider` 和 `slug`。
+
+此外，每个事件还有一个同名的事件数据对象，例如 `preToolUse` 包含 `toolName` 和 `parameters`，`postToolUse` 还包含 `result`、`success` 和 `executionTimeMs`。
+
+## 输出
+
+在标准输出中返回一个 JSON 对象，所有字段都是可选的：
+
+```json
+{
+  "cancel": false,
+  "contextModification": "Extra context for the model",
+  "errorMessage": ""
+}
+```
+
+- `cancel`：布尔值。`PreToolUse` 返回 `true` 时会取消整个任务，`errorMessage` 作为取消原因。
+- `contextModification`：字符串，会作为额外上下文加入对话，最长 50,000 个字符。
+- `errorMessage`：字符串，错误或取消说明。
+
+`Notification` 事件会忽略 `cancel` 和 `contextModification`。旧的 `shouldContinue` 字段已被移除，出现时输出会被判定为无效，请改用 `cancel`。
+
+## 限制
+
+- 每个脚本最长运行 30 秒。
+- 标准输出和标准错误合计最多 1 MiB。
+- 脚本正常退出但没有输出合法 JSON 时，Dline 忽略其结果并继续任务。
+
+## 在面板中管理钩子
+
+点击输入框下方工具栏中的天平图标打开能力面板，切换到 **Hooks** 标签：
+
+- 钩子按 **Global Hooks** 和工作区的 `.agents/hooks/` 分组显示；
+- 用 **New hook...** 选择事件类型，Dline 会生成对应平台的脚本模板并打开；
+- 每个钩子都可以编辑、删除和开关。
+
+<Aside type="caution">
+在 macOS 和 Linux 上，开关通过修改文件的执行权限实现，新建的模板默认处于关闭状态。在 Windows 上，只要 `.ps1` 文件存在就会执行，面板中的单个钩子开关不可用；如需停用，请删除或重命名文件。
+</Aside>
+
+**New hook...** 列表中没有 `Notification`，需要时请在钩子目录中手动创建该文件。列表中的 `TaskResume` 类型可以创建，但当前版本不会触发它。
+
+## 相关内容
+
+- [Dline Rules](/customization/dline-rules/)
+- [Skills](/customization/skills/)
+- [插件](/customization/plugins/)

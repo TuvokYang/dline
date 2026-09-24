@@ -1,0 +1,66 @@
+---
+title: Using Slash Commands
+description: Type / in the input box to run built-in commands, workflows, and skills, and learn what each command actually does.
+---
+
+import { Aside } from "@astrojs/starlight/components"
+
+Typing `/` in the input box opens a suggestion menu with the built-in commands, enabled workflows, and skills. Picking a command from the menu inserts text of the form `/cmd:<name>`; you can also type a built-in command without the prefix, for example `/newtask`.
+
+<Aside>
+Only the **first** slash command in a message is processed. Later slash commands are treated as plain text.
+</Aside>
+
+## Built-in commands
+
+| Command | Menu text | What it does |
+|---|---|---|
+| `/newtask` | Create a new task with context from the current task | Has Dline summarize the current work, decisions, relevant files, problems, and next steps as the starting point of a new task |
+| `/deep-planning` | Create a comprehensive implementation plan before coding | Investigates the codebase before coding, writes an implementation plan, and creates a follow-up task for the implementation |
+| `/smol`, `/compact` | Condenses your current context window | Compacts the current task's context right away |
+| `/newrule` | — | Creates a new rule file under `.agents/rules/` based on preferences expressed in the conversation |
+| `/reportbug` | — | Drafts a problem report and opens a prefilled GitHub issue page |
+| `/explain-changes` | Explain code changes between git refs (PRs, commits, branches, etc.) | Explains code changes between two Git refs, or between a ref and the working tree (VS Code only) |
+
+### `/newtask`
+
+Dline first drafts a handoff summary and shows it to you as a preview. You can create the new task from it or keep chatting in the current one. Typing the command does not force a new task immediately.
+
+Use it when the current task's context has grown long but the work needs to continue.
+
+### `/smol` and `/compact`
+
+Both commands do the same thing: they authorize Dline to compact the **current** task's context right away, with the model writing a summary that replaces older conversation. The summary is model-written and cannot be guaranteed to keep every detail. For automatic compaction, see [Auto compact](/en/features/auto-compact/).
+
+### `/newrule`
+
+Dline creates a new Markdown rule file in the workspace's `.agents/rules/` folder based on preferences actually expressed in the conversation, without overwriting existing rules. Whether the rule applies to later tasks depends on whether it is enabled and on any conditional rule criteria; see [Dline Rules](/en/customization/dline-rules/).
+
+### `/deep-planning`
+
+Depending on the active prompt profile, the command uses four-stage or five-stage instructions: investigate first (the five-stage version separates reading files from terminal investigation), ask clarifying questions when needed, write a plan document, then create an implementation task. See [Plan and Act](/en/core-workflows/plan-and-act/#deep-planning).
+
+### `/explain-changes`
+
+Compares two Git refs, `from_ref` and `to_ref`; when `to_ref` is omitted, it compares against the files in the working tree. The workspace must be a Git repository, and binary files are skipped.
+
+<Aside type="caution">
+Comparing against `HEAD` includes every uncommitted change, not only staged changes.
+</Aside>
+
+### `/reportbug`
+
+Dline works with you on the report fields such as the title, what happened, and the steps to reproduce, and adds environment details: operating system, editor, Dline version, provider, and model. After you confirm, Dline opens a prefilled GitHub issue page in your browser for you to review and submit; Dline does not submit the issue itself.
+
+## Workflows
+
+A workflow is a set of step-by-step instructions saved as a Markdown file; invoking it injects its content into the current task. Dline discovers workflows in:
+
+- the workspace: `.agents/workflows/`;
+- globally: `<documents-root>/workflows/` (`<documents-root>` defaults to `dline` inside your system Documents folder and can be overridden with `DLINE_DOCS_DIR`).
+
+Invoke a workflow with `/workflow:<file-name>` (the file name without its extension); for compatibility, `/<file-name>` also works. Workflow files need no YAML frontmatter. You can enable or disable individual workflows in **Manage Dline Rules & Workflows**.
+
+## Skills
+
+Enabled skills appear in the suggestion menu. Invoking one with `/skills:<name>` injects the skill's instructions directly into the current task. For how to write and store skills, see [Skills](/en/customization/skills/).

@@ -1,0 +1,91 @@
+---
+title: 多 Profile 配置
+description: 创建多个 API Profile，为 Act、Plan 和子代理分别绑定不同的服务商与模型，并了解任务中切换 Profile 的行为和存储位置。
+---
+
+import { Aside, Steps } from "@astrojs/starlight/components"
+
+**API Profile** 是一组完整的模型连接配置：服务商、模型、API Key、可选的 Base URL，以及该服务商特有的设置。你可以创建多个 Profile，在不同模式或不同子代理中使用不同的模型。
+
+## 创建与管理
+
+在 **Settings → API Configuration** 中管理 Profile。
+
+<Steps>
+
+1. 点击 **Add profile**，会新增一个名为 **New Model** 的 Profile 并展开。
+
+2. 选择 **Provider**，填写该服务商需要的设置（API Key、模型等）。选择服务商和模型后，Profile 可能自动命名为 `服务商:模型` 的形式。
+
+3. 如需重命名，在 **Profile name** 中修改，离开输入框后保存。
+
+</Steps>
+
+- **可填写的字段取决于服务商和模型**。例如 OpenAI 提供 **Use custom base URL**、模型选择或 **Use custom model ID**，以及 **Thinking Mode** 等选项。各服务商的具体设置参见[模型与服务商](/getting-started/authorizing-with-dline/)。
+- **更换服务商会清空**当前的 API Key、Base URL、模型选择和服务商特有设置。
+- 拖动卡片左侧的手柄可以调整顺序。
+- 点击 **Manage** 进入管理模式，勾选要删除的卡片后点击 **Delete selected (n)**，再在 5 秒内点击 **Confirm delete (n)** 确认。点击 **Done** 退出管理模式。
+
+## Profile 的用途
+
+每个 Profile 有三个 **Profile usage** 复选框，卡片上以徽标显示：
+
+| 用途 | 徽标 | 作用 |
+|---|---|---|
+| **Act** | ACT | 可以在 Act 模式中选用 |
+| **Plan** | PLAN | 可以在 Plan 模式中选用 |
+| **Subagents** | SUB | 可以被子代理显式选用 |
+
+新建的 Profile 默认三项全选。**全部取消**表示该 Profile 不可用于任何用途，而不是“可用于所有用途”。
+
+图片生成不是用途选项，而是 Profile 中单独的 **Image source** 设置，参见[图片生成](/features/image-generation/)。
+
+## 在任务中选择 Profile
+
+点击输入区的模型选择器，打开 **Available Models** 菜单：
+
+- 默认情况下，菜单列出可用于 Act 或 Plan 的 Profile，选中后两种模式都使用它；
+- 打开 **Split Model**（提示为 “Use different models per mode”，默认关闭）后，会出现 **Act** 和 **Plan** 两个标签页，各自只列出勾选了对应用途的 Profile，选择只影响该模式；
+- 菜单中的齿轮按钮打开 **API Configuration**；还没有 Profile 时，菜单提供 **Create profile**。
+
+选择的作用范围：
+
+| 何时选择 | 作用 |
+|---|---|
+| 没有进行中的任务 | 更新全局的 Plan/Act 绑定，作为之后新任务的默认值 |
+| 任务进行中 | 只改变当前任务的绑定；修改全局设置不会替换进行中任务的绑定 |
+
+任务进行中关闭 **Split Model** 时，两种模式都会绑定到当前模式正在使用的 Profile。
+
+### 切换到上下文窗口更小的模型
+
+任务进行中切换 Profile 通常直接生效。如果当前已用的上下文不小于目标模型的上下文窗口，会弹出 **Switch to a smaller context window?**，可选择 **Cancel** 或 **Switch**。确认后**不会立即压缩**，只是切换模型；之后任务继续时，普通的上下文压缩仍可能发生。
+
+这与 Plan/Act 模式切换时的 **Compact & Switch** 不同，参见 [Plan 与 Act](/core-workflows/plan-and-act/)。
+
+## 在子代理中使用
+
+具名子代理可以在 YAML 中用 `profile` 指定 Profile 名称，或在 **Subagents** 标签页的 **Profile** 下拉框中选择（只列出已启用且勾选了 **Subagents** 用途的 Profile；**Default (act profile)** 表示沿用主任务的 Act Profile）。回退规则参见[子代理](/features/subagents/)。
+
+## 存储位置
+
+| 内容 | 位置 |
+|---|---|
+| Profile 配置 | `<data-root>/settings/api_profiles.json` |
+| API Key | `<data-root>/secrets/api_keys.json`，按 Profile ID 保存，不写入 Profile 配置文件 |
+| 其他服务商凭据 | `<data-root>/secrets/provider_secrets.json` |
+
+`<data-root>` 默认是 `~/.dline/data`，设置 `DLINE_DIR` 后为 `<DLINE_DIR>/data`。多个 VS Code 窗口同时修改 Profile 时，Dline 会在文件锁下合并改动，并同步到其他窗口。
+
+## 常见提示
+
+| 提示 | 含义 |
+|---|---|
+| “No profiles configured. Add a profile to connect a provider and model.” | 还没有任何 Profile |
+| “No profiles for this mode.” | 没有 Profile 勾选了当前模式的用途 |
+| “Failed to load API profiles. Existing profiles have not been replaced.” | 读取失败，已有配置未被覆盖；可点击 **Retry** |
+| `Profile not valid: …` | 任务绑定的 Profile 已被删除、停用、配置不完整或缺少凭据 |
+
+<Aside type="caution">
+任务绑定的 Profile 失效时，Dline 会报告错误，**不会**静默改用其他 Profile。请修复该 Profile，或在模型选择器中重新选择。
+</Aside>

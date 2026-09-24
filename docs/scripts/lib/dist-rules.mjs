@@ -8,6 +8,7 @@ import { CJK_TEXT } from "./locale-text.mjs"
 
 /**
  * @typedef {{ file: string, message: string }} DistIssue
+ * @typedef {{ url: string, file: string, fragment: string }} LinkTarget
  */
 
 const SCRIPT_BODY = /(<script\b[^>]*>)[\s\S]*?(<\/script>)/gi
@@ -21,6 +22,18 @@ const NON_PROSE_BLOCK = /<(script|style|pre|code|template|starlight-lang-select)
 const VISIBLE_ATTRIBUTE = /\s(?:title|alt|aria-label|placeholder|data-copied|data-translations)\s*=\s*(["'])(.*?)\1/gis
 const TAG = /<[^>]*>/g
 const LEAK_CONTEXT = 24
+const ELEMENT_ID = /\sid\s*=\s*(["'])(.*?)\1/gis
+const HTML_ENTITY = /&(?:amp|quot|apos|lt|gt|#39|#x27);/g
+/** @type {Readonly<Record<string, string>>} */
+const ENTITY_TEXT = Object.freeze({
+	"&amp;": "&",
+	"&quot;": '"',
+	"&apos;": "'",
+	"&lt;": "<",
+	"&gt;": ">",
+	"&#39;": "'",
+	"&#x27;": "'",
+})
 
 /**
  * Entry page that every locale edition must produce, relative to dist/.
@@ -102,6 +115,123 @@ export function checkBuiltFile({ relativePath, text, basePrefix }) {
 		}
 	}
 	return issues
+}
+
+/**
+ * Where a URL found in a built page points inside dist/. Returns undefined for
+ * URLs that leave the site or miss the base (the latter are reported by
+ * findUnprefixedUrls).
+ * @param {string} url raw attribute value
+ * @param {string} fromFile dist-relative path of the page that contains the URL
+ * @param {string} basePrefix base without trailing slash; "" for a root deployment
+ * @returns {LinkTarget | undefined}
+ */
+export function resolveBuiltTarget(url, fromFile, basePrefix) {
+	const value = decodeAttribute(url.trim())
+	const hashIndex = value.indexOf("#")
+	const fragment = hashIndex === -1 ? "" : safeDecode(value.slice(hashIndex + 1))
+	const path = (hashIndex === -1 ? value : value.slice(0, hashIndex)).split("?", 1)[0] ?? ""
+	if (path === "") {
+		return value.startsWith("#") ? { url, file: fromFile, fragment } : undefined
+	}
+	if (!isRootRelative(path) || !hasBasePrefix(path, basePrefix)) {
+		return undefined
+	}
+	const sitePath = safeDecode(path.slice(basePrefix.length)).replace(/^\/+/, "")
+	return { url, file: builtFileFor(sitePath), fragment }
+}
+
+/**
+ * Internal links, assets and redirects whose target file or fragment is not in
+ * the build. Pure: the caller supplies every built file and the HTML text.
+ * @param {{ pages: ReadonlyMap<string, string>, files: ReadonlySet<string>, basePrefix: string }} input
+ *   pages maps dist-relative HTML paths to their text; files lists every dist-relative file
+ * @returns {DistIssue[]}
+ */
+export function checkInternalLinks({ pages, files, basePrefix }) {
+	/** @type {Map<string, Set<string>>} */
+	const idCache = new Map()
+	const idsOf = (/** @type {string} */ file) => {
+		let ids = idCache.get(file)
+		if (!ids) {
+			ids = collectElementIds(pages.get(file) ?? "")
+			idCache.set(file, ids)
+		}
+		return ids
+	}
+	/** @type {DistIssue[]} */
+	const issues = []
+	for (const [file, html] of pages) {
+		const reported = new Set()
+		for (const url of collectUrls(html.replace(SCRIPT_BODY, "$1$2"))) {
+			const target = resolveBuiltTarget(url, file, basePrefix)
+			const problem = target && !reported.has(url) ? describeMissingTarget(target, files, idsOf) : undefined
+			if (problem) {
+				reported.add(url)
+				issues.push({ file, message: `${problem}: ${url}` })
+			}
+		}
+	}
+	return issues
+}
+
+/**
+ * Element ids declared in built HTML, decoded to their literal values.
+ * @param {string} html
+ * @returns {Set<string>}
+ */
+export function collectElementIds(html) {
+	const ids = html.replace(SCRIPT_BODY, "$1$2").matchAll(ELEMENT_ID)
+	return new Set(Array.from(ids, (match) => decodeAttribute(match[2] ?? "")))
+}
+
+/**
+ * @param {LinkTarget} target
+ * @param {ReadonlySet<string>} files
+ * @param {(file: string) => Set<string>} idsOf
+ * @returns {string | undefined}
+ */
+function describeMissingTarget({ file, fragment }, files, idsOf) {
+	if (!files.has(file)) {
+		return `link target was not built (${file})`
+	}
+	if (fragment && /\.html$/i.test(file) && !idsOf(file).has(fragment)) {
+		return `link fragment #${fragment} has no matching id in ${file}`
+	}
+	return undefined
+}
+
+/**
+ * Built file that serves a base-free site path under Astro's directory format.
+ * @param {string} sitePath path without the base and without a leading slash
+ * @returns {string}
+ */
+function builtFileFor(sitePath) {
+	if (sitePath === "" || sitePath.endsWith("/")) {
+		return `${sitePath}index.html`
+	}
+	const lastSegment = sitePath.slice(sitePath.lastIndexOf("/") + 1)
+	return /\.[a-z\d]+$/i.test(lastSegment) ? sitePath : `${sitePath}/index.html`
+}
+
+/**
+ * @param {string} value
+ * @returns {string}
+ */
+function decodeAttribute(value) {
+	return value.replace(HTML_ENTITY, (entity) => ENTITY_TEXT[entity] ?? entity)
+}
+
+/**
+ * @param {string} value
+ * @returns {string}
+ */
+function safeDecode(value) {
+	try {
+		return decodeURIComponent(value)
+	} catch {
+		return value
+	}
 }
 
 /**

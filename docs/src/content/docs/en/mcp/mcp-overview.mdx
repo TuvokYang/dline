@@ -1,0 +1,130 @@
+---
+title: MCP
+description: Add, configure, and use MCP servers in Dline.
+---
+
+import { Aside } from "@astrojs/starlight/components"
+
+MCP (Model Context Protocol) lets Dline use external tools, resources, and prompts through MCP servers. A server can be a local process (STDIO) or a remote endpoint (Streamable HTTP or SSE).
+
+## Opening MCP settings
+
+Select the **MCP Servers** button in the Dline panel title bar. The view has three tabs:
+
+- **Marketplace**: browse servers from an online catalog. After you select **Install**, Dline starts a task that helps you install and configure the server.
+- **Remote Servers**: add a remote server.
+- **Configure**: manage configured servers or edit the configuration file.
+
+## Adding a remote server
+
+On the **Remote Servers** tab:
+
+1. Enter a unique name in **Server Name**.
+2. Enter the full URL in **Server URL**.
+3. Under **Transport Type**, choose **Streamable HTTP** (default) or **SSE (Legacy)**.
+4. Select **Add Server**.
+
+This form has no field for request headers. To add authentication headers, edit the configuration file instead.
+
+## Editing the global configuration file
+
+On the **Configure** tab, select **Configure MCP Servers**. Dline opens `<documents-root>/settings/mcp_settings.json`. By default, `<documents-root>` is the `dline` folder inside the operating system's Documents directory; when `DLINE_DOCS_DIR` is set, its value is used as the root.
+
+### Local server (STDIO)
+
+```json
+{
+  "mcpServers": {
+    "local-server": {
+      "command": "node",
+      "args": ["/path/to/server.js"],
+      "env": {
+        "API_KEY": "${env:MY_API_KEY}"
+      },
+      "timeout": 60,
+      "disabled": false
+    }
+  }
+}
+```
+
+### Remote server
+
+```json
+{
+  "mcpServers": {
+    "remote-server": {
+      "type": "streamableHttp",
+      "url": "https://example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${env:MCP_TOKEN}"
+      }
+    }
+  }
+}
+```
+
+### Fields
+
+| Field | Description |
+|---|---|
+| `command`, `args`, `env`, `cwd` | Launch command, arguments, environment variables, and working directory of a STDIO server |
+| `url`, `headers` | Address and request headers of a remote server |
+| `type` | `stdio`, `sse`, or `streamableHttp`. An entry with `url` but no `type` is treated as `sse`, so set it explicitly |
+| `timeout` | Request timeout in seconds; default 60, minimum 1 |
+| `disabled` | Disables the server when `true` |
+| `autoApprove` | Names of tools allowed to be auto-approved |
+
+`${env:VAR}` in the configuration file is replaced with the environment variable's value. If the variable is not set, the text is left as-is and a warning is logged.
+
+## Workspace servers
+
+A project can place `.yaml`, `.yml`, or `.json` descriptor files under `<workspace>/.agents/mcp/`. Each file describes one server that applies only to that workspace:
+
+```yaml
+name: project-db
+description: Query the project database
+type: stdio
+command: node
+args: ["${workspaceFolder}/tools/db-mcp.js"]
+env:
+  DB_URL: "${env:PROJECT_DB_URL}"
+```
+
+- `name` is required and `description` is optional. Other fields are the same as in the global configuration, without the outer `mcpServers` object.
+- `${workspaceFolder}` is replaced with the workspace root. A `stdio` server without `cwd` uses the workspace root as its working directory.
+- Sensitive fields must reference environment variables (`${env:VAR}`); plain-text credentials are rejected.
+- `autoApprove` in a workspace descriptor is ignored, so a descriptor cannot auto-approve tools.
+
+## Managing servers
+
+On the **Configure** tab, each server can be:
+
+- enabled or disabled with its switch (not available for workspace servers);
+- restarted with **Restart Server**, or reconnected with **Retry Connection** after a failed connection;
+- given a timeout from 30 seconds to 1 hour in **Request Timeout** (servers from the global configuration only);
+- configured to auto-approve individual tools with **Auto-approve**, or all tools with **Auto-approve all tools** (not available for workspace servers);
+- removed with **Delete Server**.
+
+## OAuth authentication
+
+When a remote server requires OAuth, the connection reports that authentication is needed and the server row shows an **Authenticate** button. Selecting it opens the authorization page in your external browser. After you authorize, Dline reconnects automatically.
+
+## Security
+
+- Add only servers you trust.
+- Reference credentials with `${env:VAR}` instead of writing them into repository files.
+- `autoApprove` in a server configuration does not bypass the global approval settings. Review the parameters of tool calls with side effects before approving them.
+
+<Aside>
+For when MCP tools are available in a task, see the [Tools reference](/en/tools-reference/all-dline-tools/).
+</Aside>
+
+## Troubleshooting
+
+| Problem | Fix |
+|---|---|
+| The server does not connect | Check the command or URL, then select **Retry Connection** |
+| Tools are missing | Make sure the server is enabled and connected |
+| Authentication errors | Check `headers` or environment variables; for OAuth servers, select **Authenticate** |
+| Requests time out | Increase **Request Timeout** or `timeout` |

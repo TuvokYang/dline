@@ -1,0 +1,42 @@
+---
+title: DeepSeek
+description: Get a DeepSeek API key and configure DeepSeek models in Dline.
+---
+
+import { Aside, Steps } from "@astrojs/starlight/components"
+
+**Website:** [platform.deepseek.com](https://platform.deepseek.com/)
+
+## Get an API key
+
+<Steps>
+
+1. Go to the [DeepSeek Platform](https://platform.deepseek.com/) and sign up or sign in.
+
+2. Open the [API keys](https://platform.deepseek.com/api_keys) page.
+
+3. Click **Create new API key** and give the key a recognizable name, such as `Dline`.
+
+4. Copy the key immediately and store it securely. You cannot view it again after closing the page.
+
+</Steps>
+
+## Configure Dline
+
+See [Authorization and model setup](/en/getting-started/authorizing-with-dline/) for the general flow.
+
+<Steps>
+
+1. Click the **Settings** button in the Dline panel title bar.
+
+2. Set **API Provider** to **DeepSeek**.
+
+3. Paste the key into the **DeepSeek API Key** field.
+
+4. Search for, select, or type a model ID under **Model**.
+
+</Steps>
+
+<Aside>
+Models that support thinking show an **Enable Thinking** option. When it is on, choose the reasoning strength under **Thinking Level**.
+</Aside>

@@ -1,0 +1,91 @@
+---
+title: 自动批准
+description: 按操作类别决定哪些操作 Dline 可以不经你确认直接执行，了解默认值、命令安全标记、通知和 YOLO 模式的边界。
+---
+
+import { Aside } from "@astrojs/starlight/components"
+
+默认情况下，Dline 在执行可能产生影响的操作前会请求你批准。自动批准让你按类别放行某些操作，减少打断。
+
+## 在哪里设置
+
+自动批准设置位于聊天输入框正上方的 **Auto-approve:** 栏。点击后弹出菜单，顶部说明为 “Let Dline take these actions without asking for approval.”。
+
+## 操作类别与默认值
+
+| 选项 | 覆盖的操作 | 默认 |
+|---|---|---|
+| **Read project files** | 读取、列出和搜索工作区内的文件 | 开 |
+| └ **Read all files** | 读取工作区之外的文件 | 关 |
+| **Edit project files** | 创建和编辑工作区内的文件 | 关 |
+| └ **Edit all files** | 创建和编辑工作区之外的文件 | 关 |
+| **Execute safe commands** | 模型标记为安全的命令 | 开 |
+| └ **Execute all commands** | 所有命令 | 关 |
+| **Use the browser** | 浏览器自动化 | 关 |
+| **Use Web** | 网页搜索与网页抓取（`web_search`、`web_fetch`） | 关 |
+| **Use MCP servers** | MCP 工具 | 开 |
+| **Generate images** | 图片生成，参见[图片生成](/features/image-generation/) | 关 |
+| **Focus chain overrides** | Focus Chain 待办清单的更新 | 关 |
+
+在菜单中，带 └ 的子选项依附于上一行：勾选子选项会同时勾选父选项，取消父选项会同时取消子选项。
+
+<Aside type="caution">
+**Use the browser** 和 **Use Web** 是两个独立的选项：前者只控制浏览器自动化，网页搜索和抓取由后者控制。
+</Aside>
+
+## “安全命令”如何判断
+
+Dline 执行命令时，模型需要为每个命令声明 `requires_approval`：可能产生影响的命令声明为 `true`，无破坏性的命令声明为 `false`。**Execute safe commands** 放行的是被声明为 `false` 的命令。
+
+这是模型给出的判断，Dline 不会另外解析命令文本来确认它是否安全。如果你需要硬性限制，可以使用下面的命令权限规则。
+
+### 命令权限规则
+
+通过环境变量 `DLINE_COMMAND_PERMISSIONS` 可以配置命令的允许与拒绝规则（glob 模式），在命令执行前检查，即使在 YOLO 模式下也生效：
+
+```json
+{"allow": ["npm test", "git status"], "deny": ["rm *"], "allowRedirects": false}
+```
+
+- 未设置该变量时，不做额外限制；
+- `deny` 规则优先；配置了 `allow` 后，未匹配任何规则的命令会被拒绝；
+- 带重定向（如 `>`、`>>`）的命令，只有 `allowRedirects` 为 `true` 时才允许；
+- 用 `&&`、`||`、`|`、`;` 连接的命令会拆开逐段检查，每一段都必须通过。
+
+## 通知
+
+菜单底部的 **Enable notifications** 默认关闭，说明为 “Notifications may show abbreviated tool details for safety and privacy.”。开启后，Dline 会在以下情况发送系统通知：
+
+- 需要你批准某个操作时；
+- 任务完成时；
+- Dline 向你提问时；
+- 自动批准的命令运行超过 30 秒时。
+
+通知能否显示取决于操作系统设置。
+
+## YOLO 模式
+
+**Yolo Mode** 位于 **Settings → Features** 的实验性功能分组中，默认关闭。说明为：“Execute tasks without user's confirmation. Auto-switches from Plan to Act mode and disables the ask question tool. Use with extreme caution.”
+
+开启后：
+
+- 输入框上方显示 **Auto-approve: YOLO**，需要到设置中关闭；
+- Plan 模式下生成计划后会自动切换到 Act 模式；
+- Dline 向你提问时不会停下来等待回答。
+
+<Aside type="danger">
+YOLO 模式不是“关闭所有安全检查”：命令权限规则、[.agentignore](/customization/agentignore/) 限制仍然生效，MCP 服务器也必须处于启用状态。但它会让大量操作在没有确认的情况下发生，请只在可以承受后果的环境中使用，并配合[检查点](/core-workflows/checkpoints/)。组织的远程配置可能锁定该选项。
+</Aside>
+
+## 与其他设置的关系
+
+- **MCP 工具级自动批准**：在 MCP 服务器管理界面中，可以为单个工具开启 **Auto-approve**，或为服务器开启 **Auto-approve all tools**（工作区服务器除外）。这与聊天中的 **Use MCP servers** 是不同的开关，参见 [MCP 概览](/mcp/mcp-overview/)。
+- **.agentignore**：被 `.agentignore` 拒绝的操作即使被自动批准也会失败，并在聊天中显示原因。
+- **子代理**：启动子代理使用 **Read project files** 权限，子代理内部的工具不会逐个请求你批准，参见[子代理](/features/subagents/#approval)。
+- **工作区内外的判定**：依据工具声明或确认的路径。这不代表命令或 MCP 工具无法访问工作区之外的资源。
+
+## 建议
+
+- 先从默认设置开始，只放行你经常批准、且风险可接受的类别；
+- 开启 **Edit project files** 时保持[检查点](/core-workflows/checkpoints/)开启，任务结束后用 **View Changes** 检查结果；
+- 谨慎开启 **Execute all commands**，需要限制时配合 `DLINE_COMMAND_PERMISSIONS`。

@@ -1,6 +1,15 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
-import { checkBuiltFile, findChineseLeak, findUnprefixedUrls, localeOfBuiltFile, requiredEntryPages } from "../lib/dist-rules.mjs"
+import {
+	checkBuiltFile,
+	checkInternalLinks,
+	collectElementIds,
+	findChineseLeak,
+	findUnprefixedUrls,
+	localeOfBuiltFile,
+	requiredEntryPages,
+	resolveBuiltTarget,
+} from "../lib/dist-rules.mjs"
 
 const BASE = "/dline"
 
@@ -77,6 +86,90 @@ describe("findChineseLeak", () => {
 			'<starlight-lang-select><option value="/dline/">简体中文</option></starlight-lang-select>',
 		].join("")
 		assert.equal(findChineseLeak(html), undefined)
+	})
+})
+
+describe("resolveBuiltTarget", () => {
+	it("maps directory URLs, base roots and assets to built files", () => {
+		assert.deepEqual(resolveBuiltTarget("/dline/guide/", "index.html", BASE), { url: "/dline/guide/", file: "guide/index.html", fragment: "" })
+		assert.equal(resolveBuiltTarget("/dline", "index.html", BASE)?.file, "index.html")
+		assert.equal(resolveBuiltTarget("/dline/en/guide", "index.html", BASE)?.file, "en/guide/index.html")
+		assert.equal(resolveBuiltTarget("/dline/assets/demo.gif?v=1", "index.html", BASE)?.file, "assets/demo.gif")
+	})
+
+	it("decodes fragments, entities and percent-encoded paths", () => {
+		assert.deepEqual(resolveBuiltTarget("/dline/guide/#%E5%AE%89%E8%A3%85", "index.html", BASE), {
+			url: "/dline/guide/#%E5%AE%89%E8%A3%85",
+			file: "guide/index.html",
+			fragment: "安装",
+		})
+		assert.equal(resolveBuiltTarget("/dline/a/?x=1&amp;y=2#b", "index.html", BASE)?.fragment, "b")
+		assert.equal(resolveBuiltTarget("/dline/my%20file.png", "index.html", BASE)?.file, "my file.png")
+	})
+
+	it("treats a fragment-only URL as a reference into the current page", () => {
+		assert.deepEqual(resolveBuiltTarget("#_top", "en/guide/index.html", BASE), { url: "#_top", file: "en/guide/index.html", fragment: "_top" })
+	})
+
+	it("ignores external, protocol-relative, unprefixed and data URLs", () => {
+		for (const url of ["https://example.com/", "//cdn.example.com/a.js", "/other/", "data:image/png;base64,AA", "mailto:a@b.c", ""]) {
+			assert.equal(resolveBuiltTarget(url, "index.html", BASE), undefined, url)
+		}
+	})
+
+	it("resolves every root-relative URL for a root deployment", () => {
+		assert.equal(resolveBuiltTarget("/guide/", "index.html", "")?.file, "guide/index.html")
+	})
+})
+
+describe("collectElementIds", () => {
+	it("collects decoded ids outside scripts", () => {
+		const ids = collectElementIds('<h2 id="a&amp;b">x</h2><span id=\'anchor\'></span><script>el.innerHTML = \'<p id="fake">\'</script>')
+		assert.deepEqual(Array.from(ids).sort(), ["a&b", "anchor"])
+	})
+})
+
+describe("checkInternalLinks", () => {
+	const guide = '<h1 id="_top">Guide</h1><h2 id="install">Install</h2>'
+	const files = new Set(["index.html", "guide/index.html", "assets/demo.gif"])
+
+	it("accepts links to built pages, existing fragments and assets", () => {
+		const pages = new Map([
+			["index.html", '<a href="/dline/guide/#install">x</a><img src="/dline/assets/demo.gif"><a href="#_top">top</a><h1 id="_top"></h1>'],
+			["guide/index.html", guide],
+		])
+		assert.deepEqual(checkInternalLinks({ pages, files, basePrefix: BASE }), [])
+	})
+
+	it("reports missing pages, missing fragments and missing assets once per URL", () => {
+		const pages = new Map([
+			[
+				"index.html",
+				[
+					'<a href="/dline/missing/">a</a>',
+					'<a href="/dline/missing/">again</a>',
+					'<a href="/dline/guide/#nope">b</a>',
+					'<img src="/dline/assets/none.png">',
+					'<a href="#local">c</a>',
+				].join(""),
+			],
+			["guide/index.html", guide],
+		])
+		const messages = checkInternalLinks({ pages, files, basePrefix: BASE }).map((issue) => issue.message)
+		assert.deepEqual(messages, [
+			"link target was not built (missing/index.html): /dline/missing/",
+			"link fragment #nope has no matching id in guide/index.html: /dline/guide/#nope",
+			"link target was not built (assets/none.png): /dline/assets/none.png",
+			"link fragment #local has no matching id in index.html: #local",
+		])
+	})
+
+	it("checks refresh redirects and ignores script bodies", () => {
+		const pages = new Map([
+			["old/index.html", '<meta http-equiv="refresh" content="0;url=/dline/gone/"><script>location.href = "/dline/also-gone/"</script>'],
+		])
+		const messages = checkInternalLinks({ pages, files: new Set(["old/index.html"]), basePrefix: BASE }).map((issue) => issue.message)
+		assert.deepEqual(messages, ["link target was not built (gone/index.html): /dline/gone/"])
 	})
 })
 

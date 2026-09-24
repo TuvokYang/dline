@@ -1,0 +1,77 @@
+---
+title: Working with Files and Context
+description: Mention files, folders, diagnostics, terminals, Git changes, and web pages with @, and hand context to Dline through attachments, drag and drop, and editor menus.
+---
+
+import { Aside } from "@astrojs/starlight/components"
+
+Dline can read and search your workspace on its own, but pointing it at the relevant files and information usually gets accurate results faster.
+
+## Mentioning context with `@`
+
+Type `@` in the input box to open a menu with **URL**, **Problems**, **Terminal** (VS Code), **Git**, **Folder**, and **File**.
+
+| Syntax | What is added |
+|---|---|
+| `@/path/to/file` | The file's content (relative to the workspace root). Only that file is included, not files it imports; very large files may be truncated |
+| `@/path/to/folder/` | A one-level listing of the folder plus the content of the readable files it **directly** contains; subfolders are listed by name but not read recursively |
+| `@problems` | Error and warning diagnostics in the workspace |
+| `@terminal` | Output of the active terminal (VS Code) |
+| `@git-changes` | Uncommitted changes: `git status` and `git diff HEAD`. Shown as **Working changes** in the menu |
+| `@<commit-hash>` | A 7–40 character hexadecimal commit hash; adds the commit's metadata, stats, and diff |
+| `@https://…` | Fetches the page and converts it to Markdown; a failed fetch is reported as an error |
+
+<Aside type="tip">
+In a multi-root workspace, use `@workspace-name:/path/to/file` to pick which root to search. Without a workspace name, Dline looks for the path in every root.
+</Aside>
+
+## Attachments
+
+Click the **+** button in the input area to pick files or images:
+
+- **Images**: PNG, JPG/JPEG, WebP. Images can be picked only when the current model supports image input.
+- **Files**: XML, JSON, TXT, LOG, MD, DOCX, IPYNB, PDF, XLSX, CSV.
+
+Limits:
+
+- at most 20 images and files per message;
+- non-image files larger than 20 MB picked through the selector are skipped;
+- pasted or dropped images wider or taller than 7500 pixels are rejected.
+
+You can also **paste** images straight into the input box.
+
+## Drag and drop
+
+- **From the VS Code Explorer**: files and folders become `@/file` or `@/folder/` mentions. Paths outside the workspace are rejected.
+- **From your operating system's file manager**: only PNG, JPEG, and WebP images are accepted, as image attachments; other file types are not supported.
+
+## Sending code from the editor
+
+### Context menu and shortcut
+
+With code selected in the editor, the context menu shows **Add to Dline**, which puts the selected code, a file mention, and any diagnostics in that range into the chat. Pressing `Cmd+'` (macOS) or `Ctrl+'` (Windows/Linux) with a selection does the same.
+
+### Code actions (lightbulb menu)
+
+In the editor's code-action menu (the lightbulb or Quick Fix), Dline offers:
+
+| Action | When it appears | Effect |
+|---|---|---|
+| **Add to Dline** | Always | Puts the code, a file mention, and diagnostics into the chat |
+| **Explain with Dline** | Always | Starts a task that explains the selected code |
+| **Improve with Dline** | Always | Starts a task that improves the selected code |
+| **Fix with Dline** | When diagnostics exist at that location | Asks Dline to fix the reported problems |
+
+## Sending terminal output
+
+Select text in a terminal, right-click, and choose **Add to Dline**. The selected output is placed in the input box as a code block. Only your selection is copied, not the whole terminal output; use `@terminal` when you want the active terminal's output.
+
+## Generating commit messages
+
+In the **Source Control** view's title bar, click **Generate Commit Message with Dline**. Dline writes a commit message from your changes and fills in the commit input box. It prefers staged changes; with nothing staged, it uses all changes relative to `HEAD`. While it is generating, click **Generate Commit Message with Dline - Stop** to cancel.
+
+## Related
+
+- [.agentignore](/en/customization/agentignore/): limit which files Dline may read and change;
+- [Jupyter notebooks](/en/features/jupyter-notebooks/): use Dline with notebook cells;
+- [Multi-root workspaces](/en/features/multiroot-workspace/): mention files across several project folders.

@@ -1,0 +1,39 @@
+---
+title: "Amazon Bedrock: AWS CLI profile (SSO)"
+description: Authenticate Dline to Amazon Bedrock with an AWS CLI profile, for SSO or federated roles and secure enterprise access.
+---
+
+import { Steps } from "@astrojs/starlight/components"
+
+Dline can use either AWS credentials or an AWS profile to access Amazon Bedrock. SSO / federated roles are recommended over legacy IAM configuration. This page shows how to set up your environment so that Dline authenticates with an SSO role.
+
+## Setup
+
+<Steps>
+
+1. Install the [latest AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html), following the AWS instructions for your operating system.
+
+2. [Configure IAM Identity Center authentication](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sso.html) for the AWS CLI:
+   - If you do not yet access AWS through IAM Identity Center, follow the [IAM Identity Center user guide](https://docs.aws.amazon.com/singlesignon/latest/userguide/getting-started.html) to set up users and roles, and make sure you have a `PowerUserAccess` role.
+   - If you access AWS through your employer, open your AWS access portal, find the right account, and confirm you have `PowerUserAccess` permissions.
+   - Open the **Access keys** link and note the **SSO start URL** and **SSO region** for the next step.
+
+3. Finish configuring the profile with the [`aws configure sso` wizard](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sso.html#cli-configure-sso-configure), then sign in:
+
+   ```bash
+   aws sso login --profile <AWS-profile-name>
+   ```
+
+   Note the profile name you attached to the account; you need it to configure Dline.
+
+4. If VS Code and Dline are not installed yet, see [Installing Dline](/en/getting-started/installing-dline/) first.
+
+5. Open Dline and click the **Settings** button in the panel title bar:
+   - Set **API Provider** to **Amazon Bedrock**.
+   - Choose **AWS Profile** as the authentication method and enter the profile name from step 3 under **AWS Profile Name**. Leave it empty to use the default profile.
+   - Select a region under **AWS Region**.
+   - Some models require **Use cross-region inference** to be checked.
+
+</Steps>
+
+Dline reads profile credentials from your AWS configuration, such as `~/.aws/credentials`. When the SSO session expires, run `aws sso login --profile <AWS-profile-name>` again.

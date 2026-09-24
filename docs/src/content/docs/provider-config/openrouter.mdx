@@ -1,0 +1,46 @@
+---
+title: OpenRouter
+description: 通过 OpenRouter，用一个 API Key 在 Dline 中调用多家服务商的模型。
+---
+
+import { Steps } from "@astrojs/starlight/components"
+
+OpenRouter 用一个统一的 API 提供多家服务商的模型，方便你快速切换和比较不同模型。
+
+**官网：** [openrouter.ai](https://openrouter.ai/)
+
+## 获取 API Key
+
+<Steps>
+
+1. 访问 [OpenRouter](https://openrouter.ai/)，使用 Google 或 GitHub 账号登录。
+
+2. 打开 [Keys 页面](https://openrouter.ai/keys)，复制已有 Key，或新建一个 Key。
+
+</Steps>
+
+也可以直接在 Dline 设置中点击 **Get OpenRouter API Key**，在浏览器中完成授权后自动获取 Key。
+
+## 在 Dline 中配置
+
+通用步骤见[授权与模型配置](/getting-started/authorizing-with-dline/)。
+
+<Steps>
+
+1. 点击 Dline 面板标题栏的 **Settings** 按钮。
+
+2. 在 **API Provider** 中选择 **OpenRouter**。
+
+3. 把 Key 粘贴到 **OpenRouter API Key** 输入框。填写后，输入框旁边会显示账户余额。
+
+4. 在 **Model** 中搜索并选择模型。
+
+</Steps>
+
+Key 只保存在本机，并且只用于从本扩展发起 API 请求。
+
+## 提示
+
+- **价格：** OpenRouter 按底层模型的价格计费，详见 [OpenRouter Models](https://openrouter.ai/models)。
+- **提示缓存：** OpenRouter 会把缓存请求转发给支持缓存的底层模型。哪些模型支持缓存，见 [OpenRouter Models](https://openrouter.ai/models)。
+- **路由：** 模型信息区域提供服务商排序选项，可以控制 OpenRouter 把请求路由给哪些底层服务商。

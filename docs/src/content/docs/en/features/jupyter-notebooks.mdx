@@ -1,0 +1,47 @@
+---
+title: Jupyter Notebooks
+description: Use Dline to generate, explain, and improve cells in Jupyter notebooks in VS Code, and learn what context it actually sends.
+---
+
+import { Aside } from "@astrojs/starlight/components"
+
+When you open a Jupyter notebook (`.ipynb`) in VS Code, Dline adds three commands to the notebook UI.
+
+| Command | Location |
+|---|---|
+| **Generate Jupyter Cell with Dline** | Notebook toolbar |
+| **Explain Jupyter Cell with Dline** | Cell title bar |
+| **Improve Jupyter Cell with Dline** | Cell title bar |
+
+The commands appear only when the notebook type is `jupyter-notebook`. They have no default keyboard shortcuts; to bind one, search Keyboard Shortcuts for `dline.jupyterGenerateCell`, `dline.jupyterExplainCell`, or `dline.jupyterImproveCell`.
+
+## Generating a cell
+
+![Generating a cell in a notebook](/assets/jupyter-generate-cell.gif)
+
+1. Select a cell as the position reference;
+2. click **Generate Jupyter Cell with Dline** in the notebook toolbar;
+3. describe what you want.
+
+Dline receives your description, an instruction to insert a new cell above or below the current one, and the current cell's JSON. The new cell is written by Dline editing the `.ipynb` file, and it still asks for your approval before writing, as usual.
+
+## Explaining and improving a cell
+
+![Explaining and improving a cell](/assets/jupyter-explain-improve-cell.gif)
+
+- **Explain Jupyter Cell with Dline** starts a task that explains the code, with the selected code, its language, and the current cell's JSON.
+- **Improve Jupyter Cell with Dline** first asks what you want improved, then asks Dline to improve the current cell through refactoring, optimization, and best practices. It sends to the current task if there is one, and otherwise starts a new task.
+
+## What Dline actually sees
+
+- These commands send the JSON of **only the current cell**, read from the `.ipynb` file saved on disk. Variables and imports defined in other cells are not provided automatically; mention them in your description, or ask Dline to read the whole notebook.
+- The cell JSON keeps the source, metadata, execution count, and text outputs; image outputs are replaced with `[IMAGE DATA TRUNCATED]`.
+- When Dline reads an `.ipynb` file with its regular file-reading tool, all code-cell outputs are stripped.
+
+<Aside type="tip">
+The commands read the saved file. Save the notebook before running them so Dline sees the latest content.
+</Aside>
+
+## Reviewing changes
+
+Dline edits `.ipynb` files by replacing text in the JSON structure. In VS Code with the Jupyter extension installed, you can review changes in the notebook diff view. The model is told to match cell JSON strings exactly, but that cannot guarantee a cell's metadata, position, and outputs stay intact every time; check the diff before approving.

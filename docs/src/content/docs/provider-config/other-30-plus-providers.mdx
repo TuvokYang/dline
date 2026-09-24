@@ -1,0 +1,293 @@
+---
+title: 其他服务商
+description: Dline 支持的其他模型服务商速查，它们使用相同的配置流程。
+---
+
+import { Steps } from "@astrojs/starlight/components"
+
+本页列出配置流程相同的其他服务商。右侧目录可以直接跳转到对应服务商。
+
+## 通用配置流程
+
+<Steps>
+
+1. 点击 Dline 面板标题栏的 **Settings** 按钮。
+
+2. 在 **API Provider** 中选择服务商。
+
+3. 把 API Key 或 Token 粘贴到对应的凭证输入框。
+
+4. 在 **Model** 中选择模型。
+
+</Steps>
+
+完整说明见[授权与模型配置](/getting-started/authorizing-with-dline/)。
+
+## AIHubMix
+
+兼容 OpenAI API 的模型聚合服务，用一套接口访问多个模型后端。
+
+**官网：** [aihubmix.com](https://aihubmix.com/)
+
+1. 注册或登录 AIHubMix 账号。
+2. 在控制台生成 API Key。
+3. 在 Dline 中选择 **AIHubMix** 并粘贴 Key。
+
+## AskSage
+
+面向企业和政府用户的 AI 访问平台，提供合规相关的管控能力。
+
+**官网：** [asksage.ai](https://www.asksage.ai/)
+
+1. 登录 AskSage 并创建 API 凭证。
+2. 确认所在工作区或组织已开通模型访问。
+3. 在 Dline 中选择 **AskSage** 并填写 Key。
+
+## Baseten
+
+提供托管模型 API 和面向生产推理的部署基础设施。
+
+**官网：** [baseten.co](https://www.baseten.co/products/model-apis/)
+
+1. 创建 Baseten 账号并打开 API Keys 页面。
+2. 生成具备所需权限的 API Key。
+3. 在 Dline 中选择 **Baseten** 并粘贴 Key。
+
+## Cerebras
+
+为支持的模型系列提供极快的托管推理。
+
+**官网：** [cloud.cerebras.ai](https://cloud.cerebras.ai/)
+
+1. 登录 Cerebras Cloud。
+2. 创建或获取 API Key。
+3. 在 Dline 中选择 **Cerebras** 并填写 Key。
+
+## Dify.ai
+
+以工作流为中心的 AI 平台，支持应用与流水线编排。
+
+**官网：** [dify.ai](https://dify.ai/)
+
+1. 创建 Dify 工作区和 API 凭证。
+2. 确认 Dify 的接口地址和服务商设置已生效。
+3. 在 Dline 中选择 **Dify.ai** 并粘贴 Key。
+
+## Doubao
+
+字节跳动的豆包模型系列，通常通过火山引擎访问。在 **API Provider** 中显示为 **ByteDance Doubao**。
+
+**官网：** [volcengine.com](https://www.volcengine.com/)
+
+1. 登录火山引擎并开通模型访问。
+2. 为豆包接口生成 API 凭证。
+3. 在 Dline 中选择 **ByteDance Doubao** 并粘贴凭证。
+
+## Fireworks AI
+
+为开源模型提供注重性能的托管推理。
+
+**官网：** [fireworks.ai](https://fireworks.ai/)
+
+1. 创建 Fireworks 账号。
+2. 在项目或账号设置中生成 API Key。
+3. 在 Dline 中选择 **Fireworks AI** 并填写 Key。
+
+## GCP Vertex AI
+
+Google Cloud 的企业级模型平台，支持 IAM 与项目级治理。
+
+**官网：** [cloud.google.com/vertex-ai](https://cloud.google.com/vertex-ai)
+
+1. 准备一个已启用 Vertex AI 的 GCP 项目。
+2. 配置认证（服务账号或应用默认凭证）。
+3. 在 Dline 中选择 **GCP Vertex AI**，填写 **Google Cloud Project ID**，并在 **Google Cloud Region** 中选择区域。
+
+## Groq
+
+为支持的模型系列提供低延迟推理。
+
+**官网：** [groq.com](https://groq.com/)
+
+1. 登录 Groq Console。
+2. 创建 API Key。
+3. 在 Dline 中选择 **Groq** 并粘贴 Key。
+
+## HiCap
+
+兼容 OpenAI API、支持多模态的模型服务。
+
+**官网：** [hicap.ai](https://hicap.ai)
+
+1. 创建 HiCap 账号。
+2. 生成 API Key 或 Token。
+3. 在 Dline 中选择 **HiCap** 并填写凭证。
+
+## Huawei Cloud MaaS
+
+华为云提供的模型即服务（MaaS）。
+
+**官网：** [huaweicloud.com](https://www.huaweicloud.com/)
+
+1. 登录华为云并打开 MaaS 服务。
+2. 创建用于模型访问的 API 凭证。
+3. 在 Dline 中选择 **Huawei Cloud MaaS** 并填写凭证。
+
+## Hugging Face
+
+为开源模型提供托管推理。
+
+**官网：** [huggingface.co](https://huggingface.co/)
+
+1. 登录 Hugging Face。
+2. 创建具备推理权限的 Access Token。
+3. 在 Dline 中选择 **Hugging Face** 并粘贴 Token。
+
+## LiteLLM
+
+用统一接口访问多家模型服务商的代理网关。
+
+**文档：** [docs.litellm.ai](https://docs.litellm.ai/docs/)
+
+1. 启动 LiteLLM 代理，记下代理地址和 API Key。
+2. 在 Dline 中选择 **LiteLLM**，在 **Base URL (optional)** 中填写代理地址（默认 `http://localhost:4000`），在 **API Key** 中填写 Key。
+3. 在 **Model** 中搜索、选择或直接输入模型 ID。
+
+## Mistral
+
+直接访问 Mistral 系列模型的 API。
+
+**官网：** [mistral.ai](https://mistral.ai/)
+
+1. 注册或登录 Mistral 平台账号。
+2. 生成 API Key。
+3. 在 Dline 中选择 **Mistral** 并粘贴 Key。
+
+## Moonshot
+
+提供 Kimi 系列模型的 API 访问。
+
+**官网：** [platform.moonshot.ai](https://platform.moonshot.ai/)
+
+1. 登录 Moonshot 平台。
+2. 在账号设置中创建 API Key。
+3. 在 Dline 中选择 **Moonshot** 并填写 Key。
+
+## Nebius AI Studio
+
+提供托管的模型 API。
+
+**官网：** [studio.nebius.com](https://studio.nebius.com/)
+
+1. 注册或登录 Nebius AI Studio。
+2. 生成 API 凭证。
+3. 在 Dline 中选择 **Nebius AI Studio** 并填写凭证。
+
+## Nous Research
+
+提供 Hermes 系列模型。
+
+**官网：** [nousresearch.com](https://nousresearch.com/)
+
+1. 获取 Nous 托管接口的访问凭证。
+2. 确认账号可用的模型 ID。
+3. 在 Dline 中选择 **Nous Research** 并填写凭证。
+
+## Oracle Code Assist
+
+通过 Oracle Cloud Infrastructure（OCI）生成式 AI 服务提供编程辅助。
+
+**官网：** [oracle.com](https://www.oracle.com/application-development/code-assist/)
+
+1. 准备 OCI 账号。
+2. 在租户中启用 OCI Generative AI 服务。
+3. 在 Dline 中选择 **Oracle Code Assist**，填写 **OCA Base URL** 和 **OCA API Key**。
+
+## Qwen Code
+
+面向编程场景的通义千问模型访问方式。
+
+**官网：** [chat.qwen.ai](https://chat.qwen.ai/)
+
+1. 登录 Qwen 平台。
+2. 获取 API 访问凭证。
+3. 在 Dline 中选择 **Qwen Code** 并填写凭证。
+
+## Requesty
+
+在单一 API 背后为多个服务商提供路由。
+
+**官网：** [requesty.ai](https://www.requesty.ai/)
+
+1. 注册或登录 Requesty。
+2. 生成 API Key。
+3. 在 Dline 中选择 **Requesty** 并粘贴 Key。
+
+## SambaNova
+
+提供托管推理和企业级 AI 平台能力。
+
+**官网：** [sambanova.ai](https://sambanova.ai/)
+
+1. 注册或登录 SambaNova 账号。
+2. 创建 API Key 或 Token。
+3. 在 Dline 中选择 **SambaNova** 并填写凭证。
+
+## SAP AI Core
+
+SAP 面向企业的 AI 平台，用于模型集成与治理。
+
+**官网：** [SAP AI Core](https://help.sap.com/docs/sap-ai-core/sap-ai-core-service-guide/what-is-sap-ai-core)
+
+1. 开通 SAP AI Core / Generative AI Hub 访问权限。
+2. 准备服务密钥和接口地址。
+3. 在 Dline 中选择 **SAP AI Core** 并填写所需信息。
+
+## Together
+
+为众多热门开源模型提供托管推理。
+
+**官网：** [together.ai](https://together.ai/)
+
+1. 注册或登录 Together 账号。
+2. 生成 API Key。
+3. 在 Dline 中选择 **Together** 并粘贴 Key。
+
+## Vercel AI Gateway
+
+用一个 API 访问多个上游模型服务商。
+
+**官网：** [vercel.com](https://vercel.com/)
+
+1. 登录 Vercel 并打开 AI Gateway。
+2. 创建 Gateway API Key。
+3. 在 Dline 中选择 **Vercel AI Gateway** 并填写 Key。
+
+## VS Code Language Model API
+
+让 Dline 使用当前 VS Code 中可用的内置语言模型。在 **API Provider** 中显示为 **GitHub Copilot**。
+
+**文档：** [VS Code Language Model API](https://code.visualstudio.com/api/extension-guides/language-model)
+
+1. 确认当前 VS Code 中已有可用的语言模型。
+2. 在 Dline 中选择 **GitHub Copilot**，无需填写 API Key 或其他配置。
+
+## W&B Inference
+
+Weights & Biases 提供的托管推理服务。
+
+**官网：** [wandb.ai](https://wandb.ai/)
+
+1. 登录 W&B，在 [设置页](https://wandb.ai/settings) 创建 API Key。
+2. 在 Dline 中选择 **W&B Inference**，把 Key 粘贴到 **W&B API Key** 输入框。
+3. 在 **Model** 中选择模型。
+
+## xAI (Grok)
+
+通过 xAI API 平台提供 Grok 模型。在 **API Provider** 中显示为 **xAI**。
+
+**官网：** [x.ai](https://x.ai/)
+
+1. 登录 xAI 平台。
+2. 生成 API Key。
+3. 在 Dline 中选择 **xAI** 并粘贴 Key。

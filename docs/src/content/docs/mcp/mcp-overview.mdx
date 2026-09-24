@@ -1,0 +1,130 @@
+---
+title: MCP
+description: 在 Dline 中添加、配置和使用 MCP 服务器。
+---
+
+import { Aside } from "@astrojs/starlight/components"
+
+MCP（Model Context Protocol）让 Dline 通过 MCP 服务器使用外部工具、资源和提示词。服务器可以是本机进程（STDIO），也可以是远程端点（Streamable HTTP 或 SSE）。
+
+## 打开 MCP 设置
+
+点击 Dline 面板标题栏中的 **MCP Servers** 按钮。视图包含三个标签：
+
+- **Marketplace**：浏览在线目录中的服务器。点击 **Install** 后，Dline 会启动一个任务，协助你完成安装和配置。
+- **Remote Servers**：添加远程服务器。
+- **Configure**：管理已配置的服务器，或编辑配置文件。
+
+## 添加远程服务器
+
+在 **Remote Servers** 标签中：
+
+1. 在 **Server Name** 中填写唯一的名称。
+2. 在 **Server URL** 中填写完整的 URL。
+3. 在 **Transport Type** 中选择 **Streamable HTTP**（默认）或 **SSE (Legacy)**。
+4. 点击 **Add Server**。
+
+这个表单不能填写请求头。如需认证头，请改为编辑配置文件。
+
+## 编辑全局配置文件
+
+在 **Configure** 标签中点击 **Configure MCP Servers**，Dline 会打开 `<documents-root>/settings/mcp_settings.json`。`<documents-root>` 默认是操作系统“文档”目录下的 `dline` 文件夹；设置 `DLINE_DOCS_DIR` 后，以该变量的值作为根目录。
+
+### 本地服务器（STDIO）
+
+```json
+{
+  "mcpServers": {
+    "local-server": {
+      "command": "node",
+      "args": ["/path/to/server.js"],
+      "env": {
+        "API_KEY": "${env:MY_API_KEY}"
+      },
+      "timeout": 60,
+      "disabled": false
+    }
+  }
+}
+```
+
+### 远程服务器
+
+```json
+{
+  "mcpServers": {
+    "remote-server": {
+      "type": "streamableHttp",
+      "url": "https://example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${env:MCP_TOKEN}"
+      }
+    }
+  }
+}
+```
+
+### 字段
+
+| 字段 | 说明 |
+|---|---|
+| `command`、`args`、`env`、`cwd` | STDIO 服务器的启动命令、参数、环境变量和工作目录 |
+| `url`、`headers` | 远程服务器的地址和请求头 |
+| `type` | `stdio`、`sse` 或 `streamableHttp`。只有 `url` 而没有 `type` 时按 `sse` 处理，建议显式填写 |
+| `timeout` | 请求超时，单位为秒，默认 60，最小 1 |
+| `disabled` | 为 `true` 时禁用该服务器 |
+| `autoApprove` | 允许自动批准的工具名列表 |
+
+配置文件中的 `${env:VAR}` 会被替换为环境变量的值。变量不存在时保持原样，并在日志中给出警告。
+
+## 工作区服务器
+
+项目可以在 `<workspace>/.agents/mcp/` 下放置 `.yaml`、`.yml` 或 `.json` 描述文件，每个文件描述一个服务器，只在该工作区生效：
+
+```yaml
+name: project-db
+description: Query the project database
+type: stdio
+command: node
+args: ["${workspaceFolder}/tools/db-mcp.js"]
+env:
+  DB_URL: "${env:PROJECT_DB_URL}"
+```
+
+- 必须提供 `name`，`description` 可选，其他字段与全局配置相同，但不需要外层的 `mcpServers`。
+- `${workspaceFolder}` 会被替换为工作区根目录。`stdio` 类型未指定 `cwd` 时，默认以工作区根目录作为工作目录。
+- 敏感字段必须引用环境变量（`${env:VAR}`），直接写入明文凭据会被拒绝。
+- 工作区描述文件中的 `autoApprove` 会被忽略，不能借此自动批准工具。
+
+## 管理服务器
+
+在 **Configure** 标签中，每个服务器都可以：
+
+- 用开关启用或停用（工作区服务器不提供该开关）；
+- 点击 **Restart Server** 重启；连接失败时点击 **Retry Connection** 重试；
+- 在 **Request Timeout** 中选择 30 秒到 1 小时的超时（仅全局配置中的服务器）；
+- 为单个工具勾选 **Auto-approve**，或勾选 **Auto-approve all tools**（工作区服务器不提供）；
+- 点击 **Delete Server** 删除。
+
+## OAuth 认证
+
+对于需要 OAuth 的远程服务器，连接时会显示需要认证，服务器行中会出现 **Authenticate** 按钮。点击后，Dline 会在外部浏览器中打开授权页面；完成授权后自动重新连接。
+
+## 安全建议
+
+- 只添加你信任的服务器。
+- 凭据使用 `${env:VAR}` 引用，不要写入仓库文件。
+- 服务器配置中的 `autoApprove` 不会绕过全局审批设置，请在批准有副作用的工具调用前检查参数。
+
+<Aside>
+MCP 工具在任务中的可用条件，参见[工具参考](/tools-reference/all-dline-tools/)。
+</Aside>
+
+## 故障排查
+
+| 问题 | 处理方法 |
+|---|---|
+| 服务器无法连接 | 检查命令或 URL，然后点击 **Retry Connection** |
+| 看不到工具 | 确认服务器已启用并成功连接 |
+| 认证错误 | 检查 `headers` 或环境变量；OAuth 服务器请点击 **Authenticate** |
+| 请求超时 | 调大 **Request Timeout** 或 `timeout` |

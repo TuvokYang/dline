@@ -1,0 +1,53 @@
+---
+title: Multi-Root Workspaces
+description: Use Dline in a VS Code workspace with several folders — the primary root, how paths resolve, @ mentions, and the limits for rules, Git, and checkpoints.
+---
+
+import { Aside } from "@astrojs/starlight/components"
+
+VS Code lets one workspace contain several folders (a multi-root workspace). Dline supports multi-root workspaces by default; nothing needs to be turned on.
+
+## How Dline identifies the roots
+
+- Each workspace folder is a root, and **the first folder is the primary root**.
+- A root's name is its folder name (the last segment of its path); aliases set in a `.code-workspace` file are not read.
+- For each root, Dline records its absolute path, whether it is a Git repository, and its current commit.
+- The roots' names, paths, and version-control types are provided to the model, along with which root is primary.
+
+<Aside type="caution">
+If two roots have the same folder name, Dline does not tell them apart automatically; lookups by name use the first match. Keep your root folder names distinct.
+</Aside>
+
+## Paths and tools
+
+| Operation | When no root is specified |
+|---|---|
+| Reading and writing files | The path is resolved in the primary root |
+| Searching files (`search_files`) | All roots are searched |
+| Running commands | Commands run in the primary root; Dline can set the working directory to another root |
+
+The model can include a root name in a path to target that root. If the named root does not exist, file tools fall back to the primary root.
+
+Naming the project in your prompt (for example "change … in frontend") helps Dline pick the right root, but this depends on how the model interprets it.
+
+## Mentioning files in the chat
+
+- `@frontend:/src/App.tsx` looks only in the root named `frontend`;
+- `@/src/App.tsx` looks in every root and may return files with the same path from several roots.
+
+Note that when you name a root, the part after the colon must start with `/`. A root name that does not exist reports `Workspace '<name>' not found`; a file found in no root reports `File not found in any workspace. Searched: …`.
+
+## Limits
+
+| Feature | Behavior in a multi-root workspace |
+|---|---|
+| Workspace rules and skills | Loaded only from the **first** workspace folder's `.agents/rules/`, skills folders, and similar locations; other roots are not read separately |
+| Global rules | Loaded from `<documents-root>/rules/` as usual |
+| `@git-changes` and commit mentions | Apply to the primary root only |
+| [Checkpoints](/en/core-workflows/checkpoints/) | Unavailable. The task header shows "Checkpoints are not currently supported in multi-root workspaces." with **Retry Checkpoints** and **Disable Checkpoints** |
+
+If you need checkpoints, open a single project folder in a new VS Code window and start a new task there.
+
+## When initialization fails
+
+If the multi-root workspace fails to initialize, Dline reports "Failed to initialize workspace. Using single folder mode." and continues as a single-folder workspace.

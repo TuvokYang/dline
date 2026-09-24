@@ -1,0 +1,55 @@
+---
+title: Auto Compact
+description: When the context nears the model's window limit, Dline can summarize older conversation automatically. Learn the trigger, settings, how to restore, and the limits.
+---
+
+import { Aside } from "@astrojs/starlight/components"
+
+Long tasks keep filling the model's context window. With **Auto Compact** on, Dline has the model summarize older conversation when the context nears its limit, and continues the task with the summary in place of that content.
+
+## Turning it on
+
+Turn on **Auto Compact** under **Settings → Features** ("Automatically compress conversation history."). It is **off by default**.
+
+## Settings
+
+When it is on, these settings appear:
+
+| Setting | Default | Description |
+|---|---|---|
+| **Compression point (%)** | 97 | Adjustable from 1 to 97; lower values compact earlier |
+| **Minimum reserve** | 5K | Lower bound of the reserved space (K tokens) |
+| **Maximum reserve** | 30K | Upper bound of the reserved space (K tokens) |
+| **Maximum context** | 0 | Absolute context cap (K tokens); 0 means no absolute cap |
+
+The trigger is not simply "97% used". The reserve derived from the percentage is clamped between the minimum and maximum reserve; when the model's context window is larger than **Maximum context**, that absolute value becomes the trigger center instead. Dline also applies a 2K estimation tolerance automatically.
+
+Invalid input shows "Reserve values must be whole numbers from 0 to …" or "Minimum reserve cannot exceed maximum reserve."
+
+## What happens during compaction
+
+1. Dline instructs the model to write a summary covering your requests, technical details, and pending work. With [Focus Chain](/en/core-workflows/task-management/#focus-chain) on, the to-do progress also feeds the summary.
+2. A **Summary** card appears in the chat, showing the summary as it is generated and when it completes.
+3. From then on, what is sent to the model consists of the cumulative summary, the messages not yet covered by it, and the current continuation.
+
+The full conversation record on disk is not deleted; only what is sent to the model gets shorter.
+
+<Aside type="caution">
+The summary is written by the model and may omit details. After compaction Dline does not "remember everything". If a detail matters, remind Dline after compaction or put key constraints in [Dline Rules](/en/customization/dline-rules/).
+</Aside>
+
+## Restoring to before compaction
+
+After compaction, the checkpoint next to the Summary card reads **Compaction checkpoint**. Clicking **Restore** offers only **Restore Task Only**: the conversation returns to before the compaction, and workspace files are unchanged. You cannot edit a message while restoring from a compaction card.
+
+## Manual compaction
+
+Whether or not Auto Compact is on, type `/compact` or `/smol` in the input box to compact the current task right away; see [Using slash commands](/en/core-workflows/using-commands/).
+
+## When it is off
+
+With Auto Compact off, Dline still trims by rules when the context nears its limit: it optimizes repeated file reads and removes older conversation turns, always keeping the first turn. This produces no summary, and removed content is not kept in any form in the context sent to the model.
+
+## Cost
+
+Generating the summary is itself a model request, so it uses tokens and costs money like any other request and counts toward the task's totals. The actual cost depends on your provider and caching.

@@ -1,0 +1,82 @@
+---
+title: Skills
+description: 用 SKILL.md 打包可复用的任务说明，让 Dline 按需加载。
+---
+
+import { Aside } from "@astrojs/starlight/components"
+
+Skill（技能）是一个包含 `SKILL.md` 文件的目录。Dline 在系统提示词中只列出每个技能的名称和描述；当任务与某个描述匹配时，模型会调用 `load_skill` 加载该技能的完整说明。你也可以用斜杠命令手动加载技能。
+
+<Aside>
+Lite 提示词配置不包含技能目录，也不提供 `load_skill` 工具。
+</Aside>
+
+## 目录结构
+
+```text
+.agents/skills/
+└── aws-deploy/
+    ├── SKILL.md
+    └── scripts/
+        └── deploy.sh
+```
+
+`SKILL.md` 以 YAML frontmatter 开头：
+
+```markdown
+---
+name: aws-deploy
+description: Deploy the service with the project's CDK stack. Use when the user asks to deploy or release.
+---
+
+# AWS deploy
+
+1. Run `scripts/deploy.sh --dry-run` and review the diff.
+2. ...
+```
+
+要求如下：
+
+- 技能目录必须是技能根目录的直接子目录，并包含名为 `SKILL.md` 的文件。
+- frontmatter 必须包含非空字符串 `name` 和 `description`，其他键不会被读取。
+- `name` 必须与目录名完全一致，否则该技能会被跳过。
+- 系统提示词中的描述最多显示 240 个字符，请把用途和适用场景写在前面。
+
+## 技能位置
+
+| 范围 | 路径 |
+|---|---|
+| 工作区 | `<workspace>/.agents/skills/` |
+| 全局 | `<documents-root>/skills/` |
+
+`<documents-root>` 默认是操作系统“文档”目录下的 `dline` 文件夹；设置 `DLINE_DOCS_DIR` 后，以该变量的值作为根目录。
+
+Dline 还会兼容读取工作区中的 `.claude/skills/`、`.cline/skills/` 和 `.clinerules/skills/`。存在同名技能时，按以下优先级只保留一个：`.agents/skills` > `.claude/skills` > `.cline/skills` > `.clinerules/skills` > 全局。
+
+<Aside type="caution">
+同名去重在开关过滤之前进行。关闭优先级较高的同名技能后，较低优先级的同名技能不会接替生效。
+</Aside>
+
+## 创建技能
+
+1. 点击输入框下方工具栏中的天平图标，打开能力面板，切换到 **Skills** 标签。
+2. 在 **Global Skills** 或 **Workspace Skills** 分组中选择 **New skill...**。
+3. 输入名称（可以包含字母、数字、`-` 和 `_`），然后点击 **Create skill**。
+
+Dline 会创建并打开一个模板 `SKILL.md`，名称会被转换为小写。
+
+## 使用技能
+
+- **自动加载**：模型会把任务与技能描述进行匹配，并用技能名称调用 `load_skill`。描述写得越清楚，越容易被正确选用。
+- **手动加载**：在输入框中输入 `/skills:<name>`，例如 `/skills:aws-deploy`，也可以在斜杠菜单的 **Skills** 分组中选择。技能内容会直接注入到这条消息中。该技能必须处于启用状态，且一条消息只处理第一个斜杠命令。
+
+每个技能都有开关，默认启用；关闭后模型将看不到该技能。面板会提示开关的保存范围（仅当前任务或当前工作区）。
+
+## 附带文件
+
+`load_skill` 只返回 `SKILL.md` 的正文和它的路径，不会自动读取同目录下的其他文件，也不会执行脚本。如需使用附带的文档或脚本，请在 `SKILL.md` 中写明相对路径和用法。模型会根据需要使用文件读取或命令执行工具，这些操作仍然受审批设置控制。
+
+## 相关内容
+
+- [Dline Rules](/customization/dline-rules/)
+- [工具参考](/tools-reference/all-dline-tools/)

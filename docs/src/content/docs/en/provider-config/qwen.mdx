@@ -1,0 +1,46 @@
+---
+title: Alibaba Qwen
+description: Get an Alibaba Cloud Model Studio API key and configure Qwen models in Dline.
+---
+
+import { Steps } from "@astrojs/starlight/components"
+
+**Website:** [bailian.console.aliyun.com](https://bailian.console.aliyun.com/)
+
+## Get an API key
+
+<Steps>
+
+1. Go to the [Alibaba Cloud Model Studio console](https://bailian.console.aliyun.com/) and sign up or sign in.
+
+2. Open the API key management page.
+
+3. Create a new API key for your application.
+
+4. Copy the key immediately and store it securely.
+
+</Steps>
+
+## Configure Dline
+
+See [Authorization and model setup](/en/getting-started/authorizing-with-dline/) for the general flow.
+
+<Steps>
+
+1. Click the **Settings** button in the Dline panel title bar.
+
+2. Set **API Provider** to **Alibaba Qwen**.
+
+3. Under **Alibaba API Line**, choose **International API** or **China API** based on your location.
+
+4. Paste the key into the **Qwen API Key** field.
+
+5. Select a model under **Model**.
+
+</Steps>
+
+## Tips
+
+- **Vision:** VL (Vision-Language) models accept image input.
+- **Thinking:** Models that support thinking, such as the Qwen3 series, show a thinking budget slider.
+- **Pricing:** See the [Alibaba Cloud Model Studio console](https://bailian.console.aliyun.com/) for current rates.

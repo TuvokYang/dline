@@ -1,0 +1,127 @@
+---
+title: 子代理
+description: 让 Dline 把独立的调研问题委派给隔离的子代理并行执行，并用具名 YAML 配置为不同职责选择模型、工具和输出预算。
+---
+
+import { Aside } from "@astrojs/starlight/components"
+
+子代理（Subagent）是主任务派出的独立工作者。每个子代理有自己的上下文，只把最终结论交回主任务，因此大量的读取和搜索过程不会占满主任务的上下文。
+
+## 开启与并发
+
+- 子代理默认开启，可在 **Settings → Features** 的 Agent 分组中通过 **Subagents** 开关关闭。
+- 开关下方的 **Max Parallel Subagents** 控制同时运行的子代理数量，范围 1–64，默认 64。
+- 单次批量委派最多包含 32 个子代理；超出并发上限的部分会排队等待。
+- 未指定超时时，每个子代理最长运行 1200 秒（20 分钟）。
+
+## Dline 如何委派
+
+Dline 有两个委派工具：
+
+- `use_subagent`：运行一个默认或具名子代理；
+- `use_subagents`：一次运行 1–32 个子代理，每一项都可以单独指定具名代理、Profile 和超时。
+
+Dline 会根据任务自行决定是否委派，你也可以在提示词中明确要求，例如：
+
+```text
+用子代理分别调查认证流程、数据库模型定义和测试配置，都只读，不修改文件。
+```
+
+每个子代理最好只回答一个明确的问题。问题之间互不依赖时才适合并行；最后由主任务核对证据并整合结论。
+
+## 默认子代理
+
+内置的默认子代理只能使用以下工具：
+
+`read_file`、`list_files`、`search_files`、`list_code_definition_names`、`load_skill`，以及用于交回结果的 `attempt_completion`。
+
+它不能执行命令、写文件、联网、使用浏览器或 MCP。需要这些能力时，请使用具名子代理并显式授权。
+
+## 具名子代理
+
+具名子代理是一个带 frontmatter 的 YAML 文件：
+
+| 位置 | 作用范围 |
+|---|---|
+| `.agents/subagents/` | 当前工作区 |
+| `<documents-root>/subagents/` | 全局（`<documents-root>` 默认是系统“文档”目录下的 `dline`，可用 `DLINE_DOCS_DIR` 覆盖） |
+
+扩展名可以是 `.yml` 或 `.yaml`。工作区与全局有同名代理时，工作区的优先。
+
+```yaml
+---
+name: code-researcher
+description: Read-only codebase research
+profile: "Fast Research"
+tools:
+  - read_file
+  - list_files
+  - search_files
+  - list_code_definition_names
+skills: []
+maxOutputTokens: 0.05
+---
+Trace the requested code paths without changing files. Return findings with file paths, evidence, and open questions.
+```
+
+| 字段 | 必填 | 说明 |
+|---|---|---|
+| `name` | 是 | 代理名称 |
+| `description` | 是 | 职责说明 |
+| 正文 | 是 | frontmatter 之后的内容就是子代理的提示词，不能为空 |
+| `profile` | 否 | 使用哪个 API Profile，见下文 |
+| `tools` | 否 | 允许的工具，数组或逗号分隔字符串。省略或为空时使用默认工具集 |
+| `skills` | 否 | 可见的技能。省略时可见全部可用技能，`[]` 表示不可见任何技能 |
+| `maxOutputTokens` | 否 | 最终结果的 token 预算，见下文 |
+
+缺少必填字段、frontmatter 格式错误、正文为空、出现未知或空白的工具名，或输出预算非法时，该文件会被跳过并记录日志。配置模型请使用 `profile`；`modelId` 等其他字段不会生效。
+
+具名子代理可以通过 `tools` 显式申请写文件、执行命令、联网、MCP 或生成图片等工具；这些工具仍受底层功能开关和权限约束。
+
+### 在界面中管理
+
+在 **Manage Dline Rules & Workflows** 面板的 **Subagents** 标签页中，可以看到 **Global Subagents** 与 **Workspace Subagents** 两组，各有 **New subagent...** 按钮。每一行可以启用或停用、编辑或删除，选择 **Profile**，并逐个勾选允许的工具（必需的工具始终保持勾选）。
+
+## 选择 Profile
+
+| 情况 | 使用的 Profile |
+|---|---|
+| `profile` 指向一个已启用、且勾选了 **Subagents** 用途的 Profile | 该 Profile 的模型与思考配置，不套用主任务的任务级思考设置 |
+| 省略 `profile`，或指向的 Profile 不可用、未启用或未勾选 Subagents 用途 | 回退到主任务的 **Act Profile**（即使主任务当前处于 Plan 模式） |
+| 批量委派中某一项单独指定了 `profile` | 覆盖 YAML 中的设置；该 Profile 无效时，这一项会被拒绝，不会回退 |
+| 子代理允许使用 `generate_image` | 必须显式指定一个有效的 Profile，否则失败 |
+
+Profile 的创建与用途设置参见[多 Profile 配置](/customization/profiles/)。
+
+## 最终结果的输出预算
+
+`maxOutputTokens` 限制子代理交回主任务的最终结果大小，单位是 token：
+
+- 不配置时，默认为启动时主任务剩余上下文的 5%；
+- `0` 到 `1` 之间的小数表示比例，例如 `0.05`；
+- 正整数表示固定 token 数，例如 `10240`；
+- 生效预算最低为 512 token，即使主任务剩余上下文更少。
+
+预算会写入子代理的提示词，交回结果时超出部分会被截断。它只限制最终结果，不限制子代理过程中的每次请求。
+
+<span id="approval"></span>
+
+## 审批
+
+- 启动子代理使用自动批准中的 **Read project files** 权限。
+- 子代理内部的每个工具调用都要通过它的工具白名单和审批策略检查，**不会**再向你弹出逐个审批。需要人工审批的工具在子代理中会直接失败，而不是等待你确认。
+- 执行命令时仍会应用命令权限和目录访问检查。
+
+<Aside type="caution">
+为具名子代理开放写文件或执行命令等工具前，请确认你接受这些操作在没有逐个确认的情况下发生（前提是审批策略允许）。
+</Aside>
+
+## 在聊天中查看
+
+委派时聊天中会显示 “Dline wants to use a subagent:” 或 “Dline wants to use subagents:”。每个子代理有一张卡片，显示代理名称、前台或后台（**Foreground** / **Background**）、任务、工具和输出，以及运行状态。卡片提供 **Cancel**、**Cancel all**，以及在适用时的完成或重试按钮。
+
+运行统计包括工具调用次数、耗时、token 用量和费用；子代理的用量会计入主任务的总用量。
+
+## 与 `spawn_task` 的区别
+
+`spawn_task` 是另一个工具，用于创建独立的新任务，不属于子代理功能。子代理自身不能再委派子代理。

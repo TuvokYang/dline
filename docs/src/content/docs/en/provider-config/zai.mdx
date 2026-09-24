@@ -1,0 +1,90 @@
+---
+title: Z AI (Zhipu)
+description: Get a Z AI / Zhipu Open Platform API key and configure GLM models in Dline.
+---
+
+import { Steps, TabItem, Tabs } from "@astrojs/starlight/components"
+
+Z AI (formerly Zhipu AI) offers the GLM model series, with hybrid reasoning and agentic capabilities for reasoning, coding, and agent applications.
+
+**Website:** [z.ai/model-api](https://z.ai/model-api) (international) | [open.bigmodel.cn](https://open.bigmodel.cn/) (mainland China)
+
+## Get an API key
+
+<Tabs>
+<TabItem label="International">
+
+<Steps>
+
+1. Go to [z.ai/model-api](https://z.ai/model-api) and sign up or sign in.
+
+2. Open the [API key management page](https://z.ai/manage-apikey/apikey-list) in the console.
+
+3. Create a new API key.
+
+4. Copy the key immediately and store it securely.
+
+</Steps>
+
+</TabItem>
+<TabItem label="Mainland China">
+
+<Steps>
+
+1. Go to the [Zhipu Open Platform](https://open.bigmodel.cn/) and sign up or sign in.
+
+2. Find API key management in the [console](https://open.bigmodel.cn/console/overview).
+
+3. Create a new API key.
+
+4. Copy the key immediately and store it securely.
+
+</Steps>
+
+</TabItem>
+</Tabs>
+
+Pricing differs between the two regions. Check the prices published on each platform.
+
+## Configure Dline
+
+See [Authorization and model setup](/en/getting-started/authorizing-with-dline/) for the general flow.
+
+<Steps>
+
+1. Click the **Settings** button in the Dline panel title bar.
+
+2. Set **API Provider** to **Z AI**.
+
+3. Under **Z AI Entrypoint**, choose the entrypoint for your region:
+   - `api.z.ai`: international
+   - `open.bigmodel.cn`: mainland China
+
+4. Paste the key into the **Z AI API Key** field.
+
+5. Select a model under **Model**.
+
+</Steps>
+
+## GLM Coding Plan
+
+Z AI offers subscription plans for coding, billed by prompts rather than traditional API usage.
+
+<Steps>
+
+1. Go to [z.ai/subscribe](https://z.ai/subscribe) and choose a plan.
+
+2. After subscribing, sign in to the Z AI console and create an API key for the plan.
+
+3. In Dline, select **Z AI** and paste the key into the **Z AI API Key** field.
+
+</Steps>
+
+## Entrypoints
+
+| Entrypoint | API address |
+| --- | --- |
+| International (`api.z.ai`) | `https://api.z.ai/api/paas/v4` |
+| Mainland China (`open.bigmodel.cn`) | `https://open.bigmodel.cn/api/paas/v4` |
+
+The entrypoint determines where requests are sent. Choose the entrypoint that matches the platform your key belongs to.

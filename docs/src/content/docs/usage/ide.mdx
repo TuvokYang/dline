@@ -1,0 +1,201 @@
+---
+title: 在 IDE 中使用
+description: 在 VS Code 中用 Dline 构建一个可运行的待办应用，掌握核心工作流程。
+---
+
+import { Aside, Steps, Tabs, TabItem } from "@astrojs/starlight/components"
+
+本教程带你用 Dline 从零构建一个单文件待办应用，并在过程中熟悉 Plan/Act 模式、审批改动、迭代修改和检查点回滚。
+
+## 准备工作
+
+开始之前，请确认：
+
+- 已在编辑器中安装 Dline（参见[安装 Dline](/getting-started/installing-dline/)）；
+- 已连接一个 AI 模型（参见[模型与服务商](/getting-started/authorizing-with-dline/)）。
+
+## 第 1 步：打开项目文件夹
+
+Dline 在工作区中创建和编辑文件。为待办应用准备一个空文件夹：
+
+<Steps>
+
+1. 在 VS Code 中选择 **File → Open Folder**。
+
+2. 新建一个文件夹，例如桌面上的 `todo-app`。
+
+3. 选中该文件夹并点击 **Open**。
+
+</Steps>
+
+资源管理器中会显示该文件夹，此时文件列表为空。
+
+<Aside type="caution">
+没有打开文件夹时，Dline 不知道应该在哪里创建文件。开始任务前请先打开一个文件夹。
+</Aside>
+
+## 第 2 步：打开 Dline 面板
+
+点击 VS Code 活动栏中的 **Dline** 图标即可打开面板。面板底部是输入框，上方是任务对话；面板标题栏提供 **New Task**、**History**、**Settings** 等按钮。
+
+<Aside type="tip">
+在编辑器中未选中文本时，按 `Cmd+'`（macOS）或 `Ctrl+'`（Windows/Linux）可以把焦点移到 Dline 输入框；对应命令是 **Dline: Jump to Chat Input**。
+</Aside>
+
+## 第 3 步：给 Dline 一个任务
+
+点击面板底部的输入框，粘贴以下提示词：
+
+```text
+Build a todo app in a single HTML file. Include:
+- Input field to add new tasks
+- List that displays all tasks
+- Checkbox to mark tasks complete (with strikethrough styling)
+- Button to delete individual tasks
+- Clean, modern design with CSS
+- All JavaScript inline in the same file
+```
+
+按 `Enter` 或点击发送按钮提交。发送快捷键可在 **Settings → General → Send messages with** 中改为 `Ctrl + Enter` 或 `Shift + Enter`。
+
+## 第 4 步：理解 Plan 模式与 Act 模式
+
+输入区右下角有一个 **Plan / Act** 切换开关，点击即可切换模式；把鼠标悬停在开关上可以看到切换快捷键。
+
+- **Plan 模式**：Dline 收集信息并与你讨论方案。适合先对齐需求、调整思路、澄清细节。
+- **Act 模式**：Dline 直接执行任务，创建文件、编写代码。
+
+<Aside>
+如果希望在 Plan 模式下强制禁止文件编辑，请在 **Settings → Features** 中开启 **Strict Plan Mode**（默认关闭）。
+
+本教程需要 Dline 创建文件，请切换到 **Act** 模式。何时使用哪种模式，参见 [Plan 与 Act](/core-workflows/plan-and-act/)。
+</Aside>
+
+## 第 5 步：审批改动
+
+Dline 准备写入文件时，聊天中会显示目标文件路径（例如 `index.html`）和拟写入的内容，下方出现两个按钮：
+
+- **Approve**：允许 Dline 创建或编辑该文件；
+- **Reject**：拒绝本次改动，你可以随后给出新的指示。
+
+点击 **Approve**，`index.html` 会出现在编辑器左侧的资源管理器中。
+
+<Aside>
+默认配置下，编辑文件需要你手动批准；读取工作区内的文件、执行安全命令等操作会自动批准。你可以在[自动批准](/features/auto-approve/)中按类别调整。
+</Aside>
+
+## 第 6 步：查看应用
+
+在浏览器中打开 `index.html`：
+
+<Tabs>
+  <TabItem label="macOS">
+    **方式 A：使用终端**
+
+    在编辑器中打开终端（`` Ctrl+` `` 或菜单 **Terminal → New Terminal**），执行：
+
+    ```bash
+    open index.html
+    ```
+
+    **方式 B：使用 Finder**
+
+    在资源管理器中右键 `index.html`，选择 **Reveal in Finder**，然后双击该文件。
+  </TabItem>
+  <TabItem label="Windows">
+    **方式 A：使用终端**
+
+    在编辑器中打开终端（`` Ctrl+` `` 或菜单 **Terminal → New Terminal**），执行：
+
+    ```bash
+    start index.html
+    ```
+
+    **方式 B：使用文件资源管理器**
+
+    在资源管理器中右键 `index.html`，选择 **Reveal in File Explorer**，然后双击该文件。
+  </TabItem>
+  <TabItem label="Linux">
+    **方式 A：使用终端**
+
+    在编辑器中打开终端（`` Ctrl+` `` 或菜单 **Terminal → New Terminal**），执行：
+
+    ```bash
+    xdg-open index.html
+    ```
+
+    **方式 B：使用文件管理器**
+
+    在资源管理器中右键 `index.html`，选择 **Open Containing Folder**，然后双击该文件。
+  </TabItem>
+</Tabs>
+
+如果安装了 Live Server 扩展，也可以右键 `index.html` 并选择 **Open with Live Server**，文件变化时页面会自动刷新。
+
+试着添加、勾选和删除几个任务。应用完全在浏览器中运行，不需要后端。
+
+## 第 7 步：迭代改进
+
+在**同一个任务**中继续发送消息，Dline 会基于已有代码修改，而不是从头重写。可以尝试：
+
+```text
+Add local storage so tasks persist when I refresh the page
+```
+
+```text
+Switch to a dark theme with purple accent colors
+```
+
+```text
+Add a filter to show all, active, or completed tasks
+```
+
+Dline 会先读取现有的 `index.html`，再提出具体改动，并在修改前等待你的批准。点击 **Approve** 后刷新浏览器即可看到效果。
+
+## 第 8 步：用检查点撤销改动
+
+Dline 修改工作区后，聊天中会出现 **Checkpoint** 标记。把鼠标悬停在标记上会显示两个按钮：
+
+- **Compare**：查看从该检查点起发生了哪些文件变化；
+- **Restore**：打开恢复菜单。
+
+恢复菜单提供以下选项：
+
+| 选项 | 效果 |
+|---|---|
+| **Restore Files & Task** | 将文件恢复到该检查点，并清除该点之后的消息 |
+| **Restore Files Only**（在 **More options** 中） | 只将文件恢复到该检查点，保留对话 |
+| **Restore Task Only**（在 **More options** 中） | 只清除该点之后的消息，文件保持不变 |
+
+想撤销某次改动但继续和 Dline 讨论其他做法时，使用 **Restore Files Only**。
+
+<Aside type="tip">
+检查点保存在 Dline 独立管理的影子 Git 仓库中，不会影响你项目中的提交和分支。使用检查点需要本机已安装 Git；可在 **Settings → Features → Checkpoints** 中开关该功能。
+</Aside>
+
+更多内容参见[检查点](/core-workflows/checkpoints/)。
+
+## 你学到了什么
+
+你已经完成了 Dline 的核心工作流程：
+
+1. 打开项目文件夹作为工作区；
+2. 打开 Dline 面板并在输入框中描述任务；
+3. 理解并切换 Plan 与 Act 模式；
+4. 在写入前审批文件改动；
+5. 在同一任务中发送后续消息进行迭代；
+6. 使用检查点撤销改动。
+
+这些模式适用于从简单脚本到完整应用的各种项目。你提供的上下文越具体，结果越好。
+
+## 下一步
+
+- [任务管理](/core-workflows/task-management/)：日常使用 Dline 的工作模式；
+- [处理文件](/core-workflows/working-with-files/)：在提示词中用 `@` 引用文件、文件夹和 URL；
+- [Dline Rules](/customization/dline-rules/)：定制 Dline 在项目中的行为。
+
+## 需要帮助？
+
+- **开启新任务**：在输入框中输入 `/newtask`，Dline 会基于当前上下文开启一个新任务；
+- **报告问题**：输入 `/reportbug`，Dline 会协助整理并创建 GitHub issue；
+- **项目 issue**：访问 [Dline issue tracker](https://github.com/TuvokYang/Dline/issues)。

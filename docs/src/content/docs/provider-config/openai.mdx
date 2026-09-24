@@ -1,0 +1,87 @@
+---
+title: OpenAI / ChatGPT 订阅
+description: 使用 OpenAI API Key 或 ChatGPT 订阅登录，在 Dline 中调用 OpenAI 模型。
+---
+
+import { Aside, Steps } from "@astrojs/starlight/components"
+
+**官网：** [openai.com](https://openai.com/)
+
+Dline 提供两种使用 OpenAI 模型的方式：
+
+- **OpenAI**：使用 OpenAI API Key，按 token 计费。
+- **ChatGPT Subscription**：使用 ChatGPT 订阅账号登录，无需管理 API Key。
+
+## OpenAI API Key
+
+### 获取 API Key
+
+<Steps>
+
+1. 访问 [OpenAI Platform](https://platform.openai.com/)，注册或登录账号。
+
+2. 打开 [API keys](https://platform.openai.com/api-keys) 页面。
+
+3. 点击 **Create new secret key**，为 Key 起一个便于识别的名称，例如 `Dline`。
+
+4. 立即复制并妥善保存 Key，OpenAI 不会再次显示它。
+
+</Steps>
+
+### 在 Dline 中配置
+
+通用步骤见[授权与模型配置](/getting-started/authorizing-with-dline/)。
+
+<Steps>
+
+1. 点击 Dline 面板标题栏的 **Settings** 按钮。
+
+2. 在 **API Provider** 中选择 **OpenAI**。
+
+3. 把 Key 粘贴到 **OpenAI API Key** 输入框。
+
+4. 在 **Model** 中搜索或选择模型。
+
+</Steps>
+
+同一个 **OpenAI** 服务商也可以连接 Azure OpenAI 和其他兼容 OpenAI API 的服务，见 [OpenAI 兼容服务](/provider-config/openai-compatible/)。
+
+<span id="chatgpt-subscription"></span>
+
+## ChatGPT 订阅
+
+<Steps>
+
+1. 打开 Dline 设置，在 **API Provider** 中选择 **ChatGPT Subscription**。
+
+2. 点击 **Sign in**。Dline 会打开 **Sign in to ChatGPT** 对话框并启动系统浏览器。
+
+3. 在浏览器中完成授权。浏览器自动回到 Dline 后，对话框关闭，状态显示 **Signed in**。
+
+4. 在 **Model** 中选择模型。可用模型取决于你的 ChatGPT 套餐。
+
+</Steps>
+
+### 浏览器无法自动返回时
+
+1. 保持 **Sign in to ChatGPT** 对话框打开，不要取消。
+2. 从浏览器地址栏复制授权完成后的**完整回调 URL**。
+3. 粘贴到对话框中的 **Full callback URL** 输入框，然后点击 **Finish sign-in**。
+
+浏览器没有自动打开时，可以复制对话框中的登录 URL，手动粘贴到浏览器。登录超时后点击 **Try again** 重新开始。
+
+### 导入已有凭据
+
+正常登录无法完成时，可以在对话框中展开 **Advanced: import OAuth credential JSON**，粘贴完整的 OAuth 凭据 JSON，然后点击 **Import credential**。凭据会写入该 Profile 自己的密钥文件。
+
+### 多个 Profile
+
+每个 API Profile 独立保存自己的 ChatGPT 凭据。一个 Profile 登录、退出或删除，不会影响其他 Profile；需要使用多个 Profile 时，分别为每个 Profile 登录一次。
+
+<Aside type="caution">
+不要把 Dline 数据目录下的 `secrets/` 文件提交到版本控制、附到工单或发送给他人。更换账号时请使用 **Sign in again**，不要手动编辑凭据文件。
+</Aside>
+
+## 提示
+
+- **价格：** 各模型的费用见 [OpenAI 定价页](https://openai.com/pricing)。

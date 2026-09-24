@@ -1,0 +1,46 @@
+---
+title: Google Gemini
+description: Get a Google AI Studio API key and configure Gemini models in Dline.
+---
+
+import { Steps } from "@astrojs/starlight/components"
+
+Google Gemini is Google's family of multimodal models. It offers very large context windows and performs well at coding, reasoning, and document analysis.
+
+**Website:** [ai.google.dev](https://ai.google.dev/)
+
+## Get an API key
+
+<Steps>
+
+1. Go to [Google AI Studio](https://aistudio.google.com/) and sign in with your Google account.
+
+2. Open [aistudio.google.com/apikey](https://aistudio.google.com/apikey).
+
+3. Click **Create API Key** and select or create a Google Cloud project.
+
+4. Copy the key immediately and store it securely.
+
+</Steps>
+
+## Configure Dline
+
+See [Authorization and model setup](/en/getting-started/authorizing-with-dline/) for the general flow.
+
+<Steps>
+
+1. Click the **Settings** button in the Dline panel title bar.
+
+2. Set **API Provider** to **Google Gemini**.
+
+3. Paste the key into the **Gemini API Key** field.
+
+4. Select a model under **Model**.
+
+</Steps>
+
+Requests go to `https://generativelanguage.googleapis.com` by default. To route them through a gateway, check **Use custom base URL** and enter the address. Models that support reasoning effort show an extra reasoning-effort option.
+
+## Tips
+
+- **Pricing:** See the [Google AI pricing page](https://ai.google.dev/gemini-api/docs/models/gemini) for current rates.

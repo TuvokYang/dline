@@ -1,0 +1,75 @@
+---
+title: .agentignore
+description: 控制 Dline 可以扫描、读取、写入或执行的项目路径。
+---
+
+import { Aside } from "@astrojs/starlight/components"
+
+`.agentignore` 为 Dline 定义工作区路径权限。路径模式使用 `.gitignore` 语法，还可以在行尾加权限属性，分别限制扫描、读取、写入和执行。
+
+## 文件位置
+
+在工作区根目录创建 `.agentignore`。Dline 也接受 `.dlineignore` 和 `.clineignore`，按 `.agentignore` → `.dlineignore` → `.clineignore` 的顺序**只使用第一个存在的文件**。
+
+- 子目录中的 `.agentignore` 不会被读取。
+- 文件的新增、修改和删除会被自动监测，修改后立即生效。
+- 可以用 `!include <file>` 引入另一个文件中的规则。被引入的文件发生变化时不会被自动监测，需要重新保存 `.agentignore` 才会生效。
+
+## 示例
+
+```text
+# 在扫描中隐藏大型生成目录，但仍可按路径读取
+coverage/ -s
+.next/ -s
+*.map -s
+
+# 允许读取第三方代码，但禁止修改
+vendor/ -w
+
+# 禁止以不受信任的目录作为命令工作目录
+scripts/untrusted/ -x
+
+# 不带属性的规则同时禁止扫描、读取、写入和执行
+.env
+.env.*
+secrets/
+```
+
+## 规则语法
+
+| 规则 | 效果 |
+|---|---|
+| `secrets/` | 禁止扫描、读取、写入和执行 |
+| `generated/ -s` | 不出现在扫描和列表中；按路径指定的文件仍可读写 |
+| `vendor/ -w` | 允许读取，禁止写入 |
+| `scripts/untrusted/ -x` | 禁止以该路径作为命令的工作目录 |
+| `private/ -r` | 禁止读取，其他权限不变 |
+| `build/ -sw` | 禁止扫描和写入；属性可以合并书写 |
+| `!audit.log -s` | 重新允许扫描之前被排除的路径 |
+
+属性字母为 `r`（读取）、`w`（写入）、`x`（执行）和 `s`（扫描），可以分开写（`-s -w`）或合并写（`-sw`）。空行和以 `#` 开头的行会被忽略。
+
+## 与 .gitignore 和内置排除的关系
+
+在大范围扫描（例如列出目录、搜索文件）时，Dline 会跳过 `.gitignore` 中的路径以及内置的 `.git`、`node_modules`、`dist`、`build`、`out`、`tmp` 目录。这种跳过只为降低扫描开销，不限制按路径直接读写。另有一条内置规则始终禁止写入 `.git/` 目录。
+
+`.agentignore` 中的限制则是权限：即使在任务中直接指定了被限制的路径，读取、写入和搜索工具也会拒绝访问。当前生效的忽略文件本身也受保护，Dline 无法读取或修改它。
+
+<Aside type="caution">
+对命令执行的限制有边界：`-x` 只检查命令的工作目录；读取限制只能识别少数常见的读文件命令。Dline 不会分析任意 shell 命令实际访问了哪些文件。对于真正敏感的内容，请不要只依赖 `.agentignore`，同时在命令审批时仔细检查。
+</Aside>
+
+## 被拦截时的表现
+
+- 读取、写入或执行被拒绝时，聊天中会显示 “Dline tried to access `<path>` which is blocked by the .agentignore file.”，模型也会收到相应错误并被要求不使用该文件继续任务。
+- 在目录列表中，不可读取的路径会带 🔒 标记。
+- 直接搜索被 `-s` 限制的路径时，搜索会被拒绝。
+
+## 与检查点的关系
+
+检查点只遵循 `.gitignore` 和内置排除规则，不受 `.agentignore` 的权限规则影响。
+
+## 相关内容
+
+- [Dline Rules](/customization/dline-rules/)
+- [检查点](/core-workflows/checkpoints/)

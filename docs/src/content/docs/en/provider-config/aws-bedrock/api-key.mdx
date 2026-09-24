@@ -1,0 +1,93 @@
+---
+title: "Amazon Bedrock: API key"
+description: Connect Dline to Amazon Bedrock models the simplest way, with a Bedrock API key.
+---
+
+import { Aside, Steps } from "@astrojs/starlight/components"
+
+[Amazon Bedrock](https://docs.aws.amazon.com/bedrock/latest/userguide/what-is-bedrock.html) is a fully managed AWS service that gives you access to leading generative models such as Anthropic Claude and Amazon Nova. This page is for individual developers who want a quick setup with a Bedrock API key.
+
+For other authentication methods, see [IAM credentials](/en/provider-config/aws-bedrock/iam-credentials/) and [AWS CLI profile](/en/provider-config/aws-bedrock/cli-profile/).
+
+## Step 1: Create a Bedrock API key
+
+See the [AWS documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys.html) for details.
+
+<Steps>
+
+1. Sign in to the [AWS Management Console](https://aws.amazon.com/console/).
+
+2. Open the [Bedrock console](https://console.aws.amazon.com/bedrock) and create a long-lived API key. By default the key carries the [`AmazonBedrockLimitedAccess`](https://docs.aws.amazon.com/bedrock/latest/userguide/security-iam.html) IAM policy.
+
+</Steps>
+
+### Optional: use a least-privilege policy
+
+`AmazonBedrockLimitedAccess` is broad. To follow the principle of least privilege, Dline only needs these permissions to invoke models:
+
+- `bedrock:InvokeModel`
+- `bedrock:InvokeModelWithResponseStream`
+- `bedrock:CallWithBearerToken`
+
+<Steps>
+
+1. Create a new policy in the AWS IAM console.
+
+2. Paste this policy into the JSON editor:
+
+   ```json
+   {
+   	"Version": "2012-10-17",
+   	"Statement": [
+   		{
+   			"Effect": "Allow",
+   			"Action": ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream", "bedrock:CallWithBearerToken"],
+   			"Resource": "*"
+   		}
+   	]
+   }
+   ```
+
+   For better security, scope `Resource` to specific model ARNs.
+
+3. Name the policy (for example `DlineBedrockInvokeAccess`) and attach it to the IAM user behind the API key. The IAM user name and the API key share the same prefix.
+
+</Steps>
+
+<Aside>
+- **Model listing:** The minimal permissions are enough to invoke models. If you want Dline to list available Bedrock models dynamically, you may also need permissions such as `bedrock:ListFoundationModels`.
+- **Third-party models:** `AmazonBedrockLimitedAccess` already includes the permissions to subscribe to third-party models through AWS Marketplace, so nothing else needs to be enabled. Anthropic models still require a First Time Use (FTU) form in the console. If Dline reports `Model use case details have not been submitted for this account`, open the [Bedrock Playground](https://console.aws.amazon.com/bedrock/home?#/text-generation-playground), pick any Anthropic model, and fill in the form (you may need to send a prompt first).
+</Aside>
+
+## Step 2: Confirm the region
+
+- Bedrock is available in many regions. Choose one that meets your latency and compliance needs; see [AWS Global Infrastructure](https://aws.amazon.com/about-aws/global-infrastructure/regions_az/).
+- Some models are only reachable through an [inference profile](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-support.html). In that case, check **Use cross-region inference** in Dline.
+
+## Step 3: Configure Dline
+
+If Dline is not installed yet, see [Installing Dline](/en/getting-started/installing-dline/) first.
+
+<Steps>
+
+1. Click the **Settings** button in the Dline panel title bar.
+
+2. Set **API Provider** to **Amazon Bedrock**.
+
+3. Choose **API Key** as the authentication method and paste the key into the **AWS Bedrock Api Key** field.
+
+4. Select or type a region under **AWS Region**, for example `us-east-1`.
+
+5. Select a model under **Model**. If the model is not listed, choose **Custom** and enter the model ID.
+
+6. Send a simple prompt to test the connection, for example "Write a Python function that checks whether a number is prime."
+
+</Steps>
+
+## Step 4: Security and operations
+
+- **Access:** Prefer AWS SSO or federated roles over long-lived API keys; see [IAM best practices](https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html).
+- **Network:** Consider [AWS PrivateLink](https://docs.aws.amazon.com/vpc/latest/userguide/endpoint-services-overview.html), then check **Use custom VPC endpoint** in Dline and enter the endpoint address.
+- **Monitoring:** Enable CloudTrail to log Bedrock API calls, use CloudWatch to track invocation count, latency, and token usage, and set alerts for abnormal activity.
+- **Cost:** Use AWS Cost Explorer and set billing alerts; see [AWS Cost Management](https://docs.aws.amazon.com/cost-management/latest/userguide/what-is-aws-cost-management.html).
+- **Audits:** Review IAM roles and CloudTrail logs regularly and follow your organization's data privacy and governance policies.

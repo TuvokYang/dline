@@ -1,0 +1,42 @@
+---
+title: DeepSeek
+description: 获取 DeepSeek API Key，并在 Dline 中配置 DeepSeek 模型。
+---
+
+import { Aside, Steps } from "@astrojs/starlight/components"
+
+**官网：** [platform.deepseek.com](https://platform.deepseek.com/)
+
+## 获取 API Key
+
+<Steps>
+
+1. 访问 [DeepSeek 开放平台](https://platform.deepseek.com/)，注册或登录账号。
+
+2. 打开 [API keys](https://platform.deepseek.com/api_keys) 页面。
+
+3. 点击 **Create new API key**，为 Key 起一个便于识别的名称，例如 `Dline`。
+
+4. 立即复制并妥善保存 Key，页面关闭后将无法再次查看。
+
+</Steps>
+
+## 在 Dline 中配置
+
+通用步骤见[授权与模型配置](/getting-started/authorizing-with-dline/)。
+
+<Steps>
+
+1. 点击 Dline 面板标题栏的 **Settings** 按钮。
+
+2. 在 **API Provider** 中选择 **DeepSeek**。
+
+3. 把 Key 粘贴到 **DeepSeek API Key** 输入框。
+
+4. 在 **Model** 中搜索、选择或直接输入模型 ID。
+
+</Steps>
+
+<Aside>
+支持思考模式的模型会显示 **Enable Thinking** 选项。开启后可以在 **Thinking Level** 中选择推理强度。
+</Aside>
