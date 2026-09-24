@@ -20,6 +20,7 @@ export const sidebar = [
 		items: [
 			"dline-overview",
 			"getting-started/installing-dline",
+			"getting-started/migration-cline-to-dline",
 			{
 				label: "模型与服务商",
 				translations: { en: "Models & Providers" },
