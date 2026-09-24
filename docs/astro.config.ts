@@ -14,7 +14,6 @@ const repositoryUrl = "https://github.com/TuvokYang/dline"
 export default defineConfig({
 	site,
 	base,
-	redirects: withBaseDestinations(redirects, base),
 	// The base-link rewrite is a remark plugin, so content must run on the unified pipeline.
 	markdown: { processor: unified() },
 	integrations: [
@@ -41,8 +40,8 @@ export default defineConfig({
 
 /**
  * Astro prefixes redirect sources with `base` but emits destinations verbatim,
- * so base-free destinations would leave the Pages project path. Prefix them here
- * so the redirect data stays deployment-independent.
+ * so base-free destinations would leave the Pages project path. Prefix them with
+ * the final base so the redirect data stays deployment-independent.
  */
 function withBaseDestinations(map: Readonly<Record<string, string>>, siteBase: string): Record<string, string> {
 	const prefix = toPrefix(siteBase)
@@ -59,7 +58,10 @@ function baseSafeContentLinks(): AstroIntegration {
 	return {
 		name: "dline-docs:base-safe-links",
 		hooks: {
-			"astro:config:setup": ({ config }) => {
+			"astro:config:setup": ({ config, updateConfig }) => {
+				// Registered here rather than at the top level so a `--base` CLI override
+				// (used by `npm run dev`) also reaches redirect destinations.
+				updateConfig({ redirects: withBaseDestinations(redirects, config.base) })
 				const processor = config.markdown.processor
 				if (!processor || !isUnifiedProcessor(processor)) {
 					throw new Error(
