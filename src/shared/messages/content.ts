@@ -1,5 +1,6 @@
 import { Anthropic } from "@anthropic-ai/sdk"
 import { ClineMessageMetricsInfo, ClineMessageModelInfo } from "./metrics"
+import { isForeignReasoningForAnthropic, isReasoningBlock } from "./reasoning-origin"
 
 export type ClinePromptInputContent = string
 
@@ -154,8 +155,7 @@ export function convertClineStorageToAnthropicMessage(
 		return { role, content }
 	}
 
-	// Removes thinking block that has no signature (invalid thinking block that's incompatible with Anthropic API)
-	const filteredContent = content.filter((b) => b.type !== "thinking" || !!b.signature)
+	const filteredContent = content.filter(isReplayableToAnthropic)
 
 	// Handle array content - strip Cline-specific fields for non-reasoning_details providers
 	const shouldCleanContent = !REASONING_DETAILS_PROVIDERS.includes(provider)
@@ -164,6 +164,16 @@ export function convertClineStorageToAnthropicMessage(
 		: (filteredContent as Anthropic.MessageParam["content"])
 
 	return { role, content: cleanedContent }
+}
+
+/**
+ * Anthropic accepts only reasoning it issued: an unsigned `thinking` block cannot be verified, and
+ * reasoning produced by another protocol carries ciphertext that Anthropic rejects.
+ */
+function isReplayableToAnthropic(block: ClineContent): boolean {
+	if (!isReasoningBlock(block)) return true
+	if (isForeignReasoningForAnthropic(block)) return false
+	return block.type !== "thinking" || !!block.signature
 }
 
 /**
