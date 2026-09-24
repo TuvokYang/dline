@@ -51,7 +51,8 @@ describe("compactTask", () => {
 		)
 
 		expect(requestCompaction).toHaveBeenCalledOnce()
-		expect(requestCompaction).toHaveBeenCalledWith(session, { stateRevision: 12, mode: "summarize" })
+		// The header control is the user asking, so the request is recorded as manual and reviewed before landing.
+		expect(requestCompaction).toHaveBeenCalledWith(session, { stateRevision: 12, mode: "summarize", trigger: "manual" })
 		expect(response).toMatchObject({ accepted: true, result: "accepted:12" })
 	})
 
@@ -65,7 +66,11 @@ describe("compactTask", () => {
 		)
 
 		expect(requestCompaction).toHaveBeenCalledOnce()
-		expect(requestCompaction).toHaveBeenCalledWith(session, { stateRevision: 12, mode: "force_truncate" })
+		expect(requestCompaction).toHaveBeenCalledWith(session, {
+			stateRevision: 12,
+			mode: "force_truncate",
+			trigger: "manual",
+		})
 		expect(response).toMatchObject({ accepted: true, result: "truncated:12" })
 	})
 

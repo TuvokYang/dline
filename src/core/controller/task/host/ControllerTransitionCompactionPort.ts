@@ -39,14 +39,24 @@ export class ControllerTransitionCompactionPort implements TaskCompactionPort {
 		const admitted = await requestTaskCompaction(session, {
 			stateRevision: session.state().revision,
 			mode: "summarize",
+			trigger: "transition",
+			// The context has to fit the target, so the target condenses it;
+			// the task only adopts that handler once the transition commits.
+			scope: { api: request.targetApi, mode: request.targetMode },
 		})
+		// A refusal includes "nothing to compact": the context did not get any
+		// smaller, so the transition must not commit as if it now fits.
 		if (!admitted.accepted) {
 			Logger.warn(`[TransitionCompaction] Compaction rejected for ${request.operationId}: ${admitted.result}`)
 			return "failed"
 		}
-		const compactionId = session.state().flow.compaction?.compactionId
+		const compactionId = admitted.compactionId ?? session.state().flow.compaction?.compactionId
 		if (!compactionId) return "failed"
-		return this.awaitCompaction(session, compactionId)
+		try {
+			return await this.awaitCompaction(session, compactionId)
+		} finally {
+			session.owners.compactionScopes?.release(compactionId)
+		}
 	}
 
 	async complete(_operationId: string): Promise<void> {

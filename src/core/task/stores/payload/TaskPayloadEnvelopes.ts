@@ -1,7 +1,20 @@
 import type { SemanticInputDocument } from "@shared/input-semantics/document"
 import type { ClineAssistantContent } from "@shared/messages/content"
 import type { ExplicitInstructionDeclaration } from "../../explicit-instructions/types"
-import type { ProviderTurnApproval, ProviderTurnPlan } from "../../kernel"
+import type { JournalWatermark, ProviderTurnApproval, ProviderTurnPlan, TurnContinuationReason } from "../../kernel"
+
+/**
+ * A lifecycle command the user placed, carried with the input that named it.
+ *
+ * It travels with the accepted input rather than being handed to its owner at
+ * admission, so a submission the kernel refuses - or a round a stop releases -
+ * never carries it out, and a restart finds it where the input left it.
+ */
+export interface LifecycleCommand {
+	readonly commandId: string
+	/** Content addressed to the command itself, never sent to the model as prose. */
+	readonly premessage: string
+}
 
 export interface UserInputEnvelope {
 	readonly kind: "user_input"
@@ -18,6 +31,8 @@ export interface UserInputEnvelope {
 	readonly authorizedTools?: readonly string[]
 	/** Declarations the provider request registers before an authorized tool may run. */
 	readonly explicitInstructions?: readonly ExplicitInstructionDeclaration[]
+	/** The lifecycle command this input carries out before the round that admits it. */
+	readonly lifecycle?: LifecycleCommand
 }
 
 export interface DialogDraftEnvelope {
@@ -53,6 +68,34 @@ export interface ProviderDraftEnvelope {
 	readonly inputPayloadRefs: readonly string[]
 	readonly journalPayloadRefs: readonly string[]
 	readonly turnId?: string
+	/** Present when the kernel opened this round instead of the user; see TurnContinuationEnvelope. */
+	readonly continuation?: TurnContinuationReason
+}
+
+/**
+ * Why a round the user did not ask for was opened.
+ *
+ * Kept as its own kind so replay can tell this system prompt from user-authored
+ * input, and so a continued round states its reason in the conversation rather
+ * than silently repeating the previous request.
+ */
+export interface TurnContinuationEnvelope {
+	readonly kind: "turn_continuation"
+	readonly reason: TurnContinuationReason
+	readonly text: string
+}
+
+/**
+ * Results of work that finished while the model was busy elsewhere.
+ *
+ * A background command or subagent completes on its own schedule, so the only
+ * way the model learns the outcome is a round that carries it. Kept as its own
+ * kind because it is reported once: replay must show it where it was delivered
+ * rather than re-deriving it from whatever the background state looks like now.
+ */
+export interface BackgroundResultsEnvelope {
+	readonly kind: "background_results"
+	readonly text: string
 }
 
 export interface ProviderPartialEnvelope {
@@ -86,6 +129,12 @@ export interface ToolInvocationEnvelope {
 	readonly presentationId: number
 	readonly isNativeToolCall: boolean
 	readonly signature?: string
+	/**
+	 * Set when the provider boundary kept this call out of the recorded
+	 * conversation as a tool call, so its result must return as prose rather
+	 * than pair with a call id the provider never issued. Absent means paired.
+	 */
+	readonly resultReplay?: "text"
 }
 
 export interface ToolResultEnvelope {
@@ -95,14 +144,57 @@ export interface ToolResultEnvelope {
 	readonly failed?: boolean
 }
 
+/**
+ * Who asked for a compaction, which decides whether the user reviews it.
+ *
+ * A summary the user asked for is shown before it replaces anything, because
+ * it is their conversation being condensed on their word; an automatic or
+ * transition summary lands on its own, since nobody is waiting to confirm it.
+ */
+export type CompactionTrigger = "automatic" | "manual" | "transition"
+
 export interface CompactionContextEnvelope {
 	readonly kind: "compaction_context"
+	/** Journal span the request summarizes; landing replaces exactly this span. */
+	readonly span?: { readonly from: JournalWatermark; readonly to: JournalWatermark }
+	/** The user's reply the span ends on, which landing replays after the summary instead of condensing. */
+	readonly continuation?: CompactionContinuation
+	/** Absent in contexts written before triggers were recorded; treated as automatic. */
+	readonly trigger?: CompactionTrigger
 	readonly context: unknown
 }
 
 export interface CompactionResultEnvelope {
 	readonly kind: "compaction_result"
 	readonly result: unknown
+}
+
+/**
+ * The summary that now stands for a condensed span of the conversation.
+ *
+ * Kept as its own kind because the span it replaced is still in the journal:
+ * only this entry explains why those messages stopped reaching the provider,
+ * so a replay shows the compaction where it happened instead of inferring it.
+ */
+export interface CompactionSummaryEnvelope {
+	readonly kind: "compaction_summary"
+	readonly compactionId: string
+	readonly text: string
+	/**
+	 * User input the condensed span carried that the model has not answered.
+	 *
+	 * A reply written into a tool result belongs to the protected continuation
+	 * (WS-010 §2), yet the result must stay paired with its call, so both are
+	 * condensed and the reply is replayed after the summary as ordinary input.
+	 */
+	readonly continuation?: CompactionContinuation
+}
+
+/** The user-authored part of a condensed reply, replayed verbatim after the summary. */
+export interface CompactionContinuation {
+	readonly text: string
+	readonly images?: readonly string[]
+	readonly files?: readonly string[]
 }
 
 /**

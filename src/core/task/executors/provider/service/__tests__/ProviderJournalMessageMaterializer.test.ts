@@ -1,5 +1,6 @@
 import { ClineDefaultTool } from "@shared/tools"
 import { describe, expect, it } from "vitest"
+import { serializeDurableToolResult } from "../../../../DurableToolResult"
 import type { TaskPayloadStore } from "../../../../stores"
 import { encodeTaskPayload } from "../../../../stores/payload/TaskPayloadCodec"
 import { ProviderJournalMessageMaterializer } from "../ProviderJournalMessageMaterializer"
@@ -46,5 +47,122 @@ describe("ProviderJournalMessageMaterializer", () => {
 		)
 
 		expect(await materializer.collectAuthority(["ref-1", "ref-2"])).toEqual([])
+	})
+
+	// Submission context is separate from what the user typed: a TaskStart hook or
+	// a spawn handoff records it alongside the text, and dropping it silently
+	// removed the workspace policy the first turn was supposed to obey.
+	it("appends the submission context to the admitted text", async () => {
+		const materializer = new ProviderJournalMessageMaterializer(
+			payloadStore({
+				"ref-1": encodeTaskPayload({
+					kind: "user_input",
+					entryId: "entry-1",
+					text: "do the thing",
+					context: "WORKSPACE_POLICY",
+				}),
+			}),
+		)
+
+		const [message] = await materializer.materialize(["ref-1"])
+
+		expect(message?.content).toEqual([
+			{ type: "text", text: "<user_message>\ndo the thing\n\nWORKSPACE_POLICY\n</user_message>" },
+		])
+	})
+
+	it("materializes context-only input when the submission carried no text", async () => {
+		const materializer = new ProviderJournalMessageMaterializer(
+			payloadStore({
+				"ref-1": encodeTaskPayload({ kind: "user_input", entryId: "entry-1", context: "WORKSPACE_POLICY" }),
+			}),
+		)
+
+		const [message] = await materializer.materialize(["ref-1"])
+
+		expect(message?.content).toEqual([{ type: "text", text: "<user_message>\nWORKSPACE_POLICY\n</user_message>" }])
+	})
+
+	it("leaves the admitted text untouched when no context was recorded", async () => {
+		const materializer = new ProviderJournalMessageMaterializer(
+			payloadStore({
+				"ref-1": encodeTaskPayload({
+					kind: "user_input",
+					entryId: "entry-1",
+					text: "raw mirror",
+					admittedText: "expanded text",
+				}),
+			}),
+		)
+
+		const [message] = await materializer.materialize(["ref-1"])
+
+		expect(message?.content).toEqual([{ type: "text", text: "<user_message>\nexpanded text\n</user_message>" }])
+	})
+
+	const refused = {
+		type: "tool_result" as const,
+		function_id: "dline_function_01",
+		dline_tid: "dline_tid_01",
+		content: [
+			{ type: "text" as const, text: "Explicit-only tool 'summarize_task' was rejected: explicit_instruction_missing." },
+		],
+	}
+
+	it("replays a result paired with a recorded call as the canonical tool result", async () => {
+		const materializer = new ProviderJournalMessageMaterializer(
+			payloadStore({
+				"ref-1": encodeTaskPayload({
+					kind: "tool_result",
+					blockId: "dline_tid_01",
+					content: serializeDurableToolResult(refused),
+				}),
+			}),
+		)
+
+		const [message] = await materializer.materialize(["ref-1"])
+
+		expect(message).toMatchObject({ role: "user", content: [refused] })
+	})
+
+	// The call was kept in the history as the markup the model wrote, so there is
+	// no provider call to pair with; the result speaks as prose instead.
+	it("replays a result whose call was never recorded as prose without the call identity", async () => {
+		const image = {
+			type: "image" as const,
+			source: { type: "base64" as const, media_type: "image/png" as const, data: "AA==" },
+		}
+		const materializer = new ProviderJournalMessageMaterializer(
+			payloadStore({
+				"ref-1": encodeTaskPayload({
+					kind: "tool_result",
+					blockId: "dline_tid_01",
+					content: serializeDurableToolResult(
+						{ ...refused, content: [...refused.content, image] },
+						{ kind: "text", toolName: "summarize_task" },
+					),
+				}),
+			}),
+		)
+
+		const [message] = await materializer.materialize(["ref-1"])
+
+		expect(message?.content).toEqual([
+			{
+				type: "text",
+				text: "[summarize_task] Result:\nExplicit-only tool 'summarize_task' was rejected: explicit_instruction_missing.",
+			},
+			image,
+		])
+		expect(JSON.stringify(message)).not.toContain("dline_function_")
+	})
+
+	it("rejects a durable result whose replay marker is malformed", async () => {
+		const malformed = JSON.stringify({ ...JSON.parse(serializeDurableToolResult(refused)), replay: { kind: "native" } })
+		const materializer = new ProviderJournalMessageMaterializer(
+			payloadStore({ "ref-1": encodeTaskPayload({ kind: "tool_result", blockId: "dline_tid_01", content: malformed }) }),
+		)
+
+		await expect(materializer.materialize(["ref-1"])).rejects.toThrow("InvalidDurableToolResult:dline_tid_01")
 	})
 })

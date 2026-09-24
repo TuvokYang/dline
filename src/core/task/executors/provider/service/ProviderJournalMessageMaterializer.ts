@@ -1,31 +1,44 @@
 import type { ClineContent, ClineStorageMessage } from "@shared/messages/content"
-import { parseDurableToolResult } from "../../../DurableToolResult"
+import { replayDurableToolResult } from "../../../DurableToolResult"
 import type { ExplicitInstructionDeclaration } from "../../../explicit-instructions/types"
 import type { TaskPayloadStore } from "../../../stores"
 import { decodeTaskPayload } from "../../../stores/payload/TaskPayloadCodec"
 import type {
+	BackgroundResultsEnvelope,
+	CompactionSummaryEnvelope,
 	DialogDraftEnvelope,
 	DialogSelectionEnvelope,
 	EnvironmentDetailsEnvelope,
 	ProviderFinalEnvelope,
 	TaskHandoffEnvelope,
 	ToolResultEnvelope,
+	TurnContinuationEnvelope,
 	UserInputEnvelope,
 } from "../../../stores/payload/TaskPayloadEnvelopes"
 import { buildUserFeedbackContent } from "../../../utils/buildUserFeedbackContent"
 
 type JournalPayload =
 	| UserInputEnvelope
+	| CompactionSummaryEnvelope
 	| DialogDraftEnvelope
 	| DialogSelectionEnvelope
+	| BackgroundResultsEnvelope
 	| EnvironmentDetailsEnvelope
 	| ProviderFinalEnvelope
 	| ToolResultEnvelope
 	| TaskHandoffEnvelope
+	| TurnContinuationEnvelope
 	| { readonly kind: string; readonly [key: string]: unknown }
 
 function textMessage(text: string): ClineStorageMessage {
 	return { role: "user", content: [{ type: "text", text }], ts: Date.now() }
+}
+
+/** Join a submission with the context recorded alongside it, keeping either side optional. */
+function appendSubmissionContext(text: string | undefined, context: string | undefined): string | undefined {
+	const trimmedContext = context?.trim()
+	if (!trimmedContext) return text
+	return text ? `${text}\n\n${trimmedContext}` : trimmedContext
 }
 
 /** Rebuilds the provider conversation exclusively from the append-only journal payload sequence. */
@@ -55,8 +68,23 @@ export class ProviderJournalMessageMaterializer {
 			const payload = decodeTaskPayload<JournalPayload>(await this.payloads.read(payloadRef))
 			const message = await this.materializePayload(payload)
 			if (message) messages.push(message)
+			const continuation = await this.materializeContinuation(payload)
+			if (continuation) messages.push(continuation)
 		}
 		return messages
+	}
+
+	/** A condensed reply the model has not answered returns after its summary, as the user wrote it. */
+	private async materializeContinuation(payload: JournalPayload): Promise<ClineStorageMessage | undefined> {
+		if (payload.kind !== "compaction_summary") return undefined
+		const continuation = (payload as CompactionSummaryEnvelope).continuation
+		if (!continuation) return undefined
+		const content = await buildUserFeedbackContent(
+			continuation.text,
+			continuation.images === undefined ? undefined : [...continuation.images],
+			continuation.files === undefined ? undefined : [...continuation.files],
+		)
+		return content.length === 0 ? undefined : { role: "user", content, ts: Date.now() }
 	}
 
 	private async materializePayload(payload: JournalPayload): Promise<ClineStorageMessage | undefined> {
@@ -65,8 +93,10 @@ export class ProviderJournalMessageMaterializer {
 				const input = payload as UserInputEnvelope
 				const content = await buildUserFeedbackContent(
 					// The admitted projection carries the expanded commands and mentions;
-					// raw text is only the mirror the chat row renders.
-					input.admittedText ?? input.text,
+					// raw text is only the mirror the chat row renders. Submission context
+					// such as a TaskStart hook or a spawn handoff is separate from what the
+					// user typed, so it has to be appended rather than replace the text.
+					appendSubmissionContext(input.admittedText ?? input.text, input.context),
 					input.images === undefined ? undefined : [...input.images],
 					input.files === undefined ? undefined : [...input.files],
 				)
@@ -90,14 +120,24 @@ export class ProviderJournalMessageMaterializer {
 			}
 			case "tool_result": {
 				const result = payload as ToolResultEnvelope
-				const canonical = parseDurableToolResult(result.content)
-				if (!canonical) throw new Error(`InvalidDurableToolResult:${result.blockId}`)
-				return { role: "user", content: [canonical], ts: Date.now() }
+				const content = replayDurableToolResult(result.content)
+				if (!content) throw new Error(`InvalidDurableToolResult:${result.blockId}`)
+				return { role: "user", content, ts: Date.now() }
 			}
 			case "task_handoff":
 				return textMessage((payload as TaskHandoffEnvelope).context)
 			case "environment_details":
 				return textMessage((payload as EnvironmentDetailsEnvelope).text)
+			case "background_results":
+				return textMessage((payload as BackgroundResultsEnvelope).text)
+			case "turn_continuation":
+				return textMessage((payload as TurnContinuationEnvelope).text)
+			case "compaction_summary": {
+				// The summary speaks for the assistant turns it replaced, so it
+				// takes their role; a user-role summary would read as new input.
+				const text = (payload as CompactionSummaryEnvelope).text
+				return { role: "assistant", content: [{ type: "text", text }], ts: Date.now() }
+			}
 			case "provider_partial":
 				return undefined
 			default:

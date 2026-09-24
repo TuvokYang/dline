@@ -9,9 +9,11 @@ export async function compactTask(controller: Controller, request: CompactTaskRe
 		return CompactTaskResponse.create({ accepted: false, result: "missing_task" })
 	}
 
+	// The header control is the user asking, so the summary is theirs to review.
 	const result = await requestTaskCompaction(session, {
 		stateRevision: request.stateRevision,
 		mode: request.forceTruncate ? "force_truncate" : "summarize",
+		trigger: "manual",
 	})
-	return CompactTaskResponse.create(result)
+	return CompactTaskResponse.create({ accepted: result.accepted, result: result.result })
 }
