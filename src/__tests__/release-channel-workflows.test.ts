@@ -123,7 +123,7 @@ describe("release channel workflows", () => {
 		expect(productionPublisher).toContain("uses: ./.github/workflows/publish-vsix-registries.yml")
 
 		expect(registryWorkflow.match(/name: dline-release/g)).toHaveLength(2)
-		expect(registryWorkflow.match(/if: github\.repository == 'TuvokYang\/dline'/g)).toHaveLength(2)
+		expect(registryWorkflow.match(/if: github\.repository == 'TuvokYang\/dline'/g)).toHaveLength(3)
 		expect(registryWorkflow).toContain("DLINE_VSCODE_RELEASE_PUBLISH_PAT")
 		expect(registryWorkflow).toContain("DLINE_VSCODE_OVSX_PAT")
 		expect(registryWorkflow).toContain("@vscode/vsce@3.9.2")
@@ -133,8 +133,40 @@ describe("release channel workflows", () => {
 		const ovsxInstall = registryWorkflow.slice(registryWorkflow.indexOf("Install pinned Open VSX CLI"))
 		expect(ovsxInstall).toContain("--include=optional")
 		expect(ovsxInstall).not.toContain("--omit=optional")
-		expect(registryWorkflow.match(/EXPECTED_SHA256: \$\{\{ inputs\.expected_sha256 \}\}/g)).toHaveLength(2)
-		expect(registryWorkflow.match(/name: \$\{\{ inputs\.artifact_name \}\}/g)).toHaveLength(2)
+		expect(registryWorkflow.match(/EXPECTED_SHA256: \$\{\{ inputs\.expected_sha256 \}\}/g)).toHaveLength(3)
+		expect(registryWorkflow.match(/name: \$\{\{ inputs\.artifact_name \}\}/g)).toHaveLength(3)
+	})
+
+	it("verifies each channel's source and VSIX before either registry receives credentials", async () => {
+		const registryWorkflow = await readProjectFile(".github/workflows/publish-vsix-registries.yml")
+		const insidersWorkflow = await readProjectFile(".github/workflows/publish-insiders.yml")
+		const previewWorkflow = await readProjectFile(".github/workflows/release-draft.yml")
+		const productionWorkflow = await readProjectFile(".github/workflows/publish-production-release.yml")
+		const parsed = load(registryWorkflow) as {
+			jobs: Record<string, { needs?: string; steps?: Array<{ name: string }> }>
+		}
+
+		expect(parsed.jobs["verify-source"]?.steps?.map((step) => step.name)).toContain("Verify package channel and digest")
+		for (const jobName of ["publish-marketplace", "publish-open-vsx"]) {
+			expect(parsed.jobs[jobName]?.needs, `${jobName} must wait for the source gate`).toBe("verify-source")
+		}
+		expect(insidersWorkflow).toContain("channel: insiders")
+		expect(registryWorkflow).toContain("$TESTED_BRANCH\" != 'dev'")
+		expect(registryWorkflow).toContain('$TESTED_SHA" != "$COMMIT_SHA')
+		expect(previewWorkflow).toContain("channel: preview")
+		expect(previewWorkflow).toContain("release_tag: ${{ needs.verify-tag.outputs.tag }}")
+		expect(registryWorkflow).toContain("^refs/tags/dev-v(")
+		expect(registryWorkflow).toContain('expected_tag="dev-v${version}"')
+		expect(productionWorkflow).toContain("channel: production")
+		expect(productionWorkflow).toContain("release_tag: ${{ inputs.tag }}")
+		expect(registryWorkflow).toContain("^refs/tags/v(")
+		expect(registryWorkflow).toContain('expected_tag="v${version}"')
+		expect(registryWorkflow).toContain("$GITHUB_REF\" != 'refs/heads/main'")
+		expect(registryWorkflow).toContain(".merge_base_commit.sha")
+		expect(registryWorkflow).toContain('$branch_sha" != "$COMMIT_SHA')
+		expect(registryWorkflow).toContain('.name == "dline-preview"')
+		expect(registryWorkflow).toContain('.name == "dline-insiders"')
+		expect(registryWorkflow).toContain('actual_sha256=$(sha256sum "$vsix_path"')
 	})
 
 	it("tolerates one failing registry and fails the stage only when neither accepted the release", async () => {
@@ -154,7 +186,7 @@ describe("release channel workflows", () => {
 		// The aggregate gate is the only place that decides the stage conclusion,
 		// and it must still run when a publish job failed.
 		const gate = parsed.jobs["require-one-registry"]
-		expect(gate?.needs).toEqual(["publish-marketplace", "publish-open-vsx"])
+		expect(gate?.needs).toEqual(["verify-source", "publish-marketplace", "publish-open-vsx"])
 		expect(registryWorkflow).toContain("if: always() && github.repository == 'TuvokYang/dline'")
 		expect(registryWorkflow).toContain('if [[ "${#published[@]}" -eq 0 ]]; then')
 

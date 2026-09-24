@@ -128,6 +128,7 @@ jobs:
     with:
       channel: production
       commit_sha: ${{ inputs.commit_sha }}
+      release_tag: ${{ inputs.tag }}
       artifact_name: registry-vsix-${{ inputs.commit_sha }}
       asset_name: ${{ inputs.asset_name }}
       expected_sha256: ${{ needs.release.outputs.sha256 }}

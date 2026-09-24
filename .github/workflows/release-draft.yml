@@ -195,6 +195,7 @@ jobs:
     with:
       channel: preview
       commit_sha: ${{ needs.verify-tag.outputs.commit_sha }}
+      release_tag: ${{ needs.verify-tag.outputs.tag }}
       artifact_name: dline-vsix-${{ needs.verify-tag.outputs.commit_sha }}
       asset_name: dline-preview-${{ needs.verify-tag.outputs.version }}.vsix
       expected_sha256: ${{ needs.release.outputs.sha256 }}

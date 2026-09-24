@@ -11,6 +11,11 @@ on:
         description: Full commit SHA of the tested package.
         type: string
         required: true
+      release_tag:
+        description: Exact release tag for Preview and Production (unused for Insiders).
+        type: string
+        required: false
+        default: ""
       artifact_name:
         description: Name of the verified workflow artifact containing the VSIX.
         type: string
@@ -39,9 +44,10 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout release tag
-        if: inputs.channel != 'insiders' && github.event_name == 'push'
+        if: inputs.channel != 'insiders'
         uses: actions/checkout@v6
         with:
+          ref: ${{ inputs.release_tag }}
           fetch-depth: 0
           fetch-tags: true
 
@@ -51,8 +57,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CHANNEL: ${{ inputs.channel }}
           COMMIT_SHA: ${{ inputs.commit_sha }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
           ARTIFACT_NAME: ${{ inputs.artifact_name }}
           ASSET_NAME: ${{ inputs.asset_name }}
+          REQUESTED_TAG: ${{ github.event.inputs.tag }}
+          REQUESTED_REASON: ${{ github.event.inputs.reason }}
           TESTED_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
           TESTED_EVENT: ${{ github.event.workflow_run.event }}
           TESTED_BRANCH: ${{ github.event.workflow_run.head_branch }}
@@ -68,6 +77,7 @@ jobs:
             exit 1
           fi
 
+          manual_override=false
           case "$CHANNEL" in
             insiders)
               if [[ "$GITHUB_EVENT_NAME" != 'workflow_run' || "$TESTED_CONCLUSION" != 'success' || "$TESTED_EVENT" != 'push' || "$TESTED_BRANCH" != 'dev' || "$TESTED_REPOSITORY" != "$GITHUB_REPOSITORY" || "$TESTED_WORKFLOW" != '.github/workflows/test.yml' || "$TESTED_SHA" != "$COMMIT_SHA" ]]; then
@@ -82,30 +92,49 @@ jobs:
               expected_artifact="registry-vsix-${COMMIT_SHA}"
               ;;
             preview|production)
-              if [[ "$GITHUB_EVENT_NAME" != 'push' ]]; then
-                echo "Error: tagged releases require a tag push."
-                exit 1
-              fi
               if [[ "$CHANNEL" == 'preview' ]]; then
-                if [[ ! "$GITHUB_REF" =~ ^refs/tags/dev-v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
-                  echo "Error: Preview requires an exact dev-vX.Y.Z tag."
+                if [[ "$GITHUB_EVENT_NAME" != 'push' || ! "$GITHUB_REF" =~ ^refs/tags/dev-v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+                  echo "Error: Preview requires an exact dev-vX.Y.Z tag push."
                   exit 1
                 fi
+                version="${BASH_REMATCH[1]}"
                 branch=dev
                 expected_artifact="dline-vsix-${COMMIT_SHA}"
-                expected_asset="dline-preview-${BASH_REMATCH[1]}.vsix"
+                expected_asset="dline-preview-${version}.vsix"
+                expected_tag="dev-v${version}"
               else
-                if [[ ! "$GITHUB_REF" =~ ^refs/tags/v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
-                  echo "Error: Production requires an exact vX.Y.Z tag."
-                  exit 1
-                fi
                 branch=main
                 expected_artifact="registry-vsix-${COMMIT_SHA}"
-                expected_asset="dline-${BASH_REMATCH[1]}.vsix"
+                if [[ "$GITHUB_EVENT_NAME" == 'push' ]]; then
+                  if [[ ! "$GITHUB_REF" =~ ^refs/tags/v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+                    echo "Error: automatic Production requires an exact vX.Y.Z tag push."
+                    exit 1
+                  fi
+                  version="${BASH_REMATCH[1]}"
+                elif [[ "$GITHUB_EVENT_NAME" == 'workflow_dispatch' ]]; then
+                  if [[ "$GITHUB_REF" != 'refs/heads/main' || "$REQUESTED_TAG" != "$RELEASE_TAG" || -z "${REQUESTED_REASON// }" ]]; then
+                    echo "Error: manual Production requires a main-branch dispatch with a matching tag and reason."
+                    exit 1
+                  fi
+                  if [[ ! "$RELEASE_TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+                    echo "Error: manual Production requires an exact vX.Y.Z tag."
+                    exit 1
+                  fi
+                  version="${BASH_REMATCH[1]}"
+                  manual_override=true
+                else
+                  echo "Error: unsupported Production event '$GITHUB_EVENT_NAME'."
+                  exit 1
+                fi
+                expected_asset="dline-${version}.vsix"
+                expected_tag="v${version}"
               fi
-              echo "version=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
-              tag="${GITHUB_REF#refs/tags/}"
-              tag_sha=$(git rev-parse --verify "${tag}^{commit}")
+              if [[ "$RELEASE_TAG" != "$expected_tag" ]]; then
+                echo "Error: release tag does not match the selected channel and version."
+                exit 1
+              fi
+              echo "version=$version" >> "$GITHUB_OUTPUT"
+              tag_sha=$(git rev-parse --verify "${RELEASE_TAG}^{commit}")
               if [[ "$tag_sha" != "$COMMIT_SHA" || "$ASSET_NAME" != "$expected_asset" ]]; then
                 echo "Error: release tag commit or VSIX filename differs from the verified release."
                 exit 1
@@ -122,7 +151,13 @@ jobs:
             exit 1
           fi
           branch_sha=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${branch}" --jq '.object.sha')
-          if [[ "$branch_sha" != "$COMMIT_SHA" ]]; then
+          if [[ "$CHANNEL" == 'production' && "$manual_override" == 'true' ]]; then
+            compare_json=$(gh api "repos/${GITHUB_REPOSITORY}/compare/${COMMIT_SHA}...${branch_sha}")
+            if [[ "$(jq -r '.merge_base_commit.sha' <<<"$compare_json")" != "$COMMIT_SHA" ]]; then
+              echo "Error: manual Production tag '$RELEASE_TAG' is not an ancestor of main '$branch_sha'."
+              exit 1
+            fi
+          elif [[ "$branch_sha" != "$COMMIT_SHA" ]]; then
             echo "Error: release commit '$COMMIT_SHA' is not the current ${branch} head '$branch_sha'."
             exit 1
           fi
