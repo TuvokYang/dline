@@ -14,17 +14,23 @@ Dline 通过**模型服务商**（provider）连接 AI 模型。你可以：
 
 <Steps>
 
-1. 点击 Dline 面板标题栏的 **Settings** 按钮打开设置。
+1. 点击 Dline 面板标题栏的 **Settings** 按钮，进入 **API Configuration**。
 
-2. 在 **API Provider** 下拉框中选择服务商。
+2. 点击 **Add profile** 新建一个 Profile；已有 Profile 时，也可以点击卡片左侧的展开按钮直接修改。
 
-3. 完成认证：
-   - **云端服务商**：把 API Key 粘贴到 **API Key** 输入框。
+3. 在 **Provider** 下拉框中选择服务商。
+
+4. 完成认证：
+   - **云端服务商**：把 API Key 粘贴到该服务商的 Key 输入框，例如 **OpenAI API Key**。
    - **本地运行时（Ollama / LM Studio）**：不需要 Key，确认运行时已经启动。
 
-4. 在 **Model** 下拉框中选择可用模型。
+5. 在 **Model** 中选择可用模型。
 
 </Steps>
+
+![在 API Configuration 中新建 Profile、选择服务商和模型，再在输入区选用该 Profile](/assets/profile-setup.gif)
+
+每个 Profile 是一组服务商、模型和 Key 的组合。你可以创建多个 Profile，并为 Act、Plan 和子代理分别选用，参见[多 Profile 配置](/customization/profiles/)。
 
 ## 服务商选择
 
@@ -55,6 +61,6 @@ Dline 通过**模型服务商**（provider）连接 AI 模型。你可以：
 
 | 问题 | 处理方式 |
 | --- | --- |
-| 请求返回 401 或提示 Key 无效 | 在 **API Key** 输入框重新粘贴 Key，并确认它属于当前选择的服务商。 |
+| 请求返回 401 或提示 Key 无效 | 在 Profile 的 Key 输入框重新粘贴 Key，并确认它属于当前选择的服务商。 |
 | 模型列表为空或请求超时 | 检查网络与代理设置，参见[网络与代理](/troubleshooting/networking-and-proxies/)。 |
 | 无法连接本地模型 | 确认 Ollama 或 LM Studio 正在运行，且设置中的地址与运行时监听地址一致。 |

@@ -29,7 +29,9 @@ Use subagents to investigate the auth flow, where the database models are define
 
 Give each subagent one clear question. Run them in parallel only when the questions are independent; the main task then checks the evidence and combines the findings.
 
-## The default subagent
+![The main task delegating several subagents in parallel and combining their results](/assets/subagents.gif)
+
+## The default subagent (default.yml)
 
 The built-in default subagent can use only these tools:
 
@@ -37,9 +39,13 @@ The built-in default subagent can use only these tools:
 
 It cannot run commands, write files, go online, use the browser, or use MCP. When you need those, use a named subagent and grant them explicitly.
 
-## Named subagents
+When the global subagents folder contains no `.yml` or `.yaml` file, Dline creates an editable `<documents-root>/subagents/default.yml` with the default configuration above. An existing file is never overwritten.
 
-A named subagent is a YAML file with frontmatter:
+<span id="agent-yml"></span>
+
+## Named subagents (agent YAML)
+
+A named subagent is a YAML file with frontmatter. Each file defines one subagent; the file name is up to you (for example `code-researcher.yml`), and agents are matched by the `name` field, case-insensitively:
 
 | Location | Scope |
 |---|---|
@@ -75,6 +81,8 @@ Trace the requested code paths without changing files. Return findings with file
 | `maxOutputTokens` | No | Token budget for the final result; see below |
 
 A file is skipped and logged when a required field is missing, the frontmatter is malformed, the body is empty, a tool name is unknown or blank, or the output budget is invalid. Use `profile` to choose a model; other keys such as `modelId` have no effect.
+
+Question, plan, and task-ending tools (except `attempt_completion`) and `use_subagent` / `use_subagents` are removed from `tools` automatically: a subagent has no user to answer questions and cannot delegate further. `attempt_completion` is always granted.
 
 Named subagents can request tools such as writing files, running commands, web access, MCP, or image generation through `tools`; those tools are still subject to their feature switches and permissions.
 

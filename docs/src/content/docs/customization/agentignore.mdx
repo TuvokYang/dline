@@ -65,11 +65,13 @@ secrets/
 - 在目录列表中，不可读取的路径会带 🔒 标记。
 - 直接搜索被 `-s` 限制的路径时，搜索会被拒绝。
 
+![写入被 .agentignore 中的 vendor/ -w 规则拒绝时，聊天中显示的拦截提示](/assets/agentignore-blocked.png)
+
 ## 与检查点的关系
 
 检查点只遵循 `.gitignore` 和内置排除规则，不受 `.agentignore` 的权限规则影响。
 
 ## 相关内容
 
-- [Dline Rules](/customization/dline-rules/)
+- [Rules](/customization/rules/)
 - [检查点](/core-workflows/checkpoints/)

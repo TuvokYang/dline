@@ -1,5 +1,5 @@
 ---
-title: Dline Rules
+title: Rules
 description: Give Dline persistent project and personal instructions with Markdown rule files.
 ---
 
@@ -34,6 +34,8 @@ Select the scale icon in the toolbar below the input box (tooltip **Manage Dline
 - Rule files are listed in groups such as **Global Rules** and **Workspace Rules**, each with its own toggle. Disabled rules are not loaded.
 - Under **Global Rules**, choose **New rule file...** and enter a file name to create a global rule. A name without an extension gets `.md`; `.txt` is also accepted.
 - The panel shows where toggles are saved: **Toggles saved for this task only** or **Toggles saved for this workspace**.
+
+![Toggling rules, skills, and workflows in the capabilities panel](/assets/capability-panel.gif)
 
 You can also type `/newrule` in the input box. Dline then creates a new Markdown rule file under `.agents/rules/` based on the current conversation, without overwriting existing files.
 
@@ -81,6 +83,7 @@ Conditions apply only to Dline workspace and global rules. `.cursorrules`, `.win
 
 ## Related
 
+- [Workflows](/en/customization/workflows/)
 - [Skills](/en/customization/skills/)
 - [Hooks](/en/customization/hooks/)
 - [.agentignore](/en/customization/agentignore/)

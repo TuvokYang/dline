@@ -1,0 +1,120 @@
+---
+title: 终端环境（bashrc.yml）
+description: 用 .agents/bashrc.yml 为 Dline 执行的命令设置环境变量、启动脚本和前后置命令，并在 Environments 面板中可视化编辑。
+---
+
+import { Aside } from "@astrojs/starlight/components"
+
+Dline 执行命令前，会读取工作区根目录下的 `.agents/bashrc.yml`，为命令准备环境变量、加载启动脚本，并在命令前后运行你指定的命令。适合激活 Python 虚拟环境、加载 Visual Studio 开发者环境（`vcvars64.bat`）、设置代理或工具链路径等场景。
+
+<Aside>
+文件名虽然叫 `bashrc.yml`，但它对 PowerShell、Command Prompt、bash、zsh 等所有终端配置都生效，不只是 bash。
+</Aside>
+
+## 在界面中编辑
+
+点击输入框下方工具栏中的天平图标（悬停提示为 **Manage Dline Rules & Workflows**），切换到 **Environments** 标签：
+
+1. 在 **Workspace** 中选择工作区（多根工作区时有多个选项）。
+2. 在 **Terminal Profile** 中选择要配置的终端配置，默认选中设置中的 **Default Terminal Profile**。
+3. 在三个子标签中编辑：
+   - **Environment**：添加环境变量。勾选 **Unset** 表示在命令环境中删除该变量。
+   - **Startup Scripts**：添加启动脚本路径。
+   - **Commands**：选择 **Python Env Manager**（None、Conda、venv），并编辑 **Pre Commands** 和 **Post Command**。
+4. 修改会在停止输入约 0.35 秒后自动保存到 `.agents/bashrc.yml`，状态栏显示 **Saving...** → **Saved**。直接编辑文件后，面板会在约 1 秒内同步，显示 **Synced**。
+
+在面板中编辑时，只会更新当前平台下所选终端配置的内容，其他平台和配置保持不变。如果文件在保存前被外部修改，保存会被拒绝，需要重新加载后再改，避免覆盖外部编辑。
+
+### Python 环境
+
+- 选择 **Conda** 时，面板会列出本机的 Conda 环境，并生成 `conda activate <环境名>` 作为前置命令。
+- 选择 **venv** 时，默认路径是 `${workspaceFolder}/.venv`（Windows 为 `${workspaceFolder}\.venv`），并按终端类型生成激活命令：
+  - bash、zsh 等：`. '<路径>/bin/activate'`
+  - Command Prompt：`call "<路径>\Scripts\activate.bat"`
+  - PowerShell：`& "<路径>\Scripts\Activate.ps1"`
+
+## 文件格式
+
+```yaml
+version: 1
+environment:
+  PIP_INDEX_URL: https://mirrors.example.com/pypi/simple
+platforms:
+  win32:
+    environment:
+      PYTHONUTF8: "1"
+    profiles:
+      default:
+        environment:
+          TOOLCHAIN_HOME: ${workspaceFolder}\tools
+          LEGACY_FLAG: null
+        startupScripts:
+          - C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat
+        preCommands:
+          - '& "${workspaceFolder}\.venv\Scripts\Activate.ps1"'
+        postCommand: Write-Output done
+  linux:
+    profiles:
+      bash:
+        startupScripts:
+          - ./scripts/dev-env.sh
+        preCommands:
+          - conda activate myenv
+```
+
+| 字段 | 说明 |
+|---|---|
+| `version` | 必填，必须为 `1` |
+| `environment` | 所有平台共用的环境变量 |
+| `platforms.<平台>` | 平台名只能是 `win32`、`linux`、`darwin` |
+| `platforms.<平台>.environment` | 该平台的环境变量 |
+| `platforms.<平台>.profiles.<配置 ID>` | 某个终端配置的设置，可包含下面四个字段 |
+| `environment` | 该终端配置的环境变量。值可以是字符串、数字或布尔值；`null` 表示删除该变量 |
+| `startupScripts` | 启动脚本路径列表 |
+| `preCommands` | 在每条命令之前运行的命令列表 |
+| `postCommand` | 在每条命令之后运行的一条命令 |
+
+- 出现未列出的字段、平台名不正确或值类型不对时，整个文件视为无效。Dline 会记录错误日志，并按**不带任何项目配置**的方式照常执行命令。
+- 三层环境变量按“全局 → 平台 → 终端配置”合并，后者覆盖前者。
+
+### 终端配置 ID
+
+| 平台 | 可用 ID |
+|---|---|
+| Windows | `default`（Windows PowerShell）、`powershell-7`、`powershell-legacy`、`cmd`、`wsl-bash`、`git-bash` |
+| macOS | `default`（zsh）、`zsh`、`bash` |
+| Linux | `default`（bash）、`bash`、`zsh`、`dash` |
+
+`default` 会先按平台解析为具体配置（Windows 为 `powershell`，macOS 为 `zsh`，Linux 为 `bash`）再查找，找不到时再用 `default` 本身查找。Dline 使用的终端配置由 **Settings → Terminal** 中的 **Default Terminal Profile** 决定。
+
+### 变量替换
+
+`environment` 的值、`startupScripts`、`preCommands` 和 `postCommand` 中可以使用：
+
+- `${workspaceFolder}`：命令所在的工作区根目录；
+- `${env:NAME}`：Dline 进程中环境变量 `NAME` 的值，不存在时为空字符串。
+
+相对路径的启动脚本相对于工作区根目录解析。
+
+## 执行方式
+
+- **启动脚本**：在 VS Code 终端中执行时，只在创建终端时加载一次；后台执行的命令每次都会先加载启动脚本。支持的类型取决于终端：
+  - PowerShell：`.ps1`，以及 `.bat` / `.cmd`（会把脚本设置的环境变量带回 PowerShell）；
+  - Command Prompt：`.bat`、`.cmd`；
+  - bash、zsh 等：`.bashrc`、`.bash`、`.sh`。
+
+  类型不匹配的脚本不会执行，会记为失败。
+- **前置命令**在每条命令之前运行，**后置命令**在每条命令之后运行，它们的输出都被丢弃。
+- 启动脚本、前置命令或后置命令失败时，不会中断你的命令；失败信息会写入 Dline 日志（前缀 `[ShellEnvironment]`）。
+- 命令的退出码始终是命令本身的退出码，不受后置命令影响。
+- 配置只作用于位于某个工作区内的命令；多根工作区时，使用命令所在目录对应的那个工作区的 `.agents/bashrc.yml`。
+
+<Aside type="caution">
+`bashrc.yml` 中的命令会在每次执行命令时自动运行。启用来自其他仓库的配置前，请先审查其中的脚本和命令，不要把密钥直接写进文件。
+</Aside>
+
+## 相关内容
+
+- [子代理](/features/subagents/)
+- [自动批准](/features/auto-approve/)
+- [配置与存储位置](/getting-started/config/)

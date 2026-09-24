@@ -65,11 +65,13 @@ Command restrictions have limits: `-x` checks only the command's working directo
 - In directory listings, paths that cannot be read are marked with 🔒.
 - Searching a path restricted with `-s` directly is refused.
 
+![The chat notice shown when a write is denied by the vendor/ -w rule in .agentignore](/assets/agentignore-blocked.png)
+
 ## Relationship to checkpoints
 
 Checkpoints follow only `.gitignore` and the built-in exclusions. The permission rules in `.agentignore` do not affect them.
 
 ## Related
 
-- [Dline Rules](/en/customization/dline-rules/)
+- [Rules](/en/customization/rules/)
 - [Checkpoints](/en/core-workflows/checkpoints/)

@@ -29,7 +29,9 @@ Dline 会根据任务自行决定是否委派，你也可以在提示词中明�
 
 每个子代理最好只回答一个明确的问题。问题之间互不依赖时才适合并行；最后由主任务核对证据并整合结论。
 
-## 默认子代理
+![主任务并行委派多个子代理并汇总结果](/assets/subagents.gif)
+
+## 默认子代理（default.yml）
 
 内置的默认子代理只能使用以下工具：
 
@@ -37,9 +39,13 @@ Dline 会根据任务自行决定是否委派，你也可以在提示词中明�
 
 它不能执行命令、写文件、联网、使用浏览器或 MCP。需要这些能力时，请使用具名子代理并显式授权。
 
-## 具名子代理
+全局子代理目录中没有任何 `.yml` / `.yaml` 文件时，Dline 会自动创建一份可编辑的 `<documents-root>/subagents/default.yml`，内容就是上面的默认配置；已有文件时不会覆盖。
 
-具名子代理是一个带 frontmatter 的 YAML 文件：
+<span id="agent-yml"></span>
+
+## 具名子代理（agent YAML）
+
+具名子代理是一个带 frontmatter 的 YAML 文件，每个文件定义一个子代理，文件名可以任取（例如 `code-researcher.yml`），按 `name` 字段匹配，不区分大小写：
 
 | 位置 | 作用范围 |
 |---|---|
@@ -75,6 +81,8 @@ Trace the requested code paths without changing files. Return findings with file
 | `maxOutputTokens` | 否 | 最终结果的 token 预算，见下文 |
 
 缺少必填字段、frontmatter 格式错误、正文为空、出现未知或空白的工具名，或输出预算非法时，该文件会被跳过并记录日志。配置模型请使用 `profile`；`modelId` 等其他字段不会生效。
+
+`tools` 中的提问、计划、结束任务类工具（`attempt_completion` 除外）以及 `use_subagent`、`use_subagents` 会被自动移除：子代理没有可以回答问题的用户，也不能再委派子代理。`attempt_completion` 总会被授予。
 
 具名子代理可以通过 `tools` 显式申请写文件、执行命令、联网、MCP 或生成图片等工具；这些工具仍受底层功能开关和权限约束。
 

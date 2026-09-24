@@ -1,5 +1,5 @@
 ---
-title: Dline Rules
+title: Rules
 description: 用 Markdown 规则文件为 Dline 提供持久的项目与个人指令。
 ---
 
@@ -34,6 +34,8 @@ import { Aside } from "@astrojs/starlight/components"
 - 规则文件分组显示在 **Global Rules**、**Workspace Rules** 等分组中，每个文件都有独立开关。关闭的规则不会加载。
 - 在 **Global Rules** 分组中选择 **New rule file...** 并输入文件名，即可创建全局规则。不写扩展名时会自动补上 `.md`，也可以使用 `.txt`。
 - 面板会提示开关的保存范围：**Toggles saved for this task only**（仅当前任务）或 **Toggles saved for this workspace**（当前工作区）。
+
+![在能力面板中切换 Rules、Skills 与 Workflows 的开关](/assets/capability-panel.gif)
 
 也可以在输入框中输入 `/newrule`，由 Dline 根据当前对话在 `.agents/rules/` 下创建一个新的 Markdown 规则文件。已有文件不会被覆盖。
 
@@ -81,6 +83,7 @@ paths:
 
 ## 相关内容
 
+- [Workflows](/customization/workflows/)
 - [Skills](/customization/skills/)
 - [Hooks](/customization/hooks/)
 - [.agentignore](/customization/agentignore/)

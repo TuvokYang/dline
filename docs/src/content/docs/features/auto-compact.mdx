@@ -34,8 +34,10 @@ import { Aside } from "@astrojs/starlight/components"
 
 保存在磁盘上的完整对话记录不会被删除，只是发送给模型的内容变短了。
 
+![上下文接近上限时自动生成摘要，压缩后上下文用量下降并继续任务](/assets/auto-compact.gif)
+
 <Aside type="caution">
-摘要由模型生成，可能遗漏细节。压缩之后，Dline 并不“记得所有内容”；如果某些细节很重要，可以在压缩后再次提醒它，或把关键约束写进 [Dline Rules](/customization/dline-rules/)。
+摘要由模型生成，可能遗漏细节。压缩之后，Dline 并不“记得所有内容”；如果某些细节很重要，可以在压缩后再次提醒它，或把关键约束写进 [Rules](/customization/rules/)。
 </Aside>
 
 ## 恢复到压缩之前

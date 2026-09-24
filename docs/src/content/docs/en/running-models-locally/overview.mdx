@@ -15,7 +15,7 @@ Dline can connect to models that run on your own machine. Local models need no A
 
 2. Start the runtime's local server.
 
-3. Open Dline settings and choose the matching provider under **API Provider**.
+3. Open Dline settings and choose the matching provider under **Provider**.
 
 4. Select a local model under **Model**.
 
@@ -56,7 +56,7 @@ ollama run <model-name>
 ### 4. Configure Dline
 
 1. Open Dline settings.
-2. Set **API Provider** to **Ollama**.
+2. Set **Provider** to **Ollama**.
 3. Dline connects to `http://localhost:11434` by default. To use another address, check **Use custom base URL** and enter it; authenticated instances also accept an optional API key.
 4. Search for and select the model under **Model**.
 5. Set **Model Context Window** to the model's real capacity (default `32768`).
@@ -91,7 +91,7 @@ Open the **Developer** page and start the server. The default address is `http:/
 ### 5. Configure Dline
 
 1. Open Dline settings.
-2. Set **API Provider** to **LM Studio**.
+2. Set **Provider** to **LM Studio**.
 3. Keep the default `http://localhost:1234`, or enter the server's address under **Base URL**.
 4. Select the model under **Model**. If the model list cannot be fetched, type the model ID manually.
 

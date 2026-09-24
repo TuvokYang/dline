@@ -74,6 +74,8 @@ Click **Restore** to open the restore menu:
 | **Restore Files Only** (under **More options**) | Revert files to this checkpoint | Restores files only; the conversation is kept |
 | **Restore Task Only** (under **More options**) | Clear messages after this point | Deletes only the later messages, API conversation records, and context; files are unchanged |
 
+![The restore menu shown after clicking Restore on a checkpoint](/assets/checkpoint-restore.png)
+
 If a checkpoint has no file snapshot, or it was created by context compaction (shown as "Compaction checkpoint"), the menu offers only **Restore Task Only**.
 
 After files are restored successfully, the marker reads **Checkpoint (restored)** and its **Restore Files Only** button is disabled. The state clears when a new checkpoint is saved.

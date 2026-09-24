@@ -69,8 +69,10 @@ export const sidebar = [
 		translations: { en: "Configurations" },
 		items: [
 			"tools-reference/all-dline-tools",
-			"customization/dline-rules",
+			"customization/rules",
+			"customization/workflows",
 			"customization/skills",
+			"customization/terminal-environment",
 			"customization/plugins",
 			"mcp/mcp-overview",
 			"customization/hooks",

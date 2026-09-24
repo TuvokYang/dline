@@ -14,17 +14,23 @@ Dline connects to AI models through a **provider**. You can:
 
 <Steps>
 
-1. Click the **Settings** button in the Dline panel title bar.
+1. Click the **Settings** button in the Dline panel title bar to open **API Configuration**.
 
-2. Choose a provider from the **API Provider** dropdown.
+2. Click **Add profile** to create a Profile. If you already have one, you can expand its card with the button on the left and edit it instead.
 
-3. Authenticate:
-   - **Cloud provider:** paste your key into the **API Key** field.
+3. Choose a provider from the **Provider** dropdown.
+
+4. Authenticate:
+   - **Cloud provider:** paste your key into the provider's key field, such as **OpenAI API Key**.
    - **Local runtime (Ollama / LM Studio):** no key is needed; make sure the runtime is running.
 
-4. Choose an available model from the **Model** dropdown.
+5. Choose an available model under **Model**.
 
 </Steps>
+
+![Creating a Profile in API Configuration, choosing a provider and model, then selecting the Profile in the input area](/assets/profile-setup.gif)
+
+Each Profile combines a provider, a model, and a key. You can create several Profiles and use different ones for Act, Plan, and subagents. See [Multiple Profiles](/en/customization/profiles/).
 
 ## Choosing a provider
 
@@ -55,6 +61,6 @@ Local models need capable hardware, especially GPU memory. See [Running models l
 
 | Issue | Fix |
 | --- | --- |
-| Requests return 401 or the key is rejected | Paste the key into the **API Key** field again and make sure it belongs to the selected provider. |
+| Requests return 401 or the key is rejected | Paste the key into the Profile's key field again and make sure it belongs to the selected provider. |
 | The model list is empty or requests time out | Check your network and proxy settings. See [Networking and proxies](/en/troubleshooting/networking-and-proxies/). |
 | Dline cannot reach a local model | Make sure Ollama or LM Studio is running and the address in settings matches the address the runtime listens on. |
