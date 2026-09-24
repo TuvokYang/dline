@@ -569,6 +569,14 @@ export interface ClineSayTool {
 	compactionUnitIndex?: number
 	/** True only after this execution-unit card has been committed to durable message history. */
 	compactionDurable?: boolean
+	/**
+	 * Last conversation-journal entry the summary replaced.
+	 *
+	 * Written by the Task runtime, whose provider conversation lives in the
+	 * journal rather than in API history rows, so this watermark (not an API
+	 * row index) is what a Restore from the card rewinds to.
+	 */
+	compactionJournalBoundary?: { readonly epoch: number; readonly seq: number }
 	/** Actionable compaction failure detail. */
 	error?: string
 	/** One-based retry attempt currently scheduled. */

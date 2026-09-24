@@ -3,6 +3,11 @@ import { projectCanonicalTaskView } from "@core/task/view/canonical/projectCanon
 import { describe, expect, it } from "vitest"
 import { adaptCanonicalTaskView } from "../TaskViewMessageAdapter"
 
+/** An active task whose running work already projects a task-level Cancel. */
+function runningCommandProjection() {
+	return projectCanonicalTaskView({ ...createInitialTaskState("task-1"), flow: { phase: "running" } })
+}
+
 describe("adaptCanonicalTaskView", () => {
 	it("decorates an awaiting canonical dialog with its exact message anchor", () => {
 		const initial = createInitialTaskState("task-1")
@@ -70,5 +75,50 @@ describe("adaptCanonicalTaskView", () => {
 				dispatchTarget: "task",
 			},
 		])
+	})
+
+	it("offers the background handoff before Cancel while a foreground command owns it", () => {
+		const view = adaptCanonicalTaskView(runningCommandProjection(), [], {
+			readyActivityId: () => "command-1",
+			isRequested: () => false,
+		})
+
+		expect(view.footer.actions).toEqual([
+			{
+				type: "continue_in_background",
+				label: "Continue in Background",
+				appearance: "secondary",
+				enabled: true,
+				payloadPolicy: "none",
+				dispatchTarget: "task",
+				activityId: "command-1",
+			},
+			{
+				type: "cancel",
+				label: "Cancel",
+				appearance: "danger",
+				enabled: true,
+				payloadPolicy: "none",
+				dispatchTarget: "task",
+			},
+		])
+	})
+
+	it("disables the handoff once the move is already settling", () => {
+		const view = adaptCanonicalTaskView(runningCommandProjection(), [], {
+			readyActivityId: () => "command-1",
+			isRequested: (activityId) => activityId === "command-1",
+		})
+
+		expect(view.footer.actions[0]).toMatchObject({ type: "continue_in_background", enabled: false })
+	})
+
+	it("omits the handoff when no executor owns an eligible command", () => {
+		const view = adaptCanonicalTaskView(runningCommandProjection(), [], {
+			readyActivityId: () => undefined,
+			isRequested: () => false,
+		})
+
+		expect(view.footer.actions.map((action) => action.type)).toEqual(["cancel"])
 	})
 })

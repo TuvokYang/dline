@@ -20,7 +20,7 @@ function recordingHandler(name: ClineDefaultTool) {
 			return "done"
 		},
 	}
-	return { handler, lastConfig: () => seen[seen.length - 1] }
+	return { handler, calls: () => seen.length, lastConfig: () => seen[seen.length - 1] }
 }
 
 function coordinatorWith(handler: IToolHandler): ToolExecutorCoordinator {
@@ -48,7 +48,7 @@ describe("ToolExecutorCoordinator explicit authority", () => {
 		})
 	})
 
-	it("consumes the authority once, so a second call carries none", async () => {
+	it("consumes the authority once, so a second call is refused before its handler runs", async () => {
 		const authority = new TaskTurnAuthority()
 		authority.grant("turn-1", [
 			{ type: "summarize_task", source: "manual_compact_command", targetTool: ClineDefaultTool.SUMMARIZE_TASK },
@@ -58,18 +58,22 @@ describe("ToolExecutorCoordinator explicit authority", () => {
 		const config = { explicitInstructions: authority.read("turn-1") } as TaskConfig
 
 		await coordinator.execute(config, block(ClineDefaultTool.SUMMARIZE_TASK))
-		await coordinator.execute(config, block(ClineDefaultTool.SUMMARIZE_TASK))
+		const second = await coordinator.execute(config, block(ClineDefaultTool.SUMMARIZE_TASK))
 
-		expect(recording.lastConfig().explicitInstructionAuthorization).toBeUndefined()
+		expect(recording.calls()).toBe(1)
+		expect(JSON.stringify(second)).toMatch(/explicit_instruction_(already_consumed|missing)/)
 	})
 
-	it("leaves a tool without granted authority to its own refusal", async () => {
+	// WS-013: an explicit-only tool nobody authorized is refused centrally with a
+	// code the model reads back, and none of its effects run.
+	it("refuses an explicit-only tool without granted authority and never runs its handler", async () => {
 		const recording = recordingHandler(ClineDefaultTool.SUMMARIZE_TASK)
 		const coordinator = coordinatorWith(recording.handler)
 
-		await coordinator.execute({} as TaskConfig, block(ClineDefaultTool.SUMMARIZE_TASK))
+		const result = await coordinator.execute({} as TaskConfig, block(ClineDefaultTool.SUMMARIZE_TASK))
 
-		expect(recording.lastConfig().explicitInstructionAuthorization).toBeUndefined()
+		expect(recording.calls()).toBe(0)
+		expect(JSON.stringify(result)).toContain("explicit_instruction_missing")
 	})
 
 	it("does not touch a tool that needs no explicit authority", async () => {

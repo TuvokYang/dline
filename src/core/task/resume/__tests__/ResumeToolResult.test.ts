@@ -167,6 +167,63 @@ describe("collectResumeTurnContent", () => {
 		expect(restored?.content).toEqual([{ type: "text", text: "[]" }])
 	})
 
+	// A call the model wrote as markup beside native tools was kept in history as
+	// that markup, so no provider call exists to pair its result with.
+	it("restores the result of a call that was never recorded as prose, never as a paired result", () => {
+		const markupCall: BlockLifecycle = {
+			dlineTid: "tid-markup",
+			functionId: "dline_function_markup",
+			toolName: "summarize_task",
+			phase: BlockPhase.COMPLETED,
+			ts: 13,
+			requiresApproval: false,
+			conversationHistoryIndex: 1,
+		}
+		const uiHistory: ClineMessage[] = [
+			{
+				ts: 3,
+				type: "say",
+				say: "partial_tool_result",
+				text: JSON.stringify({
+					version: 1,
+					function_id: "fn-ui",
+					dline_tid: "tid-ui",
+					content: [{ type: "text", text: "durable partial" }],
+					is_error: null,
+				}),
+			},
+			{
+				ts: 4,
+				type: "say",
+				say: "partial_tool_result",
+				text: JSON.stringify({
+					version: 1,
+					function_id: "dline_function_markup",
+					dline_tid: "tid-markup",
+					content: [{ type: "text", text: "rejected: explicit_instruction_missing" }],
+					is_error: null,
+					replay: { kind: "text", tool_name: "summarize_task" },
+				}),
+			},
+		]
+
+		const content = collectResumeTurnContent({
+			blocks: [blocks[1], markupCall],
+			assistantApiIndex: 0,
+			apiHistory: [{ role: "assistant", content: [], ts: 1 }],
+			uiHistory,
+			pendingContent: [{ type: "text", text: "preserved feedback" }],
+			synthesizeMissing: "all",
+		})
+
+		expect(content).toEqual([
+			expect.objectContaining({ type: "tool_result", dline_tid: "tid-ui" }),
+			{ type: "text", text: "[summarize_task] Result:\nrejected: explicit_instruction_missing" },
+			{ type: "text", text: "preserved feedback" },
+		])
+		expect(JSON.stringify(content)).not.toContain("dline_function_markup")
+	})
+
 	it("keeps an awaiting interaction unpaired while restoring earlier durable results", () => {
 		const awaiting = blocks.map((block, index) => (index === 2 ? { ...block, phase: BlockPhase.AWAITING_APPROVAL } : block))
 		const pending = result("tid-ui", "fn-ui", "already pending")

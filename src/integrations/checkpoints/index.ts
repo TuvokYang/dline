@@ -23,7 +23,7 @@ import type { ClineContent } from "../../shared/messages/content"
 import { type ChatRestoreBoundary, resolveChatRestoreBoundary } from "./chat-restore-boundary"
 import { resolveCompletionDiffBaseHash } from "./completion-diff"
 import { CHECKPOINT_TRACKER_ATTEMPT_TIMEOUT_MS } from "./initializer"
-import { ICheckpointManager } from "./types"
+import type { ConversationRewindPort, ICheckpointManager } from "./types"
 
 /**
  * Consecutive staging failures tolerated before the user is told that
@@ -87,6 +87,8 @@ interface CheckpointManagerServices {
 	readonly taskState: CheckpointRuntimeState
 	readonly taskFileTracker?: import("./TaskFileTracker").TaskFileTracker
 	readonly workspaceManager?: WorkspaceRootManager
+	/** Rewinds the task's journal conversation; required only to restore a journal-bounded card. */
+	readonly conversationRewind?: ConversationRewindPort
 }
 interface CheckpointManagerCallbacks {
 	readonly updateTaskHistory: UpdateTaskHistoryFunction
@@ -350,6 +352,9 @@ export class TaskCheckpointManager implements ICheckpointManager {
 							apiCount: this.services.messageStateHandler.apiConversation?.count ?? 0,
 							uiCount: this.services.messageStateHandler.uiMessage?.count ?? clineMessages.length,
 						})
+			// A chat restore the task cannot complete is refused before the workspace
+			// is touched; otherwise the files would rewind while the chat stays put.
+			if (chatRestoreBoundary) this.assertChatRestoreAdmissible(message, chatRestoreBoundary, editedText)
 			const workspaceRestoreResult =
 				restoreType === "task"
 					? undefined
@@ -692,6 +697,29 @@ export class TaskCheckpointManager implements ICheckpointManager {
 		this.taskState.didRespondToPlanAskBySwitchingMode = false
 	}
 
+	/**
+	 * Refuses a chat restore this manager cannot carry out, before anything is
+	 * written. Both checks depend only on the boundary and the injected ports,
+	 * so they give the same answer before the workspace rewind and at the chat
+	 * commit point.
+	 */
+	private assertChatRestoreAdmissible(
+		message: ClineMessage,
+		boundary: ChatRestoreBoundary,
+		editedText: string | undefined,
+	): void {
+		if ((message.compactionConversationRange || boundary.journalTarget) && editedText !== undefined) {
+			throw new Error("Editing input is unavailable when restoring a compaction card")
+		}
+		if (boundary.journalTarget) this.requireConversationRewind()
+	}
+
+	private requireConversationRewind(): ConversationRewindPort {
+		const rewind = this.services.conversationRewind
+		if (!rewind) throw new Error("Compaction Restore requires the task conversation journal")
+		return rewind
+	}
+
 	private async restoreChatCheckpoint(
 		message: ClineMessage,
 		messageIndex: number,
@@ -700,8 +728,16 @@ export class TaskCheckpointManager implements ICheckpointManager {
 		workspaceRestored: boolean,
 		boundary: ChatRestoreBoundary,
 	): Promise<void> {
-		if (message.compactionConversationRange && editedText !== undefined) {
-			throw new Error("Editing input is unavailable when restoring a compaction card")
+		this.assertChatRestoreAdmissible(message, boundary, editedText)
+		// The journal rewind is the restore's commit point, so it runs before any
+		// chat, API or context file is truncated: a refused rewind leaves the task
+		// exactly as it was, and a restore retried after a crash replays the same
+		// record instead of rewinding twice.
+		if (boundary.journalTarget) {
+			await this.requireConversationRewind().rewindTo({
+				operationId: `checkpoint.restore:${messageTs}`,
+				target: boundary.journalTarget,
+			})
 		}
 		// The boundary indexes the durable sequence, so the deleted slice must read it too.
 		const deletedMessages = this.services.messageStateHandler.durableClineMessages.slice(boundary.uiKeepCount)

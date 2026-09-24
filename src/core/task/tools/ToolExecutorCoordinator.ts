@@ -42,6 +42,7 @@ import { UseMcpToolHandler } from "./handlers/UseMcpToolHandler"
 import { WebFetchToolHandler } from "./handlers/WebFetchToolHandler"
 import { WebSearchToolHandler } from "./handlers/WebSearchToolHandler"
 import { WriteToFileToolHandler } from "./handlers/WriteToFileToolHandler"
+import { applyToolCallSideEffects, resolveToolCallSideEffects } from "./ToolCallSideEffects"
 import type { ToolHandlerResult } from "./ToolExecutionResult"
 import { ToolValidator } from "./ToolValidator"
 import type { TaskConfig } from "./types/TaskConfig"
@@ -298,20 +299,35 @@ export class ToolExecutorCoordinator {
 			throw new Error(`No handler registered for tool: ${block.name}`)
 		}
 		if (block.dline_tid) this.preparedHandlers.delete(block.dline_tid)
-		return handler.execute(this.authorize(config, handler.name), block)
+		const authorized = this.authorize(config, handler.name)
+		if (!authorized.ok) {
+			// The code is what the model reads back, so it can tell a missing grant
+			// from a spent one instead of retrying a call that can never run.
+			return formatResponse.toolError(`Explicit-only tool '${block.name}' was rejected: ${authorized.code}.`)
+		}
+		const result = await handler.execute(authorized.config, block)
+		// Effects that ride on a call without belonging to any tool. The surface
+		// decides which of them it has, so a task with no checklist and no
+		// workspace history runs the same tools without supplying either.
+		await applyToolCallSideEffects(resolveToolCallSideEffects(config), block, handler.name)
+		return result
 	}
 
 	/**
 	 * Consume the turn's one-shot authority for an explicit-only tool.
 	 *
 	 * The gate runs once per invocation so a handler that requires explicit
-	 * authorization sees exactly one consumed authorization. A tool that was
-	 * never granted authority keeps its own refusal: the gate does not invent a
-	 * denial for tools whose authority is produced elsewhere.
+	 * authorization sees exactly one consumed authorization. A refusal stops the
+	 * call here, before the handler or any of its effects: an explicit-only tool
+	 * the user never asked for must not run on the strength of the model alone.
 	 */
-	private authorize(config: TaskConfig, tool: ClineDefaultTool): TaskConfig {
+	private authorize(
+		config: TaskConfig,
+		tool: ClineDefaultTool,
+	): { readonly ok: true; readonly config: TaskConfig } | { readonly ok: false; readonly code: string } {
 		const gated = authorizeExplicitToolExecution(tool, config.explicitInstructions)
-		if (!gated.ok || !gated.authorization) return config
-		return { ...config, explicitInstructionAuthorization: gated.authorization }
+		if (!gated.ok) return { ok: false, code: gated.code }
+		if (!gated.authorization) return { ok: true, config }
+		return { ok: true, config: { ...config, explicitInstructionAuthorization: gated.authorization } }
 	}
 }

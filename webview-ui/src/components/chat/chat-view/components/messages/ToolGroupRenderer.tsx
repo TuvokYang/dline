@@ -339,6 +339,12 @@ export const ToolGroupRenderer = memo(({ messages, allMessages, isLastGroup }: T
  */
 export function buildToolsWithReasoning(messages: ClineMessage[]): ToolWithReasoning[] {
 	const result: ToolWithReasoning[] = []
+	// An approved read owns one summary entry but produces two rows, and their
+	// order is not guaranteed: the result row carries the timestamp of the tool
+	// block while the approval row is anchored when the dialog is revealed.
+	// Pairing therefore has to work in both directions, and each row may only be
+	// consumed once so two genuine reads of the same path stay two files.
+	const paired: boolean[] = []
 
 	for (const msg of messages) {
 		// Skip reasoning messages - they should not be in file lists
@@ -356,32 +362,53 @@ export function buildToolsWithReasoning(messages: ClineMessage[]): ToolWithReaso
 
 		if (isLowStakesTool(msg)) {
 			const parsedTool = parseToolSafe(msg.text)
-			const previous = result.at(-1)
-			const supersedesPreviousReadAsk =
-				parsedTool.tool === "readFile" &&
-				parsedTool.path &&
-				msg.say === "tool" &&
-				previous?.tool.ask === "tool" &&
-				previous.parsedTool.tool === "readFile" &&
-				previous.parsedTool.path === parsedTool.path
+			const readPath = parsedTool.tool === "readFile" ? parsedTool.path : undefined
 
-			if (supersedesPreviousReadAsk) {
-				result[result.length - 1] = {
-					tool: msg,
-					parsedTool,
-					reasoning: undefined,
+			if (readPath) {
+				// The result row replaces the approval it belongs to, because it is the
+				// row that carries the resolved path and line range.
+				if (msg.say === "tool") {
+					const askIndex = findUnpairedReadRow(result, paired, readPath, "ask")
+					if (askIndex !== -1) {
+						result[askIndex] = { tool: msg, parsedTool, reasoning: undefined }
+						paired[askIndex] = true
+						continue
+					}
+				} else if (msg.ask === "tool") {
+					// The result already arrived, so this approval adds no new file.
+					const resultIndex = findUnpairedReadRow(result, paired, readPath, "say")
+					if (resultIndex !== -1) {
+						paired[resultIndex] = true
+						continue
+					}
 				}
-				continue
 			}
+
 			result.push({
 				tool: msg,
 				parsedTool,
 				reasoning: undefined, // Never show reasoning in file lists
 			})
+			paired.push(false)
 		}
 	}
 
 	return result
+}
+
+/**
+ * Find the most recent read row for `path` that has not been paired yet.
+ * `kind` selects whether an approval row or a result row is wanted.
+ */
+function findUnpairedReadRow(tools: ToolWithReasoning[], paired: boolean[], path: string, kind: "ask" | "say"): number {
+	for (let index = tools.length - 1; index >= 0; index -= 1) {
+		if (paired[index]) continue
+		const candidate = tools[index]
+		if (candidate.parsedTool.tool !== "readFile" || candidate.parsedTool.path !== path) continue
+		const matchesKind = kind === "ask" ? candidate.tool.ask === "tool" : candidate.tool.say === "tool"
+		if (matchesKind) return index
+	}
+	return -1
 }
 
 /**

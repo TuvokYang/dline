@@ -3,22 +3,43 @@ import { CompactionCommandExecutor, type CompactionPort } from "../executors/com
 import { ComposeCommandExecutor, type ComposePort } from "../executors/compose/ComposeCommandExecutor"
 import type { HaltParticipant, TaskEventSink, TaskEventSubmission } from "../executors/contracts"
 import { CoTaskIngressExecutor } from "../executors/cotask/CoTaskIngressExecutor"
-import { DialogCommandExecutor, type DialogExecutionPort } from "../executors/dialog/DialogCommandExecutor"
+import { DialogCommandExecutor, type DialogExecutionPort, type DialogWaiterPort } from "../executors/dialog/DialogCommandExecutor"
 import { HaltCommandExecutor, type HaltCommandExecutorOptions } from "../executors/halt/HaltCommandExecutor"
 import { assertCompleteHaltParticipants } from "../executors/halt/participants"
 import { type ApprovalPolicyPort, PolicyCommandExecutor } from "../executors/policy/PolicyCommandExecutor"
-import { ProviderCommandExecutor, type ProviderExecutionPort } from "../executors/provider/ProviderCommandExecutor"
+import {
+	ProviderCommandExecutor,
+	type ProviderExecutionPort,
+	type ProviderTextPresentationPort,
+} from "../executors/provider/ProviderCommandExecutor"
+import type { ProviderRequestReportPort } from "../executors/provider/service/ProviderRequestReport"
 import { SpawnCoordinator, type SpawnPort } from "../executors/spawn/SpawnCoordinator"
 import { ToolCommandExecutor, type ToolCommandExecutorOptions } from "../executors/tool/ToolCommandExecutor"
 import type { TaskEvent, TaskState } from "../kernel"
 import { type CommandExecutor, type RuntimeDiagnosticSink, type RuntimeFacade, TaskRuntime } from "../runtime"
 import type { CommandPublicationStore, ConversationJournal, DurableTaskSnapshot, StateVault, TaskViewPort } from "../stores"
 
+/** Everything the provider domain needs: how a turn runs, how it is shown, and what it cost. */
+export interface ProviderPorts {
+	readonly execution: ProviderExecutionPort
+	/** Shows the assistant's prose as a chat row; absent in headless assemblies. */
+	readonly presentation?: ProviderTextPresentationPort
+	/** Records what each request consumed; absent in headless assemblies. */
+	readonly report?: ProviderRequestReportPort
+}
+
+/** Everything the dialog domain needs: how a question is asked, and who awaits it. */
+export interface DialogPorts {
+	readonly execution: DialogExecutionPort
+	/** Receivers to fail when a stop makes their answer impossible; see DialogWaiterPort. */
+	readonly waiters?: DialogWaiterPort
+}
+
 export interface TaskExecutionPorts {
-	readonly provider: ProviderExecutionPort
+	readonly provider: ProviderPorts
 	readonly compose: ComposePort
 	readonly compaction: CompactionPort
-	readonly dialog: DialogExecutionPort
+	readonly dialog: DialogPorts
 	readonly policy: ApprovalPolicyPort
 	readonly tool: ToolCommandExecutorOptions
 	readonly spawn: SpawnPort
@@ -75,13 +96,15 @@ export function createTaskExecutorAssembly(options: TaskExecutorAssemblyOptions)
 
 	const provider = new ProviderCommandExecutor(
 		options.taskId,
-		options.execution.provider,
+		options.execution.provider.execution,
 		options.persistence.journal,
 		options.persistence.taskView,
 		events,
+		options.execution.provider.presentation,
+		options.execution.provider.report,
 	)
 	const tool = new ToolCommandExecutor(options.execution.tool, events)
-	const dialog = new DialogCommandExecutor(options.execution.dialog, events)
+	const dialog = new DialogCommandExecutor(options.execution.dialog.execution, events, options.execution.dialog.waiters)
 	const compose = new ComposeCommandExecutor(options.execution.compose, events)
 	const compaction = new CompactionCommandExecutor(options.execution.compaction, events, (projection) =>
 		options.persistence.taskView.notifyTransient(options.taskId, projection),

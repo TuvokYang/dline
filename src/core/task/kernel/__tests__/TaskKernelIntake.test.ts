@@ -97,6 +97,30 @@ describe("task kernel intake", () => {
 		expect(result.commands).toEqual([expect.objectContaining({ type: "dialog.prepare", prepareKey: expect.any(String) })])
 	})
 
+	it("lets a paused task complete the round its resumption opened", () => {
+		const paused = { ...createInitialTaskState("task-1"), flow: { phase: "paused" as const } }
+		const submitted = accepted(
+			transition(paused, { type: "user.submit", generation: 0, entryId: "resume-1", payloadRef: "input:resume" }),
+		)
+		const compose = submitted.commands.find((command): command is ComposeRoundCommand => command.type === "compose.round")
+		if (!compose) throw new Error("missing compose command")
+
+		// Staying paused made the round unfinishable: compose feedback is refused
+		// after a halt, so answering Resume produced no reply at all.
+		const composed = accepted(
+			transition(submitted.state, {
+				type: "compose.completed",
+				generation: 0,
+				commandId: compose.commandId,
+				originRevision: compose.originRevision,
+				draftRef: "draft:resume",
+			}),
+		)
+
+		expect(composed.state.flow.phase).not.toBe("paused")
+		expect(composed.commands).toEqual([expect.objectContaining({ type: "provider.start", draftRef: "draft:resume" })])
+	})
+
 	it("loads legacy snapshots without intake and resolves uncertain entries against the committed watermark", () => {
 		const snapshot = {
 			...createInitialTaskState("task-1"),

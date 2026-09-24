@@ -1,7 +1,7 @@
-import { reduceDialog } from "./machines/dialog"
-import { reduceFlow } from "./machines/flow"
+import { reduceDialog, withoutAbandonedReview } from "./machines/dialog"
+import { expireAbandonedCompaction, reduceFlow } from "./machines/flow"
 import { ALL_HALT_PARTICIPANTS, reduceHalt } from "./machines/halt"
-import { intakeHasCapacity, reduceIntake, reserveIntakeEntries } from "./machines/intake"
+import { intakeHasCapacity, pendingIntakeEntryIds, reduceIntake, reserveIntakeEntries } from "./machines/intake"
 import { reduceTurn } from "./machines/turn"
 import type {
 	Command,
@@ -181,7 +181,7 @@ function validateEvent(state: TaskState, event: TaskEvent): ValidationFailure | 
 				message: `Block ${event.blockId} cannot accept policy feedback from ${block.phase}`,
 			}
 	}
-	if (event.type === "compose.completed" || event.type === "compose.failed") {
+	if (event.type === "compose.completed" || event.type === "compose.failed" || event.type === "compose.withdrawn") {
 		const owner = state.flow.compose
 		if (!owner || owner.commandId !== event.commandId || owner.originRevision !== event.originRevision)
 			return { reason: "identity_mismatch", message: `Compose feedback ${event.commandId} is not active` }
@@ -330,6 +330,30 @@ function allBlocksTerminal(state: TaskState): boolean {
 
 function hasActiveRound(state: TaskState): boolean {
 	return state.flow.compose?.status === "running" || state.flow.provider?.status === "running"
+}
+
+/**
+ * How many answers without a tool call the kernel continues through.
+ *
+ * The continuation exists so a model that replies in prose still reaches its
+ * next tool call. A model that never calls one has to stop instead, so the task
+ * returns to the user rather than spending an account on an endless loop.
+ */
+const MAX_TEXT_ONLY_TURNS = 3
+
+/** Whether the kernel is free to open the next round itself. */
+function canOpenNextRound(state: TaskState): boolean {
+	if (state.halt.status === "stopping") return false
+	if (["paused", "terminated", "completed", "error"].includes(state.flow.phase)) return false
+	// An awaiting question is the user's turn; continuing would answer over them.
+	if (state.dialog.primary) return false
+	// A round still in flight already owns the next request.
+	return !hasActiveRound(state)
+}
+
+/** Whether a turn that planned no tool may open the next round on its own. */
+function continuesWithoutTools(state: TaskState): boolean {
+	return canOpenNextRound(state) && (state.flow.textOnlyTurnStreak ?? 0) <= MAX_TEXT_ONLY_TURNS
 }
 
 function applyCommandOwnership(state: TaskState, commands: readonly Command[]): TaskState {
@@ -500,7 +524,9 @@ function deriveCommands(previous: TaskState, next: TaskState, event: TaskEvent):
 				...commandBase(next, 0),
 				type: "compose.round",
 				turnId: next.turn.blocks.length > 0 ? next.turn.turnId : undefined,
-				admittedEntryIds: [event.entryId],
+				// Anything still waiting rides along with the arrival that opened
+				// this round, so an entry that arrived mid-round is not left behind.
+				admittedEntryIds: pendingIntakeEntryIds(next.intake),
 			},
 		]
 	}
@@ -510,7 +536,14 @@ function deriveCommands(previous: TaskState, next: TaskState, event: TaskEvent):
 		allBlocksTerminal(next) &&
 		!hasActiveRound(previous)
 	) {
-		return [{ ...commandBase(next, 0), type: "compose.round", turnId: next.turn.turnId, admittedEntryIds: [] }]
+		return [
+			{
+				...commandBase(next, 0),
+				type: "compose.round",
+				turnId: next.turn.turnId,
+				admittedEntryIds: pendingIntakeEntryIds(next.intake),
+			},
+		]
 	}
 	if (event.type === "compose.completed") {
 		return [{ ...commandBase(next, 0), type: "provider.start", draftRef: event.draftRef, turnId: event.turnId }]
@@ -518,6 +551,22 @@ function deriveCommands(previous: TaskState, next: TaskState, event: TaskEvent):
 	if (event.type === "provider.turn_ready") {
 		const commands: Command[] = []
 		let sequence = 0
+		// A turn that planned no block has nothing that will ever settle it, so
+		// the conversation only moves if the kernel opens the next round itself.
+		// Without this a plain answer ended the task silently: no tool ran, no
+		// interaction was offered, and no further request was ever made.
+		if (event.turnPlan.blocks.length === 0) {
+			// Anything that arrived while the turn ran is waiting for a round to
+			// carry it. That is the user speaking again, not the model continuing
+			// itself, so it opens a round regardless of the text-only budget.
+			const pending = pendingIntakeEntryIds(next.intake)
+			if (pending.length > 0 && canOpenNextRound(next)) {
+				return [{ ...commandBase(next, 0), type: "compose.round", admittedEntryIds: pending }]
+			}
+			return continuesWithoutTools(next)
+				? [{ ...commandBase(next, 0), type: "compose.round", admittedEntryIds: [], continuation: "no_tools_used" }]
+				: []
+		}
 		const readyBlocks = next.turn.blocks.filter((block) => block.phase === "ready")
 		if (readyBlocks.length > 0) {
 			commands.push({
@@ -660,7 +709,10 @@ export function transition(state: TaskState, event: TaskEvent): TransitionResult
 						? { ...next.flow.provider, status: "cancelled" }
 						: next.flow.provider,
 				spawn: next.flow.spawn?.status === "running" ? { ...next.flow.spawn, status: "cancelled" } : next.flow.spawn,
+				compaction: expireAbandonedCompaction(next.flow.compaction, "compaction_cancelled"),
 			},
+			// Read against the compaction as it was before expiry above.
+			dialog: withoutAbandonedReview(next.dialog, next.flow.compaction),
 			turn: {
 				...next.turn,
 				blocks: next.turn.blocks.map((block) =>
@@ -685,8 +737,14 @@ export function transition(state: TaskState, event: TaskEvent): TransitionResult
 			},
 		}
 	}
+	// A refusal ends the round once nothing is left to run, whichever authority
+	// issued it. The policy refuses for the same reason a human does — the call
+	// is not permitted — so the flow must be released identically. Releasing only
+	// on the human event left a policy-refused turn with every block terminal and
+	// the flow still active: no command was ever derived again, and the task
+	// simply stopped with no error and no interaction to answer.
 	if (
-		event.type === "approval.responded" &&
+		(event.type === "approval.responded" || event.type === "approval.evaluated") &&
 		!event.approved &&
 		next.turn.blocks.length > 0 &&
 		next.turn.blocks.every((block) => ["completed", "failed", "rejected", "skipped", "cancelled"].includes(block.phase))

@@ -2,7 +2,14 @@ import type { Command, JournalWatermark, TaskState } from "../kernel"
 
 export type { JournalWatermark } from "../kernel"
 
-export type JournalEntryKind = "message" | "tombstone" | "truncate_boundary" | "supersede_range" | "checkpoint_marker" | "rebase"
+export type JournalEntryKind =
+	| "message"
+	| "tombstone"
+	| "truncate_boundary"
+	| "supersede_range"
+	| "checkpoint_marker"
+	| "rebase"
+	| "rewind"
 export type JournalSource = "provider" | "tool" | "dialog" | "intake" | "system"
 
 export interface JournalCausation {
@@ -70,12 +77,27 @@ export interface ConversationJournal {
 	rebase(input: { readonly operationId: string; readonly reasonRef: string }): Promise<JournalAppendResult>
 	tombstone(input: { readonly operationId: string; readonly target: JournalWatermark }): Promise<JournalAppendResult>
 	truncateBoundary(input: { readonly operationId: string; readonly target: JournalWatermark }): Promise<JournalAppendResult>
+	/**
+	 * Hide `[from, to]`; with `replacementRef`, the same record also shows that
+	 * payload where the span began. One record keeps a replacement atomic: a
+	 * crash leaves either the original span or its replacement, never neither.
+	 */
 	supersedeRange(input: {
 		readonly operationId: string
 		readonly from: JournalWatermark
 		readonly to: JournalWatermark
+		readonly replacementRef?: string
 	}): Promise<JournalAppendResult>
 	checkpointMarker(input: { readonly operationId: string; readonly checkpointRef: string }): Promise<JournalAppendResult>
+	/**
+	 * Return the projection to what it was right after `target`.
+	 *
+	 * Unlike a truncation, a rewind also drops every marker recorded after the
+	 * target, so a summary that replaced part of the conversation disappears
+	 * with it. One record keeps the rewind atomic; the entries it undoes stay on
+	 * disk, so the journal remains append-only.
+	 */
+	rewind(input: { readonly operationId: string; readonly target: JournalWatermark }): Promise<JournalAppendResult>
 	watermark(): JournalWatermark
 }
 

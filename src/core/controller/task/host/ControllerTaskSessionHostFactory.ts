@@ -19,10 +19,11 @@ import { BrowserSession } from "@services/browser/BrowserSession"
 import { UrlContentFetcher } from "@services/browser/UrlContentFetcher"
 import type { McpHub } from "@services/mcp/McpHub"
 import type { ClineExtensionContext } from "@shared/cline/context"
+import { convertClineMessageToProto } from "@shared/proto-conversions/cline-message"
 import { HostProvider } from "@/hosts/host-provider"
+import { sendPartialMessageEvent } from "../../ui/subscribeToPartialMessage"
 import { ControllerTaskCallbacksOwner } from "./ControllerTaskCallbacksOwner"
 import { ControllerTaskCheckpointOwner } from "./ControllerTaskCheckpointOwner"
-import { ControllerTaskCompactionService } from "./ControllerTaskCompactionService"
 import { ControllerTaskSpawnLauncher } from "./ControllerTaskSpawnLauncher"
 
 export interface ControllerTaskSessionHostFactoryOptions {
@@ -75,14 +76,22 @@ export class ControllerTaskSessionHostFactory implements TaskSessionHostFactory 
 			}).service,
 		}
 		const commandCallbacks: CommandExecutorCallbacks = {
-			say: (type, text, images, files, partial, existingTs) =>
-				callbackOwner.callbacks.say(type as never, text, images, files, partial, existingTs),
+			say: (type, text, images, files, partial, existingTs, commandTs) =>
+				callbackOwner.callbacks.say(type as never, text, images, files, partial, existingTs, commandTs),
 			ask: (type, text, partial, commandOptions) =>
 				callbackOwner.callbacks.ask(type as never, text, partial, { existingTs: commandOptions?.commandTs }),
 			updateBackgroundCommandState: (running) =>
 				this.options.controller.updateBackgroundCommandState(running, context.taskId),
 			onHandoffAvailabilityChanged: () => void this.options.controller.postStateToWebview(),
-			updateClineMessage: (index, updates) => context.messages.updateClineMessage(index, updates),
+			updateClineMessage: async (index, updates) => {
+				await context.messages.updateClineMessage(index, updates)
+				// Persisting is not publishing. The command row is already on screen,
+				// so a patch that only reaches storage leaves the visible row stale
+				// until something unrelated republishes it: an accepted background
+				// handoff kept rendering as "Foreground" for the rest of the task.
+				const row = context.messages.clineMessages[index]
+				if (row) await sendPartialMessageEvent(this.options.controller, convertClineMessageToProto(row))
+			},
 			getClineMessages: () => context.messages.clineMessages,
 			addToUserMessageContent: (content) => context.toolState.userMessageContent.push(content as never),
 			createCommandActivity: (input) => {
@@ -133,6 +142,7 @@ export class ControllerTaskSessionHostFactory implements TaskSessionHostFactory 
 			diffViewProvider,
 			say: callbackOwner.callbacks.say,
 			workspaceManager: this.options.workspaceManager,
+			conversationRewind: context.conversationRewind,
 		})
 		callbackOwner.bindCheckpointManager(checkpointOwner.manager)
 		await callbackOwner.initialize()
@@ -153,7 +163,6 @@ export class ControllerTaskSessionHostFactory implements TaskSessionHostFactory 
 			terminals: terminalManager,
 			checkpoints: checkpointOwner.manager,
 			surface,
-			compaction: new ControllerTaskCompactionService(context.api, context.taskId),
 			spawn: new ControllerTaskSpawnLauncher({
 				context: this.options.context,
 				parent: this.options.controller,

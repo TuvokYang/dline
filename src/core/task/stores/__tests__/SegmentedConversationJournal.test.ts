@@ -41,6 +41,32 @@ describe("SegmentedConversationJournal", () => {
 		expect((await recovered.read()).map((entry) => entry.kind)).toEqual(["message", "rebase", "message"])
 	})
 
+	it("durably reopens a supersede replacement and keeps it idempotent", async () => {
+		const { directory, journal: opened } = await journal()
+		await opened.append({ operationId: "message:1", payloadRef: "task", source: "intake" })
+		const answered = await opened.append({ operationId: "message:2", payloadRef: "answered", source: "provider" })
+		await opened.append({ operationId: "message:3", payloadRef: "pending", source: "tool" })
+		const replacement = {
+			operationId: "compaction.supersede:1",
+			from: answered.watermark,
+			to: answered.watermark,
+			replacementRef: "summary:1",
+		}
+		await opened.supersedeRange(replacement)
+
+		const reopened = await SegmentedConversationJournal.open({ directory, taskId: "task-1" })
+		expect((await reopened.project()).visibleMessages.map((entry) => entry.payloadRef)).toEqual([
+			"task",
+			"summary:1",
+			"pending",
+		])
+		// A retried landing replays the same record instead of writing a second one.
+		expect(await reopened.supersedeRange(replacement)).toMatchObject({ disposition: "existing" })
+		await expect(reopened.supersedeRange({ ...replacement, replacementRef: "summary:other" })).rejects.toThrow(
+			"operation conflict",
+		)
+	})
+
 	it("rejects a malformed complete record instead of skipping it", async () => {
 		const directory = await mkdtemp(join(tmpdir(), "dline-journal-"))
 		directories.push(directory)

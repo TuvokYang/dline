@@ -19,25 +19,29 @@ function assembly() {
 		},
 		execution: {
 			provider: {
-				async *start(input) {
-					yield {
-						kind: "final" as const,
-						turnId: input.turnId ?? "turn-1",
-						payloadRef: "answer:1",
-						turnPlan: { mode: "serial" as const, blocks: [] },
-					}
+				execution: {
+					async *start(input) {
+						yield {
+							kind: "final" as const,
+							turnId: input.turnId ?? "turn-1",
+							payloadRef: "answer:1",
+							turnPlan: { mode: "serial" as const, blocks: [] },
+						}
+					},
 				},
 			},
 			compose: { compose: async () => ({ draftRef: "draft:1" }) },
 			compaction: { run: async () => ({ resultRef: "compacted:1" }) },
 			dialog: {
-				prepare: async () => ({
-					journalRef: "journal:dialog",
-					journalWatermark: { epoch: 0, seq: 1 },
-					receiverGeneration: 1,
-					disposition: "created",
-				}),
-				reveal: async () => ({ disposition: "revealed" }),
+				execution: {
+					prepare: async () => ({
+						journalRef: "journal:dialog",
+						journalWatermark: { epoch: 0, seq: 1 },
+						receiverGeneration: 1,
+						disposition: "created",
+					}),
+					reveal: async () => ({ disposition: "revealed" }),
+				},
 			},
 			policy: { evaluate: async () => ({ approved: true }) },
 			tool: {

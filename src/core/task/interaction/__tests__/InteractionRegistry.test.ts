@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest"
+import { RECOVERY_ACTION_RULES } from "../../kernel/recovery"
 import type { InteractionKind } from "../Interaction"
 import { getInteraction, INTERACTION_KINDS } from "../InteractionRegistry"
 
@@ -27,6 +28,13 @@ const CASES: InteractionCase[] = [
 	{ kind: "qna_response", taskAsk: "qna_respond", actions: [], enterAction: "reply", continuation: "handler" },
 	{ kind: "generate_report", taskAsk: "generate_report", actions: [], enterAction: "reply", continuation: "handler" },
 	{ kind: "resume", taskAsk: "resume_task", actions: ["resume"], enterAction: "resume", continuation: "resume" },
+	{
+		kind: "cancelled_resume",
+		taskAsk: "resume_task",
+		actions: ["resume"],
+		enterAction: "resume",
+		continuation: "resume",
+	},
 	{ kind: "error_retry", taskAsk: "api_req_failed", actions: ["retry", "start_new_task"], enterAction: "retry" },
 	{
 		kind: "condense",
@@ -68,6 +76,25 @@ describe("InteractionRegistry", () => {
 		expect(new Set(INTERACTION_KINDS).size).toBe(INTERACTION_KINDS.length)
 		for (const kind of INTERACTION_KINDS) {
 			expect(getInteraction(kind).kind).toBe(kind)
+		}
+	})
+
+	it("renders a cancelled round through the resume presentation it shares", () => {
+		expect(getInteraction("cancelled_resume")).toMatchObject({
+			kind: "cancelled_resume",
+			taskAsk: "resume_task",
+			presentationKind: "resume",
+		})
+	})
+
+	it("offers the actions the kernel plans for a recovery dialog", () => {
+		// The kernel plans these rules without reading this registry, and the
+		// surface only renders actions present in both. A recovery dialog whose
+		// rules disagreed would render a Resume button that dispatches nothing.
+		for (const kind of ["resume", "cancelled_resume"] as const) {
+			expect(
+				getInteraction(kind).actions.map((item) => ({ actionId: item.type, payloadPolicy: item.payloadPolicy })),
+			).toEqual(RECOVERY_ACTION_RULES)
 		}
 	})
 

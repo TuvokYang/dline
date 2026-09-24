@@ -7,6 +7,7 @@ import { taskPhaseStillDelivers } from "@shared/InputQueueDelivery"
 import { BooleanRequest, StringRequest } from "@shared/proto/dline/common"
 import type { ModelInfo } from "@shared/proto/dline/models"
 import { AskResponseRequest, CompactTaskRequest } from "@shared/proto/dline/task"
+import { toProtoSemanticInputDocument } from "@shared/proto-conversions/input-semantics/document"
 import { resolveProfileModelInfo } from "@shared/providers/profile-model-info"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useApiProfiles } from "@/components/settings/providers/useApiProfiles"
@@ -14,6 +15,8 @@ import { useProviderModels } from "@/components/settings/providers/useProviderMo
 import { useExtensionState } from "@/context/ExtensionStateContext"
 import { useShowNavbar } from "@/context/PlatformContext"
 import { FileServiceClient, TaskServiceClient, UiServiceClient } from "@/services/grpc-client"
+import { composeSubmission, newComposerDocumentId, provenanceForRecalledDraft } from "@/services/input-semantics/paste-provenance"
+import { useInputSemanticCatalog } from "@/services/input-semantics/useInputSemanticCatalog"
 import { createInteractionDispatchGate } from "@/task-interaction/dispatch-gate"
 import { InteractionHost } from "@/task-interaction/InteractionHost"
 import { isPresentationKind } from "@/task-interaction/renderer-registry"
@@ -97,7 +100,13 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 	const forceTruncateTaskRpcPendingRef = useRef(false)
 	const [activityFilters, setActivityFilters] = useState<TaskActivityFilters>(DEFAULT_TASK_ACTIVITY_FILTERS)
 	const task = taskTitleMessage
-	const taskId = taskViewState?.taskId ?? currentTaskItem?.id
+	// A closed task leaves `currentTaskItem` pointing at the history entry it
+	// became, so falling back to it would keep claiming a task is open. The
+	// welcome composer submits a new task, and a stale id made that submission
+	// look like input for a task that is no longer there, so it was dropped.
+	// The canonical view is the authority on whether a task is open at all; the
+	// history item only supplies the id while the view is still catching up.
+	const taskId = taskViewState?.taskId ?? (task ? currentTaskItem?.id : undefined)
 	const contextCompactionActive = taskViewState?.contextCompaction?.active === true
 	const { activeCount } = useTaskActivities(taskId)
 	useEffect(() => {
@@ -156,7 +165,22 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 		expandedRows,
 		setExpandedRows,
 		textAreaRef,
+		pasteProvenance,
+		commitPasteProvenance,
 	} = chatState
+	const semanticCatalog = useInputSemanticCatalog()
+	// Every surface that submits the draft - composer, footer, resume - reads one
+	// derived document, so a held pasted candidate stays held whichever sends it.
+	const draftSemanticInput = useMemo(
+		() =>
+			composeSubmission({
+				text: inputValue,
+				spans: pasteProvenance.text === inputValue ? pasteProvenance.spans : [],
+				catalog: semanticCatalog,
+				documentId: newComposerDocumentId(),
+			}).semanticInput,
+		[inputValue, pasteProvenance, semanticCatalog],
+	)
 	const draftRevisionRef = useRef(0)
 	const previousDraftSourceRef = useRef({ inputValue, activeQuote, selectedImages, selectedFiles })
 	const previousDraftSource = previousDraftSourceRef.current
@@ -175,6 +199,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 		files: selectedFiles,
 		activeQuote,
 		ownerRevision: draftRevisionRef.current,
+		...(draftSemanticInput === undefined ? {} : { semanticInput: draftSemanticInput }),
 	}
 	const taskSessionRef = useRef({ taskId, epoch: 0 })
 	if (taskSessionRef.current.taskId !== taskId) {
@@ -214,11 +239,14 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 				return
 			}
 			setInputValue(settlement.draft.text)
+			// The restored text keeps what it held back, so an edit cannot turn a
+			// pasted fragment into a command (WS-041 AC-09).
+			commitPasteProvenance(provenanceForRecalledDraft(settlement.draft.text, settlement.draft.semanticInput))
 			setSelectedImages([...settlement.draft.images])
 			setSelectedFiles([...settlement.draft.files])
 			setActiveQuote(settlement.draft.activeQuote ?? null)
 		},
-		[setActiveQuote, setInputValue, setSelectedFiles, setSelectedImages],
+		[commitPasteProvenance, setActiveQuote, setInputValue, setSelectedFiles, setSelectedImages],
 	)
 	const retainSuccessorDraft = useCallback((transfer: PendingSuccessorDraftTransfer): void => {
 		setPendingSuccessorDraft(transfer)
@@ -530,6 +558,9 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 						text: capturedDraft.text,
 						images: capturedDraft.images,
 						files: capturedDraft.files,
+						...(capturedDraft.semanticInput === undefined
+							? {}
+							: { semanticInput: toProtoSemanticInputDocument(capturedDraft.semanticInput) }),
 					}),
 				)
 			} catch (error: unknown) {
@@ -621,9 +652,21 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 			}
 			const capturedDraft = captureInteractionDraft(currentDraftRef.current)
 			const trimmedText = capturedDraft.text.trim()
+			// The option is model-authored text: it is held literal, and the user's
+			// own text keeps whatever it still holds back (WS-041 AC-09).
+			const composed = composeSubmission({
+				text: capturedDraft.text,
+				spans: pasteProvenance.text === capturedDraft.text ? pasteProvenance.spans : [],
+				catalog: semanticCatalog,
+				documentId: newComposerDocumentId(),
+				literalPrefix: trimmedText ? `${option}: ` : option,
+				trim: true,
+			})
+			const { semanticInput: _previous, ...plainDraft } = capturedDraft
 			const responseDraft = {
-				...capturedDraft,
-				text: option + (trimmedText ? `: ${trimmedText}` : ""),
+				...plainDraft,
+				text: composed.text,
+				...(composed.semanticInput === undefined ? {} : { semanticInput: composed.semanticInput }),
 			}
 			const request = buildInteractionRequest(view, "reply", responseDraft)
 			if (!request) return
@@ -631,7 +674,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 			clearOwnedDraft(settlement)
 			await TaskServiceClient.dispatchInteraction(request)
 		},
-		[clearOwnedDraft, interactionSynchronized, taskViewState],
+		[clearOwnedDraft, interactionSynchronized, pasteProvenance, semanticCatalog, taskViewState],
 	)
 
 	const placeholderText = useMemo(() => {
@@ -738,6 +781,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 					placeholderText={placeholderText}
 					scrollBehavior={scrollBehavior}
 					selectFilesAndImages={selectFilesAndImages}
+					semanticCatalog={semanticCatalog}
 					shouldDisableFilesAndImages={
 						shouldDisableFilesAndImages ||
 						Boolean(

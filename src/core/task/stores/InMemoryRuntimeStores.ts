@@ -109,6 +109,10 @@ export class InMemoryConversationJournal implements ConversationJournal {
 		return this.record("rebase", input.operationId, { payloadRef: input.reasonRef, previousTail })
 	}
 
+	async rewind(input: { readonly operationId: string; readonly target: JournalWatermark }): Promise<JournalAppendResult> {
+		return this.record("rewind", input.operationId, { target: input.target })
+	}
+
 	async tombstone(input: { readonly operationId: string; readonly target: JournalWatermark }): Promise<JournalAppendResult> {
 		return this.record("tombstone", input.operationId, { target: input.target })
 	}
@@ -124,9 +128,13 @@ export class InMemoryConversationJournal implements ConversationJournal {
 		readonly operationId: string
 		readonly from: JournalWatermark
 		readonly to: JournalWatermark
+		readonly replacementRef?: string
 	}): Promise<JournalAppendResult> {
 		if (compareJournalWatermarks(input.from, input.to) > 0) throw new Error("Supersede range must be ordered")
-		return this.record("supersede_range", input.operationId, { range: { from: input.from, to: input.to } })
+		return this.record("supersede_range", input.operationId, {
+			range: { from: input.from, to: input.to },
+			...(input.replacementRef === undefined ? {} : { payloadRef: input.replacementRef }),
+		})
 	}
 
 	async checkpointMarker(input: {

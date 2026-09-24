@@ -56,6 +56,19 @@ export interface ToolPreflightAdmission<T> {
 	outcome: "admitted"
 	decision: ApprovalDecision
 	/**
+	 * The classification facts the decision was resolved from.
+	 *
+	 * The decision itself is an output: `scope` and `ceiling` say which rule
+	 * applied, not why it applied. Anything that must reach the same conclusion
+	 * again — notably the approval policy, which re-resolves from value facts
+	 * alone — needs these inputs, because re-resolving without them silently
+	 * reclassifies the call. A safe command would land in the "all commands"
+	 * scope and be refused under a grant that does cover it.
+	 */
+	scope?: PermissionScopeContext
+	/** Whether this call inherits an approval its parent already obtained. */
+	inheritsApproval?: boolean
+	/**
 	 * Absent when the decision needs no user-facing request, which is the case
 	 * for policy-approved calls and for tools that present their own
 	 * interaction.
@@ -151,6 +164,8 @@ export function admitToolCall<T>(
 	return {
 		outcome: "admitted",
 		decision,
+		scope: input.scope,
+		inheritsApproval: input.inheritsApproval,
 		// A decision that needs no user request carries no payload, so a caller
 		// cannot accidentally present one.
 		presentation: decision.kind === "manual" || decision.kind === "ai_approver" ? presentation : undefined,

@@ -112,6 +112,15 @@ export interface FlowState {
 	readonly provider?: ProviderFlowState
 	readonly compaction?: CompactionFlowState
 	readonly spawn?: SpawnFlowState
+	/**
+	 * How many turns in a row answered without calling any tool.
+	 *
+	 * Such a turn has no block that will ever report completion, so the round
+	 * only continues because the kernel says so. Counting the streak is what
+	 * bounds that continuation: a model that never calls a tool releases the
+	 * task back to the user instead of looping forever.
+	 */
+	readonly textOnlyTurnStreak?: number
 }
 
 export interface KernelBlock {
@@ -298,6 +307,15 @@ export type BackgroundEvent = EventBase & {
 export type ComposeEvent =
 	| (CommandFeedbackEvent & { readonly type: "compose.completed"; readonly draftRef: string; readonly turnId?: TurnId })
 	| (CommandFeedbackEvent & { readonly type: "compose.failed"; readonly message: string; readonly turnId?: TurnId })
+	/**
+	 * The round was given up before any request was drafted.
+	 *
+	 * A lifecycle command the round had to carry out first - a `/compact` the
+	 * user placed - did not complete, so there is nothing the user still wants
+	 * sent. Unlike a failure it is not an error to retry: the command's own
+	 * domain already told the user, and the task simply waits for them.
+	 */
+	| (CommandFeedbackEvent & { readonly type: "compose.withdrawn"; readonly reason: string; readonly turnId?: TurnId })
 export type CompactionEvent =
 	| (EventBase & {
 			readonly type: "compaction.requested"
@@ -445,10 +463,15 @@ export type DialogCommand =
 				readonly receiverGeneration: number
 				readonly revealKey: string
 			})
+/** Why a round was opened without the user submitting anything. */
+export type TurnContinuationReason = "no_tools_used"
+
 export type ComposeRoundCommand = CommandBase & {
 	readonly type: "compose.round"
 	readonly turnId?: TurnId
 	readonly admittedEntryIds: readonly EntryId[]
+	/** Present when the kernel continued the conversation on its own. */
+	readonly continuation?: TurnContinuationReason
 }
 export type CompactionRunCommand = CommandBase & {
 	readonly type: "compaction.run"
@@ -507,6 +530,15 @@ export interface HydrateInput {
 	readonly snapshot?: TaskState
 	readonly journalTail: { readonly epoch: number; readonly seq: number }
 	readonly openReason: "resume" | "crash_recovery" | "checkpoint_restore" | "new"
+	/**
+	 * Whether durable conversation history exists for this task.
+	 *
+	 * A task written before runtime snapshots existed, or one whose snapshot
+	 * write never landed, still has its conversation. That history is what makes
+	 * recovery possible without a snapshot; refusing such a task as read-only
+	 * leaves it permanently unresumable.
+	 */
+	readonly hasConversationHistory?: boolean
 }
 export type HydrateForm = "interrupted" | "completed" | "error" | "consumed" | "new"
 

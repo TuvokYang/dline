@@ -1,3 +1,4 @@
+import { planRecoveryDialog } from "../kernel/recovery"
 import type { EventSubmissionResult, RuntimeFacade } from "../runtime"
 import type { TaskUiAction } from "./TaskUiAction"
 
@@ -12,9 +13,24 @@ export interface TaskHaltRearmPort {
 	rearm(haltId: string): Promise<void>
 }
 
-/** Shows an accepted submission as the user's own chat row. */
+/**
+ * Shows an accepted submission as the user's own chat row.
+ *
+ * Presentation is split in two because the row's position is part of its
+ * meaning. Everything the row needs is resolved before the runtime is told to
+ * submit, so the row is ordered ahead of the work the submission causes; the
+ * commit is withheld until the submission is accepted, so a refused entry still
+ * leaves no message behind. Resolving after submission instead let the turn
+ * allocate its blocks first, which placed the user's own message after the
+ * replies to it.
+ */
 export interface TaskInputPresentationPort {
-	present(input: TaskInput): Promise<void>
+	prepare(input: TaskInput): Promise<TaskInputPresentationCommit>
+}
+
+/** A prepared chat row, not yet visible. */
+export interface TaskInputPresentationCommit {
+	commit(): Promise<void>
 }
 
 export class TaskShell {
@@ -31,6 +47,9 @@ export class TaskShell {
 	}
 
 	async submitInput(input: TaskInput): Promise<EventSubmissionResult> {
+		// Prepared before submission so the row precedes the work it causes, and
+		// committed only after acceptance so a refused entry leaves no message.
+		const presentation = await this.presentation?.prepare(input)
 		const submitted = await this.runtime.submit({
 			type: "user.submit",
 			generation: this.runtime.getState().generation,
@@ -39,9 +58,7 @@ export class TaskShell {
 			mode: input.mode,
 			sequence: input.sequence,
 		})
-		// The chat row follows acceptance, so a refused submission never leaves a
-		// message for an entry the task does not own.
-		if (submitted.kind !== "rejected") await this.presentation?.present(input)
+		if (submitted.kind !== "rejected") await presentation?.commit()
 		return submitted
 	}
 
@@ -88,6 +105,34 @@ export class TaskShell {
 		await this.runtime.waitForDomainCompletion(result.state.revision)
 		await this.runtime.waitForQuiescence()
 		await this.halt.rearm(haltId)
+		if (type === "user.cancel") await this.offerResume()
 		return result
+	}
+
+	/**
+	 * Offer the stopped task a way back to work.
+	 *
+	 * Cancelling only pauses: the conversation is intact and the user is
+	 * expected to resume, but nothing else plans that dialog. Hydration covers
+	 * the task that was reopened from a snapshot, so a round stopped inside a
+	 * live session was the one case left with no interaction at all — the
+	 * footer offered neither Cancel nor Resume and the task could not continue.
+	 *
+	 * Raised here rather than from the halt reducer because the dialog executor
+	 * is fenced for the whole halt: a command derived while stopping is dropped
+	 * and never retried. After rearm the same command runs normally.
+	 */
+	private async offerResume(): Promise<void> {
+		const state = this.runtime.getState()
+		// Terminal tasks have nothing to resume, and an existing primary dialog is
+		// already the question the user has to answer.
+		if (state.flow.phase !== "paused" || state.dialog.primary) return
+		const plan = planRecoveryDialog({
+			taskId: state.taskId,
+			revision: state.revision,
+			reason: "cancelled",
+			turnId: state.turn.turnId ?? `cancelled:${state.taskId}`,
+		})
+		await this.runtime.submit({ type: "dialog.requested", generation: state.generation, ...plan })
 	}
 }

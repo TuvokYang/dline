@@ -1,4 +1,4 @@
-import type { Command, DialogInteraction, DialogSlice, TaskEvent } from "../types"
+import type { Command, CompactionFlowState, DialogInteraction, DialogSlice, TaskEvent } from "../types"
 
 export interface DialogReduction {
 	readonly state: DialogSlice
@@ -74,6 +74,20 @@ function updateInteraction(
 			selectionRef: event.selectionRef,
 		},
 	}
+}
+
+/**
+ * Drop the review a compaction run opened once that run is abandoned.
+ *
+ * A run opens its review under its own compaction id, so the two share an
+ * identity and nothing else. The review has no receiver once the run is gone:
+ * leaving it primary kept the recovery offer from appearing and left a
+ * Condense button that could no longer condense anything.
+ */
+export function withoutAbandonedReview(dialog: DialogSlice, compaction: CompactionFlowState | undefined): DialogSlice {
+	if (compaction?.status !== "scheduled" && compaction?.status !== "running") return dialog
+	if (dialog.primary?.turnId !== compaction.compactionId) return dialog
+	return { ...dialog, primary: dialog.interrupted, interrupted: undefined }
 }
 
 export function reduceDialog(state: DialogSlice, event: TaskEvent, nextRevision: number): DialogReduction {

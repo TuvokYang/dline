@@ -1,3 +1,5 @@
+import type { CompactionConversationPort } from "../compaction/JournalCompactionConversation"
+import type { ToolApprovalFeedbackLedger } from "../executors/tool/ToolApprovalFeedbackLedger"
 import type { TaskState } from "../kernel"
 import type { MessageStateHandler } from "../message-state"
 import type { Task } from "../shell/Task"
@@ -19,6 +21,10 @@ export interface ActiveTaskSessionOptions {
 	readonly payloads: TaskPayloadStore
 	readonly inputs: TaskInputMaterializer
 	readonly owners: TaskSessionOwners
+	/** Where an approval response records the feedback its tool block must carry. */
+	readonly approvalFeedback: ToolApprovalFeedbackLedger
+	/** The conversation a compaction reads: exactly what the provider is sent. */
+	readonly conversation: CompactionConversationPort
 	readonly releases?: readonly ActiveTaskSessionReleasePort[]
 }
 
@@ -31,6 +37,8 @@ export class ActiveTaskSession {
 	readonly inputs: TaskInputMaterializer
 	readonly messages: MessageStateHandler
 	readonly owners: TaskSessionOwners
+	readonly approvalFeedback: ToolApprovalFeedbackLedger
+	readonly conversation: CompactionConversationPort
 	private disposePromise: Promise<void> | undefined
 
 	constructor(private readonly options: ActiveTaskSessionOptions) {
@@ -41,6 +49,8 @@ export class ActiveTaskSession {
 		this.inputs = options.inputs
 		this.owners = options.owners
 		this.messages = options.owners.messages
+		this.approvalFeedback = options.approvalFeedback
+		this.conversation = options.conversation
 	}
 
 	state(): Readonly<TaskState> {

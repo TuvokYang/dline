@@ -31,6 +31,9 @@ const mocks = vi.hoisted(() => {
 		clearExpandedRows: vi.fn(),
 		resetState: vi.fn(),
 		restoreDraft: vi.fn(),
+		// ChatState owns paste provenance; an empty record keeps typed drafts on the legacy path.
+		pasteProvenance: { text: "", spans: [] as { start: number; end: number }[] },
+		commitPasteProvenance: vi.fn(),
 	}
 	return {
 		chatState,
@@ -57,6 +60,10 @@ vi.mock("@/services/grpc-client", () => ({
 	FileServiceClient: {
 		copyToClipboard: vi.fn(async () => undefined),
 		selectFiles: vi.fn(async () => ({ values1: [], values2: [] })),
+	},
+	// ChatView owns the input semantic catalog subscription shared by every composer surface.
+	SlashServiceClient: {
+		subscribeToInputSemanticCatalog: vi.fn(() => () => undefined),
 	},
 	TaskServiceClient: {
 		askResponse: mocks.askResponse,

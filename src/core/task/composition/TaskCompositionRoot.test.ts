@@ -56,7 +56,11 @@ describe("TaskCompositionRoot", () => {
 		if (result.kind !== "ready") return
 		const payloadRef = await payloads.put(encodeTaskPayload({ kind: "user_input", text: "hello" }))
 		await result.task.start({ entryId: "entry-1", payloadRef })
-		await vi.waitFor(() => expect(provider).toHaveBeenCalledOnce())
+		// This provider answers every round in prose without calling a tool, which
+		// the kernel now continues through up to its bound. Asserting a single call
+		// asserted the old defect: the task stopped after one unanswered answer.
+		await vi.waitFor(() => expect(provider.mock.calls.length).toBeGreaterThan(1))
+		await vi.waitFor(() => expect(provider).toHaveBeenCalledTimes(4))
 		expect(Object.getOwnPropertyNames(Object.getPrototypeOf(result.task)).sort()).toEqual([
 			"cancel",
 			"constructor",

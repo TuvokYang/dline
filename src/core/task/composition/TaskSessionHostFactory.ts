@@ -1,10 +1,9 @@
-import type { ICheckpointManager } from "@integrations/checkpoints/types"
+import type { ConversationRewindPort, ICheckpointManager } from "@integrations/checkpoints/types"
 import type { CommandExecutor } from "@integrations/terminal/CommandExecutor"
 import type { ITerminalManager } from "@integrations/terminal/types"
 import type { BrowserSession } from "@services/browser/BrowserSession"
 import type { ClineExtensionContext } from "@shared/cline/context"
 import type { TaskActivityStore } from "../activity/TaskActivityStore"
-import type { ProductionCompactionService } from "../executors/compaction/ProductionCompactionAdapter"
 import type { SpawnChildLauncher } from "../executors/spawn/ProductionSpawnAdapter"
 import type { ToolDomainSurface } from "../executors/tool/ToolDomainSurface"
 import type { TaskInputQueueService } from "../input-queue/TaskInputQueueService"
@@ -34,6 +33,8 @@ export interface TaskSessionHostContext {
 	readonly toolState: DefaultToolHandlerState
 	readonly interactions: TaskInteractionOwner
 	readonly readState: () => Readonly<TaskState>
+	/** Rewinds this task's journal conversation, for a restore from a summary card. */
+	readonly conversationRewind?: ConversationRewindPort
 }
 
 export interface TaskSessionHostResources {
@@ -45,7 +46,6 @@ export interface TaskSessionHostResources {
 	readonly terminals?: ITerminalManager
 	readonly checkpoints?: ICheckpointManager
 	readonly surface: ToolDomainSurface
-	readonly compaction: ProductionCompactionService
 	readonly spawn: SpawnChildLauncher
 	readonly providerRequestRounds?: ProviderRequestRoundPort
 	readonly controllerContext?: ClineExtensionContext

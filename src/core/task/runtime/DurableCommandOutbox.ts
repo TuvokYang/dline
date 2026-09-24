@@ -1,7 +1,7 @@
 import type { Command } from "../kernel"
 import type { CommandPublicationStore } from "../stores/contracts"
-import type { CommandRouter } from "./CommandRouter"
-import type { CommitReceipt, RuntimeDiagnosticSink } from "./contracts"
+import { type CommandRouter, domainFor } from "./CommandRouter"
+import type { CommitReceipt, ExecutorDomain, RuntimeDiagnosticSink } from "./contracts"
 
 interface PendingCommand {
 	readonly command: Command
@@ -19,9 +19,19 @@ export function commandEffectKey(command: Command): string {
 	return command.commandId
 }
 
+/**
+ * Publishes durable commands to their executors, one queue per executor domain.
+ *
+ * Publication is ordered within a domain and independent across domains. A
+ * single shared queue deadlocks the turn-ending tools: such a tool stays running
+ * until the dialog it opened has been answered, so the dialog's reveal has to
+ * reach the dialog executor while the tool is still in flight. Behind one queue
+ * the reveal waited for the tool and the tool waited for the reveal, leaving the
+ * question rendered but permanently unanswerable.
+ */
 export class DurableCommandOutbox {
-	private readonly pending: PendingCommand[] = []
-	private drainPromise: Promise<void> | undefined
+	private readonly pending = new Map<ExecutorDomain, PendingCommand[]>()
+	private readonly drains = new Map<ExecutorDomain, Promise<void>>()
 
 	constructor(
 		private readonly router: CommandRouter,
@@ -31,7 +41,7 @@ export class DurableCommandOutbox {
 
 	persistableAfter(commands: readonly Command[]): readonly Command[] {
 		const haltRevision = commands.find((command) => command.type === "halt.stop")?.originRevision
-		const retained = this.pending
+		const retained = this.allPending()
 			.filter((entry) => !entry.fenced && (haltRevision === undefined || entry.command.originRevision >= haltRevision))
 			.map((entry) => entry.command)
 		const incoming = commands.filter((command) => !isImmediate(command))
@@ -49,44 +59,64 @@ export class DurableCommandOutbox {
 				this.dispatchImmediate(command)
 				continue
 			}
-			this.pending.push({ command, receipt, fenced: false })
+			this.queueFor(domainFor(command)).push({ command, receipt, fenced: false })
 		}
-		this.scheduleDrain()
+		this.scheduleAll()
 	}
 
 	restore(commands: readonly Command[], generation?: number): void {
-		const known = new Set(this.pending.map((entry) => commandEffectKey(entry.command)))
+		const known = new Set(this.allPending().map((entry) => commandEffectKey(entry.command)))
 		for (const command of commands) {
 			if (generation !== undefined && command.generation !== generation) continue
 			const effectKey = commandEffectKey(command)
 			if (known.has(effectKey)) continue
 			known.add(effectKey)
-			this.pending.push({
+			this.queueFor(domainFor(command)).push({
 				command,
 				receipt: { revision: command.originRevision, durable: Promise.resolve() },
 				fenced: false,
 			})
 		}
-		this.scheduleDrain()
+		this.scheduleAll()
 	}
 
 	async whenPublishedThrough(revision: number): Promise<void> {
-		while (this.pending.some((entry) => !entry.fenced && entry.command.originRevision <= revision)) {
-			this.scheduleDrain()
-			if (this.drainPromise) await this.drainPromise
+		while (this.allPending().some((entry) => !entry.fenced && entry.command.originRevision <= revision)) {
+			this.scheduleAll()
+			await this.settleActiveDrains()
 		}
 	}
 
 	async whenIdle(): Promise<void> {
-		while (this.drainPromise) await this.drainPromise
+		while (this.drains.size > 0) await this.settleActiveDrains()
 	}
 
 	get pendingCount(): number {
-		return this.pending.filter((entry) => !entry.fenced).length
+		return this.allPending().filter((entry) => !entry.fenced).length
+	}
+
+	/** Every queued entry across domains, for accounting that spans the whole outbox. */
+	private allPending(): readonly PendingCommand[] {
+		return [...this.pending.values()].flat()
+	}
+
+	private queueFor(domain: ExecutorDomain): PendingCommand[] {
+		const existing = this.pending.get(domain)
+		if (existing) return existing
+		const created: PendingCommand[] = []
+		this.pending.set(domain, created)
+		return created
+	}
+
+	/** Await the drains running now, without waiting on ones started afterwards. */
+	private async settleActiveDrains(): Promise<void> {
+		const active = [...this.drains.values()]
+		if (active.length === 0) return
+		await Promise.allSettled(active)
 	}
 
 	private fenceBefore(revision: number): void {
-		for (const entry of this.pending) {
+		for (const entry of this.allPending()) {
 			if (entry.command.originRevision < revision) entry.fenced = true
 		}
 	}
@@ -105,27 +135,33 @@ export class DurableCommandOutbox {
 		}
 	}
 
-	private scheduleDrain(): void {
-		if (this.drainPromise || this.pending.length === 0) return
-		this.drainPromise = Promise.resolve()
-			.then(() => this.drain())
-			.finally(() => {
-				this.drainPromise = undefined
-				if (this.pending.length > 0) this.scheduleDrain()
-			})
+	private scheduleAll(): void {
+		for (const domain of this.pending.keys()) this.scheduleDrain(domain)
 	}
 
-	private async drain(): Promise<void> {
-		while (this.pending.length > 0) {
-			const entry = this.pending[0]
+	private scheduleDrain(domain: ExecutorDomain): void {
+		const queue = this.pending.get(domain)
+		if (this.drains.has(domain) || !queue || queue.length === 0) return
+		const drain = Promise.resolve()
+			.then(() => this.drain(domain, queue))
+			.finally(() => {
+				this.drains.delete(domain)
+				if (queue.length > 0) this.scheduleDrain(domain)
+			})
+		this.drains.set(domain, drain)
+	}
+
+	private async drain(domain: ExecutorDomain, queue: PendingCommand[]): Promise<void> {
+		while (queue.length > 0) {
+			const entry = queue[0]
 			if (entry.fenced) {
-				this.pending.shift()
+				queue.shift()
 				continue
 			}
 			try {
 				await entry.receipt.durable
 				if (entry.fenced) {
-					this.pending.shift()
+					queue.shift()
 					continue
 				}
 				const effectKey = commandEffectKey(entry.command)
@@ -143,7 +179,8 @@ export class DurableCommandOutbox {
 					commandId: entry.command.commandId,
 				})
 			}
-			this.pending.shift()
+			queue.shift()
 		}
+		if (queue.length === 0) this.pending.delete(domain)
 	}
 }

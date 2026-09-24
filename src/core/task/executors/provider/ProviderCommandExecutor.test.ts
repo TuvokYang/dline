@@ -200,3 +200,131 @@ describe("ProviderCommandExecutor", () => {
 		expect(recorded.events).toEqual([])
 	})
 })
+
+describe("ProviderCommandExecutor request reporting", () => {
+	function reporter() {
+		const settle = vi.fn(async () => {})
+		const begin = vi.fn(async () => ({ settle }))
+		return { begin, settle, port: { begin } }
+	}
+
+	it("settles a completed request with the usage the turn reported", async () => {
+		const report = reporter()
+		const executor = new ProviderCommandExecutor(
+			"task-1",
+			{
+				start: () =>
+					chunks([
+						{ kind: "usage", usage: { inputTokens: 10, cacheReadTokens: 4, totalCost: 0.5 } },
+						{
+							kind: "final",
+							turnId: "turn-request",
+							payloadRef: "payload:final",
+							turnPlan: { mode: "serial", blocks: [] },
+						},
+						{ kind: "usage", usage: { outputTokens: 7, totalCost: 0.9 } },
+					]),
+			},
+			new InMemoryConversationJournal(),
+			new InMemoryTaskViewPort(),
+			recorder().sink,
+			undefined,
+			report.port,
+		)
+
+		await executor.execute(command)
+
+		expect(report.begin).toHaveBeenCalledWith({ turnId: "turn-request" })
+		// Token counts accumulate across chunks; a reported total cost replaces
+		// the previous total instead of being summed into a double charge.
+		expect(report.settle).toHaveBeenCalledWith({
+			usage: { inputTokens: 10, cacheReadTokens: 4, totalCost: 0.9, outputTokens: 7 },
+			outcome: "completed",
+		})
+	})
+
+	it("settles a failed request so its row cannot stay running", async () => {
+		const report = reporter()
+		const executor = new ProviderCommandExecutor(
+			"task-1",
+			{ start: () => chunks([]) },
+			new InMemoryConversationJournal(),
+			new InMemoryTaskViewPort(),
+			recorder().sink,
+			undefined,
+			report.port,
+		)
+
+		await executor.execute(command)
+
+		expect(report.settle).toHaveBeenCalledWith({ usage: undefined, outcome: "failed" })
+	})
+
+	it("settles a cancelled request as cancelled rather than failed", async () => {
+		let started!: () => void
+		const ready = new Promise<void>((resolve) => (started = resolve))
+		const report = reporter()
+		const executor = new ProviderCommandExecutor(
+			"task-1",
+			{
+				start: ({ signal }) => ({
+					async *[Symbol.asyncIterator]() {
+						started()
+						await new Promise<void>((_resolve, reject) =>
+							signal.addEventListener(
+								"abort",
+								() => reject(Object.assign(new Error("cancelled"), { name: "AbortError" })),
+								{ once: true },
+							),
+						)
+					},
+				}),
+			},
+			new InMemoryConversationJournal(),
+			new InMemoryTaskViewPort(),
+			recorder().sink,
+			undefined,
+			report.port,
+		)
+
+		const execution = executor.execute(command)
+		await ready
+		executor.cancel(command.commandId)
+		await execution
+
+		expect(report.settle).toHaveBeenCalledWith({ usage: undefined, outcome: "cancelled" })
+	})
+
+	it("keeps the turn when reporting throws", async () => {
+		const recorded = recorder()
+		const executor = new ProviderCommandExecutor(
+			"task-1",
+			{
+				start: () =>
+					chunks([
+						{
+							kind: "final",
+							turnId: "turn-request",
+							payloadRef: "payload:final",
+							turnPlan: { mode: "serial", blocks: [] },
+						},
+					]),
+			},
+			new InMemoryConversationJournal(),
+			new InMemoryTaskViewPort(),
+			recorded.sink,
+			undefined,
+			{
+				begin: async () => ({
+					settle: async () => {
+						throw new Error("reporting unavailable")
+					},
+				}),
+			},
+		)
+
+		await executor.execute(command)
+
+		expect(recorded.events).toEqual([expect.objectContaining({ type: "provider.turn_ready" })])
+	})
+})

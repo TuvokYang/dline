@@ -41,15 +41,20 @@ describe("HaltCommandExecutor", () => {
 		expect(events.every((event) => event.type === "halt.halted")).toBe(true)
 	})
 
-	it("bounds a stuck participant, keeps its fence, and waits for real quiescence before rearm", async () => {
+	// Replaces an earlier expectation that rearm waits for a stuck drain without
+	// any bound. That wait was the deadlock: a participant that never drains made
+	// rearm outlive a halt the kernel had already completed, so `terminate` never
+	// returned and every later lifecycle operation queued behind the unfinished
+	// teardown. The stop's own deadline now governs both paths, and the
+	// participant that missed it keeps its fence instead of being freed.
+	it("bounds a stuck participant and completes the halt without clearing its fence", async () => {
 		const failures: ParticipantId[] = []
 		const events: TaskEvent[] = []
-		let resolveDrain!: () => void
 		const provider: HaltParticipant = {
 			id: "provider",
 			fence: vi.fn(),
 			stop: vi.fn(),
-			drain: () => new Promise<void>((resolve) => (resolveDrain = resolve)),
+			drain: () => new Promise<void>(() => undefined),
 			rearm: vi.fn(),
 		}
 		const tool: HaltParticipant = {
@@ -57,6 +62,7 @@ describe("HaltCommandExecutor", () => {
 			fence: vi.fn(),
 			stop: vi.fn(),
 			drain: async () => undefined,
+			rearm: vi.fn(),
 		}
 		const executor = new HaltCommandExecutor(
 			[provider, tool],
@@ -71,13 +77,35 @@ describe("HaltCommandExecutor", () => {
 				expect.objectContaining({ type: "halt.halted", participantId: "tool" }),
 			]),
 		)
-		expect(failures).toEqual(["provider"])
-		let rearmed = false
-		const rearm = executor.rearm("halt-1").then(() => (rearmed = true))
-		await Promise.resolve()
-		expect(rearmed).toBe(false)
-		resolveDrain()
-		await rearm
+
+		await executor.rearm("halt-1")
+
+		expect(tool.rearm).toHaveBeenCalledWith("halt-1")
+		expect(provider.rearm).not.toHaveBeenCalled()
+		expect(failures).toEqual(["provider", "provider"])
+	})
+
+	it("rearms a participant that drains after its receipt but within the deadline", async () => {
+		const events: TaskEvent[] = []
+		let releaseDrain!: () => void
+		const drained = new Promise<void>((resolve) => (releaseDrain = resolve))
+		const provider: HaltParticipant = {
+			id: "provider",
+			fence: vi.fn(),
+			stop: () => void setTimeout(releaseDrain, 0),
+			drain: () => drained,
+			rearm: vi.fn(),
+		}
+		const executor = new HaltCommandExecutor(
+			[provider],
+			{ submit: async (event) => (events.push(event), { kind: "accepted" as const }) },
+			{ timeoutMs: 50 },
+		)
+
+		await executor.execute(command(["provider"]))
+		await executor.rearm("halt-1")
+
+		expect(events).toEqual([expect.objectContaining({ type: "halt.halted", participantId: "provider" })])
 		expect(provider.rearm).toHaveBeenCalledWith("halt-1")
 	})
 })

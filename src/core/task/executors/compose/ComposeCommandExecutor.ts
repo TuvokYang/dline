@@ -1,16 +1,29 @@
-import type { Command, ComposeRoundCommand } from "../../kernel"
+import type { Command, ComposeRoundCommand, TurnContinuationReason } from "../../kernel"
 import type { CommandExecutor } from "../../runtime"
 import { executorFailure, type HaltOrder, type HaltParticipant, isExecutionAbort, type TaskEventSink } from "../contracts"
 
 export interface ComposeRoundInput {
 	readonly turnId?: string
 	readonly admittedEntryIds: readonly string[]
+	/**
+	 * Why the kernel opened this round without a submission, when it did.
+	 *
+	 * The compose domain owns what a round contains, so the reason has to reach
+	 * it: a round continued after a toolless answer must tell the model why it
+	 * is being asked again, or the same answer simply repeats.
+	 */
+	readonly continuation?: TurnContinuationReason
 	readonly signal: AbortSignal
 }
 
-export interface ComposeRoundResult {
-	readonly draftRef: string
-}
+/**
+ * What composing one round produced.
+ *
+ * Either a draft for the provider, or the round given up before any draft:
+ * a lifecycle command the round had to carry out first did not complete, so
+ * nothing the user still wants remains to be sent.
+ */
+export type ComposeRoundResult = { readonly draftRef: string } | { readonly withdrawn: { readonly reason: string } }
 
 export interface ComposePort {
 	compose(input: ComposeRoundInput): Promise<ComposeRoundResult>
@@ -76,6 +89,7 @@ export class ComposeCommandExecutor implements CommandExecutor, HaltParticipant 
 			result = await this.port.compose({
 				turnId: command.turnId,
 				admittedEntryIds: command.admittedEntryIds,
+				...(command.continuation === undefined ? {} : { continuation: command.continuation }),
 				signal: controller.signal,
 			})
 		} catch (error) {
@@ -91,6 +105,17 @@ export class ComposeCommandExecutor implements CommandExecutor, HaltParticipant 
 			return
 		}
 		if (controller.signal.aborted) return
+		if ("withdrawn" in result) {
+			await this.events.submit({
+				type: "compose.withdrawn",
+				generation: command.generation,
+				commandId: command.commandId,
+				originRevision: command.originRevision,
+				turnId: command.turnId,
+				reason: result.withdrawn.reason,
+			})
+			return
+		}
 		if (!result.draftRef) throw new Error("MissingDraftRef")
 		await this.events.submit(this.completed(command, result.draftRef))
 	}

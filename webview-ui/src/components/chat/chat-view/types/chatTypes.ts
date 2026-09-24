@@ -27,6 +27,10 @@ export interface ChatState {
 	undoInputValue: () => string | undefined
 	redoInputValue: () => string | undefined
 	resetInputValue: (value?: string) => void
+	/** Pasted spans of `inputValue`; always describes exactly the current text. */
+	pasteProvenance: import("@/services/input-semantics/paste-provenance").PasteProvenance
+	/** Record the provenance of an edit the composer observed. */
+	commitPasteProvenance: (provenance: import("@/services/input-semantics/paste-provenance").PasteProvenance) => void
 	activeQuote: string | null
 	setActiveQuote: React.Dispatch<React.SetStateAction<string | null>>
 	isTextAreaFocused: boolean
@@ -65,11 +69,18 @@ export interface ChatState {
 	pendingScrollToMessage?: number | null
 }
 
+/** What a new task needs to compose its structured input (WS-041 AC-09). */
+export interface NewTaskComposition {
+	/** Pasted spans of the submitted text. */
+	readonly spans: readonly import("@/services/input-semantics/paste-provenance").TextSpan[]
+	readonly catalog: import("@shared/input-semantics/catalog").InputSemanticCatalog
+}
+
 /**
  * Message handlers interface
  */
 export interface MessageHandlers {
-	handleSendMessage: (text: string, images: string[], files: string[]) => Promise<void>
+	handleSendMessage: (text: string, images: string[], files: string[], composition?: NewTaskComposition) => Promise<void>
 	handleTaskCloseButtonClick: () => Promise<void>
 	startNewTask: () => Promise<void>
 }

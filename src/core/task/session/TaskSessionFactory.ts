@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto"
 import { composeTask, type TaskCompositionOptions } from "../composition/TaskCompositionRoot"
 import { ActiveTaskSession, type ActiveTaskSessionReleasePort } from "./ActiveTaskSession"
-import type { TaskInputAdmissionPort } from "./TaskInputAdmission"
+import type { LifecycleBarrierPort, TaskInputAdmissionPort } from "./TaskInputAdmission"
 import { type TaskInputIdentityPort, TaskInputMaterializer } from "./TaskInputMaterializer"
 import type { TaskSessionOwners } from "./TaskSessionOwners"
 
@@ -11,6 +11,8 @@ export interface OpenActiveTaskSessionOptions extends TaskCompositionOptions {
 	readonly releases?: readonly ActiveTaskSessionReleasePort[]
 	/** Reviews each submission before it is journaled; omitted only where no catalog exists. */
 	readonly inputAdmission?: TaskInputAdmissionPort
+	/** Carries out lifecycle commands such as `/compact`; absent means they stay prose. */
+	readonly lifecycleBarriers?: LifecycleBarrierPort
 }
 
 export type OpenActiveTaskSessionResult =
@@ -39,8 +41,11 @@ export async function openActiveTaskSession(options: OpenActiveTaskSessionOption
 				composed.payloads,
 				options.inputIdentity ?? createInputIdentity(options.taskId),
 				options.inputAdmission,
+				options.lifecycleBarriers,
 			),
 			owners: options.owners,
+			approvalFeedback: composed.approvalFeedback,
+			conversation: composed.conversation,
 			releases: options.releases,
 		}),
 	}

@@ -126,6 +126,10 @@ export class SegmentedConversationJournal implements ConversationJournal {
 		})
 	}
 
+	rewind(input: { readonly operationId: string; readonly target: JournalWatermark }): Promise<JournalAppendResult> {
+		return this.enqueue(() => this.record("rewind", input.operationId, { target: input.target }))
+	}
+
 	tombstone(input: { readonly operationId: string; readonly target: JournalWatermark }): Promise<JournalAppendResult> {
 		return this.enqueue(() => this.record("tombstone", input.operationId, { target: input.target }))
 	}
@@ -138,10 +142,14 @@ export class SegmentedConversationJournal implements ConversationJournal {
 		readonly operationId: string
 		readonly from: JournalWatermark
 		readonly to: JournalWatermark
+		readonly replacementRef?: string
 	}): Promise<JournalAppendResult> {
 		return this.enqueue(() => {
 			if (compareJournalWatermarks(input.from, input.to) > 0) throw new Error("Supersede range must be ordered")
-			return this.record("supersede_range", input.operationId, { range: { from: input.from, to: input.to } })
+			return this.record("supersede_range", input.operationId, {
+				range: { from: input.from, to: input.to },
+				...(input.replacementRef === undefined ? {} : { payloadRef: input.replacementRef }),
+			})
 		})
 	}
 

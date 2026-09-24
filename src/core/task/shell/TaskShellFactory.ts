@@ -25,6 +25,14 @@ export interface OpenTaskShellOptions {
 	readonly persistence?: TaskPersistenceAssembly
 	/** Shows accepted submissions in chat; absent in headless assemblies. */
 	readonly inputPresentation?: TaskInputPresentationPort
+	/**
+	 * Whether durable conversation history exists for this task.
+	 *
+	 * Supplied by the caller that owns message storage, so the shell stays
+	 * independent of where history lives. It lets a task written before runtime
+	 * snapshots existed still resume instead of being refused as read-only.
+	 */
+	readonly hasConversationHistory?: boolean
 }
 
 export type OpenTaskShellResult =
@@ -49,6 +57,29 @@ function mergeRestoredCommands(commands: readonly Command[]): readonly Command[]
 	return [...merged.values()]
 }
 
+/**
+ * Describe what recovery decided, so a task that reopens without offering a way
+ * back in can be told apart from one that had nothing to replay.
+ *
+ * Every later symptom of a failed reopen — no dialog, a disabled composer, a
+ * silent backend — looks identical from the outside. Only the hydrate outcome
+ * distinguishes them, and it is otherwise never recorded.
+ */
+function describeHydrate(form: HydrateForm, state: TaskState, commands: readonly Command[]): string {
+	const types = commands.map((command) => command.type)
+	return [
+		`form=${form}`,
+		`flow=${state.flow.phase}`,
+		`revision=${state.revision}`,
+		`generation=${state.generation}`,
+		`primary=${state.dialog.primary ? `${state.dialog.primary.kind}:${state.dialog.primary.status}` : "none"}`,
+		// The anchor row is matched by this id, so a restored dialog that no row
+		// carries is indistinguishable from a missing dialog without it.
+		`primaryInteraction=${state.dialog.primary?.interactionId ?? "none"}`,
+		`commands=${types.length === 0 ? "none" : types.join(",")}`,
+	].join(" ")
+}
+
 export async function openTaskShell(options: OpenTaskShellOptions): Promise<OpenTaskShellResult> {
 	const persistence = options.persistence ?? (await openTaskPersistence(options.taskId))
 	const durable = await persistence.ports.vault.load(options.taskId)
@@ -57,6 +88,7 @@ export async function openTaskShell(options: OpenTaskShellOptions): Promise<Open
 		snapshot: durable?.state,
 		journalTail: persistence.ports.journal.watermark(),
 		openReason: options.openReason,
+		hasConversationHistory: options.hasConversationHistory,
 	})
 	if (restored.kind === "read_only") return restored
 
@@ -66,6 +98,13 @@ export async function openTaskShell(options: OpenTaskShellOptions): Promise<Open
 			? options.execution({ initialState: restored.state, persistence })
 			: options.execution
 	const restoredOutbox = mergeRestoredCommands([...(durable?.outbox ?? []), ...restored.initialCommands])
+	options.diagnostics?.record({
+		source: "hydrate",
+		code: "hydrated",
+		severity: "observation",
+		message: describeHydrate(restored.form, restored.state, restoredOutbox),
+		revision: restored.state.revision,
+	})
 	const assembly = createTaskExecutorAssembly({
 		taskId: options.taskId,
 		initialState: restored.state,

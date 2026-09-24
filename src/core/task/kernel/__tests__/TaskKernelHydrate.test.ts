@@ -85,4 +85,27 @@ describe("task kernel hydrate forms", () => {
 		const result = hydrate({ taskId: "task-1", snapshot, journalTail: { epoch: 0, seq: 10 }, openReason: "resume" })
 		expect(result).toMatchObject({ kind: "read_only", reason: "snapshot_invalid", diagnostics: [{ code }] })
 	})
+
+	// A task written before runtime snapshots existed, or one whose snapshot write
+	// never landed, still has its conversation. Refusing it left the surface
+	// offering Resume while every promotion failed with `snapshot_missing`.
+	it.each([
+		["conversation history", { hasConversationHistory: true, journalTail: { epoch: 0, seq: 0 } }],
+		["journal content", { hasConversationHistory: false, journalTail: { epoch: 0, seq: 7 } }],
+	] as const)("recovers a snapshotless task that still has %s", (_name, evidence) => {
+		const result = hydrate({ taskId: "task-1", openReason: "resume", ...evidence })
+
+		expect(result.kind).toBe("ready")
+		if (result.kind !== "ready") throw new Error(result.diagnostics[0]?.message)
+		expect(result.form).toBe("interrupted")
+		expect(result.state.flow).toEqual({ phase: "paused" })
+		expect(result.state.dialog.primary).toMatchObject({ kind: "resume", status: "planned" })
+		expect(result.diagnostics.some((diagnostic) => diagnostic.code === "snapshot_missing")).toBe(true)
+	})
+
+	it("still refuses a task with neither snapshot nor any history", () => {
+		const result = hydrate({ taskId: "task-1", journalTail: { epoch: 0, seq: 0 }, openReason: "resume" })
+
+		expect(result).toMatchObject({ kind: "read_only", reason: "snapshot_missing" })
+	})
 })

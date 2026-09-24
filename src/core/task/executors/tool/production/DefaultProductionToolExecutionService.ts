@@ -1,5 +1,5 @@
 import type { ToolUse } from "@core/assistant-message"
-import { serializeDurableToolResult } from "../../../DurableToolResult"
+import { serializeDurableToolResult, toolResultReplayOf } from "../../../DurableToolResult"
 import type { ToolInvocationEnvelope } from "../../../stores/payload/TaskPayloadEnvelopes"
 import { normalizeToolExecutionResult, type ToolPostCommitDirective } from "../../../tools/ToolExecutionResult"
 import type { ToolExecutorCoordinator } from "../../../tools/ToolExecutorCoordinator"
@@ -63,12 +63,15 @@ export class DefaultProductionToolExecutionService implements ProductionToolExec
 		const config = this.options.config.create({ ...input, coordinator: this.options.runtime.coordinator })
 		const result = normalizeToolExecutionResult(await this.options.runtime.execute(config, block))
 		return {
-			content: serializeDurableToolResult({
-				type: "tool_result",
-				function_id: block.function_id,
-				dline_tid: block.dline_tid,
-				content: result.response,
-			}),
+			content: serializeDurableToolResult(
+				{
+					type: "tool_result",
+					function_id: block.function_id,
+					dline_tid: block.dline_tid,
+					content: result.response,
+				},
+				toolResultReplayOf(input.invocation),
+			),
 			...(result.postCommit === undefined ? {} : { postCommit: result.postCommit }),
 		}
 	}

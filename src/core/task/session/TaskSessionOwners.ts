@@ -3,6 +3,7 @@ import type { ICheckpointManager } from "@integrations/checkpoints/types"
 import type { CommandExecutor } from "@integrations/terminal/CommandExecutor"
 import type { BrowserSession } from "@services/browser/BrowserSession"
 import type { TaskActivityStore } from "../activity/TaskActivityStore"
+import type { CompactionRequestScopes } from "../compaction/CompactionRequestScopes"
 import type { TaskInputQueueService } from "../input-queue/TaskInputQueueService"
 import type { MessageStateHandler } from "../message-state"
 import type { ApiRateSnapshot } from "../performance/api-rate-tracker"
@@ -11,6 +12,7 @@ import type { TaskPromptLifecycle } from "../prompt/TaskPromptLifecycle"
 import type { PromptCacheHealthTracker } from "../prompt-cache/PromptCacheHealthTracker"
 import type { TaskStateManager } from "../TaskStateManager"
 import type { DefaultToolHandlerState } from "../tools/state/ToolHandlerState"
+import type { PresentationIdSequence } from "./PresentationIdSequence"
 import type { TaskApiHandlerOwner } from "./TaskApiHandlerOwner"
 import type { TaskInteractionOwner } from "./TaskInteractionOwner"
 import type { TaskToolExecutionOwner } from "./TaskToolExecutionOwner"
@@ -40,4 +42,8 @@ export interface TaskSessionOwners {
 	readonly apiRateSnapshot?: () => ApiRateSnapshot
 	readonly queryRateMetrics?: (query: TaskRateMetricsQuery) => Promise<TaskRateMetricsQueryResult>
 	readonly inputQueue?: TaskInputQueueService
+	/** The session's single chat-row id sequence; a host that adds a row must draw from it to keep causal order. */
+	readonly nextPresentationId?: PresentationIdSequence
+	/** Handlers a compaction run is sent under instead of the task's own; absent means every run uses the task's handler. */
+	readonly compactionScopes?: CompactionRequestScopes
 }

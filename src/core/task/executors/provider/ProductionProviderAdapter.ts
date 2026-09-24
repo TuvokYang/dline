@@ -61,6 +61,9 @@ export class ProductionProviderAdapter implements ProviderExecutionPort {
 					kind: "partial",
 					transientId: chunk.transientId,
 					payloadRef: await this.options.payloads.put(encodeTaskPayload(payload)),
+					// Carried beside the ref so presentation does not have to read the
+					// payload store back on every streamed chunk.
+					text: chunk.text,
 					...(chunk.projection === undefined ? {} : { projection: chunk.projection }),
 				}
 				continue
@@ -88,6 +91,7 @@ export class ProductionProviderAdapter implements ProviderExecutionPort {
 				turnId: chunk.turnId,
 				...(chunk.transientId === undefined ? {} : { transientId: chunk.transientId }),
 				payloadRef: await this.options.payloads.put(encodeTaskPayload(finalPayload)),
+				...(chunk.text === undefined ? {} : { text: chunk.text }),
 				turnPlan,
 			}
 		}

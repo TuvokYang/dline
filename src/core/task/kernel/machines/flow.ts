@@ -1,20 +1,54 @@
-import type { Command, FlowState, TaskEvent } from "../types"
+import type { Command, CompactionFlowState, FlowState, TaskEvent } from "../types"
 
 export interface FlowReduction {
 	readonly state: FlowState
 	readonly commands: readonly Command[]
 }
 
+/**
+ * Retire a compaction whose executor can no longer report back.
+ *
+ * A halt advances the generation and a restart replaces the process, so the
+ * run's own terminal event is refused or never sent. Left `running`, the slot
+ * refused every later request as a duplicate and the task could never compact
+ * again. Expired, not failed: nothing went wrong with the summary, the run was
+ * simply abandoned, and nothing it produced was landed.
+ */
+export function expireAbandonedCompaction(
+	compaction: CompactionFlowState | undefined,
+	message: string,
+): CompactionFlowState | undefined {
+	if (compaction?.status !== "scheduled" && compaction?.status !== "running") return compaction
+	return { ...compaction, status: "expired", message }
+}
+
 export function reduceFlow(state: FlowState, event: TaskEvent): FlowReduction {
 	switch (event.type) {
 		case "lifecycle.open":
 			return { state: state.phase === "idle" ? { ...state, phase: "initializing" } : state, commands: [] }
+		case "user.submit":
+			// A submission is what ends a pause. Leaving the phase at `paused` let
+			// the round it opens start and then be refused at `compose.completed`,
+			// so answering Resume produced no reply at all.
+			// It also ends any text-only streak: the user spoke, so whatever bound
+			// the previous streak no longer applies to the round they just opened.
+			return {
+				state:
+					state.phase === "paused"
+						? { ...state, phase: "initializing", textOnlyTurnStreak: 0 }
+						: { ...state, textOnlyTurnStreak: 0 },
+				commands: [],
+			}
 		case "provider.turn_ready":
 			return {
 				state: {
 					...state,
 					phase: "running",
 					error: undefined,
+					// A turn that planned no block ends with nothing that could
+					// report completion, so the streak is what later decides
+					// whether the round is continued or handed back to the user.
+					textOnlyTurnStreak: event.turnPlan.blocks.length === 0 ? (state.textOnlyTurnStreak ?? 0) + 1 : 0,
 					provider: state.provider && {
 						...state.provider,
 						status: "completed",
@@ -44,6 +78,17 @@ export function reduceFlow(state: FlowState, event: TaskEvent): FlowReduction {
 					phase: "error",
 					error: event.message,
 					compose: state.compose && { ...state.compose, status: "failed" },
+				},
+				commands: [],
+			}
+		case "compose.withdrawn":
+			// Waiting, not error: nothing failed that a retry could fix, and the
+			// user decides what the task does next.
+			return {
+				state: {
+					...state,
+					phase: "waiting",
+					compose: state.compose && { ...state.compose, status: "cancelled" },
 				},
 				commands: [],
 			}

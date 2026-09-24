@@ -28,6 +28,29 @@ interface ActiveDialogCommand {
 	readonly completion: Promise<void>
 }
 
+/**
+ * The receivers that depend on an answer this domain can deliver.
+ *
+ * A halt fences dialog admission, so a caller parked on its own request can
+ * never be resolved. It has to be failed instead, because a turn-ending tool
+ * waiting this way is in-flight work of the tool domain: leaving it parked made
+ * the stop wait for an answer the same stop had made impossible.
+ *
+ * Suspension covers the whole stop rather than just the moment it runs. A tool
+ * that was busy elsewhere when the stop arrived — finishing a checkpoint, for
+ * instance — asks for its dialog afterwards, and a receiver admitted then would
+ * wait exactly as forever as the ones the stop just released.
+ *
+ * Declared as a port because who is waiting is session state, not dialog
+ * plumbing, and a headless assembly has no waiters at all.
+ */
+export interface DialogWaiterPort {
+	/** Fail the current receivers and refuse new ones until the halt retires. */
+	suspend(reason: string): void
+	/** Accept receivers again, because the task may resume and ask anew. */
+	resume(): void
+}
+
 /** Executes durable dialog prepare/reveal phases without waiting for a user response. */
 export class DialogCommandExecutor implements CommandExecutor, HaltParticipant {
 	readonly domain = "dialog" as const
@@ -38,6 +61,7 @@ export class DialogCommandExecutor implements CommandExecutor, HaltParticipant {
 	constructor(
 		private readonly port: DialogExecutionPort,
 		private readonly events: TaskEventSink,
+		private readonly waiters?: DialogWaiterPort,
 	) {}
 
 	execute(command: Command): Promise<void> {
@@ -56,6 +80,10 @@ export class DialogCommandExecutor implements CommandExecutor, HaltParticipant {
 
 	stop(order: HaltOrder): void {
 		for (const active of this.active.values()) active.controller.abort(`dialog_${order.reason}`)
+		// Released here rather than at task disposal: disposal runs after the stop
+		// completes, so a receiver freed only then would be freed by a stop that
+		// could never finish while it waited.
+		this.waiters?.suspend(`dialog_${order.reason}`)
 	}
 
 	async drain(_order: HaltOrder): Promise<void> {
@@ -63,7 +91,9 @@ export class DialogCommandExecutor implements CommandExecutor, HaltParticipant {
 	}
 
 	rearm(haltId: string): void {
-		if (this.fencedHaltId === haltId) this.fencedHaltId = undefined
+		if (this.fencedHaltId !== haltId) return
+		this.fencedHaltId = undefined
+		this.waiters?.resume()
 	}
 
 	private async run(command: DialogCommand, controller: AbortController): Promise<void> {

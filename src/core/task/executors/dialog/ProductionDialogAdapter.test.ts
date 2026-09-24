@@ -1,7 +1,24 @@
-import { describe, expect, it } from "vitest"
+import { createHash } from "node:crypto"
+import { describe, expect, it, vi } from "vitest"
 import { createInitialTaskState, type DialogCommand } from "../../kernel"
-import { InMemoryConversationJournal, InMemoryTaskViewPort } from "../../stores"
+import { InMemoryConversationJournal, InMemoryTaskViewPort, type TaskPayloadStore } from "../../stores"
+import { decodeTaskPayload } from "../../stores/payload/TaskPayloadCodec"
 import { ProductionDialogAdapter } from "./ProductionDialogAdapter"
+
+/** Content-addressed like the production store, so an identical body keeps one reference. */
+class MemoryPayloads implements TaskPayloadStore {
+	private readonly values = new Map<string, Uint8Array>()
+	async put(payload: Uint8Array): Promise<string> {
+		const ref = `sha256:${createHash("sha256").update(payload).digest("hex")}`
+		this.values.set(ref, payload)
+		return ref
+	}
+	async read(ref: string): Promise<Uint8Array> {
+		const value = this.values.get(ref)
+		if (!value) throw new Error(`MissingPayload:${ref}`)
+		return value
+	}
+}
 
 const base = {
 	commandId: "dialog-1",
@@ -41,7 +58,13 @@ describe("ProductionDialogAdapter", () => {
 		const journal = new InMemoryConversationJournal()
 		const taskView = new InMemoryTaskViewPort()
 		const state = createInitialTaskState("task-1")
-		const adapter = new ProductionDialogAdapter({ taskId: "task-1", journal, taskView, readState: () => state })
+		const adapter = new ProductionDialogAdapter({
+			taskId: "task-1",
+			journal,
+			payloads: new MemoryPayloads(),
+			taskView,
+			readState: () => state,
+		})
 
 		await expect(adapter.prepare(prepare())).resolves.toMatchObject({
 			journalRef: "journal:0:1",
@@ -58,5 +81,82 @@ describe("ProductionDialogAdapter", () => {
 				projection: expect.objectContaining({ kind: "dialog_reveal", interactionId: "interaction-1" }),
 			}),
 		])
+	})
+
+	it("stores a presentation body so the journal always references durable content", async () => {
+		// An approval is planned from the turn, so its presentation arrives as the
+		// body. Writing that body straight into the journal made the next provider
+		// request reject the reference and fail the whole turn.
+		const journal = new InMemoryConversationJournal()
+		const payloads = new MemoryPayloads()
+		const state = createInitialTaskState("task-1")
+		const adapter = new ProductionDialogAdapter({
+			taskId: "task-1",
+			journal,
+			payloads,
+			taskView: new InMemoryTaskViewPort(),
+			readState: () => state,
+		})
+
+		await adapter.prepare(prepare())
+
+		const entry = await journal.findByOperation(base.prepareKey)
+		expect(entry?.payloadRef).toMatch(/^sha256:[a-f0-9]{64}$/)
+		expect(decodeTaskPayload(await payloads.read(entry?.payloadRef ?? ""))).toMatchObject({
+			kind: "dialog_presentation",
+			presentationKind: "followup",
+			body: "payload:question-1",
+		})
+	})
+
+	it("keeps an existing content-addressed presentation reference", async () => {
+		const journal = new InMemoryConversationJournal()
+		const payloads = new MemoryPayloads()
+		const state = createInitialTaskState("task-1")
+		const storedRef = `sha256:${"a".repeat(64)}`
+		const adapter = new ProductionDialogAdapter({
+			taskId: "task-1",
+			journal,
+			payloads,
+			taskView: new InMemoryTaskViewPort(),
+			readState: () => state,
+		})
+
+		await adapter.prepare({ ...prepare(), presentationRef: storedRef })
+
+		expect((await journal.findByOperation(base.prepareKey))?.payloadRef).toBe(storedRef)
+	})
+
+	it("writes the anchor row once, before the reveal is projected", async () => {
+		const journal = new InMemoryConversationJournal()
+		const taskView = new InMemoryTaskViewPort()
+		const state = createInitialTaskState("task-1")
+		// The surface refuses to answer a dialog whose row is missing, so the
+		// anchor has to exist before the projection announces the reveal.
+		let transientCountAtAnchor = -1
+		const writeAnchor = vi.fn(async () => {
+			transientCountAtAnchor = taskView.transient.length
+		})
+		const adapter = new ProductionDialogAdapter({
+			taskId: "task-1",
+			journal,
+			payloads: new MemoryPayloads(),
+			taskView,
+			readState: () => state,
+			writeAnchor,
+		})
+
+		await adapter.prepare(prepare())
+		await adapter.reveal(reveal())
+		await adapter.reveal(reveal())
+
+		expect(writeAnchor).toHaveBeenCalledOnce()
+		expect(writeAnchor).toHaveBeenCalledWith({
+			interactionId: "interaction-1",
+			kind: "followup",
+			body: "payload:question-1",
+		})
+		expect(transientCountAtAnchor).toBe(0)
+		expect(taskView.transient).toHaveLength(1)
 	})
 })

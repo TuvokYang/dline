@@ -8,7 +8,7 @@ import type { TaskCallbacks } from "@core/task/tools/types/TaskConfig"
 import type { WorkspaceRootManager } from "@core/workspace/WorkspaceRootManager"
 import { buildCheckpointManager } from "@integrations/checkpoints/factory"
 import type { TaskFileTracker } from "@integrations/checkpoints/TaskFileTracker"
-import type { ICheckpointManager } from "@integrations/checkpoints/types"
+import type { ConversationRewindPort, ICheckpointManager } from "@integrations/checkpoints/types"
 import type { DiffViewProvider } from "@integrations/editor/DiffViewProvider"
 import { Logger } from "@shared/services/Logger"
 
@@ -24,6 +24,7 @@ export interface ControllerTaskCheckpointOwnerOptions {
 	readonly diffViewProvider: DiffViewProvider
 	readonly say: TaskCallbacks["say"]
 	readonly workspaceManager?: WorkspaceRootManager
+	readonly conversationRewind?: ConversationRewindPort
 }
 
 /**
@@ -50,6 +51,7 @@ export class ControllerTaskCheckpointOwner {
 			taskState: options.toolState,
 			taskFileTracker: options.taskFileTracker,
 			workspaceManager: options.workspaceManager,
+			conversationRewind: options.conversationRewind,
 			updateTaskHistory: (historyItem) => options.controller.updateTaskHistory(historyItem),
 			say: (...args) => options.say(...(args as Parameters<TaskCallbacks["say"]>)),
 			cancelTask: () => options.controller.cancelTask(),
@@ -70,7 +72,10 @@ export class ControllerTaskCheckpointOwner {
 	 */
 	private async reopenAfterChatRestore(input: { apiIndex: number; editedText?: string }): Promise<void> {
 		Logger.debug(`[Task ${this.options.taskId}] Reopening after checkpoint chat restore at apiIndex=${input.apiIndex}`)
-		await this.options.controller.reinitExistingTaskFromId(this.options.taskId)
+		// Reopened as an interactive session that knows it was restored: a history
+		// display would leave nothing to resume, and an ordinary resume would plan
+		// whatever dialog the rewound conversation last ended in.
+		await this.options.controller.reopenTaskForCheckpointRestore(this.options.taskId)
 		const session = this.options.controller.task
 		if (!session || session.taskId !== this.options.taskId) {
 			throw new Error(`Checkpoint chat restore could not reopen task ${this.options.taskId}`)

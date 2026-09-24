@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest"
+import { InMemoryToolApprovalFeedbackLedger } from "../executors/tool/ToolApprovalFeedbackLedger"
 import { createInitialTaskState } from "../kernel"
 import type { MessageStateHandler } from "../message-state"
 import type { Task } from "../shell/Task"
@@ -10,6 +11,11 @@ import type { TaskSessionOwners } from "./TaskSessionOwners"
 
 function createOwners(): TaskSessionOwners {
 	return { messages: {} as MessageStateHandler } as TaskSessionOwners
+}
+
+function createConversation() {
+	// The port returns the source with the span it fixes; an empty conversation has no span.
+	return { read: async () => ({ messages: [] }) }
 }
 
 describe("ActiveTaskSession", () => {
@@ -25,6 +31,8 @@ describe("ActiveTaskSession", () => {
 			payloads,
 			inputs,
 			owners: createOwners(),
+			approvalFeedback: new InMemoryToolApprovalFeedbackLedger(),
+			conversation: createConversation(),
 		})
 
 		expect(session.state()).toBe(state)
@@ -46,6 +54,8 @@ describe("ActiveTaskSession", () => {
 			payloads,
 			inputs: new TaskInputMaterializer(payloads, { nextEntryId: () => "entry-1", nextSequence: () => 0 }),
 			owners: createOwners(),
+			approvalFeedback: new InMemoryToolApprovalFeedbackLedger(),
+			conversation: createConversation(),
 			releases: [{ release: async () => void order.push("first") }, { release: async () => void order.push("second") }],
 		})
 

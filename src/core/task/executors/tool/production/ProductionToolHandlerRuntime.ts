@@ -17,6 +17,26 @@ export interface ProductionToolPlan {
 	readonly approval: ProviderTurnApproval
 }
 
+/**
+ * Project one admission's classification facts into the policy's fact map.
+ *
+ * Only defined facts are copied. The resolver distinguishes "absent" from
+ * `false` for the tool-local gate, so writing a default would turn an
+ * unconstrained call into an explicitly denied one.
+ */
+function riskFacts(
+	block: ToolUse,
+	admission: Extract<ReturnType<ToolExecutorCoordinator["prepareAdmission"]>, { outcome: "admitted" }>,
+): Record<string, string | number | boolean> {
+	const facts: Record<string, string | number | boolean> = { toolName: block.name }
+	const scope = admission.scope
+	if (scope?.isExternalPath !== undefined) facts.isExternalPath = scope.isExternalPath
+	if (scope?.isSafeCommand !== undefined) facts.isSafeCommand = scope.isSafeCommand
+	if (scope?.isToolAutoApproveEnabled !== undefined) facts.isToolAutoApproveEnabled = scope.isToolAutoApproveEnabled
+	if (admission.inheritsApproval !== undefined) facts.inheritsApproval = admission.inheritsApproval
+	return facts
+}
+
 function approval(block: ToolUse, result: ReturnType<ToolExecutorCoordinator["prepareAdmission"]>): ProviderTurnApproval {
 	if (result.outcome === "rejected" || result.decision.kind === "none") return { kind: "none" }
 	const interactionId = `approval:${block.dline_tid}`
@@ -25,10 +45,13 @@ function approval(block: ToolUse, result: ReturnType<ToolExecutorCoordinator["pr
 			kind: "automatic",
 			interactionId,
 			policyRevision: 0,
-			// The policy re-resolves the decision from value facts alone, so the tool
-			// identity must travel with them; without it the adapter cannot tell which
-			// permission scope the settings snapshot applies to.
-			riskFacts: { toolName: block.name, scope: result.decision.scope, ceiling: result.decision.ceiling },
+			// The policy re-resolves the decision from value facts alone, so it needs
+			// the same inputs this admission used: the tool identity plus the facts
+			// that classify the call. Sending the resolved scope instead would send
+			// an output as an input, and the policy would reclassify the call from an
+			// empty context: a safe command would be judged as an arbitrary one and
+			// refused under a grant that does cover it.
+			riskFacts: riskFacts(block, result),
 		}
 	}
 	return {
@@ -36,7 +59,10 @@ function approval(block: ToolUse, result: ReturnType<ToolExecutorCoordinator["pr
 		interactionId,
 		presentationRef: result.presentation?.body ?? JSON.stringify(block.params),
 		actionRules: [
-			{ actionId: "approve", payloadPolicy: "none" },
+			// Approving with a note is a normal workflow ("approve, but read it this
+			// way"), so approve carries the composer draft exactly like reject does.
+			// Declaring it as `none` made the surface drop what the user typed.
+			{ actionId: "approve", payloadPolicy: "draft" },
 			{ actionId: "reject", payloadPolicy: "draft" },
 		],
 	}

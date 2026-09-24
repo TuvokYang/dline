@@ -106,7 +106,11 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
 
 		await commitCompletion({
 			publishResult: () => config.callbacks.say("completion_result", result, undefined, undefined, false, block.ts),
-			saveCheckpoint: (completionMessageTs) => config.callbacks.saveCheckpoint(true, completionMessageTs),
+			// A task surface without workspace history has nothing to commit, so
+			// completion stays available to one that only produces an answer.
+			saveCheckpoint: async (completionMessageTs) => {
+				await config.callbacks.saveCheckpoint?.(true, completionMessageTs)
+			},
 			markWorkspaceChanges: (completionMessageTs) => this.markCompletionWorkspaceChanges(config, completionMessageTs),
 			captureTelemetry: () => telemetryService.captureTaskCompleted(config.ulid ?? "", getTaskCompletionTelemetry(config)),
 		})

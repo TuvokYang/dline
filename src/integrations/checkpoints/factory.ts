@@ -6,7 +6,7 @@ import { WorkspaceRootManager } from "@core/workspace/WorkspaceRootManager"
 import { type CheckpointRuntimeState, createTaskCheckpointManager } from "@integrations/checkpoints"
 import { MultiRootCheckpointManager } from "@integrations/checkpoints/MultiRootCheckpointManager"
 import { TaskFileTracker } from "@integrations/checkpoints/TaskFileTracker"
-import type { ICheckpointManager } from "@integrations/checkpoints/types"
+import type { ConversationRewindPort, ICheckpointManager } from "@integrations/checkpoints/types"
 import type { DiffViewProvider } from "@integrations/editor/DiffViewProvider"
 import { StateManager } from "@/core/storage/StateManager"
 
@@ -41,6 +41,8 @@ type BuildArgs = {
 	taskFileTracker: TaskFileTracker
 	// multi-root deps
 	workspaceManager?: WorkspaceRootManager
+	/** Rewinds the task's journal conversation when a journal-bounded card is restored. */
+	conversationRewind?: ConversationRewindPort
 
 	// callbacks for single-root TaskCheckpointManager
 	updateTaskHistory: (historyItem: any) => Promise<any[]>
@@ -72,6 +74,7 @@ export function buildCheckpointManager(args: BuildArgs): ICheckpointManager {
 		taskState,
 		taskFileTracker,
 		workspaceManager,
+		conversationRewind,
 		updateTaskHistory,
 		say,
 		cancelTask,
@@ -85,7 +88,12 @@ export function buildCheckpointManager(args: BuildArgs): ICheckpointManager {
 	const enableCheckpoints = stateManager.getGlobalSettingsKey("enableCheckpointsSetting")
 
 	if (shouldUseMultiRoot({ workspaceManager, enableCheckpoints, stateManager })) {
-		// Multi-root manager (init should be kicked off externally, non-blocking)
+		// Multi-root manager (init should be kicked off externally, non-blocking).
+		// conversationRewind is deliberately not passed: this manager's restore
+		// never rewinds chat, API or context state, so a journal rewind here would
+		// shorten the model conversation while every other store stayed put.
+		// Whoever implements its chat restore must adopt the same port and the
+		// rewind-first ordering used by TaskCheckpointManager.
 		return new MultiRootCheckpointManager(workspaceManager!, taskId, enableCheckpoints, messageStateHandler)
 	}
 
@@ -101,6 +109,7 @@ export function buildCheckpointManager(args: BuildArgs): ICheckpointManager {
 			taskFileTracker,
 			taskState,
 			workspaceManager,
+			conversationRewind,
 		},
 		{
 			updateTaskHistory,

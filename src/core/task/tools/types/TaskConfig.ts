@@ -169,6 +169,13 @@ export interface TaskCallbacks {
 		files?: string[],
 		partial?: boolean,
 		existingTs?: number,
+		/**
+		 * `ts` of the command row this message belongs to.
+		 *
+		 * A `command_output` row is only merged into its command by this key, so a
+		 * host that drops it leaves the output orphaned and never rendered.
+		 */
+		commandTs?: number,
 	) => Promise<number | undefined>
 
 	focusChainForceUpdate: (newPlan: string) => Promise<void>
@@ -188,7 +195,13 @@ export interface TaskCallbacks {
 		files?: string[]
 	}>
 
-	saveCheckpoint: (isAttemptCompletionMessage?: boolean, completionMessageTs?: number) => Promise<void>
+	/**
+	 * Commit a workspace restore point.
+	 *
+	 * Optional for the same reason as the checklist: a task that only produces
+	 * an answer has no workspace history to step back through.
+	 */
+	saveCheckpoint?: (isAttemptCompletionMessage?: boolean, completionMessageTs?: number) => Promise<void>
 
 	sayAndCreateMissingParamError: (
 		toolName: ClineDefaultTool,
@@ -207,7 +220,14 @@ export interface TaskCallbacks {
 
 	doesLatestTaskCompletionHaveNewChanges: () => Promise<boolean>
 
-	updateFCListFromToolResponse: (taskProgress: string | undefined) => Promise<void>
+	/**
+	 * Publish the checklist a tool call carried.
+	 *
+	 * Optional because a checklist belongs to the surface, not to tool
+	 * execution: a task instantiated to generate a title, review a change, or
+	 * decide an approval presents none, and must not have to supply a stub.
+	 */
+	updateFCListFromToolResponse?: (taskProgress: string | undefined) => Promise<void>
 
 	// Additional callbacks for task management
 	postStateToWebview: () => Promise<void>

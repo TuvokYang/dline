@@ -2,12 +2,20 @@ import type { Command, ProviderStartCommand, ProviderTurnPlan } from "../../kern
 import type { CommandExecutor } from "../../runtime"
 import type { ConversationJournal, TaskViewPort } from "../../stores"
 import { executorFailure, type HaltOrder, type HaltParticipant, isExecutionAbort, type TaskEventSink } from "../contracts"
+import {
+	mergeProviderUsage,
+	type ProviderRequestOutcome,
+	type ProviderRequestRecord,
+	type ProviderRequestReportPort,
+} from "./service/ProviderRequestReport"
 
 export type ProviderExecutionChunk =
 	| {
 			readonly kind: "partial"
 			readonly transientId: string
 			readonly payloadRef: string
+			/** The prose streamed so far, for presentation; the payload stays authoritative. */
+			readonly text?: string
 			readonly projection?: Readonly<Record<string, unknown>>
 	  }
 	| { readonly kind: "usage"; readonly usage: Readonly<Record<string, number>> }
@@ -16,8 +24,27 @@ export type ProviderExecutionChunk =
 			readonly turnId: string
 			readonly payloadRef: string
 			readonly transientId?: string
+			/** The assistant's settled prose; see ProviderTextPresentationPort. */
+			readonly text?: string
 			readonly turnPlan: ProviderTurnPlan
 	  }
+
+/**
+ * Shows the assistant's prose as its own chat row.
+ *
+ * The provider domain already owns what the outside sees while a turn streams,
+ * and a reply that calls no tool has nothing else to show it: the journal entry
+ * feeds the next request, not the conversation on screen. Without this the user
+ * watched a turn run and end with no visible answer.
+ *
+ * Declared as a port because a headless assembly has no chat to write to.
+ */
+export interface ProviderTextPresentationPort {
+	/** Reveal the prose streamed so far under the stream's own identity. */
+	showPartial(input: { readonly transientId: string; readonly text: string }): void
+	/** Settle that row once the turn is durable, or retract it when no prose arrived. */
+	commit(input: { readonly transientId: string; readonly text: string }): Promise<void>
+}
 
 export interface ProviderExecutionInput {
 	readonly draftRef: string
@@ -35,6 +62,17 @@ interface ActiveProviderCommand {
 	readonly completion: Promise<void>
 }
 
+/** A turn the journal accepted, together with where it landed. */
+interface ProviderTurnOutcome {
+	readonly chunk: Extract<ProviderExecutionChunk, { kind: "final" }>
+	readonly journalWatermark: { readonly epoch: number; readonly seq: number }
+}
+
+/** Carries the usage seen so far into the settlement that happens after the stream. */
+interface UsageAccumulator {
+	value?: Readonly<Record<string, number>>
+}
+
 export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant {
 	readonly domain = "provider" as const
 	readonly id = "provider" as const
@@ -47,6 +85,8 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
 		private readonly journal: ConversationJournal,
 		private readonly taskView: TaskViewPort,
 		private readonly events: TaskEventSink,
+		private readonly presentation?: ProviderTextPresentationPort,
+		private readonly report?: ProviderRequestReportPort,
 	) {}
 
 	execute(command: Command): Promise<void> {
@@ -88,12 +128,7 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
 	}
 
 	private async run(command: ProviderStartCommand, controller: AbortController): Promise<void> {
-		let finalResult:
-			| {
-					readonly chunk: Extract<ProviderExecutionChunk, { kind: "final" }>
-					readonly journalWatermark: { readonly epoch: number; readonly seq: number }
-			  }
-			| undefined
+		let finalResult: ProviderTurnOutcome | undefined
 		try {
 			finalResult = await this.consume(command, controller.signal)
 		} catch (error) {
@@ -121,27 +156,70 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
 		})
 	}
 
-	private async consume(
+	private async consume(command: ProviderStartCommand, signal: AbortSignal): Promise<ProviderTurnOutcome | undefined> {
+		const record = await this.openRequestRecord(command)
+		const usage: UsageAccumulator = {}
+		// A stream that neither yields a turn nor throws was abandoned, which only
+		// happens when the signal fired, so an unset outcome means cancellation.
+		let outcome: ProviderRequestOutcome = "cancelled"
+		try {
+			const turn = await this.streamTurn(command, signal, usage)
+			if (turn) outcome = "completed"
+			return turn
+		} catch (error) {
+			outcome = isExecutionAbort(error, signal) ? "cancelled" : "failed"
+			throw error
+		} finally {
+			// Settles on every exit, cancellation and failure included, so a request
+			// never stays open as a turn the user is still waiting on.
+			await this.closeRequestRecord(record, usage, outcome)
+		}
+	}
+
+	/** A record that cannot be opened only costs visibility, never the turn. */
+	private async openRequestRecord(command: ProviderStartCommand): Promise<ProviderRequestRecord | undefined> {
+		if (!this.report) return undefined
+		try {
+			return await this.report.begin({ turnId: command.turnId ?? command.commandId })
+		} catch {
+			return undefined
+		}
+	}
+
+	private async closeRequestRecord(
+		record: ProviderRequestRecord | undefined,
+		usage: UsageAccumulator,
+		outcome: ProviderRequestOutcome,
+	): Promise<void> {
+		if (!record) return
+		try {
+			await record.settle({ usage: usage.value, outcome })
+		} catch {
+			// Reporting must not change provider execution semantics.
+		}
+	}
+
+	private absorbUsage(accumulated: UsageAccumulator, usage: Readonly<Record<string, number>>): void {
+		accumulated.value = mergeProviderUsage(accumulated.value, usage)
+		try {
+			this.port.recordUsage?.(usage)
+		} catch {
+			// Metrics must not change provider execution semantics.
+		}
+	}
+
+	private async streamTurn(
 		command: ProviderStartCommand,
 		signal: AbortSignal,
-	): Promise<
-		| {
-				readonly chunk: Extract<ProviderExecutionChunk, { kind: "final" }>
-				readonly journalWatermark: { readonly epoch: number; readonly seq: number }
-		  }
-		| undefined
-	> {
+		usage: UsageAccumulator,
+	): Promise<ProviderTurnOutcome | undefined> {
 		let finalChunk: Extract<ProviderExecutionChunk, { kind: "final" }> | undefined
 		let transientId: string | undefined
 		for await (const chunk of this.port.start({ draftRef: command.draftRef, turnId: command.turnId, signal })) {
 			if (signal.aborted) return undefined
 			if (finalChunk) {
 				if (chunk.kind === "usage") {
-					try {
-						this.port.recordUsage?.(chunk.usage)
-					} catch {
-						// Metrics must not change provider execution semantics.
-					}
+					this.absorbUsage(usage, chunk.usage)
 					continue
 				}
 				throw new Error("ChunkAfterFinal")
@@ -154,14 +232,11 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
 					this.taskId,
 					chunk.projection ?? { kind: "provider.partial", payloadRef: chunk.payloadRef },
 				)
+				this.presentation?.showPartial({ transientId: chunk.transientId, text: chunk.text ?? "" })
 				continue
 			}
 			if (chunk.kind === "usage") {
-				try {
-					this.port.recordUsage?.(chunk.usage)
-				} catch {
-					// Metrics must not change provider execution semantics.
-				}
+				this.absorbUsage(usage, chunk.usage)
 				continue
 			}
 			if (transientId && chunk.transientId !== transientId) throw new Error("FinalTransientIdentityMismatch")
@@ -185,6 +260,11 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
 			? await this.journal.finalizeTransient({ ...journalInput, transientId: finalChunk.transientId })
 			: await this.journal.append(journalInput)
 		if (signal.aborted) return undefined
+		// Settled only after the journal accepted the turn: a row shown as final
+		// before its durable entry exists would survive a crash the turn did not.
+		if (finalChunk.transientId) {
+			await this.presentation?.commit({ transientId: finalChunk.transientId, text: finalChunk.text ?? "" })
+		}
 		return { chunk: finalChunk, journalWatermark: appended.watermark }
 	}
 }

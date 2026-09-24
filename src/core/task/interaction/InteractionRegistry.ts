@@ -29,6 +29,7 @@ export const INTERACTION_KINDS = [
 	"mistake_limit",
 	"completion",
 	"resume",
+	"cancelled_resume",
 ] as const satisfies readonly InteractionKind[]
 
 const DRAFT_INPUT: InputPolicy = {
@@ -123,6 +124,23 @@ const DEFINITIONS: Readonly<Record<InteractionKind, InteractionDefinition>> = {
 		"completion",
 	),
 	resume: define("resume", "resume_task", [action("resume", "Resume", "draft")], RESUME_INPUT, "resume"),
+	/**
+	 * Resuming a round the user stopped inside a live session.
+	 *
+	 * Identical to `resume` everywhere the user can see, and deliberately so:
+	 * both offer one Resume that carries the draft. They are separate kinds
+	 * because only `resume` may state that the session was closed and restored.
+	 * Sharing one kind made a cancelled round claim a restoration that never
+	 * happened, so the distinction has to live in the kind itself.
+	 */
+	cancelled_resume: define(
+		"cancelled_resume",
+		"resume_task",
+		[action("resume", "Resume", "draft")],
+		RESUME_INPUT,
+		"resume",
+		"resume",
+	),
 }
 
 /** Return the immutable definition for one interaction kind. */

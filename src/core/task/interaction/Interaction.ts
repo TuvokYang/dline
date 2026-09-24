@@ -22,6 +22,7 @@ export type InteractionKind =
 	| "mistake_limit"
 	| "completion"
 	| "resume"
+	| "cancelled_resume"
 
 /** Interaction actions understood by the causal response protocol. */
 export type InteractionActionType =

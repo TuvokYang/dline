@@ -164,9 +164,12 @@ export class ControllerTaskCallbacksOwner {
 		files?: string[],
 		partial?: boolean,
 		existingTs?: number,
+		commandTs?: number,
 	): Promise<number> {
 		const ts = existingTs ?? Date.now()
-		const message: ClineMessage = { ts, type: "say", say: type, text, images, files, partial }
+		// commandTs is how a command_output row finds the command it belongs to;
+		// dropping it here leaves the output orphaned and never rendered.
+		const message: ClineMessage = { ts, type: "say", say: type, text, images, files, partial, commandTs }
 		if (partial) await this.options.messages.upsertClineMessageInMemory(message)
 		else if (this.options.messages.clineMessages.some((candidate) => candidate.ts === ts))
 			await this.options.messages.finalizeClineMessage(message)

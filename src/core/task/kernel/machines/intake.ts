@@ -106,7 +106,12 @@ export function reduceIntake(state: IntakeSlice, event: TaskEvent, context: Inta
 			commands: [],
 		}
 	}
-	if (event.type === "compose.failed" || event.type === "user.cancel" || event.type === "user.terminate") {
+	if (
+		event.type === "compose.failed" ||
+		event.type === "compose.withdrawn" ||
+		event.type === "user.cancel" ||
+		event.type === "user.terminate"
+	) {
 		const admitted = context.admittedEntryIds ?? [
 			...state.queued
 				.filter((entry) => entry.state === "reserved" || entry.state === "included")
@@ -152,4 +157,19 @@ export function reduceIntake(state: IntakeSlice, event: TaskEvent, context: Inta
 
 export function intakeHasCapacity(entries: readonly IntakeEntry[]): boolean {
 	return activeCount(entries) < INTAKE_BOX_LIMIT
+}
+
+/**
+ * Entries that are accepted but still waiting for a round to carry them.
+ *
+ * Arrivals are accepted whenever they happen, including while a round is in
+ * flight, but only a round admits them. A round the kernel opens on its own has
+ * to take those waiting entries, otherwise they are stranded: nothing else
+ * re-opens a round for an entry that arrived at the wrong moment, so the message
+ * would never reach a provider request.
+ */
+export function pendingIntakeEntryIds(state: IntakeSlice): readonly EntryId[] {
+	return [...state.queued, ...state.background, ...state.coTask]
+		.filter((entry) => entry.state === "accepted")
+		.map((entry) => entry.entryId)
 }

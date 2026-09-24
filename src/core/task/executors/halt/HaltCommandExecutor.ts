@@ -7,12 +7,19 @@ export interface HaltCommandExecutorOptions {
 	readonly onParticipantFailure?: (participantId: ParticipantId, error: unknown) => void
 }
 
+/** Marks the one failure that means "still running" rather than "stopped badly". */
+const HALT_TIMEOUT_NAME = "HaltTimeout"
+
+function isDeadlineMiss(error: unknown): boolean {
+	return error instanceof Error && error.name === HALT_TIMEOUT_NAME
+}
+
 /** Coordinates the nine-domain quiescence barrier without owning any domain resource itself. */
 export class HaltCommandExecutor implements CommandExecutor {
 	readonly domain = "halt" as const
 	private readonly participants = new Map<ParticipantId, HaltParticipant>()
 	private readonly operations = new Map<string, Promise<void>>()
-	private readonly quiescence = new Map<string, Promise<void>>()
+	private readonly quiescence = new Map<string, ReadonlyMap<ParticipantId, Promise<void>>>()
 	private readonly completedHaltIds = new Set<string>()
 	private readonly timeoutMs: number
 	private readonly onParticipantFailure: (participantId: ParticipantId, error: unknown) => void
@@ -41,13 +48,49 @@ export class HaltCommandExecutor implements CommandExecutor {
 		return operation
 	}
 
+	/**
+	 * Retire the fences once the stop has settled, under the stop's own deadline.
+	 *
+	 * The drains are awaited a second time here because a receipt only says the
+	 * stop was reported, not that the participant stopped publishing. The wait
+	 * must use the same bound as the receipts: awaiting without one made a single
+	 * participant that never drains outlive a halt the kernel had already
+	 * completed, so the caller waited forever and every later lifecycle operation
+	 * queued behind it.
+	 *
+	 * A participant that misses the deadline keeps its fence. It is still running,
+	 * and clearing the fence would let its output reach a task that has stopped.
+	 */
 	async rearm(haltId: string): Promise<void> {
-		const quiet = this.quiescence.get(haltId)
-		if (quiet) await quiet
-		for (const participant of this.participants.values()) participant.rearm?.(haltId)
+		const stalled = await this.settleDrains(this.quiescence.get(haltId))
+		for (const participant of this.participants.values()) {
+			if (stalled.has(participant.id)) continue
+			participant.rearm?.(haltId)
+		}
 		this.operations.delete(haltId)
 		this.quiescence.delete(haltId)
 		this.completedHaltIds.delete(haltId)
+	}
+
+	/** The participants that were still draining when the deadline expired. */
+	private async settleDrains(drains: ReadonlyMap<ParticipantId, Promise<void>> | undefined): Promise<Set<ParticipantId>> {
+		const stalled = new Set<ParticipantId>()
+		if (!drains) return stalled
+		await Promise.all(
+			[...drains].map(async ([participantId, drain]) => {
+				try {
+					await this.withTimeout(drain)
+				} catch (error) {
+					// A drain that rejected has stopped, just badly, and its receipt
+					// already reported that. Only an unmet deadline means the
+					// participant is still live and must stay fenced.
+					if (!isDeadlineMiss(error)) return
+					stalled.add(participantId)
+					this.onParticipantFailure(participantId, error)
+				}
+			}),
+		)
+		return stalled
 	}
 
 	private async run(command: HaltStopCommand): Promise<void> {
@@ -79,10 +122,7 @@ export class HaltCommandExecutor implements CommandExecutor {
 			void drain.catch(() => undefined)
 			drains.set(participantId, drain)
 		}
-		this.quiescence.set(
-			command.haltId,
-			Promise.allSettled([...drains.values()]).then(() => undefined),
-		)
+		this.quiescence.set(command.haltId, drains)
 
 		await Promise.all(
 			participantIds.map(async (participantId) => {
@@ -109,7 +149,7 @@ export class HaltCommandExecutor implements CommandExecutor {
 				new Promise<never>((_, reject) => {
 					timer = setTimeout(() => {
 						const error = new Error(`Halt timed out after ${this.timeoutMs}ms`)
-						error.name = "HaltTimeout"
+						error.name = HALT_TIMEOUT_NAME
 						reject(error)
 					}, this.timeoutMs)
 				}),

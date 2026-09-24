@@ -130,6 +130,11 @@ export class HistoryDisplaySession {
 		this.locked = true
 	}
 
+	/** Restore the writable projection once this window owns the task lock. */
+	markUnlocked(): void {
+		this.locked = false
+	}
+
 	isLocked(): boolean {
 		return this.locked
 	}

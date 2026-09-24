@@ -77,6 +77,62 @@ describe("DialogCommandExecutor", () => {
 		)
 	})
 
+	it("suspends receivers for the whole halt and admits them again on rearm", async () => {
+		const waiters = { suspend: vi.fn(), resume: vi.fn() }
+		const executor = new DialogCommandExecutor(
+			{
+				prepare: async () => ({
+					journalRef: "journal:0:1",
+					journalWatermark: { epoch: 0, seq: 1 },
+					receiverGeneration: 4,
+					disposition: "created" as const,
+				}),
+				reveal: async () => ({ disposition: "revealed" as const }),
+			},
+			{ submit: async () => ({ kind: "accepted" as const }) },
+			waiters,
+		)
+		const order = { haltId: "halt-1", generation: 0, reason: "terminate" as const }
+		executor.fence(order)
+		executor.stop(order)
+		await executor.drain(order)
+
+		// Without this the tool domain drains by waiting for a turn-ending block
+		// that is itself waiting for this domain, and the stop never completes.
+		expect(waiters.suspend).toHaveBeenCalledExactlyOnceWith("dialog_terminate")
+		// Refusal has to outlast the stop itself: a tool still finishing other
+		// work asks for its dialog afterwards and would wait just as forever.
+		expect(waiters.resume).not.toHaveBeenCalled()
+
+		executor.rearm("halt-1")
+
+		expect(waiters.resume).toHaveBeenCalledOnce()
+	})
+
+	it("keeps receivers refused when an unrelated halt rearms", async () => {
+		const waiters = { suspend: vi.fn(), resume: vi.fn() }
+		const executor = new DialogCommandExecutor(
+			{
+				prepare: async () => ({
+					journalRef: "journal:0:1",
+					journalWatermark: { epoch: 0, seq: 1 },
+					receiverGeneration: 4,
+					disposition: "created" as const,
+				}),
+				reveal: async () => ({ disposition: "revealed" as const }),
+			},
+			{ submit: async () => ({ kind: "accepted" as const }) },
+			waiters,
+		)
+		const order = { haltId: "halt-1", generation: 0, reason: "cancel" as const }
+		executor.fence(order)
+		executor.stop(order)
+
+		executor.rearm("halt-0")
+
+		expect(waiters.resume).not.toHaveBeenCalled()
+	})
+
 	it("sanitizes port failures and does not present after cancellation", async () => {
 		const events: TaskEvent[] = []
 		const executor = new DialogCommandExecutor(

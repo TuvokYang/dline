@@ -21,7 +21,12 @@ interface RestoreHarness {
 	clearTransientClineMessages: ReturnType<typeof vi.fn>
 }
 
-function createHarness(messages: ClineMessage[], trackedFiles?: string[], apiHistoryLength = 2): RestoreHarness {
+function createHarness(
+	messages: ClineMessage[],
+	trackedFiles?: string[],
+	apiHistoryLength = 2,
+	conversationRewind?: { rewindTo: ReturnType<typeof vi.fn> },
+): RestoreHarness {
 	const taskState = Object.assign(new DefaultToolHandlerState(), {
 		userMessageContent: [{ type: "text", text: "active user content" }],
 		assistantMessageContent: [{ type: "text", text: "active assistant content" }],
@@ -75,6 +80,7 @@ function createHarness(messages: ClineMessage[], trackedFiles?: string[], apiHis
 			diffViewProvider: {},
 			messageStateHandler,
 			taskState,
+			...(conversationRewind === undefined ? {} : { conversationRewind }),
 			...(trackedFiles === undefined
 				? {}
 				: { taskFileTracker: { getAllModifiedFiles: vi.fn().mockReturnValue(trackedFiles) } }),
@@ -362,6 +368,95 @@ describe("TaskCheckpointManager restore isolation", () => {
 		expect(harness.truncateContextHistory).not.toHaveBeenCalled()
 		expect(harness.restoreChatRuntime).not.toHaveBeenCalled()
 		expect(harness.persistTaskHistory).not.toHaveBeenCalled()
+	})
+
+	describe("journal-bounded compaction card", () => {
+		const journalMessages = (): ClineMessage[] => [
+			{ ts: 10, type: "say", say: "task" },
+			{ ts: 20, type: "say", say: "text" },
+			{
+				ts: 30,
+				type: "say",
+				say: "tool",
+				partial: false,
+				text: JSON.stringify({
+					tool: "summarizeTask",
+					content: "summary",
+					compactionStatus: "completed",
+					compactionJournalBoundary: { epoch: 0, seq: 6 },
+				}),
+			},
+			{ ts: 40, type: "say", say: "text" },
+		]
+
+		it("rewinds the journal before any chat or context file is truncated", async () => {
+			const order: string[] = []
+			const rewindTo = vi.fn(async () => {
+				order.push("rewind")
+			})
+			const harness = createHarness(journalMessages(), undefined, 2, { rewindTo })
+			harness.truncateUiHistory.mockImplementation(async () => {
+				order.push("ui")
+			})
+
+			await harness.manager.restoreCheckpoint(30, "task")
+
+			expect(rewindTo).toHaveBeenCalledWith({ operationId: "checkpoint.restore:30", target: { epoch: 0, seq: 6 } })
+			expect(order).toEqual(["rewind", "ui"])
+			expect(harness.truncateUiHistory).toHaveBeenCalledWith(2)
+			expect(harness.truncateContextHistory).toHaveBeenCalledWith(20, expect.any(String))
+			expect(harness.restoreChatRuntime).toHaveBeenCalledOnce()
+		})
+
+		it("leaves every store untouched when the journal refuses the rewind", async () => {
+			const rewindTo = vi.fn().mockRejectedValue(new Error("ConversationRewindTargetMissing"))
+			const harness = createHarness(journalMessages(), undefined, 2, { rewindTo })
+
+			const result = await harness.manager.restoreCheckpoint(30, "task")
+
+			expect(result.checkpointManagerErrorMessage).toBe("ConversationRewindTargetMissing")
+			expect(harness.truncateApiHistory).not.toHaveBeenCalled()
+			expect(harness.truncateUiHistory).not.toHaveBeenCalled()
+			expect(harness.truncateContextHistory).not.toHaveBeenCalled()
+			expect(harness.restoreChatRuntime).not.toHaveBeenCalled()
+		})
+
+		it("refuses the restore when no journal is available to rewind", async () => {
+			const harness = createHarness(journalMessages(), undefined, 2)
+
+			const result = await harness.manager.restoreCheckpoint(30, "task")
+
+			expect(result.checkpointManagerErrorMessage).toMatch(/requires the task conversation journal/)
+			expect(harness.truncateUiHistory).not.toHaveBeenCalled()
+			expect(harness.restoreChatRuntime).not.toHaveBeenCalled()
+		})
+
+		it("refuses a task-and-workspace restore before rewinding files when no journal is available", async () => {
+			const messages = journalMessages()
+			messages[2] = { ...messages[2], lastCheckpointHash: "hash-card" }
+			const harness = createHarness(messages, undefined, 2)
+
+			const result = await harness.manager.restoreCheckpoint(30, "taskAndWorkspace")
+
+			expect(result.checkpointManagerErrorMessage).toMatch(/requires the task conversation journal/)
+			expect(harness.resetHead).not.toHaveBeenCalled()
+			expect(harness.restoreFiles).not.toHaveBeenCalled()
+			expect(harness.truncateUiHistory).not.toHaveBeenCalled()
+			expect(harness.restoreChatRuntime).not.toHaveBeenCalled()
+		})
+
+		it("refuses to edit a journal-bounded card before rewinding files", async () => {
+			const rewindTo = vi.fn().mockResolvedValue(undefined)
+			const messages = journalMessages()
+			messages[2] = { ...messages[2], lastCheckpointHash: "hash-card" }
+			const harness = createHarness(messages, undefined, 2, { rewindTo })
+
+			const result = await harness.manager.restoreCheckpoint(30, "taskAndWorkspace", undefined, "edited")
+
+			expect(result.checkpointManagerErrorMessage).toMatch(/Editing input is unavailable/)
+			expect(harness.resetHead).not.toHaveBeenCalled()
+			expect(rewindTo).not.toHaveBeenCalled()
+		})
 	})
 
 	it("continues an edited chat restore exactly once through the typed runtime", async () => {

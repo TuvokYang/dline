@@ -58,6 +58,35 @@ function parseArguments(value: unknown): Readonly<Record<string, unknown>> {
 	}
 }
 
+/**
+ * Parses without allocating identities, for text that is only shown.
+ *
+ * A streaming preview is re-parsed on every chunk; drawing real presentation
+ * ids or tool identities for it would burn ids the final parse never uses.
+ */
+const PREVIEW_PARSE_REGISTRY = {
+	getOrCreateTsForBlock: () => 0,
+	getOrCreateToolIdentityForBlock: () => ({ function_id: "", dline_tid: "" }),
+}
+
+function proseOf(blocks: ReturnType<typeof parseAssistantMessageV2>): string {
+	return blocks
+		.filter((block) => block.type === "text")
+		.map((block) => block.content)
+		.join("\n\n")
+}
+
+/**
+ * The prose of an assistant reply with its tool markup removed.
+ *
+ * Tool markup is an invocation, not something the model said to the user: a
+ * call the task refuses (an explicit-only tool nobody authorized) must not
+ * reach the chat as text while it streams any more than after it settles.
+ */
+function visibleAssistantText(text: string): string {
+	return proseOf(parseAssistantMessageV2(text, PREVIEW_PARSE_REGISTRY))
+}
+
 function toolParams(input: Readonly<Record<string, unknown>>): ToolUse["params"] {
 	return Object.fromEntries(
 		Object.entries(input).map(([key, value]) => [key, typeof value === "string" ? value : JSON.stringify(value)]),
@@ -105,7 +134,7 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 						break
 					case "text":
 						textParts.push(chunk.text)
-						yield { kind: "partial", transientId, text: textParts.join("") }
+						yield { kind: "partial", transientId, text: visibleAssistantText(textParts.join("")) }
 						break
 					case "reasoning":
 						if (chunk.reasoning) reasoningParts.push(chunk.reasoning)
@@ -115,7 +144,7 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 						yield {
 							kind: "partial",
 							transientId,
-							text: textParts.join(""),
+							text: visibleAssistantText(textParts.join("")),
 							projection: {
 								kind: "provider.tool_partial",
 								dlineTid: chunk.dline_tid,
@@ -127,7 +156,7 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 						yield {
 							kind: "partial",
 							transientId,
-							text: textParts.join(""),
+							text: visibleAssistantText(textParts.join("")),
 							projection: {
 								kind: "provider.server_tool",
 								tool: chunk.tool,
@@ -144,13 +173,18 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 		if (input.signal.aborted) return
 
 		const materialized = request.nativeTools
-			? this.materializeNativeTools(nativeTools)
+			? this.materializeNativeTools(nativeTools, textParts.join(""))
 			: this.materializeXmlTools(textParts.join(""))
-		const blocks = materialized.tools.map((tool, index) => this.createBlock(request, tool, index))
 		const content: ClineAssistantContent[] = []
 		if (reasoningParts.length > 0) content.push({ type: "thinking", thinking: reasoningParts.join(""), signature: "" })
-		if (materialized.text.trim().length > 0) content.push({ type: "text", text: materialized.text })
-		content.push(...materialized.tools.map((tool) => this.toAssistantToolUse(tool)))
+		// History records what the model actually sent. A call it wrote as markup
+		// beside native tools stays markup there: turning it into a native call
+		// would replay an invented call id the provider never issued.
+		const historyText = request.nativeTools ? textParts.join("") : materialized.text
+		if (historyText.trim().length > 0) content.push({ type: "text", text: historyText })
+		const recorded = (tool: ToolUse) => !request.nativeTools || tool.isNativeToolCall === true
+		content.push(...materialized.tools.filter(recorded).map((tool) => this.toAssistantToolUse(tool)))
+		const blocks = materialized.tools.map((tool, index) => this.createBlock(request, tool, index, recorded(tool)))
 		yield {
 			kind: "final",
 			turnId: request.turnId,
@@ -181,20 +215,38 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 		tools.set(chunk.dline_tid, pending)
 	}
 
-	private materializeNativeTools(tools: Map<string, PendingNativeTool>): { text: string; tools: ToolUse[] } {
+	/**
+	 * Native tool calls arrive beside the assistant's prose, not instead of it.
+	 *
+	 * The streamed text is carried through rather than dropped: a provider that
+	 * answers in words and calls no tool produced a turn whose entire content was
+	 * discarded here, so the reply never reached the conversation or the chat.
+	 *
+	 * A model offered native tools can still write a call as markup in its prose.
+	 * That markup is materialized as a call like any other, so the tool gate
+	 * decides it: left as text it would bypass authorization entirely and show a
+	 * refused call to the user as if the model had said it.
+	 */
+	private materializeNativeTools(tools: Map<string, PendingNativeTool>, text: string): { text: string; tools: ToolUse[] } {
+		const written = this.materializeXmlTools(text)
 		return {
-			text: "",
-			tools: [...tools.values()].map((tool) => ({
-				type: "tool_use",
-				name: tool.name as ToolUse["name"],
-				params: toolParams(parseArguments(tool.arguments)),
-				partial: false,
-				ts: tool.presentationId,
-				isNativeToolCall: true,
-				function_id: tool.functionId,
-				dline_tid: tool.dlineTid,
-				...(tool.signature === undefined ? {} : { signature: tool.signature }),
-			})),
+			text: written.text,
+			tools: [
+				...written.tools,
+				...[...tools.values()].map(
+					(tool): ToolUse => ({
+						type: "tool_use",
+						name: tool.name as ToolUse["name"],
+						params: toolParams(parseArguments(tool.arguments)),
+						partial: false,
+						ts: tool.presentationId,
+						isNativeToolCall: true,
+						function_id: tool.functionId,
+						dline_tid: tool.dlineTid,
+						...(tool.signature === undefined ? {} : { signature: tool.signature }),
+					}),
+				),
+			],
 		}
 	}
 
@@ -218,15 +270,12 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 			},
 		})
 		return {
-			text: blocks
-				.filter((block) => block.type === "text")
-				.map((block) => block.content)
-				.join("\n\n"),
+			text: proseOf(blocks),
 			tools: blocks.filter((block): block is ToolUse => block.type === "tool_use" && !block.partial),
 		}
 	}
 
-	private createBlock(request: PreparedProviderRequest, tool: ToolUse, index: number): ProviderBlockOutput {
+	private createBlock(request: PreparedProviderRequest, tool: ToolUse, index: number, recorded: boolean): ProviderBlockOutput {
 		const planned = request.planTool(tool)
 		const invocation: ToolInvocationEnvelope = {
 			kind: "tool_invocation",
@@ -237,6 +286,7 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 			presentationId: tool.ts,
 			isNativeToolCall: tool.isNativeToolCall === true,
 			...(tool.signature === undefined ? {} : { signature: tool.signature }),
+			...(recorded ? {} : { resultReplay: "text" as const }),
 		}
 		return {
 			blockId: tool.dline_tid,

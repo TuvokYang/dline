@@ -1,3 +1,5 @@
+import { BUILTIN_INPUT_SEMANTICS } from "@shared/input-semantics/catalog"
+import { lexSemanticInput } from "@shared/input-semantics/lexer"
 import { act, render, renderHook, screen, waitFor } from "@testing-library/react"
 import { useLayoutEffect } from "react"
 import { afterEach, describe, expect, it, vi } from "vitest"
@@ -157,5 +159,147 @@ describe("useChatState input history", () => {
 		}
 
 		expect(result.current.inputValue).toBe("entry-5")
+	})
+})
+
+describe("useChatState paste provenance (WS-041 AC-09)", () => {
+	const PASTED = { text: "/compact", spans: [{ start: 0, end: 8 }] }
+
+	it("keeps a pasted candidate held when undo brings its text back", () => {
+		vi.useFakeTimers()
+		vi.setSystemTime(0)
+		const { result } = renderHook(() => useChatState([]))
+
+		act(() => {
+			result.current.setInputValue(PASTED.text)
+			result.current.commitPasteProvenance(PASTED)
+		})
+		vi.advanceTimersByTime(1_000)
+		act(() => {
+			result.current.setInputValue("")
+			result.current.commitPasteProvenance({ text: "", spans: [] })
+		})
+		act(() => result.current.undoInputValue())
+
+		expect(result.current.inputValue).toBe(PASTED.text)
+		expect(result.current.pasteProvenance).toEqual(PASTED)
+	})
+
+	it("does not let a typed draft with the same text release an undone paste", () => {
+		vi.useFakeTimers()
+		vi.setSystemTime(0)
+		const { result } = renderHook(() => useChatState([]))
+
+		act(() => {
+			result.current.setInputValue(PASTED.text)
+			result.current.commitPasteProvenance(PASTED)
+		})
+		vi.advanceTimersByTime(1_000)
+		act(() => {
+			result.current.setInputValue("")
+			result.current.commitPasteProvenance({ text: "", spans: [] })
+		})
+		vi.advanceTimersByTime(1_000)
+		act(() => {
+			result.current.setInputValue(PASTED.text)
+			result.current.commitPasteProvenance({ text: PASTED.text, spans: [] })
+		})
+		expect(result.current.pasteProvenance.spans).toEqual([])
+
+		act(() => result.current.undoInputValue())
+		act(() => result.current.undoInputValue())
+
+		expect(result.current.inputValue).toBe(PASTED.text)
+		expect(result.current.pasteProvenance).toEqual(PASTED)
+	})
+
+	it("records the replaced provenance when an edit commits before it sets the text", () => {
+		vi.useFakeTimers()
+		vi.setSystemTime(0)
+		const { result } = renderHook(() => useChatState([]))
+
+		act(() => {
+			result.current.setInputValue(PASTED.text)
+			result.current.commitPasteProvenance(PASTED)
+		})
+		vi.advanceTimersByTime(1_000)
+		// Menu confirmation commits the released text first, then sets it.
+		act(() => {
+			result.current.commitPasteProvenance({ text: "/cmd:compact", spans: [] })
+			result.current.setInputValue("/cmd:compact")
+		})
+		act(() => result.current.undoInputValue())
+
+		expect(result.current.inputValue).toBe(PASTED.text)
+		expect(result.current.pasteProvenance).toEqual(PASTED)
+	})
+
+	it("forgets pasted spans when the draft changes owner", () => {
+		const { result } = renderHook(() => useChatState([]))
+
+		act(() => {
+			result.current.setInputValue(PASTED.text)
+			result.current.commitPasteProvenance(PASTED)
+		})
+		act(() => result.current.resetInputValue())
+		act(() => result.current.setInputValue(PASTED.text))
+
+		expect(result.current.pasteProvenance.spans).toEqual([])
+	})
+
+	it("carries held spans through an edit it did not observe", () => {
+		const { result } = renderHook(() => useChatState([]))
+
+		act(() => {
+			result.current.setInputValue(PASTED.text)
+			result.current.commitPasteProvenance(PASTED)
+		})
+		act(() => result.current.setInputValue(`${PASTED.text} now`))
+
+		expect(result.current.pasteProvenance.spans).toEqual([{ start: 0, end: 8 }])
+	})
+
+	it("restores held spans from the document of a refused draft", () => {
+		const { result } = renderHook(() => useChatState([]))
+		const semanticInput = lexSemanticInput("/compact", {
+			catalog: { revision: 1, descriptors: BUILTIN_INPUT_SEMANTICS },
+			documentId: "doc-1",
+			activation: "candidate_only",
+		})
+
+		act(() => {
+			result.current.restoreDraft({ text: "/compact", images: [], files: [], activeQuote: null, semanticInput })
+		})
+
+		expect(result.current.inputValue).toBe("/compact")
+		expect(result.current.pasteProvenance.spans).toEqual([{ start: 0, end: 8 }])
+	})
+
+	it("keeps a restored pasted fragment held when an edit completes it into a command", () => {
+		const { result } = renderHook(() => useChatState([]))
+		// A refused queue change restores the draft with the document it was composed with.
+		const semanticInput = lexSemanticInput("/compac", {
+			catalog: { revision: 1, descriptors: BUILTIN_INPUT_SEMANTICS },
+			documentId: "doc-2",
+			activation: "candidate_only",
+		})
+
+		act(() => {
+			result.current.restoreDraft({ text: "/compac", images: [], files: [], activeQuote: null, semanticInput })
+		})
+		act(() => result.current.setInputValue("/compact"))
+
+		expect(result.current.pasteProvenance.spans).toEqual([{ start: 0, end: 7 }])
+	})
+
+	it("holds the plain text of a restored draft that carries no document", () => {
+		const { result } = renderHook(() => useChatState([]))
+
+		act(() => {
+			result.current.restoreDraft({ text: "/compact now", images: [], files: [], activeQuote: null })
+		})
+
+		// The typed command stays live; the rest cannot be told apart from a paste.
+		expect(result.current.pasteProvenance.spans).toEqual([{ start: 8, end: 12 }])
 	})
 })

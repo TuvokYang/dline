@@ -1,10 +1,12 @@
 import type { ClineMessage } from "@shared/ExtensionMessage"
 import { EmptyRequest } from "@shared/proto/dline/common"
 import { NewTaskRequest } from "@shared/proto/dline/task"
+import { toProtoSemanticInputDocument } from "@shared/proto-conversions/input-semantics/document"
 import { useCallback, useRef } from "react"
 import { TaskServiceClient } from "@/services/grpc-client"
+import { composeSubmission, newComposerDocumentId } from "@/services/input-semantics/paste-provenance"
 
-import type { ChatState, MessageHandlers } from "../types/chatTypes"
+import type { ChatState, MessageHandlers, NewTaskComposition } from "../types/chatTypes"
 
 export async function runNewTaskSubmission(
 	startTask: () => Promise<unknown>,
@@ -53,15 +55,27 @@ export function useMessageHandlers(
 	latestMessagesRef.current = messages
 
 	const handleSendMessage = useCallback(
-		async (text: string, images: string[], files: string[]) => {
-			let messageToSend = text.trim()
-			const hasContent = messageToSend.length > 0 || images.length > 0 || files.length > 0
+		async (text: string, images: string[], files: string[], composition?: NewTaskComposition) => {
+			const hasContent = text.trim().length > 0 || images.length > 0 || files.length > 0
 			if (!hasContent || taskId !== undefined) {
 				return
 			}
-			if (activeQuote) {
-				messageToSend = `[context] \n> ${activeQuote}\n[/context] \n\n${messageToSend}`
-			}
+			// The quote is text the composer adds, never something the user typed,
+			// so it is held literal whether or not the user's own text needs a
+			// document (WS-041 AC-09).
+			const quotePrefix = activeQuote ? `[context] \n> ${activeQuote}\n[/context] \n\n` : ""
+			const submission = composition
+				? composeSubmission({
+						text,
+						spans: composition.spans,
+						catalog: composition.catalog,
+						documentId: newComposerDocumentId(),
+						literalPrefix: quotePrefix,
+						trim: true,
+					})
+				: { text: quotePrefix + text.trim(), semanticInput: undefined }
+			const messageToSend = submission.text
+			const document = submission.semanticInput
 			const submissionOwnerRevision = taskOwnershipRef.current.revision
 			await runNewTaskSubmission(
 				() =>
@@ -70,6 +84,7 @@ export function useMessageHandlers(
 							text: messageToSend,
 							images,
 							files,
+							...(document ? { semanticInput: toProtoSemanticInputDocument(document) } : {}),
 						}),
 					),
 				() => {

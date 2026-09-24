@@ -1,6 +1,8 @@
 import type { ClineMessage, TaskViewActionType, TaskViewState } from "@shared/ExtensionMessage"
+import type { SemanticInputDocument } from "@shared/input-semantics/document"
 import { matchesActiveInteractionAnchor } from "@shared/interaction-anchor"
 import type { DispatchInteractionRequest, DispatchInteractionResponse } from "@shared/proto/dline/task"
+import { toProtoSemanticInputDocument } from "@shared/proto-conversions/input-semantics/document"
 
 /** Complete Webview draft snapshot owned by the chat composition root. */
 export interface InteractionDraft {
@@ -9,6 +11,12 @@ export interface InteractionDraft {
 	files: string[]
 	activeQuote?: string | null
 	ownerRevision?: number
+	/**
+	 * The structured meaning of `text`, present only when it differs from what
+	 * Core's legacy adapter would read - today, a pasted candidate held back
+	 * until the user confirms it (WS-041 AC-09).
+	 */
+	semanticInput?: SemanticInputDocument
 }
 
 /** Capture mutable draft values before dispatching an interaction. */
@@ -19,6 +27,8 @@ export function captureInteractionDraft(draft: InteractionDraft): InteractionDra
 		files: [...draft.files],
 		activeQuote: draft.activeQuote ?? null,
 		ownerRevision: draft.ownerRevision,
+		// Composed documents are immutable, so the reference is already a snapshot.
+		...(draft.semanticInput === undefined ? {} : { semanticInput: draft.semanticInput }),
 	}
 }
 
@@ -132,9 +142,25 @@ export function findActiveInteractionAnchor(messages: readonly ClineMessage[], v
 	return matches.length === 1 ? matches[0] : undefined
 }
 
-/** A view without an active interaction needs no ask anchor; active interactions must match exactly. */
+/**
+ * Whether the Webview can act on the projected interaction.
+ *
+ * A view without an active interaction needs no ask anchor. When one is
+ * active, the backend's `anchorVerified` is the stronger evidence: it is
+ * written in durable order, while the local row may still be outside the
+ * loaded message window or folded away by the presentation combiners. The
+ * footer already dispatches on that flag, so requiring the local row here too
+ * left the composer disabled beneath a footer the user could click.
+ *
+ * The local lookup remains the fallback for an older projection that does not
+ * carry the flag; an active interaction still needs exactly one match.
+ */
 export function isActiveInteractionSynchronized(messages: readonly ClineMessage[], view: TaskViewState): boolean {
-	return !view.activeInteraction || Boolean(findActiveInteractionAnchor(messages, view))
+	const interaction = view.activeInteraction
+	if (!interaction) {
+		return true
+	}
+	return interaction.anchorVerified === true || Boolean(findActiveInteractionAnchor(messages, view))
 }
 
 /** Build one causal request from the current backend projection. */
@@ -160,7 +186,16 @@ export function buildInteractionRequest(
 		interactionId: interaction.interactionId,
 		actionId,
 		stateRevision: interaction.stateRevision,
-		draft: carriesDraft ? { text: draft.text, images: [...draft.images], files: [...draft.files] } : undefined,
+		draft: carriesDraft
+			? {
+					text: draft.text,
+					images: [...draft.images],
+					files: [...draft.files],
+					...(draft.semanticInput === undefined
+						? {}
+						: { semanticInput: toProtoSemanticInputDocument(draft.semanticInput) }),
+				}
+			: undefined,
 		selection: selection ? { values: [...selection.values] } : undefined,
 	}
 }

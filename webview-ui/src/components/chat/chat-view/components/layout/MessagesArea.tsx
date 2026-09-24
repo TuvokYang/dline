@@ -21,6 +21,7 @@ import {
 	planWindowExtensions,
 	trailingBuffer,
 	type VisibleMessageRange,
+	type WindowSide,
 } from "../../utils/messageWindowPlan"
 import { buildMessageRowKey, getBottomFollowIntent, mergeMessageWindow } from "../../utils/messageWindowUtils"
 import { advanceRowCoordinate, ROW_INDEX_BASE, type RowCoordinate } from "../../utils/rowCoordinate"
@@ -663,13 +664,15 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 	)
 
 	const requestWindowExtensions = useCallback(
-		(visible: VisibleMessageRange, anchorTs: number | null) => {
+		(visible: VisibleMessageRange, anchorTs: number | null, restrictTo?: WindowSide) => {
 			if (isWebviewHiddenRef.current) return
 
 			const window = currentMessageWindow()
 			if (isWholeConversationLoaded(window)) return
 
-			const planned = planWindowExtensions(window, visible)
+			const planned = planWindowExtensions(window, visible).filter(
+				(extension) => restrictTo === undefined || extension.side === restrictTo,
+			)
 			if (planned.length === 0) return
 
 			// Growing the window at the leading edge inserts rows above the
@@ -843,6 +846,12 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 			// otherwise those layout events eagerly fetch every leading page.
 			if (!disableAutoScrollRef.current) {
 				latestExtensionRangeRef.current = null
+				// The trailing side is exempt, because it is how a newly arrived
+				// reply enters the loaded window at all. Withholding it here was
+				// self-defeating: the window stayed short of the conversation end,
+				// which is exactly the condition that suppresses the follow intent,
+				// so every later message stayed outside both the window and the view.
+				if (!absoluteBottomLoaded) requestWindowExtensions(visible, null, "trailing")
 				return
 			}
 
@@ -1016,12 +1025,20 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 					totalListHeightChanged={handleMeasuredLayoutChange}
 				/>
 
-				{/* Floating scroll direction button — appears on scroll, auto-hides after 5s idle */}
+				{/* Floating scroll direction button — dims after 5s idle, stays armed */}
 				{showScrollToBottom && (
 					<div
 						className={cn(
-							"absolute bottom-4 right-4 z-20 transition-all duration-300 ease-out",
-							floatingBtnVisible ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none",
+							"absolute bottom-4 right-4 z-20 transition-opacity duration-300 ease-out",
+							// The wrapper exists only while the reader is away from the
+							// live bottom, so the affordance is warranted for as long as
+							// it is rendered and must remain clickable. The idle timer is
+							// presentation only: it may lower prominence, never remove
+							// interactivity. Tying pointer events to it produced a
+							// control that hit-testing and assistive technology both
+							// still reported as a button while the row underneath
+							// silently swallowed every click.
+							floatingBtnVisible ? "opacity-100" : "opacity-40 hover:opacity-100",
 						)}>
 						<button
 							aria-label={floatingBtnDir === "bottom" ? "Scroll to bottom" : "Scroll to top"}

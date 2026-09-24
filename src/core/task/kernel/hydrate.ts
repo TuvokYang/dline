@@ -1,3 +1,6 @@
+import { withoutAbandonedReview } from "./machines/dialog"
+import { expireAbandonedCompaction } from "./machines/flow"
+import { planRecoveryDialog } from "./recovery"
 import type {
 	Command,
 	Diagnostic,
@@ -122,15 +125,14 @@ function recoveryInteraction(state: TaskState, form: Exclude<HydrateForm, "new" 
 			prepareKey: `dialog.prepare:${interactionId}`,
 		}
 	}
+	// Shared with the offer a live cancellation raises, so both recovery paths
+	// keep one definition of what resuming means.
+	const plan = planRecoveryDialog({ taskId: state.taskId, revision: state.revision, reason: "interrupted", turnId })
 	return {
-		interactionId,
-		turnId,
-		kind: "resume",
+		...plan,
 		status: "planned",
 		createdRevision: state.revision,
-		presentationRef: `resume:${state.taskId}:${state.revision}`,
-		actionRules: [action("resume", "draft")],
-		prepareKey: `dialog.prepare:${interactionId}`,
+		prepareKey: `dialog.prepare:${plan.interactionId}`,
 	}
 }
 
@@ -175,11 +177,18 @@ function normalizeState(
 			}
 		})
 	const legacyIntake = snapshot.intake ?? { queued: [], background: [], coTask: [] }
+	// A review whose run died with the process has nobody left to answer it.
+	const dialog = withoutAbandonedReview(snapshot.dialog, snapshot.flow.compaction)
 	let state: TaskState = {
 		...snapshot,
 		revision,
 		generation,
-		flow: form === "interrupted" ? { phase: "paused" } : snapshot.flow,
+		// The process that ran any compaction is gone, so its slot is released
+		// whatever form the task restores into.
+		flow:
+			form === "interrupted"
+				? { phase: "paused" }
+				: { ...snapshot.flow, compaction: expireAbandonedCompaction(snapshot.flow.compaction, "compaction_interrupted") },
 		turn: {
 			...snapshot.turn,
 			blocks,
@@ -188,8 +197,8 @@ function normalizeState(
 			manualApprovalBlockIds: snapshot.turn.manualApprovalBlockIds,
 		},
 		dialog: {
-			primary: snapshot.dialog.primary ? normalizeInteraction(snapshot.dialog.primary, generation) : undefined,
-			interrupted: snapshot.dialog.interrupted ? normalizeInteraction(snapshot.dialog.interrupted, generation) : undefined,
+			primary: dialog.primary ? normalizeInteraction(dialog.primary, generation) : undefined,
+			interrupted: dialog.interrupted ? normalizeInteraction(dialog.interrupted, generation) : undefined,
 			approvalsByBlock,
 		},
 		intake: {
@@ -291,15 +300,81 @@ function installDialogCommandOwners(state: TaskState, commands: readonly Command
 	}
 }
 
+/**
+ * Rebuild a task that has conversation history but no runtime snapshot.
+ *
+ * A task created before snapshots existed, or one whose snapshot write never
+ * landed, still has its journal and chat history. Refusing it as read-only made
+ * the task permanently unusable: the surface offered Resume, and the promotion
+ * that Resume triggers failed with `snapshot_missing`. Treating it as
+ * interrupted recovers the same way an interrupted task does, which is what the
+ * remaining evidence actually supports.
+ */
+function hydrateWithoutSnapshot(input: HydrateInput): HydrateResult {
+	const state: TaskState = {
+		...createInitialTaskState(input.taskId),
+		journalWatermark: input.journalTail,
+	}
+	const normalized = normalizeState(state, "interrupted")
+	const commands = initialCommands(normalized.state)
+	return {
+		kind: "ready",
+		form: "interrupted",
+		state: installDialogCommandOwners(normalized.state, commands),
+		initialCommands: commands,
+		diagnostics: [
+			...normalized.diagnostics,
+			{ code: "snapshot_missing", message: "Recovered from conversation history without a runtime snapshot" },
+		],
+	}
+}
+
+/**
+ * The snapshot a chat restore resumes from.
+ *
+ * A restore rewinds the conversation behind the snapshot, so every fact the
+ * snapshot holds about the discarded tail is stale: its turn's blocks and
+ * approvals refer to messages that are gone, and its dialog - a completion,
+ * an error retry, a question - answers a conversation the user just undid.
+ * The task is therefore rebuilt as interrupted, which offers to resume from
+ * the restored point instead of reopening whatever the tail last ended in.
+ *
+ * A consumed task is left alone: it was handed to a successor, and restoring
+ * its chat does not take that back.
+ */
+function rewoundSnapshot(snapshot: TaskState): TaskState {
+	if (classify(snapshot) === "consumed") return snapshot
+	return {
+		...snapshot,
+		flow: { phase: "paused" },
+		turn: {
+			...snapshot.turn,
+			blocks: [],
+			manualApprovalBlockIds: [],
+			automaticApprovalBlockIds: [],
+			executingBlockIds: [],
+		},
+		dialog: { approvalsByBlock: {} },
+	}
+}
+
 export function hydrate(input: HydrateInput): HydrateResult {
 	if (input.openReason === "new") {
 		return { kind: "ready", form: "new", state: createInitialTaskState(input.taskId), initialCommands: [], diagnostics: [] }
 	}
-	if (!input.snapshot) return readOnly("snapshot_missing", "snapshot_missing", "No snapshot was available")
+	if (!input.snapshot) {
+		// Existing conversation content is the evidence this task really ran.
+		// Without either a journal or history there is nothing to recover from,
+		// so the read-only refusal still stands.
+		const recoverable = input.hasConversationHistory || input.journalTail.epoch > 0 || input.journalTail.seq > 0
+		if (!recoverable) return readOnly("snapshot_missing", "snapshot_missing", "No snapshot was available")
+		return hydrateWithoutSnapshot(input)
+	}
 	const invalid = validateSnapshot(input, input.snapshot)
 	if (invalid) return invalid
-	const form = classify(input.snapshot)
-	const normalized = normalizeState(input.snapshot, form)
+	const snapshot = input.openReason === "checkpoint_restore" ? rewoundSnapshot(input.snapshot) : input.snapshot
+	const form = classify(snapshot)
+	const normalized = normalizeState(snapshot, form)
 	const commands = form === "consumed" ? [] : initialCommands(normalized.state)
 	return {
 		kind: "ready",

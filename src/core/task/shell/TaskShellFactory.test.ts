@@ -18,19 +18,21 @@ const payloads: TaskPayloadStore = {
 
 function execution(reveal: () => void) {
 	return {
-		provider: { async *start() {} },
+		provider: { execution: { async *start() {} } },
 		compose: { compose: async () => ({ draftRef: "draft:1" }) },
 		compaction: { run: async () => ({ resultRef: "result:1" }) },
 		dialog: {
-			prepare: async () => ({
-				journalRef: "journal:1",
-				journalWatermark: { epoch: 0, seq: 0 },
-				receiverGeneration: 0,
-				disposition: "existing" as const,
-			}),
-			reveal: async () => {
-				reveal()
-				return { disposition: "revealed" as const }
+			execution: {
+				prepare: async () => ({
+					journalRef: "journal:1",
+					journalWatermark: { epoch: 0, seq: 0 },
+					receiverGeneration: 0,
+					disposition: "existing" as const,
+				}),
+				reveal: async () => {
+					reveal()
+					return { disposition: "revealed" as const }
+				},
 			},
 		},
 		policy: { evaluate: async () => ({ approved: true }) },

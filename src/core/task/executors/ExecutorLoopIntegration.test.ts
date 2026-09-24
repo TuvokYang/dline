@@ -19,7 +19,17 @@ describe("executor loop integration", () => {
 		const compose = vi.fn(async ({ admittedEntryIds }) => ({ draftRef: `draft:${admittedEntryIds.join(",")}` }))
 		let turn = 0
 		let runtime!: TaskRuntime
-		const events = { submit: (event: Parameters<TaskRuntime["submit"]>[0]) => runtime.submit(event) }
+		// An event the kernel refuses is answered, not thrown, so a refused round
+		// would otherwise be indistinguishable from the loop deciding to stop.
+		const refusals: string[] = []
+		const events = {
+			submit: async (event: Parameters<TaskRuntime["submit"]>[0]) => {
+				const result = await runtime.submit(event)
+				if (result.kind === "rejected")
+					refusals.push(`${event.type}:${result.diagnostic.code}:${result.diagnostic.message}`)
+				return result
+			},
+		}
 		const provider = vi.fn(({ draftRef }: { draftRef: string }) => ({
 			async *[Symbol.asyncIterator]() {
 				turn += 1
@@ -31,11 +41,15 @@ describe("executor loop integration", () => {
 				}
 			},
 		}))
+		// A command the runtime could not run is reported here rather than thrown,
+		// so without this the loop would look like it simply chose to stop.
+		const diagnostics: string[] = []
 		runtime = new TaskRuntime({
 			initialState: createInitialTaskState("task-1"),
 			vault,
 			taskView,
 			publications: new InMemoryCommandPublicationStore(),
+			diagnostics: { record: (entry) => void diagnostics.push(`${entry.source}:${entry.code}:${entry.message}`) },
 			executors: [
 				new ComposeCommandExecutor({ compose }, events),
 				new ProviderCommandExecutor("task-1", { start: provider }, journal, taskView, events),
@@ -45,13 +59,40 @@ describe("executor loop integration", () => {
 		await runtime.submit({ type: "user.submit", generation: 0, entryId: "entry-1", payloadRef: "input:1" })
 		await runtime.waitForQuiescence()
 		await runtime.submit({ type: "user.submit", generation: 0, entryId: "entry-2", payloadRef: "input:2" })
-		await runtime.waitForQuiescence()
+		// A round the kernel opens for itself can be scheduled as the previous one
+		// settles, so one quiescence is not the end of the conversation. Draining
+		// until no new round appears is what "the loop has stopped" actually means.
+		await drainRounds(runtime, [compose, provider])
 
-		expect(compose).toHaveBeenCalledTimes(2)
-		expect(provider).toHaveBeenCalledTimes(2)
-		expect(await journal.read()).toHaveLength(2)
+		expect({ diagnostics, refusals }).toEqual({ diagnostics: [], refusals: [] })
+		// Both submissions are carried by a round, each exactly once.
+		const composedEntryIds = compose.mock.calls.flatMap(
+			([input]) => (input as { admittedEntryIds: readonly string[] }).admittedEntryIds,
+		)
+		expect(composedEntryIds).toEqual(["entry-1", "entry-2"])
+		// A turn that plans no tool continues on its own until the text-only streak
+		// is exhausted, so these replies also produce rounds carrying no entry.
+		// Asserting a fixed round count would encode the older behaviour where such
+		// a turn simply ended the flow with nothing to run next.
+		expect(compose.mock.calls.length).toBeGreaterThan(composedEntryIds.length)
+		// Every composed round runs its turn, and every turn lands one journal entry.
+		expect(provider).toHaveBeenCalledTimes(compose.mock.calls.length)
+		expect(await journal.read()).toHaveLength(provider.mock.calls.length)
 		expect(runtime.getState().flow.phase).toBe("running")
 	})
+
+	/** Settle the runtime until none of the watched executors is invoked again. */
+	async function drainRounds(runtime: TaskRuntime, watched: readonly { mock: { calls: readonly unknown[] } }[]) {
+		const counts = () => watched.map((spy) => spy.mock.calls.length).join(",")
+		// The continuation is bounded by the text-only streak, so this terminates;
+		// the cap only stops a runaway from hanging the suite.
+		for (let attempt = 0; attempt < 20; attempt++) {
+			const before = counts()
+			await runtime.waitForQuiescence()
+			if (counts() === before) return
+		}
+		throw new Error("Rounds never stopped being opened")
+	}
 
 	it("runs dialog prepare and reveal through the immediate/durable outbox phases", async () => {
 		let runtime!: TaskRuntime

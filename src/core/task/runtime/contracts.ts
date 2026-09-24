@@ -12,10 +12,27 @@ export interface CommandExecutor {
 	execute(command: Command): Promise<void>
 }
 
+/**
+ * Whether an entry reports something that went wrong.
+ *
+ * An observation describes a decision the runtime made normally. Reporting one
+ * at failure severity makes healthy runs look broken, so the distinction
+ * belongs to the entry rather than to whichever sink consumes it.
+ */
+export type RuntimeDiagnosticSeverity = "failure" | "observation"
+
 export interface RuntimeDiagnostic {
-	readonly source: "commit" | "router" | "outbox"
+	/**
+	 * `hydrate` reports what recovery decided before any event is submitted,
+	 * and `dialog` reports an answer that reached no receiver and no
+	 * continuation; the other sources report failures that occur behind the
+	 * event loop.
+	 */
+	readonly source: "commit" | "router" | "outbox" | "hydrate" | "dialog"
 	readonly code: string
 	readonly message: string
+	/** Defaults to `failure`, which is what every reported fault is. */
+	readonly severity?: RuntimeDiagnosticSeverity
 	readonly revision?: number
 	readonly commandId?: string
 }

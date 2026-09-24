@@ -1,3 +1,5 @@
+import { createInitialTaskState } from "@core/task/kernel"
+import { projectCanonicalTaskView } from "@core/task/view/canonical/projectCanonicalTaskView"
 import type { TaskViewState } from "@shared/ExtensionMessage"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { Controller } from "../index"
@@ -110,6 +112,68 @@ describe("Controller state publication coalescing", () => {
 		expect(setActiveTaskId).toHaveBeenCalledWith("task-a")
 		expect(buildState).not.toHaveBeenCalled()
 		expect(sendStatePatch).toHaveBeenCalledWith(controller, { stateRevision: 1, taskViewState }, undefined)
+	})
+
+	// A reopened task publishes its restored dialog through the interaction
+	// patch rather than a full state build. Projecting that patch without the
+	// task's rows left the anchor unresolved, so the composer stayed disabled
+	// and the interaction was never offered: the task looked permanently stuck
+	// even though its dialog was awaiting an answer.
+	it("projects the interaction patch against the task's own messages", async () => {
+		const { controller } = createController("task-a")
+		const initial = createInitialTaskState("task-a")
+		const view = projectCanonicalTaskView({
+			...initial,
+			revision: 7,
+			flow: { phase: "paused" },
+			dialog: {
+				approvalsByBlock: {},
+				primary: {
+					interactionId: "interaction-1",
+					turnId: "turn-1",
+					kind: "completion",
+					status: "awaiting",
+					createdRevision: 6,
+					presentationRef: "completion:turn-1",
+					receiverGeneration: 0,
+					actionRules: [{ actionId: "reply", payloadPolicy: "draft" }],
+				},
+			},
+		})
+		Object.assign(controller, {
+			task: {
+				taskId: "task-a",
+				projectView: () => view,
+				owners: {
+					messages: {
+						clineMessages: [
+							{
+								type: "ask",
+								ask: "completion_result",
+								ts: 20,
+								text: "done",
+								interactionId: "interaction-1",
+								partial: false,
+							},
+						],
+					},
+					commands: {
+						getReadyBackgroundHandoffActivityId: () => undefined,
+						isBackgroundHandoffRequested: () => false,
+					},
+				},
+			},
+		})
+
+		await controller.postTaskViewPatchToWebview()
+
+		const patched = vi.mocked(sendStatePatch).mock.calls[0]?.[1] as { taskViewState?: TaskViewState }
+		expect(patched.taskViewState?.activeInteraction).toMatchObject({
+			interactionId: "interaction-1",
+			status: "awaiting",
+			askMessageTs: 20,
+		})
+		expect(patched.taskViewState?.input).toMatchObject({ enabled: true, enterAction: "reply" })
 	})
 
 	it("lets an immediate publication supersede a pending merge window", async () => {

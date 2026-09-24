@@ -5,6 +5,7 @@ import type {
 	CanonicalTaskViewProjection,
 } from "@core/task/view/canonical/CanonicalTaskViewProjection"
 import type { ClineMessage, TaskInputViewState, TaskViewAction, TaskViewPhase, TaskViewState } from "@shared/ExtensionMessage"
+import { type BackgroundHandoffAvailabilityPort, projectBackgroundHandoffAction } from "./BackgroundHandoffAvailability"
 
 const DISABLED_INPUT: TaskInputViewState = {
 	enabled: false,
@@ -53,9 +54,30 @@ function projectInteractionInput(dialog: CanonicalDialogProjection, kind: Intera
 	return { ...definition.input, enabled: definition.input.enabled && enterEnabled }
 }
 
+/**
+ * Select the dialog the canonical projection already assigned the input to.
+ *
+ * Taking the primary dialog unconditionally hid a live approval behind a primary
+ * that had been answered and was still resolving: the input went to the
+ * approval while the footer and anchor described the spent primary, so its
+ * Approve and Reject controls never rendered.
+ */
+function owningDialog(view: CanonicalTaskViewProjection): CanonicalDialogProjection | undefined {
+	const ownerInteractionId = view.input.mode === "dialog" ? view.input.ownerInteractionId : undefined
+	const candidates = [view.primary, view.interrupted, ...view.approvals]
+	const owner = ownerInteractionId ? candidates.find((candidate) => candidate?.interactionId === ownerInteractionId) : undefined
+	// An interrupted task has no live primary; its recovery dialog is the one the
+	// surface must anchor, otherwise Resume renders without a dispatch target.
+	return owner ?? view.primary ?? view.interrupted ?? view.approvals[0]
+}
+
 /** Decorate one canonical Task projection with message-anchor and Webview presentation metadata. */
-export function adaptCanonicalTaskView(view: CanonicalTaskViewProjection, messages: readonly ClineMessage[] = []): TaskViewState {
-	const dialog = view.primary ?? view.approvals[0]
+export function adaptCanonicalTaskView(
+	view: CanonicalTaskViewProjection,
+	messages: readonly ClineMessage[] = [],
+	handoff?: BackgroundHandoffAvailabilityPort,
+): TaskViewState {
+	const dialog = owningDialog(view)
 	const kind = dialog ? interactionKind(dialog.kind) : undefined
 	// A still-partial row means the reveal never finished, so it cannot anchor a
 	// dispatchable interaction.
@@ -87,7 +109,7 @@ export function adaptCanonicalTaskView(view: CanonicalTaskViewProjection, messag
 				}
 			: undefined
 	const interactionActions = dialog && kind ? projectInteractionActions(dialog, kind) : []
-	const taskActions: TaskViewAction[] = view.taskActions.map((action) => ({
+	const cancelActions: TaskViewAction[] = view.taskActions.map((action) => ({
 		type: "cancel",
 		label: "Cancel",
 		appearance: "danger",
@@ -95,6 +117,11 @@ export function adaptCanonicalTaskView(view: CanonicalTaskViewProjection, messag
 		payloadPolicy: "none",
 		dispatchTarget: "task",
 	}))
+	// A synchronous command that outlived its handoff wait can be moved to the
+	// background instead of cancelled, so that choice is offered before Cancel.
+	// The affordance disappears again once the executor no longer owns it.
+	const handoffAction = cancelActions.length > 0 ? projectBackgroundHandoffAction(handoff) : undefined
+	const taskActions: TaskViewAction[] = handoffAction ? [handoffAction, ...cancelActions] : cancelActions
 	// Without its anchor row the dialog has nothing to pin its controls to, so the
 	// surface falls back to task-level affordances instead of orphaned buttons.
 	const anchored = Boolean(dialog && anchor)

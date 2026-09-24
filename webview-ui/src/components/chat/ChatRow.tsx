@@ -905,9 +905,11 @@ export const ChatRowContent = memo(
 							</div>
 							{/* The checkpoint control renders its menu outside the card, so it must not
 							    sit inside the card's clipping box or the control gets occluded. */}
-							{status === "completed" && message.partial !== true && message.compactionConversationRange && (
-								<CheckmarkControl hasWorkspaceCheckpoint={false} messageTs={message.ts} />
-							)}
+							{status === "completed" &&
+								message.partial !== true &&
+								(message.compactionConversationRange || tool.compactionJournalBoundary) && (
+									<CheckmarkControl hasWorkspaceCheckpoint={false} messageTs={message.ts} />
+								)}
 						</div>
 					)
 				}

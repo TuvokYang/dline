@@ -1,7 +1,8 @@
 import type { Command } from "../kernel"
 import type { CommandDispatch, CommandExecutor, ExecutorDomain, RuntimeDiagnosticSink } from "./contracts"
 
-function domainFor(command: Command): ExecutorDomain {
+/** The executor domain that owns one command; also the outbox publication lane. */
+export function domainFor(command: Command): ExecutorDomain {
 	switch (command.type) {
 		case "provider.start":
 			return "provider"
