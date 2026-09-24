@@ -146,7 +146,10 @@ export class CompactionRoundBarrier
 		readonly lifecycle: readonly LifecycleCommand[]
 	}): Promise<RoundReadiness> {
 		const replied = this.takeReplied()
-		const manual = input.lifecycle.find((command) => this.owns(command.commandId)) ?? replied
+		const manual = mergeOwedCompactions([
+			...input.lifecycle.filter((command) => this.owns(command.commandId)),
+			...(replied ? [replied] : []),
+		])
 		const pressure = this.observed
 		// Consumed whatever the outcome: a refused or failed compaction must not
 		// make every later round retry the same request forever.
@@ -238,6 +241,21 @@ export class CompactionRoundBarrier
 		}
 		this.unclaimed = { compactionId, outcome }
 	}
+}
+
+/**
+ * Fold every compaction a round owes into the one run it performs.
+ *
+ * Several accepted inputs, or an input and a dialog reply, can each ask for
+ * `/compact` before the same round. They condense the same conversation, so
+ * one run serves them all, but each carried its own guidance and taking only
+ * the first silently dropped the others. Guidance is kept in causal order.
+ */
+function mergeOwedCompactions(owed: readonly LifecycleCommand[]): LifecycleCommand | undefined {
+	const [first] = owed
+	if (!first) return undefined
+	const guidance = owed.map((command) => command.premessage.trim()).filter((text) => text.length > 0)
+	return { ...first, premessage: guidance.join("\n\n") }
 }
 
 /** Resolve with the run's outcome, or as withdrawn as soon as the signal aborts. */

@@ -158,6 +158,48 @@ describe("SemanticInputAdmissionService", () => {
 		expect(result.diagnostics[0].entityId).toBe("doc-1#0")
 	})
 
+	it("refuses a structure whose nodes do not reproduce the text the user submitted", async () => {
+		// The visible text asks for a review; the forged node would run /compact instead.
+		const forged: SemanticInputDocument = { ...lex("/compact"), rawText: "review this" }
+
+		const result = await service().admit(forged)
+
+		expect(result.ok).toBe(false)
+		if (result.ok) return
+		expect(result.diagnostics[0].code).toBe("semantic_input_node_invalid")
+	})
+
+	it("refuses an active command typed as text that is not one of its triggers", async () => {
+		const lexed = lex("/compact")
+		const [node] = lexed.nodes
+		if (node?.kind !== "slash_command") throw new Error("expected a command node")
+		const forged: SemanticInputDocument = {
+			...lexed,
+			rawText: "/review",
+			nodes: [{ ...node, sourceText: "/review" }],
+		}
+
+		const result = await service().admit(forged)
+
+		expect(result.ok).toBe(false)
+		if (result.ok) return
+		expect(result.diagnostics[0]).toMatchObject({ code: "semantic_input_node_invalid", entityId: node.entityId })
+	})
+
+	it("refuses an active command that claims a different composition than its descriptor", async () => {
+		const lexed = lex("/compact")
+		const [node] = lexed.nodes
+		if (node?.kind !== "slash_command") throw new Error("expected a command node")
+		// Downgrading the barrier to composable would expand /compact into the turn itself.
+		const forged: SemanticInputDocument = { ...lexed, nodes: [{ ...node, compositionMode: "composable" }] }
+
+		const result = await service().admit(forged)
+
+		expect(result.ok).toBe(false)
+		if (result.ok) return
+		expect(result.diagnostics[0].code).toBe("semantic_input_node_invalid")
+	})
+
 	it("fails closed on a structurally broken document before touching any port", async () => {
 		const broken: SemanticInputDocument = { ...lex("hi"), documentId: "" }
 

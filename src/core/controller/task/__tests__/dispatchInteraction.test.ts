@@ -1,4 +1,6 @@
+import { InMemoryToolApprovalFeedbackLedger } from "@core/task/executors/tool/ToolApprovalFeedbackLedger"
 import { createInitialTaskState, type TaskState } from "@core/task/kernel"
+import { SemanticInputDocument as WireDocument, SemanticInputNode as WireNode } from "@shared/proto/dline/input"
 import { DispatchInteractionRequest } from "@shared/proto/dline/task"
 import { describe, expect, it, vi } from "vitest"
 import { dispatchInteraction } from "../dispatchInteraction"
@@ -34,6 +36,8 @@ interface ControllerOptions {
 	/** What the input review claims from the reply; undefined means nothing. */
 	readonly reviewed?: ReviewedReplyFixture
 	readonly rejected?: boolean
+	/** Make the chat-row write fail, as a broken message store would. */
+	readonly rowWriteFails?: boolean
 }
 
 function controller(taskState: TaskState = state(), options: ControllerOptions = {}) {
@@ -57,8 +61,10 @@ function controller(taskState: TaskState = state(), options: ControllerOptions =
 		{ ts: 100, say: "text", text: "earlier row" },
 	]
 	const addToClineMessages = vi.fn(async (row: (typeof clineMessages)[number]) => {
+		if (options.rowWriteFails) throw new Error("message store unavailable")
 		clineMessages.push(row)
 	})
+	const approvalFeedback = new InMemoryToolApprovalFeedbackLedger()
 	return {
 		value: {
 			task: {
@@ -67,6 +73,7 @@ function controller(taskState: TaskState = state(), options: ControllerOptions =
 				task: { respond },
 				payloads: { put },
 				inputs: { reviewReply },
+				approvalFeedback,
 				messages: { clineMessages, addToClineMessages, flushUiMessages: vi.fn(async () => {}) },
 				owners: { interactions: { resolve } },
 			},
@@ -76,7 +83,25 @@ function controller(taskState: TaskState = state(), options: ControllerOptions =
 		resolve,
 		clineMessages,
 		addToClineMessages,
+		approvalFeedback,
 	}
+}
+
+function approvalState(): TaskState {
+	const taskState = state("tool_approval", "approve")
+	const approval = taskState.dialog.primary!
+	return { ...taskState, dialog: { approvalsByBlock: { "block-1": { ...approval, blockId: "block-1" } } } }
+}
+
+function approveWith(text: string) {
+	return DispatchInteractionRequest.create({
+		taskId: "task-1",
+		turnId: "turn-1",
+		interactionId: "interaction-1",
+		actionId: "approve",
+		stateRevision: 12,
+		draft: { text, images: [], files: [] },
+	})
 }
 
 function compactReply(text = "/compact keep the API notes") {
@@ -233,6 +258,54 @@ describe("dispatchInteraction", () => {
 		expect(host.addToClineMessages).not.toHaveBeenCalled()
 		expect(commit).not.toHaveBeenCalled()
 		expect(host.resolve).not.toHaveBeenCalled()
+	})
+
+	it("refuses a reply whose structure cannot be decoded instead of sending it as live text", async () => {
+		const host = controller()
+		const request = DispatchInteractionRequest.create({
+			...compactReply("/compact pasted from a log"),
+			draft: {
+				text: "/compact pasted from a log",
+				images: [],
+				files: [],
+				semanticInput: WireDocument.create({ nodes: [WireNode.create({})] }),
+			},
+		})
+
+		const result = await dispatchInteraction(host.value as never, request)
+
+		expect(result).toMatchObject({ accepted: false, result: "invalid_payload" })
+		expect(host.respond).not.toHaveBeenCalled()
+		expect(host.resolve).not.toHaveBeenCalled()
+	})
+
+	it("keeps the accepted approval's feedback when a later response for the block is refused", async () => {
+		const host = controller(approvalState(), { rejected: true })
+		host.approvalFeedback.record("block-1", { text: "read it as UTF-8" })
+
+		const result = await dispatchInteraction(host.value as never, approveWith("a stale second click"))
+
+		expect(result).toMatchObject({ accepted: false })
+		expect(host.approvalFeedback.take("block-1")).toEqual({ text: "read it as UTF-8" })
+	})
+
+	it("records the feedback an accepted approval carries for its block", async () => {
+		const host = controller(approvalState())
+
+		await dispatchInteraction(host.value as never, approveWith("read it as UTF-8"))
+
+		expect(host.approvalFeedback.take("block-1")).toMatchObject({ text: "read it as UTF-8" })
+	})
+
+	it("still runs the command and answers the dialog when the consumed reply cannot be shown", async () => {
+		const commit = vi.fn()
+		const host = controller(state(), { reviewed: { text: "", commit }, rowWriteFails: true })
+
+		const result = await dispatchInteraction(host.value as never, compactReply())
+
+		expect(result).toMatchObject({ accepted: true, result: "accepted" })
+		expect(commit).toHaveBeenCalledOnce()
+		expect(host.resolve).toHaveBeenCalledWith("interaction-1", expect.objectContaining({ actionId: "reply" }))
 	})
 
 	it("returns missing task when no runtime and no history display own the interaction", async () => {

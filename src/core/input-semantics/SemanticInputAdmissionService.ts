@@ -1,4 +1,4 @@
-import { authorizedTools, type InputSemanticCatalog } from "@shared/input-semantics/catalog"
+import { authorizedTools, type InputSemanticCatalog, type InputSemanticDescriptor } from "@shared/input-semantics/catalog"
 import {
 	planSemanticCommands,
 	type SemanticCommandInvocation,
@@ -10,8 +10,9 @@ import {
 	isSlashCommandNode,
 	type MentionInputNode,
 	type SemanticInputDocument,
+	type SlashCommandInputNode,
 } from "@shared/input-semantics/document"
-import { presentationTextOfNode } from "@shared/input-semantics/presentation"
+import { documentMatchesPresentation, presentationTextOfNode } from "@shared/input-semantics/presentation"
 import { type SemanticInputDiagnostic, validateSemanticInputDocument } from "@shared/input-semantics/validation"
 import type { ExplicitInstructionDeclaration } from "@/core/task/explicit-instructions/types"
 
@@ -144,12 +145,35 @@ export class SemanticInputAdmissionService {
 			return diagnostics
 		}
 
+		// The nodes are the authority, but only for the text the user actually
+		// submitted: a structure that no longer reproduces it could name a
+		// command the visible text does not contain.
+		if (!documentMatchesPresentation(document)) {
+			diagnostics.push({
+				code: "semantic_input_node_invalid",
+				message: "document nodes do not reproduce its raw text",
+				documentId: document.documentId,
+			})
+			return diagnostics
+		}
+
 		for (const node of document.nodes) {
 			if (!isSlashCommandNode(node) || !isActiveEntity(node)) continue
-			if (!catalog.descriptors.some((descriptor) => descriptor.id === node.commandId)) {
+			const descriptor = catalog.descriptors.find((candidate) => candidate.id === node.commandId)
+			if (!descriptor) {
 				diagnostics.push({
 					code: "semantic_input_command_unknown",
 					message: `command ${node.commandId} is no longer in the catalog`,
+					documentId: document.documentId,
+					entityId: node.entityId,
+				})
+				continue
+			}
+			const mismatch = commandNodeMismatch(node, descriptor)
+			if (mismatch) {
+				diagnostics.push({
+					code: "semantic_input_node_invalid",
+					message: `command ${node.commandId} ${mismatch}`,
 					documentId: document.documentId,
 					entityId: node.entityId,
 				})
@@ -223,4 +247,21 @@ export class SemanticInputAdmissionService {
 			},
 		}
 	}
+}
+
+/**
+ * Why an active command node disagrees with the descriptor it names, if it does.
+ *
+ * The composer derives trigger and composition from the descriptor; a node
+ * whose typed text is not one of that descriptor's triggers, or that claims a
+ * different lifecycle, would let a structure run a command the user never
+ * typed, or run it with the wrong barrier semantics.
+ */
+function commandNodeMismatch(node: SlashCommandInputNode, descriptor: InputSemanticDescriptor): string | undefined {
+	if (descriptor.kind !== "command") return "does not name a command"
+	const triggers = [descriptor.trigger, ...(descriptor.aliases ?? [])]
+	if (!triggers.includes(node.sourceText)) return `was typed as ${node.sourceText}, which is not one of its triggers`
+	const expected = descriptor.lifecycle === "task" ? "lifecycle_barrier" : "composable"
+	if (node.compositionMode !== expected) return `declares ${node.compositionMode} composition, expected ${expected}`
+	return undefined
 }

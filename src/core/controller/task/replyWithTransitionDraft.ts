@@ -23,13 +23,17 @@ function hasContent(chatContent: ChatContent | undefined): chatContent is ChatCo
  * `none` means there was nothing to deliver or no dialog awaiting a reply, in
  * which case the Webview still owns the draft. `rejected` means a dialog was
  * waiting but refused it, and the caller must not report the switch as done.
+ *
+ * @param session The task the switch was committed on. When the Controller
+ * has moved to another task meanwhile, the draft belongs to neither dialog
+ * and is not delivered.
  */
 export async function replyWithTransitionDraft(
 	controller: Controller,
 	chatContent: ChatContent | undefined,
+	session = controller.task,
 ): Promise<TransitionDraftOutcome> {
-	const session = controller.task
-	if (!session || !hasContent(chatContent)) return "none"
+	if (!session || controller.task !== session || !hasContent(chatContent)) return "none"
 	const state = session.state()
 	const primary = state.dialog.primary
 	if (!primary || primary.status !== "awaiting" || primary.receiverGeneration === undefined) return "none"

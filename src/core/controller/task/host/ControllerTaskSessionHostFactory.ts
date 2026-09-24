@@ -20,6 +20,7 @@ import { UrlContentFetcher } from "@services/browser/UrlContentFetcher"
 import type { McpHub } from "@services/mcp/McpHub"
 import type { ClineExtensionContext } from "@shared/cline/context"
 import { convertClineMessageToProto } from "@shared/proto-conversions/cline-message"
+import { Logger } from "@shared/services/Logger"
 import { HostProvider } from "@/hosts/host-provider"
 import { sendPartialMessageEvent } from "../../ui/subscribeToPartialMessage"
 import { ControllerTaskCallbacksOwner } from "./ControllerTaskCallbacksOwner"
@@ -89,8 +90,16 @@ export class ControllerTaskSessionHostFactory implements TaskSessionHostFactory 
 				// so a patch that only reaches storage leaves the visible row stale
 				// until something unrelated republishes it: an accepted background
 				// handoff kept rendering as "Foreground" for the rest of the task.
+				// The push is view delivery, so the executor that patched the row
+				// does not wait on it: a slow or closed Webview must not stall a
+				// command whose change is already durable.
 				const row = context.messages.clineMessages[index]
-				if (row) await sendPartialMessageEvent(this.options.controller, convertClineMessageToProto(row))
+				if (!row) return
+				void sendPartialMessageEvent(this.options.controller, convertClineMessageToProto(row)).catch((error: unknown) => {
+					Logger.warn(
+						`[Task ${context.taskId}] Could not publish the patched row ${index}: ${error instanceof Error ? error.message : String(error)}`,
+					)
+				})
 			},
 			getClineMessages: () => context.messages.clineMessages,
 			addToUserMessageContent: (content) => context.toolState.userMessageContent.push(content as never),

@@ -184,6 +184,27 @@ describe("CompactionRoundBarrier - manual", () => {
 		expect(p.contexts[0].context).toMatchObject({ mode: "summarize", guidance: "keep the audit" })
 	})
 
+	it("runs once for every /compact the round owes, keeping each one's guidance in order", async () => {
+		const state = running()
+		const p = probe(() => state)
+		const barrier = new CompactionRoundBarrier({ session: () => p.session, state: () => state })
+
+		// A reply's command and two admitted inputs' commands all land on the same round.
+		barrier.request({ commandId: COMPACT_COMMAND_ID, premessage: "keep the reply notes" })
+		const waiting = barrier.settleBeforeRound(
+			round([
+				{ commandId: COMPACT_COMMAND_ID, premessage: "keep A" },
+				{ commandId: COMPACT_COMMAND_ID, premessage: "keep B" },
+			]),
+		)
+		await drain()
+		await run(barrier, p.scheduled[0])
+
+		await expect(waiting).resolves.toEqual({ kind: "ready" })
+		expect(p.scheduled).toHaveLength(1)
+		expect(p.contexts[0].context).toMatchObject({ guidance: "keep A\n\nkeep B\n\nkeep the reply notes" })
+	})
+
 	it("withdraws the round when the compaction the user asked for fails", async () => {
 		const state = running()
 		const p = probe(() => state)

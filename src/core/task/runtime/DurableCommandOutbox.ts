@@ -143,15 +143,20 @@ export class DurableCommandOutbox {
 		const queue = this.pending.get(domain)
 		if (this.drains.has(domain) || !queue || queue.length === 0) return
 		const drain = Promise.resolve()
-			.then(() => this.drain(domain, queue))
+			.then(() => this.drain(queue))
 			.finally(() => {
 				this.drains.delete(domain)
-				if (queue.length > 0) this.scheduleDrain(domain)
+				// Decide from the live queue, not the captured one: a command
+				// published after the loop ran dry but before this settles lands
+				// in the queue still registered for the domain and must be drained.
+				const current = this.pending.get(domain)
+				if (current && current.length > 0) this.scheduleDrain(domain)
+				else if (current === queue) this.pending.delete(domain)
 			})
 		this.drains.set(domain, drain)
 	}
 
-	private async drain(domain: ExecutorDomain, queue: PendingCommand[]): Promise<void> {
+	private async drain(queue: PendingCommand[]): Promise<void> {
 		while (queue.length > 0) {
 			const entry = queue[0]
 			if (entry.fenced) {
@@ -181,6 +186,5 @@ export class DurableCommandOutbox {
 			}
 			queue.shift()
 		}
-		if (queue.length === 0) this.pending.delete(domain)
 	}
 }

@@ -101,6 +101,35 @@ describe("DurableCommandOutbox cross-domain publication", () => {
 		await outbox.whenIdle()
 	})
 
+	it("drains a command published after the queue ran dry but before its drain settled", async () => {
+		const executed: number[] = []
+		let outbox!: DurableCommandOutbox
+		let published = false
+		const router = new CommandRouter([
+			{
+				domain: "tool",
+				execute: async (command: Command) => {
+					executed.push(command.originRevision)
+					if (published) return
+					published = true
+					// Land the next command in the window between the loop emptying
+					// the queue and the drain's settlement, where a wake-up was lost.
+					void Promise.resolve()
+						.then(() => undefined)
+						.then(() => undefined)
+						.then(() => outbox.enqueue([toolRun(5)], { revision: 5, durable: Promise.resolve() }))
+				},
+			},
+		])
+		outbox = new DurableCommandOutbox(router, publications())
+
+		outbox.enqueue([toolRun(4)], { revision: 4, durable: Promise.resolve() })
+		await vi.waitFor(() => expect(executed).toEqual([4, 5]))
+		await outbox.whenIdle()
+
+		expect(outbox.pendingCount).toBe(0)
+	})
+
 	it("keeps one domain's commands in their original order", async () => {
 		const order: number[] = []
 		const router = new CommandRouter([

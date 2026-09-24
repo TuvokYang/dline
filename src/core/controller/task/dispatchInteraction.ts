@@ -23,18 +23,22 @@ function response(accepted: boolean, result: DispatchInteractionResult): Dispatc
 }
 
 /**
- * Decode the structure submitted with a reply, or report text only.
+ * Decode the structure submitted with a reply.
  *
- * Dropped rather than stored raw: the persisted draft is what a recovered
- * interaction replays, so it must not hold a structure no stage can validate.
+ * `invalid` means a structure was sent but cannot be read. The reply is then
+ * refused rather than downgraded to text: the structure is what held pasted
+ * command text inert, and text alone would be re-read with every command live.
  */
-function decodeDraftDocument(request: DispatchInteractionRequest): SemanticInputDocument | undefined {
+function decodeDraftDocument(request: DispatchInteractionRequest): {
+	readonly document?: SemanticInputDocument
+	readonly invalid?: true
+} {
 	const wire = request.draft?.semanticInput
-	if (!wire) return undefined
+	if (!wire) return {}
 	const decoded = fromProtoSemanticInputDocument(wire)
-	if (decoded.ok) return decoded.document
-	Logger.warn(`dispatchInteraction: dropping undecodable semantic input (${decoded.diagnostic.code})`)
-	return undefined
+	if (decoded.ok) return { document: decoded.document }
+	Logger.warn(`dispatchInteraction: refusing a reply with undecodable semantic input (${decoded.diagnostic.code})`)
+	return { invalid: true }
 }
 
 /**
@@ -102,7 +106,9 @@ export async function dispatchInteraction(
 	if (!interaction.actionRules.some((rule) => rule.actionId === request.actionId)) return response(false, "invalid_action")
 	if (interaction.receiverGeneration === undefined) return response(false, "invalid_runtime_event")
 
-	const draftDocument = decodeDraftDocument(request)
+	const decodedDraft = decodeDraftDocument(request)
+	if (decodedDraft.invalid) return response(false, "invalid_payload")
+	const draftDocument = decodedDraft.document
 	// A reply is user input like any submission: a lifecycle command typed into
 	// it acts instead of reaching the model as literal feedback. What remains is
 	// the text the reply keeps once the command and its premessage are taken out;
@@ -135,8 +141,12 @@ export async function dispatchInteraction(
 	// An approval is planned from the turn, so its draft is not an intake entry.
 	// Recording it against the block is the only route into the next provider
 	// request; without it a note typed while approving is silently discarded.
-	if (approvalEntry && request.draft) {
-		session.approvalFeedback.record(approvalEntry[0], {
+	// It is recorded before the response so the block's result can never be
+	// produced without it, and undone below if the runtime refuses the response.
+	const feedbackBlockId = approvalEntry && request.draft ? approvalEntry[0] : undefined
+	const priorFeedback = feedbackBlockId ? session.approvalFeedback.take(feedbackBlockId) : undefined
+	if (feedbackBlockId && request.draft) {
+		session.approvalFeedback.record(feedbackBlockId, {
 			text: draftText ?? request.draft.text,
 			images: [...request.draft.images],
 			files: [...request.draft.files],
@@ -166,9 +176,28 @@ export async function dispatchInteraction(
 				draftRef,
 				selectionRef,
 			})
-	if (result.kind === "rejected") return response(false, normalizeResult(result.reason))
+	if (result.kind === "rejected") {
+		// A refused response (stale or a duplicate of an accepted one) must not
+		// replace the note the accepted response left for this block.
+		if (feedbackBlockId) {
+			session.approvalFeedback.take(feedbackBlockId)
+			if (priorFeedback) session.approvalFeedback.record(feedbackBlockId, priorFeedback)
+		}
+		return response(false, normalizeResult(result.reason))
+	}
 	// When the command left text behind, the handler shows that text instead.
-	if (reviewed && !reviewed.text) await showConsumedReply(session.messages, session.owners.nextPresentationId, request)
+	// The row takes its place in the sequence now, ahead of anything the
+	// answered dialog goes on to produce, but it is presentation: the runtime
+	// already accepted the reply, so its command and receiver settle first and
+	// a failed or slow write cannot strand either of them.
+	const consumedRow =
+		reviewed && !reviewed.text
+			? showConsumedReply(session.messages, session.owners.nextPresentationId, request).catch((error: unknown) => {
+					Logger.warn(
+						`dispatchInteraction: could not show the consumed reply for ${request.interactionId}: ${error instanceof Error ? error.message : String(error)}`,
+					)
+				})
+			: undefined
 	reviewed?.commit()
 	const outcome: InteractionOutcome = {
 		actionId: request.actionId as InteractionOutcome["actionId"],
@@ -183,5 +212,6 @@ export async function dispatchInteraction(
 		selection: request.selection ? { values: [...request.selection.values] } : undefined,
 	}
 	session.owners.interactions.resolve(request.interactionId, outcome)
+	await consumedRow
 	return response(true, "accepted")
 }

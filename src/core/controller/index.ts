@@ -1348,7 +1348,7 @@ export class Controller {
 				}
 				// The recovery dialog is still planned when promotion returns; its
 				// prepare and reveal run through the outbox afterwards.
-				const interaction = await awaitDispatchableDialog(session)
+				const interaction = await awaitDispatchableDialog(session, { isCurrent: () => this.task === session })
 				const state = session.state()
 				if (!interaction) {
 					// Without this the promoted task simply stopped: no command ran,
@@ -1537,32 +1537,61 @@ export class Controller {
 			commit: {
 				validate: (operation) => this.validateModeSwitch(operation),
 				commit: async (operation) => {
-					if (!this.task) throw new Error("Active task is unavailable.")
-					const sourceMode = this.task.owners.settings.mode
-					this.task.owners.settings.setMode(operation.target.mode)
-					// The frozen prompt and its tool projection are keyed by provider and
-					// model, not Mode; without an explicit refresh the next request would
-					// still carry the source Mode's instructions and tools. Request it
-					// before the draft is delivered, because that reply may start the next
-					// provider round immediately.
-					this.task.owners.prompt.requestRefresh("mode_switch")
-					await this.task.owners.api.rebuild({ abortPrevious: true })
-					// The draft the user switched with answers the awaiting dialog under
-					// the target Mode; a refused answer must not leave a switch that
-					// silently dropped it.
-					if ((await replyWithTransitionDraft(this, operation.chatContent)) === "rejected") {
-						this.task.owners.settings.setMode(sourceMode)
-						await this.task.owners.api.rebuild({ abortPrevious: true })
-						throw new Error("The awaiting dialog refused the draft sent with the mode switch.")
+					// Pinned once: the transition lease does not fence task replacement,
+					// so re-reading `this.task` after an await could switch another task.
+					const session = this.task
+					if (!session) throw new Error("Active task is unavailable.")
+					const sourceMode = session.owners.settings.mode
+					let rebuilt = false
+					session.owners.settings.setMode(operation.target.mode)
+					try {
+						// The frozen prompt and its tool projection are keyed by provider and
+						// model, not Mode; without an explicit refresh the next request would
+						// still carry the source Mode's instructions and tools. Request it
+						// before the draft is delivered, because that reply may start the next
+						// provider round immediately.
+						session.owners.prompt.requestRefresh("mode_switch")
+						await session.owners.api.rebuild({ abortPrevious: true })
+						rebuilt = true
+						// The draft the user switched with answers the awaiting dialog under
+						// the target Mode; a refused answer must not leave a switch that
+						// silently dropped it.
+						if ((await replyWithTransitionDraft(this, operation.chatContent, session)) === "rejected") {
+							throw new Error("The awaiting dialog refused the draft sent with the mode switch.")
+						}
+					} catch (error) {
+						await this.restoreSourceMode(session, sourceMode, rebuilt)
+						throw error
 					}
-					telemetryService.captureModeSwitch(this.task.owners.identity.taskIncarnationId, operation.target.mode)
+					telemetryService.captureModeSwitch(session.owners.identity.taskIncarnationId, operation.target.mode)
 					this.restartAccountUsagePolling()
-					await this.postStateToWebview({ immediate: true })
+					// The engine publishes the settled transition right after this commit,
+					// so the commit itself does not wait on view delivery.
 				},
 			},
 			getTaskId: () => this.task?.taskId,
 		})
 		return new ModeSwitchCoordinator({ engine: this.contextTransitionEngine, policy })
+	}
+
+	/**
+	 * Put a task back on the Mode a failed switch started from.
+	 *
+	 * Settings are always restored so the persisted Mode matches the handler the
+	 * task keeps; the handler is rebuilt only when the switch had replaced it and
+	 * the task is still the one this Controller serves.
+	 */
+	private async restoreSourceMode(session: ActiveTaskSession, sourceMode: Mode, rebuilt: boolean): Promise<void> {
+		session.owners.settings.setMode(sourceMode)
+		session.owners.prompt.requestRefresh("mode_switch")
+		if (!rebuilt || this.task !== session) return
+		try {
+			await session.owners.api.rebuild({ abortPrevious: true })
+		} catch (error) {
+			Logger.error(
+				`[ModeSwitch] ${session.taskId}: could not rebuild the ${sourceMode} handler after a failed switch: ${error instanceof Error ? error.message : String(error)}`,
+			)
+		}
 	}
 
 	private getOccupiedContextTokens(): number {
@@ -1584,20 +1613,26 @@ export class Controller {
 			commit: {
 				validate: (operation) => this.validateProfileSwitch(operation),
 				commit: async (operation) => {
-					if (!this.task) throw new Error("Active task is unavailable.")
+					const session = this.task
+					if (!session) throw new Error("Active task is unavailable.")
 					const binding = { profileId: operation.targetProfileId, profileName: operation.targetProfile }
-					this.task.owners.settings.setProfileIdentityBindings(
+					const previous = session.owners.settings.setProfileIdentityBindings(
 						Object.fromEntries(operation.targetModes.map((mode) => [mode, binding])),
 						{ clearRuntimeOverrides: true },
 					)
-					await this.task.owners.api.rebuild({ abortPrevious: true })
-					if ((await replyWithTransitionDraft(this, operation.chatContent)) === "rejected") {
+					try {
+						await session.owners.api.rebuild({ abortPrevious: true })
+					} catch (error) {
+						// The handler was never replaced, so the bindings must not claim it was.
+						session.owners.settings.restoreProfileState(previous)
+						throw error
+					}
+					if ((await replyWithTransitionDraft(this, operation.chatContent, session)) === "rejected") {
 						Logger.warn(
 							`[ProfileSwitch] ${operation.operationId}: awaiting dialog refused the draft sent with the switch`,
 						)
 					}
 					this.restartAccountUsagePolling()
-					await this.postStateToWebview({ immediate: true })
 				},
 			},
 			getTaskId: () => this.task?.taskId,
