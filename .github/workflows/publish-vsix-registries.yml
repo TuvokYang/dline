@@ -15,6 +15,11 @@ on:
         description: SHA-256 recorded by the verification job.
         type: string
         required: true
+      publish_marketplace:
+        description: Whether to publish to VS Code Marketplace alongside Open VSX.
+        type: boolean
+        required: false
+        default: true
 
 permissions:
   actions: read
@@ -26,7 +31,7 @@ env:
 jobs:
   publish-marketplace:
     name: Publish VS Code Marketplace
-    if: github.repository == 'TuvokYang/dline'
+    if: github.repository == 'TuvokYang/dline' && inputs.publish_marketplace
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # One registry being unavailable must not withhold the release from the
@@ -226,6 +231,7 @@ jobs:
         env:
           MARKETPLACE_STATUS: ${{ needs.publish-marketplace.outputs.status }}
           OPEN_VSX_STATUS: ${{ needs.publish-open-vsx.outputs.status }}
+          MARKETPLACE_ENABLED: ${{ inputs.publish_marketplace }}
         shell: bash
         run: |
           set -euo pipefail
@@ -237,6 +243,9 @@ jobs:
           for entry in "marketplace=${MARKETPLACE_STATUS:-unreported}" "open-vsx=${OPEN_VSX_STATUS:-unreported}"; do
             registry="${entry%%=*}"
             status="${entry#*=}"
+            if [[ "$registry" == "marketplace" && "$MARKETPLACE_ENABLED" == "false" ]]; then
+              continue
+            fi
             if [[ "$status" == "published" ]]; then
               published+=("$registry")
             else

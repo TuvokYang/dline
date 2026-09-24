@@ -82,6 +82,8 @@ jobs:
       attestations: write
       contents: write
       id-token: write
+    outputs:
+      sha256: ${{ steps.vsix.outputs.sha256 }}
     steps:
       - name: Checkout tested tag
         uses: actions/checkout@v6
@@ -185,3 +187,14 @@ jobs:
               --notes-file "$notes_path" \
               --repo "$GITHUB_REPOSITORY"
           fi
+
+  publish-preview-registry:
+    name: Publish Preview to Open VSX
+    needs: [verify-tag, tests, release]
+    uses: ./.github/workflows/publish-vsix-registries.yml
+    with:
+      artifact_name: dline-vsix-${{ needs.verify-tag.outputs.commit_sha }}
+      asset_name: dline-preview-${{ needs.verify-tag.outputs.version }}.vsix
+      expected_sha256: ${{ needs.release.outputs.sha256 }}
+      publish_marketplace: false
+    secrets: inherit

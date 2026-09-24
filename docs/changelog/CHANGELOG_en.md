@@ -2,6 +2,29 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 
 # Changelog
 
+## [0.9.4]
+
+### Features
+- Parallel tool calls: when enabled, calls in one turn that need no manual approval can run concurrently; calls needing approval are confirmed one at a time, with a configurable maximum. Disabling the feature keeps execution serial
+- `use_subagents` accepts up to 32 subagents per call, each with its own agent, API Profile, and timeout; items above the concurrency limit queue instead of being discarded
+- Claude Code Profiles support OAuth sign-in and direct Anthropic Messages API requests; Anthropic API-key Profiles can optionally send Claude Code billing attribution, but the provider determines whether usage counts against a subscription
+- Anthropic and Claude Code can declare hosted Web Search and Web Fetch independently where supported; actual execution depends on the provider response, and Force Remote does not silently fall back to local tools
+- Claude Opus 5.5 is in the built-in model catalog and is the default for Anthropic and Claude Code; availability still depends on the provider account
+
+### Changed
+- Subscription usage identifies provider quota windows and snapshot age, and counts daily input/output tokens from Dline's own requests locally; sources without periodic usage polling retain an initial snapshot and manual refresh
+- History tasks open in a lightweight, read-only message window while preserving their bound Profile, cross-window lock notice, and saved subagent metrics
+- Command logs and shell diagnostics now live under the owning task's temporary directory, with a per-task size budget; commands without a task still use the process temporary directory
+- Migration from Cline no longer imports task history that Dline cannot open or resume; settings, rules, workflows, and MCP configuration keep their existing migration paths
+
+### Fixed
+- Fixed request-level approval appearing merely because hosted Web capabilities were declared; `Use Web` still governs Dline-owned local Web tools, and legacy hosted-approval snapshots require an explicit Resume only for a matching persisted history tail
+- Fixed `generate_image` approvals, rejections, and reopened tasks losing the title, prompt, or image card; rejection makes no provider request
+- Fixed replaying reasoning from another protocol as Anthropic thinking after switching providers, which could cause the request to be rejected
+- Fixed silent Close Task failures and stale reply drafts appearing after a closed task is reopened
+- Fixed duplicate approval/input submissions, accumulated API auto-retry failure cards, and command cards collapsing before streaming output finishes
+- Fixed delayed process-listener/log-stream cleanup when commands finish, fail to start, or are cancelled, as well as cross-task background-command cancellation and missing trailing output
+
 ## [0.9.3]
 
 ### Features

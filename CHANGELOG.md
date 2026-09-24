@@ -2,6 +2,29 @@
 
 # Changelog
 
+## [0.9.4]
+
+### Features
+- 并行工具调用：启用后，同一轮中无需人工审批的工具可并发执行；需要审批的调用逐项确认，设置中可调整最大并行工具数，关闭后仍串行执行
+- `use_subagents` 单次最多接受 32 个子代理，可分别指定 Agent、API Profile 与超时；超出并行上限的任务排队，而非被截断
+- Claude Code Profile 支持 OAuth 登录并通过 Anthropic Messages API 直连；Anthropic API Key Profile 可选发送 Claude Code 计费归因标识，是否由上游归入订阅额度取决于提供方
+- Anthropic 与 Claude Code 在支持时可分别声明托管 Web Search 和 Web Fetch；是否实际调用由 Provider 响应决定，强制远程模式不可用时不会暗中回退本地
+- 内置模型目录加入 Claude Opus 5.5，并将其设为 Anthropic 与 Claude Code 的默认模型；实际可用性仍取决于提供方账户
+
+### Changed
+- 订阅用量按 Provider 标明额度窗口及快照时间，并在本地统计 Dline 自身请求的每日输入/输出 token；不支持定时查询的来源保留首次快照与手动刷新
+- 历史任务采用轻量只读窗口加载，同时保留任务绑定的 Profile、跨窗口锁提示和已记录的子代理指标
+- 命令日志与 Shell 诊断归入所属任务的临时目录，日志按每任务容量预算清理；无任务归属的命令仍使用进程临时目录
+- 从 Cline 迁移时不再导入无法在 Dline 打开或恢复的旧任务历史；设置、规则、工作流与 MCP 配置仍按既有路径迁移
+
+### Fixed
+- 修复只声明托管 Web 能力就弹出请求级审批的问题；`Use Web` 仍控制 Dline 本地 Web 工具的审批，旧托管审批快照只有在请求确属持久化历史尾部时才能经显式 Resume 恢复
+- 修复 `generate_image` 审批、拒绝与重新打开时标题、提示词或图像卡片丢失的问题；拒绝不会触发 Provider 请求
+- 修复跨 Provider 切换后将其他协议的 reasoning 当作 Anthropic thinking 重放、导致请求被拒的问题
+- 修复关闭任务失败时缺少提示，以及重开已关闭任务后出现过期回复草稿的问题
+- 修复审批与输入重复提交、自动重试堆叠失败卡片，以及命令流式输出期间卡片提前折叠的问题
+- 修复命令结束、启动失败或取消后监听与日志流未及时收尾，以及后台命令跨任务误取消或尾部输出丢失的问题
+
 ## [0.9.3]
 
 ### Features
