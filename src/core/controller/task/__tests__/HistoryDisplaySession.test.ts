@@ -6,6 +6,7 @@ import type { HistoryItem } from "@shared/HistoryItem"
 import { DispatchInteractionRequest } from "@shared/proto/dline/task"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { ensureTaskDirectoryExists, GlobalFileNames } from "@/core/storage/disk"
+import { ensureInstanceLayout } from "@/core/storage/instance"
 import { UIMessage } from "@/core/storage/UIMessage"
 import { UIMessageWindowReader } from "@/core/storage/UIMessageWindowReader"
 import { createInitialTaskState, type DialogInteraction, type TaskState } from "@/core/task/kernel"
@@ -34,9 +35,8 @@ async function seedMessages(taskId: string, messages: readonly ClineMessage[]): 
 }
 
 async function persistSnapshot(taskId: string, state: TaskState): Promise<void> {
-	const runtimeDirectory = path.join(await ensureTaskDirectoryExists(taskId), GlobalFileNames.taskRuntime)
-	await fs.mkdir(runtimeDirectory, { recursive: true })
-	await new FileTaskStateVault(runtimeDirectory).save({ state, outbox: [] })
+	const layout = await ensureInstanceLayout({ taskId })
+	await new FileTaskStateVault(layout.stateFile).save({ state, outbox: [] })
 }
 
 function stoppedState(taskId: string, revision: number, primary: DialogInteraction): TaskState {

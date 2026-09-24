@@ -1,6 +1,7 @@
 import fs from "node:fs/promises"
 import { OrchestratorController } from "@/core/orchestrator/OrchestratorController"
 import { getDlineCheckpointsDir } from "@/core/storage/disk"
+import { closeInstanceStoragesUnder } from "@/core/storage/instance"
 import { WebviewProviderRegistry } from "@/core/webview/WebviewProviderRegistry"
 import { Logger } from "@/shared/services/Logger"
 import type { TaskLockService } from "../../locks/TaskLockService"
@@ -121,6 +122,9 @@ export class TaskDeletionOrchestrator {
 
 			// Phase 5: Delete the complete task-owned directory. This includes
 			// settings, snapshots, artifacts, SQLite sidecars, and future task files.
+			// Open instance databases, including subagent ones, are closed first:
+			// Windows refuses to remove a database, -wal or -shm that is still open.
+			await closeInstanceStoragesUnder(taskPaths.taskDirPath)
 			await this.removeTaskDirectory(taskPaths.taskDirPath)
 
 			// Phase 5b: Release file ownership in the global checkpoint registry.

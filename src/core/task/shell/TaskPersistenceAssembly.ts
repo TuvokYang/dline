@@ -1,5 +1,5 @@
 import path from "node:path"
-import { ensureTaskDirectoryExists, GlobalFileNames } from "../../storage/disk"
+import { ensureInstanceLayout } from "../../storage/instance"
 import {
 	FileCommandPublicationStore,
 	FileTaskPayloadStore,
@@ -15,13 +15,13 @@ export interface TaskPersistenceAssembly {
 }
 
 export async function openTaskPersistence(taskId: string): Promise<TaskPersistenceAssembly> {
-	const taskDirectory = await ensureTaskDirectoryExists(taskId)
-	const runtimeDirectory = path.join(taskDirectory, GlobalFileNames.taskRuntime)
+	const layout = await ensureInstanceLayout({ taskId })
+	const runtimeDirectory = layout.runtimeDirectory
 	const journal = await SegmentedConversationJournal.open({ directory: path.join(runtimeDirectory, "journal"), taskId })
 	const publications = await FileCommandPublicationStore.open(runtimeDirectory)
 	return {
 		ports: {
-			vault: new FileTaskStateVault(runtimeDirectory),
+			vault: new FileTaskStateVault(layout.stateFile),
 			publications,
 			journal,
 		},

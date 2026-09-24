@@ -22,7 +22,7 @@ afterEach(async () => {
 describe("file runtime stores", () => {
 	it("atomically restores state and outbox together", async () => {
 		const root = await directory()
-		const vault = new FileTaskStateVault(root)
+		const vault = new FileTaskStateVault(path.join(root, "state.json"))
 		const command: Command = {
 			type: "compose.round",
 			commandId: "command-1",
@@ -31,7 +31,7 @@ describe("file runtime stores", () => {
 			admittedEntryIds: ["entry-1"],
 		}
 		await vault.save({ state: { ...createInitialTaskState("task-1"), revision: 1 }, outbox: [command] })
-		await expect(new FileTaskStateVault(root).load("task-1")).resolves.toMatchObject({
+		await expect(new FileTaskStateVault(path.join(root, "state.json")).load("task-1")).resolves.toMatchObject({
 			state: { taskId: "task-1", revision: 1 },
 			outbox: [command],
 		})
@@ -39,29 +39,30 @@ describe("file runtime stores", () => {
 
 	it("keeps the previous snapshot as state.json.bak and restores it when state.json is torn", async () => {
 		const root = await directory()
-		const vault = new FileTaskStateVault(root)
+		const stateFile = path.join(root, "state.json")
+		const vault = new FileTaskStateVault(stateFile)
 		await vault.save({ state: { ...createInitialTaskState("task-1"), revision: 1 }, outbox: [] })
 		await vault.save({ state: { ...createInitialTaskState("task-1"), revision: 2 }, outbox: [] })
 
 		expect((await readdir(root)).sort()).toEqual(["state.json", "state.json.bak"])
 		expect(await readFile(path.join(root, "state.json"), "utf8")).toMatch(/^\{\n {2}"version": 1,\n[\s\S]*\}\n$/)
 
-		await writeFile(path.join(root, "state.json"), '{ "version": 1, "snap')
-		await expect(new FileTaskStateVault(root).load("task-1")).resolves.toMatchObject({
+		await writeFile(stateFile, '{ "version": 1, "snap')
+		await expect(new FileTaskStateVault(stateFile).load("task-1")).resolves.toMatchObject({
 			state: { taskId: "task-1", revision: 1 },
 		})
 
-		await rm(path.join(root, "state.json"))
-		await expect(new FileTaskStateVault(root).load("task-1")).resolves.toMatchObject({
+		await rm(stateFile)
+		await expect(new FileTaskStateVault(stateFile).load("task-1")).resolves.toMatchObject({
 			state: { taskId: "task-1", revision: 1 },
 		})
 	})
 
 	it("does not load a snapshot that belongs to another task", async () => {
-		const root = await directory()
-		await new FileTaskStateVault(root).save({ state: { ...createInitialTaskState("task-1"), revision: 1 }, outbox: [] })
+		const stateFile = path.join(await directory(), "state.json")
+		await new FileTaskStateVault(stateFile).save({ state: { ...createInitialTaskState("task-1"), revision: 1 }, outbox: [] })
 
-		await expect(new FileTaskStateVault(root).load("task-2")).rejects.toThrow("TaskStateVaultIdentityMismatch")
+		await expect(new FileTaskStateVault(stateFile).load("task-2")).rejects.toThrow("TaskStateVaultIdentityMismatch")
 	})
 
 	it("restores publication effect keys and payloads across reopen", async () => {

@@ -1,8 +1,7 @@
-import path from "node:path"
 import type { ClineMessage, TaskViewState } from "@shared/ExtensionMessage"
 import type { HistoryItem } from "@shared/HistoryItem"
 import type { DispatchInteractionRequest } from "@shared/proto/dline/task"
-import { ensureTaskDirectoryExists, GlobalFileNames } from "@/core/storage/disk"
+import { resolveInstanceLayout } from "@/core/storage/instance"
 import { UIMessage } from "@/core/storage/UIMessage"
 import type { UIMessageWindowPage, UIMessageWindowReader } from "@/core/storage/UIMessageWindowReader"
 import { getInteraction } from "@/core/task/interaction/InteractionRegistry"
@@ -171,8 +170,9 @@ export class HistoryDisplaySession {
 
 	private async readSnapshot(): Promise<TaskState | undefined> {
 		try {
-			const runtimeDirectory = path.join(await ensureTaskDirectoryExists(this.taskId), GlobalFileNames.taskRuntime)
-			return (await new FileTaskStateVault(runtimeDirectory).load(this.taskId))?.state
+			// Reading a historical snapshot must not create directories for a task being viewed.
+			const layout = await resolveInstanceLayout({ taskId: this.taskId })
+			return (await new FileTaskStateVault(layout.stateFile).load(this.taskId))?.state
 		} catch {
 			return undefined
 		}

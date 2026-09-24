@@ -52,9 +52,6 @@ export const GlobalFileNames = {
 	taskActivities: "activities.json",
 	taskApiRateMetrics: "api_rate_metrics.jsonl",
 	taskDatabase: (taskId: string) => `${taskId}.db`,
-	// Durable task runtime: state vault, conversation journal, command
-	// publications and content-addressed payloads.
-	taskRuntime: "runtime",
 	taskContext: "context.json",
 	apiConversationHistory: "api_conversation_history.jsonl",
 	contextHistory: "context_history.jsonl",

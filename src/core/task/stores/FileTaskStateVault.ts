@@ -1,4 +1,3 @@
-import path from "node:path"
 import { readJsonWithBackup, writeJsonAtomic } from "@shared/storage/atomic-file"
 import type { DurableTaskSnapshot, StateVault } from "./contracts"
 
@@ -24,12 +23,10 @@ function decodeFor(taskId: string): (value: unknown) => DurableTaskSnapshot {
 }
 
 export class FileTaskStateVault implements StateVault {
-	private readonly filePath: string
 	private writeTail: Promise<void> = Promise.resolve()
 
-	constructor(directory: string) {
-		this.filePath = path.join(directory, "state.json")
-	}
+	/** @param filePath the instance state file; see `InstanceLayout.stateFile`. */
+	constructor(private readonly filePath: string) {}
 
 	/** Returns the newest decodable snapshot, falling back to `state.json.bak` when the primary is unusable. */
 	async load(taskId: string): Promise<DurableTaskSnapshot | undefined> {
