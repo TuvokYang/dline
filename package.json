@@ -478,8 +478,8 @@
 		"publish:marketplace:insiders": "node ./scripts/publish-insiders.mjs",
 		"prepare": "npx husky",
 		"docs": "cd docs && npm run dev",
-		"docs:check-links": "cd docs && npm run check",
-		"docs:rename-file": "cd docs && npm run rename",
+		"docs:check": "cd docs && npm run check",
+		"docs:verify": "cd docs && npm run verify",
 		"report-issue": "node scripts/report-issue.js",
 		"storybook": "cd webview-ui && npm run storybook",
 		"eval:smoke:run": "npx tsx evals/smoke-tests/run-smoke-tests.ts"

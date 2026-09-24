@@ -1,0 +1,19 @@
+/*
+ * Dline brand theme for Starlight.
+ *
+ * Only Starlight's documented color tokens are overridden, so upgrades keep
+ * working. Fonts intentionally stay on Starlight's system font stacks: the site
+ * must not load third-party font services.
+ */
+
+:root {
+	--sl-color-accent-low: #2a1542;
+	--sl-color-accent: #9d4edd;
+	--sl-color-accent-high: #e4d0ff;
+}
+
+:root[data-theme="light"] {
+	--sl-color-accent-low: #f0e6ff;
+	--sl-color-accent: #7b2cbf;
+	--sl-color-accent-high: #3c1361;
+}
