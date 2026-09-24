@@ -2,6 +2,7 @@ import type { ClineAsk, ClineMessage } from "@shared/ExtensionMessage"
 import type { ClineStorageMessage } from "@shared/messages"
 import cloneDeep from "clone-deep"
 import { BlockPhase } from "../BlockPhaseMachine"
+import { hostedWebApprovalApiIndex } from "../interaction/HostedWebApproval"
 import type { InteractionKind } from "../interaction/Interaction"
 import { getInteraction } from "../interaction/InteractionRegistry"
 import { TaskPhase } from "../TaskPhase"
@@ -48,6 +49,53 @@ const BLOCK_APPROVAL_INTERACTIONS = new Set<InteractionKind>([
 
 function cloneSnapshot(snapshot: TaskSnapshot): TaskSnapshot {
 	return createSnapshot(hydrateSnapshot(snapshot), snapshot.timestamp)
+}
+
+function legacyHostedWebApiIndex(taskId: string, interactionId: string): number | undefined {
+	const approvalIndex = hostedWebApprovalApiIndex(taskId, interactionId)
+	if (approvalIndex !== undefined) return approvalIndex
+	const prefix = `hosted-web-rejected:${taskId}:`
+	if (!interactionId.startsWith(prefix)) return undefined
+	const rawIndex = interactionId.slice(prefix.length)
+	if (!/^(0|[1-9]\d*)$/.test(rawIndex)) return undefined
+	const apiIndex = Number(rawIndex)
+	return Number.isSafeInteger(apiIndex) ? apiIndex : undefined
+}
+
+function isLegacyHostedWebInteraction(snapshot: TaskSnapshot, interactionId: string | undefined): boolean {
+	return Boolean(snapshot.taskId && interactionId && legacyHostedWebApiIndex(snapshot.taskId, interactionId) !== undefined)
+}
+
+/** Convert obsolete Hosted capability approvals into an inert persisted-request Resume. */
+function migrateLegacyHostedWebInteraction(
+	snapshot: TaskSnapshot,
+	apiHistory: readonly ClineStorageMessage[] | undefined,
+): boolean {
+	const identities = [
+		snapshot.interaction?.interactionId,
+		snapshot.interruptedInteraction?.interactionId,
+		snapshot.anchor?.interactionId,
+	]
+	const legacyId = identities.find((interactionId) => isLegacyHostedWebInteraction(snapshot, interactionId))
+	if (!legacyId) return false
+	// Never resurrect an obsolete interrupted approval if the request tail is
+	// invalid and the primary interaction falls back to an ordinary Resume.
+	if (isLegacyHostedWebInteraction(snapshot, snapshot.interruptedInteraction?.interactionId)) {
+		snapshot.interruptedInteraction = undefined
+	}
+	const apiIndex = snapshot.taskId ? legacyHostedWebApiIndex(snapshot.taskId, legacyId) : undefined
+	if (apiIndex === undefined || apiIndex !== snapshot.anchor?.apiIndex) return false
+	const request = apiHistory?.[apiIndex]
+	if (apiHistory?.length !== apiIndex + 1 || request?.role !== "user" || !Array.isArray(request.content)) {
+		return false
+	}
+
+	snapshot.interaction = undefined
+	snapshot.interruptedInteraction = undefined
+	snapshot.completion = undefined
+	snapshot.phase = TaskPhase.PAUSED
+	snapshot.anchor = { apiIndex }
+	return true
 }
 
 function isValidAnchor(snapshot: TaskSnapshot, historyLength: number): boolean {
@@ -123,6 +171,7 @@ function isPendingCommandApproval(snapshot: TaskSnapshot, message: ClineMessage)
 
 function interactionKind(snapshot: TaskSnapshot, message: ClineMessage): InteractionKind | undefined {
 	if (message.type !== "ask" || !message.ask) return undefined
+	if (isLegacyHostedWebInteraction(snapshot, message.interactionId)) return undefined
 	if (message.ask === "command" && !isPendingCommandApproval(snapshot, message)) return undefined
 	const currentInteraction = snapshot.interaction
 	let knownKind: InteractionKind | undefined
@@ -256,7 +305,7 @@ function bindPersistedInteraction(snapshot: TaskSnapshot, message: ClineMessage,
 		kind,
 		status,
 		createdRevision: existing?.createdRevision ?? snapshot.revision ?? 0,
-		...(kind === "error_retry" && existing?.persistedRequest !== undefined
+		...((kind === "error_retry" || kind === "resume") && existing?.persistedRequest !== undefined
 			? { persistedRequest: existing.persistedRequest }
 			: {}),
 		...(kind === "error_retry" && existing?.retryContent ? { retryContent: cloneDeep(existing.retryContent) } : {}),
@@ -301,7 +350,7 @@ function retainInteractionWithContinuation(
 	kind: InteractionKind,
 	diagnostics: ResumeDiagnostic[],
 ): boolean {
-	if (kind === "hosted_web_approval" || kind === "resume" || kind === "error_retry" || kind === "mistake_limit") {
+	if (kind === "resume" || kind === "error_retry" || kind === "mistake_limit") {
 		return true
 	}
 	const interaction = snapshot.interaction
@@ -482,7 +531,7 @@ function restorePresentedCompletion(snapshot: TaskSnapshot, uiMessages: readonly
 }
 
 /** Materialize an inert Resume interaction for a stopped state with no original interaction. */
-function ensureResumeInteraction(snapshot: TaskSnapshot): ResumeEntry {
+function ensureResumeInteraction(snapshot: TaskSnapshot, persistedRequest = false): ResumeEntry {
 	const taskId = snapshot.taskId
 	if (!taskId) throw new Error("resume_snapshot_task_missing")
 	const revision = (snapshot.revision ?? 0) + 1
@@ -498,6 +547,7 @@ function ensureResumeInteraction(snapshot: TaskSnapshot): ResumeEntry {
 		kind: "resume",
 		status: "opening",
 		createdRevision: revision,
+		...(persistedRequest ? { persistedRequest: true } : {}),
 	}
 	snapshot.anchor = { apiIndex, turnId, interactionId }
 	return { type: "show_resume_interaction", interactionId, turnId }
@@ -568,10 +618,15 @@ export function reconcileResume(input: ResumeInput): ResumeResult {
 		}
 	}
 
+	const migratedHostedWebRequest = migrateLegacyHostedWebInteraction(next, prepared.apiHistory)
 	reconcilePersistedInteraction(next, prepared.uiTail, folded.answeredDlineTids, prepared.apiHistory, diagnostics)
 	clearStaleApprovalOwner(next)
 	restorePresentedCompletion(next, input.uiHistory ?? prepared.uiTail)
 	normalizeStoppedTaskSnapshot(next)
+
+	if (migratedHostedWebRequest) {
+		return { snapshot: next, entry: ensureResumeInteraction(next, true), diagnostics }
+	}
 
 	if (next.interaction) {
 		if (next.interaction.status === "opening" && next.interaction.anchor) next.interaction.status = "awaiting"

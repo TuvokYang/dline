@@ -413,11 +413,20 @@ export class InteractionCoordinator {
 
 	/** Commit the already claimed resume continuation through its typed runtime event. */
 	private async commitClaimedResume(interactionId: string, response: InteractionResponse): Promise<InteractionOutcome> {
-		const committed = await this.runtime.dispatchAtAdmission({
-			type: "TASK_RESUME_REQUESTED",
-			interactionId,
-			draft: response.draft ?? { text: "", images: [], files: [] },
-		})
+		const interaction = this.runtime.getState().interaction
+		const committed = await this.runtime.dispatchAtAdmission(
+			interaction?.interactionId === interactionId && interaction.persistedRequest === true
+				? {
+						type: "PERSISTED_API_REQUEST_CONTINUATION_REQUESTED",
+						interactionId,
+						apiIndex: this.runtime.getState().anchor.apiIndex,
+					}
+				: {
+						type: "TASK_RESUME_REQUESTED",
+						interactionId,
+						draft: response.draft ?? { text: "", images: [], files: [] },
+					},
+		)
 		if (!committed.accepted) {
 			throw new Error(`Resume continuation rejected: ${committed.error?.code ?? "invalid_runtime_event"}`)
 		}

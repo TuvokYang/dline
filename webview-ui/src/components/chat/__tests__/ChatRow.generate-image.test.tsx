@@ -1,3 +1,4 @@
+import type { TaskViewState } from "@shared/ExtensionMessage"
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import React, { type ComponentType } from "react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
@@ -5,6 +6,7 @@ import { ChatRowContent } from "../ChatRow"
 
 void React
 
+const activeView = vi.hoisted(() => ({ current: undefined as TaskViewState | undefined }))
 const { getImageArtifact, getImagePreview, openImageArtifact, copyToClipboard } = vi.hoisted(() => ({
 	getImageArtifact: vi.fn(async () => ({
 		data: new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
@@ -36,7 +38,7 @@ vi.mock("@/context/ExtensionStateContext", () => ({
 		vscodeTerminalExecutionMode: "backgroundExec",
 		clineMessages: [],
 		showFeatureTips: false,
-		taskViewState: undefined,
+		taskViewState: activeView.current,
 		currentTaskItem: { id: "task-1" },
 	}),
 }))
@@ -110,7 +112,10 @@ const baseProps = {
 const TestableChatRowContent = ChatRowContent as ComponentType<Record<string, unknown>>
 
 describe("ChatRow image generation rendering", () => {
-	beforeEach(() => vi.clearAllMocks())
+	beforeEach(() => {
+		vi.clearAllMocks()
+		activeView.current = undefined
+	})
 
 	it("loads a completed task artifact without persisting base64 in the message", async () => {
 		render(<TestableChatRowContent {...baseProps} message={message} />)
@@ -124,6 +129,87 @@ describe("ChatRow image generation rendering", () => {
 		expect(screen.queryByTestId("image-generation-partial-preview")).not.toBeInTheDocument()
 		const preview = await screen.findByRole("img", { name: "Generated image 1" })
 		expect(preview).toHaveAttribute("src", expect.stringMatching(/^data:image\/png;base64,/))
+	})
+
+	it.each([
+		["awaiting_approval", "Dline wants to generate an image", "ask"],
+		["rejected", "Image generation rejected", "say"],
+	] as const)("keeps the typed card for %s state", (status, title, type) => {
+		const approvalMessage = {
+			...partialMessage,
+			type,
+			...(type === "ask" ? { ask: "tool" as const, say: undefined } : { say: "tool" as const }),
+			partial: false,
+			text: JSON.stringify({
+				tool: "generateImage",
+				imageGeneration: {
+					schemaVersion: 1,
+					status,
+					requestId: `request-${status}`,
+					prompt: "A blue owl awaiting a decision",
+					count: 1,
+				},
+			}),
+		}
+
+		render(<TestableChatRowContent {...baseProps} message={approvalMessage} />)
+
+		expect(screen.getByText(title)).toBeInTheDocument()
+		expect(screen.getByText("A blue owl awaiting a decision")).toBeInTheDocument()
+	})
+
+	it("delegates only the exact active approval card to the footer and restores timeline history afterward", () => {
+		const approvalMessage = {
+			...partialMessage,
+			ts: 100,
+			type: "ask" as const,
+			ask: "tool" as const,
+			say: undefined,
+			interactionId: "image-approval",
+			partial: false,
+			text: JSON.stringify({
+				tool: "generateImage",
+				imageGeneration: {
+					schemaVersion: 1,
+					status: "awaiting_approval",
+					requestId: "image-approval",
+					prompt: "A blue owl awaiting a decision",
+					count: 1,
+				},
+			}),
+		}
+		activeView.current = {
+			taskId: "task-1",
+			phase: "awaiting_approval",
+			stateRevision: 8,
+			activeInteraction: {
+				taskId: "task-1",
+				turnId: "turn:image-approval",
+				interactionId: "image-approval",
+				kind: "tool_approval",
+				status: "awaiting",
+				stateRevision: 8,
+				taskAsk: "tool",
+				presentationKind: "tool_approval",
+				askMessageTs: 100,
+			},
+			input: { enabled: true, acceptsText: true, acceptsImages: true, acceptsFiles: true },
+			footer: { actions: [] },
+		}
+		const { rerender } = render(<TestableChatRowContent {...baseProps} message={approvalMessage} />)
+		expect(screen.queryByText("Dline wants to generate an image")).not.toBeInTheDocument()
+
+		rerender(<TestableChatRowContent {...baseProps} message={{ ...approvalMessage, interactionId: "older-approval" }} />)
+		expect(screen.getByText("Dline wants to generate an image")).toBeInTheDocument()
+
+		activeView.current = undefined
+		rerender(<TestableChatRowContent {...baseProps} message={approvalMessage} />)
+		expect(screen.getByText("Dline wants to generate an image")).toBeInTheDocument()
+
+		rerender(
+			<TestableChatRowContent {...baseProps} message={{ ...approvalMessage, type: "say", say: "tool", ask: undefined }} />,
+		)
+		expect(screen.getByText("Dline wants to generate an image")).toBeInTheDocument()
 	})
 
 	it("shows the prompt before any image is available", () => {

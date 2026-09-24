@@ -81,11 +81,13 @@ async function attachHostedWebResumeEvidence(
 		const content = await readFile(path.join(taskDir, "snapshot.json"), "utf8").catch(() => undefined)
 		if (!content) return undefined
 		const parsed = JSON.parse(content) as { interaction?: { kind?: string; status?: string } }
-		return parsed.interaction?.kind === "resume" && parsed.interaction.status === "awaiting" ? content : undefined
+		return parsed.interaction?.kind === "hosted_web_approval" && parsed.interaction.status === "awaiting"
+			? content
+			: undefined
 	}, 30_000)
 	const uiMessages = await E2ETestHelper.waitForValue(async () => {
 		const content = await readFile(path.join(taskDir, "ui_messages.jsonl"), "utf8").catch(() => undefined)
-		return content?.includes('"ask":"resume_task"') ? content : undefined
+		return content?.includes('"ask":"tool"') && content.includes('"hosted-web:') ? content : undefined
 	}, 30_000)
 	const settings = await E2ETestHelper.waitForValue(async () => {
 		const content = await readFile(settingsPath(dlineDir), "utf8").catch(() => undefined)
@@ -352,6 +354,66 @@ function expectIsolatedDirectories(dlineDir: string, dlineHomeDir: string, dline
 	expect(path.resolve(dlineDocsDir)).not.toBe(path.resolve(dlineDir))
 }
 
+async function seedLegacyHostedWebApproval(dlineDocsDir: string, taskId: string): Promise<void> {
+	const taskDir = path.join(dlineDocsDir, "tasks", taskId)
+	const apiPath = path.join(taskDir, "api_conversation_history.jsonl")
+	const apiHistory = (await readFile(apiPath, "utf8"))
+		.split(/\r?\n/)
+		.filter(Boolean)
+		.map((line) => JSON.parse(line) as { role?: string; content?: unknown })
+	const [request, interrupted] = apiHistory
+	if (
+		apiHistory.length !== 2 ||
+		request?.role !== "user" ||
+		!Array.isArray(request.content) ||
+		interrupted?.role !== "assistant" ||
+		!Array.isArray(interrupted.content) ||
+		interrupted.content.some(
+			(block) => typeof block === "object" && block !== null && "type" in block && block.type === "tool_use",
+		)
+	) {
+		const shape = apiHistory.map((message) => ({ role: message.role, contentIsArray: Array.isArray(message.content) }))
+		throw new Error(`Expected one failed user request and no executed tool: ${JSON.stringify(shape)}`)
+	}
+	// Closing a real failed request writes an interrupted assistant row. The obsolete pre-send approval had no response yet.
+	await writeFile(apiPath, `${JSON.stringify(request)}\n`, "utf8")
+	const apiIndex = 0
+
+	const uiPath = path.join(taskDir, "ui_messages.jsonl")
+	const uiMessages = (await readFile(uiPath, "utf8"))
+		.split(/\r?\n/)
+		.filter(Boolean)
+		.map((line) => JSON.parse(line) as Record<string, unknown>)
+	const failedAsk = uiMessages.findLast((message) => message.type === "ask" && message.ask === "api_req_failed")
+	if (!failedAsk || typeof failedAsk.ts !== "number") throw new Error("Expected a persisted failed-request ask")
+	const interactionId = `hosted-web:${taskId}:${apiIndex}`
+	failedAsk.ask = "tool"
+	failedAsk.interactionId = interactionId
+	failedAsk.conversationHistoryIndex = apiIndex
+	failedAsk.text = JSON.stringify({ tool: "webSearch", content: "Legacy Hosted Web approval" })
+
+	const snapshotPath = path.join(taskDir, "snapshot.json")
+	const snapshot = JSON.parse(await readFile(snapshotPath, "utf8")) as Record<string, unknown>
+	if (snapshot.taskId !== taskId) throw new Error("Expected the closed task snapshot to match its task ID")
+	snapshot.phase = "awaiting_approval"
+	snapshot.apiIndex = apiIndex
+	snapshot.anchor = { apiIndex, turnId: interactionId, interactionId, uiMessageTs: failedAsk.ts }
+	snapshot.interaction = {
+		taskId,
+		turnId: interactionId,
+		interactionId,
+		kind: "hosted_web_approval",
+		status: "awaiting",
+		createdRevision: snapshot.revision,
+		anchor: { messageTs: failedAsk.ts, messageType: "ask", taskAsk: "tool" },
+	}
+	for (const field of ["turn", "cancellation", "error", "completion", "interruptedInteraction", "runtimeError"]) {
+		delete snapshot[field]
+	}
+	await writeFile(uiPath, `${uiMessages.map((message) => JSON.stringify(message)).join("\n")}\n`, "utf8")
+	await writeFile(snapshotPath, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8")
+}
+
 async function expectHostedLifecycle(
 	sidebar: Frame,
 	query: string,
@@ -377,7 +439,7 @@ async function expectHostedLifecycle(
 }
 
 e2e(
-	"ServerTool runtime - OpenAI Responses hosted Web Search waits for Use Web approval before the Provider request",
+	"ServerTool runtime - OpenAI Responses hosted Web Search bypasses Local Web approval and sends once",
 	async ({ dlineDir, dlineDocsDir, dlineHomeDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
 		e2e.setTimeout(180_000)
 		expectIsolatedDirectories(dlineDir, dlineHomeDir, dlineDocsDir)
@@ -409,28 +471,11 @@ e2e(
 			app = opened.app
 			const taskText = "Use OpenAI provider-hosted search and finish the task."
 			await sendTask(opened.sidebar, taskText)
-			let approveButton = opened.sidebar.getByRole("contentinfo").getByText("Approve", { exact: true })
-			await expect
-				.poll(
-					async () => ({
-						approvalCount: await approveButton.count(),
-						providerRequests: server.getMockConsumptions("openai-compatible-responses").length,
-					}),
-					{ timeout: 60_000, intervals: [250, 500, 1_000] },
-				)
-				.toEqual({ approvalCount: 1, providerRequests: 0 })
-			await expect(opened.sidebar.getByText("Dline wants to search the web for:", { exact: true })).toBeVisible()
-			await expect(opened.sidebar.getByText("OpenAI Web Search (Hosted)", { exact: true })).toBeVisible()
-			expect(server.getSearxngSearchRequests()).toHaveLength(0)
-			await closeCurrentTask(opened.sidebar)
-			await reopenTask(opened.sidebar, taskText)
-			approveButton = opened.sidebar.getByRole("contentinfo").getByText("Approve", { exact: true })
-			await expect(approveButton).toBeVisible({ timeout: 60_000 })
-			expect(server.getMockConsumptions("openai-compatible-responses")).toHaveLength(0)
-			expect(server.getSearxngSearchRequests()).toHaveLength(0)
-			await approveButton.click()
-
+			const approveButton = opened.sidebar.getByRole("contentinfo").getByText("Approve", { exact: true })
 			await expect.poll(() => server.getMockConsumptions("openai-compatible-responses").length, { timeout: 60_000 }).toBe(1)
+			await expect(approveButton).toHaveCount(0)
+			await expect(opened.sidebar.getByText("Dline wants to search the web for:", { exact: true })).toHaveCount(0)
+			expect(server.getSearxngSearchRequests()).toHaveLength(0)
 			const [firstRequest] = server.getMockConsumptions("openai-compatible-responses")
 			expect(firstRequest).toBeDefined()
 			expectSingleSearchRoute(firstRequest, "hosted")
@@ -462,7 +507,7 @@ e2e(
 )
 
 e2e(
-	"ServerTool runtime - disabling Use Web prompts once and reuses manual Hosted approval for the current task",
+	"ServerTool runtime - Local Web approval toggle does not gate Hosted requests across turns",
 	async ({ dlineDir, dlineDocsDir, dlineHomeDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
 		e2e.setTimeout(180_000)
 		expectIsolatedDirectories(dlineDir, dlineHomeDir, dlineDocsDir)
@@ -506,7 +551,7 @@ e2e(
 			const opened = await openSidebar(openVSCode, workspaceDir, helper)
 			app = opened.app
 			await setAutoApproveAction(opened.sidebar, "Use Web", true, dlineDir)
-			await sendTask(opened.sidebar, "Keep working after one manual Hosted Web approval.")
+			await sendTask(opened.sidebar, "Keep working while Hosted Web remains independent from Local Web approval.")
 			await expect(opened.sidebar.getByText(ready, { exact: true })).toBeVisible({ timeout: 60_000 })
 			await expect.poll(() => server.getMockConsumptions("openai-compatible-responses").length).toBe(1)
 
@@ -517,10 +562,6 @@ e2e(
 
 			const footer = opened.sidebar.getByRole("contentinfo")
 			const approveButton = footer.getByText("Approve", { exact: true })
-			await expect(approveButton).toBeVisible({ timeout: 60_000 })
-			expect(server.getMockConsumptions("openai-compatible-responses")).toHaveLength(1)
-			await approveButton.click()
-
 			await expect(opened.sidebar.getByText(approved, { exact: true })).toBeVisible({ timeout: 60_000 })
 			await expect.poll(() => server.getMockConsumptions("openai-compatible-responses").length).toBe(2)
 			await expect(approveButton).toHaveCount(0)
@@ -530,7 +571,7 @@ e2e(
 			await expect(opened.sidebar.getByText(completion, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
 			await expect.poll(() => server.getMockConsumptions("openai-compatible-responses").length).toBe(3)
 			await expect(approveButton).toHaveCount(0)
-			await attachHostedWebScreenshot(opened.page, "hosted-web-manual-approval-lease")
+			await attachHostedWebScreenshot(opened.page, "hosted-web-local-toggle-independent")
 			await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
 		} finally {
 			await app?.close()
@@ -539,7 +580,7 @@ e2e(
 )
 
 e2e(
-	"ServerTool runtime - rejecting Hosted Web approval leaves an immediate durable Resume path",
+	"ServerTool runtime - legacy Hosted approval reopens inertly and Resume replays one persisted request",
 	async ({ dlineDir, dlineDocsDir, dlineHomeDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
 		e2e.setTimeout(180_000)
 		expectIsolatedDirectories(dlineDir, dlineHomeDir, dlineDocsDir)
@@ -549,65 +590,65 @@ e2e(
 			supportsWebSearch: true,
 		})
 		await configureNormalApprovalMode(dlineDir)
-		const ready = "E2E_HOSTED_REJECT_RECOVERY_READY"
-		const rejectedDraft = "E2E_HOSTED_REJECT_RECOVERY_DRAFT"
-		server.enqueueResponses("openai-compatible-responses", {
-			type: "tool",
-			id: "call_hosted_reject_recovery_ready",
-			name: "qna_respond",
-			arguments: { response: ready },
-		})
+		const taskText = "Resume the one legacy Hosted Web request without sending on history reopen."
+		const completion = "E2E_LEGACY_HOSTED_RESUME_OK"
+		server.enqueueResponses(
+			"openai-compatible-responses",
+			{ type: "error", status: 403, code: "e2e_legacy_hosted_fixture", message: "Legacy Hosted fixture failure" },
+			{
+				type: "tool",
+				id: "call_legacy_hosted_resumed",
+				name: "attempt_completion",
+				arguments: { result: completion },
+				expectedRequestIncludes: [taskText],
+			},
+			{ type: "error", status: 500, code: "unexpected_legacy_hosted_replay", message: "Unexpected duplicate replay" },
+		)
 
 		let app: ElectronApplication | undefined
 		try {
 			const opened = await openSidebar(openVSCode, workspaceDir, helper)
 			app = opened.app
-			await setAutoApproveAction(opened.sidebar, "Use Web", true)
-			const taskText = "Pause safely when I reject Hosted Web access."
 			await sendTask(opened.sidebar, taskText)
-			await expect(opened.sidebar.getByText(ready, { exact: true })).toBeVisible({ timeout: 60_000 })
-			await expect.poll(() => server.getMockConsumptions("openai-compatible-responses").length).toBe(1)
-
-			await setAutoApproveAction(opened.sidebar, "Use Web", false)
-			const input = opened.sidebar.getByTestId("chat-input")
-			await input.fill(rejectedDraft)
-			await input.press("Enter")
-
-			const footer = opened.sidebar.getByRole("contentinfo")
-			const rejectButton = footer.getByText("Reject", { exact: true })
-			await expect(rejectButton).toBeVisible({ timeout: 60_000 })
-			expect(server.getMockConsumptions("openai-compatible-responses")).toHaveLength(1)
-			await rejectButton.click()
-
-			const resumeButton = footer.getByText("Resume", { exact: true })
-			await expect(resumeButton).toBeVisible({ timeout: 30_000 })
-			await expect(input).toBeEnabled()
-			expect(server.getMockConsumptions("openai-compatible-responses")).toHaveLength(1)
-			await expect(footer.getByText("Approve", { exact: true })).toHaveCount(0)
-			await expect(rejectButton).toHaveCount(0)
-			await attachHostedWebResumeEvidence(
-				opened.page,
-				dlineDir,
-				dlineDocsDir,
-				userDataDir,
-				"hosted-web-reject-immediate-resume",
-			)
-
+			await expect(opened.sidebar.locator('vscode-button[aria-label="Retry"]')).toBeVisible({ timeout: 60_000 })
+			await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(1)
+			const taskId = await onlyTaskId(dlineDocsDir)
+			const taskDir = path.join(dlineDocsDir, "tasks", taskId)
 			await closeCurrentTask(opened.sidebar)
-			await reopenTask(opened.sidebar, taskText)
-			await expect(opened.sidebar.getByRole("contentinfo").getByText("Resume", { exact: true })).toBeVisible({
-				timeout: 30_000,
-			})
-			await expect(opened.sidebar.getByTestId("chat-input")).toBeEnabled()
-			expect(server.getMockConsumptions("openai-compatible-responses")).toHaveLength(1)
-			await attachHostedWebResumeEvidence(
-				opened.page,
-				dlineDir,
-				dlineDocsDir,
-				userDataDir,
-				"hosted-web-reject-reopened-resume",
-			)
-			await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
+			await seedLegacyHostedWebApproval(dlineDocsDir, taskId)
+
+			for (let reopen = 0; reopen < 2; reopen++) {
+				await reopenTask(opened.sidebar, taskText)
+				await expect
+					.poll(
+						async () => {
+							const snapshot = JSON.parse(await readFile(path.join(taskDir, "snapshot.json"), "utf8")) as {
+								interaction?: { kind?: string; status?: string; persistedRequest?: boolean }
+							}
+							return snapshot.interaction
+						},
+						{ timeout: 30_000 },
+					)
+					.toMatchObject({ kind: "hosted_web_approval", status: "awaiting" })
+				await expect(opened.sidebar.getByRole("contentinfo").getByText("Resume", { exact: true })).toBeVisible({
+					timeout: 30_000,
+				})
+				await expect(opened.sidebar.getByRole("contentinfo").getByText("Approve", { exact: true })).toHaveCount(0)
+				await opened.page.waitForTimeout(750)
+				expect(server.getRequestCount("openai-compatible-responses")).toBe(1)
+				if (reopen === 0) await closeCurrentTask(opened.sidebar)
+			}
+
+			await attachHostedWebResumeEvidence(opened.page, dlineDir, dlineDocsDir, userDataDir, "legacy-hosted-resume")
+			await opened.sidebar.getByRole("contentinfo").getByText("Resume", { exact: true }).click()
+			await expect(opened.sidebar.getByText(completion, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
+			await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(2)
+			const consumptions = server.getMockConsumptions("openai-compatible-responses")
+			expect(consumptions).toHaveLength(2)
+			expect(consumptions[1].contractError).toBeUndefined()
+			expectSingleSearchRoute(consumptions[1], "hosted")
+			expect(server.getSearxngSearchRequests()).toHaveLength(0)
+			await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir, [/Legacy Hosted fixture failure/])
 		} finally {
 			await app?.close()
 		}
@@ -719,119 +760,6 @@ e2e(
 			await expect(restoredSearchCard.getByText("E2E_SHARED_RESULT_SNIPPET", { exact: true })).toBeVisible()
 			await expect(restoredSearchCard.getByText("Source-only result", { exact: true })).toBeVisible()
 			await expect(opened.sidebar.getByText("Provider-hosted web search", { exact: true })).toHaveCount(0)
-			await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
-		} finally {
-			await app?.close()
-		}
-	},
-)
-
-e2e(
-	"ServerTool runtime - checkpoint Restore replaces pending Hosted Web approval and reapproves the resumed request",
-	async ({ dlineDir, dlineDocsDir, dlineHomeDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
-		e2e.setTimeout(240_000)
-		expectIsolatedDirectories(dlineDir, dlineHomeDir, dlineDocsDir)
-		await prepareRuntimeProfile(dlineDir, E2E_PROFILE_NAMES.mockOpenAiResponses, {
-			enabled: true,
-			mode: "WEB_TOOLS_MODE_AUTO",
-			supportsWebSearch: true,
-		})
-		await configureNormalApprovalMode(dlineDir)
-		const pendingDraft = "E2E_HOSTED_WEB_RESTORE_PENDING_DRAFT"
-		const resumeDraft = "E2E_HOSTED_WEB_RESTORE_RESUME_DRAFT"
-		const completion = "E2E_HOSTED_WEB_RESTORE_OK"
-		server.enqueueResponses(
-			"openai-compatible-responses",
-			{
-				type: "tool",
-				id: "call_hosted_restore_ready",
-				name: "qna_respond",
-				arguments: { response: "E2E_HOSTED_WEB_RESTORE_READY" },
-			},
-			{
-				type: "tool",
-				id: "call_hosted_restore_done",
-				name: "attempt_completion",
-				arguments: { result: completion },
-				expectedRequestIncludes: [resumeDraft],
-			},
-			{
-				type: "error",
-				status: 500,
-				code: "unexpected_stale_hosted_request",
-				message: "A stale Hosted Web approval sent an extra Provider request after checkpoint Restore",
-			},
-		)
-
-		let app: ElectronApplication | undefined
-		try {
-			const opened = await openSidebar(openVSCode, workspaceDir, helper)
-			app = opened.app
-			await setAutoApproveAction(opened.sidebar, "Use Web", true)
-			await sendTask(opened.sidebar, "Create a checkpoint before testing Hosted Web approval Restore.")
-			await expect(opened.sidebar.getByText("E2E_HOSTED_WEB_RESTORE_READY", { exact: true })).toBeVisible({
-				timeout: 60_000,
-			})
-			await expect.poll(() => server.getMockConsumptions("openai-compatible-responses").length).toBe(1)
-			const checkpointLabels = opened.sidebar.getByText("Checkpoint", { exact: true })
-			await expect.poll(() => checkpointLabels.count(), { timeout: 30_000 }).toBeGreaterThan(0)
-			const restoreCheckpointIndex = (await checkpointLabels.count()) - 1
-
-			await setAutoApproveAction(opened.sidebar, "Use Web", false)
-			const input = opened.sidebar.getByTestId("chat-input")
-			await input.fill(pendingDraft)
-			await expect(opened.sidebar.getByTestId("send-button")).toHaveAttribute("aria-disabled", "false", {
-				timeout: 60_000,
-			})
-			await input.press("Enter")
-			let approveButton = opened.sidebar.getByRole("contentinfo").getByText("Approve", { exact: true })
-			await expect(approveButton).toBeVisible({ timeout: 60_000 })
-			await expect(opened.sidebar.getByText("OpenAI Web Search (Hosted)", { exact: true }).last()).toBeVisible()
-			expect(server.getMockConsumptions("openai-compatible-responses")).toHaveLength(1)
-			expect(server.getSearxngSearchRequests()).toHaveLength(0)
-
-			const restoreCheckpointControl = checkpointLabels.nth(restoreCheckpointIndex).locator("..").locator("..")
-			await restoreCheckpointControl.scrollIntoViewIfNeeded()
-			await restoreCheckpointControl.hover()
-			const restoreButton = restoreCheckpointControl.getByRole("button", { name: "Restore", exact: true })
-			await expect(restoreButton).toBeVisible({ timeout: 3_000 })
-			await restoreButton.click({ timeout: 3_000 })
-			const moreOptions = opened.sidebar.getByText("More options", { exact: true })
-			await expect(moreOptions).toBeVisible()
-			await moreOptions.click()
-			await opened.sidebar.getByRole("button", { name: "Restore Task Only", exact: true }).click()
-
-			const resumeButton = opened.sidebar.getByRole("contentinfo").getByText("Resume", { exact: true })
-			await expect(resumeButton).toBeVisible({ timeout: 5_000 })
-			await expect(approveButton).toHaveCount(0)
-			await expect(opened.sidebar.getByText(pendingDraft, { exact: true })).toHaveCount(0)
-			expect(server.getMockConsumptions("openai-compatible-responses")).toHaveLength(1)
-			expect(server.getSearxngSearchRequests()).toHaveLength(0)
-
-			await input.fill(resumeDraft)
-			await resumeButton.click()
-			approveButton = opened.sidebar.getByRole("contentinfo").getByText("Approve", { exact: true })
-			await expect
-				.poll(
-					async () => ({
-						approvalCount: await approveButton.count(),
-						providerRequests: server.getMockConsumptions("openai-compatible-responses").length,
-					}),
-					{ timeout: 60_000, intervals: [250, 500, 1_000] },
-				)
-				.toEqual({ approvalCount: 1, providerRequests: 1 })
-			expect(server.getSearxngSearchRequests()).toHaveLength(0)
-			await approveButton.click()
-
-			await expect.poll(() => server.getMockConsumptions("openai-compatible-responses").length, { timeout: 60_000 }).toBe(2)
-			const continuation = server.getMockConsumptions("openai-compatible-responses")[1]
-			expect(continuation.contractError).toBeUndefined()
-			expectSingleSearchRoute(continuation, "hosted")
-			expect(JSON.stringify(continuation.requestBody)).toContain(resumeDraft)
-			await expect(opened.sidebar.getByText(completion, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
-			await expect(opened.sidebar.getByText(/stale_interaction|stale interaction/i)).toHaveCount(0)
-			expect(server.getMockConsumptions("openai-compatible-responses")).toHaveLength(2)
-			expect(server.getSearxngSearchRequests()).toHaveLength(0)
 			await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
 		} finally {
 			await app?.close()

@@ -41,6 +41,29 @@ async function configureCurrentCapableImageProfile(dlineDir: string): Promise<vo
 	})
 }
 
+async function configureManualImageProfile(dlineDir: string): Promise<void> {
+	await configureCurrentCapableImageProfile(dlineDir)
+	const profilesPath = path.join(dlineDir, "data", "settings", "api_profiles.json")
+	const profiles = JSON.parse(await readFile(profilesPath, "utf8")) as Array<Record<string, unknown>>
+	const profile = profiles.find((candidate) => candidate.name === E2E_PROFILE_NAMES.mockOpenAiResponses)
+	if (!profile) throw new Error("Current image E2E profile is unavailable")
+	profile.imageSource = "IMAGE_GENERATION_SOURCE_GPT_SUBSCRIPTION"
+	profile.imageModelId = "gpt-image-2.5"
+	await writeFile(profilesPath, `${JSON.stringify(profiles, null, 2)}\n`, "utf8")
+	await updateSettings(dlineDir, { imageGenerationEnabled: true })
+}
+
+async function setManualImageApproval(sidebar: Frame): Promise<void> {
+	await sidebar.getByLabel("Open auto-approve settings").click()
+	const checkbox = sidebar.locator("vscode-checkbox").filter({ hasText: "Generate images" })
+	await expect(checkbox).toHaveCount(1)
+	if (await checkbox.evaluate((element) => Boolean((element as HTMLInputElement).checked))) {
+		await sidebar.getByText("Generate images", { exact: true }).click()
+	}
+	await expect.poll(() => checkbox.evaluate((element) => Boolean((element as HTMLInputElement).checked))).toBe(false)
+	await sidebar.getByLabel("Close auto-approve settings").click()
+}
+
 async function setImageAndProjectReadAutoApproval(sidebar: Frame): Promise<void> {
 	await sidebar.getByLabel("Open auto-approve settings").click()
 	const setChecked = async (label: string, checked: boolean): Promise<void> => {
@@ -161,6 +184,106 @@ e2e(
 			expect(consumptions[0].contractError).toBeUndefined()
 			expect(JSON.stringify(consumptions[0].requestBody)).not.toContain("generate_image")
 			expect(server.getOpenAIImageConsumptions()).toHaveLength(0)
+			await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
+		} finally {
+			await app.close()
+		}
+	},
+)
+
+e2e(
+	"Image generation - manual Reject and Approve keep typed cards across task reopen",
+	async ({ dlineDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
+		e2e.setTimeout(180_000)
+		await configureManualImageProfile(dlineDir)
+		server.resetOpenAiMock()
+		const rejectedPrompt = "One blue owl awaiting approval"
+		const approvedPrompt = "One green owl after approval"
+		const rejectedTask = "Request one image, but wait for my manual decision."
+		const approvedTask = "Request one image after I explicitly approve."
+		const hostedImageConsumptions = () =>
+			server
+				.getMockConsumptions("openai-compatible-responses")
+				.filter((entry) => entry.responseType === "hosted-image-generation")
+		server.enqueueResponses(
+			"openai-compatible-responses",
+			{ type: "tool", id: "call_image_rejected", name: "generate_image", arguments: { prompt: rejectedPrompt, count: 1 } },
+			{
+				type: "tool",
+				id: "call_image_rejection_done",
+				name: "attempt_completion",
+				arguments: { result: "E2E_IMAGE_REJECTED_OK" },
+			},
+			{ type: "tool", id: "call_image_approved", name: "generate_image", arguments: { prompt: approvedPrompt, count: 1 } },
+			{
+				type: "hosted-image-generation",
+				id: "ig_manual_approved_e2e",
+				b64Json: PNG_1X1_BASE64,
+				revisedPrompt: approvedPrompt,
+			},
+			{
+				type: "tool",
+				id: "call_image_approval_done",
+				name: "attempt_completion",
+				arguments: { result: "E2E_IMAGE_APPROVED_OK" },
+				expectedToolResults: [{ callId: "call_image_approved", contentIncludes: "reference_artifact_ids" }],
+			},
+		)
+
+		const app = await openVSCode(workspaceDir)
+		try {
+			const page = await app.firstWindow()
+			await E2ETestHelper.openClineSidebar(page)
+			const sidebar = await helper.getSidebar(page)
+			await helper.signin(sidebar)
+			await setManualImageApproval(sidebar)
+			await sendTask(sidebar, rejectedTask)
+			const pendingCard = sidebar.getByRole("contentinfo").getByTestId("presentation-tool_approval")
+			await expect(pendingCard.getByText("Dline wants to generate an image", { exact: true })).toBeVisible({
+				timeout: 60_000,
+			})
+			await expect(sidebar.getByText("Dline wants to generate an image", { exact: true })).toHaveCount(1)
+			await expect(pendingCard.getByText(rejectedPrompt, { exact: true })).toBeVisible()
+			await expect(pendingCard.getByText("2 images requested", { exact: true })).toHaveCount(0)
+			await expect(sidebar.getByRole("contentinfo").getByText("Reject", { exact: true })).toBeVisible()
+			expect(server.getMockConsumptions("openai-compatible-responses")).toHaveLength(1)
+			expect(hostedImageConsumptions()).toHaveLength(0)
+
+			await sidebar.getByRole("button", { name: "Close Task", exact: true }).click()
+			await page.getByRole("button", { name: "History", exact: true }).click()
+			await E2ETestHelper.dismissWhatsNewModal(sidebar)
+			await sidebar.locator(".history-item").filter({ hasText: rejectedTask }).click()
+			await expect(pendingCard.getByText("Dline wants to generate an image", { exact: true })).toBeVisible()
+			await expect(sidebar.getByText("Dline wants to generate an image", { exact: true })).toHaveCount(1)
+			await expect(pendingCard.getByText(rejectedPrompt, { exact: true })).toBeVisible()
+			expect(hostedImageConsumptions()).toHaveLength(0)
+			await sidebar.getByRole("contentinfo").getByText("Reject", { exact: true }).click()
+			await expect(sidebar.getByText("Image generation rejected", { exact: true }).last()).toBeVisible()
+			await expect(sidebar.getByText(rejectedPrompt, { exact: true }).last()).toBeVisible()
+			expect(hostedImageConsumptions()).toHaveLength(0)
+			await expect(sidebar.getByText("E2E_IMAGE_REJECTED_OK", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
+
+			await sidebar.getByRole("button", { name: "Close Task", exact: true }).click()
+			await sendTask(sidebar, approvedTask)
+			await expect(pendingCard.getByText("Dline wants to generate an image", { exact: true })).toBeVisible({
+				timeout: 60_000,
+			})
+			await expect(sidebar.getByText("Dline wants to generate an image", { exact: true })).toHaveCount(1)
+			await expect(pendingCard.getByText(approvedPrompt, { exact: true })).toBeVisible()
+			expect(hostedImageConsumptions()).toHaveLength(0)
+			await sidebar.getByRole("contentinfo").getByText("Approve", { exact: true }).click()
+			await expect(sidebar.getByText("E2E_IMAGE_APPROVED_OK", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
+			await expect(sidebar.getByText("Image generation completed", { exact: true }).last()).toBeVisible()
+			const consumptions = server.getMockConsumptions("openai-compatible-responses")
+			expect(consumptions).toHaveLength(5)
+			expect(consumptions.map((entry) => entry.responseType)).toEqual([
+				"tool",
+				"tool",
+				"tool",
+				"hosted-image-generation",
+				"tool",
+			])
+			expect(consumptions.every((entry) => entry.contractError === undefined)).toBe(true)
 			await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
 		} finally {
 			await app.close()

@@ -1,12 +1,7 @@
 import * as path from "node:path"
 import type { ApiHandler, buildApiHandler } from "@core/api"
 import { recordProviderAdapterInput, recordProviderAdapterOutput } from "@core/api/debug/api-conversation-log"
-import {
-	disableWebFetchRoute,
-	disableWebSearchRoute,
-	disableWebSearchRoutingPlan,
-	type WebSearchRoutingPlan,
-} from "@core/api/server-tools"
+import { disableWebFetchRoute, disableWebSearchRoute, type WebSearchRoutingPlan } from "@core/api/server-tools"
 import { isOutputLimitExceededError } from "@core/api/stream/OutputLimitExceededError"
 import { createIdentityFactory, type IdentityFactory } from "@core/api/transform/block-identity"
 import type { ApiProviderStreamChunk } from "@core/api/transform/stream"
@@ -17,7 +12,6 @@ import { discoverAvailableSkills } from "@core/context/instructions/user-instruc
 import { createImageProfileResolverForProfile } from "@core/image-generation/runtime"
 import { formatResponse } from "@core/prompts/responses"
 import { getSystemPrompt, type SystemPromptContext } from "@core/prompts/system-prompt"
-import { type ConfigurableCeilings, resolveApprovalKind } from "@core/task/kernel/turn/approval-kind"
 import type { ProviderRequestRoundAdmission } from "@core/task/performance/provider-request-round-port"
 import { resolveRequestWebSearchRoutingPlan } from "@core/task/RequestApiScope"
 import { StreamResponseHandler } from "@core/task/StreamResponseHandler"
@@ -1658,27 +1652,8 @@ export class SubagentRunner {
 		const searchAllowed = this.allowedTools.includes(ClineDefaultTool.WEB_SEARCH)
 		const fetchAllowed = this.allowedTools.includes(ClineDefaultTool.WEB_FETCH)
 		const resolved = resolveRequestWebSearchRoutingPlan(api, webToolsEnabled && (searchAllowed || fetchAllowed))
-		if (!this.inheritsWebApproval()) return disableWebSearchRoutingPlan(resolved)
 		const withSearch = searchAllowed ? resolved : disableWebSearchRoute(resolved)
 		return fetchAllowed ? withSearch : disableWebFetchRoute(withSearch)
-	}
-
-	/**
-	 * Whether the approval that launched this subagent covers its web tools.
-	 *
-	 * Local web tools meet a `manual_only` web ceiling at admission and fail closed.
-	 * Hosted tools never pass admission, so the same ceiling must withdraw them here
-	 * or a subagent would run provider-hosted web access the user reserved for manual approval.
-	 */
-	private inheritsWebApproval(): boolean {
-		const settings = this.baseConfig.autoApprovalSettings
-		const decision = resolveApprovalKind({
-			toolName: ClineDefaultTool.WEB_FETCH,
-			settings,
-			ceilings: settings.ceilings as ConfigurableCeilings | undefined,
-			inheritsApproval: true,
-		})
-		return decision.kind === "none" || decision.kind === "automatic"
 	}
 
 	private createSubagentTaskConfig(

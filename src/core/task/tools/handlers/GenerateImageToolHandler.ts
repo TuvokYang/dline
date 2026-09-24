@@ -13,8 +13,9 @@ import { formatResponse } from "@core/prompts/responses"
 import type { ClineSayTool } from "@shared/ExtensionMessage"
 import { IMAGE_GENERATION_PRESENTATION_SCHEMA_VERSION, type ImageGenerationPresentationV1 } from "@shared/image-generation"
 import { ClineDefaultTool } from "@shared/tools"
+import type { ToolApprovalPresentation } from "../../executors/tool/ToolPreflight"
 import type { ToolResponse } from "../../index"
-import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
+import type { IApprovalPresentingToolHandler, IDenialPresentingToolHandler, IFullyManagedTool } from "../ToolExecutorCoordinator"
 import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
 
@@ -92,23 +93,52 @@ function createToolPresentation(imageGeneration: ImageGenerationPresentationV1):
 	}
 }
 
-export class GenerateImageToolHandler implements IFullyManagedTool {
+function presentationCount(value: string | undefined): number {
+	const count = Number(value)
+	return Number.isSafeInteger(count) && count > 0 ? count : 1
+}
+
+function createAdmissionPresentation(block: ToolUse, status: "awaiting_approval" | "rejected"): ClineSayTool {
+	return createToolPresentation({
+		schemaVersion: IMAGE_GENERATION_PRESENTATION_SCHEMA_VERSION,
+		status,
+		requestId: block.dline_tid || block.function_id || `image:${block.ts}`,
+		prompt: block.params.prompt?.trim() || "Image generation",
+		count: presentationCount(block.params.count),
+	})
+}
+
+export class GenerateImageToolHandler implements IFullyManagedTool, IApprovalPresentingToolHandler, IDenialPresentingToolHandler {
 	readonly name = ClineDefaultTool.GENERATE_IMAGE
 
 	getDescription(block: ToolUse): string {
 		return `[${block.name} for '${block.params.prompt ?? ""}']`
 	}
 
+	getApprovalPresentation(block: ToolUse, notify: boolean): ToolApprovalPresentation {
+		return { ask: "tool", body: JSON.stringify(createAdmissionPresentation(block, "awaiting_approval")), notify }
+	}
+
+	async presentDenial(config: TaskConfig, block: ToolUse): Promise<void> {
+		await config.callbacks.say(
+			"tool",
+			JSON.stringify(createAdmissionPresentation(block, "rejected")),
+			undefined,
+			undefined,
+			false,
+			block.ts,
+		)
+	}
+
 	async handlePartialBlock(block: ToolUse, uiHelpers: StronglyTypedUIHelpers): Promise<void> {
 		if (uiHelpers.getConfig().isSubagentExecution) return
 		const prompt = uiHelpers.removeClosingTag(block, "prompt", block.params.prompt)
-		const count = Number(block.params.count)
 		const presentation = createToolPresentation({
 			schemaVersion: IMAGE_GENERATION_PRESENTATION_SCHEMA_VERSION,
 			status: "queued",
 			requestId: block.dline_tid,
 			prompt,
-			count: Number.isSafeInteger(count) && count > 0 ? count : 1,
+			count: presentationCount(block.params.count),
 		})
 		const message = JSON.stringify(presentation)
 		await uiHelpers.say("tool", message, undefined, undefined, true, block.ts)

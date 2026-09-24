@@ -71,12 +71,12 @@ describe("reduceTask lifecycle events", () => {
 		})
 	})
 
-	it("continues an approved restored Hosted Web request through exactly one persisted-request effect", () => {
-		const interactionId = "hosted-web:task-1:3"
+	it("continues one explicit persisted-request Resume through exactly one API effect", () => {
+		const interactionId = "resume:task-1:3:5"
 		const state = {
 			...createTaskRuntimeState({
 				taskId: "task-1",
-				phase: TaskPhase.STREAMING,
+				phase: TaskPhase.PAUSED,
 				revision: 5,
 				anchor: { apiIndex: 3, turnId: interactionId, interactionId },
 			}),
@@ -84,30 +84,35 @@ describe("reduceTask lifecycle events", () => {
 				taskId: "task-1",
 				turnId: interactionId,
 				interactionId,
-				kind: "hosted_web_approval" as const,
+				kind: "resume" as const,
 				status: "resolving" as const,
 				createdRevision: 4,
+				persistedRequest: true,
 				anchor: { messageTs: 100, messageType: "ask" as const },
 				acceptedResponse: {
 					taskId: "task-1",
 					turnId: interactionId,
 					interactionId,
-					actionId: "approve" as const,
-					stateRevision: 4,
+					actionId: "resume" as const,
+					stateRevision: 5,
 					draft: { text: "", images: [], files: [] },
 				},
 			},
 		}
 
 		const result = reduceTask(state, {
-			type: "HOSTED_WEB_REQUEST_CONTINUATION_REQUESTED",
+			type: "PERSISTED_API_REQUEST_CONTINUATION_REQUESTED",
 			interactionId,
 			apiIndex: 3,
 		})
 
 		expect(result).toMatchObject({
 			accepted: true,
-			next: { phase: TaskPhase.STREAMING, interaction: undefined, anchor: { apiIndex: 3 } },
+			next: {
+				phase: TaskPhase.RESUMING,
+				interaction: { kind: "resume", status: "resolving", persistedRequest: true },
+				anchor: { apiIndex: 3, interactionId },
+			},
 		})
 		expect(result.effects.map((effect) => effect.type)).toEqual(["POST_TASK_VIEW", "START_API", "PERSIST_SNAPSHOT"])
 		expect(result.effects.filter((effect) => effect.type === "START_API")).toHaveLength(1)
@@ -116,6 +121,13 @@ describe("reduceTask lifecycle events", () => {
 			apiIndex: 3,
 			persistedRequest: true,
 		})
+
+		const admitted = reduceTask(result.next, { type: "API_REQUEST_STARTED", apiIndex: 3 })
+		expect(admitted).toMatchObject({
+			accepted: true,
+			next: { phase: TaskPhase.STREAMING, anchor: { apiIndex: 3 } },
+		})
+		expect(admitted.next.interaction).toBeUndefined()
 	})
 
 	it("rejects an API continuation while an unfinished restored turn still owns execution", () => {
@@ -499,66 +511,14 @@ describe("reduceTask lifecycle events", () => {
 		expect(result.effects.map((effect) => effect.type)).toEqual(["POST_TASK_VIEW", "CANCEL_RUNTIME", "PERSIST_SNAPSHOT"])
 	})
 
-	it("opens a durable Resume interaction for the rejected pending Hosted Web request", () => {
-		const result = reduceTask(
-			createTaskRuntimeState({
-				taskId: "task-1",
-				phase: TaskPhase.PAUSED,
-				revision: 7,
-				anchor: {
-					apiIndex: 0,
-					turnId: "hosted-web:task-1:3",
-					interactionId: "hosted-web:task-1:3",
-				},
-			}),
-			{
-				type: "HOSTED_WEB_REQUEST_REJECTED",
-				apiIndex: 3,
-				turnId: "hosted-web-rejected:task-1:3",
-				interactionId: "hosted-web-rejected:task-1:3",
-				presentation: "Hosted Web Search was rejected. Resume when you are ready to continue without this request.",
-			},
-		)
-
-		expect(result).toMatchObject({
-			accepted: true,
-			next: {
-				phase: TaskPhase.PAUSED,
-				interaction: {
-					kind: "resume",
-					status: "opening",
-					interactionId: "hosted-web-rejected:task-1:3",
-				},
-				anchor: { apiIndex: 3, interactionId: "hosted-web-rejected:task-1:3" },
-			},
-		})
-		expect(result.effects).toMatchObject([
-			{
-				type: "APPEND_ASK",
-				interactionId: "hosted-web-rejected:task-1:3",
-				taskAsk: "resume_task",
-			},
-		])
-	})
-
-	it("rejects a Hosted Web recovery event that does not own the current approval anchor", () => {
-		const state = createTaskRuntimeState({
-			taskId: "task-1",
-			phase: TaskPhase.PAUSED,
-			revision: 7,
-			anchor: {
-				apiIndex: 0,
-				turnId: "hosted-web:task-1:4",
-				interactionId: "hosted-web:task-1:4",
-			},
-		})
-
+	it("rejects opening the obsolete request-level Hosted Web approval interaction", () => {
+		const state = createTaskRuntimeState({ taskId: "task-1", phase: TaskPhase.STREAMING, anchor: { apiIndex: 3 } })
 		const result = reduceTask(state, {
-			type: "HOSTED_WEB_REQUEST_REJECTED",
-			apiIndex: 3,
-			turnId: "hosted-web-rejected:task-1:3",
-			interactionId: "hosted-web-rejected:task-1:3",
-			presentation: "Hosted Web Search was rejected. Resume when you are ready to continue without this request.",
+			type: "INTERACTION_OPEN_REQUESTED",
+			turnId: "hosted-web:task-1:3",
+			interactionId: "hosted-web:task-1:3",
+			kind: "hosted_web_approval",
+			presentation: "obsolete approval",
 		})
 
 		expect(result).toMatchObject({ accepted: false, error: { code: "invalid_runtime_event" } })

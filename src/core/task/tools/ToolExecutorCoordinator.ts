@@ -56,6 +56,11 @@ export interface IPartialBlockHandler {
 	handlePartialBlock(block: ToolUse, uiHelpers: StronglyTypedUIHelpers): Promise<void>
 }
 
+/** A handler that owns the typed payload shown before its side effect is admitted. */
+export interface IApprovalPresentingToolHandler extends IToolHandler {
+	getApprovalPresentation(block: ToolUse, notify: boolean): ToolApprovalPresentation
+}
+
 /**
  * A handler that can explain what a user rejection left behind.
  *
@@ -252,12 +257,20 @@ export class ToolExecutorCoordinator {
 				message: `No handler registered for tool: ${block.name}`,
 			})
 		}
+		const presentation =
+			"getApprovalPresentation" in handler
+				? (handler as IApprovalPresentingToolHandler).getApprovalPresentation(
+						block,
+						snapshot.settings.enableNotifications,
+					)
+				: undefined
 		return prepareRegisteredToolAdmission({
 			canonicalToolName: canonicalToolName as ClineDefaultTool,
 			block,
 			description: handler.getDescription(block),
 			snapshot,
 			snapshotProvider,
+			presentation,
 			run,
 		})
 	}

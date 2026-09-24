@@ -312,63 +312,60 @@ describe("TaskRuntime dispatch", () => {
 		})
 	})
 
-	it("commits the durable Resume presentation after a Hosted Web rejection", async () => {
-		const sequence: string[] = []
-		const appendAsk = vi.fn(async () => {
-			sequence.push("append")
-			return { uiMessageTs: 321 }
-		})
-		const postView = vi.fn(async () => {
-			sequence.push("view")
-		})
-		const persistSnapshot = vi.fn(async () => {
-			sequence.push("snapshot")
-		})
+	it("runs one persisted-request continuation and rejects a duplicate dispatch", async () => {
+		const interactionId = "resume:task-1:3:8"
+		const startApi = vi.fn(async () => undefined)
 		const runtime = new TaskRuntime(
-			createTaskRuntimeState({
-				taskId: "task-1",
-				phase: TaskPhase.PAUSED,
-				revision: 7,
-				anchor: {
-					apiIndex: 0,
-					turnId: "hosted-web:task-1:3",
-					interactionId: "hosted-web:task-1:3",
+			{
+				...createTaskRuntimeState({
+					taskId: "task-1",
+					phase: TaskPhase.PAUSED,
+					revision: 8,
+					anchor: { apiIndex: 3, turnId: interactionId, interactionId },
+				}),
+				interaction: {
+					taskId: "task-1",
+					turnId: interactionId,
+					interactionId,
+					kind: "resume",
+					status: "resolving",
+					createdRevision: 7,
+					persistedRequest: true,
+					anchor: { messageTs: 321, messageType: "ask" },
+					acceptedResponse: {
+						taskId: "task-1",
+						turnId: interactionId,
+						interactionId,
+						actionId: "resume",
+						stateRevision: 8,
+						draft: { text: "", images: [], files: [] },
+					},
 				},
-			}),
-			createPorts({ appendAsk, postView, persistSnapshot }),
+			},
+			createPorts({ startApi }),
 		)
-
-		const result = await runtime.dispatch({
-			type: "HOSTED_WEB_REQUEST_REJECTED",
+		const event = {
+			type: "PERSISTED_API_REQUEST_CONTINUATION_REQUESTED" as const,
+			interactionId,
 			apiIndex: 3,
-			turnId: "hosted-web-rejected:task-1:3",
-			interactionId: "hosted-web-rejected:task-1:3",
-			presentation: "Hosted Web Search was rejected. Resume when you are ready to continue without this request.",
-		})
+		}
+
+		const result = await runtime.dispatch(event)
+		const repeated = await runtime.dispatch(event)
 
 		expect(result.accepted).toBe(true)
-		expect(appendAsk).toHaveBeenCalledWith(
-			expect.objectContaining({
-				interactionId: "hosted-web-rejected:task-1:3",
-				taskAsk: "resume_task",
-			}),
-		)
+		expect(repeated.accepted).toBe(false)
+		expect(startApi).toHaveBeenCalledOnce()
+		expect(startApi).toHaveBeenCalledWith(expect.objectContaining({ apiIndex: 3, persistedRequest: true }))
 		expect(runtime.getState()).toMatchObject({
-			revision: 9,
-			phase: TaskPhase.PAUSED,
-			anchor: {
-				apiIndex: 3,
-				uiMessageTs: 321,
-				turnId: "hosted-web-rejected:task-1:3",
-				interactionId: "hosted-web-rejected:task-1:3",
-			},
-			interaction: {
-				kind: "resume",
-				status: "awaiting",
-				anchor: { messageTs: 321, messageType: "ask" },
-			},
+			phase: TaskPhase.RESUMING,
+			interaction: { kind: "resume", status: "resolving", persistedRequest: true },
 		})
-		expect(sequence).toEqual(["append", "view", "snapshot"])
+
+		const admitted = await runtime.dispatch({ type: "API_REQUEST_STARTED", apiIndex: 3 })
+		expect(admitted.accepted).toBe(true)
+		expect(runtime.getState()).toMatchObject({ phase: TaskPhase.STREAMING })
+		expect(runtime.getState().interaction).toBeUndefined()
 	})
 
 	it("awaits the completed view and rejects a repeated completion presentation without republishing", async () => {

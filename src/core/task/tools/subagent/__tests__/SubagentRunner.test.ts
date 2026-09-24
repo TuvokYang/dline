@@ -750,9 +750,9 @@ describe("SubagentRunner", () => {
 		assert.deepEqual(createMessage.mock.calls[0][3], { serverTools, retryOwner: "subagent" })
 	})
 
-	it("withholds hosted web tools when the web ceiling reserves them for manual approval", async () => {
-		// Hosted tools bypass tool admission, so the ceiling that fails a local web
-		// tool closed inside a subagent must keep the hosted ones off the request.
+	it("keeps hosted web tools when the web ceiling reserves local tools for manual approval", async () => {
+		// Hosted capabilities are Provider declarations rather than Dline-owned tool
+		// executions, so the local web approval ceiling must not rewrite their route.
 		const createMessage = vi.fn().mockImplementation(async function* () {
 			yield {
 				type: "tool_calls",
@@ -782,10 +782,13 @@ describe("SubagentRunner", () => {
 			description: "Researches current information on the web.",
 			tools: [ClineDefaultTool.WEB_SEARCH, ClineDefaultTool.WEB_FETCH, ClineDefaultTool.ATTEMPT],
 			systemPrompt: "",
-		}).run("Do not use hosted web tools", () => {})
+		}).run("Use the allowed hosted web tools", () => {})
 
 		assert.equal(result.status, "completed", result.error)
-		assert.deepEqual(createMessage.mock.calls[0][3], { serverTools: [], retryOwner: "subagent" })
+		assert.deepEqual(createMessage.mock.calls[0][3], {
+			serverTools: [ServerTool.WEB_SEARCH, ServerTool.WEB_FETCH],
+			retryOwner: "subagent",
+		})
 	})
 
 	it("reports cancellation between API turns as cancelled", async () => {

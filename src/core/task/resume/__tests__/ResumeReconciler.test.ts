@@ -15,6 +15,10 @@ function apiUser(content = "task"): ClineStorageMessage {
 	return { role: "user", content }
 }
 
+function persistedApiUser(): ClineStorageMessage {
+	return { role: "user", content: [{ type: "text", text: "A durable request" }] }
+}
+
 function assistantTool(dlineTid: string, functionId: string, name = "read_file"): ClineStorageMessage {
 	return {
 		role: "assistant",
@@ -790,7 +794,7 @@ describe("reconcileResume", () => {
 		expect(result.snapshot.interaction?.interactionId).not.toBe("tid-accepted")
 	})
 
-	it("reopens pending Hosted Web approval without requiring a tool block", () => {
+	it("migrates a pending Hosted Web approval to an explicit persisted-request Resume", () => {
 		const interactionId = `hosted-web:${TASK_ID}:0`
 		const state = createTaskRuntimeState({
 			taskId: TASK_ID,
@@ -808,17 +812,108 @@ describe("reconcileResume", () => {
 			anchor: { messageTs: 205, messageType: "ask" },
 		}
 		const snapshot = createSnapshot(state, 206)
-		const result = reconcileResume(fullInput([apiUser()], [interactionAsk("tool", interactionId, 0)], snapshot))
+		const result = reconcileResume(fullInput([persistedApiUser()], [interactionAsk("tool", interactionId, 0)], snapshot))
 
-		expect(result.entry).toEqual({ type: "reopen_interaction", interactionId, turnId: interactionId })
-		expect(result.snapshot.phase).toBe(TaskPhase.AWAITING_APPROVAL)
+		expect(result.entry).toMatchObject({ type: "show_resume_interaction" })
+		expect(result.snapshot.phase).toBe(TaskPhase.PAUSED)
 		expect(result.snapshot.turn).toBeUndefined()
 		expect(result.snapshot.interaction).toMatchObject({
-			interactionId,
+			kind: "resume",
+			status: "opening",
+			persistedRequest: true,
+		})
+		expect(result.snapshot.interaction?.interactionId).not.toBe(interactionId)
+		expect(result.snapshot.anchor?.interactionId).toBe(result.snapshot.interaction?.interactionId)
+	})
+
+	it("keeps the migrated persisted request through repeated close and reopen without dispatching it", () => {
+		const legacyId = `hosted-web:${TASK_ID}:0`
+		const snapshot = baseline(0)
+		snapshot.phase = TaskPhase.AWAITING_APPROVAL
+		snapshot.anchor = { apiIndex: 0, turnId: legacyId, interactionId: legacyId, uiMessageTs: 205 }
+		snapshot.interaction = {
+			taskId: TASK_ID,
+			turnId: legacyId,
+			interactionId: legacyId,
 			kind: "hosted_web_approval",
 			status: "awaiting",
-		})
-		expect(result.diagnostics).not.toContainEqual(expect.objectContaining({ code: "missing_interaction_continuation" }))
+			createdRevision: 2,
+			anchor: { messageTs: 205, messageType: "ask" },
+		}
+		const first = reconcileResume(fullInput([persistedApiUser()], [interactionAsk("tool", legacyId, 0)], snapshot))
+		const resumeId = first.snapshot.interaction?.interactionId
+		if (!resumeId) throw new Error("expected migrated Resume interaction")
+		const uiHistory = [interactionAsk("tool", legacyId, 0), interactionAsk("resume_task", resumeId, 0, 210)]
+		const second = reconcileResume(fullInput([persistedApiUser()], uiHistory, first.snapshot))
+		const third = reconcileResume(fullInput([persistedApiUser()], uiHistory, second.snapshot))
+
+		for (const result of [second, third]) {
+			expect(result.entry).toMatchObject({ type: "show_resume_interaction", interactionId: resumeId })
+			expect(result.snapshot.phase).toBe(TaskPhase.PAUSED)
+			expect(result.snapshot.interaction).toMatchObject({
+				kind: "resume",
+				status: "awaiting",
+				persistedRequest: true,
+			})
+			expect(result.snapshot.apiIndex).toBe(0)
+		}
+	})
+
+	it("does not replay an obsolete Hosted approval without an intact persisted user request", () => {
+		const legacyId = `hosted-web-rejected:${TASK_ID}:0`
+		const snapshot = baseline(0)
+		snapshot.phase = TaskPhase.PAUSED
+		snapshot.anchor = { apiIndex: 0, turnId: legacyId, interactionId: legacyId, uiMessageTs: 205 }
+		snapshot.interaction = {
+			taskId: TASK_ID,
+			turnId: legacyId,
+			interactionId: legacyId,
+			kind: "hosted_web_approval",
+			status: "awaiting",
+			createdRevision: 2,
+		}
+		snapshot.interruptedInteraction = { ...snapshot.interaction }
+		const result = reconcileResume(
+			fullInput(
+				[{ role: "assistant", content: "Not a persisted user request." }],
+				[interactionAsk("tool", legacyId, 0)],
+				snapshot,
+			),
+		)
+
+		expect(result.entry).toMatchObject({ type: "show_resume_interaction" })
+		expect(result.snapshot.interaction?.persistedRequest).not.toBe(true)
+		expect(result.snapshot.interruptedInteraction).toBeUndefined()
+	})
+
+	it("does not replay an obsolete Hosted approval after the API history tail has advanced", () => {
+		const legacyId = `hosted-web:${TASK_ID}:0`
+		const snapshot = baseline(0)
+		snapshot.phase = TaskPhase.AWAITING_APPROVAL
+		snapshot.anchor = { apiIndex: 0, turnId: legacyId, interactionId: legacyId, uiMessageTs: 205 }
+		snapshot.interaction = {
+			taskId: TASK_ID,
+			turnId: legacyId,
+			interactionId: legacyId,
+			kind: "hosted_web_approval",
+			status: "awaiting",
+			createdRevision: 2,
+			anchor: { messageTs: 205, messageType: "ask" },
+		}
+		snapshot.interruptedInteraction = { ...snapshot.interaction }
+		const result = reconcileResume(
+			fullInput(
+				[apiUser(), { role: "assistant", content: "Already answered." }],
+				[interactionAsk("tool", legacyId, 0)],
+				snapshot,
+			),
+		)
+
+		expect(result.entry).toMatchObject({ type: "show_resume_interaction" })
+		expect(result.snapshot.interaction).toMatchObject({ kind: "resume", status: "opening" })
+		expect(result.snapshot.interaction?.persistedRequest).not.toBe(true)
+		expect(result.snapshot.interruptedInteraction).toBeUndefined()
+		expect(result.snapshot.apiIndex).toBe(1)
 	})
 
 	it.each([

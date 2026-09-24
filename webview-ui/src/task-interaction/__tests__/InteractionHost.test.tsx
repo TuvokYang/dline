@@ -257,6 +257,66 @@ describe("InteractionHost", () => {
 		expect(screen.getByRole("alert")).toHaveTextContent(/message anchor could not be matched/i)
 	})
 
+	it("renders the exact approval summary above actions in footer-only mode", () => {
+		render(<InteractionHost dispatch={vi.fn()} messages={[SAY, ASK]} showTimeline={false} view={taskView()} />)
+
+		expect(screen.getByText("Approve write")).toBeVisible()
+		expect(screen.getByRole("button", { name: "Approve" })).toHaveAttribute("aria-disabled", "false")
+		expect(screen.queryByRole("alert")).toBeNull()
+	})
+
+	it("renders a typed file approval summary instead of raw JSON", () => {
+		const message = {
+			...ASK,
+			text: JSON.stringify({ tool: "newFileCreated", path: "src/new-file.ts", content: "export const value = 1" }),
+		}
+		render(<InteractionHost dispatch={vi.fn()} messages={[message]} showTimeline={false} view={taskView()} />)
+
+		expect(screen.getByText("Dline wants to create this file:")).toBeVisible()
+		expect(screen.getByText("src/new-file.ts")).toBeVisible()
+		expect(screen.queryByText(message.text)).toBeNull()
+	})
+
+	it("keeps the typed image approval card and prompt above footer actions", () => {
+		const message = {
+			...ASK,
+			text: JSON.stringify({
+				tool: "generateImage",
+				imageGeneration: {
+					schemaVersion: 1,
+					status: "awaiting_approval",
+					requestId: "image-request-1",
+					prompt: "A blue owl",
+					count: 2,
+				},
+			}),
+		}
+		render(<InteractionHost dispatch={vi.fn()} messages={[message]} showTimeline={false} view={taskView()} />)
+
+		expect(screen.getByText("Dline wants to generate an image")).toBeVisible()
+		expect(screen.getByText("A blue owl")).toBeVisible()
+		expect(screen.getByText("2 images requested")).toBeVisible()
+		expect(screen.getByRole("button", { name: "Approve" })).toBeVisible()
+		expect(screen.getByRole("button", { name: "Reject" })).toBeVisible()
+	})
+
+	it("does not duplicate an API retry error above its footer controls", () => {
+		const view = taskView()
+		const message = configureInteraction(view, {
+			kind: "error_retry",
+			taskAsk: "api_req_failed",
+			presentationKind: "error_retry",
+			action: "retry",
+			label: "Retry",
+		})
+		message.text = '{"message":"Connection error.","providerId":"anthropic"}'
+
+		render(<InteractionHost dispatch={vi.fn()} messages={[message]} showTimeline={false} view={view} />)
+
+		expect(screen.queryByTestId("error-presentation-box")).toBeNull()
+		expect(screen.getByRole("button", { name: "Retry" })).toBeVisible()
+	})
+
 	it("renders verified interaction actions in footer-only mode before the message window catches up", () => {
 		const view = taskView()
 		if (!view.activeInteraction) throw new Error("Expected active interaction")

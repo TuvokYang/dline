@@ -5,7 +5,15 @@ export const GPT_IMAGE_2_5_MODEL_ID = "gpt-image-2.5"
 /** @deprecated Stored-profile compatibility only; new configuration uses a real model ID plus ImageGenerationSource. */
 export const GPT_IMAGE_2_SUBSCRIPTION_MODEL_ID = "gpt-image-2-sub"
 
-export type ImageGenerationPresentationStatus = "queued" | "started" | "preview" | "completed" | "failed" | "cancelled"
+export type ImageGenerationPresentationStatus =
+	| "awaiting_approval"
+	| "queued"
+	| "started"
+	| "preview"
+	| "completed"
+	| "failed"
+	| "cancelled"
+	| "rejected"
 
 export interface ImageGenerationArtifactPresentationV1 {
 	id: string
@@ -55,7 +63,16 @@ export interface ImageGenerationPresentationV1 {
 	error?: ImageGenerationErrorPresentationV1
 }
 
-const STATUSES = new Set<ImageGenerationPresentationStatus>(["queued", "started", "preview", "completed", "failed", "cancelled"])
+const STATUSES = new Set<ImageGenerationPresentationStatus>([
+	"awaiting_approval",
+	"queued",
+	"started",
+	"preview",
+	"completed",
+	"failed",
+	"cancelled",
+	"rejected",
+])
 const FORMATS = new Set<ImageGenerationArtifactPresentationV1["format"]>(["png", "jpeg", "webp"])
 
 function isRecord(value: unknown): value is Record<string, unknown> {

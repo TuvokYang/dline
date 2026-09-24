@@ -1,6 +1,6 @@
 import { ApiHandler, ApiProviderInfo, buildApiHandlerFromProfile, resolveProviderFromProfile } from "@core/api"
 import { recordProviderAdapterInput, recordProviderAdapterOutput } from "@core/api/debug/api-conversation-log"
-import { hasHostedWebRoute, type WebSearchRoutingPlan } from "@core/api/server-tools"
+import type { WebSearchRoutingPlan } from "@core/api/server-tools"
 import { createIdentityFactory } from "@core/api/transform/block-identity"
 import { ApiStream } from "@core/api/transform/stream"
 import { createStreamNormalizer, normalizeApiStream } from "@core/api/transform/stream-identity-normalizer"
@@ -290,7 +290,6 @@ import type { QueuedInputEntry } from "./input-queue/InputQueue"
 import { InputQueueCoordinator } from "./input-queue/InputQueueCoordinator"
 import type { QueueDelivery } from "./input-queue/InputQueueDelivery"
 import type { InputQueueMutation, InputQueueMutationResult } from "./input-queue/InputQueueMutation"
-import { hostedWebApprovalApiIndex, hostedWebCapabilityLabel, requestHostedWebApproval } from "./interaction/HostedWebApproval"
 import type { InteractionKind } from "./interaction/Interaction"
 import { isInteractionCancellationError } from "./interaction/InteractionCancellationError"
 import { type DetachedInteractionContinuationContext, InteractionCoordinator } from "./interaction/InteractionCoordinator"
@@ -4780,23 +4779,6 @@ export class Task {
 			await this.waitForTaskHeaderCompactionSettlement()
 			if (!context.isCurrent() || this.controllerDetached) return
 			const state = this.taskRuntime.getState()
-			if (context.interaction.kind === "hosted_web_approval") {
-				const apiIndex = hostedWebApprovalApiIndex(this.taskId, context.interaction.interactionId)
-				if (apiIndex === undefined || apiIndex !== state.anchor.apiIndex) {
-					throw new Error("resume_hosted_web_request_identity_mismatch")
-				}
-				if (context.outcome.actionId === "reject") {
-					await context.resolve()
-					return
-				}
-				const continued = await this.dispatchRuntime({
-					type: "HOSTED_WEB_REQUEST_CONTINUATION_REQUESTED",
-					interactionId: context.interaction.interactionId,
-					apiIndex,
-				})
-				if (!continued.accepted) throw new Error("resume_hosted_web_request_rejected")
-				return
-			}
 			const turn = state.turn
 			if (!turn) throw new Error(`resume_turn_missing: interaction=${context.interaction.turnId}`)
 			if (turn.turnId !== context.interaction.turnId) {
@@ -4809,6 +4791,33 @@ export class Task {
 			const blocks = this.restoredTurnToolBlocks(turn)
 			const block = blocks.find((candidate) => candidate.dline_tid === lifecycle?.dlineTid)
 			if (!block || block.function_id !== lifecycle.functionId) throw new Error("resume_interaction_block_mismatch")
+			const kind = context.interaction.kind
+			const isManualToolApproval =
+				kind === "tool_approval" ||
+				kind === "command_approval" ||
+				kind === "browser_approval" ||
+				kind === "mcp_approval" ||
+				kind === "subagent_approval" ||
+				kind === "spawn_task_approval" ||
+				kind === "change_todo_list"
+			if (isManualToolApproval) {
+				const accepted = state.interaction
+				const expectedPhase =
+					context.outcome.actionId === "approve"
+						? BlockPhase.EXECUTING
+						: context.outcome.actionId === "reject"
+							? BlockPhase.REJECTED
+							: undefined
+				if (
+					!expectedPhase ||
+					lifecycle.phase !== expectedPhase ||
+					accepted?.interactionId !== context.interaction.interactionId ||
+					accepted.status !== "resolving" ||
+					accepted.acceptedResponse?.actionId !== context.outcome.actionId
+				) {
+					throw new Error("resume_interaction_approval_mismatch")
+				}
+			}
 
 			this.taskState.resetOperationCancellation()
 			this.taskState.abort = false
@@ -4835,23 +4844,50 @@ export class Task {
 				lifecycle = started.next.turn?.blocks.find((candidate) => candidate.dlineTid === lifecycle?.dlineTid)
 				if (!lifecycle) throw new Error("resume_interaction_block_missing_after_start")
 			}
-			lifecycle = await this.ensureRestoredBlockExecutionStarted(turn.turnId, lifecycle)
-			if (!context.isCurrent()) return
+			const rejectedApproval = isManualToolApproval && context.outcome.actionId === "reject"
+			if (rejectedApproval) {
+				if (!this.turnDriver.hasPendingToolResult(lifecycle.dlineTid, lifecycle.functionId)) {
+					const denial = await this.toolExecutor.describeToolDenial(block)
+					if (!context.isCurrent()) return
+					await this.toolExecutor.commitInterruptedToolResult(block, denial)
+					if (!context.isCurrent()) return
+				}
+				await this.toolExecutor.presentToolDenial(block)
+				if (!context.isCurrent()) return
+				// A restored rejection must also retire later unstarted blocks before
+				// the normal turn driver can schedule them again.
+				for (const candidate of turn.blocks.slice(turn.blocks.indexOf(lifecycle) + 1)) {
+					if (this.turnDriver.isTerminalRuntimeBlock(candidate.phase)) continue
+					const skipped = await this.dispatchRuntime({
+						type: "BLOCK_EXECUTION_SKIPPED",
+						turnId: turn.turnId,
+						dlineTid: candidate.dlineTid,
+					})
+					if (!context.isCurrent()) return
+					if (!skipped.accepted) throw new Error("resume_interaction_sibling_skip_rejected")
+				}
+			} else {
+				lifecycle = await this.ensureRestoredBlockExecutionStarted(turn.turnId, lifecycle)
+				if (!context.isCurrent()) return
+				if (isManualToolApproval) this.toolExecutor.recordAdmissionOutcome(block, context.outcome)
+			}
 
 			const continuation = getInteraction(context.interaction.kind).continuation
 			const draftEmbeddedInToolResult = continuation === "handler" || continuation === "completion"
-			if (draftEmbeddedInToolResult) {
-				const toolResult = await this.toolExecutor.continueTurnEndInteraction(
-					context.interaction.kind,
-					block,
-					context.outcome,
-				)
-				if (!context.isCurrent()) return
-				await this.toolExecutor.commitRestoredToolResult(toolResult, block)
-				if (!context.isCurrent()) return
-			} else {
-				await this.toolExecutor.executeTool(block)
-				if (!context.isCurrent()) return
+			if (!rejectedApproval) {
+				if (draftEmbeddedInToolResult) {
+					const toolResult = await this.toolExecutor.continueTurnEndInteraction(
+						context.interaction.kind,
+						block,
+						context.outcome,
+					)
+					if (!context.isCurrent()) return
+					await this.toolExecutor.commitRestoredToolResult(toolResult, block)
+					if (!context.isCurrent()) return
+				} else {
+					await this.toolExecutor.executeTool(block)
+					if (!context.isCurrent()) return
+				}
 			}
 
 			if (!this.turnDriver.hasPendingToolResult(lifecycle.dlineTid, lifecycle.functionId)) {
@@ -8427,78 +8463,15 @@ export class Task {
 		}
 	}
 
-	/** Finish every request-local write-ahead gate before the Provider request is admitted. */
+	/** Finish request-local write-ahead work before the Provider request is admitted. */
 	private async completeApiRequestGate(
-		requestScope: RequestApiScope,
+		_requestScope: RequestApiScope,
 		apiIndex: number,
 		beforeApiRequestStarted?: () => Promise<void>,
 	): Promise<boolean> {
-		// The gate sits between the context projection and the provider request,
-		// and it can wait on an interaction. Without entry and exit records a
-		// wait here reads in the log as a request that was simply never sent,
-		// with the previous line hours earlier and nothing naming this stage.
 		const gateEnteredAt = performance.now()
 		Logger.debug(`[Task ${this.taskId}] requestGate phase=enter apiIndex=${apiIndex}`)
 		await beforeApiRequestStarted?.()
-		const autoApprovalSettings = this.stateManager.getGlobalSettingsKey("autoApprovalSettings")
-		const settingsVersion = autoApprovalSettings.version ?? 1
-		const hostedWebAdmission = this.toolExecutor.prepareAdmission({
-			type: "tool_use",
-			name: ClineDefaultTool.WEB_SEARCH,
-			params: { query: "Hosted Web Search" },
-			partial: false,
-			ts: Date.now(),
-			function_id: `hosted-web:${this.taskId}:${apiIndex}`,
-			dline_tid: `hosted-web:${this.taskId}:${apiIndex}`,
-		})
-		const webSearchAutoApproved =
-			hostedWebAdmission.outcome === "admitted" &&
-			(hostedWebAdmission.decision.kind === "automatic" || hostedWebAdmission.decision.kind === "none")
-		const hostedApprovalLeased = this.taskState.hostedWebApprovalLeaseVersion === settingsVersion
-		const hostedApprovalSatisfied = webSearchAutoApproved || hostedApprovalLeased
-		const routingPlan =
-			this.ordinaryRequestInputReplay.get(apiIndex)?.runtime?.webSearchRoutingPlan ??
-			this.compactionRequestReplay.getProviderInput(apiIndex)?.runtime?.webSearchRoutingPlan ??
-			requestScope.webSearchRoutingPlan
-		if (hasHostedWebRoute(routingPlan) && !hostedApprovalSatisfied) {
-			await this.interactionCoordinator.releaseApiContinuationForRequestGate()
-		}
-		const approvalRequestedAt = performance.now()
-		const approval = await requestHostedWebApproval(this.interactionCoordinator, {
-			taskId: this.taskId,
-			apiIndex,
-			providerId: requestScope.providerInfo.providerId,
-			routingPlan,
-			autoApproved: hostedApprovalSatisfied,
-		})
-		// Approval duration separates a gate blocked on a user decision from one
-		// blocked on a response that never arrived. Both stall the request, but
-		// only the second one is a defect.
-		Logger.debug(
-			`[Task ${this.taskId}] requestGate phase=approval apiIndex=${apiIndex} route=${routingPlan.route} ` +
-				`fetchRoute=${routingPlan.webFetchRoute} ` +
-				`autoApproved=${hostedApprovalSatisfied} approved=${approval.approved} required=${approval.required} ` +
-				`waitedMs=${Math.round(performance.now() - approvalRequestedAt)}`,
-		)
-		if (!approval.approved) {
-			Logger.debug(
-				`[Task ${this.taskId}] requestGate phase=exit apiIndex=${apiIndex} outcome=rejected ` +
-					`elapsedMs=${Math.round(performance.now() - gateEnteredAt)}`,
-			)
-			const interactionId = `hosted-web-rejected:${this.taskId}:${apiIndex}`
-			const rejected = await this.dispatchRuntime({
-				type: "HOSTED_WEB_REQUEST_REJECTED",
-				apiIndex,
-				turnId: interactionId,
-				interactionId,
-				presentation: `Hosted ${hostedWebCapabilityLabel(routingPlan)} was rejected. Resume when you are ready to continue without this request.`,
-			})
-			if (!rejected.accepted) {
-				throw new Error(`Hosted Web rejection recovery rejected: ${rejected.error?.code ?? "invalid_runtime_event"}`)
-			}
-			return false
-		}
-		if (approval.required) this.taskState.hostedWebApprovalLeaseVersion = settingsVersion
 		await this.admitApiRequest(apiIndex)
 		Logger.debug(
 			`[Task ${this.taskId}] requestGate phase=exit apiIndex=${apiIndex} outcome=admitted ` +
