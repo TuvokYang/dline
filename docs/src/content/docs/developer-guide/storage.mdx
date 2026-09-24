@@ -1,0 +1,128 @@
+---
+title: 存储
+description: Dline 的三个存储根目录、环境变量、目录布局、各文件的归属模块、设置解析顺序与迁移边界。
+---
+
+import { Aside } from "@astrojs/starlight/components"
+
+Dline 的持久化数据不在 VS Code `ExtensionContext` 中，而是写入三个独立的文件根目录。每个持久化值都有一个明确的归属模块，修改存储时应当通过归属模块，不要自行拼路径或直接写 JSON。
+
+## 三个根目录
+
+| 根目录 | 解析函数 | 覆盖方式 | 默认位置 |
+|---|---|---|---|
+| 状态与数据根 | `getDlineDataDir()` | `DLINE_DIR`，实际路径为 `<DLINE_DIR>/data` | `~/.dline/data` |
+| 资源目录 | `getDlineHomePath()` | `DLINE_HOME_DIR` | `~/.dline` |
+| 文档根 | `getDlineDocumentsPath()` | `DLINE_DOCS_DIR`，按原样使用 | `<系统“文档”目录>/dline` |
+
+三个函数都在 `src/core/storage/documents-path.ts`。`DLINE_DIR` 与 `DLINE_HOME_DIR` 默认都落在 `~/.dline` 下，但它们是两个独立的覆盖项。设置 `DLINE_DOCS_DIR` 后，Dline 不会再追加 `dline` 子目录。
+
+系统“文档”目录的解析方式：Windows 通过 PowerShell 查询 `MyDocuments`，Linux 使用 `xdg-user-dir DOCUMENTS`，其他情况回退到 `~/Documents`。启动时 `warmupDocumentsPathCache()` 会先缓存这个结果，供同步调用方使用。测试需要完全隔离时，应同时设置三个环境变量。
+
+## 状态与数据根
+
+```text
+<data-root>/
+├── globalState.json            # 非设置类全局状态
+├── secrets.json                # StateManager 管理的类型化密钥
+├── settings/
+│   ├── settings.json           # 全局设置
+│   └── api_profiles.json       # Profile 目录
+├── secrets/
+│   ├── api_keys.json           # 按 Profile ID 保存的 API Key
+│   ├── provider_secrets.json   # 按 Profile ID 保存的服务商密钥
+│   └── ...                     # 各 Profile 的 OAuth 凭据文件
+└── workspaces/<hash>/
+    ├── workspaceState.json     # 工作区状态
+    └── settings.json           # 工作区设置
+```
+
+密钥文件以仅所有者可读写的权限（`0o600`）创建。不要把 `settings/settings.json` 与文档根下的 `settings/mcp_settings.json` 混淆。
+
+## 文档根
+
+```text
+<documents-root>/
+├── tasks/
+│   ├── taskHistory.db          # 任务索引（SQLite）
+│   └── <task-id>/
+├── rules/  workflows/  skills/  subagents/  mcp/  hooks/
+├── settings/mcp_settings.json  # MCP 服务器设置
+└── checkpoints/                # 检查点影子仓库
+```
+
+工作区内的能力文件不在这里：规则、工作流、技能、子智能体和钩子分别在项目的 `.agents/rules`、`.agents/workflows`、`.agents/skills`、`.agents/subagents` 和 `.agents/hooks` 下；工作区 MCP 描述文件在 `.agents/mcp/`。
+
+资源目录下保存服务商元数据（`providers/`）、缓存（`cache/`，包括 MCP Marketplace 目录缓存）和 Puppeteer 数据（`puppeteer/`）。
+
+## 单个任务的文件
+
+以下文件都在 `<documents-root>/tasks/<task-id>/` 下：
+
+| 文件 | 归属 |
+|---|---|
+| `ui_messages.jsonl` | `UIMessage`，缓冲写入的界面消息 |
+| `api_conversation_history.jsonl` | `ApiConversation`，发送给模型的对话 |
+| `snapshot.json` | `TaskSnapshotPersistence`，用于崩溃恢复的快照 |
+| `context.json`、`context_history.jsonl` | 任务上下文与上下文管理记录 |
+| `settings.json` | 任务级设置覆盖 |
+| `task_metadata.json` | 任务元数据 |
+| `activities.json` | `TaskActivityPersistence`，带 schema 版本的任务活动 |
+| `<task-id>.db` | 每任务 SQLite 容器，保存 API 速率指标和请求/响应执行数据 |
+| `artifacts/` | 任务产物（例如生成的图片），只允许任务相对路径 |
+| `tmp/` | `command-logs/`、`shell-diagnostics/`、`image-previews/`、`image-viewer/` |
+
+`tmp/command-logs/` 跨会话保留，因为聊天行和 Activities 视图会链接到这些日志。它按每个任务的总大小预算（默认 200 MiB）从最旧的日志开始清理，不按时间过期。`api_rate_metrics.jsonl` 是旧格式，会带指纹校验地导入每任务数据库。
+
+删除任务必须经过任务删除协调器，由它处理锁、活动的 Controller、面板、`TaskHistory`、数据库文件和检查点。新增任务级文件时，要同时考虑删除和恢复时由谁负责。
+
+## 状态归属与一致性
+
+| 类别 | 权威来源 | 一致性 |
+|---|---|---|
+| 非设置类全局状态 | `globalState.json` | 批量写入，2 秒防抖，有显式 flush |
+| 全局设置 | `SettingsRepository` 管理的 `settings/settings.json` | 跨进程文件锁；在锁内读取最新版本，写临时文件后原子重命名；监听外部修改 |
+| 工作区设置 | 另一个 `SettingsRepository`，管理 `workspaces/<hash>/settings.json` | 与全局设置相同 |
+| 工作区状态 | `workspaces/<hash>/workspaceState.json` | 批量写入 |
+| 任务设置 | `tasks/<task-id>/settings.json` | 读取、合并后写临时文件再原子重命名 |
+| 会话覆盖 | 仅在 `StateManager` 内存中 | 不持久化 |
+| Profile 目录 | `ProfileCatalogRepository` 管理的 `settings/api_profiles.json` | 在跨进程锁内，把本次按稳定 ID 的修改合并到磁盘上的最新版本 |
+| 任务索引 | `TaskHistory` 管理的 `taskHistory.db` | SQLite WAL；同时监听数据库和 WAL 文件；元数据写入排队 |
+
+`StateManager.flushPendingState()` 会反复刷新，直到没有待写的修改；关闭时先拒绝新的修改，再做最后一次刷新。
+
+<Aside type="caution">
+`TaskHistory.flush()` 等待已排队的写入结束，但单次写入失败会被记录并吞掉，不会抛出。它不能证明所有元数据写入都已成功。界面消息的普通追加也只写入内存缓冲，需要显式 flush 才会落盘。
+</Aside>
+
+## 设置解析顺序
+
+任务相关的设置按以下顺序解析，先命中者生效：
+
+1. 远程配置
+2. 会话覆盖
+3. 任务设置
+4. 全局设置
+5. 迁移期间的旧值回退
+6. 声明的默认值
+
+`autoApprovalSettings` 是例外：它只读取全局设置，历史任务的快照不会覆盖当前的审批权限。
+
+能力开关（规则、工作流、技能等）使用三层稀疏作用域：全局、工作区、任务，任务层优先级最高。某个资源在某层没有记录表示“继承”，不表示“禁用”。按作用域读写要使用 `getScopedCapabilityToggles()` 和 `mutateScopedCapabilityToggles()`。
+
+## 迁移边界
+
+- **从 Cline 迁移**：启动时把旧 Cline 路径下的数据复制到空的 Dline 位置，详见[从 Cline 迁移](/getting-started/migration-cline-to-dline/)。
+- **从 VS Code 存储导出**：`exportVSCodeStorageToSharedFiles()`（`src/hosts/vscode/vscode-to-file-migration.ts`）读取旧的 `ExtensionContext` 全局状态、工作区状态和密钥，写入文件存储。全局和每个工作区分别用 `__vscodeMigrationVersion` 记录版本；文件中已有的值优先。
+- **设置迁移**：`StateManager` 用 `__settingsMigrationVersion` 把受支持的旧全局状态设置迁入设置文件，确认设置文件接管后才清理旧副本。
+- **任务历史**：`taskHistory.db` 不存在时才会导入旧的 `taskHistory.jsonl`。数据库一旦创建，后续启动不会再尝试导入。
+- **消息文件**：只有当前的 JSONL 文件不存在时，才导入旧的 JSON 消息文件。
+
+## 新增持久化状态
+
+1. 先确定归属模块、根目录、作用域、一致性要求和清理路径。
+2. 只有真正属于 `StateManager` 管理的全局状态、设置、工作区状态或密钥时，才在 `src/shared/storage/state-keys.ts` 中新增键。
+3. 用户设置通过全局或工作区 `SettingsRepository` 修改；能力开关使用按作用域的 API。
+4. 用户可见的设置要沿 Proto、Controller 和 Webview 走完整个往返，只加到内存状态里的字段不会持久化。
+5. 为缓冲写入定义有限的 flush 和关闭行为，并在任务、Controller、宿主关闭和恢复边界调用。
+6. 测试重启恢复、多窗口并发、过期写入、工作区与任务隔离、迁移重试、损坏或不完整的文件，以及删除清理。

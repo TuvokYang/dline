@@ -1,0 +1,109 @@
+---
+title: Prompt Architecture
+description: Dline's two independent dimensions of prompt profile and tool transport, the prompt call chains for main tasks and subagents, the frozen cache, module responsibilities, and change constraints.
+---
+
+## Two independent dimensions
+
+Prompt content and tool transport are two independent dimensions.
+
+| Dimension | Values | Responsibility |
+|---|---|---|
+| Prompt profile | `standard`, `lite` | Chooses the system prompt content, the profile's tool set, and profile-specific command content |
+| Tool transport | `native`, `xml` | Chooses provider-native function schemas or XML tool documentation |
+| Runtime gates | Browser, MCP, Skills, Subagents, Focus Chain, Web tools, image generation, YOLO, CLI, multi-root workspace, parallel tools | Enable the matching content and tools based on runtime capabilities and settings |
+| Projection | OpenAI-compatible, Anthropic protocol, Gemini; XML | Converts canonical tool descriptors into a request format |
+
+Provider-native schemas are produced by `provider-projector.ts`, while XML tool documentation is produced separately by `xml-tool-projector.ts`. Skills and MCP are not standalone booleans; they depend on the available skills and the connected servers.
+
+Snapshot test file names encode the first two dimensions: `standard.native.*`, `standard.xml.*`, `lite.native.*`, and `lite.xml.*`. `enableNativeToolCalls`, `nativeTools`, and `transport: "native"` describe tool transport only and must never be used as profile names.
+
+## Call chains
+
+### Main task
+
+```text
+Task
+  -> resolvePromptProfile
+  -> SystemPromptContext
+  -> SystemPromptCacheService
+  -> getSystemPrompt
+  -> SystemPromptGenerator
+  -> createSystemPromptConfig
+  -> Standard or Lite section assembly
+  -> ToolPromptGenerator
+  -> provider-native or XML projection
+```
+
+`resolvePromptProfile` (in `src/shared/resolve-prompt-profile.ts`) is the single profile policy boundary:
+
+1. an explicitly chosen profile wins;
+2. if any `/`-separated segment of the model ID is `o1` or starts with `o1-`, Lite is selected;
+3. otherwise the context window decides: below 64,000 selects Lite, anything else selects Standard. A missing or invalid context window is treated as 128,000.
+
+`SystemPromptCacheService` freezes the generated prompt and tool projection into the task's `context.json`. It regenerates when the prompt contract version (`SYSTEM_PROMPT_CONTRACT_VERSION`), provider ID, model ID, profile, native-tools setting, or API format changes. Focus Chain and capability changes are only tracked as freshness information; they do not trigger an automatic rebuild and require an explicit refresh. The cache stores only `standard` or `lite`; the storage read boundary migrates a legacy `native` value one way to `standard`.
+
+### Subagent
+
+```text
+SubagentRunner
+  -> resolvePromptProfile
+  -> SystemPromptContext (isSubagentRun = true)
+  -> getSystemPrompt
+  -> filter the generated native tools by the subagent allowlist
+```
+
+A subagent does not reuse the main task's frozen prompt; it generates a prompt for its own run. It shares the profile and transport architecture with the main task and uses the subagent runtime gate to avoid exposing subagent tools recursively.
+
+### Slash commands
+
+`CommandPromptGenerator` renders explicit command instructions. Deep Planning picks the Standard or Lite command description from the profile the caller has already resolved. Slash commands are explicit instructions injected on demand, not callable function tools. Tool transport must never decide the prompt profile.
+
+## Module responsibilities
+
+| Source | Responsibility |
+|---|---|
+| `src/shared/resolve-prompt-profile.ts` | Profile selection policy |
+| `src/core/prompts/profiles/types.ts` | Stable profile identity |
+| `src/core/prompts/system-prompt/context.ts` | Typed runtime input |
+| `src/core/prompts/system-prompt/pipeline.ts` | Reduces runtime input into `SystemPromptConfig` |
+| `src/core/prompts/generators/SystemPromptGenerator.ts` | Prompt generation orchestration |
+| `src/core/prompts/system-prompt/variants/` | Section assembly and conditional content |
+| `src/core/prompts/i18n/en/variants/` | Profile-owned prompt text |
+| `src/core/prompts/tools/tool-specs.ts` | Canonical tool descriptors, `STANDARD_TOOL_SPECS` |
+| `src/core/prompts/tools/tool-ids.ts`, `tool-profile.ts` | Tool IDs registered for each profile and the registration logic |
+| `src/core/prompts/tools/provider-projector.ts` | Provider-native schema projection |
+| `src/core/prompts/tools/xml-tool-projector.ts` | XML tool documentation projection |
+| `src/core/prompts/commands/` | Explicit command prompt generation |
+| `src/core/prompts/system-prompt-cache/` | Lifecycle of the task-level frozen prompt |
+
+`STANDARD_TOOL_SPECS` is the single source of canonical descriptors. Each profile registers the tools listed for it in `tool-ids.ts` rather than every descriptor; Lite registers a smaller set from the same source. Unavailable tools or parameters are then filtered by runtime conditions before the native or XML projection is produced.
+
+## Architecture properties
+
+1. The profile is resolved before prompt generation begins, so prompt text never checks the provider or model ID.
+2. Native function calling and XML share the same condition-filtered tool descriptors.
+3. Runtime capabilities enter through `SystemPromptContext` and are reduced to an immutable `SystemPromptConfig` before assembly.
+4. Prompt text lives in registered i18n modules and is rendered through declarative runtime contracts.
+5. The main task uses a frozen prompt to keep requests consistent; subagents use an isolated prompt and a tool allowlist.
+6. The snapshot matrix covers both profile and tool transport.
+
+## Adding a prompt profile
+
+Add a profile only when a set of prompts forms a complete, consistent contract difference. Neither the transport nor a provider name is a profile.
+
+1. Add a stable value to `PromptProfile` and define its selection policy in `resolvePromptProfile`.
+2. Add a registered i18n variant module and its section assembler, reusing shared sections first.
+3. Define the profile's tool ID set; reuse the canonical descriptors unless the wording or parameters genuinely differ.
+4. Add a command variant only when the command contract actually varies by profile.
+5. Add the new profile to the behavior and snapshot matrices, covering both `native` and `xml` transports.
+6. Include the profile in the frozen prompt metadata; bump `SYSTEM_PROMPT_CONTRACT_VERSION` when existing frozen results must be invalidated.
+
+## Change constraints
+
+- Do not create a profile named `native`, `xml`, or after a provider.
+- Do not duplicate tool admission policy in provider adapters.
+- Do not check model IDs in prompt text, section assemblers, or tool projectors.
+- Do not register slash commands as callable tools.
+- Do not modify a task's frozen prompt during ordinary requests; updates must go through the cache refresh contract.
+- Keep Lite's exclusions explicit, especially Skills, Focus Chain, and `task_progress`.

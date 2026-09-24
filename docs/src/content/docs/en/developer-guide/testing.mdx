@@ -1,0 +1,82 @@
+---
+title: Testing
+description: Dline's test tiers - Vitest unit and integration tests, the work, functional, dev, and pressure tiers of Playwright E2E, and the CI gates.
+---
+
+import { Aside } from "@astrojs/starlight/components"
+
+Pick the smallest test tier that proves the behavior: Vitest for pure logic, Playwright E2E for full behavior in the extension host and the UI. For lifecycle, persistence, protocol, or tool changes, test failure paths and restart recovery, not only the successful path.
+
+## Vitest
+
+The root `vitest.config.ts` contains five backend projects (`backend-task`, `backend-prompts`, `backend-hooks`, `backend-core`, `backend`) and the `webview` project. The backend projects exclude files under `src/test/e2e/`; the `webview` project uses jsdom.
+
+| Command | Scope |
+|---|---|
+| `npm run test:smoke` | Only the `backend-smoke` smoke test |
+| `npm run test:run` | Every Vitest project |
+| `npm test` | Generates the Protobuf code, then runs every Vitest project |
+| `npm run test:webview` | Only the tests in `webview-ui/` |
+
+Run a single file, a single test, or a single project:
+
+```bash
+npm run test:run -- src/core/task/tools/handlers/__tests__/SpawnTaskHandler.test.ts
+npm run test:run -- src/core/task/tools/handlers/__tests__/SpawnTaskHandler.test.ts -t "should return toolError"
+npm run test:run -- --project backend-task
+```
+
+A single Webview test file:
+
+```bash
+npm --prefix webview-ui test -- src/components/settings/OpenAIServiceTierSelector.test.tsx
+```
+
+## Playwright E2E
+
+E2E tests load the extension in a real VS Code instance. They live in `src/test/e2e/` and are split into four tiers by purpose:
+
+| Tier | Directory | Purpose | Command |
+|---|---|---|---|
+| work | `src/test/e2e/work/` | The required continuous gate: one smoke project plus four daily workflows | `npm run test:e2e:work` |
+| functional | `src/test/e2e/functional/` | Stable, focused regression tests | `npm run test:e2e:functional` |
+| dev | `src/test/e2e/dev/` | Fault injection, forensic capture, and precise reproductions; never part of a required gate | `npm run e2e:dev` |
+| pressure | Functional tests tagged `@pressure` | Load and soak tests | `npm run test:e2e:pressure` |
+
+The work tier uses one worker and no retries; the smoke project times out after 120 seconds and each daily workflow after 600 seconds. Run only what you need:
+
+```bash
+npm run test:e2e:work -- --project "work smoke"
+npm run test:e2e:functional -- src/test/e2e/functional/tasks/history-resume-liveness.test.ts --project "functional e2e tests" --workers=1 --retries=0
+```
+
+A full functional run is for nightly runs or dedicated investigation; for everyday changes, run only the relevant files.
+
+### Run isolation
+
+- **Run ID**: every E2E run has a `DLINE_E2E_RUN_ID` that isolates its output directory. It is generated when unset; when you set it yourself, it may contain only letters, digits, `.`, `_`, and `-`.
+- **dist lock**: `dist/` is the only resource that is not isolated per run. `scripts/with-dist-lock.mjs` guards it with a reader/writer lock: builds are exclusive, Playwright runs are shared. To run tiers in parallel, build once and then start the read-only runs. Use `npm run e2e:lock:status` to see who holds the lock instead of deleting `dist/.e2e-lock/`.
+- **Source mode and VSIX mode**: `test:e2e:work` and `test:e2e:functional` load the extension from source; `test:e2e`, `test:e2e:optimal`, and `test:e2e:pressure` install a packaged VSIX. Setting `DLINE_E2E_INSTALL_VSIX=1` also switches to VSIX mode.
+
+When a run fails, keep its artifacts and find the first unmet condition before considering a longer timeout or a broader scope.
+
+### Linux dependencies
+
+Running VS Code extension tests on Linux requires the following system libraries. On Debian or Ubuntu:
+
+```bash
+sudo apt update
+sudo apt install -y dbus libasound2 libatk-bridge2.0-0 libatk1.0-0 libdrm2 libgbm1 \
+  libgtk-3-0 libnss3 libx11-xcb1 libxcomposite1 libxdamage1 libxfixes3 libxkbfile1 \
+  libxrandr2 xvfb
+```
+
+## CI gates
+
+`.github/workflows/test.yml` (**Tests**) runs for pull requests targeting `main` or `dev` and for pushes to those branches. It runs, in order: type checking, Biome, the smoke test, Vitest (the five backend projects and the Webview), E2E, and VSIX packaging.
+
+The E2E stage first runs the work smoke test on Ubuntu, then runs each of the four daily workflows on Ubuntu, Windows, and macOS. The validation workflow for production version tags (`vX.Y.Z`) additionally runs the full functional E2E suite.
+
+<Aside>
+The repository's `.agents/skills/use-vitest` and `.agents/skills/use-e2e` document running and diagnosing tests in more detail.
+</Aside>

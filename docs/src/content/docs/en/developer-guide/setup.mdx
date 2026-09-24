@@ -1,0 +1,126 @@
+---
+title: Development Setup
+description: Set up a development environment for the Dline extension - prerequisites, dependencies, Protobuf generation, debugging in VS Code, common scripts, and VSIX packaging.
+---
+
+import { Aside, Steps } from "@astrojs/starlight/components"
+
+This page explains how to build and debug the Dline VS Code extension from source. The repository contains three independent npm projects: the root (the extension), `webview-ui/` (the React Webview), and `docs/` (this documentation site).
+
+## Prerequisites
+
+| Tool | Requirement |
+|---|---|
+| Git and Git LFS | Some media files are stored with Git LFS, so install Git LFS before cloning |
+| Node.js | The repository `.nvmrc` is `lts/*`, and CI uses Node 24. The root `package.json` does not declare a Node version |
+| VS Code | The extension declares a minimum of `^1.134.0` |
+
+The `docs/` site separately requires Node.js `>=22.12.0`.
+
+## Install dependencies
+
+<Steps>
+
+1. Clone the repository:
+
+   ```bash
+   git clone https://github.com/TuvokYang/dline.git
+   ```
+
+2. Install the extension and Webview dependencies from the repository root:
+
+   ```bash
+   npm run install:all
+   ```
+
+   This script runs `npm install` in the root and then in `webview-ui/`. Running `npm install` in the root alone does not install the Webview dependencies. CI uses `npm ci` and `npm --prefix webview-ui ci` for reproducible installs.
+
+3. Generate the Protobuf code:
+
+   ```bash
+   npm run protos
+   ```
+
+   The extension, the Webview, and the host bridge all depend on the generated code, so run it once before the first build. Regenerate whenever you change files under `proto/`. See [Protobuf and ProtoBus](/en/developer-guide/protobuf/).
+
+</Steps>
+
+Installing the root dependencies runs the `prepare` script, which enables Husky. The pre-commit hook runs `lint-staged`: it applies Biome `check --write` to staged files, and when `src/shared/storage/state-keys.ts` is staged it also regenerates and stages `proto/dline/state.proto`.
+
+## Debug the extension in VS Code
+
+<Steps>
+
+1. Open the repository root in VS Code and install the recommended extensions when prompted (including esbuild problem matchers and Biome).
+2. In the Run and Debug view, select **Run Extension (local)**.
+3. Press `F5`. VS Code runs the `watch:debug` task first, then opens a new window with the development build of Dline loaded.
+
+</Steps>
+
+The `watch:debug` task generates the Protobuf code and starts the Webview Vite dev server, TypeScript watch, and esbuild watch together. The **Run Extension (local)** configuration also:
+
+- sets `DLINE_ENVIRONMENT=local`, `IS_DEV=true`, `DLINE_LOG_LEVEL=debug`, and `DLINE_SKIP_MIGRATION=1` (skipping data migration from Cline);
+- reads `.env` from the repository root through `envFile` (the file is ignored by `.gitignore`);
+- disables installed Cline extensions in the debug window to avoid conflicts.
+
+`.vscode/launch.json` also contains configurations such as **Run Extension (production)** and **Run Extension (staging)**, which use the default build task `watch`.
+
+### Watch mode from the terminal
+
+Without `F5`, run this in a terminal:
+
+```bash
+npm run dev
+```
+
+It generates the Protobuf code first, then runs esbuild watch and TypeScript type-check watch in parallel. Start the Webview dev server separately:
+
+```bash
+npm run dev:webview
+```
+
+## Common scripts
+
+Run all of these from the repository root.
+
+| Command | What it does |
+|---|---|
+| `npm run check-types` | Generates the Protobuf code, then type-checks the extension and the Webview |
+| `npm run lint` | Runs Biome lint, then `lint:proto` (`buf lint` plus proto formatting, which rewrites files under `proto/` in place) |
+| `npm run format` | Checks the formatting of changed files with Biome **without writing** |
+| `npm run format:fix` | Fixes formatting and auto-fixable issues in changed files with Biome |
+| `npm run test:smoke` | Runs the smoke test |
+| `npm run test:run` | Runs every Vitest project |
+| `npm test` | Generates the Protobuf code, then runs every Vitest project |
+| `npm run compile` | Type-checks, lints, then builds a development bundle with esbuild |
+| `npm run package` | Type-checks, builds the Webview, lints, then builds a production bundle with esbuild |
+
+<Aside type="caution">
+Do not assemble a `tsc` command by hand. `tsc -b` is a build mode that emits output and has previously scattered `.js` files across `src/`. Use `npm run check-types` for type checking.
+</Aside>
+
+For test commands, see [Testing](/en/developer-guide/testing/).
+
+## Package a VSIX
+
+```bash
+npm run vsix
+```
+
+`scripts/package-vsix.mjs` picks the package identity from the current branch and the tag pointing at `HEAD`:
+
+| Current `HEAD` | Extension name | Version |
+|---|---|---|
+| `main` with a `vX.Y.Z` tag | `dline` | `X.Y.Z` from the tag |
+| `dev` with a `dev-vX.Y.Z` tag | `dline-preview` | `X.Y.Z` from the tag |
+| `dev` without a tag | `dline-insiders` | `major.minor.<Unix seconds>` |
+
+On any other branch, packaging is rejected by default. To build a local test package on a feature branch, name the channel explicitly:
+
+```bash
+npm run vsix -- --channel ci
+```
+
+The available channels are `auto`, `ci`, `insiders`, `preview`, and `production`; `--out <path>` sets the output path. When packaging a tagged version, the versions in `package.json`, `CHANGELOG.md`, and `docs/changelog/CHANGELOG_en.md` must agree.
+
+Packaging is not publishing. Marketplace publication is done by the release workflows in GitHub Actions.

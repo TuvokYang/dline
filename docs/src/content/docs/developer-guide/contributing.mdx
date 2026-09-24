@@ -1,0 +1,78 @@
+---
+title: 参与贡献
+description: 向 Dline 提交 Issue、Pull Request 和文档修改的流程：分支约定、提交前检查、提交信息与更新日志。
+---
+
+import { Aside, Steps } from "@astrojs/starlight/components"
+
+欢迎为 Dline 贡献代码、测试、文档或审查意见。所有参与者都需要遵守仓库中的 [行为准则](https://github.com/TuvokYang/dline/blob/dev/CODE_OF_CONDUCT.md)。
+
+## 报告问题
+
+提交前先[搜索已有的 Issue](https://github.com/TuvokYang/dline/issues)，避免重复。新建 Issue 时选择对应的模板填写。
+
+<Aside type="caution" title="安全漏洞">
+发现安全漏洞时，请通过 GitHub 的[安全公告功能](https://github.com/TuvokYang/dline/security/advisories/new)私下报告，不要公开提交 Issue。
+</Aside>
+
+## 开始之前
+
+除小的 bug 修复、错别字、措辞调整和不改变功能的简单类型修正外，所有贡献都应当先有对应的 GitHub Issue。新功能要先在 [Feature Requests 讨论区](https://github.com/TuvokYang/dline/discussions/categories/feature-requests)提出，等核心维护者同意后再开始实现。没有经过批准的 Issue 的 PR 可能会被关闭。
+
+想找入门任务，可以看带 [good first issue](https://github.com/TuvokYang/dline/labels/good%20first%20issue) 或 [help wanted](https://github.com/TuvokYang/dline/labels/help%20wanted) 标签的 Issue。
+
+## 分支与 Pull Request
+
+仓库有两个长期分支：
+
+| 分支 | 角色 |
+|---|---|
+| `dev` | 集成分支，所有普通 PR 的目标 |
+| `main` | 生产分支，只接收已经通过完整发布门禁的 `dev` |
+
+<Steps>
+
+1. 从最新的 `dev` 创建独立分支，例如 `feature/<名称>`、`bugfix/<名称>`、`docs/<名称>`、`refactor/<名称>` 或 `chore/<名称>`。
+2. 完成修改，并按[开发环境](/developer-guide/setup/)和[测试](/developer-guide/testing/)中的说明做本地验证。
+3. 提交前把分支 rebase 到最新的 `dev`。
+4. 推送分支，创建以 `dev` 为目标的 PR。CI 会运行类型检查、lint、测试和打包。
+
+</Steps>
+
+功能分支和 bug 修复分支不能直接以 `main` 为目标。
+
+## 提交前检查
+
+- 一个 PR 只处理一个功能或一个问题；较大的修改拆成多个相关的 PR，提交按逻辑拆分，便于分别审查。
+- 运行 `npm run lint` 检查代码，运行 `npm run format:fix` 修复格式。`npm run format` 只检查、不写入。
+- 为新功能补充测试，修改影响到已有测试时同步更新，运行相关测试确认通过。
+- 确认分支可以构建，并去掉调试代码和多余的日志输出。
+
+PR 描述应当说明改了什么、如何测试、是否有破坏性变更；界面修改请附截图。
+
+## 提交信息
+
+使用 Conventional Commits 格式，例如 `feat:`、`fix:`、`docs:`，需要时用 `#<Issue 编号>` 关联 Issue。仓库目前没有自动校验提交信息的钩子，这是约定而不是强制检查。
+
+## 更新日志与版本
+
+贡献者不需要在 PR 中编写更新日志条目。版本号和更新日志由维护者在发布时整理：中文版在仓库根目录的 `CHANGELOG.md`，英文版在 `docs/changelog/CHANGELOG_en.md`。打包带标签的版本时，两份更新日志都必须包含对应的 `## [X.Y.Z]` 标题。
+
+## 修改文档
+
+本站是 `docs/` 下独立的 Astro Starlight 项目，需要 Node.js `>=22.12.0`：
+
+```bash
+cd docs
+npm install
+npm run dev      # 本地预览，根路径为 /
+npm run verify   # 单元测试、内容检查、构建和产物检查
+```
+
+也可以在仓库根目录运行 `npm run docs`、`npm run docs:check` 和 `npm run docs:verify`。
+
+文档必须中英文成对提交：中文页面放在 `docs/src/content/docs/`，英文页面放在 `docs/src/content/docs/en/` 的相同路径下。`npm run check` 会检查两种语言的页面是否一一对应，以及链接和组件是否合规。页面中的行为、默认值和界面文字都应当以当前代码为准。
+
+## 许可
+
+提交 PR 即表示你同意以本项目使用的 [Apache 2.0](https://github.com/TuvokYang/dline/blob/dev/LICENSE) 许可证授权你的贡献。

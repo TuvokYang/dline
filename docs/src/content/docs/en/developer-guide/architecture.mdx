@@ -1,0 +1,116 @@
+---
+title: Architecture Overview
+description: Where the Dline VS Code extension keeps its repository layout, activation flow, host boundary, Webview messaging, task runtime, tools, providers, networking, and MCP.
+---
+
+import { Aside } from "@astrojs/starlight/components"
+
+Dline currently ships as a single VS Code extension with an embedded React Webview. This page walks through the main modules layer by layer and points to their source, so you can find the real entry point before changing anything.
+
+## Repository layout
+
+| Directory | Contents |
+|---|---|
+| `src/` | The extension: entry point, core logic, host adapters, shared code, and tests |
+| `webview-ui/` | A separate React + Vite Webview project |
+| `proto/` | Protobuf contracts; see [Protobuf and ProtoBus](/en/developer-guide/protobuf/) |
+| `scripts/` | Code generation, packaging, test, and build helpers |
+| `docs/` | This documentation site (a separate Astro Starlight project) and the English changelog |
+| `standalone/`, `src/standalone/`, `src/hosts/external/` | Code kept for a future standalone executable; the current release ships only the VS Code extension |
+| `evals/`, `testing-platform/`, `tests/` | Evaluation framework, testing platform, and extra tests such as Storybook specs |
+
+`src/core` is a source grouping, not a separately deployed product.
+
+## Activation flow
+
+The `package.json` entry point is `dist/extension.js`, built from `activate()` in `src/extension.ts`. Startup runs in this order:
+
+1. `setupHostProvider()` registers the VS Code implementations of the Webview, diff, review, terminal, and host bridge through `HostProvider.initialize()`;
+2. the sidebar Webview provider is created and registered right away; its Controller is created later;
+3. `migrateFromClineWithProgress()` copies legacy Cline data (see [Migrating from Cline](/en/getting-started/migration-cline-to-dline/)), then legacy VS Code storage is cleaned up;
+4. `createStorageContext()` resolves the storage roots, and `exportVSCodeStorageToSharedFiles()` exports legacy `ExtensionContext` state to file storage;
+5. `initialize()` (in `src/common.ts`) initializes `StateManager` and `ModelRegistry`, creates the Controller, attaches it to the Webview provider, and registers it as the orchestrator's main Controller;
+6. the editor panel serializer, test mode, and hooks are registered, followed by the VS Code commands.
+
+## Host boundary
+
+`HostProvider` in `src/hosts/host-provider.ts` keeps task and service modules independent of the editor API. The VS Code implementation lives in `src/hosts/vscode/`:
+
+- each host bridge service method is implemented under `src/hosts/vscode/hostbridge/<service>/`, for example `window/showMessage.ts`;
+- requests are dispatched by `src/hosts/vscode/hostbridge-grpc-handler.ts`, which uses a generated service configuration;
+- the VS Code terminal, diff, and review implementations live in the same directory.
+
+Keep VS Code API calls inside the host and integration boundary.
+
+## Webview and Controller
+
+| Component | Source | Responsibility |
+|---|---|---|
+| `VscodeWebviewProvider` | `src/hosts/vscode/VscodeWebviewProvider.ts` | Binds the VS Code sidebar |
+| `WebviewProvider` | `src/core/webview/WebviewProvider.ts` | Lifecycle shared by the sidebar and editor panels |
+| `WebviewProviderRegistry` | `src/core/webview/WebviewProviderRegistry.ts` | Tracks the sidebar and additional panels |
+| `Controller` | `src/core/controller/index.ts` | Coordinates tasks, state projection, RPC handlers, and Webview updates |
+| `OrchestratorController` | `src/core/orchestrator/OrchestratorController.ts` | Manages the main Controller, panel Controllers, Profile broadcasts, and parent/child tasks |
+
+Each Webview provider owns one Controller. The React side boots from `webview-ui/src/main.tsx`, which renders `App.tsx`; shared extension state is provided by `webview-ui/src/context/ExtensionStateContext.tsx`.
+
+RPC between the extension and the Webview uses ProtoBus request/response envelopes carried over VS Code `postMessage`, not a network gRPC connection.
+
+## Task runtime
+
+`Task` in `src/core/task/index.ts` is the primary task coordinator. Its lifecycle is split across these components:
+
+| Source | Responsibility |
+|---|---|
+| `runtime/TaskRuntime.ts` | Dispatches task events serially |
+| `runtime/TaskReducer.ts`, `runtime/TaskEvent.ts`, `TaskPhase.ts` | Define the valid lifecycle transitions |
+| `TaskController.ts` | Coordinates block phases, approval ownership, and retained presentation state |
+| `MessageChannel.ts` | Delivers messages serially |
+| `message-state.ts` | Manages API and UI message state |
+| `interaction/InteractionCoordinator.ts` | Owns user interactions such as approval, retry, resume, Q&A, plan, and completion |
+| `TaskSnapshotPersistence.ts` | Coalesces snapshot writes used for crash recovery |
+| `activity/TaskActivityStore.ts` | Owns the task activities shown in chat and the Activities view |
+
+All paths are relative to `src/core/task/`. Express a new lifecycle transition as an event, validate it in the reducer, then project it to the UI and persist it when needed; do not add a parallel boolean lifecycle next to `TaskRuntime`.
+
+## Tools
+
+| Location | Contents |
+|---|---|
+| `src/shared/tools.ts` | Built-in tool identities, enum `ClineDefaultTool` |
+| `src/core/prompts/tools/tool-specs.ts` | Canonical tool descriptors, `STANDARD_TOOL_SPECS` |
+| `src/core/prompts/tools/tool-ids.ts` | Ordered tool IDs registered for Standard and Lite |
+| `src/core/prompts/tools/provider-projector.ts` | Projection to provider-native tool schemas |
+| `src/core/prompts/tools/xml-tool-projector.ts` | Projection to XML tool documentation |
+| `src/core/task/tools/handlers/` | Runtime handler for each tool |
+| `src/core/task/ToolExecutor.ts`, `src/core/task/tools/ToolExecutorCoordinator.ts` | Tool execution coordination |
+
+Native tools and XML tools are two projections of the same canonical descriptors. See [Prompt Architecture](/en/developer-guide/prompt-architecture/) for how prompts and tools relate, and [Tool Execution Domain](/en/developer-guide/task-tool-execution-domain/) for how tool blocks run.
+
+## Providers and models
+
+- `buildApiHandler()` in `src/core/api/index.ts` takes the current mode's Profile and, through `buildApiHandlerFromProfile()`, calls `createHandlerForProvider()`, which picks a handler from `src/core/api/providers/` by `profile.provider`. An unknown provider ID throws.
+- `src/core/model-registry/ModelRegistry.ts` is the runtime model catalog.
+- The API format `ApiFormat` is defined in `proto/dline/models/metadata.proto`. Provider metadata and API format decide native tool, hosted tool, image, reasoning, and transport capabilities.
+
+## Networking
+
+Extension-side code must reach the network through `src/shared/net.ts`, not global `fetch` or a default Axios instance:
+
+| Export | Use |
+|---|---|
+| `fetch` | Ordinary network requests |
+| `providerFetch` | Provider API requests, counted in provider request observation |
+| `getAxiosSettings()` | Shared transport settings for Axios requests |
+| `createOpenAIClient()` | OpenAI-compatible SDK client that uses `providerFetch` |
+| `mockFetchForTesting()` | Replaces the shared transport within a bounded scope in tests |
+
+`createOpenAIClientForProfile()`, which builds an OpenAI client for a Profile, lives in `src/core/api/providers/openai-client-factory.ts`. The Webview runs in a browser environment and may use the browser's own `fetch`.
+
+## MCP
+
+`src/services/mcp/McpHub.ts` is a reference-counted instance shared by multiple Controllers. It supports the `stdio`, `sse`, and `streamableHttp` transports; OAuth applies only to the two remote transports. MCP configuration never grants task approval by itself.
+
+<Aside>
+The repository's `.agents/rules/` directory holds more detailed conventions for contributors and AI assistants. Read the relevant file before changing an area.
+</Aside>

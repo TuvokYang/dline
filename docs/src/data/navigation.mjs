@@ -101,6 +101,20 @@ export const sidebar = [
 		translations: { en: "Troubleshooting" },
 		items: ["troubleshooting/networking-and-proxies", "troubleshooting/telemetry"],
 	},
+	{
+		label: "开发指南",
+		translations: { en: "Developer Guide" },
+		items: [
+			"developer-guide/setup",
+			"developer-guide/architecture",
+			"developer-guide/prompt-architecture",
+			"developer-guide/task-tool-execution-domain",
+			"developer-guide/protobuf",
+			"developer-guide/storage",
+			"developer-guide/testing",
+			"developer-guide/contributing",
+		],
+	},
 ]
 
 /**

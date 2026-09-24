@@ -1,0 +1,82 @@
+---
+title: 测试
+description: Dline 的测试分层：Vitest 单元与集成测试、Playwright E2E 的 work、functional、dev 与 pressure 四个层级，以及 CI 门禁。
+---
+
+import { Aside } from "@astrojs/starlight/components"
+
+选择能证明行为的最小测试层级：纯逻辑用 Vitest，扩展宿主与界面的完整行为用 Playwright E2E。涉及生命周期、持久化、协议或工具的修改，除了成功路径，还要测试失败路径和重启恢复。
+
+## Vitest
+
+根目录的 `vitest.config.ts` 包含五个后端项目（`backend-task`、`backend-prompts`、`backend-hooks`、`backend-core`、`backend`）和 `webview` 项目。后端项目不包含 `src/test/e2e/` 下的文件；`webview` 项目使用 jsdom。
+
+| 命令 | 范围 |
+|---|---|
+| `npm run test:smoke` | 只运行 `backend-smoke` 冒烟测试 |
+| `npm run test:run` | 所有 Vitest 项目 |
+| `npm test` | 先生成 Protobuf 代码，再运行所有 Vitest 项目 |
+| `npm run test:webview` | 只运行 `webview-ui/` 中的测试 |
+
+运行单个文件、单个用例或单个项目：
+
+```bash
+npm run test:run -- src/core/task/tools/handlers/__tests__/SpawnTaskHandler.test.ts
+npm run test:run -- src/core/task/tools/handlers/__tests__/SpawnTaskHandler.test.ts -t "should return toolError"
+npm run test:run -- --project backend-task
+```
+
+Webview 的单个测试文件：
+
+```bash
+npm --prefix webview-ui test -- src/components/settings/OpenAIServiceTierSelector.test.tsx
+```
+
+## Playwright E2E
+
+E2E 测试在真实的 VS Code 中加载扩展，位于 `src/test/e2e/`，按用途分为四个层级：
+
+| 层级 | 目录 | 用途 | 命令 |
+|---|---|---|---|
+| work | `src/test/e2e/work/` | 必需的持续门禁：一个冒烟项目加四个日常工作流 | `npm run test:e2e:work` |
+| functional | `src/test/e2e/functional/` | 稳定的定向回归测试 | `npm run test:e2e:functional` |
+| dev | `src/test/e2e/dev/` | 故障注入、取证和精确复现，不进入任何必需门禁 | `npm run e2e:dev` |
+| pressure | 带 `@pressure` 标签的 functional 测试 | 负载与长时间运行测试 | `npm run test:e2e:pressure` |
+
+work 层使用一个 worker、不重试；冒烟项目超时 120 秒，每个日常工作流超时 600 秒。只运行需要的部分：
+
+```bash
+npm run test:e2e:work -- --project "work smoke"
+npm run test:e2e:functional -- src/test/e2e/functional/tasks/history-resume-liveness.test.ts --project "functional e2e tests" --workers=1 --retries=0
+```
+
+完整运行 functional 层用于夜间或专门排查，日常修改只运行相关文件。
+
+### 运行隔离
+
+- **运行 ID**：每次 E2E 运行都有一个 `DLINE_E2E_RUN_ID`，用于隔离输出目录。未设置时会自动生成；手动设置时只能包含字母、数字、`.`、`_` 和 `-`。
+- **dist 锁**：`dist/` 是唯一不按运行隔离的资源，由 `scripts/with-dist-lock.mjs` 加读写锁保护：构建独占，Playwright 运行共享。想并行运行多个层级时，先构建一次，再启动只读运行。用 `npm run e2e:lock:status` 查看锁的持有者，不要直接删除 `dist/.e2e-lock/`。
+- **源码模式与 VSIX 模式**：`test:e2e:work` 和 `test:e2e:functional` 以源码模式加载扩展；`test:e2e`、`test:e2e:optimal` 和 `test:e2e:pressure` 安装打包好的 VSIX。设置 `DLINE_E2E_INSTALL_VSIX=1` 也会切换到 VSIX 模式。
+
+失败时先保留产物，找出第一个没有满足的条件，再考虑是否需要调整超时或扩大范围。
+
+### Linux 依赖
+
+在 Linux 上运行 VS Code 扩展测试需要以下系统库。以 Debian 或 Ubuntu 为例：
+
+```bash
+sudo apt update
+sudo apt install -y dbus libasound2 libatk-bridge2.0-0 libatk1.0-0 libdrm2 libgbm1 \
+  libgtk-3-0 libnss3 libx11-xcb1 libxcomposite1 libxdamage1 libxfixes3 libxkbfile1 \
+  libxrandr2 xvfb
+```
+
+## CI 门禁
+
+`.github/workflows/test.yml`（**Tests**）在针对 `main` 或 `dev` 的 PR 以及推送到这两个分支时运行，依次执行：类型检查、Biome、冒烟测试、Vitest（五个后端项目和 Webview）、E2E、打包 VSIX。
+
+E2E 部分先在 Ubuntu 上运行 work 冒烟测试，再把四个日常工作流分别在 Ubuntu、Windows 和 macOS 上运行。生产版本标签（`vX.Y.Z`）的验证流程还会额外运行完整的 functional E2E。
+
+<Aside>
+仓库中的 `.agents/skills/use-vitest` 和 `.agents/skills/use-e2e` 记录了更详细的运行与排查方法。
+</Aside>

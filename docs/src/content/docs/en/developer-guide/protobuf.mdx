@@ -1,0 +1,65 @@
+---
+title: Protobuf and ProtoBus
+description: How Dline uses Protobuf for typed contracts between the Webview, the Controller, and the host bridge, and the full steps for adding an RPC.
+---
+
+import { Aside, Steps } from "@astrojs/starlight/components"
+
+Dline uses Protobuf for typed contracts between the Webview, the core Controller, and the host bridge. RPC between the Webview and the extension uses ProtoBus request/response envelopes carried over VS Code `postMessage`; the generated API looks like gRPC, but no network socket is involved.
+
+## Source layout
+
+| Location | Contents | Protobuf package |
+|---|---|---|
+| `proto/dline/*.proto` | Application and Webview services such as `task.proto`, `state.proto`, `mcp.proto` | `dline` |
+| `proto/dline/host/` | IDE host services: `diff`, `env`, `language`, `testing`, `window`, `workspace` | `dline.host` |
+| `proto/dline/models/` | Model metadata such as `ApiFormat` | `dline.models` |
+| `proto/dline/provider/` | Provider-specific messages | `dline.provider` |
+| `proto/dline/common.proto` | Shared messages | `dline` |
+
+Import paths are rooted at `dline/`. Naming conventions: services use `PascalCaseService`, RPC methods use `camelCase`, messages and enums use `PascalCase`, and fields use `snake_case` (converted when TypeScript is generated).
+
+## Generate code
+
+```bash
+npm run protos
+```
+
+`scripts/build-proto.mjs` collects `proto/**/*.proto`, cleans the previous output, and regenerates:
+
+| Output | Contents |
+|---|---|
+| `src/shared/proto/` | TypeScript message types and barrel files |
+| `src/generated/grpc-js/` | grpc-js service definitions |
+| `src/generated/nice-grpc/` | nice-grpc clients |
+| `src/generated/hosts/` | ProtoBus service registration and host bridge glue |
+| `webview-ui/src/services/grpc-client.ts` | Clients used by the Webview |
+| `dist-standalone/proto/descriptor_set.pb` | Descriptor set |
+
+After generation, the `postprotos` script formats the generated code with Biome. **Never edit generated files by hand**; if the output is wrong, change the `.proto` source or the generator.
+
+## Add an RPC
+
+<Steps>
+
+1. **Define the contract**: add the message and RPC to the `.proto` file that owns the domain; host capabilities go under `proto/dline/host/`. Spell out optional, repeated, and default semantics, and how errors and cancellation behave. Never reuse an existing field number for a different meaning; when removing a field, use `reserved` for its number and name where compatibility requires it.
+
+2. **Regenerate**: run `npm run protos` and check that the generated diff has no unexpected deletions or namespace changes.
+
+3. **Implement the handler**: application service handlers live at `src/core/controller/<directory>/<method>.ts`, where the directory is the service name without the `Service` suffix and with a lowercase first letter. For example, `TaskService.cancelTask` in `task.proto` is implemented by `src/core/controller/task/cancelTask.ts`. The generator imports and registers handlers by this convention in `src/generated/hosts/vscode/protobus-services.ts`, so there is no second registry to maintain. Host bridge handlers live under `src/hosts/vscode/hostbridge/<service>/`.
+
+4. **Call it**: the Webview imports generated clients from `webview-ui/src/services/grpc-client.ts` and message types from `@shared/proto/dline/...`. When an RPC owns an interaction, do not send an ad-hoc `postMessage` object instead.
+
+5. **Verify**: run `npm run check-types` and `npm run lint`, then the relevant handler, conversion, and transport tests. For streaming RPCs, also test cancellation and disposal.
+
+</Steps>
+
+## Enum and message conversion
+
+Some enums used for persistence or UI need explicit two-way conversions in `src/shared/proto-conversions/`. When adding an enum value, check the conversion functions in both directions.
+
+Adding a field to a Proto message does not automatically carry it into Controller state projection, Webview defaults, persistence, or validation. Connect each step of the data flow explicitly.
+
+<Aside type="caution">
+A successful `npm run protos` only proves that code generation succeeded. It does not prove that the handler is registered or that callers use the new contract.
+</Aside>
