@@ -780,6 +780,20 @@ export class ClineApiServerMock {
 				requestBytes: Buffer.byteLength(requestText, "utf8"),
 			}),
 		)
+		// A contract failure consumes its scripted response, so every later
+		// request answers the wrong entry and the first real mismatch is hidden
+		// behind the ones it caused. Reporting it on stderr keeps that first
+		// mismatch visible in the run output.
+		if (contractError) {
+			process.stderr.write(
+				`E2E_MOCK_CONTRACT_FAILURE ${JSON.stringify({
+					target,
+					scriptedToolName: scriptedToolCall?.name,
+					contractError,
+					remainingResponses: this.mockResponses[target].length,
+				})}\n`,
+			)
+		}
 		const response = contractedResponse
 		const derivedCacheUsage =
 			response.type === "error" ? undefined : this.openAiCacheDiagnostics.deriveUsage(target, route.protocol, requestBody)

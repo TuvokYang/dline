@@ -374,6 +374,18 @@ async function captureContextWindowEvidence(sidebar: Frame, testInfo: TestInfo, 
 	await captureLocatorEvidence(sidebar.getByTestId("context-window-indicator"), testInfo, name)
 }
 
+/**
+ * Wait until the completion dialog is open and can take a reply.
+ *
+ * `attempt_completion` publishes its text before its checkpoint and hooks
+ * settle, and only the opened dialog can take a transition draft as its reply.
+ * A switch made in between leaves the draft in the composer for the user to
+ * send, which is what these tests are not about.
+ */
+async function waitForCompletionDialog(sidebar: Frame): Promise<void> {
+	await expect(sidebar.locator('vscode-button[aria-label="Start New Task"]')).toBeVisible({ timeout: 60_000 })
+}
+
 async function confirmManualCompaction(sidebar: Frame, summary: string): Promise<void> {
 	await expect(sidebar.getByText(summary, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
 	const confirmButton = sidebar.locator('vscode-button[aria-label="Condense Conversation"]')
@@ -682,6 +694,7 @@ e2e(
 			await expect(sidebar.getByText("E2E_SAME_PROFILE_READY", { exact: false }).last()).toBeVisible({
 				timeout: 60_000,
 			})
+			await waitForCompletionDialog(sidebar)
 
 			const input = sidebar.getByTestId("chat-input")
 			await input.fill("E2E_SAME_PROFILE_PLAN_DRAFT")
@@ -893,6 +906,7 @@ e2e(
 			const { sidebar } = await openSidebar(app, helper)
 			await sendTask(sidebar, "E2E_SMALLER_FITS_TASK")
 			await expect(sidebar.getByText("E2E_SMALLER_FITS_READY", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
+			await waitForCompletionDialog(sidebar)
 
 			await sidebar.getByTestId("chat-input").fill("E2E_SMALLER_FITS_PLAN_DRAFT")
 			await sidebar.getByTestId("mode-switch").evaluate((element) => element.click())
@@ -2178,9 +2192,16 @@ e2e(
 			await expect.poll(() => server.getRequestCount("deepseek-chat")).toBe(3)
 			const finalRequest = server.getMockConsumptions("deepseek-chat")[2]
 			expect(finalRequest.contractError).toBeUndefined()
-			expect(finalRequest.requestToolResults).not.toContainEqual(
-				expect.objectContaining({ callId: "call_deepseek_near_limit_ready" }),
-			)
+			// The reply reached the conversation after the model last spoke, so it
+			// is protected continuation (WS-010 §2): never summarized unseen, and
+			// carried verbatim, once, as the result of the call it answers.
+			const reply = "E2E_DEEPSEEK_NEAR_LIMIT_CONTINUE"
+			expect(JSON.stringify(summaryRequest.requestBody)).not.toContain(reply)
+			expect(
+				finalRequest.requestToolResults.filter((result) => result.callId === "call_deepseek_near_limit_ready"),
+			).toEqual([expect.objectContaining({ content: expect.stringContaining(reply) })])
+			expect(finalRequest.requestToolPairing.complete).toBe(true)
+			expect(JSON.stringify(finalRequest.requestBody).split(reply)).toHaveLength(2)
 			await expectCompactionSummary(sidebar, "E2E_DEEPSEEK_NEAR_LIMIT_SUMMARY preserves the task and latest request.")
 			await expect
 				.poll(async () =>
