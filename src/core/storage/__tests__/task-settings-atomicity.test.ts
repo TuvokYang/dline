@@ -4,6 +4,25 @@ import path from "path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { readTaskSettingsFromStorage, writeTaskSettingsToStorage } from "../disk"
 
+const renameGate = vi.hoisted(() => ({
+	/** Awaited before a rename whose destination equals this path. */
+	pauseBeforePublishing: undefined as { destination: string; reached: () => void; release: Promise<void> } | undefined,
+}))
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("node:fs/promises")>()
+	const rename: typeof actual.rename = async (source, destination) => {
+		const gate = renameGate.pauseBeforePublishing
+		if (gate && String(destination) === gate.destination) {
+			renameGate.pauseBeforePublishing = undefined
+			gate.reached()
+			await gate.release
+		}
+		return actual.rename(source, destination)
+	}
+	return { ...actual, default: { ...actual, rename }, rename }
+})
+
 describe("Task settings atomic persistence", () => {
 	let originalDocsDir: string | undefined
 	let temporaryDirectory: string
@@ -15,6 +34,7 @@ describe("Task settings atomic persistence", () => {
 	})
 
 	afterEach(async () => {
+		renameGate.pauseBeforePublishing = undefined
 		vi.restoreAllMocks()
 		if (originalDocsDir === undefined) delete process.env.DLINE_DOCS_DIR
 		else process.env.DLINE_DOCS_DIR = originalDocsDir
@@ -29,7 +49,6 @@ describe("Task settings atomic persistence", () => {
 		})
 
 		const settingsPath = path.join(temporaryDirectory, "tasks", taskId, "settings.json")
-		const originalWriteFile = fs.writeFile.bind(fs)
 		let releaseWrite: (() => void) | undefined
 		const writePaused = new Promise<void>((resolve) => {
 			releaseWrite = resolve
@@ -38,14 +57,11 @@ describe("Task settings atomic persistence", () => {
 		const writeObserved = new Promise<void>((resolve) => {
 			observedWrite = resolve
 		})
-
-		vi.spyOn(fs, "writeFile").mockImplementation(async (file, data, options) => {
-			await originalWriteFile(file, data, options)
-			if (String(file).startsWith(settingsPath)) {
-				observedWrite?.()
-				await writePaused
-			}
-		})
+		renameGate.pauseBeforePublishing = {
+			destination: settingsPath,
+			reached: () => observedWrite?.(),
+			release: writePaused,
+		}
 
 		const update = writeTaskSettingsToStorage(taskId, {
 			actModeReasoningOverrideEffort: "medium",
@@ -63,5 +79,7 @@ describe("Task settings atomic persistence", () => {
 			actModeReasoningOverrideKind: "effort",
 			actModeReasoningOverrideEffort: "medium",
 		})
+		expect(await fs.readFile(settingsPath, "utf8")).toMatch(/\n$/)
+		expect((await fs.readdir(path.dirname(settingsPath))).filter((name) => name.endsWith(".tmp"))).toEqual([])
 	})
 })

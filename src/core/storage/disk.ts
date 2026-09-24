@@ -7,6 +7,7 @@ import { requiresLegacyConversationMigration } from "@shared/messages/legacy-ide
 import { ApiFormat, ServerTool } from "@shared/proto/dline/models/metadata"
 import { WebToolsMode } from "@shared/proto/dline/provider/common"
 import { RemoteConfig } from "@shared/remote-config/schema"
+import { removeStaleAtomicTempFiles, writeFileAtomic, writeJsonAtomic } from "@shared/storage/atomic-file"
 import { GlobalState, Settings } from "@shared/storage/state-keys"
 import { fileExistsAtPath, isDirectory } from "@utils/fs"
 import fs from "fs/promises"
@@ -42,71 +43,8 @@ export {
 	warmupDocumentsPathCache,
 }
 
-const ATOMIC_WRITE_RENAME_MAX_ATTEMPTS = 5
-const ATOMIC_WRITE_RENAME_RETRY_DELAYS_MS = [10, 25, 50, 100]
-const RETRYABLE_RENAME_ERROR_CODES = new Set(["EPERM", "EBUSY", "EACCES"])
-
 /** Maximum age for task history lock file before it's considered stale (10 seconds). */
 const _TASK_HISTORY_LOCK_TIMEOUT_MS = 10_000
-
-function isRetryableRenameError(error: unknown): boolean {
-	const code = (error as NodeJS.ErrnoException | undefined)?.code
-	return typeof code === "string" && RETRYABLE_RENAME_ERROR_CODES.has(code)
-}
-async function renameWithRetry(tmpPath: string, filePath: string): Promise<void> {
-	for (let attempt = 1; attempt <= ATOMIC_WRITE_RENAME_MAX_ATTEMPTS; attempt++) {
-		try {
-			await fs.rename(tmpPath, filePath)
-			return
-		} catch (error) {
-			if (!isRetryableRenameError(error) || attempt === ATOMIC_WRITE_RENAME_MAX_ATTEMPTS) throw error
-			const delayMs = ATOMIC_WRITE_RENAME_RETRY_DELAYS_MS[attempt - 1] ?? ATOMIC_WRITE_RENAME_RETRY_DELAYS_MS.at(-1) ?? 0
-			await new Promise((r) => setTimeout(r, delayMs))
-		}
-	}
-}
-/**
- * Atomically write data to a file using a temp file + rename.
- * On failure, cleans up the temp file.
- */
-async function atomicWriteFile(filePath: string, data: string): Promise<void> {
-	const tmpPath = `${filePath}.tmp.${Date.now()}.${Math.random().toString(36).substring(7)}.json`
-	try {
-		await fs.writeFile(tmpPath, data, "utf8")
-		await renameWithRetry(tmpPath, filePath)
-	} catch (e) {
-		// Clean up the temp file on any failure
-		fs.unlink(tmpPath).catch(() => {})
-		throw e
-	}
-}
-
-/**
- * Clean up stale .tmp.*.json files left behind by atomicWriteFile.
- * These can accumulate if the process crashes between writeFile and rename.
- * Only cleans files older than STALE_TMP_FILE_AGE_MS to avoid racing with active writes.
- */
-const STALE_TMP_FILE_AGE_MS = 60_000
-
-async function cleanupStaleTmpFiles(dir: string): Promise<void> {
-	try {
-		const entries = await fs.readdir(dir, { withFileTypes: true })
-		const now = Date.now()
-		for (const entry of entries) {
-			if (!entry.isFile()) continue
-			const match = entry.name.match(/^(.+)\.tmp\.(\d{13})\.([a-z0-9]+)\.json$/)
-			if (!match) continue
-			const ts = Number.parseInt(match[2], 10)
-			if (Number.isNaN(ts)) continue
-			if (now - ts > STALE_TMP_FILE_AGE_MS) {
-				const fp = path.join(dir, entry.name)
-				await fs.unlink(fp).catch(() => {})
-			}
-		}
-	} catch {
-		// Directory may not exist yet — ignore
-	}
-}
 
 export const GlobalFileNames = {
 	apiConversationAll: "api_conversation_all.jsonl",
@@ -114,6 +52,9 @@ export const GlobalFileNames = {
 	taskActivities: "activities.json",
 	taskApiRateMetrics: "api_rate_metrics.jsonl",
 	taskDatabase: (taskId: string) => `${taskId}.db`,
+	// Durable task runtime: state vault, conversation journal, command
+	// publications and content-addressed payloads.
+	taskRuntime: "runtime",
 	taskContext: "context.json",
 	apiConversationHistory: "api_conversation_history.jsonl",
 	contextHistory: "context_history.jsonl",
@@ -489,7 +430,7 @@ export async function getTaskMetadata(taskId: string): Promise<TaskMetadata> {
 }
 export async function saveTaskMetadata(taskId: string, m: TaskMetadata) {
 	const p = path.join(await ensureTaskDirectoryExists(taskId), GlobalFileNames.taskMetadata)
-	await fs.writeFile(p, JSON.stringify(m, null, 2), "utf8")
+	await writeJsonAtomic(p, m)
 }
 
 /**
@@ -730,7 +671,7 @@ export async function getTaskContext(taskId: string): Promise<TaskContextCache> 
  */
 export async function saveTaskContext(taskId: string, context: TaskContextCache): Promise<void> {
 	const p = path.join(await ensureTaskDirectoryExists(taskId), GlobalFileNames.taskContext)
-	await atomicWriteFile(p, JSON.stringify(context, null, 2))
+	await writeJsonAtomic(p, context)
 }
 
 export async function ensureStateDirectoryExists(): Promise<string> {
@@ -822,8 +763,7 @@ export async function writeTaskHistoryToState(items: HistoryItem[], targetPath?:
 	const dir = path.dirname(fp)
 	await fs.mkdir(dir, { recursive: true })
 	await writeJsonl(fp, items)
-	// Clean up stale tmp files that may have accumulated from atomic writes
-	await cleanupStaleTmpFiles(dir)
+	await removeStaleAtomicTempFiles(dir)
 }
 
 export async function getTaskHistoryStateFilePath(): Promise<string> {
@@ -929,7 +869,7 @@ export async function writeTaskSettingsToStorage(taskId: string, s: Partial<Sett
 			next[key] = value
 		}
 	}
-	await atomicWriteFile(p, JSON.stringify(next, null, 2))
+	await writeJsonAtomic(p, next)
 }
 
 export async function readRemoteConfigFromCache(orgId: string): Promise<RemoteConfig | undefined> {
@@ -1068,6 +1008,6 @@ export async function writeConversationHistoryText(taskId: string, h: ClineStora
 		c += "\n"
 	}
 	c += "=== END OF CONTEXT ===\n"
-	await atomicWriteFile(p, c)
+	await writeFileAtomic(p, c)
 	return p
 }

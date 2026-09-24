@@ -34,7 +34,7 @@ async function seedMessages(taskId: string, messages: readonly ClineMessage[]): 
 }
 
 async function persistSnapshot(taskId: string, state: TaskState): Promise<void> {
-	const runtimeDirectory = path.join(await ensureTaskDirectoryExists(taskId), "runtime-v2")
+	const runtimeDirectory = path.join(await ensureTaskDirectoryExists(taskId), GlobalFileNames.taskRuntime)
 	await fs.mkdir(runtimeDirectory, { recursive: true })
 	await new FileTaskStateVault(runtimeDirectory).save({ state, outbox: [] })
 }

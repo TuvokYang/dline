@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
-import { mkdir, readFile } from "node:fs/promises"
+import { readFile } from "node:fs/promises"
 import path from "node:path"
-import { atomicWriteTaskFile } from "./AtomicTaskFile"
+import { writeFileAtomic } from "@shared/storage/atomic-file"
 
 export interface TaskPayloadStore {
 	put(payload: Uint8Array): Promise<string>
@@ -14,8 +14,7 @@ export class FileTaskPayloadStore implements TaskPayloadStore {
 	async put(payload: Uint8Array): Promise<string> {
 		const digest = createHash("sha256").update(payload).digest("hex")
 		const payloadRef = `sha256:${digest}`
-		await mkdir(this.directory, { recursive: true })
-		await atomicWriteTaskFile(this.pathFor(payloadRef), payload)
+		await writeFileAtomic(this.pathFor(payloadRef), payload)
 		return payloadRef
 	}
 

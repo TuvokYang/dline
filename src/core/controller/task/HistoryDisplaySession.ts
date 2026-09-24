@@ -2,7 +2,7 @@ import path from "node:path"
 import type { ClineMessage, TaskViewState } from "@shared/ExtensionMessage"
 import type { HistoryItem } from "@shared/HistoryItem"
 import type { DispatchInteractionRequest } from "@shared/proto/dline/task"
-import { ensureTaskDirectoryExists } from "@/core/storage/disk"
+import { ensureTaskDirectoryExists, GlobalFileNames } from "@/core/storage/disk"
 import { UIMessage } from "@/core/storage/UIMessage"
 import type { UIMessageWindowPage, UIMessageWindowReader } from "@/core/storage/UIMessageWindowReader"
 import { getInteraction } from "@/core/task/interaction/InteractionRegistry"
@@ -171,7 +171,7 @@ export class HistoryDisplaySession {
 
 	private async readSnapshot(): Promise<TaskState | undefined> {
 		try {
-			const runtimeDirectory = path.join(await ensureTaskDirectoryExists(this.taskId), "runtime-v2")
+			const runtimeDirectory = path.join(await ensureTaskDirectoryExists(this.taskId), GlobalFileNames.taskRuntime)
 			return (await new FileTaskStateVault(runtimeDirectory).load(this.taskId))?.state
 		} catch {
 			return undefined

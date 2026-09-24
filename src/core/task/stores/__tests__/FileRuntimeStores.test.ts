@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises"
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
@@ -10,7 +10,7 @@ import { FileTaskStateVault } from "../FileTaskStateVault"
 const directories: string[] = []
 
 async function directory(): Promise<string> {
-	const created = await mkdtemp(path.join(tmpdir(), "dline-runtime-v2-"))
+	const created = await mkdtemp(path.join(tmpdir(), "dline-runtime-"))
 	directories.push(created)
 	return created
 }
@@ -35,6 +35,33 @@ describe("file runtime stores", () => {
 			state: { taskId: "task-1", revision: 1 },
 			outbox: [command],
 		})
+	})
+
+	it("keeps the previous snapshot as state.json.bak and restores it when state.json is torn", async () => {
+		const root = await directory()
+		const vault = new FileTaskStateVault(root)
+		await vault.save({ state: { ...createInitialTaskState("task-1"), revision: 1 }, outbox: [] })
+		await vault.save({ state: { ...createInitialTaskState("task-1"), revision: 2 }, outbox: [] })
+
+		expect((await readdir(root)).sort()).toEqual(["state.json", "state.json.bak"])
+		expect(await readFile(path.join(root, "state.json"), "utf8")).toMatch(/^\{\n {2}"version": 1,\n[\s\S]*\}\n$/)
+
+		await writeFile(path.join(root, "state.json"), '{ "version": 1, "snap')
+		await expect(new FileTaskStateVault(root).load("task-1")).resolves.toMatchObject({
+			state: { taskId: "task-1", revision: 1 },
+		})
+
+		await rm(path.join(root, "state.json"))
+		await expect(new FileTaskStateVault(root).load("task-1")).resolves.toMatchObject({
+			state: { taskId: "task-1", revision: 1 },
+		})
+	})
+
+	it("does not load a snapshot that belongs to another task", async () => {
+		const root = await directory()
+		await new FileTaskStateVault(root).save({ state: { ...createInitialTaskState("task-1"), revision: 1 }, outbox: [] })
+
+		await expect(new FileTaskStateVault(root).load("task-2")).rejects.toThrow("TaskStateVaultIdentityMismatch")
 	})
 
 	it("restores publication effect keys and payloads across reopen", async () => {

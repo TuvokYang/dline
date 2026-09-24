@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs"
 import path from "node:path"
 import { describe, expect, it } from "vitest"
 
-const GOLDEN_PATH = path.resolve(__dirname, "../__fixtures__/task-runtime-v21-legacy-golden.json")
+const GOLDEN_PATH = path.resolve(__dirname, "../__fixtures__/task-runtime-legacy-golden.json")
 const FROZEN_SHA256 = "4ec9231c393a0930b7a3c1fe82d358cf36f30a9c674d1a245865a8cb615f2c50"
 
 describe("TASK-103 frozen legacy golden", () => {

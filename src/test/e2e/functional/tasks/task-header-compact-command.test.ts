@@ -134,7 +134,7 @@ e2e(
 			await sidebar.locator('vscode-button[aria-label="Condense Conversation"]').click()
 
 			const compactionPass = sidebar.getByTestId("compaction-pass").last()
-			// Runtime v2 names every compaction run `compaction:<uuid>` and records the
+			// The task runtime names every compaction run `compaction:<uuid>` and records the
 			// cause as its trigger, not in the id; neither the Webview nor the product
 			// keys on a `manual-compaction:` prefix any more.
 			await expect(compactionPass).toHaveAttribute("data-compaction-operation-id", /^compaction:/, {

@@ -1,6 +1,5 @@
-import { readFile } from "node:fs/promises"
 import path from "node:path"
-import { atomicWriteTaskFile } from "./AtomicTaskFile"
+import { readJsonWithBackup, writeJsonAtomic } from "@shared/storage/atomic-file"
 import type { DurableTaskSnapshot, StateVault } from "./contracts"
 
 interface PersistedTaskStateV1 {
@@ -8,12 +7,20 @@ interface PersistedTaskStateV1 {
 	readonly snapshot: DurableTaskSnapshot
 }
 
-function decode(content: string): DurableTaskSnapshot {
-	const parsed = JSON.parse(content) as Partial<PersistedTaskStateV1>
-	if (parsed.version !== 1 || !parsed.snapshot?.state || !Array.isArray(parsed.snapshot.outbox)) {
+function decode(value: unknown): DurableTaskSnapshot {
+	const parsed = value as Partial<PersistedTaskStateV1> | null
+	if (parsed?.version !== 1 || !parsed.snapshot?.state || !Array.isArray(parsed.snapshot.outbox)) {
 		throw new Error("InvalidTaskStateVault")
 	}
 	return parsed.snapshot
+}
+
+function decodeFor(taskId: string): (value: unknown) => DurableTaskSnapshot {
+	return (value) => {
+		const snapshot = decode(value)
+		if (snapshot.state.taskId !== taskId) throw new Error("TaskStateVaultIdentityMismatch")
+		return snapshot
+	}
 }
 
 export class FileTaskStateVault implements StateVault {
@@ -24,21 +31,24 @@ export class FileTaskStateVault implements StateVault {
 		this.filePath = path.join(directory, "state.json")
 	}
 
+	/** Returns the newest decodable snapshot, falling back to `state.json.bak` when the primary is unusable. */
 	async load(taskId: string): Promise<DurableTaskSnapshot | undefined> {
 		await this.writeTail
-		try {
-			const snapshot = decode(await readFile(this.filePath, "utf8"))
-			if (snapshot.state.taskId !== taskId) throw new Error("TaskStateVaultIdentityMismatch")
-			return snapshot
-		} catch (error) {
-			if ((error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") return undefined
-			throw error
+		const result = await readJsonWithBackup(this.filePath, decodeFor(taskId))
+		switch (result.status) {
+			case "primary":
+			case "backup":
+				return result.value
+			case "missing":
+				return undefined
+			case "invalid":
+				throw result.error
 		}
 	}
 
 	save(snapshot: DurableTaskSnapshot): Promise<void> {
-		const payload = `${JSON.stringify({ version: 1, snapshot } satisfies PersistedTaskStateV1, null, 2)}\n`
-		const write = this.writeTail.then(() => atomicWriteTaskFile(this.filePath, payload))
+		const document: PersistedTaskStateV1 = { version: 1, snapshot }
+		const write = this.writeTail.then(() => writeJsonAtomic(this.filePath, document, { backup: true }))
 		this.writeTail = write.catch(() => undefined)
 		return write
 	}

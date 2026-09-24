@@ -2,6 +2,7 @@ import fs from "node:fs/promises"
 import path from "node:path"
 import { ensureTaskDirectoryExists, GlobalFileNames } from "@core/storage/disk"
 import { Logger } from "@shared/services/Logger"
+import { writeJsonAtomic } from "@shared/storage/atomic-file"
 import type { TaskActivityEvent, TaskActivityRecord } from "@shared/task-activity"
 
 const ACTIVITY_SCHEMA_VERSION = 2
@@ -99,19 +100,11 @@ export class TaskActivityPersistence {
 
 	async save(activities: TaskActivityRecord[]): Promise<void> {
 		const taskDirectory = await ensureTaskDirectoryExists(this.taskId)
-		const filePath = path.join(taskDirectory, GlobalFileNames.taskActivities)
-		const tempPath = `${filePath}.tmp.${Date.now()}`
 		const payload: PersistedTaskActivities = {
 			schemaVersion: ACTIVITY_SCHEMA_VERSION,
 			taskId: this.taskId,
 			activities,
 		}
-		try {
-			await fs.writeFile(tempPath, JSON.stringify(payload), "utf8")
-			await fs.rename(tempPath, filePath)
-		} catch (error) {
-			await fs.rm(tempPath, { force: true }).catch(() => undefined)
-			throw error
-		}
+		await writeJsonAtomic(path.join(taskDirectory, GlobalFileNames.taskActivities), payload)
 	}
 }
