@@ -1,0 +1,58 @@
+name: Docs Check
+
+# Read-only validation of the documentation site for pull requests and the dev
+# integration branch. Production deployment lives in docs-pages.yml.
+on:
+  pull_request:
+    branches: [main, dev]
+    types: [opened, reopened, synchronize, ready_for_review]
+    paths:
+      - "docs/**"
+      - ".github/workflows/docs-check.yml"
+      - ".github/workflows/docs-pages.yml"
+  push:
+    branches: [dev]
+    paths:
+      - "docs/**"
+      - ".github/workflows/docs-check.yml"
+      - ".github/workflows/docs-pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-check-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  verify:
+    name: Verify documentation site
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: docs
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: docs/package-lock.json
+
+      - name: Install locked docs dependencies
+        run: npm ci
+
+      # Unit tests, Astro/content checks, the production-base build and the
+      # built-site link, anchor, asset and forbidden-resource checks.
+      - name: Verify docs
+        run: npm run verify

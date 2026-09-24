@@ -6,7 +6,7 @@ import { resolveSiteConfig } from "./site.config.mjs"
 import { locales, ROOT_LOCALE } from "./src/data/locales.mjs"
 import { sidebar } from "./src/data/navigation.mjs"
 import { redirects } from "./src/data/redirects.mjs"
-import { remarkBaseLinks } from "./src/plugins/remark-base-links.mjs"
+import { remarkBaseLinks, toPrefix, withBase } from "./src/plugins/remark-base-links.mjs"
 
 const { site, base } = resolveSiteConfig()
 const repositoryUrl = "https://github.com/TuvokYang/dline"
@@ -14,7 +14,7 @@ const repositoryUrl = "https://github.com/TuvokYang/dline"
 export default defineConfig({
 	site,
 	base,
-	redirects,
+	redirects: withBaseDestinations(redirects, base),
 	// The base-link rewrite is a remark plugin, so content must run on the unified pipeline.
 	markdown: { processor: unified() },
 	integrations: [
@@ -38,6 +38,16 @@ export default defineConfig({
 		}),
 	],
 })
+
+/**
+ * Astro prefixes redirect sources with `base` but emits destinations verbatim,
+ * so base-free destinations would leave the Pages project path. Prefix them here
+ * so the redirect data stays deployment-independent.
+ */
+function withBaseDestinations(map: Readonly<Record<string, string>>, siteBase: string): Record<string, string> {
+	const prefix = toPrefix(siteBase)
+	return Object.fromEntries(Object.entries(map).map(([from, to]) => [from, withBase(to, prefix)]))
+}
 
 /**
  * Register the base-link rewrite with the resolved base, so a `--base` CLI

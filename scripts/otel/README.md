@@ -219,4 +219,4 @@ DLINE_LIVE_OTEL_RESULT {"canaryId":"...","traceId":"...","failedTaskSegmentId":"
 - 旧 extension-host 可能继续发送旧 schema，排查时同时检查 `service_version` 和 `service_instance_id`。
 - `dline_runtime_operation_duration_*` 的样本带有 `bucket_schema`，标识该样本使用的 bucket 布局。分位数查询必须锁定单一取值：`le="15000"` 只存在于 `v2`，混合聚合会使它的计数低于 `le="10000"`，Prometheus 的单调性修正随后把估计值推向最高有限边界。计数与求和不依赖 bucket 边界，因此比值查询刻意不锁定该标签，以覆盖所有版本的宿主。
 
-更多 consent、Journal、OTLP 字段和 exporter 排查说明见 [`../../docs/troubleshooting/telemetry.mdx`](../../docs/troubleshooting/telemetry.mdx)。
+更多 consent、Journal、OTLP 字段和 exporter 排查说明见[遥测文档](https://tuvokyang.github.io/dline/troubleshooting/telemetry/)（源文件 [`docs/src/content/docs/troubleshooting/telemetry.mdx`](../../docs/src/content/docs/troubleshooting/telemetry.mdx)）。
