@@ -170,24 +170,9 @@ export class DistLockUnavailableError extends Error {
 }
 
 function ensureLockDirectories() {
+	// Keep the directories after release: another process may have finished
+	// creating them but not yet written its lock entry.
 	fs.mkdirSync(READERS_DIR, { recursive: true })
-}
-
-/**
- * Remove the lock directories once they are empty.
- *
- * Leaving them behind is harmless, but an empty `.e2e-lock` directory inside
- * `dist/` invites the question of whether a run is still active.
- */
-function removeEmptyLockDirectories() {
-	for (const directory of [READERS_DIR, DIST_LOCK_ROOT]) {
-		try {
-			fs.rmdirSync(directory)
-		} catch {
-			// A concurrent holder still owns an entry, which is the normal case.
-			return
-		}
-	}
 }
 
 /**
@@ -202,7 +187,6 @@ function createRelease(entryPath) {
 		if (released) return
 		released = true
 		removeEntry(entryPath)
-		removeEmptyLockDirectories()
 	}
 }
 
@@ -285,7 +269,6 @@ export function acquireSharedDistLock(command) {
 	const racedWriter = collectLiveWriter()
 	if (racedWriter) {
 		removeEntry(entryPath)
-		removeEmptyLockDirectories()
 		throw new DistLockUnavailableError(
 			`A build claimed dist/ first (${describeOwner(racedWriter)}). Wait for it to finish, then retry.`,
 			[racedWriter],
@@ -320,6 +303,5 @@ export function inspectDistLock() {
 	ensureLockDirectories()
 	const writer = collectLiveWriter()
 	const readers = collectLiveReaders().map((reader) => reader.owner)
-	removeEmptyLockDirectories()
 	return { writer, readers }
 }
