@@ -202,6 +202,8 @@ jobs:
     if: needs.verify-insiders.outputs.eligible == 'true'
     uses: ./.github/workflows/publish-vsix-registries.yml
     with:
+      channel: insiders
+      commit_sha: ${{ needs.verify-insiders.outputs.commit_sha }}
       artifact_name: registry-vsix-${{ github.event.workflow_run.head_sha }}
       asset_name: ${{ needs.verify-insiders.outputs.asset_name }}
       expected_sha256: ${{ needs.verify-insiders.outputs.sha256 }}

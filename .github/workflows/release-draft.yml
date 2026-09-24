@@ -189,12 +189,13 @@ jobs:
           fi
 
   publish-preview-registry:
-    name: Publish Preview to Open VSX
+    name: Publish Preview to registries
     needs: [verify-tag, tests, release]
     uses: ./.github/workflows/publish-vsix-registries.yml
     with:
+      channel: preview
+      commit_sha: ${{ needs.verify-tag.outputs.commit_sha }}
       artifact_name: dline-vsix-${{ needs.verify-tag.outputs.commit_sha }}
       asset_name: dline-preview-${{ needs.verify-tag.outputs.version }}.vsix
       expected_sha256: ${{ needs.release.outputs.sha256 }}
-      publish_marketplace: false
     secrets: inherit

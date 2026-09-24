@@ -16,6 +16,7 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 - History tasks open in a lightweight, read-only message window while preserving their bound Profile, cross-window lock notice, and saved subagent metrics
 - Command logs and shell diagnostics now live under the owning task's temporary directory, with a per-task size budget; commands without a task still use the process temporary directory
 - Migration from Cline no longer imports task history that Dline cannot open or resume; settings, rules, workflows, and MCP configuration keep their existing migration paths
+- When switching models, readable reasoning from the previous model becomes ordinary context tagged `<prior_model_reasoning>`; opaque reasoning and response IDs are not replayed to the new model, and a model-switch notice is added to the following user turn
 
 ### Fixed
 - Fixed request-level approval appearing merely because hosted Web capabilities were declared; `Use Web` still governs Dline-owned local Web tools, and legacy hosted-approval snapshots require an explicit Resume only for a matching persisted history tail

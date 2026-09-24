@@ -126,6 +126,8 @@ jobs:
     if: github.repository == 'TuvokYang/dline'
     uses: ./.github/workflows/publish-vsix-registries.yml
     with:
+      channel: production
+      commit_sha: ${{ inputs.commit_sha }}
       artifact_name: registry-vsix-${{ inputs.commit_sha }}
       asset_name: ${{ inputs.asset_name }}
       expected_sha256: ${{ needs.release.outputs.sha256 }}
