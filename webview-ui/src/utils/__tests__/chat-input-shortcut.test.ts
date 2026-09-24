@@ -1,6 +1,6 @@
 import { type ChatInputSendShortcut, getChatInputSendShortcutLabel } from "@shared/ChatInputSendShortcut"
 import { describe, expect, it } from "vitest"
-import { type ChatInputKeyEvent, shouldSendChatInput } from "../chat-input-shortcut"
+import { type ChatInputKeyEvent, shouldCompleteMenuSelection, shouldSendChatInput } from "../chat-input-shortcut"
 
 const enterEvent = (overrides: Partial<ChatInputKeyEvent> = {}): ChatInputKeyEvent => ({
 	key: "Enter",
@@ -41,6 +41,29 @@ describe("shouldSendChatInput", () => {
 		expect(shouldSendChatInput(enterEvent({ key: "a" }), "enter", false)).toBe(false)
 		expect(shouldSendChatInput(enterEvent({ altKey: true }), "enter", false)).toBe(false)
 		expect(shouldSendChatInput(enterEvent({ metaKey: true }), "enter", false)).toBe(false)
+	})
+})
+
+describe("shouldCompleteMenuSelection", () => {
+	it("leaves the configured send shortcut to the send path", () => {
+		// The typed command used to stay in the input: the open suggestion list
+		// consumed Ctrl+Enter as a completion, so no request was ever made.
+		expect(shouldCompleteMenuSelection(enterEvent({ ctrlKey: true }), "ctrlEnter", false)).toBe(false)
+		expect(shouldCompleteMenuSelection(enterEvent({ shiftKey: true }), "shiftEnter", false)).toBe(false)
+	})
+
+	it("completes the highlighted suggestion on Tab and on a bare Enter", () => {
+		expect(shouldCompleteMenuSelection(enterEvent({ key: "Tab" }), "ctrlEnter", false)).toBe(true)
+		expect(shouldCompleteMenuSelection(enterEvent(), "ctrlEnter", false)).toBe(true)
+	})
+
+	it("keeps completion first when Enter is itself the send shortcut", () => {
+		expect(shouldCompleteMenuSelection(enterEvent(), "enter", false)).toBe(true)
+	})
+
+	it("ignores composition and unrelated keys", () => {
+		expect(shouldCompleteMenuSelection(enterEvent(), "enter", true)).toBe(false)
+		expect(shouldCompleteMenuSelection(enterEvent({ key: "a" }), "enter", false)).toBe(false)
 	})
 })
 

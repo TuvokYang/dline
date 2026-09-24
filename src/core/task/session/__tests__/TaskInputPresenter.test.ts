@@ -25,40 +25,62 @@ function payloadStore(envelope: Partial<UserInputEnvelope>): TaskPayloadStore {
 	} as unknown as TaskPayloadStore
 }
 
+/** A sequence whose ids are recognisable in assertions. */
+function sequence(start = 1000): () => number {
+	let last = start
+	return () => ++last
+}
+
+/** Prepare and commit one submission, which is what an accepted submit does. */
+async function present(presenter: TaskInputPresenter, entryId: string): Promise<void> {
+	const prepared = await presenter.prepare({ entryId, payloadRef: `ref:${entryId}` })
+	await prepared.commit()
+}
+
 describe("TaskInputPresenter", () => {
 	it("opens the task with what the user typed, not the admitted projection", async () => {
 		const state = messageState()
 		const presenter = new TaskInputPresenter(
 			payloadStore({ text: "/compact please", admittedText: "<compact-instructions> please" }),
 			state.messages,
+			sequence(),
 		)
 
-		await presenter.present({ entryId: "entry-1", payloadRef: "ref-1" })
+		await present(presenter, "entry-1")
 
 		expect(state.rows).toEqual([
 			expect.objectContaining({ type: "say", say: "task", text: "/compact please", interactionId: "entry-1" }),
 		])
 	})
 
+	it("withholds the row until the submission is accepted", async () => {
+		const state = messageState()
+		const presenter = new TaskInputPresenter(payloadStore({ text: "refused" }), state.messages, sequence())
+
+		const prepared = await presenter.prepare({ entryId: "entry-1", payloadRef: "ref-1" })
+
+		expect(state.rows).toEqual([])
+		await prepared.commit()
+		expect(state.rows).toHaveLength(1)
+	})
+
 	it("shows a later submission as user feedback", async () => {
 		const state = messageState()
-		const presenter = new TaskInputPresenter(payloadStore({ text: "first" }), state.messages)
-		await presenter.present({ entryId: "entry-1", payloadRef: "ref-1" })
+		const ids = sequence()
+		const presenter = new TaskInputPresenter(payloadStore({ text: "first" }), state.messages, ids)
+		await present(presenter, "entry-1")
 
-		await new TaskInputPresenter(payloadStore({ text: "second" }), state.messages).present({
-			entryId: "entry-2",
-			payloadRef: "ref-2",
-		})
+		await present(new TaskInputPresenter(payloadStore({ text: "second" }), state.messages, ids), "entry-2")
 
 		expect(state.rows.map((row) => row.say)).toEqual(["task", "user_feedback"])
 	})
 
 	it("keeps one row for a replayed entry", async () => {
 		const state = messageState()
-		const presenter = new TaskInputPresenter(payloadStore({ text: "hello" }), state.messages)
+		const presenter = new TaskInputPresenter(payloadStore({ text: "hello" }), state.messages, sequence())
 
-		await presenter.present({ entryId: "entry-1", payloadRef: "ref-1" })
-		await presenter.present({ entryId: "entry-1", payloadRef: "ref-1" })
+		await present(presenter, "entry-1")
+		await present(presenter, "entry-1")
 
 		expect(state.rows).toHaveLength(1)
 	})
@@ -68,9 +90,10 @@ describe("TaskInputPresenter", () => {
 		const presenter = new TaskInputPresenter(
 			payloadStore({ text: "look", images: ["image-1"], files: ["file-1"] }),
 			state.messages,
+			sequence(),
 		)
 
-		await presenter.present({ entryId: "entry-1", payloadRef: "ref-1" })
+		await present(presenter, "entry-1")
 
 		expect(state.rows[0]).toMatchObject({ images: ["image-1"], files: ["file-1"] })
 	})

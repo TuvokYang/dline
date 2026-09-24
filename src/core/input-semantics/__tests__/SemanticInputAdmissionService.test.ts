@@ -67,6 +67,37 @@ describe("SemanticInputAdmissionService", () => {
 		expect(result.admitted.authorizedTools).toEqual(["summarize_task"])
 	})
 
+	it("splits the projection around the barrier so its premessage can be routed apart from the turn", async () => {
+		const result = await service().admit(lex("/explain-changes then /compact keep the audit"))
+
+		expect(result.ok).toBe(true)
+		if (!result.ok) return
+		// The fake expander attaches one identical declaration per expanded command,
+		// so declarations are told apart by position: the first belongs to
+		// /explain-changes, the second to the /compact barrier itself.
+		expect(result.admitted.explicitInstructions).toHaveLength(2)
+		expect(result.admitted.barrier).toEqual({
+			commandId: "command.compact",
+			before: "<explain-changes-instructions> then",
+			// A carrier without command authority, such as a dialog reply, keeps the typed form.
+			sourceBefore: "/explain-changes then",
+			premessage: "keep the audit",
+			// Claiming the barrier drops only its own authority, never an earlier command's.
+			instructionsBefore: result.admitted.explicitInstructions.slice(0, 1),
+			// /explain-changes authorizes no tool; summarize_task belongs to the barrier alone.
+			toolsBefore: [],
+		})
+		expect(result.admitted.authorizedTools).toEqual(["summarize_task"])
+	})
+
+	it("reports no barrier when the user placed none", async () => {
+		const result = await service().admit(lex("/explain-changes please"))
+
+		expect(result.ok).toBe(true)
+		if (!result.ok) return
+		expect(result.admitted.barrier).toBeUndefined()
+	})
+
 	it("rejects a document that declares two lifecycle barriers", async () => {
 		const result = await service().admit(lex("/compact and /newtask"))
 
@@ -100,6 +131,17 @@ describe("SemanticInputAdmissionService", () => {
 		expect(result.ok).toBe(false)
 		if (result.ok) return
 		expect(result.diagnostics[0].code).toBe("semantic_input_catalog_stale")
+	})
+
+	it("reviews against the catalog a submission was composed with, not one published since", async () => {
+		// Discovery advanced between lexing and admission. The document is not
+		// stale — it names exactly the catalog it was built from — so refusing it
+		// would drop a submission the user just made.
+		const advanced: InputSemanticCatalog = { revision: 5, descriptors: BUILTIN_INPUT_SEMANTICS }
+
+		const result = await service({ catalog: advanced }).admit(lex("/compact"), catalog)
+
+		expect(result.ok).toBe(true)
 	})
 
 	it("fails closed when a recognized command left the catalog, and names the node", async () => {

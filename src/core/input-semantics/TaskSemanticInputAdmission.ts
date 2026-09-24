@@ -1,6 +1,6 @@
 import { isSlashCommandNode, type SemanticInputDocument } from "@shared/input-semantics/document"
-import type { TaskInputAdmissionPort, TaskInputAdmissionResult } from "@/core/task/session/TaskInputAdmission"
 import { Logger } from "@shared/services/Logger"
+import type { TaskInputAdmissionPort, TaskInputAdmissionResult } from "@/core/task/session/TaskInputAdmission"
 import type { LegacyInputAdapter } from "./LegacyInputAdapter"
 import type { SemanticInputAdmissionService } from "./SemanticInputAdmissionService"
 
@@ -23,9 +23,15 @@ export class TaskSemanticInputAdmission implements TaskInputAdmissionPort {
 		readonly files?: readonly string[]
 		readonly semanticInput?: SemanticInputDocument
 	}): Promise<TaskInputAdmissionResult> {
-		const document = input.semanticInput ?? (await this.legacy.adapt(input))
+		// A legacy submission carries the catalog it was just lexed against, so
+		// admission reviews it against that snapshot instead of a revision that
+		// discovery may have published in between.
+		const adapted = input.semanticInput
+			? { document: input.semanticInput, catalog: undefined }
+			: await this.legacy.adapt(input)
+		const document = adapted.document
 		reportUnresolvedCommands(document)
-		const result = await this.admission.admit(document)
+		const result = await this.admission.admit(document, adapted.catalog)
 		if (!result.ok) return result
 		return {
 			ok: true,
@@ -34,6 +40,7 @@ export class TaskSemanticInputAdmission implements TaskInputAdmissionPort {
 				admittedText: result.admitted.text,
 				authorizedTools: result.admitted.authorizedTools,
 				explicitInstructions: result.admitted.explicitInstructions,
+				...(result.admitted.barrier === undefined ? {} : { barrier: result.admitted.barrier }),
 			},
 		}
 	}

@@ -31,6 +31,14 @@ export interface LexSemanticInputOptions {
 	readonly catalog: InputSemanticCatalog
 	readonly documentId: string
 	readonly activation?: SemanticActivation
+	/**
+	 * Activation for one candidate, by its UTF-16 span in `rawText`.
+	 *
+	 * A composer mixes typed and pasted text in one draft, so a single switch
+	 * cannot say which candidates the user actually typed. When present this
+	 * decides every candidate and `activation` is ignored.
+	 */
+	readonly activationAt?: (start: number, end: number) => SemanticActivation
 }
 
 interface Candidate {
@@ -67,6 +75,16 @@ function scanCandidates(rawText: string): Candidate[] {
 		consumedUntil = candidate.end
 	}
 	return partition
+}
+
+/**
+ * The UTF-16 range of every candidate in `rawText`.
+ *
+ * Where a candidate sits depends on the grammar alone, never on a catalog, so
+ * this separates candidate text from plain text without resolving anything.
+ */
+export function semanticCandidateSpans(rawText: string): { readonly start: number; readonly end: number }[] {
+	return scanCandidates(rawText).map(({ start, end }) => ({ start, end }))
 }
 
 function namespaceOf(descriptor: InputSemanticDescriptor): SlashCommandNamespace {
@@ -148,13 +166,15 @@ function nodeFor(
  * and every later stage addresses nodes by identity.
  */
 export function lexSemanticInput(rawText: string, options: LexSemanticInputOptions): SemanticInputDocument {
-	const activation = options.activation ?? "auto"
+	const activationOf =
+		options.activationAt ?? ((_start: number, _end: number) => options.activation ?? ("auto" as SemanticActivation))
 	const nodes: SemanticInputNode[] = []
 	let cursor = 0
 	let ordinal = 0
 
 	for (const candidate of scanCandidates(rawText)) {
 		if (candidate.start > cursor) nodes.push({ kind: "text", text: rawText.slice(cursor, candidate.start) })
+		const activation = activationOf(candidate.start, candidate.end)
 		nodes.push(nodeFor(candidate, `${options.documentId}#${ordinal}`, options.catalog, activation))
 		ordinal += 1
 		cursor = candidate.end

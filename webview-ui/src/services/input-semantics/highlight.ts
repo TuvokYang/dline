@@ -1,7 +1,7 @@
 import type { InputSemanticCatalog } from "@shared/input-semantics/catalog"
 import { planSemanticCommands } from "@shared/input-semantics/command-plan"
 import { isMentionNode, isSlashCommandNode } from "@shared/input-semantics/document"
-import { lexSemanticInput } from "@shared/input-semantics/lexer"
+import { lexSemanticInput, type SemanticActivation } from "@shared/input-semantics/lexer"
 
 export type SemanticSegmentRole = "text" | "command" | "mention"
 
@@ -38,8 +38,14 @@ export function segmentSemanticInput(
 	rawText: string,
 	catalog: InputSemanticCatalog,
 	documentId: string = COMPOSER_DOCUMENT_ID,
+	activationAt?: (start: number, end: number) => SemanticActivation,
 ): readonly SemanticHighlightSegment[] {
-	const document = lexSemanticInput(rawText, { catalog, documentId, activation: "auto" })
+	const document = lexSemanticInput(rawText, {
+		catalog,
+		documentId,
+		activation: "auto",
+		...(activationAt ? { activationAt } : {}),
+	})
 	const plan = planSemanticCommands(document)
 	// The barrier is a command the task will run, so it stays an entity; only the
 	// nodes it pushed into the pre-message become literal text.
@@ -66,9 +72,18 @@ export function segmentSentMessage(rawText: string, catalog: InputSemanticCatalo
 	return segmentSemanticInput(rawText, catalog, HISTORY_DOCUMENT_ID)
 }
 
-/** Render the composer highlight layer from the shared semantic segments. */
-export function renderSemanticHighlightHtml(rawText: string, catalog: InputSemanticCatalog): string {
-	const html = segmentSemanticInput(rawText, catalog)
+/**
+ * Render the composer highlight layer from the shared semantic segments.
+ *
+ * `activationAt` is the same rule the submission uses, so a pasted candidate
+ * that will be sent as plain text is never drawn as an active entity.
+ */
+export function renderSemanticHighlightHtml(
+	rawText: string,
+	catalog: InputSemanticCatalog,
+	activationAt?: (start: number, end: number) => SemanticActivation,
+): string {
+	const html = segmentSemanticInput(rawText, catalog, COMPOSER_DOCUMENT_ID, activationAt)
 		.map((segment) =>
 			segment.active && segment.role !== "text"
 				? `<mark class="mention-context-textarea-highlight">${escapeHtml(segment.text)}</mark>`

@@ -17,6 +17,8 @@ export interface InputQueuePanelEntry {
 	readonly images: readonly string[]
 	readonly files: readonly string[]
 	readonly activeQuote?: string
+	/** The entry's composed structure; recalled with it when the entry is edited. */
+	readonly semanticInput?: import("@shared/input-semantics/document").SemanticInputDocument
 	readonly mode: InputQueuePanelMode
 	readonly editing?: boolean
 }

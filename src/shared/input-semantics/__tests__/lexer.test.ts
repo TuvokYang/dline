@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 import { BUILTIN_INPUT_SEMANTICS, type InputSemanticCatalog } from "../catalog"
 import type { MentionInputNode, SemanticInputNode, SlashCommandInputNode } from "../document"
-import { lexSemanticInput } from "../lexer"
+import { lexSemanticInput, semanticCandidateSpans } from "../lexer"
 import { presentationTextOf } from "../presentation"
 
 const catalog: InputSemanticCatalog = { revision: 4, descriptors: BUILTIN_INPUT_SEMANTICS }
@@ -17,6 +17,14 @@ function commands(nodes: readonly SemanticInputNode[]): SlashCommandInputNode[] 
 function mentions(nodes: readonly SemanticInputNode[]): MentionInputNode[] {
 	return nodes.filter((node): node is MentionInputNode => node.kind === "mention")
 }
+
+describe("semanticCandidateSpans", () => {
+	it("locates every command and mention shape without consulting a catalog", () => {
+		const text = "/compac then @/src/a.ts and https://host/compact"
+
+		expect(semanticCandidateSpans(text).map(({ start, end }) => text.slice(start, end))).toEqual(["/compac", "@/src/a.ts"])
+	})
+})
 
 describe("lexSemanticInput", () => {
 	it("recognizes a built-in command and records its catalog identity and barrier role", () => {

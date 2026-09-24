@@ -32,11 +32,39 @@ export interface SemanticMentionResolverPort {
 	resolve(node: MentionInputNode): Promise<string>
 }
 
+/**
+ * The lifecycle barrier of one submission, with its text split around it.
+ *
+ * A barrier changes the task rather than the turn, so whoever routes it needs
+ * the projection before it (still ordinary content) apart from its premessage
+ * (content addressed to the barrier itself), not one string where both blur.
+ */
+export interface AdmittedBarrier {
+	readonly commandId: string
+	/** Projection of every node before the barrier, in node order. */
+	readonly before: string
+	/**
+	 * What the user typed before the barrier, commands and mentions unexpanded.
+	 *
+	 * A carrier that grants no command authority - a dialog reply - keeps this
+	 * instead of `before`, so it never sends instructions without their tools.
+	 */
+	readonly sourceBefore: string
+	/** Projection of the barrier's premessage nodes, in node order. */
+	readonly premessage: string
+	/** Authority granted by the commands before the barrier, without the barrier's own. */
+	readonly instructionsBefore: readonly ExplicitInstructionDeclaration[]
+	/** Tools authorized by the commands before the barrier, without the barrier's own. */
+	readonly toolsBefore: readonly string[]
+}
+
 export interface AdmittedSemanticInput {
 	readonly documentId: string
 	/** Ordered projection sent to the provider; node order is preserved exactly. */
 	readonly text: string
 	readonly plan: SemanticCommandPlan
+	/** The lifecycle barrier the user placed, when there is one. */
+	readonly barrier?: AdmittedBarrier
 	/** Tools the user authorized by naming a command, derived from catalog identity. */
 	readonly authorizedTools: readonly string[]
 	/** Declarations the provider request must register before the authorized tool may run. */
@@ -64,26 +92,38 @@ export interface SemanticInputAdmissionPorts {
 export class SemanticInputAdmissionService {
 	constructor(private readonly ports: SemanticInputAdmissionPorts) {}
 
-	async admit(document: SemanticInputDocument): Promise<SemanticInputAdmission> {
+	/**
+	 * Review one document, optionally against the catalog it was composed with.
+	 *
+	 * A client that composed the document names its own revision, so the current
+	 * catalog is the right thing to check it against. A submission upgraded from
+	 * legacy text has just been lexed inside this same call, and passing that
+	 * snapshot keeps the check honest: discovery may publish a new revision at
+	 * any moment, and comparing against it would refuse a document for drifting
+	 * from a catalog it never saw.
+	 */
+	async admit(document: SemanticInputDocument, composedWith?: InputSemanticCatalog): Promise<SemanticInputAdmission> {
 		const structural = validateSemanticInputDocument(document)
 		if (structural.length > 0) return { ok: false, diagnostics: structural }
 
-		const catalog = this.ports.catalog()
+		const catalog = composedWith ?? this.ports.catalog()
 		const catalogDiagnostics = this.reviewAgainstCatalog(document, catalog)
 		if (catalogDiagnostics.length > 0) return { ok: false, diagnostics: catalogDiagnostics }
 
 		const plan = planSemanticCommands(document)
 		const projection = await this.project(document, plan)
+		// Every composable invocation precedes the barrier: nothing may start after it.
+		const composable = plan.invocations.map((invocation) => invocation.commandId)
 		return {
 			ok: true,
 			admitted: {
 				documentId: document.documentId,
 				text: projection.text,
 				plan,
-				authorizedTools: authorizedTools(
-					catalog,
-					[...plan.invocations, ...(plan.barrier ? [plan.barrier] : [])].map((invocation) => invocation.commandId),
-				),
+				...(projection.barrier === undefined
+					? {}
+					: { barrier: { ...projection.barrier, toolsBefore: authorizedTools(catalog, composable) } }),
+				authorizedTools: authorizedTools(catalog, [...composable, ...(plan.barrier ? [plan.barrier.commandId] : [])]),
 				explicitInstructions: projection.explicitInstructions,
 			},
 		}
@@ -121,12 +161,21 @@ export class SemanticInputAdmissionService {
 	private async project(
 		document: SemanticInputDocument,
 		plan: SemanticCommandPlan,
-	): Promise<{ text: string; explicitInstructions: readonly ExplicitInstructionDeclaration[] }> {
+	): Promise<{
+		text: string
+		explicitInstructions: readonly ExplicitInstructionDeclaration[]
+		barrier?: Omit<AdmittedBarrier, "toolsBefore">
+	}> {
 		const planned = new Map(
 			[...plan.invocations, ...(plan.barrier ? [plan.barrier] : [])].map((invocation) => [invocation.entityId, invocation]),
 		)
 		const parts: string[] = []
+		// The typed form of each part, index-aligned with `parts`.
+		const sources: string[] = []
 		const declarations: ExplicitInstructionDeclaration[] = []
+		// Index of the barrier's own part; every later part is its premessage.
+		let barrierPart: number | undefined
+		let declarationsBefore = 0
 
 		for (const node of document.nodes) {
 			if (isSlashCommandNode(node)) {
@@ -134,20 +183,44 @@ export class SemanticInputAdmissionService {
 				// A command the plan did not accept stays exactly as the user typed it.
 				if (!invocation) {
 					parts.push(node.sourceText)
+					sources.push(node.sourceText)
 					continue
 				}
 				const expansion = await this.ports.commands.expand(invocation)
+				if (invocation === plan.barrier) {
+					barrierPart = parts.length
+					declarationsBefore = declarations.length
+				}
 				parts.push(expansion.text)
+				sources.push(node.sourceText)
 				declarations.push(...(expansion.explicitInstructions ?? []))
 				continue
 			}
 			if (isMentionNode(node)) {
 				parts.push(isActiveEntity(node) ? await this.ports.mentions.resolve(node) : node.sourceText)
+				sources.push(node.sourceText)
 				continue
 			}
-			parts.push(presentationTextOfNode(node))
+			const text = presentationTextOfNode(node)
+			parts.push(text)
+			sources.push(text)
 		}
 
-		return { text: parts.join(""), explicitInstructions: declarations }
+		const text = parts.join("")
+		if (!plan.barrier || barrierPart === undefined) return { text, explicitInstructions: declarations }
+		return {
+			text,
+			explicitInstructions: declarations,
+			barrier: {
+				commandId: plan.barrier.commandId,
+				before: parts.slice(0, barrierPart).join("").trim(),
+				sourceBefore: sources.slice(0, barrierPart).join("").trim(),
+				premessage: parts
+					.slice(barrierPart + 1)
+					.join("")
+					.trim(),
+				instructionsBefore: declarations.slice(0, declarationsBefore),
+			},
+		}
 	}
 }

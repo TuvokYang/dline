@@ -55,6 +55,8 @@ async function settleEffects(): Promise<void> {
 
 function props(currentDraft: InteractionDraft): ComponentProps<typeof InputSection> {
 	return {
+		// InputSection now receives the catalog it composes and recalls drafts against.
+		semanticCatalog: { revision: 1, descriptors: [] },
 		chatState: {
 			activeQuote: null,
 			setActiveQuote: vi.fn(),
@@ -68,6 +70,10 @@ function props(currentDraft: InteractionDraft): ComponentProps<typeof InputSecti
 			setSelectedFiles: vi.fn(),
 			textAreaRef: { current: null },
 			handleFocusChange: vi.fn(),
+			// Paste provenance is part of the chat state contract since WS-041 AC-09.
+			pasteProvenance: { text: currentDraft.text, spans: [] },
+			commitPasteProvenance: vi.fn(),
+			restoreDraft: vi.fn(),
 		},
 		messageHandlers: { handleSendMessage: vi.fn() },
 		scrollBehavior: { isAtBottom: true, scrollToBottomAuto: vi.fn() },
