@@ -1,5 +1,6 @@
 import { Task } from "@core/task"
 import { InteractionCancellationError } from "@core/task/interaction/InteractionCancellationError"
+import { ServerTool } from "@shared/proto/dline/models/metadata"
 import { describe, expect, it, vi } from "vitest"
 
 /** Verify Profile admission is request-local and always evaluates the current binding. */
@@ -31,13 +32,15 @@ describe("Task Profile admission", () => {
 		const completeApiRequestGate = Reflect.get(Task.prototype, "completeApiRequestGate") as (
 			this: typeof fakeTask,
 			requestScope: {
-				webSearchRoutingPlan: { route: "hosted" }
+				webSearchRoutingPlan: { route: "hosted"; serverTools: ServerTool[] }
 				providerInfo: { providerId: string }
 			},
 			apiIndex: number,
 		) => Promise<boolean>
+		// Approval follows the routed hosted tools, so the plan must carry the
+		// hosted Web Search it declares, exactly as the resolver produces it.
 		const requestScope = {
-			webSearchRoutingPlan: { route: "hosted" as const },
+			webSearchRoutingPlan: { route: "hosted" as const, serverTools: [ServerTool.WEB_SEARCH] },
 			providerInfo: { providerId: "openai" },
 		}
 
