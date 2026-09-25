@@ -1,6 +1,38 @@
+import { createHash } from "node:crypto"
+import * as fs from "node:fs"
 import { Logger } from "@shared/services/Logger"
 import chokidar, { type ChokidarOptions, type FSWatcher } from "chokidar"
 import * as path from "path"
+
+/** Content identity of a file, or undefined when it cannot be read or is too large to hash. */
+export type FileFingerprint = (absolutePath: string) => string | undefined
+
+const MAX_FINGERPRINT_BYTES = 8 * 1024 * 1024
+
+/**
+ * Hash small files synchronously. Change events only arrive for files a task
+ * has read or edited, and a bounded read keeps the event handler cheap.
+ */
+function defaultFingerprint(absolutePath: string): string | undefined {
+	try {
+		if (fs.statSync(absolutePath).size > MAX_FINGERPRINT_BYTES) return undefined
+		return createHash("sha256").update(fs.readFileSync(absolutePath)).digest("hex")
+	} catch {
+		return undefined
+	}
+}
+
+/**
+ * Identity of a workspace file across path spellings.
+ *
+ * Relative and absolute spellings resolve to one absolute path; on Windows the
+ * key is also case-folded because the file system is case-insensitive. The
+ * function is idempotent, so a key can be passed back in as a path.
+ */
+export function fileContextKey(cwd: string, filePath: string): string {
+	const absolutePath = path.resolve(cwd, filePath)
+	return process.platform === "win32" ? absolutePath.toLowerCase() : absolutePath
+}
 
 /**
  * One tracker's handle on a shared workspace file watch.
@@ -14,6 +46,7 @@ export interface WorkspaceFileSubscription {
 
 export interface WorkspaceFileContextRegistryDeps {
 	readonly watch?: (paths: string, options: ChokidarOptions) => FSWatcher
+	readonly fingerprint?: FileFingerprint
 }
 
 /** Reported to every subscriber watching the changed path. */
@@ -35,6 +68,7 @@ interface FileSubscriber {
 }
 
 interface WatchEntry {
+	readonly absolutePath: string
 	readonly watcher: FSWatcher
 	readonly subscribers: Set<FileSubscriber>
 }
@@ -53,20 +87,31 @@ const WATCH_OPTIONS: ChokidarOptions = {
 /**
  * Share one file watcher per absolute path across every tracker of a workspace.
  *
- * The registry owns watcher lifetime, the monotonic revision of "this file
- * changed outside Dline", and the pending marker for changes Dline authored
- * itself. Acknowledgement cursors stay with each subscriber so one task
- * consuming a change never hides it from another.
+ * The registry owns watcher lifetime, the monotonic revision of "this file's
+ * content changed outside Dline", and the content baseline that decides it.
+ * A change event only counts when the content differs from the baseline, so
+ * metadata-only events are ignored. While Dline writes a file every event is
+ * absorbed, and settling the write moves the baseline to the written content.
+ * Acknowledgement cursors stay with each subscriber so one task consuming a
+ * change never hides it from another.
  */
 export class WorkspaceFileContextRegistry {
 	private readonly watch: (paths: string, options: ChokidarOptions) => FSWatcher
+	private readonly fingerprint: FileFingerprint
+	/** Keyed by {@link fileContextKey}. */
 	private readonly entries = new Map<string, WatchEntry>()
 	private readonly revisions = new Map<string, number>()
-	private readonly pendingSelfEdits = new Set<string>()
+	private readonly baselines = new Map<string, string | undefined>()
+	private readonly selfEditsInProgress = new Set<string>()
+	/** Writes in progress that already absorbed at least one change event. */
+	private readonly absorbedSelfEdits = new Set<string>()
+	/** Settled writes that could not be fingerprinted and whose event is still due. */
+	private readonly unverifiedSelfEdits = new Set<string>()
 	private revisionCounter = 0
 
 	constructor(deps: WorkspaceFileContextRegistryDeps = {}) {
 		this.watch = deps.watch ?? ((paths, options) => chokidar.watch(paths, options))
+		this.fingerprint = deps.fingerprint ?? defaultFingerprint
 	}
 
 	/**
@@ -76,9 +121,9 @@ export class WorkspaceFileContextRegistry {
 	 * spell the same file differently still share a single watcher.
 	 */
 	subscribe(cwd: string, filePath: string, onExternalChange: (change: WorkspaceFileChange) => void): WorkspaceFileSubscription {
-		const absolutePath = path.resolve(cwd, filePath)
+		const key = fileContextKey(cwd, filePath)
 		const subscriber: FileSubscriber = { filePath, onExternalChange }
-		const entry = this.entries.get(absolutePath) ?? this.createEntry(absolutePath)
+		const entry = this.entries.get(key) ?? this.createEntry(key, path.resolve(cwd, filePath))
 		entry.subscribers.add(subscriber)
 
 		let released = false
@@ -86,28 +131,47 @@ export class WorkspaceFileContextRegistry {
 			dispose: async () => {
 				if (released) return
 				released = true
-				await this.releaseSubscriber(absolutePath, entry, subscriber)
+				await this.releaseSubscriber(key, entry, subscriber)
 			},
 		}
 	}
 
 	/**
-	 * Suppress the next observed change for a path because Dline authored it.
+	 * Mark a Dline write to a watched path as in progress.
 	 *
-	 * The marker is workspace-wide: whichever task performed the write, no
-	 * tracker should report that write back as an external edit. Paths without
-	 * a live watcher are ignored: no change event can be reported for them, and
-	 * a stored marker would instead swallow a later real user edit.
+	 * Every change event is absorbed until {@link settleSelfEdit} records the
+	 * written content as the new baseline. The marker is workspace-wide, so no
+	 * task reports another task's write. Paths without a live watcher are
+	 * ignored: their baseline is taken when a watcher is created.
 	 */
 	markSelfEdit(cwd: string, filePath: string): void {
-		const absolutePath = path.resolve(cwd, filePath)
-		if (!this.entries.has(absolutePath)) return
-		this.pendingSelfEdits.add(absolutePath)
+		const key = fileContextKey(cwd, filePath)
+		if (!this.entries.has(key)) return
+		this.selfEditsInProgress.add(key)
+	}
+
+	/**
+	 * Finish a Dline write: the current content becomes the baseline, so a
+	 * change event that arrives later for the same content is not reported.
+	 */
+	settleSelfEdit(cwd: string, filePath: string): void {
+		const key = fileContextKey(cwd, filePath)
+		const wasInProgress = this.selfEditsInProgress.delete(key)
+		const eventAbsorbed = this.absorbedSelfEdits.delete(key)
+		const entry = this.entries.get(key)
+		if (!entry) return
+		const fingerprint = this.fingerprint(entry.absolutePath)
+		this.baselines.set(key, fingerprint)
+		// Without a content identity the write's late event cannot be recognized,
+		// so fall back to swallowing exactly one event, as a one-shot marker did.
+		if (fingerprint === undefined && wasInProgress && !eventAbsorbed) {
+			this.unverifiedSelfEdits.add(key)
+		}
 	}
 
 	/** Current revision of a path, or 0 when no external change was observed. */
 	getRevision(cwd: string, filePath: string): number {
-		return this.revisions.get(path.resolve(cwd, filePath)) ?? 0
+		return this.revisions.get(fileContextKey(cwd, filePath)) ?? 0
 	}
 
 	/**
@@ -115,9 +179,9 @@ export class WorkspaceFileContextRegistry {
 	 * so it becomes visible to every task tracking the same path.
 	 */
 	recordExternalEdit(cwd: string, filePath: string): number {
-		const absolutePath = path.resolve(cwd, filePath)
+		const key = fileContextKey(cwd, filePath)
 		this.revisionCounter += 1
-		this.revisions.set(absolutePath, this.revisionCounter)
+		this.revisions.set(key, this.revisionCounter)
 		return this.revisionCounter
 	}
 
@@ -127,10 +191,10 @@ export class WorkspaceFileContextRegistry {
 	 */
 	adoptRevision(cwd: string, filePath: string, revision: number): void {
 		if (!Number.isSafeInteger(revision) || revision <= 0) return
-		const absolutePath = path.resolve(cwd, filePath)
-		const current = this.revisions.get(absolutePath) ?? 0
+		const key = fileContextKey(cwd, filePath)
+		const current = this.revisions.get(key) ?? 0
 		if (revision > current) {
-			this.revisions.set(absolutePath, revision)
+			this.revisions.set(key, revision)
 		}
 		this.revisionCounter = Math.max(this.revisionCounter, revision)
 	}
@@ -140,7 +204,10 @@ export class WorkspaceFileContextRegistry {
 		const entries = [...this.entries.values()]
 		this.entries.clear()
 		this.revisions.clear()
-		this.pendingSelfEdits.clear()
+		this.baselines.clear()
+		this.selfEditsInProgress.clear()
+		this.absorbedSelfEdits.clear()
+		this.unverifiedSelfEdits.clear()
 		for (const entry of entries) {
 			entry.subscribers.clear()
 			await entry.watcher.close().catch((error) => {
@@ -149,27 +216,41 @@ export class WorkspaceFileContextRegistry {
 		}
 	}
 
-	private createEntry(absolutePath: string): WatchEntry {
+	private createEntry(key: string, absolutePath: string): WatchEntry {
 		const subscribers = new Set<FileSubscriber>()
 		const watcher = this.watch(absolutePath, WATCH_OPTIONS)
-		watcher.on("change", () => this.handleChange(absolutePath, subscribers))
+		const entry: WatchEntry = { absolutePath, watcher, subscribers }
+		watcher.on("change", () => this.handleChange(key, entry))
 		watcher.on("error", (error) => {
 			Logger.error("[WorkspaceFileContextRegistry] Watch error:", error)
 		})
-		const entry: WatchEntry = { watcher, subscribers }
-		this.entries.set(absolutePath, entry)
+		this.entries.set(key, entry)
+		this.baselines.set(key, this.fingerprint(absolutePath))
 		return entry
 	}
 
-	private handleChange(absolutePath: string, subscribers: ReadonlySet<FileSubscriber>): void {
-		if (this.pendingSelfEdits.delete(absolutePath)) {
-			return // Dline authored this write; no tracker should treat it as external.
+	private handleChange(key: string, entry: WatchEntry): void {
+		const current = this.fingerprint(entry.absolutePath)
+		const baseline = this.baselines.get(key)
+		this.baselines.set(key, current)
+		// Dline is writing this file; its own events are never external edits.
+		if (this.selfEditsInProgress.has(key)) {
+			this.absorbedSelfEdits.add(key)
+			return
 		}
+		if (current === undefined) {
+			if (this.unverifiedSelfEdits.delete(key)) return
+		} else {
+			this.unverifiedSelfEdits.delete(key)
+			// Same content as last seen: a metadata-only or duplicate event.
+			if (current === baseline) return
+		}
+
 		this.revisionCounter += 1
 		const revision = this.revisionCounter
-		this.revisions.set(absolutePath, revision)
+		this.revisions.set(key, revision)
 		let isMetadataAuthor = true
-		for (const subscriber of [...subscribers]) {
+		for (const subscriber of [...entry.subscribers]) {
 			try {
 				subscriber.onExternalChange({ filePath: subscriber.filePath, revision, isMetadataAuthor })
 				isMetadataAuthor = false
@@ -179,13 +260,16 @@ export class WorkspaceFileContextRegistry {
 		}
 	}
 
-	private async releaseSubscriber(absolutePath: string, entry: WatchEntry, subscriber: FileSubscriber): Promise<void> {
+	private async releaseSubscriber(key: string, entry: WatchEntry, subscriber: FileSubscriber): Promise<void> {
 		entry.subscribers.delete(subscriber)
 		if (entry.subscribers.size > 0) return
-		if (this.entries.get(absolutePath) === entry) this.entries.delete(absolutePath)
-		// No watcher remains to consume a pending marker; keeping it would swallow
-		// the first real edit observed after the path is watched again.
-		this.pendingSelfEdits.delete(absolutePath)
+		if (this.entries.get(key) === entry) this.entries.delete(key)
+		// Without a watcher no event can be absorbed or compared; keeping the
+		// marker or baseline would misjudge the first event after a new watch.
+		this.selfEditsInProgress.delete(key)
+		this.absorbedSelfEdits.delete(key)
+		this.unverifiedSelfEdits.delete(key)
+		this.baselines.delete(key)
 		await entry.watcher.close().catch((error) => {
 			Logger.error("[WorkspaceFileContextRegistry] Failed to dispose shared watcher:", error)
 		})

@@ -1,7 +1,7 @@
 import type { ChokidarOptions, FSWatcher } from "chokidar"
 import * as path from "path"
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { type WorkspaceFileChange, WorkspaceFileContextRegistry } from "../WorkspaceFileContextRegistry"
+import { fileContextKey, type WorkspaceFileChange, WorkspaceFileContextRegistry } from "../WorkspaceFileContextRegistry"
 
 const CWD = path.resolve("/workspace")
 
@@ -163,17 +163,93 @@ describe("WorkspaceFileContextRegistry", () => {
 		expect(registry.getRevision(CWD, "src/other.ts")).toBe(2)
 	})
 
-	it("swallows exactly the change that follows a self-edit marker", () => {
+	it("absorbs changes while a Dline write is in progress and reports changes after it settles", () => {
 		const notify = vi.fn()
 		registry.subscribe(CWD, "src/app.ts", notify)
 		registry.markSelfEdit(CWD, "src/app.ts")
 
 		factory.created[0].fake.emitChange()
+		factory.created[0].fake.emitChange()
 		expect(notify).not.toHaveBeenCalled()
 		expect(registry.getRevision(CWD, "src/app.ts")).toBe(0)
 
+		registry.settleSelfEdit(CWD, "src/app.ts")
 		factory.created[0].fake.emitChange()
 		expect(notify).toHaveBeenCalledWith({ filePath: "src/app.ts", revision: 1, isMetadataAuthor: true })
+	})
+
+	it("swallows exactly one late change of an unfingerprinted Dline write", () => {
+		const notify = vi.fn()
+		registry.subscribe(CWD, "src/app.ts", notify)
+		registry.markSelfEdit(CWD, "src/app.ts")
+		registry.settleSelfEdit(CWD, "src/app.ts")
+
+		factory.created[0].fake.emitChange()
+		expect(notify).not.toHaveBeenCalled()
+
+		factory.created[0].fake.emitChange()
+		expect(notify).toHaveBeenCalledWith({ filePath: "src/app.ts", revision: 1, isMetadataAuthor: true })
+	})
+
+	describe("content fingerprints", () => {
+		let content: string
+		beforeEach(() => {
+			content = "original"
+			registry = new WorkspaceFileContextRegistry({ watch: factory.watch, fingerprint: () => content })
+		})
+
+		it("ignores a change event that leaves the content unchanged", () => {
+			const notify = vi.fn()
+			registry.subscribe(CWD, "src/app.ts", notify)
+
+			factory.created[0].fake.emitChange()
+
+			expect(notify).not.toHaveBeenCalled()
+			expect(registry.getRevision(CWD, "src/app.ts")).toBe(0)
+		})
+
+		it("absorbs every change event while Dline is writing", () => {
+			const notify = vi.fn()
+			registry.subscribe(CWD, "src/app.ts", notify)
+			registry.markSelfEdit(CWD, "src/app.ts")
+			content = "partial write"
+			factory.created[0].fake.emitChange()
+			content = "final write"
+			factory.created[0].fake.emitChange()
+			registry.settleSelfEdit(CWD, "src/app.ts")
+
+			expect(notify).not.toHaveBeenCalled()
+			content = "edited by the user"
+			factory.created[0].fake.emitChange()
+			expect(notify).toHaveBeenCalledWith({ filePath: "src/app.ts", revision: 1, isMetadataAuthor: true })
+		})
+
+		it("does not report a Dline write whose change event arrives after the write settled", () => {
+			const notify = vi.fn()
+			registry.subscribe(CWD, "src/app.ts", notify)
+			registry.markSelfEdit(CWD, "src/app.ts")
+			content = "written by Dline"
+			registry.settleSelfEdit(CWD, "src/app.ts")
+
+			factory.created[0].fake.emitChange()
+			expect(notify).not.toHaveBeenCalled()
+
+			content = "edited by the user"
+			factory.created[0].fake.emitChange()
+			expect(notify).toHaveBeenCalledWith({ filePath: "src/app.ts", revision: 1, isMetadataAuthor: true })
+		})
+	})
+
+	it("derives one key for relative and absolute spellings of a path", () => {
+		expect(fileContextKey(CWD, "src/app.ts")).toBe(fileContextKey(CWD, path.resolve(CWD, "src/app.ts")))
+		expect(fileContextKey(CWD, fileContextKey(CWD, "src/app.ts"))).toBe(fileContextKey(CWD, "src/app.ts"))
+	})
+
+	it.runIf(process.platform === "win32")("shares one watcher for path spellings that differ only in case on Windows", () => {
+		registry.subscribe(CWD, "src/app.ts", vi.fn())
+		registry.subscribe(CWD, path.resolve(CWD, "SRC/App.ts"), vi.fn())
+
+		expect(factory.watch).toHaveBeenCalledTimes(1)
 	})
 
 	it("ignores a self-edit marker for a path that has no watcher", () => {

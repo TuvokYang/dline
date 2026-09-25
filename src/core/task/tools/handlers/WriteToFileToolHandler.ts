@@ -299,26 +299,11 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 				throw error
 			}
 
-			// Mark the file as edited by Cline
-			config.services.fileContextTracker.markFileAsEditedByCline(relPath)
-
-			// Track file modification for per-file checkpointing
-			config.services.taskFileTracker.trackModification(absolutePath)
-
-			// Save the changes and get the result
 			const { newProblemsMessage, userEdits, autoFormattingEdits, finalContent, wroteLines, savedLines, formatterChanged } =
-				await config.services.diffViewProvider.saveChanges()
+				await this.saveAsClineEdit(config, relPath, absolutePath)
 
 			// Reset consecutive mistake counter on successful file operation
 			config.taskState.consecutiveMistakeCount = 0
-
-			config.taskState.didEditFile = true // used to determine if we should wait for busy terminal to update before sending api request
-
-			// Invalidate file read cache for this file so re-reads get fresh content
-			config.taskState.fileReadCache.delete(absolutePath.toLowerCase())
-
-			// Track file edit operation
-			await config.services.fileContextTracker.trackFileContext(relPath, "cline_edited")
 
 			// Reset the diff view
 			await config.services.diffViewProvider.reset()
@@ -505,7 +490,7 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 						await config.callbacks.say("tool", updatedToolJson, undefined, undefined, false, existingTs)
 						await config.services.diffViewProvider.open(absolutePath, { displayPath: resolvedPath })
 						await config.services.diffViewProvider.update(newContent, true)
-						const { savedLines } = await config.services.diffViewProvider.saveChanges()
+						await this.saveAsClineEdit(config, resolvedPath, absolutePath)
 						await config.services.diffViewProvider.reset()
 						this._lastDiffError = `${blockResults}${describeFailureReminder(result.blocks)}`
 						return
@@ -596,6 +581,30 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 		}
 
 		return { relPath, absolutePath, fileExists, diff, content, newContent, workspaceContext, blocks }
+	}
+
+	/**
+	 * Save the open diff view as a Dline-authored write.
+	 *
+	 * Every save path goes through here, so each write marks itself before the
+	 * file changes on disk, records the checkpoint modification, clears the read
+	 * cache, and settles the self-edit once the new content is tracked. A save
+	 * that fails still settles, so the marker never swallows a later user edit.
+	 */
+	private async saveAsClineEdit(config: TaskConfig, relPath: string, absolutePath: string) {
+		const tracker = config.services.fileContextTracker
+		tracker.markFileAsEditedByCline(relPath)
+		try {
+			config.services.taskFileTracker.trackModification(absolutePath)
+			const saved = await config.services.diffViewProvider.saveChanges()
+			// Used to decide whether to wait for a busy terminal before the next API request.
+			config.taskState.didEditFile = true
+			config.taskState.fileReadCache.delete(absolutePath.toLowerCase())
+			await tracker.trackFileContext(relPath, "cline_edited")
+			return saved
+		} finally {
+			tracker.settleClineEdit(relPath)
+		}
 	}
 
 	/**
