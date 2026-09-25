@@ -132,7 +132,8 @@ export class TaskSessionCompositionService {
 			uiMessage: options.messages.uiMessage,
 			apiConversation: options.messages.apiConversation,
 		})
-		const activities = new TaskActivityStore(options.taskId, new TaskActivityPersistence(options.taskId))
+		const activityPersistence = new TaskActivityPersistence(options.taskId)
+		const activities = new TaskActivityStore(options.taskId, activityPersistence)
 		await activities.hydrate()
 		let session: ActiveTaskSession | undefined
 		// Command dispatch, publication, commit and unowned dialog continuation all
@@ -492,6 +493,8 @@ export class TaskSessionCompositionService {
 					release: async () => {
 						await activities.waitForPersistence()
 						activities.dispose()
+						// activities.db has one writer; closing releases it for the next session.
+						await activityPersistence.close()
 					},
 				},
 				{ release: () => tool.browser.dispose() },

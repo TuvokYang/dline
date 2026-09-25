@@ -1,17 +1,8 @@
-import fs from "node:fs/promises"
-import path from "node:path"
-import { ensureTaskDirectoryExists, GlobalFileNames } from "@core/storage/disk"
+import { TaskActivityRowStore } from "@core/storage/activities/TaskActivityRowStore"
 import { Logger } from "@shared/services/Logger"
-import { writeJsonAtomic } from "@shared/storage/atomic-file"
 import type { TaskActivityEvent, TaskActivityRecord } from "@shared/task-activity"
 
 const ACTIVITY_SCHEMA_VERSION = 2
-
-interface PersistedTaskActivities {
-	schemaVersion: 2
-	taskId: string
-	activities: TaskActivityRecord[]
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -69,42 +60,83 @@ function sanitizeActivity(value: unknown, taskId: string): TaskActivityRecord | 
 	}
 }
 
-/** Persists activity snapshots without serializing runtime cancellers. */
+function sanitizeActivities(values: readonly unknown[], taskId: string): TaskActivityRecord[] {
+	return values
+		.map((activity) => sanitizeActivity(activity, taskId))
+		.filter((activity): activity is TaskActivityRecord => Boolean(activity))
+}
+
+/** Activities of a legacy `activities.json`, or an empty list when it belongs elsewhere or is unreadable. */
+function decodeLegacyActivities(text: string, taskId: string): TaskActivityRecord[] {
+	const parsed: unknown = JSON.parse(text)
+	if (!isRecord(parsed) || parsed.taskId !== taskId) return []
+	if (parsed.schemaVersion !== 1 && parsed.schemaVersion !== ACTIVITY_SCHEMA_VERSION) return []
+	return Array.isArray(parsed.activities) ? sanitizeActivities(parsed.activities, taskId) : []
+}
+
+/**
+ * Persists activity snapshots in the task's `activities.db` without serializing runtime cancellers.
+ *
+ * This is the only writer of that database. A legacy `activities.json` is imported on the first
+ * load and renamed to `.migrated`; loading never fails, so a damaged history shows as empty.
+ */
 export class TaskActivityPersistence {
+	private storePromise?: Promise<TaskActivityRowStore>
+
 	constructor(private readonly taskId: string) {}
 
 	async load(): Promise<TaskActivityRecord[]> {
 		try {
-			const taskDirectory = await ensureTaskDirectoryExists(this.taskId)
-			const raw = await fs.readFile(path.join(taskDirectory, GlobalFileNames.taskActivities), "utf8")
-			const parsed: unknown = JSON.parse(raw)
-			if (
-				!isRecord(parsed) ||
-				(parsed.schemaVersion !== 1 && parsed.schemaVersion !== ACTIVITY_SCHEMA_VERSION) ||
-				parsed.taskId !== this.taskId
-			) {
-				return []
-			}
-			return Array.isArray(parsed.activities)
-				? parsed.activities
-						.map((activity) => sanitizeActivity(activity, this.taskId))
-						.filter((activity): activity is TaskActivityRecord => Boolean(activity))
-				: []
+			const store = await this.store()
+			const stored = await store.read()
+			if (stored.length > 0) return sanitizeActivities(stored, this.taskId)
+			return await this.importLegacy(store)
 		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-				Logger.warn("[TaskActivityPersistence] Failed to load activity history", error)
-			}
+			Logger.warn("[TaskActivityPersistence] Failed to load activity history", error)
 			return []
 		}
 	}
 
 	async save(activities: TaskActivityRecord[]): Promise<void> {
-		const taskDirectory = await ensureTaskDirectoryExists(this.taskId)
-		const payload: PersistedTaskActivities = {
-			schemaVersion: ACTIVITY_SCHEMA_VERSION,
-			taskId: this.taskId,
-			activities,
+		await (await this.store()).replace(activities)
+	}
+
+	/** Releases `activities.db`; the next load or save reopens it. */
+	async close(): Promise<void> {
+		const pending = this.storePromise
+		this.storePromise = undefined
+		if (!pending) return
+		await (await pending).close()
+	}
+
+	private store(): Promise<TaskActivityRowStore> {
+		this.storePromise ??= TaskActivityRowStore.open(this.taskId).catch((error) => {
+			this.storePromise = undefined
+			throw error
+		})
+		return this.storePromise
+	}
+
+	private async importLegacy(store: TaskActivityRowStore): Promise<TaskActivityRecord[]> {
+		const legacy = await store.readLegacy()
+		if (!legacy) return []
+		let activities: TaskActivityRecord[]
+		try {
+			activities = decodeLegacyActivities(legacy.text, this.taskId)
+		} catch (error) {
+			// Unreadable JSON stays in place for inspection; the task opens with no history.
+			Logger.warn(`[TaskActivityPersistence] Keeping unreadable ${legacy.file}`, error)
+			return []
 		}
-		await writeJsonAtomic(path.join(taskDirectory, GlobalFileNames.taskActivities), payload)
+		await store.replace(activities)
+		const stored = await store.read()
+		if (stored.length !== activities.length) {
+			Logger.error(
+				`[TaskActivityPersistence] ${legacy.file} imported ${stored.length} of ${activities.length} activities; keeping the file`,
+			)
+			return activities
+		}
+		await store.retireLegacy(legacy.file)
+		return activities
 	}
 }
