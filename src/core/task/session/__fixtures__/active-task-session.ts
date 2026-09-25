@@ -36,6 +36,7 @@ export function createSessionFixture(options: SessionFixtureOptions = {}) {
 		messages: {
 			clineMessages: [] as unknown[],
 			reloadFromStore: vi.fn(),
+			replaceClineMessages: vi.fn(async (_messages: unknown[]) => undefined),
 			addToClineMessages: vi.fn(async () => undefined),
 			upsertClineMessageInMemory: vi.fn(async () => undefined),
 			readStateMetrics: vi.fn(() => undefined),

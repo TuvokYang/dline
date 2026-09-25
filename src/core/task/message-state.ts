@@ -104,7 +104,7 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 	/** Last measured task-directory size with the time it was taken. */
 	private taskDirectorySizeCache?: { bytes: number; measuredAt: number }
 
-	/** UI messages (clineMessages) — single source of truth for ui_messages.jsonl plus transient presentation overlays. */
+	/** UI messages (clineMessages) — the task's only writer of messages.db, plus transient presentation overlays. */
 	public readonly uiMessage: UIMessage | undefined
 
 	/** API conversation history — single source of truth for api_conversation_history.jsonl */
@@ -194,6 +194,19 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 		this.checkpointTracker = tracker
 	}
 
+	/**
+	 * Replaces the whole durable history through this task's writer and waits until
+	 * it is stored. Recovery uses it so a rebuilt history never needs a second writer.
+	 */
+	async replaceClineMessages(messages: ClineMessage[]): Promise<void> {
+		if (!this.uiMessage) return
+		const previousMessages = [...this.clineMessages]
+		await this.uiMessage.overwrite(messages)
+		await this.uiMessage.flush()
+		this.emitClineMessagesChanged({ type: "set", messages: this.clineMessages, previousMessages })
+		await this.updateTaskHistoryOnly()
+	}
+
 	reloadFromStore(): void {
 		const uiMsg = this.uiMessage
 		if (!uiMsg) return
@@ -222,11 +235,10 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 			if (persisted.length === 0) return
 			const apiMetrics = this.readAggregatedMetrics(allMessages)
 			// Read the task header from the in-memory message list instead of
-			// re-reading ui_messages.jsonl on every history-only update: the disk
-			// path bypasses the jsonl cache and does a full read + JSON.parse.
+			// re-reading the stored chat history on every history-only update.
 			// History entries are list labels: the panel title, the history row,
 			// and search all use short text, while the authoritative task text
-			// stays in ui_messages.jsonl. Storing it verbatim here made the one
+			// stays in the task's messages.db. Storing it verbatim here made the one
 			// global taskHistory key grow without bound.
 			const taskText = summarizeHistoryTaskText(this.clineMessages.find((m) => m.say === "task")?.text ?? "")
 			const lastRelevantIndex = findLastIndex(

@@ -64,6 +64,9 @@ export async function readLegacyUiMessages(instanceRoot: string): Promise<Legacy
  * readable source. A database that already has rows is never overwritten: if a legacy
  * file is still present (the rename did not happen), it is renamed only when it holds
  * the same messages, and otherwise kept and reported.
+ *
+ * A read-back that disagrees with the file keeps the file and logs instead of
+ * failing: the task must still open, and the untouched source stays available.
  */
 export async function importLegacyUiMessages(instanceRoot: string, store: UiMessageRowStore): Promise<void> {
 	const legacy = await readLegacyUiMessages(instanceRoot)
@@ -75,7 +78,10 @@ export async function importLegacyUiMessages(instanceRoot: string, store: UiMess
 		await store.replaceAll(messages.map((message, ordinal) => ({ ordinal, ts: message.ts, message })))
 		const { records: stored } = await store.query()
 		if (!sameTimestamps(messages, stored)) {
-			throw new Error(`UiMessageImportMismatch: ${legacyFile} imported ${stored.length} of ${messages.length} messages`)
+			Logger.error(
+				`[messages.db] UiMessageImportMismatch: ${legacyFile} imported ${stored.length} of ${messages.length} messages; keeping the file`,
+			)
+			return
 		}
 	} else if (!sameTimestamps(messages, existing)) {
 		Logger.warn(

@@ -4,27 +4,32 @@ import type { ClineMessage } from "@/shared/ExtensionMessage"
 import type { ClineStorageMessage } from "@/shared/messages/content"
 
 const mocks = vi.hoisted(() => ({
-	access: vi.fn(),
-	copyFile: vi.fn(),
 	readFile: vi.fn(),
 	ensureTaskDirectoryExists: vi.fn(),
 	getSavedApiConversationHistory: vi.fn(),
-	saveClineMessages: vi.fn(),
+	getSavedClineMessages: vi.fn(),
+	writeJsonAtomic: vi.fn(),
+	openUiMessage: vi.fn(),
 }))
 
 vi.mock("fs/promises", () => ({
 	default: {
-		access: mocks.access,
-		copyFile: mocks.copyFile,
 		readFile: mocks.readFile,
 	},
 }))
 
 vi.mock("@core/storage/disk", () => ({
 	ensureTaskDirectoryExists: mocks.ensureTaskDirectoryExists,
-	GlobalFileNames: { uiMessages: "ui_messages.jsonl" },
 	getSavedApiConversationHistory: mocks.getSavedApiConversationHistory,
-	saveClineMessages: mocks.saveClineMessages,
+	getSavedClineMessages: mocks.getSavedClineMessages,
+}))
+
+vi.mock("@/shared/storage/atomic-file", () => ({
+	writeJsonAtomic: mocks.writeJsonAtomic,
+}))
+
+vi.mock("@core/storage/UIMessage", () => ({
+	UIMessage: { open: mocks.openUiMessage },
 }))
 
 import { recoverUiMessages } from "../recoverUiMessages"
@@ -55,31 +60,62 @@ describe("recoverUiMessages", () => {
 		vi.clearAllMocks()
 		mocks.ensureTaskDirectoryExists.mockResolvedValue("e:\\workspace\\task-1")
 		mocks.getSavedApiConversationHistory.mockResolvedValue(recoveredHistory())
-		mocks.access.mockRejectedValue(Object.assign(new Error("missing"), { code: "ENOENT" }))
+		mocks.getSavedClineMessages.mockResolvedValue([])
 		mocks.readFile.mockRejectedValue(Object.assign(new Error("missing"), { code: "ENOENT" }))
-		mocks.saveClineMessages.mockResolvedValue(undefined)
+		mocks.writeJsonAtomic.mockResolvedValue(undefined)
 	})
 
-	it("preserves canonical interaction identity without starting an interactive resume", async () => {
+	it("replaces an open task's history through that task's own writer", async () => {
 		const postStateToWebview = vi.fn().mockResolvedValue(undefined)
 		const session = createSessionFixture({ taskId: "task-1" })
 		const controller = { task: session, postStateToWebview }
 
 		await recoverUiMessages(controller as never)
 
-		const savedMessages = mocks.saveClineMessages.mock.calls[0]?.[1] as ClineMessage[] | undefined
+		const replace = session.owners.messages.replaceClineMessages
+		expect(replace).toHaveBeenCalledOnce()
+		const savedMessages = replace.mock.calls[0]?.[0] as ClineMessage[] | undefined
 		const recoveredAsk = savedMessages?.find((message) => message.type === "ask" && message.ask === "qna_respond")
 		expect(recoveredAsk).toMatchObject({
 			type: "ask",
 			ask: "qna_respond",
 			interactionId: "interaction-qna-1",
 		})
-		// Recovery re-reads the durable store; it must not drive the task facade.
-		expect(session.owners.messages.reloadFromStore).toHaveBeenCalledOnce()
+		// A second writer on messages.db would conflict with the open task's writer.
+		expect(mocks.openUiMessage).not.toHaveBeenCalled()
 		expect(session.task.start).not.toHaveBeenCalled()
 		expect(session.task.respond).not.toHaveBeenCalled()
 		expect(session.task.submitInput).not.toHaveBeenCalled()
 		expect(postStateToWebview).toHaveBeenCalledOnce()
+	})
+
+	it("opens a closed task's store only for the write and backs up the previous history", async () => {
+		const previous = [{ ts: 1, type: "say", say: "task", text: "old" }] as ClineMessage[]
+		mocks.getSavedClineMessages.mockResolvedValue(previous)
+		const store = { overwrite: vi.fn(async () => undefined), close: vi.fn(async () => undefined) }
+		mocks.openUiMessage.mockResolvedValue(store)
+
+		await recoverUiMessages(undefined, "task-1")
+
+		expect(mocks.writeJsonAtomic).toHaveBeenCalledOnce()
+		expect(mocks.writeJsonAtomic.mock.calls[0]?.[1]).toEqual(previous)
+		expect(mocks.openUiMessage).toHaveBeenCalledWith("task-1")
+		expect(store.overwrite).toHaveBeenCalledOnce()
+		expect(store.close).toHaveBeenCalledOnce()
+	})
+
+	it("closes the temporary store even when the write fails", async () => {
+		const store = {
+			overwrite: vi.fn(async () => {
+				throw new Error("disk full")
+			}),
+			close: vi.fn(async () => undefined),
+		}
+		mocks.openUiMessage.mockResolvedValue(store)
+
+		await expect(recoverUiMessages(undefined, "task-1")).rejects.toThrow("disk full")
+		expect(store.close).toHaveBeenCalledOnce()
+		expect(mocks.writeJsonAtomic).not.toHaveBeenCalled()
 	})
 
 	it("preserves the selected mode in a recovered spawn task approval", async () => {
@@ -108,7 +144,9 @@ describe("recoverUiMessages", () => {
 
 		await recoverUiMessages(controller as never)
 
-		const savedMessages = mocks.saveClineMessages.mock.calls[0]?.[1] as ClineMessage[] | undefined
+		const savedMessages = controller.task.owners.messages.replaceClineMessages.mock.calls[0]?.[0] as
+			| ClineMessage[]
+			| undefined
 		const recoveredAsk = savedMessages?.find((message) => message.type === "ask" && message.ask === "spawn_task")
 		expect(JSON.parse(recoveredAsk?.text ?? "{}")).toEqual({
 			task: "Implement feature",

@@ -31,6 +31,7 @@ import {
 	getDocumentsPath,
 	warmupDocumentsPathCache,
 } from "./documents-path"
+import { readUiMessages } from "./messages/readUiMessages"
 
 // Storage roots live in a leaf module so low-level owners can resolve them
 // without importing this module's host and Webview dependencies.
@@ -55,6 +56,7 @@ export const GlobalFileNames = {
 	taskContext: "context.json",
 	apiConversationHistory: "api_conversation_history.jsonl",
 	contextHistory: "context_history.jsonl",
+	/** Legacy chat history file; the owning task imports it into `messages.db` on first open. */
 	uiMessages: "ui_messages.jsonl",
 	clineModels: "cline_models.json",
 	groqModels: "groq_models.json",
@@ -313,51 +315,15 @@ export function dedupeClineMessagesByTs(messages: ClineMessage[]): ClineMessage[
 	return deduped
 }
 
-export async function getSavedClineMessages(taskId: string): Promise<ClineMessage[]> {
-	const dir = await ensureTaskDirectoryExists(taskId)
-	const p = path.join(dir, GlobalFileNames.uiMessages)
-
-	// If .jsonl exists, use it exclusively — never fall back to legacy .json
-	if (await fileExistsAtPath(p)) {
-		const raw = await readJsonl<ClineMessage>(p)
-		return dedupeClineMessagesByTs(raw)
-	}
-
-	// Migrate: read legacy .json, write to .jsonl, preserve old file as backup
-	const legacyP = path.join(dir, "ui_messages.json")
-	if (await fileExistsAtPath(legacyP)) {
-		const legacyMsgs = await readJsonl<ClineMessage>(legacyP)
-		if (legacyMsgs.length > 0) {
-			await writeJsonl(p, legacyMsgs)
-		}
-		return dedupeClineMessagesByTs(legacyMsgs)
-	}
-	// Legacy: claude_messages.json migration (no .jsonl exists yet)
-	const old = path.join(dir, "claude_messages.json")
-	if (await fileExistsAtPath(old)) {
-		const d = await readJsonl<ClineMessage>(old)
-		if (d.length > 0) {
-			await writeJsonl(p, d)
-		}
-		return dedupeClineMessagesByTs(d)
-	}
-	return []
-}
-export async function saveClineMessages(taskId: string, m: ClineMessage[]) {
-	const p = path.join(await ensureTaskDirectoryExists(taskId), GlobalFileNames.uiMessages)
-	await writeJsonl(p, m)
-}
-
 /**
- * Atomically append a single ClineMessage to the JSONL file.
- * Uses fs.appendFile which guarantees atomicity for single-line writes.
+ * Reads a task's chat history without writing it.
  *
- * @param taskId Task identifier
- * @param message Single message to append
+ * Only the task's own `UIMessage` store writes `messages.db`; this read never
+ * claims that writer and never migrates a legacy file, so it is safe while the
+ * task is open in any window.
  */
-export async function appendClineMessage(taskId: string, message: ClineMessage): Promise<void> {
-	const p = path.join(await ensureTaskDirectoryExists(taskId), GlobalFileNames.uiMessages)
-	await appendJsonl(p, message)
+export async function getSavedClineMessages(taskId: string): Promise<ClineMessage[]> {
+	return dedupeClineMessagesByTs(await readUiMessages(await ensureTaskDirectoryExists(taskId)))
 }
 
 /**
@@ -834,7 +800,7 @@ export async function readTaskHistoryFromState(): Promise<HistoryItem[]> {
 
 /**
  * Get the task header/description text for a given task.
- * Currently reads the first "say === task" message from ui_messages.jsonl.
+ * Currently reads the first "say === task" message from the task's chat history.
  *
  * TODO: Future enhancement — replace with AI-generated summary stored
  * in a dedicated storage entry (e.g., task_summary.jsonl per task),
