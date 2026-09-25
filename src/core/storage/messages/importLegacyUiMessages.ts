@@ -1,0 +1,70 @@
+import { access, rename } from "node:fs/promises"
+import path from "node:path"
+import type { ClineMessage } from "@/shared/ExtensionMessage"
+import { Logger } from "@/shared/services/Logger"
+import { readJsonl } from "../backend/jsonl/jsonl-utils"
+import type { UiMessageRowStore } from "./UiMessageRowStore"
+import { isStorableMessage, type UiMessageRecord } from "./UiMessageRows"
+
+/** Files that held the chat history before `messages.db`, newest format first. */
+export const LEGACY_UI_MESSAGE_FILES = ["ui_messages.jsonl", "ui_messages.json", "claude_messages.json"] as const
+
+export const MIGRATED_SUFFIX = ".migrated"
+
+async function exists(filePath: string): Promise<boolean> {
+	try {
+		await access(filePath)
+		return true
+	} catch {
+		return false
+	}
+}
+
+async function firstLegacyFile(instanceRoot: string): Promise<string | undefined> {
+	for (const name of LEGACY_UI_MESSAGE_FILES) {
+		const candidate = path.join(instanceRoot, name)
+		if (await exists(candidate)) return candidate
+	}
+	return undefined
+}
+
+/** Later lines win for a repeated timestamp, at the position of their last write, as the JSONL store did. */
+function latestPerTimestamp(messages: readonly ClineMessage[]): ClineMessage[] {
+	const latest = new Map<number, { message: ClineMessage; ordinal: number }>()
+	messages.forEach((message, ordinal) => latest.set(message.ts, { message, ordinal }))
+	return [...latest.values()].sort((left, right) => left.ordinal - right.ordinal).map(({ message }) => message)
+}
+
+function sameTimestamps(expected: readonly ClineMessage[], stored: readonly UiMessageRecord[]): boolean {
+	return expected.length === stored.length && expected.every((message, index) => message.ts === stored[index].ts)
+}
+
+/**
+ * Moves the chat history of one instance from its legacy file into `messages.db`.
+ *
+ * The file is renamed to `<name>.migrated` only after the rows are committed and read
+ * back with the same timestamps in the same order, so a crash at any point leaves a
+ * readable source. A database that already has rows is never overwritten: if a legacy
+ * file is still present (the rename did not happen), it is renamed only when it holds
+ * the same messages, and otherwise kept and reported.
+ */
+export async function importLegacyUiMessages(instanceRoot: string, store: UiMessageRowStore): Promise<void> {
+	const legacyFile = await firstLegacyFile(instanceRoot)
+	if (!legacyFile) return
+	const messages = latestPerTimestamp((await readJsonl<unknown>(legacyFile)).filter(isStorableMessage))
+	const { records: existing } = await store.query()
+
+	if (existing.length === 0) {
+		await store.replaceAll(messages.map((message, ordinal) => ({ ordinal, ts: message.ts, message })))
+		const { records: stored } = await store.query()
+		if (!sameTimestamps(messages, stored)) {
+			throw new Error(`UiMessageImportMismatch: ${legacyFile} imported ${stored.length} of ${messages.length} messages`)
+		}
+	} else if (!sameTimestamps(messages, existing)) {
+		Logger.warn(
+			`[messages.db] Keeping ${legacyFile}: it holds ${messages.length} messages but messages.db already holds ${existing.length}`,
+		)
+		return
+	}
+	await rename(legacyFile, `${legacyFile}${MIGRATED_SUFFIX}`)
+}
