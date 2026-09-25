@@ -61,7 +61,7 @@ export class ProductionDialogAdapter implements DialogExecutionPort {
 		})
 		if (input.signal.aborted) throw input.signal.reason
 		return {
-			journalRef: `journal:${appended.watermark.epoch}:${appended.watermark.seq}`,
+			journalRef: `journal:${appended.watermark.seq}`,
 			journalWatermark: appended.watermark,
 			receiverGeneration: this.options.readState().generation,
 			disposition: appended.disposition === "appended" ? "created" : "existing",

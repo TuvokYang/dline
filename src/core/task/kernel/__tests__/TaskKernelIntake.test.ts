@@ -45,12 +45,12 @@ describe("task kernel intake", () => {
 				originRevision: provider.originRevision,
 				turnId: "turn-1",
 				finalPayloadRef: "answer:1",
-				journalWatermark: { epoch: 0, seq: 4 },
+				journalWatermark: { seq: 4 },
 				turnPlan: { mode: "serial", blocks: [] },
 			}),
 		)
-		expect(ready.state.intake.queued[0]).toMatchObject({ state: "consumed", journalWatermark: { epoch: 0, seq: 4 } })
-		expect(ready.state.journalWatermark).toEqual({ epoch: 0, seq: 4 })
+		expect(ready.state.intake.queued[0]).toMatchObject({ state: "consumed", journalWatermark: { seq: 4 } })
+		expect(ready.state.journalWatermark).toEqual({ seq: 4 })
 	})
 
 	it("releases admitted entries when compose fails and rejects capacity overflow without mutation", () => {
@@ -125,7 +125,7 @@ describe("task kernel intake", () => {
 		const snapshot = {
 			...createInitialTaskState("task-1"),
 			flow: { phase: "paused" as const },
-			journalWatermark: { epoch: 0, seq: 5 },
+			journalWatermark: { seq: 5 },
 			intake: {
 				queued: [
 					{
@@ -135,14 +135,14 @@ describe("task kernel intake", () => {
 						mode: "queued" as const,
 						sequence: 1,
 						state: "uncertain" as const,
-						journalWatermark: { epoch: 0, seq: 4 },
+						journalWatermark: { seq: 4 },
 					},
 				],
 				background: [],
 				coTask: [],
 			},
 		}
-		const restored = hydrate({ taskId: "task-1", snapshot, journalTail: { epoch: 0, seq: 5 }, openReason: "crash_recovery" })
+		const restored = hydrate({ taskId: "task-1", snapshot, journalTail: { seq: 5 }, openReason: "crash_recovery" })
 		expect(restored.kind).toBe("ready")
 		if (restored.kind === "ready") expect(restored.state.intake.queued[0].state).toBe("consumed")
 
@@ -150,7 +150,7 @@ describe("task kernel intake", () => {
 		const legacyResult = hydrate({
 			taskId: "task-1",
 			snapshot: legacy,
-			journalTail: { epoch: 0, seq: 5 },
+			journalTail: { seq: 5 },
 			openReason: "resume",
 		})
 		expect(legacyResult.kind).toBe("ready")

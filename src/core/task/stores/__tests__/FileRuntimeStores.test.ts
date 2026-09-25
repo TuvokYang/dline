@@ -3,8 +3,6 @@ import { tmpdir } from "node:os"
 import path from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
 import { type Command, createInitialTaskState } from "../../kernel"
-import { FileCommandPublicationStore } from "../FileCommandPublicationStore"
-import { FileTaskPayloadStore } from "../FileTaskPayloadStore"
 import { FileTaskStateVault } from "../FileTaskStateVault"
 
 const directories: string[] = []
@@ -63,30 +61,5 @@ describe("file runtime stores", () => {
 		await new FileTaskStateVault(stateFile).save({ state: { ...createInitialTaskState("task-1"), revision: 1 }, outbox: [] })
 
 		await expect(new FileTaskStateVault(stateFile).load("task-2")).rejects.toThrow("TaskStateVaultIdentityMismatch")
-	})
-
-	it("restores publication effect keys and payloads across reopen", async () => {
-		const root = await directory()
-		const command: Command = {
-			type: "dialog.prepare",
-			commandId: "prepare-1",
-			originRevision: 1,
-			generation: 0,
-			interactionId: "interaction-1",
-			turnId: "turn-1",
-			kind: "question",
-			presentationRef: "question:1",
-			actionRules: [],
-			prepareKey: "dialog.prepare:interaction-1",
-		}
-		const publications = await FileCommandPublicationStore.open(root)
-		await publications.mark(command, command.prepareKey)
-		expect(await (await FileCommandPublicationStore.open(root)).has(command.prepareKey)).toBe(true)
-
-		const payloads = new FileTaskPayloadStore(path.join(root, "payloads"))
-		const payloadRef = await payloads.put(new TextEncoder().encode("hello"))
-		expect(new TextDecoder().decode(await new FileTaskPayloadStore(path.join(root, "payloads")).read(payloadRef))).toBe(
-			"hello",
-		)
 	})
 })

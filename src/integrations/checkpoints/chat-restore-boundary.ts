@@ -2,7 +2,6 @@ import type { ClineMessage, ClineSayTool } from "@shared/ExtensionMessage"
 
 /** A position in the task's conversation journal. */
 export interface ConversationJournalPosition {
-	readonly epoch: number
 	readonly seq: number
 }
 
@@ -118,11 +117,11 @@ function readCompactionJournalBoundary(message: ClineMessage): ConversationJourn
 	if (payload.tool !== "summarizeTask" || payload.compactionStatus !== "completed") return undefined
 	const boundary = payload.compactionJournalBoundary
 	if (!boundary) return undefined
-	const { epoch, seq } = boundary
-	if (!Number.isInteger(epoch) || !Number.isInteger(seq) || epoch < 0 || seq < 1) {
+	const { seq } = boundary
+	if (!Number.isInteger(seq) || seq < 1) {
 		throw new Error("Compaction Restore boundary is inconsistent with the current conversation")
 	}
-	return { epoch, seq }
+	return { seq }
 }
 
 function validateDeletedRange(range: [number, number] | undefined, apiKeepCount: number): void {

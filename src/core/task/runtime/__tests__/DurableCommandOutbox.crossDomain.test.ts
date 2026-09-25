@@ -53,7 +53,7 @@ function dialogReveal(originRevision: number): Command {
 		presentationRef: "presentation-1",
 		actionRules: [{ actionId: "reply", payloadPolicy: "draft" }],
 		prepareKey: "dialog.prepare:block-1",
-		journalRef: "journal:0:4",
+		journalRef: "journal:4",
 		receiverGeneration: 0,
 		revealKey: "dialog.reveal:block-1:0",
 	} as Command

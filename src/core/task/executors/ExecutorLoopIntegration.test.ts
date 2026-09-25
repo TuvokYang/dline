@@ -107,8 +107,8 @@ describe("executor loop integration", () => {
 				new DialogCommandExecutor(
 					{
 						prepare: async () => ({
-							journalRef: "journal:0:1",
-							journalWatermark: { epoch: 0, seq: 1 },
+							journalRef: "journal:1",
+							journalWatermark: { seq: 1 },
 							receiverGeneration: 0,
 							disposition: "created" as const,
 						}),
@@ -128,7 +128,7 @@ describe("executor loop integration", () => {
 			actionRules: [{ actionId: "reply", payloadPolicy: "draft" }],
 		})
 		await runtime.waitForQuiescence()
-		expect(runtime.getState().dialog.primary).toMatchObject({ status: "awaiting", journalRef: "journal:0:1" })
+		expect(runtime.getState().dialog.primary).toMatchObject({ status: "awaiting", journalRef: "journal:1" })
 		expect(reveal).toHaveBeenCalledTimes(1)
 	})
 

@@ -68,7 +68,7 @@ function openQuestion(state: TaskState, interactionId = "i-1"): TaskState {
 			actionRules: [{ actionId: "reply", payloadPolicy: "draft" }],
 		}),
 	)
-	return prepareAndPresent(requested.state, interactionId, "journal:0:1")
+	return prepareAndPresent(requested.state, interactionId, "journal:1")
 }
 
 function response(stateRevision: number, interactionId = "i-1"): Extract<TaskEvent, { type: "dialog.responded" }> {
@@ -136,8 +136,8 @@ describe("task kernel causal dialog", () => {
 		concurrent = accepted(transition(concurrent, approval("b2"))).state
 		expect(concurrent.turn.manualApprovalBlockIds).toEqual(["b1", "b2"])
 		expect(Object.keys(concurrent.dialog.approvalsByBlock)).toEqual(["b1", "b2"])
-		let rejected = prepareAndPresent(concurrent, "approval:b1", "journal:0:5")
-		rejected = prepareAndPresent(rejected, "approval:b2", "journal:0:6")
+		let rejected = prepareAndPresent(concurrent, "approval:b1", "journal:5")
+		rejected = prepareAndPresent(rejected, "approval:b2", "journal:6")
 		rejected = accepted(
 			transition(rejected, {
 				type: "dialog.responded",
@@ -186,7 +186,7 @@ describe("task kernel causal dialog", () => {
 		let humanFirst = accepted(transition(initial, policyRequest)).state
 		const humanPolicy = humanFirst.turn.blocks[0].policy!
 		humanFirst = accepted(transition(humanFirst, approval("b1"))).state
-		humanFirst = prepareAndPresent(humanFirst, "approval:b1", "journal:0:3")
+		humanFirst = prepareAndPresent(humanFirst, "approval:b1", "journal:3")
 		humanFirst = accepted(
 			transition(humanFirst, {
 				type: "dialog.responded",
@@ -226,7 +226,7 @@ describe("task kernel causal dialog", () => {
 		let aiFirst = accepted(transition(initial, policyRequest)).state
 		const aiPolicy = aiFirst.turn.blocks[0].policy!
 		aiFirst = accepted(transition(aiFirst, approval("b1"))).state
-		aiFirst = prepareAndPresent(aiFirst, "approval:b1", "journal:0:4")
+		aiFirst = prepareAndPresent(aiFirst, "approval:b1", "journal:4")
 		const aiWon = accepted(
 			transition(aiFirst, {
 				type: "approval.evaluated",
@@ -272,7 +272,7 @@ describe("task kernel causal dialog", () => {
 		const interruptedResponse = transition(state, response(state.revision, "primary"))
 		expect(interruptedResponse).toMatchObject({ kind: "rejected", reason: "phase_invalid" })
 		expect(interruptedResponse.state).toBe(state)
-		state = prepareAndPresent(state, "interrupt", "journal:0:2")
+		state = prepareAndPresent(state, "interrupt", "journal:2")
 		state = accepted(
 			transition(state, {
 				...response(state.revision, "interrupt"),

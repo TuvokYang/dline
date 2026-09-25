@@ -58,14 +58,14 @@ function terminatedHistorySnapshot(): TaskState {
 					mode: "queued",
 					sequence: 0,
 					state: "consumed",
-					journalWatermark: { epoch: 0, seq: 3 },
+					journalWatermark: { seq: 3 },
 				},
 			],
 			background: [],
 			coTask: [],
 		},
 		halt: { status: "idle", generation: 3 },
-		journalWatermark: { epoch: 0, seq: 1 },
+		journalWatermark: { seq: 1 },
 	}
 }
 
@@ -77,8 +77,8 @@ function execution() {
 		dialog: {
 			execution: {
 				prepare: async (input: { readonly interactionId: string }) => ({
-					journalRef: `journal:0:2`,
-					journalWatermark: { epoch: 0, seq: 2 },
+					journalRef: `journal:2`,
+					journalWatermark: { seq: 2 },
 					receiverGeneration: 4,
 					disposition: "created" as const,
 					interactionId: input.interactionId,

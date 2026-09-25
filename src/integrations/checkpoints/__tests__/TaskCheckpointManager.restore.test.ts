@@ -383,7 +383,7 @@ describe("TaskCheckpointManager restore isolation", () => {
 					tool: "summarizeTask",
 					content: "summary",
 					compactionStatus: "completed",
-					compactionJournalBoundary: { epoch: 0, seq: 6 },
+					compactionJournalBoundary: { seq: 6 },
 				}),
 			},
 			{ ts: 40, type: "say", say: "text" },
@@ -401,7 +401,7 @@ describe("TaskCheckpointManager restore isolation", () => {
 
 			await harness.manager.restoreCheckpoint(30, "task")
 
-			expect(rewindTo).toHaveBeenCalledWith({ operationId: "checkpoint.restore:30", target: { epoch: 0, seq: 6 } })
+			expect(rewindTo).toHaveBeenCalledWith({ operationId: "checkpoint.restore:30", target: { seq: 6 } })
 			expect(order).toEqual(["rewind", "ui"])
 			expect(harness.truncateUiHistory).toHaveBeenCalledWith(2)
 			expect(harness.truncateContextHistory).toHaveBeenCalledWith(20, expect.any(String))

@@ -6,14 +6,14 @@ function entry(seq: number, kind: JournalEntry["kind"], fields: Partial<JournalE
 	return {
 		version: 1,
 		operationId: `${kind}:${seq}`,
-		watermark: { epoch: 0, seq },
+		watermark: { seq },
 		kind,
 		...fields,
 	}
 }
 
 describe("rebuildJournalProjection rewind", () => {
-	const at = (seq: number) => ({ epoch: 0, seq })
+	const at = (seq: number) => ({ seq })
 	const compacted = [
 		entry(1, "message", { payloadRef: "task" }),
 		entry(2, "message", { payloadRef: "history" }),
@@ -70,11 +70,11 @@ describe("rebuildJournalProjection", () => {
 		const entries: JournalEntry[] = [
 			entry(1, "message", { payloadRef: "one" }),
 			entry(2, "message", { payloadRef: "two" }),
-			entry(3, "tombstone", { target: { epoch: 0, seq: 1 } }),
+			entry(3, "tombstone", { target: { seq: 1 } }),
 			entry(4, "message", { payloadRef: "three" }),
-			entry(5, "truncate_boundary", { target: { epoch: 0, seq: 2 } }),
+			entry(5, "truncate_boundary", { target: { seq: 2 } }),
 			entry(6, "message", { payloadRef: "four" }),
-			entry(7, "supersede_range", { range: { from: { epoch: 0, seq: 1 }, to: { epoch: 0, seq: 2 } } }),
+			entry(7, "supersede_range", { range: { from: { seq: 1 }, to: { seq: 2 } } }),
 			entry(8, "checkpoint_marker", { payloadRef: "checkpoint:1" }),
 		]
 
@@ -90,7 +90,7 @@ describe("rebuildJournalProjection", () => {
 			entry(3, "message", { payloadRef: "call" }),
 			entry(4, "message", { payloadRef: "pending-reply" }),
 			entry(5, "supersede_range", {
-				range: { from: { epoch: 0, seq: 2 }, to: { epoch: 0, seq: 2 } },
+				range: { from: { seq: 2 }, to: { seq: 2 } },
 				payloadRef: "summary:1",
 			}),
 		]
@@ -102,7 +102,7 @@ describe("rebuildJournalProjection", () => {
 		expect(projection.visibleMessages[1]).toMatchObject({
 			kind: "message",
 			source: "system",
-			watermark: { epoch: 0, seq: 2 },
+			watermark: { seq: 2 },
 		})
 	})
 
@@ -111,13 +111,13 @@ describe("rebuildJournalProjection", () => {
 			entry(1, "message", { payloadRef: "task" }),
 			entry(2, "message", { payloadRef: "answered" }),
 			entry(3, "supersede_range", {
-				range: { from: { epoch: 0, seq: 2 }, to: { epoch: 0, seq: 2 } },
+				range: { from: { seq: 2 }, to: { seq: 2 } },
 				payloadRef: "summary:1",
 			}),
 			entry(4, "message", { payloadRef: "later" }),
 			entry(5, "message", { payloadRef: "pending" }),
 			entry(6, "supersede_range", {
-				range: { from: { epoch: 0, seq: 2 }, to: { epoch: 0, seq: 4 } },
+				range: { from: { seq: 2 }, to: { seq: 4 } },
 				payloadRef: "summary:2",
 			}),
 		]
@@ -134,10 +134,10 @@ describe("rebuildJournalProjection", () => {
 			entry(3, "message", { payloadRef: "three" }),
 			entry(4, "message", { payloadRef: "four" }),
 			entry(5, "supersede_range", {
-				range: { from: { epoch: 0, seq: 2 }, to: { epoch: 0, seq: 4 } },
+				range: { from: { seq: 2 }, to: { seq: 4 } },
 				payloadRef: "summary:1",
 			}),
-			entry(6, "tombstone", { target: { epoch: 0, seq: 3 } }),
+			entry(6, "tombstone", { target: { seq: 3 } }),
 		]
 
 		// The summary still spoke for message three, so it cannot stay once three is undone.
@@ -151,10 +151,10 @@ describe("rebuildJournalProjection", () => {
 			entry(3, "message", { payloadRef: "three" }),
 			entry(4, "message", { payloadRef: "four" }),
 			entry(5, "supersede_range", {
-				range: { from: { epoch: 0, seq: 2 }, to: { epoch: 0, seq: 4 } },
+				range: { from: { seq: 2 }, to: { seq: 4 } },
 				payloadRef: "summary:1",
 			}),
-			entry(6, "truncate_boundary", { target: { epoch: 0, seq: 3 } }),
+			entry(6, "truncate_boundary", { target: { seq: 3 } }),
 		]
 
 		expect(rebuildJournalProjection(entries).visibleMessages.map((item) => item.payloadRef)).toEqual(["task", "two", "three"])
@@ -166,11 +166,11 @@ describe("rebuildJournalProjection", () => {
 			entry(2, "message", { payloadRef: "two" }),
 			entry(3, "message", { payloadRef: "three" }),
 			entry(4, "supersede_range", {
-				range: { from: { epoch: 0, seq: 2 }, to: { epoch: 0, seq: 3 } },
+				range: { from: { seq: 2 }, to: { seq: 3 } },
 				payloadRef: "summary:1",
 			}),
 			entry(5, "message", { payloadRef: "later" }),
-			entry(6, "truncate_boundary", { target: { epoch: 0, seq: 3 } }),
+			entry(6, "truncate_boundary", { target: { seq: 3 } }),
 		]
 
 		expect(rebuildJournalProjection(entries).visibleMessages.map((item) => item.payloadRef)).toEqual(["task", "summary:1"])
@@ -181,15 +181,15 @@ describe("rebuildJournalProjection", () => {
 			entry(1, "message", { payloadRef: "task" }),
 			entry(2, "message", { payloadRef: "two" }),
 			entry(3, "supersede_range", {
-				range: { from: { epoch: 0, seq: 2 }, to: { epoch: 0, seq: 2 } },
+				range: { from: { seq: 2 }, to: { seq: 2 } },
 				payloadRef: "summary:1",
 			}),
 			entry(4, "message", { payloadRef: "four" }),
 			entry(5, "supersede_range", {
-				range: { from: { epoch: 0, seq: 2 }, to: { epoch: 0, seq: 4 } },
+				range: { from: { seq: 2 }, to: { seq: 4 } },
 				payloadRef: "summary:2",
 			}),
-			entry(6, "tombstone", { target: { epoch: 0, seq: 4 } }),
+			entry(6, "tombstone", { target: { seq: 4 } }),
 		]
 
 		expect(rebuildJournalProjection(entries).visibleMessages.map((item) => item.payloadRef)).toEqual(["task", "two"])
@@ -199,7 +199,7 @@ describe("rebuildJournalProjection", () => {
 		const entries: JournalEntry[] = [
 			entry(1, "message", { payloadRef: "one" }),
 			entry(2, "message", { payloadRef: "two" }),
-			entry(3, "supersede_range", { range: { from: { epoch: 0, seq: 2 }, to: { epoch: 0, seq: 2 } } }),
+			entry(3, "supersede_range", { range: { from: { seq: 2 }, to: { seq: 2 } } }),
 		]
 
 		expect(rebuildJournalProjection(entries).visibleMessages.map((item) => item.payloadRef)).toEqual(["one"])
@@ -208,10 +208,7 @@ describe("rebuildJournalProjection", () => {
 	it("rejects sequence gaps and markers that reference unknown entries", () => {
 		expect(() => rebuildJournalProjection([entry(2, "message", { payloadRef: "gap" })])).toThrow("InvalidJournalGenesis")
 		expect(() =>
-			rebuildJournalProjection([
-				entry(1, "message", { payloadRef: "one" }),
-				entry(2, "tombstone", { target: { epoch: 0, seq: 9 } }),
-			]),
+			rebuildJournalProjection([entry(1, "message", { payloadRef: "one" }), entry(2, "tombstone", { target: { seq: 9 } })]),
 		).toThrow("JournalMarkerTargetMissing")
 	})
 })

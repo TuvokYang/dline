@@ -46,7 +46,7 @@ function reveal(
 		commandId: "dialog-2",
 		originRevision: 2,
 		type: "dialog.reveal",
-		journalRef: "journal:0:1",
+		journalRef: "journal:1",
 		receiverGeneration: 0,
 		revealKey: "dialog.reveal:interaction-1:0",
 		signal,
@@ -67,8 +67,8 @@ describe("ProductionDialogAdapter", () => {
 		})
 
 		await expect(adapter.prepare(prepare())).resolves.toMatchObject({
-			journalRef: "journal:0:1",
-			journalWatermark: { epoch: 0, seq: 1 },
+			journalRef: "journal:1",
+			journalWatermark: { seq: 1 },
 			receiverGeneration: 0,
 			disposition: "created",
 		})

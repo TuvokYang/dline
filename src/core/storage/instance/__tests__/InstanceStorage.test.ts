@@ -82,23 +82,42 @@ describe("instance storage", () => {
 		expect(await exists(ensured.root)).toBe(true)
 	})
 
-	it("gives each database a single writer and releases it on close", async () => {
+	it("gives each database a single writer, lets others read, and releases the writer on close", async () => {
 		const layout = await ensureInstanceLayout({ taskId: "task-writer" })
 		const first = openInstanceStorage(layout.root)
 		const database = await first.openDatabase(InstanceDatabase.Journal, "kernel-commit")
 		await (await database.openStore(Row)).insert([new Row(1, "one")])
 
 		const second = openInstanceStorage(layout.root)
-		await expect(second.openDatabase(InstanceDatabase.Journal, "intruder")).rejects.toThrow(
-			/InstanceDatabaseWriterConflict: journal\.db .* is written by kernel-commit; intruder cannot open it/,
+		const intruder = await (await second.openDatabase(InstanceDatabase.Journal, "intruder")).openStore(Row)
+		// A window that only shows the task may read it.
+		expect((await intruder.query()).records).toEqual([new Row(1, "one")])
+		await expect(intruder.insert([new Row(2, "two")])).rejects.toThrow(
+			/InstanceDatabaseWriterConflict: journal\.db .* is written by kernel-commit; intruder cannot write it/,
 		)
+		await expect(intruder.transaction((transaction) => transaction.upsert([new Row(2, "two")]))).rejects.toThrow(
+			/InstanceDatabaseWriterConflict/,
+		)
+		expect((await intruder.query()).records).toEqual([new Row(1, "one")])
 		// A different database of the same instance has its own writer.
-		await expect(second.openDatabase(InstanceDatabase.Messages, "ui-projection")).resolves.toBeDefined()
+		const messages = await second.openDatabase(InstanceDatabase.Messages, "ui-projection")
+		await expect((await messages.openStore(Row)).insert([new Row(1, "message")])).resolves.toBeUndefined()
 
 		await first.close()
-		const reopened = await second.openDatabase(InstanceDatabase.Journal, "kernel-commit")
-		expect((await (await reopened.openStore(Row)).query()).records).toEqual([new Row(1, "one")])
+		const third = openInstanceStorage(layout.root)
+		const reopened = await (await third.openDatabase(InstanceDatabase.Journal, "kernel-commit")).openStore(Row)
+		await reopened.insert([new Row(2, "two")])
+		expect((await reopened.query()).records).toEqual([new Row(1, "one"), new Row(2, "two")])
 		await second.close()
+		await third.close()
+	})
+
+	it("rejects opening the same database twice in one instance storage", async () => {
+		const layout = await ensureInstanceLayout({ taskId: "task-twice" })
+		const storage = openInstanceStorage(layout.root)
+		await storage.openDatabase(InstanceDatabase.Journal, "kernel-commit")
+		await expect(storage.openDatabase(InstanceDatabase.Journal, "kernel-commit")).rejects.toThrow(/already open/)
+		await storage.close()
 	})
 
 	it("rejects new opens after close and treats repeated close as a no-op", async () => {
@@ -124,7 +143,9 @@ describe("instance storage", () => {
 		await (await (await childStorage.openDatabase(InstanceDatabase.Journal, "kernel-commit")).openStore(Row)).insert([
 			new Row(1, "child"),
 		])
-		await otherStorage.openDatabase(InstanceDatabase.Journal, "kernel-commit")
+		await (await (await otherStorage.openDatabase(InstanceDatabase.Journal, "kernel-commit")).openStore(Row)).insert([
+			new Row(1, "other"),
+		])
 
 		await closeInstanceStoragesUnder(task.root)
 		await rm(task.root, { recursive: true, force: true })
@@ -133,9 +154,10 @@ describe("instance storage", () => {
 		await expect(taskStorage.openDatabase(InstanceDatabase.Journal, "kernel-commit")).rejects.toThrow(/is closed/)
 		await expect(childStorage.openDatabase(InstanceDatabase.Journal, "kernel-commit")).rejects.toThrow(/is closed/)
 		// The sibling task stays open and keeps its writer claim.
-		await expect(openInstanceStorage(other.root).openDatabase(InstanceDatabase.Journal, "second-writer")).rejects.toThrow(
-			/InstanceDatabaseWriterConflict/,
-		)
+		const secondWriter = openInstanceStorage(other.root)
+		const store = await (await secondWriter.openDatabase(InstanceDatabase.Journal, "second-writer")).openStore(Row)
+		await expect(store.insert([new Row(2, "second")])).rejects.toThrow(/InstanceDatabaseWriterConflict/)
+		await secondWriter.close()
 		await otherStorage.close()
 	})
 

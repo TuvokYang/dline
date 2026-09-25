@@ -43,7 +43,7 @@ function turnReady(blocks: readonly ProviderTurnBlockPlan[]) {
 		originRevision: 4,
 		turnId: "turn-1",
 		finalPayloadRef: "final:1",
-		journalWatermark: { epoch: 0, seq: 3 },
+		journalWatermark: { seq: 3 },
 		turnPlan: { mode: "serial" as const, blocks },
 	}
 }

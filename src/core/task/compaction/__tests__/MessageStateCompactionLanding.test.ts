@@ -96,11 +96,11 @@ describe("MessageStateCompactionLanding", () => {
 			compactionId: "compaction-1",
 			attempt: "attempt-1",
 			summary: "the summary",
-			span: { from: { epoch: 0, seq: 2 }, to: { epoch: 0, seq: 7 } },
+			span: { from: { seq: 2 }, to: { seq: 7 } },
 		})
 
 		const payload = JSON.parse(rows[0].text ?? "{}") as ClineSayTool
-		expect(payload.compactionJournalBoundary).toEqual({ epoch: 0, seq: 7 })
+		expect(payload.compactionJournalBoundary).toEqual({ seq: 7 })
 		// The card belongs to the journal conversation, not to API history rows.
 		expect(rows[0].compactionConversationRange).toBeUndefined()
 	})

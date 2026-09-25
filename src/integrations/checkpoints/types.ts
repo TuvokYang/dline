@@ -13,10 +13,7 @@ export interface ConversationRewindPort {
 	 * after a crash replays the same record instead of adding a second one.
 	 * Rejects without writing when `target` cannot be rewound to.
 	 */
-	rewindTo(input: {
-		readonly operationId: string
-		readonly target: { readonly epoch: number; readonly seq: number }
-	}): Promise<void>
+	rewindTo(input: { readonly operationId: string; readonly target: { readonly seq: number } }): Promise<void>
 }
 
 /**

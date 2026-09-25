@@ -4,7 +4,7 @@ import { executorFailure, type HaltOrder, type HaltParticipant, isExecutionAbort
 
 export interface DialogPreparationResult {
 	readonly journalRef: string
-	readonly journalWatermark: { readonly epoch: number; readonly seq: number }
+	readonly journalWatermark: { readonly seq: number }
 	readonly receiverGeneration: number
 	readonly disposition: "created" | "existing"
 }

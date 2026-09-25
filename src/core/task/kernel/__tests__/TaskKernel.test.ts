@@ -148,7 +148,7 @@ describe("task kernel", () => {
 		const restored = hydrate({
 			taskId: "task-1",
 			snapshot: state,
-			journalTail: { epoch: 0, seq: 0 },
+			journalTail: { seq: 0 },
 			openReason: "crash_recovery",
 		})
 		expect(restored.kind).toBe("ready")
@@ -156,7 +156,7 @@ describe("task kernel", () => {
 
 	it("rejects a snapshot that belongs to another task", () => {
 		const snapshot = createInitialTaskState("task-other")
-		const result = hydrate({ taskId: "task-1", snapshot, journalTail: { epoch: 1, seq: 0 }, openReason: "resume" })
+		const result = hydrate({ taskId: "task-1", snapshot, journalTail: { seq: 0 }, openReason: "resume" })
 		expect(result).toMatchObject({ kind: "read_only", reason: "task_identity_mismatch" })
 	})
 
@@ -197,7 +197,7 @@ describe("task kernel", () => {
 				approvalsByBlock: {},
 			},
 		}
-		const result = hydrate({ taskId: "task-1", snapshot, journalTail: { epoch: 1, seq: 12 }, openReason: "crash_recovery" })
+		const result = hydrate({ taskId: "task-1", snapshot, journalTail: { seq: 12 }, openReason: "crash_recovery" })
 		expect(result.kind).toBe("ready")
 		if (result.kind !== "ready") return
 		expect(result.form).toBe("interrupted")

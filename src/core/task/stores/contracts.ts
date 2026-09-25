@@ -2,14 +2,7 @@ import type { Command, JournalWatermark, TaskState } from "../kernel"
 
 export type { JournalWatermark } from "../kernel"
 
-export type JournalEntryKind =
-	| "message"
-	| "tombstone"
-	| "truncate_boundary"
-	| "supersede_range"
-	| "checkpoint_marker"
-	| "rebase"
-	| "rewind"
+export type JournalEntryKind = "message" | "tombstone" | "truncate_boundary" | "supersede_range" | "checkpoint_marker" | "rewind"
 export type JournalSource = "provider" | "tool" | "dialog" | "intake" | "system"
 
 export interface JournalCausation {
@@ -43,7 +36,6 @@ export interface JournalEntry {
 	readonly transientId?: string
 	readonly target?: JournalWatermark
 	readonly range?: { readonly from: JournalWatermark; readonly to: JournalWatermark }
-	readonly previousTail?: JournalWatermark
 }
 
 export interface JournalProjection {
@@ -74,7 +66,6 @@ export interface ConversationJournal {
 	project(through?: JournalWatermark): Promise<JournalProjection>
 	appendTransient(transientId: string, payloadRef: string): void
 	finalizeTransient(input: JournalAppendInput & { readonly transientId: string }): Promise<JournalAppendResult>
-	rebase(input: { readonly operationId: string; readonly reasonRef: string }): Promise<JournalAppendResult>
 	tombstone(input: { readonly operationId: string; readonly target: JournalWatermark }): Promise<JournalAppendResult>
 	truncateBoundary(input: { readonly operationId: string; readonly target: JournalWatermark }): Promise<JournalAppendResult>
 	/**
@@ -104,4 +95,11 @@ export interface ConversationJournal {
 export interface CommandPublicationStore {
 	has(effectKey: string): Promise<boolean>
 	mark(command: Command, effectKey?: string): Promise<void>
+}
+
+/** Content-addressed bytes that journal entries and kernel state refer to by reference. */
+export interface TaskPayloadStore {
+	/** Stores `payload` and returns its reference; storing equal bytes again returns the same reference. */
+	put(payload: Uint8Array): Promise<string>
+	read(payloadRef: string): Promise<Uint8Array>
 }

@@ -12,7 +12,7 @@ const TEST_BARRIER_TIMEOUT_MS = 50
 
 /** A conversation with a settled span, so a request is scheduled rather than refused. */
 const COMPACTABLE = {
-	read: async () => ({ messages: [], span: { from: { epoch: 0, seq: 2 }, to: { epoch: 0, seq: 3 } } }),
+	read: async () => ({ messages: [], span: { from: { seq: 2 }, to: { seq: 3 } } }),
 }
 
 interface Probe {

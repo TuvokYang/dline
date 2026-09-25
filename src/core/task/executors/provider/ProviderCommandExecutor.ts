@@ -65,7 +65,7 @@ interface ActiveProviderCommand {
 /** A turn the journal accepted, together with where it landed. */
 interface ProviderTurnOutcome {
 	readonly chunk: Extract<ProviderExecutionChunk, { kind: "final" }>
-	readonly journalWatermark: { readonly epoch: number; readonly seq: number }
+	readonly journalWatermark: { readonly seq: number }
 }
 
 /** Carries the usage seen so far into the settlement that happens after the stream. */

@@ -7,8 +7,8 @@ export type HaltId = string
 export type EntryId = string
 export type CommandId = string
 
+/** Position of one journal entry; `seq` increases by one per committed entry. */
 export interface JournalWatermark {
-	readonly epoch: number
 	readonly seq: number
 }
 
@@ -528,7 +528,7 @@ export type TransitionResult =
 export interface HydrateInput {
 	readonly taskId: TaskId
 	readonly snapshot?: TaskState
-	readonly journalTail: { readonly epoch: number; readonly seq: number }
+	readonly journalTail: JournalWatermark
 	readonly openReason: "resume" | "crash_recovery" | "checkpoint_restore" | "new"
 	/**
 	 * Whether durable conversation history exists for this task.
@@ -562,6 +562,6 @@ export function createInitialTaskState(taskId: TaskId): TaskState {
 		dialog: { approvalsByBlock: {} },
 		intake: { queued: [], background: [], coTask: [] },
 		halt: { status: "idle", generation: 0 },
-		journalWatermark: { epoch: 0, seq: 0 },
+		journalWatermark: { seq: 0 },
 	}
 }

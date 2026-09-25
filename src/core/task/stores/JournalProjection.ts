@@ -1,11 +1,11 @@
 import type { JournalEntry, JournalProjection, JournalWatermark } from "./contracts"
 
 export function compareJournalWatermarks(left: JournalWatermark, right: JournalWatermark): number {
-	return left.epoch === right.epoch ? left.seq - right.seq : left.epoch - right.epoch
+	return left.seq - right.seq
 }
 
 export function journalWatermarkKey(watermark: JournalWatermark): string {
-	return `${watermark.epoch}:${watermark.seq}`
+	return String(watermark.seq)
 }
 
 export function maxJournalWatermark(left: JournalWatermark, right: JournalWatermark): JournalWatermark {
@@ -15,25 +15,9 @@ export function maxJournalWatermark(left: JournalWatermark, right: JournalWaterm
 function assertValidSequence(entries: readonly JournalEntry[]): void {
 	let previous: JournalEntry | undefined
 	for (const entry of entries) {
-		if (!Number.isInteger(entry.watermark.epoch) || entry.watermark.epoch < 0) throw new Error("InvalidJournalEpoch")
 		if (!Number.isInteger(entry.watermark.seq) || entry.watermark.seq < 1) throw new Error("InvalidJournalSequence")
-		if (!previous) {
-			if (entry.watermark.epoch === 0 && entry.watermark.seq === 1) {
-				previous = entry
-				continue
-			}
-			if (entry.kind !== "rebase" || entry.watermark.seq !== 1) throw new Error("InvalidJournalGenesis")
-			previous = entry
-			continue
-		}
-		if (entry.watermark.epoch === previous.watermark.epoch) {
-			if (entry.watermark.seq !== previous.watermark.seq + 1) throw new Error("JournalSequenceGap")
-		} else {
-			if (entry.watermark.epoch !== previous.watermark.epoch + 1 || entry.watermark.seq !== 1 || entry.kind !== "rebase")
-				throw new Error("InvalidJournalRebase")
-			if (!entry.previousTail || compareJournalWatermarks(entry.previousTail, previous.watermark) !== 0)
-				throw new Error("JournalRebaseTailMismatch")
-		}
+		const expected = previous ? previous.watermark.seq + 1 : 1
+		if (entry.watermark.seq !== expected) throw new Error(previous ? "JournalSequenceGap" : "InvalidJournalGenesis")
 		previous = entry
 	}
 }
@@ -207,8 +191,6 @@ function applyEntry(state: ProjectionState, entry: JournalEntry, earlier: () => 
 		case "checkpoint_marker":
 			state.checkpoints.push(entry)
 			return
-		case "rebase":
-			return
 	}
 }
 
@@ -223,7 +205,7 @@ function projectEntries(entries: readonly JournalEntry[]): ProjectionState {
 
 export function rebuildJournalProjection(
 	entries: readonly JournalEntry[],
-	through: JournalWatermark = entries.at(-1)?.watermark ?? { epoch: 0, seq: 0 },
+	through: JournalWatermark = entries.at(-1)?.watermark ?? { seq: 0 },
 ): JournalProjection {
 	assertValidSequence(entries)
 	const bounded = entries.filter((entry) => compareJournalWatermarks(entry.watermark, through) <= 0)

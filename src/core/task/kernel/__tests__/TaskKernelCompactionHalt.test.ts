@@ -91,7 +91,7 @@ describe("compaction abandoned by a restart", () => {
 		const result = hydrate({
 			taskId: "task-1",
 			snapshot: reviewingCompaction(),
-			journalTail: { epoch: 0, seq: 0 },
+			journalTail: { seq: 0 },
 			openReason: "crash_recovery",
 		})
 
@@ -107,7 +107,7 @@ describe("compaction abandoned by a restart", () => {
 			flow: { ...reviewingCompaction().flow, phase: "error", error: "provider failed" },
 		}
 
-		const result = hydrate({ taskId: "task-1", snapshot: errored, journalTail: { epoch: 0, seq: 0 }, openReason: "resume" })
+		const result = hydrate({ taskId: "task-1", snapshot: errored, journalTail: { seq: 0 }, openReason: "resume" })
 
 		expect(result.kind).toBe("ready")
 		if (result.kind !== "ready") return

@@ -41,7 +41,7 @@ export class MessageStateCompactionLanding implements CompactionLandingPort {
 				compactionOperationId: input.compactionId,
 				compactionUnitKind: "pass",
 				compactionDurable: true,
-				...(input.span ? { compactionJournalBoundary: { epoch: input.span.to.epoch, seq: input.span.to.seq } } : {}),
+				...(input.span ? { compactionJournalBoundary: { seq: input.span.to.seq } } : {}),
 			} satisfies ClineSayTool),
 		})
 	}

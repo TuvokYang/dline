@@ -1,12 +1,17 @@
 export type * from "./contracts"
-export { FileCommandPublicationStore } from "./FileCommandPublicationStore"
-export { FileTaskPayloadStore, type TaskPayloadStore } from "./FileTaskPayloadStore"
 export { FileTaskStateVault } from "./FileTaskStateVault"
 export {
 	InMemoryCommandPublicationStore,
 	InMemoryConversationJournal,
 	InMemoryStateVault,
+	InMemoryTaskPayloadStore,
 	InMemoryTaskViewPort,
 } from "./InMemoryRuntimeStores"
 export { compareJournalWatermarks, journalWatermarkKey, maxJournalWatermark, rebuildJournalProjection } from "./JournalProjection"
-export { SegmentedConversationJournal, type SegmentedConversationJournalOptions } from "./SegmentedConversationJournal"
+export {
+	openTaskJournalStores,
+	SqliteCommandPublicationStore,
+	SqliteConversationJournal,
+	SqliteTaskPayloadStore,
+	type TaskJournalStores,
+} from "./sqlite"

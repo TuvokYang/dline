@@ -65,9 +65,7 @@ function dialogCommandInput(interaction: DialogInteraction) {
 
 function maxWatermark(current: JournalWatermark | undefined, incoming: JournalWatermark): JournalWatermark {
 	if (!current) return incoming
-	return current.epoch > incoming.epoch || (current.epoch === incoming.epoch && current.seq >= incoming.seq)
-		? current
-		: incoming
+	return current.seq >= incoming.seq ? current : incoming
 }
 
 function hasRequiredPayload(

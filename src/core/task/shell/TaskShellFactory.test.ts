@@ -25,7 +25,7 @@ function execution(reveal: () => void) {
 			execution: {
 				prepare: async () => ({
 					journalRef: "journal:1",
-					journalWatermark: { epoch: 0, seq: 0 },
+					journalWatermark: { seq: 0 },
 					receiverGeneration: 0,
 					disposition: "existing" as const,
 				}),
@@ -58,7 +58,7 @@ describe("openTaskShell", () => {
 			presentationRef: "question:1",
 			actionRules: [],
 			journalRef: "journal:1",
-			journalWatermark: { epoch: 0, seq: 1 },
+			journalWatermark: { seq: 1 },
 			receiverGeneration: 0,
 			prepareKey: "dialog.prepare:interaction-1",
 			revealKey: "dialog.reveal:interaction-1:0",
@@ -66,7 +66,7 @@ describe("openTaskShell", () => {
 		const state: TaskState = {
 			...createInitialTaskState("task-1"),
 			revision: 8,
-			journalWatermark: { epoch: 0, seq: 1 },
+			journalWatermark: { seq: 1 },
 			dialog: { primary: interaction, approvalsByBlock: {} },
 		}
 		const reveal: Command = {

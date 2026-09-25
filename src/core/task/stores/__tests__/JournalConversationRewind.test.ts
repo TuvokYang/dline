@@ -9,7 +9,7 @@ async function journalWithSummary() {
 	const history = await journal.append({ operationId: "intake:2", payloadRef: "history", source: "intake" })
 	await journal.supersedeRange({
 		operationId: "compaction.supersede:1",
-		from: { epoch: 0, seq: 2 },
+		from: { seq: 2 },
 		to: history.watermark,
 		replacementRef: "summary",
 	})
@@ -46,9 +46,9 @@ describe("JournalConversationRewind", () => {
 		await rewind.rewindTo({ operationId: "checkpoint.restore:1", target: history })
 		const tail = journal.watermark()
 
-		await expect(
-			rewind.rewindTo({ operationId: "checkpoint.restore:1", target: { epoch: history.epoch, seq: history.seq - 1 } }),
-		).rejects.toThrow("ConversationRewindOperationConflict")
+		await expect(rewind.rewindTo({ operationId: "checkpoint.restore:1", target: { seq: history.seq - 1 } })).rejects.toThrow(
+			"ConversationRewindOperationConflict",
+		)
 		expect(journal.watermark()).toEqual(tail)
 	})
 
@@ -69,7 +69,7 @@ describe("JournalConversationRewind", () => {
 		await expect(
 			new JournalConversationRewind(journal).rewindTo({
 				operationId: "checkpoint.restore:1",
-				target: { epoch: 0, seq: tail.seq + 5 },
+				target: { seq: tail.seq + 5 },
 			}),
 		).rejects.toThrow("ConversationRewindTargetAhead")
 		expect(journal.watermark()).toEqual(tail)
@@ -82,7 +82,7 @@ describe("JournalConversationRewind", () => {
 		await expect(
 			new JournalConversationRewind(journal).rewindTo({
 				operationId: "checkpoint.restore:1",
-				target: { epoch: 0, seq: 0 },
+				target: { seq: 0 },
 			}),
 		).rejects.toThrow("ConversationRewindTargetMissing")
 		expect(journal.watermark()).toEqual(tail)

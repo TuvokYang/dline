@@ -19,13 +19,13 @@ function readOnly(reason: string, code: string, message: string): HydrateResult 
 }
 
 function parseJournalRef(ref: string): JournalWatermark | undefined {
-	const match = ref.match(/^journal:(?:(\d+):)?(\d+)$/)
+	const match = ref.match(/^journal:(\d+)$/)
 	if (!match) return undefined
-	return { epoch: Number(match[1] ?? 0), seq: Number(match[2]) }
+	return { seq: Number(match[1]) }
 }
 
 function isAfter(position: JournalWatermark, tail: JournalWatermark): boolean {
-	return position.epoch > tail.epoch || (position.epoch === tail.epoch && position.seq > tail.seq)
+	return position.seq > tail.seq
 }
 
 function interactions(state: TaskState): readonly DialogInteraction[] {
@@ -171,7 +171,7 @@ function normalizeState(
 			if (!entry.journalWatermark) return { ...entry, state: "uncertain" as const }
 			return {
 				...entry,
-				state: isAfter(entry.journalWatermark, snapshot.journalWatermark ?? { epoch: 0, seq: 0 })
+				state: isAfter(entry.journalWatermark, snapshot.journalWatermark ?? { seq: 0 })
 					? ("released" as const)
 					: ("consumed" as const),
 			}
@@ -207,7 +207,7 @@ function normalizeState(
 			coTask: normalizeEntries(legacyIntake.coTask),
 		},
 		halt: { status: "idle", generation },
-		journalWatermark: snapshot.journalWatermark ?? { epoch: 0, seq: 0 },
+		journalWatermark: snapshot.journalWatermark ?? { seq: 0 },
 	}
 	if (form === "consumed") {
 		state = {
@@ -366,7 +366,7 @@ export function hydrate(input: HydrateInput): HydrateResult {
 		// Existing conversation content is the evidence this task really ran.
 		// Without either a journal or history there is nothing to recover from,
 		// so the read-only refusal still stands.
-		const recoverable = input.hasConversationHistory || input.journalTail.epoch > 0 || input.journalTail.seq > 0
+		const recoverable = input.hasConversationHistory || input.journalTail.seq > 0
 		if (!recoverable) return readOnly("snapshot_missing", "snapshot_missing", "No snapshot was available")
 		return hydrateWithoutSnapshot(input)
 	}

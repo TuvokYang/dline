@@ -4,13 +4,15 @@ import type { TransactionalUnifyStoreDatabase } from "../backend/api/UnifyStore"
 import { SqliteUnifyStoreBackend } from "../backend/sqlite/SqliteUnifyStore"
 import { getDlineDocumentsPath } from "../documents-path"
 import { type InstanceDatabase, InstanceLayout, type InstanceLocation, instanceRoot } from "./InstanceLayout"
+import { claimOnWrite } from "./WriterClaimedDatabase"
 
 /**
- * Writer of each open instance database in this process, keyed by normalized path.
+ * Writer of each instance database in this process, keyed by normalized path.
  *
- * A high-frequency database has exactly one writing module. Two owners opening the
- * same file would interleave their writes on one connection, so the second claim
- * fails instead of silently sharing it.
+ * A high-frequency database has exactly one writing module. Two owners writing the
+ * same file would interleave their writes on one connection, so the second writer
+ * fails instead of silently sharing it. Readers never claim: a window that only
+ * shows a task may open the same file.
  */
 const writerByDatabase = new Map<string, WriterClaim>()
 
@@ -49,36 +51,38 @@ export class InstanceStorage {
 	constructor(readonly layout: InstanceLayout) {}
 
 	/**
-	 * Opens `kind` for its single writer.
+	 * Opens `kind` on behalf of `writer`.
 	 *
-	 * @throws when the storage is closed, or when another owner already writes the same file.
+	 * Opening and reading are always allowed. The first write claims the file for
+	 * `writer` until this storage closes; a write through any other owner then fails
+	 * with `InstanceDatabaseWriterConflict` before it reaches the file.
+	 *
+	 * @throws when the storage is closed or `kind` is already open in this storage.
 	 */
 	async openDatabase(kind: InstanceDatabase, writer: string): Promise<TransactionalUnifyStoreDatabase> {
 		if (this.closePromise) throw new Error(`Instance storage ${this.layout.root} is closed`)
+		if (this.databases.has(kind)) throw new Error(`Instance database ${kind} is already open in ${this.layout.root}`)
 		const location = this.layout.database(kind)
 		const key = normalizedPath(location)
-		const claim = writerByDatabase.get(key)
-		if (claim) {
-			throw new Error(
-				`InstanceDatabaseWriterConflict: ${kind} at ${location} is written by ${claim.writer}; ${writer} cannot open it`,
-			)
-		}
-		writerByDatabase.set(key, { storage: this, writer })
-		let database: TransactionalUnifyStoreDatabase
-		try {
-			database = await new SqliteUnifyStoreBackend().open(location)
-		} catch (error) {
-			writerByDatabase.delete(key)
-			throw error
-		}
+		const database = await new SqliteUnifyStoreBackend().open(location)
 		if (this.closePromise) {
 			// Closed while the file was opening: nothing may keep it past close().
-			writerByDatabase.delete(key)
 			await database.close()
 			throw new Error(`Instance storage ${this.layout.root} is closed`)
 		}
 		this.databases.set(kind, { key, database })
-		return database
+		return claimOnWrite(database, () => this.claimWriter(key, kind, location, writer))
+	}
+
+	private claimWriter(key: string, kind: InstanceDatabase, location: string, writer: string): void {
+		const claim = writerByDatabase.get(key)
+		if (claim?.storage === this && claim.writer === writer) return
+		if (claim) {
+			throw new Error(
+				`InstanceDatabaseWriterConflict: ${kind} at ${location} is written by ${claim.writer}; ${writer} cannot write it`,
+			)
+		}
+		writerByDatabase.set(key, { storage: this, writer })
 	}
 
 	/** Closes every database this instance opened and releases their writer claims. */

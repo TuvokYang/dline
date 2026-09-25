@@ -54,7 +54,7 @@ import type { TaskSessionOwners } from "../session/TaskSessionOwners"
 import { TaskToolExecutionOwner } from "../session/TaskToolExecutionOwner"
 import { TurnContinuationRenderer } from "../session/TurnContinuationRenderer"
 import { ResumeDialogContinuation } from "../session/UnownedDialogContinuation"
-import { openTaskPersistence } from "../shell/TaskPersistenceAssembly"
+import { openTaskPersistence, type TaskPersistenceAssembly } from "../shell/TaskPersistenceAssembly"
 import type { TaskViewPort } from "../stores"
 import { JournalConversationRewind } from "../stores/JournalConversationRewind"
 import { TaskStateManager } from "../TaskStateManager"
@@ -100,8 +100,21 @@ export interface OpenTaskSessionCompositionOptions {
 /** The only production composition root for one task incarnation. */
 export class TaskSessionCompositionService {
 	async open(options: OpenTaskSessionCompositionOptions): Promise<ActiveTaskSession> {
-		const taskIncarnationId = options.taskIncarnationId ?? randomUUID()
 		const persistence = await openTaskPersistence(options.taskId)
+		try {
+			return await this.compose(options, persistence)
+		} catch (error) {
+			// Nothing owns the task yet, so its journal.db would otherwise stay open.
+			await persistence.close?.()
+			throw error
+		}
+	}
+
+	private async compose(
+		options: OpenTaskSessionCompositionOptions,
+		persistence: TaskPersistenceAssembly,
+	): Promise<ActiveTaskSession> {
+		const taskIncarnationId = options.taskIncarnationId ?? randomUUID()
 		const settings = new TaskStateManager(options.taskId, options.stateManager)
 		const toolState = new DefaultToolHandlerState()
 		const messages = new MessageStateHandler({
@@ -470,6 +483,8 @@ export class TaskSessionCompositionService {
 				spawn: tool.spawn,
 			},
 			releases: [
+				// Released last: every other owner may still commit while it shuts down.
+				{ release: async () => persistence.close?.() },
 				{ release: () => prompt.dispose() },
 				{
 					release: async () => {

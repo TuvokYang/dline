@@ -44,14 +44,14 @@ function terminatedHistorySnapshot(): TaskState {
 					mode: "queued",
 					sequence: 0,
 					state: "consumed",
-					journalWatermark: { epoch: 0, seq: 3 },
+					journalWatermark: { seq: 3 },
 				},
 			],
 			background: [],
 			coTask: [],
 		},
 		halt: { status: "idle", generation: 3 },
-		journalWatermark: { epoch: 0, seq: 16 },
+		journalWatermark: { seq: 16 },
 	} as TaskState
 }
 
@@ -60,7 +60,7 @@ describe("hydrate of a terminated task reopened from history", () => {
 		const result = hydrate({
 			taskId: "1790149560953",
 			snapshot: terminatedHistorySnapshot(),
-			journalTail: { epoch: 0, seq: 17 },
+			journalTail: { seq: 17 },
 			openReason: "resume",
 		})
 
@@ -75,7 +75,7 @@ describe("hydrate of a terminated task reopened from history", () => {
 		const result = hydrate({
 			taskId: "1790149560953",
 			snapshot: terminatedHistorySnapshot(),
-			journalTail: { epoch: 0, seq: 17 },
+			journalTail: { seq: 17 },
 			openReason: "resume",
 		})
 

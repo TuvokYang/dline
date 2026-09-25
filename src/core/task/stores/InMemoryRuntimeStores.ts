@@ -9,9 +9,11 @@ import type {
 	JournalEntryKind,
 	JournalWatermark,
 	StateVault,
+	TaskPayloadStore,
 	TaskViewPort,
 } from "./contracts"
 import { compareJournalWatermarks, rebuildJournalProjection } from "./JournalProjection"
+import { assertTaskPayloadRef, taskPayloadRef } from "./payload/TaskPayloadRef"
 
 export class InMemoryStateVault implements StateVault {
 	private readonly snapshots = new Map<string, DurableTaskSnapshot>()
@@ -50,8 +52,26 @@ export class InMemoryCommandPublicationStore implements CommandPublicationStore 
 	}
 }
 
+/** Content-addressed payloads kept in memory, with the same references as the durable store. */
+export class InMemoryTaskPayloadStore implements TaskPayloadStore {
+	private readonly payloads = new Map<string, Uint8Array>()
+
+	async put(payload: Uint8Array): Promise<string> {
+		const payloadRef = taskPayloadRef(payload)
+		this.payloads.set(payloadRef, new Uint8Array(payload))
+		return payloadRef
+	}
+
+	async read(payloadRef: string): Promise<Uint8Array> {
+		assertTaskPayloadRef(payloadRef)
+		const payload = this.payloads.get(payloadRef)
+		if (!payload) throw new Error(`TaskPayloadNotFound: ${payloadRef}`)
+		return new Uint8Array(payload)
+	}
+}
+
 export class InMemoryConversationJournal implements ConversationJournal {
-	private current: JournalWatermark = { epoch: 0, seq: 0 }
+	private current: JournalWatermark = { seq: 0 }
 	private readonly entries: JournalEntry[] = []
 	private readonly operations = new Map<string, { readonly fingerprint: string; readonly entry: JournalEntry }>()
 	private readonly transient = new Map<string, string>()
@@ -99,14 +119,6 @@ export class InMemoryConversationJournal implements ConversationJournal {
 		})
 		this.transient.delete(input.transientId)
 		return result
-	}
-
-	async rebase(input: { readonly operationId: string; readonly reasonRef: string }): Promise<JournalAppendResult> {
-		const existing = this.idempotent(input.operationId, "rebase", { payloadRef: input.reasonRef, previousTail: this.current })
-		if (existing) return existing
-		const previousTail = this.current
-		this.current = { epoch: this.current.epoch + 1, seq: 0 }
-		return this.record("rebase", input.operationId, { payloadRef: input.reasonRef, previousTail })
 	}
 
 	async rewind(input: { readonly operationId: string; readonly target: JournalWatermark }): Promise<JournalAppendResult> {
@@ -163,7 +175,7 @@ export class InMemoryConversationJournal implements ConversationJournal {
 	): JournalAppendResult {
 		const existing = this.idempotent(operationId, kind, entry)
 		if (existing) return existing
-		this.current = { epoch: this.current.epoch, seq: this.current.seq + 1 }
+		this.current = { seq: this.current.seq + 1 }
 		const recorded: JournalEntry = { ...entry, version: 1, operationId, kind, watermark: this.current }
 		this.entries.push(recorded)
 		this.operations.set(operationId, { fingerprint: JSON.stringify({ kind, entry }), entry: recorded })

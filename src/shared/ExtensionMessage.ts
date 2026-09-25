@@ -576,7 +576,7 @@ export interface ClineSayTool {
 	 * journal rather than in API history rows, so this watermark (not an API
 	 * row index) is what a Restore from the card rewinds to.
 	 */
-	compactionJournalBoundary?: { readonly epoch: number; readonly seq: number }
+	compactionJournalBoundary?: { readonly seq: number }
 	/** Actionable compaction failure detail. */
 	error?: string
 	/** One-based retry attempt currently scheduled. */

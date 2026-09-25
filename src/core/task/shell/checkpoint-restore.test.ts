@@ -11,7 +11,7 @@ function ports(workspaceOk = true): CheckpointRestorePorts & { calls: string[] }
 			calls.push("resolve")
 			return {
 				snapshot: { ...createInitialTaskState("task-1"), revision: 2, flow: { phase: "running" as const } },
-				boundary: { epoch: 0, seq: 4 },
+				boundary: { seq: 4 },
 				workspaceRef: "workspace:1",
 			}
 		}),
@@ -51,7 +51,7 @@ describe("checkpoint restore coordinator", () => {
 		const subject = ports()
 		vi.mocked(subject.resolve).mockResolvedValue({
 			snapshot: createInitialTaskState("another-task"),
-			boundary: { epoch: 0, seq: 4 },
+			boundary: { seq: 4 },
 			workspaceRef: "workspace:1",
 		})
 		const result = await restoreCheckpoint({ taskId: "task-1", checkpointRef: "checkpoint:1", mode: "combined" }, subject)

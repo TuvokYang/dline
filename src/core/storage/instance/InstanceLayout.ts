@@ -21,9 +21,6 @@ const SUBAGENTS_DIRECTORY_NAME = "subagents"
 /** Durable kernel snapshot; its previous version is kept as `state.json.bak`. */
 const STATE_FILE_NAME = "state.json"
 
-/** File-based journal, publications and payloads, until they move into `journal.db`. */
-const RUNTIME_DIRECTORY_NAME = "runtime"
-
 /** SQLite databases of one instance. Each database has exactly one writing module. */
 export const InstanceDatabase = {
 	/** Kernel commits: journal entries, command publications and payloads. */
@@ -73,11 +70,6 @@ export class InstanceLayout {
 
 	get stateFile(): string {
 		return path.join(this.root, STATE_FILE_NAME)
-	}
-
-	/** Transitional: removed once the journal, publications and payloads live in `journal.db`. */
-	get runtimeDirectory(): string {
-		return path.join(this.root, RUNTIME_DIRECTORY_NAME)
 	}
 
 	database(kind: InstanceDatabase): string {

@@ -1,11 +1,14 @@
-import os from "node:os"
-import path from "node:path"
 import { describe, expect, it, vi } from "vitest"
 import { createDeniedSurface } from "../executors/tool/ToolDomainSurface"
 import { TurnToolScheduler } from "../executors/tool/TurnToolScheduler"
 import type { TaskPersistenceAssembly } from "../shell/TaskPersistenceAssembly"
-import { InMemoryCommandPublicationStore, InMemoryConversationJournal, InMemoryStateVault, InMemoryTaskViewPort } from "../stores"
-import { FileTaskPayloadStore } from "../stores/FileTaskPayloadStore"
+import {
+	InMemoryCommandPublicationStore,
+	InMemoryConversationJournal,
+	InMemoryStateVault,
+	InMemoryTaskPayloadStore,
+	InMemoryTaskViewPort,
+} from "../stores"
 import { encodeTaskPayload } from "../stores/payload/TaskPayloadCodec"
 import { composeTask, type TaskCompositionServices } from "./TaskCompositionRoot"
 
@@ -33,8 +36,7 @@ function services(provider: ReturnType<typeof vi.fn>): TaskCompositionServices {
 
 describe("TaskCompositionRoot", () => {
 	it("exposes the six-use-case facade and keeps compose inside the composition root", async () => {
-		const directory = path.join(os.tmpdir(), `dline-task-composition-${Date.now()}`)
-		const payloads = new FileTaskPayloadStore(path.join(directory, "payloads"))
+		const payloads = new InMemoryTaskPayloadStore()
 		const journal = new InMemoryConversationJournal()
 		const persistence: TaskPersistenceAssembly = {
 			ports: { vault: new InMemoryStateVault(), publications: new InMemoryCommandPublicationStore(), journal },

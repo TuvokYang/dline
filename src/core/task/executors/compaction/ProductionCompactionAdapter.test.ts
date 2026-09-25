@@ -43,7 +43,7 @@ describe("ProductionCompactionAdapter", () => {
 
 	it("lands the span the request fixed, not whatever the conversation holds when the summary returns", async () => {
 		const payloads = new MemoryPayloads()
-		const span = { from: { epoch: 0, seq: 2 }, to: { epoch: 0, seq: 4 } }
+		const span = { from: { seq: 2 }, to: { seq: 4 } }
 		const context: CompactionContextEnvelope = { kind: "compaction_context", span, context: { sourceHistory: [] } }
 		const contextRef = await payloads.put(encodeTaskPayload(context))
 		const landed: unknown[] = []

@@ -24,6 +24,6 @@ export function createRunningTaskState(options: RunningTaskStateOptions = {}): T
 		revision,
 		flow: { phase: options.phase ?? "running" },
 		turn: { ...base.turn, turnId: options.turnId ?? "turn-a" },
-		journalWatermark: { epoch: 0, seq: revision },
+		journalWatermark: { seq: revision },
 	}
 }

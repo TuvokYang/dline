@@ -24,7 +24,7 @@ function reveal(): Extract<DialogCommand, { type: "dialog.reveal" }> {
 		commandId: "dialog-2",
 		originRevision: 2,
 		type: "dialog.reveal",
-		journalRef: "journal:0:1",
+		journalRef: "journal:1",
 		receiverGeneration: 4,
 		revealKey: "dialog.reveal:i-1:4",
 	}
@@ -35,8 +35,8 @@ describe("DialogCommandExecutor", () => {
 		const events: TaskEvent[] = []
 		const port = {
 			prepare: vi.fn(async () => ({
-				journalRef: "journal:0:1",
-				journalWatermark: { epoch: 0, seq: 1 },
+				journalRef: "journal:1",
+				journalWatermark: { seq: 1 },
 				receiverGeneration: 4,
 				disposition: "created" as const,
 			})),
@@ -51,7 +51,7 @@ describe("DialogCommandExecutor", () => {
 
 		expect(port.prepare).toHaveBeenCalledWith(expect.objectContaining({ presentationRef: "question:1" }))
 		expect(events).toEqual([
-			expect.objectContaining({ type: "dialog.prepared", commandId: "dialog-1", journalRef: "journal:0:1" }),
+			expect.objectContaining({ type: "dialog.prepared", commandId: "dialog-1", journalRef: "journal:1" }),
 			expect.objectContaining({ type: "dialog.presented", commandId: "dialog-2", interactionId: "i-1" }),
 		])
 	})
@@ -61,8 +61,8 @@ describe("DialogCommandExecutor", () => {
 		const executor = new DialogCommandExecutor(
 			{
 				prepare: async () => ({
-					journalRef: "journal:0:1",
-					journalWatermark: { epoch: 0, seq: 1 },
+					journalRef: "journal:1",
+					journalWatermark: { seq: 1 },
 					receiverGeneration: 4,
 					disposition: "existing" as const,
 				}),
@@ -82,8 +82,8 @@ describe("DialogCommandExecutor", () => {
 		const executor = new DialogCommandExecutor(
 			{
 				prepare: async () => ({
-					journalRef: "journal:0:1",
-					journalWatermark: { epoch: 0, seq: 1 },
+					journalRef: "journal:1",
+					journalWatermark: { seq: 1 },
 					receiverGeneration: 4,
 					disposition: "created" as const,
 				}),
@@ -114,8 +114,8 @@ describe("DialogCommandExecutor", () => {
 		const executor = new DialogCommandExecutor(
 			{
 				prepare: async () => ({
-					journalRef: "journal:0:1",
-					journalWatermark: { epoch: 0, seq: 1 },
+					journalRef: "journal:1",
+					journalWatermark: { seq: 1 },
 					receiverGeneration: 4,
 					disposition: "created" as const,
 				}),

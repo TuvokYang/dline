@@ -1,6 +1,6 @@
 import type { TaskState, TurnContinuationReason } from "../../kernel"
 import type { ConversationJournal } from "../../stores"
-import type { TaskPayloadStore } from "../../stores/FileTaskPayloadStore"
+import type { TaskPayloadStore } from "../../stores/contracts"
 import { decodeTaskPayload, encodeTaskPayload } from "../../stores/payload/TaskPayloadCodec"
 import type {
 	BackgroundResultsEnvelope,

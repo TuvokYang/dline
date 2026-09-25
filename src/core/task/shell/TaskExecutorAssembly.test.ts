@@ -36,7 +36,7 @@ function assembly() {
 				execution: {
 					prepare: async () => ({
 						journalRef: "journal:dialog",
-						journalWatermark: { epoch: 0, seq: 1 },
+						journalWatermark: { seq: 1 },
 						receiverGeneration: 1,
 						disposition: "created",
 					}),

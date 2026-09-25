@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest"
 import type { TaskState } from "../../kernel"
 import { createInitialTaskState } from "../../kernel"
-import type { TaskPayloadStore } from "../../stores/FileTaskPayloadStore"
+import type { TaskPayloadStore } from "../../stores/contracts"
 import { InMemoryConversationJournal } from "../../stores/InMemoryRuntimeStores"
 import { decodeTaskPayload, encodeTaskPayload } from "../../stores/payload/TaskPayloadCodec"
 import { ProductionComposeAdapter } from "./ProductionComposeAdapter"

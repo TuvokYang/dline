@@ -13,7 +13,7 @@ function completion(): DialogInteraction {
 		createdRevision: 20,
 		presentationRef: "completion:done-1",
 		actionRules: [{ actionId: "reply", payloadPolicy: "draft" }],
-		journalRef: "journal:0:12",
+		journalRef: "journal:12",
 	}
 }
 
@@ -48,7 +48,7 @@ function completedSnapshot(): TaskState {
 		},
 		intake: { queued: [], background: [], coTask: [] },
 		halt: { status: "idle", generation: 2 },
-		journalWatermark: { epoch: 0, seq: 12 },
+		journalWatermark: { seq: 12 },
 	}
 }
 
@@ -57,7 +57,7 @@ describe("hydrate for a checkpoint restore", () => {
 		const result = hydrate({
 			taskId: TASK_ID,
 			snapshot: completedSnapshot(),
-			journalTail: { epoch: 0, seq: 14 },
+			journalTail: { seq: 14 },
 			openReason: "checkpoint_restore",
 		})
 
@@ -76,7 +76,7 @@ describe("hydrate for a checkpoint restore", () => {
 		const result = hydrate({
 			taskId: TASK_ID,
 			snapshot: completedSnapshot(),
-			journalTail: { epoch: 0, seq: 14 },
+			journalTail: { seq: 14 },
 			openReason: "resume",
 		})
 
@@ -95,7 +95,7 @@ describe("hydrate for a checkpoint restore", () => {
 		const result = hydrate({
 			taskId: TASK_ID,
 			snapshot: consumed,
-			journalTail: { epoch: 0, seq: 14 },
+			journalTail: { seq: 14 },
 			openReason: "checkpoint_restore",
 		})
 
