@@ -154,10 +154,11 @@ describe("task kernel", () => {
 		expect(restored.kind).toBe("ready")
 	})
 
-	it("rejects a snapshot that belongs to another task", () => {
+	it("discards a snapshot that belongs to another task and rebuilds this one", () => {
 		const snapshot = createInitialTaskState("task-other")
 		const result = hydrate({ taskId: "task-1", snapshot, journalTail: { seq: 0 }, openReason: "resume" })
-		expect(result).toMatchObject({ kind: "read_only", reason: "task_identity_mismatch" })
+		expect(result).toMatchObject({ kind: "ready", form: "interrupted", rebuilt: true, state: { taskId: "task-1" } })
+		expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toContain("task_identity_mismatch")
 	})
 
 	it("hydrates conservatively and re-emits only prepared dialog reveals", () => {

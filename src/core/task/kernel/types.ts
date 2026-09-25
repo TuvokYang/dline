@@ -531,26 +531,28 @@ export interface HydrateInput {
 	readonly journalTail: JournalWatermark
 	readonly openReason: "resume" | "crash_recovery" | "checkpoint_restore" | "new"
 	/**
-	 * Whether durable conversation history exists for this task.
-	 *
-	 * A task written before runtime snapshots existed, or one whose snapshot
-	 * write never landed, still has its conversation. That history is what makes
-	 * recovery possible without a snapshot; refusing such a task as read-only
-	 * leaves it permanently unresumable.
+	 * Payloads the snapshot requires that the payload store cannot provide; see
+	 * `requiredPayloadRefs`. A snapshot missing any of them cannot continue, so
+	 * the task is rebuilt from the journal instead.
 	 */
-	readonly hasConversationHistory?: boolean
+	readonly unavailablePayloads?: ReadonlySet<string>
 }
 export type HydrateForm = "interrupted" | "completed" | "error" | "consumed" | "new"
 
-export type HydrateResult =
-	| {
-			readonly kind: "ready"
-			readonly form: HydrateForm
-			readonly state: TaskState
-			readonly initialCommands: readonly Command[]
-			readonly diagnostics: readonly Diagnostic[]
-	  }
-	| { readonly kind: "read_only"; readonly reason: string; readonly diagnostics: readonly Diagnostic[] }
+/** Opening an existing task always yields a usable state; see `hydrate`. */
+export interface HydrateResult {
+	readonly kind: "ready"
+	readonly form: HydrateForm
+	/**
+	 * Whether the snapshot was missing or unusable and the state was rebuilt
+	 * from the journal. Commands stored with a discarded snapshot describe a
+	 * state that no longer exists and must not be replayed.
+	 */
+	readonly rebuilt: boolean
+	readonly state: TaskState
+	readonly initialCommands: readonly Command[]
+	readonly diagnostics: readonly Diagnostic[]
+}
 
 export function createInitialTaskState(taskId: TaskId): TaskState {
 	return {

@@ -50,7 +50,10 @@ export async function restoreCheckpoint(
 		journalTail: checkpoint.boundary,
 		openReason: "checkpoint_restore",
 	})
-	if (hydrated.kind === "read_only") return { kind: "rejected", diagnostics: hydrated.diagnostics }
+	// Restoring must not replace the task's state with one rebuilt from nothing:
+	// a checkpoint whose snapshot cannot be continued is refused before anything
+	// is touched, and the task keeps what it had.
+	if (hydrated.rebuilt) return { kind: "rejected", diagnostics: hydrated.diagnostics }
 
 	const diagnostics: Diagnostic[] = [...hydrated.diagnostics]
 	if (input.mode !== "chat_only") {

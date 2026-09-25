@@ -1,7 +1,7 @@
-import { type Command, type HydrateForm, type HydrateInput, hydrate, type TaskState } from "../kernel"
+import { type Command, type HydrateForm, type HydrateInput, hydrate, requiredPayloadRefs, type TaskState } from "../kernel"
 import type { RuntimeDiagnosticSink, TaskRuntime } from "../runtime"
 import { commandEffectKey } from "../runtime/DurableCommandOutbox"
-import type { TaskPayloadStore, TaskViewPort } from "../stores"
+import type { DurableTaskSnapshot, TaskPayloadStore, TaskViewPort } from "../stores"
 import {
 	createTaskExecutorAssembly,
 	type TaskExecutionPorts,
@@ -25,31 +25,18 @@ export interface OpenTaskShellOptions {
 	readonly persistence?: TaskPersistenceAssembly
 	/** Shows accepted submissions in chat; absent in headless assemblies. */
 	readonly inputPresentation?: TaskInputPresentationPort
-	/**
-	 * Whether durable conversation history exists for this task.
-	 *
-	 * Supplied by the caller that owns message storage, so the shell stays
-	 * independent of where history lives. It lets a task written before runtime
-	 * snapshots existed still resume instead of being refused as read-only.
-	 */
-	readonly hasConversationHistory?: boolean
 }
 
-export type OpenTaskShellResult =
-	| {
-			readonly kind: "ready"
-			readonly form: HydrateForm
-			readonly shell: TaskShell
-			readonly runtime: TaskRuntime
-			readonly assembly: TaskExecutorAssembly
-			readonly payloads: TaskPayloadStore
-			readonly diagnostics: readonly { readonly code: string; readonly message: string }[]
-	  }
-	| {
-			readonly kind: "read_only"
-			readonly reason: string
-			readonly diagnostics: readonly { readonly code: string; readonly message: string }[]
-	  }
+/** An opened task; opening an existing task always succeeds, see `hydrate`. */
+export interface OpenTaskShellResult {
+	readonly kind: "ready"
+	readonly form: HydrateForm
+	readonly shell: TaskShell
+	readonly runtime: TaskRuntime
+	readonly assembly: TaskExecutorAssembly
+	readonly payloads: TaskPayloadStore
+	readonly diagnostics: readonly { readonly code: string; readonly message: string }[]
+}
 
 function mergeRestoredCommands(commands: readonly Command[]): readonly Command[] {
 	const merged = new Map<string, Command>()
@@ -80,24 +67,71 @@ function describeHydrate(form: HydrateForm, state: TaskState, commands: readonly
 	].join(" ")
 }
 
+/**
+ * The stored snapshot, or undefined when there is none or it cannot be read.
+ *
+ * An unreadable vault costs the in-flight state, not the task: hydrate rebuilds
+ * it from the journal, so the failure is recorded instead of thrown.
+ */
+async function loadSnapshot(
+	persistence: TaskPersistenceAssembly,
+	taskId: string,
+	diagnostics: RuntimeDiagnosticSink | undefined,
+): Promise<DurableTaskSnapshot | undefined> {
+	try {
+		return await persistence.ports.vault.load(taskId)
+	} catch (error) {
+		diagnostics?.record({
+			source: "hydrate",
+			code: "snapshot_unreadable",
+			message: error instanceof Error ? error.message : String(error),
+		})
+		return undefined
+	}
+}
+
+/** Payloads `state` needs that the store cannot provide; see `requiredPayloadRefs`. */
+async function unavailablePayloads(payloads: TaskPayloadStore, state: TaskState | undefined): Promise<ReadonlySet<string>> {
+	const unavailable = new Set<string>()
+	if (!state) return unavailable
+	for (const payloadRef of requiredPayloadRefs(state)) {
+		try {
+			await payloads.read(payloadRef)
+		} catch {
+			unavailable.add(payloadRef)
+		}
+	}
+	return unavailable
+}
+
 export async function openTaskShell(options: OpenTaskShellOptions): Promise<OpenTaskShellResult> {
 	const persistence = options.persistence ?? (await openTaskPersistence(options.taskId))
-	const durable = await persistence.ports.vault.load(options.taskId)
+	const durable = await loadSnapshot(persistence, options.taskId, options.diagnostics)
 	const restored = hydrate({
 		taskId: options.taskId,
 		snapshot: durable?.state,
 		journalTail: persistence.ports.journal.watermark(),
 		openReason: options.openReason,
-		hasConversationHistory: options.hasConversationHistory,
+		unavailablePayloads: await unavailablePayloads(persistence.payloads, durable?.state),
 	})
-	if (restored.kind === "read_only") return restored
 
 	const ports: TaskPersistencePorts = { ...persistence.ports, taskView: options.taskView }
 	const execution =
 		typeof options.execution === "function"
 			? options.execution({ initialState: restored.state, persistence })
 			: options.execution
-	const restoredOutbox = mergeRestoredCommands([...(durable?.outbox ?? []), ...restored.initialCommands])
+	// Commands stored with a discarded snapshot act on a state that no longer exists.
+	const storedOutbox = restored.rebuilt ? [] : (durable?.outbox ?? [])
+	const restoredOutbox = mergeRestoredCommands([...storedOutbox, ...restored.initialCommands])
+	for (const diagnostic of restored.diagnostics) {
+		options.diagnostics?.record({
+			source: "hydrate",
+			code: diagnostic.code,
+			message: diagnostic.message,
+			severity: restored.rebuilt ? "failure" : "observation",
+			revision: restored.state.revision,
+		})
+	}
 	options.diagnostics?.record({
 		source: "hydrate",
 		code: "hydrated",

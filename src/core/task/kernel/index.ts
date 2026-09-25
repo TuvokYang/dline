@@ -1,4 +1,4 @@
-export { hydrate } from "./hydrate"
+export { hydrate, requiredPayloadRefs } from "./hydrate"
 export { transition } from "./transition"
 export * from "./turn/approval-kind"
 export * from "./turn/pool-admission"

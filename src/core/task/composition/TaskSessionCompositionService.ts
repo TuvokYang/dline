@@ -391,10 +391,6 @@ export class TaskSessionCompositionService {
 			// A `/compact` the user types is carried out by the compaction barrier,
 			// so its guidance shapes the summary instead of reaching the model.
 			lifecycleBarriers: compaction,
-			// Message storage is this service's to read, so it supplies the history
-			// fact the kernel needs when no runtime snapshot exists. A task created
-			// before snapshots must resume from its conversation, not be refused.
-			hasConversationHistory: options.messages.uiMessage.getAll().length > 0,
 			inputPresentation: new TaskInputPresenter(persistence.payloads, messages, nextPresentationId),
 			// A round that would overflow the window waits for the summary first,
 			// so the request it sends is the one that fits. It guards compose
@@ -498,8 +494,7 @@ export class TaskSessionCompositionService {
 				{ release: async () => interactions.dispose() },
 			],
 		})
-		if (opened.kind === "read_only") throw new Error(`TaskReadOnly:${opened.reason}`)
-		session = opened.session
+		session = opened
 		interactions.bind(session)
 		return session
 	}

@@ -55,7 +55,7 @@ describe("checkpoint restore coordinator", () => {
 			workspaceRef: "workspace:1",
 		})
 		const result = await restoreCheckpoint({ taskId: "task-1", checkpointRef: "checkpoint:1", mode: "combined" }, subject)
-		expect(result.kind).toBe("rejected")
+		expect(result).toMatchObject({ kind: "rejected", diagnostics: [{ code: "task_identity_mismatch" }] })
 		expect(subject.calls).toEqual(["stop"])
 		expect(subject.restoreWorkspace).not.toHaveBeenCalled()
 		expect(subject.applyConversationBoundary).not.toHaveBeenCalled()

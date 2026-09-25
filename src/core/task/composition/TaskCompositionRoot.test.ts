@@ -54,8 +54,6 @@ describe("TaskCompositionRoot", () => {
 			taskView: new InMemoryTaskViewPort(),
 			persistence,
 		})
-		expect(result.kind).toBe("ready")
-		if (result.kind !== "ready") return
 		const payloadRef = await payloads.put(encodeTaskPayload({ kind: "user_input", text: "hello" }))
 		await result.task.start({ entryId: "entry-1", payloadRef })
 		// This provider answers every round in prose without calling a tool, which

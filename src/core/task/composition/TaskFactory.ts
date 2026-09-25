@@ -3,8 +3,6 @@ import { type OpenActiveTaskSessionOptions, openActiveTaskSession } from "../ses
 
 export type TaskInstance = ActiveTaskSession
 
-export async function createTask(options: OpenActiveTaskSessionOptions): Promise<TaskInstance> {
-	const result = await openActiveTaskSession(options)
-	if (result.kind === "read_only") throw new Error(`TaskReadOnly:${result.reason}`)
-	return result.session
+export function createTask(options: OpenActiveTaskSessionOptions): Promise<TaskInstance> {
+	return openActiveTaskSession(options)
 }

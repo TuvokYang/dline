@@ -15,10 +15,6 @@ export interface OpenActiveTaskSessionOptions extends TaskCompositionOptions {
 	readonly lifecycleBarriers?: LifecycleBarrierPort
 }
 
-export type OpenActiveTaskSessionResult =
-	| { readonly kind: "ready"; readonly session: ActiveTaskSession }
-	| { readonly kind: "read_only"; readonly reason: string; readonly diagnostics: readonly { code: string; message: string }[] }
-
 function createInputIdentity(taskId: string): TaskInputIdentityPort {
 	let sequence = 0
 	return {
@@ -27,26 +23,23 @@ function createInputIdentity(taskId: string): TaskInputIdentityPort {
 	}
 }
 
-export async function openActiveTaskSession(options: OpenActiveTaskSessionOptions): Promise<OpenActiveTaskSessionResult> {
+/** Open one task session; opening an existing task always succeeds, see `hydrate`. */
+export async function openActiveTaskSession(options: OpenActiveTaskSessionOptions): Promise<ActiveTaskSession> {
 	const composed = await composeTask(options)
-	if (composed.kind === "read_only") return composed
-	return {
-		kind: "ready",
-		session: new ActiveTaskSession({
-			task: composed.task,
-			readState: () => composed.runtime.getState(),
-			assembly: composed.assembly,
-			payloads: composed.payloads,
-			inputs: new TaskInputMaterializer(
-				composed.payloads,
-				options.inputIdentity ?? createInputIdentity(options.taskId),
-				options.inputAdmission,
-				options.lifecycleBarriers,
-			),
-			owners: options.owners,
-			approvalFeedback: composed.approvalFeedback,
-			conversation: composed.conversation,
-			releases: options.releases,
-		}),
-	}
+	return new ActiveTaskSession({
+		task: composed.task,
+		readState: () => composed.runtime.getState(),
+		assembly: composed.assembly,
+		payloads: composed.payloads,
+		inputs: new TaskInputMaterializer(
+			composed.payloads,
+			options.inputIdentity ?? createInputIdentity(options.taskId),
+			options.inputAdmission,
+			options.lifecycleBarriers,
+		),
+		owners: options.owners,
+		approvalFeedback: composed.approvalFeedback,
+		conversation: composed.conversation,
+		releases: options.releases,
+	})
 }

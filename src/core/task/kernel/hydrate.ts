@@ -2,6 +2,7 @@ import { withoutAbandonedReview } from "./machines/dialog"
 import { expireAbandonedCompaction } from "./machines/flow"
 import { planRecoveryDialog } from "./recovery"
 import type {
+	BlockPhase,
 	Command,
 	Diagnostic,
 	DialogActionRule,
@@ -14,8 +15,8 @@ import type {
 } from "./types"
 import { createInitialTaskState } from "./types"
 
-function readOnly(reason: string, code: string, message: string): HydrateResult {
-	return { kind: "read_only", reason, diagnostics: [{ code, message }] }
+function invalid(code: string, message: string): readonly Diagnostic[] {
+	return [{ code, message }]
 }
 
 function parseJournalRef(ref: string): JournalWatermark | undefined {
@@ -34,21 +35,81 @@ function interactions(state: TaskState): readonly DialogInteraction[] {
 	)
 }
 
-function validateSnapshot(input: HydrateInput, snapshot: TaskState): HydrateResult | undefined {
-	if (snapshot.taskId !== input.taskId)
-		return readOnly("task_identity_mismatch", "task_identity_mismatch", "Snapshot belongs to another task")
+/** A block in one of these phases never reads its invocation again. */
+const SETTLED_BLOCK_PHASES: ReadonlySet<BlockPhase> = new Set(["completed", "failed", "rejected", "skipped", "cancelled"])
+
+/**
+ * Whether `state` has the structure every later check dereferences.
+ *
+ * A snapshot is decoded from disk, so a truncated or hand-edited file can hold
+ * any shape. Checking it first keeps a malformed snapshot a recoverable
+ * diagnostic instead of an exception that stops the task from opening.
+ */
+function isShaped(state: TaskState): boolean {
+	const candidate = state as Partial<TaskState> | null
+	return (
+		typeof candidate === "object" &&
+		candidate !== null &&
+		typeof candidate.flow?.phase === "string" &&
+		Array.isArray(candidate.turn?.blocks) &&
+		Array.isArray(candidate.turn.executingBlockIds) &&
+		Array.isArray(candidate.turn.automaticApprovalBlockIds) &&
+		Array.isArray(candidate.turn.manualApprovalBlockIds) &&
+		typeof candidate.dialog?.approvalsByBlock === "object" &&
+		candidate.dialog.approvalsByBlock !== null &&
+		typeof candidate.halt === "object" &&
+		candidate.halt !== null &&
+		// Absent intake is a legacy snapshot and is normalized; a present one must be lists.
+		(candidate.intake === undefined ||
+			[candidate.intake.queued, candidate.intake.background, candidate.intake.coTask].every(
+				(entries) => entries === undefined || Array.isArray(entries),
+			))
+	)
+}
+
+/**
+ * Payloads a restored snapshot will read once its work continues.
+ *
+ * Unsettled blocks re-read their invocation, intake not yet consumed is
+ * composed again, and an accepted dialog response carries its draft or
+ * selection. The shell checks these against the payload store before hydrate,
+ * so a snapshot whose inputs are gone is rebuilt instead of failing later in
+ * the middle of a round.
+ */
+export function requiredPayloadRefs(state: TaskState): readonly string[] {
+	if (!isShaped(state)) return []
+	const refs = new Set<string>()
+	const intake = state.intake
+	for (const entry of [...(intake?.queued ?? []), ...(intake?.background ?? []), ...(intake?.coTask ?? [])]) {
+		if (entry.state !== "consumed") refs.add(entry.payloadRef)
+	}
+	for (const block of state.turn.blocks) {
+		if (!SETTLED_BLOCK_PHASES.has(block.phase)) refs.add(block.invocationRef)
+	}
+	for (const interaction of interactions(state)) {
+		const response = interaction.acceptedResponse
+		if (response?.draftRef) refs.add(response.draftRef)
+		if (response?.selectionRef) refs.add(response.selectionRef)
+	}
+	return [...refs]
+}
+
+/** Why `snapshot` cannot be continued, or undefined when it can. */
+function validateSnapshot(input: HydrateInput, snapshot: TaskState): readonly Diagnostic[] | undefined {
+	if (!isShaped(snapshot)) return invalid("malformed_snapshot", "Snapshot does not have the structure of a task state")
+	if (snapshot.taskId !== input.taskId) return invalid("task_identity_mismatch", "Snapshot belongs to another task")
 	if (!Number.isInteger(snapshot.revision) || snapshot.revision < 0)
-		return readOnly("snapshot_invalid", "invalid_revision", "Snapshot revision is invalid")
+		return invalid("invalid_revision", "Snapshot revision is invalid")
 	if (!Number.isInteger(snapshot.generation) || snapshot.generation < 0 || snapshot.halt.generation !== snapshot.generation)
-		return readOnly("snapshot_invalid", "invalid_generation", "Snapshot generation is inconsistent")
+		return invalid("invalid_generation", "Snapshot generation is inconsistent")
 	if (snapshot.journalWatermark && isAfter(snapshot.journalWatermark, input.journalTail))
-		return readOnly("snapshot_invalid", "journal_ahead_of_tail", "Snapshot journal watermark is ahead of journal tail")
+		return invalid("journal_ahead_of_tail", "Snapshot journal watermark is ahead of journal tail")
 
 	const blockIds = new Set<string>()
 	const indexes = new Set<number>()
 	for (const block of snapshot.turn.blocks) {
 		if (blockIds.has(block.blockId) || indexes.has(block.index))
-			return readOnly("snapshot_invalid", "duplicate_block_identity", "Snapshot contains duplicate block identity")
+			return invalid("duplicate_block_identity", "Snapshot contains duplicate block identity")
 		blockIds.add(block.blockId)
 		indexes.add(block.index)
 	}
@@ -58,32 +119,31 @@ function validateSnapshot(input: HydrateInput, snapshot: TaskState): HydrateResu
 		...snapshot.turn.manualApprovalBlockIds,
 	]
 	if (ownedBlockIds.some((blockId) => !blockIds.has(blockId)))
-		return readOnly("snapshot_invalid", "unknown_block_owner", "Snapshot ownership references an unknown block")
+		return invalid("unknown_block_owner", "Snapshot ownership references an unknown block")
 
 	const interactionIds = new Set<string>()
 	for (const interaction of interactions(snapshot)) {
 		if (interactionIds.has(interaction.interactionId))
-			return readOnly("snapshot_invalid", "duplicate_interaction", "Snapshot contains duplicate interaction identity")
+			return invalid("duplicate_interaction", "Snapshot contains duplicate interaction identity")
 		interactionIds.add(interaction.interactionId)
 		if (interaction.status === "prepared") {
-			if (!interaction.journalRef)
-				return readOnly("snapshot_invalid", "missing_journal_ref", "Prepared interaction has no journal reference")
+			if (!interaction.journalRef) return invalid("missing_journal_ref", "Prepared interaction has no journal reference")
 			const position = parseJournalRef(interaction.journalRef)
-			if (!position) return readOnly("snapshot_invalid", "invalid_journal_ref", "Journal reference is not parseable")
+			if (!position) return invalid("invalid_journal_ref", "Journal reference is not parseable")
 			if (isAfter(position, input.journalTail))
-				return readOnly(
-					"snapshot_invalid",
-					"journal_ahead_of_tail",
-					"Interaction journal reference is ahead of journal tail",
-				)
+				return invalid("journal_ahead_of_tail", "Interaction journal reference is ahead of journal tail")
 		}
 	}
 	if (snapshot.flow.phase === "completed" && !snapshot.flow.completionId)
-		return readOnly("snapshot_invalid", "missing_completion_identity", "Completed task has no completion identity")
+		return invalid("missing_completion_identity", "Completed task has no completion identity")
 	if (snapshot.flow.phase === "error" && !snapshot.flow.error)
-		return readOnly("snapshot_invalid", "missing_error", "Errored task has no error detail")
+		return invalid("missing_error", "Errored task has no error detail")
 	if (snapshot.flow.terminalReason === "consumed" && !snapshot.flow.consumedRef)
-		return readOnly("snapshot_invalid", "missing_consumed_identity", "Consumed task has no consumed identity")
+		return invalid("missing_consumed_identity", "Consumed task has no consumed identity")
+	const unavailable = input.unavailablePayloads
+	const missing = unavailable ? requiredPayloadRefs(snapshot).filter((ref) => unavailable.has(ref)) : []
+	if (missing.length > 0)
+		return invalid("payload_missing", `Snapshot requires ${missing.length} payload(s) the payload store cannot provide`)
 	return undefined
 }
 
@@ -301,18 +361,18 @@ function installDialogCommandOwners(state: TaskState, commands: readonly Command
 }
 
 /**
- * Rebuild a task that has conversation history but no runtime snapshot.
+ * Rebuild a task from its journal alone, as interrupted.
  *
- * A task created before snapshots existed, or one whose snapshot write never
- * landed, still has its journal and chat history. Refusing it as read-only made
- * the task permanently unusable: the surface offered Resume, and the promotion
- * that Resume triggers failed with `snapshot_missing`. Treating it as
- * interrupted recovers the same way an interrupted task does, which is what the
- * remaining evidence actually supports.
+ * Used when the snapshot is missing or cannot be continued. The journal is the
+ * durable conversation, so the task keeps everything the user and the model
+ * said; only in-flight state is lost, and `cause` records why. Refusing the
+ * task instead left it permanently unusable: the surface offered Resume and
+ * every attempt to act on it failed.
  */
-function hydrateWithoutSnapshot(input: HydrateInput): HydrateResult {
+function hydrateWithoutSnapshot(input: HydrateInput, cause: readonly Diagnostic[]): HydrateResult {
 	const state: TaskState = {
 		...createInitialTaskState(input.taskId),
+		...continuedCounters(input),
 		journalWatermark: input.journalTail,
 	}
 	const normalized = normalizeState(state, "interrupted")
@@ -320,12 +380,32 @@ function hydrateWithoutSnapshot(input: HydrateInput): HydrateResult {
 	return {
 		kind: "ready",
 		form: "interrupted",
+		rebuilt: true,
 		state: installDialogCommandOwners(normalized.state, commands),
 		initialCommands: commands,
-		diagnostics: [
-			...normalized.diagnostics,
-			{ code: "snapshot_missing", message: "Recovered from conversation history without a runtime snapshot" },
-		],
+		diagnostics: [...normalized.diagnostics, ...cause],
+	}
+}
+
+function isCount(value: unknown): value is number {
+	return Number.isInteger(value) && (value as number) >= 0
+}
+
+/**
+ * Revision and generation a rebuilt task continues from.
+ *
+ * Command and interaction identities are derived from them, and a published
+ * command is remembered by that identity and never dispatched again. Starting
+ * every rebuild from zero could reuse an identity an earlier rebuild already
+ * published, leaving the recovery dialog planned but never prepared.
+ */
+function continuedCounters(input: HydrateInput): { readonly revision: number; readonly generation: number } {
+	const snapshot = input.snapshot as Partial<TaskState> | undefined
+	if (typeof snapshot !== "object" || snapshot === null || snapshot.taskId !== input.taskId)
+		return { revision: 0, generation: 0 }
+	return {
+		revision: isCount(snapshot.revision) ? snapshot.revision : 0,
+		generation: isCount(snapshot.generation) ? snapshot.generation : 0,
 	}
 }
 
@@ -358,20 +438,29 @@ function rewoundSnapshot(snapshot: TaskState): TaskState {
 	}
 }
 
+/**
+ * Open a task into a state its runtime can continue from.
+ *
+ * Opening an existing task always succeeds. A missing or unusable snapshot
+ * costs the in-flight state, never the task: it is rebuilt as interrupted from
+ * the journal, marked `rebuilt`, and the reason travels as a diagnostic.
+ */
 export function hydrate(input: HydrateInput): HydrateResult {
 	if (input.openReason === "new") {
-		return { kind: "ready", form: "new", state: createInitialTaskState(input.taskId), initialCommands: [], diagnostics: [] }
+		return {
+			kind: "ready",
+			form: "new",
+			rebuilt: false,
+			state: createInitialTaskState(input.taskId),
+			initialCommands: [],
+			diagnostics: [],
+		}
 	}
 	if (!input.snapshot) {
-		// Existing conversation content is the evidence this task really ran.
-		// Without either a journal or history there is nothing to recover from,
-		// so the read-only refusal still stands.
-		const recoverable = input.hasConversationHistory || input.journalTail.seq > 0
-		if (!recoverable) return readOnly("snapshot_missing", "snapshot_missing", "No snapshot was available")
-		return hydrateWithoutSnapshot(input)
+		return hydrateWithoutSnapshot(input, invalid("snapshot_missing", "Recovered from the journal without a runtime snapshot"))
 	}
-	const invalid = validateSnapshot(input, input.snapshot)
-	if (invalid) return invalid
+	const unusable = validateSnapshot(input, input.snapshot)
+	if (unusable) return hydrateWithoutSnapshot(input, unusable)
 	const snapshot = input.openReason === "checkpoint_restore" ? rewoundSnapshot(input.snapshot) : input.snapshot
 	const form = classify(snapshot)
 	const normalized = normalizeState(snapshot, form)
@@ -379,6 +468,7 @@ export function hydrate(input: HydrateInput): HydrateResult {
 	return {
 		kind: "ready",
 		form,
+		rebuilt: false,
 		state: installDialogCommandOwners(normalized.state, commands),
 		initialCommands: commands,
 		diagnostics: normalized.diagnostics,

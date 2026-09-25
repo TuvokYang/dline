@@ -85,23 +85,18 @@ export interface TaskCompositionOptions {
 	readonly compactionReview?: CompactionReviewPort
 	/** Shows a compaction that failed to produce a summary; see CompactionFailurePresentationPort. */
 	readonly compactionFailure?: CompactionFailurePresentationPort
-	/** Whether this task already has durable conversation history; see openTaskShell. */
-	readonly hasConversationHistory?: OpenTaskShellOptions["hasConversationHistory"]
 }
 
-export type TaskCompositionResult =
-	| {
-			readonly kind: "ready"
-			readonly task: Task
-			readonly runtime: TaskRuntime
-			readonly assembly: TaskExecutorAssembly
-			readonly payloads: TaskPayloadStore
-			/** Where an approval response records the feedback its tool block must carry. */
-			readonly approvalFeedback: ToolApprovalFeedbackLedger
-			/** The conversation a compaction summarizes: what the provider is actually sent. */
-			readonly conversation: CompactionConversationPort
-	  }
-	| { readonly kind: "read_only"; readonly reason: string; readonly diagnostics: readonly { code: string; message: string }[] }
+export interface TaskCompositionResult {
+	readonly task: Task
+	readonly runtime: TaskRuntime
+	readonly assembly: TaskExecutorAssembly
+	readonly payloads: TaskPayloadStore
+	/** Where an approval response records the feedback its tool block must carry. */
+	readonly approvalFeedback: ToolApprovalFeedbackLedger
+	/** The conversation a compaction summarizes: what the provider is actually sent. */
+	readonly conversation: CompactionConversationPort
+}
 
 /** Let an observer see the run end without making compaction depend on one. */
 function instrumentCompaction(port: CompactionPort, observer: CompactionSettlementObserverPort | undefined): CompactionPort {
@@ -180,11 +175,9 @@ export async function composeTask(options: TaskCompositionOptions): Promise<Task
 			}
 		},
 	})
-	if (opened.kind === "read_only") return opened
 	runtime = opened.runtime
 	if (!conversation) throw new Error("TaskCompositionMissingConversation")
 	return {
-		kind: "ready",
 		task: new Task(options.taskId, {
 			shell: opened.shell,
 			runtime: opened.runtime,
