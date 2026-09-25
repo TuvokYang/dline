@@ -40,7 +40,7 @@
           },
           "diff": {
             "type": "string",
-            "description": "One or more SEARCH/REPLACE blocks following this exact format:\n```\n------- SEARCH\n[exact content to find]\n=======\n[new content to replace with]\n+++++++ REPLACE\n```\nCritical rules:\n1. SEARCH content must match the associated file section to find EXACTLY:\n    * Match character-for-character including whitespace, indentation, line endings\n    * Include all comments, docstrings, etc.\n2. SEARCH/REPLACE blocks will ONLY replace the first match occurrence.\n    * Including multiple unique SEARCH/REPLACE blocks if you need to make multiple changes.\n    * Include *just* enough lines in each SEARCH section to uniquely match each set of lines that need to change.\n    * When using multiple SEARCH/REPLACE blocks, list them in the order they appear in the file.\n3. Keep SEARCH/REPLACE blocks concise:\n    * Break large SEARCH/REPLACE blocks into a series of smaller blocks that each change a small portion of the file.\n    * Include just the changing lines, and a few surrounding lines if needed for uniqueness.\n    * Do not include long runs of unchanging lines in SEARCH/REPLACE blocks.\n    * Each line must be complete. Never truncate lines mid-way through as this can cause matching failures.\n4. Special operations:\n    * To move code: Use two SEARCH/REPLACE blocks (one to delete from original + one to insert at new location)\n    * To delete code: Use empty REPLACE section\n5. If your source context came from read_file and includes line labels (for example, \"42 | const x = 1\"), do NOT include the \"42 | \" prefix in SEARCH or REPLACE content. Match only the raw file text.\n6. DELIMITER CONFLICT: If any line in your SEARCH content starts with 7+ dashes followed by \" SEARCH\", or is exactly 7+ \"=\" signs, or starts with 7+ \"+\" followed by \" REPLACE\", change your delimiter count to a unique value (>= 7). The count must not match any content line format. All three markers within a block must use the same count.\n7. FAILURE RECOVERY: If SEARCH block fails to match:\n    - The match text may be too short, causing multiple identical matches in the file. Read the file with read_file, select a longer unique snippet around the target lines, and retry.\n    - The match text may not exist exactly in the file due to character differences, whitespace, or indentation. Read the file and copy/paste the EXACT text you need to match.\n    - You MUST use replace_in_file for editing existing files. If replace_in_file cannot complete the affected operation, stop and wait for the user to decide whether command-line tools are authorized for a task specified by the user. If the user already gave that authorization for the specified task, it remains valid; risk assessment and requires_approval are unchanged.\n    - Always re-read the file before retrying after a failed match."
+            "description": "One or more SEARCH/REPLACE blocks following this exact format:\n```\n------- SEARCH\n[lines to find]\n=======\n[new content to replace with]\n+++++++ REPLACE\n```\nCritical rules:\n1. SEARCH lines are matched against whole file lines:\n    * Each SEARCH line must be the complete file line or its beginning (a line prefix). Never start a SEARCH line in the middle of a file line.\n    * Leading indentation may be omitted, and leading/trailing whitespace differences are tolerated.\n    * Consecutive SEARCH lines may each be a prefix, but they must be consecutive lines of the file. Blank SEARCH lines only match blank file lines.\n2. Each SEARCH block must match exactly ONE location in the whole file:\n    * A block that matches several locations is rejected and the candidate line numbers are returned. Add more leading characters or a distinctive adjacent line, then retry.\n    * Use multiple SEARCH/REPLACE blocks for multiple changes. List them in the order they appear in the file; they must not overlap.\n3. Every matched line is replaced in full, and REPLACE is inserted verbatim:\n    * Write every replacement line completely, including its exact indentation.\n    * Nothing from the matched lines is kept automatically: neither the indentation nor the unwritten rest of a prefix line.\n4. SKIP ranges delete or rewrite a long range without copying it (saves output tokens):\n    * In SEARCH, write the head line(s), then one line that is exactly `....... SKIP` (as many dots as your delimiter length), then the tail line(s):\n------- SEARCH\nexport function legacyParse(input: string) {\n....... SKIP\n}\n=======\n+++++++ REPLACE\n    * The head must match exactly one location. The range ends at the first tail match after the head; an exact tail match is preferred over looser ones.\n    * EVERY line from the first head line through the last tail line, including all skipped lines, is deleted and replaced by REPLACE. Skipped lines are NOT preserved: write any line you want to keep in REPLACE, or use smaller blocks.\n    * At most one SKIP line per block. It cannot be the first or last SEARCH line, and it must never appear in REPLACE.\n    * Use SKIP only for a range you have just read and intend to remove or rewrite entirely, then check the replaced line range reported in the result.\n5. Keep SEARCH/REPLACE blocks concise:\n    * Break large SEARCH/REPLACE blocks into a series of smaller blocks that each change a small portion of the file.\n    * Include just the changing lines, and a few surrounding lines if needed for uniqueness.\n    * Do not include long runs of unchanging lines in SEARCH/REPLACE blocks.\n    * Only SEARCH lines may be shortened, and only at their end. REPLACE lines must always be complete.\n6. Special operations:\n    * To move code: Use two SEARCH/REPLACE blocks (one to delete from original + one to insert at new location)\n    * To delete code: Use empty REPLACE section (combine it with SKIP for long ranges)\n7. If your source context came from read_file and includes line labels (for example, \"42 | const x = 1\"), do NOT include the \"42 | \" prefix in SEARCH or REPLACE content. Match only the raw file text.\n8. DELIMITER CONFLICT: If any line in your SEARCH content starts with 7+ dashes followed by \" SEARCH\", or is exactly 7+ \"=\" signs, or starts with 7+ \"+\" followed by \" REPLACE\", or is exactly 7+ \".\" followed by \" SKIP\", change your delimiter count to a unique value (>= 7). The count must not match any content line format. All markers within a block, including SKIP, must use the same count.\n9. FAILURE RECOVERY: If a SEARCH block fails to match:\n    - Not found: re-read the file with read_file and write each SEARCH line from the beginning of the file line; never start in the middle of a line.\n    - Ambiguous: extend the line prefixes with more characters, or include an adjacent line that exists only at the intended location.\n    - SKIP tail not found: make sure the tail lines really appear after the head.\n    - You MUST use replace_in_file for editing existing files. If replace_in_file cannot complete the affected operation, stop and wait for the user to decide whether command-line tools are authorized for a task specified by the user. If the user already gave that authorization for the specified task, it remains valid; risk assessment and requires_approval are unchanged.\n    - Always re-read the file before retrying after a failed match."
           }
         },
         "required": [
@@ -62,7 +62,7 @@
         "properties": {
           "path": {
             "type": "string",
-            "description": "The path of the file to read (relative to the current working directory /workspace/project)"
+            "description": "The file path. Use `path` for the default workspace or `@workspace:path` to target a named workspace."
           },
           "start_line": {
             "type": "integer",
@@ -91,7 +91,7 @@
         "properties": {
           "path": {
             "type": "string",
-            "description": "The path of the directory to search in (relative to the current working directory /workspace/project). This directory will be recursively searched."
+            "description": "The directory path to search. Use `path` for the default workspace or `@workspace:path` to target a named workspace. This directory will be recursively searched."
           },
           "regex": {
             "type": "string",
@@ -121,7 +121,7 @@
         "properties": {
           "path": {
             "type": "string",
-            "description": "The path of the directory to list contents for."
+            "description": "The directory path to list. Use `path` for the default workspace or `@workspace:path` to target a named workspace."
           },
           "recursive": {
             "type": "boolean",
@@ -150,7 +150,7 @@
         "properties": {
           "path": {
             "type": "string",
-            "description": "The path of a directory (not a file) relative to the current working directory /workspace/project. Lists definitions across all source files in that directory. To inspect a single file, use read_file instead."
+            "description": "The directory path, not a file path. Use `path` for the default workspace or `@workspace:path` to target a named workspace. Lists definitions across all source files in that directory. To inspect a single file, use read_file instead."
           }
         },
         "required": [
@@ -164,14 +164,14 @@
     "type": "function",
     "function": {
       "name": "attempt_completion",
-      "description": "[TURN-END] Use this tool only when the user's current task is fully complete. It presents the final result and marks the task completed; it is not a progress update, partial result, plan, report, question, or ordinary conversation.\n\nBefore calling it, finish and verify all requested work. Summarize what was completed and the verification outcome.",
+      "description": "[TURN-END] Use this tool when the user's entire current task is complete and the relevant verification is consistent. A completed TODO list shows that the tracked phase is done; it does not by itself establish that the full user objective is complete.\n\nBefore calling, compare the result with the latest user instruction, approved scope, expected deliverables, success criteria, verification evidence, known blockers, and work discovered during execution. Do not use this tool for a progress update, intermediate milestone, completed phase checklist, context-window pressure, automatic compaction, partial result, plan, report, question, or ordinary conversation. If work still remains to satisfy the user's request, continue the task instead.",
       "strict": false,
       "parameters": {
         "type": "object",
         "properties": {
           "result": {
             "type": "string",
-            "description": "A clear, specific, brief one- or two-paragraph summary of the final result, including what was completed and the relevant verification outcome."
+            "description": "Write a clear, readable completion report adapted to the task.\n\n- Start with the actual outcome and what was delivered.\n- Use short descriptive headings, paragraphs, or bullet lists when they make the result easier to scan. Avoid an unbroken wall of text.\n- Include relevant details about the completed work, verification performed and its results, material problems and their resolutions, and known remaining issues, risks, limitations, or unverified claims.\n- Keep simple results brief. Use more structure when the task has multiple distinct outcomes or findings, without creating empty boilerplate sections or following a fixed template.\n- State failed, skipped, or unavailable verification explicitly rather than implying that it passed.\n- Do not hide known failures, blockers, incomplete work, or unresolved risks. If work still appears unfinished, continue the task instead of calling `attempt_completion`."
           }
         },
         "required": [
@@ -263,7 +263,7 @@
           },
           "workdirectory": {
             "type": "string",
-            "description": "Optional directory in which to execute the command. Relative paths are resolved from /workspace/project. The directory must already exist. A directory outside every project root requires user approval."
+            "description": "Optional directory in which to execute the command. Use `path` for the default workspace or `@workspace:path` to target a named workspace. The directory must already exist. A directory outside every project root requires user approval."
           },
           "requires_approval": {
             "type": "boolean",

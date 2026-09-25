@@ -16,6 +16,7 @@ import {
 	type SnapshotProfile,
 	type SnapshotTransport,
 } from "./profile-snapshot-cases"
+import { assertPromptContent } from "./snapshot-content"
 
 const UPDATE_NEW_SNAPSHOTS = process.env.UPDATE_NEW_PROMPT_SNAPSHOTS === "true"
 const SNAPSHOTS_ROOT = path.join(__dirname, "__snapshots__")
@@ -73,6 +74,7 @@ const BASE_CONTEXT = {
 } as SystemPromptContext
 
 async function assertCompleteSnapshot(name: string, content: string): Promise<void> {
+	assertPromptContent(name, content)
 	const snapshotPath = path.join(SNAPSHOTS_DIR, name)
 	if (UPDATE_NEW_SNAPSHOTS) {
 		await fs.writeFile(snapshotPath, content, "utf-8")
@@ -149,7 +151,6 @@ describe("complete explicit-profile snapshot matrix", () => {
 			.map((entry) => entry.name)
 			.sort()
 		expect(generatedNames).toEqual(expectedSnapshotNames())
-		expect(generatedNames).toHaveLength(60)
 	})
 
 	for (const profile of SNAPSHOT_PROFILES) {
@@ -162,107 +163,6 @@ describe("complete explicit-profile snapshot matrix", () => {
 
 					expect(generated.profile).toBe(profile)
 					expect(generated.warnings).toEqual([])
-					expect(generated.systemPrompt).not.toContain("\n====\n")
-					expect(generated.systemPrompt).toContain(profile === "standard" ? "# TOOL USE" : "# TOOLS")
-					expect(generated.systemPrompt.match(/^## Explicit Instructions$/gm)).toHaveLength(1)
-					expect(generated.systemPrompt.match(/^# ACT MODE V\.S\. PLAN MODE(?: \(STRICT\))?$/gm)).toHaveLength(1)
-					expect(generated.systemPrompt).toContain("# CAPABILITIES")
-					expect(generated.systemPrompt).not.toMatch(/^# SKILLS$/gm)
-					expect(generated.systemPrompt).toContain("# USER'S CUSTOM INSTRUCTIONS")
-					expect(generated.systemPrompt).toContain("## Workflows\n")
-					expect(generated.systemPrompt).toContain(
-						"Workflows provide reusable, ordered procedures for multi-step operations",
-					)
-					expect(generated.systemPrompt).toContain("The Workflows available to the current task are listed below:")
-					expect(generated.systemPrompt).toContain("- `release`: Run the release workflow.")
-					expect(
-						generated.systemPrompt.indexOf("The Workflows available to the current task are listed below:"),
-					).toBeLessThan(generated.systemPrompt.indexOf("- `release`: Run the release workflow."))
-					if (profile === "standard") {
-						expect(generated.systemPrompt.match(/^## Skills$/gm)).toHaveLength(1)
-						expect(generated.systemPrompt).toContain(
-							"Skills provide task-specific methods, constraints, and best practices",
-						)
-						expect(generated.systemPrompt).toContain("The Skills available to the current task are listed below:")
-						expect(generated.systemPrompt).toContain("Use `load_skill` once")
-						expect(generated.systemPrompt).toContain("Use `load_workflow` once")
-						expect(generated.systemPrompt).not.toContain("use_skill")
-					} else {
-						expect(generated.systemPrompt).not.toMatch(/^## Skills$/gm)
-						expect(generated.systemPrompt).not.toContain("load_skill")
-						expect(generated.systemPrompt).not.toContain("load_workflow")
-					}
-					if (snapshotCase.id === "no-mcp") {
-						expect(generated.systemPrompt).not.toContain("## MCP")
-					} else {
-						expect(generated.systemPrompt).toContain("## MCP\n")
-						expect(generated.systemPrompt).toContain("MCP tools connect Dline to external services")
-						const mcpListIntroduction =
-							profile === "standard"
-								? "The MCP tools available to the current task are listed below:"
-								: "The connected MCP tools known to the current task are listed below:"
-						expect(generated.systemPrompt).toContain(mcpListIntroduction)
-						expect(generated.systemPrompt).toContain("- `Snapshot MCP.echo`: Returns the complete provided text.")
-						expect(generated.systemPrompt.indexOf(mcpListIntroduction)).toBeLessThan(
-							generated.systemPrompt.indexOf("- `Snapshot MCP.echo`: Returns the complete provided text."),
-						)
-						if (profile === "standard") {
-							expect(generated.systemPrompt).toContain("Use `load_mcp` to inspect")
-						} else {
-							expect(generated.systemPrompt).not.toContain("`load_mcp`")
-							expect(generated.systemPrompt).not.toContain("`use_mcp_tool`")
-						}
-					}
-					if (profile === "lite" || snapshotCase.id === "no-subagents") {
-						expect(generated.systemPrompt).not.toContain("## Subagents")
-					} else {
-						expect(generated.systemPrompt).toContain("## Subagents\n")
-						expect(generated.systemPrompt).toContain("Subagents delegate self-contained research or analysis")
-						expect(generated.systemPrompt).toContain("Use `use_subagents` for one to five parallel default subtasks.")
-						expect(generated.systemPrompt).toContain("The Subagents available to the current task are listed below:")
-						expect(generated.systemPrompt).toContain("- `reviewer`: Review implementation changes.")
-					}
-					expect(generated.systemPrompt).toContain("Local Dline rules.")
-					expect(generated.systemPrompt).toContain("Local Cursor rules.")
-					expect(generated.systemPrompt).toContain("Local agent rules.")
-					if (transport === "xml" && profile !== "lite") {
-						expect(generated.systemPrompt).toContain("## spawn_task")
-						expect(generated.systemPrompt).toContain("<spawn_task>")
-					}
-					if (snapshotCase.id === "no-image") {
-						expect(generated.systemPrompt).not.toContain("generate_image")
-						expect(serializeTools(generated.tools)).not.toContain('"generate_image"')
-					} else if (transport === "native") {
-						expect(serializeTools(generated.tools)).toContain('"generate_image"')
-					} else {
-						expect(generated.systemPrompt).toContain("## generate_image")
-					}
-					if (profile === "lite") {
-						for (const toolName of [
-							"spawn_task",
-							"use_subagent",
-							"use_subagents",
-							"find_references",
-							"rename",
-							"replace_text",
-							"browser_action",
-							"web_fetch",
-							"web_search",
-						]) {
-							expect(generated.systemPrompt).not.toContain(toolName)
-							expect(serializeTools(generated.tools)).not.toContain(`"${toolName}"`)
-						}
-					} else if (transport === "native") {
-						const tools = serializeTools(generated.tools)
-						expect(tools).toContain('"spawn_task"')
-						if (snapshotCase.id === "no-subagents") {
-							expect(tools).not.toContain('"use_subagent"')
-							expect(tools).not.toContain('"use_subagents"')
-						} else {
-							expect(tools).toContain('"use_subagent"')
-							expect(tools).toContain('"use_subagents"')
-						}
-					}
 					await assertCompleteSnapshot(
 						profileSnapshotName(profile, transport, snapshotCase.id, "prompt"),
 						generated.systemPrompt,

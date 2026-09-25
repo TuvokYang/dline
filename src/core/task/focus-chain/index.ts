@@ -208,7 +208,7 @@ export class FocusChainManager {
 				return `\n
 				${listCurrentProgress}\n
 				${noteChecklistInEnv}\n
-				${FocusChainPrompts.completed.replace("{{totalItems}}", totalItems.toString())}\n
+				${FocusChainPrompts.completed(totalItems)}\n
 				`
 			}
 
@@ -434,7 +434,7 @@ export class FocusChainManager {
 					// - [ ] text mismatch — warn but don't block tools
 					const examples = extractExampleItems(previousList, 3)
 					const exampleStr = examples.join("\n")
-					const msg = FocusChainPrompts.inProgressMismatchRejected.replace("{{examples}}", exampleStr)
+					const msg = FocusChainPrompts.inProgressMismatchRejected(exampleStr)
 					this.taskState.consecutiveMistakeCount++
 					Logger.warn(`[Task ${this.taskId}] focus chain: In-progress item mismatch.`)
 					this.taskState.focusChainRejectionMessage = msg
@@ -465,9 +465,7 @@ export class FocusChainManager {
 				const unmatchedStr = unmatchedItems.map((i) => `- ${i}`).join("\n")
 				const examples = extractExampleItems(previousList, 3)
 				const exampleStr = examples.join("\n")
-				const msg = FocusChainPrompts.itemMismatchRejected
-					.replace("{{unmatchedItems}}", unmatchedStr)
-					.replace("{{examples}}", exampleStr)
+				const msg = FocusChainPrompts.itemMismatchRejected(unmatchedStr, exampleStr)
 				Logger.warn(
 					`[Task ${this.taskId}] focus chain: Item mismatch — ${unmatchedItems.length} items not found in checklist. Blocking next tools.`,
 				)
@@ -531,7 +529,7 @@ export class FocusChainManager {
 					this.taskState.consecutiveMistakeCount++
 					const examples = extractExampleItems(previousList, 3)
 					const exampleStr = examples.join("\n")
-					const msg = FocusChainPrompts.skipOrderRejected.replace("{{examples}}", exampleStr)
+					const msg = FocusChainPrompts.skipOrderRejected(exampleStr)
 					Logger.warn(`[Task ${this.taskId}] focus chain: Second skip-order violation — rejecting.`)
 					this.taskState.focusChainRejectionMessage = msg
 					await this.say(

@@ -1,4 +1,12 @@
 import { renderPrompt } from "@core/prompts/i18n"
+import {
+	FileLineIndex,
+	type LineRange,
+	type MatchTier,
+	matchSearchBlock,
+	type SearchMatch,
+	type SearchPattern,
+} from "./diff-matcher"
 
 const SEARCH_BLOCK_START = "------- SEARCH"
 const SEARCH_BLOCK_END = "======="
@@ -37,6 +45,14 @@ export interface ParsedBlock {
 	errorCode?: string
 	/** Full error message for API response (formatResponse.toolError) */
 	errorMessage?: string
+	/** 1-based inclusive last line of the replaced range, present on success */
+	endLine?: number
+	/** Original file lines replaced by this block, joined with "\n" without the final terminator */
+	matchedText?: string
+	/** Matching tier that located the block, present on success */
+	matchTier?: MatchTier
+	/** Lines deleted between the SKIP head and tail, 0 for ordinary blocks */
+	skippedLines?: number
 }
 
 /**
@@ -66,6 +82,8 @@ export const DIFF_ERROR_CODE = {
 	UNCLOSED_REPLACE: "UNCLOSED_REPLACE",
 	BLOCK_OVERLAP: "BLOCK_OVERLAP",
 	BLOCK_OUT_OF_ORDER: "BLOCK_OUT_OF_ORDER",
+	AMBIGUOUS_MATCH: "AMBIGUOUS_MATCH",
+	INVALID_SKIP_MARKER: "INVALID_SKIP_MARKER",
 	// StreamingDiffParser-only: real-time streaming detection
 	EXTRA_CLOSE_MARKER: "EXTRA_CLOSE_MARKER",
 	NESTED_SEARCH_MARKER: "NESTED_SEARCH_MARKER",
@@ -1216,47 +1234,44 @@ export async function constructNewFileContentV2(
 	return result
 }
 
-/**
- * Unified diff parser that produces ParsedBlock[] for both webview rendering
- * and file modification. Splits raw diff into individual SEARCH/REPLACE blocks
- * and merges with match results from constructNewFileContent.
- *
- * @param diffContent - Raw SEARCH/REPLACE diff string from the AI
- * @param originalContent - Current file content to match against
- * @param isFinal - Whether this is the final (non-partial) parse
- * @returns DiffResult with parsed blocks, new content, and errors
- */
-// ─── Match helpers (shared by constructNewFileContent and DiffParser) ────────
+// ─── SKIP ranges and match reporting (DiffParser) ───────────────────────────
 
-/**
- * Match SEARCH lines against original file content.
- * Uses 3-tier strategy: exact → line-trimmed → block-anchor.
- */
-function matchSearchInFile(
-	searchLines: string[],
-	originalContent: string,
-	lastProcessedIndex: number,
-): { matchStartIndex: number; matchEndIndex: number } | null {
-	if (searchLines.length === 0) return null
-	const searchContent = `${searchLines.join("\n")}\n`
+const SKIP_MARKER_SUFFIX = " SKIP"
+const MAX_REPORTED_CANDIDATE_LINES = 10
 
-	const exactIndex = originalContent.indexOf(searchContent, lastProcessedIndex)
-	if (exactIndex !== -1) {
-		return { matchStartIndex: exactIndex, matchEndIndex: exactIndex + searchContent.length }
-	}
-	const lineMatch = lineTrimmedFallbackMatch(originalContent, searchContent, lastProcessedIndex)
-	if (lineMatch) return { matchStartIndex: lineMatch[0], matchEndIndex: lineMatch[1] }
-	if (searchLines.length >= 3) {
-		const blockMatch = blockAnchorFallbackMatch(originalContent, searchContent, lastProcessedIndex)
-		if (blockMatch) return { matchStartIndex: blockMatch[0], matchEndIndex: blockMatch[1] }
-	}
-	return null
+const MATCH_TIER_LABELS: Record<MatchTier, string> = {
+	exact: "exact",
+	line_trim: "whitespace-tolerant",
+	line_prefix: "line-prefix",
+}
+
+/** SKIP marker of one block: as many dots as the block delimiter, then " SKIP". */
+export function skipMarkerFor(delimiterCount: number): string {
+	return `${".".repeat(delimiterCount)}${SKIP_MARKER_SUFFIX}`
+}
+
+function formatCandidateLines(lines: readonly number[]): string {
+	const listed = lines.slice(0, MAX_REPORTED_CANDIDATE_LINES).join(", ")
+	return lines.length > MAX_REPORTED_CANDIDATE_LINES ? `${listed}, …` : listed
 }
 
 /**
+ * Render REPLACE lines for a whole-line range, reusing the range's line break
+ * style and keeping a missing final newline missing.
+ */
+function formatReplacement(replaceLines: readonly string[], matchedSource: string): string {
+	const lineBreak = matchedSource.includes("\r\n") ? "\r\n" : "\n"
+	const replaceText = replaceLines.join(lineBreak)
+	if (replaceText === "") return ""
+	return matchedSource.endsWith("\n") ? `${replaceText}${lineBreak}` : replaceText
+}
+
+type BlockFailure = Pick<ParsedBlock, "errorCode" | "errorMessage">
+
+/**
  * Unified DiffParser — processes SEARCH/REPLACE diff line-by-line.
- * Blocks are matched and applied immediately on close. Unclosed blocks
- * and overlap checks are deferred to finalize().
+ * Blocks are located with line-aligned, whole-file-unique matching and applied
+ * immediately on close; unclosed blocks are reported by finalize().
  */
 export class DiffParser {
 	private state: "idle" | "search" | "replace" = "idle"
@@ -1273,6 +1288,10 @@ export class DiffParser {
 	private newContent = ""
 	private lastProcessedIndex = 0
 	private readonly isPartial: boolean
+	private readonly lineIndex: FileLineIndex
+	private readonly appliedRanges: Array<{ blockNumber: number; range: LineRange }> = []
+	/** Index of the SKIP marker within searchLines for the current block. */
+	private skipLineIndex: number | undefined
 
 	/** When true, idle-state lines are drained into the previous error block's rawText. */
 	private drainToPrevBlock = false
@@ -1285,6 +1304,7 @@ export class DiffParser {
 	constructor(originalContent: string, isPartial = false) {
 		this.originalContent = originalContent
 		this.isPartial = isPartial
+		this.lineIndex = new FileLineIndex(originalContent)
 	}
 
 	processLine(line: string): void {
@@ -1307,24 +1327,6 @@ export class DiffParser {
 		if (!this.isPartial && (this.state === "search" || this.state === "replace") && this.currentRawLines.length > 0) {
 			const errCode = this.state === "search" ? DIFF_ERROR_CODE.UNCLOSED_SEARCH : DIFF_ERROR_CODE.UNCLOSED_REPLACE
 			this.pushBlock(0, errCode)
-		}
-		// Overlap detection: if a failed block's searchText is contained within any
-		// previous successful block's searchText, it's an overlap (not SEARCH_NOT_FOUND).
-		for (let i = 1; i < this.blocks.length; i++) {
-			const curr = this.blocks[i]
-			if (!curr.hasError || !curr.searchText) continue
-			for (let j = 0; j < i; j++) {
-				const prev = this.blocks[j]
-				if (prev.hasError || !prev.searchText) continue
-				if (prev.searchText.includes(curr.searchText)) {
-					curr.errorCode = DIFF_ERROR_CODE.BLOCK_OVERLAP
-					curr.errorMessage = renderPrompt("replaceInFile", "diffBlockOverlap", {
-						BLOCK_INDEX: String(i + 1),
-						PREV_INDEX: String(j + 1),
-					})
-					break
-				}
-			}
 		}
 		// Append remaining original content
 		if (this.lastProcessedIndex < this.originalContent.length) {
@@ -1398,6 +1400,10 @@ export class DiffParser {
 				this.pushBlock(0, DIFF_ERROR_CODE.EMPTY_SEARCH_CONTENT_CONFLICT)
 				return
 			}
+			if (this.skipLineIndex !== undefined && this.skipLineIndex === this.searchLines.length - 1) {
+				this.pushBlock(0, DIFF_ERROR_CODE.INVALID_SKIP_MARKER)
+				return
+			}
 			this.state = "replace"
 			return
 		}
@@ -1410,6 +1416,14 @@ export class DiffParser {
 		if (isReplaceBlockEnd(trimmed, this.delimiterN)) {
 			this.pushBlock(0, DIFF_ERROR_CODE.MISSING_SEPARATOR)
 			return
+		}
+		if (trimmed === skipMarkerFor(this.delimiterN)) {
+			// A SKIP range needs a head before it; a second marker is ambiguous.
+			if (this.searchLines.length === 0 || this.skipLineIndex !== undefined) {
+				this.pushBlock(0, DIFF_ERROR_CODE.INVALID_SKIP_MARKER)
+				return
+			}
+			this.skipLineIndex = this.searchLines.length
 		}
 		this.searchLines.push(line)
 		this.currentWebviewLines.push(`- ${line}`)
@@ -1433,43 +1447,103 @@ export class DiffParser {
 			this.pushBlock(0, DIFF_ERROR_CODE.SEARCH_MARKER_IN_REPLACE)
 			return
 		}
+		if (trimmed === skipMarkerFor(this.delimiterN)) {
+			this.pushBlock(0, DIFF_ERROR_CODE.INVALID_SKIP_MARKER)
+			return
+		}
 		this.replaceLines.push(line)
 		this.currentWebviewLines.push(`+ ${line}`)
 	}
 
 	private completeBlock(): void {
-		const rawText = this.currentRawLines.join("\n")
-		const searchText = this.searchLines.join("\n")
-		const replaceText = this.replaceLines.join("\n")
-		const matchResult = matchSearchInFile(this.searchLines, this.originalContent, this.lastProcessedIndex)
-		if (matchResult) {
-			const startLine = getLineNumberFromCharIndex(this.originalContent, matchResult.matchStartIndex)
-			this.newContent += this.originalContent.slice(this.lastProcessedIndex, matchResult.matchStartIndex)
-			if (replaceText) this.newContent += `${replaceText}\n`
-			this.lastProcessedIndex = matchResult.matchEndIndex
-			this.blocks.push({
-				rawText,
-				searchText,
-				replaceText,
-				startLine,
-				hasError: false,
-				_matchStart: matchResult.matchStartIndex,
-				_matchEnd: matchResult.matchEndIndex,
-			} as any)
-		} else {
-			this.blocks.push({
-				rawText,
-				searchText,
-				replaceText,
-				startLine: 0,
-				hasError: true,
-				errorCode: DIFF_ERROR_CODE.SEARCH_NOT_FOUND,
-				errorMessage: renderPrompt("replaceInFile", "diffSearchNotFound", {
-					LINE_COUNT: String(this.searchLines.length),
-				}),
-			})
+		const blockText = {
+			rawText: this.currentRawLines.join("\n"),
+			searchText: this.searchLines.join("\n"),
+			replaceText: this.replaceLines.join("\n"),
 		}
+		const blockNumber = this.blockIndex + 1
+		const match = matchSearchBlock(this.lineIndex, this.searchPattern())
+		const failure =
+			match.kind === "unique" ? this.findRangeConflict(match.range, blockNumber) : this.describeMatchFailure(match)
+		if (failure || match.kind !== "unique") {
+			this.blocks.push({ ...blockText, startLine: 0, hasError: true, ...failure })
+			this.resetBlock()
+			return
+		}
+		this.applyReplacement(match.range, blockNumber)
+		this.blocks.push({
+			...blockText,
+			startLine: match.range.startLine,
+			endLine: match.range.endLine,
+			hasError: false,
+			matchedText: this.lineIndex.lineText(match.range),
+			matchTier: match.tier,
+			skippedLines: match.skippedLines,
+		})
 		this.resetBlock()
+	}
+
+	private searchPattern(): SearchPattern {
+		if (this.skipLineIndex === undefined) {
+			return { head: this.searchLines }
+		}
+		return {
+			head: this.searchLines.slice(0, this.skipLineIndex),
+			tail: this.searchLines.slice(this.skipLineIndex + 1),
+		}
+	}
+
+	private describeMatchFailure(match: Exclude<SearchMatch, { kind: "unique" }>): BlockFailure {
+		if (match.kind === "ambiguous") {
+			return {
+				errorCode: DIFF_ERROR_CODE.AMBIGUOUS_MATCH,
+				errorMessage: renderPrompt("replaceInFile", "diffSearchAmbiguous", {
+					MATCH_COUNT: String(match.candidateLines.length),
+					MATCH_MODE: MATCH_TIER_LABELS[match.tier],
+					LINE_NUMBERS: formatCandidateLines(match.candidateLines),
+				}),
+			}
+		}
+		if (match.part === "skip_tail") {
+			return {
+				errorCode: DIFF_ERROR_CODE.SEARCH_NOT_FOUND,
+				errorMessage: renderPrompt("replaceInFile", "diffSkipTailNotFound", { HEAD_LINE: String(match.headLine) }),
+			}
+		}
+		return {
+			errorCode: DIFF_ERROR_CODE.SEARCH_NOT_FOUND,
+			errorMessage: renderPrompt("replaceInFile", "diffSearchNotFound", { LINE_COUNT: String(this.searchLines.length) }),
+		}
+	}
+
+	/** Blocks must follow file order and never share lines with an applied block. */
+	private findRangeConflict(range: LineRange, blockNumber: number): BlockFailure | undefined {
+		const overlapped = this.appliedRanges.find(
+			(applied) => range.startIndex < applied.range.endIndex && range.endIndex > applied.range.startIndex,
+		)
+		if (overlapped) {
+			return {
+				errorCode: DIFF_ERROR_CODE.BLOCK_OVERLAP,
+				errorMessage: renderPrompt("replaceInFile", "diffBlockOverlap", {
+					BLOCK_INDEX: String(blockNumber),
+					PREV_INDEX: String(overlapped.blockNumber),
+				}),
+			}
+		}
+		if (range.startIndex < this.lastProcessedIndex) {
+			return {
+				errorCode: DIFF_ERROR_CODE.BLOCK_OUT_OF_ORDER,
+				errorMessage: renderPrompt("replaceInFile", "diffBlockOutOfOrder", { BLOCK_INDEX: String(blockNumber) }),
+			}
+		}
+		return undefined
+	}
+
+	private applyReplacement(range: LineRange, blockNumber: number): void {
+		this.newContent += this.originalContent.slice(this.lastProcessedIndex, range.startIndex)
+		this.newContent += formatReplacement(this.replaceLines, this.lineIndex.slice(range))
+		this.lastProcessedIndex = range.endIndex
+		this.appliedRanges.push({ blockNumber, range })
 	}
 
 	private pushBlock(startLine: number, errorCode: string): void {
@@ -1525,6 +1599,8 @@ export class DiffParser {
 				return renderPrompt("replaceInFile", "diffSearchMarkerInReplace")
 			case DIFF_ERROR_CODE.EMPTY_SEARCH_CONTENT_CONFLICT:
 				return renderPrompt("replaceInFile", "diffEmptySearchContentConflict")
+			case DIFF_ERROR_CODE.INVALID_SKIP_MARKER:
+				return renderPrompt("replaceInFile", "diffInvalidSkipMarker", { SKIP_MARKER: skipMarkerFor(n) })
 			default:
 				return `SEARCH/REPLACE error: ${code}`
 		}
@@ -1534,6 +1610,7 @@ export class DiffParser {
 	private resetBlock(): void {
 		this.state = "idle"
 		this.blockIndex++
+		this.skipLineIndex = undefined
 		this.searchLines = []
 		this.replaceLines = []
 		this.currentRawLines = []

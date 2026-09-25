@@ -3,9 +3,9 @@
 const prompts: Record<string, string> = {
 	main: `TOOL USE
 
-You have access to a set of tools that are executed upon the user's approval. 
-You can use one tool per message, and will receive the result of that tool use in the user's response. 
-You use tools step-by-step to accomplish a given task, with each tool use informed by the result of the previous tool use.
+You have access to a set of tools that are executed upon the user's approval.
+@PARALLEL_TOOL_POLICY@
+Tool results arrive after execution. Do not assume outcomes; dependent actions must wait for the results they depend on.
 
 You MUST use read_file, search_files, list_files, list_code_definition_names, and find_references for reading and searching files. You MUST use replace_in_file and write_to_file for creating and editing files. These dedicated tools make the intended paths, read scope, and modification boundary explicit, keeping the work reviewable and reducing unintended changes.
 

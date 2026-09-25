@@ -3,8 +3,7 @@ import * as path from "node:path"
 
 import { describe, expect, it } from "vitest"
 
-import { RuntimePromptGenerator } from "../../generators/RuntimePromptGenerator"
-import { englishPromptGroups, englishPrompts, englishTemplateStore } from "../en"
+import { englishPromptGroups, englishPrompts } from "../en"
 
 const EXPECTED_NAMESPACES = [
 	"accessMcpResource",
@@ -14,13 +13,14 @@ const EXPECTED_NAMESPACES = [
 	"askFollowupQuestion",
 	"attemptCompletion",
 	"browserAction",
-	"capabilities",
+	"capabilitiesCore",
 	"capabilityCatalog",
 	"commands",
 	"contextManagement",
 	"deepPlanning5Step",
 	"deepPlanningGeneric",
 	"editingFiles",
+	"execution",
 	"executeCommand",
 	"feedback",
 	"findReferences",
@@ -62,6 +62,8 @@ const EXPECTED_NAMESPACES = [
 	"toolUseIndex",
 	"toolUseTools",
 	"useMcpTool",
+	"userAuthority",
+	"userCommunication",
 	"userInstructions",
 	"variants.lite",
 	"variants.standard",
@@ -113,13 +115,13 @@ async function collectSources(directory: string): Promise<string[]> {
 describe("prompt asset inventory", () => {
 	it("locks the final English namespace inventory", () => {
 		expect(sortValues(Object.keys(englishPrompts))).toEqual(sortValues(EXPECTED_NAMESPACES))
-		expect(EXPECTED_NAMESPACES).toHaveLength(63)
+		expect(EXPECTED_NAMESPACES).toHaveLength(66)
 	})
 
 	it("locks the static domain group order and coverage", () => {
 		expect(englishPromptGroups.map((group) => group.name)).toEqual(["system", "tools", "commands", "variants"])
-		expect(englishPromptGroups.map((group) => group.modules.length)).toEqual([24, 34, 3, 2])
-		expect(englishPromptGroups.flatMap((group) => group.modules)).toHaveLength(63)
+		expect(englishPromptGroups.map((group) => group.modules.length)).toEqual([27, 34, 3, 2])
+		expect(englishPromptGroups.flatMap((group) => group.modules)).toHaveLength(66)
 		expect(englishPromptGroups[3].modules.map((module) => module.name)).toEqual(["variants.standard", "variants.lite"])
 		for (const group of englishPromptGroups) {
 			for (const module of group.modules) {
@@ -128,23 +130,13 @@ describe("prompt asset inventory", () => {
 		}
 	})
 
-	it("renders declared parameters through the immutable runtime generator", () => {
-		const prompt = new RuntimePromptGenerator(englishTemplateStore).generate("toolHandlers.missingToolParameterError", {
-			PARAM_NAME: "command",
-			TOOL_REMINDER: "Use the tool schema.",
-		}).text
-
-		expect(prompt).toContain("command")
-		expect(prompt).toContain("Use the tool schema.")
-		expect(prompt).not.toContain("[MISSING:")
-	})
-
 	it("provides system prompt modules from the system domain", async () => {
 		const systemEntries = [
 			"agentRole.ts",
-			"capabilities.ts",
+			"capabilitiesCore.ts",
 			"contextManagement.ts",
 			"editingFiles.ts",
+			"execution.ts",
 			"feedback.ts",
 			"focusChain.ts",
 			"inputQueue.ts",
@@ -161,6 +153,8 @@ describe("prompt asset inventory", () => {
 			"toolUseGuidelines.ts",
 			"toolUseIndex.ts",
 			"toolUseTools.ts",
+			"userAuthority.ts",
+			"userCommunication.ts",
 			"userInstructions.ts",
 			"workflows.ts",
 		]

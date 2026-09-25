@@ -48,7 +48,9 @@ export const toolPromptModules = [
 		standardCoordinateInstruction: createRuntimeContract("BROWSER_VIEWPORT_WIDTH", "BROWSER_VIEWPORT_HEIGHT"),
 	}),
 	defineLegacyModule("executeCommand", "tools", executeCommand, {
-		standardWorkdirectoryInstruction: createRuntimeContract("CWD"),
+		description: createRuntimeContract(),
+		workdirectoryInstruction: createRuntimeContract("WORKSPACE_PATH_RULE", "MULTI_ROOT_HINT"),
+		standardWorkdirectoryInstruction: createRuntimeContract("WORKSPACE_PATH_RULE", "MULTI_ROOT_HINT"),
 		standardTimeoutInstruction: createRuntimeContract("TERMINAL_COMMAND_TIMEOUT_SECONDS"),
 		clineIgnoreError: createRuntimeContract("PATH"),
 		permissionDeniedError: createRuntimeContract("REASON"),
@@ -63,9 +65,12 @@ export const toolPromptModules = [
 	defineLegacyModule("generateImage", "tools", generateImage),
 	defineLegacyModule("generateReport", "tools", generateReport),
 	defineLegacyModule("listCodeDefinitionNames", "tools", listCodeDefinitionNames, {
-		pathInstruction: createRuntimeContract("CWD", "MULTI_ROOT_HINT"),
+		pathInstruction: createRuntimeContract("WORKSPACE_PATH_RULE", "MULTI_ROOT_HINT"),
 	}),
-	defineLegacyModule("listFiles", "tools", listFiles),
+	defineLegacyModule("listFiles", "tools", listFiles, {
+		pathInstruction: createRuntimeContract("WORKSPACE_PATH_RULE", "MULTI_ROOT_HINT"),
+		standardPathInstruction: createRuntimeContract("WORKSPACE_PATH_RULE", "MULTI_ROOT_HINT"),
+	}),
 	defineLegacyModule("loadCapability", "tools", loadCapability),
 	defineLegacyModule("loadMcpDocumentation", "tools", loadMcpDocumentation, {
 		main: createRuntimeContract("MCP_SERVERS_PATH", "MCP_SETTINGS_FILE_PATH", "CONNECTED_SERVERS"),
@@ -75,7 +80,7 @@ export const toolPromptModules = [
 	defineLegacyModule("newTask", "tools", newTask),
 	defineLegacyModule("qnaRespond", "tools", qnaRespond),
 	defineLegacyModule("readFile", "tools", readFile, {
-		pathInstruction: createRuntimeContract("CWD", "MULTI_ROOT_HINT"),
+		pathInstruction: createRuntimeContract("WORKSPACE_PATH_RULE", "MULTI_ROOT_HINT"),
 	}),
 	defineLegacyModule("rename", "tools", rename, {
 		errorPrefix: createRuntimeContract("ERROR"),
@@ -88,6 +93,9 @@ export const toolPromptModules = [
 	defineLegacyModule("replaceInFile", "tools", replaceInFile, {
 		replaceInFileMissingDiffError: createRuntimeContract("REL_PATH"),
 		diffSearchNotFound: createRuntimeContract("LINE_COUNT"),
+		diffSearchAmbiguous: createRuntimeContract("MATCH_COUNT", "MATCH_MODE", "LINE_NUMBERS"),
+		diffSkipTailNotFound: createRuntimeContract("HEAD_LINE"),
+		diffInvalidSkipMarker: createRuntimeContract("SKIP_MARKER"),
 		diffDelimiterTooShort: createRuntimeContract("COUNT"),
 		diffDelimiterConflict: createRuntimeContract("BLOCK_TYPE", "COUNT", "CHAR"),
 		diffDelimiterMismatch: createRuntimeContract("SEARCH_N", "CLOSE_N"),
@@ -103,7 +111,7 @@ export const toolPromptModules = [
 		errorPrefix: createRuntimeContract("ERROR"),
 	}),
 	defineLegacyModule("searchFiles", "tools", searchFiles, {
-		pathInstruction: createRuntimeContract("CWD", "MULTI_ROOT_HINT"),
+		pathInstruction: createRuntimeContract("WORKSPACE_PATH_RULE", "MULTI_ROOT_HINT"),
 	}),
 	defineLegacyModule("spawnTask", "tools", spawnTask),
 	defineLegacyModule("statusUpdate", "tools", statusUpdate),
@@ -139,6 +147,7 @@ export const toolPromptModules = [
 		descriptionLine: createRuntimeContract("DESCRIPTION"),
 	}),
 	defineLegacyModule("writeToFile", "tools", writeToFile, {
+		pathInstruction: createRuntimeContract("WORKSPACE_PATH_RULE", "MULTI_ROOT_HINT"),
 		writeToFileBaseError: createRuntimeContract("REL_PATH"),
 		writeToFileContextWarning: createRuntimeContract("CONTEXT_USAGE_PERCENT"),
 		writeToFileCriticalFail: createRuntimeContract("CONSECUTIVE_FAILURES"),

@@ -9,9 +9,9 @@ const prompts: Record<string, string> = {
 
 # Next Steps
 
-If you have completed the user's task, use the attempt_completion tool. 
-If you require additional information from the user, use the ask_followup_question tool. 
-Otherwise, if you have not completed the task and do not need additional information, then proceed with the next step of the task. 
+If the entire user task appears complete after comparing the result with the latest request and Objective, use attempt_completion. A completed phase checklist alone is not enough.
+If progress depends on information or a decision only the user can provide, use ask_followup_question.
+Otherwise, continue with the next non-turn-ending step of the task. Do not use a progress summary, intermediate milestone, automatic compaction, or context pressure as a reason to finish.
 (This is an automated message, so do not respond to it conversationally.)`,
 	tooManyMistakes:
 		"You seem to be having trouble proceeding. The user has provided the following feedback to help guide you:\n<feedback>\n@FEEDBACK@\n</feedback>",
@@ -38,15 +38,15 @@ Always adhere to this format for all tool uses to ensure proper parsing and exec
 
 	// AttemptCompletionHandler
 	doubleCheckVerification:
-		"Before completing, re-verify your work against the original task requirements. Check that:\n" +
-		"1. All requested changes have been made\n" +
-		"2. No steps were skipped or partially completed\n" +
-		"3. Edge cases and error handling are addressed\n" +
-		"4. The solution matches what was asked for, not just what was convenient\n" +
-		"5. Output files contain exactly what was specified--no extra columns, fields, debug output, or commentary\n" +
-		"6. If the task specifies numerical thresholds or accuracy targets, verify your result meets the criteria. If close but not passing, iterate rather than declaring completion" +
+		"Before completing, compare the current result with the original task and the latest user instructions again. Consider:\n" +
+		"1. Whether the user-visible outcome and expected deliverables are complete\n" +
+		"2. Whether the completed checklist covered the full Objective or only one phase\n" +
+		"3. Whether any work discovered during execution still needs attention\n" +
+		"4. Whether the relevant verification supports the claims you plan to make\n" +
+		"5. Whether known failures, skipped checks, blockers, limitations, or remaining risks are stated honestly\n" +
+		"6. Whether the final result will be easy to scan without forcing a fixed heading template" +
 		"@TASK_SECTION@" +
-		"\n\nIf everything checks out, call attempt_completion again with your final result.",
+		"\n\nIf work still remains, continue the task and create the next checklist when the current phase is complete. If the entire task is complete, call attempt_completion again with a clear, readable result that does not hide known problems or unverified claims.",
 
 	attemptCompletionNotificationSubtitle: "Task Completed",
 

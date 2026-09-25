@@ -292,17 +292,17 @@ export const formatResponse = {
 	clineRulesLocalFileInstructions: (workspaceName: string, content: string) =>
 		generateResponse("clineRulesLocalFileInstructions", { WORKSPACE_NAME: workspaceName, CONTENT: content }),
 
-	windsurfRulesLocalFileInstructions: (cwd: string, content: string) =>
-		generateResponse("windsurfRulesLocalFileInstructions", { CWD: cwd.toPosix(), CONTENT: content }),
+	windsurfRulesLocalFileInstructions: (workspaceName: string, content: string) =>
+		generateResponse("windsurfRulesWorkspaceInstructions", { WORKSPACE_NAME: workspaceName, CONTENT: content }),
 
-	cursorRulesLocalFileInstructions: (cwd: string, content: string) =>
-		generateResponse("cursorRulesLocalFileInstructions", { CWD: cwd.toPosix(), CONTENT: content }),
+	cursorRulesLocalFileInstructions: (workspaceName: string, content: string) =>
+		generateResponse("cursorRulesWorkspaceFileInstructions", { WORKSPACE_NAME: workspaceName, CONTENT: content }),
 
-	cursorRulesLocalDirectoryInstructions: (cwd: string, content: string) =>
-		generateResponse("cursorRulesLocalDirInstructions", { CWD: cwd.toPosix(), CONTENT: content }),
+	cursorRulesLocalDirectoryInstructions: (workspaceName: string, content: string) =>
+		generateResponse("cursorRulesWorkspaceDirInstructions", { WORKSPACE_NAME: workspaceName, CONTENT: content }),
 
-	agentsRulesLocalFileInstructions: (cwd: string, content: string) =>
-		generateResponse("agentsRulesLocalFileInstructions", { CWD: cwd.toPosix(), CONTENT: content }),
+	agentsRulesLocalFileInstructions: (workspaceName: string, content: string) =>
+		generateResponse("agentsRulesWorkspaceInstructions", { WORKSPACE_NAME: workspaceName, CONTENT: content }),
 
 	fileContextWarning: (editedFiles: string[]): string => {
 		const fileCount = editedFiles.length

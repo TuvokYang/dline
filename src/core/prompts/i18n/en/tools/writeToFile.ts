@@ -4,7 +4,7 @@ const prompts: Record<string, string> = {
 		"Request to write content to a NEW file at the specified path. Use this tool ONLY for creating files that do not already exist. For editing existing files, always use replace_in_file. This tool will automatically create any directories needed to write the file.",
 	standardDescription:
 		"[IMPORTANT: Always output the absolutePath first] Request to write content to a NEW file at the specified path. Use this tool ONLY for creating files that do not already exist. For editing existing files, always use replace_in_file. This tool will automatically create any directories needed to write the file.",
-	pathInstruction: `The path of the file to write to (relative to the current working directory {{CWD}}){{MULTI_ROOT_HINT}}`,
+	pathInstruction: `The file path. @WORKSPACE_PATH_RULE@@MULTI_ROOT_HINT@`,
 	pathUsage: "File path here",
 	standardPathInstruction: "The absolute path to the file to write to.",
 	contentInstruction:

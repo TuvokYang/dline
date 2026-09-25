@@ -16,7 +16,7 @@ export const FocusChainPrompts = {
 	planModeReminder: renderPrompt("focusChain", "planModeReminder", {
 		REMINDER: reminder,
 	}),
-	completed: getPrompt("focusChain", "completed"),
+	completed: (totalItems: number) => renderPrompt("focusChain", "completed", { TOTAL_ITEMS: totalItems }),
 	apiRequestCount: (count: number) =>
 		renderPrompt("focusChain", "apiRequestCount", {
 			API_REQUEST_COUNT: count,
@@ -25,10 +25,12 @@ export const FocusChainPrompts = {
 	tamperingRejected: getPrompt("focusChain", "tamperingRejected"),
 	titleRequired: getPrompt("focusChain", "titleRequired"),
 	uncheckedItemRequired: getPrompt("focusChain", "uncheckedItemRequired"),
-	skipOrderRejected: getPrompt("focusChain", "skipOrderRejected"),
+	skipOrderRejected: (examples: string) => renderPrompt("focusChain", "skipOrderRejected", { EXAMPLES: examples }),
 	skipOrderWarning: getPrompt("focusChain", "skipOrderWarning"),
-	itemMismatchRejected: getPrompt("focusChain", "itemMismatchRejected"),
-	inProgressMismatchRejected: getPrompt("focusChain", "inProgressMismatchRejected"),
+	itemMismatchRejected: (unmatchedItems: string, examples: string) =>
+		renderPrompt("focusChain", "itemMismatchRejected", { UNMATCHED_ITEMS: unmatchedItems, EXAMPLES: examples }),
+	inProgressMismatchRejected: (examples: string) =>
+		renderPrompt("focusChain", "inProgressMismatchRejected", { EXAMPLES: examples }),
 	allCompletedAlready: getPrompt("focusChain", "allCompletedAlready"),
 	attemptCompletionBlocked: getPrompt("focusChain", "attemptCompletionBlocked"),
 }

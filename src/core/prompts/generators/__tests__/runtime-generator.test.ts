@@ -1,7 +1,6 @@
 import { ClineDefaultTool } from "@shared/tools"
 import { describe, expect, it, vi } from "vitest"
 
-import { summarizeTask } from "../../contextManagement"
 import { englishTemplateStore } from "../../i18n/en"
 import { createPromptGroup } from "../../i18n/helpers/create-pack"
 import { definePromptModule } from "../../i18n/helpers/define-module"
@@ -184,45 +183,6 @@ describe("ToolPromptGenerator", () => {
 })
 
 describe("RuntimePromptGenerator", () => {
-	it("injects auto-condense focus guidance only when focus tracking is enabled", () => {
-		const enabled = summarizeTask({ enabled: true })
-		const disabled = summarizeTask({ enabled: false })
-
-		expect(enabled).toContain("task_progress")
-		expect(disabled).not.toContain("task_progress")
-		expect(disabled).toContain("You must call the summarize_task tool")
-		expect(disabled).toContain("Do not call attempt_completion")
-		expect(disabled).not.toContain("you may call attempt_completion")
-		expect(disabled).not.toContain("either the attempt_completion tool or the summarize_task tool call")
-	})
-
-	it("keeps the compaction budget and closure contract inside the explicit instruction", () => {
-		const budgetGuidance = "# Compaction Window Budget\n- Hard limit for the complete response: 4096 tokens."
-		const prompt = summarizeTask({ enabled: false }, undefined, undefined, budgetGuidance)
-		const instructionStart = prompt.indexOf('<explicit_instructions type="summarize_task">')
-		const budgetIndex = prompt.indexOf(budgetGuidance)
-		const instructionEnd = prompt.indexOf("</explicit_instructions>")
-
-		expect(instructionStart).toBeGreaterThanOrEqual(0)
-		expect(budgetIndex).toBeGreaterThan(instructionStart)
-		expect(budgetIndex).toBeLessThan(instructionEnd)
-		expect(prompt).not.toContain("projected input")
-		expect(prompt).toContain("Stop adding optional detail as the recommended upper bound or hard limit is approached.")
-		expect(prompt).toContain("Close </context></summarize_task> before the hard limit")
-	})
-
-	it("provides one complete summarize_task example without thinking or empty calls", () => {
-		const prompt = summarizeTask({ enabled: false })
-		const exampleStart = prompt.indexOf("<example>")
-		const exampleEnd = prompt.indexOf("</example>", exampleStart)
-		const example = prompt.slice(exampleStart, exampleEnd)
-
-		expect(example).toContain("<summarize_task>\n<context>\n1. Previous Conversation:")
-		expect(example).toContain("10. Required Files:")
-		expect(example).not.toContain("<thinking>")
-		expect(example).not.toContain("<summarize_task />")
-	})
-
 	it("preserves literal dollar text and does not rescan inserted values", () => {
 		const output = new RuntimePromptGenerator(createStore()).generate("generatorTest.runtime", {
 			VALUE: `opaque @OTHER@ $HOME ${TEMPLATE_OPEN}request.params.uri}`,

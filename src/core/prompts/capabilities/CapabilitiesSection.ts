@@ -1,3 +1,4 @@
+import { ClineDefaultTool } from "@shared/tools"
 import { getPrompt } from "../i18n"
 import { PromptProfile } from "../profiles/types"
 import { assemblePromptFragments } from "../system-prompt/assembly/prompt-fragment-assembler"
@@ -115,13 +116,27 @@ export function renderCapabilitiesSection(
 /** Render only capability groups whose invocation tools are available in the current prompt context. */
 export function renderCapabilitiesForContext(
 	snapshot: CapabilitiesSnapshot,
-	context: { readonly profile: PromptProfile; readonly subagentsEnabled?: boolean },
+	context: {
+		readonly profile: PromptProfile
+		readonly subagentsEnabled?: boolean
+		readonly disableTools?: readonly ClineDefaultTool[]
+	},
 ): string {
 	const exclude: CapabilitySource[] = []
 	if (context.profile === PromptProfile.Lite) {
 		exclude.push("skills", "subagents")
-	} else if (context.subagentsEnabled !== true) {
-		exclude.push("subagents")
+	} else {
+		const disabled = new Set(context.disableTools ?? [])
+		if (disabled.has(ClineDefaultTool.LOAD_SKILL)) exclude.push("skills")
+		if (disabled.has(ClineDefaultTool.LOAD_WORKFLOW)) exclude.push("workflows")
+		if (disabled.has(ClineDefaultTool.LOAD_MCP) || disabled.has(ClineDefaultTool.MCP_USE)) exclude.push("mcp")
+		if (
+			context.subagentsEnabled !== true ||
+			disabled.has(ClineDefaultTool.USE_SUBAGENT) ||
+			disabled.has(ClineDefaultTool.USE_SUBAGENTS)
+		) {
+			exclude.push("subagents")
+		}
 	}
 	return renderCapabilitiesSection(snapshot, { exclude, profile: context.profile })
 }

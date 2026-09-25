@@ -22,7 +22,8 @@ export interface SystemPromptConfig extends SystemSectionContentConfig {
 }
 
 const COMPLETE_TEMPLATE_ENV_KEYS = [
-	"CWD",
+	"WORKSPACE_NAMES",
+	"WORKSPACE_PATH_RULE",
 	"BROWSER_SUPPORT",
 	"YOLO_ASK_TEXT",
 	"BROWSER_CAPABILITIES",
@@ -31,9 +32,6 @@ const COMPLETE_TEMPLATE_ENV_KEYS = [
 	"OS",
 	"IDE",
 	"SHELL",
-	"HOME_DIR",
-	"WORKSPACE_TITLE",
-	"WORKING_DIR",
 	"PARALLEL_TOOLS_RULE",
 	"BROWSER_WAIT_RULES",
 	"MCP_RULE",
@@ -76,7 +74,10 @@ export function createSystemPromptConfig(context: SystemPromptContext): SystemPr
 		transport: context.enableNativeToolCalls === true ? "native" : "xml",
 		parallelTools: context.enableParallelToolCalling === true,
 		mcpEnabled: servers.some((server) => server.status === "connected" && server.disabled !== true),
-		browserEnabled: context.supportsBrowserUse === true && context.browserSettings?.disableToolUse !== true,
+		browserEnabled:
+			variant === PromptProfile.Standard &&
+			context.supportsBrowserUse === true &&
+			context.browserSettings?.disableToolUse !== true,
 		focusChainEnabled: variant === PromptProfile.Standard && context.focusChainSettings?.enabled === true,
 		subagentsEnabled: variant === PromptProfile.Standard && context.subagentsEnabled === true,
 		subagentRun: context.isSubagentRun === true,
@@ -122,17 +123,13 @@ export function prepareToolUseSection(config: SystemPromptConfig, baseSection: s
 
 export function prepareSystemRuntimeEnv(context: SystemPromptContext, config: SystemPromptConfig): PromptEnv {
 	const cwd = context.cwd ?? process.cwd()
-	const roots = context.workspaceRoots?.length ? context.workspaceRoots : [{ name: "primary", path: cwd }]
+	const cwdSegments = cwd.split(/[\\/]/).filter(Boolean)
+	const fallbackWorkspaceName = cwdSegments[cwdSegments.length - 1] || "workspace"
+	const roots = context.workspaceRoots?.length ? context.workspaceRoots : [{ name: fallbackWorkspaceName, path: cwd }]
+	const workspaceNames = roots.map((root) => root.name.replace(/[\r\n\t]+/g, " ").trim()).filter((name) => name.length > 0)
+	const visibleWorkspaceNames = workspaceNames.length > 0 ? workspaceNames : [fallbackWorkspaceName]
+	const workspaceList = visibleWorkspaceNames.map((name) => `\n- ${name}`).join("")
 	const multiRoot = context.isMultiRootEnabled === true && roots.length > 1
-	const rootLines = roots.map((root) => `\n  - ${root.name}: ${root.path}${root.vcs ? ` (${root.vcs})` : ""}`).join("")
-	const workingDir = multiRoot
-		? assemblePromptFragments(getPrompt("runtimeEnvironment", "multiRootWorkingDirectory"), {
-				ROOTS: rootLines,
-				CWD: cwd,
-			})
-		: context.isTesting
-			? "/Users/tester/dev/project"
-			: cwd
 	const customInstructions = [
 		context.preferredLanguageInstructions,
 		context.globalClineRulesFileInstructions,
@@ -145,11 +142,10 @@ export function prepareSystemRuntimeEnv(context: SystemPromptContext, config: Sy
 	]
 		.filter((value): value is string => Boolean(value))
 		.join("\n\n")
-	const toolRoots = context.workspaceRoots?.length
-		? context.workspaceRoots.map((root) => `${root.name}: ${root.path}${root.vcs ? ` (${root.vcs})` : ""}`).join("; ")
-		: cwd
 	const multiRootHint = multiRoot
-		? assemblePromptFragments(getPrompt("runtimeEnvironment", "multiRootHint"), { ROOTS: toolRoots })
+		? assemblePromptFragments(getPrompt("runtimeEnvironment", "multiRootHint"), {
+				NAMES: visibleWorkspaceNames.join(", "),
+			})
 		: ""
 	const browserSupport = config.browserEnabled ? getPrompt("runtimeEnvironment", "browserSupport") : ""
 	const browserCapabilities = config.browserEnabled ? getPrompt("runtimeEnvironment", "browserCapabilities") : ""
@@ -160,7 +156,8 @@ export function prepareSystemRuntimeEnv(context: SystemPromptContext, config: Sy
 	].join("")
 
 	return Object.freeze({
-		CWD: cwd,
+		WORKSPACE_NAMES: workspaceList,
+		WORKSPACE_PATH_RULE: getPrompt("runtimeEnvironment", "workspacePathRule"),
 		BROWSER_SUPPORT: browserSupport,
 		YOLO_ASK_TEXT: config.yoloModeEnabled ? "" : getPrompt("runtimeEnvironment", "yoloAskText"),
 		BROWSER_CAPABILITIES: browserCapabilities,
@@ -173,9 +170,6 @@ export function prepareSystemRuntimeEnv(context: SystemPromptContext, config: Sy
 			: process.platform === "win32"
 				? getShellForProfile(context.defaultTerminalProfile ?? "default")
 				: process.env.SHELL || "/bin/bash",
-		HOME_DIR: context.isTesting ? "/Users/tester" : process.env.HOME || process.env.USERPROFILE || "",
-		WORKSPACE_TITLE: getPrompt("runtimeEnvironment", multiRoot ? "workspaceRootsTitle" : "currentWorkingDirectoryTitle"),
-		WORKING_DIR: workingDir,
 		PARALLEL_TOOLS_RULE: config.parallelTools ? getPrompt("runtimeEnvironment", "parallelToolsRule") : "",
 		BROWSER_WAIT_RULES: config.browserEnabled ? getPrompt("rules", "browserWaitRules") : "",
 		MCP_RULE: "",

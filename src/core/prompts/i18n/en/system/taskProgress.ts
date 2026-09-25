@@ -65,106 +65,83 @@ The following is INVALID while the current checklist still has unchecked items b
 - [ ] Add signup page
 </task_progress>`,
 
-	standardFused: `# Updating Task Progress
+	standardFused: `# TODO LIST MANAGEMENT
 
-Use the \`task_progress\` parameter only when creating or updating TODO items. The current TODO list is stored by the runtime and shown in \`environment_details\`.
+The TODO list is the runtime-owned execution record for multi-step work. It keeps the agreed milestones, completed work, and current step visible in \`environment_details\`. Treat the stored list as the source of truth for checklist state. Use \`task_progress\` only to initialize the list or report actual status changes; omit it when nothing changed. Do not use it to rewrite the plan—structural changes go through \`change_todo_list\` and user approval.
 
-## Modes
+## Initialize the List
 
-### 1. Create the initial checklist
-
-Pass the complete checklist with a \`# Title\`, optional \`## Section\` headings, and at least one non-empty \`- [ ]\` item. Do this once at task start. This creates the TODO list and is not a progress update.
-
-### 2. Report progress during work — incremental update only
-
-The current checklist must already exist. Pass only exact items already present in the stored checklist. Report newly completed items with \`- [x]\`. You may also report exactly one unchanged existing \`- [ ]\` item, either by itself to identify the current work or after completed items to identify the next current work. Preserve strict item order.
-
-Do not repeat the full checklist during an ordinary incremental update, even when copying it without changes. An ordinary incremental update must not contain \`# Title\`, \`## Section\`, a new heading, or unrelated unchecked items. The explicit \`summarize_task\` operation is the only exception: it may request an ordered sequence of completed and subsequent unchecked items for continuation. Do not add, remove, reorder, rename, rephrase, or regroup checklist items. If the plan structure must change, stop using task_progress and request user authorization with \`change_todo_list\`.
-
-### 3. Continue after all items are complete
-
-When every item in the stored checklist is \`[x]\`, choose one action:
-
-- Pass a new complete checklist for a genuinely new phase.
-- Call \`attempt_completion\` with a summary of what was accomplished, the methods used, and the test or verification results.
-- Call \`generate_report\` with findings and analysis.
-- Call \`make_plan\` with the complete plan. In ACT MODE, do this only when the user explicitly requested a plan.
-
-A full checklist is allowed only for initial creation or after all items in the current checklist are complete. Submitting a full checklist while any current item remains \`[ ]\` is an unauthorized plan replacement and must be rejected.
-
-## Parameter Rules
-
-- Omit \`task_progress\` when no TODO item is being created or updated. Blank, whitespace-only, heading-only, or empty-checkbox values are ignored.
-- Send progress updates silently without announcing them.
-- Keep checklist items focused on milestones.
-- Complete items in strict order; do not skip unchecked items.
-- Do not deviate from the plan without user approval.
-- Provide \`task_progress\` as its own parameter, not inside another content or argument block.
-
-## Examples
+Pass a complete checklist with a \`# Title\`, optional \`## Section\` headings, and at least one non-empty \`- [ ]\` item. A complete checklist is allowed when creating the first list or after every item in the current list is \`[x]\` and a genuinely new phase is starting. If a current item remains \`[ ]\`, the runtime treats a complete checklist as an unauthorized replacement and rejects it.
 
 ### Initial creation
 
-Use this XML parameter form, with the complete Markdown checklist as its value:
+Provide this complete Markdown checklist as the \`task_progress\` value:
 
-\`\`\`xml
-<task_progress>
+\`\`\`markdown
 # Build React Application
 
 ## Set up project
 
 - [ ] Set up project structure
 - [ ] Install dependencies
-</task_progress>
 \`\`\`
 
-### Report completed items
+When every item in the stored checklist is \`[x]\`, compare the completed phase with the latest user request and the Objective before choosing the next action:
 
-Use this XML parameter form with the exact completed items:
-
-\`\`\`xml
-<task_progress>
-- [x] Set up project structure
-- [x] Install dependencies
-</task_progress>
-\`\`\`
-
-### Report current work only
-
-Use this XML parameter form with one exact existing unchecked item:
-
-\`\`\`xml
-<task_progress>
-- [ ] Create components
-</task_progress>
-\`\`\`
-
-### Report completed items and the next current item
-
-Use this XML parameter form with the exact completed items followed by one exact existing unchecked item:
-
-\`\`\`xml
-<task_progress>
-- [x] Set up project structure
-- [x] Install dependencies
-- [ ] Create components
-</task_progress>
-\`\`\`
+- If work remains to satisfy the user's request, pass a new complete checklist for the next phase and continue.
+- If progress depends on a decision only the user can make, ask one focused question.
+- If the user explicitly requested a plan or report for review, use the corresponding tool when it is ready.
+- Use \`attempt_completion\` when the entire current task is complete and the relevant verification is consistent.
 
 ### Start the next checklist
 
-When all current items are complete and work continues, use this XML parameter form for the next complete Markdown checklist:
+When all current items are complete and work continues, provide a new complete Markdown checklist:
 
-\`\`\`xml
-<task_progress>
+\`\`\`markdown
 # Add Features
 
 - [ ] Add login page
 - [ ] Add signup page
-</task_progress>
-\`\`\``,
+\`\`\`
 
-	paramInstruction: `Omit task_progress when no TODO item is being created or updated. When provided, it must contain at least one non-empty checklist item. During an existing checklist, send exact newly completed items and at most one exact current item; the current item may be sent by itself. Do not repeat the full checklist or change its structure. Use a full checklist only for initial creation or after all current items are complete and a new phase begins.`,
+## Update Progress
+
+The current checklist already exists. Pass only exact items present in the stored checklist. Report newly completed items with \`- [x]\`. You may also report exactly one unchanged existing \`- [ ]\` item, either by itself to identify the current work or after completed items to identify the next current work. Preserve strict item order and do not skip unchecked items.
+
+Do not repeat the complete checklist during an incremental update, even when copying it without changes. Do not include \`# Title\`, \`## Section\`, a new heading, or unrelated unchecked items. Omit \`task_progress\` when no TODO item is being created or updated; blank, whitespace-only, heading-only, or empty-checkbox values are ignored. Do not narrate the checklist edit itself, keep checklist items focused on milestones, and provide \`task_progress\` as its own parameter rather than inside another content or argument block.
+
+### Report completed items
+
+Provide only the exact completed items:
+
+\`\`\`markdown
+- [x] Set up project structure
+- [x] Install dependencies
+\`\`\`
+
+### Report current work only
+
+Provide one exact existing unchecked item:
+
+\`\`\`markdown
+- [ ] Create components
+\`\`\`
+
+### Report completed items and the next current item
+
+Provide the exact completed items followed by one exact current item:
+
+\`\`\`markdown
+- [x] Set up project structure
+- [x] Install dependencies
+- [ ] Create components
+\`\`\`
+
+## Change the Structure
+
+Do not add, remove, reorder, rename, rephrase, or regroup checklist items through \`task_progress\`. If the plan structure needs to change, stop using \`task_progress\` and request user authorization with \`change_todo_list\`. Continue to follow the stored list until the replacement is approved.`,
+
+	paramInstruction: `Omit task_progress when no TODO item is being created or updated. When provided, include at least one non-empty checklist item. During an existing checklist, send exact newly completed items and at most one exact current item; the current item may be sent by itself. Do not repeat the full checklist or change its structure. Use a full checklist only for initial creation or after all current items are complete and a new phase begins.`,
 }
 
 export default prompts

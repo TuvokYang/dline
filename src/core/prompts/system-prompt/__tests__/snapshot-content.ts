@@ -1,14 +1,14 @@
-const MISSING_PROMPT_MARKER = "[MISSING:"
+const INVALID_PROMPT_OUTPUT = [
+	{ reason: "missing prompt lookup", pattern: /\[MISSING:/ },
+	{ reason: "legacy placeholder", pattern: /\{\{[A-Za-z_][^}]*\}\}/ },
+	{ reason: "unresolved canonical token", pattern: /@[A-Z][A-Z0-9_]+@/ },
+] as const
 
-/**
- * Reject unresolved i18n markers before prompt content is compared or persisted.
- *
- * @param snapshotName Snapshot file name used for diagnostic context.
- * @param content Generated prompt or tool schema content.
- * @throws Error when the generated content contains an unresolved prompt marker.
- */
+/** Reject invalid replacements before generated prompt content is compared or persisted. */
 export function assertPromptContent(snapshotName: string, content: string): void {
-	if (content.includes(MISSING_PROMPT_MARKER)) {
-		throw new Error(`Refusing to use unresolved prompt content for snapshot: ${snapshotName}`)
+	for (const { reason, pattern } of INVALID_PROMPT_OUTPUT) {
+		if (pattern.test(content)) {
+			throw new Error(`Refusing to use prompt snapshot with ${reason}: ${snapshotName}`)
+		}
 	}
 }

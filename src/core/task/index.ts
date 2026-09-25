@@ -7346,16 +7346,19 @@ export class Task {
 		const [localCursorRulesFileInstructions, localCursorRulesDirInstructions] = await getLocalCursorRules(
 			this.cwd,
 			taskCapabilityToggles.localCursorRulesToggles,
+			workspaceName,
 		)
 		const localWindsurfRulesFileInstructions = await getLocalWindsurfRules(
 			this.cwd,
 			taskCapabilityToggles.localWindsurfRulesToggles,
+			workspaceName,
 		)
 
 		const localAgentsRulesFileInstructions = await getLocalAgentsRules(
 			this.cwd,
 			taskCapabilityToggles.localAgentsRulesToggles,
 			this.ignoreController,
+			workspaceName,
 		)
 		const localRulesLoadMs = Math.round(performance.now() - stageStartedAt)
 

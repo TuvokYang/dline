@@ -1,10 +1,5 @@
-import { ApiFormat, ServerTool } from "@shared/proto/dline/models/metadata"
 import { describe, expect, it, vi } from "vitest"
-import {
-	DISABLED_WEB_SEARCH_ROUTING_PLAN,
-	HOSTED_WEB_SEARCH_ROUTING_PLAN,
-	LOCAL_WEB_SEARCH_ROUTING_PLAN,
-} from "../../__tests__/web-search-routing-fixtures"
+import { LOCAL_WEB_SEARCH_ROUTING_PLAN } from "../../__tests__/web-search-routing-fixtures"
 import { PromptProfile } from "../../profiles/types"
 import { PromptScanner } from "../../template/PromptScanner"
 import { assemblePromptFragments } from "../assembly/prompt-fragment-assembler"
@@ -30,7 +25,7 @@ const BASE_CONTEXT: SystemPromptContext = {
 		viewport: { width: 1280, height: 800 },
 		disableToolUse: false,
 	},
-	capabilitiesSection: "  @CWD@ capability  ",
+	capabilitiesSection: "  capability catalog  ",
 	focusChainSettings: { enabled: true, remindClineInterval: 6 },
 	globalClineRulesFileInstructions: "Global project rules.",
 	preferredLanguageInstructions: "Preferred language: zh-CN.",
@@ -60,7 +55,7 @@ describe("canonical system prompt pipeline", () => {
 			transport: "xml",
 			parallelTools: true,
 			mcpEnabled: false,
-			browserEnabled: true,
+			browserEnabled: false,
 			focusChainEnabled: false,
 			subagentsEnabled: false,
 			subagentRun: false,
@@ -74,77 +69,14 @@ describe("canonical system prompt pipeline", () => {
 		expect(Object.isFrozen(config)).toBe(true)
 	})
 
-	it("adds hosted web search guidance only from the request routing plan", () => {
-		const context: SystemPromptContext = {
-			...BASE_CONTEXT,
-			webSearchRoutingPlan: HOSTED_WEB_SEARCH_ROUTING_PLAN,
-		}
-		const config = createSystemPromptConfig(context)
-		const env = prepareSystemRuntimeEnv(context, config)
-
-		expect(config.webToolsEnabled).toBe(true)
-		expect(config.localWebSearchEnabled).toBe(false)
-		expect(config.serverWebSearchEnabled).toBe(true)
-		expect(env.WEB_TOOLS_CAPABILITIES).toContain(
-			"Use web search only when the user explicitly requests external search or verification, or when the task cannot be completed reliably without external retrieval.",
-		)
-		expect(env.WEB_TOOLS_CAPABILITIES).toContain("Do not search merely because information may be current or recent.")
-		expect(env.WEB_TOOLS_CAPABILITIES).not.toContain("provider-hosted")
-		expect(env.WEB_TOOLS_CAPABILITIES).not.toContain("local executor")
-	})
-
-	it("does not infer hosted web search from model metadata without a request routing plan", () => {
-		const context: SystemPromptContext = {
-			...BASE_CONTEXT,
-			webSearchRoutingPlan: undefined,
-			providerInfo: {
-				...BASE_CONTEXT.providerInfo,
-				providerId: "metadata-driven-provider",
-				model: {
-					id: "metadata-driven-model",
-					info: {
-						id: "metadata-driven-model",
-						apiFormats: [ApiFormat.OPENAI_RESPONSES],
-						capabilities: { tools: [ServerTool.WEB_SEARCH] },
-					},
-				},
-			},
-		}
-		const config = createSystemPromptConfig(context)
-		const env = prepareSystemRuntimeEnv(context, config)
-
-		expect(config.serverWebSearchEnabled).toBe(false)
-		expect(config.localWebSearchEnabled).toBe(false)
-		expect(env.WEB_TOOLS_CAPABILITIES).not.toContain("Use web search only when")
-		expect(env.WEB_TOOLS_CAPABILITIES).not.toContain("local executor")
-	})
-
-	it("keeps local, hosted, and disabled web search guidance mutually exclusive", () => {
-		const local = prepareSystemRuntimeEnv(BASE_CONTEXT, createSystemPromptConfig(BASE_CONTEXT)).WEB_TOOLS_CAPABILITIES
-		const hostedContext = { ...BASE_CONTEXT, webSearchRoutingPlan: HOSTED_WEB_SEARCH_ROUTING_PLAN }
-		const hosted = prepareSystemRuntimeEnv(hostedContext, createSystemPromptConfig(hostedContext)).WEB_TOOLS_CAPABILITIES
-		const disabledContext = { ...BASE_CONTEXT, webSearchRoutingPlan: DISABLED_WEB_SEARCH_ROUTING_PLAN }
-		const disabled = prepareSystemRuntimeEnv(
-			disabledContext,
-			createSystemPromptConfig(disabledContext),
-		).WEB_TOOLS_CAPABILITIES
-
-		expect(local).toContain("local executor")
-		expect(local).not.toContain("Use web search only when")
-		expect(hosted).toContain("Use web search only when")
-		expect(hosted).not.toContain("provider-hosted")
-		expect(hosted).not.toContain("local executor")
-		expect(disabled).not.toContain("Use web search only when")
-		expect(disabled).not.toContain("local executor")
-	})
-
 	it("prepares one frozen complete runtime env before unresolved content preparation", () => {
 		const config = createSystemPromptConfig(BASE_CONTEXT)
 		const env = prepareSystemRuntimeEnv(BASE_CONTEXT, config)
 
 		expect(Object.isFrozen(env)).toBe(true)
 		expect(env).toMatchObject({
-			CWD: "/workspace/project",
+			WORKSPACE_NAMES: "\n- project",
+			WORKSPACE_PATH_RULE: "Use `path` for the default workspace or `@workspace:path` to target a named workspace.",
 			PARALLEL_TOOLS_RULE: expect.stringContaining("multiple tools"),
 			MCP_RULE: "",
 			CLARIFY_PERMISSION: expect.stringContaining("ask the user clarifying questions"),
@@ -154,15 +86,25 @@ describe("canonical system prompt pipeline", () => {
 			IDE: "TestIde",
 			SUBAGENT_TIMEOUT_SECONDS: "1200",
 		})
-		expect(Reflect.set(env, "CWD", "/mutated")).toBe(false)
+		expect(Reflect.set(env, "WORKSPACE_NAMES", "\n- mutated")).toBe(false)
+		expect(env).not.toHaveProperty("CWD")
+		expect(env).not.toHaveProperty("HOME_DIR")
 		expect(env).not.toHaveProperty("XML_TOOLS_SECTION")
 		expect(env).not.toHaveProperty("SUBAGENTS_GUIDANCE")
 		expect(env).not.toHaveProperty("FOCUS_CHAIN_EXAMPLE_BASH")
 
 		const sections = createStandardSystemSections(config)
-		expect(sections.get("rules")).toContain("@CWD@")
-		expect(sections.get("objective")).toContain("@PARALLEL_TOOL_POLICY@")
-		expect(env.CWD).toBe("/workspace/project")
+		const sectionIds: readonly string[] = [...sections.keys()]
+		expect(sectionIds).toEqual(SYSTEM_SECTION_IDS)
+		expect(sections.get("system-info")).toContain("@WORKSPACE_NAMES@")
+		expect(sections.get("execution")).toContain("@CLARIFY_RULE@")
+		expect(sections.get("objective")).toBeTruthy()
+		expect(sections.get("user-communication")).toBeTruthy()
+		expect(sectionIds.indexOf("user-communication")).toBe(sectionIds.indexOf("act-vs-plan") + 1)
+		expect(sectionIds.indexOf("tool-use")).toBe(sectionIds.indexOf("user-communication") + 1)
+		expect(sectionIds.indexOf("feedback")).toBe(sectionIds.indexOf("user-instructions") - 1)
+		expect(sectionIds).not.toContain("rules")
+		expect(sectionIds).not.toContain("todo")
 	})
 
 	it("reports PowerShell as the Windows default terminal shell", () => {
@@ -186,18 +128,19 @@ describe("canonical system prompt pipeline", () => {
 
 	it("assembles the stable unresolved template with exact-empty omission and no trimming", () => {
 		const sections = new Map<string, string>(SYSTEM_SECTION_IDS.map((sectionId) => [sectionId, ""] as const))
-		sections.set("agent-role", "  role @CWD@  ")
+		sections.set("agent-role", "  role @WORKSPACE_NAMES@  ")
 		sections.set("tool-use", "@XML_TOOLS_SECTION@")
 		sections.set("todo", "\n")
 
-		expect(assembleSystemPrompt(SYSTEM_SECTION_IDS, sections, "|")).toBe("  role @CWD@  |# @XML_TOOLS_SECTION@|\n")
+		expect(assembleSystemPrompt(SYSTEM_SECTION_IDS, sections, "|")).toBe("  role @WORKSPACE_NAMES@  |# @XML_TOOLS_SECTION@")
 	})
 
 	it("assembles tool content after env preparation without leaving structural slots", () => {
 		const config = createSystemPromptConfig(BASE_CONTEXT)
-		const section = prepareToolUseSection(config, "unused native section", "XML @CWD@ TOOLS")
+		const section = prepareToolUseSection(config, "unused native section", "XML @WORKSPACE_PATH_RULE@ TOOLS")
 
-		expect(section).toContain("XML @CWD@ TOOLS")
+		expect(section).toContain("XML @WORKSPACE_PATH_RULE@ TOOLS")
+		expect(section).toContain("@PARALLEL_TOOL_POLICY@")
 		expect(section).toContain("<task_progress>")
 		expect(section).not.toMatch(/@(TOOL_USE_[A-Z_]+|TOOLS_SECTION|FOCUS_[A-Z_]+|XML_TOOLS_SECTION|SUBAGENTS_GUIDANCE)@/)
 	})
@@ -213,8 +156,8 @@ describe("canonical system prompt pipeline", () => {
 
 	it("rejects env keys outside the static complete-template contract", () => {
 		expect(() =>
-			assembleSystemPrompt(["agent-role"], new Map([["agent-role", "@CWD@"]]), "|", {
-				CWD: "/workspace/project",
+			assembleSystemPrompt(["agent-role"], new Map([["agent-role", "@WORKSPACE_NAMES@"]]), "|", {
+				WORKSPACE_NAMES: "\n- project",
 				RUNTIME_ONLY_SURPRISE: "not contracted",
 			}),
 		).toThrowError(/undeclared-key/)
@@ -225,17 +168,17 @@ describe("canonical system prompt pipeline", () => {
 		const output = assembleSystemPrompt(
 			["agent-role", "tool-use"],
 			new Map([
-				["agent-role", "@CWD@"],
+				["agent-role", "@WORKSPACE_NAMES@"],
 				["tool-use", "@CUSTOM_INSTRUCTIONS@"],
 			]),
 			"|",
 			{
-				CWD: "/workspace/project",
-				CUSTOM_INSTRUCTIONS: "literal @CWD@",
+				WORKSPACE_NAMES: "\n- project",
+				CUSTOM_INSTRUCTIONS: "literal @WORKSPACE_NAMES@",
 			},
 		)
 
-		expect(output.text).toBe("/workspace/project|# literal @CWD@")
+		expect(output.text).toBe("\n- project|# literal @WORKSPACE_NAMES@")
 		expect(output.warnings).toEqual([])
 		expect(renderSpy).toHaveBeenCalledTimes(1)
 	})

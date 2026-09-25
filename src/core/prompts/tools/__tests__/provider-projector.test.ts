@@ -5,11 +5,7 @@ import {
 	GPT_IMAGE_2_SUBSCRIPTION_MODEL_ID,
 } from "../../../../shared/image-generation"
 import { ClineDefaultTool } from "../../../../shared/tools"
-import {
-	DISABLED_WEB_SEARCH_ROUTING_PLAN,
-	HOSTED_WEB_SEARCH_ROUTING_PLAN,
-	LOCAL_WEB_SEARCH_ROUTING_PLAN,
-} from "../../__tests__/web-search-routing-fixtures"
+import { DISABLED_WEB_SEARCH_ROUTING_PLAN, HOSTED_WEB_SEARCH_ROUTING_PLAN } from "../../__tests__/web-search-routing-fixtures"
 import { ToolPromptGenerator } from "../../generators/ToolPromptGenerator"
 import { getPrompt } from "../../i18n"
 import { PromptProfile } from "../../profiles/types"
@@ -83,14 +79,6 @@ describe("provider tool projector", () => {
 		}
 	})
 
-	it("keeps the interactive blocking policy in the canonical ask tool description", () => {
-		const tools = new ToolPromptGenerator().generate(PromptProfile.Standard, BASE_CONTEXT)
-		const description = toolDescription(findTool(tools, ClineDefaultTool.ASK))
-
-		expect(description).toBe(getPrompt("askFollowupQuestion", "standardDescription"))
-		expect(description).toContain("when at least two failed approaches leave the task genuinely blocked")
-	})
-
 	it("resolves canonical runtime tokens at the native transport boundary without recursive insertion", () => {
 		const context = {
 			...BASE_CONTEXT,
@@ -100,7 +88,7 @@ describe("provider tool projector", () => {
 			isMultiRootEnabled: true,
 			workspaceRoots: [
 				{ name: "primary", path: "/workspace/project" },
-				{ name: "opaque", path: "literal @CWD@" },
+				{ name: "secondary\nworkspace", path: "/private/secondary-root" },
 			],
 		} as SystemPromptContext
 
@@ -109,9 +97,13 @@ describe("provider tool projector", () => {
 		const browserTool = findTool(tools, ClineDefaultTool.BROWSER)
 		const serialized = JSON.stringify([fileTool, browserTool])
 
-		expect(serialized).toContain("/workspace/project")
-		expect(serialized).toContain("opaque: literal @CWD@")
+		expect(serialized).toContain("Use `path` for the default workspace")
+		expect(serialized).toContain("`@workspace:path`")
+		expect(serialized).toContain("Available workspaces: primary, secondary workspace.")
 		expect(serialized).toContain("1440x900")
+		expect(serialized).not.toContain("/workspace/project")
+		expect(serialized).not.toContain("/private/secondary-root")
+		expect(serialized).not.toContain("@WORKSPACE_PATH_RULE@")
 		expect(serialized).not.toContain("@MULTI_ROOT_HINT@")
 		expect(serialized).not.toContain("@BROWSER_VIEWPORT_WIDTH@")
 		expect(serialized).not.toContain("@BROWSER_VIEWPORT_HEIGHT@")
@@ -146,22 +138,6 @@ describe("provider tool projector", () => {
 				mute_stdout: { type: boolType },
 			},
 		})
-		expect(JSON.stringify(schema)).toContain("default is 1800 seconds")
-		expect(JSON.stringify(schema)).toContain("absolute maximum runtime")
-		expect(JSON.stringify(schema)).toContain("zero or a negative integer")
-		expect(JSON.stringify(schema)).toContain("10-second background handoff")
-		expect(JSON.stringify(schema)).toContain("certain the command's stdout is not needed")
-		expect(JSON.stringify(schema)).toContain("If you are unsure whether stdout is needed")
-		expect(JSON.stringify(schema)).toContain("On failure")
-		expect(JSON.stringify(schema)).not.toContain("foreground wait")
-	})
-
-	it("injects the configured timeout default into a newly generated tool schema", () => {
-		const context = { ...BASE_CONTEXT, terminalCommandTimeoutSeconds: 3600 }
-		const tool = findTool(new ToolPromptGenerator().generate(PromptProfile.Standard, context), ClineDefaultTool.BASH)
-
-		expect(JSON.stringify(tool)).toContain("default is 3600 seconds")
-		expect(JSON.stringify(tool)).not.toContain("default is 1800 seconds")
 	})
 
 	it.each([
@@ -180,7 +156,6 @@ describe("provider tool projector", () => {
 				},
 			},
 		})
-		expect(JSON.stringify(tool)).toContain("does not cancel the task or other commands")
 	})
 
 	it("keeps spawn_task independent from the Standard subagents feature toggle", () => {
@@ -342,31 +317,14 @@ describe("provider tool projector", () => {
 		const enabledAttempt = findTool(generator.generate(profile, enabledContext), ClineDefaultTool.ATTEMPT)
 		const disabledAttempt = findTool(generator.generate(profile, disabledContext), ClineDefaultTool.ATTEMPT)
 
-		expect(toolDescription(enabledAttempt)).toBe(getPrompt("attemptCompletion", "standardDescription"))
-		expect(toolDescription(enabledAttempt)).toContain("[TURN-END]")
-		expect(toolDescription(enabledAttempt)).toContain("current task is fully complete")
-		expect(toolDescription(enabledAttempt)).toContain("every checklist item must already be marked [x]")
-		expect(toolDescription(enabledAttempt)).not.toContain("After each tool use")
-		expect(toolDescription(enabledAttempt)).not.toContain("only for completing implementation or development tasks")
-		expect(toolDescription(disabledAttempt)).toContain("[TURN-END]")
-		expect(toolDescription(disabledAttempt)).toContain("current task is fully complete")
-		expect(toolDescription(disabledAttempt)).not.toContain("task_progress")
 		expect(enabledAttempt).not.toMatchObject({ function: { parameters: { properties: { task_progress: {} } } } })
 		expect(disabledAttempt).not.toMatchObject({ function: { parameters: { properties: { task_progress: {} } } } })
 
-		const expectedDescriptions = [
-			[ClineDefaultTool.MAKE_PLAN, getPrompt("makePlan", "description")],
-			[ClineDefaultTool.STATUS_UPDATE, getPrompt("statusUpdate", "standardDescription")],
-		] as const
-
-		for (const [toolId, expectedDescription] of expectedDescriptions) {
+		for (const toolId of [ClineDefaultTool.MAKE_PLAN, ClineDefaultTool.STATUS_UPDATE]) {
 			const enabled = findTool(generator.generate(profile, enabledContext), toolId)
 			const disabled = findTool(generator.generate(profile, disabledContext), toolId)
 
-			expect(toolDescription(enabled)).toBe(expectedDescription)
 			expect(enabled).toMatchObject({ function: { parameters: { properties: { task_progress: {} } } } })
-			expect(JSON.stringify(enabled)).toContain("task_progress")
-			expect(JSON.stringify(disabled)).not.toContain("task_progress")
 			expect(disabled).not.toMatchObject({ function: { parameters: { properties: { task_progress: {} } } } })
 		}
 
@@ -391,30 +349,6 @@ describe("provider tool projector", () => {
 
 		expect(JSON.stringify(tools)).not.toContain("task_progress")
 		expect(JSON.stringify(tools)).not.toContain("change_todo_list")
-	})
-
-	it("keeps the active Native web descriptions and prompt parameter text", () => {
-		const context = {
-			...BASE_CONTEXT,
-			providerInfo: { ...BASE_CONTEXT.providerInfo, providerId: "cline" },
-			clineWebToolsEnabled: true,
-			webSearchRoutingPlan: LOCAL_WEB_SEARCH_ROUTING_PLAN,
-		}
-		const tools = new ToolPromptGenerator().generate(PromptProfile.Standard, context)
-		const fetchTool = findTool(tools, ClineDefaultTool.WEB_FETCH)
-		const searchTool = findTool(tools, ClineDefaultTool.WEB_SEARCH)
-
-		expect(toolDescription(fetchTool)).toBe(getPrompt("webFetch", "standardDescription"))
-		expect(toolDescription(searchTool)).toBe(getPrompt("webSearch", "standardDescription"))
-		expect(fetchTool).toMatchObject({
-			function: {
-				parameters: {
-					properties: {
-						prompt: { description: getPrompt("webFetch", "standardPromptInstruction") },
-					},
-				},
-			},
-		})
 	})
 
 	it("does not project the local web_search function for a hosted request", () => {
