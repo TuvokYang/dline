@@ -97,9 +97,6 @@ describe("provider tool projector", () => {
 		const browserTool = findTool(tools, ClineDefaultTool.BROWSER)
 		const serialized = JSON.stringify([fileTool, browserTool])
 
-		expect(serialized).toContain("Use `path` for the default workspace")
-		expect(serialized).toContain("`@workspace:path`")
-		expect(serialized).toContain("Available workspaces: primary, secondary workspace.")
 		expect(serialized).toContain("1440x900")
 		expect(serialized).not.toContain("/workspace/project")
 		expect(serialized).not.toContain("/private/secondary-root")

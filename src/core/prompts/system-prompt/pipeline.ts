@@ -144,7 +144,7 @@ export function prepareSystemRuntimeEnv(context: SystemPromptContext, config: Sy
 		.join("\n\n")
 	const multiRootHint = multiRoot
 		? assemblePromptFragments(getPrompt("runtimeEnvironment", "multiRootHint"), {
-				NAMES: visibleWorkspaceNames.join(", "),
+				AVAILABLE_WORKSPACE_NAMES: visibleWorkspaceNames.join(", "),
 			})
 		: ""
 	const browserSupport = config.browserEnabled ? getPrompt("runtimeEnvironment", "browserSupport") : ""

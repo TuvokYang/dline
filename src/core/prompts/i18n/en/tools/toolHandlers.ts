@@ -9,10 +9,12 @@ const prompts: Record<string, string> = {
 
 # Next Steps
 
-If the entire user task appears complete after comparing the result with the latest request and Objective, use attempt_completion. A completed phase checklist alone is not enough.
-If progress depends on information or a decision only the user can provide, use ask_followup_question.
-Otherwise, continue with the next non-turn-ending step of the task. Do not use a progress summary, intermediate milestone, automatic compaction, or context pressure as a reason to finish.
-(This is an automated message, so do not respond to it conversationally.)`,
+If the previous response was intended as a non-blocking user-visible message and execution should continue, resend it with \`act_mode_respond\` in ACT MODE or \`status_update\` with acknowledgment disabled, then follow it with an actual work tool in the same turn.
+If the user asked a question or requested clarification and your response should hand control back to the user, answer with the TURN-END \`qna_respond\` tool.
+If the entire user task is complete after comparing the result with the latest request and Objective, use \`attempt_completion\`. A completed phase checklist alone is not enough.
+If progress requires information or a decision only the user can provide, use \`ask_followup_question\`.
+Otherwise, continue with the next non-turn-ending work step. Do not use a progress summary, intermediate milestone, automatic compaction, or context pressure as a reason to finish.
+(This is an automated message. Follow the applicable tool path above rather than replying in plain text.)`,
 	tooManyMistakes:
 		"You seem to be having trouble proceeding. The user has provided the following feedback to help guide you:\n<feedback>\n@FEEDBACK@\n</feedback>",
 	missingToolParameterError:

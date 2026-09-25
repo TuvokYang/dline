@@ -54,9 +54,6 @@ describe("XML tool projection", () => {
 		const output = await new SystemPromptGenerator(generator).generate(BASE_CONTEXT)
 
 		expect(output.systemPrompt).toContain("Workspace Names:\n- primary\n- secondary workspace")
-		expect(output.systemPrompt).toContain("Use `path` for the default workspace")
-		expect(output.systemPrompt).toContain("`@workspace:path`")
-		expect(output.systemPrompt).toContain("Available workspaces: primary, secondary workspace.")
 		expect(output.systemPrompt).toContain("1440x900")
 		expect(output.systemPrompt).not.toContain("/workspace/project")
 		expect(output.systemPrompt).not.toContain("/private/secondary-root")

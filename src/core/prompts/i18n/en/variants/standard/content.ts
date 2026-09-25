@@ -19,7 +19,7 @@ The user may explicitly authorize command-line tools to complete a task specifie
 
 Command-line authorization changes only the permitted tool choice. Keep the existing task scope, risk assessment, requires_approval decision, and all separately required operation authorizations unchanged.
 
-Include at least one tool call in each response except when processing explicit_instructions. Choose the proper tool for each situation:
+Include at least one tool call in each response except when an \`<explicit_instructions>\` block defines a different response format. Choose the proper tool for each situation:
 - General conversation or questions: qna_respond
 - Presenting a complete implementation or design plan: make_plan (in ACT MODE, only when explicitly requested by the user)
 - Technical report or structured analysis: generate_report

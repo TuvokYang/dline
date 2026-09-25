@@ -76,7 +76,6 @@ describe("canonical system prompt pipeline", () => {
 		expect(Object.isFrozen(env)).toBe(true)
 		expect(env).toMatchObject({
 			WORKSPACE_NAMES: "\n- project",
-			WORKSPACE_PATH_RULE: "Use `path` for the default workspace or `@workspace:path` to target a named workspace.",
 			PARALLEL_TOOLS_RULE: expect.stringContaining("multiple tools"),
 			MCP_RULE: "",
 			CLARIFY_PERMISSION: expect.stringContaining("ask the user clarifying questions"),

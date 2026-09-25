@@ -2464,6 +2464,11 @@ export class Task {
 		const rebuildActiveHandler = uniqueModes.includes(this.taskSm.mode)
 		const profileRecoveryInteractionId = rebuildActiveHandler ? this.getProfileRecoveryInteractionId() : undefined
 		const sourceProfileState = this.taskSm.setProfileIdentityBindings(targetBindings, { clearRuntimeOverrides: true })
+		if (rebuildActiveHandler) {
+			// Frozen ordinary input contains Provider-specific prompt and tool projections.
+			// Rebuild it from canonical history after changing the active Profile.
+			this.ordinaryRequestInputReplay.clear()
+		}
 		try {
 			if (rebuildActiveHandler) await this.rebuildApiHandler()
 			await this.stateManager.flushPendingState()

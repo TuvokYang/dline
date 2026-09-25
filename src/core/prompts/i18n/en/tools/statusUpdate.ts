@@ -1,20 +1,24 @@
 // English prompts for status_update tool — key-value pairs only, no code logic.
 const prompts: Record<string, string> = {
-	description: `Provide a progress statement or announcement to the user during task execution. By default, execution continues immediately — you can proceed with the next tool call without waiting. Use this tool for phase transitions, milestone announcements, or when you want to inform the user of your current approach.
+	description: `Provide a brief user-visible preamble, progress statement, or correction during task execution without ending the turn. By default, execution continues immediately so you can proceed with the next work tool without waiting.
 
-Set requires_acknowledgment to true ONLY when you explicitly need the user to confirm before continuing — this displays "知晓" (acknowledge) and "停止" (stop) buttons. The user can stop the task or acknowledge and let you continue.
+Use this tool to tell the user what you will change and why, announce a completed phase and its verification result, explain a change in approach, acknowledge a correction or changed direction received during execution, or report and correct your own mistake.
 
-IMPORTANT: Do NOT use this tool consecutively. After calling status_update, your next tool call must be a different tool performing actual work. This tool is NOT for final completion — use attempt_completion for that. Do NOT use status_update merely to update task_progress — task_progress updates are silent and should be done via the task_progress parameter on any tool call. Use status_update only for meaningful announcements that the user needs to read.`,
+Set requires_acknowledgment to true ONLY when you need the user to confirm before continuing — this displays "知晓" (acknowledge) and "停止" (stop) buttons. Otherwise leave it false and continue with actual work in the same turn.
+
+Do not call status_update consecutively; the next call must perform work. Do not use it for final completion — use attempt_completion. Do not use it merely to update task_progress; checklist-only updates are silent.`,
 	focusOmissionDescriptionSentence:
 		" Do NOT use status_update merely to update task_progress — task_progress updates are silent and should be done via the task_progress parameter on any tool call.",
 
-	standardDescription: `Provide a progress statement or announcement to the user during task execution. By default, execution continues immediately — you can proceed with the next tool call without waiting. Use this tool for phase transitions, milestone announcements, or when you want to inform the user of your current approach.
+	standardDescription: `Provide a brief user-visible preamble, progress statement, or correction during task execution without ending the turn. By default, execution continues immediately so you can proceed with the next work tool without waiting.
 
-Set requires_acknowledgment to true ONLY when you explicitly need the user to confirm before continuing — this displays "知晓" (acknowledge) and "停止" (stop) buttons. The user can stop the task or acknowledge and let you continue.
+Use this tool to tell the user what you will change and why, announce a completed phase and its verification result, explain a change in approach, acknowledge a correction or changed direction received during execution, or report and correct your own mistake.
 
-IMPORTANT: Do NOT use this tool consecutively. After calling status_update, your next tool call must be a different tool performing actual work. This tool is NOT for final completion — use attempt_completion for that. Do NOT use status_update merely to update task_progress — task_progress updates are silent and should be done via the task_progress parameter on any tool call. Use status_update only for meaningful announcements that the user needs to read.`,
+Set requires_acknowledgment to true ONLY when you need the user to confirm before continuing — this displays "知晓" (acknowledge) and "停止" (stop) buttons. Otherwise leave it false and continue with actual work in the same turn.
 
-	responseInstruction: `The progress statement or announcement text. Be concise and informative.`,
+Do not call status_update consecutively; the next call must perform work. Do not use it for final completion — use attempt_completion. Do not use it merely to update task_progress; checklist-only updates are silent.`,
+
+	responseInstruction: `The brief user-visible message explaining the planned change, current progress, completed phase, correction, or relevant rationale.`,
 
 	responseUsage: "Your announcement text here",
 

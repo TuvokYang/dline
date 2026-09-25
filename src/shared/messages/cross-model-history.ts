@@ -6,8 +6,8 @@ import type { ClineAssistantThinkingBlock, ClineContent, ClineStorageMessage, Cl
  * A task can continue on another model mid-conversation. Another model's opaque reasoning
  * (ciphertext, response ids) is only valid for the protocol that issued it, but its readable
  * reasoning is still useful context. Foreign assistant turns therefore keep their readable
- * reasoning as `<prior_model_reasoning>` text and lose provider replay metadata, and the first user
- * turn after the last foreign assistant turn that survives projection carries one fixed switch notice.
+ * reasoning as `<prior_model_reasoning>` text and lose provider replay metadata. Every surviving
+ * foreign segment that returns to the target keeps one fixed notice on its own user boundary.
  *
  * Model identity decides which turns are foreign and is never written into request content:
  * the tag has no attributes and the notice names no model.
@@ -38,23 +38,39 @@ export function isForeignAssistantMessage(message: ClineStorageMessage, targetMo
  */
 export function projectCrossModelHistory(messages: readonly ClineStorageMessage[], targetModelId: string): ClineStorageMessage[] {
 	const projected: ClineStorageMessage[] = []
-	let noticeSearchStart: number | undefined
+	let foreignSegmentActive = false
+	let noticeCandidateIndex: number | undefined
 
-	for (const message of messages) {
-		if (!isForeignAssistantMessage(message, targetModelId)) {
-			projected.push(message)
-			continue
+	const finishForeignSegment = () => {
+		if (!foreignSegmentActive) return
+		if (noticeCandidateIndex !== undefined) {
+			projected[noticeCandidateIndex] = withSwitchNotice(projected[noticeCandidateIndex])
 		}
-		const foreign = projectForeignAssistant(message)
-		if (!foreign) continue
-		projected.push(foreign)
-		// Anchor to turns the target can see; a dropped turn leaves nothing to explain.
-		noticeSearchStart = projected.length
+		foreignSegmentActive = false
+		noticeCandidateIndex = undefined
 	}
 
-	if (noticeSearchStart === undefined) return projected
-	const noticeIndex = projected.findIndex((message, index) => index >= noticeSearchStart && message.role === "user")
-	if (noticeIndex >= 0) projected[noticeIndex] = withSwitchNotice(projected[noticeIndex])
+	for (const message of messages) {
+		if (isForeignAssistantMessage(message, targetModelId)) {
+			const foreign = projectForeignAssistant(message)
+			if (!foreign) continue
+			projected.push(foreign)
+			foreignSegmentActive = true
+			// A later visible foreign turn continues the segment, so its following user is the new boundary candidate.
+			noticeCandidateIndex = undefined
+			continue
+		}
+
+		const projectedIndex = projected.push(message) - 1
+		if (!foreignSegmentActive) continue
+		if (message.role === "user") {
+			noticeCandidateIndex ??= projectedIndex
+			continue
+		}
+		finishForeignSegment()
+	}
+
+	finishForeignSegment()
 	return projected
 }
 

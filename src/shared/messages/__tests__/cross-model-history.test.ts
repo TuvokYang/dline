@@ -155,25 +155,47 @@ describe("projectCrossModelHistory", () => {
 		expect(projected.ts).toBe(1)
 	})
 
-	it("places exactly one notice after the last foreign turn across repeated switches", () => {
-		const history = [
+	it("keeps earlier notices and adds one per foreign segment across repeated switches", () => {
+		const firstHistory = [
+			user("0"),
+			assistant(TARGET, [{ type: "text", text: "B0" }]),
 			user("1"),
 			assistant(OTHER, [{ type: "text", text: "A1" }]),
 			user("2"),
+		]
+		const secondHistory = [
+			...firstHistory,
 			assistant(TARGET, [{ type: "text", text: "B1" }]),
 			user("3"),
 			assistant(OTHER, [{ type: "text", text: "A2" }]),
 			user("4"),
-			assistant(TARGET, [{ type: "text", text: "B2" }]),
-			user("5"),
+		]
+
+		const firstRequest = projectCrossModelHistory(firstHistory, TARGET)
+		const secondRequest = projectCrossModelHistory(secondHistory, TARGET)
+
+		expect(textsOf(firstRequest[4])).toStrictEqual(["2", MODEL_SWITCH_NOTICE])
+		expect(secondRequest.slice(0, firstRequest.length)).toStrictEqual(firstRequest)
+		expect(textsOf(secondRequest[8])).toStrictEqual(["4", MODEL_SWITCH_NOTICE])
+		expect(countNotices(secondRequest)).toBe(2)
+	})
+
+	it("waits for the end of a continuing foreign segment before adding its notice", () => {
+		const history = [
+			user("1"),
+			assistant(OTHER, [{ type: "text", text: "A1" }]),
+			user("2"),
+			assistant(OTHER, [{ type: "text", text: "A2" }]),
+			user("3"),
+			assistant(TARGET, [{ type: "text", text: "B1" }]),
+			user("4"),
 		]
 
 		const projected = projectCrossModelHistory(history, TARGET)
 
+		expect(projected[2]).toBe(history[2])
+		expect(textsOf(projected[4])).toStrictEqual(["3", MODEL_SWITCH_NOTICE])
 		expect(countNotices(projected)).toBe(1)
-		expect(textsOf(projected[6])).toStrictEqual(["4", MODEL_SWITCH_NOTICE])
-		expect(projected[3]).toBe(history[3])
-		expect(projected[7]).toBe(history[7])
 	})
 
 	it("keeps the projected prefix stable across consecutive requests to the same target", () => {

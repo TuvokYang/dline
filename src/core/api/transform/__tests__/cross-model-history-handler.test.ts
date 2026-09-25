@@ -166,6 +166,42 @@ describe("withCrossModelHistory at handler construction", () => {
 describe("cross-model history on provider wires", () => {
 	afterEach(() => vi.restoreAllMocks())
 
+	it("keeps accumulated switch notices as an append-only Anthropic wire prefix", () => {
+		const targetModel = "claude-opus-4-7"
+		const storedAssistant = (modelId: string, providerId: string, text: string): ClineStorageMessage => ({
+			role: "assistant",
+			modelInfo: { modelId, providerId, mode: "act" },
+			content: [{ type: "text", text }],
+		})
+		const firstHistory: ClineStorageMessage[] = [
+			{ role: "user", content: "0" },
+			storedAssistant(targetModel, "anthropic", "B0"),
+			{ role: "user", content: "1" },
+			storedAssistant(TARGET_MODEL, "openai", "A1"),
+			{ role: "user", content: "2" },
+		]
+		const secondHistory: ClineStorageMessage[] = [
+			...firstHistory,
+			storedAssistant(targetModel, "anthropic", "B1"),
+			{ role: "user", content: "3" },
+			storedAssistant(TARGET_MODEL, "openai", "A2"),
+			{ role: "user", content: "4" },
+		]
+
+		const firstWire = sanitizeAnthropicMessages(projectCrossModelHistory(firstHistory, targetModel), false)
+		const secondWire = sanitizeAnthropicMessages(projectCrossModelHistory(secondHistory, targetModel), false)
+		const wireTexts = secondWire.flatMap((message) =>
+			typeof message.content === "string"
+				? [message.content]
+				: message.content.flatMap((block) => (block.type === "text" ? [block.text] : [])),
+		)
+
+		expect(secondWire.slice(0, firstWire.length)).toStrictEqual(firstWire)
+		expect(wireTexts.filter((text) => text === MODEL_SWITCH_NOTICE)).toHaveLength(2)
+		expect(JSON.stringify(secondWire)).not.toContain(TARGET_MODEL)
+		expect(JSON.stringify(secondWire)).not.toContain(targetModel)
+	})
+
 	it("keeps Gemini tool calls that carry their own reasoning_details after a Gemini model switch", () => {
 		const target = "google/gemini-3-pro"
 		const history: ClineStorageMessage[] = [

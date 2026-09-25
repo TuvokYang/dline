@@ -49,8 +49,8 @@ export const toolPromptModules = [
 	}),
 	defineLegacyModule("executeCommand", "tools", executeCommand, {
 		description: createRuntimeContract(),
-		workdirectoryInstruction: createRuntimeContract("WORKSPACE_PATH_RULE", "MULTI_ROOT_HINT"),
-		standardWorkdirectoryInstruction: createRuntimeContract("WORKSPACE_PATH_RULE", "MULTI_ROOT_HINT"),
+		workdirectoryInstruction: createRuntimeContract("MULTI_ROOT_HINT"),
+		standardWorkdirectoryInstruction: createRuntimeContract("MULTI_ROOT_HINT"),
 		standardTimeoutInstruction: createRuntimeContract("TERMINAL_COMMAND_TIMEOUT_SECONDS"),
 		clineIgnoreError: createRuntimeContract("PATH"),
 		permissionDeniedError: createRuntimeContract("REASON"),

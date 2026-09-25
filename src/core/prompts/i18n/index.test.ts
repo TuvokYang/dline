@@ -7,8 +7,8 @@ describe("prompt i18n registry", () => {
 		const simplifiedChinese = getPrompt("inputQueue", "auxiliaryAlignmentV1", "zh-CN")
 		const japaneseFallback = getPrompt("inputQueue", "auxiliaryAlignmentV1", "ja")
 
-		expect(english).toContain("auxiliary alignment information")
-		expect(simplifiedChinese).toContain("辅助对齐信息")
+		expect(english).toContain("sent by the user while work was in progress")
+		expect(simplifiedChinese).toContain("用户在任务执行过程中发送")
 		expect(japaneseFallback).toBe(english)
 	})
 

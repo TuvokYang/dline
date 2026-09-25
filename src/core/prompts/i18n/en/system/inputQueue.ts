@@ -2,9 +2,8 @@
 
 const prompts: Record<string, string> = {
 	auxiliaryAlignmentV1:
-		"The following content is auxiliary alignment information the user queued while work was in progress. " +
-		"Use it to align subsequent execution. Unless the user explicitly asks for a different approach, " +
-		"keep the agreed plan and apply only minor adjustments.",
+		"The following message was sent by the user while work was in progress and is now part of the current conversation. " +
+		"Process it according to USER AUTHORITY and USER COMMUNICATION.",
 }
 
 export default prompts

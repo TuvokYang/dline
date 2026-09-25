@@ -69,7 +69,7 @@ export const systemPromptModules = [
 	defineLegacyModule("mcp", "system", mcp),
 	defineLegacyModule("objective", "system", objective),
 	defineLegacyModule("runtimeEnvironment", "system", runtimeEnvironment, {
-		multiRootHint: createRuntimeContract("NAMES"),
+		multiRootHint: createRuntimeContract("AVAILABLE_WORKSPACE_NAMES"),
 		connectedMcpServers: createRuntimeContract("NAMES"),
 	}),
 	defineLegacyModule("responses", "system", responses, {
@@ -93,7 +93,7 @@ export const systemPromptModules = [
 	defineLegacyModule("rules", "system", rules),
 	defineLegacyModule("skills", "system", skills),
 	defineLegacyModule("systemInfo", "system", systemInfo, {
-		main: createRuntimeContract("OS", "IDE", "SHELL", "WORKSPACE_NAMES", "WORKSPACE_PATH_RULE"),
+		main: createRuntimeContract("OS", "IDE", "SHELL", "WORKSPACE_NAMES"),
 	}),
 	defineLegacyModule("taskProgress", "system", taskProgress),
 	defineLegacyModule("toolUseExamples", "system", toolUseExamples, {
