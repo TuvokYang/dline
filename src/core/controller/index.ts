@@ -1078,6 +1078,9 @@ export class Controller {
 		this.task = await new TaskSessionCompositionService().open({
 			taskId,
 			openReason: historyItem ? (options?.openReason ?? "resume") : "new",
+			// Another window owns the task: recovered work waits for `task.open()`,
+			// which runs only once this window acquires the lock.
+			deferRestoredCommands: !this.taskLockAcquired,
 			cwd,
 			stateManager: this.stateManager,
 			taskView,

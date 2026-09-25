@@ -62,6 +62,7 @@ export interface TaskCompositionOptions {
 	readonly diagnostics?: RuntimeDiagnosticSink
 	readonly persistence?: OpenTaskShellOptions["persistence"]
 	readonly inputPresentation?: OpenTaskShellOptions["inputPresentation"]
+	readonly deferRestoredCommands?: OpenTaskShellOptions["deferRestoredCommands"]
 	/** Condenses the conversation before a round is drafted; see ComposeCompactionBarrierPort. */
 	readonly compactionBarrier?: ComposeCompactionBarrierPort
 	/** Write the chat row a revealed dialog anchors to; see ProductionDialogAdapter. */

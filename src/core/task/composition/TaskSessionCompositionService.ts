@@ -88,6 +88,11 @@ export interface OpenTaskSessionCompositionOptions {
 	readonly taskId: string
 	readonly taskIncarnationId?: string
 	readonly openReason: "new" | "resume" | "crash_recovery" | "checkpoint_restore"
+	/**
+	 * The opening window does not own the task lock yet: recovered commands wait for
+	 * `Task.open()` instead of writing the databases the lock owner is writing.
+	 */
+	readonly deferRestoredCommands?: boolean
 	readonly cwd: string
 	readonly stateManager: StateManager
 	readonly taskView: TaskViewPort
@@ -373,6 +378,7 @@ export class TaskSessionCompositionService {
 		const opened = await openActiveTaskSession({
 			taskId: options.taskId,
 			openReason: options.openReason,
+			deferRestoredCommands: options.deferRestoredCommands,
 			persistence,
 			// A request's figure stays in flight until the run it belongs to comes
 			// to rest, and only a committed state says when that is.

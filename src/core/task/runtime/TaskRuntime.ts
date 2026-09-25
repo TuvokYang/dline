@@ -14,6 +14,17 @@ export interface TaskRuntimeOptions {
 	readonly executors: readonly CommandExecutor[]
 	readonly diagnostics?: RuntimeDiagnosticSink
 	readonly restoredOutbox?: DurableTaskSnapshot["outbox"]
+	/**
+	 * Hold restored commands until `releaseRestoredCommands()`. A window that opens a task
+	 * without owning its lock must not dispatch recovered work, because dispatch writes the
+	 * task databases that the lock owner is writing.
+	 */
+	readonly deferRestoredCommands?: boolean
+}
+
+interface HeldRestoredCommands {
+	readonly commands: NonNullable<TaskRuntimeOptions["restoredOutbox"]>
+	readonly generation: number
 }
 
 export class TaskRuntime implements RuntimeFacade {
@@ -22,6 +33,7 @@ export class TaskRuntime implements RuntimeFacade {
 	private readonly outbox: DurableCommandOutbox
 	private readonly events: EventLoop
 	private readonly taskView: TaskViewPort
+	private held?: HeldRestoredCommands
 
 	constructor(options: TaskRuntimeOptions) {
 		this.taskView = options.taskView
@@ -29,7 +41,17 @@ export class TaskRuntime implements RuntimeFacade {
 		this.commits = new CommitPipeline(options.vault, options.taskView, options.diagnostics)
 		this.outbox = new DurableCommandOutbox(this.router, options.publications, options.diagnostics)
 		this.events = new EventLoop(options.initialState, this.commits, this.outbox)
-		if (options.restoredOutbox) this.outbox.restore(options.restoredOutbox, options.initialState.generation)
+		if (options.restoredOutbox) {
+			this.held = { commands: options.restoredOutbox, generation: options.initialState.generation }
+			if (!options.deferRestoredCommands) this.releaseRestoredCommands()
+		}
+	}
+
+	releaseRestoredCommands(): void {
+		const held = this.held
+		if (!held) return
+		this.held = undefined
+		this.outbox.restore(held.commands, held.generation)
 	}
 
 	getState(): Readonly<TaskState> {

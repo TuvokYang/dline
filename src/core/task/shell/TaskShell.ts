@@ -95,7 +95,13 @@ export class TaskShell {
 		return this.haltTask("user.terminate", haltId)
 	}
 
+	/**
+	 * Take ownership of the task: dispatch recovered work that was held while the window did
+	 * not own the task lock, then submit `lifecycle.open`. Release happens first because an
+	 * interrupted task is paused and rejects `lifecycle.open`, yet its recovered work still runs.
+	 */
 	open(): Promise<EventSubmissionResult> {
+		this.runtime.releaseRestoredCommands()
 		return this.runtime.submit({ type: "lifecycle.open", generation: this.runtime.getState().generation })
 	}
 

@@ -25,6 +25,11 @@ export interface OpenTaskShellOptions {
 	readonly persistence?: TaskPersistenceAssembly
 	/** Shows accepted submissions in chat; absent in headless assemblies. */
 	readonly inputPresentation?: TaskInputPresentationPort
+	/**
+	 * Hold recovered commands until `TaskShell.open()`. Set when the opening window does not
+	 * own the task lock, so recovery cannot write the databases another window is writing.
+	 */
+	readonly deferRestoredCommands?: boolean
 }
 
 /** An opened task; opening an existing task always succeeds, see `hydrate`. */
@@ -146,6 +151,7 @@ export async function openTaskShell(options: OpenTaskShellOptions): Promise<Open
 		execution,
 		diagnostics: options.diagnostics,
 		restoredOutbox,
+		deferRestoredCommands: options.deferRestoredCommands,
 	})
 	return {
 		kind: "ready",

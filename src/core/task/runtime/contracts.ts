@@ -63,4 +63,6 @@ export interface RuntimeFacade {
 	waitForDurable(revision: number): Promise<void>
 	waitForDomainCompletion(revision: number): Promise<void>
 	waitForQuiescence(): Promise<void>
+	/** Dispatch recovered commands held at construction; a no-op when nothing is held. */
+	releaseRestoredCommands(): void
 }

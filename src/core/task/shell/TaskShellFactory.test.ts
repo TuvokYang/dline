@@ -47,56 +47,77 @@ function execution(reveal: () => void) {
 	}
 }
 
+/** A task stopped with a prepared question whose reveal was still in the outbox. */
+async function preparedDialogTask() {
+	const interaction = {
+		interactionId: "interaction-1",
+		turnId: "turn-1",
+		kind: "question",
+		status: "prepared" as const,
+		createdRevision: 7,
+		presentationRef: "question:1",
+		actionRules: [],
+		journalRef: "journal:1",
+		journalWatermark: { seq: 1 },
+		receiverGeneration: 0,
+		prepareKey: "dialog.prepare:interaction-1",
+		revealKey: "dialog.reveal:interaction-1:0",
+	}
+	const state: TaskState = {
+		...createInitialTaskState("task-1"),
+		revision: 8,
+		journalWatermark: { seq: 1 },
+		dialog: { primary: interaction, approvalsByBlock: {} },
+	}
+	const reveal: Command = {
+		type: "dialog.reveal",
+		commandId: "legacy-reveal",
+		originRevision: 8,
+		generation: 0,
+		...interaction,
+		revealKey: interaction.revealKey,
+	}
+	const vault = new InMemoryStateVault()
+	await vault.save({ state, outbox: [reveal] })
+	const journal = new InMemoryConversationJournal()
+	await journal.append({ operationId: "dialog.prepare:interaction-1", payloadRef: "journal:1", source: "dialog" })
+	return { ports: { vault, journal, publications: new InMemoryCommandPublicationStore() }, payloads }
+}
+
 describe("openTaskShell", () => {
 	it("merges hydrate reveal and restored outbox into one replay owner", async () => {
-		const interaction = {
-			interactionId: "interaction-1",
-			turnId: "turn-1",
-			kind: "question",
-			status: "prepared" as const,
-			createdRevision: 7,
-			presentationRef: "question:1",
-			actionRules: [],
-			journalRef: "journal:1",
-			journalWatermark: { seq: 1 },
-			receiverGeneration: 0,
-			prepareKey: "dialog.prepare:interaction-1",
-			revealKey: "dialog.reveal:interaction-1:0",
-		}
-		const state: TaskState = {
-			...createInitialTaskState("task-1"),
-			revision: 8,
-			journalWatermark: { seq: 1 },
-			dialog: { primary: interaction, approvalsByBlock: {} },
-		}
-		const reveal: Command = {
-			type: "dialog.reveal",
-			commandId: "legacy-reveal",
-			originRevision: 8,
-			generation: 0,
-			...interaction,
-			revealKey: interaction.revealKey,
-		}
-		const vault = new InMemoryStateVault()
-		await vault.save({ state, outbox: [reveal] })
-		const journal = new InMemoryConversationJournal()
-		await journal.append({ operationId: "dialog.prepare:interaction-1", payloadRef: "journal:1", source: "dialog" })
 		const revealed = vi.fn()
 		const opened = await openTaskShell({
 			taskId: "task-1",
 			openReason: "crash_recovery",
 			execution: execution(revealed),
 			taskView: new InMemoryTaskViewPort(),
-			persistence: {
-				ports: {
-					vault,
-					journal,
-					publications: new InMemoryCommandPublicationStore(),
-				},
-				payloads,
-			},
+			persistence: await preparedDialogTask(),
 		})
 		expect(opened.kind).toBe("ready")
+		await opened.runtime.waitForQuiescence()
+		expect(revealed).toHaveBeenCalledTimes(1)
+	})
+
+	it("holds recovered commands until a window without the task lock opens the task", async () => {
+		const revealed = vi.fn()
+		const opened = await openTaskShell({
+			taskId: "task-1",
+			openReason: "crash_recovery",
+			execution: execution(revealed),
+			taskView: new InMemoryTaskViewPort(),
+			persistence: await preparedDialogTask(),
+			deferRestoredCommands: true,
+		})
+		await opened.runtime.waitForQuiescence()
+		expect(revealed).not.toHaveBeenCalled()
+
+		await opened.shell.open()
+		await opened.runtime.waitForQuiescence()
+		expect(revealed).toHaveBeenCalledTimes(1)
+
+		// A second open (lock re-acquired after a later release) must not replay again.
+		await opened.shell.open()
 		await opened.runtime.waitForQuiescence()
 		expect(revealed).toHaveBeenCalledTimes(1)
 	})

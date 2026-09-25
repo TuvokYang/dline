@@ -6,6 +6,7 @@ import { TaskShell } from "./TaskShell"
 class RecordingRuntime implements RuntimeFacade {
 	readonly events: TaskEvent[] = []
 	readonly durable: number[] = []
+	released = 0
 	private state: TaskState = createInitialTaskState("task-1")
 
 	getState(): Readonly<TaskState> {
@@ -37,6 +38,9 @@ class RecordingRuntime implements RuntimeFacade {
 	}
 	waitForQuiescence(): Promise<void> {
 		return Promise.resolve()
+	}
+	releaseRestoredCommands(): void {
+		this.released += 1
 	}
 }
 
@@ -111,5 +115,16 @@ describe("TaskShell", () => {
 		await shell.cancel("halt-1")
 
 		expect(runtime.events.map((event) => event.type)).toEqual(["user.cancel"])
+	})
+
+	it("releases held recovered commands when the window opens the task", async () => {
+		const runtime = new RecordingRuntime()
+		const shell = new TaskShell(runtime, { rearm: async () => undefined })
+
+		expect(runtime.released).toBe(0)
+		await shell.open()
+
+		expect(runtime.released).toBe(1)
+		expect(runtime.events.map((event) => event.type)).toEqual(["lifecycle.open"])
 	})
 })

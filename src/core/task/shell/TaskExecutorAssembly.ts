@@ -59,6 +59,8 @@ export interface TaskExecutorAssemblyOptions {
 	readonly execution: TaskExecutionPorts
 	readonly diagnostics?: RuntimeDiagnosticSink
 	readonly restoredOutbox?: DurableTaskSnapshot["outbox"]
+	/** Hold restored commands until the shell opens the task; see `TaskRuntime`. */
+	readonly deferRestoredCommands?: boolean
 	readonly halt?: HaltCommandExecutorOptions
 }
 
@@ -136,6 +138,7 @@ export function createTaskExecutorAssembly(options: TaskExecutorAssemblyOptions)
 		executors,
 		diagnostics: options.diagnostics,
 		restoredOutbox: options.restoredOutbox,
+		deferRestoredCommands: options.deferRestoredCommands,
 	})
 	events.bind(runtime)
 	return { runtime, halt, background, cotask, executors, participants }
