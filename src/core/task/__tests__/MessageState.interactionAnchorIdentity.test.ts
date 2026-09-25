@@ -6,6 +6,7 @@ import fs from "fs/promises"
 import os from "os"
 import path from "path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { closeInstanceStoragesUnder } from "@/core/storage/instance"
 
 /**
  * An awaiting approval is reachable only while its ask row still carries the
@@ -24,6 +25,7 @@ describe("interaction anchor identity", () => {
 
 	afterEach(async () => {
 		vi.unstubAllEnvs()
+		await closeInstanceStoragesUnder(dlineDocsDir)
 		await fs.rm(dlineDocsDir, { recursive: true, force: true })
 	})
 

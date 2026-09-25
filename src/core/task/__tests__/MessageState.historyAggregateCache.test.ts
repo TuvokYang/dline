@@ -6,6 +6,7 @@ import fs from "fs/promises"
 import os from "os"
 import path from "path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { closeInstanceStoragesUnder } from "@/core/storage/instance"
 
 /**
  * History updates run on the message write path, so their aggregates are cached.
@@ -23,6 +24,7 @@ describe("history aggregate cache", () => {
 
 	afterEach(async () => {
 		vi.unstubAllEnvs()
+		await closeInstanceStoragesUnder(dlineDocsDir)
 		await fs.rm(dlineDocsDir, { recursive: true, force: true })
 	})
 

@@ -6,6 +6,7 @@ import fs from "fs/promises"
 import os from "os"
 import path from "path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { closeInstanceStoragesUnder } from "@/core/storage/instance"
 
 describe("command status persistence", () => {
 	let dlineDocsDir: string
@@ -17,6 +18,7 @@ describe("command status persistence", () => {
 
 	afterEach(async () => {
 		vi.unstubAllEnvs()
+		await closeInstanceStoragesUnder(dlineDocsDir)
 		await fs.rm(dlineDocsDir, { recursive: true, force: true })
 	})
 

@@ -7,7 +7,7 @@ import type {
 	UnifyStoreStats,
 	UnifyStoreTransaction,
 } from "../backend/api/UnifyStore"
-import { asc, type UnifyStoreQuery } from "../backend/api/UnifyStoreQuery"
+import { and, asc, desc, eq, gte, lt, type UnifyStoreQuery } from "../backend/api/UnifyStoreQuery"
 import { decodeUiMessage, encodeUiMessage, UiMessageAttachmentRow, type UiMessageRecord, UiMessageRow } from "./UiMessageRows"
 
 /** Order field of {@link UiMessageRecord}; the only order the row store serves. */
@@ -54,11 +54,13 @@ function encodeAll(records: readonly UiMessageRecord[]) {
 	}
 }
 
-async function readRecords(access: CollectionAccess, limit: number | undefined): Promise<UiMessageRecord[]> {
-	const rows = await access.rows.query({ orderBy: [asc(UiMessageRow.storage.fields.ordinal)], limit })
-	if (rows.length === 0) return []
+const ROW_ORDINAL = UiMessageRow.storage.fields.ordinal
+const ROW_TIMESTAMP = UiMessageRow.storage.fields.ts
+const ATTACHMENT_ORDINAL = UiMessageAttachmentRow.storage.fields.ordinal
+
+function toRecords(rows: readonly UiMessageRow[], attachments: readonly UiMessageAttachmentRow[]): UiMessageRecord[] {
 	const attachmentsByOrdinal = new Map<number, UiMessageAttachmentRow[]>()
-	for (const attachment of await access.attachments.query()) {
+	for (const attachment of attachments) {
 		const list = attachmentsByOrdinal.get(attachment.ordinal)
 		if (list) list.push(attachment)
 		else attachmentsByOrdinal.set(attachment.ordinal, [attachment])
@@ -68,6 +70,12 @@ async function readRecords(access: CollectionAccess, limit: number | undefined):
 		ts: row.ts,
 		message: decodeUiMessage(row, attachmentsByOrdinal.get(row.ordinal) ?? []),
 	}))
+}
+
+async function readRecords(access: CollectionAccess, limit: number | undefined): Promise<UiMessageRecord[]> {
+	const rows = await access.rows.query({ orderBy: [asc(ROW_ORDINAL)], limit })
+	if (rows.length === 0) return []
+	return toRecords(rows, await access.attachments.query())
 }
 
 async function insertRecords(access: CollectionAccess, records: readonly UiMessageRecord[]): Promise<void> {
@@ -152,6 +160,32 @@ export class UiMessageRowStore implements UnifyStore<UiMessageRecord> {
 
 	stats(): Promise<UnifyStoreStats> {
 		return this.rows.stats()
+	}
+
+	/** Number of stored rows. */
+	async count(): Promise<number> {
+		return (await this.rows.stats()).storedRecordCount
+	}
+
+	/** Records whose ordinal is in `[start, end)`, in stored order, without reading the rest of the history. */
+	async readRange(start: number, end: number): Promise<UiMessageRecord[]> {
+		if (end <= start) return []
+		const rows = (
+			await this.rows.query({ where: and(gte(ROW_ORDINAL, start), lt(ROW_ORDINAL, end)), orderBy: [asc(ROW_ORDINAL)] })
+		).records
+		if (rows.length === 0) return []
+		const attachments = (
+			await this.attachments.query({ where: and(gte(ATTACHMENT_ORDINAL, start), lt(ATTACHMENT_ORDINAL, end)) })
+		).records
+		return toRecords(rows, attachments)
+	}
+
+	/** The last record stored with timestamp `ts`, which is the one the chat shows for it. */
+	async findLastByTimestamp(ts: number): Promise<UiMessageRecord | undefined> {
+		const [row] = (await this.rows.query({ where: eq(ROW_TIMESTAMP, ts), orderBy: [desc(ROW_ORDINAL)], limit: 1 })).records
+		if (!row) return undefined
+		const attachments = (await this.attachments.query({ where: eq(ATTACHMENT_ORDINAL, row.ordinal) })).records
+		return toRecords([row], attachments)[0]
 	}
 
 	close(): Promise<void> {

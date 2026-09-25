@@ -3,6 +3,8 @@ import os from "node:os"
 import path from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { ApiConversation } from "../ApiConversation"
+import { closeInstanceStoragesUnder } from "../instance"
+import { MIGRATED_SUFFIX } from "../messages/importLegacyUiMessages"
 import { UIMessage } from "../UIMessage"
 
 describe("message store open boundaries", () => {
@@ -21,6 +23,7 @@ describe("message store open boundaries", () => {
 		} else {
 			process.env.DLINE_DOCS_DIR = previousDocsDir
 		}
+		await closeInstanceStoragesUnder(docsDir)
 		await rm(docsDir, { force: true, recursive: true })
 	})
 
@@ -30,7 +33,7 @@ describe("message store open boundaries", () => {
 		return taskDir
 	}
 
-	it("opens a canonical UI JSONL file without rewriting it", async () => {
+	it("imports a UI JSONL file into messages.db once and keeps it byte-for-byte as .migrated", async () => {
 		const taskDir = await createTaskDir("canonical-ui")
 		const filePath = path.join(taskDir, "ui_messages.jsonl")
 		const original =
@@ -39,18 +42,23 @@ describe("message store open boundaries", () => {
 				JSON.stringify({ ts: 200, type: "say", say: "reasoning", text: "thinking", partial: false }),
 			].join("\n") + "\n"
 		await writeFile(filePath, original, "utf8")
-		const before = await stat(filePath)
 
 		const store = await UIMessage.open("canonical-ui")
 		expect(store.getAll()).toHaveLength(2)
 		await store.close()
 
-		const after = await stat(filePath)
-		expect(await readFile(filePath, "utf8")).toBe(original)
-		expect(after.mtimeMs).toBe(before.mtimeMs)
+		await expect(access(filePath)).rejects.toThrow()
+		const migratedPath = `${filePath}${MIGRATED_SUFFIX}`
+		expect(await readFile(migratedPath, "utf8")).toBe(original)
+		const migratedStat = await stat(migratedPath)
+
+		const reopened = await UIMessage.open("canonical-ui")
+		expect(reopened.getAll().map((message) => message.text)).toEqual(["task", "thinking"])
+		await reopened.close()
+		expect((await stat(migratedPath)).mtimeMs).toBe(migratedStat.mtimeMs)
 	})
 
-	it("migrates duplicate UI timestamps once while keeping the last occurrence", async () => {
+	it("imports duplicate UI timestamps once while keeping the last occurrence", async () => {
 		const taskDir = await createTaskDir("duplicate-ui")
 		const filePath = path.join(taskDir, "ui_messages.jsonl")
 		await writeFile(
@@ -69,19 +77,17 @@ describe("message store open boundaries", () => {
 			expect.objectContaining({ ts: 200, text: "tail" }),
 		])
 		await firstOpen.close()
-		const migrated = await readFile(filePath, "utf8")
-		const migratedStat = await stat(filePath)
 
 		const secondOpen = await UIMessage.open("duplicate-ui")
-		expect(secondOpen.getAll()).toHaveLength(2)
+		expect(secondOpen.getAll()).toEqual([
+			expect.objectContaining({ ts: 100, text: "final" }),
+			expect.objectContaining({ ts: 200, text: "tail" }),
+		])
 		await secondOpen.close()
-		const reopenedStat = await stat(filePath)
-
-		expect(await readFile(filePath, "utf8")).toBe(migrated)
-		expect(reopenedStat.mtimeMs).toBe(migratedStat.mtimeMs)
+		await expect(access(`${filePath}${MIGRATED_SUFFIX}`)).resolves.toBeUndefined()
 	})
 
-	it("imports legacy UI JSON only when the JSONL target is absent", async () => {
+	it("imports legacy UI JSON and never recreates a UI JSONL file", async () => {
 		const taskDir = await createTaskDir("legacy-ui")
 		const legacyPath = path.join(taskDir, "ui_messages.json")
 		const jsonlPath = path.join(taskDir, "ui_messages.jsonl")
@@ -92,8 +98,8 @@ describe("message store open boundaries", () => {
 		expect(store.getAll()).toEqual(legacy)
 		await store.close()
 
-		await expect(access(jsonlPath)).resolves.toBeUndefined()
-		expect(await readFile(legacyPath, "utf8")).toBe(JSON.stringify(legacy))
+		await expect(access(jsonlPath)).rejects.toThrow()
+		expect(await readFile(`${legacyPath}${MIGRATED_SUFFIX}`, "utf8")).toBe(JSON.stringify(legacy))
 	})
 
 	it("preserves concurrent API messages that arrive with the same timestamp", async () => {

@@ -4,6 +4,7 @@ import path from "node:path"
 import { FetchMessageRequest } from "@shared/proto/dline/task"
 import { convertProtoToClineMessage } from "@shared/proto-conversions/cline-message"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
+import { closeInstanceStoragesUnder } from "@/core/storage/instance"
 import { UIMessage } from "../../../storage/UIMessage"
 import { MessageChannel } from "../../../task/MessageChannel"
 import { MessageStateHandler } from "../../../task/message-state"
@@ -26,6 +27,7 @@ describe("fetchMessage durable user_feedback integration", () => {
 		} else {
 			process.env.DLINE_DOCS_DIR = previousDocsDir
 		}
+		await closeInstanceStoragesUnder(docsDir)
 		await rm(docsDir, { force: true, recursive: true })
 	})
 

@@ -4,6 +4,7 @@ import path from "node:path"
 import type CheckpointTracker from "@integrations/checkpoints/CheckpointTracker"
 import { ensureCheckpointInitialized } from "@integrations/checkpoints/initializer"
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import { closeInstanceStoragesUnder } from "@/core/storage/instance"
 import { UIMessage } from "@/core/storage/UIMessage"
 import { MessageStateHandler } from "@/core/task/message-state"
 import { TaskState } from "@/core/task/TaskState"
@@ -279,6 +280,7 @@ describe("TaskCheckpointManager checkpoint initialization", () => {
 		} finally {
 			if (previousDocsDir === undefined) delete process.env.DLINE_DOCS_DIR
 			else process.env.DLINE_DOCS_DIR = previousDocsDir
+			await closeInstanceStoragesUnder(docsDir)
 			await rm(docsDir, { force: true, recursive: true })
 		}
 	})

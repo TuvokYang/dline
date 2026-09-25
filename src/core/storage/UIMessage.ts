@@ -1,31 +1,25 @@
-import { fileExistsAtPath } from "@utils/fs"
 import path from "path"
 import { ClineMessage } from "@/shared/ExtensionMessage"
 import type { BufferedUnifyStore } from "./backend/api/UnifyStore"
-import { openBufferedJsonlStore } from "./backend/jsonl/JsonlUnifyStore"
-import { readJsonl, writeJsonl } from "./backend/jsonl/jsonl-utils"
-import { dedupeClineMessagesByTs, ensureTaskDirectoryExists, GlobalFileNames } from "./disk"
+import { BufferedUnifyStore as BufferedStore } from "./backend/core/BufferedUnifyStore"
+import { dedupeClineMessagesByTs } from "./disk"
+import { ensureInstanceLayout, InstanceDatabase } from "./instance"
+import { importLegacyUiMessages } from "./messages/importLegacyUiMessages"
+import { openUiMessageRows, UI_MESSAGE_WRITER } from "./messages/openUiMessageRows"
+import { UI_MESSAGE_ORDINAL, UI_MESSAGE_TIMESTAMP } from "./messages/UiMessageRowStore"
+import type { UiMessageRecord } from "./messages/UiMessageRows"
 import { UIMessageWindowReader } from "./UIMessageWindowReader"
 
-async function ensureUiMessageFile(taskId: string): Promise<string> {
-	const dir = await ensureTaskDirectoryExists(taskId)
-	const filePath = path.join(dir, GlobalFileNames.uiMessages)
-	if (await fileExistsAtPath(filePath)) return filePath
-
-	for (const legacyName of ["ui_messages.json", "claude_messages.json"]) {
-		const legacyPath = path.join(dir, legacyName)
-		if (!(await fileExistsAtPath(legacyPath))) continue
-		const legacyMessages = dedupeClineMessagesByTs(await readJsonl<ClineMessage>(legacyPath))
-		if (legacyMessages.length > 0) await writeJsonl(filePath, legacyMessages)
-		break
-	}
-	return filePath
+function subscriptionKey(databasePath: string): string {
+	const resolved = path.resolve(databasePath)
+	return process.platform === "win32" ? resolved.toLowerCase() : resolved
 }
 
 /**
- * UI messages store backed by ui_messages.jsonl.
+ * Chat history of one task, stored in the task's `messages.db`.
  *
- * Uses the backend-neutral buffered layer over the raw JSONL backend.
+ * This store is the only writer of that database. A legacy `ui_messages.jsonl` (or
+ * older JSON file) is imported once on open and then renamed to `<name>.migrated`.
  */
 export class UIMessage {
 	private store: BufferedUnifyStore<ClineMessage>
@@ -34,12 +28,29 @@ export class UIMessage {
 		this.store = store
 	}
 
-	/** Open (or create) the writable ui_messages.jsonl for a given task. */
+	/** Opens the writable chat history of a task, importing a legacy file first. */
 	static async open(taskId: string): Promise<UIMessage> {
-		const filePath = await ensureUiMessageFile(taskId)
-		const store = await openBufferedJsonlStore<ClineMessage>(filePath, {
-			schemaId: "ui-message",
-			acceptInitialItem: (message) => message.ts > 0,
+		const layout = await ensureInstanceLayout({ taskId })
+		const rows = await openUiMessageRows(layout.root, UI_MESSAGE_WRITER)
+		try {
+			await importLegacyUiMessages(layout.root, rows)
+		} catch (error) {
+			await rows.close().catch(() => undefined)
+			throw error
+		}
+		const store = await BufferedStore.open<UiMessageRecord, ClineMessage>({
+			store: rows,
+			mapping: {
+				ordinal: UI_MESSAGE_ORDINAL,
+				timestamp: UI_MESSAGE_TIMESTAMP,
+				toItem: (record) => record.message,
+				toEntity: (message, ordinal) => ({ ordinal, ts: message.ts, message }),
+			},
+			bufferOptions: {
+				subscriptionKey: subscriptionKey(layout.database(InstanceDatabase.Messages)),
+				storeKind: "ui_message",
+				acceptInitialItem: (message) => message.ts > 0,
+			},
 		})
 		const stored = store.getAll()
 		if (new Set(stored.map((message) => message.ts)).size !== stored.length) {
@@ -48,9 +59,10 @@ export class UIMessage {
 		return new UIMessage(store)
 	}
 
-	/** Open a bounded read-only historical window without materializing every message body. */
+	/** Opens a bounded read-only window over a task's history; it never writes. */
 	static async openWindow(taskId: string): Promise<UIMessageWindowReader> {
-		return await UIMessageWindowReader.open(await ensureUiMessageFile(taskId))
+		const layout = await ensureInstanceLayout({ taskId })
+		return await UIMessageWindowReader.open(layout.root)
 	}
 
 	// ── Read ──

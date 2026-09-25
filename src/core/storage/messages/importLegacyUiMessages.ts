@@ -39,6 +39,23 @@ function sameTimestamps(expected: readonly ClineMessage[], stored: readonly UiMe
 	return expected.length === stored.length && expected.every((message, index) => message.ts === stored[index].ts)
 }
 
+export interface LegacyUiMessages {
+	readonly file: string
+	readonly messages: ClineMessage[]
+}
+
+/**
+ * Reads the legacy chat history of one instance without changing it.
+ *
+ * Invalid lines are skipped and a repeated timestamp keeps its last write, so the
+ * result is what the JSONL store would have shown.
+ */
+export async function readLegacyUiMessages(instanceRoot: string): Promise<LegacyUiMessages | undefined> {
+	const file = await firstLegacyFile(instanceRoot)
+	if (!file) return undefined
+	return { file, messages: latestPerTimestamp((await readJsonl<unknown>(file)).filter(isStorableMessage)) }
+}
+
 /**
  * Moves the chat history of one instance from its legacy file into `messages.db`.
  *
@@ -49,9 +66,9 @@ function sameTimestamps(expected: readonly ClineMessage[], stored: readonly UiMe
  * the same messages, and otherwise kept and reported.
  */
 export async function importLegacyUiMessages(instanceRoot: string, store: UiMessageRowStore): Promise<void> {
-	const legacyFile = await firstLegacyFile(instanceRoot)
-	if (!legacyFile) return
-	const messages = latestPerTimestamp((await readJsonl<unknown>(legacyFile)).filter(isStorableMessage))
+	const legacy = await readLegacyUiMessages(instanceRoot)
+	if (!legacy) return
+	const { file: legacyFile, messages } = legacy
 	const { records: existing } = await store.query()
 
 	if (existing.length === 0) {
