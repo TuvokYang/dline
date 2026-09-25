@@ -30,7 +30,14 @@ import type { ToolValidator } from "../ToolValidator"
 import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
 import { captureAccepted, getModelInfo } from "../utils/AiOutputTelemetry"
-import { countAppliedLines, describeBlockOutcomes, projectFinalCard, projectStreamingCard } from "../utils/diffBlockPresentation"
+import {
+	countAppliedLines,
+	describeBlockOutcomes,
+	describeFailureReminder,
+	projectFinalCard,
+	projectMissingFileCard,
+	projectStreamingCard,
+} from "../utils/diffBlockPresentation"
 import { applyModelContentFixes } from "../utils/ModelContentProcessor"
 
 export class WriteToFileToolHandler implements IFullyManagedTool {
@@ -448,6 +455,13 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 			fileExists = config.services.diffViewProvider.editType === "modify"
 		} else {
 			fileExists = await fileExistsAtPath(absolutePath)
+			// replace_in_file only edits existing files. Refusing here, before the
+			// editor opens, keeps the create path from writing an empty file and
+			// its missing directories just to match against empty content.
+			if (diff && !fileExists) {
+				await this.rejectMissingFile(config, block, resolvedPath, diff)
+				return
+			}
 			config.services.diffViewProvider.editType = fileExists ? "modify" : "create"
 		}
 
@@ -493,9 +507,7 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 						await config.services.diffViewProvider.update(newContent, true)
 						const { savedLines } = await config.services.diffViewProvider.saveChanges()
 						await config.services.diffViewProvider.reset()
-						const hasAnyFailed = result.blocks.some((b) => b.hasError)
-						const reminder = hasAnyFailed ? `\n\n<reminder>\n${formatResponse.diffErrorReminder()}\n</reminder>` : ""
-						this._lastDiffError = `${blockResults}${reminder}`
+						this._lastDiffError = `${blockResults}${describeFailureReminder(result.blocks)}`
 						return
 					}
 					config.taskState.consecutiveMistakeCount++
@@ -508,8 +520,7 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 						operationIsLocatedInWorkspace: await isLocatedInWorkspace(resolvedPath),
 					} satisfies ClineSayTool)
 					await config.callbacks.say("tool", noPartialJson, undefined, undefined, false, block.ts)
-					const reminder = `\n\n<reminder>\n${formatResponse.diffErrorReminder()}\n</reminder>`
-					this._lastDiffError = `${blockResults}${reminder}`
+					this._lastDiffError = `${blockResults}${describeFailureReminder(result.blocks)}`
 					return
 				}
 			} catch (error) {
@@ -521,7 +532,8 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 
 				const existingTs = block.ts
 				const origContent = config.services.diffViewProvider.originalContent || ""
-				const card = projectFinalCard(runDiffParser(diff, origContent).blocks)
+				const parsedBlocks = runDiffParser(diff, origContent).blocks
+				const card = projectFinalCard(parsedBlocks)
 				const updatedToolJson = JSON.stringify({
 					tool: "editedExistingFile",
 					path: getReadablePath(config.cwd, relPath),
@@ -548,7 +560,7 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 				// Store error message for execute() to return as toolError to the API.
 				// Do NOT pushToolResult here — let ToolExecutor.handleCompleteBlock
 				// do it once from execute()'s return value to avoid double-push overwrite.
-				this._lastDiffError = `${(error as Error)?.message}\n\n<reminder>\n${formatResponse.diffErrorReminder()}\n</reminder>`
+				this._lastDiffError = `${(error as Error)?.message}${describeFailureReminder(parsedBlocks)}`
 
 				if (!config.enableParallelToolCalling) {
 					config.taskState.didAlreadyUseTool = true
@@ -584,6 +596,31 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 		}
 
 		return { relPath, absolutePath, fileExists, diff, content, newContent, workspaceContext, blocks }
+	}
+
+	/**
+	 * Refuse a replace_in_file call whose target does not exist.
+	 *
+	 * The diff card shows every block as refused and the tool result tells the
+	 * model that nothing was created. Like other failed edits, the refusal counts
+	 * as a consecutive mistake.
+	 */
+	private async rejectMissingFile(config: TaskConfig, block: ToolUse, resolvedPath: string, diff: string): Promise<void> {
+		config.taskState.consecutiveMistakeCount++
+		await config.services.diffViewProvider.reset()
+		const card = projectMissingFileCard(runDiffParser(diff, "").blocks)
+		const refusedJson = JSON.stringify({
+			tool: "editedExistingFile",
+			path: getReadablePath(config.cwd, resolvedPath),
+			content: card.content,
+			startLineNumbers: card.startLineNumbers,
+			blockErrors: card.blockErrors,
+			operationIsLocatedInWorkspace: await isLocatedInWorkspace(resolvedPath),
+		} satisfies ClineSayTool)
+		await config.callbacks.say("tool", refusedJson, undefined, undefined, false, block.ts)
+		this._lastDiffError = formatResponse.toolError(
+			formatResponse.replaceInFileFileNotFound(getReadablePath(config.cwd, resolvedPath)),
+		)
 	}
 }
 

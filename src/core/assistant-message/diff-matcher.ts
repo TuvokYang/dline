@@ -36,6 +36,14 @@ export type SearchMatch =
 	| { kind: "not_found"; part: "block" }
 	| { kind: "not_found"; part: "skip_tail"; headLine: number }
 
+/** Longest run of leading SEARCH lines found on consecutive file lines. */
+export interface LeadingMatch {
+	/** 1-based file line where the run starts. */
+	startLine: number
+	/** Number of leading SEARCH lines in the run, at least 1. */
+	matchedLines: number
+}
+
 interface IndexedLine {
 	/** Line content without its terminator (`\n` or `\r\n`). */
 	text: string
@@ -132,6 +140,35 @@ export function matchSearchBlock(index: FileLineIndex, pattern: SearchPattern): 
 	const tailEnd = tailLocation.start + tail.length - 1
 	const skippedLines = tailLocation.start - headEnd - 1
 	return uniqueMatch(index, looserTier(headLocation.tier, tailLocation.tier), headLocation.start, tailEnd, skippedLines)
+}
+
+/**
+ * Finds where the longest run of leading SEARCH lines matches consecutive file
+ * lines under the loosest tier, preferring the earliest run on ties.
+ *
+ * Only a failed block is explained this way, so the O(file × SEARCH) scan never
+ * runs on the success path.
+ *
+ * @returns undefined when the first SEARCH line does not begin any file line.
+ */
+export function findLongestLeadingMatch(index: FileLineIndex, lines: readonly string[]): LeadingMatch | undefined {
+	const search = normalizeSearchLines(lines)
+	const matcher = LINE_MATCHERS.line_prefix
+	let best: LeadingMatch | undefined
+	for (let start = 0; start < index.lines.length; start++) {
+		let matched = 0
+		while (
+			matched < search.length &&
+			start + matched < index.lines.length &&
+			matcher(index.lines[start + matched], search[matched])
+		) {
+			matched++
+		}
+		if (matched > 0 && (!best || matched > best.matchedLines)) {
+			best = { startLine: start + 1, matchedLines: matched }
+		}
+	}
+	return best
 }
 
 type UniqueLocation =

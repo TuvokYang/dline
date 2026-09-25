@@ -88,28 +88,27 @@ Rules:
 - You can include multiple SEARCH/REPLACE blocks in a single diff parameter
 - If you're unsure of the exact content, use read_file first to see the current file
 - If the diff was not empty but the operation still failed, re-read the file with read_file and copy the lines from it - never guess or reconstruct from memory.`,
-	diffErrorReminder: `The SEARCH block failed to match exactly one location in the file. Diagnose:
-1. Stale context - file modified since last read. Re-read with read_file.
-2. Line alignment - each SEARCH line must be a complete file line or its beginning; never start in the middle of a line.
-3. Ambiguity - the block matched several locations; add more leading characters or a distinctive adjacent line.
-4. Character confusion - em-dash vs hyphen, curly vs straight quotes.
-
-Fix: re-read the file, then copy lines from it. REPLACE must contain complete lines with their exact indentation.
-Do NOT guess or reconstruct content from memory.
-Do NOT add extra characters to the markers. 
-Do NOT modify the marker format.
-Do NOT use CLI tools to edit files.
-
-The correct SEARCH/REPLACE block format is:
+	replaceInFileFileNotFound: `Failed to edit '@REL_PATH@': the file does not exist, so nothing was changed or created.
+replace_in_file only edits existing files. Check the path with list_files or search_files, or use write_to_file to create a new file.`,
+	diffReminderMatch: `A SEARCH block did not identify exactly one location in the file.
+1. Stale context: the file may have changed since you last read it. Re-read it with read_file.
+2. Line alignment: each SEARCH line must be a complete file line or its beginning; never start in the middle of a line and never include read_file line labels.
+3. Ambiguity: when several locations match, add more leading characters or a distinctive adjacent line.
+4. Character confusion: em dash vs hyphen, curly vs straight quotes, tabs vs spaces.
+Copy lines from the file instead of reconstructing them from memory. REPLACE must contain complete lines with their exact indentation.`,
+	diffReminderFormat: `A SEARCH/REPLACE block is malformed. Every block has this structure, with one delimiter length N >= 7 shared by all of its markers:
 ------- SEARCH
-exact content to find
+lines to find
 =======
-new content to replace with
+replacement lines
 +++++++ REPLACE
-
-IMPORTANT: The ======= separator line must be EXACTLY that — equals signs only, with nothing else on the line.
-Do NOT write "======= REPLACE" — that will cause a malformatted error.
-Only the final +++++++ REPLACE marker includes the word REPLACE.`,
+- The separator line contains only N equals signs; only the closing marker contains the word REPLACE.
+- SEARCH must contain at least one line.
+- A longer N is the fix for content lines that look like markers; the separator, the closing marker, and any SKIP marker must then use that same N.
+Fix the lines named in the error above and resend the block.`,
+	diffReminderOrder: `SEARCH blocks must follow file order and must not overlap. List blocks by ascending line number, and merge blocks that touch the same lines into one block.`,
+	diffReminderPartialSuccess: `Blocks reported as success were already applied to the file. Re-read the file and resend only the failed blocks.`,
+	diffReminderToolPolicy: `Retry with replace_in_file. Do not edit files with command-line tools; if replace_in_file cannot complete the edit, stop and ask the user.`,
 	diffExtraCloseMarker: `Unexpected +++++++ REPLACE close marker without a preceding ------- SEARCH block.
 Remove the extra close marker or ensure it follows a complete SEARCH/REPLACE block.`,
 	diffNestedSearchMarker: `Nested ------- SEARCH marker found inside SEARCH content.
@@ -118,21 +117,26 @@ Ensure each SEARCH/REPLACE block is complete before starting a new one.`,
 	diffMissingSeparator: `Missing ======= separator in SEARCH/REPLACE block.
 The block has a ------- SEARCH marker and a +++++++ REPLACE marker but no ======= separator.
 Add the separator line between the SEARCH content and the REPLACE content.`,
-	diffSearchNotFound: `SEARCH content (@LINE_COUNT@ lines) was not found in the file.
-Each SEARCH line must be a complete file line or the beginning of one (leading indentation may be omitted); matching never starts in the middle of a line.
-Diagnose:
-1. Re-read the file with read_file to get the current content.
-2. Write each SEARCH line from its first non-whitespace character; you may stop early on a line, but never skip its beginning.
-3. SEARCH lines must be consecutive lines of the file.`,
+	diffSearchNotFound: `SEARCH content (@LINE_COUNT@) was not found in the file. This block was not applied.
+Each SEARCH line must be a complete file line or the beginning of one (leading indentation may be omitted), and SEARCH lines must be consecutive file lines.`,
+	diffFindingsHeader: "Findings:",
+	diffHintLineLabels: `Every SEARCH line starts with a read_file line label such as "@LABEL@". Labels are not part of the file: remove them from SEARCH and REPLACE.`,
+	diffHintSkipDotCount: `SEARCH line @LINE@ "@TEXT@" looks like a SKIP marker, but its dot count differs from the block delimiter, so it was matched as ordinary content. The SKIP marker of this block is "@SKIP_MARKER@".`,
+	diffHintEmptyFile: "The file is empty, so no SEARCH line can match. Use write_to_file to write its content.",
+	diffHintFirstLineMissing: `SEARCH line 1 "@TEXT@" is not the beginning of any file line.`,
+	diffHintBreakPoint: `SEARCH line @LINE@ "@TEXT@" differs from file line @FILE_LINE@ "@FILE_TEXT@"; the SEARCH lines before it match consecutive file lines starting at line @FROM@.`,
+	diffHintFileEnds: `SEARCH line @LINE@ "@TEXT@" has no file line left to match; the SEARCH lines before it match from line @FROM@ to the end of the file.`,
 	diffSearchAmbiguous: `SEARCH content matches @MATCH_COUNT@ locations in the file (@MATCH_MODE@ match, starting at lines @LINE_NUMBERS@).
 Each SEARCH block must match exactly one location. This block was not applied.
 Fix: add more leading characters to the SEARCH lines, or include an adjacent line that exists only at the intended location, then retry.`,
 	diffSkipTailNotFound: `The SKIP range head matched line @HEAD_LINE@, but no line after it matches the tail (the SEARCH lines after the SKIP marker).
 This block was not applied. Re-read the file and make sure the tail lines appear after the head.`,
-	diffInvalidSkipMarker: `Invalid SKIP marker. A SEARCH section may contain at most one line that is exactly "@SKIP_MARKER@" (as many dots as the block delimiter).
-The SKIP line needs head lines before it and tail lines after it, and it must never appear in REPLACE.`,
-	diffEmptySearchNonemptyFile: `Empty SEARCH block with a non-empty file.
-Use an empty SEARCH block only for creating new files. For existing files, provide the exact content to find and replace.`,
+	diffSkipMarkerFirst: `Invalid SKIP marker: "@SKIP_MARKER@" is the first SEARCH line. A SKIP range needs at least one head line before the marker to anchor where the range starts.`,
+	diffSkipMarkerLast: `Invalid SKIP marker: "@SKIP_MARKER@" is the last SEARCH line. A SKIP range needs at least one tail line after the marker to mark where the range ends.`,
+	diffSkipMarkerTwice: `Invalid SKIP marker: this block has a second SKIP marker "@SKIP_MARKER@". Use at most one SKIP marker per block, and split the edit into several blocks instead.`,
+	diffSkipMarkerInReplace: `Invalid SKIP marker: the REPLACE section contains the SKIP marker "@SKIP_MARKER@". SKIP is only valid in SEARCH; REPLACE is written verbatim, so write every line you want to keep.`,
+	diffEmptySearch: `The SEARCH section is empty. SEARCH must contain at least one line of the file to locate the edit.
+To write a new file or replace a whole file, use write_to_file.`,
 	diffEmptySearchContentConflict: `Empty SEARCH block detected — SEARCH content may conflict with delimiter format.
 The SEARCH content line was treated as the ======= separator because it has the same number of characters.
 Use a higher delimiter count (>= 7) for all three markers to distinguish content from delimiters.`,
@@ -151,6 +155,16 @@ Use a different delimiter count (e.g. 8 or 9) to avoid this conflict. Example:
 ++++++++ REPLACE`,
 	diffDelimiterMismatch: `Delimiter count mismatch: SEARCH marker used @SEARCH_N@ characters but close marker used @CLOSE_N@ characters.
 All markers in a block must use the same number of delimiter characters.`,
+	diffSeparatorConflict: `Delimiter conflict: this block has more than one line that is exactly @COUNT@ "=" characters. The first one was read as the separator, so a separator-like line in the SEARCH or REPLACE content collides with it.
+Keep the content line and use a longer delimiter for every marker of this block, for example:
+@SEARCH_MARKER@
+@SEPARATOR@
+@CLOSE_MARKER@
+A SKIP marker in that block needs the same number of dots.`,
+	diffSeparatorWithText: `No ======= separator was recognized. SEARCH line @LINE@ "@TEXT@" starts like the separator but has extra text; the separator line must contain only equals signs (@COUNT@ for this block).
+Only the closing +++++++ REPLACE marker contains the word REPLACE.`,
+	diffMarkerCountMismatch: `Delimiter count mismatch: the block opened with a @OPEN_COUNT@-character SEARCH marker, but @SECTION@ line @LINE@ "@TEXT@" uses @COUNT@ characters, so it was read as content instead of a marker.
+All markers of one block (SEARCH, the ======= separator, the closing REPLACE marker, and SKIP) must use the same number of characters.`,
 	diffUnclosedSearch: `SEARCH block was not closed — missing ======= separator.
 When the diff stream ended, the parser was still inside a SEARCH block.
 Ensure every ------- SEARCH is followed by ======= and +++++++ REPLACE.`,

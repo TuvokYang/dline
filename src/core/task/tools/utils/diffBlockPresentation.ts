@@ -1,4 +1,6 @@
 import type { ParsedBlock } from "@core/assistant-message/diff"
+import { formatLineCount } from "@core/assistant-message/diff-diagnostics"
+import { renderPrompt } from "@core/prompts/i18n"
 
 /**
  * Presentation of parsed replace_in_file blocks.
@@ -24,6 +26,26 @@ export interface DiffLineCounts {
 }
 
 const GENERIC_DIFF_ERROR = "SEARCH/REPLACE error"
+const MISSING_FILE_ERROR = "File not found"
+
+/** Failure families that need different recovery advice. */
+type DiffFailureCategory = "match" | "format" | "order"
+
+/** Codes outside this map are malformed blocks. */
+const FAILURE_CATEGORIES: Readonly<Record<string, DiffFailureCategory>> = {
+	SEARCH_NOT_FOUND: "match",
+	AMBIGUOUS_MATCH: "match",
+	BLOCK_OVERLAP: "order",
+	BLOCK_OUT_OF_ORDER: "order",
+}
+
+const REMINDER_KEYS: Readonly<Record<DiffFailureCategory, string>> = {
+	match: "diffReminderMatch",
+	format: "diffReminderFormat",
+	order: "diffReminderOrder",
+}
+
+const REMINDER_ORDER: readonly DiffFailureCategory[] = ["format", "match", "order"]
 
 /**
  * Diff errors that a partially received SEARCH/REPLACE block can prove.
@@ -45,7 +67,7 @@ const BRIEF_DIFF_ERRORS: Readonly<Record<string, string>> = {
 	SEARCH_NOT_FOUND: "SEARCH not found in file",
 	AMBIGUOUS_MATCH: "SEARCH matches multiple locations",
 	INVALID_SKIP_MARKER: "Invalid SKIP marker",
-	EMPTY_SEARCH_CONTENT_CONFLICT: "Empty SEARCH block",
+	EMPTY_SEARCH: "Empty SEARCH block",
 	UNCLOSED_SEARCH: "Unclosed SEARCH block",
 	UNCLOSED_REPLACE: "Unclosed REPLACE block",
 	BLOCK_OVERLAP: "Block overlap",
@@ -94,6 +116,24 @@ export function projectFinalCard(blocks: readonly ParsedBlock[]): DiffCardProjec
 		content: visible.map((block) => (block.hasError ? block.rawText : projectBlockLines(block))),
 		startLineNumbers: visible.map((block) => block.startLine),
 		blockErrors: visible.map((block) => (block.hasError ? briefDiffError(block.errorCode) : undefined)),
+	}
+}
+
+/**
+ * Project a diff that was refused because the target file does not exist.
+ *
+ * No block was matched, so every block keeps its raw text and carries the
+ * same reason.
+ *
+ * @param blocks Blocks of the refused diff.
+ * @returns Card fields for the final say message.
+ */
+export function projectMissingFileCard(blocks: readonly ParsedBlock[]): DiffCardProjection {
+	const visible = blocks.filter((block) => block.rawText.trim())
+	return {
+		content: visible.map((block) => block.rawText),
+		startLineNumbers: visible.map(() => 0),
+		blockErrors: visible.map(() => MISSING_FILE_ERROR),
 	}
 }
 
@@ -152,15 +192,44 @@ export function describeBlockOutcomes(blocks: readonly ParsedBlock[]): string {
 		.join("\n")
 }
 
+/**
+ * Build the reminder appended to a tool result that contains failed blocks.
+ *
+ * Advice is chosen from the failure categories actually present, so a format
+ * error never receives matching advice and vice versa. When some blocks were
+ * applied, the reminder also says that only the failed blocks must be resent.
+ *
+ * @param blocks Parsed blocks in diff order.
+ * @returns A `<reminder>` section prefixed by a blank line, or "" when no block failed.
+ */
+export function describeFailureReminder(blocks: readonly ParsedBlock[]): string {
+	const failed = blocks.filter((block) => block.hasError)
+	if (failed.length === 0) return ""
+
+	const present = new Set(failed.map((block) => failureCategory(block.errorCode)))
+	const sections = REMINDER_ORDER.filter((category) => present.has(category)).map((category) =>
+		renderPrompt("replaceInFile", REMINDER_KEYS[category]),
+	)
+	if (failed.length < blocks.length) {
+		sections.push(renderPrompt("replaceInFile", "diffReminderPartialSuccess"))
+	}
+	sections.push(renderPrompt("replaceInFile", "diffReminderToolPolicy"))
+	return `\n\n<reminder>\n${sections.join("\n\n")}\n</reminder>`
+}
+
+function failureCategory(code: string | undefined): DiffFailureCategory {
+	return (code && FAILURE_CATEGORIES[code]) || "format"
+}
+
 function describeBlockOutcome(block: ParsedBlock): string {
 	if (block.hasError) {
 		return `error — ${block.errorMessage ?? GENERIC_DIFF_ERROR}`
 	}
-	const counts = `deleted ${deletedLineCount(block)} lines, added ${addedLineCount(block)} lines`
+	const counts = `deleted ${formatLineCount(deletedLineCount(block))}, added ${formatLineCount(addedLineCount(block))}`
 	if (block.endLine === undefined) {
 		return `success — ${counts}.`
 	}
-	const skipped = block.skippedLines ? `, including ${block.skippedLines} lines inside the SKIP range` : ""
+	const skipped = block.skippedLines ? `, including ${formatLineCount(block.skippedLines)} inside the SKIP range` : ""
 	return `success — replaced original lines ${block.startLine}-${block.endLine}${skipped} (${counts}).`
 }
 

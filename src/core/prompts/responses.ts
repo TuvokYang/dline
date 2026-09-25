@@ -99,6 +99,9 @@ export const formatResponse = {
 	replaceInFileMissingDiffError: (relPath: string): string =>
 		generateToolResponse("replaceInFile", "replaceInFileMissingDiffError", { REL_PATH: relPath }),
 
+	replaceInFileFileNotFound: (relPath: string): string =>
+		generateToolResponse("replaceInFile", "replaceInFileFileNotFound", { REL_PATH: relPath }),
+
 	executeCommandMissingCommandError: (): string => generateToolResponse("executeCommand", "executeCommandMissingCommandError"),
 
 	invalidMcpToolArgumentError: (serverName: string, toolName: string) =>
@@ -272,8 +275,6 @@ export const formatResponse = {
 				})
 		return `${successTemplate}${autoFormattingEdits ? generateToolResponse("writeToFile", "fileEditAutoFormattingWithoutChanges", { AUTO_FORMATTING_EDITS: autoFormattingEdits }) : ""}${formatterNotice}${generateToolResponse("writeToFile", "fileEditNotesWithoutChanges", { NEW_PROBLEMS_MESSAGE: newProblemsMessage ?? "" })}`
 	},
-
-	diffErrorReminder: () => generateToolResponse("replaceInFile", "diffErrorReminder"),
 
 	toolAlreadyUsed: (toolName: string) => generateToolResponse("toolHandlers", "toolAlreadyUsed", { TOOL_NAME: toolName }),
 

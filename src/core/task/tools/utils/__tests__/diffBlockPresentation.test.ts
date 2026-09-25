@@ -4,7 +4,9 @@ import {
 	briefDiffError,
 	countAppliedLines,
 	describeBlockOutcomes,
+	describeFailureReminder,
 	projectFinalCard,
+	projectMissingFileCard,
 	projectStreamingCard,
 } from "../diffBlockPresentation"
 
@@ -69,7 +71,7 @@ describe("diffBlockPresentation", () => {
 		const blocks = parse(block(["  const doubled", "....... SKIP", "  return doubled"], ["  return value * 9"]))
 
 		expect(describeBlockOutcomes(blocks)).toBe(
-			"success — replaced original lines 2-5, including 2 lines inside the SKIP range (deleted 4 lines, added 1 lines).",
+			"success — replaced original lines 2-5, including 2 lines inside the SKIP range (deleted 4 lines, added 1 line).",
 		)
 		expect(countAppliedLines(blocks)).toEqual({ deletedLines: 4, addedLines: 1 })
 	})
@@ -82,7 +84,7 @@ describe("diffBlockPresentation", () => {
 
 		const outcomes = describeBlockOutcomes(blocks).split("\n")
 
-		expect(outcomes[0]).toBe("Block #1: success — replaced original lines 2-2 (deleted 1 lines, added 1 lines).")
+		expect(outcomes[0]).toBe("Block #1: success — replaced original lines 2-2 (deleted 1 line, added 1 line).")
 		expect(outcomes[1]).toMatch(/^Block #2: error — SEARCH content matches 2 locations/)
 		expect(countAppliedLines(blocks)).toEqual({ deletedLines: 1, addedLines: 1 })
 	})
@@ -109,5 +111,52 @@ describe("diffBlockPresentation", () => {
 
 		expect(card.blockErrors).toEqual([undefined])
 		expect(card.content[0].startsWith("- ")).toBe(true)
+	})
+
+	it("labels an empty SEARCH block on the card", () => {
+		expect(projectFinalCard(parse(block([], ["x"]))).blockErrors).toEqual(["Empty SEARCH block"])
+	})
+
+	it("shows every block of a refused missing-file edit with its raw text", () => {
+		const card = projectMissingFileCard(parse(block(["  const doubled"], ["x"]), ""))
+
+		expect(card.blockErrors).toEqual(["File not found"])
+		expect(card.content[0]).toContain("------- SEARCH")
+	})
+})
+
+describe("describeFailureReminder", () => {
+	it("returns nothing when every block succeeded", () => {
+		expect(describeFailureReminder(parse(block(["  const doubled"], ["x"])))).toBe("")
+	})
+
+	it("gives format advice without matching advice for a malformed block", () => {
+		const reminder = describeFailureReminder(parse(block([], ["x"])))
+
+		expect(reminder).toContain("<reminder>")
+		expect(reminder).toContain("A SEARCH/REPLACE block is malformed")
+		expect(reminder).toContain("A longer N is the fix")
+		expect(reminder).not.toContain("did not identify exactly one location")
+		expect(reminder).not.toMatch(/Do NOT add extra characters/i)
+	})
+
+	it("gives matching advice without format advice when SEARCH is not found", () => {
+		const reminder = describeFailureReminder(parse(block(["  const missing"], ["x"])))
+
+		expect(reminder).toContain("did not identify exactly one location")
+		expect(reminder).not.toContain("A SEARCH/REPLACE block is malformed")
+	})
+
+	it("gives ordering advice for out-of-order blocks and tells the model which blocks already landed", () => {
+		const blocks = parse([block(["export function beta"], ["A"]), block(["export function alpha"], ["B"])].join("\n"))
+		const reminder = describeFailureReminder(blocks)
+
+		expect(blocks[1].errorCode).toBe("BLOCK_OUT_OF_ORDER")
+		expect(reminder).toContain("must follow file order")
+		expect(reminder).toContain("resend only the failed blocks")
+	})
+
+	it("omits the partial-success note when no block was applied", () => {
+		expect(describeFailureReminder(parse(block(["  const missing"], ["x"])))).not.toContain("resend only the failed blocks")
 	})
 })
