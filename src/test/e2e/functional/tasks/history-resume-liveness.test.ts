@@ -1,7 +1,9 @@
-import { readdir, writeFile } from "node:fs/promises"
+import { readdir } from "node:fs/promises"
 import * as path from "node:path"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
+import { rewriteTaskActivities } from "@e2e/utils/task-instance-store"
 import { expect, type Frame } from "@playwright/test"
+import type { TaskActivityRecord } from "@shared/task-activity"
 
 const HISTORY_SURFACE_BUDGET_MS = 500
 
@@ -30,7 +32,7 @@ async function onlyTaskId(dlineDocsDir: string): Promise<string> {
 	return taskIds[0]
 }
 
-async function seedLargeTransientActivityHistory(taskDirectory: string, taskId: string): Promise<void> {
+async function seedLargeTransientActivityHistory(dlineDocsDir: string, taskId: string): Promise<void> {
 	const createdAt = Date.now()
 	const detail = "E2E_HISTORY_LIVENESS_ACTIVITY_DETAIL_".padEnd(64 * 1024, "x")
 	const output = "E2E_HISTORY_LIVENESS_ACTIVITY_OUTPUT_".padEnd(64 * 1024, "y")
@@ -50,7 +52,7 @@ async function seedLargeTransientActivityHistory(taskDirectory: string, taskId: 
 		timeoutSeconds: 0,
 		events: [],
 	}))
-	await writeFile(path.join(taskDirectory, "activities.json"), JSON.stringify({ schemaVersion: 1, taskId, activities }), "utf8")
+	await rewriteTaskActivities(dlineDocsDir, taskId, () => activities as unknown as TaskActivityRecord[])
 }
 
 e2e(
@@ -94,8 +96,7 @@ e2e(
 		await closeCurrentTask(sidebar)
 
 		const taskId = await onlyTaskId(dlineDocsDir)
-		const taskDirectory = path.join(dlineDocsDir, "tasks", taskId)
-		await seedLargeTransientActivityHistory(taskDirectory, taskId)
+		await seedLargeTransientActivityHistory(dlineDocsDir, taskId)
 
 		const historyTask = sidebar.getByText(taskText, { exact: true }).last()
 		await expect(historyTask).toBeVisible({ timeout: 30_000 })

@@ -1,7 +1,20 @@
-import { access, appendFile, readdir, readFile, writeFile } from "node:fs/promises"
+import { access, readdir, readFile, writeFile } from "node:fs/promises"
 import * as path from "node:path"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
+import {
+	readTaskActivities,
+	readTaskUiMessages,
+	rewriteTaskActivities,
+	rewriteTaskUiMessages,
+} from "@e2e/utils/task-instance-store"
 import { expect, type Frame, type Locator } from "@playwright/test"
+import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { TaskActivityRecord } from "@shared/task-activity"
+
+/** Stored chat rows as loose records, for fixtures that edit fields outside the message type. */
+function asRecords(messages: ClineMessage[]): Array<Record<string, unknown>> {
+	return messages as unknown as Array<Record<string, unknown>>
+}
 
 async function sendTask(sidebar: Frame, text: string): Promise<void> {
 	const input = sidebar.getByTestId("chat-input")
@@ -70,12 +83,11 @@ async function seedPersistedCommandLayoutActivities(dlineDocsDir: string, taskId
 	const outputLines = Array.from({ length: 40 }, (_, index) => `E2E_ACTIVITY_OUTPUT_LINE_${index}`).join("\n")
 	const resultLines = Array.from({ length: 40 }, (_, index) => `E2E_ACTIVITY_RESULT_LINE_${index}`).join("\n")
 	const errorLines = Array.from({ length: 40 }, (_, index) => `E2E_ACTIVITY_ERROR_LINE_${index}`).join("\n")
-	await writeFile(
-		path.join(dlineDocsDir, "tasks", taskId, "activities.json"),
-		JSON.stringify({
-			schemaVersion: 1,
-			taskId,
-			activities: [
+	await rewriteTaskActivities(
+		dlineDocsDir,
+		taskId,
+		() =>
+			[
 				{
 					schemaVersion: 1,
 					activityId: "e2e-command-layout-completed",
@@ -112,48 +124,45 @@ async function seedPersistedCommandLayoutActivities(dlineDocsDir: string, taskId
 					timeoutSeconds: 60,
 					events: [],
 				},
-			],
-		}),
-		"utf8",
+			] as unknown as TaskActivityRecord[],
 	)
 }
 
 async function seedPersistedRunningCommand(dlineDocsDir: string, taskId: string, command: string): Promise<string> {
-	const taskDir = path.join(dlineDocsDir, "tasks", taskId)
-	const activitiesPath = path.join(taskDir, "activities.json")
-	const persistedActivities = JSON.parse(await readFile(activitiesPath, "utf8")) as {
-		activities?: Array<Record<string, unknown>>
-	}
-	const activity = persistedActivities.activities?.find((candidate) => candidate.detail === command)
-	if (!activity || typeof activity.activityId !== "string") {
-		throw new Error("Expected the closed task to persist its command activity")
-	}
-	activity.status = "running"
-	activity.executionMode = "background"
-	activity.timeoutSeconds = 0
-	activity.latestEvent = "E2E_ORPHAN_COMMAND_STILL_RUNNING"
-	delete activity.finishedAt
-	await writeFile(activitiesPath, JSON.stringify(persistedActivities), "utf8")
+	let activityId: string | undefined
+	await rewriteTaskActivities(dlineDocsDir, taskId, (activities) => {
+		const activity = (activities as unknown as Array<Record<string, unknown>>).find(
+			(candidate) => candidate.detail === command,
+		)
+		if (!activity || typeof activity.activityId !== "string") {
+			throw new Error("Expected the closed task to persist its command activity")
+		}
+		activityId = activity.activityId
+		activity.status = "running"
+		activity.executionMode = "background"
+		activity.timeoutSeconds = 0
+		activity.latestEvent = "E2E_ORPHAN_COMMAND_STILL_RUNNING"
+		delete activity.finishedAt
+		return activities
+	})
+	if (!activityId) throw new Error("Expected the closed task to persist its command activity")
 
-	const messagesPath = path.join(taskDir, "ui_messages.jsonl")
-	const messages = (await readFile(messagesPath, "utf8"))
-		.split(/\r?\n/)
-		.filter(Boolean)
-		.map((line) => JSON.parse(line) as Record<string, unknown>)
-	const commandMessage = messages.find(
-		(message) =>
-			(message.say === "command" || message.ask === "command") &&
-			typeof message.text === "string" &&
-			message.text.startsWith(command),
-	)
-	if (!commandMessage) {
-		throw new Error("Expected the closed task to persist its command message")
-	}
-	commandMessage.activityId = activity.activityId
-	commandMessage.commandExecutionMode = "background"
-	commandMessage.commandStatus = "running"
-	await writeFile(messagesPath, `${messages.map((message) => JSON.stringify(message)).join("\n")}\n`, "utf8")
-	return activity.activityId
+	await rewriteTaskUiMessages(dlineDocsDir, taskId, (messages) => {
+		const commandMessage = asRecords(messages).find(
+			(message) =>
+				(message.say === "command" || message.ask === "command") &&
+				typeof message.text === "string" &&
+				message.text.startsWith(command),
+		)
+		if (!commandMessage) {
+			throw new Error("Expected the closed task to persist its command message")
+		}
+		commandMessage.activityId = activityId
+		commandMessage.commandExecutionMode = "background"
+		commandMessage.commandStatus = "running"
+		return messages
+	})
+	return activityId
 }
 
 async function readTaskSnapshot(
@@ -178,29 +187,22 @@ async function markPersistedApprovalAnchorPartial(dlineDocsDir: string, taskId: 
 		throw new Error("Expected a persisted approval interaction with a message anchor")
 	}
 
-	const messagesPath = path.join(taskDir, "ui_messages.jsonl")
-	const messages = (await readFile(messagesPath, "utf8"))
-		.split(/\r?\n/)
-		.filter(Boolean)
-		.map((line) => JSON.parse(line) as Record<string, unknown>)
-	const anchor = messages.find(
-		(message) => message.type === "ask" && message.ts === messageTs && message.interactionId === interactionId,
-	)
-	if (!anchor) {
-		throw new Error("Expected the persisted approval ask owned by the active interaction")
-	}
-	anchor.partial = true
-	anchor.text = JSON.stringify({ tool: "readFile", path: "" })
-	await writeFile(messagesPath, `${messages.map((message) => JSON.stringify(message)).join("\n")}\n`, "utf8")
+	await rewriteTaskUiMessages(dlineDocsDir, taskId, (messages) => {
+		const anchor = asRecords(messages).find(
+			(message) => message.type === "ask" && message.ts === messageTs && message.interactionId === interactionId,
+		)
+		if (!anchor) {
+			throw new Error("Expected the persisted approval ask owned by the active interaction")
+		}
+		anchor.partial = true
+		anchor.text = JSON.stringify({ tool: "readFile", path: "" })
+		return messages
+	})
 }
 
 async function simulateIncompleteTurnEndContinuation(dlineDocsDir: string, taskId: string): Promise<void> {
 	const taskDir = path.join(dlineDocsDir, "tasks", taskId)
-	const uiMessagesPath = path.join(taskDir, "ui_messages.jsonl")
-	const uiMessages = (await readFile(uiMessagesPath, "utf8"))
-		.split(/\r?\n/)
-		.filter(Boolean)
-		.map((line) => JSON.parse(line) as Record<string, unknown>)
+	const uiMessages = asRecords(await readTaskUiMessages(dlineDocsDir, taskId))
 	const ask = uiMessages.findLast((message) => message.type === "ask" && message.ask === "qna_respond")
 	const interactionId = typeof ask?.interactionId === "string" ? ask.interactionId : undefined
 	const apiIndex = typeof ask?.conversationHistoryIndex === "number" ? ask.conversationHistoryIndex : undefined
@@ -240,24 +242,16 @@ async function simulateIncompleteTurnEndContinuation(dlineDocsDir: string, taskI
 }
 
 async function appendPersistedTimelineTail(dlineDocsDir: string, taskId: string, count: number): Promise<void> {
-	const messagesPath = path.join(dlineDocsDir, "tasks", taskId, "ui_messages.jsonl")
-	const persisted = await readFile(messagesPath, "utf8")
-	let maxTs = 0
-	for (const line of persisted.split(/\r?\n/)) {
-		if (!line.trim()) continue
-		const message = JSON.parse(line) as { ts?: unknown }
-		if (typeof message.ts === "number") maxTs = Math.max(maxTs, message.ts)
-	}
-	const tail = Array.from({ length: count }, (_, index) =>
-		JSON.stringify({
+	await rewriteTaskUiMessages(dlineDocsDir, taskId, (messages) => {
+		const maxTs = messages.reduce((max, message) => Math.max(max, message.ts), 0)
+		const tail: ClineMessage[] = Array.from({ length: count }, (_, index) => ({
 			ts: maxTs + index + 1,
 			type: "say",
 			say: "text",
 			text: `E2E_MESSAGE_WINDOW_FILLER_${index + 1}`,
-		}),
-	)
-	const separator = persisted.length > 0 && !persisted.endsWith("\n") ? "\n" : ""
-	await appendFile(messagesPath, `${separator}${tail.join("\n")}\n`, "utf8")
+		}))
+		return [...messages, ...tail]
+	})
 }
 
 e2e(
@@ -1232,12 +1226,9 @@ e2e(
 		// or the late cancellation can overwrite the synthetic orphan with cancelled.
 		await expect
 			.poll(
-				async () => {
-					const persisted = JSON.parse(
-						await readFile(path.join(dlineDocsDir, "tasks", persistedTaskId, "activities.json"), "utf8"),
-					) as { activities?: Array<{ detail?: string; status?: string }> }
-					return persisted.activities?.find((activity) => activity.detail === command)?.status
-				},
+				async () =>
+					(await readTaskActivities(dlineDocsDir, persistedTaskId)).find((activity) => activity.detail === command)
+						?.status,
 				{ timeout: 30_000 },
 			)
 			.toBe("cancelled")
@@ -1264,12 +1255,12 @@ e2e(
 		await expect(interruptedActivity.locator(".animate-spin")).toHaveCount(0)
 		await expect(interruptedActivity.getByRole("button", { name: "Cancel", exact: true })).toHaveCount(0)
 		await expect
-			.poll(async () => {
-				const persisted = JSON.parse(
-					await readFile(path.join(dlineDocsDir, "tasks", persistedTaskId, "activities.json"), "utf8"),
-				) as { activities?: Array<{ activityId?: string; status?: string }> }
-				return persisted.activities?.find((activity) => activity.activityId === activityId)?.status
-			})
+			.poll(
+				async () =>
+					(await readTaskActivities(dlineDocsDir, persistedTaskId)).find(
+						(activity) => activity.activityId === activityId,
+					)?.status,
+			)
 			.toBe("interrupted")
 
 		await closeCurrentTask(sidebar)

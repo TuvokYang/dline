@@ -1,8 +1,9 @@
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises"
+import { mkdir, readdir, writeFile } from "node:fs/promises"
 import * as path from "node:path"
 import type { MockApiConsumption } from "@e2e/fixtures/server"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
+import { readTaskActivities } from "@e2e/utils/task-instance-store"
 import { expect, type Frame, type Locator, type Page, type TestInfo } from "@playwright/test"
 
 /** Mirrors SubagentRunner.MAX_INITIAL_STREAM_ATTEMPTS (one initial try plus five backoff retries). */
@@ -69,10 +70,8 @@ async function onlyTaskId(dlineDocsDir: string): Promise<string> {
 
 async function readSubagentActivity(dlineDocsDir: string, taskId: string): Promise<Record<string, unknown>> {
 	return E2ETestHelper.waitForValue(async () => {
-		const persisted = JSON.parse(await readFile(path.join(dlineDocsDir, "tasks", taskId, "activities.json"), "utf8")) as {
-			activities?: Array<Record<string, unknown>>
-		}
-		return persisted.activities?.find((activity) => activity.kind === "subagent")
+		const activity = (await readTaskActivities(dlineDocsDir, taskId)).find((candidate) => candidate.kind === "subagent")
+		return activity as unknown as Record<string, unknown> | undefined
 	})
 }
 

@@ -3,6 +3,7 @@ import { mkdir, readdir, readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
+import { readTaskUiMessagesText } from "@e2e/utils/task-instance-store"
 import { expect, type Frame } from "@playwright/test"
 import { ImageGenerationSource } from "@shared/proto/dline/profile"
 
@@ -511,11 +512,7 @@ e2e(
 			expect(manifest).toContain("image:sha256:")
 			expect(manifest).not.toContain(PNG_1X1_BASE64)
 			expect(path.resolve(path.dirname(manifests[0]), "..")).toBe(taskDirectory)
-			const requiredConversationArtifactNames = [
-				"context.json",
-				"api_conversation_history.jsonl",
-				"ui_messages.jsonl",
-			] as const
+			const requiredConversationArtifactNames = ["context.json", "api_conversation_history.jsonl", "messages.db"] as const
 			const conversationArtifactNames = new Set([
 				...requiredConversationArtifactNames,
 				"context_history.jsonl",
@@ -525,7 +522,21 @@ e2e(
 			for (const requiredName of requiredConversationArtifactNames) {
 				expect(taskFiles.some((filePath) => path.basename(filePath) === requiredName)).toBe(true)
 			}
-			for (const artifactPath of taskFiles.filter((filePath) => conversationArtifactNames.has(path.basename(filePath)))) {
+			// Chat history lives in messages.db; check its decoded rows rather than the SQLite pages.
+			const chatHistory = await readTaskUiMessagesText(dlineDocsDir, path.basename(taskDirectory))
+			expect(chatHistory).not.toBe("")
+			expect(chatHistory).not.toContain("dline-e2e-api-key")
+			expect(chatHistory).not.toContain("data:image/")
+			expect(chatHistory).not.toContain("partial_image_b64")
+			const chatHistoryProofPath = path.join(proofDir, "current-image-ui-messages.jsonl")
+			await writeFile(chatHistoryProofPath, chatHistory)
+			await testInfo.attach("current-image-ui-messages.jsonl", {
+				path: chatHistoryProofPath,
+				contentType: "application/x-ndjson",
+			})
+			for (const artifactPath of taskFiles.filter(
+				(filePath) => conversationArtifactNames.has(path.basename(filePath)) && !filePath.endsWith(".db"),
+			)) {
 				const artifactName = path.basename(artifactPath)
 				const artifactContent = await readFile(artifactPath)
 				expect(artifactContent.toString("utf8")).not.toContain("dline-e2e-api-key")

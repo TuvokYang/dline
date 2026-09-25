@@ -1,10 +1,10 @@
-import { type FSWatcher, watch } from "node:fs"
-import { appendFile, readdir, readFile, stat, writeFile } from "node:fs/promises"
+import { readdir, readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
-import { setTimeout as delay } from "node:timers/promises"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
+import { readTaskUiMessages, rewriteTaskUiMessages } from "@e2e/utils/task-instance-store"
 import { expect, type Frame, type TestInfo } from "@playwright/test"
+import type { ClineMessage } from "@shared/ExtensionMessage"
 import type { ElectronApplication } from "playwright"
 
 const TASK_TEXT = "E2E_LARGE_UI_JSONL_COMPACTION_TASK"
@@ -12,8 +12,6 @@ const READY_MARKER = "E2E_LARGE_UI_JSONL_READY"
 const CONTINUATION_MARKER = "E2E_LARGE_UI_JSONL_CONTINUATION"
 const SUMMARY_MARKER = "E2E_LARGE_UI_JSONL_ACCEPTED_SUMMARY"
 const COMPLETION_MARKER = "E2E_LARGE_UI_JSONL_CONTINUED"
-const UI_MESSAGES_FILE = "ui_messages.jsonl"
-const UI_MESSAGES_TEMP_PREFIX = `${UI_MESSAGES_FILE}.tmp.`
 const TARGET_UI_MESSAGES_BYTES = 32 * 1024 * 1024
 const STREAM_CHUNK_SIZE = 8
 const STREAM_CHUNK_DELAY_MS = 1_500
@@ -29,11 +27,9 @@ interface StoredProfile {
 	}
 }
 
-interface TempFileObservation {
-	name: string
-	firstSeenAtMs: number
-	lastSeenAtMs: number
-	maxBytes: number
+interface SeededHistory {
+	bytes: number
+	count: number
 }
 
 const profilesPath = (dlineDir: string) => path.join(dlineDir, "data", "settings", "api_profiles.json")
@@ -93,138 +89,75 @@ async function onlyTaskId(dlineDocsDir: string): Promise<string> {
 	}, 30_000)
 }
 
-async function growUiMessagesFile(filePath: string, targetBytes: number): Promise<number> {
-	const persisted = await readFile(filePath, "utf8")
-	let maxTs = 0
-	for (const line of persisted.split(/\r?\n/)) {
-		if (!line.trim()) continue
-		const message = JSON.parse(line) as { ts?: unknown }
-		if (typeof message.ts === "number") maxTs = Math.max(maxTs, message.ts)
-	}
-
-	const padding = "x".repeat(8 * 1024)
-	const lines: string[] = []
-	let appendedBytes = 0
-	let pairIndex = 0
-	while (Buffer.byteLength(persisted, "utf8") + appendedBytes < targetBytes) {
-		const ts = maxTs + pairIndex * 2 + 1
-		const started = `${JSON.stringify({
-			ts,
-			type: "say",
-			say: "api_req_started",
-			text: JSON.stringify({
-				requestId: `seed_${ts}`,
-				modelId: "dline-e2e-model",
-				provider: "openai",
-				tokensIn: 3_312,
-				tokensOut: 217,
-				cacheReads: 123_456,
-				cost: 0.018179,
-				padding,
-			}),
-		})}\n`
-		const finished = `${JSON.stringify({
-			ts: ts + 1,
-			type: "say",
-			say: "api_req_finished",
-			text: JSON.stringify({ requestId: `seed_${ts}`, cost: 0.018179, totalTokensIn: 3_312, totalTokensOut: 217 }),
-		})}\n`
-		lines.push(started, finished)
-		appendedBytes += Buffer.byteLength(started, "utf8") + Buffer.byteLength(finished, "utf8")
-		pairIndex++
-	}
-
-	const separator = persisted.length > 0 && !persisted.endsWith("\n") ? "\n" : ""
-	await appendFile(filePath, `${separator}${lines.join("")}`, "utf8")
-	return (await stat(filePath)).size
+async function closeCurrentTask(sidebar: Frame): Promise<void> {
+	const closeButton = sidebar.getByRole("button", { name: "Close Task", exact: true })
+	await expect(closeButton).toBeVisible({ timeout: 30_000 })
+	await closeButton.click()
+	await expect(closeButton).toHaveCount(0, { timeout: 30_000 })
+	await expect(sidebar.getByTestId("chat-input")).toBeVisible()
+	await E2ETestHelper.dismissWhatsNewModal(sidebar)
 }
 
-class UiMessagesTempObserver {
-	private readonly observations = new Map<string, TempFileObservation>()
-	private readonly initialNames = new Set<string>()
-	private watcher: FSWatcher | undefined
-	private pollTimer: ReturnType<typeof setInterval> | undefined
-	private scanQueue = Promise.resolve()
+async function reopenTask(sidebar: Frame, taskText: string): Promise<void> {
+	const historyTask = sidebar.getByText(taskText, { exact: true }).last()
+	await expect(historyTask).toBeVisible({ timeout: 30_000 })
+	await historyTask.click()
+	await expect(sidebar.getByRole("button", { name: "Close Task", exact: true })).toBeVisible({ timeout: 30_000 })
+}
 
-	private constructor(private readonly taskDir: string) {}
-
-	static async start(taskDir: string): Promise<UiMessagesTempObserver> {
-		const observer = new UiMessagesTempObserver(taskDir)
-		for (const name of await observer.tempFileNames()) observer.initialNames.add(name)
-		observer.watcher = watch(taskDir, { persistent: false }, (_eventType, filename) => {
-			if (!filename) return
-			observer.recordName(String(filename))
-		})
-		observer.pollTimer = setInterval(() => observer.scheduleScan(), 25)
-		observer.pollTimer.unref?.()
-		observer.scheduleScan()
-		return observer
-	}
-
-	async stopAfterQuiet(quietMs = 2_000, timeoutMs = 30_000): Promise<readonly TempFileObservation[]> {
-		const deadline = Date.now() + timeoutMs
-		let emptySince: number | undefined
-		while (Date.now() < deadline) {
-			await this.scan()
-			const active = (await this.tempFileNames()).filter((name) => !this.initialNames.has(name))
-			if (active.length === 0) {
-				emptySince ??= Date.now()
-				if (Date.now() - emptySince >= quietMs) break
-			} else {
-				emptySince = undefined
-			}
-			await delay(50)
+/**
+ * Grows the stored chat history of a closed task to at least `targetBytes` of
+ * serialized messages, appending realistic API request pairs after the last row.
+ */
+async function growStoredHistory(dlineDocsDir: string, taskId: string, targetBytes: number): Promise<SeededHistory> {
+	const padding = "x".repeat(8 * 1024)
+	const seeded: SeededHistory = { bytes: 0, count: 0 }
+	await rewriteTaskUiMessages(dlineDocsDir, taskId, (messages) => {
+		const grown = [...messages]
+		let bytes = messages.reduce((sum, message) => sum + Buffer.byteLength(JSON.stringify(message), "utf8"), 0)
+		const maxTs = messages.reduce((max, message) => Math.max(max, message.ts), 0)
+		for (let pairIndex = 0; bytes < targetBytes; pairIndex++) {
+			const ts = maxTs + pairIndex * 2 + 1
+			const pair: ClineMessage[] = [
+				{
+					ts,
+					type: "say",
+					say: "api_req_started",
+					text: JSON.stringify({
+						requestId: `seed_${ts}`,
+						modelId: "dline-e2e-model",
+						provider: "openai",
+						tokensIn: 3_312,
+						tokensOut: 217,
+						cacheReads: 123_456,
+						cost: 0.018179,
+						padding,
+					}),
+				},
+				{
+					ts: ts + 1,
+					type: "say",
+					say: "api_req_finished",
+					text: JSON.stringify({ requestId: `seed_${ts}`, cost: 0.018179, totalTokensIn: 3_312, totalTokensOut: 217 }),
+				},
+			]
+			for (const message of pair) bytes += Buffer.byteLength(JSON.stringify(message), "utf8")
+			grown.push(...pair)
 		}
-		if (this.pollTimer) clearInterval(this.pollTimer)
-		this.pollTimer = undefined
-		this.watcher?.close()
-		this.watcher = undefined
-		await this.scanQueue
-		return [...this.observations.values()].sort((left, right) => left.firstSeenAtMs - right.firstSeenAtMs)
-	}
-
-	private scheduleScan(): void {
-		this.scanQueue = this.scanQueue.then(() => this.scan()).catch(() => undefined)
-	}
-
-	private async scan(): Promise<void> {
-		for (const name of await this.tempFileNames()) this.recordName(name)
-		await Promise.all(
-			[...this.observations.values()].map(async (observation) => {
-				try {
-					const fileStat = await stat(path.join(this.taskDir, observation.name))
-					observation.maxBytes = Math.max(observation.maxBytes, fileStat.size)
-					observation.lastSeenAtMs = Date.now()
-				} catch {
-					// The atomic rename may remove the temp file between directory enumeration and stat.
-				}
-			}),
-		)
-	}
-
-	private recordName(name: string): void {
-		if (!name.startsWith(UI_MESSAGES_TEMP_PREFIX) || this.initialNames.has(name)) return
-		const now = Date.now()
-		const existing = this.observations.get(name)
-		if (existing) {
-			existing.lastSeenAtMs = now
-			return
-		}
-		this.observations.set(name, { name, firstSeenAtMs: now, lastSeenAtMs: now, maxBytes: 0 })
-	}
-
-	private async tempFileNames(): Promise<string[]> {
-		return (await readdir(this.taskDir).catch(() => [])).filter((name) => name.startsWith(UI_MESSAGES_TEMP_PREFIX))
-	}
+		seeded.bytes = bytes
+		seeded.count = grown.length
+		return grown
+	})
+	return seeded
 }
 
 async function attachDiagnostics(
 	testInfo: TestInfo,
 	value: {
-		baselineBytes: number
+		seeded: SeededHistory
 		configuredChunkCount: number
-		observations: readonly TempFileObservation[]
-		partialWindow: readonly TempFileObservation[]
+		storedCount: number
+		storedPartialCount: number
 	},
 ): Promise<void> {
 	await testInfo.attach("automatic-compaction-streaming-persistence.json", {
@@ -234,7 +167,7 @@ async function attachDiagnostics(
 }
 
 e2e(
-	"Automatic compaction streaming - large ui_messages.jsonl is not atomically rewritten for every partial chunk",
+	"Automatic compaction streaming - a large stored history keeps every row and never persists partial chunks",
 	async ({ dlineDir, dlineDocsDir, helper, openVSCode, server, userDataDir, workspaceDir }, testInfo) => {
 		e2e.setTimeout(240_000)
 		await configureResponsesAutoCompaction(dlineDir)
@@ -278,20 +211,18 @@ e2e(
 			await sendTask(sidebar, TASK_TEXT)
 			await expect(sidebar.getByText(READY_MARKER, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
 			const taskId = await onlyTaskId(dlineDocsDir)
-			const taskDir = path.join(dlineDocsDir, "tasks", taskId)
-			const uiMessagesPath = path.join(taskDir, UI_MESSAGES_FILE)
 
-			// Let the first turn's durable write settle, then enlarge the active Task's
-			// file externally. The next dirty flush merges this committed tail under lock.
-			await delay(1_500)
-			const baselineBytes = await growUiMessagesFile(uiMessagesPath, TARGET_UI_MESSAGES_BYTES)
-			expect(baselineBytes).toBeGreaterThanOrEqual(TARGET_UI_MESSAGES_BYTES)
+			// messages.db has one writer: the open task. Grow the history while the task
+			// is closed, then reopen it so the extension reads the grown rows back.
+			await closeCurrentTask(sidebar)
+			const seeded = await growStoredHistory(dlineDocsDir, taskId, TARGET_UI_MESSAGES_BYTES)
+			expect(seeded.bytes).toBeGreaterThanOrEqual(TARGET_UI_MESSAGES_BYTES)
 			expect(server.getRequestCount("openai-compatible-responses")).toBe(1)
+			await reopenTask(sidebar, TASK_TEXT)
 
-			const observer = await UiMessagesTempObserver.start(taskDir)
 			await sendTask(sidebar, CONTINUATION_MARKER)
 			await expect.poll(() => server.getRequestCount("openai-compatible-responses"), { timeout: 90_000 }).toBe(3)
-			const observations = await observer.stopAfterQuiet()
+			await expect(sidebar.getByText(COMPLETION_MARKER, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
 
 			const requests = server.getMockConsumptions("openai-compatible-responses")
 			const summaryRequest = requests[1]
@@ -299,16 +230,19 @@ e2e(
 			expect(summaryRequest.responseType).toBe("tool-with-completion-snapshots")
 			expect(summaryRequest.contractError).toBeUndefined()
 			expect(continuationRequest.contractError).toBeUndefined()
-			const partialWindow = observations.filter(
-				(observation) =>
-					observation.firstSeenAtMs >= summaryRequest.receivedAtMs &&
-					observation.firstSeenAtMs < continuationRequest.receivedAtMs,
-			)
-			await attachDiagnostics(testInfo, { baselineBytes, configuredChunkCount, observations, partialWindow })
 
-			// A partial stream may cause at most one durable boundary write. Rewriting the
-			// complete JSONL once per provider chunk makes persistence O(history size * chunks).
-			expect(partialWindow.length).toBeLessThanOrEqual(1)
+			// Partial chunks stay in memory; only finished messages reach messages.db, so the
+			// streamed summary can neither leave a partial row nor drop any seeded row.
+			const stored = await readTaskUiMessages(dlineDocsDir, taskId)
+			const storedPartialCount = stored.filter((message) => message.partial === true).length
+			await attachDiagnostics(testInfo, {
+				seeded,
+				configuredChunkCount,
+				storedCount: stored.length,
+				storedPartialCount,
+			})
+			expect(storedPartialCount).toBe(0)
+			expect(stored.length).toBeGreaterThanOrEqual(seeded.count)
 			expect(JSON.stringify(continuationRequest.requestBody)).toContain(SUMMARY_MARKER)
 			await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
 		} finally {

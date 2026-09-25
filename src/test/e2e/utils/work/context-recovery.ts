@@ -3,6 +3,7 @@ import path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper } from "@e2e/utils/helpers"
 import { seedLegacyTaskHistory } from "@e2e/utils/task-history-store"
+import { readTaskUiMessages, readTaskUiMessagesText } from "@e2e/utils/task-instance-store"
 import { expect, type Frame, type Page } from "@playwright/test"
 import type { ClineApiReqInfo } from "@shared/ExtensionMessage"
 import type { HistoryItem } from "@shared/HistoryItem"
@@ -316,12 +317,10 @@ export async function closeContextRecoveryTask(sidebar: Frame): Promise<void> {
 }
 
 export async function readTaskApiRequestInfos(dlineDocsDir: string, taskId: string): Promise<ClineApiReqInfo[]> {
-	const raw = await readFile(path.join(dlineDocsDir, "tasks", taskId, "ui_messages.jsonl"), "utf8").catch(() => "")
 	const requests: ClineApiReqInfo[] = []
-	for (const line of raw.split(/\r?\n/).filter(Boolean)) {
+	for (const message of await readTaskUiMessages(dlineDocsDir, taskId)) {
+		if (message.type !== "say" || message.say !== "api_req_started" || !message.text) continue
 		try {
-			const message = JSON.parse(line) as { type?: string; say?: string; text?: string }
-			if (message.type !== "say" || message.say !== "api_req_started" || !message.text) continue
 			requests.push(JSON.parse(message.text) as ClineApiReqInfo)
 		} catch {}
 	}
@@ -346,7 +345,7 @@ export async function waitForPersistedTaskMarkers(
 	timeoutMs = 60_000,
 ): Promise<void> {
 	await E2ETestHelper.waitForValue(async () => {
-		const raw = await readFile(path.join(dlineDocsDir, "tasks", taskId, "ui_messages.jsonl"), "utf8").catch(() => "")
+		const raw = await readTaskUiMessagesText(dlineDocsDir, taskId)
 		return markers.every((marker) => raw.includes(marker)) ? true : undefined
 	}, timeoutMs)
 }

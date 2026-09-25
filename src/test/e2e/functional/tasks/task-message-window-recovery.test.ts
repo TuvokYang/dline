@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
+import { readTaskUiMessagesText } from "@e2e/utils/task-instance-store"
 import { expect } from "@playwright/test"
 
 const TASK_ID = "e2e-history-empty-first-window"
@@ -17,7 +18,8 @@ const emptyFirstMessageWindow = JSON.stringify({
 	markerName: FAULT_MARKER,
 })
 
-async function seedCompletedTask(dlineDocsDir: string, workspaceDir: string): Promise<string> {
+/** Seeds a legacy chat history; the extension imports it into messages.db when the task opens. */
+async function seedCompletedTask(dlineDocsDir: string, workspaceDir: string): Promise<void> {
 	const tasksDir = path.join(dlineDocsDir, "tasks")
 	const taskDir = path.join(tasksDir, TASK_ID)
 	await mkdir(taskDir, { recursive: true })
@@ -49,7 +51,6 @@ async function seedCompletedTask(dlineDocsDir: string, workspaceDir: string): Pr
 			"utf8",
 		),
 	])
-	return path.join(taskDir, "ui_messages.jsonl")
 }
 
 e2e.describe("Task message window recovery", () => {
@@ -59,8 +60,8 @@ e2e.describe("Task message window recovery", () => {
 		"recovers persisted history after the first message window is empty",
 		async ({ dlineDir, dlineDocsDir, helper, openVSCode, userDataDir, workspaceDir }) => {
 			e2e.setTimeout(180_000)
-			const uiMessagesPath = await seedCompletedTask(dlineDocsDir, workspaceDir)
-			expect(await readFile(uiMessagesPath, "utf8")).toContain(BODY_MARKER)
+			await seedCompletedTask(dlineDocsDir, workspaceDir)
+			expect(await readTaskUiMessagesText(dlineDocsDir, TASK_ID)).toContain(BODY_MARKER)
 
 			const app = await openVSCode(workspaceDir)
 			try {
@@ -81,7 +82,7 @@ e2e.describe("Task message window recovery", () => {
 						timeout: 30_000,
 					})
 					.toBe("released")
-				expect(await readFile(uiMessagesPath, "utf8")).toContain(BODY_MARKER)
+				expect(await readTaskUiMessagesText(dlineDocsDir, TASK_ID)).toContain(BODY_MARKER)
 				await expect(sidebar.getByText(BODY_MARKER, { exact: true })).toBeVisible({ timeout: 5_000 })
 				await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
 			} finally {

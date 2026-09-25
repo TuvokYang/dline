@@ -2,6 +2,7 @@ import { readdir, readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
+import { readTaskUiMessagesText } from "@e2e/utils/task-instance-store"
 import { expect, type Frame, type Locator, type Page } from "@playwright/test"
 import type { ElectronApplication } from "playwright"
 
@@ -467,7 +468,7 @@ async function seedLargeCompactionHistory(
 }
 
 async function readPersistedCompactionCards(dlineDocsDir: string, taskId: string): Promise<Array<Record<string, unknown>>> {
-	const raw = await readFile(path.join(dlineDocsDir, "tasks", taskId, "ui_messages.jsonl"), "utf8")
+	const raw = await readTaskUiMessagesText(dlineDocsDir, taskId)
 	return raw
 		.split(/\r?\n/)
 		.filter(Boolean)

@@ -2,6 +2,7 @@ import { mkdir, readdir, readFile, writeFile } from "node:fs/promises"
 import * as path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
+import { readTaskActivities } from "@e2e/utils/task-instance-store"
 import { startFooterActionStabilityObserver, stopFooterActionStabilityObserver } from "@e2e/utils/ui-stability"
 import { expect, type Frame, type Page } from "@playwright/test"
 
@@ -1277,16 +1278,15 @@ e2e(
 			return ids.length === 1 ? ids[0] : undefined
 		}, 30_000)
 		if (!taskId) throw new Error("Terminal drain E2E task directory was not created")
-		const persistedActivity = await E2ETestHelper.waitForValue(async () => {
-			const persisted = JSON.parse(await readFile(path.join(dlineDocsDir, "tasks", taskId, "activities.json"), "utf8")) as {
-				activities?: Array<{ detail?: string; output?: string; status?: string }>
-			}
-			const activity = persisted.activities?.find((candidate) => candidate.detail === "node e2e-terminal-tail-parent.cjs")
-			return activity?.status === "cancelled" && activity.output ? activity : undefined
+		const persistedOutput = await E2ETestHelper.waitForValue(async () => {
+			const activity = (await readTaskActivities(dlineDocsDir, taskId)).find(
+				(candidate) => candidate.detail === "node e2e-terminal-tail-parent.cjs",
+			)
+			return activity?.status === "cancelled" && activity.output ? activity.output : undefined
 		}, 30_000)
-		if (!persistedActivity) throw new Error("Cancelled terminal activity was not persisted")
-		expect(persistedActivity.output).toContain("E2E_TERMINAL_CANCEL_DRAIN_STARTED")
-		const capturedSequences = [...persistedActivity.output.matchAll(/E2E_TERMINAL_CANCEL_TAIL_(\d+)/g)].map((match) =>
+		if (!persistedOutput) throw new Error("Cancelled terminal activity was not persisted")
+		expect(persistedOutput).toContain("E2E_TERMINAL_CANCEL_DRAIN_STARTED")
+		const capturedSequences = [...persistedOutput.matchAll(/E2E_TERMINAL_CANCEL_TAIL_(\d+)/g)].map((match) =>
 			Number(match[1]),
 		)
 		expect(capturedSequences.length).toBeGreaterThan(0)

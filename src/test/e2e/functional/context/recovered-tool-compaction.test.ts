@@ -2,6 +2,7 @@ import { readdir, readFile, writeFile } from "node:fs/promises"
 import * as path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
+import { readTaskUiMessagesText, rewriteTaskUiMessages } from "@e2e/utils/task-instance-store"
 import { expect, type Frame, type Page } from "@playwright/test"
 import type { ElectronApplication } from "playwright"
 
@@ -134,7 +135,6 @@ async function onlyTaskId(dlineDocsDir: string): Promise<string> {
 async function recreateInterruptedStreamingSnapshot(dlineDocsDir: string, taskId: string): Promise<void> {
 	const taskDirectory = path.join(dlineDocsDir, "tasks", taskId)
 	const apiHistoryPath = path.join(taskDirectory, "api_conversation_history.jsonl")
-	const uiMessagesPath = path.join(taskDirectory, "ui_messages.jsonl")
 	const snapshotPath = path.join(taskDirectory, "snapshot.json")
 	const apiMessages = (await readFile(apiHistoryPath, "utf8"))
 		.split(/\r?\n/)
@@ -168,22 +168,13 @@ async function recreateInterruptedStreamingSnapshot(dlineDocsDir: string, taskId
 	]
 	await writeFile(apiHistoryPath, `${completedApiMessages.map((message) => JSON.stringify(message)).join("\n")}\n`, "utf8")
 
-	const uiMessages = (await readFile(uiMessagesPath, "utf8"))
-		.split(/\r?\n/)
-		.filter(Boolean)
-		.map((line) => JSON.parse(line) as PersistedRecord)
-	const pendingAsk = uiMessages.at(-1)
-	if (pendingAsk?.type !== "ask" || pendingAsk.ask !== "qna_respond") {
-		throw new Error("Expected the setup task to end with a pending qna_respond UI interaction")
-	}
-	await writeFile(
-		uiMessagesPath,
-		`${uiMessages
-			.slice(0, -1)
-			.map((message) => JSON.stringify(message))
-			.join("\n")}\n`,
-		"utf8",
-	)
+	await rewriteTaskUiMessages(dlineDocsDir, taskId, (uiMessages) => {
+		const pendingAsk = uiMessages.at(-1)
+		if (pendingAsk?.type !== "ask" || pendingAsk.ask !== "qna_respond") {
+			throw new Error("Expected the setup task to end with a pending qna_respond UI interaction")
+		}
+		return uiMessages.slice(0, -1)
+	})
 
 	const snapshot = JSON.parse(await readFile(snapshotPath, "utf8")) as PersistedRecord
 	const apiIndex = completedApiMessages.length - 1
@@ -205,9 +196,8 @@ async function recreateInterruptedStreamingSnapshot(dlineDocsDir: string, taskId
 async function recreateRecoveredUnpairedToolTail(dlineDocsDir: string, taskId: string, commandMarker: string): Promise<void> {
 	const taskDirectory = path.join(dlineDocsDir, "tasks", taskId)
 	const apiHistoryPath = path.join(taskDirectory, "api_conversation_history.jsonl")
-	const uiMessagesPath = path.join(taskDirectory, "ui_messages.jsonl")
 	const snapshotPath = path.join(taskDirectory, "snapshot.json")
-	const uiMessages = await readFile(uiMessagesPath, "utf8")
+	const uiMessages = await readTaskUiMessagesText(dlineDocsDir, taskId)
 	expect(uiMessages).toContain('"say":"partial_tool_result"')
 	expect(uiMessages).toContain(commandMarker)
 

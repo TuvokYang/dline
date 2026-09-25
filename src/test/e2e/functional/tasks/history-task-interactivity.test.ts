@@ -1,4 +1,4 @@
-import { readdir, readFile, stat, writeFile } from "node:fs/promises"
+import { readdir, readFile, writeFile } from "node:fs/promises"
 import * as path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
@@ -14,7 +14,9 @@ import {
 	LARGE_PROJECT_TOTAL_TRACKED_FILES,
 	type LargeRealProjectFixture,
 } from "@e2e/utils/large-real-project-fixture"
+import { readTaskUiMessages, rewriteTaskActivities, rewriteTaskUiMessages } from "@e2e/utils/task-instance-store"
 import { expect, type Frame, type Page, type TestInfo } from "@playwright/test"
+import type { TaskActivityRecord } from "@shared/task-activity"
 import type { ElectronApplication } from "playwright"
 
 const HISTORY_INTERACTIVE_BUDGET_MS = 5_000
@@ -96,7 +98,8 @@ async function onlyTaskId(dlineDocsDir: string): Promise<string> {
 	}, 30_000)
 }
 
-async function seedLargeTransientActivityHistory(taskDirectory: string, taskId: string): Promise<number> {
+/** Stores 160 large running activities for the closed task and returns their serialized size. */
+async function seedLargeTransientActivityHistory(dlineDocsDir: string, taskId: string): Promise<number> {
 	const createdAt = Date.now()
 	const detail = "E2E_HISTORY_INTERACTIVITY_ACTIVITY_DETAIL_".padEnd(64 * 1024, "x")
 	const output = "E2E_HISTORY_INTERACTIVITY_ACTIVITY_OUTPUT_".padEnd(64 * 1024, "y")
@@ -116,9 +119,8 @@ async function seedLargeTransientActivityHistory(taskDirectory: string, taskId: 
 		timeoutSeconds: 0,
 		events: [],
 	}))
-	const activityPath = path.join(taskDirectory, "activities.json")
-	await writeFile(activityPath, JSON.stringify({ schemaVersion: 1, taskId, activities }), "utf8")
-	return (await stat(activityPath)).size
+	await rewriteTaskActivities(dlineDocsDir, taskId, () => activities as unknown as TaskActivityRecord[])
+	return Buffer.byteLength(JSON.stringify(activities), "utf8")
 }
 
 async function readSnapshot(taskDirectory: string): Promise<StoredInteractionSnapshot | undefined> {
@@ -136,28 +138,26 @@ async function waitForSnapshotInteraction(
 	}, 30_000)
 }
 
-async function readUiMessages(taskDirectory: string): Promise<Array<Record<string, unknown>>> {
-	const content = await readFile(path.join(taskDirectory, "ui_messages.jsonl"), "utf8")
-	return content
-		.split(/\r?\n/u)
-		.filter(Boolean)
-		.map((line) => JSON.parse(line) as Record<string, unknown>)
+async function readUiMessages(dlineDocsDir: string, taskId: string): Promise<Array<Record<string, unknown>>> {
+	return (await readTaskUiMessages(dlineDocsDir, taskId)) as unknown as Array<Record<string, unknown>>
 }
 
-async function rewriteCompletionAskAsLegacy(taskDirectory: string): Promise<Record<string, unknown>> {
-	const messagesPath = path.join(taskDirectory, "ui_messages.jsonl")
-	const messages = await readUiMessages(taskDirectory)
+async function rewriteCompletionAskAsLegacy(dlineDocsDir: string, taskId: string): Promise<Record<string, unknown>> {
 	let rewritten: Record<string, unknown> | undefined
-	for (let index = messages.length - 1; index >= 0; index--) {
-		const message = messages[index]
-		if (message?.type === "ask" && message.ask === "completion_result") {
-			rewritten = { ...message, ask: LEGACY_COMPLETION_ASK }
-			messages[index] = rewritten
-			break
+	await rewriteTaskUiMessages(dlineDocsDir, taskId, (messages) => {
+		const records = messages as unknown as Array<Record<string, unknown>>
+		for (let index = records.length - 1; index >= 0; index--) {
+			const message = records[index]
+			if (message?.type === "ask" && message.ask === "completion_result") {
+				rewritten = { ...message, ask: LEGACY_COMPLETION_ASK }
+				records[index] = rewritten
+				break
+			}
 		}
-	}
+		if (!rewritten) throw new Error("Canonical completion ask was not persisted")
+		return messages
+	})
 	if (!rewritten) throw new Error("Canonical completion ask was not persisted")
-	await writeFile(messagesPath, `${messages.map((message) => JSON.stringify(message)).join("\n")}\n`, "utf8")
 	return rewritten
 }
 
@@ -258,7 +258,7 @@ e2e(
 
 			const taskId = await onlyTaskId(dlineDocsDir)
 			const taskDirectory = path.join(dlineDocsDir, "tasks", taskId)
-			const activityBytes = await seedLargeTransientActivityHistory(taskDirectory, taskId)
+			const activityBytes = await seedLargeTransientActivityHistory(dlineDocsDir, taskId)
 			await startHistoryInteractivityProbe(sidebar, "resume")
 			await clickHistoryPreview(sidebar, INTERRUPTED_TASK_TEXT)
 			await expect(sidebar.getByRole("button", { name: "Close Task", exact: true })).toBeVisible({ timeout: 30_000 })
@@ -267,7 +267,7 @@ e2e(
 			await waitForExpectedProbe(sidebar, 30_000)
 			const probe = await stopHistoryInteractivityProbe(sidebar)
 			const gitAfter = await inspectLargeRealProjectGit(workspaceDir)
-			const uiTail = (await readUiMessages(taskDirectory)).slice(-12)
+			const uiTail = (await readUiMessages(dlineDocsDir, taskId)).slice(-12)
 			await attachEvidence(testInfo, "history-resume-interactivity", {
 				fixture,
 				gitAfter,
@@ -329,7 +329,7 @@ e2e(
 
 			const taskId = await onlyTaskId(dlineDocsDir)
 			const taskDirectory = path.join(dlineDocsDir, "tasks", taskId)
-			const legacyAsk = await rewriteCompletionAskAsLegacy(taskDirectory)
+			const legacyAsk = await rewriteCompletionAskAsLegacy(dlineDocsDir, taskId)
 			await app.close()
 			helper.clearCachedFrame()
 			app = undefined
@@ -344,7 +344,7 @@ e2e(
 			await waitForExpectedProbe(opened.sidebar, 10_000)
 			const probe = await stopHistoryInteractivityProbe(opened.sidebar)
 			const gitAfter = await inspectLargeRealProjectGit(workspaceDir)
-			const uiTail = (await readUiMessages(taskDirectory)).slice(-12)
+			const uiTail = (await readUiMessages(dlineDocsDir, taskId)).slice(-12)
 			await attachEvidence(testInfo, "history-legacy-completion-interactivity", {
 				fixture,
 				gitAfter,

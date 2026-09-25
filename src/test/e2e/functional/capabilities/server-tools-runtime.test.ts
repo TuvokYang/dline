@@ -4,6 +4,7 @@ import type { MockApiConsumption, MockApiTarget } from "@e2e/fixtures/server"
 import { getE2EMockProviderBaseUrl } from "@e2e/fixtures/server/api"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
+import { readTaskUiMessagesText } from "@e2e/utils/task-instance-store"
 import { expect, type Frame, type Locator, type Page } from "@playwright/test"
 import { type BrowserSettings, DEFAULT_BROWSER_SETTINGS } from "@shared/BrowserSettings"
 import { ServerTool } from "@shared/proto/dline/models/metadata"
@@ -84,8 +85,8 @@ async function attachHostedWebResumeEvidence(
 		return parsed.interaction?.kind === "resume" && parsed.interaction.status === "awaiting" ? content : undefined
 	}, 30_000)
 	const uiMessages = await E2ETestHelper.waitForValue(async () => {
-		const content = await readFile(path.join(taskDir, "ui_messages.jsonl"), "utf8").catch(() => undefined)
-		return content?.includes('"ask":"resume_task"') ? content : undefined
+		const content = await readTaskUiMessagesText(dlineDocsDir, taskId)
+		return content.includes('"ask":"resume_task"') ? content : undefined
 	}, 30_000)
 	const settings = await E2ETestHelper.waitForValue(async () => {
 		const content = await readFile(settingsPath(dlineDir), "utf8").catch(() => undefined)

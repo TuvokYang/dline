@@ -1,6 +1,7 @@
 import { readdir, readFile } from "node:fs/promises"
 import path from "node:path"
 import { E2ETestHelper } from "@e2e/utils/helpers"
+import { readTaskUiMessagesText } from "@e2e/utils/task-instance-store"
 import { expect, type Frame, type Locator, type Page } from "@playwright/test"
 
 export interface WorkStoredProfile {
@@ -195,9 +196,7 @@ export async function workTaskIdByMarker(dlineDocsDir: string, marker: string): 
 		const entries = await readdir(path.join(dlineDocsDir, "tasks"), { withFileTypes: true }).catch(() => [])
 		for (const entry of entries) {
 			if (!entry.isDirectory()) continue
-			const messages = await readFile(path.join(dlineDocsDir, "tasks", entry.name, "ui_messages.jsonl"), "utf8").catch(
-				() => "",
-			)
+			const messages = await readTaskUiMessagesText(dlineDocsDir, entry.name)
 			if (messages.includes(marker)) return entry.name
 		}
 		return undefined

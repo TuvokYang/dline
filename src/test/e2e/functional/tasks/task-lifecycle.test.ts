@@ -2,6 +2,7 @@ import { readdir, readFile, stat, writeFile } from "node:fs/promises"
 import * as path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
+import { readTaskUiMessagesText } from "@e2e/utils/task-instance-store"
 import { startFooterActionStabilityObserver, stopFooterActionStabilityObserver } from "@e2e/utils/ui-stability"
 import { expect, type Frame } from "@playwright/test"
 
@@ -1060,15 +1061,13 @@ e2e(
 			await expect(sidebar.getByTestId("chat-input")).toBeEnabled({ timeout: 30_000 })
 			const taskId = await onlyTaskId(dlineDocsDir)
 			const taskDir = path.join(dlineDocsDir, "tasks", taskId)
-			const uiPath = path.join(taskDir, "ui_messages.jsonl")
 			const apiPath = path.join(taskDir, "api_conversation_history.jsonl")
 			await expect.poll(async () => (await readFile(apiPath, "utf8")).includes(planText), { timeout: 30_000 }).toBe(true)
 			await closeCurrentTask(sidebar)
 
-			const [uiBefore, apiBefore, uiStatBefore, apiStatBefore] = await Promise.all([
-				readFile(uiPath, "utf8"),
+			const [uiBefore, apiBefore, apiStatBefore] = await Promise.all([
+				readTaskUiMessagesText(dlineDocsDir, taskId),
 				readFile(apiPath, "utf8"),
-				stat(uiPath),
 				stat(apiPath),
 			])
 			expect(uiBefore).toContain(reasoningText)
@@ -1081,15 +1080,13 @@ e2e(
 			await expect(sidebar.getByText(planText, { exact: false }).last()).toBeVisible({ timeout: 30_000 })
 			await page.waitForTimeout(1_250)
 
-			const [uiAfter, apiAfter, uiStatAfter, apiStatAfter] = await Promise.all([
-				readFile(uiPath, "utf8"),
+			const [uiAfter, apiAfter, apiStatAfter] = await Promise.all([
+				readTaskUiMessagesText(dlineDocsDir, taskId),
 				readFile(apiPath, "utf8"),
-				stat(uiPath),
 				stat(apiPath),
 			])
 			expect(uiAfter).toBe(uiBefore)
 			expect(apiAfter).toBe(apiBefore)
-			expect(uiStatAfter.mtimeMs).toBe(uiStatBefore.mtimeMs)
 			expect(apiStatAfter.mtimeMs).toBe(apiStatBefore.mtimeMs)
 
 			await sidebar.getByRole("button", { name: "Thinking", exact: true }).last().click()
@@ -1176,7 +1173,6 @@ e2e(
 
 			const taskId = await onlyTaskId(dlineDocsDir)
 			const taskDir = path.join(dlineDocsDir, "tasks", taskId)
-			const uiPath = path.join(taskDir, "ui_messages.jsonl")
 			const apiPath = path.join(taskDir, "api_conversation_history.jsonl")
 			await closeCurrentTask(sidebar)
 			await expect
@@ -1186,10 +1182,9 @@ e2e(
 				.poll(async () => (await readFile(apiPath, "utf8")).includes(secondReasoning), { timeout: 30_000 })
 				.toBe(true)
 
-			const [uiBefore, apiBefore, uiStatBefore, apiStatBefore] = await Promise.all([
-				readFile(uiPath, "utf8"),
+			const [uiBefore, apiBefore, apiStatBefore] = await Promise.all([
+				readTaskUiMessagesText(dlineDocsDir, taskId),
 				readFile(apiPath, "utf8"),
-				stat(uiPath),
 				stat(apiPath),
 			])
 			expect(uiBefore).toContain(firstReasoning)
@@ -1205,10 +1200,9 @@ e2e(
 			await expect(sidebar.getByText("E2E_GPT56_CLOSED_RESPONSE_MUST_NOT_RENDER", { exact: false })).toHaveCount(0)
 			await page.waitForTimeout(1_250)
 
-			const [uiAfter, apiAfter, uiStatAfter, apiStatAfter] = await Promise.all([
-				readFile(uiPath, "utf8"),
+			const [uiAfter, apiAfter, apiStatAfter] = await Promise.all([
+				readTaskUiMessagesText(dlineDocsDir, taskId),
 				readFile(apiPath, "utf8"),
-				stat(uiPath),
 				stat(apiPath),
 			])
 			// Reopen may append the one durable resume interaction it presents, but
@@ -1222,7 +1216,6 @@ e2e(
 			expect(appendedUiMessages).toHaveLength(1)
 			expect(appendedUiMessages[0]).toMatchObject({ type: "ask", ask: "resume_task", text: "" })
 			expect(appendedUiMessages[0].interactionId).toEqual(expect.any(String))
-			expect(uiStatAfter.size).toBeGreaterThan(uiStatBefore.size)
 			expect(apiAfter).toBe(apiBefore)
 			expect(apiStatAfter.mtimeMs).toBe(apiStatBefore.mtimeMs)
 

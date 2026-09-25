@@ -4,6 +4,7 @@ import type { MockApiTarget, MockTokenUsage } from "@e2e/fixtures/server"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { readTaskApiRateMetrics } from "@e2e/utils/read-task-api-rate-metrics"
+import { readTaskUiMessages } from "@e2e/utils/task-instance-store"
 import { expect, type Frame } from "@playwright/test"
 import type { ElectronApplication } from "playwright"
 
@@ -103,11 +104,7 @@ function expectedTotalTokens(usage: MockTokenUsage): number {
 }
 
 async function readFinalRequestInfo(dlineDocsDir: string, taskId: string): Promise<ApiRequestInfo | undefined> {
-	const raw = await readFile(path.join(dlineDocsDir, "tasks", taskId, "ui_messages.jsonl"), "utf8").catch(() => "")
-	const requests = raw
-		.split(/\r?\n/)
-		.filter(Boolean)
-		.map((line) => JSON.parse(line) as { type?: string; say?: string; text?: string })
+	const requests = (await readTaskUiMessages(dlineDocsDir, taskId))
 		.filter((message) => message.type === "say" && message.say === "api_req_started" && message.text)
 		.map((message) => JSON.parse(message.text ?? "{}") as ApiRequestInfo)
 	return requests.at(-1)
