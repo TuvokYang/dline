@@ -38,6 +38,20 @@ Without an open folder, Dline does not know where to create files. Always open a
 
 Select the **Dline** icon in the VS Code Activity Bar to open the panel. The input box sits at the bottom and the task conversation above it; the panel title bar provides buttons such as **New Task**, **History**, and **Settings**.
 
+The **Auto-approve** bar sits above the input box, and a row of tool buttons sits below it:
+
+![The Dline input area: the Auto-approve bar above and the numbered tool buttons below](/assets/ui/chat-input-toolbar.png)
+
+| # | Control | Purpose |
+|---|---|---|
+| 1 | **@** (Add Context) | Insert an `@` mention for files, folders, terminal output, Problems, and other context |
+| 2 | **+** (Add Files & Images) | Attach files or images to the message |
+| 3 | MCP icon (Manage MCP Servers) | Open the MCP servers popup to enable or disable servers |
+| 4 | Scales icon (Manage Dline Rules & Workflows) | Open the capabilities panel for Rules, Workflows, Skills, Subagents, and Environments |
+| 5 | Model name (Select model) | Switch the model in use |
+| 6 | **Plan / Act** switch | Switch between Plan mode and Act mode |
+| 7 | Send button | Send the message |
+
 <Aside type="tip">
 When no editor text is selected, press `Cmd+'` (macOS) or `Ctrl+'` (Windows/Linux) to move focus to the Dline input box. The corresponding command is **Dline: Jump to Chat Input**.
 </Aside>
@@ -64,6 +78,8 @@ The bottom-right corner of the input area has a **Plan / Act** switch. Select it
 
 - **Plan mode**: Dline gathers information and discusses an approach with you. Use it to align on requirements, adjust the approach, and clarify details.
 - **Act mode**: Dline carries out the task directly, creating files and writing code.
+
+![Selecting the Plan / Act switch to change between the two modes](/assets/ui/docs-mode-switch.gif)
 
 <Aside>
 To block file edits while in Plan mode, turn on **Strict Plan Mode** in **Settings → Features** (off by default).

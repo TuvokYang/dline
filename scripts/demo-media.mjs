@@ -6,6 +6,7 @@ import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import sharp from "sharp"
+import { createCameraTrack, projectRect, toSourceCrop } from "./demo-camera.mjs"
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -21,6 +22,10 @@ const GIF_ENCODING_PROFILES = [
 	{ name: "balanced", dither: 0.5, interFrameMaxError: 6, interPaletteMaxError: 4 },
 	{ name: "compact", dither: 0.25, interFrameMaxError: 8, interPaletteMaxError: 6 },
 ]
+const SPOTLIGHT_DIM_OPACITY = 0.45
+const SPOTLIGHT_PADDING = 6
+const SPOTLIGHT_RADIUS = 6
+const SPOTLIGHT_RING_COLOR = "#3794ff"
 
 function printUsage() {
 	console.log(
@@ -212,14 +217,19 @@ function extractFrames(ffmpegPath, manifest, options, source) {
 	fs.rmSync(frameDir, { recursive: true, force: true })
 	fs.mkdirSync(frameDir, { recursive: true })
 
+	// A camera track crops every frame individually, so frames stay at source
+	// resolution here and are reframed afterwards by applyCamera().
 	const filters = []
-	if (crop) filters.push(`crop=${crop.width}:${crop.height}:${crop.x}:${crop.y}`)
-	filters.push(`scale=${outputWidth}:-1:flags=lanczos`)
+	if (!manifest.camera) {
+		if (crop) filters.push(`crop=${crop.width}:${crop.height}:${crop.x}:${crop.y}`)
+		filters.push(`scale=${outputWidth}:-1:flags=lanczos`)
+	}
 	const args = ["-hide_banner", "-loglevel", "warning"]
 	if (manifest.trim?.fromEndSeconds) args.push("-sseof", `-${manifest.trim.fromEndSeconds}`)
 	args.push("-i", manifest.sourceWebm)
 	if (manifest.trim?.durationSeconds) args.push("-t", String(manifest.trim.durationSeconds))
-	args.push("-vf", filters.join(","), "-r", String(fps), "-y", path.join(frameDir, "frame-%04d.png"))
+	if (filters.length > 0) args.push("-vf", filters.join(","))
+	args.push("-r", String(fps), "-y", path.join(frameDir, "frame-%04d.png"))
 	runFfmpeg(ffmpegPath, args, `extract ${manifest.id} frames`)
 
 	const framePaths = fs
@@ -229,6 +239,54 @@ function extractFrames(ffmpegPath, manifest, options, source) {
 		.map((name) => path.join(frameDir, name))
 	if (framePaths.length === 0) fail(`${manifest.id} produced no PNG frames`)
 	return { fps, frameDir, framePaths, outputWidth }
+}
+
+function evenRound(value) {
+	return Math.max(2, Math.round(value / 2) * 2)
+}
+
+/**
+ * Render an SVG that dims everything except the focused control and outlines it.
+ * The cut-out uses an even-odd path so the control keeps its original pixels.
+ */
+function spotlightOverlay(focus, width, height) {
+	const x = Math.max(0, focus.x - SPOTLIGHT_PADDING)
+	const y = Math.max(0, focus.y - SPOTLIGHT_PADDING)
+	const w = Math.min(width - x, focus.width + SPOTLIGHT_PADDING * 2)
+	const h = Math.min(height - y, focus.height + SPOTLIGHT_PADDING * 2)
+	const r = SPOTLIGHT_RADIUS
+	const hole = `M${x + r},${y}H${x + w - r}A${r},${r} 0 0 1 ${x + w},${y + r}V${y + h - r}A${r},${r} 0 0 1 ${x + w - r},${y + h}H${x + r}A${r},${r} 0 0 1 ${x},${y + h - r}V${y + r}A${r},${r} 0 0 1 ${x + r},${y}Z`
+	return Buffer.from(
+		`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">` +
+			`<path fill="#000" fill-opacity="${SPOTLIGHT_DIM_OPACITY}" fill-rule="evenodd" d="M0,0H${width}V${height}H0Z ${hole}"/>` +
+			`<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${r}" fill="none" stroke="${SPOTLIGHT_RING_COLOR}" stroke-width="2"/>` +
+			"</svg>",
+	)
+}
+
+/**
+ * Reframe each extracted frame through the manifest camera track.
+ * Frame N is sampled at N / fps seconds after the recording started.
+ */
+async function applyCamera(manifest, extracted, source) {
+	const viewport = manifest.viewport ?? { width: 1_200, height: 900 }
+	const track = createCameraTrack(manifest.camera)
+	const width = extracted.outputWidth
+	const height = evenRound(width / manifest.camera.aspectRatio)
+	for (const [index, framePath] of extracted.framePaths.entries()) {
+		const seconds = index / extracted.fps
+		const frame = track.frameAt(seconds)
+		const crop = toSourceCrop(frame, viewport, source)
+		const pipeline = sharp(fs.readFileSync(framePath))
+			.extract(crop)
+			.resize(width, height, { fit: "fill", kernel: "lanczos3" })
+		if (manifest.camera.spotlight) {
+			const focus = projectRect(track.focusAt(seconds), frame, { width, height })
+			pipeline.composite([{ input: spotlightOverlay(focus, width, height), top: 0, left: 0 }])
+		}
+		// Read and write through buffers so Windows never holds the file open while it is rewritten.
+		fs.writeFileSync(framePath, await pipeline.png().toBuffer())
+	}
 }
 
 async function encodeGif(framePaths, fps, outputPath, profile) {
@@ -263,6 +321,7 @@ async function convertManifest(ffmpegPath, manifest, options) {
 	const source = inspectMedia(ffmpegPath, manifest.sourceWebm)
 	if (!source.width || !source.height) fail(`${manifest.id} source dimensions could not be inspected`)
 	const extracted = extractFrames(ffmpegPath, manifest, options, source)
+	if (manifest.camera) await applyCamera(manifest, extracted, source)
 	const outputPath = path.join(options.outDir, manifest.outputFile || `${manifest.id}.gif`)
 	fs.mkdirSync(path.dirname(outputPath), { recursive: true })
 

@@ -11,6 +11,12 @@ export const DEMO_ASSET_DIR = path.join(E2ETestHelper.CODEBASE_ROOT_DIR, "assets
 const DEMO_MANIFEST_DIR = path.join(E2ETestHelper.CODEBASE_ROOT_DIR, "tmp", "demo-media")
 const DEFAULT_PACE_MS = 2_000
 const SCREENCAST_QUALITY = 95
+const CAMERA_TRANSITION_SECONDS = 0.4
+// Transition time plus a short hold, so the camera settles before the next action.
+const CAMERA_SETTLE_MS = 750
+// Menus and popups animate open or shift layout; sample the target until its box stops moving.
+const CAMERA_BOX_POLL_MS = 100
+const CAMERA_BOX_MAX_POLLS = 15
 
 interface DemoCropRect {
 	x: number
@@ -21,10 +27,32 @@ interface DemoCropRect {
 
 type DemoCrop = "full" | "sidebar" | DemoCropRect
 
+interface DemoCameraOptions {
+	/** Output width divided by output height of every rendered frame. */
+	aspectRatio: number
+	/** Narrowest viewport span the camera may show; keep it at or above the output width to avoid upscaling. */
+	minWidth: number
+	padding?: number
+	/** Dim everything except the focused control and outline it during GIF conversion. */
+	spotlight?: boolean
+}
+
+interface DemoCameraKeyframe {
+	atSeconds: number
+	rect: DemoCropRect
+}
+
+interface DemoCameraRegistration extends DemoCameraOptions {
+	bounds: DemoCropRect
+	keyframes: DemoCameraKeyframe[]
+}
+
 interface RegisterRecordingOptions {
 	crop?: DemoCrop
 	fps?: number
 	outputWidth?: number
+	/** Pan and zoom toward each `focusCamera` target during GIF conversion. */
+	camera?: DemoCameraOptions
 }
 
 interface RecordingRegistration {
@@ -35,6 +63,7 @@ interface RecordingRegistration {
 	crop?: DemoCropRect
 	fps: number
 	outputWidth: number
+	camera?: DemoCameraRegistration
 }
 
 interface DemoRecordingState {
@@ -48,6 +77,41 @@ interface DemoFixtures {
 	registerRecording: (id: string, options?: RegisterRecordingOptions) => Promise<void>
 	finishRecording: () => Promise<void>
 	captureScreenshot: (id: string, target?: Locator) => Promise<string>
+	/** Pan toward one control, or toward the union of several controls that belong to one step. */
+	focusCamera: (target: Locator | Locator[], settleMs?: number) => Promise<void>
+}
+
+function sameRect(left: DemoCropRect, right: DemoCropRect): boolean {
+	return (
+		Math.abs(left.x - right.x) < 0.5 &&
+		Math.abs(left.y - right.y) < 0.5 &&
+		Math.abs(left.width - right.width) < 0.5 &&
+		Math.abs(left.height - right.height) < 0.5
+	)
+}
+
+/**
+ * Resolve a focus target only after two consecutive reads agree, so a keyframe never
+ * records a control while its menu is still expanding or a validation row is shifting it.
+ */
+async function stableBoundingBox(page: Page, target: Locator): Promise<DemoCropRect> {
+	let previous = await target.boundingBox()
+	for (let poll = 0; poll < CAMERA_BOX_MAX_POLLS; poll += 1) {
+		await page.waitForTimeout(CAMERA_BOX_POLL_MS)
+		const current = await target.boundingBox()
+		if (previous && current && sameRect(previous, current)) return current
+		previous = current
+	}
+	if (!previous) throw new Error("focusCamera target does not have a bounding box")
+	return previous
+}
+
+function unionRect(rects: DemoCropRect[]): DemoCropRect {
+	const left = Math.min(...rects.map((rect) => rect.x))
+	const top = Math.min(...rects.map((rect) => rect.y))
+	const right = Math.max(...rects.map((rect) => rect.x + rect.width))
+	const bottom = Math.max(...rects.map((rect) => rect.y + rect.height))
+	return { x: left, y: top, width: right - left, height: bottom - top }
 }
 
 function assertAssetId(id: string): void {
@@ -163,6 +227,9 @@ export const demo = e2e.extend<DemoFixtures>({
 					fps: registration.fps,
 					outputWidth: registration.outputWidth,
 					crop: registration.crop,
+					camera: registration.camera
+						? { ...registration.camera, transitionSeconds: CAMERA_TRANSITION_SECONDS }
+						: undefined,
 					trim: {
 						durationSeconds: sceneDurationSeconds,
 					},
@@ -218,13 +285,22 @@ export const demo = e2e.extend<DemoFixtures>({
 				await page.screencast.stop().catch(() => undefined)
 				throw error
 			}
+			const startedAtMs = Date.now()
+			const resolvedCrop = await resolveCrop(page, crop)
 			_demoRecordingState.registration = {
 				id,
 				sourceWebm,
-				startedAtMs: Date.now(),
-				crop: await resolveCrop(page, crop),
+				startedAtMs,
+				crop: resolvedCrop,
 				fps: options.fps ?? 10,
 				outputWidth: options.outputWidth ?? (crop === "sidebar" ? 600 : 1_200),
+				camera: options.camera
+					? {
+							...options.camera,
+							bounds: resolvedCrop ?? { x: 0, y: 0, ...DEMO_VIEWPORT },
+							keyframes: [],
+						}
+					: undefined,
 			}
 		})
 	},
@@ -236,6 +312,23 @@ export const demo = e2e.extend<DemoFixtures>({
 			const endedAtMs = Date.now()
 			await page.screencast.stop()
 			registration.endedAtMs = endedAtMs
+		})
+	},
+	focusCamera: async ({ page, _demoRecordingState }, use) => {
+		await use(async (target, settleMs = CAMERA_SETTLE_MS) => {
+			const camera = _demoRecordingState.registration?.camera
+			if (!camera) throw new Error("focusCamera requires a recording registered with a camera")
+			// Start the pan when the step begins, not after the box settles, so the spotlight
+			// follows a menu or status line while it moves instead of lagging behind it.
+			const requestedAtMs = Date.now()
+			const targets = Array.isArray(target) ? target : [target]
+			if (targets.length === 0) throw new Error("focusCamera requires at least one target")
+			const boxes: DemoCropRect[] = []
+			for (const locator of targets) boxes.push(await stableBoundingBox(page, locator))
+			const box = unionRect(boxes)
+			const startedAtMs = _demoRecordingState.registration?.startedAtMs ?? requestedAtMs
+			camera.keyframes.push({ atSeconds: Math.max(0, (requestedAtMs - startedAtMs) / 1_000), rect: box })
+			await page.waitForTimeout(settleMs)
 		})
 	},
 	captureScreenshot: async ({ page }, use) => {

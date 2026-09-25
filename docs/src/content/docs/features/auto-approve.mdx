@@ -11,6 +11,8 @@ import { Aside } from "@astrojs/starlight/components"
 
 自动批准设置位于聊天输入框正上方的 **Auto-approve:** 栏。点击后弹出菜单，顶部说明为 “Let Dline take these actions without asking for approval.”。
 
+![自动批准菜单的默认状态：勾选了 Read project files、Execute safe commands 和 Use MCP servers](/assets/ui/auto-approve-menu.png)
+
 ## 操作类别与默认值
 
 | 选项 | 覆盖的操作 | 默认 |
@@ -28,6 +30,8 @@ import { Aside } from "@astrojs/starlight/components"
 | **Focus chain overrides** | Focus Chain 待办清单的更新 | 关 |
 
 在菜单中，带 └ 的子选项依附于上一行：勾选子选项会同时勾选父选项，取消父选项会同时取消子选项。
+
+![勾选 Edit project files 后出现子选项 Edit all files，栏上的摘要变为 Auto-approve: Read, Edit, Safe Commands, MCP](/assets/ui/docs-auto-approve.gif)
 
 <Aside type="caution">
 **Use the browser** 和 **Use Web** 是两个独立的选项：前者只控制浏览器自动化，网页搜索和抓取由后者控制。
