@@ -7,8 +7,7 @@ Use this tool to tell the user what you will change and why, announce a complete
 Set requires_acknowledgment to true ONLY when you need the user to confirm before continuing — this displays "知晓" (acknowledge) and "停止" (stop) buttons. Otherwise leave it false and continue with actual work in the same turn.
 
 Do not call status_update consecutively; the next call must perform work. Do not use it for final completion — use attempt_completion. Do not use it merely to update task_progress; checklist-only updates are silent.`,
-	focusOmissionDescriptionSentence:
-		" Do NOT use status_update merely to update task_progress — task_progress updates are silent and should be done via the task_progress parameter on any tool call.",
+	focusOmissionDescriptionSentence: " Do not use it merely to update task_progress; checklist-only updates are silent.",
 
 	standardDescription: `Provide a brief user-visible preamble, progress statement, or correction during task execution without ending the turn. By default, execution continues immediately so you can proceed with the next work tool without waiting.
 
