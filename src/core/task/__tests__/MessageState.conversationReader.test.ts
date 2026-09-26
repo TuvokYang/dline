@@ -20,6 +20,10 @@ function journal(messages: ClineStorageMessage[]): ConversationHistoryReader {
 			size = messages.length
 			return messages
 		},
+		count: async () => {
+			size = messages.length
+			return size
+		},
 		size: () => size,
 	}
 }

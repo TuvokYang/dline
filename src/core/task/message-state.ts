@@ -189,6 +189,17 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 		return journal > 0 ? journal : (this.apiConversation?.count ?? 0)
 	}
 
+	/**
+	 * The conversation length now, counting journal entries written since the last read.
+	 *
+	 * A chat row records the index of the conversation message it follows, and the
+	 * provider reply or tool result it follows may have been journaled a moment ago.
+	 */
+	private async currentConversationSize(): Promise<number> {
+		const journal = this.conversation ? await this.conversation.count() : 0
+		return journal > 0 ? journal : (this.apiConversation?.count ?? 0)
+	}
+
 	private legacyConversationHistory(): ClineStorageMessage[] {
 		return this.apiConversation ? (this.apiConversation.getAll() as unknown as ClineStorageMessage[]) : []
 	}
@@ -441,7 +452,7 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 
 		// Set cross-store context before persisting. Callers may provide an
 		// explicit index when replaying or responding to historical asks.
-		msg.conversationHistoryIndex = msg.conversationHistoryIndex ?? this.conversationSize() - 1
+		msg.conversationHistoryIndex = msg.conversationHistoryIndex ?? (await this.currentConversationSize()) - 1
 		msg.conversationHistoryDeletedRange = this.metadata.conversationHistoryDeletedRange
 
 		// Persist via UIMessage store (cache + disk, Mutex-protected)
@@ -495,7 +506,7 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 			return freshAll[existingIndex]
 		}
 
-		msg.conversationHistoryIndex = msg.conversationHistoryIndex ?? this.conversationSize() - 1
+		msg.conversationHistoryIndex = msg.conversationHistoryIndex ?? (await this.currentConversationSize()) - 1
 		msg.conversationHistoryDeletedRange = this.metadata.conversationHistoryDeletedRange
 
 		// Find insertion point in ascending ts order
@@ -537,7 +548,7 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 			msg.conversationHistoryIndex = all[existingIndex].conversationHistoryIndex
 			msg.conversationHistoryDeletedRange = all[existingIndex].conversationHistoryDeletedRange
 		} else {
-			msg.conversationHistoryIndex = msg.conversationHistoryIndex ?? this.conversationSize() - 1
+			msg.conversationHistoryIndex = msg.conversationHistoryIndex ?? (await this.currentConversationSize()) - 1
 			msg.conversationHistoryDeletedRange = this.metadata.conversationHistoryDeletedRange
 		}
 

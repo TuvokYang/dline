@@ -77,6 +77,29 @@ describe("JournalConversationView", () => {
 		expect(payloads.totalReads()).toBe(afterFirstRound + 1)
 	})
 
+	it("counts entries journaled since the last read", async () => {
+		const { journal, payloads, view } = open()
+		await write(journal, payloads, "intake:1", { kind: "user_input", text: "first" })
+		await view.messages()
+		await write(journal, payloads, "provider:1", { kind: "provider_final", text: "answer" }, "provider")
+
+		// The synchronous size still reports the last read; the count sees the new reply.
+		expect(view.size()).toBe(1)
+		await expect(view.count()).resolves.toBe(2)
+		expect(view.size()).toBe(2)
+	})
+
+	it("finds the earliest position that held a given number of messages", async () => {
+		const { journal, payloads, view } = open()
+		await write(journal, payloads, "intake:1", { kind: "user_input", text: "first" })
+		await write(journal, payloads, "provider:1", { kind: "provider_final", text: "answer" }, "provider")
+		const answered = journal.watermark()
+		await write(journal, payloads, "intake:2", { kind: "user_input", text: "second" })
+
+		await expect(view.positionKeeping(2)).resolves.toEqual(answered)
+		await expect(view.positionKeeping(9)).resolves.toBeUndefined()
+	})
+
 	it("returns the same message objects each round so the provider prefix stays stable", async () => {
 		const { journal, payloads, view } = open()
 		await write(journal, payloads, "intake:1", { kind: "user_input", text: "first" })

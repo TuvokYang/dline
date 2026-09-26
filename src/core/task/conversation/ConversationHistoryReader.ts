@@ -11,11 +11,13 @@ import type { ClineStorageMessage } from "@shared/messages/content"
 export interface ConversationHistoryReader {
 	/** The conversation as the next provider request would carry it. */
 	read(): Promise<ClineStorageMessage[]>
+	/** How many messages the conversation holds now, including entries written since the last read. */
+	count(): Promise<number>
 	/**
-	 * How many messages the latest read returned.
+	 * How many messages the latest read or count saw.
 	 *
-	 * For synchronous callers that only need a position, such as the index a
-	 * chat row records; it lags a write until the next read.
+	 * Only for synchronous callers that cannot wait; it lags a journal write
+	 * until the next `read` or `count`.
 	 */
 	size(): number
 }
@@ -23,5 +25,6 @@ export interface ConversationHistoryReader {
 /** A task with no conversation yet, or a caller that has no journal to read. */
 export const EMPTY_CONVERSATION_HISTORY: ConversationHistoryReader = {
 	read: async () => [],
+	count: async () => 0,
 	size: () => 0,
 }

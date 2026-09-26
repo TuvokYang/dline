@@ -2259,9 +2259,13 @@ export class Controller {
 			const uiMessagesFilePath = path.join(taskDirPath, GlobalFileNames.uiMessages)
 			const contextHistoryFilePath = path.join(taskDirPath, GlobalFileNames.contextHistory)
 			const taskMetadataFilePath = path.join(taskDirPath, GlobalFileNames.taskMetadata)
-			const fileExists = await fileExistsAtPath(apiConversationHistoryFilePath)
-			if (fileExists) {
-				const apiConversationHistory = await readJsonl<Anthropic.MessageParam>(apiConversationHistoryFilePath)
+			// A task exists while its directory does. Its conversation lives in the
+			// task journal, so the legacy history file is read only when a task
+			// written before the journal still has one.
+			if (await fileExistsAtPath(taskDirPath)) {
+				const apiConversationHistory = (await fileExistsAtPath(apiConversationHistoryFilePath))
+					? await readJsonl<Anthropic.MessageParam>(apiConversationHistoryFilePath)
+					: []
 				return {
 					historyItem,
 					taskDirPath,
@@ -2273,8 +2277,7 @@ export class Controller {
 				}
 			}
 		}
-		// if we tried to get a task that doesn't exist, remove it from state
-		// FIXME: this seems to happen sometimes when the json file doesn't save to disk for some reason
+		// A history entry without a task directory has nothing left to open.
 		await this.deleteTaskFromState(id)
 		throw new Error("Task not found")
 	}

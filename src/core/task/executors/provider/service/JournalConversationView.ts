@@ -33,6 +33,8 @@ function hasPayload(entry: JournalEntry): entry is PayloadEntry {
 export class JournalConversationView implements ConversationHistoryReader {
 	private readonly rendered = new Map<string, Promise<MaterializedPayload>>()
 	private latestSize = 0
+	/** Journal position `latestSize` was counted at; -1 before the first count. */
+	private countedThrough = -1
 
 	constructor(
 		private readonly journal: ConversationJournal,
@@ -55,8 +57,29 @@ export class JournalConversationView implements ConversationHistoryReader {
 		if (this.isLatest(projection.through)) {
 			this.retainOnly(visible)
 			this.latestSize = entries.reduce((count, item) => count + item.messages.length, 0)
+			this.countedThrough = projection.through.seq
 		}
 		return entries
+	}
+
+	/**
+	 * The earliest journal position whose conversation holds at least `keep` messages.
+	 *
+	 * A chat row records how long the conversation was when it was written, so
+	 * the position it belongs to is the first one that had grown that long. The
+	 * search replays history rather than reading the current view: a summary
+	 * that landed later replaced earlier entries, and cutting the current view
+	 * would undo that compaction instead of returning to the row's moment.
+	 * Undefined when the conversation never grew that long.
+	 */
+	async positionKeeping(keep: number): Promise<JournalWatermark | undefined> {
+		const tail = this.journal.watermark().seq
+		for (let seq = 1; seq <= tail; seq++) {
+			const through = { seq }
+			const count = (await this.entries(through)).reduce((total, item) => total + item.messages.length, 0)
+			if (count >= keep) return through
+		}
+		return undefined
 	}
 
 	/** The provider messages through `through`, in journal order. */
@@ -66,6 +89,11 @@ export class JournalConversationView implements ConversationHistoryReader {
 
 	read(): Promise<ClineStorageMessage[]> {
 		return this.messages()
+	}
+
+	async count(): Promise<number> {
+		if (this.countedThrough !== this.journal.watermark().seq) await this.entries()
+		return this.latestSize
 	}
 
 	size(): number {
