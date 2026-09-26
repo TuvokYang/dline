@@ -35,6 +35,14 @@ const CHECKPOINT_STAGING_FAILURE_ALERT_THRESHOLD = 3
 /** Prefix identifying the message this manager raises for staging failures. */
 const STAGING_FAILURE_MESSAGE_PREFIX = "Checkpoints could not record"
 
+/**
+ * Whether a row shows input the user submitted. Such a row is written just
+ * before its input is journaled, so the input sits right after the row's position.
+ */
+function showsUserInput(message: ClineMessage): boolean {
+	return message.type === "say" && (message.say === "task" || message.say === "user_feedback")
+}
+
 // Type definitions for better code organization
 type SayFunction = (
 	type: ClineSay,
@@ -351,10 +359,7 @@ export class TaskCheckpointManager implements ICheckpointManager {
 							messageIndex,
 							// Rows record their index against the journal conversation, so the
 							// boundary is measured against the same sequence.
-							apiCount:
-								this.services.messageStateHandler.conversationSize?.() ??
-								this.services.messageStateHandler.apiConversation?.count ??
-								0,
+							apiCount: await this.conversationLength(),
 							uiCount: this.services.messageStateHandler.uiMessage?.count ?? clineMessages.length,
 						})
 			// A chat restore the task cannot complete is refused before the workspace
@@ -725,6 +730,74 @@ export class TaskCheckpointManager implements ICheckpointManager {
 		return rewind
 	}
 
+	/** The conversation length rows are measured against, including entries journaled since the last read. */
+	private async conversationLength(): Promise<number> {
+		const handler = this.services.messageStateHandler
+		return (await handler.currentConversationSize?.()) ?? handler.apiConversation?.count ?? 0
+	}
+
+	/**
+	 * Return the journal conversation to the restored row. This is the restore's
+	 * commit point, so it runs before any chat, API or context file is
+	 * truncated: a refused rewind leaves the task exactly as it was, and a
+	 * restore retried after a crash replays the same record.
+	 *
+	 * @returns whether the journal holds the conversation; when it does, the
+	 * legacy API rows are not its record and are left alone.
+	 */
+	private async rewindConversation(
+		message: ClineMessage,
+		messageTs: number,
+		editedText: string | undefined,
+		boundary: ChatRestoreBoundary,
+	): Promise<boolean> {
+		const operationId = `checkpoint.restore:${messageTs}`
+		if (boundary.journalTarget) {
+			await this.requireConversationRewind().rewindTo({ operationId, target: boundary.journalTarget })
+			return true
+		}
+		const rewind = this.services.conversationRewind
+		if (!rewind?.holdsConversation()) return false
+		await rewind.rewindToRow({
+			operationId,
+			row: {
+				keep: (message.conversationHistoryIndex ?? -1) + 1,
+				...(message.conversationJournalSeq === undefined ? {} : { seq: message.conversationJournalSeq }),
+				// An edit submits its text again as new input, so the input it replaces goes.
+				keepInput: editedText === undefined && showsUserInput(message),
+			},
+		})
+		return true
+	}
+
+	/** Truncate the legacy API rows of a task whose conversation predates the journal. */
+	private async truncateLegacyConversation(boundary: ChatRestoreBoundary, editedText: string | undefined): Promise<void> {
+		const apiConversation = this.services.messageStateHandler.apiConversation
+		const userMsgIdx = boundary.apiKeepCount - 1
+		await apiConversation?.truncateByLineNum(boundary.apiKeepCount)
+
+		// Modify the user message text in-place when editing input,
+		// preserving tool_result blocks so the preceding assistant's
+		// tool_use stays paired.
+		if (editedText === undefined || userMsgIdx < 0 || !apiConversation || userMsgIdx >= apiConversation.count) return
+		const userMsg = apiConversation.getAt(userMsgIdx)
+		if (!userMsg || userMsg.role !== "user" || !Array.isArray(userMsg.content)) return
+		const replaceInBlocks = (blocks: ClineContent[]): void => {
+			for (const block of blocks) {
+				if (block.type === "text") {
+					block.text = block.text.replace(
+						/<user_message>\n[\s\S]*?\n<\/user_message>/,
+						`<user_message>\n${editedText}\n</user_message>`,
+					)
+				}
+				if (block.type === "tool_result" && Array.isArray(block.content)) {
+					replaceInBlocks(block.content)
+				}
+			}
+		}
+		replaceInBlocks(userMsg.content)
+	}
+
 	private async restoreChatCheckpoint(
 		message: ClineMessage,
 		messageIndex: number,
@@ -734,48 +807,14 @@ export class TaskCheckpointManager implements ICheckpointManager {
 		boundary: ChatRestoreBoundary,
 	): Promise<void> {
 		this.assertChatRestoreAdmissible(message, boundary, editedText)
-		// The journal rewind is the restore's commit point, so it runs before any
-		// chat, API or context file is truncated: a refused rewind leaves the task
-		// exactly as it was, and a restore retried after a crash replays the same
-		// record instead of rewinding twice.
-		if (boundary.journalTarget) {
-			await this.requireConversationRewind().rewindTo({
-				operationId: `checkpoint.restore:${messageTs}`,
-				target: boundary.journalTarget,
-			})
-		}
+		const journalRewound = await this.rewindConversation(message, messageTs, editedText, boundary)
 		// The boundary indexes the durable sequence, so the deleted slice must read it too.
 		const deletedMessages = this.services.messageStateHandler.durableClineMessages.slice(boundary.uiKeepCount)
 		this.abortAndClearState()
 		this.state.conversationHistoryDeletedRange = boundary.conversationHistoryDeletedRange
 		this.taskState.conversationHistoryDeletedRange = boundary.conversationHistoryDeletedRange
 
-		const apiConversation = this.services.messageStateHandler.apiConversation
-		const userMsgIdx = boundary.apiKeepCount - 1
-		await apiConversation?.truncateByLineNum(boundary.apiKeepCount)
-
-		// Modify the user message text in-place when editing input,
-		// preserving tool_result blocks so the preceding assistant's
-		// tool_use stays paired.
-		if (editedText !== undefined && userMsgIdx >= 0 && apiConversation && userMsgIdx < apiConversation.count) {
-			const userMsg = apiConversation.getAt(userMsgIdx)
-			if (userMsg && userMsg.role === "user" && Array.isArray(userMsg.content)) {
-				const replaceInBlocks = (blocks: ClineContent[]): void => {
-					for (const block of blocks) {
-						if (block.type === "text") {
-							block.text = block.text.replace(
-								/<user_message>\n[\s\S]*?\n<\/user_message>/,
-								`<user_message>\n${editedText}\n</user_message>`,
-							)
-						}
-						if (block.type === "tool_result" && Array.isArray(block.content)) {
-							replaceInBlocks(block.content)
-						}
-					}
-				}
-				replaceInBlocks(userMsg.content)
-			}
-		}
+		if (!journalRewound) await this.truncateLegacyConversation(boundary, editedText)
 
 		await this.services.messageStateHandler.uiMessage?.truncateByLineNum(boundary.uiKeepCount)
 		// Truncating writes the durable store directly, so aggregates computed

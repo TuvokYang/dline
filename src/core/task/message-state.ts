@@ -195,9 +195,23 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 	 * A chat row records the index of the conversation message it follows, and the
 	 * provider reply or tool result it follows may have been journaled a moment ago.
 	 */
-	private async currentConversationSize(): Promise<number> {
+	async currentConversationSize(): Promise<number> {
 		const journal = this.conversation ? await this.conversation.count() : 0
 		return journal > 0 ? journal : (this.apiConversation?.count ?? 0)
+	}
+
+	/** Stamp where the conversation stands on a new row, unless the caller already placed it. */
+	private placeRow(msg: ClineMessage, size: number): void {
+		msg.conversationHistoryIndex = msg.conversationHistoryIndex ?? size - 1
+		msg.conversationJournalSeq = msg.conversationJournalSeq ?? this.conversation?.position()
+		msg.conversationHistoryDeletedRange = this.metadata.conversationHistoryDeletedRange
+	}
+
+	/** A replaced row keeps the place it was first written at. */
+	private keepPlace(msg: ClineMessage, existing: ClineMessage): void {
+		msg.conversationHistoryIndex = existing.conversationHistoryIndex
+		msg.conversationJournalSeq = existing.conversationJournalSeq
+		msg.conversationHistoryDeletedRange = existing.conversationHistoryDeletedRange
 	}
 
 	private legacyConversationHistory(): ClineStorageMessage[] {
@@ -452,8 +466,7 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 
 		// Set cross-store context before persisting. Callers may provide an
 		// explicit index when replaying or responding to historical asks.
-		msg.conversationHistoryIndex = msg.conversationHistoryIndex ?? (await this.currentConversationSize()) - 1
-		msg.conversationHistoryDeletedRange = this.metadata.conversationHistoryDeletedRange
+		this.placeRow(msg, await this.currentConversationSize())
 
 		// Persist via UIMessage store (cache + disk, Mutex-protected)
 		await this.uiMessage?.addMessage(msg)
@@ -482,8 +495,7 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 
 		if (existingIndex >= 0) {
 			const previousMessage = { ...all[existingIndex] }
-			msg.conversationHistoryIndex = all[existingIndex].conversationHistoryIndex
-			msg.conversationHistoryDeletedRange = all[existingIndex].conversationHistoryDeletedRange
+			this.keepPlace(msg, all[existingIndex])
 			// The upsert replaces the whole row, so a presentation refresh that does
 			// not carry the causal identity would silently drop it. The Webview
 			// matches its active interaction against exactly this field, and losing
@@ -506,8 +518,7 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 			return freshAll[existingIndex]
 		}
 
-		msg.conversationHistoryIndex = msg.conversationHistoryIndex ?? (await this.currentConversationSize()) - 1
-		msg.conversationHistoryDeletedRange = this.metadata.conversationHistoryDeletedRange
+		this.placeRow(msg, await this.currentConversationSize())
 
 		// Find insertion point in ascending ts order
 		let insertIndex = all.length
@@ -545,11 +556,9 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 		const durableIndex = this.uiMessage?.findIndexByTs(msg.ts) ?? -1
 
 		if (existingIndex >= 0) {
-			msg.conversationHistoryIndex = all[existingIndex].conversationHistoryIndex
-			msg.conversationHistoryDeletedRange = all[existingIndex].conversationHistoryDeletedRange
+			this.keepPlace(msg, all[existingIndex])
 		} else {
-			msg.conversationHistoryIndex = msg.conversationHistoryIndex ?? (await this.currentConversationSize()) - 1
-			msg.conversationHistoryDeletedRange = this.metadata.conversationHistoryDeletedRange
+			this.placeRow(msg, await this.currentConversationSize())
 		}
 
 		msg.partial = false
@@ -634,6 +643,8 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 			partial: false,
 			conversationHistoryIndex:
 				existing?.conversationHistoryIndex ?? message.conversationHistoryIndex ?? this.conversationSize() - 1,
+			conversationJournalSeq:
+				existing?.conversationJournalSeq ?? message.conversationJournalSeq ?? this.conversation?.position(),
 			conversationHistoryDeletedRange:
 				existing?.conversationHistoryDeletedRange ??
 				message.conversationHistoryDeletedRange ??

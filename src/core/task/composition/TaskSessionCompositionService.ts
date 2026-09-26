@@ -236,9 +236,9 @@ export class TaskSessionCompositionService {
 			toolState,
 			interactions,
 			readState,
-			// A restore from a summary card undoes the summary in the conversation
-			// the provider is sent, which only this task's journal holds.
-			conversationRewind: new JournalConversationRewind(persistence.ports.journal),
+			// A chat restore undoes what was said after the restored row in the
+			// conversation the provider is sent, which only this task's journal holds.
+			conversationRewind: new JournalConversationRewind(persistence.ports.journal, conversationView),
 		})
 		const toolRuntime = new ProductionToolHandlerRuntime(new ToolValidator(options.prompt.ignoreController))
 		// One owner per task session: the provider request grants the turn's

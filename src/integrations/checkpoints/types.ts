@@ -1,9 +1,9 @@
 /**
  * Returns a task's provider conversation to an earlier journal position.
  *
- * A chat restore from a Task-runtime summary card has to undo the summary in
- * the conversation the provider is sent, which lives in the task journal
- * rather than in the chat or API history files the checkpoint manager owns.
+ * A chat restore has to undo what was said after the restored row in the
+ * conversation the provider is sent, which lives in the task journal rather
+ * than in the chat or API history files the checkpoint manager owns.
  * Declared here, by the consumer, so the manager stays independent of how a
  * task stores its conversation; an assembly without a journal leaves it out.
  */
@@ -14,6 +14,20 @@ export interface ConversationRewindPort {
 	 * Rejects without writing when `target` cannot be rewound to.
 	 */
 	rewindTo(input: { readonly operationId: string; readonly target: { readonly seq: number } }): Promise<void>
+	/** Whether the journal holds the conversation; a task that predates it keeps its legacy history. */
+	holdsConversation(): boolean
+	/**
+	 * Return the conversation to where it stood when a chat row was written,
+	 * keeping the tool results that answer calls made before it.
+	 *
+	 * `seq` is the position the row recorded; `keep`, its conversation length,
+	 * is the fallback for rows written before rows recorded a position.
+	 * `keepInput` keeps the user input the row itself shows.
+	 */
+	rewindToRow(input: {
+		readonly operationId: string
+		readonly row: { readonly keep: number; readonly seq?: number; readonly keepInput?: boolean }
+	}): Promise<void>
 }
 
 /**

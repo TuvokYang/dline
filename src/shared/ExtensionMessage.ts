@@ -306,6 +306,14 @@ export interface ClineMessage {
 	completionHasChanges?: boolean
 	isOperationOutsideWorkspace?: boolean
 	conversationHistoryIndex?: number
+	/**
+	 * Journal position the conversation stood at when the row was written.
+	 *
+	 * A restore returns the journal to exactly this point. The row's
+	 * `conversationHistoryIndex` alone cannot: a compacted conversation passes
+	 * through the same length more than once. Backend-only; never sent to the Webview.
+	 */
+	conversationJournalSeq?: number
 	conversationHistoryDeletedRange?: [number, number] // for when conversation history is truncated for API requests
 	/** Canonical pre-compaction range stored only on a durable completed compaction card. */
 	compactionConversationRange?: CompactionConversationRange

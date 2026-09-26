@@ -100,6 +100,10 @@ export class JournalConversationView implements ConversationHistoryReader {
 		return this.latestSize
 	}
 
+	position(): number {
+		return this.journal.watermark().seq
+	}
+
 	/** The messages of explicit payload refs, as drafts written before drafts recorded a position name them. */
 	async messagesOf(payloadRefs: readonly string[]): Promise<ClineStorageMessage[]> {
 		const messages: ClineStorageMessage[] = []

@@ -25,6 +25,7 @@ function journal(messages: ClineStorageMessage[]): ConversationHistoryReader {
 			return size
 		},
 		size: () => size,
+		position: () => messages.length,
 	}
 }
 

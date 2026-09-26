@@ -147,15 +147,20 @@ function applySupersede(state: ProjectionState, entry: JournalEntry): void {
 	if (entry.payloadRef) placeReplacement(state.visible, state.replacements, entry, hidden)
 }
 
+/** The position before the first entry: a rewind to it empties the conversation. */
+const JOURNAL_GENESIS: JournalWatermark = { seq: 0 }
+
 /**
  * Return the view to what it was right after `target`.
  *
  * The prefix is projected again from scratch, so everything recorded after the
  * target, summaries included, stops being visible and stops being addressable
  * by later markers. Checkpoint markers are history, not view, and stay.
+ * The genesis position is always reachable, so a restore can return to a
+ * conversation that has not started yet.
  */
 function applyRewind(state: ProjectionState, target: JournalWatermark, earlier: readonly JournalEntry[]): void {
-	requireSeen(state.seen, target)
+	if (compareJournalWatermarks(target, JOURNAL_GENESIS) !== 0) requireSeen(state.seen, target)
 	const restored = projectEntries(earlier.filter((entry) => compareJournalWatermarks(entry.watermark, target) <= 0))
 	state.visible = restored.visible
 	state.replacements = restored.replacements

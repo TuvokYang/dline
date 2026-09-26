@@ -20,6 +20,12 @@ export interface ConversationHistoryReader {
 	 * until the next `read` or `count`.
 	 */
 	size(): number
+	/**
+	 * The journal position of the latest committed entry, which a chat row
+	 * records so a restore can return to exactly that point. Undefined without
+	 * a journal.
+	 */
+	position(): number | undefined
 }
 
 /** A task with no conversation yet, or a caller that has no journal to read. */
@@ -27,4 +33,5 @@ export const EMPTY_CONVERSATION_HISTORY: ConversationHistoryReader = {
 	read: async () => [],
 	count: async () => 0,
 	size: () => 0,
+	position: () => undefined,
 }
