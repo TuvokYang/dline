@@ -115,13 +115,14 @@ export class ProductionComposeAdapter implements ComposePort {
 		if (input.signal.aborted) throw input.signal.reason
 		await this.appendBackgroundResults(input, state.revision, state.generation)
 		await this.appendEnvironment(input, state.revision, state.generation)
-		const projection = await this.options.journal.project()
+		// Only the position: the conversation through it is fixed, so recording
+		// every visible payload would only grow the draft with the conversation.
 		const envelope: ProviderDraftEnvelope = {
 			kind: "provider_draft",
 			admittedEntryIds: input.admittedEntryIds,
 			...(input.continuation === undefined ? {} : { continuation: input.continuation }),
 			inputPayloadRefs: entries.map((entry) => entry.payloadRef),
-			journalPayloadRefs: projection.visibleMessages.flatMap((entry) => (entry.payloadRef ? [entry.payloadRef] : [])),
+			journalThrough: this.options.journal.watermark(),
 			turnId: input.turnId,
 		}
 		for (const payloadRef of envelope.inputPayloadRefs) {

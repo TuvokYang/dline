@@ -5,6 +5,7 @@ import type { TaskPayloadStore } from "../../../stores"
 import { decodeTaskPayload } from "../../../stores/payload/TaskPayloadCodec"
 import type {
 	BackgroundResultsEnvelope,
+	CompactionContinuation,
 	CompactionSummaryEnvelope,
 	DialogDraftEnvelope,
 	DialogSelectionEnvelope,
@@ -41,6 +42,19 @@ function appendSubmissionContext(text: string | undefined, context: string | und
 	return text ? `${text}\n\n${trimmedContext}` : trimmedContext
 }
 
+/** What one journal payload contributes to the provider conversation. */
+export interface MaterializedPayload {
+	/** Payload kind, which is what says who wrote a user-role message. */
+	readonly kind: string
+	/**
+	 * Usually one message. A summary carrying a reply the model has not
+	 * answered yields that reply as well; a payload that renders nothing yields none.
+	 */
+	readonly messages: readonly ClineStorageMessage[]
+	/** The reply a landed summary carries, handed on when a later span takes the summary. */
+	readonly continuation?: CompactionContinuation
+}
+
 /** Rebuilds the provider conversation exclusively from the append-only journal payload sequence. */
 export class ProviderJournalMessageMaterializer {
 	constructor(private readonly payloads: TaskPayloadStore) {}
@@ -64,14 +78,21 @@ export class ProviderJournalMessageMaterializer {
 
 	async materialize(payloadRefs: readonly string[]): Promise<ClineStorageMessage[]> {
 		const messages: ClineStorageMessage[] = []
-		for (const payloadRef of payloadRefs) {
-			const payload = decodeTaskPayload<JournalPayload>(await this.payloads.read(payloadRef))
-			const message = await this.materializePayload(payload)
-			if (message) messages.push(message)
-			const continuation = await this.materializeContinuation(payload)
-			if (continuation) messages.push(continuation)
-		}
+		for (const payloadRef of payloadRefs) messages.push(...(await this.materializeEntry(payloadRef)).messages)
 		return messages
+	}
+
+	/** Read one payload once and render everything it contributes. */
+	async materializeEntry(payloadRef: string): Promise<MaterializedPayload> {
+		const payload = decodeTaskPayload<JournalPayload>(await this.payloads.read(payloadRef))
+		const messages: ClineStorageMessage[] = []
+		const message = await this.materializePayload(payload)
+		if (message) messages.push(message)
+		const reply = await this.materializeContinuation(payload)
+		if (reply) messages.push(reply)
+		const continuation =
+			payload.kind === "compaction_summary" ? (payload as CompactionSummaryEnvelope).continuation : undefined
+		return continuation ? { kind: payload.kind, messages, continuation } : { kind: payload.kind, messages }
 	}
 
 	/** A condensed reply the model has not answered returns after its summary, as the user wrote it. */

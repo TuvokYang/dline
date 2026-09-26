@@ -174,3 +174,35 @@ describe("ProductionComposeAdapter background results", () => {
 		expect(await journaledKinds(journal, store)).toEqual([])
 	})
 })
+
+describe("ProductionComposeAdapter draft", () => {
+	it("records the journal position the round was composed through, not the visible payloads", async () => {
+		const store = payloadStore()
+		const journal = new InMemoryConversationJournal()
+		for (let turn = 1; turn <= 20; turn++) {
+			await journal.append({
+				operationId: `history:${turn}`,
+				payloadRef: await store.put(encodeTaskPayload({ kind: "user_input", text: `turn ${turn}` })),
+				source: "intake",
+			})
+		}
+		const entryRef = await store.put(encodeTaskPayload({ kind: "user_input", text: "latest" }))
+		const state = stateWithEntry(entryRef)
+		const adapter = new ProductionComposeAdapter({
+			payloads: store,
+			journal,
+			readState: () => state,
+			environment: { render: async () => "ENVIRONMENT" },
+		})
+
+		const result = await adapter.compose({ admittedEntryIds: ["entry-1"], signal: new AbortController().signal })
+
+		if (!("draftRef" in result)) throw new Error("expected a draft")
+		const draft = decodeTaskPayload(await store.read(result.draftRef)) as Record<string, unknown>
+		// Through the environment block, the last entry this round wrote.
+		expect(draft.journalThrough).toEqual(journal.watermark())
+		expect(journal.watermark()).toEqual({ seq: 22 })
+		expect(draft).not.toHaveProperty("journalPayloadRefs")
+		expect(draft.inputPayloadRefs).toEqual([entryRef])
+	})
+})

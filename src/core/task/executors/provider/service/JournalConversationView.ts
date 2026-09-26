@@ -1,0 +1,91 @@
+import type { ClineStorageMessage } from "@shared/messages/content"
+import type { ConversationJournal, JournalEntry, JournalWatermark } from "../../../stores"
+import type { MaterializedPayload, ProviderJournalMessageMaterializer } from "./ProviderJournalMessageMaterializer"
+
+/** One visible journal entry together with what it contributes to the provider conversation. */
+export interface ConversationViewEntry extends MaterializedPayload {
+	readonly entry: JournalEntry
+}
+
+type PayloadEntry = JournalEntry & { readonly payloadRef: string }
+
+function hasPayload(entry: JournalEntry): entry is PayloadEntry {
+	return entry.payloadRef !== undefined
+}
+
+/**
+ * The provider conversation of one task, held in memory.
+ *
+ * A journal payload never changes once written: payloads are addressed by
+ * content and the journal only appends. Each payload is therefore rendered
+ * once and reused by every later round. Rendering again per round read the
+ * whole history back from `journal.db` and re-read attached files, which cost
+ * O(history) I/O per request and let an edited attachment silently rewrite a
+ * prefix the provider had already cached.
+ *
+ * A position fixes the conversation: the projection through a watermark never
+ * changes, so a draft that records only its position replays byte-identical
+ * messages on retry or recovery.
+ *
+ * Messages are shared between rounds; callers must treat them as immutable.
+ */
+export class JournalConversationView {
+	private readonly rendered = new Map<string, Promise<MaterializedPayload>>()
+
+	constructor(
+		private readonly journal: ConversationJournal,
+		private readonly materializer: ProviderJournalMessageMaterializer,
+	) {}
+
+	/**
+	 * Visible entries through `through`, or through the latest committed entry.
+	 *
+	 * Reading the latest position also forgets renders that left the view, such
+	 * as a span a summary replaced; an older position renders them again on demand.
+	 */
+	async entries(through?: JournalWatermark): Promise<ConversationViewEntry[]> {
+		const projection = await this.journal.project(through)
+		const visible = projection.visibleMessages.filter(hasPayload)
+		const entries: ConversationViewEntry[] = []
+		// Sequential on purpose: a first render of a long history may read many
+		// attachments, and the order they are read in must not depend on timing.
+		for (const entry of visible) entries.push({ entry, ...(await this.render(entry.payloadRef)) })
+		if (this.isLatest(projection.through)) this.retainOnly(visible)
+		return entries
+	}
+
+	/** The provider messages through `through`, in journal order. */
+	async messages(through?: JournalWatermark): Promise<ClineStorageMessage[]> {
+		return (await this.entries(through)).flatMap((item) => [...item.messages])
+	}
+
+	/** The messages of explicit payload refs, as drafts written before drafts recorded a position name them. */
+	async messagesOf(payloadRefs: readonly string[]): Promise<ClineStorageMessage[]> {
+		const messages: ClineStorageMessage[] = []
+		for (const payloadRef of payloadRefs) messages.push(...(await this.render(payloadRef)).messages)
+		return messages
+	}
+
+	private render(payloadRef: string): Promise<MaterializedPayload> {
+		const cached = this.rendered.get(payloadRef)
+		if (cached) return cached
+		const pending = this.materializer.materializeEntry(payloadRef)
+		this.rendered.set(payloadRef, pending)
+		// A failed render is not remembered, so a transient read error does not stick.
+		pending.catch(() => {
+			if (this.rendered.get(payloadRef) === pending) this.rendered.delete(payloadRef)
+		})
+		return pending
+	}
+
+	private isLatest(through: JournalWatermark): boolean {
+		return through.seq >= this.journal.watermark().seq
+	}
+
+	private retainOnly(visible: readonly PayloadEntry[]): void {
+		const kept = new Set(visible.map((entry) => entry.payloadRef))
+		for (const payloadRef of this.rendered.keys()) {
+			if (!kept.has(payloadRef)) this.rendered.delete(payloadRef)
+		}
+	}
+}

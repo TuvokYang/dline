@@ -66,7 +66,16 @@ export interface ProviderDraftEnvelope {
 	readonly kind: "provider_draft"
 	readonly admittedEntryIds: readonly string[]
 	readonly inputPayloadRefs: readonly string[]
-	readonly journalPayloadRefs: readonly string[]
+	/**
+	 * The journal position the round's conversation was composed through.
+	 *
+	 * The journal only appends, so the projection through this position never
+	 * changes: a retried or recovered request replays the same messages, and the
+	 * draft stays the same size however long the conversation grows.
+	 */
+	readonly journalThrough?: JournalWatermark
+	/** @deprecated Written by drafts before `journalThrough`; read only to replay them. */
+	readonly journalPayloadRefs?: readonly string[]
 	readonly turnId?: string
 	/** Present when the kernel opened this round instead of the user; see TurnContinuationEnvelope. */
 	readonly continuation?: TurnContinuationReason

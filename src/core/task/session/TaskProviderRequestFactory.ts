@@ -3,7 +3,8 @@ import type { ToolUse } from "@core/assistant-message"
 import { ToolPromptGenerator } from "@core/prompts/generators/ToolPromptGenerator"
 import { resolveFrozenPromptRuntime } from "@core/prompts/system-prompt-cache/FrozenPromptRuntime"
 import type { StateManager } from "@core/storage/StateManager"
-import { ProviderJournalMessageMaterializer } from "../executors/provider/service/ProviderJournalMessageMaterializer"
+import type { JournalConversationView } from "../executors/provider/service/JournalConversationView"
+import type { ProviderJournalMessageMaterializer } from "../executors/provider/service/ProviderJournalMessageMaterializer"
 import type {
 	PreparedProviderRequest,
 	ProviderRequestFactory,
@@ -28,6 +29,9 @@ export interface TaskProviderRequestFactoryOptions {
 	readonly api: TaskApiHandlerOwner
 	readonly promptContext: TaskPromptContextOwner
 	readonly prompt: TaskPromptLifecycle
+	/** The task's conversation, held in memory and read through the draft's position. */
+	readonly conversation: JournalConversationView
+	/** Reads the one-shot authority the round's admitted inputs carry. */
 	readonly messages: ProviderJournalMessageMaterializer
 	readonly authority: TaskTurnAuthority
 	readonly tools: ProductionToolHandlerRuntime
@@ -40,7 +44,7 @@ export class TaskProviderRequestFactory implements ProviderRequestFactory, Provi
 
 	async prepare(draft: ProviderDraftEnvelope, signal: AbortSignal): Promise<PreparedProviderRequest> {
 		const frame = await this.buildFrame(signal, false)
-		const messages = await this.options.messages.materialize(draft.journalPayloadRefs)
+		const messages = await this.conversationOf(draft)
 		const turnId = draft.turnId ?? randomUUID()
 		// Authority is derived from the durable admitted input, so a recovered or
 		// retried turn grants exactly what the user named and nothing more.
@@ -55,6 +59,18 @@ export class TaskProviderRequestFactory implements ProviderRequestFactory, Provi
 			...(authority === undefined ? {} : { authority }),
 			planTool: (tool: ToolUse) => this.options.tools.plan(tool, this.options.readAdmissionSnapshot(tool)),
 		}
+	}
+
+	/**
+	 * The conversation the draft was composed with.
+	 *
+	 * A draft written before drafts recorded a position names its payloads
+	 * instead; replaying it from those keeps a recovered request unchanged.
+	 */
+	private conversationOf(draft: ProviderDraftEnvelope) {
+		if (draft.journalThrough) return this.options.conversation.messages(draft.journalThrough)
+		if (draft.journalPayloadRefs) return this.options.conversation.messagesOf(draft.journalPayloadRefs)
+		return this.options.conversation.messages()
 	}
 
 	/**

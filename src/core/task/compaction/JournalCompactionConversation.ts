@@ -8,9 +8,9 @@ import {
 } from "@shared/messages/content"
 import { Logger } from "@shared/services/Logger"
 import { type ClineDefaultTool, CONVERSATIONAL_TOOL_NAMES } from "@shared/tools"
-import type { ProviderJournalMessageMaterializer } from "../executors/provider/service/ProviderJournalMessageMaterializer"
+import type { JournalConversationView } from "../executors/provider/service/JournalConversationView"
 import type { ConversationJournal, JournalEntry, TaskPayloadStore } from "../stores"
-import { decodeTaskPayload, encodeTaskPayload } from "../stores/payload/TaskPayloadCodec"
+import { encodeTaskPayload } from "../stores/payload/TaskPayloadCodec"
 import type { CompactionContinuation, CompactionSummaryEnvelope } from "../stores/payload/TaskPayloadEnvelopes"
 import type { CompactionLandingInput, CompactionLandingPort, CompactionSpan } from "./CompactionSummaryLanding"
 
@@ -341,7 +341,7 @@ export class JournalCompactionConversation implements CompactionConversationPort
 	constructor(
 		private readonly journal: ConversationJournal,
 		private readonly payloads: TaskPayloadStore,
-		private readonly messages: ProviderJournalMessageMaterializer,
+		private readonly conversation: JournalConversationView,
 	) {}
 
 	/**
@@ -417,19 +417,12 @@ export class JournalCompactionConversation implements CompactionConversationPort
 	 * the summary takes its reply with it, and hands the reply on.
 	 */
 	private async items(): Promise<ConversationItem[]> {
-		const projection = await this.journal.project()
 		const items: ConversationItem[] = []
-		for (const entry of projection.visibleMessages) {
-			if (!entry.payloadRef) continue
-			const [message, ...carried] = await this.messages.materialize([entry.payloadRef])
+		for (const { entry, kind, messages, continuation } of await this.conversation.entries()) {
+			const [message, ...carried] = messages
 			if (!message) continue
-			const payload = decodeTaskPayload<{ readonly kind: string }>(await this.payloads.read(entry.payloadRef))
-			items.push({ entry, kind: payload.kind, message })
-			const continuation =
-				payload.kind === "compaction_summary" ? (payload as CompactionSummaryEnvelope).continuation : undefined
-			for (const reply of carried) {
-				items.push({ entry, kind: payload.kind, message: reply, ...(continuation ? { continuation } : {}) })
-			}
+			items.push({ entry, kind, message })
+			for (const reply of carried) items.push({ entry, kind, message: reply, ...(continuation ? { continuation } : {}) })
 		}
 		return items
 	}

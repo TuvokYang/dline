@@ -1,6 +1,7 @@
 import type { ClineStorageMessage, ClineUserToolResultContentBlock } from "@shared/messages/content"
 import { describe, expect, it } from "vitest"
 import { serializeDurableToolResult } from "../../DurableToolResult"
+import { JournalConversationView } from "../../executors/provider/service/JournalConversationView"
 import { ProviderJournalMessageMaterializer } from "../../executors/provider/service/ProviderJournalMessageMaterializer"
 import type { JournalSource, TaskPayloadStore } from "../../stores"
 import { InMemoryConversationJournal } from "../../stores/InMemoryRuntimeStores"
@@ -191,7 +192,11 @@ function texts(messages: readonly { readonly content: unknown }[]): string[] {
 function open() {
 	const journal = new InMemoryConversationJournal()
 	const payloads = new MemoryPayloads()
-	const conversation = new JournalCompactionConversation(journal, payloads, new ProviderJournalMessageMaterializer(payloads))
+	const conversation = new JournalCompactionConversation(
+		journal,
+		payloads,
+		new JournalConversationView(journal, new ProviderJournalMessageMaterializer(payloads)),
+	)
 	return { journal, payloads, conversation }
 }
 

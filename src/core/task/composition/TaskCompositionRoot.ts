@@ -22,6 +22,7 @@ import {
 } from "../executors/policy/ProductionApprovalPolicyAdapter"
 import { ProductionProviderAdapter, type ProductionProviderService } from "../executors/provider/ProductionProviderAdapter"
 import type { ProviderTextPresentationPort } from "../executors/provider/ProviderCommandExecutor"
+import { JournalConversationView } from "../executors/provider/service/JournalConversationView"
 import { ProviderJournalMessageMaterializer } from "../executors/provider/service/ProviderJournalMessageMaterializer"
 import type { ProviderRequestReportPort } from "../executors/provider/service/ProviderRequestReport"
 import { ProductionSpawnAdapter, type SpawnChildLauncher } from "../executors/spawn/ProductionSpawnAdapter"
@@ -86,6 +87,14 @@ export interface TaskCompositionOptions {
 	readonly compactionReview?: CompactionReviewPort
 	/** Shows a compaction that failed to produce a summary; see CompactionFailurePresentationPort. */
 	readonly compactionFailure?: CompactionFailurePresentationPort
+	/**
+	 * The task's in-memory conversation over `persistence`; see JournalConversationView.
+	 *
+	 * An assembly that also builds provider requests passes the view they read,
+	 * so what a compaction condenses is exactly what the next request sends.
+	 * Absent, one is built over the journal the shell opens.
+	 */
+	readonly conversationView?: JournalConversationView
 }
 
 export interface TaskCompositionResult {
@@ -118,7 +127,11 @@ export async function composeTask(options: TaskCompositionOptions): Promise<Task
 			conversation = new JournalCompactionConversation(
 				persistence.ports.journal,
 				persistence.payloads,
-				new ProviderJournalMessageMaterializer(persistence.payloads),
+				options.conversationView ??
+					new JournalConversationView(
+						persistence.ports.journal,
+						new ProviderJournalMessageMaterializer(persistence.payloads),
+					),
 			)
 			return {
 				provider: {

@@ -26,6 +26,7 @@ import { MessageStateCompactionFailure } from "../compaction/MessageStateCompact
 import { MessageStateCompactionLanding } from "../compaction/MessageStateCompactionLanding"
 import { ProviderCompactionService } from "../compaction/ProviderCompactionService"
 import { DefaultProductionProviderService } from "../executors/provider/service/DefaultProductionProviderService"
+import { JournalConversationView } from "../executors/provider/service/JournalConversationView"
 import { ProviderJournalMessageMaterializer } from "../executors/provider/service/ProviderJournalMessageMaterializer"
 import { DefaultProductionToolExecutionService } from "../executors/tool/production/DefaultProductionToolExecutionService"
 import { ProductionToolHandlerRuntime } from "../executors/tool/production/ProductionToolHandlerRuntime"
@@ -282,6 +283,10 @@ export class TaskSessionCompositionService {
 		// need a later round to carry them; without this the model never learns
 		// what a backgrounded command or subagent produced.
 		const backgroundResults = new TaskBackgroundResultsOwner({ subagents: toolExecution, commands: tool.commands })
+		// One view per task: requests and compaction read the same conversation,
+		// and each journal payload is rendered once rather than once per round.
+		const journalMessages = new ProviderJournalMessageMaterializer(persistence.payloads)
+		const conversationView = new JournalConversationView(persistence.ports.journal, journalMessages)
 		const providerRequests = new TaskProviderRequestFactory({
 			taskId: options.taskId,
 			stateManager: options.stateManager,
@@ -289,7 +294,8 @@ export class TaskSessionCompositionService {
 			api,
 			promptContext,
 			prompt,
-			messages: new ProviderJournalMessageMaterializer(persistence.payloads),
+			conversation: conversationView,
+			messages: journalMessages,
 			authority: turnAuthority,
 			tools: toolRuntime,
 			readAdmissionSnapshot: (block) => toolExecution.readAdmissionSnapshot(block),
@@ -381,6 +387,7 @@ export class TaskSessionCompositionService {
 			openReason: options.openReason,
 			deferRestoredCommands: options.deferRestoredCommands,
 			persistence,
+			conversationView,
 			// A request's figure stays in flight until the run it belongs to comes
 			// to rest, and only a committed state says when that is.
 			taskView: {
