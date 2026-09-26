@@ -349,7 +349,12 @@ export class TaskCheckpointManager implements ICheckpointManager {
 					: resolveChatRestoreBoundary({
 							messages: clineMessages,
 							messageIndex,
-							apiCount: this.services.messageStateHandler.apiConversation?.count ?? 0,
+							// Rows record their index against the journal conversation, so the
+							// boundary is measured against the same sequence.
+							apiCount:
+								this.services.messageStateHandler.conversationSize?.() ??
+								this.services.messageStateHandler.apiConversation?.count ??
+								0,
 							uiCount: this.services.messageStateHandler.uiMessage?.count ?? clineMessages.length,
 						})
 			// A chat restore the task cannot complete is refused before the workspace

@@ -123,6 +123,10 @@ export class TaskSessionCompositionService {
 		const taskIncarnationId = options.taskIncarnationId ?? randomUUID()
 		const settings = new TaskStateManager(options.taskId, options.stateManager)
 		const toolState = new DefaultToolHandlerState()
+		// One view per task: requests, compaction and every conversation reader
+		// share it, and each journal payload is rendered once rather than once per round.
+		const journalMessages = new ProviderJournalMessageMaterializer(persistence.payloads)
+		const conversationView = new JournalConversationView(persistence.ports.journal, journalMessages)
 		const messages = new MessageStateHandler({
 			taskId: options.taskId,
 			ulid: taskIncarnationId,
@@ -132,6 +136,7 @@ export class TaskSessionCompositionService {
 			metadata: toolState,
 			uiMessage: options.messages.uiMessage,
 			apiConversation: options.messages.apiConversation,
+			conversation: conversationView,
 		})
 		const activityPersistence = new TaskActivityPersistence(options.taskId)
 		const activities = new TaskActivityStore(options.taskId, activityPersistence)
@@ -283,10 +288,6 @@ export class TaskSessionCompositionService {
 		// need a later round to carry them; without this the model never learns
 		// what a backgrounded command or subagent produced.
 		const backgroundResults = new TaskBackgroundResultsOwner({ subagents: toolExecution, commands: tool.commands })
-		// One view per task: requests and compaction read the same conversation,
-		// and each journal payload is rendered once rather than once per round.
-		const journalMessages = new ProviderJournalMessageMaterializer(persistence.payloads)
-		const conversationView = new JournalConversationView(persistence.ports.journal, journalMessages)
 		const providerRequests = new TaskProviderRequestFactory({
 			taskId: options.taskId,
 			stateManager: options.stateManager,

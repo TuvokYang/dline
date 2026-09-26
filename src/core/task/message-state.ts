@@ -13,6 +13,7 @@ import { getCwd, getDesktopDir } from "@/utils/path"
 import { ApiConversation } from "../storage/ApiConversation"
 import { ensureTaskDirectoryExists } from "../storage/disk"
 import { UIMessage } from "../storage/UIMessage"
+import type { ConversationHistoryReader } from "./conversation/ConversationHistoryReader"
 
 // Event types for clineMessages changes
 export type ClineMessageChangeType = "add" | "update" | "delete" | "set"
@@ -61,6 +62,8 @@ export interface MessageStateHandlerParams {
 	uiMessage?: UIMessage
 	/** API conversation store — optional for tests. */
 	apiConversation?: ApiConversation
+	/** The task's provider conversation; see readConversationHistory. */
+	conversation?: ConversationHistoryReader
 }
 
 /**
@@ -107,8 +110,9 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 	/** UI messages (clineMessages) — the task's only writer of messages.db, plus transient presentation overlays. */
 	public readonly uiMessage: UIMessage | undefined
 
-	/** API conversation history — single source of truth for api_conversation_history.jsonl */
+	/** Legacy api_conversation_history.jsonl, read only when the journal holds no conversation. */
 	public readonly apiConversation: ApiConversation | undefined
+	private readonly conversation: ConversationHistoryReader | undefined
 
 	constructor(params: MessageStateHandlerParams) {
 		super()
@@ -120,6 +124,7 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 		this._publishTaskHistoryClose = params.publishTaskHistoryClose ?? (() => {})
 		this.uiMessage = params.uiMessage
 		this.apiConversation = params.apiConversation
+		this.conversation = params.conversation
 	}
 
 	// ── ClineMessages (read from UIMessage store) ──
@@ -166,7 +171,29 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 		return this.uiMessage ? (this.uiMessage.getAll() as unknown as ClineMessage[]) : []
 	}
 
-	/** ApiConversationHistory as a property getter — reads directly from apiConversation store. */
+	/**
+	 * The conversation the provider is sent.
+	 *
+	 * The journal is its only record. A task written before the journal existed
+	 * has an empty journal and its conversation in the legacy file, which is
+	 * read instead so such a task still has a history.
+	 */
+	async readConversationHistory(): Promise<ClineStorageMessage[]> {
+		const journal = this.conversation ? await this.conversation.read() : []
+		return journal.length > 0 ? journal : this.legacyConversationHistory()
+	}
+
+	/** How many messages the conversation holds, for positions a chat row records. */
+	conversationSize(): number {
+		const journal = this.conversation?.size() ?? 0
+		return journal > 0 ? journal : (this.apiConversation?.count ?? 0)
+	}
+
+	private legacyConversationHistory(): ClineStorageMessage[] {
+		return this.apiConversation ? (this.apiConversation.getAll() as unknown as ClineStorageMessage[]) : []
+	}
+
+	/** @deprecated The legacy file only; read the conversation through readConversationHistory. */
 	get apiConversationHistory(): ClineStorageMessage[] {
 		return this.apiConversation ? (this.apiConversation.getAll() as unknown as ClineStorageMessage[]) : []
 	}
@@ -246,7 +273,7 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 				(message) => !(message.ask === "resume_task" || message.ask === "resume_completed_task"),
 			)
 			const lastRelevantMessage = lastRelevantIndex >= 0 ? persisted[lastRelevantIndex] : persisted[persisted.length - 1]
-			const apiHistory = this.apiConversationHistory
+			const apiHistory = await this.readConversationHistory()
 			const lastModelInfo = [...apiHistory].reverse().find((msg) => msg.modelInfo !== undefined)
 			const taskDir = await ensureTaskDirectoryExists(this.taskId)
 			const taskDirSize = await this.readTaskDirectorySize(taskDir)
@@ -414,7 +441,7 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 
 		// Set cross-store context before persisting. Callers may provide an
 		// explicit index when replaying or responding to historical asks.
-		msg.conversationHistoryIndex = msg.conversationHistoryIndex ?? this.apiConversationHistory.length - 1
+		msg.conversationHistoryIndex = msg.conversationHistoryIndex ?? this.conversationSize() - 1
 		msg.conversationHistoryDeletedRange = this.metadata.conversationHistoryDeletedRange
 
 		// Persist via UIMessage store (cache + disk, Mutex-protected)
@@ -468,7 +495,7 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 			return freshAll[existingIndex]
 		}
 
-		msg.conversationHistoryIndex = msg.conversationHistoryIndex ?? this.apiConversationHistory.length - 1
+		msg.conversationHistoryIndex = msg.conversationHistoryIndex ?? this.conversationSize() - 1
 		msg.conversationHistoryDeletedRange = this.metadata.conversationHistoryDeletedRange
 
 		// Find insertion point in ascending ts order
@@ -510,7 +537,7 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 			msg.conversationHistoryIndex = all[existingIndex].conversationHistoryIndex
 			msg.conversationHistoryDeletedRange = all[existingIndex].conversationHistoryDeletedRange
 		} else {
-			msg.conversationHistoryIndex = msg.conversationHistoryIndex ?? this.apiConversationHistory.length - 1
+			msg.conversationHistoryIndex = msg.conversationHistoryIndex ?? this.conversationSize() - 1
 			msg.conversationHistoryDeletedRange = this.metadata.conversationHistoryDeletedRange
 		}
 
@@ -595,7 +622,7 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 			...message,
 			partial: false,
 			conversationHistoryIndex:
-				existing?.conversationHistoryIndex ?? message.conversationHistoryIndex ?? this.apiConversationHistory.length - 1,
+				existing?.conversationHistoryIndex ?? message.conversationHistoryIndex ?? this.conversationSize() - 1,
 			conversationHistoryDeletedRange:
 				existing?.conversationHistoryDeletedRange ??
 				message.conversationHistoryDeletedRange ??

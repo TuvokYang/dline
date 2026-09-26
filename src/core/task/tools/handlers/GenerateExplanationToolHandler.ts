@@ -231,9 +231,8 @@ export class GenerateExplanationToolHandler implements IToolHandler, IPartialBlo
 				)
 			}
 
-			// Get conversation context from the task's API conversation history
-			const apiConversationHistory = config.messageState.apiConversationHistory
-			const conversationContext = stringifyConversationHistory(apiConversationHistory)
+			// The conversation the model was actually sent, so the explanation shares its context.
+			const conversationContext = stringifyConversationHistory(await config.messageState.readConversationHistory())
 
 			// Set up the comment controller with reply handler
 			const commentController = await setupCommentController(apiConfiguration, changedFiles, conversationContext)

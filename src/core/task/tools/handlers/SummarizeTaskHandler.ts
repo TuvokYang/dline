@@ -76,7 +76,7 @@ export class SummarizeTaskHandler implements IToolHandler, IPartialBlockHandler 
 					const useAutoCondense = StateManager.get().getGlobalSettingsKey("useAutoCondense")
 					const strategy = useAutoCondense ? "auto-condense" : "standard-truncation-firstpair"
 
-					const apiHistory = config.messageState.apiConversationHistory
+					const apiHistory = await config.messageState.readConversationHistory()
 
 					const result = await executePreCompactHookWithCleanup({
 						taskId: config.taskId,

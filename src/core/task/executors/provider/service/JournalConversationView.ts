@@ -1,4 +1,5 @@
 import type { ClineStorageMessage } from "@shared/messages/content"
+import type { ConversationHistoryReader } from "../../../conversation/ConversationHistoryReader"
 import type { ConversationJournal, JournalEntry, JournalWatermark } from "../../../stores"
 import type { MaterializedPayload, ProviderJournalMessageMaterializer } from "./ProviderJournalMessageMaterializer"
 
@@ -29,8 +30,9 @@ function hasPayload(entry: JournalEntry): entry is PayloadEntry {
  *
  * Messages are shared between rounds; callers must treat them as immutable.
  */
-export class JournalConversationView {
+export class JournalConversationView implements ConversationHistoryReader {
 	private readonly rendered = new Map<string, Promise<MaterializedPayload>>()
+	private latestSize = 0
 
 	constructor(
 		private readonly journal: ConversationJournal,
@@ -50,13 +52,24 @@ export class JournalConversationView {
 		// Sequential on purpose: a first render of a long history may read many
 		// attachments, and the order they are read in must not depend on timing.
 		for (const entry of visible) entries.push({ entry, ...(await this.render(entry.payloadRef)) })
-		if (this.isLatest(projection.through)) this.retainOnly(visible)
+		if (this.isLatest(projection.through)) {
+			this.retainOnly(visible)
+			this.latestSize = entries.reduce((count, item) => count + item.messages.length, 0)
+		}
 		return entries
 	}
 
 	/** The provider messages through `through`, in journal order. */
 	async messages(through?: JournalWatermark): Promise<ClineStorageMessage[]> {
 		return (await this.entries(through)).flatMap((item) => [...item.messages])
+	}
+
+	read(): Promise<ClineStorageMessage[]> {
+		return this.messages()
+	}
+
+	size(): number {
+		return this.latestSize
 	}
 
 	/** The messages of explicit payload refs, as drafts written before drafts recorded a position name them. */

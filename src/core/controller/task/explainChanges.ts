@@ -125,9 +125,8 @@ export async function explainChanges(controller: Controller, request: ExplainCha
 			return Empty.create({})
 		}
 
-		// Get conversation summary for context
-		const apiConversationHistory = messageStateHandler.apiConversationHistory
-		const conversationSummary = stringifyConversationHistory(apiConversationHistory)
+		// The conversation the model was actually sent, so the explanation shares its context.
+		const conversationSummary = stringifyConversationHistory(await messageStateHandler.readConversationHistory())
 
 		// Set up the comment controller with reply handler
 		const commentController = await setupCommentController(apiConfiguration, changedFiles, conversationSummary)
