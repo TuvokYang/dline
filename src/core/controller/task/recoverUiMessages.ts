@@ -1,10 +1,11 @@
+import { readTaskConversation } from "@core/task/conversation/TaskConversationReader"
 import fs from "fs/promises"
 import * as path from "path"
 import { ClineMessage } from "@/shared/ExtensionMessage"
 import { ClineStorageMessage } from "@/shared/messages/content"
 import { Logger } from "@/shared/services/Logger"
 import { writeJsonAtomic } from "@/shared/storage/atomic-file"
-import { ensureTaskDirectoryExists, getSavedApiConversationHistory, getSavedClineMessages } from "../../../core/storage/disk"
+import { ensureTaskDirectoryExists, getSavedClineMessages } from "../../../core/storage/disk"
 import { UIMessage } from "../../../core/storage/UIMessage"
 import { extractFocusChainListFromText } from "../../task/focus-chain/file-utils"
 import { Controller } from ".."
@@ -233,8 +234,8 @@ export async function recoverUiMessages(controller: Controller | undefined, task
 	// 1. Backup existing UI messages
 	const backupPath = await backupUiMessages(id, taskDir)
 
-	// 2. Read API conversation history
-	const apiMessages = await getSavedApiConversationHistory(id)
+	// 2. Read the provider conversation, from the journal or a legacy task's history file
+	const apiMessages = await readTaskConversation(id)
 	if (apiMessages.length === 0) {
 		throw new Error(`No API conversation history found for task ${id}`)
 	}

@@ -30,6 +30,8 @@ export const TaskTempSection = {
 	ImageViewer: "image-viewer",
 	/** Authoritative copies of the resources one task's input carried. */
 	InputResources: "input-resources",
+	/** Read-only exports of the provider conversation, rebuilt each time one is opened. */
+	ConversationExport: "conversation-export",
 } as const
 
 export type TaskTempSection = (typeof TaskTempSection)[keyof typeof TaskTempSection]

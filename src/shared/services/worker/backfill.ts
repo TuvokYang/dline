@@ -7,7 +7,8 @@
  */
 
 import * as fs from "fs/promises"
-import { GlobalFileNames, getSavedApiConversationHistory, getTaskHistoryStateFilePath } from "@/core/storage/disk"
+import { GlobalFileNames, getTaskHistoryStateFilePath } from "@/core/storage/disk"
+import { readTaskConversation } from "@/core/task/conversation/TaskConversationReader"
 import { Logger } from "@/shared/services/Logger"
 import { syncWorker } from "./sync"
 import { getTaskTimestamp } from "./utils"
@@ -97,7 +98,7 @@ export async function backfillTask(taskId: string): Promise<BackfillTaskResult> 
 			return result
 		}
 		try {
-			const data = await getSavedApiConversationHistory(taskId)
+			const data = await readTaskConversation(taskId)
 			queue.enqueue(taskId, GlobalFileNames.apiConversationHistory, JSON.stringify(data))
 			result.filesQueued.push(taskId)
 		} catch (err) {

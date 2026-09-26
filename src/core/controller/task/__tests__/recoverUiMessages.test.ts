@@ -20,8 +20,12 @@ vi.mock("fs/promises", () => ({
 
 vi.mock("@core/storage/disk", () => ({
 	ensureTaskDirectoryExists: mocks.ensureTaskDirectoryExists,
-	getSavedApiConversationHistory: mocks.getSavedApiConversationHistory,
 	getSavedClineMessages: mocks.getSavedClineMessages,
+}))
+
+// The conversation now comes from the task's journal; the mock stands in for either source.
+vi.mock("@core/task/conversation/TaskConversationReader", () => ({
+	readTaskConversation: mocks.getSavedApiConversationHistory,
 }))
 
 vi.mock("@/shared/storage/atomic-file", () => ({
