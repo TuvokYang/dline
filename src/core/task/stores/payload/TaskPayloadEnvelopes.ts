@@ -1,5 +1,5 @@
 import type { SemanticInputDocument } from "@shared/input-semantics/document"
-import type { ClineAssistantContent } from "@shared/messages/content"
+import type { ClineAssistantContent, ClineStorageMessage } from "@shared/messages/content"
 import type { ExplicitInstructionDeclaration } from "../../explicit-instructions/types"
 import type { JournalWatermark, ProviderTurnApproval, ProviderTurnPlan, TurnContinuationReason } from "../../kernel"
 
@@ -216,6 +216,18 @@ export interface CompactionContinuation {
 export interface EnvironmentDetailsEnvelope {
 	readonly kind: "environment_details"
 	readonly text: string
+}
+
+/**
+ * A provider message written before the journal existed, carried in as stored.
+ *
+ * Tasks from before the journal kept their conversation only in
+ * `api_conversation_history.jsonl`. Each message is replayed verbatim, because
+ * no runtime payload can reconstruct what an older build sent.
+ */
+export interface LegacyMessageEnvelope {
+	readonly kind: "legacy_message"
+	readonly message: ClineStorageMessage
 }
 
 export interface TaskHandoffEnvelope {

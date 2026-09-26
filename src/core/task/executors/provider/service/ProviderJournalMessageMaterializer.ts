@@ -10,6 +10,7 @@ import type {
 	DialogDraftEnvelope,
 	DialogSelectionEnvelope,
 	EnvironmentDetailsEnvelope,
+	LegacyMessageEnvelope,
 	ProviderFinalEnvelope,
 	TaskHandoffEnvelope,
 	ToolResultEnvelope,
@@ -29,6 +30,7 @@ type JournalPayload =
 	| ToolResultEnvelope
 	| TaskHandoffEnvelope
 	| TurnContinuationEnvelope
+	| LegacyMessageEnvelope
 	| { readonly kind: string; readonly [key: string]: unknown }
 
 function textMessage(text: string): ClineStorageMessage {
@@ -159,6 +161,9 @@ export class ProviderJournalMessageMaterializer {
 				const text = (payload as CompactionSummaryEnvelope).text
 				return { role: "assistant", content: [{ type: "text", text }], ts: Date.now() }
 			}
+			case "legacy_message":
+				// Written by an older build and replayed exactly as it was sent.
+				return (payload as LegacyMessageEnvelope).message
 			case "provider_partial":
 				return undefined
 			default:

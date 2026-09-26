@@ -25,6 +25,7 @@ import { InteractionCompactionReview } from "../compaction/InteractionCompaction
 import { MessageStateCompactionFailure } from "../compaction/MessageStateCompactionFailure"
 import { MessageStateCompactionLanding } from "../compaction/MessageStateCompactionLanding"
 import { ProviderCompactionService } from "../compaction/ProviderCompactionService"
+import { importLegacyConversation } from "../conversation/LegacyConversationImport"
 import { DefaultProductionProviderService } from "../executors/provider/service/DefaultProductionProviderService"
 import { JournalConversationView } from "../executors/provider/service/JournalConversationView"
 import { ProviderJournalMessageMaterializer } from "../executors/provider/service/ProviderJournalMessageMaterializer"
@@ -121,6 +122,9 @@ export class TaskSessionCompositionService {
 		persistence: TaskPersistenceAssembly,
 	): Promise<ActiveTaskSession> {
 		const taskIncarnationId = options.taskIncarnationId ?? randomUUID()
+		// Before the kernel reads the journal tail, so a task from an older build
+		// hydrates with the conversation it already had.
+		if (!options.deferRestoredCommands) await this.importLegacyConversation(options, persistence)
 		const settings = new TaskStateManager(options.taskId, options.stateManager)
 		const toolState = new DefaultToolHandlerState()
 		// One view per task: requests, compaction and every conversation reader
@@ -514,6 +518,30 @@ export class TaskSessionCompositionService {
 		session = opened
 		interactions.bind(session)
 		return session
+	}
+
+	/**
+	 * Carry a pre-journal conversation into the journal.
+	 *
+	 * Only the window owning the task lock writes `journal.db`, so a window
+	 * that opens the task read-only leaves it to the owner. A failed import is
+	 * logged and the task still opens: the import resumes on the next open, and
+	 * refusing the task would lose more than the missing context.
+	 */
+	private async importLegacyConversation(
+		options: OpenTaskSessionCompositionOptions,
+		persistence: TaskPersistenceAssembly,
+	): Promise<void> {
+		try {
+			const imported = await importLegacyConversation({
+				journal: persistence.ports.journal,
+				payloads: persistence.payloads,
+				legacy: options.messages.apiConversation.getAll(),
+			})
+			if (imported > 0) Logger.info(`[Task ${options.taskId}] Imported ${imported} legacy conversation messages`)
+		} catch (error) {
+			Logger.warn(`[Task ${options.taskId}] Legacy conversation import failed; it resumes on the next open`, error)
+		}
 	}
 
 	/**
