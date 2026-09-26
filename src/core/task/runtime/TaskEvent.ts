@@ -15,14 +15,7 @@ export type TaskEvent =
 	| { type: "PROFILE_RECOVERY_INPUT_RECEIVED"; draft: InteractionDraft }
 	| { type: "API_REQUEST_STARTED"; apiIndex: number }
 	| { type: "RESUME_API_CONTINUATION_REQUESTED"; apiIndex: number; draft?: InteractionDraft }
-	| { type: "HOSTED_WEB_REQUEST_CONTINUATION_REQUESTED"; interactionId: string; apiIndex: number }
-	| {
-			type: "HOSTED_WEB_REQUEST_REJECTED"
-			apiIndex: number
-			turnId: string
-			interactionId: string
-			presentation: string
-	  }
+	| { type: "PERSISTED_API_REQUEST_CONTINUATION_REQUESTED"; interactionId: string; apiIndex: number }
 	| { type: "RESUME_BLOCK_REPLAY_REQUESTED"; turnId: string; dlineTids: string[] }
 	| {
 			type: "TURN_CREATED"

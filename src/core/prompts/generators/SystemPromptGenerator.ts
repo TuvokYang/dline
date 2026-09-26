@@ -47,6 +47,7 @@ export class SystemPromptGenerator {
 			? renderCapabilitiesForContext(capabilities, {
 					profile: config.variant,
 					subagentsEnabled: context.subagentsEnabled,
+					disableTools: context.disableTools,
 				})
 			: config.variant === "lite"
 				? ""
@@ -54,11 +55,9 @@ export class SystemPromptGenerator {
 		if (capabilitiesSection?.trim()) {
 			const capabilityHeading = getPrompt("capabilityCatalog", "heading")
 			const capabilityGroups = capabilitiesSection.trim().replace(new RegExp(`^${capabilityHeading}\\s*`, "i"), "")
-			const catalog =
-				config.variant === "lite"
-					? `${getPrompt("capabilityCatalog", "nativeHeading")}\n\n${capabilityGroups}`
-					: capabilityGroups
-			sections.set("capabilities", `${sections.get("capabilities") ?? ""}\n\n${catalog}`)
+			if (capabilityGroups) {
+				sections.set("capabilities", `${sections.get("capabilities") ?? ""}\n\n${capabilityGroups}`)
+			}
 		}
 		const xmlTools = config.transport === "xml" ? this.toolGenerator.generateXml(config.variant, context) : ""
 		sections.set("tool-use", prepareToolUseSection(config, sections.get("tool-use") ?? "", xmlTools))

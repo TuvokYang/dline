@@ -244,7 +244,6 @@ export class TaskRuntime {
 			case "API_RETRY_EXHAUSTED":
 			case "MISTAKE_LIMIT_REACHED":
 			case "ATTEMPT_COMPLETION_PRESENTED":
-			case "HOSTED_WEB_REQUEST_REJECTED":
 				return event.interactionId
 			case "TASK_CANCELLED":
 				return event.resume?.interactionId

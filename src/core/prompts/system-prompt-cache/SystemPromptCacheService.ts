@@ -21,7 +21,9 @@ import { buildPromptFreshnessBaseline, comparePromptFreshness } from "./PromptFr
 // 6: claude-code tools were frozen in the OpenAI function shape, which the
 // Anthropic Messages API rejects. The provider identity is unchanged, so only
 // a contract bump discards those stored projections for an in-flight task.
-export const SYSTEM_PROMPT_CONTRACT_VERSION = 6
+// 7: main-task prompts add explicit communication and full-objective completion
+// contracts, so frozen tasks should rebuild the system prompt and tool guidance.
+export const SYSTEM_PROMPT_CONTRACT_VERSION = 7
 
 export interface BuiltSystemPrompt {
 	readonly systemPrompt: string
@@ -157,6 +159,7 @@ export class SystemPromptCacheService {
 		const capabilitiesSection = renderCapabilitiesForContext(capabilities, {
 			profile: input.promptContext.promptProfile,
 			subagentsEnabled: input.promptContext.subagentsEnabled,
+			disableTools: input.promptContext.disableTools,
 		})
 		const capabilitiesHash = hashPromptContent(capabilitiesSection)
 		const freshnessBaseline = buildPromptFreshnessBaseline(input.promptContext, capabilities)

@@ -53,6 +53,7 @@ import { WandbHandler } from "./providers/wandb"
 import { XAIHandler } from "./providers/xai"
 import { ZAiHandler } from "./providers/zai"
 import { applyTaskRuntimeOverrides } from "./runtime-profile"
+import { withCrossModelHistory } from "./transform/cross-model-history-handler"
 import { ApiStream, ApiStreamUsageChunk } from "./transform/stream"
 
 /** @deprecated Use ApiHandlerContext instead */
@@ -327,7 +328,7 @@ function createHandlerForProvider(ctx: ApiHandlerContext): ApiHandler {
 		getWebToolsMode: () => profile.webToolsMode,
 		getDisabledServerTools: () => resolveProfileDisabledServerTools(profile),
 	})
-	return instrumentApiHandler(handler, ctx)
+	return instrumentApiHandler(withCrossModelHistory(handler), ctx)
 }
 
 export function resolveProviderFromProfile(profileName?: string): string | undefined {

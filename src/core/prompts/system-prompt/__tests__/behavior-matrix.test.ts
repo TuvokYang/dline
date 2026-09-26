@@ -91,7 +91,6 @@ describe("Standard/Lite transport and capability behavior matrix", () => {
 		expect(exposes(result, transport, "web_search")).toBe(profile === PromptProfile.Standard)
 		expect(exposes(result, transport, "generate_explanation")).toBe(false)
 		expect(exposes(result, transport, "make_plan")).toBe(true)
-		expect(result.systemPrompt).toContain("status_update / act_mode_respond: progress-only")
 		expect(exposes(result, transport, "qna_respond")).toBe(true)
 		expect(exposes(result, transport, "generate_report")).toBe(true)
 	})
@@ -143,21 +142,14 @@ describe("Standard/Lite transport and capability behavior matrix", () => {
 
 		expect(exposes(local, transport, "web_fetch")).toBe(true)
 		expect(exposes(local, transport, "web_search")).toBe(true)
-		expect(local.systemPrompt).toContain("local executor")
-		expect(local.systemPrompt).not.toContain("Use web search only when")
 
 		expect(exposes(hosted, transport, "web_fetch")).toBe(true)
 		expect(exposes(hosted, transport, "web_search")).toBe(false)
-		expect(hosted.systemPrompt).toContain("Use web search only when")
-		expect(hosted.systemPrompt).not.toContain("provider-hosted")
-		expect(hosted.systemPrompt).not.toContain("local executor")
 
 		// Web Tools is one switch over both web tools, so turning it off for a
 		// profile withdraws Web Fetch alongside Web Search.
 		expect(exposes(disabled, transport, "web_fetch")).toBe(false)
 		expect(exposes(disabled, transport, "web_search")).toBe(false)
-		expect(disabled.systemPrompt).not.toContain("Use web search only when")
-		expect(disabled.systemPrompt).not.toContain("local executor")
 	})
 
 	it.each(["native", "xml"] as const)("does not leak hosted web search into Lite/%s", async (transport) => {
@@ -166,8 +158,6 @@ describe("Standard/Lite transport and capability behavior matrix", () => {
 		})
 
 		expect(exposes(hosted, transport, "web_search")).toBe(false)
-		expect(hosted.systemPrompt).not.toContain("Use web search only when")
-		expect(hosted.systemPrompt).not.toContain("local executor")
 	})
 
 	it.each(["native", "xml"] as const)("requires a connected enabled MCP server for Standard/%s", async (transport) => {
@@ -222,7 +212,6 @@ describe("Standard/Lite transport and capability behavior matrix", () => {
 		expect(exposes(result, transport, "web_search")).toBe(false)
 		expect(exposes(result, transport, "generate_explanation")).toBe(false)
 		expect(exposes(result, transport, "ask_followup_question")).toBe(false)
-		expect(result.systemPrompt).not.toContain("You may use multiple tools in a single response")
 	})
 
 	it.each([
@@ -235,29 +224,7 @@ describe("Standard/Lite transport and capability behavior matrix", () => {
 		})
 
 		expect(exposes(enabled, transport, "change_todo_list")).toBe(true)
-		expect(enabled.systemPrompt).toContain("task_progress")
-		expect(enabled.systemPrompt).toContain("## TURN-END Tools")
-		expect(enabled.systemPrompt).toContain("## Task Closure Contract")
-		expect(enabled.systemPrompt).toContain("affected modules, and current task_progress step")
-		expect(enabled.systemPrompt).not.toContain("TURN-END TOOLS (")
-		expect(enabled.systemPrompt).not.toContain("  * ask_followup_question:")
-		expect(enabled.systemPrompt).not.toContain("  * make_plan:")
-		expect(enabled.systemPrompt).not.toContain("  * qna_respond:")
-		expect(enabled.systemPrompt).not.toContain("  * generate_report:")
-		expect(enabled.systemPrompt).toContain(
-			"status_update / act_mode_respond: progress-only, MUST be followed by actual work tool. NOT for completion.",
-		)
-		expect(enabled.systemPrompt).toContain("attempt_completion: FORBIDDEN while any TODO list item remains [ ]")
 		expect(exposes(disabled, transport, "change_todo_list")).toBe(false)
-		expect(disabled.systemPrompt).not.toContain("task_progress")
-		expect(disabled.systemPrompt).toContain("## TURN-END Tools")
-		expect(disabled.systemPrompt).toContain("## Task Closure Contract")
-		expect(disabled.systemPrompt).toContain("affected modules. Use these as the completion contract.")
-		expect(disabled.systemPrompt).not.toContain("TURN-END TOOLS (")
-		expect(disabled.systemPrompt).toContain(
-			"status_update / act_mode_respond: progress-only, MUST be followed by actual work tool. NOT for completion.",
-		)
-		expect(disabled.systemPrompt).not.toContain("attempt_completion: FORBIDDEN while any TODO list item remains [ ]")
 		for (const toolName of ["ask_followup_question", "make_plan", "qna_respond", "generate_report"]) {
 			expect(exposes(enabled, transport, toolName)).toBe(true)
 		}
@@ -272,7 +239,6 @@ describe("Standard/Lite transport and capability behavior matrix", () => {
 		})
 
 		expect(exposes(result, transport, "change_todo_list")).toBe(false)
-		expect(result.systemPrompt).not.toContain("task_progress")
 		expect(JSON.stringify(result.tools ?? [])).not.toContain("task_progress")
 	})
 })

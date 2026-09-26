@@ -103,7 +103,7 @@ export async function refreshExternalRulesToggles(
 /**
  * Gather formatted windsurf rules
  */
-export const getLocalWindsurfRules = async (cwd: string, toggles: ClineRulesToggles) => {
+export const getLocalWindsurfRules = async (cwd: string, toggles: ClineRulesToggles, workspaceName = path.basename(cwd)) => {
 	const windsurfRulesFilePath = path.resolve(cwd, GlobalFileNames.windsurfRules)
 
 	let windsurfRulesFileInstructions: string | undefined
@@ -114,7 +114,10 @@ export const getLocalWindsurfRules = async (cwd: string, toggles: ClineRulesTogg
 				if (windsurfRulesFilePath in toggles && toggles[windsurfRulesFilePath] !== false) {
 					const ruleFileContent = (await fs.readFile(windsurfRulesFilePath, "utf8")).trim()
 					if (ruleFileContent) {
-						windsurfRulesFileInstructions = formatResponse.windsurfRulesLocalFileInstructions(cwd, ruleFileContent)
+						windsurfRulesFileInstructions = formatResponse.windsurfRulesLocalFileInstructions(
+							workspaceName,
+							ruleFileContent,
+						)
 					}
 				}
 			} catch {
@@ -129,7 +132,7 @@ export const getLocalWindsurfRules = async (cwd: string, toggles: ClineRulesTogg
 /**
  * Gather formatted cursor rules, which can come from two sources
  */
-export const getLocalCursorRules = async (cwd: string, toggles: ClineRulesToggles) => {
+export const getLocalCursorRules = async (cwd: string, toggles: ClineRulesToggles, workspaceName = path.basename(cwd)) => {
 	// we first check for the .cursorrules file
 	const cursorRulesFilePath = path.resolve(cwd, GlobalFileNames.cursorRulesFile)
 	let cursorRulesFileInstructions: string | undefined
@@ -140,7 +143,10 @@ export const getLocalCursorRules = async (cwd: string, toggles: ClineRulesToggle
 				if (cursorRulesFilePath in toggles && toggles[cursorRulesFilePath] !== false) {
 					const ruleFileContent = (await fs.readFile(cursorRulesFilePath, "utf8")).trim()
 					if (ruleFileContent) {
-						cursorRulesFileInstructions = formatResponse.cursorRulesLocalFileInstructions(cwd, ruleFileContent)
+						cursorRulesFileInstructions = formatResponse.cursorRulesLocalFileInstructions(
+							workspaceName,
+							ruleFileContent,
+						)
 					}
 				}
 			} catch {
@@ -159,7 +165,10 @@ export const getLocalCursorRules = async (cwd: string, toggles: ClineRulesToggle
 				const rulesScan = await readDirectoryRecursive(cursorRulesDirPath, ".mdc")
 				const rulesFilesTotalContent = await getRuleFilesTotalContent([...rulesScan.items], cwd, toggles)
 				if (rulesFilesTotalContent) {
-					cursorRulesDirInstructions = formatResponse.cursorRulesLocalDirectoryInstructions(cwd, rulesFilesTotalContent)
+					cursorRulesDirInstructions = formatResponse.cursorRulesLocalDirectoryInstructions(
+						workspaceName,
+						rulesFilesTotalContent,
+					)
 				}
 			} catch {
 				Logger.error(`Failed to read .cursor/rules directory at ${cursorRulesDirPath}`)
@@ -202,7 +211,12 @@ async function findAgentsMdFiles(cwd: string, ignoreController?: IgnoreControlle
 /**
  * Gather formatted agents rules - searches recursively and combines all agents.md files
  */
-export const getLocalAgentsRules = async (cwd: string, toggles: ClineRulesToggles, ignoreController?: IgnoreController) => {
+export const getLocalAgentsRules = async (
+	cwd: string,
+	toggles: ClineRulesToggles,
+	ignoreController?: IgnoreController,
+	workspaceName = path.basename(cwd),
+) => {
 	const agentsRulesFilePath = path.resolve(cwd, GlobalFileNames.agentsRulesFile)
 
 	// Check if the top-level agents.md file is enabled
@@ -236,7 +250,7 @@ export const getLocalAgentsRules = async (cwd: string, toggles: ClineRulesToggle
 		).then((contents) => contents.filter(Boolean).join("\n\n"))
 
 		if (combinedContent) {
-			return formatResponse.agentsRulesLocalFileInstructions(cwd, combinedContent)
+			return formatResponse.agentsRulesLocalFileInstructions(workspaceName, combinedContent)
 		}
 	} catch (error) {
 		Logger.error("Failed to read agents.md files:", error)

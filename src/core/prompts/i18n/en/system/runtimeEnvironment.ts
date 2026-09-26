@@ -1,9 +1,8 @@
 // English runtime-environment prompts — key-value pairs only, no code logic.
 const prompts: Record<string, string> = {
-	multiRootWorkingDirectory: `@ROOTS@
-
-Primary Working Directory: @CWD@`,
-	multiRootHint: " Workspace roots: @ROOTS@.",
+	workspacePathRule: "For the default workspace, use a relative path.",
+	multiRootHint:
+		" To target another listed workspace, use `@<workspace-name>:<relative-path>`. Available workspaces: @AVAILABLE_WORKSPACE_NAMES@.",
 	browserSupport: ", use the browser",
 	yoloAskText: ", and ask follow-up questions",
 	browserCapabilities: `
@@ -16,9 +15,7 @@ Primary Working Directory: @CWD@`,
 	serverWebSearchCapabilities:
 		"\n- Use web search only when the user explicitly requests external search or verification, or when the task cannot be completed reliably without external retrieval. Do not search merely because information may be current or recent.",
 	connectedMcpServers: "Connected MCP servers: @NAMES@",
-	workspaceReferenceHint: " Use @workspace:path syntax (e.g., @frontend:src/index.ts) to specify a workspace.",
-	workspaceRootsTitle: "Workspace Roots",
-	currentWorkingDirectoryTitle: "Current Working Directory",
+	workspaceReferenceHint: " For the default workspace, use relative paths.",
 	parallelToolsRule:
 		"\n- You may use multiple tools in a single response when the operations are independent (e.g., reading several files, creating independent files). For dependent operations where one result informs the next, use tools sequentially and wait for the user's response.",
 	clarifyPermission:

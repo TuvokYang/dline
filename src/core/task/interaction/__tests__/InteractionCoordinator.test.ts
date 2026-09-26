@@ -659,7 +659,7 @@ describe("InteractionCoordinator", () => {
 		expect(runtime.getState().interaction).toBeUndefined()
 	})
 
-	it("hands an accepted Resume continuation to a subsequent request gate", async () => {
+	it("retires an accepted Resume continuation without permitting a new Hosted Web approval", async () => {
 		const interactionId = "resume-request-gate"
 		const turnId = "resume-turn"
 		const response: InteractionResponse = {
@@ -690,33 +690,14 @@ describe("InteractionCoordinator", () => {
 			anchor: { apiIndex: 2 },
 		})
 
-		const approval = coordinator.open({
-			turnId: "hosted-web:task-1:2",
-			interactionId: "hosted-web:task-1:2",
-			kind: "hosted_web_approval",
-			presentation: "Hosted Web approval",
-		})
-		await vi.waitFor(() => {
-			expect(runtime.getState()).toMatchObject({
-				phase: TaskPhase.AWAITING_APPROVAL,
-				interaction: {
-					kind: "hosted_web_approval",
-					status: "awaiting",
-				},
-			})
-		})
-		await runtime.dispatch({
-			type: "INTERACTION_RESPONDED",
-			response: {
-				taskId: "task-1",
+		await expect(
+			coordinator.open({
 				turnId: "hosted-web:task-1:2",
 				interactionId: "hosted-web:task-1:2",
-				actionId: "approve",
-				stateRevision: runtime.getState().revision,
-				draft: { text: "", images: [], files: [] },
-			},
-		})
-		await expect(approval).resolves.toMatchObject({ actionId: "approve" })
+				kind: "hosted_web_approval",
+				presentation: "obsolete approval",
+			}),
+		).rejects.toThrow("Interaction open rejected")
 	})
 
 	it("retires an accepted Resume continuation reopened after START_API failure", async () => {
@@ -980,6 +961,58 @@ describe("InteractionCoordinator", () => {
 		expect(runtime.getState().interaction).toBeUndefined()
 	})
 
+	it("replays one migrated persisted request only after explicit Resume", async () => {
+		const startApi = vi.fn(async () => undefined)
+		const runtime = new TaskRuntime(
+			{
+				...createTaskRuntimeState({
+					taskId: "task-1",
+					phase: TaskPhase.PAUSED,
+					revision: 4,
+					anchor: { apiIndex: 2, turnId: "resume-turn", interactionId: "resume-1" },
+				}),
+				interaction: {
+					taskId: "task-1",
+					turnId: "resume-turn",
+					interactionId: "resume-1",
+					kind: "resume",
+					status: "awaiting",
+					createdRevision: 3,
+					persistedRequest: true,
+					anchor: { messageTs: 100, messageType: "ask" },
+				},
+			},
+			createPorts({ startApi }),
+		)
+		const coordinator = new InteractionCoordinator(runtime)
+		const resumePromise = coordinator.resumeExisting("resume-1")
+		const response = {
+			taskId: "task-1",
+			turnId: "resume-turn",
+			interactionId: "resume-1",
+			actionId: "resume" as const,
+			stateRevision: runtime.getState().revision,
+			draft: { text: "", images: [], files: [] },
+		}
+
+		const first = await coordinator.respond(response)
+		await expect(resumePromise).resolves.toMatchObject({ actionId: "resume" })
+		const repeated = await coordinator.respond({ ...response, stateRevision: runtime.getState().revision })
+
+		expect(first.accepted).toBe(true)
+		expect(repeated).toMatchObject({ accepted: false, error: { code: "duplicate_response" } })
+		expect(startApi).toHaveBeenCalledOnce()
+		expect(startApi).toHaveBeenCalledWith(expect.objectContaining({ apiIndex: 2, persistedRequest: true }))
+		expect(runtime.getState()).toMatchObject({
+			phase: TaskPhase.RESUMING,
+			interaction: { kind: "resume", status: "resolving", persistedRequest: true },
+		})
+
+		const admitted = await runtime.dispatch({ type: "API_REQUEST_STARTED", apiIndex: 2 })
+		expect(admitted.accepted).toBe(true)
+		expect(runtime.getState().interaction).toBeUndefined()
+	})
+
 	it("takes over one hydrated resume interaction and commits its causal response", async () => {
 		const runtime = new TaskRuntime(
 			{
@@ -1230,7 +1263,7 @@ describe("InteractionCoordinator", () => {
 	})
 
 	it.each(
-		INTERACTION_KINDS.filter((kind) => kind !== "condense"),
+		INTERACTION_KINDS.filter((kind) => kind !== "condense" && kind !== "hosted_web_approval"),
 	)("temporarily interrupts and restores a live %s interaction", async (kind) => {
 		const runtime = new TaskRuntime(createTaskRuntimeState({ taskId: "task-1", phase: TaskPhase.STREAMING }), createPorts())
 		const coordinator = new InteractionCoordinator(runtime)

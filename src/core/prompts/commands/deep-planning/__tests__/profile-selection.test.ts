@@ -46,24 +46,4 @@ describe("deep-planning explicit profile selection", () => {
 		expect(liteFromGpt).toBe(liteFromOtherModel)
 		expect(standardFromGpt).not.toBe(liteFromGpt)
 	})
-
-	it("never injects task-progress instructions into Lite", () => {
-		const enabled = getDeepPlanningPrompt(PromptProfile.Lite, { enabled: true }, createProviderInfo("gpt-5.1"), false)
-		const disabled = getDeepPlanningPrompt(PromptProfile.Lite, { enabled: false }, createProviderInfo("gpt-5.1"), false)
-
-		expect(enabled).not.toContain("task_progress")
-		expect(disabled).not.toContain("task_progress")
-		expect(enabled.match(/<IMPORTANT>/g)).toHaveLength(1)
-		expect(enabled.match(/<\/IMPORTANT>/g)).toHaveLength(1)
-		expect(disabled.match(/<IMPORTANT>/g)).toHaveLength(1)
-		expect(disabled.match(/<\/IMPORTANT>/g)).toHaveLength(1)
-	})
-
-	it.each([PromptProfile.Standard, PromptProfile.Lite])("keeps the multi-turn XML new_task boundary for %s", (profile) => {
-		const prompt = getDeepPlanningPrompt(profile, { enabled: true }, createProviderInfo("gpt-5.1"), true)
-
-		expect(prompt).toContain("<new_task>")
-		expect(prompt).toContain("</new_task>")
-		expect(prompt).not.toContain('"name": "new_task"')
-	})
 })

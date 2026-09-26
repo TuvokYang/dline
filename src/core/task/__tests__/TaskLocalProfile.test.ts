@@ -80,6 +80,7 @@ describe("Task task-local Profile adoption", () => {
 		})
 		const fakeTask = {
 			taskSm,
+			ordinaryRequestInputReplay: { clear: vi.fn(() => order.push("replay")) },
 			getProfileRecoveryInteractionId: vi.fn(() => undefined),
 			resolveProfileBinding: vi.fn(() => ({ profileId: "target-id", profileName: "target-profile" })),
 			rebuildApiHandler: vi.fn(async () => order.push("rebuild")),
@@ -102,7 +103,38 @@ describe("Task task-local Profile adoption", () => {
 		)
 		expect(fakeTask.rebuildApiHandler).toHaveBeenCalledOnce()
 		expect(fakeTask.syncContextWindowIndicatorScope).toHaveBeenCalledOnce()
-		expect(order).toEqual(["bindings", "rebuild", "flush", "scope"])
+		expect(order).toEqual(["bindings", "replay", "rebuild", "flush", "scope"])
+	})
+
+	it("invalidates frozen ordinary Provider input before rebuilding the active Profile", async () => {
+		const taskSm = createTaskStateManager("act")
+		const order: string[] = []
+		const originalSet = taskSm.setProfileIdentityBindings
+		taskSm.setProfileIdentityBindings = vi.fn((bindings, options) => {
+			order.push("bindings")
+			return originalSet(bindings, options)
+		})
+		const ordinaryRequestInputReplay = {
+			clear: vi.fn(() => order.push("replay")),
+		}
+		const fakeTask = {
+			taskSm,
+			ordinaryRequestInputReplay,
+			getProfileRecoveryInteractionId: vi.fn(() => undefined),
+			resolveProfileBinding: vi.fn(() => ({ profileId: "target-id", profileName: "target-profile" })),
+			rebuildApiHandler: vi.fn(async () => order.push("rebuild")),
+			syncContextWindowIndicatorScope: vi.fn(() => order.push("scope")),
+			stateManager: {
+				flushPendingState: vi.fn(async () => {
+					order.push("flush")
+				}),
+			},
+		}
+
+		await Task.prototype.commitProfileBindings.call(fakeTask, "target-profile", ["act"])
+
+		expect(ordinaryRequestInputReplay.clear).toHaveBeenCalledOnce()
+		expect(order).toEqual(["bindings", "replay", "rebuild", "flush", "scope"])
 	})
 
 	it("durably removes both stale Profile error carriers before publishing recovery", async () => {
@@ -133,6 +165,7 @@ describe("Task task-local Profile adoption", () => {
 		const dispatchRuntime = vi.fn(async () => ({ accepted: true }))
 		const fakeTask = {
 			taskSm,
+			ordinaryRequestInputReplay: { clear: vi.fn() },
 			clearProfileRecoveryMessages: Reflect.get(Task.prototype, "clearProfileRecoveryMessages") as (
 				interactionId: string,
 			) => Promise<void>,
@@ -194,6 +227,7 @@ describe("Task task-local Profile adoption", () => {
 		const taskSm = createTaskStateManager("act")
 		const fakeTask = {
 			taskSm,
+			ordinaryRequestInputReplay: { clear: vi.fn() },
 			getProfileRecoveryInteractionId: vi.fn(() => undefined),
 			resolveProfileBinding: vi.fn(() => ({ profileId: "target-id", profileName: "target-profile" })),
 			rebuildApiHandler: vi.fn(async () => undefined),

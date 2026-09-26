@@ -332,7 +332,6 @@ const protocolCases = [
 		thinking: { mode: "effort" as const, effort: "high" },
 		exposesReasoningSummary: false,
 		replaysReasoningInRequestBody: false,
-		requiresWebSearchApproval: false,
 	},
 	{
 		target: "openai-compatible-responses" as const,
@@ -342,7 +341,6 @@ const protocolCases = [
 		thinking: { mode: "effort" as const, effort: "high" },
 		exposesReasoningSummary: true,
 		replaysReasoningInRequestBody: true,
-		requiresWebSearchApproval: false,
 	},
 	{
 		target: "openai-official-responses" as const,
@@ -352,7 +350,6 @@ const protocolCases = [
 		thinking: { mode: "effort" as const, effort: "high" },
 		exposesReasoningSummary: true,
 		replaysReasoningInRequestBody: true,
-		requiresWebSearchApproval: true,
 	},
 	{
 		target: "deepseek-chat" as const,
@@ -362,7 +359,6 @@ const protocolCases = [
 		thinking: { mode: "effort" as const, effort: "high" },
 		exposesReasoningSummary: true,
 		replaysReasoningInRequestBody: true,
-		requiresWebSearchApproval: false,
 	},
 	{
 		target: "anthropic-messages" as const,
@@ -372,7 +368,6 @@ const protocolCases = [
 		thinking: { mode: "effort" as const, effort: "high" },
 		exposesReasoningSummary: true,
 		replaysReasoningInRequestBody: true,
-		requiresWebSearchApproval: true,
 	},
 ]
 
@@ -488,19 +483,8 @@ for (const testCase of protocolCases) {
 			)
 			await sendTask(sidebar, `Exercise ${testCase.target} usage accounting.`)
 			const hostedSearchApproval = sidebar.getByRole("contentinfo").getByText("Approve", { exact: true })
-			const approveInitialHostedRequest = async (): Promise<void> => {
-				await expect(hostedSearchApproval).toHaveCount(1, { timeout: 60_000 })
-				await expect(hostedSearchApproval).toBeVisible()
-				expect(server.getRequestCount(testCase.target)).toBe(0)
-				await hostedSearchApproval.click()
-				await expect.poll(() => server.getRequestCount(testCase.target), { timeout: 60_000 }).toBe(1)
-			}
-			if (testCase.requiresWebSearchApproval) {
-				await approveInitialHostedRequest()
-			} else {
-				await expect(hostedSearchApproval).toHaveCount(0)
-				await expect.poll(() => server.getRequestCount(testCase.target), { timeout: 60_000 }).toBeGreaterThanOrEqual(1)
-			}
+			await expect.poll(() => server.getRequestCount(testCase.target), { timeout: 60_000 }).toBeGreaterThanOrEqual(1)
+			await expect(hostedSearchApproval).toHaveCount(0)
 			const firstConsumption = server.getMockConsumptions(testCase.target)[0]
 			if (!firstConsumption) throw new Error("First API request was not recorded")
 			const advertisedTools = advertisedToolNames(firstConsumption)
@@ -517,25 +501,21 @@ for (const testCase of protocolCases) {
 			const advertisedToolPayload = JSON.stringify((firstConsumption.requestBody as { tools?: unknown }).tools ?? [])
 			expect(advertisedToolPayload).toContain("task_progress")
 
-			if (testCase.requiresWebSearchApproval) {
-				await expect(hostedSearchApproval).toHaveCount(0)
-			}
+			await expect(hostedSearchApproval).toHaveCount(0)
 			await expect(sidebar.getByText(REPORT_TITLE, { exact: true })).toBeVisible({ timeout: 60_000 })
 			await expect(sidebar.getByText(REPORT_CONTENT, { exact: true })).toBeVisible()
 			await expect.poll(() => server.getRequestCount(testCase.target)).toBe(3)
 			await page.waitForTimeout(500)
 			expect(server.getRequestCount(testCase.target)).toBe(3)
 			await submitInteractionFeedback(sidebar, REPORT_FEEDBACK)
-			if (testCase.requiresWebSearchApproval) await expect(hostedSearchApproval).toHaveCount(0)
+			await expect(hostedSearchApproval).toHaveCount(0)
 
 			await expect(sidebar.getByText(QNA_RESPONSE, { exact: true })).toBeVisible({ timeout: 60_000 })
 			await expect.poll(() => server.getRequestCount(testCase.target)).toBe(4)
 			await page.waitForTimeout(500)
 			expect(server.getRequestCount(testCase.target)).toBe(4)
 			await submitInteractionFeedback(sidebar, QNA_FEEDBACK)
-			if (testCase.requiresWebSearchApproval) {
-				await expect(hostedSearchApproval).toHaveCount(0)
-			}
+			await expect(hostedSearchApproval).toHaveCount(0)
 
 			await expect(sidebar.getByText(testCase.responseText, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
 			await expect.poll(() => server.getRequestCount(testCase.target)).toBe(7)
@@ -1060,26 +1040,19 @@ e2e(
 			})),
 		)
 		await sendTask(sidebar, "Exercise an Anthropic connection failure.")
-		const expectedFailureRequestCount = 4
+		const expectedFailureRequestCount = 6
 		const hostedSearchApproval = sidebar.getByRole("contentinfo").getByText("Approve", { exact: true })
-		const approveNextHostedRequest = async (completedRequestCount: number): Promise<void> => {
-			await expect(hostedSearchApproval).toHaveCount(1, { timeout: 60_000 })
-			await expect(hostedSearchApproval).toBeVisible()
-			expect(server.getRequestCount("anthropic-messages")).toBe(completedRequestCount)
-			await hostedSearchApproval.click()
-			await expect
-				.poll(() => server.getRequestCount("anthropic-messages"), { timeout: 60_000 })
-				.toBe(completedRequestCount + 1)
-		}
-
 		const errorBox = sidebar.getByTestId("error-retry-box")
-		await approveNextHostedRequest(0)
-		await expect(errorBox).toContainText("Attempt 1 of 3", { timeout: 90_000 })
+		await expect.poll(() => server.getRequestCount("anthropic-messages"), { timeout: 60_000 }).toBeGreaterThanOrEqual(1)
+		await expect(hostedSearchApproval).toHaveCount(0)
+		await expect(errorBox).toContainText("Attempt 1 of 5", { timeout: 90_000 })
 		await expect(errorBox.getByTestId("error-retry-box-provider")).toHaveText("anthropic")
 		await expect(errorBox.getByTestId("error-retry-box-model")).toHaveText("claude-sonnet-4-6")
 		await expect(errorBox.getByTestId("error-retry-box-message")).toHaveText("Connection error.")
-		await expect(errorBox).toContainText("Attempt 2 of 3", { timeout: 90_000 })
-		await expect(errorBox).toContainText("Attempt 3 of 3", { timeout: 90_000 })
+		await expect(errorBox).toContainText("Attempt 2 of 5", { timeout: 90_000 })
+		await expect(errorBox).toContainText("Attempt 3 of 5", { timeout: 90_000 })
+		await expect(errorBox).toContainText("Attempt 4 of 5", { timeout: 90_000 })
+		await expect(errorBox).toContainText("Attempt 5 of 5", { timeout: 90_000 })
 		await expect
 			.poll(() => server.getRequestCount("anthropic-messages"), { timeout: 90_000 })
 			.toBe(expectedFailureRequestCount)
@@ -1089,7 +1062,7 @@ e2e(
 			model: "claude-sonnet-4-6",
 		})
 		await expect(errorBox).toContainText("Automatic retry stopped")
-		await expect(errorBox).toContainText("All 3 automatic attempts were used.")
+		await expect(errorBox).toContainText("All 5 automatic attempts were used.")
 		const failures = server.getMockConsumptions("anthropic-messages")
 		expect(failures).toHaveLength(expectedFailureRequestCount)
 		expect(failures.every((entry) => entry.status === 0)).toBe(true)

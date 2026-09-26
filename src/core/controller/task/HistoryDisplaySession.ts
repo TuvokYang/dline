@@ -190,6 +190,11 @@ export class HistoryDisplaySession {
 		reader: UIMessageWindowReader,
 	): Promise<{ messages: ClineMessage[]; view: TaskViewState; syntheticMessage?: ClineMessage }> {
 		const hydrated = this.tryHydrate(snapshot)
+		// The lightweight view cannot authorize a retired Hosted capability approval;
+		// promotion delegates request-tail validation to ResumeReconciler.
+		if (hydrated?.interaction?.kind === "hosted_web_approval") {
+			return this.projectSyntheticInteraction(durableMessages, "resume")
+		}
 		if (hydrated?.interaction?.status === "awaiting") {
 			const view = projectTaskView(hydrated)
 			const interaction = view.activeInteraction

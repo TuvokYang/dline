@@ -23,7 +23,7 @@ export interface ActiveInteraction {
 	kind: InteractionKind
 	status: "opening" | "awaiting" | "resolving"
 	createdRevision: number
-	/** Whether an error retry owns a durable user request that can be replayed by apiIndex. */
+	/** Whether this interaction owns a durable user request that can be replayed by apiIndex. */
 	persistedRequest?: boolean
 	/** Ephemeral request content that had not reached API history when the request failed. */
 	retryContent?: ClineContent[]

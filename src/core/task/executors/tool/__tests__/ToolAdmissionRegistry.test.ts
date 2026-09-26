@@ -6,6 +6,7 @@ import { DEFAULT_AUTO_APPROVAL_SETTINGS } from "@shared/AutoApprovalSettings"
 import { ClineDefaultTool } from "@shared/tools"
 import { describe, expect, it, vi } from "vitest"
 import { resolvePermissionScope } from "../../../kernel/turn/approval-kind"
+import { GenerateImageToolHandler } from "../../../tools/handlers/GenerateImageToolHandler"
 import { ToolExecutorCoordinator } from "../../../tools/ToolExecutorCoordinator"
 import { prepareRegisteredToolAdmission, type ToolAdmissionSnapshot } from "../ToolAdmissionRegistry"
 
@@ -59,6 +60,35 @@ describe("ToolAdmissionRegistry", () => {
 		expect(run).not.toHaveBeenCalled()
 		await admission.run()
 		expect(run).toHaveBeenCalledOnce()
+	})
+
+	it("uses the image handler's typed presentation for manual approval", () => {
+		const coordinator = new ToolExecutorCoordinator()
+		coordinator.register(new GenerateImageToolHandler())
+		const result = coordinator.prepareAdmission(
+			block(ClineDefaultTool.GENERATE_IMAGE, { prompt: "A blue owl", count: "2" }),
+			snapshot({
+				settings: {
+					...snapshot().settings,
+					actions: { ...snapshot().settings.actions, generateImages: false },
+				},
+			}),
+			async () => undefined,
+		)
+
+		expect(result.outcome).toBe("admitted")
+		if (result.outcome !== "admitted") throw new Error("expected admission")
+		expect(result.decision.kind).toBe("manual")
+		expect(JSON.parse(result.presentation?.body ?? "{}")).toMatchObject({
+			tool: "generateImage",
+			imageGeneration: {
+				schemaVersion: 1,
+				status: "awaiting_approval",
+				requestId: `dline-${ClineDefaultTool.GENERATE_IMAGE}`,
+				prompt: "A blue owl",
+				count: 2,
+			},
+		})
 	})
 
 	it("rejects invalid parameters without constructing or running an effect", () => {

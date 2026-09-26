@@ -9,6 +9,8 @@ import type { TaskEffectPorts } from "@core/task/runtime/TaskEffectRunner"
 import { TaskRuntime } from "@core/task/runtime/TaskRuntime"
 import { createTaskRuntimeState } from "@core/task/runtime/TaskRuntimeState"
 import { TaskPhase } from "@core/task/TaskPhase"
+import { FocusChainHandler } from "@core/task/tools/handlers/FocusChainHandler"
+import type { TaskConfig } from "@core/task/tools/types/TaskConfig"
 import { ClineDefaultTool } from "@shared/tools"
 import { describe, expect, it, vi } from "vitest"
 import { type BlockLifecycle, BlockPhase } from "../BlockPhaseMachine"
@@ -215,6 +217,328 @@ describe("Task restored turn-end continuation", () => {
 		const duplicate = await coordinator.respond(response)
 		expect(duplicate).toMatchObject({ accepted: false, error: { code: "stale_interaction" } })
 		expect(continuation).toHaveBeenCalledOnce()
+	})
+
+	it("does not execute a rejected image tool after restoring its manual approval", async () => {
+		const interactionId = "image-history-interaction"
+		const turnId = `turn:${interactionId}`
+		const functionId = "image-history-function"
+		const storedBlock = {
+			type: "tool_use" as const,
+			name: ClineDefaultTool.GENERATE_IMAGE,
+			input: { prompt: "A quiet lake", count: "1" },
+			function_id: functionId,
+			dline_tid: interactionId,
+		}
+		const runtime = new TaskRuntime(
+			{
+				...createTaskRuntimeState({
+					taskId: "task-1",
+					phase: TaskPhase.AWAITING_APPROVAL,
+					revision: 8,
+					anchor: { apiIndex: 1, uiMessageTs: 100, turnId, interactionId },
+				}),
+				turn: {
+					turnId,
+					assistantApiIndex: 1,
+					mode: "serial",
+					activeDlineTid: interactionId,
+					blocks: [
+						{
+							dlineTid: interactionId,
+							functionId,
+							toolName: ClineDefaultTool.GENERATE_IMAGE,
+							phase: BlockPhase.AWAITING_APPROVAL,
+							ts: 100,
+							requiresApproval: true,
+							conversationHistoryIndex: 1,
+						},
+					],
+				},
+				interaction: {
+					taskId: "task-1",
+					turnId,
+					interactionId,
+					kind: "tool_approval",
+					status: "awaiting",
+					createdRevision: 7,
+					anchor: { messageTs: 100, messageType: "ask" },
+				},
+			},
+			runtimePorts(),
+		)
+		const nextRequest = vi.fn(async () => false)
+		const executeTool = vi.fn(async () => undefined)
+		const describeToolDenial = vi.fn(async () => "Image generation rejected")
+		const pendingContent: Array<Record<string, unknown>> = []
+		const commitInterruptedToolResult = vi.fn(async (block: ToolUse, reason: string) => {
+			pendingContent.push({
+				type: "tool_result",
+				dline_tid: block.dline_tid,
+				function_id: block.function_id,
+				content: reason,
+			})
+		})
+		const presentToolDenial = vi.fn(async () => undefined)
+		const fakeTask = {
+			taskId: "task-1",
+			taskRuntime: runtime,
+			taskState: {
+				abort: true,
+				userMessageContent: pendingContent,
+				assistantMessageContent: [] as ToolUse[],
+				didCompleteReadingStream: false,
+				resetOperationCancellation: vi.fn(),
+			},
+			messageStateHandler: {
+				apiConversationHistory: [
+					{ role: "user" as const, content: "task" },
+					{ role: "assistant" as const, content: [storedBlock] },
+				],
+				clineMessages: [],
+			},
+			restoreHandler: {
+				storedToRuntime: (block: typeof storedBlock, ts: number): ToolUse => ({
+					type: "tool_use",
+					name: block.name,
+					params: block.input,
+					partial: false,
+					function_id: block.function_id,
+					dline_tid: block.dline_tid,
+					ts,
+				}),
+			},
+			restoredTurnToolBlocks: (Task.prototype as unknown as { restoredTurnToolBlocks(turn: unknown): ToolUse[] })
+				.restoredTurnToolBlocks,
+			ensureRestoredBlockExecutionStarted: (
+				Task.prototype as unknown as {
+					ensureRestoredBlockExecutionStarted(turnId: string, lifecycle: BlockLifecycle): Promise<BlockLifecycle>
+				}
+			).ensureRestoredBlockExecutionStarted,
+			turnDriver: {
+				hasPendingToolResult: (dlineTid: string, id: string) =>
+					pendingContent.some((content) => content.dline_tid === dlineTid && content.function_id === id),
+				isTerminalRuntimeBlock: (phase: BlockPhase) =>
+					[BlockPhase.COMPLETED, BlockPhase.REJECTED, BlockPhase.SKIPPED, BlockPhase.CANCELLED].includes(phase),
+				ensureTerminalToolResult: vi.fn(async () => undefined),
+				execute: vi.fn(async () => undefined),
+			},
+			dispatchRuntime: runtime.dispatch.bind(runtime),
+			toolExecutor: { executeTool, describeToolDenial, presentToolDenial, commitInterruptedToolResult },
+			waitForTaskHeaderCompactionSettlement: vi.fn(async () => undefined),
+			syncRetainedMachines: vi.fn(),
+			recursivelyMakeClineRequests: nextRequest,
+			requestCancellation: vi.fn(async () => ({ accepted: true })),
+		} as unknown as Task
+		const coordinator = new InteractionCoordinator(runtime)
+		const continueRestoredInteraction = (
+			Task.prototype as unknown as {
+				continueRestoredInteraction(context: DetachedInteractionContinuationContext): Promise<void>
+			}
+		).continueRestoredInteraction
+		coordinator.registerDetachedContinuation((context) => continueRestoredInteraction.call(fakeTask, context))
+
+		const response: InteractionResponse = {
+			taskId: "task-1",
+			turnId,
+			interactionId,
+			actionId: "reject",
+			stateRevision: 8,
+			draft: { text: "No image", images: [], files: [] },
+		}
+		expect((await coordinator.respond(response)).accepted).toBe(true)
+		await coordinator.waitForClaimedContinuation(interactionId)
+
+		expect(runtime.getState().turn?.blocks[0]?.phase).toBe(BlockPhase.REJECTED)
+		expect(executeTool).not.toHaveBeenCalled()
+		expect(describeToolDenial).toHaveBeenCalledOnce()
+		expect(commitInterruptedToolResult).toHaveBeenCalledOnce()
+		expect(pendingContent.filter((content) => content.type === "tool_result")).toEqual([
+			{ type: "tool_result", dline_tid: interactionId, function_id: functionId, content: "Image generation rejected" },
+		])
+		expect(presentToolDenial).toHaveBeenCalledOnce()
+		expect(nextRequest).toHaveBeenCalledOnce()
+		expect((await coordinator.respond(response)).accepted).toBe(false)
+		expect(commitInterruptedToolResult).toHaveBeenCalledOnce()
+	})
+
+	it.each(["approve", "reject"] as const)("restores change_todo_list %s without widening its approval", async (actionId) => {
+		const interactionId = `focus-chain-${actionId}`
+		const turnId = `turn:${interactionId}`
+		const functionId = `function-${interactionId}`
+		const newPlan = "# Approved changes\n- [ ] Keep this item\n- [ ] Do not add this item"
+		const storedBlock = {
+			type: "tool_use" as const,
+			name: ClineDefaultTool.CHANGE_TODO_LIST,
+			input: { new_plan: newPlan, reason: "Only the selected item" },
+			function_id: functionId,
+			dline_tid: interactionId,
+		}
+		const runtime = new TaskRuntime(
+			{
+				...createTaskRuntimeState({
+					taskId: "task-1",
+					phase: TaskPhase.AWAITING_APPROVAL,
+					revision: 8,
+					anchor: { apiIndex: 1, uiMessageTs: 100, turnId, interactionId },
+				}),
+				turn: {
+					turnId,
+					assistantApiIndex: 1,
+					mode: "serial",
+					activeDlineTid: interactionId,
+					blocks: [
+						{
+							dlineTid: interactionId,
+							functionId,
+							toolName: ClineDefaultTool.CHANGE_TODO_LIST,
+							phase: BlockPhase.AWAITING_APPROVAL,
+							ts: 100,
+							requiresApproval: true,
+							conversationHistoryIndex: 1,
+						},
+					],
+				},
+				interaction: {
+					taskId: "task-1",
+					turnId,
+					interactionId,
+					kind: "change_todo_list",
+					status: "awaiting",
+					createdRevision: 7,
+					anchor: { messageTs: 100, messageType: "ask" },
+				},
+			},
+			runtimePorts(),
+		)
+		const pendingContent: Array<Record<string, unknown>> = []
+		const admissionOutcomes = new Map<string, InteractionResponse>()
+		const focusChainForceUpdate = vi.fn(async (_plan: string) => undefined)
+		const handler = new FocusChainHandler()
+		const executeTool = vi.fn(async (block: ToolUse) => {
+			const result = await handler.execute(
+				{
+					admissionOutcomes,
+					callbacks: { focusChainForceUpdate, say: vi.fn(async () => undefined) },
+				} as unknown as TaskConfig,
+				block,
+			)
+			pendingContent.push({
+				type: "tool_result",
+				dline_tid: block.dline_tid,
+				function_id: block.function_id,
+				content: result,
+			})
+		})
+		const describeToolDenial = vi.fn(async () => "TODO list change rejected")
+		const commitInterruptedToolResult = vi.fn(async (block: ToolUse, reason: string) => {
+			pendingContent.push({
+				type: "tool_result",
+				dline_tid: block.dline_tid,
+				function_id: block.function_id,
+				content: reason,
+			})
+		})
+		const nextRequest = vi.fn(async () => false)
+		const recordAdmissionOutcome = vi.fn((block: ToolUse, outcome: InteractionResponse) => {
+			if (block.dline_tid) admissionOutcomes.set(block.dline_tid, outcome)
+		})
+		const fakeTask = {
+			taskId: "task-1",
+			taskRuntime: runtime,
+			taskState: {
+				abort: true,
+				userMessageContent: pendingContent,
+				assistantMessageContent: [] as ToolUse[],
+				didCompleteReadingStream: false,
+				resetOperationCancellation: vi.fn(),
+			},
+			messageStateHandler: {
+				apiConversationHistory: [
+					{ role: "user" as const, content: "task" },
+					{ role: "assistant" as const, content: [storedBlock] },
+				],
+				clineMessages: [],
+			},
+			restoreHandler: {
+				storedToRuntime: (block: typeof storedBlock, ts: number): ToolUse => ({
+					type: "tool_use",
+					name: block.name,
+					params: block.input,
+					partial: false,
+					function_id: block.function_id,
+					dline_tid: block.dline_tid,
+					ts,
+				}),
+			},
+			restoredTurnToolBlocks: (Task.prototype as unknown as { restoredTurnToolBlocks(turn: unknown): ToolUse[] })
+				.restoredTurnToolBlocks,
+			ensureRestoredBlockExecutionStarted: (
+				Task.prototype as unknown as {
+					ensureRestoredBlockExecutionStarted(turnId: string, lifecycle: BlockLifecycle): Promise<BlockLifecycle>
+				}
+			).ensureRestoredBlockExecutionStarted,
+			turnDriver: {
+				hasPendingToolResult: (dlineTid: string, id: string) =>
+					pendingContent.some((content) => content.dline_tid === dlineTid && content.function_id === id),
+				isTerminalRuntimeBlock: (phase: BlockPhase) =>
+					[BlockPhase.COMPLETED, BlockPhase.REJECTED, BlockPhase.SKIPPED, BlockPhase.CANCELLED].includes(phase),
+				ensureTerminalToolResult: vi.fn(async () => undefined),
+				execute: vi.fn(async () => undefined),
+			},
+			dispatchRuntime: runtime.dispatch.bind(runtime),
+			toolExecutor: {
+				executeTool,
+				describeToolDenial,
+				commitInterruptedToolResult,
+				presentToolDenial: vi.fn(async () => undefined),
+				recordAdmissionOutcome,
+			},
+			waitForTaskHeaderCompactionSettlement: vi.fn(async () => undefined),
+			syncRetainedMachines: vi.fn(),
+			recursivelyMakeClineRequests: nextRequest,
+			requestCancellation: vi.fn(async () => ({ accepted: true })),
+		} as unknown as Task
+		const coordinator = new InteractionCoordinator(runtime)
+		const continueRestoredInteraction = (
+			Task.prototype as unknown as {
+				continueRestoredInteraction(context: DetachedInteractionContinuationContext): Promise<void>
+			}
+		).continueRestoredInteraction
+		coordinator.registerDetachedContinuation((context) => continueRestoredInteraction.call(fakeTask, context))
+		const response: InteractionResponse = {
+			taskId: "task-1",
+			turnId,
+			interactionId,
+			actionId,
+			stateRevision: 8,
+			draft: { text: "", images: [], files: [] },
+			selection: { values: ["0"] },
+		}
+
+		expect((await coordinator.respond(response)).accepted).toBe(true)
+		await coordinator.waitForClaimedContinuation(interactionId)
+		expect(nextRequest).toHaveBeenCalledOnce()
+		expect(pendingContent.filter((content) => content.type === "tool_result")).toHaveLength(1)
+		expect((await coordinator.respond(response)).accepted).toBe(false)
+		if (actionId === "approve") {
+			expect(runtime.getState().turn?.blocks[0]?.phase).toBe(BlockPhase.COMPLETED)
+			expect(recordAdmissionOutcome).toHaveBeenCalledWith(
+				expect.objectContaining({ dline_tid: interactionId }),
+				expect.objectContaining({ selection: { values: ["0"] } }),
+			)
+			expect(executeTool).toHaveBeenCalledOnce()
+			expect(focusChainForceUpdate).toHaveBeenCalledWith("# Approved changes\n- [ ] Keep this item")
+			expect(describeToolDenial).not.toHaveBeenCalled()
+		} else {
+			expect(runtime.getState().turn?.blocks[0]?.phase).toBe(BlockPhase.REJECTED)
+			expect(executeTool).not.toHaveBeenCalled()
+			expect(recordAdmissionOutcome).not.toHaveBeenCalled()
+			expect(focusChainForceUpdate).not.toHaveBeenCalled()
+			expect(describeToolDenial).toHaveBeenCalledOnce()
+			expect(pendingContent[0]?.content).toBe("TODO list change rejected")
+			expect(commitInterruptedToolResult).toHaveBeenCalledOnce()
+		}
 	})
 
 	it("claims restored manual approval execution ownership exactly once", async () => {

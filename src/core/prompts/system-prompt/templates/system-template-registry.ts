@@ -1,15 +1,15 @@
 export const SYSTEM_SECTION_IDS = [
 	"agent-role",
-	"tool-use",
-	"todo",
-	"task-progress",
-	"editing-files",
+	"user-authority",
 	"act-vs-plan",
+	"user-communication",
+	"tool-use",
+	"task-progress",
 	"capabilities",
-	"feedback",
-	"rules",
-	"system-info",
 	"objective",
+	"execution",
+	"system-info",
+	"feedback",
 	"user-instructions",
 ] as const
 

@@ -1,6 +1,14 @@
 // English system response prompts — key-value pairs only, no code logic.
 
 const prompts: Record<string, string> = {
+	windsurfRulesWorkspaceInstructions:
+		"# .windsurfrules\n\nThe following instructions apply to workspace @WORKSPACE_NAME@.\n\n@CONTENT@",
+	cursorRulesWorkspaceFileInstructions:
+		"# .cursorrules\n\nThe following instructions apply to workspace @WORKSPACE_NAME@.\n\n@CONTENT@",
+	cursorRulesWorkspaceDirInstructions:
+		"# .cursor/rules\n\nThe following instructions apply to workspace @WORKSPACE_NAME@.\n\n@CONTENT@",
+	agentsRulesWorkspaceInstructions:
+		"# AGENTS.md\n\nThe following instructions apply to workspace @WORKSPACE_NAME@. Nested AGENTS.md content is combined below and applies only to files within each rule file's directory scope.\n\n@CONTENT@",
 	repeatFileReadNotice:
 		"[[NOTE] This file read has been removed to save space in the context window. Refer to the latest file read for the most up to date version of this file.]",
 	duplicateFileReadNotice:
@@ -31,14 +39,6 @@ const prompts: Record<string, string> = {
 		"# Local User Rules (.agents/rules/)\n\nThe following is provided by local user rules in @WORKSPACE_NAME@ where the user has specified instructions:\n\n@CONTENT@",
 	clineRulesLocalFileInstructions:
 		"# Local User Rules (.agents/rules)\n\nThe following is provided by local user rules in @WORKSPACE_NAME@ where the user has specified instructions:\n\n@CONTENT@",
-	windsurfRulesLocalFileInstructions:
-		"# .windsurfrules\n\nThe following is provided by a root-level .windsurfrules file where the user has specified instructions for this working directory (@CWD@)\n\n@CONTENT@",
-	cursorRulesLocalFileInstructions:
-		"# .cursorrules\n\nThe following is provided by a root-level .cursorrules file where the user has specified instructions for this working directory (@CWD@)\n\n@CONTENT@",
-	cursorRulesLocalDirInstructions:
-		"# .cursor/rules\n\nThe following is provided by a root-level .cursor/rules directory where the user has specified instructions for this working directory (@CWD@)\n\n@CONTENT@",
-	agentsRulesLocalFileInstructions:
-		"# AGENTS.md\n\nThe following is provided by AGENTS.md files found recursively throughout this working directory (@CWD@) where the user has specified instructions. Nested AGENTS.md will be combined below, and you should only apply the instructions for each AGENTS.md file that is directly applicable to the current task, i.e. if you are reading or writing to a file in that directory.\n\n@CONTENT@",
 }
 
 export default prompts

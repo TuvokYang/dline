@@ -5,25 +5,18 @@ import { describe, expect, it, vi } from "vitest"
 
 /** Verify Profile admission is request-local and always evaluates the current binding. */
 describe("Task Profile admission", () => {
-	it("reuses one manual Hosted Web approval until the auto-approval Settings version changes", async () => {
-		let settingsVersion = 4
+	it("admits a Hosted Web declaration without opening a request-level approval", async () => {
+		const beforeApiRequestStarted = vi.fn(async () => undefined)
 		const open = vi.fn(async () => ({ actionId: "approve" as const }))
 		const releaseApiContinuationForRequestGate = vi.fn(async () => false)
+		const prepareAdmission = vi.fn()
 		const admitApiRequest = vi.fn(async () => undefined)
 		const fakeTask = {
 			taskId: "task-1",
-			taskState: { hostedWebApprovalLeaseVersion: undefined as number | undefined },
 			stateManager: {
-				getGlobalSettingsKey: vi.fn(() => ({ version: settingsVersion, actions: { useWeb: false } })),
+				getGlobalSettingsKey: vi.fn(() => ({ version: 4, actions: { useWeb: false } })),
 			},
-			toolExecutor: {
-				prepareAdmission: vi.fn(() => ({
-					outcome: "admitted",
-					decision: { kind: "manual", scope: "web", ceiling: "auto" },
-					lanes: [],
-					run: async () => undefined,
-				})),
-			},
+			toolExecutor: { prepareAdmission },
 			ordinaryRequestInputReplay: { get: vi.fn(() => undefined) },
 			compactionRequestReplay: { getProviderInput: vi.fn(() => undefined) },
 			interactionCoordinator: { releaseApiContinuationForRequestGate, open },
@@ -36,26 +29,19 @@ describe("Task Profile admission", () => {
 				providerInfo: { providerId: string }
 			},
 			apiIndex: number,
+			beforeApiRequestStarted?: () => Promise<void>,
 		) => Promise<boolean>
-		// Approval follows the routed hosted tools, so the plan must carry the
-		// hosted Web Search it declares, exactly as the resolver produces it.
 		const requestScope = {
 			webSearchRoutingPlan: { route: "hosted" as const, serverTools: [ServerTool.WEB_SEARCH] },
 			providerInfo: { providerId: "openai" },
 		}
 
-		await expect(completeApiRequestGate.call(fakeTask, requestScope, 4)).resolves.toBe(true)
-		expect(open).toHaveBeenCalledTimes(1)
-		expect(fakeTask.taskState.hostedWebApprovalLeaseVersion).toBe(4)
-
-		await expect(completeApiRequestGate.call(fakeTask, requestScope, 5)).resolves.toBe(true)
-		expect(open).toHaveBeenCalledTimes(1)
-		expect(admitApiRequest).toHaveBeenCalledTimes(2)
-
-		settingsVersion = 5
-		await expect(completeApiRequestGate.call(fakeTask, requestScope, 6)).resolves.toBe(true)
-		expect(open).toHaveBeenCalledTimes(2)
-		expect(fakeTask.taskState.hostedWebApprovalLeaseVersion).toBe(5)
+		await expect(completeApiRequestGate.call(fakeTask, requestScope, 4, beforeApiRequestStarted)).resolves.toBe(true)
+		expect(beforeApiRequestStarted).toHaveBeenCalledOnce()
+		expect(admitApiRequest).toHaveBeenCalledWith(4)
+		expect(prepareAdmission).not.toHaveBeenCalled()
+		expect(releaseApiContinuationForRequestGate).not.toHaveBeenCalled()
+		expect(open).not.toHaveBeenCalled()
 	})
 
 	it("presents the current invalid Profile as one request-local retry interaction", async () => {

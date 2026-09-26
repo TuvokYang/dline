@@ -102,6 +102,49 @@ describe("HistoryDisplaySession", () => {
 		}
 	})
 
+	it("projects obsolete Hosted approval as a synthetic Resume without accepting the old Approve", async () => {
+		const taskId = "history-legacy-hosted-approval"
+		const legacyId = `hosted-web:${taskId}:0`
+		await seedMessages(taskId, [
+			{ ts: 10, type: "say", say: "task", text: "Original task" },
+			{
+				ts: 100,
+				type: "ask",
+				ask: "tool",
+				text: JSON.stringify({ tool: "webSearch", content: "Legacy Hosted approval" }),
+				interactionId: legacyId,
+				conversationHistoryIndex: 0,
+			},
+		])
+		await persistSnapshot(taskId, {
+			taskId,
+			phase: TaskPhase.AWAITING_APPROVAL,
+			revision: 7,
+			anchor: { apiIndex: 0, uiMessageTs: 100, turnId: legacyId, interactionId: legacyId },
+			interaction: {
+				taskId,
+				turnId: legacyId,
+				interactionId: legacyId,
+				kind: "hosted_web_approval",
+				status: "awaiting",
+				createdRevision: 6,
+				anchor: { messageTs: 100, messageType: "ask", taskAsk: "tool" },
+			},
+		})
+		const session = new HistoryDisplaySession(createHistoryItem(taskId))
+		try {
+			await session.load()
+			const interaction = session.getViewState().activeInteraction
+			expect(interaction).toMatchObject({ kind: "resume", status: "awaiting", anchorVerified: true })
+			expect(interaction?.interactionId).not.toBe(legacyId)
+			expect(session.getMessages().at(-1)).toMatchObject({ type: "ask", ask: "resume_task" })
+			expect(session.accepts(requestFor(session))).toBe(true)
+			expect(session.accepts(requestFor(session, { interactionId: legacyId, actionId: "approve" }))).toBe(false)
+		} finally {
+			await session.dispose()
+		}
+	})
+
 	it("hydrates persisted activities for the lightweight history surface", async () => {
 		const taskId = "history-activities"
 		await seedMessages(taskId, [{ ts: 10, type: "say", say: "task", text: "Original task" }])

@@ -13,7 +13,7 @@ import { Aside } from "@astrojs/starlight/components"
 |---|---|---|
 | `read_file` | 读取文件内容，可指定行范围 | Standard、Lite |
 | `write_to_file` | 创建新文件，必要时创建目录 | Standard、Lite |
-| `replace_in_file` | 用 SEARCH/REPLACE 块编辑已有文件 | Standard、Lite |
+| `replace_in_file` | 用按行匹配的 SEARCH/REPLACE 块编辑已有文件 | Standard、Lite |
 | `search_files` | 在目录中按正则表达式搜索文件内容 | Standard、Lite |
 | `list_files` | 列出目录内容，可递归 | Standard、Lite |
 | `list_code_definition_names` | 列出源代码的顶层定义 | Standard、Lite |
@@ -21,6 +21,16 @@ import { Aside } from "@astrojs/starlight/components"
 | `find_references` | 通过 IDE 语言服务查找符号引用 | 仅 Standard；需要 VS Code |
 | `rename` | 通过 IDE 语言服务重命名符号，支持预览 | 仅 Standard；需要 VS Code |
 | `replace_text` | 在匹配 glob 的文件中批量替换文本，支持预览 | 仅 Standard |
+
+### `replace_in_file` 的匹配方式
+
+- 每个 SEARCH 行匹配文件中的整行或该行的行首部分。行首缩进可以省略，SEARCH 行绝不会从文件行的中间开始匹配。
+- 一个 SEARCH 块必须在整个文件中只匹配一处。匹配到多处的块会被拒绝，结果会列出候选行号。
+- 被匹配的每一行都会整行替换。REPLACE 原样写入，因此替换行必须带上自己的缩进。
+- 形如 `....... SKIP`（点的数量与分隔符长度相同）的 SEARCH 行表示 SKIP 区间。此时该块覆盖从首段到最近匹配尾段之间的所有行，这些行全部由 REPLACE 替换。
+- 编辑成功后，结果会报告每个块替换的原始行范围，以及 SKIP 区间删除了多少行。
+
+`replace_text` 是独立的工具，不受上述规则影响。
 
 ## 命令、浏览器与网络
 

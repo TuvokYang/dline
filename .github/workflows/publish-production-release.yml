@@ -92,7 +92,7 @@ jobs:
           echo "sha256=$sha256" >> "$GITHUB_OUTPUT"
 
       - name: Attest production VSIX provenance
-        uses: actions/attest-build-provenance@v3
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: ${{ steps.vsix.outputs.path }}
 
@@ -126,6 +126,9 @@ jobs:
     if: github.repository == 'TuvokYang/dline'
     uses: ./.github/workflows/publish-vsix-registries.yml
     with:
+      channel: production
+      commit_sha: ${{ inputs.commit_sha }}
+      release_tag: ${{ inputs.tag }}
       artifact_name: registry-vsix-${{ inputs.commit_sha }}
       asset_name: ${{ inputs.asset_name }}
       expected_sha256: ${{ needs.release.outputs.sha256 }}

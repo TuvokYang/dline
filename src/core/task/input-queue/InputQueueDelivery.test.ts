@@ -81,7 +81,7 @@ describe("takeQueueDelivery", () => {
 		const delivery = takeQueueDelivery(queue, "tool-round")
 
 		expect(delivery?.blocks).toEqual(["steer one", "steer two"])
-		expect(delivery?.text).not.toContain("auxiliary alignment information")
+		expect(delivery?.text).not.toContain("sent by the user while work was in progress")
 	})
 
 	it("keeps the flat payload free of model-only XML", () => {

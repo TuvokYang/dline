@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest"
+import { isForeignReasoningForAnthropic } from "@/shared/messages/reasoning-origin"
 import { MAX_ENCRYPTED_REASONING_ITEMS } from "../reasoning-retention"
 import { StreamResponseHandler } from "../StreamResponseHandler"
 
@@ -99,5 +100,61 @@ describe("ReasoningHandler encrypted reasoning accumulation", () => {
 
 		handler.reset()
 		expect(handler.getHandlers().reasonsHandler.getRedactedThinking()).toHaveLength(0)
+	})
+})
+
+/**
+ * Anthropic replay relies on the producer shape recorded here (BUGFIX-088): Anthropic-family
+ * streams emit reasoning without provider metadata, OpenAI Responses and Gemini always attach it.
+ * Blocks are checked after a JSON round trip, which is how persisted history reaches the boundary.
+ */
+describe("ReasoningHandler reasoning origin shape", () => {
+	function persisted<T>(value: T | null): T {
+		expect(value).not.toBeNull()
+		return JSON.parse(JSON.stringify(value)) as T
+	}
+
+	it("records Anthropic-family thinking and redacted thinking as replayable to Anthropic", () => {
+		const { reasonsHandler } = createHandler().getHandlers()
+
+		reasonsHandler.processReasoningDelta({ reasoning: "Plan the edit" })
+		reasonsHandler.processReasoningDelta({ reasoning: "", signature: "claude-signature" })
+		reasonsHandler.processReasoningDelta({ reasoning: "[Redacted thinking block]", redacted_data: "claude-ciphertext" })
+
+		const [redacted] = reasonsHandler.getRedactedThinking()
+		expect(isForeignReasoningForAnthropic(persisted(reasonsHandler.getCurrentReasoning()))).toBe(false)
+		expect(isForeignReasoningForAnthropic(persisted(redacted))).toBe(false)
+		expect(redacted.data).toBe("claude-ciphertext")
+	})
+
+	it("records OpenAI Responses encrypted reasoning as foreign to Anthropic", () => {
+		const { reasonsHandler } = createHandler().getHandlers()
+
+		reasonsHandler.processReasoningDelta({ provider_metadata: { response_id: "rs_1" }, reasoning: "summary" })
+		reasonsHandler.processReasoningDelta({
+			provider_metadata: { response_id: "rs_1" },
+			reasoning: "",
+			redacted_data: "openai-ciphertext",
+			redacted_phase: "final",
+		})
+
+		const [redacted] = reasonsHandler.getRedactedThinking()
+		expect(isForeignReasoningForAnthropic(persisted(redacted))).toBe(true)
+		expect(isForeignReasoningForAnthropic(persisted(reasonsHandler.getCurrentReasoning()))).toBe(true)
+	})
+
+	it("records Gemini thinking as foreign even when the first chunk had no response id", () => {
+		const { reasonsHandler } = createHandler().getHandlers()
+
+		reasonsHandler.processReasoningDelta({
+			provider_metadata: { response_id: undefined },
+			reasoning: "Gemini thought",
+			signature: "gemini-thought-signature",
+		})
+		reasonsHandler.processReasoningDelta({ provider_metadata: { response_id: "gemini-response-1" }, reasoning: " more" })
+
+		const thinking = persisted(reasonsHandler.getCurrentReasoning())
+		expect(thinking.signature).toBe("gemini-thought-signature")
+		expect(isForeignReasoningForAnthropic(thinking)).toBe(true)
 	})
 })

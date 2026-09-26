@@ -916,6 +916,17 @@ export const ChatRowContent = memo(
 				case "webSearch":
 					return <WebSearchRow messageType={message.type} query={tool.path} webSearch={tool.webSearch} />
 				case "generateImage": {
+					const activeApproval = taskViewState?.activeInteraction
+					if (
+						message.type === "ask" &&
+						activeApproval?.presentationKind === "tool_approval" &&
+						activeApproval.taskAsk === "tool" &&
+						activeApproval.askMessageTs === message.ts &&
+						activeApproval.interactionId === message.interactionId
+					) {
+						// The footer owns the same typed card while this exact approval is active.
+						return <InvisibleSpacer />
+					}
 					const imageGeneration = message.imageGeneration ?? parseImageGenerationPresentation(tool.imageGeneration)
 					return imageGeneration ? (
 						<ImageGenerationRow

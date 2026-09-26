@@ -392,6 +392,30 @@ describe("FileContextTracker", () => {
 		})
 	})
 
+	it("reports one path for relative and absolute spellings of the same file", async () => {
+		await tracker.trackFileContext(filePath, "read_tool")
+		await tracker.trackFileContext(path.resolve("/mock/workspace", filePath), "cline_edited")
+		expect(chokidarWatchStub.mock.calls.length).to.equal(1)
+
+		const changeHandler = mockFileSystemWatcher.on.mock.calls.find(([event]: [string]) => event === "change")?.[1]
+		changeHandler()
+
+		expect(tracker.getAndClearRecentlyModifiedFiles()).to.deep.equal([filePath])
+		expect(tracker.peekRecentlyModifiedFiles().files).to.be.empty
+	})
+
+	it("settles a Dline write so a later change is reported again", async () => {
+		await tracker.trackFileContext(filePath, "read_tool")
+		tracker.markFileAsEditedByCline(filePath)
+		const changeHandler = mockFileSystemWatcher.on.mock.calls.find(([event]: [string]) => event === "change")?.[1]
+		changeHandler()
+		expect(tracker.peekRecentlyModifiedFiles().files).to.be.empty
+
+		tracker.settleClineEdit(filePath)
+		changeHandler()
+		expect(tracker.peekRecentlyModifiedFiles().files).to.deep.equal([filePath])
+	})
+
 	it("hides a first write from a task that has not tracked anything yet", async () => {
 		// Another task already watches the file through the shared registry.
 		const otherTracker = new FileContextTracker({} as Controller, "other-task-id", registry)

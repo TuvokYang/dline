@@ -47,6 +47,16 @@ export interface InteractionHostProps {
 
 const EMPTY_DRAFT: InteractionDraft = { text: "", images: [], files: [], activeQuote: null }
 
+const FOOTER_APPROVAL_PRESENTATIONS = new Set([
+	"tool_approval",
+	"command_approval",
+	"browser_approval",
+	"mcp_approval",
+	"subagent_approval",
+	"spawn_task_approval",
+	"focus_chain_change",
+])
+
 const DIAGNOSTIC_MESSAGES = {
 	interaction_anchor_missing: "Dline could not restore the saved interaction message. The task remains saved for recovery.",
 	interaction_anchor_is_say: "Dline found an invalid saved interaction message. The task remains saved for recovery.",
@@ -99,6 +109,7 @@ export function InteractionHost({
 	const successorContext = interaction?.kind === "new_task" ? anchor?.text : undefined
 	const presentationKind = interaction?.presentationKind
 	const supported = presentationKind ? isPresentationKind(presentationKind) : false
+	const showAnchorPresentation = showTimeline || (presentationKind && FOOTER_APPROVAL_PRESENTATIONS.has(presentationKind))
 	const canRenderVerifiedFooter = Boolean(
 		interaction && !anchor && !showTimeline && supported && interaction.anchorVerified && interaction.kind !== "new_task",
 	)
@@ -158,7 +169,7 @@ export function InteractionHost({
 				/>
 			) : anchor && presentationKind && isPresentationKind(presentationKind) ? (
 				<>
-					{showTimeline
+					{showAnchorPresentation
 						? renderPresentation(presentationKind, { message: anchor, selection, onSelectionChange: setSelection })
 						: null}
 					<FooterActions

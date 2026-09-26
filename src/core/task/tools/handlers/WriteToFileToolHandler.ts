@@ -30,6 +30,14 @@ import type { ToolValidator } from "../ToolValidator"
 import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
 import { captureAccepted, getModelInfo } from "../utils/AiOutputTelemetry"
+import {
+	countAppliedLines,
+	describeBlockOutcomes,
+	describeFailureReminder,
+	projectFinalCard,
+	projectMissingFileCard,
+	projectStreamingCard,
+} from "../utils/diffBlockPresentation"
 import { applyModelContentFixes } from "../utils/ModelContentProcessor"
 
 export class WriteToFileToolHandler implements IFullyManagedTool {
@@ -92,13 +100,15 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 		// Sending the raw SEARCH/REPLACE text here made the webview colour the
 		// delimiter lines instead of the content, because it classifies a line
 		// by its first character.
-		const partialBlocks =
+		const streamingCard =
 			block.name === "replace_in_file" && rawDiff
-				? runDiffParser(rawDiff, config.services.diffViewProvider.originalContent || "", true).blocks
-				: []
+				? projectStreamingCard(
+						runDiffParser(rawDiff, config.services.diffViewProvider.originalContent || "", true).blocks,
+					)
+				: undefined
 
 		const contentArr = rawDiff
-			? partialBlocks.filter((b) => !isConclusiveStreamingError(b) || b.rawText.trim()).map(projectStreamingBlock)
+			? (streamingCard?.content ?? [])
 			: rawContent != null
 				? [
 						rawContent
@@ -112,8 +122,8 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 			tool: block.name === "replace_in_file" ? "editedExistingFile" : "newFileCreated",
 			path: getReadablePath(config.cwd, relPath),
 			content: contentArr,
-			startLineNumbers: rawDiff ? partialBlocks.map((b) => b.startLine) : [1],
-			blockErrors: rawDiff ? partialBlocks.map((b) => streamingBlockError(b)) : undefined,
+			startLineNumbers: rawDiff ? (streamingCard?.startLineNumbers ?? []) : [1],
+			blockErrors: rawDiff ? (streamingCard?.blockErrors ?? []) : undefined,
 			operationIsLocatedInWorkspace: await isLocatedInWorkspace(relPath),
 		}
 		await uiHelpers.say("tool", JSON.stringify(message), undefined, undefined, true, block.ts)
@@ -209,17 +219,10 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 			let contentArr: string[] = []
 			let webviewBlockErrors: (string | undefined)[] | undefined
 			if (diff && block.name === "replace_in_file") {
-				const diffResult = runDiffParser(diff, config.services.diffViewProvider.originalContent || "")
-				const validBlocks = diffResult.blocks.filter((b) => !b.hasError || b.rawText.trim())
-				contentArr = validBlocks.map((b) =>
-					b.hasError
-						? b.rawText
-						: `- ${b.searchText.replace(/\n/g, "\n- ")}\n+ ${b.replaceText.replace(/\n/g, "\n+ ")}`,
-				)
-				webviewStartLines = validBlocks.map((b) => b.startLine)
-				webviewBlockErrors = validBlocks.map((b) =>
-					b.hasError ? (b.errorCode ? diffCodeToBrief(b.errorCode) : "SEARCH/REPLACE error") : undefined,
-				)
+				const card = projectFinalCard(runDiffParser(diff, config.services.diffViewProvider.originalContent || "").blocks)
+				contentArr = card.content
+				webviewStartLines = card.startLineNumbers
+				webviewBlockErrors = card.blockErrors
 			} else if (content != null) {
 				contentArr = [
 					content
@@ -296,26 +299,11 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 				throw error
 			}
 
-			// Mark the file as edited by Cline
-			config.services.fileContextTracker.markFileAsEditedByCline(relPath)
-
-			// Track file modification for per-file checkpointing
-			config.services.taskFileTracker.trackModification(absolutePath)
-
-			// Save the changes and get the result
 			const { newProblemsMessage, userEdits, autoFormattingEdits, finalContent, wroteLines, savedLines, formatterChanged } =
-				await config.services.diffViewProvider.saveChanges()
+				await this.saveAsClineEdit(config, relPath, absolutePath)
 
 			// Reset consecutive mistake counter on successful file operation
 			config.taskState.consecutiveMistakeCount = 0
-
-			config.taskState.didEditFile = true // used to determine if we should wait for busy terminal to update before sending api request
-
-			// Invalidate file read cache for this file so re-reads get fresh content
-			config.taskState.fileReadCache.delete(absolutePath.toLowerCase())
-
-			// Track file edit operation
-			await config.services.fileContextTracker.trackFileContext(relPath, "cline_edited")
 
 			// Reset the diff view
 			await config.services.diffViewProvider.reset()
@@ -358,17 +346,13 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 			let replaceDeletedLines: number | undefined
 			let replaceAddedLines: number | undefined
 			let blockDetail = ""
-			if (diff && blocks && blocks.length > 1) {
-				blockDetail =
-					"\n" +
-					blocks
-						.map((b, i) => {
-							const del = b.searchText ? b.searchText.split("\n").length : 0
-							const add = b.replaceText ? b.replaceText.split("\n").length : 0
-							return `Block #${i + 1}: success — deleted ${del} lines, added ${add} lines.`
-						})
-						.join("\n")
-				blockDetail += `\nTotal saved: ${savedLines} lines`
+			if (diff && blocks && blocks.length > 0) {
+				// Every block reports the original range it replaced: a line-prefix
+				// SEARCH or a SKIP range covers more text than the model wrote.
+				blockDetail = `\n${describeBlockOutcomes(blocks)}`
+				if (blocks.length > 1) {
+					blockDetail += `\nTotal saved: ${savedLines} lines`
+				}
 				const diffCounts = countDiffLines(blocks, diff)
 				replaceDeletedLines = diffCounts.deletedLines
 				replaceAddedLines = diffCounts.addedLines
@@ -456,12 +440,19 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 			fileExists = config.services.diffViewProvider.editType === "modify"
 		} else {
 			fileExists = await fileExistsAtPath(absolutePath)
+			// replace_in_file only edits existing files. Refusing here, before the
+			// editor opens, keeps the create path from writing an empty file and
+			// its missing directories just to match against empty content.
+			if (diff && !fileExists) {
+				await this.rejectMissingFile(config, block, resolvedPath, diff)
+				return
+			}
 			config.services.diffViewProvider.editType = fileExists ? "modify" : "create"
 		}
 
 		// Construct newContent from diff
 		let newContent: string
-		let blocks: Array<{ searchText: string; replaceText: string }> = []
+		let blocks: ParsedBlock[] = []
 		newContent = "" // default to original content if not editing
 
 		if (diff) {
@@ -482,25 +473,8 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 				const hasAnyError = result.blocks.some((b) => b.hasError)
 				if (hasAnyError && !block.partial) {
 					const hasPartialSuccess = newContent !== (config.services.diffViewProvider.originalContent || "")
-					const validBlocks = result.blocks.filter((b) => !b.hasError || b.rawText.trim())
-					const blockContents = validBlocks.map((b) =>
-						b.hasError
-							? b.rawText
-							: `- ${b.searchText.replace(/\n/g, "\n- ")}\n+ ${b.replaceText.replace(/\n/g, "\n+ ")}`,
-					)
-					const blockErrors: (string | undefined)[] = validBlocks.map((b) =>
-						b.hasError ? (b.errorCode ? diffCodeToBrief(b.errorCode) : "SEARCH/REPLACE error") : undefined,
-					)
-					const startLineNumbers = validBlocks.map((b) => b.startLine)
-					const blockResults = result.blocks
-						.map((b, i) => {
-							const prefix = result.blocks.length > 1 ? `Block #${i + 1}: ` : ""
-							if (b.hasError) return `${prefix}error — ${b.errorMessage ?? "SEARCH/REPLACE error"}`
-							const del = b.searchText ? b.searchText.split("\n").length : 0
-							const add = b.replaceText ? b.replaceText.split("\n").length : 0
-							return `${prefix}success — deleted ${del} lines, added ${add} lines.`
-						})
-						.join("\n")
+					const { content: blockContents, startLineNumbers, blockErrors } = projectFinalCard(result.blocks)
+					const blockResults = describeBlockOutcomes(result.blocks)
 
 					if (hasPartialSuccess) {
 						config.taskState.consecutiveMistakeCount++
@@ -516,11 +490,9 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 						await config.callbacks.say("tool", updatedToolJson, undefined, undefined, false, existingTs)
 						await config.services.diffViewProvider.open(absolutePath, { displayPath: resolvedPath })
 						await config.services.diffViewProvider.update(newContent, true)
-						const { savedLines } = await config.services.diffViewProvider.saveChanges()
+						await this.saveAsClineEdit(config, resolvedPath, absolutePath)
 						await config.services.diffViewProvider.reset()
-						const hasAnyFailed = result.blocks.some((b) => b.hasError)
-						const reminder = hasAnyFailed ? `\n\n<reminder>\n${formatResponse.diffErrorReminder()}\n</reminder>` : ""
-						this._lastDiffError = `${blockResults}${reminder}`
+						this._lastDiffError = `${blockResults}${describeFailureReminder(result.blocks)}`
 						return
 					}
 					config.taskState.consecutiveMistakeCount++
@@ -533,8 +505,7 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 						operationIsLocatedInWorkspace: await isLocatedInWorkspace(resolvedPath),
 					} satisfies ClineSayTool)
 					await config.callbacks.say("tool", noPartialJson, undefined, undefined, false, block.ts)
-					const reminder = `\n\n<reminder>\n${formatResponse.diffErrorReminder()}\n</reminder>`
-					this._lastDiffError = `${blockResults}${reminder}`
+					this._lastDiffError = `${blockResults}${describeFailureReminder(result.blocks)}`
 					return
 				}
 			} catch (error) {
@@ -546,22 +517,14 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 
 				const existingTs = block.ts
 				const origContent = config.services.diffViewProvider.originalContent || ""
-				const diffResult = runDiffParser(diff, origContent)
-				const validBlocks = diffResult.blocks.filter((b) => !b.hasError || b.rawText.trim())
-				const blockContents = validBlocks.map((b) =>
-					b.hasError
-						? b.rawText
-						: `- ${b.searchText.replace(/\n/g, "\n- ")}\n+ ${b.replaceText.replace(/\n/g, "\n+ ")}`,
-				)
-				const blockErrors: (string | undefined)[] = validBlocks.map((b) =>
-					b.hasError ? (b.errorCode ? diffCodeToBrief(b.errorCode) : "SEARCH/REPLACE error") : undefined,
-				)
+				const parsedBlocks = runDiffParser(diff, origContent).blocks
+				const card = projectFinalCard(parsedBlocks)
 				const updatedToolJson = JSON.stringify({
 					tool: "editedExistingFile",
 					path: getReadablePath(config.cwd, relPath),
-					content: blockContents,
-					startLineNumbers: validBlocks.map((b) => b.startLine),
-					blockErrors,
+					content: card.content,
+					startLineNumbers: card.startLineNumbers,
+					blockErrors: card.blockErrors,
 					operationIsLocatedInWorkspace: await isLocatedInWorkspace(relPath),
 				} satisfies ClineSayTool)
 				await config.callbacks.say("tool", updatedToolJson, undefined, undefined, false, existingTs)
@@ -582,7 +545,7 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 				// Store error message for execute() to return as toolError to the API.
 				// Do NOT pushToolResult here — let ToolExecutor.handleCompleteBlock
 				// do it once from execute()'s return value to avoid double-push overwrite.
-				this._lastDiffError = `${(error as Error)?.message}\n\n<reminder>\n${formatResponse.diffErrorReminder()}\n</reminder>`
+				this._lastDiffError = `${(error as Error)?.message}${describeFailureReminder(parsedBlocks)}`
 
 				if (!config.enableParallelToolCalling) {
 					config.taskState.didAlreadyUseTool = true
@@ -619,26 +582,66 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 
 		return { relPath, absolutePath, fileExists, diff, content, newContent, workspaceContext, blocks }
 	}
+
+	/**
+	 * Save the open diff view as a Dline-authored write.
+	 *
+	 * Every save path goes through here, so each write marks itself before the
+	 * file changes on disk, records the checkpoint modification, clears the read
+	 * cache, and settles the self-edit once the new content is tracked. A save
+	 * that fails still settles, so the marker never swallows a later user edit.
+	 */
+	private async saveAsClineEdit(config: TaskConfig, relPath: string, absolutePath: string) {
+		const tracker = config.services.fileContextTracker
+		tracker.markFileAsEditedByCline(relPath)
+		try {
+			config.services.taskFileTracker.trackModification(absolutePath)
+			const saved = await config.services.diffViewProvider.saveChanges()
+			// Used to decide whether to wait for a busy terminal before the next API request.
+			config.taskState.didEditFile = true
+			config.taskState.fileReadCache.delete(absolutePath.toLowerCase())
+			await tracker.trackFileContext(relPath, "cline_edited")
+			return saved
+		} finally {
+			tracker.settleClineEdit(relPath)
+		}
+	}
+
+	/**
+	 * Refuse a replace_in_file call whose target does not exist.
+	 *
+	 * The diff card shows every block as refused and the tool result tells the
+	 * model that nothing was created. Like other failed edits, the refusal counts
+	 * as a consecutive mistake.
+	 */
+	private async rejectMissingFile(config: TaskConfig, block: ToolUse, resolvedPath: string, diff: string): Promise<void> {
+		config.taskState.consecutiveMistakeCount++
+		await config.services.diffViewProvider.reset()
+		const card = projectMissingFileCard(runDiffParser(diff, "").blocks)
+		const refusedJson = JSON.stringify({
+			tool: "editedExistingFile",
+			path: getReadablePath(config.cwd, resolvedPath),
+			content: card.content,
+			startLineNumbers: card.startLineNumbers,
+			blockErrors: card.blockErrors,
+			operationIsLocatedInWorkspace: await isLocatedInWorkspace(resolvedPath),
+		} satisfies ClineSayTool)
+		await config.callbacks.say("tool", refusedJson, undefined, undefined, false, block.ts)
+		this._lastDiffError = formatResponse.toolError(
+			formatResponse.replaceInFileFileNotFound(getReadablePath(config.cwd, resolvedPath)),
+		)
+	}
 }
 
 /**
  * Count deleted and added lines from parsed blocks.
  *
- * @param blocks - Parsed blocks with searchText/replaceText
+ * @param blocks - Parsed blocks; deleted lines come from the matched range, not the SEARCH text
  * @param diff - Raw diff string as fallback (unused when blocks available)
  */
-function countDiffLines(
-	blocks: Array<{ searchText: string; replaceText: string }>,
-	diff?: string,
-): { deletedLines: number; addedLines: number } {
+function countDiffLines(blocks: readonly ParsedBlock[], diff?: string): { deletedLines: number; addedLines: number } {
 	if (blocks.length > 0) {
-		let deleted = 0
-		let added = 0
-		for (const block of blocks) {
-			deleted += block.searchText ? block.searchText.split("\n").length : 0
-			added += block.replaceText ? block.replaceText.split("\n").length : 0
-		}
-		return { deletedLines: deleted, addedLines: added }
+		return countAppliedLines(blocks)
 	}
 	// Fallback: regex parsing when blocks not available (should rarely be needed)
 	let deleted = 0
@@ -660,100 +663,4 @@ function countDiffLines(
 		added += replace.split("\n").filter((l) => l !== "").length
 	}
 	return { deletedLines: deleted, addedLines: added }
-}
-
-/**
- * Diff errors that a partially received SEARCH/REPLACE block can prove.
- *
- * Every other code depends on content the stream has not delivered yet, so
- * reporting it mid-stream produces an error that a later chunk withdraws.
- */
-const STREAMING_DELIMITER_ERRORS: ReadonlySet<string> = new Set([
-	"DELIMITER_TOO_SHORT",
-	"DELIMITER_MISMATCH",
-	"DELIMITER_CONFLICT",
-])
-
-/**
- * Resolve the error a streaming diff block may report to the webview.
- *
- * @param block Parsed diff block from an in-flight tool argument stream.
- * @returns Brief error message, or undefined while the verdict is not final.
- */
-function streamingBlockError(block: { hasError: boolean; errorCode?: string }): string | undefined {
-	if (!block.hasError || !block.errorCode) {
-		return undefined
-	}
-	return STREAMING_DELIMITER_ERRORS.has(block.errorCode) ? diffCodeToBrief(block.errorCode) : undefined
-}
-
-/**
- * Report whether a streamed block already failed for a reason a later chunk cannot undo.
- *
- * Only delimiter syntax is decidable from the streamed text alone. A match
- * failure is not: the file content may not be loaded yet, and the model may
- * still be streaming the lines that would match.
- *
- * @param block Parsed diff block from an in-flight tool argument stream.
- * @returns True when the block is conclusively broken.
- */
-function isConclusiveStreamingError(block: { hasError: boolean; errorCode?: string }): boolean {
-	return block.hasError && !!block.errorCode && STREAMING_DELIMITER_ERRORS.has(block.errorCode)
-}
-
-/**
- * Project one streamed block into the "- old / + new" lines the webview colours.
- *
- * A conclusively broken block keeps its raw text so the malformed markers stay
- * inspectable. Every other block is projected optimistically, which keeps the
- * card stable: a block that has not matched yet must not flip between projected
- * and raw output on consecutive chunks, because the webview renders that flip
- * as the diff card collapsing and expanding.
- *
- * @param block Parsed diff block from an in-flight tool argument stream.
- * @returns Webview line projection for the block.
- */
-function projectStreamingBlock(block: ParsedBlock): string {
-	if (isConclusiveStreamingError(block)) {
-		return block.rawText
-	}
-	return `- ${block.searchText.replace(/\n/g, "\n- ")}\n+ ${block.replaceText.replace(/\n/g, "\n+ ")}`
-}
-
-/** Map DiffErrorCode (from DIFF_ERROR_CODE in diff.ts) to a brief one-line message for webview display. */
-function diffCodeToBrief(code: string): string {
-	switch (code) {
-		// Common: parseDiff + StreamingDiffParser
-		case "DELIMITER_TOO_SHORT":
-			return "Delimiter count below minimum"
-		case "DELIMITER_MISMATCH":
-			return "Delimiter count mismatch"
-		case "DELIMITER_CONFLICT":
-			return "Delimiter conflict"
-		case "SEARCH_NOT_FOUND":
-			return "SEARCH not found in file"
-		case "EMPTY_SEARCH_CONTENT_CONFLICT":
-			return "Empty SEARCH block"
-		case "UNCLOSED_SEARCH":
-			return "Unclosed SEARCH block"
-		case "UNCLOSED_REPLACE":
-			return "Unclosed REPLACE block"
-		case "BLOCK_OVERLAP":
-			return "Block overlap"
-		case "BLOCK_OUT_OF_ORDER":
-			return "Block out of order"
-		// StreamingDiffParser-only: real-time streaming detection
-		case "EXTRA_CLOSE_MARKER":
-			return "Unexpected close marker"
-		case "NESTED_SEARCH_MARKER":
-			return "Nested SEARCH marker"
-		case "MISSING_SEPARATOR":
-			return "Missing separator"
-		case "SEARCH_MARKER_IN_REPLACE":
-			return "SEARCH marker in REPLACE"
-		case "FINAL_VALIDATION":
-			return "Final validation failed"
-		default:
-			return "SEARCH/REPLACE error"
-	}
 }

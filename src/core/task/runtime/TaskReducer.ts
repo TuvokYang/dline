@@ -1,6 +1,5 @@
 import type { ClineContent } from "@shared/messages"
 import { BlockPhase } from "../BlockPhaseMachine"
-import { hostedWebApprovalId } from "../interaction/HostedWebApproval"
 import { reduceInteraction } from "../interaction/InteractionReducer"
 import { getInteraction } from "../interaction/InteractionRegistry"
 import type { InteractionResponseErrorCode } from "../interaction/InteractionResponse"
@@ -371,76 +370,35 @@ function reduceResumeApi(
 	}
 }
 
-/** Continue one restored Hosted Web request whose user message is already durable. */
-function reduceHostedWebRequest(
+/** Continue one reconciled request whose complete user message is already durable. */
+function reducePersistedApiRequest(
 	state: TaskRuntimeState,
-	event: Extract<TaskEvent, { type: "HOSTED_WEB_REQUEST_CONTINUATION_REQUESTED" }>,
+	event: Extract<TaskEvent, { type: "PERSISTED_API_REQUEST_CONTINUATION_REQUESTED" }>,
 ): TransitionResult {
 	const interaction = state.interaction
 	if (
-		interaction?.kind !== "hosted_web_approval" ||
+		interaction?.kind !== "resume" ||
+		interaction.persistedRequest !== true ||
 		interaction.status !== "resolving" ||
 		interaction.interactionId !== event.interactionId ||
-		interaction.acceptedResponse?.actionId !== "approve" ||
-		event.apiIndex !== state.anchor.apiIndex
+		interaction.acceptedResponse?.actionId !== "resume" ||
+		event.apiIndex !== state.anchor.apiIndex ||
+		state.phase !== TaskPhase.PAUSED
 	) {
 		return reject(state, event.type)
 	}
-	if (state.phase !== TaskPhase.STREAMING && !canTransition(state.phase, TaskPhase.STREAMING)) {
-		return reject(state, event.type)
-	}
 	const revision = state.revision + 1
-	return {
-		accepted: true,
-		next: {
-			...state,
-			phase: TaskPhase.STREAMING,
-			revision,
-			interaction: undefined,
-			anchor: {
-				...state.anchor,
-				apiIndex: event.apiIndex,
-				interactionId: undefined,
-			},
-		},
+	return accept(state, {
+		eventType: event.type,
+		phase: TaskPhase.RESUMING,
+		anchor: { ...state.anchor, apiIndex: event.apiIndex },
+		error: null,
 		effects: [
 			{ id: effectId(revision, 1), type: "POST_TASK_VIEW" },
-			{
-				id: effectId(revision, 2),
-				type: "START_API",
-				apiIndex: event.apiIndex,
-				persistedRequest: true,
-			},
+			{ id: effectId(revision, 2), type: "START_API", apiIndex: event.apiIndex, persistedRequest: true },
 			{ id: effectId(revision, 3), type: "PERSIST_SNAPSHOT" },
 		],
-	}
-}
-
-/** Open a durable Resume interaction after one request-level Hosted Web rejection. */
-function reduceHostedWebRejection(
-	state: TaskRuntimeState,
-	event: Extract<TaskEvent, { type: "HOSTED_WEB_REQUEST_REJECTED" }>,
-): TransitionResult {
-	const approvalInteractionId = hostedWebApprovalId(state.taskId, event.apiIndex)
-	if (
-		state.phase !== TaskPhase.PAUSED ||
-		state.interaction ||
-		state.anchor.turnId !== approvalInteractionId ||
-		state.anchor.interactionId !== approvalInteractionId
-	) {
-		return reject(state, event.type)
-	}
-	const revision = state.revision + 1
-	return acceptInteraction(
-		state,
-		openingInteraction(state, revision, { ...event, kind: "resume" }),
-		{ ...state.anchor, apiIndex: event.apiIndex, turnId: event.turnId, interactionId: event.interactionId },
-		interactionEffects(revision, {
-			interactionId: event.interactionId,
-			taskAsk: "resume_task",
-			presentation: event.presentation,
-		}),
-	)
+	})
 }
 
 /** Reset only reconciled non-terminal blocks before replaying their normal handler lifecycle. */
@@ -917,9 +875,11 @@ function reduceInteractionOpen(
 	if (state.interaction) {
 		return reject(state, event.type)
 	}
+	if (event.kind === "hosted_web_approval") {
+		return reject(state, event.type)
+	}
 	const approvalKinds = new Set([
 		"tool_approval",
-		"hosted_web_approval",
 		"command_approval",
 		"browser_approval",
 		"mcp_approval",
@@ -945,16 +905,12 @@ function reduceInteractionOpen(
 	const turn = approvalBlock
 		? replaceTurnBlock(state, approvalBlock.dlineTid, BlockPhase.AWAITING_APPROVAL, approvalBlock.dlineTid)
 		: state.turn
-	const requestApproval = event.kind === "hosted_web_approval"
-	if (requestApproval && !canTransition(state.phase, TaskPhase.AWAITING_APPROVAL)) {
-		return reject(state, event.type)
-	}
 	const revision = state.revision + 1
 	const definition = getInteraction(event.kind)
 	const next: TaskRuntimeState = {
 		...state,
 		...(turn ? { turn } : {}),
-		...(approvalBlock || requestApproval ? { phase: TaskPhase.AWAITING_APPROVAL } : {}),
+		...(approvalBlock ? { phase: TaskPhase.AWAITING_APPROVAL } : {}),
 		revision,
 		anchor: { ...state.anchor, turnId: event.turnId, interactionId: event.interactionId },
 		interaction: {
@@ -1090,25 +1046,15 @@ function reduceInteractionResponse(
 	if (!state.interaction || event.response.stateRevision > state.revision) {
 		return reject(state, event.type, "stale_interaction")
 	}
+	if (state.interaction.kind === "hosted_web_approval") {
+		return reject(state, event.type)
+	}
 	const result = reduceInteraction(state.interaction, event.response)
 	if (!result.accepted) {
 		return reject(state, event.type, result.error.code)
 	}
 	const revision = state.revision + 1
 	const effects = interactionResponseEffects(state.interaction, event.response, revision)
-	if (state.interaction.kind === "hosted_web_approval") {
-		const phase = event.response.actionId === "approve" ? TaskPhase.STREAMING : TaskPhase.PAUSED
-		if (!canTransition(state.phase, phase)) {
-			return reject(state, event.type)
-		}
-		return accept(state, {
-			eventType: event.type,
-			phase,
-			interaction: result.next,
-			anchor: { ...state.anchor },
-			effects,
-		})
-	}
 	const turn = state.turn
 	if (!turn || turn.turnId !== event.response.turnId) {
 		return acceptInteraction(state, result.next, state.anchor, effects)
@@ -1730,10 +1676,8 @@ export function reduceTask(state: TaskRuntimeState, event: TaskEvent): Transitio
 			return reduceApi(state, event)
 		case "RESUME_API_CONTINUATION_REQUESTED":
 			return reduceResumeApi(state, event)
-		case "HOSTED_WEB_REQUEST_CONTINUATION_REQUESTED":
-			return reduceHostedWebRequest(state, event)
-		case "HOSTED_WEB_REQUEST_REJECTED":
-			return reduceHostedWebRejection(state, event)
+		case "PERSISTED_API_REQUEST_CONTINUATION_REQUESTED":
+			return reducePersistedApiRequest(state, event)
 		case "RESUME_BLOCK_REPLAY_REQUESTED":
 			return reduceResumeBlocks(state, event)
 		case "TURN_CREATED":

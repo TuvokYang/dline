@@ -12,6 +12,7 @@
 
 import * as fs from "node:fs/promises"
 import * as path from "node:path"
+import { assertPromptContent } from "@core/prompts/system-prompt/__tests__/snapshot-content"
 import { describe, it } from "vitest"
 import { FocusChainPrompts } from "../prompts"
 
@@ -58,6 +59,7 @@ async function readSnapshots(): Promise<Record<string, string>> {
 
 /** Assert snapshot match; if UPDATE=true, write entries to .snap file */
 async function assertSnapshot(title: string, content: string): Promise<void> {
+	assertPromptContent(title, content)
 	if (UPDATE) {
 		await updateSnapshot(title, content)
 		return
@@ -109,7 +111,7 @@ describe("Focus Chain Prompt Snapshots", () => {
 	})
 
 	it("completed — all items done", async () => {
-		await assertSnapshot("completed", FocusChainPrompts.completed.replace("{{totalItems}}", "6"))
+		await assertSnapshot("completed", FocusChainPrompts.completed(6))
 	})
 
 	it("apiRequestCount — too many requests without checklist", async () => {
@@ -137,7 +139,7 @@ describe("Focus Chain Prompt Snapshots", () => {
 
 	it("skipOrderRejected — with examples", async () => {
 		const exampleStr = SAMPLE_UNCHECKED.join("\n")
-		await assertSnapshot("skipOrderRejected", FocusChainPrompts.skipOrderRejected.replace("{{examples}}", exampleStr))
+		await assertSnapshot("skipOrderRejected", FocusChainPrompts.skipOrderRejected(exampleStr))
 	})
 
 	// ── Item-mismatch rejection prompts ─────────────────────────────
@@ -145,18 +147,13 @@ describe("Focus Chain Prompt Snapshots", () => {
 	it("itemMismatchRejected — with unmatched items + examples", async () => {
 		const unmatched = ["Fake item A", "Fake item B"]
 		const exampleStr = SAMPLE_UNCHECKED.slice(0, 2).join("\n")
-		const msg = FocusChainPrompts.itemMismatchRejected
-			.replace("{{unmatchedItems}}", unmatched.map((i) => `- ${i}`).join("\n"))
-			.replace("{{examples}}", exampleStr)
+		const msg = FocusChainPrompts.itemMismatchRejected(unmatched.map((i) => `- ${i}`).join("\n"), exampleStr)
 		await assertSnapshot("itemMismatchRejected", msg)
 	})
 
 	it("inProgressMismatchRejected — with examples", async () => {
 		const exampleStr = SAMPLE_UNCHECKED.slice(0, 2).join("\n")
-		await assertSnapshot(
-			"inProgressMismatchRejected",
-			FocusChainPrompts.inProgressMismatchRejected.replace("{{examples}}", exampleStr),
-		)
+		await assertSnapshot("inProgressMismatchRejected", FocusChainPrompts.inProgressMismatchRejected(exampleStr))
 	})
 
 	// ── Blocking / terminal-state prompts ───────────────────────────

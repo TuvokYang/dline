@@ -371,7 +371,7 @@ describe("skip-order detection via updateFCListFromToolResponse", () => {
 
 		// Second skip SHOULD be rejected because hasWarnedSkipOrder is true
 		// and E is a NEWLY completed item that skips C
-		// Note: skipOrderRejected template has {{examples}} replaced with actual items
+		// Note: skipOrderRejected renders @EXAMPLES@ with the actual items.
 		expect(ts.focusChainRejectionMessage).toContain("second order violation")
 		expect(ts.focusChainRejectionMessage).toContain("update rejected")
 		expect(ts.focusChainRejectionMessage).toContain("Task C")

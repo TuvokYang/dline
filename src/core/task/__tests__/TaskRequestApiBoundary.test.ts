@@ -594,19 +594,18 @@ describe("Task request API boundary", () => {
 		expect(requestMethod).not.toContain("requestToolIds")
 	})
 
-	it("uses replay-frozen hosted routing for request approval before falling back to the live request scope", async () => {
+	it("admits the provider request without treating Hosted declarations as tool execution", async () => {
 		const source = await readFile(taskSourcePath, "utf8")
 		const method = extractMethod(source, "private async completeApiRequestGate(", "private isTrustedUserFeedbackResult(")
 
-		const ordinaryReplayIndex = method.indexOf("this.ordinaryRequestInputReplay.get(apiIndex)?.runtime?.webSearchRoutingPlan")
-		const compactionReplayIndex = method.indexOf(
-			"this.compactionRequestReplay.getProviderInput(apiIndex)?.runtime?.webSearchRoutingPlan",
+		expect(method).toContain("await beforeApiRequestStarted?.()")
+		expect(method).toContain("await this.admitApiRequest(apiIndex)")
+		expect(method.indexOf("await beforeApiRequestStarted?.()")).toBeLessThan(
+			method.indexOf("await this.admitApiRequest(apiIndex)"),
 		)
-		const requestScopeIndex = method.indexOf("requestScope.webSearchRoutingPlan")
-		expect(ordinaryReplayIndex).toBeGreaterThanOrEqual(0)
-		expect(compactionReplayIndex).toBeGreaterThan(ordinaryReplayIndex)
-		expect(requestScopeIndex).toBeGreaterThan(compactionReplayIndex)
-		expect(method).toContain("routingPlan,")
+		expect(method).not.toContain("requestHostedWebApproval")
+		expect(method).not.toContain("hasHostedWebRoute")
+		expect(method).not.toContain("prepareAdmission")
 	})
 
 	it("uses the dedicated browser capability before the legacy image fallback", async () => {

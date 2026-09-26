@@ -109,6 +109,37 @@ describe("dist build lock", () => {
 		}
 	})
 
+	it("keeps the lock directories while another reader is between directory setup and its claim", async () => {
+		const moduleUrl = new URL(`file://${LOCK_MODULE_PATH.replaceAll("\\", "/")}`).href
+		const source = `
+			import fs from "node:fs"
+			const { acquireSharedDistLock } = await import(${JSON.stringify(moduleUrl)})
+			const releaseFirst = acquireSharedDistLock("first reader")
+			const originalMkdir = fs.mkdirSync
+			fs.mkdirSync = (...args) => {
+				const result = originalMkdir(...args)
+				if (args[0] === ${JSON.stringify(READERS_DIR)}) {
+					fs.mkdirSync = originalMkdir
+					releaseFirst()
+				}
+				return result
+			}
+			try {
+				const releaseSecond = acquireSharedDistLock("second reader")
+				releaseSecond()
+				console.log("second reader acquired")
+			} finally {
+				fs.mkdirSync = originalMkdir
+				releaseFirst()
+			}
+		`
+		const result = await run(process.execPath, ["--input-type=module", "-e", source], {
+			DLINE_E2E_RUN_ID: "dist-lock-directory-race",
+		})
+		expect(result.exitCode, result.stderr).toBe(0)
+		expect(result.stdout).toContain("second reader acquired")
+	})
+
 	it("refuses a build while another build owns dist", async () => {
 		await acquireAndExit("exclusive", "dist-lock-live-writer", false)
 		// The staged process exited, so revive the entry with a live PID: this

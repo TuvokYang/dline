@@ -99,6 +99,9 @@ export const formatResponse = {
 	replaceInFileMissingDiffError: (relPath: string): string =>
 		generateToolResponse("replaceInFile", "replaceInFileMissingDiffError", { REL_PATH: relPath }),
 
+	replaceInFileFileNotFound: (relPath: string): string =>
+		generateToolResponse("replaceInFile", "replaceInFileFileNotFound", { REL_PATH: relPath }),
+
 	executeCommandMissingCommandError: (): string => generateToolResponse("executeCommand", "executeCommandMissingCommandError"),
 
 	invalidMcpToolArgumentError: (serverName: string, toolName: string) =>
@@ -273,8 +276,6 @@ export const formatResponse = {
 		return `${successTemplate}${autoFormattingEdits ? generateToolResponse("writeToFile", "fileEditAutoFormattingWithoutChanges", { AUTO_FORMATTING_EDITS: autoFormattingEdits }) : ""}${formatterNotice}${generateToolResponse("writeToFile", "fileEditNotesWithoutChanges", { NEW_PROBLEMS_MESSAGE: newProblemsMessage ?? "" })}`
 	},
 
-	diffErrorReminder: () => generateToolResponse("replaceInFile", "diffErrorReminder"),
-
 	toolAlreadyUsed: (toolName: string) => generateToolResponse("toolHandlers", "toolAlreadyUsed", { TOOL_NAME: toolName }),
 
 	repeatedToolCall: (toolName: string, count: number) =>
@@ -292,17 +293,17 @@ export const formatResponse = {
 	clineRulesLocalFileInstructions: (workspaceName: string, content: string) =>
 		generateResponse("clineRulesLocalFileInstructions", { WORKSPACE_NAME: workspaceName, CONTENT: content }),
 
-	windsurfRulesLocalFileInstructions: (cwd: string, content: string) =>
-		generateResponse("windsurfRulesLocalFileInstructions", { CWD: cwd.toPosix(), CONTENT: content }),
+	windsurfRulesLocalFileInstructions: (workspaceName: string, content: string) =>
+		generateResponse("windsurfRulesWorkspaceInstructions", { WORKSPACE_NAME: workspaceName, CONTENT: content }),
 
-	cursorRulesLocalFileInstructions: (cwd: string, content: string) =>
-		generateResponse("cursorRulesLocalFileInstructions", { CWD: cwd.toPosix(), CONTENT: content }),
+	cursorRulesLocalFileInstructions: (workspaceName: string, content: string) =>
+		generateResponse("cursorRulesWorkspaceFileInstructions", { WORKSPACE_NAME: workspaceName, CONTENT: content }),
 
-	cursorRulesLocalDirectoryInstructions: (cwd: string, content: string) =>
-		generateResponse("cursorRulesLocalDirInstructions", { CWD: cwd.toPosix(), CONTENT: content }),
+	cursorRulesLocalDirectoryInstructions: (workspaceName: string, content: string) =>
+		generateResponse("cursorRulesWorkspaceDirInstructions", { WORKSPACE_NAME: workspaceName, CONTENT: content }),
 
-	agentsRulesLocalFileInstructions: (cwd: string, content: string) =>
-		generateResponse("agentsRulesLocalFileInstructions", { CWD: cwd.toPosix(), CONTENT: content }),
+	agentsRulesLocalFileInstructions: (workspaceName: string, content: string) =>
+		generateResponse("agentsRulesWorkspaceInstructions", { WORKSPACE_NAME: workspaceName, CONTENT: content }),
 
 	fileContextWarning: (editedFiles: string[]): string => {
 		const fileCount = editedFiles.length
