@@ -1,7 +1,8 @@
 import { mkdir, rm, writeFile } from "node:fs/promises"
 import path from "node:path"
-import { expect, type Frame, type Locator } from "@playwright/test"
+import { expect, type Frame } from "@playwright/test"
 import { E2ETestHelper } from "../utils/helpers"
+import { capabilityRow, toggleCapability } from "./scenarios/capabilities"
 import { demo } from "./utils/demo-fixture"
 import { dismissDemoNotifications } from "./utils/png-asset"
 
@@ -12,10 +13,6 @@ const MCP_NAME = "release-tools"
 const MCP_TOOL_NAME = "e2e_workspace_echo"
 const TASK_TEXT = "Prepare a release review with only the capabilities needed for this task."
 const COMPLETION_TEXT = "Release review started with this task's selected capabilities."
-
-function capabilityRow(sidebar: Frame, name: string): Locator {
-	return sidebar.getByText(name, { exact: true }).locator("xpath=ancestor::div[contains(@class, 'mb-2.5')][1]")
-}
 
 async function createDemoCapabilities(workspaceDir: string): Promise<string> {
 	const ruleDirectory = path.join(workspaceDir, ".agents", "rules")
@@ -88,13 +85,6 @@ async function selectCapabilityTab(sidebar: Frame, name: "Rules" | "Workflows" |
 	const tab = sidebar.getByRole("button", { name, exact: true })
 	await tab.click()
 	await expect(tab).toHaveAttribute("aria-pressed", "true")
-}
-
-async function toggleCapability(sidebar: Frame, name: string, enabled: boolean): Promise<void> {
-	const toggle = capabilityRow(sidebar, name).getByRole("switch")
-	await expect(toggle).toHaveAttribute("data-state", enabled ? "unchecked" : "checked")
-	await toggle.click()
-	await expect(toggle).toHaveAttribute("data-state", enabled ? "checked" : "unchecked")
 }
 
 demo("R6", async ({ finishRecording, helper, pace, page, registerRecording, server, sidebar, userDataDir, workspaceDir }) => {

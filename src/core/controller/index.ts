@@ -1004,7 +1004,7 @@ export class Controller {
 		fetchRemoteConfig(this)
 
 		if (!options?.skipInitialClear) {
-			await this.clearTask()
+			await this.clearTaskBeforeInit(historyItem, options)
 			logInitStage("initial_clear")
 		}
 
@@ -1205,6 +1205,28 @@ export class Controller {
 		return initializedTaskId
 	}
 
+	/**
+	 * Release the previous surface before initializing the next one.
+	 *
+	 * Opening a task from history replaces one visible task with another, so the
+	 * intermediate "no task" state must not reach the Webview: rendering it sends
+	 * the user back to the home view until the history snapshot is ready. The
+	 * history display publishes its own preparing projection right after this.
+	 * Teardown of a different task is deferred like an explicit close; the next
+	 * lifecycle operation still drains it before touching task-owned resources.
+	 */
+	private async clearTaskBeforeInit(historyItem: HistoryItem | undefined, options?: InitTaskOptions): Promise<void> {
+		const opensHistoryDisplay = historyItem !== undefined && !options?.activateHistory
+		if (!opensHistoryDisplay) {
+			await this.clearTask()
+			return
+		}
+		const previousTaskId = this.task?.taskId ?? this.historyDisplaySession?.taskId
+		await this.runTaskLifecycleOperation((scope) =>
+			scope.clearTask({ suppressPostState: true, deferTeardown: previousTaskId !== historyItem.id }),
+		)
+	}
+
 	private async initHistoryDisplaySession(historyItem: HistoryItem, options?: InitTaskOptions): Promise<string> {
 		const session = new HistoryDisplaySession(historyItem)
 		this.historyDisplaySession = session
@@ -1229,22 +1251,36 @@ export class Controller {
 			await this.postStateToWebview({ immediate: true })
 			await options?.onHistoryTaskReadyToDisplay?.()
 		}
-		const remainsCurrent = await prepareHistoryTaskForDisplay({
-			taskId: session.taskId,
-			displayHistory: async () => {
-				const [[, lockedByAnotherInstance]] = await Promise.all([durableFacts, session.load()])
-				if (this.historyDisplaySession !== session || !lockedByAnotherInstance) return
-				session.markLocked()
-				this.startLockPoll(session.taskId)
-			},
-			// This surface owns no Task runtime, so there is never a canonical
-			// history preparation to run. It is unrelated to the task lock.
-			prepareFromHistory: async () => undefined,
-			hasTaskLock: false,
-			isCurrent: () => this.historyDisplaySession === session,
-			onPreparingToDisplay: options?.onHistoryTaskPreparingToDisplay,
-			onReadyToDisplay: publishReadyHistory,
-		})
+		// The preceding clear no longer publishes an empty surface, so the
+		// preparing projection is the first frame of this task. Callers without
+		// their own navigation still publish it, otherwise the previous task would
+		// stay on screen until the history window finished loading.
+		const publishPreparingHistory =
+			options?.onHistoryTaskPreparingToDisplay ?? (() => this.postStateToWebview({ immediate: true }))
+		let remainsCurrent: boolean
+		try {
+			remainsCurrent = await prepareHistoryTaskForDisplay({
+				taskId: session.taskId,
+				displayHistory: async () => {
+					const [[, lockedByAnotherInstance]] = await Promise.all([durableFacts, session.load()])
+					if (this.historyDisplaySession !== session || !lockedByAnotherInstance) return
+					session.markLocked()
+					this.startLockPoll(session.taskId)
+				},
+				// This surface owns no Task runtime, so there is never a canonical
+				// history preparation to run. It is unrelated to the task lock.
+				prepareFromHistory: async () => undefined,
+				hasTaskLock: false,
+				isCurrent: () => this.historyDisplaySession === session,
+				onPreparingToDisplay: publishPreparingHistory,
+				onReadyToDisplay: publishReadyHistory,
+			})
+		} catch (error) {
+			// A history surface that failed to load must not remain as a disabled
+			// preparing view; release it so the user is returned to the home view.
+			if (this.historyDisplaySession === session) await this.clearTask()
+			throw error
+		}
 		if (!remainsCurrent) return session.taskId
 
 		await new Promise((resolve) => setTimeout(resolve, 0))

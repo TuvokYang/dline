@@ -67,14 +67,111 @@ function toolDetail(tool: ClineSayTool): string | undefined {
 	return undefined
 }
 
-function JsonToolApproval({ tool }: { tool: ClineSayTool }) {
-	const detail = toolDetail(tool)
+const GENERIC_APPROVAL_TITLE = "Dline wants your approval:"
+
+interface ApprovalSummary {
+	title: string
+	detail?: string
+}
+
+interface ApprovalCardProps extends ApprovalSummary {
+	/** Render the detail in a monospace block, used for commands and structured payloads. */
+	monospace?: boolean
+	/** Text offered by the copy action; omitted when the card has nothing worth copying. */
+	copyText?: string
+	copyLabel?: string
+}
+
+/**
+ * Titled approval card shared by every approval presentation.
+ *
+ * The card is width-bound to the chat column: long paths, URLs, and JSON wrap at
+ * any character instead of widening the row, and very long bodies scroll inside
+ * a bounded block so the approval buttons stay in view.
+ */
+function ApprovalCard({ title, detail, monospace = false, copyText, copyLabel }: ApprovalCardProps) {
 	return (
-		<div className="mx-3.5 mb-2 rounded-sm border border-editor-group-border bg-code p-3" data-testid="tool-approval-summary">
-			<div className="font-semibold text-foreground">{TOOL_APPROVAL_TITLES[tool.tool]}</div>
-			{detail ? <div className="mt-1 whitespace-pre-wrap break-words text-sm">{detail}</div> : null}
+		<div
+			className="relative mx-3.5 mb-2 min-w-0 max-w-full overflow-hidden rounded-sm border border-editor-group-border bg-code p-3"
+			data-testid="tool-approval-summary">
+			{copyText ? (
+				<div className="absolute right-1 top-1">
+					<CopyButton ariaLabel={copyLabel ?? "Copy"} textToCopy={copyText} />
+				</div>
+			) : null}
+			<div className={copyText ? "pr-8 font-semibold text-foreground" : "font-semibold text-foreground"}>{title}</div>
+			{detail ? (
+				<div
+					className={
+						monospace
+							? "mt-1 max-h-60 overflow-y-auto whitespace-pre-wrap [overflow-wrap:anywhere] font-mono text-xs"
+							: "mt-1 max-h-60 overflow-y-auto whitespace-pre-wrap [overflow-wrap:anywhere] text-sm"
+					}>
+					{detail}
+				</div>
+			) : null}
 		</div>
 	)
+}
+
+function parseObject(text: string | undefined): Record<string, unknown> | undefined {
+	if (!text) return undefined
+	try {
+		const parsed = JSON.parse(text) as unknown
+		return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+			? (parsed as Record<string, unknown>)
+			: undefined
+	} catch {
+		return undefined
+	}
+}
+
+function stringField(payload: Record<string, unknown> | undefined, key: string): string | undefined {
+	const value = payload?.[key]
+	return typeof value === "string" && value.trim() ? value : undefined
+}
+
+function mcpSummary(payload: Record<string, unknown> | undefined, fallback: string | undefined): ApprovalSummary {
+	const serverName = stringField(payload, "serverName")
+	if (!serverName) return { title: "Dline wants to use an MCP server:", detail: fallback }
+	if (payload?.type === "access_mcp_resource") {
+		return { title: `Dline wants to access a resource on the ${serverName} MCP server:`, detail: stringField(payload, "uri") }
+	}
+	const toolName = stringField(payload, "toolName")
+	const args = stringField(payload, "arguments")
+	return {
+		title: `Dline wants to use a tool on the ${serverName} MCP server:`,
+		detail: [toolName, args].filter(Boolean).join("\n") || undefined,
+	}
+}
+
+function subagentSummary(payload: Record<string, unknown> | undefined, fallback: string | undefined): ApprovalSummary {
+	const prompts = Array.isArray(payload?.prompts)
+		? payload.prompts.filter((prompt): prompt is string => typeof prompt === "string")
+		: []
+	if (prompts.length === 0) return { title: "Dline wants to run subagents:", detail: fallback }
+	return {
+		title: prompts.length === 1 ? "Dline wants to run a subagent:" : `Dline wants to run ${prompts.length} subagents:`,
+		detail: prompts.map((prompt, index) => `${index + 1}. ${prompt}`).join("\n"),
+	}
+}
+
+/** Resolve the title and body for approvals whose payload is not a `ClineSayTool`. */
+function askApprovalSummary(message: ClineMessage): ApprovalSummary {
+	const payload = parseObject(message.text)
+	const fallback = message.text?.trim() ? message.text : undefined
+	switch (message.ask) {
+		case "use_mcp_server":
+			return mcpSummary(payload, fallback)
+		case "use_subagents":
+			return subagentSummary(payload, fallback)
+		case "spawn_task":
+			return { title: "Dline wants to start a new task:", detail: stringField(payload, "task") ?? fallback }
+		case "browser_action_launch":
+			return { title: "Dline wants to use the browser:", detail: stringField(payload, "url") ?? fallback }
+		default:
+			return { title: GENERIC_APPROVAL_TITLE, detail: fallback }
+	}
 }
 
 /** Render approval-oriented interaction content from the exact persisted ask anchor. */
@@ -93,18 +190,23 @@ export function ApprovalRenderer(props: PresentationProps) {
 		)
 	}
 	const tool = parseTool(props.message.text)
-	return tool ? <JsonToolApproval tool={tool} /> : shell(props.message)
+	if (tool) {
+		return <ApprovalCard detail={toolDetail(tool)} title={TOOL_APPROVAL_TITLES[tool.tool] ?? GENERIC_APPROVAL_TITLE} />
+	}
+	const summary = askApprovalSummary(props.message)
+	return <ApprovalCard {...summary} monospace={props.message.ask === "use_mcp_server"} />
 }
 
 /** Render command-oriented interaction content. */
 export function CommandRenderer(props: PresentationProps) {
 	return (
-		<div className="relative rounded-sm border border-editor-group-border bg-code p-3 pr-10">
-			<div className="absolute right-1 top-1">
-				<CopyButton ariaLabel="Copy command" textToCopy={props.message.text} />
-			</div>
-			<pre className="m-0 whitespace-pre-wrap break-words font-mono text-xs">{props.message.text}</pre>
-		</div>
+		<ApprovalCard
+			copyLabel="Copy command"
+			copyText={props.message.text}
+			detail={props.message.text}
+			monospace
+			title="Dline wants to execute this command:"
+		/>
 	)
 }
 

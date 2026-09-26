@@ -1,116 +1,16 @@
 import { expect } from "@playwright/test"
 import { E2ETestHelper } from "../utils/helpers"
+import { enqueueSubagentReview, SUBAGENT_ITEMS as ITEMS, PARENT_RESULT, startSubagentReview } from "./scenarios/subagent-review"
 import { demo } from "./utils/demo-fixture"
 import { dismissDemoNotifications } from "./utils/png-asset"
-
-const PARENT_TASK = "Review three release tracks in parallel and summarize the findings."
-const PARENT_RESULT = "Parallel review complete: interface, mock coverage, and release timing are ready."
-const ITEMS = [
-	{
-		task: "Check interface readiness.",
-		context: "Read the safe workspace overview.",
-		tool: "read_file",
-		arguments: { path: "README.md" },
-		resultMarker: "# Test Workspace",
-		result: "Interface review complete.",
-		delayMs: 13_000,
-	},
-	{
-		task: "Check mock coverage.",
-		context: "Read the safe workspace page.",
-		tool: "read_file",
-		arguments: { path: "index.html" },
-		resultMarker: "<title>Test Workspace</title>",
-		result: "Mock coverage review complete.",
-		delayMs: 14_500,
-	},
-	{
-		task: "Check release timing.",
-		context: "List the safe workspace root.",
-		tool: "list_files",
-		arguments: { path: ".", recursive: false },
-		resultMarker: "README.md",
-		result: "Release timing review complete.",
-		delayMs: 16_000,
-	},
-] as const
 
 demo("R5", async ({ finishRecording, helper, pace, page, registerRecording, server, sidebar, userDataDir }) => {
 	demo.setTimeout(180_000)
 	await helper.signin(sidebar)
-	server.resetOpenAiMock()
-	server.enqueueOpenAiResponses(
-		{
-			type: "tool",
-			id: "call_r5_use_subagents",
-			name: "use_subagents",
-			arguments: {
-				prompt_1: `<task>${ITEMS[0].task}</task><context>${ITEMS[0].context}</context>`,
-				prompt_2: `<task>${ITEMS[1].task}</task><context>${ITEMS[1].context}</context>`,
-				prompt_3: `<task>${ITEMS[2].task}</task><context>${ITEMS[2].context}</context>`,
-				timeout: 120,
-			},
-			expectedRequestIncludes: [PARENT_TASK],
-		},
-		...ITEMS.map((item, index) => ({
-			type: "tool" as const,
-			id: `call_r5_child_read_${index + 1}`,
-			name: item.tool,
-			arguments: item.arguments,
-			reasoning: `Reviewing release track ${index + 1}.`,
-			usage: { inputTokens: 700 + index * 100, outputTokens: 70 + index * 10 },
-			matchRequestContract: true,
-			expectedRequestIncludes: [item.task, item.context],
-			expectedToolResultCount: 0,
-			requireCompleteToolPairing: true,
-		})),
-		...ITEMS.map((item, index) => ({
-			type: "tool" as const,
-			id: `call_r5_child_complete_${index + 1}`,
-			name: "attempt_completion",
-			arguments: { result: item.result },
-			reasoning: `Release track ${index + 1} is ready.`,
-			usage: { inputTokens: 900 + index * 100, outputTokens: 90 + index * 10 },
-			delayMs: item.delayMs,
-			matchRequestContract: true,
-			expectedRequestIncludes: [item.task, item.context],
-			expectedToolResultCount: 1,
-			expectedToolResults: [
-				{
-					callId: `call_r5_child_read_${index + 1}`,
-					contentIncludes: item.resultMarker,
-				},
-			],
-			requireCompleteToolPairing: true,
-		})),
-		{
-			type: "tool",
-			id: "call_r5_parent_complete",
-			name: "attempt_completion",
-			arguments: { result: PARENT_RESULT },
-			matchRequestContract: true,
-			expectedToolResultCount: 1,
-			expectedToolResults: [
-				{
-					callId: "call_r5_use_subagents",
-					contentIncludes: ["Subagent results:", "Total: 3", "Succeeded: 3", ...ITEMS.map((item) => item.result)],
-				},
-			],
-			requireCompleteToolPairing: true,
-		},
-	)
+	enqueueSubagentReview(server)
 
 	await dismissDemoNotifications(page)
-	const input = sidebar.getByTestId("chat-input")
-	await input.fill(PARENT_TASK)
-	await input.press("Enter")
-	await expect(input).toHaveValue("")
-
-	const approveButton = sidebar.getByText("Approve", { exact: true })
-	const firstChildTask = sidebar.getByText(ITEMS[0].task, { exact: true }).last()
-	await expect(approveButton.or(firstChildTask)).toBeVisible({ timeout: 60_000 })
-	if (await approveButton.isVisible()) await approveButton.click()
-	await expect.poll(() => server.openAiRequestCount, { timeout: 60_000 }).toBe(7)
+	await startSubagentReview(sidebar, server)
 
 	await registerRecording("r5-subagents")
 	await sidebar.getByRole("tab", { name: /^Activities(?: \d+)?$/ }).click()

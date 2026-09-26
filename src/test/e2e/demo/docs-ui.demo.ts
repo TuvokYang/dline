@@ -1,9 +1,23 @@
 import { mkdir, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { expect, type Frame, type Locator } from "@playwright/test"
+import { getE2EMockProviderBaseUrl } from "../fixtures/server/api"
+import { E2E_PROFILE_NAMES } from "../utils/api-profile"
 import { E2ETestHelper } from "../utils/helpers"
+import { capabilityRow, toggleCapability } from "./scenarios/capabilities"
+import {
+	COMPACTION_COMPLETION_TEXT,
+	COMPACTION_CONTINUE_TEXT,
+	configureAutoCompaction,
+	enqueueAutoCompaction,
+	primeContextNearLimit,
+	selectProfile,
+} from "./scenarios/compaction"
+import { fillMockOpenAiProfile, MOCK_PROFILE_NAME, waitForStoredProfileName } from "./scenarios/profile-setup"
+import { enqueueSubagentReview, PARENT_RESULT, SUBAGENT_ITEMS, startSubagentReview } from "./scenarios/subagent-review"
 import { demo } from "./utils/demo-fixture"
 import { captureDocScreenshot } from "./utils/doc-capture"
+import { dismissDemoNotifications } from "./utils/png-asset"
 
 /**
  * Documentation captures for the docs site (`docs/public/assets/ui`).
@@ -21,6 +35,8 @@ const SIDEBAR_RECORDING = {
 	outputWidth: 560,
 	camera: { aspectRatio: 4 / 3, minWidth: 560, spotlight: true },
 } as const
+// Multi-step flows move the camera often; a short settle keeps them inside the 20 s GIF budget.
+const STEP_SETTLE_MS = 250
 
 async function seedWorkspaceCapabilities(workspaceDir: string): Promise<void> {
 	const files: Record<string, string> = {
@@ -280,3 +296,160 @@ demo("docs auto approve", async ({ finishRecording, focusCamera, helper, pace, r
 	await pace(1_200)
 	await finishRecording()
 })
+
+demo(
+	"docs capability toggles",
+	async ({ finishRecording, focusCamera, helper, pace, registerRecording, sidebar, workspaceDir }) => {
+		await seedWorkspaceCapabilities(workspaceDir)
+		await helper.signin(sidebar)
+
+		await registerRecording("docs-capability-toggles", SIDEBAR_RECORDING)
+		const showCapabilities = showCapabilitiesButton(sidebar)
+		await focusCamera(showCapabilities)
+		await showCapabilities.click()
+		const popup = sidebar.getByTestId("capabilities-popup")
+		await expect(popup).toBeVisible()
+
+		const steps = [
+			{ tab: "Rules", name: "release-policy.md" },
+			{ tab: "Skills", name: "release-checklist" },
+			{ tab: "Workflows", name: `${WORKFLOW_NAME}.md` },
+		]
+		for (const { tab, name } of steps) {
+			await focusCamera(popup.getByRole("button", { name: tab, exact: true }), STEP_SETTLE_MS)
+			await selectCapabilityTab(popup, tab)
+			const row = capabilityRow(sidebar, name)
+			await expect(row).toBeVisible({ timeout: 30_000 })
+			await focusCamera(row, STEP_SETTLE_MS)
+			await toggleCapability(sidebar, name, false)
+			await pace(700)
+		}
+		await finishRecording()
+	},
+)
+
+demo(
+	"docs profile setup",
+	async ({ dlineDir, finishRecording, focusCamera, helper, page, pace, registerRecording, server, sidebar }) => {
+		await helper.signin(sidebar)
+		const focusStep = (target: Locator | Locator[]) => focusCamera(target, STEP_SETTLE_MS)
+
+		await registerRecording("docs-profile-setup", SIDEBAR_RECORDING)
+		const settingsButton = page.getByRole("button", { name: "Settings", exact: true })
+		await focusStep(settingsButton)
+		await settingsButton.click()
+		const addProfile = sidebar.getByRole("button", { name: "Add profile", exact: true })
+		await expect(addProfile).toBeVisible()
+		await focusStep(addProfile)
+		await addProfile.click()
+		const profileCard = sidebar.getByTestId("api-profile-card").last()
+		await expect(profileCard).toBeVisible()
+
+		await fillMockOpenAiProfile(profileCard, getE2EMockProviderBaseUrl(server.baseUrl, "openai-compatible-chat"), focusStep)
+		await waitForStoredProfileName(dlineDir, MOCK_PROFILE_NAME)
+
+		const done = sidebar.getByRole("button", { name: "Done", exact: true })
+		await focusStep(done)
+		await done.click()
+		const modelSwitcher = sidebar.getByRole("button", { name: "Select model", exact: true })
+		await expect(modelSwitcher).toBeVisible()
+		await focusStep(modelSwitcher)
+		await modelSwitcher.click()
+		const profileOption = sidebar.getByRole("option").filter({ has: sidebar.getByText(MOCK_PROFILE_NAME, { exact: true }) })
+		await expect(profileOption).toHaveCount(1)
+		await focusStep([profileOption, modelSwitcher])
+		await profileOption.click()
+		await expect(modelSwitcher).toHaveText(MOCK_PROFILE_NAME)
+		await focusCamera(modelSwitcher, 0)
+		await pace(1_200)
+		await finishRecording()
+	},
+)
+
+demo("docs subagents", async ({ finishRecording, focusCamera, helper, pace, page, registerRecording, server, sidebar }) => {
+	demo.setTimeout(180_000)
+	await helper.signin(sidebar)
+	enqueueSubagentReview(server)
+	// Clear startup toasts before the run: the command palette used to dismiss them
+	// later loses focus to the live subagent updates and cannot be driven reliably.
+	await dismissDemoNotifications(page)
+	await startSubagentReview(sidebar, server)
+	// Children finish 13-16 s after their last request; start a little later so the GIF stays under 20 s
+	// while every child is still running when the Activities list first comes into view.
+	await pace(2_000)
+
+	await registerRecording("docs-subagents", SIDEBAR_RECORDING)
+	const activitiesTab = sidebar.getByRole("tab", { name: /^Activities(?: \d+)?$/ })
+	await focusCamera(activitiesTab, STEP_SETTLE_MS)
+	await activitiesTab.click()
+	await sidebar.getByTestId("activity-status-filter-all").click()
+	await sidebar.getByTestId("activity-kind-filter-subagent").click()
+
+	const cards = sidebar.getByTestId("activity-item")
+	await expect(cards).toHaveCount(SUBAGENT_ITEMS.length)
+	await focusCamera(sidebar.getByTestId("activity-list"), STEP_SETTLE_MS)
+	// Collapsed cards show only the agent name; expand them so each child's task identifies its card.
+	for (let index = 0; index < SUBAGENT_ITEMS.length; index += 1) {
+		await cards.nth(index).getByTestId("activity-toggle").click()
+	}
+	const activities = SUBAGENT_ITEMS.map((item) => cards.filter({ hasText: item.task }))
+	await Promise.all(activities.map((activity) => expect(activity).toHaveCount(1)))
+	await pace(800)
+
+	// Follow each child as it finishes so the status change is the focus of the frame.
+	for (const activity of activities) {
+		await focusCamera(activity, 0)
+		await expect(activity).toHaveAttribute("data-activity-status", "completed", { timeout: 30_000 })
+		await pace(600)
+	}
+
+	const workTab = sidebar.getByRole("tab", { name: "Work", exact: true })
+	await focusCamera(workTab, STEP_SETTLE_MS)
+	await workTab.click()
+	const parentResult = sidebar.getByText(PARENT_RESULT, { exact: false }).last()
+	await expect(parentResult).toBeVisible({ timeout: 30_000 })
+	await focusCamera(parentResult, 0)
+	await pace(1_400)
+	await finishRecording()
+})
+
+demo(
+	"docs auto compact",
+	async ({ dlineDir, finishRecording, focusCamera, helper, pace, registerRecording, server, sidebar }) => {
+		demo.setTimeout(180_000)
+		await configureAutoCompaction(dlineDir)
+		await helper.signin(sidebar)
+		await selectProfile(sidebar, E2E_PROFILE_NAMES.mockOpenAiResponses)
+		enqueueAutoCompaction(server)
+		await primeContextNearLimit(sidebar)
+		const contextIndicator = sidebar.getByTestId("context-window-indicator")
+		const contextProgress = sidebar.getByTestId("context-window-segmented-progress")
+
+		await registerRecording("docs-auto-compact", SIDEBAR_RECORDING)
+		await focusCamera(contextIndicator)
+		await pace(600)
+		const input = sidebar.getByTestId("chat-input")
+		await focusCamera(input, STEP_SETTLE_MS)
+		await input.fill(COMPACTION_CONTINUE_TEXT)
+		await input.press("Enter")
+		await expect(input).toHaveValue("")
+
+		const compactionPass = sidebar.getByTestId("compaction-pass").last()
+		await expect(compactionPass).toBeVisible({ timeout: 60_000 })
+		await focusCamera(compactionPass, 0)
+		await expect(compactionPass).toHaveAttribute("data-compaction-status", "completed", { timeout: 60_000 })
+		await pace(800)
+
+		const completion = sidebar.getByText(COMPACTION_COMPLETION_TEXT, { exact: false }).last()
+		await expect(completion).toBeVisible({ timeout: 60_000 })
+		await focusCamera(completion, STEP_SETTLE_MS)
+		await expect
+			.poll(async () => Number((await contextProgress.getAttribute("aria-valuenow")) ?? Number.POSITIVE_INFINITY), {
+				timeout: 30_000,
+			})
+			.toBeLessThan(40_000)
+		await focusCamera(contextIndicator, 0)
+		await pace(1_400)
+		await finishRecording()
+	},
+)

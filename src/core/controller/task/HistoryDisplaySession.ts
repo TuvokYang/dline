@@ -97,7 +97,11 @@ export class HistoryDisplaySession {
 	}
 
 	getTaskTitleMessage(): ClineMessage | undefined {
-		return this.taskTitleMessage
+		if (this.taskTitleMessage || this.loaded || this.disposed) return this.taskTitleMessage
+		// Until the durable header is read, project the indexed task text so the
+		// preparing surface renders as this task instead of the empty home view.
+		// It carries no interaction, and load() replaces it with the stored message.
+		return { ts: this.historyItem.ts, type: "say", say: "task", text: this.historyItem.task, partial: false }
 	}
 
 	async fetchMessages(referenceIndex: number, count: number): Promise<UIMessageWindowPage> {

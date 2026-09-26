@@ -1,22 +1,16 @@
 import { readFile } from "node:fs/promises"
 import path from "node:path"
 import { expect } from "@playwright/test"
-import { ApiFormat } from "../../../shared/proto/dline/models/metadata"
 import { getE2EMockProviderBaseUrl } from "../fixtures/server/api"
+import {
+	fillMockOpenAiProfile,
+	MOCK_API_KEY,
+	MOCK_MODEL_ID as MODEL_ID,
+	MOCK_PROFILE_NAME as PROFILE_NAME,
+	type StoredProfile,
+} from "./scenarios/profile-setup"
 import { demo } from "./utils/demo-fixture"
 
-interface StoredProfile {
-	id: string
-	name: string
-	provider: string
-	modelId?: string
-	baseUrl?: string
-	openai?: { apiFormat?: string }
-}
-
-const PROFILE_NAME = "openai:dline-e2e-model"
-const MODEL_ID = "dline-e2e-model"
-const MOCK_API_KEY = "demo-api-key-not-real"
 const TASK_TEXT = "Give me one concise suggestion for this demo workspace."
 const COMPLETION_TEXT = "Your first Dline task is ready."
 
@@ -50,22 +44,8 @@ demo("R2", async ({ dlineDir, finishRecording, helper, pace, page, registerRecor
 		return resolved
 	})()
 
-	await profileCard.getByRole("combobox", { name: "Provider", exact: true }).selectOption("openai")
-	const apiFormat = profileCard.getByRole("combobox", { name: "API Format", exact: true })
-	await apiFormat.selectOption(String(ApiFormat.OPENAI_CHAT))
-
-	const customBaseUrl = profileCard.locator("vscode-checkbox").filter({ hasText: "Use custom base URL" })
-	await customBaseUrl.click()
 	const baseUrl = getE2EMockProviderBaseUrl(server.baseUrl, "openai-compatible-chat")
-	const baseUrlInput = profileCard.locator('vscode-text-field[placeholder="Enter base URL..."] input')
-	await baseUrlInput.fill(baseUrl)
-
-	const apiKeyInput = profileCard.getByRole("textbox", { name: "OpenAI API Key", exact: true })
-	await apiKeyInput.fill(MOCK_API_KEY)
-	const customModelId = profileCard.locator("vscode-checkbox").filter({ hasText: "Use custom model ID" })
-	await customModelId.click()
-	const modelInput = profileCard.locator('vscode-text-field[placeholder="Enter Model ID..."] input')
-	await modelInput.fill(MODEL_ID)
+	await fillMockOpenAiProfile(profileCard, baseUrl)
 
 	await expect
 		.poll(async () => {

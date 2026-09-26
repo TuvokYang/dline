@@ -311,6 +311,26 @@ describe("HistoryDisplaySession", () => {
 		}
 	})
 
+	it("renders the indexed task title before the durable header is loaded", async () => {
+		const taskId = "history-provisional-title"
+		await seedMessages(taskId, [{ ts: 10, type: "say", say: "task", text: "Durable header" }])
+		const session = new HistoryDisplaySession(createHistoryItem(taskId))
+
+		try {
+			// The preparing surface must identify the task, otherwise the Webview
+			// renders the home view until the history window has been read.
+			const provisional = session.getTaskTitleMessage()
+			expect(provisional).toMatchObject({ type: "say", say: "task", text: session.historyItem.task })
+			expect(session.getViewState().activeInteraction).toBeUndefined()
+
+			await session.load()
+			expect(session.getTaskTitleMessage()).toMatchObject({ ts: 10, text: "Durable header" })
+		} finally {
+			await session.dispose()
+		}
+		expect(session.getTaskTitleMessage()).toBeUndefined()
+	})
+
 	it("closes an untransferred window reader once when the display is cleared", async () => {
 		const session = new HistoryDisplaySession(createHistoryItem("history-display-close"))
 		const closeSpy = vi.spyOn(UIMessageWindowReader.prototype, "close")
