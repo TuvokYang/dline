@@ -285,7 +285,7 @@ Use this tool to tell the user what you will change and why, announce a complete
 
 Set requires_acknowledgment to true ONLY when you need the user to confirm before continuing — this displays "知晓" (acknowledge) and "停止" (stop) buttons. Otherwise leave it false and continue with actual work in the same turn.
 
-Do not call status_update consecutively; the next call must perform work. Do not use it for final completion — use attempt_completion. Do not use it merely to update task_progress; checklist-only updates are silent.
+Do not call status_update consecutively; the next call must perform work. Do not use it for final completion — use attempt_completion.
 Parameters:
 - response: (required) The brief user-visible message explaining the planned change, current progress, completed phase, correction, or relevant rationale.
 - requires_acknowledgment: (optional) Set to true if you need the user to explicitly acknowledge before continuing. Defaults to false — execution continues immediately.

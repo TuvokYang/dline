@@ -101,7 +101,7 @@ jobs:
     timeout-minutes: 20
     outputs:
       artifact_name: ${{ steps.package.outputs.artifact_name }}
-      asset_name: ${{ steps.package.outputs.filename }}
+      asset_name: ${{ steps.artifact.outputs.asset_name }}
       version: ${{ steps.artifact.outputs.version }}
       commit_sha: ${{ steps.package.outputs.commit_sha }}
       sha256: ${{ steps.artifact.outputs.sha256 }}
@@ -147,6 +147,8 @@ jobs:
               filename="dline-ci-${version}-${short_sha}.vsix"
               ;;
             insiders)
+              # Staging name only; the published asset is renamed from the
+              # packaged manifest version in "Inspect packaged VSIX".
               filename="dline-insiders-${short_sha}.vsix"
               ;;
             preview)
@@ -170,20 +172,34 @@ jobs:
       - name: Inspect packaged VSIX
         id: artifact
         env:
-          VSIX_PATH: dist/${{ steps.package.outputs.filename }}
+          CHANNEL: ${{ inputs.channel }}
+          BUILT_NAME: ${{ steps.package.outputs.filename }}
         shell: bash
         run: |
           set -euo pipefail
+          vsix_path="dist/$BUILT_NAME"
           manifest_path="$RUNNER_TEMP/vsix-package.json"
-          unzip -p "$VSIX_PATH" extension/package.json > "$manifest_path"
-          echo "version=$(jq -r '.version' "$manifest_path")" >> "$GITHUB_OUTPUT"
-          echo "sha256=$(sha256sum "$VSIX_PATH" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          unzip -p "$vsix_path" extension/package.json > "$manifest_path"
+          version=$(jq -r '.version' "$manifest_path")
+          asset_name="$BUILT_NAME"
+          # The Insiders version carries a build timestamp that exists only after
+          # packaging, and the registry gate binds the asset name to that version.
+          if [[ "$CHANNEL" == "insiders" ]]; then
+            asset_name="dline-insiders-${version}.vsix"
+            if [[ "$asset_name" != "$BUILT_NAME" ]]; then
+              mv "$vsix_path" "dist/$asset_name"
+            fi
+            vsix_path="dist/$asset_name"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "asset_name=$asset_name" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(sha256sum "$vsix_path" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
 
       - name: Upload tested VSIX
         uses: actions/upload-artifact@v5
         with:
           name: ${{ steps.package.outputs.artifact_name }}
-          path: dist/${{ steps.package.outputs.filename }}
+          path: dist/${{ steps.artifact.outputs.asset_name }}
           if-no-files-found: error
           retention-days: 14
 
