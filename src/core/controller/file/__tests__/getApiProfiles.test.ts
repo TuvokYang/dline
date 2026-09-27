@@ -351,7 +351,9 @@ describe("getApiProfiles", () => {
 		}
 		resetAllStores()
 		;(ModelRegistry as any).instance = undefined
-		await fs.rm(tempDir, { recursive: true, force: true })
+		// readApiProfiles schedules a fire-and-forget Catalog repair that can still be creating its
+		// lock or temp file here; on Windows that races the recursive removal with ENOTEMPTY/EBUSY.
+		await fs.rm(tempDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 })
 		vi.restoreAllMocks()
 	})
 
