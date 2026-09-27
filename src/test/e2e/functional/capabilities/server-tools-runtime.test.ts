@@ -34,6 +34,7 @@ interface StoredProfile {
 	modelInfo?: { capabilities?: { tools?: ServerTool[]; [key: string]: unknown }; [key: string]: unknown }
 	openai?: StoredProviderConfiguration
 	anthropic?: StoredProviderConfiguration
+	claudeCode?: StoredProviderConfiguration
 	[key: string]: unknown
 }
 
@@ -147,6 +148,7 @@ async function prepareRuntimeProfile(
 	options: {
 		apiFormat?: "OPENAI_CHAT" | "OPENAI_RESPONSES"
 		baseUrl?: string
+		modelId?: string
 		enabled: boolean
 		mode: StoredWebToolsMode
 		supportsWebSearch?: boolean
@@ -158,7 +160,15 @@ async function prepareRuntimeProfile(
 
 	profile.webToolsMode = options.mode
 	if (options.baseUrl) profile.baseUrl = options.baseUrl
-	const providerKey = profile.provider === "anthropic" ? "anthropic" : profile.provider === "deepseek" ? "deepseek" : "openai"
+	if (options.modelId) profile.modelId = options.modelId
+	const providerKey =
+		profile.provider === "anthropic"
+			? "anthropic"
+			: profile.provider === "claude-code"
+				? "claudeCode"
+				: profile.provider === "deepseek"
+					? "deepseek"
+					: "openai"
 	const provider = (profile[providerKey] ?? {}) as StoredProviderConfiguration
 	if (options.apiFormat) provider.apiFormat = options.apiFormat
 	if (options.supportsWebSearch !== undefined) {
@@ -486,6 +496,7 @@ e2e(
 				snippet: "E2E_OPENAI_HOSTED_RESULT_SNIPPET",
 			})
 			await expect(opened.sidebar.getByText(completion, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
+			expect(server.getMockConsumptions("openai-compatible-responses")).toHaveLength(1)
 
 			await closeCurrentTask(opened.sidebar)
 			await reopenTask(opened.sidebar, taskText)
@@ -964,6 +975,92 @@ e2e(
 		}
 	},
 )
+
+for (const scenario of [
+	{
+		label: "Anthropic",
+		profileName: E2E_PROFILE_NAMES.mockAnthropic,
+		target: "anthropic-messages" as MockApiTarget,
+		marker: "ANTHROPIC",
+	},
+	{
+		label: "Claude Code",
+		profileName: E2E_PROFILE_NAMES.mockClaudeCode,
+		target: "claude-code-messages" as MockApiTarget,
+		marker: "CLAUDE_CODE",
+	},
+]) {
+	e2e(
+		`ServerTool runtime - ${scenario.label} continues pause_turn with the hosted result exactly once`,
+		async ({ dlineDir, dlineDocsDir, dlineHomeDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
+			e2e.setTimeout(180_000)
+			expectIsolatedDirectories(dlineDir, dlineHomeDir, dlineDocsDir)
+			await prepareRuntimeProfile(dlineDir, scenario.profileName, {
+				enabled: true,
+				mode: "WEB_TOOLS_MODE_AUTO",
+				modelId: scenario.label === "Claude Code" ? "claude-sonnet-5" : undefined,
+				supportsWebSearch: true,
+			})
+			const query = `Dline ${scenario.label} pause turn search`
+			const resultTitle = `E2E_${scenario.marker}_PAUSE_TURN_RESULT`
+			const resultUrl = `https://example.test/${scenario.marker.toLowerCase()}-pause-turn`
+			const completion = `E2E_${scenario.marker}_PAUSE_TURN_OK`
+			server.enqueueResponses(
+				scenario.target,
+				{
+					type: "hosted-web-search",
+					id: `srv_web_${scenario.marker.toLowerCase()}_pause_turn`,
+					query,
+					results: [{ title: resultTitle, url: resultUrl }],
+					anthropicStopReason: "pause_turn",
+				},
+				{
+					type: "tool",
+					id: `call_${scenario.marker.toLowerCase()}_pause_turn_done`,
+					name: "attempt_completion",
+					arguments: { result: completion },
+					expectedRequestIncludes: ["server_tool_use", "web_search_tool_result", resultTitle, resultUrl],
+				},
+				{
+					type: "error",
+					status: 500,
+					code: "unexpected_pause_turn_replay",
+					message: "Hosted pause_turn continuation was sent more than once",
+				},
+			)
+
+			let app: ElectronApplication | undefined
+			try {
+				const opened = await openSidebar(openVSCode, workspaceDir, helper)
+				app = opened.app
+				await setAutoApproveAction(opened.sidebar, "Use Web", true)
+				await sendTask(opened.sidebar, `Use ${scenario.label} hosted search, consume its result, and finish.`)
+				await expectHostedLifecycle(opened.sidebar, query, { title: resultTitle, url: resultUrl })
+				await expect(opened.sidebar.getByText(completion, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
+				await expect.poll(() => server.getMockConsumptions(scenario.target).length).toBe(2)
+
+				const [initial, continuation] = server.getMockConsumptions(scenario.target)
+				expectSingleSearchRoute(initial, "hosted")
+				expectSingleSearchRoute(continuation, "hosted")
+				expect(initial.contractError).toBeUndefined()
+				expect(continuation.contractError).toBeUndefined()
+				const continuationBody = continuation.requestBody as {
+					messages?: Array<{ role?: string; content?: unknown }>
+				}
+				const replayedAssistant = continuationBody.messages?.at(-1)
+				expect(replayedAssistant?.role).toBe("assistant")
+				expect(JSON.stringify(replayedAssistant?.content)).toContain("server_tool_use")
+				expect(JSON.stringify(replayedAssistant?.content)).toContain("web_search_tool_result")
+				expect(JSON.stringify(replayedAssistant?.content)).toContain(resultTitle)
+				expect(server.getSearxngSearchRequests()).toHaveLength(0)
+				await expect(opened.sidebar.getByText("API Request Failed", { exact: true })).toHaveCount(0)
+				await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
+			} finally {
+				await app?.close()
+			}
+		},
+	)
+}
 
 e2e(
 	"ServerTool runtime - Anthropic Auto advertises versioned web search without inventing a hosted action",

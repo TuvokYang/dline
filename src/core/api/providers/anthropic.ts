@@ -5,7 +5,6 @@ import type {
 } from "@anthropic-ai/sdk/resources/beta/messages/messages"
 import { Tool as AnthropicTool } from "@anthropic-ai/sdk/resources/index"
 import type { MessageCreateParamsStreaming as AnthropicMessageCreateParamsStreaming } from "@anthropic-ai/sdk/resources/messages/messages"
-import { Stream as AnthropicStream } from "@anthropic-ai/sdk/streaming"
 import { ANTHROPIC_FAST_MODE_SUFFIX, AnthropicModelId, anthropicDefaultModelId, anthropicModels, ModelInfo } from "@shared/api"
 import { providerFetch } from "@shared/net"
 import { prioritizeApiFormat } from "@shared/providers/api-format"
@@ -31,7 +30,8 @@ import { ApiHandler, ApiHandlerContext, type ApiRequestOptions } from "../index"
 import { withRetry } from "../retry"
 import { sanitizeAnthropicMessages } from "../transform/anthropic-format"
 import { ApiStream } from "../transform/stream"
-import { handleAnthropicMessagesApiStreamResponse, mergeAnthropicServerTools } from "../utils/messages_api_support"
+import { streamAnthropicMessagesEndpoint } from "../utils/anthropic-messages-endpoint"
+import { mergeAnthropicServerTools } from "../utils/messages_api_support"
 
 export const ANTHROPIC_FAST_MODE_BETA = "fast-mode-2026-02-01"
 
@@ -193,7 +193,6 @@ export class AnthropicHandler implements ApiHandler {
 		const client = this.ensureClient()
 
 		const model = this.getModel()
-		let stream: AnthropicStream<Anthropic.RawMessageStreamEvent> | AsyncIterable<BetaRawMessageStreamEvent>
 
 		const useFastMode = model.id.endsWith(ANTHROPIC_FAST_MODE_SUFFIX)
 		const modelId = useFastMode ? model.id.slice(0, -ANTHROPIC_FAST_MODE_SUFFIX.length) : model.id
@@ -289,6 +288,8 @@ export class AnthropicHandler implements ApiHandler {
 			options?.generation?.purpose === "compaction"
 				? options.generation.maxOutputTokens
 				: model.info.capabilities?.maxTokens || 8192
+		let requestBody: AnthropicMessageCreateParamsStreaming & Record<string, unknown>
+		let identityHeaders: Record<string, string>
 
 		if (model.info.capabilities?.supportsPromptCache) {
 			const anthropicMessages = sanitizeAnthropicMessages(messages, true)
@@ -297,7 +298,8 @@ export class AnthropicHandler implements ApiHandler {
 			// stays on the system prompt below.
 			const claudeCodeIdentity = await this.buildClaudeCodeIdentity(anthropicMessages)
 			const attributionBlocks = claudeCodeIdentity.systemBlocks
-			const requestBody: AnthropicMessageCreateParamsStreaming & Record<string, unknown> = {
+			identityHeaders = claudeCodeIdentity.headers
+			requestBody = {
 				model: apiModelId,
 				thinking: thinkingConfig,
 				max_tokens: maxOutputTokens,
@@ -334,15 +336,12 @@ export class AnthropicHandler implements ApiHandler {
 			if (outputConfig) {
 				requestBody.output_config = outputConfig
 			}
-
-			stream = useFastMode
-				? await createFastModeMessage(requestBody)
-				: await client.messages.create(requestBody, requestOptions(claudeCodeIdentity.headers))
 		} else {
 			const anthropicMessages = sanitizeAnthropicMessages(messages, false)
 			const claudeCodeIdentity = await this.buildClaudeCodeIdentity(anthropicMessages)
 			const attributionBlocks = claudeCodeIdentity.systemBlocks
-			const requestBody: AnthropicMessageCreateParamsStreaming & Record<string, unknown> = {
+			identityHeaders = claudeCodeIdentity.headers
+			requestBody = {
 				model: apiModelId,
 				max_tokens: maxOutputTokens,
 				temperature: isAdaptiveThinkingModel ? undefined : reasoningOn ? undefined : 0,
@@ -356,13 +355,17 @@ export class AnthropicHandler implements ApiHandler {
 			if (outputConfig) {
 				requestBody.output_config = outputConfig
 			}
-
-			stream = useFastMode
-				? await createFastModeMessage(requestBody)
-				: await client.messages.create(requestBody, requestOptions(claudeCodeIdentity.headers))
 		}
 
-		yield* handleAnthropicMessagesApiStreamResponse(stream)
+		yield* streamAnthropicMessagesEndpoint({
+			messages: requestBody.messages,
+			openStream: (continuationMessages) => {
+				const continuationBody = { ...requestBody, messages: continuationMessages }
+				return useFastMode
+					? createFastModeMessage(continuationBody)
+					: client.messages.create(continuationBody, requestOptions(identityHeaders))
+			},
+		})
 	}
 
 	/**

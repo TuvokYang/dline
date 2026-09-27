@@ -157,6 +157,8 @@ interface MockResponseOptions {
 	expectedRequestExcludes?: readonly string[]
 	/** Reject incomplete historical tool-call pairing like strict production Providers do. */
 	requireCompleteToolPairing?: boolean
+	/** Anthropic Messages terminal reason used to exercise provider-owned continuation. */
+	anthropicStopReason?: "end_turn" | "pause_turn"
 }
 
 export type OpenAiMockResponse =
@@ -1281,6 +1283,8 @@ export class ClineApiServerMock {
 							? scriptedResponse.text
 							: ""
 					const responseToolCalls = getResponseToolCalls(scriptedResponse)
+					const anthropicStopReason =
+						scriptedResponse.anthropicStopReason ?? (responseToolCalls.length > 0 ? "tool_use" : "end_turn")
 					const writeSse = (data: unknown, event?: string) => {
 						if (res.destroyed || res.writableEnded) return
 						res.write(`${event ? `event: ${event}\n` : ""}data: ${JSON.stringify(data)}\n\n`)
@@ -1983,7 +1987,7 @@ export class ClineApiServerMock {
 							role: "assistant",
 							model,
 							content: thinkingBlock ? [thinkingBlock, ...contentBlocks] : contentBlocks,
-							stop_reason: responseToolCalls.length > 0 ? "tool_use" : "end_turn",
+							stop_reason: anthropicStopReason,
 							stop_sequence: null,
 							usage: { ...messageUsage, output_tokens: usage.outputTokens },
 						})
@@ -2130,7 +2134,7 @@ export class ClineApiServerMock {
 						{
 							type: "message_delta",
 							delta: {
-								stop_reason: responseToolCalls.length > 0 ? "tool_use" : "end_turn",
+								stop_reason: anthropicStopReason,
 								stop_sequence: null,
 							},
 							usage: { output_tokens: usage.outputTokens },

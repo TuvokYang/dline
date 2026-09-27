@@ -28,7 +28,8 @@ import { type ApiHandler, type ApiHandlerContext, type ApiRequestOptions } from 
 import { withRetry } from "../retry"
 import { sanitizeAnthropicMessages } from "../transform/anthropic-format"
 import { type ApiStream } from "../transform/stream"
-import { handleAnthropicMessagesApiStreamResponse, mergeAnthropicServerTools } from "../utils/messages_api_support"
+import { streamAnthropicMessagesEndpoint } from "../utils/anthropic-messages-endpoint"
+import { mergeAnthropicServerTools } from "../utils/messages_api_support"
 
 /**
  * Effort levels the Messages API accepts for adaptive thinking.
@@ -258,7 +259,7 @@ export class ClaudeCodeHandler implements ApiHandler {
 		options?: ApiRequestOptions,
 	): ApiStream {
 		const accessToken = await this.resolveAccessToken()
-		const client = this.ensureClient(accessToken)
+		let client = this.ensureClient(accessToken)
 		const model = this.getModel()
 
 		const promptCacheOn = model.info.capabilities?.supportsPromptCache ?? false
@@ -302,9 +303,16 @@ export class ClaudeCodeHandler implements ApiHandler {
 			requestBody.output_config = reasoning.outputConfig
 		}
 
-		const stream = await this.openStream(client, requestBody, identity.headers)
-
-		for await (const chunk of handleAnthropicMessagesApiStreamResponse(stream)) {
+		for await (const chunk of streamAnthropicMessagesEndpoint({
+			messages: requestBody.messages,
+			openStream: async (continuationMessages) => {
+				const stream = await this.openStream(client, { ...requestBody, messages: continuationMessages }, identity.headers)
+				// A 401 refresh replaces the cached SDK client. Reuse it for any later
+				// pause_turn continuation instead of presenting the rejected credential again.
+				client = this.client ?? client
+				return stream
+			},
+		})) {
 			// A subscription is billed by plan, not per request, so reporting a
 			// token-derived cost here would invent a charge the user never incurs.
 			yield chunk.type === "usage" ? { ...chunk, totalCost: 0 } : chunk

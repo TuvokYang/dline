@@ -11,7 +11,12 @@ import { ServerTool } from "@/shared/proto/dline/models/metadata"
 import { OutputLimitExceededError } from "../stream/OutputLimitExceededError"
 import { ApiStream } from "../transform/stream"
 
-type AnthropicMessagesStreamEvent = Anthropic.RawMessageStreamEvent | BetaRawMessageStreamEvent
+export type AnthropicMessagesStreamEvent = Anthropic.RawMessageStreamEvent | BetaRawMessageStreamEvent
+
+export interface AnthropicMessagesStreamState {
+	/** Provider-native hosted calls that may complete in a later pause_turn response. */
+	startedServerToolCallIds?: Set<string>
+}
 
 /**
  * Callers permitted to invoke the hosted tools below.
@@ -145,10 +150,13 @@ export function mergeAnthropicServerTools(
 	return merged.length > 0 ? merged : undefined
 }
 
-export async function* handleAnthropicMessagesApiStreamResponse(stream: AsyncIterable<AnthropicMessagesStreamEvent>): ApiStream {
+export async function* handleAnthropicMessagesApiStreamResponse(
+	stream: AsyncIterable<AnthropicMessagesStreamEvent>,
+	state?: AnthropicMessagesStreamState,
+): ApiStream {
 	const lastStartedToolCall = { id: "", name: "", arguments: "" }
 	const activeServerToolCall = { id: "", name: "", arguments: "", input: undefined as unknown }
-	const startedServerToolCallIds = new Set<string>()
+	const startedServerToolCallIds = state?.startedServerToolCallIds ?? new Set<string>()
 
 	for await (const chunk of stream) {
 		switch (chunk?.type) {

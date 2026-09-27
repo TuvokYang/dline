@@ -18,9 +18,11 @@ const createAsyncIterable = (events: any[]) =>
 		},
 	}) as any
 
-async function collectChunks(events: any[]) {
+async function collectChunks(events: any[], startedServerToolCallIds?: Set<string>) {
 	const chunks: any[] = []
-	for await (const chunk of handleAnthropicMessagesApiStreamResponse(createAsyncIterable(events))) {
+	for await (const chunk of handleAnthropicMessagesApiStreamResponse(createAsyncIterable(events), {
+		startedServerToolCallIds,
+	})) {
 		chunks.push(chunk)
 	}
 	return chunks
@@ -484,6 +486,53 @@ describe("messages_api_support", () => {
 			])
 
 			expect(chunks).to.deep.equal([])
+		})
+
+		it("matches a hosted result against a call started in a previous Messages response", async () => {
+			const startedServerToolCallIds = new Set<string>()
+			const started = await collectChunks(
+				[
+					{
+						type: "content_block_start",
+						index: 0,
+						content_block: {
+							type: "server_tool_use",
+							id: "srv_web_cross_response",
+							name: "web_search",
+							input: { query: "Dline" },
+							caller: { type: "direct" },
+						},
+					},
+				],
+				startedServerToolCallIds,
+			)
+			const completed = await collectChunks(
+				[
+					{
+						type: "content_block_start",
+						index: 0,
+						content_block: {
+							type: "web_search_tool_result",
+							tool_use_id: "srv_web_cross_response",
+							content: [],
+							caller: { type: "direct" },
+						},
+					},
+				],
+				startedServerToolCallIds,
+			)
+
+			expect(started.map((chunk) => chunk.phase)).to.deep.equal(["started"])
+			expect(completed).to.deep.equal([
+				{
+					type: "server_tool",
+					function_id: "srv_web_cross_response",
+					tool: ServerTool.WEB_SEARCH,
+					phase: "completed",
+					result: [],
+				},
+			])
+			expect(startedServerToolCallIds.size).to.equal(0)
 		})
 
 		it("emits a hosted web fetch lifecycle and fetch usage without local tool_calls", async () => {
