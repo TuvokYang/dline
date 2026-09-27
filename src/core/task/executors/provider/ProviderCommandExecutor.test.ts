@@ -295,6 +295,64 @@ describe("ProviderCommandExecutor request reporting", () => {
 		expect(report.settle).toHaveBeenCalledWith({ usage: undefined, outcome: "cancelled" })
 	})
 
+	it("reports retries before the first chunk and their recovery, without journaling anything", async () => {
+		const retrying = vi.fn(async () => {})
+		const recovered = vi.fn(async () => {})
+		const settle = vi.fn(async () => {})
+		const journal = new InMemoryConversationJournal()
+		const notice = { attempt: 1, maxAttempts: 5, delayMs: 3000, errorMessage: "{}" }
+		const executor = new ProviderCommandExecutor(
+			"task-1",
+			{
+				start: () =>
+					chunks([
+						{ kind: "retry", notice },
+						{ kind: "partial", transientId: "stream-1", payloadRef: "payload:partial" },
+						{
+							kind: "final",
+							transientId: "stream-1",
+							turnId: "turn-request",
+							payloadRef: "payload:final",
+							turnPlan: { mode: "serial", blocks: [] },
+						},
+					]),
+			},
+			journal,
+			new InMemoryTaskViewPort(),
+			recorder().sink,
+			undefined,
+			{ begin: async () => ({ retrying, recovered, settle }) },
+		)
+
+		await executor.execute(command)
+
+		expect(retrying).toHaveBeenCalledWith(notice)
+		expect(recovered).toHaveBeenCalledOnce()
+		expect(settle).toHaveBeenCalledWith({ usage: undefined, outcome: "completed" })
+		expect(await journal.read()).toEqual([expect.objectContaining({ payloadRef: "payload:final" })])
+	})
+
+	it("rejects a retry after the stream already produced output", async () => {
+		const recorded = recorder()
+		const executor = new ProviderCommandExecutor(
+			"task-1",
+			{
+				start: () =>
+					chunks([
+						{ kind: "partial", transientId: "stream-1", payloadRef: "payload:partial" },
+						{ kind: "retry", notice: { attempt: 1, maxAttempts: 5, delayMs: 3000, errorMessage: "{}" } },
+					]),
+			},
+			new InMemoryConversationJournal(),
+			new InMemoryTaskViewPort(),
+			recorded.sink,
+		)
+
+		await executor.execute(command)
+
+		expect(recorded.events).toEqual([expect.objectContaining({ type: "provider.failed" })])
+	})
+
 	it("keeps the turn when reporting throws", async () => {
 		const recorded = recorder()
 		const executor = new ProviderCommandExecutor(

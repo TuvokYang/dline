@@ -9,6 +9,7 @@ import type {
 	ProviderRequestOutcome,
 	ProviderRequestRecord,
 	ProviderRequestReportPort,
+	ProviderRetryNotice,
 } from "../executors/provider/service/ProviderRequestReport"
 import type { MessageStateHandler } from "../message-state"
 import type { PromptCacheHealthTracker } from "../prompt-cache/PromptCacheHealthTracker"
@@ -89,8 +90,17 @@ export class TaskProviderRequestReporter implements ProviderRequestReportPort {
 			turnId: input.turnId,
 			contextWindow: getContextWindowInfo(this.options.api()).contextWindow,
 		})
+		const retryCard = new RetryCard(this.options.messages, this.options.nextPresentationId)
 		return {
-			settle: (settlement) => this.settle(ts, input.turnId, settlement),
+			retrying: (notice) => retryCard.show(notice),
+			recovered: () => retryCard.withdraw(),
+			settle: async (settlement) => {
+				// A request that failed after retrying keeps its card as the record of
+				// the attempts; any other ending makes the countdown obsolete.
+				if (settlement.outcome === "failed") await retryCard.markFailed()
+				else await retryCard.withdraw()
+				await this.settle(ts, input.turnId, settlement)
+			},
 		}
 	}
 
@@ -159,6 +169,58 @@ export class TaskProviderRequestReporter implements ProviderRequestReportPort {
 		})
 		return compactTriggerTokens
 	}
+}
+
+/**
+ * The one live countdown card of a request's automatic retries.
+ *
+ * Every attempt replaces the previous card, so the chat shows one countdown
+ * rather than a stack of identical failures. The card is re-created at the end
+ * of the transcript instead of edited in place, because the chat hides a card
+ * that sits behind a later request row.
+ */
+class RetryCard {
+	private ts?: number
+	private notice?: ProviderRetryNotice
+
+	constructor(
+		private readonly messages: MessageStateHandler,
+		private readonly nextPresentationId: PresentationIdSequence,
+	) {}
+
+	async show(notice: ProviderRetryNotice): Promise<void> {
+		await this.withdraw()
+		const ts = this.nextPresentationId()
+		await this.messages.addToClineMessages({ ts, type: "say", say: "error_retry", text: cardText(notice) })
+		this.ts = ts
+		this.notice = notice
+	}
+
+	async withdraw(): Promise<void> {
+		const ts = this.ts
+		this.ts = undefined
+		this.notice = undefined
+		if (ts !== undefined) await this.messages.removeMessagesByTs([ts])
+	}
+
+	/** The retries did not recover the request; the card stops counting down and says so. */
+	async markFailed(): Promise<void> {
+		const index = this.ts === undefined ? -1 : this.messages.clineMessages.findIndex((message) => message.ts === this.ts)
+		if (index < 0 || !this.notice) return
+		await this.messages.updateClineMessage(index, { text: cardText(this.notice, true) })
+		await this.messages.flushMessageUpdate(index)
+	}
+}
+
+/** The card payload the chat's retry box renders. */
+function cardText(notice: ProviderRetryNotice, failed = false): string {
+	return JSON.stringify({
+		attempt: notice.attempt,
+		maxAttempts: notice.maxAttempts,
+		delaySeconds: failed ? 0 : notice.delayMs / 1000,
+		errorMessage: notice.errorMessage,
+		...(failed ? { failed: true } : {}),
+	})
 }
 
 /**

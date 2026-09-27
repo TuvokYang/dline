@@ -22,7 +22,26 @@ export interface ProviderRequestReportPort {
  */
 export type ProviderRequestOutcome = "completed" | "cancelled" | "failed"
 
+/** One automatic replay of a request that failed before its first chunk. */
+export interface ProviderRetryNotice {
+	/** One-based retry attempt within the request's retry budget. */
+	readonly attempt: number
+	readonly maxAttempts: number
+	/** How long the request waits before it is sent again. */
+	readonly delayMs: number
+	/** Serialized provider error, for display only; it never enters the conversation. */
+	readonly errorMessage: string
+}
+
 export interface ProviderRequestRecord {
+	/**
+	 * The request failed before its first chunk and is sent again after the notice's delay.
+	 *
+	 * Optional because an assembly that renders nothing has no retry progress to show.
+	 */
+	retrying?(notice: ProviderRetryNotice): Promise<void>
+	/** A replayed request produced its first chunk, so the retry is over. */
+	recovered?(): Promise<void>
 	/**
 	 * Settle the record with what the request actually consumed.
 	 *

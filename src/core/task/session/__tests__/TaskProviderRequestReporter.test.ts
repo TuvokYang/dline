@@ -19,6 +19,12 @@ function messageState() {
 		updateClineMessage: vi.fn(async (index: number, updates: Partial<ClineMessage>) => {
 			rows[index] = { ...rows[index], ...updates }
 		}),
+		removeMessagesByTs: vi.fn(async (tsList: number[]) => {
+			for (const ts of tsList) {
+				const index = rows.findIndex((row) => row.ts === ts)
+				if (index >= 0) rows.splice(index, 1)
+			}
+		}),
 		flushMessageUpdate: vi.fn(async (index: number) => {
 			flushed.push(index)
 		}),
@@ -194,6 +200,51 @@ describe("TaskProviderRequestReporter", () => {
 		expect(harness.usages).toEqual([])
 		// Each of them still ends its request, so the header stops showing it in flight.
 		expect(harness.lifecycle.filter((entry) => entry === "unmeasured")).toHaveLength(4)
+	})
+
+	it("keeps one live retry card per request and withdraws it once the request recovers", async () => {
+		const harness = createReporter()
+		const record = await harness.reporter.begin({ turnId: "turn-1" })
+
+		await record.retrying?.({ attempt: 1, maxAttempts: 5, delayMs: 3000, errorMessage: "first" })
+		await record.retrying?.({ attempt: 2, maxAttempts: 5, delayMs: 5000, errorMessage: "second" })
+
+		const cards = harness.rows.filter((row) => row.say === "error_retry")
+		expect(cards).toHaveLength(1)
+		expect(JSON.parse(cards[0].text ?? "{}")).toEqual({
+			attempt: 2,
+			maxAttempts: 5,
+			delaySeconds: 5,
+			errorMessage: "second",
+		})
+
+		await record.recovered?.()
+		await record.settle({ usage: { inputTokens: 10, outputTokens: 1 }, outcome: "completed" })
+
+		expect(harness.rows.filter((row) => row.say === "error_retry")).toEqual([])
+		expect(requestInfo(harness.rows[0]).tokensIn).toBe(10)
+	})
+
+	it("marks the retry card failed when the retries did not recover the request", async () => {
+		const harness = createReporter()
+		const record = await harness.reporter.begin({ turnId: "turn-1" })
+
+		await record.retrying?.({ attempt: 5, maxAttempts: 5, delayMs: 30_000, errorMessage: "still down" })
+		await record.settle({ outcome: "failed" })
+
+		const card = harness.rows.find((row) => row.say === "error_retry")
+		expect(JSON.parse(card?.text ?? "{}")).toMatchObject({ failed: true, delaySeconds: 0, errorMessage: "still down" })
+		expect(requestInfo(harness.rows[0]).cancelReason).toBe("streaming_failed")
+	})
+
+	it("withdraws the retry card when the user cancels during the countdown", async () => {
+		const harness = createReporter()
+		const record = await harness.reporter.begin({ turnId: "turn-1" })
+
+		await record.retrying?.({ attempt: 1, maxAttempts: 5, delayMs: 3000, errorMessage: "down" })
+		await record.settle({ outcome: "cancelled" })
+
+		expect(harness.rows.filter((row) => row.say === "error_retry")).toEqual([])
 	})
 
 	it("settles each request against its own row", async () => {

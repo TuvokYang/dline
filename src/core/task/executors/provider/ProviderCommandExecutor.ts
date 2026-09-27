@@ -7,6 +7,7 @@ import {
 	type ProviderRequestOutcome,
 	type ProviderRequestRecord,
 	type ProviderRequestReportPort,
+	type ProviderRetryNotice,
 } from "./service/ProviderRequestReport"
 
 export type ProviderExecutionChunk =
@@ -19,6 +20,8 @@ export type ProviderExecutionChunk =
 			readonly projection?: Readonly<Record<string, unknown>>
 	  }
 	| { readonly kind: "usage"; readonly usage: Readonly<Record<string, number>> }
+	/** The request failed before its first chunk and will be sent again; nothing reached the journal. */
+	| { readonly kind: "retry"; readonly notice: ProviderRetryNotice }
 	| {
 			readonly kind: "final"
 			readonly turnId: string
@@ -163,7 +166,7 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
 		// happens when the signal fired, so an unset outcome means cancellation.
 		let outcome: ProviderRequestOutcome = "cancelled"
 		try {
-			const turn = await this.streamTurn(command, signal, usage)
+			const turn = await this.streamTurn(command, signal, usage, record)
 			if (turn) outcome = "completed"
 			return turn
 		} catch (error) {
@@ -199,6 +202,23 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
 		}
 	}
 
+	/** Retry progress only costs visibility when it cannot be shown, never the turn. */
+	private async noteRetry(record: ProviderRequestRecord | undefined, notice: ProviderRetryNotice): Promise<void> {
+		try {
+			await record?.retrying?.(notice)
+		} catch {
+			// Reporting must not change provider execution semantics.
+		}
+	}
+
+	private async noteRecovered(record: ProviderRequestRecord | undefined): Promise<void> {
+		try {
+			await record?.recovered?.()
+		} catch {
+			// Reporting must not change provider execution semantics.
+		}
+	}
+
 	private absorbUsage(accumulated: UsageAccumulator, usage: Readonly<Record<string, number>>): void {
 		accumulated.value = mergeProviderUsage(accumulated.value, usage)
 		try {
@@ -212,9 +232,11 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
 		command: ProviderStartCommand,
 		signal: AbortSignal,
 		usage: UsageAccumulator,
+		record: ProviderRequestRecord | undefined,
 	): Promise<ProviderTurnOutcome | undefined> {
 		let finalChunk: Extract<ProviderExecutionChunk, { kind: "final" }> | undefined
 		let transientId: string | undefined
+		let retrying = false
 		for await (const chunk of this.port.start({ draftRef: command.draftRef, turnId: command.turnId, signal })) {
 			if (signal.aborted) return undefined
 			if (finalChunk) {
@@ -223,6 +245,17 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
 					continue
 				}
 				throw new Error("ChunkAfterFinal")
+			}
+			if (chunk.kind === "retry") {
+				// A retry is only legal before the stream produced anything.
+				if (transientId) throw new Error("RetryAfterStreamStarted")
+				retrying = true
+				await this.noteRetry(record, chunk.notice)
+				continue
+			}
+			if (retrying) {
+				retrying = false
+				await this.noteRecovered(record)
 			}
 			if (chunk.kind === "partial") {
 				if (transientId && transientId !== chunk.transientId) throw new Error("MultipleTransientStreams")

@@ -8,6 +8,7 @@ import type {
 	ProviderPartialEnvelope,
 } from "../../stores/payload/TaskPayloadEnvelopes"
 import type { ProviderExecutionChunk, ProviderExecutionInput, ProviderExecutionPort } from "./ProviderCommandExecutor"
+import type { ProviderRetryNotice } from "./service/ProviderRequestReport"
 
 export type ProductionProviderChunk =
 	| {
@@ -17,6 +18,8 @@ export type ProductionProviderChunk =
 			readonly projection?: Readonly<Record<string, unknown>>
 	  }
 	| { readonly kind: "usage"; readonly usage: Readonly<Record<string, number>> }
+	/** The request failed before its first chunk and will be sent again. */
+	| { readonly kind: "retry"; readonly notice: ProviderRetryNotice }
 	| {
 			readonly kind: "final"
 			readonly turnId: string
@@ -51,7 +54,7 @@ export class ProductionProviderAdapter implements ProviderExecutionPort {
 		if (draft.kind !== "provider_draft") throw new Error("InvalidProviderDraftPayload")
 		for await (const chunk of this.options.service.start({ ...input, draft })) {
 			if (input.signal.aborted) return
-			if (chunk.kind === "usage") {
+			if (chunk.kind === "usage" || chunk.kind === "retry") {
 				yield chunk
 				continue
 			}

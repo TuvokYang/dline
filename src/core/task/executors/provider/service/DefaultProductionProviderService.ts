@@ -1,14 +1,25 @@
 import { createIdentityFactory, type IdentityFactory } from "@core/api/transform/block-identity"
-import type { ApiStreamToolCallsChunk, ApiStreamUsageChunk } from "@core/api/transform/stream"
+import type { ApiStreamChunk, ApiStreamToolCallsChunk, ApiStreamUsageChunk } from "@core/api/transform/stream"
 import { createStreamNormalizer, normalizeApiStream } from "@core/api/transform/stream-identity-normalizer"
 import { parseAssistantMessageV2, type ToolUse } from "@core/assistant-message"
-import type { ClineAssistantContent, ClineAssistantToolUseBlock } from "@shared/messages/content"
+import { isDeterministicToolPairingError } from "@core/context/context-management/compaction-retryability"
+import type { ClineAssistantContent, ClineAssistantToolUseBlock, ClineStorageMessage } from "@shared/messages/content"
+import { Logger } from "@shared/services/Logger"
+import { ClineError } from "@/services/error"
+import {
+	getRetryDelay,
+	isRetryableProviderError,
+	MAX_AUTO_RETRY_ATTEMPTS,
+	type ProviderIdentity,
+	waitRetryDelayUnlessAborted,
+} from "../../../auto-retry"
 import type {
 	ProviderBlockOutput,
 	ProviderDraftEnvelope,
 	ToolInvocationEnvelope,
 } from "../../../stores/payload/TaskPayloadEnvelopes"
 import type { ProductionProviderChunk, ProductionProviderService } from "../ProductionProviderAdapter"
+import { repairProviderPairing } from "./ProviderPairingRepair"
 import type { PreparedProviderRequest, ProviderRequestFactory } from "./ProviderRequest"
 
 interface PendingNativeTool {
@@ -20,11 +31,43 @@ interface PendingNativeTool {
 	signature?: string
 }
 
+/** How a request that failed before its first chunk is sent again. */
+export interface ProviderRetryPolicy {
+	readonly maxAttempts: number
+	/** Delay before one-based retry `attempt`. */
+	delayMs(attempt: number): number
+	/** Resolve true once the delay elapsed, false as soon as the signal aborts. */
+	wait(delayMs: number, signal: AbortSignal): Promise<boolean>
+}
+
+/** The automatic retry schedule the chat presents: five attempts, bounded at one minute. */
+export const DEFAULT_PROVIDER_RETRY_POLICY: ProviderRetryPolicy = {
+	maxAttempts: MAX_AUTO_RETRY_ATTEMPTS,
+	delayMs: getRetryDelay,
+	wait: waitRetryDelayUnlessAborted,
+}
+
 export interface DefaultProductionProviderServiceOptions {
 	readonly requests: ProviderRequestFactory
 	readonly identities?: IdentityFactory
 	readonly nextPresentationId?: () => number
 	readonly onUsage?: (usage: Readonly<Record<string, number>>) => void
+	readonly retry?: ProviderRetryPolicy
+}
+
+/** Yield a stream's first chunk again, then the rest of it, forwarding early close to the source. */
+async function* continueFrom<T>(first: T, rest: AsyncIterator<T>): AsyncGenerator<T> {
+	yield first
+	yield* { [Symbol.asyncIterator]: () => rest }
+}
+
+/** Release a failed attempt's stream; a stream that already failed has nothing left to report. */
+async function closeQuietly(iterator: AsyncIterator<unknown> | undefined): Promise<void> {
+	try {
+		await iterator?.return?.(undefined)
+	} catch {
+		// The attempt already failed; its cleanup error carries no new information.
+	}
 }
 
 function usageRecord(chunk: ApiStreamUsageChunk): Record<string, number> {
@@ -87,6 +130,23 @@ function visibleAssistantText(text: string): string {
 	return proseOf(parseAssistantMessageV2(text, PREVIEW_PARSE_REGISTRY))
 }
 
+/**
+ * The failure as the chat's error box renders it.
+ *
+ * A provider's own parser knows its error shapes best; the generic transform
+ * is the fallback. Describing a failure must never replace it with another.
+ */
+function describeProviderError(request: PreparedProviderRequest, error: unknown, provider: ProviderIdentity): string {
+	try {
+		const parsed =
+			request.api.parseError?.(error, provider.modelId) ??
+			ClineError.transform(error, provider.modelId, provider.providerId)
+		return parsed.serialize()
+	} catch {
+		return ClineError.transform(error, provider.modelId, provider.providerId).serialize()
+	}
+}
+
 function toolParams(input: Readonly<Record<string, unknown>>): ToolUse["params"] {
 	return Object.fromEntries(
 		Object.entries(input).map(([key, value]) => [key, typeof value === "string" ? value : JSON.stringify(value)]),
@@ -97,11 +157,13 @@ function toolParams(input: Readonly<Record<string, unknown>>): ToolUse["params"]
 export class DefaultProductionProviderService implements ProductionProviderService {
 	private readonly identities: IdentityFactory
 	private readonly nextPresentationId: () => number
+	private readonly retry: ProviderRetryPolicy
 
 	constructor(private readonly options: DefaultProductionProviderServiceOptions) {
 		this.identities = options.identities ?? createIdentityFactory()
 		let presentationId = Date.now()
 		this.nextPresentationId = options.nextPresentationId ?? (() => ++presentationId)
+		this.retry = options.retry ?? DEFAULT_PROVIDER_RETRY_POLICY
 	}
 
 	async *start(input: {
@@ -110,13 +172,13 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 		readonly turnId?: string
 		readonly signal: AbortSignal
 	}): AsyncIterable<ProductionProviderChunk> {
+		// Prepared once: every retry below replays exactly this request, so a
+		// prompt refresh or a newer journal entry cannot change a turn in flight.
 		const request = await this.options.requests.prepare(input.draft, input.signal)
 		const transientId = `provider:${request.turnId}`
 		const textParts: string[] = []
 		const reasoningParts: string[] = []
 		const nativeTools = new Map<string, PendingNativeTool>()
-		const apiStream = request.api.createMessage(request.systemPrompt, request.messages, request.tools, request.options)
-		const stream = normalizeApiStream(apiStream, createStreamNormalizer(this.identities))
 		// Abandoning the stream also withdraws the turn's one-shot authority, so a
 		// cancelled command cannot authorize a tool in a later turn.
 		const abort = () => {
@@ -126,6 +188,8 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 		input.signal.addEventListener("abort", abort, { once: true })
 
 		try {
+			const stream = yield* this.openStream(request, input.signal)
+			if (!stream) return
 			for await (const chunk of stream) {
 				if (input.signal.aborted) return
 				switch (chunk.type) {
@@ -198,6 +262,66 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 
 	recordUsage(usage: Readonly<Record<string, number>>): void {
 		this.options.onUsage?.(usage)
+	}
+
+	/**
+	 * Open the request's stream, sending it again until it produces a first chunk.
+	 *
+	 * Only a failure before the first chunk is replayed: nothing reached the
+	 * conversation or the chat yet, so the same request can simply be sent
+	 * again. After that, a replay would duplicate prose or tool calls the user
+	 * already saw.
+	 *
+	 * A deterministic tool-pairing rejection is not transient, so waiting would
+	 * repeat it. The conversation is rebuilt with canonical pairing once and
+	 * sent immediately; a second rejection fails the request.
+	 *
+	 * Returns undefined when cancellation ended the attempt.
+	 */
+	private async *openStream(
+		request: PreparedProviderRequest,
+		signal: AbortSignal,
+	): AsyncGenerator<ProductionProviderChunk, AsyncIterable<ApiStreamChunk> | undefined> {
+		const provider: ProviderIdentity = { providerId: request.api.getProviderId?.(), modelId: request.api.getModel().id }
+		let messages: ClineStorageMessage[] = request.messages
+		let pairingRebuilt = false
+		let retries = 0
+		for (;;) {
+			let iterator: AsyncIterator<ApiStreamChunk> | undefined
+			let failure: unknown
+			try {
+				const apiStream = request.api.createMessage(request.systemPrompt, messages, request.tools, request.options)
+				iterator = normalizeApiStream(apiStream, createStreamNormalizer(this.identities))[Symbol.asyncIterator]()
+				const first = await iterator.next()
+				if (!first.done) return continueFrom(first.value, iterator)
+				failure = new Error("API stream ended without producing any content")
+			} catch (error) {
+				failure = error
+			}
+			await closeQuietly(iterator)
+			if (signal.aborted) return undefined
+			if (isDeterministicToolPairingError(failure)) {
+				if (pairingRebuilt) throw failure
+				pairingRebuilt = true
+				messages = repairProviderPairing(messages)
+				Logger.warn("[provider] request rejected for tool pairing; sending it once with canonical pairing")
+				continue
+			}
+			if (retries >= this.retry.maxAttempts || !isRetryableProviderError(failure, provider)) throw failure
+			retries++
+			const delayMs = this.retry.delayMs(retries)
+			Logger.warn(`[provider] request failed before its first chunk; retry ${retries} in ${delayMs}ms`, failure)
+			yield {
+				kind: "retry",
+				notice: {
+					attempt: retries,
+					maxAttempts: this.retry.maxAttempts,
+					delayMs,
+					errorMessage: describeProviderError(request, failure, provider),
+				},
+			}
+			if (!(await this.retry.wait(delayMs, signal))) return undefined
+		}
 	}
 
 	private consumeNativeTool(tools: Map<string, PendingNativeTool>, chunk: ApiStreamToolCallsChunk): void {
