@@ -1,5 +1,6 @@
-import { appendFile, mkdir, readFile, rename, writeFile } from "node:fs/promises"
+import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
+import { writeFileAtomic } from "@/shared/storage/atomic-file"
 
 export type JournalSignalFile = "usage" | "metrics" | "traces"
 
@@ -181,9 +182,7 @@ export class JsonlJournalWriter {
 		}
 		const kept = lines.slice(firstKept)
 		this.truncated += lines.length - kept.length
-		const temporary = `${path}.tmp`
-		await writeFile(temporary, kept.length > 0 ? `${kept.join("\n")}\n` : "", "utf8")
-		await rename(temporary, path)
+		await writeFileAtomic(path, kept.length > 0 ? `${kept.join("\n")}\n` : "")
 		this.writtenBytes.set(file, keptBytes)
 	}
 }

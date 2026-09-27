@@ -1,6 +1,7 @@
 import { createWriteStream, type WriteStream } from "node:fs"
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises"
+import { mkdir, readFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
+import { writeFileAtomic } from "@/shared/storage/atomic-file"
 import { toOtlpLogRecord } from "../otel-semantics"
 import type { RuntimeTelemetryEvent } from "../types"
 
@@ -186,9 +187,7 @@ export class SessionJournal {
 
 		const kept = lines.slice(firstKept)
 		this.truncated += lines.length - kept.length
-		const temporary = `${this.path}.tmp`
-		await writeFile(temporary, kept.length > 0 ? `${kept.join("\n")}\n` : "", "utf8")
-		await rename(temporary, this.path)
+		await writeFileAtomic(this.path, kept.length > 0 ? `${kept.join("\n")}\n` : "")
 		this.writtenBytes = keptBytes
 	}
 
