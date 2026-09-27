@@ -155,6 +155,7 @@ vi.mock("../chat-view", () => {
 			handleTaskCloseButtonClick: vi.fn(),
 			startNewTask: vi.fn(async () => undefined),
 		}),
+		useStoppedReasoningExpansion: () => undefined,
 		useScrollBehavior: () => ({
 			disableAutoScrollRef: { current: false },
 			isAtBottom: true,

@@ -1,25 +1,23 @@
 import type { TaskViewPhase, UiMessage } from "@shared/ExtensionMessage"
-import { type Dispatch, type SetStateAction, useEffect, useRef } from "react"
+import { type Dispatch, type SetStateAction, useLayoutEffect, useRef } from "react"
 
 /** Phases in which the task waits for the user after its reply was cut short. */
 const STOPPED_PHASES: ReadonlySet<TaskViewPhase> = new Set<TaskViewPhase>(["cancelling", "paused", "aborted"])
 
-/** Rows a stop itself appends; they do not mean the reply went on past its reasoning. */
-function isStopRow(message: UiMessage): boolean {
-	return message.type === "ask" && (message.ask === "resume_task" || message.ask === "resume_completed_task")
-}
-
 /**
- * The reasoning row the reply is still on, if its thinking is the newest thing shown.
+ * What the newest streaming row says about the reasoning being watched.
  *
- * Once the reply moves on to prose or a tool call, that newer row carries what
- * the user is reading, so the reasoning is no longer the reply's frontier.
+ * Only a live stream produces partial rows, so a task shown from history never
+ * starts a watch. `undefined` means nothing is streaming: the previous
+ * observation stands, because a stop may settle the row before the phase moves.
+ * Once the reply streams prose or a tool, that newer row is what the user is
+ * reading and the reasoning is no longer watched.
  */
-function frontierReasoningTs(messages: readonly UiMessage[]): number | undefined {
+function observeStreamingRow(messages: readonly UiMessage[]): { readonly reasoningTs?: number } | undefined {
 	for (let index = messages.length - 1; index >= 0; index--) {
 		const message = messages[index]
-		if (isStopRow(message)) continue
-		return message.say === "reasoning" ? message.ts : undefined
+		if (message.partial !== true) continue
+		return { reasoningTs: message.say === "reasoning" ? message.ts : undefined }
 	}
 	return undefined
 }
@@ -53,7 +51,9 @@ export function useStoppedReasoningExpansion(
 	const openedTsRef = useRef<number>()
 	const taskIdRef = useRef(taskId)
 
-	useEffect(() => {
+	// Layout, not passive: the stop commits the streamed row as settled, and a
+	// passive effect would let that collapsed row paint before it is reopened.
+	useLayoutEffect(() => {
 		if (taskIdRef.current !== taskId) {
 			// The parent clears expandedRows for a new task; only forget what was watched.
 			taskIdRef.current = taskId
@@ -76,8 +76,13 @@ export function useStoppedReasoningExpansion(
 			setExpandedRows((rows) => withoutRow(rows, openedTs))
 		}
 
-		// Only a reply streaming right now can be stopped mid-thought; any other
-		// phase means the reasoning already led somewhere.
-		watchedTsRef.current = phase === "streaming" ? frontierReasoningTs(messages) : undefined
+		if (phase === "completed") {
+			watchedTsRef.current = undefined
+			return
+		}
+		// Not gated on "streaming": the first round of a task streams while the
+		// task is still initializing, and it can be stopped just the same.
+		const observation = observeStreamingRow(messages)
+		if (observation) watchedTsRef.current = observation.reasoningTs
 	}, [messages, phase, setExpandedRows, taskId])
 }

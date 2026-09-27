@@ -156,12 +156,14 @@ export function filterVisibleMessages(messages: UiMessage[]): UiMessage[] {
 				return false
 			// NOTE: reasoning passes through to be included in tool groups
 			case "api_req_started": {
-				// api_req_started rows only render visible content for errors/cancels.
-				// Reasoning has its own standalone ChatRows. Everything else renders
-				// as invisible padding. Filter out unless there's an error.
+				// api_req_started rows only render visible content for failures.
+				// Reasoning has its own standalone ChatRows, and a cancelled request
+				// has nothing of its own to show: keeping it only re-rendered that
+				// reasoning a second time under the request. Filter out unless the
+				// request failed.
 				try {
 					const info = JSON.parse(message.text || "{}")
-					if (info.cancelReason || info.streamingFailedMessage) {
+					if (info.streamingFailedMessage) {
 						break // keep - has error content
 					}
 				} catch {

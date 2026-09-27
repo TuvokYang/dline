@@ -1,6 +1,7 @@
 import type { TaskViewState, UiMessage } from "@shared/ExtensionMessage"
 import { describe, expect, it } from "vitest"
 import {
+	filterVisibleMessages,
 	findGroupedMessageByTs,
 	groupLowStakesTools,
 	groupMessages,
@@ -29,6 +30,28 @@ const createReasoningMessage = (ts: number, text: string): UiMessage => ({
 	say: "reasoning",
 	text,
 	ts,
+})
+
+const createRequestMessage = (ts: number, info: Record<string, unknown>): UiMessage => ({
+	type: "say",
+	say: "api_req_started",
+	text: JSON.stringify(info),
+	ts,
+})
+
+describe("filterVisibleMessages request rows", () => {
+	it("hides a cancelled request so its reasoning renders once", () => {
+		const request = createRequestMessage(1, { cost: 0, cancelReason: "user_cancelled" })
+		const reasoning = createReasoningMessage(2, "thought")
+
+		expect(filterVisibleMessages([request, reasoning])).toEqual([reasoning])
+	})
+
+	it("keeps a request whose stream failed", () => {
+		const request = createRequestMessage(1, { cost: 0, streamingFailedMessage: "boom" })
+
+		expect(filterVisibleMessages([request])).toEqual([request])
+	})
 })
 
 /**

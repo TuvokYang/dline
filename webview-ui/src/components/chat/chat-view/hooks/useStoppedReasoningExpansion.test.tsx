@@ -40,6 +40,14 @@ describe("useStoppedReasoningExpansion", () => {
 		expect(hook.result.current.expandedRows).toEqual({})
 	})
 
+	it("opens reasoning streamed by a task's first round, which is still initializing", () => {
+		const hook = renderExpansion({ messages: [REQUEST, STREAMING_REASONING], phase: "initializing", taskId: "task-1" })
+
+		hook.rerender({ messages: [REQUEST, SETTLED_REASONING, RESUME_ASK], phase: "paused", taskId: "task-1" })
+
+		expect(hook.result.current.expandedRows).toEqual({ 2: true })
+	})
+
 	it("opens the reasoning even when the stop settles the row before the phase moves", () => {
 		const hook = renderExpansion({ messages: [REQUEST, STREAMING_REASONING], phase: "streaming", taskId: "task-1" })
 
