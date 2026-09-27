@@ -1,5 +1,5 @@
 import path from "path"
-import { ClineMessage } from "@/shared/ExtensionMessage"
+import { UiMessage } from "@/shared/ExtensionMessage"
 import type { BufferedUnifyStore } from "./backend/api/UnifyStore"
 import { BufferedUnifyStore as BufferedStore } from "./backend/core/BufferedUnifyStore"
 import { dedupeClineMessagesByTs } from "./disk"
@@ -22,9 +22,9 @@ function subscriptionKey(databasePath: string): string {
  * older JSON file) is imported once on open and then renamed to `<name>.migrated`.
  */
 export class UIMessage {
-	private store: BufferedUnifyStore<ClineMessage>
+	private store: BufferedUnifyStore<UiMessage>
 
-	private constructor(store: BufferedUnifyStore<ClineMessage>) {
+	private constructor(store: BufferedUnifyStore<UiMessage>) {
 		this.store = store
 	}
 
@@ -38,7 +38,7 @@ export class UIMessage {
 			await rows.close().catch(() => undefined)
 			throw error
 		}
-		const store = await BufferedStore.open<UiMessageRecord, ClineMessage>({
+		const store = await BufferedStore.open<UiMessageRecord, UiMessage>({
 			store: rows,
 			mapping: {
 				ordinal: UI_MESSAGE_ORDINAL,
@@ -66,13 +66,13 @@ export class UIMessage {
 	}
 
 	// ── Read ──
-	getAll(): ReadonlyArray<ClineMessage> {
+	getAll(): ReadonlyArray<UiMessage> {
 		return this.store.getAll()
 	}
-	getByTs(ts: number): ClineMessage | undefined {
+	getByTs(ts: number): UiMessage | undefined {
 		return this.store.getByTimestamp(ts)
 	}
-	getAt(index: number): ClineMessage | undefined {
+	getAt(index: number): UiMessage | undefined {
 		return this.store.getAt(index)
 	}
 	findIndexByTs(ts: number): number {
@@ -83,22 +83,22 @@ export class UIMessage {
 	}
 
 	// ── Low-level Write (delegated) ──
-	async append(msg: ClineMessage): Promise<void> {
+	async append(msg: UiMessage): Promise<void> {
 		await this.store.append(msg)
 	}
-	async appendDurable(msg: ClineMessage): Promise<ClineMessage> {
+	async appendDurable(msg: UiMessage): Promise<UiMessage> {
 		return await this.store.appendDurable(msg)
 	}
 	async truncate(beforeTs: number): Promise<void> {
 		await this.store.truncateBeforeTimestamp(beforeTs)
 	}
-	async overwrite(items: ClineMessage[]): Promise<void> {
+	async overwrite(items: UiMessage[]): Promise<void> {
 		await this.store.replaceAll(items)
 	}
-	async insertAt(index: number, msg: ClineMessage): Promise<void> {
+	async insertAt(index: number, msg: UiMessage): Promise<void> {
 		await this.store.insertAt(index, msg)
 	}
-	async updateAt(index: number, msg: ClineMessage): Promise<void> {
+	async updateAt(index: number, msg: UiMessage): Promise<void> {
 		await this.store.stageUpdateAt(index, msg)
 	}
 	async deleteAt(index: number): Promise<void> {
@@ -124,7 +124,7 @@ export class UIMessage {
 	 *
 	 * @returns The index and message as stored
 	 */
-	async addMessage(msg: ClineMessage): Promise<{ index: number; message: ClineMessage }> {
+	async addMessage(msg: UiMessage): Promise<{ index: number; message: UiMessage }> {
 		if (msg.partial === true) {
 			return this.upsertMessage(msg)
 		}
@@ -142,8 +142,8 @@ export class UIMessage {
 	 * @param msg The message to upsert
 	 * @returns The index and message as stored
 	 */
-	async upsertMessage(msg: ClineMessage): Promise<{ index: number; message: ClineMessage }> {
-		const all = this.store.getAll() as ClineMessage[]
+	async upsertMessage(msg: UiMessage): Promise<{ index: number; message: UiMessage }> {
+		const all = this.store.getAll() as UiMessage[]
 		const existingIndex = all.findIndex((m) => m.ts === msg.ts)
 
 		if (existingIndex >= 0) {
@@ -171,7 +171,7 @@ export class UIMessage {
 	 * @param msg The finalized message (partial must be false)
 	 * @returns The finalized message
 	 */
-	async finalizeMessage(msg: ClineMessage): Promise<ClineMessage> {
+	async finalizeMessage(msg: UiMessage): Promise<UiMessage> {
 		msg.partial = false
 		await this.store.stageUpsertByTimestamp(msg)
 		return msg
@@ -185,7 +185,7 @@ export class UIMessage {
 	 * @param updates Partial fields to merge into the existing message
 	 * @returns The updated message
 	 */
-	async updateMessage(index: number, updates: Partial<ClineMessage>): Promise<ClineMessage> {
+	async updateMessage(index: number, updates: Partial<UiMessage>): Promise<UiMessage> {
 		return await this.store.stagePatchAt(index, updates)
 	}
 
@@ -195,8 +195,8 @@ export class UIMessage {
 	 * @param index Zero-based index
 	 * @returns The deleted message
 	 */
-	async deleteMessage(index: number): Promise<ClineMessage> {
-		const all = this.store.getAll() as ClineMessage[]
+	async deleteMessage(index: number): Promise<UiMessage> {
+		const all = this.store.getAll() as UiMessage[]
 		if (index < 0 || index >= all.length) {
 			throw new Error(`UIMessage.deleteMessage: index ${index} out of range [0, ${all.length})`)
 		}
@@ -238,7 +238,7 @@ export class UIMessage {
 		let removed = 0
 		await this.store.mutate((items) => {
 			const before = items.length
-			const kept = (items as unknown as ClineMessage[]).filter((m) => m.partial !== true)
+			const kept = (items as unknown as UiMessage[]).filter((m) => m.partial !== true)
 			removed = before - kept.length
 			return kept as unknown as typeof items
 		})
@@ -257,7 +257,7 @@ export class UIMessage {
 		let removed = 0
 		await this.store.mutate((items) => {
 			const before = items.length
-			const kept = (items as unknown as ClineMessage[]).filter((m) => !tsSet.has(m.ts))
+			const kept = (items as unknown as UiMessage[]).filter((m) => !tsSet.has(m.ts))
 			removed = before - kept.length
 			return kept as unknown as typeof items
 		})
@@ -269,7 +269,7 @@ export class UIMessage {
 	 * Partial messages are never persisted to disk, so this is memory-only.
 	 */
 	clearPartialFlags(): void {
-		const all = this.store.getAll() as ClineMessage[]
+		const all = this.store.getAll() as UiMessage[]
 		for (const msg of all) {
 			if (msg.partial === true) {
 				msg.partial = false

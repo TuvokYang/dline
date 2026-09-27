@@ -2,7 +2,7 @@
  * Shared types and interfaces for the chat view components
  */
 
-import { ClineAsk, ClineMessage } from "@shared/ExtensionMessage"
+import { UiAsk, UiMessage } from "@shared/ExtensionMessage"
 import { ListRange, VirtuosoHandle } from "react-virtuoso"
 import type { InteractionDraft } from "../../../../task-interaction/types"
 import type { ScrollRequest } from "../utils/scrollArbiter"
@@ -54,8 +54,8 @@ export interface ChatState {
 	textAreaRef: React.RefObject<HTMLTextAreaElement>
 
 	// Derived presentation values
-	lastMessage: ClineMessage | undefined
-	secondLastMessage: ClineMessage | undefined
+	lastMessage: UiMessage | undefined
+	secondLastMessage: UiMessage | undefined
 
 	// Handlers
 	handleFocusChange: (isFocused: boolean) => void
@@ -114,7 +114,7 @@ export interface ScrollBehavior {
 	setIsAtBottom: React.Dispatch<React.SetStateAction<boolean>>
 	pendingScrollToMessage: number | null
 	setPendingScrollToMessage: React.Dispatch<React.SetStateAction<number | null>>
-	scrolledPastUserMessage: ClineMessage | null
+	scrolledPastUserMessage: UiMessage | null
 	handleRangeChanged: (range: ListRange) => void
 }
 
@@ -142,8 +142,8 @@ export interface InputState {
  * Task section props
  */
 export interface TaskSectionProps {
-	task: ClineMessage
-	messages: ClineMessage[]
+	task: UiMessage
+	messages: UiMessage[]
 	scrollBehavior: ScrollBehavior
 	buttonState: ButtonState
 	messageHandlers: MessageHandlers
@@ -164,8 +164,8 @@ export interface TaskSectionProps {
 		supportsImages: boolean
 	}
 	isStreaming: boolean
-	clineAsk?: ClineAsk
-	modifiedMessages: ClineMessage[]
+	clineAsk?: UiAsk
+	modifiedMessages: UiMessage[]
 }
 
 /**

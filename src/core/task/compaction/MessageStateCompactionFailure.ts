@@ -1,4 +1,4 @@
-import type { ClineSayTool } from "@shared/ExtensionMessage"
+import type { UiSayTool } from "@shared/ExtensionMessage"
 import type { CompactionFailurePresentationPort } from "../executors/compaction/ProductionCompactionAdapter"
 import type { MessageStateHandler } from "../message-state"
 import type { PresentationIdSequence } from "../session/PresentationIdSequence"
@@ -40,7 +40,7 @@ export class MessageStateCompactionFailure implements CompactionFailurePresentat
 				compactionUnitKind: "failure",
 				compactionDurable: true,
 				error: COMPACTION_FAILURE_MESSAGE,
-			} satisfies ClineSayTool),
+			} satisfies UiSayTool),
 		})
 	}
 }

@@ -1,4 +1,4 @@
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 
 /**
  * Height a fenced code block contributes per line of code, in pixels.
@@ -45,7 +45,7 @@ const FENCE_PATTERN = /^[ \t]{0,3}(`{3,}|~{3,})/
  * @param message Message about to be rendered.
  * @returns Estimated row height in pixels, or undefined to use the default.
  */
-export function estimateMessageHeight(message: ClineMessage): number | undefined {
+export function estimateMessageHeight(message: UiMessage): number | undefined {
 	const text = message.text
 	if (!text || !text.includes("```")) return undefined
 
@@ -84,7 +84,7 @@ export function estimateMessageHeight(message: ClineMessage): number | undefined
  * @param row Row about to be rendered.
  * @returns Estimated height in pixels, or undefined to use the default.
  */
-export function estimateRowHeight(row: ClineMessage | ClineMessage[]): number | undefined {
+export function estimateRowHeight(row: UiMessage | UiMessage[]): number | undefined {
 	if (!Array.isArray(row)) return estimateMessageHeight(row)
 
 	let total = 0

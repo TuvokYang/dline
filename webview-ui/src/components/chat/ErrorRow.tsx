@@ -1,4 +1,4 @@
-import { ClineMessage } from "@shared/ExtensionMessage"
+import { UiMessage } from "@shared/ExtensionMessage"
 import { memo } from "react"
 import CreditLimitError from "@/components/chat/CreditLimitError"
 import SpendLimitError from "@/components/chat/SpendLimitError"
@@ -8,7 +8,7 @@ import { ClineError, ClineErrorType } from "../../../../src/services/error/Cline
 import { ApiErrorBox } from "./ApiErrorBox"
 
 interface ErrorRowProps {
-	message: ClineMessage
+	message: UiMessage
 	errorType: "error" | "mistake_limit_reached" | "diff_error" | "clineignore_error"
 	apiRequestFailedMessage?: string
 	apiReqStreamingFailedMessage?: string

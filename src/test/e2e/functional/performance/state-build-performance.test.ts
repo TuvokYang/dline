@@ -3,7 +3,7 @@ import * as path from "node:path"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { rewriteTaskUiMessages } from "@e2e/utils/task-instance-store"
 import { expect, type Frame } from "@playwright/test"
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 
 const TASK_TEXT = "E2E_STATE_BUILD_PERF_TASK"
 const TURN_1_DONE = "E2E_STATE_BUILD_PERF_TURN_1_DONE"
@@ -46,7 +46,7 @@ function parseStateBuildDurations(output: string, taskId: string, sinceMs: numbe
 async function appendApiRequestPairs(dlineDocsDir: string, taskId: string, pairCount: number): Promise<void> {
 	await rewriteTaskUiMessages(dlineDocsDir, taskId, (messages) => {
 		const maxTs = messages.reduce((max, message) => Math.max(max, message.ts), 0)
-		const pairs: ClineMessage[] = []
+		const pairs: UiMessage[] = []
 		for (let i = 0; i < pairCount; i++) {
 			const ts = maxTs + i * 2 + 1
 			// Realistic message payloads: the field logs show ~226KB per 1000 messages,

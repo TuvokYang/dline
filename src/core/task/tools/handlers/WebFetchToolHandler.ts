@@ -1,5 +1,5 @@
 import { getPrompt } from "@core/prompts/i18n"
-import { ClineSayTool } from "@shared/ExtensionMessage"
+import { UiSayTool } from "@shared/ExtensionMessage"
 import { ClineDefaultTool } from "@shared/tools"
 import { telemetryService } from "@/services/telemetry"
 import { BrowserWebFetchProvider, type LocalWebFetchProvider } from "@/services/web-fetch/LocalWebFetchProvider"
@@ -34,7 +34,7 @@ export class WebFetchToolHandler implements IFullyManagedTool {
 		const url = block.params.url || ""
 		const normalizedUrl = uiHelpers.removeClosingTag(block, "url", url)
 		if (!normalizedUrl.trim()) return
-		const sharedMessageProps: ClineSayTool = {
+		const sharedMessageProps: UiSayTool = {
 			tool: "webFetch",
 			path: normalizedUrl,
 			content: `Fetching URL: ${normalizedUrl}`,
@@ -44,7 +44,7 @@ export class WebFetchToolHandler implements IFullyManagedTool {
 				status: "running",
 				url: normalizedUrl,
 			},
-		} satisfies ClineSayTool
+		} satisfies UiSayTool
 
 		const partialMessage = JSON.stringify(sharedMessageProps)
 
@@ -53,11 +53,11 @@ export class WebFetchToolHandler implements IFullyManagedTool {
 
 	async execute(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
 		const operationSignal = config.taskState.operationSignal
-		let terminalMessage: ClineSayTool | undefined
+		let terminalMessage: UiSayTool | undefined
 		let failureWritten = false
 		const writeFailure = async (message: string): Promise<void> => {
 			if (operationSignal.aborted || failureWritten || !terminalMessage?.webFetch) return
-			const failedMessage: ClineSayTool = {
+			const failedMessage: UiSayTool = {
 				...terminalMessage,
 				content: `Web fetch failed: ${message}`,
 				webFetch: {
@@ -104,7 +104,7 @@ export class WebFetchToolHandler implements IFullyManagedTool {
 			config.taskState.consecutiveMistakeCount = 0
 
 			// Create message for approval
-			const sharedMessageProps: ClineSayTool = {
+			const sharedMessageProps: UiSayTool = {
 				tool: "webFetch",
 				path: url,
 				content: `Fetching URL: ${url}`,
@@ -147,7 +147,7 @@ export class WebFetchToolHandler implements IFullyManagedTool {
 			throwIfCancelled(operationSignal)
 			const result = await this.provider.fetch({ url, prompt, signal: operationSignal })
 			throwIfCancelled(operationSignal)
-			const completedMessage: ClineSayTool = {
+			const completedMessage: UiSayTool = {
 				...sharedMessageProps,
 				content: `Fetched URL: ${result.url}`,
 				webFetch: {

@@ -1,6 +1,6 @@
 import { formatResponse } from "@core/prompts/responses"
 import { processFilesIntoText } from "@integrations/misc/extract-text"
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import {
 	type ClineContent,
 	type ClineStorageMessage,
@@ -15,7 +15,7 @@ import type { NewTaskConsumedState, NewTaskFeedback } from "./new-task-handoff"
 /** Persisted histories used to recover the latest causally submitted New Task feedback. */
 export interface NewTaskFeedbackHistory {
 	readonly apiHistory: readonly ClineStorageMessage[]
-	readonly uiHistory: readonly ClineMessage[]
+	readonly uiHistory: readonly UiMessage[]
 	readonly approvedSource: NewTaskConsumedState
 }
 

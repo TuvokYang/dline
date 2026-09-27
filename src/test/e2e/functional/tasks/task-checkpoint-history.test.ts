@@ -8,11 +8,11 @@ import {
 	rewriteTaskUiMessages,
 } from "@e2e/utils/task-instance-store"
 import { expect, type Frame, type Locator } from "@playwright/test"
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import type { TaskActivityRecord } from "@shared/task-activity"
 
 /** Stored chat rows as loose records, for fixtures that edit fields outside the message type. */
-function asRecords(messages: ClineMessage[]): Array<Record<string, unknown>> {
+function asRecords(messages: UiMessage[]): Array<Record<string, unknown>> {
 	return messages as unknown as Array<Record<string, unknown>>
 }
 
@@ -244,7 +244,7 @@ async function simulateIncompleteTurnEndContinuation(dlineDocsDir: string, taskI
 async function appendPersistedTimelineTail(dlineDocsDir: string, taskId: string, count: number): Promise<void> {
 	await rewriteTaskUiMessages(dlineDocsDir, taskId, (messages) => {
 		const maxTs = messages.reduce((max, message) => Math.max(max, message.ts), 0)
-		const tail: ClineMessage[] = Array.from({ length: count }, (_, index) => ({
+		const tail: UiMessage[] = Array.from({ length: count }, (_, index) => ({
 			ts: maxTs + index + 1,
 			type: "say",
 			say: "text",

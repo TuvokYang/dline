@@ -2,7 +2,7 @@ import { ApiHandler } from "@core/api"
 import { findLastIndex } from "@shared/array"
 import { showApprovalNotification } from "@/integrations/notifications"
 import { calculateApiUsageStatistics } from "@/shared/api-usage"
-import { ClineApiReqCancelReason, ClineApiReqInfo } from "@/shared/ExtensionMessage"
+import { UiApiReqCancelReason, UiApiReqInfo } from "@/shared/ExtensionMessage"
 import { calculateApiCostAnthropic } from "@/utils/cost"
 import { MessageStateHandler } from "./message-state"
 
@@ -21,7 +21,7 @@ type UpdateApiReqMsgParams = {
 	totalCost?: number
 	cacheHitRate?: number
 	api: ApiHandler
-	cancelReason?: ClineApiReqCancelReason
+	cancelReason?: UiApiReqCancelReason
 	streamingFailedMessage?: string
 }
 
@@ -43,7 +43,7 @@ export const updateApiReqMsg = async (params: UpdateApiReqMsgParams): Promise<vo
 			`Unable to finalize API request message: no api_req_started message remains (requested index ${params.lastApiReqIndex})`,
 		)
 	}
-	const currentApiReqInfo: ClineApiReqInfo = JSON.parse(clineMessages[currentApiReqIndex].text || "{}")
+	const currentApiReqInfo: UiApiReqInfo = JSON.parse(clineMessages[currentApiReqIndex].text || "{}")
 	delete currentApiReqInfo.retryStatus // Clear retry status when request is finalized
 
 	const modelInfo = params.api.getModel().info
@@ -76,7 +76,7 @@ export const updateApiReqMsg = async (params: UpdateApiReqMsgParams): Promise<vo
 			outputPrice: modelInfo.pricing?.outputPrice,
 			cancelReason: params.cancelReason,
 			streamingFailedMessage: params.streamingFailedMessage,
-		} satisfies ClineApiReqInfo),
+		} satisfies UiApiReqInfo),
 	})
 }
 

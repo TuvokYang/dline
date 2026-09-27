@@ -1,10 +1,10 @@
-import type { ClineMessage } from "@/shared/ExtensionMessage"
+import type { UiMessage } from "@/shared/ExtensionMessage"
 import { readLegacyUiMessages } from "./messages/importLegacyUiMessages"
 import { openUiMessageRows, UI_MESSAGE_READER } from "./messages/openUiMessageRows"
 import type { UiMessageRowStore } from "./messages/UiMessageRowStore"
 
 export interface UIMessageWindowPage {
-	messages: ClineMessage[]
+	messages: UiMessage[]
 	totalCount: number
 	startIndex: number
 }
@@ -12,8 +12,8 @@ export interface UIMessageWindowPage {
 /** Where a window reads its messages from. */
 interface WindowSource {
 	readonly count: number
-	read(start: number, end: number): Promise<ClineMessage[]>
-	findByTimestamp(timestamp: number): Promise<ClineMessage | undefined>
+	read(start: number, end: number): Promise<UiMessage[]>
+	findByTimestamp(timestamp: number): Promise<UiMessage | undefined>
 	close(): Promise<void>
 }
 
@@ -24,11 +24,11 @@ class RowSource implements WindowSource {
 		readonly count: number,
 	) {}
 
-	async read(start: number, end: number): Promise<ClineMessage[]> {
+	async read(start: number, end: number): Promise<UiMessage[]> {
 		return (await this.rows.readRange(start, end)).map((record) => record.message)
 	}
 
-	async findByTimestamp(timestamp: number): Promise<ClineMessage | undefined> {
+	async findByTimestamp(timestamp: number): Promise<UiMessage | undefined> {
 		return (await this.rows.findLastByTimestamp(timestamp))?.message
 	}
 
@@ -39,17 +39,17 @@ class RowSource implements WindowSource {
 
 /** A legacy history that has not been imported yet because the task was not opened since the upgrade. */
 class LegacySource implements WindowSource {
-	constructor(private readonly messages: readonly ClineMessage[]) {}
+	constructor(private readonly messages: readonly UiMessage[]) {}
 
 	get count(): number {
 		return this.messages.length
 	}
 
-	async read(start: number, end: number): Promise<ClineMessage[]> {
+	async read(start: number, end: number): Promise<UiMessage[]> {
 		return this.messages.slice(start, end)
 	}
 
-	async findByTimestamp(timestamp: number): Promise<ClineMessage | undefined> {
+	async findByTimestamp(timestamp: number): Promise<UiMessage | undefined> {
 		return this.messages.find((message) => message.ts === timestamp)
 	}
 
@@ -88,7 +88,7 @@ export class UIMessageWindowReader {
 		return this.source.count
 	}
 
-	async getLatest(limit: number): Promise<ClineMessage[]> {
+	async getLatest(limit: number): Promise<UiMessage[]> {
 		return (await this.getPage(-1, limit)).messages
 	}
 
@@ -105,7 +105,7 @@ export class UIMessageWindowReader {
 		return { messages, totalCount, startIndex }
 	}
 
-	async getByTimestamp(timestamp: number): Promise<ClineMessage | undefined> {
+	async getByTimestamp(timestamp: number): Promise<UiMessage | undefined> {
 		this.assertOpen()
 		return await this.source.findByTimestamp(timestamp)
 	}

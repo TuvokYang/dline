@@ -1,5 +1,5 @@
 import type { MessageStateHandler } from "@core/task/message-state"
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import { describe, expect, it } from "vitest"
 import { ControllerTaskCallbacksOwner } from "../ControllerTaskCallbacksOwner"
 
@@ -8,20 +8,20 @@ import { ControllerTaskCallbacksOwner } from "../ControllerTaskCallbacksOwner"
  * host say adapter has to carry that key all the way into the persisted message.
  * Losing it renders the command with no output at all.
  */
-function messageStore(): { handler: MessageStateHandler; written: ClineMessage[] } {
-	const written: ClineMessage[] = []
+function messageStore(): { handler: MessageStateHandler; written: UiMessage[] } {
+	const written: UiMessage[] = []
 	const handler = {
 		get clineMessages() {
 			return written
 		},
-		addToClineMessages: async (message: ClineMessage) => {
+		addToClineMessages: async (message: UiMessage) => {
 			written.push(message)
 		},
-		upsertClineMessageInMemory: async (message: ClineMessage) => {
+		upsertClineMessageInMemory: async (message: UiMessage) => {
 			written.push(message)
 			return message
 		},
-		finalizeClineMessage: async (message: ClineMessage) => {
+		finalizeClineMessage: async (message: UiMessage) => {
 			written.push(message)
 		},
 	} as unknown as MessageStateHandler

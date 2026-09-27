@@ -1,7 +1,7 @@
 import { readJsonl } from "@core/storage/backend/jsonl/jsonl-utils"
 import { getTaskHeaderText } from "@core/storage/disk"
 import { createSessionFixture } from "@core/task/session/__fixtures__/active-task-session"
-import type { ClineMessage, ExtensionState } from "@shared/ExtensionMessage"
+import type { ExtensionState, UiMessage } from "@shared/ExtensionMessage"
 import { describe, expect, it, vi } from "vitest"
 import { Controller } from "../index"
 
@@ -37,8 +37,8 @@ vi.mock("@/utils/announcements", () => ({
 const HEADER_TEXT = "test task header"
 
 /** Build a realistic long-conversation message list with a leading task header. */
-function buildMessages(count: number): ClineMessage[] {
-	const messages: ClineMessage[] = [{ ts: 1, type: "say", say: "task", text: HEADER_TEXT }]
+function buildMessages(count: number): UiMessage[] {
+	const messages: UiMessage[] = [{ ts: 1, type: "say", say: "task", text: HEADER_TEXT }]
 	for (let i = 2; i <= count; i++) {
 		messages.push({ ts: i, type: "say", say: "text", text: `message ${i}` })
 	}
@@ -56,7 +56,7 @@ function controllerAccessor(name: "getCurrentTaskId" | "getCurrentTaskMessages" 
 }
 
 /** Minimal Controller-shaped object exposing every field buildState touches. */
-function createFakeController(messages: ClineMessage[]): Record<string, unknown> {
+function createFakeController(messages: UiMessage[]): Record<string, unknown> {
 	return {
 		task: createSessionFixture({
 			taskId: "test-task-1",

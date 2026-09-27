@@ -1,5 +1,5 @@
 import type { ModelPricing } from "@shared/api"
-import { ClineMessage } from "@shared/ExtensionMessage"
+import { UiMessage } from "@shared/ExtensionMessage"
 import { COLOR_BEIGE, COLOR_BLUE, COLOR_DARK_GRAY, COLOR_GRAY, COLOR_GREEN, COLOR_PURPLE, COLOR_WHITE } from "../colors"
 
 export { formatTokenMetric } from "@/utils/format"
@@ -38,10 +38,10 @@ export const hasNonZeroModelPricing = (pricing: ModelPricing | undefined): boole
  *
  * Get the color for a block or the indicator based on the message type
  *
- * @param message ClineMessage - The message to determine the color for
+ * @param message UiMessage - The message to determine the color for
  * @returns string - The color code for the block or indicator
  */
-export const getColor = (message: ClineMessage): string => {
+export const getColor = (message: UiMessage): string => {
 	if (message.type === "say") {
 		switch (message.say) {
 			case "task":

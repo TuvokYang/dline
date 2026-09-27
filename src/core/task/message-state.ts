@@ -4,7 +4,7 @@ import getFolderSize from "get-folder-size"
 import { findLastIndex } from "@/shared/array"
 import { combineApiRequests } from "@/shared/combineApiRequests"
 import { combineCommandSequences } from "@/shared/combineCommandSequences"
-import { ClineMessage } from "@/shared/ExtensionMessage"
+import { UiMessage } from "@/shared/ExtensionMessage"
 import { getApiMetrics } from "@/shared/getApiMetrics"
 import { HistoryItem, summarizeHistoryTaskText } from "@/shared/HistoryItem"
 import { ClineStorageMessage } from "@/shared/messages/content"
@@ -21,15 +21,15 @@ export type ClineMessageChangeType = "add" | "update" | "delete" | "set"
 export interface ClineMessageChange {
 	type: ClineMessageChangeType
 	/** The full array after the change */
-	messages: ClineMessage[]
+	messages: UiMessage[]
 	/** The affected index (for add/update/delete) */
 	index?: number
 	/** The new/updated message (for add/update) */
-	message?: ClineMessage
+	message?: UiMessage
 	/** The old message before change (for update/delete) */
-	previousMessage?: ClineMessage
+	previousMessage?: UiMessage
 	/** The entire previous array (for set) */
-	previousMessages?: ClineMessage[]
+	previousMessages?: UiMessage[]
 }
 
 // Strongly-typed event emitter interface
@@ -39,8 +39,8 @@ export interface MessageStateHandlerEvents {
 
 /** A UI row that is already visible in memory and registered in the durable write order. */
 export interface RegisteredClineMessagePersistence {
-	readonly message: ClineMessage
-	readonly persistence: Promise<ClineMessage>
+	readonly message: UiMessage
+	readonly persistence: Promise<UiMessage>
 }
 
 export interface MessageTaskMetadataSource {
@@ -91,7 +91,7 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 	private taskId: string
 	private ulid: string
 	private readonly metadata: MessageTaskMetadataSource
-	private readonly transientClineMessages = new Map<number, ClineMessage>()
+	private readonly transientClineMessages = new Map<number, UiMessage>()
 	/** Bumped by every mutation that can change how messages aggregate. */
 	private messageRevision = 0
 	/** Aggregated metrics reused while the message sequence is unchanged. */
@@ -130,15 +130,15 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 	// ── ClineMessages (read from UIMessage store) ──
 
 	/** ClineMessages as a property getter — merges durable rows with transient presentation overlays by timestamp. */
-	get clineMessages(): ClineMessage[] {
-		const durable = this.uiMessage ? (this.uiMessage.getAll() as unknown as ClineMessage[]) : []
+	get clineMessages(): UiMessage[] {
+		const durable = this.uiMessage ? (this.uiMessage.getAll() as unknown as UiMessage[]) : []
 		if (this.transientClineMessages.size === 0) return durable
 		const merged = new Map(durable.map((message) => [message.ts, message]))
 		for (const [ts, message] of this.transientClineMessages) merged.set(ts, message)
 		return [...merged.values()].sort((left, right) => left.ts - right.ts)
 	}
 
-	set clineMessages(msgs: ClineMessage[]) {
+	set clineMessages(msgs: UiMessage[]) {
 		if (!this.uiMessage) return
 		// Replacing the whole sequence changes every derived aggregate, and this
 		// path writes the store directly instead of going through the mutation
@@ -167,8 +167,8 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 	 * view instead made the loaded length disagree with the durable count whenever an
 	 * in-flight compaction card was present, which rejected the restore outright.
 	 */
-	get durableClineMessages(): ClineMessage[] {
-		return this.uiMessage ? (this.uiMessage.getAll() as unknown as ClineMessage[]) : []
+	get durableClineMessages(): UiMessage[] {
+		return this.uiMessage ? (this.uiMessage.getAll() as unknown as UiMessage[]) : []
 	}
 
 	/**
@@ -201,14 +201,14 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 	}
 
 	/** Stamp where the conversation stands on a new row, unless the caller already placed it. */
-	private placeRow(msg: ClineMessage, size: number): void {
+	private placeRow(msg: UiMessage, size: number): void {
 		msg.conversationHistoryIndex = msg.conversationHistoryIndex ?? size - 1
 		msg.conversationJournalSeq = msg.conversationJournalSeq ?? this.conversation?.position()
 		msg.conversationHistoryDeletedRange = this.metadata.conversationHistoryDeletedRange
 	}
 
 	/** A replaced row keeps the place it was first written at. */
-	private keepPlace(msg: ClineMessage, existing: ClineMessage): void {
+	private keepPlace(msg: UiMessage, existing: UiMessage): void {
 		msg.conversationHistoryIndex = existing.conversationHistoryIndex
 		msg.conversationJournalSeq = existing.conversationJournalSeq
 		msg.conversationHistoryDeletedRange = existing.conversationHistoryDeletedRange
@@ -250,7 +250,7 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 	 * Replaces the whole durable history through this task's writer and waits until
 	 * it is stored. Recovery uses it so a rebuilt history never needs a second writer.
 	 */
-	async replaceClineMessages(messages: ClineMessage[]): Promise<void> {
+	async replaceClineMessages(messages: UiMessage[]): Promise<void> {
 		if (!this.uiMessage) return
 		const previousMessages = [...this.clineMessages]
 		await this.uiMessage.overwrite(messages)
@@ -338,7 +338,7 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 	 * exact — any add, update, delete or transient overlay change invalidates it —
 	 * while collapsing the repeated work a single unchanged sequence would cause.
 	 */
-	private readAggregatedMetrics(allMessages: ClineMessage[]): ReturnType<typeof getApiMetrics> {
+	private readAggregatedMetrics(allMessages: UiMessage[]): ReturnType<typeof getApiMetrics> {
 		const cached = this.historyMetricsCache
 		if (cached?.revision === this.messageRevision) return cached.metrics
 		const metrics = getApiMetrics(combineApiRequests(combineCommandSequences(allMessages.slice(1))))
@@ -453,11 +453,11 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 	 * Handles partial vs complete messages, coordinates with API conversation history,
 	 * and emits change events.
 	 */
-	async addToClineMessages(message: Partial<ClineMessage>): Promise<void> {
+	async addToClineMessages(message: Partial<UiMessage>): Promise<void> {
 		if (message.ts === undefined) {
 			throw new Error("addToClineMessages: ts is required")
 		}
-		const msg = message as ClineMessage
+		const msg = message as UiMessage
 		if (msg.partial === true) {
 			// Partial messages stay memory-only — upsert without disk write
 			await this.upsertClineMessageInMemory(message)
@@ -485,11 +485,11 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 	/**
 	 * Upsert a message in memory only — no disk write.
 	 */
-	async upsertClineMessageInMemory(message: Partial<ClineMessage>): Promise<ClineMessage> {
+	async upsertClineMessageInMemory(message: Partial<UiMessage>): Promise<UiMessage> {
 		if (message.ts === undefined) {
 			throw new Error("upsertClineMessageInMemory: ts is required")
 		}
-		const msg = message as ClineMessage
+		const msg = message as UiMessage
 		const all = this.clineMessages
 		const existingIndex = all.findIndex((m) => m.ts === msg.ts)
 
@@ -546,11 +546,11 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 	/**
 	 * Finalize a partial message — persist to disk.
 	 */
-	async finalizeClineMessage(message: Partial<ClineMessage>): Promise<ClineMessage> {
+	async finalizeClineMessage(message: Partial<UiMessage>): Promise<UiMessage> {
 		if (message.ts === undefined) {
 			throw new Error("finalizeClineMessage: ts is required")
 		}
-		const msg = message as ClineMessage
+		const msg = message as UiMessage
 		const all = this.clineMessages
 		const existingIndex = all.findIndex((m) => m.ts === msg.ts)
 		const durableIndex = this.uiMessage?.findIndexByTs(msg.ts) ?? -1
@@ -606,7 +606,7 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 	}
 
 	/** Upsert a transient presentation row without marking the durable UI store dirty. */
-	upsertTransientClineMessage(message: ClineMessage): ClineMessage {
+	upsertTransientClineMessage(message: UiMessage): UiMessage {
 		const previousMessages = this.clineMessages
 		const previousIndex = previousMessages.findIndex((candidate) => candidate.ts === message.ts)
 		const previousMessage = previousIndex >= 0 ? previousMessages[previousIndex] : undefined
@@ -624,7 +624,7 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 	}
 
 	/** Commit a new transient row durably before exposing it as durable in memory. */
-	async commitTransientClineMessage(message: ClineMessage): Promise<ClineMessage> {
+	async commitTransientClineMessage(message: UiMessage): Promise<UiMessage> {
 		return await this.commitTransientClineMessageByTimestamp(message, false)
 	}
 
@@ -635,9 +635,9 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 	 * store mutex is entered before this method returns. Later message writes therefore
 	 * queue behind this row even when the physical commit is delayed by a file lock.
 	 */
-	beginDurableClineMessage(message: ClineMessage): RegisteredClineMessagePersistence {
+	beginDurableClineMessage(message: UiMessage): RegisteredClineMessagePersistence {
 		const existing = this.clineMessages.find((candidate) => candidate.ts === message.ts)
-		const prepared: ClineMessage = {
+		const prepared: UiMessage = {
 			...existing,
 			...message,
 			partial: false,
@@ -659,9 +659,9 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 
 	/** Persist one transient row, optionally replacing the durable row with the same timestamp. */
 	private async commitTransientClineMessageByTimestamp(
-		message: ClineMessage,
+		message: UiMessage,
 		allowDurableReplacement: boolean,
-	): Promise<ClineMessage> {
+	): Promise<UiMessage> {
 		const transient = this.transientClineMessages.get(message.ts)
 		if (!transient) throw new Error(`Transient message ${message.ts} is unavailable for durable commit`)
 		const uiMessage = this.uiMessage
@@ -672,7 +672,7 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 			throw new Error(`Durable message ${message.ts} already exists`)
 		}
 
-		let committed: ClineMessage
+		let committed: UiMessage
 		if (durableIndex >= 0) {
 			committed = await uiMessage.updateMessage(durableIndex, { ...message, partial: false })
 			await uiMessage.flush()
@@ -741,7 +741,7 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 	/**
 	 * Update a specific message in the clineMessages array and mark it for persistence.
 	 */
-	async updateClineMessage(index: number, updates: Partial<ClineMessage>): Promise<void> {
+	async updateClineMessage(index: number, updates: Partial<UiMessage>): Promise<void> {
 		const all = this.clineMessages
 		if (index < 0 || index >= all.length) {
 			throw new Error(`Invalid message index: ${index}`)

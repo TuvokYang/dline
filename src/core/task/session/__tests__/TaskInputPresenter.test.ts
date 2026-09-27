@@ -1,4 +1,4 @@
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import { describe, expect, it } from "vitest"
 import type { MessageStateHandler } from "../../message-state"
 import type { TaskPayloadStore } from "../../stores"
@@ -7,13 +7,13 @@ import type { UserInputEnvelope } from "../../stores/payload/TaskPayloadEnvelope
 import { TaskInputPresenter } from "../TaskInputPresenter"
 
 function messageState() {
-	const rows: ClineMessage[] = []
+	const rows: UiMessage[] = []
 	const messages = {
 		get clineMessages() {
 			return rows
 		},
-		addToClineMessages: async (message: Partial<ClineMessage>) => {
-			rows.push(message as ClineMessage)
+		addToClineMessages: async (message: Partial<UiMessage>) => {
+			rows.push(message as UiMessage)
 		},
 	} as unknown as MessageStateHandler
 	return { messages, rows }

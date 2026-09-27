@@ -1,7 +1,7 @@
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 
 /** Return true when a persisted row represents a completed task boundary. */
-function isCompletionMessage(message: ClineMessage): boolean {
+function isCompletionMessage(message: UiMessage): boolean {
 	return message.say === "completion_result" || message.ask === "completion_result"
 }
 
@@ -14,7 +14,7 @@ function isCompletionMessage(message: ClineMessage): boolean {
  * checkpoint; later completions use the closest earlier completion with a
  * checkpoint hash.
  */
-export function resolveCompletionDiffBaseHash(messages: readonly ClineMessage[], messageIndex: number): string | undefined {
+export function resolveCompletionDiffBaseHash(messages: readonly UiMessage[], messageIndex: number): string | undefined {
 	for (let index = messageIndex - 1; index >= 0; index--) {
 		const message = messages[index]
 		if (message && isCompletionMessage(message) && message.lastCheckpointHash) {

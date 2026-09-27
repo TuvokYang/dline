@@ -1,4 +1,4 @@
-import type { ActiveInteractionView, ClineMessage, TaskViewState } from "@shared/ExtensionMessage"
+import type { ActiveInteractionView, TaskViewState, UiMessage } from "@shared/ExtensionMessage"
 import { describe, expect, it } from "vitest"
 import { isActiveInteractionSynchronized } from "../types"
 
@@ -30,7 +30,7 @@ function view(activeInteraction: ActiveInteractionView | undefined): TaskViewSta
 	}
 }
 
-function anchorRow(overrides: Partial<ClineMessage> = {}): ClineMessage {
+function anchorRow(overrides: Partial<UiMessage> = {}): UiMessage {
 	return {
 		ts: ANCHOR_TS,
 		type: "ask",

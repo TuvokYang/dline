@@ -5,7 +5,7 @@ import { E2ETestHelper } from "@e2e/utils/helpers"
 import { seedLegacyTaskHistory } from "@e2e/utils/task-history-store"
 import { readTaskUiMessages, readTaskUiMessagesText } from "@e2e/utils/task-instance-store"
 import { expect, type Frame, type Page } from "@playwright/test"
-import type { ClineApiReqInfo } from "@shared/ExtensionMessage"
+import type { UiApiReqInfo } from "@shared/ExtensionMessage"
 import type { HistoryItem } from "@shared/HistoryItem"
 import type { ElectronApplication } from "playwright"
 
@@ -316,12 +316,12 @@ export async function closeContextRecoveryTask(sidebar: Frame): Promise<void> {
 	await E2ETestHelper.dismissWhatsNewModal(sidebar)
 }
 
-export async function readTaskApiRequestInfos(dlineDocsDir: string, taskId: string): Promise<ClineApiReqInfo[]> {
-	const requests: ClineApiReqInfo[] = []
+export async function readTaskApiRequestInfos(dlineDocsDir: string, taskId: string): Promise<UiApiReqInfo[]> {
+	const requests: UiApiReqInfo[] = []
 	for (const message of await readTaskUiMessages(dlineDocsDir, taskId)) {
 		if (message.type !== "say" || message.say !== "api_req_started" || !message.text) continue
 		try {
-			requests.push(JSON.parse(message.text) as ClineApiReqInfo)
+			requests.push(JSON.parse(message.text) as UiApiReqInfo)
 		} catch {}
 	}
 	return requests
@@ -331,7 +331,7 @@ export async function waitForPositiveTaskCacheHit(
 	dlineDocsDir: string,
 	taskId: string,
 	timeoutMs = 60_000,
-): Promise<ClineApiReqInfo> {
+): Promise<UiApiReqInfo> {
 	return E2ETestHelper.waitForValue(async () => {
 		const latest = (await readTaskApiRequestInfos(dlineDocsDir, taskId)).at(-1)
 		return (latest?.cacheReads ?? 0) > 0 && (latest?.cacheHitRate ?? 0) > 0 ? latest : undefined

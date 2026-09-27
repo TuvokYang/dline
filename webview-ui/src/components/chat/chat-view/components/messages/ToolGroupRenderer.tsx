@@ -1,4 +1,4 @@
-import { ClineMessage, ClineSayTool } from "@shared/ExtensionMessage"
+import { UiMessage, UiSayTool } from "@shared/ExtensionMessage"
 import { StringRequest } from "@shared/proto/dline/common"
 import { memo, useCallback, useMemo, useState } from "react"
 import { cleanPathPrefix } from "@/components/common/CodeAccordian"
@@ -9,14 +9,14 @@ import { ToolItemRow } from "./ToolItemRow"
 import type { ToolItemText, ToolRowParts } from "./tool-row-layout"
 
 interface ToolGroupRendererProps {
-	messages: ClineMessage[]
-	allMessages: ClineMessage[]
+	messages: UiMessage[]
+	allMessages: UiMessage[]
 	isLastGroup: boolean
 }
 
 interface ToolWithReasoning {
-	tool: ClineMessage
-	parsedTool: ClineSayTool
+	tool: UiMessage
+	parsedTool: UiSayTool
 	reasoning?: string
 	isActive?: boolean
 	activityText?: ToolItemText
@@ -75,7 +75,7 @@ export function formatScale(
 }
 
 /** Render a search as `"terms" in dir/ (pattern) (N matches · M files)`. */
-export function formatSearchDisplay(tool: ClineSayTool): ToolItemText & { row: ToolRowParts } {
+export function formatSearchDisplay(tool: UiSayTool): ToolItemText & { row: ToolRowParts } {
 	const terms = formatSearchTerms(tool.regex || "")
 	const cleanedPath = cleanPathPrefix(tool.path || "")
 	const pattern = tool.filePattern && tool.filePattern !== "*" ? ` (${tool.filePattern})` : ""
@@ -93,7 +93,7 @@ export function formatSearchDisplay(tool: ClineSayTool): ToolItemText & { row: T
  * Falls back to a generic target when the symbol could not be resolved, so the
  * row is never empty.
  */
-export function formatReferencesDisplay(tool: ClineSayTool): ToolItemText & { row: ToolRowParts } {
+export function formatReferencesDisplay(tool: UiSayTool): ToolItemText & { row: ToolRowParts } {
 	const target = tool.symbolName ? `"${tool.symbolName}"` : "references"
 	const cleanedPath = cleanPathPrefix(tool.path || "")
 	const scale = formatScale(tool.count, tool.files, "ref")
@@ -110,7 +110,7 @@ export function formatReferencesDisplay(tool: ClineSayTool): ToolItemText & { ro
  * Shares the completed-state formatters so the same operation reads the same
  * way before and after it finishes.
  */
-export function getActivityText(tool: ClineSayTool): ToolItemText | null {
+export function getActivityText(tool: UiSayTool): ToolItemText | null {
 	const cleanedPath = cleanPathPrefix(tool.path || "")
 
 	switch (tool.tool) {
@@ -174,7 +174,7 @@ export function getActivityText(tool: ClineSayTool): ToolItemText | null {
 }
 
 // Calculate current activities (from RequestStartRow logic)
-const getCurrentActivities = (allMessages: ClineMessage[]): ClineMessage[] => {
+const getCurrentActivities = (allMessages: UiMessage[]): UiMessage[] => {
 	// Find current api_req
 	let currentApiReqIndex = -1
 	for (let i = allMessages.length - 1; i >= 0; i--) {
@@ -198,7 +198,7 @@ const getCurrentActivities = (allMessages: ClineMessage[]): ClineMessage[] => {
 	}
 
 	// Collect tools AFTER the current api_req_started
-	const activities: ClineMessage[] = []
+	const activities: UiMessage[] = []
 	for (let i = currentApiReqIndex + 1; i < allMessages.length; i++) {
 		const msg = allMessages[i]
 		// Only collect tools that are currently executing (ask === "tool")
@@ -337,7 +337,7 @@ export const ToolGroupRenderer = memo(({ messages, allMessages, isLastGroup }: T
  * Build tool items WITHOUT reasoning.
  * Reasoning should not be displayed in file lists - only file/folder content.
  */
-export function buildToolsWithReasoning(messages: ClineMessage[]): ToolWithReasoning[] {
+export function buildToolsWithReasoning(messages: UiMessage[]): ToolWithReasoning[] {
 	const result: ToolWithReasoning[] = []
 	// An approved read owns one summary entry but produces two rows, and their
 	// order is not guaranteed: the result row carries the timestamp of the tool
@@ -414,11 +414,11 @@ function findUnpairedReadRow(tools: ToolWithReasoning[], paired: boolean[], path
 /**
  * Safely parse tool JSON, returning empty tool on failure.
  */
-function parseToolSafe(text: string | undefined): ClineSayTool {
+function parseToolSafe(text: string | undefined): UiSayTool {
 	try {
-		return JSON.parse(text || "{}") as ClineSayTool
+		return JSON.parse(text || "{}") as UiSayTool
 	} catch {
-		return {} as ClineSayTool
+		return {} as UiSayTool
 	}
 }
 
@@ -441,7 +441,7 @@ function pathOnlyText(path: string): ToolItemText {
  * Every branch produces both text forms, so the row never has to decide how to
  * fall back when a formatter yields nothing.
  */
-export function getToolDisplayInfo(tool: ClineSayTool): ToolDisplayInfo | null {
+export function getToolDisplayInfo(tool: UiSayTool): ToolDisplayInfo | null {
 	const icon = getIconByToolName(tool.tool)
 	const filePath = tool.path || ""
 	const folderPath = `${filePath}/`
@@ -519,7 +519,7 @@ export function getToolDisplayInfo(tool: ClineSayTool): ToolDisplayInfo | null {
 /**
  * Get summary label for a tool group - shows what's been added to context.
  */
-export function getToolGroupSummaryFromParsedTools(tools: ClineSayTool[]): string {
+export function getToolGroupSummaryFromParsedTools(tools: UiSayTool[]): string {
 	const counts = { read: 0, list: 0, search: 0, def: 0, refs: 0 }
 
 	for (const tool of tools) {
@@ -567,7 +567,7 @@ export function getToolGroupSummaryFromParsedTools(tools: ClineSayTool[]): strin
 
 /** Props for the expanded content renderer. */
 interface ExpandedToolContentProps {
-	parsedTool: ClineSayTool
+	parsedTool: UiSayTool
 	onOpenFile: (filePath: string) => void
 	content: string | null
 }

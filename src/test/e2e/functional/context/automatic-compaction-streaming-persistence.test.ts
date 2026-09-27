@@ -4,7 +4,7 @@ import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { readTaskUiMessages, rewriteTaskUiMessages } from "@e2e/utils/task-instance-store"
 import { expect, type Frame, type TestInfo } from "@playwright/test"
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import type { ElectronApplication } from "playwright"
 
 const TASK_TEXT = "E2E_LARGE_UI_JSONL_COMPACTION_TASK"
@@ -118,7 +118,7 @@ async function growStoredHistory(dlineDocsDir: string, taskId: string, targetByt
 		const maxTs = messages.reduce((max, message) => Math.max(max, message.ts), 0)
 		for (let pairIndex = 0; bytes < targetBytes; pairIndex++) {
 			const ts = maxTs + pairIndex * 2 + 1
-			const pair: ClineMessage[] = [
+			const pair: UiMessage[] = [
 				{
 					ts,
 					type: "say",

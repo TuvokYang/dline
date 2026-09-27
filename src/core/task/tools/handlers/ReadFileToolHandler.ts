@@ -7,7 +7,7 @@ import { resolveWorkspacePath } from "@core/workspace"
 import { extractFileContent, type FileContentResult } from "@integrations/misc/extract-file-content"
 import { arePathsEqual, getReadablePath, isLocatedInWorkspace } from "@utils/path"
 import { telemetryService } from "@/services/telemetry"
-import { ClineSayTool } from "@/shared/ExtensionMessage"
+import { UiSayTool } from "@/shared/ExtensionMessage"
 import { ClineDefaultTool } from "@/shared/tools"
 import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
 import type { ToolResponse } from "../ToolResponse"
@@ -130,7 +130,7 @@ async function isProjectScopedRead(config: TaskConfig, requestedPath: string, ab
 
 async function emitReadFileToolUiComplete(
 	config: TaskConfig,
-	sharedMessageProps: ClineSayTool,
+	sharedMessageProps: UiSayTool,
 	block: ToolUse,
 	fileContent: FileContentResult,
 ): Promise<void> {
@@ -138,7 +138,7 @@ async function emitReadFileToolUiComplete(
 		return
 	}
 	const range = getReadToolDisplayedLineRange(block, fileContent)
-	const payload: ClineSayTool = { ...sharedMessageProps }
+	const payload: UiSayTool = { ...sharedMessageProps }
 	if (range) {
 		payload.readLineStart = range.start
 		payload.readLineEnd = range.end
@@ -230,7 +230,7 @@ export class ReadFileToolHandler implements IFullyManagedTool {
 			path: getReadablePath(config.cwd, displayPath),
 			content: absolutePath,
 			operationIsLocatedInWorkspace: await isProjectScopedRead(config, relPath, absolutePath),
-		} satisfies ClineSayTool
+		} satisfies UiSayTool
 
 		void sharedMessageProps
 		telemetryService.captureToolUsage(

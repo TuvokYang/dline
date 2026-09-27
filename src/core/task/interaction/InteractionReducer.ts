@@ -1,4 +1,4 @@
-import type { ClineAsk } from "@shared/ExtensionMessage"
+import type { UiAsk } from "@shared/ExtensionMessage"
 import type { ClineContent } from "@shared/messages"
 import type { InteractionKind } from "./Interaction"
 import { getInteraction } from "./InteractionRegistry"
@@ -12,7 +12,7 @@ export interface InteractionAnchor {
 	// `resume_completed_task` but still drives the `completion` interaction.
 	// The kind cannot name its own entry ask, so the anchor carries the ask
 	// actually presented; the Webview matches its row against this value.
-	taskAsk?: ClineAsk
+	taskAsk?: UiAsk
 }
 
 /** Runtime state for one primary interaction. */

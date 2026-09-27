@@ -1,6 +1,6 @@
 import { EnvironmentMetadataEntry, TaskMetadata } from "@core/context/context-tracking/ContextTrackerTypes"
 import type { FrozenPromptBuilderInfo, TaskContextCache } from "@core/storage/task-context-types"
-import { ClineMessage } from "@shared/ExtensionMessage"
+import { UiMessage } from "@shared/ExtensionMessage"
 import { envFlagEnabled } from "@shared/env"
 import { HistoryItem } from "@shared/HistoryItem"
 import { requiresLegacyConversationMigration } from "@shared/messages/legacy-identity-migration"
@@ -290,21 +290,21 @@ export async function saveApiConversationHistory(taskId: string, h: ClineStorage
 	await writeJsonl(p, h)
 }
 /**
- * Deduplicate ClineMessage array by timestamp (ts), keeping the last
+ * Deduplicate UiMessage array by timestamp (ts), keeping the last
  * occurrence for each ts. Used because incremental appends (addToClineMessages
  * + flushMessageUpdate) may produce duplicate rows for the same message
  * (initial partial write + final complete write).
  */
-export function dedupeClineMessagesByTs(messages: ClineMessage[]): ClineMessage[] {
+export function dedupeClineMessagesByTs(messages: UiMessage[]): UiMessage[] {
 	if (messages.length <= 1) return messages
-	const seen = new Map<number, ClineMessage>()
+	const seen = new Map<number, UiMessage>()
 	// Walk in order; later entries overwrite earlier ones for the same ts
 	for (const msg of messages) {
 		seen.set(msg.ts, msg)
 	}
 	// Preserve insertion order by collecting in original order,
 	// but only keeping the last occurrence for each ts
-	const deduped: ClineMessage[] = []
+	const deduped: UiMessage[] = []
 	const included = new Set<number>()
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const msg = messages[i]
@@ -323,7 +323,7 @@ export function dedupeClineMessagesByTs(messages: ClineMessage[]): ClineMessage[
  * claims that writer and never migrates a legacy file, so it is safe while the
  * task is open in any window.
  */
-export async function getSavedClineMessages(taskId: string): Promise<ClineMessage[]> {
+export async function getSavedClineMessages(taskId: string): Promise<UiMessage[]> {
 	return dedupeClineMessagesByTs(await readUiMessages(await ensureTaskDirectoryExists(taskId)))
 }
 

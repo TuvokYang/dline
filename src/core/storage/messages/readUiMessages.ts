@@ -1,4 +1,4 @@
-import type { ClineMessage } from "@/shared/ExtensionMessage"
+import type { UiMessage } from "@/shared/ExtensionMessage"
 import { InstanceDatabase, InstanceLayout, instanceDatabaseExists } from "../instance"
 import { readLegacyUiMessages } from "./importLegacyUiMessages"
 import { openUiMessageRows, UI_MESSAGE_READER } from "./openUiMessageRows"
@@ -10,7 +10,7 @@ import { openUiMessageRows, UI_MESSAGE_READER } from "./openUiMessageRows"
  * opens and imports its legacy file, that file is read in place instead. A missing
  * database is not created, so reading never leaves files behind.
  */
-export async function readUiMessages(instanceRoot: string): Promise<ClineMessage[]> {
+export async function readUiMessages(instanceRoot: string): Promise<UiMessage[]> {
 	if (await instanceDatabaseExists(new InstanceLayout(instanceRoot), InstanceDatabase.Messages)) {
 		const rows = await openUiMessageRows(instanceRoot, UI_MESSAGE_READER)
 		try {

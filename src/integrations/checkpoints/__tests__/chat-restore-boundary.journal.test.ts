@@ -1,12 +1,12 @@
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import { describe, expect, it } from "vitest"
 import { resolveChatRestoreBoundary } from "../chat-restore-boundary"
 
-function row(ts: number, text: string): ClineMessage {
-	return { ts, type: "say", say: "text", text } as ClineMessage
+function row(ts: number, text: string): UiMessage {
+	return { ts, type: "say", say: "text", text } as UiMessage
 }
 
-function journalCard(ts: number, boundary: unknown, status = "completed"): ClineMessage {
+function journalCard(ts: number, boundary: unknown, status = "completed"): UiMessage {
 	return {
 		ts,
 		type: "say",
@@ -18,7 +18,7 @@ function journalCard(ts: number, boundary: unknown, status = "completed"): Cline
 			compactionStatus: status,
 			compactionJournalBoundary: boundary,
 		}),
-	} as ClineMessage
+	} as UiMessage
 }
 
 describe("chat restore boundary for a journal-bounded compaction card", () => {

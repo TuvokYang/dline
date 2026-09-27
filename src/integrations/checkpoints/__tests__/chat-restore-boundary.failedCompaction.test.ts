@@ -1,4 +1,4 @@
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import { describe, expect, it } from "vitest"
 import { resolveChatRestoreBoundary } from "../chat-restore-boundary"
 
@@ -12,7 +12,7 @@ import { resolveChatRestoreBoundary } from "../chat-restore-boundary"
  * conversation and rejected an otherwise legitimate chat restore.
  */
 
-function failedCompactionCard(conversationHistoryIndex: number, ts: number): ClineMessage {
+function failedCompactionCard(conversationHistoryIndex: number, ts: number): UiMessage {
 	return {
 		ts,
 		type: "say",
@@ -25,11 +25,11 @@ function failedCompactionCard(conversationHistoryIndex: number, ts: number): Cli
 			compactionStatus: "failed",
 			error: "400 No tool output found for function call fc_ClqKYdfhn2EQ96FhGa6slahO.",
 		}),
-	} as ClineMessage
+	} as UiMessage
 }
 
-function userMessage(ts: number, conversationHistoryIndex: number): ClineMessage {
-	return { ts, type: "say", say: "text", text: "user turn", conversationHistoryIndex } as ClineMessage
+function userMessage(ts: number, conversationHistoryIndex: number): UiMessage {
+	return { ts, type: "say", say: "text", text: "user turn", conversationHistoryIndex } as UiMessage
 }
 
 describe("chat restore boundary for a failed compaction card", () => {

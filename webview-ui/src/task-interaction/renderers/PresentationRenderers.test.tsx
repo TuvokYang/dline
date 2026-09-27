@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
 
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { CommandRenderer } from "./PresentationRenderers"
 
-const COMMAND_ASK: ClineMessage = {
+const COMMAND_ASK: UiMessage = {
 	ts: 100,
 	type: "ask",
 	ask: "command",

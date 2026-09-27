@@ -16,7 +16,7 @@ import type { McpHub } from "@services/mcp/McpHub"
 import type { AutoApprovalSettings } from "@shared/AutoApprovalSettings"
 import type { BrowserSettings } from "@shared/BrowserSettings"
 import type { ClineExtensionContext } from "@shared/cline/context"
-import type { ClineAsk, ClineSay, CommandStatus } from "@shared/ExtensionMessage"
+import type { CommandStatus, UiAsk, UiSay } from "@shared/ExtensionMessage"
 import type { FocusChainSettings } from "@shared/FocusChainSettings"
 import type { ClineContent, ClineToolResponseContent } from "@shared/messages/content"
 import type { Mode } from "@shared/storage/types"
@@ -47,7 +47,7 @@ import { TASK_CALLBACKS_KEYS, TASK_CONFIG_KEYS, TASK_SERVICES_KEYS } from "../ut
  */
 /** Presentation-only request issued by one handler. */
 export interface SayPresentationRequest {
-	taskSay: ClineSay
+	taskSay: UiSay
 	presentation?: string
 	images?: string[]
 	files?: string[]
@@ -163,7 +163,7 @@ export interface TaskServices {
  */
 export interface TaskCallbacks {
 	say: (
-		type: ClineSay,
+		type: UiSay,
 		text?: string,
 		images?: string[],
 		files?: string[],
@@ -181,7 +181,7 @@ export interface TaskCallbacks {
 	focusChainForceUpdate: (newPlan: string) => Promise<void>
 
 	ask: (
-		type: ClineAsk,
+		type: UiAsk,
 		text?: string,
 		partial?: boolean,
 		options?: {

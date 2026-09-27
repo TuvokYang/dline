@@ -1,4 +1,4 @@
-import type { ClineMessage, TaskViewState } from "@shared/ExtensionMessage"
+import type { TaskViewState, UiMessage } from "@shared/ExtensionMessage"
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import type { ReactNode } from "react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
@@ -146,9 +146,9 @@ vi.mock("../chat-view", () => {
 		TaskActivityTabs: () => null,
 		WelcomeSection: () => null,
 		convertHtmlToMarkdown: async (value: string) => value,
-		filterVisibleMessages: (messages: ClineMessage[]) => messages,
-		groupLowStakesTools: (messages: ClineMessage[]) => messages,
-		groupMessages: (messages: ClineMessage[]) => messages,
+		filterVisibleMessages: (messages: UiMessage[]) => messages,
+		groupLowStakesTools: (messages: UiMessage[]) => messages,
+		groupMessages: (messages: UiMessage[]) => messages,
 		useChatState: mocks.useChatState,
 		useMessageHandlers: () => ({
 			handleSendMessage: vi.fn(async () => undefined),
@@ -165,7 +165,7 @@ vi.mock("../chat-view", () => {
 
 import ChatView from "../ChatView"
 
-const ASK: ClineMessage = {
+const ASK: UiMessage = {
 	ts: 100,
 	type: "ask",
 	ask: "qna_respond",
@@ -205,7 +205,7 @@ function chatView() {
 }
 
 function renderChat(
-	messages: ClineMessage[],
+	messages: UiMessage[],
 	view: TaskViewState = taskView(),
 	includeHistoryItem = true,
 ): ReturnType<typeof render> {
@@ -509,7 +509,7 @@ describe("ChatView interaction anchor synchronization", () => {
 				dispatchTarget: "interaction",
 			},
 		]
-		const condenseAsk: ClineMessage = { ...ASK, ask: "condense", text: "Summary preview" }
+		const condenseAsk: UiMessage = { ...ASK, ask: "condense", text: "Summary preview" }
 		mocks.chatState.inputValue = "Keep the deployment details"
 
 		renderChat([condenseAsk], view)

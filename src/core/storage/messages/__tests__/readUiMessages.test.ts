@@ -2,13 +2,13 @@ import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import type { ClineMessage } from "@/shared/ExtensionMessage"
+import type { UiMessage } from "@/shared/ExtensionMessage"
 import { closeInstanceStoragesUnder, ensureInstanceLayout, InstanceDatabase } from "../../instance"
 import { openUiMessageRows, UI_MESSAGE_WRITER } from "../openUiMessageRows"
 import { readUiMessages } from "../readUiMessages"
 
-function say(ts: number, text: string): ClineMessage {
-	return { ts, type: "say", say: "text", text } as ClineMessage
+function say(ts: number, text: string): UiMessage {
+	return { ts, type: "say", say: "text", text } as UiMessage
 }
 
 async function exists(filePath: string): Promise<boolean> {

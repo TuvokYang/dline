@@ -10,7 +10,7 @@ import { executeHook } from "../core/hooks/hook-executor"
 import { StateManager } from "../core/storage/StateManager"
 import { MessageStateHandler } from "../core/task/message-state"
 import { TaskState } from "../core/task/TaskState"
-import { ClineMessage } from "../shared/ExtensionMessage"
+import { UiMessage } from "../shared/ExtensionMessage"
 
 /**
  * Unit tests for the hook-executor module
@@ -22,7 +22,7 @@ describe("Hook Executor", () => {
 	let tempDir: string
 	let baseTempDir: string // Store base directory for cleanup
 	let testHandler: MessageStateHandler
-	let _mockMessages: ClineMessage[]
+	let _mockMessages: UiMessage[]
 	let stateManagerStub: any /* sinon.SinonStub → vitest */
 
 	/**
@@ -401,16 +401,16 @@ setTimeout(() => {
 
 			await createHookScript("TaskStart", {}, 1) // Exit with error
 
-			const messages: ClineMessage[] = []
+			const messages: UiMessage[] = []
 			const mockHandler = {
 				...testHandler,
 				get clineMessages() {
 					return messages
 				},
-				addToClineMessages: async (msg: ClineMessage) => {
+				addToClineMessages: async (msg: UiMessage) => {
 					messages.push(msg)
 				},
-				updateClineMessage: async (index: number, updates: Partial<ClineMessage>) => {
+				updateClineMessage: async (index: number, updates: Partial<UiMessage>) => {
 					if (messages[index]) {
 						Object.assign(messages[index], updates)
 					}
@@ -430,7 +430,7 @@ setTimeout(() => {
 				},
 				isCancellable: true,
 				say: async (type: any, text?: string) => {
-					const msg: ClineMessage = {
+					const msg: UiMessage = {
 						ts: Date.now(),
 						type: "say",
 						say: type,
@@ -457,7 +457,7 @@ setTimeout(() => {
 				cancel: false,
 			})
 
-			const messages: ClineMessage[] = []
+			const messages: UiMessage[] = []
 
 			await executeHook({
 				hookName: "TaskStart",
@@ -472,7 +472,7 @@ setTimeout(() => {
 				},
 				isCancellable: true,
 				say: async (type: any, text?: string) => {
-					const msg: ClineMessage = {
+					const msg: UiMessage = {
 						ts: Date.now(),
 						type: "say",
 						say: type,
@@ -499,13 +499,13 @@ setTimeout(() => {
 				cancel: false,
 			})
 
-			const messages: ClineMessage[] = []
+			const messages: UiMessage[] = []
 			const mockHandler = {
 				...testHandler,
 				get clineMessages() {
 					return messages
 				},
-				updateClineMessage: async (index: number, updates: Partial<ClineMessage>) => {
+				updateClineMessage: async (index: number, updates: Partial<UiMessage>) => {
 					if (messages[index]) {
 						Object.assign(messages[index], updates)
 					}
@@ -525,7 +525,7 @@ setTimeout(() => {
 				},
 				isCancellable: true,
 				say: async (type: any, text?: string) => {
-					const msg: ClineMessage = {
+					const msg: UiMessage = {
 						ts: Date.now(),
 						type: "say",
 						say: type,

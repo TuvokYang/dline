@@ -1,4 +1,4 @@
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import React from "react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
@@ -13,12 +13,12 @@ interface VirtuosoTestProps {
 
 const mocks = vi.hoisted(() => ({
 	fetchMessage: vi.fn(),
-	initialMessages: [] as ClineMessage[],
+	initialMessages: [] as UiMessage[],
 	initialFirstItemIndex: 0,
 	totalMessageCount: 0,
-	currentMessages: [] as ClineMessage[],
+	currentMessages: [] as UiMessage[],
 	currentFirstItemIndex: 0,
-	setCurrentMessages: undefined as React.Dispatch<React.SetStateAction<ClineMessage[]>> | undefined,
+	setCurrentMessages: undefined as React.Dispatch<React.SetStateAction<UiMessage[]>> | undefined,
 	virtuosoProps: undefined as VirtuosoTestProps | undefined,
 	scrollToIndex: vi.fn(),
 }))
@@ -53,7 +53,7 @@ vi.mock("@/services/grpc-client", () => ({
 }))
 
 vi.mock("@shared/proto-conversions/cline-message", () => ({
-	convertProtoToClineMessage: (message: ClineMessage) => message,
+	convertProtoToClineMessage: (message: UiMessage) => message,
 }))
 
 vi.mock("react-virtuoso", async () => {
@@ -81,7 +81,7 @@ vi.mock("../messages/MessageRenderer", () => ({
 	createMessageRenderer: () => () => null,
 }))
 
-function createMessages(startIndex: number, count: number): ClineMessage[] {
+function createMessages(startIndex: number, count: number): UiMessage[] {
 	return Array.from({ length: count }, (_, offset) => {
 		const absoluteIndex = startIndex + offset
 		return {
@@ -89,7 +89,7 @@ function createMessages(startIndex: number, count: number): ClineMessage[] {
 			type: "say",
 			say: "text",
 			text: `message-${absoluteIndex}`,
-		} as ClineMessage
+		} as UiMessage
 	})
 }
 
@@ -190,7 +190,7 @@ describe("MessagesArea sliding-window integration", () => {
 				say: "completion_result",
 				text: completionText,
 				partial: false,
-			} as ClineMessage,
+			} as UiMessage,
 		]
 		mocks.initialFirstItemIndex = 0
 		mocks.totalMessageCount = 2

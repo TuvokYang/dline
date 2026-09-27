@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto"
-import type { ClineApiReqInfo, ClineMessage } from "@shared/ExtensionMessage"
+import type { UiApiReqInfo, UiMessage } from "@shared/ExtensionMessage"
 
 export interface LegacyUiMessageSource {
-	getAll(): ReadonlyArray<ClineMessage>
+	getAll(): ReadonlyArray<UiMessage>
 }
 
 export interface LegacyUsageFact {
@@ -35,7 +35,7 @@ export interface LegacyUsageParseResult {
 }
 
 /** Extract durable legacy usage facts without reading the physical UIMessage backend. */
-export function parseLegacyUsageMessages(taskId: string, messages: readonly ClineMessage[]): LegacyUsageParseResult {
+export function parseLegacyUsageMessages(taskId: string, messages: readonly UiMessage[]): LegacyUsageParseResult {
 	const rounds: LegacyRoundCandidate[] = []
 	const aggregates: LegacyAggregateCandidate[] = []
 	let degraded = false
@@ -118,17 +118,17 @@ export function parseLegacyUsageMessages(taskId: string, messages: readonly Clin
 	}
 }
 
-function parseInfo(text: string | undefined): ClineApiReqInfo | undefined {
+function parseInfo(text: string | undefined): UiApiReqInfo | undefined {
 	if (!text) return undefined
 	try {
 		const value: unknown = JSON.parse(text)
-		return typeof value === "object" && value !== null ? (value as ClineApiReqInfo) : undefined
+		return typeof value === "object" && value !== null ? (value as UiApiReqInfo) : undefined
 	} catch {
 		return undefined
 	}
 }
 
-function normalizeUsage(info: ClineApiReqInfo): Omit<LegacyUsageFact, "sourceKey" | "messageTs"> | undefined {
+function normalizeUsage(info: UiApiReqInfo): Omit<LegacyUsageFact, "sourceKey" | "messageTs"> | undefined {
 	const input = readNonNegativeInteger(info.tokensIn)
 	const output = readNonNegativeInteger(info.tokensOut)
 	const write = readNonNegativeInteger(info.cacheWrites)

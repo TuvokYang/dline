@@ -1,5 +1,5 @@
 import type { AutoApprovalSettings } from "@shared/AutoApprovalSettings"
-import type { ClineAsk } from "@shared/ExtensionMessage"
+import type { UiAsk } from "@shared/ExtensionMessage"
 import {
 	type ApprovalDecision,
 	type ConfigurableCeilings,
@@ -41,7 +41,7 @@ export interface ToolPreflightRejection {
  */
 export interface ToolApprovalPresentation {
 	/** Interaction kind the Webview uses to render the request. */
-	ask: ClineAsk
+	ask: UiAsk
 	/** Serialized payload for that interaction. */
 	body: string
 	/** Whether a desktop notification should accompany the request. */

@@ -1,4 +1,4 @@
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import type { ClineContent, ClineStorageMessage, ClineUserToolResultContentBlock } from "@shared/messages"
 import { describe, expect, it } from "vitest"
 import { type BlockLifecycle, BlockPhase } from "../../BlockPhaseMachine"
@@ -65,7 +65,7 @@ describe("collectResumeTurnContent", () => {
 				conversationHistoryIndex: 13,
 			},
 		]
-		const uiHistory: ClineMessage[] = restoredBlocks.slice(0, 4).map((block, index) => ({
+		const uiHistory: UiMessage[] = restoredBlocks.slice(0, 4).map((block, index) => ({
 			ts: 30 + index,
 			type: "say",
 			say: "partial_tool_result",
@@ -108,7 +108,7 @@ describe("collectResumeTurnContent", () => {
 			{ role: "assistant", content: [], ts: 1 },
 			{ role: "user", content: [result("tid-api", "fn-api", "already persisted")], ts: 2 },
 		]
-		const uiHistory: ClineMessage[] = [
+		const uiHistory: UiMessage[] = [
 			{
 				ts: 3,
 				type: "say",
@@ -179,7 +179,7 @@ describe("collectResumeTurnContent", () => {
 			requiresApproval: false,
 			conversationHistoryIndex: 1,
 		}
-		const uiHistory: ClineMessage[] = [
+		const uiHistory: UiMessage[] = [
 			{
 				ts: 3,
 				type: "say",

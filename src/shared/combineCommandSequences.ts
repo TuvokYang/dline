@@ -1,4 +1,4 @@
-import { ClineMessage } from "./ExtensionMessage"
+import { UiMessage } from "./ExtensionMessage"
 
 /**
  * Combines sequences of command and command_output messages in an array of ClineMessages.
@@ -8,11 +8,11 @@ import { ClineMessage } from "./ExtensionMessage"
  * When such a sequence is found, it combines them into a single message, merging
  * their text contents.
  *
- * @param messages - An array of ClineMessage objects to process.
- * @returns A new array of ClineMessage objects with command sequences combined.
+ * @param messages - An array of UiMessage objects to process.
+ * @returns A new array of UiMessage objects with command sequences combined.
  *
  * @example
- * const messages: ClineMessage[] = [
+ * const messages: UiMessage[] = [
  *   { type: 'ask', ask: 'command', text: 'ls', ts: 1625097600000 },
  *   { type: 'ask', ask: 'command_output', text: 'file1.txt', ts: 1625097601000 },
  *   { type: 'ask', ask: 'command_output', text: 'file2.txt', ts: 1625097602000 }
@@ -20,7 +20,7 @@ import { ClineMessage } from "./ExtensionMessage"
  * const result = simpleCombineCommandSequences(messages);
  * // Result: [{ type: 'ask', ask: 'command', text: 'ls\nfile1.txt\nfile2.txt', ts: 1625097600000 }]
  */
-export function combineCommandSequences(messages: ClineMessage[]): ClineMessage[] {
+export function combineCommandSequences(messages: UiMessage[]): UiMessage[] {
 	// Map from command ts to accumulated output text
 	const outputByCmdTs = new Map<number, string>()
 	// Track ts of command_output messages that were successfully merged
@@ -45,7 +45,7 @@ export function combineCommandSequences(messages: ClineMessage[]): ClineMessage[
 	}
 
 	// Build combined command messages
-	const combinedCommands = new Map<number, ClineMessage>()
+	const combinedCommands = new Map<number, UiMessage>()
 	for (const msg of messages) {
 		if (msg.ask === "command" || msg.say === "command") {
 			const output = outputByCmdTs.get(msg.ts)

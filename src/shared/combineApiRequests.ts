@@ -1,4 +1,4 @@
-import { ClineMessage } from "./ExtensionMessage"
+import { UiMessage } from "./ExtensionMessage"
 
 /**
  * Combines API request start and finish messages in an array of ClineMessages.
@@ -7,8 +7,8 @@ import { ClineMessage } from "./ExtensionMessage"
  * When it finds a pair, it combines them into a single 'api_req_combined' message.
  * The JSON data in the text fields of both messages are merged.
  *
- * @param messages - An array of ClineMessage objects to process.
- * @returns A new array of ClineMessage objects with API requests combined.
+ * @param messages - An array of UiMessage objects to process.
+ * @returns A new array of UiMessage objects with API requests combined.
  *
  * @example
  * const messages = [
@@ -18,11 +18,11 @@ import { ClineMessage } from "./ExtensionMessage"
  * const result = combineApiRequests(messages);
  * // Result: [{ type: "say", say: "api_req_started", text: '{"request":"GET /api/data","cost":0.005}', ts: 1000 }]
  */
-export function combineApiRequests(messages: ClineMessage[]): ClineMessage[] {
+export function combineApiRequests(messages: UiMessage[]): UiMessage[] {
 	// Index combined requests by message timestamp for O(1) lookup during the
 	// final output pass. Keep the FIRST combined entry for a duplicated ts to
 	// preserve old semantics.
-	const combinedByTs = new Map<number, ClineMessage>()
+	const combinedByTs = new Map<number, UiMessage>()
 
 	// Pre-scan finished positions so every started message can find its first
 	// following finished message in O(1) via a monotonic pointer. The original
@@ -78,7 +78,7 @@ export function combineApiRequests(messages: ClineMessage[]): ClineMessage[] {
 	// Replace original api_req_started and remove api_req_finished in one
 	// pre-sized pass. Avoiding the unused combined-message array and the
 	// filter().map() intermediate materially reduces GC pressure on long tasks.
-	const result = new Array<ClineMessage>(messages.length - finishedPositions.length)
+	const result = new Array<UiMessage>(messages.length - finishedPositions.length)
 	let resultIndex = 0
 	for (const msg of messages) {
 		if (msg.type === "say" && msg.say === "api_req_finished") {

@@ -1,12 +1,12 @@
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import { describe, expect, it } from "vitest"
 import type { MessageStateHandler } from "../../message-state"
 import { COMPACTION_FAILURE_MESSAGE, MessageStateCompactionFailure } from "../MessageStateCompactionFailure"
 
 function recordingMessages() {
-	const rows: ClineMessage[] = []
+	const rows: UiMessage[] = []
 	const handler = {
-		addToClineMessages: async (message: ClineMessage) => {
+		addToClineMessages: async (message: UiMessage) => {
 			rows.push(message)
 		},
 	} as unknown as MessageStateHandler

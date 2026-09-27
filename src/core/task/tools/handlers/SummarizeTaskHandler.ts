@@ -11,7 +11,7 @@ import { formatResponse } from "@core/prompts/responses"
 import { StateManager } from "@core/storage/StateManager"
 import { resolveWorkspacePath } from "@core/workspace"
 import { extractFileContent } from "@integrations/misc/extract-file-content"
-import { ClineSayTool } from "@shared/ExtensionMessage"
+import { UiSayTool } from "@shared/ExtensionMessage"
 import { telemetryService } from "@/services/telemetry"
 import { Logger } from "@/shared/services/Logger"
 import { ClineDefaultTool } from "@/shared/tools"
@@ -131,7 +131,7 @@ export class SummarizeTaskHandler implements IToolHandler, IPartialBlockHandler 
 				tool: "summarizeTask",
 				content: context,
 				compactionStatus: "completed",
-			} satisfies ClineSayTool)
+			} satisfies UiSayTool)
 			const compactionMessageTs = config.taskState.contextCompactionMessageTs
 			await config.callbacks.say("tool", completeMessage, undefined, undefined, false, compactionMessageTs ?? block.ts)
 			if (compactionMessageTs !== undefined) {
@@ -322,7 +322,7 @@ export class SummarizeTaskHandler implements IToolHandler, IPartialBlockHandler 
 			tool: "summarizeTask",
 			content: uiHelpers.removeClosingTag(block, "context", context),
 			compactionStatus: "running",
-		} satisfies ClineSayTool)
+		} satisfies UiSayTool)
 
 		const messageTs = await uiHelpers.say("tool", partialMessage, undefined, undefined, true, existingTs ?? block.ts)
 		if (config.taskState.isInternalContextCompactionRequest && messageTs !== undefined) {

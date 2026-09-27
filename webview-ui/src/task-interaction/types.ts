@@ -1,4 +1,4 @@
-import type { ClineMessage, TaskViewActionType, TaskViewState } from "@shared/ExtensionMessage"
+import type { TaskViewActionType, TaskViewState, UiMessage } from "@shared/ExtensionMessage"
 import type { SemanticInputDocument } from "@shared/input-semantics/document"
 import { matchesActiveInteractionAnchor } from "@shared/interaction-anchor"
 import type { DispatchInteractionRequest, DispatchInteractionResponse } from "@shared/proto/dline/task"
@@ -98,7 +98,7 @@ function isEmptyInteractionDraft(draft: InteractionDraft): boolean {
 export interface DraftRollbackEvidence {
 	currentEpoch: number
 	submissionEpoch: number
-	messages: readonly ClineMessage[]
+	messages: readonly UiMessage[]
 }
 
 /**
@@ -133,7 +133,7 @@ export function canRestoreRejectedInteractionDraft(
 export type DispatchInteraction = (request: DispatchInteractionRequest) => Promise<DispatchInteractionResponse>
 
 /** Resolve the exact ask row owned by the projected active interaction. */
-export function findActiveInteractionAnchor(messages: readonly ClineMessage[], view: TaskViewState): ClineMessage | undefined {
+export function findActiveInteractionAnchor(messages: readonly UiMessage[], view: TaskViewState): UiMessage | undefined {
 	const interaction = view.activeInteraction
 	if (!interaction) {
 		return undefined
@@ -155,7 +155,7 @@ export function findActiveInteractionAnchor(messages: readonly ClineMessage[], v
  * The local lookup remains the fallback for an older projection that does not
  * carry the flag; an active interaction still needs exactly one match.
  */
-export function isActiveInteractionSynchronized(messages: readonly ClineMessage[], view: TaskViewState): boolean {
+export function isActiveInteractionSynchronized(messages: readonly UiMessage[], view: TaskViewState): boolean {
 	const interaction = view.activeInteraction
 	if (!interaction) {
 		return true

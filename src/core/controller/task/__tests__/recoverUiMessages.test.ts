@@ -1,6 +1,6 @@
 import { createSessionFixture } from "@core/task/session/__fixtures__/active-task-session"
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import type { ClineMessage } from "@/shared/ExtensionMessage"
+import type { UiMessage } from "@/shared/ExtensionMessage"
 import type { ClineStorageMessage } from "@/shared/messages/content"
 
 const mocks = vi.hoisted(() => ({
@@ -78,7 +78,7 @@ describe("recoverUiMessages", () => {
 
 		const replace = session.owners.messages.replaceClineMessages
 		expect(replace).toHaveBeenCalledOnce()
-		const savedMessages = replace.mock.calls[0]?.[0] as ClineMessage[] | undefined
+		const savedMessages = replace.mock.calls[0]?.[0] as UiMessage[] | undefined
 		const recoveredAsk = savedMessages?.find((message) => message.type === "ask" && message.ask === "qna_respond")
 		expect(recoveredAsk).toMatchObject({
 			type: "ask",
@@ -94,7 +94,7 @@ describe("recoverUiMessages", () => {
 	})
 
 	it("opens a closed task's store only for the write and backs up the previous history", async () => {
-		const previous = [{ ts: 1, type: "say", say: "task", text: "old" }] as ClineMessage[]
+		const previous = [{ ts: 1, type: "say", say: "task", text: "old" }] as UiMessage[]
 		mocks.getSavedClineMessages.mockResolvedValue(previous)
 		const store = { overwrite: vi.fn(async () => undefined), close: vi.fn(async () => undefined) }
 		mocks.openUiMessage.mockResolvedValue(store)
@@ -148,9 +148,7 @@ describe("recoverUiMessages", () => {
 
 		await recoverUiMessages(controller as never)
 
-		const savedMessages = controller.task.owners.messages.replaceClineMessages.mock.calls[0]?.[0] as
-			| ClineMessage[]
-			| undefined
+		const savedMessages = controller.task.owners.messages.replaceClineMessages.mock.calls[0]?.[0] as UiMessage[] | undefined
 		const recoveredAsk = savedMessages?.find((message) => message.type === "ask" && message.ask === "spawn_task")
 		expect(JSON.parse(recoveredAsk?.text ?? "{}")).toEqual({
 			task: "Implement feature",

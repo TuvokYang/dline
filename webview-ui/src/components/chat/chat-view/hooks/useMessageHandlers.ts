@@ -1,4 +1,4 @@
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import { EmptyRequest } from "@shared/proto/dline/common"
 import { NewTaskRequest } from "@shared/proto/dline/task"
 import { toProtoSemanticInputDocument } from "@shared/proto-conversions/input-semantics/document"
@@ -30,7 +30,7 @@ export async function runNewTaskSubmission(
  * Handles sending messages, button clicks, and task management
  */
 export function useMessageHandlers(
-	messages: ClineMessage[],
+	messages: UiMessage[],
 	chatState: ChatState,
 	disableAutoScrollRef?: React.MutableRefObject<boolean>,
 	taskId?: string,

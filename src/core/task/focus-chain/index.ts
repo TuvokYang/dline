@@ -4,7 +4,7 @@ import * as chokidar from "chokidar"
 import * as fs from "fs/promises"
 import { telemetryService } from "@/services/telemetry"
 import { Logger } from "@/shared/services/Logger"
-import { ClineSay } from "../../../shared/ExtensionMessage"
+import { UiSay } from "../../../shared/ExtensionMessage"
 import { Mode } from "../../../shared/storage/types"
 import { writeFile } from "../../../utils/fs"
 import { ensureTaskDirectoryExists } from "../../storage/disk"
@@ -61,7 +61,7 @@ export interface FocusChainDependencies {
 	getMode: () => Mode
 	stateManager: StateManager
 	postStateToWebview: () => Promise<void>
-	say: (type: ClineSay, text?: string, images?: string[], files?: string[], partial?: boolean) => Promise<number | undefined>
+	say: (type: UiSay, text?: string, images?: string[], files?: string[], partial?: boolean) => Promise<number | undefined>
 	focusChainSettings: FocusChainSettings
 }
 
@@ -72,7 +72,7 @@ export class FocusChainManager {
 	private getMode: () => Mode
 	private postStateToWebview: () => Promise<void>
 	private say: (
-		type: ClineSay,
+		type: UiSay,
 		text?: string,
 		images?: string[],
 		files?: string[],

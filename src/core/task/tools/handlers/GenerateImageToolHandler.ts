@@ -10,7 +10,7 @@ import type {
 import { ImageGenerationError } from "@core/image-generation/contracts"
 import { DEFAULT_IMAGE_GENERATION_SIZE } from "@core/image-generation/ImageGenerationSizes"
 import { formatResponse } from "@core/prompts/responses"
-import type { ClineSayTool } from "@shared/ExtensionMessage"
+import type { UiSayTool } from "@shared/ExtensionMessage"
 import { IMAGE_GENERATION_PRESENTATION_SCHEMA_VERSION, type ImageGenerationPresentationV1 } from "@shared/image-generation"
 import { ClineDefaultTool } from "@shared/tools"
 import type { ToolApprovalPresentation } from "../../executors/tool/ToolPreflight"
@@ -84,7 +84,7 @@ function parseEnum<T extends string>(value: string | undefined, allowed: Readonl
 	return value as T
 }
 
-function createToolPresentation(imageGeneration: ImageGenerationPresentationV1): ClineSayTool {
+function createToolPresentation(imageGeneration: ImageGenerationPresentationV1): UiSayTool {
 	return {
 		tool: "generateImage",
 		content: imageGeneration.prompt,
@@ -98,7 +98,7 @@ function presentationCount(value: string | undefined): number {
 	return Number.isSafeInteger(count) && count > 0 ? count : 1
 }
 
-function createAdmissionPresentation(block: ToolUse, status: "awaiting_approval" | "rejected"): ClineSayTool {
+function createAdmissionPresentation(block: ToolUse, status: "awaiting_approval" | "rejected"): UiSayTool {
 	return createToolPresentation({
 		schemaVersion: IMAGE_GENERATION_PRESENTATION_SCHEMA_VERSION,
 		status,

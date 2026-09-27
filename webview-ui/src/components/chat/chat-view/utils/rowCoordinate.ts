@@ -1,4 +1,4 @@
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 
 /**
  * Origin for the row coordinate reported to the virtual list.
@@ -25,7 +25,7 @@ export interface RowCoordinate {
  * "the same row again" from "a row that now covers different messages". Using
  * only the first and last message would report a regrouped row as unchanged.
  */
-export function rowIdentity(row: ClineMessage | ClineMessage[]): string {
+export function rowIdentity(row: UiMessage | UiMessage[]): string {
 	return Array.isArray(row) ? row.map((message) => message.ts).join(",") : String(row.ts)
 }
 
@@ -102,7 +102,7 @@ export function leadingRowShift(previous: readonly string[], next: readonly stri
  * @param rows Rows being rendered now, in display order.
  * @returns Coordinate describing the rows now on screen.
  */
-export function advanceRowCoordinate(previous: RowCoordinate, rows: readonly (ClineMessage | ClineMessage[])[]): RowCoordinate {
+export function advanceRowCoordinate(previous: RowCoordinate, rows: readonly (UiMessage | UiMessage[])[]): RowCoordinate {
 	const identities = rows.map(rowIdentity)
 	const shift = leadingRowShift(previous.identities, identities)
 	const firstItemIndex = shift === null ? previous.firstItemIndex : previous.firstItemIndex - shift

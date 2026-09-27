@@ -4,7 +4,7 @@ import { resolve as resolvePath } from "node:path"
 import type { ToolUse } from "@core/assistant-message"
 import { getPrompt } from "@core/prompts/i18n"
 import { resolveWorkspacePath } from "@core/workspace"
-import type { ClineSayTool } from "@shared/ExtensionMessage"
+import type { UiSayTool } from "@shared/ExtensionMessage"
 import { fileExistsAtPath } from "@utils/fs"
 import { isLocatedInWorkspace } from "@utils/path"
 import { applyPatch } from "diff"
@@ -111,7 +111,7 @@ export class ApplyPatchHandler implements IFullyManagedTool {
 				displayPath = moveLine.substring(PATCH_MARKERS.MOVE.length).trim() || targetPath
 			}
 		}
-		const message: ClineSayTool = {
+		const message: UiSayTool = {
 			tool: PatchClineSayMap[actionType],
 			path: displayPath,
 			content: rawInput,
@@ -619,7 +619,7 @@ export class ApplyPatchHandler implements IFullyManagedTool {
 		}
 	}
 
-	private async generateChangeSummary(changes: Record<string, FileChange>): Promise<ClineSayTool[]> {
+	private async generateChangeSummary(changes: Record<string, FileChange>): Promise<UiSayTool[]> {
 		const summaries = await Promise.all(
 			Object.entries(changes).map(async ([file, change]) => {
 				const operationIsLocatedInWorkspace = await isLocatedInWorkspace(file)
@@ -630,7 +630,7 @@ export class ApplyPatchHandler implements IFullyManagedTool {
 							path: file,
 							content: change.newContent,
 							operationIsLocatedInWorkspace,
-						} as ClineSayTool
+						} as UiSayTool
 					case PatchActionType.UPDATE:
 						return {
 							tool: change.movePath ? "newFileCreated" : "editedExistingFile",
@@ -638,14 +638,14 @@ export class ApplyPatchHandler implements IFullyManagedTool {
 							content: change.movePath ? change.oldContent : change.newContent,
 							operationIsLocatedInWorkspace,
 							startLineNumbers: change.startLineNumbers,
-						} as ClineSayTool
+						} as UiSayTool
 					case PatchActionType.DELETE:
 						return {
 							tool: "fileDeleted",
 							path: file,
 							content: change.newContent,
 							operationIsLocatedInWorkspace,
-						} as ClineSayTool
+						} as UiSayTool
 				}
 			}),
 		)
@@ -656,7 +656,7 @@ export class ApplyPatchHandler implements IFullyManagedTool {
 	private async presentAcceptedChange(
 		config: TaskConfig,
 		block: ToolUse,
-		message: ClineSayTool,
+		message: UiSayTool,
 		rawInput: string,
 		change: FileChange | undefined,
 		wasAutoApproved: boolean,

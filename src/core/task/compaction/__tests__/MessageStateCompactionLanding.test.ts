@@ -1,4 +1,4 @@
-import type { ClineMessage, ClineSayTool } from "@shared/ExtensionMessage"
+import type { UiMessage, UiSayTool } from "@shared/ExtensionMessage"
 import { describe, expect, it } from "vitest"
 import type { MessageStateHandler } from "../../message-state"
 import { MessageStateCompactionLanding } from "../MessageStateCompactionLanding"
@@ -14,7 +14,7 @@ interface RecordedHistoryEntry {
  * accepted a message without `ts` would pass while production threw.
  */
 function createMessageStub(initialHistory: RecordedHistoryEntry[]) {
-	const rows: ClineMessage[] = []
+	const rows: UiMessage[] = []
 	let history = initialHistory
 	const handler = {
 		get apiConversationHistory() {
@@ -23,11 +23,11 @@ function createMessageStub(initialHistory: RecordedHistoryEntry[]) {
 		async overwriteApiConversationHistory(next: RecordedHistoryEntry[]) {
 			history = next
 		},
-		async addToClineMessages(message: Partial<ClineMessage>) {
+		async addToClineMessages(message: Partial<UiMessage>) {
 			if (message.ts === undefined) {
 				throw new Error("addToClineMessages: ts is required")
 			}
-			rows.push(message as ClineMessage)
+			rows.push(message as UiMessage)
 		},
 	}
 	return { handler: handler as unknown as MessageStateHandler, rows, readHistory: () => history }
@@ -61,7 +61,7 @@ describe("MessageStateCompactionLanding", () => {
 
 		await landing.land({ compactionId: "compaction-7", attempt: "attempt-2", summary: "compressed history" })
 
-		const payload = JSON.parse(rows[0].text ?? "{}") as ClineSayTool
+		const payload = JSON.parse(rows[0].text ?? "{}") as UiSayTool
 		expect(payload).toMatchObject({
 			tool: "summarizeTask",
 			content: "compressed history",
@@ -99,7 +99,7 @@ describe("MessageStateCompactionLanding", () => {
 			span: { from: { seq: 2 }, to: { seq: 7 } },
 		})
 
-		const payload = JSON.parse(rows[0].text ?? "{}") as ClineSayTool
+		const payload = JSON.parse(rows[0].text ?? "{}") as UiSayTool
 		expect(payload.compactionJournalBoundary).toEqual({ seq: 7 })
 		// The card belongs to the journal conversation, not to API history rows.
 		expect(rows[0].compactionConversationRange).toBeUndefined()
@@ -111,7 +111,7 @@ describe("MessageStateCompactionLanding", () => {
 
 		await landing.land({ compactionId: "compaction-1", attempt: "attempt-1", summary: "the summary" })
 
-		const payload = JSON.parse(rows[0].text ?? "{}") as ClineSayTool
+		const payload = JSON.parse(rows[0].text ?? "{}") as UiSayTool
 		expect(payload.compactionJournalBoundary).toBeUndefined()
 	})
 

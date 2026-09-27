@@ -1,19 +1,19 @@
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import { describe, expect, it } from "vitest"
 import type { MessageStateHandler } from "../../message-state"
 import { ProviderTextPresenter } from "../ProviderTextPresenter"
 
 /** A message store reduced to the row operations the presenter performs. */
 function createMessages() {
-	const rows = new Map<number, ClineMessage>()
-	const committed: ClineMessage[] = []
+	const rows = new Map<number, UiMessage>()
+	const committed: UiMessage[] = []
 	const removed: number[] = []
 	const handler = {
-		upsertTransientClineMessage: (message: ClineMessage) => {
+		upsertTransientClineMessage: (message: UiMessage) => {
 			rows.set(message.ts, message)
 			return message
 		},
-		commitTransientClineMessage: async (message: ClineMessage) => {
+		commitTransientClineMessage: async (message: UiMessage) => {
 			rows.set(message.ts, message)
 			committed.push(message)
 			return message

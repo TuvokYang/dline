@@ -1,4 +1,4 @@
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import { describe, expect, it } from "vitest"
 import { collectContextWindowRequestPressures, readContextWindowRequestPressure } from "../context-pressure"
 import { resolveContextWindowProjection } from "../context-window-projection"
@@ -9,7 +9,7 @@ import { resolveContextWindowProjection } from "../context-window-projection"
  * @param messages The chat messages in chronological order.
  * @returns Pressure records parsed from every persisted API request.
  */
-function collectPressuresWithoutCompactionBoundary(messages: readonly ClineMessage[]) {
+function collectPressuresWithoutCompactionBoundary(messages: readonly UiMessage[]) {
 	return messages.flatMap((message) => {
 		if (message.say !== "api_req_started") return []
 		const pressure = readContextWindowRequestPressure(message.text)
@@ -34,8 +34,8 @@ function collectPressuresWithoutCompactionBoundary(messages: readonly ClineMessa
  * @param info The persisted request pressure metadata.
  * @returns The api_req_started chat message.
  */
-function apiRequest(ts: number, info: Record<string, unknown>): ClineMessage {
-	return { ts, type: "say", say: "api_req_started", text: JSON.stringify(info) } as ClineMessage
+function apiRequest(ts: number, info: Record<string, unknown>): UiMessage {
+	return { ts, type: "say", say: "api_req_started", text: JSON.stringify(info) } as UiMessage
 }
 
 /**
@@ -45,14 +45,14 @@ function apiRequest(ts: number, info: Record<string, unknown>): ClineMessage {
  * @param compactionStatus The compaction lifecycle status carried by the card.
  * @returns The summarizeTask chat message.
  */
-function compactionCard(ts: number, compactionStatus: "completed" | "failed"): ClineMessage {
+function compactionCard(ts: number, compactionStatus: "completed" | "failed"): UiMessage {
 	return {
 		ts,
 		type: "say",
 		say: "tool",
 		partial: false,
 		text: JSON.stringify({ tool: "summarizeTask", content: "summary", compactionStatus }),
-	} as ClineMessage
+	} as UiMessage
 }
 
 const PRE_COMPACTION_PROVIDER_TOKENS = 440_000

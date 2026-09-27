@@ -1,4 +1,4 @@
-import type { ClineAsk, ClineMessage, TaskViewActionType, TaskViewState } from "@shared/ExtensionMessage"
+import type { TaskViewActionType, TaskViewState, UiAsk, UiMessage } from "@shared/ExtensionMessage"
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { TaskServiceClient } from "@/services/grpc-client"
@@ -11,14 +11,14 @@ vi.mock("@/services/grpc-client", () => ({
 	},
 }))
 
-const ASK: ClineMessage = {
+const ASK: UiMessage = {
 	ts: 100,
 	type: "ask",
 	ask: "tool",
 	text: "Approve write",
 	interactionId: "interaction-1",
 }
-const SAY: ClineMessage = { ts: 90, type: "say", say: "text", text: "status text" }
+const SAY: UiMessage = { ts: 90, type: "say", say: "text", text: "status text" }
 
 /** Create one active interaction view anchored to timestamp 100. */
 function taskView(): TaskViewState {
@@ -65,13 +65,13 @@ function configureInteraction(
 	view: TaskViewState,
 	input: {
 		kind: string
-		taskAsk: ClineAsk
+		taskAsk: UiAsk
 		presentationKind: string
 		action: TaskViewActionType
 		label: string
 		enterAction?: TaskViewActionType
 	},
-): ClineMessage {
+): UiMessage {
 	if (!view.activeInteraction) throw new Error("Expected active interaction")
 	view.phase = input.kind === "completion" ? "completed" : "paused"
 	view.activeInteraction = {
@@ -170,7 +170,7 @@ describe("InteractionHost", () => {
 			presentationKind: "focus_chain_change",
 			taskAsk: "change_todo_list",
 		}
-		const message: ClineMessage = {
+		const message: UiMessage = {
 			...ASK,
 			ask: "change_todo_list",
 			text: JSON.stringify({ plan: "# Plan\n- [ ] First item\n- [ ] Second item", reason: "Review" }),

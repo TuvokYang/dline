@@ -1,8 +1,8 @@
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 
 import { buildMessageRowKey, getBottomFollowIntent, mergeMessageWindow, shouldRestoreBottom } from "./messageWindowUtils"
 
-const createMessage = (ts: number, text = `message-${ts}`, partial = false): ClineMessage => ({
+const createMessage = (ts: number, text = `message-${ts}`, partial = false): UiMessage => ({
 	ts,
 	type: "say",
 	say: "text",

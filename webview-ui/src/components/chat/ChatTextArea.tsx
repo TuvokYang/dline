@@ -1,6 +1,6 @@
 import { DEFAULT_CHAT_INPUT_SEND_SHORTCUT, getChatInputSendShortcutLabel } from "@shared/ChatInputSendShortcut"
 import { mentionRegex } from "@shared/context-mentions"
-import type { ClineAsk } from "@shared/ExtensionMessage"
+import type { UiAsk } from "@shared/ExtensionMessage"
 import type { InputSemanticCatalog } from "@shared/input-semantics/catalog"
 import { EmptyRequest, StringRequest } from "@shared/proto/dline/common"
 import { FileSearchRequest, FileSearchType, RefreshedDlineToggles, RelativePathsRequest } from "@shared/proto/dline/file"
@@ -105,7 +105,7 @@ interface ChatTextAreaProps {
 	onSendBlocked?: (draft: ModeSwitchDraft) => void
 	onSelectFilesAndImages: () => void
 	shouldDisableFilesAndImages: boolean
-	clineAsk?: ClineAsk
+	clineAsk?: UiAsk
 	onHeightChange?: (height: number) => void
 	onFocusChange?: (isFocused: boolean) => void
 	/** Pasted spans of `inputValue`, owned by the draft state (WS-041 AC-09). */

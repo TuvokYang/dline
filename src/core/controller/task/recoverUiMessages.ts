@@ -1,7 +1,7 @@
 import { readTaskConversation } from "@core/task/conversation/TaskConversationReader"
 import fs from "fs/promises"
 import * as path from "path"
-import { ClineMessage } from "@/shared/ExtensionMessage"
+import { UiMessage } from "@/shared/ExtensionMessage"
 import { ClineStorageMessage } from "@/shared/messages/content"
 import { Logger } from "@/shared/services/Logger"
 import { writeJsonAtomic } from "@/shared/storage/atomic-file"
@@ -29,7 +29,7 @@ async function backupUiMessages(taskId: string, taskDir: string): Promise<string
  * The open task already owns that writer, so its message state replaces the
  * history. A task that is not open here is opened just long enough to write.
  */
-async function storeRecoveredMessages(controller: Controller | undefined, taskId: string, messages: ClineMessage[]) {
+async function storeRecoveredMessages(controller: Controller | undefined, taskId: string, messages: UiMessage[]) {
 	const activeTask = controller?.task?.taskId === taskId ? controller.task : undefined
 	if (activeTask) {
 		await activeTask.owners.messages.replaceClineMessages(messages)
@@ -55,7 +55,7 @@ function stripXml(text: string, tag: string): string {
 /**
  * Check if a text block is a system-generated block that should be filtered out.
  */
-/** Map tool_use names to ClineAsk types */
+/** Map tool_use names to UiAsk types */
 function toolToAskType(name: string): string | undefined {
 	const map: Record<string, string> = {
 		ask_followup_question: "followup",
@@ -119,7 +119,7 @@ function isSystemBlock(text: string): boolean {
 }
 
 /**
- * Convert an API conversation history entry to approximate ClineMessage entries.
+ * Convert an API conversation history entry to approximate UiMessage entries.
  */
 /**
  * Build an api_req_started text payload from the metrics stored on the
@@ -144,8 +144,8 @@ function buildApiReqStartedText(metrics?: ClineStorageMessage["metrics"]): strin
 	})
 }
 
-function convertApiToUiMessages(apiMessages: ClineStorageMessage[]): ClineMessage[] {
-	const result: ClineMessage[] = []
+function convertApiToUiMessages(apiMessages: ClineStorageMessage[]): UiMessage[] {
+	const result: UiMessage[] = []
 	const baseTs = Date.now()
 	const genTs = (offset: number): number => baseTs + offset
 
@@ -163,7 +163,7 @@ function convertApiToUiMessages(apiMessages: ClineStorageMessage[]): ClineMessag
 					// Strip <task> XML wrapper from the task description
 					text = stripXml(text, "task")
 					if (text) {
-						result.push({ ts: genTs(result.length), type: "say", say: "task", text } as ClineMessage)
+						result.push({ ts: genTs(result.length), type: "say", say: "task", text } as UiMessage)
 						isFirstUser = false
 					}
 					continue
@@ -175,7 +175,7 @@ function convertApiToUiMessages(apiMessages: ClineStorageMessage[]): ClineMessag
 				// Strip <user_response> wrapper
 				text = stripXml(text, "user_response")
 
-				result.push({ ts: genTs(result.length), type: "say", say: "user_feedback", text } as ClineMessage)
+				result.push({ ts: genTs(result.length), type: "say", say: "user_feedback", text } as UiMessage)
 			}
 			// Build api_req_started from the NEXT assistant message's metrics
 			const nextMsg = apiMessages[i + 1] as ClineStorageMessage | undefined
@@ -184,11 +184,11 @@ function convertApiToUiMessages(apiMessages: ClineStorageMessage[]): ClineMessag
 				type: "say",
 				say: "api_req_started",
 				text: buildApiReqStartedText(nextMsg?.metrics),
-			} as ClineMessage)
+			} as UiMessage)
 		} else if (msg.role === "assistant") {
 			for (const block of contentBlocks) {
 				if (block.type === "text" && block.text) {
-					result.push({ ts: genTs(result.length), type: "say", say: "text", text: block.text } as ClineMessage)
+					result.push({ ts: genTs(result.length), type: "say", say: "text", text: block.text } as UiMessage)
 				} else if (block.type === "tool_use") {
 					const input = (block.input as Record<string, unknown>) || {}
 					const askType = toolToAskType(block.name)
@@ -200,11 +200,11 @@ function convertApiToUiMessages(apiMessages: ClineStorageMessage[]): ClineMessag
 							ask: askType,
 							text: askText,
 							interactionId: block.dline_tid,
-						} as ClineMessage)
+						} as UiMessage)
 					} else {
 						// Read-only tools: render as text
 						const toolDesc = `**Tool: ${block.name}**\n\`\`\`json\n${JSON.stringify(block.input, null, 2)}\n\`\`\``
-						result.push({ ts: genTs(result.length), type: "say", say: "text", text: toolDesc } as ClineMessage)
+						result.push({ ts: genTs(result.length), type: "say", say: "text", text: toolDesc } as UiMessage)
 					}
 				}
 			}

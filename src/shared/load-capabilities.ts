@@ -37,7 +37,7 @@ export function buildLoadToolName(kind: LoadCapabilityKind): string {
  *
  * @param kind Capability family currently loading.
  * @param name Capability name requested by the model.
- * @returns Structured payload for ClineSayTool messages.
+ * @returns Structured payload for UiSayTool messages.
  */
 export function createLoadingPayload(kind: LoadCapabilityKind, name: string): LoadCapabilityPayload {
 	return {
@@ -54,7 +54,7 @@ export function createLoadingPayload(kind: LoadCapabilityKind, name: string): Lo
  * @param kind Capability family that failed to load.
  * @param name Capability name requested by the model.
  * @param error Human-readable failure reason.
- * @returns Structured payload for ClineSayTool messages.
+ * @returns Structured payload for UiSayTool messages.
  */
 export function createFailedPayload(kind: LoadCapabilityKind, name: string, error: string): LoadCapabilityPayload {
 	return {

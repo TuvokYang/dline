@@ -1,4 +1,4 @@
-import type { ClineAsk } from "@shared/ExtensionMessage"
+import type { UiAsk } from "@shared/ExtensionMessage"
 import type { SemanticInputDocument } from "@shared/input-semantics/document"
 import type { ModeSwitchSnapshot } from "@shared/mode-switch"
 import { ModeSwitchOperationRequest, ModeSwitchStatus, PlanActMode, TogglePlanActModeRequest } from "@shared/proto/dline/state"
@@ -52,7 +52,7 @@ interface UseModeSwitchResult {
 }
 
 const ACTIVE_PHASES = new Set<ModeSwitchSnapshot["phase"]>(["awaiting_confirmation", "compacting", "committing"])
-const MODE_SWITCH_OWNED_ASKS = new Set<ClineAsk>([
+const MODE_SWITCH_OWNED_ASKS = new Set<UiAsk>([
 	"followup",
 	"make_plan",
 	"qna_respond",
@@ -67,7 +67,7 @@ function hasDraft(draft: ModeSwitchDraft): boolean {
 }
 
 /** Return whether the active interaction owns the draft submitted with a mode switch. */
-export function shouldAttachModeSwitchDraft(clineAsk: ClineAsk | undefined): boolean {
+export function shouldAttachModeSwitchDraft(clineAsk: UiAsk | undefined): boolean {
 	return clineAsk !== undefined && MODE_SWITCH_OWNED_ASKS.has(clineAsk)
 }
 

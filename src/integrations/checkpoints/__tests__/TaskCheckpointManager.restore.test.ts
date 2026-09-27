@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest"
-import type { ClineMessage } from "@/shared/ExtensionMessage"
+import type { UiMessage } from "@/shared/ExtensionMessage"
 
 vi.unmock("@integrations/checkpoints")
 
@@ -22,7 +22,7 @@ interface RestoreHarness {
 }
 
 function createHarness(
-	messages: ClineMessage[],
+	messages: UiMessage[],
 	trackedFiles?: string[],
 	apiHistoryLength = 2,
 	conversationRewind?: { rewindTo: ReturnType<typeof vi.fn> },
@@ -138,7 +138,7 @@ describe("TaskCheckpointManager restore isolation", () => {
 	it("truncates a durable compaction failure card that follows the restore point", async () => {
 		// A failed compaction carries no compactionConversationRange, so it is an ordinary
 		// durable row. Restoring an earlier point must rewind past it and remove it.
-		const failureCard: ClineMessage = {
+		const failureCard: UiMessage = {
 			ts: 43,
 			type: "say",
 			say: "tool",
@@ -151,7 +151,7 @@ describe("TaskCheckpointManager restore isolation", () => {
 				compactionUnitKind: "failure",
 				error: "Internal compaction Pass did not return a valid summarize_task context",
 			}),
-		} as ClineMessage
+		} as UiMessage
 		const harness = createHarness([
 			{ ts: 42, type: "say", say: "checkpoint_created", lastCheckpointHash: "hash-1" },
 			failureCard,
@@ -220,7 +220,7 @@ describe("TaskCheckpointManager restore isolation", () => {
 	})
 
 	it("restores chat and workspace through one combined success projection", async () => {
-		const messages: ClineMessage[] = [
+		const messages: UiMessage[] = [
 			{
 				ts: 42,
 				type: "say",
@@ -309,7 +309,7 @@ describe("TaskCheckpointManager restore isolation", () => {
 	})
 
 	it("restores a completed compaction card to its pre-compaction boundary through the ordinary transaction", async () => {
-		const messages: ClineMessage[] = [
+		const messages: UiMessage[] = [
 			{ ts: 10, type: "say", say: "task", conversationHistoryIndex: 0 },
 			{ ts: 20, type: "say", say: "text", conversationHistoryIndex: 1 },
 			{
@@ -343,7 +343,7 @@ describe("TaskCheckpointManager restore isolation", () => {
 	})
 
 	it("rejects an invalid compaction boundary before mutating API, UI, context, or runtime", async () => {
-		const messages: ClineMessage[] = [
+		const messages: UiMessage[] = [
 			{ ts: 10, type: "say", say: "task", conversationHistoryIndex: 0 },
 			{
 				ts: 30,
@@ -371,7 +371,7 @@ describe("TaskCheckpointManager restore isolation", () => {
 	})
 
 	describe("journal-bounded compaction card", () => {
-		const journalMessages = (): ClineMessage[] => [
+		const journalMessages = (): UiMessage[] => [
 			{ ts: 10, type: "say", say: "task" },
 			{ ts: 20, type: "say", say: "text" },
 			{

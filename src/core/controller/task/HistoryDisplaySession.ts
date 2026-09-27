@@ -1,4 +1,4 @@
-import type { ClineMessage, TaskViewState } from "@shared/ExtensionMessage"
+import type { TaskViewState, UiMessage } from "@shared/ExtensionMessage"
 import type { HistoryItem } from "@shared/HistoryItem"
 import type { DispatchInteractionRequest } from "@shared/proto/dline/task"
 import { Logger } from "@shared/services/Logger"
@@ -40,10 +40,10 @@ export class HistoryDisplaySession {
 	 */
 	private readonly activityPersistence: TaskActivityPersistence
 	private messageReader?: UIMessageWindowReader
-	private messages: ClineMessage[] = []
+	private messages: UiMessage[] = []
 	private durableMessageCount = 0
-	private syntheticMessage?: ClineMessage
-	private taskTitleMessage?: ClineMessage
+	private syntheticMessage?: UiMessage
+	private taskTitleMessage?: UiMessage
 	private viewState: TaskViewState
 	private locked = false
 	private loaded = false
@@ -97,7 +97,7 @@ export class HistoryDisplaySession {
 		}
 	}
 
-	getMessages(): readonly ClineMessage[] {
+	getMessages(): readonly UiMessage[] {
 		return this.messages
 	}
 
@@ -105,7 +105,7 @@ export class HistoryDisplaySession {
 		return this.durableMessageCount + (this.syntheticMessage ? 1 : 0)
 	}
 
-	getTaskTitleMessage(): ClineMessage | undefined {
+	getTaskTitleMessage(): UiMessage | undefined {
 		return this.taskTitleMessage
 	}
 
@@ -217,13 +217,13 @@ export class HistoryDisplaySession {
 	 */
 	private projectSnapshot(
 		snapshot: TaskState | undefined,
-		durableMessages: ClineMessage[],
-	): { messages: ClineMessage[]; view: TaskViewState; syntheticMessage?: ClineMessage } {
+		durableMessages: UiMessage[],
+	): { messages: UiMessage[]; view: TaskViewState; syntheticMessage?: UiMessage } {
 		const display = projectHistoryDisplayState(this.taskId, snapshot)
 		if (!display.synthetic) {
 			return { messages: durableMessages, view: this.projectView(display.state, durableMessages) }
 		}
-		const syntheticMessage: ClineMessage = {
+		const syntheticMessage: UiMessage = {
 			ts: durableMessages.reduce((latest, message) => Math.max(latest, message.ts), 0) + 1,
 			type: "ask",
 			ask: historyDisplayTaskAsk(display.synthetic.kind),
@@ -235,12 +235,12 @@ export class HistoryDisplaySession {
 		return { messages, view: this.projectView(display.state, messages), syntheticMessage }
 	}
 
-	private projectView(state: TaskState, messages: readonly ClineMessage[]): TaskViewState {
+	private projectView(state: TaskState, messages: readonly UiMessage[]): TaskViewState {
 		return adaptCanonicalTaskView(projectCanonicalTaskView(state), messages)
 	}
 }
 
 /** A completed task reopened from history asks to resume rather than replaying its completion row. */
-function historyDisplayTaskAsk(kind: HistoryDisplayInteractionKind): ClineMessage["ask"] {
+function historyDisplayTaskAsk(kind: HistoryDisplayInteractionKind): UiMessage["ask"] {
 	return kind === "completion" ? "resume_completed_task" : getInteraction(kind).taskAsk
 }

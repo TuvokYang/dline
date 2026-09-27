@@ -1,4 +1,4 @@
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import { beforeEach, describe, expect, it } from "vitest"
 import { MessageChannel } from "../MessageChannel"
 import { TaskState } from "../TaskState"
@@ -14,7 +14,7 @@ import { TaskState } from "../TaskState"
 interface Harness {
 	channel: MessageChannel
 	taskState: TaskState
-	messages: ClineMessage[]
+	messages: UiMessage[]
 	/** Receive-window state observed at each point the ask became visible. */
 	windowOpenAtVisibility: boolean[]
 }
@@ -25,7 +25,7 @@ interface Harness {
  */
 function createHarness(): Harness {
 	const taskState = new TaskState()
-	const messages: ClineMessage[] = []
+	const messages: UiMessage[] = []
 	const windowOpenAtVisibility: boolean[] = []
 	let nextTs = 1000
 
@@ -33,14 +33,14 @@ function createHarness(): Harness {
 
 	const messageStateHandler = {
 		clineMessages: messages,
-		addToClineMessages: async (message: ClineMessage) => {
+		addToClineMessages: async (message: UiMessage) => {
 			messages.push(message)
 		},
-		upsertClineMessageInMemory: async (message: ClineMessage) => {
+		upsertClineMessageInMemory: async (message: UiMessage) => {
 			messages.push(message)
 			return message
 		},
-		finalizeClineMessage: async (message: ClineMessage) => {
+		finalizeClineMessage: async (message: UiMessage) => {
 			messages.push(message)
 			return message
 		},
@@ -104,8 +104,8 @@ describe("MessageChannel ask receive window ordering", () => {
 		// previous ordering this response was refused and the ask hung forever.
 		let acceptedDuringPresentation = false
 		const channel = harness.channel
-		const originalPush = Reflect.get(channel, "pushMessage") as (msg: ClineMessage) => void
-		Reflect.set(channel, "pushMessage", (msg: ClineMessage) => {
+		const originalPush = Reflect.get(channel, "pushMessage") as (msg: UiMessage) => void
+		Reflect.set(channel, "pushMessage", (msg: UiMessage) => {
 			originalPush(msg)
 			if (!acceptedDuringPresentation) {
 				acceptedDuringPresentation = channel.resolve("messageResponse", "early answer")

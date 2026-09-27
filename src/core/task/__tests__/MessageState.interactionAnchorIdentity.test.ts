@@ -1,7 +1,7 @@
 import { UIMessage } from "@core/storage/UIMessage"
 import { MessageStateHandler } from "@core/task/message-state"
 import { TaskState } from "@core/task/TaskState"
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import fs from "fs/promises"
 import os from "os"
 import path from "path"
@@ -46,7 +46,7 @@ describe("interaction anchor identity", () => {
 	const INTERACTION_ID = "dline_tid_approval"
 
 	/** Durable approval anchor written when the interaction opens. */
-	function anchorRow(): ClineMessage {
+	function anchorRow(): UiMessage {
 		return {
 			ts: ANCHOR_TS,
 			type: "ask",

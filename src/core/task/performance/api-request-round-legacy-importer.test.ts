@@ -3,13 +3,13 @@ import path from "node:path"
 import type { UnifyStore, UnifyStoreTransaction } from "@core/storage/backend/api/UnifyStore"
 import { eq } from "@core/storage/backend/api/UnifyStoreQuery"
 import { SqliteUnifyStoreBackend } from "@core/storage/backend/sqlite/SqliteUnifyStore"
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { ApiRequestRoundEntity } from "./api-request-round-entity"
 import { ApiRequestRoundLegacyImportEntity } from "./api-request-round-legacy-import-entity"
 import { importApiRequestRoundLegacyUsage } from "./api-request-round-legacy-importer"
 
-function message(ts: number, say: ClineMessage["say"], usage: object): ClineMessage {
+function message(ts: number, say: UiMessage["say"], usage: object): UiMessage {
 	return { ts, type: "say", say, text: JSON.stringify(usage) }
 }
 

@@ -1,4 +1,4 @@
-import type { ClineAsk } from "@shared/ExtensionMessage"
+import type { UiAsk } from "@shared/ExtensionMessage"
 import { ClineDefaultTool, CONVERSATIONAL_TOOL_NAMES } from "@shared/tools"
 
 // ── Types ──
@@ -50,7 +50,7 @@ export interface BlockEvent {
 	dlineTid: string
 	functionId: string
 	toolName?: string
-	askType?: ClineAsk
+	askType?: UiAsk
 }
 
 /**
@@ -369,9 +369,9 @@ export class BlockPhaseMachine {
 	}
 
 	/**
-	 * Map a tool name to the ClineAsk type used for approval UI.
+	 * Map a tool name to the UiAsk type used for approval UI.
 	 */
-	static toolNameToAskType(toolName: string): ClineAsk {
+	static toolNameToAskType(toolName: string): UiAsk {
 		switch (toolName) {
 			case "execute_command":
 				return "command"
@@ -397,7 +397,7 @@ export class BlockPhaseMachine {
 			default:
 				// Conversational tools use their own name as the ask type
 				if (CONVERSATIONAL_TOOL_NAMES.has(toolName as ClineDefaultTool)) {
-					return toolName as ClineAsk
+					return toolName as UiAsk
 				}
 				return "tool"
 		}

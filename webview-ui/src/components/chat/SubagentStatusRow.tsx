@@ -1,9 +1,9 @@
 import {
-	ClineAskUseSubagents,
-	ClineMessage,
-	ClineSaySubagentStatus,
 	SubagentExecutionStatus,
 	SubagentStatusItem,
+	UiAskUseSubagents,
+	UiMessage,
+	UiSaySubagentStatus,
 } from "@shared/ExtensionMessage"
 import type { TaskActivityEvent, TaskActivityRuntimeConfig } from "@shared/proto/dline/task"
 import {
@@ -34,9 +34,9 @@ import { cancelTaskActivities, finishTaskActivities, retryTaskActivities, useTas
 import { TOOL_RESPONSE_SCROLL_CLASS } from "./constants"
 
 interface SubagentStatusRowProps {
-	message: ClineMessage
+	message: UiMessage
 	isLast: boolean
-	lastModifiedMessage?: ClineMessage
+	lastModifiedMessage?: UiMessage
 }
 
 type DisplayStatus = SubagentExecutionStatus
@@ -111,14 +111,14 @@ function SubagentContext({ context }: { context: string }) {
 	)
 }
 
-function parseSubagentRowData(message: ClineMessage): SubagentRowData | null {
+function parseSubagentRowData(message: UiMessage): SubagentRowData | null {
 	if (!message.text) {
 		return null
 	}
 
 	try {
 		if (message.ask === "use_subagents" || message.say === "use_subagents") {
-			const parsed = JSON.parse(message.text) as ClineAskUseSubagents
+			const parsed = JSON.parse(message.text) as UiAskUseSubagents
 			if (!Array.isArray(parsed.prompts)) {
 				return null
 			}
@@ -203,7 +203,7 @@ function parseSubagentRowData(message: ClineMessage): SubagentRowData | null {
 			}
 		}
 
-		const parsed = JSON.parse(message.text) as ClineSaySubagentStatus
+		const parsed = JSON.parse(message.text) as UiSaySubagentStatus
 		if (!Array.isArray(parsed.items)) {
 			return null
 		}

@@ -1,4 +1,4 @@
-import { type BrowserAction, browserActions, type ClineMessage } from "@shared/ExtensionMessage"
+import { type BrowserAction, browserActions, type UiMessage } from "@shared/ExtensionMessage"
 
 export interface BrowserSessionState {
 	url?: string
@@ -21,7 +21,7 @@ export interface BrowserSessionPage {
 
 export interface BrowserSessionProjection {
 	pages: BrowserSessionPage[]
-	conversationMessages: ClineMessage[]
+	conversationMessages: UiMessage[]
 	initialUrl: string
 	isAutoApproved: boolean
 	hasBrowserResult: boolean
@@ -43,7 +43,7 @@ function optionalString(value: unknown): string | undefined {
 	return typeof value === "string" ? value : undefined
 }
 
-function parseResult(message: ClineMessage): BrowserSessionState {
+function parseResult(message: UiMessage): BrowserSessionState {
 	const result = parseRecord(message.text)
 	return {
 		url: optionalString(result?.currentUrl),
@@ -53,7 +53,7 @@ function parseResult(message: ClineMessage): BrowserSessionState {
 	}
 }
 
-function parseAction(message: ClineMessage): BrowserSessionAction | undefined {
+function parseAction(message: UiMessage): BrowserSessionAction | undefined {
 	const value = parseRecord(message.text)
 	const action = optionalString(value?.action)
 	if (!action || !browserActions.includes(action as BrowserAction)) return undefined
@@ -65,15 +65,15 @@ function parseAction(message: ClineMessage): BrowserSessionAction | undefined {
 	}
 }
 
-export function hasCancelledBrowserApiRequest(messages: ClineMessage[]): boolean {
+export function hasCancelledBrowserApiRequest(messages: UiMessage[]): boolean {
 	const lastApiRequest = [...messages].reverse().find((message) => message.say === "api_req_started")
 	const value = parseRecord(lastApiRequest?.text)
 	return value?.cancelReason !== undefined && value.cancelReason !== null
 }
 
-export function projectBrowserSession(messages: ClineMessage[]): BrowserSessionProjection {
+export function projectBrowserSession(messages: UiMessage[]): BrowserSessionProjection {
 	const pages: BrowserSessionPage[] = []
-	const conversationMessages: ClineMessage[] = []
+	const conversationMessages: UiMessage[] = []
 	let pendingActions: BrowserSessionAction[] = []
 	let initialUrl = ""
 	let isAutoApproved = false

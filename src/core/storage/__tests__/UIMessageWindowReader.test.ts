@@ -1,7 +1,7 @@
 import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { writeJsonl } from "@/core/storage/backend/jsonl/jsonl-utils"
 import { ensureTaskDirectoryExists, GlobalFileNames } from "@/core/storage/disk"
@@ -24,7 +24,7 @@ describe("UIMessage history windows", () => {
 		const taskId = "window-pages"
 		const messages = Array.from(
 			{ length: 600 },
-			(_, index): ClineMessage => ({
+			(_, index): UiMessage => ({
 				ts: index + 1,
 				type: "say",
 				say: index === 0 ? "task" : "text",

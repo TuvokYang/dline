@@ -1,15 +1,15 @@
 import { EmptyRequest } from "@shared/proto/dline/common"
-import { ClineMessage } from "@shared/proto/dline/ui"
+import { ClineMessage as ProtoUiMessage } from "@shared/proto/dline/ui"
 import { Logger } from "@/shared/services/Logger"
 import { getRequestRegistry, StreamingResponseHandler } from "../grpc-handler"
 import { Controller } from "../index"
 
 // Per-controller subscriptions to isolate partial messages between independent webviews.
-const subs = new Map<Controller, Set<StreamingResponseHandler<ClineMessage>>>()
+const subs = new Map<Controller, Set<StreamingResponseHandler<ProtoUiMessage>>>()
 
 // Keep track of callback-based subscriptions (for CLI and other non-gRPC consumers).
 // These remain global since CLI consumers are not per-controller.
-export type PartialMessageCallback = (message: ClineMessage) => void
+export type PartialMessageCallback = (message: ProtoUiMessage) => void
 const callbackSubscriptions = new Set<PartialMessageCallback>()
 
 /**
@@ -18,7 +18,7 @@ const callbackSubscriptions = new Set<PartialMessageCallback>()
 export async function subscribeToPartialMessage(
 	controller: Controller,
 	_request: EmptyRequest,
-	responseStream: StreamingResponseHandler<ClineMessage>,
+	responseStream: StreamingResponseHandler<ProtoUiMessage>,
 	requestId?: string,
 ): Promise<void> {
 	let set = subs.get(controller)
@@ -56,9 +56,9 @@ export function registerPartialMessageCallback(callback: PartialMessageCallback)
 /**
  * Send a partial message event to a specific controller's subscribers.
  * @param controller The controller whose subscribers should receive the event
- * @param partialMessage The ClineMessage to send
+ * @param partialMessage The ProtoUiMessage to send
  */
-export async function sendPartialMessageEvent(controller: Controller, partialMessage: ClineMessage): Promise<void> {
+export async function sendPartialMessageEvent(controller: Controller, partialMessage: ProtoUiMessage): Promise<void> {
 	// Send to gRPC stream subscribers of this controller
 	const set = subs.get(controller)
 	const streamPromises: Promise<void>[] = []

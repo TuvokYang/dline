@@ -8,7 +8,7 @@ import {
 import { DEFAULT_BROWSER_SETTINGS } from "@shared/BrowserSettings"
 import { DEFAULT_CHAT_INPUT_SEND_SHORTCUT } from "@shared/ChatInputSendShortcut"
 import { DEFAULT_MAX_PARALLEL_SUBAGENTS, DEFAULT_MAX_PARALLEL_TOOL_CALLS } from "@shared/concurrency-limits"
-import { type ActiveInteractionView, type ClineMessage, DEFAULT_PLATFORM, type ExtensionState } from "@shared/ExtensionMessage"
+import { type ActiveInteractionView, DEFAULT_PLATFORM, type ExtensionState, type UiMessage } from "@shared/ExtensionMessage"
 import { DEFAULT_FOCUS_CHAIN_SETTINGS } from "@shared/FocusChainSettings"
 import { DEFAULT_MCP_DISPLAY_MODE } from "@shared/McpDisplayMode"
 import type { UserInfo } from "@shared/proto/dline/account"
@@ -65,10 +65,10 @@ export function shouldAcceptState(currentRevision: number, incomingRevision?: nu
 	return incomingRevision > currentRevision
 }
 
-const mergeClineMessagesByTs = (existing: ClineMessage[], incoming: ClineMessage[]): ClineMessage[] => {
-	const merged: ClineMessage[] = []
+const mergeClineMessagesByTs = (existing: UiMessage[], incoming: UiMessage[]): UiMessage[] => {
+	const merged: UiMessage[] = []
 	const indexByTs = new Map<number, number>()
-	const appendOrReplace = (message: ClineMessage) => {
+	const appendOrReplace = (message: UiMessage) => {
 		const existingIndex = indexByTs.get(message.ts)
 		if (existingIndex === undefined) {
 			indexByTs.set(message.ts, merged.length)
@@ -106,12 +106,12 @@ const mergeClineMessagesByTs = (existing: ClineMessage[], incoming: ClineMessage
  * @returns Reconciled window and its absolute start index.
  */
 const applyFetchedMessageWindow = (
-	existing: ClineMessage[],
+	existing: UiMessage[],
 	existingStartIndex: number,
-	fetched: ClineMessage[],
+	fetched: UiMessage[],
 	fetchedStartIndex: number,
 	total?: number,
-): { messages: ClineMessage[]; startIndex: number } => {
+): { messages: UiMessage[]; startIndex: number } => {
 	const reconciled = reconcileMessageWindow(
 		{ messages: existing, startIndex: existingStartIndex },
 		{ messages: fetched, startIndex: fetchedStartIndex, total },
@@ -119,7 +119,7 @@ const applyFetchedMessageWindow = (
 	return { messages: reconciled.messages, startIndex: reconciled.startIndex }
 }
 
-const hasExactInteractionAnchor = (messages: readonly ClineMessage[], interaction: ActiveInteractionView): boolean =>
+const hasExactInteractionAnchor = (messages: readonly UiMessage[], interaction: ActiveInteractionView): boolean =>
 	messages.some(
 		(message) =>
 			message.type === "ask" &&
@@ -158,8 +158,8 @@ function describeHydrationFailure(error: unknown): string {
 export type HydrationStatus = { status: "pending" } | { status: "failed"; reason: string } | { status: "ready" }
 
 export interface ExtensionStateContextType extends ExtensionState {
-	clineMessages: ClineMessage[]
-	setClineMessages: React.Dispatch<React.SetStateAction<ClineMessage[]>>
+	clineMessages: UiMessage[]
+	setClineMessages: React.Dispatch<React.SetStateAction<UiMessage[]>>
 	didHydrateState: boolean
 	/** Hydration progress, including why it failed when it did. */
 	hydration: HydrationStatus
@@ -437,9 +437,9 @@ export const ExtensionStateContextProvider: React.FC<{
 	}, [])
 
 	// Atomic sliding window state via React 18 auto-batching
-	const [clineMessages, setClineMessages] = useState<ClineMessage[]>([])
+	const [clineMessages, setClineMessages] = useState<UiMessage[]>([])
 	const [firstItemIndex, setFirstItemIndex] = useState(0)
-	const clineMessagesRef = useRef<ClineMessage[]>([])
+	const clineMessagesRef = useRef<UiMessage[]>([])
 	// Fetch callbacks resolve after their scheduling render, so reconciliation
 	// has to read the window start from a ref rather than the captured value.
 	const firstItemIndexRef = useRef(0)
@@ -450,7 +450,7 @@ export const ExtensionStateContextProvider: React.FC<{
 	totalMessageCountRef.current = state.totalMessageCount ?? 0
 	if (clineMessages.length > 0) bootstrapResolvedRef.current = true
 
-	const commitMessageWindow = useCallback((messages: ClineMessage[], startIndex: number) => {
+	const commitMessageWindow = useCallback((messages: UiMessage[], startIndex: number) => {
 		clineMessagesRef.current = messages
 		firstItemIndexRef.current = startIndex
 		setClineMessages(messages)

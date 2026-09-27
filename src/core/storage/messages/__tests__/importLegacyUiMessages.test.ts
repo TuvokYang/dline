@@ -2,13 +2,13 @@ import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import type { ClineMessage } from "@/shared/ExtensionMessage"
+import type { UiMessage } from "@/shared/ExtensionMessage"
 import { closeInstanceStoragesUnder, ensureInstanceLayout, InstanceDatabase, openInstanceStorage } from "../../instance"
 import { importLegacyUiMessages, MIGRATED_SUFFIX } from "../importLegacyUiMessages"
 import { UiMessageRowStore } from "../UiMessageRowStore"
 
-function say(ts: number, text: string, extra: Partial<ClineMessage> = {}): ClineMessage {
-	return { ts, type: "say", say: "text", text, ...extra } as ClineMessage
+function say(ts: number, text: string, extra: Partial<UiMessage> = {}): UiMessage {
+	return { ts, type: "say", say: "text", text, ...extra } as UiMessage
 }
 
 async function exists(filePath: string): Promise<boolean> {

@@ -13,7 +13,7 @@ import { formatResponse } from "@core/prompts/responses"
 import fs from "fs/promises"
 import path from "path"
 import simpleGit from "simple-git"
-import type { ClineSayGenerateExplanation } from "@/shared/ExtensionMessage"
+import type { UiSayGenerateExplanation } from "@/shared/ExtensionMessage"
 import { Logger } from "@/shared/services/Logger"
 import { ClineDefaultTool } from "@/shared/tools"
 import type { IPartialBlockHandler, IToolHandler } from "../ToolExecutorCoordinator"
@@ -22,16 +22,16 @@ import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
 
 /**
- * Helper to create a stringified ClineSayGenerateExplanation message
+ * Helper to create a stringified UiSayGenerateExplanation message
  */
 function createExplanationMessage(
 	title: string,
 	fromRef: string,
 	toRef: string,
-	status: ClineSayGenerateExplanation["status"],
+	status: UiSayGenerateExplanation["status"],
 	error?: string,
 ): string {
-	const message: ClineSayGenerateExplanation = { title, fromRef, toRef, status }
+	const message: UiSayGenerateExplanation = { title, fromRef, toRef, status }
 	if (error) {
 		message.error = error
 	}

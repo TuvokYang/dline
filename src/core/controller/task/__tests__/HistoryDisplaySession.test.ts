@@ -1,7 +1,7 @@
 import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import type { HistoryItem } from "@shared/HistoryItem"
 import { DispatchInteractionRequest } from "@shared/proto/dline/task"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
@@ -26,7 +26,7 @@ function createHistoryItem(taskId: string): HistoryItem {
 	}
 }
 
-async function seedMessages(taskId: string, messages: readonly ClineMessage[]): Promise<void> {
+async function seedMessages(taskId: string, messages: readonly UiMessage[]): Promise<void> {
 	const store = await UIMessage.open(taskId)
 	try {
 		for (const message of messages) await store.addMessage({ ...message })
@@ -251,7 +251,7 @@ describe("HistoryDisplaySession", () => {
 		const interactionId = "interaction-partial-approval"
 		const anchorTs = 100
 		const taskDirectory = await ensureTaskDirectoryExists(taskId)
-		const partialAnchor: ClineMessage = {
+		const partialAnchor: UiMessage = {
 			ts: anchorTs,
 			type: "ask",
 			ask: "tool",
@@ -298,7 +298,7 @@ describe("HistoryDisplaySession", () => {
 			taskId,
 			Array.from(
 				{ length: 260 },
-				(_, index): ClineMessage => ({
+				(_, index): UiMessage => ({
 					ts: index + 1,
 					type: "say",
 					say: index === 0 ? "task" : "text",

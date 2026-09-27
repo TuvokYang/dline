@@ -1,5 +1,5 @@
 import type { ModelPricing } from "@shared/api"
-import { ClineMessage } from "@shared/ExtensionMessage"
+import { UiMessage } from "@shared/ExtensionMessage"
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react"
 import React, { useCallback, useLayoutEffect, useState } from "react"
 import Thumbnails from "@/components/common/Thumbnails"
@@ -23,7 +23,7 @@ import { hasNonZeroModelPricing } from "./util"
 
 const IS_DEV = process.env.IS_DEV === '"true"'
 interface TaskHeaderProps {
-	task: ClineMessage
+	task: UiMessage
 	tokensIn: number
 	tokensOut: number
 	doesModelSupportPromptCache: boolean

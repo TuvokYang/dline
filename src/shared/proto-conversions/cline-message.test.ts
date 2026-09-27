@@ -1,9 +1,9 @@
-import type { ClineMessage } from "@shared/ExtensionMessage"
-import { ClineAsk } from "@shared/proto/dline/ui"
+import type { UiMessage } from "@shared/ExtensionMessage"
+import { ClineAsk as ProtoAsk } from "@shared/proto/dline/ui"
 import { describe, expect, it } from "vitest"
 import { convertClineMessageToProto, convertProtoToClineMessage } from "./cline-message"
 
-describe("ClineMessage command identity conversion", () => {
+describe("UiMessage command identity conversion", () => {
 	it("preserves command activity state across the proto boundary", () => {
 		const applicationMessage = {
 			ts: 100,
@@ -40,8 +40,8 @@ describe("ClineMessage command identity conversion", () => {
 		const protoMessage = convertClineMessageToProto(applicationMessage)
 		const roundTripMessage = convertProtoToClineMessage(protoMessage)
 
-		expect(ClineAsk.CHANGE_TODO_LIST).toBe(20)
-		expect(protoMessage.ask).toBe(ClineAsk.CHANGE_TODO_LIST)
+		expect(ProtoAsk.CHANGE_TODO_LIST).toBe(20)
+		expect(protoMessage.ask).toBe(ProtoAsk.CHANGE_TODO_LIST)
 		expect(roundTripMessage.ask).toBe("change_todo_list")
 	})
 
@@ -89,7 +89,7 @@ describe("ClineMessage command identity conversion", () => {
 	})
 })
 
-describe("ClineMessage image generation conversion", () => {
+describe("UiMessage image generation conversion", () => {
 	it("preserves a structured image presentation across the proto boundary without embedding image bytes", () => {
 		const artifactId = `image:sha256:${"a".repeat(64)}`
 		const previewId = `image-preview:sha256:${"b".repeat(64)}`
@@ -128,12 +128,12 @@ describe("ClineMessage image generation conversion", () => {
 					],
 				},
 			}),
-		} satisfies ClineMessage
+		} satisfies UiMessage
 
 		const protoMessage = convertClineMessageToProto(applicationMessage)
 		const roundTripMessage = convertProtoToClineMessage(protoMessage)
 		const protoPresentation = (protoMessage as unknown as { imageGeneration?: unknown }).imageGeneration
-		const restoredPresentation = (roundTripMessage as ClineMessage & { imageGeneration?: unknown }).imageGeneration
+		const restoredPresentation = (roundTripMessage as UiMessage & { imageGeneration?: unknown }).imageGeneration
 
 		expect(protoPresentation).toMatchObject({
 			schemaVersion: 1,

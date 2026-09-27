@@ -1,7 +1,7 @@
 import { resolveProvider } from "@core/api"
 import type { ToolUse } from "@core/assistant-message"
 import { formatResponse } from "@core/prompts/responses"
-import { ClineAskUseMcpServer } from "@shared/ExtensionMessage"
+import { UiAskUseMcpServer } from "@shared/ExtensionMessage"
 import { telemetryService } from "@/services/telemetry"
 import { truncateContent } from "@/shared/content-limits"
 import { ClineDefaultTool } from "@/shared/tools"
@@ -27,7 +27,7 @@ export class UseMcpToolHandler implements IFullyManagedTool {
 			serverName: uiHelpers.removeClosingTag(block, "server_name", server_name),
 			toolName: uiHelpers.removeClosingTag(block, "tool_name", tool_name),
 			arguments: uiHelpers.removeClosingTag(block, "arguments", mcp_arguments),
-		} satisfies ClineAskUseMcpServer)
+		} satisfies UiAskUseMcpServer)
 
 		await uiHelpers.say("use_mcp_server", partialMessage, undefined, undefined, true, block.ts)
 	}
@@ -77,7 +77,7 @@ export class UseMcpToolHandler implements IFullyManagedTool {
 			serverName: server_name,
 			toolName: tool_name,
 			arguments: mcp_arguments,
-		} satisfies ClineAskUseMcpServer)
+		} satisfies UiAskUseMcpServer)
 
 		await config.callbacks.say("use_mcp_server", completeMessage, undefined, undefined, false, block.ts)
 		telemetryService.captureToolUsage(

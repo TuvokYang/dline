@@ -2,7 +2,7 @@ import {
 	collectContextWindowRequestPressures,
 	getLatestReliableContextWindowTokens,
 } from "@core/context/context-management/context-pressure"
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 
 /** Context pressure as the compaction barrier observes it. */
 export interface RestoredPressure {
@@ -24,7 +24,7 @@ export interface RestoredPressure {
  * pressure must not be read as a full window.
  */
 export function readRestoredContextPressure(
-	messages: readonly ClineMessage[],
+	messages: readonly UiMessage[],
 	compactTriggerTokens: number,
 ): RestoredPressure | undefined {
 	const contextTokens = getLatestReliableContextWindowTokens(collectContextWindowRequestPressures(messages))

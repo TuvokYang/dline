@@ -1,4 +1,4 @@
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import { act, renderHook } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
@@ -18,7 +18,7 @@ vi.mock("@/services/grpc-client", () => ({
 
 import { useMessageHandlers } from "./useMessageHandlers"
 
-const TASK_MESSAGE: ClineMessage = {
+const TASK_MESSAGE: UiMessage = {
 	ts: 1,
 	type: "say",
 	say: "task",
@@ -93,7 +93,7 @@ describe("useMessageHandlers new task submission", () => {
 		)
 		const chatState = createChatState()
 		const { result, rerender } = renderHook(
-			({ messages, taskId }: { messages: ClineMessage[]; taskId?: string }) =>
+			({ messages, taskId }: { messages: UiMessage[]; taskId?: string }) =>
 				useMessageHandlers(messages, chatState, undefined, taskId),
 			{ initialProps: { messages: [], taskId: undefined } },
 		)

@@ -4,12 +4,7 @@ import { readApiProfiles } from "@core/controller/file/getApiProfiles"
 import { resolveProfileReference } from "@core/profiles/profile-binding"
 import { getPrompt } from "@core/prompts/i18n"
 import { formatResponse } from "@core/prompts/responses"
-import {
-	ClineAskUseSubagents,
-	ClineSaySubagentStatus,
-	ClineSubagentUsageInfo,
-	SubagentStatusItem,
-} from "@shared/ExtensionMessage"
+import { SubagentStatusItem, UiAskUseSubagents, UiSaySubagentStatus, UiSubagentUsageInfo } from "@shared/ExtensionMessage"
 import { telemetryService } from "@/services/telemetry"
 import { calculateApiUsageStatistics } from "@/shared/api-usage"
 import { Logger } from "@/shared/services/Logger"
@@ -527,10 +522,10 @@ function createSubagentActivity(
  */
 export function buildStatusPayload(
 	kind: "single" | "batch",
-	status: ClineSaySubagentStatus["status"],
+	status: UiSaySubagentStatus["status"],
 	entries: SubagentStatusItem[],
-	options: Pick<ClineSaySubagentStatus, "background" | "timeoutSeconds" | "jobId" | "batchJobId" | "injectionState">,
-): ClineSaySubagentStatus {
+	options: Pick<UiSaySubagentStatus, "background" | "timeoutSeconds" | "jobId" | "batchJobId" | "injectionState">,
+): UiSaySubagentStatus {
 	const completed = entries.filter((entry) => entry.status !== "pending" && entry.status !== "running").length
 	const successes = entries.filter((entry) => entry.status === "completed").length
 	const failures = entries.filter((entry) => isFailureStatus(entry.status)).length
@@ -754,7 +749,7 @@ function formatRejectedItems(rejected: readonly RejectedSubagentItem[], wholeBat
  * @param entries Final status entries.
  */
 async function emitUsage(config: TaskConfig, entries: SubagentStatusItem[]): Promise<void> {
-	const payload: ClineSubagentUsageInfo = {
+	const payload: UiSubagentUsageInfo = {
 		source: "subagents",
 		tokensIn: entries.reduce((acc, entry) => acc + entry.inputTokens, 0),
 		tokensOut: entries.reduce((acc, entry) => acc + entry.outputTokens, 0),
@@ -809,7 +804,7 @@ export class UseSubagentToolHandler implements IFullyManagedTool, IPreparableToo
 		const task = readParam(block.params.task)
 		const context = readParam(block.params.context)
 		if (!subagentName && !task && !context) return
-		const payload: ClineAskUseSubagents = {
+		const payload: UiAskUseSubagents = {
 			kind: "single",
 			prompts: task ? [task] : [],
 			subagentName,
@@ -848,7 +843,7 @@ export class UseSubagentToolHandler implements IFullyManagedTool, IPreparableToo
 			context: request.context,
 			background: request.options.background,
 			timeoutSeconds: request.options.timeoutSeconds,
-		} satisfies ClineAskUseSubagents)
+		} satisfies UiAskUseSubagents)
 		this.preparedExecutions.set(preparedExecutionKey(block), {
 			request,
 			resolvedSubagent,
@@ -1173,7 +1168,7 @@ export class UseSubagentsToolHandler implements IFullyManagedTool, IPreparableTo
 		const streamed = uiHelpers.removeClosingTag(block, "subagents", readParam(block.params.subagents))?.trim()
 		const prompts = streamed ? previewBatchPrompts(streamed) : []
 		if (prompts.length === 0) return
-		const partialMessage = JSON.stringify({ kind: "batch", prompts } satisfies ClineAskUseSubagents)
+		const partialMessage = JSON.stringify({ kind: "batch", prompts } satisfies UiAskUseSubagents)
 		await uiHelpers.say("use_subagents", partialMessage, undefined, undefined, true, block.ts)
 	}
 
@@ -1217,7 +1212,7 @@ export class UseSubagentsToolHandler implements IFullyManagedTool, IPreparableTo
 			rejected: rejected.map((item) => ({ index: item.index, error: item.error })),
 			background: request.options.background,
 			timeoutSeconds: request.options.timeoutSeconds,
-		} satisfies ClineAskUseSubagents)
+		} satisfies UiAskUseSubagents)
 		this.preparedExecutions.set(preparedExecutionKey(block), { request, batchId, planned, rejected, approvalBody })
 		return { outcome: "prepared", presentation: { ask: "tool", body: approvalBody, notify: false } }
 	}
@@ -1550,7 +1545,7 @@ export class UseSubagentsToolHandler implements IFullyManagedTool, IPreparableTo
 					return retainedManager.retryJob(entry.jobId as string)
 				})
 			})
-			const finalStatus: ClineSaySubagentStatus["status"] = entries.some((entry) => entry.status === "timeout")
+			const finalStatus: UiSaySubagentStatus["status"] = entries.some((entry) => entry.status === "timeout")
 				? "timeout"
 				: entries.some((entry) => entry.status === "failed")
 					? "failed"

@@ -1,16 +1,16 @@
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 
 export type BottomFollowIntent = "follow" | "none"
 
 export interface MergeMessageWindowInput {
-	existing: ClineMessage[]
-	incoming: ClineMessage[]
+	existing: UiMessage[]
+	incoming: UiMessage[]
 	existingStartIndex: number
 	incomingStartIndex: number
 }
 
 export interface MergeMessageWindowResult {
-	messages: ClineMessage[]
+	messages: UiMessage[]
 	firstItemIndex: number
 	merged: boolean
 }
@@ -31,7 +31,7 @@ export interface RestoreBottomInput {
 
 interface IndexedMessage {
 	index: number
-	message: ClineMessage
+	message: UiMessage
 	order: number
 }
 
@@ -99,7 +99,7 @@ export function mergeMessageWindow(input: MergeMessageWindowInput): MergeMessage
  * @param right Second message window.
  * @returns True when both windows contain identical message data.
  */
-function areMessageWindowsEqual(left: ClineMessage[], right: ClineMessage[]): boolean {
+function areMessageWindowsEqual(left: UiMessage[], right: UiMessage[]): boolean {
 	if (left.length !== right.length) {
 		return false
 	}
@@ -114,7 +114,7 @@ function areMessageWindowsEqual(left: ClineMessage[], right: ClineMessage[]): bo
  * @param fallbackIndex Row index used only when a timestamp is unavailable.
  * @returns Stable row key for virtual-list DOM identity.
  */
-export function buildMessageRowKey(row: ClineMessage | ClineMessage[], fallbackIndex: number): string {
+export function buildMessageRowKey(row: UiMessage | UiMessage[], fallbackIndex: number): string {
 	if (Array.isArray(row)) {
 		const firstTs = row.at(0)?.ts
 		const lastTs = row.at(-1)?.ts
@@ -173,9 +173,9 @@ export function shouldRestoreBottom(input: RestoreBottomInput): boolean {
  * @returns Indexed messages in replacement order.
  */
 function buildIndexedMessages(
-	existing: ClineMessage[],
+	existing: UiMessage[],
 	existingStartIndex: number,
-	incoming: ClineMessage[],
+	incoming: UiMessage[],
 	incomingStartIndex: number,
 ): IndexedMessage[] {
 	const indexedMessages: IndexedMessage[] = []

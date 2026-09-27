@@ -1,6 +1,6 @@
 import fs from "node:fs/promises"
 import path from "node:path"
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { TaskApiRequestRoundRepository } from "./api-request-round-repository"
 import type { ApiRequestRoundRecord } from "./api-request-round-types"
@@ -63,7 +63,7 @@ describe("TaskApiRequestRoundRepository", () => {
 
 	it("imports legacy rounds once while keeping aggregate-only facts out of history and RPM", async () => {
 		const location = path.join(root, "legacy.db")
-		const messages: ClineMessage[] = [
+		const messages: UiMessage[] = [
 			{
 				ts: 1_000,
 				type: "say",

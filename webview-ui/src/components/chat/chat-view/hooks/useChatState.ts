@@ -1,4 +1,4 @@
-import { ClineMessage } from "@shared/ExtensionMessage"
+import { UiMessage } from "@shared/ExtensionMessage"
 import { type Dispatch, type SetStateAction, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import {
 	EMPTY_PASTE_PROVENANCE,
@@ -150,7 +150,7 @@ function useInputHistory() {
  * Custom hook for managing chat state
  * Handles input values, selection states, and UI state
  */
-export function useChatState(messages: ClineMessage[], taskId?: string): ChatState {
+export function useChatState(messages: UiMessage[], taskId?: string): ChatState {
 	// Input and selection state
 	const { inputValue, setInputValue, undoInputValue, redoInputValue, resetInputValue, pasteProvenance, commitPasteProvenance } =
 		useInputHistory()

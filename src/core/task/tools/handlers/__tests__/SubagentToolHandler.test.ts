@@ -5,7 +5,7 @@ import type { ToolUse } from "@core/assistant-message"
 import * as ApiProfilesModule from "@core/controller/file/getApiProfiles"
 import { telemetryService } from "@services/telemetry"
 import { MAX_SUBAGENTS_PER_BATCH } from "@shared/concurrency-limits"
-import { ClineSubagentUsageInfo } from "@shared/ExtensionMessage"
+import { UiSubagentUsageInfo } from "@shared/ExtensionMessage"
 import { createTaskCapabilityToggles } from "@shared/TaskCapabilityToggles"
 import type { TaskActivityEventInput } from "@shared/task-activity"
 import { ClineDefaultTool } from "@shared/tools"
@@ -463,7 +463,7 @@ describe("SubagentToolHandler", () => {
 
 		const usageCalls = callbacks.say.mock.calls.filter((call) => call[0] === "subagent_usage")
 		assert.equal(usageCalls.length, 1)
-		const usagePayload = JSON.parse(usageCalls[0][1]) as ClineSubagentUsageInfo
+		const usagePayload = JSON.parse(usageCalls[0][1]) as UiSubagentUsageInfo
 		assert.equal(usagePayload.source, "subagents")
 		assert.equal(usagePayload.tokensIn, 6)
 		assert.equal(usagePayload.tokensOut, 9)

@@ -1,6 +1,6 @@
 import { access, readFile } from "node:fs/promises"
 import * as path from "node:path"
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import type { TaskActivityRecord } from "@shared/task-activity"
 import { TaskActivityRow } from "@/core/storage/activities/TaskActivityRow"
 import { LEGACY_ACTIVITY_FILE } from "@/core/storage/activities/TaskActivityRowStore"
@@ -30,7 +30,7 @@ function taskRoot(dlineDocsDir: string, taskId: string): string {
 }
 
 /** The stored chat history of a task, in display order. */
-export async function readTaskUiMessages(dlineDocsDir: string, taskId: string): Promise<ClineMessage[]> {
+export async function readTaskUiMessages(dlineDocsDir: string, taskId: string): Promise<UiMessage[]> {
 	try {
 		return await readUiMessages(taskRoot(dlineDocsDir, taskId))
 	} catch {
@@ -68,7 +68,7 @@ async function readLegacyActivities(root: string): Promise<TaskActivityRecord[]>
 export async function rewriteTaskUiMessages(
 	dlineDocsDir: string,
 	taskId: string,
-	transform: (messages: ClineMessage[]) => ClineMessage[] | Promise<ClineMessage[]>,
+	transform: (messages: UiMessage[]) => UiMessage[] | Promise<UiMessage[]>,
 ): Promise<void> {
 	const root = taskRoot(dlineDocsDir, taskId)
 	const next = await transform(await readUiMessages(root))

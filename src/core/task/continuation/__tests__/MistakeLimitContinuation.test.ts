@@ -1,4 +1,4 @@
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import type { ClineContent, ClineStorageMessage, ClineUserToolResultContentBlock } from "@shared/messages"
 import { describe, expect, it } from "vitest"
 import { type BlockLifecycle, BlockPhase } from "../../BlockPhaseMachine"
@@ -25,7 +25,7 @@ function toolResult(dlineTid: string, functionId: string, text: string): ClineUs
 	}
 }
 
-function durableResult(result: ClineUserToolResultContentBlock): ClineMessage {
+function durableResult(result: ClineUserToolResultContentBlock): UiMessage {
 	return {
 		ts: 10,
 		type: "say",

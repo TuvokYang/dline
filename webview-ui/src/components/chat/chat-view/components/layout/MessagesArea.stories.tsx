@@ -1,4 +1,4 @@
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import { convertClineMessageToProto } from "@shared/proto-conversions/cline-message"
 import type { Meta, StoryObj } from "@storybook/react-vite"
 import { useEffect, useMemo, useState } from "react"
@@ -9,8 +9,8 @@ import { useScrollBehavior } from "../../hooks/useScrollBehavior"
 import type { MessageHandlers } from "../../types/chatTypes"
 import { MessagesArea } from "./MessagesArea"
 
-const TASK: ClineMessage = { ts: 1, type: "say", say: "task", text: "Scroll regression fixture" }
-const INITIAL_MESSAGES: ClineMessage[] = Array.from({ length: 80 }, (_, index) => ({
+const TASK: UiMessage = { ts: 1, type: "say", say: "task", text: "Scroll regression fixture" }
+const INITIAL_MESSAGES: UiMessage[] = Array.from({ length: 80 }, (_, index) => ({
 	ts: index + 2,
 	type: "say",
 	say: "text",

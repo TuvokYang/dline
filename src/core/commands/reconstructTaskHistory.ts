@@ -1,7 +1,7 @@
 import { getDlineDocumentsPath, getSavedClineMessages, getTaskMetadata } from "@core/storage/disk"
 import { StateManager } from "@core/storage/StateManager"
 import { HostProvider } from "@hosts/host-provider"
-import { ClineMessage } from "@shared/ExtensionMessage"
+import { UiMessage } from "@shared/ExtensionMessage"
 import { HistoryItem } from "@shared/HistoryItem"
 import { ShowMessageType } from "@shared/proto/dline/host/window"
 import { fileExistsAtPath } from "@utils/fs"
@@ -187,7 +187,7 @@ interface TaskInfo {
 	conversationHistoryDeletedRange?: [number, number]
 }
 
-function extractTaskInformation(clineMessages: ClineMessage[], metadata: any): TaskInfo {
+function extractTaskInformation(clineMessages: UiMessage[], metadata: any): TaskInfo {
 	// Find the first user message (task description)
 	const firstUserMessage = clineMessages.find((msg) => msg.type === "say" && msg.say === "text" && msg.text)
 

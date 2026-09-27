@@ -1,6 +1,6 @@
 import { access, rename } from "node:fs/promises"
 import path from "node:path"
-import type { ClineMessage } from "@/shared/ExtensionMessage"
+import type { UiMessage } from "@/shared/ExtensionMessage"
 import { Logger } from "@/shared/services/Logger"
 import { readJsonl } from "../backend/jsonl/jsonl-utils"
 import type { UiMessageRowStore } from "./UiMessageRowStore"
@@ -29,19 +29,19 @@ async function firstLegacyFile(instanceRoot: string): Promise<string | undefined
 }
 
 /** Later lines win for a repeated timestamp, at the position of their last write, as the JSONL store did. */
-function latestPerTimestamp(messages: readonly ClineMessage[]): ClineMessage[] {
-	const latest = new Map<number, { message: ClineMessage; ordinal: number }>()
+function latestPerTimestamp(messages: readonly UiMessage[]): UiMessage[] {
+	const latest = new Map<number, { message: UiMessage; ordinal: number }>()
 	messages.forEach((message, ordinal) => latest.set(message.ts, { message, ordinal }))
 	return [...latest.values()].sort((left, right) => left.ordinal - right.ordinal).map(({ message }) => message)
 }
 
-function sameTimestamps(expected: readonly ClineMessage[], stored: readonly UiMessageRecord[]): boolean {
+function sameTimestamps(expected: readonly UiMessage[], stored: readonly UiMessageRecord[]): boolean {
 	return expected.length === stored.length && expected.every((message, index) => message.ts === stored[index].ts)
 }
 
 export interface LegacyUiMessages {
 	readonly file: string
-	readonly messages: ClineMessage[]
+	readonly messages: UiMessage[]
 }
 
 /**

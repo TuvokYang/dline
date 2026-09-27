@@ -2,7 +2,7 @@ import { getPrompt, renderPrompt } from "@core/prompts/i18n"
 import { processFilesIntoText } from "@integrations/misc/extract-text"
 import { showSystemNotification } from "@integrations/notifications"
 import { findLastIndex, parsePartialArrayString } from "@shared/array"
-import { ClineAsk, ClineAskQuestion } from "@shared/ExtensionMessage"
+import { UiAsk, UiAskQuestion } from "@shared/ExtensionMessage"
 import { ClineDefaultTool } from "@shared/tools"
 import { telemetryService } from "@/services/telemetry"
 import { ToolUse } from "../../../assistant-message"
@@ -27,9 +27,9 @@ export class AskFollowupQuestionToolHandler implements IToolHandler, IPartialBlo
 		const sharedMessage = {
 			question: uiHelpers.removeClosingTag(block, "question", question),
 			options: parsePartialArrayString(uiHelpers.removeClosingTag(block, "options", optionsRaw)),
-		} satisfies ClineAskQuestion
+		} satisfies UiAskQuestion
 
-		await uiHelpers.ask("followup" as ClineAsk, JSON.stringify(sharedMessage), true, { existingTs: block.ts }).catch(() => {})
+		await uiHelpers.ask("followup" as UiAsk, JSON.stringify(sharedMessage), true, { existingTs: block.ts }).catch(() => {})
 	}
 
 	async execute(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
@@ -63,7 +63,7 @@ export class AskFollowupQuestionToolHandler implements IToolHandler, IPartialBlo
 		const sharedMessage = {
 			question: question,
 			options: parsePartialArrayString(optionsRaw || "[]"),
-		} satisfies ClineAskQuestion
+		} satisfies UiAskQuestion
 
 		const options = parsePartialArrayString(optionsRaw || "[]")
 
@@ -81,7 +81,7 @@ export class AskFollowupQuestionToolHandler implements IToolHandler, IPartialBlo
 	async continueInteraction(config: TaskConfig, block: ToolUse, outcome: InteractionOutcome): Promise<ToolResponse> {
 		const optionsRaw: string | undefined = block.params.options
 		const options = parsePartialArrayString(optionsRaw || "[]")
-		const sharedMessage = { question: block.params.question || "", options } satisfies ClineAskQuestion
+		const sharedMessage = { question: block.params.question || "", options } satisfies UiAskQuestion
 		const text = outcome.draft?.text
 		const images = outcome.draft?.images
 		const followupFiles = outcome.draft?.files
@@ -100,7 +100,7 @@ export class AskFollowupQuestionToolHandler implements IToolHandler, IPartialBlo
 				const updatedText = JSON.stringify({
 					...sharedMessage,
 					selected: selectedOption,
-				} satisfies ClineAskQuestion)
+				} satisfies UiAskQuestion)
 				await config.callbacks.updateClineMessage(lastFollowupMessageIndex, { text: updatedText })
 				await config.messageState.flushMessageUpdate(lastFollowupMessageIndex)
 			}

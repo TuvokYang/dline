@@ -1,5 +1,5 @@
 import type { ApiHandler } from "@core/api"
-import type { ClineApiReqInfo, ClineMessage } from "@shared/ExtensionMessage"
+import type { UiApiReqInfo, UiMessage } from "@shared/ExtensionMessage"
 import { describe, expect, it, vi } from "vitest"
 import type { MessageStateHandler } from "../../message-state"
 import { PromptCacheHealthTracker } from "../../prompt-cache/PromptCacheHealthTracker"
@@ -7,16 +7,16 @@ import { TaskProviderRequestReporter } from "../TaskProviderRequestReporter"
 
 /** A message store that keeps rows in an array, which is all the reporter needs. */
 function messageState() {
-	const rows: ClineMessage[] = []
+	const rows: UiMessage[] = []
 	const flushed: number[] = []
 	const handler = {
 		get clineMessages() {
 			return rows
 		},
-		addToClineMessages: vi.fn(async (message: Partial<ClineMessage>) => {
-			rows.push(message as ClineMessage)
+		addToClineMessages: vi.fn(async (message: Partial<UiMessage>) => {
+			rows.push(message as UiMessage)
 		}),
-		updateClineMessage: vi.fn(async (index: number, updates: Partial<ClineMessage>) => {
+		updateClineMessage: vi.fn(async (index: number, updates: Partial<UiMessage>) => {
 			rows[index] = { ...rows[index], ...updates }
 		}),
 		removeMessagesByTs: vi.fn(async (tsList: number[]) => {
@@ -78,8 +78,8 @@ function createReporter() {
 	return { ...state, promptCache, samples, pressures, usages, lifecycle, reporter }
 }
 
-function requestInfo(row: ClineMessage): ClineApiReqInfo {
-	return JSON.parse(row.text ?? "{}") as ClineApiReqInfo
+function requestInfo(row: UiMessage): UiApiReqInfo {
+	return JSON.parse(row.text ?? "{}") as UiApiReqInfo
 }
 
 describe("TaskProviderRequestReporter", () => {

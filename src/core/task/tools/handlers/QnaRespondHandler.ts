@@ -1,7 +1,7 @@
 import type { ToolUse } from "@core/assistant-message"
 import { getPrompt, renderPrompt } from "@core/prompts/i18n"
 import { formatResponse } from "@core/prompts/responses"
-import type { ClineQnaResponse } from "@shared/ExtensionMessage"
+import type { UiQnaResponse } from "@shared/ExtensionMessage"
 import { ClineDefaultTool } from "@shared/tools"
 import type { InteractionOutcome } from "../../interaction/InteractionProtocol"
 import type { IPartialBlockHandler, IToolHandler } from "../ToolExecutorCoordinator"
@@ -27,7 +27,7 @@ export class QnaRespondHandler implements IToolHandler, IPartialBlockHandler {
 	async handlePartialBlock(block: ToolUse, uiHelpers: StronglyTypedUIHelpers): Promise<void> {
 		const response = uiHelpers.removeClosingTag(block, "response", block.params.response)
 		if (response) {
-			const sharedMessage: ClineQnaResponse = { response }
+			const sharedMessage: UiQnaResponse = { response }
 			await uiHelpers.ask(this.name, JSON.stringify(sharedMessage), true, { existingTs: block.ts }).catch(() => {})
 		}
 	}
@@ -42,7 +42,7 @@ export class QnaRespondHandler implements IToolHandler, IPartialBlockHandler {
 
 		config.taskState.consecutiveMistakeCount = 0
 
-		const sharedMessage: ClineQnaResponse = { response }
+		const sharedMessage: UiQnaResponse = { response }
 
 		config.taskState.isAwaitingPlanResponse = true
 

@@ -1,4 +1,4 @@
-import type { ClineSayTool } from "@shared/ExtensionMessage"
+import type { UiSayTool } from "@shared/ExtensionMessage"
 import type { MessageStateHandler } from "../message-state"
 import type { PresentationIdSequence } from "../session/PresentationIdSequence"
 import type { CompactionLandingPort, CompactionSummary } from "./CompactionSummaryLanding"
@@ -42,7 +42,7 @@ export class MessageStateCompactionLanding implements CompactionLandingPort {
 				compactionUnitKind: "pass",
 				compactionDurable: true,
 				...(input.span ? { compactionJournalBoundary: { seq: input.span.to.seq } } : {}),
-			} satisfies ClineSayTool),
+			} satisfies UiSayTool),
 		})
 	}
 }

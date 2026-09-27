@@ -1,4 +1,4 @@
-import type { ClineMessage, ClineSayTool } from "@shared/ExtensionMessage"
+import type { UiMessage, UiSayTool } from "@shared/ExtensionMessage"
 
 /** A position in the task's conversation journal. */
 export interface ConversationJournalPosition {
@@ -22,7 +22,7 @@ export interface ChatRestoreBoundary {
 
 /** Resolve and validate every chat rewind boundary before any store is mutated. */
 export function resolveChatRestoreBoundary(input: {
-	readonly messages: readonly ClineMessage[]
+	readonly messages: readonly UiMessage[]
 	readonly messageIndex: number
 	readonly apiCount: number
 	readonly uiCount: number
@@ -106,11 +106,11 @@ export function resolveChatRestoreBoundary(input: {
  * performs it read the same fact. A malformed position is treated as absent
  * rather than guessed, which leaves the card on the ordinary restore path.
  */
-function readCompactionJournalBoundary(message: ClineMessage): ConversationJournalPosition | undefined {
+function readCompactionJournalBoundary(message: UiMessage): ConversationJournalPosition | undefined {
 	if (message.say !== "tool" || message.partial === true || !message.text) return undefined
-	let payload: ClineSayTool
+	let payload: UiSayTool
 	try {
-		payload = JSON.parse(message.text) as ClineSayTool
+		payload = JSON.parse(message.text) as UiSayTool
 	} catch {
 		return undefined
 	}

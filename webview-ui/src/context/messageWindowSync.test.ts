@@ -1,4 +1,4 @@
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import { describe, expect, it } from "vitest"
 
 import { canAppendRealtimeMessage, isMessageWindowOverfull, reconcileMessageWindow } from "./messageWindowSync"
@@ -10,8 +10,8 @@ import { canAppendRealtimeMessage, isMessageWindowOverfull, reconcileMessageWind
  * @param partial Whether the message is a streaming frame.
  * @returns Message usable by the reconciliation contract.
  */
-function message(ts: number, partial?: boolean): ClineMessage {
-	return { ts, type: "say", say: "text", text: `m${ts}`, partial } as ClineMessage
+function message(ts: number, partial?: boolean): UiMessage {
+	return { ts, type: "say", say: "text", text: `m${ts}`, partial } as UiMessage
 }
 
 describe("reconcileMessageWindow", () => {
@@ -95,8 +95,8 @@ describe("reconcileMessageWindow", () => {
 	it("does not let a slow response overwrite a newer durable local message", () => {
 		// The realtime stream already upgraded ts=2 to an ask; a fetch that was
 		// in flight before that must not push the older say back on screen.
-		const durableAsk = { ts: 2, type: "ask", ask: "completion_result", text: "Completed" } as ClineMessage
-		const staleSay = { ts: 2, type: "say", say: "completion_result", text: "Completed" } as ClineMessage
+		const durableAsk = { ts: 2, type: "ask", ask: "completion_result", text: "Completed" } as UiMessage
+		const staleSay = { ts: 2, type: "say", say: "completion_result", text: "Completed" } as UiMessage
 
 		const result = reconcileMessageWindow(
 			{ messages: [message(1), durableAsk], startIndex: 0 },

@@ -3,7 +3,7 @@ import { getPrompt, renderPrompt } from "@core/prompts/i18n"
 import { formatResponse } from "@core/prompts/responses"
 import { findLast } from "@shared/array"
 import { telemetryService } from "@/services/telemetry"
-import type { ClineMakePlanResponse } from "@/shared/ExtensionMessage"
+import type { UiMakePlanResponse } from "@/shared/ExtensionMessage"
 import { Logger } from "@/shared/services/Logger"
 import { ClineDefaultTool } from "@/shared/tools"
 import type { InteractionOutcome } from "../../interaction/InteractionProtocol"
@@ -31,7 +31,7 @@ export class MakePlanHandler implements IToolHandler, IPartialBlockHandler {
 
 		const sharedMessage = {
 			response: uiHelpers.removeClosingTag(block, "response", response),
-		} satisfies ClineMakePlanResponse
+		} satisfies UiMakePlanResponse
 
 		await uiHelpers.ask(MAKE_PLAN_ASK, JSON.stringify(sharedMessage), true, { existingTs: block.ts }).catch(() => {})
 	}
@@ -53,7 +53,7 @@ export class MakePlanHandler implements IToolHandler, IPartialBlockHandler {
 			return formatResponse.toolResult(getPrompt("toolHandlers", "planNeedsMoreExploration"))
 		}
 
-		const sharedMessage = { response } satisfies ClineMakePlanResponse
+		const sharedMessage = { response } satisfies UiMakePlanResponse
 
 		// Auto-switch to Act mode while in yolo mode
 		if (config.mode === "plan" && config.yoloModeToggled) {

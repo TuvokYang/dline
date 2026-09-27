@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import * as path from "node:path"
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import type { ClineStorageMessage } from "@shared/messages/content"
 import { afterEach, describe, expect, it } from "vitest"
 import { readJsonl } from "@/core/storage/backend/jsonl/jsonl-utils"
@@ -31,7 +31,7 @@ describe("seedTaskCorpus", () => {
 		expect(corpus.totalPersistedBytes).toBeGreaterThan(2_000)
 		for (const entry of corpus.entries) {
 			const taskDirectory = path.join(root, "tasks", entry.id)
-			const uiMessages = await readJsonl<ClineMessage>(path.join(taskDirectory, SEEDED_TASK_FILE_NAMES.uiMessages))
+			const uiMessages = await readJsonl<UiMessage>(path.join(taskDirectory, SEEDED_TASK_FILE_NAMES.uiMessages))
 			const apiMessages = await readJsonl<ClineStorageMessage>(
 				path.join(taskDirectory, SEEDED_TASK_FILE_NAMES.apiConversationHistory),
 			)

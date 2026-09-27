@@ -15,7 +15,7 @@ import type { TaskCallbacks } from "@core/task/tools/types/TaskConfig"
 import type { ICheckpointManager } from "@integrations/checkpoints/types"
 import type { CommandExecutor } from "@integrations/terminal/CommandExecutor"
 import { BrowserSession } from "@services/browser/BrowserSession"
-import type { ClineAsk, ClineMessage, ClineSay } from "@shared/ExtensionMessage"
+import type { UiAsk, UiMessage, UiSay } from "@shared/ExtensionMessage"
 import type { ClineContent } from "@shared/messages/content"
 import type { ClineDefaultTool } from "@shared/tools"
 import type { ClineAskResponse } from "@shared/WebviewMessage"
@@ -31,7 +31,7 @@ export interface ControllerTaskCallbacksOwnerOptions {
 	readonly createBrowser: () => BrowserSession
 }
 
-function interactionKind(type: ClineAsk | string): InteractionKind {
+function interactionKind(type: UiAsk | string): InteractionKind {
 	switch (type) {
 		case "tool":
 			return "tool_approval"
@@ -158,7 +158,7 @@ export class ControllerTaskCallbacksOwner {
 	}
 
 	private async say(
-		type: ClineSay,
+		type: UiSay,
 		text?: string,
 		images?: string[],
 		files?: string[],
@@ -169,7 +169,7 @@ export class ControllerTaskCallbacksOwner {
 		const ts = existingTs ?? Date.now()
 		// commandTs is how a command_output row finds the command it belongs to;
 		// dropping it here leaves the output orphaned and never rendered.
-		const message: ClineMessage = { ts, type: "say", say: type, text, images, files, partial, commandTs }
+		const message: UiMessage = { ts, type: "say", say: type, text, images, files, partial, commandTs }
 		if (partial) await this.options.messages.upsertClineMessageInMemory(message)
 		else if (this.options.messages.clineMessages.some((candidate) => candidate.ts === ts))
 			await this.options.messages.finalizeClineMessage(message)
@@ -178,7 +178,7 @@ export class ControllerTaskCallbacksOwner {
 	}
 
 	private async ask(
-		type: ClineAsk,
+		type: UiAsk,
 		text?: string,
 		_partial?: boolean,
 		options?: { existingTs?: number; onTsCreated?: (ts: number) => void },

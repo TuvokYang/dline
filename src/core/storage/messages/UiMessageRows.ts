@@ -1,4 +1,4 @@
-import type { ClineMessage } from "@/shared/ExtensionMessage"
+import type { UiMessage } from "@/shared/ExtensionMessage"
 import { column, defineEntity } from "../backend/api/EntitySchema"
 
 const MESSAGE_TYPES = ["ask", "say"] as const
@@ -189,7 +189,7 @@ export class UiMessageAttachmentRow {
 export interface UiMessageRecord {
 	readonly ordinal: number
 	readonly ts: number
-	readonly message: ClineMessage
+	readonly message: UiMessage
 }
 
 export interface EncodedUiMessage {
@@ -198,7 +198,7 @@ export interface EncodedUiMessage {
 }
 
 /** Whether `value` can be stored as a chat row: a message with a positive timestamp and a known type. */
-export function isStorableMessage(value: unknown): value is ClineMessage {
+export function isStorableMessage(value: unknown): value is UiMessage {
 	if (!isJsonObject(value)) return false
 	return (
 		typeof value.ts === "number" &&
@@ -212,7 +212,7 @@ export function isStorableMessage(value: unknown): value is ClineMessage {
  * Splits a message into its row and attachments without losing anything: a field
  * with no column, or a value its column cannot hold, is kept in `extra`.
  */
-export function encodeUiMessage(message: ClineMessage, ordinal: number): EncodedUiMessage {
+export function encodeUiMessage(message: UiMessage, ordinal: number): EncodedUiMessage {
 	const rest: JsonObject = { ...message }
 	const extra: JsonObject = {}
 	const values: Record<string, unknown> = { ordinal, ts: message.ts, type: message.type }
@@ -269,7 +269,7 @@ const COLUMN_FIELDS = [
 ] as const
 
 /** The message a row and its attachments store; the inverse of {@link encodeUiMessage}. */
-export function decodeUiMessage(row: UiMessageRow, attachments: readonly UiMessageAttachmentRow[]): ClineMessage {
+export function decodeUiMessage(row: UiMessageRow, attachments: readonly UiMessageAttachmentRow[]): UiMessage {
 	const message: Record<string, unknown> = { ts: row.ts, type: row.type }
 	for (const field of COLUMN_FIELDS) {
 		const value = row[field]
@@ -283,5 +283,5 @@ export function decodeUiMessage(row: UiMessageRow, attachments: readonly UiMessa
 		if (values.length > 0) message[kind] = values
 	}
 	if (row.extra) Object.assign(message, row.extra)
-	return message as unknown as ClineMessage
+	return message as unknown as UiMessage
 }

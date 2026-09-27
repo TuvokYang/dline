@@ -1,5 +1,5 @@
 import type { HookOutputStreamMeta } from "@shared/ExtensionMessage"
-import { ClineMessage } from "@shared/ExtensionMessage"
+import { UiMessage } from "@shared/ExtensionMessage"
 import type { HookOutput } from "@shared/proto/dline/hooks"
 import { Logger } from "@/shared/services/Logger"
 import { MessageStateHandler } from "../task/message-state"
@@ -265,7 +265,7 @@ async function updateHookMessage(
 	metadata: Record<string, any>,
 ): Promise<void> {
 	const clineMessages = messageStateHandler.clineMessages
-	const hookMessageIndex = clineMessages.findIndex((m: ClineMessage) => m.ts === hookMessageTs)
+	const hookMessageIndex = clineMessages.findIndex((m: UiMessage) => m.ts === hookMessageTs)
 	if (hookMessageIndex !== -1) {
 		await messageStateHandler.updateClineMessage(hookMessageIndex, {
 			text: JSON.stringify(metadata),

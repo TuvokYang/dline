@@ -1,4 +1,4 @@
-import type { ClineAsk } from "@shared/ExtensionMessage"
+import type { UiAsk } from "@shared/ExtensionMessage"
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { type ComponentProps, forwardRef, type ReactNode } from "react"
 import { describe, expect, it, vi } from "vitest"
@@ -12,7 +12,7 @@ vi.mock("@/components/chat/ChatTextArea", () => ({
 			onSend: (draft: { text: string; images: string[]; files: string[] }) => void
 			onSendBlocked?: (draft: { text: string; images: string[]; files: string[] }) => void
 			sendingDisabled: boolean
-			clineAsk?: ClineAsk
+			clineAsk?: UiAsk
 		}
 	>((props, _ref) => (
 		<>

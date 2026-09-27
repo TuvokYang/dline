@@ -4,7 +4,7 @@ import {
 	getContextWindowInfo,
 	resolveCompactTriggerPolicy,
 } from "@core/context/context-management/context-window-utils"
-import type { ClineApiReqCancelReason, ClineApiReqInfo } from "@/shared/ExtensionMessage"
+import type { UiApiReqCancelReason, UiApiReqInfo } from "@/shared/ExtensionMessage"
 import type {
 	ProviderRequestOutcome,
 	ProviderRequestRecord,
@@ -105,7 +105,7 @@ export class TaskProviderRequestReporter implements ProviderRequestReportPort {
 			ts,
 			type: "say",
 			say: "api_req_started",
-			text: JSON.stringify({ request: input.turnId } satisfies ClineApiReqInfo),
+			text: JSON.stringify({ request: input.turnId } satisfies UiApiReqInfo),
 		})
 		await this.options.usage?.started({
 			turnId: input.turnId,
@@ -288,7 +288,7 @@ interface UsageTokens {
  * A request the user stopped or that never produced a turn is recorded with the
  * reason it ended, which is also what stops the chat row reading as still running.
  */
-function cancelReasonFor(outcome: ProviderRequestOutcome): ClineApiReqCancelReason | undefined {
+function cancelReasonFor(outcome: ProviderRequestOutcome): UiApiReqCancelReason | undefined {
 	if (outcome === "cancelled") return "user_cancelled"
 	return outcome === "failed" ? "streaming_failed" : undefined
 }

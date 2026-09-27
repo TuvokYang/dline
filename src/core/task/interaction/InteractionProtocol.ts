@@ -1,4 +1,4 @@
-import type { ClineAsk } from "@shared/ExtensionMessage"
+import type { UiAsk } from "@shared/ExtensionMessage"
 import type { ClineContent } from "@shared/messages"
 import type { InteractionKind } from "./Interaction"
 import type { InteractionDraft, InteractionResponse, InteractionSelection } from "./InteractionResponse"
@@ -44,7 +44,7 @@ export interface InteractionOutcome {
 export interface InteractionAnchor {
 	messageTs: number
 	messageType: "ask" | "say"
-	taskAsk?: ClineAsk
+	taskAsk?: UiAsk
 }
 
 export interface ActiveInteraction {

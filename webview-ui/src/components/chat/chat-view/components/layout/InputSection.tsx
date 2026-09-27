@@ -1,5 +1,5 @@
 import { flushPendingTaskSettingsRequests } from "@components/settings/utils/settingsHandlers"
-import type { ClineAsk } from "@shared/ExtensionMessage"
+import type { UiAsk } from "@shared/ExtensionMessage"
 import type { InputSemanticCatalog } from "@shared/input-semantics/catalog"
 import React, { useEffect, useRef, useState } from "react"
 import ChatTextArea from "@/components/chat/ChatTextArea"
@@ -27,7 +27,7 @@ interface InputSectionProps {
 	submissionScope?: string
 	/** Causal owner used to deduplicate only repeated dispatches of the same submission. */
 	submissionIdentity?: string
-	clineAsk?: ClineAsk
+	clineAsk?: UiAsk
 	/** Queue entries owned by the backend; the composer only renders them. */
 	inputQueue?: readonly InputQueuePanelEntry[]
 	/**

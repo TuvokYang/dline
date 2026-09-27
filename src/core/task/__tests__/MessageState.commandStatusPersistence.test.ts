@@ -1,7 +1,7 @@
 import { UIMessage } from "@core/storage/UIMessage"
 import { MessageStateHandler } from "@core/task/message-state"
 import { TaskState } from "@core/task/TaskState"
-import type { ClineMessage, CommandStatus } from "@shared/ExtensionMessage"
+import type { CommandStatus, UiMessage } from "@shared/ExtensionMessage"
 import fs from "fs/promises"
 import os from "os"
 import path from "path"
@@ -36,7 +36,7 @@ describe("command status persistence", () => {
 			ask: "command",
 			text: "echo test",
 			commandStatus: "pending",
-		} satisfies ClineMessage)
+		} satisfies UiMessage)
 		await writer.flush()
 
 		const messageState = new MessageStateHandler({

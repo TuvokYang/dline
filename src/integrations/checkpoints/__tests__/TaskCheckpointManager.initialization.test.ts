@@ -8,7 +8,7 @@ import { closeInstanceStoragesUnder } from "@/core/storage/instance"
 import { UIMessage } from "@/core/storage/UIMessage"
 import { MessageStateHandler } from "@/core/task/message-state"
 import { TaskState } from "@/core/task/TaskState"
-import type { ClineMessage } from "@/shared/ExtensionMessage"
+import type { UiMessage } from "@/shared/ExtensionMessage"
 
 vi.unmock("@integrations/checkpoints")
 
@@ -23,7 +23,7 @@ type CreateCheckpointTracker = (
 function createManager(
 	createCheckpointTracker: CreateCheckpointTracker,
 	initialError?: string,
-	options?: { messages?: ClineMessage[]; tracker?: CheckpointTracker },
+	options?: { messages?: UiMessage[]; tracker?: CheckpointTracker },
 ) {
 	const messages = options?.messages ?? []
 	const taskState: { taskId: string; checkpointManagerErrorMessage?: string } = {
@@ -33,11 +33,11 @@ function createManager(
 	const setCheckpointTracker = vi.fn()
 	const postStateToWebview = vi.fn().mockResolvedValue(undefined)
 	const say = vi.fn(async () => {
-		const message: ClineMessage = { ts: 42, type: "say", say: "checkpoint_created" }
+		const message: UiMessage = { ts: 42, type: "say", say: "checkpoint_created" }
 		messages.push(message)
 		return message.ts
 	})
-	const updateClineMessage = vi.fn(async (index: number, updates: Partial<ClineMessage>) => {
+	const updateClineMessage = vi.fn(async (index: number, updates: Partial<UiMessage>) => {
 		Object.assign(messages[index], updates)
 	})
 	const flushMessageUpdate = vi.fn().mockResolvedValue(undefined)
@@ -157,7 +157,7 @@ describe("TaskCheckpointManager checkpoint initialization", () => {
 	})
 
 	it("creates a chat-only checkpoint when Git initialization is unavailable", async () => {
-		const messages: ClineMessage[] = []
+		const messages: UiMessage[] = []
 		const create = vi.fn<CreateCheckpointTracker>().mockRejectedValue(new Error("Git must be installed to use checkpoints."))
 		const harness = createManager(create, undefined, { messages })
 
@@ -170,7 +170,7 @@ describe("TaskCheckpointManager checkpoint initialization", () => {
 	})
 
 	it("binds the first chat checkpoint to the initialized shadow baseline when no files were tracked", async () => {
-		const messages: ClineMessage[] = []
+		const messages: UiMessage[] = []
 		const baselineHash = "shadow-baseline-hash"
 		const tracker = {
 			setTaskFileTracker: vi.fn(),
@@ -199,7 +199,7 @@ describe("TaskCheckpointManager checkpoint initialization", () => {
 	})
 
 	it("durably binds a completion checkpoint before posting its updated UI state", async () => {
-		const completionMessage: ClineMessage = { ts: 84, type: "say", say: "completion_result" }
+		const completionMessage: UiMessage = { ts: 84, type: "say", say: "completion_result" }
 		const messages = [completionMessage]
 		const completionHash = "completion-checkpoint-hash"
 		const tracker = {

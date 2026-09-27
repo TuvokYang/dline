@@ -1,7 +1,7 @@
-import type { ActiveInteractionView, ClineMessage } from "./ExtensionMessage"
+import type { ActiveInteractionView, UiMessage } from "./ExtensionMessage"
 
 /** Match one complete ask presentation to the exact interaction that owns it. */
-export function matchesActiveInteractionAnchor(message: ClineMessage, interaction: ActiveInteractionView): boolean {
+export function matchesActiveInteractionAnchor(message: UiMessage, interaction: ActiveInteractionView): boolean {
 	return (
 		message.type === "ask" &&
 		message.partial !== true &&

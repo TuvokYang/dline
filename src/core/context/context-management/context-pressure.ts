@@ -1,4 +1,4 @@
-import type { ClineApiReqInfo, ClineMessage, ClineSayTool } from "@shared/ExtensionMessage"
+import type { UiApiReqInfo, UiMessage, UiSayTool } from "@shared/ExtensionMessage"
 import type { ContextWindowRequestPressure } from "./context-window-projection"
 import { computeCompactTrigger, computeSummarizeBudget } from "./context-window-utils"
 
@@ -20,7 +20,7 @@ export type ModeSwitchPressureDecision = { kind: "switch" } | { kind: "confirm";
  * @param info Persisted API request metrics.
  * @returns Canonical context occupancy in tokens.
  */
-export function getContextTokens(info: ClineApiReqInfo): number {
+export function getContextTokens(info: UiApiReqInfo): number {
 	if (typeof info.contextTokens === "number" && Number.isFinite(info.contextTokens) && info.contextTokens >= 0) {
 		return info.contextTokens
 	}
@@ -38,7 +38,7 @@ export function readContextTokens(text?: string): number {
 		return 0
 	}
 	try {
-		return getContextTokens(JSON.parse(text) as ClineApiReqInfo)
+		return getContextTokens(JSON.parse(text) as UiApiReqInfo)
 	} catch {
 		return 0
 	}
@@ -49,7 +49,7 @@ export function readContextWindowRequestPressure(text?: string): ContextWindowRe
 	if (!text) return undefined
 
 	try {
-		const info = JSON.parse(text) as ClineApiReqInfo
+		const info = JSON.parse(text) as UiApiReqInfo
 		const pressure: ContextWindowRequestPressure = {}
 		const estimatedContextTokens = normalizePositiveTokens(info.estimatedContextTokens)
 		if (estimatedContextTokens > 0) {
@@ -83,10 +83,10 @@ function normalizePositiveTokens(value: unknown): number {
  * @param message The chat message to classify.
  * @returns True when the message reports a completed compaction unit.
  */
-function isCompletedCompactionCard(message: ClineMessage): boolean {
+function isCompletedCompactionCard(message: UiMessage): boolean {
 	if (message.type !== "say" || message.say !== "tool" || message.partial || !message.text) return false
 	try {
-		const tool = JSON.parse(message.text) as ClineSayTool
+		const tool = JSON.parse(message.text) as UiSayTool
 		return tool.tool === "summarizeTask" && tool.compactionStatus === "completed"
 	} catch {
 		return false
@@ -104,7 +104,7 @@ function isCompletedCompactionCard(message: ClineMessage): boolean {
  * @param messages The chat messages in chronological order.
  * @returns Pressure records recorded after the latest completed compaction.
  */
-export function collectContextWindowRequestPressures(messages: readonly ClineMessage[]): readonly ContextWindowRequestPressure[] {
+export function collectContextWindowRequestPressures(messages: readonly UiMessage[]): readonly ContextWindowRequestPressure[] {
 	let startIndex = 0
 	for (let index = messages.length - 1; index >= 0; index--) {
 		if (isCompletedCompactionCard(messages[index])) {

@@ -1,9 +1,9 @@
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import { describe, expect, it } from "vitest"
 import { readRestoredContextPressure } from "../RestoredContextPressure"
 
-function request(ts: number, info: Record<string, unknown>): ClineMessage {
-	return { ts, type: "say", say: "api_req_started", text: JSON.stringify(info) } as ClineMessage
+function request(ts: number, info: Record<string, unknown>): UiMessage {
+	return { ts, type: "say", say: "api_req_started", text: JSON.stringify(info) } as UiMessage
 }
 
 describe("readRestoredContextPressure", () => {

@@ -9,7 +9,7 @@ import { DiffViewProvider } from "@integrations/editor/DiffViewProvider"
 import { findLast, findLastIndex } from "@shared/array"
 import { combineApiRequests } from "@shared/combineApiRequests"
 import { combineCommandSequences } from "@shared/combineCommandSequences"
-import { ClineApiReqInfo, ClineMessage, ClineSay } from "@shared/ExtensionMessage"
+import { UiApiReqInfo, UiMessage, UiSay } from "@shared/ExtensionMessage"
 import { getApiMetrics } from "@shared/getApiMetrics"
 import { HistoryItem } from "@shared/HistoryItem"
 import { ClineCheckpointRestore } from "@shared/WebviewMessage"
@@ -39,13 +39,13 @@ const STAGING_FAILURE_MESSAGE_PREFIX = "Checkpoints could not record"
  * Whether a row shows input the user submitted. Such a row is written just
  * before its input is journaled, so the input sits right after the row's position.
  */
-function showsUserInput(message: ClineMessage): boolean {
+function showsUserInput(message: UiMessage): boolean {
 	return message.type === "say" && (message.say === "task" || message.say === "user_feedback")
 }
 
 // Type definitions for better code organization
 type SayFunction = (
-	type: ClineSay,
+	type: UiSay,
 	text?: string,
 	images?: string[],
 	files?: string[],
@@ -631,8 +631,8 @@ export class TaskCheckpointManager implements ICheckpointManager {
 	}
 
 	private async restoreWorkspaceCheckpoint(
-		message: ClineMessage,
-		lastMessageWithHash: ClineMessage | undefined,
+		message: UiMessage,
+		lastMessageWithHash: UiMessage | undefined,
 		messageTs: number,
 		offset?: number,
 	): Promise<WorkspaceRestoreResult> {
@@ -713,11 +713,7 @@ export class TaskCheckpointManager implements ICheckpointManager {
 	 * so they give the same answer before the workspace rewind and at the chat
 	 * commit point.
 	 */
-	private assertChatRestoreAdmissible(
-		message: ClineMessage,
-		boundary: ChatRestoreBoundary,
-		editedText: string | undefined,
-	): void {
+	private assertChatRestoreAdmissible(message: UiMessage, boundary: ChatRestoreBoundary, editedText: string | undefined): void {
 		if ((message.compactionConversationRange || boundary.journalTarget) && editedText !== undefined) {
 			throw new Error("Editing input is unavailable when restoring a compaction card")
 		}
@@ -746,7 +742,7 @@ export class TaskCheckpointManager implements ICheckpointManager {
 	 * legacy API rows are not its record and are left alone.
 	 */
 	private async rewindConversation(
-		message: ClineMessage,
+		message: UiMessage,
 		messageTs: number,
 		editedText: string | undefined,
 		boundary: ChatRestoreBoundary,
@@ -799,7 +795,7 @@ export class TaskCheckpointManager implements ICheckpointManager {
 	}
 
 	private async restoreChatCheckpoint(
-		message: ClineMessage,
+		message: UiMessage,
 		messageIndex: number,
 		messageTs: number,
 		editedText: string | undefined,
@@ -847,7 +843,7 @@ export class TaskCheckpointManager implements ICheckpointManager {
 				cacheWrites: deletedApiReqsMetrics.totalCacheWrites,
 				cacheReads: deletedApiReqsMetrics.totalCacheReads,
 				cost: deletedApiReqsMetrics.totalCost,
-			} satisfies ClineApiReqInfo),
+			} satisfies UiApiReqInfo),
 		)
 
 		if (editedText !== undefined) {

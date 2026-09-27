@@ -2,7 +2,7 @@ import { combineApiRequests } from "@shared/combineApiRequests"
 import { combineCommandSequences } from "@shared/combineCommandSequences"
 import { combineErrorRetryMessages } from "@shared/combineErrorRetryMessages"
 import { combineHookSequences } from "@shared/combineHookSequences"
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import { taskPhaseStillDelivers } from "@shared/InputQueueDelivery"
 import { BooleanRequest, StringRequest } from "@shared/proto/dline/common"
 import type { ModelInfo } from "@shared/proto/dline/models"
@@ -636,7 +636,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 		}
 	}, [contextCompactionActive, taskInputEnabled, taskViewState])
 	const submitFollowupOption = useCallback(
-		async (message: ClineMessage, option: string): Promise<void> => {
+		async (message: UiMessage, option: string): Promise<void> => {
 			const view = taskViewState
 			const interaction = view?.activeInteraction
 			if (

@@ -4,7 +4,7 @@ import type {
 	CanonicalDialogProjection,
 	CanonicalTaskViewProjection,
 } from "@core/task/view/canonical/CanonicalTaskViewProjection"
-import type { ClineMessage, TaskInputViewState, TaskViewAction, TaskViewPhase, TaskViewState } from "@shared/ExtensionMessage"
+import type { TaskInputViewState, TaskViewAction, TaskViewPhase, TaskViewState, UiMessage } from "@shared/ExtensionMessage"
 import { type BackgroundHandoffAvailabilityPort, projectBackgroundHandoffAction } from "./BackgroundHandoffAvailability"
 
 const DISABLED_INPUT: TaskInputViewState = {
@@ -74,7 +74,7 @@ function owningDialog(view: CanonicalTaskViewProjection): CanonicalDialogProject
 /** Decorate one canonical Task projection with message-anchor and Webview presentation metadata. */
 export function adaptCanonicalTaskView(
 	view: CanonicalTaskViewProjection,
-	messages: readonly ClineMessage[] = [],
+	messages: readonly UiMessage[] = [],
 	handoff?: BackgroundHandoffAvailabilityPort,
 ): TaskViewState {
 	const dialog = owningDialog(view)

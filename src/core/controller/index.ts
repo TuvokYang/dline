@@ -47,7 +47,7 @@ import type { ModelInfo } from "@shared/api"
 import type { ChatContent } from "@shared/ChatContent"
 import { resolveMaxParallelSubagents, resolveMaxParallelToolCalls } from "@shared/concurrency-limits"
 import { getContextWindowIndicatorTotalTokens } from "@shared/context-window-indicator"
-import type { ClineMessage, ExtensionState, Platform, TaskViewState } from "@shared/ExtensionMessage"
+import type { ExtensionState, Platform, TaskViewState, UiMessage } from "@shared/ExtensionMessage"
 import type { ApiMetrics } from "@shared/getApiMetrics"
 import type { HistoryItem } from "@shared/HistoryItem"
 import type { McpMarketplaceCatalog, McpMarketplaceItem, McpServer } from "@shared/mcp"
@@ -836,7 +836,7 @@ export class Controller {
 	}
 
 	/** Return the current visible message sequence for state projection. */
-	getCurrentTaskMessages(): readonly ClineMessage[] {
+	getCurrentTaskMessages(): readonly UiMessage[] {
 		return this.task?.owners.messages.clineMessages ?? this.historyDisplaySession?.getMessages() ?? []
 	}
 
@@ -848,7 +848,7 @@ export class Controller {
 	async fetchCurrentTaskMessages(
 		referenceIndex: number,
 		count: number,
-	): Promise<{ messages: ClineMessage[]; totalCount: number; startIndex: number }> {
+	): Promise<{ messages: UiMessage[]; totalCount: number; startIndex: number }> {
 		const historyDisplay = this.historyDisplaySession
 		if (historyDisplay) return await historyDisplay.fetchMessages(referenceIndex, count)
 
@@ -1290,7 +1290,7 @@ export class Controller {
 					session.owners.messages.addToClineMessages({
 						ts: Date.now(),
 						type: "say",
-						say: type as ClineMessage["say"],
+						say: type as UiMessage["say"],
 						text,
 					}) as unknown as number,
 				model: () => getHookModelContext(session.owners.api.current(), this.stateManager),
@@ -2463,7 +2463,7 @@ export class Controller {
 	 * interaction-only patch equivalent to the full state build; the parameter
 	 * remains for callers that already materialized the same window.
 	 */
-	private projectCurrentTaskViewState(messages?: readonly ClineMessage[]): TaskViewState | undefined {
+	private projectCurrentTaskViewState(messages?: readonly UiMessage[]): TaskViewState | undefined {
 		const historyDisplay = this.historyDisplaySession
 		if (historyDisplay) return historyDisplay.getViewState()
 		const session = this.task

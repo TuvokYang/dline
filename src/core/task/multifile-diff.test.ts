@@ -3,7 +3,7 @@ import { expect } from "chai"
 import { afterEach, beforeEach, describe, it, vi, expect as vitestExpect } from "vitest"
 // sinon import removed: using vitest globals
 import { HostProvider } from "@/hosts/host-provider"
-import { ClineMessage } from "@/shared/ExtensionMessage"
+import { UiMessage } from "@/shared/ExtensionMessage"
 import { ShowMessageType } from "@/shared/proto/dline/host"
 
 describe("multifile-diff", () => {
@@ -26,7 +26,7 @@ describe("multifile-diff", () => {
 	describe("showChangedFilesDiff", () => {
 		const mockMessageTs = 1234567890
 		const mockHash = "abc123def456"
-		const mockMessages: ClineMessage[] = [
+		const mockMessages: UiMessage[] = [
 			{
 				ts: mockMessageTs,
 				type: "say",
@@ -58,7 +58,7 @@ describe("multifile-diff", () => {
 			]
 
 			// Mock finding last completion message
-			const messagesWithCompletion: ClineMessage[] = [
+			const messagesWithCompletion: UiMessage[] = [
 				{
 					ts: 1234567000,
 					type: "ask",
@@ -150,7 +150,7 @@ describe("multifile-diff", () => {
 
 		it("should handle missing checkpoint hash", async () => {
 			// Arrange
-			const messagesWithoutHash: ClineMessage[] = [
+			const messagesWithoutHash: UiMessage[] = [
 				{
 					ts: mockMessageTs,
 					type: "say",
@@ -205,7 +205,7 @@ describe("multifile-diff", () => {
 
 		it("should use first checkpoint when no last completion found", async () => {
 			// Arrange
-			const messagesWithFirstCheckpoint: ClineMessage[] = [
+			const messagesWithFirstCheckpoint: UiMessage[] = [
 				{
 					ts: 1234567000,
 					type: "say",

@@ -3,7 +3,7 @@ import "should"
 import should from "should"
 import { MessageStateHandler } from "../core/task/message-state"
 import { TaskState } from "../core/task/TaskState"
-import { ClineMessage } from "../shared/ExtensionMessage"
+import { UiMessage } from "../shared/ExtensionMessage"
 
 /**
  * Unit tests for MessageStateHandler's mutex protection (RC-4)
@@ -75,9 +75,9 @@ describe("MessageStateHandler Mutex Protection", () => {
 	}
 
 	/**
-	 * Helper to create a test ClineMessage
+	 * Helper to create a test UiMessage
 	 */
-	function createTestMessage(text: string): ClineMessage {
+	function createTestMessage(text: string): UiMessage {
 		return {
 			ts: Date.now(),
 			type: "say",
@@ -336,7 +336,7 @@ describe("MessageStateHandler Mutex Protection", () => {
 			say: "text",
 			text: "partial",
 			partial: true,
-		} as ClineMessage)
+		} as UiMessage)
 		should.equal(partial.partial, true)
 
 		// MessageChannel.pushMessage stores the returned partial in the runtime message collection.
@@ -351,7 +351,7 @@ describe("MessageStateHandler Mutex Protection", () => {
 			type: "say",
 			say: "text",
 			text: "final",
-		} as ClineMessage)
+		} as UiMessage)
 		should.equal(finalized.partial, false)
 
 		// Still exactly one message — upsert + finalize = same ts single entry

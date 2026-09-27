@@ -1,4 +1,4 @@
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 
 /**
  * Reconciliation of the local message window against a fetched window.
@@ -17,7 +17,7 @@ import type { ClineMessage } from "@shared/ExtensionMessage"
 /** A fetched window together with the absolute range it covers. */
 export interface FetchedMessageWindow {
 	/** Messages returned by the backend, ordered by timestamp. */
-	messages: ClineMessage[]
+	messages: UiMessage[]
 	/** Absolute index of the first returned message. */
 	startIndex: number
 	/** Total messages the backend holds, when reported. */
@@ -26,13 +26,13 @@ export interface FetchedMessageWindow {
 
 /** The local window, described the same way. */
 export interface LocalMessageWindow {
-	messages: ClineMessage[]
+	messages: UiMessage[]
 	startIndex: number
 }
 
 /** Result of reconciling the local window against a fetched one. */
 export interface ReconciledMessageWindow {
-	messages: ClineMessage[]
+	messages: UiMessage[]
 	startIndex: number
 	/** True when the reconciliation dropped locally held messages. */
 	removed: boolean
@@ -86,7 +86,7 @@ export function reconcileMessageWindow(local: LocalMessageWindow, fetched: Fetch
 	//   - what a surviving timestamp contains: the fetch is not authoritative,
 	//     because a slow response can carry an older snapshot than a realtime
 	//     event that already arrived.
-	const survivors: ClineMessage[] = []
+	const survivors: UiMessage[] = []
 	const localByTs = new Map(local.messages.map((message) => [message.ts, message]))
 	let removed = false
 

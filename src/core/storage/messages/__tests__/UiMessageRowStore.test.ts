@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import type { ClineMessage } from "@/shared/ExtensionMessage"
+import type { UiMessage } from "@/shared/ExtensionMessage"
 import { closeInstanceStoragesUnder, ensureInstanceLayout, InstanceDatabase, openInstanceStorage } from "../../instance"
 import { UI_MESSAGE_ORDINAL, UiMessageRowStore } from "../UiMessageRowStore"
 import { decodeUiMessage, encodeUiMessage, type UiMessageRecord } from "../UiMessageRows"
@@ -23,9 +23,9 @@ const richMessage = {
 	futureField: { nested: [1, "two"] },
 	// A value its column cannot hold goes to `extra` instead of being coerced.
 	exitCodeAsText: undefined,
-} as unknown as ClineMessage
+} as unknown as UiMessage
 
-function record(message: ClineMessage, ordinal: number): UiMessageRecord {
+function record(message: UiMessage, ordinal: number): UiMessageRecord {
 	return { ordinal, ts: message.ts, message }
 }
 
@@ -38,7 +38,7 @@ describe("UI message rows", () => {
 	})
 
 	it("keeps a value that does not fit its column in extra", () => {
-		const message = { ts: 5, type: "ask", ask: "followup", exitCode: "7", images: [] } as unknown as ClineMessage
+		const message = { ts: 5, type: "ask", ask: "followup", exitCode: "7", images: [] } as unknown as UiMessage
 		const { row, attachments } = encodeUiMessage(message, 0)
 		expect(row.exitCode).toBeNull()
 		expect(row.extra).toEqual({ exitCode: "7", images: [] })
@@ -70,7 +70,7 @@ describe("UiMessageRowStore", () => {
 
 	it("persists rows and attachments together and reads them back after reopening", async () => {
 		const first = await openStore("task-rows")
-		const second = { ts: richMessage.ts, type: "say", say: "text", text: "same timestamp" } as ClineMessage
+		const second = { ts: richMessage.ts, type: "say", say: "text", text: "same timestamp" } as UiMessage
 		await first.insert([record(richMessage, 0)])
 		await first.insert([record(second, 1)])
 		await first.close()

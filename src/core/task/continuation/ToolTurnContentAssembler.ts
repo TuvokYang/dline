@@ -1,4 +1,4 @@
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import type { ClineContent, ClineStorageMessage, ClineUserToolResultContentBlock } from "@shared/messages"
 import { type BlockLifecycle, BlockPhase } from "../BlockPhaseMachine"
 import { type DurableToolResultRecord, readDurableToolResult, replayContentOf } from "../DurableToolResult"
@@ -7,7 +7,7 @@ export interface AssembleToolTurnContentInput {
 	blocks: readonly BlockLifecycle[]
 	assistantApiIndex: number
 	apiHistory: readonly ClineStorageMessage[]
-	uiHistory: readonly ClineMessage[]
+	uiHistory: readonly UiMessage[]
 	pendingContent: readonly ClineContent[]
 	synthesizeMissing: "all" | "terminal_only"
 	deferMissingDlineTids?: readonly string[]
@@ -40,7 +40,7 @@ function pendingResults(content: readonly ClineContent[]): Map<string, ClineUser
 	return results
 }
 
-function durableResults(messages: readonly ClineMessage[]): Map<string, DurableToolResultRecord> {
+function durableResults(messages: readonly UiMessage[]): Map<string, DurableToolResultRecord> {
 	const results = new Map<string, DurableToolResultRecord>()
 	for (const message of messages) {
 		if (message.type !== "say" || message.say !== "partial_tool_result" || !message.text) continue

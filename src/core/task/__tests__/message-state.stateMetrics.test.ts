@@ -1,4 +1,4 @@
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import { describe, expect, it } from "vitest"
 import { MessageStateHandler } from "../message-state"
 
@@ -13,27 +13,27 @@ import { MessageStateHandler } from "../message-state"
  */
 
 interface CountingStore {
-	getAll(): ClineMessage[]
+	getAll(): UiMessage[]
 	reads: number
 }
 
-function createStore(messages: ClineMessage[]): CountingStore {
+function createStore(messages: UiMessage[]): CountingStore {
 	return {
 		reads: 0,
-		getAll(): ClineMessage[] {
+		getAll(): UiMessage[] {
 			this.reads++
 			return messages
 		},
 	}
 }
 
-function apiRequest(ts: number, tokensIn: number, tokensOut: number): ClineMessage {
+function apiRequest(ts: number, tokensIn: number, tokensOut: number): UiMessage {
 	return {
 		ts,
 		type: "say",
 		say: "api_req_started",
 		text: JSON.stringify({ tokensIn, tokensOut, cost: 0 }),
-	} as ClineMessage
+	} as UiMessage
 }
 
 function createHandler(store: CountingStore): MessageStateHandler {
@@ -116,7 +116,7 @@ describe("MessageStateHandler.readStateMetrics", () => {
 
 		const stateMetrics = handler.readStateMetrics()
 		const historyMetrics = (
-			handler as unknown as { readAggregatedMetrics(all: ClineMessage[]): { totalTokensIn: number } }
+			handler as unknown as { readAggregatedMetrics(all: UiMessage[]): { totalTokensIn: number } }
 		).readAggregatedMetrics(messages)
 
 		expect(stateMetrics.totalTokensIn).toBe(12)
