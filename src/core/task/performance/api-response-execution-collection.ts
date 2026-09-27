@@ -1,8 +1,7 @@
-import path from "node:path"
 import type { UnifyStore } from "@core/storage/backend/api/UnifyStore"
 import { SqliteUnifyStoreBackend } from "@core/storage/backend/sqlite/SqliteUnifyStore"
-import { ensureTaskDirectoryExists, GlobalFileNames } from "@core/storage/disk"
 import { ApiResponseExecutionEntity } from "./api-response-execution-entity"
+import { resolveTaskMetricsDatabase } from "./task-metrics-database"
 
 export interface ApiResponseExecutionCollectionOptions {
 	readonly taskId: string
@@ -12,8 +11,7 @@ export interface ApiResponseExecutionCollectionOptions {
 export async function createApiResponseExecutionCollection(
 	options: ApiResponseExecutionCollectionOptions,
 ): Promise<UnifyStore<ApiResponseExecutionEntity>> {
-	const taskDirectory = await ensureTaskDirectoryExists(options.taskId)
-	const databasePath = options.location ?? path.join(taskDirectory, GlobalFileNames.taskDatabase(options.taskId))
+	const databasePath = await resolveTaskMetricsDatabase(options.taskId, options.location)
 	const database = await new SqliteUnifyStoreBackend().open(databasePath)
 	let store: UnifyStore<ApiResponseExecutionEntity> | undefined
 	try {

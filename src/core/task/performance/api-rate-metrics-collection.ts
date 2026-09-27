@@ -1,10 +1,9 @@
-import path from "node:path"
 import type { UnifyStore } from "@core/storage/backend/api/UnifyStore"
 import { SqliteUnifyStoreBackend } from "@core/storage/backend/sqlite/SqliteUnifyStore"
-import { ensureTaskDirectoryExists, GlobalFileNames } from "@core/storage/disk"
 import { LegacyApiRateMetricsWrapperEntity } from "./api-rate-metrics-legacy-wrapper-entity"
 import { ApiRateMetricsEntity } from "./api-rate-metrics-record-codec"
 import { migrateApiRateMetricsWrapper } from "./api-rate-metrics-wrapper-migration"
+import { resolveTaskMetricsDatabase } from "./task-metrics-database"
 
 export interface ApiRateMetricsCollectionFactoryOptions {
 	readonly taskId: string
@@ -15,8 +14,7 @@ export interface ApiRateMetricsCollectionFactoryOptions {
 export async function createApiRateMetricsCollection(
 	options: ApiRateMetricsCollectionFactoryOptions,
 ): Promise<UnifyStore<ApiRateMetricsEntity>> {
-	const taskDirectory = await ensureTaskDirectoryExists(options.taskId)
-	const databasePath = options.location ?? path.join(taskDirectory, GlobalFileNames.taskDatabase(options.taskId))
+	const databasePath = await resolveTaskMetricsDatabase(options.taskId, options.location)
 	const database = await new SqliteUnifyStoreBackend().open(databasePath)
 	let legacyStore: UnifyStore<LegacyApiRateMetricsWrapperEntity> | undefined
 	let store: UnifyStore<ApiRateMetricsEntity> | undefined

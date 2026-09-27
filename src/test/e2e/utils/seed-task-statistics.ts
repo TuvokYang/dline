@@ -1,3 +1,4 @@
+import { mkdir } from "node:fs/promises"
 import path from "node:path"
 import { SqliteUnifyStoreBackend } from "../../../core/storage/backend/sqlite/SqliteUnifyStore"
 import { ApiRateMetricsEntity, toApiRateMetricsEntity } from "../../../core/task/performance/api-rate-metrics-record-codec"
@@ -68,7 +69,8 @@ export async function seedTaskStatistics(
 	taskId: string,
 	nowMs = Date.now(),
 ): Promise<SeedTaskStatisticsResult> {
-	const databasePath = path.join(dlineDocsDir, "tasks", taskId, `${taskId}.db`)
+	const databasePath = path.join(dlineDocsDir, "tasks", taskId, "metrics.db")
+	await mkdir(path.dirname(databasePath), { recursive: true })
 	const database = await new SqliteUnifyStoreBackend().open(databasePath)
 	const roundStore = await database.openStore(ApiRequestRoundEntity)
 	const executionStore = await database.openStore(ApiResponseExecutionEntity)

@@ -52,7 +52,8 @@ export const GlobalFileNames = {
 	taskSnapshot: "snapshot.json",
 	taskActivities: "activities.json",
 	taskApiRateMetrics: "api_rate_metrics.jsonl",
-	taskDatabase: (taskId: string) => `${taskId}.db`,
+	/** Where builds before `metrics.db` kept a task's API metrics; moved on first open. */
+	legacyTaskDatabase: (taskId: string) => `${taskId}.db`,
 	taskContext: "context.json",
 	apiConversationHistory: "api_conversation_history.jsonl",
 	contextHistory: "context_history.jsonl",
