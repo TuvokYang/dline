@@ -44,8 +44,9 @@ import SectionTabs from "./SectionTabs.astro"
 	.page > header.header {
 		padding-block-end: 0;
 	}
+	/* The logo fills its own box, so it may use most of the bar height. */
 	.site-title img {
-		height: calc(var(--dline-nav-bar-height) - 2 * var(--sl-nav-pad-y));
+		height: calc(var(--dline-nav-bar-height) - 1.25rem);
 	}
 	.sl-menu-button {
 		top: calc((var(--dline-nav-bar-height) - var(--sl-menu-button-size)) / 2);

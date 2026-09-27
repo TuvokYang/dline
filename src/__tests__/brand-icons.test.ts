@@ -2,21 +2,33 @@ import fs from "node:fs/promises"
 import path from "node:path"
 import sharp from "sharp"
 import { describe, expect, it } from "vitest"
-// @ts-expect-error -- brand scripts are plain ESM without type declarations.
-import { designToFont, FONT, fontSvg, markCenter, markPath } from "../../scripts/brand/dline-mark.mjs"
+import {
+	designToFont,
+	FONT,
+	faviconSvg,
+	fontSvg,
+	headSize,
+	logoSvg,
+	markBounds,
+	markCenter,
+	markPath,
+	// @ts-expect-error -- brand scripts are plain ESM without type declarations.
+} from "../../scripts/brand/dline-mark.mjs"
 // @ts-expect-error -- brand scripts are plain ESM without type declarations.
 import { buildBrandAssets } from "../../scripts/generate-brand-icons.mjs"
 
 /**
- * Every brand asset is generated from one geometry by `npm run icons`. These
- * tests keep the committed files in sync with the generator and guard the two
- * properties that are easy to break silently: the face must be cut out of the
- * body (nonzero winding), and the icon font must place the glyph inside the em.
+ * Every brand asset is generated from one robot by `npm run icons`. These tests
+ * keep the committed files in sync with the generator and guard the properties
+ * that are easy to break silently: the eyes must be cut out of the head
+ * (nonzero winding), the icon font must place the glyph inside the em, and the
+ * docs site marks must stay transparent.
  */
 
 const ROOT = path.resolve(__dirname, "../..")
 
 type Asset = { file: string; content: string | Uint8Array; kind: "text" | "binary" | "raster" }
+type Point = [number, number]
 
 describe("brand icons", () => {
 	it("committed assets match the generator output", async () => {
@@ -38,29 +50,48 @@ describe("brand icons", () => {
 		}
 	})
 
-	it("cuts the eyes and mouth out of the body", async () => {
+	it("cuts the eyes out of the head", async () => {
 		const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="320" height="320"><path fill="#000" d="${markPath()}"/></svg>`
 		const { data, info } = await sharp(Buffer.from(svg)).ensureAlpha().raw().toBuffer({ resolveWithObject: true })
-		const alphaAt = ([x, y]: [number, number]) => data[(Math.round(y * 10) * info.width + Math.round(x * 10)) * 4 + 3]
-		// Body between the eyes, eye centers, mouth center, antenna stem, and outside the robot.
-		expect(alphaAt([16, 14])).toBe(255)
-		expect(alphaAt([11.8, 18.2])).toBe(0)
-		expect(alphaAt([20.2, 18.2])).toBe(0)
-		expect(alphaAt([16, 24.35])).toBe(0)
-		expect(alphaAt([16, 9])).toBe(255)
+		const alphaAt = ([x, y]: Point) => data[(Math.round(y * 10) * info.width + Math.round(x * 10)) * 4 + 3]
+		// Head above the eyes, both eyes, the mouth, the antenna fork, both ear tips,
+		// the gap between an ear and the head, and outside the robot.
+		expect(alphaAt([16, 13])).toBe(255)
+		expect(alphaAt([12.3, 18.3])).toBe(0)
+		expect(alphaAt([19.7, 18.3])).toBe(0)
+		expect(alphaAt([16, 24.2])).toBe(0)
+		expect(alphaAt([16, 7.5])).toBe(255)
+		expect(alphaAt([3.6, 19.5])).toBe(255)
+		expect(alphaAt([28.4, 19.5])).toBe(255)
+		expect(alphaAt([6.2, 19.5])).toBe(0)
 		expect(alphaAt([1, 2])).toBe(0)
+	})
+
+	it("keeps the head square and the robot horizontally centered", () => {
+		const { width, height } = headSize()
+		expect(width).toBe(height)
+		const { left, right } = markBounds()
+		expect((left + right) / 2).toBeCloseTo(16, 6)
+		expect(markCenter()[0]).toBeCloseTo(16, 6)
 	})
 
 	it("centers the icon-font glyph inside the em box", () => {
 		const [x, y] = designToFont(markCenter())
 		expect(x).toBeCloseTo(FONT.unitsPerEm / 2, 6)
 		expect(y).toBeCloseTo((FONT.ascent + FONT.descent) / 2, 6)
-		const [left, top] = designToFont([0.9, 3.4])
-		const [right, bottom] = designToFont([31.1, 28])
-		expect(left).toBeGreaterThanOrEqual(0)
-		expect(right).toBeLessThanOrEqual(FONT.unitsPerEm)
-		expect(top).toBeLessThanOrEqual(FONT.ascent)
-		expect(bottom).toBeGreaterThanOrEqual(FONT.descent)
+		const { left, top, right, bottom } = markBounds()
+		const [fontLeft, fontTop] = designToFont([left, top])
+		const [fontRight, fontBottom] = designToFont([right, bottom])
+		expect(fontLeft).toBeGreaterThanOrEqual(0)
+		expect(fontRight).toBeLessThanOrEqual(FONT.unitsPerEm)
+		expect(fontTop).toBeLessThanOrEqual(FONT.ascent)
+		expect(fontBottom).toBeGreaterThanOrEqual(FONT.descent)
 		expect(fontSvg()).toContain('unicode="&#xe900;"')
+	})
+
+	it("keeps the documentation site marks transparent", () => {
+		for (const svg of [faviconSvg(), logoSvg("light"), logoSvg("dark")]) {
+			expect(svg).not.toContain("<rect")
+		}
 	})
 })

@@ -95,6 +95,8 @@ old_docs/**
 assets/icons/**
 !assets/icons/icon.png
 !assets/icons/icon.svg
+!assets/icons/panel-dark.svg
+!assets/icons/panel-light.svg
 !assets/icons/dline-icon.woff
 
 # Ignore E2E build files

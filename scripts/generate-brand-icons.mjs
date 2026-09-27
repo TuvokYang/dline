@@ -1,8 +1,8 @@
 /**
- * Regenerate every Dline brand asset from the mark geometry in
- * scripts/brand/dline-mark.mjs. Run with `npm run icons` after changing the
- * geometry; src/__tests__/brand-icons.test.ts fails when a committed asset
- * drifts from this output.
+ * Regenerate every Dline brand asset from the one robot in
+ * scripts/brand/dline-mark.mjs. Run with `npm run icons` after changing it;
+ * src/__tests__/brand-icons.test.ts fails when a committed asset drifts from
+ * this output.
  */
 import { mkdir, writeFile } from "node:fs/promises"
 import path from "node:path"
@@ -10,7 +10,7 @@ import { fileURLToPath, pathToFileURL } from "node:url"
 import sharp from "sharp"
 import svg2ttf from "svg2ttf"
 import ttf2woff from "ttf2woff"
-import { fontSvg, GRID, glyphSvg, logoSvg, markSvg, webviewPathsModule } from "./brand/dline-mark.mjs"
+import { faviconSvg, fontSvg, GRID, glyphSvg, logoSvg, panelSvg, tileSvg, webviewPathsModule } from "./brand/dline-mark.mjs"
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 /** Marketplace icon size; the Marketplace requires at least 128 px. */
@@ -24,16 +24,19 @@ const PNG_SIZE = 256
 
 /** @returns {Promise<BrandAsset[]>} */
 export async function buildBrandAssets() {
-	const mark = markSvg()
 	return [
-		{ file: "assets/icons/dline-mark.svg", content: mark, kind: "text" },
-		{ file: "docs/public/favicon.svg", content: mark, kind: "text" },
+		// VS Code: Marketplace and editor-tab tile, activity bar, product icon font, Webview logo.
+		{ file: "assets/icons/icon-tile.svg", content: tileSvg(), kind: "text" },
+		{ file: "assets/icons/icon.png", content: await rasterize(tileSvg(), PNG_SIZE), kind: "raster" },
+		{ file: "assets/icons/icon.svg", content: glyphSvg(), kind: "text" },
+		{ file: "assets/icons/panel-dark.svg", content: panelSvg("dark"), kind: "text" },
+		{ file: "assets/icons/panel-light.svg", content: panelSvg("light"), kind: "text" },
+		{ file: "assets/icons/dline-icon.woff", content: iconFont(), kind: "binary" },
+		{ file: "webview-ui/src/assets/dlineMarkPaths.ts", content: webviewPathsModule(), kind: "text" },
+		// Docs site: transparent marks.
+		{ file: "docs/public/favicon.svg", content: faviconSvg(), kind: "text" },
 		{ file: "docs/src/assets/brand/logo-light.svg", content: logoSvg("light"), kind: "text" },
 		{ file: "docs/src/assets/brand/logo-dark.svg", content: logoSvg("dark"), kind: "text" },
-		{ file: "assets/icons/icon.svg", content: glyphSvg(), kind: "text" },
-		{ file: "webview-ui/src/assets/dlineMarkPaths.ts", content: webviewPathsModule(), kind: "text" },
-		{ file: "assets/icons/dline-icon.woff", content: iconFont(), kind: "binary" },
-		{ file: "assets/icons/icon.png", content: await rasterize(mark, PNG_SIZE), kind: "raster" },
 	]
 }
 
