@@ -1,8 +1,8 @@
-import { readdir, readFile, stat, writeFile } from "node:fs/promises"
+import { readdir, readFile, writeFile } from "node:fs/promises"
 import * as path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
-import { readTaskUiMessagesText } from "@e2e/utils/task-instance-store"
+import { readTaskConversationText, readTaskUiMessagesText } from "@e2e/utils/task-instance-store"
 import { startFooterActionStabilityObserver, stopFooterActionStabilityObserver } from "@e2e/utils/ui-stability"
 import { expect, type Frame } from "@playwright/test"
 
@@ -1060,15 +1060,14 @@ e2e(
 			await expect(sidebar.getByText(planText, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
 			await expect(sidebar.getByTestId("chat-input")).toBeEnabled({ timeout: 30_000 })
 			const taskId = await onlyTaskId(dlineDocsDir)
-			const taskDir = path.join(dlineDocsDir, "tasks", taskId)
-			const apiPath = path.join(taskDir, "api_conversation_history.jsonl")
-			await expect.poll(async () => (await readFile(apiPath, "utf8")).includes(planText), { timeout: 30_000 }).toBe(true)
+			await expect
+				.poll(async () => (await readTaskConversationText(dlineDocsDir, taskId)).includes(planText), { timeout: 30_000 })
+				.toBe(true)
 			await closeCurrentTask(sidebar)
 
-			const [uiBefore, apiBefore, apiStatBefore] = await Promise.all([
+			const [uiBefore, apiBefore] = await Promise.all([
 				readTaskUiMessagesText(dlineDocsDir, taskId),
-				readFile(apiPath, "utf8"),
-				stat(apiPath),
+				readTaskConversationText(dlineDocsDir, taskId),
 			])
 			expect(uiBefore).toContain(reasoningText)
 			expect(uiBefore).toContain(planText)
@@ -1080,14 +1079,13 @@ e2e(
 			await expect(sidebar.getByText(planText, { exact: false }).last()).toBeVisible({ timeout: 30_000 })
 			await page.waitForTimeout(1_250)
 
-			const [uiAfter, apiAfter, apiStatAfter] = await Promise.all([
+			const [uiAfter, apiAfter] = await Promise.all([
 				readTaskUiMessagesText(dlineDocsDir, taskId),
-				readFile(apiPath, "utf8"),
-				stat(apiPath),
+				readTaskConversationText(dlineDocsDir, taskId),
 			])
 			expect(uiAfter).toBe(uiBefore)
+			// Reopening a finished task must not append to or rewrite its conversation.
 			expect(apiAfter).toBe(apiBefore)
-			expect(apiStatAfter.mtimeMs).toBe(apiStatBefore.mtimeMs)
 
 			await sidebar.getByRole("button", { name: "Thinking", exact: true }).last().click()
 			await expect(sidebar.getByText(reasoningText, { exact: false }).last()).toBeVisible({ timeout: 30_000 })
@@ -1172,20 +1170,19 @@ e2e(
 			await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(2)
 
 			const taskId = await onlyTaskId(dlineDocsDir)
-			const taskDir = path.join(dlineDocsDir, "tasks", taskId)
-			const apiPath = path.join(taskDir, "api_conversation_history.jsonl")
 			await closeCurrentTask(sidebar)
 			await expect
 				.poll(() => server.getMockConsumptions("openai-compatible-responses")[1]?.abortedAtMs, { timeout: 30_000 })
 				.not.toBeUndefined()
 			await expect
-				.poll(async () => (await readFile(apiPath, "utf8")).includes(secondReasoning), { timeout: 30_000 })
+				.poll(async () => (await readTaskConversationText(dlineDocsDir, taskId)).includes(secondReasoning), {
+					timeout: 30_000,
+				})
 				.toBe(true)
 
-			const [uiBefore, apiBefore, apiStatBefore] = await Promise.all([
+			const [uiBefore, apiBefore] = await Promise.all([
 				readTaskUiMessagesText(dlineDocsDir, taskId),
-				readFile(apiPath, "utf8"),
-				stat(apiPath),
+				readTaskConversationText(dlineDocsDir, taskId),
 			])
 			expect(uiBefore).toContain(firstReasoning)
 			expect(uiBefore).toContain(secondReasoning)
@@ -1200,10 +1197,9 @@ e2e(
 			await expect(sidebar.getByText("E2E_GPT56_CLOSED_RESPONSE_MUST_NOT_RENDER", { exact: false })).toHaveCount(0)
 			await page.waitForTimeout(1_250)
 
-			const [uiAfter, apiAfter, apiStatAfter] = await Promise.all([
+			const [uiAfter, apiAfter] = await Promise.all([
 				readTaskUiMessagesText(dlineDocsDir, taskId),
-				readFile(apiPath, "utf8"),
-				stat(apiPath),
+				readTaskConversationText(dlineDocsDir, taskId),
 			])
 			// Reopen may append the one durable resume interaction it presents, but
 			// every byte from the pre-reopen timeline must remain an unchanged prefix.
@@ -1217,7 +1213,6 @@ e2e(
 			expect(appendedUiMessages[0]).toMatchObject({ type: "ask", ask: "resume_task", text: "" })
 			expect(appendedUiMessages[0].interactionId).toEqual(expect.any(String))
 			expect(apiAfter).toBe(apiBefore)
-			expect(apiStatAfter.mtimeMs).toBe(apiStatBefore.mtimeMs)
 
 			const thinkingButtons = sidebar.getByRole("button", { name: "Thinking", exact: true })
 			await expect(thinkingButtons).toHaveCount(2)

@@ -2,7 +2,7 @@ import { mkdir, readdir, readFile, writeFile } from "node:fs/promises"
 import * as path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
-import { readTaskActivities } from "@e2e/utils/task-instance-store"
+import { readTaskActivities, readTaskConversationText } from "@e2e/utils/task-instance-store"
 import { startFooterActionStabilityObserver, stopFooterActionStabilityObserver } from "@e2e/utils/ui-stability"
 import { expect, type Frame, type Page } from "@playwright/test"
 
@@ -725,12 +725,11 @@ e2e(
 			return ids.length === 1 ? ids[0] : undefined
 		}, 30_000)
 		if (!taskId) throw new Error("E2E task directory was not created")
-		const durableHistoryPath = path.join(dlineDocsDir, "tasks", taskId, "api_conversation_history.jsonl")
 
 		await sidebar.getByRole("button", { name: "Close Task", exact: true }).click()
 		await expect(sidebar.getByTestId("chat-input")).toBeVisible()
 		const durableHistory = await E2ETestHelper.waitForValue(async () => {
-			const content = await readFile(durableHistoryPath, "utf8").catch(() => "")
+			const content = await readTaskConversationText(dlineDocsDir, taskId)
 			return content.includes('"function_id":"call_batch_search_after"') ? content : undefined
 		}, 30_000)
 		if (!durableHistory) throw new Error("Skipped tool results were not flushed to durable history")

@@ -2,6 +2,7 @@ import { readdir, readFile, writeFile } from "node:fs/promises"
 import * as path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
+import { readTaskConversationText } from "@e2e/utils/task-instance-store"
 import { expect, type Frame, type Page } from "@playwright/test"
 import type { ElectronApplication } from "playwright"
 
@@ -274,14 +275,8 @@ e2e(
 			await expectInheritedTaskSettings(dlineDocsDir, successorTaskId)
 			await expectConsumedTaskSnapshot(dlineDocsDir, oldTaskId, approvedToolId)
 
-			const oldApiHistory = await readFile(
-				path.join(dlineDocsDir, "tasks", oldTaskId, "api_conversation_history.jsonl"),
-				"utf8",
-			)
-			const successorApiHistory = await readFile(
-				path.join(dlineDocsDir, "tasks", successorTaskId, "api_conversation_history.jsonl"),
-				"utf8",
-			)
+			const oldApiHistory = await readTaskConversationText(dlineDocsDir, oldTaskId)
+			const successorApiHistory = await readTaskConversationText(dlineDocsDir, successorTaskId)
 			expect(oldApiHistory).toContain(approvedToolId)
 			expect(oldApiHistory).toContain(feedback)
 			expect(successorApiHistory).toContain(successorContext)
@@ -403,14 +398,8 @@ e2e(
 			await expectInheritedTaskSettings(dlineDocsDir, successorTaskId)
 			await expectConsumedTaskSnapshot(dlineDocsDir, oldPanelTaskId, approvedToolId)
 
-			const oldPanelApiHistory = await readFile(
-				path.join(dlineDocsDir, "tasks", oldPanelTaskId, "api_conversation_history.jsonl"),
-				"utf8",
-			)
-			const successorApiHistory = await readFile(
-				path.join(dlineDocsDir, "tasks", successorTaskId, "api_conversation_history.jsonl"),
-				"utf8",
-			)
+			const oldPanelApiHistory = await readTaskConversationText(dlineDocsDir, oldPanelTaskId)
+			const successorApiHistory = await readTaskConversationText(dlineDocsDir, successorTaskId)
 			expect(oldPanelApiHistory).toContain(approvedToolId)
 			expect(oldPanelApiHistory).toContain(feedback)
 			expect(successorApiHistory).toContain(successorContext)

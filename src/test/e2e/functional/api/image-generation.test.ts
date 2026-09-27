@@ -635,10 +635,12 @@ e2e(
 			expect(manifest).toContain("image:sha256:")
 			expect(manifest).not.toContain(PNG_1X1_BASE64)
 			expect(path.resolve(path.dirname(manifests[0]), "..")).toBe(taskDirectory)
-			const requiredConversationArtifactNames = ["context.json", "api_conversation_history.jsonl", "messages.db"] as const
+			// The provider conversation lives in journal.db and the chat in messages.db.
+			const requiredConversationArtifactNames = ["context.json", "journal.db", "messages.db"] as const
 			const conversationArtifactNames = new Set([
 				...requiredConversationArtifactNames,
 				"context_history.jsonl",
+				"api_conversation_history.jsonl",
 				"api_conversation_all.jsonl",
 			])
 			const taskFiles = await listFilesRecursively(taskDirectory)

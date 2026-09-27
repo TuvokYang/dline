@@ -10,6 +10,7 @@ import type { MockApiConsumption } from "@e2e/fixtures/server"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { openTab } from "@e2e/utils/common"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
+import { readTaskConversationText } from "@e2e/utils/task-instance-store"
 import { expect, type Frame, type Locator, type Page } from "@playwright/test"
 
 const DLINE_RELOAD_NOTIFICATION =
@@ -98,13 +99,7 @@ async function findTaskIdByHistoryMarker(dlineDocsDir: string, marker: string): 
 		})
 		for (const entry of entries) {
 			if (!entry.isDirectory()) continue
-			const history = await readFile(
-				path.join(dlineDocsDir, "tasks", entry.name, "api_conversation_history.jsonl"),
-				"utf8",
-			).catch((error: unknown) => {
-				if ((error as NodeJS.ErrnoException).code === "ENOENT") return ""
-				throw error
-			})
+			const history = await readTaskConversationText(dlineDocsDir, entry.name)
 			if (history.includes(marker)) return entry.name
 		}
 		return undefined

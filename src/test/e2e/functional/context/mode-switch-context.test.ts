@@ -3,7 +3,7 @@ import * as path from "node:path"
 import type { MockApiConsumption } from "@e2e/fixtures/server"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
-import { readTaskUiMessagesText } from "@e2e/utils/task-instance-store"
+import { readTaskConversationText, readTaskUiMessagesText } from "@e2e/utils/task-instance-store"
 import { expect, type Frame, type Locator, type TestInfo } from "@playwright/test"
 import { MAX_TOOL_RESULT_TEXT_BYTES } from "@shared/content-limits"
 import type { ElectronApplication } from "playwright"
@@ -548,8 +548,7 @@ e2e(
 
 			const [taskId] = await taskDirectoryIds(dlineDocsDir)
 			if (!taskId) throw new Error("Profile switch E2E task directory was not created")
-			const apiHistoryPath = path.join(dlineDocsDir, "tasks", taskId, "api_conversation_history.jsonl")
-			const committedApiHistory = await readFile(apiHistoryPath, "utf8")
+			const committedApiHistory = await readTaskConversationText(dlineDocsDir, taskId)
 			expect(committedApiHistory).toContain("E2E_PROFILE_COMPACTION_TASK")
 			expect(committedApiHistory).toContain("E2E_PROFILE_COMPACTION_HISTORY_READY")
 			expect(committedApiHistory).toContain("E2E_PROFILE_COMPACTION_LATEST")
@@ -2098,8 +2097,7 @@ e2e(
 
 			const [taskId] = await taskDirectoryIds(dlineDocsDir)
 			if (!taskId) throw new Error("DeepSeek pressure E2E task directory was not created")
-			const taskDirectory = path.join(dlineDocsDir, "tasks", taskId)
-			const apiHistory = await readFile(path.join(taskDirectory, "api_conversation_history.jsonl"), "utf8")
+			const apiHistory = await readTaskConversationText(dlineDocsDir, taskId)
 			const uiMessages = await readTaskUiMessagesText(dlineDocsDir, taskId)
 			expect(apiHistory).not.toContain(summary)
 			for (const file of [...seedFiles, ...protectedFiles]) expect(apiHistory).toContain(file.marker)

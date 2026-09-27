@@ -8,6 +8,8 @@ import { asc } from "@/core/storage/backend/api/UnifyStoreQuery"
 import { InstanceDatabase, InstanceLayout, openInstanceStorage } from "@/core/storage/instance"
 import { openUiMessageRows } from "@/core/storage/messages/openUiMessageRows"
 import { readUiMessages } from "@/core/storage/messages/readUiMessages"
+import { readJournalConversation } from "@/core/task/conversation/JournalConversationReader"
+import type { ClineStorageMessage } from "@/shared/messages/content"
 
 /**
  * Test access to the per-task databases the extension persists.
@@ -47,6 +49,52 @@ export async function readTaskUiMessages(dlineDocsDir: string, taskId: string): 
 export async function readTaskUiMessagesText(dlineDocsDir: string, taskId: string): Promise<string> {
 	const messages = await readTaskUiMessages(dlineDocsDir, taskId)
 	return messages.length === 0 ? "" : `${messages.map((message) => JSON.stringify(message)).join("\n")}\n`
+}
+
+const LEGACY_CONVERSATION_FILE = "api_conversation_history.jsonl"
+
+async function readLegacyConversation(root: string): Promise<ClineStorageMessage[]> {
+	try {
+		const text = await readFile(path.join(root, LEGACY_CONVERSATION_FILE), "utf8")
+		return text
+			.split(/\r?\n/)
+			.filter((line) => line.trim().length > 0)
+			.map((line) => JSON.parse(line) as ClineStorageMessage)
+	} catch {
+		return []
+	}
+}
+
+/**
+ * The provider conversation of a task, as the model sees it.
+ *
+ * The conversation lives in `journal.db` and is rebuilt from its entries and
+ * payloads. A seeded task the extension has not run yet has only its legacy
+ * `api_conversation_history.jsonl`, which is read instead. Reading never claims
+ * the journal, so it works while the task is open in the extension.
+ */
+export async function readTaskConversation(dlineDocsDir: string, taskId: string): Promise<ClineStorageMessage[]> {
+	const root = taskRoot(dlineDocsDir, taskId)
+	try {
+		const journal = await readJournalConversation(new InstanceLayout(root))
+		if (journal) return journal
+	} catch {
+		// A journal the extension is still creating reads as absent until its first commit.
+	}
+	return await readLegacyConversation(root)
+}
+
+/**
+ * The provider conversation as one JSON line per message, the shape the legacy history file had.
+ *
+ * `ts` is left out: the journal stamps each message when it renders it, so two
+ * reads of an unchanged conversation differ only there. Without it, equal text
+ * means the task holds the same conversation.
+ */
+export async function readTaskConversationText(dlineDocsDir: string, taskId: string): Promise<string> {
+	const messages = await readTaskConversation(dlineDocsDir, taskId)
+	const lines = messages.map(({ ts: _renderedAt, ...message }) => JSON.stringify(message))
+	return lines.length === 0 ? "" : `${lines.join("\n")}\n`
 }
 
 async function readLegacyActivities(root: string): Promise<TaskActivityRecord[]> {

@@ -1,15 +1,7 @@
 import { getSavedApiConversationHistory } from "@core/storage/disk"
-import { InstanceDatabase, instanceDatabaseExists, openInstanceStorage, resolveInstanceLayout } from "@core/storage/instance"
+import { resolveInstanceLayout } from "@core/storage/instance"
 import type { ClineStorageMessage } from "@shared/messages/content"
-import { JournalConversationView } from "../executors/provider/service/JournalConversationView"
-import { ProviderJournalMessageMaterializer } from "../executors/provider/service/ProviderJournalMessageMaterializer"
-import { openTaskJournalStores } from "../stores"
-
-/**
- * Names the reader when it opens `journal.db`. It never writes, so it never
- * claims the database and can read a task another window is running.
- */
-const CONVERSATION_READER = "conversation-reader"
+import { readJournalConversation } from "./JournalConversationReader"
 
 /**
  * The provider conversation a task holds, whether or not it is open.
@@ -21,14 +13,5 @@ const CONVERSATION_READER = "conversation-reader"
  */
 export async function readTaskConversation(taskId: string): Promise<ClineStorageMessage[]> {
 	const layout = await resolveInstanceLayout({ taskId })
-	if (!(await instanceDatabaseExists(layout, InstanceDatabase.Journal))) return getSavedApiConversationHistory(taskId)
-	const storage = openInstanceStorage(layout.root)
-	try {
-		const stores = await openTaskJournalStores(await storage.openDatabase(InstanceDatabase.Journal, CONVERSATION_READER))
-		if (stores.journal.watermark().seq === 0) return getSavedApiConversationHistory(taskId)
-		const view = new JournalConversationView(stores.journal, new ProviderJournalMessageMaterializer(stores.payloads))
-		return await view.messages()
-	} finally {
-		await storage.close()
-	}
+	return (await readJournalConversation(layout)) ?? getSavedApiConversationHistory(taskId)
 }
