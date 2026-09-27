@@ -258,4 +258,65 @@ describe("TaskProviderRequestReporter", () => {
 		expect(requestInfo(harness.rows[0]).tokensIn).toBe(10)
 		expect(requestInfo(harness.rows[1]).tokensIn).toBe(20)
 	})
+
+	// dev 2bcb27618: subscriptions report no token counts, so today's figures
+	// come from Dline's own requests, each counted once against its Profile.
+	describe("Profile daily tokens", () => {
+		function reporterCountingProfiles(active: { current: string | undefined }) {
+			const state = messageState()
+			const recorded: { profileId: string; inputTokens: number; outputTokens: number }[] = []
+			const reporter = new TaskProviderRequestReporter({
+				messages: state.handler,
+				nextPresentationId: (() => {
+					let next = 100
+					return () => ++next
+				})(),
+				api: apiHandler,
+				promptCache: new PromptCacheHealthTracker("task-1", { debug: () => {}, warn: () => {} }),
+				profileTokens: {
+					activeProfileId: () => active.current,
+					record: (profileId, increment) => void recorded.push({ profileId, ...increment }),
+				},
+			})
+			return { reporter, recorded }
+		}
+
+		it("counts input with cache reads and writes, once per settled request", async () => {
+			const harness = reporterCountingProfiles({ current: "profile-a" })
+			const record = await harness.reporter.begin({ turnId: "turn-1" })
+
+			// A retried request is still one request: only its settlement counts.
+			await record.retrying?.({ attempt: 1, maxAttempts: 5, delayMs: 1000, errorMessage: "down" })
+			await record.settle({
+				usage: { inputTokens: 100, outputTokens: 20, cacheWriteTokens: 5, cacheReadTokens: 300 },
+				outcome: "completed",
+			})
+
+			expect(harness.recorded).toEqual([{ profileId: "profile-a", inputTokens: 405, outputTokens: 20 }])
+		})
+
+		it("counts against the Profile the request started under, not one switched to meanwhile", async () => {
+			const active = { current: "profile-a" as string | undefined }
+			const harness = reporterCountingProfiles(active)
+			const record = await harness.reporter.begin({ turnId: "turn-1" })
+
+			active.current = "profile-b"
+			await record.settle({ usage: { inputTokens: 10, outputTokens: 1 }, outcome: "cancelled" })
+
+			expect(harness.recorded).toEqual([{ profileId: "profile-a", inputTokens: 10, outputTokens: 1 }])
+		})
+
+		it("counts nothing for a request that consumed nothing or had no Profile", async () => {
+			const unbound = reporterCountingProfiles({ current: undefined })
+			await (await unbound.reporter.begin({ turnId: "turn-1" })).settle({
+				usage: { inputTokens: 10, outputTokens: 1 },
+				outcome: "completed",
+			})
+			const idle = reporterCountingProfiles({ current: "profile-a" })
+			await (await idle.reporter.begin({ turnId: "turn-1" })).settle({ outcome: "failed" })
+
+			expect(unbound.recorded).toEqual([])
+			expect(idle.recorded).toEqual([])
+		})
+	})
 })

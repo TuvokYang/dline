@@ -362,26 +362,30 @@ export class TaskSessionCompositionService {
 			const restored = readRestoredContextPressure(messages.clineMessages, trigger)
 			if (restored) compaction.observe(restored)
 		}
+		// The Profile the task's current Mode runs under: the task's own binding,
+		// or the configuration's when the task never chose one.
+		const activeProfile = () => {
+			const configuration = options.stateManager.getApiConfigurationForTask(options.taskId)
+			const plan = settings.mode === "plan"
+			return {
+				profileId:
+					(plan ? settings.planModeProfileId : settings.actModeProfileId) ??
+					(plan ? configuration.planModeProfileId : configuration.actModeProfileId),
+				profileName:
+					(plan ? settings.planModeProfile : settings.actModeProfile) ??
+					(plan ? configuration.planModeProfile : configuration.actModeProfile),
+			}
+		}
 		// The Task Header draws its usage bar from the snapshot the controller
 		// reads off the tool state, so the projection writes it there.
 		const contextUsage = new TaskContextUsageProjection({
 			taskId: options.taskId,
 			target: toolState,
-			scope: () => {
-				const mode = settings.mode
-				const configuration = options.stateManager.getApiConfigurationForTask(options.taskId)
-				const plan = mode === "plan"
-				return {
-					mode,
-					profileId:
-						(plan ? settings.planModeProfileId : settings.actModeProfileId) ??
-						(plan ? configuration.planModeProfileId : configuration.actModeProfileId),
-					profileName:
-						(plan ? settings.planModeProfile : settings.actModeProfile) ??
-						(plan ? configuration.planModeProfile : configuration.actModeProfile),
-					contextWindow: getContextWindowInfo(api.current()).contextWindow,
-				}
-			},
+			scope: () => ({
+				mode: settings.mode,
+				...activeProfile(),
+				contextWindow: getContextWindowInfo(api.current()).contextWindow,
+			}),
 			publish: options.publishState,
 		})
 		// Every Mode, Profile, or configuration switch ends in a handler rebuild,
@@ -450,6 +454,18 @@ export class TaskSessionCompositionService {
 				api: () => api.current(),
 				promptCache,
 				compactTriggerOptions: readCompactTriggerOptions,
+				// Subscriptions report no token counts, so today's figures on the
+				// usage surfaces are counted here, against the Profile that served the request.
+				profileTokens: {
+					activeProfileId: () => activeProfile().profileId,
+					record: (profileId, increment) => {
+						void options.prompt.controller
+							.recordProfileTokenUsage(profileId, increment)
+							.catch((error) =>
+								Logger.debug(`[Task ${options.taskId}] Failed to record daily Profile tokens: ${String(error)}`),
+							)
+					},
+				},
 			}),
 			services: {
 				// One sequence for both producers: chat rows are ordered by this id,
