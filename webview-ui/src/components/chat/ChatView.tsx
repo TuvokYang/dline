@@ -51,6 +51,7 @@ import {
 	useChatState,
 	useMessageHandlers,
 	useScrollBehavior,
+	useStoppedReasoningExpansion,
 	WelcomeSection,
 } from "./chat-view"
 import { resolveActiveProfile, resolveTaskCurrency } from "./chat-view/utils/profileUtils"
@@ -168,6 +169,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 		pasteProvenance,
 		commitPasteProvenance,
 	} = chatState
+	useStoppedReasoningExpansion(messages, taskViewState?.phase, taskId, setExpandedRows)
 	const semanticCatalog = useInputSemanticCatalog()
 	// Every surface that submits the draft - composer, footer, resume - reads one
 	// derived document, so a held pasted candidate stays held whichever sends it.
