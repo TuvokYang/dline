@@ -11,7 +11,7 @@ import { sidebar, unlistedSlugs } from "../src/data/navigation.mjs"
 import { redirects } from "../src/data/redirects.mjs"
 import { toPrefix } from "../src/plugins/remark-base-links.mjs"
 import { listPages } from "./lib/content-files.mjs"
-import { checkLocaleParity, checkNavigation, checkPage, checkRedirects } from "./lib/content-rules.mjs"
+import { checkLocaleParity, checkNavigation, checkPage, checkRedirects, checkSections } from "./lib/content-rules.mjs"
 
 const basePrefix = toPrefix(resolveSiteConfig().base)
 const pages = await listPages()
@@ -22,6 +22,7 @@ const issues = [
 	).flat(),
 	...checkLocaleParity(pages),
 	...checkNavigation(pages, sidebar, unlistedSlugs),
+	...checkSections(sidebar),
 	...checkRedirects(redirects, pages),
 ]
 

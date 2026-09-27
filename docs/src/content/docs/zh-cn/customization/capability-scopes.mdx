@@ -1,0 +1,45 @@
+---
+title: 能力开关作用域
+description: 了解 Rules、Workflows、Skills、子代理和 MCP 开关保存在哪一层，以及任务、工作区和全局设置如何叠加。
+---
+
+import { Aside } from "@astrojs/starlight/components"
+
+Rules、Workflows、Skills、子代理和 MCP 服务器都可以单独开启或关闭。开关保存在哪一层，取决于当前是否打开了任务。
+
+## 开关保存位置
+
+能力面板和 MCP 服务器弹窗会在标签栏下方用一行提示说明当前写入的层级：
+
+| 场景 | 提示 | 作用 |
+|---|---|---|
+| 未打开任务（起始界面） | **Toggles saved for this workspace** | 作用于此后在该工作区启动的新任务 |
+| 已打开任务 | **Toggles saved for this task only** | 只作用于当前任务，不影响其他任务和工作区默认值 |
+
+全局偏好位于两者之下，对所有工作区生效。
+
+<Aside>
+资源来自哪里和开关保存在哪里是两回事。即使某条规则来自全局 Rules 目录，也可以只为某个任务关闭它。面板中的分组标题说明资源来源，提示行说明本次修改写入的层级。
+</Aside>
+
+## 作用域如何叠加
+
+实际状态取自有记录的最强作用域：
+
+```text
+任务覆盖 → 工作区覆盖 → 全局覆盖 → 资源默认值
+```
+
+某个作用域中没有记录的资源会**继承**下一层，而不是视为关闭。因此任务只记录你在其中实际改过的开关，其余开关继续跟随工作区和全局设置。
+
+## 对运行中任务的影响
+
+任务在启动时会冻结系统提示词和工具列表。任务进行中修改开关，不会悄悄改写这份快照：任务头中的 **Refresh Prompt Cache** 按钮会出现警告图标，并列出变化内容，例如 `Rules changed` 或 `MCP tools changed`。点击并确认后，才会用新的开关重建提示词；刷新会导致一次提示缓存未命中。
+
+![为单个任务关闭技能和工作流，随后出现提示词过期警告](@docs-assets/marketplace/r6-capability-scopes.gif)
+
+## 相关页面
+
+- [Rules](/zh-cn/customization/rules/)、[Workflows](/zh-cn/customization/workflows/)、[Skills](/zh-cn/customization/skills/)、[子代理](/zh-cn/features/subagents/)
+- [MCP 服务器](/zh-cn/mcp/mcp-overview/) 与 [Hooks](/zh-cn/customization/hooks/)
+- [完整使用指南：任务头](/zh-cn/usage/ide/#任务头)

@@ -62,7 +62,7 @@
 			"dline-icon": {
 				"description": "dline",
 				"default": {
-					"fontPath": "assets/icons/cline-bot.woff",
+					"fontPath": "assets/icons/dline-icon.woff",
 					"fontCharacter": "\\e900"
 				}
 			}
@@ -460,6 +460,7 @@
 		"pree2e:demo": "npm run pree2e",
 		"e2e:demo": "node scripts/with-dist-lock.mjs --shared -- playwright test -c playwright.demo.config.ts",
 		"demo:media": "node scripts/demo-media.mjs",
+		"icons": "node scripts/generate-brand-icons.mjs",
 		"pree2e:legacy": "npm run pree2e",
 		"e2e:legacy": "node scripts/with-dist-lock.mjs --shared -- playwright test -c playwright.legacy.config.ts",
 		"test:e2e:build": "node scripts/with-dist-lock.mjs --exclusive -- vsce package --no-dependencies --allow-package-secrets sendgrid --out dist/e2e.vsix",
@@ -540,10 +541,12 @@
 		"sharp": "^0.35.3",
 		"should": "^13.2.3",
 		"sinon": "^21.0.3",
+		"svg2ttf": "^6.1.0",
 		"tree-kill": "^1.2.2",
 		"ts-node": "^10.9.2",
 		"ts-proto": "^2.6.1",
 		"tsconfig-paths": "^4.2.0",
+		"ttf2woff": "^3.0.0",
 		"typescript": "7.0.2",
 		"vite-plugin-checker": "^0.14.4",
 		"vitest": "^4.1.10"

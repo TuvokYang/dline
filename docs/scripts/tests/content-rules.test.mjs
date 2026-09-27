@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 import { ROOT_LOCALE } from "../lib/content-files.mjs"
-import { checkLink, checkLocaleParity, checkNavigation, checkPage, checkRedirects } from "../lib/content-rules.mjs"
+import { checkLink, checkLocaleParity, checkNavigation, checkPage, checkRedirects, checkSections } from "../lib/content-rules.mjs"
 
 const BASE = "/dline"
 
@@ -63,9 +63,14 @@ describe("checkLink", () => {
 		assert.equal(check("/zh-cnx/guide/"), undefined, "only the exact locale segment marks the Chinese edition")
 	})
 
-	it("lets both editions share root-relative assets", () => {
-		assert.equal(check("/assets/ui/demo.gif", ZH, "image"), undefined)
-		assert.equal(check("/assets/ui/demo.gif", ROOT_LOCALE, "image"), undefined)
+	it("lets both editions share images imported through the docs assets alias", () => {
+		assert.equal(check("@docs-assets/ui/demo.gif", ZH, "image"), undefined)
+		assert.equal(check("@docs-assets/ui/demo.gif", ROOT_LOCALE, "image"), undefined)
+	})
+
+	it("rejects root-relative images, which bypass the image pipeline", () => {
+		assert.match(check("/assets/ui/demo.gif", ROOT_LOCALE, "image") ?? "", /bypasses Astro's image pipeline/)
+		assert.match(check("/assets/ui/demo.gif", ZH, "image") ?? "", /@docs-assets/)
 	})
 })
 
@@ -104,6 +109,35 @@ describe("checkNavigation", () => {
 		assert.deepEqual(
 			issues.map((issue) => issue.message),
 			['sidebar slug "guide" has no zh-cn page'],
+		)
+	})
+})
+
+describe("checkSections", () => {
+	it("accepts top-level groups that each own their pages", () => {
+		const sidebar = [
+			{ label: "User Guide", items: ["guide", { label: "Models", items: ["models"] }] },
+			{ label: "Developer Guide", items: ["developer-guide/setup"] },
+		]
+		assert.deepEqual(checkSections(sidebar), [])
+	})
+
+	it("rejects a top-level page that belongs to no section", () => {
+		const issues = checkSections(["guide", { label: "Developer Guide", items: ["developer-guide/setup"] }])
+		assert.deepEqual(
+			issues.map((issue) => issue.message),
+			["top-level sidebar entry 1 is not a group; every top-level entry is a documentation section"],
+		)
+	})
+
+	it("rejects a page listed in two places", () => {
+		const sidebar = [
+			{ label: "User Guide", items: ["guide"] },
+			{ label: "Developer Guide", items: [{ label: "Nested", items: ["guide"] }] },
+		]
+		assert.deepEqual(
+			checkSections(sidebar).map((issue) => issue.message),
+			['sidebar slug "guide" is listed more than once; a page belongs to exactly one place'],
 		)
 	})
 })

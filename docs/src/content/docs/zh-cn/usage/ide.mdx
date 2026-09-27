@@ -1,6 +1,6 @@
 ---
-title: 在 IDE 中使用
-description: 在 VS Code 中用 Dline 构建一个可运行的待办应用，掌握核心工作流程。
+title: 完整使用指南
+description: 在 VS Code 中用 Dline 构建一个可运行的待办应用，熟悉界面并掌握核心工作流程。
 ---
 
 import { Aside, Steps, Tabs, TabItem } from "@astrojs/starlight/components"
@@ -36,11 +36,47 @@ Dline 在工作区中创建和编辑文件。为待办应用准备一个空文�
 
 ## 第 2 步：打开 Dline 面板
 
-点击 VS Code 活动栏中的 **Dline** 图标即可打开面板。面板底部是输入框，上方是任务对话；面板标题栏提供 **New Task**、**History**、**Settings** 等按钮。
+点击 VS Code 活动栏中的 **Dline** 图标即可打开面板。面板分为三块：顶部标题栏、中间的任务对话、底部的输入框。
+
+### 面板标题栏
+
+标题栏按钮与是否有任务在运行无关，随时可用：
+
+![Dline 面板标题栏及编号标注的按钮](@docs-assets/ui/panel-title-bar.png)
+
+| 编号 | 按钮 | 作用 |
+|---|---|---|
+| 1 | **New Task**（`+`） | 在当前编辑器旁边的编辑器标签页中打开一个新的 Dline 任务；侧边栏和其他标签页中的任务不受影响 |
+| 2 | **MCP Servers** | 侧边栏切换到 MCP 服务器视图 |
+| 3 | **History** | 侧边栏切换到任务历史，可重新打开、搜索和删除任务 |
+| 4 | **Account** | 侧边栏切换到账户视图 |
+| 5 | **Settings** | 侧边栏切换到设置，包括 Profile、功能开关和终端选项 |
+
+### 任务头
+
+打开任务后，对话顶部会显示任务头。点击折叠箭头或任务标题可以展开或收起。
+
+![展开后的任务头及编号标注的控件](@docs-assets/ui/task-header.png)
+
+| 编号 | 控件 | 作用 |
+|---|---|---|
+| 1 | 用量胶囊（`In`、`Out`、`RPM`、`TPM`、`Hit`、费用） | 显示 token 用量、请求速率、提示缓存命中率和费用（模型有定价时）；点击打开 **API Rate History** |
+| 2 | 上下文条 | 显示任务的上下文窗口占用，悬停可查看摘要 |
+| 3 | **Compact Task** | 压缩对话以释放上下文，执行前会先确认 |
+| 4 | **Copy Text** | 复制任务提示词 |
+| 5 | **Refresh Prompt Cache** | 重建任务的系统提示词。出现警告图标表示任务开始后 Rules、Skills、MCP 服务器等提示词输入发生了变化；刷新会导致一次提示缓存未命中 |
+| 6 | **Delete Task** | 确认后永久删除任务 |
+| 7 | **Close Task**（`×`） | 关闭当前任务，回到起始界面 |
+
+自动压缩失败且 **Retry** 无法恢复任务时，**Compact Task** 旁会出现 **More context actions**（`⋯`）按钮，提供 **Force truncate conversation history**，需要输入 `TRUNCATE` 确认。
+
+任务头下方有时会出现提示横幅，例如提示缓存命中率持续偏低、检查点出错（**Retry Checkpoints** / **Disable Checkpoints**），或任务锁被其他窗口占用（**Unlock**）。
+
+### 输入区
 
 输入框上方是 **Auto-approve** 栏，下方是一排工具按钮：
 
-![Dline 输入区：上方为 Auto-approve 栏，下方为编号标注的工具按钮](/assets/ui/chat-input-toolbar.png)
+![Dline 输入区：上方为 Auto-approve 栏，下方为编号标注的工具按钮](@docs-assets/ui/chat-input-toolbar.png)
 
 | 编号 | 控件 | 作用 |
 |---|---|---|
@@ -79,7 +115,7 @@ Build a todo app in a single HTML file. Include:
 - **Plan 模式**：Dline 收集信息并与你讨论方案。适合先对齐需求、调整思路、澄清细节。
 - **Act 模式**：Dline 直接执行任务，创建文件、编写代码。
 
-![点击 Plan / Act 开关在两种模式之间切换](/assets/ui/docs-mode-switch.gif)
+![点击 Plan / Act 开关在两种模式之间切换](@docs-assets/ui/docs-mode-switch.gif)
 
 <Aside>
 如果希望在 Plan 模式下强制禁止文件编辑，请在 **Settings → Features** 中开启 **Strict Plan Mode**（默认关闭）。
@@ -96,7 +132,7 @@ Dline 准备写入文件时，聊天中会显示目标文件路径（例如 `ind
 
 点击 **Approve**，`index.html` 会出现在编辑器左侧的资源管理器中。
 
-![Dline 提出写入文件，点击 Approve 后文件被创建，任务完成](/assets/approve-file-edit.gif)
+![Dline 提出写入文件，点击 Approve 后文件被创建，任务完成](@docs-assets/marketplace/r1-hero.gif)
 
 <Aside>
 默认配置下，编辑文件需要你手动批准；读取工作区内的文件、执行安全命令等操作会自动批准。你可以在[自动批准](/zh-cn/features/auto-approve/)中按类别调整。

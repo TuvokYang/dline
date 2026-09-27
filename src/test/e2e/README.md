@@ -86,7 +86,11 @@ Convert registered WebM recordings to GIF assets:
 ```bash
 npm run demo:media -- --id r1-hero
 npm run demo:media -- --id smoke --out-dir tmp/demo-media
+npm run demo:media -- --id docs-mode-switch --out-dir assets/docs/ui
 ```
+
+Documentation GIFs (`docs-*`) belong in `assets/docs/ui`, which the docs site imports as `@docs-assets/ui/*`; stills from
+`captureDocScreenshot` are written there directly.
 
 Set `DLINE_DEMO_FFMPEG` when the Playwright-managed ffmpeg executable is stored in a non-standard location. Generated marketplace
 GIFs must be at most 20 seconds and 3 MB; PNG screenshots must be 1200 px wide and at most 500 KB. Before accepting an asset,

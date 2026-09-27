@@ -41,7 +41,7 @@ Task
 2. 模型 ID 中任一以 `/` 分隔的段是 `o1` 或以 `o1-` 开头时，选择 Lite；
 3. 否则按上下文窗口判断：小于 64,000 选择 Lite，否则选择 Standard。上下文窗口缺失或无效时按 128,000 处理。
 
-`SystemPromptCacheService` 把生成的提示词和工具投影冻结到任务的 `context.json`。当提示词合同版本（`SYSTEM_PROMPT_CONTRACT_VERSION`）、服务商 ID、模型 ID、Profile、原生工具开关或 API 格式变化时，会重新生成。Focus Chain 和能力变化只记为新鲜度信息，不会自动触发重建，需要显式刷新。缓存只写入 `standard` 或 `lite`；存储读取边界会把旧缓存中的 `native` 单向迁移为 `standard`。
+`SystemPromptCacheService` 把生成的提示词和工具投影冻结到任务的 `context.json`（完整的冻结、陈旧检测和缓存健康设计见[提示词缓存冻结与陈旧监测](/zh-cn/developer-guide/prompt-cache-freshness/)）。
 
 ### 子智能体
 

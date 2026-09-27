@@ -17,7 +17,7 @@ MCP（Model Context Protocol）让 Dline 通过 MCP 服务器使用外部工具�
 
 也可以点击输入框下方工具栏中的服务器图标（悬停提示为 **Manage MCP Servers**），在弹出的 **MCP Servers** 列表中用开关快速启用或停用服务器；点击列表右上角的齿轮图标会直接打开 **Configure** 标签。
 
-![输入框工具栏弹出的 MCP Servers 列表：服务器 release-tools 带有开关，右上角为齿轮图标](/assets/ui/mcp-servers-popup.png)
+![输入框工具栏弹出的 MCP Servers 列表：服务器 release-tools 带有开关，右上角为齿轮图标](@docs-assets/ui/mcp-servers-popup.png)
 
 ## 添加远程服务器
 
@@ -101,6 +101,8 @@ env:
 - 工作区描述文件中的 `autoApprove` 会被忽略，不能借此自动批准工具。
 
 ## 管理服务器
+
+打开任务时，启用或停用服务器只对当前任务生效；未打开任务时，则保存为工作区设置。参见[能力开关作用域](/zh-cn/customization/capability-scopes/)。
 
 在 **Configure** 标签中，每个服务器都可以：
 

@@ -95,7 +95,7 @@ old_docs/**
 assets/icons/**
 !assets/icons/icon.png
 !assets/icons/icon.svg
-!assets/icons/cline-bot.woff
+!assets/icons/dline-icon.woff
 
 # Ignore E2E build files
 e2e-build.mjs

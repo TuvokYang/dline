@@ -1,10 +1,14 @@
 /**
  * Navigation decisions for the documentation site.
  *
- * `sidebar` is the only source of sidebar structure. Group labels are written in
- * the root locale (English) with Simplified Chinese translations keyed by BCP-47
- * tag; page entries use slugs so each locale shows its own page title and the
- * Pages base path is applied by Starlight.
+ * `sidebar` is the only source of navigation structure. Each top-level group is
+ * one documentation section: the header shows the sections as tabs, and the
+ * route middleware (`src/routeData.ts`) narrows every page's sidebar to the
+ * section that contains it. A slug may therefore appear only once.
+ *
+ * Group labels are written in the root locale (English) with Simplified Chinese
+ * translations keyed by BCP-47 tag; page entries use slugs so each locale shows
+ * its own page title and the Pages base path is applied by Starlight.
  *
  * Starlight publishes every content file, including files missing from the
  * sidebar. `scripts/check-content.mjs` therefore requires each page to be either
@@ -15,17 +19,26 @@
 /** @type {NonNullable<import("@astrojs/starlight/types").StarlightUserConfig["sidebar"]>} */
 export const sidebar = [
 	{
-		label: "Getting Started",
-		translations: { "zh-CN": "快速开始" },
+		label: "User Guide",
+		translations: { "zh-CN": "使用指南" },
 		items: [
-			"dline-overview",
-			"getting-started/installing-dline",
-			"getting-started/migration-cline-to-dline",
 			{
-				label: "Models & Providers",
-				translations: { "zh-CN": "模型与服务商" },
+				label: "Quick Start",
+				translations: { "zh-CN": "快速使用" },
+				items: [
+					"dline-overview",
+					"getting-started/installing-dline",
+					"usage/ide",
+					"getting-started/migration-cline-to-dline",
+				],
+			},
+			{
+				label: "Models",
+				translations: { "zh-CN": "模型" },
 				items: [
 					"getting-started/authorizing-with-dline",
+					"features/thinking-effort",
+					"features/usage-and-balance",
 					"running-models-locally/overview",
 					{
 						label: "Cloud Providers",
@@ -55,65 +68,85 @@ export const sidebar = [
 					},
 				],
 			},
-			"getting-started/config",
+			{
+				label: "Tasks",
+				translations: { "zh-CN": "任务" },
+				items: [
+					"core-workflows/plan-and-act",
+					"core-workflows/working-with-files",
+					"core-workflows/using-commands",
+					"core-workflows/task-management",
+					"core-workflows/checkpoints",
+					"features/auto-compact",
+				],
+			},
+			{
+				label: "Approval & Permissions",
+				translations: { "zh-CN": "审批与权限" },
+				items: ["features/auto-approve", "customization/agentignore"],
+			},
+			{
+				label: "Capabilities",
+				translations: { "zh-CN": "能力扩展" },
+				items: [
+					"customization/capability-scopes",
+					"customization/rules",
+					"customization/workflows",
+					"customization/skills",
+					"mcp/mcp-overview",
+					"customization/hooks",
+					"customization/plugins",
+					"features/subagents",
+				],
+			},
+			{
+				label: "Tools & Workspace",
+				translations: { "zh-CN": "工具与工作区" },
+				items: [
+					"tools-reference/all-dline-tools",
+					"customization/terminal-environment",
+					"features/image-generation",
+					"features/jupyter-notebooks",
+					"features/multiroot-workspace",
+				],
+			},
+			{
+				label: "Settings & Troubleshooting",
+				translations: { "zh-CN": "设置与排错" },
+				items: ["getting-started/config", "troubleshooting/networking-and-proxies", "troubleshooting/telemetry"],
+			},
 		],
-	},
-	{
-		label: "Usage",
-		translations: { "zh-CN": "使用" },
-		items: ["usage/ide"],
-	},
-	{
-		label: "Configurations",
-		translations: { "zh-CN": "配置" },
-		items: [
-			"tools-reference/all-dline-tools",
-			"customization/rules",
-			"customization/workflows",
-			"customization/skills",
-			"customization/terminal-environment",
-			"customization/plugins",
-			"mcp/mcp-overview",
-			"customization/hooks",
-			"customization/agentignore",
-		],
-	},
-	{
-		label: "Features",
-		translations: { "zh-CN": "功能" },
-		items: [
-			"core-workflows/plan-and-act",
-			"core-workflows/working-with-files",
-			"core-workflows/using-commands",
-			"core-workflows/checkpoints",
-			"core-workflows/task-management",
-			"features/auto-compact",
-			"features/subagents",
-			"features/image-generation",
-		],
-	},
-	{
-		label: "IDE Specific Features",
-		translations: { "zh-CN": "IDE 专属功能" },
-		items: ["features/auto-approve", "features/jupyter-notebooks", "features/multiroot-workspace"],
-	},
-	{
-		label: "Troubleshooting",
-		translations: { "zh-CN": "故障排查" },
-		items: ["troubleshooting/networking-and-proxies", "troubleshooting/telemetry"],
 	},
 	{
 		label: "Developer Guide",
 		translations: { "zh-CN": "开发指南" },
 		items: [
-			"developer-guide/setup",
-			"developer-guide/architecture",
-			"developer-guide/prompt-architecture",
-			"developer-guide/task-tool-execution-domain",
-			"developer-guide/protobuf",
-			"developer-guide/storage",
-			"developer-guide/testing",
-			"developer-guide/contributing",
+			{
+				label: "Get Started",
+				translations: { "zh-CN": "开始" },
+				items: ["developer-guide/setup", "developer-guide/contributing"],
+			},
+			{
+				label: "Runtime Architecture",
+				translations: { "zh-CN": "运行时架构" },
+				items: [
+					"developer-guide/architecture",
+					"developer-guide/task-tool-execution-domain",
+					"developer-guide/prompt-architecture",
+					"developer-guide/storage",
+					"developer-guide/protobuf",
+				],
+			},
+			{
+				label: "Caching & Observability",
+				translations: { "zh-CN": "缓存与可观测性" },
+				items: ["developer-guide/prompt-cache-freshness", "developer-guide/telemetry"],
+			},
+			{
+				label: "Verification",
+				translations: { "zh-CN": "验证" },
+				items: ["developer-guide/testing"],
+			},
 		],
 	},
 ]

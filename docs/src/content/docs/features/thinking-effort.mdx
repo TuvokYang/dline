@@ -1,0 +1,37 @@
+---
+title: Thinking Effort
+description: Change the thinking effort, thinking budget, or OpenAI service tier for one task without editing the Profile.
+---
+
+import { Aside } from "@astrojs/starlight/components"
+
+A Profile stores the default reasoning settings for its model. While a task is open, you can override them for that task alone from the input toolbar. The Profile itself does not change, and other tasks keep their own settings.
+
+## Where the control appears
+
+When a task is open and the selected model supports thinking, a thinking selector appears in the input toolbar next to the model name. It shows the current value, for example **Medium** or **Budget**; hover it to see `Thinking: <value>`.
+
+The options come from the model metadata:
+
+| Option | Meaning |
+|---|---|
+| Effort levels (for example **Low**, **Medium**, **High**) | Ask the model for a fixed reasoning effort. Only the levels the model supports are listed |
+| **Budget** | Give the model a thinking token budget. A number field appears; type a value between 0 and the model's maximum and press `Enter` or leave the field |
+
+If the model does not support thinking, or the Profile turns thinking off, the selector is hidden.
+
+## How the override behaves
+
+- **Task only.** The value is saved in the task's own settings. It never becomes a global default and does not modify the Profile.
+- **Per mode.** Plan mode and Act mode keep separate overrides, because they can use different Profiles.
+- **Validated against the model.** An effort level the model does not list, a negative budget, or a budget above the model's maximum is rejected, and the error appears next to the control.
+- **Inherited default.** Until you pick a value, the task uses the Profile's reasoning settings.
+- **Subagents are separate.** Subagents use their own Profile settings; the main task's thinking override does not apply to them. See [Subagents](/features/subagents/).
+
+## OpenAI service tier
+
+For OpenAI and OpenAI Codex Profiles that enable service tiers, an icon-only **Task service tier** button appears beside the thinking selector. Choose **Auto**, **Default**, **Flex**, **Scale**, **Priority**, or **Ultrafast** for the current task. Like the thinking override, the choice is saved per task and per mode.
+
+<Aside type="tip">
+To change the default for every new task, edit the Profile instead. See [Model Configuration Profiles](/getting-started/authorizing-with-dline/).
+</Aside>

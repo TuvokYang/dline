@@ -1,0 +1,53 @@
+---
+/**
+ * Starlight Header override: the default header bar with a row of section
+ * tabs below it. `--sl-nav-height` covers both rows, so the sidebar, the
+ * table of contents and the scroll offsets all stay below the whole header;
+ * the elements Starlight sizes from `--sl-nav-height` (the logo and the mobile
+ * menu button) are re-anchored to the bar row.
+ */
+import Default from "@astrojs/starlight/components/Header.astro"
+import SectionTabs from "./SectionTabs.astro"
+---
+
+<div class="dline-header">
+	<div class="dline-header-bar"><Default /></div>
+	<SectionTabs />
+</div>
+
+<style>
+	.dline-header {
+		display: flex;
+		flex-direction: column;
+		height: 100%;
+	}
+	/* Keeps the default header's vertical centering: padding above and below the bar. */
+	.dline-header-bar {
+		flex: none;
+		height: calc(var(--dline-nav-bar-height) - 2 * var(--sl-nav-pad-y));
+		margin-block-end: var(--sl-nav-pad-y);
+	}
+</style>
+
+<style is:global>
+	:root {
+		--dline-nav-bar-height: 3.5rem;
+		--dline-section-tabs-height: 2.5rem;
+		--sl-nav-height: calc(var(--dline-nav-bar-height) + var(--dline-section-tabs-height));
+	}
+	@media (min-width: 50em) {
+		:root {
+			--dline-nav-bar-height: 4rem;
+		}
+	}
+	/* The tab row sits on the header's bottom border. */
+	.page > header.header {
+		padding-block-end: 0;
+	}
+	.site-title img {
+		height: calc(var(--dline-nav-bar-height) - 2 * var(--sl-nav-pad-y));
+	}
+	.sl-menu-button {
+		top: calc((var(--dline-nav-bar-height) - var(--sl-menu-button-size)) / 2);
+	}
+</style>

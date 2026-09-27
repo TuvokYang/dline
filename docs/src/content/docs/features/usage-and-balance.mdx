@@ -1,0 +1,37 @@
+---
+title: Usage and Balance
+description: See subscription quota windows and account balance for the active Profile directly in the input toolbar.
+---
+
+import { Aside } from "@astrojs/starlight/components"
+
+For providers that report account usage, Dline shows a usage chip in the input toolbar. It describes the account behind the Profile that the current mode uses.
+
+## Supported providers
+
+| Provider | What is shown | How it is read |
+|---|---|---|
+| **OpenAI Codex** (ChatGPT sign-in) | Quota windows such as `5 hour` and `7 day`, plus reset cards when the account has them | Once per Profile, then on demand with **Refresh** |
+| **Claude Code** (Claude sign-in) | Quota windows such as `5 hour`, `This week`, and per-model weekly limits | Once per Profile, then on demand with **Refresh** |
+| **DeepSeek** | Remaining account balance | Every 60 seconds while the Dline view is visible |
+
+Subscription usage endpoints count against the same account that serves your conversations, so Codex and Claude Code are not polled on a timer. Balance polling pauses while the Dline view is hidden and resumes when it becomes visible again.
+
+OpenRouter shows its key balance in the Profile editor, next to the API key field, rather than in the toolbar.
+
+## Reading the chip
+
+- For subscriptions, the chip shows the remaining percentage of one window, for example `5h: 72%`. The five-hour window is preferred while it is in use; if another window is exhausted, that window is shown instead because it is the one blocking requests.
+- For balance accounts, the chip shows the balance in the provider's currency.
+- Windows whose data cannot be read are skipped rather than shown as `0%`.
+- The chip is hidden when the active Profile reports no usage, and on very narrow panels.
+
+Hover the chip to preview every window with its remaining percentage, progress bar, and reset time. Select it to open **Usage**, which adds a **Refresh** button and, for Codex, the list of reset cards.
+
+## Reset cards
+
+When an OpenAI Codex account has rate-limit reset cards, the **Usage** panel lists them with their expiry. Choosing a card asks for confirmation and then resets the eligible windows. The result, for example which windows were reset, appears in the panel.
+
+<Aside>
+Usage is attached to a Profile. Switching the Profile or mode clears the previous reading and loads the one for the new Profile.
+</Aside>

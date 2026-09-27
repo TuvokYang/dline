@@ -5,8 +5,11 @@ import sharp from "sharp"
 import { E2ETestHelper } from "../../utils/helpers"
 import { dismissDemoNotifications } from "./png-asset"
 
-/** Documentation screenshots are served from the Starlight public directory. */
-export const DOC_UI_ASSET_DIR = path.join(E2ETestHelper.CODEBASE_ROOT_DIR, "docs", "public", "assets", "ui")
+/**
+ * Documentation screenshots live with the other documentation media in the
+ * repository's `assets/docs/`; the docs site imports them as `@docs-assets/ui/*`.
+ */
+export const DOC_UI_ASSET_DIR = path.join(E2ETestHelper.CODEBASE_ROOT_DIR, "assets", "docs", "ui")
 
 const REGION_PADDING = 12
 const MARKER_RADIUS = 9

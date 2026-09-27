@@ -23,6 +23,7 @@ const VISIBLE_ATTRIBUTE = /\s(?:title|alt|aria-label|placeholder|data-copied|dat
 const TAG = /<[^>]*>/g
 const LEAK_CONTEXT = 24
 const ELEMENT_ID = /\sid\s*=\s*(["'])(.*?)\1/gis
+const IMG_TAG = /<img\b[^>]*>/gi
 const HTML_ENTITY = /&(?:amp|quot|apos|lt|gt|#39|#x27);/g
 /** @type {Readonly<Record<string, string>>} */
 const ENTITY_TEXT = Object.freeze({
@@ -108,6 +109,11 @@ export function checkBuiltFile({ relativePath, text, basePrefix }) {
 			report(`root-relative URL misses the site base ${basePrefix}/: ${url}`)
 		}
 	}
+	if (/\.html$/i.test(relativePath)) {
+		for (const problem of findImageIssues(text, basePrefix)) {
+			report(problem)
+		}
+	}
 	if (/\.html$/i.test(relativePath) && localeOfBuiltFile(relativePath) !== CHINESE_LOCALE) {
 		const leak = findChineseLeak(text)
 		if (leak) {
@@ -115,6 +121,38 @@ export function checkBuiltFile({ relativePath, text, basePrefix }) {
 		}
 	}
 	return issues
+}
+
+/**
+ * Site images that skipped Astro's image pipeline or lack the attributes that
+ * keep the layout stable and defer offscreen downloads. Every same-site image
+ * must be emitted under `<base>/_astro/` with a width and a height; raster
+ * images must also declare a loading strategy. External and data URLs are
+ * outside the pipeline and are not checked.
+ * @param {string} html
+ * @param {string} basePrefix base without trailing slash; "" for a root deployment
+ * @returns {string[]}
+ */
+export function findImageIssues(html, basePrefix) {
+	/** @type {string[]} */
+	const problems = []
+	for (const [tag] of html.replace(SCRIPT_BODY, "$1$2").matchAll(IMG_TAG)) {
+		const src = decodeAttribute(attributeOf(tag, "src") ?? "")
+		if (!isRootRelative(src)) {
+			continue
+		}
+		if (!src.startsWith(`${basePrefix}/_astro/`)) {
+			problems.push(`image is not processed by Astro's image pipeline: ${src}`)
+		}
+		if (attributeOf(tag, "width") === undefined || attributeOf(tag, "height") === undefined) {
+			problems.push(`image has no width and height: ${src}`)
+		}
+		const isVector = /\.svg$/i.test(src.split(/[?#]/, 1)[0] ?? "")
+		if (!isVector && attributeOf(tag, "loading") === undefined) {
+			problems.push(`raster image has no loading attribute: ${src}`)
+		}
+	}
+	return problems
 }
 
 /**
@@ -212,6 +250,16 @@ function builtFileFor(sitePath) {
 	}
 	const lastSegment = sitePath.slice(sitePath.lastIndexOf("/") + 1)
 	return /\.[a-z\d]+$/i.test(lastSegment) ? sitePath : `${sitePath}/index.html`
+}
+
+/**
+ * Value of one attribute in a single HTML start tag.
+ * @param {string} tag
+ * @param {string} name
+ * @returns {string | undefined}
+ */
+function attributeOf(tag, name) {
+	return new RegExp(`\\s${name}\\s*=\\s*(["'])(.*?)\\1`, "is").exec(tag)?.[2]
 }
 
 /**

@@ -18,9 +18,10 @@ import { enqueueSubagentReview, PARENT_RESULT, SUBAGENT_ITEMS, startSubagentRevi
 import { demo } from "./utils/demo-fixture"
 import { captureDocScreenshot } from "./utils/doc-capture"
 import { dismissDemoNotifications } from "./utils/png-asset"
+import { SIDEBAR_RECORDING, STEP_SETTLE_MS } from "./utils/recording-presets"
 
 /**
- * Documentation captures for the docs site (`docs/public/assets/ui`).
+ * Documentation captures for the docs site (`assets/docs/ui`).
  *
  * Stills are cropped from live bounding boxes and numbered in reading order.
  * GIFs are recorded full-frame and reframed afterwards by `npm run demo:media`
@@ -29,14 +30,10 @@ import { dismissDemoNotifications } from "./utils/png-asset"
 
 const WORKFLOW_NAME = "release-review"
 const MCP_NAME = "release-tools"
-const SIDEBAR_RECORDING = {
-	crop: "sidebar",
-	fps: 12,
-	outputWidth: 560,
-	camera: { aspectRatio: 4 / 3, minWidth: 560, spotlight: true },
-} as const
-// Multi-step flows move the camera often; a short settle keeps them inside the 20 s GIF budget.
-const STEP_SETTLE_MS = 250
+const HEADER_TASK_TEXT = "Summarize the release checklist for this workspace."
+const HEADER_TASK_RESULT = "Release checklist summarized."
+// View-title actions contributed by package.json `menus.view/title`, in their display order.
+const PANEL_TITLE_ACTIONS = ["New Task", "MCP Servers", "History", "Account", "Settings"] as const
 
 async function seedWorkspaceCapabilities(workspaceDir: string): Promise<void> {
 	const files: Record<string, string> = {
@@ -102,10 +99,33 @@ async function selectCapabilityTab(popup: Locator, tab: string): Promise<void> {
 	await expect(tabButton).toHaveAttribute("aria-pressed", "true")
 }
 
-demo("docs UI stills", async ({ helper, page, sidebar, workspaceDir }) => {
+/** The task header card is the parent of its expand/collapse row. */
+async function expandedTaskHeader(sidebar: Frame): Promise<Locator> {
+	const toggle = sidebar.locator('[aria-label="Expand task header"], [aria-label="Collapse task header"]')
+	await expect(toggle).toHaveCount(1)
+	if ((await toggle.getAttribute("aria-label")) === "Expand task header") await toggle.click()
+	await expect(toggle).toHaveAttribute("aria-label", "Collapse task header")
+	return toggle.locator("xpath=..")
+}
+
+function taskHeaderIconButton(header: Locator, icon: string): Locator {
+	return header.locator(`button:has(svg.lucide-${icon})`).first()
+}
+
+demo("docs UI stills", async ({ helper, page, server, sidebar, workspaceDir }) => {
 	demo.setTimeout(240_000)
 	await seedWorkspaceCapabilities(workspaceDir)
 	await helper.signin(sidebar)
+
+	const panelTitle = page.locator('[id="workbench.parts.sidebar"] .composite.title').first()
+	await captureDocScreenshot(page, sidebar, "panel-title-bar", {
+		regions: [panelTitle],
+		padding: 4,
+		markers: PANEL_TITLE_ACTIONS.map((name, index) => ({
+			label: String(index + 1),
+			target: panelTitle.getByRole("button", { name, exact: true }),
+		})),
+	})
 
 	const modeSwitch = sidebar.getByTestId("mode-switch")
 	await captureDocScreenshot(page, sidebar, "chat-input-toolbar", {
@@ -162,6 +182,42 @@ demo("docs UI stills", async ({ helper, page, sidebar, workspaceDir }) => {
 			serverName,
 		],
 		padding: 16,
+	})
+	await sidebar.getByRole("button", { name: "Hide MCP Servers", exact: true }).first().click()
+	await expect(serverName).toBeHidden()
+
+	// The task header only exists while a task is open; run one short task with usage so
+	// the metrics capsule and context bar have real values to show.
+	server.resetOpenAiMock()
+	server.enqueueOpenAiResponses({
+		type: "tool",
+		id: "call_docs_header_complete",
+		name: "attempt_completion",
+		arguments: { result: HEADER_TASK_RESULT },
+		usage: { inputTokens: 18_400, outputTokens: 320, cacheReadTokens: 12_800 },
+		expectedRequestIncludes: [HEADER_TASK_TEXT],
+	})
+	const input = sidebar.getByTestId("chat-input")
+	await input.fill(HEADER_TASK_TEXT)
+	await sidebar.getByTestId("send-button").click()
+	await expect(sidebar.getByText(HEADER_TASK_RESULT, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
+
+	const header = await expandedTaskHeader(sidebar)
+	const metrics = sidebar.getByTestId("task-rate-metrics")
+	await expect(metrics).toBeVisible({ timeout: 30_000 })
+	await expect(sidebar.getByTestId("context-window-indicator")).toBeVisible({ timeout: 30_000 })
+	await captureDocScreenshot(page, sidebar, "task-header", {
+		regions: [header],
+		padding: 8,
+		markers: [
+			{ label: "1", target: metrics },
+			{ label: "2", target: sidebar.getByTestId("context-window-progress-track") },
+			{ label: "3", target: header.locator('[aria-label="Compact task"]') },
+			{ label: "4", target: taskHeaderIconButton(header, "copy") },
+			{ label: "5", target: taskHeaderIconButton(header, "refresh-cw") },
+			{ label: "6", target: taskHeaderIconButton(header, "trash") },
+			{ label: "7", target: header.locator('[aria-label="Close Task"]') },
+		],
 	})
 })
 

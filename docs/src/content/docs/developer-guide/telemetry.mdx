@@ -1,0 +1,64 @@
+---
+title: Telemetry System
+description: How Dline's telemetry is layered, from the capture API and domain recorders to consent-gated providers, the runtime diagnostics pipeline, and diagnostic bundles.
+---
+
+import { Aside } from "@astrojs/starlight/components"
+
+Telemetry lives in `src/services/telemetry/`. It is built so that producers can record from the first line of activation, while consent, content policy, and delivery are decided in one place. For the user-facing consent contract, see [Telemetry and Diagnostics](/troubleshooting/telemetry/).
+
+## Layers
+
+| Layer | Location | Responsibility |
+|---|---|---|
+| Call surface | `index.ts`, `TelemetryService.ts` | The `telemetryService.capture*()` contract used across the extension |
+| Domain recorders | `events/` | Task, tool, UI, user, workspace, and hook events; the event catalog; error and runtime recorders |
+| Instrumentation | `instrumentation/` | Duration recorders, performance domains, and diagnostic events |
+| Producer contract | `service/pipeline-port.ts` | The single port between producers and the recording pipeline |
+| Delivery | `service/provider-registry.ts`, `providers/` | Fan-out to OpenTelemetry, PostHog, and legacy adapters |
+| Local journal | `journal/` | JSONL session journals written as OTLP-shaped records |
+| Runtime diagnostics | `runtime/` | Event bus, lifecycle, content policy, transports, export, analysis |
+
+## Call surface
+
+`telemetryService` is a proxy: importing the module does not construct the service, and the first call creates it synchronously so `capture*` stays a plain synchronous call. Providers and host metadata are attached asynchronously. Until they arrive, the provider registry holds signals in a bounded buffer and replays them in order.
+
+`TelemetryService` is deliberately thin. It owns the public `capture*` names and delegates everything else. After shutdown, late calls reach a service with no providers, so they are inert instead of rebuilding the singleton.
+
+## Producers and the pipeline port
+
+Instrumentation helpers, domain recorders, and the runtime pipeline only meet through `pipeline-port.ts`:
+
+- Producers describe what kind of fact they report; queue priority and eviction stay inside the pipeline.
+- Signals recorded before a pipeline exists go to a bounded bootstrap buffer that evicts the oldest entry when full.
+- Installing a pipeline does not flush that buffer automatically. Admitting early startup facts is a consent decision owned by the lifecycle.
+- Whether producers record at all is a predicate, so a consent change takes effect without restarting the extension host.
+
+`category-policy.ts` switches individual noisy event categories on or off. It is separate from consent: consent decides whether telemetry exists at all.
+
+## Providers
+
+The provider registry owns the set of providers and isolates each call, so a vendor SDK that throws or stalls cannot break the caller. The OpenTelemetry provider exports logs, metrics, and traces through `OpenTelemetryExporterFactory`. By default the endpoint is a local collector at `http://127.0.0.1:4318`; organizations can override it through remote configuration. Network traffic follows the shared transport rules in [Networking](/troubleshooting/networking-and-proxies/).
+
+## Runtime diagnostics
+
+`runtime/lifecycle.ts` turns the **Allow error reporting** choice into a running or stopped diagnostics pipeline, and is the only place that decides whether diagnostics may touch the disk or the network.
+
+- `runtime-event-bus.ts` is the single bounded buffer, with priority eviction.
+- The lifecycle drains the bus on a timer into its sinks: the session journal and the OTLP log transport. On disable, recorded events are flushed before the sinks close.
+- `transports/session-journal.ts` appends one OTLP log record per line, so a standard collector can tail the directory with a `filelog` receiver. Writing is best-effort; failures are counted, never propagated.
+- `content-policy.ts` is the boundary for attribute bags: it rejects fields that carry prompts, commands, output, or credentials, and tracks per-attribute cardinality.
+- `export/` builds the diagnostic bundle ZIP behind **Export diagnostic bundle**, redacting again before writing.
+- `analysis/`, `performance/`, and `reproduction/` hold the root-cause analyzer, runtime sampler with threshold policy, and scenario replay used by diagnostics.
+
+<Aside type="caution">
+Never log prompts, command output, file contents, tokens, or headers from a producer. Add a new attribute to the content policy explicitly, and prefer bounded enums over free text so cardinality stays predictable.
+</Aside>
+
+## Adding an event
+
+1. Add the event to `events/catalog.ts` and record it from the owning domain recorder, not directly from UI or controller code.
+2. Keep attributes structured and bounded; rely on the content policy rather than ad-hoc masking.
+3. Cover the recorder with a focused test, and extend the architecture or consent-boundary tests when the event crosses a new boundary.
+
+Relevant tests include `telemetry-architecture.test.ts`, `TelemetryService.test.ts`, `pipeline-port.test.ts`, `runtime/__tests__/consent-boundary.test.ts`, `lifecycle.drain.test.ts`, `session-journal.test.ts`, and `bundle-builder.test.ts`.

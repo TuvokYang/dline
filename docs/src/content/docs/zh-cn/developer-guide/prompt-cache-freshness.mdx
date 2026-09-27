@@ -1,0 +1,80 @@
+---
+title: 提示词缓存冻结与陈旧监测
+description: Dline 如何冻结任务系统提示词与每次请求、检测提示词输入过期，以及监控服务商提示缓存的健康状况。
+---
+
+import { Aside } from "@astrojs/starlight/components"
+
+服务商的提示缓存只有在请求前缀逐字节不变时才有效。因此 Dline 把系统提示词和工具列表当作任务自有的快照，在每次请求发出前冻结请求内容，并在配置变化时给出提示，而不是悄悄重建。本页介绍其中的四层机制。
+
+## 1. 任务级冻结提示词
+
+`SystemPromptCacheService`（`src/core/prompts/system-prompt-cache/`）负责冻结提示词。快照持久化在任务的 `context.json` 中（类型见 `src/core/storage/task-context-types.ts`），内容包括：
+
+- 系统提示词文本和原生工具定义；
+- 能力哈希和运行时快照（Web 路由与服务端工具、浏览器与视口、子代理、Focus Chain、能力开关、并行工具调用）；
+- 用于陈旧检测的新鲜度基线；
+- 缓存合同版本。
+
+| 构建原因 | 触发条件 |
+|---|---|
+| `task_start` | `getOrCreate` 找不到可用快照 |
+| `capability_change` | 合同版本、服务商、模型、Profile、原生工具或 API 格式变化时自动重建 |
+| `manual` | 用户确认 **Refresh Prompt Cache**（`refreshPrompt` RPC → `Task.refreshPromptCache`） |
+| `mode_switch`、`post_compaction` | 待处理原因，由下一次请求的 `buildProviderInput` 消费 |
+
+`FrozenPromptRuntime.resolveFrozenPromptRuntime` 把冻结的运行时交给 `ToolExecutor.setPromptRuntime`，因此设置变化不会改变模型已经看到的工具。
+
+## 2. 单次请求冻结
+
+- `RequestApiScope` 为一次请求冻结 handler、API 格式、Web Tools 开关和路由计划。
+- `OrdinaryRequestInputReplay` 冻结准备好的服务商输入；首个 chunk 之前发生重试时重放相同字节，请求被接受后确认。遇到工具配对错误时允许一次规范重建。切换 Profile 或压缩时调用 `invalidatePreparedProviderInputs`。
+- `CompactionRequestReplay` 对压缩请求执行同样的合同。
+- `src/core/api/transform/openai-prompt-cache.ts` 用 `dline_cache_` 加上模型、系统提示词、任务命名空间和工具的哈希生成 `prompt_cache_key`，并且只在系统消息上放置显式缓存断点。因此刷新提示词会改变 key，恰好造成一次缓存未命中。
+
+## 3. 陈旧检测
+
+`PromptFreshnessBaseline`（`src/shared/PromptFreshness.ts`）由 `PromptFreshnessProjection.ts` 中的 `buildPromptFreshnessBaseline` 构建，记录服务商、模型、Profile、传输方式、图像、浏览器与 Web 路由、Focus Chain、Rules 哈希，以及 MCP 工具、Skills、Workflows 和子代理的 SHA-256 哈希。`comparePromptFreshness` 返回 `fresh`、`stale` 或 `unknown`，并附带不含隐私信息的变化摘要。
+
+`PromptFreshnessInvalidationCoordinator` 对失效事件做 200 ms 防抖，单飞执行并保留一次排队重跑，提供 `flush` 处理已提交的变更。失效来源包括：
+
+| 来源 | 出处 |
+|---|---|
+| `prompt_input_file` | `PromptInputFileWatcher`（chokidar），通过 `WorkspacePromptInputWatcherRegistry` 在同一工作区内共享 |
+| `settings` | `PROMPT_FRESHNESS_SETTINGS_KEYS` 中列出的设置项 |
+| `task_capability_toggle`、`capability_mutation` | 能力开关和能力发现的变化 |
+| `remote_config`、`profile_catalog`、`mcp_registry` | 远程配置、Profile 目录、MCP 服务器注册表 |
+
+`Task.reevaluatePromptFreshness` 只做比较，从不重建或持久化。`Controller.buildState` 把结果投影给 `RefreshPromptButton`，后者显示警告图标和最多四条变化摘要。
+
+<Aside type="caution">
+产品规则：提示词过期后仍继续使用，直到用户确认 **Refresh Prompt Cache**。不要为新鲜度漂移添加自动重建，否则会在用户不知情时破坏缓存。
+</Aside>
+
+性能日志使用 `[PromptFreshnessPerf]` 和 `[PromptInputWatcherPerf]` 前缀。
+
+## 4. 缓存健康监控
+
+`PromptCacheHealthMonitor`（`src/core/task/prompt-cache/`）把状态分为 `disabled`、`waiting`、`warming`、`healthy` 和 `warning`。只有提示 token 不少于 4,096 的请求才会计入。
+
+| 警告 | 条件 |
+|---|---|
+| `cache_not_improving` | 连续三次计入的请求命中率低于 30 %，且缓存读取没有改善 |
+| `near_context_low_hit_rate` | 上下文用量超过压缩触发点，且命中率低于 90 % |
+
+`PromptCacheHealthTracker` 跳过压缩请求，对每次计入的请求记录 debug 日志，进入警告状态时只警告一次，并在切换 Profile 和压缩完成后重置。Webview 通过 `PromptCacheHealthBanner` 展示状态。
+
+## 测试
+
+| 层 | 测试 |
+|---|---|
+| 冻结提示词 | `SystemPromptCacheService.test.ts`、`FrozenPromptRuntime.test.ts` |
+| 请求冻结 | `OrdinaryRequestInputReplay.test.ts`、`RequestApiScope.test.ts`、`openai-task-cache-key.test.ts` |
+| 陈旧检测 | `PromptFreshnessProjection.test.ts`、`PromptFreshnessInvalidationCoordinator.test.ts`、`PromptInputFileWatcher.test.ts`、`WorkspacePromptInputWatcherRegistry.test.ts` |
+| 健康监控 | `PromptCacheHealthMonitor` 与 `PromptCacheHealthTracker` 的测试 |
+| Webview | `RefreshPromptButton.test.tsx`、`PromptCacheHealthBanner.test.tsx` |
+| E2E | `task-prompt-refresh`、`task-prompt-input-capability-freshness`、`openai-cache-prefix-compaction`、`openai-chat-cache-prefix` |
+
+新增提示词输入时，需要把它加入新鲜度基线、为它提供失效来源，并同时覆盖陈旧投影和手动刷新两条路径。
+
+另见[提示词架构](/zh-cn/developer-guide/prompt-architecture/)和[存储](/zh-cn/developer-guide/storage/)。

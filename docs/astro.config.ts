@@ -3,6 +3,7 @@ import starlight from "@astrojs/starlight"
 import type { AstroIntegration } from "astro"
 import { defineConfig } from "astro/config"
 import { resolveSiteConfig } from "./site.config.mjs"
+import { DOCS_ASSETS_ALIAS, DOCS_ASSETS_DIR } from "./src/data/assets.mjs"
 import { locales, ROOT_LOCALE } from "./src/data/locales.mjs"
 import { sidebar } from "./src/data/navigation.mjs"
 import { redirects } from "./src/data/redirects.mjs"
@@ -16,6 +17,11 @@ export default defineConfig({
 	base,
 	// The base-link rewrite is a remark plugin, so content must run on the unified pipeline.
 	markdown: { processor: unified() },
+	vite: {
+		resolve: { alias: { [DOCS_ASSETS_ALIAS]: DOCS_ASSETS_DIR } },
+		// The images sit outside the docs project root; let the dev server read them.
+		server: { fs: { allow: [".", DOCS_ASSETS_DIR] } },
+	},
 	integrations: [
 		baseSafeContentLinks(),
 		starlight({
@@ -33,7 +39,11 @@ export default defineConfig({
 			social: [{ icon: "github", label: "GitHub", href: repositoryUrl }],
 			editLink: { baseUrl: `${repositoryUrl}/edit/dev/docs/` },
 			customCss: ["./src/styles/custom.css"],
-			components: { PageFrame: "./src/components/PageFrame.astro" },
+			components: {
+				Header: "./src/components/Header.astro",
+				PageFrame: "./src/components/PageFrame.astro",
+			},
+			routeMiddleware: "./src/routeData.ts",
 			sidebar,
 		}),
 	],

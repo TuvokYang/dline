@@ -1,6 +1,6 @@
 import { AlertCircleIcon, CircleCheckIcon, CircleIcon, LoaderCircleIcon } from "lucide-react"
 import { useCallback, useMemo, useState } from "react"
-import ClineLogoWhite from "@/assets/ClineLogoWhite"
+import DlineLogo from "@/assets/DlineLogo"
 import { Button } from "@/components/ui/button"
 import { Item, ItemContent, ItemDescription, ItemMedia, ItemTitle } from "@/components/ui/item"
 import { useExtensionState } from "@/context/ExtensionStateContext"
@@ -108,7 +108,7 @@ const OnboardingView = () => {
 	return (
 		<div className="fixed inset-0 p-0 flex flex-col w-full">
 			<div className="h-full px-5 xs:mx-10 overflow-auto flex flex-col gap-4 items-center justify-center">
-				<ClineLogoWhite className="size-16 flex-shrink-0" />
+				<DlineLogo className="size-16 flex-shrink-0" color="white" />
 				<h2 className="text-lg font-semibold p-0 flex-shrink-0">{stepDisplayInfo.title}</h2>
 				{stepNumber === 2 && (
 					<div className="flex w-full max-w-lg flex-col gap-6 my-4 items-center">

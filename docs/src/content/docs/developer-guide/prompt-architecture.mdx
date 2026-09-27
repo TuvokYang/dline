@@ -41,7 +41,7 @@ Task
 2. if any `/`-separated segment of the model ID is `o1` or starts with `o1-`, Lite is selected;
 3. otherwise the context window decides: below 64,000 selects Lite, anything else selects Standard. A missing or invalid context window is treated as 128,000.
 
-`SystemPromptCacheService` freezes the generated prompt and tool projection into the task's `context.json`. It regenerates when the prompt contract version (`SYSTEM_PROMPT_CONTRACT_VERSION`), provider ID, model ID, profile, native-tools setting, or API format changes. Focus Chain and capability changes are only tracked as freshness information; they do not trigger an automatic rebuild and require an explicit refresh. The cache stores only `standard` or `lite`; the storage read boundary migrates a legacy `native` value one way to `standard`.
+`SystemPromptCacheService` freezes the generated prompt and tool projection into the task's `context.json` (see [Prompt Cache Freezing and Staleness](/developer-guide/prompt-cache-freshness/) for the full freeze, staleness, and cache-health design).
 
 ### Subagent
 

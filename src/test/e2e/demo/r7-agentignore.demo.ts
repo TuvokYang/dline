@@ -2,6 +2,7 @@ import { access, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { expect, type Page } from "@playwright/test"
 import { E2ETestHelper } from "../utils/helpers"
+import { setWorkAutoApproveAction } from "../utils/work/session"
 import { demo } from "./utils/demo-fixture"
 import { dismissDemoNotifications, finalizeDemoPng } from "./utils/png-asset"
 
@@ -41,6 +42,9 @@ demo("R7", async ({ captureScreenshot, helper, page, server, sidebar, userDataDi
 	demo.setTimeout(150_000)
 	await writeFile(path.join(workspaceDir, RULE_FILE), RULE_CONTENT, "utf8")
 	await helper.signin(sidebar)
+	// Edits are admitted before the handler checks .agentignore, so a manual approval
+	// card would otherwise stand in front of the refusal this still is meant to show.
+	await setWorkAutoApproveAction(sidebar, "Edit project files", true)
 	await openWorkspaceFile(page, RULE_FILE)
 
 	server.resetOpenAiMock()

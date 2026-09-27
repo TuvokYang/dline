@@ -1,6 +1,6 @@
 ---
-title: Using Dline in the IDE
-description: Build a working todo app with Dline in VS Code and learn the core workflow.
+title: Complete Usage Guide
+description: Learn the Dline interface and the core workflow by building a working todo app in VS Code.
 ---
 
 import { Aside, Steps, Tabs, TabItem } from "@astrojs/starlight/components"
@@ -36,11 +36,47 @@ Without an open folder, Dline does not know where to create files. Always open a
 
 ## Step 2: Open the Dline panel
 
-Select the **Dline** icon in the VS Code Activity Bar to open the panel. The input box sits at the bottom and the task conversation above it; the panel title bar provides buttons such as **New Task**, **History**, and **Settings**.
+Select the **Dline** icon in the VS Code Activity Bar to open the panel. The panel has three areas: the title bar at the top, the task conversation in the middle, and the input box at the bottom.
+
+### Panel title bar
+
+The buttons in the panel title bar work whether or not a task is running:
+
+![The Dline panel title bar with its numbered buttons](@docs-assets/ui/panel-title-bar.png)
+
+| # | Button | Purpose |
+|---|---|---|
+| 1 | **New Task** (`+`) | Open a new Dline task in an editor tab beside the current editor; the sidebar and other tabs keep their tasks |
+| 2 | **MCP Servers** | Switch the sidebar to the MCP servers view |
+| 3 | **History** | Switch the sidebar to task history, where you can reopen, search, and delete tasks |
+| 4 | **Account** | Switch the sidebar to the account view |
+| 5 | **Settings** | Switch the sidebar to settings, including Profiles, features, and terminal options |
+
+### Task header
+
+While a task is open, the task header sits at the top of the conversation. Select the chevron or the task title to expand or collapse it.
+
+![The expanded task header with its numbered controls](@docs-assets/ui/task-header.png)
+
+| # | Control | Purpose |
+|---|---|---|
+| 1 | Metrics capsule (`In`, `Out`, `RPM`, `TPM`, `Hit`, cost) | Token usage, request rate, prompt-cache hit rate, and cost (when the model has pricing); select it to open **API Rate History** |
+| 2 | Context bar | Context-window usage for the task; hover to see a summary |
+| 3 | **Compact Task** | Summarize the conversation to free context; asks for confirmation first |
+| 4 | **Copy Text** | Copy the task prompt |
+| 5 | **Refresh Prompt Cache** | Rebuild the task's system prompt; a warning icon means rules, skills, MCP servers, or other prompt inputs changed since the task started. Refreshing causes one prompt-cache miss |
+| 6 | **Delete Task** | Permanently delete the task after confirmation |
+| 7 | **Close Task** (`×`) | Close the current task and return to the start screen |
+
+When automatic compaction has failed and **Retry** cannot recover the task, a **More context actions** (`⋯`) button appears next to **Compact Task**. It offers **Force truncate conversation history**, which asks you to type `TRUNCATE` to confirm.
+
+Banners may appear under the header, for example when prompt-cache hit rates stay low, when checkpoints fail (**Retry Checkpoints** / **Disable Checkpoints**), or when another window holds the task lock (**Unlock**).
+
+### Input area
 
 The **Auto-approve** bar sits above the input box, and a row of tool buttons sits below it:
 
-![The Dline input area: the Auto-approve bar above and the numbered tool buttons below](/assets/ui/chat-input-toolbar.png)
+![The Dline input area: the Auto-approve bar above and the numbered tool buttons below](@docs-assets/ui/chat-input-toolbar.png)
 
 | # | Control | Purpose |
 |---|---|---|
@@ -79,7 +115,7 @@ The bottom-right corner of the input area has a **Plan / Act** switch. Select it
 - **Plan mode**: Dline gathers information and discusses an approach with you. Use it to align on requirements, adjust the approach, and clarify details.
 - **Act mode**: Dline carries out the task directly, creating files and writing code.
 
-![Selecting the Plan / Act switch to change between the two modes](/assets/ui/docs-mode-switch.gif)
+![Selecting the Plan / Act switch to change between the two modes](@docs-assets/ui/docs-mode-switch.gif)
 
 <Aside>
 To block file edits while in Plan mode, turn on **Strict Plan Mode** in **Settings → Features** (off by default).
@@ -96,7 +132,7 @@ When Dline is ready to write a file, the chat shows the target path (for example
 
 Select **Approve**. `index.html` appears in the Explorer on the left.
 
-![Dline proposes a file write; after Approve the file is created and the task completes](/assets/approve-file-edit.gif)
+![Dline proposes a file write; after Approve the file is created and the task completes](@docs-assets/marketplace/r1-hero.gif)
 
 <Aside>
 With the default settings, editing files requires your approval, while reading files inside the workspace and running safe commands are approved automatically. You can adjust each category in [Auto-approve](/features/auto-approve/).

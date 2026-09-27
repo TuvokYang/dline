@@ -5,6 +5,7 @@ import {
 	checkInternalLinks,
 	collectElementIds,
 	findChineseLeak,
+	findImageIssues,
 	findUnprefixedUrls,
 	localeOfBuiltFile,
 	requiredEntryPages,
@@ -194,5 +195,44 @@ describe("checkBuiltFile", () => {
 			issues.map((issue) => issue.message),
 			["Google Fonts request"],
 		)
+	})
+
+	it("checks images on HTML pages", () => {
+		const html = '<img src="/dline/assets/demo.gif" alt="">'
+		assert.equal(checkBuiltFile({ relativePath: "zh-cn/guide/index.html", text: html, basePrefix: BASE }).length, 3)
+	})
+})
+
+describe("findImageIssues", () => {
+	it("accepts processed images with dimensions and a loading strategy", () => {
+		const html = [
+			'<img src="/dline/_astro/demo.X1.webp" alt="Demo" loading="lazy" decoding="async" width="560" height="420">',
+			'<img src="/dline/_astro/logo.X2.svg" alt="Dline" width="24" height="24">',
+		].join("")
+		assert.deepEqual(findImageIssues(html, BASE), [])
+	})
+
+	it("reports images served outside the pipeline and missing attributes", () => {
+		assert.deepEqual(findImageIssues('<img src="/dline/assets/demo.gif" alt="">', BASE), [
+			"image is not processed by Astro's image pipeline: /dline/assets/demo.gif",
+			"image has no width and height: /dline/assets/demo.gif",
+			"raster image has no loading attribute: /dline/assets/demo.gif",
+		])
+	})
+
+	it("requires a loading strategy only for raster images", () => {
+		assert.deepEqual(findImageIssues('<img src="/dline/_astro/a.svg" width="1" height="1">', BASE), [])
+		assert.deepEqual(findImageIssues('<img src="/dline/_astro/a.webp" width="1" height="1">', BASE), [
+			"raster image has no loading attribute: /dline/_astro/a.webp",
+		])
+	})
+
+	it("ignores external, data and script-embedded images", () => {
+		const html = [
+			'<img src="https://example.com/a.png">',
+			'<img src="data:image/png;base64,AAAA">',
+			'<script>const t = \'<img src="/dline/raw.png">\'</script>',
+		].join("")
+		assert.deepEqual(findImageIssues(html, BASE), [])
 	})
 })

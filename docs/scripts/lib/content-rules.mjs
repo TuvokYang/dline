@@ -1,3 +1,4 @@
+import { DOCS_ASSETS_ALIAS } from "../../src/data/assets.mjs"
 import { CHINESE_LOCALE } from "../../src/data/locales.mjs"
 import { pagePath, ROOT_LOCALE } from "./content-files.mjs"
 import { findForbiddenText } from "./forbidden-patterns.mjs"
@@ -103,6 +104,10 @@ export function checkLink({ url, kind }, locale, basePrefix) {
 	}
 	if (!url.startsWith("/")) {
 		return kind === "image" ? undefined : "relative link; use a base-free root-relative path such as /getting-started/"
+	}
+	if (kind === "image") {
+		// Root-relative images are served as-is from public/, without dimensions, lazy loading or WebP.
+		return `image bypasses Astro's image pipeline; import it as ${DOCS_ASSETS_ALIAS}/<path> from the repository's assets/docs/`
 	}
 	const path = url.split(/[?#]/, 1)[0] ?? ""
 	if (basePrefix && (path === basePrefix || path.startsWith(`${basePrefix}/`))) {
@@ -210,6 +215,34 @@ export function checkNavigation(pages, sidebar, unlistedSlugs) {
 			}
 		}
 	}
+	return issues
+}
+
+/**
+ * The sidebar's top-level groups are the documentation sections shown as
+ * header tabs, and each page shows only its own section's sidebar. Every
+ * top-level entry must therefore be a group, and a slug may appear only once,
+ * or a page would belong to two sections.
+ * @param {readonly SidebarEntry[]} sidebar
+ * @returns {Issue[]}
+ */
+export function checkSections(sidebar) {
+	/** @type {Issue[]} */
+	const issues = []
+	const report = (/** @type {string} */ message) => issues.push({ file: "src/data/navigation.mjs", line: 1, message })
+	const owners = new Map()
+	sidebar.forEach((entry, index) => {
+		if (typeof entry === "string" || !entry.items) {
+			report(`top-level sidebar entry ${index + 1} is not a group; every top-level entry is a documentation section`)
+			return
+		}
+		for (const slug of collectSidebarTargets(entry.items).slugs) {
+			if (owners.has(slug)) {
+				report(`sidebar slug "${slug}" is listed more than once; a page belongs to exactly one place`)
+			}
+			owners.set(slug, index)
+		}
+	})
 	return issues
 }
 

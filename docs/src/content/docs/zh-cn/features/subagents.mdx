@@ -9,6 +9,8 @@ import { Aside } from "@astrojs/starlight/components"
 
 ## 开启与并发
 
+具名子代理的开关与 Rules、Skills 一样，按任务、工作区和全局三层保存。参见[能力开关作用域](/zh-cn/customization/capability-scopes/)。
+
 - 子代理默认开启，可在 **Settings → Features** 的 Agent 分组中通过 **Subagents** 开关关闭。
 - 开关下方的 **Max Parallel Subagents** 控制同时运行的子代理数量，范围 1–64，默认 64。
 - 单次批量委派最多包含 32 个子代理；超出并发上限的部分会排队等待。
@@ -29,7 +31,7 @@ Dline 会根据任务自行决定是否委派，你也可以在提示词中明�
 
 每个子代理最好只回答一个明确的问题。问题之间互不依赖时才适合并行；最后由主任务核对证据并整合结论。
 
-![主任务并行委派多个子代理并汇总结果](/assets/ui/docs-subagents.gif)
+![主任务并行委派多个子代理并汇总结果](@docs-assets/ui/docs-subagents.gif)
 
 ## 默认子代理（default.yml）
 
@@ -90,7 +92,7 @@ Trace the requested code paths without changing files. Return findings with file
 
 在 **Manage Dline Rules & Workflows** 面板的 **Subagents** 标签页中，可以看到 **Global Subagents** 与 **Workspace Subagents** 两组，各有 **New subagent...** 按钮。每一行可以启用或停用、编辑或删除，选择 **Profile**，并逐个勾选允许的工具（必需的工具始终保持勾选）。
 
-![能力面板的 Subagents 标签：Global Subagents 中的内置 default 与 Workspace Subagents 中的 code-researcher，两组各有 New subagent... 按钮](/assets/ui/capabilities-subagents.png)
+![能力面板的 Subagents 标签：Global Subagents 中的内置 default 与 Workspace Subagents 中的 code-researcher，两组各有 New subagent... 按钮](@docs-assets/ui/capabilities-subagents.png)
 
 ## 选择 Profile
 

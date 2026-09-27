@@ -9,6 +9,8 @@ A subagent is an independent worker launched by the main task. Each subagent has
 
 ## Enabling and concurrency
 
+Turning a named subagent on or off follows the same task, workspace, and global layers as rules and skills. See [Capability toggle scopes](/customization/capability-scopes/).
+
 - Subagents are on by default. Turn them off with the **Subagents** switch in the Agent group under **Settings → Features**.
 - **Max Parallel Subagents**, below the switch, sets how many subagents run at once: 1–64, default 64.
 - One batch delegation can contain at most 32 subagents; anything beyond the concurrency limit waits its turn.
@@ -29,7 +31,7 @@ Use subagents to investigate the auth flow, where the database models are define
 
 Give each subagent one clear question. Run them in parallel only when the questions are independent; the main task then checks the evidence and combines the findings.
 
-![The main task delegating several subagents in parallel and combining their results](/assets/ui/docs-subagents.gif)
+![The main task delegating several subagents in parallel and combining their results](@docs-assets/ui/docs-subagents.gif)
 
 ## The default subagent (default.yml)
 
@@ -90,7 +92,7 @@ Named subagents can request tools such as writing files, running commands, web a
 
 The **Subagents** tab of the **Manage Dline Rules & Workflows** panel shows **Global Subagents** and **Workspace Subagents**, each with a **New subagent...** button. Each row can be enabled or disabled, edited or deleted, assigned a **Profile**, and given per-tool checkboxes (required tools always stay checked).
 
-![The Subagents tab of the capabilities panel: the built-in default under Global Subagents and code-researcher under Workspace Subagents, each group with a New subagent... button](/assets/ui/capabilities-subagents.png)
+![The Subagents tab of the capabilities panel: the built-in default under Global Subagents and code-researcher under Workspace Subagents, each group with a New subagent... button](@docs-assets/ui/capabilities-subagents.png)
 
 ## Choosing a Profile
 
