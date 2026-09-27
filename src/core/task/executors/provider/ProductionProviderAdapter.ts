@@ -5,6 +5,7 @@ import type {
 	ProviderBlockOutput,
 	ProviderDraftEnvelope,
 	ProviderFinalEnvelope,
+	ProviderInterruptedEnvelope,
 	ProviderPartialEnvelope,
 } from "../../stores/payload/TaskPayloadEnvelopes"
 import type { ProviderExecutionChunk, ProviderExecutionInput, ProviderExecutionPort } from "./ProviderCommandExecutor"
@@ -15,16 +16,27 @@ export type ProductionProviderChunk =
 			readonly kind: "partial"
 			readonly transientId: string
 			readonly text: string
+			/** The reasoning streamed so far, shown while the model thinks. */
+			readonly reasoning?: string
 			readonly projection?: Readonly<Record<string, unknown>>
 	  }
 	| { readonly kind: "usage"; readonly usage: Readonly<Record<string, number>> }
 	/** The request failed before its first chunk and will be sent again. */
 	| { readonly kind: "retry"; readonly notice: ProviderRetryNotice }
+	/** The user stopped the reply; what it already said is kept, and nothing it was still calling runs. */
+	| {
+			readonly kind: "interrupted"
+			readonly transientId: string
+			readonly text: string
+			readonly reasoning?: string
+			readonly content: ProviderInterruptedEnvelope["content"]
+	  }
 	| {
 			readonly kind: "final"
 			readonly turnId: string
 			readonly transientId?: string
 			readonly text?: string
+			readonly reasoning?: string
 			readonly content?: ProviderFinalEnvelope["content"]
 			readonly modelInfo?: ProviderFinalEnvelope["modelInfo"]
 			readonly mode: ProviderTurnPlan["mode"]
@@ -54,7 +66,21 @@ export class ProductionProviderAdapter implements ProviderExecutionPort {
 		const draft = decodeTaskPayload<ProviderDraftEnvelope>(await this.options.payloads.read(input.draftRef))
 		if (draft.kind !== "provider_draft") throw new Error("InvalidProviderDraftPayload")
 		for await (const chunk of this.options.service.start({ ...input, draft })) {
-			if (input.signal.aborted) return
+			if (chunk.kind === "interrupted") {
+				// Produced only after the stop, so it is the one chunk the stop lets through.
+				const payload: ProviderInterruptedEnvelope = { kind: "provider_interrupted", content: chunk.content }
+				yield {
+					kind: "interrupted",
+					transientId: chunk.transientId,
+					payloadRef: await this.options.payloads.put(encodeTaskPayload(payload)),
+					text: chunk.text,
+					...(chunk.reasoning === undefined ? {} : { reasoning: chunk.reasoning }),
+				}
+				continue
+			}
+			// Drained rather than left: returning here would close the service before
+			// it reports what the stopped reply had already said.
+			if (input.signal.aborted) continue
 			if (chunk.kind === "usage" || chunk.kind === "retry") {
 				yield chunk
 				continue
@@ -68,6 +94,7 @@ export class ProductionProviderAdapter implements ProviderExecutionPort {
 					// Carried beside the ref so presentation does not have to read the
 					// payload store back on every streamed chunk.
 					text: chunk.text,
+					...(chunk.reasoning === undefined ? {} : { reasoning: chunk.reasoning }),
 					...(chunk.projection === undefined ? {} : { projection: chunk.projection }),
 				}
 				continue
@@ -97,6 +124,7 @@ export class ProductionProviderAdapter implements ProviderExecutionPort {
 				...(chunk.transientId === undefined ? {} : { transientId: chunk.transientId }),
 				payloadRef: await this.options.payloads.put(encodeTaskPayload(finalPayload)),
 				...(chunk.text === undefined ? {} : { text: chunk.text }),
+				...(chunk.reasoning === undefined ? {} : { reasoning: chunk.reasoning }),
 				turnPlan,
 			}
 		}

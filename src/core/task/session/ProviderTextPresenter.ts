@@ -2,14 +2,18 @@ import type { ProviderTextPresentationPort } from "../executors/provider/Provide
 import type { MessageStateHandler } from "../message-state"
 import type { PresentationIdSequence } from "./PresentationIdSequence"
 
+/** The two rows one streamed reply can own: what the model thought, then what it said. */
+type ReplyRow = "reasoning" | "text"
+
 /**
- * Shows the assistant's prose as a chat row while its turn streams.
+ * Shows the assistant's reasoning and prose as chat rows while its turn streams.
  *
- * One row per stream, keyed by the provider's transient id, so a resumed or
- * retried stream rewrites its own row instead of appending a second copy. The
- * row stays transient until the turn is journaled: only then is the same text
- * committed durably, which keeps the visible conversation and the durable one
- * from disagreeing after a crash.
+ * One row of each kind per stream, keyed by the provider's transient id, so a
+ * resumed or retried stream rewrites its own rows instead of appending copies.
+ * The rows stay transient until the turn is journaled: only then is the same
+ * content committed durably, which keeps the visible conversation and the
+ * durable one from disagreeing after a crash. Reasoning is shown as it streams
+ * because a long think is otherwise indistinguishable from a stalled request.
  */
 export class ProviderTextPresenter implements ProviderTextPresentationPort {
 	private readonly rows = new Map<string, number>()
@@ -19,42 +23,58 @@ export class ProviderTextPresenter implements ProviderTextPresentationPort {
 		private readonly nextPresentationId: PresentationIdSequence,
 	) {}
 
-	showPartial(input: { readonly transientId: string; readonly text: string }): void {
-		if (!input.text) return
+	showPartial(input: { readonly transientId: string; readonly text: string; readonly reasoning?: string }): void {
+		// Reasoning first: its row is allocated before the prose row, so the chat
+		// shows the thinking above the answer it led to.
+		if (input.reasoning) this.show(input.transientId, "reasoning", input.reasoning)
+		if (input.text) this.show(input.transientId, "text", input.text)
+	}
+
+	async commit(input: { readonly transientId: string; readonly text: string; readonly reasoning?: string }): Promise<void> {
+		await this.settle(input.transientId, "reasoning", input.reasoning ?? "")
+		await this.settle(input.transientId, "text", input.text)
+	}
+
+	private show(transientId: string, row: ReplyRow, text: string): void {
 		this.messages.upsertTransientClineMessage({
-			ts: this.rowId(input.transientId),
+			ts: this.rowId(transientId, row),
 			type: "say",
-			say: "text",
-			text: input.text,
+			say: row,
+			text,
 			partial: true,
 		})
 	}
 
-	async commit(input: { readonly transientId: string; readonly text: string }): Promise<void> {
-		const existing = this.rows.get(input.transientId)
-		this.rows.delete(input.transientId)
-		if (!input.text.trim()) {
+	private async settle(transientId: string, row: ReplyRow, text: string): Promise<void> {
+		const key = rowKey(transientId, row)
+		const existing = this.rows.get(key)
+		this.rows.delete(key)
+		if (!text.trim()) {
 			// A turn that only called tools has no prose to keep. Any row opened by
 			// an early chunk is withdrawn rather than committed empty.
 			if (existing !== undefined) this.messages.removeTransientClineMessage(existing)
 			return
 		}
-		const ts = existing ?? this.nextPresentationId()
 		await this.messages.commitTransientClineMessage({
-			ts,
+			ts: existing ?? this.nextPresentationId(),
 			type: "say",
-			say: "text",
-			text: input.text,
+			say: row,
+			text,
 			partial: false,
 		})
 	}
 
 	/** The row a stream owns, allocated once so later chunks update rather than append. */
-	private rowId(transientId: string): number {
-		const existing = this.rows.get(transientId)
+	private rowId(transientId: string, row: ReplyRow): number {
+		const key = rowKey(transientId, row)
+		const existing = this.rows.get(key)
 		if (existing !== undefined) return existing
 		const created = this.nextPresentationId()
-		this.rows.set(transientId, created)
+		this.rows.set(key, created)
 		return created
 	}
+}
+
+function rowKey(transientId: string, row: ReplyRow): string {
+	return `${transientId}:${row}`
 }

@@ -12,6 +12,7 @@ import type {
 	EnvironmentDetailsEnvelope,
 	LegacyMessageEnvelope,
 	ProviderFinalEnvelope,
+	ProviderInterruptedEnvelope,
 	TaskHandoffEnvelope,
 	ToolResultEnvelope,
 	TurnContinuationEnvelope,
@@ -27,6 +28,7 @@ type JournalPayload =
 	| BackgroundResultsEnvelope
 	| EnvironmentDetailsEnvelope
 	| ProviderFinalEnvelope
+	| ProviderInterruptedEnvelope
 	| ToolResultEnvelope
 	| TaskHandoffEnvelope
 	| TurnContinuationEnvelope
@@ -142,6 +144,10 @@ export class ProviderJournalMessageMaterializer {
 				if (content.length === 0) return undefined
 				// The producer tells a later request to another model that this turn is foreign.
 				return { role: "assistant", content, ts: Date.now(), ...(final.modelInfo ? { modelInfo: final.modelInfo } : {}) }
+			}
+			case "provider_interrupted": {
+				const content = [...(payload as ProviderInterruptedEnvelope).content]
+				return content.length === 0 ? undefined : { role: "assistant", content, ts: Date.now() }
 			}
 			case "tool_result": {
 				const result = payload as ToolResultEnvelope

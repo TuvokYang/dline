@@ -182,6 +182,26 @@ function describeProviderError(request: PreparedProviderRequest, error: unknown,
 	}
 }
 
+/** Closes a reply the user stopped, so the next request knows it was cut short on purpose. */
+export const USER_INTERRUPTION_NOTICE = "[Response interrupted by user]"
+
+/**
+ * What a stopped reply leaves in the conversation.
+ *
+ * Only what the model already said is kept: its reasoning and prose. A tool
+ * call it was still writing never ran, so it is dropped rather than replayed.
+ */
+function interruptedTurn(
+	reasoning: string,
+	prose: string,
+): { content: ClineAssistantContent[]; text: string; reasoning?: string } | undefined {
+	if (!reasoning.trim() && !prose.trim()) return undefined
+	const content: ClineAssistantContent[] = []
+	if (reasoning) content.push({ type: "thinking", thinking: reasoning, signature: "" })
+	content.push({ type: "text", text: prose.trim() ? `${prose}\n\n${USER_INTERRUPTION_NOTICE}` : USER_INTERRUPTION_NOTICE })
+	return { content, text: prose, ...(reasoning ? { reasoning } : {}) }
+}
+
 function toolParams(input: Readonly<Record<string, unknown>>): ToolUse["params"] {
 	return Object.fromEntries(
 		Object.entries(input).map(([key, value]) => [key, typeof value === "string" ? value : JSON.stringify(value)]),
@@ -229,7 +249,7 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 			const stream = yield* this.openStream(turn, input.signal)
 			if (!stream) return
 			for await (const chunk of stream) {
-				if (input.signal.aborted) return
+				if (input.signal.aborted) break
 				if (turnEnded && chunk.type !== "usage") {
 					// Leaving the loop closes the iterator; aborting the handler also
 					// ends a transport that would otherwise stay open behind it.
@@ -245,7 +265,16 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 						yield { kind: "partial", transientId, text: visibleAssistantText(textParts.join("")) }
 						break
 					case "reasoning":
-						if (chunk.reasoning) reasoningParts.push(chunk.reasoning)
+						if (!chunk.reasoning) break
+						reasoningParts.push(chunk.reasoning)
+						// Shown while it streams, as dev did: a long think is otherwise
+						// indistinguishable from a stalled request.
+						yield {
+							kind: "partial",
+							transientId,
+							text: visibleAssistantText(textParts.join("")),
+							reasoning: reasoningParts.join(""),
+						}
 						break
 					case "tool_calls":
 						this.consumeNativeTool(nativeTools, chunk)
@@ -279,10 +308,17 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 						break
 				}
 			}
+		} catch (error) {
+			// A stream the user stopped ends however its transport reports it.
+			if (!input.signal.aborted) throw error
 		} finally {
 			input.signal.removeEventListener("abort", abort)
 		}
-		if (input.signal.aborted) return
+		if (input.signal.aborted) {
+			const interrupted = interruptedTurn(reasoningParts.join(""), visibleAssistantText(textParts.join("")))
+			if (interrupted) yield { kind: "interrupted", transientId, ...interrupted }
+			return
+		}
 
 		// The request that produced the stream decides how its reply is read.
 		const request = turn.request
@@ -304,6 +340,7 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 			turnId: request.turnId,
 			transientId,
 			text: materialized.text,
+			...(reasoningParts.length > 0 ? { reasoning: reasoningParts.join("") } : {}),
 			content,
 			...(request.modelInfo === undefined ? {} : { modelInfo: request.modelInfo }),
 			mode: blocks.length > 1 ? request.mode : "serial",

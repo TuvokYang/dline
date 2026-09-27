@@ -113,6 +113,19 @@ export interface ProviderPartialEnvelope {
 	readonly text: string
 }
 
+/**
+ * A reply the user stopped before it finished.
+ *
+ * Its reasoning and prose stay in the conversation, closed by an interruption
+ * notice, so the next request continues from what the model already said
+ * instead of silently losing it. It plans no turn: a call the model was still
+ * writing never ran.
+ */
+export interface ProviderInterruptedEnvelope {
+	readonly kind: "provider_interrupted"
+	readonly content: readonly ClineAssistantContent[]
+}
+
 export interface ProviderFinalEnvelope {
 	readonly kind: "provider_final"
 	readonly text?: string

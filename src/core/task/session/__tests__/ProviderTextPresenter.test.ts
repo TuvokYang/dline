@@ -38,6 +38,39 @@ function createPresenter() {
  * visible at all.
  */
 describe("ProviderTextPresenter", () => {
+	// dev showed reasoning while it streamed; a long think is otherwise
+	// indistinguishable from a stalled request.
+	it("shows streamed reasoning in its own row above the prose and settles both", async () => {
+		const { presenter, rows, committed } = createPresenter()
+
+		presenter.showPartial({ transientId: "provider:turn-1", text: "", reasoning: "THINK" })
+		presenter.showPartial({ transientId: "provider:turn-1", text: "Answer", reasoning: "THINKING" })
+
+		const streamed = [...rows.values()]
+		expect(streamed.map((row) => [row.say, row.text, row.partial])).toEqual([
+			["reasoning", "THINKING", true],
+			["text", "Answer", true],
+		])
+		expect(streamed[0].ts).toBeLessThan(streamed[1].ts)
+
+		await presenter.commit({ transientId: "provider:turn-1", text: "Answer", reasoning: "THINKING" })
+
+		expect(committed.map((row) => [row.say, row.text, row.partial, row.ts])).toEqual([
+			["reasoning", "THINKING", false, streamed[0].ts],
+			["text", "Answer", false, streamed[1].ts],
+		])
+	})
+
+	it("keeps the reasoning of a reply that said nothing else", async () => {
+		const { presenter, committed, removed } = createPresenter()
+
+		presenter.showPartial({ transientId: "provider:turn-1", text: "", reasoning: "ONLY_THOUGHT" })
+		await presenter.commit({ transientId: "provider:turn-1", text: "", reasoning: "ONLY_THOUGHT" })
+
+		expect(committed.map((row) => [row.say, row.text])).toEqual([["reasoning", "ONLY_THOUGHT"]])
+		expect(removed).toEqual([])
+	})
+
 	it("keeps one row per stream while the prose grows", () => {
 		const { presenter, rows } = createPresenter()
 

@@ -81,6 +81,82 @@ describe("ProviderCommandExecutor", () => {
 		])
 	})
 
+	it("journals what a stopped reply already said and settles its rows, without planning a turn", async () => {
+		const recorded = recorder()
+		const journal = new InMemoryConversationJournal()
+		const presentation = { showPartial: vi.fn(), commit: vi.fn(async () => undefined) }
+		let stop: () => void = () => undefined
+		const executor = new ProviderCommandExecutor(
+			"task-1",
+			{
+				start: async function* () {
+					yield {
+						kind: "partial",
+						transientId: "stream-1",
+						payloadRef: "payload:partial",
+						text: "",
+						reasoning: "THOUGHT",
+					} as ProviderExecutionChunk
+					stop()
+					yield {
+						kind: "interrupted",
+						transientId: "stream-1",
+						payloadRef: "payload:interrupted",
+						text: "",
+						reasoning: "THOUGHT",
+					} as ProviderExecutionChunk
+				},
+			},
+			journal,
+			new InMemoryTaskViewPort(),
+			recorded.sink,
+			presentation,
+		)
+		stop = () => executor.cancelAll("provider_cancel")
+
+		await executor.execute(command)
+
+		expect(await journal.read()).toEqual([
+			expect.objectContaining({
+				kind: "message",
+				operationId: "provider.interrupted:provider:1",
+				payloadRef: "payload:interrupted",
+				transientId: "stream-1",
+			}),
+		])
+		expect(presentation.showPartial).toHaveBeenCalledWith({ transientId: "stream-1", text: "", reasoning: "THOUGHT" })
+		expect(presentation.commit).toHaveBeenCalledWith({ transientId: "stream-1", text: "", reasoning: "THOUGHT" })
+		// A stopped reply plans no turn: nothing it was calling runs.
+		expect(recorded.events).toEqual([])
+	})
+
+	it("withdraws the streamed rows of a reply stopped before it produced anything to keep", async () => {
+		const recorded = recorder()
+		const journal = new InMemoryConversationJournal()
+		const presentation = { showPartial: vi.fn(), commit: vi.fn(async () => undefined) }
+		let stop: () => void = () => undefined
+		const executor = new ProviderCommandExecutor(
+			"task-1",
+			{
+				start: async function* () {
+					yield { kind: "partial", transientId: "stream-1", payloadRef: "payload:partial" } as ProviderExecutionChunk
+					stop()
+				},
+			},
+			journal,
+			new InMemoryTaskViewPort(),
+			recorded.sink,
+			presentation,
+		)
+		stop = () => executor.cancelAll("provider_cancel")
+
+		await executor.execute(command)
+
+		expect(await journal.read()).toEqual([])
+		expect(presentation.commit).toHaveBeenCalledWith({ transientId: "stream-1", text: "" })
+		expect(recorded.events).toEqual([])
+	})
+
 	it("rejects a final chunk for another turn", async () => {
 		const recorded = recorder()
 		const journal = new InMemoryConversationJournal()

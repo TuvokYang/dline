@@ -17,11 +17,26 @@ export type ProviderExecutionChunk =
 			readonly payloadRef: string
 			/** The prose streamed so far, for presentation; the payload stays authoritative. */
 			readonly text?: string
+			/** The reasoning streamed so far, for presentation. */
+			readonly reasoning?: string
 			readonly projection?: Readonly<Record<string, unknown>>
 	  }
 	| { readonly kind: "usage"; readonly usage: Readonly<Record<string, number>> }
 	/** The request failed before its first chunk and will be sent again; nothing reached the journal. */
 	| { readonly kind: "retry"; readonly notice: ProviderRetryNotice }
+	/**
+	 * What a reply the user stopped had already said.
+	 *
+	 * The only chunk produced after the stop. It is journaled so the next request
+	 * continues from it, but it plans no turn: nothing it was calling runs.
+	 */
+	| {
+			readonly kind: "interrupted"
+			readonly transientId: string
+			readonly payloadRef: string
+			readonly text?: string
+			readonly reasoning?: string
+	  }
 	| {
 			readonly kind: "final"
 			readonly turnId: string
@@ -29,6 +44,7 @@ export type ProviderExecutionChunk =
 			readonly transientId?: string
 			/** The assistant's settled prose; see ProviderTextPresentationPort. */
 			readonly text?: string
+			readonly reasoning?: string
 			readonly turnPlan: ProviderTurnPlan
 	  }
 
@@ -43,10 +59,10 @@ export type ProviderExecutionChunk =
  * Declared as a port because a headless assembly has no chat to write to.
  */
 export interface ProviderTextPresentationPort {
-	/** Reveal the prose streamed so far under the stream's own identity. */
-	showPartial(input: { readonly transientId: string; readonly text: string }): void
-	/** Settle that row once the turn is durable, or retract it when no prose arrived. */
-	commit(input: { readonly transientId: string; readonly text: string }): Promise<void>
+	/** Reveal the reasoning and prose streamed so far under the stream's own identity. */
+	showPartial(input: { readonly transientId: string; readonly text: string; readonly reasoning?: string }): void
+	/** Settle those rows once the turn is durable, or retract a row that received nothing. */
+	commit(input: { readonly transientId: string; readonly text: string; readonly reasoning?: string }): Promise<void>
 }
 
 export interface ProviderExecutionInput {
@@ -235,10 +251,17 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
 		record: ProviderRequestRecord | undefined,
 	): Promise<ProviderTurnOutcome | undefined> {
 		let finalChunk: Extract<ProviderExecutionChunk, { kind: "final" }> | undefined
+		let interrupted: Extract<ProviderExecutionChunk, { kind: "interrupted" }> | undefined
 		let transientId: string | undefined
 		let retrying = false
 		for await (const chunk of this.port.start({ draftRef: command.draftRef, turnId: command.turnId, signal })) {
-			if (signal.aborted) return undefined
+			if (chunk.kind === "interrupted") {
+				interrupted = chunk
+				continue
+			}
+			// Keep draining after a stop: the stream ends by itself once the provider
+			// notices, and only then does it report what the reply had already said.
+			if (signal.aborted) continue
 			if (finalChunk) {
 				if (chunk.kind === "usage") {
 					this.absorbUsage(usage, chunk.usage)
@@ -265,7 +288,11 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
 					this.taskId,
 					chunk.projection ?? { kind: "provider.partial", payloadRef: chunk.payloadRef },
 				)
-				this.presentation?.showPartial({ transientId: chunk.transientId, text: chunk.text ?? "" })
+				this.presentation?.showPartial({
+					transientId: chunk.transientId,
+					text: chunk.text ?? "",
+					...(chunk.reasoning === undefined ? {} : { reasoning: chunk.reasoning }),
+				})
 				continue
 			}
 			if (chunk.kind === "usage") {
@@ -276,7 +303,10 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
 			if (command.turnId && chunk.turnId !== command.turnId) throw new Error("ProviderTurnIdentityMismatch")
 			finalChunk = chunk
 		}
-		if (signal.aborted) return undefined
+		if (signal.aborted) {
+			await this.recordInterruption(command, interrupted, transientId)
+			return undefined
+		}
 		if (!finalChunk) throw new Error("MissingFinalChunk")
 		const journalInput = {
 			operationId: `provider.final:${command.commandId}`,
@@ -296,8 +326,48 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
 		// Settled only after the journal accepted the turn: a row shown as final
 		// before its durable entry exists would survive a crash the turn did not.
 		if (finalChunk.transientId) {
-			await this.presentation?.commit({ transientId: finalChunk.transientId, text: finalChunk.text ?? "" })
+			await this.presentation?.commit({
+				transientId: finalChunk.transientId,
+				text: finalChunk.text ?? "",
+				...(finalChunk.reasoning === undefined ? {} : { reasoning: finalChunk.reasoning }),
+			})
 		}
 		return { chunk: finalChunk, journalWatermark: appended.watermark }
+	}
+
+	/**
+	 * Keep what a stopped reply had already said.
+	 *
+	 * Journaled under the command's identity, so a stop that is reported twice
+	 * records it once, and settled on screen only after it is durable. A stop
+	 * before anything streamed leaves nothing behind.
+	 */
+	private async recordInterruption(
+		command: ProviderStartCommand,
+		interrupted: Extract<ProviderExecutionChunk, { kind: "interrupted" }> | undefined,
+		streamedTransientId: string | undefined,
+	): Promise<void> {
+		if (!interrupted) {
+			if (streamedTransientId) await this.presentation?.commit({ transientId: streamedTransientId, text: "" })
+			return
+		}
+		const journalInput = {
+			operationId: `provider.interrupted:${command.commandId}`,
+			payloadRef: interrupted.payloadRef,
+			source: "provider" as const,
+			causation: {
+				commandId: command.commandId,
+				originRevision: command.originRevision,
+				generation: command.generation,
+				...(command.turnId === undefined ? {} : { turnId: command.turnId }),
+			},
+		}
+		if (streamedTransientId) await this.journal.finalizeTransient({ ...journalInput, transientId: streamedTransientId })
+		else await this.journal.append(journalInput)
+		await this.presentation?.commit({
+			transientId: interrupted.transientId,
+			text: interrupted.text ?? "",
+			...(interrupted.reasoning === undefined ? {} : { reasoning: interrupted.reasoning }),
+		})
 	}
 }

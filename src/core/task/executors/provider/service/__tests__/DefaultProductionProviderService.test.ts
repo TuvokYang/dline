@@ -179,6 +179,106 @@ describe("DefaultProductionProviderService", () => {
 		expect(JSON.stringify(final.content)).not.toContain("AFTER_TURN_END")
 	})
 
+	it("streams reasoning as it arrives and keeps it on the settled turn", async () => {
+		const chunks = await run(
+			[
+				{ type: "reasoning", reasoning: "THINK_" } as ApiStreamChunk,
+				{ type: "reasoning", reasoning: "MORE" } as ApiStreamChunk,
+				text("Answer."),
+			],
+			true,
+		)
+
+		const partials = chunks.filter((chunk) => chunk.kind === "partial")
+		expect(partials.map((chunk) => (chunk.kind === "partial" ? chunk.reasoning : undefined))).toEqual([
+			"THINK_",
+			"THINK_MORE",
+			undefined,
+		])
+		expect(chunks.find((chunk) => chunk.kind === "final")).toMatchObject({ reasoning: "THINK_MORE", text: "Answer." })
+	})
+
+	// dev kept a stopped reply as an assistant message closed by an interruption
+	// notice, so the next request continued from what the model had said.
+	it("reports what a stopped reply already said, without the call it was still writing", async () => {
+		const controller = new AbortController()
+		const api = {
+			createMessage: async function* () {
+				yield { type: "reasoning", reasoning: "PARTIAL_THOUGHT" } as ApiStreamChunk
+				yield text("Partial answer")
+				controller.abort()
+				yield {
+					type: "tool_calls",
+					function_id: "call_cut",
+					dline_tid: "tid_cut",
+					argumentsMode: "snapshot",
+					tool_call: { function: { name: "attempt_completion", arguments: '{"result":"NEVER"}' } },
+				} as ApiStreamChunk
+			},
+			getModel: () => ({ id: "test-model", info: {} }),
+		} as unknown as ApiHandler
+		const request = {
+			api,
+			systemPrompt: "",
+			nativeTools: true,
+			mode: "serial",
+			profile: "standard",
+			messages: [],
+			turnId: "turn-1",
+			planTool: () => ({ attempt: "attempt-1", lanes: [], turnEnding: false, approval: { kind: "none" } }),
+		} as unknown as PreparedProviderRequest
+		const out: ProductionProviderChunk[] = []
+		for await (const chunk of new DefaultProductionProviderService({ requests: { prepare: async () => request } }).start({
+			draftRef: "draft-1",
+			draft: {} as ProviderDraftEnvelope,
+			signal: controller.signal,
+		}))
+			out.push(chunk)
+
+		expect(out.some((chunk) => chunk.kind === "final")).toBe(false)
+		expect(out.at(-1)).toEqual({
+			kind: "interrupted",
+			transientId: "provider:turn-1",
+			text: "Partial answer",
+			reasoning: "PARTIAL_THOUGHT",
+			content: [
+				{ type: "thinking", thinking: "PARTIAL_THOUGHT", signature: "" },
+				{ type: "text", text: "Partial answer\n\n[Response interrupted by user]" },
+			],
+		})
+		expect(JSON.stringify(out)).not.toContain("NEVER")
+	})
+
+	it("reports nothing for a reply stopped before it said anything", async () => {
+		const controller = new AbortController()
+		const api = {
+			createMessage: async function* () {
+				controller.abort()
+				yield text("")
+			},
+			getModel: () => ({ id: "test-model", info: {} }),
+		} as unknown as ApiHandler
+		const request = {
+			api,
+			systemPrompt: "",
+			nativeTools: true,
+			mode: "serial",
+			profile: "standard",
+			messages: [],
+			turnId: "turn-1",
+			planTool: () => ({ attempt: "attempt-1", lanes: [], turnEnding: false, approval: { kind: "none" } }),
+		} as unknown as PreparedProviderRequest
+		const out: ProductionProviderChunk[] = []
+		for await (const chunk of new DefaultProductionProviderService({ requests: { prepare: async () => request } }).start({
+			draftRef: "draft-1",
+			draft: {} as ProviderDraftEnvelope,
+			signal: controller.signal,
+		}))
+			out.push(chunk)
+
+		expect(out.filter((chunk) => chunk.kind === "interrupted" || chunk.kind === "final")).toEqual([])
+	})
+
 	it("keeps reading after a completed ordinary call, because later calls in the reply still run", async () => {
 		const chunks = await run(
 			[
