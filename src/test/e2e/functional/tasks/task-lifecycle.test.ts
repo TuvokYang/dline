@@ -1201,17 +1201,10 @@ e2e(
 				readTaskUiMessagesText(dlineDocsDir, taskId),
 				readTaskConversationText(dlineDocsDir, taskId),
 			])
-			// Reopen may append the one durable resume interaction it presents, but
-			// every byte from the pre-reopen timeline must remain an unchanged prefix.
-			expect(uiAfter.startsWith(uiBefore)).toBe(true)
-			const appendedUiMessages = uiAfter
-				.slice(uiBefore.length)
-				.split(/\r?\n/)
-				.filter(Boolean)
-				.map((line) => JSON.parse(line) as Record<string, unknown>)
-			expect(appendedUiMessages).toHaveLength(1)
-			expect(appendedUiMessages[0]).toMatchObject({ type: "ask", ask: "resume_task", text: "" })
-			expect(appendedUiMessages[0].interactionId).toEqual(expect.any(String))
+			// Viewing a task from history is read-only: the Resume interaction is
+			// synthesized for display and nothing is written until the user acts,
+			// so a window that does not hold the task lock never writes its history.
+			expect(uiAfter).toBe(uiBefore)
 			expect(apiAfter).toBe(apiBefore)
 
 			const thinkingButtons = sidebar.getByRole("button", { name: "Thinking", exact: true })
