@@ -3120,11 +3120,18 @@ export class Task {
 		}
 	}
 
-	/** Present a terminal automatic-compaction failure through the existing API retry interaction. */
+	/**
+	 * Present a terminal automatic-compaction failure through the existing API retry interaction.
+	 *
+	 * `persistedRequest` must describe the gated request itself. When the gated request was already
+	 * persisted (for example a manual Retry of a failed Provider request), the recovery must replay
+	 * that same history entry; declaring it unpersisted makes Retry append a new request instead.
+	 */
 	private async presentTerminalCompactionFailure(
 		operationId: string,
 		apiIndex: number,
 		retryContent: ClineContent[],
+		persistedRequest: boolean,
 	): Promise<void> {
 		this.taskState.forceTruncateAvailable = true
 		const errorMessage =
@@ -3158,7 +3165,7 @@ export class Task {
 			interactionId: retryId,
 			apiIndex,
 			presentation: errorMessage,
-			persistedRequest: false,
+			persistedRequest,
 		})
 	}
 
@@ -8897,7 +8904,7 @@ export class Task {
 				includeFileDetails,
 			)
 			if (result === "failed") {
-				await this.presentTerminalCompactionFailure(operationId, apiIndex, ordinaryCompactionInput)
+				await this.presentTerminalCompactionFailure(operationId, apiIndex, ordinaryCompactionInput, persistedRequest)
 				return true
 			}
 			this.contextCompactionFailureReasons.delete(operationId)
@@ -9091,7 +9098,7 @@ export class Task {
 					includeFileDetails,
 				)
 				if (result === "failed") {
-					await this.presentTerminalCompactionFailure(operationId, apiIndex, ordinaryCompactionInput)
+					await this.presentTerminalCompactionFailure(operationId, apiIndex, ordinaryCompactionInput, persistedRequest)
 					return true
 				}
 				this.contextCompactionFailureReasons.delete(operationId)

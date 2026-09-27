@@ -51,7 +51,10 @@ export const DIAGNOSTIC_KINDS = {
 	[DiagnosticDomain.Task]: ["history_truncated", "context_window_exceeded", "stream_retry", "resume_interrupted"],
 	[DiagnosticDomain.Profile]: ["catalog_repaired", "resolution_fallback"],
 	[DiagnosticDomain.Capability]: ["refresh_failure", "source_unavailable"],
-	[DiagnosticDomain.Storage]: ["lock_contended", "stale_lock_broken", "write_retry"],
+	// `baseline_diverged` is a buffered store finding that the durable
+	// collection no longer ends the way it last wrote it, which forces the
+	// full read-and-merge commit that the in-memory baseline exists to avoid.
+	[DiagnosticDomain.Storage]: ["lock_contended", "stale_lock_broken", "write_retry", "baseline_diverged"],
 	[DiagnosticDomain.Workspace]: ["root_unresolved", "watcher_restarted"],
 } as const satisfies Record<DiagnosticDomain, readonly string[]>
 

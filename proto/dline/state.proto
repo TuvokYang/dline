@@ -36,6 +36,8 @@ service StateService {
   rpc testOtelConnection(EmptyRequest) returns (TestConnectionResult);
   rpc testPromptUploading(EmptyRequest) returns (TestConnectionResult);
   rpc exportRuntimeTelemetryBundle(ExportRuntimeTelemetryBundleRequest) returns (ExportRuntimeTelemetryBundleResponse);
+  // Records a Webview-side failure in the extension log so it reaches runtime telemetry.
+  rpc reportWebviewError(WebviewErrorReport) returns (Empty);
 }
 
 // Ask the extension host to write a diagnostic bundle to disk.
@@ -575,6 +577,17 @@ message OnboardingModel {
   string badge = 5;
   string group = 6;
   OpenRouterModelInfo info = 7;
+}
+
+// A failure observed inside the Webview. Fields are bounded by the sender and
+// truncated again by the receiver; they never carry state payloads.
+message WebviewErrorReport {
+  // One of "render", "uncaught", "unhandled_rejection".
+  string kind = 1;
+  string message = 2;
+  optional string name = 3;
+  optional string stack = 4;
+  optional string component_stack = 5;
 }
 
 message TrackBannerEventRequest {
