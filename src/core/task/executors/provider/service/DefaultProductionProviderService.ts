@@ -6,6 +6,7 @@ import { isDeterministicToolPairingError } from "@core/context/context-managemen
 import type { ClineAssistantContent, ClineAssistantToolUseBlock, ClineStorageMessage } from "@shared/messages/content"
 import { Logger } from "@shared/services/Logger"
 import { ClineError } from "@/services/error"
+import { isTurnEndingToolName } from "../../../assistant-message-order"
 import {
 	getRetryDelay,
 	isRetryableProviderError,
@@ -219,12 +220,22 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 		// A cancelled command cannot authorize a tool in a later turn.
 		const abort = () => turn.abandon()
 		input.signal.addEventListener("abort", abort, { once: true })
+		// Set once a turn-ending call is complete. From then on the user owns the
+		// next interaction, so only the final usage is still read: anything else
+		// the provider streams belongs to a continuation Dline will never render.
+		let turnEnded = false
 
 		try {
 			const stream = yield* this.openStream(turn, input.signal)
 			if (!stream) return
 			for await (const chunk of stream) {
 				if (input.signal.aborted) return
+				if (turnEnded && chunk.type !== "usage") {
+					// Leaving the loop closes the iterator; aborting the handler also
+					// ends a transport that would otherwise stay open behind it.
+					turn.request.api.abort?.()
+					break
+				}
 				switch (chunk.type) {
 					case "usage":
 						yield { kind: "usage", usage: usageRecord(chunk) }
@@ -238,6 +249,10 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 						break
 					case "tool_calls":
 						this.consumeNativeTool(nativeTools, chunk)
+						// The completed chunk may omit the name, so it is read from the call
+						// the earlier deltas accumulated.
+						if (chunk.phase === "completed" && isTurnEndingToolName(nativeTools.get(chunk.dline_tid)?.name))
+							turnEnded = true
 						yield {
 							kind: "partial",
 							transientId,

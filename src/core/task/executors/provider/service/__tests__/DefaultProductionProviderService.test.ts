@@ -120,6 +120,85 @@ describe("DefaultProductionProviderService", () => {
 		expect(final.blocks.map((block) => block.invocation.resultReplay)).toEqual([undefined])
 	})
 
+	// A completed turn-ending call hands the next interaction to the user. dev
+	// stopped reading the stream there; without it the provider kept streaming
+	// reasoning the user already moved past, and the request stayed open.
+	it("stops reading after a completed turn-ending call and aborts the transport", async () => {
+		const abort = vi.fn()
+		let pulledAfterTurnEnd = false
+		const api = {
+			createMessage: async function* () {
+				yield {
+					type: "tool_calls",
+					function_id: "call_plan",
+					dline_tid: "tid_plan",
+					argumentsMode: "snapshot",
+					tool_call: { function: { name: "make_plan", arguments: '{"response":"PLAN"}' } },
+				} as ApiStreamChunk
+				yield {
+					type: "tool_calls",
+					phase: "completed",
+					function_id: "call_plan",
+					dline_tid: "tid_plan",
+					argumentsMode: "snapshot",
+					tool_call: { function: { arguments: '{"response":"PLAN"}' } },
+				} as ApiStreamChunk
+				yield { type: "usage", inputTokens: 10, outputTokens: 5 } as ApiStreamChunk
+				yield { type: "reasoning", reasoning: "AFTER_TURN_END" } as ApiStreamChunk
+				pulledAfterTurnEnd = true
+				yield text("AFTER_TURN_END_TEXT")
+			},
+			getModel: () => ({ id: "test-model", info: {} }),
+			abort,
+		} as unknown as ApiHandler
+		const request = {
+			api,
+			systemPrompt: "",
+			nativeTools: true,
+			mode: "serial",
+			profile: "standard",
+			messages: [],
+			turnId: "turn-1",
+			planTool: () => ({ attempt: "attempt-1", lanes: [], turnEnding: true, approval: { kind: "none" } }),
+		} as unknown as PreparedProviderRequest
+		const out: ProductionProviderChunk[] = []
+		for await (const chunk of new DefaultProductionProviderService({ requests: { prepare: async () => request } }).start({
+			draftRef: "draft-1",
+			draft: {} as ProviderDraftEnvelope,
+			signal: new AbortController().signal,
+		}))
+			out.push(chunk)
+
+		expect(abort).toHaveBeenCalledOnce()
+		expect(pulledAfterTurnEnd).toBe(false)
+		// The final usage still arrives, so the header and metrics stay complete.
+		expect(out.filter((chunk) => chunk.kind === "usage")).toHaveLength(1)
+		const final = out.find((chunk) => chunk.kind === "final")
+		if (final?.kind !== "final") throw new Error("missing final chunk")
+		expect(final.blocks.map((block) => block.invocation.toolName)).toEqual(["make_plan"])
+		expect(JSON.stringify(final.content)).not.toContain("AFTER_TURN_END")
+	})
+
+	it("keeps reading after a completed ordinary call, because later calls in the reply still run", async () => {
+		const chunks = await run(
+			[
+				{
+					type: "tool_calls",
+					phase: "completed",
+					function_id: "call_read",
+					dline_tid: "tid_read",
+					argumentsMode: "snapshot",
+					tool_call: { function: { name: "read_file", arguments: '{"path":"a.ts"}' } },
+				} as ApiStreamChunk,
+				text("Then more."),
+			],
+			true,
+		)
+
+		const final = chunks.find((chunk) => chunk.kind === "final")
+		expect(final).toMatchObject({ kind: "final", text: "Then more." })
+	})
+
 	it("records the model that produced the reply on the final chunk", async () => {
 		const modelInfo = { modelId: "test-model", providerId: "anthropic", mode: "act" }
 		const request = {
