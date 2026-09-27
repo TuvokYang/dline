@@ -141,7 +141,7 @@ describe("BufferedUnifyStore flush span", () => {
 		}
 	})
 
-	it("reports the bounded reason for a full rewrite", async () => {
+	it("reports the bounded reason when a persisted entry is rewritten", async () => {
 		const store = await openStore(createFixturePath())
 		const parent = fakeSpan("caller", { name: "caller", attributes: {}, ended: false })
 
@@ -151,8 +151,10 @@ describe("BufferedUnifyStore flush span", () => {
 			await store.stagePatchAt(0, { value: "edited" })
 			await runInSpanScope(parent, () => store.flush())
 
+			// Only the changed tail is rewritten; the whole-file rewrite is kept
+			// for collections memory can no longer vouch for.
 			expect(flushSpans()[0]?.attributes).toMatchObject({
-				commit: "rewrite",
+				commit: "tail_rewrite",
 				store_kind: "other",
 				rewrite_reason: "patch",
 			})

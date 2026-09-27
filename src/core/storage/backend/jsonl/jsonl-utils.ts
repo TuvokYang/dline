@@ -21,6 +21,9 @@ const TRIM_START_REGEX = /^\s+/
  * reading a file that exists precisely because it is too large to rewrite.
  */
 const LEGACY_ARRAY_PROBE_BYTES = 64
+const NEWLINE = 0x0a
+/** Read size used when scanning a file backwards for its final lines. */
+const TAIL_CHUNK_BYTES = 64 * 1024
 const ATOMIC_RENAME_MAX_ATTEMPTS = 3
 const ATOMIC_RENAME_RETRY_DELAYS_MS = [10, 25] as const
 const RETRYABLE_ATOMIC_RENAME_CODES = new Set(["EPERM", "EACCES", "EBUSY"])
@@ -190,6 +193,146 @@ export async function truncateJsonlTail(filePath: string, keepLineCount: number,
 	} finally {
 		await handle.close()
 	}
+}
+
+/** One final JSONL line and the byte offset where it starts. */
+interface JsonlTailLine {
+	readonly offset: number
+	readonly text: string
+}
+
+interface JsonlTail {
+	readonly size: number
+	/** Whether the file ends with a newline, so another line can follow directly. */
+	readonly terminated: boolean
+	/** Up to the requested number of final lines, in file order. */
+	readonly lines: readonly JsonlTailLine[]
+}
+
+/**
+ * Read the final lines of a JSONL file without reading the lines before them.
+ *
+ * A file holding fewer lines than requested returns all of them, which lets a
+ * caller tell a short file apart from a matching one.
+ */
+async function readJsonlTail(handle: FileHandle, lineCount: number): Promise<JsonlTail> {
+	const { size } = await handle.stat()
+	if (size === 0) return { size, terminated: true, lines: [] }
+	const lastByte = Buffer.alloc(1)
+	await handle.read(lastByte, 0, 1, size - 1)
+	const terminated = lastByte[0] === NEWLINE
+	if (lineCount === 0) return { size, terminated, lines: [] }
+
+	// The newline ending the line just before the requested ones. A final
+	// newline terminates the last line rather than starting another one.
+	const boundaryOrdinal = lineCount + (terminated ? 1 : 0)
+	const chunks: Buffer[] = []
+	let position = size
+	let seenNewlines = 0
+	let start = 0
+	scan: while (position > 0) {
+		const length = Math.min(TAIL_CHUNK_BYTES, position)
+		position -= length
+		const chunk = Buffer.allocUnsafe(length)
+		const { bytesRead } = await handle.read(chunk, 0, length, position)
+		// Every offset below is derived from `position`, so a short read would
+		// point a later truncation at the wrong byte.
+		if (bytesRead !== length) throw new Error("JSONL tail read returned fewer bytes than the file holds")
+		chunks.unshift(chunk)
+		for (let index = length - 1; index >= 0; index--) {
+			if (chunk[index] !== NEWLINE) continue
+			seenNewlines += 1
+			if (seenNewlines === boundaryOrdinal) {
+				start = position + index + 1
+				break scan
+			}
+		}
+	}
+
+	// Split on bytes rather than on decoded text so every offset stays a byte
+	// offset that truncation can use directly.
+	const region = Buffer.concat(chunks).subarray(start - position)
+	const lines: JsonlTailLine[] = []
+	let lineStart = 0
+	for (let index = 0; index < region.length; index++) {
+		if (region[index] !== NEWLINE) continue
+		lines.push({ offset: start + lineStart, text: region.toString("utf8", lineStart, index) })
+		lineStart = index + 1
+	}
+	if (lineStart < region.length) lines.push({ offset: start + lineStart, text: region.toString("utf8", lineStart) })
+	return { size, terminated, lines }
+}
+
+function lineTimestamp(text: string): number | undefined {
+	try {
+		const value: unknown = JSON.parse(text)
+		if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined
+		const ts = (value as { ts?: unknown }).ts
+		return typeof ts === "number" ? ts : undefined
+	} catch {
+		return undefined
+	}
+}
+
+function endsWithTimestamps(tail: JsonlTail, expected: readonly number[]): boolean {
+	if (expected.length === 0) return tail.size === 0
+	if (tail.lines.length !== expected.length) return false
+	return tail.lines.every((line, index) => lineTimestamp(line.text) === expected[index])
+}
+
+export interface JsonlTailReplacement<T> {
+	/**
+	 * Timestamps the final lines must carry, in order. An empty list asserts
+	 * an empty file.
+	 */
+	readonly expectedTailTimestamps: readonly number[]
+	/** Final lines replaced by `entries`; zero appends after the last line. */
+	readonly replacedLineCount: number
+	readonly entries: readonly T[]
+}
+
+/**
+ * Replace the end of a JSONL file, provided it still ends the way the caller
+ * last saw it.
+ *
+ * Only the final lines are read: enough to confirm they carry the expected
+ * timestamps and to find where the replaced lines begin. A mismatch writes
+ * nothing and resolves false, leaving the caller to fall back to a full read.
+ * That covers a file another writer extended, a legacy JSON array, and an
+ * unreadable or unterminated final line.
+ *
+ * Cutting and appending are two writes, so a process that dies between them
+ * loses the replaced lines from disk while every earlier line stays intact.
+ * The caller must hold the file lock.
+ */
+export async function replaceJsonlTail<T>(filePath: string, replacement: JsonlTailReplacement<T>): Promise<boolean> {
+	const { expectedTailTimestamps, replacedLineCount, entries } = replacement
+	if (!Number.isInteger(replacedLineCount) || replacedLineCount < 0 || replacedLineCount > expectedTailTimestamps.length) {
+		throw new Error(
+			`Invalid JSONL tail replacement: replaced=${replacedLineCount}, verified=${expectedTailTimestamps.length}`,
+		)
+	}
+
+	let tail: JsonlTail = { size: 0, terminated: true, lines: [] }
+	if (await fileExistsAtPath(filePath)) {
+		const handle = await fs.open(filePath, "r")
+		try {
+			tail = await readJsonlTail(handle, expectedTailTimestamps.length)
+		} finally {
+			await handle.close()
+		}
+	}
+	if (!endsWithTimestamps(tail, expectedTailTimestamps)) return false
+
+	if (replacedLineCount === 0) {
+		// An unterminated final line would absorb the first appended record.
+		if (!tail.terminated) return false
+		await appendJsonl(filePath, [...entries])
+		return true
+	}
+	await fs.truncate(filePath, tail.lines[tail.lines.length - replacedLineCount].offset)
+	await appendJsonl(filePath, [...entries])
+	return true
 }
 
 /**
