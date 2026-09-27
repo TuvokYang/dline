@@ -2,7 +2,7 @@
  * Rules for the built site in dist/. Every function is pure so the rules can be
  * tested without running a build; scripts/check-dist.mjs does the file I/O.
  */
-import { locales, ROOT_LOCALE } from "../../src/data/locales.mjs"
+import { CHINESE_LOCALE, locales, ROOT_LOCALE } from "../../src/data/locales.mjs"
 import { findForbiddenText } from "./forbidden-patterns.mjs"
 import { CJK_TEXT } from "./locale-text.mjs"
 
@@ -108,7 +108,7 @@ export function checkBuiltFile({ relativePath, text, basePrefix }) {
 			report(`root-relative URL misses the site base ${basePrefix}/: ${url}`)
 		}
 	}
-	if (/\.html$/i.test(relativePath) && localeOfBuiltFile(relativePath) !== ROOT_LOCALE) {
+	if (/\.html$/i.test(relativePath) && localeOfBuiltFile(relativePath) !== CHINESE_LOCALE) {
 		const leak = findChineseLeak(text)
 		if (leak) {
 			report(`Chinese text on a non-Chinese page: "${leak}"`)

@@ -1,68 +1,68 @@
 ---
-title: 使用斜杠命令
-description: 在输入框中用 / 触发内置命令、工作流和技能，了解每个命令实际做什么。
+title: Using Slash Commands
+description: Type / in the input box to run built-in commands, workflows, and skills, and learn what each command actually does.
 ---
 
 import { Aside } from "@astrojs/starlight/components"
 
-在输入框中输入 `/` 会弹出命令建议菜单，列出内置命令、已启用的工作流和技能。从菜单中选择命令时，输入框中会插入 `/cmd:<名称>` 形式的文本；你也可以直接输入不带前缀的内置命令名，例如 `/newtask`。
+Typing `/` in the input box opens a suggestion menu with the built-in commands, enabled workflows, and skills. Picking a command from the menu inserts text of the form `/cmd:<name>`; you can also type a built-in command without the prefix, for example `/newtask`.
 
 <Aside>
-每条消息只处理**第一个**斜杠命令，后面的斜杠命令会被当作普通文本。
+Only the **first** slash command in a message is processed. Later slash commands are treated as plain text.
 </Aside>
 
-## 内置命令
+## Built-in commands
 
-| 命令 | 菜单说明 | 作用 |
+| Command | Menu text | What it does |
 |---|---|---|
-| `/newtask` | Create a new task with context from the current task | 让 Dline 总结当前工作、已做的决定、相关文件、遇到的问题和下一步，作为新任务的起点 |
-| `/deep-planning` | Create a comprehensive implementation plan before coding | 在编码前调研代码库、写出实现计划，并创建用于实施的后续任务 |
-| `/smol`、`/compact` | Condenses your current context window | 立即压缩当前任务的上下文 |
-| `/newrule` | — | 根据对话中体现的偏好，在 `.agents/rules/` 下新建一个规则文件 |
-| `/reportbug` | — | 整理问题报告，并打开预填内容的 GitHub issue 页面 |
-| `/explain-changes` | Explain code changes between git refs (PRs, commits, branches, etc.) | 解释两个 Git 引用之间，或某个引用与工作区之间的代码变化（仅 VS Code） |
+| `/newtask` | Create a new task with context from the current task | Has Dline summarize the current work, decisions, relevant files, problems, and next steps as the starting point of a new task |
+| `/deep-planning` | Create a comprehensive implementation plan before coding | Investigates the codebase before coding, writes an implementation plan, and creates a follow-up task for the implementation |
+| `/smol`, `/compact` | Condenses your current context window | Compacts the current task's context right away |
+| `/newrule` | — | Creates a new rule file under `.agents/rules/` based on preferences expressed in the conversation |
+| `/reportbug` | — | Drafts a problem report and opens a prefilled GitHub issue page |
+| `/explain-changes` | Explain code changes between git refs (PRs, commits, branches, etc.) | Explains code changes between two Git refs, or between a ref and the working tree (VS Code only) |
 
 ### `/newtask`
 
-Dline 会先生成一份交接摘要并展示给你预览。你可以据此创建新任务，也可以选择继续当前对话。输入该命令不会立即强制开启新任务。
+Dline first drafts a handoff summary and shows it to you as a preview. You can create the new task from it or keep chatting in the current one. Typing the command does not force a new task immediately.
 
-适合在当前任务上下文已经很长、但工作还要继续时使用。
+Use it when the current task's context has grown long but the work needs to continue.
 
 <span id="smol"></span>
 
-### `/smol` 与 `/compact`
+### `/smol` and `/compact`
 
-两个命令效果相同：授权 Dline 立即对**当前**任务执行上下文压缩，由模型写出摘要来替代较早的对话。摘要由模型生成，不能保证保留所有细节。自动触发的压缩参见[自动压缩](/features/auto-compact/)。
+Both commands do the same thing: they authorize Dline to compact the **current** task's context right away, with the model writing a summary that replaces older conversation. The summary is model-written and cannot be guaranteed to keep every detail. For automatic compaction, see [Auto compact](/features/auto-compact/).
 
 ### `/newrule`
 
-Dline 会根据对话中实际表达过的偏好，在工作区的 `.agents/rules/` 目录下创建一个新的 Markdown 规则文件，不会覆盖已有规则。规则是否在后续任务中生效，取决于它是否启用以及条件规则的匹配情况，参见 [Rules](/customization/rules/)。
+Dline creates a new Markdown rule file in the workspace's `.agents/rules/` folder based on preferences actually expressed in the conversation, without overwriting existing rules. Whether the rule applies to later tasks depends on whether it is enabled and on any conditional rule criteria; see [Rules](/customization/rules/).
 
 ### `/deep-planning`
 
-根据当前提示词配置，命令会使用四阶段或五阶段的指令：先调研（五阶段版本会把读取文件和终端调研分开），必要时提出澄清问题，再写出计划文档，最后创建实施任务。详见 [Plan 与 Act](/core-workflows/plan-and-act/#deep-planning)。
+Depending on the active prompt profile, the command uses four-stage or five-stage instructions: investigate first (the five-stage version separates reading files from terminal investigation), ask clarifying questions when needed, write a plan document, then create an implementation task. See [Plan and Act](/core-workflows/plan-and-act/#deep-planning).
 
 ### `/explain-changes`
 
-比较 `from_ref` 与 `to_ref` 两个 Git 引用；省略 `to_ref` 时与当前工作区文件比较。要求工作区是 Git 仓库，二进制文件会被跳过。
+Compares two Git refs, `from_ref` and `to_ref`; when `to_ref` is omitted, it compares against the files in the working tree. The workspace must be a Git repository, and binary files are skipped.
 
 <Aside type="caution">
-与 `HEAD` 比较时包含所有未提交的改动，而不只是已暂存（staged）的改动。
+Comparing against `HEAD` includes every uncommitted change, not only staged changes.
 </Aside>
 
 ### `/reportbug`
 
-Dline 会和你一起整理问题标题、现象、复现步骤等字段，并自动补充操作系统、编辑器、Dline 版本、服务商和模型等环境信息。你确认后，Dline 会在浏览器中打开一个预填好内容的 GitHub issue 页面，由你检查并提交；Dline 不会替你直接提交 issue。
+Dline works with you on the report fields such as the title, what happened, and the steps to reproduce, and adds environment details: operating system, editor, Dline version, provider, and model. After you confirm, Dline opens a prefilled GitHub issue page in your browser for you to review and submit; Dline does not submit the issue itself.
 
-## 工作流
+## Workflows
 
-工作流是保存为 Markdown 文件的一组步骤说明，调用时其内容会注入到当前任务中。Dline 会从以下位置发现工作流：
+A workflow is a set of step-by-step instructions saved as a Markdown file; invoking it injects its content into the current task. Dline discovers workflows in:
 
-- 工作区：`.agents/workflows/`；
-- 全局：`<documents-root>/workflows/`（`<documents-root>` 默认是系统“文档”目录下的 `dline`，可用 `DLINE_DOCS_DIR` 覆盖）。
+- the workspace: `.agents/workflows/`;
+- globally: `<documents-root>/workflows/` (`<documents-root>` defaults to `dline` inside your system Documents folder and can be overridden with `DLINE_DOCS_DIR`).
 
-调用方式是 `/workflow:<文件名>`（文件名不含扩展名），为兼容旧用法也可以直接输入 `/<文件名>`。工作流文件不需要 YAML frontmatter。可以在 **Manage Dline Rules & Workflows** 中启用或停用某个工作流。
+Invoke a workflow with `/workflow:<file-name>` (the file name without its extension); for compatibility, `/<file-name>` also works. Workflow files need no YAML frontmatter. You can enable or disable individual workflows in **Manage Dline Rules & Workflows**.
 
-## 技能
+## Skills
 
-已启用的技能会出现在建议菜单中，用 `/skills:<名称>` 调用时，技能的说明会直接注入当前任务。技能的编写与存放位置参见[技能](/customization/skills/)。
+Enabled skills appear in the suggestion menu. Invoking one with `/skills:<name>` injects the skill's instructions directly into the current task. For how to write and store skills, see [Skills](/customization/skills/).

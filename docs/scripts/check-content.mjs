@@ -17,7 +17,9 @@ const basePrefix = toPrefix(resolveSiteConfig().base)
 const pages = await listPages()
 
 const issues = [
-	...(await Promise.all(pages.map(async (page) => checkPage({ page, source: await readFile(page.file, "utf8"), basePrefix })))).flat(),
+	...(
+		await Promise.all(pages.map(async (page) => checkPage({ page, source: await readFile(page.file, "utf8"), basePrefix })))
+	).flat(),
 	...checkLocaleParity(pages),
 	...checkNavigation(pages, sidebar, unlistedSlugs),
 	...checkRedirects(redirects, pages),
@@ -32,6 +34,6 @@ if (issues.length > 0) {
 	process.exitCode = 1
 } else {
 	console.log(
-		`Content check passed: ${pages.length} page(s) (${rootCount} zh-CN, ${pages.length - rootCount} en), ${Object.keys(redirects).length} redirect(s).`,
+		`Content check passed: ${pages.length} page(s) (${rootCount} en, ${pages.length - rootCount} zh-CN), ${Object.keys(redirects).length} redirect(s).`,
 	)
 }

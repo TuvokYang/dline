@@ -21,7 +21,7 @@ const REPOSITORY_URL = "https://github.com/TuvokYang/Dline"
 describe("marketplace README repository refs", () => {
 	it("pins self-referencing links to the packaged ref", () => {
 		const source = [
-			"[English](https://github.com/TuvokYang/Dline/blob/main/README_en.md)",
+			"[English](https://github.com/TuvokYang/Dline/blob/main/README.md)",
 			"[变更日志](https://github.com/TuvokYang/Dline/blob/main/CHANGELOG.md)",
 			"![demo](https://github.com/TuvokYang/Dline/raw/main/assets/docs/demo.gif)",
 			"[docs](https://github.com/TuvokYang/Dline/tree/main/docs)",
@@ -29,7 +29,7 @@ describe("marketplace README repository refs", () => {
 
 		const rewritten = rewriteRepositoryRefs(source, REPOSITORY_URL, "dev-v0.9.4")
 
-		expect(rewritten).toContain("/blob/dev-v0.9.4/README_en.md")
+		expect(rewritten).toContain("/blob/dev-v0.9.4/README.md")
 		expect(rewritten).toContain("/blob/dev-v0.9.4/CHANGELOG.md")
 		expect(rewritten).toContain("/raw/dev-v0.9.4/assets/docs/demo.gif")
 		expect(rewritten).toContain("/tree/dev-v0.9.4/docs")

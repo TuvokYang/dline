@@ -10,14 +10,10 @@
 			</g>
 		</mask>
 	</defs>
-	<g fill="none" stroke="#E4D0FF" stroke-linecap="round" stroke-linejoin="round">
+	<g fill="none" stroke="#5CC8B8" stroke-linecap="round" stroke-linejoin="round">
 		<path d="M12 8.4V5.92M12 5.92 9.6 4.02M12 5.92 14.4 4.02" stroke-width="1.6" />
 		<path d="M2.75 12.6 1.35 14.5 2.75 16.4" stroke-width="1.7" />
 		<path d="M21.25 12.6 22.65 14.5 21.25 16.4" stroke-width="1.7" />
 	</g>
-	<g fill="#E4D0FF">
-		<circle cx="9.6" cy="4.02" r="1.15" />
-		<circle cx="14.4" cy="4.02" r="1.15" />
-	</g>
-	<rect x="4.2" y="8" width="15.6" height="13" rx="4.3" fill="#E4D0FF" mask="url(#dline-logo-dark-face)" />
+	<rect x="4.2" y="8" width="15.6" height="13" rx="4.3" fill="#5CC8B8" mask="url(#dline-logo-dark-face)" />
 </svg>

@@ -1,128 +1,128 @@
 ---
-title: 存储
-description: Dline 的三个存储根目录、环境变量、目录布局、各文件的归属模块、设置解析顺序与迁移边界。
+title: Storage
+description: Dline's three storage roots, environment variables, directory layout, the owning module of each file, setting resolution order, and migration boundaries.
 ---
 
 import { Aside } from "@astrojs/starlight/components"
 
-Dline 的持久化数据不在 VS Code `ExtensionContext` 中，而是写入三个独立的文件根目录。每个持久化值都有一个明确的归属模块，修改存储时应当通过归属模块，不要自行拼路径或直接写 JSON。
+Dline does not keep its persistent data in VS Code's `ExtensionContext`. It writes to three independent file roots instead. Every persistent value has one owning module; when changing storage, go through that owner rather than building paths or writing JSON yourself.
 
-## 三个根目录
+## Three roots
 
-| 根目录 | 解析函数 | 覆盖方式 | 默认位置 |
+| Root | Resolver | Override | Default |
 |---|---|---|---|
-| 状态与数据根 | `getDlineDataDir()` | `DLINE_DIR`，实际路径为 `<DLINE_DIR>/data` | `~/.dline/data` |
-| 资源目录 | `getDlineHomePath()` | `DLINE_HOME_DIR` | `~/.dline` |
-| 文档根 | `getDlineDocumentsPath()` | `DLINE_DOCS_DIR`，按原样使用 | `<系统“文档”目录>/dline` |
+| State/data root | `getDlineDataDir()` | `DLINE_DIR`; the actual path is `<DLINE_DIR>/data` | `~/.dline/data` |
+| Resource home | `getDlineHomePath()` | `DLINE_HOME_DIR` | `~/.dline` |
+| Documents root | `getDlineDocumentsPath()` | `DLINE_DOCS_DIR`, used as is | `dline` under the system Documents directory |
 
-三个函数都在 `src/core/storage/documents-path.ts`。`DLINE_DIR` 与 `DLINE_HOME_DIR` 默认都落在 `~/.dline` 下，但它们是两个独立的覆盖项。设置 `DLINE_DOCS_DIR` 后，Dline 不会再追加 `dline` 子目录。
+All three resolvers are in `src/core/storage/documents-path.ts`. `DLINE_DIR` and `DLINE_HOME_DIR` both default to locations under `~/.dline`, but they are separate overrides. When `DLINE_DOCS_DIR` is set, Dline does not append another `dline` directory.
 
-系统“文档”目录的解析方式：Windows 通过 PowerShell 查询 `MyDocuments`，Linux 使用 `xdg-user-dir DOCUMENTS`，其他情况回退到 `~/Documents`。启动时 `warmupDocumentsPathCache()` 会先缓存这个结果，供同步调用方使用。测试需要完全隔离时，应同时设置三个环境变量。
+The system Documents directory is resolved by querying `MyDocuments` through PowerShell on Windows, running `xdg-user-dir DOCUMENTS` on Linux, and otherwise falling back to `~/Documents`. At startup, `warmupDocumentsPathCache()` caches the result for synchronous callers. Tests that need full isolation should set all three environment variables.
 
-## 状态与数据根
+## State/data root
 
 ```text
 <data-root>/
-├── globalState.json            # 非设置类全局状态
-├── secrets.json                # StateManager 管理的类型化密钥
+├── globalState.json            # non-setting global state
+├── secrets.json                # typed secrets managed by StateManager
 ├── settings/
-│   ├── settings.json           # 全局设置
-│   └── api_profiles.json       # Profile 目录
+│   ├── settings.json           # global settings
+│   └── api_profiles.json       # Profile catalog
 ├── secrets/
-│   ├── api_keys.json           # 按 Profile ID 保存的 API Key
-│   ├── provider_secrets.json   # 按 Profile ID 保存的服务商密钥
-│   └── ...                     # 各 Profile 的 OAuth 凭据文件
+│   ├── api_keys.json           # API keys keyed by Profile ID
+│   ├── provider_secrets.json   # provider secrets keyed by Profile ID
+│   └── ...                     # per-Profile OAuth credential files
 └── workspaces/<hash>/
-    ├── workspaceState.json     # 工作区状态
-    └── settings.json           # 工作区设置
+    ├── workspaceState.json     # workspace state
+    └── settings.json           # workspace settings
 ```
 
-密钥文件以仅所有者可读写的权限（`0o600`）创建。不要把 `settings/settings.json` 与文档根下的 `settings/mcp_settings.json` 混淆。
+Secret files are created with owner-only permissions (`0o600`). Do not confuse `settings/settings.json` with `settings/mcp_settings.json` under the documents root.
 
-## 文档根
+## Documents root
 
 ```text
 <documents-root>/
 ├── tasks/
-│   ├── taskHistory.db          # 任务索引（SQLite）
+│   ├── taskHistory.db          # task index (SQLite)
 │   └── <task-id>/
 ├── rules/  workflows/  skills/  subagents/  mcp/  hooks/
-├── settings/mcp_settings.json  # MCP 服务器设置
-└── checkpoints/                # 检查点影子仓库
+├── settings/mcp_settings.json  # MCP server settings
+└── checkpoints/                # checkpoint shadow repositories
 ```
 
-工作区内的能力文件不在这里：规则、工作流、技能、子智能体和钩子分别在项目的 `.agents/rules`、`.agents/workflows`、`.agents/skills`、`.agents/subagents` 和 `.agents/hooks` 下；工作区 MCP 描述文件在 `.agents/mcp/`。
+Workspace capability files are not stored here: rules, workflows, skills, subagents, and hooks live in the project's `.agents/rules`, `.agents/workflows`, `.agents/skills`, `.agents/subagents`, and `.agents/hooks`, and workspace MCP descriptors live in `.agents/mcp/`.
 
-资源目录下保存服务商元数据（`providers/`）、缓存（`cache/`，包括 MCP Marketplace 目录缓存）和 Puppeteer 数据（`puppeteer/`）。
+The resource home holds provider metadata (`providers/`), caches (`cache/`, including the MCP Marketplace catalog cache), and Puppeteer data (`puppeteer/`).
 
-## 单个任务的文件
+## Per-task files
 
-以下文件都在 `<documents-root>/tasks/<task-id>/` 下：
+All of these are under `<documents-root>/tasks/<task-id>/`:
 
-| 文件 | 归属 |
+| File | Owner |
 |---|---|
-| `ui_messages.jsonl` | `UIMessage`，缓冲写入的界面消息 |
-| `api_conversation_history.jsonl` | `ApiConversation`，发送给模型的对话 |
-| `snapshot.json` | `TaskSnapshotPersistence`，用于崩溃恢复的快照 |
-| `context.json`、`context_history.jsonl` | 任务上下文与上下文管理记录 |
-| `settings.json` | 任务级设置覆盖 |
-| `task_metadata.json` | 任务元数据 |
-| `activities.json` | `TaskActivityPersistence`，带 schema 版本的任务活动 |
-| `<task-id>.db` | 每任务 SQLite 容器，保存 API 速率指标和请求/响应执行数据 |
-| `artifacts/` | 任务产物（例如生成的图片），只允许任务相对路径 |
-| `tmp/` | `command-logs/`、`shell-diagnostics/`、`image-previews/`、`image-viewer/` |
+| `ui_messages.jsonl` | `UIMessage`, buffered UI messages |
+| `api_conversation_history.jsonl` | `ApiConversation`, the conversation sent to the model |
+| `snapshot.json` | `TaskSnapshotPersistence`, snapshots used for crash recovery |
+| `context.json`, `context_history.jsonl` | Task context and context-management records |
+| `settings.json` | Task-level setting overrides |
+| `task_metadata.json` | Task metadata |
+| `activities.json` | `TaskActivityPersistence`, schema-versioned task activities |
+| `<task-id>.db` | Per-task SQLite container for API rate metrics and request/response execution data |
+| `artifacts/` | Task artifacts (such as generated images); only task-relative paths are allowed |
+| `tmp/` | `command-logs/`, `shell-diagnostics/`, `image-previews/`, `image-viewer/` |
 
-`tmp/command-logs/` 跨会话保留，因为聊天行和 Activities 视图会链接到这些日志。它按每个任务的总大小预算（默认 200 MiB）从最旧的日志开始清理，不按时间过期。`api_rate_metrics.jsonl` 是旧格式，会带指纹校验地导入每任务数据库。
+`tmp/command-logs/` survives across sessions because chat rows and the Activities view link to those logs. It is bounded by a per-task total size budget (200 MiB by default) that drops the oldest logs first; age alone never deletes a log. `api_rate_metrics.jsonl` is a legacy format that is imported into the per-task database with fingerprint checks.
 
-删除任务必须经过任务删除协调器，由它处理锁、活动的 Controller、面板、`TaskHistory`、数据库文件和检查点。新增任务级文件时，要同时考虑删除和恢复时由谁负责。
+Deleting a task must go through the task deletion coordinator, which handles locks, active Controllers, panels, `TaskHistory`, database files, and checkpoints. When you add a task-owned file, decide who is responsible for it during deletion and recovery.
 
-## 状态归属与一致性
+## State ownership and consistency
 
-| 类别 | 权威来源 | 一致性 |
+| Category | Authority | Consistency |
 |---|---|---|
-| 非设置类全局状态 | `globalState.json` | 批量写入，2 秒防抖，有显式 flush |
-| 全局设置 | `SettingsRepository` 管理的 `settings/settings.json` | 跨进程文件锁；在锁内读取最新版本，写临时文件后原子重命名；监听外部修改 |
-| 工作区设置 | 另一个 `SettingsRepository`，管理 `workspaces/<hash>/settings.json` | 与全局设置相同 |
-| 工作区状态 | `workspaces/<hash>/workspaceState.json` | 批量写入 |
-| 任务设置 | `tasks/<task-id>/settings.json` | 读取、合并后写临时文件再原子重命名 |
-| 会话覆盖 | 仅在 `StateManager` 内存中 | 不持久化 |
-| Profile 目录 | `ProfileCatalogRepository` 管理的 `settings/api_profiles.json` | 在跨进程锁内，把本次按稳定 ID 的修改合并到磁盘上的最新版本 |
-| 任务索引 | `TaskHistory` 管理的 `taskHistory.db` | SQLite WAL；同时监听数据库和 WAL 文件；元数据写入排队 |
+| Non-setting global state | `globalState.json` | Batched writes with a 2-second debounce and an explicit flush |
+| Global settings | `settings/settings.json` through `SettingsRepository` | Cross-process file lock; reads the latest revision inside the lock, writes a temporary file, then renames it atomically; watches for external changes |
+| Workspace settings | A separate `SettingsRepository` for `workspaces/<hash>/settings.json` | Same as global settings |
+| Workspace state | `workspaces/<hash>/workspaceState.json` | Batched writes |
+| Task settings | `tasks/<task-id>/settings.json` | Read, merge, write a temporary file, then rename atomically |
+| Session overrides | `StateManager` memory only | Never persisted |
+| Profile catalog | `settings/api_profiles.json` through `ProfileCatalogRepository` | Merges this change, keyed by stable ID, into the latest version on disk inside a cross-process lock |
+| Task index | `taskHistory.db` through `TaskHistory` | SQLite WAL; watches both the database and the WAL file; queues metadata writes |
 
-`StateManager.flushPendingState()` 会反复刷新，直到没有待写的修改；关闭时先拒绝新的修改，再做最后一次刷新。
+`StateManager.flushPendingState()` keeps flushing until no pending changes remain; at shutdown it rejects new changes before the final flush.
 
 <Aside type="caution">
-`TaskHistory.flush()` 等待已排队的写入结束，但单次写入失败会被记录并吞掉，不会抛出。它不能证明所有元数据写入都已成功。界面消息的普通追加也只写入内存缓冲，需要显式 flush 才会落盘。
+`TaskHistory.flush()` waits for queued writes to settle, but a failed individual write is logged and swallowed rather than rethrown, so it does not prove every metadata write succeeded. Likewise, an ordinary append of a UI message only goes to the in-memory buffer; it reaches disk after an explicit flush.
 </Aside>
 
-## 设置解析顺序
+## Setting resolution order
 
-任务相关的设置按以下顺序解析，先命中者生效：
+Task-aware settings resolve in this order; the first hit wins:
 
-1. 远程配置
-2. 会话覆盖
-3. 任务设置
-4. 全局设置
-5. 迁移期间的旧值回退
-6. 声明的默认值
+1. Remote configuration
+2. Session override
+3. Task setting
+4. Global setting
+5. Legacy fallback during migration
+6. Declared default
 
-`autoApprovalSettings` 是例外：它只读取全局设置，历史任务的快照不会覆盖当前的审批权限。
+`autoApprovalSettings` is an exception: it reads only the global setting, so a historical task snapshot cannot override the current approval permissions.
 
-能力开关（规则、工作流、技能等）使用三层稀疏作用域：全局、工作区、任务，任务层优先级最高。某个资源在某层没有记录表示“继承”，不表示“禁用”。按作用域读写要使用 `getScopedCapabilityToggles()` 和 `mutateScopedCapabilityToggles()`。
+Capability toggles (rules, workflows, skills, and so on) use three sparse scopes: global, workspace, and task, with the task scope strongest. A resource with no entry in a scope means "inherit", not "disabled". Use `getScopedCapabilityToggles()` and `mutateScopedCapabilityToggles()` to read and write a specific scope.
 
-## 迁移边界
+## Migration boundaries
 
-- **从 Cline 迁移**：启动时把旧 Cline 路径下的数据复制到空的 Dline 位置，详见[从 Cline 迁移](/getting-started/migration-cline-to-dline/)。
-- **从 VS Code 存储导出**：`exportVSCodeStorageToSharedFiles()`（`src/hosts/vscode/vscode-to-file-migration.ts`）读取旧的 `ExtensionContext` 全局状态、工作区状态和密钥，写入文件存储。全局和每个工作区分别用 `__vscodeMigrationVersion` 记录版本；文件中已有的值优先。
-- **设置迁移**：`StateManager` 用 `__settingsMigrationVersion` 把受支持的旧全局状态设置迁入设置文件，确认设置文件接管后才清理旧副本。
-- **任务历史**：`taskHistory.db` 不存在时才会导入旧的 `taskHistory.jsonl`。数据库一旦创建，后续启动不会再尝试导入。
-- **消息文件**：只有当前的 JSONL 文件不存在时，才导入旧的 JSON 消息文件。
+- **Migrating from Cline**: at startup, data from legacy Cline paths is copied into empty Dline locations. See [Migrating from Cline](/getting-started/migration-cline-to-dline/).
+- **Exporting VS Code storage**: `exportVSCodeStorageToSharedFiles()` (in `src/hosts/vscode/vscode-to-file-migration.ts`) reads legacy `ExtensionContext` global state, workspace state, and secrets and writes them to file storage. Global state and each workspace record their version separately in `__vscodeMigrationVersion`; values already in files take precedence.
+- **Settings migration**: `StateManager` uses `__settingsMigrationVersion` to move supported legacy global-state settings into the settings file, and removes the legacy copies only after the settings file owns them.
+- **Task history**: the legacy `taskHistory.jsonl` is imported only when `taskHistory.db` does not exist. Once the database has been created, later launches do not attempt the import again.
+- **Message files**: legacy JSON message files are imported only when the current JSONL file does not exist.
 
-## 新增持久化状态
+## Adding persistent state
 
-1. 先确定归属模块、根目录、作用域、一致性要求和清理路径。
-2. 只有真正属于 `StateManager` 管理的全局状态、设置、工作区状态或密钥时，才在 `src/shared/storage/state-keys.ts` 中新增键。
-3. 用户设置通过全局或工作区 `SettingsRepository` 修改；能力开关使用按作用域的 API。
-4. 用户可见的设置要沿 Proto、Controller 和 Webview 走完整个往返，只加到内存状态里的字段不会持久化。
-5. 为缓冲写入定义有限的 flush 和关闭行为，并在任务、Controller、宿主关闭和恢复边界调用。
-6. 测试重启恢复、多窗口并发、过期写入、工作区与任务隔离、迁移重试、损坏或不完整的文件，以及删除清理。
+1. Decide the owner, root, scope, consistency requirement, and cleanup path first.
+2. Add a key to `src/shared/storage/state-keys.ts` only when the value truly belongs to `StateManager`-managed global state, settings, workspace state, or secrets.
+3. Change user settings through the global or workspace `SettingsRepository`; use the scoped APIs for capability toggles.
+4. Carry a user-visible setting through the full Proto, Controller, and Webview round trip; a field added only to in-memory state is not persisted.
+5. Define a finite flush and close behavior for buffered writes, and invoke it at task, Controller, host shutdown, and recovery boundaries.
+6. Test restart recovery, concurrent windows, stale writers, workspace and task isolation, migration retries, malformed or partial files, and cleanup on deletion.

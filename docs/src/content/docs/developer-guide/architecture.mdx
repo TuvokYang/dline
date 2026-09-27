@@ -1,116 +1,116 @@
 ---
-title: 架构概览
-description: Dline VS Code 扩展的仓库结构、激活流程、宿主边界、Webview 通信、Task 运行时、工具、服务商、网络与 MCP 的源码位置。
+title: Architecture Overview
+description: Where the Dline VS Code extension keeps its repository layout, activation flow, host boundary, Webview messaging, task runtime, tools, providers, networking, and MCP.
 ---
 
 import { Aside } from "@astrojs/starlight/components"
 
-Dline 目前以一个 VS Code 扩展发布，内嵌 React Webview。本页按运行时的层次说明主要模块及其源码位置，便于修改前找到真正的入口。
+Dline currently ships as a single VS Code extension with an embedded React Webview. This page walks through the main modules layer by layer and points to their source, so you can find the real entry point before changing anything.
 
-## 仓库结构
+## Repository layout
 
-| 目录 | 内容 |
+| Directory | Contents |
 |---|---|
-| `src/` | 扩展主体：入口、核心逻辑、宿主适配、共享代码和测试 |
-| `webview-ui/` | 独立的 React + Vite Webview 项目 |
-| `proto/` | Protobuf 合同，见 [Protobuf 与 ProtoBus](/developer-guide/protobuf/) |
-| `scripts/` | 代码生成、打包、测试与构建辅助脚本 |
-| `docs/` | 本文档站（独立的 Astro Starlight 项目）和英文更新日志 |
-| `standalone/`、`src/standalone/`、`src/hosts/external/` | 为未来的独立可执行程序保留的代码，当前发布只包含 VS Code 扩展 |
-| `evals/`、`testing-platform/`、`tests/` | 评测框架、测试平台和 Storybook 等附加测试 |
+| `src/` | The extension: entry point, core logic, host adapters, shared code, and tests |
+| `webview-ui/` | A separate React + Vite Webview project |
+| `proto/` | Protobuf contracts; see [Protobuf and ProtoBus](/developer-guide/protobuf/) |
+| `scripts/` | Code generation, packaging, test, and build helpers |
+| `docs/` | This documentation site (a separate Astro Starlight project) and the English changelog |
+| `standalone/`, `src/standalone/`, `src/hosts/external/` | Code kept for a future standalone executable; the current release ships only the VS Code extension |
+| `evals/`, `testing-platform/`, `tests/` | Evaluation framework, testing platform, and extra tests such as Storybook specs |
 
-`src/core` 是源码分组，不是单独部署的产品。
+`src/core` is a source grouping, not a separately deployed product.
 
-## 激活流程
+## Activation flow
 
-`package.json` 的入口是 `dist/extension.js`，源码为 `src/extension.ts` 中的 `activate()`。启动顺序如下：
+The `package.json` entry point is `dist/extension.js`, built from `activate()` in `src/extension.ts`. Startup runs in this order:
 
-1. `setupHostProvider()` 通过 `HostProvider.initialize()` 注册 VS Code 版本的 Webview、diff、review、终端和宿主桥接实现；
-2. 立即创建并注册侧边栏 Webview 提供者，它的 Controller 稍后才创建；
-3. `migrateFromClineWithProgress()` 复制旧的 Cline 数据（见[从 Cline 迁移](/getting-started/migration-cline-to-dline/)），然后清理旧的 VS Code 存储；
-4. `createStorageContext()` 解析存储根目录，`exportVSCodeStorageToSharedFiles()` 把旧的 `ExtensionContext` 状态导出到文件存储；
-5. `initialize()`（`src/common.ts`）初始化 `StateManager` 和 `ModelRegistry`，创建 Controller 并挂到 Webview 提供者上，同时注册为编排器的主 Controller；
-6. 注册编辑器面板的序列化器、测试模式和钩子，最后注册 VS Code 命令。
+1. `setupHostProvider()` registers the VS Code implementations of the Webview, diff, review, terminal, and host bridge through `HostProvider.initialize()`;
+2. the sidebar Webview provider is created and registered right away; its Controller is created later;
+3. `migrateFromClineWithProgress()` copies legacy Cline data (see [Migrating from Cline](/getting-started/migration-cline-to-dline/)), then legacy VS Code storage is cleaned up;
+4. `createStorageContext()` resolves the storage roots, and `exportVSCodeStorageToSharedFiles()` exports legacy `ExtensionContext` state to file storage;
+5. `initialize()` (in `src/common.ts`) initializes `StateManager` and `ModelRegistry`, creates the Controller, attaches it to the Webview provider, and registers it as the orchestrator's main Controller;
+6. the editor panel serializer, test mode, and hooks are registered, followed by the VS Code commands.
 
-## 宿主边界
+## Host boundary
 
-`src/hosts/host-provider.ts` 中的 `HostProvider` 让任务和服务模块不直接依赖编辑器 API。VS Code 实现在 `src/hosts/vscode/`：
+`HostProvider` in `src/hosts/host-provider.ts` keeps task and service modules independent of the editor API. The VS Code implementation lives in `src/hosts/vscode/`:
 
-- 宿主桥接的每个服务方法实现在 `src/hosts/vscode/hostbridge/<service>/` 下，例如 `window/showMessage.ts`；
-- 请求分发在 `src/hosts/vscode/hostbridge-grpc-handler.ts`，它使用生成的服务配置；
-- 终端、diff 和 review 的 VS Code 实现也在这个目录下。
+- each host bridge service method is implemented under `src/hosts/vscode/hostbridge/<service>/`, for example `window/showMessage.ts`;
+- requests are dispatched by `src/hosts/vscode/hostbridge-grpc-handler.ts`, which uses a generated service configuration;
+- the VS Code terminal, diff, and review implementations live in the same directory.
 
-VS Code API 调用应当留在宿主和集成边界内。
+Keep VS Code API calls inside the host and integration boundary.
 
-## Webview 与 Controller
+## Webview and Controller
 
-| 组件 | 源码 | 职责 |
+| Component | Source | Responsibility |
 |---|---|---|
-| `VscodeWebviewProvider` | `src/hosts/vscode/VscodeWebviewProvider.ts` | 绑定 VS Code 侧边栏 |
-| `WebviewProvider` | `src/core/webview/WebviewProvider.ts` | 侧边栏和编辑器面板共用的生命周期 |
-| `WebviewProviderRegistry` | `src/core/webview/WebviewProviderRegistry.ts` | 跟踪侧边栏和额外面板 |
-| `Controller` | `src/core/controller/index.ts` | 协调任务、状态投影、RPC 处理和 Webview 更新 |
-| `OrchestratorController` | `src/core/orchestrator/OrchestratorController.ts` | 管理主 Controller、面板 Controller、Profile 广播和父子任务关系 |
+| `VscodeWebviewProvider` | `src/hosts/vscode/VscodeWebviewProvider.ts` | Binds the VS Code sidebar |
+| `WebviewProvider` | `src/core/webview/WebviewProvider.ts` | Lifecycle shared by the sidebar and editor panels |
+| `WebviewProviderRegistry` | `src/core/webview/WebviewProviderRegistry.ts` | Tracks the sidebar and additional panels |
+| `Controller` | `src/core/controller/index.ts` | Coordinates tasks, state projection, RPC handlers, and Webview updates |
+| `OrchestratorController` | `src/core/orchestrator/OrchestratorController.ts` | Manages the main Controller, panel Controllers, Profile broadcasts, and parent/child tasks |
 
-每个 Webview 提供者拥有一个 Controller。React 端从 `webview-ui/src/main.tsx` 启动并渲染 `App.tsx`；共享的扩展状态通过 `webview-ui/src/context/ExtensionStateContext.tsx` 提供。
+Each Webview provider owns one Controller. The React side boots from `webview-ui/src/main.tsx`, which renders `App.tsx`; shared extension state is provided by `webview-ui/src/context/ExtensionStateContext.tsx`.
 
-扩展与 Webview 之间的 RPC 是经 VS Code `postMessage` 传递的 ProtoBus 请求/响应信封，不是网络 gRPC 连接。
+RPC between the extension and the Webview uses ProtoBus request/response envelopes carried over VS Code `postMessage`, not a network gRPC connection.
 
-## Task 运行时
+## Task runtime
 
-`src/core/task/index.ts` 中的 `Task` 是任务的主协调者，生命周期由以下组件分担：
+`Task` in `src/core/task/index.ts` is the primary task coordinator. Its lifecycle is split across these components:
 
-| 源码 | 职责 |
+| Source | Responsibility |
 |---|---|
-| `runtime/TaskRuntime.ts` | 串行分发任务事件 |
-| `runtime/TaskReducer.ts`、`runtime/TaskEvent.ts`、`TaskPhase.ts` | 定义合法的生命周期转换 |
-| `TaskController.ts` | 协调块阶段、审批归属和保留的展示状态 |
-| `MessageChannel.ts` | 串行投递消息 |
-| `message-state.ts` | 管理 API 与界面消息状态 |
-| `interaction/InteractionCoordinator.ts` | 管理审批、重试、恢复、问答、计划和完成等用户交互 |
-| `TaskSnapshotPersistence.ts` | 合并快照写入，用于崩溃恢复 |
-| `activity/TaskActivityStore.ts` | 管理聊天和 Activities 视图中的任务活动 |
+| `runtime/TaskRuntime.ts` | Dispatches task events serially |
+| `runtime/TaskReducer.ts`, `runtime/TaskEvent.ts`, `TaskPhase.ts` | Define the valid lifecycle transitions |
+| `TaskController.ts` | Coordinates block phases, approval ownership, and retained presentation state |
+| `MessageChannel.ts` | Delivers messages serially |
+| `message-state.ts` | Manages API and UI message state |
+| `interaction/InteractionCoordinator.ts` | Owns user interactions such as approval, retry, resume, Q&A, plan, and completion |
+| `TaskSnapshotPersistence.ts` | Coalesces snapshot writes used for crash recovery |
+| `activity/TaskActivityStore.ts` | Owns the task activities shown in chat and the Activities view |
 
-以上路径都相对于 `src/core/task/`。新的生命周期转换应当表达为事件，经 reducer 校验，再投影到界面并按需持久化；不要在 `TaskRuntime` 旁边另建布尔状态机。
+All paths are relative to `src/core/task/`. Express a new lifecycle transition as an event, validate it in the reducer, then project it to the UI and persist it when needed; do not add a parallel boolean lifecycle next to `TaskRuntime`.
 
-## 工具
+## Tools
 
-| 位置 | 内容 |
+| Location | Contents |
 |---|---|
-| `src/shared/tools.ts` | 内置工具身份，枚举 `ClineDefaultTool` |
-| `src/core/prompts/tools/tool-specs.ts` | 规范工具描述 `STANDARD_TOOL_SPECS` |
-| `src/core/prompts/tools/tool-ids.ts` | 按顺序列出 Standard 与 Lite 注册的工具 ID |
-| `src/core/prompts/tools/provider-projector.ts` | 投影为服务商原生工具 Schema |
-| `src/core/prompts/tools/xml-tool-projector.ts` | 投影为 XML 工具说明 |
-| `src/core/task/tools/handlers/` | 各工具的运行时处理器 |
-| `src/core/task/ToolExecutor.ts`、`src/core/task/tools/ToolExecutorCoordinator.ts` | 工具执行协调 |
+| `src/shared/tools.ts` | Built-in tool identities, enum `ClineDefaultTool` |
+| `src/core/prompts/tools/tool-specs.ts` | Canonical tool descriptors, `STANDARD_TOOL_SPECS` |
+| `src/core/prompts/tools/tool-ids.ts` | Ordered tool IDs registered for Standard and Lite |
+| `src/core/prompts/tools/provider-projector.ts` | Projection to provider-native tool schemas |
+| `src/core/prompts/tools/xml-tool-projector.ts` | Projection to XML tool documentation |
+| `src/core/task/tools/handlers/` | Runtime handler for each tool |
+| `src/core/task/ToolExecutor.ts`, `src/core/task/tools/ToolExecutorCoordinator.ts` | Tool execution coordination |
 
-原生工具和 XML 工具是同一套规范描述的两种投影。提示词与工具的关系见[提示词架构](/developer-guide/prompt-architecture/)，工具块的执行方式见[工具执行域](/developer-guide/task-tool-execution-domain/)。
+Native tools and XML tools are two projections of the same canonical descriptors. See [Prompt Architecture](/developer-guide/prompt-architecture/) for how prompts and tools relate, and [Tool Execution Domain](/developer-guide/task-tool-execution-domain/) for how tool blocks run.
 
-## 服务商与模型
+## Providers and models
 
-- `src/core/api/index.ts` 的 `buildApiHandler()` 取当前模式的 Profile，经 `buildApiHandlerFromProfile()` 调用 `createHandlerForProvider()`，按 `profile.provider` 选择 `src/core/api/providers/` 下的处理器；未知的服务商 ID 会抛出错误。
-- `src/core/model-registry/ModelRegistry.ts` 是运行时模型目录。
-- API 格式 `ApiFormat` 定义在 `proto/dline/models/metadata.proto`。服务商元数据和 API 格式决定原生工具、托管工具、图片、推理和传输能力。
+- `buildApiHandler()` in `src/core/api/index.ts` takes the current mode's Profile and, through `buildApiHandlerFromProfile()`, calls `createHandlerForProvider()`, which picks a handler from `src/core/api/providers/` by `profile.provider`. An unknown provider ID throws.
+- `src/core/model-registry/ModelRegistry.ts` is the runtime model catalog.
+- The API format `ApiFormat` is defined in `proto/dline/models/metadata.proto`. Provider metadata and API format decide native tool, hosted tool, image, reasoning, and transport capabilities.
 
-## 网络
+## Networking
 
-扩展侧代码必须通过 `src/shared/net.ts` 访问网络，不要使用全局 `fetch` 或默认的 Axios 实例：
+Extension-side code must reach the network through `src/shared/net.ts`, not global `fetch` or a default Axios instance:
 
-| 导出 | 用途 |
+| Export | Use |
 |---|---|
-| `fetch` | 普通网络请求 |
-| `providerFetch` | 服务商 API 请求，会计入服务商请求观测 |
-| `getAxiosSettings()` | 为 Axios 请求提供共享的传输设置 |
-| `createOpenAIClient()` | 使用 `providerFetch` 的 OpenAI 兼容 SDK 客户端 |
-| `mockFetchForTesting()` | 测试时在限定范围内替换共享传输 |
+| `fetch` | Ordinary network requests |
+| `providerFetch` | Provider API requests, counted in provider request observation |
+| `getAxiosSettings()` | Shared transport settings for Axios requests |
+| `createOpenAIClient()` | OpenAI-compatible SDK client that uses `providerFetch` |
+| `mockFetchForTesting()` | Replaces the shared transport within a bounded scope in tests |
 
-按 Profile 创建 OpenAI 客户端的 `createOpenAIClientForProfile()` 位于 `src/core/api/providers/openai-client-factory.ts`。Webview 运行在浏览器环境中，可以使用浏览器自带的 `fetch`。
+`createOpenAIClientForProfile()`, which builds an OpenAI client for a Profile, lives in `src/core/api/providers/openai-client-factory.ts`. The Webview runs in a browser environment and may use the browser's own `fetch`.
 
 ## MCP
 
-`src/services/mcp/McpHub.ts` 是多个 Controller 共享、按引用计数管理的实例，支持 `stdio`、`sse` 和 `streamableHttp` 三种传输；OAuth 只用于后两种远程传输。MCP 配置本身不会授予任务审批。
+`src/services/mcp/McpHub.ts` is a reference-counted instance shared by multiple Controllers. It supports the `stdio`, `sse`, and `streamableHttp` transports; OAuth applies only to the two remote transports. MCP configuration never grants task approval by itself.
 
 <Aside>
-仓库的 `.agents/rules/` 目录中有面向贡献者和 AI 助手的更详细约定，修改对应领域前值得先读一遍。
+The repository's `.agents/rules/` directory holds more detailed conventions for contributors and AI assistants. Read the relevant file before changing an area.
 </Aside>

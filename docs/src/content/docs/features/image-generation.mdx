@@ -1,109 +1,109 @@
 ---
-title: 图片生成
-description: 开启 generate_image 工具，为 API Profile 配置图片来源，了解参数、输出位置、限制、审批和常见错误。
+title: Image Generation
+description: Turn on the generate_image tool, configure an image source on an API Profile, and learn the parameters, output location, limits, approval, and common errors.
 ---
 
 import { Aside, Steps } from "@astrojs/starlight/components"
 
-开启图片生成后，Dline 可以在任务中调用 `generate_image` 工具生成或编辑图片。请求通过当前 API Profile 配置的图片来源发出。
+With image generation on, Dline can call the `generate_image` tool during a task to create or edit images. Requests go through the image source configured on the current API Profile.
 
-## 开启与配置
+## Turning it on and configuring it
 
 <Steps>
 
-1. 在 **Settings → Features** 中打开 **Enable Image Generation**（默认关闭），说明为 “Expose the generate_image tool and route calls through the configured image source.”。
+1. Under **Settings → Features**, turn on **Enable Image Generation** (off by default). Its description is "Expose the generate_image tool and route calls through the configured image source."
 
-2. 在 **Settings → API Configuration** 中展开任务使用的 API Profile，设置 **Image source**。
+2. Under **Settings → API Configuration**, expand the API Profile the task uses and set **Image source**.
 
-3. 按所选来源完成模型等设置。
+3. Complete the model and other settings for the source you chose.
 
 </Steps>
 
-**Image source** 的可选项：
+**Image source** options:
 
-| 选项 | 说明 |
+| Option | Description |
 |---|---|
-| **None** | 不使用图片生成 |
-| **GPT Subscription**、**GPT API**、**Hosted** | 通过该 Profile 自身的 OpenAI 类连接生成图片；哪些选项可用取决于 Profile 的服务商和传输方式 |
-| **Independent** | 使用单独配置的图片 Profile，需要选择一个已启用的 **Image profile** 和 **Image model** |
+| **None** | No image generation |
+| **GPT Subscription**, **GPT API**, **Hosted** | Generate images through the Profile's own OpenAI-family connection; which options are available depends on the Profile's provider and transport |
+| **Independent** | Use a separately configured image Profile; you must select an enabled **Image profile** and an **Image model** |
 
-使用 **Independent** 时，在 **Image Generation Profiles** 区域点击 **Add image profile** 创建图片连接：选择 OpenAI 或 Gemini，填写 API Key，可选填写自定义 Base URL，并确保勾选 **Enabled**。指定的图片 Profile 不可用时不会回退到其他连接。
+For **Independent**, create an image connection with **Add image profile** in the **Image Generation Profiles** section: choose OpenAI or Gemini, enter an API key, optionally set a custom base URL, and make sure **Enabled** is checked. If the selected image Profile is unavailable, Dline does not fall back to another connection.
 
-内置的图片模型：
+Built-in image models:
 
-- OpenAI：GPT Image 1、GPT Image 2、GPT Image 2.5（默认）；
-- Gemini：Nano Banana 2（默认）、Nano Banana 2 Lite、Nano Banana Pro、Nano Banana。
+- OpenAI: GPT Image 1, GPT Image 2, GPT Image 2.5 (default);
+- Gemini: Nano Banana 2 (default), Nano Banana 2 Lite, Nano Banana Pro, Nano Banana.
 
-还可以在 Profile 中设置 **Image generation limits**：任务预算、请求超时和并发数。
+You can also set **Image generation limits** on the Profile: a task budget, a request timeout, and concurrency.
 
 <Aside>
-图片生成使用任务当前模式绑定的 API Profile：Act 模式用 Act Profile，Plan 模式用 Plan Profile。只有功能已开启、且当前 Profile 有可用的图片模型时，模型才能看到 `generate_image` 工具。Profile 管理参见[多 Profile 配置](/customization/profiles/)。
+Image generation uses the API Profile bound to the task's current mode: the Act Profile in Act mode and the Plan Profile in Plan mode. The model sees the `generate_image` tool only when the feature is on and the current Profile has an available image model. For managing Profiles, see [Model configuration](/getting-started/authorizing-with-dline/).
 </Aside>
 
-## 工具参数
+## Tool parameters
 
-| 参数 | 说明 |
+| Parameter | Description |
 |---|---|
-| `prompt` | 必填，图片描述 |
-| `count` | 生成数量，默认 1 |
-| `width` / `height` | 成对使用的目标尺寸；默认目标为 2048×1152 |
-| `aspect_ratio` | 宽高比 |
-| `quality` | `auto`（默认）、`low`、`medium`、`high` |
-| `background` | `auto`（默认）、`opaque`、`transparent` |
-| `output_format` | `png`（默认）、`jpeg`、`webp` |
-| `output_compression` | JPEG/WebP 的压缩率，0–100 |
-| `reference_artifact_ids` | 参考图片的 artifact ID 列表；提供参考图时为编辑请求 |
-| `mask_artifact_id` | 编辑时使用的蒙版 |
+| `prompt` | Required; the image description |
+| `count` | Number of images; default 1 |
+| `width` / `height` | Target size, used as a pair; the default target is 2048×1152 |
+| `aspect_ratio` | Aspect ratio |
+| `quality` | `auto` (default), `low`, `medium`, `high` |
+| `background` | `auto` (default), `opaque`, `transparent` |
+| `output_format` | `png` (default), `jpeg`, `webp` |
+| `output_compression` | Compression for JPEG/WebP, 0–100 |
+| `reference_artifact_ids` | Artifact IDs of reference images; providing references makes it an edit request |
+| `mask_artifact_id` | Mask used for edits |
 
-没有输出路径参数。
+There is no output-path parameter.
 
-## 输出位置
+## Output location
 
-生成的图片保存为**任务 artifact**，而不是直接写入工作区：
+Generated images are saved as **task artifacts**, not written straight into the workspace:
 
 ```text
-<documents-root>/tasks/<task-id>/artifacts/images/<sha256>.<扩展名>
+<documents-root>/tasks/<task-id>/artifacts/images/<sha256>.<extension>
 ```
 
-`<documents-root>` 默认是系统“文档”目录下的 `dline`，可用 `DLINE_DOCS_DIR` 覆盖。工具结果包含 artifact ID、绝对路径和元数据。需要把图片放进项目时，可以让 Dline 复制该文件。
+`<documents-root>` defaults to `dline` inside your system Documents folder and can be overridden with `DLINE_DOCS_DIR`. The tool result includes the artifact ID, absolute path, and metadata. To put an image into your project, ask Dline to copy the file.
 
-## 限制
+## Limits
 
-- 每次调用 1–4 张（模型上限更低时以模型为准）；
-- 最多 4 张参考图；
-- 请求尺寸不超过 4096×4096，且总像素不超过 16,777,216；
-- **Hosted** 来源每次只能生成 1 张，且不支持蒙版编辑；
-- 部分模型还有额外的尺寸和比例限制；
-- 单个图片文件最大 25 MiB，每个任务的图片总计最大 250 MiB。
+- 1–4 images per call (or fewer if the model's limit is lower);
+- at most 4 reference images;
+- requested size at most 4096×4096 and at most 16,777,216 pixels in total;
+- the **Hosted** source generates exactly 1 image per call and does not support mask edits;
+- some models add their own size and ratio limits;
+- each image file is at most 25 MiB, and a task's images total at most 250 MiB.
 
-## 审批
+## Approval
 
-自动批准菜单中的 **Generate images** 默认关闭。未开启时，每次生成都会显示 **Approve** / **Reject** 请你确认。参见[自动批准](/features/auto-approve/)。
+**Generate images** in the auto-approve menu is off by default. While it is off, each generation shows **Approve** / **Reject** for you to confirm. See [Auto-approve](/features/auto-approve/).
 
-## 在聊天中查看
+## Following along in the chat
 
-每次生成在聊天中显示为一个可展开的行，状态依次为 **Image generation queued**、**Generating image**、**Image preview**，最终为 **Image generation completed**、**Image generation failed** 或 **Image generation cancelled**。行内显示提示词、模型、错误信息（如有）、生成中的预览和最终图片。
+Each generation appears as an expandable row whose status moves through **Image generation queued**, **Generating image**, and **Image preview**, ending as **Image generation completed**, **Image generation failed**, or **Image generation cancelled**. The row shows the prompt, the model, any error, a preview while generating, and the final images.
 
-- 点击图片可以打开它；
-- **Copy Artifact ID** 复制 artifact ID；
-- **Use as Reference** 把该图片作为后续生成的参考图。
+- Click an image to open it;
+- **Copy Artifact ID** copies the artifact ID;
+- **Use as Reference** uses the image as a reference for later generations.
 
-图片已经保存在任务目录中，因此没有单独的保存按钮。
+Images are already saved in the task folder, so there is no separate save button.
 
-## 其他说明
+## Other notes
 
-- Standard 和 Lite 提示词配置都支持该工具；
-- [Strict Plan Mode](/core-workflows/plan-and-act/) 不会阻止图片生成；
-- 子代理要使用 `generate_image`，必须在工具列表中显式包含它，并指定一个勾选了 **Subagents** 用途的 Profile，不会继承主任务的图片配置。参见[子代理](/features/subagents/)。
+- The tool is available with both the Standard and Lite prompt profiles;
+- [Strict Plan Mode](/core-workflows/plan-and-act/) does not block image generation;
+- for a subagent to use `generate_image`, it must list the tool explicitly and name a Profile with the **Subagents** usage checked; it does not inherit the main task's image configuration. See [Subagents](/features/subagents/).
 
-## 常见错误
+## Common errors
 
-| 错误信息 | 原因 |
+| Message | Cause |
 |---|---|
-| Image generation is disabled in Feature Settings. | 未开启 **Enable Image Generation** |
-| Image generation is disabled for the current API Profile. | 当前 Profile 的 **Image source** 为 **None** |
-| The current API Profile is not configured for image generation. | 当前 Profile 未配置可用的图片来源 |
-| The current API Profile could not be resolved. | 无法解析任务绑定的 Profile |
-| OpenAI image generation was rate limited. / OpenAI image generation request was rejected. | 服务商限流或拒绝请求 |
-| OpenAI hosted image generation failed. / Gemini image generation failed. | 服务商调用失败 |
-| Image generation failed. | 其他意外错误 |
+| Image generation is disabled in Feature Settings. | **Enable Image Generation** is off |
+| Image generation is disabled for the current API Profile. | The current Profile's **Image source** is **None** |
+| The current API Profile is not configured for image generation. | The current Profile has no usable image source |
+| The current API Profile could not be resolved. | The Profile bound to the task cannot be resolved |
+| OpenAI image generation was rate limited. / OpenAI image generation request was rejected. | The provider rate-limited or rejected the request |
+| OpenAI hosted image generation failed. / Gemini image generation failed. | The provider call failed |
+| Image generation failed. | Another unexpected error |

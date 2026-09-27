@@ -1,0 +1,117 @@
+---
+title: 本地运行模型
+description: 通过 Ollama 或 LM Studio 在本机运行模型，并在 Dline 中完成配置。
+---
+
+import { Aside, Steps, TabItem, Tabs } from "@astrojs/starlight/components"
+
+Dline 可以连接运行在你自己机器上的模型。本地模型不需要 API Key，请求数据也不会离开本机。
+
+## 快速开始
+
+<Steps>
+
+1. 安装本地运行时（**Ollama** 或 **LM Studio**）。
+
+2. 启动运行时的本地服务。
+
+3. 打开 Dline 设置，在 **Provider** 中选择对应的服务商。
+
+4. 在 **Model** 中选择本地模型。
+
+5. 如果模型的上下文窗口较小，勾选 **Use compact prompt**。
+
+</Steps>
+
+## 硬件要求
+
+| 内存 | 典型的本地配置 |
+| --- | --- |
+| 16–32 GB | 小型或量化模型 |
+| 32–64 GB | 中等规模的编程模型 |
+| 64 GB 以上 | 更大的模型和更长的上下文窗口 |
+
+<span id="runtime-options"></span>
+
+## 运行时选项
+
+<Tabs>
+<TabItem label="Ollama">
+
+### 1. 安装
+
+从 [ollama.com](https://ollama.com) 下载并安装适合你操作系统的版本。
+
+### 2. 查找模型
+
+- 在 [Ollama 模型库](https://ollama.com/search) 中浏览模型。
+- 可以按热度、模型大小和更新时间筛选。
+- 打开模型页面，复制其中的 `ollama pull` 命令。
+
+### 3. 拉取并运行模型
+
+```bash
+ollama pull <model-name>
+ollama run <model-name>
+```
+
+### 4. 配置 Dline
+
+1. 打开 Dline 设置。
+2. **Provider** 选择 **Ollama**。
+3. 默认连接 `http://localhost:11434`；如需连接其他地址，勾选 **Use custom base URL** 并填写地址，需要认证的实例可以再填写可选的 API Key。
+4. 在 **Model** 中搜索并选择模型。
+5. 按模型实际能力填写 **Model Context Window**（默认 `32768`）。
+
+### 5. 故障排查
+
+- 发送消息前确认 Ollama 正在运行。
+- 连接失败时，检查 `http://localhost:11434` 是否可以访问。
+- 模型列表中没有目标模型时，先运行 `ollama pull <model-name>`。
+
+</TabItem>
+<TabItem label="LM Studio">
+
+### 1. 安装
+
+从 [lmstudio.ai](https://lmstudio.ai) 下载、安装并启动应用。
+
+### 2. 查找模型
+
+- 在 [LM Studio 模型库](https://lmstudio.ai/models) 中浏览模型。
+- 可以按模型系列、大小和能力筛选。
+- 选择与你的硬件相匹配的模型。
+
+### 3. 下载模型
+
+打开 **Discover** 页面并下载模型。
+
+### 4. 启动服务
+
+打开 **Developer** 页面并启动服务，默认地址为 `http://localhost:1234`。
+
+### 5. 配置 Dline
+
+1. 打开 Dline 设置。
+2. **Provider** 选择 **LM Studio**。
+3. 使用默认地址 `http://localhost:1234`；服务监听其他地址时，在 **Base URL** 中填写。
+4. 在 **Model** 中选择模型；无法获取模型列表时，可以手动输入模型 ID。
+
+### 6. 故障排查
+
+- 确认 LM Studio 服务正在运行。
+- 确认已经加载模型。
+- 连接失败时，检查 `http://localhost:1234` 是否可以访问。
+
+</TabItem>
+</Tabs>
+
+## 本地推理的推荐设置
+
+- 上下文窗口较小的模型（例如 8K 或更小）可以勾选 Ollama 或 LM Studio 设置中的 **Use compact prompt**。
+- 保持任务聚焦：上下文越小，响应越快。
+- 上下文过大时开始一个新任务。
+
+<Aside>
+**Use compact prompt** 只对本地模型服务商生效，启用后不支持 MCP 和 Focus Chain。上下文窗口低于 64K tokens 的模型会自动使用 Lite 提示词配置，设置页会显示 **Lite prompt profile** 提示。
+</Aside>

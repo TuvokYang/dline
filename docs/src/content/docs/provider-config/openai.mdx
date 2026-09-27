@@ -1,87 +1,85 @@
 ---
-title: OpenAI / ChatGPT 订阅
-description: 使用 OpenAI API Key 或 ChatGPT 订阅登录，在 Dline 中调用 OpenAI 模型。
+title: OpenAI / ChatGPT subscription
+description: Use an OpenAI API key or sign in with a ChatGPT subscription to run OpenAI models in Dline.
 ---
 
 import { Aside, Steps } from "@astrojs/starlight/components"
 
-**官网：** [openai.com](https://openai.com/)
+**Website:** [openai.com](https://openai.com/)
 
-Dline 提供两种使用 OpenAI 模型的方式：
+Dline offers two ways to use OpenAI models:
 
-- **OpenAI**：使用 OpenAI API Key，按 token 计费。
-- **ChatGPT Subscription**：使用 ChatGPT 订阅账号登录，无需管理 API Key。
+- **OpenAI**: use an OpenAI API key, billed per token.
+- **ChatGPT Subscription**: sign in with a ChatGPT subscription account, with no API key to manage.
 
-## OpenAI API Key
+## OpenAI API key
 
-### 获取 API Key
-
-<Steps>
-
-1. 访问 [OpenAI Platform](https://platform.openai.com/)，注册或登录账号。
-
-2. 打开 [API keys](https://platform.openai.com/api-keys) 页面。
-
-3. 点击 **Create new secret key**，为 Key 起一个便于识别的名称，例如 `Dline`。
-
-4. 立即复制并妥善保存 Key，OpenAI 不会再次显示它。
-
-</Steps>
-
-### 在 Dline 中配置
-
-通用步骤见[授权与模型配置](/getting-started/authorizing-with-dline/)。
+### Get an API key
 
 <Steps>
 
-1. 点击 Dline 面板标题栏的 **Settings** 按钮。
+1. Go to the [OpenAI Platform](https://platform.openai.com/) and sign up or sign in.
 
-2. 在 **Provider** 中选择 **OpenAI**。
+2. Open the [API keys](https://platform.openai.com/api-keys) page.
 
-3. 把 Key 粘贴到 **OpenAI API Key** 输入框。
+3. Click **Create new secret key** and give the key a recognizable name, such as `Dline`.
 
-4. 在 **Model** 中搜索或选择模型。
+4. Copy the key immediately and store it securely. OpenAI will not show it again.
 
 </Steps>
 
-同一个 **OpenAI** 服务商也可以连接 Azure OpenAI 和其他兼容 OpenAI API 的服务，见 [OpenAI 兼容服务](/provider-config/openai-compatible/)。
+### Configure Dline
 
-<span id="chatgpt-subscription"></span>
-
-## ChatGPT 订阅
+See [Model configuration](/getting-started/authorizing-with-dline/) for the general flow.
 
 <Steps>
 
-1. 打开 Dline 设置，在 **Provider** 中选择 **ChatGPT Subscription**。
+1. Click the **Settings** button in the Dline panel title bar.
 
-2. 点击 **Sign in**。Dline 会打开 **Sign in to ChatGPT** 对话框并启动系统浏览器。
+2. Set **Provider** to **OpenAI**.
 
-3. 在浏览器中完成授权。浏览器自动回到 Dline 后，对话框关闭，状态显示 **Signed in**。
+3. Paste the key into the **OpenAI API Key** field.
 
-4. 在 **Model** 中选择模型。可用模型取决于你的 ChatGPT 套餐。
+4. Search for or select a model under **Model**.
 
 </Steps>
 
-### 浏览器无法自动返回时
+The same **OpenAI** provider also connects to Azure OpenAI and other OpenAI-compatible services. See [OpenAI-compatible services](/provider-config/openai-compatible/).
 
-1. 保持 **Sign in to ChatGPT** 对话框打开，不要取消。
-2. 从浏览器地址栏复制授权完成后的**完整回调 URL**。
-3. 粘贴到对话框中的 **Full callback URL** 输入框，然后点击 **Finish sign-in**。
+## ChatGPT subscription
 
-浏览器没有自动打开时，可以复制对话框中的登录 URL，手动粘贴到浏览器。登录超时后点击 **Try again** 重新开始。
+<Steps>
 
-### 导入已有凭据
+1. Open Dline settings and set **Provider** to **ChatGPT Subscription**.
 
-正常登录无法完成时，可以在对话框中展开 **Advanced: import OAuth credential JSON**，粘贴完整的 OAuth 凭据 JSON，然后点击 **Import credential**。凭据会写入该 Profile 自己的密钥文件。
+2. Click **Sign in**. Dline opens the **Sign in to ChatGPT** dialog and launches your system browser.
 
-### 多个 Profile
+3. Authorize in the browser. When the browser returns to Dline automatically, the dialog closes and the status shows **Signed in**.
 
-每个 API Profile 独立保存自己的 ChatGPT 凭据。一个 Profile 登录、退出或删除，不会影响其他 Profile；需要使用多个 Profile 时，分别为每个 Profile 登录一次。
+4. Select a model under **Model**. The available models depend on your ChatGPT plan.
+
+</Steps>
+
+### When the browser cannot return automatically
+
+1. Keep the **Sign in to ChatGPT** dialog open. Do not cancel it.
+2. Copy the **full callback URL** from the browser address bar after authorization completes.
+3. Paste it into the **Full callback URL** field in the dialog, then click **Finish sign-in**.
+
+If the browser does not open automatically, copy the sign-in URL from the dialog and paste it into a browser yourself. If the sign-in times out, click **Try again** to start over.
+
+### Import an existing credential
+
+If the normal sign-in cannot complete, expand **Advanced: import OAuth credential JSON** in the dialog, paste the full OAuth credential JSON, and click **Import credential**. The credential is written to that profile's own secret file.
+
+### Multiple profiles
+
+Each API profile stores its own ChatGPT credential. Signing in, signing out, or deleting one profile never affects another. To use several profiles, sign in once for each of them.
 
 <Aside type="caution">
-不要把 Dline 数据目录下的 `secrets/` 文件提交到版本控制、附到工单或发送给他人。更换账号时请使用 **Sign in again**，不要手动编辑凭据文件。
+Never commit the `secrets/` files in the Dline data directory to version control, attach them to tickets, or send them to others. To switch accounts, use **Sign in again** instead of editing credential files by hand.
 </Aside>
 
-## 提示
+## Tips
 
-- **价格：** 各模型的费用见 [OpenAI 定价页](https://openai.com/pricing)。
+- **Pricing:** See the [OpenAI pricing page](https://openai.com/pricing) for per-model costs.

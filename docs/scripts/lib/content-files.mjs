@@ -34,7 +34,7 @@ export function toPageIdentity(relativePath) {
 }
 
 /**
- * Site path of a page without the deployment base, e.g. "/en/usage/ide/".
+ * Site path of a page without the deployment base, e.g. "/zh-cn/usage/ide/".
  * @param {PageIdentity} page
  * @returns {string}
  */

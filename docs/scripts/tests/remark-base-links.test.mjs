@@ -18,7 +18,7 @@ describe("toPrefix", () => {
 describe("withBase", () => {
 	it("prefixes root-relative page and asset URLs", () => {
 		assert.equal(withBase("/getting-started/", "/dline"), "/dline/getting-started/")
-		assert.equal(withBase("/en/", "/dline"), "/dline/en/")
+		assert.equal(withBase("/zh-cn/", "/dline"), "/dline/zh-cn/")
 		assert.equal(withBase("/images/logo.png", "/dline"), "/dline/images/logo.png")
 	})
 
@@ -56,7 +56,11 @@ describe("remarkBaseLinks", () => {
 				attributes: [
 					{ type: "mdxJsxAttribute", name: "href", value: "/card/" },
 					{ type: "mdxJsxAttribute", name: "title", value: "/not-a-link/" },
-					{ type: "mdxJsxAttribute", name: "link", value: { type: "mdxJsxAttributeValueExpression", value: "'/expr/'" } },
+					{
+						type: "mdxJsxAttribute",
+						name: "link",
+						value: { type: "mdxJsxAttributeValueExpression", value: "'/expr/'" },
+					},
 				],
 				children: [],
 			},

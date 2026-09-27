@@ -1,117 +1,115 @@
 ---
-title: 本地运行模型
-description: 通过 Ollama 或 LM Studio 在本机运行模型，并在 Dline 中完成配置。
+title: Running models locally
+description: Run models on your own machine with Ollama or LM Studio and connect them to Dline.
 ---
 
 import { Aside, Steps, TabItem, Tabs } from "@astrojs/starlight/components"
 
-Dline 可以连接运行在你自己机器上的模型。本地模型不需要 API Key，请求数据也不会离开本机。
+Dline can connect to models that run on your own machine. Local models need no API key, and request data never leaves your computer.
 
-## 快速开始
+## Quick start
 
 <Steps>
 
-1. 安装本地运行时（**Ollama** 或 **LM Studio**）。
+1. Install a local runtime (**Ollama** or **LM Studio**).
 
-2. 启动运行时的本地服务。
+2. Start the runtime's local server.
 
-3. 打开 Dline 设置，在 **Provider** 中选择对应的服务商。
+3. Open Dline settings and choose the matching provider under **Provider**.
 
-4. 在 **Model** 中选择本地模型。
+4. Select a local model under **Model**.
 
-5. 如果模型的上下文窗口较小，勾选 **Use compact prompt**。
+5. If the model has a small context window, check **Use compact prompt**.
 
 </Steps>
 
-## 硬件要求
+## Hardware requirements
 
-| 内存 | 典型的本地配置 |
+| Memory | Typical local setup |
 | --- | --- |
-| 16–32 GB | 小型或量化模型 |
-| 32–64 GB | 中等规模的编程模型 |
-| 64 GB 以上 | 更大的模型和更长的上下文窗口 |
+| 16–32 GB | Small or quantized models |
+| 32–64 GB | Mid-size coding models |
+| 64 GB or more | Larger models and longer context windows |
 
-<span id="runtime-options"></span>
-
-## 运行时选项
+## Runtime options
 
 <Tabs>
 <TabItem label="Ollama">
 
-### 1. 安装
+### 1. Install
 
-从 [ollama.com](https://ollama.com) 下载并安装适合你操作系统的版本。
+Download Ollama from [ollama.com](https://ollama.com) and install the build for your operating system.
 
-### 2. 查找模型
+### 2. Find a model
 
-- 在 [Ollama 模型库](https://ollama.com/search) 中浏览模型。
-- 可以按热度、模型大小和更新时间筛选。
-- 打开模型页面，复制其中的 `ollama pull` 命令。
+- Browse the [Ollama model library](https://ollama.com/search).
+- Filter by popularity, model size, and last update.
+- Open a model page and copy its `ollama pull` command.
 
-### 3. 拉取并运行模型
+### 3. Pull and run the model
 
 ```bash
 ollama pull <model-name>
 ollama run <model-name>
 ```
 
-### 4. 配置 Dline
+### 4. Configure Dline
 
-1. 打开 Dline 设置。
-2. **Provider** 选择 **Ollama**。
-3. 默认连接 `http://localhost:11434`；如需连接其他地址，勾选 **Use custom base URL** 并填写地址，需要认证的实例可以再填写可选的 API Key。
-4. 在 **Model** 中搜索并选择模型。
-5. 按模型实际能力填写 **Model Context Window**（默认 `32768`）。
+1. Open Dline settings.
+2. Set **Provider** to **Ollama**.
+3. Dline connects to `http://localhost:11434` by default. To use another address, check **Use custom base URL** and enter it; authenticated instances also accept an optional API key.
+4. Search for and select the model under **Model**.
+5. Set **Model Context Window** to the model's real capacity (default `32768`).
 
-### 5. 故障排查
+### 5. Troubleshooting
 
-- 发送消息前确认 Ollama 正在运行。
-- 连接失败时，检查 `http://localhost:11434` 是否可以访问。
-- 模型列表中没有目标模型时，先运行 `ollama pull <model-name>`。
+- Make sure Ollama is running before you send a message.
+- If the connection fails, check that `http://localhost:11434` is reachable.
+- If the model is missing from the list, run `ollama pull <model-name>` first.
 
 </TabItem>
 <TabItem label="LM Studio">
 
-### 1. 安装
+### 1. Install
 
-从 [lmstudio.ai](https://lmstudio.ai) 下载、安装并启动应用。
+Download LM Studio from [lmstudio.ai](https://lmstudio.ai), install it, and launch the app.
 
-### 2. 查找模型
+### 2. Find a model
 
-- 在 [LM Studio 模型库](https://lmstudio.ai/models) 中浏览模型。
-- 可以按模型系列、大小和能力筛选。
-- 选择与你的硬件相匹配的模型。
+- Browse the [LM Studio model catalog](https://lmstudio.ai/models).
+- Filter by model family, size, and capabilities.
+- Pick a model that fits your hardware.
 
-### 3. 下载模型
+### 3. Download the model
 
-打开 **Discover** 页面并下载模型。
+Open the **Discover** page and download a model.
 
-### 4. 启动服务
+### 4. Start the server
 
-打开 **Developer** 页面并启动服务，默认地址为 `http://localhost:1234`。
+Open the **Developer** page and start the server. The default address is `http://localhost:1234`.
 
-### 5. 配置 Dline
+### 5. Configure Dline
 
-1. 打开 Dline 设置。
-2. **Provider** 选择 **LM Studio**。
-3. 使用默认地址 `http://localhost:1234`；服务监听其他地址时，在 **Base URL** 中填写。
-4. 在 **Model** 中选择模型；无法获取模型列表时，可以手动输入模型 ID。
+1. Open Dline settings.
+2. Set **Provider** to **LM Studio**.
+3. Keep the default `http://localhost:1234`, or enter the server's address under **Base URL**.
+4. Select the model under **Model**. If the model list cannot be fetched, type the model ID manually.
 
-### 6. 故障排查
+### 6. Troubleshooting
 
-- 确认 LM Studio 服务正在运行。
-- 确认已经加载模型。
-- 连接失败时，检查 `http://localhost:1234` 是否可以访问。
+- Make sure the LM Studio server is running.
+- Make sure a model is loaded.
+- If the connection fails, check that `http://localhost:1234` is reachable.
 
 </TabItem>
 </Tabs>
 
-## 本地推理的推荐设置
+## Recommended settings for local inference
 
-- 上下文窗口较小的模型（例如 8K 或更小）可以勾选 Ollama 或 LM Studio 设置中的 **Use compact prompt**。
-- 保持任务聚焦：上下文越小，响应越快。
-- 上下文过大时开始一个新任务。
+- For models with a small context window (for example 8K or less), check **Use compact prompt** in the Ollama or LM Studio settings.
+- Keep tasks focused: a smaller context produces faster responses.
+- Start a new task when the context grows too large.
 
 <Aside>
-**Use compact prompt** 只对本地模型服务商生效，启用后不支持 MCP 和 Focus Chain。上下文窗口低于 64K tokens 的模型会自动使用 Lite 提示词配置，设置页会显示 **Lite prompt profile** 提示。
+**Use compact prompt** only applies to local model providers, and it disables MCP and Focus Chain. Models with a context window below 64K tokens use the Lite prompt profile automatically, and the settings page shows a **Lite prompt profile** notice.
 </Aside>

@@ -1,29 +1,29 @@
 ---
-title: Amazon Bedrock：API Key
-description: 使用 Bedrock API Key 以最简单的方式在 Dline 中接入 Amazon Bedrock 模型。
+title: "Amazon Bedrock: API key"
+description: Connect Dline to Amazon Bedrock models the simplest way, with a Bedrock API key.
 ---
 
 import { Aside, Steps } from "@astrojs/starlight/components"
 
-[Amazon Bedrock](https://docs.aws.amazon.com/bedrock/latest/userguide/what-is-bedrock.html) 是 AWS 提供的全托管服务，可以通过 AWS 调用 Anthropic Claude、Amazon Nova 等主流生成式模型。本页适合希望用 Bedrock API Key 快速接入的个人开发者。
+[Amazon Bedrock](https://docs.aws.amazon.com/bedrock/latest/userguide/what-is-bedrock.html) is a fully managed AWS service that gives you access to leading generative models such as Anthropic Claude and Amazon Nova. This page is for individual developers who want a quick setup with a Bedrock API key.
 
-其他认证方式见 [IAM 凭证](/provider-config/aws-bedrock/iam-credentials/)和 [AWS CLI Profile](/provider-config/aws-bedrock/cli-profile/)。
+For other authentication methods, see [IAM credentials](/provider-config/aws-bedrock/iam-credentials/) and [AWS CLI profile](/provider-config/aws-bedrock/cli-profile/).
 
-## 第 1 步：创建 Bedrock API Key
+## Step 1: Create a Bedrock API key
 
-详细说明见 [AWS 文档](https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys.html)。
+See the [AWS documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys.html) for details.
 
 <Steps>
 
-1. 登录 [AWS 管理控制台](https://aws.amazon.com/console/)。
+1. Sign in to the [AWS Management Console](https://aws.amazon.com/console/).
 
-2. 打开 [Bedrock 控制台](https://console.aws.amazon.com/bedrock)，创建一个长期有效的 API Key。该 Key 默认附带 [`AmazonBedrockLimitedAccess`](https://docs.aws.amazon.com/bedrock/latest/userguide/security-iam.html) IAM 策略。
+2. Open the [Bedrock console](https://console.aws.amazon.com/bedrock) and create a long-lived API key. By default the key carries the [`AmazonBedrockLimitedAccess`](https://docs.aws.amazon.com/bedrock/latest/userguide/security-iam.html) IAM policy.
 
 </Steps>
 
-### 可选：使用最小权限策略
+### Optional: use a least-privilege policy
 
-`AmazonBedrockLimitedAccess` 权限较宽。如果希望遵循最小权限原则，Dline 调用模型只需要以下权限：
+`AmazonBedrockLimitedAccess` is broad. To follow the principle of least privilege, Dline only needs these permissions to invoke models:
 
 - `bedrock:InvokeModel`
 - `bedrock:InvokeModelWithResponseStream`
@@ -31,63 +31,63 @@ import { Aside, Steps } from "@astrojs/starlight/components"
 
 <Steps>
 
-1. 在 AWS IAM 控制台中新建策略。
+1. Create a new policy in the AWS IAM console.
 
-2. 在 JSON 编辑器中填入以下策略：
+2. Paste this policy into the JSON editor:
 
    ```json
    {
-   	"Version": "2012-10-17",
-   	"Statement": [
-   		{
-   			"Effect": "Allow",
-   			"Action": ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream", "bedrock:CallWithBearerToken"],
-   			"Resource": "*"
-   		}
-   	]
+     "Version": "2012-10-17",
+     "Statement": [
+       {
+         "Effect": "Allow",
+         "Action": ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream", "bedrock:CallWithBearerToken"],
+         "Resource": "*"
+       }
+     ]
    }
    ```
 
-   为了更安全，可以把 `Resource` 限定为具体的模型 ARN。
+   For better security, scope `Resource` to specific model ARNs.
 
-3. 为策略命名（例如 `DlineBedrockInvokeAccess`），并附加到 API Key 对应的 IAM 用户上。IAM 用户名与 API Key 使用相同的前缀。
+3. Name the policy (for example `DlineBedrockInvokeAccess`) and attach it to the IAM user behind the API key. The IAM user name and the API key share the same prefix.
 
 </Steps>
 
 <Aside>
-- **模型列表：** 以上最小权限足以调用模型。如果希望 Dline 动态列出可用的 Bedrock 模型，可能还需要 `bedrock:ListFoundationModels` 等权限。
-- **第三方模型：** `AmazonBedrockLimitedAccess` 已包含通过 AWS Marketplace 订阅第三方模型的权限，无需额外开通。Anthropic 模型仍需在控制台提交首次使用（FTU）表单。如果 Dline 提示 `Model use case details have not been submitted for this account`，请打开 [Bedrock Playground](https://console.aws.amazon.com/bedrock/home?#/text-generation-playground)，选择任意 Anthropic 模型并填写表单（可能需要先发送一条提示）。
+- **Model listing:** The minimal permissions are enough to invoke models. If you want Dline to list available Bedrock models dynamically, you may also need permissions such as `bedrock:ListFoundationModels`.
+- **Third-party models:** `AmazonBedrockLimitedAccess` already includes the permissions to subscribe to third-party models through AWS Marketplace, so nothing else needs to be enabled. Anthropic models still require a First Time Use (FTU) form in the console. If Dline reports `Model use case details have not been submitted for this account`, open the [Bedrock Playground](https://console.aws.amazon.com/bedrock/home?#/text-generation-playground), pick any Anthropic model, and fill in the form (you may need to send a prompt first).
 </Aside>
 
-## 第 2 步：确认区域
+## Step 2: Confirm the region
 
-- Bedrock 在多个区域可用，请根据延迟和合规要求选择区域，参见 [AWS 全球基础设施](https://aws.amazon.com/about-aws/global-infrastructure/regions_az/)。
-- 部分模型只能通过[推理配置文件](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-support.html)调用。遇到这种情况时，在 Dline 中勾选 **Use cross-region inference**。
+- Bedrock is available in many regions. Choose one that meets your latency and compliance needs; see [AWS Global Infrastructure](https://aws.amazon.com/about-aws/global-infrastructure/regions_az/).
+- Some models are only reachable through an [inference profile](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-support.html). In that case, check **Use cross-region inference** in Dline.
 
-## 第 3 步：配置 Dline
+## Step 3: Configure Dline
 
-尚未安装 Dline 时，先参阅[安装 Dline](/getting-started/installing-dline/)。
+If Dline is not installed yet, see [Installing Dline](/getting-started/installing-dline/) first.
 
 <Steps>
 
-1. 点击 Dline 面板标题栏的 **Settings** 按钮。
+1. Click the **Settings** button in the Dline panel title bar.
 
-2. 在 **Provider** 中选择 **Amazon Bedrock**。
+2. Set **Provider** to **Amazon Bedrock**.
 
-3. 认证方式选择 **API Key**，把 Key 粘贴到 **AWS Bedrock Api Key** 输入框。
+3. Choose **API Key** as the authentication method and paste the key into the **AWS Bedrock Api Key** field.
 
-4. 在 **AWS Region** 中选择或输入区域，例如 `us-east-1`。
+4. Select or type a region under **AWS Region**, for example `us-east-1`.
 
-5. 在 **Model** 中选择模型；列表中没有目标模型时选择 **Custom** 并输入模型 ID。
+5. Select a model under **Model**. If the model is not listed, choose **Custom** and enter the model ID.
 
-6. 发送一条简单的提示测试连接，例如“写一个判断质数的 Python 函数”。
+6. Send a simple prompt to test the connection, for example "Write a Python function that checks whether a number is prime."
 
 </Steps>
 
-## 第 4 步：安全与运维建议
+## Step 4: Security and operations
 
-- **访问安全：** 尽量使用 AWS SSO 或联合身份角色，而不是长期有效的 API Key，参见 [IAM 最佳实践](https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html)。
-- **网络安全：** 可以配置 [AWS PrivateLink](https://docs.aws.amazon.com/vpc/latest/userguide/endpoint-services-overview.html)，并在 Dline 中勾选 **Use custom VPC endpoint** 填写终端节点地址。
-- **监控：** 启用 CloudTrail 记录 Bedrock API 调用，使用 CloudWatch 监控调用次数、延迟和 token 用量，并为异常活动设置告警。
-- **成本：** 使用 AWS Cost Explorer 并设置账单告警，参见 [AWS 成本管理](https://docs.aws.amazon.com/cost-management/latest/userguide/what-is-aws-cost-management.html)。
-- **审计：** 定期检查 IAM 角色和 CloudTrail 日志，遵循组织内部的数据隐私与治理策略。
+- **Access:** Prefer AWS SSO or federated roles over long-lived API keys; see [IAM best practices](https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html).
+- **Network:** Consider [AWS PrivateLink](https://docs.aws.amazon.com/vpc/latest/userguide/endpoint-services-overview.html), then check **Use custom VPC endpoint** in Dline and enter the endpoint address.
+- **Monitoring:** Enable CloudTrail to log Bedrock API calls, use CloudWatch to track invocation count, latency, and token usage, and set alerts for abnormal activity.
+- **Cost:** Use AWS Cost Explorer and set billing alerts; see [AWS Cost Management](https://docs.aws.amazon.com/cost-management/latest/userguide/what-is-aws-cost-management.html).
+- **Audits:** Review IAM roles and CloudTrail logs regularly and follow your organization's data privacy and governance policies.

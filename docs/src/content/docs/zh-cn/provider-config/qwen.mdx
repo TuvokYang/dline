@@ -1,0 +1,46 @@
+---
+title: Alibaba Qwen
+description: 获取阿里云百炼 API Key，并在 Dline 中配置通义千问模型。
+---
+
+import { Steps } from "@astrojs/starlight/components"
+
+**官网：** [bailian.console.aliyun.com](https://bailian.console.aliyun.com/)
+
+## 获取 API Key
+
+<Steps>
+
+1. 访问[阿里云百炼控制台](https://bailian.console.aliyun.com/)，注册或登录账号。
+
+2. 进入 API Key 管理页面。
+
+3. 为你的应用创建新的 API Key。
+
+4. 立即复制并妥善保存 Key。
+
+</Steps>
+
+## 在 Dline 中配置
+
+通用步骤见[模型配置](/zh-cn/getting-started/authorizing-with-dline/)。
+
+<Steps>
+
+1. 点击 Dline 面板标题栏的 **Settings** 按钮。
+
+2. 在 **Provider** 中选择 **Alibaba Qwen**。
+
+3. 在 **Alibaba API Line** 中根据所在地区选择 **International API** 或 **China API**。
+
+4. 把 Key 粘贴到 **Qwen API Key** 输入框。
+
+5. 在 **Model** 中选择模型。
+
+</Steps>
+
+## 提示
+
+- **视觉：** VL（Vision-Language）模型支持图片输入。
+- **思考：** Qwen3 系列等支持思考的模型会显示思考预算滑块。
+- **价格：** 最新价格见[阿里云百炼控制台](https://bailian.console.aliyun.com/)。

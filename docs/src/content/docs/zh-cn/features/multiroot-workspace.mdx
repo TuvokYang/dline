@@ -1,0 +1,53 @@
+---
+title: 多根工作区
+description: 在包含多个文件夹的 VS Code 工作区中使用 Dline：主根目录、路径解析、@ 引用方式，以及规则、Git 和检查点的限制。
+---
+
+import { Aside } from "@astrojs/starlight/components"
+
+VS Code 允许一个工作区包含多个文件夹（多根工作区）。Dline 默认支持多根工作区，不需要额外开启。
+
+## Dline 如何识别各个根目录
+
+- 每个工作区文件夹是一个根目录，**第一个文件夹是主根目录**（primary）。
+- 根目录的名称取自文件夹名（路径的最后一段），不读取 `.code-workspace` 中设置的别名。
+- 对每个根目录，Dline 会记录它的绝对路径、是否是 Git 仓库以及当前提交。
+- 这些根目录的名称、路径和版本控制类型会提供给模型，同时说明主根目录。
+
+<Aside type="caution">
+如果两个根目录的文件夹名相同，Dline 不会自动区分它们；按名称查找时会使用第一个匹配。建议让各个根目录的文件夹名互不相同。
+</Aside>
+
+## 路径与工具
+
+| 操作 | 未指定根目录时 |
+|---|---|
+| 读取、写入文件 | 在主根目录中解析路径 |
+| 搜索文件（`search_files`） | 在所有根目录中搜索 |
+| 执行命令 | 在主根目录中执行；Dline 可以把工作目录指定为其他根目录 |
+
+模型可以在路径中带上根目录名来指定位置。如果指定的根目录名不存在，文件工具会回退到主根目录。
+
+在提示词中说明要操作的项目（例如“在 frontend 中修改…”）有助于 Dline 选择正确的根目录，但这取决于模型的理解。
+
+## 在聊天中引用文件
+
+- `@frontend:/src/App.tsx`：只在名为 `frontend` 的根目录中查找；
+- `@/src/App.tsx`：在所有根目录中查找，可能返回多个根目录下的同名文件。
+
+注意，指定根目录时，冒号后面要以 `/` 开头。指定的根目录不存在时会提示 `Workspace '<name>' not found`；所有根目录都找不到文件时会提示 `File not found in any workspace. Searched: …`。
+
+## 限制
+
+| 功能 | 在多根工作区中的行为 |
+|---|---|
+| 工作区规则与技能 | 只从**第一个**工作区文件夹的 `.agents/rules/`、技能目录等位置加载，不会分别读取每个根目录 |
+| 全局规则 | 照常从 `<documents-root>/rules/` 加载 |
+| `@git-changes` 与提交引用 | 只针对主根目录 |
+| [检查点](/zh-cn/core-workflows/checkpoints/) | 不可用。任务顶部显示 “Checkpoints are not currently supported in multi-root workspaces.”，并提供 **Retry Checkpoints** 和 **Disable Checkpoints** |
+
+如果需要检查点，请为单个项目文件夹打开一个新的 VS Code 窗口，在其中开始新任务。
+
+## 初始化失败
+
+如果多根工作区初始化失败，Dline 会提示 “Failed to initialize workspace. Using single folder mode.”，并按单文件夹工作区继续运行。

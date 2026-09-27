@@ -1,68 +1,68 @@
 ---
-title: 从 Cline 迁移
-description: Dline 启动时如何把 Cline 的设置、全局能力文件和部分缓存复制到 Dline 的存储位置，以及哪些内容不会迁移。
+title: Migrating from Cline
+description: How Dline copies Cline settings, global capability files, and some caches into Dline storage at startup, and what is not migrated.
 ---
 
 import { Aside } from "@astrojs/starlight/components"
 
-如果你之前用过 Cline，Dline 启动时会检查旧的 Cline 数据，并把可迁移的内容复制到 Dline 自己的存储位置。迁移只做复制，不会修改或删除任何 Cline 文件。
+If you used Cline before, Dline checks for legacy Cline data at startup and copies what it can into Dline's own storage locations. Migration only copies; it never modifies or deletes Cline files.
 
-## 何时运行
+## When it runs
 
-- 每次扩展启动时都会检查一次。只有至少一项内容满足“源有内容、目标不存在或为空”时才会真正迁移。
-- 迁移期间会显示通知 **Dline: Migrating legacy Cline data...**，进度文字为 **Copying data into empty Dline locations...**。
-- 至少复制成功一项后，会显示 **Dline: Data migrated - …**，列出已处理的项目。
-- 每一步单独执行。某一步失败时，Dline 记录错误并继续下一步，不会阻止扩展启动。
+- The check runs every time the extension starts. Data is copied only when at least one item has a source with content and a target that is missing or empty.
+- While migrating, Dline shows the notification **Dline: Migrating legacy Cline data...** with the progress text **Copying data into empty Dline locations...**.
+- When at least one item was copied, Dline shows **Dline: Data migrated - …** listing what was processed.
+- Each step runs on its own. If one step fails, Dline logs the error and continues with the next step; extension startup is not blocked.
 
-## 迁移内容
+## What is migrated
 
-下表按执行顺序列出。`<Documents>` 指操作系统的“文档”目录，`<documents-root>` 指 Dline 文档根目录，默认是 `<Documents>/dline`。
+The table lists the steps in execution order. `<Documents>` is the operating system's Documents directory, and `<documents-root>` is the Dline documents root, which defaults to `<Documents>/dline`.
 
-| 顺序 | 来源 | 目标 | 条件 |
+| Order | Source | Target | Condition |
 |---|---|---|---|
-| 1 | `~/.cline/data/` | `~/.dline/data/` | 目标不存在或为空 |
-| 2 | `~/.cline/endpoints.json` | `~/.dline/endpoints.json` | 目标文件不存在 |
-| 3 | `<Documents>/Cline/settings/cline_mcp_settings.json` | `<documents-root>/settings/mcp_settings.json` | 目标文件不存在 |
-| 4 | `<Documents>/Cline/` 的其余内容，不含顶层 `tasks/` | `<documents-root>/` | 执行这一步时文档根目录不存在或为空 |
-| 5 | 旧扩展存储中的 `checkpoints/` | `<documents-root>/checkpoints/` | 目标不存在或为空 |
-| 6 | 旧扩展存储中的 `puppeteer/` | `~/.dline/puppeteer/` | 目标不存在或为空 |
-| 7 | 旧扩展存储中的 `cache/sync-queue.json` | `~/.dline/cache/sync-queue.json` | 目标文件不存在 |
+| 1 | `~/.cline/data/` | `~/.dline/data/` | Target is missing or empty |
+| 2 | `~/.cline/endpoints.json` | `~/.dline/endpoints.json` | Target file does not exist |
+| 3 | `<Documents>/Cline/settings/cline_mcp_settings.json` | `<documents-root>/settings/mcp_settings.json` | Target file does not exist |
+| 4 | The rest of `<Documents>/Cline/`, excluding the top-level `tasks/` | `<documents-root>/` | The documents root is missing or empty when this step runs |
+| 5 | `checkpoints/` in legacy extension storage | `<documents-root>/checkpoints/` | Target is missing or empty |
+| 6 | `puppeteer/` in legacy extension storage | `~/.dline/puppeteer/` | Target is missing or empty |
+| 7 | `cache/sync-queue.json` in legacy extension storage | `~/.dline/cache/sync-queue.json` | Target file does not exist |
 
-“旧扩展存储”是 VS Code 为扩展 `saoudrizwan.claude-dev` 或 `cline.cline` 分配的全局存储目录，与 Dline 的全局存储目录位于同一个父目录下。第 5–7 步各自使用第一个包含对应内容的旧目录。
+"Legacy extension storage" is the global storage directory VS Code assigns to the `saoudrizwan.claude-dev` or `cline.cline` extension, located in the same parent directory as Dline's global storage. Steps 5–7 each use the first legacy directory that contains the corresponding item.
 
-判断“为空”时，会忽略 `.DS_Store`、`Thumbs.db` 和 `desktop.ini`。第 1、6、7 步的目标固定位于 `~/.dline` 下，设置 `DLINE_DIR` 不会改变迁移目标。
+When deciding whether a directory is empty, Dline ignores `.DS_Store`, `Thumbs.db`, and `desktop.ini`. The targets of steps 1, 6, and 7 are always under `~/.dline`; setting `DLINE_DIR` does not change where migration writes.
 
-## 不会迁移的内容
+## What is not migrated
 
-**任务历史不会迁移。** `<Documents>/Cline/tasks/` 和旧扩展存储中的任务记录都会留在原处。Dline 用 SQLite 索引任务，并为每个任务保存 Cline 任务目录中没有的运行状态，因此旧任务无法在 Dline 中打开或恢复。
+**Task history is not migrated.** Both `<Documents>/Cline/tasks/` and task records in legacy extension storage stay where they are. Dline indexes tasks in SQLite and keeps per-task runtime state that a Cline task directory does not contain, so legacy tasks cannot be opened or resumed in Dline.
 
-迁移也不会合并数据：目标位置已经有内容时，这一项直接跳过，已有的 Dline 数据不会被覆盖。
+Migration never merges data either: when a target already has content, that item is skipped and existing Dline data is not overwritten.
 
-## 跳过迁移
+## Skipping migration
 
-满足以下任一条件时，整个迁移不会运行：
+Migration does not run at all when any of these is true:
 
-| 环境变量 | 效果 |
+| Environment variable | Effect |
 |---|---|
-| `DLINE_SKIP_MIGRATION=1` | 跳过迁移 |
-| `DLINE_HOME_DIR` 已设置 | 使用自定义路径，跳过迁移 |
-| `DLINE_DOCS_DIR` 已设置 | 使用自定义路径，跳过迁移 |
+| `DLINE_SKIP_MIGRATION=1` | Skips migration |
+| `DLINE_HOME_DIR` is set | Custom paths are in use; migration is skipped |
+| `DLINE_DOCS_DIR` is set | Custom paths are in use; migration is skipped |
 
-这些变量的含义见[配置](/getting-started/config/)。
+See [Configuration](/getting-started/config/) for what these variables control.
 
-## 迁移后检查
+## After migration
 
-1. 打开服务商设置，确认原有配置还在。
-2. 打开 MCP 服务器设置，确认服务器列表还在。参见 [MCP 概览](/mcp/mcp-overview/)。
-3. 检查全局规则和工作流是否能在 Dline 中看到。
+1. Open the provider settings and confirm your existing configuration is there.
+2. Open the MCP server settings and confirm your servers are listed. See [MCP overview](/mcp/mcp-overview/).
+3. Check that your global rules and workflows are visible in Dline.
 
-## 故障排查
+## Troubleshooting
 
-<Aside type="caution" title="规则或工作流没有迁移过来">
-第 4 步只在文档根目录仍为空时执行。如果第 3 步已经复制了 MCP 设置文件，或者你之前运行过 Dline，文档根目录就不再为空，`<Documents>/Cline/` 的其余内容会被跳过。这时需要手动把需要的文件复制到 `<documents-root>` 下对应的目录。
+<Aside type="caution" title="Rules or workflows were not migrated">
+Step 4 runs only while the documents root is still empty. If step 3 has already copied the MCP settings file, or you have run Dline before, the documents root is no longer empty and the rest of `<Documents>/Cline/` is skipped. Copy the files you need into the matching folders under `<documents-root>` by hand.
 </Aside>
 
-- **手动复制时的目录名**：Dline 的全局目录名是小写的：`rules/`、`workflows/`、`skills/`、`hooks/`、`mcp/`。自动迁移会保留原目录名。在区分大小写的文件系统上，如果旧目录名的大小写不同（例如 `Rules`），需要改成对应的小写名称。
-- **MCP 设置文件名不同**：Cline 使用 `cline_mcp_settings.json`，Dline 使用 `mcp_settings.json`。手动复制时要改名。
-- **迁移没有运行**：检查是否设置了上表中的环境变量，并确认目标位置确实不存在或为空。
-- **想继续使用 Cline**：迁移不会改动 Cline 的文件，原有数据仍保留在原位置。
+- **Folder names when copying by hand**: Dline's global folder names are lowercase: `rules/`, `workflows/`, `skills/`, `hooks/`, `mcp/`. Automatic migration keeps the original folder names. On a case-sensitive file system, rename a legacy folder whose casing differs (for example `Rules`) to the matching lowercase name.
+- **The MCP settings file has a different name**: Cline uses `cline_mcp_settings.json`, while Dline uses `mcp_settings.json`. Rename the file when copying it by hand.
+- **Migration did not run**: check whether any variable in the table above is set, and confirm that the target location is really missing or empty.
+- **Keep using Cline**: migration does not touch Cline's files, so your original data stays in place.

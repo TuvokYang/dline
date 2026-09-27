@@ -1,46 +1,46 @@
 ---
 title: Alibaba Qwen
-description: 获取阿里云百炼 API Key，并在 Dline 中配置通义千问模型。
+description: Get an Alibaba Cloud Model Studio API key and configure Qwen models in Dline.
 ---
 
 import { Steps } from "@astrojs/starlight/components"
 
-**官网：** [bailian.console.aliyun.com](https://bailian.console.aliyun.com/)
+**Website:** [bailian.console.aliyun.com](https://bailian.console.aliyun.com/)
 
-## 获取 API Key
-
-<Steps>
-
-1. 访问[阿里云百炼控制台](https://bailian.console.aliyun.com/)，注册或登录账号。
-
-2. 进入 API Key 管理页面。
-
-3. 为你的应用创建新的 API Key。
-
-4. 立即复制并妥善保存 Key。
-
-</Steps>
-
-## 在 Dline 中配置
-
-通用步骤见[授权与模型配置](/getting-started/authorizing-with-dline/)。
+## Get an API key
 
 <Steps>
 
-1. 点击 Dline 面板标题栏的 **Settings** 按钮。
+1. Go to the [Alibaba Cloud Model Studio console](https://bailian.console.aliyun.com/) and sign up or sign in.
 
-2. 在 **Provider** 中选择 **Alibaba Qwen**。
+2. Open the API key management page.
 
-3. 在 **Alibaba API Line** 中根据所在地区选择 **International API** 或 **China API**。
+3. Create a new API key for your application.
 
-4. 把 Key 粘贴到 **Qwen API Key** 输入框。
-
-5. 在 **Model** 中选择模型。
+4. Copy the key immediately and store it securely.
 
 </Steps>
 
-## 提示
+## Configure Dline
 
-- **视觉：** VL（Vision-Language）模型支持图片输入。
-- **思考：** Qwen3 系列等支持思考的模型会显示思考预算滑块。
-- **价格：** 最新价格见[阿里云百炼控制台](https://bailian.console.aliyun.com/)。
+See [Model configuration](/getting-started/authorizing-with-dline/) for the general flow.
+
+<Steps>
+
+1. Click the **Settings** button in the Dline panel title bar.
+
+2. Set **Provider** to **Alibaba Qwen**.
+
+3. Under **Alibaba API Line**, choose **International API** or **China API** based on your location.
+
+4. Paste the key into the **Qwen API Key** field.
+
+5. Select a model under **Model**.
+
+</Steps>
+
+## Tips
+
+- **Vision:** VL (Vision-Language) models accept image input.
+- **Thinking:** Models that support thinking, such as the Qwen3 series, show a thinking budget slider.
+- **Pricing:** See the [Alibaba Cloud Model Studio console](https://bailian.console.aliyun.com/) for current rates.

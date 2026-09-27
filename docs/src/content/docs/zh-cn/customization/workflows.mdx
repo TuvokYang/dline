@@ -1,0 +1,81 @@
+---
+title: Workflows
+description: 把重复的多步骤操作写成 Markdown 工作流，用斜杠命令或 load_workflow 注入当前任务。
+---
+
+import { Aside } from "@astrojs/starlight/components"
+
+工作流（Workflow）是一份按步骤编写的 Markdown 说明，适合部署、发版、提交 PR 这类每次都要按固定顺序完成的操作。调用工作流时，它的全文会作为明确指令注入当前任务。
+
+与[规则](/zh-cn/customization/rules/)的区别：规则在每次请求中都生效；工作流只在调用时注入一次。
+
+## 工作流来源
+
+| 来源 | 位置 | 说明 |
+|---|---|---|
+| 工作区 | `<workspace>/.agents/workflows/` | 只对该工作区生效 |
+| 工作区（兼容） | `<workspace>/.clinerules/workflows/` | 兼容旧目录，建议迁移到 `.agents/workflows/` |
+| 全局 | `<documents-root>/workflows/` | 对所有工作区生效 |
+| 远程 | 组织的远程配置下发 | 由组织管理，可能被设为始终启用 |
+
+- 目录会递归扫描，子目录中的文件同样会被发现。
+- `<documents-root>` 默认是操作系统“文档”目录下的 `dline` 文件夹，可用环境变量 `DLINE_DOCS_DIR` 覆盖。
+
+## 编写工作流
+
+```markdown
+---
+name: release-review
+description: 发版前检查变更、测试与变更日志
+---
+
+# 发版检查
+
+1. 用 `git log` 列出自上一个版本标签以来的提交。
+2. 运行 `npm run check-types` 和 `npm run test:run`，记录失败项。
+3. 核对 CHANGELOG 是否覆盖了所有面向用户的变更。
+4. 汇总风险，给出是否可以发版的结论。
+```
+
+- 调用名取自**文件名**去掉 `.md` 或 `.txt` 后的部分，上例文件应命名为 `release-review.md`。
+- frontmatter 是可选的。`name` 用于斜杠菜单中的显示名，建议与文件名保持一致，否则菜单显示的名字无法用来调用。
+- 菜单中的说明取自 `description`；没有 `description` 时取正文第一行（去掉 `#` 标题标记），超过 80 个字符会被截断。
+
+## 调用工作流
+
+在输入框中输入 `/`，菜单会列出所有已启用的工作流。也可以直接输入：
+
+```text
+/workflow:release-review 这次只检查 packages/api 目录
+```
+
+- `/workflow:<名称>` 是标准写法；为兼容旧用法，`/<名称>` 和 `/<名称>.md` 也能调用。
+- 斜杠命令本身会从消息中移除，同一条消息中的其余文字照常发送。
+- 每条消息只处理一个斜杠命令，即第一个能匹配的命令。
+- 同名时的优先级：工作区 > 全局 > 远程。
+
+![输入 /rel 后在斜杠菜单中选择 release-review，输入框填入 /workflow:release-review](/assets/ui/docs-slash-workflow.gif)
+
+在 Standard 提示词配置下，模型还可以用 `load_workflow` 工具按名称加载已启用的工作流，参见[工具参考](/zh-cn/tools-reference/all-dline-tools/)。
+
+## 管理工作流
+
+点击输入框下方工具栏中的天平图标（悬停提示为 **Manage Dline Rules & Workflows**），切换到 **Workflows** 标签：
+
+- 工作流按全局、工作区分组，每个文件都有独立开关。关闭的工作流不会出现在斜杠菜单中，也无法调用。
+- 开关的保存范围与规则相同：面板会提示 **Toggles saved for this task only**（仅当前任务）或 **Toggles saved for this workspace**（当前工作区）。
+- 组织下发的远程工作流会在面板顶部显示提示。
+
+![能力面板的 Workflows 标签：Workspace Workflows 分组中的 release-review.md 带有开关](/assets/ui/capabilities-workflows.png)
+
+![在能力面板中切换 Rules、Skills 与 Workflows 的开关](/assets/ui/docs-capability-toggles.gif)
+
+<Aside type="caution">
+工作流内容会原样注入对话。启用来自其他仓库的工作流前，请先审查其中的命令和步骤。
+</Aside>
+
+## 相关内容
+
+- [使用斜杠命令](/zh-cn/core-workflows/using-commands/)
+- [规则](/zh-cn/customization/rules/)
+- [Skills](/zh-cn/customization/skills/)

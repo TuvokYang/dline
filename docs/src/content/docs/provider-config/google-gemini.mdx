@@ -1,46 +1,46 @@
 ---
 title: Google Gemini
-description: 获取 Google AI Studio API Key，并在 Dline 中配置 Gemini 模型。
+description: Get a Google AI Studio API key and configure Gemini models in Dline.
 ---
 
 import { Steps } from "@astrojs/starlight/components"
 
-Google Gemini 是 Google 的多模态模型系列，提供超长上下文窗口，适合编程、推理和文档分析。
+Google Gemini is Google's family of multimodal models. It offers very large context windows and performs well at coding, reasoning, and document analysis.
 
-**官网：** [ai.google.dev](https://ai.google.dev/)
+**Website:** [ai.google.dev](https://ai.google.dev/)
 
-## 获取 API Key
-
-<Steps>
-
-1. 访问 [Google AI Studio](https://aistudio.google.com/)，使用 Google 账号登录。
-
-2. 打开 [aistudio.google.com/apikey](https://aistudio.google.com/apikey)。
-
-3. 点击 **Create API Key**，选择或新建一个 Google Cloud 项目。
-
-4. 立即复制并妥善保存 Key。
-
-</Steps>
-
-## 在 Dline 中配置
-
-通用步骤见[授权与模型配置](/getting-started/authorizing-with-dline/)。
+## Get an API key
 
 <Steps>
 
-1. 点击 Dline 面板标题栏的 **Settings** 按钮。
+1. Go to [Google AI Studio](https://aistudio.google.com/) and sign in with your Google account.
 
-2. 在 **Provider** 中选择 **Google Gemini**。
+2. Open [aistudio.google.com/apikey](https://aistudio.google.com/apikey).
 
-3. 把 Key 粘贴到 **Gemini API Key** 输入框。
+3. Click **Create API Key** and select or create a Google Cloud project.
 
-4. 在 **Model** 中选择模型。
+4. Copy the key immediately and store it securely.
 
 </Steps>
 
-默认请求地址为 `https://generativelanguage.googleapis.com`。需要走代理网关时，勾选 **Use custom base URL** 并填写地址。支持推理强度的模型会额外显示推理强度选项。
+## Configure Dline
 
-## 提示
+See [Model configuration](/getting-started/authorizing-with-dline/) for the general flow.
 
-- **价格：** 最新价格见 [Google AI 定价页](https://ai.google.dev/gemini-api/docs/models/gemini)。
+<Steps>
+
+1. Click the **Settings** button in the Dline panel title bar.
+
+2. Set **Provider** to **Google Gemini**.
+
+3. Paste the key into the **Gemini API Key** field.
+
+4. Select a model under **Model**.
+
+</Steps>
+
+Requests go to `https://generativelanguage.googleapis.com` by default. To route them through a gateway, check **Use custom base URL** and enter the address. Models that support reasoning effort show an extra reasoning-effort option.
+
+## Tips
+
+- **Pricing:** See the [Google AI pricing page](https://ai.google.dev/gemini-api/docs/models/gemini) for current rates.

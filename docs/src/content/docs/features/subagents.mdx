@@ -1,58 +1,58 @@
 ---
-title: 子代理
-description: 让 Dline 把独立的调研问题委派给隔离的子代理并行执行，并用具名 YAML 配置为不同职责选择模型、工具和输出预算。
+title: Subagents
+description: Let Dline delegate independent research questions to isolated subagents that run in parallel, and use named YAML agents to pick models, tools, and output budgets per role.
 ---
 
 import { Aside } from "@astrojs/starlight/components"
 
-子代理（Subagent）是主任务派出的独立工作者。每个子代理有自己的上下文，只把最终结论交回主任务，因此大量的读取和搜索过程不会占满主任务的上下文。
+A subagent is an independent worker launched by the main task. Each subagent has its own context and returns only its final findings, so the reading and searching it does never fills the main task's context.
 
-## 开启与并发
+## Enabling and concurrency
 
-- 子代理默认开启，可在 **Settings → Features** 的 Agent 分组中通过 **Subagents** 开关关闭。
-- 开关下方的 **Max Parallel Subagents** 控制同时运行的子代理数量，范围 1–64，默认 64。
-- 单次批量委派最多包含 32 个子代理；超出并发上限的部分会排队等待。
-- 未指定超时时，每个子代理最长运行 1200 秒（20 分钟）。
+- Subagents are on by default. Turn them off with the **Subagents** switch in the Agent group under **Settings → Features**.
+- **Max Parallel Subagents**, below the switch, sets how many subagents run at once: 1–64, default 64.
+- One batch delegation can contain at most 32 subagents; anything beyond the concurrency limit waits its turn.
+- Without an explicit timeout, each subagent runs for at most 1200 seconds (20 minutes).
 
-## Dline 如何委派
+## How Dline delegates
 
-Dline 有两个委派工具：
+Dline has two delegation tools:
 
-- `use_subagent`：运行一个默认或具名子代理；
-- `use_subagents`：一次运行 1–32 个子代理，每一项都可以单独指定具名代理、Profile 和超时。
+- `use_subagent` runs one default or named subagent;
+- `use_subagents` runs 1–32 subagents in one call, and each item can set its own named agent, Profile, and timeout.
 
-Dline 会根据任务自行决定是否委派，你也可以在提示词中明确要求，例如：
+Dline decides on its own whether to delegate, and you can also ask explicitly, for example:
 
 ```text
-用子代理分别调查认证流程、数据库模型定义和测试配置，都只读，不修改文件。
+Use subagents to investigate the auth flow, where the database models are defined, and the test setup. Read only; do not change files.
 ```
 
-每个子代理最好只回答一个明确的问题。问题之间互不依赖时才适合并行；最后由主任务核对证据并整合结论。
+Give each subagent one clear question. Run them in parallel only when the questions are independent; the main task then checks the evidence and combines the findings.
 
-![主任务并行委派多个子代理并汇总结果](/assets/ui/docs-subagents.gif)
+![The main task delegating several subagents in parallel and combining their results](/assets/ui/docs-subagents.gif)
 
-## 默认子代理（default.yml）
+## The default subagent (default.yml)
 
-内置的默认子代理只能使用以下工具：
+The built-in default subagent can use only these tools:
 
-`read_file`、`list_files`、`search_files`、`list_code_definition_names`、`load_skill`，以及用于交回结果的 `attempt_completion`。
+`read_file`, `list_files`, `search_files`, `list_code_definition_names`, `load_skill`, plus `attempt_completion` to return its result.
 
-它不能执行命令、写文件、联网、使用浏览器或 MCP。需要这些能力时，请使用具名子代理并显式授权。
+It cannot run commands, write files, go online, use the browser, or use MCP. When you need those, use a named subagent and grant them explicitly.
 
-全局子代理目录中没有任何 `.yml` / `.yaml` 文件时，Dline 会自动创建一份可编辑的 `<documents-root>/subagents/default.yml`，内容就是上面的默认配置；已有文件时不会覆盖。
+When the global subagents folder contains no `.yml` or `.yaml` file, Dline creates an editable `<documents-root>/subagents/default.yml` with the default configuration above. An existing file is never overwritten.
 
 <span id="agent-yml"></span>
 
-## 具名子代理（agent YAML）
+## Named subagents (agent YAML)
 
-具名子代理是一个带 frontmatter 的 YAML 文件，每个文件定义一个子代理，文件名可以任取（例如 `code-researcher.yml`），按 `name` 字段匹配，不区分大小写：
+A named subagent is a YAML file with frontmatter. Each file defines one subagent; the file name is up to you (for example `code-researcher.yml`), and agents are matched by the `name` field, case-insensitively:
 
-| 位置 | 作用范围 |
+| Location | Scope |
 |---|---|
-| `.agents/subagents/` | 当前工作区 |
-| `<documents-root>/subagents/` | 全局（`<documents-root>` 默认是系统“文档”目录下的 `dline`，可用 `DLINE_DOCS_DIR` 覆盖） |
+| `.agents/subagents/` | Current workspace |
+| `<documents-root>/subagents/` | Global (`<documents-root>` defaults to `dline` inside your system Documents folder and can be overridden with `DLINE_DOCS_DIR`) |
 
-扩展名可以是 `.yml` 或 `.yaml`。工作区与全局有同名代理时，工作区的优先。
+The extension can be `.yml` or `.yaml`. When the workspace and the global folder define an agent with the same name, the workspace one wins.
 
 ```yaml
 ---
@@ -70,68 +70,66 @@ maxOutputTokens: 0.05
 Trace the requested code paths without changing files. Return findings with file paths, evidence, and open questions.
 ```
 
-| 字段 | 必填 | 说明 |
+| Field | Required | Description |
 |---|---|---|
-| `name` | 是 | 代理名称 |
-| `description` | 是 | 职责说明 |
-| 正文 | 是 | frontmatter 之后的内容就是子代理的提示词，不能为空 |
-| `profile` | 否 | 使用哪个 API Profile，见下文 |
-| `tools` | 否 | 允许的工具，数组或逗号分隔字符串。省略或为空时使用默认工具集 |
-| `skills` | 否 | 可见的技能。省略时可见全部可用技能，`[]` 表示不可见任何技能 |
-| `maxOutputTokens` | 否 | 最终结果的 token 预算，见下文 |
+| `name` | Yes | Agent name |
+| `description` | Yes | What the agent is for |
+| Body | Yes | The content after the frontmatter is the subagent's prompt and must not be empty |
+| `profile` | No | Which API Profile to use; see below |
+| `tools` | No | Allowed tools, as an array or a comma-separated string. Omitted or empty means the default tool set |
+| `skills` | No | Visible skills. Omitted means all available skills; `[]` means none |
+| `maxOutputTokens` | No | Token budget for the final result; see below |
 
-缺少必填字段、frontmatter 格式错误、正文为空、出现未知或空白的工具名，或输出预算非法时，该文件会被跳过并记录日志。配置模型请使用 `profile`；`modelId` 等其他字段不会生效。
+A file is skipped and logged when a required field is missing, the frontmatter is malformed, the body is empty, a tool name is unknown or blank, or the output budget is invalid. Use `profile` to choose a model; other keys such as `modelId` have no effect.
 
-`tools` 中的提问、计划、结束任务类工具（`attempt_completion` 除外）以及 `use_subagent`、`use_subagents` 会被自动移除：子代理没有可以回答问题的用户，也不能再委派子代理。`attempt_completion` 总会被授予。
+Question, plan, and task-ending tools (except `attempt_completion`) and `use_subagent` / `use_subagents` are removed from `tools` automatically: a subagent has no user to answer questions and cannot delegate further. `attempt_completion` is always granted.
 
-具名子代理可以通过 `tools` 显式申请写文件、执行命令、联网、MCP 或生成图片等工具；这些工具仍受底层功能开关和权限约束。
+Named subagents can request tools such as writing files, running commands, web access, MCP, or image generation through `tools`; those tools are still subject to their feature switches and permissions.
 
-### 在界面中管理
+### Managing them in the UI
 
-在 **Manage Dline Rules & Workflows** 面板的 **Subagents** 标签页中，可以看到 **Global Subagents** 与 **Workspace Subagents** 两组，各有 **New subagent...** 按钮。每一行可以启用或停用、编辑或删除，选择 **Profile**，并逐个勾选允许的工具（必需的工具始终保持勾选）。
+The **Subagents** tab of the **Manage Dline Rules & Workflows** panel shows **Global Subagents** and **Workspace Subagents**, each with a **New subagent...** button. Each row can be enabled or disabled, edited or deleted, assigned a **Profile**, and given per-tool checkboxes (required tools always stay checked).
 
-![能力面板的 Subagents 标签：Global Subagents 中的内置 default 与 Workspace Subagents 中的 code-researcher，两组各有 New subagent... 按钮](/assets/ui/capabilities-subagents.png)
+![The Subagents tab of the capabilities panel: the built-in default under Global Subagents and code-researcher under Workspace Subagents, each group with a New subagent... button](/assets/ui/capabilities-subagents.png)
 
-## 选择 Profile
+## Choosing a Profile
 
-| 情况 | 使用的 Profile |
+| Situation | Profile used |
 |---|---|
-| `profile` 指向一个已启用、且勾选了 **Subagents** 用途的 Profile | 该 Profile 的模型与思考配置，不套用主任务的任务级思考设置 |
-| 省略 `profile`，或指向的 Profile 不可用、未启用或未勾选 Subagents 用途 | 回退到主任务的 **Act Profile**（即使主任务当前处于 Plan 模式） |
-| 批量委派中某一项单独指定了 `profile` | 覆盖 YAML 中的设置；该 Profile 无效时，这一项会被拒绝，不会回退 |
-| 子代理允许使用 `generate_image` | 必须显式指定一个有效的 Profile，否则失败 |
+| `profile` names an enabled Profile with the **Subagents** usage checked | That Profile's model and thinking configuration; the main task's task-level thinking setting does not apply |
+| `profile` is omitted, or names a Profile that is unavailable, disabled, or lacks the Subagents usage | Falls back to the main task's **Act Profile** (even while the main task is in Plan mode) |
+| An item in a batch delegation sets its own `profile` | Overrides the YAML value; if that Profile is invalid, the item is rejected instead of falling back |
+| The subagent is allowed to use `generate_image` | It must name a valid Profile explicitly, or it fails |
 
-Profile 的创建与用途设置参见[多 Profile 配置](/customization/profiles/)。
+To create Profiles and set their usages, see [Model configuration](/getting-started/authorizing-with-dline/).
 
-## 最终结果的输出预算
+## Output budget for the final result
 
-`maxOutputTokens` 限制子代理交回主任务的最终结果大小，单位是 token：
+`maxOutputTokens` limits the size of the final result the subagent returns to the main task, measured in tokens:
 
-- 不配置时，默认为启动时主任务剩余上下文的 5%；
-- `0` 到 `1` 之间的小数表示比例，例如 `0.05`；
-- 正整数表示固定 token 数，例如 `10240`；
-- 生效预算最低为 512 token，即使主任务剩余上下文更少。
+- when unset, it defaults to 5% of the main task's remaining context at launch;
+- a decimal between `0` and `1` is a ratio, for example `0.05`;
+- a positive integer is a fixed token count, for example `10240`;
+- the effective budget is at least 512 tokens, even if less context remains in the main task.
 
-预算会写入子代理的提示词，交回结果时超出部分会被截断。它只限制最终结果，不限制子代理过程中的每次请求。
+The budget is written into the subagent's prompt, and anything beyond it is truncated when the result is returned. It limits only the final result, not the individual requests the subagent makes along the way.
 
-<span id="approval"></span>
+## Approval
 
-## 审批
-
-- 启动子代理使用自动批准中的 **Read project files** 权限。
-- 子代理内部的每个工具调用都要通过它的工具白名单和审批策略检查，**不会**再向你弹出逐个审批。需要人工审批的工具在子代理中会直接失败，而不是等待你确认。
-- 执行命令时仍会应用命令权限和目录访问检查。
+- Launching a subagent uses the **Read project files** auto-approve permission.
+- Every tool call inside a subagent is checked against its tool allowlist and the approval policy; you are **not** prompted for each call. A tool that needs manual approval fails inside a subagent instead of waiting for you.
+- Command execution still applies command permissions and directory-access checks.
 
 <Aside type="caution">
-为具名子代理开放写文件或执行命令等工具前，请确认你接受这些操作在没有逐个确认的情况下发生（前提是审批策略允许）。
+Before granting a named subagent tools such as writing files or running commands, make sure you accept those actions happening without per-call confirmation (where the approval policy allows them).
 </Aside>
 
-## 在聊天中查看
+## Following along in the chat
 
-委派时聊天中会显示 “Dline wants to use a subagent:” 或 “Dline wants to use subagents:”。每个子代理有一张卡片，显示代理名称、前台或后台（**Foreground** / **Background**）、任务、工具和输出，以及运行状态。卡片提供 **Cancel**、**Cancel all**，以及在适用时的完成或重试按钮。
+When Dline delegates, the chat shows "Dline wants to use a subagent:" or "Dline wants to use subagents:". Each subagent gets a card with the agent name, **Foreground** or **Background**, its task, tools, and output, and its status. Cards offer **Cancel**, **Cancel all**, and finish or retry controls where applicable.
 
-运行统计包括工具调用次数、耗时、token 用量和费用；子代理的用量会计入主任务的总用量。
+Run statistics include tool calls, elapsed time, tokens, and cost; subagent usage counts toward the main task's totals.
 
-## 与 `spawn_task` 的区别
+## How this differs from `spawn_task`
 
-`spawn_task` 是另一个工具，用于创建独立的新任务，不属于子代理功能。子代理自身不能再委派子代理。
+`spawn_task` is a separate tool that creates an independent new task; it is not part of the subagent feature. Subagents cannot delegate to further subagents.

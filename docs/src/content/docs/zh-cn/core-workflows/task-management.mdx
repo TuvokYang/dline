@@ -1,0 +1,88 @@
+---
+title: 任务管理
+description: 创建、查看、搜索、恢复和删除 Dline 任务，并了解任务头部显示的用量和上下文信息。
+---
+
+import { Aside } from "@astrojs/starlight/components"
+
+在 Dline 中，每次对话都是一个**任务**。任务会保存完整的对话记录，你可以随时重新打开、继续或删除。
+
+## 任务如何保存
+
+- 每个任务有自己的目录，分别保存界面消息和发送给模型的对话记录。
+- 所有任务的索引保存在 `<documents-root>/tasks/taskHistory.db`（`<documents-root>` 默认是系统“文档”目录下的 `dline`，可用 `DLINE_DOCS_DIR` 覆盖）。
+- 上下文被压缩后，发送给模型的内容会变短，但保存下来的对话记录仍然完整。
+
+## 开始新任务
+
+- 点击 Dline 面板标题栏的 **+**（提示为 **New Task**）；
+- 在输入框中输入 `/newtask`，让 Dline 把当前任务的要点整理成新任务的起点，参见[使用斜杠命令](/zh-cn/core-workflows/using-commands/)。
+
+一个任务专注于一个目标通常效果更好：上下文更集中，也更容易回滚和回顾。
+
+## 任务头部信息
+
+任务进行中，面板顶部会显示用量信息：
+
+- **In** / **Out**：输入与输出 token 数；
+- **RPM**、**TPM**、**Hit**：在有对应数据时显示请求速率、token 速率和缓存命中率；
+- **费用**：只有当前模型有非零定价信息时才显示。费用来自服务商返回的数值，或根据模型定价估算，不代表服务商的最终账单。
+
+展开任务头部后会看到上下文用量条，显示已用 token 数和模型上下文窗口大小。把鼠标悬停在用量条上，会显示 **Context Window** 面板，列出 **Used**、**Remaining**、**Total** 和百分比。
+
+任务头部右侧的 **×**（**Close Task**）用于关闭当前任务。
+
+### Focus Chain
+
+**Focus Chain** 默认开启（**Settings → Features → Focus Chain**，说明为 “Maintain context focus across interactions”）。开启后，Dline 会为任务维护一个待办清单，显示在任务头部下方：当前项、已完成数/总数，并可展开查看完整列表。
+
+## 任务历史
+
+点击面板标题栏的 **History** 按钮打开任务历史。
+
+每一行显示任务的开头文字、最后活动时间和用量信息；展开后可以看到 **Tokens**、**Model**（如有）、**Size**，以及 **Export** 按钮。点击某一行即可重新打开该任务。
+
+### 搜索、排序与筛选
+
+- **搜索框**（“Fuzzy search history...”）：对任务的开头文字做模糊匹配，不搜索回复内容、代码或文件名。
+- **排序**：**Newest**、**Oldest**、**Most Expensive**、**Most Tokens**、**Most Relevant**（需要输入搜索词）。
+- **筛选**：**Workspace Only**（只显示当前工作区的任务）、**Favorites Only**（只显示收藏的任务）。
+
+### 单个任务的操作
+
+| 操作 | 说明 |
+|---|---|
+| **Add to favorites** / **Remove from favorites** | 收藏或取消收藏 |
+| **Delete** | 删除该任务。收藏的任务不能单独删除 |
+| **Open in New Window** | 在新窗口中打开该任务 |
+| **Export** | 在展开的行中导出任务 |
+
+### 批量删除
+
+历史视图底部提供 **Select All**、**Select None**、**Delete Selected** 和 **Delete All History**：
+
+- **Delete Selected** 会删除所有选中的任务，**包括收藏的任务**；
+- **Delete All History** 会询问选择 **Delete All Except Favorites**（保留收藏）还是 **Delete Everything**。
+
+<Aside type="caution">
+删除最后一个任务或选择 **Delete Everything** 时，所有检查点数据也会被删除，参见[检查点](/zh-cn/core-workflows/checkpoints/)。
+</Aside>
+
+## 恢复任务
+
+从历史中打开任务后：
+
+- 被中断的任务底部会显示 **Resume**，点击后继续；恢复只加载保存的状态，不会自动重新发送请求或重新执行工具。
+- 已完成的任务显示 **Start New Task**；你也可以直接在输入框中继续发送消息。
+
+## 上下文变长时
+
+对话越长，占用的上下文越多。你可以：
+
+- 开启[自动压缩](/zh-cn/features/auto-compact/)，在上下文接近上限时自动总结较早的对话；
+- 用 `/compact` 或 `/smol` 手动压缩；
+- 用 `/newtask` 把要点带到新任务中继续。
+
+未开启自动压缩时，Dline 会在接近上限时优化重复的文件读取，并删除较早的对话轮次（始终保留第一轮）。
+
+用 [.agentignore](/zh-cn/customization/agentignore/) 排除无关文件，也可以减少 Dline 搜索和读取时带入的无关内容。

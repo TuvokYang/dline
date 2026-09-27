@@ -1,39 +1,39 @@
 ---
-title: Amazon Bedrock：AWS CLI Profile（SSO）
-description: 使用 AWS CLI Profile 为 Dline 提供 Amazon Bedrock 认证，适合 SSO / 联合身份角色和安全的企业访问。
+title: "Amazon Bedrock: AWS CLI profile (SSO)"
+description: Authenticate Dline to Amazon Bedrock with an AWS CLI profile, for SSO or federated roles and secure enterprise access.
 ---
 
 import { Steps } from "@astrojs/starlight/components"
 
-Dline 可以使用 AWS 凭证或 AWS Profile 访问 Amazon Bedrock。相比传统的 IAM 配置，更推荐使用 SSO / 联合身份角色。本页说明如何配置环境，让 Dline 使用 SSO 角色认证。
+Dline can use either AWS credentials or an AWS profile to access Amazon Bedrock. SSO / federated roles are recommended over legacy IAM configuration. This page shows how to set up your environment so that Dline authenticates with an SSO role.
 
-## 配置步骤
+## Setup
 
 <Steps>
 
-1. 安装[最新版本的 AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)，按 AWS 文档安装与操作系统对应的版本。
+1. Install the [latest AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html), following the AWS instructions for your operating system.
 
-2. 为 AWS CLI [配置 IAM Identity Center 认证](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sso.html)：
-   - 还没有通过 IAM Identity Center 访问 AWS 时，按 [IAM Identity Center 用户指南](https://docs.aws.amazon.com/singlesignon/latest/userguide/getting-started.html)设置用户和角色，并确保拥有 `PowerUserAccess` 角色。
-   - 通过公司访问 AWS 时，打开 AWS 访问门户找到对应账号，确认拥有 `PowerUserAccess` 权限。
-   - 打开 **Access keys** 链接，记下 **SSO start URL** 和 **SSO region**，下一步会用到。
+2. [Configure IAM Identity Center authentication](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sso.html) for the AWS CLI:
+   - If you do not yet access AWS through IAM Identity Center, follow the [IAM Identity Center user guide](https://docs.aws.amazon.com/singlesignon/latest/userguide/getting-started.html) to set up users and roles, and make sure you have a `PowerUserAccess` role.
+   - If you access AWS through your employer, open your AWS access portal, find the right account, and confirm you have `PowerUserAccess` permissions.
+   - Open the **Access keys** link and note the **SSO start URL** and **SSO region** for the next step.
 
-3. 使用 [`aws configure sso` 向导](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sso.html#cli-configure-sso-configure)完成 Profile 配置，然后运行以下命令登录：
+3. Finish configuring the profile with the [`aws configure sso` wizard](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sso.html#cli-configure-sso-configure), then sign in:
 
    ```bash
    aws sso login --profile <AWS-profile-name>
    ```
 
-   记下为该账号配置的 Profile 名称，后面配置 Dline 时需要。
+   Note the profile name you attached to the account; you need it to configure Dline.
 
-4. 尚未安装 VS Code 和 Dline 时，先参阅[安装 Dline](/getting-started/installing-dline/)。
+4. If VS Code and Dline are not installed yet, see [Installing Dline](/getting-started/installing-dline/) first.
 
-5. 打开 Dline，点击面板标题栏的 **Settings** 按钮：
-   - 在 **Provider** 中选择 **Amazon Bedrock**。
-   - 认证方式选择 **AWS Profile**，在 **AWS Profile Name** 中填写第 3 步的 Profile 名称；留空时使用默认 Profile。
-   - 在 **AWS Region** 中选择区域。
-   - 部分模型需要勾选 **Use cross-region inference**。
+5. Open Dline and click the **Settings** button in the panel title bar:
+   - Set **Provider** to **Amazon Bedrock**.
+   - Choose **AWS Profile** as the authentication method and enter the profile name from step 3 under **AWS Profile Name**. Leave it empty to use the default profile.
+   - Select a region under **AWS Region**.
+   - Some models require **Use cross-region inference** to be checked.
 
 </Steps>
 
-Dline 会读取 `~/.aws/credentials` 等 AWS 配置中的 Profile 凭证。SSO 会话过期后，重新运行 `aws sso login --profile <AWS-profile-name>` 即可。
+Dline reads profile credentials from your AWS configuration, such as `~/.aws/credentials`. When the SSO session expires, run `aws sso login --profile <AWS-profile-name>` again.

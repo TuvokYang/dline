@@ -1,29 +1,28 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+	<!--
+		Drawn on a 32-unit grid so it stays legible at the 16 px tab size: the
+		robot fills the tile, and the strokes and features are at least one
+		device pixel wide at 16 px.
+	-->
 	<defs>
 		<linearGradient id="dline-favicon-tile" x1="0" y1="0" x2="1" y2="1">
-			<stop offset="0" stop-color="#B47CF0" />
-			<stop offset="1" stop-color="#5B1A9C" />
+			<stop offset="0" stop-color="#5CC8B8" />
+			<stop offset="1" stop-color="#1F7A6F" />
 		</linearGradient>
-		<mask id="dline-favicon-face" maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24">
-			<rect width="24" height="24" fill="#FFFFFF" />
+		<mask id="dline-favicon-face" maskUnits="userSpaceOnUse" x="0" y="0" width="32" height="32">
+			<rect width="32" height="32" fill="#FFFFFF" />
 			<g fill="#000000">
-				<circle cx="9.2" cy="13" r="1.75" />
-				<circle cx="14.8" cy="13" r="1.75" />
-				<rect x="9.2" y="16.6" width="5.6" height="1.9" rx="0.95" />
+				<circle cx="11.8" cy="18.2" r="2.7" />
+				<circle cx="20.2" cy="18.2" r="2.7" />
+				<rect x="12.4" y="23.1" width="7.2" height="2.5" rx="1.25" />
 			</g>
 		</mask>
 	</defs>
-	<rect width="128" height="128" rx="28" fill="url(#dline-favicon-tile)" />
-	<g transform="translate(16 16) scale(4)">
-		<g fill="none" stroke="#FFFFFF" stroke-linecap="round" stroke-linejoin="round">
-			<path d="M12 8.4V5.92M12 5.92 9.6 4.02M12 5.92 14.4 4.02" stroke-width="1.6" />
-			<path d="M2.75 12.6 1.35 14.5 2.75 16.4" stroke-width="1.7" />
-			<path d="M21.25 12.6 22.65 14.5 21.25 16.4" stroke-width="1.7" />
-		</g>
-		<g fill="#FFFFFF">
-			<circle cx="9.6" cy="4.02" r="1.15" />
-			<circle cx="14.4" cy="4.02" r="1.15" />
-		</g>
-		<rect x="4.2" y="8" width="15.6" height="13" rx="4.3" fill="#FFFFFF" mask="url(#dline-favicon-face)" />
+	<rect width="32" height="32" rx="7" fill="url(#dline-favicon-tile)" />
+	<g fill="none" stroke="#FFFFFF" stroke-linecap="round" stroke-linejoin="round">
+		<path d="M16 11V7.6M16 7.6 12.4 4.6M16 7.6 19.6 4.6" stroke-width="2.3" />
+		<path d="M3.9 15.3 1.9 18.6 3.9 21.9" stroke-width="2.2" />
+		<path d="M28.1 15.3 30.1 18.6 28.1 21.9" stroke-width="2.2" />
 	</g>
+	<rect x="5.4" y="10.6" width="21.2" height="17.4" rx="5.4" fill="#FFFFFF" mask="url(#dline-favicon-face)" />
 </svg>

@@ -1,47 +1,47 @@
 ---
-title: 遥测与诊断
-description: 了解 Dline 的使用数据与错误报告如何征得同意、默认发送到哪里、哪些内容会被屏蔽，以及如何导出诊断包。
+title: Telemetry and Diagnostics
+description: Learn how Dline asks for consent for usage data and error reports, where the data goes by default, what is masked, and how to export a diagnostic bundle.
 ---
 
 import { Aside } from "@astrojs/starlight/components"
 
-Dline 把“使用数据”和“错误报告”分开征求同意。未经你同意，不会发送任何一类数据。
+Dline asks for consent to "usage data" and "error reports" separately. Neither kind of data is sent without your consent.
 
-## 同意设置
+## Consent settings
 
-在 **Settings → About** 中有两个独立的选项：
+**Settings → About** has two independent options:
 
-- **Allow usage reporting**：使用数据；
-- **Allow error reporting**：错误报告。
+- **Allow usage reporting** for usage data;
+- **Allow error reporting** for error reports.
 
-两者默认都未勾选。只有明确勾选才算同意；未勾选（包括从未设置过）时，对应类别的数据不会被收集或发送。组织的远程配置可以关闭遥测，但不能替你开启。
+Both are unchecked by default. Only an explicit check counts as consent; while an option is unchecked (including when it was never set), that category is neither collected nor sent. Your organization's remote configuration can turn telemetry off, but cannot turn it on for you.
 
-VS Code 自身的遥测设置（`telemetry.telemetryLevel`）关闭时，Dline 也不会向远程端点发送遥测数据。
+When VS Code's own telemetry setting (`telemetry.telemetryLevel`) is off, Dline does not send telemetry to remote endpoints either.
 
-## 数据发往哪里
+## Where the data goes
 
-- 默认情况下，同意后的数据以 OpenTelemetry（OTLP，HTTP/protobuf）格式发送到**本机**的 `http://127.0.0.1:4318`。只有你在本机运行了 OTLP 收集器时，这些数据才会被接收。
-- 组织可以通过远程配置指定其他 OTLP 端点。
-- 同意后，Dline 还会在本地写入 JSONL 格式的会话日志，用于诊断。
+- By default, consented data is sent in OpenTelemetry format (OTLP over HTTP/protobuf) to `http://127.0.0.1:4318` on **your own machine**. The data is received only if you run an OTLP collector locally.
+- Your organization can point it at a different OTLP endpoint through remote configuration.
+- With consent, Dline also writes local session journals in JSONL format for diagnostics.
 
 <Aside>
-Dline 默认不会把遥测数据发送到任何固定的外部服务。
+By default, Dline does not send telemetry to any fixed external service.
 </Aside>
 
-## 哪些内容会被屏蔽
+## What is masked
 
-发送前，Dline 会屏蔽以下内容：
+Before sending, Dline masks:
 
-- 提示词、命令和命令输出；
-- 凭据；
-- 与身份相关的字段。
+- prompts, commands, and command output;
+- credentials;
+- identity-related fields.
 
-保留的内容包括服务商与模型名称、token 用量等数值，以及其他有长度限制的结构化字段。
+What is kept includes provider and model names, numeric values such as token usage, and other length-limited structured fields.
 
 <Aside type="caution">
-同意后发送的事件包含一个匿名的设备标识（`distinct_id`），用于区分不同的安装，它不会被屏蔽。请不要认为遥测数据中完全没有任何标识符。
+Consented events include an anonymous installation identifier (`distinct_id`) that tells installations apart and is not masked. Do not assume telemetry contains no identifier at all.
 </Aside>
 
-## 导出诊断包
+## Exporting a diagnostic bundle
 
-勾选 **Allow error reporting** 后，**Settings → About** 中会出现 **Export diagnostic bundle**。它会在本地生成一个 ZIP 文件，写入前会再次执行脱敏处理，不会自动上传。遇到问题时，你可以检查后再决定是否附在 issue 中。
+With **Allow error reporting** checked, **Settings → About** shows **Export diagnostic bundle**. It creates a ZIP file locally, redacts it again before writing, and does not upload it. When you run into a problem, you can review the bundle before deciding whether to attach it to an issue.

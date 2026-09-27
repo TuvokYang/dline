@@ -20,8 +20,8 @@ export default defineConfig({
 		baseSafeContentLinks(),
 		starlight({
 			title: {
-				"zh-CN": "Dline 文档",
 				en: "Dline Docs",
+				"zh-CN": "Dline 文档",
 			},
 			defaultLocale: ROOT_LOCALE,
 			locales,
@@ -33,6 +33,7 @@ export default defineConfig({
 			social: [{ icon: "github", label: "GitHub", href: repositoryUrl }],
 			editLink: { baseUrl: `${repositoryUrl}/edit/dev/docs/` },
 			customCss: ["./src/styles/custom.css"],
+			components: { PageFrame: "./src/components/PageFrame.astro" },
 			sidebar,
 		}),
 	],

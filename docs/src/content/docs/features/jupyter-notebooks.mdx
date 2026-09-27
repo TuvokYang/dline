@@ -1,47 +1,47 @@
 ---
-title: Jupyter Notebook
-description: 在 VS Code 的 Jupyter Notebook 中用 Dline 生成、解释和改进单元格，并了解它实际发送了哪些上下文。
+title: Jupyter Notebooks
+description: Use Dline to generate, explain, and improve cells in Jupyter notebooks in VS Code, and learn what context it actually sends.
 ---
 
 import { Aside } from "@astrojs/starlight/components"
 
-在 VS Code 中打开 Jupyter Notebook（`.ipynb`）时，Dline 会在 Notebook 界面中提供三个命令。
+When you open a Jupyter notebook (`.ipynb`) in VS Code, Dline adds three commands to the notebook UI.
 
-| 命令 | 位置 |
+| Command | Location |
 |---|---|
-| **Generate Jupyter Cell with Dline** | Notebook 工具栏 |
-| **Explain Jupyter Cell with Dline** | 单元格标题栏 |
-| **Improve Jupyter Cell with Dline** | 单元格标题栏 |
+| **Generate Jupyter Cell with Dline** | Notebook toolbar |
+| **Explain Jupyter Cell with Dline** | Cell title bar |
+| **Improve Jupyter Cell with Dline** | Cell title bar |
 
-这三个命令只在 Notebook 类型为 `jupyter-notebook` 时显示。它们没有默认快捷键；如需绑定，可在键盘快捷方式中搜索 `dline.jupyterGenerateCell`、`dline.jupyterExplainCell` 或 `dline.jupyterImproveCell`。
+The commands appear only when the notebook type is `jupyter-notebook`. They have no default keyboard shortcuts; to bind one, search Keyboard Shortcuts for `dline.jupyterGenerateCell`, `dline.jupyterExplainCell`, or `dline.jupyterImproveCell`.
 
-## 生成单元格
+## Generating a cell
 
-![在 Notebook 中生成单元格](/assets/jupyter-generate-cell.gif)
+![Generating a cell in a notebook](/assets/jupyter-generate-cell.gif)
 
-1. 选中一个单元格作为位置参考；
-2. 点击 Notebook 工具栏中的 **Generate Jupyter Cell with Dline**；
-3. 输入你想要的内容描述。
+1. Select a cell as the position reference;
+2. click **Generate Jupyter Cell with Dline** in the notebook toolbar;
+3. describe what you want.
 
-Dline 会收到你的描述、在当前单元格上方或下方插入新单元格的指示，以及当前单元格的 JSON。新单元格由 Dline 通过编辑 `.ipynb` 文件写入，写入前仍按正常流程请求你批准。
+Dline receives your description, an instruction to insert a new cell above or below the current one, and the current cell's JSON. The new cell is written by Dline editing the `.ipynb` file, and it still asks for your approval before writing, as usual.
 
-## 解释与改进单元格
+## Explaining and improving a cell
 
-![解释并改进单元格](/assets/jupyter-explain-improve-cell.gif)
+![Explaining and improving a cell](/assets/jupyter-explain-improve-cell.gif)
 
-- **Explain Jupyter Cell with Dline**：以“解释这段代码”开始任务，附带选中的代码、语言以及当前单元格的 JSON。
-- **Improve Jupyter Cell with Dline**：先请你输入改进要求，然后请 Dline 在重构、优化和最佳实践方面改进当前单元格。已有任务时会发送到当前任务，否则开始新任务。
+- **Explain Jupyter Cell with Dline** starts a task that explains the code, with the selected code, its language, and the current cell's JSON.
+- **Improve Jupyter Cell with Dline** first asks what you want improved, then asks Dline to improve the current cell through refactoring, optimization, and best practices. It sends to the current task if there is one, and otherwise starts a new task.
 
-## Dline 实际看到什么
+## What Dline actually sees
 
-- 这些命令只发送**当前一个单元格**的 JSON，读取的是磁盘上已保存的 `.ipynb` 文件。其他单元格中定义的变量和导入不会自动作为上下文提供；如有需要，请在描述中说明，或让 Dline 读取整个 Notebook。
-- 单元格 JSON 保留源码、元数据、执行计数和文本输出；图片输出会被替换为 `[IMAGE DATA TRUNCATED]`。
-- Dline 用普通文件读取工具读取 `.ipynb` 时，所有代码单元格的输出都会被去掉。
+- These commands send the JSON of **only the current cell**, read from the `.ipynb` file saved on disk. Variables and imports defined in other cells are not provided automatically; mention them in your description, or ask Dline to read the whole notebook.
+- The cell JSON keeps the source, metadata, execution count, and text outputs; image outputs are replaced with `[IMAGE DATA TRUNCATED]`.
+- When Dline reads an `.ipynb` file with its regular file-reading tool, all code-cell outputs are stripped.
 
 <Aside type="tip">
-命令读取的是已保存的文件。运行这些命令前先保存 Notebook，可以确保 Dline 看到的是最新内容。
+The commands read the saved file. Save the notebook before running them so Dline sees the latest content.
 </Aside>
 
-## 查看改动
+## Reviewing changes
 
-Dline 修改 `.ipynb` 文件时，会按 JSON 结构进行文本替换。在安装了 Jupyter 扩展的 VS Code 中，改动可以在 Notebook 差异视图中查看。模型被要求精确匹配单元格的 JSON 字符串，但这不能保证每次都保持单元格的元数据、位置和输出不变；批准前请检查差异。
+Dline edits `.ipynb` files by replacing text in the JSON structure. In VS Code with the Jupyter extension installed, you can review changes in the notebook diff view. The model is told to match cell JSON strings exactly, but that cannot guarantee a cell's metadata, position, and outputs stay intact every time; check the diff before approving.

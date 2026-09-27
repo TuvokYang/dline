@@ -34,7 +34,7 @@ go.work.sum
 tsconfig.tsbuildinfo
 .worktreeinclude
 CHANGELOG_OLD.md
-README_en.md
+README_zh.md
 SECURITY.md
 implementation_plan.md
 

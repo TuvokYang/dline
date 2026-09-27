@@ -1,21 +1,21 @@
 ---
-title: 工具执行域
-description: 任务中的工具块如何执行：reducer 负责决策，执行域负责执行，两者只通过命令和事件交互。
+title: Tool Execution Domain
+description: How a task's tool blocks run - the reducer decides, the execution domain performs, and the two meet only through commands and events.
 ---
 
-工具执行域负责任务中工具块的实际执行。它是按目标运行时架构从 `Task` 中拆出的第一个执行器：reducer 负责决策，执行器负责执行，两者只通过命令和事件交互。
+The tool execution domain owns how a task's tool blocks actually run. It is the first executor extracted from `Task` along the target runtime architecture: the reducer decides, the executor performs, and the two only meet through commands and events.
 
-源码位于 `src/core/task/executors/tool/`。
+Source: `src/core/task/executors/tool/`.
 
-## 为什么按职责拆分
+## Why split by responsibility
 
-早先的尝试是把工具相关的方法逐个移出 `src/core/task/index.ts`，结果停滞了：像助手消息展示器这样的成员，在同一个函数里同时服务流式输出和工具预览；最终轮次还要处理服务商计费、上下文压缩记录和后续任务交接。按成员拆分，要么带走无关职责，要么把工具工作留在原处。
+An earlier attempt moved tool-related methods out of `src/core/task/index.ts` one by one, and it stalled: members such as the assistant-message presenter serve streaming output and tool preview in the same function, and the final turn also handles provider accounting, context-compaction bookkeeping, and successor-task handoff. Splitting by member either dragged unrelated duties along or left the tool work behind.
 
-按职责拆分消除了这个冲突：混合职责的成员留在原处负责编排，工具工作以命令的形式移出。
+Splitting by responsibility removes the conflict: the mixed members stay where they are and act as orchestration, and the tool work leaves as a command.
 
-## 命令
+## The command
 
-每个被接纳的工具块对应一条命令：
+Each admitted tool block corresponds to one command:
 
 ```ts
 interface ToolRunCommand {
@@ -26,26 +26,26 @@ interface ToolRunCommand {
 }
 ```
 
-命令只携带身份和执行模式，不携带工具输入；生产代码按 `dlineTid` 查找已经准备好的准入记录再执行。`mode` 由 `TurnDriver` 在创建轮次时根据任务设置决定，reducer 把它复制到执行 effect 中。执行域不根据 `mode` 做调度决定：它一次收到一个块或一批块，就执行收到的内容。`turnId` 随命令传递，使 reducer 已经离开的轮次的结果能够被识别，而不是被悄悄应用。
+The command carries only identities and the execution mode, not the tool input; production code looks up the prepared admission record by `dlineTid` before running it. `mode` is chosen by `TurnDriver` from the task setting when the turn is created, and the reducer copies it into the execution effect. The domain never makes a scheduling decision from `mode`: it receives one block at a time or a batch, and runs what it is given. `turnId` travels with the command so a result belonging to a turn the reducer has already left can be recognized instead of silently applied.
 
-## 执行器合同
+## The executor contract
 
 ```ts
 handle(command: ToolRunCommand): void
 halt(order: HaltOrder): Promise<void>
 ```
 
-**`handle` 立即返回。** 调用方是串行的运行时分发路径，如果在这里等待工具完成，所有后续事件都会被最慢的工具阻塞。
+**`handle` returns immediately.** The caller is the serialized runtime dispatch path; awaiting a tool there would block every later event behind the slowest tool.
 
-**每个结果都成为事件。** 成功时发出 `tool.block_result`，工具抛出异常时发出 `tool.block_failed`，停止之后到达的命令发出 `tool.rejected`。执行域不会让拒绝逃逸为未处理的 Promise，也不会直接写状态。
+**Every outcome becomes an event.** Success emits `tool.block_result`, a thrown tool emits `tool.block_failed`, and a command arriving after a stop emits `tool.rejected`. Nothing escapes as an unhandled rejection, and the domain never writes state directly.
 
-**`halt` 是排空屏障。** 只有在进行中的工作全部结束、自有资源释放之后，才会发出回执 `tool.halted`。停止之前产生的结果会被丢弃，不会被应用，因此一个在拆除期间恰好完成的工具不能让已取消的轮次复活。停止之后调用 `handle` 会得到 `tool.rejected`；运行时开始新一代工作时通过 `rearm` 重新接纳命令。
+**`halt` is a drain barrier.** The receipt `tool.halted` is emitted only after in-flight work has settled and owned resources have been released. Results produced before the stop are dropped rather than applied, so a tool that happens to finish during teardown cannot resurrect a cancelled turn. Calling `handle` after a stop yields `tool.rejected`; when the runtime starts a new generation of work, `rearm` admits commands again.
 
-同一个 `haltId` 的重复停止不会产生效果，这保证了每一代停止只释放一次资源。生产代码使用的 `haltToolDomain()` 为每次停止设置 5 秒预算：超时或出错时会报告失败并执行回退释放，此时可能没有正常的排空回执。
+A repeated stop with the same `haltId` has no effect, which guarantees a single release per stop generation. `haltToolDomain()`, which production code uses, gives each stop a 5-second budget: on timeout or error it reports the failure and runs a fallback release, in which case there may be no normal drain receipt.
 
-## 资源归属
+## Resource ownership
 
-执行域通过 `OwnedToolResources` 描述它使用的工作区资源：
+The domain describes the workspace resources it uses through `OwnedToolResources`:
 
 ```ts
 interface OwnedToolResources {
@@ -54,36 +54,36 @@ interface OwnedToolResources {
 }
 ```
 
-以前同一职责分散在中止、中断、终止和服务商重试等多条路径上，每条路径都要记得还原 diff：漏掉一条会留下打开的编辑器，重复一条会还原两次。把所有停止都经过同一个释放点，使“每次停止只重置一次”成为结构上的保证。
+Previously the same duty was spread across the abort, interrupt, terminate, and provider-retry paths, each of which had to remember to revert the diff: a missed path left an editor open, and a duplicated path reverted twice. Routing every stop through one release point makes "exactly one reset per stop" structural.
 
-`createToolDomainRunner()` 提供的释放适配器会尝试执行两个重置，即使第一个失败也会继续第二个，并报告失败而不重新抛出。直接注入的 runner 如果在 `release` 中抛出异常，`halt` 仍会在 `finally` 中发出回执，但自身会以该异常拒绝。
+The release adapter provided by `createToolDomainRunner()` attempts both resets even when the first fails, and reports failures without rethrowing them. If a directly injected runner throws from `release`, `halt` still emits its receipt in `finally` but rejects with that error itself.
 
-当前生产环境的 `Task` 注入的 `cancelCommand` 是空操作，前台命令的取消仍由 `Task` 中已有的调用点负责。
+The production `Task` currently injects a no-op `cancelCommand`; cancelling the foreground command remains the responsibility of existing call sites in `Task`.
 
-## 按装配授予能力
+## Capability by assembly
 
-与界面相关的能力在装配执行域时授予，而不是在每个处理器内部检查：
+UI-bound capability is granted when the domain is assembled, not checked inside each handler:
 
 ```ts
 type ToolDomainSurface = UserFacingSurface | DeniedSurface
 ```
 
-使用 `DeniedSurface` 装配的执行域中，`ask`、`say`、`openInteraction` 和可见的 diff 根本不存在。另一种做法是枚举：覆盖一份已知的回调列表只能保护被记得覆盖的成员，每新增一个回调都要重新检查。收回整个界面则直接移除了能力本身。
+In a domain assembled with `DeniedSurface`, `ask`, `say`, `openInteraction`, and the visible diff simply do not exist. The alternative is enumeration: overriding a known list of callbacks protects only the members someone remembered to override, and every new callback reopens the question. Withholding the surface removes the capability itself.
 
-拒绝是显式的：确实需要用户参与的工作会抛出 `SurfaceDeniedError`，说明缺少的能力和原因，而不是看似成功、输出却落到别处。收回界面不会禁止工作本身，文件仍然可以写入，只是不渲染。
+Denial is explicit: work that genuinely needs a user throws `SurfaceDeniedError`, naming the missing capability and the reason, instead of appearing to succeed while its output lands somewhere else. Denying the surface does not disable the work itself; files are still written, they are just not rendered.
 
-目前生产环境唯一的执行域装配使用 `UserFacingSurface`；子智能体通过自己的 runner 执行已接纳的处理器。`DeniedSurface` 装配目前在单元测试中验证。
+Today the only production assembly of the domain uses `UserFacingSurface`; subagents run admitted handlers through their own runner. Assembly with `DeniedSurface` is currently exercised by unit tests.
 
-## 与整体运行时收敛的关系
+## Relationship to the wider runtime convergence
 
-这个执行域是目标架构中一个执行器的提前实现，不是它的替代品。这里交付的是工具执行域和 `tool.*` 命令与事件词汇，以及仅限本执行域的资源归属和停止回执。统一内核、替代当前运行时分发的事件循环，以及服务商、对话、组合、后台和协作任务等执行器，仍属于更大范围的运行时收敛工作。
+This domain is an early implementation of one executor in the target architecture, not a replacement for it. It delivers the tool domain and the `tool.*` command and event vocabulary, plus resource ownership and the halt receipt for this domain only. The unified kernel, the event loop that replaces the current runtime dispatch, and the provider, dialog, compose, background, and cotask executors remain part of the broader runtime convergence work.
 
-## 测试
+## Testing
 
-行为由 `src/core/task/executors/tool/__tests__/` 中的单元测试覆盖：
+Behavior is covered by unit tests in `src/core/task/executors/tool/__tests__/`:
 
-- `handle` 在工具块结束之前返回，一批块并发执行；
-- 抛出异常的工具变成失败事件，而不是逃逸的拒绝；
-- 停止回执在排空之后发出，停止之前的结果被丢弃；
-- 重复取消只释放一次资源，新一代停止会再次释放；
-- 收回界面后所有界面能力都被拒绝，但工具仍然执行。
+- `handle` returns before a block settles, and a batch runs concurrently;
+- a thrown tool becomes a failure event rather than an escaping rejection;
+- the halt receipt follows the drain, and pre-stop results are dropped;
+- a repeated cancel releases resources exactly once, while a new halt generation releases again;
+- a denied surface refuses every UI capability yet still executes tools.

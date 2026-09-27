@@ -1,26 +1,26 @@
 ---
-title: 提示词架构
-description: Dline 的提示词 Profile 与工具传输两个维度、主任务与子智能体的提示词调用链、冻结缓存、模块职责和修改约束。
+title: Prompt Architecture
+description: Dline's two independent dimensions of prompt profile and tool transport, the prompt call chains for main tasks and subagents, the frozen cache, module responsibilities, and change constraints.
 ---
 
-## 两个独立维度
+## Two independent dimensions
 
-提示词内容与工具传输是相互独立的两个维度。
+Prompt content and tool transport are two independent dimensions.
 
-| 维度 | 取值 | 职责 |
+| Dimension | Values | Responsibility |
 |---|---|---|
-| 提示词 Profile | `standard`、`lite` | 决定系统提示词内容、Profile 的工具集和与 Profile 相关的命令内容 |
-| 工具传输 | `native`、`xml` | 决定使用服务商原生函数 Schema，还是 XML 工具说明 |
-| 运行时开关 | 浏览器、MCP、技能、子智能体、Focus Chain、Web 工具、图片生成、YOLO、CLI、多根工作区、并行工具 | 按运行时能力和设置启用对应的内容与工具 |
-| 投影 | OpenAI 兼容、Anthropic 协议、Gemini；XML | 把规范工具描述转换为请求格式 |
+| Prompt profile | `standard`, `lite` | Chooses the system prompt content, the profile's tool set, and profile-specific command content |
+| Tool transport | `native`, `xml` | Chooses provider-native function schemas or XML tool documentation |
+| Runtime gates | Browser, MCP, Skills, Subagents, Focus Chain, Web tools, image generation, YOLO, CLI, multi-root workspace, parallel tools | Enable the matching content and tools based on runtime capabilities and settings |
+| Projection | OpenAI-compatible, Anthropic protocol, Gemini; XML | Converts canonical tool descriptors into a request format |
 
-服务商原生 Schema 由 `provider-projector.ts` 生成，XML 工具说明由 `xml-tool-projector.ts` 单独生成。技能和 MCP 不是独立的布尔开关，而是根据可用的技能和已连接的服务器决定。
+Provider-native schemas are produced by `provider-projector.ts`, while XML tool documentation is produced separately by `xml-tool-projector.ts`. Skills and MCP are not standalone booleans; they depend on the available skills and the connected servers.
 
-快照测试的文件名同时编码前两个维度：`standard.native.*`、`standard.xml.*`、`lite.native.*`、`lite.xml.*`。`enableNativeToolCalls`、`nativeTools` 和 `transport: "native"` 只表示工具传输，不能当作 Profile 名称。
+Snapshot test file names encode the first two dimensions: `standard.native.*`, `standard.xml.*`, `lite.native.*`, and `lite.xml.*`. `enableNativeToolCalls`, `nativeTools`, and `transport: "native"` describe tool transport only and must never be used as profile names.
 
-## 调用链
+## Call chains
 
-### 主任务
+### Main task
 
 ```text
 Task
@@ -30,80 +30,80 @@ Task
   -> getSystemPrompt
   -> SystemPromptGenerator
   -> createSystemPromptConfig
-  -> Standard 或 Lite 的 Section 组装
+  -> Standard or Lite section assembly
   -> ToolPromptGenerator
-  -> 服务商原生投影或 XML 投影
+  -> provider-native or XML projection
 ```
 
-`resolvePromptProfile`（`src/shared/resolve-prompt-profile.ts`）是 Profile 策略的唯一边界：
+`resolvePromptProfile` (in `src/shared/resolve-prompt-profile.ts`) is the single profile policy boundary:
 
-1. 显式指定的 Profile 优先；
-2. 模型 ID 中任一以 `/` 分隔的段是 `o1` 或以 `o1-` 开头时，选择 Lite；
-3. 否则按上下文窗口判断：小于 64,000 选择 Lite，否则选择 Standard。上下文窗口缺失或无效时按 128,000 处理。
+1. an explicitly chosen profile wins;
+2. if any `/`-separated segment of the model ID is `o1` or starts with `o1-`, Lite is selected;
+3. otherwise the context window decides: below 64,000 selects Lite, anything else selects Standard. A missing or invalid context window is treated as 128,000.
 
-`SystemPromptCacheService` 把生成的提示词和工具投影冻结到任务的 `context.json`。当提示词合同版本（`SYSTEM_PROMPT_CONTRACT_VERSION`）、服务商 ID、模型 ID、Profile、原生工具开关或 API 格式变化时，会重新生成。Focus Chain 和能力变化只记为新鲜度信息，不会自动触发重建，需要显式刷新。缓存只写入 `standard` 或 `lite`；存储读取边界会把旧缓存中的 `native` 单向迁移为 `standard`。
+`SystemPromptCacheService` freezes the generated prompt and tool projection into the task's `context.json`. It regenerates when the prompt contract version (`SYSTEM_PROMPT_CONTRACT_VERSION`), provider ID, model ID, profile, native-tools setting, or API format changes. Focus Chain and capability changes are only tracked as freshness information; they do not trigger an automatic rebuild and require an explicit refresh. The cache stores only `standard` or `lite`; the storage read boundary migrates a legacy `native` value one way to `standard`.
 
-### 子智能体
+### Subagent
 
 ```text
 SubagentRunner
   -> resolvePromptProfile
-  -> SystemPromptContext（isSubagentRun = true）
+  -> SystemPromptContext (isSubagentRun = true)
   -> getSystemPrompt
-  -> 按子智能体允许列表过滤生成的原生工具
+  -> filter the generated native tools by the subagent allowlist
 ```
 
-子智能体不复用主任务冻结的提示词，而是为本次运行生成专用提示词。它与主任务共用 Profile 和传输架构，并通过子智能体运行时开关避免递归暴露子智能体工具。
+A subagent does not reuse the main task's frozen prompt; it generates a prompt for its own run. It shares the profile and transport architecture with the main task and uses the subagent runtime gate to avoid exposing subagent tools recursively.
 
-### 斜杠命令
+### Slash commands
 
-`CommandPromptGenerator` 渲染显式命令指令。Deep Planning 根据调用方已经解析好的 Profile 选择 Standard 或 Lite 的命令描述。斜杠命令是即时注入的显式指令，不是可调用的函数工具。工具传输不能决定提示词 Profile。
+`CommandPromptGenerator` renders explicit command instructions. Deep Planning picks the Standard or Lite command description from the profile the caller has already resolved. Slash commands are explicit instructions injected on demand, not callable function tools. Tool transport must never decide the prompt profile.
 
-## 模块职责
+## Module responsibilities
 
-| 源码 | 职责 |
+| Source | Responsibility |
 |---|---|
-| `src/shared/resolve-prompt-profile.ts` | Profile 选择策略 |
-| `src/core/prompts/profiles/types.ts` | Profile 的稳定身份 |
-| `src/core/prompts/system-prompt/context.ts` | 类型化的运行时输入 |
-| `src/core/prompts/system-prompt/pipeline.ts` | 把运行时输入收敛为 `SystemPromptConfig` |
-| `src/core/prompts/generators/SystemPromptGenerator.ts` | 提示词生成编排 |
-| `src/core/prompts/system-prompt/variants/` | Section 组装和条件内容 |
-| `src/core/prompts/i18n/en/variants/` | Profile 自有的提示词文本 |
-| `src/core/prompts/tools/tool-specs.ts` | 规范工具描述 `STANDARD_TOOL_SPECS` |
-| `src/core/prompts/tools/tool-ids.ts`、`tool-profile.ts` | 每个 Profile 注册的工具 ID 及注册逻辑 |
-| `src/core/prompts/tools/provider-projector.ts` | 服务商原生 Schema 投影 |
-| `src/core/prompts/tools/xml-tool-projector.ts` | XML 工具说明投影 |
-| `src/core/prompts/commands/` | 显式命令提示词生成 |
-| `src/core/prompts/system-prompt-cache/` | 任务级冻结提示词的生命周期 |
+| `src/shared/resolve-prompt-profile.ts` | Profile selection policy |
+| `src/core/prompts/profiles/types.ts` | Stable profile identity |
+| `src/core/prompts/system-prompt/context.ts` | Typed runtime input |
+| `src/core/prompts/system-prompt/pipeline.ts` | Reduces runtime input into `SystemPromptConfig` |
+| `src/core/prompts/generators/SystemPromptGenerator.ts` | Prompt generation orchestration |
+| `src/core/prompts/system-prompt/variants/` | Section assembly and conditional content |
+| `src/core/prompts/i18n/en/variants/` | Profile-owned prompt text |
+| `src/core/prompts/tools/tool-specs.ts` | Canonical tool descriptors, `STANDARD_TOOL_SPECS` |
+| `src/core/prompts/tools/tool-ids.ts`, `tool-profile.ts` | Tool IDs registered for each profile and the registration logic |
+| `src/core/prompts/tools/provider-projector.ts` | Provider-native schema projection |
+| `src/core/prompts/tools/xml-tool-projector.ts` | XML tool documentation projection |
+| `src/core/prompts/commands/` | Explicit command prompt generation |
+| `src/core/prompts/system-prompt-cache/` | Lifecycle of the task-level frozen prompt |
 
-`STANDARD_TOOL_SPECS` 是规范描述的唯一来源。每个 Profile 按 `tool-ids.ts` 中的 ID 列表注册工具，并非注册全部描述；Lite 从同一描述源注册更小的集合。之后再根据运行时条件过滤不可用的工具或参数，生成原生或 XML 投影。
+`STANDARD_TOOL_SPECS` is the single source of canonical descriptors. Each profile registers the tools listed for it in `tool-ids.ts` rather than every descriptor; Lite registers a smaller set from the same source. Unavailable tools or parameters are then filtered by runtime conditions before the native or XML projection is produced.
 
-## 架构特点
+## Architecture properties
 
-1. Profile 在进入提示词生成前已经确定，提示词正文不判断服务商或模型 ID。
-2. 原生函数调用和 XML 共用同一套经过条件过滤的工具描述。
-3. 运行时能力通过 `SystemPromptContext` 输入，在组装前收敛为不可变的 `SystemPromptConfig`。
-4. 提示词正文放在已注册的 i18n 模块中，通过声明式运行时合同渲染。
-5. 主任务使用冻结提示词保证请求之间一致；子智能体使用隔离的提示词和工具允许列表。
-6. 快照矩阵同时覆盖 Profile 和工具传输。
+1. The profile is resolved before prompt generation begins, so prompt text never checks the provider or model ID.
+2. Native function calling and XML share the same condition-filtered tool descriptors.
+3. Runtime capabilities enter through `SystemPromptContext` and are reduced to an immutable `SystemPromptConfig` before assembly.
+4. Prompt text lives in registered i18n modules and is rendered through declarative runtime contracts.
+5. The main task uses a frozen prompt to keep requests consistent; subagents use an isolated prompt and a tool allowlist.
+6. The snapshot matrix covers both profile and tool transport.
 
-## 新增提示词 Profile
+## Adding a prompt profile
 
-只有当一组提示词形成完整、一致的合同差异时，才应该新增 Profile。传输方式和服务商名称都不能作为 Profile。
+Add a profile only when a set of prompts forms a complete, consistent contract difference. Neither the transport nor a provider name is a profile.
 
-1. 在 `PromptProfile` 中新增稳定值，并在 `resolvePromptProfile` 中定义选择策略。
-2. 新增已注册的 i18n Variant 模块和对应的 Section 组装器，优先复用共享 Section。
-3. 定义该 Profile 的工具 ID 集；除非措辞或参数确实不同，否则复用规范工具描述。
-4. 只有命令合同确实随 Profile 变化时，才新增命令 Variant。
-5. 把新 Profile 加入行为矩阵和快照矩阵，同时覆盖 `native` 和 `xml` 两种传输。
-6. 把 Profile 纳入冻结提示词的元数据；需要让旧的冻结结果失效时，提升 `SYSTEM_PROMPT_CONTRACT_VERSION`。
+1. Add a stable value to `PromptProfile` and define its selection policy in `resolvePromptProfile`.
+2. Add a registered i18n variant module and its section assembler, reusing shared sections first.
+3. Define the profile's tool ID set; reuse the canonical descriptors unless the wording or parameters genuinely differ.
+4. Add a command variant only when the command contract actually varies by profile.
+5. Add the new profile to the behavior and snapshot matrices, covering both `native` and `xml` transports.
+6. Include the profile in the frozen prompt metadata; bump `SYSTEM_PROMPT_CONTRACT_VERSION` when existing frozen results must be invalidated.
 
-## 修改约束
+## Change constraints
 
-- 不要创建名为 `native`、`xml` 或服务商名称的 Profile。
-- 不要在服务商适配器中复制工具准入策略。
-- 不要在提示词正文、Section 组装器或工具投影器中判断模型 ID。
-- 不要把斜杠命令注册为可调用的工具。
-- 普通请求期间不要修改任务的冻结提示词，更新必须经过缓存刷新合同。
-- Lite 的排除项必须保持显式，特别是技能、Focus Chain 和 `task_progress`。
+- Do not create a profile named `native`, `xml`, or after a provider.
+- Do not duplicate tool admission policy in provider adapters.
+- Do not check model IDs in prompt text, section assemblers, or tool projectors.
+- Do not register slash commands as callable tools.
+- Do not modify a task's frozen prompt during ordinary requests; updates must go through the cache refresh contract.
+- Keep Lite's exclusions explicit, especially Skills, Focus Chain, and `task_progress`.

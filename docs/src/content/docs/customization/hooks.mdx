@@ -1,59 +1,59 @@
 ---
 title: Hooks
-description: 在任务生命周期和工具调用的关键节点运行自定义脚本。
+description: Run custom scripts at key points in the task lifecycle and around tool calls.
 ---
 
 import { Aside } from "@astrojs/starlight/components"
 
-钩子（Hook）是按事件命名的脚本。Dline 在任务生命周期和工具调用的特定节点运行它，通过标准输入传入 JSON，并读取脚本在标准输出中返回的 JSON。你可以用钩子记录审计日志、校验工具参数、向对话注入上下文，或在条件不满足时取消任务。
+A hook is a script named after an event. Dline runs it at specific points in the task lifecycle and around tool calls, passes JSON on standard input, and reads the JSON the script returns on standard output. Use hooks to write audit logs, validate tool parameters, inject context into the conversation, or cancel a task when a condition is not met.
 
-## 启用钩子
+## Enabling hooks
 
-钩子由 **Settings → Features** 中的 **Hooks** 开关控制（“Enable lifecycle and tool hooks during task execution.”），默认开启。关闭后，能力面板中的 **Hooks** 标签也会隐藏。
+Hooks are controlled by the **Hooks** toggle in **Settings → Features** ("Enable lifecycle and tool hooks during task execution."), which is on by default. When it is off, the **Hooks** tab in the capabilities panel is hidden as well.
 
-## 钩子位置
+## Hook locations
 
-| 范围 | 路径 |
+| Scope | Path |
 |---|---|
-| 全局 | `<documents-root>/hooks/` |
-| 工作区 | `<workspace>/.agents/hooks/` |
+| Global | `<documents-root>/hooks/` |
+| Workspace | `<workspace>/.agents/hooks/` |
 
-`<documents-root>` 默认是操作系统“文档”目录下的 `dline` 文件夹；设置 `DLINE_DOCS_DIR` 后，以该变量的值作为根目录。全局和工作区中存在同名钩子时，两者都会运行，结果合并处理。
+By default, `<documents-root>` is the `dline` folder inside the operating system's Documents directory. When `DLINE_DOCS_DIR` is set, its value is used as the root. When a global and a workspace hook share a name, both run and their results are merged.
 
-## 文件命名
+## File naming
 
-文件名必须与事件名完全一致（区分大小写）：
+The file name must match the event name exactly (case-sensitive):
 
-- **macOS / Linux**：无扩展名的可执行文件，例如 `PreToolUse`，需要有执行权限。`.ps1` 文件会被忽略。
-- **Windows**：PowerShell 脚本 `<事件名>.ps1`，例如 `PreToolUse.ps1`。Dline 以 `-NoProfile -NonInteractive -ExecutionPolicy Bypass` 参数运行它，无扩展名的文件会被忽略。
+- **macOS / Linux**: an executable file without an extension, for example `PreToolUse`, with the execute permission set. `.ps1` files are ignored.
+- **Windows**: a PowerShell script named `<Event>.ps1`, for example `PreToolUse.ps1`. Dline runs it with `-NoProfile -NonInteractive -ExecutionPolicy Bypass`; files without an extension are ignored.
 
-## 事件
+## Events
 
-| 事件 | 触发时机 |
+| Event | When it runs |
 |---|---|
-| `PreToolUse` | 工具执行之前 |
-| `PostToolUse` | 工具执行之后 |
-| `UserPromptSubmit` | 用户提交消息时 |
-| `TaskStart` | 任务开始时 |
-| `TaskCancel` | 任务被取消时 |
-| `TaskComplete` | 任务完成时 |
-| `Notification` | Dline 发出通知时 |
-| `PreCompact` | 压缩上下文之前 |
+| `PreToolUse` | Before a tool runs |
+| `PostToolUse` | After a tool runs |
+| `UserPromptSubmit` | When the user submits a message |
+| `TaskStart` | When a task starts |
+| `TaskCancel` | When a task is cancelled |
+| `TaskComplete` | When a task completes |
+| `Notification` | When Dline emits a notification |
+| `PreCompact` | Before the context is compacted |
 
-## 输入
+## Input
 
-Dline 通过标准输入传入一个 JSON 对象，字段名使用 camelCase。公共字段包括：
+Dline passes a JSON object on standard input with camelCase field names. Common fields:
 
-- `clineVersion`、`hookName`、`timestamp`、`taskId`；
-- `workspaceRoots`：工作区根目录列表；
-- `userId`：匿名的用户或设备标识；
-- `model`：包含 `provider` 和 `slug`。
+- `clineVersion`, `hookName`, `timestamp`, `taskId`;
+- `workspaceRoots`: the list of workspace root directories;
+- `userId`: an anonymous user or machine identifier;
+- `model`: an object with `provider` and `slug`.
 
-此外，每个事件还有一个同名的事件数据对象，例如 `preToolUse` 包含 `toolName` 和 `parameters`，`postToolUse` 还包含 `result`、`success` 和 `executionTimeMs`。
+Each event also has its own data object named after the event. For example, `preToolUse` contains `toolName` and `parameters`, and `postToolUse` additionally contains `result`, `success`, and `executionTimeMs`.
 
-## 输出
+## Output
 
-在标准输出中返回一个 JSON 对象，所有字段都是可选的：
+Return a JSON object on standard output. Every field is optional:
 
 ```json
 {
@@ -63,34 +63,34 @@ Dline 通过标准输入传入一个 JSON 对象，字段名使用 camelCase。�
 }
 ```
 
-- `cancel`：布尔值。`PreToolUse` 返回 `true` 时会取消整个任务，`errorMessage` 作为取消原因。
-- `contextModification`：字符串，会作为额外上下文加入对话，最长 50,000 个字符。
-- `errorMessage`：字符串，错误或取消说明。
+- `cancel`: a boolean. When `PreToolUse` returns `true`, the whole task is cancelled and `errorMessage` is used as the reason.
+- `contextModification`: a string added to the conversation as extra context, up to 50,000 characters.
+- `errorMessage`: a string describing an error or the reason for cancellation.
 
-`Notification` 事件会忽略 `cancel` 和 `contextModification`。旧的 `shouldContinue` 字段已被移除，出现时输出会被判定为无效，请改用 `cancel`。
+The `Notification` event ignores `cancel` and `contextModification`. The old `shouldContinue` field has been removed; output that contains it is rejected as invalid. Use `cancel` instead.
 
-## 限制
+## Limits
 
-- 每个脚本最长运行 30 秒。
-- 标准输出和标准错误合计最多 1 MiB。
-- 脚本正常退出但没有输出合法 JSON 时，Dline 忽略其结果并继续任务。
+- Each script can run for at most 30 seconds.
+- Standard output and standard error together are limited to 1 MiB.
+- If a script exits normally without printing valid JSON, Dline ignores its result and continues the task.
 
-## 在面板中管理钩子
+## Managing hooks in the panel
 
-点击输入框下方工具栏中的天平图标打开能力面板，切换到 **Hooks** 标签：
+Select the scale icon in the toolbar below the input box to open the capabilities panel, then switch to the **Hooks** tab:
 
-- 钩子按 **Global Hooks** 和工作区的 `.agents/hooks/` 分组显示；
-- 用 **New hook...** 选择事件类型，Dline 会生成对应平台的脚本模板并打开；
-- 每个钩子都可以编辑、删除和开关。
+- Hooks are grouped under **Global Hooks** and the workspace's `.agents/hooks/`;
+- **New hook...** lets you pick an event type; Dline generates a script template for your platform and opens it;
+- Each hook can be edited, deleted, and toggled.
 
 <Aside type="caution">
-在 macOS 和 Linux 上，开关通过修改文件的执行权限实现，新建的模板默认处于关闭状态。在 Windows 上，只要 `.ps1` 文件存在就会执行，面板中的单个钩子开关不可用；如需停用，请删除或重命名文件。
+On macOS and Linux, the toggle works by changing the file's execute permission, and new templates start out disabled. On Windows, a `.ps1` file runs whenever it exists and the per-hook toggle is unavailable; delete or rename the file to disable it.
 </Aside>
 
-**New hook...** 列表中没有 `Notification`，需要时请在钩子目录中手动创建该文件。列表中的 `TaskResume` 类型可以创建，但当前版本不会触发它。
+The **New hook...** list does not include `Notification`; create that file in a hooks directory manually if you need it. The list also offers a `TaskResume` type, which you can create but the current version does not trigger.
 
-## 相关内容
+## Related
 
 - [Rules](/customization/rules/)
 - [Skills](/customization/skills/)
-- [插件](/customization/plugins/)
+- [Plugins](/customization/plugins/)

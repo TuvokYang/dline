@@ -2,7 +2,7 @@
  * Navigation decisions for the documentation site.
  *
  * `sidebar` is the only source of sidebar structure. Group labels are written in
- * the root locale (Simplified Chinese) with English translations keyed by BCP-47
+ * the root locale (English) with Simplified Chinese translations keyed by BCP-47
  * tag; page entries use slugs so each locale shows its own page title and the
  * Pages base path is applied by Starlight.
  *
@@ -15,22 +15,21 @@
 /** @type {NonNullable<import("@astrojs/starlight/types").StarlightUserConfig["sidebar"]>} */
 export const sidebar = [
 	{
-		label: "快速开始",
-		translations: { en: "Getting Started" },
+		label: "Getting Started",
+		translations: { "zh-CN": "快速开始" },
 		items: [
 			"dline-overview",
 			"getting-started/installing-dline",
 			"getting-started/migration-cline-to-dline",
 			{
-				label: "模型与服务商",
-				translations: { en: "Models & Providers" },
+				label: "Models & Providers",
+				translations: { "zh-CN": "模型与服务商" },
 				items: [
 					"getting-started/authorizing-with-dline",
-					"customization/profiles",
 					"running-models-locally/overview",
 					{
-						label: "云服务商",
-						translations: { en: "Cloud Providers" },
+						label: "Cloud Providers",
+						translations: { "zh-CN": "云服务商" },
 						collapsed: true,
 						items: [
 							"provider-config/qwen",
@@ -60,13 +59,13 @@ export const sidebar = [
 		],
 	},
 	{
-		label: "使用",
-		translations: { en: "Usage" },
+		label: "Usage",
+		translations: { "zh-CN": "使用" },
 		items: ["usage/ide"],
 	},
 	{
-		label: "配置",
-		translations: { en: "Configurations" },
+		label: "Configurations",
+		translations: { "zh-CN": "配置" },
 		items: [
 			"tools-reference/all-dline-tools",
 			"customization/rules",
@@ -80,8 +79,8 @@ export const sidebar = [
 		],
 	},
 	{
-		label: "功能",
-		translations: { en: "Features" },
+		label: "Features",
+		translations: { "zh-CN": "功能" },
 		items: [
 			"core-workflows/plan-and-act",
 			"core-workflows/working-with-files",
@@ -94,18 +93,18 @@ export const sidebar = [
 		],
 	},
 	{
-		label: "IDE 专属功能",
-		translations: { en: "IDE Specific Features" },
+		label: "IDE Specific Features",
+		translations: { "zh-CN": "IDE 专属功能" },
 		items: ["features/auto-approve", "features/jupyter-notebooks", "features/multiroot-workspace"],
 	},
 	{
-		label: "故障排查",
-		translations: { en: "Troubleshooting" },
+		label: "Troubleshooting",
+		translations: { "zh-CN": "故障排查" },
 		items: ["troubleshooting/networking-and-proxies", "troubleshooting/telemetry"],
 	},
 	{
-		label: "开发指南",
-		translations: { en: "Developer Guide" },
+		label: "Developer Guide",
+		translations: { "zh-CN": "开发指南" },
 		items: [
 			"developer-guide/setup",
 			"developer-guide/architecture",

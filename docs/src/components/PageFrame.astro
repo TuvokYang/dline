@@ -1,0 +1,11 @@
+---
+/**
+ * Starlight PageFrame override: the default frame plus the live 3D mascot,
+ * which stands in the empty lower part of the table-of-contents column.
+ */
+import Default from "@astrojs/starlight/components/PageFrame.astro"
+import MascotStage from "./MascotStage.astro"
+---
+
+<Default><slot name="header" slot="header" /><slot name="sidebar" slot="sidebar" /><slot /></Default>
+<MascotStage />

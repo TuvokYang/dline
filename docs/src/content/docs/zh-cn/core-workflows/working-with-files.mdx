@@ -1,0 +1,79 @@
+---
+title: 处理文件与上下文
+description: 用 @ 引用文件、文件夹、诊断、终端、Git 变更和网页，并通过附件、拖放和编辑器菜单把上下文交给 Dline。
+---
+
+import { Aside } from "@astrojs/starlight/components"
+
+Dline 可以自己读取和搜索工作区，但直接告诉它相关的文件和信息，通常能更快得到准确结果。
+
+## 用 `@` 引用上下文
+
+在输入框中输入 `@` 会弹出菜单，可选择 **URL**、**Problems**、**Terminal**（VS Code）、**Git**、**Folder** 和 **File**。
+
+![在输入框中输入 @ 弹出上下文菜单，用方向键把高亮移到 Problems、Terminal 等条目，按 Esc 关闭菜单](/assets/ui/docs-context-mention.gif)
+
+| 写法 | 加入的内容 |
+|---|---|
+| `@/path/to/file` | 该文件的内容（相对于工作区根目录）。只包含这个文件本身，不会自动带上它引用的其他文件；非常大的文件可能被截断 |
+| `@/path/to/folder/` | 该文件夹的一级目录列表，以及其中**直接包含**的可读文件内容；子文件夹只列出名称，不会递归读取 |
+| `@problems` | 工作区中的错误与警告诊断 |
+| `@terminal` | 当前活动终端的输出（VS Code） |
+| `@git-changes` | 未提交的改动：`git status` 与 `git diff HEAD`。菜单中显示为 **Working changes** |
+| `@<提交哈希>` | 7–40 位十六进制提交哈希，加入该提交的信息、统计和 diff |
+| `@https://…` | 抓取该网页并转换为 Markdown；抓取失败时会报告错误 |
+
+<Aside type="tip">
+在多根工作区中，可以用 `@工作区名:/path/to/file` 指定从哪个根目录查找。不带工作区名时，Dline 会在所有根目录中查找同名路径。
+</Aside>
+
+## 添加附件
+
+点击输入区的 **+** 按钮可以选择文件或图片：
+
+- **图片**：PNG、JPG/JPEG、WebP。只有当前模型支持图片输入时才能选择图片。
+- **文件**：XML、JSON、TXT、LOG、MD、DOCX、IPYNB、PDF、XLSX、CSV。
+
+限制：
+
+- 每条消息最多 20 个图片和文件；
+- 通过选择器添加的非图片文件超过 20 MB 会被跳过；
+- 粘贴或拖入的图片，任一边超过 7500 像素会被拒绝。
+
+你也可以直接把图片**粘贴**到输入框中。
+
+## 拖放
+
+- **从 VS Code 资源管理器拖入**：文件和文件夹会变成 `@/file` 或 `@/folder/` 引用。工作区之外的路径会被拒绝。
+- **从系统文件管理器拖入**：只接受 PNG、JPEG 和 WebP 图片，作为图片附件加入；其他类型的文件不受支持。
+
+## 在编辑器中发送代码
+
+### 右键菜单与快捷键
+
+在编辑器中选中代码后，右键菜单中会出现 **Add to Dline**，它会把选中的代码、文件引用以及该范围内的诊断信息放入聊天。选中代码时按 `Cmd+'`（macOS）或 `Ctrl+'`（Windows/Linux）效果相同。
+
+### 代码操作（灯泡菜单）
+
+在编辑器的代码操作菜单（灯泡图标或快速修复）中，Dline 提供：
+
+| 操作 | 何时出现 | 效果 |
+|---|---|---|
+| **Add to Dline** | 始终 | 把代码、文件引用和诊断信息放入聊天 |
+| **Explain with Dline** | 始终 | 以选中代码开始一个“解释这段代码”的任务 |
+| **Improve with Dline** | 始终 | 以选中代码开始一个“改进这段代码”的任务 |
+| **Fix with Dline** | 该位置存在诊断时 | 请求 Dline 修复对应问题 |
+
+## 从终端发送输出
+
+在终端中选中文本后右键，选择 **Add to Dline**，选中的终端输出会以代码块形式放入输入框。它只复制你选中的部分，不会自动收集全部终端输出；需要完整的当前终端输出时，可以用 `@terminal`。
+
+## 生成提交信息
+
+在 **Source Control** 视图的标题栏中点击 **Generate Commit Message with Dline**，Dline 会根据改动生成提交信息并填入提交输入框。它优先使用已暂存（staged）的改动；没有暂存改动时，使用相对于 `HEAD` 的全部改动。生成过程中可以点击 **Generate Commit Message with Dline - Stop** 停止。
+
+## 相关内容
+
+- [.agentignore](/zh-cn/customization/agentignore/)：限制 Dline 可以读取和修改的文件；
+- [Jupyter Notebook](/zh-cn/features/jupyter-notebooks/)：在 Notebook 单元格中使用 Dline；
+- [多根工作区](/zh-cn/features/multiroot-workspace/)：在多个项目文件夹之间引用文件。

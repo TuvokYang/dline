@@ -1,88 +1,88 @@
 ---
-title: 工具参考
-description: Dline 内置工具一览，以及每个工具的可用条件。
+title: Tools reference
+description: The built-in Dline tools and when each one is available.
 ---
 
 import { Aside } from "@astrojs/starlight/components"
 
-工具是模型在任务中可以调用的函数。实际可用的工具取决于提示词配置（Standard 或 Lite）、当前模式、功能开关、服务商能力和任务权限。下表中的“条件”列只列出该工具特有的前提；所有工具都还受审批设置约束。
+Tools are functions the model can call during a task. Which tools are available depends on the prompt profile (Standard or Lite), the current mode, feature toggles, provider capabilities, and task permissions. The "Conditions" column lists only the requirements specific to each tool; every tool is also subject to your approval settings.
 
-## 文件与代码
+## Files and code
 
-| 工具 | 作用 | 条件 |
+| Tool | Purpose | Conditions |
 |---|---|---|
-| `read_file` | 读取文件内容，可指定行范围 | Standard、Lite |
-| `write_to_file` | 创建新文件，必要时创建目录 | Standard、Lite |
-| `replace_in_file` | 用按行匹配的 SEARCH/REPLACE 块编辑已有文件 | Standard、Lite |
-| `search_files` | 在目录中按正则表达式搜索文件内容 | Standard、Lite |
-| `list_files` | 列出目录内容，可递归 | Standard、Lite |
-| `list_code_definition_names` | 列出源代码的顶层定义 | Standard、Lite |
-| `apply_patch` | 按补丁格式新增、删除、移动或编辑代码 | 仅 Standard |
-| `find_references` | 通过 IDE 语言服务查找符号引用 | 仅 Standard；需要 VS Code |
-| `rename` | 通过 IDE 语言服务重命名符号，支持预览 | 仅 Standard；需要 VS Code |
-| `replace_text` | 在匹配 glob 的文件中批量替换文本，支持预览 | 仅 Standard |
+| `read_file` | Read file content, optionally a line range | Standard, Lite |
+| `write_to_file` | Create a new file, creating directories as needed | Standard, Lite |
+| `replace_in_file` | Edit an existing file with line-matched SEARCH/REPLACE blocks | Standard, Lite |
+| `search_files` | Search file contents in a directory with a regular expression | Standard, Lite |
+| `list_files` | List directory contents, optionally recursively | Standard, Lite |
+| `list_code_definition_names` | List top-level source-code definitions | Standard, Lite |
+| `apply_patch` | Add, delete, move, or edit code using a patch format | Standard only |
+| `find_references` | Find symbol references through the IDE language service | Standard only; requires VS Code |
+| `rename` | Rename a symbol through the IDE language service, with preview | Standard only; requires VS Code |
+| `replace_text` | Replace text across files matching a glob, with preview | Standard only |
 
-### `replace_in_file` 的匹配方式
+### How `replace_in_file` matches
 
-- 每个 SEARCH 行匹配文件中的整行或该行的行首部分。行首缩进可以省略，SEARCH 行绝不会从文件行的中间开始匹配。
-- 一个 SEARCH 块必须在整个文件中只匹配一处。匹配到多处的块会被拒绝，结果会列出候选行号。
-- 被匹配的每一行都会整行替换。REPLACE 原样写入，因此替换行必须带上自己的缩进。
-- 形如 `....... SKIP`（点的数量与分隔符长度相同）的 SEARCH 行表示 SKIP 区间。此时该块覆盖从首段到最近匹配尾段之间的所有行，这些行全部由 REPLACE 替换。
-- 编辑成功后，结果会报告每个块替换的原始行范围，以及 SKIP 区间删除了多少行。
+- Each SEARCH line matches a whole file line or the beginning of one. Leading indentation may be omitted, and a SEARCH line never matches from the middle of a file line.
+- A SEARCH block must match exactly one location in the file. A block that matches several locations is rejected, and the result lists the candidate line numbers.
+- Every matched line is replaced in full. REPLACE is written verbatim, so replacement lines must include their indentation.
+- A SEARCH line of the form `....... SKIP` (as many dots as the delimiter length) marks a SKIP range. The block then covers every line from the head through the nearest matching tail, and all of those lines are replaced by REPLACE.
+- A successful edit reports the original line range each block replaced, including how many lines a SKIP range removed.
 
-`replace_text` 是独立的工具，不受上述规则影响。
+`replace_text` is a separate tool and is not affected by these rules.
 
-## 命令、浏览器与网络
+## Commands, browser, and web
 
-| 工具 | 作用 | 条件 |
+| Tool | Purpose | Conditions |
 |---|---|---|
-| `execute_command` | 执行 shell 命令 | Standard、Lite |
-| `kill_command` | 终止由 `execute_command` 启动的命令 | Standard、Lite |
-| `browser_action` | 操作由 Puppeteer 控制的浏览器 | 仅 Standard；模型支持浏览器操作，且未在浏览器设置中禁用 |
-| `web_fetch` | 抓取并分析指定 URL | 仅 Standard；开启 **Web Tools** |
-| `web_search` | 搜索网页，返回标题和链接 | 仅 Standard；开启 **Web Tools** |
-| `generate_image` | 通过已配置的图像来源生成或编辑图片 | 开启 **Enable Image Generation**，且有可用的图像模型 |
+| `execute_command` | Run a shell command | Standard, Lite |
+| `kill_command` | Stop a command started by `execute_command` | Standard, Lite |
+| `browser_action` | Operate a Puppeteer-controlled browser | Standard only; the model supports browser use and it is not disabled in browser settings |
+| `web_fetch` | Fetch and analyze a given URL | Standard only; **Web Tools** is on |
+| `web_search` | Search the web and return titles and links | Standard only; **Web Tools** is on |
+| `generate_image` | Generate or edit images through the configured image source | **Enable Image Generation** is on and an image model is available |
 
 <Aside>
-开启 **Web Tools** 后，部分服务商会使用其托管的网页搜索或抓取能力，此时由服务商执行，Dline 不再提供对应的内置工具。
+With **Web Tools** on, some providers use their own hosted web search or fetch. In that case the provider performs the work, and Dline does not offer the corresponding built-in tool.
 </Aside>
 
-## 任务交互
+## Task interaction
 
-| 工具 | 作用 | 条件 |
+| Tool | Purpose | Conditions |
 |---|---|---|
-| `ask_followup_question` | 向用户提出一个必须回答的问题 | Standard、Lite |
-| `qna_respond` | 回答用户的提问 | Standard、Lite |
-| `make_plan` | 提交完整的实施或设计计划 | Standard、Lite |
-| `act_mode_respond` | 在 Act 模式下发布进度说明 | Standard、Lite；仅 Act 模式 |
-| `status_update` | 发布进度通告 | Standard、Lite |
-| `generate_report` | 提交结构化报告供用户审阅 | Standard、Lite |
-| `attempt_completion` | 提交任务的最终结果 | Standard、Lite |
-| `change_todo_list` | 请求用户批准替换当前的待办清单 | 仅 Standard；开启 **Focus Chain** |
+| `ask_followup_question` | Ask the user one question that needs an answer | Standard, Lite |
+| `qna_respond` | Answer the user's question | Standard, Lite |
+| `make_plan` | Submit a complete implementation or design plan | Standard, Lite |
+| `act_mode_respond` | Post a progress note in Act mode | Standard, Lite; Act mode only |
+| `status_update` | Post a progress announcement | Standard, Lite |
+| `generate_report` | Submit a structured report for review | Standard, Lite |
+| `attempt_completion` | Submit the final result of the task | Standard, Lite |
+| `change_todo_list` | Ask the user to approve replacing the current to-do list | Standard only; **Focus Chain** is on |
 
-## 能力与委派
+## Capabilities and delegation
 
-| 工具 | 作用 | 条件 |
+| Tool | Purpose | Conditions |
 |---|---|---|
-| `load_skill` | 加载一个技能的完整说明 | 仅 Standard；存在可用技能 |
-| `load_workflow` | 加载一个工作流的步骤 | 仅 Standard |
-| `load_mcp` | 加载某个 MCP 工具的元数据，不执行它 | 仅 Standard；有已连接的 MCP 服务器 |
-| `use_mcp_tool` | 执行 MCP 服务器提供的工具 | 仅 Standard；有已连接的 MCP 服务器 |
-| `access_mcp_resource` | 读取 MCP 服务器提供的资源 | 仅 Standard；有已连接的 MCP 服务器 |
-| `load_mcp_documentation` | 加载创建和安装 MCP 服务器的指南 | 仅 Standard；有已连接的 MCP 服务器 |
-| `use_subagent` / `use_subagents` | 运行一个或一批子代理 | 仅 Standard；启用子代理功能，且当前不在子代理中 |
-| `spawn_task` | 启动一个独立运行的新任务，创建前需要用户批准 | 仅 Standard；当前不在子代理或派生任务中 |
+| `load_skill` | Load the full instructions of a skill | Standard only; at least one skill is available |
+| `load_workflow` | Load the steps of a workflow | Standard only |
+| `load_mcp` | Load the metadata of one MCP tool without running it | Standard only; an MCP server is connected |
+| `use_mcp_tool` | Run a tool provided by an MCP server | Standard only; an MCP server is connected |
+| `access_mcp_resource` | Read a resource provided by an MCP server | Standard only; an MCP server is connected |
+| `load_mcp_documentation` | Load guidance for creating and installing MCP servers | Standard only; an MCP server is connected |
+| `use_subagent` / `use_subagents` | Run one subagent or a batch of subagents | Standard only; subagents are enabled and the current run is not itself a subagent |
+| `spawn_task` | Start an independent new task; requires user approval before creation | Standard only; not inside a subagent or a spawned task |
 
 ## Strict Plan Mode
 
-在 **Settings → Features** 中开启 **Strict Plan Mode** 后，Plan 模式下会拒绝 `write_to_file`、`replace_in_file` 和 `apply_patch`，以及 `/newrule` 使用的规则创建工具。
+When **Strict Plan Mode** is on in **Settings → Features**, Plan mode rejects `write_to_file`, `replace_in_file`, and `apply_patch`, as well as the rule-creation tool used by `/newrule`.
 
-## MCP 工具
+## MCP tools
 
-除上表中的内置工具外，已连接的 MCP 服务器提供的工具也会作为可调用工具出现。MCP 服务器配置来自全局文件 `<documents-root>/settings/mcp_settings.json` 和工作区目录 `.agents/mcp/`。详见 [MCP](/mcp/mcp-overview/)。
+Besides the built-in tools above, tools provided by connected MCP servers also become callable. MCP server configuration comes from the global file `<documents-root>/settings/mcp_settings.json` and the workspace directory `.agents/mcp/`. See [MCP](/mcp/mcp-overview/).
 
-## 相关内容
+## Related
 
-- [自动批准](/features/auto-approve/)
-- [使用命令](/core-workflows/using-commands/)
+- [Auto-approve](/features/auto-approve/)
+- [Using commands](/core-workflows/using-commands/)
 - [MCP](/mcp/mcp-overview/)

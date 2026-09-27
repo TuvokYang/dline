@@ -1,58 +1,58 @@
 ---
-title: OpenAI 兼容服务
-description: 通过 OpenAI 服务商的自定义 Base URL，把 Dline 接入 Azure OpenAI 和其他兼容 OpenAI API 的服务。
+title: OpenAI-compatible services
+description: Connect Dline to Azure OpenAI and other OpenAI-compatible APIs through the OpenAI provider's custom base URL.
 ---
 
 import { Aside, Steps } from "@astrojs/starlight/components"
 
-很多模型服务商都提供与 OpenAI API 兼容的接口，例如 Together AI、Perplexity、各类自建网关和 Azure OpenAI。Dline 通过 **OpenAI** 服务商加上自定义 Base URL 接入这些服务。
+Many model providers expose an API that is compatible with OpenAI's, for example Together AI, Perplexity, self-hosted gateways, and Azure OpenAI. Dline connects to them through the **OpenAI** provider with a custom base URL.
 
-官方 OpenAI API 的配置见 [OpenAI / ChatGPT 订阅](/provider-config/openai/)。Ollama 和 LM Studio 有专门的服务商，见[本地运行模型](/running-models-locally/overview/)。
+For the official OpenAI API, see [OpenAI / ChatGPT subscription](/provider-config/openai/). Ollama and LM Studio have dedicated providers; see [Running models locally](/running-models-locally/overview/).
 
-## 基本配置
+## Basic setup
 
-接入兼容服务需要三项信息：
+You need three pieces of information:
 
-- **Base URL**：服务商提供的 API 地址，不是 `https://api.openai.com/v1`。
-- **API Key**：从该服务商获取的密钥。
-- **Model ID**：要使用的模型标识符。
+- **Base URL**: the provider's API address, not `https://api.openai.com/v1`.
+- **API key**: the secret key issued by that provider.
+- **Model ID**: the identifier of the model you want to use.
 
 <Steps>
 
-1. 点击 Dline 面板标题栏的 **Settings** 按钮。
+1. Click the **Settings** button in the Dline panel title bar.
 
-2. 在 **Provider** 中选择 **OpenAI**。
+2. Set **Provider** to **OpenAI**.
 
-3. 勾选 **Use custom base URL**，填写服务商的 API 地址。
+3. Check **Use custom base URL** and enter the provider's API address.
 
-4. 把服务商的 Key 粘贴到 **OpenAI API Key** 输入框。
+4. Paste the provider's key into the **OpenAI API Key** field.
 
-5. 在 **Model** 中选择模型；列表里没有目标模型时，勾选 **Use custom model ID** 并在 **Model ID** 中手动输入。
+5. Select a model under **Model**. If the model is not listed, check **Use custom model ID** and type it under **Model ID**.
 
 </Steps>
 
 <Aside>
-不同服务商的模型 ID 各不相同，请以服务商文档为准。
+Model IDs differ between providers. Always check the provider's documentation.
 </Aside>
 
-## 高级选项
+## Advanced options
 
-- **API Format：** 选择请求使用的接口格式，需与服务端支持的格式一致。
-- **Model Configuration：** 为自定义模型填写最大输出 token、上下文窗口、图片支持、工具调用支持以及输入 / 输出价格，让 Dline 正确选择提示词配置和计算费用。
-- **Custom Headers：** 点击 **Add Header** 添加服务商要求的额外请求头。
-- **Use explicit prompt cache controls：** 仅在服务端支持 `prompt_cache_breakpoint` 时开启；请求被拒绝时，当前任务会回退到自动缓存。
+- **API Format:** choose the request format; it must match a format the endpoint supports.
+- **Model Configuration:** set max output tokens, context window, image support, tool support, and input / output prices for a custom model, so Dline can choose the right prompt profile and calculate cost.
+- **Custom Headers:** click **Add Header** to add any extra request headers the provider requires.
+- **Use explicit prompt cache controls:** enable this only when the endpoint supports `prompt_cache_breakpoint`. If the controls are rejected, the current task falls back to automatic caching.
 
 ## Azure OpenAI
 
-- 在 **Use custom base URL** 中填写 Azure OpenAI 资源的地址。
-- 需要指定 API 版本时，勾选 **Set Azure API version** 并填写版本，默认 `2024-10-01-preview`。
-- 勾选 **Use Azure Identity Authentication** 可以使用现有的 Azure 托管身份认证。它不会主动发起登录，只会复用已有的认证状态（例如 `az login`）。
+- Enter your Azure OpenAI resource address under **Use custom base URL**.
+- To pin an API version, check **Set Azure API version** and enter it. The default is `2024-10-01-preview`.
+- Check **Use Azure Identity Authentication** to reuse an existing Azure managed identity. It does not start a sign-in; it only reuses an existing authentication state, such as `az login`.
 
-## 故障排查
+## Troubleshooting
 
-| 问题 | 处理方式 |
+| Problem | What to do |
 | --- | --- |
-| 提示 API Key 无效 | 确认 Key 输入正确，且属于当前 Base URL 对应的服务商。 |
-| 提示模型不存在 | 确认模型 ID 有效，并且该模型在当前 Base URL 下可用。 |
-| 连接失败 | 检查 Base URL、本机能否访问该服务，以及防火墙和代理设置，参见[网络与代理](/troubleshooting/networking-and-proxies/)。 |
-| 输出异常 | 换一个模型试试，或检查 **Model Configuration** 中的能力参数是否与模型一致。 |
+| Invalid API key | Check that the key is correct and belongs to the provider behind the current base URL. |
+| Model not found | Check that the model ID is valid and available at the current base URL. |
+| Connection errors | Check the base URL, whether this machine can reach the service, and your firewall and proxy settings. See [Networking and proxies](/troubleshooting/networking-and-proxies/). |
+| Unexpected output | Try another model, or check that the capabilities in **Model Configuration** match the model. |

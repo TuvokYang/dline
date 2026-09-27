@@ -1,0 +1,135 @@
+---
+title: 模型配置
+description: 为 Dline 配置模型服务商的 API Key 或本地模型运行时，创建和管理多个 API Profile，并为 Act、Plan 和子代理分别选用。
+---
+
+import { Aside, Steps } from "@astrojs/starlight/components"
+
+Dline 通过**模型服务商**（provider）连接 AI 模型。你可以：
+
+- **使用自己的 API Key**：接入云端服务商，例如 Anthropic、OpenAI、OpenRouter。
+- **使用本地模型**：通过 Ollama 或 LM Studio 在自己的机器上运行模型，无需 API Key。
+
+连接配置保存在 **API Profile** 中。一个 Profile 是一组完整的模型连接配置：服务商、模型、API Key、可选的 Base URL，以及该服务商特有的设置。你可以创建多个 Profile，在不同模式或子代理中使用不同的模型。
+
+## 创建与管理 Profile
+
+<Steps>
+
+1. 点击 Dline 面板标题栏的 **Settings** 按钮，进入 **API Configuration**。
+
+2. 点击 **Add profile**，会新增一个名为 **New Model** 的 Profile 并展开；已有 Profile 时，也可以点击卡片左侧的展开按钮直接修改。
+
+3. 在 **Provider** 下拉框中选择服务商。
+
+4. 完成认证：
+   - **云端服务商**：把 API Key 粘贴到该服务商的 Key 输入框，例如 **OpenAI API Key**。
+   - **本地运行时（Ollama / LM Studio）**：不需要 Key，确认运行时已经启动。
+
+5. 在 **Model** 中选择可用模型。选择服务商和模型后，Profile 可能自动命名为 `服务商:模型` 的形式；如需重命名，在 **Profile name** 中修改，离开输入框后保存。
+
+</Steps>
+
+![新建 Profile、填写服务商设置，并在模型选择器中选用](/assets/ui/docs-profile-setup.gif)
+
+- **可填写的字段取决于服务商和模型**。例如 OpenAI 提供 **Use custom base URL**、模型选择或 **Use custom model ID**，以及 **Thinking Mode** 等选项。各服务商的具体设置见下文“服务商选择”中的配置指南。
+- **更换服务商会清空**当前的 API Key、Base URL、模型选择和服务商特有设置。
+- 拖动卡片左侧的手柄可以调整顺序。
+- 点击 **Manage** 进入管理模式，勾选要删除的卡片后点击 **Delete selected (n)**，再在 5 秒内点击 **Confirm delete (n)** 确认。点击 **Done** 退出管理模式。
+
+## 服务商选择
+
+### 云端服务商
+
+| 服务商 | 适用场景 | 配置指南 |
+| --- | --- | --- |
+| **OpenRouter** | 一个 Key 访问多家模型 | [配置](/zh-cn/provider-config/openrouter/) |
+| **Anthropic** | 直接使用 Claude | [配置](/zh-cn/provider-config/anthropic/) |
+| **Claude Code** | 使用 Claude Max/Pro 订阅 | [配置](/zh-cn/provider-config/anthropic/) |
+| **OpenAI** | GPT 系列模型 | [配置](/zh-cn/provider-config/openai/) |
+| **Google Gemini** | Gemini 系列模型 | [配置](/zh-cn/provider-config/google-gemini/) |
+| **AWS Bedrock** | 通过自己的 AWS 账号调用模型 | [配置](/zh-cn/provider-config/aws-bedrock/api-key/) |
+| **DeepSeek** | 性价比高 | [配置](/zh-cn/provider-config/deepseek/) |
+
+### 本地模型
+
+在自己的硬件上运行模型，数据不出本机，也没有按请求计费。
+
+| 运行时 | 适用场景 | 配置指南 |
+| --- | --- | --- |
+| **Ollama** | 命令行本地运行时 | [配置](/zh-cn/running-models-locally/overview/#runtime-options) |
+| **LM Studio** | 图形界面本地运行时 | [配置](/zh-cn/running-models-locally/overview/#runtime-options) |
+
+本地模型对硬件（尤其是显存）有要求，详见[本地运行模型](/zh-cn/running-models-locally/overview/)。
+
+## Profile 的用途
+
+每个 Profile 有三个 **Profile usage** 复选框，卡片上以徽标显示：
+
+| 用途 | 徽标 | 作用 |
+|---|---|---|
+| **Act** | ACT | 可以在 Act 模式中选用 |
+| **Plan** | PLAN | 可以在 Plan 模式中选用 |
+| **Subagents** | SUB | 可以被子代理显式选用 |
+
+新建的 Profile 默认三项全选。**全部取消**表示该 Profile 不可用于任何用途，而不是“可用于所有用途”。
+
+图片生成不是用途选项，而是 Profile 中单独的 **Image source** 设置，参见[图片生成](/zh-cn/features/image-generation/)。
+
+## 在任务中选择 Profile
+
+点击输入区的模型选择器，打开 **Available Models** 菜单：
+
+- 默认情况下，菜单列出可用于 Act 或 Plan 的 Profile，选中后两种模式都使用它；
+- 打开 **Split Model**（提示为 “Use different models per mode”，默认关闭）后，会出现 **Act** 和 **Plan** 两个标签页，各自只列出勾选了对应用途的 Profile，选择只影响该模式；
+- 菜单中的齿轮按钮打开 **API Configuration**；还没有 Profile 时，菜单提供 **Create profile**。
+
+选择的作用范围：
+
+| 何时选择 | 作用 |
+|---|---|
+| 没有进行中的任务 | 更新全局的 Plan/Act 绑定，作为之后新任务的默认值 |
+| 任务进行中 | 只改变当前任务的绑定；修改全局设置不会替换进行中任务的绑定 |
+
+任务进行中关闭 **Split Model** 时，两种模式都会绑定到当前模式正在使用的 Profile。
+
+### 切换到上下文窗口更小的模型
+
+任务进行中切换 Profile 通常直接生效。如果当前已用的上下文不小于目标模型的上下文窗口，会弹出 **Switch to a smaller context window?**，可选择 **Cancel** 或 **Switch**。确认后**不会立即压缩**，只是切换模型；之后任务继续时，普通的上下文压缩仍可能发生。
+
+这与 Plan/Act 模式切换时的 **Compact & Switch** 不同，参见 [Plan 与 Act](/zh-cn/core-workflows/plan-and-act/)。
+
+## 在子代理中使用
+
+具名子代理可以在 YAML 中用 `profile` 指定 Profile 名称，或在 **Subagents** 标签页的 **Profile** 下拉框中选择（只列出已启用且勾选了 **Subagents** 用途的 Profile；**Default (act profile)** 表示沿用主任务的 Act Profile）。回退规则参见[子代理](/zh-cn/features/subagents/)。
+
+## 存储位置
+
+| 内容 | 位置 |
+|---|---|
+| Profile 配置 | `<data-root>/settings/api_profiles.json` |
+| API Key | `<data-root>/secrets/api_keys.json`，按 Profile ID 保存，不写入 Profile 配置文件 |
+| 其他服务商凭据 | `<data-root>/secrets/provider_secrets.json` |
+
+`<data-root>` 默认是 `~/.dline/data`，设置 `DLINE_DIR` 后为 `<DLINE_DIR>/data`。多个 VS Code 窗口同时修改 Profile 时，Dline 会在文件锁下合并改动，并同步到其他窗口。
+
+## 常见问题
+
+| 问题 | 处理方式 |
+| --- | --- |
+| 请求返回 401 或提示 Key 无效 | 在 Profile 的 Key 输入框重新粘贴 Key，并确认它属于当前选择的服务商。 |
+| 模型列表为空或请求超时 | 检查网络与代理设置，参见[网络与代理](/zh-cn/troubleshooting/networking-and-proxies/)。 |
+| 无法连接本地模型 | 确认 Ollama 或 LM Studio 正在运行，且设置中的地址与运行时监听地址一致。 |
+
+### 界面提示
+
+| 提示 | 含义 |
+|---|---|
+| “No profiles configured. Add a profile to connect a provider and model.” | 还没有任何 Profile |
+| “No profiles for this mode.” | 没有 Profile 勾选了当前模式的用途 |
+| “Failed to load API profiles. Existing profiles have not been replaced.” | 读取失败，已有配置未被覆盖；可点击 **Retry** |
+| `Profile not valid: …` | 任务绑定的 Profile 已被删除、停用、配置不完整或缺少凭据 |
+
+<Aside type="caution">
+任务绑定的 Profile 失效时，Dline 会报告错误，**不会**静默改用其他 Profile。请修复该 Profile，或在模型选择器中重新选择。
+</Aside>

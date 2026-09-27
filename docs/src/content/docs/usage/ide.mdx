@@ -1,64 +1,64 @@
 ---
-title: 在 IDE 中使用
-description: 在 VS Code 中用 Dline 构建一个可运行的待办应用，掌握核心工作流程。
+title: Using Dline in the IDE
+description: Build a working todo app with Dline in VS Code and learn the core workflow.
 ---
 
 import { Aside, Steps, Tabs, TabItem } from "@astrojs/starlight/components"
 
-本教程带你用 Dline 从零构建一个单文件待办应用，并在过程中熟悉 Plan/Act 模式、审批改动、迭代修改和检查点回滚。
+This tutorial walks you through building a single-file todo app with Dline. Along the way you will use Plan and Act modes, approve changes, iterate on the result, and roll back with checkpoints.
 
-## 准备工作
+## Prerequisites
 
-开始之前，请确认：
+Before starting, make sure you have:
 
-- 已在编辑器中安装 Dline（参见[安装 Dline](/getting-started/installing-dline/)）；
-- 已连接一个 AI 模型（参见[模型与服务商](/getting-started/authorizing-with-dline/)）。
+- Dline installed in your editor (see [Installing Dline](/getting-started/installing-dline/));
+- an AI model connected (see [Models & Providers](/getting-started/authorizing-with-dline/)).
 
-## 第 1 步：打开项目文件夹
+## Step 1: Open a project folder
 
-Dline 在工作区中创建和编辑文件。为待办应用准备一个空文件夹：
+Dline creates and edits files inside your workspace. Prepare an empty folder for the todo app:
 
 <Steps>
 
-1. 在 VS Code 中选择 **File → Open Folder**。
+1. In VS Code, choose **File → Open Folder**.
 
-2. 新建一个文件夹，例如桌面上的 `todo-app`。
+2. Create a folder, for example `todo-app` on your Desktop.
 
-3. 选中该文件夹并点击 **Open**。
+3. Select the folder and choose **Open**.
 
 </Steps>
 
-资源管理器中会显示该文件夹，此时文件列表为空。
+The folder now appears in the Explorer. The file list is empty because this is a new project.
 
 <Aside type="caution">
-没有打开文件夹时，Dline 不知道应该在哪里创建文件。开始任务前请先打开一个文件夹。
+Without an open folder, Dline does not know where to create files. Always open a folder before starting a task.
 </Aside>
 
-## 第 2 步：打开 Dline 面板
+## Step 2: Open the Dline panel
 
-点击 VS Code 活动栏中的 **Dline** 图标即可打开面板。面板底部是输入框，上方是任务对话；面板标题栏提供 **New Task**、**History**、**Settings** 等按钮。
+Select the **Dline** icon in the VS Code Activity Bar to open the panel. The input box sits at the bottom and the task conversation above it; the panel title bar provides buttons such as **New Task**, **History**, and **Settings**.
 
-输入框上方是 **Auto-approve** 栏，下方是一排工具按钮：
+The **Auto-approve** bar sits above the input box, and a row of tool buttons sits below it:
 
-![Dline 输入区：上方为 Auto-approve 栏，下方为编号标注的工具按钮](/assets/ui/chat-input-toolbar.png)
+![The Dline input area: the Auto-approve bar above and the numbered tool buttons below](/assets/ui/chat-input-toolbar.png)
 
-| 编号 | 控件 | 作用 |
+| # | Control | Purpose |
 |---|---|---|
-| 1 | **@**（Add Context） | 插入 `@` 引用文件、文件夹、终端输出、Problems 等上下文 |
-| 2 | **+**（Add Files & Images） | 选择文件或图片附加到消息 |
-| 3 | MCP 图标（Manage MCP Servers） | 打开 MCP 服务器弹窗，启用或停用服务器 |
-| 4 | 天平图标（Manage Dline Rules & Workflows） | 打开能力面板，管理 Rules、Workflows、Skills、Subagents 与 Environments |
-| 5 | 模型名称（Select model） | 切换当前使用的模型 |
-| 6 | **Plan / Act** 开关 | 在 Plan 模式与 Act 模式之间切换 |
-| 7 | 发送按钮 | 发送消息 |
+| 1 | **@** (Add Context) | Insert an `@` mention for files, folders, terminal output, Problems, and other context |
+| 2 | **+** (Add Files & Images) | Attach files or images to the message |
+| 3 | MCP icon (Manage MCP Servers) | Open the MCP servers popup to enable or disable servers |
+| 4 | Scales icon (Manage Dline Rules & Workflows) | Open the capabilities panel for Rules, Workflows, Skills, Subagents, and Environments |
+| 5 | Model name (Select model) | Switch the model in use |
+| 6 | **Plan / Act** switch | Switch between Plan mode and Act mode |
+| 7 | Send button | Send the message |
 
 <Aside type="tip">
-在编辑器中未选中文本时，按 `Cmd+'`（macOS）或 `Ctrl+'`（Windows/Linux）可以把焦点移到 Dline 输入框；对应命令是 **Dline: Jump to Chat Input**。
+When no editor text is selected, press `Cmd+'` (macOS) or `Ctrl+'` (Windows/Linux) to move focus to the Dline input box. The corresponding command is **Dline: Jump to Chat Input**.
 </Aside>
 
-## 第 3 步：给 Dline 一个任务
+## Step 3: Give Dline a task
 
-点击面板底部的输入框，粘贴以下提示词：
+Select the input box at the bottom of the panel and paste this prompt:
 
 ```text
 Build a todo app in a single HTML file. Include:
@@ -70,91 +70,91 @@ Build a todo app in a single HTML file. Include:
 - All JavaScript inline in the same file
 ```
 
-按 `Enter` 或点击发送按钮提交。发送快捷键可在 **Settings → General → Send messages with** 中改为 `Ctrl + Enter` 或 `Shift + Enter`。
+Press `Enter` or select the send button. You can change the send shortcut to `Ctrl + Enter` or `Shift + Enter` in **Settings → General → Send messages with**.
 
-## 第 4 步：理解 Plan 模式与 Act 模式
+## Step 4: Understand Plan mode and Act mode
 
-输入区右下角有一个 **Plan / Act** 切换开关，点击即可切换模式；把鼠标悬停在开关上可以看到切换快捷键。
+The bottom-right corner of the input area has a **Plan / Act** switch. Select it to change modes; hover over it to see the toggle shortcut.
 
-- **Plan 模式**：Dline 收集信息并与你讨论方案。适合先对齐需求、调整思路、澄清细节。
-- **Act 模式**：Dline 直接执行任务，创建文件、编写代码。
+- **Plan mode**: Dline gathers information and discusses an approach with you. Use it to align on requirements, adjust the approach, and clarify details.
+- **Act mode**: Dline carries out the task directly, creating files and writing code.
 
-![点击 Plan / Act 开关在两种模式之间切换](/assets/ui/docs-mode-switch.gif)
-
-<Aside>
-如果希望在 Plan 模式下强制禁止文件编辑，请在 **Settings → Features** 中开启 **Strict Plan Mode**（默认关闭）。
-
-本教程需要 Dline 创建文件，请切换到 **Act** 模式。何时使用哪种模式，参见 [Plan 与 Act](/core-workflows/plan-and-act/)。
-</Aside>
-
-## 第 5 步：审批改动
-
-Dline 准备写入文件时，聊天中会显示目标文件路径（例如 `index.html`）和拟写入的内容，下方出现两个按钮：
-
-- **Approve**：允许 Dline 创建或编辑该文件；
-- **Reject**：拒绝本次改动，你可以随后给出新的指示。
-
-点击 **Approve**，`index.html` 会出现在编辑器左侧的资源管理器中。
-
-![Dline 提出写入文件，点击 Approve 后文件被创建，任务完成](/assets/approve-file-edit.gif)
+![Selecting the Plan / Act switch to change between the two modes](/assets/ui/docs-mode-switch.gif)
 
 <Aside>
-默认配置下，编辑文件需要你手动批准；读取工作区内的文件、执行安全命令等操作会自动批准。你可以在[自动批准](/features/auto-approve/)中按类别调整。
+To block file edits while in Plan mode, turn on **Strict Plan Mode** in **Settings → Features** (off by default).
+
+This tutorial needs Dline to create files, so switch to **Act** mode. For when to use each mode, see [Plan and Act](/core-workflows/plan-and-act/).
 </Aside>
 
-## 第 6 步：查看应用
+## Step 5: Approve changes
 
-在浏览器中打开 `index.html`：
+When Dline is ready to write a file, the chat shows the target path (for example `index.html`) and the proposed content, followed by two buttons:
+
+- **Approve**: let Dline create or edit the file;
+- **Reject**: decline this change; you can then give different instructions.
+
+Select **Approve**. `index.html` appears in the Explorer on the left.
+
+![Dline proposes a file write; after Approve the file is created and the task completes](/assets/approve-file-edit.gif)
+
+<Aside>
+With the default settings, editing files requires your approval, while reading files inside the workspace and running safe commands are approved automatically. You can adjust each category in [Auto-approve](/features/auto-approve/).
+</Aside>
+
+## Step 6: View the app
+
+Open `index.html` in a web browser:
 
 <Tabs>
   <TabItem label="macOS">
-    **方式 A：使用终端**
+    **Option A: Use the terminal**
 
-    在编辑器中打开终端（`` Ctrl+` `` 或菜单 **Terminal → New Terminal**），执行：
+    Open a terminal in your editor (`` Ctrl+` `` or **Terminal → New Terminal**) and run:
 
     ```bash
     open index.html
     ```
 
-    **方式 B：使用 Finder**
+    **Option B: Use Finder**
 
-    在资源管理器中右键 `index.html`，选择 **Reveal in Finder**，然后双击该文件。
+    Right-click `index.html` in the Explorer, choose **Reveal in Finder**, and double-click the file.
   </TabItem>
   <TabItem label="Windows">
-    **方式 A：使用终端**
+    **Option A: Use the terminal**
 
-    在编辑器中打开终端（`` Ctrl+` `` 或菜单 **Terminal → New Terminal**），执行：
+    Open a terminal in your editor (`` Ctrl+` `` or **Terminal → New Terminal**) and run:
 
     ```bash
     start index.html
     ```
 
-    **方式 B：使用文件资源管理器**
+    **Option B: Use File Explorer**
 
-    在资源管理器中右键 `index.html`，选择 **Reveal in File Explorer**，然后双击该文件。
+    Right-click `index.html` in the Explorer, choose **Reveal in File Explorer**, and double-click the file.
   </TabItem>
   <TabItem label="Linux">
-    **方式 A：使用终端**
+    **Option A: Use the terminal**
 
-    在编辑器中打开终端（`` Ctrl+` `` 或菜单 **Terminal → New Terminal**），执行：
+    Open a terminal in your editor (`` Ctrl+` `` or **Terminal → New Terminal**) and run:
 
     ```bash
     xdg-open index.html
     ```
 
-    **方式 B：使用文件管理器**
+    **Option B: Use your file manager**
 
-    在资源管理器中右键 `index.html`，选择 **Open Containing Folder**，然后双击该文件。
+    Right-click `index.html` in the Explorer, choose **Open Containing Folder**, and double-click the file.
   </TabItem>
 </Tabs>
 
-如果安装了 Live Server 扩展，也可以右键 `index.html` 并选择 **Open with Live Server**，文件变化时页面会自动刷新。
+If you have the Live Server extension installed, you can also right-click `index.html` and choose **Open with Live Server**; the page reloads automatically when files change.
 
-试着添加、勾选和删除几个任务。应用完全在浏览器中运行，不需要后端。
+Try adding, checking off, and deleting a few tasks. The app runs entirely in your browser with no backend.
 
-## 第 7 步：迭代改进
+## Step 7: Iterate on the project
 
-在**同一个任务**中继续发送消息，Dline 会基于已有代码修改，而不是从头重写。可以尝试：
+Keep sending messages **in the same task**. Dline modifies the existing code instead of starting over. Try:
 
 ```text
 Add local storage so tasks persist when I refresh the page
@@ -168,52 +168,52 @@ Switch to a dark theme with purple accent colors
 Add a filter to show all, active, or completed tasks
 ```
 
-Dline 会先读取现有的 `index.html`，再提出具体改动，并在修改前等待你的批准。点击 **Approve** 后刷新浏览器即可看到效果。
+Dline first reads the current `index.html`, then proposes specific changes and waits for your approval before modifying the file. Select **Approve**, then refresh the browser to see the result.
 
-## 第 8 步：用检查点撤销改动
+## Step 8: Undo changes with checkpoints
 
-Dline 修改工作区后，聊天中会出现 **Checkpoint** 标记。把鼠标悬停在标记上会显示两个按钮：
+After Dline changes the workspace, a **Checkpoint** marker appears in the chat. Hover over the marker to reveal two buttons:
 
-- **Compare**：查看从该检查点起发生了哪些文件变化；
-- **Restore**：打开恢复菜单。
+- **Compare**: show which files have changed since that checkpoint;
+- **Restore**: open the restore menu.
 
-恢复菜单提供以下选项：
+The restore menu offers these options:
 
-| 选项 | 效果 |
+| Option | Effect |
 |---|---|
-| **Restore Files & Task** | 将文件恢复到该检查点，并清除该点之后的消息 |
-| **Restore Files Only**（在 **More options** 中） | 只将文件恢复到该检查点，保留对话 |
-| **Restore Task Only**（在 **More options** 中） | 只清除该点之后的消息，文件保持不变 |
+| **Restore Files & Task** | Revert files to the checkpoint and clear messages after that point |
+| **Restore Files Only** (under **More options**) | Revert only the files to the checkpoint and keep the conversation |
+| **Restore Task Only** (under **More options**) | Clear only the messages after that point; files stay unchanged |
 
-想撤销某次改动但继续和 Dline 讨论其他做法时，使用 **Restore Files Only**。
+To undo a change but keep discussing a different approach with Dline, use **Restore Files Only**.
 
 <Aside type="tip">
-检查点保存在 Dline 独立管理的影子 Git 仓库中，不会影响你项目中的提交和分支。使用检查点需要本机已安装 Git；可在 **Settings → Features → Checkpoints** 中开关该功能。
+Checkpoints are stored in a shadow Git repository that Dline manages separately, so they do not affect your project's commits or branches. Checkpoints require Git to be installed; you can turn the feature on or off in **Settings → Features → Checkpoints**.
 </Aside>
 
-更多内容参见[检查点](/core-workflows/checkpoints/)。
+Learn more in [Checkpoints](/core-workflows/checkpoints/).
 
-## 你学到了什么
+## What you learned
 
-你已经完成了 Dline 的核心工作流程：
+You have completed the core Dline workflow:
 
-1. 打开项目文件夹作为工作区；
-2. 打开 Dline 面板并在输入框中描述任务；
-3. 理解并切换 Plan 与 Act 模式；
-4. 在写入前审批文件改动；
-5. 在同一任务中发送后续消息进行迭代；
-6. 使用检查点撤销改动。
+1. opened a project folder as the workspace;
+2. opened the Dline panel and described a task in the input box;
+3. understood and switched between Plan and Act modes;
+4. approved file changes before they were written;
+5. iterated by sending follow-up messages in the same task;
+6. used checkpoints to undo changes.
 
-这些模式适用于从简单脚本到完整应用的各种项目。你提供的上下文越具体，结果越好。
+The same patterns work for any project, from small scripts to full applications. The more specific the context you give, the better the results.
 
-## 下一步
+## Next steps
 
-- [任务管理](/core-workflows/task-management/)：日常使用 Dline 的工作模式；
-- [处理文件](/core-workflows/working-with-files/)：在提示词中用 `@` 引用文件、文件夹和 URL；
-- [Rules](/customization/rules/)：定制 Dline 在项目中的行为。
+- [Task management](/core-workflows/task-management/): the patterns you will use with Dline every day;
+- [Working with files](/core-workflows/working-with-files/): reference files, folders, and URLs in prompts with `@`;
+- [Rules](/customization/rules/): customize how Dline behaves in your projects.
 
-## 需要帮助？
+## Need help?
 
-- **开启新任务**：在输入框中输入 `/newtask`，Dline 会基于当前上下文开启一个新任务；
-- **报告问题**：输入 `/reportbug`，Dline 会协助整理并创建 GitHub issue；
-- **项目 issue**：访问 [Dline issue tracker](https://github.com/TuvokYang/Dline/issues)。
+- **Start a new task**: type `/newtask` in the input box and Dline starts a new task with context carried over from the current one;
+- **Report a problem**: type `/reportbug` and Dline helps you gather the details and file a GitHub issue;
+- **Project issues**: visit the [Dline issue tracker](https://github.com/TuvokYang/Dline/issues).

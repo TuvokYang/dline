@@ -1,0 +1,126 @@
+---
+title: 开发环境
+description: 准备 Dline 扩展的开发环境：前置条件、安装依赖、生成 Protobuf 代码、在 VS Code 中调试扩展、常用脚本与 VSIX 打包。
+---
+
+import { Aside, Steps } from "@astrojs/starlight/components"
+
+本页介绍如何从源码构建并调试 Dline VS Code 扩展。仓库包含三个相互独立的 npm 项目：根目录（扩展主体）、`webview-ui/`（React Webview）和 `docs/`（本文档站）。
+
+## 前置条件
+
+| 工具 | 要求 |
+|---|---|
+| Git 与 Git LFS | 仓库中的部分媒体文件通过 Git LFS 存储，克隆前需要先安装 Git LFS |
+| Node.js | 仓库的 `.nvmrc` 为 `lts/*`，CI 使用 Node 24。根 `package.json` 没有声明 Node 版本要求 |
+| VS Code | 扩展声明的最低版本为 `^1.134.0` |
+
+`docs/` 文档站单独要求 Node.js `>=22.12.0`。
+
+## 安装依赖
+
+<Steps>
+
+1. 克隆仓库：
+
+   ```bash
+   git clone https://github.com/TuvokYang/dline.git
+   ```
+
+2. 在仓库根目录安装扩展和 Webview 的依赖：
+
+   ```bash
+   npm run install:all
+   ```
+
+   这个脚本依次在根目录和 `webview-ui/` 中执行 `npm install`。只在根目录执行 `npm install` 不会安装 Webview 的依赖。CI 使用 `npm ci` 和 `npm --prefix webview-ui ci` 做可复现安装。
+
+3. 生成 Protobuf 代码：
+
+   ```bash
+   npm run protos
+   ```
+
+   扩展、Webview 和宿主桥接都依赖生成的代码，首次构建前必须运行一次。之后修改 `proto/` 下的文件时需要重新生成，详见 [Protobuf 与 ProtoBus](/zh-cn/developer-guide/protobuf/)。
+
+</Steps>
+
+安装根依赖时，`prepare` 脚本会启用 Husky。提交前钩子会运行 `lint-staged`：对暂存的文件执行 Biome `check --write`；如果暂存了 `src/shared/storage/state-keys.ts`，还会重新生成并暂存 `proto/dline/state.proto`。
+
+## 在 VS Code 中调试扩展
+
+<Steps>
+
+1. 用 VS Code 打开仓库根目录，按提示安装推荐扩展（包括 esbuild problem matchers 和 Biome）。
+2. 在“运行和调试”视图中选择 **Run Extension (local)**。
+3. 按 `F5`。VS Code 会先运行 `watch:debug` 任务，然后打开一个加载了开发版 Dline 的新窗口。
+
+</Steps>
+
+`watch:debug` 任务会生成 Protobuf 代码，并同时启动 Webview 的 Vite 开发服务器、TypeScript 监视和 esbuild 监视。**Run Extension (local)** 配置还会：
+
+- 设置 `DLINE_ENVIRONMENT=local`、`IS_DEV=true`、`DLINE_LOG_LEVEL=debug` 和 `DLINE_SKIP_MIGRATION=1`（跳过从 Cline 迁移数据）；
+- 通过 `envFile` 读取仓库根目录的 `.env`（该文件已被 `.gitignore` 忽略）；
+- 在调试窗口中禁用已安装的 Cline 扩展，避免冲突。
+
+`.vscode/launch.json` 中还有 **Run Extension (production)** 和 **Run Extension (staging)** 等配置，它们使用默认构建任务 `watch`。
+
+### 命令行监视模式
+
+不使用 `F5` 时，可以在终端中运行：
+
+```bash
+npm run dev
+```
+
+它先生成 Protobuf 代码，再并行运行 esbuild 监视和 TypeScript 类型检查监视。Webview 的开发服务器需要另外启动：
+
+```bash
+npm run dev:webview
+```
+
+## 常用脚本
+
+以下命令都在仓库根目录运行。
+
+| 命令 | 作用 |
+|---|---|
+| `npm run check-types` | 生成 Protobuf 代码，然后对扩展和 Webview 做 TypeScript 类型检查 |
+| `npm run lint` | 运行 Biome lint，然后运行 `lint:proto`（`buf lint` 加 proto 格式化，会直接改写 `proto/` 下的文件） |
+| `npm run format` | 用 Biome 检查已修改文件的格式，**不写入** |
+| `npm run format:fix` | 用 Biome 修复已修改文件的格式和可自动修复的问题 |
+| `npm run test:smoke` | 运行冒烟测试 |
+| `npm run test:run` | 运行全部 Vitest 项目 |
+| `npm test` | 先生成 Protobuf 代码，再运行全部 Vitest 项目 |
+| `npm run compile` | 类型检查、lint，然后用 esbuild 构建开发包 |
+| `npm run package` | 类型检查、构建 Webview、lint，然后用 esbuild 构建生产包 |
+
+<Aside type="caution">
+不要手工拼装 `tsc` 命令。`tsc -b` 是会产生输出的构建模式，曾在 `src/` 中生成大量 `.js` 文件。类型检查统一使用 `npm run check-types`。
+</Aside>
+
+测试相关命令见[测试](/zh-cn/developer-guide/testing/)。
+
+## 打包 VSIX
+
+```bash
+npm run vsix
+```
+
+`scripts/package-vsix.mjs` 根据当前分支和指向 `HEAD` 的标签决定打包身份：
+
+| 当前 `HEAD` | 扩展名 | 版本号 |
+|---|---|---|
+| `main` 且有 `vX.Y.Z` 标签 | `dline` | 标签中的 `X.Y.Z` |
+| `dev` 且有 `dev-vX.Y.Z` 标签 | `dline-preview` | 标签中的 `X.Y.Z` |
+| `dev` 且没有标签 | `dline-insiders` | `主版本.次版本.<Unix 秒>` |
+
+在其他分支上默认会拒绝打包。需要在功能分支上打一个本地测试包时，显式指定渠道：
+
+```bash
+npm run vsix -- --channel ci
+```
+
+可用的渠道为 `auto`、`ci`、`insiders`、`preview`、`production`，`--out <path>` 可以指定输出路径。打包带标签的版本时，`package.json`、`CHANGELOG.md` 和 `docs/changelog/CHANGELOG_en.md` 中的版本必须一致。
+
+打包不等于发布。发布到扩展市场由 GitHub Actions 中的发布流程完成。

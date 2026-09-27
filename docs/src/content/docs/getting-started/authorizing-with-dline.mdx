@@ -1,66 +1,135 @@
 ---
-title: 授权与模型配置
-description: 为 Dline 配置模型服务商的 API Key 或本地模型运行时，并选择第一个模型。
+title: Model configuration
+description: Configure a model provider API key or a local model runtime for Dline, create and manage several API Profiles, and choose them for Act, Plan, and subagents.
 ---
 
-import { Steps } from "@astrojs/starlight/components"
+import { Aside, Steps } from "@astrojs/starlight/components"
 
-Dline 通过**模型服务商**（provider）连接 AI 模型。你可以：
+Dline connects to AI models through a **provider**. You can:
 
-- **使用自己的 API Key**：接入云端服务商，例如 Anthropic、OpenAI、OpenRouter。
-- **使用本地模型**：通过 Ollama 或 LM Studio 在自己的机器上运行模型，无需 API Key。
+- **Bring your own API key** for a cloud provider such as Anthropic, OpenAI, or OpenRouter.
+- **Run models locally** with Ollama or LM Studio on your own machine, with no API key.
 
-## 在 VS Code 中配置
+Connections are stored as **API Profiles**. A Profile is a complete model connection: provider, model, API key, an optional base URL, and provider-specific settings. You can create several Profiles and use different models in different modes or subagents.
+
+## Creating and managing Profiles
 
 <Steps>
 
-1. 点击 Dline 面板标题栏的 **Settings** 按钮，进入 **API Configuration**。
+1. Click the **Settings** button in the Dline panel title bar to open **API Configuration**.
 
-2. 点击 **Add profile** 新建一个 Profile；已有 Profile 时，也可以点击卡片左侧的展开按钮直接修改。
+2. Click **Add profile**. A new Profile named **New Model** is added and expanded. If you already have one, you can expand its card with the button on the left and edit it instead.
 
-3. 在 **Provider** 下拉框中选择服务商。
+3. Choose a provider from the **Provider** dropdown.
 
-4. 完成认证：
-   - **云端服务商**：把 API Key 粘贴到该服务商的 Key 输入框，例如 **OpenAI API Key**。
-   - **本地运行时（Ollama / LM Studio）**：不需要 Key，确认运行时已经启动。
+4. Authenticate:
+   - **Cloud provider:** paste your key into the provider's key field, such as **OpenAI API Key**.
+   - **Local runtime (Ollama / LM Studio):** no key is needed; make sure the runtime is running.
 
-5. 在 **Model** 中选择可用模型。
+5. Choose an available model under **Model**. After you choose a provider and model, the Profile may be named automatically in the form `provider:model`; to rename it, edit **Profile name**, and the change is saved when you leave the field.
 
 </Steps>
 
-![在 API Configuration 中新建 Profile、选择服务商和模型，再在输入区选用该 Profile](/assets/ui/docs-profile-setup.gif)
+![Creating a Profile, filling in provider settings, and selecting it in the model picker](/assets/ui/docs-profile-setup.gif)
 
-每个 Profile 是一组服务商、模型和 Key 的组合。你可以创建多个 Profile，并为 Act、Plan 和子代理分别选用，参见[多 Profile 配置](/customization/profiles/)。
+- **The available fields depend on the provider and model.** For example, OpenAI offers **Use custom base URL**, a model picker or **Use custom model ID**, and options such as **Thinking Mode**. The setup guides under "Choosing a provider" below cover each provider's settings.
+- **Changing the provider clears** the current API key, base URL, model selection, and provider-specific settings.
+- Drag the handle on the left of a card to reorder Profiles.
+- Click **Manage** to enter management mode, select the cards to delete, click **Delete selected (n)**, then click **Confirm delete (n)** within 5 seconds. Click **Done** to leave management mode.
 
-## 服务商选择
+## Choosing a provider
 
-### 云端服务商
+### Cloud providers
 
-| 服务商 | 适用场景 | 配置指南 |
+| Provider | Best for | Setup guide |
 | --- | --- | --- |
-| **OpenRouter** | 一个 Key 访问多家模型 | [配置](/provider-config/openrouter/) |
-| **Anthropic** | 直接使用 Claude | [配置](/provider-config/anthropic/) |
-| **Claude Code** | 使用 Claude Max/Pro 订阅 | [配置](/provider-config/anthropic/) |
-| **OpenAI** | GPT 系列模型 | [配置](/provider-config/openai/) |
-| **Google Gemini** | Gemini 系列模型 | [配置](/provider-config/google-gemini/) |
-| **AWS Bedrock** | 通过自己的 AWS 账号调用模型 | [配置](/provider-config/aws-bedrock/api-key/) |
-| **DeepSeek** | 性价比高 | [配置](/provider-config/deepseek/) |
+| **OpenRouter** | Many vendors' models with one key | [Setup](/provider-config/openrouter/) |
+| **Anthropic** | Direct Claude access | [Setup](/provider-config/anthropic/) |
+| **Claude Code** | Claude Max/Pro subscription | [Setup](/provider-config/anthropic/) |
+| **OpenAI** | GPT models | [Setup](/provider-config/openai/) |
+| **Google Gemini** | Gemini models | [Setup](/provider-config/google-gemini/) |
+| **AWS Bedrock** | Models billed through your AWS account | [Setup](/provider-config/aws-bedrock/api-key/) |
+| **DeepSeek** | Good value | [Setup](/provider-config/deepseek/) |
 
-### 本地模型
+### Local models
 
-在自己的硬件上运行模型，数据不出本机，也没有按请求计费。
+Run models on your own hardware: data stays on your machine and there are no per-request charges.
 
-| 运行时 | 适用场景 | 配置指南 |
+| Runtime | Best for | Setup guide |
 | --- | --- | --- |
-| **Ollama** | 命令行本地运行时 | [配置](/running-models-locally/overview/#runtime-options) |
-| **LM Studio** | 图形界面本地运行时 | [配置](/running-models-locally/overview/#runtime-options) |
+| **Ollama** | Command-line local runtime | [Setup](/running-models-locally/overview/#runtime-options) |
+| **LM Studio** | GUI local runtime | [Setup](/running-models-locally/overview/#runtime-options) |
 
-本地模型对硬件（尤其是显存）有要求，详见[本地运行模型](/running-models-locally/overview/)。
+Local models need capable hardware, especially GPU memory. See [Running models locally](/running-models-locally/overview/) for requirements.
 
-## 常见问题
+## What a Profile is used for
 
-| 问题 | 处理方式 |
+Each Profile has three **Profile usage** checkboxes, shown as badges on the card:
+
+| Usage | Badge | Effect |
+|---|---|---|
+| **Act** | ACT | Can be selected in Act mode |
+| **Plan** | PLAN | Can be selected in Plan mode |
+| **Subagents** | SUB | Can be selected explicitly by subagents |
+
+New Profiles have all three checked. **Unchecking all of them** means the Profile cannot be used for anything, not that it can be used everywhere.
+
+Image generation is not a usage option; it is a separate **Image source** setting on the Profile. See [Image generation](/features/image-generation/).
+
+## Choosing a Profile for a task
+
+Click the model selector in the input area to open the **Available Models** menu:
+
+- by default, the menu lists Profiles usable in Act or Plan, and the one you pick is used for both modes;
+- with **Split Model** on (tooltip "Use different models per mode"; off by default), **Act** and **Plan** tabs appear, each listing only Profiles with that usage checked, and your choice affects only that mode;
+- the gear button in the menu opens **API Configuration**; when there are no Profiles yet, the menu offers **Create profile**.
+
+What a selection affects:
+
+| When you choose | Effect |
+|---|---|
+| No task is running | Updates the global Plan/Act bindings, the defaults for new tasks |
+| A task is running | Changes only the current task's bindings; changing global settings does not replace a running task's bindings |
+
+Turning **Split Model** off during a task binds both modes to the Profile the current mode is using.
+
+### Switching to a model with a smaller context window
+
+Switching Profiles during a task usually takes effect immediately. If the context already in use is at least the target model's context window, a **Switch to a smaller context window?** dialog appears with **Cancel** and **Switch**. Confirming **does not compact right away**; it only switches the model, and ordinary context compaction may still happen later as the task continues.
+
+This differs from **Compact & Switch** when switching between Plan and Act; see [Plan and Act](/core-workflows/plan-and-act/).
+
+## Using Profiles with subagents
+
+A named subagent can name a Profile with `profile` in its YAML, or you can pick one in the **Profile** drop-down on the **Subagents** tab (only enabled Profiles with the **Subagents** usage are listed; **Default (act profile)** keeps the main task's Act Profile). For fallback rules, see [Subagents](/features/subagents/).
+
+## Where Profiles are stored
+
+| Content | Location |
+|---|---|
+| Profile configuration | `<data-root>/settings/api_profiles.json` |
+| API keys | `<data-root>/secrets/api_keys.json`, keyed by Profile ID and never written to the Profile configuration file |
+| Other provider credentials | `<data-root>/secrets/provider_secrets.json` |
+
+`<data-root>` defaults to `~/.dline/data`, or `<DLINE_DIR>/data` when `DLINE_DIR` is set. When several VS Code windows change Profiles at the same time, Dline merges the changes under a file lock and syncs them to the other windows.
+
+## Troubleshooting
+
+| Issue | Fix |
 | --- | --- |
-| 请求返回 401 或提示 Key 无效 | 在 Profile 的 Key 输入框重新粘贴 Key，并确认它属于当前选择的服务商。 |
-| 模型列表为空或请求超时 | 检查网络与代理设置，参见[网络与代理](/troubleshooting/networking-and-proxies/)。 |
-| 无法连接本地模型 | 确认 Ollama 或 LM Studio 正在运行，且设置中的地址与运行时监听地址一致。 |
+| Requests return 401 or the key is rejected | Paste the key into the Profile's key field again and make sure it belongs to the selected provider. |
+| The model list is empty or requests time out | Check your network and proxy settings. See [Networking and proxies](/troubleshooting/networking-and-proxies/). |
+| Dline cannot reach a local model | Make sure Ollama or LM Studio is running and the address in settings matches the address the runtime listens on. |
+
+### Messages in the interface
+
+| Message | Meaning |
+|---|---|
+| "No profiles configured. Add a profile to connect a provider and model." | No Profile exists yet |
+| "No profiles for this mode." | No Profile has the current mode's usage checked |
+| "Failed to load API profiles. Existing profiles have not been replaced." | Loading failed and existing configuration was left untouched; click **Retry** |
+| `Profile not valid: …` | The Profile bound to the task was deleted, disabled, is incomplete, or lacks credentials |
+
+<Aside type="caution">
+When a task's bound Profile becomes invalid, Dline reports an error and does **not** silently switch to another Profile. Fix the Profile, or choose again in the model selector.
+</Aside>

@@ -6,7 +6,8 @@
  * server-side 301/308 responses, so these redirects are client-side only.
  *
  * Destinations must point at current pages directly: chains are not allowed.
- * Legacy Mintlify URLs had no locale prefix, so they land on the root locale.
+ * Legacy Mintlify URLs had no locale prefix, so they land on the root (English)
+ * locale.
  * @type {Record<string, string>}
  */
 export const redirects = {

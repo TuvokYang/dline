@@ -1,126 +1,126 @@
 ---
-title: 开发环境
-description: 准备 Dline 扩展的开发环境：前置条件、安装依赖、生成 Protobuf 代码、在 VS Code 中调试扩展、常用脚本与 VSIX 打包。
+title: Development Setup
+description: Set up a development environment for the Dline extension - prerequisites, dependencies, Protobuf generation, debugging in VS Code, common scripts, and VSIX packaging.
 ---
 
 import { Aside, Steps } from "@astrojs/starlight/components"
 
-本页介绍如何从源码构建并调试 Dline VS Code 扩展。仓库包含三个相互独立的 npm 项目：根目录（扩展主体）、`webview-ui/`（React Webview）和 `docs/`（本文档站）。
+This page explains how to build and debug the Dline VS Code extension from source. The repository contains three independent npm projects: the root (the extension), `webview-ui/` (the React Webview), and `docs/` (this documentation site).
 
-## 前置条件
+## Prerequisites
 
-| 工具 | 要求 |
+| Tool | Requirement |
 |---|---|
-| Git 与 Git LFS | 仓库中的部分媒体文件通过 Git LFS 存储，克隆前需要先安装 Git LFS |
-| Node.js | 仓库的 `.nvmrc` 为 `lts/*`，CI 使用 Node 24。根 `package.json` 没有声明 Node 版本要求 |
-| VS Code | 扩展声明的最低版本为 `^1.134.0` |
+| Git and Git LFS | Some media files are stored with Git LFS, so install Git LFS before cloning |
+| Node.js | The repository `.nvmrc` is `lts/*`, and CI uses Node 24. The root `package.json` does not declare a Node version |
+| VS Code | The extension declares a minimum of `^1.134.0` |
 
-`docs/` 文档站单独要求 Node.js `>=22.12.0`。
+The `docs/` site separately requires Node.js `>=22.12.0`.
 
-## 安装依赖
+## Install dependencies
 
 <Steps>
 
-1. 克隆仓库：
+1. Clone the repository:
 
    ```bash
    git clone https://github.com/TuvokYang/dline.git
    ```
 
-2. 在仓库根目录安装扩展和 Webview 的依赖：
+2. Install the extension and Webview dependencies from the repository root:
 
    ```bash
    npm run install:all
    ```
 
-   这个脚本依次在根目录和 `webview-ui/` 中执行 `npm install`。只在根目录执行 `npm install` 不会安装 Webview 的依赖。CI 使用 `npm ci` 和 `npm --prefix webview-ui ci` 做可复现安装。
+   This script runs `npm install` in the root and then in `webview-ui/`. Running `npm install` in the root alone does not install the Webview dependencies. CI uses `npm ci` and `npm --prefix webview-ui ci` for reproducible installs.
 
-3. 生成 Protobuf 代码：
+3. Generate the Protobuf code:
 
    ```bash
    npm run protos
    ```
 
-   扩展、Webview 和宿主桥接都依赖生成的代码，首次构建前必须运行一次。之后修改 `proto/` 下的文件时需要重新生成，详见 [Protobuf 与 ProtoBus](/developer-guide/protobuf/)。
+   The extension, the Webview, and the host bridge all depend on the generated code, so run it once before the first build. Regenerate whenever you change files under `proto/`. See [Protobuf and ProtoBus](/developer-guide/protobuf/).
 
 </Steps>
 
-安装根依赖时，`prepare` 脚本会启用 Husky。提交前钩子会运行 `lint-staged`：对暂存的文件执行 Biome `check --write`；如果暂存了 `src/shared/storage/state-keys.ts`，还会重新生成并暂存 `proto/dline/state.proto`。
+Installing the root dependencies runs the `prepare` script, which enables Husky. The pre-commit hook runs `lint-staged`: it applies Biome `check --write` to staged files, and when `src/shared/storage/state-keys.ts` is staged it also regenerates and stages `proto/dline/state.proto`.
 
-## 在 VS Code 中调试扩展
+## Debug the extension in VS Code
 
 <Steps>
 
-1. 用 VS Code 打开仓库根目录，按提示安装推荐扩展（包括 esbuild problem matchers 和 Biome）。
-2. 在“运行和调试”视图中选择 **Run Extension (local)**。
-3. 按 `F5`。VS Code 会先运行 `watch:debug` 任务，然后打开一个加载了开发版 Dline 的新窗口。
+1. Open the repository root in VS Code and install the recommended extensions when prompted (including esbuild problem matchers and Biome).
+2. In the Run and Debug view, select **Run Extension (local)**.
+3. Press `F5`. VS Code runs the `watch:debug` task first, then opens a new window with the development build of Dline loaded.
 
 </Steps>
 
-`watch:debug` 任务会生成 Protobuf 代码，并同时启动 Webview 的 Vite 开发服务器、TypeScript 监视和 esbuild 监视。**Run Extension (local)** 配置还会：
+The `watch:debug` task generates the Protobuf code and starts the Webview Vite dev server, TypeScript watch, and esbuild watch together. The **Run Extension (local)** configuration also:
 
-- 设置 `DLINE_ENVIRONMENT=local`、`IS_DEV=true`、`DLINE_LOG_LEVEL=debug` 和 `DLINE_SKIP_MIGRATION=1`（跳过从 Cline 迁移数据）；
-- 通过 `envFile` 读取仓库根目录的 `.env`（该文件已被 `.gitignore` 忽略）；
-- 在调试窗口中禁用已安装的 Cline 扩展，避免冲突。
+- sets `DLINE_ENVIRONMENT=local`, `IS_DEV=true`, `DLINE_LOG_LEVEL=debug`, and `DLINE_SKIP_MIGRATION=1` (skipping data migration from Cline);
+- reads `.env` from the repository root through `envFile` (the file is ignored by `.gitignore`);
+- disables installed Cline extensions in the debug window to avoid conflicts.
 
-`.vscode/launch.json` 中还有 **Run Extension (production)** 和 **Run Extension (staging)** 等配置，它们使用默认构建任务 `watch`。
+`.vscode/launch.json` also contains configurations such as **Run Extension (production)** and **Run Extension (staging)**, which use the default build task `watch`.
 
-### 命令行监视模式
+### Watch mode from the terminal
 
-不使用 `F5` 时，可以在终端中运行：
+Without `F5`, run this in a terminal:
 
 ```bash
 npm run dev
 ```
 
-它先生成 Protobuf 代码，再并行运行 esbuild 监视和 TypeScript 类型检查监视。Webview 的开发服务器需要另外启动：
+It generates the Protobuf code first, then runs esbuild watch and TypeScript type-check watch in parallel. Start the Webview dev server separately:
 
 ```bash
 npm run dev:webview
 ```
 
-## 常用脚本
+## Common scripts
 
-以下命令都在仓库根目录运行。
+Run all of these from the repository root.
 
-| 命令 | 作用 |
+| Command | What it does |
 |---|---|
-| `npm run check-types` | 生成 Protobuf 代码，然后对扩展和 Webview 做 TypeScript 类型检查 |
-| `npm run lint` | 运行 Biome lint，然后运行 `lint:proto`（`buf lint` 加 proto 格式化，会直接改写 `proto/` 下的文件） |
-| `npm run format` | 用 Biome 检查已修改文件的格式，**不写入** |
-| `npm run format:fix` | 用 Biome 修复已修改文件的格式和可自动修复的问题 |
-| `npm run test:smoke` | 运行冒烟测试 |
-| `npm run test:run` | 运行全部 Vitest 项目 |
-| `npm test` | 先生成 Protobuf 代码，再运行全部 Vitest 项目 |
-| `npm run compile` | 类型检查、lint，然后用 esbuild 构建开发包 |
-| `npm run package` | 类型检查、构建 Webview、lint，然后用 esbuild 构建生产包 |
+| `npm run check-types` | Generates the Protobuf code, then type-checks the extension and the Webview |
+| `npm run lint` | Runs Biome lint, then `lint:proto` (`buf lint` plus proto formatting, which rewrites files under `proto/` in place) |
+| `npm run format` | Checks the formatting of changed files with Biome **without writing** |
+| `npm run format:fix` | Fixes formatting and auto-fixable issues in changed files with Biome |
+| `npm run test:smoke` | Runs the smoke test |
+| `npm run test:run` | Runs every Vitest project |
+| `npm test` | Generates the Protobuf code, then runs every Vitest project |
+| `npm run compile` | Type-checks, lints, then builds a development bundle with esbuild |
+| `npm run package` | Type-checks, builds the Webview, lints, then builds a production bundle with esbuild |
 
 <Aside type="caution">
-不要手工拼装 `tsc` 命令。`tsc -b` 是会产生输出的构建模式，曾在 `src/` 中生成大量 `.js` 文件。类型检查统一使用 `npm run check-types`。
+Do not assemble a `tsc` command by hand. `tsc -b` is a build mode that emits output and has previously scattered `.js` files across `src/`. Use `npm run check-types` for type checking.
 </Aside>
 
-测试相关命令见[测试](/developer-guide/testing/)。
+For test commands, see [Testing](/developer-guide/testing/).
 
-## 打包 VSIX
+## Package a VSIX
 
 ```bash
 npm run vsix
 ```
 
-`scripts/package-vsix.mjs` 根据当前分支和指向 `HEAD` 的标签决定打包身份：
+`scripts/package-vsix.mjs` picks the package identity from the current branch and the tag pointing at `HEAD`:
 
-| 当前 `HEAD` | 扩展名 | 版本号 |
+| Current `HEAD` | Extension name | Version |
 |---|---|---|
-| `main` 且有 `vX.Y.Z` 标签 | `dline` | 标签中的 `X.Y.Z` |
-| `dev` 且有 `dev-vX.Y.Z` 标签 | `dline-preview` | 标签中的 `X.Y.Z` |
-| `dev` 且没有标签 | `dline-insiders` | `主版本.次版本.<Unix 秒>` |
+| `main` with a `vX.Y.Z` tag | `dline` | `X.Y.Z` from the tag |
+| `dev` with a `dev-vX.Y.Z` tag | `dline-preview` | `X.Y.Z` from the tag |
+| `dev` without a tag | `dline-insiders` | `major.minor.<Unix seconds>` |
 
-在其他分支上默认会拒绝打包。需要在功能分支上打一个本地测试包时，显式指定渠道：
+On any other branch, packaging is rejected by default. To build a local test package on a feature branch, name the channel explicitly:
 
 ```bash
 npm run vsix -- --channel ci
 ```
 
-可用的渠道为 `auto`、`ci`、`insiders`、`preview`、`production`，`--out <path>` 可以指定输出路径。打包带标签的版本时，`package.json`、`CHANGELOG.md` 和 `docs/changelog/CHANGELOG_en.md` 中的版本必须一致。
+The available channels are `auto`, `ci`, `insiders`, `preview`, and `production`; `--out <path>` sets the output path. When packaging a tagged version, the versions in `package.json`, `CHANGELOG.md`, and `docs/changelog/CHANGELOG_en.md` must agree.
 
-打包不等于发布。发布到扩展市场由 GitHub Actions 中的发布流程完成。
+Packaging is not publishing. Marketplace publication is done by the release workflows in GitHub Actions.

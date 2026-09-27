@@ -1,88 +1,88 @@
 ---
-title: 任务管理
-description: 创建、查看、搜索、恢复和删除 Dline 任务，并了解任务头部显示的用量和上下文信息。
+title: Task Management
+description: Create, browse, search, resume, and delete Dline tasks, and read the usage and context information in the task header.
 ---
 
 import { Aside } from "@astrojs/starlight/components"
 
-在 Dline 中，每次对话都是一个**任务**。任务会保存完整的对话记录，你可以随时重新打开、继续或删除。
+Every conversation in Dline is a **task**. A task keeps its full conversation record, so you can reopen it, continue it, or delete it at any time.
 
-## 任务如何保存
+## How tasks are stored
 
-- 每个任务有自己的目录，分别保存界面消息和发送给模型的对话记录。
-- 所有任务的索引保存在 `<documents-root>/tasks/taskHistory.db`（`<documents-root>` 默认是系统“文档”目录下的 `dline`，可用 `DLINE_DOCS_DIR` 覆盖）。
-- 上下文被压缩后，发送给模型的内容会变短，但保存下来的对话记录仍然完整。
+- Each task has its own folder that stores the UI messages and the conversation sent to the model separately.
+- The index of all tasks lives in `<documents-root>/tasks/taskHistory.db` (`<documents-root>` defaults to `dline` inside your system Documents folder and can be overridden with `DLINE_DOCS_DIR`).
+- After context compaction, what is sent to the model gets shorter, but the stored conversation record stays complete.
 
-## 开始新任务
+## Starting a new task
 
-- 点击 Dline 面板标题栏的 **+**（提示为 **New Task**）；
-- 在输入框中输入 `/newtask`，让 Dline 把当前任务的要点整理成新任务的起点，参见[使用斜杠命令](/core-workflows/using-commands/)。
+- Click **+** in the Dline panel title bar (tooltip **New Task**);
+- or type `/newtask` in the input box to have Dline turn the current task's key points into the starting point of a new task; see [Using slash commands](/core-workflows/using-commands/).
 
-一个任务专注于一个目标通常效果更好：上下文更集中，也更容易回滚和回顾。
+Keeping one goal per task usually works better: the context stays focused, and changes are easier to roll back and review.
 
-## 任务头部信息
+## Task header
 
-任务进行中，面板顶部会显示用量信息：
+While a task runs, the top of the panel shows usage information:
 
-- **In** / **Out**：输入与输出 token 数；
-- **RPM**、**TPM**、**Hit**：在有对应数据时显示请求速率、token 速率和缓存命中率；
-- **费用**：只有当前模型有非零定价信息时才显示。费用来自服务商返回的数值，或根据模型定价估算，不代表服务商的最终账单。
+- **In** / **Out**: input and output tokens;
+- **RPM**, **TPM**, **Hit**: request rate, token rate, and cache hit rate, shown when the data is available;
+- **Cost**: shown only when the current model has non-zero pricing. It comes from the value the provider reports or is estimated from model pricing, and is not your provider's final bill.
 
-展开任务头部后会看到上下文用量条，显示已用 token 数和模型上下文窗口大小。把鼠标悬停在用量条上，会显示 **Context Window** 面板，列出 **Used**、**Remaining**、**Total** 和百分比。
+Expand the task header to see a context usage bar with the tokens used and the model's context window size. Hover over the bar to open the **Context Window** panel with **Used**, **Remaining**, **Total**, and a percentage.
 
-任务头部右侧的 **×**（**Close Task**）用于关闭当前任务。
+The **×** (**Close Task**) on the right of the task header closes the current task.
 
 ### Focus Chain
 
-**Focus Chain** 默认开启（**Settings → Features → Focus Chain**，说明为 “Maintain context focus across interactions”）。开启后，Dline 会为任务维护一个待办清单，显示在任务头部下方：当前项、已完成数/总数，并可展开查看完整列表。
+**Focus Chain** is on by default (**Settings → Features → Focus Chain**, "Maintain context focus across interactions"). When it is on, Dline keeps a to-do list for the task below the task header: the current item, completed/total count, and an expandable full list.
 
-## 任务历史
+## Task history
 
-点击面板标题栏的 **History** 按钮打开任务历史。
+Click the **History** button in the panel title bar to open the task history.
 
-每一行显示任务的开头文字、最后活动时间和用量信息；展开后可以看到 **Tokens**、**Model**（如有）、**Size**，以及 **Export** 按钮。点击某一行即可重新打开该任务。
+Each row shows the beginning of the task, the last activity time, and usage information. Expand a row to see **Tokens**, **Model** (when available), **Size**, and an **Export** button. Click a row to reopen that task.
 
-### 搜索、排序与筛选
+### Search, sort, and filter
 
-- **搜索框**（“Fuzzy search history...”）：对任务的开头文字做模糊匹配，不搜索回复内容、代码或文件名。
-- **排序**：**Newest**、**Oldest**、**Most Expensive**、**Most Tokens**、**Most Relevant**（需要输入搜索词）。
-- **筛选**：**Workspace Only**（只显示当前工作区的任务）、**Favorites Only**（只显示收藏的任务）。
+- **Search box** ("Fuzzy search history..."): fuzzy-matches the beginning of each task; it does not search replies, code, or file names.
+- **Sort**: **Newest**, **Oldest**, **Most Expensive**, **Most Tokens**, **Most Relevant** (requires a search query).
+- **Filter**: **Workspace Only** (tasks from the current workspace) and **Favorites Only** (favorited tasks).
 
-### 单个任务的操作
+### Actions on a task
 
-| 操作 | 说明 |
+| Action | Description |
 |---|---|
-| **Add to favorites** / **Remove from favorites** | 收藏或取消收藏 |
-| **Delete** | 删除该任务。收藏的任务不能单独删除 |
-| **Open in New Window** | 在新窗口中打开该任务 |
-| **Export** | 在展开的行中导出任务 |
+| **Add to favorites** / **Remove from favorites** | Favorite or unfavorite the task |
+| **Delete** | Delete the task. A favorited task cannot be deleted individually |
+| **Open in New Window** | Open the task in a new window |
+| **Export** | Export the task from the expanded row |
 
-### 批量删除
+### Bulk deletion
 
-历史视图底部提供 **Select All**、**Select None**、**Delete Selected** 和 **Delete All History**：
+The bottom of the history view offers **Select All**, **Select None**, **Delete Selected**, and **Delete All History**:
 
-- **Delete Selected** 会删除所有选中的任务，**包括收藏的任务**；
-- **Delete All History** 会询问选择 **Delete All Except Favorites**（保留收藏）还是 **Delete Everything**。
+- **Delete Selected** deletes every selected task, **including favorites**;
+- **Delete All History** asks whether to **Delete All Except Favorites** or **Delete Everything**.
 
 <Aside type="caution">
-删除最后一个任务或选择 **Delete Everything** 时，所有检查点数据也会被删除，参见[检查点](/core-workflows/checkpoints/)。
+Deleting the last task or choosing **Delete Everything** also deletes all checkpoint data; see [Checkpoints](/core-workflows/checkpoints/).
 </Aside>
 
-## 恢复任务
+## Resuming a task
 
-从历史中打开任务后：
+After you open a task from history:
 
-- 被中断的任务底部会显示 **Resume**，点击后继续；恢复只加载保存的状态，不会自动重新发送请求或重新执行工具。
-- 已完成的任务显示 **Start New Task**；你也可以直接在输入框中继续发送消息。
+- an interrupted task shows **Resume** at the bottom; click it to continue. Resuming only loads the saved state; it does not resend requests or rerun tools automatically.
+- a completed task shows **Start New Task**; you can also keep sending messages in the input box.
 
-## 上下文变长时
+## When the context grows
 
-对话越长，占用的上下文越多。你可以：
+Longer conversations use more context. You can:
 
-- 开启[自动压缩](/features/auto-compact/)，在上下文接近上限时自动总结较早的对话；
-- 用 `/compact` 或 `/smol` 手动压缩；
-- 用 `/newtask` 把要点带到新任务中继续。
+- turn on [Auto compact](/features/auto-compact/) to summarize older conversation automatically when the context nears its limit;
+- compact manually with `/compact` or `/smol`;
+- carry the key points into a new task with `/newtask`.
 
-未开启自动压缩时，Dline 会在接近上限时优化重复的文件读取，并删除较早的对话轮次（始终保留第一轮）。
+Without auto compact, Dline optimizes repeated file reads and removes older conversation turns near the limit (always keeping the first turn).
 
-用 [.agentignore](/customization/agentignore/) 排除无关文件，也可以减少 Dline 搜索和读取时带入的无关内容。
+Excluding irrelevant files with [.agentignore](/customization/agentignore/) also reduces unrelated content that Dline pulls in while searching and reading.

@@ -1,49 +1,49 @@
 ---
 title: Rules
-description: 用 Markdown 规则文件为 Dline 提供持久的项目与个人指令。
+description: Give Dline persistent project and personal instructions with Markdown rule files.
 ---
 
 import { Aside } from "@astrojs/starlight/components"
 
-规则是纯文本或 Markdown 文件。启用后，其内容会加入 Dline 的系统提示词，适合记录编码规范、项目约定、架构约束等每次任务都应遵守的指令。
+Rules are plain-text or Markdown files. When a rule is enabled, its content is added to Dline's system prompt. Use rules for coding standards, project conventions, architectural constraints, and other instructions every task should follow.
 
-## 规则来源
+## Rule sources
 
-| 来源 | 位置 | 说明 |
+| Source | Location | Notes |
 |---|---|---|
-| 工作区规则 | `<workspace>/.agents/rules/` | 递归读取目录中的文件，只对该工作区生效 |
-| 全局规则 | `<documents-root>/rules/` | 对所有工作区生效 |
-| Cursor 规则 | 工作区根目录的 `.cursorrules`，以及 `.cursor/rules/` 下的 `.mdc` 文件 | 兼容读取 |
-| Windsurf 规则 | 工作区根目录的 `.windsurfrules` | 兼容读取 |
-| `AGENTS.md` | 工作区根目录的 `AGENTS.md` | 根目录文件存在且启用时，还会收集子目录中的 `AGENTS.md`，它们共用根文件的开关 |
+| Workspace rules | `<workspace>/.agents/rules/` | Files in the directory are read recursively; applies to that workspace only |
+| Global rules | `<documents-root>/rules/` | Applies to every workspace |
+| Cursor rules | `.cursorrules` at the workspace root and `.mdc` files under `.cursor/rules/` | Read for compatibility |
+| Windsurf rules | `.windsurfrules` at the workspace root | Read for compatibility |
+| `AGENTS.md` | `AGENTS.md` at the workspace root | When the root file exists and is enabled, `AGENTS.md` files in subdirectories are also collected; they share the root file's toggle |
 
-`<documents-root>` 默认是操作系统“文档”目录下的 `dline` 文件夹。设置环境变量 `DLINE_DOCS_DIR` 后，该变量的值直接作为 `<documents-root>`。
+By default, `<documents-root>` is the `dline` folder inside the operating system's Documents directory. When the `DLINE_DOCS_DIR` environment variable is set, its value is used directly as `<documents-root>`.
 
-## 规则如何组合
+## How rules are combined
 
-所有启用的规则会按以下顺序拼接进系统提示词：全局规则、工作区规则、Cursor 规则、Windsurf 规则、`AGENTS.md`。
+Enabled rules are concatenated into the system prompt in this order: global rules, workspace rules, Cursor rules, Windsurf rules, `AGENTS.md`.
 
-- 同一目录中的文件按文件系统返回的顺序读取。`01-` 这类文件名前缀只用于整理，不决定顺序或优先级。
-- 规则之间发生冲突时，Dline 不会自动裁决，模型会同时看到双方。请避免编写相互矛盾的规则。
-- 规则内容会占用上下文窗口，请保持简洁。每个文件只写一个主题，便于单独开关。
+- Files in one directory are read in the order the file system returns them. Prefixes such as `01-` help you organize files but do not set order or priority.
+- When rules conflict, Dline does not resolve the conflict; the model sees both. Avoid writing rules that contradict each other.
+- Rule content uses context-window space, so keep rules concise. One topic per file makes each rule easy to toggle on its own.
 
-## 管理规则
+## Managing rules
 
-点击输入框下方工具栏中的天平图标（悬停提示 **Manage Dline Rules & Workflows**）打开能力面板，然后切换到 **Rules** 标签：
+Select the scale icon in the toolbar below the input box (tooltip **Manage Dline Rules & Workflows**) to open the capabilities panel, then switch to the **Rules** tab:
 
-- 规则文件分组显示在 **Global Rules**、**Workspace Rules** 等分组中，每个文件都有独立开关。关闭的规则不会加载。
-- 在 **Global Rules** 分组中选择 **New rule file...** 并输入文件名，即可创建全局规则。不写扩展名时会自动补上 `.md`，也可以使用 `.txt`。
-- 面板会提示开关的保存范围：**Toggles saved for this task only**（仅当前任务）或 **Toggles saved for this workspace**（当前工作区）。
+- Rule files are listed in groups such as **Global Rules** and **Workspace Rules**, each with its own toggle. Disabled rules are not loaded.
+- Under **Global Rules**, choose **New rule file...** and enter a file name to create a global rule. A name without an extension gets `.md`; `.txt` is also accepted.
+- The panel shows where toggles are saved: **Toggles saved for this task only** or **Toggles saved for this workspace**.
 
-![能力面板的 Rules 标签：Workspace Rules 分组中的 release-policy.md 带有开关、编辑和删除按钮](/assets/ui/capabilities-rules.png)
+![The Rules tab of the capabilities panel: release-policy.md under Workspace Rules with its toggle, edit, and delete buttons](/assets/ui/capabilities-rules.png)
 
-![在能力面板中切换 Rules、Skills 与 Workflows 的开关](/assets/ui/docs-capability-toggles.gif)
+![Toggling rules, skills, and workflows in the capabilities panel](/assets/ui/docs-capability-toggles.gif)
 
-也可以在输入框中输入 `/newrule`，由 Dline 根据当前对话在 `.agents/rules/` 下创建一个新的 Markdown 规则文件。已有文件不会被覆盖。
+You can also type `/newrule` in the input box. Dline then creates a new Markdown rule file under `.agents/rules/` based on the current conversation, without overwriting existing files.
 
-## 条件规则
+## Conditional rules
 
-工作区规则和全局规则可以在文件开头用 YAML frontmatter 声明 `paths`，使规则只在当前上下文涉及匹配文件时生效：
+Workspace and global rules can declare `paths` in YAML frontmatter at the top of the file so that the rule applies only when the current context involves matching files:
 
 ```markdown
 ---
@@ -52,38 +52,38 @@ paths:
   - "**/*.tsx"
 ---
 
-# 前端组件规范
+# Frontend component conventions
 
-- 组件使用函数式写法。
+- Write components as functions.
 ```
 
-匹配规则：
+Matching behavior:
 
-- 只支持 `paths` 键，其他键会被忽略。
-- `paths` 是 glob 字符串数组。模式相对于工作区根目录，路径分隔符为 `/`，也会匹配以 `.` 开头的文件。任意一个模式匹配任意一个候选路径，规则即生效。
-- 没有 frontmatter 的规则始终生效；`paths: []` 的规则永不生效。
-- `paths` 不是字符串数组时，条件会被忽略，规则照常生效。YAML 无法解析时，规则会连同 frontmatter 原文一起加载。
-- 要匹配某个目录下的所有文件，请写 `dir/**`，不要写 `dir/`。
+- Only the `paths` key is supported; other keys are ignored.
+- `paths` is an array of glob strings. Patterns are relative to the workspace root, use `/` as the separator, and also match files whose names start with `.`. The rule applies when any pattern matches any candidate path.
+- A rule without frontmatter always applies; a rule with `paths: []` never applies.
+- If `paths` is not an array of strings, the condition is ignored and the rule applies. If the YAML cannot be parsed, the rule is loaded together with the raw frontmatter.
+- To match every file under a directory, write `dir/**`, not `dir/`.
 
-候选路径来自以下位置，去重后最多 100 个：
+Candidate paths come from the following places, deduplicated and capped at 100:
 
-- 最近一条用户消息中出现的路径；
-- 编辑器中打开的和可见的标签页；
-- 本任务中已编辑或删除的文件；
-- 待执行工具请求涉及的路径。
+- paths mentioned in the most recent user message;
+- open and visible editor tabs;
+- files edited or deleted in the current task;
+- paths in pending tool requests.
 
-因此，只要打开了匹配的文件，条件规则就会生效，并不限于正在编辑的文件。
+As a result, a conditional rule applies whenever a matching file is open, not only while it is being edited.
 
 <Aside>
-条件只对 Dline 的工作区规则和全局规则生效。`.cursorrules`、`.windsurfrules` 和 `AGENTS.md` 会按原文加载，不解析 `paths`。
+Conditions apply only to Dline workspace and global rules. `.cursorrules`, `.windsurfrules`, and `AGENTS.md` are loaded as-is without evaluating `paths`.
 </Aside>
 
-## 故障排查
+## Troubleshooting
 
-- **规则没有生效**：先确认规则开关已启用。如果是条件规则，再确认打开的文件或消息中的路径能匹配 `paths`。
-- **frontmatter 原文出现在规则内容中**：说明 YAML 无法解析，或 `---` 分隔符不完整。
+- **A rule has no effect**: make sure its toggle is on. For a conditional rule, also make sure an open file or a path in your message matches `paths`.
+- **Raw frontmatter appears in the rule content**: the YAML could not be parsed, or the `---` delimiters are incomplete.
 
-## 相关内容
+## Related
 
 - [Workflows](/customization/workflows/)
 - [Skills](/customization/skills/)

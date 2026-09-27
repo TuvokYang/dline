@@ -15,18 +15,18 @@ const BASE = "/dline"
 
 describe("requiredEntryPages", () => {
 	it("expects a home page for every locale edition", () => {
-		assert.deepEqual(requiredEntryPages(), ["index.html", "en/index.html"])
+		assert.deepEqual(requiredEntryPages(), ["index.html", "zh-cn/index.html"])
 	})
 })
 
 describe("localeOfBuiltFile", () => {
 	it("attributes files below a locale directory to that locale", () => {
-		assert.equal(localeOfBuiltFile("en/index.html"), "en")
-		assert.equal(localeOfBuiltFile("en/guide/index.html"), "en")
+		assert.equal(localeOfBuiltFile("zh-cn/index.html"), "zh-cn")
+		assert.equal(localeOfBuiltFile("zh-cn/guide/index.html"), "zh-cn")
 	})
 
 	it("attributes everything else to the root locale", () => {
-		for (const file of ["index.html", "guide/index.html", "english/index.html", "en.html", "_astro/page.css", "404.html"]) {
+		for (const file of ["index.html", "guide/index.html", "en/index.html", "zh-cnx/index.html", "zh-cn.html", "_astro/page.css", "404.html"]) {
 			assert.equal(localeOfBuiltFile(file), "root", file)
 		}
 	})
@@ -35,7 +35,7 @@ describe("localeOfBuiltFile", () => {
 describe("findUnprefixedUrls", () => {
 	it("accepts base-prefixed, absolute, protocol-relative and fragment URLs", () => {
 		const html = [
-			'<a href="/dline/en/">en</a>',
+			'<a href="/dline/zh-cn/">zh-cn</a>',
 			'<a href="/dline">home</a>',
 			'<link rel="canonical" href="https://tuvokyang.github.io/dline/">',
 			'<script src="//cdn.example.com/a.js"></script>',
@@ -93,7 +93,7 @@ describe("resolveBuiltTarget", () => {
 	it("maps directory URLs, base roots and assets to built files", () => {
 		assert.deepEqual(resolveBuiltTarget("/dline/guide/", "index.html", BASE), { url: "/dline/guide/", file: "guide/index.html", fragment: "" })
 		assert.equal(resolveBuiltTarget("/dline", "index.html", BASE)?.file, "index.html")
-		assert.equal(resolveBuiltTarget("/dline/en/guide", "index.html", BASE)?.file, "en/guide/index.html")
+		assert.equal(resolveBuiltTarget("/dline/zh-cn/guide", "index.html", BASE)?.file, "zh-cn/guide/index.html")
 		assert.equal(resolveBuiltTarget("/dline/assets/demo.gif?v=1", "index.html", BASE)?.file, "assets/demo.gif")
 	})
 
@@ -108,7 +108,7 @@ describe("resolveBuiltTarget", () => {
 	})
 
 	it("treats a fragment-only URL as a reference into the current page", () => {
-		assert.deepEqual(resolveBuiltTarget("#_top", "en/guide/index.html", BASE), { url: "#_top", file: "en/guide/index.html", fragment: "_top" })
+		assert.deepEqual(resolveBuiltTarget("#_top", "zh-cn/guide/index.html", BASE), { url: "#_top", file: "zh-cn/guide/index.html", fragment: "_top" })
 	})
 
 	it("ignores external, protocol-relative, unprefixed and data URLs", () => {
@@ -176,8 +176,9 @@ describe("checkInternalLinks", () => {
 describe("checkBuiltFile", () => {
 	it("flags Chinese only on non-Chinese HTML pages", () => {
 		const html = "<p>终端窗口</p>"
-		assert.equal(checkBuiltFile({ relativePath: "en/guide/index.html", text: html, basePrefix: BASE }).length, 1)
-		assert.deepEqual(checkBuiltFile({ relativePath: "guide/index.html", text: html, basePrefix: BASE }), [])
+		assert.equal(checkBuiltFile({ relativePath: "guide/index.html", text: html, basePrefix: BASE }).length, 1)
+		assert.equal(checkBuiltFile({ relativePath: "index.html", text: html, basePrefix: BASE }).length, 1)
+		assert.deepEqual(checkBuiltFile({ relativePath: "zh-cn/guide/index.html", text: html, basePrefix: BASE }), [])
 	})
 
 	it("checks base-safe URLs in HTML and CSS but not in scripts", () => {

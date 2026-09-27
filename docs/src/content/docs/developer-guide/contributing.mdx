@@ -1,78 +1,78 @@
 ---
-title: 参与贡献
-description: 向 Dline 提交 Issue、Pull Request 和文档修改的流程：分支约定、提交前检查、提交信息与更新日志。
+title: Contributing
+description: How to file issues, pull requests, and documentation changes for Dline - branch conventions, pre-submit checks, commit messages, and the changelog.
 ---
 
 import { Aside, Steps } from "@astrojs/starlight/components"
 
-欢迎为 Dline 贡献代码、测试、文档或审查意见。所有参与者都需要遵守仓库中的 [行为准则](https://github.com/TuvokYang/dline/blob/dev/CODE_OF_CONDUCT.md)。
+Contributions of code, tests, documentation, and reviews are welcome. Everyone taking part must follow the repository's [Code of Conduct](https://github.com/TuvokYang/dline/blob/dev/CODE_OF_CONDUCT.md).
 
-## 报告问题
+## Reporting issues
 
-提交前先[搜索已有的 Issue](https://github.com/TuvokYang/dline/issues)，避免重复。新建 Issue 时选择对应的模板填写。
+Before filing, [search existing issues](https://github.com/TuvokYang/dline/issues) to avoid duplicates. When creating a new issue, pick the matching template.
 
-<Aside type="caution" title="安全漏洞">
-发现安全漏洞时，请通过 GitHub 的[安全公告功能](https://github.com/TuvokYang/dline/security/advisories/new)私下报告，不要公开提交 Issue。
+<Aside type="caution" title="Security vulnerabilities">
+Report a security vulnerability privately through GitHub's [security advisory feature](https://github.com/TuvokYang/dline/security/advisories/new) instead of opening a public issue.
 </Aside>
 
-## 开始之前
+## Before you start
 
-除小的 bug 修复、错别字、措辞调整和不改变功能的简单类型修正外，所有贡献都应当先有对应的 GitHub Issue。新功能要先在 [Feature Requests 讨论区](https://github.com/TuvokYang/dline/discussions/categories/feature-requests)提出，等核心维护者同意后再开始实现。没有经过批准的 Issue 的 PR 可能会被关闭。
+Except for small bug fixes, typo corrections, wording tweaks, and simple type fixes that do not change behavior, every contribution should start from a GitHub issue. Propose new features in the [Feature Requests discussions](https://github.com/TuvokYang/dline/discussions/categories/feature-requests) and wait for approval from the core maintainers before implementing them. Pull requests without an approved issue may be closed.
 
-想找入门任务，可以看带 [good first issue](https://github.com/TuvokYang/dline/labels/good%20first%20issue) 或 [help wanted](https://github.com/TuvokYang/dline/labels/help%20wanted) 标签的 Issue。
+For a first contribution, look at issues labeled [good first issue](https://github.com/TuvokYang/dline/labels/good%20first%20issue) or [help wanted](https://github.com/TuvokYang/dline/labels/help%20wanted).
 
-## 分支与 Pull Request
+## Branches and pull requests
 
-仓库有两个长期分支：
+The repository has two long-lived branches:
 
-| 分支 | 角色 |
+| Branch | Role |
 |---|---|
-| `dev` | 集成分支，所有普通 PR 的目标 |
-| `main` | 生产分支，只接收已经通过完整发布门禁的 `dev` |
+| `dev` | The integration branch and the target of every ordinary pull request |
+| `main` | The production branch; it only receives a `dev` that has passed the full release gate |
 
 <Steps>
 
-1. 从最新的 `dev` 创建独立分支，例如 `feature/<名称>`、`bugfix/<名称>`、`docs/<名称>`、`refactor/<名称>` 或 `chore/<名称>`。
-2. 完成修改，并按[开发环境](/developer-guide/setup/)和[测试](/developer-guide/testing/)中的说明做本地验证。
-3. 提交前把分支 rebase 到最新的 `dev`。
-4. 推送分支，创建以 `dev` 为目标的 PR。CI 会运行类型检查、lint、测试和打包。
+1. Create an independent branch from the latest `dev`, such as `feature/<name>`, `bugfix/<name>`, `docs/<name>`, `refactor/<name>`, or `chore/<name>`.
+2. Make your changes and verify them locally as described in [Development Setup](/developer-guide/setup/) and [Testing](/developer-guide/testing/).
+3. Rebase your branch on the latest `dev` before submitting.
+4. Push the branch and open a pull request against `dev`. CI runs type checking, lint, tests, and packaging.
 
 </Steps>
 
-功能分支和 bug 修复分支不能直接以 `main` 为目标。
+Feature and bug-fix branches must not target `main` directly.
 
-## 提交前检查
+## Pre-submit checks
 
-- 一个 PR 只处理一个功能或一个问题；较大的修改拆成多个相关的 PR，提交按逻辑拆分，便于分别审查。
-- 运行 `npm run lint` 检查代码，运行 `npm run format:fix` 修复格式。`npm run format` 只检查、不写入。
-- 为新功能补充测试，修改影响到已有测试时同步更新，运行相关测试确认通过。
-- 确认分支可以构建，并去掉调试代码和多余的日志输出。
+- Keep each pull request to one feature or one fix; split larger changes into several related pull requests, and split commits logically so they can be reviewed separately.
+- Run `npm run lint` to check the code and `npm run format:fix` to fix formatting. `npm run format` only checks and does not write.
+- Add tests for new features, update existing tests your change affects, and run the relevant tests.
+- Make sure the branch builds, and remove debugging code and stray log output.
 
-PR 描述应当说明改了什么、如何测试、是否有破坏性变更；界面修改请附截图。
+The pull request description should explain what changed, how to test it, and any breaking changes; include screenshots for UI changes.
 
-## 提交信息
+## Commit messages
 
-使用 Conventional Commits 格式，例如 `feat:`、`fix:`、`docs:`，需要时用 `#<Issue 编号>` 关联 Issue。仓库目前没有自动校验提交信息的钩子，这是约定而不是强制检查。
+Use the Conventional Commits format, such as `feat:`, `fix:`, or `docs:`, and reference issues with `#<issue-number>` where relevant. The repository has no hook that validates commit messages; this is a convention rather than an enforced check.
 
-## 更新日志与版本
+## Changelog and versions
 
-贡献者不需要在 PR 中编写更新日志条目。版本号和更新日志由维护者在发布时整理：中文版在仓库根目录的 `CHANGELOG.md`，英文版在 `docs/changelog/CHANGELOG_en.md`。打包带标签的版本时，两份更新日志都必须包含对应的 `## [X.Y.Z]` 标题。
+Contributors do not write changelog entries in pull requests. Maintainers handle version numbers and the changelog at release time: the Chinese edition is `CHANGELOG.md` in the repository root, and the English edition is `docs/changelog/CHANGELOG_en.md`. When a tagged version is packaged, both changelogs must contain the matching `## [X.Y.Z]` heading.
 
-## 修改文档
+## Changing the documentation
 
-本站是 `docs/` 下独立的 Astro Starlight 项目，需要 Node.js `>=22.12.0`：
+This site is a separate Astro Starlight project under `docs/` and requires Node.js `>=22.12.0`:
 
 ```bash
 cd docs
 npm install
-npm run dev      # 本地预览，根路径为 /
-npm run verify   # 单元测试、内容检查、构建和产物检查
+npm run dev      # local preview served at /
+npm run verify   # unit tests, content checks, build, and output checks
 ```
 
-也可以在仓库根目录运行 `npm run docs`、`npm run docs:check` 和 `npm run docs:verify`。
+You can also run `npm run docs`, `npm run docs:check`, and `npm run docs:verify` from the repository root.
 
-文档必须中英文成对提交：中文页面放在 `docs/src/content/docs/`，英文页面放在 `docs/src/content/docs/en/` 的相同路径下。`npm run check` 会检查两种语言的页面是否一一对应，以及链接和组件是否合规。页面中的行为、默认值和界面文字都应当以当前代码为准。
+Documentation must be submitted in English and Chinese pairs: English pages go in `docs/src/content/docs/`, and Chinese pages go in the same path under `docs/src/content/docs/zh-cn/`.
 
-## 许可
+## License
 
-提交 PR 即表示你同意以本项目使用的 [Apache 2.0](https://github.com/TuvokYang/dline/blob/dev/LICENSE) 许可证授权你的贡献。
+By submitting a pull request, you agree that your contribution is licensed under the project's [Apache 2.0](https://github.com/TuvokYang/dline/blob/dev/LICENSE) license.

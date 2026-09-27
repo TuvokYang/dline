@@ -1,0 +1,75 @@
+---
+title: Plan 与 Act
+description: 用 Plan 模式调研和讨论方案，用 Act 模式执行实现，并了解切换模式时上下文、模型与输入草稿如何处理。
+---
+
+import { Aside } from "@astrojs/starlight/components"
+
+Dline 有两种工作模式：**Plan** 用于调研和讨论方案，**Act** 用于实际执行。两者在同一个任务中共享对话，你可以随时切换。
+
+## 切换模式
+
+输入区右下角的 **Plan / Act** 开关显示当前模式，点击即可切换。把鼠标悬停在开关上会看到说明：
+
+- Plan：“In Plan mode, Dline will gather information to architect a plan”；
+- Act：“In Act mode, Dline will complete the task immediately”。
+
+提示中还会显示切换模式的快捷键（“Toggle w/ …”）。新安装时默认处于 **Act** 模式。
+
+![点击输入区右下角的 Plan / Act 开关在两种模式之间切换](/assets/ui/docs-mode-switch.gif)
+
+## Plan 模式
+
+Plan 模式下，Dline 会读取文件、搜索代码、梳理架构，并与你讨论实现方案。它被要求不做实现、不运行会改变状态的命令；在 Standard 提示词配置下，仍可以运行只读命令，或写入规划类文档。
+
+<Aside type="caution">
+默认情况下，“不修改文件”只是对模型的指令，不是运行时强制。若希望 Plan 模式下强制拒绝文件编辑，请在 **Settings → Features** 中开启 **Strict Plan Mode**（默认关闭）。开启后，`write_to_file`、`replace_in_file`、`apply_patch` 和 `new_rule` 在 Plan 模式下会被拒绝。
+</Aside>
+
+当 Dline 在 Plan 模式下整理出完整方案时，聊天中会出现 **Plan Created** 结果。确认方案后，用输入区的开关切换到 Act 模式开始执行。
+
+## Act 模式
+
+Act 模式下，Dline 可以创建和编辑文件、运行命令、执行测试。每个操作是否需要你批准，取决于[自动批准](/zh-cn/features/auto-approve/)设置。
+
+对于目标明确的小改动，可以直接在 Act 模式下开始；需求不清楚或涉及面较广时，先在 Plan 模式下对齐方案通常更稳妥。
+
+## 切换时会发生什么
+
+切换模式不会创建新任务，对话记录保留在同一个任务中。
+
+- **上下文检查**：如果 Plan 与 Act 使用同一个 Profile，切换直接完成。如果两种模式使用不同的 Profile，Dline 会估算切换后的请求大小；超过目标模型的压缩阈值时，会弹出 **Compact context before switching?** 对话框，说明将先用目标 Profile 压缩上下文再切换。你可以选择 **Cancel** 或 **Compact & Switch**。
+- **切换状态**：切换过程中开关不可点击，并依次显示 **Checking…**、**Confirm**、**Compacting…**、**Switching…** 等状态。
+- **切换失败**：显示 **Switch not completed**，可选择 **Dismiss** 或 **Retry**；原模式保持不变。
+- **输入草稿**：切换时输入框中的文字、图片和文件会被一起带走。在已有任务中，它们会在切换完成后发送一次；如果 Dline 正在等待你回答问题或确认计划，草稿会作为对该交互的回复。在欢迎页上，草稿会留在输入框中，直到你手动发送。取消或失败时草稿不会丢失。
+
+## 为 Plan 和 Act 使用不同的模型
+
+你可以让 Plan 和 Act 使用不同的 Profile（即不同的服务商与模型）：
+
+1. 点击输入区的模型选择器。
+2. 在 **Available Models** 旁打开 **Split Model** 开关（提示为 “Use different models per mode”），默认关闭。
+3. 分别在 **Act** 和 **Plan** 标签页中选择要使用的 Profile。
+
+关闭该开关后，两种模式使用同一个 Profile。Profile 的创建和管理参见 [模型配置](/zh-cn/getting-started/authorizing-with-dline/)。
+
+## `/deep-planning`
+
+在输入框中输入 `/deep-planning` 可以让 Dline 在编码前进行更系统的规划。菜单中的说明是 “Create a comprehensive implementation plan before coding”。该命令会指示 Dline：
+
+1. 先调研代码库（包括必要的只读终端命令）；
+2. 只在确有必要时向你提出澄清问题；
+3. 写出实现计划文档；
+4. 创建一个用于实施的后续任务。
+
+根据当前使用的提示词配置（Standard 或 Lite），命令会使用不同版本的指令。它指导模型的行为，但不能保证每次都识别出所有受影响的文件。
+
+## YOLO 模式下的例外
+
+如果在 **Settings → Features** 中开启了 **Yolo Mode**（默认关闭），Dline 在 Plan 模式下生成计划后会尝试自动切换到 Act 模式继续执行。详见[自动批准](/zh-cn/features/auto-approve/)。
+
+## 相关内容
+
+- [检查点](/zh-cn/core-workflows/checkpoints/)：在 Act 模式下回滚文件改动；
+- [任务管理](/zh-cn/core-workflows/task-management/)：任务历史与上下文用量；
+- [自动压缩](/zh-cn/features/auto-compact/)：上下文接近上限时的处理方式。

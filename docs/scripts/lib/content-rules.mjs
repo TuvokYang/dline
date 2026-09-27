@@ -1,3 +1,4 @@
+import { CHINESE_LOCALE } from "../../src/data/locales.mjs"
 import { pagePath, ROOT_LOCALE } from "./content-files.mjs"
 import { findForbiddenText } from "./forbidden-patterns.mjs"
 import { CJK_TEXT } from "./locale-text.mjs"
@@ -20,7 +21,9 @@ import {
 const REQUIRED_FRONTMATTER = Object.freeze(["title", "description"])
 const MINTLIFY_FRONTMATTER = new Set(["sidebarTitle", "icon", "iconType", "mode", "api", "openapi"])
 const URL_SCHEME = /^[a-z][a-z\d+.-]*:/i
-const ENGLISH_PREFIX = "/en/"
+const CHINESE_PREFIX = `/${CHINESE_LOCALE}/`
+/** Reader-facing edition names used in diagnostics. */
+const EDITION_NAME = Object.freeze({ [ROOT_LOCALE]: "English", [CHINESE_LOCALE]: "Chinese" })
 
 /**
  * Validate one content page against the migration rules.
@@ -36,7 +39,11 @@ export function checkPage({ page, source, basePrefix }) {
 	 * @param {number} [index]
 	 */
 	const report = (message, text, index) =>
-		issues.push({ file: page.relativePath, line: text === undefined || index === undefined ? 1 : lineOf(text, index), message })
+		issues.push({
+			file: page.relativePath,
+			line: text === undefined || index === undefined ? 1 : lineOf(text, index),
+			message,
+		})
 
 	const { frontmatter, body } = maskFrontmatter(source)
 	const keys = frontmatterKeys(frontmatter)
@@ -55,7 +62,11 @@ export function checkPage({ page, source, basePrefix }) {
 	const imports = collectImports(prose)
 	for (const [name, index] of collectComponentTags(prose)) {
 		if (!imports.has(name)) {
-			report(`component <${name}> is not imported; convert Mintlify components to Starlight components or Markdown`, prose, index)
+			report(
+				`component <${name}> is not imported; convert Mintlify components to Starlight components or Markdown`,
+				prose,
+				index,
+			)
 		}
 	}
 	for (const link of collectLinks(prose)) {
@@ -69,7 +80,7 @@ export function checkPage({ page, source, basePrefix }) {
 	if (forbidden) {
 		report(forbidden.reason, source, forbidden.index)
 	}
-	if (page.locale !== ROOT_LOCALE) {
+	if (page.locale !== CHINESE_LOCALE) {
 		const translatedText = maskCode(source)
 		const cjk = CJK_TEXT.exec(translatedText)
 		if (cjk) {
@@ -106,12 +117,9 @@ export function checkLink({ url, kind }, locale, basePrefix) {
 	if (!path.endsWith("/")) {
 		return "page link must end with a trailing slash"
 	}
-	const targetsEnglish = path.startsWith(ENGLISH_PREFIX)
-	if (locale === ROOT_LOCALE && targetsEnglish) {
-		return "Chinese page links to an English page"
-	}
-	if (locale !== ROOT_LOCALE && !targetsEnglish) {
-		return "English page links to a Chinese page"
+	const target = path === `/${CHINESE_LOCALE}/` || path.startsWith(CHINESE_PREFIX) ? CHINESE_LOCALE : ROOT_LOCALE
+	if (target !== locale) {
+		return `${EDITION_NAME[locale]} page links to ${target === ROOT_LOCALE ? "an" : "a"} ${EDITION_NAME[target]} page`
 	}
 	return undefined
 }
@@ -132,10 +140,10 @@ export function checkLocaleParity(pages) {
 	const issues = []
 	for (const [slug, locales] of bySlug) {
 		const [present] = locales.values()
-		if (!locales.has(ROOT_LOCALE)) {
+		if (!locales.has(CHINESE_LOCALE)) {
 			issues.push({ file: present.relativePath, line: 1, message: `missing Chinese counterpart for "${slug || "(home)"}"` })
 		}
-		if (!locales.has("en")) {
+		if (!locales.has(ROOT_LOCALE)) {
 			issues.push({ file: present.relativePath, line: 1, message: `missing English counterpart for "${slug || "(home)"}"` })
 		}
 	}
@@ -173,8 +181,8 @@ export function collectSidebarTargets(sidebar) {
 }
 
 /**
- * Every Chinese page needs an explicit publication decision, and every sidebar
- * slug must exist in both locales.
+ * Every root-locale (English) page needs an explicit publication decision, and
+ * every sidebar slug must exist in both locales.
  * @param {PageIdentity[]} pages
  * @param {readonly SidebarEntry[]} sidebar
  * @param {ReadonlySet<string>} unlistedSlugs
@@ -196,7 +204,7 @@ export function checkNavigation(pages, sidebar, unlistedSlugs) {
 		}
 	}
 	for (const slug of slugs) {
-		for (const locale of [ROOT_LOCALE, "en"]) {
+		for (const locale of [ROOT_LOCALE, CHINESE_LOCALE]) {
 			if (!pages.some((page) => page.slug === slug && page.locale === locale)) {
 				issues.push({ file: "src/data/navigation.mjs", line: 1, message: `sidebar slug "${slug}" has no ${locale} page` })
 			}

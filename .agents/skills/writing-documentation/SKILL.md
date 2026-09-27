@@ -12,7 +12,7 @@ Use this skill for user-facing guides, feature pages, architecture documents, tr
 - User conversation and progress updates use Chinese unless the user requests another language.
 - Files under `.agents/` use English.
 - Documentation under `docs/` must provide Chinese and English deliverables for the same scope.
-- Root documentation follows the established pairing, such as `README.md` and `README_en.md`.
+- Root documentation follows the established pairing, such as `README.md` (English, the default) and `README_zh.md` (Chinese).
 - Release notes follow the established pairing: `CHANGELOG.md` and `docs/changelog/CHANGELOG_en.md`.
 - Before creating a new documentation pair, inspect neighboring files and `docs/docs.json` for the local naming and navigation convention. Preserve an existing convention rather than mass-renaming historical files.
 - If the target area has no discoverable bilingual naming convention, ask the user before inventing a new public URL structure.

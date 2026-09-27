@@ -1,17 +1,17 @@
 ---
-title: 配置与存储位置
-description: 了解 Dline 在哪里保存配置，以及全局配置与项目配置如何协同。
+title: Configuration and storage
+description: Understand where Dline stores configuration and how global and project configuration work together.
 ---
 
 import { Aside } from "@astrojs/starlight/components"
 
-Dline 把持久状态、运行时资源、用户文档和项目能力放在不同的根目录下。这些位置各有归属，不应合并成一个配置目录。
+Dline keeps durable state, runtime resources, user documents, and project capabilities under separate roots. Each location has its own owner and should not be merged into one configuration directory.
 
-## 存储位置
+## Storage locations
 
-### 状态与数据根目录
+### State and data root
 
-默认位于 `~/.dline/data/`，保存规范化设置、工作区状态、Profile 元数据和密钥：
+The default is `~/.dline/data/`. It holds canonical settings, workspace state, profile metadata, and secrets:
 
 ```text
 ~/.dline/data/
@@ -29,11 +29,11 @@ Dline 把持久状态、运行时资源、用户文档和项目能力放在不�
         └── settings.json
 ```
 
-Dline 运行时不要手动编辑这些文件。设置和 Profile 通过各自的仓储接口更新，避免多个 VS Code 窗口用过期快照互相覆盖。
+Do not edit these files while Dline is running. Settings and profiles are updated through their owning repositories so that multiple VS Code windows do not overwrite one another with stale snapshots.
 
-### 资源目录
+### Resource home
 
-默认位于 `~/.dline/`，保存服务商元数据、缓存和 Puppeteer 数据等资源：
+The default is `~/.dline/`. It holds resources such as provider metadata, caches, and Puppeteer data:
 
 ```text
 ~/.dline/
@@ -42,9 +42,9 @@ Dline 运行时不要手动编辑这些文件。设置和 Profile 通过各自�
 └── puppeteer/
 ```
 
-### 文档根目录
+### Documents root
 
-面向用户的任务数据和全局能力位于操作系统的“文档”目录下，通常是 `~/Documents/dline/`：
+User-facing task data and global capabilities live under the operating system's Documents directory, normally `~/Documents/dline/`:
 
 ```text
 ~/Documents/dline/
@@ -60,11 +60,11 @@ Dline 运行时不要手动编辑这些文件。设置和 Profile 通过各自�
 └── checkpoints/
 ```
 
-`DLINE_DOCS_DIR` 表示完整的 Dline 文档根目录。设置后，Dline 不会再追加一层 `dline` 目录。
+`DLINE_DOCS_DIR` is the complete Dline documents root. When it is set, Dline does not append another `dline` directory.
 
-## 项目能力
+## Project capabilities
 
-仓库级能力使用明确的项目路径：
+Repository-scoped capabilities use explicit project paths:
 
 ```text
 your-project/
@@ -77,28 +77,28 @@ your-project/
 └── .agentignore
 ```
 
-把需要与协作者共享的 `.agents/` 资源和 `.agentignore` 策略提交到仓库，但不要提交凭据。工作区 MCP 描述文件会拒绝在敏感字段中直接写入密钥，必须改用环境变量引用。
+Commit the `.agents/` resources and the `.agentignore` policy that you intend to share with collaborators, but keep credentials out of the repository. Workspace MCP descriptors reject inline secrets in sensitive fields and require environment-variable references instead.
 
-## 环境变量
+## Environment variables
 
-| 变量 | 说明 | 默认值 |
+| Variable | Description | Default |
 | --- | --- | --- |
-| `DLINE_DIR` | 状态与数据根目录的父目录，Dline 会在其下追加 `data/` | `~/.dline` |
-| `DLINE_HOME_DIR` | 资源目录，保存服务商元数据、缓存和 Puppeteer 数据 | `~/.dline` |
-| `DLINE_DOCS_DIR` | 完整的文档根目录，保存任务和全局能力 | 系统“文档”目录下的 `dline` |
-| `DLINE_COMMAND_PERMISSIONS` | 限制可执行 shell 命令的 JSON 策略 | 未设置 |
+| `DLINE_DIR` | Parent of the state and data root; Dline appends `data/` | `~/.dline` |
+| `DLINE_HOME_DIR` | Resource home for provider metadata, caches, and Puppeteer data | `~/.dline` |
+| `DLINE_DOCS_DIR` | Complete documents root for tasks and global capabilities | `dline` under the system Documents directory |
+| `DLINE_COMMAND_PERMISSIONS` | JSON policy that restricts shell commands | unset |
 
-路径覆盖需要在启动 VS Code 之前设置，扩展宿主进程才能继承。若需要完全隔离的环境，请同时设置三个路径变量；只覆盖其中一个不会隔离其他目录。
+Set path overrides before launching VS Code so that the extension host inherits them. For a fully isolated environment, set all three path variables; overriding only one does not isolate the others.
 
 ### DLINE_COMMAND_PERMISSIONS
 
-限制 Dline 可以执行的 shell 命令：
+Restrict which shell commands Dline can run:
 
 ```bash
 export DLINE_COMMAND_PERMISSIONS='{"allow": ["npm *", "git *"], "deny": ["rm -rf *"]}'
 ```
 
-格式：
+Format:
 
 ```json
 {
@@ -108,25 +108,25 @@ export DLINE_COMMAND_PERMISSIONS='{"allow": ["npm *", "git *"], "deny": ["rm -rf
 }
 ```
 
-规则：
+Rules:
 
-- `deny` 优先于 `allow`。
-- 设置了 `allow` 时，不匹配 `allow` 的命令都会被拒绝。
-- `allowRedirects` 控制是否允许 shell 重定向（`>`、`>>`、`<`），默认为 `false`。
+- `deny` takes precedence over `allow`.
+- When `allow` is set, any command that does not match it is denied.
+- `allowRedirects` controls shell redirects (`>`, `>>`, `<`) and defaults to `false`.
 
-## 相关文档
+## Related docs
 
-- [规则](/customization/rules/)
+- [Rules](/customization/rules/)
 - [Skills](/customization/skills/)
 - [MCP](/mcp/mcp-overview/)
 - [.agentignore](/customization/agentignore/)
-- [Hooks 规划](/customization/hooks/)
-- [插件规划](/customization/plugins/)
+- [Hooks roadmap](/customization/hooks/)
+- [Plugins roadmap](/customization/plugins/)
 
-## 安全提示
+## Security notes
 
 <Aside type="caution">
-不要提交 API Key、服务商凭据或 MCP token。启用来自其他仓库的规则、Skills、Workflows、子代理 Profile 和 MCP 描述文件之前，先审查其内容。
+Never commit API keys, provider credentials, or MCP tokens. Review rules, skills, workflows, subagent profiles, and MCP descriptors from another repository before you enable them.
 </Aside>
 
-当前公开的扩展能力不提供稳定的第三方插件或生命周期 Hook 安装接口。上面链接的 Hooks 和插件页面描述的是规划中的边界，不是可安装的合同。
+The current public extension surface does not provide a stable third-party plugin or lifecycle-hook installation API. The Hooks and Plugins pages linked above describe planned boundaries, not an installable contract.
