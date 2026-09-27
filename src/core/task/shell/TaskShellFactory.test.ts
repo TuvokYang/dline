@@ -213,8 +213,30 @@ describe("openTaskShell", () => {
 		expect(recorded).toContainEqual(expect.objectContaining({ code: "payload_missing", severity: "failure" }))
 	})
 
+	it("reports rebuilding a task that never had a snapshot as an observation", async () => {
+		const journal = new InMemoryConversationJournal()
+		await journal.append({ operationId: "seed:1", payloadRef: "journal:1", source: "system" })
+		const recorded: { code: string; severity?: string }[] = []
+
+		const opened = await openTaskShell({
+			taskId: "task-1",
+			openReason: "resume",
+			execution: execution(() => undefined),
+			taskView: new InMemoryTaskViewPort(),
+			diagnostics: { record: (diagnostic) => recorded.push(diagnostic) },
+			persistence: {
+				ports: { vault: new InMemoryStateVault(), journal, publications: new InMemoryCommandPublicationStore() },
+				payloads,
+			},
+		})
+
+		expect(opened.form).toBe("interrupted")
+		expect(recorded).toContainEqual(expect.objectContaining({ code: "snapshot_missing", severity: "observation" }))
+		expect(recorded.filter((diagnostic) => diagnostic.severity === "failure")).toEqual([])
+	})
+
 	it("opens a task whose snapshot cannot be read", async () => {
-		const recorded: { code: string }[] = []
+		const recorded: { code: string; severity?: string }[] = []
 
 		const opened = await openTaskShell({
 			taskId: "task-1",
@@ -241,5 +263,7 @@ describe("openTaskShell", () => {
 		expect(recorded.map((diagnostic) => diagnostic.code)).toEqual(
 			expect.arrayContaining(["snapshot_unreadable", "snapshot_missing"]),
 		)
+		// The unreadable snapshot is the fault; rebuilding without it is the recovery.
+		expect(recorded).toContainEqual(expect.objectContaining({ code: "snapshot_unreadable", severity: "failure" }))
 	})
 })

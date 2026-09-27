@@ -11,6 +11,16 @@ import {
 import { openTaskPersistence, type TaskPersistenceAssembly } from "./TaskPersistenceAssembly"
 import { type TaskInputPresentationPort, TaskShell } from "./TaskShell"
 
+/**
+ * Rebuild causes that describe a normal open rather than a fault.
+ *
+ * A task written by an older build, or seeded without runtime state, has no
+ * snapshot yet; rebuilding it from its journal is the designed path, so it is
+ * reported as an observation. Every other rebuild cause means durable state
+ * was damaged and stays a failure.
+ */
+const EXPECTED_REBUILD_CAUSES: ReadonlySet<string> = new Set(["snapshot_missing"])
+
 export interface TaskExecutionFactoryContext {
 	readonly initialState: TaskState
 	readonly persistence: TaskPersistenceAssembly
@@ -90,6 +100,9 @@ async function loadSnapshot(
 			source: "hydrate",
 			code: "snapshot_unreadable",
 			message: error instanceof Error ? error.message : String(error),
+			// A snapshot that exists but cannot be read is a fault, unlike one that
+			// was never written; the rebuild that follows is the recovery from it.
+			severity: "failure",
 		})
 		return undefined
 	}
@@ -133,7 +146,7 @@ export async function openTaskShell(options: OpenTaskShellOptions): Promise<Open
 			source: "hydrate",
 			code: diagnostic.code,
 			message: diagnostic.message,
-			severity: restored.rebuilt ? "failure" : "observation",
+			severity: restored.rebuilt && !EXPECTED_REBUILD_CAUSES.has(diagnostic.code) ? "failure" : "observation",
 			revision: restored.state.revision,
 		})
 	}
