@@ -13,6 +13,8 @@ export interface InteractionContinuationInput {
 	dlineTid: string
 	chatContent?: ChatContent
 	switchesPlanToAct?: boolean
+	/** The action the user answered with; a status acknowledgment reads Stop differently. */
+	actionId?: string
 }
 
 /** Map a conversational tool name to the interaction contract that formats its continuation. */
@@ -68,6 +70,11 @@ async function projectResponseContent(input: InteractionContinuationInput): Prom
 		}
 		case "status_acknowledgment": {
 			const feedback = formatStatusFeedback(text, images, files)
+			// Worded exactly as StatusUpdateHandler answers a live dialog, so a
+			// restored answer reads the same to the model.
+			if (input.actionId === "stop") {
+				return formatResponse.toolResult(`[STATUS_UPDATE] User chose to stop.${feedback} Wait for further instructions.`)
+			}
 			return formatResponse.toolResult(`[STATUS_UPDATE] User acknowledged.${feedback} Continue with your next tool call.`)
 		}
 		case "completion": {

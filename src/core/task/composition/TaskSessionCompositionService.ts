@@ -43,6 +43,7 @@ import type { ActiveTaskSession } from "../session/ActiveTaskSession"
 import { createPresentationIdSequence } from "../session/PresentationIdSequence"
 import { ProviderTextPresenter } from "../session/ProviderTextPresenter"
 import { readRestoredContextPressure } from "../session/RestoredContextPressure"
+import { RestoredToolDialogContinuation } from "../session/RestoredToolDialogContinuation"
 import { TaskApiHandlerOwner } from "../session/TaskApiHandlerOwner"
 import { TaskBackgroundResultsOwner } from "../session/TaskBackgroundResultsOwner"
 import { TaskContextUsageProjection } from "../session/TaskContextUsageProjection"
@@ -55,7 +56,10 @@ import { openActiveTaskSession } from "../session/TaskSessionFactory"
 import type { TaskSessionOwners } from "../session/TaskSessionOwners"
 import { TaskToolExecutionOwner } from "../session/TaskToolExecutionOwner"
 import { TurnContinuationRenderer } from "../session/TurnContinuationRenderer"
-import { ResumeDialogContinuation } from "../session/UnownedDialogContinuation"
+import {
+	ResumeDialogContinuation,
+	type TaskResumptionPort as ResumeDialogContinuationPorts,
+} from "../session/UnownedDialogContinuation"
 import { openTaskPersistence, type TaskPersistenceAssembly } from "../shell/TaskPersistenceAssembly"
 import type { TaskViewPort } from "../stores"
 import { JournalConversationRewind } from "../stores/JournalConversationRewind"
@@ -169,14 +173,26 @@ export class TaskSessionCompositionService {
 		)
 		// A recovery or wakeup dialog is planned by the kernel, so answering it has
 		// no receiver to hand the outcome to. Resuming means submitting the answer
-		// as an ordinary input, which only the opened session can do.
+		// as an ordinary input, which only the opened session can do. A restored
+		// tool dialog is the exception: its answer is the tool's result.
+		const resumption: ResumeDialogContinuationPorts = {
+			materialize: (input) => this.requireSession(session).inputs.materialize(input),
+			submit: (input) => this.requireSession(session).task.submitInput(input),
+		}
 		const interactions = new TaskInteractionOwner(
 			messages,
 			persistence.payloads,
-			new ResumeDialogContinuation({
-				materialize: (input) => this.requireSession(session).inputs.materialize(input),
-				submit: (input) => this.requireSession(session).task.submitInput(input),
-			}),
+			new RestoredToolDialogContinuation(
+				{
+					state: () => this.requireSession(session).state(),
+					payloads: persistence.payloads,
+					journal: persistence.ports.journal,
+					messages,
+					nextPresentationId: () => nextPresentationId(),
+				},
+				resumption,
+				new ResumeDialogContinuation(resumption),
+			),
 			diagnostics,
 		)
 		const api = new TaskApiHandlerOwner({
