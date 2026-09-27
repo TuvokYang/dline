@@ -5,6 +5,7 @@ import type { IPartialBlockHandler, IToolHandler } from "../ToolExecutorCoordina
 import type { ToolResponse } from "../ToolResponse"
 import { interactionId, interactionTurnId, type TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
+import { sayFeedbackOnce } from "../utils/UserFeedbackUtils"
 
 export class StatusUpdateHandler implements IToolHandler, IPartialBlockHandler {
 	readonly name = ClineDefaultTool.STATUS_UPDATE
@@ -71,6 +72,11 @@ export class StatusUpdateHandler implements IToolHandler, IPartialBlockHandler {
 				existingTs: block.ts,
 			})
 			const feedback = this.formatFeedback(outcome.draft?.text, outcome.draft?.images, outcome.draft?.files)
+			// The note typed with Acknowledge or Stop is the user's own message, so it
+			// is shown in the chat just as a follow-up reply is.
+			if (outcome.draft?.text?.trim() || outcome.draft?.images.length || outcome.draft?.files.length) {
+				await sayFeedbackOnce(config, "messageResponse", outcome.draft.text, outcome.draft.images, outcome.draft.files)
+			}
 			if (outcome.actionId === "stop") {
 				return formatResponse.toolResult(`[STATUS_UPDATE] User chose to stop.${feedback} Wait for further instructions.`)
 			}

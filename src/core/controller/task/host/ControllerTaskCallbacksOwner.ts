@@ -17,8 +17,11 @@ import type { CommandExecutor } from "@integrations/terminal/CommandExecutor"
 import { BrowserSession } from "@services/browser/BrowserSession"
 import type { UiAsk, UiMessage, UiSay } from "@shared/ExtensionMessage"
 import type { ClineContent } from "@shared/messages/content"
+import { convertClineMessageToProto } from "@shared/proto-conversions/cline-message"
+import { Logger } from "@shared/services/Logger"
 import type { ClineDefaultTool } from "@shared/tools"
 import type { ClineAskResponse } from "@shared/WebviewMessage"
+import { sendPartialMessageEvent } from "../../ui/subscribeToPartialMessage"
 
 export interface ControllerTaskCallbacksOwnerOptions {
 	readonly controller: Controller
@@ -132,8 +135,27 @@ export class ControllerTaskCallbacksOwner {
 			},
 			getActiveHookExecution: async () => options.toolState.activeHookExecution,
 			runUserPromptSubmitHook: (content, context) => this.runUserPromptSubmitHook(content, context),
-			updateClineMessage: (index, updates) => options.messages.updateClineMessage(index, updates),
+			updateClineMessage: (index, updates) => this.updateClineMessage(index, updates),
 		}
+	}
+
+	/**
+	 * Patch a row a tool already showed, and show the patch.
+	 *
+	 * Persisting is not publishing: a follow-up answer marks its option as picked
+	 * on a row that is already on screen, and a patch that only reached storage
+	 * left the option unpressed until an unrelated reload. Delivery is not awaited
+	 * as a failure, because the change is already durable.
+	 */
+	private async updateClineMessage(index: number, updates: Partial<UiMessage>): Promise<void> {
+		await this.options.messages.updateClineMessage(index, updates)
+		const row = this.options.messages.clineMessages[index]
+		if (!row) return
+		await sendPartialMessageEvent(this.options.controller, convertClineMessageToProto(row)).catch((error: unknown) => {
+			Logger.warn(
+				`[Task ${this.options.taskId}] Could not publish the patched row ${index}: ${error instanceof Error ? error.message : String(error)}`,
+			)
+		})
 	}
 
 	get browserSession(): BrowserSession {

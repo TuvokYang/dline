@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto"
 import { getContextWindowInfo } from "@core/context/context-management/context-window-utils"
 import type { Controller } from "@core/controller"
 import { inputSemanticCatalogService } from "@core/controller/slash/input-semantic-catalog"
+import { sendPartialMessageEvent } from "@core/controller/ui/subscribeToPartialMessage"
 import type { IgnoreController } from "@core/ignore/IgnoreController"
 import { LegacyInputAdapter } from "@core/input-semantics/LegacyInputAdapter"
 import { SemanticInputAdmissionService } from "@core/input-semantics/SemanticInputAdmissionService"
@@ -12,6 +13,7 @@ import { isMultiRootEnabled } from "@core/workspace/multi-root-utils"
 import type { WorkspaceRootManager } from "@core/workspace/WorkspaceRootManager"
 import type { McpHub } from "@services/mcp/McpHub"
 import type { HistoryItem } from "@shared/HistoryItem"
+import { convertClineMessageToProto } from "@shared/proto-conversions/cline-message"
 import { Logger } from "@shared/services/Logger"
 import type { TaskCapabilityToggles } from "@shared/TaskCapabilityToggles"
 import type { ApiConversation } from "../../storage/ApiConversation"
@@ -189,6 +191,7 @@ export class TaskSessionCompositionService {
 					journal: persistence.ports.journal,
 					messages,
 					nextPresentationId: () => nextPresentationId(),
+					publishRow: (row) => sendPartialMessageEvent(options.prompt.controller, convertClineMessageToProto(row)),
 				},
 				resumption,
 				new ResumeDialogContinuation(resumption),

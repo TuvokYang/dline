@@ -54,13 +54,14 @@ function harness(options: { readonly toolName: string; readonly phase?: string; 
 		accepts: vi.fn(() => false),
 		continue: vi.fn(async () => "declined" as const),
 	}
+	const publishRow = vi.fn(async () => undefined)
 	const continuation = new RestoredToolDialogContinuation(
-		{ state: () => state, payloads, journal, messages, nextPresentationId: () => 100 },
+		{ state: () => state, payloads, journal, messages, nextPresentationId: () => 100, publishRow },
 		resumption,
 		fallback,
 	)
 	const journaledResult = () => decodeTaskPayload<ToolResultEnvelope>(puts.at(-1) as never)
-	return { continuation, journal, messages, resumption, fallback, journaledResult }
+	return { continuation, journal, messages, resumption, fallback, journaledResult, publishRow }
 }
 
 describe("RestoredToolDialogContinuation", () => {
@@ -86,6 +87,8 @@ describe("RestoredToolDialogContinuation", () => {
 		expect(h.messages.updateClineMessage).toHaveBeenCalledWith(0, {
 			text: JSON.stringify({ ...question, selected: "OPTION_B" }),
 		})
+		// The ask row is already on screen, so the picked option has to be pushed.
+		expect(h.publishRow).toHaveBeenCalledWith(expect.objectContaining({ ts: 1, interactionId: TID }))
 		expect(h.messages.addToClineMessages).toHaveBeenCalledWith(
 			expect.objectContaining({ say: "user_feedback", text: "OPTION_B: DRAFT_NOTE" }),
 		)

@@ -1,4 +1,4 @@
-import type { UiAskQuestion } from "@shared/ExtensionMessage"
+import type { UiAskQuestion, UiMessage } from "@shared/ExtensionMessage"
 import { Logger } from "@shared/services/Logger"
 import { serializeDurableToolResult, toolResultReplayOf } from "../DurableToolResult"
 import { interactionKindForToolName, projectInteractionContinuation } from "../interaction/InteractionContinuation"
@@ -34,6 +34,12 @@ export interface RestoredToolDialogPorts {
 		"clineMessages" | "addToClineMessages" | "updateClineMessage" | "flushMessageUpdate"
 	>
 	readonly nextPresentationId: () => number
+	/**
+	 * Push an edited row to the view. Persisting a row does not publish it, and
+	 * the ask row is already on screen, so without this the picked option only
+	 * appears after the next full reload.
+	 */
+	readonly publishRow?: (row: UiMessage) => Promise<void>
 }
 
 /** The option a follow-up answer picked, matched the way the live handler matches it. */
@@ -127,6 +133,7 @@ export class RestoredToolDialogContinuation implements UnownedDialogContinuation
 			if (question && selected) {
 				await messages.updateClineMessage(index, { text: JSON.stringify({ ...question, selected }) })
 				await messages.flushMessageUpdate(index)
+				await this.publish(messages.clineMessages[index])
 			}
 		}
 		if (!draft?.text && !draft?.images.length && !draft?.files.length) return
@@ -137,6 +144,16 @@ export class RestoredToolDialogContinuation implements UnownedDialogContinuation
 			text: draft?.text ?? "",
 			images: [...(draft?.images ?? [])],
 			files: [...(draft?.files ?? [])],
+		})
+	}
+
+	/** View delivery is best effort: the row is already durable. */
+	private async publish(row: UiMessage | undefined): Promise<void> {
+		if (!row || !this.ports.publishRow) return
+		await this.ports.publishRow(row).catch((error: unknown) => {
+			Logger.warn(
+				`Could not publish restored dialog row ${row.ts}: ${error instanceof Error ? error.message : String(error)}`,
+			)
 		})
 	}
 }
