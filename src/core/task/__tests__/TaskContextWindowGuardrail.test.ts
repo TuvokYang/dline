@@ -282,7 +282,7 @@ describe("Task context-window final admission guard", () => {
 		const commit = extractMethod(
 			source,
 			"private async commitContextCompaction(",
-			"/** Present a terminal automatic-compaction failure",
+			"Present a terminal automatic-compaction failure",
 		)
 
 		expect(commit).toContain("createCompactionConversationRange(state")
@@ -322,10 +322,13 @@ describe("Task context-window final admission guard", () => {
 		expect(presenter).toContain('"error_retry"')
 		expect(presenter).toContain("failed: true")
 		expect(presenter).toContain("await this.recoverApiFailure({")
+		// Retry must keep the gated request's identity: a persisted request is replayed, never re-appended.
+		expect(presenter).toContain("persistedRequest: boolean")
+		expect(presenter).not.toContain("persistedRequest: false")
 		expect(requestMethod.match(/if \(result === "failed"\)/g)).toHaveLength(2)
 		expect(
 			requestMethod.match(
-				/await this\.presentTerminalCompactionFailure\(operationId, apiIndex, ordinaryCompactionInput\)/g,
+				/await this\.presentTerminalCompactionFailure\(\s*operationId,\s*apiIndex,\s*ordinaryCompactionInput,\s*persistedRequest,?\s*\)/g,
 			),
 		).toHaveLength(2)
 		expect(requestMethod.match(/if \(result === "cancelled"\) return true/g)).toHaveLength(2)

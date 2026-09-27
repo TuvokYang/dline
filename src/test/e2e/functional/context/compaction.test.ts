@@ -1171,6 +1171,125 @@ e2e(
 	},
 )
 
+/**
+ * A completed compaction starts a new context-pressure boundary. When the first
+ * ordinary request after it fails transiently and the user retries manually, the
+ * retry must replay that persisted request. Re-reading the pre-compaction
+ * Provider usage would compact again a history that only holds the summary and
+ * fail with "No complete logical turn", repeating on every later Retry.
+ */
+e2e(
+	"Auto compact - manual retry after a post-compaction Provider failure replays the request without recompacting",
+	async ({ dlineDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
+		e2e.setTimeout(360_000)
+		await configureTriggerBoundary(dlineDir, 1_000_000, 272_000)
+		const compactionInstruction = "The current conversation is rapidly running out of context"
+		const belowFeedback = "E2E_POST_COMPACTION_RETRY_BELOW_CONTINUE"
+		const triggerFeedback = "E2E_POST_COMPACTION_RETRY_TRIGGER_CONTINUE"
+		const summaryMarker = "E2E_POST_COMPACTION_RETRY_SUMMARY"
+		const completionMarker = "E2E_POST_COMPACTION_RETRY_OK"
+		const failureMarker = "E2E_POST_COMPACTION_RETRY_503"
+		const failureCode = "e2e_post_compaction_retry_503"
+		const compactTriggerTokens = 268_500
+		// The last pre-compaction Provider usage stays inside the shared 2K tolerance,
+		// so any gate that ignores the compaction boundary would compact again.
+		const belowPreviousTokens = compactTriggerTokens - 3_000
+		const triggerPreviousTokens = compactTriggerTokens - 1_000
+		// Transport-level retries may consume several responses per Task attempt, so
+		// queue more failures than one automatic sequence can use and drop the rest
+		// before the manual Retry.
+		const queuedFailures = 40
+		const setupRequests = 3
+		server.enqueueResponses(
+			"openai-compatible-responses",
+			{
+				type: "tool",
+				id: "call_post_compaction_retry_below",
+				name: "qna_respond",
+				arguments: { response: "E2E_POST_COMPACTION_RETRY_BELOW_READY" },
+				usage: { inputTokens: belowPreviousTokens - 100, outputTokens: 100 },
+			},
+			{
+				type: "tool",
+				id: "call_post_compaction_retry_exact",
+				name: "qna_respond",
+				arguments: { response: "E2E_POST_COMPACTION_RETRY_EXACT_READY" },
+				usage: { inputTokens: triggerPreviousTokens - 100, outputTokens: 100 },
+				expectedRequestExcludes: [compactionInstruction],
+			},
+			{
+				type: "tool",
+				id: "call_post_compaction_retry_summary",
+				name: "summarize_task",
+				arguments: { context: summaryMarker },
+				expectedRequestIncludes: [compactionInstruction],
+				expectedRequestExcludes: [triggerFeedback],
+			},
+			...Array.from({ length: queuedFailures }, () => ({
+				type: "error" as const,
+				status: 503,
+				code: failureCode,
+				message: failureMarker,
+			})),
+		)
+
+		const app = await openVSCode(workspaceDir)
+		try {
+			const sidebar = await openSidebar(app, helper)
+			await sendTask(sidebar, "E2E_POST_COMPACTION_RETRY_TASK")
+			await expect(sidebar.getByText("E2E_POST_COMPACTION_RETRY_BELOW_READY", { exact: false }).last()).toBeVisible({
+				timeout: 60_000,
+			})
+			await sendTask(sidebar, belowFeedback)
+			await expect(sidebar.getByText("E2E_POST_COMPACTION_RETRY_EXACT_READY", { exact: false }).last()).toBeVisible({
+				timeout: 60_000,
+			})
+			await sendTask(sidebar, triggerFeedback)
+
+			// Compaction succeeds; the first ordinary request after it exhausts the automatic budget.
+			await expect(sidebar.getByTestId("error-retry-countdown")).toContainText("automatic attempts were used", {
+				timeout: 240_000,
+			})
+			server.clearPendingResponses("openai-compatible-responses")
+			const requestsBeforeRetry = server.getMockConsumptions("openai-compatible-responses")
+			const failedRequestCount = requestsBeforeRetry.length
+			expect(failedRequestCount).toBeGreaterThan(setupRequests)
+			expect(requestsBeforeRetry[2]).toMatchObject({ responseType: "tool", toolName: "summarize_task" })
+			expect(requestsBeforeRetry.slice(setupRequests).every((request) => request.status === 503)).toBe(true)
+			const failedRequestText = JSON.stringify(requestsBeforeRetry[setupRequests].requestBody)
+			expect(failedRequestText).toContain(summaryMarker)
+			expect(failedRequestText).not.toContain(compactionInstruction)
+			const failedFeedbackCount = countOccurrences(failedRequestText, triggerFeedback)
+			expect(failedFeedbackCount).toBeGreaterThan(0)
+
+			server.enqueueResponses("openai-compatible-responses", {
+				type: "tool",
+				id: "call_post_compaction_retry_complete",
+				name: "attempt_completion",
+				arguments: { result: completionMarker },
+				expectedRequestIncludes: [summaryMarker, triggerFeedback],
+				expectedRequestExcludes: [compactionInstruction],
+			})
+			const retry = sidebar.locator('vscode-button[aria-label="Retry"]').last()
+			await expect(retry).toBeVisible()
+			await retry.click()
+
+			await expect(sidebar.getByText(completionMarker, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
+			await expect(sidebar.getByText("Conversation Compaction Failed", { exact: true })).toHaveCount(0)
+			await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(failedRequestCount + 1)
+			const requests = server.getMockConsumptions("openai-compatible-responses")
+			expect(requests.filter((request) => request.toolName === "summarize_task")).toHaveLength(1)
+			// The manual Retry replays the persisted request; it must not append a second copy of the feedback.
+			const replayedRequestText = JSON.stringify(requests[failedRequestCount].requestBody)
+			expect(countOccurrences(replayedRequestText, triggerFeedback)).toBe(failedFeedbackCount)
+			expect(requests.every((request) => request.contractError === undefined)).toBe(true)
+			await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir, [new RegExp(failureMarker), new RegExp(failureCode)])
+		} finally {
+			await app.close()
+		}
+	},
+)
+
 e2e(
 	"OpenAI compaction - iterates until the projected context is below 80 percent",
 	async ({ dlineDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {

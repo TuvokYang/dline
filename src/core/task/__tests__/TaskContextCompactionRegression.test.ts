@@ -75,16 +75,49 @@ describe("Task context compaction regressions", () => {
 			operationId: string,
 			apiIndex: number,
 			retryContent: ClineContent[],
+			persistedRequest: boolean,
 		) => Promise<void>
 		const retryContent: ClineContent[] = [{ type: "text", text: "latest pending input" }]
 
-		await presentTerminalCompactionFailure.call(task, "operation-1", 79, retryContent)
+		await presentTerminalCompactionFailure.call(task, "operation-1", 79, retryContent, false)
 
 		expect(order).toEqual(["release", "recover"])
 		expect(task.say).not.toHaveBeenCalled()
 		expect(task.taskState.autoRetryAttempts).toBe(0)
 		expect(recoverApiFailure).toHaveBeenCalledWith(
 			expect.objectContaining({ apiIndex: 79, persistedRequest: false, retryContent }),
+		)
+	})
+
+	it("keeps the persisted identity of a retried request whose compaction gate failed", async () => {
+		const recoverApiFailure = vi.fn(async () => undefined)
+		const task = {
+			taskId: "task-1",
+			taskState: { forceTruncateAvailable: false, autoRetryAttempts: 0 },
+			contextCompactionFailureReasons: new Map([
+				["operation-1", "No complete logical turn is available for context compaction."],
+			]),
+			contextCompactionRetryProgress: new Map(),
+			endAutoRetrySequence: vi.fn(),
+			say: vi.fn(async () => undefined),
+			getRuntimeState: () => ({ revision: 9 }),
+			interactionCoordinator: { releaseApiContinuationForRequestGate: vi.fn(async () => true) },
+			recoverApiFailure,
+		}
+		const presentTerminalCompactionFailure = Reflect.get(Task.prototype, "presentTerminalCompactionFailure") as (
+			this: typeof task,
+			operationId: string,
+			apiIndex: number,
+			retryContent: ClineContent[],
+			persistedRequest: boolean,
+		) => Promise<void>
+
+		// A persisted request carries no unsent input; its identity is the history entry at apiIndex.
+		await presentTerminalCompactionFailure.call(task, "operation-1", 189, [], true)
+
+		// Declaring it unpersisted would make the next Retry append a new request at apiIndex 190.
+		expect(recoverApiFailure).toHaveBeenCalledWith(
+			expect.objectContaining({ apiIndex: 189, persistedRequest: true, retryContent: [] }),
 		)
 	})
 
@@ -105,9 +138,10 @@ describe("Task context compaction regressions", () => {
 			operationId: string,
 			apiIndex: number,
 			retryContent: ClineContent[],
+			persistedRequest: boolean,
 		) => Promise<void>
 
-		await presentTerminalCompactionFailure.call(task, "operation-1", 79, [])
+		await presentTerminalCompactionFailure.call(task, "operation-1", 79, [], false)
 
 		expect(task.taskState.autoRetryAttempts).toBe(3)
 		expect(task.say).toHaveBeenCalledWith("error_retry", expect.stringContaining('"failed":true'))

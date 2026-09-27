@@ -19,7 +19,7 @@ import { isTurnEndingToolName } from "../../task/assistant-message-order"
 import { createMissingToolResultMessage } from "../../task/resume/ResumeProvenance"
 import { extractUserPromptFromContent } from "../../task/utils/extractUserPromptFromContent"
 import type { CanonicalMessageRange } from "./compaction-context-projection"
-import { getContextTokens, readContextTokens, readContextWindowRequestPressure } from "./context-pressure"
+import { collectContextWindowRequestPressures, getContextTokens, readContextTokens } from "./context-pressure"
 import { resolveContextWindowProjection } from "./context-window-projection"
 import {
 	type CompactTriggerOptions,
@@ -204,7 +204,12 @@ export class ContextManager {
 	}
 
 	/**
-	 * Determine whether we should compact context window, based on token counts
+	 * Determine whether we should compact context window, based on token counts.
+	 *
+	 * Only request pressure recorded after the latest completed compaction counts: the summary
+	 * replaced everything before that boundary, so pre-compaction Provider occupancy no longer
+	 * measures the live context. Reading it would re-compact a summary-only history, for example
+	 * when the first post-compaction request fails before reporting fresh usage and is retried.
 	 */
 	shouldCompactContextWindow(
 		clineMessages: ClineMessage[],
@@ -214,11 +219,7 @@ export class ContextManager {
 	): boolean {
 		if (previousApiReqIndex < 0) return false
 
-		const requestInfos = clineMessages.slice(0, previousApiReqIndex + 1).flatMap((message) => {
-			if (message.say !== "api_req_started") return []
-			const pressure = readContextWindowRequestPressure(message.text)
-			return pressure === undefined ? [] : [pressure]
-		})
+		const requestInfos = collectContextWindowRequestPressures(clineMessages.slice(0, previousApiReqIndex + 1))
 		if (requestInfos.length === 0) return false
 
 		const { contextWindow } = getContextWindowInfo(api)

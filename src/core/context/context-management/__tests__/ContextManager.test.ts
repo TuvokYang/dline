@@ -828,6 +828,67 @@ describe("ContextManager", () => {
 			const result = contextManager.shouldCompactContextWindow(clineMessages, api, 0, { triggerPercent: 97 })
 			expect(result).to.equal(true)
 		})
+
+		describe("after a completed compaction", () => {
+			// Mirrors a real task: 600K window at 95% triggers at 566,500, and the last
+			// pre-compaction Provider usage sat inside the shared 2K tolerance.
+			const contextWindow = 600_000
+			const preCompactionProviderTokens = 564_737
+
+			function completedCompactionCard(): ClineMessage {
+				return {
+					ts: Date.now(),
+					type: "say",
+					say: "tool",
+					text: JSON.stringify({ tool: "summarizeTask", compactionStatus: "completed" }),
+				}
+			}
+
+			function postCompactionEstimate(estimatedContextTokens: number): ClineMessage {
+				return {
+					ts: Date.now() + 1,
+					type: "say",
+					say: "api_req_started",
+					text: JSON.stringify({ estimatedContextTokens, contextTokensSource: "estimate" }),
+				}
+			}
+
+			it("ignores Provider usage recorded before the compaction boundary", () => {
+				const api = createMockApi(contextWindow)
+				const clineMessages: ClineMessage[] = [
+					createApiReqMessage({ tokensIn: preCompactionProviderTokens }),
+					completedCompactionCard(),
+					// The first post-compaction request failed before reporting Provider usage.
+					postCompactionEstimate(51_348),
+				]
+
+				const result = contextManager.shouldCompactContextWindow(clineMessages, api, 2, { triggerPercent: 95 })
+				expect(result).to.equal(false)
+			})
+
+			it("does not fall back to pre-compaction usage when no pressure follows the boundary", () => {
+				const api = createMockApi(contextWindow)
+				const clineMessages: ClineMessage[] = [
+					createApiReqMessage({ tokensIn: preCompactionProviderTokens }),
+					completedCompactionCard(),
+				]
+
+				const result = contextManager.shouldCompactContextWindow(clineMessages, api, 1, { triggerPercent: 95 })
+				expect(result).to.equal(false)
+			})
+
+			it("still compacts when pressure recorded after the boundary reaches the trigger", () => {
+				const api = createMockApi(contextWindow)
+				const clineMessages: ClineMessage[] = [
+					createApiReqMessage({ tokensIn: preCompactionProviderTokens }),
+					completedCompactionCard(),
+					createApiReqMessage({ tokensIn: preCompactionProviderTokens }),
+				]
+
+				const result = contextManager.shouldCompactContextWindow(clineMessages, api, 2, { triggerPercent: 95 })
+				expect(result).to.equal(true)
+			})
+		})
 	})
 
 	describe("getNewContextMessagesAndMetadata", () => {
