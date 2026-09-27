@@ -29,11 +29,11 @@ describe("renderCompactionInstruction", () => {
 		expect(rendered).toBe(summarizeTask(undefined, CWD, false))
 	})
 
-	it("adds the workspace reference hint only in a multi-root workspace", () => {
+	it("states the workspace path rule for single-root and multi-root workspaces alike", () => {
 		const single = renderCompactionInstruction({ cwd: CWD, profile: PromptProfile.Standard, multiRoot: false })
 		const multi = renderCompactionInstruction({ cwd: CWD, profile: PromptProfile.Standard, multiRoot: true })
 
 		expect(multi).toBe(summarizeTask(undefined, CWD, true))
-		expect(multi).not.toBe(single)
+		expect(multi).toBe(single)
 	})
 })

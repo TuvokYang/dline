@@ -236,6 +236,13 @@ export interface AccountUsageData {
 	/** Optional provider-owned reset credits exposed through the shared usage capability. */
 	resetCredits?: AccountUsageResetCreditData[]
 	resetCreditsAvailableCount?: number
+	/**
+	 * ISO timestamp of the read that produced this snapshot.
+	 *
+	 * A snapshot is held until the user refreshes it, so the surfaces state its
+	 * age instead of implying the numbers are current.
+	 */
+	retrievedAt?: string
 	isAvailable?: boolean
 	dailyInputTokens?: number
 	dailyOutputTokens?: number
@@ -259,6 +266,13 @@ export interface AccountUsageQuotaData {
 	windowSeconds?: number
 	resetAt?: string
 	resetLabel?: string
+	/**
+	 * Compact label for space-constrained surfaces such as the chat input bar.
+	 *
+	 * Supplied by the provider because providers name their windows
+	 * differently: a calendar week is not a rolling seven days.
+	 */
+	shortLabel?: string
 }
 
 export interface CompactionConversationRange {

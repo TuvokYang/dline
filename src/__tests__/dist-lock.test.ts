@@ -109,6 +109,37 @@ describe("dist build lock", () => {
 		}
 	})
 
+	it("keeps the lock directories while another reader is between directory setup and its claim", async () => {
+		const moduleUrl = new URL(`file://${LOCK_MODULE_PATH.replaceAll("\\", "/")}`).href
+		const source = `
+			import fs from "node:fs"
+			const { acquireSharedDistLock } = await import(${JSON.stringify(moduleUrl)})
+			const releaseFirst = acquireSharedDistLock("first reader")
+			const originalMkdir = fs.mkdirSync
+			fs.mkdirSync = (...args) => {
+				const result = originalMkdir(...args)
+				if (args[0] === ${JSON.stringify(READERS_DIR)}) {
+					fs.mkdirSync = originalMkdir
+					releaseFirst()
+				}
+				return result
+			}
+			try {
+				const releaseSecond = acquireSharedDistLock("second reader")
+				releaseSecond()
+				console.log("second reader acquired")
+			} finally {
+				fs.mkdirSync = originalMkdir
+				releaseFirst()
+			}
+		`
+		const result = await run(process.execPath, ["--input-type=module", "-e", source], {
+			DLINE_E2E_RUN_ID: "dist-lock-directory-race",
+		})
+		expect(result.exitCode, result.stderr).toBe(0)
+		expect(result.stdout).toContain("second reader acquired")
+	})
+
 	it("refuses a build while another build owns dist", async () => {
 		await acquireAndExit("exclusive", "dist-lock-live-writer", false)
 		// The staged process exited, so revive the entry with a live PID: this
@@ -180,12 +211,12 @@ describe("dist build lock", () => {
 	})
 
 	it("recovers from entries left behind by a crashed run", async () => {
-		// PID 1 is never this repository's build on any supported platform, and a
-		// corrupt entry is what a process killed mid-write leaves behind.
-		await writeStaleEntry(
-			WRITER_ENTRY_PATH,
-			`${JSON.stringify({ pid: 1, runId: "crashed", command: "killed build", startedAt: "2026-01-01T00:00:00.000Z" })}\n`,
-		)
+		// Staging a holder that acquires without releasing and then exits leaves a
+		// writer entry owned by a PID that is genuinely gone. A hard-coded PID
+		// cannot express that: PID 1 exists on Linux, and an unprivileged
+		// `kill(1, 0)` reports EPERM, which the lock correctly reads as alive.
+		// A corrupt entry is what a process killed mid-write leaves behind.
+		await acquireAndExit("exclusive", "crashed", false)
 		await writeStaleEntry(path.join(READERS_DIR, "crashed-reader.json"), "{ truncated")
 
 		const recovered = await runWithLock("--exclusive", "dist-lock-after-crash")

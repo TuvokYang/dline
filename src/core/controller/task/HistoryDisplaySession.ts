@@ -1,9 +1,12 @@
 import type { ClineMessage, TaskViewState } from "@shared/ExtensionMessage"
 import type { HistoryItem } from "@shared/HistoryItem"
 import type { DispatchInteractionRequest } from "@shared/proto/dline/task"
+import { Logger } from "@shared/services/Logger"
 import { resolveInstanceLayout } from "@/core/storage/instance"
 import { UIMessage } from "@/core/storage/UIMessage"
 import type { UIMessageWindowPage, UIMessageWindowReader } from "@/core/storage/UIMessageWindowReader"
+import { TaskActivityPersistence } from "@/core/task/activity/TaskActivityPersistence"
+import { TaskActivityStore } from "@/core/task/activity/TaskActivityStore"
 import { getInteraction } from "@/core/task/interaction/InteractionRegistry"
 import type { TaskState } from "@/core/task/kernel"
 import { FileTaskStateVault } from "@/core/task/stores"
@@ -19,15 +22,23 @@ import { adaptCanonicalTaskView } from "./TaskViewMessageAdapter"
 /**
  * Lightweight owner for a historical surface before the user resumes execution.
  *
- * It deliberately owns only the UI history needed to render the panel and a
- * snapshot-derived interaction projection. API history, Task runtime services,
- * locks, terminals, browser sessions, and orchestrator registration are created
- * only when the user dispatches an action and the Controller promotes the
- * session into a real Task.
+ * It deliberately owns only the durable UI history and activity snapshot needed
+ * to render the panel, plus a snapshot-derived interaction projection. API
+ * history, Task runtime services, locks, terminals, browser sessions, and
+ * orchestrator registration are created only when the user dispatches an action
+ * and the Controller promotes the session into a real Task.
  */
 const HISTORY_MESSAGE_WINDOW_SIZE = 200
 
 export class HistoryDisplaySession {
+	readonly activityStore: TaskActivityStore
+	/**
+	 * `activities.db` admits one writer, and opening it is what claims that
+	 * role. A display only reads, so it releases the database as soon as the
+	 * snapshot is hydrated: holding it would refuse the Task this display is
+	 * promoted into, and any other window opening the same task.
+	 */
+	private readonly activityPersistence: TaskActivityPersistence
 	private messageReader?: UIMessageWindowReader
 	private messages: ClineMessage[] = []
 	private durableMessageCount = 0
@@ -39,6 +50,8 @@ export class HistoryDisplaySession {
 	private disposed = false
 
 	constructor(readonly historyItem: HistoryItem) {
+		this.activityPersistence = new TaskActivityPersistence(historyItem.id)
+		this.activityStore = new TaskActivityStore(historyItem.id, this.activityPersistence)
 		this.viewState = projectHistoryPreparingView({ taskId: historyItem.id, phase: TaskPhase.IDLE, revision: 0 })
 	}
 
@@ -64,6 +77,7 @@ export class HistoryDisplaySession {
 				reader.getLatest(HISTORY_MESSAGE_WINDOW_SIZE),
 				this.readSnapshot(),
 				reader.getPage(0, 1),
+				this.hydrateActivities(),
 			])
 			if (this.disposed) return
 
@@ -159,13 +173,31 @@ export class HistoryDisplaySession {
 
 	async dispose(): Promise<void> {
 		this.disposed = true
+		this.activityStore.dispose()
 		const reader = this.messageReader
 		this.messageReader = undefined
 		this.messages = []
 		this.syntheticMessage = undefined
 		this.taskTitleMessage = undefined
 		this.durableMessageCount = 0
-		if (reader) await reader.close()
+		await Promise.all([reader?.close(), this.releaseActivities()])
+	}
+
+	/** Read the persisted activities, then give `activities.db` back to its writer. */
+	private async hydrateActivities(): Promise<void> {
+		try {
+			await this.activityStore.hydrate()
+		} finally {
+			await this.releaseActivities()
+		}
+	}
+
+	private async releaseActivities(): Promise<void> {
+		try {
+			await this.activityPersistence.close()
+		} catch (error) {
+			Logger.warn(`[HistoryDisplay] Failed to release activities for task ${this.taskId}:`, error)
+		}
 	}
 
 	private async readSnapshot(): Promise<TaskState | undefined> {

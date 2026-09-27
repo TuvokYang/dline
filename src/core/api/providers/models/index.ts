@@ -59,7 +59,8 @@ export const allProviderModels: Record<string, ProviderModelsConfig> = {
 		providerName: "Claude Code",
 		tier: "frontier",
 		frontierRank: 20,
-		billingMode: "token",
+		// Paid by plan; model prices are reference information only.
+		billingMode: "subscription",
 		models: claudeCodeModels,
 		defaultModelId: firstKey(claudeCodeModels),
 	},

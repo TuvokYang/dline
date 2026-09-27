@@ -11,7 +11,7 @@ import { createToolSet, LITE_TOOL_IDS, STANDARD_TOOL_IDS } from "../tools/tool-p
 import { projectXmlTool } from "../tools/xml-tool-projector"
 
 const TOOL_RUNTIME_KEYS = [
-	"CWD",
+	"WORKSPACE_PATH_RULE",
 	"MULTI_ROOT_HINT",
 	"BROWSER_VIEWPORT_WIDTH",
 	"BROWSER_VIEWPORT_HEIGHT",

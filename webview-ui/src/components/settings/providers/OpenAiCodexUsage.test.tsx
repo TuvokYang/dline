@@ -71,6 +71,48 @@ describe("ProviderUsage through OpenAiCodexUsage compatibility", () => {
 		expect(screen.getByText("Reset cards: 1")).toBeInTheDocument()
 	})
 
+	it("hides the reset-card section for a provider that has no reset-credit capability", () => {
+		// A provider such as anthropic decodes to `undefined` for both reset-credit
+		// fields, which must hide the section rather than render "Reset cards: none".
+		const { resetCredits: _credits, resetCreditsAvailableCount: _count, ...withoutResetCredits } = usage
+		mocks.useUsage.mockReturnValue({
+			usage: withoutResetCredits,
+			loading: false,
+			refreshing: false,
+			resetting: false,
+			error: undefined,
+			resetError: undefined,
+			refresh: mocks.refresh,
+			consumeResetCredit: mocks.consumeResetCredit,
+		})
+
+		render(<OpenAiCodexUsage enabled profileId="profile-a" />)
+		fireEvent.click(screen.getByRole("button", { name: "Usage 7 day 20%" }))
+
+		expect(screen.queryByText(/Reset cards/)).not.toBeInTheDocument()
+		// The rest of the usage panel must keep rendering.
+		expect(screen.getByText("50% remaining")).toBeInTheDocument()
+	})
+
+	it("reports an exhausted balance for a provider that supports reset cards but has none left", () => {
+		mocks.useUsage.mockReturnValue({
+			usage: { ...usage, resetCredits: [], resetCreditsAvailableCount: 0 },
+			loading: false,
+			refreshing: false,
+			resetting: false,
+			error: undefined,
+			resetError: undefined,
+			refresh: mocks.refresh,
+			consumeResetCredit: mocks.consumeResetCredit,
+		})
+
+		render(<OpenAiCodexUsage enabled profileId="profile-a" />)
+		fireEvent.click(screen.getByRole("button", { name: "Usage 7 day 20%" }))
+
+		// Zero is a real state here and stays visible, unlike the absent capability.
+		expect(screen.getByText("Reset cards: none")).toBeInTheDocument()
+	})
+
 	it("requires confirmation before consuming a reset card", async () => {
 		render(<OpenAiCodexUsage enabled profileId="profile-a" />)
 		fireEvent.click(screen.getByRole("button", { name: "Usage 7 day 20%" }))

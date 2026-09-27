@@ -3,15 +3,20 @@ import { useState } from "react"
 import { cn } from "@/lib/utils"
 import {
 	formatProviderUsageCurrency,
+	formatUsageRetrievedAt,
 	ProviderUsageDetails,
 	providerUsageRemainingLabel,
 	selectEffectiveUsageQuota,
 } from "./ProviderUsageDetails"
-import { useProviderUsage } from "./useProviderUsage"
+import { type ProviderUsageOptions, useProviderUsage } from "./useProviderUsage"
 
 /** Reusable Profile-scoped settings surface for providers that expose usage capabilities. */
-export function ProviderUsage({ profileId, enabled }: { profileId: string; enabled: boolean }) {
-	const state = useProviderUsage(profileId, enabled)
+export function ProviderUsage({
+	profileId,
+	enabled,
+	pollIntervalMs,
+}: { profileId: string; enabled: boolean } & ProviderUsageOptions) {
+	const state = useProviderUsage(profileId, enabled, { pollIntervalMs })
 	const [expanded, setExpanded] = useState(false)
 	const usage = state.usage
 	const effectiveQuota = selectEffectiveUsageQuota(usage?.quotas ?? [])
@@ -25,6 +30,9 @@ export function ProviderUsage({ profileId, enabled }: { profileId: string; enabl
 				: !usage?.planType && usage?.remainingBalance !== undefined
 					? formatProviderUsageCurrency(usage.currency, usage.remainingBalance)
 					: "No usage data"
+	// The snapshot is held until refreshed, so its age is shown next to it
+	// rather than letting an old reading look current.
+	const retrievedAt = formatUsageRetrievedAt(usage?.retrievedAt)
 
 	return (
 		<div
@@ -50,6 +58,7 @@ export function ProviderUsage({ profileId, enabled }: { profileId: string; enabl
 					<span className="shrink-0 font-medium">Usage</span>
 					<span className="truncate text-description">{summary}</span>
 				</button>
+				{retrievedAt ? <span className="shrink-0 text-[10px] text-description">{retrievedAt}</span> : null}
 				<button
 					aria-label="Refresh Provider usage"
 					className="flex size-6 shrink-0 items-center justify-center rounded-xs border-0 bg-transparent text-description hover:bg-toolbar-hover hover:text-foreground disabled:opacity-50"
@@ -65,6 +74,7 @@ export function ProviderUsage({ profileId, enabled }: { profileId: string; enabl
 						consumeResetCredit={state.consumeResetCredit}
 						resetError={state.resetError}
 						resetting={state.resetting}
+						showRetrievedAt={false}
 						usage={usage}
 					/>
 				</div>

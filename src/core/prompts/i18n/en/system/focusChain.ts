@@ -39,7 +39,7 @@ A single exact unchecked item may be sent by itself to identify the current work
 \`\`\``,
 
 	progressUpdateWhenSupported:
-		"# TODO LIST UPDATE: If your next tool supports task_progress and either completion state or the current work changed, include the exact update. Otherwise omit task_progress. Tools without task_progress remain valid and must not be blocked.",
+		"# TODO LIST UPDATE: If your next tool supports task_progress and either completion state or the current work changed, include the exact update. Otherwise omit task_progress. Tools without task_progress remain valid and are not blocked.",
 
 	reminder: `
 Use \`task_progress\` only when completion state or the current work changes:
@@ -69,48 +69,48 @@ When starting a multi-step task, create a TODO list through \`task_progress\` wi
 @REMINDER@`,
 
 	completed: `
-All {{totalItems}} items completed.
+All @TOTAL_ITEMS@ items in the current TODO list are complete. This closes the tracked phase; it does not by itself establish that the user's full task is complete.
 
-**Next — choose ONE:**
-- **Continue work:** Pass a NEW full checklist via task_progress with a required \`# Title\`, optional \`## Section\` headings, and at least one non-empty \`- [ ]\` item to start the next phase.
-- **Finish task:** Call attempt_completion. Summarize what was accomplished, methods used, and test/verification results.
-- **Deliver report:** Call generate_report with findings, analysis, and recommendations.
-- **Present plan:** Call make_plan with the complete plan (in ACT MODE, only when the user explicitly requested a plan).`,
+Compare the completed phase with the latest user request and the Objective:
+- If work remains to satisfy the user's request, create a new complete checklist for the next phase and continue.
+- If progress depends on a decision only the user can make, ask one focused question.
+- If the user explicitly requested a plan or report for review, use the corresponding tool when it is ready.
+- Use attempt_completion when the entire current task is complete and the relevant verification is consistent.`,
 
 	tamperingRejected: `TODO list update rejected. The submitted \`task_progress\` changes the stored list structure while unchecked items remain. Continue from the stored TODO list and report only exact existing items whose completion state or current-work selection changed. Use \`change_todo_list\` with user approval to change the structure.`,
 	titleRequired: `TODO list update rejected. A complete checklist requires a top-level \`# Title\`. \`## Section\` headings are optional and cannot replace the title.`,
 	uncheckedItemRequired: `TODO list update rejected. A new complete checklist requires at least one non-empty \`- [ ]\` item. A checklist containing only completed items does not start a new work phase.`,
-	skipOrderRejected: `TODO list update rejected. Items must be completed in order. You marked a later item complete while an earlier item remains unchecked. This is the second order violation, so the update was not applied.
+	skipOrderRejected: `TODO list update rejected. Complete items in order. You marked a later item complete while an earlier item remains unchecked. This is the second order violation, so the update was not applied.
 
 Complete these items FIRST (in order):
-{{examples}}
+@EXAMPLES@
 
 To change the order, use change_todo_list to get user authorization. Continue reporting progress via task_progress parameter.`,
 	skipOrderWarning: `TODO list warning. You marked a later item complete while an earlier item remains unchecked. The update was accepted once; the next order violation will be rejected. Use \`change_todo_list\` with user approval if the order must change.`,
 	itemMismatchRejected: `TODO list update rejected — NEXT TOOL CALLS BLOCKED. The submitted completed items do not match the stored TODO list.
 
 Unmatched items:
-{{unmatchedItems}}
+@UNMATCHED_ITEMS@
 
 Expected format (use EXACT text from the checklist):
-{{examples}}
+@EXAMPLES@
 
-Complete items in strict order FIRST. If plan must change, use change_todo_list to get user authorization.`,
+Complete items in strict order FIRST. If the plan needs to change, use change_todo_list to get user authorization.`,
 	inProgressMismatchRejected: `TODO list update rejected. The submitted current item (\`- [ ]\`) does not match the stored TODO list. Use exact item text.
 
 Expected items (copy ONE exactly):
-{{examples}}
+@EXAMPLES@
 
-Complete items in strict order FIRST. If plan must change, use change_todo_list.`,
-	allCompletedAlready: `TODO list update rejected. All stored items are already complete. Create a new TODO list for a genuine next phase or call \`attempt_completion\`.`,
+Complete items in strict order FIRST. If the plan needs to change, use change_todo_list.`,
+	allCompletedAlready: `TODO list update rejected because all stored items are already complete. Compare the completed phase with the user's full Objective. If work remains to satisfy the request, create the next checklist and continue; use \`attempt_completion\` when the entire task is complete and verified.`,
 	attemptCompletionBlocked: `ATTEMPT_COMPLETION BLOCKED — The TODO list still has unchecked items.
 
-Your current checklist is shown above in environment_details. You MUST:
-1. Finish ALL remaining \`- [ ]\` items in strict order
-2. Report each completed item via task_progress parameter with EXACT text
-3. Only call attempt_completion AFTER every item is \`- [x]\`
+The current checklist is shown above in environment_details. Continue by:
+1. Finishing the remaining \`- [ ]\` items in strict order
+2. Reporting each completed item through task_progress with its exact text
+3. Rechecking the user's full Objective after the checklist is complete
 
-For stage-by-stage progress summaries, use status_update (set requires_acknowledgment to false — it does not block for user approval). Do NOT try other tools to bypass this restriction.
+For non-blocking progress summaries, use status_update with requires_acknowledgment set to false. Do not use another tool to bypass this completion gate.
 
 If the plan genuinely needs to change, use change_todo_list to request user approval.`,
 
@@ -120,13 +120,13 @@ If the plan genuinely needs to change, use change_todo_list to request user appr
 
 	focusChainChangeDenied: `The TODO list change was denied. Continue with the current TODO list.`,
 
-	focusChainChangeMissing: `The proposed TODO list must contain a required top-level \`# Title\` and at least one non-empty \`- [ ]\` or \`- [x]\` item.`,
+	focusChainChangeMissing: `The proposed TODO list needs a top-level \`# Title\` and at least one non-empty \`- [ ]\` or \`- [x]\` item.`,
 
 	focusChainChangeNoItemsApproved: `No TODO items were approved. The current TODO list remains unchanged.`,
 
 	focusChainChangeToolDescription: `Request user approval to replace the current TODO list. Only approved items are applied.`,
 
-	focusChainChangeNewPlanInstruction: `The complete proposed TODO list, organized with # Title and optional ## Section headings. It must contain at least one non-empty checklist item. Example: "# Build Feature\n## Setup\n- [ ] Create files\n## Implement\n- [ ] Write code"`,
+	focusChainChangeNewPlanInstruction: `The complete proposed TODO list, organized with # Title and optional ## Section headings, including at least one non-empty checklist item. Example: "# Build Feature\n## Setup\n- [ ] Create files\n## Implement\n- [ ] Write code"`,
 
 	focusChainChangeNewPlanNativeInstruction: `The complete proposed TODO list with a # Title, optional ## Section headings, and at least one non-empty checklist item.`,
 

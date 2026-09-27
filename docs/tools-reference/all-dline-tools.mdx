@@ -14,7 +14,7 @@ Dline tools are executable functions the model can call while working. The exact
 |------|-------------|
 | `read_file` | Read a file or a bounded line range |
 | `write_to_file` | Create a new file |
-| `replace_in_file` | Edit an existing file with exact search/replace blocks |
+| `replace_in_file` | Edit an existing file with line-matched SEARCH/REPLACE blocks |
 | `apply_patch` | Apply a structured patch when that capability is enabled |
 | `search_files` | Search project files with a regular expression |
 | `list_files` | List directory contents |
@@ -58,6 +58,16 @@ Dline tools are executable functions the model can call while working. The exact
 | `spawn_task` | Start an independent first-class task when that capability is available |
 
 The Lite profile intentionally exposes a smaller core set. A tool listed here can still be absent when its feature is disabled or its host/provider requirements are not met.
+
+### How `replace_in_file` matches
+
+- Each SEARCH line matches a whole file line or the beginning of one. Leading indentation may be omitted, and a SEARCH line never matches from the middle of a file line.
+- A SEARCH block must match exactly one location in the file. A block that matches several locations is rejected, and the result lists the candidate line numbers.
+- Every matched line is replaced in full. REPLACE is written verbatim, so replacement lines must include their indentation.
+- A SEARCH line of the form `....... SKIP` (as many dots as the delimiter length) marks a SKIP range. The block then covers every line from the head through the nearest matching tail, and all of those lines are replaced by REPLACE.
+- A successful edit reports the original line range each block replaced, including how many lines a SKIP range removed.
+
+`replace_text` is a separate tool and is not affected by these rules.
 
 ## Approval and Policy Controls
 

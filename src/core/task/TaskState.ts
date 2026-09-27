@@ -68,8 +68,6 @@ export class TaskState {
 
 	// Retry tracking for auto-retry feature
 	autoRetryAttempts = 0
-	/** Auto-approval Settings version covered by one manual Hosted Web approval in this live Task. */
-	hostedWebApprovalLeaseVersion?: number
 
 	// Task Initialization
 	isInitialized = false

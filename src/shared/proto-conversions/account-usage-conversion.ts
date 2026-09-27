@@ -20,6 +20,7 @@ function protoToQuota(proto?: ProtoUsageQuota): AccountUsageQuotaData | undefine
 		windowSeconds: proto.windowSeconds ?? undefined,
 		resetAt: proto.resetAt ?? undefined,
 		resetLabel: proto.resetLabel ?? undefined,
+		shortLabel: proto.shortLabel || undefined,
 	}
 }
 
@@ -38,6 +39,7 @@ function quotaToProto(data?: AccountUsageQuotaData): ProtoUsageQuota | undefined
 		windowSeconds: data.windowSeconds,
 		resetAt: data.resetAt,
 		resetLabel: data.resetLabel,
+		shortLabel: data.shortLabel,
 	}
 }
 
@@ -78,8 +80,10 @@ export function protoToAccountUsage(proto?: ProtoAccountUsage): AccountUsageData
 		allowed: proto.allowed ?? undefined,
 		limitReached: proto.limitReached ?? undefined,
 		quotas: proto.quotas?.map(protoToQuota).filter(Boolean) as AccountUsageQuotaData[] | undefined,
-		resetCredits: proto.resetCredits?.map(protoToResetCredit).filter(Boolean) as AccountUsageResetCreditData[] | undefined,
-		resetCreditsAvailableCount: proto.resetCreditsAvailableCount ?? undefined,
+		...decodeResetCreditSupport(proto),
+		// The snapshot is held until refreshed, so its read time must survive
+		// the transport or every surface loses the "Updated … ago" line.
+		retrievedAt: proto.retrievedAt || undefined,
 		isAvailable: proto.isAvailable ?? undefined,
 		dailyInputTokens: proto.dailyInputTokens ?? undefined,
 		dailyOutputTokens: proto.dailyOutputTokens ?? undefined,
@@ -89,8 +93,31 @@ export function protoToAccountUsage(proto?: ProtoAccountUsage): AccountUsageData
 }
 
 /**
- * Convert shared AccountUsageData to proto AccountUsage.
- * Returns undefined when data is undefined.
+ * Restore reset-credit presence, which Proto3 scalars and repeated fields drop.
+ *
+ * A repeated field always decodes to `[]` and an `int32` always decodes to `0`,
+ * so a provider that never reports reset credits is indistinguishable from one
+ * that reports zero of them. Consumers use `undefined` to mean "this provider
+ * has no reset-credit capability" and hide the section entirely, so collapsing
+ * the empty encoding back to `undefined` keeps that distinction intact.
+ *
+ * A provider that genuinely supports reset credits but currently has none still
+ * sends a positive count or a non-empty list at least once, and an explicit zero
+ * alongside a known credit list stays visible through the list itself.
+ */
+function decodeResetCreditSupport(proto: ProtoAccountUsage): {
+	resetCredits?: AccountUsageResetCreditData[]
+	resetCreditsAvailableCount?: number
+} {
+	const credits = proto.resetCredits?.map(protoToResetCredit).filter(Boolean) as AccountUsageResetCreditData[] | undefined
+	const count = proto.resetCreditsAvailableCount
+	if (!credits?.length && !count) return {}
+	return { resetCredits: credits, resetCreditsAvailableCount: count }
+}
+
+/**
+ * Convert proto AccountUsage to shared AccountUsageData.
+ * Returns undefined when proto is undefined (not fetched yet).
  */
 export function accountUsageToProto(data?: AccountUsageData): ProtoAccountUsage | undefined {
 	if (!data) {
@@ -110,6 +137,7 @@ export function accountUsageToProto(data?: AccountUsageData): ProtoAccountUsage 
 		resetCredits:
 			(data.resetCredits?.map(resetCreditToProto).filter(Boolean) as ProtoAccountUsageResetCredit[] | undefined) ?? [],
 		resetCreditsAvailableCount: data.resetCreditsAvailableCount,
+		retrievedAt: data.retrievedAt,
 		isAvailable: data.isAvailable,
 		dailyInputTokens: data.dailyInputTokens,
 		dailyOutputTokens: data.dailyOutputTokens,

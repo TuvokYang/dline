@@ -13,6 +13,23 @@ export function formatLargeNumber(num: number): string {
 	return num.toString()
 }
 
+/**
+ * Compact token count shared by the task header and usage surfaces:
+ * `950`, `12.3K`, `4.56M`, `1.25B`.
+ */
+export function formatTokenMetric(tokens: number): string {
+	if (tokens >= 1_000_000_000) {
+		return `${(tokens / 1_000_000_000).toFixed(2)}B`
+	}
+	if (tokens >= 1_000_000) {
+		return `${(tokens / 1_000_000).toFixed(2)}M`
+	}
+	if (tokens >= 1_000) {
+		return `${(tokens / 1_000).toFixed(1)}K`
+	}
+	return tokens.toString()
+}
+
 // Helper to format cents as dollars with 2 decimal places
 export function formatDollars(cents?: number): string {
 	if (cents === undefined) {

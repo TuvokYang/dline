@@ -125,6 +125,12 @@ const capabilityDefinitions = [
 		icon: WebIcon,
 		supported: (value: ModelCapabilities) => value.tools?.includes(ServerTool.WEB_SEARCH) === true,
 	},
+	{
+		key: "web-fetch",
+		label: "Web fetch",
+		icon: WebIcon,
+		supported: (value: ModelCapabilities) => value.tools?.includes(ServerTool.WEB_FETCH) === true,
+	},
 ] as const
 
 interface ProfileCapabilityIconsProps {

@@ -38,6 +38,16 @@ const _opus_tiers = [
 	},
 ]
 
+/**
+ * Capabilities shared by the Claude generation that keeps adaptive thinking on.
+ *
+ * Thinking cannot be combined with a forced tool choice, so these models reject
+ * `tool_choice: any` with an error rather than degrading to an automatic choice.
+ * Vertex renames the models but does not change that rule, so the declaration
+ * belongs here too instead of relying on the ID fallback alone.
+ */
+const ADAPTIVE_THINKING_CLAUDE_CAPABILITIES = { supportsForcedToolUse: false } as const
+
 export const vertexModels: Record<string, ModelInfo> = {
 	"gemini-3.1-pro-preview": {
 		id: "gemini-3.1-pro-preview",
@@ -100,6 +110,7 @@ export const vertexModels: Record<string, ModelInfo> = {
 			supportsImages: true,
 			supportsPromptCache: true,
 			supportsReasoning: true,
+			...ADAPTIVE_THINKING_CLAUDE_CAPABILITIES,
 		},
 		pricing: {
 			inputPrice: 3.0,
@@ -117,6 +128,7 @@ export const vertexModels: Record<string, ModelInfo> = {
 			supportsImages: true,
 			supportsPromptCache: true,
 			supportsReasoning: true,
+			...ADAPTIVE_THINKING_CLAUDE_CAPABILITIES,
 		},
 		pricing: {
 			inputPrice: 3.0,
@@ -186,6 +198,7 @@ export const vertexModels: Record<string, ModelInfo> = {
 			supportsImages: true,
 			supportsPromptCache: true,
 			supportsReasoning: true,
+			...ADAPTIVE_THINKING_CLAUDE_CAPABILITIES,
 		},
 		pricing: {
 			inputPrice: 5.0,
@@ -203,6 +216,7 @@ export const vertexModels: Record<string, ModelInfo> = {
 			supportsImages: true,
 			supportsPromptCache: true,
 			supportsReasoning: true,
+			...ADAPTIVE_THINKING_CLAUDE_CAPABILITIES,
 		},
 		pricing: {
 			inputPrice: 5.0,
@@ -222,6 +236,7 @@ export const vertexModels: Record<string, ModelInfo> = {
 			supportsPromptCache: true,
 			supportsReasoning: true,
 			supportsGlobalEndpoint: true,
+			...ADAPTIVE_THINKING_CLAUDE_CAPABILITIES,
 		},
 		pricing: {
 			inputPrice: 5.0,
@@ -240,6 +255,7 @@ export const vertexModels: Record<string, ModelInfo> = {
 			supportsPromptCache: true,
 			supportsReasoning: true,
 			supportsGlobalEndpoint: true,
+			...ADAPTIVE_THINKING_CLAUDE_CAPABILITIES,
 		},
 		pricing: {
 			inputPrice: 5.0,

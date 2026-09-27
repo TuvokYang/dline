@@ -48,6 +48,7 @@ function buildRequestWebSearchRoutingPlan(
 		selectedApiFormat,
 		localAvailable: promptProfile === PromptProfile.Standard,
 		remoteAdapterAvailable: api.supportsServerTool?.(ServerTool.WEB_SEARCH) === true,
+		remoteWebFetchAdapterAvailable: api.supportsServerTool?.(ServerTool.WEB_FETCH) === true,
 	})
 }
 

@@ -116,6 +116,9 @@ for (const { title, workspaceType } of E2E_WORKSPACE_TYPES) {
 				).toBe(`${title} secondary write\n`)
 			}
 
+			const initial = server.getMockConsumptions("openai-compatible-chat")[0]
+			expect(initial.contractError).toBeUndefined()
+
 			const continuation = server.getMockConsumptions("openai-compatible-chat")[1]
 			expect(continuation.contractError).toBeUndefined()
 			expect(continuation.requestToolResults).toHaveLength(tools.length)

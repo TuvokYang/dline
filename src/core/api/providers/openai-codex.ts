@@ -280,6 +280,12 @@ export class OpenAiCodexHandler implements ApiHandler {
 		return apiFormat === ApiFormat.OPENAI_RESPONSES || apiFormat === ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE
 	}
 
+	/**
+	 * The usage endpoint is served by the same subscription as conversations,
+	 * so it is read once per Profile and then only on an explicit refresh.
+	 */
+	readonly supportsAccountUsagePolling = false
+
 	/** Fetch current ChatGPT Codex quota windows for this OAuth account. */
 	async getAccountUsage(): Promise<AccountUsage | undefined> {
 		const releaseRuntime = this.beginRuntimeOperation()

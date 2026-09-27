@@ -53,6 +53,7 @@ import { WandbHandler } from "./providers/wandb"
 import { XAIHandler } from "./providers/xai"
 import { ZAiHandler } from "./providers/zai"
 import { applyTaskRuntimeOverrides } from "./runtime-profile"
+import { withCrossModelHistory } from "./transform/cross-model-history-handler"
 import { ApiStream, ApiStreamUsageChunk } from "./transform/stream"
 
 /** @deprecated Use ApiHandlerContext instead */
@@ -137,6 +138,15 @@ export interface ApiHandler {
 	getApiStreamUsage?(): Promise<ApiStreamUsageChunk | undefined>
 	/** Query account-level usage/balance from the provider. Returns undefined if not supported. */
 	getAccountUsage?(): Promise<AccountUsage | undefined>
+	/**
+	 * Whether background polling may call `getAccountUsage()`.
+	 *
+	 * Defaults to true. A provider sets this to false when its usage endpoint is
+	 * metered, rate limited, or otherwise too costly to query on a timer; the
+	 * value then stays available through an explicit user refresh instead of
+	 * being fetched once per interval per window.
+	 */
+	readonly supportsAccountUsagePolling?: boolean
 	/** Consume one opaque reset-credit ID exposed by getAccountUsage(). */
 	consumeAccountUsageResetCredit?(creditId: string): Promise<AccountUsageResetResult>
 	abort?(): void
@@ -318,7 +328,7 @@ function createHandlerForProvider(ctx: ApiHandlerContext): ApiHandler {
 		getWebToolsMode: () => profile.webToolsMode,
 		getDisabledServerTools: () => resolveProfileDisabledServerTools(profile),
 	})
-	return instrumentApiHandler(handler, ctx)
+	return instrumentApiHandler(withCrossModelHistory(handler), ctx)
 }
 
 export function resolveProviderFromProfile(profileName?: string): string | undefined {

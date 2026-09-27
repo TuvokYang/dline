@@ -162,8 +162,6 @@ export class AwsBedrockHandler implements ApiHandler {
 			? rawModelId.slice(0, -CLAUDE_SONNET_1M_SUFFIX.length)
 			: rawModelId
 
-		const enable1mContextWindow = rawModelId.endsWith(CLAUDE_SONNET_1M_SUFFIX)
-
 		const model = this.getModel()
 
 		// This baseModelId is used to indicate the capabilities of the model.
@@ -196,7 +194,7 @@ export class AwsBedrockHandler implements ApiHandler {
 		}
 
 		// Default: Use Anthropic Converse API for all Anthropic models
-		yield* this.createAnthropicMessage(systemPrompt, messages, modelId, model, enable1mContextWindow, tools)
+		yield* this.createAnthropicMessage(systemPrompt, messages, modelId, model, tools)
 	}
 
 	getModel(): { id: string; info: ModelInfo } {
@@ -909,7 +907,6 @@ export class AwsBedrockHandler implements ApiHandler {
 		messages: ClineStorageMessage[],
 		modelId: string,
 		model: { id: string; info: ModelInfo },
-		enable1mContextWindow: boolean,
 		tools?: ClineTool[],
 	): ApiStream {
 		// Format messages for Anthropic model using unified formatter
@@ -959,9 +956,6 @@ export class AwsBedrockHandler implements ApiHandler {
 					output_config: {
 						effort: adaptiveThinkingEffort,
 					},
-				}),
-				...(enable1mContextWindow && {
-					anthropic_beta: ["context-1m-2025-08-07"],
 				}),
 			},
 		})

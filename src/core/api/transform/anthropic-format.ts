@@ -3,43 +3,44 @@ import { ClineStorageMessage, convertClineStorageToAnthropicMessage } from "@/sh
 
 /**
  * Converts Cline storage messages to Anthropic API format with optional cache control.
- * Adds ephemeral cache control to the last two user messages to prevent them from being
- * stored in Anthropic's cache.
+ *
+ * Reasoning that Anthropic cannot verify is removed during conversion; an assistant turn that
+ * held nothing else is then dropped, because Anthropic rejects an empty content array.
+ * Ephemeral cache control is applied to the last two user messages of the final list.
  *
  * @param clineMessages - Array of Cline storage messages to convert
- * @param lastUserMsgIndex - Optional index of the last user message
- * @param secondLastMsgUserIndex - Optional index of the second-to-last user message
+ * @param supportCache - Whether to add ephemeral cache control breakpoints
  * @returns Array of Anthropic-compatible messages with cache control applied
  */
 export function sanitizeAnthropicMessages(
 	clineMessages: ClineStorageMessage[],
 	supportCache: boolean,
 ): Array<Anthropic.MessageParam> {
-	// The latest message will be the new user message, one before will be the assistant message from a previous request,
-	// and the user message before that will be a previously cached user message. So we need to mark the latest user message
-	// as ephemeral to cache it for the next request, and mark the second to last user message as ephemeral to let the server
-	// know the last message to retrieve from the cache for the current request.
-	const userMsgIndices = clineMessages.reduce((acc, msg, index) => {
-		if (msg.role === "user") {
-			acc.push(index)
+	const anthropicMessages = clineMessages
+		.map((msg) => convertClineStorageToAnthropicMessage(msg))
+		.filter((msg) => !isEmptyAssistantMessage(msg))
+	if (!supportCache) {
+		return anthropicMessages
+	}
+
+	// The latest user message is cached for the next request, and the second to last one tells the
+	// server which prefix to read from the cache for the current request.
+	const cachedUserIndices = new Set(lastUserMessageIndices(anthropicMessages, 2))
+	return anthropicMessages.map((msg, index) => (cachedUserIndices.has(index) ? addCacheControl(msg) : msg))
+}
+
+function isEmptyAssistantMessage(message: Anthropic.MessageParam): boolean {
+	return message.role === "assistant" && Array.isArray(message.content) && message.content.length === 0
+}
+
+function lastUserMessageIndices(messages: Anthropic.MessageParam[], count: number): number[] {
+	const indices: number[] = []
+	for (let index = messages.length - 1; index >= 0 && indices.length < count; index--) {
+		if (messages[index].role === "user") {
+			indices.push(index)
 		}
-		return acc
-	}, [] as number[])
-	// Set to -1 if there are no user messages so the indices are invalid
-	const indicesLength = userMsgIndices.length ?? -1
-	const lastUserMsgIndex = userMsgIndices[indicesLength - 1]
-	const secondLastMsgUserIndex = userMsgIndices[indicesLength - 2]
-
-	return clineMessages.map((msg, index) => {
-		const anthropicMsg = convertClineStorageToAnthropicMessage(msg)
-
-		// Add cache control to the last two user messages
-		if (supportCache && (index === lastUserMsgIndex || index === secondLastMsgUserIndex)) {
-			return addCacheControl(anthropicMsg)
-		}
-
-		return anthropicMsg
-	})
+	}
+	return indices
 }
 
 const isThinkingBlock = (

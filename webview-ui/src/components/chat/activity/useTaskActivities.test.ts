@@ -48,11 +48,19 @@ describe("useTaskActivities", () => {
 		const { result, unmount } = renderHook(() => useTaskActivities("task-1"))
 		expect(openStreams).toHaveLength(1)
 
-		// The backend ends the stream immediately when the requested task is not
-		// yet the controller's current task, which is a normal startup race.
 		act(() => {
+			openStreams[0].onResponse({ snapshot: true, activities: [{ activityId: "stale-job" }] })
+		})
+		expect(result.current.getById("stale-job")).toBeDefined()
+
+		// The backend sends one terminal empty snapshot when the requested task is
+		// not yet current. The response clears stale data before completion schedules
+		// a new stream for the same task.
+		act(() => {
+			openStreams[0].onResponse({ snapshot: true, activities: [] })
 			openStreams[0].onComplete()
 		})
+		expect(result.current.getById("stale-job")).toBeUndefined()
 		act(() => {
 			vi.advanceTimersByTime(500)
 		})
@@ -63,6 +71,24 @@ describe("useTaskActivities", () => {
 
 		act(() => {
 			openStreams[1].onResponse({ snapshot: true, activities: [{ activityId: "job-1" }] })
+		})
+		expect(result.current.getById("job-1")).toBeDefined()
+
+		// A later history recovery can hit the same startup race again. Each
+		// terminal response must independently clear the stale snapshot and create
+		// another live stream rather than leaving the shared subscription orphaned.
+		act(() => {
+			openStreams[1].onResponse({ snapshot: true, activities: [] })
+			openStreams[1].onComplete()
+		})
+		expect(result.current.getById("job-1")).toBeUndefined()
+		act(() => {
+			vi.advanceTimersByTime(500)
+		})
+		expect(openStreams).toHaveLength(3)
+
+		act(() => {
+			openStreams[2].onResponse({ snapshot: true, activities: [{ activityId: "job-1" }] })
 		})
 		expect(result.current.getById("job-1")).toBeDefined()
 

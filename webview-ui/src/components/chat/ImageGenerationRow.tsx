@@ -40,6 +40,8 @@ function bytesToBase64(bytes: Uint8Array): string {
 
 function statusLabel(status: ImageGenerationPresentationV1["status"]): string {
 	switch (status) {
+		case "awaiting_approval":
+			return "Dline wants to generate an image"
 		case "queued":
 			return "Image generation queued"
 		case "started":
@@ -52,6 +54,8 @@ function statusLabel(status: ImageGenerationPresentationV1["status"]): string {
 			return "Image generation failed"
 		case "cancelled":
 			return "Image generation cancelled"
+		case "rejected":
+			return "Image generation rejected"
 	}
 }
 
@@ -160,7 +164,7 @@ export default function ImageGenerationRow({ presentation, isExpanded, onAddToIn
 	}, [artifactIds, latestTransientPreviewId])
 
 	const isRunning = presentation.status === "queued" || presentation.status === "started" || presentation.status === "preview"
-	const isFailed = presentation.status === "failed"
+	const isFailed = presentation.status === "failed" || presentation.status === "rejected"
 	const fitActionLabel = displayMode === "fit" ? "Fill image preview" : "Keep image aspect ratio"
 
 	return (
@@ -191,6 +195,9 @@ export default function ImageGenerationRow({ presentation, isExpanded, onAddToIn
 			{isExpanded && (
 				<div className={`space-y-3 p-3 ${TOOL_RESPONSE_SCROLL_CLASS}`} data-testid="image-generation-scroll">
 					<div className="whitespace-pre-wrap break-words text-sm">{presentation.prompt}</div>
+					{presentation.count > 1 && (
+						<div className="text-xs text-description">{presentation.count} images requested</div>
+					)}
 					{presentation.modelId && (
 						<div className="text-xs text-description">
 							{presentation.providerId ? `${presentation.providerId} · ` : ""}

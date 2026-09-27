@@ -3,6 +3,14 @@ import { OAuthFlowError } from "./types"
 
 export interface ParsedOAuthCallback {
 	code: string
+	/**
+	 * Every query parameter the provider returned, including `code` and `state`.
+	 *
+	 * The framework only validates the parameters OAuth itself defines. Which of
+	 * the remaining ones a token endpoint expects back is provider knowledge, so
+	 * they are handed to the strategy rather than being interpreted here.
+	 */
+	params: Readonly<Record<string, string>>
 }
 
 /** Loopback names that address the same local callback server. */
@@ -58,5 +66,5 @@ export function parseOAuthCallbackUri(
 	if (!code) {
 		throw new OAuthFlowError("CALLBACK_MISSING_PARAMETERS", "The OAuth callback is missing an authorization code.")
 	}
-	return { code }
+	return { code, params: Object.freeze(Object.fromEntries(callback.searchParams)) }
 }

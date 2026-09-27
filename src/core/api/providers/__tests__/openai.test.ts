@@ -1309,6 +1309,7 @@ describe("OpenAiCodexHandler account usage", () => {
 				{
 					type: "5hour",
 					label: "5 hour",
+					shortLabel: "5h",
 					used: 25,
 					limit: 100,
 					windowSeconds: 18_000,
@@ -1317,6 +1318,7 @@ describe("OpenAiCodexHandler account usage", () => {
 				{
 					type: "weekly",
 					label: "7 day",
+					shortLabel: "7d",
 					used: 60,
 					limit: 100,
 					windowSeconds: 604_800,

@@ -39,6 +39,7 @@ export interface ApiStreamUsageChunk {
 	totalCost?: number // openrouter
 	serverToolUsage?: {
 		webSearchRequests?: number
+		webFetchRequests?: number
 	}
 	provider_metadata?: ClineProviderMetadata
 }

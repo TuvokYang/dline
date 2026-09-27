@@ -1,11 +1,13 @@
 import { getTaskMetadata, saveTaskMetadata } from "@core/storage/disk"
 import type { ClineMessage } from "@shared/ExtensionMessage"
+import * as path from "path"
 import { Controller } from "@/core/controller"
 import { StateManager } from "@/core/storage/StateManager"
 import { Logger } from "@/shared/services/Logger"
 import { getCwd } from "@/utils/path"
 import type { FileMetadataEntry } from "./ContextTrackerTypes"
 import {
+	fileContextKey,
 	getWorkspaceFileContextRegistry,
 	type WorkspaceFileContextRegistry,
 	type WorkspaceFileSubscription,
@@ -35,11 +37,15 @@ export class FileContextTracker {
 	readonly taskId: string
 
 	// Workspace-shared watching; per-task acknowledgement state stays local.
+	// Every map below is keyed by fileContextKey, so relative and absolute
+	// spellings of one file share a single entry and acknowledgement cursor.
 	private readonly registry: WorkspaceFileContextRegistry
 	private readonly subscriptions = new Map<string, WorkspaceFileSubscription>()
 	private readonly acknowledgedRevisions = new Map<string, number>()
 	private readonly restoredRevisions = new Map<string, number>()
-	/** Paths whose current external edit was already published by the shared watcher. */
+	/** Workspace-relative display path reported to the model, per key. */
+	private readonly displayPaths = new Map<string, string>()
+	/** Keys whose current external edit was already published by the shared watcher. */
 	private readonly watcherPublishedPaths = new Set<string>()
 	/** Most recently resolved workspace root; used to key registry lookups. */
 	private workspaceRoot?: string
@@ -76,14 +82,15 @@ export class FileContextTracker {
 	 * The registry keeps a single underlying watcher per path across all tasks.
 	 */
 	async setupFileWatcher(filePath: string) {
-		// Only subscribe once per file for this task
-		if (this.subscriptions.has(filePath)) {
-			return
-		}
-
 		const cwd = await this.resolveWorkspaceRoot()
 		if (!cwd) {
 			Logger.info("No workspace folder available - cannot determine current working directory")
+			return
+		}
+
+		// Only subscribe once per file for this task, whatever the spelling.
+		const key = this.keyFor(cwd, filePath)
+		if (this.subscriptions.has(key)) {
 			return
 		}
 
@@ -91,16 +98,16 @@ export class FileContextTracker {
 			if (change.isMetadataAuthor) {
 				// Exactly one subscriber records the external edit in task metadata.
 				// The registry already published this revision, so do not publish it again.
-				this.watcherPublishedPaths.add(change.filePath)
+				this.watcherPublishedPaths.add(this.keyFor(cwd, change.filePath))
 				this.trackFileContext(change.filePath, "user_edited")
 			}
 		})
 
-		this.subscriptions.set(filePath, subscription)
+		this.subscriptions.set(key, subscription)
 
 		// A snapshot restored before this subscription existed could not reach the
 		// registry yet; publish it now so later real edits still outrank it.
-		const restoredRevision = this.restoredRevisions.get(filePath)
+		const restoredRevision = this.restoredRevisions.get(key)
 		if (restoredRevision !== undefined) {
 			this.registry.adoptRevision(cwd, filePath, restoredRevision)
 		}
@@ -112,7 +119,9 @@ export class FileContextTracker {
 	 */
 	async trackFileContext(filePath: string, operation: "read_tool" | "user_edited" | "cline_edited" | "file_mentioned") {
 		// Consume the marker before any await so a concurrent explicit call still publishes.
-		const alreadyPublished = this.watcherPublishedPaths.delete(filePath)
+		const alreadyPublished = this.workspaceRoot
+			? this.watcherPublishedPaths.delete(this.keyFor(this.workspaceRoot, filePath))
+			: false
 		try {
 			const cwd = await this.resolveWorkspaceRoot()
 			if (!cwd) {
@@ -129,6 +138,10 @@ export class FileContextTracker {
 			if (operation === "user_edited" && !alreadyPublished) {
 				// Publish the edit so every task watching this path can see it.
 				this.registry.recordExternalEdit(cwd, filePath)
+			}
+			if (operation === "cline_edited") {
+				// The write is on disk and now watched: its content is the new baseline.
+				this.registry.settleSelfEdit(cwd, filePath)
 			}
 		} catch (error) {
 			Logger.error("Failed to track file operation:", error)
@@ -200,10 +213,11 @@ export class FileContextTracker {
 	peekRecentlyModifiedFiles(): RecentlyModifiedFilesSnapshot {
 		const files: string[] = []
 		const revisions: Record<string, number> = {}
-		for (const [filePath, revision] of this.currentRevisions()) {
-			if (revision > (this.acknowledgedRevisions.get(filePath) ?? 0)) {
-				files.push(filePath)
-				revisions[filePath] = revision
+		for (const [key, revision] of this.currentRevisions()) {
+			if (revision > (this.acknowledgedRevisions.get(key) ?? 0)) {
+				const displayPath = this.displayPaths.get(key) ?? key
+				files.push(displayPath)
+				revisions[displayPath] = revision
 			}
 		}
 		return { files, revisions }
@@ -214,17 +228,18 @@ export class FileContextTracker {
 		for (const filePath of snapshot.files) {
 			const restoredRevision = snapshot.revisions[filePath]
 			if (!Number.isSafeInteger(restoredRevision) || restoredRevision <= 0) continue
+			const key = this.remember(filePath)
 			if (this.workspaceRoot) {
 				this.registry.adoptRevision(this.workspaceRoot, filePath, restoredRevision)
 			}
-			const currentRestored = this.restoredRevisions.get(filePath) ?? 0
+			const currentRestored = this.restoredRevisions.get(key) ?? 0
 			if (restoredRevision > currentRestored) {
-				this.restoredRevisions.set(filePath, restoredRevision)
+				this.restoredRevisions.set(key, restoredRevision)
 			}
-			const acknowledged = this.acknowledgedRevisions.get(filePath) ?? 0
+			const acknowledged = this.acknowledgedRevisions.get(key) ?? 0
 			if (acknowledged >= restoredRevision) {
 				// Re-expose a restored edit that this task had already acknowledged.
-				this.acknowledgedRevisions.delete(filePath)
+				this.acknowledgedRevisions.delete(key)
 			}
 		}
 	}
@@ -234,8 +249,9 @@ export class FileContextTracker {
 		for (const filePath of snapshot.files) {
 			const snapshotRevision = snapshot.revisions[filePath]
 			if (snapshotRevision === undefined) continue
-			if (this.currentRevisionFor(filePath) !== snapshotRevision) continue
-			this.acknowledgedRevisions.set(filePath, snapshotRevision)
+			const key = this.remember(filePath)
+			if (this.currentRevisionFor(key) !== snapshotRevision) continue
+			this.acknowledgedRevisions.set(key, snapshotRevision)
 		}
 	}
 
@@ -246,34 +262,65 @@ export class FileContextTracker {
 		return snapshot.files
 	}
 
-	/** Latest known revision per tracked path, combining live watches and restored snapshots. */
+	/** Latest known revision per tracked key, combining live watches and restored snapshots. */
 	private currentRevisions(): Map<string, number> {
 		const revisions = new Map(this.restoredRevisions)
-		for (const filePath of this.subscriptions.keys()) {
-			const revision = this.registryRevisionFor(filePath)
-			if (revision > (revisions.get(filePath) ?? 0)) {
-				revisions.set(filePath, revision)
+		for (const key of this.subscriptions.keys()) {
+			const revision = this.registryRevisionFor(key)
+			if (revision > (revisions.get(key) ?? 0)) {
+				revisions.set(key, revision)
 			}
 		}
 		return revisions
 	}
 
-	private currentRevisionFor(filePath: string): number {
-		return Math.max(this.restoredRevisions.get(filePath) ?? 0, this.registryRevisionFor(filePath))
+	private currentRevisionFor(key: string): number {
+		return Math.max(this.restoredRevisions.get(key) ?? 0, this.registryRevisionFor(key))
 	}
 
-	private registryRevisionFor(filePath: string): number {
-		return this.workspaceRoot ? this.registry.getRevision(this.workspaceRoot, filePath) : 0
+	/** Registry keys are idempotent, so a tracker key can be passed back as a path. */
+	private registryRevisionFor(key: string): number {
+		return this.workspaceRoot ? this.registry.getRevision(this.workspaceRoot, key) : 0
 	}
 
 	/**
-	 * Marks a file as edited by Cline to prevent false positives in file watchers.
-	 * The registry ignores paths without a live watcher, so a task that has not
-	 * resolved a workspace root yet cannot leave a stale marker behind.
+	 * Canonical key for a path and the display path recorded for it.
+	 *
+	 * Paths inside the workspace are shown relative to it with forward slashes;
+	 * paths outside keep their absolute form.
+	 */
+	private keyFor(cwd: string, filePath: string): string {
+		const key = fileContextKey(cwd, filePath)
+		if (!this.displayPaths.has(key)) {
+			const relative = path.relative(cwd, path.resolve(cwd, filePath))
+			const inside = relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative)
+			this.displayPaths.set(key, inside ? relative.split(path.sep).join("/") : path.resolve(cwd, filePath))
+		}
+		return key
+	}
+
+	/** Key a path before the workspace root is known by its original spelling. */
+	private remember(filePath: string): string {
+		if (this.workspaceRoot) return this.keyFor(this.workspaceRoot, filePath)
+		this.displayPaths.set(filePath, filePath)
+		return filePath
+	}
+
+	/**
+	 * Marks a Dline write as in progress so its change events are not reported
+	 * as external edits. The registry ignores paths without a live watcher, so a
+	 * task that has not resolved a workspace root yet cannot leave a stale marker.
+	 * Pair every call with {@link settleClineEdit}, including when the write fails.
 	 */
 	markFileAsEditedByCline(filePath: string): void {
 		if (!this.workspaceRoot) return
 		this.registry.markSelfEdit(this.workspaceRoot, filePath)
+	}
+
+	/** Ends a Dline write so later changes to the file are reported again. */
+	settleClineEdit(filePath: string): void {
+		if (!this.workspaceRoot) return
+		this.registry.settleSelfEdit(this.workspaceRoot, filePath)
 	}
 
 	/**

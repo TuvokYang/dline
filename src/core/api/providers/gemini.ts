@@ -10,6 +10,7 @@ import {
 } from "@google/genai"
 import { GeminiModelId, geminiDefaultModelId, geminiModels, ModelInfo } from "@shared/api"
 import { observeProviderStream } from "@shared/provider-attempt-observer"
+import { resolveForcedToolUseSupport } from "@shared/utils/reasoning-support"
 import { GEMINI_FLASH_MAX_OUTPUT_TOKENS, isGeminiFlashModel } from "@utils/model-utils"
 import { buildExternalBasicHeaders } from "@/services/EnvUtils"
 import { telemetryService } from "@/services/telemetry"
@@ -166,9 +167,14 @@ export class GeminiHandler implements ApiHandler {
 		const isNativeToolCallsEnabled = tools?.length
 		if (isNativeToolCallsEnabled) {
 			requestConfig.tools = [{ functionDeclarations: tools }]
+			// Gemini accepts a forced call by default, so this stays ANY unless the
+			// model declares otherwise. Reading the declaration keeps one catalog
+			// entry able to opt out without the request ignoring it.
 			requestConfig.toolConfig = {
 				functionCallingConfig: {
-					mode: FunctionCallingConfigMode.ANY,
+					mode: resolveForcedToolUseSupport(modelId, info.capabilities)
+						? FunctionCallingConfigMode.ANY
+						: FunctionCallingConfigMode.AUTO,
 				},
 			}
 		}

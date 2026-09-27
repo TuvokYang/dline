@@ -16,4 +16,7 @@ message AnthropicProviderConfig {
   // Hosted server tools the user turned off for this profile. See
   // BaseProviderConfig.disabled_server_tools for the subtraction semantics.
   repeated dline.models.ServerTool disabled_server_tools = 7;
+  // Opt-in Claude Code billing attribution. Only the attribution block is
+  // emitted here; beta values and fingerprint headers stay untouched.
+  ClaudeCodeIdentityConfig claude_code_identity = 8;
 }

@@ -9,6 +9,8 @@ import { ensureTaskDirectoryExists, GlobalFileNames } from "@/core/storage/disk"
 import { ensureInstanceLayout } from "@/core/storage/instance"
 import { UIMessage } from "@/core/storage/UIMessage"
 import { UIMessageWindowReader } from "@/core/storage/UIMessageWindowReader"
+import { TaskActivityPersistence } from "@/core/task/activity/TaskActivityPersistence"
+import { TaskActivityStore } from "@/core/task/activity/TaskActivityStore"
 import { createInitialTaskState, type DialogInteraction, type TaskState } from "@/core/task/kernel"
 import { FileTaskStateVault } from "@/core/task/stores"
 import { HistoryDisplaySession } from "../HistoryDisplaySession"
@@ -37,6 +39,11 @@ async function seedMessages(taskId: string, messages: readonly ClineMessage[]): 
 async function persistSnapshot(taskId: string, state: TaskState): Promise<void> {
 	const layout = await ensureInstanceLayout({ taskId })
 	await new FileTaskStateVault(layout.stateFile).save({ state, outbox: [] })
+}
+
+/** Write a state file in the retired runtime's shape, which no kernel reader accepts. */
+async function writeLegacySnapshot(stateFile: string, snapshot: Record<string, unknown>): Promise<void> {
+	await fs.writeFile(stateFile, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8")
 }
 
 function stoppedState(taskId: string, revision: number, primary: DialogInteraction): TaskState {
@@ -104,6 +111,87 @@ describe("HistoryDisplaySession", () => {
 			expect(session.accepts(requestFor(session))).toBe(true)
 			expect(session.accepts(requestFor(session, { stateRevision: 1 }))).toBe(false)
 			expect(session.accepts(requestFor(session, { interactionId: "stale-interaction" }))).toBe(false)
+		} finally {
+			await session.dispose()
+		}
+	})
+
+	it("projects a legacy Hosted approval snapshot as a synthetic Resume without accepting the old Approve", async () => {
+		const taskId = "history-legacy-hosted-approval"
+		const legacyId = `hosted-web:${taskId}:0`
+		await seedMessages(taskId, [
+			{ ts: 10, type: "say", say: "task", text: "Original task" },
+			{
+				ts: 100,
+				type: "ask",
+				ask: "tool",
+				text: JSON.stringify({ tool: "webSearch", content: "Legacy Hosted approval" }),
+				interactionId: legacyId,
+				conversationHistoryIndex: 0,
+			},
+		])
+		// A snapshot written by the retired runtime is not a kernel state, so the
+		// display must fall back to Resume instead of reviving its approval.
+		const layout = await ensureInstanceLayout({ taskId })
+		await writeLegacySnapshot(layout.stateFile, {
+			taskId,
+			phase: "awaiting_approval",
+			revision: 7,
+			anchor: { apiIndex: 0, uiMessageTs: 100, turnId: legacyId, interactionId: legacyId },
+			interaction: {
+				taskId,
+				turnId: legacyId,
+				interactionId: legacyId,
+				kind: "hosted_web_approval",
+				status: "awaiting",
+				createdRevision: 6,
+				anchor: { messageTs: 100, messageType: "ask", taskAsk: "tool" },
+			},
+		})
+		const session = new HistoryDisplaySession(createHistoryItem(taskId))
+		try {
+			await session.load()
+			const interaction = session.getViewState().activeInteraction
+			expect(interaction).toMatchObject({ kind: "resume", status: "awaiting", anchorVerified: true })
+			expect(interaction?.interactionId).not.toBe(legacyId)
+			expect(session.getMessages().at(-1)).toMatchObject({ type: "ask", ask: "resume_task" })
+			expect(session.accepts(requestFor(session))).toBe(true)
+			expect(session.accepts(requestFor(session, { interactionId: legacyId, actionId: "approve" }))).toBe(false)
+		} finally {
+			await session.dispose()
+		}
+	})
+
+	it("hydrates persisted activities for the lightweight history surface", async () => {
+		const taskId = "history-activities"
+		await seedMessages(taskId, [{ ts: 10, type: "say", say: "task", text: "Original task" }])
+		// The seeding writer releases activities.db before the display opens it.
+		const writer = new TaskActivityPersistence(taskId)
+		const persistedStore = new TaskActivityStore(taskId, writer)
+		persistedStore.create({
+			activityId: "history-subagent",
+			kind: "subagent",
+			executionMode: "foreground",
+			title: "history review",
+		})
+		persistedStore.update("history-subagent", {
+			status: "cancelled",
+			metrics: { toolCalls: 4, inputTokens: 40, outputTokens: 8 },
+		})
+		await persistedStore.waitForPersistence()
+		persistedStore.dispose()
+		await writer.close()
+		const session = new HistoryDisplaySession(createHistoryItem(taskId))
+
+		try {
+			await session.load()
+			expect(session.activityStore.list()).toEqual([
+				expect.objectContaining({
+					activityId: "history-subagent",
+					status: "cancelled",
+					metrics: expect.objectContaining({ toolCalls: 4, inputTokens: 40, outputTokens: 8 }),
+				}),
+			])
 		} finally {
 			await session.dispose()
 		}

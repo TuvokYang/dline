@@ -8,6 +8,17 @@ import * as OcaTokenStore from "./OcaTokenStore"
 import * as OpenAiCodexAuthStore from "./OpenAiCodexAuthStore"
 import * as ProviderSecretStore from "./ProviderSecretStore"
 
+export {
+	getClaudeCodeProfileAuthFileName,
+	getClaudeCodeProfileAuthPath,
+	isClaudeCodeProfileAuthFileName,
+} from "./ClaudeCodeProfileAuthPath"
+export type {
+	ClaudeCodeOAuthCredentials,
+	ClaudeCodeProfileAuthReadResult,
+	ClaudeCodeProfileAuthRepositoryOptions,
+} from "./ClaudeCodeProfileAuthRepository"
+export { ClaudeCodeProfileAuthRepository, parseClaudeCodeOAuthCredentials } from "./ClaudeCodeProfileAuthRepository"
 export type {
 	OAuthProfileCatalogEntry,
 	OpenAiCodexProfileAuthGarbageCollectionResult,

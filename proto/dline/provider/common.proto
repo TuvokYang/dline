@@ -22,6 +22,23 @@ enum WebToolsMode {
   WEB_TOOLS_MODE_FORCE_REMOTE = 3;
 }
 
+// Claude Code client identity declared to Anthropic upstream.
+//
+// The anthropic provider uses this to opt into the billing attribution block
+// only. The claude-code provider additionally derives its beta set and
+// fingerprint headers from the same configuration, so both providers read one
+// contract instead of maintaining parallel toggles.
+message ClaudeCodeIdentityConfig {
+  // When false the request must stay byte-identical to a request built without
+  // this feature.
+  bool enabled = 1;
+  // Pins the declared client version. Empty resolves it from the registry and
+  // falls back to the maintained floor.
+  optional string client_version_override = 2;
+  // Overrides the declared entrypoint. Empty uses the default.
+  optional string entrypoint_override = 3;
+}
+
 message BaseProviderConfig {
   ReasoningConfig reasoning = 1;
   bool custom_model_enabled = 2;

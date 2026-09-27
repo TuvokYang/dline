@@ -28,6 +28,21 @@ describe("optional repeated model metadata", () => {
 		expect(decoded.capabilities?.supportsBrowserAction).toBe(true)
 	})
 
+	// A model that rejects a forced tool choice fails the whole request, so a
+	// declared refusal has to survive transport rather than decode as "unset"
+	// and fall back to the inference this flag exists to override.
+	it("round-trips a declared refusal of forced tool use, and keeps it distinct from absence", () => {
+		const declared = ModelCapabilities.create({ supportsForcedToolUse: false })
+		const decoded = ModelCapabilities.decode(ModelCapabilities.encode(declared).finish())
+
+		expect(decoded.supportsForcedToolUse).toBe(false)
+		expect(ModelCapabilities.fromJSON(ModelCapabilities.toJSON(declared)).supportsForcedToolUse).toBe(false)
+		expect(ModelCapabilities.create().supportsForcedToolUse).toBeUndefined()
+		expect(
+			ModelCapabilities.decode(ModelCapabilities.encode(ModelCapabilities.create()).finish()).supportsForcedToolUse,
+		).toBeUndefined()
+	})
+
 	it("preserves explicitly empty context and pricing tiers in JSON conversion", () => {
 		const capabilities = ModelCapabilities.create({ contextWindowTiers: [] })
 		const pricing = ModelPricing.create({ tiers: [] })

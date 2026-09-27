@@ -83,6 +83,14 @@ export class WebFetchToolHandler implements IFullyManagedTool {
 			if (!webToolsEnabled) {
 				return formatResponse.toolError(getPrompt("toolHandlers", "webToolsDisabled"))
 			}
+			// The local executor runs only on the local route. While the provider hosts
+			// fetch, or the mode leaves no fetch route at all, a local call is refused
+			// rather than silently bypassing the frozen route. A restored approval with
+			// no request scope carries no plan and keeps its original local behavior.
+			const webFetchRoute = config.webSearchRoutingPlan?.webFetchRoute
+			if (webFetchRoute !== undefined && webFetchRoute !== "local") {
+				return formatResponse.toolError(getPrompt("toolHandlers", "webFetchNotRoutedLocally"))
+			}
 
 			// Validate required parameters
 			if (!url) {

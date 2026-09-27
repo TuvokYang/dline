@@ -317,4 +317,47 @@ describe("ServerToolLifecycle", () => {
 		expect(await lifecycle.consume(chunk("started"))).toBe(false)
 		expect(updates).toEqual([])
 	})
+
+	it("admits hosted Web Fetch by its own route while Web Search stays local", async () => {
+		const fetchOnly = resolveWebSearchRoutingPlan({
+			enabled: true,
+			modelInfo: { capabilities: { tools: [ServerTool.WEB_FETCH] } },
+			selectedApiFormat: ApiFormat.ANTHROPIC_CHAT,
+			localAvailable: true,
+			remoteAdapterAvailable: true,
+			remoteWebFetchAdapterAvailable: true,
+		})
+		expect(fetchOnly.route).toBe("local")
+		expect(fetchOnly.webFetchRoute).toBe("hosted")
+		const updates: Array<{ tool: ServerTool; status: string; query: string }> = []
+		const lifecycle = new ServerToolLifecycle(fetchOnly, true, (update) => {
+			updates.push({ tool: update.tool, status: update.status, query: update.query })
+		})
+
+		const fetchChunk = { ...chunk("started", { url: "https://example.com/page" }), tool: ServerTool.WEB_FETCH }
+		expect(await lifecycle.consume(fetchChunk)).toBe(true)
+		expect(await lifecycle.consume({ ...chunk("started"), dline_tid: "trace-2", function_id: "provider-call-2" })).toBe(false)
+
+		expect(updates).toEqual([{ tool: ServerTool.WEB_FETCH, status: "started", query: "https://example.com/page" }])
+	})
+
+	it("drops hosted Web Fetch chunks when only Web Search is hosted", async () => {
+		const searchOnly = resolveWebSearchRoutingPlan({
+			enabled: true,
+			modelInfo: { capabilities: { tools: [ServerTool.WEB_SEARCH] } },
+			selectedApiFormat: ApiFormat.ANTHROPIC_CHAT,
+			localAvailable: true,
+			remoteAdapterAvailable: true,
+			remoteWebFetchAdapterAvailable: true,
+		})
+		expect(searchOnly.route).toBe("hosted")
+		expect(searchOnly.webFetchRoute).toBe("local")
+		const updates: unknown[] = []
+		const lifecycle = new ServerToolLifecycle(searchOnly, true, (update) => {
+			updates.push(update)
+		})
+
+		expect(await lifecycle.consume({ ...chunk("started"), tool: ServerTool.WEB_FETCH })).toBe(false)
+		expect(updates).toEqual([])
+	})
 })

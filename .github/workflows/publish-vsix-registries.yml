@@ -3,6 +3,19 @@ name: Publish VSIX Registries
 on:
   workflow_call:
     inputs:
+      channel:
+        description: Release channel (insiders, preview, or production).
+        type: string
+        required: true
+      commit_sha:
+        description: Full commit SHA of the tested package.
+        type: string
+        required: true
+      release_tag:
+        description: Exact release tag for Preview and Production (unused for Insiders).
+        type: string
+        required: false
+        default: ""
       artifact_name:
         description: Name of the verified workflow artifact containing the VSIX.
         type: string
@@ -24,13 +37,186 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
+  verify-source:
+    name: Verify release source and package identity
+    if: github.repository == 'TuvokYang/dline'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout release tag
+        if: inputs.channel != 'insiders'
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.release_tag }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Verify event, branch, tag, and artifact names
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CHANNEL: ${{ inputs.channel }}
+          COMMIT_SHA: ${{ inputs.commit_sha }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          ARTIFACT_NAME: ${{ inputs.artifact_name }}
+          ASSET_NAME: ${{ inputs.asset_name }}
+          REQUESTED_TAG: ${{ github.event.inputs.tag }}
+          REQUESTED_REASON: ${{ github.event.inputs.reason }}
+          TESTED_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          TESTED_EVENT: ${{ github.event.workflow_run.event }}
+          TESTED_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          TESTED_REPOSITORY: ${{ github.event.workflow_run.head_repository.full_name }}
+          TESTED_WORKFLOW: ${{ github.event.workflow_run.path }}
+          TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Error: tested commit must be a full lowercase Git SHA."
+            exit 1
+          fi
+
+          manual_override=false
+          case "$CHANNEL" in
+            insiders)
+              if [[ "$GITHUB_EVENT_NAME" != 'workflow_run' || "$TESTED_CONCLUSION" != 'success' || "$TESTED_EVENT" != 'push' || "$TESTED_BRANCH" != 'dev' || "$TESTED_REPOSITORY" != "$GITHUB_REPOSITORY" || "$TESTED_WORKFLOW" != '.github/workflows/test.yml' || "$TESTED_SHA" != "$COMMIT_SHA" ]]; then
+                echo "Error: Insiders requires a successful Tests push run for this repository's dev branch and exact commit."
+                exit 1
+              fi
+              if [[ ! "$ASSET_NAME" =~ ^dline-insiders-[0-9]+\.[0-9]+\.[0-9]+\.vsix$ ]]; then
+                echo "Error: Insiders VSIX filename does not match the channel."
+                exit 1
+              fi
+              branch=dev
+              expected_artifact="registry-vsix-${COMMIT_SHA}"
+              ;;
+            preview|production)
+              if [[ "$CHANNEL" == 'preview' ]]; then
+                if [[ "$GITHUB_EVENT_NAME" != 'push' || ! "$GITHUB_REF" =~ ^refs/tags/dev-v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+                  echo "Error: Preview requires an exact dev-vX.Y.Z tag push."
+                  exit 1
+                fi
+                version="${BASH_REMATCH[1]}"
+                branch=dev
+                expected_artifact="dline-vsix-${COMMIT_SHA}"
+                expected_asset="dline-preview-${version}.vsix"
+                expected_tag="dev-v${version}"
+              else
+                branch=main
+                expected_artifact="registry-vsix-${COMMIT_SHA}"
+                if [[ "$GITHUB_EVENT_NAME" == 'push' ]]; then
+                  if [[ ! "$GITHUB_REF" =~ ^refs/tags/v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+                    echo "Error: automatic Production requires an exact vX.Y.Z tag push."
+                    exit 1
+                  fi
+                  version="${BASH_REMATCH[1]}"
+                elif [[ "$GITHUB_EVENT_NAME" == 'workflow_dispatch' ]]; then
+                  if [[ "$GITHUB_REF" != 'refs/heads/main' || "$REQUESTED_TAG" != "$RELEASE_TAG" || -z "${REQUESTED_REASON// }" ]]; then
+                    echo "Error: manual Production requires a main-branch dispatch with a matching tag and reason."
+                    exit 1
+                  fi
+                  if [[ ! "$RELEASE_TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+                    echo "Error: manual Production requires an exact vX.Y.Z tag."
+                    exit 1
+                  fi
+                  version="${BASH_REMATCH[1]}"
+                  manual_override=true
+                else
+                  echo "Error: unsupported Production event '$GITHUB_EVENT_NAME'."
+                  exit 1
+                fi
+                expected_asset="dline-${version}.vsix"
+                expected_tag="v${version}"
+              fi
+              if [[ "$RELEASE_TAG" != "$expected_tag" ]]; then
+                echo "Error: release tag does not match the selected channel and version."
+                exit 1
+              fi
+              echo "version=$version" >> "$GITHUB_OUTPUT"
+              tag_sha=$(git rev-parse --verify "${RELEASE_TAG}^{commit}")
+              if [[ "$tag_sha" != "$COMMIT_SHA" || "$ASSET_NAME" != "$expected_asset" ]]; then
+                echo "Error: release tag commit or VSIX filename differs from the verified release."
+                exit 1
+              fi
+              ;;
+            *)
+              echo "Error: unsupported release channel '$CHANNEL'."
+              exit 1
+              ;;
+          esac
+
+          if [[ "$ARTIFACT_NAME" != "$expected_artifact" ]]; then
+            echo "Error: artifact name does not match the tested release commit."
+            exit 1
+          fi
+          branch_sha=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${branch}" --jq '.object.sha')
+          if [[ "$CHANNEL" == 'production' && "$manual_override" == 'true' ]]; then
+            compare_json=$(gh api "repos/${GITHUB_REPOSITORY}/compare/${COMMIT_SHA}...${branch_sha}")
+            if [[ "$(jq -r '.merge_base_commit.sha' <<<"$compare_json")" != "$COMMIT_SHA" ]]; then
+              echo "Error: manual Production tag '$RELEASE_TAG' is not an ancestor of main '$branch_sha'."
+              exit 1
+            fi
+          elif [[ "$branch_sha" != "$COMMIT_SHA" ]]; then
+            echo "Error: release commit '$COMMIT_SHA' is not the current ${branch} head '$branch_sha'."
+            exit 1
+          fi
+
+      - name: Download verified VSIX
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: release-artifact
+
+      - name: Verify package channel and digest
+        env:
+          CHANNEL: ${{ inputs.channel }}
+          ASSET_NAME: ${{ inputs.asset_name }}
+          EXPECTED_SHA256: ${{ inputs.expected_sha256 }}
+          TAG_VERSION: ${{ steps.source.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          vsix_path="release-artifact/$ASSET_NAME"
+          mapfile -t assets < <(find release-artifact -maxdepth 1 -type f -name '*.vsix' -print)
+          if [[ "${#assets[@]}" -ne 1 || ! -s "$vsix_path" || ! "$EXPECTED_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "Error: expected one nonempty VSIX and a verified SHA-256."
+            exit 1
+          fi
+          actual_sha256=$(sha256sum "$vsix_path" | cut -d' ' -f1)
+          if [[ "$actual_sha256" != "$EXPECTED_SHA256" ]]; then
+            echo "Error: release artifact SHA-256 differs from the verified package."
+            exit 1
+          fi
+          manifest_path="$RUNNER_TEMP/vsix-package.json"
+          unzip -p "$vsix_path" extension/package.json > "$manifest_path"
+          if ! jq -e --arg channel "$CHANNEL" --arg asset "$ASSET_NAME" --arg version "$TAG_VERSION" '
+            .publisher == "tuvokyang" and
+            (.version | test("^[0-9]+\\.[0-9]+\\.[0-9]+$")) and
+            (
+              ($channel == "insiders" and .name == "dline-insiders" and .preview == true and $asset == ("dline-insiders-" + .version + ".vsix")) or
+              ($channel == "preview" and .name == "dline-preview" and .preview == true and .version == $version) or
+              ($channel == "production" and .name == "dline" and .preview != true and .version == $version)
+            )
+          ' "$manifest_path" >/dev/null; then
+            echo "Error: VSIX manifest does not match the release channel."
+            exit 1
+          fi
+
   publish-marketplace:
+    needs: verify-source
     name: Publish VS Code Marketplace
     if: github.repository == 'TuvokYang/dline'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # One registry being unavailable must not withhold the release from the
+    # other. The aggregate gate below derives the stage conclusion from the two
+    # reported statuses, so this job reports its outcome instead of imposing it.
+    continue-on-error: true
     environment:
       name: dline-release
+    outputs:
+      status: ${{ steps.publish.outputs.status }}
     steps:
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -61,6 +247,7 @@ jobs:
           path: release-artifact
 
       - name: Publish VSIX
+        id: publish
         env:
           VSCE_PAT: ${{ secrets.DLINE_VSCODE_RELEASE_PUBLISH_PAT }}
           ASSET_NAME: ${{ inputs.asset_name }}
@@ -71,25 +258,30 @@ jobs:
           set -euo pipefail
           vsix_path="release-artifact/$ASSET_NAME"
 
-          if [[ -z "${VSCE_PAT:-}" ]]; then
-            echo "Error: DLINE_VSCODE_RELEASE_PUBLISH_PAT is not configured in the dline-release environment."
+          # Record the registry outcome before aborting: the aggregate gate reads
+          # these statuses, so an unreported failure would be indistinguishable
+          # from a registry that was never attempted.
+          fail() {
+            echo "status=failed" >> "$GITHUB_OUTPUT"
+            echo "Error: $1"
             exit 1
+          }
+
+          if [[ -z "${VSCE_PAT:-}" ]]; then
+            fail "DLINE_VSCODE_RELEASE_PUBLISH_PAT is not configured in the dline-release environment."
           fi
           if [[ ! -x "$VSCE_BIN" ]]; then
-            echo "Error: pinned VSCE executable '$VSCE_BIN' is unavailable."
-            exit 1
+            fail "pinned VSCE executable '$VSCE_BIN' is unavailable."
           fi
           if [[ ! -s "$vsix_path" ]]; then
-            echo "Error: verified VSIX '$vsix_path' is missing or empty."
-            exit 1
+            fail "verified VSIX '$vsix_path' is missing or empty."
           fi
 
           actual_sha256=$(sha256sum "$vsix_path" | cut -d' ' -f1)
           if [[ "$actual_sha256" != "$EXPECTED_SHA256" ]]; then
-            echo "Error: Marketplace package changed after verification."
             echo "Expected: $EXPECTED_SHA256"
             echo "Actual:   $actual_sha256"
-            exit 1
+            fail "Marketplace package changed after verification."
           fi
 
           for attempt in 1 2 3; do
@@ -100,10 +292,11 @@ jobs:
             echo "$publish_output"
 
             if [[ "$publish_status" -eq 0 ]]; then
+              echo "status=published" >> "$GITHUB_OUTPUT"
               exit 0
             fi
             if [[ "$attempt" -eq 3 ]] || ! grep -Eq 'RequestBlockedException|Concurrency' <<<"$publish_output"; then
-              exit "$publish_status"
+              fail "Marketplace publish failed with exit status $publish_status."
             fi
 
             retry_delay=$((attempt * 30))
@@ -111,13 +304,20 @@ jobs:
             sleep "$retry_delay"
           done
 
+          fail "Marketplace publish exhausted every retry attempt."
+
   publish-open-vsx:
+    needs: verify-source
     name: Publish Open VSX
     if: github.repository == 'TuvokYang/dline'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # Reported, not imposed: see publish-marketplace.
+    continue-on-error: true
     environment:
       name: dline-release
+    outputs:
+      status: ${{ steps.publish.outputs.status }}
     steps:
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -148,6 +348,7 @@ jobs:
           path: release-artifact
 
       - name: Publish VSIX
+        id: publish
         env:
           OVSX_PAT: ${{ secrets.DLINE_VSCODE_OVSX_PAT }}
           ASSET_NAME: ${{ inputs.asset_name }}
@@ -158,25 +359,78 @@ jobs:
           set -euo pipefail
           vsix_path="release-artifact/$ASSET_NAME"
 
-          if [[ -z "${OVSX_PAT:-}" ]]; then
-            echo "Error: DLINE_VSCODE_OVSX_PAT is not configured in the dline-release environment."
+          # Record the registry outcome before aborting: the aggregate gate reads
+          # these statuses, so an unreported failure would be indistinguishable
+          # from a registry that was never attempted.
+          fail() {
+            echo "status=failed" >> "$GITHUB_OUTPUT"
+            echo "Error: $1"
             exit 1
+          }
+
+          if [[ -z "${OVSX_PAT:-}" ]]; then
+            fail "DLINE_VSCODE_OVSX_PAT is not configured in the dline-release environment."
           fi
           if [[ ! -x "$OVSX_BIN" ]]; then
-            echo "Error: pinned Open VSX executable '$OVSX_BIN' is unavailable."
-            exit 1
+            fail "pinned Open VSX executable '$OVSX_BIN' is unavailable."
           fi
           if [[ ! -s "$vsix_path" ]]; then
-            echo "Error: verified VSIX '$vsix_path' is missing or empty."
-            exit 1
+            fail "verified VSIX '$vsix_path' is missing or empty."
           fi
 
           actual_sha256=$(sha256sum "$vsix_path" | cut -d' ' -f1)
           if [[ "$actual_sha256" != "$EXPECTED_SHA256" ]]; then
-            echo "Error: Open VSX package changed after verification."
             echo "Expected: $EXPECTED_SHA256"
             echo "Actual:   $actual_sha256"
+            fail "Open VSX package changed after verification."
+          fi
+
+          set +e
+          "$OVSX_BIN" publish "$vsix_path" --skip-duplicate
+          publish_status=$?
+          set -e
+          if [[ "$publish_status" -ne 0 ]]; then
+            fail "Open VSX publish failed with exit status $publish_status."
+          fi
+          echo "status=published" >> "$GITHUB_OUTPUT"
+
+  require-one-registry:
+    name: Require one published registry
+    needs: [verify-source, publish-marketplace, publish-open-vsx]
+    # always(): both publish jobs tolerate their own failure, so this gate must
+    # still run to decide whether the release reached any registry at all.
+    if: always() && github.repository == 'TuvokYang/dline'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Evaluate registry publication
+        env:
+          MARKETPLACE_STATUS: ${{ needs.publish-marketplace.outputs.status }}
+          OPEN_VSX_STATUS: ${{ needs.publish-open-vsx.outputs.status }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          published=()
+          failed=()
+          # An empty status means the job aborted before it could report, which
+          # counts as that registry failing rather than as a silent success.
+          for entry in "marketplace=${MARKETPLACE_STATUS:-unreported}" "open-vsx=${OPEN_VSX_STATUS:-unreported}"; do
+            registry="${entry%%=*}"
+            status="${entry#*=}"
+            if [[ "$status" == "published" ]]; then
+              published+=("$registry")
+            else
+              failed+=("${registry}:${status}")
+            fi
+          done
+
+          if [[ "${#failed[@]}" -gt 0 ]]; then
+            echo "::warning::Registry publish incomplete: ${failed[*]}"
+          fi
+          if [[ "${#published[@]}" -eq 0 ]]; then
+            echo "Error: no registry accepted the release (${failed[*]}); inspect both publish jobs."
             exit 1
           fi
 
-          "$OVSX_BIN" publish "$vsix_path" --skip-duplicate
+          echo "Release published to: ${published[*]}"

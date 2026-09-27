@@ -14,6 +14,8 @@ export type OAuthFlowErrorCode =
 	| "BROWSER_OPEN_FAILED"
 	| "FLOW_CANCELLED"
 	| "FLOW_TIMED_OUT"
+	| "MANUAL_CODE_UNSUPPORTED"
+	| "MANUAL_CODE_INVALID"
 
 export class OAuthFlowError extends Error {
 	constructor(
@@ -37,6 +39,29 @@ export interface OAuthCodeExchangeInput {
 	code: string
 	codeVerifier: string
 	redirectUri: string
+	/**
+	 * Everything the provider returned alongside the code.
+	 *
+	 * The coordinator validates the parameters OAuth itself defines and then
+	 * forwards the whole set, because which of them a token endpoint expects
+	 * back varies per provider. Keeping this opaque means supporting another
+	 * provider's extra parameter is a strategy change, not a framework change.
+	 *
+	 * It is absent when the code did not arrive through a callback, such as a
+	 * hosted page the user copied from.
+	 */
+	callbackParams?: Readonly<Record<string, string>>
+}
+
+/**
+ * Authorization code recovered from a value the user pasted by hand.
+ *
+ * Providers that return the code on a hosted page may append the flow state to
+ * it, so the state travels back through the paste rather than a query string.
+ */
+export interface ParsedManualOAuthCode {
+	code: string
+	state?: string
 }
 
 /**
@@ -71,6 +96,14 @@ export interface OAuthAuthorizationStrategy<TCredential> {
 	readonly callbackRedirectHost?: string
 	/** Provider label rendered on the callback page when the strategy supplies one. */
 	readonly providerDisplayName?: string
+	/**
+	 * Redirect URI of the provider-hosted page that displays the authorization code.
+	 *
+	 * Declaring it opts the strategy into manual completion, which stays available
+	 * when no browser can reach the loopback server. The token exchange must echo
+	 * this exact URI, so it is kept separate from the loopback redirect URI.
+	 */
+	readonly manualRedirectUri?: string
 	buildAuthorizationUrl(input: OAuthAuthorizationInput): URL
 	exchangeAuthorizationCode(input: OAuthCodeExchangeInput): Promise<TCredential>
 	refreshCredential?(credential: TCredential): Promise<TCredential>
@@ -81,6 +114,15 @@ export interface OAuthAuthorizationStrategy<TCredential> {
 	 * without account details. Implementations must return presentation data only.
 	 */
 	describeAccount?(credential: TCredential): OAuthAccountPresentation | undefined
+	/**
+	 * Recover the authorization code from a value the user pasted.
+	 *
+	 * Required for manual completion because the paste is a bare code rather than
+	 * a callback URL, so the loopback URI parser cannot validate it. Implementations
+	 * should reject only what they cannot interpret and let the token endpoint judge
+	 * the rest, since a code is opaque to the client.
+	 */
+	parseManualCode?(pastedValue: string): ParsedManualOAuthCode
 }
 
 export interface OAuthFlowLeaseOwner {
@@ -107,6 +149,29 @@ export interface OAuthFlowStarted<TCredential> {
 	expiresAtMs: number
 	browserOpenStatus: OAuthBrowserOpenStatus
 	result: Promise<TCredential>
+	/**
+	 * Authorization URL that routes the code to the provider-hosted page.
+	 *
+	 * Present only when the strategy supports manual completion. It is offered
+	 * alongside the loopback URL so the user can choose either path, and it is the
+	 * only option left when the callback server could not start.
+	 */
+	manualAuthorizationUrl?: string
+	/** Whether the loopback callback server is listening for this flow. */
+	loopbackListening: boolean
+}
+
+/**
+ * One user-submitted completion value, whatever form it arrived in.
+ *
+ * A single input field is easier to explain than asking the user to classify
+ * their own clipboard, so the coordinator decides whether the value is a
+ * callback URL or a bare authorization code.
+ */
+export interface CompleteOAuthPastedValueInput {
+	flowId: string
+	profileId: string
+	pastedValue: string
 }
 
 export interface StartOAuthFlowInput {

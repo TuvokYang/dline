@@ -3,8 +3,12 @@ import { ImageGenerationSource } from "@shared/proto/dline/profile"
 import { WebToolsMode } from "@shared/proto/dline/provider/common"
 import { describe, expect, it } from "vitest"
 import {
+	disableWebFetchRoute,
+	disableWebSearchRoute,
 	disableWebSearchRoutingPlan,
 	hasActiveServerTool,
+	hasHostedWebRoute,
+	isHostedToolRouted,
 	projectServerTools,
 	resolveHostedImageGenerationPlan,
 	resolveServerToolPlan,
@@ -319,9 +323,244 @@ describe("resolveWebSearchRoutingPlan", () => {
 		]) {
 			expect(resolveWebSearchRoutingPlan({ ...base, enabled: false, mode })).toMatchObject({
 				route: "disabled",
+				webFetchRoute: "disabled",
 				localToolEnabled: false,
 				serverTools: [],
 			})
 		}
+	})
+})
+
+describe("resolveWebSearchRoutingPlan for Web Fetch", () => {
+	const base = {
+		enabled: true,
+		modelInfo: { capabilities: { tools: [ServerTool.WEB_SEARCH, ServerTool.WEB_FETCH] } },
+		selectedApiFormat: ApiFormat.ANTHROPIC_CHAT,
+		localAvailable: true,
+		remoteAdapterAvailable: true,
+		remoteWebFetchAdapterAvailable: true,
+	}
+
+	it("hosts Web Fetch in Auto when the model declares it and the handler carries it", () => {
+		const plan = resolveWebSearchRoutingPlan({ ...base, mode: WebToolsMode.WEB_TOOLS_MODE_AUTO })
+
+		expect(plan).toMatchObject({ route: "hosted", webFetchRoute: "hosted" })
+		expect(plan.serverTools).toEqual([ServerTool.WEB_SEARCH, ServerTool.WEB_FETCH])
+	})
+
+	it.each([
+		{
+			name: "the model does not declare it",
+			overrides: { modelInfo: { capabilities: { tools: [ServerTool.WEB_SEARCH] } } },
+			reason: "server_tool_not_declared",
+		},
+		{
+			name: "the profile switched it off",
+			overrides: { disabledServerTools: [ServerTool.WEB_FETCH] },
+			reason: "server_tool_disabled_by_profile",
+		},
+		{
+			name: "the wire protocol cannot carry it",
+			overrides: { selectedApiFormat: ApiFormat.OPENAI_RESPONSES },
+			reason: "server_tool_transport_unsupported",
+		},
+		{
+			name: "the handler has no adapter for it",
+			overrides: { remoteWebFetchAdapterAvailable: false },
+			reason: "server_tool_adapter_unavailable",
+		},
+	])("falls back to local fetch in Auto and blocks it in Force Remote when $name", ({ overrides, reason }) => {
+		const auto = resolveWebSearchRoutingPlan({ ...base, ...overrides, mode: WebToolsMode.WEB_TOOLS_MODE_AUTO })
+		expect(auto.webFetchRoute).toBe("local")
+		expect(auto.serverTools).not.toContain(ServerTool.WEB_FETCH)
+
+		const remote = resolveWebSearchRoutingPlan({ ...base, ...overrides, mode: WebToolsMode.WEB_TOOLS_MODE_FORCE_REMOTE })
+		expect(remote).toMatchObject({ webFetchRoute: "unavailable", webFetchUnavailableReason: reason })
+		expect(remote.serverTools).not.toContain(ServerTool.WEB_FETCH)
+	})
+
+	it("routes each web tool independently under one mode", () => {
+		const plan = resolveWebSearchRoutingPlan({
+			...base,
+			mode: WebToolsMode.WEB_TOOLS_MODE_AUTO,
+			disabledServerTools: [ServerTool.WEB_SEARCH],
+		})
+
+		expect(plan).toMatchObject({ route: "local", webFetchRoute: "hosted", localToolEnabled: true })
+		expect(plan.serverTools).toEqual([ServerTool.WEB_FETCH])
+	})
+
+	it("keeps Web Fetch local in Force Local and off in Force Off even when it could be hosted", () => {
+		expect(resolveWebSearchRoutingPlan({ ...base, mode: WebToolsMode.WEB_TOOLS_MODE_FORCE_LOCAL })).toMatchObject({
+			webFetchRoute: "local",
+			serverTools: [],
+		})
+		expect(resolveWebSearchRoutingPlan({ ...base, mode: WebToolsMode.WEB_TOOLS_MODE_FORCE_OFF })).toMatchObject({
+			webFetchRoute: "disabled",
+			serverTools: [],
+		})
+	})
+
+	it("leaves Web Fetch unavailable in Auto when neither hosted nor local fetch can run", () => {
+		const plan = resolveWebSearchRoutingPlan({
+			...base,
+			mode: WebToolsMode.WEB_TOOLS_MODE_AUTO,
+			localAvailable: false,
+			remoteWebFetchAdapterAvailable: false,
+		})
+
+		expect(plan).toMatchObject({ webFetchRoute: "unavailable", webFetchUnavailableReason: "server_tool_adapter_unavailable" })
+	})
+
+	it("treats an absent fetch adapter flag as unsupported", () => {
+		const { remoteWebFetchAdapterAvailable: _omitted, ...withoutFlag } = base
+		const plan = resolveWebSearchRoutingPlan({ ...withoutFlag, mode: WebToolsMode.WEB_TOOLS_MODE_AUTO })
+
+		expect(plan).toMatchObject({ route: "hosted", webFetchRoute: "local" })
+		expect(plan.serverTools).toEqual([ServerTool.WEB_SEARCH])
+	})
+
+	it("drops hosted fetch from an internal request together with hosted search", () => {
+		const disabled = disableWebSearchRoutingPlan(
+			resolveWebSearchRoutingPlan({ ...base, mode: WebToolsMode.WEB_TOOLS_MODE_AUTO }),
+		)
+
+		expect(disabled).toMatchObject({ route: "disabled", webFetchRoute: "disabled", serverTools: [] })
+	})
+})
+
+describe("hosted web tool predicates", () => {
+	const anthropic = {
+		enabled: true,
+		modelInfo: { capabilities: { tools: [ServerTool.WEB_SEARCH, ServerTool.WEB_FETCH] } },
+		selectedApiFormat: ApiFormat.ANTHROPIC_CHAT,
+		localAvailable: true,
+		remoteAdapterAvailable: true,
+		remoteWebFetchAdapterAvailable: true,
+	}
+
+	it("routes each hosted tool by its own route", () => {
+		const fetchOnly = resolveWebSearchRoutingPlan({ ...anthropic, remoteAdapterAvailable: false })
+		expect(fetchOnly).toMatchObject({ route: "local", webFetchRoute: "hosted" })
+
+		expect(isHostedToolRouted(fetchOnly, ServerTool.WEB_FETCH)).toBe(true)
+		expect(isHostedToolRouted(fetchOnly, ServerTool.WEB_SEARCH)).toBe(false)
+		expect(hasHostedWebRoute(fetchOnly)).toBe(true)
+	})
+
+	it("reports no hosted route when both tools run locally", () => {
+		const local = resolveWebSearchRoutingPlan({ ...anthropic, mode: WebToolsMode.WEB_TOOLS_MODE_FORCE_LOCAL })
+
+		expect(hasHostedWebRoute(local)).toBe(false)
+	})
+
+	it("withdraws only Web Fetch when a caller may not use it", () => {
+		const both = resolveWebSearchRoutingPlan(anthropic)
+		const withdrawn = disableWebFetchRoute(both)
+
+		expect(withdrawn).toMatchObject({ route: "hosted", webFetchRoute: "disabled" })
+		expect(withdrawn.serverTools).toEqual([ServerTool.WEB_SEARCH])
+		expect(projectServerTools(withdrawn).declarations.map((declaration) => declaration.type)).toEqual(["web_search_20260318"])
+		expect(disableWebFetchRoute(withdrawn)).toBe(withdrawn)
+	})
+
+	it("drops the fetch unavailable reason once Web Fetch is withdrawn", () => {
+		const forced = resolveWebSearchRoutingPlan({
+			...anthropic,
+			mode: WebToolsMode.WEB_TOOLS_MODE_FORCE_REMOTE,
+			remoteWebFetchAdapterAvailable: false,
+		})
+		expect(forced.webFetchUnavailableReason).toBe("server_tool_adapter_unavailable")
+
+		expect(disableWebFetchRoute(forced).webFetchUnavailableReason).toBeUndefined()
+	})
+
+	it("withdraws only Web Search and the sandbox riding on it when a caller may not search", () => {
+		const both = resolveWebSearchRoutingPlan({
+			...anthropic,
+			modelInfo: {
+				capabilities: { tools: [ServerTool.WEB_SEARCH, ServerTool.CODE_EXECUTION, ServerTool.WEB_FETCH] },
+			},
+		})
+		expect(both.serverTools).toEqual([ServerTool.WEB_SEARCH, ServerTool.CODE_EXECUTION, ServerTool.WEB_FETCH])
+
+		const withdrawn = disableWebSearchRoute(both)
+
+		expect(withdrawn).toMatchObject({
+			route: "disabled",
+			webFetchRoute: "hosted",
+			localToolEnabled: false,
+			localFallbackAvailable: false,
+		})
+		expect(withdrawn.serverTools).toEqual([ServerTool.WEB_FETCH])
+		expect(projectServerTools(withdrawn).declarations.map((declaration) => declaration.type)).toEqual(["web_fetch_20260318"])
+		expect(disableWebSearchRoute(withdrawn)).toBe(withdrawn)
+	})
+
+	it("keeps a local Web Fetch when Web Search is withdrawn from a local plan", () => {
+		const local = resolveWebSearchRoutingPlan({ ...anthropic, mode: WebToolsMode.WEB_TOOLS_MODE_FORCE_LOCAL })
+		const withdrawn = disableWebSearchRoute(local)
+
+		expect(withdrawn).toMatchObject({ route: "disabled", webFetchRoute: "local", localToolEnabled: false })
+		expect(hasHostedWebRoute(withdrawn)).toBe(false)
+	})
+
+	it("drops the search unavailable reason once Web Search is withdrawn", () => {
+		const forced = resolveWebSearchRoutingPlan({
+			...anthropic,
+			mode: WebToolsMode.WEB_TOOLS_MODE_FORCE_REMOTE,
+			remoteAdapterAvailable: false,
+		})
+		expect(forced.unavailableReason).toBe("server_tool_adapter_unavailable")
+
+		expect(disableWebSearchRoute(forced).unavailableReason).toBeUndefined()
+	})
+})
+
+describe("projectServerTools for Web Fetch", () => {
+	const base = {
+		enabled: true,
+		mode: WebToolsMode.WEB_TOOLS_MODE_AUTO,
+		selectedApiFormat: ApiFormat.ANTHROPIC_CHAT,
+		localAvailable: true,
+		remoteAdapterAvailable: true,
+		remoteWebFetchAdapterAvailable: true,
+	}
+
+	it("declares the direct-caller Anthropic web fetch tool beside hosted search", () => {
+		const plan = resolveWebSearchRoutingPlan({
+			...base,
+			modelInfo: { capabilities: { tools: [ServerTool.WEB_SEARCH, ServerTool.WEB_FETCH] } },
+		})
+
+		expect(projectServerTools(plan)).toEqual({
+			declarations: [
+				{ type: "web_search_20260318", name: "web_search", allowed_callers: ["direct"] },
+				{ type: "web_fetch_20260318", name: "web_fetch", allowed_callers: ["direct"] },
+			],
+		})
+	})
+
+	it("declares hosted fetch alone when search runs locally", () => {
+		const plan = resolveWebSearchRoutingPlan({
+			...base,
+			modelInfo: { capabilities: { tools: [ServerTool.WEB_FETCH] } },
+		})
+
+		expect(plan).toMatchObject({ route: "local", webFetchRoute: "hosted" })
+		expect(projectServerTools(plan)).toEqual({
+			declarations: [{ type: "web_fetch_20260318", name: "web_fetch", allowed_callers: ["direct"] }],
+		})
+	})
+
+	it("never declares hosted fetch on the Responses protocol", () => {
+		const plan = resolveWebSearchRoutingPlan({
+			...base,
+			selectedApiFormat: ApiFormat.OPENAI_RESPONSES,
+			modelInfo: { capabilities: { tools: [ServerTool.WEB_SEARCH, ServerTool.WEB_FETCH] } },
+		})
+
+		expect(plan.webFetchRoute).toBe("local")
+		expect(projectServerTools(plan)).toEqual({ declarations: [{ type: "web_search" }] })
 	})
 })

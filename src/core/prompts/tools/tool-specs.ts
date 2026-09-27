@@ -52,16 +52,14 @@ function isInteractive(context: SystemPromptContext): boolean {
 }
 
 /**
- * Reports whether the local Dline Web Fetch tool is exposed.
+ * Reports whether this request selected the local Web Fetch executor.
  *
- * Web Fetch has no hosted counterpart today, so every route other than an
- * explicit "off" resolves to the local executor. Reading the same routing plan as
- * Web Search keeps one Web Tools switch governing both tools.
+ * A hosted fetch shares the tool name, so the local tool is withheld while the
+ * provider runs it; declaring both would give the model two tools called web_fetch.
  */
-function hasWebFetch(context: SystemPromptContext): boolean {
+function hasLocalWebFetch(context: SystemPromptContext): boolean {
 	if (context.clineWebToolsEnabled !== true) return false
-	const route = context.webSearchRoutingPlan?.route
-	return route !== "disabled"
+	return context.webSearchRoutingPlan?.webFetchRoute === "local"
 }
 
 /** Reports whether this request selected the local Web Search executor. */
@@ -286,7 +284,7 @@ export const STANDARD_TOOL_SPECS: readonly Omit<ProfileToolSpec, "profile">[] = 
 			param("prompt", true, getPrompt("webFetch", "standardPromptInstruction")),
 			taskProgress,
 		],
-		hasWebFetch,
+		hasLocalWebFetch,
 	),
 	spec(
 		ClineDefaultTool.WEB_SEARCH,

@@ -6,8 +6,7 @@ const prompts: Record<string, string> = {
 Operating System: @OS@
 IDE: @IDE@
 Default Shell: @SHELL@
-Home Directory: @HOME_DIR@
-@WORKSPACE_TITLE@: @WORKING_DIR@`,
+Workspace Names:@WORKSPACE_NAMES@`,
 }
 
 export default prompts

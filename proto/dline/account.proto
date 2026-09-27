@@ -88,6 +88,21 @@ service AccountService {
   // Signs out one OpenAI Codex Profile and clears only its credential.
   rpc signOutOpenAiCodexProfile(OpenAiCodexProfileRequest) returns (Empty);
 
+  // Starts a subscription OAuth flow for one Claude Code Profile.
+  rpc startClaudeCodeSignIn(ClaudeCodeProfileRequest) returns (ClaudeCodeAuthFlow);
+
+  // Returns the current OAuth status for one Claude Code Profile.
+  rpc getClaudeCodeAuthStatus(ClaudeCodeProfileRequest) returns (ClaudeCodeAuthStatusResponse);
+
+  // Completes a flow from either a pasted callback URL or a pasted authorization code.
+  rpc completeClaudeCodeSignIn(ClaudeCodePastedValueRequest) returns (ClaudeCodeAuthStatusResponse);
+
+  // Cancels an existing OAuth flow owned by one Claude Code Profile.
+  rpc cancelClaudeCodeSignIn(ClaudeCodeAuthFlowRequest) returns (Empty);
+
+  // Signs out one Claude Code Profile and clears only its credential.
+  rpc signOutClaudeCodeProfile(ClaudeCodeProfileRequest) returns (Empty);
+
   // Submits a spend limit increase request to the user's org admin.
   // Called when the user hits a SPEND_LIMIT_EXCEEDED (429) error and clicks "Request Increase".
   rpc submitLimitIncreaseRequest(EmptyRequest) returns (SubmitLimitIncreaseResponse);
@@ -168,6 +183,56 @@ message OpenAiCodexAuthStatusResponse {
   OpenAiCodexAuthFlow active_flow = 4;
   OpenAiCodexFlowOutcome last_flow_outcome = 5;
   OpenAiCodexAccount account = 6;
+}
+
+enum ClaudeCodeAuthStatus {
+  CLAUDE_CODE_AUTH_STATUS_UNSPECIFIED = 0;
+  CLAUDE_CODE_AUTH_STATUS_MISSING = 1;
+  CLAUDE_CODE_AUTH_STATUS_MALFORMED = 2;
+  CLAUDE_CODE_AUTH_STATUS_AUTHENTICATED = 3;
+  CLAUDE_CODE_AUTH_STATUS_REFRESHABLE_EXPIRED = 4;
+  CLAUDE_CODE_AUTH_STATUS_UNUSABLE_EXPIRED = 5;
+}
+
+message ClaudeCodeProfileRequest {
+  string profile_id = 1;
+}
+
+message ClaudeCodeAuthFlowRequest {
+  string profile_id = 1;
+  string flow_id = 2;
+}
+
+// One paste field accepts either a callback URL or a bare authorization code.
+message ClaudeCodePastedValueRequest {
+  string profile_id = 1;
+  string flow_id = 2;
+  string pasted_value = 3;
+}
+
+message ClaudeCodeAuthFlow {
+  string profile_id = 1;
+  string flow_id = 2;
+  string authorization_url = 3;
+  optional string manual_authorization_url = 4;
+  int64 expires_at_ms = 5;
+  OpenAiCodexBrowserOpenStatus browser_open_status = 6;
+  // False when no loopback port could be bound, so only the paste path works.
+  bool loopback_listening = 7;
+}
+
+message ClaudeCodeAccount {
+  optional string display_name = 1;
+  optional string email = 2;
+  optional string organization_name = 3;
+  optional int64 expires_at_ms = 4;
+}
+
+message ClaudeCodeAuthStatusResponse {
+  string profile_id = 1;
+  ClaudeCodeAuthStatus status = 2;
+  ClaudeCodeAuthFlow active_flow = 3;
+  ClaudeCodeAccount account = 4;
 }
 
 message ProviderUsageRequest {

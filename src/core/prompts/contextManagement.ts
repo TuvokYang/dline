@@ -5,15 +5,11 @@ const runtimeGenerator = new RuntimePromptGenerator(englishTemplateStore)
 
 export const summarizeTask = (
 	focusChainSettings?: { enabled: boolean },
-	cwd?: string,
-	isMultiRootEnabled?: boolean,
+	_cwd?: string,
+	_isMultiRootEnabled?: boolean,
 	compactionWindowBudget = "",
 ) => {
-	const CWD = cwd ? cwd.toPosix() : ""
-
-	const MULTI_ROOT_HINT = isMultiRootEnabled
-		? runtimeGenerator.generate("runtimeEnvironment.workspaceReferenceHint", {}).text
-		: ""
+	const WORKSPACE_PATH_RULE = runtimeGenerator.generate("runtimeEnvironment.workspacePathRule", {}).text
 
 	const focusChainEnabled = focusChainSettings?.enabled
 	const focusChainParam = focusChainEnabled
@@ -32,8 +28,7 @@ export const summarizeTask = (
 
 	return `${
 		runtimeGenerator.generate("contextManagement.summarizeMain", {
-			CWD,
-			MULTI_ROOT_HINT,
+			WORKSPACE_PATH_RULE,
 			FOCUS_CHAIN_PARAM: focusChainParam,
 			FOCUS_CHAIN_USAGE: focusChainUsage,
 			FOCUS_CHAIN_EXAMPLE: focusChainExample,

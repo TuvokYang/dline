@@ -1,7 +1,14 @@
 import { createHash, randomUUID } from "node:crypto"
 import type { Anthropic } from "@anthropic-ai/sdk"
 import { accountUsageCoordinator } from "@core/account-usage/AccountUsageCoordinator"
-import { decorateProviderAccountUsage } from "@core/account-usage/provider-usage"
+import { addDailyTokens, readDailyTokens, type TokenIncrement } from "@core/account-usage/daily-token-ledger"
+import {
+	allowsAccountUsagePolling,
+	applyLocalDailyTokens,
+	decideAccountUsageRead,
+	decorateProviderAccountUsage,
+	isSubscriptionUsage,
+} from "@core/account-usage/provider-usage"
 import {
 	type AccountUsage,
 	type AccountUsageResetResult,
@@ -105,6 +112,7 @@ import { type PersistenceErrorEvent, StateManager } from "../storage/StateManage
 import { pruneTaskCommandLogs } from "../storage/task-temp"
 import { UIMessage } from "../storage/UIMessage"
 import type { ActiveTaskDescriptor } from "../task/active-tasks/ActiveTaskContextProvider"
+import type { TaskActivityStore } from "../task/activity/TaskActivityStore"
 import { TaskSessionCompositionService } from "../task/composition/TaskSessionCompositionService"
 import type { ActiveTaskSession } from "../task/session/ActiveTaskSession"
 import { KernelTaskViewPort } from "../task/view/KernelTaskViewPort"
@@ -432,6 +440,13 @@ export class Controller {
 	// Account usage data (refreshed every 60s, zero overhead on state push)
 	private _accountUsage?: AccountUsage
 	private accountUsageProfileKey?: string
+	/**
+	 * Profile key whose usage was already read outside the timer.
+	 *
+	 * A provider that refuses polling still has one snapshot worth showing, so
+	 * the read happens once per Profile instead of on every tick.
+	 */
+	private accountUsageSingleReadKey?: string
 	// Disposal function returned by StateManager.registerCallbacks().
 	// Invoked in dispose() to unregister this controller from global
 	// state-change notifications so closed windows don't keep receiving them.
@@ -454,6 +469,33 @@ export class Controller {
 				: (apiConfig.actModeProfileId ?? apiConfig.actModeProfile)
 		const resolution = resolveProfileReference(readApiProfiles(), profileReference)
 		return resolution.status === "resolved" && resolution.profile.id === profileId
+	}
+
+	/** Today's locally counted tokens for one Profile. */
+	private readLocalDailyTokens(profileId: string): TokenIncrement {
+		return readDailyTokens(this.stateManager.getGlobalStateKey("profileDailyTokenUsage"), profileId, new Date())
+	}
+
+	/**
+	 * Count one completed request against its Profile's daily totals.
+	 *
+	 * Subscription endpoints report percentages only, so this is where today's
+	 * token counts come from. The published snapshot is refreshed from the
+	 * ledger without reading the provider again, so the counts stay current
+	 * while the quota windows keep their last-read values.
+	 */
+	async recordProfileTokenUsage(profileId: string, increment: TokenIncrement): Promise<void> {
+		if (!profileId || (increment.inputTokens <= 0 && increment.outputTokens <= 0)) return
+		const ledger = this.stateManager.getGlobalStateKey("profileDailyTokenUsage")
+		this.stateManager.setGlobalState("profileDailyTokenUsage", addDailyTokens(ledger, profileId, increment, new Date()))
+		const published = this._accountUsage
+		// Balance providers report their own daily counts; only a subscription
+		// snapshot carries counts that came from this ledger.
+		if (!published || published.profileId !== profileId || !isSubscriptionUsage(published)) return
+		const { dailyInputTokens: _input, dailyOutputTokens: _output, ...withoutLocalCounts } = published
+		const refreshed = applyLocalDailyTokens(withoutLocalCounts, this.readLocalDailyTokens(profileId))
+		this._accountUsage = refreshed
+		await sendAccountUsageUpdate(this, refreshed)
 	}
 
 	/** Publish a shared snapshot only when its Profile is still active for the current mode. */
@@ -482,6 +524,7 @@ export class Controller {
 			const usage = decorateProviderAccountUsage(
 				target.profile,
 				target.handler.getAccountUsage ? await target.handler.getAccountUsage() : undefined,
+				this.readLocalDailyTokens(target.profile.id),
 			) ?? {
 				profileId: target.profile.id,
 				providerId: target.profile.provider,
@@ -510,6 +553,7 @@ export class Controller {
 			const usage = decorateProviderAccountUsage(
 				target.profile,
 				target.handler.getAccountUsage ? await target.handler.getAccountUsage() : undefined,
+				this.readLocalDailyTokens(target.profile.id),
 			) ?? {
 				profileId: target.profile.id,
 				providerId: target.profile.provider,
@@ -777,6 +821,13 @@ export class Controller {
 	/** Return the task identity owned by either the interactive runtime or lightweight history display. */
 	getCurrentTaskId(): string | undefined {
 		return this.task?.taskId ?? this.historyDisplaySession?.taskId
+	}
+
+	/** Return the activity store owned by the exact visible task surface. */
+	getCurrentTaskActivityStore(taskId: string): TaskActivityStore | undefined {
+		if (this.task?.taskId === taskId) return this.task.owners.activities
+		if (this.historyDisplaySession?.taskId === taskId) return this.historyDisplaySession.activityStore
+		return undefined
 	}
 
 	/** Return whether this Controller already owns a visible task surface. */
@@ -1255,41 +1306,28 @@ export class Controller {
 		}
 	}
 
-	/**
-	 * Mark a history surface read-only while another instance holds its lock.
-	 *
-	 * The lock file is the only evidence available before a Task exists, and the
-	 * poll is what clears the banner once the other window releases it.
-	 */
-	private async markHistoryDisplayLockState(session: HistoryDisplaySession): Promise<void> {
-		try {
-			const status = await this.lockService.checkTaskLock(session.taskId)
-			if (!status.isLocked || this.historyDisplaySession !== session) return
-			session.markLocked()
-			this.taskLockAcquired = false
-			this.startLockPoll(session.taskId)
-		} catch (error) {
-			Logger.warn(`[Lock] Failed to check lock for history task ${session.taskId}:`, error)
-		}
-	}
-
 	private async initHistoryDisplaySession(historyItem: HistoryItem, options?: InitTaskOptions): Promise<string> {
 		const session = new HistoryDisplaySession(historyItem)
 		this.historyDisplaySession = session
-		// A history surface reads the same task-scoped settings a live Task
-		// would, but no Task exists to populate that cache. Without this load
-		// the surface fell back to the global Profile, so reopening a task
-		// bound to one Profile showed whichever Profile the window last used.
-		try {
-			await this.stateManager.loadTaskSettings(session.taskId)
-		} catch (error) {
-			Logger.warn(`[History] Failed to load task settings for ${session.taskId}:`, error)
-		}
-		// A history surface is read-only until the user acts, but another window
-		// may already hold the task. Without this check the surface offered the
-		// full footer and no unlock affordance, so the foreign lock was invisible
-		// and the first dispatch promoted a task this window cannot own.
-		await this.markHistoryDisplayLockState(session)
+
+		// A lightweight display still has to report the durable facts a user acts
+		// on. Task settings carry the Profile this task is bound to, and the lock
+		// file decides whether this surface is read-only. Skipping them made the
+		// model switcher fall back to the global Profile and dropped the read-only
+		// banner, even though another instance still held the task.
+		//
+		// Both are small independent reads, so they are started here and awaited
+		// alongside the message window: resolving them in sequence before the
+		// window would add their latency to the first visible frame. Neither
+		// promise rejects: a lock that cannot be read counts as unlocked, and
+		// unreadable settings fall back to the global Profile.
+		const durableFacts = Promise.all([
+			this.stateManager.loadTaskSettings(session.taskId).catch((error: unknown) => {
+				Logger.warn(`[History] Failed to load task settings for ${session.taskId}:`, error)
+			}),
+			this.isTaskLockedByAnotherInstance(session.taskId),
+		])
+
 		const publishReadyHistory = async () => {
 			if (this.historyDisplaySession !== session) return
 			await this.postStateToWebview({ immediate: true })
@@ -1297,7 +1335,17 @@ export class Controller {
 		}
 		const remainsCurrent = await prepareHistoryTaskForDisplay({
 			taskId: session.taskId,
-			displayHistory: () => session.load(),
+			displayHistory: async () => {
+				const [[, lockedByAnotherInstance]] = await Promise.all([durableFacts, session.load()])
+				if (this.historyDisplaySession !== session || !lockedByAnotherInstance) return
+				session.markLocked()
+				// The surface no longer owns the lock a previous task held, so an
+				// unlock must take the task over rather than find it already owned.
+				this.taskLockAcquired = false
+				this.startLockPoll(session.taskId)
+			},
+			// This surface owns no Task runtime, so there is never a canonical
+			// history preparation to run. It is unrelated to the task lock.
 			prepareFromHistory: async () => undefined,
 			hasTaskLock: false,
 			isCurrent: () => this.historyDisplaySession === session,
@@ -1330,6 +1378,9 @@ export class Controller {
 			return DispatchInteractionResponse.create({ accepted: false, result: "stale_interaction" })
 		}
 
+		// The lifecycle lock covers the promotion only. Dispatch returns once the
+		// kernel accepted the reply; the resumed turn runs through its executors
+		// afterwards, so Close and later lifecycle operations are never held behind it.
 		return this.runTaskLifecycleOperation(async () => {
 			if (this.historyDisplaySession !== display || !display.accepts(request)) {
 				Logger.warn(
@@ -1338,6 +1389,10 @@ export class Controller {
 				return DispatchInteractionResponse.create({ accepted: false, result: "stale_interaction" })
 			}
 			this.historyDisplaySession = undefined
+			// A read-only display may own a lock poll. initTask acquires the lock
+			// itself, so leaving that round armed would let it take the same lock
+			// concurrently and then activate a surface this promotion replaced.
+			this.stopLockPoll()
 			try {
 				await display.dispose()
 				await this.initTask(undefined, undefined, undefined, display.historyItem, undefined, {
@@ -2837,12 +2892,17 @@ export class Controller {
 				await sendAccountUsageUpdate(this, undefined)
 			}
 			const handler = buildApiHandler(apiConfig, mode)
-			if (!handler.getAccountUsage) {
-				await clearStaleUsage()
+			if (decideAccountUsageRead(handler, profileKey, this.accountUsageSingleReadKey) === "skip") {
+				handler.abort?.()
+				// Only a provider that cannot report usage at all invalidates the
+				// published snapshot; a skipped repeat must keep showing the one
+				// reading this Profile already produced.
+				if (!handler.getAccountUsage) await clearStaleUsage()
 				return
 			}
-			const loadAccountUsage = handler.getAccountUsage.bind(handler)
-			const getAccountUsage = async () => decorateProviderAccountUsage(profile, await loadAccountUsage())
+			const loadAccountUsage = handler.getAccountUsage!.bind(handler)
+			const getAccountUsage = async () =>
+				decorateProviderAccountUsage(profile, await loadAccountUsage(), this.readLocalDailyTokens(profile.id))
 			this.accountUsageHandler = handler
 			let usage: AccountUsage | undefined
 			try {
@@ -2860,6 +2920,10 @@ export class Controller {
 				await clearStaleUsage()
 				return
 			}
+			// Marked only once a reading actually arrived. Marking before the
+			// request would turn a first failure, or a view hidden mid-request,
+			// into a Profile that is never read again.
+			if (!allowsAccountUsagePolling(handler)) this.accountUsageSingleReadKey = profileKey
 			if (JSON.stringify(this._accountUsage) === JSON.stringify(usage)) {
 				return
 			}
@@ -2889,6 +2953,9 @@ export class Controller {
 		const hadUsage = this._accountUsage !== undefined
 		this._accountUsage = undefined
 		this.accountUsageProfileKey = undefined
+		// A restart follows a Profile or credential change, so the one allowed
+		// read is owed again even to a provider that refuses the timer.
+		this.accountUsageSingleReadKey = undefined
 		if (hadUsage) {
 			void sendAccountUsageUpdate(this, undefined)
 		}
@@ -2915,7 +2982,13 @@ export class Controller {
 	private startLockPoll(taskId: string) {
 		this.stopLockPoll()
 		const generation = this.lockPollGeneration
-		const isCurrentRound = () => generation === this.lockPollGeneration && !this.disposed && !this.taskLockAcquired
+		// `taskLockAcquired` tracks the interactive runtime only. A read-only
+		// history display owns no Task, so a round stays valid while that session
+		// is still the current surface waiting for the lock to be released.
+		const awaitsReadOnlyHistoryLock = () =>
+			this.historyDisplaySession?.taskId === taskId && this.historyDisplaySession.isLocked()
+		const isCurrentRound = () =>
+			generation === this.lockPollGeneration && !this.disposed && (!this.taskLockAcquired || awaitsReadOnlyHistoryLock())
 		this.lockPollTimer = setInterval(async () => {
 			if (!isCurrentRound()) return
 			try {
@@ -2999,9 +3072,14 @@ export class Controller {
 		this.taskLockAcquired = true
 		this.stopLockPoll()
 		this.startLockHeartbeat(taskId)
-		// A history surface has no Task to reopen, so clearing its read-only
-		// projection is what restores the footer this window now owns.
-		if (this.historyDisplaySession?.taskId === taskId) this.historyDisplaySession.markUnlocked()
+
+		// A lightweight history display owns the read-only projection itself, so
+		// clearing the lock has to reach the session too. Without this the banner
+		// and the disabled footer survive an unlock that already succeeded.
+		const historyDisplay = this.historyDisplaySession
+		if (historyDisplay?.taskId === taskId) {
+			historyDisplay.markUnlocked()
+		}
 
 		// Publish the stopped interaction state after the task becomes writable.
 		if (this.task) {
@@ -3025,6 +3103,28 @@ export class Controller {
 		this.lockHeartbeatTimer = setInterval(() => {
 			this.lockService.touchTaskLock(taskId).catch(() => {})
 		}, 60000)
+	}
+
+	/**
+	 * Report whether a live lock on this task belongs to a different instance.
+	 *
+	 * A stale lock is not ownership: `checkTaskLock` releases it and reports the
+	 * task as unlocked, so this instance may take it over. A lock this instance
+	 * already holds is also not a conflict.
+	 *
+	 * @param taskId Task whose lock file should be inspected.
+	 * @returns True when another live instance owns the task.
+	 */
+	private async isTaskLockedByAnotherInstance(taskId: string): Promise<boolean> {
+		try {
+			const status = await this.lockService.checkTaskLock(taskId)
+			return status.isLocked && status.lockedBy !== this.lockService.instanceAddress
+		} catch (error) {
+			// Failing open here would silently drop the read-only guard, so treat an
+			// unreadable lock as unlocked only after reporting it.
+			Logger.error(`[Lock] Failed to read lock state for task ${taskId}:`, error)
+			return false
+		}
 	}
 
 	/**

@@ -10,6 +10,7 @@ import {
 	AlertDialogHeader,
 	AlertDialogTitle,
 } from "@/components/common/AlertDialog"
+import { formatTokenMetric } from "@/utils/format"
 
 export type ProviderUsageProgressTone = "success" | "warning" | "caution" | "danger"
 
@@ -29,8 +30,20 @@ export function formatProviderUsageCurrency(currency: string | undefined, amount
 	}
 }
 
+/**
+ * Report whether a quota carries a percentage that can be shown.
+ *
+ * A quota missing a usable bound or reading says nothing about the account, and
+ * `Math.min`/`Math.max` propagate NaN rather than clamping it. Reporting such a
+ * quota as 0% would claim it is exhausted, so callers drop it instead of
+ * turning missing data into a definite state.
+ */
+export function isReadableUsageQuota(quota: AccountUsageQuotaData): boolean {
+	return Number.isFinite(quota.limit) && quota.limit > 0 && Number.isFinite(quota.used)
+}
+
 export function usageRemainingPercent(quota: AccountUsageQuotaData): number {
-	if (!Number.isFinite(quota.limit) || quota.limit <= 0) return 0
+	if (!isReadableUsageQuota(quota)) return 0
 	return Math.max(0, Math.min(100, ((quota.limit - quota.used) / quota.limit) * 100))
 }
 
@@ -38,16 +51,34 @@ export function usageUsedPercent(quota: AccountUsageQuotaData): number {
 	return 100 - usageRemainingPercent(quota)
 }
 
+/**
+ * Describe when a usage snapshot was read.
+ *
+ * The snapshot is held until the user refreshes it, so every surface showing
+ * the numbers also states their age; otherwise an hours-old reading looks
+ * current. Relative wording is used because the exact clock time matters less
+ * than whether the reading is stale.
+ */
+export function formatUsageRetrievedAt(retrievedAt: string | undefined, now: number = Date.now()): string | undefined {
+	if (!retrievedAt) return undefined
+	const readingTime = Date.parse(retrievedAt)
+	if (!Number.isFinite(readingTime)) return undefined
+	const elapsedMinutes = Math.floor((now - readingTime) / 60_000)
+	if (elapsedMinutes < 1) return "Updated just now"
+	if (elapsedMinutes < 60) return `Updated ${elapsedMinutes}m ago`
+	const elapsedHours = Math.floor(elapsedMinutes / 60)
+	if (elapsedHours < 24) return `Updated ${elapsedHours}h ago`
+	return `Updated ${Math.floor(elapsedHours / 24)}d ago`
+}
+
 export function selectEffectiveUsageQuota(quotas: readonly AccountUsageQuotaData[]): AccountUsageQuotaData | undefined {
-	return quotas
-		.filter((quota) => Number.isFinite(quota.limit) && quota.limit > 0)
-		.sort((left, right) => {
-			const remainingDifference = usageRemainingPercent(left) - usageRemainingPercent(right)
-			if (remainingDifference !== 0) return remainingDifference
-			if (left.type === "5hour") return -1
-			if (right.type === "5hour") return 1
-			return 0
-		})[0]
+	return quotas.filter(isReadableUsageQuota).sort((left, right) => {
+		const remainingDifference = usageRemainingPercent(left) - usageRemainingPercent(right)
+		if (remainingDifference !== 0) return remainingDifference
+		if (left.type === "5hour") return -1
+		if (right.type === "5hour") return 1
+		return 0
+	})[0]
 }
 
 export function providerUsageProgressTone(remainingPercent: number): ProviderUsageProgressTone {
@@ -122,6 +153,11 @@ export interface ProviderUsageDetailsProps {
 	readonly resetting: boolean
 	readonly resetError?: string
 	readonly showResetActions?: boolean
+	/**
+	 * Show the snapshot age above the details. The settings card already shows
+	 * it on its header row, so it opts out rather than repeating the line.
+	 */
+	readonly showRetrievedAt?: boolean
 	readonly resetCreditsDisplay?: "full" | "summary"
 	readonly consumeResetCredit: (creditId: string) => Promise<AccountUsageResetResult | undefined>
 }
@@ -132,6 +168,7 @@ export function ProviderUsageDetails({
 	resetting,
 	resetError,
 	showResetActions = true,
+	showRetrievedAt = true,
 	resetCreditsDisplay = "full",
 	consumeResetCredit,
 }: ProviderUsageDetailsProps) {
@@ -150,9 +187,14 @@ export function ProviderUsageDetails({
 		setSelectedCreditId(undefined)
 	}
 
+	// Shown by both the chat tooltip and the expanded menu, because the reading
+	// is only as current as the last refresh in either surface.
+	const retrievedAt = showRetrievedAt ? formatUsageRetrievedAt(usage.retrievedAt) : undefined
+
 	return (
 		<>
 			<div className="flex flex-col gap-2 text-xs">
+				{retrievedAt ? <span className="text-[10px] text-description">{retrievedAt}</span> : null}
 				{usage.planType ? (
 					<div className="flex items-center justify-between gap-2">
 						<span className="text-description">Plan</span>
@@ -169,14 +211,17 @@ export function ProviderUsageDetails({
 				) : null}
 				{usage.dailyInputTokens !== undefined || usage.dailyOutputTokens !== undefined ? (
 					<div className="grid grid-cols-2 gap-2 text-description">
-						<span>Today In: {usage.dailyInputTokens ?? 0}</span>
-						<span>Today Out: {usage.dailyOutputTokens ?? 0}</span>
+						<span>Today In: {formatTokenMetric(usage.dailyInputTokens ?? 0)}</span>
+						<span>Today Out: {formatTokenMetric(usage.dailyOutputTokens ?? 0)}</span>
 					</div>
 				) : null}
-				{usage.quotas?.map((quota) => {
+				{/* Filtered like the chat bar: an unusable reading rendered as
+				    "0% remaining" would claim the window is exhausted. */}
+				{usage.quotas?.filter(isReadableUsageQuota).map((quota, index) => {
 					const resetAt = formatTime(quota.resetAt)
 					return (
-						<div className="flex flex-col gap-1" key={`${quota.type}:${quota.label}`}>
+						// Two scoped caps may share a display name, so position disambiguates.
+						<div className="flex flex-col gap-1" key={`${quota.type}:${quota.label}:${index}`}>
 							<div className="flex items-center justify-between gap-2">
 								<span>{quota.label}</span>
 								<span className="font-medium text-foreground">

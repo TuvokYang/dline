@@ -1,4 +1,4 @@
-import type { WebSearchRoutingPlan } from "@core/api/server-tools"
+import { isHostedToolRouted, type WebSearchRoutingPlan } from "@core/api/server-tools"
 import type { ApiStreamServerToolChunk } from "@core/api/transform/stream"
 import { ServerTool } from "@shared/proto/dline/models/metadata"
 import { type HostedWebSearchOperation, normalizeHostedWebSearchOperation } from "@shared/web-tools"
@@ -40,12 +40,17 @@ interface HostedServerToolState {
 }
 
 /** Fallback label for a call that ends before the provider described its work. */
+const HOSTED_TOOL_LABEL: Readonly<Partial<Record<ServerTool, string>>> = {
+	[ServerTool.CODE_EXECUTION]: "Provider-hosted code execution",
+	[ServerTool.WEB_FETCH]: "Provider-hosted web fetch",
+}
+
 function defaultQueryFor(tool: ServerTool): string {
-	return tool === ServerTool.CODE_EXECUTION ? "Provider-hosted code execution" : "Provider-hosted web search"
+	return HOSTED_TOOL_LABEL[tool] ?? "Provider-hosted web search"
 }
 
 function defaultFailureFor(tool: ServerTool): string {
-	return tool === ServerTool.CODE_EXECUTION ? "Provider-hosted code execution failed" : "Provider-hosted web search failed"
+	return `${defaultQueryFor(tool)} failed`
 }
 
 const PHASE_RANK: Readonly<Record<ApiStreamServerToolChunk["phase"], number>> = {
@@ -57,20 +62,29 @@ const PHASE_RANK: Readonly<Record<ApiStreamServerToolChunk["phase"], number>> = 
 	failed: 2,
 }
 
-function textFromUnknown(value: unknown): string | undefined {
+/** Keys that name what a hosted call worked on; a fetch names its target by URL. */
+const SUBJECT_KEYS = ["query", "q", "search_query", "url"] as const
+/** Keys that may carry a readable failure; a URL in an error payload is its subject, not its cause. */
+const ERROR_TEXT_KEYS = ["query", "q", "search_query"] as const
+
+function textFromKeys(value: unknown, keys: readonly string[]): string | undefined {
 	if (typeof value === "string" && value.trim().length > 0) return value.trim()
 	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined
 
 	const record = value as Record<string, unknown>
-	for (const key of ["query", "q", "search_query"]) {
-		const text = textFromUnknown(record[key])
+	for (const key of keys) {
+		const text = textFromKeys(record[key], keys)
 		if (text) return text
 	}
-	return textFromUnknown(record.action)
+	return textFromKeys(record.action, keys)
+}
+
+function textFromUnknown(value: unknown): string | undefined {
+	return textFromKeys(value, SUBJECT_KEYS)
 }
 
 function errorFromUnknown(value: unknown, fallback: string): string {
-	return textFromUnknown(value) ?? fallback
+	return textFromKeys(value, ERROR_TEXT_KEYS) ?? fallback
 }
 
 function isKnownOperation(operation: HostedWebSearchOperation): boolean {
@@ -126,7 +140,7 @@ function resolveOperation(chunk: ApiStreamServerToolChunk, existing?: HostedWebS
 
 /**
  * Owns one provider-hosted server-tool lifecycle for one API response.
- * It admits only the frozen hosted route and permits one late result enrichment
+ * It admits only tools whose own frozen route is hosted and permits one late result enrichment
  * when a provider emits a result-free completion before its final output item.
  */
 export class ServerToolLifecycle {
@@ -141,8 +155,8 @@ export class ServerToolLifecycle {
 	private accepts(chunk: ApiStreamServerToolChunk): boolean {
 		return (
 			this.enabled &&
-			this.routingPlan?.route === "hosted" &&
-			this.routingPlan.serverTools.includes(chunk.tool) &&
+			this.routingPlan !== undefined &&
+			isHostedToolRouted(this.routingPlan, chunk.tool) &&
 			typeof chunk.dline_tid === "string" &&
 			chunk.dline_tid.length > 0 &&
 			typeof chunk.function_id === "string" &&

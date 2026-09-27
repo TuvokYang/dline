@@ -1230,12 +1230,10 @@ describe("SubagentToolHandler", () => {
 		assert.equal(runResolvers.length, 1, "the second batch item should queue behind the shared budget")
 		const foregroundIds = activityStore.list().map((activity) => activity.activityId)
 		assert.equal(foregroundIds.length, 2)
-		// Compared as a set: the contract is that naming one batch member moves
-		// the whole batch, not the order the store happens to list them in. The
-		// two activities are created in the same millisecond, so asserting the
-		// listed order made this fail whenever the machine was loaded enough to
-		// resolve the ties the other way.
-		assert.deepEqual([...(await activityStore.moveToBackground([foregroundIds[0]]))].sort(), [...foregroundIds].sort())
+		// list() orders by creation time while the handoff reports the batch in
+		// registration order; only the moved membership is the contract.
+		const movedIds = await activityStore.moveToBackground([foregroundIds[0]])
+		assert.deepEqual([...movedIds].sort(), [...foregroundIds].sort())
 		const result = await execution
 		assert.match(String(result), /Continued background subagent batch job: subagent_batch_/)
 		assert.equal(config.subagentFanoutBudget?.state().running, 1)

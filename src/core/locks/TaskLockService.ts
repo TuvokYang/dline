@@ -33,13 +33,15 @@ export interface TaskLockStatus {
  *   {tasksBasePath}/{taskId}/.lock
  */
 export class TaskLockService {
-	private instanceAddress: string
 	private pid: number
 	private tasksBasePath: string
 
-	constructor(tasksBasePath: string, instanceAddress: string) {
+	constructor(
+		tasksBasePath: string,
+		/** Identity written into lock files, so callers can tell own locks from foreign ones. */
+		readonly instanceAddress: string,
+	) {
 		this.tasksBasePath = tasksBasePath
-		this.instanceAddress = instanceAddress
 		this.pid = process.pid
 	}
 

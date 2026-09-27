@@ -3,6 +3,7 @@ import { cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import * as os from "node:os"
 import * as path from "node:path"
 import { allProviderModels } from "../../../core/api/providers/models"
+import { getClaudeCodeProfileAuthFileName } from "../../../core/storage/secrets/ClaudeCodeProfileAuthPath"
 import { getOpenAiCodexProfileAuthFileName } from "../../../core/storage/secrets/OpenAiCodexProfileAuthPath"
 import { SETTINGS_MIGRATION_VERSION, SETTINGS_MIGRATION_VERSION_KEY } from "../../../core/storage/settings/settings-types"
 import { getE2EMockProviderBaseUrl, getE2EOpenAIImageBaseUrl } from "../fixtures/server/api"
@@ -14,6 +15,7 @@ export const E2E_PROFILE_NAMES = {
 	mockOpenAIImage: "E2E OpenAI Image Mock",
 	mockDeepSeek: "E2E DeepSeek Thinking Mock",
 	mockAnthropic: "E2E Anthropic Mock",
+	mockClaudeCode: "E2E Claude Code Mock",
 	persistence: "E2E Profile Persistence",
 } as const
 
@@ -85,8 +87,12 @@ const PROFILE_IDS = {
 	mockOpenAIImage: "dline-e2e-mock-openai-image",
 	mockDeepSeek: "dline-e2e-mock-deepseek",
 	mockAnthropic: "dline-e2e-mock-anthropic",
+	mockClaudeCode: "dline-e2e-mock-claude-code",
 	persistence: "dline-e2e-profile-persistence",
 } as const
+
+/** Far-future expiry so the seeded subscription token never triggers a refresh. */
+const CLAUDE_CODE_MOCK_TOKEN_EXPIRY_MS = 4_102_444_800_000
 
 const PROVIDER_CONFIG_FIELDS: Record<string, string> = {
 	anthropic: "anthropic",
@@ -381,6 +387,23 @@ function anthropicProfile(id: string, name: string, baseUrl: string): StoredApiP
 	}
 }
 
+/**
+ * Claude Code is subscription-only, so it carries no API key; the handler reads
+ * a bearer token from the per-Profile OAuth credential document instead.
+ */
+function claudeCodeProfile(id: string, name: string, baseUrl: string): StoredApiProfile {
+	return {
+		id,
+		name,
+		provider: "claude-code",
+		baseUrl,
+		modelId: "claude-sonnet-4-5-20250929",
+		usedFor: ["act", "plan", "subagents"],
+		enabled: true,
+		claudeCode: {},
+	}
+}
+
 function liveProfile(configuration: LiveE2EProfile): StoredApiProfile {
 	const providerConfig = allProviderModels[configuration.provider]
 	const providerConfigField = PROVIDER_CONFIG_FIELDS[configuration.provider]
@@ -505,6 +528,13 @@ export async function prepareE2EState(options: PrepareE2EStateOptions): Promise<
 	upsertProfile(profiles, mockAnthropicProfile)
 	setApiKey(apiKeys, mockAnthropicProfile, "dline-e2e-api-key")
 
+	const mockClaudeCodeProfile = claudeCodeProfile(
+		PROFILE_IDS.mockClaudeCode,
+		E2E_PROFILE_NAMES.mockClaudeCode,
+		getE2EMockProviderBaseUrl(options.mockBaseUrl, "claude-code-messages"),
+	)
+	upsertProfile(profiles, mockClaudeCodeProfile)
+
 	const persistenceProfile = openAiProfile(
 		PROFILE_IDS.persistence,
 		E2E_PROFILE_NAMES.persistence,
@@ -536,6 +566,19 @@ export async function prepareE2EState(options: PrepareE2EStateOptions): Promise<
 		},
 	])
 	await writeJson(apiKeysPath, apiKeys, 0o600)
+	// Seeding the credential document is the only way to exercise the provider
+	// without driving a real OAuth authorization from the test.
+	await writeJson(
+		path.join(secretsDir, getClaudeCodeProfileAuthFileName(mockClaudeCodeProfile.id)),
+		{
+			type: "oauth",
+			access_token: "dline-e2e-claude-code-token",
+			refresh_token: "dline-e2e-claude-code-refresh",
+			expires: CLAUDE_CODE_MOCK_TOKEN_EXPIRY_MS,
+			scopes: "user:inference",
+		},
+		0o600,
+	)
 	// Seed an already-migrated document: without the current version, startup
 	// replays the legacy migration and revives stale global-state values.
 	await writeJson(path.join(settingsDir, "settings.json"), {

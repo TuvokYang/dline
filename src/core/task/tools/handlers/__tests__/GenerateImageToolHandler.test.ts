@@ -80,6 +80,26 @@ function createConfig(autoApprove: boolean) {
 describe("GenerateImageToolHandler", () => {
 	beforeEach(() => vi.clearAllMocks())
 
+	it("keeps a rejected manual approval on the typed image row", async () => {
+		const { config, say } = createConfig(false)
+
+		await new GenerateImageToolHandler().presentDenial(config, block)
+
+		expect(say).toHaveBeenCalledOnce()
+		const deniedMessage = JSON.parse(say.mock.calls[0]?.[1] as string)
+		expect(deniedMessage).toMatchObject({
+			tool: "generateImage",
+			imageGeneration: {
+				schemaVersion: 1,
+				status: "rejected",
+				requestId: "image-request-1",
+				prompt: "A blue owl",
+				count: 2,
+			},
+		})
+		expect(say.mock.calls[0]?.[5]).toBe(block.ts)
+	})
+
 	it("strictly parses provider-neutral parameters and returns only safe artifact metadata", async () => {
 		const { config, generate, resolveProfile, say } = createConfig(true)
 

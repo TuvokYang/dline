@@ -50,19 +50,54 @@ function adaptiveThinking(effortLevels: readonly string[]): ThinkingConfig {
 	return { supported: true, mode: "effort", effortLevels: [...effortLevels] }
 }
 
+/**
+ * Capabilities shared by every adaptive-thinking model.
+ *
+ * Adaptive thinking stays on, and thinking cannot be combined with a forced
+ * tool choice, so these models reject `tool_choice: any` with an error instead
+ * of degrading to an automatic choice. Declaring it here keeps the rule with
+ * the thinking mode that causes it, rather than repeating it per model.
+ */
+function adaptiveThinkingCapabilities(effortLevels: readonly string[]): {
+	thinking: ThinkingConfig
+	supportsForcedToolUse: boolean
+} {
+	return { thinking: adaptiveThinking(effortLevels), supportsForcedToolUse: false }
+}
+
 export const anthropicModels: Record<string, ModelInfo> = {
-	"claude-opus-5": {
-		id: "claude-opus-5",
-		name: "claude-opus-5",
+	"claude-opus-5-5": {
+		id: "claude-opus-5-5",
+		name: "claude-opus-5-5",
 		capabilities: {
 			supportsTools: true,
-			tools: [ServerTool.WEB_SEARCH],
+			tools: [ServerTool.WEB_SEARCH, ServerTool.WEB_FETCH],
 			maxTokens: 128_000,
 			contextWindow: 1_000_000,
 			supportsImages: true,
 			supportsPromptCache: true,
 			supportsReasoning: true,
-			thinking: adaptiveThinking(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS),
+			...adaptiveThinkingCapabilities(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS),
+		},
+		pricing: {
+			inputPrice: 4.0,
+			outputPrice: 20.0,
+			cacheWritesPrice: 5.0,
+			cacheReadsPrice: 0.2,
+		},
+	},
+	"claude-opus-5": {
+		id: "claude-opus-5",
+		name: "claude-opus-5",
+		capabilities: {
+			supportsTools: true,
+			tools: [ServerTool.WEB_SEARCH, ServerTool.WEB_FETCH],
+			maxTokens: 128_000,
+			contextWindow: 1_000_000,
+			supportsImages: true,
+			supportsPromptCache: true,
+			supportsReasoning: true,
+			...adaptiveThinkingCapabilities(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS),
 		},
 		pricing: {
 			inputPrice: 5.0,
@@ -78,13 +113,13 @@ export const anthropicModels: Record<string, ModelInfo> = {
 			"Current Claude Fable model. Adaptive thinking is always on, forced tool use is rejected, and thinking blocks are invalidated when earlier turns are edited.",
 		capabilities: {
 			supportsTools: true,
-			tools: [ServerTool.WEB_SEARCH],
+			tools: [ServerTool.WEB_SEARCH, ServerTool.WEB_FETCH],
 			maxTokens: 128_000,
 			contextWindow: 1_000_000,
 			supportsImages: true,
 			supportsPromptCache: true,
 			supportsReasoning: true,
-			thinking: adaptiveThinking(ANTHROPIC_REQUIRED_ADAPTIVE_REASONING_EFFORT_OPTIONS),
+			...adaptiveThinkingCapabilities(ANTHROPIC_REQUIRED_ADAPTIVE_REASONING_EFFORT_OPTIONS),
 		},
 		pricing: {
 			inputPrice: 10.0,
@@ -100,13 +135,13 @@ export const anthropicModels: Record<string, ModelInfo> = {
 		description: "Legacy Claude Fable model. Use claude-fable-5-1 for current Fable capabilities.",
 		capabilities: {
 			supportsTools: true,
-			tools: [ServerTool.WEB_SEARCH],
+			tools: [ServerTool.WEB_SEARCH, ServerTool.WEB_FETCH],
 			maxTokens: 128_000,
 			contextWindow: 1_000_000,
 			supportsImages: true,
 			supportsPromptCache: true,
 			supportsReasoning: true,
-			thinking: adaptiveThinking(ANTHROPIC_REQUIRED_ADAPTIVE_REASONING_EFFORT_OPTIONS),
+			...adaptiveThinkingCapabilities(ANTHROPIC_REQUIRED_ADAPTIVE_REASONING_EFFORT_OPTIONS),
 		},
 		pricing: {
 			inputPrice: 10.0,
@@ -120,13 +155,13 @@ export const anthropicModels: Record<string, ModelInfo> = {
 		name: "claude-opus-4-8",
 		capabilities: {
 			supportsTools: true,
-			tools: [ServerTool.WEB_SEARCH],
+			tools: [ServerTool.WEB_SEARCH, ServerTool.WEB_FETCH],
 			maxTokens: 128_000,
 			contextWindow: 1_000_000,
 			supportsImages: true,
 			supportsPromptCache: true,
 			supportsReasoning: true,
-			thinking: adaptiveThinking(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS),
+			...adaptiveThinkingCapabilities(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS),
 		},
 		pricing: {
 			inputPrice: 5.0,
@@ -140,13 +175,13 @@ export const anthropicModels: Record<string, ModelInfo> = {
 		name: "claude-sonnet-5",
 		capabilities: {
 			supportsTools: true,
-			tools: [ServerTool.WEB_SEARCH],
+			tools: [ServerTool.WEB_SEARCH, ServerTool.WEB_FETCH],
 			maxTokens: 128_000,
 			contextWindow: 1_000_000,
 			supportsImages: true,
 			supportsPromptCache: true,
 			supportsReasoning: true,
-			thinking: adaptiveThinking(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS),
+			...adaptiveThinkingCapabilities(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS),
 		},
 		pricing: {
 			inputPrice: 2.0,
@@ -160,13 +195,13 @@ export const anthropicModels: Record<string, ModelInfo> = {
 		name: "claude-sonnet-4-6",
 		capabilities: {
 			supportsTools: true,
-			tools: [ServerTool.WEB_SEARCH],
+			tools: [ServerTool.WEB_SEARCH, ServerTool.WEB_FETCH],
 			maxTokens: 128_000,
 			contextWindow: 1_000_000,
 			supportsImages: true,
 			supportsPromptCache: true,
 			supportsReasoning: true,
-			thinking: adaptiveThinking(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS_WITHOUT_XHIGH),
+			...adaptiveThinkingCapabilities(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS_WITHOUT_XHIGH),
 		},
 		pricing: {
 			inputPrice: 3.0,
@@ -180,13 +215,13 @@ export const anthropicModels: Record<string, ModelInfo> = {
 		name: "claude-opus-4-6",
 		capabilities: {
 			supportsTools: true,
-			tools: [ServerTool.WEB_SEARCH],
+			tools: [ServerTool.WEB_SEARCH, ServerTool.WEB_FETCH],
 			maxTokens: 128_000,
 			contextWindow: 1_000_000,
 			supportsImages: true,
 			supportsPromptCache: true,
 			supportsReasoning: true,
-			thinking: adaptiveThinking(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS_WITHOUT_XHIGH),
+			...adaptiveThinkingCapabilities(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS_WITHOUT_XHIGH),
 		},
 		pricing: {
 			inputPrice: 5.0,
@@ -202,13 +237,13 @@ export const anthropicModels: Record<string, ModelInfo> = {
 			"Anthropic fast mode for Claude Opus 5. Same model and capabilities with higher output token speed at premium pricing. Requires fast mode access on your Anthropic account.",
 		capabilities: {
 			supportsTools: true,
-			tools: [ServerTool.WEB_SEARCH],
+			tools: [ServerTool.WEB_SEARCH, ServerTool.WEB_FETCH],
 			maxTokens: 128_000,
 			contextWindow: 1_000_000,
 			supportsImages: true,
 			supportsPromptCache: true,
 			supportsReasoning: true,
-			thinking: adaptiveThinking(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS),
+			...adaptiveThinkingCapabilities(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS),
 		},
 		pricing: {
 			inputPrice: 10.0,
@@ -224,13 +259,13 @@ export const anthropicModels: Record<string, ModelInfo> = {
 			"Anthropic fast mode for Claude Opus 4.8. Same model and capabilities with higher output token speed at premium pricing. Requires fast mode access on your Anthropic account.",
 		capabilities: {
 			supportsTools: true,
-			tools: [ServerTool.WEB_SEARCH],
+			tools: [ServerTool.WEB_SEARCH, ServerTool.WEB_FETCH],
 			maxTokens: 128_000,
 			contextWindow: 1_000_000,
 			supportsImages: true,
 			supportsPromptCache: true,
 			supportsReasoning: true,
-			thinking: adaptiveThinking(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS),
+			...adaptiveThinkingCapabilities(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS),
 		},
 		pricing: {
 			inputPrice: 10.0,
@@ -244,13 +279,13 @@ export const anthropicModels: Record<string, ModelInfo> = {
 		name: "claude-opus-4-7",
 		capabilities: {
 			supportsTools: true,
-			tools: [ServerTool.WEB_SEARCH],
+			tools: [ServerTool.WEB_SEARCH, ServerTool.WEB_FETCH],
 			maxTokens: 128_000,
 			contextWindow: 1_000_000,
 			supportsImages: true,
 			supportsPromptCache: true,
 			supportsReasoning: true,
-			thinking: adaptiveThinking(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS),
+			...adaptiveThinkingCapabilities(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS),
 		},
 		pricing: {
 			inputPrice: 5.0,
@@ -264,7 +299,7 @@ export const anthropicModels: Record<string, ModelInfo> = {
 // Anthropic model suffix and capability constants
 export const CLAUDE_SONNET_1M_SUFFIX = ":1m"
 export const ANTHROPIC_FAST_MODE_SUFFIX = ":fast"
-export const anthropicDefaultModelId = "claude-opus-4-8"
+export const anthropicDefaultModelId = "claude-opus-5-5"
 export const ANTHROPIC_MIN_THINKING_BUDGET = 1_024
 export const ANTHROPIC_MAX_THINKING_BUDGET = 6_000
 

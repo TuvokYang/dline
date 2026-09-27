@@ -80,6 +80,7 @@ function boundRetryRecipe(recipe: SubagentRetryRecipe): SubagentRetryRecipe {
 }
 
 type ActivityListener = (update: TaskActivityUpdate) => void | Promise<void>
+type ActivityCompletionListener = () => void | Promise<void>
 type CancelActivity = () => void | Promise<void>
 type ControlActivity = () => boolean | Promise<boolean>
 export type BackgroundHandoffResult =
@@ -124,6 +125,7 @@ export class TaskActivityStore {
 	private readonly backgroundMovers = new Map<string, MoveActivity>()
 	private readonly backgroundGroups = new Map<string, readonly string[]>()
 	private readonly listeners = new Map<ActivityListener, Promise<void>>()
+	private readonly completionListeners = new Map<ActivityListener, ActivityCompletionListener>()
 	private readonly dirtyIds = new Set<string>()
 	private readonly persistedRecoveryCandidateIds = new Set<string>()
 	private persistenceDeferralDepth = 0
@@ -131,6 +133,7 @@ export class TaskActivityStore {
 	private sequence = 0
 	private persistenceSequence = Promise.resolve()
 	private hydratePromise?: Promise<void>
+	private disposed = false
 
 	constructor(
 		readonly taskId: string,
@@ -168,7 +171,9 @@ export class TaskActivityStore {
 
 	private async loadPersistedActivities(): Promise<void> {
 		if (!this.persistence) return
-		for (const activity of await this.persistence.load()) {
+		const persistedActivities = await this.persistence.load()
+		if (this.disposed) return
+		for (const activity of persistedActivities) {
 			this.persistedRecoveryCandidateIds.add(activity.activityId)
 			if (!this.activities.has(activity.activityId)) {
 				this.activities.set(activity.activityId, this.clone(activity))
@@ -494,14 +499,26 @@ export class TaskActivityStore {
 		)
 	}
 
-	subscribe(listener: ActivityListener): () => void {
+	subscribe(listener: ActivityListener, onComplete?: ActivityCompletionListener): () => void {
+		if (this.disposed) {
+			if (onComplete) {
+				void Promise.resolve()
+					.then(onComplete)
+					.catch((error) => Logger.warn("[TaskActivityStore] Activity completion delivery failed", error))
+			}
+			return () => undefined
+		}
 		this.listeners.set(listener, Promise.resolve())
+		if (onComplete) this.completionListeners.set(listener, onComplete)
 		void this.hydrate().then(() => {
 			if (this.listeners.has(listener)) {
 				this.enqueue(listener, { sequence: ++this.sequence, snapshot: true, activities: this.list() })
 			}
 		})
-		return () => this.listeners.delete(listener)
+		return () => {
+			this.listeners.delete(listener)
+			this.completionListeners.delete(listener)
+		}
 	}
 
 	async finish(activityIds: string[]): Promise<string[]> {
@@ -605,9 +622,20 @@ export class TaskActivityStore {
 	}
 
 	dispose(): void {
+		if (this.disposed) return
+		this.disposed = true
 		if (this.flushTimer) clearTimeout(this.flushTimer)
 		this.flushTimer = undefined
+		for (const [listener, delivery] of this.listeners) {
+			const onComplete = this.completionListeners.get(listener)
+			if (!onComplete) continue
+			void delivery
+				.catch(() => undefined)
+				.then(onComplete)
+				.catch((error) => Logger.warn("[TaskActivityStore] Activity completion delivery failed", error))
+		}
 		this.listeners.clear()
+		this.completionListeners.clear()
 		this.cancellers.clear()
 		this.finishers.clear()
 		this.retriers.clear()

@@ -30,6 +30,19 @@ describe("TaskActivityStore", () => {
 		})
 	})
 
+	it("completes active subscribers when the owning activity surface is disposed", async () => {
+		const store = new TaskActivityStore("task-1")
+		const listener = vi.fn()
+		const onComplete = vi.fn()
+		store.subscribe(listener, onComplete)
+		await vi.waitFor(() => expect(listener).toHaveBeenCalledOnce())
+
+		store.dispose()
+		store.dispose()
+
+		await vi.waitFor(() => expect(onComplete).toHaveBeenCalledOnce())
+	})
+
 	it("keeps only the bounded output tail", () => {
 		const store = new TaskActivityStore("task-1")
 		store.create({

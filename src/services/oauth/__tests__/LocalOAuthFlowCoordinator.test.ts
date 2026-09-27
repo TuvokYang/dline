@@ -386,3 +386,239 @@ describe("LocalOAuthFlowCoordinator", () => {
 		await expect(flow.result).rejects.toMatchObject({ code: "TOKEN_EXCHANGE_FAILED" })
 	})
 })
+
+const HOSTED_REDIRECT_URI = "https://auth.example.test/oauth/code/callback"
+
+/**
+ * Never a valid TCP port, so binding it always fails. Port 0 would instead ask
+ * the OS for an arbitrary free port and succeed.
+ */
+const UNBINDABLE_PORT = -1
+
+/**
+ * Strategy that also publishes a hosted page, like providers whose authorization
+ * URL can route the code to a page the user reads instead of a loopback server.
+ */
+class ManualCapableStrategy extends TestStrategy {
+	readonly manualRedirectUri = HOSTED_REDIRECT_URI
+	readonly exchangedRedirectUris: string[] = []
+	readonly exchangedStates: (string | undefined)[] = []
+	readonly exchangedCallbackParams: (Readonly<Record<string, string>> | undefined)[] = []
+	/** Rejections applied to the next exchanges, oldest first. */
+	readonly pendingExchangeFailures: Error[] = []
+
+	/**
+	 * Point the flow at a port no listener can take, reproducing an environment
+	 * without a usable loopback callback. Patching the shared callback server
+	 * class instead would leak the stub into every later test in this file.
+	 */
+	static withoutBindablePort(): ManualCapableStrategy {
+		return new ManualCapableStrategy([UNBINDABLE_PORT])
+	}
+
+	override exchangeAuthorizationCode(input: {
+		code: string
+		codeVerifier: string
+		redirectUri: string
+		callbackParams?: Readonly<Record<string, string>>
+	}): Promise<TestCredential> {
+		this.exchangedRedirectUris.push(input.redirectUri)
+		this.exchangedCallbackParams.push(input.callbackParams)
+		this.exchangedStates.push(input.callbackParams?.state)
+		const failure = this.pendingExchangeFailures.shift()
+		if (failure) return Promise.reject(failure)
+		return super.exchangeAuthorizationCode(input)
+	}
+
+	parseManualCode(pastedValue: string): { code: string; state?: string } {
+		const separator = pastedValue.indexOf("#")
+		if (separator === -1) return { code: pastedValue }
+		return { code: pastedValue.slice(0, separator), state: pastedValue.slice(separator + 1) }
+	}
+}
+
+describe("LocalOAuthFlowCoordinator manual completion", () => {
+	let tempDir: string | undefined
+	const coordinators: LocalOAuthFlowCoordinator<TestCredential>[] = []
+	const openedAuthorizationUrls: string[] = []
+
+	afterEach(async () => {
+		await Promise.all(coordinators.map((coordinator) => coordinator.dispose()))
+		coordinators.length = 0
+		openedAuthorizationUrls.length = 0
+		if (tempDir) await fs.rm(tempDir, { recursive: true, force: true })
+		tempDir = undefined
+		vi.restoreAllMocks()
+	})
+
+	async function createCoordinator(
+		strategy: OAuthAuthorizationStrategy<TestCredential>,
+	): Promise<LocalOAuthFlowCoordinator<TestCredential>> {
+		tempDir ??= await fs.mkdtemp(path.join(os.tmpdir(), "dline-oauth-manual-"))
+		const coordinator = new LocalOAuthFlowCoordinator(strategy, {
+			lease: new FileOAuthFlowLease(path.join(tempDir, "flow-lease.json")),
+			openExternal: async (authorizationUrl) => {
+				openedAuthorizationUrls.push(authorizationUrl)
+			},
+			timeoutMs: 5_000,
+		})
+		coordinators.push(coordinator)
+		return coordinator
+	}
+
+	function stateOf(authorizationUrl: string): string {
+		return new URL(authorizationUrl).searchParams.get("state") ?? ""
+	}
+
+	it("offers both paths when the callback server is listening", async () => {
+		const strategy = new ManualCapableStrategy()
+		const flow = await (await createCoordinator(strategy)).startFlow({ profileId: "profile-a" })
+
+		expect(flow.loopbackListening).toBe(true)
+		expect(flow.redirectUri).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/oauth\/callback$/)
+		expect(new URL(flow.manualAuthorizationUrl ?? "").searchParams.get("redirect_uri")).toBe(HOSTED_REDIRECT_URI)
+		// The browser still opens the loopback variant, which completes on its own.
+		expect(flow.authorizationUrl).toBe(openedAuthorizationUrls.at(-1))
+		expect(new URL(flow.authorizationUrl).searchParams.get("redirect_uri")).toBe(flow.redirectUri)
+		// One authorization, so both URLs must carry the same state.
+		expect(stateOf(flow.manualAuthorizationUrl ?? "")).toBe(stateOf(flow.authorizationUrl))
+	})
+
+	it("exchanges a pasted code against the hosted redirect URI", async () => {
+		const strategy = new ManualCapableStrategy()
+		const coordinator = await createCoordinator(strategy)
+		const flow = await coordinator.startFlow({ profileId: "profile-a" })
+
+		const credential = await coordinator.completeFromPastedValue({
+			flowId: flow.flowId,
+			profileId: "profile-a",
+			pastedValue: `hosted-code#${stateOf(flow.authorizationUrl)}`,
+		})
+
+		expect(credential).toMatchObject({ code: "hosted-code" })
+		// Echoing the loopback URI here would make the token endpoint reject the call.
+		expect(strategy.exchangedRedirectUris).toEqual([HOSTED_REDIRECT_URI])
+		await expect(flow.result).resolves.toEqual(credential)
+	})
+
+	it("accepts a pasted code with no trailing state", async () => {
+		const strategy = new ManualCapableStrategy()
+		const coordinator = await createCoordinator(strategy)
+		const flow = await coordinator.startFlow({ profileId: "profile-a" })
+
+		await expect(
+			coordinator.completeFromPastedValue({
+				flowId: flow.flowId,
+				profileId: "profile-a",
+				pastedValue: "bare-code",
+			}),
+		).resolves.toMatchObject({ code: "bare-code" })
+	})
+
+	it("rejects a pasted code carrying another attempt's state", async () => {
+		const strategy = new ManualCapableStrategy()
+		const coordinator = await createCoordinator(strategy)
+		const flow = await coordinator.startFlow({ profileId: "profile-a" })
+
+		await expect(
+			coordinator.completeFromPastedValue({
+				flowId: flow.flowId,
+				profileId: "profile-a",
+				pastedValue: "hosted-code#state-from-another-sign-in",
+			}),
+		).rejects.toMatchObject({ code: "STATE_MISMATCH" })
+		await expect(flow.result).rejects.toMatchObject({ code: "STATE_MISMATCH" })
+	})
+
+	it("routes a pasted callback URL to the loopback parser", async () => {
+		const strategy = new ManualCapableStrategy()
+		const coordinator = await createCoordinator(strategy)
+		const flow = await coordinator.startFlow({ profileId: "profile-a" })
+
+		const credential = await coordinator.completeFromPastedValue({
+			flowId: flow.flowId,
+			profileId: "profile-a",
+			pastedValue: `${flow.redirectUri}?code=loopback-code&state=${stateOf(flow.authorizationUrl)}`,
+		})
+
+		expect(credential).toMatchObject({ code: "loopback-code" })
+		expect(strategy.exchangedRedirectUris).toEqual([flow.redirectUri])
+	})
+
+	it("hands the whole callback query to the strategy", async () => {
+		const strategy = new ManualCapableStrategy()
+		const coordinator = await createCoordinator(strategy)
+		const flow = await coordinator.startFlow({ profileId: "profile-a" })
+		const state = stateOf(flow.authorizationUrl)
+
+		await coordinator.completeFromPastedValue({
+			flowId: flow.flowId,
+			profileId: "profile-a",
+			pastedValue: `${flow.redirectUri}?code=loopback-code&state=${state}&organization_id=org-7`,
+		})
+
+		// A provider that issued these may require them back at the token
+		// endpoint, and which ones it needs is not the framework's knowledge,
+		// so the parameters are forwarded rather than interpreted.
+		expect(strategy.exchangedCallbackParams).toEqual([{ code: "loopback-code", state, organization_id: "org-7" }])
+	})
+
+	it("keeps the flow open so a failed exchange can still be completed by pasting", async () => {
+		const strategy = new ManualCapableStrategy()
+		strategy.pendingExchangeFailures.push(new Error("token endpoint rejected the loopback attempt"))
+		const coordinator = await createCoordinator(strategy)
+		const flow = await coordinator.startFlow({ profileId: "profile-a" })
+		const state = stateOf(flow.authorizationUrl)
+
+		const response = await fetch(`${flow.redirectUri}?code=browser-code&state=${state}`)
+		expect(response.status).toBe(500)
+
+		// The authorization itself succeeded, so the user must still be able to
+		// recover by pasting rather than being forced to restart the sign-in.
+		await expect(
+			coordinator.completeFromPastedValue({
+				flowId: flow.flowId,
+				profileId: "profile-a",
+				pastedValue: `hosted-code#${state}`,
+			}),
+		).resolves.toMatchObject({ code: "hosted-code" })
+	})
+
+	it("degrades to manual-only when no callback port can be bound", async () => {
+		const strategy = ManualCapableStrategy.withoutBindablePort()
+		const coordinator = await createCoordinator(strategy)
+		const flow = await coordinator.startFlow({ profileId: "profile-a" })
+
+		expect(flow.loopbackListening).toBe(false)
+		// With no server to return to, the hosted page is the only way to authorize.
+		expect(flow.authorizationUrl).toBe(flow.manualAuthorizationUrl)
+		expect(flow.redirectUri).toBe(HOSTED_REDIRECT_URI)
+
+		await expect(
+			coordinator.completeFromPastedValue({
+				flowId: flow.flowId,
+				profileId: "profile-a",
+				pastedValue: `degraded-code#${stateOf(flow.authorizationUrl)}`,
+			}),
+		).resolves.toMatchObject({ code: "degraded-code" })
+	})
+
+	it("still fails the flow when the strategy has no manual fallback", async () => {
+		const coordinator = await createCoordinator(new TestStrategy([UNBINDABLE_PORT]))
+
+		await expect(coordinator.startFlow({ profileId: "profile-a" })).rejects.toThrow()
+	})
+
+	it("reports an unsupported paste for a strategy without manual completion", async () => {
+		const coordinator = await createCoordinator(new TestStrategy())
+		const flow = await coordinator.startFlow({ profileId: "profile-a" })
+
+		await expect(
+			coordinator.completeFromPastedValue({
+				flowId: flow.flowId,
+				profileId: "profile-a",
+				pastedValue: "bare-code",
+			}),
+		).rejects.toMatchObject({ code: "MANUAL_CODE_UNSUPPORTED" })
+	})
+})

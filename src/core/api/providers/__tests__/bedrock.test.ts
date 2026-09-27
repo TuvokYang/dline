@@ -1270,8 +1270,11 @@ describe("AwsBedrockHandler", () => {
 				},
 			]
 
-			// Consume the generator to trigger createAnthropicMessage
-			const gen = handler.createAnthropicMessage("system prompt", [], "test-model", handler.getModel(), false, tools)
+			// Consume the generator to trigger createAnthropicMessage. The
+			// parameters must match the method exactly: an extra argument pushes
+			// `tools` past the signature, so the request loses its tool config
+			// while the call still type-checks through the `any` handler.
+			const gen = handler.createAnthropicMessage("system prompt", [], "test-model", handler.getModel(), tools)
 			for await (const _ of gen) {
 				// drain
 			}

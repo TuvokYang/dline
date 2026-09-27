@@ -1,0 +1,97 @@
+---
+title: "工具"
+sidebarTitle: "工具"
+description: "Dline 编辑器扩展内置工具参考。"
+---
+
+Dline 工具是模型在工作中可以调用的可执行函数。实际可用的工具集取决于当前的 Standard 或 Lite 提示词配置、宿主能力、功能开关、Provider 支持和任务权限。
+
+## 内置工具
+
+### 文件与代码
+
+| 工具 | 说明 |
+|------|------|
+| `read_file` | 读取文件或有界的行范围 |
+| `write_to_file` | 创建新文件 |
+| `replace_in_file` | 用按行匹配的 SEARCH/REPLACE 块编辑已有文件 |
+| `apply_patch` | 在该能力启用时应用结构化补丁 |
+| `search_files` | 用正则表达式搜索项目文件 |
+| `list_files` | 列出目录内容 |
+| `list_code_definition_names` | 列出顶层源码定义 |
+| `find_references` | 通过 IDE 查找符号的语义引用 |
+| `rename` | 通过 IDE 语言服务重命名符号 |
+| `replace_text` | 预览并应用有界的多文件文本替换 |
+
+### 执行与浏览器
+
+| 工具 | 说明 |
+|------|------|
+| `execute_command` | 在报告的 shell 中运行命令，并经过审批与策略检查 |
+| `kill_command` | 停止由 Dline 启动的命令 |
+| `browser_action` | 与 Puppeteer 控制的浏览器交互 |
+| `web_fetch` | 获取并分析已知 URL |
+| `web_search` | 在 Web Tools 与所选路由可用时搜索网页 |
+| `generate_image` | 在所选配置支持时生成或编辑图像 |
+
+### 任务交互
+
+| 工具 | 说明 |
+|------|------|
+| `ask_followup_question` | 请求一项必需的用户决定 |
+| `qna_respond` | 回答用户问题 |
+| `make_plan` | 呈现完整的实现或设计计划 |
+| `act_mode_respond` / `status_update` | 发布执行进度更新 |
+| `generate_report` | 呈现供审阅的结构化报告 |
+| `attempt_completion` | 返回已验证的最终结果 |
+| `change_todo_list` | 请求批准替换当前清单 |
+
+### 能力与委派
+
+| 工具 | 说明 |
+|------|------|
+| `load_skill` / `load_workflow` | 加载已公布的任务说明或有序流程 |
+| `load_mcp` | 加载某个已公布 MCP 工具的元数据 |
+| `use_mcp_tool` / `access_mcp_resource` | 执行 MCP 工具或读取 MCP 资源 |
+| `load_mcp_documentation` | 加载创建 MCP 服务器的指南 |
+| `use_subagent` / `use_subagents` | 把有界的研究委派给一个或多个子代理 |
+| `spawn_task` | 在该能力可用时启动独立的一等任务 |
+
+Lite 配置有意只暴露较小的核心集合。即使工具列在这里，当其功能被关闭或宿主/Provider 条件不满足时，它仍可能不可用。
+
+### `replace_in_file` 的匹配方式
+
+- 每个 SEARCH 行匹配文件中的整行或该行的行首部分。行首缩进可以省略，SEARCH 行绝不会从文件行的中间开始匹配。
+- 一个 SEARCH 块必须在整个文件中只匹配一处。匹配到多处的块会被拒绝，结果会列出候选行号。
+- 被匹配的每一行都会整行替换。REPLACE 原样写入，因此替换行必须带上自己的缩进。
+- 形如 `....... SKIP`（点的数量与分隔符长度相同）的 SEARCH 行表示 SKIP 区间。此时该块覆盖从首段到最近匹配尾段之间的所有行，这些行全部由 REPLACE 替换。
+- 编辑成功后，结果会报告每个块替换的原始行范围，以及 SKIP 区间删除了多少行。
+
+`replace_text` 是独立的工具，不受上述规则影响。
+
+## 审批与策略控制
+
+Dline 可以按设置和策略以审批或自动审批方式运行工具。常见模式：
+
+- 对高风险工具要求审批（例如 `execute_command` 和写入/编辑操作）
+- 自动审批低风险工具（例如读取/搜索操作）
+- 在需要时完全禁用特定工具
+
+审批行为见[自动审批](/features/auto-approve)。
+
+## MCP 工具
+
+Dline 可以调用从全局 MCP 设置文件 `~/Documents/dline/settings/mcp_settings.json` 以及 `.agents/mcp/` 下工作区描述符中发现的工具。
+
+只有在对应服务器和任务能力启用时，MCP 工具才会暴露。服务器配置不会绕过任务审批。
+
+见 [MCP 概览](/mcp/mcp-overview)。
+
+## 外部工具
+
+使用 MCP 服务器添加外部工具、资源和提示词。配置、工作区描述符和安全指南见 [MCP 概览](/mcp/mcp-overview)。
+
+## 相关内容
+
+- [自动审批](/features/auto-approve)
+- [MCP 概览](/mcp/mcp-overview)

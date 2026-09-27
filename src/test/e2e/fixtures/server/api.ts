@@ -41,6 +41,16 @@ export const E2E_MOCK_PROVIDER_ROUTES = {
 		endpoint: "/v1/messages",
 		auth: "x-api-key",
 	},
+	// The subscription provider speaks the same protocol but authenticates with
+	// a bearer token, so it needs its own route rather than sharing the
+	// x-api-key one.
+	"claude-code-messages": {
+		provider: "claude-code",
+		protocol: "anthropic-messages",
+		basePath: "/mock/claude-code",
+		endpoint: "/v1/messages",
+		auth: "bearer",
+	},
 } as const
 
 export const E2E_OPENAI_IMAGE_ROUTE = {
