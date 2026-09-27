@@ -139,7 +139,9 @@ export class ProviderJournalMessageMaterializer {
 					: final.text
 						? [{ type: "text", text: final.text }]
 						: []
-				return content.length === 0 ? undefined : { role: "assistant", content, ts: Date.now() }
+				if (content.length === 0) return undefined
+				// The producer tells a later request to another model that this turn is foreign.
+				return { role: "assistant", content, ts: Date.now(), ...(final.modelInfo ? { modelInfo: final.modelInfo } : {}) }
 			}
 			case "tool_result": {
 				const result = payload as ToolResultEnvelope

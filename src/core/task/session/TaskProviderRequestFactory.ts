@@ -3,6 +3,7 @@ import type { ToolUse } from "@core/assistant-message"
 import { ToolPromptGenerator } from "@core/prompts/generators/ToolPromptGenerator"
 import { resolveFrozenPromptRuntime } from "@core/prompts/system-prompt-cache/FrozenPromptRuntime"
 import type { StateManager } from "@core/storage/StateManager"
+import { DEFAULT_API_PROVIDER } from "@shared/api"
 import type { JournalConversationView } from "../executors/provider/service/JournalConversationView"
 import type { ProviderJournalMessageMaterializer } from "../executors/provider/service/ProviderJournalMessageMaterializer"
 import type {
@@ -57,6 +58,14 @@ export class TaskProviderRequestFactory implements ProviderRequestFactory, Provi
 			messages,
 			turnId,
 			...(authority === undefined ? {} : { authority }),
+			modelInfo: {
+				modelId: frame.api.getModel().id,
+				providerId: frame.api.getProviderId?.() ?? DEFAULT_API_PROVIDER,
+				mode: this.options.settings.mode,
+			},
+			// Every Profile, Mode or configuration change ends in a handler rebuild,
+			// so handler identity is what tells whether this projection still applies.
+			isCurrent: () => this.options.api.current() === frame.api,
 			planTool: (tool: ToolUse) => this.options.tools.plan(tool, this.options.readAdmissionSnapshot(tool)),
 		}
 	}

@@ -26,6 +26,7 @@ export type ProductionProviderChunk =
 			readonly transientId?: string
 			readonly text?: string
 			readonly content?: ProviderFinalEnvelope["content"]
+			readonly modelInfo?: ProviderFinalEnvelope["modelInfo"]
 			readonly mode: ProviderTurnPlan["mode"]
 			readonly blocks: readonly ProviderBlockOutput[]
 	  }
@@ -87,6 +88,7 @@ export class ProductionProviderAdapter implements ProviderExecutionPort {
 				kind: "provider_final",
 				...(chunk.text === undefined ? {} : { text: chunk.text }),
 				...(chunk.content === undefined ? {} : { content: chunk.content }),
+				...(chunk.modelInfo === undefined ? {} : { modelInfo: chunk.modelInfo }),
 				turnPlan,
 			}
 			yield {

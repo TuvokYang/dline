@@ -43,6 +43,7 @@ describe("ProductionProviderAdapter", () => {
 						turnId: "turn-1",
 						transientId: "stream-1",
 						text: "hello",
+						modelInfo: { modelId: "source-model", providerId: "anthropic", mode: "act" as const },
 						mode: "serial" as const,
 						blocks: [
 							{
@@ -74,6 +75,8 @@ describe("ProductionProviderAdapter", () => {
 		const final = chunks[1]
 		if (final.kind !== "final") throw new Error("expected final")
 		const storedFinal = decodeTaskPayload<ProviderFinalEnvelope>(await payloads.read(final.payloadRef))
+		// The producer is durable with the reply, so a restart still knows the turn's model.
+		expect(storedFinal.modelInfo).toEqual({ modelId: "source-model", providerId: "anthropic", mode: "act" })
 		const invocationRef = storedFinal.turnPlan.blocks[0].invocationRef
 		expect(decodeTaskPayload<ToolInvocationEnvelope>(await payloads.read(invocationRef))).toMatchObject({
 			kind: "tool_invocation",

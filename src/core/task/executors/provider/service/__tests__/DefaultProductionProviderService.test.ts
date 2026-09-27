@@ -120,6 +120,31 @@ describe("DefaultProductionProviderService", () => {
 		expect(final.blocks.map((block) => block.invocation.resultReplay)).toEqual([undefined])
 	})
 
+	it("records the model that produced the reply on the final chunk", async () => {
+		const modelInfo = { modelId: "test-model", providerId: "anthropic", mode: "act" }
+		const request = {
+			api: streamingApi([text("hello")]),
+			systemPrompt: "",
+			nativeTools: false,
+			mode: "serial",
+			profile: "standard",
+			messages: [],
+			turnId: "turn-1",
+			modelInfo,
+			planTool: () => ({ attempt: "attempt-1", lanes: [], turnEnding: false, approval: { kind: "none" } }),
+		} as unknown as PreparedProviderRequest
+		const chunks: ProductionProviderChunk[] = []
+		const provider = new DefaultProductionProviderService({ requests: { prepare: async () => request } })
+		for await (const chunk of provider.start({
+			draftRef: "draft-1",
+			draft: {} as ProviderDraftEnvelope,
+			signal: new AbortController().signal,
+		}))
+			chunks.push(chunk)
+
+		expect(chunks.find((chunk) => chunk.kind === "final")).toMatchObject({ kind: "final", modelInfo })
+	})
+
 	it("records markup calls as paired when the request offered no native tools", async () => {
 		const chunks = await run([text(MARKUP)], false)
 
@@ -191,7 +216,7 @@ function scripted(attempts: readonly Attempt[], retry: Partial<ProviderRetryPoli
 		nextPresentationId: () => ++id,
 		retry: policy,
 	})
-	return { service, api, prepare, sent, waits }
+	return { service, api, request, prepare, sent, waits }
 }
 
 async function collect(service: DefaultProductionProviderService, signal = new AbortController().signal) {
@@ -292,6 +317,129 @@ describe("DefaultProductionProviderService request retry", () => {
 
 		expect(harness.api.createMessage).toHaveBeenCalledOnce()
 		expect(chunks.map((chunk) => chunk.kind)).toEqual(["retry"])
+	})
+
+	// BUGFIX-092 in the v2 runtime: the frozen prompt and tools are one
+	// provider's projection, so a handler replaced by a Profile or Mode switch
+	// must not be sent the previous provider's request.
+	it("prepares the same turn again for a handler the task replaced during the retry wait", async () => {
+		const sourceApi = {
+			createMessage: vi.fn(async function* () {
+				yield* []
+				throw httpError(503, "Service Unavailable")
+			}),
+			getModel: () => ({ id: "source-model", info: {} }),
+		} as unknown as ApiHandler
+		const targetApi = {
+			createMessage: vi.fn(async function* () {
+				yield {
+					type: "tool_calls",
+					function_id: "call_target",
+					dline_tid: "tid_target",
+					argumentsMode: "snapshot",
+					tool_call: { function: { name: "read_file", arguments: '{"path":"a.ts"}' } },
+				} as ApiStreamChunk
+			}),
+			getModel: () => ({ id: "target-model", info: {} }),
+		} as unknown as ApiHandler
+		let current = sourceApi
+		const requestFor = (api: ApiHandler, tools: unknown[] | undefined) =>
+			({
+				api,
+				systemPrompt: api === sourceApi ? "source prompt" : "target prompt",
+				tools,
+				nativeTools: Boolean(tools?.length),
+				mode: "serial",
+				profile: "standard",
+				messages: FROZEN_MESSAGES,
+				turnId: "turn-1",
+				isCurrent: () => current === api,
+				planTool: () => ({ attempt: "attempt-1", lanes: [], turnEnding: false, approval: { kind: "none" } }),
+			}) as unknown as PreparedProviderRequest
+		const targetTools = [{ type: "function", function: { name: "read_file" } }]
+		const prepare = vi.fn(async (_draft: ProviderDraftEnvelope) =>
+			current === sourceApi ? requestFor(sourceApi, undefined) : requestFor(targetApi, targetTools),
+		)
+		const service = new DefaultProductionProviderService({
+			requests: { prepare },
+			nextPresentationId: () => 1,
+			retry: {
+				maxAttempts: 5,
+				delayMs: () => 1000,
+				wait: async () => {
+					// The user switches Profile while the retry countdown runs.
+					current = targetApi
+					return true
+				},
+			},
+		})
+
+		const chunks = await collect(service)
+
+		expect(prepare).toHaveBeenCalledTimes(2)
+		// The same turn: its authority and transient row stay the turn's own.
+		expect(prepare.mock.calls[1][0]).toMatchObject({ turnId: "turn-1" })
+		expect(sourceApi.createMessage).toHaveBeenCalledOnce()
+		expect(targetApi.createMessage).toHaveBeenCalledOnce()
+		expect(targetApi.createMessage).toHaveBeenCalledWith("target prompt", FROZEN_MESSAGES, targetTools, undefined)
+		const final = chunks.find((chunk) => chunk.kind === "final")
+		if (final?.kind !== "final") throw new Error("missing final chunk")
+		// Read with the target request's native tools, not the source's markup reading.
+		expect(final.content).toEqual([expect.objectContaining({ type: "tool_use", function_id: "call_target" })])
+	})
+
+	it("sends again at once, without spending a retry, when the replacement aborted the attempt", async () => {
+		let current = "source"
+		const abortedByRebuild = Object.assign(new Error("Request was aborted."), { name: "AbortError" })
+		const apiFor = (name: string) =>
+			({
+				createMessage: vi.fn(async function* () {
+					if (name === "source") {
+						current = "target"
+						throw abortedByRebuild
+					}
+					yield text(`answer from ${name}`)
+				}),
+				getModel: () => ({ id: `${name}-model`, info: {} }),
+			}) as unknown as ApiHandler
+		const prepare = vi.fn(async () => {
+			const name = current
+			return {
+				api: apiFor(name),
+				systemPrompt: "",
+				nativeTools: false,
+				mode: "serial",
+				profile: "standard",
+				messages: [],
+				turnId: "turn-1",
+				isCurrent: () => current === name,
+				planTool: () => ({ attempt: "attempt-1", lanes: [], turnEnding: false, approval: { kind: "none" } }),
+			} as unknown as PreparedProviderRequest
+		})
+		const wait = vi.fn(async () => true)
+		const service = new DefaultProductionProviderService({
+			requests: { prepare },
+			nextPresentationId: () => 1,
+			retry: { maxAttempts: 5, delayMs: () => 1000, wait },
+		})
+
+		const chunks = await collect(service)
+
+		expect(prepare).toHaveBeenCalledTimes(2)
+		expect(wait).not.toHaveBeenCalled()
+		expect(chunks.some((chunk) => chunk.kind === "retry")).toBe(false)
+		expect(chunks.at(-1)).toMatchObject({ kind: "final", text: "answer from target" })
+	})
+
+	it("keeps replaying the frozen request while its handler is still the task's", async () => {
+		const harness = scripted([{ error: httpError(503, "Service Unavailable") }, { chunks: [text("same request")] }])
+		Object.assign(harness.request, { isCurrent: () => true })
+
+		const chunks = await collect(harness.service)
+
+		expect(harness.prepare).toHaveBeenCalledOnce()
+		expect(harness.sent[1]).toEqual(harness.sent[0])
+		expect(chunks.at(-1)).toMatchObject({ kind: "final", text: "same request" })
 	})
 
 	it("never replays once the stream produced its first chunk", async () => {

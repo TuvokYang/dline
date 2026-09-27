@@ -1,5 +1,6 @@
 import type { SemanticInputDocument } from "@shared/input-semantics/document"
 import type { ClineAssistantContent, ClineStorageMessage } from "@shared/messages/content"
+import type { ClineMessageModelInfo } from "@shared/messages/metrics"
 import type { ExplicitInstructionDeclaration } from "../../explicit-instructions/types"
 import type { JournalWatermark, ProviderTurnApproval, ProviderTurnPlan, TurnContinuationReason } from "../../kernel"
 
@@ -116,6 +117,14 @@ export interface ProviderFinalEnvelope {
 	readonly kind: "provider_final"
 	readonly text?: string
 	readonly content?: readonly ClineAssistantContent[]
+	/**
+	 * The model that wrote this reply.
+	 *
+	 * A request to a different model projects this turn as foreign history, so
+	 * the producer must survive a restart with the reply. Absent for replies
+	 * written before it was recorded; those are treated as the target's own.
+	 */
+	readonly modelInfo?: ClineMessageModelInfo
 	readonly turnPlan: ProviderTurnPlan
 }
 

@@ -2,6 +2,7 @@ import type { ApiHandler } from "@core/api"
 import type { ToolUse } from "@core/assistant-message"
 import type { PromptProfile } from "@core/prompts/profiles/types"
 import type { ClineStorageMessage } from "@shared/messages/content"
+import type { ClineMessageModelInfo } from "@shared/messages/metrics"
 import type { Mode } from "@shared/storage/types"
 import type { ExplicitTurnAuthority } from "../../../explicit-instructions/TurnAuthority"
 import type { ProviderTurnApproval } from "../../../kernel"
@@ -60,6 +61,21 @@ export interface PreparedProviderRequest extends ProviderRequestFrame {
 	 * abandoning the request must withdraw it rather than leave it pending.
 	 */
 	readonly authority?: ExplicitTurnAuthority
+	/**
+	 * The model this request is sent to, recorded with its reply.
+	 *
+	 * A later request to another model reads it to project this turn as foreign
+	 * history. Absent leaves the reply unattributed, as older replies are.
+	 */
+	readonly modelInfo?: ClineMessageModelInfo
+	/**
+	 * False once the task replaced the handler this request was prepared for.
+	 *
+	 * The frozen prompt and tools are a projection for one provider: a Profile or
+	 * Mode switch while the request waits to be sent again makes them wrong for
+	 * the handler that will send it. Absent means the request never goes stale.
+	 */
+	isCurrent?(): boolean
 	planTool(tool: ToolUse): PlannedProviderTool
 }
 

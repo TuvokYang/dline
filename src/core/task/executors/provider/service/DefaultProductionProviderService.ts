@@ -55,6 +55,40 @@ export interface DefaultProductionProviderServiceOptions {
 	readonly retry?: ProviderRetryPolicy
 }
 
+/**
+ * The request one turn sends, kept frozen across its retries.
+ *
+ * It is replaced only when the task replaced the handler it was prepared for:
+ * the frozen prompt and tools are one provider's projection, so replaying them
+ * through another provider's handler loses every tool that provider cannot
+ * read. The replacement is prepared from the same draft and turn, so the
+ * conversation it carries is unchanged.
+ */
+class TurnRequest {
+	constructor(
+		private current: PreparedProviderRequest,
+		private readonly prepareAgain: () => Promise<PreparedProviderRequest>,
+	) {}
+
+	get request(): PreparedProviderRequest {
+		return this.current
+	}
+
+	/** Prepare the turn again when its handler was replaced; true when it was. */
+	async refreshIfStale(): Promise<boolean> {
+		if (this.current.isCurrent?.() !== false) return false
+		Logger.info("[provider] the task replaced its handler while the request waited; preparing it for the new handler")
+		this.current = await this.prepareAgain()
+		return true
+	}
+
+	/** Abandoning the stream also withdraws the turn's one-shot authority. */
+	abandon(): void {
+		this.current.api.abort?.()
+		this.current.authority?.cancel()
+	}
+}
+
 /** Yield a stream's first chunk again, then the rest of it, forwarding early close to the source. */
 async function* continueFrom<T>(first: T, rest: AsyncIterator<T>): AsyncGenerator<T> {
 	yield first
@@ -174,21 +208,20 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 	}): AsyncIterable<ProductionProviderChunk> {
 		// Prepared once: every retry below replays exactly this request, so a
 		// prompt refresh or a newer journal entry cannot change a turn in flight.
-		const request = await this.options.requests.prepare(input.draft, input.signal)
-		const transientId = `provider:${request.turnId}`
+		// Only a replaced handler prepares it again, for the same turn.
+		const prepared = await this.options.requests.prepare(input.draft, input.signal)
+		const sameTurn = { ...input.draft, turnId: prepared.turnId }
+		const turn = new TurnRequest(prepared, () => this.options.requests.prepare(sameTurn, input.signal))
+		const transientId = `provider:${prepared.turnId}`
 		const textParts: string[] = []
 		const reasoningParts: string[] = []
 		const nativeTools = new Map<string, PendingNativeTool>()
-		// Abandoning the stream also withdraws the turn's one-shot authority, so a
-		// cancelled command cannot authorize a tool in a later turn.
-		const abort = () => {
-			request.api.abort?.()
-			request.authority?.cancel()
-		}
+		// A cancelled command cannot authorize a tool in a later turn.
+		const abort = () => turn.abandon()
 		input.signal.addEventListener("abort", abort, { once: true })
 
 		try {
-			const stream = yield* this.openStream(request, input.signal)
+			const stream = yield* this.openStream(turn, input.signal)
 			if (!stream) return
 			for await (const chunk of stream) {
 				if (input.signal.aborted) return
@@ -236,6 +269,8 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 		}
 		if (input.signal.aborted) return
 
+		// The request that produced the stream decides how its reply is read.
+		const request = turn.request
 		const materialized = request.nativeTools
 			? this.materializeNativeTools(nativeTools, textParts.join(""))
 			: this.materializeXmlTools(textParts.join(""))
@@ -255,6 +290,7 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 			transientId,
 			text: materialized.text,
 			content,
+			...(request.modelInfo === undefined ? {} : { modelInfo: request.modelInfo }),
 			mode: blocks.length > 1 ? request.mode : "serial",
 			blocks,
 		}
@@ -276,17 +312,26 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 	 * repeat it. The conversation is rebuilt with canonical pairing once and
 	 * sent immediately; a second rejection fails the request.
 	 *
+	 * A handler the task replaced meanwhile (a Profile, Mode or configuration
+	 * change) prepares the turn again before the next attempt. An attempt that
+	 * failed after its handler was replaced is sent again at once without
+	 * spending the retry budget: the replacement aborted it, or its failure
+	 * belonged to a provider the task no longer uses.
+	 *
 	 * Returns undefined when cancellation ended the attempt.
 	 */
 	private async *openStream(
-		request: PreparedProviderRequest,
+		turn: TurnRequest,
 		signal: AbortSignal,
 	): AsyncGenerator<ProductionProviderChunk, AsyncIterable<ApiStreamChunk> | undefined> {
-		const provider: ProviderIdentity = { providerId: request.api.getProviderId?.(), modelId: request.api.getModel().id }
-		let messages: ClineStorageMessage[] = request.messages
 		let pairingRebuilt = false
+		const messagesOf = (request: PreparedProviderRequest): ClineStorageMessage[] =>
+			pairingRebuilt ? repairProviderPairing(request.messages) : request.messages
+		let messages = messagesOf(turn.request)
 		let retries = 0
 		for (;;) {
+			const request = turn.request
+			const provider: ProviderIdentity = { providerId: request.api.getProviderId?.(), modelId: request.api.getModel().id }
 			let iterator: AsyncIterator<ApiStreamChunk> | undefined
 			let failure: unknown
 			try {
@@ -300,10 +345,14 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 			}
 			await closeQuietly(iterator)
 			if (signal.aborted) return undefined
+			if (await turn.refreshIfStale()) {
+				messages = messagesOf(turn.request)
+				continue
+			}
 			if (isDeterministicToolPairingError(failure)) {
 				if (pairingRebuilt) throw failure
 				pairingRebuilt = true
-				messages = repairProviderPairing(messages)
+				messages = messagesOf(request)
 				Logger.warn("[provider] request rejected for tool pairing; sending it once with canonical pairing")
 				continue
 			}
@@ -321,6 +370,7 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 				},
 			}
 			if (!(await this.retry.wait(delayMs, signal))) return undefined
+			if (await turn.refreshIfStale()) messages = messagesOf(turn.request)
 		}
 	}
 

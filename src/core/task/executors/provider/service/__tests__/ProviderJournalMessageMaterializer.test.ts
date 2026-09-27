@@ -157,6 +157,33 @@ describe("ProviderJournalMessageMaterializer", () => {
 		expect(JSON.stringify(message)).not.toContain("dline_function_")
 	})
 
+	// A request to another model projects this turn as foreign history only if
+	// the producer survives the journal; without it a switch loses the reasoning.
+	it("restores the model that wrote a reply", async () => {
+		const modelInfo = { modelId: "source-model", providerId: "anthropic", mode: "act" as const }
+		const materializer = new ProviderJournalMessageMaterializer(
+			payloadStore({
+				"ref-1": encodeTaskPayload({
+					kind: "provider_final",
+					content: [{ type: "text", text: "answer" }],
+					modelInfo,
+					turnPlan: { mode: "serial", blocks: [] },
+				}),
+				"ref-2": encodeTaskPayload({
+					kind: "provider_final",
+					text: "older answer",
+					turnPlan: { mode: "serial", blocks: [] },
+				}),
+			}),
+		)
+
+		const [attributed, unattributed] = await materializer.materialize(["ref-1", "ref-2"])
+
+		expect(attributed).toMatchObject({ role: "assistant", modelInfo })
+		expect(unattributed).toMatchObject({ role: "assistant" })
+		expect(unattributed).not.toHaveProperty("modelInfo")
+	})
+
 	it("rejects a durable result whose replay marker is malformed", async () => {
 		const malformed = JSON.stringify({ ...JSON.parse(serializeDurableToolResult(refused)), replay: { kind: "native" } })
 		const materializer = new ProviderJournalMessageMaterializer(
