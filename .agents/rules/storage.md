@@ -131,22 +131,26 @@ Legacy `taskHistory.jsonl` and `taskHistory.json` functions remain migration/com
 
 ## Per-task storage
 
-A task directory can contain:
+A task directory is an instance root. A subagent run uses the same layout under `tasks/<task-id>/subagents/<subagent-id>/`; `InstanceLayout` and `resolveInstanceLayout()` in `src/core/storage/instance/` are the only source of these paths.
 
 ```text
 tasks/<task-id>/
-├── ui_messages.jsonl
-├── api_conversation_history.jsonl
-├── snapshot.json
+├── journal.db
+├── messages.db
+├── activities.db
+├── metrics.db
+├── state.json
+├── state.json.bak
 ├── context.json
 ├── context_history.jsonl
 ├── settings.json
 ├── task_metadata.json
-├── activities.json
-├── <task-id>.db
 ├── artifacts/
+├── subagents/
+│   └── <subagent-id>/        (same instance layout)
 └── tmp/
     ├── command-logs/
+    ├── conversation-export/
     ├── shell-diagnostics/
     ├── image-previews/
     └── image-viewer/
@@ -154,13 +158,15 @@ tasks/<task-id>/
 
 Ownership matters more than the physical filename:
 
-- `UIMessage` owns `ui_messages.jsonl` through the buffered JSONL backend. Partial messages may exist only in memory; complete/finalized messages and lifecycle flushes establish durability.
-- `ApiConversation` owns `api_conversation_history.jsonl`, normalizes legacy identity, and guarantees usable unique timestamps for indexed operations.
-- `TaskSnapshotPersistence` owns coalesced atomic `snapshot.json` writes used for snapshot-first recovery. Runtime transitions, interactions, activities, and snapshots must agree; one file is not a substitute for the others.
+- Each `.db` is opened through `openInstanceStorage(root)` and has exactly one high-frequency writer per process, registered by name on first write. Low-frequency maintenance writers are exempt. Do not open an instance database with a second writer to work around ownership.
+- `journal.db` holds the conversation journal, command publication, and task payloads, committed in one transaction. It is the provider conversation authority; `JournalConversationView` renders it in memory and `readJournalConversation()` / `readTaskConversation()` are the read ports. `api_conversation_history.jsonl` is read-compatible only: a task whose journal is empty imports it once as `legacy_message` entries.
+- `messages.db` owns chat rows (`task-ui-message` plus the attachment table) through the buffered UI message store. `ui_messages.jsonl` (and older `ui_messages.json` / `claude_messages.json`) is imported once, verified, and renamed to `*.migrated`.
+- `activities.db` owns append-only activity events; the legacy `activities.json` is an import source only.
+- `metrics.db` owns API rate metrics and request/response execution data with dev's metrics implementation; the legacy per-task `<task-id>.db` and `api_rate_metrics.jsonl` are migration sources, and a lock file that cannot be read is treated as unlocked.
+- `FileTaskStateVault` owns `state.json` (runtime snapshot) with coalesced atomic writes and a `.bak` fallback. A missing snapshot rebuilds the task from the journal as an expected observation; an unreadable one is recorded as a failure and then rebuilt. Runtime transitions, interactions, activities, and snapshots must agree; one file is not a substitute for the others.
+- Every JSON document is written through `src/shared/storage/atomic-file` (`writeJsonAtomic` / `readJsonWithBackup`: same-directory temp file then rename, busy retry, optional `.bak`, two-space indentation, trailing newline). Do not hand-roll temp-and-rename writes.
+- The UnifyStore backend defaults to SQLite. `DLINE_INSTANCE_STORAGE_BACKEND=jsonl` selects the JSONL backend, which implements the same transactional, unique-index, blob, and ordering contracts so the two can be switched and copied without loss; it loads collections into memory. TaskHistory remains SQLite.
 - Task context helpers own `context.json` and `context_history.jsonl`.
-- `TaskActivityPersistence` owns schema-versioned `activities.json`; runtime cancellers are intentionally not serialized.
-- The per-task `<task-id>.db` is a shared SQLite container for UnifyStore collections such as API rate metrics and API request/response execution data.
-- `api_rate_metrics.jsonl` is a legacy migration source. Current metrics belong in the per-task database, with a durable fingerprinted migration marker that rejects changed or ambiguous sources.
 - Artifact APIs own `artifacts/` and enforce task-relative paths. Do not expose conversation, snapshot, settings, or database files through the artifact read scope.
 - `src/core/storage/task-temp.ts` owns `tmp/` and is the only source of that path. Command logs and shell diagnostics belong to the owning task; `command-logs` survives across sessions because chat rows and Activities keep a clickable path to it, so age alone never deletes a log. It is bounded only by a per-task total size budget enforced on the locked task, which drops the oldest logs first. `image-previews` and `image-viewer` stay process-ephemeral. Command execution without a task identity keeps using the process-level temp directory owned by `DlineRuntimeFileManager`, which also retains pre-migration logs.
 
