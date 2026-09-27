@@ -2,10 +2,11 @@
  * Live, in-page rendering of the Dline mascot. The robot is drawn by
  * WebGL at the device pixel ratio with multisampling, so it stays sharp at
  * any zoom level. It runs the warm-up routine once and then rests in the
- * still pose; activating the stage replays the routine from the start.
+ * still pose; activating the stage replays the routine from the start. A
+ * still mount skips the routine and only ever draws the still pose.
  *
- * The page never blocks on this module: it is loaded lazily by the
- * MascotStage component, and it renders only while the stage is visible.
+ * The page never blocks on this module: it is loaded lazily through
+ * lazy-mount.js, and it renders only while its container is visible.
  */
 import {
 	AmbientLight,
@@ -57,10 +58,10 @@ function perchedQuaternion(rig) {
 
 /**
  * Mounts the mascot into `container`, which must be sized by CSS. Returns
- * `{ replay, dispose }`. With `reducedMotion` the robot only shows its
- * still pose and `replay` does nothing.
+ * `{ replay, dispose }`. With `still` the robot only shows its still pose,
+ * holding up the songbird on one hand, and `replay` does nothing.
  */
-export function mountMascot(container, { reducedMotion = false } = {}) {
+export function mountMascot(container, { still = false } = {}) {
 	const renderer = new WebGLRenderer({ alpha: true, antialias: true, powerPreference: "low-power" })
 	renderer.setClearColor(0x000000, 0)
 	renderer.outputColorSpace = SRGBColorSpace
@@ -153,7 +154,7 @@ export function mountMascot(container, { reducedMotion = false } = {}) {
 	}
 
 	function replay() {
-		if (reducedMotion) return
+		if (still) return
 		started = null
 		if (!frame && visible) frame = requestAnimationFrame(tick)
 	}
@@ -184,7 +185,7 @@ export function mountMascot(container, { reducedMotion = false } = {}) {
 	resizer.observe(container)
 
 	resize()
-	if (reducedMotion) drawStill()
+	if (still) drawStill()
 	else replay()
 
 	return {

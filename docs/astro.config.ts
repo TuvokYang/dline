@@ -41,6 +41,7 @@ export default defineConfig({
 			customCss: ["./src/styles/custom.css"],
 			components: {
 				Header: "./src/components/Header.astro",
+				Hero: "./src/components/Hero.astro",
 				PageFrame: "./src/components/PageFrame.astro",
 			},
 			routeMiddleware: "./src/routeData.ts",

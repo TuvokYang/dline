@@ -170,33 +170,15 @@ class InsidersPublisher {
 	 * the marketplace-flavored README. vsce reads README.md from disk at
 	 * `vsce package` time and there's no flag to redirect it.
 	 *
-	 * An insiders build ships code from dev, so the README's /blob/main/ links
-	 * are pinned to the packaged commit; otherwise the bundled changelog and
-	 * translated README would describe the default branch instead of this build.
+	 * An insiders build ships code from dev; the swap pins the README's
+	 * repository links and images to the checked-out commit, so the listing
+	 * shows this build's changelog and demos rather than the default branch's.
 	 */
 	swapMarketplaceReadme() {
-		const result = swapInMarketplaceReadme({ ref: this.resolveDocumentationRef() })
+		const result = swapInMarketplaceReadme()
 		this.didSwapMarketplaceReadme = !result.skipped
 		if (this.didSwapMarketplaceReadme) {
 			log.info("Swapped README.marketplace.md into README.md for packaging")
-		}
-	}
-
-	/**
-	 * Exact commit this insiders build is built from.
-	 *
-	 * @returns {string|null} Commit SHA, or null when it cannot be determined.
-	 */
-	resolveDocumentationRef() {
-		try {
-			return execFileSync("git", ["rev-parse", "HEAD"], {
-				cwd: config.projectRoot,
-				encoding: "utf-8",
-			}).trim()
-		} catch {
-			// Without a resolvable commit the authored links remain correct enough
-			// to publish; a broken swap would be worse than default-branch links.
-			return null
 		}
 	}
 

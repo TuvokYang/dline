@@ -112,26 +112,25 @@ function getCurrentBranch() {
 }
 
 /**
- * Git ref the packaged README should link against.
+ * Git ref the packaged README links and images are pinned to.
  *
- * The marketplace README is authored with `/blob/main/` links, which are correct
- * only for a production build. A preview or insiders VSIX ships code from `dev`,
- * so those links must resolve to the packaged revision instead of the default
- * branch; otherwise the changelog and translated README describe a different
- * build, and a document that exists only on `dev` 404s.
+ * The marketplace README links to repository files with relative paths, and
+ * every one of them must resolve to the revision this VSIX ships: a Preview or
+ * Insiders build comes from `dev`, whose changelog and demos differ from the
+ * default branch.
  *
- * A tag is preferred because it is immutable. A rolling insiders build has no
- * tag, so it falls back to the exact commit rather than the moving branch.
+ * A release tag is preferred because it is immutable and readable. An
+ * untagged build (Insiders, CI) is pinned to the exact commit rather than the
+ * moving branch.
  *
- * @param {"ci"|"production"|"preview"|"insiders"} channel Resolved channel.
  * @param {string|null} tag Release tag at HEAD, when present.
- * @returns {string|null} Ref to link against, or null to keep authored links.
+ * @returns {string} Tag or commit SHA to link against.
  */
-function resolveDocumentationRef(channel, tag) {
-	if (channel === "production") return tag
+function resolveDocumentationRef(tag) {
 	if (tag) return tag
 	const commit = tryGit("git rev-parse HEAD")
-	return commit ?? getCurrentBranch()
+	if (!commit) fail("Cannot resolve HEAD; the packaged README links need an exact commit.")
+	return commit
 }
 
 /**
@@ -350,13 +349,13 @@ const packageVersion = readPackageJson().version
 const { channel, version, tag } = resolveRequestedChannel(requestedChannel, packageVersion)
 const resolvedOutputPath = outputPath ? (path.isAbsolute(outputPath) ? outputPath : path.join(PROJECT_ROOT, outputPath)) : null
 
-const documentationRef = resolveDocumentationRef(channel, tag)
+const documentationRef = resolveDocumentationRef(tag)
 
 console.log(`[package-vsix] Git hash: ${getGitHash()}`)
 console.log(`[package-vsix] Tag: ${tag ?? "(none)"}`)
 console.log(`[package-vsix] Channel: ${channel}`)
 console.log(`[package-vsix] Version: ${version}`)
-console.log(`[package-vsix] Documentation ref: ${documentationRef ?? "(authored default)"}`)
+console.log(`[package-vsix] Documentation ref: ${documentationRef}`)
 
 await withMarketplaceReadme(
 	async (cleanups) => {

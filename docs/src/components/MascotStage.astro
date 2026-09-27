@@ -14,38 +14,12 @@ const hasToc = Boolean(route.toc)
 {hasToc && <button type="button" class="dline-mascot" aria-label={label} title={label} hidden />}
 
 <script>
-	const WIDE = "(min-width: 72rem)"
+	import { showMascotWhen } from "../mascot/lazy-mount.js"
+
 	const stage = document.querySelector<HTMLButtonElement>(".dline-mascot")
-	let mounted: { replay(): void; dispose(): void } | null = null
-	let loading = false
-
-	async function mount() {
-		if (!stage || mounted || loading) return
-		loading = true
-		stage.hidden = false
-		try {
-			const { mountMascot } = await import("../mascot/scene.js")
-			const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches
-			mounted = mountMascot(stage, { reducedMotion })
-		} catch (error) {
-			// WebGL may be unavailable; the page works without the mascot.
-			console.warn("Dline mascot unavailable:", error)
-			stage.hidden = true
-		} finally {
-			loading = false
-		}
-	}
-
 	if (stage) {
-		stage.addEventListener("click", () => mounted?.replay())
-		const wide = window.matchMedia(WIDE)
-		const update = () => {
-			if (wide.matches) void mount()
-			else if (stage) stage.hidden = true
-			if (wide.matches && mounted) stage.hidden = false
-		}
-		wide.addEventListener("change", update)
-		update()
+		const mascot = showMascotWhen(stage, "(min-width: 72rem)")
+		stage.addEventListener("click", () => mascot.replay())
 	}
 </script>
 
