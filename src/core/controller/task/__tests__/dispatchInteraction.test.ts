@@ -297,6 +297,23 @@ describe("dispatchInteraction", () => {
 		expect(host.approvalFeedback.take("block-1")).toMatchObject({ text: "read it as UTF-8" })
 	})
 
+	it("continues an accepted approval only through the kernel, never as a new submission", async () => {
+		const host = controller(approvalState())
+
+		const result = await dispatchInteraction(host.value as never, approveWith("read it as UTF-8"))
+
+		expect(result).toMatchObject({ accepted: true, result: "accepted" })
+		expect(host.respond).toHaveBeenCalledWith(
+			expect.objectContaining({ type: "approval.respond", blockId: "block-1", approved: true, draftRef: "payload-1" }),
+		)
+		// The note reaches the next request through the block's feedback, after
+		// the tool result. Handing the approval to the interaction owner as well
+		// resubmitted the note as user input and composed a round before the
+		// tool result existed.
+		expect(host.approvalFeedback.take("block-1")).toMatchObject({ text: "read it as UTF-8" })
+		expect(host.resolve).not.toHaveBeenCalled()
+	})
+
 	it("still runs the command and answers the dialog when the consumed reply cannot be shown", async () => {
 		const commit = vi.fn()
 		const host = controller(state(), { reviewed: { text: "", commit }, rowWriteFails: true })

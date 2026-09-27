@@ -211,7 +211,13 @@ export async function dispatchInteraction(
 			: undefined,
 		selection: request.selection ? { values: [...request.selection.values] } : undefined,
 	}
-	session.owners.interactions.resolve(request.interactionId, outcome)
+	// An approval already continues through the kernel: `approval.responded`
+	// runs the block, its result and the note recorded above are journaled, and
+	// only then is the next round composed. It has no receiver, so handing it to
+	// the interaction owner as well would treat it as an unowned dialog and
+	// submit the note as new input, composing a round before the tool result
+	// exists. Every other dialog still reaches its receiver or continuation.
+	if (!approvalEntry) session.owners.interactions.resolve(request.interactionId, outcome)
 	await consumedRow
 	return response(true, "accepted")
 }
