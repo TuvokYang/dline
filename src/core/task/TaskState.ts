@@ -7,6 +7,12 @@ import type { ClineContent, ClineStorageMessage } from "@/shared/messages"
 import type { PartialToolLifecycle } from "./partial-tool-lifecycle"
 import type { HookExecution } from "./types/HookExecution"
 
+/** Identity of one request continuation, captured when its request loop starts. */
+export interface TaskContinuationLease {
+	/** True once a later continuation replaced this one's cancellation scope. */
+	isSuperseded(): boolean
+}
+
 export class TaskState {
 	// Task-level timing
 	taskStartTimeMs = Date.now()
@@ -107,6 +113,23 @@ export class TaskState {
 	cancelOperations(reason = "task_cancelled"): void {
 		if (!this.operationAbortController.signal.aborted) {
 			this.operationAbortController.abort(new Error(reason))
+		}
+	}
+
+	/**
+	 * Bind the caller to the continuation that is current right now.
+	 *
+	 * `abort` is a task-wide flag that Resume clears, so a request loop whose Provider
+	 * stream outlives Cancel would otherwise look current again once the user resumes.
+	 * Resume admits the next continuation through a fresh cancellation scope; a lease
+	 * whose scope was replaced stays superseded even if that later loop is cancelled too.
+	 * Between Cancel and Resume the lease is not superseded, so the ordinary abort paths
+	 * still own that interval.
+	 */
+	captureContinuation(): TaskContinuationLease {
+		const scope = this.operationAbortController.signal
+		return {
+			isSuperseded: () => this.operationAbortController.signal !== scope,
 		}
 	}
 

@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import { ErrorService } from "@/services/error"
 import { MAX_AUTO_RETRY_ATTEMPTS } from "../auto-retry"
 import { Task } from "../index"
+import { isInteractionCancellationError } from "../interaction/InteractionCancellationError"
 import { OrdinaryRequestInputReplay } from "../OrdinaryRequestInputReplay"
 
 vi.mock("@core/storage/disk", async (importOriginal) => {
@@ -642,5 +643,162 @@ describe("Task.attemptApiRequest first chunk state", () => {
 		expect(receiveIndicator).not.toHaveBeenCalled()
 		expect(rollbackIndicator).toHaveBeenCalledOnce()
 		expect(ordinaryRequestInputReplay.acknowledge).not.toHaveBeenCalled()
+	})
+})
+
+describe("Task.attemptApiRequest request ownership", () => {
+	afterEach(() => {
+		vi.restoreAllMocks()
+	})
+
+	/**
+	 * Build an ordinary request whose Provider fails on the first chunk. `onFirstChunk`
+	 * runs just before the failure, which is where the field report saw a concurrent
+	 * loop start automatic compaction or a Resume replace the continuation.
+	 */
+	function createOrdinaryRequestHarness(onFirstChunk: (taskState: Record<string, unknown>) => void) {
+		const providerError = new Error("HTTP 500: upstream overloaded")
+		const api = {
+			createMessage: vi.fn(() => ({
+				[Symbol.asyncIterator]() {
+					return this
+				},
+				next: vi.fn(async () => {
+					onFirstChunk(taskState)
+					throw providerError
+				}),
+				return: vi.fn(async () => ({ done: true, value: undefined })),
+			})),
+		}
+		const requestScope = {
+			api,
+			providerInfo: { providerId: "anthropic", model: { id: "claude-opus", info: {} }, mode: "act" },
+			webToolsEnabled: false,
+			webSearchRoutingPlan: resolveWebSearchRoutingPlan({
+				enabled: false,
+				modelInfo: undefined,
+				selectedApiFormat: undefined,
+				localAvailable: true,
+				remoteAdapterAvailable: false,
+			}),
+			hostedImageGenerationPlan: disabledHostedImageGenerationPlan,
+			explicitInstructions: { beginProviderAttempt: vi.fn(), createConsumePort: vi.fn(() => ({})) },
+		} as unknown as RequestApiScope
+		const taskState: Record<string, unknown> = {
+			abort: false,
+			apiRequestCount: 1,
+			autoRetryAttempts: MAX_AUTO_RETRY_ATTEMPTS,
+			conversationHistoryDeletedRange: undefined,
+			didAutomaticallyRetryFailedApiRequest: false,
+			isWaitingForFirstChunk: false,
+			isInternalContextCompactionRequest: false,
+			isManualContextCompactionRequest: false,
+		}
+		const clineError = {
+			message: "upstream overloaded",
+			isErrorType: vi.fn(() => false),
+			serialize: vi.fn(() => '{"message":"upstream overloaded"}'),
+		}
+		const errorService = { logMessage: vi.fn(), toClineError: vi.fn(() => clineError) }
+		vi.spyOn(ErrorService, "get").mockReturnValue(errorService as unknown as ErrorService)
+		const updateContextCompactionStatus = vi.fn(async () => undefined)
+		const discardFailedCompactionAttempt = vi.fn(async () => undefined)
+		const rollbackIndicator = vi.fn(async () => undefined)
+		const fakeTask = Object.assign(Object.create(Task.prototype), {
+			taskId: "task-request-ownership",
+			// Explicit user takeover keeps this failure out of the automatic-retry card path.
+			manualRetryTakeoverActive: true,
+			ordinaryRequestInputReplay: {
+				get: vi.fn(() => ({ systemPrompt: "frozen", messages: [{ role: "user", content: "hello" }], serverTools: [] })),
+				acknowledge: vi.fn(),
+			},
+			taskState,
+			beginOrdinaryContextWindowIndicator: vi.fn(async () => ({
+				kind: "ordinary" as const,
+				requestId: "ordinary:task-request-ownership:0",
+				requestSequence: 1,
+				attemptId: "attempt-0",
+			})),
+			receiveOrdinaryContextWindowIndicator: vi.fn(async () => undefined),
+			rollbackOrdinaryContextWindowIndicator: rollbackIndicator,
+			apiRateMetricsService: { recordRequestStarted: vi.fn(), trackProviderStream: <T>(stream: T) => stream },
+			admitOrdinaryProviderRequestRound: vi.fn(() => ({
+				bindAttempt: <T>(stream: T) => stream,
+				attachExactUsage: vi.fn(),
+			})),
+			buildThinkingSummary: vi.fn(() => undefined),
+			compactionRequestReplay: {
+				getProviderInput: vi.fn(() => undefined),
+				getHistoryIndex: vi.fn(() => undefined),
+				prepareOpenAiMaxOutputReplay: vi.fn(() => "not_applicable"),
+			},
+			discardFailedCompactionAttempt,
+			updateContextCompactionStatus,
+			endAutoRetrySequence: vi.fn(),
+			messageStateHandler: { apiConversationHistory: [{ role: "user" as const, content: "hello" }], clineMessages: [] },
+			stateManager: {
+				getApiConfiguration: vi.fn(() => ({ actModeProfile: "anthropic:claude-opus" })),
+				getGlobalSettingsKey: vi.fn(() => false),
+			},
+			toolExecutor: {
+				setAllowedNativeToolNames: vi.fn(),
+				setExplicitInstructionConsumePort: vi.fn(),
+				setHostedImageGenerationContext: vi.fn(),
+				setPromptRuntime: vi.fn(),
+				setWebSearchRoutingPlan: vi.fn(),
+			},
+			writePromptMetadataArtifacts: vi.fn(async () => undefined),
+		}) as Task
+		return {
+			fakeTask,
+			requestScope,
+			taskState,
+			providerError,
+			errorService,
+			updateContextCompactionStatus,
+			discardFailedCompactionAttempt,
+			rollbackIndicator,
+		}
+	}
+
+	it("keeps an ordinary request ordinary when automatic compaction starts before it fails", async () => {
+		const harness = createOrdinaryRequestHarness((taskState) => {
+			// A concurrent loop publishes automatic compaction while this request is still pending.
+			taskState.isInternalContextCompactionRequest = true
+		})
+
+		await expect(harness.fakeTask.attemptApiRequest(-1, harness.requestScope, 0, 0).next()).rejects.toBe(
+			harness.providerError,
+		)
+
+		expect(harness.discardFailedCompactionAttempt).not.toHaveBeenCalled()
+		expect(harness.updateContextCompactionStatus).not.toHaveBeenCalled()
+		expect(harness.rollbackIndicator).toHaveBeenCalledOnce()
+	})
+
+	it("stops a superseded continuation without touching the resumed continuation's request state", async () => {
+		let superseded = false
+		const harness = createOrdinaryRequestHarness((taskState) => {
+			// Resume replaced this continuation and its own request is now waiting on the Provider.
+			superseded = true
+			taskState.isWaitingForFirstChunk = true
+			taskState.isInternalContextCompactionRequest = true
+		})
+		const continuation = { isSuperseded: () => superseded }
+
+		const failure = await harness.fakeTask
+			.attemptApiRequest(-1, harness.requestScope, 0, 0, continuation)
+			.next()
+			.then(
+				() => undefined,
+				(error: unknown) => error,
+			)
+
+		expect(isInteractionCancellationError(failure)).toBe(true)
+		expect(harness.taskState.isWaitingForFirstChunk).toBe(true)
+		expect(harness.rollbackIndicator).not.toHaveBeenCalled()
+		expect(harness.discardFailedCompactionAttempt).not.toHaveBeenCalled()
+		expect(harness.updateContextCompactionStatus).not.toHaveBeenCalled()
+		expect(harness.errorService.toClineError).not.toHaveBeenCalled()
 	})
 })

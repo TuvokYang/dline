@@ -291,7 +291,7 @@ import { InputQueueCoordinator } from "./input-queue/InputQueueCoordinator"
 import type { QueueDelivery } from "./input-queue/InputQueueDelivery"
 import type { InputQueueMutation, InputQueueMutationResult } from "./input-queue/InputQueueMutation"
 import type { InteractionKind } from "./interaction/Interaction"
-import { isInteractionCancellationError } from "./interaction/InteractionCancellationError"
+import { InteractionCancellationError, isInteractionCancellationError } from "./interaction/InteractionCancellationError"
 import { type DetachedInteractionContinuationContext, InteractionCoordinator } from "./interaction/InteractionCoordinator"
 import { getInteraction } from "./interaction/InteractionRegistry"
 import type { InteractionDraft } from "./interaction/InteractionResponse"
@@ -345,7 +345,7 @@ import { TaskPhase } from "./TaskPhase"
 import { type PresentationFlushContext, TaskPresentationScheduler } from "./TaskPresentationScheduler"
 import { createSnapshot, hydrateSnapshot, normalizeLegacyTaskSnapshot, type TaskSnapshot } from "./TaskSnapshot"
 import { renameTaskSnapshotWithRetry, TaskSnapshotPersistence } from "./TaskSnapshotPersistence"
-import { TaskState } from "./TaskState"
+import { type TaskContinuationLease, TaskState } from "./TaskState"
 import { TaskStateManager } from "./TaskStateManager"
 import { withTerminateTimeout } from "./TaskTerminateTimeout"
 import { ToolExecutor } from "./ToolExecutor"
@@ -398,6 +398,13 @@ type AskOptions = {
 	onTsCreated?: (ts: number) => void
 	/** ts of the associated command message (for command_output) */
 	commandTs?: number
+}
+
+/** Cancellation reason for a request loop whose continuation a later Resume replaced. */
+const CONTINUATION_SUPERSEDED = "continuation_superseded"
+
+function isContinuationSupersededError(error: unknown): boolean {
+	return isInteractionCancellationError(error) && error.reason === CONTINUATION_SUPERSEDED
 }
 
 type ApiRequestTransactionOptions = {
@@ -7616,9 +7623,14 @@ export class Task {
 		requestScope: RequestApiScope,
 		apiIndex = this.messageStateHandler.apiConversationHistory.length - 1,
 		providerAttempt = 0,
+		continuation?: TaskContinuationLease,
 	): ApiStream {
 		const apiReqStart = performance.now()
 		const { api, providerInfo } = requestScope
+		// Classify the request when it is sent. The compaction flag is task-wide, so a
+		// failure that surfaces after another loop started compaction must not be
+		// recovered as that compaction attempt.
+		const isAutomaticCompactionRequest = this.taskState.isInternalContextCompactionRequest
 		Logger.debug(`[Task ${this.taskId}] attemptApiRequest: start (req #${this.taskState.apiRequestCount})`)
 
 		const replayProviderInput = this.compactionRequestReplay.getProviderInput(apiIndex)
@@ -7859,6 +7871,7 @@ export class Task {
 			// awaiting first chunk to see if it will throw an error
 			this.taskState.isWaitingForFirstChunk = true
 			const firstChunk = await iterator.next()
+			if (continuation) this.assertContinuationCurrent(continuation)
 			firstChunkAtMs = performance.now()
 			// A first chunk proves that the request in the active retry sequence
 			// reached the provider. Keep Cancel for the live stream, but release
@@ -7889,6 +7902,12 @@ export class Task {
 				`[Task ${this.taskId}] attemptApiRequest: upstream TTFB ${Math.round(firstChunkAtMs - providerRequestStartedAtMs)}ms`,
 			)
 		} catch (error) {
+			if (continuation?.isSuperseded()) {
+				// The first-chunk flag, indicator, retry cards and compaction status now
+				// belong to the resumed continuation. Release the stream without waiting on it.
+				void Promise.resolve(iterator.return?.(undefined)).catch(() => undefined)
+				this.assertContinuationCurrent(continuation)
+			}
 			this.taskState.isWaitingForFirstChunk = false
 			if (ordinaryIndicatorLineage) {
 				await this.rollbackOrdinaryContextWindowIndicator(apiIndex, ordinaryIndicatorLineage)
@@ -7907,15 +7926,15 @@ export class Task {
 						messages: this.projectCanonicalContext(),
 					})
 					Logger.warn(`[Task ${this.taskId}] Replaying one canonical tool-pairing rebuild`, { apiIndex })
-					yield* this.attemptApiRequest(previousApiReqIndex, requestScope, apiIndex, providerAttempt + 1)
+					yield* this.attemptApiRequest(previousApiReqIndex, requestScope, apiIndex, providerAttempt + 1, continuation)
 					return
 				}
 				if (rebuildDecision === "exhausted") throw error
 			}
-			const openAiMaxOutputReplayDecision = this.taskState.isInternalContextCompactionRequest
+			const openAiMaxOutputReplayDecision = isAutomaticCompactionRequest
 				? this.compactionRequestReplay.prepareOpenAiMaxOutputReplay(apiIndex, error)
 				: "not_applicable"
-			if (this.taskState.isInternalContextCompactionRequest) {
+			if (isAutomaticCompactionRequest) {
 				await this.discardFailedCompactionAttempt(apiIndex)
 			}
 			if (openAiMaxOutputReplayDecision === "replay") {
@@ -7925,7 +7944,7 @@ export class Task {
 					maxRetryAttempts: 1,
 					clearContent: true,
 				})
-				yield* this.attemptApiRequest(previousApiReqIndex, requestScope, apiIndex, providerAttempt + 1)
+				yield* this.attemptApiRequest(previousApiReqIndex, requestScope, apiIndex, providerAttempt + 1, continuation)
 				return
 			}
 			if (openAiMaxOutputReplayDecision === "exhausted") {
@@ -7953,7 +7972,7 @@ export class Task {
 			if (
 				isContextWindowExceededError &&
 				!autoCondenseEnabled &&
-				!this.taskState.isInternalContextCompactionRequest &&
+				!isAutomaticCompactionRequest &&
 				!this.taskState.didAutomaticallyRetryFailedApiRequest
 			) {
 				await this.handleContextWindowExceededError(api)
@@ -7961,7 +7980,7 @@ export class Task {
 				// request failed after retrying automatically once, ask user if they want to retry again
 				// note that this api_req_failed ask is unique in that we only present this option if the api hasn't streamed any content yet (ie it fails on the first chunk due), as it would allow them to hit a retry button. However if the api failed mid-stream, it could be in any arbitrary state where some tools may have executed, so that error is handled differently and requires cancelling the task entirely.
 
-				if (isContextWindowExceededError && !autoCondenseEnabled && !this.taskState.isInternalContextCompactionRequest) {
+				if (isContextWindowExceededError && !autoCondenseEnabled && !isAutomaticCompactionRequest) {
 					const truncatedConversationHistory = this.contextManager.getTruncatedMessages(
 						this.messageStateHandler.apiConversationHistory,
 						this.taskState.conversationHistoryDeletedRange,
@@ -8010,20 +8029,20 @@ export class Task {
 				const shouldRetry =
 					!manualRetryTakeover &&
 					this.taskState.autoRetryAttempts < MAX_AUTO_RETRY_ATTEMPTS &&
-					(!isContextWindowExceededError ||
-						!autoCondenseEnabled ||
-						this.taskState.isInternalContextCompactionRequest) &&
-					(this.taskState.isInternalContextCompactionRequest ||
+					(!isContextWindowExceededError || !autoCondenseEnabled || isAutomaticCompactionRequest) &&
+					(isAutomaticCompactionRequest ||
 						(!isInsufficientCredits && !isAuthError && !isSpendLimitError && !quotaExceeded))
 				if (shouldRetry) {
 					// Auto-retry enabled with max 3 attempts: automatically approve the retry
 					this.taskState.autoRetryAttempts++
-					await this.updateContextCompactionStatus("retrying", {
-						error: clineError.message,
-						retryAttempt: this.taskState.autoRetryAttempts,
-						maxRetryAttempts: MAX_AUTO_RETRY_ATTEMPTS,
-						clearContent: true,
-					})
+					if (isAutomaticCompactionRequest) {
+						await this.updateContextCompactionStatus("retrying", {
+							error: clineError.message,
+							retryAttempt: this.taskState.autoRetryAttempts,
+							maxRetryAttempts: MAX_AUTO_RETRY_ATTEMPTS,
+							clearContent: true,
+						})
+					}
 
 					// Calculate delay: 2s, 4s, 8s
 					const delay = getRetryDelay(this.taskState.autoRetryAttempts)
@@ -8070,9 +8089,11 @@ export class Task {
 						throw new Error("Dline instance aborted")
 					}
 				} else {
-					await this.updateContextCompactionStatus("failed", {
-						error: clineError.message,
-					})
+					if (isAutomaticCompactionRequest) {
+						await this.updateContextCompactionStatus("failed", {
+							error: clineError.message,
+						})
+					}
 					if (!manualRetryTakeover && this.taskState.autoRetryAttempts >= MAX_AUTO_RETRY_ATTEMPTS) {
 						await this.markAutoRetryExhausted(streamingFailedMessage)
 					}
@@ -8108,7 +8129,7 @@ export class Task {
 				this.taskState.didAutomaticallyRetryFailedApiRequest = false
 			}
 			// delegate generator output from the recursive call
-			yield* this.attemptApiRequest(previousApiReqIndex, requestScope, apiIndex, providerAttempt + 1)
+			yield* this.attemptApiRequest(previousApiReqIndex, requestScope, apiIndex, providerAttempt + 1, continuation)
 			return
 		}
 
@@ -8658,6 +8679,19 @@ export class Task {
 		return this.completeApiRequestGate(requestScope, apiIndex, beforeApiRequestStarted)
 	}
 
+	/**
+	 * Stop a request loop whose continuation a later Resume replaced.
+	 *
+	 * A Provider stream can outlive Cancel and finish after the user resumed. The
+	 * resumed loop owns the conversation from then on, so the superseded loop must not
+	 * append history, present failures, or send another Provider request.
+	 */
+	private assertContinuationCurrent(continuation: TaskContinuationLease): void {
+		if (!continuation.isSuperseded()) return
+		Logger.info(`[Task ${this.taskId}] Stopped a request loop superseded by a later continuation`)
+		throw new InteractionCancellationError(CONTINUATION_SUPERSEDED)
+	}
+
 	async recursivelyMakeClineRequests(
 		userContent: ClineContent[],
 		includeFileDetails = false,
@@ -8667,6 +8701,7 @@ export class Task {
 		if (this.taskState.abort) {
 			throw new Error("Task instance aborted")
 		}
+		const continuation = this.taskState.captureContinuation()
 		// Internal transition compaction owns a frozen target scope; user requests revalidate the current binding.
 		const transitionScope = this.modeSwitchCompaction.getExecutionScope()
 		const requestMode = transitionScope?.mode ?? this.taskSm.mode
@@ -9442,7 +9477,7 @@ export class Task {
 			this.taskState.partialToolLifecycleByTs.clear()
 
 			const { toolUseHandler, reasonsHandler } = this.streamHandler.getHandlers()
-			const providerStream = this.attemptApiRequest(previousApiReqIndex, requestScope, apiIndex) // yields only if the first chunk is successful, otherwise will allow the user to retry the request (most likely due to rate limit error, which gets thrown on the first chunk)
+			const providerStream = this.attemptApiRequest(previousApiReqIndex, requestScope, apiIndex, 0, continuation) // yields only if the first chunk is successful, otherwise will allow the user to retry the request (most likely due to rate limit error, which gets thrown on the first chunk)
 			const stream = normalizeApiStream(providerStream, createStreamNormalizer(this.identityFactory))
 
 			let assistantMessageId = ""
@@ -9500,6 +9535,7 @@ export class Task {
 
 				while (true) {
 					const chunk = await streamCoordinator.nextChunk()
+					this.assertContinuationCurrent(continuation)
 					if (!chunk) {
 						break
 					}
@@ -9724,6 +9760,8 @@ export class Task {
 				}
 			} catch (error) {
 				await streamCoordinator?.stop()
+				// Everything below reports or rolls back task-wide state that the current continuation owns.
+				if (isContinuationSupersededError(error)) throw error
 				if (!this.taskState.isInternalContextCompactionRequest && !this.taskState.isManualContextCompactionRequest) {
 					await this.rollbackOrdinaryContextWindowIndicator(apiIndex)
 				}
@@ -9882,8 +9920,16 @@ export class Task {
 					await this.reinitExistingTaskFromId(this.taskId)
 				}
 			} finally {
+				// Streaming flags and hosted tool calls are task-wide. After a later
+				// continuation took over, they belong to that continuation.
+				const ownsTaskStreamState = !continuation.isSuperseded()
 				try {
-					if (this.taskState.abort && !this.taskState.didFinishAbortingStream && !this.taskState.abandoned) {
+					if (
+						ownsTaskStreamState &&
+						this.taskState.abort &&
+						!this.taskState.didFinishAbortingStream &&
+						!this.taskState.abandoned
+					) {
 						// Some provider adapters surface transport abort as a clean iterator EOF.
 						// Persist the interrupted turn before isStreaming becomes false so task
 						// termination cannot close the stores ahead of this durability boundary.
@@ -9891,18 +9937,21 @@ export class Task {
 					}
 				} finally {
 					try {
-						await this.toolExecutor.finalizeServerToolCalls(
-							this.taskState.abort
-								? "Provider-hosted tool cancelled."
-								: "Provider stream ended before the hosted tool returned a result.",
-						)
+						if (ownsTaskStreamState) {
+							await this.toolExecutor.finalizeServerToolCalls(
+								this.taskState.abort
+									? "Provider-hosted tool cancelled."
+									: "Provider stream ended before the hosted tool returned a result.",
+							)
+						}
 					} finally {
-						this.taskState.isStreaming = false
+						if (ownsTaskStreamState) this.taskState.isStreaming = false
 						// End API call tracking for session statistics
 						Session.get().endApiCall()
 					}
 				}
 			}
+			this.assertContinuationCurrent(continuation)
 
 			if (this.taskState.isInternalContextCompactionRequest || this.taskState.isManualContextCompactionRequest) {
 				assistantMessage = normalizeCompactionResponse(assistantMessage).assistantText
@@ -10134,6 +10183,9 @@ export class Task {
 					await this.checkpointManager?.saveCheckpoint()
 				}
 
+				// A Resume during tool execution hands the conversation to the resumed loop.
+				this.assertContinuationCurrent(continuation)
+
 				// if the model did not tool use, then we need to tell it to either use a tool or attempt_completion
 				const didToolUse = this.taskState.assistantMessageContent.some((block) => block.type === "tool_use")
 
@@ -10253,8 +10305,10 @@ export class Task {
 
 			requestScope.explicitInstructions.close()
 			return didEndLoop // will always be false for now
-		} catch (_error) {
+		} catch (error) {
 			requestScope.explicitInstructions.cancel()
+			// The replay state now belongs to the continuation that superseded this loop.
+			if (isContinuationSupersededError(error)) return true
 			this.compactionRequestReplay.clear(apiIndex)
 			// this should never happen since the only thing that can throw an error is the attemptApiRequest, which is wrapped in a try catch that sends an ask where if noButtonClicked, will clear current task and destroy this instance. However to avoid unhandled promise rejection, we will end this loop which will end execution of this instance (see startTask)
 			return true // needs to be true so parent loop knows to end task
