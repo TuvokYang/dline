@@ -170,7 +170,11 @@ export function removeStaleAtomicTempFilesSync(
 	}
 }
 
-function temporaryPathOf(filePath: string): string {
+/**
+ * A fresh temporary path next to `filePath`. Files with this shape that outlive their
+ * writer are removed by {@link removeStaleAtomicTempFiles}.
+ */
+export function temporaryPathOf(filePath: string): string {
 	return `${filePath}.${process.pid}.${randomUUID()}.tmp`
 }
 
@@ -275,7 +279,8 @@ function restoreBackupSync(filePath: string): void {
 	}
 }
 
-async function renameWithRetry(sourcePath: string, destinationPath: string): Promise<void> {
+/** Renames `sourcePath` over `destinationPath`, retrying the transient Windows sharing errors. */
+export async function renameWithRetry(sourcePath: string, destinationPath: string): Promise<void> {
 	for (let attempt = 0; ; attempt++) {
 		try {
 			await rename(sourcePath, destinationPath)

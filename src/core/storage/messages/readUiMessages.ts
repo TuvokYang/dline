@@ -1,6 +1,5 @@
 import type { ClineMessage } from "@/shared/ExtensionMessage"
-import { fileExistsAtPath } from "@/utils/fs"
-import { InstanceDatabase, InstanceLayout } from "../instance"
+import { InstanceDatabase, InstanceLayout, instanceDatabaseExists } from "../instance"
 import { readLegacyUiMessages } from "./importLegacyUiMessages"
 import { openUiMessageRows, UI_MESSAGE_READER } from "./openUiMessageRows"
 
@@ -12,7 +11,7 @@ import { openUiMessageRows, UI_MESSAGE_READER } from "./openUiMessageRows"
  * database is not created, so reading never leaves files behind.
  */
 export async function readUiMessages(instanceRoot: string): Promise<ClineMessage[]> {
-	if (await fileExistsAtPath(new InstanceLayout(instanceRoot).database(InstanceDatabase.Messages))) {
+	if (await instanceDatabaseExists(new InstanceLayout(instanceRoot), InstanceDatabase.Messages)) {
 		const rows = await openUiMessageRows(instanceRoot, UI_MESSAGE_READER)
 		try {
 			if ((await rows.count()) > 0) return (await rows.query()).records.map((record) => record.message)

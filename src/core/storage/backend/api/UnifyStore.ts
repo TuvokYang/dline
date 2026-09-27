@@ -36,9 +36,18 @@ export interface UnifyStore<TEntity extends object> {
 	close(): Promise<void>
 }
 
+/** A collection registered in a database, identified by the schema it was created with. */
+export interface UnifyStoreCollectionInfo {
+	readonly schemaId: string
+	readonly version: number
+	readonly fingerprint: string
+}
+
 export interface UnifyStoreDatabase {
 	hasStore<TEntity extends object>(entity: StoredEntityClass<TEntity>): Promise<boolean>
 	openStore<TEntity extends object>(entity: StoredEntityClass<TEntity>): Promise<UnifyStore<TEntity>>
+	/** Every collection this database holds, ordered by schema id; a copy uses it so no collection is left behind. */
+	collections(): Promise<readonly UnifyStoreCollectionInfo[]>
 	close(): Promise<void>
 }
 
@@ -60,6 +69,11 @@ export interface UnifyStoreDatabaseTransaction {
  */
 export interface TransactionalUnifyStoreDatabase extends UnifyStoreDatabase {
 	transaction<TResult>(operation: (transaction: UnifyStoreDatabaseTransaction) => TResult | Promise<TResult>): Promise<TResult>
+}
+
+/** A backend whose databases support cross-collection transactions; SQLite and JSONL both do. */
+export interface TransactionalUnifyStoreBackend extends UnifyStoreBackend {
+	open(location: string): Promise<TransactionalUnifyStoreDatabase>
 }
 
 export interface BufferedUnifyStoreChange {

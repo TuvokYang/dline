@@ -4,8 +4,6 @@ import { column, defineEntity, type EntitySchema, type StoredEntityClass } from 
 import type {
 	BufferedUnifyStore as BufferedUnifyStoreContract,
 	UnifyStore,
-	UnifyStoreBackend,
-	UnifyStoreDatabase,
 	UnifyStoreResult,
 	UnifyStoreStats,
 } from "../api/UnifyStore"
@@ -13,21 +11,16 @@ import { BufferedUnifyStore, type BufferedUnifyStoreOptions } from "../core/Buff
 import { UnifyStoreCore, type UnifyStoreDriver, type UnifyStoreDriverTransaction } from "../core/UnifyStoreCore"
 import { evaluateUnifyStoreQuery, type NormalizedUnifyStoreQuery } from "../core/UnifyStoreQueryEvaluator"
 import { FileLock } from "./FileLock"
-import { createSchemaJsonlRecordCodec, type JsonlRecordCodec } from "./JsonlRecordCodec"
+import type { JsonlRecordCodec } from "./JsonlRecordCodec"
 import { appendJsonl, canAppendJsonl, readJsonl, truncateJsonlTail, writeJsonl } from "./jsonl-utils"
 
-interface JsonlSchemaMetadata {
-	readonly schemaId: string
-	readonly version: number
-	readonly fingerprint: string
-}
-
-export class JsonlUnifyStoreBackend implements UnifyStoreBackend {
-	async open(location: string): Promise<UnifyStoreDatabase> {
-		await fs.mkdir(location, { recursive: true })
-		return new JsonlUnifyStoreDatabase(location)
-	}
-}
+/**
+ * Single-file JSONL stores for the legacy per-task message files.
+ *
+ * These read and write one pre-existing `.jsonl` file in its historical format and are
+ * kept only so legacy task files stay readable. Durable databases use
+ * {@link import("./JsonlDatabase").JsonlUnifyStoreBackend} instead.
+ */
 
 interface BufferedJsonlRow {
 	readonly ordinal: number
@@ -99,49 +92,6 @@ export async function openBufferedJsonlStore<TItem extends { ts: number }>(
 				fileLock.withLock(filePath, () => truncateJsonlTail(filePath, keepCount, expectedCount)),
 		},
 	})
-}
-
-class JsonlUnifyStoreDatabase implements UnifyStoreDatabase {
-	private closed = false
-	private closePromise: Promise<void> | undefined
-	private readonly fileLock = new FileLock()
-
-	constructor(private readonly directory: string) {}
-
-	async hasStore<TEntity extends object>(entity: StoredEntityClass<TEntity>): Promise<boolean> {
-		this.assertOpen()
-		const paths = collectionPaths(this.directory, entity.storage.schemaId)
-		return await this.fileLock.withLock(paths.data, async () => {
-			this.assertOpen()
-			const [hasData, hasMetadata] = await Promise.all([pathExists(paths.data), pathExists(paths.metadata)])
-			if (!hasData && !hasMetadata) return false
-			if (!hasData || !hasMetadata) throw new Error(`Incomplete JSONL entity store for ${entity.storage.schemaId}`)
-			await validateSchemaMetadata(paths.metadata, entity.storage)
-			return true
-		})
-	}
-
-	async openStore<TEntity extends object>(entity: StoredEntityClass<TEntity>): Promise<UnifyStore<TEntity>> {
-		this.assertOpen()
-		const paths = collectionPaths(this.directory, entity.storage.schemaId)
-		await this.fileLock.withLock(paths.data, async () => {
-			this.assertOpen()
-			await ensureSchemaMetadata(paths.metadata, entity.storage)
-			await fs.appendFile(paths.data, "", "utf8")
-		})
-		return createJsonlStore(entity.storage, paths.data, createSchemaJsonlRecordCodec(entity.storage), this.fileLock)
-	}
-
-	close(): Promise<void> {
-		this.closePromise ??= Promise.resolve().then(() => {
-			this.closed = true
-		})
-		return this.closePromise
-	}
-
-	private assertOpen(): void {
-		if (this.closed) throw new Error("JSONL UnifyStore database is closed")
-	}
 }
 
 function createJsonlStore<TEntity extends object, TPersisted>(
@@ -328,51 +278,6 @@ class JsonlUnifyStoreDriver<TEntity extends object, TPersisted> implements Unify
 	}
 }
 
-async function ensureSchemaMetadata<TEntity extends object>(metadataPath: string, schema: EntitySchema<TEntity>): Promise<void> {
-	try {
-		await validateSchemaMetadata(metadataPath, schema)
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
-		await fs.writeFile(metadataPath, JSON.stringify(expectedSchemaMetadata(schema)), { encoding: "utf8", flag: "wx" })
-	}
-}
-
-async function validateSchemaMetadata<TEntity extends object>(
-	metadataPath: string,
-	schema: EntitySchema<TEntity>,
-): Promise<void> {
-	const expected = expectedSchemaMetadata(schema)
-	const actual = JSON.parse(await fs.readFile(metadataPath, "utf8")) as Partial<JsonlSchemaMetadata>
-	if (typeof actual.version === "number" && actual.version > schema.version) {
-		throw new Error(`Future entity schema version for ${schema.schemaId}`)
-	}
-	if (
-		actual.schemaId !== expected.schemaId ||
-		actual.version !== expected.version ||
-		actual.fingerprint !== expected.fingerprint
-	) {
-		throw new Error(`Entity schema conflict for ${schema.schemaId}`)
-	}
-}
-
-function expectedSchemaMetadata<TEntity extends object>(schema: EntitySchema<TEntity>): JsonlSchemaMetadata {
-	return {
-		schemaId: schema.schemaId,
-		version: schema.version,
-		fingerprint: schema.fingerprint,
-	}
-}
-
-async function pathExists(filePath: string): Promise<boolean> {
-	try {
-		await fs.access(filePath)
-		return true
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") return false
-		throw error
-	}
-}
-
 function assertNoPrimaryConflicts<TEntity extends object>(
 	schema: EntitySchema<TEntity>,
 	current: readonly TEntity[],
@@ -482,27 +387,6 @@ function bufferedStoreKind(schemaId: string): string {
 function normalizeSubscriptionKey(filePath: string): string {
 	const resolved = path.resolve(filePath)
 	return process.platform === "win32" ? resolved.toLowerCase() : resolved
-}
-
-function collectionPaths(directory: string, schemaId: string): { data: string; metadata: string } {
-	const base = `${sanitizeName(schemaId)}-${fnv1a(schemaId)}`
-	return {
-		data: path.join(directory, `${base}.jsonl`),
-		metadata: path.join(directory, `${base}.schema.json`),
-	}
-}
-
-function sanitizeName(value: string): string {
-	return value.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 72)
-}
-
-function fnv1a(value: string): string {
-	let hash = 0x811c9dc5
-	for (let index = 0; index < value.length; index++) {
-		hash ^= value.charCodeAt(index)
-		hash = Math.imul(hash, 0x01000193)
-	}
-	return (hash >>> 0).toString(16).padStart(8, "0")
 }
 
 async function createStats(dataPath: string, count: number): Promise<UnifyStoreStats> {

@@ -21,6 +21,9 @@ export function claimOnWrite(database: TransactionalUnifyStoreDatabase, claim: (
 		async openStore<TEntity extends object>(entity: StoredEntityClass<TEntity>): Promise<UnifyStore<TEntity>> {
 			return claimStore(await database.openStore(entity), claim)
 		},
+		collections() {
+			return database.collections()
+		},
 		transaction<TResult>(
 			operation: (transaction: UnifyStoreDatabaseTransaction) => TResult | Promise<TResult>,
 		): Promise<TResult> {

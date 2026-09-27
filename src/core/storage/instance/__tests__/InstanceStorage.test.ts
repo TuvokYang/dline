@@ -5,7 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { column, defineEntity } from "../../backend/api/EntitySchema"
 import {
 	closeInstanceStoragesUnder,
+	databaseLocation,
 	ensureInstanceLayout,
+	INSTANCE_BACKEND_ENV,
+	InstanceBackend,
 	InstanceDatabase,
 	InstanceLayout,
 	instanceRoot,
@@ -37,12 +40,27 @@ async function exists(location: string): Promise<boolean> {
 	)
 }
 
-describe("instance storage", () => {
+describe.each(Object.values(InstanceBackend))("instance storage on %s", (backend) => {
 	let documentsRoot: string
 
 	beforeEach(async () => {
 		documentsRoot = await mkdtemp(path.join(os.tmpdir(), "dline-instance-storage-"))
 		vi.stubEnv("DLINE_DOCS_DIR", documentsRoot)
+		vi.stubEnv(INSTANCE_BACKEND_ENV, backend)
+	})
+
+	it("creates a new database in the configured backend", async () => {
+		const layout = await ensureInstanceLayout({ taskId: "task-backend" })
+		const storage = openInstanceStorage(layout.root)
+		await (await (await storage.openDatabase(InstanceDatabase.Journal, "kernel-commit")).openStore(Row)).insert([
+			new Row(1, "one"),
+		])
+
+		expect(storage.openBackends().get(InstanceDatabase.Journal)).toBe(backend)
+		expect(await exists(databaseLocation(layout, InstanceDatabase.Journal, backend))).toBe(true)
+		const other = backend === InstanceBackend.Sqlite ? InstanceBackend.Jsonl : InstanceBackend.Sqlite
+		expect(await exists(databaseLocation(layout, InstanceDatabase.Journal, other))).toBe(false)
+		await storage.close()
 	})
 
 	afterEach(async () => {

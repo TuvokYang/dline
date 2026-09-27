@@ -1,9 +1,10 @@
 import type { DatabaseSync } from "node:sqlite"
 import type { EntitySchema, EntityValues, StoredEntityClass } from "../api/EntitySchema"
 import type {
+	TransactionalUnifyStoreBackend,
 	TransactionalUnifyStoreDatabase,
 	UnifyStore,
-	UnifyStoreBackend,
+	UnifyStoreCollectionInfo,
 	UnifyStoreDatabaseTransaction,
 	UnifyStoreResult,
 	UnifyStoreStats,
@@ -63,7 +64,7 @@ interface PragmaRow {
 	readonly page_size?: number
 }
 
-export class SqliteUnifyStoreBackend implements UnifyStoreBackend {
+export class SqliteUnifyStoreBackend implements TransactionalUnifyStoreBackend {
 	async open(location: string): Promise<TransactionalUnifyStoreDatabase> {
 		const lease = await registry.acquire(location, {
 			applicationId: APPLICATION_ID,
@@ -94,6 +95,21 @@ class SqliteUnifyStoreDatabase implements TransactionalUnifyStoreDatabase {
 			ensureEntitySchema(this.lease.database, entity.storage)
 		})
 		return new UnifyStoreCore(entity.storage, new SqliteUnifyStoreDriver(this.lease, entity.storage))
+	}
+
+	async collections(): Promise<readonly UnifyStoreCollectionInfo[]> {
+		this.assertOpen()
+		return await this.lease.withLock(() => {
+			this.assertOpen()
+			const rows = this.lease.database
+				.prepare("SELECT schema_id, schema_version, schema_fingerprint FROM entity_schema_registry ORDER BY schema_id")
+				.all() as unknown as Array<{ schema_id: string; schema_version: number; schema_fingerprint: string }>
+			return rows.map((row) => ({
+				schemaId: row.schema_id,
+				version: row.schema_version,
+				fingerprint: row.schema_fingerprint,
+			}))
+		})
 	}
 
 	/**

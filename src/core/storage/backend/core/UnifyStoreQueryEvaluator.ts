@@ -8,8 +8,8 @@ export interface NormalizedUnifyStoreQuery<TEntity extends object> {
 	readonly limit?: number
 }
 
-interface EvaluatedEntity<TEntity extends object> {
-	readonly entity: TEntity
+interface EvaluatedEntity<TItem, TEntity extends object> {
+	readonly entity: TItem
 	readonly values: EntityValues<TEntity>
 }
 
@@ -31,15 +31,31 @@ export function evaluateUnifyStoreQuery<TEntity extends object>(
 	entities: readonly TEntity[],
 	query: NormalizedUnifyStoreQuery<TEntity>,
 ): TEntity[] {
-	let selected: EvaluatedEntity<TEntity>[] = entities.map((entity) => ({
-		entity,
-		values: schema.dehydrate(entity),
-	}))
+	const evaluated = entities.map((entity) => ({ entity, values: schema.dehydrate(entity) }))
+	return selectEvaluated(evaluated, query).map(({ entity }) => entity)
+}
+
+/** Evaluates `query` over already validated stored values and returns the selected values in result order. */
+export function evaluateUnifyStoreValues<TEntity extends object>(
+	values: readonly EntityValues<TEntity>[],
+	query: NormalizedUnifyStoreQuery<TEntity>,
+): EntityValues<TEntity>[] {
+	return selectEvaluated(
+		values.map((entry) => ({ entity: entry, values: entry })),
+		query,
+	).map(({ values: selected }) => selected)
+}
+
+function selectEvaluated<TItem, TEntity extends object>(
+	evaluated: EvaluatedEntity<TItem, TEntity>[],
+	query: NormalizedUnifyStoreQuery<TEntity>,
+): EvaluatedEntity<TItem, TEntity>[] {
+	let selected = evaluated
 	if (query.where) selected = selected.filter(({ values }) => evaluatePredicate(query.where!, values))
 	if (query.select) selected = selectLatestPerGroup(selected, query.select)
 	selected.sort((left, right) => compareByOrder(left.values, right.values, query.orderBy))
 	if (query.limit !== undefined) selected = selected.slice(0, query.limit)
-	return selected.map(({ entity }) => entity)
+	return selected
 }
 
 export function compareEntityValues<TEntity extends object>(
@@ -112,11 +128,11 @@ function evaluatePredicate<TEntity extends object>(
 	return predicate.operator === "gte" ? comparison >= 0 : comparison < 0
 }
 
-function selectLatestPerGroup<TEntity extends object>(
-	entities: readonly EvaluatedEntity<TEntity>[],
+function selectLatestPerGroup<TItem, TEntity extends object>(
+	entities: readonly EvaluatedEntity<TItem, TEntity>[],
 	selection: LatestPerGroup<TEntity>,
-): EvaluatedEntity<TEntity>[] {
-	const selected = new Map<string, EvaluatedEntity<TEntity>>()
+): EvaluatedEntity<TItem, TEntity>[] {
+	const selected = new Map<string, EvaluatedEntity<TItem, TEntity>>()
 	for (const candidate of entities) {
 		const key = selection.groupBy.map((field) => serializeKeyPart(candidate.values[field.name])).join("|")
 		const current = selected.get(key)
@@ -143,10 +159,32 @@ function compareValues(left: unknown, right: unknown): number {
 	if (right === null || right === undefined) return 1
 	if (typeof left === "number" && typeof right === "number") return left - right
 	if (typeof left === "bigint" && typeof right === "bigint") return left < right ? -1 : 1
-	if (typeof left === "string" && typeof right === "string") return left.localeCompare(right)
+	if (typeof left === "string" && typeof right === "string") return compareCodePoints(left, right)
 	if (typeof left === "boolean" && typeof right === "boolean") return Number(left) - Number(right)
 	if (left instanceof Uint8Array && right instanceof Uint8Array) return Buffer.compare(left, right)
-	return JSON.stringify(left).localeCompare(JSON.stringify(right))
+	return compareCodePoints(JSON.stringify(left), JSON.stringify(right))
+}
+
+/**
+ * Orders strings by Unicode code point, which is the order of their UTF-8 bytes and
+ * therefore SQLite's BINARY collation. `localeCompare` would make the in-memory
+ * backends sort text differently from SQLite. UTF-16 code unit order only differs
+ * from code point order where a surrogate meets a unit at or above U+E000.
+ */
+export function compareCodePoints(left: string, right: string): number {
+	const length = Math.min(left.length, right.length)
+	for (let index = 0; index < length; index++) {
+		const leftUnit = left.charCodeAt(index)
+		const rightUnit = right.charCodeAt(index)
+		if (leftUnit !== rightUnit) return codePointRank(leftUnit) - codePointRank(rightUnit)
+	}
+	return left.length - right.length
+}
+
+function codePointRank(unit: number): number {
+	if (unit >= 0xd800 && unit <= 0xdfff) return unit + 0x2000
+	if (unit >= 0xe000) return unit - 0x800
+	return unit
 }
 
 function valuesEqual(left: unknown, right: unknown): boolean {

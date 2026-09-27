@@ -121,8 +121,21 @@ async function breakStaleLock(lockPath: string): Promise<void> {
  *       await appendJsonl(jsonlPath, item)
  *   })
  */
+export interface FileLockOptions {
+	/**
+	 * Attempts, 100 ms apart, before an acquire gives up on a lock held by an active owner.
+	 * Defaults to 10, about one second.
+	 */
+	readonly maxAcquireAttempts?: number
+}
+
 export class FileLock {
 	private readonly ownedLocks = new Map<string, string>()
+	private readonly maxAcquireAttempts: number
+
+	constructor(options: FileLockOptions = {}) {
+		this.maxAcquireAttempts = options.maxAcquireAttempts ?? MAX_ACQUIRE_RETRIES
+	}
 
 	/**
 	 * Acquire the lock for a JSONL file.
@@ -147,7 +160,7 @@ export class FileLock {
 		}
 		let attempt = 1
 
-		for (; attempt <= MAX_ACQUIRE_RETRIES; attempt++) {
+		for (; attempt <= this.maxAcquireAttempts; attempt++) {
 			const payload: LockPayload = {
 				pid: process.pid,
 				ownerId,
@@ -208,9 +221,9 @@ export class FileLock {
 				await breakStaleLock(lockPath)
 				continue
 			}
-			if (attempt === MAX_ACQUIRE_RETRIES) {
+			if (attempt === this.maxAcquireAttempts) {
 				report("timeout", Math.round(performance.now() - startedAt))
-				throw new Error(`[FileLock] Failed to acquire lock after ${MAX_ACQUIRE_RETRIES} attempts: ${lockPath}`)
+				throw new Error(`[FileLock] Failed to acquire lock after ${this.maxAcquireAttempts} attempts: ${lockPath}`)
 			}
 			await new Promise((r) => setTimeout(r, ACQUIRE_RETRY_DELAY_MS))
 		}

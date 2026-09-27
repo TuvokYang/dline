@@ -1,8 +1,14 @@
 import { mkdir } from "node:fs/promises"
 import path from "node:path"
 import type { TransactionalUnifyStoreDatabase } from "../backend/api/UnifyStore"
-import { SqliteUnifyStoreBackend } from "../backend/sqlite/SqliteUnifyStore"
 import { getDlineDocumentsPath } from "../documents-path"
+import {
+	configuredInstanceBackend,
+	databaseLocation,
+	type InstanceBackend,
+	instanceBackend,
+	resolveDatabaseBackend,
+} from "./InstanceBackends"
 import { type InstanceDatabase, InstanceLayout, type InstanceLocation, instanceRoot } from "./InstanceLayout"
 import { claimOnWrite } from "./WriterClaimedDatabase"
 
@@ -27,6 +33,7 @@ interface WriterClaim {
 interface OpenedDatabase {
 	readonly key: string
 	readonly database: TransactionalUnifyStoreDatabase
+	readonly backend: InstanceBackend
 }
 
 function normalizedPath(location: string): string {
@@ -53,25 +60,34 @@ export class InstanceStorage {
 	/**
 	 * Opens `kind` on behalf of `writer`.
 	 *
-	 * Opening and reading are always allowed. The first write claims the file for
-	 * `writer` until this storage closes; a write through any other owner then fails
-	 * with `InstanceDatabaseWriterConflict` before it reaches the file.
+	 * The database is opened in whichever backend holds it; a database that does not exist
+	 * yet is created in the configured backend (see `InstanceBackends.ts`). Opening and
+	 * reading are always allowed. The first write claims the database for `writer` until
+	 * this storage closes; a write through any other owner then fails with
+	 * `InstanceDatabaseWriterConflict` before it reaches the file.
 	 *
 	 * @throws when the storage is closed or `kind` is already open in this storage.
 	 */
 	async openDatabase(kind: InstanceDatabase, writer: string): Promise<TransactionalUnifyStoreDatabase> {
 		if (this.closePromise) throw new Error(`Instance storage ${this.layout.root} is closed`)
 		if (this.databases.has(kind)) throw new Error(`Instance database ${kind} is already open in ${this.layout.root}`)
-		const location = this.layout.database(kind)
-		const key = normalizedPath(location)
-		const database = await new SqliteUnifyStoreBackend().open(location)
+		const backend = await resolveDatabaseBackend(this.layout, kind, configuredInstanceBackend())
+		const location = databaseLocation(this.layout, kind, backend)
+		// Keyed by the database rather than its file, so the claim survives a backend switch.
+		const key = normalizedPath(this.layout.database(kind))
+		const database = await instanceBackend(backend).open(location)
 		if (this.closePromise) {
 			// Closed while the file was opening: nothing may keep it past close().
 			await database.close()
 			throw new Error(`Instance storage ${this.layout.root} is closed`)
 		}
-		this.databases.set(kind, { key, database })
+		this.databases.set(kind, { key, database, backend })
 		return claimOnWrite(database, () => this.claimWriter(key, kind, location, writer))
+	}
+
+	/** Backend each open database of this storage uses. */
+	openBackends(): ReadonlyMap<InstanceDatabase, InstanceBackend> {
+		return new Map([...this.databases.entries()].map(([kind, opened]) => [kind, opened.backend]))
 	}
 
 	private claimWriter(key: string, kind: InstanceDatabase, location: string, writer: string): void {
@@ -121,6 +137,12 @@ export async function ensureInstanceLayout(location: InstanceLocation): Promise<
 	const layout = await resolveInstanceLayout(location)
 	await mkdir(layout.root, { recursive: true })
 	return layout
+}
+
+/** Whether any instance storage at or below `root` is open in this process. */
+export function hasOpenInstanceStoragesUnder(root: string): boolean {
+	const normalized = normalizedPath(root)
+	return [...openStorages].some((storage) => isSameOrInside(normalizedPath(storage.layout.root), normalized))
 }
 
 /**

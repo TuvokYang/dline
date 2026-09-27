@@ -1,7 +1,6 @@
 import { getSavedApiConversationHistory } from "@core/storage/disk"
-import { InstanceDatabase, openInstanceStorage, resolveInstanceLayout } from "@core/storage/instance"
+import { InstanceDatabase, instanceDatabaseExists, openInstanceStorage, resolveInstanceLayout } from "@core/storage/instance"
 import type { ClineStorageMessage } from "@shared/messages/content"
-import { fileExistsAtPath } from "@utils/fs"
 import { JournalConversationView } from "../executors/provider/service/JournalConversationView"
 import { ProviderJournalMessageMaterializer } from "../executors/provider/service/ProviderJournalMessageMaterializer"
 import { openTaskJournalStores } from "../stores"
@@ -22,7 +21,7 @@ const CONVERSATION_READER = "conversation-reader"
  */
 export async function readTaskConversation(taskId: string): Promise<ClineStorageMessage[]> {
 	const layout = await resolveInstanceLayout({ taskId })
-	if (!(await fileExistsAtPath(layout.database(InstanceDatabase.Journal)))) return getSavedApiConversationHistory(taskId)
+	if (!(await instanceDatabaseExists(layout, InstanceDatabase.Journal))) return getSavedApiConversationHistory(taskId)
 	const storage = openInstanceStorage(layout.root)
 	try {
 		const stores = await openTaskJournalStores(await storage.openDatabase(InstanceDatabase.Journal, CONVERSATION_READER))
