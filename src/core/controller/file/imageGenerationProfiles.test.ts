@@ -12,15 +12,10 @@ vi.mock("@core/storage/disk", () => ({ getDlineDataDir: () => "e:/dline-test" })
 vi.mock("node:fs", () => ({
 	default: { readFileSync: () => state.fileText },
 }))
-vi.mock("node:fs/promises", () => ({
-	default: {
-		mkdir: vi.fn(async () => undefined),
-		writeFile: vi.fn(async (_path: string, text: string) => {
-			state.writtenText = text
-		}),
-		rename: vi.fn(async () => undefined),
-		unlink: vi.fn(async () => undefined),
-	},
+vi.mock("@shared/storage/atomic-file", () => ({
+	writeFileAtomic: vi.fn(async (_path: string, text: string) => {
+		state.writtenText = text
+	}),
 }))
 vi.mock("@core/storage/secrets", () => ({
 	getAllApiKeys: () => state.storedKeys,

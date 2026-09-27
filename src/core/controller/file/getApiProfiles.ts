@@ -41,6 +41,7 @@ import {
 import { PROFILE_PROVIDER_KEYS } from "@shared/providers/profile-model-info"
 import { declaredServerTools } from "@shared/providers/server-tool-switches"
 import { Logger } from "@shared/services/Logger"
+import { writeFileAtomic } from "@shared/storage/atomic-file"
 import { ProviderToApiKeyMap } from "@shared/storage/provider-keys"
 import fsSync from "fs"
 import fs from "fs/promises"
@@ -121,43 +122,16 @@ export function invalidateApiProfilesReadCache(filePath?: string): void {
 	apiProfilesReadCache = undefined
 }
 
-const ATOMIC_WRITE_RENAME_RETRY_DELAYS_MS = [20, 50, 100, 200, 500]
-
-function isRetryableRenameError(error: unknown): boolean {
-	const code = (error as NodeJS.ErrnoException)?.code
-	return code === "EPERM" || code === "EBUSY" || code === "EACCES"
-}
-
-async function renameWithRetry(tmpPath: string, filePath: string): Promise<void> {
-	for (let attempt = 0; ; attempt++) {
-		try {
-			await fs.rename(tmpPath, filePath)
-			return
-		} catch (error) {
-			if (!isRetryableRenameError(error) || attempt >= ATOMIC_WRITE_RENAME_RETRY_DELAYS_MS.length) {
-				throw error
-			}
-			await new Promise((resolve) => setTimeout(resolve, ATOMIC_WRITE_RENAME_RETRY_DELAYS_MS[attempt]))
-		}
-	}
-}
-
-async function atomicWriteApiProfilesFile(filePath: string, data: string): Promise<void> {
-	const tmpPath = `${filePath}.tmp.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.json`
-	try {
-		await fs.writeFile(tmpPath, data, "utf8")
-		await renameWithRetry(tmpPath, filePath)
-	} catch (error) {
-		fs.unlink(tmpPath).catch(() => {})
-		throw error
-	}
-}
+/**
+ * Every open window watches and re-reads the catalog, so a reader can hold the file longer than
+ * the default rename budget allows.
+ */
+const API_PROFILES_RENAME_RETRY_DELAYS_MS = [20, 50, 100, 200, 500] as const
 
 async function persistApiProfilesFile(filePath: string, profiles: ApiProfile[]): Promise<void> {
 	await persistProviderSecrets(profiles)
-	const data = JSON.stringify(serializeApiProfilesForStorage(profiles), null, "\t")
-	await fs.mkdir(path.dirname(filePath), { recursive: true })
-	await atomicWriteApiProfilesFile(filePath, data)
+	const data = `${JSON.stringify(serializeApiProfilesForStorage(profiles), null, "\t")}\n`
+	await writeFileAtomic(filePath, data, { renameRetryDelaysMs: API_PROFILES_RENAME_RETRY_DELAYS_MS })
 	invalidateApiProfilesReadCache(filePath)
 }
 

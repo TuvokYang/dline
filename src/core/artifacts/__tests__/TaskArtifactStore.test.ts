@@ -127,7 +127,9 @@ describe("TaskArtifactStore", () => {
 		})
 		expect(await fs.readFile(path.join(taskDirectory, "artifacts", artifact.relativePath))).toEqual(fixture.bytes)
 		expect(
-			(await fs.readdir(path.join(taskDirectory, "artifacts", "images"))).some((name) => name.endsWith(".partial")),
+			(await fs.readdir(path.join(taskDirectory, "artifacts", "images"))).some(
+				(name) => name.endsWith(".partial") || name.endsWith(".tmp"),
+			),
 		).toBe(false)
 	})
 
@@ -344,6 +346,12 @@ describe("TaskArtifactStore", () => {
 		const stalePartialPath = path.join(imagesDirectory, "orphan.partial")
 		await fs.writeFile(stalePartialPath, PNG_1X1)
 		await fs.utimes(stalePartialPath, new Date(0), new Date(0))
+		const staleTemporaryPath = path.join(
+			imagesDirectory,
+			`${"a".repeat(64)}.png.123.0f8fad5b-d9cb-469f-a165-70867728950e.tmp`,
+		)
+		await fs.writeFile(staleTemporaryPath, PNG_1X1)
+		await fs.utimes(staleTemporaryPath, new Date(0), new Date(0))
 		await fs.writeFile(
 			path.join(artifactRoot, "manifest.json"),
 			JSON.stringify({ schemaVersion: 999, taskId: "task-1", artifacts: [] }),

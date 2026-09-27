@@ -46,6 +46,11 @@ export interface AtomicWriteOptions {
 	readonly fsync?: boolean
 	/** Permission bits of the published file, for example `0o600` for credentials. */
 	readonly mode?: number
+	/**
+	 * Backoff between rename attempts after a transient sharing error. Documents that several
+	 * windows watch and re-read (the API profile catalog) need a longer budget than the default.
+	 */
+	readonly renameRetryDelaysMs?: readonly number[]
 }
 
 export type BackupReadResult<T> =
@@ -80,7 +85,7 @@ export async function writeFileAtomic(
 	try {
 		await writeTemporaryFile(temporaryPath, data, options)
 		if (options.backup) rotated = await rotateToBackup(filePath)
-		await renameWithRetry(temporaryPath, filePath)
+		await renameWithRetry(temporaryPath, filePath, options.renameRetryDelaysMs)
 	} catch (error) {
 		await rm(temporaryPath, { force: true }).catch(() => undefined)
 		if (rotated) await renameWithRetry(backupPathOf(filePath), filePath).catch(() => undefined)
@@ -131,7 +136,7 @@ export function writeFileAtomicSync(filePath: string, data: string | Uint8Array,
 	try {
 		writeTemporaryFileSync(temporaryPath, data, options)
 		if (options.backup) rotated = rotateToBackupSync(filePath)
-		renameWithRetrySync(temporaryPath, filePath)
+		renameWithRetrySync(temporaryPath, filePath, options.renameRetryDelaysMs)
 	} catch (error) {
 		rmSync(temporaryPath, { force: true })
 		if (rotated) restoreBackupSync(filePath)
@@ -280,26 +285,34 @@ function restoreBackupSync(filePath: string): void {
 }
 
 /** Renames `sourcePath` over `destinationPath`, retrying the transient Windows sharing errors. */
-export async function renameWithRetry(sourcePath: string, destinationPath: string): Promise<void> {
+export async function renameWithRetry(
+	sourcePath: string,
+	destinationPath: string,
+	retryDelaysMs: readonly number[] = RENAME_RETRY_DELAYS_MS,
+): Promise<void> {
 	for (let attempt = 0; ; attempt++) {
 		try {
 			await rename(sourcePath, destinationPath)
 			return
 		} catch (error) {
-			if (!isRetryableRenameError(error) || attempt >= RENAME_RETRY_DELAYS_MS.length) throw error
-			await new Promise<void>((resolve) => setTimeout(resolve, RENAME_RETRY_DELAYS_MS[attempt]))
+			if (!isRetryableRenameError(error) || attempt >= retryDelaysMs.length) throw error
+			await new Promise<void>((resolve) => setTimeout(resolve, retryDelaysMs[attempt]))
 		}
 	}
 }
 
-function renameWithRetrySync(sourcePath: string, destinationPath: string): void {
+function renameWithRetrySync(
+	sourcePath: string,
+	destinationPath: string,
+	retryDelaysMs: readonly number[] = RENAME_RETRY_DELAYS_MS,
+): void {
 	for (let attempt = 0; ; attempt++) {
 		try {
 			renameSync(sourcePath, destinationPath)
 			return
 		} catch (error) {
-			if (!isRetryableRenameError(error) || attempt >= RENAME_RETRY_DELAYS_MS.length) throw error
-			Atomics.wait(SLEEP_CELL, 0, 0, RENAME_RETRY_DELAYS_MS[attempt])
+			if (!isRetryableRenameError(error) || attempt >= retryDelaysMs.length) throw error
+			Atomics.wait(SLEEP_CELL, 0, 0, retryDelaysMs[attempt])
 		}
 	}
 }

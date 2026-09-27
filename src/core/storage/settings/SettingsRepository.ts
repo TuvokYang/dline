@@ -3,6 +3,7 @@ import fs from "node:fs/promises"
 import * as path from "node:path"
 import { isDeepStrictEqual } from "node:util"
 import { Logger } from "@shared/services/Logger"
+import { writeJsonAtomic } from "@shared/storage/atomic-file"
 import type { Settings, SettingsKey } from "@shared/storage/state-keys"
 import { SettingsKeys } from "@shared/storage/state-keys"
 import chokidar, { type FSWatcher } from "chokidar"
@@ -18,8 +19,6 @@ import {
 } from "./settings-types"
 import { applySettingsPatch, buildPersistedSettingsDocument, parseSettingsDocument } from "./settings-validation"
 
-const RENAME_RETRY_DELAYS_MS = [10, 25, 50, 100] as const
-const RETRYABLE_RENAME_CODES = new Set(["EPERM", "EBUSY", "EACCES"])
 const SETTINGS_KEY_SET = new Set<string>(SettingsKeys as string[])
 
 function cloneValues(values: Settings): Settings {
@@ -52,31 +51,6 @@ async function readDocument(filePath: string): Promise<Record<string, unknown>> 
 		return JSON.parse(await fs.readFile(filePath, "utf8")) as Record<string, unknown>
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code === "ENOENT") return {}
-		throw error
-	}
-}
-
-async function renameWithRetry(sourcePath: string, destinationPath: string): Promise<void> {
-	for (let attempt = 0; ; attempt++) {
-		try {
-			await fs.rename(sourcePath, destinationPath)
-			return
-		} catch (error) {
-			const code = (error as NodeJS.ErrnoException).code
-			if (!code || !RETRYABLE_RENAME_CODES.has(code) || attempt >= RENAME_RETRY_DELAYS_MS.length) throw error
-			await new Promise<void>((resolve) => setTimeout(resolve, RENAME_RETRY_DELAYS_MS[attempt]))
-		}
-	}
-}
-
-async function atomicWriteDocument(filePath: string, document: Record<string, unknown>): Promise<void> {
-	await fs.mkdir(path.dirname(filePath), { recursive: true })
-	const tempPath = `${filePath}.tmp.${Date.now()}.${randomUUID()}.json`
-	try {
-		await fs.writeFile(tempPath, `${JSON.stringify(document, null, 2)}\n`, "utf8")
-		await renameWithRetry(tempPath, filePath)
-	} catch (error) {
-		await fs.unlink(tempPath).catch(() => undefined)
 		throw error
 	}
 }
@@ -155,7 +129,7 @@ export class SettingsRepository {
 				}
 				const revision = Math.max(parsed.revision, this.currentSnapshot.revision) + 1
 				const writeStartedAt = performance.now()
-				await atomicWriteDocument(this.filePath, buildPersistedSettingsDocument(nextValues, revision, sourceId))
+				await writeJsonAtomic(this.filePath, buildPersistedSettingsDocument(nextValues, revision, sourceId))
 				writeMs = Math.round(performance.now() - writeStartedAt)
 				this.currentSnapshot = snapshot(nextValues, revision)
 				commit = { revision, changedKeys: keys, snapshot: this.currentSnapshot, sourceId }

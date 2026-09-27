@@ -1,13 +1,13 @@
-import { randomUUID } from "node:crypto"
 import fs from "node:fs/promises"
 import path from "node:path"
+import { writeJsonAtomic } from "@shared/storage/atomic-file"
 import { FileLock } from "../backend/jsonl/FileLock"
 import { getDlineDataDir } from "../disk"
 import { getLegacyHashedOpenAiCodexProfileAuthPath, getOpenAiCodexProfileAuthPath } from "./OpenAiCodexProfileAuthPath"
 
 const MINIMUM_VALID_EXPIRY_MS = 1_000_000_000_000
-const RENAME_RETRY_DELAYS_MS = [10, 25, 50] as const
-const RETRYABLE_RENAME_CODES = new Set(["EPERM", "EACCES", "EBUSY"])
+/** Credentials are readable by their owner only. */
+const CREDENTIAL_FILE_MODE = 0o600
 const KNOWN_CREDENTIAL_KEYS = new Set([
 	"type",
 	"access_token",
@@ -115,29 +115,8 @@ function preserveUnknownFields(value: unknown): Record<string, unknown> {
 	return Object.fromEntries(Object.entries(value).filter(([key]) => !KNOWN_CREDENTIAL_KEYS.has(key)))
 }
 
-async function renameWithRetry(sourcePath: string, destinationPath: string): Promise<void> {
-	for (let attempt = 0; ; attempt++) {
-		try {
-			await fs.rename(sourcePath, destinationPath)
-			return
-		} catch (error) {
-			const code = (error as NodeJS.ErrnoException).code
-			if (!code || !RETRYABLE_RENAME_CODES.has(code) || attempt >= RENAME_RETRY_DELAYS_MS.length) throw error
-			await new Promise<void>((resolve) => setTimeout(resolve, RENAME_RETRY_DELAYS_MS[attempt]))
-		}
-	}
-}
-
 async function atomicWriteCredential(filePath: string, value: Record<string, unknown>): Promise<void> {
-	const tempPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`
-	try {
-		await fs.writeFile(tempPath, JSON.stringify(value, null, 2), { encoding: "utf8", flag: "wx", mode: 0o600 })
-		await renameWithRetry(tempPath, filePath)
-		await fs.chmod(filePath, 0o600)
-	} catch (error) {
-		await fs.unlink(tempPath).catch(() => undefined)
-		throw error
-	}
+	await writeJsonAtomic(filePath, value, { mode: CREDENTIAL_FILE_MODE })
 }
 
 async function unlinkIfExists(filePath: string): Promise<void> {

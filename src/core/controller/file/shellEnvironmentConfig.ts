@@ -1,6 +1,6 @@
-import { randomUUID } from "node:crypto"
-import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises"
+import { readFile } from "node:fs/promises"
 import path from "node:path"
+import { writeFileAtomic } from "@shared/storage/atomic-file"
 import { dump as dumpYaml, load as parseYaml } from "js-yaml"
 import { HostProvider } from "@/hosts/host-provider"
 import { type ProfileConfiguration, parseShellEnvironmentConfiguration } from "@/integrations/terminal/shell-environment"
@@ -15,16 +15,8 @@ import { arePathsEqual } from "@/utils/path"
 import { getAvailableTerminalProfiles, resolveTerminalProfileId } from "@/utils/shell"
 
 const CONFIG_RELATIVE_PATH = path.join(".agents", "bashrc.yml")
-const RENAME_RETRY_DELAYS_MS = [10, 25, 50, 100] as const
-const RETRYABLE_RENAME_CODES = new Set(["EPERM", "EBUSY", "EACCES"])
 
-type RenameFile = (sourcePath: string, destinationPath: string) => Promise<void>
 type YamlRecord = Record<string, unknown>
-
-export interface RenameShellEnvironmentConfigOptions {
-	renameFile?: RenameFile
-	sleep?: (delayMs: number) => Promise<void>
-}
 
 function isRecord(value: unknown): value is YamlRecord {
 	return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -168,38 +160,6 @@ async function buildPreview(request: UpdateShellEnvironmentProfileRequest): Prom
 	return { workspacePath, configPath, currentContent, proposedContent }
 }
 
-export async function renameShellEnvironmentConfigWithRetry(
-	sourcePath: string,
-	destinationPath: string,
-	options: RenameShellEnvironmentConfigOptions = {},
-): Promise<void> {
-	const renameFile = options.renameFile ?? rename
-	const sleep = options.sleep ?? ((delayMs: number) => new Promise<void>((resolve) => setTimeout(resolve, delayMs)))
-
-	for (let attempt = 0; ; attempt++) {
-		try {
-			await renameFile(sourcePath, destinationPath)
-			return
-		} catch (error) {
-			const code = (error as NodeJS.ErrnoException).code
-			if (!code || !RETRYABLE_RENAME_CODES.has(code) || attempt >= RENAME_RETRY_DELAYS_MS.length) throw error
-			await sleep(RENAME_RETRY_DELAYS_MS[attempt])
-		}
-	}
-}
-
-async function atomicWrite(configPath: string, content: string): Promise<void> {
-	await mkdir(path.dirname(configPath), { recursive: true })
-	const temporaryPath = `${configPath}.${process.pid}.${randomUUID()}.tmp`
-	try {
-		await writeFile(temporaryPath, content, { encoding: "utf8", flag: "wx" })
-		await renameShellEnvironmentConfigWithRetry(temporaryPath, configPath)
-	} catch (error) {
-		await unlink(temporaryPath).catch(() => undefined)
-		throw error
-	}
-}
-
 export async function getShellEnvironmentProfile(request: ShellEnvironmentProfileRequest): Promise<ShellEnvironmentProfile> {
 	validateProfile(request.profile)
 	const workspacePath = await resolveWorkspacePath(request.workspacePath)
@@ -230,7 +190,7 @@ export async function updateShellEnvironmentProfile(
 	if (!request.confirmed) throw new Error("Shell environment changes must be previewed and confirmed before saving")
 	const preview = await buildPreview(request)
 	if (preview.currentContent !== preview.proposedContent) {
-		await atomicWrite(preview.configPath, preview.proposedContent)
+		await writeFileAtomic(preview.configPath, preview.proposedContent)
 	}
 	return toProfileResponse(
 		preview.workspacePath,
@@ -243,6 +203,6 @@ export async function updateShellEnvironmentProfile(
 export async function ensureShellEnvironmentConfig(workspacePath: string): Promise<string> {
 	const resolvedWorkspacePath = await resolveWorkspacePath(workspacePath)
 	const configPath = path.join(resolvedWorkspacePath, CONFIG_RELATIVE_PATH)
-	if (!(await readSource(configPath))) await atomicWrite(configPath, "version: 1\n")
+	if (!(await readSource(configPath))) await writeFileAtomic(configPath, "version: 1\n")
 	return configPath
 }

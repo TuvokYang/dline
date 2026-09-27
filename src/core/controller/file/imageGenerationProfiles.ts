@@ -1,9 +1,9 @@
 import fsSync from "node:fs"
-import fs from "node:fs/promises"
 import path from "node:path"
 import { getDlineDataDir } from "@core/storage/disk"
 import { type ApiKeyEntry, getAllApiKeys, getApiKey, setApiKeysBatch } from "@core/storage/secrets"
 import { ImageGenerationProfile, type UpdateImageGenerationProfilesRequest } from "@shared/proto/dline/profile"
+import { writeFileAtomic } from "@shared/storage/atomic-file"
 
 const IMAGE_GENERATION_PROFILES_FILE = "image_generation_profiles.json"
 const IMAGE_SECRET_PREFIX = "image:"
@@ -56,16 +56,8 @@ export function readImageGenerationProfiles(): ImageGenerationProfile[] {
 }
 
 async function writeProfiles(profiles: readonly ImageGenerationProfile[]): Promise<void> {
-	const target = filePath()
-	const temporary = `${target}.tmp.${process.pid}.${Date.now()}`
-	await fs.mkdir(path.dirname(target), { recursive: true })
-	try {
-		await fs.writeFile(temporary, JSON.stringify(serializeImageGenerationProfiles(profiles), null, "\t"), "utf8")
-		await fs.rename(temporary, target)
-	} catch (error) {
-		await fs.unlink(temporary).catch(() => undefined)
-		throw error
-	}
+	// Tab indentation matches the neighbouring API profile catalog.
+	await writeFileAtomic(filePath(), `${JSON.stringify(serializeImageGenerationProfiles(profiles), null, "\t")}\n`)
 }
 
 function buildApiKeyChanges(

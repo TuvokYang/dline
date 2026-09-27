@@ -85,7 +85,7 @@ describe("ClineFileStorage", () => {
 		expect(fs.existsSync(storagePath)).toBe(false)
 	})
 
-	it("stops after three transient rename failures and preserves the original error", () => {
+	it("stops after the bounded transient rename retries and preserves the original error", () => {
 		const storagePath = path.join(tempDir, "api_keys.json")
 		const storage = new ClineFileStorage<{ apiKey: string }>(storagePath, "ApiKeyStore")
 		const failure = Object.assign(new Error("file remained locked"), {
@@ -97,7 +97,8 @@ describe("ClineFileStorage", () => {
 		})
 
 		expect(() => storage.setBatch({ profile: { apiKey: "secret" } })).toThrow(failure)
-		expect(fsMock.renameSync).toHaveBeenCalledTimes(3)
+		// One attempt plus the four retries of the shared atomic-file primitive.
+		expect(fsMock.renameSync).toHaveBeenCalledTimes(5)
 		expect(storage.get("profile")).toBeUndefined()
 		expect(fs.existsSync(storagePath)).toBe(false)
 	})

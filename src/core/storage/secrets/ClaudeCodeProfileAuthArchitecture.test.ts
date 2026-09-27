@@ -31,8 +31,9 @@ describe("Claude Code profile OAuth storage architecture", () => {
 		expect(combined).toContain("claude_code_oauth_")
 		expect(combined).not.toContain("secrets.json")
 		expect(combined).not.toContain("api_keys.json")
-		expect(repositorySource).toContain("mode: 0o600")
-		expect(repositorySource).toContain("fs.chmod(filePath, 0o600)")
+		// Owner-only files published through the shared atomic writer.
+		expect(repositorySource).toContain("CREDENTIAL_FILE_MODE = 0o600")
+		expect(repositorySource).toContain("writeJsonAtomic(filePath, value, { mode: CREDENTIAL_FILE_MODE })")
 	})
 
 	it("keeps the OAuth strategy free of storage paths, StateManager, and telemetry", async () => {

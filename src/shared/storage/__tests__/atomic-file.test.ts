@@ -99,6 +99,17 @@ describe("atomic-file", () => {
 		expect(await directoryEntries()).toEqual(["state.json"])
 	})
 
+	it("uses a caller-supplied retry budget for heavily watched documents", async () => {
+		fsMock.rename.mockRejectedValue(errnoError("EBUSY"))
+
+		await expect(writeJsonAtomic(target, { version: 1 }, { renameRetryDelaysMs: [1, 1, 1, 1, 1, 1] })).rejects.toMatchObject({
+			code: "EBUSY",
+		})
+
+		expect(fsMock.rename).toHaveBeenCalledTimes(7)
+		expect(await directoryEntries()).toEqual([])
+	})
+
 	it("does not retry errors that are not transient sharing violations", async () => {
 		fsMock.rename.mockRejectedValueOnce(errnoError("ENOSPC"))
 

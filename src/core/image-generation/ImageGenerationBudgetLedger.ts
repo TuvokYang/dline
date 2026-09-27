@@ -1,10 +1,9 @@
+import { writeJsonAtomic } from "@shared/storage/atomic-file"
 import fs from "fs/promises"
 import path from "path"
 import { ImageGenerationError } from "./contracts"
 
 const BUDGET_LEDGER_SCHEMA_VERSION = 1 as const
-const RETRYABLE_RENAME_ERROR_CODES = new Set(["EPERM", "EBUSY", "EACCES"])
-const RENAME_RETRY_DELAYS_MS = [10, 25, 50, 100]
 
 interface ImageGenerationBudgetReservation {
 	requestId: string
@@ -42,31 +41,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isFiniteNonNegative(value: unknown): value is number {
 	return typeof value === "number" && Number.isFinite(value) && value >= 0
-}
-
-async function renameWithRetry(sourcePath: string, destinationPath: string): Promise<void> {
-	for (let attempt = 0; ; attempt++) {
-		try {
-			await fs.rename(sourcePath, destinationPath)
-			return
-		} catch (error) {
-			const code = (error as NodeJS.ErrnoException).code
-			const delayMs = RENAME_RETRY_DELAYS_MS[attempt]
-			if (!code || !RETRYABLE_RENAME_ERROR_CODES.has(code) || delayMs === undefined) throw error
-			await new Promise((resolve) => setTimeout(resolve, delayMs))
-		}
-	}
-}
-
-async function atomicWrite(filePath: string, content: string): Promise<void> {
-	const partialPath = `${filePath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.partial`
-	try {
-		await fs.writeFile(partialPath, content, "utf8")
-		await renameWithRetry(partialPath, filePath)
-	} catch (error) {
-		await fs.unlink(partialPath).catch(() => undefined)
-		throw error
-	}
 }
 
 function invalidLedger(message: string, cause?: unknown): ImageGenerationError {
@@ -132,7 +106,7 @@ export class ImageGenerationBudgetLedger {
 				createdAtMs: this.now(),
 				status: "reserved",
 			})
-			await atomicWrite(this.ledgerPath, `${JSON.stringify(ledger, null, 2)}\n`)
+			await writeJsonAtomic(this.ledgerPath, ledger)
 		})
 	}
 
@@ -145,7 +119,7 @@ export class ImageGenerationBudgetLedger {
 			if (reservation.status === "settled") return
 			reservation.status = "settled"
 			reservation.settledAtMs = this.now()
-			await atomicWrite(this.ledgerPath, `${JSON.stringify(ledger, null, 2)}\n`)
+			await writeJsonAtomic(this.ledgerPath, ledger)
 		})
 	}
 
@@ -156,7 +130,7 @@ export class ImageGenerationBudgetLedger {
 			const index = ledger.reservations.findIndex((entry) => entry.requestId === requestId)
 			if (index < 0 || ledger.reservations[index].status === "settled") return
 			ledger.reservations.splice(index, 1)
-			await atomicWrite(this.ledgerPath, `${JSON.stringify(ledger, null, 2)}\n`)
+			await writeJsonAtomic(this.ledgerPath, ledger)
 		})
 	}
 

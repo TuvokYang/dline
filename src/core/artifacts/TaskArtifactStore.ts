@@ -1,3 +1,4 @@
+import { removeStaleAtomicTempFiles, writeFileAtomic } from "@shared/storage/atomic-file"
 import { createHash } from "crypto"
 import type { Stats } from "fs"
 import fs from "fs/promises"
@@ -7,8 +8,8 @@ import path from "path"
 const ARTIFACT_MANIFEST_SCHEMA_VERSION = 1 as const
 const IMAGE_ARTIFACT_SCHEMA_VERSION = 1 as const
 const ARTIFACT_ID_PATTERN = /^image:sha256:([a-f0-9]{64})$/
-const RETRYABLE_RENAME_ERROR_CODES = new Set(["EPERM", "EBUSY", "EACCES"])
-const RENAME_RETRY_DELAYS_MS = [10, 25, 50, 100]
+/** Temporary suffix of the writer that predates the shared atomic-file primitive. */
+const LEGACY_PARTIAL_SUFFIX = ".partial"
 
 export type ImageArtifactFormat = "png" | "jpeg" | "webp"
 
@@ -288,31 +289,6 @@ function validateManifestArtifact(value: unknown): ImageArtifact {
 	}
 }
 
-async function renameWithRetry(sourcePath: string, destinationPath: string): Promise<void> {
-	for (let attempt = 0; ; attempt++) {
-		try {
-			await fs.rename(sourcePath, destinationPath)
-			return
-		} catch (error) {
-			const code = (error as NodeJS.ErrnoException).code
-			const delayMs = RENAME_RETRY_DELAYS_MS[attempt]
-			if (!code || !RETRYABLE_RENAME_ERROR_CODES.has(code) || delayMs === undefined) throw error
-			await new Promise((resolve) => setTimeout(resolve, delayMs))
-		}
-	}
-}
-
-async function atomicWrite(filePath: string, bytes: Uint8Array): Promise<void> {
-	const partialPath = `${filePath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.partial`
-	try {
-		await fs.writeFile(partialPath, bytes)
-		await renameWithRetry(partialPath, filePath)
-	} catch (error) {
-		await fs.unlink(partialPath).catch(() => undefined)
-		throw error
-	}
-}
-
 function cloneProvenance(provenance: ImageArtifactProvenance): ImageArtifactProvenance {
 	return {
 		...provenance,
@@ -412,7 +388,7 @@ export class TaskArtifactStore {
 					this.throwIfAborted(signal)
 					const finalPath = this.resolveManagedArtifactPath(artifact)
 					if (!(await this.pathExists(finalPath))) {
-						await atomicWrite(finalPath, bytes)
+						await writeFileAtomic(finalPath, bytes)
 						createdPaths.push(finalPath)
 					} else {
 						await this.verifyFileHash(finalPath, artifact)
@@ -530,9 +506,10 @@ export class TaskArtifactStore {
 	}
 
 	private async cleanupStalePartialFiles(directoryPath: string): Promise<void> {
+		await removeStaleAtomicTempFiles(directoryPath, this.limits.stalePartialAgeMs, this.now())
 		const entries = await fs.readdir(directoryPath, { withFileTypes: true })
 		for (const entry of entries) {
-			if (!entry.isFile() || !entry.name.endsWith(".partial")) continue
+			if (!entry.isFile() || !entry.name.endsWith(LEGACY_PARTIAL_SUFFIX)) continue
 			const partialPath = path.join(directoryPath, entry.name)
 			const stats = await fs.stat(partialPath)
 			if (this.now() - stats.mtimeMs >= this.limits.stalePartialAgeMs) {
@@ -594,7 +571,7 @@ export class TaskArtifactStore {
 		const referencedNames = new Set(manifest.artifacts.map((artifact) => path.basename(artifact.relativePath)))
 		const entries = await fs.readdir(this.imagesDirectory, { withFileTypes: true })
 		for (const entry of entries) {
-			if (!entry.isFile() || entry.name.endsWith(".partial") || referencedNames.has(entry.name)) continue
+			if (!entry.isFile() || entry.name.endsWith(LEGACY_PARTIAL_SUFFIX) || referencedNames.has(entry.name)) continue
 			if (/^[a-f0-9]{64}\.(png|jpeg|webp)$/.test(entry.name)) {
 				await fs.unlink(path.join(this.imagesDirectory, entry.name)).catch(() => undefined)
 			}
@@ -603,7 +580,7 @@ export class TaskArtifactStore {
 
 	private async writeManifest(manifest: ArtifactManifestV1): Promise<void> {
 		const serialized = `${JSON.stringify(manifest, null, 2)}\n`
-		await atomicWrite(this.manifestPath, Buffer.from(serialized, "utf8"))
+		await writeFileAtomic(this.manifestPath, serialized)
 	}
 
 	private resolveManagedArtifactPath(artifact: ImageArtifact): string {

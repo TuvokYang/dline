@@ -13,10 +13,11 @@ const fsMock = vi.hoisted(() => ({
 	actualRename: undefined as typeof import("fs/promises").rename | undefined,
 }))
 
-vi.mock("fs/promises", async (importOriginal) => {
-	const actual = await importOriginal<typeof import("fs/promises")>()
+// writeJsonl publishes through the shared atomic-file primitive, which imports node:fs/promises.
+vi.mock("node:fs/promises", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("node:fs/promises")>()
 	fsMock.actualRename = actual.rename
-	return { ...actual, default: { ...actual, rename: fsMock.rename } }
+	return { ...actual, rename: fsMock.rename, default: { ...actual, rename: fsMock.rename } }
 })
 
 describe("jsonl-utils", () => {

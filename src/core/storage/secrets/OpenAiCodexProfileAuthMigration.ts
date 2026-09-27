@@ -1,5 +1,5 @@
-import { randomUUID } from "node:crypto"
 import fs from "node:fs/promises"
+import { writeJsonAtomic } from "@shared/storage/atomic-file"
 import { FileLock } from "../backend/jsonl/FileLock"
 import { getLegacyOpenAiCodexAuthMigrationPath, getLegacyOpenAiCodexAuthPath } from "./OpenAiCodexProfileAuthPath"
 import { OpenAiCodexProfileAuthRepository, parseOpenAiOAuthCredentials } from "./OpenAiCodexProfileAuthRepository"
@@ -77,19 +77,9 @@ async function readLegacySharedMarker(filePath: string): Promise<LegacySharedMar
 }
 
 async function writeLegacySharedMarker(filePath: string, profileIds: string[]): Promise<void> {
-	const tempPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`
-	try {
-		await fs.writeFile(
-			tempPath,
-			JSON.stringify({ schemaVersion: 1, mode: "legacy-shared", profileIds } satisfies LegacySharedMarker, null, 2),
-			{ encoding: "utf8", flag: "wx", mode: 0o600 },
-		)
-		await fs.rename(tempPath, filePath)
-		await fs.chmod(filePath, 0o600)
-	} catch (error) {
-		await fs.unlink(tempPath).catch(() => undefined)
-		throw error
-	}
+	const marker: LegacySharedMarker = { schemaVersion: 1, mode: "legacy-shared", profileIds }
+	// The marker sits among credentials, so it keeps their owner-only permission.
+	await writeJsonAtomic(filePath, marker, { mode: 0o600 })
 }
 
 async function unlinkIfExists(filePath: string): Promise<void> {
