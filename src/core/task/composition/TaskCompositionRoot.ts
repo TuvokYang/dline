@@ -31,6 +31,7 @@ import { InMemoryToolApprovalFeedbackLedger, type ToolApprovalFeedbackLedger } f
 import type { OwnedToolResources } from "../executors/tool/ToolDomainResources"
 import type { ToolDomainSurface } from "../executors/tool/ToolDomainSurface"
 import type { TurnToolScheduler } from "../executors/tool/TurnToolScheduler"
+import { createSuccessorHandoffPublisher, type TaskSuccessorPort } from "../new-task/successor-handoff"
 import type { RuntimeDiagnosticSink, TaskRuntime } from "../runtime"
 import { Task } from "../shell/Task"
 import type { TaskExecutorAssembly } from "../shell/TaskExecutorAssembly"
@@ -95,6 +96,13 @@ export interface TaskCompositionOptions {
 	 * Absent, one is built over the journal the shell opens.
 	 */
 	readonly conversationView?: JournalConversationView
+	/**
+	 * Starts the task a `new_task` block hands its work to; see TaskSuccessorPort.
+	 *
+	 * Absent, a handoff is dropped and the source keeps working, which is only
+	 * right for assemblies that cannot start tasks, such as headless subagents.
+	 */
+	readonly successor?: TaskSuccessorPort
 }
 
 export interface TaskCompositionResult {
@@ -184,6 +192,11 @@ export async function composeTask(options: TaskCompositionOptions): Promise<Task
 					surface: options.services.toolSurface,
 					service: options.services.tool,
 					scheduler: options.services.toolScheduler,
+					// The composition root owns the runtime, so it is what marks the
+					// source consumed; the host only decides how a successor starts.
+					publishPostCommit: options.successor
+						? createSuccessorHandoffPublisher({ runtime: () => runtime, successor: options.successor })
+						: undefined,
 				}),
 				spawn: new ProductionSpawnAdapter({ payloads: persistence.payloads, launcher: options.services.spawn }),
 			}

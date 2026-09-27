@@ -1,0 +1,124 @@
+import { describe, expect, it, vi } from "vitest"
+import type { TaskEvent, TaskState } from "../../kernel"
+import { createInitialTaskState } from "../../kernel"
+import type { NewTaskHandoff } from "../new-task-handoff"
+import {
+	createSuccessorHandoffPublisher,
+	newTaskConsumedRef,
+	type SuccessorHandoffRuntime,
+	type TaskSuccessorPort,
+} from "../successor-handoff"
+
+const directive = {
+	type: "start_successor_task",
+	context: "Carry the migration forward",
+	functionId: "function-1",
+	dlineTid: "tid-1",
+} as const
+
+const command = { turnId: "turn-1", dlineTid: "tid-1" }
+
+function fakeRuntime(outcome: "accepted" | "rejected") {
+	const order: string[] = []
+	const events: TaskEvent[] = []
+	const state: TaskState = { ...createInitialTaskState("task-1"), generation: 3, revision: 9 }
+	const runtime: SuccessorHandoffRuntime = {
+		getState: () => state,
+		submit: vi.fn(async (event: TaskEvent) => {
+			events.push(event)
+			order.push("submit")
+			return { kind: outcome, state: { ...state, revision: 10 } }
+		}),
+		waitForDurable: vi.fn(async (revision: number) => {
+			order.push(`durable:${revision}`)
+		}),
+	}
+	return { runtime, events, order }
+}
+
+function fakeSuccessor(order: string[]) {
+	const started: NewTaskHandoff[] = []
+	const successor: TaskSuccessorPort = {
+		settings: () => ({ mode: "plan", planModeProfile: "planner", actModeProfile: "actor" }),
+		start: vi.fn(async (handoff: NewTaskHandoff) => {
+			order.push("start")
+			started.push(handoff)
+		}),
+		onError: vi.fn(),
+	}
+	return { successor, started }
+}
+
+describe("successor handoff publisher", () => {
+	it("starts the successor only after the source is durably consumed", async () => {
+		const { runtime, events, order } = fakeRuntime("accepted")
+		const { successor, started } = fakeSuccessor(order)
+		const scheduled: Array<() => void> = []
+		const publish = createSuccessorHandoffPublisher({
+			runtime: () => runtime,
+			successor,
+			schedule: (run) => scheduled.push(run),
+		})
+
+		await publish({ command, directive })
+
+		expect(events).toEqual([
+			{
+				type: "lifecycle.consumed",
+				generation: 3,
+				turnId: "turn-1",
+				blockId: "tid-1",
+				consumedRef: newTaskConsumedRef(directive),
+			},
+		])
+		// The start is deferred past the block: starting tears the source down,
+		// and that teardown waits for the block that asked for it.
+		expect(started).toEqual([])
+		for (const run of scheduled) run()
+		await vi.waitFor(() => expect(started).toHaveLength(1))
+		expect(order).toEqual(["submit", "durable:10", "start"])
+		expect(started[0]).toEqual({
+			context: "Carry the migration forward",
+			source: { functionId: "function-1", dlineTid: "tid-1" },
+			initialUserContent: [],
+			taskSettings: { mode: "plan", planModeProfile: "planner", actModeProfile: "actor" },
+		})
+	})
+
+	it("starts nothing when the kernel refuses the handoff because the task is already stopping", async () => {
+		const { runtime, order } = fakeRuntime("rejected")
+		const { successor, started } = fakeSuccessor(order)
+		const scheduled: Array<() => void> = []
+		const publish = createSuccessorHandoffPublisher({
+			runtime: () => runtime,
+			successor,
+			schedule: (run) => scheduled.push(run),
+		})
+
+		await publish({ command, directive })
+
+		expect(scheduled).toEqual([])
+		expect(started).toEqual([])
+		expect(runtime.waitForDurable).not.toHaveBeenCalled()
+	})
+
+	it("reports a successor that failed to start instead of failing the finished block", async () => {
+		const { runtime, order } = fakeRuntime("accepted")
+		const { successor } = fakeSuccessor(order)
+		const failure = new Error("surface closed")
+		vi.mocked(successor.start).mockRejectedValueOnce(failure)
+		const publish = createSuccessorHandoffPublisher({ runtime: () => runtime, successor, schedule: (run) => run() })
+
+		await expect(publish({ command, directive })).resolves.toBeUndefined()
+
+		await vi.waitFor(() => expect(successor.onError).toHaveBeenCalledWith(failure))
+	})
+
+	it("fails the block when there is no active turn to hand off from", async () => {
+		const { successor } = fakeSuccessor([])
+		const publish = createSuccessorHandoffPublisher({ runtime: () => undefined, successor })
+
+		await expect(publish({ command, directive })).rejects.toThrow("NewTaskHandoffWithoutActiveTurn")
+		expect(successor.start).not.toHaveBeenCalled()
+	})
+})

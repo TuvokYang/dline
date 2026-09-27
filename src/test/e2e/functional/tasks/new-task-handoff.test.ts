@@ -12,11 +12,16 @@ interface StoredTaskSettings {
 	actModeProfile?: string
 }
 
-interface StoredTaskSnapshot {
-	phase?: string
-	newTaskConsumed?: {
-		functionId?: string
-		dlineTid?: string
+/** The kernel snapshot the runtime persists as `state.json`. */
+interface StoredTaskState {
+	snapshot?: {
+		state?: {
+			flow?: {
+				phase?: string
+				terminalReason?: string
+				consumedRef?: string
+			}
+		}
 	}
 }
 
@@ -74,8 +79,8 @@ async function readTaskSettings(dlineDocsDir: string, taskId: string): Promise<S
 	return JSON.parse(await readFile(path.join(dlineDocsDir, "tasks", taskId, "settings.json"), "utf8"))
 }
 
-async function readTaskSnapshot(dlineDocsDir: string, taskId: string): Promise<StoredTaskSnapshot> {
-	return JSON.parse(await readFile(path.join(dlineDocsDir, "tasks", taskId, "snapshot.json"), "utf8"))
+async function readTaskState(dlineDocsDir: string, taskId: string): Promise<StoredTaskState> {
+	return JSON.parse(await readFile(path.join(dlineDocsDir, "tasks", taskId, "state.json"), "utf8"))
 }
 
 async function expectInheritedTaskSettings(dlineDocsDir: string, taskId: string): Promise<void> {
@@ -107,11 +112,15 @@ async function expectConsumedTaskSnapshot(dlineDocsDir: string, taskId: string, 
 		.poll(
 			async () => {
 				try {
-					const snapshot = await readTaskSnapshot(dlineDocsDir, taskId)
+					const flow = (await readTaskState(dlineDocsDir, taskId)).snapshot?.state?.flow
+					// `new_task:<functionId>:<dlineTid>` names the declaration that consumed the task.
+					const [kind, consumedFunctionId, dlineTid] = flow?.consumedRef?.split(":") ?? []
 					return {
-						phase: snapshot.phase,
-						functionId: snapshot.newTaskConsumed?.functionId,
-						hasDlineTid: Boolean(snapshot.newTaskConsumed?.dlineTid),
+						phase: flow?.phase,
+						terminalReason: flow?.terminalReason,
+						kind,
+						functionId: consumedFunctionId,
+						hasDlineTid: Boolean(dlineTid),
 					}
 				} catch {
 					return undefined
@@ -119,7 +128,7 @@ async function expectConsumedTaskSnapshot(dlineDocsDir: string, taskId: string, 
 			},
 			{ timeout: 30_000 },
 		)
-		.toEqual({ phase: "aborted", functionId, hasDlineTid: true })
+		.toEqual({ phase: "terminated", terminalReason: "consumed", kind: "new_task", functionId, hasDlineTid: true })
 }
 
 async function sendTask(frame: Frame, text: string): Promise<void> {

@@ -94,6 +94,26 @@ export function reduceTurn(state: TurnSlice, event: TaskEvent): TurnReduction {
 			commands: [],
 		}
 	}
+	if (event.type === "lifecycle.consumed") {
+		if (state.turnId !== event.turnId) return { state, commands: [] }
+		// The consuming block already made its result durable, so it is done. Every
+		// other block is settled too: the task is terminal, so no later event could
+		// ever settle it, and the session teardown that follows stops what still runs.
+		return {
+			state: {
+				...state,
+				blocks: state.blocks.map((block) => {
+					if (block.blockId === event.blockId) return { ...block, phase: "completed" as const }
+					if (TERMINAL_PHASES.has(block.phase)) return block
+					return { ...block, phase: block.phase === "executing" ? ("cancelled" as const) : ("skipped" as const) }
+				}),
+				manualApprovalBlockIds: [],
+				automaticApprovalBlockIds: [],
+				executingBlockIds: [],
+			},
+			commands: [],
+		}
+	}
 	if (event.type === "approval.requested") {
 		if (state.turnId !== event.turnId) return { state, commands: [] }
 		return {

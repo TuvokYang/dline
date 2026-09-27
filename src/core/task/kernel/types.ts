@@ -406,6 +406,21 @@ export type LifecycleEvent =
 			readonly participantId?: ParticipantId
 			readonly message?: string
 	  })
+	/**
+	 * The task handed its work to a successor task.
+	 *
+	 * Submitted by the block that created the successor while it is still
+	 * running, so the turn is closed before its completion could open another
+	 * round: the source must not keep talking to the model once the successor
+	 * owns the conversation. `consumedRef` names the handoff so a reopened
+	 * source can say which one consumed it.
+	 */
+	| (EventBase & {
+			readonly type: "lifecycle.consumed"
+			readonly turnId: TurnId
+			readonly blockId: BlockId
+			readonly consumedRef: string
+	  })
 
 export type TaskEvent =
 	| UserEvent

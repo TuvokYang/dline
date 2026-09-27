@@ -157,6 +157,14 @@ export function reduceFlow(state: FlowState, event: TaskEvent): FlowReduction {
 			}
 		case "lifecycle.close":
 			return { state: { ...state, phase: "completed", completionId: state.completionId }, commands: [] }
+		case "lifecycle.consumed":
+			// Terminal on purpose: every later event is refused, so the block's own
+			// completion cannot open another round for a conversation the
+			// successor now owns. Hydration renders this form inert.
+			return {
+				state: { ...state, phase: "terminated", terminalReason: "consumed", consumedRef: event.consumedRef },
+				commands: [],
+			}
 		default:
 			return { state, commands: [] }
 	}

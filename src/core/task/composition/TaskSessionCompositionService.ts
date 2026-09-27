@@ -446,6 +446,28 @@ export class TaskSessionCompositionService {
 			// A run that produced nothing left the conversation as it was, which the
 			// user cannot see unless the chat says so.
 			compactionFailure: new MessageStateCompactionFailure(messages, nextPresentationId),
+			// A `new_task` hands the conversation to a successor on the same
+			// surface. The Controller owns that surface, so it starts the successor
+			// once the runtime has durably marked this task consumed.
+			successor: {
+				settings: () => ({
+					mode: settings.mode,
+					planModeProfileId: settings.planModeProfileId,
+					planModeProfile: settings.planModeProfile,
+					actModeProfileId: settings.actModeProfileId,
+					actModeProfile: settings.actModeProfile,
+				}),
+				start: async (handoff) => {
+					await options.prompt.controller.startSuccessorTask(
+						options.taskId,
+						handoff.context,
+						handoff.taskSettings,
+						handoff.initialUserContent,
+					)
+				},
+				onError: (error) =>
+					Logger.error(`[Task ${options.taskId}] Failed to start the New Task successor: ${String(error)}`),
+			},
 			// An approval is planned with the turn rather than opened by a tool, so
 			// the interaction owner writes its row when the dialog is revealed.
 			writeDialogAnchor: (request) => interactions.anchor(request),

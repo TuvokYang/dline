@@ -317,6 +317,18 @@ function validateEvent(state: TaskState, event: TaskEvent): ValidationFailure | 
 	}
 	if (event.type === "lifecycle.open" && state.flow.phase !== "idle")
 		return { reason: "phase_invalid", message: `Task cannot open from ${state.flow.phase}` }
+	if (event.type === "lifecycle.consumed") {
+		// Only the block that is running may hand the task over; anything else is a
+		// stale or forged handoff that must not end a task still in use.
+		if (!event.consumedRef) return { reason: "identity_mismatch", message: "Consumed task has no consumed identity" }
+		const block = state.turn.blocks.find((candidate) => candidate.blockId === event.blockId)
+		if (state.turn.turnId !== event.turnId || !block)
+			return { reason: "identity_mismatch", message: `Consuming block ${event.blockId} is not active` }
+		if (block.phase !== "executing")
+			return { reason: "phase_invalid", message: `Block ${event.blockId} cannot hand off from ${block.phase}` }
+		if (state.halt.status === "stopping")
+			return { reason: "phase_invalid", message: "Task cannot hand off while it is stopping" }
+	}
 	return undefined
 }
 
@@ -721,6 +733,11 @@ export function transition(state: TaskState, event: TaskEvent): TransitionResult
 			},
 			halt: { status: "idle", generation: halt.state.generation },
 		}
+	}
+	if (event.type === "lifecycle.consumed") {
+		// The successor owns the conversation now, so no question is left for the
+		// user here; hydrating the consumed form clears the dialog the same way.
+		next = { ...next, dialog: { approvalsByBlock: {} } }
 	}
 	if (event.type === "approval.responded") {
 		next = {
