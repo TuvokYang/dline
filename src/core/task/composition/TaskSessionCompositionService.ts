@@ -64,6 +64,14 @@ import { DefaultToolHandlerState } from "../tools/state/ToolHandlerState"
 import { ToolValidator } from "../tools/ToolValidator"
 import type { TaskSessionHostFactory } from "./TaskSessionHostFactory"
 
+/**
+ * Message stores the caller opened for this incarnation.
+ *
+ * Ownership passes to the session on `open`: disposing the session closes them,
+ * and so does a failed open. `uiMessage` holds the single writer of the task's
+ * `messages.db`, so a store left open would refuse every write of the next
+ * incarnation opened in this window.
+ */
 export interface TaskSessionMessageHost {
 	readonly uiMessage: UIMessage
 	readonly apiConversation: ApiConversation
@@ -107,12 +115,18 @@ export interface OpenTaskSessionCompositionOptions {
 /** The only production composition root for one task incarnation. */
 export class TaskSessionCompositionService {
 	async open(options: OpenTaskSessionCompositionOptions): Promise<ActiveTaskSession> {
-		const persistence = await openTaskPersistence(options.taskId)
+		let persistence: TaskPersistenceAssembly | undefined
 		try {
+			persistence = await openTaskPersistence(options.taskId)
 			return await this.compose(options, persistence)
 		} catch (error) {
-			// Nothing owns the task yet, so its journal.db would otherwise stay open.
-			await persistence.close?.()
+			// Nothing owns the task yet, so its journal.db and messages.db writers
+			// would otherwise stay claimed. Closing must not replace the failure.
+			await Promise.allSettled([
+				persistence?.close?.(),
+				options.messages.uiMessage.close(),
+				options.messages.apiConversation.close(),
+			])
 			throw error
 		}
 	}
@@ -516,6 +530,10 @@ export class TaskSessionCompositionService {
 			releases: [
 				// Released last: every other owner may still commit while it shuts down.
 				{ release: async () => persistence.close?.() },
+				// Closing is the durability boundary of the chat rows and releases the
+				// single messages.db writer, so the task can be opened again in this
+				// window. Released after every owner that may still record a row.
+				{ release: () => messages.close() },
 				{ release: () => prompt.dispose() },
 				{
 					release: async () => {

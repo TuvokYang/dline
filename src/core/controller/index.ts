@@ -1118,7 +1118,12 @@ export class Controller {
 		// Mode is persisted separately via setTaskSettings in togglePlanActMode
 		// and restored by loadTaskSettings above �?do NOT override it from historyItem.
 		const uiMessage = await UIMessage.open(taskId)
-		const apiConversation = await ApiConversation.open(taskId)
+		// The chat store claims the task's messages.db writer on its first write;
+		// it must not outlive an open that never hands it to a session.
+		const apiConversation = await ApiConversation.open(taskId).catch(async (error: unknown) => {
+			await uiMessage.close().catch(() => undefined)
+			throw error
+		})
 		logInitStage("message_stores_open", taskId)
 
 		const terminalExecutionMode = vscodeTerminalExecutionMode ?? "vscodeTerminal"
