@@ -475,8 +475,12 @@ export const ExtensionStateContextProvider: React.FC<{
 	const lastInteractionFetchKeyRef = useRef<string | undefined>(undefined)
 	const inFlightInteractionFetchRef = useRef<string | undefined>(undefined)
 	const projectedInteraction = state.taskViewState?.activeInteraction
-	const projectedInteractionAnchorPresent = projectedInteraction
-		? projectedInteraction.anchorVerified === true || hasExactInteractionAnchor(clineMessages, projectedInteraction)
+	// Whether this window has loaded the chat row the interaction anchors to.
+	// `anchorVerified` only says the backend holds that row, which is enough for
+	// the footer to dispatch but not for the chat to show it; treating it as
+	// loaded skipped the recovery fetch and left an answered row off screen.
+	const projectedInteractionAnchorLoaded = projectedInteraction
+		? hasExactInteractionAnchor(clineMessages, projectedInteraction)
 		: true
 	const localTailMessage = clineMessages.at(-1)
 
@@ -636,6 +640,12 @@ export const ExtensionStateContextProvider: React.FC<{
 		}
 		const knownEndIndex = firstItemIndex + clineMessages.length
 		const windowCoveredPreviousTail = knownEndIndex >= prevTotalRef.current
+		// A tail fetch still running cannot be extended, so the rows it did not
+		// ask for must be requested once it lands. Holding the previous total
+		// keeps the window counted as the live tail until then; advancing it
+		// here made the next pass believe the window had fallen behind on
+		// purpose and never fetched the newest row.
+		const tailCatchUpDeferred = knownEndIndex < total && windowCoveredPreviousTail && refetchLockRef.current
 		const durableTailMayHaveReplacedPartial =
 			total > prevTotalRef.current && knownEndIndex === total && localTailMessage?.partial === true
 		if (durableTailMayHaveReplacedPartial && !refetchLockRef.current) {
@@ -723,7 +733,12 @@ export const ExtensionStateContextProvider: React.FC<{
 		}
 
 		const activeInteraction = projectedInteraction
-		if (activeInteraction && !projectedInteractionAnchorPresent && !refetchLockRef.current) {
+		// A verified anchor keeps the footer usable meanwhile, so its row is
+		// recovered once the first window has landed instead of racing it. The
+		// in-flight key below already prevents duplicate recoveries, so an
+		// unrelated tail fetch must not suppress this one.
+		const anchorRecoveryReady = activeInteraction?.anchorVerified !== true || bootstrapResolvedRef.current
+		if (activeInteraction && !projectedInteractionAnchorLoaded && anchorRecoveryReady) {
 			const expectedFetchKey = interactionFetchKey(currentTaskViewKeyRef.current, activeInteraction)
 			// Recovery is skipped only when this anchor was already hydrated or a
 			// recovery for it is still running. A previously failed attempt no
@@ -736,13 +751,13 @@ export const ExtensionStateContextProvider: React.FC<{
 			}
 		}
 
-		prevTotalRef.current = total
+		if (!tailCatchUpDeferred) prevTotalRef.current = total
 	}, [
 		state.currentTaskItem?.id,
 		state.taskTitleMessage?.ts,
 		state.totalMessageCount,
 		projectedInteraction,
-		projectedInteractionAnchorPresent,
+		projectedInteractionAnchorLoaded,
 		clineMessages.length,
 		localTailMessage,
 		firstItemIndex,

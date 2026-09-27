@@ -508,6 +508,49 @@ describe("ExtensionStateContext persisted message reconciliation", () => {
 		expect(TaskServiceClient.fetchMessage).toHaveBeenCalledWith({ referenceIndex: -1, count: 200 })
 	})
 
+	it("still recovers a missing anchor row the backend has already verified", async () => {
+		// `anchorVerified` means the backend holds the row, so the footer may
+		// dispatch; it does not mean this window loaded it. Treating it as loaded
+		// skipped recovery and left an answered question off screen.
+		const earlier = convertClineMessageToProto({ ts: 50, type: "say", say: "text", text: "earlier row" })
+		const ask = convertClineMessageToProto({
+			ts: 100,
+			type: "ask",
+			ask: "qna_respond",
+			text: "Question",
+			interactionId: "interaction-1",
+		})
+		vi.mocked(TaskServiceClient.fetchMessage)
+			.mockResolvedValueOnce({ messages: [earlier], startIndex: 0 })
+			.mockResolvedValue({ messages: [earlier, ask], startIndex: 0 })
+		render(
+			<ExtensionStateContextProvider>
+				<InteractionProbe observedTaskIds={[]} />
+			</ExtensionStateContextProvider>,
+		)
+		await waitFor(() => expect(subscriptions.state).toBeDefined())
+
+		// The window is already loaded when the verified interaction arrives,
+		// so only the anchor recovery can bring its row in.
+		const loaded = outOfSyncInteractionState(1)
+		if (!loaded.taskViewState) throw new Error("Expected a task view")
+		loaded.taskViewState.activeInteraction = undefined
+		act(() => {
+			subscriptions.state?.onResponse({ stateJson: JSON.stringify(loaded) })
+		})
+		await waitFor(() => expect(TaskServiceClient.fetchMessage).toHaveBeenCalledOnce())
+		await waitFor(() => expect(screen.getByText("earlier row")).toBeInTheDocument())
+
+		const verified = outOfSyncInteractionState(2)
+		if (!verified.taskViewState?.activeInteraction) throw new Error("Expected an active interaction")
+		verified.taskViewState.activeInteraction.anchorVerified = true
+		act(() => {
+			subscriptions.state?.onResponse({ stateJson: JSON.stringify(verified) })
+		})
+
+		await waitFor(() => expect(screen.getByText("Question")).toBeVisible())
+	})
+
 	it("walks backward through persisted windows until it finds an older interaction anchor", async () => {
 		const tail = Array.from({ length: 200 }, (_, index) =>
 			convertClineMessageToProto({
