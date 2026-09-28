@@ -12,6 +12,7 @@ import { findLastIndex } from "@shared/array"
 import { Logger } from "@shared/services/Logger"
 import { ClineDefaultTool } from "@shared/tools"
 import { commitCompletion } from "../../completion/CompletionCommit"
+import { isAllItemsCompleted } from "../../focus-chain/file-utils"
 import type { InteractionOutcome } from "../../interaction/InteractionProtocol"
 import { buildUserFeedbackContent } from "../../utils/buildUserFeedbackContent"
 import type { IPartialBlockHandler, IToolHandler } from "../ToolExecutorCoordinator"
@@ -32,6 +33,20 @@ function getInitialTaskPreview(config: TaskConfig): string | undefined {
 		return firstTaskMessage
 	}
 	return `${firstTaskMessage.slice(0, TASK_PREVIEW_MAX_CHARS)}\n...[truncated]`
+}
+
+/**
+ * Return the stored checklist when it still blocks completion.
+ *
+ * Completion is refused while the task's own TODO list has unchecked items, so a
+ * model cannot declare victory over a plan it has not finished. A subagent runs
+ * without the parent's checklist, and a disabled Focus Chain has no plan to hold.
+ */
+function readUnfinishedFocusChecklist(config: TaskConfig): string | undefined {
+	if (config.isSubagentExecution || config.focusChainSettings?.enabled !== true) return undefined
+	const checklist = config.taskState.currentFocusChainChecklist
+	if (!checklist || isAllItemsCompleted(checklist)) return undefined
+	return checklist
 }
 
 export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHandler {
@@ -55,6 +70,14 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
 		if (!result) {
 			config.taskState.consecutiveMistakeCount++
 			return await config.callbacks.sayAndCreateMissingParamError(this.name, "result", undefined, block.ts)
+		}
+
+		const unfinishedChecklist = readUnfinishedFocusChecklist(config)
+		if (unfinishedChecklist) {
+			config.taskState.consecutiveMistakeCount++
+			return formatResponse.toolError(
+				`${getPrompt("focusChain", "attemptCompletionBlocked")}\n\nCurrent checklist:\n${unfinishedChecklist}`,
+			)
 		}
 
 		config.taskState.consecutiveMistakeCount = 0

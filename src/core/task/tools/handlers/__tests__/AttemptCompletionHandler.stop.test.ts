@@ -115,6 +115,54 @@ describe("AttemptCompletionHandler stop behavior", () => {
 		expect(config.callbacks.updateFCListFromToolResponse).not.toHaveBeenCalled()
 	})
 
+	it("refuses completion while the Focus Chain checklist has unchecked items", async () => {
+		const taskState = new TaskState()
+		taskState.currentFocusChainChecklist = "# Plan\n- [x] Inspect\n- [ ] Verify"
+		const config = createConfig(taskState)
+		config.focusChainSettings = { enabled: true } as TaskConfig["focusChainSettings"]
+
+		const result = await new AttemptCompletionHandler().execute(config, createBlock())
+
+		assert.equal(typeof result, "string")
+		assert.match(result as string, /ATTEMPT_COMPLETION BLOCKED/)
+		assert.match(result as string, /Current checklist:\n# Plan\n- \[x\] Inspect\n- \[ \] Verify/)
+		assert.equal(taskState.consecutiveMistakeCount, 1)
+		// The refused call must not publish a completion row.
+		const sayCalls = (config.callbacks.say as ReturnType<typeof vi.fn>).mock.calls
+		assert.equal(
+			sayCalls.some(([type]) => type === "completion_result"),
+			false,
+		)
+	})
+
+	it("completes once every checklist item is checked", async () => {
+		const taskState = new TaskState()
+		taskState.currentFocusChainChecklist = "# Plan\n- [x] Inspect\n- [x] Verify"
+		const config = createConfig(taskState)
+		config.focusChainSettings = { enabled: true } as TaskConfig["focusChainSettings"]
+
+		const result = await new AttemptCompletionHandler().execute(config, createBlock())
+
+		assert.equal(result, "[attempt_completion] Result: Done")
+	})
+
+	it("does not gate completion when the Focus Chain is disabled or the call is a subagent's", async () => {
+		for (const [enabled, isSubagentExecution] of [
+			[false, false],
+			[true, true],
+		] as const) {
+			const taskState = new TaskState()
+			taskState.currentFocusChainChecklist = "# Plan\n- [ ] Verify"
+			const config = createConfig(taskState)
+			config.focusChainSettings = { enabled } as TaskConfig["focusChainSettings"]
+			config.isSubagentExecution = isSubagentExecution
+
+			const result = await new AttemptCompletionHandler().execute(config, createBlock())
+
+			assert.equal(result, "[attempt_completion] Result: Done")
+		}
+	})
+
 	it("returns completion feedback when the user replies", async () => {
 		const taskState = new TaskState()
 		const config = createConfig(taskState, { actionId: "reply", text: "Please refine the result" })
