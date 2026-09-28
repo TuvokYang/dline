@@ -29,6 +29,10 @@ const INITIAL_TASK_PROGRESS = `# E2E multi-turn thinking
 
 const completedProgress = (...indexes: number[]): string => indexes.map((index) => `- [x] ${CHECKLIST_ITEMS[index]}`).join("\n")
 
+// Mirrors AUTO_RETRY_DELAYS_MS in src/core/task/auto-retry.ts: one initial request plus five scheduled retries.
+const EXPECTED_AUTO_RETRY_ATTEMPTS = 5
+const retryAttemptText = (attempt: number): string => `Attempt ${attempt} of ${EXPECTED_AUTO_RETRY_ATTEMPTS}`
+
 const REPORT_TITLE = "E2E workspace inspection report"
 const REPORT_CONTENT = "E2E_REPORT_REVIEW_REQUIRED: README and workspace listing were inspected."
 const REPORT_FEEDBACK = "E2E_REPORT_FEEDBACK_ACCEPTED"
@@ -677,7 +681,7 @@ for (const status of [403, 429, 502] as const) {
 			e2e.setTimeout(180_000)
 			const marker = `E2E_HTTP_${status}`
 			const retryFeedback = `E2E_HTTP_${status}_RETRY_FEEDBACK`
-			const expectedFailureRequestCount = status === 403 ? 1 : 4
+			const expectedFailureRequestCount = status === 403 ? 1 : EXPECTED_AUTO_RETRY_ATTEMPTS + 1
 			server.enqueueResponses(
 				"openai-compatible-chat",
 				...Array.from({ length: 24 }, () => ({
@@ -705,14 +709,15 @@ for (const status of [403, 429, 502] as const) {
 				await expect.poll(() => server.getRequestCount("openai-compatible-chat"), { timeout: 60_000 }).toBe(1)
 			} else {
 				const errorBox = sidebar.getByTestId("error-retry-box")
-				await expect(errorBox).toContainText("Attempt 1 of 3", { timeout: 90_000 })
+				await expect(errorBox).toContainText(retryAttemptText(1), { timeout: 90_000 })
 				await expect(errorBox.getByTestId("error-retry-box-status")).toHaveText(String(status))
 				await expect(errorBox.getByTestId("error-retry-box-code")).toHaveText(`e2e_http_${status}`)
 				await expect(errorBox.getByTestId("error-retry-box-message")).toHaveText(marker)
 				await expect(errorBox.getByRole("button", { name: "Copy error" })).toBeVisible()
 				await expect(errorBox.getByRole("button", { name: /^(Retry|Cancel)$/ })).toHaveCount(0)
-				await expect(errorBox).toContainText("Attempt 2 of 3", { timeout: 90_000 })
-				await expect(errorBox).toContainText("Attempt 3 of 3", { timeout: 90_000 })
+				for (let attempt = 2; attempt <= EXPECTED_AUTO_RETRY_ATTEMPTS; attempt++) {
+					await expect(errorBox).toContainText(retryAttemptText(attempt), { timeout: 90_000 })
+				}
 				await expect
 					.poll(() => server.getRequestCount("openai-compatible-chat"), { timeout: 90_000 })
 					.toBe(expectedFailureRequestCount)
@@ -725,7 +730,7 @@ for (const status of [403, 429, 502] as const) {
 					details: { type: "e2e_mock_error" },
 				})
 				await expect(errorBox).toContainText("Automatic retry stopped")
-				await expect(errorBox).toContainText("All 3 automatic attempts were used.")
+				await expect(errorBox).toContainText(`All ${EXPECTED_AUTO_RETRY_ATTEMPTS} automatic attempts were used.`)
 			}
 
 			const retryButton = sidebar.locator('vscode-button[aria-label="Retry"]')
@@ -1125,7 +1130,7 @@ e2e(
 		await sendTask(sidebar, "Exercise automatic DeepSeek connection recovery.")
 
 		const errorBox = sidebar.getByTestId("error-retry-box")
-		await expect(errorBox).toContainText("Attempt 1 of 3", { timeout: 90_000 })
+		await expect(errorBox).toContainText(retryAttemptText(1), { timeout: 90_000 })
 		await expect(errorBox.getByTestId("error-retry-box-provider")).toHaveText("deepseek")
 		await expect(errorBox.getByTestId("error-retry-box-model")).toHaveText("deepseek-v4-flash")
 		await expect(errorBox.getByTestId("error-retry-box-message")).toHaveText("Connection error.")
@@ -1179,7 +1184,7 @@ e2e(
 
 		await sendTask(sidebar, "E2E_UNSENT_DRAFT_AUTOMATIC_RETRY_TASK")
 		const errorBox = sidebar.getByTestId("error-retry-box")
-		await expect(errorBox).toContainText("Attempt 1 of 3", { timeout: 90_000 })
+		await expect(errorBox).toContainText(retryAttemptText(1), { timeout: 90_000 })
 		await expect.poll(() => server.getRequestCount("deepseek-chat"), { timeout: 60_000 }).toBe(2)
 		await expect(errorBox.getByText("Automatic retry in progress", { exact: true })).toBeVisible()
 
@@ -1239,7 +1244,7 @@ e2e(
 		await sendTask(sidebar, "Exercise multi-turn DeepSeek connection recovery.")
 
 		const errorBox = sidebar.getByTestId("error-retry-box")
-		await expect(errorBox).toContainText("Attempt 1 of 3", { timeout: 90_000 })
+		await expect(errorBox).toContainText(retryAttemptText(1), { timeout: 90_000 })
 		await expect(sidebar.getByText(recoveredText, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
 		await expect.poll(() => server.getRequestCount("deepseek-chat")).toBe(3)
 		await expect(errorBox).toHaveCount(0)
@@ -1294,7 +1299,7 @@ e2e(
 		await sendTask(sidebar, "Exercise DeepSeek recovery into a follow-up interaction.")
 
 		const errorBox = sidebar.getByTestId("error-retry-box")
-		await expect(errorBox).toContainText("Attempt 1 of 3", { timeout: 90_000 })
+		await expect(errorBox).toContainText(retryAttemptText(1), { timeout: 90_000 })
 		await expect(sidebar.getByText(question, { exact: true })).toBeVisible({ timeout: 60_000 })
 		await expect.poll(() => server.getRequestCount("deepseek-chat")).toBe(2)
 		await expect(errorBox).toHaveCount(0)
@@ -1345,7 +1350,7 @@ e2e(
 		await sendTask(sidebar, "Exercise DeepSeek recovery at the first streamed response chunk.")
 
 		const errorBox = sidebar.getByTestId("error-retry-box")
-		await expect(errorBox).toContainText("Attempt 1 of 3", { timeout: 90_000 })
+		await expect(errorBox).toContainText(retryAttemptText(1), { timeout: 90_000 })
 		await expect(sidebar.getByText(recoveredReasoning, { exact: false })).toHaveCount(1, { timeout: 60_000 })
 		await expect.poll(() => server.getRequestCount("deepseek-chat")).toBe(2)
 		await expect(errorBox).toHaveCount(0)
@@ -1384,7 +1389,7 @@ e2e(
 		await sendTask(sidebar, "Exercise the automatic retry override countdown.")
 
 		const errorBox = sidebar.getByTestId("error-retry-box")
-		await expect(errorBox).toContainText("Attempt 1 of 3", { timeout: 90_000 })
+		await expect(errorBox).toContainText(retryAttemptText(1), { timeout: 90_000 })
 		await expect(errorBox.getByTestId("error-retry-box-status")).toHaveText("502")
 		await expect(errorBox.getByTestId("error-retry-box-code")).toHaveText("e2e_retry_override_1")
 		await expect(errorBox.getByTestId("error-retry-box-message")).toHaveText(firstError)
@@ -1393,7 +1398,7 @@ e2e(
 		const countdown = errorBox.getByTestId("error-retry-countdown")
 		await expect
 			.poll(() => countdown.evaluate((element) => element.textContent ?? ""))
-			.toMatch(/^Attempt 1 of 3\s+Next retry in [1-9]\d*s$/)
+			.toMatch(new RegExp(`^${retryAttemptText(1)}\\s+Next retry in [1-9]\\d*s$`))
 
 		const retryButton = sidebar.locator('vscode-button[aria-label="Retry"]')
 		await expect(retryButton).toBeVisible()
@@ -1401,9 +1406,9 @@ e2e(
 		await startFooterActionStabilityObserver(sidebar, ["Retry", "Cancel"])
 		await expect.poll(() => server.getMockConsumptions("openai-compatible-chat").length).toBe(2)
 		await expect(errorBox.getByText("Automatic retry in progress", { exact: true })).toBeVisible()
-		await expect(countdown).toHaveText(/^Attempt 1 of 3\s+Retrying now$/)
+		await expect(countdown).toHaveText(new RegExp(`^${retryAttemptText(1)}\\s+Retrying now$`))
 		await expect(countdown).not.toContainText("0s")
-		await expect(errorBox).toContainText("Attempt 2 of 3", { timeout: 90_000 })
+		await expect(errorBox).toContainText(retryAttemptText(2), { timeout: 90_000 })
 		await expect(errorBox.getByTestId("error-retry-box-code")).toHaveText("e2e_retry_override_2")
 		await expect(errorBox.getByTestId("error-retry-box-message")).toHaveText(secondError)
 		const footerStabilityEvents = await stopFooterActionStabilityObserver(sidebar)
