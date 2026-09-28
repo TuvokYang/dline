@@ -26,6 +26,8 @@ export interface ProductionToolAdapterOptions {
 	readonly service: ProductionToolExecutionService
 	/** Task-scoped WS-072 scheduler shared by every turn of this task. */
 	readonly scheduler: TurnToolScheduler
+	/** Abort and renew handler-owned operation scopes across runtime halts. */
+	readonly operationCancellation?: ToolCommandExecutorOptions["operationCancellation"]
 	/** Read the task's consecutive mistake count and live configured ceiling. */
 	readonly readMistakeLimit?: () => { readonly count: number; readonly limit: number }
 	/**
@@ -87,6 +89,7 @@ export function createProductionToolAdapter(options: ProductionToolAdapterOption
 	return {
 		surface: options.surface,
 		scheduler: options.scheduler,
+		operationCancellation: options.operationCancellation,
 		readMistakeLimit: options.readMistakeLimit,
 		runner: createToolDomainRunner({
 			resources: options.resources,

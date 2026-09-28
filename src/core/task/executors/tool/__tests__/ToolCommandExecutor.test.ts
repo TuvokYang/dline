@@ -31,11 +31,17 @@ function harness(limit = 32) {
 	}
 	const events: TaskEvent[] = []
 	const scheduler = new TurnToolScheduler({ readConfiguredLimit: () => limit })
+	const operationCancellation = { cancel: vi.fn(), reset: vi.fn() }
 	const executor = new ToolCommandExecutor(
-		{ runner, surface: createDeniedSurface("detached_domain"), scheduler },
-		{ submit: async (event) => (events.push(event), { kind: "accepted" as const }) },
+		{ runner, surface: createDeniedSurface("detached_domain"), scheduler, operationCancellation },
+		{
+			submit: async (event) => {
+				events.push(event)
+				return { kind: "accepted" as const }
+			},
+		},
 	)
-	return { executor, runner, settlers, events, scheduler }
+	return { executor, runner, settlers, events, scheduler, operationCancellation }
 }
 
 function startedBlocks(events: TaskEvent[]): string[] {
@@ -68,7 +74,7 @@ describe("ToolCommandExecutor", () => {
 	})
 
 	it("keeps the halt fence until explicit rearm and converts pre-halt work to cancellation", async () => {
-		const { executor, runner, settlers, events } = harness()
+		const { executor, runner, settlers, events, operationCancellation } = harness()
 		const execution = executor.execute({ ...command(), blocks: [command().blocks[0]] })
 		await vi.waitFor(() => expect(runner.runBlock).toHaveBeenCalledTimes(1))
 		const order = { haltId: "halt-1", generation: 0, reason: "cancel" as const }
@@ -82,9 +88,12 @@ describe("ToolCommandExecutor", () => {
 		expect(events.some((event) => event.type === "tool.cancelled" && event.blockId === "b1")).toBe(true)
 		expect(events.some((event) => event.type === "tool.completed" && event.blockId === "b1")).toBe(false)
 		expect(runner.release).toHaveBeenCalledTimes(1)
+		expect(operationCancellation.cancel).toHaveBeenCalledWith("cancel")
 		executor.rearm("halt-older")
+		expect(operationCancellation.reset).not.toHaveBeenCalled()
 		await executor.execute({ ...command(), commandId: "fenced", blocks: [] })
 		executor.rearm("halt-1")
+		expect(operationCancellation.reset).toHaveBeenCalledOnce()
 	})
 
 	it("holds parallel blocks behind the configured ceiling and starts them only as slots free", async () => {

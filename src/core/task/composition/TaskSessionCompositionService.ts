@@ -567,6 +567,10 @@ export class TaskSessionCompositionService {
 						await tool.commands.cancelTaskOwnedCommands()
 					},
 				},
+				toolOperationCancellation: {
+					cancel: (reason) => toolState.cancelOperations(reason),
+					reset: () => toolState.resetOperationCancellation(),
+				},
 				toolSurface: tool.surface,
 				toolScheduler: toolExecution.turnScheduler,
 				environment,

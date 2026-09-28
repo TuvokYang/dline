@@ -1,6 +1,6 @@
 import { withoutAbandonedReview } from "./machines/dialog"
 import { expireAbandonedCompaction } from "./machines/flow"
-import { planRecoveryDialog } from "./recovery"
+import { planRecoveryDialog, restorableApprovals } from "./recovery"
 import type {
 	BlockPhase,
 	Command,
@@ -277,7 +277,15 @@ function normalizeState(
 		}
 		return { state, diagnostics: [] }
 	}
-	if (!state.dialog.primary) {
+	const approvals = restorableApprovals(state)
+	const hasRestorableApproval = Object.keys(approvals).length > 0
+	if (hasRestorableApproval) {
+		state = {
+			...state,
+			flow: form === "interrupted" ? { phase: "waiting" } : state.flow,
+			dialog: { ...state.dialog, primary: undefined, approvalsByBlock: approvals },
+		}
+	} else if (!state.dialog.primary) {
 		state = { ...state, dialog: { ...state.dialog, primary: recoveryInteraction(state, form) } }
 	}
 	return {
@@ -354,7 +362,10 @@ function installDialogCommandOwners(state: TaskState, commands: readonly Command
 			primary: own(state.dialog.primary),
 			interrupted: own(state.dialog.interrupted),
 			approvalsByBlock: Object.fromEntries(
-				Object.entries(state.dialog.approvalsByBlock).map(([blockId, interaction]) => [blockId, own(interaction)!]),
+				Object.entries(state.dialog.approvalsByBlock).map(([blockId, interaction]) => [
+					blockId,
+					own(interaction) ?? interaction,
+				]),
 			),
 		},
 	}

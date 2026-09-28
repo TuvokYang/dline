@@ -15,11 +15,20 @@ interface PendingBlock {
 	resolve(): void
 }
 
+export interface ToolOperationCancellationPort {
+	/** Abort handler-owned operations in the continuation being stopped. */
+	cancel(reason: string): void
+	/** Start a fresh operation scope once the matching halt generation is retired. */
+	reset(): void
+}
+
 export type ToolCommandExecutorOptions = Omit<ToolExecutionDomainOptions, "sink"> & {
 	/** Task-scoped WS-072 scheduler deciding when an approved block may start. */
 	readonly scheduler: TurnToolScheduler
 	/** Read the task's consecutive model mistakes after a tool handler settles. */
 	readonly readMistakeLimit?: () => { readonly count: number; readonly limit: number }
+	/** Cancellation scope shared by handlers such as Web Fetch and image generation. */
+	readonly operationCancellation?: ToolOperationCancellationPort
 }
 
 /** Adapts kernel tool commands to the single WS-072 tool execution domain. */
@@ -30,6 +39,7 @@ export class ToolCommandExecutor implements CommandExecutor, HaltParticipant {
 	private readonly toolDomain: ToolExecutionDomain
 	private readonly scheduler: TurnToolScheduler
 	private readonly readMistakeLimit?: () => { readonly count: number; readonly limit: number }
+	private readonly operationCancellation?: ToolOperationCancellationPort
 	private readonly pending = new Map<string, PendingBlock>()
 	private readonly executions = new Set<Promise<void>>()
 	private readonly feedback = new Set<Promise<void>>()
@@ -40,9 +50,10 @@ export class ToolCommandExecutor implements CommandExecutor, HaltParticipant {
 		options: ToolCommandExecutorOptions,
 		private readonly events: TaskEventSink,
 	) {
-		const { scheduler, readMistakeLimit, ...domainOptions } = options
+		const { scheduler, readMistakeLimit, operationCancellation, ...domainOptions } = options
 		this.scheduler = scheduler
 		this.readMistakeLimit = readMistakeLimit
+		this.operationCancellation = operationCancellation
 		this.toolDomain = new ToolExecutionDomain({
 			...domainOptions,
 			sink: {
@@ -67,6 +78,10 @@ export class ToolCommandExecutor implements CommandExecutor, HaltParticipant {
 	fence(order: HaltOrder): void {
 		this.fencedHaltId = order.haltId
 		this.toolDomain.fence(order.haltId)
+		// Abort handler-owned effects before the drain waits for them. Without
+		// this, a Web Fetch can keep the tool participant pending until its network
+		// timeout even though the scheduler has already cancelled the block.
+		this.operationCancellation?.cancel(order.reason)
 		// Queued blocks must never start behind the fence; running ones are
 		// settled by the domain drain, which reports them as cancelled.
 		this.scheduler.cancelActiveTurn()
@@ -87,6 +102,7 @@ export class ToolCommandExecutor implements CommandExecutor, HaltParticipant {
 	rearm(haltId: string): void {
 		if (this.fencedHaltId !== haltId) return
 		this.toolDomain.rearm(haltId)
+		this.operationCancellation?.reset()
 		this.fencedHaltId = undefined
 		this.haltPromise = undefined
 	}

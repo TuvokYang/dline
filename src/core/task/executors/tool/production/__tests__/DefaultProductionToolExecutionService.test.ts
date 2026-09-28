@@ -62,4 +62,42 @@ describe("DefaultProductionToolExecutionService", () => {
 			},
 		])
 	})
+
+	it("reuses the manual approval anchor timestamp for the handler lifecycle row", async () => {
+		let receivedPresentationTs: number | undefined
+		const runtime = {
+			coordinator: {},
+			execute: async (_config: TaskConfig, block: { ts?: number }) => {
+				receivedPresentationTs = block.ts
+				return REFUSAL
+			},
+			restoreSubagentRetry: async () => false,
+		} as unknown as ProductionToolHandlerRuntime
+		const service = new DefaultProductionToolExecutionService({
+			config: {
+				create: () =>
+					({
+						messageState: {
+							clineMessages: [
+								{
+									ts: 99,
+									type: "ask",
+									ask: "tool",
+									interactionId: "approval:dline_tid_01",
+								},
+							],
+						},
+					}) as TaskConfig,
+			},
+			runtime,
+		})
+
+		await service.execute({
+			command: { commandId: "command-1", turnId: "turn-1", dlineTid: INVOCATION.dlineTid, invocationRef: "ref-1" },
+			invocation: INVOCATION,
+			surface: createDeniedSurface("detached_domain"),
+		})
+
+		expect(receivedPresentationTs).toBe(99)
+	})
 })

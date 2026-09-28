@@ -26,7 +26,11 @@ import { JournalConversationView } from "../executors/provider/service/JournalCo
 import { ProviderJournalMessageMaterializer } from "../executors/provider/service/ProviderJournalMessageMaterializer"
 import type { ProviderRequestReportPort } from "../executors/provider/service/ProviderRequestReport"
 import { ProductionSpawnAdapter, type SpawnChildLauncher } from "../executors/spawn/ProductionSpawnAdapter"
-import { createProductionToolAdapter, type ProductionToolExecutionService } from "../executors/tool/ProductionToolAdapter"
+import {
+	createProductionToolAdapter,
+	type ProductionToolAdapterOptions,
+	type ProductionToolExecutionService,
+} from "../executors/tool/ProductionToolAdapter"
 import { InMemoryToolApprovalFeedbackLedger, type ToolApprovalFeedbackLedger } from "../executors/tool/ToolApprovalFeedbackLedger"
 import type { OwnedToolResources } from "../executors/tool/ToolDomainResources"
 import type { ToolDomainSurface } from "../executors/tool/ToolDomainSurface"
@@ -42,6 +46,7 @@ export interface TaskCompositionServices {
 	readonly provider: ProductionProviderService
 	readonly tool: ProductionToolExecutionService
 	readonly toolResources: OwnedToolResources
+	readonly toolOperationCancellation?: ProductionToolAdapterOptions["operationCancellation"]
 	readonly toolSurface: ToolDomainSurface
 	/** Task-scoped WS-072 scheduler; owned by the task so limit changes reach the active turn. */
 	readonly toolScheduler: TurnToolScheduler
@@ -191,6 +196,7 @@ export async function composeTask(options: TaskCompositionOptions): Promise<Task
 					journal: persistence.ports.journal,
 					approvalFeedback,
 					resources: options.services.toolResources,
+					operationCancellation: options.services.toolOperationCancellation,
 					surface: options.services.toolSurface,
 					service: options.services.tool,
 					scheduler: options.services.toolScheduler,

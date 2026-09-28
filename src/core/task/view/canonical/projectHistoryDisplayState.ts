@@ -1,4 +1,10 @@
-import { createInitialTaskState, type DialogActionRule, type DialogInteraction, type TaskState } from "../../kernel"
+import {
+	createInitialTaskState,
+	type DialogActionRule,
+	type DialogInteraction,
+	restorableApprovals,
+	type TaskState,
+} from "../../kernel"
 
 /** Interaction a stopped task offers when it is rendered from history alone. */
 export type HistoryDisplayInteractionKind = "resume" | "completion"
@@ -40,6 +46,16 @@ function revealedInteraction(snapshot: TaskState | undefined): DialogInteraction
 	return { ...primary, status: "awaiting", receiverGeneration: primary.receiverGeneration ?? snapshot.generation }
 }
 
+function revealedApprovals(snapshot: TaskState | undefined): Readonly<Record<string, DialogInteraction>> {
+	if (!snapshot) return {}
+	return Object.fromEntries(
+		Object.entries(restorableApprovals(snapshot)).map(([blockId, interaction]) => [
+			blockId,
+			{ ...interaction, status: "awaiting", receiverGeneration: interaction.receiverGeneration ?? snapshot.generation },
+		]),
+	)
+}
+
 /**
  * Project the read-only task state used to render a historical task without
  * starting its runtime, acquiring its lock, or writing any durable state.
@@ -48,8 +64,18 @@ export function projectHistoryDisplayState(taskId: string, snapshot: TaskState |
 	const owned = ownedSnapshot(taskId, snapshot)
 	const base = owned ?? createInitialTaskState(taskId)
 	const durable = revealedInteraction(owned)
+	const approvals = revealedApprovals(owned)
 	if (durable) {
-		return { state: { ...base, dialog: { primary: durable, approvalsByBlock: {} } } }
+		return { state: { ...base, dialog: { primary: durable, approvalsByBlock: approvals } } }
+	}
+	if (Object.keys(approvals).length > 0) {
+		return {
+			state: {
+				...base,
+				flow: { phase: "waiting" },
+				dialog: { primary: undefined, approvalsByBlock: approvals },
+			},
+		}
 	}
 
 	const kind: HistoryDisplayInteractionKind = owned?.flow.phase === "completed" ? "completion" : "resume"

@@ -245,6 +245,87 @@ describe("HistoryDisplaySession", () => {
 		}
 	})
 
+	it("keeps a canonical pending local approval actionable instead of synthesizing Resume", async () => {
+		const taskId = "history-canonical-local-approval"
+		const turnId = "turn-local-approval"
+		const blockId = "block-local-web-search"
+		const interactionId = "approval:dline_tid_local_web"
+		const anchorTs = 100
+		await seedMessages(taskId, [
+			{
+				ts: anchorTs,
+				type: "ask",
+				ask: "tool",
+				text: JSON.stringify({ tool: "webSearch", path: "runtime-v2 approval" }),
+				partial: false,
+				interactionId,
+			},
+		])
+		await persistSnapshot(taskId, {
+			...createInitialTaskState(taskId),
+			revision: 7,
+			flow: { phase: "waiting" },
+			turn: {
+				turnId,
+				mode: "serial",
+				blocks: [
+					{
+						blockId,
+						index: 0,
+						phase: "awaiting_approval",
+						attempt: "attempt-local-web",
+						lanes: [],
+						turnEnding: false,
+						invocationRef: "invocation:local-web",
+					},
+				],
+				manualApprovalBlockIds: [blockId],
+				automaticApprovalBlockIds: [],
+				executingBlockIds: [],
+			},
+			dialog: {
+				approvalsByBlock: {
+					[blockId]: {
+						turnId,
+						interactionId,
+						kind: "tool_approval",
+						status: "awaiting",
+						createdRevision: 6,
+						presentationRef: interactionId,
+						actionRules: [
+							{ actionId: "approve", payloadPolicy: "draft" },
+							{ actionId: "reject", payloadPolicy: "draft" },
+						],
+						blockId,
+						receiverGeneration: 0,
+					},
+				},
+			},
+		})
+		const session = new HistoryDisplaySession(createHistoryItem(taskId))
+
+		try {
+			await session.load()
+
+			expect(session.getViewState().activeInteraction).toMatchObject({
+				taskId,
+				turnId,
+				interactionId,
+				kind: "tool_approval",
+				status: "awaiting",
+				stateRevision: 7,
+				anchorVerified: true,
+			})
+			expect(session.getViewState().footer.actions.map((action) => action.type)).toEqual(["approve", "reject"])
+			expect(session.getMessages()).toHaveLength(1)
+			expect(session.getMessages()[0]).toMatchObject({ ts: anchorTs, interactionId, ask: "tool" })
+			expect(session.accepts(requestFor(session, { actionId: "approve" }))).toBe(true)
+			expect(session.accepts(requestFor(session))).toBe(false)
+		} finally {
+			await session.dispose()
+		}
+	})
+
 	it("fails closed when a canonical approval anchor is still partial", async () => {
 		const taskId = "history-partial-approval"
 		const turnId = "turn-partial-approval"

@@ -998,25 +998,27 @@ e2e(
 		await expect(copyErrorButton).toBeVisible()
 		await copyErrorButton.click()
 		await expect(sidebar.getByRole("button", { name: "Copied" })).toBeVisible()
-		const copiedError = (await app.evaluate(({ clipboard }) => clipboard.readText())).replaceAll("\r\n", "\n")
-		expect(copiedError).toBe(
-			[
-				"API Request Failed",
-				"",
-				message,
-				"",
-				"Provider: openai",
-				"Model: dline-e2e-model",
-				"HTTP status: 500",
-				"Error code: e2e_mock_queue_exhausted",
-				`Request ID: ${requestId}`,
-				"",
-				"Details",
-				"Type: e2e_mock_error",
-				"Target: openai-compatible-chat",
-				"Retryable: true",
-			].join("\n"),
-		)
+		const expectedCopiedError = [
+			"API Request Failed",
+			"",
+			message,
+			"",
+			"Provider: openai",
+			"Model: dline-e2e-model",
+			"HTTP status: 500",
+			"Error code: e2e_mock_queue_exhausted",
+			`Request ID: ${requestId}`,
+			"",
+			"Details",
+			"Type: e2e_mock_error",
+			"Target: openai-compatible-chat",
+			"Retryable: true",
+		].join("\n")
+		await expect
+			.poll(async () => (await app.evaluate(({ clipboard }) => clipboard.readText())).replaceAll("\r\n", "\n"), {
+				timeout: 10_000,
+			})
+			.toBe(expectedCopiedError)
 
 		server.enqueueResponses("openai-compatible-chat", {
 			type: "tool",
@@ -1177,7 +1179,8 @@ e2e(
 				type: "tool",
 				name: "attempt_completion",
 				arguments: { result: "E2E_UNSENT_DRAFT_AUTOMATIC_RETRY_DONE" },
-				delayMs: 5_000,
+				// Keep the recovered request active long enough for real keyboard input before completion rerenders the task footer.
+				delayMs: 15_000,
 			},
 			{
 				type: "error",

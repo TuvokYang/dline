@@ -57,6 +57,60 @@ describe("task kernel hydrate forms", () => {
 		expect(result.initialCommands.map((command) => command.type)).toEqual(["dialog.prepare"])
 	})
 
+	it("restores a pending manual tool approval instead of replacing it with Resume", () => {
+		const interactionId = "approval:dline_tid_01"
+		const result = ready({
+			...base(),
+			turn: {
+				...base().turn,
+				blocks: [
+					{
+						blockId: "block-1",
+						index: 0,
+						phase: "awaiting_approval",
+						attempt: "attempt-1",
+						lanes: [],
+						turnEnding: false,
+						invocationRef: "invocation:1",
+					},
+				],
+				manualApprovalBlockIds: ["block-1"],
+			},
+			dialog: {
+				approvalsByBlock: {
+					"block-1": {
+						interactionId,
+						turnId: "turn-1",
+						kind: "tool_approval",
+						status: "awaiting",
+						createdRevision: 3,
+						presentationRef: interactionId,
+						actionRules: [
+							{ actionId: "approve", payloadPolicy: "draft" },
+							{ actionId: "reject", payloadPolicy: "draft" },
+						],
+						blockId: "block-1",
+						receiverGeneration: 0,
+					},
+				},
+			},
+		})
+
+		expect(result.state.flow).toEqual({ phase: "waiting" })
+		expect(result.state.dialog.primary).toBeUndefined()
+		expect(result.state.dialog.approvalsByBlock["block-1"]).toMatchObject({
+			interactionId,
+			kind: "tool_approval",
+			status: "awaiting",
+			receiverGeneration: 1,
+			actionRules: [
+				{ actionId: "approve", payloadPolicy: "draft" },
+				{ actionId: "reject", payloadPolicy: "draft" },
+			],
+		})
+		expect(result.initialCommands).toEqual([])
+	})
+
 	it.each([
 		["completed", { phase: "completed", completionId: "completion-1" }, "completion"],
 		["error", { phase: "error", error: "provider failed" }, "error_retry"],

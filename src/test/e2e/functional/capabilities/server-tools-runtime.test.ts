@@ -81,7 +81,6 @@ async function attachHostedWebResumeEvidence(
 	await attachHostedWebScreenshot(page, name)
 	const testInfo = e2e.info()
 	const taskId = await onlyTaskId(dlineDocsDir)
-	const taskDir = path.join(dlineDocsDir, "tasks", taskId)
 	const journalConversation = `${JSON.stringify(await readTaskConversation(dlineDocsDir, taskId), null, 2)}\n`
 	const uiMessages = await readTaskUiMessagesText(dlineDocsDir, taskId)
 	const settings = await E2ETestHelper.waitForValue(async () => {
@@ -614,7 +613,6 @@ e2e(
 			await expect(opened.sidebar.locator('vscode-button[aria-label="Retry"]')).toBeVisible({ timeout: 60_000 })
 			await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(1)
 			const taskId = await onlyTaskId(dlineDocsDir)
-			const taskDir = path.join(dlineDocsDir, "tasks", taskId)
 			await closeCurrentTask(opened.sidebar)
 			await seedLegacyHostedWebApproval(dlineDocsDir, taskId)
 
@@ -1461,6 +1459,15 @@ e2e(
 			"openai-compatible-responses",
 			{
 				type: "tool",
+				id: "call_web_fetch_restore_checkpoint_anchor",
+				name: "write_to_file",
+				arguments: {
+					path: "web-fetch-restore-checkpoint-anchor.txt",
+					content: "E2E_WEB_FETCH_RESTORE_CHECKPOINT_ANCHOR",
+				},
+			},
+			{
+				type: "tool",
 				id: "call_web_fetch_restore_ready",
 				name: "qna_respond",
 				arguments: { response: "E2E_WEB_FETCH_RESTORE_READY" },
@@ -1505,12 +1512,15 @@ e2e(
 			app = opened.app
 			await setAutoApproveAction(opened.sidebar, "Use Web", false)
 			await sendTask(opened.sidebar, "Create a checkpoint before warming Web Fetch.")
+			const checkpointApproval = opened.sidebar.getByRole("contentinfo").getByText("Approve", { exact: true })
+			await expect(checkpointApproval).toBeVisible({ timeout: 60_000 })
+			await checkpointApproval.click()
 			await expect(opened.sidebar.getByText("E2E_WEB_FETCH_RESTORE_READY", { exact: true })).toBeVisible({
 				timeout: 60_000,
 			})
 
 			const checkpointLabels = opened.sidebar.getByText("Checkpoint", { exact: true })
-			await expect.poll(() => checkpointLabels.count(), { timeout: 30_000 }).toBeGreaterThan(0)
+			await expect.poll(() => checkpointLabels.count(), { timeout: 30_000 }).toBe(1)
 			const input = opened.sidebar.getByTestId("chat-input")
 			await input.fill("E2E_WARM_WEB_FETCH")
 			await input.press("Enter")
@@ -1539,9 +1549,20 @@ e2e(
 			await expect(restoreButton).toBeVisible({ timeout: 3_000 })
 			await restoreButton.click({ timeout: 3_000 })
 			const moreOptions = opened.sidebar.getByText("More options", { exact: true })
-			await expect(moreOptions).toBeVisible()
-			await moreOptions.click()
 			const restoreTaskButton = opened.sidebar.getByRole("button", { name: "Restore Task Only", exact: true })
+			await expect
+				.poll(
+					async () =>
+						(await moreOptions.isVisible())
+							? "more-options"
+							: (await restoreTaskButton.isVisible())
+								? "task-only"
+								: "pending",
+					{ timeout: 5_000 },
+				)
+				.toMatch(/^(more-options|task-only)$/)
+			if (await moreOptions.isVisible()) await moreOptions.click()
+			await expect(restoreTaskButton).toBeVisible()
 			const restoreStartedAt = Date.now()
 			await restoreTaskButton.click()
 
@@ -1556,8 +1577,8 @@ e2e(
 			await expect(input).toHaveValue("")
 			await expect(opened.sidebar.getByText(/stale_interaction|stale interaction/i)).toHaveCount(0)
 			await expect(opened.sidebar.getByText(completion, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
-			await expect.poll(() => server.getMockConsumptions("openai-compatible-responses").length).toBe(5)
-			const continuation = server.getMockConsumptions("openai-compatible-responses")[4]
+			await expect.poll(() => server.getMockConsumptions("openai-compatible-responses").length).toBe(6)
+			const continuation = server.getMockConsumptions("openai-compatible-responses")[5]
 			expect(continuation.contractError).toBeUndefined()
 			expectSingleSearchRoute(continuation, "local")
 			expect(JSON.stringify(continuation.requestBody)).toContain(resumeDraft)

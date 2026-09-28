@@ -147,8 +147,12 @@ export class DefaultProductionToolExecutionService implements ProductionToolExec
 		if (input.invocation.dlineTid !== input.command.dlineTid) {
 			throw new Error(`ToolInvocationIdentityMismatch:${input.invocation.dlineTid}:${input.command.dlineTid}`)
 		}
-		const block = materializeToolInvocation(input.invocation)
 		let config = this.options.config.create({ ...input, coordinator: this.options.runtime.coordinator })
+		const block = materializeToolInvocation(input.invocation)
+		const approvalAnchor = config.messageState?.clineMessages.find(
+			(message) => message.interactionId === `approval:${input.invocation.dlineTid}`,
+		)
+		if (approvalAnchor) block.ts = approvalAnchor.ts
 		if (
 			input.invocation.isNativeToolCall &&
 			input.invocation.toolName === ClineDefaultTool.WEB_SEARCH &&

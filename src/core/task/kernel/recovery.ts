@@ -1,4 +1,4 @@
-import type { DialogActionRule } from "./types"
+import type { BlockId, DialogActionRule, DialogInteraction, TaskState } from "./types"
 
 /**
  * Why a task is offering to resume.
@@ -44,6 +44,23 @@ export interface RecoveryDialogInput {
 	readonly revision: number
 	readonly reason: RecoveryReason
 	readonly turnId: string
+}
+
+/** Awaiting local tool approvals that remain executable after a process restart. */
+export function restorableApprovals(state: Pick<TaskState, "turn" | "dialog">): Readonly<Record<BlockId, DialogInteraction>> {
+	const manual = new Set(state.turn.manualApprovalBlockIds)
+	const blocks = new Map(state.turn.blocks.map((block) => [block.blockId, block]))
+	return Object.fromEntries(
+		Object.entries(state.dialog.approvalsByBlock).filter(([blockId, interaction]) => {
+			const block = blocks.get(blockId)
+			return (
+				manual.has(blockId) &&
+				block?.phase === "awaiting_approval" &&
+				interaction.kind === "tool_approval" &&
+				interaction.status !== "failed"
+			)
+		}),
+	)
 }
 
 /** Plan the dialog a stopped task offers so the user can put it back to work. */

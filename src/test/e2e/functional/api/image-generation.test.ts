@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto"
+import type { Dirent } from "node:fs"
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
@@ -106,7 +107,7 @@ function getFrozenToolName(tool: unknown): string | undefined {
 }
 
 async function listFilesRecursively(root: string): Promise<string[]> {
-	let entries
+	let entries: Dirent[]
 	try {
 		entries = await readdir(root, { withFileTypes: true })
 	} catch (error) {
@@ -124,7 +125,7 @@ async function listFilesRecursively(root: string): Promise<string[]> {
 
 e2e(
 	"Image generation - Feature off keeps generate_image out of the provider tool schema",
-	async ({ dlineDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
+	async ({ helper, openVSCode, server, userDataDir, workspaceDir }) => {
 		e2e.setTimeout(120_000)
 		server.resetOpenAiMock()
 		server.enqueueOpenAiResponses({
@@ -209,12 +210,6 @@ e2e(
 		server.enqueueResponses(
 			"openai-compatible-responses",
 			{ type: "tool", id: "call_image_rejected", name: "generate_image", arguments: { prompt: rejectedPrompt, count: 1 } },
-			{
-				type: "tool",
-				id: "call_image_rejected_resumed",
-				name: "generate_image",
-				arguments: { prompt: rejectedPrompt, count: 1 },
-			},
 			{ type: "tool", id: "call_image_approved", name: "generate_image", arguments: { prompt: approvedPrompt, count: 1 } },
 			{
 				type: "hosted-image-generation",
@@ -260,14 +255,13 @@ e2e(
 			await expect(reopenedToggle.locator("xpath=../..").getByText(rejectedPrompt, { exact: true })).toBeVisible()
 			expect(hostedImageConsumptions()).toHaveLength(0)
 			const reopenedFooter = sidebar.getByRole("contentinfo")
-			const resumeButton = reopenedFooter.getByRole("button", { name: "Resume", exact: true }).first()
+			const approveButton = reopenedFooter.getByRole("button", { name: "Approve", exact: true }).first()
 			const rejectButton = reopenedFooter.getByRole("button", { name: "Reject", exact: true }).first()
-			await expect(resumeButton).toBeVisible({ timeout: 30_000 })
-			await expect(rejectButton).toHaveCount(0)
+			await expect(approveButton).toBeVisible({ timeout: 30_000 })
+			await expect(rejectButton).toBeVisible()
+			await expect(reopenedFooter.getByRole("button", { name: "Resume", exact: true })).toHaveCount(0)
 			await page.waitForTimeout(750)
-			await resumeButton.click()
-			await expect.poll(() => server.getMockConsumptions("openai-compatible-responses").length, { timeout: 30_000 }).toBe(2)
-			await expect(rejectButton).toBeVisible({ timeout: 30_000 })
+			expect(server.getMockConsumptions("openai-compatible-responses")).toHaveLength(1)
 			await rejectButton.click()
 			await expect(sidebar.getByText("Image generation rejected", { exact: true }).last()).toBeVisible({ timeout: 30_000 })
 			await expect(sidebar.getByText(rejectedPrompt, { exact: true }).last()).toBeVisible()
@@ -287,14 +281,8 @@ e2e(
 			await expect(sidebar.getByText("E2E_IMAGE_APPROVED_OK", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
 			await expect(sidebar.getByText("Image generation completed", { exact: true }).last()).toBeVisible()
 			const consumptions = server.getMockConsumptions("openai-compatible-responses")
-			expect(consumptions).toHaveLength(5)
-			expect(consumptions.map((entry) => entry.responseType)).toEqual([
-				"tool",
-				"tool",
-				"tool",
-				"hosted-image-generation",
-				"tool",
-			])
+			expect(consumptions).toHaveLength(4)
+			expect(consumptions.map((entry) => entry.responseType)).toEqual(["tool", "tool", "hosted-image-generation", "tool"])
 			expect(consumptions.every((entry) => entry.contractError === undefined)).toBe(true)
 			await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
 		} finally {
