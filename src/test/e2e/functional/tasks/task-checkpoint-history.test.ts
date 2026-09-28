@@ -545,7 +545,7 @@ e2e(
 )
 
 e2e(
-	"History - a partial approval anchor exposes no approval or cancellation actions",
+	"History - a partial approval anchor falls back to an executable Resume",
 	async ({ dlineDocsDir, helper, page, server, sidebar, userDataDir }) => {
 		e2e.setTimeout(180_000)
 		await helper.signin(sidebar)
@@ -574,7 +574,8 @@ e2e(
 		await expect(taskFooter.getByText("Approve", { exact: true })).toHaveCount(0)
 		await expect(taskFooter.getByText("Reject", { exact: true })).toHaveCount(0)
 		await expect(taskFooter.getByText("Cancel", { exact: true })).toHaveCount(0)
-		await expect(sidebar.getByRole("alert")).toContainText(/controls are unavailable|saved interaction message/i)
+		await expect(taskFooter.getByText("Resume", { exact: true })).toBeVisible()
+		await expect(sidebar.getByText(/saved interaction message|controls are unavailable/i)).toHaveCount(0)
 		await page.waitForTimeout(500)
 		expect(server.openAiRequestCount).toBe(1)
 		await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)

@@ -114,6 +114,12 @@ export interface AppendAskEffect {
 	taskAsk: string
 	presentation: string
 	existingTs?: number
+	/**
+	 * Recovery asks are reconstructable from the runtime snapshot. Register their
+	 * in-memory ordering before disk persistence so a storage failure cannot leave
+	 * the task without an executable Resume interaction.
+	 */
+	persistence?: "required" | "reconstructable"
 }
 
 /** Terminate the current task and create the requested successor transaction. */

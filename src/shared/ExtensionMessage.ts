@@ -494,12 +494,6 @@ export interface TaskViewAction {
 	activityId?: string
 }
 
-/** Diagnostic for an interaction that cannot be projected to its persisted ask anchor. */
-export interface TaskViewDiagnostic {
-	code: "interaction_anchor_missing" | "interaction_anchor_is_say"
-	interactionId: string
-}
-
 /** Input capabilities projected for the current active interaction. */
 export interface TaskInputViewState {
 	enabled: boolean
@@ -541,7 +535,6 @@ export interface TaskViewState {
 	phase: TaskViewPhase
 	stateRevision: number
 	activeInteraction?: ActiveInteractionView
-	diagnostic?: TaskViewDiagnostic
 	contextCompaction?: TaskContextCompactionViewState
 	/** True only while terminal automatic-compaction recovery offers explicit history truncation. */
 	forceTruncateAvailable?: boolean

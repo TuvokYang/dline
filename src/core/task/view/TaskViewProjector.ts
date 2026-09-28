@@ -38,19 +38,6 @@ const RETRY_PENDING_ACTION: TaskViewAction = {
 	dispatchTarget: "task",
 }
 
-/** Remove interaction controls when the durable presentation anchor is unavailable or incomplete. */
-export function projectMissingInteractionAnchor(view: TaskViewState): TaskViewState {
-	const interaction = view.activeInteraction
-	if (!interaction) return view
-	return {
-		...view,
-		activeInteraction: undefined,
-		diagnostic: { code: "interaction_anchor_missing", interactionId: interaction.interactionId },
-		input: { ...DISABLED_INPUT },
-		footer: { actions: view.footer.actions.filter((action) => action.dispatchTarget === "task") },
-	}
-}
-
 export interface TaskViewProjectionOptions {
 	autoRetryActive?: boolean
 	autoRetryPending?: boolean
@@ -79,7 +66,6 @@ export function projectTaskView(
 		}
 	}
 	const interaction = state.interaction ? projectInteraction(state.interaction, state.revision) : undefined
-	const diagnostic = state.interaction?.status === "opening" && !state.error ? undefined : interaction?.diagnostic
 	const forceTruncateAvailable =
 		options.forceTruncateAvailable === true &&
 		state.interaction?.kind === "error_retry" &&
@@ -124,7 +110,6 @@ export function projectTaskView(
 		phase: state.phase,
 		stateRevision: state.revision,
 		activeInteraction: interaction?.view,
-		...(diagnostic ? { diagnostic } : {}),
 		...(contextCompaction ? { contextCompaction } : {}),
 		...(forceTruncateAvailable ? { forceTruncateAvailable: true } : {}),
 		// Only an active interaction or an explicit recovery admission opens the

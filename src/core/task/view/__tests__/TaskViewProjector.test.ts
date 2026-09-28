@@ -3,7 +3,7 @@ import type { ActiveInteraction } from "../../interaction/InteractionReducer"
 import type { TaskRuntimeState } from "../../runtime/TaskRuntimeState"
 import { TaskPhase } from "../../TaskPhase"
 import { projectInteraction } from "../InteractionProjector"
-import { projectMissingInteractionAnchor, projectTaskView } from "../TaskViewProjector"
+import { projectTaskView } from "../TaskViewProjector"
 
 /** Create runtime state with one optional active interaction. */
 function runtime(phase: TaskPhase, interaction?: ActiveInteraction): TaskRuntimeState {
@@ -76,15 +76,16 @@ describe("projectTaskView", () => {
 		expect(view.activeInteraction).toMatchObject({ askMessageTs: 100, taskAsk: "tool" })
 	})
 
-	it("fails closed when an awaiting interaction loses its complete ask anchor", () => {
-		const view = projectMissingInteractionAnchor(
-			projectTaskView(runtime(TaskPhase.AWAITING_APPROVAL, active("tool_approval"))),
-		)
+	it("keeps an opening interaction inert until its ask anchor is registered", () => {
+		const interaction = active("tool_approval")
+		interaction.status = "opening"
+		delete interaction.anchor
+		const view = projectTaskView(runtime(TaskPhase.AWAITING_APPROVAL, interaction))
 
 		expect(view.activeInteraction).toBeUndefined()
 		expect(view.input).toEqual({ enabled: false, acceptsText: false, acceptsImages: false, acceptsFiles: false })
 		expect(view.footer.actions).toEqual([])
-		expect(view.diagnostic).toEqual({ code: "interaction_anchor_missing", interactionId: "interaction-1" })
+		expect(view).not.toHaveProperty("diagnostic")
 	})
 
 	it("projects Hosted Web request approval with tool presentation and approval actions", () => {
@@ -410,22 +411,21 @@ describe("projectTaskView", () => {
 })
 
 describe("projectInteraction", () => {
-	it("never projects actions for a say anchor", () => {
+	it("never projects actions or error UI for a non-ask anchor", () => {
 		const result = projectInteraction(active("tool_approval", "say"), 8)
 
-		expect(result.view).toBeUndefined()
-		expect(result.diagnostic?.code).toBe("interaction_anchor_is_say")
+		expect(result).toEqual({})
 	})
 
-	it("carries an invalid anchor diagnostic into the complete task view", () => {
+	it("keeps a malformed non-ask anchor out of the complete task view", () => {
 		const view = projectTaskView(runtime(TaskPhase.PAUSED, active("tool_approval", "say")))
 
 		expect(view.activeInteraction).toBeUndefined()
 		expect(view.footer.actions).toEqual([])
-		expect(view.diagnostic).toEqual({ code: "interaction_anchor_is_say", interactionId: "interaction-1" })
+		expect(view).not.toHaveProperty("diagnostic")
 	})
 
-	it("surfaces a failed opening recovery interaction without projecting controls", () => {
+	it("does not turn a transient opening recovery interaction into an error alert", () => {
 		const interaction = active("resume")
 		interaction.status = "opening"
 		delete interaction.anchor
@@ -441,6 +441,6 @@ describe("projectInteraction", () => {
 
 		expect(view.activeInteraction).toBeUndefined()
 		expect(view.footer.actions).toEqual([])
-		expect(view.diagnostic).toEqual({ code: "interaction_anchor_missing", interactionId: "interaction-1" })
+		expect(view).not.toHaveProperty("diagnostic")
 	})
 })

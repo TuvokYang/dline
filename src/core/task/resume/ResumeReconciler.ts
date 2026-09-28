@@ -170,12 +170,15 @@ function isPendingCommandApproval(snapshot: TaskSnapshot, message: ClineMessage)
 }
 
 function interactionKind(snapshot: TaskSnapshot, message: ClineMessage): InteractionKind | undefined {
-	if (message.type !== "ask" || !message.ask) return undefined
+	if (message.type !== "ask" || !message.ask || message.partial === true) return undefined
 	if (isLegacyHostedWebInteraction(snapshot, message.interactionId)) return undefined
 	if (message.ask === "command" && !isPendingCommandApproval(snapshot, message)) return undefined
 	const currentInteraction = snapshot.interaction
 	let knownKind: InteractionKind | undefined
 	if (currentInteraction && message.interactionId === currentInteraction.interactionId) {
+		const expectedAsk = currentInteraction.anchor?.taskAsk ?? getInteraction(currentInteraction.kind).taskAsk
+		const mappedKind = ASK_INTERACTIONS[message.ask]
+		if (message.ask !== expectedAsk && mappedKind !== currentInteraction.kind) return undefined
 		knownKind = currentInteraction.kind
 	}
 	const kind = knownKind ?? ASK_INTERACTIONS[message.ask]
@@ -432,18 +435,19 @@ function reconcilePersistedInteraction(
 				}
 				return
 			}
-			const expectedAsk = getInteraction(snapshot.interaction.kind).taskAsk
-			const anchored = uiMessages.find(
+			const expectedAsk = snapshot.interaction.anchor?.taskAsk ?? getInteraction(snapshot.interaction.kind).taskAsk
+			const anchored = uiMessages.filter(
 				(message) =>
 					message.type === "ask" &&
+					message.partial !== true &&
 					message.ask === expectedAsk &&
 					message.interactionId === snapshot.interaction?.interactionId &&
 					interactionKind(snapshot, message) === snapshot.interaction?.kind,
 			)
-			if (anchored) {
+			if (anchored.length === 1 && anchored[0]) {
 				const interactionId = snapshot.interaction.interactionId
 				const kind = snapshot.interaction.kind
-				bindPersistedInteraction(snapshot, anchored, kind)
+				bindPersistedInteraction(snapshot, anchored[0], kind)
 				retainInteractionWithContinuation(snapshot, interactionId, kind, diagnostics)
 				return
 			}
@@ -456,6 +460,18 @@ function reconcilePersistedInteraction(
 
 	const interactionId = latest.message.interactionId
 	if (!interactionId) return
+	const matchingAnchors = uiMessages.filter(
+		(message) =>
+			message.partial !== true &&
+			message.interactionId === interactionId &&
+			message.ask === latest.message.ask &&
+			interactionKind(snapshot, message) === latest.kind,
+	)
+	if (matchingAnchors.length !== 1) {
+		diagnostics.push({ code: "missing_interaction_anchor", interactionId })
+		clearInteractionOwnership(snapshot, interactionId)
+		return
+	}
 	for (const dlineTid of restoreAnchoredInteractionTurn(snapshot, latest.message, uiMessages, apiHistory, diagnostics)) {
 		answeredDlineTids.add(dlineTid)
 	}

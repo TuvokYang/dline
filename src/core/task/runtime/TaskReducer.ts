@@ -1616,13 +1616,14 @@ function reduceFailure(state: TaskRuntimeState, event: Extract<TaskEvent, { type
 	if (event.effectType !== "PERSIST_SNAPSHOT") {
 		effects.push({ id: effectId(revision, effects.length + 1), type: "PERSIST_SNAPSHOT" })
 	}
-	if (recoveryInteraction && event.effectType !== "APPEND_ASK") {
+	if (recoveryInteraction) {
 		effects.push({
 			id: effectId(revision, effects.length + 1),
 			type: "APPEND_ASK",
 			interactionId: recoveryInteraction.interactionId,
 			taskAsk: "resume_task",
 			presentation: "",
+			persistence: "reconstructable",
 		})
 	} else if (event.effectType !== "POST_TASK_VIEW") {
 		effects.push({ id: effectId(revision, effects.length + 1), type: "POST_TASK_VIEW" })

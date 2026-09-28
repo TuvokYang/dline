@@ -1,6 +1,7 @@
 import fs from "node:fs/promises"
 import path from "node:path"
 import type { ClineMessage, TaskViewState } from "@shared/ExtensionMessage"
+import { getLastApiReqTotalTokens } from "@shared/getApiMetrics"
 import type { HistoryItem } from "@shared/HistoryItem"
 import { matchesActiveInteractionAnchor } from "@shared/interaction-anchor"
 import type { DispatchInteractionRequest } from "@shared/proto/dline/task"
@@ -9,13 +10,15 @@ import { UIMessage } from "@/core/storage/UIMessage"
 import type { UIMessageWindowPage, UIMessageWindowReader } from "@/core/storage/UIMessageWindowReader"
 import { TaskActivityPersistence } from "@/core/task/activity/TaskActivityPersistence"
 import { TaskActivityStore } from "@/core/task/activity/TaskActivityStore"
+import { extractFocusChainListFromText, getFocusChainFilePath } from "@/core/task/focus-chain/file-utils"
 import type { ActiveInteraction } from "@/core/task/interaction/InteractionReducer"
 import { getInteraction } from "@/core/task/interaction/InteractionRegistry"
 import { normalizeStoppedTaskSnapshot } from "@/core/task/resume/ResumeReconciler"
 import type { TaskRuntimeState } from "@/core/task/runtime/TaskRuntimeState"
 import { TaskPhase } from "@/core/task/TaskPhase"
 import { hydrateSnapshot, normalizeLegacyTaskSnapshot, type TaskSnapshot } from "@/core/task/TaskSnapshot"
-import { projectMissingInteractionAnchor, projectTaskView } from "@/core/task/view/TaskViewProjector"
+import { projectTaskView } from "@/core/task/view/TaskViewProjector"
+import { Logger } from "@/shared/services/Logger"
 import { projectHistoryPreparingView } from "./history-task-readiness"
 
 /**
@@ -36,6 +39,8 @@ export class HistoryDisplaySession {
 	private durableMessageCount = 0
 	private syntheticMessage?: ClineMessage
 	private taskTitleMessage?: ClineMessage
+	private focusChainChecklist: string | null = null
+	private lastApiReqTotalTokens?: number
 	private viewState: TaskViewState
 	private locked = false
 	private loaded = false
@@ -64,11 +69,14 @@ export class HistoryDisplaySession {
 		}
 		this.messageReader = reader
 		try {
-			const [durableMessages, snapshot, taskTitlePage] = await Promise.all([
+			const [durableMessages, snapshot, taskTitlePage, , focusChainChecklist] = await Promise.all([
 				reader.getLatest(HISTORY_MESSAGE_WINDOW_SIZE),
 				this.readSnapshot(),
 				reader.getPage(0, 1),
-				this.activityStore.hydrate(),
+				this.activityStore.hydrate().catch((error) => {
+					Logger.warn(`[HistoryDisplay] Failed to hydrate activities for task ${this.taskId}:`, error)
+				}),
+				this.readFocusChainChecklist(),
 			])
 			if (this.disposed) return
 
@@ -78,6 +86,8 @@ export class HistoryDisplaySession {
 			this.syntheticMessage = projected.syntheticMessage
 			this.messages = projected.messages
 			this.taskTitleMessage = taskTitlePage.messages[0]
+			this.focusChainChecklist = focusChainChecklist
+			this.lastApiReqTotalTokens = getLastApiReqTotalTokens(durableMessages) || undefined
 			this.viewState = projected.view
 			this.loaded = true
 		} catch (error) {
@@ -94,6 +104,14 @@ export class HistoryDisplaySession {
 
 	getMessageCount(): number {
 		return this.durableMessageCount + (this.syntheticMessage ? 1 : 0)
+	}
+
+	getFocusChainChecklist(): string | null {
+		return this.focusChainChecklist
+	}
+
+	getLastApiReqTotalTokens(): number | undefined {
+		return this.lastApiReqTotalTokens
 	}
 
 	getTaskTitleMessage(): ClineMessage | undefined {
@@ -174,8 +192,20 @@ export class HistoryDisplaySession {
 		this.messages = []
 		this.syntheticMessage = undefined
 		this.taskTitleMessage = undefined
+		this.focusChainChecklist = null
+		this.lastApiReqTotalTokens = undefined
 		this.durableMessageCount = 0
 		if (reader) await reader.close()
+	}
+
+	private async readFocusChainChecklist(): Promise<string | null> {
+		try {
+			const taskDirectory = await ensureTaskDirectoryExists(this.taskId)
+			const markdown = await fs.readFile(getFocusChainFilePath(taskDirectory, this.taskId), "utf8")
+			return extractFocusChainListFromText(markdown)
+		} catch {
+			return null
+		}
 	}
 
 	private async readSnapshot(): Promise<TaskSnapshot | undefined> {
@@ -216,7 +246,10 @@ export class HistoryDisplaySession {
 						},
 					}
 				}
-				return { messages: durableMessages, view: projectMissingInteractionAnchor(view) }
+				return this.projectSyntheticInteraction(
+					durableMessages,
+					hydrated.phase === TaskPhase.COMPLETED ? "completion" : "resume",
+				)
 			}
 		}
 

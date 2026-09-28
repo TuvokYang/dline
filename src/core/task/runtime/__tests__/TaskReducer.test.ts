@@ -731,7 +731,7 @@ describe("reduceTask lifecycle events", () => {
 		})
 	})
 
-	it("turns effect failures into explicit recovery state", () => {
+	it("turns effect failures into an explicitly reconstructable Resume", () => {
 		const result = reduceTask(stateAt(TaskPhase.STREAMING), {
 			type: "EFFECT_FAILED",
 			effectId: "effect-1",
@@ -751,10 +751,13 @@ describe("reduceTask lifecycle events", () => {
 				error: { effectId: "effect-1", effectType: "START_API", message: "provider unavailable" },
 			},
 		})
-		expect(result.effects.map((effect) => effect.type)).toEqual(["PERSIST_SNAPSHOT", "APPEND_ASK"])
+		expect(result.effects).toEqual([
+			expect.objectContaining({ type: "PERSIST_SNAPSHOT" }),
+			expect.objectContaining({ type: "APPEND_ASK", persistence: "reconstructable", taskAsk: "resume_task" }),
+		])
 	})
 
-	it("persists an opening Resume without retrying a failed ask presentation", () => {
+	it("registers a reconstructable Resume after the original ask presentation fails", () => {
 		const state = {
 			...stateAt(TaskPhase.STREAMING),
 			interaction: {
@@ -779,7 +782,10 @@ describe("reduceTask lifecycle events", () => {
 			accepted: true,
 			next: { phase: TaskPhase.PAUSED, interaction: { kind: "resume", status: "opening" } },
 		})
-		expect(result.effects.map((effect) => effect.type)).toEqual(["PERSIST_SNAPSHOT", "POST_TASK_VIEW"])
+		expect(result.effects).toEqual([
+			expect.objectContaining({ type: "PERSIST_SNAPSHOT" }),
+			expect.objectContaining({ type: "APPEND_ASK", persistence: "reconstructable", taskAsk: "resume_task" }),
+		])
 	})
 
 	it("keeps an anchored approval actionable when only snapshot persistence fails", () => {

@@ -1025,6 +1025,72 @@ describe("reconcileResume", () => {
 		})
 	})
 
+	it.each([
+		["partial", { ...interactionAsk("qna_respond", "tid-invalid-anchor"), partial: true }],
+		["wrong ask kind", { ...interactionAsk("command", "tid-invalid-anchor"), commandStatus: "pending" as const }],
+		[
+			"say row",
+			{
+				ts: 205,
+				type: "say" as const,
+				say: "text" as const,
+				text: "not an ask",
+				interactionId: "tid-invalid-anchor",
+				conversationHistoryIndex: 1,
+			},
+		],
+	] as const)("falls back to executable Resume when the stored interaction anchor is %s", (_case, message) => {
+		const interactionId = "tid-invalid-anchor"
+		const snapshot = snapshotWithTurn(interactionId, "fn-invalid-anchor", { interaction: "qna_response" })
+		const result = reconcileResume(
+			fullInput([apiUser(), assistantTool(interactionId, "fn-invalid-anchor", "qna_respond")], [message], snapshot),
+		)
+
+		expect(result.entry).toMatchObject({ type: "show_resume_interaction" })
+		expect(result.snapshot.interaction).toMatchObject({ kind: "resume", status: "opening" })
+		expect(result.snapshot.interaction?.interactionId).not.toBe(interactionId)
+		expect(result.diagnostics).toContainEqual({ code: "missing_interaction_anchor", interactionId })
+	})
+
+	it("falls back to executable Resume when the stored interaction anchor is duplicated", () => {
+		const interactionId = "tid-duplicate-anchor"
+		const snapshot = snapshotWithTurn(interactionId, "fn-duplicate-anchor", { interaction: "qna_response" })
+		const ask = interactionAsk("qna_respond", interactionId)
+		const result = reconcileResume(
+			fullInput(
+				[apiUser(), assistantTool(interactionId, "fn-duplicate-anchor", "qna_respond")],
+				[ask, { ...ask, ts: ask.ts + 1 }],
+				snapshot,
+			),
+		)
+
+		expect(result.entry).toMatchObject({ type: "show_resume_interaction" })
+		expect(result.snapshot.interaction).toMatchObject({ kind: "resume", status: "opening" })
+		expect(result.snapshot.interaction?.interactionId).not.toBe(interactionId)
+		expect(result.diagnostics).toContainEqual({ code: "missing_interaction_anchor", interactionId })
+	})
+
+	it("rebinds one uniquely identified ask when only its saved timestamp drifted", () => {
+		const interactionId = "tid-relocated-anchor"
+		const snapshot = snapshotWithTurn(interactionId, "fn-relocated-anchor", { interaction: "qna_response" })
+		const result = reconcileResume(
+			fullInput(
+				[apiUser(), assistantTool(interactionId, "fn-relocated-anchor", "qna_respond")],
+				[interactionAsk("qna_respond", interactionId, 1, 305)],
+				snapshot,
+			),
+		)
+
+		expect(result.entry).toMatchObject({ type: "reopen_interaction", interactionId })
+		expect(result.snapshot.interaction).toMatchObject({
+			interactionId,
+			kind: "qna_response",
+			status: "awaiting",
+			anchor: { messageTs: 305, messageType: "ask" },
+		})
+		expect(result.diagnostics).not.toContainEqual(expect.objectContaining({ code: "missing_interaction_anchor" }))
+	})
+
 	it("falls back to normal Resume when a stored handler interaction has no canonical assistant turn", () => {
 		const interactionId = "tid-missing-continuation"
 		const snapshot = snapshotWithTurn(interactionId, "fn-missing-continuation", { interaction: "qna_response" })

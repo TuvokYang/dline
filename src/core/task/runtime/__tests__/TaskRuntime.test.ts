@@ -569,18 +569,16 @@ describe("TaskRuntime dispatch", () => {
 		expect(appendAsk).toHaveBeenCalledOnce()
 	})
 
-	it("returns a caller-visible failure when presenting an interaction fails", async () => {
+	it("returns the original failure after replacing its missing ask with an executable Resume", async () => {
 		const postView = vi.fn(async () => {})
 		const persistSnapshot = vi.fn(async () => {})
+		const appendAsk = vi.fn(async (effect) => {
+			if (effect.persistence !== "reconstructable") throw new Error("ask failed")
+			return { uiMessageTs: 101 }
+		})
 		const runtime = new TaskRuntime(
 			createTaskRuntimeState({ taskId: "task-1", phase: TaskPhase.STREAMING }),
-			createPorts({
-				postView,
-				persistSnapshot,
-				appendAsk: async () => {
-					throw new Error("ask failed")
-				},
-			}),
+			createPorts({ postView, persistSnapshot, appendAsk }),
 		)
 
 		const result = await runtime.dispatch({
@@ -595,10 +593,17 @@ describe("TaskRuntime dispatch", () => {
 			accepted: false,
 			effectError: { effectType: "APPEND_ASK", message: "ask failed" },
 		})
-		expect(runtime.getState().phase).toBe(TaskPhase.PAUSED)
-		expect(runtime.getState().interaction).toMatchObject({ kind: "resume", status: "opening" })
+		expect(runtime.getState()).toMatchObject({
+			phase: TaskPhase.PAUSED,
+			interaction: { kind: "resume", status: "awaiting", anchor: { messageTs: 101, messageType: "ask" } },
+		})
+		expect(appendAsk).toHaveBeenCalledTimes(2)
+		expect(appendAsk.mock.calls[1]?.[0]).toMatchObject({
+			taskAsk: "resume_task",
+			persistence: "reconstructable",
+		})
 		expect(postView).toHaveBeenCalledTimes(1)
-		expect(persistSnapshot).toHaveBeenCalledTimes(1)
+		expect(persistSnapshot).toHaveBeenCalledTimes(2)
 	})
 
 	it("retains an accepted Resume response when feedback presentation fails before API admission", async () => {

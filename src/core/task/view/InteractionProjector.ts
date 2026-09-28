@@ -2,32 +2,19 @@ import type { ActiveInteractionView, TaskInputViewState, TaskViewAction } from "
 import type { ActiveInteraction } from "../interaction/InteractionReducer"
 import { getInteraction } from "../interaction/InteractionRegistry"
 
-/** Projection diagnostic returned for an invalid interaction anchor. */
-export interface InteractionProjectionDiagnostic {
-	code: "interaction_anchor_missing" | "interaction_anchor_is_say"
-	interactionId: string
-}
-
 /** Complete projection result for one active interaction. */
 export interface InteractionProjectionResult {
 	view?: ActiveInteractionView
 	input?: TaskInputViewState
 	actions?: TaskViewAction[]
-	diagnostic?: InteractionProjectionDiagnostic
 }
 
 /** Project one interaction without reading UI or API messages. */
 export function projectInteraction(interaction: Readonly<ActiveInteraction>, stateRevision: number): InteractionProjectionResult {
-	if (!interaction.anchor) {
-		return {
-			diagnostic: { code: "interaction_anchor_missing", interactionId: interaction.interactionId },
-		}
-	}
-	if (interaction.anchor.messageType === "say") {
-		return {
-			diagnostic: { code: "interaction_anchor_is_say", interactionId: interaction.interactionId },
-		}
-	}
+	// Opening interactions have not registered their ask yet. Persisted malformed
+	// anchors are reconciled to Resume before hydration, and runtime presentation
+	// failures create a reconstructable Resume ask, so no error UI is projected here.
+	if (!interaction.anchor || interaction.anchor.messageType !== "ask") return {}
 
 	const definition = getInteraction(interaction.kind)
 	const input: TaskInputViewState = {

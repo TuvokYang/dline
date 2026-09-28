@@ -36,6 +36,7 @@ function taskView(): TaskViewState {
 			taskAsk: "tool",
 			presentationKind: "tool_approval",
 			askMessageTs: 100,
+			anchorVerified: true,
 		},
 		input: { enabled: true, acceptsText: true, acceptsImages: true, acceptsFiles: true },
 		footer: {
@@ -227,34 +228,48 @@ describe("InteractionHost", () => {
 		["missing interaction identity", { ...ASK, interactionId: undefined }],
 		["interaction identity", { ...ASK, interactionId: "interaction-2" }],
 		["task ask", { ...ASK, ask: "command" as const }],
-	])("withholds controls for a mismatched %s anchor without offering manual reload", (_field, message) => {
+	])("keeps backend-verified controls available for a mismatched %s window row", (_field, message) => {
 		render(<InteractionHost dispatch={vi.fn()} messages={[SAY, message]} view={taskView()} />)
 
 		expect(screen.getByText("status text")).toBeVisible()
-		expect(screen.queryByRole("button", { name: "Approve" })).toBeNull()
+		expect(screen.getByRole("button", { name: "Approve" })).toBeVisible()
+		expect(screen.getByRole("button", { name: "Reject" })).toBeVisible()
+		expect(screen.queryByRole("alert")).toBeNull()
 	})
 
-	it("withholds controls when the exact approval anchor is still partial", () => {
+	it("keeps backend-verified controls available while the matching window row is partial", () => {
 		render(<InteractionHost dispatch={vi.fn()} messages={[SAY, { ...ASK, partial: true }]} view={taskView()} />)
 
-		expect(screen.queryByRole("button", { name: "Approve" })).toBeNull()
-		expect(screen.queryByRole("button", { name: "Reject" })).toBeNull()
-		expect(screen.getByRole("alert")).toHaveTextContent(/message anchor could not be matched/i)
+		expect(screen.getByRole("button", { name: "Approve" })).toBeVisible()
+		expect(screen.getByRole("button", { name: "Reject" })).toBeVisible()
+		expect(screen.queryByRole("alert")).toBeNull()
 	})
 
-	it("withholds controls when the exact anchor identity is duplicated", () => {
+	it("keeps backend-verified controls available when the message window contains a duplicate", () => {
 		render(<InteractionHost dispatch={vi.fn()} messages={[ASK, { ...ASK, text: "Duplicate ask" }]} view={taskView()} />)
 
-		expect(screen.queryByRole("button", { name: "Approve" })).toBeNull()
+		expect(screen.getByRole("button", { name: "Approve" })).toBeVisible()
+		expect(screen.getByRole("button", { name: "Reject" })).toBeVisible()
+		expect(screen.queryByRole("alert")).toBeNull()
 	})
 
-	it("explains why an awaiting interaction lost its controls when no anchor matches", () => {
-		// The backend anchor is intact here, so no diagnostic arrives. Without a
-		// local notice the approval row would vanish silently while the task waits.
-		render(<InteractionHost dispatch={vi.fn()} messages={[SAY, { ...ASK, interactionId: undefined }]} view={taskView()} />)
+	it("dispatches the backend-verified interaction before the message window catches up", async () => {
+		const dispatch = vi.fn(async () => ({ accepted: true, result: "accepted" }))
+		render(<InteractionHost dispatch={dispatch} messages={[SAY]} view={taskView()} />)
 
-		expect(screen.queryByRole("button", { name: "Approve" })).toBeNull()
-		expect(screen.getByRole("alert")).toHaveTextContent(/message anchor could not be matched/i)
+		fireEvent.click(screen.getByRole("button", { name: "Approve" }))
+
+		await waitFor(() => expect(dispatch).toHaveBeenCalledOnce())
+		expect(dispatch).toHaveBeenCalledWith(
+			expect.objectContaining({
+				taskId: "task-1",
+				turnId: "turn-1",
+				interactionId: "interaction-1",
+				actionId: "approve",
+				stateRevision: 8,
+			}),
+		)
+		expect(screen.queryByRole("alert")).toBeNull()
 	})
 
 	it("renders the exact approval summary above actions in footer-only mode", () => {
@@ -328,15 +343,16 @@ describe("InteractionHost", () => {
 		expect(screen.queryByRole("alert")).toBeNull()
 	})
 
-	it("keeps the backend diagnostic as the only alert when one is supplied", () => {
-		const view = taskView()
-		view.diagnostic = { code: "interaction_anchor_missing", interactionId: "interaction-1" }
+	it("ignores a legacy backend anchor diagnostic instead of rendering an error", () => {
+		const view = {
+			...taskView(),
+			diagnostic: { code: "interaction_anchor_missing", interactionId: "interaction-1" },
+		} as TaskViewState
 
 		render(<InteractionHost dispatch={vi.fn()} messages={[SAY]} view={view} />)
 
-		const alerts = screen.getAllByRole("alert")
-		expect(alerts).toHaveLength(1)
-		expect(alerts[0]).toHaveTextContent(/could not restore the saved interaction message/i)
+		expect(screen.queryByRole("alert")).toBeNull()
+		expect(screen.getByRole("button", { name: "Approve" })).toBeVisible()
 	})
 
 	it("does not warn about anchors once the interaction is resolved", () => {
@@ -349,16 +365,19 @@ describe("InteractionHost", () => {
 		expect(screen.queryByRole("alert")).toBeNull()
 	})
 
-	it("renders a backend interaction diagnostic without inventing an action", () => {
+	it("ignores a legacy diagnostic after its interaction has already resolved", () => {
 		const view = taskView()
 		delete view.activeInteraction
 		view.input = { enabled: false, acceptsText: false, acceptsImages: false, acceptsFiles: false }
 		view.footer.actions = []
-		view.diagnostic = { code: "interaction_anchor_missing", interactionId: "interaction-1" }
+		const legacyView = {
+			...view,
+			diagnostic: { code: "interaction_anchor_missing", interactionId: "interaction-1" },
+		} as TaskViewState
 
-		render(<InteractionHost dispatch={vi.fn()} messages={[SAY]} view={view} />)
+		render(<InteractionHost dispatch={vi.fn()} messages={[SAY]} view={legacyView} />)
 
-		expect(screen.getByRole("alert")).toHaveTextContent("saved interaction message")
+		expect(screen.queryByRole("alert")).toBeNull()
 		expect(screen.queryByRole("button")).toBeNull()
 	})
 

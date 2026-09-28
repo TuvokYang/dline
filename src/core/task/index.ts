@@ -1116,14 +1116,31 @@ export class Task {
 					}
 					await this.taskController.say(effect.taskSay, effect.presentation, effect.images, effect.files)
 				},
-				async (effect) => ({
-					uiMessageTs: await this.taskController.channel.presentAsk(
-						effect.taskAsk as ClineAsk,
-						effect.presentation,
-						effect.existingTs,
-						effect.interactionId,
-					),
-				}),
+				async (effect) => {
+					if (effect.persistence === "reconstructable") {
+						const registered = this.taskController.channel.beginSynthesizedHistoryAsk(
+							effect.taskAsk as ClineAsk,
+							effect.presentation,
+							effect.existingTs,
+							effect.interactionId,
+						)
+						void registered.persistence.catch((error) => {
+							Logger.warn(
+								`[Task ${this.taskId}] Recovery interaction persistence failed; it will be reconstructed on reopen:`,
+								error,
+							)
+						})
+						return { uiMessageTs: registered.askTs }
+					}
+					return {
+						uiMessageTs: await this.taskController.channel.presentAsk(
+							effect.taskAsk as ClineAsk,
+							effect.presentation,
+							effect.existingTs,
+							effect.interactionId,
+						),
+					}
+				},
 				async () => {
 					// The footer "Start New Task" action must close the current task and return to
 					// the RECENT welcome screen instead of immediately launching a replacement task,

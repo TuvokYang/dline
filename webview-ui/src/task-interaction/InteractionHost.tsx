@@ -57,21 +57,6 @@ const FOOTER_APPROVAL_PRESENTATIONS = new Set([
 	"focus_chain_change",
 ])
 
-const DIAGNOSTIC_MESSAGES = {
-	interaction_anchor_missing: "Dline could not restore the saved interaction message. The task remains saved for recovery.",
-	interaction_anchor_is_say: "Dline found an invalid saved interaction message. The task remains saved for recovery.",
-} as const
-
-/**
- * Shown when the backend still owns an awaiting interaction but its ask anchor
- * cannot be matched in the projected messages. The backend anchor is intact in
- * this case, so it emits no diagnostic, and without this notice the controls
- * would disappear with no explanation while the task keeps waiting. The text
- * stays purely descriptive: no recovery action is known to be safe here.
- */
-const UNRESOLVED_ANCHOR_MESSAGE =
-	"Dline is waiting on a request whose message anchor could not be matched, so its controls are unavailable. The task remains saved for recovery."
-
 async function dispatchTaskAction(view: TaskViewState, action: TaskViewAction): Promise<void> {
 	if (action.type === "retry") {
 		await TaskServiceClient.askResponse(AskResponseRequest.create({ responseType: "retry" }))
@@ -111,7 +96,7 @@ export function InteractionHost({
 	const supported = presentationKind ? isPresentationKind(presentationKind) : false
 	const showAnchorPresentation = showTimeline || (presentationKind && FOOTER_APPROVAL_PRESENTATIONS.has(presentationKind))
 	const canRenderVerifiedFooter = Boolean(
-		interaction && !anchor && !showTimeline && supported && interaction.anchorVerified && interaction.kind !== "new_task",
+		interaction && !anchor && supported && interaction.anchorVerified && interaction.kind !== "new_task",
 	)
 	const taskActionDispatcher = (action: TaskViewAction) => dispatchTaskAction(view, action)
 	const taskOnlyView: TaskViewState = {
@@ -123,11 +108,6 @@ export function InteractionHost({
 
 	return (
 		<section>
-			{view.diagnostic ? (
-				<div className="mx-3.5 mb-1 text-xs text-(--vscode-errorForeground)" role="alert">
-					{DIAGNOSTIC_MESSAGES[view.diagnostic.code]}
-				</div>
-			) : null}
 			{showTimeline &&
 				messages.map((message, index) => {
 					if (message === anchor && supported) {
@@ -140,23 +120,16 @@ export function InteractionHost({
 					)
 				})}
 			{interaction && (!anchor || !supported) && !canRenderVerifiedFooter ? (
-				<>
-					{!anchor && !view.diagnostic ? (
-						<div className="mx-3.5 mb-1 text-xs text-(--vscode-errorForeground)" role="alert">
-							{UNRESOLVED_ANCHOR_MESSAGE}
-						</div>
-					) : null}
-					<FooterActions
-						dispatch={dispatch}
-						dispatchTaskAction={taskActionDispatcher}
-						draft={draft}
-						onDraftAccepted={onDraftAccepted}
-						onDraftRejected={onDraftRejected}
-						onSuccessorAccepted={onSuccessorAccepted}
-						successorContext={successorContext}
-						view={taskOnlyView}
-					/>
-				</>
+				<FooterActions
+					dispatch={dispatch}
+					dispatchTaskAction={taskActionDispatcher}
+					draft={draft}
+					onDraftAccepted={onDraftAccepted}
+					onDraftRejected={onDraftRejected}
+					onSuccessorAccepted={onSuccessorAccepted}
+					successorContext={successorContext}
+					view={taskOnlyView}
+				/>
 			) : canRenderVerifiedFooter ? (
 				<FooterActions
 					dispatch={dispatch}

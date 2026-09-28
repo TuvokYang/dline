@@ -34,7 +34,7 @@ import { settingsAffectPromptFreshness } from "@core/prompts/system-prompt-cache
 import * as SecretsManager from "@core/storage/secrets"
 import { capabilityResourceId } from "@core/storage/settings/capability-resource-id"
 import { type CapabilityKind, mergeScopedToggles, readScopedToggles } from "@core/storage/settings/capability-toggle-store"
-import { projectMissingInteractionAnchor, projectTaskView } from "@core/task/view/TaskViewProjector"
+import { projectTaskView } from "@core/task/view/TaskViewProjector"
 import { detectWorkspaceRoots } from "@core/workspace/detection"
 import { setupWorkspaceManager } from "@core/workspace/setup"
 import type { WorkspaceRootManager } from "@core/workspace/WorkspaceRootManager"
@@ -49,7 +49,6 @@ import { getContextWindowIndicatorTotalTokens } from "@shared/context-window-ind
 import type { ClineMessage, ExtensionState, Platform, TaskViewState } from "@shared/ExtensionMessage"
 import type { ApiMetrics } from "@shared/getApiMetrics"
 import type { HistoryItem } from "@shared/HistoryItem"
-import { matchesActiveInteractionAnchor } from "@shared/interaction-anchor"
 import type { McpMarketplaceCatalog, McpMarketplaceItem, McpServer } from "@shared/mcp"
 import type { ClineUserContent } from "@shared/messages/content"
 import type { ModeSwitchRequestResult } from "@shared/mode-switch"
@@ -1313,45 +1312,64 @@ export class Controller {
 			if (this.historyDisplaySession !== session || !session.accepts(request)) {
 				return DispatchInteractionResponse.create({ accepted: false, result: "stale_interaction" })
 			}
-			this.historyDisplaySession = undefined
-			// A read-only display may own a lock poll. initTask acquires the lock
-			// itself, so leaving that round armed would let it take the same lock
-			// concurrently and then activate a surface this promotion replaced.
+			// Keep the lightweight surface attached until the canonical Task is fully
+			// prepared. Any state publication during initialization therefore still
+			// renders this task instead of exposing the empty Recent surface.
 			this.stopLockPoll()
+			let task: Task | undefined
 			try {
-				await session.dispose()
 				await this.initTask(undefined, undefined, undefined, session.historyItem, undefined, {
 					skipInitialClear: true,
 					activateHistory: true,
 				})
-				const task = this.task
+				task = this.task
 				const interaction = task?.getRuntimeState().interaction
 				if (!task || !interaction || interaction.status !== "awaiting") {
-					return DispatchInteractionResponse.create({ accepted: false, result: "invalid_runtime_event" })
+					throw new Error("Promoted task did not expose an awaiting interaction")
 				}
-				const result = await task.dispatchRuntime({
-					type: "INTERACTION_RESPONDED",
-					response: {
-						taskId: task.taskId,
-						turnId: interaction.turnId,
-						interactionId: interaction.interactionId,
-						actionId,
-						stateRevision: task.getRuntimeState().revision,
-						draft: request.draft
-							? { text: request.draft.text, images: [...request.draft.images], files: [...request.draft.files] }
-							: undefined,
-						selection: request.selection ? { values: [...request.selection.values] } : undefined,
-					},
-				})
-				if (!result.accepted) {
-					return DispatchInteractionResponse.create({ accepted: false, result: "invalid_runtime_event" })
-				}
-				settlement = task.waitForInteractionSettlement(interaction.interactionId)
-				return DispatchInteractionResponse.create({ accepted: true, result: "accepted" })
 			} catch (error) {
 				Logger.error(`[HistoryDisplay] Failed to promote task ${session.taskId}:`, error)
+				const failedTask = this.task
+				if (failedTask?.taskId === session.taskId) {
+					failedTask.fenceControllerDetachment()
+					this.task = undefined
+					this.workspaceHistorySession = undefined
+					this.restartAccountUsagePolling()
+					await this.teardownDetachedTask(failedTask, session.taskId, false, () => undefined)
+				}
+				this.historyDisplaySession = session
+				await this.postStateToWebview({ immediate: true }).catch((postError) => {
+					Logger.error(`[HistoryDisplay] Failed to restore task ${session.taskId} after promotion error:`, postError)
+				})
 				return DispatchInteractionResponse.create({ accepted: false, result: "invalid_runtime_event" })
 			}
+
+			const interaction = task.getRuntimeState().interaction
+			if (!interaction || interaction.status !== "awaiting") {
+				return DispatchInteractionResponse.create({ accepted: false, result: "invalid_runtime_event" })
+			}
+			this.historyDisplaySession = undefined
+			await session.dispose()
+			await this.postStateToWebview({ immediate: true })
+			const result = await task.dispatchRuntime({
+				type: "INTERACTION_RESPONDED",
+				response: {
+					taskId: task.taskId,
+					turnId: interaction.turnId,
+					interactionId: interaction.interactionId,
+					actionId,
+					stateRevision: task.getRuntimeState().revision,
+					draft: request.draft
+						? { text: request.draft.text, images: [...request.draft.images], files: [...request.draft.files] }
+						: undefined,
+					selection: request.selection ? { values: [...request.selection.values] } : undefined,
+				},
+			})
+			if (!result.accepted) {
+				return DispatchInteractionResponse.create({ accepted: false, result: "invalid_runtime_event" })
+			}
+			settlement = task.waitForInteractionSettlement(interaction.interactionId)
+			return DispatchInteractionResponse.create({ accepted: true, result: "accepted" })
 		})
 		await settlement
 		return response
@@ -2239,8 +2257,8 @@ export class Controller {
 		this.pendingStatePostTimer = undefined
 	}
 
-	/** Project the active Task and confirm its exact durable interaction anchor when available. */
-	private projectCurrentTaskViewState(messages?: readonly ClineMessage[]): TaskViewState | undefined {
+	/** Project the active Task from the runtime-owned interaction and its registered ask anchor. */
+	private projectCurrentTaskViewState(): TaskViewState | undefined {
 		const historyDisplay = this.historyDisplaySession
 		if (historyDisplay) return historyDisplay.getViewState()
 		const task = this.task
@@ -2262,11 +2280,10 @@ export class Controller {
 		})
 		const interaction = view.activeInteraction
 		if (!interaction || interaction.status !== "awaiting") return view
-		const candidates = messages ?? task.messageStateHandler.clineMessages
-		const matchingAnchors = candidates.filter((message) => matchesActiveInteractionAnchor(message, interaction))
-		return matchingAnchors.length === 1
-			? { ...view, activeInteraction: { ...interaction, anchorVerified: true } }
-			: projectMissingInteractionAnchor(view)
+		// Awaiting is reached only after the TaskRuntime has registered the ask in
+		// durable write order. The Webview message window may legitimately lag or
+		// omit an older row, so it must not revoke the backend-owned interaction.
+		return { ...view, activeInteraction: { ...interaction, anchorVerified: true } }
 	}
 
 	/** Build a monotonic extension state while preserving the public non-optional contract. */
@@ -2452,7 +2469,7 @@ export class Controller {
 				Logger.warn("Failed to aggregate api metrics:", error)
 			}
 		}
-		const { getApiMetrics, getLastTaskProgressText } = await import("@shared/getApiMetrics")
+		const { getApiMetrics, getLastApiReqTotalTokens, getLastTaskProgressText } = await import("@shared/getApiMetrics")
 		const apiMetrics = {
 			// Combining parses each paired request as a whole, so a single
 			// malformed entry fails the aggregate outright. The per-message pass
@@ -2465,12 +2482,15 @@ export class Controller {
 		const contextWindowIndicator = this.task?.getContextWindowIndicator()
 		const lastApiReqTotalTokens = contextWindowIndicator
 			? getContextWindowIndicatorTotalTokens(contextWindowIndicator)
-			: undefined
+			: this.historyDisplaySession
+				? (this.historyDisplaySession.getLastApiReqTotalTokens() ?? (getLastApiReqTotalTokens(rawMessages) || undefined))
+				: undefined
 
 		// If currentFocusChainChecklist is null, fall back to searching
 		// the full message list (not the window slice) for task_progress.
 		const checklistFromTaskState = this.task?.taskState.currentFocusChainChecklist || null
-		const checklistForState = checklistFromTaskState || getLastTaskProgressText(rawMessages)
+		const checklistFromHistory = this.historyDisplaySession?.getFocusChainChecklist() ?? null
+		const checklistForState = checklistFromTaskState || checklistFromHistory || getLastTaskProgressText(rawMessages)
 
 		const result: ExtensionState = {
 			stateRevision: revision,
@@ -2600,7 +2620,7 @@ export class Controller {
 			 */
 			inputQueue: this.task?.getInputQueueSnapshot?.() ?? [],
 			/** Complete interaction view projected only from canonical runtime state. */
-			taskViewState: this.projectCurrentTaskViewState(rawMessages),
+			taskViewState: this.projectCurrentTaskViewState(),
 		}
 
 		const durationMs = Math.round(performance.now() - startTime)

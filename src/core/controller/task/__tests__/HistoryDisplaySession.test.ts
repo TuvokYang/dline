@@ -10,6 +10,7 @@ import { UIMessage } from "@/core/storage/UIMessage"
 import { UIMessageWindowReader } from "@/core/storage/UIMessageWindowReader"
 import { TaskActivityPersistence } from "@/core/task/activity/TaskActivityPersistence"
 import { TaskActivityStore } from "@/core/task/activity/TaskActivityStore"
+import { createFocusChainMarkdownContent, getFocusChainFilePath } from "@/core/task/focus-chain/file-utils"
 import type { TaskRuntimeState } from "@/core/task/runtime/TaskRuntimeState"
 import { TaskPhase } from "@/core/task/TaskPhase"
 import { createSnapshot } from "@/core/task/TaskSnapshot"
@@ -102,6 +103,70 @@ describe("HistoryDisplaySession", () => {
 		}
 	})
 
+	it("restores Resume when the saved Resume interaction has no durable ask row", async () => {
+		const taskId = "history-missing-resume-anchor"
+		const interactionId = `resume:${taskId}:34:244`
+		await seedMessages(taskId, [{ ts: 10, type: "say", say: "task", text: "Original task" }])
+		await persistSnapshot(taskId, {
+			taskId,
+			phase: TaskPhase.PAUSED,
+			revision: 244,
+			anchor: { apiIndex: 34, uiMessageTs: 999, turnId: "turn-1", interactionId },
+			interaction: {
+				taskId,
+				turnId: "turn-1",
+				interactionId,
+				kind: "resume",
+				status: "awaiting",
+				createdRevision: 244,
+				anchor: { messageTs: 999, messageType: "ask" },
+			},
+		})
+		const session = new HistoryDisplaySession(createHistoryItem(taskId))
+
+		try {
+			await session.load()
+
+			const view = session.getViewState()
+			expect(view.activeInteraction).toMatchObject({ kind: "resume", status: "awaiting", anchorVerified: true })
+			expect(view).not.toHaveProperty("diagnostic")
+			expect(session.getMessages().at(-1)).toMatchObject({ type: "ask", ask: "resume_task", partial: false })
+			expect(session.accepts(requestFor(session))).toBe(true)
+		} finally {
+			await session.dispose()
+		}
+	})
+
+	it("loads historical context usage and the persisted TODO checklist before Resume", async () => {
+		const taskId = "history-header-projection"
+		const taskDirectory = await ensureTaskDirectoryExists(taskId)
+		const checklist = "# Restore history header\n- [x] Investigate\n- [ ] Resume safely"
+		await fs.writeFile(
+			getFocusChainFilePath(taskDirectory, taskId),
+			createFocusChainMarkdownContent(taskId, checklist),
+			"utf8",
+		)
+		await seedMessages(taskId, [
+			{ ts: 10, type: "say", say: "task", text: "Original task" },
+			{
+				ts: 20,
+				type: "say",
+				say: "api_req_started",
+				text: JSON.stringify({ tokensIn: 40_000, tokensOut: 2_000, cacheWrites: 1_000, cacheReads: 7_000 }),
+			},
+		])
+		const session = new HistoryDisplaySession(createHistoryItem(taskId))
+
+		try {
+			await session.load()
+
+			expect(session.getLastApiReqTotalTokens()).toBe(50_000)
+			expect(session.getFocusChainChecklist()).toBe(checklist)
+		} finally {
+			await session.dispose()
+		}
+	})
+
 	it("projects obsolete Hosted approval as a synthetic Resume without accepting the old Approve", async () => {
 		const taskId = "history-legacy-hosted-approval"
 		const legacyId = `hosted-web:${taskId}:0`
@@ -140,6 +205,20 @@ describe("HistoryDisplaySession", () => {
 			expect(session.getMessages().at(-1)).toMatchObject({ type: "ask", ask: "resume_task" })
 			expect(session.accepts(requestFor(session))).toBe(true)
 			expect(session.accepts(requestFor(session, { interactionId: legacyId, actionId: "approve" }))).toBe(false)
+		} finally {
+			await session.dispose()
+		}
+	})
+
+	it("opens the history surface even when persisted activities cannot be hydrated", async () => {
+		const taskId = "history-activity-hydration-failure"
+		await seedMessages(taskId, [{ ts: 10, type: "say", say: "task", text: "Original task" }])
+		vi.spyOn(TaskActivityStore.prototype, "hydrate").mockRejectedValueOnce(new Error("activities unreadable"))
+		const session = new HistoryDisplaySession(createHistoryItem(taskId))
+
+		try {
+			await expect(session.load()).resolves.toBeUndefined()
+			expect(session.getViewState().activeInteraction).toMatchObject({ kind: "resume", status: "awaiting" })
 		} finally {
 			await session.dispose()
 		}
@@ -228,7 +307,7 @@ describe("HistoryDisplaySession", () => {
 		}
 	})
 
-	it("fails closed when a canonical approval anchor is still partial", async () => {
+	it("falls back to a synthetic Resume when a canonical interaction anchor is incomplete", async () => {
 		const taskId = "history-partial-approval"
 		const turnId = "turn-partial-approval"
 		const interactionId = "interaction-partial-approval"
@@ -265,11 +344,20 @@ describe("HistoryDisplaySession", () => {
 			await session.load()
 
 			const view = session.getViewState()
-			expect(view.activeInteraction).toBeUndefined()
-			expect(view.input).toEqual({ enabled: false, acceptsText: false, acceptsImages: false, acceptsFiles: false })
-			expect(view.footer.actions).toEqual([])
-			expect(view.diagnostic).toEqual({ code: "interaction_anchor_missing", interactionId })
-			expect(session.getMessages()).toEqual([partialAnchor])
+			expect(view.activeInteraction).toMatchObject({
+				taskId,
+				kind: "resume",
+				status: "awaiting",
+				anchorVerified: true,
+			})
+			expect(view.input).toMatchObject({ enabled: true, enterAction: "resume" })
+			expect(view.footer.actions.map((action) => action.type)).toEqual(["resume"])
+			expect(view).not.toHaveProperty("diagnostic")
+			expect(session.getMessages()).toEqual([
+				partialAnchor,
+				expect.objectContaining({ type: "ask", ask: "resume_task", partial: false }),
+			])
+			expect(session.accepts(requestFor(session))).toBe(true)
 		} finally {
 			await session.dispose()
 		}
