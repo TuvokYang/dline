@@ -34,7 +34,7 @@ export function legacyParse(input: string) {
 }
 =======
 +++++++ REPLACE
-    * The head must match exactly one location. The range ends at the first tail match after the head; an exact tail match is preferred over looser ones.
+    * The head must match exactly one location, and the tail after it must also match exactly one location. If either matches several locations, the block is rejected; add more complete head or tail lines until the range is unique.
     * EVERY line from the first head line through the last tail line, including all skipped lines, is deleted and replaced by REPLACE. Skipped lines are NOT preserved: write any line you want to keep in REPLACE, or use smaller blocks.
     * At most one SKIP line per block. It cannot be the first or last SEARCH line, and it must never appear in REPLACE.
     * Use SKIP only for a range you have just read and intend to remove or rewrite entirely, then check the replaced line range reported in the result.
@@ -51,7 +51,7 @@ export function legacyParse(input: string) {
 9. FAILURE RECOVERY: If a SEARCH block fails to match:
     - Not found: re-read the file with read_file and write each SEARCH line from the beginning of the file line; never start in the middle of a line.
     - Ambiguous: extend the line prefixes with more characters, or include an adjacent line that exists only at the intended location.
-    - SKIP tail not found: make sure the tail lines really appear after the head.
+    - SKIP tail not found or ambiguous: make sure the tail lines appear after the head and include enough adjacent lines to identify one location.
     - You MUST use replace_in_file for editing existing files. If replace_in_file cannot complete the affected operation, stop and wait for the user to decide whether command-line tools are authorized for a task specified by the user. If the user already gave that authorization for the specified task, it remains valid; risk assessment and requires_approval are unchanged.
     - Always re-read the file before retrying after a failed match.`,
 	notebookInstructions: `
@@ -131,6 +131,8 @@ Each SEARCH block must match exactly one location. This block was not applied.
 Fix: add more leading characters to the SEARCH lines, or include an adjacent line that exists only at the intended location, then retry.`,
 	diffSkipTailNotFound: `The SKIP range head matched line @HEAD_LINE@, but no line after it matches the tail (the SEARCH lines after the SKIP marker).
 This block was not applied. Re-read the file and make sure the tail lines appear after the head.`,
+	diffSkipTailAmbiguous: `The SKIP range head matched line @HEAD_LINE@, but its tail matches @MATCH_COUNT@ locations after it (@MATCH_MODE@ match, starting at lines @LINE_NUMBERS@).
+This block was not applied because the range is ambiguous. Add more complete tail lines or adjacent context until the tail identifies exactly one location.`,
 	diffSkipMarkerFirst: `Invalid SKIP marker: "@SKIP_MARKER@" is the first SEARCH line. A SKIP range needs at least one head line before the marker to anchor where the range starts.`,
 	diffSkipMarkerLast: `Invalid SKIP marker: "@SKIP_MARKER@" is the last SEARCH line. A SKIP range needs at least one tail line after the marker to mark where the range ends.`,
 	diffSkipMarkerTwice: `Invalid SKIP marker: this block has a second SKIP marker "@SKIP_MARKER@". Use at most one SKIP marker per block, and split the edit into several blocks instead.`,

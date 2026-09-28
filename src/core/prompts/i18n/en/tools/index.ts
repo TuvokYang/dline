@@ -101,6 +101,7 @@ export const toolPromptModules = [
 		diffHintFileEnds: createRuntimeContract("LINE", "TEXT", "FROM"),
 		diffSearchAmbiguous: createRuntimeContract("MATCH_COUNT", "MATCH_MODE", "LINE_NUMBERS"),
 		diffSkipTailNotFound: createRuntimeContract("HEAD_LINE"),
+		diffSkipTailAmbiguous: createRuntimeContract("HEAD_LINE", "MATCH_COUNT", "MATCH_MODE", "LINE_NUMBERS"),
 		diffSkipMarkerFirst: createRuntimeContract("SKIP_MARKER"),
 		diffSkipMarkerLast: createRuntimeContract("SKIP_MARKER"),
 		diffSkipMarkerTwice: createRuntimeContract("SKIP_MARKER"),

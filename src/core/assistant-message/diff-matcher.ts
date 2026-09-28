@@ -32,7 +32,8 @@ export interface LineRange {
 
 export type SearchMatch =
 	| { kind: "unique"; tier: MatchTier; range: LineRange; skippedLines: number }
-	| { kind: "ambiguous"; tier: MatchTier; candidateLines: number[] }
+	| { kind: "ambiguous"; part: "block"; tier: MatchTier; candidateLines: number[] }
+	| { kind: "ambiguous"; part: "skip_tail"; tier: MatchTier; headLine: number; candidateLines: number[] }
 	| { kind: "not_found"; part: "block" }
 	| { kind: "not_found"; part: "skip_tail"; headLine: number }
 
@@ -105,8 +106,8 @@ export class FileLineIndex {
  * Locates one SEARCH block in the original file.
  *
  * Without a tail, the head must match exactly one location. With a tail (SKIP
- * range), the head must be unique and the range ends at the nearest tail match
- * after it, preferring stricter tiers so the smallest plausible range wins.
+ * range), the head and the tail after it must each be unique at their first
+ * matching tier; multiple tail candidates are rejected instead of choosing one.
  */
 export function matchSearchBlock(index: FileLineIndex, pattern: SearchPattern): SearchMatch {
 	const head = normalizeSearchLines(pattern.head)
@@ -121,6 +122,7 @@ export function matchSearchBlock(index: FileLineIndex, pattern: SearchPattern): 
 	if (headLocation.kind === "ambiguous") {
 		return {
 			kind: "ambiguous",
+			part: "block",
 			tier: headLocation.tier,
 			candidateLines: headLocation.starts.map((start) => start + 1),
 		}
@@ -132,9 +134,18 @@ export function matchSearchBlock(index: FileLineIndex, pattern: SearchPattern): 
 	}
 
 	const tail = normalizeSearchLines(pattern.tail)
-	const tailLocation = tail.length > 0 ? locateNearest(index.lines, tail, headEnd + 1) : undefined
-	if (!tailLocation) {
+	const tailLocation = tail.length > 0 ? locateUnique(index.lines, tail, headEnd + 1) : { kind: "not_found" as const }
+	if (tailLocation.kind === "not_found") {
 		return { kind: "not_found", part: "skip_tail", headLine: headLocation.start + 1 }
+	}
+	if (tailLocation.kind === "ambiguous") {
+		return {
+			kind: "ambiguous",
+			part: "skip_tail",
+			tier: tailLocation.tier,
+			headLine: headLocation.start + 1,
+			candidateLines: tailLocation.starts.map((start) => start + 1),
+		}
 	}
 
 	const tailEnd = tailLocation.start + tail.length - 1
@@ -176,9 +187,9 @@ type UniqueLocation =
 	| { kind: "ambiguous"; tier: MatchTier; starts: number[] }
 	| { kind: "not_found" }
 
-function locateUnique(lines: readonly IndexedLine[], search: readonly SearchLine[]): UniqueLocation {
+function locateUnique(lines: readonly IndexedLine[], search: readonly SearchLine[], fromLine = 0): UniqueLocation {
 	for (const tier of MATCH_TIERS) {
-		const starts = findCandidateStarts(lines, search, LINE_MATCHERS[tier])
+		const starts = findCandidateStarts(lines, search, LINE_MATCHERS[tier], fromLine)
 		if (starts.length === 1) {
 			return { kind: "unique", tier, start: starts[0] }
 		}
@@ -190,42 +201,19 @@ function locateUnique(lines: readonly IndexedLine[], search: readonly SearchLine
 	return { kind: "not_found" }
 }
 
-function locateNearest(
+function findCandidateStarts(
 	lines: readonly IndexedLine[],
 	search: readonly SearchLine[],
-	fromLine: number,
-): { tier: MatchTier; start: number } | undefined {
-	for (const tier of MATCH_TIERS) {
-		const start = findFirstStart(lines, search, LINE_MATCHERS[tier], fromLine)
-		if (start !== undefined) {
-			return { tier, start }
-		}
-	}
-	return undefined
-}
-
-function findCandidateStarts(lines: readonly IndexedLine[], search: readonly SearchLine[], matcher: LineMatcher): number[] {
+	matcher: LineMatcher,
+	fromLine = 0,
+): number[] {
 	const starts: number[] = []
-	for (let start = 0; start + search.length <= lines.length; start++) {
+	for (let start = fromLine; start + search.length <= lines.length; start++) {
 		if (matchesAt(lines, search, matcher, start)) {
 			starts.push(start)
 		}
 	}
 	return starts
-}
-
-function findFirstStart(
-	lines: readonly IndexedLine[],
-	search: readonly SearchLine[],
-	matcher: LineMatcher,
-	fromLine: number,
-): number | undefined {
-	for (let start = fromLine; start + search.length <= lines.length; start++) {
-		if (matchesAt(lines, search, matcher, start)) {
-			return start
-		}
-	}
-	return undefined
 }
 
 function matchesAt(lines: readonly IndexedLine[], search: readonly SearchLine[], matcher: LineMatcher, start: number): boolean {
