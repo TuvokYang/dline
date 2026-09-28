@@ -1,6 +1,7 @@
 import type { ProviderTextPresentationPort } from "../executors/provider/ProviderCommandExecutor"
 import type { MessageStateHandler } from "../message-state"
 import type { PresentationIdSequence } from "./PresentationIdSequence"
+import type { RealtimeMessagePublisher } from "./RealtimeMessagePublisher"
 
 /** The two rows one streamed reply can own: what the model thought, then what it said. */
 type ReplyRow = "reasoning" | "text"
@@ -21,6 +22,7 @@ export class ProviderTextPresenter implements ProviderTextPresentationPort {
 	constructor(
 		private readonly messages: MessageStateHandler,
 		private readonly nextPresentationId: PresentationIdSequence,
+		private readonly realtime?: RealtimeMessagePublisher,
 	) {}
 
 	showPartial(input: { readonly transientId: string; readonly text: string; readonly reasoning?: string }): void {
@@ -36,13 +38,15 @@ export class ProviderTextPresenter implements ProviderTextPresentationPort {
 	}
 
 	private show(transientId: string, row: ReplyRow, text: string): void {
-		this.messages.upsertTransientClineMessage({
+		const message = {
 			ts: this.rowId(transientId, row),
-			type: "say",
+			type: "say" as const,
 			say: row,
 			text,
 			partial: true,
-		})
+		}
+		this.messages.upsertTransientClineMessage(message)
+		this.realtime?.publish(message)
 	}
 
 	private async settle(transientId: string, row: ReplyRow, text: string): Promise<void> {

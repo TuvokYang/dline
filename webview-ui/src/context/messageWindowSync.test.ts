@@ -38,6 +38,27 @@ describe("reconcileMessageWindow", () => {
 		expect(result.removed).toBe(true)
 	})
 
+	it("preserves a partial that arrived after the fetched snapshot started", () => {
+		const result = reconcileMessageWindow(
+			{ messages: [message(1), message(2), message(3, true)], startIndex: 0 },
+			{ messages: [message(1), message(4)], startIndex: 0, total: 2 },
+			{ localTimestampsAtFetchStart: new Set([1, 2]) },
+		)
+
+		expect(result.messages.map((entry) => entry.ts)).toEqual([1, 3, 4])
+		expect(result.removed).toBe(true)
+	})
+
+	it("preserves an already visible partial while the task is still streaming", () => {
+		const result = reconcileMessageWindow(
+			{ messages: [message(1), message(2), message(3, true)], startIndex: 0 },
+			{ messages: [message(1), message(4)], startIndex: 0, total: 2 },
+			{ localTimestampsAtFetchStart: new Set([1, 2, 3]), preserveOmittedPartials: true },
+		)
+
+		expect(result.messages.map((entry) => entry.ts)).toEqual([1, 3, 4])
+	})
+
 	it("keeps a restore that truncated the tail and appended a new message", () => {
 		// Restore removed ts=3 and appended ts=4, so the total is unchanged and
 		// only the fetched span can reveal the deletion.

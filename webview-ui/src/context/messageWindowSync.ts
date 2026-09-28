@@ -38,6 +38,17 @@ export interface ReconciledMessageWindow {
 	removed: boolean
 }
 
+export interface MessageWindowReconciliationOptions {
+	/**
+	 * Local timestamps present when the fetch started. A partial timestamp absent
+	 * from this set arrived after the backend snapshot began and must survive an
+	 * omission from that older snapshot.
+	 */
+	localTimestampsAtFetchStart?: ReadonlySet<number>
+	/** Keep in-flight rows while the task is actively streaming. */
+	preserveOmittedPartials?: boolean
+}
+
 /**
  * Merge a fetched window into the local one, honouring backend deletions.
  *
@@ -45,7 +56,11 @@ export interface ReconciledMessageWindow {
  * @param fetched Window just returned by the backend.
  * @returns Reconciled window and whether messages were dropped.
  */
-export function reconcileMessageWindow(local: LocalMessageWindow, fetched: FetchedMessageWindow): ReconciledMessageWindow {
+export function reconcileMessageWindow(
+	local: LocalMessageWindow,
+	fetched: FetchedMessageWindow,
+	options: MessageWindowReconciliationOptions = {},
+): ReconciledMessageWindow {
 	if (fetched.messages.length === 0) {
 		// An empty answer proves deletion only when the backend also reports an
 		// empty conversation. Otherwise it is a range that holds nothing yet.
@@ -92,7 +107,10 @@ export function reconcileMessageWindow(local: LocalMessageWindow, fetched: Fetch
 
 	for (const message of local.messages) {
 		const withinFetchedSpan = message.ts >= oldestFetchedTs && message.ts <= newestFetchedTs
-		if (withinFetchedSpan && !authoritativeTs.has(message.ts)) {
+		const preserveOmittedPartial =
+			message.partial === true &&
+			(options.preserveOmittedPartials === true || options.localTimestampsAtFetchStart?.has(message.ts) === false)
+		if (withinFetchedSpan && !authoritativeTs.has(message.ts) && !preserveOmittedPartial) {
 			removed = true
 			continue
 		}

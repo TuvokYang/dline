@@ -28,8 +28,15 @@ function createMessages() {
 
 function createPresenter() {
 	const messages = createMessages()
+	const published: UiMessage[] = []
 	let next = 100
-	return { ...messages, presenter: new ProviderTextPresenter(messages.handler, () => ++next) }
+	return {
+		...messages,
+		published,
+		presenter: new ProviderTextPresenter(messages.handler, () => ++next, {
+			publish: (row) => published.push(row),
+		}),
+	}
 }
 
 /**
@@ -41,7 +48,7 @@ describe("ProviderTextPresenter", () => {
 	// dev showed reasoning while it streamed; a long think is otherwise
 	// indistinguishable from a stalled request.
 	it("shows streamed reasoning in its own row above the prose and settles both", async () => {
-		const { presenter, rows, committed } = createPresenter()
+		const { presenter, rows, committed, published } = createPresenter()
 
 		presenter.showPartial({ transientId: "provider:turn-1", text: "", reasoning: "THINK" })
 		presenter.showPartial({ transientId: "provider:turn-1", text: "Answer", reasoning: "THINKING" })
@@ -52,6 +59,10 @@ describe("ProviderTextPresenter", () => {
 			["text", "Answer", true],
 		])
 		expect(streamed[0].ts).toBeLessThan(streamed[1].ts)
+		expect(published.slice(-2)).toEqual([
+			expect.objectContaining({ say: "reasoning", text: "THINKING", partial: true }),
+			expect.objectContaining({ say: "text", text: "Answer", partial: true }),
+		])
 
 		await presenter.commit({ transientId: "provider:turn-1", text: "Answer", reasoning: "THINKING" })
 

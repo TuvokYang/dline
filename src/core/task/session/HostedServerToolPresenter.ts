@@ -18,6 +18,7 @@ import type { MessageStateHandler } from "../message-state"
 import { HostedImageGenerationLifecycle } from "../tools/HostedImageGenerationLifecycle"
 import { type HostedServerToolUpdate, ServerToolLifecycle } from "../tools/ServerToolLifecycle"
 import type { PresentationIdSequence } from "./PresentationIdSequence"
+import type { RealtimeMessagePublisher } from "./RealtimeMessagePublisher"
 
 function providerLabel(providerId: string): string {
 	if (providerId === "openai") return "OpenAI"
@@ -152,6 +153,7 @@ class HostedServerToolPresentationSession implements ProviderServerToolPresentat
 		context: ProviderServerToolRequestContext,
 		private readonly messages: MessageStateHandler,
 		private readonly nextPresentationId: PresentationIdSequence,
+		private readonly realtime?: RealtimeMessagePublisher,
 	) {
 		this.webTools = new ServerToolLifecycle(context.webSearchRoutingPlan, true, async (update) => {
 			await this.present(update.dlineTid, buildHostedMessage(update, context.providerId), update.partial)
@@ -186,6 +188,7 @@ class HostedServerToolPresentationSession implements ProviderServerToolPresentat
 		}
 		if (partial) {
 			this.messages.upsertTransientClineMessage(row)
+			this.realtime?.publish(row)
 			return
 		}
 		// beginDurableClineMessage permits a late terminal enrichment to replace
@@ -208,10 +211,17 @@ export class HostedServerToolPresenter implements ProviderServerToolPresentation
 		private readonly taskId: string,
 		private readonly messages: MessageStateHandler,
 		private readonly nextPresentationId: PresentationIdSequence,
+		private readonly realtime?: RealtimeMessagePublisher,
 	) {}
 
 	begin(context: ProviderServerToolRequestContext): ProviderServerToolPresentationSession {
-		return new HostedServerToolPresentationSession(this.taskId, context, this.messages, this.nextPresentationId)
+		return new HostedServerToolPresentationSession(
+			this.taskId,
+			context,
+			this.messages,
+			this.nextPresentationId,
+			this.realtime,
+		)
 	}
 }
 

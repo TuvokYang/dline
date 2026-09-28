@@ -46,6 +46,7 @@ import type { ActiveTaskSession } from "../session/ActiveTaskSession"
 import { HostedServerToolPresenter } from "../session/HostedServerToolPresenter"
 import { createPresentationIdSequence } from "../session/PresentationIdSequence"
 import { ProviderTextPresenter } from "../session/ProviderTextPresenter"
+import type { RealtimeMessagePublisher } from "../session/RealtimeMessagePublisher"
 import { readRestoredContextPressure } from "../session/RestoredContextPressure"
 import { RestoredToolDialogContinuation } from "../session/RestoredToolDialogContinuation"
 import { TaskApiHandlerOwner } from "../session/TaskApiHandlerOwner"
@@ -341,6 +342,13 @@ export class TaskSessionCompositionService {
 			readAdmissionSnapshot: (block) => toolExecution.readAdmissionSnapshot(block),
 		})
 		const nextPresentationId = createPresentationIdSequence()
+		const realtimeMessages: RealtimeMessagePublisher = {
+			publish: (row) => {
+				void sendPartialMessageEvent(options.prompt.controller, convertClineMessageToProto(row)).catch((error) =>
+					Logger.debug(`[Task ${options.taskId}] Realtime message could not reach the Webview: ${String(error)}`),
+				)
+			},
+		}
 		const compactionScopes = new CompactionRequestScopes()
 		// The footer shows Retry and Cancel only while a countdown owns the
 		// request, so every change of that ownership republishes the view.
@@ -502,7 +510,7 @@ export class TaskSessionCompositionService {
 			dialogWaiters: interactions,
 			// A reply that calls no tool has no block to render it, so the prose
 			// itself is what the chat must show.
-			providerPresentation: new ProviderTextPresenter(messages, nextPresentationId),
+			providerPresentation: new ProviderTextPresenter(messages, nextPresentationId, realtimeMessages),
 			readMistakeLimit: () => ({
 				count: toolState.consecutiveMistakeCount,
 				limit: options.stateManager.getGlobalSettingsKey("maxConsecutiveMistakes") ?? 3,
@@ -546,7 +554,7 @@ export class TaskSessionCompositionService {
 					requests: providerRequests,
 					nextPresentationId,
 					retry: providerRetry,
-					serverTools: new HostedServerToolPresenter(options.taskId, messages, nextPresentationId),
+					serverTools: new HostedServerToolPresenter(options.taskId, messages, nextPresentationId, realtimeMessages),
 				}),
 				tool: new DefaultProductionToolExecutionService({ config: toolExecution, runtime: toolRuntime }),
 				toolResources: {

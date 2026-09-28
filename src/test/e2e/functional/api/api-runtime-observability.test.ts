@@ -1236,7 +1236,9 @@ e2e(
 				type: "tool",
 				name: "attempt_completion",
 				arguments: { result: completion },
-				delayMs: 5_000,
+				// Leave a deterministic window after the recovered text turn so the
+				// assertion observes the active request rather than racing completion.
+				delayMs: 15_000,
 			},
 			{
 				type: "error",
@@ -1342,7 +1344,9 @@ e2e(
 				name: "attempt_completion",
 				arguments: { result: completion },
 				reasoning: recoveredReasoning,
-				afterReasoningDelayMs: 8_000,
+				// Keep the recovered request active while the reasoning row is expanded
+				// and the retry card is reconciled from the persisted message window.
+				afterReasoningDelayMs: 20_000,
 			},
 			{
 				type: "error",
@@ -1355,13 +1359,14 @@ e2e(
 		await sendTask(sidebar, "Exercise DeepSeek recovery at the first streamed response chunk.")
 
 		const errorBox = sidebar.getByTestId("error-retry-box")
-		await expect(errorBox).toContainText(retryAttemptText(1), { timeout: 90_000 })
-		await expect(sidebar.getByText(recoveredReasoning, { exact: false })).toHaveCount(1, { timeout: 60_000 })
+		const streamingThinking = sidebar.getByRole("button", { name: "Thinking...", exact: true }).last()
+		await expect(streamingThinking).toBeVisible({ timeout: 60_000 })
+		await expect(sidebar.getByText(completion, { exact: false })).toHaveCount(0)
+		await expect(sidebar.getByText(recoveredReasoning, { exact: false })).toHaveCount(1)
 		await expect.poll(() => server.getRequestCount("deepseek-chat")).toBe(2)
 		await expect(errorBox).toHaveCount(0)
 		await expect(sidebar.getByText(/Automatic retry (scheduled|in progress|stopped)/)).toHaveCount(0)
 		await expect(sidebar.locator('vscode-button[aria-label="Retry"]')).toHaveCount(0)
-		await expect(sidebar.locator('vscode-button[aria-label="Cancel"]')).toBeVisible()
 
 		await expect(sidebar.getByText(completion, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
 		await expect(sidebar.getByTestId("error-retry-box")).toHaveCount(0)

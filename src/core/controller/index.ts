@@ -2696,6 +2696,7 @@ export class Controller {
 			currentTaskItem,
 			taskTitleMessage,
 			totalMessageCount,
+			messageWindowRevision: this.task?.owners.messages.messageWindowMutationRevision ?? 0,
 			firstItemIndex,
 			apiMetrics,
 			contextWindowIndicator,

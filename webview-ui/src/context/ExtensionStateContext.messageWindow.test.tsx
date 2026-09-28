@@ -175,13 +175,14 @@ function pinnedAnchorState(stateRevision: number, total = 1): ExtensionState {
 	} as ExtensionState
 }
 
-function stateSnapshot(input: { revision: number; total: number }): ExtensionState {
+function stateSnapshot(input: { revision: number; total: number; messageWindowRevision?: number }): ExtensionState {
 	return {
 		stateRevision: input.revision,
 		version: "test",
 		currentTaskItem: { id: "task-1", task: "Task", ts: 1 },
 		taskTitleMessage: { ts: 1, type: "say", say: "task", text: "Task" },
 		totalMessageCount: input.total,
+		messageWindowRevision: input.messageWindowRevision,
 		welcomeViewCompleted: true,
 	} as ExtensionState
 }
@@ -769,6 +770,78 @@ describe("ExtensionStateContext persisted message reconciliation", () => {
 		await waitFor(() => expect(TaskServiceClient.fetchMessage).toHaveBeenCalledTimes(2))
 		await waitFor(() => expect(screen.getByText("durable replacement")).toBeVisible())
 		expect(screen.queryByText("stale partial")).toBeNull()
+	})
+
+	it("reconciles a destructive same-count replacement while a durable-tail fetch is still running", async () => {
+		const initial = convertClineMessageToProto({ ts: 10, type: "say", say: "text", text: "assistant" })
+		const obsolete = convertClineMessageToProto({ ts: 20, type: "say", say: "text", text: "obsolete retry" })
+		const recovered = convertClineMessageToProto({
+			ts: 30,
+			type: "say",
+			say: "text",
+			text: "recovered response",
+			partial: true,
+		})
+		const activeRequest = convertClineMessageToProto({
+			ts: 40,
+			type: "say",
+			say: "text",
+			text: "active request",
+		})
+		let resolveTailFetch:
+			| ((value: {
+					messages: [typeof initial, typeof obsolete, typeof recovered]
+					startIndex: number
+					totalCount: number
+			  }) => void)
+			| undefined
+		const tailFetch = new Promise<{
+			messages: [typeof initial, typeof obsolete, typeof recovered]
+			startIndex: number
+			totalCount: number
+		}>((resolve) => {
+			resolveTailFetch = resolve
+		})
+		vi.mocked(TaskServiceClient.fetchMessage)
+			.mockResolvedValueOnce({ messages: [initial, obsolete], startIndex: 0, totalCount: 2 })
+			.mockReturnValueOnce(tailFetch as never)
+			.mockResolvedValueOnce({
+				messages: [initial, { ...recovered, partial: false }, activeRequest],
+				startIndex: 0,
+				totalCount: 3,
+			})
+
+		render(
+			<ExtensionStateContextProvider>
+				<MessageProbe />
+			</ExtensionStateContextProvider>,
+		)
+		await waitFor(() => expect(subscriptions.state).toBeDefined())
+		act(() => {
+			subscriptions.state?.onResponse({ stateJson: JSON.stringify(stateSnapshot({ revision: 1, total: 2 })) })
+		})
+		await waitFor(() => expect(screen.getByText("obsolete retry")).toBeVisible())
+
+		act(() => {
+			subscriptions.partial?.onResponse(recovered)
+			subscriptions.state?.onResponse({ stateJson: JSON.stringify(stateSnapshot({ revision: 2, total: 3 })) })
+		})
+		await waitFor(() => expect(TaskServiceClient.fetchMessage).toHaveBeenCalledTimes(2))
+
+		act(() => {
+			subscriptions.state?.onResponse({
+				stateJson: JSON.stringify(stateSnapshot({ revision: 3, total: 3, messageWindowRevision: 1 })),
+			})
+		})
+		await act(async () => {
+			resolveTailFetch?.({ messages: [initial, obsolete, recovered], startIndex: 0, totalCount: 3 })
+			await tailFetch
+		})
+
+		await waitFor(() => expect(TaskServiceClient.fetchMessage).toHaveBeenCalledTimes(3))
+		await waitFor(() => expect(screen.queryByText("obsolete retry")).toBeNull())
+		expect(screen.getByText("recovered response")).toBeVisible()
+		expect(screen.getByText("active request")).toBeVisible()
 	})
 
 	it("deduplicates a delayed partial event after the persisted tail has already been recovered", async () => {

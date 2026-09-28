@@ -85,6 +85,8 @@ export interface ExtensionState {
 	taskTitleMessage?: UiMessage
 	/** Total count of body messages (excluding task) for virtuoso totalCount */
 	totalMessageCount?: number
+	/** Destructive sequence revision used to refetch same-count message replacements. */
+	messageWindowRevision?: number
 	/** Index of the first item in the current window within the full message list */
 	firstItemIndex?: number
 	currentTaskItem?: HistoryItem

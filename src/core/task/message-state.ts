@@ -94,6 +94,8 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 	private readonly transientClineMessages = new Map<number, UiMessage>()
 	/** Bumped by every mutation that can change how messages aggregate. */
 	private messageRevision = 0
+	/** Bumped when positional message windows must be fetched again. */
+	private messageWindowRevision = 0
 	/** Aggregated metrics reused while the message sequence is unchanged. */
 	private historyMetricsCache?: { revision: number; metrics: ReturnType<typeof getApiMetrics> }
 	/**
@@ -239,6 +241,7 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 		// to remember. A non-tail edit changes the aggregate while leaving the
 		// message count and the tail untouched, so shape-based keys would miss it.
 		this.bumpMessageRevision()
+		if (change.type === "delete" || change.type === "set") this.messageWindowRevision++
 		this.emit("clineMessagesChanged", change)
 	}
 
@@ -395,6 +398,11 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 	/** Current message mutation revision, exposed for aggregate cache tests. */
 	get messageMutationRevision(): number {
 		return this.messageRevision
+	}
+
+	/** Revision of destructive sequence changes that invalidate a positional Webview window. */
+	get messageWindowMutationRevision(): number {
+		return this.messageWindowRevision
 	}
 
 	async updateTaskHistory(): Promise<void> {
