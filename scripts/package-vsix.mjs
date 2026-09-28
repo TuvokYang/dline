@@ -5,19 +5,23 @@
  *
  * Local invocations derive the channel from the branch and exact tag at HEAD.
  * CI can pass `--channel` explicitly so pull-request packages remain neutral
- * while dev, preview, and production runs receive their public identities:
+ * while dev, pre-release, and production runs receive their public identities:
  *
- * | Channel      | name             | version                    |
- * | ------------ | ---------------- | -------------------------- |
- * | ci           | dline            | package.json version       |
- * | production   | dline            | X.Y.Z (from `vX.Y.Z`)      |
- * | preview      | dline-preview    | X.Y.Z (from `dev-vX.Y.Z`)  |
- * | insiders     | dline-insiders   | major.minor.<unix seconds> |
+ * | Channel      | name             | version                    | Marketplace track |
+ * | ------------ | ---------------- | -------------------------- | ----------------- |
+ * | ci           | dline            | package.json version       | -                 |
+ * | production   | dline            | X.Y.Z (from `vX.Y.Z`)      | release           |
+ * | pre-release  | dline            | X.Y.Z (from `dev-vX.Y.Z`)  | pre-release       |
+ * | insiders     | dline-insiders   | major.minor.<unix seconds> | release           |
+ *
+ * Pre-release and production share the `tuvokyang.dline` extension; only the
+ * VSIX pre-release marker (vsce `preRelease`) puts a build on the pre-release
+ * track.
  *
  * GitHub distribution follows the same channel contract:
  * - untagged main runs CI only and is rejected by automatic release packaging;
  * - vX.Y.Z publishes stable assets after full validation or a manager override;
- * - dev-vX.Y.Z publishes a public Preview prerelease;
+ * - dev-vX.Y.Z publishes a public GitHub pre-release and the Marketplace pre-release track;
  * - untagged dev publishes a per-commit maintainers-only Insiders draft and registries.
  *
  * Tagged channels require the tag, package.json, and both changelogs to agree.
@@ -46,11 +50,10 @@ const PRODUCTION_TAG_PATTERN = /^v(\d+\.\d+\.\d+)$/
 const DEV_TAG_PATTERN = /^dev-v(\d+\.\d+\.\d+)$/
 const INSIDERS_DRAFT_TAG_PATTERN = /^insiders-[0-9a-f]{40}$/
 
-const PREVIEW_SUFFIX = "-preview"
-const PREVIEW_DISPLAY_SUFFIX = " (Preview)"
+const PRE_RELEASE_CHANNEL = "pre-release"
 const INSIDERS_SUFFIX = "-insiders"
 const INSIDERS_DISPLAY_SUFFIX = " (Insiders)"
-const SUPPORTED_CHANNELS = new Set(["auto", "ci", "production", "preview", "insiders"])
+const SUPPORTED_CHANNELS = new Set(["auto", "ci", "production", PRE_RELEASE_CHANNEL, "insiders"])
 
 /**
  * Run a git command and return its trimmed output.
@@ -209,7 +212,7 @@ function createInsidersVersion(packageVersion) {
  * Resolve which channel the current HEAD belongs to.
  *
  * @param {string} packageVersion Version currently in package.json.
- * @returns {{channel: "production"|"preview"|"insiders", version: string, tag: string|null}}
+ * @returns {{channel: "production"|"pre-release"|"insiders", version: string, tag: string|null}}
  */
 function resolveChannel(packageVersion) {
 	const branch = getCurrentBranch()
@@ -230,7 +233,7 @@ function resolveChannel(packageVersion) {
 			fail(`Development tag '${tag}' is checked out on '${branch}'. A dev release tag must live on dev.`)
 		}
 		assertReleaseVersionConsistency(tag, devTag[1], packageVersion)
-		return { channel: "preview", version: devTag[1], tag }
+		return { channel: PRE_RELEASE_CHANNEL, version: devTag[1], tag }
 	}
 
 	if (tag !== null) {
@@ -253,7 +256,7 @@ function resolveChannel(packageVersion) {
  *
  * @param {string} requestedChannel Requested channel.
  * @param {string} packageVersion Version currently in package.json.
- * @returns {{channel: "ci"|"production"|"preview"|"insiders", version: string, tag: string|null}}
+ * @returns {{channel: "ci"|"production"|"pre-release"|"insiders", version: string, tag: string|null}}
  */
 function resolveRequestedChannel(requestedChannel, packageVersion) {
 	if (requestedChannel === "auto") {
@@ -300,7 +303,7 @@ function parseArguments(argv) {
 			outputPath = argv[index + 1]
 			index += 1
 		} else if (argument === "--help" || argument === "-h") {
-			console.log("Usage: npm run vsix -- [--channel auto|ci|insiders|preview|production] [--out <path>]")
+			console.log("Usage: npm run vsix -- [--channel auto|ci|insiders|pre-release|production] [--out <path>]")
 			process.exit(0)
 		} else {
 			fail(`Unknown argument '${argument}'.`)
@@ -320,20 +323,22 @@ function parseArguments(argv) {
 /**
  * Apply a channel identity to a package manifest in place.
  *
+ * Only Insiders is a separate extension. A pre-release keeps the production
+ * identity: it is the same extension on the Marketplace pre-release track, so
+ * its manifest must not diverge from the release it precedes.
+ *
  * @param {object} pkg Parsed package.json.
- * @param {"ci"|"production"|"preview"|"insiders"} channel Target channel.
+ * @param {"ci"|"production"|"pre-release"|"insiders"} channel Target channel.
  * @param {string} version Version to publish.
  * @returns {boolean} True when the manifest was modified.
  */
 function applyChannelIdentity(pkg, channel, version) {
-	if (channel === "ci" || channel === "production") return false
+	if (channel !== "insiders") return false
 
-	const suffix = channel === "preview" ? PREVIEW_SUFFIX : INSIDERS_SUFFIX
-	const displaySuffix = channel === "preview" ? PREVIEW_DISPLAY_SUFFIX : INSIDERS_DISPLAY_SUFFIX
-	const displayName = pkg.displayName + displaySuffix
+	const displayName = pkg.displayName + INSIDERS_DISPLAY_SUFFIX
 
 	pkg.preview = true
-	pkg.name += suffix
+	pkg.name += INSIDERS_SUFFIX
 	pkg.displayName = displayName
 	pkg.version = version
 	if (pkg.contributes?.viewsContainers?.activitybar?.title) {
@@ -381,11 +386,15 @@ await withMarketplaceReadme(
 			fs.mkdirSync(destinationDirectory, { recursive: true })
 		}
 
-		console.log(`[package-vsix] Packaging through the VSCE API${resolvedOutputPath ? `: ${resolvedOutputPath}` : ""}`)
+		const preRelease = channel === PRE_RELEASE_CHANNEL
+		console.log(
+			`[package-vsix] Packaging through the VSCE API${preRelease ? " as a pre-release" : ""}${resolvedOutputPath ? `: ${resolvedOutputPath}` : ""}`,
+		)
 		await packageVsix({
 			cwd: PROJECT_ROOT,
 			mode: "build-and-pack",
 			packagePath: resolvedOutputPath,
+			preRelease,
 		})
 		console.log("[package-vsix] Package completed successfully!")
 	},

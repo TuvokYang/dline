@@ -109,11 +109,13 @@ npm run vsix
 
 `scripts/package-vsix.mjs` picks the package identity from the current branch and the tag pointing at `HEAD`:
 
-| Current `HEAD` | Extension name | Version |
-|---|---|---|
-| `main` with a `vX.Y.Z` tag | `dline` | `X.Y.Z` from the tag |
-| `dev` with a `dev-vX.Y.Z` tag | `dline-preview` | `X.Y.Z` from the tag |
-| `dev` without a tag | `dline-insiders` | `major.minor.<Unix seconds>` |
+| Current `HEAD` | Extension name | Version | Marketplace track |
+|---|---|---|---|
+| `main` with a `vX.Y.Z` tag | `dline` | `X.Y.Z` from the tag | Release |
+| `dev` with a `dev-vX.Y.Z` tag | `dline` | `X.Y.Z` from the tag | Pre-release |
+| `dev` without a tag | `dline-insiders` | `major.minor.<Unix seconds>` | Release |
+
+A pre-release is the same `tuvokyang.dline` extension as the stable release; the VSIX is packaged with the pre-release flag, so users who switch to the pre-release version receive it.
 
 On any other branch, packaging is rejected by default. To build a local test package on a feature branch, name the channel explicitly:
 
@@ -121,6 +123,6 @@ On any other branch, packaging is rejected by default. To build a local test pac
 npm run vsix -- --channel ci
 ```
 
-The available channels are `auto`, `ci`, `insiders`, `preview`, and `production`; `--out <path>` sets the output path. When packaging a tagged version, the versions in `package.json`, `CHANGELOG.md`, and `docs/changelog/CHANGELOG_en.md` must agree.
+The available channels are `auto`, `ci`, `insiders`, `pre-release`, and `production`; `--out <path>` sets the output path.
 
 Packaging is not publishing. Marketplace publication is done by the release workflows in GitHub Actions.

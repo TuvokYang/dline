@@ -17,16 +17,18 @@ const PACKAGE_SECRET_ALLOWLIST = ["sendgrid"]
 /**
  * Validate and normalize one VSIX packaging request.
  *
- * @param {{ cwd: string, mode: "build-and-pack"|"pack-only", packagePath?: string|null }} options
+ * @param {{ cwd: string, mode: "build-and-pack"|"pack-only", packagePath?: string|null, preRelease?: boolean }} options
+ *   `preRelease` marks the package for the Marketplace pre-release track of
+ *   the same extension ID (`Microsoft.VisualStudio.Code.PreRelease`).
  */
-function normalizeOptions({ cwd, mode, packagePath = null }) {
+function normalizeOptions({ cwd, mode, packagePath = null, preRelease = false }) {
 	if (!cwd) {
 		throw new Error("VSIX packaging requires a working directory.")
 	}
 	if (!SUPPORTED_MODES.has(mode)) {
 		throw new Error(`Unsupported VSIX packaging mode '${mode ?? ""}'.`)
 	}
-	return { cwd, mode, packagePath }
+	return { cwd, mode, packagePath, preRelease: preRelease === true }
 }
 
 /**
@@ -36,7 +38,7 @@ function normalizeOptions({ cwd, mode, packagePath = null }) {
  * behavior in a worker guarantees the parent can still restore temporary
  * package.json and README mutations.
  *
- * @param {{ cwd: string, mode: "build-and-pack"|"pack-only", packagePath?: string|null }} options
+ * @param {{ cwd: string, mode: "build-and-pack"|"pack-only", packagePath?: string|null, preRelease?: boolean }} options
  * @returns {Promise<{ packagePath: string|null }>}
  */
 export async function packageVsix(options) {
@@ -48,12 +50,13 @@ export async function packageVsix(options) {
 	return { packagePath: normalized.packagePath }
 }
 
-/** @param {{ cwd: string, mode: "build-and-pack"|"pack-only", packagePath: string|null }} options */
+/** @param {{ cwd: string, mode: "build-and-pack"|"pack-only", packagePath: string|null, preRelease: boolean }} options */
 async function runWorker(options) {
 	const packageOptions = {
 		cwd: options.cwd,
 		dependencies: false,
 		allowPackageSecrets: PACKAGE_SECRET_ALLOWLIST,
+		preRelease: options.preRelease,
 	}
 	if (options.packagePath) {
 		packageOptions.packagePath = options.packagePath

@@ -109,11 +109,13 @@ npm run vsix
 
 `scripts/package-vsix.mjs` 根据当前分支和指向 `HEAD` 的标签决定打包身份：
 
-| 当前 `HEAD` | 扩展名 | 版本号 |
-|---|---|---|
-| `main` 且有 `vX.Y.Z` 标签 | `dline` | 标签中的 `X.Y.Z` |
-| `dev` 且有 `dev-vX.Y.Z` 标签 | `dline-preview` | 标签中的 `X.Y.Z` |
-| `dev` 且没有标签 | `dline-insiders` | `主版本.次版本.<Unix 秒>` |
+| 当前 `HEAD` | 扩展名 | 版本号 | 扩展市场轨道 |
+|---|---|---|---|
+| `main` 且有 `vX.Y.Z` 标签 | `dline` | 标签中的 `X.Y.Z` | 正式版 |
+| `dev` 且有 `dev-vX.Y.Z` 标签 | `dline` | 标签中的 `X.Y.Z` | 预发布版 |
+| `dev` 且没有标签 | `dline-insiders` | `主版本.次版本.<Unix 秒>` | 正式版 |
+
+预发布版与正式版是同一个扩展 `tuvokyang.dline`，VSIX 打包时带有预发布标记，只有切换到预发布版本的用户才会收到。
 
 在其他分支上默认会拒绝打包。需要在功能分支上打一个本地测试包时，显式指定渠道：
 
@@ -121,6 +123,6 @@ npm run vsix
 npm run vsix -- --channel ci
 ```
 
-可用的渠道为 `auto`、`ci`、`insiders`、`preview`、`production`，`--out <path>` 可以指定输出路径。打包带标签的版本时，`package.json`、`CHANGELOG.md` 和 `docs/changelog/CHANGELOG_en.md` 中的版本必须一致。
+可用的渠道为 `auto`、`ci`、`insiders`、`pre-release`、`production`，
 
 打包不等于发布。发布到扩展市场由 GitHub Actions 中的发布流程完成。

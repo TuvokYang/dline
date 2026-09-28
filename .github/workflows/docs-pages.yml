@@ -1,10 +1,12 @@
 name: Docs Pages
 
-# Builds, verifies and deploys the documentation site to GitHub Pages from main.
-# The deployed artifact is the docs/dist directory verified in the same build job.
+# Builds, verifies and deploys the documentation site to GitHub Pages from dev,
+# the repository's default branch. Only one branch deploys, so the site never
+# alternates between two sources. The deployed artifact is the docs/dist
+# directory verified in the same build job.
 on:
   push:
-    branches: [main]
+    branches: [dev]
     paths:
       - "docs/**"
       - "assets/docs/**"
@@ -24,8 +26,8 @@ env:
 jobs:
   build:
     name: Build verified site
-    # Manual runs may be started from any ref; only main is a production source.
-    if: github.repository == 'TuvokYang/dline' && github.ref == 'refs/heads/main'
+    # Manual runs may be started from any ref; only dev is the published source.
+    if: github.repository == 'TuvokYang/dline' && github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

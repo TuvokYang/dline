@@ -167,7 +167,7 @@ Until that strategy is approved, the hotfix workflow must stop instead of invent
 
 ## 9. Tag semantics
 
-- A development release tag must match `dev-vX.Y.Z`, point to the exact current `dev` head, and may be pushed only after tag creation is authorized. It triggers the `Publish Draft Release (Dev)` workflow, whose GitHub draft-release job consumes the tested VSIX only after the complete reusable Tests workflow, including full Vitest, one package job, and the three-platform work smoke plus four daily workflows against that same artifact.
+- A development release tag must match `dev-vX.Y.Z`, point to the exact current `dev` head, and may be pushed only after tag creation is authorized. It triggers the `Publish Pre-release` workflow, whose GitHub pre-release and registry jobs consume the tested VSIX only after the complete reusable Tests workflow, including full Vitest, one package job, and the three-platform work smoke plus four daily workflows against that same artifact.
 - A `dev-vX.Y.Z` tag is never a production baseline and must not trigger the Production Release or production Marketplace workflow.
 - A production tag must match `vX.Y.Z` and point to a verified `main` commit.
 - Creating a local tag, pushing it, and replacing a remote tag are separate operations.
@@ -177,13 +177,13 @@ Until that strategy is approved, the hotfix workflow must stop instead of invent
 
 `npm run vsix` derives the packaged identity from the current branch and the tag pointing at `HEAD`, so a single command produces the correct artifact for each channel. `scripts/package-vsix.mjs` owns this resolution; do not reintroduce a branch-only or tag-only heuristic.
 
-| HEAD | Extension name | Version | Channel |
-| --- | --- | --- | --- |
-| `main` + `vX.Y.Z` | `dline` | `X.Y.Z` from the tag | Production |
-| `dev` + `dev-vX.Y.Z` | `dline-preview` | `X.Y.Z` from the tag | Release candidate |
-| `dev` without a tag | `dline-insiders` | `major.minor.<unix-seconds>` | Rolling build |
+| HEAD | Extension name | Version | Channel | Marketplace track |
+| --- | --- | --- | --- | --- |
+| `main` + `vX.Y.Z` | `dline` | `X.Y.Z` from the tag | `production` | Release |
+| `dev` + `dev-vX.Y.Z` | `dline` | `X.Y.Z` from the tag | `pre-release` | Pre-release |
+| `dev` without a tag | `dline-insiders` | `major.minor.<unix-seconds>` | `insiders` | Release |
 
-The three names are independent Marketplace extensions with independent version sequences. A Marketplace `version` accepts only three numeric segments, so a semver pre-release suffix such as `0.9.4-rc.1` cannot be published; the preview channel therefore reuses the exact tag version and the insiders channel replaces the patch with a timestamp.
+`tuvokyang.dline` carries both the release and the pre-release track; `dline-insiders` is a separate extension with its own version sequence. A pre-release keeps the production manifest identity and differs only by the VSIX pre-release marker (`Microsoft.VisualStudio.Code.PreRelease`, set by vsce `preRelease`) and by the GitHub asset name `dline-X.Y.Z-pre-release.vsix`. Registry gates reject a pre-release VSIX without the marker and a production VSIX that carries it. A Marketplace `version` accepts only three numeric segments, so a semver pre-release suffix such as `0.9.4-rc.1` cannot be published; the pre-release channel reuses the exact tag version, and the insiders channel replaces the patch with a timestamp.
 
 Packaging rules:
 
@@ -225,5 +225,5 @@ After changing a Git workflow or skill, verify at least:
 9. rejection of ordinary development or PR creation from `main`;
 10. rejection of promotion when the `dev` gate fails;
 11. authorized promotion after the complete `dev` gate passes;
-12. `dev-vX.Y.Z` development release tags only from the exact `dev` head, with GitHub draft release creation blocked until full Vitest, one package job, and the three-platform work smoke plus four daily workflows pass against the same VSIX;
+12. `dev-vX.Y.Z` development release tags only from the exact `dev` head, with GitHub pre-release and Marketplace pre-release publication blocked until full Vitest, one package job, and the three-platform work smoke plus four daily workflows pass against the same VSIX;
 13. production tag creation only from the final verified `main` commit.

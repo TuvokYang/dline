@@ -76,8 +76,8 @@ jobs:
             echo "Error: package profile must be 'ci' or 'release'"
             exit 1
           fi
-          if [[ "$CHANNEL" != "ci" && "$CHANNEL" != "insiders" && "$CHANNEL" != "preview" && "$CHANNEL" != "production" ]]; then
-            echo "Error: package channel must be 'ci', 'insiders', 'preview', or 'production'"
+          if [[ "$CHANNEL" != "ci" && "$CHANNEL" != "insiders" && "$CHANNEL" != "pre-release" && "$CHANNEL" != "production" ]]; then
+            echo "Error: package channel must be 'ci', 'insiders', 'pre-release', or 'production'"
             exit 1
           fi
           if [[ "$PROFILE" == "release" && "$CHANNEL" != "production" ]]; then
@@ -151,8 +151,10 @@ jobs:
               # packaged manifest version in "Inspect packaged VSIX".
               filename="dline-insiders-${short_sha}.vsix"
               ;;
-            preview)
-              filename="dline-preview-${version}.vsix"
+            pre-release)
+              # Same extension as production; the suffix only keeps the GitHub
+              # asset distinguishable from the stable VSIX of the same version.
+              filename="dline-${version}-pre-release.vsix"
               ;;
             *)
               echo "Error: unsupported CI package channel '$CHANNEL'"

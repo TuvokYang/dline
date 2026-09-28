@@ -1,4 +1,4 @@
-name: Publish Preview Release
+name: Publish Pre-release
 
 on:
   push:
@@ -13,7 +13,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: preview-release-${{ github.ref_name }}
+  group: pre-release-${{ github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -70,10 +70,10 @@ jobs:
     uses: ./.github/workflows/test.yml
     with:
       package_profile: ci
-      package_channel: preview
+      package_channel: pre-release
 
   release:
-    name: Publish public Preview prerelease
+    name: Publish public GitHub pre-release
     needs: [verify-tag, tests]
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -114,21 +114,27 @@ jobs:
           fi
 
           vsix_path="${assets[0]}"
-          expected_asset_name="dline-preview-${VERSION}.vsix"
+          expected_asset_name="dline-${VERSION}-pre-release.vsix"
           if [[ "$(basename "$vsix_path")" != "$expected_asset_name" ]]; then
-            echo "Error: Preview asset must be named '$expected_asset_name'."
+            echo "Error: pre-release asset must be named '$expected_asset_name'."
             exit 1
           fi
+          # A pre-release is tuvokyang.dline itself on the Marketplace
+          # pre-release track: production identity plus the VSIX marker.
           manifest_path="$RUNNER_TEMP/vsix-package.json"
           unzip -p "$vsix_path" extension/package.json > "$manifest_path"
           if ! jq -e --arg version "$VERSION" '
-            .name == "dline-preview" and
+            .name == "dline" and
             .publisher == "tuvokyang" and
             .version == $version and
-            (.preview == true)
+            (.preview != true)
           ' "$manifest_path" >/dev/null; then
             echo "Error: tested VSIX identity or version does not match the development release"
             jq '{name, publisher, version, preview}' "$manifest_path"
+            exit 1
+          fi
+          if ! unzip -p "$vsix_path" extension.vsixmanifest | grep -q 'Id="Microsoft.VisualStudio.Code.PreRelease"'; then
+            echo "Error: tested VSIX is not packaged as a pre-release."
             exit 1
           fi
 
@@ -160,7 +166,7 @@ jobs:
             exit 1
           fi
 
-      - name: Create or update public Preview prerelease
+      - name: Create or update public GitHub pre-release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.verify-tag.outputs.tag }}
@@ -170,7 +176,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          title="Dline ${VERSION} Preview"
+          title="Dline ${VERSION} Pre-release"
           notes_path="$RUNNER_TEMP/release-notes.md"
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release edit "$TAG" \
@@ -180,6 +186,15 @@ jobs:
               --notes-file "$notes_path" \
               --repo "$GITHUB_REPOSITORY"
             gh release upload "$TAG" "$VSIX_PATH" --clobber --repo "$GITHUB_REPOSITORY"
+            # A re-published tag keeps only the current VSIX, so renamed assets
+            # from an earlier channel layout cannot be downloaded by mistake.
+            asset_name=$(basename "$VSIX_PATH")
+            gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' |
+              while IFS= read -r stale; do
+                if [[ "$stale" == *.vsix && "$stale" != "$asset_name" ]]; then
+                  gh release delete-asset "$TAG" "$stale" --yes --repo "$GITHUB_REPOSITORY"
+                fi
+              done
           else
             gh release create "$TAG" "$VSIX_PATH" \
               --verify-tag \
@@ -189,15 +204,15 @@ jobs:
               --repo "$GITHUB_REPOSITORY"
           fi
 
-  publish-preview-registry:
-    name: Publish Preview to registries
+  publish-pre-release-registry:
+    name: Publish pre-release to registries
     needs: [verify-tag, tests, release]
     uses: ./.github/workflows/publish-vsix-registries.yml
     with:
-      channel: preview
+      channel: pre-release
       commit_sha: ${{ needs.verify-tag.outputs.commit_sha }}
       release_tag: ${{ needs.verify-tag.outputs.tag }}
       artifact_name: dline-vsix-${{ needs.verify-tag.outputs.commit_sha }}
-      asset_name: dline-preview-${{ needs.verify-tag.outputs.version }}.vsix
+      asset_name: dline-${{ needs.verify-tag.outputs.version }}-pre-release.vsix
       expected_sha256: ${{ needs.release.outputs.sha256 }}
     secrets: inherit

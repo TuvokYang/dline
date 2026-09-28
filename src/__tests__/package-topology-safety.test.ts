@@ -68,7 +68,7 @@ describe("package topology safety", () => {
 		expect(manualWorkflow).toContain("uses: ./.github/workflows/publish-production-release.yml")
 		expect(productionPublisher).toContain('gh release upload "$TAG" "$VSIX_PATH" --clobber')
 		expect(productionPublisher).toContain("uses: ./.github/workflows/publish-vsix-registries.yml")
-		expect(registryWorkflow).toContain('"$VSCE_BIN" publish --skip-duplicate --packagePath "$vsix_path"')
+		expect(registryWorkflow).toContain('"$VSCE_BIN" publish --skip-duplicate "${track_args[@]}" --packagePath "$vsix_path"')
 		expect(registryWorkflow).toContain('"$OVSX_BIN" publish "$vsix_path" --skip-duplicate')
 		// The source gate and both registry jobs independently download the same verified artifact.
 		expect(registryWorkflow.match(/name: \$\{\{ inputs\.artifact_name \}\}/g)).toHaveLength(3)

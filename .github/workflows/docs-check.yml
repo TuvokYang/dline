@@ -1,18 +1,12 @@
 name: Docs Check
 
-# Read-only validation of the documentation site for pull requests and the dev
-# integration branch. Production deployment lives in docs-pages.yml.
+# Read-only validation of the documentation site for pull requests. Pushes to
+# dev are verified by docs-pages.yml, which builds and checks the same artifact
+# it deploys.
 on:
   pull_request:
     branches: [main, dev]
     types: [opened, reopened, synchronize, ready_for_review]
-    paths:
-      - "docs/**"
-      - "assets/docs/**"
-      - ".github/workflows/docs-check.yml"
-      - ".github/workflows/docs-pages.yml"
-  push:
-    branches: [dev]
     paths:
       - "docs/**"
       - "assets/docs/**"

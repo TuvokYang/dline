@@ -87,8 +87,8 @@ jobs:
               channel="ci"
             fi
           fi
-          if [[ "$channel" != "ci" && "$channel" != "insiders" && "$channel" != "preview" && "$channel" != "production" ]]; then
-            echo "Error: package channel must be 'auto', 'ci', 'insiders', 'preview', or 'production'"
+          if [[ "$channel" != "ci" && "$channel" != "insiders" && "$channel" != "pre-release" && "$channel" != "production" ]]; then
+            echo "Error: package channel must be 'auto', 'ci', 'insiders', 'pre-release', or 'production'"
             exit 1
           fi
           if [[ "$profile" == "release" && "$channel" != "production" ]]; then
