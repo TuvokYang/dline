@@ -1,4 +1,5 @@
 import type { ApiHandler } from "@core/api"
+import type { WebSearchRoutingPlan } from "@core/api/server-tools"
 import type { ToolUse } from "@core/assistant-message"
 import type { PromptProfile } from "@core/prompts/profiles/types"
 import type { ClineStorageMessage } from "@shared/messages/content"
@@ -7,6 +8,7 @@ import type { Mode } from "@shared/storage/types"
 import type { ExplicitTurnAuthority } from "../../../explicit-instructions/TurnAuthority"
 import type { ProviderTurnApproval } from "../../../kernel"
 import type { ProviderDraftEnvelope } from "../../../stores/payload/TaskPayloadEnvelopes"
+import type { HostedImageGenerationContext } from "../../../tools/HostedImageGenerationLifecycle"
 
 export interface PlannedProviderTool {
 	readonly attempt: string
@@ -23,12 +25,20 @@ export interface PlannedProviderTool {
  * with its own prompt and no tools - starts a new cache entry and pays for the
  * whole conversation again, which is the opposite of what compaction is for.
  */
+export interface ProviderServerToolRequestContext {
+	readonly webSearchRoutingPlan: WebSearchRoutingPlan
+	readonly imageGeneration: HostedImageGenerationContext
+	readonly providerId: string
+}
+
 export interface ProviderRequestFrame {
 	readonly api: ApiHandler
 	readonly systemPrompt: string
 	readonly tools?: Parameters<ApiHandler["createMessage"]>[2]
 	readonly options?: Parameters<ApiHandler["createMessage"]>[3]
 	readonly nativeTools: boolean
+	/** Frozen routes and provider identity used to admit and present hosted calls from this request. */
+	readonly serverToolContext: ProviderServerToolRequestContext
 	readonly mode: "serial" | "parallel"
 	/** Profile the system prompt was rendered for; follow-up instructions must match it. */
 	readonly profile: PromptProfile

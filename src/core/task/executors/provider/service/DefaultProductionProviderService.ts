@@ -1,5 +1,10 @@
 import { createIdentityFactory, type IdentityFactory } from "@core/api/transform/block-identity"
-import type { ApiStreamChunk, ApiStreamToolCallsChunk, ApiStreamUsageChunk } from "@core/api/transform/stream"
+import type {
+	ApiStreamChunk,
+	ApiStreamServerToolChunk,
+	ApiStreamToolCallsChunk,
+	ApiStreamUsageChunk,
+} from "@core/api/transform/stream"
 import { createStreamNormalizer, normalizeApiStream } from "@core/api/transform/stream-identity-normalizer"
 import { parseAssistantMessageV2, type ToolUse } from "@core/assistant-message"
 import { isDeterministicToolPairingError } from "@core/context/context-management/compaction-retryability"
@@ -23,7 +28,7 @@ import type {
 import type { ProductionProviderChunk, ProductionProviderService } from "../ProductionProviderAdapter"
 import { ProviderFailure } from "../ProviderFailure"
 import { repairProviderPairing } from "./ProviderPairingRepair"
-import type { PreparedProviderRequest, ProviderRequestFactory } from "./ProviderRequest"
+import type { PreparedProviderRequest, ProviderRequestFactory, ProviderServerToolRequestContext } from "./ProviderRequest"
 
 interface PendingNativeTool {
 	readonly functionId: string
@@ -52,12 +57,24 @@ export const DEFAULT_PROVIDER_RETRY_POLICY: ProviderRetryPolicy = {
 	wait: waitRetryDelayUnlessAborted,
 }
 
+export interface ProviderServerToolPresentationSession {
+	consume(chunk: ApiStreamServerToolChunk): Promise<boolean>
+	finalizeOpen(reason: string): Promise<void>
+}
+
+export interface ProviderServerToolPresentationPort {
+	begin(context: ProviderServerToolRequestContext): ProviderServerToolPresentationSession
+}
+
+export type { ProviderServerToolRequestContext }
+
 export interface DefaultProductionProviderServiceOptions {
 	readonly requests: ProviderRequestFactory
 	readonly identities?: IdentityFactory
 	readonly nextPresentationId?: () => number
 	readonly onUsage?: (usage: Readonly<Record<string, number>>) => void
 	readonly retry?: ProviderRetryPolicy
+	readonly serverTools?: ProviderServerToolPresentationPort
 }
 
 /**
@@ -265,10 +282,13 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 		// next interaction, so only the final usage is still read: anything else
 		// the provider streams belongs to a continuation Dline will never render.
 		let turnEnded = false
+		let serverTools: ProviderServerToolPresentationSession | undefined
+		let streamFailed = false
 
 		try {
 			const stream = yield* this.openStream(turn, input.signal)
 			if (!stream) return
+			serverTools = this.options.serverTools?.begin(turn.request.serverToolContext)
 			for await (const chunk of stream) {
 				if (input.signal.aborted) break
 				if (turnEnded && chunk.type !== "usage") {
@@ -324,6 +344,7 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 						}
 						break
 					case "server_tool":
+						await serverTools?.consume(chunk)
 						yield {
 							kind: "partial",
 							transientId,
@@ -339,9 +360,17 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 				}
 			}
 		} catch (error) {
+			streamFailed = true
 			// A stream the user stopped ends however its transport reports it.
 			if (!input.signal.aborted) throw describedFailure(turn.request, error)
 		} finally {
+			await serverTools?.finalizeOpen(
+				input.signal.aborted
+					? "Provider-hosted tool cancelled before it returned a result."
+					: streamFailed
+						? "Provider stream failed before this hosted tool call returned a result."
+						: "Provider stream ended before this hosted tool call returned a result.",
+			)
 			input.signal.removeEventListener("abort", abort)
 		}
 		if (input.signal.aborted) {

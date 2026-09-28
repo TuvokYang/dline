@@ -4,6 +4,7 @@ import { ToolPromptGenerator } from "@core/prompts/generators/ToolPromptGenerato
 import { resolveFrozenPromptRuntime } from "@core/prompts/system-prompt-cache/FrozenPromptRuntime"
 import type { StateManager } from "@core/storage/StateManager"
 import { DEFAULT_API_PROVIDER } from "@shared/api"
+import { ServerTool } from "@shared/proto/dline/models/metadata"
 import type { JournalConversationView } from "../executors/provider/service/JournalConversationView"
 import type { ProviderJournalMessageMaterializer } from "../executors/provider/service/ProviderJournalMessageMaterializer"
 import type {
@@ -127,6 +128,15 @@ export class TaskProviderRequestFactory implements ProviderRequestFactory, Provi
 			tools,
 			options: { serverTools, taskNamespace: this.options.taskId, retryOwner: "task" },
 			nativeTools: Boolean(tools?.length),
+			serverToolContext: {
+				webSearchRoutingPlan: runtime.webSearchRoutingPlan,
+				providerId: api.getProviderId?.() ?? DEFAULT_API_PROVIDER,
+				imageGeneration: {
+					enabled: serverTools.includes(ServerTool.IMAGE_GENERATION),
+					providerId: api.getProviderId?.() ?? DEFAULT_API_PROVIDER,
+					modelId: api.getModel().id,
+				},
+			},
 			// The frozen prompt already resolved the setting against provider
 			// capability; scheduling must agree with what the model was told.
 			mode: runtime.parallelToolsEnabled ? "parallel" : "serial",

@@ -43,6 +43,7 @@ import { PromptCacheHealthTracker } from "../prompt-cache/PromptCacheHealthTrack
 import { createRequestApiScope } from "../RequestApiScope"
 import { LoggingRuntimeDiagnostics } from "../runtime"
 import type { ActiveTaskSession } from "../session/ActiveTaskSession"
+import { HostedServerToolPresenter } from "../session/HostedServerToolPresenter"
 import { createPresentationIdSequence } from "../session/PresentationIdSequence"
 import { ProviderTextPresenter } from "../session/ProviderTextPresenter"
 import { readRestoredContextPressure } from "../session/RestoredContextPressure"
@@ -541,6 +542,7 @@ export class TaskSessionCompositionService {
 					requests: providerRequests,
 					nextPresentationId,
 					retry: providerRetry,
+					serverTools: new HostedServerToolPresenter(options.taskId, messages, nextPresentationId),
 				}),
 				tool: new DefaultProductionToolExecutionService({ config: toolExecution, runtime: toolRuntime }),
 				toolResources: {

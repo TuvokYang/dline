@@ -1,3 +1,4 @@
+import { DISABLED_WEB_SEARCH_ROUTING_PLAN } from "@core/prompts/__tests__/web-search-routing-fixtures"
 import { PromptProfile } from "@core/prompts/profiles/types"
 import type { ClineStorageMessage } from "@shared/messages/content"
 import { describe, expect, it } from "vitest"
@@ -40,6 +41,11 @@ function probe(chunks: readonly unknown[], limits: ModelLimits = { contextWindow
 			tools: [{ type: "function", function: { name: "read_file" } }] as unknown as ProviderRequestFrame["tools"],
 			options: { taskNamespace: "task-1", serverTools: [], retryOwner: "task" },
 			nativeTools: true,
+			serverToolContext: {
+				webSearchRoutingPlan: DISABLED_WEB_SEARCH_ROUTING_PLAN,
+				providerId: "openai",
+				imageGeneration: { enabled: false, providerId: "openai", modelId: "probe-model" },
+			},
 			mode: "serial",
 			profile: PromptProfile.Lite,
 		},
