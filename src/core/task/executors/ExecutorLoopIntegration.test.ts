@@ -64,7 +64,12 @@ describe("executor loop integration", () => {
 		// until no new round appears is what "the loop has stopped" actually means.
 		await drainRounds(runtime, [compose, provider])
 
-		expect({ diagnostics, refusals }).toEqual({ diagnostics: [], refusals: [] })
+		// The text-only bound hands the task back through a mistake-limit dialog.
+		// This loop registers no dialog executor, so that one dispatch is expected
+		// to report itself; anything else the runtime could not run is a failure.
+		const unexpectedDiagnostics = diagnostics.filter((entry) => !entry.includes("No command executor registered for dialog"))
+		expect({ diagnostics: unexpectedDiagnostics, refusals }).toEqual({ diagnostics: [], refusals: [] })
+		expect(runtime.getState().dialog.primary?.kind).toBe("mistake_limit")
 		// Both submissions are carried by a round, each exactly once.
 		const composedEntryIds = compose.mock.calls.flatMap(
 			([input]) => (input as { admittedEntryIds: readonly string[] }).admittedEntryIds,
@@ -78,7 +83,6 @@ describe("executor loop integration", () => {
 		// Every composed round runs its turn, and every turn lands one journal entry.
 		expect(provider).toHaveBeenCalledTimes(compose.mock.calls.length)
 		expect(await journal.read()).toHaveLength(provider.mock.calls.length)
-		expect(runtime.getState().flow.phase).toBe("running")
 	})
 
 	/** Settle the runtime until none of the watched executors is invoked again. */
