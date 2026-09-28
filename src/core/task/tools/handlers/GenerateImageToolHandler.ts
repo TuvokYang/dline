@@ -237,12 +237,15 @@ export class GenerateImageToolHandler implements IFullyManagedTool, IApprovalPre
 						status: "preview",
 						previews: [...previewsBySequence.values()].sort((left, right) => left.sequence - right.sequence),
 					}
+					// A preview is transient: it updates the same row in place and the
+					// terminal state below is what finalizes it. Finalizing every preview
+					// made each one a durable replacement the surface never re-rendered.
 					await config.callbacks.say(
 						"tool",
 						JSON.stringify(createToolPresentation(activePresentation)),
 						undefined,
 						undefined,
-						false,
+						true,
 						block.ts,
 					)
 				},

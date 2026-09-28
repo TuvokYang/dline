@@ -200,6 +200,13 @@ describe("GenerateImageToolHandler", () => {
 		])
 		expect(JSON.stringify(previewMessage)).not.toContain("base64")
 		expect(JSON.stringify(previewMessage)).not.toContain("data:")
+
+		// Previews update one row in place and only the terminal state finalizes it.
+		const previewCalls = say.mock.calls.filter((call) => JSON.parse(call[1] as string).imageGeneration?.status === "preview")
+		expect(previewCalls.length).toBeGreaterThan(0)
+		expect(previewCalls.every((call) => call[4] === true && call[5] === block.ts)).toBe(true)
+		expect(say.mock.calls.at(-1)?.[4]).toBe(false)
+		expect(say.mock.calls.at(-1)?.[5]).toBe(block.ts)
 	})
 
 	it("aborts an in-flight provider request when the task operation is cancelled", async () => {
