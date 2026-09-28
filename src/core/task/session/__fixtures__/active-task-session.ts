@@ -69,7 +69,11 @@ export function createSessionFixture(options: SessionFixtureOptions = {}) {
 			notifyToolConcurrencyLimitChanged: vi.fn(),
 			restoreSubagentActivityRetry: vi.fn(async () => true),
 		},
-		interactions: { open: vi.fn(async () => undefined), dispatch: vi.fn(async () => undefined) },
+		interactions: {
+			open: vi.fn(async () => undefined),
+			dispatch: vi.fn(async () => undefined),
+			dismissProviderFailure: vi.fn(async () => undefined),
+		},
 		browser: { dispose: vi.fn() },
 		commands: { cancelTaskOwnedCommands: vi.fn(async () => undefined) },
 		files: { getAllModifiedFiles: vi.fn(() => [] as string[]) },

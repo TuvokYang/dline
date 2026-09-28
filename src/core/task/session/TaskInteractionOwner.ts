@@ -153,6 +153,33 @@ export class TaskInteractionOwner implements TaskInteractionPorts {
 		this.suspendedReason = undefined
 	}
 
+	/** Clear the provider-failure dialog made obsolete by a successful Profile rebuild. */
+	async dismissProviderFailure(): Promise<void> {
+		const session = this.session
+		const interaction = session?.state().dialog.primary
+		if (!session || interaction?.kind !== "error_retry") return
+		try {
+			const result = await session.assembly.runtime.submit({
+				type: "dialog.dismissed",
+				generation: session.state().generation,
+				interactionId: interaction.interactionId,
+			})
+			if (result.kind === "rejected") {
+				Logger.warn(`Failed to dismiss provider failure ${interaction.interactionId}: ${result.reason}`)
+				return
+			}
+			const retryCard = [...this.messages.clineMessages].reverse().find((message) => message.say === "error_retry")
+			const timestamps = this.messages.clineMessages
+				.filter((message) => message.interactionId === interaction.interactionId || message.ts === retryCard?.ts)
+				.map((message) => message.ts)
+			await this.messages.removeMessagesByTs(timestamps)
+		} catch (error) {
+			Logger.warn(
+				`Failed to dismiss provider failure ${interaction.interactionId}: ${error instanceof Error ? error.message : error}`,
+			)
+		}
+	}
+
 	dispose(reason = "task_disposed"): void {
 		this.suspend(reason)
 	}

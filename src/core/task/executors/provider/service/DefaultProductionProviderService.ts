@@ -226,14 +226,14 @@ export const USER_INTERRUPTION_NOTICE = "[Response interrupted by user]"
  * call it was still writing never ran, so it is dropped rather than replayed.
  */
 function interruptedTurn(
-	reasoning: string,
+	reasoningContent: readonly ClineAssistantContent[],
+	reasoningText: string,
 	prose: string,
 ): { content: ClineAssistantContent[]; text: string; reasoning?: string } | undefined {
-	if (!reasoning.trim() && !prose.trim()) return undefined
-	const content: ClineAssistantContent[] = []
-	if (reasoning) content.push({ type: "thinking", thinking: reasoning, signature: "" })
+	if (reasoningContent.length === 0 && !prose.trim()) return undefined
+	const content: ClineAssistantContent[] = [...reasoningContent]
 	content.push({ type: "text", text: prose.trim() ? `${prose}\n\n${USER_INTERRUPTION_NOTICE}` : USER_INTERRUPTION_NOTICE })
-	return { content, text: prose, ...(reasoning ? { reasoning } : {}) }
+	return { content, text: prose, ...(reasoningText ? { reasoning: reasoningText } : {}) }
 }
 
 function toolParams(input: Readonly<Record<string, unknown>>): ToolUse["params"] {
@@ -374,7 +374,14 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 			input.signal.removeEventListener("abort", abort)
 		}
 		if (input.signal.aborted) {
-			const interrupted = interruptedTurn(reasoningParts.join(""), visibleAssistantText(textParts.join("")))
+			const reasoningContent: ClineAssistantContent[] = [...reasoning.getRedactedThinking()]
+			const thinking = reasoning.getCurrentReasoning()
+			if (thinking) reasoningContent.push(thinking)
+			const interrupted = interruptedTurn(
+				reasoningContent,
+				reasoningParts.join(""),
+				visibleAssistantText(textParts.join("")),
+			)
 			if (interrupted) yield { kind: "interrupted", transientId, ...interrupted }
 			return
 		}

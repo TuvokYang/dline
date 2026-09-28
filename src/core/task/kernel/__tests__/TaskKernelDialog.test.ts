@@ -184,7 +184,8 @@ describe("task kernel causal dialog", () => {
 			attempt: "attempt:b1",
 		}
 		let humanFirst = accepted(transition(initial, policyRequest)).state
-		const humanPolicy = humanFirst.turn.blocks[0].policy!
+		const humanPolicy = humanFirst.turn.blocks[0].policy
+		if (!humanPolicy) throw new Error("Expected human-first policy evaluation")
 		humanFirst = accepted(transition(humanFirst, approval("b1"))).state
 		humanFirst = prepareAndPresent(humanFirst, "approval:b1", "journal:3")
 		humanFirst = accepted(
@@ -224,7 +225,8 @@ describe("task kernel causal dialog", () => {
 		expect(latePolicy).toMatchObject({ kind: "rejected", reason: "duplicate" })
 
 		let aiFirst = accepted(transition(initial, policyRequest)).state
-		const aiPolicy = aiFirst.turn.blocks[0].policy!
+		const aiPolicy = aiFirst.turn.blocks[0].policy
+		if (!aiPolicy) throw new Error("Expected AI-first policy evaluation")
 		aiFirst = accepted(transition(aiFirst, approval("b1"))).state
 		aiFirst = prepareAndPresent(aiFirst, "approval:b1", "journal:4")
 		const aiWon = accepted(
@@ -253,6 +255,35 @@ describe("task kernel causal dialog", () => {
 			actionId: "approve",
 		})
 		expect(lateHuman).toMatchObject({ kind: "rejected", reason: "identity_mismatch" })
+	})
+
+	it("dismisses an obsolete provider failure and releases the task to the user", () => {
+		const initial = createInitialTaskState("task-1")
+		const state: TaskState = {
+			...initial,
+			flow: { phase: "error", error: "Profile not valid" },
+			dialog: {
+				...initial.dialog,
+				primary: {
+					interactionId: "error:provider.failed:1",
+					turnId: "turn-1",
+					kind: "error_retry",
+					status: "awaiting",
+					createdRevision: 1,
+					presentationRef: "Profile not valid",
+					actionRules: [{ actionId: "retry", payloadPolicy: "draft" }],
+					receiverGeneration: 0,
+				},
+			},
+		}
+
+		const result = accepted(
+			transition(state, { type: "dialog.dismissed", generation: 0, interactionId: "error:provider.failed:1" }),
+		)
+
+		expect(result.state.flow).toEqual({ phase: "waiting", error: undefined })
+		expect(result.state.dialog.primary).toBeUndefined()
+		expect(result.commands).toEqual([])
 	})
 
 	it("restores the interrupted interaction atomically when the interrupt resolves", () => {

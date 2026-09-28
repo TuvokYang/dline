@@ -310,6 +310,7 @@ export type DialogEvent =
 	  })
 	| (EventBase & { readonly type: "dialog.reopened"; readonly interactionId: InteractionId })
 	| (EventBase & { readonly type: "dialog.resolved"; readonly interactionId: InteractionId })
+	| (EventBase & { readonly type: "dialog.dismissed"; readonly interactionId: InteractionId })
 export type BackgroundEvent = EventBase & {
 	readonly type: "background.ready"
 	readonly entryId: EntryId

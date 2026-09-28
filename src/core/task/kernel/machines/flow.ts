@@ -106,6 +106,11 @@ export function reduceFlow(state: FlowState, event: TaskEvent): FlowReduction {
 		case "approval.failed":
 		case "dialog.failed":
 			return { state: { ...state, phase: "error", error: event.message }, commands: [] }
+		case "dialog.dismissed":
+			return {
+				state: state.phase === "error" ? { ...state, phase: "waiting", error: undefined } : state,
+				commands: [],
+			}
 		case "lifecycle.spawned":
 			return {
 				state: {

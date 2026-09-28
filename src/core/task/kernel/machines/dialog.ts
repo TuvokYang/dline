@@ -159,7 +159,7 @@ export function reduceDialog(state: DialogSlice, event: TaskEvent, nextRevision:
 		const { [event.blockId]: _resolved, ...approvalsByBlock } = state.approvalsByBlock
 		return { state: { ...state, approvalsByBlock }, commands: [] }
 	}
-	if (event.type === "dialog.resolved") {
+	if (event.type === "dialog.resolved" || event.type === "dialog.dismissed") {
 		const resolvingPrimary = state.primary?.interactionId === event.interactionId
 		const primary = resolvingPrimary ? state.interrupted : state.primary
 		const interrupted = resolvingPrimary ? undefined : state.interrupted

@@ -40,8 +40,8 @@ export interface ReconciledMessageWindow {
 
 export interface MessageWindowReconciliationOptions {
 	/**
-	 * Local timestamps present when the fetch started. A partial timestamp absent
-	 * from this set arrived after the backend snapshot began and must survive an
+	 * Local timestamps present when the fetch started. A timestamp absent from
+	 * this set arrived after the backend snapshot began and must survive an
 	 * omission from that older snapshot.
 	 */
 	localTimestampsAtFetchStart?: ReadonlySet<number>
@@ -89,6 +89,7 @@ export function reconcileMessageWindow(
 	const authoritativeTs = new Set(fetched.messages.map((message) => message.ts))
 	const oldestFetchedTs = fetched.messages[0].ts
 	const newestFetchedTs = fetched.messages[fetched.messages.length - 1].ts
+	const fetchedReachesBackendTail = fetched.total !== undefined && fetchedEndExclusive >= fetched.total
 
 	// The fetch reports absolute indexes, but the local window indexes its own
 	// slice. Timestamps are the only identity shared by both, so the covered
@@ -107,10 +108,14 @@ export function reconcileMessageWindow(
 
 	for (const message of local.messages) {
 		const withinFetchedSpan = message.ts >= oldestFetchedTs && message.ts <= newestFetchedTs
-		const preserveOmittedPartial =
-			message.partial === true &&
-			(options.preserveOmittedPartials === true || options.localTimestampsAtFetchStart?.has(message.ts) === false)
-		if (withinFetchedSpan && !authoritativeTs.has(message.ts) && !preserveOmittedPartial) {
+		// A latest-window fetch is also authoritative after its newest timestamp:
+		// when it reaches the reported backend tail, a locally held later row is a
+		// deleted tail row rather than content outside the fetched range.
+		const beyondFetchedTail = fetchedReachesBackendTail && message.ts > newestFetchedTs
+		const arrivedAfterFetchStarted = options.localTimestampsAtFetchStart?.has(message.ts) === false
+		const preserveOmittedMessage =
+			arrivedAfterFetchStarted || (message.partial === true && options.preserveOmittedPartials === true)
+		if ((withinFetchedSpan || beyondFetchedTail) && !authoritativeTs.has(message.ts) && !preserveOmittedMessage) {
 			removed = true
 			continue
 		}

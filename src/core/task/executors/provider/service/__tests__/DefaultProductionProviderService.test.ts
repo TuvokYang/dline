@@ -256,7 +256,7 @@ describe("DefaultProductionProviderService", () => {
 		const controller = new AbortController()
 		const api = {
 			createMessage: async function* () {
-				yield { type: "reasoning", reasoning: "PARTIAL_THOUGHT" } as ApiStreamChunk
+				yield { type: "reasoning", reasoning: "PARTIAL_THOUGHT", signature: "partial-signature" } as ApiStreamChunk
 				yield text("Partial answer")
 				controller.abort()
 				yield {
@@ -294,7 +294,13 @@ describe("DefaultProductionProviderService", () => {
 			text: "Partial answer",
 			reasoning: "PARTIAL_THOUGHT",
 			content: [
-				{ type: "thinking", thinking: "PARTIAL_THOUGHT", signature: "" },
+				{
+					type: "thinking",
+					thinking: "PARTIAL_THOUGHT",
+					signature: "partial-signature",
+					summary: [],
+					provider_metadata: undefined,
+				},
 				{ type: "text", text: "Partial answer\n\n[Response interrupted by user]" },
 			],
 		})

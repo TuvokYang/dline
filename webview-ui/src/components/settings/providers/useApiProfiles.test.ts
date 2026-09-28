@@ -6,6 +6,7 @@ import { ExtensionStateContext, type ExtensionStateContextType } from "../../../
 import {
 	applyProfileUpdate,
 	buildProfileSettings,
+	flushPendingApiProfileWrites,
 	reorderProfilesById,
 	shouldUseTaskProfileSettings,
 	useApiProfiles,
@@ -52,6 +53,38 @@ describe("useApiProfiles", () => {
 		await waitFor(() => expect(result.current.expandedId).to.equal(profileId))
 		expect(result.current.profiles).to.have.length(1)
 		expect(result.current.profiles[0]?.id).to.equal(profileId)
+	})
+
+	it("flushes an in-flight Catalog mutation before Settings can close", async () => {
+		let resolveUpdate!: (value: object) => void
+		mocks.getApiProfiles.mockResolvedValue({
+			profiles: [ApiProfile.create({ id: "profile-flush", name: "Before" })],
+		})
+		mocks.updateApiProfiles.mockReturnValueOnce(
+			new Promise((resolve) => {
+				resolveUpdate = resolve
+			}),
+		)
+		const wrapper = ({ children }: PropsWithChildren) =>
+			React.createElement(
+				ExtensionStateContext.Provider,
+				{ value: { profileCatalogRevision: 250 } as ExtensionStateContextType },
+				children,
+			)
+		const { result } = renderHook(() => useApiProfiles(), { wrapper })
+		await waitFor(() => expect(result.current.profiles[0]?.id).to.equal("profile-flush"))
+		act(() => result.current.updateProfile("profile-flush", { name: "After" }))
+
+		let flushed = false
+		const flush = flushPendingApiProfileWrites().then(() => {
+			flushed = true
+		})
+		await Promise.resolve()
+		expect(flushed).to.equal(false)
+
+		resolveUpdate({})
+		await flush
+		expect(flushed).to.equal(true)
 	})
 
 	it("keeps an optimistic reorder while a revision reload predates its durable commit", async () => {

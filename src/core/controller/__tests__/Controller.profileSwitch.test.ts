@@ -55,6 +55,7 @@ describe("Controller Profile switch integration", () => {
 		const release = vi.fn()
 		const setProfileIdentityBindings = vi.fn()
 		const rebuild = vi.fn(async () => undefined)
+		const dismissProviderFailure = vi.fn(async () => undefined)
 		const restartAccountUsagePolling = vi.fn()
 		const fakeController = {
 			task: createSessionFixture({
@@ -62,6 +63,7 @@ describe("Controller Profile switch integration", () => {
 				owners: {
 					settings: { mode: "act" as const, setProfileIdentityBindings },
 					api: { rebuild },
+					interactions: { dismissProviderFailure },
 				},
 			}),
 			// Occupancy is read by the Controller from the live indicator.
@@ -118,6 +120,7 @@ describe("Controller Profile switch integration", () => {
 			{ clearRuntimeOverrides: true },
 		)
 		expect(rebuild).toHaveBeenCalledWith({ abortPrevious: true })
+		expect(dismissProviderFailure).toHaveBeenCalledOnce()
 		expect(restartAccountUsagePolling).toHaveBeenCalledOnce()
 	})
 

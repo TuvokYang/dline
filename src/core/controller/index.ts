@@ -1031,11 +1031,7 @@ export class Controller {
 		}
 
 		const autoApprovalSettings = this.stateManager.getGlobalSettingsKey("autoApprovalSettings")
-		const shellIntegrationTimeout = this.stateManager.getGlobalSettingsKey("shellIntegrationTimeout")
-		const terminalReuseEnabled = this.stateManager.getGlobalStateKey("terminalReuseEnabled")
 		const vscodeTerminalExecutionMode = this.stateManager.getGlobalStateKey("vscodeTerminalExecutionMode")
-		const terminalOutputLineLimit = this.stateManager.getGlobalSettingsKey("terminalOutputLineLimit")
-		const defaultTerminalProfile = this.stateManager.getGlobalSettingsKey("defaultTerminalProfile")
 		const isNewUser = this.stateManager.getGlobalStateKey("isNewUser")
 		const taskHistory = this.stateManager.getGlobalStateKey("taskHistory")
 
@@ -1693,6 +1689,7 @@ export class Controller {
 						session.owners.settings.restoreProfileState(previous)
 						throw error
 					}
+					await session.owners.interactions.dismissProviderFailure()
 					if ((await replyWithTransitionDraft(this, operation.chatContent, session)) === "rejected") {
 						Logger.warn(
 							`[ProfileSwitch] ${operation.operationId}: awaiting dialog refused the draft sent with the switch`,
@@ -2906,15 +2903,15 @@ export class Controller {
 				await sendAccountUsageUpdate(this, undefined)
 			}
 			const handler = buildApiHandler(apiConfig, mode)
-			if (decideAccountUsageRead(handler, profileKey, this.accountUsageSingleReadKey) === "skip") {
+			const loadAccountUsage = handler.getAccountUsage?.bind(handler)
+			if (!loadAccountUsage || decideAccountUsageRead(handler, profileKey, this.accountUsageSingleReadKey) === "skip") {
 				handler.abort?.()
 				// Only a provider that cannot report usage at all invalidates the
 				// published snapshot; a skipped repeat must keep showing the one
 				// reading this Profile already produced.
-				if (!handler.getAccountUsage) await clearStaleUsage()
+				if (!loadAccountUsage) await clearStaleUsage()
 				return
 			}
-			const loadAccountUsage = handler.getAccountUsage!.bind(handler)
 			const getAccountUsage = async () =>
 				decorateProviderAccountUsage(profile, await loadAccountUsage(), this.readLocalDailyTokens(profile.id))
 			this.accountUsageHandler = handler

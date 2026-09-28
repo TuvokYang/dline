@@ -243,7 +243,8 @@ function validateEvent(state: TaskState, event: TaskEvent): ValidationFailure | 
 		event.type === "dialog.failed" ||
 		event.type === "dialog.responded" ||
 		event.type === "dialog.reopened" ||
-		event.type === "dialog.resolved"
+		event.type === "dialog.resolved" ||
+		event.type === "dialog.dismissed"
 	) {
 		const interaction = findInteraction(state, event.interactionId)
 		if (!interaction) return { reason: "identity_mismatch", message: `Interaction ${event.interactionId} is not active` }
@@ -270,6 +271,11 @@ function validateEvent(state: TaskState, event: TaskEvent): ValidationFailure | 
 			}
 		if (event.type === "dialog.reopened" && interaction.status !== "resolving")
 			return { reason: "phase_invalid", message: "Only a resolving interaction can be reopened" }
+		if (
+			event.type === "dialog.dismissed" &&
+			(state.dialog.primary?.interactionId !== event.interactionId || interaction.kind !== "error_retry")
+		)
+			return { reason: "phase_invalid", message: "Only the active provider failure dialog can be dismissed" }
 		if (
 			event.type === "dialog.resolved" &&
 			interaction.status !== "resolving" &&

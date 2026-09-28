@@ -16,21 +16,21 @@ interface StoredTaskSettings {
 	actModeProfile?: string
 }
 
-interface SnapshotTurnBlock {
-	dlineTid?: string
-	toolName?: string
-}
-
-interface StoredSnapshot {
-	phase?: string
-	interaction?: {
-		interactionId?: string
-		kind?: string
-		status?: string
-	}
-	turn?: {
-		turnId?: string
-		blocks?: SnapshotTurnBlock[]
+interface StoredTaskState {
+	snapshot?: {
+		state?: {
+			dialog?: {
+				primary?: {
+					interactionId?: string
+					kind?: string
+					status?: string
+				}
+			}
+			turn?: {
+				turnId?: string
+				blocks?: Array<{ blockId?: string }>
+			}
+		}
 	}
 }
 
@@ -78,8 +78,8 @@ async function readTaskSettings(dlineDocsDir: string, taskId: string): Promise<S
 	return JSON.parse(await readFile(path.join(dlineDocsDir, "tasks", taskId, "settings.json"), "utf8")) as StoredTaskSettings
 }
 
-async function readSnapshot(dlineDocsDir: string, taskId: string): Promise<StoredSnapshot> {
-	return JSON.parse(await readFile(path.join(dlineDocsDir, "tasks", taskId, "snapshot.json"), "utf8")) as StoredSnapshot
+async function readTaskState(dlineDocsDir: string, taskId: string): Promise<StoredTaskState> {
+	return JSON.parse(await readFile(path.join(dlineDocsDir, "tasks", taskId, "state.json"), "utf8")) as StoredTaskState
 }
 
 async function selectProfile(sidebar: Frame, profileName: string): Promise<void> {
@@ -123,7 +123,7 @@ e2e(
 				type: "error" as const,
 				status: 429,
 				code: "e2e_profile_switch_error_retry",
-				message: failureMarker,
+				message: `Profile not valid: ${failureMarker}`,
 			})),
 		)
 
@@ -138,14 +138,16 @@ e2e(
 		const taskId = await onlyTaskId(dlineDocsDir)
 		// Confirm the exact state that breaks the Profile preflight: an awaiting
 		// error_retry interaction whose ID is absent from the recorded turn blocks.
-		const snapshot = await E2ETestHelper.waitForValue(async () => {
-			const parsed = await readSnapshot(dlineDocsDir, taskId)
-			return parsed.interaction?.kind === "error_retry" && parsed.interaction.status === "awaiting" ? parsed : undefined
-		}, 30_000)
-		const interactionId = snapshot.interaction?.interactionId
+		const taskState = await E2ETestHelper.waitForValue(async () => {
+			const parsed = await readTaskState(dlineDocsDir, taskId)
+			const primary = parsed.snapshot?.state?.dialog?.primary
+			return primary?.kind === "error_retry" && primary.status === "awaiting" ? parsed : undefined
+		}, 120_000)
+		const interactionId = taskState.snapshot?.state?.dialog?.primary?.interactionId
+		const blocks = taskState.snapshot?.state?.turn?.blocks ?? []
 		expect(interactionId).toBeTruthy()
-		expect(snapshot.turn?.blocks?.length ?? 0).toBeGreaterThan(0)
-		expect(snapshot.turn?.blocks?.some((block) => block.dlineTid === interactionId)).toBe(false)
+		expect(blocks.length).toBeGreaterThan(0)
+		expect(blocks.some((block) => block.blockId === interactionId)).toBe(false)
 
 		// The Profile selector must adopt the target binding without any interception.
 		await selectProfile(sidebar, targetProfile.name)
@@ -158,6 +160,8 @@ e2e(
 				actModeProfile: targetProfile.name,
 			})
 		await expect(input).toBeEnabled()
+		await expect(sidebar.getByTestId("error-retry-box")).toHaveCount(0)
+		await expect(sidebar.getByText(/Profile not valid:/)).toHaveCount(0)
 		await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir, [
 			new RegExp(failureMarker),
 			/e2e_profile_switch_error_retry/,

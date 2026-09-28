@@ -38,6 +38,27 @@ describe("reconcileMessageWindow", () => {
 		expect(result.removed).toBe(true)
 	})
 
+	it("drops deleted local tail rows when the fetched window reaches the backend tail", () => {
+		const result = reconcileMessageWindow(
+			{ messages: [message(1), message(2), message(3), message(4)], startIndex: 0 },
+			{ messages: [message(1), message(2)], startIndex: 0, total: 2 },
+		)
+
+		expect(result.messages.map((entry) => entry.ts)).toEqual([1, 2])
+		expect(result.removed).toBe(true)
+	})
+
+	it("preserves a durable row that arrived after the fetched snapshot started", () => {
+		const result = reconcileMessageWindow(
+			{ messages: [message(1), message(2), message(3)], startIndex: 0 },
+			{ messages: [message(1), message(2)], startIndex: 0, total: 2 },
+			{ localTimestampsAtFetchStart: new Set([1, 2]) },
+		)
+
+		expect(result.messages.map((entry) => entry.ts)).toEqual([1, 2, 3])
+		expect(result.removed).toBe(false)
+	})
+
 	it("preserves a partial that arrived after the fetched snapshot started", () => {
 		const result = reconcileMessageWindow(
 			{ messages: [message(1), message(2), message(3, true)], startIndex: 0 },

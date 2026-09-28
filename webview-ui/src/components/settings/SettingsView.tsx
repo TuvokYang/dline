@@ -23,6 +23,7 @@ import { StateServiceClient } from "@/services/grpc-client"
 import { isAdminOrOwner } from "../account/helpers"
 import { Tab, TabContent, TabList, TabTrigger } from "../common/Tab"
 import ViewHeader from "../common/ViewHeader"
+import { flushPendingApiProfileWrites } from "./providers/useApiProfiles"
 import SectionHeader from "./SectionHeader"
 import AboutSection from "./sections/AboutSection"
 import ApiConfigurationSection from "./sections/ApiConfigurationSection"
@@ -150,6 +151,7 @@ const SettingsView = ({ onDone, targetSection }: SettingsViewProps) => {
 			await saveSettingsAndClose({
 				flushInputs: flushPendingDebouncedInputs,
 				flushRequests: flushPendingSettingsRequests,
+				flushProfileCatalog: flushPendingApiProfileWrites,
 				flushBackend: () => StateServiceClient.flushPendingState(EmptyRequest.create({})),
 				close: onDone,
 			})

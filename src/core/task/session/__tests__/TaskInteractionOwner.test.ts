@@ -1,3 +1,4 @@
+import type { UiMessage } from "@shared/ExtensionMessage"
 import { describe, expect, it, vi } from "vitest"
 import { isInteractionCancellationError } from "../../interaction/InteractionCancellationError"
 import { createInitialTaskState, type DialogInteraction, type TaskState } from "../../kernel"
@@ -8,11 +9,17 @@ import type { ActiveTaskSession } from "../ActiveTaskSession"
 import { TaskInteractionOwner } from "../TaskInteractionOwner"
 import type { UnownedDialogContinuationPort, UnownedDialogOutcome } from "../UnownedDialogContinuation"
 
-function createMessages(): MessageStateHandler {
+function createMessages(rows: UiMessage[] = []): MessageStateHandler {
 	return {
-		clineMessages: [],
+		clineMessages: rows,
 		addToClineMessages: vi.fn(async () => undefined),
 		finalizeClineMessage: vi.fn(async () => undefined),
+		removeMessagesByTs: vi.fn(async (timestamps: number[]) => {
+			for (const timestamp of timestamps) {
+				const index = rows.findIndex((row) => row.ts === timestamp)
+				if (index >= 0) rows.splice(index, 1)
+			}
+		}),
 	} as unknown as MessageStateHandler
 }
 
@@ -37,8 +44,13 @@ function restoredPrimary(interactionId: string, kind: DialogInteraction["kind"])
 	}
 }
 
-function createOwner(options?: { readonly continuation?: UnownedDialogContinuationPort; readonly state?: () => TaskState }): {
+function createOwner(options?: {
+	readonly continuation?: UnownedDialogContinuationPort
+	readonly state?: () => TaskState
+	readonly messages?: MessageStateHandler
+}): {
 	owner: TaskInteractionOwner
+	messages: MessageStateHandler
 	submitted: string[]
 	recorded: RuntimeDiagnostic[]
 	/** Resolves on the next event the owner submits; arm it before causing one. */
@@ -48,7 +60,8 @@ function createOwner(options?: { readonly continuation?: UnownedDialogContinuati
 	const recorded: RuntimeDiagnostic[] = []
 	let announce: (() => void) | undefined
 	const payloads = { put: vi.fn(async () => "sha256:payload"), read: vi.fn() } as unknown as TaskPayloadStore
-	const owner = new TaskInteractionOwner(createMessages(), payloads, options?.continuation, {
+	const messages = options?.messages ?? createMessages()
+	const owner = new TaskInteractionOwner(messages, payloads, options?.continuation, {
 		record: (diagnostic) => recorded.push(diagnostic),
 	})
 	const session = {
@@ -66,7 +79,7 @@ function createOwner(options?: { readonly continuation?: UnownedDialogContinuati
 	owner.bind(session)
 	// A request registers its receiver immediately before submitting the event,
 	// so the submission is when a stop would first find something to release.
-	return { owner, submitted, recorded, whenSubmitted: () => new Promise<void>((resolve) => (announce = resolve)) }
+	return { owner, messages, submitted, recorded, whenSubmitted: () => new Promise<void>((resolve) => (announce = resolve)) }
 }
 
 function continuationPort(outcome: UnownedDialogOutcome): UnownedDialogContinuationPort & {
@@ -111,6 +124,28 @@ describe("TaskInteractionOwner", () => {
 
 		await expect(late).rejects.toSatisfy(isInteractionCancellationError)
 		expect(submitted).toEqual([])
+	})
+
+	it("dismisses the active provider failure and removes its obsolete rows", async () => {
+		const messages = createMessages([
+			{ ts: 1, type: "say", say: "error_retry", text: '{"errorMessage":"Profile not valid"}' },
+			{
+				ts: 2,
+				type: "ask",
+				ask: "api_req_failed",
+				text: "Profile not valid",
+				interactionId: "i-error",
+			},
+		])
+		const restored = restoredPrimary("i-error", "error_retry")
+		const state = () => ({ ...restored, flow: { phase: "error" as const, error: "Profile not valid" } })
+		const { owner, submitted } = createOwner({ messages, state })
+
+		await owner.dismissProviderFailure()
+
+		expect(submitted).toEqual(["dialog.dismissed"])
+		expect(messages.removeMessagesByTs).toHaveBeenCalledWith([1, 2])
+		expect(messages.clineMessages).toEqual([])
 	})
 
 	it("stays usable after a stop, because a cancelled task may resume", async () => {
