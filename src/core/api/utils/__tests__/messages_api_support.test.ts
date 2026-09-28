@@ -322,7 +322,7 @@ describe("messages_api_support", () => {
 				},
 			])
 
-			expect(chunks).to.have.length(1)
+			expect(chunks).to.have.length(2)
 			expect(chunks[0]).to.deep.equal({
 				type: "tool_calls",
 				function_id: "tool_1",
@@ -330,6 +330,19 @@ describe("messages_api_support", () => {
 					function: {
 						name: "read_file",
 						arguments: '{"path":',
+					},
+				},
+			})
+			// The block stop closes the call without adding to its arguments.
+			expect(chunks[1]).to.deep.equal({
+				type: "tool_calls",
+				function_id: "tool_1",
+				phase: "completed",
+				argumentsMode: "delta",
+				tool_call: {
+					function: {
+						name: "read_file",
+						arguments: "",
 					},
 				},
 			})
