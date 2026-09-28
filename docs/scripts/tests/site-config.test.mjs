@@ -29,9 +29,10 @@ describe("normalizeSite", () => {
 })
 
 describe("resolveSiteConfig", () => {
-	it("defaults to the GitHub Pages project site of the repository", () => {
-		assert.deepEqual(resolveSiteConfig({}), { site: DEFAULT_SITE, base: DEFAULT_BASE })
-		assert.equal(DEFAULT_BASE, "/dline/")
+	it("defaults to the custom-domain root", () => {
+		assert.deepEqual(resolveSiteConfig({}), { site: "https://docs.dline.cc", base: "/" })
+		assert.equal(DEFAULT_SITE, "https://docs.dline.cc")
+		assert.equal(DEFAULT_BASE, "/")
 	})
 
 	it("honours DOCS_SITE and DOCS_BASE overrides after normalization", () => {

@@ -10,7 +10,7 @@
 	},
 	"scripts": {
 		"dev": "astro dev --base /",
-		"dev:pages": "astro dev",
+		"dev:pages": "astro dev --base /dline/",
 		"build": "astro build",
 		"preview": "astro preview",
 		"check": "astro check && node scripts/check-content.mjs",

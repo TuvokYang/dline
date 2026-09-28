@@ -37,7 +37,7 @@ describe("marketplace README repository links", () => {
 
 	it("leaves absolute URLs, anchors and fenced code untouched", () => {
 		const source = [
-			"[Cline](https://github.com/cline/cline) · [docs](https://tuvokyang.github.io/dline/) · [top](#why-dline)",
+			"[Cline](https://github.com/cline/cline) · [docs](https://docs.dline.cc/) · [top](#why-dline)",
 			"```gitignore",
 			"[not a link](secrets/)",
 			"```",

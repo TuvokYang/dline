@@ -8,7 +8,7 @@
 
 Reads and writes files, runs commands, drives a browser, and calls MCP tools — with your approval at every step.
 
-English · [中文](README_zh.md) · [Docs](https://tuvokyang.github.io/dline/) · [Changelog](docs/changelog/CHANGELOG_en.md)
+English · [中文](README_zh.md) · [Docs](https://docs.dline.cc/) · [Changelog](docs/changelog/CHANGELOG_en.md)
 
 </div>
 
@@ -101,7 +101,7 @@ Named subagents define their role, `profile`, tool allowlist, and visible skills
 
 Combine tools by role: expose `web_search` / `web_fetch` to a web researcher, Skill loading and MCP tools to a specialist, or `generate_image` to an image agent. Search routing and image sources are configured on the bound API Profile. Image agents require an explicit valid profile; a separate Image Profile is linked through that API Profile, not selected by arbitrary credential switching at call time. Tool allowlists do not replace each tool's permission and approval policies.
 
-Call different named agents separately with `use_subagent`. The batch `use_subagents` entry runs only the default configuration, without a different profile per item. To advance implementation as an independent peer task, use `spawn_task` with a Plan or Act starting mode. See the [subagent guide](https://tuvokyang.github.io/dline/features/subagents/) for configuration examples and permission boundaries.
+Call different named agents separately with `use_subagent`. The batch `use_subagents` entry runs only the default configuration, without a different profile per item. To advance implementation as an independent peer task, use `spawn_task` with a Plan or Act starting mode. See the [subagent guide](https://docs.dline.cc/features/subagents/) for configuration examples and permission boundaries.
 
 <p align="center"><img src="assets/docs/marketplace/r5-subagents.gif" width="1200" alt="Several subagents researching in parallel" /></p>
 

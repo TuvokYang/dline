@@ -8,7 +8,7 @@
 
 读写文件、执行命令、操作浏览器、调用 MCP 工具 —— 每一步都经你审批。
 
-[English](README.md) | 中文 · [文档](https://tuvokyang.github.io/dline/zh-cn/) · [变更日志](CHANGELOG.md) · [参与贡献](CONTRIBUTING.md)
+[English](README.md) | 中文 · [文档](https://docs.dline.cc/zh-cn/) · [变更日志](CHANGELOG.md) · [参与贡献](CONTRIBUTING.md)
 
 </div>
 
@@ -120,7 +120,7 @@ Dline 在读写文件、执行命令或调用外部工具前会请求确认；�
 
 工具也可以按职责组合：给联网调研代理开放 `web_search` / `web_fetch`，给专业分析代理开放 Skill 加载与 MCP 工具，给图像代理开放 `generate_image`。搜索路由和图像源由所绑定的 API Profile 配置；图像代理必须显式绑定有效 Profile，独立 Image Profile 也通过该 API Profile 关联，而不是在调用时任意切换凭据。工具白名单不替代各工具的权限与审批策略。
 
-不同具名代理分别通过 `use_subagent` 调用；批量 `use_subagents` 只运行 default 配置，不为每项指定不同 Profile。需要独立推进实现时，可用 `spawn_task` 创建以 Plan 或 Act 模式启动的对等任务。配置示例和权限边界见[子代理使用说明](https://tuvokyang.github.io/dline/zh-cn/features/subagents/)。
+不同具名代理分别通过 `use_subagent` 调用；批量 `use_subagents` 只运行 default 配置，不为每项指定不同 Profile。需要独立推进实现时，可用 `spawn_task` 创建以 Plan 或 Act 模式启动的对等任务。配置示例和权限边界见[子代理使用说明](https://docs.dline.cc/zh-cn/features/subagents/)。
 
 <p align="center"><img src="assets/docs/marketplace/r5-subagents.gif" width="1200" alt="多个子代理并行调研" /></p>
 

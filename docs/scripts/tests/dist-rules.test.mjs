@@ -38,7 +38,7 @@ describe("findUnprefixedUrls", () => {
 		const html = [
 			'<a href="/dline/zh-cn/">zh-cn</a>',
 			'<a href="/dline">home</a>',
-			'<link rel="canonical" href="https://tuvokyang.github.io/dline/">',
+			'<link rel="canonical" href="https://docs.dline.cc/">',
 			'<script src="//cdn.example.com/a.js"></script>',
 			'<a href="#top">top</a>',
 			'<img src="data:image/png;base64,AAAA">',

@@ -51,7 +51,7 @@ jobs:
       - name: Install locked docs dependencies
         run: npm ci
 
-      # Builds docs/dist for the /dline/ base and checks that exact output.
+      # Builds docs/dist for the docs.dline.cc root and checks that exact output.
       - name: Verify and build docs
         run: npm run verify
 

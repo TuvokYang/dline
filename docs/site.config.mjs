@@ -1,17 +1,17 @@
 /**
  * Single source of truth for where the documentation site is served.
  *
- * GitHub Pages serves this repository as a project site, so production URLs live
- * under https://tuvokyang.github.io/dline/. DOCS_SITE and DOCS_BASE override the
- * defaults (for a fork, a custom domain, or a root-path preview) without editing
- * content or rewriting the built output.
+ * GitHub Pages serves production from the custom-domain root at
+ * https://docs.dline.cc/. DOCS_SITE and DOCS_BASE override the defaults (for a
+ * fork, a project-path deployment, or a preview) without editing content or
+ * rewriting the built output.
  *
  * Both astro.config.ts and the verification scripts import this module so the
  * build and its checks can never disagree about the base path.
  */
 
-export const DEFAULT_SITE = "https://tuvokyang.github.io"
-export const DEFAULT_BASE = "/dline/"
+export const DEFAULT_SITE = "https://docs.dline.cc"
+export const DEFAULT_BASE = "/"
 
 /**
  * Resolve the deployed origin and base path.
