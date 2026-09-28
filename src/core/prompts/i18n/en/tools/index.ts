@@ -39,7 +39,9 @@ import xmlProjection from "./xmlProjection"
 export const toolPromptModules = [
 	defineLegacyModule("accessMcpResource", "tools", accessMcpResource),
 	defineLegacyModule("actModeRespond", "tools", actModeRespond),
-	defineLegacyModule("applyPatch", "tools", applyPatch),
+	defineLegacyModule("applyPatch", "tools", applyPatch, {
+		description: createRuntimeContract("WORKSPACE_PATH_RULE", "MULTI_ROOT_HINT"),
+	}),
 	defineLegacyModule("askFollowupQuestion", "tools", askFollowupQuestion),
 	defineLegacyModule("attemptCompletion", "tools", attemptCompletion),
 	defineLegacyModule("browserAction", "tools", browserAction, {
@@ -57,6 +59,7 @@ export const toolPromptModules = [
 	}),
 	defineLegacyModule("killCommand", "tools", killCommand),
 	defineLegacyModule("findReferences", "tools", findReferences, {
+		filePathInstruction: createRuntimeContract("WORKSPACE_PATH_RULE", "MULTI_ROOT_HINT"),
 		errorPrefix: createRuntimeContract("ERROR"),
 		invalidPath: createRuntimeContract("PATH"),
 		outsideWorkspace: createRuntimeContract("PATH"),
@@ -83,6 +86,7 @@ export const toolPromptModules = [
 		pathInstruction: createRuntimeContract("WORKSPACE_PATH_RULE", "MULTI_ROOT_HINT"),
 	}),
 	defineLegacyModule("rename", "tools", rename, {
+		filePathInstruction: createRuntimeContract("WORKSPACE_PATH_RULE", "MULTI_ROOT_HINT"),
 		errorPrefix: createRuntimeContract("ERROR"),
 		invalidPath: createRuntimeContract("PATH"),
 		outsideWorkspace: createRuntimeContract("PATH"),
@@ -91,6 +95,7 @@ export const toolPromptModules = [
 		fileEditLine: createRuntimeContract("FILE", "LINE", "CHARACTER", "ORIGINAL", "NEW"),
 	}),
 	defineLegacyModule("replaceInFile", "tools", replaceInFile, {
+		pathInstruction: createRuntimeContract("WORKSPACE_PATH_RULE", "MULTI_ROOT_HINT"),
 		replaceInFileMissingDiffError: createRuntimeContract("REL_PATH"),
 		replaceInFileFileNotFound: createRuntimeContract("REL_PATH"),
 		diffSearchNotFound: createRuntimeContract("LINE_COUNT"),

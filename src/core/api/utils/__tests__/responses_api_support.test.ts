@@ -319,7 +319,7 @@ describe("responses_api_support hosted tools", () => {
 
 	it("does not append completed argument snapshots after streaming function-call deltas", async () => {
 		const completeArguments = JSON.stringify({
-			absolutePath: "src/generated.ts",
+			path: "src/generated.ts",
 			content: "export const value = 1\n",
 		})
 		const splitAt = Math.floor(completeArguments.length / 2)
@@ -431,7 +431,7 @@ describe("responses_api_support hosted tools", () => {
 					item_id: "fc_write",
 					output_index: 0,
 					sequence_number: 2,
-					delta: '{"absolutePath":"src/generated.ts","content":"export const value',
+					delta: '{"path":"src/generated.ts","content":"export const value',
 				},
 				{
 					type: "response.incomplete",

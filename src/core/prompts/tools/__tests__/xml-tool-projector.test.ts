@@ -38,6 +38,20 @@ describe("XML tool projection", () => {
 		expect(missingParams).toEqual([])
 	})
 
+	it.each([
+		PromptProfile.Standard,
+		PromptProfile.Lite,
+	])("projects write tools with canonical relative path tags in %s", (profile) => {
+		const xml = new ToolPromptGenerator().generateXml(profile, { ...BASE_CONTEXT, promptProfile: profile })
+
+		for (const toolName of ["write_to_file", "replace_in_file"]) {
+			const section = xml.split(`## ${toolName}\n`)[1]?.split("\n## ")[0] ?? ""
+			expect(section).toContain("- path: (required)")
+			expect(section).toContain("<path></path>")
+			expect(section).not.toContain("absolutePath")
+		}
+	})
+
 	it("keeps canonical runtime tokens unresolved until the System facade final scan", async () => {
 		const generator = new ToolPromptGenerator()
 		const xml = generator.generateXml(PromptProfile.Standard, BASE_CONTEXT)

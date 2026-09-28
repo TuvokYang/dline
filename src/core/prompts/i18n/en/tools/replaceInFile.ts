@@ -2,11 +2,8 @@
 const prompts: Record<string, string> = {
 	description:
 		"Request to edit an existing file using SEARCH/REPLACE blocks. PREFER this tool for all edits to existing files. Only use write_to_file for creating new files.",
-	standardDescription:
-		"[IMPORTANT: Always output the absolutePath first] Request to edit an existing file using SEARCH/REPLACE blocks. PREFER this tool for all edits to existing files. Only use write_to_file for creating new files.",
-	pathInstruction: "The workspace-relative path of the file to modify.",
-	pathUsage: "File path here",
-	standardPathInstruction: "The absolute path to the file to write to.",
+	pathInstruction: `The workspace-relative path of the existing file to modify. @WORKSPACE_PATH_RULE@@MULTI_ROOT_HINT@ Use '..' segments only when the user has authorized a target outside every workspace.`,
+	pathUsage: "Relative file path here",
 	baseDiffInstructions: `One or more SEARCH/REPLACE blocks following this exact format:
 \`\`\`
 ------- SEARCH

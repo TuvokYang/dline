@@ -98,7 +98,7 @@ function convertApplyPatchToToolCalls(input: any): ConvertedTool {
 		return {
 			name: "write_to_file",
 			input: {
-				absolutePath: filePath,
+				path: filePath,
 				content: extractNewContentFromPatch(contentAfterFile),
 			},
 		}
@@ -110,7 +110,7 @@ function convertApplyPatchToToolCalls(input: any): ConvertedTool {
 		return {
 			name: "replace_in_file",
 			input: {
-				absolutePath: filePath,
+				path: filePath,
 				diff: diff,
 			},
 		}
@@ -408,7 +408,7 @@ export function convertWriteToFileToolCalls(messages: Array<ClineStorageMessage>
  * Convert write_to_file or replace_in_file input to apply_patch format
  */
 function convertToPatchFormat(toolName: string, input: any, finalContent?: string): string {
-	const filePath = input.absolutePath || input.path || ""
+	const filePath = input.path || input.absolutePath || ""
 
 	if (toolName === "write_to_file") {
 		// Convert write_to_file to Add operation
@@ -593,7 +593,7 @@ function reconstructWriteToFileResult(block: any, originalToolName: string, orig
 	// Try to extract the final_file_content
 	const finalContentMatch = content.match(/<final_file_content path="([^"]+)">\s*([\s\S]*?)\s*<\/final_file_content>/)
 
-	const filePath = originalInput.absolutePath || originalInput.path || ""
+	const filePath = originalInput.path || originalInput.absolutePath || ""
 
 	if (!finalContentMatch) {
 		// If no final_file_content found, create a simple success message

@@ -132,22 +132,22 @@ Always adhere to this format for the tool use to ensure proper parsing and execu
 
 
 ## write_to_file
-Description: [IMPORTANT: Always output the absolutePath first] Request to write content to a NEW file at the specified path. Use this tool ONLY for creating files that do not already exist. For editing existing files, always use replace_in_file. This tool will automatically create any directories needed to write the file.
+Description: Request to write content to a NEW file at the specified path. Use this tool ONLY for creating files that do not already exist. For editing existing files, always use replace_in_file. This tool will automatically create any directories needed to write the file.
 Parameters:
-- absolutePath: (required) The absolute path to the file to write to.
+- path: (required) The workspace-relative path of the new file. For the default workspace, use a relative path. Use '..' segments only when the user has authorized a target outside every workspace.
 - content: (required) The content to write to the file. ALWAYS provide the COMPLETE intended content of the file, without any truncation or omissions. You MUST include ALL parts of the file, even if they haven't been modified.
 - task_progress: (optional) Omit task_progress when no TODO item is being created or updated. When provided, include at least one non-empty checklist item. During an existing checklist, send exact newly completed items and at most one exact current item; the current item may be sent by itself. Do not repeat the full checklist or change its structure. Use a full checklist only for initial creation or after all current items are complete and a new phase begins.
 Usage:
 <write_to_file>
-<absolutePath></absolutePath>
+<path></path>
 <content></content>
 <task_progress></task_progress>
 </write_to_file>
 
 ## replace_in_file
-Description: [IMPORTANT: Always output the absolutePath first] Request to edit an existing file using SEARCH/REPLACE blocks. PREFER this tool for all edits to existing files. Only use write_to_file for creating new files.
+Description: Request to edit an existing file using SEARCH/REPLACE blocks. PREFER this tool for all edits to existing files. Only use write_to_file for creating new files.
 Parameters:
-- absolutePath: (required) The absolute path to the file to write to.
+- path: (required) The workspace-relative path of the existing file to modify. For the default workspace, use a relative path. Use '..' segments only when the user has authorized a target outside every workspace.
 - diff: (required) One or more SEARCH/REPLACE blocks following this exact format:
 ```
 ------- SEARCH
@@ -198,7 +198,7 @@ export function legacyParse(input: string) {
 - task_progress: (optional) Omit task_progress when no TODO item is being created or updated. When provided, include at least one non-empty checklist item. During an existing checklist, send exact newly completed items and at most one exact current item; the current item may be sent by itself. Do not repeat the full checklist or change its structure. Use a full checklist only for initial creation or after all current items are complete and a new phase begins.
 Usage:
 <replace_in_file>
-<absolutePath></absolutePath>
+<path></path>
 <diff></diff>
 <task_progress></task_progress>
 </replace_in_file>
@@ -472,7 +472,7 @@ Usage:
 ## find_references
 Description: Find all semantic references to a symbol at the given file position via the IDE's LSP. Returns file paths, line numbers, and context lines for each reference (definitions, imports, calls). This does NOT find occurrences in string literals, comments, or JSDoc. An empty result may mean the LSP does not support this language or file type, not that no references exist. Use this before renaming or refactoring to understand semantic impact. To search strings and comments, use search_files with regex. Only available in VSCode; other environments return an error suggesting search_files as a fallback.
 Parameters:
-- file_path: (required) Absolute path to the file containing the symbol. Use the exact path as shown in the workspace file listing.
+- file_path: (required) The workspace-relative path to the file containing the symbol. For the default workspace, use a relative path.
 - line: (required) 1-based line number where the symbol appears.
 - character: (required) 1-based character offset on the line where the symbol starts.
 - task_progress: (optional) Omit task_progress when no TODO item is being created or updated. When provided, include at least one non-empty checklist item. During an existing checklist, send exact newly completed items and at most one exact current item; the current item may be sent by itself. Do not repeat the full checklist or change its structure. Use a full checklist only for initial creation or after all current items are complete and a new phase begins.
@@ -487,7 +487,7 @@ Usage:
 ## rename
 Description: Rename a symbol at the given file position using the IDE's LSP (semantic rename). Only renames symbol references (definitions, imports, calls); skips string literals, comments, and JSDoc. Set dry_run=true to preview changes without applying them. If LSP returns no edits, the rename could not be performed (language or project may not be supported). Only available in VSCode; for text-level renaming including strings and comments, use replace_text instead.
 Parameters:
-- file_path: (required) Absolute path to the file containing the symbol. Use the exact path as shown in the workspace file listing.
+- file_path: (required) The workspace-relative path to the file containing the symbol. For the default workspace, use a relative path.
 - line: (required) 1-based line number where the symbol appears.
 - character: (required) 1-based character offset on the line where the symbol starts.
 - new_name: (required) The new name for the symbol. Use camelCase/PascalCase/snake_case as appropriate for the language.
@@ -534,7 +534,9 @@ EOF
 
 Where [YOUR_PATCH] is the actual content of your patch, specified in the following V4A diff format.
 
-*** [ACTION] File: [path/to/file] -> ACTION can be one of Add, Update, or Delete. 
+*** [ACTION] File: [path/to/file] -> ACTION can be one of Add, Update, or Delete.
+
+Every patch file path must use the workspace-relative form. For the default workspace, use a relative path. Use `..` segments only when the user has authorized a target outside every workspace.
 
 In a Add File section, every line of the new file (including blank/empty lines) MUST start with a `+` prefix. Do not include any unprefixed lines inside an Add section
 In a Update/Delete section, repeat the following for each snippet of code that needs to be changed:

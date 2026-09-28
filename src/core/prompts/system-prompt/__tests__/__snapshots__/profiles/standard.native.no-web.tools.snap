@@ -3,14 +3,14 @@
     "type": "function",
     "function": {
       "name": "write_to_file",
-      "description": "[IMPORTANT: Always output the absolutePath first] Request to write content to a NEW file at the specified path. Use this tool ONLY for creating files that do not already exist. For editing existing files, always use replace_in_file. This tool will automatically create any directories needed to write the file.",
+      "description": "Request to write content to a NEW file at the specified path. Use this tool ONLY for creating files that do not already exist. For editing existing files, always use replace_in_file. This tool will automatically create any directories needed to write the file.",
       "strict": false,
       "parameters": {
         "type": "object",
         "properties": {
-          "absolutePath": {
+          "path": {
             "type": "string",
-            "description": "The absolute path to the file to write to."
+            "description": "The workspace-relative path of the new file. For the default workspace, use a relative path. Use '..' segments only when the user has authorized a target outside every workspace."
           },
           "content": {
             "type": "string",
@@ -22,7 +22,7 @@
           }
         },
         "required": [
-          "absolutePath",
+          "path",
           "content"
         ],
         "additionalProperties": false
@@ -33,14 +33,14 @@
     "type": "function",
     "function": {
       "name": "replace_in_file",
-      "description": "[IMPORTANT: Always output the absolutePath first] Request to edit an existing file using SEARCH/REPLACE blocks. PREFER this tool for all edits to existing files. Only use write_to_file for creating new files.",
+      "description": "Request to edit an existing file using SEARCH/REPLACE blocks. PREFER this tool for all edits to existing files. Only use write_to_file for creating new files.",
       "strict": false,
       "parameters": {
         "type": "object",
         "properties": {
-          "absolutePath": {
+          "path": {
             "type": "string",
-            "description": "The absolute path to the file to write to."
+            "description": "The workspace-relative path of the existing file to modify. For the default workspace, use a relative path. Use '..' segments only when the user has authorized a target outside every workspace."
           },
           "diff": {
             "type": "string",
@@ -52,7 +52,7 @@
           }
         },
         "required": [
-          "absolutePath",
+          "path",
           "diff"
         ],
         "additionalProperties": false
@@ -563,7 +563,7 @@
         "properties": {
           "file_path": {
             "type": "string",
-            "description": "Absolute path to the file containing the symbol. Use the exact path as shown in the workspace file listing."
+            "description": "The workspace-relative path to the file containing the symbol. For the default workspace, use a relative path."
           },
           "line": {
             "type": "integer",
@@ -598,7 +598,7 @@
         "properties": {
           "file_path": {
             "type": "string",
-            "description": "Absolute path to the file containing the symbol. Use the exact path as shown in the workspace file listing."
+            "description": "The workspace-relative path to the file containing the symbol. For the default workspace, use a relative path."
           },
           "line": {
             "type": "integer",
@@ -678,7 +678,7 @@
     "type": "function",
     "function": {
       "name": "apply_patch",
-      "description": "This is a custom utility that makes it more convenient to add, remove, move, or edit code in a single file. `apply_patch` effectively allows you to execute a diff/patch against a file, but the format of the diff specification is unique to this task, so pay careful attention to these instructions. To use the `apply_patch` command, you should pass a message of the following structure as \"input\":\n\n%%bash\napply_patch <<\"EOF\"\n*** Begin Patch\n[YOUR_PATCH]\n*** End Patch\nEOF\n\nWhere [YOUR_PATCH] is the actual content of your patch, specified in the following V4A diff format.\n\n*** [ACTION] File: [path/to/file] -> ACTION can be one of Add, Update, or Delete. \n\nIn a Add File section, every line of the new file (including blank/empty lines) MUST start with a `+` prefix. Do not include any unprefixed lines inside an Add section\nIn a Update/Delete section, repeat the following for each snippet of code that needs to be changed:\n[context_before] -> See below for further instructions on context.\n- [old_code] -> Precede the old code with a minus sign.\n+ [new_code] -> Precede the new, replacement code with a plus sign.\n[context_after] -> See below for further instructions on context.\n\nFor instructions on [context_before] and [context_after]:\n- By default, show 3 lines of code immediately above and 3 lines immediately below each change. If a change is within 3 lines of a previous change, do NOT duplicate the first change's [context_after] lines in the second change's [context_before] lines.\n- If 3 lines of context is insufficient to uniquely identify the snippet of code within the file, use the @@ operator to indicate the class or function to which the snippet belongs. For instance, we might have:\n@@ class BaseClass\n[3 lines of pre-context]\n- [old_code]\n+ [new_code]\n[3 lines of post-context]\n\n- If a code block is repeated so many times in a class or function such that even a single @@ statement and 3 lines of context cannot uniquely identify the snippet of code, you can use multiple `@@` statements to jump to the right context. For instance:\n\n@@ class BaseClass\n@@ \tdef method():\n[3 lines of pre-context]\n- [old_code]\n+ [new_code]\n[3 lines of post-context]\n\nNote, then, that we do not use line numbers in this diff format, as the context is enough to uniquely identify code. An example of a message that you might pass as \"input\" to this function, in order to apply a patch, is shown below.\n\n%%bash\napply_patch <<\"EOF\"\n*** Begin Patch\n*** Update File: pygorithm/searching/binary_search.py\n@@ class BaseClass\n@@     def search():\n-          pass\n+          raise NotImplementedError()\n\n@@ class Subclass\n@@     def search():\n-          pass\n+          raise NotImplementedError()\n\n*** End Patch\nEOF",
+      "description": "This is a custom utility that makes it more convenient to add, remove, move, or edit code in a single file. `apply_patch` effectively allows you to execute a diff/patch against a file, but the format of the diff specification is unique to this task, so pay careful attention to these instructions. To use the `apply_patch` command, you should pass a message of the following structure as \"input\":\n\n%%bash\napply_patch <<\"EOF\"\n*** Begin Patch\n[YOUR_PATCH]\n*** End Patch\nEOF\n\nWhere [YOUR_PATCH] is the actual content of your patch, specified in the following V4A diff format.\n\n*** [ACTION] File: [path/to/file] -> ACTION can be one of Add, Update, or Delete.\n\nEvery patch file path must use the workspace-relative form. For the default workspace, use a relative path. Use `..` segments only when the user has authorized a target outside every workspace.\n\nIn a Add File section, every line of the new file (including blank/empty lines) MUST start with a `+` prefix. Do not include any unprefixed lines inside an Add section\nIn a Update/Delete section, repeat the following for each snippet of code that needs to be changed:\n[context_before] -> See below for further instructions on context.\n- [old_code] -> Precede the old code with a minus sign.\n+ [new_code] -> Precede the new, replacement code with a plus sign.\n[context_after] -> See below for further instructions on context.\n\nFor instructions on [context_before] and [context_after]:\n- By default, show 3 lines of code immediately above and 3 lines immediately below each change. If a change is within 3 lines of a previous change, do NOT duplicate the first change's [context_after] lines in the second change's [context_before] lines.\n- If 3 lines of context is insufficient to uniquely identify the snippet of code within the file, use the @@ operator to indicate the class or function to which the snippet belongs. For instance, we might have:\n@@ class BaseClass\n[3 lines of pre-context]\n- [old_code]\n+ [new_code]\n[3 lines of post-context]\n\n- If a code block is repeated so many times in a class or function such that even a single @@ statement and 3 lines of context cannot uniquely identify the snippet of code, you can use multiple `@@` statements to jump to the right context. For instance:\n\n@@ class BaseClass\n@@ \tdef method():\n[3 lines of pre-context]\n- [old_code]\n+ [new_code]\n[3 lines of post-context]\n\nNote, then, that we do not use line numbers in this diff format, as the context is enough to uniquely identify code. An example of a message that you might pass as \"input\" to this function, in order to apply a patch, is shown below.\n\n%%bash\napply_patch <<\"EOF\"\n*** Begin Patch\n*** Update File: pygorithm/searching/binary_search.py\n@@ class BaseClass\n@@     def search():\n-          pass\n+          raise NotImplementedError()\n\n@@ class Subclass\n@@     def search():\n-          pass\n+          raise NotImplementedError()\n\n*** End Patch\nEOF",
       "strict": false,
       "parameters": {
         "type": "object",

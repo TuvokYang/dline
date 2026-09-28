@@ -53,7 +53,7 @@ describe("ContextWindowReceivingTracker", () => {
 
 	it("replaces tool argument deltas with explicit snapshots without double counting duplicate completion payloads", () => {
 		const tracker = new ContextWindowReceivingTracker()
-		const completeArguments = JSON.stringify({ absolutePath: "src/generated.ts", content: "export const value = 1" })
+		const completeArguments = JSON.stringify({ path: "src/generated.ts", content: "export const value = 1" })
 		const splitAt = Math.floor(completeArguments.length / 2)
 
 		tracker.apply({

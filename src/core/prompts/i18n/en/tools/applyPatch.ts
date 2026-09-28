@@ -11,7 +11,9 @@ EOF
 
 Where [YOUR_PATCH] is the actual content of your patch, specified in the following V4A diff format.
 
-*** [ACTION] File: [path/to/file] -> ACTION can be one of Add, Update, or Delete. 
+*** [ACTION] File: [path/to/file] -> ACTION can be one of Add, Update, or Delete.
+
+Every patch file path must use the workspace-relative form. @WORKSPACE_PATH_RULE@@MULTI_ROOT_HINT@ Use \`..\` segments only when the user has authorized a target outside every workspace.
 
 In a Add File section, every line of the new file (including blank/empty lines) MUST start with a \`+\` prefix. Do not include any unprefixed lines inside an Add section
 In a Update/Delete section, repeat the following for each snippet of code that needs to be changed:

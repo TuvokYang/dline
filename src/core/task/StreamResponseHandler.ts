@@ -301,7 +301,7 @@ class ToolUseHandler {
 	private extractPartialJsonFields(partialJson: string): Record<string, any> {
 		const result: Record<string, any> = {}
 		// Phase 1: Require closing quote for all fields.
-		// Without the closing quote guard, truncated values (e.g. "absolutePath":"e)
+		// Without the closing quote guard, truncated path values (e.g. "path":"s)
 		// leak into handlePartialBlock, which opens the diff editor at the wrong path
 		// and the real path is never applied because isEditing stays true.
 		const closedPattern = /"(\w+)":\s*"((?:[^"\\]|\\.)*)"/g

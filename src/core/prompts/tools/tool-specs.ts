@@ -180,13 +180,13 @@ const SUBAGENTS_INPUT_SCHEMA = {
 }
 
 export const STANDARD_TOOL_SPECS: readonly Omit<ProfileToolSpec, "profile">[] = [
-	spec(ClineDefaultTool.FILE_NEW, getPrompt("writeToFile", "standardDescription"), [
-		param("absolutePath", true, getPrompt("writeToFile", "standardPathInstruction")),
+	spec(ClineDefaultTool.FILE_NEW, getPrompt("writeToFile", "description"), [
+		param("path", true, getPrompt("writeToFile", "pathInstruction")),
 		param("content", true, getPrompt("writeToFile", "standardContentInstruction")),
 		taskProgress,
 	]),
-	spec(ClineDefaultTool.FILE_EDIT, getPrompt("replaceInFile", "standardDescription"), [
-		param("absolutePath", true, getPrompt("replaceInFile", "standardPathInstruction")),
+	spec(ClineDefaultTool.FILE_EDIT, getPrompt("replaceInFile", "description"), [
+		param("path", true, getPrompt("replaceInFile", "pathInstruction")),
 		param("diff", true, getPrompt("replaceInFile", "baseDiffInstructions")),
 		taskProgress,
 	]),

@@ -3,14 +3,14 @@
     "type": "function",
     "function": {
       "name": "write_to_file",
-      "description": "[IMPORTANT: Always output the absolutePath first] Request to write content to a NEW file at the specified path. Use this tool ONLY for creating files that do not already exist. For editing existing files, always use replace_in_file. This tool will automatically create any directories needed to write the file.",
+      "description": "Request to write content to a NEW file at the specified path. Use this tool ONLY for creating files that do not already exist. For editing existing files, always use replace_in_file. This tool will automatically create any directories needed to write the file.",
       "strict": false,
       "parameters": {
         "type": "object",
         "properties": {
-          "absolutePath": {
+          "path": {
             "type": "string",
-            "description": "The absolute path to the file to write to."
+            "description": "The workspace-relative path of the new file. For the default workspace, use a relative path. Use '..' segments only when the user has authorized a target outside every workspace."
           },
           "content": {
             "type": "string",
@@ -18,7 +18,7 @@
           }
         },
         "required": [
-          "absolutePath",
+          "path",
           "content"
         ],
         "additionalProperties": false
@@ -29,14 +29,14 @@
     "type": "function",
     "function": {
       "name": "replace_in_file",
-      "description": "[IMPORTANT: Always output the absolutePath first] Request to edit an existing file using SEARCH/REPLACE blocks. PREFER this tool for all edits to existing files. Only use write_to_file for creating new files.",
+      "description": "Request to edit an existing file using SEARCH/REPLACE blocks. PREFER this tool for all edits to existing files. Only use write_to_file for creating new files.",
       "strict": false,
       "parameters": {
         "type": "object",
         "properties": {
-          "absolutePath": {
+          "path": {
             "type": "string",
-            "description": "The absolute path to the file to write to."
+            "description": "The workspace-relative path of the existing file to modify. For the default workspace, use a relative path. Use '..' segments only when the user has authorized a target outside every workspace."
           },
           "diff": {
             "type": "string",
@@ -44,7 +44,7 @@
           }
         },
         "required": [
-          "absolutePath",
+          "path",
           "diff"
         ],
         "additionalProperties": false

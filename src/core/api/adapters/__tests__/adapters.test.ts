@@ -426,7 +426,8 @@ EOF`,
 						const input = toolBlock.input as any
 
 						if (expected.inputPath) {
-							input.should.have.property("absolutePath", expected.inputPath)
+							input.should.have.property("path", expected.inputPath)
+							input.should.not.have.property("absolutePath")
 						}
 
 						if (expected.inputContent !== undefined) {
@@ -728,7 +729,7 @@ EOF`,
 								id: "toolu_write",
 								name: "write_to_file",
 								input: {
-									absolutePath: "src/new-file.ts",
+									path: "src/new-file.ts",
 									content: "export const x = 1\nexport const y = 2",
 								},
 							},
@@ -760,7 +761,7 @@ EOF`,
 								id: "toolu_replace",
 								name: "replace_in_file",
 								input: {
-									absolutePath: "src/existing.ts",
+									path: "src/existing.ts",
 									diff: `------- SEARCH
 const old = 1
 =======
@@ -796,7 +797,7 @@ EOF`,
 								id: "toolu_1",
 								name: "write_to_file",
 								input: {
-									absolutePath: "file1.ts",
+									path: "file1.ts",
 									content: "const a = 1",
 								},
 							},
@@ -805,7 +806,7 @@ EOF`,
 								id: "toolu_2",
 								name: "replace_in_file",
 								input: {
-									absolutePath: "file2.ts",
+									path: "file2.ts",
 									diff: `------- SEARCH
 old
 =======
@@ -872,7 +873,7 @@ EOF`,
 								id: "toolu_context",
 								name: "replace_in_file",
 								input: {
-									absolutePath: "src/test.ts",
+									path: "src/test.ts",
 									diff: `------- SEARCH
 function oldFunction() {
 	return "old"
@@ -943,6 +944,32 @@ EOF`,
 			})
 		})
 
+		it("keeps converting persisted legacy absolutePath conversations", () => {
+			const input: ClineStorageMessage[] = [
+				{
+					role: "assistant",
+					content: [
+						{
+							type: "tool_use",
+							id: "toolu_legacy_path",
+							name: "write_to_file",
+							input: { absolutePath: "legacy.ts", content: "legacy" },
+						},
+					],
+				},
+			]
+
+			const result = transformToolCallMessages(input, [ClineDefaultTool.APPLY_PATCH])
+			const toolBlock = result
+				.flatMap((message) => (Array.isArray(message.content) ? message.content : []))
+				.find((block) => block.type === "tool_use")
+
+			toolBlock?.should.have.property("name", "apply_patch")
+			if (toolBlock?.type === "tool_use") {
+				;(toolBlock.input as { input: string }).input.should.match(/\*\*\* Add File: legacy\.ts/)
+			}
+		})
+
 		it("should use final_file_content to generate apply_patch for write_to_file", () => {
 			const input: ClineStorageMessage[] = [
 				{
@@ -953,7 +980,7 @@ EOF`,
 							id: "toolu_write_result",
 							name: "write_to_file",
 							input: {
-								absolutePath: "new.ts",
+								path: "new.ts",
 								content: "const x = 1\nconst y = 2",
 							},
 						},
@@ -1011,7 +1038,7 @@ EOF`)
 							id: "toolu_replace_result",
 							name: "replace_in_file",
 							input: {
-								absolutePath: "foobar.ts",
+								path: "foobar.ts",
 								diff: `------- SEARCH
 export function bar(foo: string): string {
 =======
@@ -1068,7 +1095,7 @@ export function bar(foo: string): Foo {
 							id: "toolu_no_final",
 							name: "write_to_file",
 							input: {
-								absolutePath: "test.ts",
+								path: "test.ts",
 								content: "test",
 							},
 						},

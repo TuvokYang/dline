@@ -102,7 +102,7 @@ async function streamPartialEdit(diff: string, originalContent = ORIGINAL_CONTEN
 			name: ClineDefaultTool.FILE_EDIT,
 			partial: true,
 			ts: 4242,
-			params: { absolutePath: "e:/workspace/vscode/dline/src/sample.ts", diff },
+			params: { path: "src/sample.ts", diff },
 		} as never,
 		createHelpers(config),
 	)
@@ -116,9 +116,9 @@ describe("WriteToFileToolHandler streaming payload", () => {
 	it("projects the streamed path exactly like the final card", async () => {
 		const message = await streamPartialEdit(searchReplace("const b = 2", "const b = 20"))
 
-		// The regression shipped the raw absolutePath parameter, so the card
-		// showed a full disk path until the edit finished.
-		expect(message.path).toBe("projected:e:/workspace/vscode/dline/src/sample.ts")
+		// The streamed card must project the canonical workspace-relative path
+		// through the same display helper as the final card.
+		expect(message.path).toBe("projected:src/sample.ts")
 	})
 
 	it("streams matched blocks as +/- projected lines without SEARCH/REPLACE markers", async () => {

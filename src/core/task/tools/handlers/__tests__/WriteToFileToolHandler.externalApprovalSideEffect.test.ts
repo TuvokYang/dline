@@ -18,6 +18,7 @@ describe("write admission target side effects", () => {
 		temporaryRoots.push(temporaryRoot)
 		const workspaceDir = path.join(temporaryRoot, "workspace")
 		const externalPath = path.join(temporaryRoot, "external", "proof.txt")
+		const externalRelativePath = path.relative(workspaceDir, externalPath)
 		await fs.mkdir(workspaceDir)
 		const run = vi.fn(async () => {
 			await fs.mkdir(path.dirname(externalPath), { recursive: true })
@@ -29,7 +30,7 @@ describe("write admission target side effects", () => {
 			block: {
 				type: "tool_use",
 				name: ClineDefaultTool.FILE_NEW,
-				params: { absolutePath: externalPath, content: "external risk proof" },
+				params: { path: externalRelativePath, content: "external risk proof" },
 				partial: false,
 				ts: 1,
 				function_id: "call-external-write",

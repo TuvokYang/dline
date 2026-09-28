@@ -12,6 +12,7 @@ import { PATCH_MARKERS } from "@/shared/Patch"
 import type { ConfigurableCeilings, PermissionScopeContext } from "../../kernel/turn/approval-kind"
 import { PATH_SCOPED_TOOLS, resolveLaneContext, type ToolLaneContext } from "../../kernel/turn/tool-lanes"
 import { findReplaceTextFiles } from "../../tools/utils/replace-text-files"
+import { declaresWritePath, resolveToolPathParam } from "../../tools/utils/tool-path-params"
 import {
 	admitToolCall,
 	rejectToolCall,
@@ -56,9 +57,9 @@ const REQUIRED_PARAMETERS: Partial<Record<ClineDefaultTool, readonly RequiredPar
 	[ClineDefaultTool.ATTEMPT]: ["result"],
 	[ClineDefaultTool.BASH]: ["command", "requires_approval"],
 	[ClineDefaultTool.KILL_COMMAND]: ["function_id"],
-	[ClineDefaultTool.FILE_EDIT]: [["path", "absolutePath"], "diff"],
+	[ClineDefaultTool.FILE_EDIT]: ["diff"],
 	[ClineDefaultTool.FILE_READ]: ["path"],
-	[ClineDefaultTool.FILE_NEW]: [["path", "absolutePath"], "content"],
+	[ClineDefaultTool.FILE_NEW]: ["content"],
 	[ClineDefaultTool.SEARCH]: ["path", "regex"],
 	[ClineDefaultTool.LIST_FILES]: ["path"],
 	[ClineDefaultTool.LIST_CODE_DEF]: ["path"],
@@ -73,7 +74,7 @@ const REQUIRED_PARAMETERS: Partial<Record<ClineDefaultTool, readonly RequiredPar
 	[ClineDefaultTool.WEB_FETCH]: ["url", "prompt"],
 	[ClineDefaultTool.WEB_SEARCH]: ["query"],
 	[ClineDefaultTool.SUMMARIZE_TASK]: ["context"],
-	[ClineDefaultTool.NEW_RULE]: [["path", "absolutePath"], "content"],
+	[ClineDefaultTool.NEW_RULE]: ["content"],
 	[ClineDefaultTool.APPLY_PATCH]: ["input"],
 	[ClineDefaultTool.GENERATE_EXPLANATION]: ["title"],
 	[ClineDefaultTool.LOAD_MCP]: ["name"],
@@ -126,6 +127,12 @@ function hasValue(value: unknown): boolean {
 }
 
 function validateParameters(block: ToolUse, toolName: ClineDefaultTool): string | undefined {
+	if (declaresWritePath(toolName)) {
+		const resolution = resolveToolPathParam(block.params)
+		if (resolution.error) return resolution.error
+		if (!resolution.param) return `Missing required parameter 'path' for tool '${block.name}'.`
+	}
+
 	for (const requirement of REQUIRED_PARAMETERS[toolName] ?? []) {
 		const alternatives = typeof requirement === "string" ? [requirement] : requirement
 		if (!alternatives.some((name) => hasValue(parameterValue(block, name)))) {
@@ -168,6 +175,10 @@ function validateParameters(block: ToolUse, toolName: ClineDefaultTool): string 
 
 function declaredPaths(block: ToolUse, toolName?: ClineDefaultTool): string[] {
 	const params = block.params as Record<string, unknown> | undefined
+	if (toolName && declaresWritePath(toolName)) {
+		const resolution = resolveToolPathParam(block.params)
+		return resolution.param ? [resolution.param.value] : []
+	}
 	if (toolName === ClineDefaultTool.APPLY_PATCH && typeof params?.input === "string") {
 		const paths: string[] = []
 		for (const line of params.input.split("\n")) {
@@ -185,7 +196,7 @@ function declaredPaths(block: ToolUse, toolName?: ClineDefaultTool): string[] {
 			? params?.workdirectory
 			: toolName === ClineDefaultTool.REPLACE_TEXT
 				? params?.file_pattern
-				: (params?.path ?? params?.absolutePath ?? params?.file_path)
+				: (params?.path ?? params?.file_path)
 	return typeof candidate === "string" && candidate.trim() ? [candidate] : []
 }
 

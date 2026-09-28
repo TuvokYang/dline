@@ -39,6 +39,7 @@ import {
 	projectStreamingCard,
 } from "../utils/diffBlockPresentation"
 import { applyModelContentFixes } from "../utils/ModelContentProcessor"
+import { resolveToolPathParam } from "../utils/tool-path-params"
 
 export class WriteToFileToolHandler implements IFullyManagedTool {
 	readonly name = ClineDefaultTool.FILE_NEW // This handler supports write_to_file, replace_in_file, and new_rule
@@ -67,7 +68,7 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 	 * landed and retrying against content that was never written.
 	 */
 	async describeDenial(config: TaskConfig, block: ToolUse): Promise<string> {
-		const rawRelPath = block.params.path || block.params.absolutePath
+		const rawRelPath = resolveToolPathParam(block.params).param?.value
 		if (!rawRelPath) return formatResponse.toolDenied()
 		const pathResult = resolveWorkspacePath(config, rawRelPath, "WriteToFileToolHandler.describeDenial")
 		const absolutePath = typeof pathResult === "string" ? pathResult : pathResult.absolutePath
@@ -82,19 +83,19 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 	}
 
 	getDescription(block: ToolUse): string {
-		const rawPath = block.params.path || block.params.absolutePath || ""
+		const rawPath = resolveToolPathParam(block.params).param?.value ?? ""
 		const basename = rawPath ? rawPath.replace(/^.*[/\\]/, "") : rawPath
 		return `[${block.name} for '${basename}']`
 	}
 
 	async handlePartialBlock(block: ToolUse, uiHelpers: StronglyTypedUIHelpers): Promise<void> {
-		const rawRelPath = block.params.path || block.params.absolutePath
-		if (!rawRelPath) return
+		const pathResolution = resolveToolPathParam(block.params)
+		if (!pathResolution.param || pathResolution.error) return
 
 		const config = uiHelpers.getConfig()
 		const rawContent = block.params.content
 		const rawDiff = block.params.diff
-		const relPath = uiHelpers.removeClosingTag(block, block.params.path ? "path" : "absolutePath", rawRelPath)
+		const relPath = uiHelpers.removeClosingTag(block, pathResolution.param.name, pathResolution.param.value)
 
 		// The streamed card must use the same projection as the final card.
 		// Sending the raw SEARCH/REPLACE text here made the webview colour the
@@ -130,23 +131,27 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 	}
 
 	async execute(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
-		const rawRelPath = block.params.path || block.params.absolutePath
+		const pathResolution = resolveToolPathParam(block.params)
+		const rawRelPath = pathResolution.param?.value
 		const rawContent = block.params.content // for write_to_file
 		const rawDiff = block.params.diff // for replace_in_file
 
 		// Extract provider information for telemetry
 		const { providerId, modelId } = getModelInfo(config)
 
+		// Admission normally rejects invalid declarations before execution. Keep the
+		// handler defensive for restored calls and direct handler tests.
+		if (pathResolution.error) {
+			config.taskState.consecutiveMistakeCount++
+			await config.services.diffViewProvider.reset()
+			return formatResponse.toolError(pathResolution.error)
+		}
+
 		// Validate required parameters based on tool type
 		if (!rawRelPath) {
 			config.taskState.consecutiveMistakeCount++
 			await config.services.diffViewProvider.reset()
-			return await config.callbacks.sayAndCreateMissingParamError(
-				block.name,
-				block.params.absolutePath ? "absolutePath" : "path",
-				undefined,
-				block.ts,
-			)
+			return await config.callbacks.sayAndCreateMissingParamError(block.name, "path", undefined, block.ts)
 		}
 
 		if (block.name === "replace_in_file" && !rawDiff) {

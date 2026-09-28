@@ -189,7 +189,7 @@ describe("ToolAdmissionRegistry", () => {
 			const result = prepareRegisteredToolAdmission({
 				canonicalToolName: ClineDefaultTool.FILE_NEW,
 				block: block(ClineDefaultTool.FILE_NEW, {
-					absolutePath: path.join(linkedDir, "proof.txt"),
+					path: path.relative(workspaceDir, path.join(linkedDir, "proof.txt")),
 					content: "proof",
 				}),
 				description: "write proof",
