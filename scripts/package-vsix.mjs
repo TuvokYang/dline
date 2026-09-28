@@ -22,7 +22,8 @@
  * - untagged main runs CI only and is rejected by automatic release packaging;
  * - vX.Y.Z publishes stable assets after full validation or a manager override;
  * - dev-vX.Y.Z publishes a public GitHub pre-release and the Marketplace pre-release track;
- * - untagged dev publishes a per-commit maintainers-only Insiders draft and registries.
+ * - every dev push publishes a per-commit maintainers-only Insiders draft and registries,
+ *   including the dev head that a dev-vX.Y.Z tag names.
  *
  * Tagged channels require the tag, package.json, and both changelogs to agree.
  * The rolling insiders channel replaces the patch with a timestamp and skips
@@ -263,15 +264,17 @@ function resolveRequestedChannel(requestedChannel, packageVersion) {
 		return resolveChannel(packageVersion)
 	}
 
+	if (requestedChannel === "insiders") {
+		// Insiders is a separate extension versioned by timestamp, so a release
+		// tag cannot change its identity. A dev-vX.Y.Z tag must name the dev head,
+		// which is exactly the commit the dev push packages as Insiders; rejecting
+		// tagged commits would fail every pre-release's dev Tests run.
+		return { channel: "insiders", version: createInsidersVersion(packageVersion), tag: null }
+	}
+
 	const tag = getExactTag()
 	if (requestedChannel === "ci") {
 		return { channel: "ci", version: packageVersion, tag }
-	}
-	if (requestedChannel === "insiders") {
-		if (tag !== null) {
-			fail(`Insiders packaging requires an untagged commit, but HEAD has tag '${tag}'.`)
-		}
-		return { channel: "insiders", version: createInsidersVersion(packageVersion), tag: null }
 	}
 
 	const pattern = requestedChannel === "production" ? PRODUCTION_TAG_PATTERN : DEV_TAG_PATTERN

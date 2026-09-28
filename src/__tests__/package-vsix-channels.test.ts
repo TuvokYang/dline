@@ -57,6 +57,19 @@ describe("package-vsix release channels", () => {
 		expect(packager).toContain("preRelease: options.preRelease")
 	})
 
+	it("packages an explicit Insiders build even when a dev-vX.Y.Z tag names the same commit", async () => {
+		const source = await readPackageVsix()
+
+		// A dev-vX.Y.Z tag must name the dev head, and every dev push packages
+		// that head as Insiders. The explicit Insiders branch therefore resolves
+		// before any tag lookup instead of rejecting a tagged commit.
+		expect(source).not.toContain("Insiders packaging requires an untagged commit")
+		const insidersBranch = source.slice(source.indexOf('if (requestedChannel === "insiders") {'))
+		const insidersReturn = insidersBranch.indexOf('return { channel: "insiders"')
+		expect(insidersReturn).toBeGreaterThan(-1)
+		expect(insidersReturn).toBeLessThan(insidersBranch.indexOf("getExactTag()"))
+	})
+
 	it("derives the insiders patch from a unix timestamp", async () => {
 		const source = await readPackageVsix()
 
