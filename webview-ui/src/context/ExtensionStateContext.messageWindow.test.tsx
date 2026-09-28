@@ -806,7 +806,7 @@ describe("ExtensionStateContext persisted message reconciliation", () => {
 		// since the committed window still cannot resolve the anchor.
 		await waitFor(() => expect(TaskServiceClient.fetchMessage.mock.calls.length).toBeGreaterThan(2))
 		expect(screen.queryByText("Question")).toBeNull()
-		expect(screen.getByRole("alert")).toBeVisible()
+		expect(screen.queryByRole("alert")).toBeNull()
 	})
 
 	it("retries a failed anchor recovery instead of suppressing it permanently", async () => {
