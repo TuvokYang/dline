@@ -56,11 +56,13 @@ describe("TaskCompositionRoot", () => {
 		})
 		const payloadRef = await payloads.put(encodeTaskPayload({ kind: "user_input", text: "hello" }))
 		await result.task.start({ entryId: "entry-1", payloadRef })
-		// This provider answers every round in prose without calling a tool, which
-		// the kernel now continues through up to its bound. Asserting a single call
-		// asserted the old defect: the task stopped after one unanswered answer.
+		// This provider answers every round in prose without calling a tool. The
+		// kernel continues through such answers until the third, which opens the
+		// mistake-limit dialog instead of another round, as dev's default of three
+		// consecutive mistakes did. A single call would be the old defect: the task
+		// stopped after one unanswered answer.
 		await vi.waitFor(() => expect(provider.mock.calls.length).toBeGreaterThan(1))
-		await vi.waitFor(() => expect(provider).toHaveBeenCalledTimes(4))
+		await vi.waitFor(() => expect(provider).toHaveBeenCalledTimes(3))
 		expect(Object.getOwnPropertyNames(Object.getPrototypeOf(result.task)).sort()).toEqual([
 			"cancel",
 			"constructor",

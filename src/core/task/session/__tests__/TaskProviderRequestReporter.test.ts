@@ -225,6 +225,31 @@ describe("TaskProviderRequestReporter", () => {
 		expect(requestInfo(harness.rows[0]).tokensIn).toBe(10)
 	})
 
+	// A retry happens before the stream produces anything, so nothing else would
+	// push the next attempt's card; the chat kept counting down the first one.
+	it("publishes the rows each time the retry card changes", async () => {
+		const state = messageState()
+		const published: string[] = []
+		let next = 100
+		const reporter = new TaskProviderRequestReporter({
+			messages: state.handler,
+			nextPresentationId: () => ++next,
+			api: apiHandler,
+			promptCache: new PromptCacheHealthTracker("task-1", { debug: () => {}, warn: () => {} }),
+			publishRows: async () => {
+				const card = state.rows.find((row) => row.say === "error_retry")
+				published.push(card ? `attempt:${JSON.parse(card.text ?? "{}").attempt}` : "none")
+			},
+		})
+		const record = await reporter.begin({ turnId: "turn-1" })
+
+		await record.retrying?.({ attempt: 1, maxAttempts: 5, delayMs: 3000, errorMessage: "first" })
+		await record.retrying?.({ attempt: 2, maxAttempts: 5, delayMs: 5000, errorMessage: "second" })
+		await record.recovered?.()
+
+		expect(published).toEqual(["attempt:1", "attempt:2", "none"])
+	})
+
 	it("marks the retry card failed when the retries did not recover the request", async () => {
 		const harness = createReporter()
 		const record = await harness.reporter.begin({ turnId: "turn-1" })

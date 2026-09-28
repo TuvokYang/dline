@@ -30,6 +30,15 @@ export interface TaskProviderRequestReporterOptions {
 	readonly usage?: ContextUsageObserverPort
 	/** Told the tokens a settled request consumed, for the Profile's daily totals; absent when nothing counts them. */
 	readonly profileTokens?: ProfileTokenUsagePort
+	/**
+	 * Pushes the chat rows to the view after the retry card changes.
+	 *
+	 * A retry happens before the stream produces anything, so no transient
+	 * projection or committed state would carry the new card; without this the
+	 * chat keeps the first attempt's countdown until the request settles.
+	 * Absent in an assembly that renders nothing.
+	 */
+	readonly publishRows?: () => Promise<void>
 }
 
 /**
@@ -113,9 +122,18 @@ export class TaskProviderRequestReporter implements ProviderRequestReportPort {
 		})
 		const retryCard = new RetryCard(this.options.messages, this.options.nextPresentationId)
 		const profileId = this.options.profileTokens?.activeProfileId()
+		const publishRows = async () => {
+			await this.options.publishRows?.()
+		}
 		return {
-			retrying: (notice) => retryCard.show(notice),
-			recovered: () => retryCard.withdraw(),
+			retrying: async (notice) => {
+				await retryCard.show(notice)
+				await publishRows()
+			},
+			recovered: async () => {
+				await retryCard.withdraw()
+				await publishRows()
+			},
 			settle: async (settlement) => {
 				// A request that failed after retrying keeps its card as the record of
 				// the attempts; any other ending makes the countdown obsolete.
