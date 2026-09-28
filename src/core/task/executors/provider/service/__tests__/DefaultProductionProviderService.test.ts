@@ -249,6 +249,46 @@ describe("DefaultProductionProviderService", () => {
 		expect(JSON.stringify(out)).not.toContain("NEVER")
 	})
 
+	// Anthropic drops a thinking block it did not sign, and the Responses API
+	// replays reasoning from its summary and encrypted items, so the journaled
+	// turn must keep what the provider attached, not only the visible text.
+	it("keeps the signature, summary and encrypted reasoning the provider attached for replay", async () => {
+		const chunks = await run(
+			[
+				{
+					type: "reasoning",
+					reasoning: "",
+					redacted_data: "ENCRYPTED_ITEM",
+					redacted_phase: "final",
+					provider_metadata: { response_id: "rs_1" },
+				} as ApiStreamChunk,
+				{ type: "reasoning", reasoning: "SIGNED_THOUGHT" } as ApiStreamChunk,
+				{
+					type: "reasoning",
+					reasoning: "",
+					signature: "SIGNATURE_1",
+					details: { type: "summary_text", text: "SUMMARY_1" },
+				} as ApiStreamChunk,
+				text("Answer"),
+			],
+			true,
+		)
+
+		const final = chunks.find((chunk) => chunk.kind === "final")
+		expect(final).toMatchObject({ reasoning: "SIGNED_THOUGHT" })
+		expect(final && "content" in final ? final.content : undefined).toEqual([
+			{ type: "redacted_thinking", data: "ENCRYPTED_ITEM", provider_metadata: { response_id: "rs_1" } },
+			{
+				type: "thinking",
+				thinking: "SIGNED_THOUGHT",
+				signature: "SIGNATURE_1",
+				summary: [{ type: "summary_text", text: "SUMMARY_1" }],
+				provider_metadata: { response_id: "rs_1" },
+			},
+			{ type: "text", text: "Answer" },
+		])
+	})
+
 	it("reports nothing for a reply stopped before it said anything", async () => {
 		const controller = new AbortController()
 		const api = {

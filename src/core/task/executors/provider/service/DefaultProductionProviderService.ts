@@ -14,6 +14,7 @@ import {
 	type ProviderIdentity,
 	waitRetryDelayUnlessAborted,
 } from "../../../auto-retry"
+import { StreamResponseHandler } from "../../../StreamResponseHandler"
 import type {
 	ProviderBlockOutput,
 	ProviderDraftEnvelope,
@@ -236,6 +237,10 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 		const transientId = `provider:${prepared.turnId}`
 		const textParts: string[] = []
 		const reasoningParts: string[] = []
+		// Replay needs what the provider signed, not only what it said: Anthropic
+		// drops an unsigned thinking block and the Responses API replays summaries
+		// and encrypted items, so the same accumulator dev and subagents use folds them.
+		const { reasonsHandler: reasoning } = new StreamResponseHandler(() => Date.now()).getHandlers()
 		const nativeTools = new Map<string, PendingNativeTool>()
 		// A cancelled command cannot authorize a tool in a later turn.
 		const abort = () => turn.abandon()
@@ -265,6 +270,15 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 						yield { kind: "partial", transientId, text: visibleAssistantText(textParts.join("")) }
 						break
 					case "reasoning":
+						reasoning.processReasoningDelta({
+							provider_metadata: chunk.provider_metadata,
+							reasoning: chunk.reasoning,
+							signature: chunk.signature,
+							details:
+								chunk.details === undefined ? [] : Array.isArray(chunk.details) ? chunk.details : [chunk.details],
+							redacted_data: chunk.redacted_data,
+							redacted_phase: chunk.redacted_phase,
+						})
 						if (!chunk.reasoning) break
 						reasoningParts.push(chunk.reasoning)
 						// Shown while it streams, as dev did: a long think is otherwise
@@ -325,8 +339,9 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 		const materialized = request.nativeTools
 			? this.materializeNativeTools(nativeTools, textParts.join(""))
 			: this.materializeXmlTools(textParts.join(""))
-		const content: ClineAssistantContent[] = []
-		if (reasoningParts.length > 0) content.push({ type: "thinking", thinking: reasoningParts.join(""), signature: "" })
+		const content: ClineAssistantContent[] = [...reasoning.getRedactedThinking()]
+		const thinking = reasoning.getCurrentReasoning()
+		if (thinking) content.push(thinking)
 		// History records what the model actually sent. A call it wrote as markup
 		// beside native tools stays markup there: turning it into a native call
 		// would replay an invented call id the provider never issued.
