@@ -73,9 +73,9 @@ function flushCalls(controller: Controller): unknown[][] {
 	return (controller.task?.owners.prompt.flush as ReturnType<typeof vi.fn>).mock.calls
 }
 
-/** Verify catalog commits refresh views without mutating active runtime handlers. */
+/** Verify catalog commits refresh views and rebuild only the handler whose active Profile changed. */
 describe("ProfileChangeCoordinator", () => {
-	it("broadcasts ordinary profile edits without rebuilding active handlers", async () => {
+	it("rebuilds only handlers whose active-mode Profile was edited", async () => {
 		const first = createController("shared-profile", "shared-profile")
 		const second = createController("other-profile", "shared-profile")
 		const third = createController("other-profile", "other-profile")
@@ -85,13 +85,80 @@ describe("ProfileChangeCoordinator", () => {
 
 		await coordinator.publish(oldProfiles, nextProfiles)
 
+		// Each fixture runs in Act mode, so only an Act binding to the edited Profile rebuilds.
+		expect(rebuildCalls(first)).to.deep.equal([[]])
+		expect(rebuildCalls(second)).to.deep.equal([[]])
+		expect(rebuildCalls(third)).to.have.length(0)
 		for (const controller of [first, second, third]) {
-			expect(rebuildCalls(controller)).to.have.length(0)
 			expect(flushCalls(controller)).to.deep.equal([["profile_catalog"]])
 			expect((controller.restartAccountUsagePolling as ReturnType<typeof vi.fn>).mock.calls).to.have.length(0)
 			expect((controller.postStateToWebview as ReturnType<typeof vi.fn>).mock.calls).to.have.length(1)
 		}
 		expect(coordinator.revision).to.equal(1)
+	})
+
+	it("rebuilds the active handler before prompt freshness is reevaluated", async () => {
+		const controller = createController("shared-profile", "shared-profile", "shared-id")
+		const order: string[] = []
+		;(controller.task!.owners.api.rebuild as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+			order.push("rebuild")
+		})
+		;(controller.task!.owners.prompt.flush as ReturnType<typeof vi.fn>).mockImplementation(async (source: string) => {
+			order.push(`flush:${source}`)
+		})
+		const coordinator = new ProfileChangeCoordinator(() => [controller])
+		const before = [
+			{
+				id: "shared-id",
+				name: "shared-profile",
+				provider: "anthropic",
+				anthropic: { claudeCodeIdentity: { enabled: false } },
+			},
+		] as unknown as ApiProfile[]
+		const after = [
+			{
+				id: "shared-id",
+				name: "shared-profile",
+				provider: "anthropic",
+				anthropic: { claudeCodeIdentity: { enabled: true } },
+			},
+		] as unknown as ApiProfile[]
+
+		await coordinator.publish(before, after)
+
+		expect(order).to.deep.equal(["rebuild", "flush:profile_catalog"])
+	})
+
+	it("does not rebuild for an edit to the inactive mode's Profile or a disabled Profile", async () => {
+		const inactive = createController("plan-profile", "act-profile")
+		const disabled = createController("act-profile", "act-profile")
+		const coordinator = new ProfileChangeCoordinator(() => [inactive])
+		await coordinator.publish(
+			[{ id: "plan-id", name: "plan-profile", modelId: "old" }] as ApiProfile[],
+			[{ id: "plan-id", name: "plan-profile", modelId: "new" }] as ApiProfile[],
+		)
+		expect(rebuildCalls(inactive)).to.have.length(0)
+		expect(flushCalls(inactive)).to.deep.equal([["profile_catalog"]])
+
+		const disabling = new ProfileChangeCoordinator(() => [disabled])
+		await disabling.publish(
+			[{ id: "act-id", name: "act-profile", enabled: true }] as ApiProfile[],
+			[{ id: "act-id", name: "act-profile", enabled: false }] as ApiProfile[],
+		)
+		expect(rebuildCalls(disabled)).to.have.length(0)
+	})
+
+	it("keeps publishing prompt freshness when the handler rebuild fails", async () => {
+		const controller = createController("shared-profile", "shared-profile", "shared-id")
+		;(controller.task!.owners.api.rebuild as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("missing key"))
+		const coordinator = new ProfileChangeCoordinator(() => [controller])
+
+		await coordinator.publish(
+			[{ id: "shared-id", name: "shared-profile", modelId: "old" }] as ApiProfile[],
+			[{ id: "shared-id", name: "shared-profile", modelId: "new" }] as ApiProfile[],
+		)
+
+		expect(flushCalls(controller)).to.deep.equal([["profile_catalog"]])
 	})
 
 	it("broadcasts a pure reorder even when no profile fields change", async () => {
@@ -174,7 +241,8 @@ describe("ProfileChangeCoordinator", () => {
 		await coordinator.publish(oldProfiles, nextProfiles)
 
 		expect(coordinator.revision).to.equal(1)
-		expect(rebuildCalls(controller)).to.have.length(0)
+		// The active Profile's model changed, so the handler was rebuilt before the failed publication.
+		expect(rebuildCalls(controller)).to.have.length(1)
 	})
 
 	it("keeps deleted profile bindings unchanged instead of selecting a fallback", async () => {
