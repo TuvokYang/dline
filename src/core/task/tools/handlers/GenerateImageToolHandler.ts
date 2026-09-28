@@ -215,7 +215,7 @@ export class GenerateImageToolHandler implements IFullyManagedTool, IApprovalPre
 			}
 			const presentation = createToolPresentation(activePresentation)
 			const message = JSON.stringify(presentation)
-			await config.callbacks.say("tool", message, undefined, undefined, false, block.ts)
+			await config.callbacks.say("tool", message, undefined, undefined, true, block.ts)
 
 			config.taskState.consecutiveMistakeCount = 0
 			activePresentation = { ...activePresentation, status: "started" }
@@ -224,7 +224,7 @@ export class GenerateImageToolHandler implements IFullyManagedTool, IApprovalPre
 				JSON.stringify(createToolPresentation(activePresentation)),
 				undefined,
 				undefined,
-				false,
+				true,
 				block.ts,
 			)
 			const result = await config.services.imageGenerationService.generate(request, {

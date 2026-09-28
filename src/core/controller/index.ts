@@ -1411,7 +1411,10 @@ export class Controller {
 				}
 				// The recovery dialog is still planned when promotion returns; its
 				// prepare and reveal run through the outbox afterwards.
-				const interaction = await awaitDispatchableDialog(session, { isCurrent: () => this.task === session })
+				const interaction = await awaitDispatchableDialog(session, {
+					actionId: request.actionId,
+					isCurrent: () => this.task === session,
+				})
 				const state = session.state()
 				if (!interaction) {
 					// Without this the promoted task simply stopped: no command ran,

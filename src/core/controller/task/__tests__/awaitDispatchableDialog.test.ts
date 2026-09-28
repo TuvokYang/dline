@@ -29,6 +29,30 @@ function answerable(): TaskState {
 	} as TaskState
 }
 
+function withPendingApproval(state: TaskState): TaskState {
+	return {
+		...state,
+		dialog: {
+			...state.dialog,
+			approvalsByBlock: {
+				"block-1": {
+					interactionId: "approval-1",
+					turnId: "turn-1",
+					kind: "tool_approval",
+					status: "awaiting",
+					createdRevision: 3,
+					presentationRef: "approval-presentation",
+					receiverGeneration: 0,
+					actionRules: [
+						{ actionId: "approve", payloadPolicy: "draft" },
+						{ actionId: "reject", payloadPolicy: "draft" },
+					],
+				},
+			},
+		},
+	} as TaskState
+}
+
 /** Bounded well below the default wait, so an early exit is distinguishable from a timeout. */
 const LONG_WAIT_MS = 5_000
 
@@ -40,6 +64,17 @@ describe("awaitDispatchableDialog", () => {
 		}, 30)
 
 		const dialog = await awaitDispatchableDialog({ state: () => current }, { timeoutMs: LONG_WAIT_MS })
+
+		expect(dialog?.interactionId).toBe("recovery-1")
+	})
+
+	it("waits for the recovery dialog instead of rebasing Resume onto an awaiting approval", async () => {
+		let current = withPendingApproval(planned())
+		setTimeout(() => {
+			current = withPendingApproval(answerable())
+		}, 30)
+
+		const dialog = await awaitDispatchableDialog({ state: () => current }, { timeoutMs: LONG_WAIT_MS, actionId: "resume" })
 
 		expect(dialog?.interactionId).toBe("recovery-1")
 	})

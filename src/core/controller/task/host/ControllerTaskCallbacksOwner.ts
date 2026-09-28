@@ -151,9 +151,14 @@ export class ControllerTaskCallbacksOwner {
 		await this.options.messages.updateClineMessage(index, updates)
 		const row = this.options.messages.clineMessages[index]
 		if (!row) return
+		await this.publishRow(row, `patched row ${index}`)
+	}
+
+	/** Deliver one in-memory row to the active surface without making delivery its durability boundary. */
+	private async publishRow(row: UiMessage, description: string): Promise<void> {
 		await sendPartialMessageEvent(this.options.controller, convertClineMessageToProto(row)).catch((error: unknown) => {
 			Logger.warn(
-				`[Task ${this.options.taskId}] Could not publish the patched row ${index}: ${error instanceof Error ? error.message : String(error)}`,
+				`[Task ${this.options.taskId}] Could not publish ${description}: ${error instanceof Error ? error.message : String(error)}`,
 			)
 		})
 	}
@@ -192,10 +197,13 @@ export class ControllerTaskCallbacksOwner {
 		// commandTs is how a command_output row finds the command it belongs to;
 		// dropping it here leaves the output orphaned and never rendered.
 		const message: UiMessage = { ts, type: "say", say: type, text, images, files, partial, commandTs }
-		if (partial) await this.options.messages.upsertClineMessageInMemory(message)
-		else if (this.options.messages.clineMessages.some((candidate) => candidate.ts === ts))
+		if (partial) {
+			await this.options.messages.upsertClineMessageInMemory(message)
+			await this.publishRow(message, `partial ${type} row ${ts}`)
+		} else if (this.options.messages.clineMessages.some((candidate) => candidate.ts === ts)) {
 			await this.options.messages.finalizeClineMessage(message)
-		else await this.options.messages.addToClineMessages(message)
+			await this.publishRow(message, `finalized ${type} row ${ts}`)
+		} else await this.options.messages.addToClineMessages(message)
 		return ts
 	}
 

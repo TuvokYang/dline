@@ -42,6 +42,7 @@ interface ControllerOptions {
 
 function controller(taskState: TaskState = state(), options: ControllerOptions = {}) {
 	const resolve = vi.fn()
+	const presentDenial = vi.fn(async () => undefined)
 	const respond = vi.fn(async () =>
 		options.rejected
 			? { kind: "rejected" as const, reason: "stale_attempt" }
@@ -75,12 +76,13 @@ function controller(taskState: TaskState = state(), options: ControllerOptions =
 				inputs: { reviewReply },
 				approvalFeedback,
 				messages: { clineMessages, addToClineMessages, flushUiMessages: vi.fn(async () => {}) },
-				owners: { interactions: { resolve } },
+				owners: { interactions: { resolve }, toolExecution: { presentDenial } },
 			},
 		},
 		respond,
 		put,
 		resolve,
+		presentDenial,
 		clineMessages,
 		addToClineMessages,
 		approvalFeedback,
@@ -89,8 +91,32 @@ function controller(taskState: TaskState = state(), options: ControllerOptions =
 
 function approvalState(): TaskState {
 	const taskState = state("tool_approval", "approve")
-	const approval = taskState.dialog.primary!
-	return { ...taskState, dialog: { approvalsByBlock: { "block-1": { ...approval, blockId: "block-1" } } } }
+	const approval = {
+		...taskState.dialog.primary!,
+		actionRules: [
+			{ actionId: "approve", payloadPolicy: "draft" as const },
+			{ actionId: "reject", payloadPolicy: "draft" as const },
+		],
+	}
+	return {
+		...taskState,
+		turn: {
+			...taskState.turn,
+			blocks: [
+				{
+					blockId: "block-1",
+					index: 0,
+					phase: "awaiting_approval",
+					attempt: "attempt-1",
+					lanes: [],
+					turnEnding: false,
+					invocationRef: "invocation:block-1",
+				},
+			],
+			manualApprovalBlockIds: ["block-1"],
+		},
+		dialog: { approvalsByBlock: { "block-1": { ...approval, blockId: "block-1" } } },
+	}
 }
 
 function approveWith(text: string) {
@@ -101,6 +127,16 @@ function approveWith(text: string) {
 		actionId: "approve",
 		stateRevision: 12,
 		draft: { text, images: [], files: [] },
+	})
+}
+
+function rejectApproval() {
+	return DispatchInteractionRequest.create({
+		taskId: "task-1",
+		turnId: "turn-1",
+		interactionId: "interaction-1",
+		actionId: "reject",
+		stateRevision: 12,
 	})
 }
 
@@ -171,6 +207,19 @@ describe("dispatchInteraction", () => {
 		expect(host.respond).toHaveBeenCalledWith(
 			expect.objectContaining({ type: "approval.respond", blockId: "block-1", approved: true }),
 		)
+	})
+
+	it("presents one handler-owned terminal state after an accepted manual rejection", async () => {
+		const host = controller(approvalState())
+
+		const result = await dispatchInteraction(host.value as never, rejectApproval())
+
+		expect(result).toMatchObject({ accepted: true, result: "accepted" })
+		expect(host.respond).toHaveBeenCalledWith(
+			expect.objectContaining({ type: "approval.respond", blockId: "block-1", approved: false }),
+		)
+		expect(host.presentDenial).toHaveBeenCalledOnce()
+		expect(host.presentDenial).toHaveBeenCalledWith("invocation:block-1")
 	})
 
 	it("rejects stale identity and unsupported actions before shell submission", async () => {

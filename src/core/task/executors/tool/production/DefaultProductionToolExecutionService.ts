@@ -117,10 +117,22 @@ function serializeResult(
 	}
 }
 
-function params(input: Readonly<Record<string, unknown>>): ToolUse["params"] {
-	return Object.fromEntries(
-		Object.entries(input).map(([key, value]) => [key, typeof value === "string" ? value : JSON.stringify(value)]),
+/** Rehydrate the canonical runtime tool block stored behind an invocation reference. */
+export function materializeToolInvocation(invocation: ToolInvocationEnvelope): ToolUse {
+	const params = Object.fromEntries(
+		Object.entries(invocation.input).map(([key, value]) => [key, typeof value === "string" ? value : JSON.stringify(value)]),
 	) as ToolUse["params"]
+	return {
+		type: "tool_use",
+		name: invocation.toolName as ToolUse["name"],
+		params,
+		partial: false,
+		ts: invocation.presentationId,
+		isNativeToolCall: invocation.isNativeToolCall,
+		function_id: invocation.functionId,
+		dline_tid: invocation.dlineTid,
+		...(invocation.signature === undefined ? {} : { signature: invocation.signature }),
+	}
 }
 
 /** Task-scoped handler runtime with no dependency on the legacy ToolExecutor. */
@@ -135,17 +147,7 @@ export class DefaultProductionToolExecutionService implements ProductionToolExec
 		if (input.invocation.dlineTid !== input.command.dlineTid) {
 			throw new Error(`ToolInvocationIdentityMismatch:${input.invocation.dlineTid}:${input.command.dlineTid}`)
 		}
-		const block: ToolUse = {
-			type: "tool_use",
-			name: input.invocation.toolName as ToolUse["name"],
-			params: params(input.invocation.input),
-			partial: false,
-			ts: input.invocation.presentationId,
-			isNativeToolCall: input.invocation.isNativeToolCall,
-			function_id: input.invocation.functionId,
-			dline_tid: input.invocation.dlineTid,
-			...(input.invocation.signature === undefined ? {} : { signature: input.invocation.signature }),
-		}
+		const block = materializeToolInvocation(input.invocation)
 		let config = this.options.config.create({ ...input, coordinator: this.options.runtime.coordinator })
 		if (
 			input.invocation.isNativeToolCall &&

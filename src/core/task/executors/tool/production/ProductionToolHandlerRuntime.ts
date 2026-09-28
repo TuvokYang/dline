@@ -5,7 +5,7 @@ import { isTurnEndingToolUse } from "../../../assistant-message-order"
 import type { ProviderTurnApproval } from "../../../kernel"
 import { resolveLaneContext, resolveToolLanes } from "../../../kernel/turn/tool-lanes"
 import type { ToolHandlerResult } from "../../../tools/ToolExecutionResult"
-import { ToolExecutorCoordinator } from "../../../tools/ToolExecutorCoordinator"
+import { presentToolDenial, ToolExecutorCoordinator } from "../../../tools/ToolExecutorCoordinator"
 import { ToolValidator } from "../../../tools/ToolValidator"
 import type { TaskConfig } from "../../../tools/types/TaskConfig"
 import type { ToolAdmissionSnapshot } from "../ToolAdmissionRegistry"
@@ -88,6 +88,10 @@ export class ProductionToolHandlerRuntime {
 
 	execute(config: TaskConfig, block: ToolUse): Promise<ToolHandlerResult> {
 		return this.coordinator.execute(config, block)
+	}
+
+	presentDenial(config: TaskConfig, block: ToolUse): Promise<void> {
+		return presentToolDenial(this.coordinator.getHandler(block.name), config, block)
 	}
 
 	restoreSubagentRetry(config: TaskConfig, activityId: string): Promise<boolean> {

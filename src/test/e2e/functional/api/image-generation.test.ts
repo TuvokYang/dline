@@ -211,9 +211,9 @@ e2e(
 			{ type: "tool", id: "call_image_rejected", name: "generate_image", arguments: { prompt: rejectedPrompt, count: 1 } },
 			{
 				type: "tool",
-				id: "call_image_rejection_done",
-				name: "attempt_completion",
-				arguments: { result: "E2E_IMAGE_REJECTED_OK" },
+				id: "call_image_rejected_resumed",
+				name: "generate_image",
+				arguments: { prompt: rejectedPrompt, count: 1 },
 			},
 			{ type: "tool", id: "call_image_approved", name: "generate_image", arguments: { prompt: approvedPrompt, count: 1 } },
 			{
@@ -254,17 +254,28 @@ e2e(
 			await page.getByRole("button", { name: "History", exact: true }).click()
 			await E2ETestHelper.dismissWhatsNewModal(sidebar)
 			await sidebar.locator(".history-item").filter({ hasText: rejectedTask }).click()
-			await expect(pendingCard.getByText("Dline wants to generate an image", { exact: true })).toBeVisible()
+			const reopenedToggle = sidebar.getByRole("button", { name: "Collapse image generation", exact: true })
+			await expect(reopenedToggle).toBeVisible()
 			await expect(sidebar.getByText("Dline wants to generate an image", { exact: true })).toHaveCount(1)
-			await expect(pendingCard.getByText(rejectedPrompt, { exact: true })).toBeVisible()
+			await expect(reopenedToggle.locator("xpath=../..").getByText(rejectedPrompt, { exact: true })).toBeVisible()
 			expect(hostedImageConsumptions()).toHaveLength(0)
-			await sidebar.getByRole("contentinfo").getByText("Reject", { exact: true }).click()
-			await expect(sidebar.getByText("Image generation rejected", { exact: true }).last()).toBeVisible()
+			const reopenedFooter = sidebar.getByRole("contentinfo")
+			const resumeButton = reopenedFooter.getByRole("button", { name: "Resume", exact: true }).first()
+			const rejectButton = reopenedFooter.getByRole("button", { name: "Reject", exact: true }).first()
+			await expect(resumeButton).toBeVisible({ timeout: 30_000 })
+			await expect(rejectButton).toHaveCount(0)
+			await page.waitForTimeout(750)
+			await resumeButton.click()
+			await expect.poll(() => server.getMockConsumptions("openai-compatible-responses").length, { timeout: 30_000 }).toBe(2)
+			await expect(rejectButton).toBeVisible({ timeout: 30_000 })
+			await rejectButton.click()
+			await expect(sidebar.getByText("Image generation rejected", { exact: true }).last()).toBeVisible({ timeout: 30_000 })
 			await expect(sidebar.getByText(rejectedPrompt, { exact: true }).last()).toBeVisible()
 			expect(hostedImageConsumptions()).toHaveLength(0)
-			await expect(sidebar.getByText("E2E_IMAGE_REJECTED_OK", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
 
 			await sidebar.getByRole("button", { name: "Close Task", exact: true }).click()
+			await expect(sidebar.getByRole("button", { name: "Close Task", exact: true })).toHaveCount(0)
+			await expect(sidebar.getByTestId("chat-input")).toHaveAttribute("placeholder", "Type your task here...")
 			await sendTask(sidebar, approvedTask)
 			await expect(pendingCard.getByText("Dline wants to generate an image", { exact: true })).toBeVisible({
 				timeout: 60_000,
@@ -475,6 +486,17 @@ e2e(
 				sidebar,
 				"Generate one image with the GPT Subscription OpenAI Responses Profile, edit it using the returned ref, inspect the image from its returned path, and complete.",
 			)
+			await expect(sidebar.getByText("A hosted deterministic blue owl", { exact: true }).last()).toBeVisible({
+				timeout: 60_000,
+			})
+			// Start observing before filesystem proof collection: each provider preview
+			// is intentionally short-lived and is replaced by the final artifact card.
+			const partialPreview = sidebar.getByTestId("image-generation-partial-preview").last()
+			await expect(partialPreview).toBeVisible({ timeout: 60_000 })
+			const partialScreenshotPath = path.join(proofDir, "current-image-partial-preview.png")
+			await partialPreview.screenshot({ path: partialScreenshotPath })
+			await testInfo.attach("current-image-partial-preview.png", { path: partialScreenshotPath, contentType: "image/png" })
+
 			const contextPath = await E2ETestHelper.waitForValue(async () => {
 				const contextFiles = await findFiles(path.join(dlineDocsDir, "tasks"), "context.json")
 				return contextFiles[0]
@@ -500,15 +522,6 @@ e2e(
 			const initialFrozenTools = initialTaskContext.systemPrompt?.frozen?.tools ?? []
 			expect(initialFrozenTools.map(getFrozenToolName)).toContain("generate_image")
 			expect(initialTaskContext.systemPrompt?.frozen?.freshnessBaseline?.imageGenerationAvailable).toBe(true)
-			await expect(sidebar.getByText("A hosted deterministic blue owl", { exact: true }).last()).toBeVisible({
-				timeout: 60_000,
-			})
-
-			const partialPreview = sidebar.getByTestId("image-generation-partial-preview").last()
-			await expect(partialPreview).toBeVisible({ timeout: 60_000 })
-			const partialScreenshotPath = path.join(proofDir, "current-image-partial-preview.png")
-			await partialPreview.screenshot({ path: partialScreenshotPath })
-			await testInfo.attach("current-image-partial-preview.png", { path: partialScreenshotPath, contentType: "image/png" })
 
 			await E2ETestHelper.waitUntil(
 				async () => server.getMockConsumptions("openai-compatible-responses").length === 4,
@@ -608,9 +621,7 @@ e2e(
 			expect(firstToolResult?.content).toContain(GENERATED_ARTIFACT_ID)
 			expect(firstToolResult?.content).not.toContain(PNG_1X1_BASE64)
 			expect(firstToolResult?.content).not.toContain("data:image/")
-			const firstToolResultBlocks = JSON.parse(firstToolResult?.content ?? "[]") as Array<{ type?: string; text?: string }>
-			const firstToolResultText = firstToolResultBlocks.find((block) => block.type === "text")?.text
-			const firstToolResultPayload = JSON.parse(firstToolResultText?.split(" Result:\n")[1] ?? "{}") as {
+			const firstToolResultPayload = JSON.parse(firstToolResult?.content ?? "{}") as {
 				artifacts?: Array<{ id?: string; path?: string }>
 			}
 			expect(firstToolResultPayload.artifacts).toEqual([

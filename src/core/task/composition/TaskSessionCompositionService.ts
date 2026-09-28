@@ -292,6 +292,7 @@ export class TaskSessionCompositionService {
 			stateManager: options.stateManager,
 			settings,
 			messages,
+			payloads: persistence.payloads,
 			activities,
 			api,
 			toolState,

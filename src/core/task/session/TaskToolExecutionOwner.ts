@@ -9,9 +9,10 @@ import { resolveMaxParallelSubagents } from "@shared/concurrency-limits"
 import type { TaskCapabilityToggles } from "@shared/TaskCapabilityToggles"
 import { ClineDefaultTool } from "@shared/tools"
 import type { TaskActivityStore } from "../activity/TaskActivityStore"
-import type {
-	ProductionToolConfigFactory,
-	ProductionToolConfigFactoryInput,
+import {
+	materializeToolInvocation,
+	type ProductionToolConfigFactory,
+	type ProductionToolConfigFactoryInput,
 } from "../executors/tool/production/DefaultProductionToolExecutionService"
 import type { ProductionToolHandlerRuntime } from "../executors/tool/production/ProductionToolHandlerRuntime"
 import type { ToolAdmissionSnapshot } from "../executors/tool/ToolAdmissionRegistry"
@@ -22,6 +23,9 @@ import type { TaskState } from "../kernel"
 import type { MessageStateHandler } from "../message-state"
 import type { ProviderRequestRoundPort } from "../performance/provider-request-round-port"
 import { createRequestApiScope } from "../RequestApiScope"
+import type { TaskPayloadStore } from "../stores"
+import { decodeTaskPayload } from "../stores/payload/TaskPayloadCodec"
+import type { ToolInvocationEnvelope } from "../stores/payload/TaskPayloadEnvelopes"
 import type { TaskStateManager } from "../TaskStateManager"
 import type { DefaultToolHandlerState } from "../tools/state/ToolHandlerState"
 import { SubagentFanoutBudget, usableSubagentLimit } from "../tools/subagent/SubagentFanoutBudget"
@@ -36,6 +40,7 @@ export interface TaskToolExecutionOwnerOptions {
 	readonly stateManager: StateManager
 	readonly settings: TaskStateManager
 	readonly messages: MessageStateHandler
+	readonly payloads: TaskPayloadStore
 	readonly activities: TaskActivityStore
 	readonly api: TaskApiHandlerOwner
 	readonly toolState: DefaultToolHandlerState
@@ -112,6 +117,14 @@ export class TaskToolExecutionOwner implements ProductionToolConfigFactory {
 	restoreSubagentActivityRetry(activityId: string): Promise<boolean> {
 		const runtime = this.options.toolRuntime
 		return runtime.restoreSubagentRetry(this.create({ coordinator: runtime.coordinator }), activityId)
+	}
+
+	/** Move a manually rejected tool's existing row into its handler-owned terminal presentation. */
+	async presentDenial(invocationRef: string): Promise<void> {
+		const invocation = decodeTaskPayload<ToolInvocationEnvelope>(await this.options.payloads.read(invocationRef))
+		if (invocation.kind !== "tool_invocation") throw new Error("InvalidToolInvocationPayload")
+		const runtime = this.options.toolRuntime
+		await runtime.presentDenial(this.create({ coordinator: runtime.coordinator }), materializeToolInvocation(invocation))
 	}
 
 	/**

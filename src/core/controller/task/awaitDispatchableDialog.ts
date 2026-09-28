@@ -11,6 +11,8 @@ export interface DialogStateSource {
 
 export interface AwaitDispatchableDialogOptions {
 	readonly timeoutMs?: number
+	/** Select only a dialog that can accept the action the historical surface received. */
+	readonly actionId?: string
 	/** False once the caller no longer serves this task, e.g. it was cleared or replaced. */
 	readonly isCurrent?: () => boolean
 }
@@ -35,7 +37,7 @@ export async function awaitDispatchableDialog(
 	const deadline = Date.now() + (options.timeoutMs ?? DEFAULT_TIMEOUT_MS)
 	for (;;) {
 		const state = source.state()
-		const dispatchable = dispatchableDialog(state)
+		const dispatchable = dispatchableDialog(state, options.actionId)
 		if (dispatchable) return dispatchable
 		if (state.halt.status === "stopping" || options.isCurrent?.() === false) return undefined
 		if (Date.now() >= deadline) return undefined
@@ -43,10 +45,13 @@ export async function awaitDispatchableDialog(
 	}
 }
 
-/** Select the dialog that can currently accept a user response. */
-export function dispatchableDialog(state: TaskState): DialogInteraction | undefined {
+/** Select the dialog that can currently accept the historical response being promoted. */
+export function dispatchableDialog(state: TaskState, actionId?: string): DialogInteraction | undefined {
 	return [state.dialog.primary, state.dialog.interrupted, ...Object.values(state.dialog.approvalsByBlock)].find(
 		(interaction): interaction is DialogInteraction =>
-			interaction !== undefined && interaction.status === "awaiting" && interaction.receiverGeneration !== undefined,
+			interaction !== undefined &&
+			interaction.status === "awaiting" &&
+			interaction.receiverGeneration !== undefined &&
+			(actionId === undefined || interaction.actionRules.some((rule) => rule.actionId === actionId)),
 	)
 }

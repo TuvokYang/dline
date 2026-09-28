@@ -1,3 +1,4 @@
+import { registerPartialMessageCallback } from "@core/controller/ui/subscribeToPartialMessage"
 import type { MessageStateHandler } from "@core/task/message-state"
 import type { UiMessage } from "@shared/ExtensionMessage"
 import { describe, expect, it } from "vitest"
@@ -61,5 +62,40 @@ describe("ControllerTaskCallbacksOwner say", () => {
 
 		expect(written).toHaveLength(1)
 		expect(written[0].commandTs).toBeUndefined()
+	})
+
+	it("publishes a finalized row after replacing its in-memory partial", async () => {
+		const { handler, written } = messageStore()
+		written.push({ ts: 99, type: "ask", ask: "tool", text: "awaiting", partial: true })
+		const delivered: Array<{ ts: number; text: string; partial: boolean }> = []
+		const unsubscribe = registerPartialMessageCallback((message) => {
+			delivered.push({ ts: Number(message.ts), text: message.text, partial: message.partial })
+		})
+
+		try {
+			await owner(handler).callbacks.say("tool", "rejected", undefined, undefined, false, 99)
+		} finally {
+			unsubscribe()
+		}
+
+		expect(written).toContainEqual(expect.objectContaining({ ts: 99, type: "say", text: "rejected", partial: false }))
+		expect(delivered).toEqual([{ ts: 99, text: "rejected", partial: false }])
+	})
+
+	it("publishes a partial row after updating the in-memory message", async () => {
+		const { handler, written } = messageStore()
+		const delivered: Array<{ ts: number; text: string; partial: boolean }> = []
+		const unsubscribe = registerPartialMessageCallback((message) => {
+			delivered.push({ ts: Number(message.ts), text: message.text, partial: message.partial })
+		})
+
+		try {
+			await owner(handler).callbacks.say("tool", "preview", undefined, undefined, true, 99)
+		} finally {
+			unsubscribe()
+		}
+
+		expect(written).toContainEqual(expect.objectContaining({ ts: 99, text: "preview", partial: true }))
+		expect(delivered).toEqual([{ ts: 99, text: "preview", partial: true }])
 	})
 })

@@ -185,6 +185,21 @@ export async function dispatchInteraction(
 		}
 		return response(false, normalizeResult(result.reason))
 	}
+	const denialPresentation =
+		approvalEntry && request.actionId === "reject"
+			? (() => {
+					const block = state.turn.blocks.find((candidate) => candidate.blockId === approvalEntry[0])
+					if (!block) {
+						Logger.warn(`dispatchInteraction: accepted rejection has no block ${approvalEntry[0]}`)
+						return undefined
+					}
+					return session.owners.toolExecution.presentDenial(block.invocationRef).catch((error: unknown) => {
+						Logger.warn(
+							`dispatchInteraction: could not present denial for ${block.blockId}: ${error instanceof Error ? error.message : String(error)}`,
+						)
+					})
+				})()
+			: undefined
 	// When the command left text behind, the handler shows that text instead.
 	// The row takes its place in the sequence now, ahead of anything the
 	// answered dialog goes on to produce, but it is presentation: the runtime
@@ -218,6 +233,6 @@ export async function dispatchInteraction(
 	// submit the note as new input, composing a round before the tool result
 	// exists. Every other dialog still reaches its receiver or continuation.
 	if (!approvalEntry) session.owners.interactions.resolve(request.interactionId, outcome)
-	await consumedRow
+	await Promise.all([consumedRow, denialPresentation])
 	return response(true, "accepted")
 }
