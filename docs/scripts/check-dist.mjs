@@ -23,7 +23,9 @@ const allFiles = await listBuiltFiles(DIST_ROOT)
 const present = new Set(allFiles)
 const files = allFiles.filter((file) => TEXT_EXTENSIONS.has(path.posix.extname(file).toLowerCase()))
 const texts = new Map(
-	await Promise.all(files.map(async (relativePath) => [relativePath, await readFile(path.join(DIST_ROOT, relativePath), "utf8")])),
+	await Promise.all(
+		files.map(async (relativePath) => [relativePath, await readFile(path.join(DIST_ROOT, relativePath), "utf8")]),
+	),
 )
 const pages = new Map(Array.from(texts).filter(([relativePath]) => relativePath.endsWith(".html")))
 

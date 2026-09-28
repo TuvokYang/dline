@@ -75,7 +75,11 @@ function rewriteNode(node, prefix) {
 	}
 	if (JSX_ELEMENT_TYPES.has(node.type) && Array.isArray(node.attributes)) {
 		for (const attribute of node.attributes) {
-			if (attribute.type === "mdxJsxAttribute" && LINK_ATTRIBUTES.has(attribute.name) && typeof attribute.value === "string") {
+			if (
+				attribute.type === "mdxJsxAttribute" &&
+				LINK_ATTRIBUTES.has(attribute.name) &&
+				typeof attribute.value === "string"
+			) {
 				attribute.value = withBase(attribute.value, prefix)
 			}
 		}
