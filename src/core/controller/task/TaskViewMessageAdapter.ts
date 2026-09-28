@@ -14,6 +14,16 @@ const DISABLED_INPUT: TaskInputViewState = {
 	acceptsFiles: false,
 }
 
+/** Sends the scheduled automatic retry now; dispatched to the task, not to a dialog. */
+const AUTOMATIC_RETRY_ACTION: TaskViewAction = {
+	type: "retry",
+	label: "Retry",
+	appearance: "primary",
+	enabled: true,
+	payloadPolicy: "none",
+	dispatchTarget: "task",
+}
+
 function taskViewPhase(view: CanonicalTaskViewProjection): TaskViewPhase {
 	if (view.activity === "halting") return "cancelling"
 	switch (view.flowPhase) {
@@ -76,6 +86,7 @@ export function adaptCanonicalTaskView(
 	view: CanonicalTaskViewProjection,
 	messages: readonly UiMessage[] = [],
 	handoff?: BackgroundHandoffAvailabilityPort,
+	automaticRetry = false,
 ): TaskViewState {
 	const dialog = owningDialog(view)
 	const kind = dialog ? interactionKind(dialog.kind) : undefined
@@ -121,7 +132,10 @@ export function adaptCanonicalTaskView(
 	// background instead of cancelled, so that choice is offered before Cancel.
 	// The affordance disappears again once the executor no longer owns it.
 	const handoffAction = cancelActions.length > 0 ? projectBackgroundHandoffAction(handoff) : undefined
-	const taskActions: TaskViewAction[] = handoffAction ? [handoffAction, ...cancelActions] : cancelActions
+	// While an automatic retry owns the request, Retry sends the next attempt
+	// now instead of waiting out the countdown, as the previous runtime offered.
+	const retryActions: TaskViewAction[] = automaticRetry ? [{ ...AUTOMATIC_RETRY_ACTION }] : []
+	const taskActions: TaskViewAction[] = [...retryActions, ...(handoffAction ? [handoffAction] : []), ...cancelActions]
 	// Without its anchor row the dialog has nothing to pin its controls to, so the
 	// surface falls back to task-level affordances instead of orphaned buttons.
 	const anchored = Boolean(dialog && anchor)

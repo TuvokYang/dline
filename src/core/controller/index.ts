@@ -2475,10 +2475,15 @@ export class Controller {
 		if (!session) return undefined
 		const commands = session.owners.commands
 		const rows = messages ?? this.getCurrentTaskMessages()
-		return adaptCanonicalTaskView(session.projectView(), rows, {
-			readyActivityId: () => commands.getReadyBackgroundHandoffActivityId(),
-			isRequested: (activityId) => commands.isBackgroundHandoffRequested(activityId),
-		})
+		return adaptCanonicalTaskView(
+			session.projectView(),
+			rows,
+			{
+				readyActivityId: () => commands.getReadyBackgroundHandoffActivityId(),
+				isRequested: (activityId) => commands.isBackgroundHandoffRequested(activityId),
+			},
+			session.owners.providerRetry?.active === true,
+		)
 	}
 
 	/** Build a monotonic extension state while preserving the public non-optional contract. */

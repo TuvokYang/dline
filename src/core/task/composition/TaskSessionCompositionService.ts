@@ -31,6 +31,7 @@ import { importLegacyConversation } from "../conversation/LegacyConversationImpo
 import { DefaultProductionProviderService } from "../executors/provider/service/DefaultProductionProviderService"
 import { JournalConversationView } from "../executors/provider/service/JournalConversationView"
 import { ProviderJournalMessageMaterializer } from "../executors/provider/service/ProviderJournalMessageMaterializer"
+import { ProviderRetryGate } from "../executors/provider/service/ProviderRetryGate"
 import { DefaultProductionToolExecutionService } from "../executors/tool/production/DefaultProductionToolExecutionService"
 import { ProductionToolHandlerRuntime } from "../executors/tool/production/ProductionToolHandlerRuntime"
 import { TaskTurnAuthority } from "../explicit-instructions/TurnAuthority"
@@ -340,10 +341,14 @@ export class TaskSessionCompositionService {
 		})
 		const nextPresentationId = createPresentationIdSequence()
 		const compactionScopes = new CompactionRequestScopes()
+		// The footer shows Retry and Cancel only while a countdown owns the
+		// request, so every change of that ownership republishes the view.
+		const providerRetry = new ProviderRetryGate(() => void options.publishState().catch(() => undefined))
 		const owners: TaskSessionOwners = {
 			identity: { taskId: options.taskId, taskIncarnationId },
 			nextPresentationId,
 			compactionScopes,
+			providerRetry,
 			settings,
 			messages,
 			activities,
@@ -532,7 +537,11 @@ export class TaskSessionCompositionService {
 				// One sequence for both producers: chat rows are ordered by this id,
 				// so the user's own row and the blocks it causes must be drawn from
 				// the same counter to stay in causal order.
-				provider: new DefaultProductionProviderService({ requests: providerRequests, nextPresentationId }),
+				provider: new DefaultProductionProviderService({
+					requests: providerRequests,
+					nextPresentationId,
+					retry: providerRetry,
+				}),
 				tool: new DefaultProductionToolExecutionService({ config: toolExecution, runtime: toolRuntime }),
 				toolResources: {
 					revertDiff: async () => {

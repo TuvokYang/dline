@@ -41,6 +41,8 @@ export interface ProviderRetryPolicy {
 	delayMs(attempt: number): number
 	/** Resolve true once the delay elapsed, false as soon as the signal aborts. */
 	wait(delayMs: number, signal: AbortSignal): Promise<boolean>
+	/** The request left its retry loop: it produced a stream, failed for good, or was cancelled. */
+	settled?(): void
 }
 
 /** The automatic retry schedule the chat presents: five attempts, bounded at one minute. */
@@ -406,6 +408,18 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 	 * Returns undefined when cancellation ended the attempt.
 	 */
 	private async *openStream(
+		turn: TurnRequest,
+		signal: AbortSignal,
+	): AsyncGenerator<ProductionProviderChunk, AsyncIterable<ApiStreamChunk> | undefined> {
+		try {
+			return yield* this.sendUntilFirstChunk(turn, signal)
+		} finally {
+			// However the loop ends, no countdown remains for the chat to show.
+			this.retry.settled?.()
+		}
+	}
+
+	private async *sendUntilFirstChunk(
 		turn: TurnRequest,
 		signal: AbortSignal,
 	): AsyncGenerator<ProductionProviderChunk, AsyncIterable<ApiStreamChunk> | undefined> {

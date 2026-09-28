@@ -4,6 +4,7 @@ import type { CommandExecutor } from "@integrations/terminal/CommandExecutor"
 import type { BrowserSession } from "@services/browser/BrowserSession"
 import type { TaskActivityStore } from "../activity/TaskActivityStore"
 import type { CompactionRequestScopes } from "../compaction/CompactionRequestScopes"
+import type { ProviderRetryGate } from "../executors/provider/service/ProviderRetryGate"
 import type { TaskInputQueueService } from "../input-queue/TaskInputQueueService"
 import type { MessageStateHandler } from "../message-state"
 import type { ApiRateSnapshot } from "../performance/api-rate-tracker"
@@ -46,4 +47,6 @@ export interface TaskSessionOwners {
 	readonly nextPresentationId?: PresentationIdSequence
 	/** Handlers a compaction run is sent under instead of the task's own; absent means every run uses the task's handler. */
 	readonly compactionScopes?: CompactionRequestScopes
+	/** The automatic retry countdown of the provider request, which a manual Retry may cut short. */
+	readonly providerRetry?: ProviderRetryGate
 }
