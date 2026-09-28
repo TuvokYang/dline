@@ -75,6 +75,8 @@ export interface TaskCompositionOptions {
 	readonly providerPresentation?: ProviderTextPresentationPort
 	/** Records what each request consumed; see ProviderRequestReportPort. */
 	readonly providerRequestReport?: ProviderRequestReportPort
+	/** Reads the task's model-mistake counter and live user-configured ceiling. */
+	readonly readMistakeLimit?: () => { readonly count: number; readonly limit: number }
 	/**
 	 * Shows a finished summary to the user; see CompactionLandingPort.
 	 *
@@ -192,6 +194,7 @@ export async function composeTask(options: TaskCompositionOptions): Promise<Task
 					surface: options.services.toolSurface,
 					service: options.services.tool,
 					scheduler: options.services.toolScheduler,
+					readMistakeLimit: options.readMistakeLimit,
 					// The composition root owns the runtime, so it is what marks the
 					// source consumed; the host only decides how a successor starts.
 					publishPostCommit: options.successor

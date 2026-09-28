@@ -18,6 +18,8 @@ interface PendingBlock {
 export type ToolCommandExecutorOptions = Omit<ToolExecutionDomainOptions, "sink"> & {
 	/** Task-scoped WS-072 scheduler deciding when an approved block may start. */
 	readonly scheduler: TurnToolScheduler
+	/** Read the task's consecutive model mistakes after a tool handler settles. */
+	readonly readMistakeLimit?: () => { readonly count: number; readonly limit: number }
 }
 
 /** Adapts kernel tool commands to the single WS-072 tool execution domain. */
@@ -27,6 +29,7 @@ export class ToolCommandExecutor implements CommandExecutor, HaltParticipant {
 
 	private readonly toolDomain: ToolExecutionDomain
 	private readonly scheduler: TurnToolScheduler
+	private readonly readMistakeLimit?: () => { readonly count: number; readonly limit: number }
 	private readonly pending = new Map<string, PendingBlock>()
 	private readonly executions = new Set<Promise<void>>()
 	private readonly feedback = new Set<Promise<void>>()
@@ -37,8 +40,9 @@ export class ToolCommandExecutor implements CommandExecutor, HaltParticipant {
 		options: ToolCommandExecutorOptions,
 		private readonly events: TaskEventSink,
 	) {
-		const { scheduler, ...domainOptions } = options
+		const { scheduler, readMistakeLimit, ...domainOptions } = options
 		this.scheduler = scheduler
+		this.readMistakeLimit = readMistakeLimit
 		this.toolDomain = new ToolExecutionDomain({
 			...domainOptions,
 			sink: {
@@ -169,6 +173,7 @@ export class ToolCommandExecutor implements CommandExecutor, HaltParticipant {
 		type: "tool.completed" | "tool.failed" | "tool.cancelled",
 		message?: string,
 	): Promise<unknown> {
+		const mistakes = this.readMistakeLimit?.()
 		return this.events.submit({
 			type,
 			generation: entry.command.generation,
@@ -176,6 +181,7 @@ export class ToolCommandExecutor implements CommandExecutor, HaltParticipant {
 			turnId: entry.command.turnId,
 			blockId: entry.block.blockId,
 			message,
+			...(mistakes === undefined ? {} : { mistakeCount: mistakes.count, mistakeLimit: mistakes.limit }),
 		})
 	}
 

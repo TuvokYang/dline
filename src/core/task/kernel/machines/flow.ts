@@ -35,8 +35,8 @@ export function reduceFlow(state: FlowState, event: TaskEvent): FlowReduction {
 			return {
 				state:
 					state.phase === "paused"
-						? { ...state, phase: "initializing", textOnlyTurnStreak: 0 }
-						: { ...state, textOnlyTurnStreak: 0 },
+						? { ...state, phase: "initializing", textOnlyTurnStreak: 0, consecutiveMistakeCount: 0 }
+						: { ...state, textOnlyTurnStreak: 0, consecutiveMistakeCount: 0 },
 				commands: [],
 			}
 		case "provider.turn_ready":
@@ -56,6 +56,17 @@ export function reduceFlow(state: FlowState, event: TaskEvent): FlowReduction {
 						finalPayloadRef: event.finalPayloadRef,
 						journalWatermark: event.journalWatermark,
 					},
+				},
+				commands: [],
+			}
+		case "tool.completed":
+		case "tool.failed":
+		case "tool.cancelled":
+			return {
+				state: {
+					...state,
+					...(event.mistakeCount === undefined ? {} : { consecutiveMistakeCount: event.mistakeCount }),
+					...(event.mistakeLimit === undefined ? {} : { maxConsecutiveMistakes: event.mistakeLimit }),
 				},
 				commands: [],
 			}

@@ -196,7 +196,7 @@ export class TaskSessionCompositionService {
 					publishRow: (row) => sendPartialMessageEvent(options.prompt.controller, convertClineMessageToProto(row)),
 				},
 				resumption,
-				new ResumeDialogContinuation(resumption),
+				new ResumeDialogContinuation(resumption, () => toolState.resetMistakeLimitState()),
 			),
 			diagnostics,
 		)
@@ -503,6 +503,10 @@ export class TaskSessionCompositionService {
 			// A reply that calls no tool has no block to render it, so the prose
 			// itself is what the chat must show.
 			providerPresentation: new ProviderTextPresenter(messages, nextPresentationId),
+			readMistakeLimit: () => ({
+				count: toolState.consecutiveMistakeCount,
+				limit: options.stateManager.getGlobalSettingsKey("maxConsecutiveMistakes") ?? 3,
+			}),
 			// Every request records what it consumed, which is the only fact the
 			// task has about context pressure, cache health and cost.
 			providerRequestReport: new TaskProviderRequestReporter({

@@ -26,6 +26,8 @@ export interface ProductionToolAdapterOptions {
 	readonly service: ProductionToolExecutionService
 	/** Task-scoped WS-072 scheduler shared by every turn of this task. */
 	readonly scheduler: TurnToolScheduler
+	/** Read the task's consecutive mistake count and live configured ceiling. */
+	readonly readMistakeLimit?: () => { readonly count: number; readonly limit: number }
 	/**
 	 * Approval feedback recorded against the block being executed.
 	 *
@@ -85,6 +87,7 @@ export function createProductionToolAdapter(options: ProductionToolAdapterOption
 	return {
 		surface: options.surface,
 		scheduler: options.scheduler,
+		readMistakeLimit: options.readMistakeLimit,
 		runner: createToolDomainRunner({
 			resources: options.resources,
 			onReleaseError: (error) => options.onReleaseError?.(error),

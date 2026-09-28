@@ -919,7 +919,12 @@ e2e(
 
 		const taskText = "E2E_FAILED_REPLACE_RESUME_TASK"
 		await sendTask(sidebar, taskText)
-		await expect.poll(() => server.openAiRequestCount, { timeout: 60_000 }).toBe(3)
+		const approve = sidebar.getByRole("contentinfo").getByText("Approve", { exact: true })
+		for (let requestCount = 1; requestCount <= 3; requestCount++) {
+			await expect.poll(() => server.openAiRequestCount, { timeout: 60_000 }).toBe(requestCount)
+			await expect(approve).toBeVisible({ timeout: 30_000 })
+			await approve.click()
+		}
 		const failedReplaceConsumptions = server.getMockConsumptions("openai-compatible-chat")
 		expect(failedReplaceConsumptions.map((entry) => entry.toolName)).toEqual([
 			"replace_in_file",
@@ -945,9 +950,9 @@ e2e(
 		const latestCheckpointControl = checkpointLabels.last().locator("..").locator("..")
 		await latestCheckpointControl.hover()
 		await latestCheckpointControl.getByRole("button", { name: "Restore", exact: true }).click()
-		const restoreAllButton = sidebar.getByRole("button", { name: "Restore Files & Task", exact: true })
-		await expect(restoreAllButton).toBeVisible()
-		await restoreAllButton.click()
+		const restoreTaskButton = sidebar.getByRole("button", { name: "Restore Task Only", exact: true })
+		await expect(restoreTaskButton).toBeVisible()
+		await restoreTaskButton.click()
 
 		const feedback =
 			"同时要带mcp server， 方便ai管理服务。 还带时间触发审查， 如错误时， ai开始审查错误来源， 账号异常则自动补充。"

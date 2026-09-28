@@ -1,3 +1,4 @@
+import { formatResponse } from "@core/prompts/responses"
 import type { SemanticInputDocument } from "@shared/input-semantics/document"
 import { Logger } from "@shared/services/Logger"
 import type { InteractionOutcome } from "../interaction/InteractionProtocol"
@@ -53,6 +54,8 @@ export interface UnownedDialogContinuationPort {
 export interface TaskResumptionPort {
 	materialize(input: {
 		readonly text?: string
+		/** Trusted internal projection sent to the provider while `text` remains the visible user row. */
+		readonly admittedText?: string
 		readonly images?: readonly string[]
 		readonly files?: readonly string[]
 		readonly context?: string
@@ -91,7 +94,10 @@ const TASK_ENDING_ACTIONS: ReadonlySet<InteractionOutcome["actionId"]> = new Set
  * keeps recovery on the automatic execution path instead of a parallel one.
  */
 export class ResumeDialogContinuation implements UnownedDialogContinuationPort {
-	constructor(private readonly resumption: TaskResumptionPort) {}
+	constructor(
+		private readonly resumption: TaskResumptionPort,
+		private readonly resetMistakes?: () => void,
+	) {}
 
 	accepts(resolution: UnownedDialogResolution): boolean {
 		return !TASK_ENDING_ACTIONS.has(resolution.outcome.actionId)
@@ -108,14 +114,17 @@ export class ResumeDialogContinuation implements UnownedDialogContinuationPort {
 		// model has to be told the session was restored, but the chat row must
 		// keep showing only what the user typed.
 		const context = createResumeSubmissionContext(resolution.kind)
+		const processAnyway = resolution.kind === "mistake_limit" && resolution.outcome.actionId === "process_anyway"
 		try {
 			const input = await this.resumption.materialize({
 				text: draft?.text,
+				...(processAnyway ? { admittedText: formatResponse.tooManyMistakes(draft?.text) } : {}),
 				images: draft?.images,
 				files: draft?.files,
 				...(context === undefined ? {} : { context }),
 				...(draft?.semanticInput === undefined ? {} : { semanticInput: draft.semanticInput }),
 			})
+			if (processAnyway) this.resetMistakes?.()
 			await this.resumption.submit(input)
 			return "continued"
 		} catch (error) {

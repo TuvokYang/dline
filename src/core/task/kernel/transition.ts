@@ -373,8 +373,15 @@ function canOpenNextRound(state: TaskState): boolean {
 }
 
 /** Whether a turn that planned no tool may open the next round on its own. */
+function mistakeLimit(state: TaskState): number {
+	const configured = state.flow.maxConsecutiveMistakes
+	return typeof configured === "number" && Number.isFinite(configured)
+		? Math.max(1, Math.trunc(configured))
+		: MAX_TEXT_ONLY_TURNS
+}
+
 function continuesWithoutTools(state: TaskState): boolean {
-	return canOpenNextRound(state) && (state.flow.textOnlyTurnStreak ?? 0) < MAX_TEXT_ONLY_TURNS
+	return canOpenNextRound(state) && (state.flow.textOnlyTurnStreak ?? 0) < mistakeLimit(state)
 }
 
 function applyCommandOwnership(state: TaskState, commands: readonly Command[]): TaskState {
@@ -557,6 +564,9 @@ function deriveCommands(previous: TaskState, next: TaskState, event: TaskEvent):
 		allBlocksTerminal(next) &&
 		!hasActiveRound(previous)
 	) {
+		if (!previous.dialog.primary && next.dialog.primary?.kind === MISTAKE_LIMIT_DIALOG_KIND) {
+			return [{ ...commandBase(next, 0), type: "dialog.prepare", ...dialogCommandInput(next.dialog.primary) }]
+		}
 		return [
 			{
 				...commandBase(next, 0),
@@ -695,8 +705,15 @@ function installArrivalWakeup(state: TaskState, event: TaskEvent, nextRevision: 
  * the user already speaking, so it is carried into a round instead.
  */
 function installMistakeLimit(state: TaskState, event: TaskEvent, nextRevision: number): TaskState {
-	if (event.type !== "provider.turn_ready" || event.turnPlan.blocks.length > 0) return state
-	if ((state.flow.textOnlyTurnStreak ?? 0) < MAX_TEXT_ONLY_TURNS) return state
+	const textOnlyLimitReached =
+		event.type === "provider.turn_ready" &&
+		event.turnPlan.blocks.length === 0 &&
+		(state.flow.textOnlyTurnStreak ?? 0) >= mistakeLimit(state)
+	const toolLimitReached =
+		(event.type === "tool.completed" || event.type === "tool.failed" || event.type === "tool.cancelled") &&
+		allBlocksTerminal(state) &&
+		(state.flow.consecutiveMistakeCount ?? 0) >= mistakeLimit(state)
+	if (!textOnlyLimitReached && !toolLimitReached) return state
 	if (!canOpenNextRound(state) || pendingIntakeEntryIds(state.intake).length > 0) return state
 	const interactionId = `mistake-limit:${state.taskId}:${nextRevision}`
 	return {

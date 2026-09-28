@@ -54,7 +54,7 @@ export class TaskInputMaterializer {
 		if (!owned) {
 			return {
 				semanticInput: result.admitted.document,
-				admittedText: result.admitted.admittedText,
+				admittedText: envelope.admittedText ?? result.admitted.admittedText,
 				authorizedTools: result.admitted.authorizedTools,
 				explicitInstructions: result.admitted.explicitInstructions,
 			}

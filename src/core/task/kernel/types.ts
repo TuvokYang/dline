@@ -121,6 +121,10 @@ export interface FlowState {
 	 * task back to the user instead of looping forever.
 	 */
 	readonly textOnlyTurnStreak?: number
+	/** Consecutive model/tool mistakes reported by the task's execution handlers. */
+	readonly consecutiveMistakeCount?: number
+	/** Live user-configured ceiling captured with the latest reported tool outcome. */
+	readonly maxConsecutiveMistakes?: number
 }
 
 export interface KernelBlock {
@@ -265,6 +269,8 @@ export type ToolEvent = EventBase & {
 	readonly turnId: TurnId
 	readonly blockId: BlockId
 	readonly message?: string
+	readonly mistakeCount?: number
+	readonly mistakeLimit?: number
 }
 interface DialogRequestEvent extends EventBase {
 	readonly interactionId: InteractionId
