@@ -509,9 +509,12 @@ export class TaskSessionCompositionService {
 				api: () => api.current(),
 				promptCache,
 				compactTriggerOptions: readCompactTriggerOptions,
-				// Retries happen before the stream says anything, so only a state
-				// publication shows each attempt's card instead of the first countdown.
-				publishRows: options.publishState,
+				// Retries happen before the stream says anything, so each attempt's
+				// card has to be delivered to the chat rather than left for the countdown.
+				retryView: {
+					showRow: (row) => sendPartialMessageEvent(options.prompt.controller, convertClineMessageToProto(row)),
+					publishState: options.publishState,
+				},
 				// Subscriptions report no token counts, so today's figures on the
 				// usage surfaces are counted here, against the Profile that served the request.
 				profileTokens: {

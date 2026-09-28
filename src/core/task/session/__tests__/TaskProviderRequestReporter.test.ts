@@ -225,29 +225,63 @@ describe("TaskProviderRequestReporter", () => {
 		expect(requestInfo(harness.rows[0]).tokensIn).toBe(10)
 	})
 
-	// A retry happens before the stream produces anything, so nothing else would
-	// push the next attempt's card; the chat kept counting down the first one.
-	it("publishes the rows each time the retry card changes", async () => {
+	// A retry happens before the stream produces anything, and replacing the card
+	// keeps the row count unchanged, so only a delivered row shows the next attempt.
+	function reporterWithView(options: { failDelivery?: boolean } = {}) {
 		const state = messageState()
-		const published: string[] = []
+		const delivered: string[] = []
 		let next = 100
 		const reporter = new TaskProviderRequestReporter({
 			messages: state.handler,
 			nextPresentationId: () => ++next,
 			api: apiHandler,
 			promptCache: new PromptCacheHealthTracker("task-1", { debug: () => {}, warn: () => {} }),
-			publishRows: async () => {
-				const card = state.rows.find((row) => row.say === "error_retry")
-				published.push(card ? `attempt:${JSON.parse(card.text ?? "{}").attempt}` : "none")
+			retryView: {
+				showRow: async (row) => {
+					if (options.failDelivery) throw new Error("webview gone")
+					const card = JSON.parse(row.text ?? "{}")
+					delivered.push(`row:${row.ts}:attempt:${card.attempt}${card.failed ? ":failed" : ""}`)
+				},
+				publishState: async () => {
+					delivered.push(`state:${state.rows.some((row) => row.say === "error_retry") ? "card" : "none"}`)
+				},
 			},
 		})
-		const record = await reporter.begin({ turnId: "turn-1" })
+		return { ...state, delivered, reporter }
+	}
+
+	it("delivers each attempt's card to the chat and publishes its withdrawal", async () => {
+		const harness = reporterWithView()
+		const record = await harness.reporter.begin({ turnId: "turn-1" })
 
 		await record.retrying?.({ attempt: 1, maxAttempts: 5, delayMs: 3000, errorMessage: "first" })
 		await record.retrying?.({ attempt: 2, maxAttempts: 5, delayMs: 5000, errorMessage: "second" })
 		await record.recovered?.()
 
-		expect(published).toEqual(["attempt:1", "attempt:2", "none"])
+		// The api_req_started row took ts 101, so the cards are 102 and 103.
+		expect(harness.delivered).toEqual(["row:102:attempt:1", "row:103:attempt:2", "state:none"])
+	})
+
+	it("delivers the exhausted card so the chat stops the countdown", async () => {
+		const harness = reporterWithView()
+		const record = await harness.reporter.begin({ turnId: "turn-1" })
+
+		await record.retrying?.({ attempt: 5, maxAttempts: 5, delayMs: 30_000, errorMessage: "still down" })
+		await record.settle({ outcome: "failed" })
+
+		expect(harness.delivered).toEqual(["row:102:attempt:5", "row:102:attempt:5:failed"])
+	})
+
+	it("keeps retrying and settling when the chat cannot receive the card", async () => {
+		const harness = reporterWithView({ failDelivery: true })
+		const record = await harness.reporter.begin({ turnId: "turn-1" })
+
+		await expect(
+			record.retrying?.({ attempt: 1, maxAttempts: 5, delayMs: 3000, errorMessage: "first" }),
+		).resolves.toBeUndefined()
+		await expect(record.settle({ outcome: "failed" })).resolves.toBeUndefined()
+
+		expect(requestInfo(harness.rows[0]).cancelReason).toBe("streaming_failed")
 	})
 
 	it("marks the retry card failed when the retries did not recover the request", async () => {

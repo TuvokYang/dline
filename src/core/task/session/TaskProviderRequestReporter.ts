@@ -4,7 +4,8 @@ import {
 	getContextWindowInfo,
 	resolveCompactTriggerPolicy,
 } from "@core/context/context-management/context-window-utils"
-import type { UiApiReqCancelReason, UiApiReqInfo } from "@/shared/ExtensionMessage"
+import { Logger } from "@shared/services/Logger"
+import type { UiApiReqCancelReason, UiApiReqInfo, UiMessage } from "@/shared/ExtensionMessage"
 import type {
 	ProviderRequestOutcome,
 	ProviderRequestRecord,
@@ -31,14 +32,28 @@ export interface TaskProviderRequestReporterOptions {
 	/** Told the tokens a settled request consumed, for the Profile's daily totals; absent when nothing counts them. */
 	readonly profileTokens?: ProfileTokenUsagePort
 	/**
-	 * Pushes the chat rows to the view after the retry card changes.
+	 * Delivers retry-card changes to the chat; absent in an assembly that renders nothing.
 	 *
 	 * A retry happens before the stream produces anything, so no transient
 	 * projection or committed state would carry the new card; without this the
 	 * chat keeps the first attempt's countdown until the request settles.
-	 * Absent in an assembly that renders nothing.
 	 */
-	readonly publishRows?: () => Promise<void>
+	readonly retryView?: RetryCardView
+}
+
+/**
+ * How a changed retry card reaches the chat.
+ *
+ * Replacing a card keeps the message count unchanged, and the chat only fetches
+ * rows when that count moves, so a state publication alone never shows the next
+ * attempt. A card that was added or rewritten is therefore delivered as a row the
+ * chat merges by timestamp, and only a removal relies on the count.
+ */
+export interface RetryCardView {
+	/** Delivers a card row that was added or rewritten. */
+	showRow(row: UiMessage): Promise<void>
+	/** Publishes the task state after a card was removed. */
+	publishState(): Promise<void>
 }
 
 /**
@@ -120,20 +135,11 @@ export class TaskProviderRequestReporter implements ProviderRequestReportPort {
 			turnId: input.turnId,
 			contextWindow: getContextWindowInfo(this.options.api()).contextWindow,
 		})
-		const retryCard = new RetryCard(this.options.messages, this.options.nextPresentationId)
+		const retryCard = new RetryCard(this.options.messages, this.options.nextPresentationId, this.options.retryView)
 		const profileId = this.options.profileTokens?.activeProfileId()
-		const publishRows = async () => {
-			await this.options.publishRows?.()
-		}
 		return {
-			retrying: async (notice) => {
-				await retryCard.show(notice)
-				await publishRows()
-			},
-			recovered: async () => {
-				await retryCard.withdraw()
-				await publishRows()
-			},
+			retrying: (notice) => retryCard.show(notice),
+			recovered: () => retryCard.withdraw(),
 			settle: async (settlement) => {
 				// A request that failed after retrying keeps its card as the record of
 				// the attempts; any other ending makes the countdown obsolete.
@@ -246,29 +252,56 @@ class RetryCard {
 	constructor(
 		private readonly messages: MessageStateHandler,
 		private readonly nextPresentationId: PresentationIdSequence,
+		private readonly view?: RetryCardView,
 	) {}
 
 	async show(notice: ProviderRetryNotice): Promise<void> {
-		await this.withdraw()
+		// The replaced card needs no publication of its own: the chat hides a
+		// card followed by a newer one, and the count it keeps reconciles the rest.
+		await this.remove()
 		const ts = this.nextPresentationId()
-		await this.messages.addToClineMessages({ ts, type: "say", say: "error_retry", text: cardText(notice) })
+		const row: UiMessage = { ts, type: "say", say: "error_retry", text: cardText(notice) }
+		await this.messages.addToClineMessages(row)
 		this.ts = ts
 		this.notice = notice
+		await this.present(() => this.view?.showRow(this.storedRow(ts) ?? row))
 	}
 
 	async withdraw(): Promise<void> {
-		const ts = this.ts
-		this.ts = undefined
-		this.notice = undefined
-		if (ts !== undefined) await this.messages.removeMessagesByTs([ts])
+		if (await this.remove()) await this.present(() => this.view?.publishState())
 	}
 
 	/** The retries did not recover the request; the card stops counting down and says so. */
 	async markFailed(): Promise<void> {
-		const index = this.ts === undefined ? -1 : this.messages.clineMessages.findIndex((message) => message.ts === this.ts)
-		if (index < 0 || !this.notice) return
+		const ts = this.ts
+		const index = ts === undefined ? -1 : this.messages.clineMessages.findIndex((message) => message.ts === ts)
+		if (ts === undefined || index < 0 || !this.notice) return
 		await this.messages.updateClineMessage(index, { text: cardText(this.notice, true) })
 		await this.messages.flushMessageUpdate(index)
+		const row = this.storedRow(ts)
+		if (row) await this.present(() => this.view?.showRow(row))
+	}
+
+	private async remove(): Promise<boolean> {
+		const ts = this.ts
+		this.ts = undefined
+		this.notice = undefined
+		if (ts === undefined) return false
+		await this.messages.removeMessagesByTs([ts])
+		return true
+	}
+
+	private storedRow(ts: number): UiMessage | undefined {
+		return this.messages.clineMessages.find((message) => message.ts === ts)
+	}
+
+	/** A card the chat could not receive costs visibility only, never the request's settlement. */
+	private async present(deliver: () => Promise<void> | undefined): Promise<void> {
+		try {
+			await deliver()
+		} catch (error) {
+			Logger.debug(`[provider] retry card could not reach the chat: ${String(error)}`)
+		}
 	}
 }
 
