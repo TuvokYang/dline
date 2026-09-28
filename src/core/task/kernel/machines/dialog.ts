@@ -132,6 +132,10 @@ export function reduceDialog(state: DialogSlice, event: TaskEvent, nextRevision:
 	}
 	if ((event.type === "provider.failed" || event.type === "compose.failed") && !state.primary) {
 		const interactionId = `error:${event.type}:${nextRevision}`
+		// The chat renders the presentation as the failure itself, so a provider
+		// that described it (an invalid Profile, a quota) is shown in its own
+		// words; the interaction id is only a fallback that names no cause.
+		const presentation = event.type === "provider.failed" ? event.presentation : undefined
 		return {
 			state: {
 				...state,
@@ -141,7 +145,7 @@ export function reduceDialog(state: DialogSlice, event: TaskEvent, nextRevision:
 					kind: "error_retry",
 					status: "planned",
 					createdRevision: nextRevision,
-					presentationRef: interactionId,
+					presentationRef: presentation ?? interactionId,
 					actionRules: [
 						{ actionId: "retry", payloadPolicy: "draft" },
 						{ actionId: "start_new_task", payloadPolicy: "draft" },

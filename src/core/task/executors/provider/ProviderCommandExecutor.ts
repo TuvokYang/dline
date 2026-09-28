@@ -2,6 +2,7 @@ import type { Command, ProviderStartCommand, ProviderTurnPlan } from "../../kern
 import type { CommandExecutor } from "../../runtime"
 import type { ConversationJournal, TaskViewPort } from "../../stores"
 import { executorFailure, type HaltOrder, type HaltParticipant, isExecutionAbort, type TaskEventSink } from "../contracts"
+import { presentationOf } from "./ProviderFailure"
 import {
 	mergeProviderUsage,
 	type ProviderRequestOutcome,
@@ -152,6 +153,7 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
 			finalResult = await this.consume(command, controller.signal)
 		} catch (error) {
 			if (isExecutionAbort(error, controller.signal)) return
+			const presentation = presentationOf(error)
 			await this.events.submit({
 				type: "provider.failed",
 				generation: command.generation,
@@ -159,6 +161,7 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
 				originRevision: command.originRevision,
 				turnId: command.turnId,
 				message: executorFailure("provider", error),
+				...(presentation === undefined ? {} : { presentation }),
 			})
 			return
 		}

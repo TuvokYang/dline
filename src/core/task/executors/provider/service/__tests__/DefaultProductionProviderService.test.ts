@@ -4,6 +4,7 @@ import type { ClineStorageMessage } from "@shared/messages/content"
 import { describe, expect, it, vi } from "vitest"
 import type { ProviderDraftEnvelope } from "../../../../stores/payload/TaskPayloadEnvelopes"
 import type { ProductionProviderChunk } from "../../ProductionProviderAdapter"
+import { presentationOf } from "../../ProviderFailure"
 import { DefaultProductionProviderService, type ProviderRetryPolicy } from "../DefaultProductionProviderService"
 import type { PreparedProviderRequest } from "../ProviderRequest"
 
@@ -118,6 +119,57 @@ describe("DefaultProductionProviderService", () => {
 			expect.objectContaining({ type: "tool_use", function_id: "call_native", name: "read_file" }),
 		])
 		expect(final.blocks.map((block) => block.invocation.resultReplay)).toEqual([undefined])
+	})
+
+	// Claude Code answers a markup-described request with native tool_use
+	// blocks. Reading that reply as markup only discarded the call, so the
+	// turn looked empty and the task asked the model to use a tool again.
+	it("keeps a native call a provider returned to a markup-described request", async () => {
+		const chunks = await run(
+			[
+				{
+					type: "tool_calls",
+					function_id: "call_native",
+					dline_tid: "tid_native",
+					tool_call: { function: { name: "attempt_completion", arguments: '{"result":' } },
+				} as ApiStreamChunk,
+				{
+					type: "tool_calls",
+					function_id: "call_native",
+					dline_tid: "tid_native",
+					tool_call: { function: { name: "attempt_completion", arguments: '"DONE"}' } },
+				} as ApiStreamChunk,
+				{
+					type: "tool_calls",
+					function_id: "call_native",
+					dline_tid: "tid_native",
+					phase: "completed",
+					argumentsMode: "delta",
+					tool_call: { function: { name: "attempt_completion", arguments: "" } },
+				} as ApiStreamChunk,
+			],
+			false,
+		)
+
+		const final = chunks.find((chunk) => chunk.kind === "final")
+		if (final?.kind !== "final") throw new Error("missing final chunk")
+		expect(final.content).toEqual([
+			expect.objectContaining({
+				type: "tool_use",
+				function_id: "call_native",
+				name: "attempt_completion",
+				input: { result: "DONE" },
+			}),
+		])
+		expect(final.blocks).toEqual([
+			expect.objectContaining({
+				invocation: expect.objectContaining({
+					toolName: "attempt_completion",
+					isNativeToolCall: true,
+					input: { result: "DONE" },
+				}),
+			}),
+		])
 	})
 
 	// A completed turn-ending call hands the next interaction to the user. dev
@@ -444,6 +496,16 @@ async function collect(service: DefaultProductionProviderService, signal = new A
 	return out
 }
 
+/** The provider's own failure, unwrapped from the description the service attaches for the chat. */
+async function failureOf(service: DefaultProductionProviderService): Promise<unknown> {
+	try {
+		await collect(service)
+	} catch (error) {
+		return error instanceof Error && error.cause !== undefined ? error.cause : error
+	}
+	throw new Error("expected the request to fail")
+}
+
 describe("DefaultProductionProviderService request retry", () => {
 	it("replays the one frozen request after a transient failure and reports each retry", async () => {
 		const harness = scripted([
@@ -471,8 +533,39 @@ describe("DefaultProductionProviderService request retry", () => {
 		const failure = httpError(503, "Service Unavailable")
 		const harness = scripted([{ error: failure }], { maxAttempts: 2 })
 
-		await expect(collect(harness.service)).rejects.toBe(failure)
+		expect(await failureOf(harness.service)).toBe(failure)
 		expect(harness.api.createMessage).toHaveBeenCalledTimes(3)
+	})
+
+	// The chat's error box explains a failure in the provider's words. The
+	// kernel only keeps a sanitized kind, so the description has to leave the
+	// service with the failure, without replacing it.
+	it("hands a failure after the stream started to the chat with its description", async () => {
+		const failure = httpError(403, "Profile not valid")
+		const api = {
+			createMessage: async function* () {
+				yield text("partial")
+				throw failure
+			},
+			getModel: () => ({ id: "test-model", info: {} }),
+		} as unknown as ApiHandler
+		const request = {
+			api,
+			systemPrompt: "",
+			nativeTools: false,
+			mode: "serial",
+			profile: "standard",
+			messages: [],
+			turnId: "turn-1",
+			planTool: () => ({ attempt: "a", lanes: [], turnEnding: false, approval: { kind: "none" } }),
+		} as unknown as PreparedProviderRequest
+		const service = new DefaultProductionProviderService({ requests: { prepare: async () => request } })
+
+		const thrown = await collect(service).catch((error: unknown) => error)
+
+		expect(presentationOf(thrown)).toContain("Profile not valid")
+		expect((thrown as Error).cause).toBe(failure)
+		expect((thrown as Error).name).toBe(failure.name)
 	})
 
 	it("treats a stream that ends without content as a failed attempt", async () => {
@@ -491,7 +584,7 @@ describe("DefaultProductionProviderService request retry", () => {
 	])("does not replay %s", async (_label, failure) => {
 		const harness = scripted([{ error: failure }, { chunks: [text("never sent")] }])
 
-		await expect(collect(harness.service)).rejects.toBe(failure)
+		expect(await failureOf(harness.service)).toBe(failure)
 		expect(harness.api.createMessage).toHaveBeenCalledOnce()
 	})
 
@@ -519,7 +612,7 @@ describe("DefaultProductionProviderService request retry", () => {
 		const second = httpError(400, "No tool output found for function call call_1.")
 		const harness = scripted([{ error: first }, { error: second }, { chunks: [text("never sent")] }])
 
-		await expect(collect(harness.service)).rejects.toBe(second)
+		expect(await failureOf(harness.service)).toBe(second)
 		expect(harness.api.createMessage).toHaveBeenCalledTimes(2)
 	})
 
@@ -671,7 +764,7 @@ describe("DefaultProductionProviderService request retry", () => {
 			throw failure
 		})
 
-		await expect(collect(harness.service)).rejects.toBe(failure)
+		expect(await failureOf(harness.service)).toBe(failure)
 		expect(call).toBe(1)
 	})
 })

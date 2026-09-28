@@ -253,7 +253,13 @@ export type ProviderEvent =
 			readonly journalWatermark: JournalWatermark
 			readonly turnPlan: ProviderTurnPlan
 	  })
-	| (CommandFeedbackEvent & { readonly type: "provider.failed"; readonly turnId?: TurnId; readonly message: string })
+	| (CommandFeedbackEvent & {
+			readonly type: "provider.failed"
+			readonly turnId?: TurnId
+			readonly message: string
+			/** The provider's own description of the failure, as the chat's error box renders it. */
+			readonly presentation?: string
+	  })
 export type ToolEvent = EventBase & {
 	readonly type: "tool.started" | "tool.completed" | "tool.failed" | "tool.cancelled"
 	readonly turnId: TurnId

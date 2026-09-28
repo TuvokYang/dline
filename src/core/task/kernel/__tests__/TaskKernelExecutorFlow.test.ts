@@ -108,6 +108,55 @@ describe("task kernel executor flow", () => {
 		expect(result.commands).toEqual([expect.objectContaining({ type: "dialog.prepare", kind: "error_retry" })])
 	})
 
+	// The chat renders the presentation as the failure itself: the provider's
+	// own description (a 403 naming the invalid Profile) must reach it, not an
+	// interaction id that names no cause.
+	it("presents a provider failure in the provider's own words", () => {
+		const provider = (presentation?: string) => {
+			const compose = activeCompose()
+			const composed = accepted(
+				transition(compose.state, {
+					type: "compose.completed",
+					generation: 0,
+					commandId: compose.command.commandId,
+					originRevision: compose.command.originRevision,
+					turnId: "turn-1",
+					draftRef: "draft:1",
+				}),
+			)
+			const start = composed.commands.find(
+				(candidate): candidate is ProviderStartCommand => candidate.type === "provider.start",
+			)
+			if (!start) throw new Error("expected provider command")
+			return accepted(
+				transition(composed.state, {
+					type: "provider.failed",
+					generation: 0,
+					commandId: start.commandId,
+					originRevision: start.originRevision,
+					turnId: "turn-1",
+					message: "provider execution failed (Error)",
+					...(presentation === undefined ? {} : { presentation }),
+				}),
+			)
+		}
+
+		const described = provider('{"message":"Profile not valid","status":403}')
+		expect(described.state.dialog.primary).toMatchObject({
+			kind: "error_retry",
+			presentationRef: '{"message":"Profile not valid","status":403}',
+		})
+		expect(described.commands).toEqual([
+			expect.objectContaining({
+				type: "dialog.prepare",
+				presentationRef: '{"message":"Profile not valid","status":403}',
+			}),
+		])
+		// Without a description the interaction still opens, under its own id.
+		const undescribed = provider()
+		expect(undescribed.state.dialog.primary?.presentationRef).toBe(undescribed.state.dialog.primary?.interactionId)
+	})
+
 	it("rejects stale, duplicate, and post-halt compose/provider feedback", () => {
 		const compose = activeCompose()
 		const stale = transition(compose.state, {

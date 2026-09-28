@@ -21,6 +21,7 @@ import type {
 	ToolInvocationEnvelope,
 } from "../../../stores/payload/TaskPayloadEnvelopes"
 import type { ProductionProviderChunk, ProductionProviderService } from "../ProductionProviderAdapter"
+import { ProviderFailure } from "../ProviderFailure"
 import { repairProviderPairing } from "./ProviderPairingRepair"
 import type { PreparedProviderRequest, ProviderRequestFactory } from "./ProviderRequest"
 
@@ -183,6 +184,19 @@ function describeProviderError(request: PreparedProviderRequest, error: unknown,
 	}
 }
 
+/**
+ * The failure as it leaves this service: the original error, carrying how the
+ * chat should explain it. Describing it must never replace it with another.
+ */
+function describedFailure(request: PreparedProviderRequest, error: unknown): unknown {
+	try {
+		const provider: ProviderIdentity = { providerId: request.api.getProviderId?.(), modelId: request.api.getModel().id }
+		return new ProviderFailure(error, describeProviderError(request, error, provider))
+	} catch {
+		return error
+	}
+}
+
 /** Closes a reply the user stopped, so the next request knows it was cut short on purpose. */
 export const USER_INTERRUPTION_NOTICE = "[Response interrupted by user]"
 
@@ -324,7 +338,7 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 			}
 		} catch (error) {
 			// A stream the user stopped ends however its transport reports it.
-			if (!input.signal.aborted) throw error
+			if (!input.signal.aborted) throw describedFailure(turn.request, error)
 		} finally {
 			input.signal.removeEventListener("abort", abort)
 		}
@@ -335,10 +349,14 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 		}
 
 		// The request that produced the stream decides how its reply is read.
+		// A provider can still return native tool_use blocks to a request that
+		// described its tools as markup (Claude Code does); those calls are
+		// the model's actual reply, so dropping them would lose the turn.
 		const request = turn.request
-		const materialized = request.nativeTools
-			? this.materializeNativeTools(nativeTools, textParts.join(""))
-			: this.materializeXmlTools(textParts.join(""))
+		const materialized =
+			request.nativeTools || nativeTools.size > 0
+				? this.materializeNativeTools(nativeTools, textParts.join(""))
+				: this.materializeXmlTools(textParts.join(""))
 		const content: ClineAssistantContent[] = [...reasoning.getRedactedThinking()]
 		const thinking = reasoning.getCurrentReasoning()
 		if (thinking) content.push(thinking)
