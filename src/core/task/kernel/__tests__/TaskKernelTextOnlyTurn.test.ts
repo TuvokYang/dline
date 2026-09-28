@@ -69,16 +69,71 @@ describe("kernel continuation after a turn that used no tool", () => {
 		expect(result.state.flow.textOnlyTurnStreak).toBe(0)
 	})
 
-	it("hands the task back once the streak passes its bound, instead of looping forever", () => {
+	it("hands the task back once the streak reaches its bound, instead of looping forever", () => {
 		// Each round is answered by a fresh provider command, so the streak is the
-		// only thing that grows; the fourth answer is where continuing stops.
+		// only thing that grows; the third answer is where continuing stops, which
+		// is the default consecutive-mistake limit of the previous runtime.
 		let state = awaitingProvider()
-		for (let turn = 1; turn <= 4; turn++) {
+		for (let turn = 1; turn <= 3; turn++) {
 			const result = accepted(transition(state, turnReady([])))
 			expect(result.state.flow.textOnlyTurnStreak).toBe(turn)
-			expect(composeRounds(result.commands)).toHaveLength(turn <= 3 ? 1 : 0)
+			expect(composeRounds(result.commands)).toHaveLength(turn < 3 ? 1 : 0)
 			state = { ...awaitingProvider(result.state.flow.textOnlyTurnStreak), revision: result.state.revision }
 		}
+	})
+
+	it("offers the mistake-limit recovery when the bound is reached, so the task does not stop silently", () => {
+		const result = accepted(transition(awaitingProvider(LAST_CONTINUED_STREAK), turnReady([])))
+
+		expect(result.state.flow.phase).toBe("waiting")
+		expect(result.state.dialog.primary).toMatchObject({
+			kind: "mistake_limit",
+			status: "planned",
+			turnId: "turn-1",
+			actionRules: [
+				{ actionId: "process_anyway", payloadPolicy: "draft" },
+				{ actionId: "start_new_task", payloadPolicy: "draft" },
+			],
+		})
+		expect(result.commands).toEqual([
+			expect.objectContaining({
+				type: "dialog.prepare",
+				kind: "mistake_limit",
+				interactionId: result.state.dialog.primary?.interactionId,
+			}),
+		])
+	})
+
+	it("does not offer the recovery while a question already awaits the user", () => {
+		const waiting: TaskState = {
+			...awaitingProvider(LAST_CONTINUED_STREAK),
+			dialog: {
+				approvalsByBlock: {},
+				primary: {
+					interactionId: "ask-1",
+					turnId: "turn-1",
+					kind: "followup",
+					status: "awaiting",
+					createdRevision: 3,
+					presentationRef: "presentation:ask-1",
+					actionRules: [{ actionId: "reply", payloadPolicy: "draft" }],
+				},
+			},
+		}
+		const result = accepted(transition(waiting, turnReady([])))
+		expect(result.state.dialog.primary?.interactionId).toBe("ask-1")
+		expect(result.commands).toEqual([])
+	})
+
+	it("lets Process Anyway continue: the answer is a submission, which resets the streak and opens a round", () => {
+		const limited = accepted(transition(awaitingProvider(LAST_CONTINUED_STREAK), turnReady([])))
+		const submitted = accepted(
+			transition(limited.state, { type: "user.submit", generation: 0, entryId: "entry-1", payloadRef: "input:1" }),
+		)
+		expect(submitted.state.flow.textOnlyTurnStreak).toBe(0)
+		expect(composeRounds(submitted.commands)).toEqual([
+			expect.objectContaining({ type: "compose.round", admittedEntryIds: ["entry-1"] }),
+		])
 	})
 
 	it("stays silent while a question is awaiting the user, whose turn it is to speak", () => {
@@ -164,3 +219,6 @@ describe("kernel continuation after a turn that used no tool", () => {
 
 /** The streak value at which the kernel stops continuing on its own. */
 const MAX_TEXT_ONLY_STREAK = 4
+
+/** The streak before the answer that reaches the bound; the next text-only answer stops the run. */
+const LAST_CONTINUED_STREAK = 2

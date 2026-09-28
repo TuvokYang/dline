@@ -343,13 +343,24 @@ function hasActiveRound(state: TaskState): boolean {
 }
 
 /**
- * How many answers without a tool call the kernel continues through.
+ * How many consecutive answers without a tool call end the automatic run.
  *
  * The continuation exists so a model that replies in prose still reaches its
  * next tool call. A model that never calls one has to stop instead, so the task
- * returns to the user rather than spending an account on an endless loop.
+ * returns to the user rather than spending an account on an endless loop. The
+ * value matches the default `maxConsecutiveMistakes`, which is where the
+ * previous runtime stopped the same loop.
  */
 const MAX_TEXT_ONLY_TURNS = 3
+
+/** Dialog kind the surface renders as "Task Needs Attention" with Process Anyway. */
+const MISTAKE_LIMIT_DIALOG_KIND = "mistake_limit"
+
+/** Guidance shown when the text-only limit hands the task back to the user. */
+const MISTAKE_LIMIT_PRESENTATION =
+	"Dline answered several times without using a tool. This may indicate a failure in its thought process or an " +
+	'inability to use a tool properly, which can be mitigated with some user guidance (e.g. "Try breaking down the ' +
+	'task into smaller steps").'
 
 /** Whether the kernel is free to open the next round itself. */
 function canOpenNextRound(state: TaskState): boolean {
@@ -363,7 +374,7 @@ function canOpenNextRound(state: TaskState): boolean {
 
 /** Whether a turn that planned no tool may open the next round on its own. */
 function continuesWithoutTools(state: TaskState): boolean {
-	return canOpenNextRound(state) && (state.flow.textOnlyTurnStreak ?? 0) <= MAX_TEXT_ONLY_TURNS
+	return canOpenNextRound(state) && (state.flow.textOnlyTurnStreak ?? 0) < MAX_TEXT_ONLY_TURNS
 }
 
 function applyCommandOwnership(state: TaskState, commands: readonly Command[]): TaskState {
@@ -573,6 +584,9 @@ function deriveCommands(previous: TaskState, next: TaskState, event: TaskEvent):
 			if (pending.length > 0 && canOpenNextRound(next)) {
 				return [{ ...commandBase(next, 0), type: "compose.round", admittedEntryIds: pending }]
 			}
+			if (!previous.dialog.primary && next.dialog.primary?.kind === MISTAKE_LIMIT_DIALOG_KIND) {
+				return [{ ...commandBase(next, 0), type: "dialog.prepare", ...dialogCommandInput(next.dialog.primary) }]
+			}
 			return continuesWithoutTools(next)
 				? [{ ...commandBase(next, 0), type: "compose.round", admittedEntryIds: [], continuation: "no_tools_used" }]
 				: []
@@ -672,6 +686,41 @@ function installArrivalWakeup(state: TaskState, event: TaskEvent, nextRevision: 
 	}
 }
 
+/**
+ * Hand the task back to the user once the model keeps answering without a tool.
+ *
+ * Stopping silently left the task looking finished with nothing to answer, so
+ * the limit opens the same recovery the previous runtime offered: the user can
+ * add guidance and process anyway, or start over. An entry waiting in intake is
+ * the user already speaking, so it is carried into a round instead.
+ */
+function installMistakeLimit(state: TaskState, event: TaskEvent, nextRevision: number): TaskState {
+	if (event.type !== "provider.turn_ready" || event.turnPlan.blocks.length > 0) return state
+	if ((state.flow.textOnlyTurnStreak ?? 0) < MAX_TEXT_ONLY_TURNS) return state
+	if (!canOpenNextRound(state) || pendingIntakeEntryIds(state.intake).length > 0) return state
+	const interactionId = `mistake-limit:${state.taskId}:${nextRevision}`
+	return {
+		...state,
+		flow: { ...state.flow, phase: "waiting" },
+		dialog: {
+			...state.dialog,
+			primary: {
+				interactionId,
+				turnId: event.turnId,
+				kind: MISTAKE_LIMIT_DIALOG_KIND,
+				status: "planned",
+				createdRevision: nextRevision,
+				presentationRef: MISTAKE_LIMIT_PRESENTATION,
+				actionRules: [
+					{ actionId: "process_anyway", payloadPolicy: "draft" },
+					{ actionId: "start_new_task", payloadPolicy: "draft" },
+				],
+				prepareKey: `dialog.prepare:${interactionId}`,
+			},
+		},
+	}
+}
+
 export function transition(state: TaskState, event: TaskEvent): TransitionResult {
 	if (event.generation !== state.generation)
 		return reject(state, "generation_mismatch", `Event generation ${event.generation} does not match ${state.generation}`)
@@ -706,6 +755,7 @@ export function transition(state: TaskState, event: TaskEvent): TransitionResult
 					: state.journalWatermark,
 	}
 	next = installArrivalWakeup(next, event, nextRevision)
+	next = installMistakeLimit(next, event, nextRevision)
 	if (halt.state.status === "stopping" && halt.state.pending.length === 0) {
 		next = {
 			...next,
