@@ -1,7 +1,14 @@
 import { describe, expect, it, vi } from "vitest"
 import { createDeniedSurface } from "../executors/tool/ToolDomainSurface"
 import { TurnToolScheduler } from "../executors/tool/TurnToolScheduler"
-import { type Command, createInitialTaskState, type TaskState } from "../kernel"
+import {
+	type Command,
+	createInitialTaskState,
+	type ProviderStartCommand,
+	type TaskState,
+	type TransitionResult,
+	transition,
+} from "../kernel"
 import {
 	InMemoryCommandPublicationStore,
 	InMemoryConversationJournal,
@@ -45,6 +52,37 @@ function execution(reveal: () => void) {
 			prepare: async () => ({ admit: async () => ({ childTaskId: "child-1" }), dispose: async () => undefined }),
 		},
 	}
+}
+
+function accepted(result: TransitionResult): Extract<TransitionResult, { kind: "accepted" }> {
+	if (result.kind !== "accepted") throw new Error(result.diagnostic.message)
+	return result
+}
+
+function awaitingProvider(): { readonly state: TaskState; readonly command: ProviderStartCommand } {
+	const submitted = accepted(
+		transition(createInitialTaskState("task-1"), {
+			type: "user.submit",
+			generation: 0,
+			entryId: "entry-1",
+			payloadRef: "input:1",
+		}),
+	)
+	const compose = submitted.commands.find((command) => command.type === "compose.round")
+	if (compose?.type !== "compose.round") throw new Error("Missing compose command")
+	const composed = accepted(
+		transition(submitted.state, {
+			type: "compose.completed",
+			generation: compose.generation,
+			commandId: compose.commandId,
+			originRevision: compose.originRevision,
+			turnId: "turn-1",
+			draftRef: "draft:1",
+		}),
+	)
+	const provider = composed.commands.find((command) => command.type === "provider.start")
+	if (provider?.type !== "provider.start") throw new Error("Missing provider command")
+	return { state: composed.state, command: provider }
 }
 
 /** A task stopped with a prepared question whose reveal was still in the outbox. */
@@ -265,5 +303,66 @@ describe("openTaskShell", () => {
 		)
 		// The unreadable snapshot is the fault; rebuilding without it is the recovery.
 		expect(recorded).toContainEqual(expect.objectContaining({ code: "snapshot_unreadable", severity: "failure" }))
+	})
+
+	it("does not replay a provider command when its final journal entry is ahead of the snapshot", async () => {
+		const { state, command } = awaitingProvider()
+		const vault = new InMemoryStateVault()
+		const journal = new InMemoryConversationJournal()
+		const publications = new InMemoryCommandPublicationStore()
+		await vault.save({ state, outbox: [command] })
+		await journal.append({
+			operationId: `provider.final:${command.commandId}`,
+			payloadRef: "payload:final",
+			source: "provider",
+			causation: {
+				commandId: command.commandId,
+				originRevision: command.originRevision,
+				generation: command.generation,
+				turnId: command.turnId,
+			},
+		})
+
+		const providerStart = vi.fn(() => ({
+			async *[Symbol.asyncIterator]() {
+				yield {
+					kind: "final" as const,
+					turnId: command.turnId ?? "turn-1",
+					payloadRef: "payload:duplicate",
+					turnPlan: { mode: "serial" as const, blocks: [] },
+				}
+			},
+		}))
+		const providerPresentation = {
+			showPartial: vi.fn(),
+			commit: vi.fn(async () => undefined),
+		}
+		const revealed = vi.fn()
+		const opened = await openTaskShell({
+			taskId: "task-1",
+			openReason: "crash_recovery",
+			execution: {
+				...execution(revealed),
+				provider: { execution: { start: providerStart }, presentation: providerPresentation },
+			},
+			taskView: new InMemoryTaskViewPort(),
+			persistence: { ports: { vault, journal, publications }, payloads },
+		})
+		await opened.runtime.waitForQuiescence()
+
+		expect(opened.form).toBe("interrupted")
+		expect(opened.runtime.getState()).toMatchObject({
+			generation: state.generation + 1,
+			flow: { phase: "paused" },
+		})
+		expect(providerStart).not.toHaveBeenCalled()
+		expect(providerPresentation.showPartial).not.toHaveBeenCalled()
+		expect(providerPresentation.commit).not.toHaveBeenCalled()
+		expect(await publications.has(command.commandId)).toBe(false)
+		expect(
+			(await journal.read()).filter((entry) => entry.operationId === `provider.final:${command.commandId}`),
+		).toHaveLength(1)
+		expect(revealed).toHaveBeenCalledTimes(1)
+		expect(opened.runtime.getState().dialog.primary).toMatchObject({ kind: "resume", status: "awaiting" })
 	})
 })
