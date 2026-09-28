@@ -227,4 +227,27 @@ describe("combineErrorRetryMessages", () => {
 
 		expect(combineErrorRetryMessages(messages)).not.toContainEqual(messages[0])
 	})
+
+	it("retires an exhausted error once a Retry answered at the canonical failure ask recovers", () => {
+		// The failure ask stays in the timeline after the user answers it, so the
+		// recovery that follows is the only evidence the error no longer applies.
+		const messages: UiMessage[] = [
+			exhaustedRetry(),
+			{ type: "ask", ask: "api_req_failed", text: "Provider failed", ts: 2, conversationHistoryIndex: 4 },
+			{ type: "say", say: "api_req_started", text: "{}", ts: 3, conversationHistoryIndex: 4 },
+			{ type: "say", say: "completion_result", text: "Recovered", ts: 4, conversationHistoryIndex: 4 },
+		]
+
+		expect(combineErrorRetryMessages(messages)).not.toContainEqual(messages[0])
+	})
+
+	it("keeps an exhausted error beside the canonical failure ask until a retry actually responds", () => {
+		const messages: UiMessage[] = [
+			exhaustedRetry(),
+			{ type: "ask", ask: "api_req_failed", text: "Provider failed", ts: 2, conversationHistoryIndex: 4 },
+			{ type: "say", say: "api_req_started", text: "{}", ts: 3, conversationHistoryIndex: 4 },
+		]
+
+		expect(combineErrorRetryMessages(messages)).toContainEqual(messages[0])
+	})
 })

@@ -139,7 +139,11 @@ export function combineErrorRetryMessages(messages: UiMessage[]): UiMessage[] {
 				}
 				if (laterMessage.type === "ask" && laterMessage.ask === "api_req_failed") {
 					hasCanonicalRecoveryAsk = true
-					break
+					// An exhausted card stays beside the canonical ask's actions, so
+					// the scan continues past it: a Retry answered there may already
+					// have recovered, and only a later response proves that.
+					if (!isTerminalFailure) break
+					continue
 				}
 				if (laterMessage.say === "api_req_retried") {
 					hasRetryStarted = true
