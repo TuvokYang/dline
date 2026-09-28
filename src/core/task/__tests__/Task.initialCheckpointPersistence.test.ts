@@ -1,9 +1,10 @@
 import { Task } from "@core/task"
+import type { CheckpointReferenceSet } from "@shared/checkpoints"
 import { describe, expect, it, vi } from "vitest"
 
 type InitialCheckpointHashPersister = {
 	checkpointHashPersistenceChain: Promise<void>
-	persistCheckpointHashToMessage(messageIndex: number, commitHash: string): Promise<void>
+	persistCheckpointHashToMessage(messageIndex: number, references: CheckpointReferenceSet): Promise<void>
 }
 
 describe("Task initial checkpoint hash persistence", () => {
@@ -18,13 +19,15 @@ describe("Task initial checkpoint hash persistence", () => {
 			postStateToWebview,
 		}
 
-		await (Task.prototype as unknown as InitialCheckpointHashPersister).persistCheckpointHashToMessage.call(
-			fakeTask,
-			3,
-			"initial-checkpoint-hash",
-		)
+		await (Task.prototype as unknown as InitialCheckpointHashPersister).persistCheckpointHashToMessage.call(fakeTask, 3, {
+			hashes: ["initial-checkpoint-hash"],
+			workspaceRoots: ["C:/workspace"],
+		})
 
-		expect(updateClineMessage).toHaveBeenCalledWith(3, { lastCheckpointHash: "initial-checkpoint-hash" })
+		expect(updateClineMessage).toHaveBeenCalledWith(3, {
+			lastCheckpointHash: ["initial-checkpoint-hash"],
+			checkpointWorkspaceRoots: ["C:/workspace"],
+		})
 		expect(updateClineMessage.mock.invocationCallOrder[0]).toBeLessThan(flushMessageUpdate.mock.invocationCallOrder[0])
 		expect(flushMessageUpdate.mock.invocationCallOrder[0]).toBeLessThan(postStateToWebview.mock.invocationCallOrder[0])
 	})
@@ -43,11 +46,10 @@ describe("Task initial checkpoint hash persistence", () => {
 		}
 
 		await expect(
-			(Task.prototype as unknown as InitialCheckpointHashPersister).persistCheckpointHashToMessage.call(
-				fakeTask,
-				0,
-				"initial-checkpoint-hash",
-			),
+			(Task.prototype as unknown as InitialCheckpointHashPersister).persistCheckpointHashToMessage.call(fakeTask, 0, {
+				hashes: ["initial-checkpoint-hash"],
+				workspaceRoots: ["C:/workspace"],
+			}),
 		).rejects.toBe(flushError)
 		expect(postStateToWebview).not.toHaveBeenCalled()
 	})
@@ -71,18 +73,17 @@ describe("Task initial checkpoint hash persistence", () => {
 		const persistence = (Task.prototype as unknown as InitialCheckpointHashPersister).persistCheckpointHashToMessage.call(
 			fakeTask,
 			1,
-			"initial-checkpoint-hash",
+			{ hashes: ["initial-checkpoint-hash"], workspaceRoots: ["C:/workspace"] },
 		)
 		const registeredChain = fakeTask.checkpointHashPersistenceChain
 		await vi.waitFor(() => expect(updateClineMessage).toHaveBeenCalledOnce())
 		expect(registeredChain).not.toBe(initialChain)
 
 		fakeTask.taskState.abort = true
-		await (Task.prototype as unknown as InitialCheckpointHashPersister).persistCheckpointHashToMessage.call(
-			fakeTask,
-			2,
-			"late-checkpoint-hash",
-		)
+		await (Task.prototype as unknown as InitialCheckpointHashPersister).persistCheckpointHashToMessage.call(fakeTask, 2, {
+			hashes: ["late-checkpoint-hash"],
+			workspaceRoots: ["C:/workspace"],
+		})
 		expect(updateClineMessage).toHaveBeenCalledOnce()
 
 		releaseUpdate()
@@ -105,11 +106,10 @@ describe("Task initial checkpoint hash persistence", () => {
 			postStateToWebview,
 		}
 
-		await (Task.prototype as unknown as InitialCheckpointHashPersister).persistCheckpointHashToMessage.call(
-			fakeTask,
-			2,
-			"initial-checkpoint-hash",
-		)
+		await (Task.prototype as unknown as InitialCheckpointHashPersister).persistCheckpointHashToMessage.call(fakeTask, 2, {
+			hashes: ["initial-checkpoint-hash"],
+			workspaceRoots: ["C:/workspace"],
+		})
 
 		expect(updateClineMessage).not.toHaveBeenCalled()
 		expect(flushMessageUpdate).not.toHaveBeenCalled()

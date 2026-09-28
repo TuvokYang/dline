@@ -65,11 +65,16 @@ interface CheckpointAttemptState {
 	lockUnavailable: boolean
 }
 
-type CheckpointChangedFile = {
+export type CheckpointChangedFile = {
 	relativePath: string
 	absolutePath: string
 	before: string
 	after: string
+}
+
+export interface CheckpointCommitOptions {
+	/** Force a guarded full-workspace scan for writes that cannot be tracked per file, such as terminal commands. */
+	forceWorkspaceScan?: boolean
 }
 
 /**
@@ -281,10 +286,9 @@ class CheckpointTracker {
 	/**
 	 * Creates a new checkpoint commit in the shadow git repository.
 	 *
-	 * When a TaskFileTracker has been injected, only files tracked as modified
-	 * by tool handlers are staged (incremental git add).  When no tracker is
-	 * set or no files have been tracked, falls back to full workspace staging
-	 * via git add . (backward compatible).
+	 * When a TaskFileTracker has been injected, files tracked by tool handlers
+	 * use incremental staging. Command execution requests a guarded workspace
+	 * scan; otherwise an empty file set reuses the validated shadow HEAD.
 	 *
 	 * @returns Promise<string | undefined> A restorable shadow revision, whether newly committed or already current
 	 * @throws Error if the restore point cannot be produced
@@ -296,13 +300,13 @@ class CheckpointTracker {
 	}
 
 	/**
-	 * Creates a checkpoint commit that only includes the specified files.
-	 * When files array is empty, falls back to staging all files via `git add .`
-	 * (backward compatible).
+	 * Creates a checkpoint commit for the specified files, or performs a guarded
+	 * workspace scan when requested by TaskFileTracker or CheckpointCommitOptions.
+	 * An empty file set without a scan request reuses the validated shadow HEAD.
 	 *
 	 * Key behaviors:
 	 * - Acquires folder lock before proceeding to prevent conflicts
-	 * - Stages only the specified files (or all files when list is empty)
+	 * - Stages the specified files, or the root workspace when a scan is required
 	 * - Creates commit with checkpoint files in shadow git repo
 	 * - Releases folder lock after completion
 	 *
@@ -311,7 +315,7 @@ class CheckpointTracker {
 	 * - Reuses the current shadow revision when staging is unchanged
 	 *
 	 * @param files - List of file paths to include in this checkpoint.
-	 *                When empty or omitted, all files are staged (full workspace).
+	 * @param options - Commit policy such as a forced root workspace scan.
 	 * @returns Promise<string | undefined> A restorable shadow revision, or undefined if:
 	 * - Folder lock acquisition fails or times out
 	 * - Shadow git access fails
@@ -322,7 +326,7 @@ class CheckpointTracker {
 	 * - Initialize simple-git
 	 * - Stage or commit files
 	 */
-	public async commitForFiles(files: string[]): Promise<string | undefined> {
+	public async commitForFiles(files: string[], options: CheckpointCommitOptions = {}): Promise<string | undefined> {
 		// Users report checkpoint creation failing when many tasks run at once,
 		// and the cost is split between waiting for the shared shadow-repository
 		// lock and the Git work itself. One span over both is what makes that
@@ -349,7 +353,7 @@ class CheckpointTracker {
 			)
 		}
 		try {
-			const commitHash = await runWithSignalSpan(span, () => this.doCommitForFiles(files, span, attempt))
+			const commitHash = await runWithSignalSpan(span, () => this.doCommitForFiles(files, span, attempt, options))
 			// An absent hash means no checkpoint was created, which the caller
 			// treats as a failed checkpoint. Reporting it as a successful span
 			// would hide exactly the failure this span exists to find.
@@ -373,6 +377,7 @@ class CheckpointTracker {
 		files: string[],
 		span: SignalSpanHandle,
 		attempt: CheckpointAttemptState,
+		options: CheckpointCommitOptions,
 	): Promise<string | undefined> {
 		let lockAcquired = false
 
@@ -486,7 +491,7 @@ class CheckpointTracker {
 							{ outcome: "acquired" satisfies CheckpointLockOutcome, mechanism: "process_mutex" },
 							{ taskId: this.taskId },
 						)
-						return this.runGitWork(filesToCommit, span)
+						return this.runGitWork(filesToCommit, span, options)
 					})
 
 					const durationMs = Math.round(performance.now() - startTime)
@@ -515,7 +520,7 @@ class CheckpointTracker {
 			}
 
 			// Standalone/CLI: cross-process lock already held via SqliteLockManager
-			const commitHash = await this.runGitWork(filesToCommit, span)
+			const commitHash = await this.runGitWork(filesToCommit, span, options)
 
 			const durationMs = Math.round(performance.now() - startTime)
 			await this.sendCheckpointSubscriptionEvent("CHECKPOINT_COMMIT", false, commitHash)
@@ -544,7 +549,11 @@ class CheckpointTracker {
 	 * granted, so a slow sample means the repository work is slow rather than
 	 * that the task was queued behind another one.
 	 */
-	private async runGitWork(files: string[], parent: SignalSpanHandle): Promise<string | undefined> {
+	private async runGitWork(
+		files: string[],
+		parent: SignalSpanHandle,
+		options: CheckpointCommitOptions,
+	): Promise<string | undefined> {
 		const startedAt = performance.now()
 		const gitSpan = startSignalSpan({
 			name: "checkpoint.git",
@@ -557,7 +566,7 @@ class CheckpointTracker {
 			recordPerfPhase(PerfDomain.Checkpoint, "commit", performance.now() - startedAt, { outcome }, { taskId: this.taskId })
 		}
 		try {
-			const commitHash = await runWithSignalSpan(gitSpan, () => this.doCommitFiles(files))
+			const commitHash = await runWithSignalSpan(gitSpan, () => this.doCommitFiles(files, options))
 			// Staging that produced nothing is reported apart from a created
 			// commit. Both return normally, but only one leaves the caller with
 			// a restore point, and folding them together would make the failure
@@ -587,36 +596,14 @@ class CheckpointTracker {
 	 * modified-file cache is cleared so the next checkpoint only captures newly
 	 * modified files.
 	 */
-	private async doCommitFiles(files: string[]): Promise<string | undefined> {
+	private async doCommitFiles(files: string[], options: CheckpointCommitOptions): Promise<string | undefined> {
 		const gitPath = this.shadowGitPath
 		const git = simpleGit(path.dirname(gitPath))
-		const requiresWorkspaceScan = this.taskFileTracker?.isWorkspaceScanRequired() ?? false
+		const requiresWorkspaceScan = options.forceWorkspaceScan || (this.taskFileTracker?.isWorkspaceScanRequired() ?? false)
 
 		Logger.trace(`[Task ${this.taskId}] Using shadow git at: ${gitPath}`)
 
-		if (files.length > 0) {
-			Logger.debug(`[CheckpointTracker] doCommitFiles: tracked add ${files.length} file(s) for task ${this.taskId}`)
-			const addFilesResult = await this.gitOperations.addCheckpointFiles({
-				git,
-				mode: "tracked",
-				fileList: files,
-				taskId: this.taskId,
-			})
-			// Paths Git cannot stage must leave the pending set even when the whole
-			// attempt failed. Retaining them replays the same rejected batch on every
-			// later checkpoint and disables checkpoints for the rest of the task.
-			this.dropUnstageablePaths(addFilesResult.rejectedPaths)
-			if (!addFilesResult.success) {
-				this.consecutiveStagingFailures += 1
-				Logger.error(
-					`[CheckpointTracker] Failed to stage ${files.length} tracked file(s) for task ${this.taskId} ` +
-						`(consecutive failures: ${this.consecutiveStagingFailures}). ` +
-						`Skipping commit to avoid an empty checkpoint.`,
-				)
-				return undefined
-			}
-			this.consecutiveStagingFailures = 0
-		} else if (requiresWorkspaceScan) {
+		if (requiresWorkspaceScan) {
 			const hasWorkspaceChanges = await this.gitOperations.hasWorkspaceChanges(git, this.taskId)
 			if (!hasWorkspaceChanges) {
 				this.taskFileTracker?.clearWorkspaceScanRequired()
@@ -635,6 +622,28 @@ class CheckpointTracker {
 				Logger.error(
 					`[CheckpointTracker] Failed workspace-scan staging for task ${this.taskId} ` +
 						`(consecutive failures: ${this.consecutiveStagingFailures})`,
+				)
+				return undefined
+			}
+			this.consecutiveStagingFailures = 0
+		} else if (files.length > 0) {
+			Logger.debug(`[CheckpointTracker] doCommitFiles: tracked add ${files.length} file(s) for task ${this.taskId}`)
+			const addFilesResult = await this.gitOperations.addCheckpointFiles({
+				git,
+				mode: "tracked",
+				fileList: files,
+				taskId: this.taskId,
+			})
+			// Paths Git cannot stage must leave the pending set even when the whole
+			// attempt failed. Retaining them replays the same rejected batch on every
+			// later checkpoint and disables checkpoints for the rest of the task.
+			this.dropUnstageablePaths(addFilesResult.rejectedPaths)
+			if (!addFilesResult.success) {
+				this.consecutiveStagingFailures += 1
+				Logger.error(
+					`[CheckpointTracker] Failed to stage ${files.length} tracked file(s) for task ${this.taskId} ` +
+						`(consecutive failures: ${this.consecutiveStagingFailures}). ` +
+						`Skipping commit to avoid an empty checkpoint.`,
 				)
 				return undefined
 			}

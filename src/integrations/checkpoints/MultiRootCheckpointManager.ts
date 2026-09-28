@@ -1,22 +1,14 @@
 /**
  * TODO: MULTI-ROOT CHECKPOINT MANAGER - NOT YET IN USE
  *
- * This MultiRootCheckpointManager class has been implemented as part of Phase 1
- * of the multi-workspace support initiative, but it is NOT currently being used
- * anywhere in the codebase.
+ * This early multi-root prototype is retained as future-architecture history,
+ * but it is NOT part of the current runtime. The checkpoint factory always
+ * creates TaskCheckpointManager, which delegates root-specific file operations
+ * to CheckpointUnitCoordinator while keeping Chat checkpoint ownership unified.
  *
- * Current Status:
- * - The infrastructure is complete and ready
- * - The feature flag for multi-root is disabled by default
- * - The checkpoint factory (src/integrations/checkpoints/factory.ts) will
- *   instantiate this manager when multi-root is enabled
- *
- * Follow-up Implementation Required:
- * 1. Enable the multi-root feature flag in StateManager
- * 2. Update the checkpoint factory to use this manager when appropriate
- * 3. Test thoroughly with multiple workspace roots
- * 4. Add proper restoration logic for all workspace roots (not just primary)
- * 5. Implement full diff checking across all workspace roots
+ * Do not route production traffic through this class: restore, diff, Chat
+ * persistence, partial-failure handling, and root identity semantics are
+ * intentionally incomplete here.
  *
  * See PRD: Multi-Workspace Folder Support for complete requirements
  */
@@ -25,9 +17,11 @@ import { MessageStateHandler } from "@core/task/message-state"
 import { showChangedFilesDiff } from "@core/task/multifile-diff"
 import { WorkspaceRootManager } from "@core/workspace"
 import { telemetryService } from "@services/telemetry"
+import { type CheckpointReferenceSet, createCheckpointReferenceSet } from "@shared/checkpoints"
 import { HostProvider } from "@/hosts/host-provider"
 import { ShowMessageType } from "@/shared/proto/dline/host/window"
 import { Logger } from "@/shared/services/Logger"
+import type { CheckpointChangedFile } from "./CheckpointTracker"
 import CheckpointTracker from "./CheckpointTracker"
 import { ICheckpointManager } from "./types"
 
@@ -205,6 +199,10 @@ export class MultiRootCheckpointManager implements ICheckpointManager {
 	 * Check if the latest task completion has new changes
 	 * Returns true if ANY workspace has changes
 	 */
+	async getTaskChangesForCheckpoint(): Promise<CheckpointChangedFile[]> {
+		throw new Error("Legacy MultiRootCheckpointManager does not implement Task-owned multi-root change review")
+	}
+
 	async doesLatestTaskCompletionHaveNewChanges(): Promise<boolean> {
 		if (!this.initialized || this.trackers.size === 0) {
 			return false
@@ -230,7 +228,7 @@ export class MultiRootCheckpointManager implements ICheckpointManager {
 	 * Commit changes across all workspaces
 	 * Returns the primary root's commit hash for backward compatibility
 	 */
-	async commit(): Promise<string | undefined> {
+	async commit(): Promise<CheckpointReferenceSet | undefined> {
 		if (!this.initialized || this.trackers.size === 0) {
 			return undefined
 		}
@@ -245,8 +243,11 @@ export class MultiRootCheckpointManager implements ICheckpointManager {
 					return undefined
 				}),
 			)
-			await Promise.all(commitPromises)
-			return undefined
+			const results = await Promise.all(commitPromises)
+			return createCheckpointReferenceSet(
+				results.map((hash) => hash ?? ""),
+				Array.from(this.trackers.keys()),
+			)
 		}
 
 		// Commit all roots in parallel
@@ -259,9 +260,10 @@ export class MultiRootCheckpointManager implements ICheckpointManager {
 
 		const results = await Promise.all(commitPromises)
 
-		// Return primary root's hash for compatibility with existing code
-		const primaryIndex = Array.from(this.trackers.keys()).indexOf(primaryRoot.path)
-		return results[primaryIndex]
+		return createCheckpointReferenceSet(
+			results.map((hash) => hash ?? ""),
+			Array.from(this.trackers.keys()),
+		)
 	}
 
 	/**

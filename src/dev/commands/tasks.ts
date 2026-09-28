@@ -275,7 +275,7 @@ function createRealisticMessageSequence(baseTimestamp: number, taskPrompt: strin
 		ts: getNextTimestamp(),
 		type: "say",
 		say: "checkpoint_created",
-		lastCheckpointHash: commitHash,
+		lastCheckpointHash: [commitHash],
 	})
 
 	// Add completion result (all tasks end with this)
@@ -284,7 +284,7 @@ function createRealisticMessageSequence(baseTimestamp: number, taskPrompt: strin
 		type: "say",
 		say: "completion_result",
 		text: `I've completed the task to ${taskPrompt.toLowerCase()}. The implementation includes all the required functionality and meets the specifications. ${"x".repeat(1024 * 1024)}`, // 1MB file
-		lastCheckpointHash: commitHash,
+		lastCheckpointHash: [commitHash],
 	})
 
 	return messages

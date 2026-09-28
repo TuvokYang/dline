@@ -5,7 +5,6 @@ import type { TaskState } from "@core/task/TaskState"
 import { isMultiRootEnabled } from "@core/workspace/multi-root-utils"
 import { WorkspaceRootManager } from "@core/workspace/WorkspaceRootManager"
 import { createTaskCheckpointManager } from "@integrations/checkpoints"
-import { MultiRootCheckpointManager } from "@integrations/checkpoints/MultiRootCheckpointManager"
 import { TaskFileTracker } from "@integrations/checkpoints/TaskFileTracker"
 import type { ICheckpointManager } from "@integrations/checkpoints/types"
 import type { DiffViewProvider } from "@integrations/editor/DiffViewProvider"
@@ -58,9 +57,8 @@ type BuildArgs = {
 }
 
 /**
- * Central factory for creating the appropriate checkpoint manager.
- * - MultiRootCheckpointManager for multi-root tasks
- * - TaskCheckpointManager for single-root tasks
+ * Build the single checkpoint owner. TaskCheckpointManager delegates file
+ * operations to a root coordinator when multiple workspace roots are present.
  */
 export function buildCheckpointManager(args: BuildArgs): ICheckpointManager {
 	const {
@@ -85,12 +83,6 @@ export function buildCheckpointManager(args: BuildArgs): ICheckpointManager {
 
 	const enableCheckpoints = stateManager.getGlobalSettingsKey("enableCheckpointsSetting")
 
-	if (shouldUseMultiRoot({ workspaceManager, enableCheckpoints, stateManager })) {
-		// Multi-root manager (init should be kicked off externally, non-blocking)
-		return new MultiRootCheckpointManager(workspaceManager!, taskId, enableCheckpoints, messageStateHandler)
-	}
-
-	// Single-root manager
 	return createTaskCheckpointManager(
 		{ taskId, controller },
 		{ enableCheckpoints },

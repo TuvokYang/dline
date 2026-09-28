@@ -1,3 +1,4 @@
+import { readCheckpointReferenceSet } from "@shared/checkpoints"
 import { HostProvider } from "@/hosts/host-provider"
 import CheckpointTracker from "@/integrations/checkpoints/CheckpointTracker"
 import { resolveCompletionDiffBaseHash } from "@/integrations/checkpoints/completion-diff"
@@ -19,7 +20,7 @@ export async function showChangedFilesDiff(
 		Logger.error("Message not found")
 		return
 	}
-	const lastCheckpointHash = message.lastCheckpointHash
+	const lastCheckpointHash = readCheckpointReferenceSet(message)?.hashes.find(Boolean)
 	if (!lastCheckpointHash) {
 		Logger.error("No checkpoint hash found")
 		return
@@ -105,8 +106,9 @@ function findPreviousCheckpointHash(messageStateHandler: MessageStateHandler, me
 	// Walk backwards from messageIndex - 1 to find the previous checkpoint_created with a hash
 	for (let i = messageIndex - 1; i >= 0; i--) {
 		const msg = clineMessages[i]
-		if (msg?.say === "checkpoint_created" && msg.lastCheckpointHash) {
-			return msg.lastCheckpointHash
+		if (msg?.say === "checkpoint_created") {
+			const hash = readCheckpointReferenceSet(msg)?.hashes.find(Boolean)
+			if (hash) return hash
 		}
 	}
 	return undefined

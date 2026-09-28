@@ -28,9 +28,9 @@ function createManager(messages: ClineMessage[], changedFileCount: number) {
 describe("TaskCheckpointManager completion change verdict", () => {
 	it("uses the previous ask-form completion and task-owned diff count", async () => {
 		const messages: ClineMessage[] = [
-			{ ts: 1, type: "say", say: "checkpoint_created", lastCheckpointHash: "task-start" },
-			{ ts: 2, type: "ask", ask: "completion_result", lastCheckpointHash: "previous" },
-			{ ts: 3, type: "say", say: "completion_result", lastCheckpointHash: "current" },
+			{ ts: 1, type: "say", say: "checkpoint_created", lastCheckpointHash: ["task-start"] },
+			{ ts: 2, type: "ask", ask: "completion_result", lastCheckpointHash: ["previous"] },
+			{ ts: 3, type: "say", say: "completion_result", lastCheckpointHash: ["current"] },
 		]
 		const { manager, tracker } = createManager(messages, 0)
 
@@ -41,8 +41,8 @@ describe("TaskCheckpointManager completion change verdict", () => {
 
 	it("uses the task-start checkpoint for the first completion", async () => {
 		const messages: ClineMessage[] = [
-			{ ts: 1, type: "say", say: "checkpoint_created", lastCheckpointHash: "task-start" },
-			{ ts: 2, type: "say", say: "completion_result", lastCheckpointHash: "current" },
+			{ ts: 1, type: "say", say: "checkpoint_created", lastCheckpointHash: ["task-start"] },
+			{ ts: 2, type: "say", say: "completion_result", lastCheckpointHash: ["current"] },
 		]
 		const { manager, tracker } = createManager(messages, 2)
 

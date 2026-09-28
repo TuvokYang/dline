@@ -1,3 +1,4 @@
+import { normalizeStoredCheckpointMessage } from "@shared/checkpoints"
 import { fileExistsAtPath } from "@utils/fs"
 import path from "path"
 import { ClineMessage } from "@/shared/ExtensionMessage"
@@ -42,8 +43,11 @@ export class UIMessage {
 			acceptInitialItem: (message) => message.ts > 0,
 		})
 		const stored = store.getAll()
-		if (new Set(stored.map((message) => message.ts)).size !== stored.length) {
-			await store.mutate((current) => dedupeClineMessagesByTs(current))
+		const hasLegacyCheckpointHash = stored.some(
+			(message) => typeof (message as ClineMessage & { lastCheckpointHash?: unknown }).lastCheckpointHash === "string",
+		)
+		if (new Set(stored.map((message) => message.ts)).size !== stored.length || hasLegacyCheckpointHash) {
+			await store.mutate((current) => dedupeClineMessagesByTs(current).map(normalizeStoredCheckpointMessage))
 		}
 		return new UIMessage(store)
 	}

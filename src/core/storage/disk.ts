@@ -1,5 +1,6 @@
 import { EnvironmentMetadataEntry, TaskMetadata } from "@core/context/context-tracking/ContextTrackerTypes"
 import type { FrozenPromptBuilderInfo, TaskContextCache } from "@core/storage/task-context-types"
+import { normalizeStoredCheckpointMessage } from "@shared/checkpoints"
 import { ClineMessage } from "@shared/ExtensionMessage"
 import { envFlagEnabled } from "@shared/env"
 import { HistoryItem } from "@shared/HistoryItem"
@@ -382,7 +383,7 @@ export async function getSavedClineMessages(taskId: string): Promise<ClineMessag
 	// If .jsonl exists, use it exclusively — never fall back to legacy .json
 	if (await fileExistsAtPath(p)) {
 		const raw = await readJsonl<ClineMessage>(p)
-		return dedupeClineMessagesByTs(raw)
+		return dedupeClineMessagesByTs(raw).map(normalizeStoredCheckpointMessage)
 	}
 
 	// Migrate: read legacy .json, write to .jsonl, preserve old file as backup
@@ -392,7 +393,7 @@ export async function getSavedClineMessages(taskId: string): Promise<ClineMessag
 		if (legacyMsgs.length > 0) {
 			await writeJsonl(p, legacyMsgs)
 		}
-		return dedupeClineMessagesByTs(legacyMsgs)
+		return dedupeClineMessagesByTs(legacyMsgs).map(normalizeStoredCheckpointMessage)
 	}
 	// Legacy: claude_messages.json migration (no .jsonl exists yet)
 	const old = path.join(dir, "claude_messages.json")
@@ -401,7 +402,7 @@ export async function getSavedClineMessages(taskId: string): Promise<ClineMessag
 		if (d.length > 0) {
 			await writeJsonl(p, d)
 		}
-		return dedupeClineMessagesByTs(d)
+		return dedupeClineMessagesByTs(d).map(normalizeStoredCheckpointMessage)
 	}
 	return []
 }

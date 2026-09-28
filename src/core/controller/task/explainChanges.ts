@@ -1,5 +1,3 @@
-import CheckpointTracker from "@integrations/checkpoints/CheckpointTracker"
-import { resolveCompletionDiffBaseHash } from "@integrations/checkpoints/completion-diff"
 import { Empty } from "@shared/proto/dline/common"
 import { ExplainChangesRequest } from "@shared/proto/dline/task"
 import { HostProvider } from "@/hosts/host-provider"
@@ -40,7 +38,7 @@ export async function explainChanges(controller: Controller, request: ExplainCha
 			return Empty.create({})
 		}
 
-		const checkpointManager = controller.task.checkpointManager as any
+		const checkpointManager = controller.task.checkpointManager
 		if (!checkpointManager) {
 			HostProvider.window.showMessage({
 				type: ShowMessageType.ERROR,
@@ -50,96 +48,18 @@ export async function explainChanges(controller: Controller, request: ExplainCha
 			return Empty.create({})
 		}
 
-		// Check if checkpoints are enabled
-		if (!checkpointManager.config?.enableCheckpoints) {
-			HostProvider.window.showMessage({
-				type: ShowMessageType.INFORMATION,
-				message: "Checkpoints are disabled in settings. Cannot review changes.",
-			})
+		const messageStateHandler = controller.task.messageStateHandler
+		let changedFiles
+		try {
+			changedFiles = await checkpointManager.getTaskChangesForCheckpoint(request.messageTs)
+		} catch (error) {
+			const errorMessage = error instanceof Error ? error.message : "Unable to load checkpoint changes"
+			Logger.error(`[explainChanges] Failed to load checkpoint changes:`, errorMessage)
+			HostProvider.window.showMessage({ type: ShowMessageType.ERROR, message: errorMessage })
 			relinquishButton()
 			return Empty.create({})
 		}
-
-		// Get message state handler
-		const messageStateHandler = checkpointManager.services?.messageStateHandler
-		if (!messageStateHandler) {
-			HostProvider.window.showMessage({
-				type: ShowMessageType.ERROR,
-				message: "Message state handler not available",
-			})
-			relinquishButton()
-			return Empty.create({})
-		}
-
-		// Find the message
-		const clineMessages = messageStateHandler.clineMessages
-		const messageIndex = clineMessages.findIndex((m: any) => m.ts === request.messageTs)
-		const message = clineMessages[messageIndex]
-
-		if (!message) {
-			Logger.error(`[explainChanges] Message not found for timestamp ${request.messageTs}`)
-			relinquishButton()
-			return Empty.create({})
-		}
-
-		const hash = message.lastCheckpointHash
-		if (!hash) {
-			Logger.error(`[explainChanges] No checkpoint hash found for message ${request.messageTs}`)
-			relinquishButton()
-			return Empty.create({})
-		}
-
-		// Initialize checkpoint tracker if needed (same logic as presentMultifileDiff)
-		if (
-			!checkpointManager.state?.checkpointTracker &&
-			checkpointManager.config?.enableCheckpoints &&
-			!checkpointManager.state?.checkpointManagerErrorMessage
-		) {
-			try {
-				const workspacePath = await checkpointManager.getWorkspacePath()
-				checkpointManager.state.checkpointTracker = await CheckpointTracker.create(
-					checkpointManager.task.taskId,
-					checkpointManager.config.enableCheckpoints,
-					workspacePath,
-				)
-				messageStateHandler.setCheckpointTracker(checkpointManager.state.checkpointTracker)
-			} catch (error) {
-				const errorMessage = error instanceof Error ? error.message : "Unknown error"
-				Logger.error(`[explainChanges] Failed to initialize checkpoint tracker:`, errorMessage)
-				checkpointManager.state.checkpointManagerErrorMessage = errorMessage
-				HostProvider.window.showMessage({
-					type: ShowMessageType.ERROR,
-					message: errorMessage,
-				})
-				relinquishButton()
-				return Empty.create({})
-			}
-		}
-
-		const checkpointTracker = checkpointManager.state?.checkpointTracker as CheckpointTracker | undefined
-		if (!checkpointTracker) {
-			Logger.error(`[explainChanges] Checkpoint tracker not available`)
-			HostProvider.window.showMessage({
-				type: ShowMessageType.ERROR,
-				message: "Checkpoint tracker not available",
-			})
-			relinquishButton()
-			return Empty.create({})
-		}
-
-		const previousCheckpointHash = resolveCompletionDiffBaseHash(clineMessages, messageIndex)
-
-		if (!previousCheckpointHash) {
-			HostProvider.window.showMessage({
-				type: ShowMessageType.ERROR,
-				message: "Unexpected error: No checkpoint hash found",
-			})
-			relinquishButton()
-			return Empty.create({})
-		}
-
-		const changedFiles = await checkpointTracker.getTaskDiffSet(previousCheckpointHash, hash)
-		if (!changedFiles?.length) {
+		if (!changedFiles.length) {
 			HostProvider.window.showMessage({
 				type: ShowMessageType.INFORMATION,
 				message: "No changes found to review",

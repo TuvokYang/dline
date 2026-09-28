@@ -137,7 +137,7 @@ import { createRequestApiScope, type RequestApiScope, resolveRequestWebSearchRou
 import { TaskRequestUsageTracker } from "@core/task/TaskRequestUsageTracker"
 import { isMultiRootEnabled } from "@core/workspace/multi-root-utils"
 import { WorkspaceRootManager } from "@core/workspace/WorkspaceRootManager"
-import { buildCheckpointManager, shouldUseMultiRoot } from "@integrations/checkpoints/factory"
+import { buildCheckpointManager } from "@integrations/checkpoints/factory"
 import { ensureCheckpointInitialized } from "@integrations/checkpoints/initializer"
 import { TaskFileTracker } from "@integrations/checkpoints/TaskFileTracker"
 import { ICheckpointManager } from "@integrations/checkpoints/types"
@@ -158,6 +158,7 @@ import { McpHub } from "@services/mcp/McpHub"
 import { ApiConfiguration, DEFAULT_API_PROVIDER } from "@shared/api"
 import { findLast, findLastIndex } from "@shared/array"
 import type { ChatContent } from "@shared/ChatContent"
+import type { CheckpointReferenceSet } from "@shared/checkpoints"
 import { combineApiRequests } from "@shared/combineApiRequests"
 import { combineCommandSequences } from "@shared/combineCommandSequences"
 import {
@@ -595,7 +596,7 @@ export class Task {
 	private readonly contextCompactionRetryProgress = new Map<string, { retryAttempt: number; maxRetryAttempts: number }>()
 	private diffViewProvider: DiffViewProvider
 	public checkpointManager?: ICheckpointManager
-	private initialCheckpointCommitPromise?: Promise<string | undefined>
+	private initialCheckpointCommitPromise?: Promise<CheckpointReferenceSet | undefined>
 	/**
 	 * Serializes only checkpoint-hash writes that have already entered the message
 	 * store boundary. Baseline Git work may outlive the Task, but terminate marks the
@@ -1339,61 +1340,43 @@ export class Task {
 			},
 		})
 
-		// Check for multiroot workspace and warn about checkpoints
-		const isMultiRootWorkspace = this.workspaceManager && this.workspaceManager.getRoots().length > 1
-		const checkpointsEnabled = this.stateManager.getGlobalSettingsKey("enableCheckpointsSetting")
-
-		if (isMultiRootWorkspace && checkpointsEnabled) {
-			// Set checkpoint manager error message to display warning in TaskHeader
-			this.taskState.checkpointManagerErrorMessage = "Checkpoints are not currently supported in multi-root workspaces."
+		// Older task histories used this message to disable every checkpoint in a
+		// multi-root workspace. The coordinated file backend now supports those
+		// roots, so retaining the stale error would keep the task chat-only.
+		if (
+			this.taskState.checkpointManagerErrorMessage === "Checkpoints are not currently supported in multi-root workspaces."
+		) {
+			this.taskState.checkpointManagerErrorMessage = undefined
 		}
 
-		// Initialize checkpoint manager based on workspace configuration
-		if (!isMultiRootWorkspace) {
-			try {
-				this.checkpointManager = buildCheckpointManager({
-					taskId: this.taskId,
-					controller: this.controller,
-					messageStateHandler: this.messageStateHandler,
-					fileContextTracker: this.fileContextTracker,
-					contextManager: this.contextManager,
-					diffViewProvider: this.diffViewProvider,
-					taskState: this.taskState,
-					taskFileTracker: this.taskFileTracker,
-					workspaceManager: this.workspaceManager,
-					updateTaskHistory: this.updateTaskHistory,
-					say: this.say.bind(this),
-					cancelTask: this.cancelTask,
-					restoreChatRuntime: (input) => this.restoreCheckpointChatRuntime(input),
-					postStateToWebview: this.postStateToWebview,
-					initialConversationHistoryDeletedRange: this.taskState.conversationHistoryDeletedRange,
-					initialCheckpointManagerErrorMessage: this.taskState.checkpointManagerErrorMessage,
-					stateManager: this.stateManager,
+		try {
+			this.checkpointManager = buildCheckpointManager({
+				taskId: this.taskId,
+				controller: this.controller,
+				messageStateHandler: this.messageStateHandler,
+				fileContextTracker: this.fileContextTracker,
+				contextManager: this.contextManager,
+				diffViewProvider: this.diffViewProvider,
+				taskState: this.taskState,
+				taskFileTracker: this.taskFileTracker,
+				workspaceManager: this.workspaceManager,
+				updateTaskHistory: this.updateTaskHistory,
+				say: this.say.bind(this),
+				cancelTask: this.cancelTask,
+				restoreChatRuntime: (input) => this.restoreCheckpointChatRuntime(input),
+				postStateToWebview: this.postStateToWebview,
+				initialConversationHistoryDeletedRange: this.taskState.conversationHistoryDeletedRange,
+				initialCheckpointManagerErrorMessage: this.taskState.checkpointManagerErrorMessage,
+				stateManager: this.stateManager,
+			})
+		} catch (error) {
+			Logger.error("Failed to initialize checkpoint manager:", error)
+			if (this.stateManager.getGlobalSettingsKey("enableCheckpointsSetting")) {
+				const errorMessage = error instanceof Error ? error.message : "Unknown error"
+				HostProvider.window.showMessage({
+					type: ShowMessageType.ERROR,
+					message: `Failed to initialize checkpoint manager: ${errorMessage}`,
 				})
-
-				// If multi-root, kick off non-blocking initialization
-				// Unreachable for now, leaving in for future multi-root checkpoint support
-				if (
-					shouldUseMultiRoot({
-						workspaceManager: this.workspaceManager,
-						enableCheckpoints: this.stateManager.getGlobalSettingsKey("enableCheckpointsSetting"),
-						stateManager: this.stateManager,
-					})
-				) {
-					this.checkpointManager.initialize?.().catch((error: Error) => {
-						Logger.error("Failed to initialize multi-root checkpoint manager:", error)
-						this.taskState.checkpointManagerErrorMessage = error?.message || String(error)
-					})
-				}
-			} catch (error) {
-				Logger.error("Failed to initialize checkpoint manager:", error)
-				if (this.stateManager.getGlobalSettingsKey("enableCheckpointsSetting")) {
-					const errorMessage = error instanceof Error ? error.message : "Unknown error"
-					HostProvider.window.showMessage({
-						type: ShowMessageType.ERROR,
-						message: `Failed to initialize checkpoint manager: ${errorMessage}`,
-					})
-				}
 			}
 		}
 
@@ -4966,7 +4949,7 @@ export class Task {
 		return this.checkpointManager?.saveCheckpoint(isAttemptCompletionMessage, completionMessageTs) ?? Promise.resolve()
 	}
 
-	private async persistCheckpointHashToMessage(messageIndex: number, commitHash: string): Promise<void> {
+	private async persistCheckpointHashToMessage(messageIndex: number, references: CheckpointReferenceSet): Promise<void> {
 		// Register the write synchronously before the first await. Terminate can then
 		// mark the Task aborted and wait for exactly the store work that already began,
 		// without waiting for a slow baseline commit that has not reached this boundary.
@@ -4976,7 +4959,8 @@ export class Task {
 			.then(async () => {
 				if (this.taskState.abort) return
 				await this.messageStateHandler.updateClineMessage(messageIndex, {
-					lastCheckpointHash: commitHash,
+					lastCheckpointHash: references.hashes,
+					checkpointWorkspaceRoots: references.workspaceRoots,
 				})
 				await this.messageStateHandler.flushMessageUpdate(messageIndex)
 				await this.postStateToWebview()
@@ -8847,11 +8831,11 @@ export class Task {
 			if (checkpointInitializationPromise) {
 				const persistCommitPromise = checkpointInitializationPromise.then(async (initialized) => {
 					if (!initialized) return undefined
-					const commitHash = await checkpointManager.commit()
-					if (commitHash && lastCheckpointMessageIndex !== -1) {
-						await this.persistCheckpointHashToMessage(lastCheckpointMessageIndex, commitHash)
+					const checkpointReferences = await checkpointManager.commit()
+					if (checkpointReferences && lastCheckpointMessageIndex !== -1) {
+						await this.persistCheckpointHashToMessage(lastCheckpointMessageIndex, checkpointReferences)
 					}
-					return commitHash
+					return checkpointReferences
 				})
 				this.initialCheckpointCommitPromise = persistCommitPromise
 				// Observe baseline failures even when no mutating tool ever awaits the

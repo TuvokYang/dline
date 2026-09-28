@@ -184,10 +184,14 @@ describe("TaskCheckpointManager checkpoint initialization", () => {
 		expect(messages).toEqual([
 			expect.objectContaining({
 				say: "checkpoint_created",
-				lastCheckpointHash: baselineHash,
+				lastCheckpointHash: [baselineHash],
+				checkpointWorkspaceRoots: ["C:/workspace"],
 			}),
 		])
-		expect(harness.updateClineMessage).toHaveBeenCalledWith(0, { lastCheckpointHash: baselineHash })
+		expect(harness.updateClineMessage).toHaveBeenCalledWith(0, {
+			lastCheckpointHash: [baselineHash],
+			checkpointWorkspaceRoots: ["C:/workspace"],
+		})
 		expect(harness.flushMessageUpdate).toHaveBeenCalledWith(0)
 		expect(harness.updateClineMessage.mock.invocationCallOrder[0]).toBeLessThan(
 			harness.flushMessageUpdate.mock.invocationCallOrder[0],
@@ -213,8 +217,13 @@ describe("TaskCheckpointManager checkpoint initialization", () => {
 
 		await harness.manager.saveCheckpoint(true, completionMessage.ts)
 
-		expect(messages[0]).toEqual(expect.objectContaining({ lastCheckpointHash: completionHash }))
-		expect(harness.updateClineMessage).toHaveBeenCalledWith(0, { lastCheckpointHash: completionHash })
+		expect(messages[0]).toEqual(
+			expect.objectContaining({ lastCheckpointHash: [completionHash], checkpointWorkspaceRoots: ["C:/workspace"] }),
+		)
+		expect(harness.updateClineMessage).toHaveBeenCalledWith(0, {
+			lastCheckpointHash: [completionHash],
+			checkpointWorkspaceRoots: ["C:/workspace"],
+		})
 		expect(harness.flushMessageUpdate).toHaveBeenCalledWith(0)
 		expect(harness.flushMessageUpdate.mock.invocationCallOrder[0]).toBeLessThan(
 			harness.postStateToWebview.mock.invocationCallOrder[0],
@@ -241,7 +250,7 @@ describe("TaskCheckpointManager checkpoint initialization", () => {
 				commit: vi.fn().mockResolvedValue(checkpointHash),
 			} as unknown as CheckpointTracker
 			let nextMessageTs = 100
-			const hashesObservedByPost: Array<string | undefined> = []
+			const hashesObservedByPost: Array<string[] | undefined> = []
 			const postStateToWebview = vi.fn(async () => {
 				const reopenedAtPost = await UIMessage.open(taskId)
 				hashesObservedByPost.push(reopenedAtPost.getAll().at(-1)?.lastCheckpointHash)
@@ -274,8 +283,8 @@ describe("TaskCheckpointManager checkpoint initialization", () => {
 			await manager.saveCheckpoint()
 
 			const reopened = await UIMessage.open(taskId)
-			expect(reopened.getAll().at(-1)?.lastCheckpointHash).toBe(checkpointHash)
-			expect(hashesObservedByPost.at(-1)).toBe(checkpointHash)
+			expect(reopened.getAll().at(-1)?.lastCheckpointHash).toEqual([checkpointHash])
+			expect(hashesObservedByPost.at(-1)).toEqual([checkpointHash])
 		} finally {
 			if (previousDocsDir === undefined) delete process.env.DLINE_DOCS_DIR
 			else process.env.DLINE_DOCS_DIR = previousDocsDir

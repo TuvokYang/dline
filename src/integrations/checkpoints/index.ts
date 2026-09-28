@@ -4,9 +4,17 @@ import type { Controller } from "@core/controller/index"
 import { sendRelinquishControlEvent } from "@core/controller/ui/subscribeToRelinquishControl"
 import { ensureTaskDirectoryExists } from "@core/storage/disk"
 import { WorkspaceRootManager } from "@core/workspace/WorkspaceRootManager"
-import CheckpointTracker from "@integrations/checkpoints/CheckpointTracker"
+import CheckpointTracker, { type CheckpointChangedFile } from "@integrations/checkpoints/CheckpointTracker"
 import { DiffViewProvider } from "@integrations/editor/DiffViewProvider"
 import { findLast, findLastIndex } from "@shared/array"
+import {
+	type CheckpointReferenceSet,
+	checkpointReferenceSetsEqual,
+	createCheckpointReferenceSet,
+	getCheckpointHashForWorkspace,
+	hasFileCheckpoint,
+	readCheckpointReferenceSet,
+} from "@shared/checkpoints"
 import { combineApiRequests } from "@shared/combineApiRequests"
 import { combineCommandSequences } from "@shared/combineCommandSequences"
 import { ClineApiReqInfo, ClineMessage, ClineSay } from "@shared/ExtensionMessage"
@@ -21,8 +29,9 @@ import { retryWithBackoff } from "@/utils/retry"
 import { MessageStateHandler } from "../../core/task/message-state"
 import { TaskState } from "../../core/task/TaskState"
 import type { ClineContent } from "../../shared/messages/content"
+import { CheckpointUnitCoordinator } from "./CheckpointUnitCoordinator"
 import { type ChatRestoreBoundary, resolveChatRestoreBoundary } from "./chat-restore-boundary"
-import { resolveCompletionDiffBaseHash } from "./completion-diff"
+import { resolveCompletionDiffBaseReferences } from "./completion-diff"
 import { CHECKPOINT_TRACKER_ATTEMPT_TIMEOUT_MS } from "./initializer"
 import { ICheckpointManager } from "./types"
 
@@ -77,6 +86,7 @@ interface CheckpointManagerCallbacks {
 interface CheckpointManagerInternalState {
 	conversationHistoryDeletedRange?: [number, number]
 	checkpointTracker?: CheckpointTracker
+	checkpointUnitCoordinator?: CheckpointUnitCoordinator
 	checkpointManagerErrorMessage?: string
 	checkpointTrackerInitPromise?: Promise<CheckpointTracker | undefined>
 }
@@ -87,7 +97,12 @@ interface CheckpointRestoreStateUpdate {
 }
 
 type WorkspaceRestoreResult =
-	| { readonly status: "restored"; readonly checkpointHash: string }
+	| { readonly status: "restored"; readonly checkpointReferences: CheckpointReferenceSet }
+	| {
+			readonly status: "partial"
+			readonly checkpointReferences: CheckpointReferenceSet
+			readonly warning: string
+	  }
 	| { readonly status: "failed"; readonly error: string }
 
 /**
@@ -135,9 +150,10 @@ export class TaskCheckpointManager implements ICheckpointManager {
 		this.state = { ...initialState }
 	}
 
-	private async persistCheckpointHash(messageIndex: number, commitHash: string): Promise<void> {
+	private async persistCheckpointHash(messageIndex: number, references: CheckpointReferenceSet): Promise<void> {
 		await this.services.messageStateHandler.updateClineMessage(messageIndex, {
-			lastCheckpointHash: commitHash,
+			lastCheckpointHash: references.hashes,
+			checkpointWorkspaceRoots: references.workspaceRoots,
 		})
 		await this.services.messageStateHandler.flushMessageUpdate(messageIndex)
 		await this.callbacks.postStateToWebview()
@@ -199,9 +215,9 @@ export class TaskCheckpointManager implements ICheckpointManager {
 				}
 
 				try {
-					const commitHash = await this.state.checkpointTracker.commit()
-					if (commitHash) {
-						await this.persistCheckpointHash(checkpointMessageIndex, commitHash)
+					const checkpointReferences = await this.commit()
+					if (checkpointReferences) {
+						await this.persistCheckpointHash(checkpointMessageIndex, checkpointReferences)
 					}
 					await this.reportStagingHealth()
 				} catch (error) {
@@ -216,14 +232,14 @@ export class TaskCheckpointManager implements ICheckpointManager {
 
 			const recentMessages = this.services.messageStateHandler.clineMessages.slice(-3)
 			const lastCompletionResultMessage = findLast(recentMessages, (m) => m.say === "completion_result")
-			if (lastCompletionResultMessage?.lastCheckpointHash) {
+			if (hasFileCheckpoint(lastCompletionResultMessage && readCheckpointReferenceSet(lastCompletionResultMessage))) {
 				Logger.log("Completion checkpoint already exists, skipping duplicate checkpoint creation")
 				return
 			}
 
-			const commitHash = await this.state.checkpointTracker.commit()
+			const checkpointReferences = await this.commit()
 			await this.reportStagingHealth()
-			if (!commitHash) {
+			if (!checkpointReferences) {
 				Logger.debug(
 					`[TaskCheckpointManager] No file checkpoint hash for completion message in task ${this.task.taskId}; using chat checkpoint only`,
 				)
@@ -235,12 +251,12 @@ export class TaskCheckpointManager implements ICheckpointManager {
 					(m) => m.ts === completionMessageTs,
 				)
 				if (targetMessageIndex !== -1) {
-					await this.persistCheckpointHash(targetMessageIndex, commitHash)
+					await this.persistCheckpointHash(targetMessageIndex, checkpointReferences)
 				}
 			} else if (lastCompletionResultMessage) {
 				const targetMessageIndex = this.services.messageStateHandler.clineMessages.indexOf(lastCompletionResultMessage)
 				if (targetMessageIndex !== -1) {
-					await this.persistCheckpointHash(targetMessageIndex, commitHash)
+					await this.persistCheckpointHash(targetMessageIndex, checkpointReferences)
 				}
 			}
 		} catch (error) {
@@ -259,11 +275,12 @@ export class TaskCheckpointManager implements ICheckpointManager {
 	 */
 	private async reportStagingHealth(): Promise<void> {
 		const tracker = this.state.checkpointTracker
-		if (!tracker) {
+		const coordinator = this.state.checkpointUnitCoordinator
+		if (!tracker && !coordinator) {
 			return
 		}
 		try {
-			const failures = tracker.getConsecutiveStagingFailures()
+			const failures = coordinator?.getConsecutiveStagingFailures() ?? tracker?.getConsecutiveStagingFailures() ?? 0
 			if (failures >= CHECKPOINT_STAGING_FAILURE_ALERT_THRESHOLD) {
 				await this.setcheckpointManagerErrorMessage(
 					`${STAGING_FAILURE_MESSAGE_PREFIX} the last ${failures} change sets. ` +
@@ -310,8 +327,10 @@ export class TaskCheckpointManager implements ICheckpointManager {
 					? this.services.messageStateHandler.clineMessages
 					: this.services.messageStateHandler.durableClineMessages
 			const messageIndex = clineMessages.findIndex((m) => m.ts === messageTs) - (offset || 0)
-			// Find the last message before messageIndex that has a lastCheckpointHash
-			const lastHashIndex = findLastIndex(clineMessages.slice(0, messageIndex), (m) => m.lastCheckpointHash !== undefined)
+			// Find the last message before messageIndex that has a usable file reference set.
+			const lastHashIndex = findLastIndex(clineMessages.slice(0, messageIndex), (m) =>
+				hasFileCheckpoint(readCheckpointReferenceSet(m)),
+			)
 			const message = clineMessages[messageIndex]
 			const lastMessageWithHash = lastHashIndex >= 0 ? clineMessages[lastHashIndex] : undefined
 
@@ -334,6 +353,8 @@ export class TaskCheckpointManager implements ICheckpointManager {
 					? undefined
 					: await this.restoreWorkspaceCheckpoint(message, lastMessageWithHash, messageTs, offset)
 			const workspaceRestoreError = workspaceRestoreResult?.status === "failed" ? workspaceRestoreResult.error : undefined
+			const workspaceRestoreWarning =
+				workspaceRestoreResult?.status === "partial" ? workspaceRestoreResult.warning : undefined
 
 			const checkpointManagerStateUpdate: CheckpointRestoreStateUpdate = {}
 
@@ -361,8 +382,11 @@ export class TaskCheckpointManager implements ICheckpointManager {
 					successfulRestoreType,
 					messageTs,
 					editedText,
-					workspaceRestoreResult?.status === "restored" ? workspaceRestoreResult.checkpointHash : undefined,
+					workspaceRestoreResult && workspaceRestoreResult.status !== "failed"
+						? workspaceRestoreResult.checkpointReferences
+						: undefined,
 					chatRestoreBoundary,
+					workspaceRestoreWarning,
 				)
 				if (this.state.conversationHistoryDeletedRange !== undefined) {
 					checkpointManagerStateUpdate.conversationHistoryDeletedRange = this.state.conversationHistoryDeletedRange
@@ -419,8 +443,8 @@ export class TaskCheckpointManager implements ICheckpointManager {
 				relinquishButton()
 				return
 			}
-			const hash = message.lastCheckpointHash
-			if (!hash) {
+			const checkpointReferences = readCheckpointReferenceSet(message)
+			if (!checkpointReferences || !hasFileCheckpoint(checkpointReferences)) {
 				Logger.error(
 					`[TaskCheckpointManager] No checkpoint hash found for message ${messageTs} in task ${this.task.taskId}`,
 				)
@@ -428,67 +452,49 @@ export class TaskCheckpointManager implements ICheckpointManager {
 				return
 			}
 
-			// Initialize checkpoint tracker if needed.
 			if (!this.state.checkpointTracker && this.config.enableCheckpoints) {
 				this.state.checkpointTracker = await this.checkpointTrackerCheckAndInit()
 			}
-
 			if (!this.state.checkpointTracker) {
 				Logger.error(`[TaskCheckpointManager] Checkpoint tracker not available for task ${this.task.taskId}`)
-				HostProvider.window.showMessage({
-					type: ShowMessageType.ERROR,
-					message: "Checkpoint tracker not available",
-				})
+				HostProvider.window.showMessage({ type: ShowMessageType.ERROR, message: "Checkpoint tracker not available" })
 				relinquishButton()
 				return
 			}
 
-			let changedFiles:
-				| {
-						relativePath: string
-						absolutePath: string
-						before: string
-						after: string
-				  }[]
-				| undefined
+			const previousReferences = seeNewChangesSinceLastTaskCompletion
+				? resolveCompletionDiffBaseReferences(this.services.messageStateHandler.clineMessages, messageIndex)
+				: undefined
+			if (seeNewChangesSinceLastTaskCompletion && !previousReferences) {
+				const errorMessage = "Unexpected error: No checkpoint hash found"
+				Logger.error(`[TaskCheckpointManager] ${errorMessage} for task ${this.task.taskId}`)
+				HostProvider.window.showMessage({ type: ShowMessageType.ERROR, message: errorMessage })
+				relinquishButton()
+				return
+			}
 
-			if (seeNewChangesSinceLastTaskCompletion) {
-				const previousCheckpointHash = resolveCompletionDiffBaseHash(
-					this.services.messageStateHandler.clineMessages,
-					messageIndex,
+			const coordinator = this.state.checkpointUnitCoordinator
+			const targetHash = coordinator ? undefined : await this.getCurrentWorkspaceHash(checkpointReferences)
+			const previousHash =
+				coordinator || !previousReferences ? undefined : await this.getCurrentWorkspaceHash(previousReferences)
+			let changedFiles: CheckpointChangedFile[]
+			if (coordinator) {
+				const outcome = await coordinator.getDiffSet(
+					checkpointReferences,
+					previousReferences,
+					seeNewChangesSinceLastTaskCompletion,
 				)
-
-				if (!previousCheckpointHash) {
-					const errorMessage = "Unexpected error: No checkpoint hash found"
-					Logger.error(`[TaskCheckpointManager] ${errorMessage} for task ${this.task.taskId}`)
-					HostProvider.window.showMessage({
-						type: ShowMessageType.ERROR,
-						message: errorMessage,
-					})
-					relinquishButton()
-					return
-				}
-
-				changedFiles = await this.state.checkpointTracker.getTaskDiffSet(previousCheckpointHash, hash)
-				if (!changedFiles?.length) {
-					HostProvider.window.showMessage({
-						type: ShowMessageType.INFORMATION,
-						message: "No changes found",
-					})
-					relinquishButton()
-					return
-				}
+				changedFiles = outcome.changedFiles
+				this.showPartialCheckpointWarning("Checkpoint diff is partial", outcome.failures)
 			} else {
-				// Get changed files between current state and commit
-				changedFiles = await this.state.checkpointTracker.getDiffSet(hash)
-				if (!changedFiles?.length) {
-					HostProvider.window.showMessage({
-						type: ShowMessageType.INFORMATION,
-						message: "No changes found",
-					})
-					relinquishButton()
-					return
-				}
+				changedFiles = seeNewChangesSinceLastTaskCompletion
+					? await this.state.checkpointTracker.getTaskDiffSet(previousHash!, targetHash!)
+					: await this.state.checkpointTracker.getDiffSet(targetHash!)
+			}
+			if (!changedFiles.length) {
+				HostProvider.window.showMessage({ type: ShowMessageType.INFORMATION, message: "No changes found" })
+				relinquishButton()
+				return
 			}
 
 			// Open multi-diff editor
@@ -512,11 +518,48 @@ export class TaskCheckpointManager implements ICheckpointManager {
 		}
 	}
 
-	/**
-	 * Creates a checkpoint commit in the underlying tracker
-	 * @returns Promise<string | undefined> The created commit hash, or undefined if failed
-	 */
-	async commit(): Promise<string | undefined> {
+	/** Return Task-owned changes for one checkpoint through the same root coordinator used by Compare. */
+	async getTaskChangesForCheckpoint(messageTs: number): Promise<CheckpointChangedFile[]> {
+		if (!this.config.enableCheckpoints) {
+			throw new Error("Checkpoints are disabled in settings. Cannot review changes.")
+		}
+		const clineMessages = this.services.messageStateHandler.clineMessages
+		const messageIndex = clineMessages.findIndex((message) => message.ts === messageTs)
+		const message = clineMessages[messageIndex]
+		if (!message) {
+			throw new Error(`Checkpoint message ${messageTs} was not found`)
+		}
+		const checkpointReferences = readCheckpointReferenceSet(message)
+		if (!checkpointReferences || !hasFileCheckpoint(checkpointReferences)) {
+			throw new Error(`No file checkpoint is available for message ${messageTs}`)
+		}
+		const previousReferences = resolveCompletionDiffBaseReferences(clineMessages, messageIndex)
+		if (!previousReferences || !hasFileCheckpoint(previousReferences)) {
+			throw new Error("No earlier file checkpoint is available for comparison")
+		}
+		if (!this.state.checkpointTracker) {
+			this.state.checkpointTracker = await this.checkpointTrackerCheckAndInit()
+		}
+		if (!this.state.checkpointTracker) {
+			throw new Error("Checkpoint tracker is not available")
+		}
+		const coordinator = this.state.checkpointUnitCoordinator
+		if (coordinator) {
+			const outcome = await coordinator.getDiffSet(checkpointReferences, previousReferences, true)
+			this.showPartialCheckpointWarning("Change review is partial", outcome.failures)
+			return outcome.changedFiles
+		}
+		const previousHash = await this.getCurrentWorkspaceHash(previousReferences)
+		const checkpointHash = await this.getCurrentWorkspaceHash(checkpointReferences)
+		if (!previousHash || !checkpointHash) {
+			throw new Error("No valid checkpoint hash is available for comparison")
+		}
+		return await this.state.checkpointTracker.getTaskDiffSet(previousHash, checkpointHash)
+	}
+
+	/** Creates one ordered reference set across every available workspace root. */
+	async commit(): Promise<CheckpointReferenceSet | undefined> {
+		let scanRequired = false
 		try {
 			if (!this.config.enableCheckpoints) {
 				return undefined
@@ -526,13 +569,32 @@ export class TaskCheckpointManager implements ICheckpointManager {
 				await this.checkpointTrackerCheckAndInit()
 			}
 
+			const coordinator = this.state.checkpointUnitCoordinator
+			if (coordinator) {
+				return await coordinator.commit()
+			}
+
 			if (!this.state.checkpointTracker) {
 				Logger.error(`[TaskCheckpointManager] Checkpoint tracker not available for commit in task ${this.task.taskId}`)
 				return undefined
 			}
 
-			return await this.state.checkpointTracker.commit()
+			scanRequired = this.services.taskFileTracker?.isWorkspaceScanRequired() ?? false
+			const previousHash = scanRequired ? await this.getLatestCheckpointHashForCurrentWorkspace() : undefined
+			const commitHash = await this.state.checkpointTracker.commit()
+			if (commitHash && scanRequired && previousHash && previousHash !== commitHash) {
+				const changedFiles = await this.state.checkpointTracker.getDiffSet(previousHash, commitHash)
+				const changedPaths = changedFiles.map((file) => file.absolutePath)
+				for (const file of changedPaths) {
+					this.services.taskFileTracker?.trackModification(file)
+				}
+				this.services.taskFileTracker?.dropModifiedFiles(changedPaths)
+			}
+			return commitHash ? createCheckpointReferenceSet([commitHash], [await this.getWorkspacePath()]) : undefined
 		} catch (error) {
+			if (scanRequired) {
+				this.services.taskFileTracker?.markWorkspaceScanRequired()
+			}
 			const errorMessage = error instanceof Error ? error.message : "Unknown error"
 			Logger.error(`[TaskCheckpointManager] Failed to create checkpoint commit for task ${this.task.taskId}:`, errorMessage)
 			return undefined
@@ -556,8 +618,8 @@ export class TaskCheckpointManager implements ICheckpointManager {
 				Logger.error(`[TaskCheckpointManager] Completion message not found for task ${this.task.taskId}`)
 				return false
 			}
-			const hash = message.lastCheckpointHash
-			if (!hash) {
+			const checkpointReferences = readCheckpointReferenceSet(message)
+			if (!checkpointReferences || !hasFileCheckpoint(checkpointReferences)) {
 				Logger.debug(
 					`[TaskCheckpointManager] No file checkpoint hash found for completion message in task ${this.task.taskId}; treating as chat-only checkpoint`,
 				)
@@ -573,9 +635,9 @@ export class TaskCheckpointManager implements ICheckpointManager {
 				return false
 			}
 
-			const previousCheckpointHash = resolveCompletionDiffBaseHash(clineMessages, messageIndex)
+			const previousCheckpointReferences = resolveCompletionDiffBaseReferences(clineMessages, messageIndex)
 
-			if (!previousCheckpointHash) {
+			if (!previousCheckpointReferences) {
 				// A task closed before its baseline commit landed has no file
 				// checkpoint to diff against. That is a chat-only history, the same
 				// case the completion message handles above, not a failure.
@@ -585,7 +647,22 @@ export class TaskCheckpointManager implements ICheckpointManager {
 				return false
 			}
 
-			const changedFilesCount = (await this.state.checkpointTracker.getTaskDiffCount(previousCheckpointHash, hash)) || 0
+			const coordinator = this.state.checkpointUnitCoordinator
+			if (coordinator) {
+				const outcome = await coordinator.getTaskDiffCount(previousCheckpointReferences, checkpointReferences)
+				if (outcome.failures.length > 0) {
+					Logger.warn(
+						`[TaskCheckpointManager] Completion diff is partial for task ${this.task.taskId}: ${this.formatCheckpointFailures(outcome.failures)}`,
+					)
+				}
+				return outcome.count > 0
+			}
+			const previousHash = await this.getCurrentWorkspaceHash(previousCheckpointReferences)
+			const checkpointHash = await this.getCurrentWorkspaceHash(checkpointReferences)
+			if (!previousHash || !checkpointHash) {
+				return false
+			}
+			const changedFilesCount = await this.state.checkpointTracker.getTaskDiffCount(previousHash, checkpointHash)
 			return changedFilesCount > 0
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : "Unknown error"
@@ -611,15 +688,16 @@ export class TaskCheckpointManager implements ICheckpointManager {
 			this.state.checkpointTracker = await this.checkpointTrackerCheckAndInit()
 		}
 
-		const checkpointHash = message.lastCheckpointHash ?? lastMessageWithHash?.lastCheckpointHash
-		if (!checkpointHash || !this.state.checkpointTracker) {
+		const messageReferences = readCheckpointReferenceSet(message)
+		const checkpointReferences = messageReferences ?? (lastMessageWithHash && readCheckpointReferenceSet(lastMessageWithHash))
+		if (!checkpointReferences || !this.state.checkpointTracker) {
 			const errorMessage = "Failed to restore checkpoint: No valid checkpoint hash found"
 			Logger.error(`[TaskCheckpointManager] ${errorMessage} for task ${this.task.taskId}`)
 			HostProvider.window.showMessage({ type: ShowMessageType.ERROR, message: errorMessage })
 			return { status: "failed", error: errorMessage }
 		}
 
-		const usesFallback = message.lastCheckpointHash === undefined
+		const usesFallback = messageReferences === undefined
 		if (usesFallback && !offset) {
 			Logger.warn(
 				`[TaskCheckpointManager] Message ${messageTs} has no checkpoint hash, falling back to previous checkpoint for task ${this.task.taskId}`,
@@ -628,6 +706,27 @@ export class TaskCheckpointManager implements ICheckpointManager {
 
 		try {
 			const taskFiles = this.services.taskFileTracker?.getAllModifiedFiles() ?? []
+			const coordinator = this.state.checkpointUnitCoordinator
+			if (coordinator) {
+				const outcome = await coordinator.restore(checkpointReferences, taskFiles)
+				if (outcome.restoredWorkspacePaths.length === 0) {
+					const errorMessage = outcome.failures[0]?.reason ?? "No matching workspace checkpoint could be restored"
+					return { status: "failed", error: `Failed to restore checkpoint: ${errorMessage}` }
+				}
+				if (outcome.failures.length > 0) {
+					return {
+						status: "partial",
+						checkpointReferences: outcome.restoredReferences,
+						warning: `Some workspaces could not be restored:\n${this.formatCheckpointFailures(outcome.failures)}`,
+					}
+				}
+				return { status: "restored", checkpointReferences: outcome.restoredReferences }
+			}
+
+			const checkpointHash = await this.getCurrentWorkspaceHash(checkpointReferences)
+			if (!checkpointHash) {
+				return { status: "failed", error: "Failed to restore checkpoint: No valid checkpoint hash found" }
+			}
 			if (taskFiles.length > 0) {
 				Logger.debug(
 					`[TaskCheckpointManager] Restoring ${taskFiles.length} task-owned file(s) for task ${this.task.taskId}`,
@@ -636,7 +735,7 @@ export class TaskCheckpointManager implements ICheckpointManager {
 			} else {
 				await this.state.checkpointTracker.resetHead(checkpointHash)
 			}
-			return { status: "restored", checkpointHash }
+			return { status: "restored", checkpointReferences }
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : "Unknown error"
 			const isOffsetFallback = usesFallback && Boolean(offset)
@@ -758,36 +857,48 @@ export class TaskCheckpointManager implements ICheckpointManager {
 		restoreType: ClineCheckpointRestore,
 		messageTs: number,
 		editedText: string | undefined,
-		workspaceCheckpointHash: string | undefined,
+		workspaceCheckpointReferences: CheckpointReferenceSet | undefined,
 		chatRestoreBoundary: ChatRestoreBoundary | undefined,
+		workspaceRestoreWarning?: string,
 	): Promise<void> {
-		switch (restoreType) {
-			case "task":
-				HostProvider.window.showMessage({
-					type: ShowMessageType.INFORMATION,
-					message: "Task messages have been restored to the checkpoint",
-				})
-				break
-			case "workspace":
-				HostProvider.window.showMessage({
-					type: ShowMessageType.INFORMATION,
-					message: "Workspace files have been restored to the checkpoint",
-				})
-				break
-			case "taskAndWorkspace":
-				HostProvider.window.showMessage({
-					type: ShowMessageType.INFORMATION,
-					message: "Task and workspace have been restored to the checkpoint",
-				})
-				break
-		}
+		if (workspaceRestoreWarning) {
+			HostProvider.window.showMessage({
+				type: ShowMessageType.WARNING,
+				message:
+					restoreType === "taskAndWorkspace"
+						? `Task messages were restored, but workspace files were restored partially. ${workspaceRestoreWarning}`
+						: `Workspace files were restored partially. ${workspaceRestoreWarning}`,
+			})
+		} else
+			switch (restoreType) {
+				case "task":
+					HostProvider.window.showMessage({
+						type: ShowMessageType.INFORMATION,
+						message: "Task messages have been restored to the checkpoint",
+					})
+					break
+				case "workspace":
+					HostProvider.window.showMessage({
+						type: ShowMessageType.INFORMATION,
+						message: "Workspace files have been restored to the checkpoint",
+					})
+					break
+				case "taskAndWorkspace":
+					HostProvider.window.showMessage({
+						type: ShowMessageType.INFORMATION,
+						message: "Task and workspace have been restored to the checkpoint",
+					})
+					break
+			}
 
-		if (workspaceCheckpointHash !== undefined) {
+		if (workspaceCheckpointReferences !== undefined) {
 			const checkpointMessages = this.services.messageStateHandler.clineMessages.filter(
 				(m) => m.say === "checkpoint_created",
 			)
 			checkpointMessages.forEach((checkpointMessage) => {
-				checkpointMessage.isCheckpointCheckedOut = checkpointMessage.lastCheckpointHash === workspaceCheckpointHash
+				checkpointMessage.isCheckpointCheckedOut =
+					workspaceRestoreWarning === undefined &&
+					checkpointReferenceSetsEqual(readCheckpointReferenceSet(checkpointMessage), workspaceCheckpointReferences)
 			})
 		}
 
@@ -824,6 +935,23 @@ export class TaskCheckpointManager implements ICheckpointManager {
 		return tracker !== undefined
 	}
 
+	private formatCheckpointFailures(failures: ReadonlyArray<{ workspacePath: string; reason: string }>): string {
+		return failures.map((failure) => `${failure.workspacePath}: ${failure.reason}`).join("\n")
+	}
+
+	private showPartialCheckpointWarning(
+		prefix: string,
+		failures: ReadonlyArray<{ workspacePath: string; reason: string }>,
+	): void {
+		if (failures.length === 0) {
+			return
+		}
+		HostProvider.window.showMessage({
+			type: ShowMessageType.WARNING,
+			message: `${prefix}:\n${this.formatCheckpointFailures(failures)}`,
+		})
+	}
+
 	async checkpointTrackerCheckAndInit(forceRetry = false): Promise<CheckpointTracker | undefined> {
 		// If tracker already exists or there was an error, return immediately
 		if (this.state.checkpointTracker) {
@@ -841,7 +969,7 @@ export class TaskCheckpointManager implements ICheckpointManager {
 		}
 
 		// Start initialization and store the promise to prevent concurrent attempts
-		this.state.checkpointTrackerInitPromise = this.initializeCheckpointTracker()
+		this.state.checkpointTrackerInitPromise = this.initializeCheckpointTracker(forceRetry)
 
 		try {
 			const tracker = await this.state.checkpointTrackerInitPromise
@@ -855,7 +983,7 @@ export class TaskCheckpointManager implements ICheckpointManager {
 	/**
 	 * Internal method to actually create the checkpoint tracker
 	 */
-	private async initializeCheckpointTracker(): Promise<CheckpointTracker | undefined> {
+	private async initializeCheckpointTracker(forceRetry = false): Promise<CheckpointTracker | undefined> {
 		// Warning Timer - If checkpoints take a while to initialize, show a warning message
 		let checkpointsWarningTimer: NodeJS.Timeout | null = null
 		let checkpointsWarningShown = false
@@ -869,6 +997,24 @@ export class TaskCheckpointManager implements ICheckpointManager {
 					)
 				}
 			}, 15_000)
+
+			const coordinator = this.getOrCreateCheckpointUnitCoordinator()
+			if (coordinator) {
+				await pTimeout(coordinator.initialize(forceRetry), {
+					milliseconds: CHECKPOINT_TRACKER_ATTEMPT_TIMEOUT_MS,
+					message:
+						"Checkpoints taking too long to initialize. Consider re-opening Dline in a project that uses git, or disabling checkpoints.",
+				})
+				if (!coordinator.hasReadyUnit) {
+					const details = coordinator.initializationFailures.map((failure) => failure.reason).join("; ")
+					throw new Error(details || "No workspace checkpoint tracker could be initialized")
+				}
+				const tracker = coordinator.primaryTracker
+				this.state.checkpointTracker = tracker
+				this.services.messageStateHandler.setCheckpointTracker(tracker)
+				await this.setcheckpointManagerErrorMessage(undefined)
+				return tracker
+			}
 
 			// Timeout - If checkpoints take too long to initialize, warn user and disable checkpoints for the task
 			const workspacePath = await this.getWorkspacePath()
@@ -997,6 +1143,46 @@ export class TaskCheckpointManager implements ICheckpointManager {
 	 * Gets the workspace path from WorkspaceRootManager when available, otherwise falls back to CheckpointUtils
 	 * @returns Promise<string> The workspace path to use for checkpoint operations
 	 */
+	private async getCurrentWorkspaceHash(referenceSet: CheckpointReferenceSet): Promise<string | undefined> {
+		if (referenceSet.workspaceRoots.length === 0) {
+			const legacyHash = referenceSet.hashes[0]
+			return legacyHash && legacyHash.length > 0 ? legacyHash : undefined
+		}
+		return getCheckpointHashForWorkspace(referenceSet, await this.getWorkspacePath(), 0)
+	}
+
+	private async getLatestCheckpointHashForCurrentWorkspace(): Promise<string | undefined> {
+		const latestMessage = findLast(this.services.messageStateHandler.clineMessages, (message) =>
+			hasFileCheckpoint(readCheckpointReferenceSet(message)),
+		)
+		const referenceSet = latestMessage && readCheckpointReferenceSet(latestMessage)
+		return referenceSet ? await this.getCurrentWorkspaceHash(referenceSet) : undefined
+	}
+
+	private getOrCreateCheckpointUnitCoordinator(): CheckpointUnitCoordinator | undefined {
+		if (this.state.checkpointUnitCoordinator) {
+			return this.state.checkpointUnitCoordinator
+		}
+		const workspaceManager = this.services.workspaceManager
+		if (!workspaceManager || typeof workspaceManager.getRoots !== "function") {
+			return undefined
+		}
+		const roots = workspaceManager.getRoots()
+		if (roots.length <= 1) {
+			return undefined
+		}
+		const coordinator = new CheckpointUnitCoordinator({
+			taskId: this.task.taskId,
+			enableCheckpoints: this.config.enableCheckpoints,
+			roots,
+			primaryRootIndex: typeof workspaceManager.getPrimaryIndex === "function" ? workspaceManager.getPrimaryIndex() : 0,
+			taskFileTracker: this.services.taskFileTracker,
+			createCheckpointTracker: this.config.createCheckpointTracker,
+		})
+		this.state.checkpointUnitCoordinator = coordinator
+		return coordinator
+	}
+
 	private async getWorkspacePath(): Promise<string> {
 		// Try to use the centralized WorkspaceRootManager first
 		if (this.services.workspaceManager) {

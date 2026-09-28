@@ -1235,11 +1235,13 @@ export const ChatRowContent = memo(
 					case "checkpoint_created":
 						return (
 							<CheckmarkControl
-								hasWorkspaceCheckpoint={
-									message.lastCheckpointHash !== undefined && checkpointManagerErrorMessage === undefined
-								}
+								hasWorkspaceCheckpoint={message.lastCheckpointHash?.some(Boolean) === true}
 								isCheckpointCheckedOut={message.isCheckpointCheckedOut}
 								messageTs={message.ts}
+								workspaceCheckpointCoverage={{
+									available: message.lastCheckpointHash?.filter(Boolean).length ?? 0,
+									total: message.checkpointWorkspaceRoots?.length ?? message.lastCheckpointHash?.length ?? 0,
+								}}
 							/>
 						)
 					case "load_mcp_documentation":

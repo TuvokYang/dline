@@ -87,6 +87,23 @@ describe("ClineMessage command identity conversion", () => {
 		expect(protoMessage.queuedInputMode).toBe("steering")
 		expect(roundTripMessage).toMatchObject(applicationMessage)
 	})
+
+	it("preserves multi-root checkpoint references across the proto boundary", () => {
+		const applicationMessage: ClineMessage = {
+			ts: 104,
+			type: "say",
+			say: "checkpoint_created",
+			lastCheckpointHash: ["hash-a", "", "hash-c"],
+			checkpointWorkspaceRoots: ["C:/workspace-a", "C:/workspace-b", "C:/workspace-c"],
+		}
+
+		const protoMessage = convertClineMessageToProto(applicationMessage)
+		const roundTripMessage = convertProtoToClineMessage(protoMessage)
+
+		expect(protoMessage.lastCheckpointHash).toEqual(applicationMessage.lastCheckpointHash)
+		expect(protoMessage.checkpointWorkspaceRoots).toEqual(applicationMessage.checkpointWorkspaceRoots)
+		expect(roundTripMessage).toMatchObject(applicationMessage)
+	})
 })
 
 describe("ClineMessage image generation conversion", () => {

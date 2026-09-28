@@ -24,6 +24,7 @@ interface CheckmarkControlProps {
 	isCheckpointCheckedOut?: boolean
 	compactionRestore?: CompactionRestoreReference
 	hasWorkspaceCheckpoint?: boolean
+	workspaceCheckpointCoverage?: { available: number; total: number }
 }
 
 export const CheckmarkControl = ({
@@ -31,6 +32,7 @@ export const CheckmarkControl = ({
 	isCheckpointCheckedOut,
 	compactionRestore,
 	hasWorkspaceCheckpoint = true,
+	workspaceCheckpointCoverage,
 }: CheckmarkControlProps) => {
 	const [compareDisabled, setCompareDisabled] = useState(false)
 	const [restoreTaskDisabled, setRestoreTaskDisabled] = useState(false)
@@ -38,9 +40,19 @@ export const CheckmarkControl = ({
 	const [restoreBothDisabled, setRestoreBothDisabled] = useState(false)
 	const [showRestoreConfirm, setShowRestoreConfirm] = useState(false)
 	const [showMoreOptions, setShowMoreOptions] = useState(false)
-	const { checkpointManagerErrorMessage, onRelinquishControl } = useExtensionState()
-	const workspaceCheckpointAvailable =
-		!compactionRestore && hasWorkspaceCheckpoint && checkpointManagerErrorMessage === undefined
+	const { onRelinquishControl } = useExtensionState()
+	const workspaceCheckpointAvailable = !compactionRestore && hasWorkspaceCheckpoint
+	const partialCoverage =
+		workspaceCheckpointCoverage !== undefined &&
+		workspaceCheckpointCoverage.total > 1 &&
+		workspaceCheckpointCoverage.available < workspaceCheckpointCoverage.total
+	const checkpointLabel = compactionRestore
+		? "Compaction checkpoint"
+		: partialCoverage
+			? `Checkpoint (${workspaceCheckpointCoverage.available}/${workspaceCheckpointCoverage.total} workspaces${isCheckpointCheckedOut ? ", restored" : ""})`
+			: isCheckpointCheckedOut
+				? "Checkpoint (restored)"
+				: "Checkpoint"
 
 	// Clear "Restore Files" button when checkpoint is no longer checked out
 	useEffect(() => {
@@ -194,11 +206,7 @@ export const CheckmarkControl = ({
 					className={cn("text-[9px] text-description shrink-0", {
 						"text-link": isCheckpointCheckedOut,
 					})}>
-					{compactionRestore
-						? "Compaction checkpoint"
-						: isCheckpointCheckedOut
-							? "Checkpoint (restored)"
-							: "Checkpoint"}
+					{checkpointLabel}
 				</span>
 				<DottedLine $isCheckedOut={isCheckpointCheckedOut} />
 				<ButtonGroup>

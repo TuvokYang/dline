@@ -422,6 +422,64 @@ describe("CheckpointTracker with tracked files in an unborn user repository", ()
 		}
 	})
 
+	it("captures untracked command writes when a root is forced to scan", async () => {
+		const sandbox = await createUnbornSandbox()
+		const commandOutput = path.join(sandbox.workspacePath, "command-output.txt")
+		try {
+			const tracker = await CheckpointTracker.create("task-command-scan", true, sandbox.workspacePath)
+			if (!tracker) throw new Error("checkpoint_tracker_missing")
+			await fs.writeFile(commandOutput, "created by command")
+
+			const checkpointHash = await tracker.commitForFiles([], { forceWorkspaceScan: true })
+			expectCheckpointHash(checkpointHash)
+			const shadowGit = simpleGit(path.dirname(await getShadowGitPath(hashWorkingDir(sandbox.workspacePath))))
+			expect(await shadowGit.show([`${checkpointHash}:command-output.txt`])).toBe("created by command")
+		} finally {
+			await disposeSandbox(sandbox)
+		}
+	})
+
+	it("records command-scanned files as task-owned so selective restore includes them", async () => {
+		const sandbox = await createUnbornSandbox()
+		const taskId = "task-command-scan-restore"
+		const commandOutput = path.join(sandbox.workspacePath, "command-output.txt")
+		const taskFiles = new TaskFileTracker(taskId)
+		const messages: ClineMessage[] = []
+		try {
+			const harness = createManagerHarness({
+				taskId,
+				workspacePath: sandbox.workspacePath,
+				taskFileTracker: taskFiles,
+				messages,
+			})
+			await harness.manager.saveCheckpoint()
+			messages.push({ ts: 999, type: "say", say: "text" })
+			taskFiles.trackModification(sandbox.trackedFile)
+			taskFiles.markWorkspaceScanRequired()
+			await fs.writeFile(sandbox.trackedFile, "tracked checkpoint content")
+			await fs.writeFile(commandOutput, "command checkpoint content")
+
+			await harness.manager.saveCheckpoint()
+
+			const checkpointMessage = messages.filter((message) => message.say === "checkpoint_created").at(-1)
+			const checkpointHash = checkpointMessage?.lastCheckpointHash?.[0]
+			expectCheckpointHash(checkpointHash)
+			expect(taskFiles.getAllModifiedFiles()).toEqual(expect.arrayContaining([sandbox.trackedFile, commandOutput]))
+			const tracker = harness.setCheckpointTracker.mock.calls.at(-1)?.[0] as CheckpointTracker | undefined
+			if (!tracker) throw new Error("checkpoint_tracker_missing")
+			await fs.writeFile(sandbox.trackedFile, "after checkpoint")
+			await fs.writeFile(commandOutput, "after checkpoint")
+
+			await tracker.restoreFiles(checkpointHash, taskFiles.getAllModifiedFiles())
+
+			expect(await fs.readFile(sandbox.trackedFile, "utf8")).toBe("tracked checkpoint content")
+			expect(await fs.readFile(commandOutput, "utf8")).toBe("command checkpoint content")
+		} finally {
+			WorkspaceFileRegistry.getInstance().releaseTask(taskId)
+			await disposeSandbox(sandbox)
+		}
+	})
+
 	it("keeps using the shadow repository bound during tracker creation", async () => {
 		const sandbox = await createUnbornSandbox()
 		const taskId = "task-bound-shadow-path"
@@ -481,15 +539,15 @@ describe("CheckpointTracker with tracked files in an unborn user repository", ()
 				lastCheckpointHash: checkpointMessage?.lastCheckpointHash,
 			}).toMatchObject({
 				staging: { success: true },
-				lastCheckpointHash: expect.stringMatching(/^[0-9a-f]{40}$/),
+				lastCheckpointHash: [expect.stringMatching(/^[0-9a-f]{40}$/)],
 			})
-			expectCheckpointHash(checkpointMessage?.lastCheckpointHash)
+			expectCheckpointHash(checkpointMessage?.lastCheckpointHash?.[0])
 			const tracker = harness.manager.getCurrentState().checkpointTracker
 			if (!tracker) throw new Error("checkpoint_tracker_missing")
 			expect(harness.setCheckpointTracker).toHaveBeenCalledWith(tracker)
 
 			await fs.writeFile(sandbox.trackedFile, "after checkpoint")
-			await tracker.restoreFiles(checkpointMessage.lastCheckpointHash, [sandbox.trackedFile])
+			await tracker.restoreFiles(checkpointMessage.lastCheckpointHash[0], [sandbox.trackedFile])
 
 			expect(await fs.readFile(sandbox.trackedFile, "utf8")).toBe("checkpoint content")
 			expect((await simpleGit(sandbox.workspacePath).branchLocal()).current).toBe("")

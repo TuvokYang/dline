@@ -317,7 +317,7 @@ message ClineMessage {
   repeated string images = 7;
   repeated string files = 8;
   bool partial = 9;
-  string last_checkpoint_hash = 10;
+  repeated string last_checkpoint_hash = 10;
   bool is_checkpoint_checked_out = 11;
   bool is_operation_outside_workspace = 12;
   int32 conversation_history_index = 13;
@@ -348,6 +348,8 @@ message ClineMessage {
   optional ImageGenerationPresentation image_generation = 36;
   // Whether this completion produced workspace changes that can be diffed.
   bool completion_has_changes = 37;
+  // Workspace identities aligned with last_checkpoint_hash.
+  repeated string checkpoint_workspace_roots = 38;
 }
 
 message ShowWebviewEvent {

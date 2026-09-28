@@ -1,4 +1,5 @@
 import fs, { type FileHandle } from "node:fs/promises"
+import { normalizeStoredCheckpointMessage } from "@shared/checkpoints"
 import type { ClineMessage } from "@/shared/ExtensionMessage"
 import { readJsonl } from "./backend/jsonl/jsonl-utils"
 
@@ -179,7 +180,7 @@ function parseMessageLine(line: Buffer): ClineMessage | undefined {
 	if (!text) return undefined
 	try {
 		const value = JSON.parse(text)
-		return isStoredMessage(value) ? value : undefined
+		return isStoredMessage(value) ? normalizeStoredCheckpointMessage(value) : undefined
 	} catch {
 		return undefined
 	}

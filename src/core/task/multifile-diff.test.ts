@@ -30,7 +30,7 @@ describe("multifile-diff", () => {
 			{
 				ts: mockMessageTs,
 				type: "say",
-				lastCheckpointHash: mockHash,
+				lastCheckpointHash: [mockHash],
 				say: "text",
 				text: "Test message",
 			},
@@ -63,7 +63,7 @@ describe("multifile-diff", () => {
 					ts: 1234567000,
 					type: "ask",
 					ask: "completion_result",
-					lastCheckpointHash: "previous123",
+					lastCheckpointHash: ["previous123"],
 				},
 				...mockMessages,
 			]
@@ -210,7 +210,7 @@ describe("multifile-diff", () => {
 					ts: 1234567000,
 					type: "say",
 					say: "checkpoint_created",
-					lastCheckpointHash: "first123",
+					lastCheckpointHash: ["first123"],
 				},
 				...mockMessages,
 			]

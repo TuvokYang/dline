@@ -308,7 +308,10 @@ export interface ClineMessage {
 	commandTs?: number
 	exitCode?: number
 	logPath?: string
-	lastCheckpointHash?: string
+	/** Ordered shadow revisions aligned with checkpointWorkspaceRoots. Legacy scalar values are promoted on read. */
+	lastCheckpointHash?: string[]
+	/** Workspace root identities captured with lastCheckpointHash so root reordering cannot misroute a restore. */
+	checkpointWorkspaceRoots?: string[]
 	isCheckpointCheckedOut?: boolean
 	/**
 	 * Whether this completion produced workspace changes that can be diffed.
