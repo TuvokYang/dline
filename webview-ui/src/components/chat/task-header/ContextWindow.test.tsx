@@ -18,6 +18,19 @@ describe("ContextWindow metrics", () => {
 		expect(screen.queryByRole("button", { name: "Compact task" })).not.toBeInTheDocument()
 	})
 
+	it("renders legacy history totals in green and reports unavailable segment details", () => {
+		render(<ContextWindow contextWindow={128_000} lastApiReqTotalTokens={64_000} useAutoCondense={false} />)
+
+		const progress = screen.getByRole("progressbar", { name: "Context window usage progress" })
+		expect(progress.firstElementChild?.getAttribute("style")).toContain("var(--vscode-charts-green, #3fb950)")
+		fireEvent.mouseEnter(screen.getByTestId("context-window-progress-track"))
+		expect(screen.getByText("Segment details unavailable for this saved task.")).toBeInTheDocument()
+		expect(document.querySelector('[data-context-summary-metric="used"]')?.getAttribute("style")).toContain(
+			"var(--vscode-charts-green, #3fb950)",
+		)
+		expect(screen.queryByTestId("context-window-segment-details")).not.toBeInTheDocument()
+	})
+
 	it("keeps the compact action disabled in the context row when compaction cannot re-enter", () => {
 		const onCompactTask = vi.fn(async () => true)
 		render(
@@ -121,6 +134,7 @@ describe("ContextWindow metrics", () => {
 	it("renders the authoritative four segments in durable, active, staged, ENV order", () => {
 		render(
 			<ContextWindow
+				contextWindow={200_000}
 				contextWindowIndicator={{
 					taskId: "task-1",
 					revision: 2,
@@ -136,6 +150,7 @@ describe("ContextWindow metrics", () => {
 					updatedAt: 1,
 					lineage: { kind: "baseline" },
 				}}
+				lastApiReqTotalTokens={90_000}
 				useAutoCondense={false}
 			/>,
 		)
@@ -151,6 +166,21 @@ describe("ContextWindow metrics", () => {
 		for (const kind of ["durable", "active", "staged", "environment"] as const) {
 			expect(screen.getByTestId(`context-window-segment-${kind}`)).not.toHaveAttribute("title")
 		}
+		expect(progress).toHaveAttribute("aria-valuenow", "46000")
+		expect(progress).toHaveAttribute("aria-valuemax", "100000")
+		fireEvent.mouseEnter(screen.getByTestId("context-window-progress-track"))
+		for (const [kind, color] of [
+			["durable", "green"],
+			["active", "yellow"],
+			["staged", "orange"],
+			["environment", "purple"],
+		]) {
+			const segmentStyle = screen.getByTestId(`context-window-segment-${kind}`).getAttribute("style")
+			const detailStyle = document.querySelector(`[data-segment-detail="${kind}"]`)?.getAttribute("style")
+			expect(segmentStyle).toContain(`--vscode-charts-${color}`)
+			expect(detailStyle).toContain(`--vscode-charts-${color}`)
+		}
+		expect(screen.queryByText("Segment details unavailable for this saved task.")).not.toBeInTheDocument()
 	})
 
 	it("opens the current snapshot immediately for the whole track and closes on mouse leave", async () => {

@@ -1,5 +1,6 @@
 import { readJsonl } from "@core/storage/backend/jsonl/jsonl-utils"
 import { getTaskHeaderText } from "@core/storage/disk"
+import type { ContextWindowIndicatorSnapshot } from "@shared/context-window-indicator"
 import type { ClineMessage, ExtensionState } from "@shared/ExtensionMessage"
 import { describe, expect, it, vi } from "vitest"
 import { Controller } from "../index"
@@ -152,6 +153,40 @@ describe("buildState header sourcing", () => {
 		expect(getTaskHeaderTextMock).not.toHaveBeenCalled()
 		expect(readJsonlMock).not.toHaveBeenCalled()
 		expect(oauthMocks.isAuthenticated).not.toHaveBeenCalled()
+	})
+
+	it("projects saved history segments and their total without an executing Task", async () => {
+		const indicator: ContextWindowIndicatorSnapshot = {
+			taskId: "history-task",
+			revision: 7,
+			epoch: 2,
+			phase: "stable",
+			durableContextTokens: 40_000,
+			pendingSendTokens: 0,
+			receivingTokens: 0,
+			stagedTokens: 2_000,
+			environmentTokens: 1_000,
+			contextWindow: 128_000,
+			mode: "act",
+			updatedAt: 100,
+			lineage: { kind: "baseline" },
+		}
+		const fakeController = createFakeController([])
+		fakeController.task = undefined
+		fakeController.historyDisplaySession = {
+			taskId: indicator.taskId,
+			historyItem: { id: indicator.taskId, tokensIn: 10, tokensOut: 1, totalCost: 0 },
+			getMessages: () => [],
+			getMessageCount: () => 0,
+			getTaskTitleMessage: () => ({ ts: 1, type: "say", say: "task", text: HEADER_TEXT }),
+			getContextWindowIndicator: () => indicator,
+			getLastApiReqTotalTokens: () => 1,
+			getFocusChainChecklist: () => null,
+			isLocked: () => false,
+		}
+		const state = await buildState.call(fakeController, 1)
+		expect(state.contextWindowIndicator).toEqual(indicator)
+		expect(state.lastApiReqTotalTokens).toBe(43_000)
 	})
 
 	it("keeps returning the in-memory header even when disk is unavailable", async () => {

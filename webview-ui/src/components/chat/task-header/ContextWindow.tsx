@@ -240,7 +240,11 @@ const ContextWindow: React.FC<ContextWindowProgressProps> = ({
 									{contextWindowIndicator ? (
 										<ContextWindowSegmentedProgress snapshot={contextWindowIndicator} />
 									) : (
-										<Progress aria-label="Context window usage progress" value={tokenData.percentage} />
+										<Progress
+											aria-label="Context window usage progress"
+											indicatorStyle={{ backgroundColor: "var(--vscode-charts-green, #3fb950)" }}
+											value={Math.min(100, Math.max(0, tokenData.percentage))}
+										/>
 									)}
 								</div>
 							</HoverCardTrigger>

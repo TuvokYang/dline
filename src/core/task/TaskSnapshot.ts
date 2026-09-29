@@ -1,3 +1,4 @@
+import type { ContextWindowIndicatorSnapshot } from "@shared/context-window-indicator"
 import type { ClineAsk } from "@shared/ExtensionMessage"
 import cloneDeep from "clone-deep"
 import type { BlockLifecycle } from "./BlockPhaseMachine"
@@ -178,6 +179,8 @@ export interface TaskSnapshot {
 	error?: TaskSnapshotErrorRecovery
 	/** Retained user input awaiting delivery; survives cancel, pause and reload. */
 	inputQueue?: QueuedInputEntry[]
+	/** Last observed context display; never hydrated as execution or request state. */
+	contextWindowIndicator?: ContextWindowIndicatorSnapshot
 }
 
 type LegacySnapshotSection = Record<string, unknown>

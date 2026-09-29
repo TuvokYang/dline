@@ -1,6 +1,7 @@
 import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
+import type { ContextWindowIndicatorSnapshot } from "@shared/context-window-indicator"
 import type { ClineMessage } from "@shared/ExtensionMessage"
 import type { HistoryItem } from "@shared/HistoryItem"
 import { DispatchInteractionRequest } from "@shared/proto/dline/task"
@@ -162,6 +163,86 @@ describe("HistoryDisplaySession", () => {
 
 			expect(session.getLastApiReqTotalTokens()).toBe(50_000)
 			expect(session.getFocusChainChecklist()).toBe(checklist)
+		} finally {
+			await session.dispose()
+		}
+	})
+
+	it.each(["stable", "receiving"] as const)("loads saved %s context segments without rebuilding API history", async (phase) => {
+		const taskId = `history-context-segments-${phase}`
+		await seedMessages(taskId, [{ ts: 10, type: "say", say: "task", text: "Original task" }])
+		const indicator: ContextWindowIndicatorSnapshot = {
+			taskId,
+			revision: 9,
+			epoch: 3,
+			phase,
+			durableContextTokens: 40_000,
+			pendingSendTokens: 0,
+			receivingTokens: phase === "receiving" ? 500 : 0,
+			stagedTokens: 2_000,
+			environmentTokens: 1_000,
+			contextWindow: 128_000,
+			mode: "act",
+			updatedAt: 100,
+			lineage: { kind: "baseline" },
+		}
+		const taskDirectory = await ensureTaskDirectoryExists(taskId)
+		await fs.writeFile(
+			path.join(taskDirectory, GlobalFileNames.taskSnapshot),
+			JSON.stringify({
+				...createSnapshot({ taskId, phase: TaskPhase.PAUSED, revision: 1, anchor: { apiIndex: -1 } }, 200),
+				contextWindowIndicator: indicator,
+			}),
+			"utf8",
+		)
+		const session = new HistoryDisplaySession(createHistoryItem(taskId))
+		try {
+			await session.load()
+			expect(session.getContextWindowIndicator()).toEqual({ ...indicator, phase: "stable", receivingTokens: 0 })
+			expect(session.getLastApiReqTotalTokens()).toBe(43_000)
+		} finally {
+			await session.dispose()
+		}
+		expect(session.getContextWindowIndicator()).toBeUndefined()
+	})
+
+	it.each([
+		{ taskId: "another-task" },
+		{ durableContextTokens: -1 },
+		{ environmentTokens: "invalid" },
+		{ phase: "unknown" },
+	])("ignores malformed or foreign context snapshots and keeps legacy usage: %j", async (invalid) => {
+		const taskId = "history-invalid-context-snapshot"
+		await seedMessages(taskId, [{ ts: 20, type: "say", say: "api_req_started", text: JSON.stringify({ tokensIn: 50_000 }) }])
+		const taskDirectory = await ensureTaskDirectoryExists(taskId)
+		await fs.writeFile(
+			path.join(taskDirectory, GlobalFileNames.taskSnapshot),
+			JSON.stringify({
+				...createSnapshot({ taskId, phase: TaskPhase.PAUSED, revision: 1, anchor: { apiIndex: -1 } }),
+				contextWindowIndicator: {
+					taskId,
+					revision: 9,
+					epoch: 3,
+					phase: "stable",
+					durableContextTokens: 40_000,
+					pendingSendTokens: 0,
+					receivingTokens: 0,
+					stagedTokens: 2_000,
+					environmentTokens: 1_000,
+					contextWindow: 128_000,
+					mode: "act",
+					updatedAt: 100,
+					lineage: { kind: "baseline" },
+					...invalid,
+				},
+			}),
+			"utf8",
+		)
+		const session = new HistoryDisplaySession(createHistoryItem(taskId))
+		try {
+			await session.load()
+			expect(session.getContextWindowIndicator()).toBeUndefined()
+			expect(session.getLastApiReqTotalTokens()).toBe(50_000)
 		} finally {
 			await session.dispose()
 		}

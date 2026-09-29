@@ -1,5 +1,6 @@
 import fs from "node:fs/promises"
 import path from "node:path"
+import { type ContextWindowIndicatorSnapshot, getContextWindowIndicatorTotalTokens } from "@shared/context-window-indicator"
 import type { ClineMessage, TaskViewState } from "@shared/ExtensionMessage"
 import { getLastApiReqTotalTokens } from "@shared/getApiMetrics"
 import type { HistoryItem } from "@shared/HistoryItem"
@@ -19,6 +20,7 @@ import { TaskPhase } from "@/core/task/TaskPhase"
 import { hydrateSnapshot, normalizeLegacyTaskSnapshot, type TaskSnapshot } from "@/core/task/TaskSnapshot"
 import { projectTaskView } from "@/core/task/view/TaskViewProjector"
 import { Logger } from "@/shared/services/Logger"
+import { readHistoryContextWindowIndicator } from "./history-context-window"
 import { projectHistoryPreparingView } from "./history-task-readiness"
 
 /**
@@ -41,6 +43,7 @@ export class HistoryDisplaySession {
 	private taskTitleMessage?: ClineMessage
 	private focusChainChecklist: string | null = null
 	private lastApiReqTotalTokens?: number
+	private contextWindowIndicator?: ContextWindowIndicatorSnapshot
 	private viewState: TaskViewState
 	private locked = false
 	private loaded = false
@@ -87,7 +90,10 @@ export class HistoryDisplaySession {
 			this.messages = projected.messages
 			this.taskTitleMessage = taskTitlePage.messages[0]
 			this.focusChainChecklist = focusChainChecklist
-			this.lastApiReqTotalTokens = getLastApiReqTotalTokens(durableMessages) || undefined
+			this.contextWindowIndicator = readHistoryContextWindowIndicator(snapshot?.contextWindowIndicator, this.taskId)
+			this.lastApiReqTotalTokens = this.contextWindowIndicator
+				? getContextWindowIndicatorTotalTokens(this.contextWindowIndicator)
+				: getLastApiReqTotalTokens(durableMessages) || undefined
 			this.viewState = projected.view
 			this.loaded = true
 		} catch (error) {
@@ -108,6 +114,10 @@ export class HistoryDisplaySession {
 
 	getFocusChainChecklist(): string | null {
 		return this.focusChainChecklist
+	}
+
+	getContextWindowIndicator(): ContextWindowIndicatorSnapshot | undefined {
+		return this.contextWindowIndicator
 	}
 
 	getLastApiReqTotalTokens(): number | undefined {
@@ -194,6 +204,7 @@ export class HistoryDisplaySession {
 		this.taskTitleMessage = undefined
 		this.focusChainChecklist = null
 		this.lastApiReqTotalTokens = undefined
+		this.contextWindowIndicator = undefined
 		this.durableMessageCount = 0
 		if (reader) await reader.close()
 	}

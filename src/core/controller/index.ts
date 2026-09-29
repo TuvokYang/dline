@@ -2479,7 +2479,8 @@ export class Controller {
 			...(aggregatedMetrics ?? getApiMetrics(rawMessages)),
 			...this.task?.getApiRateSnapshot(),
 		}
-		const contextWindowIndicator = this.task?.getContextWindowIndicator()
+		const contextWindowIndicator =
+			this.task?.getContextWindowIndicator() ?? this.historyDisplaySession?.getContextWindowIndicator()
 		const lastApiReqTotalTokens = contextWindowIndicator
 			? getContextWindowIndicatorTotalTokens(contextWindowIndicator)
 			: this.historyDisplaySession

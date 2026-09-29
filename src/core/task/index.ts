@@ -4355,6 +4355,11 @@ export class Task {
 		// otherwise pick up a projection published by a transaction that has
 		// not finished, and a later rollback could not take it back off disk.
 		const decision = this.inputQueueCoordinator.resolveSnapshotWrite(snapshot.inputQueue)
+		// Capture display state with the existing durable write, not on every
+		// streamed chunk. It is a read model and must not enter runtime hydration.
+		const contextWindowIndicator = this.taskState.contextWindowIndicator
+			? cloneDeep(this.taskState.contextWindowIndicator)
+			: undefined
 		const taskDir = await ensureTaskDirectoryExists(this.taskId)
 		const snapshotPath = path.join(taskDir, GlobalFileNames.taskSnapshot)
 		const tmpPath = `${snapshotPath}.tmp.${Date.now()}`
@@ -4375,6 +4380,7 @@ export class Task {
 			}
 			persisted = { ...snapshot, inputQueue: existing.entries }
 		}
+		persisted.contextWindowIndicator = contextWindowIndicator
 		await fs.writeFile(tmpPath, JSON.stringify(persisted, null, 2), "utf8")
 		await renameTaskSnapshotWithRetry(tmpPath, snapshotPath)
 		// A preserve keeps the queue that was already on disk, so the change the
