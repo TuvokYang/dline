@@ -583,9 +583,13 @@ export const ExtensionStateContextProvider: React.FC<{
 								inFlightInteractionFetchRef.current = undefined
 							}
 						} else if (startIndex > 0) {
-							await fetchAttempt(Math.max(0, startIndex - 200), false)
+							await fetchAttempt(Math.max(0, startIndex - 200), false, bootstrapRetryAttempt)
 						} else if (retryLatestAtStart) {
-							await fetchAttempt(-1, false)
+							await fetchAttempt(-1, false, bootstrapRetryAttempt)
+						} else if (bootstrapRetryAttempt < retryDelaysMs.length) {
+							// A disconnected page commits no window change, so recovery cannot
+							// depend on another render. Keep one fenced, bounded fetch chain.
+							await retryLatest(bootstrapRetryAttempt, false)
 						} else if (inFlightKey && inFlightInteractionFetchRef.current === inFlightKey) {
 							// Every page was walked without recovering the anchor.
 							// Releasing the in-flight marker lets a later viewport

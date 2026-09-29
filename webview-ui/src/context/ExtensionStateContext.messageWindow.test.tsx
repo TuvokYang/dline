@@ -925,6 +925,57 @@ describe("ExtensionStateContext persisted message reconciliation", () => {
 		expect(screen.getByRole("alert")).toBeVisible()
 	})
 
+	it("bounds disconnected anchor retries and recovers after a later state publication", async () => {
+		vi.useFakeTimers()
+		try {
+			const tail = convertClineMessageToProto({ ts: 900, type: "say", say: "text", text: "tail message" })
+			const ask = convertClineMessageToProto({
+				ts: 100,
+				type: "ask",
+				ask: "qna_respond",
+				text: "Question",
+				interactionId: "interaction-1",
+			})
+			vi.mocked(TaskServiceClient.fetchMessage)
+				.mockResolvedValueOnce({ messages: [tail], startIndex: 400, totalCount: 401 })
+				.mockResolvedValue({ messages: [ask], startIndex: 0, totalCount: 401 })
+
+			render(
+				<ExtensionStateContextProvider>
+					<InteractionProbe observedTaskIds={[]} />
+				</ExtensionStateContextProvider>,
+			)
+			await act(async () => {
+				subscriptions.state?.onResponse({ stateJson: JSON.stringify(pinnedAnchorState(1, 401)) })
+			})
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(1_200)
+			})
+
+			expect(TaskServiceClient.fetchMessage).toHaveBeenCalledTimes(5)
+			expect(screen.queryByText("Question")).toBeNull()
+			expect(screen.getByRole("alert")).toBeVisible()
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(10_000)
+			})
+			expect(TaskServiceClient.fetchMessage).toHaveBeenCalledTimes(5)
+
+			vi.mocked(TaskServiceClient.fetchMessage).mockResolvedValue({
+				messages: [ask, tail],
+				startIndex: 399,
+				totalCount: 401,
+			})
+			await act(async () => {
+				subscriptions.state?.onResponse({ stateJson: JSON.stringify(pinnedAnchorState(2, 401)) })
+			})
+			expect(TaskServiceClient.fetchMessage).toHaveBeenCalledTimes(6)
+			expect(screen.getByText("Question")).toBeVisible()
+			expect(screen.queryByRole("alert")).toBeNull()
+		} finally {
+			vi.useRealTimers()
+		}
+	})
+
 	it("retries a failed anchor recovery instead of suppressing it permanently", async () => {
 		const ask = convertClineMessageToProto({
 			ts: 100,
