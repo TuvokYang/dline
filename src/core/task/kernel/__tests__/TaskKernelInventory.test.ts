@@ -141,21 +141,26 @@ function productionFiles(directory: string): string[] {
 }
 
 function resolvesTaskIndex(importer: string, specifier: string): boolean {
-	if (specifier === "@core/task") return true
+	if (/^@(?:core|\/core)\/task(?:\/index(?:\.ts)?)?$/.test(specifier)) return true
 	if (!specifier.startsWith(".")) return false
 	const resolved = path.resolve(path.dirname(importer), specifier)
-	return resolved === path.dirname(TASK_INDEX) || resolved === TASK_INDEX.replace(/\.ts$/, "")
+	return resolved === path.dirname(TASK_INDEX) || resolved === TASK_INDEX.replace(/\.ts$/, "") || resolved === TASK_INDEX
+}
+
+function importedSpecifiers(source: string): string[] {
+	const stripped = stripComments(source)
+	return [
+		...stripped.matchAll(/\bfrom\s*["']([^"']+)["']/g),
+		...stripped.matchAll(/\bimport\s*["']([^"']+)["']/g),
+		...stripped.matchAll(/\bimport\s*\(\s*["']([^"']+)["']\s*\)/g),
+		...stripped.matchAll(/\brequire\s*\(\s*["']([^"']+)["']\s*\)/g),
+	].map((match) => match[1])
 }
 
 function taskIndexConsumers(): string[] {
 	return productionFiles(path.join(REPO, "src"))
 		.filter((file) => {
-			const source = stripComments(readFileSync(file, "utf8"))
-			const specifiers = [
-				...source.matchAll(/\bfrom\s*["']([^"']+)["']/g),
-				...source.matchAll(/\bimport\s*\(\s*["']([^"']+)["']\s*\)/g),
-			].map((match) => match[1])
-			return specifiers.some((specifier) => resolvesTaskIndex(file, specifier))
+			return importedSpecifiers(readFileSync(file, "utf8")).some((specifier) => resolvesTaskIndex(file, specifier))
 		})
 		.map((file) => path.relative(REPO, file).replaceAll("\\", "/"))
 		.sort()
@@ -182,6 +187,21 @@ describe("TASK-101 machine inventories", () => {
 
 	it("locks direct, barrel-resolved and dynamic production consumers of task index", () => {
 		expect(taskIndexConsumers()).toEqual([...EXPECTED_TASK_INDEX_CONSUMERS].sort())
+	})
+
+	it("recognizes every supported task-barrel import form", () => {
+		const importer = path.join(REPO, "src/core/controller/example.ts")
+		const specifiers = importedSpecifiers(`
+			import type { Task } from "@core/task"
+			import "@/core/task/index.ts"
+			const dynamic = import("../task/index")
+			const required = require("../task/index.ts")
+			export { Task } from "../task"
+		`)
+
+		expect(specifiers).toEqual(["@core/task", "../task", "@/core/task/index.ts", "../task/index", "../task/index.ts"])
+		expect(specifiers.every((specifier) => resolvesTaskIndex(importer, specifier))).toBe(true)
+		expect(resolvesTaskIndex(importer, "../task/shell/Task")).toBe(false)
 	})
 
 	it("locks every production TaskViewState type or field consumer", () => {
