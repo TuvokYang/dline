@@ -1,5 +1,10 @@
+import * as coreApi from "@core/api"
 import { afterEach, describe, expect, it, vi } from "vitest"
+import { TaskActivityPersistence } from "../activity/TaskActivityPersistence"
+import { TaskActivityStore } from "../activity/TaskActivityStore"
+import { TaskPromptLifecycle } from "../prompt/TaskPromptLifecycle"
 import type { TaskPersistenceAssembly } from "../shell/TaskPersistenceAssembly"
+import { InMemoryConversationJournal } from "../stores/InMemoryRuntimeStores"
 import { type OpenTaskSessionCompositionOptions, TaskSessionCompositionService } from "./TaskSessionCompositionService"
 
 const persistenceMock = vi.hoisted(() => ({ open: vi.fn() }))
@@ -10,8 +15,8 @@ vi.mock("../shell/TaskPersistenceAssembly", () => ({
 
 function messageStores() {
 	return {
-		uiMessage: { close: vi.fn(async () => undefined) },
-		apiConversation: { close: vi.fn(async () => undefined) },
+		uiMessage: { close: vi.fn(async () => undefined), getAll: () => [] },
+		apiConversation: { close: vi.fn(async () => undefined), getAll: () => [] },
 	}
 }
 
@@ -62,5 +67,68 @@ describe("TaskSessionCompositionService", () => {
 		expect(persistence.close).toHaveBeenCalledOnce()
 		expect(stores.uiMessage.close).toHaveBeenCalledOnce()
 		expect(stores.apiConversation.close).toHaveBeenCalledOnce()
+	})
+
+	it.each(["host factory", "post-host composition"] as const)("releases acquired owners on %s failure", async (stage) => {
+		const stores = messageStores()
+		const persistence = {
+			close: vi.fn(async () => undefined),
+			ports: { journal: new InMemoryConversationJournal() },
+			payloads: { put: vi.fn(), read: vi.fn() },
+		} as unknown as TaskPersistenceAssembly
+		persistenceMock.open.mockResolvedValue(persistence)
+		const activityLoad = vi.spyOn(TaskActivityPersistence.prototype, "load").mockResolvedValue([])
+		const activityClose = vi.spyOn(TaskActivityPersistence.prototype, "close").mockResolvedValue(undefined)
+		const activityDispose = vi.spyOn(TaskActivityStore.prototype, "dispose")
+		const promptStart = vi.spyOn(TaskPromptLifecycle.prototype, "start").mockImplementation(() => undefined)
+		const promptDispose = vi.spyOn(TaskPromptLifecycle.prototype, "dispose").mockResolvedValue(undefined)
+		vi.spyOn(coreApi, "buildApiHandler").mockReturnValue({} as never)
+		const failure = new Error(`${stage} failed`)
+		const browserDispose = vi.fn(async () => undefined)
+		const commandsDispose = vi.fn(async () => undefined)
+		const hostRelease = vi.fn(async () => {
+			throw new Error("host cleanup failed")
+		})
+		const create = vi.fn(async () => {
+			if (stage === "host factory") throw failure
+			return {
+				browser: { dispose: browserDispose },
+				commands: { dispose: commandsDispose },
+				releases: [{ release: hostRelease }],
+				// Fail after acquisition, not in a mock of the whole composition.
+				get services() {
+					throw failure
+				},
+			} as never
+		})
+		const options: OpenTaskSessionCompositionOptions = {
+			...openOptions(stores),
+			cwd: ".",
+			deferRestoredCommands: true,
+			stateManager: {
+				getTaskCacheRef: () => ({ mode: "act" }),
+				getApiConfigurationForTask: () => ({}),
+			} as never,
+			prompt: {} as never,
+			hostFactory: { create },
+			publishState: async () => undefined,
+		}
+
+		await expect(new TaskSessionCompositionService().open(options)).rejects.toBe(failure)
+
+		expect(activityLoad).toHaveBeenCalledOnce()
+		expect(promptStart).toHaveBeenCalledOnce()
+		expect(create).toHaveBeenCalledOnce()
+		expect(promptDispose).toHaveBeenCalledOnce()
+		expect(activityDispose).toHaveBeenCalledOnce()
+		expect(activityClose).toHaveBeenCalledOnce()
+		expect(persistence.close).toHaveBeenCalledOnce()
+		expect(stores.uiMessage.close).toHaveBeenCalledOnce()
+		expect(stores.apiConversation.close).toHaveBeenCalledOnce()
+		if (stage === "post-host composition") {
+			expect(hostRelease).toHaveBeenCalledOnce()
+			expect(browserDispose).toHaveBeenCalledOnce()
+			expect(commandsDispose).toHaveBeenCalledOnce()
+		}
 	})
 })

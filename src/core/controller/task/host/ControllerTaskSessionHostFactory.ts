@@ -11,6 +11,7 @@ import type {
 	TaskSessionHostResources,
 } from "@core/task/composition/TaskSessionHostFactory"
 import type { ToolDomainSurface } from "@core/task/executors/tool/ToolDomainSurface"
+import { SessionResourceScope } from "@core/task/session/SessionResourceScope"
 import type { WorkspaceRootManager } from "@core/workspace/WorkspaceRootManager"
 import { TaskFileTracker } from "@integrations/checkpoints/TaskFileTracker"
 import { CommandExecutor } from "@integrations/terminal/CommandExecutor"
@@ -41,6 +42,23 @@ export class ControllerTaskSessionHostFactory implements TaskSessionHostFactory 
 	constructor(private readonly options: ControllerTaskSessionHostFactoryOptions) {}
 
 	async create(context: TaskSessionHostContext): Promise<TaskSessionHostResources> {
+		const rollback = new SessionResourceScope()
+		try {
+			return await this.createResources(context, rollback)
+		} catch (error) {
+			try {
+				await rollback.release()
+			} catch (cleanupError) {
+				Logger.error(`[Task ${context.taskId}] Failed to release partially created host resources`, cleanupError)
+			}
+			throw error
+		}
+	}
+
+	private async createResources(
+		context: TaskSessionHostContext,
+		rollback: SessionResourceScope,
+	): Promise<TaskSessionHostResources> {
 		const host = HostProvider.get()
 		const browserFactory = () => new BrowserSession(this.options.stateManager)
 		const callbackOwner = new ControllerTaskCallbacksOwner({
@@ -53,8 +71,10 @@ export class ControllerTaskSessionHostFactory implements TaskSessionHostFactory 
 			toolState: context.toolState,
 			createBrowser: browserFactory,
 		})
+		rollback.add({ release: () => callbackOwner.dispose() })
 		const diffViewProvider = host.createDiffViewProvider()
 		const fileContextTracker = new FileContextTracker(this.options.controller, context.taskId)
+		rollback.add({ release: async () => fileContextTracker.dispose() })
 		const taskFileTracker = new TaskFileTracker(context.taskId)
 		const contextManager = new ContextManager()
 		await contextManager.initializeContextHistory(await ensureTaskDirectoryExists(context.taskId))
@@ -138,6 +158,7 @@ export class ControllerTaskSessionHostFactory implements TaskSessionHostFactory 
 			},
 			commandCallbacks,
 		)
+		rollback.add({ release: () => commands.dispose() })
 		callbackOwner.bindCommandExecutor(commands)
 		const checkpointOwner = new ControllerTaskCheckpointOwner({
 			controller: this.options.controller,

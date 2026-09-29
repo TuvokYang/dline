@@ -49,6 +49,7 @@ import { ProviderTextPresenter } from "../session/ProviderTextPresenter"
 import type { RealtimeMessagePublisher } from "../session/RealtimeMessagePublisher"
 import { readRestoredContextPressure } from "../session/RestoredContextPressure"
 import { RestoredToolDialogContinuation } from "../session/RestoredToolDialogContinuation"
+import { SessionResourceScope } from "../session/SessionResourceScope"
 import { TaskApiHandlerOwner } from "../session/TaskApiHandlerOwner"
 import { TaskBackgroundResultsOwner } from "../session/TaskBackgroundResultsOwner"
 import { TaskContextUsageProjection } from "../session/TaskContextUsageProjection"
@@ -125,17 +126,20 @@ export interface OpenTaskSessionCompositionOptions {
 export class TaskSessionCompositionService {
 	async open(options: OpenTaskSessionCompositionOptions): Promise<ActiveTaskSession> {
 		let persistence: TaskPersistenceAssembly | undefined
+		const resources = new SessionResourceScope()
+		// Storage closes last: the later owners may still commit while stopping.
+		resources.add({ release: async () => persistence?.close?.() })
+		resources.add({ release: () => options.messages.uiMessage.close() })
+		resources.add({ release: () => options.messages.apiConversation.close() })
 		try {
 			persistence = await openTaskPersistence(options.taskId)
-			return await this.compose(options, persistence)
+			return await this.compose(options, persistence, resources)
 		} catch (error) {
-			// Nothing owns the task yet, so its journal.db and messages.db writers
-			// would otherwise stay claimed. Closing must not replace the failure.
-			await Promise.allSettled([
-				persistence?.close?.(),
-				options.messages.uiMessage.close(),
-				options.messages.apiConversation.close(),
-			])
+			try {
+				await resources.release()
+			} catch (cleanupError) {
+				Logger.error(`[Task ${options.taskId}] Failed to release resources after session open failed`, cleanupError)
+			}
 			throw error
 		}
 	}
@@ -143,6 +147,7 @@ export class TaskSessionCompositionService {
 	private async compose(
 		options: OpenTaskSessionCompositionOptions,
 		persistence: TaskPersistenceAssembly,
+		resources: SessionResourceScope,
 	): Promise<ActiveTaskSession> {
 		const taskIncarnationId = options.taskIncarnationId ?? randomUUID()
 		// Before the kernel reads the journal tail, so a task from an older build
@@ -166,7 +171,17 @@ export class TaskSessionCompositionService {
 			conversation: conversationView,
 		})
 		const activityPersistence = new TaskActivityPersistence(options.taskId)
+		resources.add({ release: () => activityPersistence.close() })
 		const activities = new TaskActivityStore(options.taskId, activityPersistence)
+		resources.add({
+			release: async () => {
+				try {
+					await activities.waitForPersistence()
+				} finally {
+					activities.dispose()
+				}
+			},
+		})
 		await activities.hydrate()
 		let session: ActiveTaskSession | undefined
 		// Command dispatch, publication, commit and unowned dialog continuation all
@@ -201,6 +216,7 @@ export class TaskSessionCompositionService {
 			),
 			diagnostics,
 		)
+		resources.add({ release: async () => interactions.dispose() })
 		const api = new TaskApiHandlerOwner({
 			taskId: options.taskId,
 			taskIncarnationId,
@@ -262,6 +278,7 @@ export class TaskSessionCompositionService {
 			buildPromptContext,
 			publishState: options.publishState,
 		})
+		resources.add({ release: () => prompt.dispose() })
 		prompt.start()
 		const tool = await options.hostFactory.create({
 			taskId: options.taskId,
@@ -280,6 +297,9 @@ export class TaskSessionCompositionService {
 			// conversation the provider is sent, which only this task's journal holds.
 			conversationRewind: new JournalConversationRewind(persistence.ports.journal, conversationView),
 		})
+		resources.add({ release: () => tool.browser.dispose() })
+		resources.add({ release: () => tool.commands.dispose() })
+		for (const release of tool.releases ?? []) resources.add(release)
 		const toolRuntime = new ProductionToolHandlerRuntime(new ToolValidator(options.prompt.ignoreController))
 		// One owner per task session: the provider request grants the turn's
 		// authority and the tool gate reads it back under the same turn identity.
@@ -602,27 +622,7 @@ export class TaskSessionCompositionService {
 				}),
 				spawn: tool.spawn,
 			},
-			releases: [
-				// Released last: every other owner may still commit while it shuts down.
-				{ release: async () => persistence.close?.() },
-				// Closing is the durability boundary of the chat rows and releases the
-				// single messages.db writer, so the task can be opened again in this
-				// window. Released after every owner that may still record a row.
-				{ release: () => messages.close() },
-				{ release: () => prompt.dispose() },
-				{
-					release: async () => {
-						await activities.waitForPersistence()
-						activities.dispose()
-						// activities.db has one writer; closing releases it for the next session.
-						await activityPersistence.close()
-					},
-				},
-				{ release: () => tool.browser.dispose() },
-				{ release: () => tool.commands.dispose() },
-				...(tool.releases ?? []),
-				{ release: async () => interactions.dispose() },
-			],
+			releases: [resources],
 		})
 		session = opened
 		interactions.bind(session)

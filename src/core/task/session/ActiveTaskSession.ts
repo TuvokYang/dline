@@ -7,12 +7,11 @@ import type { TaskExecutorAssembly } from "../shell/TaskExecutorAssembly"
 import type { TaskPayloadStore } from "../stores"
 import type { CanonicalTaskViewProjection } from "../view/canonical/CanonicalTaskViewProjection"
 import { projectCanonicalTaskView } from "../view/canonical/projectCanonicalTaskView"
+import { releaseSessionResources, type SessionResourceReleasePort } from "./SessionResourceScope"
 import type { TaskInputMaterializer } from "./TaskInputMaterializer"
 import type { TaskSessionOwners } from "./TaskSessionOwners"
 
-export interface ActiveTaskSessionReleasePort {
-	release(): Promise<void>
-}
+export type ActiveTaskSessionReleasePort = SessionResourceReleasePort
 
 export interface ActiveTaskSessionOptions {
 	readonly task: Task
@@ -68,6 +67,6 @@ export class ActiveTaskSession {
 
 	private async disposeOwnedResources(haltId: string): Promise<void> {
 		await this.task.terminate(haltId)
-		for (const release of [...(this.options.releases ?? [])].reverse()) await release.release()
+		await releaseSessionResources(this.options.releases ?? [])
 	}
 }

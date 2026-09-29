@@ -64,4 +64,67 @@ describe("ActiveTaskSession", () => {
 		expect(terminate).toHaveBeenCalledExactlyOnceWith("halt-1")
 		expect(order).toEqual(["terminate", "second", "first"])
 	})
+
+	it("attempts every release after termination, preserving all cleanup failures", async () => {
+		const order: string[] = []
+		const failures = [new Error("last owner failed"), new Error("first owner failed")]
+		const terminate = vi.fn(async () => void order.push("terminate"))
+		const payloads = { put: vi.fn(), read: vi.fn() } as unknown as TaskPayloadStore
+		const session = new ActiveTaskSession({
+			task: { taskId: "task-1", terminate } as unknown as Task,
+			readState: () => createInitialTaskState("task-1"),
+			assembly: {} as TaskExecutorAssembly,
+			payloads,
+			inputs: new TaskInputMaterializer(payloads, { nextEntryId: () => "entry-1", nextSequence: () => 0 }),
+			owners: createOwners(),
+			approvalFeedback: new InMemoryToolApprovalFeedbackLedger(),
+			conversation: createConversation(),
+			releases: [
+				{
+					release: async () => {
+						order.push("first")
+						throw failures[1]
+					},
+				},
+				{ release: async () => void order.push("middle") },
+				{
+					release: async () => {
+						order.push("last")
+						throw failures[0]
+					},
+				},
+			],
+		})
+
+		const result = await session.dispose("halt-1").catch((error: unknown) => error)
+		expect(result).toBeInstanceOf(AggregateError)
+		expect((result as AggregateError).errors).toEqual(failures)
+		expect(order).toEqual(["terminate", "last", "middle", "first"])
+		await expect(session.dispose("halt-2")).rejects.toBe(result)
+		expect(terminate).toHaveBeenCalledOnce()
+		expect(order).toHaveLength(4)
+	})
+
+	it("keeps resources owned when task termination fails before quiescence", async () => {
+		const failure = new Error("task did not quiesce")
+		const release = vi.fn(async () => undefined)
+		const terminate = vi.fn(async () => {
+			throw failure
+		})
+		const payloads = { put: vi.fn(), read: vi.fn() } as unknown as TaskPayloadStore
+		const session = new ActiveTaskSession({
+			task: { taskId: "task-1", terminate } as unknown as Task,
+			readState: () => createInitialTaskState("task-1"),
+			assembly: {} as TaskExecutorAssembly,
+			payloads,
+			inputs: new TaskInputMaterializer(payloads, { nextEntryId: () => "entry-1", nextSequence: () => 0 }),
+			owners: createOwners(),
+			approvalFeedback: new InMemoryToolApprovalFeedbackLedger(),
+			conversation: createConversation(),
+			releases: [{ release }],
+		})
+
+		await expect(session.dispose("halt-1")).rejects.toBe(failure)
+		expect(release).not.toHaveBeenCalled()
+	})
 })
