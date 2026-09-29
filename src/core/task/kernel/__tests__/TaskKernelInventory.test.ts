@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync, statSync } from "node:fs"
 import path from "node:path"
+import { ts } from "ts-morph"
 import { describe, expect, it } from "vitest"
 
 const REPO = path.resolve(__dirname, "../../../../..")
@@ -147,20 +148,37 @@ function resolvesTaskIndex(importer: string, specifier: string): boolean {
 	return resolved === path.dirname(TASK_INDEX) || resolved === TASK_INDEX.replace(/\.ts$/, "") || resolved === TASK_INDEX
 }
 
-function importedSpecifiers(source: string): string[] {
-	const stripped = stripComments(source)
-	return [
-		...stripped.matchAll(/\bfrom\s*["']([^"']+)["']/g),
-		...stripped.matchAll(/\bimport\s*["']([^"']+)["']/g),
-		...stripped.matchAll(/\bimport\s*\(\s*["']([^"']+)["']\s*\)/g),
-		...stripped.matchAll(/\brequire\s*\(\s*["']([^"']+)["']\s*\)/g),
-	].map((match) => match[1])
+function importedSpecifiers(source: string, fileName = "inventory.ts"): string[] {
+	const file = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true)
+	const specifiers: string[] = []
+	const record = (node: ts.Node | undefined) => {
+		if (node && (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node))) specifiers.push(node.text)
+	}
+	const visit = (node: ts.Node): void => {
+		if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
+			record(node.moduleSpecifier)
+		} else if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)) {
+			record(node.moduleReference.expression)
+		} else if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument)) {
+			record(node.argument.literal)
+		} else if (
+			ts.isCallExpression(node) &&
+			(node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+				(ts.isIdentifier(node.expression) && node.expression.text === "require"))
+		) {
+			record(node.arguments[0])
+		}
+		ts.forEachChild(node, visit)
+	}
+	visit(file)
+	return specifiers
 }
 
 function taskIndexConsumers(): string[] {
-	return productionFiles(path.join(REPO, "src"))
+	return [path.join(REPO, "src"), path.join(REPO, "webview-ui/src")]
+		.flatMap(productionFiles)
 		.filter((file) => {
-			return importedSpecifiers(readFileSync(file, "utf8")).some((specifier) => resolvesTaskIndex(file, specifier))
+			return importedSpecifiers(readFileSync(file, "utf8"), file).some((specifier) => resolvesTaskIndex(file, specifier))
 		})
 		.map((file) => path.relative(REPO, file).replaceAll("\\", "/"))
 		.sort()
@@ -199,9 +217,27 @@ describe("TASK-101 machine inventories", () => {
 			export { Task } from "../task"
 		`)
 
-		expect(specifiers).toEqual(["@core/task", "../task", "@/core/task/index.ts", "../task/index", "../task/index.ts"])
+		expect(specifiers.sort()).toEqual(
+			["@core/task", "../task", "@/core/task/index.ts", "../task/index", "../task/index.ts"].sort(),
+		)
 		expect(specifiers.every((specifier) => resolvesTaskIndex(importer, specifier))).toBe(true)
 		expect(resolvesTaskIndex(importer, "../task/shell/Task")).toBe(false)
+	})
+
+	it("parses module references rather than matching import examples inside strings", () => {
+		const specifiers = importedSpecifiers(
+			[
+				`const note = "from '@core/task'"`,
+				`const example = 'import("@core/task")'`,
+				`// import("@core/task")`,
+				`type Lazy = import(/* type query */ "@core/task/index.ts").Task`,
+				"const dynamic = import(`../task/index`, { with: { type: 'json' } })",
+				`const required = require(/* bridge */ "../task/index.ts")`,
+				`import Alias = require("@core/task")`,
+			].join("\n"),
+		)
+
+		expect(specifiers).toEqual(["@core/task/index.ts", "../task/index", "../task/index.ts", "@core/task"])
 	})
 
 	it("locks every production TaskViewState type or field consumer", () => {
