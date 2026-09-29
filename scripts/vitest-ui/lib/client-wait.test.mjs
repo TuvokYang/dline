@@ -140,6 +140,54 @@ test("classifies a mixed passed and uncollected file as unknown", () => {
 	assert.equal(classifyFile(mixedFile), "unknown")
 })
 
+test("accepts an explicitly skipped child without a result while preserving the file's actual pass", async () => {
+	const mixedFile = {
+		...file("mixed", "pass"),
+		tasks: [
+			{ id: "passed", name: "passed", type: "test", mode: "run", result: { state: "pass" }, tasks: [] },
+			{ id: "skipped", name: "platform-specific", type: "test", mode: "skip", tasks: [] },
+		],
+	}
+	const client = {
+		state: { lastFinishedAt: Date.now() },
+		getPaths: async () => [mixedFile.filepath],
+		getFiles: async () => [mixedFile],
+	}
+
+	assert.equal(classifyFile(mixedFile), "pass")
+	assert.deepEqual(await waitForIdle(client, { timeoutMs: 20, pollMs: 0 }), [mixedFile])
+})
+
+test("reports explicitly skipped and todo collections as skip, never pass", () => {
+	for (const mode of ["skip", "todo"]) {
+		const skippedFile = {
+			...file("skipped", "skip"),
+			mode,
+			tasks: [{ id: "skipped-test", name: "optional", type: "test", mode, tasks: [] }],
+		}
+		assert.equal(classifyFile(skippedFile), "skip")
+	}
+})
+
+test("does not hide an explicit failure behind a skipped mode", () => {
+	const failedFile = {
+		...file("failed", "pass"),
+		tasks: [{ id: "failed-test", name: "failed", type: "test", mode: "skip", result: { state: "fail" }, tasks: [] }],
+	}
+	assert.equal(classifyFile(failedFile), "fail")
+})
+
+test("keeps a runnable child without a result unknown even beside explicit skips", () => {
+	const incompleteFile = {
+		...file("incomplete", "pass"),
+		tasks: [
+			{ id: "unknown", name: "not-collected", type: "test", mode: "run", tasks: [] },
+			{ id: "skipped", name: "optional", type: "test", mode: "skip", tasks: [] },
+		],
+	}
+	assert.equal(classifyFile(incompleteFile), "unknown")
+})
+
 test("readKnownFiles rejects empty and stale equal-count collections", async () => {
 	await assert.rejects(
 		readKnownFiles({ getPaths: async () => [], getFiles: async () => [] }),
