@@ -1,7 +1,7 @@
 import type { UiMessage } from "@shared/ExtensionMessage"
 import type { ClineContent, ClineStorageMessage, ClineUserToolResultContentBlock } from "@shared/messages"
-import { type BlockLifecycle, BlockPhase } from "../BlockPhaseMachine"
 import { type DurableToolResultRecord, readDurableToolResult, replayContentOf } from "../DurableToolResult"
+import { type BlockLifecycle, BlockPhase } from "./LegacyBlockLifecycle"
 
 export interface AssembleToolTurnContentInput {
 	blocks: readonly BlockLifecycle[]

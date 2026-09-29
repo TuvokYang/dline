@@ -1,7 +1,7 @@
 import type { UiMessage } from "@shared/ExtensionMessage"
 import type { ClineContent, ClineStorageMessage, ClineUserToolResultContentBlock } from "@shared/messages"
 import { describe, expect, it } from "vitest"
-import { type BlockLifecycle, BlockPhase } from "../../BlockPhaseMachine"
+import { type BlockLifecycle, BlockPhase } from "../LegacyBlockLifecycle"
 import { buildMistakeLimitContinuationContent } from "../MistakeLimitContinuation"
 
 function lifecycle(dlineTid: string, functionId: string, phase: BlockPhase = BlockPhase.COMPLETED): BlockLifecycle {

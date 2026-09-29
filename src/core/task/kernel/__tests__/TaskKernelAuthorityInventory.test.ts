@@ -56,7 +56,7 @@ describe("TASK-103 legacy authority migration inventory", () => {
 		}).toEqual({
 			transitionRequired: [],
 			buildTurn: [],
-			advance: ["src/core/task/BlockPhaseMachine.ts"],
+			advance: [],
 			rejectActiveBlock: [],
 			completeActiveBlock: [],
 			restoreTurnFromSnapshot: [],

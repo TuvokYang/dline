@@ -1,7 +1,7 @@
 import type { UiMessage } from "@shared/ExtensionMessage"
 import type { ClineContent, ClineStorageMessage, ClineUserToolResultContentBlock } from "@shared/messages"
 import { describe, expect, it } from "vitest"
-import { type BlockLifecycle, BlockPhase } from "../../BlockPhaseMachine"
+import { type BlockLifecycle, BlockPhase } from "../../continuation/LegacyBlockLifecycle"
 import { collectResumeTurnContent } from "../ResumeToolResult"
 
 const blocks: BlockLifecycle[] = [

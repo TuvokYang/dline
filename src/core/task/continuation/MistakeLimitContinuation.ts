@@ -2,7 +2,7 @@ import { formatResponse } from "@core/prompts/responses"
 import { processFilesIntoText } from "@integrations/misc/extract-text"
 import type { UiMessage } from "@shared/ExtensionMessage"
 import type { ClineContent, ClineStorageMessage } from "@shared/messages"
-import type { BlockLifecycle } from "../BlockPhaseMachine"
+import type { BlockLifecycle } from "./LegacyBlockLifecycle"
 import { assembleToolTurnContent } from "./ToolTurnContentAssembler"
 
 export interface MistakeLimitContinuationInput {
