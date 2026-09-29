@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest"
 import type { TaskState } from "../../kernel"
 import { createInitialTaskState } from "../../kernel"
+import { deferred } from "../../runtime/deferred"
 import type { TaskPayloadStore } from "../../stores/contracts"
 import { InMemoryConversationJournal } from "../../stores/InMemoryRuntimeStores"
 import { decodeTaskPayload, encodeTaskPayload } from "../../stores/payload/TaskPayloadCodec"
@@ -121,6 +122,43 @@ describe("ProductionComposeAdapter background results", () => {
 			"journal unavailable",
 		)
 		expect(commit).not.toHaveBeenCalled()
+	})
+
+	it("acknowledges a durable result even when cancellation arrives during its append", async () => {
+		const store = payloadStore()
+		const journal = new InMemoryConversationJournal()
+		const append = journal.append.bind(journal)
+		const appending = deferred<void>()
+		const persisted = deferred<void>()
+		vi.spyOn(journal, "append").mockImplementation(async (entry) => {
+			if (entry.operationId.startsWith("background:")) {
+				appending.resolve()
+				await persisted.promise
+			}
+			return append(entry)
+		})
+		const entryRef = await store.put(encodeTaskPayload({ kind: "user_input", text: "collect" }))
+		const state = stateWithEntry(entryRef)
+		const commit = vi.fn()
+		const adapter = new ProductionComposeAdapter({
+			payloads: store,
+			journal,
+			readState: () => state,
+			backgroundResults: { collect: async () => ({ text: "# Background Results", commit }) },
+			environment: { render: async () => "environment" },
+		})
+		const cancellation = new AbortController()
+		const composing = adapter.compose({ admittedEntryIds: ["entry-1"], signal: cancellation.signal })
+		const stopped = expect(composing).rejects.toThrow("round cancelled")
+		await appending.promise
+		expect(commit).not.toHaveBeenCalled()
+
+		cancellation.abort(new Error("round cancelled"))
+		persisted.resolve()
+		await stopped
+
+		expect(commit).toHaveBeenCalledOnce()
+		expect(await journaledKinds(journal, store)).toEqual(["user_input", "background_results"])
 	})
 
 	it("stays silent when no background work finished", async () => {

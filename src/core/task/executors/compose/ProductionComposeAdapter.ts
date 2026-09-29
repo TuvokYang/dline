@@ -10,6 +10,7 @@ import type {
 	TurnContinuationEnvelope,
 	UserInputEnvelope,
 } from "../../stores/payload/TaskPayloadEnvelopes"
+import type { ComposeBackgroundResultsPort } from "./ComposeBackgroundResultsPort"
 import type { ComposePort, ComposeRoundInput, ComposeRoundResult } from "./ComposeCommandExecutor"
 
 /**
@@ -31,25 +32,6 @@ export interface ComposeEnvironmentPort {
  */
 export interface ComposeContinuationPort {
 	render(reason: TurnContinuationReason): string | undefined
-}
-
-/**
- * Delivers results of background work that finished between rounds.
- *
- * Background commands and subagents outlive the round that started them, so
- * their outcome can only reach the model through a later round. The compose
- * domain decides which round that is; collecting the results and marking them
- * delivered belongs to whoever owns the background work.
- */
-export interface ComposeBackgroundResultsPort {
-	/** Collect results not yet delivered, or undefined when there are none. */
-	collect(input: { readonly signal: AbortSignal }): Promise<BackgroundResultsLease | undefined>
-}
-
-/** Background results reserved for one round and committed only after journaling. */
-export interface BackgroundResultsLease {
-	readonly text: string
-	commit(): void
 }
 
 /**

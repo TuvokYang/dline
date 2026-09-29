@@ -7,8 +7,8 @@ import {
 	ProductionCompactionAdapter,
 	type ProductionCompactionService,
 } from "../executors/compaction/ProductionCompactionAdapter"
+import type { ComposeBackgroundResultsPort } from "../executors/compose/ComposeBackgroundResultsPort"
 import {
-	type ComposeBackgroundResultsPort,
 	type ComposeCompactionBarrierPort,
 	type ComposeContinuationPort,
 	type ComposeEnvironmentPort,
