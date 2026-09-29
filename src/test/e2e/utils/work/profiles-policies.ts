@@ -249,6 +249,7 @@ export async function closeWorkTask(sidebar: Frame): Promise<void> {
 	await expect(closeTask).toBeVisible({ timeout: 30_000 })
 	await closeTask.click()
 	await expect(sidebar.getByTestId("chat-input")).toBeVisible({ timeout: 30_000 })
+	await E2ETestHelper.dismissWhatsNewModal(sidebar)
 }
 
 export async function openWorkHistoryTask(page: Page, sidebar: Frame, taskMarker: string): Promise<void> {
