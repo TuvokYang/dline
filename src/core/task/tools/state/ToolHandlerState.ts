@@ -54,7 +54,6 @@ export interface ToolConversationState {
 export interface ToolOperationState {
 	taskStartTimeMs: number
 	taskFirstTokenTimeMs?: number
-	abort: boolean
 	didFinishAbortingStream: boolean
 	contextWindowIndicator?: ContextWindowIndicatorSnapshot
 	readonly operationSignal: AbortSignal
@@ -85,7 +84,6 @@ export interface ToolHandlerState extends ToolAttemptState, ToolConversationStat
 export class DefaultToolHandlerState implements ToolHandlerState {
 	taskStartTimeMs = Date.now()
 	taskFirstTokenTimeMs?: number
-	abort = false
 	didFinishAbortingStream = false
 	contextWindowIndicator?: ContextWindowIndicatorSnapshot
 	consecutiveMistakeCount = 0

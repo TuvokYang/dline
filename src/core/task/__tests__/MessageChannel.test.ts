@@ -1,9 +1,9 @@
 import { strict as assert } from "node:assert"
 import type { UiMessage } from "@shared/ExtensionMessage"
 import { describe, it, vi } from "vitest"
-import { MessageChannel } from "../MessageChannel"
+import { MessageChannel, type MessageChannelState } from "../MessageChannel"
 import type { MessageStateHandler } from "../message-state"
-import type { TaskState } from "../TaskState"
+import { DefaultToolHandlerState } from "../tools/state/ToolHandlerState"
 
 function createMessageChannel(
 	options: {
@@ -13,14 +13,7 @@ function createMessageChannel(
 	} = {},
 ) {
 	const clineMessages: UiMessage[] = []
-	const taskState = {
-		abort: false,
-		askResponse: undefined,
-		askResponseText: undefined,
-		askResponseImages: undefined,
-		askResponseFiles: undefined,
-		lastMessageTs: undefined,
-	} as TaskState
+	const taskState: DefaultToolHandlerState & MessageChannelState = new DefaultToolHandlerState()
 
 	let lastTs = 0
 	const flushUiMessages = vi.fn(async () => {})
@@ -85,7 +78,7 @@ async function flushMicrotasks(iterations = 5) {
 describe("MessageChannel.say", () => {
 	it("allows lifecycle state snapshots while the task is aborted", async () => {
 		const { channel, clineMessages, taskState } = createMessageChannel()
-		taskState.abort = true
+		taskState.cancelOperations("test_task_aborted")
 
 		await channel.say("state_snapshot", JSON.stringify({ phase: "cancelling", apiIndex: 1, timestamp: Date.now() }))
 
@@ -95,7 +88,7 @@ describe("MessageChannel.say", () => {
 
 	it("rejects regular visible messages while the task is aborted", async () => {
 		const { channel, taskState } = createMessageChannel()
-		taskState.abort = true
+		taskState.cancelOperations("test_task_aborted")
 
 		await assert.rejects(channel.say("text", "should not continue after abort"), /Dline instance aborted/)
 	})

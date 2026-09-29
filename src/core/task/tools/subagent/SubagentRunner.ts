@@ -39,9 +39,9 @@ import { ClineError, ClineErrorType } from "@/services/error"
 import { ApiFormat, ServerTool } from "@/shared/proto/dline/models/metadata"
 import { calculateApiCostAnthropic } from "@/utils/cost"
 import { isNativeToolCallingConfig, isNextGenModelFamily } from "@/utils/model-utils"
-import { TaskState } from "../../TaskState"
 import { canonicalizeAttemptCompletionParams } from "../attempt-completion-params"
 import { ServerToolLifecycle } from "../ServerToolLifecycle"
+import { DefaultToolHandlerState, type ToolHandlerState } from "../state/ToolHandlerState"
 import { ToolExecutorCoordinator } from "../ToolExecutorCoordinator"
 import { ToolValidator } from "../ToolValidator"
 import type { TaskConfig } from "../types/TaskConfig"
@@ -710,7 +710,9 @@ export class SubagentRunner {
 	}
 
 	private shouldAbort(): boolean {
-		return this.abortRequested || (this.options.inheritTaskAbort !== false && this.baseConfig.taskState.abort)
+		return (
+			this.abortRequested || (this.options.inheritTaskAbort !== false && this.baseConfig.taskState.operationSignal.aborted)
+		)
 	}
 
 	private async getWorkspaceMetadataJson(): Promise<string | null> {
@@ -778,7 +780,7 @@ export class SubagentRunner {
 		this.running = true
 		this.activeRetryAbortController = new AbortController()
 		this.interruptionController = new AbortController()
-		const state = new TaskState()
+		const state = new DefaultToolHandlerState()
 		let emptyAssistantResponseRetries = 0
 		let invalidCompletionRetries = 0
 		let convergenceRejections = 0
@@ -1657,7 +1659,7 @@ export class SubagentRunner {
 	}
 
 	private createSubagentTaskConfig(
-		state: TaskState,
+		state: ToolHandlerState,
 		webToolsEnabled: boolean,
 		webSearchRoutingPlan: WebSearchRoutingPlan,
 		imageGenerationService: TaskConfig["services"]["imageGenerationService"],

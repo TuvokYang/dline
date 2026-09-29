@@ -2,7 +2,7 @@ import { strict as assert } from "node:assert"
 import { ClineDefaultTool } from "@shared/tools"
 import { describe, it, vi } from "vitest"
 import type { ToolUse } from "../../../../assistant-message"
-import { TaskState } from "../../../TaskState"
+import { DefaultToolHandlerState } from "../../state/ToolHandlerState"
 import type { TaskConfig } from "../../types/TaskConfig"
 import { AttemptCompletionHandler } from "../AttemptCompletionHandler"
 
@@ -12,7 +12,7 @@ import { AttemptCompletionHandler } from "../AttemptCompletionHandler"
  * @returns TaskConfig with mocked callbacks and services.
  */
 function createConfig(
-	taskState: TaskState,
+	taskState: DefaultToolHandlerState,
 	outcome: { actionId: "reply" | "start_new_task"; text?: string } = { actionId: "start_new_task" },
 ): TaskConfig {
 	const clineMessages: Array<{ type: "say"; say: string; text?: string; ts: number }> = []
@@ -94,7 +94,7 @@ function createBlock(): ToolUse {
 
 describe("AttemptCompletionHandler stop behavior", () => {
 	it("returns terminal completion when the runtime starts a new task", async () => {
-		const taskState = new TaskState()
+		const taskState = new DefaultToolHandlerState()
 		const config = createConfig(taskState)
 		const handler = new AttemptCompletionHandler()
 
@@ -104,7 +104,7 @@ describe("AttemptCompletionHandler stop behavior", () => {
 	})
 
 	it("leaves task_progress updates to the central executor", async () => {
-		const taskState = new TaskState()
+		const taskState = new DefaultToolHandlerState()
 		const config = createConfig(taskState)
 		config.focusChainSettings = { enabled: true } as TaskConfig["focusChainSettings"]
 		const block = createBlock()
@@ -116,7 +116,7 @@ describe("AttemptCompletionHandler stop behavior", () => {
 	})
 
 	it("refuses completion while the Focus Chain checklist has unchecked items", async () => {
-		const taskState = new TaskState()
+		const taskState = new DefaultToolHandlerState()
 		taskState.currentFocusChainChecklist = "# Plan\n- [x] Inspect\n- [ ] Verify"
 		const config = createConfig(taskState)
 		config.focusChainSettings = { enabled: true } as TaskConfig["focusChainSettings"]
@@ -136,7 +136,7 @@ describe("AttemptCompletionHandler stop behavior", () => {
 	})
 
 	it("completes once every checklist item is checked", async () => {
-		const taskState = new TaskState()
+		const taskState = new DefaultToolHandlerState()
 		taskState.currentFocusChainChecklist = "# Plan\n- [x] Inspect\n- [x] Verify"
 		const config = createConfig(taskState)
 		config.focusChainSettings = { enabled: true } as TaskConfig["focusChainSettings"]
@@ -151,7 +151,7 @@ describe("AttemptCompletionHandler stop behavior", () => {
 			[false, false],
 			[true, true],
 		] as const) {
-			const taskState = new TaskState()
+			const taskState = new DefaultToolHandlerState()
 			taskState.currentFocusChainChecklist = "# Plan\n- [ ] Verify"
 			const config = createConfig(taskState)
 			config.focusChainSettings = { enabled } as TaskConfig["focusChainSettings"]
@@ -164,7 +164,7 @@ describe("AttemptCompletionHandler stop behavior", () => {
 	})
 
 	it("returns completion feedback when the user replies", async () => {
-		const taskState = new TaskState()
+		const taskState = new DefaultToolHandlerState()
 		const config = createConfig(taskState, { actionId: "reply", text: "Please refine the result" })
 		const handler = new AttemptCompletionHandler()
 

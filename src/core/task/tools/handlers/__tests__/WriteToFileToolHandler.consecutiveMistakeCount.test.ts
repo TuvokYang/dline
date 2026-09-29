@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, it, vi } from "vitest"
 import "should"
 // sinon import removed: using vitest globals
-import { TaskState } from "../../../TaskState"
+import { DefaultToolHandlerState } from "../../state/ToolHandlerState"
 
 /**
  * Tests for consecutiveMistakeCount behavior in WriteToFileToolHandler.
@@ -17,11 +17,11 @@ import { TaskState } from "../../../TaskState"
  * - Repeated failures accumulate so tooManyMistakes can trigger
  */
 describe("WriteToFileToolHandler consecutiveMistakeCount", () => {
-	let taskState: TaskState
+	let taskState: DefaultToolHandlerState
 	let sandbox: any /* sinon.SinonSandbox → vitest */
 
 	beforeEach(() => {
-		taskState = new TaskState()
+		taskState = new DefaultToolHandlerState()
 		sandbox = { mockRestore: () => {} }
 	})
 

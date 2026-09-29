@@ -2,7 +2,6 @@ import { describe, it, vi } from "vitest"
 import "should"
 import should from "should"
 import { MessageStateHandler } from "../core/task/message-state"
-import { TaskState } from "../core/task/TaskState"
 import { UiMessage } from "../shared/ExtensionMessage"
 
 /**
@@ -15,7 +14,6 @@ describe("MessageStateHandler Mutex Protection", () => {
 	 * Helper to create a minimal MessageStateHandler for testing
 	 */
 	function createTestHandler(): MessageStateHandler {
-		const taskState = new TaskState()
 		const mockStore = (initial: any[] = []) => {
 			let data = [...initial]
 			return {
@@ -67,7 +65,6 @@ describe("MessageStateHandler Mutex Protection", () => {
 		return new MessageStateHandler({
 			taskId: "test-task-id",
 			ulid: "test-ulid",
-			taskState,
 			updateTaskHistory: async () => [],
 			apiConversation: mockStore() as any,
 			uiMessage: mockStore() as any,
@@ -296,7 +293,6 @@ describe("MessageStateHandler Mutex Protection", () => {
 		const handler = new MessageStateHandler({
 			taskId: "test-task-id",
 			ulid: "test-ulid",
-			taskState: new TaskState(),
 			updateTaskHistory: async () => [],
 			apiConversation: { getAll: () => data, overwrite, clear, addMessage } as any,
 		})

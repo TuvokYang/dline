@@ -66,12 +66,6 @@ describe("TASK-103 legacy authority migration inventory", () => {
 	})
 
 	it("freezes every production taskState.abort consumer file for TASK-107", () => {
-		expect(taskStateAbortFiles()).toEqual([
-			"src/core/task/MessageChannel.ts",
-			"src/core/task/tools/handlers/GenerateExplanationToolHandler.ts",
-			"src/core/task/tools/handlers/SpawnTaskHandler.ts",
-			"src/core/task/tools/subagent/SubagentRunner.ts",
-			"src/core/task/tools/utils/ToolHookUtils.ts",
-		])
+		expect(taskStateAbortFiles()).toEqual([])
 	})
 })

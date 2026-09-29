@@ -2,7 +2,7 @@ import type { UiMessage } from "@shared/ExtensionMessage"
 import { ClineDefaultTool } from "@shared/tools"
 import { describe, expect, it, vi } from "vitest"
 import type { ToolUse } from "../../../../assistant-message"
-import { TaskState } from "../../../TaskState"
+import { DefaultToolHandlerState } from "../../state/ToolHandlerState"
 import type { TaskConfig } from "../../types/TaskConfig"
 import { AttemptCompletionHandler } from "../AttemptCompletionHandler"
 
@@ -29,7 +29,7 @@ function createConfig(options: { hasNewChanges: boolean; rewriteAsAsk?: boolean 
 		cwd: "e:\\workspace\\vscode\\dline",
 		mode: "act",
 		doubleCheckCompletionEnabled: false,
-		taskState: new TaskState(),
+		taskState: new DefaultToolHandlerState(),
 		interactions: {
 			complete: vi.fn(async () => {
 				if (options.rewriteAsAsk !== false) {

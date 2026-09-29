@@ -1,7 +1,7 @@
 import type { UiMessage } from "@shared/ExtensionMessage"
 import { beforeEach, describe, expect, it } from "vitest"
 import { MessageChannel } from "../MessageChannel"
-import { TaskState } from "../TaskState"
+import { DefaultToolHandlerState } from "../tools/state/ToolHandlerState"
 
 /**
  * The receive window must be open before an ask becomes visible.
@@ -13,7 +13,7 @@ import { TaskState } from "../TaskState"
 
 interface Harness {
 	channel: MessageChannel
-	taskState: TaskState
+	taskState: DefaultToolHandlerState
 	messages: UiMessage[]
 	/** Receive-window state observed at each point the ask became visible. */
 	windowOpenAtVisibility: boolean[]
@@ -24,7 +24,7 @@ interface Harness {
  * receive window was already open when they ran.
  */
 function createHarness(): Harness {
-	const taskState = new TaskState()
+	const taskState = new DefaultToolHandlerState()
 	const messages: UiMessage[] = []
 	const windowOpenAtVisibility: boolean[] = []
 	let nextTs = 1000

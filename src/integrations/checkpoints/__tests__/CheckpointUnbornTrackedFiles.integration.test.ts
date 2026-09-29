@@ -3,7 +3,7 @@ import * as os from "os"
 import * as path from "path"
 import simpleGit from "simple-git"
 import { describe, expect, it, vi } from "vitest"
-import { TaskState } from "@/core/task/TaskState"
+import { DefaultToolHandlerState } from "@/core/task/tools/state/ToolHandlerState"
 import type { UiMessage, UiSay } from "@/shared/ExtensionMessage"
 
 vi.unmock("@integrations/checkpoints")
@@ -97,7 +97,7 @@ function createManagerHarness(input: {
 				flushMessageUpdate: vi.fn().mockResolvedValue(undefined),
 				updateTaskHistory,
 			},
-			taskState: new TaskState(),
+			taskState: new DefaultToolHandlerState(),
 			taskFileTracker: input.taskFileTracker,
 			workspaceManager: {
 				getPrimaryRoot: () => ({ path: input.workspacePath }),

@@ -3,7 +3,6 @@ import os from "node:os"
 import path from "node:path"
 import { UIMessage } from "@core/storage/UIMessage"
 import { MessageStateHandler } from "@core/task/message-state"
-import { TaskState } from "@core/task/TaskState"
 import { type HistoryItem, MAX_HISTORY_TASK_TEXT_LENGTH } from "@shared/HistoryItem"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
@@ -38,7 +37,6 @@ describe("MessageState history task summary", () => {
 		const messageState = new MessageStateHandler({
 			taskId,
 			ulid: `ulid-${taskId}`,
-			taskState: new TaskState(),
 			updateTaskHistory,
 			uiMessage,
 		})

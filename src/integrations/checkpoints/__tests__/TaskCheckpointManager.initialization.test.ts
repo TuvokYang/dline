@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import { closeInstanceStoragesUnder } from "@/core/storage/instance"
 import { UIMessage } from "@/core/storage/UIMessage"
 import { MessageStateHandler } from "@/core/task/message-state"
-import { TaskState } from "@/core/task/TaskState"
+import { DefaultToolHandlerState } from "@/core/task/tools/state/ToolHandlerState"
 import type { UiMessage } from "@/shared/ExtensionMessage"
 
 vi.unmock("@integrations/checkpoints")
@@ -233,7 +233,6 @@ describe("TaskCheckpointManager checkpoint initialization", () => {
 			const messageStateHandler = new MessageStateHandler({
 				taskId,
 				ulid: "ulid-durable-checkpoint-message",
-				taskState: new TaskState(),
 				uiMessage,
 				updateTaskHistory: async () => [],
 			})
@@ -254,7 +253,7 @@ describe("TaskCheckpointManager checkpoint initialization", () => {
 					fileContextTracker: {},
 					diffViewProvider: {},
 					messageStateHandler,
-					taskState: new TaskState(),
+					taskState: new DefaultToolHandlerState(),
 					workspaceManager: { getPrimaryRoot: () => ({ path: "C:/workspace" }) },
 				} as never,
 				{

@@ -1,6 +1,5 @@
 import { UIMessage } from "@core/storage/UIMessage"
 import { MessageStateHandler } from "@core/task/message-state"
-import { TaskState } from "@core/task/TaskState"
 import type { UiMessage } from "@shared/ExtensionMessage"
 import fs from "fs/promises"
 import os from "os"
@@ -35,7 +34,6 @@ describe("interaction anchor identity", () => {
 		const messageState = new MessageStateHandler({
 			taskId,
 			ulid: "test-ulid",
-			taskState: new TaskState(),
 			updateTaskHistory: async () => [],
 			uiMessage: writer,
 		})

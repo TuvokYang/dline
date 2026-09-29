@@ -120,7 +120,7 @@ export class ToolHookUtils {
 
 		// If task was aborted (e.g., via cancel button during hook), give durable
 		// presentations one final write opportunity before propagating cancellation.
-		if (config.taskState.abort) {
+		if (config.taskState.operationSignal.aborted) {
 			const message = "Task was aborted during PreToolUse hook execution"
 			try {
 				await options.beforeTaskCancellation?.(message)

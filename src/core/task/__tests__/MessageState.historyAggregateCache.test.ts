@@ -1,6 +1,5 @@
 import { UIMessage } from "@core/storage/UIMessage"
 import { MessageStateHandler } from "@core/task/message-state"
-import { TaskState } from "@core/task/TaskState"
 import type { UiMessage } from "@shared/ExtensionMessage"
 import fs from "fs/promises"
 import os from "os"
@@ -34,7 +33,6 @@ describe("history aggregate cache", () => {
 		const messageState = new MessageStateHandler({
 			taskId,
 			ulid: "test-ulid",
-			taskState: new TaskState(),
 			updateTaskHistory: async (item) => {
 				history.push({ tokensIn: item.tokensIn, totalCost: item.totalCost })
 				return []

@@ -12,7 +12,7 @@ import { ClineDefaultTool } from "@shared/tools"
 import { expect } from "chai"
 import { afterEach, describe, it, vi, expect as vitestExpect } from "vitest"
 import { TaskActivityStore } from "../../../activity/TaskActivityStore"
-import { TaskState } from "../../../TaskState"
+import { DefaultToolHandlerState } from "../../state/ToolHandlerState"
 import type { ResolvedAgentConfig } from "../../subagent/AgentConfigLoader"
 import * as AgentConfigModule from "../../subagent/AgentConfigLoader"
 import { SubagentBuilder } from "../../subagent/SubagentBuilder"
@@ -103,7 +103,7 @@ function createConfig(options?: {
 	subagentsEnabled?: boolean
 	maxParallelSubagents?: number
 }) {
-	const taskState = new TaskState()
+	const taskState = new DefaultToolHandlerState()
 	const askResponse = options?.taskAskResponse ?? "yesButtonClicked"
 	const subagentsEnabled = options?.subagentsEnabled ?? true
 
@@ -820,7 +820,7 @@ describe("SubagentToolHandler", () => {
 
 	it("refuses a restored retry whose recorded Profile is no longer usable", async () => {
 		const { config } = createConfig({ autoApproveSafe: true, autoApproveAll: true })
-		config.taskState.abort = true
+		config.taskState.cancelOperations("test_inert_parent")
 		const activityStore = new TaskActivityStore("task-1")
 		activityStore.create({
 			activityId: "subagent-dead-profile",
@@ -1349,7 +1349,7 @@ describe("SubagentToolHandler", () => {
 
 	it("restores a persisted retry recipe after Task reopen", async () => {
 		const { config } = createConfig({ autoApproveSafe: true, autoApproveAll: true })
-		config.taskState.abort = true
+		config.taskState.cancelOperations("test_inert_parent")
 		const activityStore = new TaskActivityStore("task-1")
 		activityStore.create({
 			activityId: "subagent-restored",
@@ -1385,7 +1385,7 @@ describe("SubagentToolHandler", () => {
 
 	it("replays a restored retry with the Profile the batch item originally resolved", async () => {
 		const { config } = createConfig({ autoApproveSafe: true, autoApproveAll: true })
-		config.taskState.abort = true
+		config.taskState.cancelOperations("test_inert_parent")
 		const activityStore = new TaskActivityStore("task-1")
 		activityStore.create({
 			activityId: "subagent-profile-bound",
@@ -1433,7 +1433,7 @@ describe("SubagentToolHandler", () => {
 
 	it("leaves a restored retry on the subagent's current Profile when the item never overrode it", async () => {
 		const { config } = createConfig({ autoApproveSafe: true, autoApproveAll: true })
-		config.taskState.abort = true
+		config.taskState.cancelOperations("test_inert_parent")
 		const activityStore = new TaskActivityStore("task-1")
 		activityStore.create({
 			activityId: "subagent-inherits-profile",

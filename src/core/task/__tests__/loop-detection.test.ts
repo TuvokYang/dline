@@ -1,7 +1,7 @@
 import { describe, it } from "vitest"
 import "should"
 import { recordToolCall, toolCallSignature } from "../loop-detection"
-import { TaskState } from "../TaskState"
+import { DefaultToolHandlerState, type ToolHandlerState } from "../tools/state/ToolHandlerState"
 
 /**
  * Simulate a tool call the way ToolExecutor makes it.
@@ -10,7 +10,7 @@ import { TaskState } from "../TaskState"
  * comparison and the state update are ordered is visible here rather than
  * duplicated into the fixture.
  */
-function simulateToolCall(state: TaskState, toolName: string, params: Record<string, string>, maxMistakes = 3) {
+function simulateToolCall(state: ToolHandlerState, toolName: string, params: Record<string, string>, maxMistakes = 3) {
 	const result = recordToolCall(state, toolName, toolCallSignature(params))
 
 	if (result.softWarning) {
@@ -31,7 +31,7 @@ describe("toolCallSignature", () => {
 
 describe("Loop Detection", () => {
 	it("should warn at 3 identical calls and escalate at 5", () => {
-		const state = new TaskState()
+		const state = new DefaultToolHandlerState()
 		const results = []
 		for (let i = 0; i < 5; i++) {
 			results.push(simulateToolCall(state, "read_file", { path: "src/main.ts" }))
@@ -49,7 +49,7 @@ describe("Loop Detection", () => {
 	})
 
 	it("should reset when tool or params change", () => {
-		const state = new TaskState()
+		const state = new DefaultToolHandlerState()
 
 		simulateToolCall(state, "read_file", { path: "a.ts" })
 		simulateToolCall(state, "read_file", { path: "a.ts" })
@@ -62,7 +62,7 @@ describe("Loop Detection", () => {
 	})
 
 	it("should NOT count different tools with same params as identical", () => {
-		const state = new TaskState()
+		const state = new DefaultToolHandlerState()
 
 		simulateToolCall(state, "read_file", { path: "src/main.ts" })
 		simulateToolCall(state, "search_files", { path: "src/main.ts" })
@@ -72,7 +72,7 @@ describe("Loop Detection", () => {
 	})
 
 	it("should re-arm after loop detection state is reset", () => {
-		const state = new TaskState()
+		const state = new DefaultToolHandlerState()
 
 		// First cycle: escalate at call 5
 		for (let i = 0; i < 5; i++) {
@@ -99,7 +99,7 @@ describe("Loop Detection", () => {
 	})
 
 	it("should work correctly when tool changes after reset", () => {
-		const state = new TaskState()
+		const state = new DefaultToolHandlerState()
 
 		// Escalate with one tool
 		for (let i = 0; i < 5; i++) {
@@ -120,7 +120,7 @@ describe("Loop Detection", () => {
 	})
 
 	it("should strip task_progress from comparison", () => {
-		const state = new TaskState()
+		const state = new DefaultToolHandlerState()
 		const results = []
 		for (let i = 0; i < 5; i++) {
 			results.push(
@@ -143,7 +143,7 @@ describe("Loop Detection", () => {
 		// record its own call had never written. Asserting the full state on
 		// return is what makes splitting the step visible: a caller that only
 		// compares leaves lastToolName behind, and this fails.
-		const state = new TaskState()
+		const state = new DefaultToolHandlerState()
 
 		const verdict = recordToolCall(state, "read_file", toolCallSignature({ path: "a.ts" }))
 

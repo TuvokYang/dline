@@ -48,7 +48,7 @@ export class SpawnTaskHandler implements IToolHandler {
 		config.taskState.consecutiveMistakeCount = 0
 
 		// Check if parent task was aborted before starting async spawn operations
-		if (config.taskState.abort) {
+		if (config.taskState.operationSignal.aborted) {
 			return formatResponse.toolError("Task was aborted before spawn could complete")
 		}
 
@@ -65,7 +65,7 @@ export class SpawnTaskHandler implements IToolHandler {
 			const { VscodeWebviewPanelProvider } = await import("@/hosts/vscode/VscodeWebviewPanelProvider")
 
 			// Check after dynamic import — parent may have been aborted during import
-			if (config.taskState.abort) {
+			if (config.taskState.operationSignal.aborted) {
 				return formatResponse.toolError("Task was aborted before spawn could complete")
 			}
 
@@ -86,7 +86,7 @@ export class SpawnTaskHandler implements IToolHandler {
 			await panelProvider.createPanel(title)
 
 			// Check after panel creation — most expensive async step
-			if (config.taskState.abort) {
+			if (config.taskState.operationSignal.aborted) {
 				// Clean up the panel we just created
 				await panelProvider.dispose().catch(() => undefined)
 				return formatResponse.toolError("Task was aborted during spawn panel creation")
@@ -121,7 +121,7 @@ export class SpawnTaskHandler implements IToolHandler {
 			)
 
 			// Final check after initTask — parent may have been aborted during initialization
-			if (config.taskState.abort) {
+			if (config.taskState.operationSignal.aborted) {
 				// Clean up the child task that was just created
 				await panelProvider.dispose().catch(() => undefined)
 				return formatResponse.toolError("Task was aborted after spawn initialization")

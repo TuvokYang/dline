@@ -3,7 +3,6 @@ import type { ClineAskResponse } from "@shared/WebviewMessage"
 import pWaitFor from "p-wait-for"
 import type { ClineMessageModelInfo } from "@/shared/messages"
 import type { MessageStateHandler } from "./message-state"
-import type { TaskState } from "./TaskState"
 
 const ABORT_ALLOWED_SAY_TYPES = new Set<UiSay>(["hook_status", "hook_output_stream", "deleted_api_reqs", "state_snapshot"])
 
@@ -40,6 +39,16 @@ export interface RegisteredAskPresentation {
 	readonly persistence: Promise<void>
 }
 
+/** Mutable response state and cancellation scope owned by the message boundary. */
+export interface MessageChannelState {
+	readonly operationSignal: AbortSignal
+	lastMessageTs?: number
+	askResponse?: ClineAskResponse
+	askResponseText?: string
+	askResponseImages?: string[]
+	askResponseFiles?: string[]
+}
+
 /**
  * A point in an ask's life that has to be recoverable from a log.
  *
@@ -68,7 +77,7 @@ export interface MessageChannelConfig {
 	pushMessage: (msg: UiMessage) => void | Promise<void>
 	syncState: () => Promise<void>
 	messageStateHandler: MessageStateHandler
-	taskState: TaskState
+	taskState: MessageChannelState
 	getProviderInfo: () => ClineMessageModelInfo
 	genTs: () => number
 	/**
@@ -92,7 +101,7 @@ export class MessageChannel {
 	private pushMessage: (msg: UiMessage) => void | Promise<void>
 	private syncState: () => Promise<void>
 	private messageStateHandler: MessageStateHandler
-	private taskState: TaskState
+	private taskState: MessageChannelState
 	private getProviderInfo: () => ClineMessageModelInfo
 	private genTs: () => number
 	private recordAskLifecycle?: (record: AskLifecycleRecord) => void
@@ -177,7 +186,7 @@ export class MessageChannel {
 		commandTs?: number,
 	): Promise<number | undefined> {
 		// Allow lifecycle messages during abort so cancel/resume state can be persisted.
-		if (this.taskState.abort && !isAbortAllowedSay(type)) {
+		if (this.taskState.operationSignal.aborted && !isAbortAllowedSay(type)) {
 			throw new Error("Dline instance aborted")
 		}
 
@@ -341,7 +350,7 @@ export class MessageChannel {
 	 */
 	async ask(type: UiAsk, text?: string, partial?: boolean, options?: AskOptions): Promise<AskResult> {
 		// Allow resume asks even when aborted
-		if (this.taskState.abort && type !== "resume_task" && type !== "resume_completed_task") {
+		if (this.taskState.operationSignal.aborted && type !== "resume_task" && type !== "resume_completed_task") {
 			throw new Error("Dline instance aborted")
 		}
 
@@ -471,7 +480,7 @@ export class MessageChannel {
 				() =>
 					this.taskState.askResponse !== undefined ||
 					this.isAskPromiseSuperseded(invalidationStartIndex) ||
-					(shouldWakeOnAbort && this.taskState.abort),
+					(shouldWakeOnAbort && this.taskState.operationSignal.aborted),
 				{ interval: 100 },
 			)
 		} finally {
@@ -480,7 +489,7 @@ export class MessageChannel {
 			// that is no longer being asked.
 			this.isAwaitingAskResponse = false
 		}
-		if (shouldWakeOnAbort && this.taskState.abort && this.taskState.askResponse === undefined) {
+		if (shouldWakeOnAbort && this.taskState.operationSignal.aborted && this.taskState.askResponse === undefined) {
 			reportLifecycle("abandoned", askTs, "aborted")
 			throw new Error("Dline instance aborted")
 		}

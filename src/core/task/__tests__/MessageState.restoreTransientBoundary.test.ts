@@ -2,7 +2,6 @@ import { resolveChatRestoreBoundary } from "@integrations/checkpoints/chat-resto
 import type { UiMessage } from "@shared/ExtensionMessage"
 import { describe, expect, it } from "vitest"
 import { MessageStateHandler } from "../message-state"
-import { TaskState } from "../TaskState"
 
 /**
  * P0 regression guard for a Restore rejected by an in-flight compaction card.
@@ -51,7 +50,6 @@ function createHandler(rows: DurableRow[]) {
 		taskId: "task-restore-transient",
 		ulid: "ulid-restore-transient",
 		updateTaskHistory: async () => [],
-		taskState: new TaskState(),
 		uiMessage: uiMessage as never,
 	})
 	return { handler, uiMessage }

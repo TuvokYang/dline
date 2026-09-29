@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, it } from "vitest"
 import "should"
 // sinon import removed: using vitest globals
-import { TaskState } from "../../../TaskState"
+import { DefaultToolHandlerState } from "../../state/ToolHandlerState"
 
 /**
  * Tests for the double-check completion feature in AttemptCompletionHandler.
@@ -12,11 +12,11 @@ import { TaskState } from "../../../TaskState"
  * attempt gets double-checked, not just the first one in a task.
  */
 describe("AttemptCompletionHandler double-check completion", () => {
-	let taskState: TaskState
+	let taskState: DefaultToolHandlerState
 	let sandbox: any /* sinon.SinonSandbox → vitest */
 
 	beforeEach(() => {
-		taskState = new TaskState()
+		taskState = new DefaultToolHandlerState()
 		sandbox = { mockRestore: () => {} }
 	})
 
@@ -103,7 +103,7 @@ describe("AttemptCompletionHandler double-check completion", () => {
 
 		it("should reset with new TaskState (new task)", () => {
 			taskState.doubleCheckCompletionPending = true
-			const newTaskState = new TaskState()
+			const newTaskState = new DefaultToolHandlerState()
 			newTaskState.doubleCheckCompletionPending.should.be.false()
 		})
 	})

@@ -40,11 +40,11 @@ import { ApiFormat, ServerTool } from "@/shared/proto/dline/models/metadata"
 import { Logger } from "@/shared/services/Logger"
 import { createTaskCapabilityToggles } from "@/shared/TaskCapabilityToggles"
 import { ClineDefaultTool } from "@/shared/tools"
-import { TaskState } from "../../../TaskState"
 import { GenerateImageToolHandler } from "../../handlers/GenerateImageToolHandler"
 import { ListCodeDefinitionNamesToolHandler } from "../../handlers/ListCodeDefinitionNamesToolHandler"
 import { ListFilesToolHandler } from "../../handlers/ListFilesToolHandler"
 import { ReadFileToolHandler } from "../../handlers/ReadFileToolHandler"
+import { DefaultToolHandlerState } from "../../state/ToolHandlerState"
 import { SubagentBuilder } from "../SubagentBuilder"
 import { SubagentRunner } from "../SubagentRunner"
 
@@ -140,7 +140,7 @@ function createTaskConfig(nativeToolCallEnabled: boolean, options: TaskConfigOpt
 		webToolsEnabled: options.webToolsEnabled,
 		providerRequestRounds: options.providerRequestRounds,
 		context: {},
-		taskState: new TaskState(),
+		taskState: new DefaultToolHandlerState(),
 		messageState: {},
 		api: {
 			getModel: () => ({
@@ -481,7 +481,7 @@ describe("SubagentRunner", () => {
 		stubApiHandler(createMessage)
 		initializeHostProvider()
 		const config = createTaskConfig(false)
-		config.taskState.abort = true
+		config.taskState.cancelOperations("test_parent_cancelled_before_request")
 		const progress = vi.fn()
 
 		const result = await new SubagentRunner(config).run("Cancel before request", progress)
@@ -586,7 +586,7 @@ describe("SubagentRunner", () => {
 		stubApiHandler(createMessage)
 		initializeHostProvider()
 		const config = createTaskConfig(false)
-		config.taskState.abort = true
+		config.taskState.cancelOperations("test_inert_parent")
 
 		const result = await new SubagentRunner(config, "subagent", undefined, { inheritTaskAbort: false }).run(
 			"Resume explicit Activity",
@@ -794,7 +794,7 @@ describe("SubagentRunner", () => {
 	it("reports cancellation between API turns as cancelled", async () => {
 		const config = createTaskConfig(false)
 		const createMessage = vi.fn().mockImplementation(async function* () {
-			config.taskState.abort = true
+			config.taskState.cancelOperations("test_cancel_between_turns")
 			yield* []
 		})
 		stubSystemPrompt(false)
@@ -815,7 +815,7 @@ describe("SubagentRunner", () => {
 	it("reports cancellation after a tool result as cancelled", async () => {
 		const config = createTaskConfig(true)
 		vi.mocked(ListFilesToolHandler.prototype.execute).mockImplementation(async () => {
-			config.taskState.abort = true
+			config.taskState.cancelOperations("test_cancel_after_tool_result")
 			return "ok"
 		})
 		const createMessage = vi.fn().mockImplementation(async function* () {

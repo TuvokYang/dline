@@ -4,13 +4,13 @@ import path from "node:path"
 import type { ToolUse } from "@core/assistant-message"
 import { ClineDefaultTool } from "@shared/tools"
 import { describe, expect, it, vi } from "vitest"
-import { TaskState } from "../../TaskState"
 import { ActModeRespondHandler } from "../../tools/handlers/ActModeRespondHandler"
 import { ExecuteCommandToolHandler } from "../../tools/handlers/ExecuteCommandToolHandler"
 import { FocusChainHandler } from "../../tools/handlers/FocusChainHandler"
 import { QnaRespondHandler } from "../../tools/handlers/QnaRespondHandler"
 import { SpawnTaskHandler } from "../../tools/handlers/SpawnTaskHandler"
 import { StatusUpdateHandler } from "../../tools/handlers/StatusUpdateHandler"
+import { DefaultToolHandlerState } from "../../tools/state/ToolHandlerState"
 import type { TaskConfig } from "../../tools/types/TaskConfig"
 
 vi.mock("@core/prompts/i18n", () => ({
@@ -63,7 +63,7 @@ function config(
 		cwd: process.cwd(),
 		mode: "act",
 		isSubagentExecution: false,
-		taskState: Object.assign(new TaskState(), { lastToolName: "read_file" }),
+		taskState: Object.assign(new DefaultToolHandlerState(), { lastToolName: "read_file" }),
 		interactions: { open, complete: open, say: vi.fn(async () => undefined) },
 		admissionOutcomes: new Map([
 			[

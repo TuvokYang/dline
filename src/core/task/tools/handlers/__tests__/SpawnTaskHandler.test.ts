@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import "should"
 import type { ToolUse } from "@core/assistant-message"
 import { ClineDefaultTool } from "@/shared/tools"
+import { DefaultToolHandlerState } from "../../state/ToolHandlerState"
 import type { TaskConfig } from "../../types/TaskConfig"
 import { SpawnTaskHandler } from "../SpawnTaskHandler"
 
@@ -40,6 +41,12 @@ vi.mock("@/core/orchestrator/OrchestratorController", () => ({
 	},
 }))
 
+function createTaskState(consecutiveMistakeCount = 0): DefaultToolHandlerState {
+	const state = new DefaultToolHandlerState()
+	state.consecutiveMistakeCount = consecutiveMistakeCount
+	return state
+}
+
 describe("SpawnTaskHandler", () => {
 	const handler = new SpawnTaskHandler()
 
@@ -63,7 +70,7 @@ describe("SpawnTaskHandler", () => {
 			let called = false
 			const config = {
 				taskId: "parent-1",
-				taskState: { consecutiveMistakeCount: 0 },
+				taskState: createTaskState(),
 				callbacks: {
 					sayAndCreateMissingParamError: async (_toolName: string, _param: string) => {
 						called = true
@@ -85,7 +92,7 @@ describe("SpawnTaskHandler", () => {
 		it("should reset mistake count when task is provided", async () => {
 			const config = {
 				taskId: "parent-1",
-				taskState: { consecutiveMistakeCount: 5 },
+				taskState: createTaskState(5),
 				taskController: { rejectActiveBlock: () => {} },
 				interactions: {
 					open: async () => ({ actionId: "reject" }),
@@ -108,7 +115,7 @@ describe("SpawnTaskHandler", () => {
 		it("should report a missing mode when task is provided without one", async () => {
 			const sayAndCreateMissingParamError = vi.fn(async () => "Missing mode error")
 			const config = {
-				taskState: { consecutiveMistakeCount: 0 },
+				taskState: createTaskState(),
 				callbacks: { sayAndCreateMissingParamError },
 			} as unknown as TaskConfig
 
@@ -126,7 +133,7 @@ describe("SpawnTaskHandler", () => {
 		it("should reject an unsupported mode before opening approval", async () => {
 			const open = vi.fn()
 			const config = {
-				taskState: { consecutiveMistakeCount: 0 },
+				taskState: createTaskState(),
 				interactions: { open },
 			} as unknown as TaskConfig
 
@@ -164,7 +171,7 @@ describe("SpawnTaskHandler", () => {
 			const config = {
 				taskId: "parent-1",
 				mode: "plan",
-				taskState: { consecutiveMistakeCount: 0, abort: false },
+				taskState: createTaskState(),
 				callbacks: { say: async () => {} },
 				services: {
 					stateManager: {
@@ -206,7 +213,7 @@ describe("SpawnTaskHandler", () => {
 			const config = {
 				taskId: "parent-1",
 				mode: "plan",
-				taskState: { consecutiveMistakeCount: 0, abort: false },
+				taskState: createTaskState(),
 				interactions: { open: async () => ({ actionId: "approve" }) },
 				callbacks: { say: async () => {} },
 				services: {
@@ -234,7 +241,7 @@ describe("SpawnTaskHandler", () => {
 		it("should return toolError when an exception occurs", async () => {
 			const config = {
 				taskId: "parent-1",
-				taskState: { consecutiveMistakeCount: 0 },
+				taskState: createTaskState(),
 				interactions: {
 					open: async () => ({ actionId: "approve" }),
 				},

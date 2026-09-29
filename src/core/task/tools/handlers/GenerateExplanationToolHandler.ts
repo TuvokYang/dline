@@ -277,11 +277,11 @@ export class GenerateExplanationToolHandler implements IToolHandler, IPartialBlo
 					commentController.endStreamingComment()
 				},
 				// shouldAbort: Check if task was cancelled
-				() => config.taskState.abort === true,
+				() => config.taskState.operationSignal.aborted,
 			)
 
 			// Check if we were aborted during streaming
-			if (config.taskState.abort) {
+			if (config.taskState.operationSignal.aborted) {
 				// Finalize the loading partial before returning
 				await config.callbacks.say(
 					"generate_explanation",

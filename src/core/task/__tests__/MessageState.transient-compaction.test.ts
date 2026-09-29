@@ -6,7 +6,6 @@ import type { UiMessage } from "@shared/ExtensionMessage"
 import { afterEach, describe, expect, it } from "vitest"
 import { UIMessage } from "../../storage/UIMessage"
 import { MessageStateHandler } from "../message-state"
-import { TaskState } from "../TaskState"
 
 const originalDocumentsDirectory = process.env.DLINE_DOCUMENTS_DIRECTORY
 
@@ -24,7 +23,6 @@ describe("MessageState compaction transient overlay", () => {
 		const state = new MessageStateHandler({
 			taskId,
 			ulid: "ulid-transient-compaction",
-			taskState: new TaskState(),
 			updateTaskHistory: async () => [],
 			uiMessage,
 		})
@@ -48,7 +46,6 @@ describe("MessageState compaction transient overlay", () => {
 		const finalState = new MessageStateHandler({
 			taskId,
 			ulid: "ulid-transient-compaction",
-			taskState: new TaskState(),
 			updateTaskHistory: async () => [],
 			uiMessage: reopened,
 		})
@@ -90,7 +87,6 @@ describe("MessageState compaction transient overlay", () => {
 		const state = new MessageStateHandler({
 			taskId,
 			ulid: "ulid-durable-compaction-cards",
-			taskState: new TaskState(),
 			updateTaskHistory: async () => [],
 			uiMessage,
 		})

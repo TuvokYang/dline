@@ -151,8 +151,12 @@ function replayHydrate(snapshot: TaskState) {
 
 function checkpointPorts(snapshot: TaskState): CheckpointRestorePorts & { readonly calls: string[]; saved?: unknown } {
 	const calls: string[] = []
+	let saved: unknown
 	return {
 		calls,
+		get saved() {
+			return saved
+		},
 		stopAndFence: vi.fn(async () => void calls.push("stop")),
 		resolve: vi.fn(async () => {
 			calls.push("resolve")
@@ -166,9 +170,9 @@ function checkpointPorts(snapshot: TaskState): CheckpointRestorePorts & { readon
 			calls.push("conversation")
 			return boundary
 		}),
-		save: vi.fn(async function (saved) {
+		save: vi.fn(async (nextSaved) => {
 			calls.push("save")
-			this.saved = saved
+			saved = nextSaved
 		}),
 	}
 }

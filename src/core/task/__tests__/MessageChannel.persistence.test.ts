@@ -7,7 +7,7 @@ import { openUiMessageRows, UI_MESSAGE_READER } from "@/core/storage/messages/op
 import { UIMessage } from "../../storage/UIMessage"
 import { MessageChannel } from "../MessageChannel"
 import { MessageStateHandler } from "../message-state"
-import { TaskState } from "../TaskState"
+import { DefaultToolHandlerState } from "../tools/state/ToolHandlerState"
 
 describe("MessageChannel completion ask persistence", () => {
 	let docsDir: string
@@ -31,7 +31,7 @@ describe("MessageChannel completion ask persistence", () => {
 
 	it("persists the latest reasoning delta when the task store closes mid-stream", async () => {
 		const taskId = "task-partial-reasoning-close"
-		const taskState = new TaskState()
+		const taskState = new DefaultToolHandlerState()
 		const uiMessage = await UIMessage.open(taskId)
 		const messageStateHandler = new MessageStateHandler({
 			taskId,
@@ -68,7 +68,7 @@ describe("MessageChannel completion ask persistence", () => {
 
 	it("keeps the upgraded completion ask anchor after reopening ui_messages.jsonl", async () => {
 		const taskId = "task-completion-ask"
-		const taskState = new TaskState()
+		const taskState = new DefaultToolHandlerState()
 		const uiMessage = await UIMessage.open(taskId)
 		const messageStateHandler = new MessageStateHandler({
 			taskId,

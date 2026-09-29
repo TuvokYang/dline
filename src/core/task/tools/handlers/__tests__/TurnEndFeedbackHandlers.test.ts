@@ -3,7 +3,7 @@ import type { ToolUse } from "@core/assistant-message"
 import { createTaskCapabilityToggles } from "@shared/TaskCapabilityToggles"
 import { ClineDefaultTool } from "@shared/tools"
 import { describe, expect, it, vi } from "vitest"
-import { TaskState } from "../../../TaskState"
+import { DefaultToolHandlerState } from "../../state/ToolHandlerState"
 import type { TaskConfig } from "../../types/TaskConfig"
 import { AskFollowupQuestionToolHandler } from "../AskFollowupQuestionToolHandler"
 import { GenerateReportHandler } from "../GenerateReportHandler"
@@ -23,7 +23,7 @@ vi.mock("@/services/telemetry", () => ({
  * @returns TaskConfig test double with stable ask and state dependencies.
  */
 function createConfig(text: string): TaskConfig {
-	const taskState = new TaskState()
+	const taskState = new DefaultToolHandlerState()
 	taskState.ackedFeedback = {
 		response: "messageResponse",
 		text,

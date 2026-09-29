@@ -9,7 +9,6 @@ import { HookDiscoveryCache } from "../core/hooks/HookDiscoveryCache"
 import { executeHook } from "../core/hooks/hook-executor"
 import { StateManager } from "../core/storage/StateManager"
 import { MessageStateHandler } from "../core/task/message-state"
-import { TaskState } from "../core/task/TaskState"
 import { UiMessage } from "../shared/ExtensionMessage"
 
 /**
@@ -29,7 +28,6 @@ describe("Hook Executor", () => {
 	 * Helper to create a minimal MessageStateHandler for testing
 	 */
 	function createTestHandler(): MessageStateHandler {
-		const taskState = new TaskState()
 		const mockStore = (initial: any[] = []) => {
 			let data = [...initial]
 			return {
@@ -74,7 +72,6 @@ describe("Hook Executor", () => {
 		return new MessageStateHandler({
 			taskId: "test-task-id",
 			ulid: "test-ulid",
-			taskState,
 			updateTaskHistory: async () => [],
 			apiConversation: mockStore() as any,
 			uiMessage: mockStore() as any,

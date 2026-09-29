@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert"
 import type { ToolUse } from "@core/assistant-message"
 import { describe, expect, it, vi } from "vitest"
-import { TaskState } from "../../../TaskState"
+import { DefaultToolHandlerState } from "../../state/ToolHandlerState"
 import type { TaskConfig } from "../../types/TaskConfig"
 import { QnaRespondHandler } from "../QnaRespondHandler"
 
@@ -11,7 +11,7 @@ import { QnaRespondHandler } from "../QnaRespondHandler"
  * @returns TaskConfig with mocked callbacks and task state.
  */
 function createConfig(overrides: Partial<TaskConfig> = {}): TaskConfig {
-	const taskState = new TaskState()
+	const taskState = new DefaultToolHandlerState()
 
 	return {
 		taskId: "task-qna",

@@ -1,6 +1,6 @@
 import type { ToolUse } from "@core/assistant-message"
 import { describe, expect, it, vi } from "vitest"
-import { TaskState } from "../../../TaskState"
+import { DefaultToolHandlerState } from "../../state/ToolHandlerState"
 import type { TaskConfig } from "../../types/TaskConfig"
 import { NewTaskHandler } from "../NewTaskHandler"
 
@@ -44,7 +44,7 @@ function createConfig(result: InteractionResult): TaskConfig {
 		ulid: "ulid-new",
 		cwd: "/workspace",
 		mode: "act",
-		taskState: new TaskState(),
+		taskState: new DefaultToolHandlerState(),
 		autoApprovalSettings: { enableNotifications: false },
 		interactions: {
 			open: vi.fn(async () => ({

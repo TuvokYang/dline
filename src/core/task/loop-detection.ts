@@ -13,7 +13,7 @@
  * comparison algorithm cannot drift between the two.
  */
 
-import type { TaskState } from "./TaskState"
+import type { ToolAttemptState } from "./tools/state/ToolHandlerState"
 
 // Soft threshold: inject a warning, giving the LLM one chance to self-correct.
 // Hard threshold: escalate to user or fail task. Set higher to avoid false
@@ -54,7 +54,7 @@ interface LoopDetectionResult {
  * Compares the current call against the previous state, updates the
  * counter, and returns which thresholds (if any) were crossed.
  */
-export function checkRepeatedToolCall(state: TaskState, toolName: string, currentSignature: string): LoopDetectionResult {
+export function checkRepeatedToolCall(state: ToolAttemptState, toolName: string, currentSignature: string): LoopDetectionResult {
 	if (toolName === state.lastToolName && currentSignature === state.lastToolParams) {
 		state.consecutiveIdenticalToolCount++
 	} else {
@@ -87,7 +87,7 @@ export function checkRepeatedToolCall(state: TaskState, toolName: string, curren
  * @param currentSignature Canonical signature of its parameters.
  * @returns Which thresholds this call crossed.
  */
-export function recordToolCall(state: TaskState, toolName: string, currentSignature: string): LoopDetectionResult {
+export function recordToolCall(state: ToolAttemptState, toolName: string, currentSignature: string): LoopDetectionResult {
 	const result = checkRepeatedToolCall(state, toolName, currentSignature)
 	state.lastToolName = toolName
 	state.lastToolParams = currentSignature

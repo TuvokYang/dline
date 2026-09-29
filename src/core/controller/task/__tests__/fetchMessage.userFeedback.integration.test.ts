@@ -8,7 +8,7 @@ import { closeInstanceStoragesUnder } from "@/core/storage/instance"
 import { UIMessage } from "../../../storage/UIMessage"
 import { MessageChannel } from "../../../task/MessageChannel"
 import { MessageStateHandler } from "../../../task/message-state"
-import { TaskState } from "../../../task/TaskState"
+import { DefaultToolHandlerState } from "../../../task/tools/state/ToolHandlerState"
 import { fetchMessage } from "../fetchMessage"
 
 describe("fetchMessage durable user_feedback integration", () => {
@@ -33,7 +33,7 @@ describe("fetchMessage durable user_feedback integration", () => {
 
 	it("persists final user_feedback and returns it through the fetchMessage RPC boundary", async () => {
 		const taskId = "task-user-feedback"
-		const taskState = new TaskState()
+		const taskState = new DefaultToolHandlerState()
 		const uiMessage = await UIMessage.open(taskId)
 		const messageStateHandler = new MessageStateHandler({
 			taskId,

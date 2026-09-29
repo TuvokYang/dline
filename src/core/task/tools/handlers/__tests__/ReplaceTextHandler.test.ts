@@ -4,7 +4,7 @@ import os from "node:os"
 import path from "node:path"
 import { afterEach, beforeEach, describe, it, vi } from "vitest"
 import { ClineDefaultTool } from "@/shared/tools"
-import { TaskState } from "../../../TaskState"
+import { DefaultToolHandlerState } from "../../state/ToolHandlerState"
 import type { TaskConfig } from "../../types/TaskConfig"
 import { ReplaceTextHandler } from "../ReplaceTextHandler"
 
@@ -15,7 +15,7 @@ function createConfig(): { config: TaskConfig; say: ReturnType<typeof vi.fn> } {
 	return {
 		config: {
 			cwd: tmpDir,
-			taskState: new TaskState(),
+			taskState: new DefaultToolHandlerState(),
 			callbacks: { say },
 			services: {
 				taskFileTracker: { trackModification: vi.fn() },
