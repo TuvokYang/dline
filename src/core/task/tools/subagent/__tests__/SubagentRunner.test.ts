@@ -32,6 +32,7 @@ import * as profileStore from "@core/controller/file/getApiProfiles"
 import { PromptProfile } from "@core/prompts/profiles/types"
 import * as systemPromptFacade from "@core/prompts/system-prompt"
 import type { SystemPromptContext } from "@core/prompts/system-prompt/context"
+import { deferred } from "@core/task/runtime/deferred"
 import type { TaskConfig } from "@core/task/tools/types/TaskConfig"
 import { DEFAULT_AUTO_APPROVAL_SETTINGS } from "@shared/AutoApprovalSettings"
 import type { GlobalInstructionsFile } from "@shared/remote-config/schema"
@@ -2384,6 +2385,147 @@ describe("SubagentRunner", () => {
 
 		assert.equal(result.status, "cancelled")
 		assert.equal(createMessage.mock.calls.length, 1)
+	})
+
+	it.each(["explicit", "parent"] as const)("cancels the active tool signal on %s cancellation", async (source) => {
+		const config = createTaskConfig(true)
+		const started = deferred<void>()
+		const settled = deferred<string>()
+		let toolSignal: AbortSignal | undefined
+		vi.mocked(ListFilesToolHandler.prototype.execute).mockImplementation((toolConfig) => {
+			toolSignal = toolConfig.taskState.operationSignal
+			started.resolve()
+			return settled.promise
+		})
+		const createMessage = vi.fn().mockImplementation(async function* () {
+			yield {
+				type: "tool_calls",
+				function_id: "cancellable-tool",
+				tool_call: { function: { name: ClineDefaultTool.LIST_FILES, arguments: JSON.stringify({ path: "." }) } },
+			}
+		})
+		stubSystemPrompt(true)
+		vi.spyOn(skills, "discoverSkills").mockResolvedValue([])
+		vi.spyOn(skills, "getAvailableSkills").mockReturnValue([])
+		stubApiHandler(createMessage)
+		initializeHostProvider()
+		const runner = new SubagentRunner(config)
+		const run = runner.run("Cancel active tool", () => {})
+		await started.promise
+		try {
+			if (source === "parent") config.taskState.cancelOperations("parent_cancelled")
+			else await runner.abort()
+			expect(toolSignal?.aborted).toBe(true)
+			// Rearming the parent must not uncancel the run that owned its old signal.
+			config.taskState.resetOperationCancellation()
+			settled.resolve("late tool result")
+			expect((await run).status).toBe("cancelled")
+		} finally {
+			await runner.abort()
+			settled.resolve("late tool result")
+		}
+		expect(createMessage).toHaveBeenCalledOnce()
+	})
+
+	it("interrupts a stalled provider when the captured parent signal is cancelled", async () => {
+		const config = createTaskConfig(false)
+		const started = deferred<void>()
+		const released = deferred<void>()
+		const createMessage = vi.fn().mockImplementation(async function* () {
+			started.resolve()
+			await released.promise
+			yield* []
+		})
+		const abort = vi.fn(() => released.resolve())
+		stubSystemPrompt(false)
+		vi.spyOn(skills, "discoverSkills").mockResolvedValue([])
+		vi.spyOn(skills, "getAvailableSkills").mockReturnValue([])
+		stubApiHandler(createMessage, 200_000, false, abort)
+		initializeHostProvider()
+		const runner = new SubagentRunner(config)
+		const run = runner.run("Cancel pending provider", () => {})
+		await started.promise
+		try {
+			config.taskState.cancelOperations("parent_cancelled")
+			expect(abort).toHaveBeenCalled()
+			expect((await run).status).toBe("cancelled")
+		} finally {
+			released.resolve()
+			await runner.abort()
+		}
+		expect(createMessage).toHaveBeenCalledOnce()
+	})
+
+	it("keeps independent activity cancellation detached from the parent", async () => {
+		const config = createTaskConfig(false)
+		const started = deferred<void>()
+		const released = deferred<void>()
+		const createMessage = vi.fn().mockImplementation(async function* () {
+			started.resolve()
+			await released.promise
+			yield {
+				type: "tool_calls",
+				function_id: "independent-completion",
+				tool_call: { function: { name: ClineDefaultTool.ATTEMPT, arguments: JSON.stringify({ result: "done" }) } },
+			}
+		})
+		const abort = vi.fn()
+		stubSystemPrompt(false)
+		vi.spyOn(skills, "discoverSkills").mockResolvedValue([])
+		vi.spyOn(skills, "getAvailableSkills").mockReturnValue([])
+		stubApiHandler(createMessage, 200_000, false, abort)
+		initializeHostProvider()
+		const runner = new SubagentRunner(config, "independent", undefined, { inheritTaskAbort: false })
+		const run = runner.run("Continue independent activity", () => {})
+		await started.promise
+		config.taskState.cancelOperations("parent_cancelled")
+		expect(abort).not.toHaveBeenCalled()
+		released.resolve()
+		expect((await run).status).toBe("completed")
+	})
+
+	it("gives retries a fresh tool signal without reviving abandoned work", async () => {
+		const config = createTaskConfig(true)
+		const started = deferred<void>()
+		const settled = deferred<string>()
+		const signals: AbortSignal[] = []
+		vi.mocked(ListFilesToolHandler.prototype.execute).mockImplementation((toolConfig) => {
+			signals.push(toolConfig.taskState.operationSignal)
+			if (signals.length === 1) {
+				started.resolve()
+				return settled.promise
+			}
+			return Promise.resolve("ok")
+		})
+		const createMessage = vi.fn().mockImplementation(async function* () {
+			const completion = signals.length === 2
+			yield {
+				type: "tool_calls",
+				function_id: `retry-call-${createMessage.mock.calls.length}`,
+				tool_call: {
+					function: {
+						name: completion ? ClineDefaultTool.ATTEMPT : ClineDefaultTool.LIST_FILES,
+						arguments: JSON.stringify(completion ? { result: "done" } : { path: "." }),
+					},
+				},
+			}
+		})
+		stubSystemPrompt(true)
+		vi.spyOn(skills, "discoverSkills").mockResolvedValue([])
+		vi.spyOn(skills, "getAvailableSkills").mockReturnValue([])
+		stubApiHandler(createMessage)
+		initializeHostProvider()
+		const runner = new SubagentRunner(config)
+		const first = runner.run("First attempt", () => {})
+		await started.promise
+		await runner.abort()
+		settled.resolve("late")
+		expect((await first).status).toBe("cancelled")
+		expect((await runner.run("Retry", () => {})).status).toBe("completed")
+		expect(signals).toHaveLength(2)
+		expect(signals[0]?.aborted).toBe(true)
+		expect(signals[1]?.aborted).toBe(false)
+		expect(signals[1]).not.toBe(signals[0])
 	})
 
 	it("stops waiting for a hung tool once the run is aborted", async () => {
