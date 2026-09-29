@@ -43,7 +43,13 @@ export interface ComposeContinuationPort {
  */
 export interface ComposeBackgroundResultsPort {
 	/** Collect results not yet delivered, or undefined when there are none. */
-	collect(input: { readonly signal: AbortSignal }): Promise<string | undefined>
+	collect(input: { readonly signal: AbortSignal }): Promise<BackgroundResultsLease | undefined>
+}
+
+/** Background results reserved for one round and committed only after journaling. */
+export interface BackgroundResultsLease {
+	readonly text: string
+	commit(): void
 }
 
 /**
@@ -185,16 +191,17 @@ export class ProductionComposeAdapter implements ComposePort {
 	 * results delivered once the entry is written.
 	 */
 	private async appendBackgroundResults(input: ComposeRoundInput, revision: number, generation: number): Promise<void> {
-		const text = await this.options.backgroundResults?.collect({ signal: input.signal })
-		if (!text) return
+		const lease = await this.options.backgroundResults?.collect({ signal: input.signal })
+		if (!lease) return
 		if (input.signal.aborted) throw input.signal.reason
-		const envelope: BackgroundResultsEnvelope = { kind: "background_results", text }
+		const envelope: BackgroundResultsEnvelope = { kind: "background_results", text: lease.text }
 		await this.options.journal.append({
 			operationId: `background:${revision}`,
 			payloadRef: await this.options.payloads.put(encodeTaskPayload(envelope)),
 			source: "system",
 			causation: { generation, turnId: input.turnId },
 		})
+		lease.commit()
 	}
 
 	/**

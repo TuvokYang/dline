@@ -59,11 +59,14 @@ describe("ProductionComposeAdapter background results", () => {
 		const journal = new InMemoryConversationJournal()
 		const entryRef = await store.put(encodeTaskPayload({ kind: "user_input", text: "collect" }))
 		const state = stateWithEntry(entryRef)
+		const commit = vi.fn()
 		const adapter = new ProductionComposeAdapter({
 			payloads: store,
 			journal,
 			readState: () => state,
-			backgroundResults: { collect: vi.fn(async () => "# Background Results\n## Background Command Results") },
+			backgroundResults: {
+				collect: vi.fn(async () => ({ text: "# Background Results\n## Background Command Results", commit })),
+			},
 		})
 
 		await adapter.compose({ admittedEntryIds: ["entry-1"], signal: new AbortController().signal })
@@ -75,6 +78,7 @@ describe("ProductionComposeAdapter background results", () => {
 			.map((payload) => decodeTaskPayload(payload) as { kind: string; text?: string })
 			.find((payload) => payload.kind === "background_results")
 		expect(delivered?.text).toContain("# Background Results")
+		expect(commit).toHaveBeenCalledOnce()
 	})
 
 	it("journals background results after the round's input and before its environment", async () => {
@@ -86,13 +90,37 @@ describe("ProductionComposeAdapter background results", () => {
 			payloads: store,
 			journal,
 			readState: () => state,
-			backgroundResults: { collect: async () => "# Background Results" },
+			backgroundResults: { collect: async () => ({ text: "# Background Results", commit: vi.fn() }) },
 			environment: { render: async () => "<environment_details>now</environment_details>" },
 		})
 
 		await adapter.compose({ admittedEntryIds: ["entry-1"], signal: new AbortController().signal })
 
 		expect(await journaledKinds(journal, store)).toEqual(["user_input", "background_results", "environment_details"])
+	})
+
+	it("keeps collected results pending when the journal append fails", async () => {
+		const store = payloadStore()
+		const journal = new InMemoryConversationJournal()
+		const append = journal.append.bind(journal)
+		vi.spyOn(journal, "append").mockImplementation(async (entry) => {
+			if (entry.operationId.startsWith("background:")) throw new Error("journal unavailable")
+			return append(entry)
+		})
+		const entryRef = await store.put(encodeTaskPayload({ kind: "user_input", text: "collect" }))
+		const state = stateWithEntry(entryRef)
+		const commit = vi.fn()
+		const adapter = new ProductionComposeAdapter({
+			payloads: store,
+			journal,
+			readState: () => state,
+			backgroundResults: { collect: async () => ({ text: "# Background Results", commit }) },
+		})
+
+		await expect(adapter.compose({ admittedEntryIds: ["entry-1"], signal: new AbortController().signal })).rejects.toThrow(
+			"journal unavailable",
+		)
+		expect(commit).not.toHaveBeenCalled()
 	})
 
 	it("stays silent when no background work finished", async () => {

@@ -1,6 +1,6 @@
 import type { CommandExecutor } from "@integrations/terminal/CommandExecutor"
 import { type BackgroundSubagentProvider, buildTaskBackgroundResults } from "../background/BackgroundContextInjector"
-import type { ComposeBackgroundResultsPort } from "../executors/compose/ProductionComposeAdapter"
+import type { BackgroundResultsLease, ComposeBackgroundResultsPort } from "../executors/compose/ProductionComposeAdapter"
 
 export interface TaskBackgroundResultsOwnerOptions {
 	readonly subagents: BackgroundSubagentProvider
@@ -20,20 +20,20 @@ export interface TaskBackgroundResultsOwnerOptions {
 export class TaskBackgroundResultsOwner implements ComposeBackgroundResultsPort {
 	constructor(private readonly options: TaskBackgroundResultsOwnerOptions) {}
 
-	async collect(input: { readonly signal: AbortSignal }): Promise<string | undefined> {
+	async collect(input: { readonly signal: AbortSignal }): Promise<BackgroundResultsLease | undefined> {
 		if (input.signal.aborted) throw input.signal.reason
 		const section = await buildTaskBackgroundResults(this.options.subagents, this.options.commands)
 		if (!section.text) return undefined
 		if (input.signal.aborted) throw input.signal.reason
-		this.markInjected(section.subagentIds, section.commandIds)
-		this.markConsumed(section.subagentIds, section.commandIds)
-		return section.text
-	}
-
-	/** Record that these results are on their way to the model. */
-	private markInjected(subagentIds: readonly string[], commandIds: readonly string[]): void {
-		if (subagentIds.length > 0) this.options.subagents.getSubagentJobManager().markInjected([...subagentIds])
-		if (commandIds.length > 0) this.options.commands.markBackgroundCommandsInjected([...commandIds])
+		let committed = false
+		return {
+			text: section.text,
+			commit: () => {
+				if (committed) return
+				committed = true
+				this.markConsumed(section.subagentIds, section.commandIds)
+			},
+		}
 	}
 
 	/** Record that the model has been told, so later rounds stay silent. */
