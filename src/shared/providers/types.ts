@@ -17,6 +17,9 @@ export interface ThinkingConfig {
 	supported?: boolean
 	mode?: string
 	effortLevels?: string[]
+	defaultEnabled?: boolean
+	canDisable?: boolean
+	defaultEffort?: string
 }
 
 /**

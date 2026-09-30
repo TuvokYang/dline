@@ -1,8 +1,47 @@
-import { ModelInfo } from "@shared/proto/dline/models"
-import { ApiFormat, ModelCapabilities, ModelPricing, ServerTool } from "@shared/proto/dline/models/metadata"
+import { ModelInfo, OpenRouterCompatibleModelInfo } from "@shared/proto/dline/models"
+import { ApiFormat, ModelCapabilities, ModelPricing, ServerTool, ThinkingConfig } from "@shared/proto/dline/models/metadata"
+import { fromProtobufModels, toProtobufModels } from "@shared/proto-conversions/models/typeConversion"
 import { describe, expect, it } from "vitest"
 
 describe("optional repeated model metadata", () => {
+	it("preserves complete capability declarations through the dynamic-model binary boundary", () => {
+		const id = "opaque/wire-fixture"
+		const capabilities = {
+			supportsReasoning: false,
+			supportsForcedToolUse: false,
+			thinking: {
+				supported: false,
+				mode: "effort",
+				maxBudget: 7,
+				effortLevels: ["declared-effort"],
+				defaultEnabled: false,
+				canDisable: false,
+				defaultEffort: "declared-effort",
+			},
+		}
+		const wire = toProtobufModels({ [id]: { id, capabilities } })
+		const decoded = OpenRouterCompatibleModelInfo.decode(OpenRouterCompatibleModelInfo.encode({ models: wire }).finish())
+		const restored = fromProtobufModels(decoded.models)[id]
+
+		expect(restored.id).toBe(id)
+		expect(restored.capabilities).toMatchObject(capabilities)
+	})
+
+	it.each([false, true])("round-trips explicit thinking defaults and disable policy %s without collapsing absence", (value) => {
+		const declared = ThinkingConfig.create({ defaultEnabled: value, canDisable: value, defaultEffort: "declared-effort" })
+		const binary = ThinkingConfig.decode(ThinkingConfig.encode(declared).finish())
+		const json = ThinkingConfig.fromJSON(ThinkingConfig.toJSON(declared))
+		for (const restored of [binary, json]) {
+			expect(restored.defaultEnabled).toBe(value)
+			expect(restored.canDisable).toBe(value)
+			expect(restored.defaultEffort).toBe("declared-effort")
+		}
+		const absent = ThinkingConfig.decode(ThinkingConfig.encode(ThinkingConfig.create()).finish())
+		expect(absent.defaultEnabled).toBeUndefined()
+		expect(absent.canDisable).toBeUndefined()
+		expect(absent.defaultEffort).toBeUndefined()
+	})
+
 	it("preserves absence through constructors, JSON conversion, and binary decode", () => {
 		expect(ModelInfo.create().apiFormats).toBeUndefined()
 		expect(ModelInfo.fromJSON({}).apiFormats).toBeUndefined()

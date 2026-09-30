@@ -20,6 +20,13 @@ message ThinkingConfig {
   optional string mode = 2;
   optional int64 max_budget = 3;
   repeated string effort_levels = 4;
+  // Declares automatic activation when no Profile preference is supplied.
+  // Absence does not authorize a model-name or provider-name inference.
+  optional bool default_enabled = 5;
+  // Only explicit false declares thinking mandatory; omission keeps normal compatibility.
+  optional bool can_disable = 6;
+  // Default effort declared by the model metadata, not guessed by a consumer.
+  optional string default_effort = 7;
 }
 
 /** Context window tier for models with selectable context windows. */
@@ -62,8 +69,8 @@ message ModelCapabilities {
   optional bool supports_browser_action = 13;
   // Whether the model accepts a forced tool choice such as Anthropic
   // `tool_choice: any`. Models that reject it fail the whole request rather
-  // than degrading to an automatic choice. Omitted metadata is inferred from
-  // the declared thinking mode.
+  // than degrading to an automatic choice. Omitted metadata keeps the normal
+  // provider wire default; consumers must not infer support from model names.
   optional bool supports_forced_tool_use = 14;
 }
 
