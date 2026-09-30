@@ -1,4 +1,5 @@
 import { Controller } from "@core/controller"
+import { dispatchInteraction } from "@core/controller/task/dispatchInteraction"
 import { TaskPhase } from "@core/task/TaskPhase"
 import type { TaskViewState } from "@shared/ExtensionMessage"
 import { DispatchInteractionRequest } from "@shared/proto/dline/task"
@@ -15,36 +16,26 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
 	return { promise, resolve }
 }
 
-/** Build a Controller whose history display promotes into a Task with a long-running continuation. */
-function createPromotingController(settlement: Promise<void>): Controller {
+/** Keep historical and active interactions on the same canonical Task. */
+function createBoundController(settlement: Promise<void>) {
 	const controller = Object.create(Controller.prototype) as Controller
 	const interaction = { status: "awaiting", taskId: "task-history", turnId: "turn-1", interactionId: "interaction-1" }
 	const task = {
 		taskId: "task-history",
+		taskInstanceId: "open-1",
 		getRuntimeState: () => ({ interaction, revision: 7 }),
 		dispatchRuntime: vi.fn(async () => ({ accepted: true })),
 		waitForInteractionSettlement: vi.fn(() => settlement),
 	}
-	Object.assign(controller as unknown as Record<string, unknown>, {
-		taskLifecycleMutex: new Mutex(),
-		historyDisplaySession: {
-			taskId: "task-history",
-			historyItem: { id: "task-history" },
-			accepts: () => true,
-			dispose: async () => undefined,
-		},
-	})
-	vi.spyOn(controller, "initTask").mockImplementation(async () => {
-		Object.assign(controller as unknown as Record<string, unknown>, { task })
-		return "task-history"
-	})
+	Object.assign(controller as unknown as Record<string, unknown>, { taskLifecycleMutex: new Mutex(), task })
 	vi.spyOn(controller, "postStateToWebview").mockResolvedValue(undefined)
-	return controller
+	return { controller, task }
 }
 
 function approveRequest(): DispatchInteractionRequest {
 	return DispatchInteractionRequest.create({
 		taskId: "task-history",
+		taskInstanceId: "open-1",
 		turnId: "turn-1",
 		interactionId: "interaction-1",
 		actionId: "approve",
@@ -72,6 +63,8 @@ describe("Controller history display interaction", () => {
 		}
 		Object.assign(controller as unknown as Record<string, unknown>, {
 			task: {
+				taskInstanceId: "open-active",
+				isReadOnly: () => false,
 				getRuntimeState: () => runtimeState,
 				isHistoryPreparationPending: () => false,
 				getReadyBackgroundHandoffActivityId: () => undefined,
@@ -95,40 +88,32 @@ describe("Controller history display interaction", () => {
 		expect(view).not.toHaveProperty("diagnostic")
 	})
 
-	it("keeps the history surface open when promotion fails", async () => {
-		const controller = Object.create(Controller.prototype) as Controller
-		const dispose = vi.fn(async () => undefined)
-		const session = {
-			taskId: "task-history",
-			historyItem: { id: "task-history" },
-			accepts: () => true,
-			dispose,
-		}
-		Object.assign(controller as unknown as Record<string, unknown>, {
-			taskLifecycleMutex: new Mutex(),
-			historyDisplaySession: session,
+	it("keeps the same history Task and causal request when execution admission fails", async () => {
+		const { controller, task } = createBoundController(Promise.resolve())
+		const init = vi.spyOn(controller, "initTask")
+		task.dispatchRuntime.mockRejectedValueOnce(new Error("history stores failed"))
+		await expect(dispatchInteraction(controller, approveRequest())).rejects.toThrow("history stores failed")
+		expect(controller.task).toBe(task)
+		expect(init).not.toHaveBeenCalled()
+		expect(task.dispatchRuntime).toHaveBeenCalledWith({
+			type: "INTERACTION_RESPONDED",
+			response: expect.objectContaining({
+				taskId: "task-history",
+				turnId: "turn-1",
+				interactionId: "interaction-1",
+				stateRevision: 7,
+			}),
 		})
-		vi.spyOn(controller, "initTask").mockRejectedValue(new Error("restore failed"))
-		const postState = vi.spyOn(controller, "postStateToWebview").mockResolvedValue(undefined)
-
-		await expect(controller.dispatchHistoryDisplayInteraction(approveRequest())).resolves.toMatchObject({
-			accepted: false,
-			result: "invalid_runtime_event",
-		})
-
-		expect((controller as unknown as { historyDisplaySession?: unknown }).historyDisplaySession).toBe(session)
-		expect(dispose).not.toHaveBeenCalled()
-		expect(postState).toHaveBeenCalledWith({ immediate: true })
 	})
 
-	it("releases the task lifecycle while the promoted continuation is still running", async () => {
+	it("releases the task lifecycle while the canonical continuation is still running", async () => {
 		// A restored approval keeps driving the Task until its next interaction,
 		// which may wait for the user indefinitely. Close must not queue behind it.
 		const settlement = deferred()
-		const controller = createPromotingController(settlement.promise)
+		const { controller } = createBoundController(settlement.promise)
 
 		let dispatchSettled = false
-		const dispatch = controller.dispatchHistoryDisplayInteraction(approveRequest()).then((response) => {
+		const dispatch = dispatchInteraction(controller, approveRequest()).then((response) => {
 			dispatchSettled = true
 			return response
 		})

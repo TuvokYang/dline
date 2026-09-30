@@ -18,6 +18,9 @@ describe("Task task-local mode", () => {
 		const fakeTask = {
 			taskSm: { mode: "plan", setMode: vi.fn(() => order.push("mode")) },
 			rebuildApiHandler: vi.fn(() => order.push("rebuild")),
+			prepareExecutionResources: vi.fn(async () => {
+				order.push("admit")
+			}),
 			taskState: { isAwaitingPlanResponse: true, didRespondToPlanAskBySwitchingMode: false },
 			interactionCoordinator: {
 				canRespondForModeSwitch: vi.fn(() => true),
@@ -39,7 +42,7 @@ describe("Task task-local mode", () => {
 			files: ["file"],
 		})
 
-		expect(order).toEqual(["mode", "rebuild", "wake", "flush"])
+		expect(order).toEqual(["admit", "mode", "rebuild", "wake", "flush"])
 		expect(fakeTask.interactionCoordinator.respondForModeSwitch).toHaveBeenCalledWith({
 			text: "continue",
 			images: ["image"],
@@ -71,6 +74,37 @@ describe("Task task-local mode", () => {
 		expect(fakeTask.stateManager.flushPendingState).toHaveBeenCalledOnce()
 	})
 
+	it("keeps the source mode and awaiting input when historical resource admission fails", async () => {
+		const taskSm = {
+			mode: "plan",
+			setMode: vi.fn((mode: "plan" | "act") => {
+				taskSm.mode = mode
+			}),
+		}
+		const fakeTask = {
+			taskSm,
+			rebuildApiHandler: vi.fn(),
+			prepareExecutionResources: vi.fn(async () => {
+				throw new Error("history unavailable")
+			}),
+			taskState: { isAwaitingPlanResponse: true, didRespondToPlanAskBySwitchingMode: false },
+			interactionCoordinator: {
+				canRespondForModeSwitch: vi.fn(() => true),
+				respondForModeSwitch: vi.fn(async () => true),
+			},
+			stateManager: { flushPendingState: vi.fn() },
+		}
+
+		await expect(Task.prototype.commitMode.call(fakeTask, "act", { message: "continue" })).rejects.toThrow(
+			"history unavailable",
+		)
+		expect(taskSm.mode).toBe("plan")
+		expect(taskSm.setMode).not.toHaveBeenCalled()
+		expect(fakeTask.rebuildApiHandler).not.toHaveBeenCalled()
+		expect(fakeTask.interactionCoordinator.respondForModeSwitch).not.toHaveBeenCalled()
+		expect(fakeTask.stateManager.flushPendingState).not.toHaveBeenCalled()
+	})
+
 	/** Restore the source mode if the awaiting interaction changes before its causal response is accepted. */
 	it("rolls back a rejected plan continuation", async () => {
 		const taskSm = {
@@ -82,6 +116,7 @@ describe("Task task-local mode", () => {
 		const fakeTask = {
 			taskSm,
 			rebuildApiHandler: vi.fn(),
+			prepareExecutionResources: vi.fn(async () => undefined),
 			taskState: { isAwaitingPlanResponse: true, didRespondToPlanAskBySwitchingMode: false },
 			interactionCoordinator: {
 				canRespondForModeSwitch: vi.fn(() => true),

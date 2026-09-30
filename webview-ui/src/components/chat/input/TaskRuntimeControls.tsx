@@ -17,7 +17,7 @@ export function TaskRuntimeControls() {
 	const { profiles } = useApiProfiles()
 	const [error, setError] = useState<string>()
 
-	const taskId = taskViewState?.taskId ?? currentTaskItem?.id
+	const taskId = taskViewState?.taskId
 	const profileId = mode === "plan" ? apiConfiguration?.planModeProfileId : apiConfiguration?.actModeProfileId
 	const profileName = mode === "plan" ? apiConfiguration?.planModeProfile : apiConfiguration?.actModeProfile
 	const profile = useMemo(

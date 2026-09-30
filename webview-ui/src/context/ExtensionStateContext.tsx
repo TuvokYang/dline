@@ -15,7 +15,6 @@ import type { UserInfo } from "@shared/proto/dline/account"
 import { EmptyRequest } from "@shared/proto/dline/common"
 import type { OpenRouterCompatibleModelInfo } from "@shared/proto/dline/models"
 import { OnboardingModelGroup, type TerminalProfile } from "@shared/proto/dline/state"
-import { FetchMessageRequest } from "@shared/proto/dline/task"
 import { protoToAccountUsage } from "@shared/proto-conversions/account-usage-conversion"
 import { convertProtoToClineMessage } from "@shared/proto-conversions/cline-message"
 import { convertProtoMcpServersToMcpServers } from "@shared/proto-conversions/mcp/mcp-server-conversion"
@@ -36,17 +35,9 @@ import {
 import { Environment } from "../../../src/shared/config-types"
 import type { McpMarketplaceCatalog, McpServer, McpViewTab } from "../../../src/shared/mcp"
 import type { TaskCapabilityToggles } from "../../../src/shared/TaskCapabilityToggles"
-import {
-	McpServiceClient,
-	ModelsServiceClient,
-	StateServiceClient,
-	TaskServiceClient,
-	UiServiceClient,
-} from "../services/grpc-client"
+import { McpServiceClient, ModelsServiceClient, StateServiceClient, UiServiceClient } from "../services/grpc-client"
+import { fetchTaskMessages, getTaskViewKey } from "../services/task-messages"
 import { canAppendRealtimeMessage, isMessageWindowOverfull, reconcileMessageWindow } from "./messageWindowSync"
-
-const getTaskViewKey = (taskId?: string, taskTitleMessageTs?: number) =>
-	taskId ?? (taskTitleMessageTs != null ? `task-title:${taskTitleMessageTs}` : undefined)
 
 type ExtensionStatePatch = {
 	__dlineStatePatch: true
@@ -463,8 +454,9 @@ export const ExtensionStateContextProvider: React.FC<{
 	// changes (remove partials, postState, total update) settle before
 	// triggering a Virtuoso data swap that causes layout jitter.
 	const cancelStabilizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-	const initialTaskViewKey = getTaskViewKey(state.currentTaskItem?.id, state.taskTitleMessage?.ts)
+	const initialTaskViewKey = getTaskViewKey(state.taskViewState)
 	const currentTaskViewKeyRef = useRef<string | undefined>(initialTaskViewKey)
+	currentTaskViewKeyRef.current = initialTaskViewKey
 	const messageFetchGenerationRef = useRef(0)
 	const prevRefetchTaskViewKeyRef = useRef<string | undefined>(initialTaskViewKey)
 	const prevHistoryTaskViewKeyRef = useRef<string | undefined>(initialTaskViewKey)
@@ -483,8 +475,10 @@ export const ExtensionStateContextProvider: React.FC<{
 	// Reset when task is cleared, bootstrap on task switch, and reconcile gaps
 	// when a durable tail message arrives without its realtime event.
 	useEffect(() => {
-		const currentTaskViewKey = getTaskViewKey(state.currentTaskItem?.id, state.taskTitleMessage?.ts)
+		const currentTaskViewKey = getTaskViewKey(state.taskViewState)
 		const total = state.totalMessageCount ?? 0
+		const fetchCurrentMessages = (referenceIndex: number, count: number) =>
+			fetchTaskMessages(state.taskViewState, referenceIndex, count)
 
 		const fetchLatestWindow = (scheduledTaskViewKey: string | undefined, expectedInteraction?: ActiveInteractionView) => {
 			const scheduledGeneration = messageFetchGenerationRef.current
@@ -518,7 +512,7 @@ export const ExtensionStateContextProvider: React.FC<{
 				bootstrapRetryAttempt = 0,
 			): Promise<void> => {
 				try {
-					const resp = await TaskServiceClient.fetchMessage(FetchMessageRequest.create({ referenceIndex, count: 200 }))
+					const resp = await fetchCurrentMessages(referenceIndex, 200)
 					if (
 						messageFetchGenerationRef.current !== scheduledGeneration ||
 						currentTaskViewKeyRef.current !== scheduledTaskViewKey
@@ -571,6 +565,11 @@ export const ExtensionStateContextProvider: React.FC<{
 						}
 					}
 				} catch {
+					if (
+						currentTaskViewKeyRef.current !== scheduledTaskViewKey ||
+						messageFetchGenerationRef.current !== scheduledGeneration
+					)
+						return
 					if (
 						referenceIndex === -1 &&
 						total > 0 &&
@@ -641,7 +640,7 @@ export const ExtensionStateContextProvider: React.FC<{
 		if (durableTailMayHaveReplacedPartial && !refetchLockRef.current) {
 			const scheduledTaskViewKey = currentTaskViewKeyRef.current
 			refetchLockRef.current = true
-			TaskServiceClient.fetchMessage(FetchMessageRequest.create({ referenceIndex: -1, count: 200 }))
+			fetchCurrentMessages(-1, 200)
 				.then((resp) => {
 					if (currentTaskViewKeyRef.current !== scheduledTaskViewKey) {
 						return
@@ -659,14 +658,12 @@ export const ExtensionStateContextProvider: React.FC<{
 				})
 				.catch(() => {})
 				.finally(() => {
-					refetchLockRef.current = false
+					if (currentTaskViewKeyRef.current === scheduledTaskViewKey) refetchLockRef.current = false
 				})
 		} else if (knownEndIndex < total && windowCoveredPreviousTail && !refetchLockRef.current) {
 			const scheduledTaskViewKey = currentTaskViewKeyRef.current
 			refetchLockRef.current = true
-			TaskServiceClient.fetchMessage(
-				FetchMessageRequest.create({ referenceIndex: knownEndIndex, count: Math.min(200, total - knownEndIndex) }),
-			)
+			fetchCurrentMessages(knownEndIndex, Math.min(200, total - knownEndIndex))
 				.then((resp) => {
 					if (currentTaskViewKeyRef.current !== scheduledTaskViewKey) {
 						return
@@ -684,7 +681,7 @@ export const ExtensionStateContextProvider: React.FC<{
 				})
 				.catch(() => {})
 				.finally(() => {
-					refetchLockRef.current = false
+					if (currentTaskViewKeyRef.current === scheduledTaskViewKey) refetchLockRef.current = false
 				})
 		}
 		// Refetch when the local window can no longer be reconciled from state
@@ -706,7 +703,7 @@ export const ExtensionStateContextProvider: React.FC<{
 					return
 				}
 				refetchLockRef.current = true
-				TaskServiceClient.fetchMessage(FetchMessageRequest.create({ referenceIndex: -1, count: 200 }))
+				fetchCurrentMessages(-1, 200)
 					.then((resp) => {
 						if (currentTaskViewKeyRef.current !== scheduledTaskViewKey) {
 							return
@@ -717,7 +714,7 @@ export const ExtensionStateContextProvider: React.FC<{
 					})
 					.catch(() => {})
 					.finally(() => {
-						refetchLockRef.current = false
+						if (currentTaskViewKeyRef.current === scheduledTaskViewKey) refetchLockRef.current = false
 					})
 			}, 200)
 		}
@@ -738,8 +735,7 @@ export const ExtensionStateContextProvider: React.FC<{
 
 		prevTotalRef.current = total
 	}, [
-		state.currentTaskItem?.id,
-		state.taskTitleMessage?.ts,
+		state.taskViewState,
 		state.totalMessageCount,
 		projectedInteraction,
 		projectedInteractionAnchorPresent,
@@ -842,6 +838,14 @@ export const ExtensionStateContextProvider: React.FC<{
 						}
 						stateRevisionRef.current = stateData.stateRevision ?? 0
 						if (!isPatch) hydratedStateRef.current = true
+						if (!isPatch || Object.hasOwn(stateData, "taskViewState")) {
+							const nextKey = getTaskViewKey(stateData.taskViewState)
+							if (nextKey !== currentTaskViewKeyRef.current) {
+								currentTaskViewKeyRef.current = nextKey
+								messageFetchGenerationRef.current++
+								commitMessageWindow([], 0)
+							}
+						}
 						setState((prevState) => {
 							const { __dlineStatePatch: _patchMarker, ...stateFields } = stateData as ExtensionStatePatch
 							// Versioning logic for autoApprovalSettings
@@ -1012,7 +1016,10 @@ export const ExtensionStateContextProvider: React.FC<{
 					}
 
 					const partialMessage = convertProtoToClineMessage(protoMessage)
+					const sourceKey = getTaskViewKey(protoMessage)
+					if (!sourceKey || sourceKey !== currentTaskViewKeyRef.current) return
 					setClineMessages((prev) => {
+						if (sourceKey !== currentTaskViewKeyRef.current) return prev
 						const existingIndex = prev.findIndex((msg) => msg.ts === partialMessage.ts)
 						if (existingIndex >= 0 && prev[existingIndex].partial !== true && partialMessage.partial === true) {
 							return prev
@@ -1205,7 +1212,7 @@ export const ExtensionStateContextProvider: React.FC<{
 	// navigation path is the backend history-ready event; this only handles a
 	// missed event without closing HistoryView just because a task already exists.
 	useEffect(() => {
-		const currentTaskViewKey = getTaskViewKey(state.currentTaskItem?.id, state.taskTitleMessage?.ts)
+		const currentTaskViewKey = getTaskViewKey(state.taskViewState)
 		const prevTaskViewKey = prevHistoryTaskViewKeyRef.current
 
 		if (!showHistory) {
@@ -1218,7 +1225,7 @@ export const ExtensionStateContextProvider: React.FC<{
 		}
 
 		prevHistoryTaskViewKeyRef.current = currentTaskViewKey
-	}, [state.currentTaskItem?.id, state.taskTitleMessage?.ts, showHistory, navigateToChat])
+	}, [state.taskViewState, showHistory, navigateToChat])
 
 	const refreshOpenRouterModels = useCallback(() => {
 		ModelsServiceClient.refreshOpenRouterModelsRpc(EmptyRequest.create({}))

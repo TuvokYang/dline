@@ -76,6 +76,7 @@ const TaskHeader: React.FC<TaskHeaderProps> = ({
 }) => {
 	const {
 		currentTaskItem,
+		taskViewState,
 		checkpointManagerErrorMessage,
 		contextWindowIndicator,
 		focusChainSettings,
@@ -145,7 +146,7 @@ const TaskHeader: React.FC<TaskHeaderProps> = ({
 				handleCheckpointSettingsClick={handleCheckpointSettingsClick}
 			/>
 			{/* Display Task Lock Warning */}
-			<TaskLockBanner currentTaskId={currentTaskItem?.id} taskLockStatus={taskLockStatus} />
+			<TaskLockBanner currentTaskId={taskId} taskLockStatus={taskLockStatus} />
 			{/* Task Header */}
 			<div
 				className={cn(
@@ -185,17 +186,11 @@ const TaskHeader: React.FC<TaskHeaderProps> = ({
 									estimatedInputTokens={currentContextTokens}
 									inputPrice={pricing?.inputPrice}
 									promptFreshness={promptFreshness}
-									taskId={currentTaskItem?.id}
+									taskId={taskId}
 								/>
-								<DeleteTaskButton
-									className={BUTTON_CLASS}
-									taskId={currentTaskItem?.id}
-									taskSize={currentTaskItem?.size}
-								/>
+								<DeleteTaskButton className={BUTTON_CLASS} taskId={taskId} taskSize={currentTaskItem?.size} />
 								{/* Only visible in development mode */}
-								{IS_DEV && (
-									<OpenDiskConversationHistoryButton className={BUTTON_CLASS} taskId={currentTaskItem?.id} />
-								)}
+								{IS_DEV && <OpenDiskConversationHistoryButton className={BUTTON_CLASS} taskId={taskId} />}
 							</div>
 						)}
 					</div>
@@ -215,7 +210,10 @@ const TaskHeader: React.FC<TaskHeaderProps> = ({
 								currency={displayCurrency}
 								isCostAvailable={isCostAvailable}
 								requestsPerMinute={requestsPerMinute ?? 0}
-								taskId={currentTaskItem?.id}
+								taskId={taskId}
+								taskInstanceId={
+									taskViewState && taskViewState.taskId === taskId ? taskViewState.taskInstanceId : undefined
+								}
 								tokensOut={tokensOut}
 								tokensPerMinute={tokensPerMinute ?? 0}
 								totalCost={totalCost}
@@ -228,7 +226,7 @@ const TaskHeader: React.FC<TaskHeaderProps> = ({
 
 				{/* Expand/Collapse Task Details */}
 				{isTaskExpanded && (
-					<div className="flex flex-col break-words" key={`task-details-${currentTaskItem?.id}`}>
+					<div className="flex flex-col break-words" key={`task-details-${taskId}:${taskViewState?.taskInstanceId}`}>
 						<div
 							className={cn(
 								"ph-no-capture whitespace-pre-wrap break-words px-0.5 text-sm mt-1 relative",
@@ -281,7 +279,7 @@ const TaskHeader: React.FC<TaskHeaderProps> = ({
 			{/* Display Focus Chain To-Do List */}
 			{focusChainSettings.enabled && (
 				<FocusChain
-					currentTaskItemId={currentTaskItem?.id}
+					currentTaskItemId={taskId}
 					lastProgressMessageText={lastProgressMessageText}
 					showPlaceholderWhenEmpty={showFocusChainPlaceholder}
 				/>

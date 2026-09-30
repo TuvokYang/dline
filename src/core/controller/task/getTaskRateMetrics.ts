@@ -24,8 +24,8 @@ export async function getTaskRateMetrics(
 ): Promise<GetTaskRateMetricsResponse> {
 	const startedAt = performance.now()
 	const task = controller.task
-	if (!task || task.taskId !== request.taskId) {
-		throw new Error("Task rate metrics query requires the matching active Task")
+	if (!task || task.taskId !== request.taskId || !request.taskInstanceId || task.taskInstanceId !== request.taskInstanceId) {
+		throw new Error("Task rate metrics query requires the matching opened Task instance")
 	}
 	if (!Number.isFinite(request.startMs) || !Number.isFinite(request.endMs) || request.endMs <= request.startMs) {
 		throw new Error("Task rate metrics query requires a valid time range")
@@ -38,7 +38,12 @@ export async function getTaskRateMetrics(
 		...(request.maxPoints > 0 && { maxPoints: request.maxPoints }),
 	})
 
+	if (controller.task !== task) {
+		throw new Error("Task rate metrics query no longer belongs to the opened Task instance")
+	}
 	const response = GetTaskRateMetricsResponse.create({
+		taskId: task.taskId,
+		taskInstanceId: task.taskInstanceId,
 		points: result.points.map((point) => ({
 			bucketStartMs: point.bucketStartMs,
 			bucketEndMs: point.bucketEndMs,

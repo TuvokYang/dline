@@ -350,6 +350,9 @@ message ClineMessage {
   bool completion_has_changes = 37;
   // Workspace identities aligned with last_checkpoint_hash.
   repeated string checkpoint_workspace_roots = 38;
+  // Transport-only opening identity; not persisted as conversation identity.
+  optional string task_id = 39;
+  optional string task_instance_id = 40;
 }
 
 message ShowWebviewEvent {

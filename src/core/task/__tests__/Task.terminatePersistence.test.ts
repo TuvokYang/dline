@@ -1,4 +1,5 @@
 import { Task } from "@core/task"
+import { TaskMessageResources } from "@core/task/messages/TaskMessageResources"
 import { TaskPhase } from "@core/task/TaskPhase"
 import { describe, expect, it, vi } from "vitest"
 
@@ -10,8 +11,16 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
 	return { promise, resolve }
 }
 
+function createTerminationMessages() {
+	return new TaskMessageResources("termination-fixture", {
+		uiMessage: { close: vi.fn(async () => {}) },
+		apiConversation: { close: vi.fn(async () => {}) },
+	} as never)
+}
+
 function createTerminationRuntime(phase: TaskPhase) {
 	return {
+		messageResources: createTerminationMessages(),
 		interactionCoordinator: {
 			cancelPending: vi.fn(() => 1),
 			waitForClaimedContinuations: vi.fn(async () => {}),
@@ -173,6 +182,7 @@ describe("Task termination persistence", () => {
 		const dispatchRuntime = vi.fn(async () => ({ accepted: true }))
 		const flushTaskSnapshot = vi.fn(async () => {})
 		const terminationRuntime = {
+			messageResources: createTerminationMessages(),
 			interactionCoordinator: {
 				cancelPending: vi.fn(() => 1),
 				waitForClaimedContinuations: vi.fn(async () => {}),

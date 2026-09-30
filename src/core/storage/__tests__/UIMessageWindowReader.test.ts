@@ -73,6 +73,37 @@ describe("UIMessage history windows", () => {
 		}
 	})
 
+	it("reads the exact older interaction anchor and recovery suffix without unrelated message bodies", async () => {
+		const taskId = "window-recovery"
+		const taskDirectory = await ensureTaskDirectoryExists(taskId)
+		const messages: ClineMessage[] = [
+			{ ts: 10, type: "say", say: "task", text: "title", conversationHistoryIndex: 0 },
+			{ ts: 20, type: "ask", ask: "tool", interactionId: "anchor", conversationHistoryIndex: 1 },
+			{ ts: 30, type: "say", say: "text", text: "unrelated", conversationHistoryIndex: 1 },
+			{ ts: 40, type: "say", say: "text", text: "later API", conversationHistoryIndex: 3 },
+			{ ts: 50, type: "say", say: "text", text: "suffix", conversationHistoryIndex: 2 },
+		]
+		await writeJsonl(path.join(taskDirectory, GlobalFileNames.uiMessages), messages)
+		const reader = await UIMessage.openWindow(taskId)
+		try {
+			await expect(reader.getRecoveryMessages({ timestamp: 50, apiIndex: 2, interactionId: "anchor" })).resolves.toEqual([
+				messages[1],
+				messages[3],
+				messages[4],
+			])
+		} finally {
+			await reader.close()
+		}
+	})
+
+	it("does not create a missing Task directory for display-only access", async () => {
+		const taskId = "missing-readonly-history"
+		const reader = await UIMessage.openWindow(taskId, { readOnly: true })
+		expect(reader.count).toBe(0)
+		await reader.close()
+		await expect(fs.access(path.join(dlineDocsDir, "tasks", taskId))).rejects.toMatchObject({ code: "ENOENT" })
+	})
+
 	it("uses a bounded reader for new tasks and rejects reads after close", async () => {
 		const reader = await UIMessage.openWindow("window-close")
 		expect(reader.count).toBe(0)

@@ -12,21 +12,15 @@ interface DispatchTask {
 }
 
 interface DispatchController {
-	task?: DispatchTask
-	dispatchHistoryDisplayInteraction: () => Promise<undefined>
+	task?: DispatchTask & { taskId: string; taskInstanceId: string }
 }
 
-/**
- * Create a controller-shaped test boundary with one optional task.
- *
- * Without a task the Controller first offers the request to its lightweight
- * history display, so the double must expose that boundary and decline it to
- * reach the missing-task outcome.
- */
+/** Create a Controller boundary with the same canonical Task in every working phase. */
 function controller(task?: DispatchTask): DispatchController {
 	return {
-		...(task ? { task: { waitForInteractionSettlement: async () => {}, ...task } } : {}),
-		dispatchHistoryDisplayInteraction: async () => undefined,
+		...(task
+			? { task: { taskId: "task-1", taskInstanceId: "open-1", waitForInteractionSettlement: async () => {}, ...task } }
+			: {}),
 	}
 }
 
@@ -34,6 +28,7 @@ describe("dispatchInteraction", () => {
 	it("maps one causal request to one runtime event", async () => {
 		const dispatchRuntime = vi.fn(async () => ({ accepted: true }))
 		const request = DispatchInteractionRequest.create({
+			taskInstanceId: "open-1",
 			taskId: "task-1",
 			turnId: "turn-1",
 			interactionId: "interaction-1",
@@ -70,6 +65,7 @@ describe("dispatchInteraction", () => {
 		const resultPromise = dispatchInteraction(
 			controller({ dispatchRuntime: vi.fn(async () => ({ accepted: true })), waitForInteractionSettlement }) as never,
 			DispatchInteractionRequest.create({
+				taskInstanceId: "open-1",
 				taskId: "task-1",
 				turnId: "turn-1",
 				interactionId: "interaction-1",
@@ -95,6 +91,7 @@ describe("dispatchInteraction", () => {
 		const result = await dispatchInteraction(
 			controller({ dispatchRuntime }) as never,
 			DispatchInteractionRequest.create({
+				taskInstanceId: "open-1",
 				taskId: "task-1",
 				turnId: "turn-old",
 				interactionId: "interaction-1",
@@ -111,6 +108,7 @@ describe("dispatchInteraction", () => {
 		const result = await dispatchInteraction(
 			controller({ dispatchRuntime }) as never,
 			DispatchInteractionRequest.create({
+				taskInstanceId: "open-1",
 				taskId: "task-1",
 				turnId: "turn-1",
 				interactionId: "interaction-1",
@@ -128,6 +126,7 @@ describe("dispatchInteraction", () => {
 		const result = await dispatchInteraction(
 			controller({ dispatchRuntime }) as never,
 			DispatchInteractionRequest.create({
+				taskInstanceId: "open-1",
 				taskId: "task-1",
 				turnId: "turn-1",
 				interactionId: "interaction-1",
@@ -143,6 +142,7 @@ describe("dispatchInteraction", () => {
 		const result = await dispatchInteraction(
 			controller() as never,
 			DispatchInteractionRequest.create({
+				taskInstanceId: "open-1",
 				taskId: "task-1",
 				turnId: "turn-1",
 				interactionId: "interaction-1",

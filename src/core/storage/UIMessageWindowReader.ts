@@ -11,6 +11,14 @@ interface MessageRecordLocation {
 	offset: number
 	length: number
 	ordinal: number
+	conversationHistoryIndex?: number
+	interactionId?: string
+}
+
+export interface UIMessageRecoveryBoundary {
+	readonly timestamp: number
+	readonly apiIndex: number
+	readonly interactionId?: string
 }
 
 export interface UIMessageWindowPage {
@@ -38,6 +46,7 @@ export class UIMessageWindowReader {
 
 	static async open(filePath: string): Promise<UIMessageWindowReader> {
 		const handle = await openReadableFile(filePath)
+		if (!handle) return new UIMessageWindowReader(undefined, [], new Map(), undefined)
 		try {
 			const { size } = await handle.stat()
 			if (await isLegacyArray(handle, size)) {
@@ -94,6 +103,23 @@ export class UIMessageWindowReader {
 		return record ? await this.readRecord(record) : undefined
 	}
 
+	/** Read only the suffix and exact interaction records needed to reconcile a snapshot. */
+	async getRecoveryMessages(boundary: UIMessageRecoveryBoundary): Promise<ClineMessage[]> {
+		this.assertOpen()
+		const matches = (message: { ts: number; conversationHistoryIndex?: number; interactionId?: string }) =>
+			message.ts >= boundary.timestamp ||
+			(message.conversationHistoryIndex !== undefined && message.conversationHistoryIndex > boundary.apiIndex) ||
+			(boundary.interactionId !== undefined && message.interactionId === boundary.interactionId)
+		if (this.legacyMessages) return this.legacyMessages.filter(matches)
+		const records = this.records.filter(matches)
+		const messages: ClineMessage[] = []
+		for (let start = 0; start < records.length; start += 200) {
+			const page = await Promise.all(records.slice(start, start + 200).map((record) => this.readRecord(record)))
+			messages.push(...page.filter((message): message is ClineMessage => message !== undefined))
+		}
+		return messages
+	}
+
 	async close(): Promise<void> {
 		if (this.closed) return
 		this.closed = true
@@ -119,12 +145,12 @@ export class UIMessageWindowReader {
 	}
 }
 
-async function openReadableFile(filePath: string): Promise<FileHandle> {
+async function openReadableFile(filePath: string): Promise<FileHandle | undefined> {
 	try {
 		return await fs.open(filePath, "r")
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
-		return await fs.open(filePath, "w+")
+		return undefined
 	}
 }
 
@@ -148,7 +174,14 @@ async function buildRecordIndex(handle: FileHandle, size: number): Promise<Messa
 	const accept = (line: Buffer, offset: number): void => {
 		const message = parseMessageLine(line)
 		if (!message) return
-		latestByTimestamp.set(message.ts, { ts: message.ts, offset, length: line.length, ordinal })
+		latestByTimestamp.set(message.ts, {
+			ts: message.ts,
+			offset,
+			length: line.length,
+			ordinal,
+			conversationHistoryIndex: message.conversationHistoryIndex,
+			interactionId: message.interactionId,
+		})
 		ordinal += 1
 	}
 

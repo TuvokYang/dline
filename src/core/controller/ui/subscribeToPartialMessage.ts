@@ -58,7 +58,13 @@ export function registerPartialMessageCallback(callback: PartialMessageCallback)
  * @param controller The controller whose subscribers should receive the event
  * @param partialMessage The ClineMessage to send
  */
-export async function sendPartialMessageEvent(controller: Controller, partialMessage: ClineMessage): Promise<void> {
+export async function sendPartialMessageEvent(
+	controller: Controller,
+	partialMessage: ClineMessage,
+	owner: NonNullable<Controller["task"]>,
+): Promise<void> {
+	if (controller.task !== owner) return
+	partialMessage = { ...partialMessage, taskId: owner.taskId, taskInstanceId: owner.taskInstanceId }
 	// Send to gRPC stream subscribers of this controller
 	const set = subs.get(controller)
 	const streamPromises: Promise<void>[] = []

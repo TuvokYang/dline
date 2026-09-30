@@ -42,8 +42,10 @@ export async function dispatchInteraction(
 	if (!isInteractionActionType(request.actionId)) {
 		return response(false, "invalid_action")
 	}
-	if (!controller.task) {
-		return (await controller.dispatchHistoryDisplayInteraction(request)) ?? response(false, "missing_task")
+	const task = controller.task
+	if (!task) return response(false, "missing_task")
+	if (task.taskId !== request.taskId || !request.taskInstanceId || task.taskInstanceId !== request.taskInstanceId) {
+		return response(false, "stale_interaction")
 	}
 
 	const interactionResponse: InteractionResponse = {
@@ -57,10 +59,10 @@ export async function dispatchInteraction(
 			: undefined,
 		selection: request.selection ? { values: [...request.selection.values] } : undefined,
 	}
-	const result = await controller.task.dispatchRuntime({ type: "INTERACTION_RESPONDED", response: interactionResponse })
+	const result = await task.dispatchRuntime({ type: "INTERACTION_RESPONDED", response: interactionResponse })
 	if (!result.accepted) {
 		return response(false, normalizeResult(result.error?.code))
 	}
-	await controller.task.waitForInteractionSettlement(request.interactionId)
+	await task.waitForInteractionSettlement(request.interactionId)
 	return response(true, "accepted")
 }

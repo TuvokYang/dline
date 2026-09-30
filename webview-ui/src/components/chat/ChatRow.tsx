@@ -337,8 +337,13 @@ export const ChatRowContent = memo(
 
 		const cancelCommand =
 			onCancelCommand ??
-			(message.activityId && currentTaskItem?.id
-				? () => void cancelTaskActivities(currentTaskItem.id, [message.activityId as string])
+			(message.activityId && taskViewState?.taskId && taskViewState.taskInstanceId
+				? () =>
+						void cancelTaskActivities(
+							taskViewState.taskId,
+							[message.activityId as string],
+							taskViewState.taskInstanceId!,
+						)
 				: undefined)
 
 		const isMcpServerResponding = isLast && lastModifiedMessage?.say === "mcp_server_request_started"

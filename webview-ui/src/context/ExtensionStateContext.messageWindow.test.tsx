@@ -135,6 +135,7 @@ function outOfSyncInteractionState(revision: number, total = 1): ExtensionState 
 		...stateSnapshot({ revision, total }),
 		taskViewState: {
 			taskId: "task-1",
+			taskInstanceId: "open-1",
 			phase: "awaiting_approval",
 			stateRevision: revision,
 			activeInteraction: {
@@ -182,6 +183,14 @@ function stateSnapshot(input: { revision: number; total: number }): ExtensionSta
 		currentTaskItem: { id: "task-1", task: "Task", ts: 1 },
 		taskTitleMessage: { ts: 1, type: "say", say: "task", text: "Task" },
 		totalMessageCount: input.total,
+		taskViewState: {
+			taskId: "task-1",
+			taskInstanceId: "open-1",
+			phase: "idle",
+			stateRevision: input.revision,
+			input: { enabled: false, acceptsText: false, acceptsImages: false, acceptsFiles: false },
+			footer: { actions: [] },
+		},
 		welcomeViewCompleted: true,
 	} as ExtensionState
 }
@@ -191,6 +200,7 @@ function resumeInteractionState(revision: number, total = 1): ExtensionState {
 		...stateSnapshot({ revision, total }),
 		taskViewState: {
 			taskId: "task-1",
+			taskInstanceId: "open-1",
 			phase: "paused",
 			stateRevision: revision,
 			activeInteraction: {
@@ -226,6 +236,7 @@ function completionInteractionState(revision: number): ExtensionState {
 		...stateSnapshot({ revision, total: 1 }),
 		taskViewState: {
 			taskId: "task-1",
+			taskInstanceId: "open-1",
 			phase: "completed",
 			stateRevision: revision,
 			activeInteraction: {
@@ -258,7 +269,9 @@ function completionInteractionState(revision: number): ExtensionState {
 
 describe("ExtensionStateContext persisted message reconciliation", () => {
 	beforeEach(() => {
-		vi.mocked(TaskServiceClient.fetchMessage).mockReset().mockResolvedValue({ messages: [], startIndex: 0 })
+		vi.mocked(TaskServiceClient.fetchMessage)
+			.mockReset()
+			.mockResolvedValue({ taskId: "task-1", taskInstanceId: "open-1", messages: [], startIndex: 0 })
 		vi.mocked(TaskServiceClient.dispatchInteraction).mockReset().mockResolvedValue({ accepted: true, result: "accepted" })
 		subscriptions.state = undefined
 		subscriptions.partial = undefined
@@ -298,6 +311,7 @@ describe("ExtensionStateContext persisted message reconciliation", () => {
 			...stateSnapshot({ revision: 1, total: 1 }),
 			taskViewState: {
 				taskId: "task-1",
+				taskInstanceId: "open-1",
 				phase: "paused",
 				stateRevision: 1,
 				input: { enabled: false, acceptsText: false, acceptsImages: false, acceptsFiles: false },
@@ -354,7 +368,12 @@ describe("ExtensionStateContext persisted message reconciliation", () => {
 			text: "Resume task",
 			interactionId: "resume-1",
 		})
-		vi.mocked(TaskServiceClient.fetchMessage).mockResolvedValue({ messages: [resumeAsk], startIndex: 0 })
+		vi.mocked(TaskServiceClient.fetchMessage).mockResolvedValue({
+			taskId: "task-1",
+			taskInstanceId: "open-1",
+			messages: [resumeAsk],
+			startIndex: 0,
+		})
 		const observedTaskIds: Array<string | undefined> = []
 		render(
 			<ExtensionStateContextProvider>
@@ -392,8 +411,14 @@ describe("ExtensionStateContext persisted message reconciliation", () => {
 	it("retries an ordinary history window when the first response is empty despite a positive total", async () => {
 		const persisted = convertClineMessageToProto({ ts: 20, type: "say", say: "text", text: "persisted history" })
 		vi.mocked(TaskServiceClient.fetchMessage)
-			.mockResolvedValueOnce({ messages: [], startIndex: 0, totalCount: 2 })
-			.mockResolvedValueOnce({ messages: [persisted], startIndex: 1, totalCount: 2 })
+			.mockResolvedValueOnce({ taskId: "task-1", taskInstanceId: "open-1", messages: [], startIndex: 0, totalCount: 2 })
+			.mockResolvedValueOnce({
+				taskId: "task-1",
+				taskInstanceId: "open-1",
+				messages: [persisted],
+				startIndex: 1,
+				totalCount: 2,
+			})
 		render(
 			<ExtensionStateContextProvider>
 				<MessageProbe />
@@ -438,9 +463,15 @@ describe("ExtensionStateContext persisted message reconciliation", () => {
 			interactionId: "resume-1",
 		})
 		vi.mocked(TaskServiceClient.fetchMessage)
-			.mockResolvedValueOnce({ messages: [], startIndex: 0, totalCount: 2 })
-			.mockResolvedValueOnce({ messages: [], startIndex: 0, totalCount: 2 })
-			.mockResolvedValueOnce({ messages: [failedWebFetch, resumeAsk], startIndex: 0, totalCount: 2 })
+			.mockResolvedValueOnce({ taskId: "task-1", taskInstanceId: "open-1", messages: [], startIndex: 0, totalCount: 2 })
+			.mockResolvedValueOnce({ taskId: "task-1", taskInstanceId: "open-1", messages: [], startIndex: 0, totalCount: 2 })
+			.mockResolvedValueOnce({
+				taskId: "task-1",
+				taskInstanceId: "open-1",
+				messages: [failedWebFetch, resumeAsk],
+				startIndex: 0,
+				totalCount: 2,
+			})
 		render(
 			<ExtensionStateContextProvider>
 				<MessageProbe />
@@ -463,7 +494,13 @@ describe("ExtensionStateContext persisted message reconciliation", () => {
 		const persisted = convertClineMessageToProto({ ts: 20, type: "say", say: "text", text: "recovered history" })
 		vi.mocked(TaskServiceClient.fetchMessage)
 			.mockRejectedValueOnce(new Error("transient fetch failure"))
-			.mockResolvedValueOnce({ messages: [persisted], startIndex: 0, totalCount: 1 })
+			.mockResolvedValueOnce({
+				taskId: "task-1",
+				taskInstanceId: "open-1",
+				messages: [persisted],
+				startIndex: 0,
+				totalCount: 1,
+			})
 		render(
 			<ExtensionStateContextProvider>
 				<MessageProbe />
@@ -488,8 +525,8 @@ describe("ExtensionStateContext persisted message reconciliation", () => {
 			interactionId: "interaction-1",
 		})
 		vi.mocked(TaskServiceClient.fetchMessage)
-			.mockResolvedValueOnce({ messages: [], startIndex: 0 })
-			.mockResolvedValueOnce({ messages: [ask], startIndex: 0 })
+			.mockResolvedValueOnce({ taskId: "task-1", taskInstanceId: "open-1", messages: [], startIndex: 0 })
+			.mockResolvedValueOnce({ taskId: "task-1", taskInstanceId: "open-1", messages: [ask], startIndex: 0 })
 		render(
 			<ExtensionStateContextProvider>
 				<InteractionProbe observedTaskIds={[]} />
@@ -505,7 +542,12 @@ describe("ExtensionStateContext persisted message reconciliation", () => {
 		await waitFor(() => expect(screen.getByText("Question")).toBeVisible())
 		expect(screen.getByLabelText("Interaction draft")).toHaveValue("keep unsent draft")
 		expect(TaskServiceClient.fetchMessage).toHaveBeenCalledTimes(2)
-		expect(TaskServiceClient.fetchMessage).toHaveBeenCalledWith({ referenceIndex: -1, count: 200 })
+		expect(TaskServiceClient.fetchMessage).toHaveBeenCalledWith({
+			taskId: "task-1",
+			taskInstanceId: "open-1",
+			referenceIndex: -1,
+			count: 200,
+		})
 	})
 
 	it("walks backward through persisted windows until it finds an older interaction anchor", async () => {
@@ -525,8 +567,14 @@ describe("ExtensionStateContext persisted message reconciliation", () => {
 			interactionId: "interaction-1",
 		})
 		vi.mocked(TaskServiceClient.fetchMessage)
-			.mockResolvedValueOnce({ messages: tail, startIndex: 1, totalCount: 201 })
-			.mockResolvedValueOnce({ messages: [ask], startIndex: 0, totalCount: 201 })
+			.mockResolvedValueOnce({ taskId: "task-1", taskInstanceId: "open-1", messages: tail, startIndex: 1, totalCount: 201 })
+			.mockResolvedValueOnce({
+				taskId: "task-1",
+				taskInstanceId: "open-1",
+				messages: [ask],
+				startIndex: 0,
+				totalCount: 201,
+			})
 		render(
 			<ExtensionStateContextProvider>
 				<InteractionProbe observedTaskIds={[]} />
@@ -539,8 +587,18 @@ describe("ExtensionStateContext persisted message reconciliation", () => {
 		})
 
 		await waitFor(() => expect(screen.getByText("Older question")).toBeVisible())
-		expect(TaskServiceClient.fetchMessage).toHaveBeenNthCalledWith(1, { referenceIndex: -1, count: 200 })
-		expect(TaskServiceClient.fetchMessage).toHaveBeenNthCalledWith(2, { referenceIndex: 0, count: 200 })
+		expect(TaskServiceClient.fetchMessage).toHaveBeenNthCalledWith(1, {
+			taskId: "task-1",
+			taskInstanceId: "open-1",
+			referenceIndex: -1,
+			count: 200,
+		})
+		expect(TaskServiceClient.fetchMessage).toHaveBeenNthCalledWith(2, {
+			taskId: "task-1",
+			taskInstanceId: "open-1",
+			referenceIndex: 0,
+			count: 200,
+		})
 	})
 
 	it("does not let a stale completion say downgrade a realtime completion ask anchor", async () => {
@@ -557,13 +615,20 @@ describe("ExtensionStateContext persisted message reconciliation", () => {
 			text: "Completed",
 			interactionId: "completion-1",
 		})
-		let resolveStaleFetch: ((value: { messages: [typeof staleSay]; startIndex: number }) => void) | undefined
-		const staleFetch = new Promise<{ messages: [typeof staleSay]; startIndex: number }>((resolve) => {
+		let resolveStaleFetch:
+			| ((value: { taskId: string; taskInstanceId: string; messages: [typeof staleSay]; startIndex: number }) => void)
+			| undefined
+		const staleFetch = new Promise<{
+			taskId: string
+			taskInstanceId: string
+			messages: [typeof staleSay]
+			startIndex: number
+		}>((resolve) => {
 			resolveStaleFetch = resolve
 		})
 		vi.mocked(TaskServiceClient.fetchMessage)
 			.mockReturnValueOnce(staleFetch)
-			.mockResolvedValue({ messages: [staleSay], startIndex: 0 })
+			.mockResolvedValue({ taskId: "task-1", taskInstanceId: "open-1", messages: [staleSay], startIndex: 0 })
 
 		render(
 			<ExtensionStateContextProvider>
@@ -577,12 +642,12 @@ describe("ExtensionStateContext persisted message reconciliation", () => {
 		await waitFor(() => expect(TaskServiceClient.fetchMessage).toHaveBeenCalledOnce())
 
 		act(() => {
-			subscriptions.partial?.onResponse(completionAsk)
+			subscriptions.partial?.onResponse({ ...completionAsk, taskId: "task-1", taskInstanceId: "open-1" })
 		})
 		await waitFor(() => expect(screen.getByRole("button", { name: "Start New Task" })).toBeVisible())
 
 		await act(async () => {
-			resolveStaleFetch?.({ messages: [staleSay], startIndex: 0 })
+			resolveStaleFetch?.({ taskId: "task-1", taskInstanceId: "open-1", messages: [staleSay], startIndex: 0 })
 			await staleFetch
 		})
 
@@ -614,7 +679,7 @@ describe("ExtensionStateContext persisted message reconciliation", () => {
 		await waitFor(() => expect(TaskServiceClient.fetchMessage).toHaveBeenCalledOnce())
 
 		act(() => {
-			subscriptions.partial?.onResponse(feedback)
+			subscriptions.partial?.onResponse({ ...feedback, taskId: "task-1", taskInstanceId: "open-1" })
 		})
 
 		await waitFor(() => expect(screen.getByText("streaming feedback")).toBeVisible())
@@ -625,8 +690,8 @@ describe("ExtensionStateContext persisted message reconciliation", () => {
 		const initial = convertClineMessageToProto({ ts: 10, type: "say", say: "text", text: "assistant" })
 		const feedback = convertClineMessageToProto({ ts: 20, type: "say", say: "user_feedback", text: "visible feedback" })
 		vi.mocked(TaskServiceClient.fetchMessage)
-			.mockResolvedValueOnce({ messages: [initial], startIndex: 0 })
-			.mockResolvedValueOnce({ messages: [initial, feedback], startIndex: 0 })
+			.mockResolvedValueOnce({ taskId: "task-1", taskInstanceId: "open-1", messages: [initial], startIndex: 0 })
+			.mockResolvedValueOnce({ taskId: "task-1", taskInstanceId: "open-1", messages: [initial, feedback], startIndex: 0 })
 
 		render(
 			<ExtensionStateContextProvider>
@@ -655,8 +720,13 @@ describe("ExtensionStateContext persisted message reconciliation", () => {
 		const feedback = convertClineMessageToProto({ ts: 20, type: "say", say: "user_feedback", text: "missed feedback" })
 		const later = convertClineMessageToProto({ ts: 30, type: "say", say: "text", text: "later response" })
 		vi.mocked(TaskServiceClient.fetchMessage)
-			.mockResolvedValueOnce({ messages: [initial], startIndex: 0 })
-			.mockResolvedValueOnce({ messages: [initial, feedback, later], startIndex: 0 })
+			.mockResolvedValueOnce({ taskId: "task-1", taskInstanceId: "open-1", messages: [initial], startIndex: 0 })
+			.mockResolvedValueOnce({
+				taskId: "task-1",
+				taskInstanceId: "open-1",
+				messages: [initial, feedback, later],
+				startIndex: 0,
+			})
 
 		render(
 			<ExtensionStateContextProvider>
@@ -670,7 +740,7 @@ describe("ExtensionStateContext persisted message reconciliation", () => {
 		await waitFor(() => expect(screen.getByText("assistant")).toBeVisible())
 
 		act(() => {
-			subscriptions.partial?.onResponse(later)
+			subscriptions.partial?.onResponse({ ...later, taskId: "task-1", taskInstanceId: "open-1" })
 			subscriptions.state?.onResponse({ stateJson: JSON.stringify(stateSnapshot({ revision: 2, total: 3 })) })
 		})
 
@@ -700,8 +770,13 @@ describe("ExtensionStateContext persisted message reconciliation", () => {
 			partial: false,
 		})
 		vi.mocked(TaskServiceClient.fetchMessage)
-			.mockResolvedValueOnce({ messages: [initial], startIndex: 0 })
-			.mockResolvedValueOnce({ messages: [initial, durableReplacement], startIndex: 0 })
+			.mockResolvedValueOnce({ taskId: "task-1", taskInstanceId: "open-1", messages: [initial], startIndex: 0 })
+			.mockResolvedValueOnce({
+				taskId: "task-1",
+				taskInstanceId: "open-1",
+				messages: [initial, durableReplacement],
+				startIndex: 0,
+			})
 
 		render(
 			<ExtensionStateContextProvider>
@@ -715,7 +790,7 @@ describe("ExtensionStateContext persisted message reconciliation", () => {
 		await waitFor(() => expect(screen.getByText("assistant")).toBeVisible())
 
 		act(() => {
-			subscriptions.partial?.onResponse(stalePartial)
+			subscriptions.partial?.onResponse({ ...stalePartial, taskId: "task-1", taskInstanceId: "open-1" })
 		})
 		await waitFor(() => expect(screen.getByText("stale partial")).toBeVisible())
 
@@ -739,8 +814,8 @@ describe("ExtensionStateContext persisted message reconciliation", () => {
 			partial: true,
 		})
 		vi.mocked(TaskServiceClient.fetchMessage)
-			.mockResolvedValueOnce({ messages: [initial], startIndex: 0 })
-			.mockResolvedValueOnce({ messages: [initial, feedback], startIndex: 0 })
+			.mockResolvedValueOnce({ taskId: "task-1", taskInstanceId: "open-1", messages: [initial], startIndex: 0 })
+			.mockResolvedValueOnce({ taskId: "task-1", taskInstanceId: "open-1", messages: [initial, feedback], startIndex: 0 })
 
 		render(
 			<ExtensionStateContextProvider>
@@ -759,7 +834,7 @@ describe("ExtensionStateContext persisted message reconciliation", () => {
 		await waitFor(() => expect(screen.getByText("visible feedback")).toBeVisible())
 
 		act(() => {
-			subscriptions.partial?.onResponse(stalePartial)
+			subscriptions.partial?.onResponse({ ...stalePartial, taskId: "task-1", taskInstanceId: "open-1" })
 		})
 
 		await waitFor(() => expect(screen.getAllByText("visible feedback")).toHaveLength(1))
@@ -781,8 +856,14 @@ describe("ExtensionStateContext persisted message reconciliation", () => {
 			interactionId: "interaction-1",
 		})
 		vi.mocked(TaskServiceClient.fetchMessage)
-			.mockResolvedValueOnce({ messages: [tail], startIndex: 400, totalCount: 401 })
-			.mockResolvedValue({ messages: [ask], startIndex: 0, totalCount: 401 })
+			.mockResolvedValueOnce({
+				taskId: "task-1",
+				taskInstanceId: "open-1",
+				messages: [tail],
+				startIndex: 400,
+				totalCount: 401,
+			})
+			.mockResolvedValue({ taskId: "task-1", taskInstanceId: "open-1", messages: [ask], startIndex: 0, totalCount: 401 })
 
 		render(
 			<ExtensionStateContextProvider>
@@ -798,7 +879,12 @@ describe("ExtensionStateContext persisted message reconciliation", () => {
 		// The tail arrives first, then recovery walks back and receives the
 		// anchor in a window that cannot be joined to the local one.
 		await waitFor(() =>
-			expect(TaskServiceClient.fetchMessage).toHaveBeenNthCalledWith(2, { referenceIndex: 200, count: 200 }),
+			expect(TaskServiceClient.fetchMessage).toHaveBeenNthCalledWith(2, {
+				taskId: "task-1",
+				taskInstanceId: "open-1",
+				referenceIndex: 200,
+				count: 200,
+			}),
 		)
 
 		// Judging success on the raw response would stop here, because that
@@ -821,7 +907,7 @@ describe("ExtensionStateContext persisted message reconciliation", () => {
 		// the footer stays disabled for the rest of the task.
 		vi.mocked(TaskServiceClient.fetchMessage)
 			.mockRejectedValueOnce(new Error("transient anchor fetch failure"))
-			.mockResolvedValue({ messages: [ask], startIndex: 0, totalCount: 1 })
+			.mockResolvedValue({ taskId: "task-1", taskInstanceId: "open-1", messages: [ask], startIndex: 0, totalCount: 1 })
 
 		render(
 			<ExtensionStateContextProvider>
@@ -843,6 +929,65 @@ describe("ExtensionStateContext persisted message reconciliation", () => {
 		await waitFor(() => expect(screen.getByText("Question")).toBeVisible())
 	})
 
+	it.each([
+		"resolve",
+		"reject",
+	] as const)("isolates a same-ID reopen without history metadata from a late page %s and old partial", async (settlement) => {
+		const oldMessage = convertClineMessageToProto({ ts: 10, type: "say", say: "text", text: "Old opening body" })
+		const currentMessage = convertClineMessageToProto({ ts: 11, type: "say", say: "text", text: "Current opening body" })
+		type Page = Awaited<ReturnType<typeof TaskServiceClient.fetchMessage>>
+		let resolveOld!: (page: Page) => void
+		let rejectOld!: (error: Error) => void
+		const oldPage = new Promise<Page>((resolve, reject) => {
+			resolveOld = resolve
+			rejectOld = reject
+		})
+		vi.mocked(TaskServiceClient.fetchMessage)
+			.mockReturnValueOnce(oldPage)
+			.mockResolvedValueOnce({
+				taskId: "task-1",
+				taskInstanceId: "open-2",
+				messages: [currentMessage],
+				startIndex: 0,
+				totalCount: 1,
+			})
+		render(
+			<ExtensionStateContextProvider>
+				<MessageProbe />
+			</ExtensionStateContextProvider>,
+		)
+		await act(async () => {
+			subscriptions.state?.onResponse({ stateJson: JSON.stringify(stateSnapshot({ revision: 1, total: 1 })) })
+		})
+		await waitFor(() => expect(TaskServiceClient.fetchMessage).toHaveBeenCalledTimes(1))
+		const reopened = stateSnapshot({ revision: 2, total: 1 })
+		await act(async () => {
+			subscriptions.state?.onResponse({
+				stateJson: JSON.stringify({
+					...reopened,
+					currentTaskItem: undefined,
+					taskViewState: { ...reopened.taskViewState, taskInstanceId: "open-2" },
+				}),
+			})
+		})
+		await waitFor(() => expect(screen.getByText("Current opening body")).toBeVisible())
+		await act(async () => {
+			if (settlement === "resolve")
+				resolveOld({
+					taskId: "task-1",
+					taskInstanceId: "open-1",
+					messages: [oldMessage],
+					startIndex: 0,
+					totalCount: 1,
+				})
+			else rejectOld(new Error("late page failure"))
+			subscriptions.partial?.onResponse({ ...oldMessage, taskId: "task-1", taskInstanceId: "open-1" })
+		})
+		expect(screen.getByText("Current opening body")).toBeVisible()
+		expect(screen.queryByText("Old opening body")).toBeNull()
+		expect(TaskServiceClient.fetchMessage).toHaveBeenCalledTimes(2)
+	})
+
 	it("does not start a second recovery for an anchor whose fetch is still running", async () => {
 		const ask = convertClineMessageToProto({
 			ts: 100,
@@ -851,8 +996,15 @@ describe("ExtensionStateContext persisted message reconciliation", () => {
 			text: "Question",
 			interactionId: "interaction-1",
 		})
-		let resolvePending: ((value: { messages: [typeof ask]; startIndex: number; totalCount: number }) => void) | undefined
-		const pending = new Promise<{ messages: [typeof ask]; startIndex: number; totalCount: number }>((resolve) => {
+		type PendingPage = {
+			taskId: string
+			taskInstanceId: string
+			messages: [typeof ask]
+			startIndex: number
+			totalCount: number
+		}
+		let resolvePending: ((value: PendingPage) => void) | undefined
+		const pending = new Promise<PendingPage>((resolve) => {
 			resolvePending = resolve
 		})
 		vi.mocked(TaskServiceClient.fetchMessage).mockReturnValueOnce(pending as never)
@@ -877,7 +1029,7 @@ describe("ExtensionStateContext persisted message reconciliation", () => {
 		expect(TaskServiceClient.fetchMessage).toHaveBeenCalledTimes(1)
 
 		await act(async () => {
-			resolvePending?.({ messages: [ask], startIndex: 0, totalCount: 1 })
+			resolvePending?.({ taskId: "task-1", taskInstanceId: "open-1", messages: [ask], startIndex: 0, totalCount: 1 })
 			await pending
 		})
 

@@ -29,6 +29,8 @@ export interface ResumeInput {
 	apiTail: readonly ClineStorageMessage[]
 	apiTailStartIndex?: number
 	apiHistoryLength: number
+	/** Read exact retained anchors without materializing already-checkpointed history. */
+	apiMessageAt?: (index: number) => ClineStorageMessage | undefined
 	/** Complete persisted histories, required when no usable snapshot exists. */
 	uiHistory?: readonly ClineMessage[]
 	apiHistory?: readonly ClineStorageMessage[]

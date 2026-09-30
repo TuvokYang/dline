@@ -2,19 +2,31 @@ import { Controller } from "@core/controller"
 import type { HistoryItem } from "@shared/HistoryItem"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
-const historyLoad = vi.hoisted(() => ({ load: vi.fn<() => Promise<void>>() }))
-
+const historyLoad = vi.hoisted(() => ({ load: vi.fn<() => Promise<void>>(), instances: 0 }))
 vi.mock("@core/storage/remote-config/fetch", () => ({ fetchRemoteConfig: vi.fn() }))
-vi.mock("@core/controller/task/HistoryDisplaySession", () => ({
-	HistoryDisplaySession: class {
-		constructor(readonly historyItem: HistoryItem) {}
-		get taskId(): string {
-			return this.historyItem.id
+vi.mock("@/core/orchestrator/OrchestratorController", () => ({
+	OrchestratorController: { getInstance: () => ({ registerController: vi.fn() }) },
+}))
+vi.mock("@core/task", () => ({
+	Task: class {
+		readonly taskId: string
+		readonly taskInstanceId = `open-${++historyLoad.instances}`
+		readonly readOnly: boolean
+		constructor(params: { taskId: string; readOnly: boolean; uiMessage?: unknown; apiConversation?: unknown }) {
+			this.taskId = params.taskId
+			this.readOnly = params.readOnly
+			if (params.uiMessage || params.apiConversation) throw new Error("History eagerly opened execution stores")
 		}
-		load(): Promise<void> {
+		isReadOnly() {
+			return this.readOnly
+		}
+		beginHistoryPreparation() {}
+		displayHistory() {
 			return historyLoad.load()
 		}
-		markLocked(): void {}
+		async prepareFromHistory(options?: { onReadyToDisplay?: () => Promise<void> }) {
+			await options?.onReadyToDisplay?.()
+		}
 	},
 }))
 
@@ -41,22 +53,38 @@ function createController(visibleTaskId: string) {
 	const events: string[] = []
 	const clearTask = vi.fn(async (options?: { suppressPostState?: boolean; deferTeardown?: boolean }) => {
 		events.push(`clear:${JSON.stringify(options ?? {})}`)
-		Object.assign(controller as unknown as Record<string, unknown>, { task: undefined, historyDisplaySession: undefined })
+		controller.task = undefined
 	})
 	Object.assign(controller as unknown as Record<string, unknown>, {
 		task: { taskId: visibleTaskId },
-		stateManager: { loadTaskSettings: vi.fn(async () => undefined) },
+		stateManager: {
+			loadTaskSettings: vi.fn(async () => undefined),
+			clearTaskSettings: vi.fn(async () => undefined),
+			getGlobalSettingsKey: () => undefined,
+			getGlobalStateKey: (key: string) => (key === "taskHistory" ? [] : undefined),
+			getTaskCacheRef: () => ({ taskCapabilityToggles: "{}", mode: "act" }),
+		},
+		lockService: { acquireTaskLock: vi.fn(async () => true) },
+		workspaceManager: { getPrimaryRoot: () => ({ path: "E:/test/workspace" }) },
 	})
 	vi.spyOn(controller, "runTaskLifecycleOperation").mockImplementation(async (operation) => operation({ clearTask }))
 	vi.spyOn(controller, "postStateToWebview").mockImplementation(async () => {
-		const session = (controller as unknown as { historyDisplaySession?: { taskId: string } }).historyDisplaySession
-		events.push(`post:${session?.taskId ?? "none"}`)
+		events.push(`post:${controller.task?.taskId ?? "none"}`)
 	})
 	const internals = controller as unknown as Record<string, unknown>
-	internals.isTaskLockedByAnotherInstance = vi.fn(async () => false)
+	internals.ensureWorkspaceManager = vi.fn(async () => undefined)
+	internals.ensureIgnoreController = vi.fn(async () => ({}))
+	internals.resolveWorkspaceHistoryManager = () => ({
+		beginTask: () => ({}),
+		publishMetadata: vi.fn(),
+		publishCompletion: vi.fn(),
+		closeTask: vi.fn(),
+	})
+	internals.restartAccountUsagePolling = vi.fn()
 	internals.syncPanelTitle = vi.fn(async () => undefined)
 	internals.persistPanelStateIfNeeded = vi.fn(async () => undefined)
 	internals.startLockPoll = vi.fn()
+	internals.startLockHeartbeat = vi.fn()
 	return { controller, events, clearTask }
 }
 
@@ -76,7 +104,7 @@ describe("Controller history display open", () => {
 
 		await controller.initTask(undefined, undefined, undefined, historyItem("task-new"))
 
-		expect(events[0]).toBe(`clear:${JSON.stringify({ suppressPostState: true, deferTeardown: true })}`)
+		expect(events[0]).toBe(`clear:${JSON.stringify({ suppressPostState: true, deferTeardown: false })}`)
 		expect(events).not.toContain("post:none")
 		expect(events.slice(1).every((event) => event === "post:task-new")).toBe(true)
 	})
@@ -86,7 +114,11 @@ describe("Controller history display open", () => {
 		historyLoad.load.mockReturnValue(load.promise)
 		const { controller, events } = createController("task-old")
 
-		const opening = controller.initTask(undefined, undefined, undefined, historyItem("task-new"))
+		const publish = async () => controller.postStateToWebview({ immediate: true })
+		const opening = controller.initTask(undefined, undefined, undefined, historyItem("task-new"), undefined, {
+			onHistoryTaskPreparingToDisplay: publish,
+			onHistoryTaskReadyToDisplay: publish,
+		})
 		await vi.waitFor(() => expect(events).toContain("post:task-new"))
 		const publishedBeforeLoad = events.filter((event) => event === "post:task-new").length
 
@@ -95,7 +127,7 @@ describe("Controller history display open", () => {
 
 		expect(publishedBeforeLoad).toBe(1)
 		// The ready projection follows once the durable window is loaded.
-		expect(events.filter((event) => event === "post:task-new")).toHaveLength(2)
+		expect(events.filter((event) => event === "post:task-new")).toHaveLength(3)
 	})
 
 	it("waits for teardown when the same task is reopened", async () => {
@@ -119,6 +151,6 @@ describe("Controller history display open", () => {
 		// The first clear replaced the old task; the second releases the broken
 		// preparing surface so the user is not left on a disabled Resume view.
 		expect(clearTask).toHaveBeenCalledTimes(2)
-		expect((controller as unknown as { historyDisplaySession?: unknown }).historyDisplaySession).toBeUndefined()
+		expect(controller.task).toBeUndefined()
 	})
 })

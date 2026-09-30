@@ -15,6 +15,7 @@ export type { TaskRateMetricsResolution } from "./TaskRateMetricsTimeline"
 
 export interface UseTaskRateMetricsOptions {
 	taskId?: string
+	taskInstanceId?: string
 	resolution: TaskRateMetricsResolution
 	enabled: boolean
 }
@@ -33,25 +34,35 @@ const PROTO_RESOLUTIONS: Record<TaskRateMetricsResolution, ProtoResolution> = {
 }
 
 /** Load bounded Task-local rate history only while its dialog is open. */
-export function useTaskRateMetrics({ taskId, resolution, enabled }: UseTaskRateMetricsOptions): TaskRateMetricsQueryState {
-	const requestGeneration = useRef(0)
+export function useTaskRateMetrics({
+	taskId,
+	taskInstanceId,
+	resolution,
+	enabled,
+}: UseTaskRateMetricsOptions): TaskRateMetricsQueryState {
 	const [refreshVersion, setRefreshVersion] = useState(0)
-	const [state, setState] = useState<Omit<TaskRateMetricsQueryState, "refresh">>({ loading: false })
+	const requestKey = JSON.stringify([taskId, taskInstanceId, resolution, enabled, refreshVersion])
+	const latestRequestKey = useRef(requestKey)
+	latestRequestKey.current = requestKey
+	const [state, setState] = useState<Omit<TaskRateMetricsQueryState, "refresh"> & { requestKey?: string }>({ loading: false })
 	const refresh = useCallback(() => setRefreshVersion((version) => version + 1), [])
 
 	useEffect(() => {
-		void refreshVersion
-		const generation = ++requestGeneration.current
-		if (!enabled || !taskId) {
-			setState({ loading: false })
-			return
+		let active = true
+		const isCurrent = () => active && latestRequestKey.current === requestKey
+		if (!enabled || !taskId || !taskInstanceId) {
+			setState({ requestKey, loading: false })
+			return () => {
+				active = false
+			}
 		}
 
 		const queryWindow = createTaskRateMetricsQueryWindow(resolution, Date.now())
-		setState({ loading: true })
+		setState({ requestKey, loading: true })
 		void TaskServiceClient.getTaskRateMetrics(
 			GetTaskRateMetricsRequest.create({
 				taskId,
+				taskInstanceId,
 				resolution: PROTO_RESOLUTIONS[resolution],
 				startMs: queryWindow.startMs,
 				endMs: queryWindow.endMs,
@@ -59,18 +70,30 @@ export function useTaskRateMetrics({ taskId, resolution, enabled }: UseTaskRateM
 			}),
 		)
 			.then((data) => {
-				if (requestGeneration.current === generation) {
-					setState({ data: { ...data, points: fillTaskRateMetricsTimeline(data.points, queryWindow) }, loading: false })
+				if (!isCurrent()) return
+				if (data.taskId !== taskId || data.taskInstanceId !== taskInstanceId) {
+					throw new Error("API rate history response belongs to a different Task opening")
 				}
+				setState({
+					requestKey,
+					data: { ...data, points: fillTaskRateMetricsTimeline(data.points, queryWindow) },
+					loading: false,
+				})
 			})
 			.catch((error: unknown) => {
-				if (requestGeneration.current !== generation) return
+				if (!isCurrent()) return
 				setState({
+					requestKey,
 					loading: false,
 					error: error instanceof Error ? error.message : "Failed to load API rate history",
 				})
 			})
-	}, [enabled, refreshVersion, resolution, taskId])
+		return () => {
+			active = false
+		}
+	}, [enabled, requestKey, resolution, taskId, taskInstanceId])
 
-	return { ...state, refresh }
+	// A new opening must not render old data even before the passive effect runs.
+	if (state.requestKey !== requestKey) return { loading: Boolean(enabled && taskId && taskInstanceId), refresh }
+	return { data: state.data, loading: state.loading, error: state.error, refresh }
 }

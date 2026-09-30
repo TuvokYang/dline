@@ -11,7 +11,7 @@ describe("subscribeToTaskActivities", () => {
 
 		await subscribeToTaskActivities(
 			{ task: undefined, getCurrentTaskActivityStore: () => undefined } as never,
-			TaskActivitySubscriptionRequest.create({ taskId: "task-1" }),
+			TaskActivitySubscriptionRequest.create({ taskId: "task-1", taskInstanceId: "open-1" }),
 			responseStream,
 			requestId,
 		)
@@ -31,7 +31,7 @@ describe("subscribeToTaskActivities", () => {
 
 		await subscribeToTaskActivities(
 			{ task: { taskId: "task-2", activityStore }, getCurrentTaskActivityStore: () => undefined } as never,
-			TaskActivitySubscriptionRequest.create({ taskId: "task-1" }),
+			TaskActivitySubscriptionRequest.create({ taskId: "task-1", taskInstanceId: "open-1" }),
 			responseStream,
 			requestId,
 		)
@@ -44,7 +44,7 @@ describe("subscribeToTaskActivities", () => {
 		expect(getRequestRegistry().hasRequest(requestId)).toBe(false)
 	})
 
-	it("streams the current lightweight history activity surface", async () => {
+	it("streams the canonical non-working Task activity surface", async () => {
 		const activityStore = new TaskActivityStore("task-1")
 		activityStore.create({
 			activityId: "history-subagent",
@@ -57,10 +57,9 @@ describe("subscribeToTaskActivities", () => {
 
 		await subscribeToTaskActivities(
 			{
-				task: undefined,
-				getCurrentTaskActivityStore: () => activityStore,
+				task: { taskId: "task-1", taskInstanceId: "open-1", isReadOnly: () => false, activityStore },
 			} as never,
-			TaskActivitySubscriptionRequest.create({ taskId: "task-1" }),
+			TaskActivitySubscriptionRequest.create({ taskId: "task-1", taskInstanceId: "open-1" }),
 			responseStream,
 		)
 		await vi.waitFor(() => expect(responseStream).toHaveBeenCalledOnce())
@@ -86,8 +85,11 @@ describe("subscribeToTaskActivities", () => {
 		const requestId = "activity-surface-disposed"
 
 		await subscribeToTaskActivities(
-			{ task: { taskId: "task-1", activityStore }, getCurrentTaskActivityStore: () => activityStore } as never,
-			TaskActivitySubscriptionRequest.create({ taskId: "task-1" }),
+			{
+				task: { taskId: "task-1", taskInstanceId: "open-1", isReadOnly: () => false, activityStore },
+				getCurrentTaskActivityStore: () => activityStore,
+			} as never,
+			TaskActivitySubscriptionRequest.create({ taskId: "task-1", taskInstanceId: "open-1" }),
 			responseStream,
 			requestId,
 		)
@@ -146,8 +148,11 @@ describe("subscribeToTaskActivities", () => {
 		})
 
 		await subscribeToTaskActivities(
-			{ task: { taskId: "task-1", activityStore }, getCurrentTaskActivityStore: () => activityStore } as never,
-			TaskActivitySubscriptionRequest.create({ taskId: "task-1" }),
+			{
+				task: { taskId: "task-1", taskInstanceId: "open-1", isReadOnly: () => false, activityStore },
+				getCurrentTaskActivityStore: () => activityStore,
+			} as never,
+			TaskActivitySubscriptionRequest.create({ taskId: "task-1", taskInstanceId: "open-1" }),
 			responseStream,
 		)
 		await vi.waitFor(() => expect(responseStream).toHaveBeenCalledOnce())

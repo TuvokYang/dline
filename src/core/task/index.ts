@@ -260,6 +260,7 @@ import { OrchestratorController } from "../orchestrator/OrchestratorController"
 import { StateManager } from "../storage/StateManager"
 import {
 	type ApiProfileValidity,
+	createInertApiHandler,
 	createUnavailableApiHandler,
 	resolveTaskApiProfile,
 	resolveTaskApiProfileFresh,
@@ -285,6 +286,7 @@ import { TurnDriver } from "./executors/tool/TurnDriver"
 import { TurnToolScheduler } from "./executors/tool/TurnToolScheduler"
 import { FocusChainManager } from "./focus-chain"
 import { formatFocusChainTaskProgressSection } from "./focus-chain/file-utils"
+import { readHistoryContextWindowIndicator } from "./HistoryContextWindow"
 import { HistoryResumeMaintenance } from "./history/HistoryResumeMaintenance"
 import { TaskCompletionProjector } from "./history/TaskCompletionProjector"
 import type { QueuedInputEntry } from "./input-queue/InputQueue"
@@ -304,6 +306,7 @@ import {
 } from "./latency"
 import { MessageChannel } from "./MessageChannel"
 import { MessageStateHandler } from "./message-state"
+import { TaskMessageResources } from "./messages/TaskMessageResources"
 import { deriveNewTaskFeedbackContinuation } from "./new-task/new-task-continuation"
 import { buildNewTaskFeedbackContent, findLatestNewTaskFeedback } from "./new-task/new-task-feedback"
 import { createNewTaskHandoff } from "./new-task/new-task-handoff"
@@ -324,10 +327,12 @@ import { ResumeCoordinator } from "./resume/ResumeCoordinator"
 import { type ResumeInput, selectResumeUiTail } from "./resume/ResumeInput"
 import { projectResumeOrdinaryInput } from "./resume/ResumeInteractionContinuation"
 import { createResumeContinuationText } from "./resume/ResumeProvenance"
+import { normalizeStoppedTaskSnapshot } from "./resume/ResumeReconciler"
 import { collectResumeTurnContent } from "./resume/ResumeToolResult"
 import type { SnapshotDurability } from "./runtime/TaskEffect"
 import type { ProjectionEffectOrigin, TaskEffectPorts } from "./runtime/TaskEffectRunner"
 import type { TaskEvent } from "./runtime/TaskEvent"
+import { reduceTask } from "./runtime/TaskReducer"
 import { type TaskDispatchResult, TaskRuntime } from "./runtime/TaskRuntime"
 import { TaskRuntimeProjectionScheduler } from "./runtime/TaskRuntimeProjectionScheduler"
 import { createTaskRuntimeState, type TaskRuntimeState } from "./runtime/TaskRuntimeState"
@@ -378,6 +383,8 @@ type TaskParams = {
 	taskId: string
 	uiMessage?: import("../storage/UIMessage").UIMessage
 	apiConversation?: import("../storage/ApiConversation").ApiConversation
+	/** Display and metrics reads remain available without execution permission. */
+	readOnly?: boolean
 }
 
 type ResumeTaskFromHistoryOptions = {
@@ -503,10 +510,13 @@ export function formatUnroutedAskResponse(context: UnroutedAskResponseContext): 
 export class Task {
 	// Core task variables
 	readonly taskId: string
+	/** Stable through Resume, pause and completion; renewed only on a new Task object. */
+	readonly taskInstanceId = ulid()
 	readonly ulid: string
 	private readonly taskTelemetry: TaskTurnTelemetry
 	/** Task text captured at construction; used before the "task" message exists. */
 	private readonly initialTaskTitle?: string
+	private readonly initialTaskTitleTs: number
 	private taskIsFavorited?: boolean
 	private cwd: string
 	private taskInitializationStartTime: number
@@ -521,6 +531,10 @@ export class Task {
 	private historyPreparationPending = false
 	private controllerDetached = false
 	private readonly restoredFromHistory: boolean
+	private readonly messageResources: TaskMessageResources
+	private historyApiLength = 0
+	private executionPreparation?: Promise<void>
+	private readOnly: boolean
 	private latestOrdinaryCompactionDiagnostic?: CompactionProviderDiagnosticSnapshot
 
 	// ONE mutex for ALL state modifications to prevent race conditions
@@ -875,6 +889,11 @@ export class Task {
 
 		this.taskInitializationStartTime = performance.now()
 		this.restoredFromHistory = historyItem !== undefined
+		this.readOnly = params.readOnly === true
+		this.messageResources = new TaskMessageResources(
+			taskId,
+			uiMessage && apiConversation ? { uiMessage, apiConversation } : undefined,
+		)
 		this.taskState = new TaskState()
 		this.remoteWorkspaceDetectionPromise = HostProvider.env
 			.getHostVersion({})
@@ -896,7 +915,22 @@ export class Task {
 		}
 		this.metrics = new TaskMetricsOwner({
 			taskId,
-			...(historyItem && uiMessage ? { legacySource: uiMessage } : {}),
+			readOnly: historyItem !== undefined || this.readOnly,
+			messagesComplete: () => this.messageResources.hasExecutionStores,
+			...(historyItem
+				? {
+						legacySource: { getAll: () => this.messageStateHandler.durableClineMessages },
+						historicalUsage: {
+							totalTokensIn: historyItem.tokensIn,
+							totalTokensOut: historyItem.tokensOut,
+							totalCacheWrites: historyItem.cacheWrites,
+							totalCacheReads: historyItem.cacheReads,
+							totalCost: historyItem.totalCost,
+							currency: historyItem.currency,
+							cacheHitRate: historyItem.cacheHitRate,
+						},
+					}
+				: {}),
 			onChanged: () => {
 				void this.postStateToWebview().catch((error) => {
 					Logger.debug(`[Task ${this.taskId}] Failed to publish API metrics: ${error}`)
@@ -1105,7 +1139,7 @@ export class Task {
 					// The footer "Start New Task" action must close the current task and return to
 					// the RECENT welcome screen instead of immediately launching a replacement task,
 					// so the user can review history and explicitly start a new task from there.
-					await this.controller.clearTask({ clearPanelState: true, preserveCompletedState: true })
+					await this.controller.clearTask({ clearPanelState: true, preserveCompletedState: true, expectedTask: this })
 				},
 				async (effect) => {
 					const committed = await this.taskRuntime.dispatch({
@@ -1121,7 +1155,7 @@ export class Task {
 						this.messageStateHandler.flushUiMessages(),
 					])
 					await this.controller.startSuccessorTask(
-						this.taskId,
+						this,
 						effect.handoff.context,
 						effect.handoff.taskSettings,
 						effect.handoff.initialUserContent,
@@ -1131,7 +1165,7 @@ export class Task {
 		)
 		this.interactionCoordinator = new InteractionCoordinator(this.taskRuntime, {
 			isPersistedApiRequest: (apiIndex) => {
-				const message = this.messageStateHandler.apiConversationHistory[apiIndex]
+				const message = this.messageResources.getApiMessageAt(apiIndex)
 				return message?.role === "user" && Array.isArray(message.content)
 			},
 			resolveLegacyRetryContent: (apiIndex, interactionId) =>
@@ -1149,8 +1183,12 @@ export class Task {
 		this.interactionCoordinator.registerDetachedContinuation((context) => this.continueRestoredInteraction(context))
 		this.resumeCoordinator = new ResumeCoordinator({
 			load: async () => this.loadResumeInput(),
-			presentInteraction: async (result) => this.presentSynthesizedHistoryInteraction(result.snapshot),
+			presentInteraction: async (result) => {
+				if (this.controllerDetached || this.readOnly) throw new Error("History preparation was superseded")
+				return this.presentSynthesizedHistoryInteraction(result.snapshot)
+			},
 			persist: async (result) => {
+				if (this.controllerDetached || this.readOnly) throw new Error("History preparation was superseded")
 				// Routed through the persistence chain rather than writing
 				// directly: a direct write races every other snapshot write,
 				// and the queue field it carries could overwrite one that a
@@ -1166,6 +1204,7 @@ export class Task {
 				)
 			},
 			hydrate: async (result) => {
+				if (this.controllerDetached || this.readOnly) throw new Error("History preparation was superseded")
 				this.taskRuntime.restore(hydrateSnapshot(result.snapshot))
 				this.syncRetainedMachines()
 			},
@@ -1229,6 +1268,7 @@ export class Task {
 		}
 		this.taskTelemetry.registerAlias(this.ulid)
 		this.initialTaskTitle = task ?? historyItem?.task
+		this.initialTaskTitleTs = historyItem?.ts ?? Date.now()
 
 		this.messageStateHandler = new MessageStateHandler({
 			taskId: this.taskId,
@@ -1240,6 +1280,8 @@ export class Task {
 			uiMessage,
 			apiConversation,
 			metricsReader: this.metrics.reader,
+			historicalMessages: this.messageResources,
+			getHistoricalApiLength: () => this.historyApiLength,
 		})
 		this.historyResumeMaintenance = new HistoryResumeMaintenance({
 			cleanupLegacyStorage: async () => {
@@ -1260,7 +1302,7 @@ export class Task {
 		const channel = new MessageChannel({
 			pushMessage: (msg) => {
 				if (this.controllerDetached) return
-				return sendPartialMessageEvent(this.controller, convertClineMessageToProto(msg))
+				return sendPartialMessageEvent(this.controller, convertClineMessageToProto(msg), this)
 			},
 			syncState: async () => {
 				await this.postStateToWebview()
@@ -1439,7 +1481,9 @@ export class Task {
 		this.api =
 			profileResolution.error || !profileResolution.resolvedApiProfile
 				? createUnavailableApiHandler(profileResolution.error ?? "Profile not valid: resolved Profile is unavailable.")
-				: buildApiHandlerFromProfile(profileResolution.configuration, mode, profileResolution.resolvedApiProfile)
+				: historyItem
+					? createInertApiHandler(profileResolution.resolvedApiProfile)
+					: buildApiHandlerFromProfile(profileResolution.configuration, mode, profileResolution.resolvedApiProfile)
 		if (!profileResolution.usedFallback && profileResolution.resolvedProfileId && profileResolution.resolvedProfile) {
 			this.taskSm.adoptResolvedProfileIdentity(mode, profileResolution.resolvedProfileId, profileResolution.resolvedProfile)
 		}
@@ -1466,11 +1510,13 @@ export class Task {
 
 		// Set up focus chain file watcher + load history (async, runs in background) only if focus chain is enabled
 		if (this.FocusChainManager) {
-			this.FocusChainManager.setupFocusChainFileWatcher()
-				.then(() => this.syncPanelTitleFromState())
-				.catch((error) => {
-					Logger.error(`[Task ${this.taskId}] Failed to setup focus chain file watcher:`, error)
-				})
+			if (!historyItem) {
+				this.FocusChainManager.setupFocusChainFileWatcher()
+					.then(() => this.syncPanelTitleFromState())
+					.catch((error) => {
+						Logger.error(`[Task ${this.taskId}] Failed to setup focus chain file watcher:`, error)
+					})
+			}
 			this.FocusChainManager.readFocusChainHistory()
 				.then(async (history) => {
 					if (history) {
@@ -1549,7 +1595,7 @@ export class Task {
 				// Notify frontend so the sliding window reflects updated fields (e.g. commandStatus, exitCode)
 				const updatedMessage = this.messageStateHandler.clineMessages[index]
 				if (updatedMessage) {
-					await sendPartialMessageEvent(this.controller, convertClineMessageToProto(updatedMessage))
+					await sendPartialMessageEvent(this.controller, convertClineMessageToProto(updatedMessage), this)
 				}
 			},
 			getClineMessages: () => this.messageStateHandler.clineMessages as Array<{ ask?: string; say?: string }>,
@@ -1782,10 +1828,13 @@ export class Task {
 		const previousApi = this.api
 		const previousPromptScope = this.getApiHandlerPromptScope(previousApi)
 		const profileResolution = await resolveTaskApiProfileFresh(this.getEffectiveApiConfiguration(), mode)
+		if (this.controllerDetached) throw new Error("Task API profile admission was superseded")
 		const nextApi =
 			profileResolution.error || !profileResolution.resolvedApiProfile
 				? createUnavailableApiHandler(profileResolution.error ?? "Profile not valid: resolved Profile is unavailable.")
-				: buildApiHandlerFromProfile(profileResolution.configuration, mode, profileResolution.resolvedApiProfile)
+				: this.restoredFromHistory && !this.executionPreparation
+					? createInertApiHandler(profileResolution.resolvedApiProfile)
+					: buildApiHandlerFromProfile(profileResolution.configuration, mode, profileResolution.resolvedApiProfile)
 		if (options.abortPrevious === true || !this.taskState.isStreaming) previousApi.abort?.()
 		this.api = nextApi
 		if (!profileResolution.usedFallback && profileResolution.resolvedProfileId && profileResolution.resolvedProfile) {
@@ -2445,6 +2494,7 @@ export class Task {
 		if (hasModeSwitchInput && this.taskState.isAwaitingPlanResponse && !shouldContinueInteraction) {
 			throw new Error("The active conversational interaction is no longer available for the mode switch.")
 		}
+		if (shouldContinueInteraction) await this.prepareExecutionResources()
 		this.taskSm.setMode(targetMode)
 		this.pendingSystemPromptRefreshReason = "mode_switch"
 		await this.rebuildApiHandler()
@@ -2513,6 +2563,8 @@ export class Task {
 			) => ClineContent | Promise<ClineContent>
 		},
 	): Promise<number> {
+		if (this.controllerDetached || this.readOnly) throw new Error("Task context projection requires write permission")
+		if (this.restoredFromHistory) await this.prepareExecutionResources()
 		const requestScope = createRequestApiScope(
 			targetApi,
 			targetMode,
@@ -3216,7 +3268,7 @@ export class Task {
 		const message = this.createContextCompactionMessage(input, snapshot, true)
 		const transient = this.messageStateHandler.upsertTransientClineMessage(message)
 		if (snapshot.existingTs === undefined) this.contextCompactionPresentation.bindMessageTs(snapshot, message.ts)
-		await sendPartialMessageEvent(this.controller, convertClineMessageToProto(transient))
+		await sendPartialMessageEvent(this.controller, convertClineMessageToProto(transient), this)
 	}
 
 	/** Append one terminal execution-unit card to JSONL; only the final cumulative summary receives a canonical range. */
@@ -3231,7 +3283,7 @@ export class Task {
 		)
 		this.contextCompactionPresentation.markDurable(snapshot)
 		try {
-			await sendPartialMessageEvent(this.controller, convertClineMessageToProto(committed))
+			await sendPartialMessageEvent(this.controller, convertClineMessageToProto(committed), this)
 		} catch (error) {
 			Logger.error(`[Task ${this.taskId}] Failed to publish a durably committed compaction card:`, error)
 		}
@@ -3589,6 +3641,7 @@ export class Task {
 
 	/** Request one user-triggered compaction without consuming a causal interaction. */
 	public async compactTask(expectedRevision: number): Promise<{ accepted: boolean; result: string }> {
+		if (this.controllerDetached || this.readOnly) return { accepted: false, result: "unavailable" }
 		const runtimeState = this.getRuntimeState()
 		if (runtimeState.revision !== expectedRevision) return { accepted: false, result: "stale_state" }
 		if (this.taskState.abort || !this.taskState.isInitialized || !runtimeState.interaction) {
@@ -3598,6 +3651,9 @@ export class Task {
 			return { accepted: false, result: "already_running" }
 		}
 
+		if (this.restoredFromHistory) await this.prepareExecutionResources()
+		if (this.getRuntimeState().revision !== expectedRevision || this.controllerDetached)
+			return { accepted: false, result: "stale_state" }
 		const operationId = `manual-compact:${this.taskId}:${expectedRevision}`
 		const { sourceHistory, sourceCanonicalRanges, targetContinuationHistory } = this.getTaskHeaderContextCompactionBoundary()
 		this.invalidatePreparedProviderInputs()
@@ -3632,6 +3688,7 @@ export class Task {
 
 	/** Apply one explicit legacy history truncation without starting a provider request. */
 	public async forceTruncateTask(expectedRevision: number): Promise<{ accepted: boolean; result: string }> {
+		if (this.controllerDetached || this.readOnly) return { accepted: false, result: "unavailable" }
 		const runtimeState = this.getRuntimeState()
 		if (runtimeState.revision !== expectedRevision) return { accepted: false, result: "stale_state" }
 		if (this.taskState.abort || !this.taskState.isInitialized || !runtimeState.interaction) {
@@ -3644,6 +3701,9 @@ export class Task {
 			return { accepted: false, result: "already_running" }
 		}
 
+		if (this.restoredFromHistory) await this.prepareExecutionResources()
+		if (this.getRuntimeState().revision !== expectedRevision || this.controllerDetached)
+			return { accepted: false, result: "stale_state" }
 		const previousRange = this.taskState.conversationHistoryDeletedRange
 		await this.handleContextWindowExceededError(this.api, false, "none")
 		const nextRange = this.taskState.conversationHistoryDeletedRange
@@ -4577,10 +4637,13 @@ export class Task {
 		}
 	}
 
-	/** Build resume input from a usable snapshot plus the complete persisted histories. */
+	/** Build recovery from exact retained anchors; full histories are a legacy fallback. */
 	private async loadResumeInput(): Promise<ResumeInput> {
 		await this.snapshotPersistence.flushNow()
 		const snapshot = await this.loadTaskSnapshot()
+		if (!this.messageResources.hasExecutionStores) {
+			return await this.loadWindowedResumeInput(snapshot)
+		}
 		const uiHistory = this.messageStateHandler.clineMessages
 		const apiHistory = this.messageStateHandler.apiConversationHistory
 		const apiTailStartIndex = snapshot ? Math.max(0, snapshot.apiIndex + 1) : 0
@@ -4593,6 +4656,51 @@ export class Task {
 			apiHistoryLength: apiHistory.length,
 			uiHistory,
 			apiHistory,
+		}
+	}
+
+	private async loadWindowedResumeInput(candidate: TaskSnapshot | undefined): Promise<ResumeInput> {
+		let snapshot = candidate
+		try {
+			if (!snapshot || hydrateSnapshot(snapshot).taskId !== this.taskId) snapshot = undefined
+		} catch {
+			snapshot = undefined
+		}
+		const uiHistory = await this.messageResources.readRecoveryMessages(
+			snapshot
+				? {
+						timestamp: snapshot.timestamp,
+						apiIndex: snapshot.apiIndex,
+						interactionId: snapshot.interaction?.interactionId ?? snapshot.anchor?.interactionId,
+					}
+				: undefined,
+		)
+		let api = await this.messageResources.readApiWindow({
+			tailStartIndex: snapshot ? Math.max(0, snapshot.apiIndex + 1) : 0,
+			requiredIndices: [
+				...(snapshot ? [snapshot.apiIndex, ...(snapshot.turn ? [snapshot.turn.assistantApiIndex] : [])] : []),
+				...uiHistory.flatMap((message) =>
+					message.conversationHistoryIndex === undefined ? [] : [message.conversationHistoryIndex],
+				),
+			],
+			signal: this.taskState.operationSignal,
+		})
+		if (snapshot && (snapshot.apiIndex < -1 || snapshot.apiIndex >= api.historyLength)) {
+			snapshot = undefined
+			api = await this.messageResources.readApiWindow({ tailStartIndex: 0, signal: this.taskState.operationSignal })
+			uiHistory.splice(0, uiHistory.length, ...(await this.messageResources.readRecoveryMessages()))
+		}
+		this.historyApiLength = api.historyLength
+		return {
+			taskId: this.taskId,
+			snapshot,
+			uiHistory,
+			uiTail: snapshot ? selectResumeUiTail(snapshot, uiHistory) : uiHistory,
+			apiTail: api.tail,
+			apiTailStartIndex: api.tailStartIndex,
+			apiHistoryLength: api.historyLength,
+			apiMessageAt: (index) => api.getAt(index),
+			...(api.completeHistory ? { apiHistory: api.completeHistory } : !snapshot ? { apiHistory: api.tail } : {}),
 		}
 	}
 
@@ -4638,7 +4746,7 @@ export class Task {
 	/** Locate the original turn-end block from runtime memory or canonical persisted assistant history. */
 	private findRestoredTurnEndBlock(interactionId: string, messageTs: number, assistantApiIndex?: number): ToolUse {
 		if (assistantApiIndex !== undefined) {
-			const message = this.messageStateHandler.apiConversationHistory[assistantApiIndex]
+			const message = this.messageResources.getApiMessageAt(assistantApiIndex)
 			const matchingBlocks =
 				message?.role === "assistant" && Array.isArray(message.content)
 					? message.content.filter(
@@ -5160,6 +5268,90 @@ export class Task {
 		return this.historyPreparationPending
 	}
 
+	public getDisplayMessages(): readonly ClineMessage[] {
+		return this.messageStateHandler.clineMessages
+	}
+
+	public getDisplayMessageCount(): number {
+		const visible = this.messageStateHandler.clineMessages
+		return this.messageResources.getMessageCount() + visible.length - this.messageResources.getDisplayMessages().length
+	}
+
+	public getTaskTitleMessage(): ClineMessage | undefined {
+		return (
+			this.messageResources.getTitleMessage() ??
+			(this.initialTaskTitle === undefined
+				? undefined
+				: {
+						ts: this.initialTaskTitleTs,
+						type: "say",
+						say: "task",
+						text: this.initialTaskTitle,
+						partial: false,
+					})
+		)
+	}
+
+	public async fetchDisplayMessages(referenceIndex: number, count: number) {
+		if (this.controllerDetached) throw new Error("Task message query was superseded")
+		if (this.messageResources.hasExecutionStores) {
+			const messages = this.messageStateHandler.clineMessages
+			const totalCount = messages.length
+			const size = Math.max(0, Math.trunc(count))
+			const startIndex =
+				referenceIndex === -1
+					? Math.max(0, totalCount - size)
+					: Math.max(0, Math.min(Math.trunc(referenceIndex), totalCount))
+			return { messages: messages.slice(startIndex, startIndex + size), totalCount, startIndex }
+		}
+		return this.messageResources.fetchMessages(referenceIndex, count)
+	}
+
+	public isReadOnly(): boolean {
+		return this.readOnly
+	}
+
+	/** Lock takeover grants write permission, but does not admit Provider work. */
+	public grantWriteAccess(): void {
+		if (this.controllerDetached) throw new Error("Task lock admission was superseded")
+		this.readOnly = false
+	}
+
+	/** Acquire execution resources without changing Task or interaction identity. */
+	private prepareExecutionResources(): Promise<void> {
+		if (this.controllerDetached || this.readOnly) return Promise.reject(new Error("Task execution is not permitted"))
+		if (!this.restoredFromHistory) return Promise.resolve()
+		if (!this.executionPreparation) {
+			const preparation = (async () => {
+				await this.snapshotPersistence.flushNow()
+				const stores = await this.messageResources.openExecution()
+				if (this.controllerDetached || this.readOnly) throw new Error("Task execution admission was superseded")
+				this.messageStateHandler.attachExecutionStores(stores)
+				await this.metrics.enableRecording()
+				await this.ensureApiRateMetricsInitialized()
+				if (this.controllerDetached || this.readOnly) throw new Error("Task execution admission was superseded")
+				await this.contextManager.initializeContextHistory(await ensureTaskDirectoryExists(this.taskId))
+				await this.rebuildApiHandler()
+				if (this.controllerDetached || this.readOnly) throw new Error("Task execution admission was superseded")
+				await this.refreshStableContextWindowIndicator({ reestimateDurable: true })
+				if (this.controllerDetached || this.readOnly) throw new Error("Task execution admission was superseded")
+				this.startContextWindowEnvironmentRefresh()
+				void this.FocusChainManager?.setupFocusChainFileWatcher().catch((error) => {
+					Logger.warn(`[Task ${this.taskId}] Failed to start focus chain watcher:`, error)
+				})
+				const isCurrent = () => !this.controllerDetached && !this.readOnly
+				void this.historyResumeMaintenance.run(isCurrent).catch((error) => {
+					Logger.warn(`[Task ${this.taskId}] Historical execution maintenance failed:`, error)
+				})
+			})().catch((error) => {
+				if (this.executionPreparation === preparation) this.executionPreparation = undefined
+				throw error
+			})
+			this.executionPreparation = preparation
+		}
+		return this.executionPreparation
+	}
+
 	/** Return the read-only runtime aggregate for projection and migration tests. */
 	public getRuntimeState(): Readonly<TaskRuntimeState> {
 		return this.taskRuntime.getState()
@@ -5168,20 +5360,37 @@ export class Task {
 	/** Dispatch one typed event through the serialized task runtime. */
 	public dispatchRuntime(event: TaskEvent): Promise<TaskDispatchResult> {
 		if (event.type === "INTERACTION_RESPONDED") {
-			const interactionBeforeResponse = this.taskRuntime.getState().interaction
-			return this.interactionCoordinator.respond(event.response).then((result) => {
-				const isAcceptedErrorRetryTakeover =
-					result.accepted &&
-					interactionBeforeResponse?.status === "awaiting" &&
-					interactionBeforeResponse.kind === "error_retry" &&
-					interactionBeforeResponse.interactionId === event.response.interactionId &&
-					interactionBeforeResponse.turnId === event.response.turnId &&
-					(event.response.actionId === "retry" || event.response.actionId === "start_new_task")
-				if (isAcceptedErrorRetryTakeover) {
-					this.taskState.forceTruncateAvailable = false
-				}
-				return result
-			})
+			const state = this.taskRuntime.getState()
+			if (this.readOnly || this.controllerDetached || this.historyPreparationPending) {
+				return Promise.resolve({
+					accepted: false,
+					next: { ...state },
+					effects: [],
+					error: { code: "stale_interaction", eventType: event.type, phase: state.phase },
+				})
+			}
+			const preview = reduceTask(state, event)
+			if (!preview.accepted) return Promise.resolve(preview)
+			const interactionBeforeResponse = state.interaction
+			const admission =
+				event.response.actionId === "start_new_task" || !this.restoredFromHistory
+					? Promise.resolve()
+					: this.prepareExecutionResources()
+			return admission
+				.then(() => this.interactionCoordinator.respond(event.response))
+				.then((result) => {
+					const isAcceptedErrorRetryTakeover =
+						result.accepted &&
+						interactionBeforeResponse?.status === "awaiting" &&
+						interactionBeforeResponse.kind === "error_retry" &&
+						interactionBeforeResponse.interactionId === event.response.interactionId &&
+						interactionBeforeResponse.turnId === event.response.turnId &&
+						(event.response.actionId === "retry" || event.response.actionId === "start_new_task")
+					if (isAcceptedErrorRetryTakeover) {
+						this.taskState.forceTruncateAvailable = false
+					}
+					return result
+				})
 		}
 		return this.taskRuntime.dispatch(event)
 	}
@@ -5709,23 +5918,39 @@ export class Task {
 	 * Used for both readonly (locked task) and interactive resume scenarios.
 	 */
 	public async displayHistory(): Promise<void> {
-		// Metrics are a secondary projection and must not delay the historical surface.
-		// The request path initializes them on demand; History readiness starts them later.
-		// Ignore rules are already loaded by the Controller that owns this workspace.
-
-		// UIMessage and ApiConversation were opened before Task construction and are
-		// already the authoritative in-memory views. Metadata refresh is deferred until
-		// after Resume readiness so directory-size scans cannot block historical display.
-
-		await ensureTaskDirectoryExists(this.taskId)
-		await this.contextManager.initializeContextHistory(await ensureTaskDirectoryExists(this.taskId))
-		await this.loadTaskSnapshot()
-		await this.rebuildApiHandler()
-
-		// Display-only history loading never infers or mutates runtime phase from message tails.
-		// Interactive restoration is owned exclusively by ResumeCoordinator.
-
-		// Mark task as initialized so checkpoint restore can proceed
+		await Promise.all([
+			this.messageResources.openDisplay(),
+			this.activityStore.hydrate().catch((error) => {
+				Logger.warn(`[Task ${this.taskId}] Failed to hydrate historical activities:`, error)
+			}),
+			this.metrics.reader.readUsageSummary(),
+		])
+		const checklist = await this.FocusChainManager?.readFocusChainFromDisk()
+		if (this.controllerDetached) return
+		this.taskState.currentFocusChainChecklist = checklist ?? null
+		const snapshot = await this.loadTaskSnapshot()
+		if (this.controllerDetached) return
+		const indicator = readHistoryContextWindowIndicator(snapshot?.contextWindowIndicator, this.taskId)
+		if (indicator) {
+			this.contextWindowIndicator.restoreHistory(indicator)
+		} else {
+			this.contextWindowIndicator.refreshStable({
+				...this.contextWindowIndicator.getSnapshot(),
+				durableContextTokens: getLatestReliableContextWindowTokens(this.getContextWindowRequestPressures()),
+			})
+		}
+		this.taskState.contextWindowIndicator = this.contextWindowIndicator.getSnapshot()
+		if (snapshot?.taskId === this.taskId) {
+			try {
+				normalizeStoppedTaskSnapshot(snapshot)
+				this.taskRuntime.restore(hydrateSnapshot(snapshot))
+				this.syncRetainedMachines()
+			} catch (error) {
+				Logger.warn(`[Task ${this.taskId}] Historical snapshot requires canonical recovery:`, error)
+			}
+		}
+		// Display uses persisted Context/TODO facts. API history, environment
+		// re-estimation and maintenance belong to explicit execution admission.
 		this.taskState.isInitialized = true
 	}
 
@@ -5737,6 +5962,7 @@ export class Task {
 	 * Readonly windows should stop after displayHistory() and show a lock banner.
 	 */
 	public async prepareFromHistory(options?: ResumeTaskFromHistoryOptions) {
+		if (this.controllerDetached || this.readOnly) throw new Error("History preparation requires Task write permission")
 		this.taskState.abort = true
 		try {
 			await this.resumeCoordinator.prepare(this.taskId)
@@ -5745,23 +5971,12 @@ export class Task {
 			await this.postStateToWebview({ immediate: true })
 			throw error
 		}
-		this.startContextWindowEnvironmentRefresh()
 		await options?.onReadyToDisplay?.()
+		const isCurrent = options?.isCurrent ?? (() => true)
+		if (!isCurrent() || this.controllerDetached) return
 		void this.ensureApiRateMetricsInitialized().catch((error) => {
 			Logger.debug(`[Task ${this.taskId}] Deferred API rate metrics initialization failed: ${error}`)
 		})
-		const isCurrent = options?.isCurrent ?? (() => true)
-		if (!isCurrent()) return
-
-		void this.historyResumeMaintenance
-			.run(isCurrent)
-			.then(() => {
-				if (!isCurrent()) return
-				return this.postStateToWebview({ immediate: true })
-			})
-			.catch((error) => {
-				Logger.warn(`[Task ${this.taskId}] Historical maintenance failed unexpectedly:`, error)
-			})
 	}
 
 	private async patchInterruptedCommandCards(activityIds: ReadonlySet<string>): Promise<void> {
@@ -6164,7 +6379,45 @@ export class Task {
 		return this.diffViewProvider
 	}
 
+	/** Release inert display resources without writing a termination phase or executing hooks. */
+	private async closeHistoricalDisplay(): Promise<void> {
+		this.fenceControllerDetachment()
+		this.stopContextWindowEnvironmentRefresh()
+		this.promptFreshnessDisposed = true
+		this.promptFreshnessInvalidationCoordinator.dispose()
+		this.projectionScheduler.dispose()
+		this.activityStore.dispose()
+		this.taskTelemetry.dispose()
+		this.FocusChainManager?.dispose()
+		this.fileContextTracker.dispose()
+		this.taskFileTracker.dispose()
+		this.terminalManager.disposeAll()
+		this.urlContentFetcher.closeBrowser()
+		if (this._mcpNotificationCb) {
+			this.mcpHub.removeNotificationCallback(this._mcpNotificationCb)
+			this._mcpNotificationCb = undefined
+		}
+		const results = await Promise.allSettled([
+			this.messageResources.close(),
+			this.metrics.close(),
+			this.readOnly ? Promise.resolve() : this.snapshotPersistence.flushNow(),
+			this.presentationScheduler.dispose(),
+			this.disposePromptInputFileWatcher(),
+			this.commandExecutor.dispose(),
+			this.browserSession.dispose(),
+			this.diffViewProvider.revertChanges(),
+		])
+		const failure = results.find((result): result is PromiseRejectedResult => result.status === "rejected")
+		if (failure) throw failure.reason
+	}
+
 	async terminate(options?: { preserveCompletedState?: boolean }) {
+		if (
+			this.readOnly ||
+			(this.restoredFromHistory && !this.executionPreparation && !this.messageResources.hasExecutionStores)
+		) {
+			return this.closeHistoricalDisplay()
+		}
 		const terminateStartedAt = performance.now()
 		let stageStartedAt = terminateStartedAt
 		const logTerminateStage = (phase: string, details = "") => {
@@ -6426,7 +6679,7 @@ export class Task {
 				}
 				// Store close is the durability boundary and must not be best-effort:
 				// Controller.clearTask releases the task lock only after this resolves.
-				await this.messageStateHandler.close()
+				await this.messageResources.close()
 				logTerminateStage("stores_close")
 			} finally {
 				this.interactionCoordinator.completeCancellation(cancellationGeneration)
@@ -6486,7 +6739,9 @@ export class Task {
 	}
 
 	/** Rebind one persisted failed subagent before an Activity Retry action. */
-	public restoreSubagentActivityRetry(activityId: string): Promise<boolean> {
+	public async restoreSubagentActivityRetry(activityId: string): Promise<boolean> {
+		await this.prepareExecutionResources()
+		if (this.controllerDetached || this.readOnly) return false
 		return this.toolExecutor.restoreSubagentRetry(activityId)
 	}
 
@@ -9419,7 +9674,7 @@ export class Task {
 					text: thinking,
 				})
 				if (finalized) {
-					await sendPartialMessageEvent(this.controller, convertClineMessageToProto(finalized))
+					await sendPartialMessageEvent(this.controller, convertClineMessageToProto(finalized), this)
 				}
 				this.taskState.reasoningTs = undefined
 				return true

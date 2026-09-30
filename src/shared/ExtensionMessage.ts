@@ -532,6 +532,8 @@ export interface TaskContextCompactionViewState {
 /** Complete backend projection consumed by the Webview interaction host. */
 export interface TaskViewState {
 	taskId: string
+	/** Ephemeral canonical Task opening; never stored in a runtime snapshot. */
+	taskInstanceId?: string
 	phase: TaskViewPhase
 	stateRevision: number
 	activeInteraction?: ActiveInteractionView

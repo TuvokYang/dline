@@ -1,5 +1,4 @@
 import type { ClineMessage } from "@shared/ExtensionMessage"
-import { FetchMessageRequest } from "@shared/proto/dline/task"
 import { convertProtoToClineMessage } from "@shared/proto-conversions/cline-message"
 import type React from "react"
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
@@ -7,7 +6,7 @@ import { Virtuoso } from "react-virtuoso"
 import { StickyUserMessage } from "@/components/chat/task-header/StickyUserMessage"
 import { useExtensionState } from "@/context/ExtensionStateContext"
 import { cn } from "@/lib/utils"
-import { TaskServiceClient } from "@/services/grpc-client"
+import { fetchTaskMessages, getTaskViewKey } from "@/services/task-messages"
 import { isApiReqActive } from "@/utils/streaming"
 
 import { useBrowsingScrollAnchor } from "../../hooks/useBrowsingScrollAnchor"
@@ -97,7 +96,11 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 	messageHandlers,
 	onFollowupOptionSelect,
 }) => {
-	const { clineMessages, setClineMessages, totalMessageCount, firstItemIndex, setFirstItemIndex } = useExtensionState()
+	const { clineMessages, setClineMessages, totalMessageCount, firstItemIndex, setFirstItemIndex, taskViewState } =
+		useExtensionState()
+	const taskKey = getTaskViewKey(taskViewState)
+	const taskKeyRef = useRef(taskKey)
+	taskKeyRef.current = taskKey
 
 	const firstItemIndexRef = useRef(firstItemIndex)
 	const clineMessagesLengthRef = useRef(clineMessages.length)
@@ -124,7 +127,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 		setScroller(element instanceof HTMLElement ? element : null)
 	}, [])
 	const { capture: captureBrowsingViewportAnchor, scheduleRestore: scheduleBrowsingViewportAnchorRestore } =
-		useBrowsingScrollAnchor(clineMessages, task.ts, scroller, scrollBehavior)
+		useBrowsingScrollAnchor(clineMessages, taskKey, scroller, scrollBehavior)
 	const windowVersionRef = useRef(0)
 	const edgeJumpInFlightRef = useRef<ScrollEdge | null>(null)
 
@@ -140,7 +143,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 	isWebviewHiddenRef.current = isWebviewHidden
 	const tailMessageSnapshotRef = useRef<TailMessageSnapshot | null>(null)
 	// A hidden snapshot belongs to exactly one Task and is invalidated on visibility restoration.
-	const cachedVisibleMessagesRef = useRef<{ taskTs: number; rows: (ClineMessage | ClineMessage[])[] } | null>(null)
+	const cachedVisibleMessagesRef = useRef<{ taskKey: string | undefined; rows: (ClineMessage | ClineMessage[])[] } | null>(null)
 
 	// Layout effects run before passive effects. Keep these mirrors current during
 	// render so initial async hydration can calculate the real loaded bottom.
@@ -153,7 +156,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 	// Reset auto-scroll flag when entering a new task so the view scrolls
 	// to the bottom instead of staying wherever the previous task left it.
 	useLayoutEffect(() => {
-		void task.ts
+		void taskKey
 		scrollBehavior.disableAutoScrollRef.current = false
 		windowVersionRef.current += 1
 		inflightRef.current.clear()
@@ -165,7 +168,10 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 		userScrollIntentRef.current = null
 		tailMessageSnapshotRef.current = null
 		scrollBehavior.cancelProgrammaticScroll()
-	}, [task.ts, scrollBehavior.cancelProgrammaticScroll, scrollBehavior.disableAutoScrollRef])
+		return () => {
+			windowVersionRef.current += 1
+		}
+	}, [taskKey, scrollBehavior.cancelProgrammaticScroll, scrollBehavior.disableAutoScrollRef])
 
 	const {
 		virtuosoRef,
@@ -280,7 +286,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 		// cached snapshot so Virtuoso stays idle instead of re-laying-out invisibly.
 		if (isWebviewHidden) {
 			const cached = cachedVisibleMessagesRef.current
-			if (cached?.taskTs === task.ts) {
+			if (cached && cached.taskKey === taskKey) {
 				return cached.rows
 			}
 		}
@@ -296,9 +302,9 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 		}
 		// Always update the cache when we compute a fresh result so the next
 		// hidden-cycle can reuse it.
-		cachedVisibleMessagesRef.current = { taskTs: task.ts, rows: result }
+		cachedVisibleMessagesRef.current = { taskKey, rows: result }
 		return result
-	}, [isWebviewHidden, renderRows, task.ts])
+	}, [isWebviewHidden, renderRows, taskKey])
 
 	const findRowOffsetByMessageTs = useCallback(
 		(ts: number) => {
@@ -606,7 +612,8 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 			}
 
 			try {
-				const resp = await TaskServiceClient.fetchMessage(FetchMessageRequest.create({ referenceIndex: start, count }))
+				const resp = await fetchTaskMessages(taskViewState, start, count)
+				if (taskKeyRef.current !== taskKey) return false
 				const msgs = resp.messages.map((message) => convertProtoToClineMessage(message))
 				const si = resp.startIndex
 
@@ -656,10 +663,10 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 				console.error("fetchMessage:", e)
 				return false
 			} finally {
-				inflightRef.current.delete(key)
+				if (taskKeyRef.current === taskKey) inflightRef.current.delete(key)
 			}
 		},
-		[setClineMessages, setFirstItemIndex],
+		[setClineMessages, setFirstItemIndex, taskViewState, taskKey],
 	)
 
 	const requestWindowExtensions = useCallback(
@@ -771,13 +778,8 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 			pendingEdgeScrollRef.current = edge
 
 			try {
-				const request =
-					edge === "top"
-						? FetchMessageRequest.create({ referenceIndex: 0, count: LOAD_COUNT })
-						: FetchMessageRequest.create({ referenceIndex: -1, count: LOAD_COUNT })
-
-				const resp = await TaskServiceClient.fetchMessage(request)
-				if (requestVersion !== windowVersionRef.current) return
+				const resp = await fetchTaskMessages(taskViewState, edge === "top" ? 0 : -1, LOAD_COUNT)
+				if (taskKeyRef.current !== taskKey || requestVersion !== windowVersionRef.current) return
 
 				const converted = resp.messages.map((message) => convertProtoToClineMessage(message))
 				const nextFirstItemIndex = Math.max(0, resp.startIndex)
@@ -791,15 +793,20 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 					pendingEdgeScrollRef.current = null
 				}
 			} catch (e) {
+				if (taskKeyRef.current !== taskKey || requestVersion !== windowVersionRef.current) return
 				pendingEdgeScrollRef.current = null
 				console.error("fetchMessage:", e)
 			} finally {
-				if (edgeJumpInFlightRef.current === edge) {
+				if (
+					taskKeyRef.current === taskKey &&
+					requestVersion === windowVersionRef.current &&
+					edgeJumpInFlightRef.current === edge
+				) {
 					edgeJumpInFlightRef.current = null
 				}
 			}
 		},
-		[setClineMessages, setFirstItemIndex],
+		[setClineMessages, setFirstItemIndex, taskViewState, taskKey],
 	)
 
 	const handleRangeChanged = useCallback(
@@ -886,7 +893,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 		requestWindowExtensions(visible, latestVisibleAnchorTsRef.current)
 	}, [clineMessages.length, firstItemIndex, requestWindowExtensions])
 
-	const virtuosoInstanceKey = `${task.ts}:${clineMessages.length === 0 ? "empty" : "loaded"}`
+	const virtuosoInstanceKey = `${taskKey}:${clineMessages.length === 0 ? "empty" : "loaded"}`
 
 	// Floating button: scroll listener for visibility + wheel listener for direction.
 	// Attached to Virtuoso inner scroller, not the outer scrollContainerRef.

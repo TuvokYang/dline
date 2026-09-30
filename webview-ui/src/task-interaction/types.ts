@@ -156,6 +156,7 @@ export function buildInteractionRequest(
 		: view.input.enterAction === actionId
 	return {
 		taskId: interaction.taskId,
+		taskInstanceId: view.taskInstanceId ?? "",
 		turnId: interaction.turnId,
 		interactionId: interaction.interactionId,
 		actionId,

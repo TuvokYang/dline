@@ -19,7 +19,7 @@ import { sendWorktreesButtonClickedEvent, subscribeToWorktreesButtonClicked } fr
  * The subscription handlers only use controller as an identity key.
  */
 function createMockController(id: string): Controller {
-	return { taskId: id } as unknown as Controller
+	return { taskId: id, task: { taskId: id, taskInstanceId: `open-${id}` } } as unknown as Controller
 }
 
 /**
@@ -99,7 +99,7 @@ describe("Per-Controller Event Isolation", () => {
 			await subscribeToPartialMessage(ctrlB, {} as any, streamB.handler)
 
 			const msg = { type: "say", say: "text", text: "hello", ts: 123 } as any
-			await sendPartialMessageEvent(ctrlA, msg)
+			await sendPartialMessageEvent(ctrlA, msg, ctrlA.task!)
 
 			assert.equal(streamA.received.length, 1)
 			assert.equal(streamB.received.length, 0)
@@ -116,7 +116,7 @@ describe("Per-Controller Event Isolation", () => {
 			const unsub = registerPartialMessageCallback((msg) => callbackReceived.push(msg))
 
 			const msg = { type: "say", say: "text", text: "global", ts: 456 } as any
-			await sendPartialMessageEvent(ctrl, msg)
+			await sendPartialMessageEvent(ctrl, msg, ctrl.task!)
 
 			assert.equal(stream.received.length, 1, "gRPC subscriber should receive")
 			assert.equal(callbackReceived.length, 1, "global callback should receive")

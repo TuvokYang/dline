@@ -6,7 +6,7 @@ type Anchor = { ts: string; top: number }
 /** Preserve layout shifts, never undo a newer user scroll within the same virtual range. */
 export function useBrowsingScrollAnchor(
 	messages: readonly unknown[],
-	taskTs: number,
+	taskKey: string | number | undefined,
 	scroller: HTMLElement | null,
 	{ disableAutoScrollRef, requestProgrammaticScroll, virtuosoRef }: ScrollBehavior,
 ) {
@@ -61,10 +61,10 @@ export function useBrowsingScrollAnchor(
 	}, [disableAutoScrollRef, invalidate, requestProgrammaticScroll, scroller, virtuosoRef])
 
 	useLayoutEffect(() => {
-		void taskTs
+		void taskKey
 		invalidate()
 		return invalidate
-	}, [invalidate, taskTs])
+	}, [invalidate, taskKey])
 
 	useLayoutEffect(() => {
 		void messages

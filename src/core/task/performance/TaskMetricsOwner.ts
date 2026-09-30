@@ -29,6 +29,9 @@ export interface TaskMetricsOwnerOptions {
 	readonly legacySource?: LegacyUiMessageSource
 	readonly onChanged?: () => void
 	readonly readOnly?: boolean
+	readonly messagesComplete?: () => boolean
+	/** Indexed compatibility totals until the canonical persisted summary is read. */
+	readonly historicalUsage?: Readonly<ApiMetrics>
 }
 
 const liveOwners = new Map<string, TaskMetricsOwner>()
@@ -53,20 +56,22 @@ export class TaskMetricsOwner {
 			await repository.close()
 		}
 	}
-	private readonly rates: TaskApiRateMetricsService
-	private readonly rounds: ApiRequestRoundLifecycle
-	private readonly queries: TaskRateMetricsQueryService
+	private rates!: TaskApiRateMetricsService
+	private rounds!: ApiRequestRoundLifecycle
+	private queries!: TaskRateMetricsQueryService
+	private readOnly: boolean
+	private recordingAdmission?: Promise<void>
 	private initialization?: Promise<void>
 	private closePromise?: Promise<void>
 	private snapshot?: Readonly<ApiRateSnapshot>
 	private readonly pendingReads = new Set<Promise<unknown>>()
 	private readonly legacyUsage = new LegacyMessageUsageReader()
-	private readonly usageRepository: TaskUsageSummaryRepository
+	private usageRepository!: TaskUsageSummaryRepository
 	private usage?: ApiMetrics
 	private summaryLoaded = false
 	private pendingUsage?: ApiMetrics
 	private usageWrites: Promise<void> = Promise.resolve()
-	private readonly predecessor?: Promise<void>
+	private predecessor?: Promise<void>
 
 	readonly reader: TaskMetricsReader
 	readonly recorder: {
@@ -86,29 +91,62 @@ export class TaskMetricsOwner {
 	}
 
 	constructor(private readonly options: TaskMetricsOwnerOptions) {
-		this.usageRepository = new TaskUsageSummaryRepository(options.taskId, options.readOnly)
-		if (!options.readOnly) {
-			const key = ownerKey(options.taskId)
-			const previous = liveOwners.get(key)
-			if (previous && !previous.closePromise) throw new Error("Task metrics already has a live owner")
-			this.predecessor = previous?.closePromise
-			liveOwners.set(key, this)
+		this.readOnly = options.readOnly === true
+		if (!this.readOnly) this.claimRecordingOwnership()
+		this.createResources()
+		// Consumers retain these facades across read-only admission into execution.
+		this.recorder = {
+			rates: {
+				recordEstimatedTokens: (...args) => this.rates.recordEstimatedTokens(...args),
+				recordExactUsage: (...args) => this.rates.recordExactUsage(...args),
+				setTaskLoopActive: (...args) => this.rates.setTaskLoopActive(...args),
+				trackProviderStream: (...args) => this.rates.trackProviderStream(...args),
+				getSnapshot: () => this.rates.getSnapshot(),
+			},
+			rounds: {
+				createObserver: (...args) => this.rounds.createObserver(...args),
+				attachExactUsage: (...args) => this.rounds.attachExactUsage(...args),
+				completeProviderOnly: (...args) => this.rounds.completeProviderOnly(...args),
+				completeTools: (...args) => this.rounds.completeTools(...args),
+				completeTurnEndAwaitingUser: (...args) => this.rounds.completeTurnEndAwaitingUser(...args),
+				abortOpenExecutions: (...args) => this.rounds.abortOpenExecutions(...args),
+			},
 		}
+		this.reader = {
+			readStateMetrics: (messages, revision) => this.readUsageMetrics(messages, revision, false),
+			readHistoryMetrics: (messages, revision) => this.readUsageMetrics(messages, revision, true),
+			getSnapshot: () => this.getSnapshot(),
+			readUsageSummary: () => this.readSummary(),
+			query: (query) => this.read(() => this.queries.query(query)),
+		}
+	}
+
+	private claimRecordingOwnership(): void {
+		const key = ownerKey(this.options.taskId)
+		const previous = liveOwners.get(key)
+		if (previous && previous !== this && !previous.closePromise) throw new Error("Task metrics already has a live owner")
+		this.predecessor = previous?.closePromise
+		liveOwners.set(key, this)
+	}
+
+	private createResources(): void {
+		const options = this.options
+		this.usageRepository = new TaskUsageSummaryRepository(options.taskId, this.readOnly)
 		const onChanged = () => {
 			this.snapshot = undefined
 			options.onChanged?.()
 		}
 		this.rates = new TaskApiRateMetricsService({
 			taskId: options.taskId,
-			repository: new TaskApiRateMetricsRepository({ taskId: options.taskId, readOnly: options.readOnly }),
+			repository: new TaskApiRateMetricsRepository({ taskId: options.taskId, readOnly: this.readOnly }),
 			onChanged,
 		})
 		const roundRepository = new TaskApiRequestRoundRepository({
 			taskId: options.taskId,
-			readOnly: options.readOnly,
+			readOnly: this.readOnly,
 			...(options.legacySource ? { legacySource: options.legacySource } : {}),
 		})
-		const executionRepository = new TaskApiResponseExecutionRepository({ taskId: options.taskId, readOnly: options.readOnly })
+		const executionRepository = new TaskApiResponseExecutionRepository({ taskId: options.taskId, readOnly: this.readOnly })
 		this.rounds = new ApiRequestRoundLifecycle(
 			new ApiRequestRoundTracker({ taskId: options.taskId, repository: roundRepository, onChanged }),
 			new ApiResponseExecutionLifecycle({ taskId: options.taskId, repository: executionRepository, onChanged }),
@@ -122,17 +160,40 @@ export class TaskMetricsOwner {
 			waitForExecutionPersistence: () => this.rounds.waitForExecutionPersistence(),
 			isExecutionDegraded: () => this.rounds.getExecutionSnapshot().degraded,
 		})
-		this.recorder = { rates: this.rates, rounds: this.rounds }
-		this.reader = {
-			readStateMetrics: (messages, revision) => this.readUsageMetrics(messages, revision, false),
-			readHistoryMetrics: (messages, revision) => this.readUsageMetrics(messages, revision, true),
-			getSnapshot: () => this.getSnapshot(),
-			readUsageSummary: () => this.readSummary(),
-			query: (query) => this.read(() => this.queries.query(query)),
-		}
+	}
+
+	/** Admit recording on this owner only after the Task has obtained execution permission. */
+	enableRecording(): Promise<void> {
+		if (this.closePromise) return Promise.reject(new Error("Task metrics owner is closed"))
+		if (!this.readOnly) return Promise.resolve()
+		if (this.recordingAdmission) return this.recordingAdmission
+		const reads = [...this.pendingReads]
+		const admission = (async () => {
+			await this.initialization?.catch(() => undefined)
+			await Promise.allSettled(reads)
+			await this.closeResources()
+			if (this.closePromise) throw new Error("Task metrics owner is closed")
+			this.claimRecordingOwnership()
+			this.readOnly = false
+			this.initialization = undefined
+			this.snapshot = undefined
+			this.createResources()
+		})().catch((error) => {
+			if (this.recordingAdmission === admission) this.recordingAdmission = undefined
+			throw error
+		})
+		this.recordingAdmission = admission
+		return admission
 	}
 
 	initialize(): Promise<void> {
+		if (this.closePromise) return Promise.reject(new Error("Task metrics owner is closed"))
+		return this.recordingAdmission
+			? this.recordingAdmission.then(() => this.initializeResources())
+			: this.initializeResources()
+	}
+
+	private initializeResources(): Promise<void> {
 		if (this.closePromise) return Promise.reject(new Error("Task metrics owner is closed"))
 		this.initialization ??= Promise.resolve(this.predecessor)
 			.then(() =>
@@ -160,16 +221,21 @@ export class TaskMetricsOwner {
 	close(): Promise<void> {
 		const key = ownerKey(this.options.taskId)
 		this.closePromise ??= (async () => {
+			await this.recordingAdmission?.catch(() => undefined)
 			await this.initialization?.catch(() => undefined)
 			await Promise.allSettled([...this.pendingReads])
 			await this.usageWrites
-			const results = await Promise.allSettled([this.rates.dispose(), this.rounds.close(), this.usageRepository.close()])
-			const failure = results.find((result): result is PromiseRejectedResult => result.status === "rejected")
-			if (failure) throw failure.reason
+			await this.closeResources()
 		})().finally(() => {
 			if (liveOwners.get(key) === this) liveOwners.delete(key)
 		})
 		return this.closePromise
+	}
+
+	private async closeResources(): Promise<void> {
+		const results = await Promise.allSettled([this.rates.dispose(), this.rounds.close(), this.usageRepository.close()])
+		const failure = results.find((result): result is PromiseRejectedResult => result.status === "rejected")
+		if (failure) throw failure.reason
 	}
 
 	private read<T>(operation: () => Promise<T>): Promise<T> {
@@ -183,13 +249,16 @@ export class TaskMetricsOwner {
 	}
 
 	private readUsageMetrics(messages: TaskUsageMessages, revision: number, history: boolean): ApiMetrics {
+		if (this.options.messagesComplete?.() === false) {
+			return this.usage ?? this.options.historicalUsage ?? { totalTokensIn: 0, totalTokensOut: 0, totalCost: 0 }
+		}
 		const metrics = history
 			? this.legacyUsage.readHistoryMetrics(messages, revision)
 			: this.legacyUsage.readStateMetrics(messages, revision)
 		if (!history && !sameUsage(this.usage, metrics)) {
 			this.usage = metrics
 			this.snapshot = undefined
-			if (!this.options.readOnly && !this.closePromise) {
+			if (!this.readOnly && !this.closePromise) {
 				this.pendingUsage = metrics
 				this.usageWrites = this.usageWrites
 					.then(async () => {
@@ -217,7 +286,10 @@ export class TaskMetricsOwner {
 					await repository.close()
 				}
 				// A live message projection may have arrived while the database was opening.
-				this.usage ??= persisted
+				if (!this.usage && persisted) {
+					this.usage = persisted
+					this.snapshot = undefined
+				}
 				this.summaryLoaded = true
 			}
 			return this.usage

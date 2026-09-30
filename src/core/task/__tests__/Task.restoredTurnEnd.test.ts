@@ -117,15 +117,16 @@ describe("Task restored turn-end continuation", () => {
 			dline_tid: block.dline_tid,
 			ts,
 		}))
+		const history = [
+			{ role: "assistant", content: [staleBlock] },
+			{ role: "user", content: "unrelated" },
+			{ role: "assistant", content: [exactBlock] },
+		]
+		const getApiMessageAt = vi.fn((index: number) => history[index])
 		const fakeTask = {
 			taskState: { assistantMessageContent: [] },
-			messageStateHandler: {
-				apiConversationHistory: [
-					{ role: "assistant", content: [staleBlock] },
-					{ role: "user", content: "unrelated" },
-					{ role: "assistant", content: [exactBlock] },
-				],
-			},
+			messageStateHandler: { apiConversationHistory: [] },
+			messageResources: { getApiMessageAt },
 			restoreHandler: { storedToRuntime },
 		} as unknown as Task
 		const findRestoredTurnEndBlock = (
@@ -143,6 +144,7 @@ describe("Task restored turn-end continuation", () => {
 			ts: 101,
 		})
 		expect(storedToRuntime).toHaveBeenCalledWith(exactBlock, 101)
+		expect(getApiMessageAt).toHaveBeenCalledExactlyOnceWith(2)
 	})
 
 	it("commits a restored approval before invoking its detached continuation", async () => {

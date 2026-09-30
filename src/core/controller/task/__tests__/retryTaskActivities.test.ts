@@ -15,6 +15,8 @@ describe("retryTaskActivities", () => {
 		const controller = {
 			task: {
 				taskId: "task-1",
+				taskInstanceId: "open-1",
+				isReadOnly: () => false,
 				activityStore: { hasLiveRetryControl, isRetryable, retry },
 				restoreSubagentActivityRetry,
 			},
@@ -22,7 +24,7 @@ describe("retryTaskActivities", () => {
 
 		const response = await retryTaskActivities(
 			controller as never,
-			RetryTaskActivitiesRequest.create({ taskId: "task-1", activityIds: ["subagent-reopened"] }),
+			RetryTaskActivitiesRequest.create({ taskId: "task-1", taskInstanceId: "open-1", activityIds: ["subagent-reopened"] }),
 		)
 
 		expect(response.retriedActivityIds).toEqual(["subagent-reopened"])
@@ -37,6 +39,8 @@ describe("retryTaskActivities", () => {
 		const controller = {
 			task: {
 				taskId: "task-1",
+				taskInstanceId: "open-1",
+				isReadOnly: () => false,
 				activityStore: {
 					hasLiveRetryControl: vi.fn(() => true),
 					isRetryable: vi.fn(() => true),
@@ -48,10 +52,40 @@ describe("retryTaskActivities", () => {
 
 		const response = await retryTaskActivities(
 			controller as never,
-			RetryTaskActivitiesRequest.create({ taskId: "task-1", activityIds: ["subagent-live"] }),
+			RetryTaskActivitiesRequest.create({ taskId: "task-1", taskInstanceId: "open-1", activityIds: ["subagent-live"] }),
 		)
 
 		expect(response.retriedActivityIds).toEqual(["subagent-live"])
 		expect(restoreSubagentActivityRetry).not.toHaveBeenCalled()
+	})
+
+	it("does not retry when a same-ID replacement opens during retry restoration", async () => {
+		let release!: () => void
+		const retry = vi.fn(async (activityIds: string[]) => activityIds)
+		const task = {
+			taskId: "task-1",
+			taskInstanceId: "open-1",
+			isReadOnly: () => false,
+			activityStore: { hasLiveRetryControl: () => false, isRetryable: () => true, retry },
+			restoreSubagentActivityRetry: vi.fn(
+				() =>
+					new Promise<boolean>((resolve) => {
+						release = () => resolve(true)
+					}),
+			),
+		}
+		const controller = { task }
+		const pending = retryTaskActivities(
+			controller as never,
+			RetryTaskActivitiesRequest.create({
+				taskId: "task-1",
+				taskInstanceId: "open-1",
+				activityIds: ["job"],
+			}),
+		)
+		controller.task = { ...task, taskInstanceId: "open-2" }
+		release()
+		await expect(pending).resolves.toMatchObject({ retriedActivityIds: [] })
+		expect(retry).not.toHaveBeenCalled()
 	})
 })

@@ -3,9 +3,10 @@ import { fileExistsAtPath } from "@utils/fs"
 import path from "path"
 import { ClineMessage } from "@/shared/ExtensionMessage"
 import type { BufferedUnifyStore } from "./backend/api/UnifyStore"
+import { FileLock } from "./backend/jsonl/FileLock"
 import { openBufferedJsonlStore } from "./backend/jsonl/JsonlUnifyStore"
-import { readJsonl, writeJsonl } from "./backend/jsonl/jsonl-utils"
-import { dedupeClineMessagesByTs, ensureTaskDirectoryExists, GlobalFileNames } from "./disk"
+import { appendJsonl, canAppendJsonl, readJsonl, writeJsonl } from "./backend/jsonl/jsonl-utils"
+import { dedupeClineMessagesByTs, ensureTaskDirectoryExists, GlobalFileNames, getDlineDocumentsPath } from "./disk"
 import { UIMessageWindowReader } from "./UIMessageWindowReader"
 
 async function ensureUiMessageFile(taskId: string): Promise<string> {
@@ -53,8 +54,37 @@ export class UIMessage {
 	}
 
 	/** Open a bounded read-only historical window without materializing every message body. */
-	static async openWindow(taskId: string): Promise<UIMessageWindowReader> {
-		return await UIMessageWindowReader.open(await ensureUiMessageFile(taskId))
+	static async openWindow(taskId: string, options?: { readOnly?: boolean }): Promise<UIMessageWindowReader> {
+		if (!options?.readOnly) return await UIMessageWindowReader.open(await ensureUiMessageFile(taskId))
+		const directory = path.join(await getDlineDocumentsPath(), "tasks", taskId)
+		for (const name of [GlobalFileNames.uiMessages, "ui_messages.json", "claude_messages.json"]) {
+			const candidate = path.join(directory, name)
+			if (await fileExistsAtPath(candidate)) return await UIMessageWindowReader.open(candidate)
+		}
+		return await UIMessageWindowReader.open(path.join(directory, GlobalFileNames.uiMessages))
+	}
+
+	/**
+	 * Register a canonical stopped ask without materializing the execution cache.
+	 * JSONL's last row for a timestamp is authoritative, just as during open().
+	 * Legacy arrays require a compatibility rewrite before they can be appended.
+	 * The caller must own the Task lock; this is not a read capability.
+	 */
+	static async persistHistoricalMessage(taskId: string, message: ClineMessage): Promise<ClineMessage> {
+		if (!Number.isFinite(message.ts) || message.ts <= 0 || message.partial === true) {
+			throw new Error("Historical UI persistence requires a complete timestamped message")
+		}
+		const filePath = await ensureUiMessageFile(taskId)
+		const stored = { ...message, partial: false }
+		await new FileLock().withLock(filePath, async () => {
+			if (await canAppendJsonl(filePath)) {
+				await appendJsonl(filePath, stored)
+			} else {
+				const current = await readJsonl<ClineMessage>(filePath)
+				await writeJsonl(filePath, dedupeClineMessagesByTs([...current, stored]).map(normalizeStoredCheckpointMessage))
+			}
+		})
+		return stored
 	}
 
 	// ── Read ──

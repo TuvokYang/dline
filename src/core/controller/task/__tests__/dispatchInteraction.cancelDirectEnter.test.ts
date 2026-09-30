@@ -64,6 +64,7 @@ function createMessageBoundary() {
 function createDispatchTask(runtime: TaskRuntime, coordinator: InteractionCoordinator) {
 	return {
 		taskId: "task-1",
+		taskInstanceId: "open-1",
 		taskRuntime: runtime,
 		interactionCoordinator: coordinator,
 		dispatchRuntime(event: TaskEvent) {
@@ -140,6 +141,7 @@ describe("dispatchInteraction after live Cancel", () => {
 		const responsePromise = dispatchInteraction(
 			{ task } as never,
 			DispatchInteractionRequest.create({
+				taskInstanceId: "open-1",
 				taskId: "task-1",
 				turnId,
 				interactionId,
@@ -267,6 +269,7 @@ describe("dispatchInteraction after live Cancel", () => {
 		const response = await dispatchInteraction(
 			{ task } as never,
 			DispatchInteractionRequest.create({
+				taskInstanceId: "open-1",
 				taskId: "task-1",
 				turnId: "resume-turn",
 				interactionId: "resume-1",
@@ -321,6 +324,7 @@ describe("dispatchInteraction after live Cancel", () => {
 		const responsePromise = dispatchInteraction(
 			{ task } as never,
 			DispatchInteractionRequest.create({
+				taskInstanceId: "open-1",
 				taskId: "task-1",
 				turnId: "resume-turn",
 				interactionId: "resume-1",
@@ -383,6 +387,7 @@ describe("dispatchInteraction after live Cancel", () => {
 		const outcome = await dispatchInteraction(
 			{ task } as never,
 			DispatchInteractionRequest.create({
+				taskInstanceId: "open-1",
 				taskId: "task-1",
 				turnId: "resume-turn",
 				interactionId: "resume-1",
@@ -441,6 +446,7 @@ describe("dispatchInteraction after live Cancel", () => {
 		const firstResponse = await dispatchInteraction(
 			{ task } as never,
 			DispatchInteractionRequest.create({
+				taskInstanceId: "open-1",
 				taskId: "task-1",
 				turnId: firstInteraction.turnId,
 				interactionId: firstInteraction.interactionId,
@@ -457,6 +463,7 @@ describe("dispatchInteraction after live Cancel", () => {
 		const secondResponse = await dispatchInteraction(
 			{ task } as never,
 			DispatchInteractionRequest.create({
+				taskInstanceId: "open-1",
 				taskId: "task-1",
 				turnId: secondInteraction.turnId,
 				interactionId: secondInteraction.interactionId,
@@ -651,6 +658,7 @@ describe("dispatchInteraction after live Cancel", () => {
 		const response = await dispatchInteraction(
 			{ task } as never,
 			DispatchInteractionRequest.create({
+				taskInstanceId: "open-1",
 				taskId: "task-1",
 				turnId: "resume-turn",
 				interactionId: "resume-1",
@@ -697,6 +705,7 @@ describe("dispatchInteraction after live Cancel", () => {
 		const response = await dispatchInteraction(
 			{ task } as never,
 			DispatchInteractionRequest.create({
+				taskInstanceId: "open-1",
 				taskId: "task-1",
 				turnId: "resume-turn",
 				interactionId: "resume-1",

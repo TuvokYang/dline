@@ -9,6 +9,7 @@ import {
 import type { TaskActivityRecord, TaskActivityUpdate } from "@shared/task-activity"
 import type { Controller } from ".."
 import { getRequestRegistry, type StreamingResponseHandler } from "../grpc-handler"
+import { getOpenedTask } from "./opened-task"
 
 function toProtoMetrics(metrics: TaskActivityRecord["metrics"]): ProtoTaskActivityMetrics | undefined {
 	return metrics
@@ -125,23 +126,29 @@ export async function subscribeToTaskActivities(
 	responseStream: StreamingResponseHandler<ProtoTaskActivityUpdate>,
 	requestId?: string,
 ): Promise<void> {
-	const activityStore = controller.getCurrentTaskActivityStore(request.taskId)
-	if (!activityStore) {
+	const owner = getOpenedTask(controller, request)
+	const activityStore = owner?.activityStore
+	if (!owner || !activityStore) {
 		await responseStream(ProtoTaskActivityUpdate.create({ sequence: 0, snapshot: true, activities: [] }), true)
 		return
 	}
 
-	const interactive = controller.task?.taskId === request.taskId
+	const interactive = () => controller.task === owner && !owner.isReadOnly()
 	const requestRegistry = getRequestRegistry()
 	let completed = false
 	const unsubscribe = activityStore.subscribe(
 		async (update) => {
+			if (controller.task !== owner || completed) return
 			await responseStream(
-				toProtoUpdate(update, (activityId) => ({
-					cancellable: interactive && activityStore.isCancellable(activityId),
-					finishable: interactive && activityStore.isFinishable(activityId),
-					retryable: interactive && activityStore.isRetryable(activityId),
-				})),
+				{
+					...toProtoUpdate(update, (activityId) => ({
+						cancellable: interactive() && activityStore.isCancellable(activityId),
+						finishable: interactive() && activityStore.isFinishable(activityId),
+						retryable: interactive() && activityStore.isRetryable(activityId),
+					})),
+					taskId: owner.taskId,
+					taskInstanceId: owner.taskInstanceId,
+				},
 				false,
 				update.sequence,
 			)

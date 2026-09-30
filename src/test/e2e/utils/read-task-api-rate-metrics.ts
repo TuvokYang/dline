@@ -39,7 +39,7 @@ interface StoredMetricRow {
 }
 
 export function readTaskApiRateMetrics<TEntity>(dlineDocsDir: string, taskId: string): TEntity[] | undefined {
-	const databasePath = path.join(dlineDocsDir, "tasks", taskId, `${taskId}.db`)
+	const databasePath = path.join(dlineDocsDir, "tasks", taskId, "metrics.db")
 	let database: DatabaseSync | undefined
 	try {
 		database = new DatabaseSync(databasePath, { readOnly: true })

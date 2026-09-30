@@ -1,3 +1,4 @@
+import fs, { type FileHandle } from "node:fs/promises"
 import { ClineStorageMessage } from "@shared/messages/content"
 import { normalizeLegacyConversation, requiresLegacyConversationMigration } from "@shared/messages/legacy-identity-migration"
 import { fileExistsAtPath } from "@utils/fs"
@@ -5,7 +6,23 @@ import path from "path"
 import type { BufferedUnifyStore } from "./backend/api/UnifyStore"
 import { openBufferedJsonlStore } from "./backend/jsonl/JsonlUnifyStore"
 import { readJsonl } from "./backend/jsonl/jsonl-utils"
-import { ensureTaskDirectoryExists, GlobalFileNames } from "./disk"
+import { ensureTaskDirectoryExists, GlobalFileNames, getDlineDocumentsPath } from "./disk"
+
+export interface ApiConversationWindowOptions {
+	readonly tailStartIndex: number
+	readonly requiredIndices?: readonly number[]
+	readonly signal?: AbortSignal
+}
+
+export interface ApiConversationReadWindow {
+	readonly historyLength: number
+	readonly tailStartIndex: number
+	readonly tail: readonly ClineStorageMessage[]
+	/** Exact retained records; no sparse array or invented history rows. */
+	getAt(index: number): ClineStorageMessage | undefined
+	/** Legacy compatibility only; canonical JSONL keeps just the requested suffix. */
+	readonly completeHistory?: readonly ClineStorageMessage[]
+}
 
 /** ClineStorageMessage with the timestamp required by the buffered projection. */
 type IndexedApiMessage = ClineStorageMessage & { ts: number }
@@ -39,6 +56,91 @@ function normalizeIndexedApiMessages(messages: readonly unknown[]): IndexedApiMe
 	return assignUniqueApiMessageTs(normalizeLegacyConversation(messages))
 }
 
+interface InspectedApiWindow {
+	historyLength: number
+	tail: ClineStorageMessage[]
+	selected: Map<number, ClineStorageMessage>
+	requiresMigration: boolean
+}
+
+/** Scan once without retaining already-checkpointed request bodies. */
+async function inspectApiWindow(filePath: string, options: ApiConversationWindowOptions): Promise<InspectedApiWindow> {
+	const result: InspectedApiWindow = { historyLength: 0, tail: [], selected: new Map(), requiresMigration: false }
+	let handle: FileHandle
+	try {
+		handle = await fs.open(filePath, "r")
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return result
+		throw error
+	}
+	try {
+		const { size } = await handle.stat()
+		const prefix = Buffer.alloc(Math.min(size, 4_096))
+		await handle.read(prefix, 0, prefix.length, 0)
+		if (prefix.toString("utf8").trimStart().startsWith("[")) {
+			result.requiresMigration = true
+			return result
+		}
+		const required = new Set(options.requiredIndices ?? [])
+		const timestamps = new Set<number>()
+		for await (const value of readApiJsonlRows(handle, size, options.signal)) {
+			const message = value as ClineStorageMessage | undefined
+			if (
+				!message ||
+				typeof message.ts !== "number" ||
+				!Number.isFinite(message.ts) ||
+				message.ts <= 0 ||
+				timestamps.has(message.ts) ||
+				requiresLegacyConversationMigration([message])
+			) {
+				result.requiresMigration = true
+				return result
+			}
+			timestamps.add(message.ts)
+			const index = result.historyLength++
+			if (index >= options.tailStartIndex) result.tail.push(message)
+			if (required.has(index)) result.selected.set(index, message)
+		}
+		return result
+	} finally {
+		await handle.close()
+	}
+}
+
+async function* readApiJsonlRows(handle: FileHandle, size: number, signal?: AbortSignal): AsyncGenerator<unknown> {
+	let position = 0
+	let pending = Buffer.alloc(0)
+	const parse = (line: Buffer): { value: unknown } | undefined => {
+		const text = line.toString("utf8").trim()
+		if (!text) return undefined
+		try {
+			return { value: JSON.parse(text) }
+		} catch {
+			return undefined
+		}
+	}
+	while (position < size) {
+		signal?.throwIfAborted()
+		const chunk = Buffer.allocUnsafe(Math.min(64 * 1024, size - position))
+		const { bytesRead } = await handle.read(chunk, 0, chunk.length, position)
+		if (bytesRead === 0) break
+		const current = chunk.subarray(0, bytesRead)
+		const data = pending.length ? Buffer.concat([pending, current]) : current
+		let start = 0
+		for (let index = 0; index < data.length; index++) {
+			if (data[index] !== 0x0a) continue
+			const parsed = parse(data.subarray(start, index))
+			if (parsed) yield parsed.value
+			start = index + 1
+		}
+		pending = Buffer.from(data.subarray(start))
+		position += bytesRead
+	}
+	signal?.throwIfAborted()
+	const parsed = parse(pending)
+	if (parsed) yield parsed.value
+}
+
 /**
  * API conversation history store backed by api_conversation_history.jsonl.
  *
@@ -56,7 +158,8 @@ export class ApiConversation {
 		const dir = await ensureTaskDirectoryExists(taskId)
 		const filePath = path.join(dir, GlobalFileNames.apiConversationHistory)
 		const targetExists = await fileExistsAtPath(filePath)
-		const targetNeedsMigration = targetExists && requiresIndexedApiMigration(await readJsonl<unknown>(filePath))
+		const targetNeedsMigration =
+			targetExists && (await inspectApiWindow(filePath, { tailStartIndex: Number.MAX_SAFE_INTEGER })).requiresMigration
 		const store = await openBufferedJsonlStore<IndexedApiMessage>(filePath, {
 			schemaId: "api-conversation-message",
 			ensureUniqueAppendTimestamp: true,
@@ -83,6 +186,38 @@ export class ApiConversation {
 			)
 		}
 		return new ApiConversation(store)
+	}
+
+	/** Read stopped recovery facts without opening a writer or a full buffered cache. */
+	static async readWindow(taskId: string, options: ApiConversationWindowOptions): Promise<ApiConversationReadWindow> {
+		if (!Number.isInteger(options.tailStartIndex) || options.tailStartIndex < 0) {
+			throw new Error("API conversation window requires a non-negative integer tail boundary")
+		}
+		options.signal?.throwIfAborted()
+		const directory = path.join(await getDlineDocumentsPath(), "tasks", taskId)
+		const canonicalPath = path.join(directory, GlobalFileNames.apiConversationHistory)
+		const filePath = (await fileExistsAtPath(canonicalPath))
+			? canonicalPath
+			: path.join(directory, "api_conversation_history.json")
+		const inspected = await inspectApiWindow(filePath, options)
+		if (inspected.requiresMigration) {
+			const history = normalizeIndexedApiMessages(await readJsonl<unknown>(filePath))
+			options.signal?.throwIfAborted()
+			return {
+				historyLength: history.length,
+				tailStartIndex: options.tailStartIndex,
+				tail: history.slice(options.tailStartIndex),
+				getAt: (index) => history[index],
+				completeHistory: history,
+			}
+		}
+		return {
+			historyLength: inspected.historyLength,
+			tailStartIndex: options.tailStartIndex,
+			tail: inspected.tail,
+			getAt: (index) =>
+				index >= options.tailStartIndex ? inspected.tail[index - options.tailStartIndex] : inspected.selected.get(index),
+		}
 	}
 
 	// ── Read ──

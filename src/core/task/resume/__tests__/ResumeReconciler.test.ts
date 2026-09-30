@@ -191,6 +191,17 @@ function fullInput(apiHistory: ClineStorageMessage[], uiHistory: ClineMessage[] 
 	}
 }
 
+function recoveryInput(
+	mode: "complete" | "window",
+	history: ClineStorageMessage[],
+	ui: ClineMessage[],
+	snapshot: TaskSnapshot,
+): ResumeInput {
+	const input = fullInput(history, ui, snapshot)
+	if (mode === "complete") return input
+	return { ...input, apiHistory: undefined, apiMessageAt: (index: number) => history[index] } as ResumeInput
+}
+
 describe("reconcileResume", () => {
 	it("uses a valid snapshot as the baseline and folds every later API row", () => {
 		const result = reconcileResume(
@@ -321,7 +332,10 @@ describe("reconcileResume", () => {
 		})
 	})
 
-	it("rebuilds the exact anchored tool turn when a valid stale snapshot has no turn", () => {
+	it.each([
+		"complete",
+		"window",
+	] as const)("rebuilds the exact anchored tool turn from %s history when a stale snapshot has no turn", (mode) => {
 		const interactionId = "tid-anchored"
 		const apiHistory: ClineStorageMessage[] = [
 			apiUser(),
@@ -346,7 +360,7 @@ describe("reconcileResume", () => {
 				],
 			},
 		]
-		const result = reconcileResume(fullInput(apiHistory, [interactionAsk("tool", interactionId)], baseline(1)))
+		const result = reconcileResume(recoveryInput(mode, apiHistory, [interactionAsk("tool", interactionId)], baseline(1)))
 
 		expect(result.entry).toEqual({
 			type: "reopen_interaction",
@@ -794,7 +808,10 @@ describe("reconcileResume", () => {
 		expect(result.snapshot.interaction?.interactionId).not.toBe("tid-accepted")
 	})
 
-	it("migrates a pending Hosted Web approval to an explicit persisted-request Resume", () => {
+	it.each([
+		"complete",
+		"window",
+	] as const)("migrates a pending Hosted Web approval from %s history to an explicit persisted-request Resume", (mode) => {
 		const interactionId = `hosted-web:${TASK_ID}:0`
 		const state = createTaskRuntimeState({
 			taskId: TASK_ID,
@@ -812,7 +829,9 @@ describe("reconcileResume", () => {
 			anchor: { messageTs: 205, messageType: "ask" },
 		}
 		const snapshot = createSnapshot(state, 206)
-		const result = reconcileResume(fullInput([persistedApiUser()], [interactionAsk("tool", interactionId, 0)], snapshot))
+		const result = reconcileResume(
+			recoveryInput(mode, [persistedApiUser()], [interactionAsk("tool", interactionId, 0)], snapshot),
+		)
 
 		expect(result.entry).toMatchObject({ type: "show_resume_interaction" })
 		expect(result.snapshot.phase).toBe(TaskPhase.PAUSED)

@@ -69,7 +69,8 @@ function isLegacyHostedWebInteraction(snapshot: TaskSnapshot, interactionId: str
 /** Convert obsolete Hosted capability approvals into an inert persisted-request Resume. */
 function migrateLegacyHostedWebInteraction(
 	snapshot: TaskSnapshot,
-	apiHistory: readonly ClineStorageMessage[] | undefined,
+	apiHistoryLength: number,
+	apiMessageAt: ResumeInput["apiMessageAt"],
 ): boolean {
 	const identities = [
 		snapshot.interaction?.interactionId,
@@ -85,8 +86,8 @@ function migrateLegacyHostedWebInteraction(
 	}
 	const apiIndex = snapshot.taskId ? legacyHostedWebApiIndex(snapshot.taskId, legacyId) : undefined
 	if (apiIndex === undefined || apiIndex !== snapshot.anchor?.apiIndex) return false
-	const request = apiHistory?.[apiIndex]
-	if (apiHistory?.length !== apiIndex + 1 || request?.role !== "user" || !Array.isArray(request.content)) {
+	const request = apiMessageAt?.(apiIndex)
+	if (apiHistoryLength !== apiIndex + 1 || request?.role !== "user" || !Array.isArray(request.content)) {
 		return false
 	}
 
@@ -122,7 +123,8 @@ function rebuildReason(error: unknown, snapshot: TaskSnapshot | undefined, taskI
 interface PreparedResumeInput {
 	snapshot: TaskSnapshot
 	apiTail: readonly ClineStorageMessage[]
-	apiHistory?: readonly ClineStorageMessage[]
+	apiHistoryLength: number
+	apiMessageAt?: ResumeInput["apiMessageAt"]
 	uiTail: readonly ClineMessage[]
 	apiTailStartIndex: number
 	diagnostics: ResumeDiagnostic[]
@@ -140,7 +142,8 @@ function prepareInput(input: ResumeInput): PreparedResumeInput {
 		return {
 			snapshot,
 			apiTail: input.apiHistory ? input.apiHistory.slice(snapshot.apiIndex + 1) : input.apiTail,
-			apiHistory: input.apiHistory,
+			apiHistoryLength: input.apiHistory?.length ?? input.apiHistoryLength,
+			apiMessageAt: input.apiHistory ? (index) => input.apiHistory?.[index] : input.apiMessageAt,
 			uiTail: input.uiHistory ? selectResumeUiTail(snapshot, input.uiHistory) : input.uiTail,
 			apiTailStartIndex: input.apiHistory ? snapshot.apiIndex + 1 : (input.apiTailStartIndex ?? snapshot.apiIndex + 1),
 			diagnostics: [],
@@ -154,7 +157,8 @@ function prepareInput(input: ResumeInput): PreparedResumeInput {
 		return {
 			snapshot,
 			apiTail: apiHistory.slice(built.apiTailStartIndex),
-			apiHistory,
+			apiHistoryLength: apiHistory.length,
+			apiMessageAt: (index) => apiHistory[index],
 			uiTail: built.apiTailStartIndex === 0 ? fullUiHistory : selectResumeUiTail(snapshot, fullUiHistory),
 			apiTailStartIndex: built.apiTailStartIndex,
 			diagnostics: [{ code: "snapshot_rebuilt", reason }],
@@ -269,14 +273,14 @@ function restoreAnchoredInteractionTurn(
 	snapshot: TaskSnapshot,
 	message: ClineMessage,
 	uiMessages: readonly ClineMessage[],
-	apiHistory: readonly ClineStorageMessage[] | undefined,
+	apiMessageAt: ResumeInput["apiMessageAt"],
 	diagnostics: ResumeDiagnostic[],
 ): Set<string> {
 	const interactionId = message.interactionId
 	if (!interactionId || snapshot.turn?.blocks.some((block) => block.dlineTid === interactionId)) return new Set()
 	const apiIndex = message.conversationHistoryIndex
-	if (!apiHistory || apiIndex === undefined || !Number.isInteger(apiIndex) || apiIndex < 0) return new Set()
-	const anchored = apiHistory[apiIndex]
+	if (!apiMessageAt || apiIndex === undefined || !Number.isInteger(apiIndex) || apiIndex < 0) return new Set()
+	const anchored = apiMessageAt(apiIndex)
 	const matchingBlocks =
 		anchored?.role === "assistant" && Array.isArray(anchored.content)
 			? anchored.content.filter((block) => block.type === "tool_use" && block.dline_tid === interactionId)
@@ -375,7 +379,7 @@ function reconcilePersistedInteraction(
 	snapshot: TaskSnapshot,
 	uiMessages: readonly ClineMessage[],
 	initialAnsweredDlineTids: ReadonlySet<string>,
-	apiHistory: readonly ClineStorageMessage[] | undefined,
+	apiMessageAt: ResumeInput["apiMessageAt"],
 	diagnostics: ResumeDiagnostic[],
 ): void {
 	const answeredDlineTids = new Set(initialAnsweredDlineTids)
@@ -472,7 +476,7 @@ function reconcilePersistedInteraction(
 		clearInteractionOwnership(snapshot, interactionId)
 		return
 	}
-	for (const dlineTid of restoreAnchoredInteractionTurn(snapshot, latest.message, uiMessages, apiHistory, diagnostics)) {
+	for (const dlineTid of restoreAnchoredInteractionTurn(snapshot, latest.message, uiMessages, apiMessageAt, diagnostics)) {
 		answeredDlineTids.add(dlineTid)
 	}
 	if (answeredDlineTids.has(interactionId)) return
@@ -634,8 +638,8 @@ export function reconcileResume(input: ResumeInput): ResumeResult {
 		}
 	}
 
-	const migratedHostedWebRequest = migrateLegacyHostedWebInteraction(next, prepared.apiHistory)
-	reconcilePersistedInteraction(next, prepared.uiTail, folded.answeredDlineTids, prepared.apiHistory, diagnostics)
+	const migratedHostedWebRequest = migrateLegacyHostedWebInteraction(next, prepared.apiHistoryLength, prepared.apiMessageAt)
+	reconcilePersistedInteraction(next, prepared.uiTail, folded.answeredDlineTids, prepared.apiMessageAt, diagnostics)
 	clearStaleApprovalOwner(next)
 	restorePresentedCompletion(next, input.uiHistory ?? prepared.uiTail)
 	normalizeStoppedTaskSnapshot(next)

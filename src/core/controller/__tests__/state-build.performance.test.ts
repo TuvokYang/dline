@@ -66,6 +66,11 @@ function createFakeController(messages: ClineMessage[]): Record<string, unknown>
 	return {
 		task: {
 			taskId: "test-task-1",
+			taskInstanceId: "open-test-1",
+			isReadOnly: () => false,
+			getDisplayMessages: () => messages,
+			getDisplayMessageCount: () => messages.length,
+			getTaskTitleMessage: () => messages[0],
 			taskSm: {
 				planModeProfile: undefined,
 				actModeProfile: undefined,
@@ -172,18 +177,9 @@ describe("buildState header sourcing", () => {
 			lineage: { kind: "baseline" },
 		}
 		const fakeController = createFakeController([])
-		fakeController.task = undefined
-		fakeController.historyDisplaySession = {
-			taskId: indicator.taskId,
-			historyItem: { id: indicator.taskId, tokensIn: 10, tokensOut: 1, totalCost: 0 },
-			getMessages: () => [],
-			getMessageCount: () => 0,
-			getTaskTitleMessage: () => ({ ts: 1, type: "say", say: "task", text: HEADER_TEXT }),
-			getContextWindowIndicator: () => indicator,
-			getLastApiReqTotalTokens: () => 1,
-			getFocusChainChecklist: () => null,
-			isLocked: () => false,
-		}
+		const task = fakeController.task as Record<string, unknown>
+		task.taskId = indicator.taskId
+		task.getContextWindowIndicator = () => indicator
 		const state = await buildState.call(fakeController, 1)
 		expect(state.contextWindowIndicator).toEqual(indicator)
 		expect(state.lastApiReqTotalTokens).toBe(43_000)

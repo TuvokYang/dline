@@ -2,6 +2,7 @@ import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import type { ApiHandler } from "@core/api"
+import { getProfileModelInfo } from "@core/api/model-info"
 import type { ApiStream } from "@core/api/transform/stream"
 import { PROVIDER_API_KEY_MAP, readApiProfiles, readApiProfilesFresh } from "@core/controller/file/getApiProfiles"
 import { resolveProfileReference } from "@core/profiles/profile-binding"
@@ -392,6 +393,19 @@ export async function resolveTaskApiProfileFresh(
 	historyProviderId?: string,
 ): Promise<ApiProfileRecoveryResult> {
 	return resolveTaskApiProfile(configuration, mode, historyProviderId, await readApiProfilesFresh())
+}
+
+/** Metadata-only projection; reading history never constructs a Provider transport. */
+export function createInertApiHandler(profile: ApiProfile): ApiHandler {
+	const info = getProfileModelInfo(profile)
+	return {
+		createMessage: async function* (): ApiStream {
+			throw new Error("Task execution resources have not been admitted")
+		},
+		getModel: () => ({ id: profile.modelId || info.id || "unavailable", info }),
+		getProviderId: () => profile.provider,
+		supportsAccountUsagePolling: false,
+	}
 }
 
 export function createUnavailableApiHandler(message: string): ApiHandler {

@@ -14,6 +14,7 @@ import { useProviderModels } from "@/components/settings/providers/useProviderMo
 import { useExtensionState } from "@/context/ExtensionStateContext"
 import { useShowNavbar } from "@/context/PlatformContext"
 import { FileServiceClient, TaskServiceClient, UiServiceClient } from "@/services/grpc-client"
+import { getTaskViewKey } from "@/services/task-messages"
 import { createInteractionDispatchGate } from "@/task-interaction/dispatch-gate"
 import { InteractionHost } from "@/task-interaction/InteractionHost"
 import { isPresentationKind } from "@/task-interaction/renderer-registry"
@@ -97,9 +98,11 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 	const forceTruncateTaskRpcPendingRef = useRef(false)
 	const [activityFilters, setActivityFilters] = useState<TaskActivityFilters>(DEFAULT_TASK_ACTIVITY_FILTERS)
 	const task = taskTitleMessage
-	const taskId = taskViewState?.taskId ?? currentTaskItem?.id
+	const taskId = taskViewState?.taskId
+	const taskInstanceId = taskViewState?.taskInstanceId
+	const taskKey = getTaskViewKey(taskViewState)
 	const contextCompactionActive = taskViewState?.contextCompaction?.active === true
-	const { activeCount } = useTaskActivities(taskId)
+	const { activeCount } = useTaskActivities(taskId, taskInstanceId)
 	useEffect(() => {
 		setContentTab("chat")
 		setFocusedActivityId(undefined)
@@ -108,7 +111,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 		setCompactCommandPending(false)
 		forceTruncateTaskRpcPendingRef.current = false
 		setForceTruncateTaskRpcPending(false)
-	}, [taskId])
+	}, [taskId, taskInstanceId])
 	const handleContentTabChange = useCallback((nextTab: TaskContentTab) => {
 		setContentTab(nextTab)
 		if (nextTab === "chat") setFocusedActivityId(undefined)
@@ -139,7 +142,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 	const lastApiReqTotalTokens = lastApiReqTotalTokensFromState
 
 	// Use custom hooks for state management
-	const chatState = useChatState(messages, taskId)
+	const chatState = useChatState(messages, taskKey)
 	// Retained input the user typed while the task was busy. The backend owns it;
 	// this only projects it and forwards the user's changes.
 	const inputQueue = useInputQueue(taskId)
@@ -176,9 +179,9 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 		activeQuote,
 		ownerRevision: draftRevisionRef.current,
 	}
-	const taskSessionRef = useRef({ taskId, epoch: 0 })
-	if (taskSessionRef.current.taskId !== taskId) {
-		taskSessionRef.current = { taskId, epoch: taskSessionRef.current.epoch + 1 }
+	const taskSessionRef = useRef({ taskId, taskInstanceId, epoch: 0 })
+	if (taskSessionRef.current.taskId !== taskId || taskSessionRef.current.taskInstanceId !== taskInstanceId) {
+		taskSessionRef.current = { taskId, taskInstanceId, epoch: taskSessionRef.current.epoch + 1 }
 	}
 	const sessionEpoch = taskSessionRef.current.epoch
 	const currentTaskIdRef = useRef(taskId)
@@ -227,16 +230,13 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 		if (!pendingSuccessorDraft || !taskId || taskId === pendingSuccessorDraft.sourceTaskId) {
 			return
 		}
-		const successorStateStable =
-			currentTaskItem?.id === taskId &&
-			taskViewState?.taskId === taskId &&
-			taskTitleMessage?.text === pendingSuccessorDraft.context
+		const successorStateStable = taskViewState?.taskId === taskId && taskTitleMessage?.text === pendingSuccessorDraft.context
 		if (!successorStateStable) {
 			return
 		}
 		restoreDraft(pendingSuccessorDraft.draft)
 		setPendingSuccessorDraft(undefined)
-	}, [currentTaskItem?.id, pendingSuccessorDraft, restoreDraft, taskId, taskTitleMessage?.text, taskViewState?.taskId])
+	}, [pendingSuccessorDraft, restoreDraft, taskId, taskTitleMessage?.text, taskViewState?.taskId])
 
 	useEffect(() => {
 		const handleCopy = async (e: ClipboardEvent) => {
@@ -695,6 +695,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 								focusActivityId={focusedActivityId}
 								onFiltersChange={handleActivityFiltersChange}
 								taskId={taskId}
+								taskInstanceId={taskInstanceId}
 							/>
 						) : null}
 					</>

@@ -8,147 +8,140 @@ import {
 } from "@shared/proto/dline/task"
 import { useEffect, useState } from "react"
 import { TaskServiceClient } from "@/services/grpc-client"
+import { getTaskViewKey } from "@/services/task-messages"
 
-let subscribedTaskId: string | undefined
-let unsubscribe: (() => void) | undefined
-let referenceCount = 0
-let resubscribeTimer: ReturnType<typeof setTimeout> | undefined
-const activities = new Map<string, TaskActivity>()
-const listeners = new Set<() => void>()
-
-/**
- * Delay before re-attaching a stream the backend closed on its own.
- *
- * The backend ends this stream immediately when the requested task is not yet
- * the controller's current task. That window is short, so a small fixed delay
- * reattaches quickly without spinning if the task never becomes current.
- */
+type Opening = { taskId: string; taskInstanceId: string }
+type ActivitySubscriber = {
+	opening: Opening
+	listeners: Set<(activities: TaskActivity[]) => void>
+	activities: Map<string, TaskActivity>
+	unsubscribe?: () => void
+	retryTimer?: ReturnType<typeof setTimeout>
+	generation: number
+	disposed: boolean
+}
+const subscriptions = new Map<string, ActivitySubscriber>()
 const RESUBSCRIBE_DELAY_MS = 500
 
-function notify(): void {
-	for (const listener of listeners) listener()
+function publish(subscription: ActivitySubscriber): void {
+	const activities = [...subscription.activities.values()]
+	for (const listener of subscription.listeners) listener(activities)
 }
 
-function stopSubscription(): void {
-	if (resubscribeTimer !== undefined) {
-		clearTimeout(resubscribeTimer)
-		resubscribeTimer = undefined
+function openSubscription(subscription: ActivitySubscriber): void {
+	const generation = ++subscription.generation
+	const isCurrent = () => !subscription.disposed && generation === subscription.generation
+	const retry = () => {
+		if (!isCurrent()) return
+		subscription.generation++
+		subscription.unsubscribe = undefined
+		if (subscription.retryTimer) clearTimeout(subscription.retryTimer)
+		subscription.retryTimer = setTimeout(() => {
+			subscription.retryTimer = undefined
+			if (!subscription.disposed) openSubscription(subscription)
+		}, RESUBSCRIBE_DELAY_MS)
 	}
-	unsubscribe?.()
-	unsubscribe = undefined
-	subscribedTaskId = undefined
-	activities.clear()
+	const unsubscribe = TaskServiceClient.subscribeToTaskActivities(
+		TaskActivitySubscriptionRequest.create(subscription.opening),
+		{
+			onResponse: (update) => {
+				if (!isCurrent() || getTaskViewKey(update) !== getTaskViewKey(subscription.opening)) return
+				if (update.snapshot) subscription.activities.clear()
+				for (const activity of update.activities) subscription.activities.set(activity.activityId, activity)
+				publish(subscription)
+			},
+			onError: (error) => {
+				if (!isCurrent()) return
+				console.error("Task activity subscription failed", error)
+				retry()
+			},
+			onComplete: retry,
+		},
+	)
+	if (isCurrent()) subscription.unsubscribe = unsubscribe
+	else unsubscribe()
 }
 
-/**
- * Re-attach after the backend closed the stream by itself.
- *
- * Releasing `subscribedTaskId` is not enough on its own: nothing else calls
- * `ensureSubscription` again while the component stays mounted, so without this
- * the view would keep rendering whatever snapshot it already had.
- */
-function scheduleResubscribe(taskId: string): void {
-	if (resubscribeTimer !== undefined || referenceCount <= 0) return
-	resubscribeTimer = setTimeout(() => {
-		resubscribeTimer = undefined
-		if (referenceCount > 0 && !unsubscribe) ensureSubscription(taskId)
-	}, RESUBSCRIBE_DELAY_MS)
+function subscribe(opening: Opening, listener: (activities: TaskActivity[]) => void): () => void {
+	const key = getTaskViewKey(opening)!
+	let subscription = subscriptions.get(key)
+	if (!subscription) {
+		subscription = { opening, listeners: new Set(), activities: new Map(), generation: 0, disposed: false }
+		subscriptions.set(key, subscription)
+	}
+	subscription.listeners.add(listener)
+	listener([...subscription.activities.values()])
+	if (!subscription.unsubscribe && !subscription.retryTimer) openSubscription(subscription)
+	const owner = subscription
+	return () => {
+		owner.listeners.delete(listener)
+		if (owner.listeners.size > 0) return
+		owner.disposed = true
+		owner.generation++
+		if (owner.retryTimer) clearTimeout(owner.retryTimer)
+		owner.unsubscribe?.()
+		owner.activities.clear()
+		if (subscriptions.get(key) === owner) subscriptions.delete(key)
+	}
 }
 
-function ensureSubscription(taskId: string): void {
-	if (subscribedTaskId === taskId && unsubscribe) return
-	// stopSubscription also clears any pending reattach, so a switch to a
-	// different task cannot be overwritten by a timer from the previous one.
-	stopSubscription()
-	subscribedTaskId = taskId
-	unsubscribe = TaskServiceClient.subscribeToTaskActivities(TaskActivitySubscriptionRequest.create({ taskId }), {
-		onResponse: (update) => {
-			if (update.snapshot) activities.clear()
-			for (const activity of update.activities) activities.set(activity.activityId, activity)
-			notify()
-		},
-		onError: (error) => {
-			console.error("Task activity subscription failed", error)
-			// Release the identity as well. Keeping it would make every later
-			// ensureSubscription call match the guard above and return early,
-			// leaving this webview permanently without activity updates.
-			if (subscribedTaskId === taskId) subscribedTaskId = undefined
-			unsubscribe = undefined
-			scheduleResubscribe(taskId)
-		},
-		onComplete: () => {
-			// The backend ends this stream immediately when the task is not yet the
-			// controller's current task. That is a startup race rather than a final
-			// state, so the identity is released and the stream is re-attached.
-			if (subscribedTaskId === taskId) subscribedTaskId = undefined
-			unsubscribe = undefined
-			scheduleResubscribe(taskId)
-		},
-	})
-}
-
-export async function cancelTaskActivities(taskId: string, activityIds: string[]): Promise<string[]> {
+export async function cancelTaskActivities(taskId: string, activityIds: string[], taskInstanceId: string): Promise<string[]> {
 	if (activityIds.length === 0) return []
-	const response = await TaskServiceClient.cancelTaskActivities(CancelTaskActivitiesRequest.create({ taskId, activityIds }))
+	const response = await TaskServiceClient.cancelTaskActivities(
+		CancelTaskActivitiesRequest.create({ taskId, taskInstanceId, activityIds }),
+	)
 	return response.cancelledActivityIds
 }
 
 /** Request soft completion for running subagents. */
-export async function finishTaskActivities(taskId: string, activityIds: string[]): Promise<string[]> {
+export async function finishTaskActivities(taskId: string, activityIds: string[], taskInstanceId: string): Promise<string[]> {
 	if (activityIds.length === 0) return []
-	const response = await TaskServiceClient.finishTaskActivities(FinishTaskActivitiesRequest.create({ taskId, activityIds }))
+	const response = await TaskServiceClient.finishTaskActivities(
+		FinishTaskActivitiesRequest.create({ taskId, taskInstanceId, activityIds }),
+	)
 	return response.finishedActivityIds
 }
 
 /** Retry retained retryable subagents. */
-export async function retryTaskActivities(taskId: string, activityIds: string[]): Promise<string[]> {
+export async function retryTaskActivities(taskId: string, activityIds: string[], taskInstanceId: string): Promise<string[]> {
 	if (activityIds.length === 0) return []
-	const response = await TaskServiceClient.retryTaskActivities(RetryTaskActivitiesRequest.create({ taskId, activityIds }))
+	const response = await TaskServiceClient.retryTaskActivities(
+		RetryTaskActivitiesRequest.create({ taskId, taskInstanceId, activityIds }),
+	)
 	return response.retriedActivityIds
 }
 
-/** Move one synchronous foreground command to background tracking. */
-export async function moveCommandToBackground(taskId: string, activityId: string): Promise<boolean> {
+export async function moveCommandToBackground(taskId: string, activityId: string, taskInstanceId: string): Promise<boolean> {
 	const response = await TaskServiceClient.moveCommandToBackground(
-		MoveCommandToBackgroundRequest.create({ taskId, activityId }),
+		MoveCommandToBackgroundRequest.create({ taskId, taskInstanceId, activityId }),
 	)
 	return response.moved
 }
 
-/** Move one foreground subagent to task-local background execution. */
-export async function moveSubagentToBackground(taskId: string, activityId: string): Promise<boolean> {
-	return moveCommandToBackground(taskId, activityId)
+export async function moveSubagentToBackground(taskId: string, activityId: string, taskInstanceId: string): Promise<boolean> {
+	return moveCommandToBackground(taskId, activityId, taskInstanceId)
 }
 
-/** Shared per-webview task activity subscription. */
-export function useTaskActivities(taskId: string | undefined): {
+/** Share transport only within the exact same Task opening; release it after the last consumer. */
+export function useTaskActivities(
+	taskId: string | undefined,
+	taskInstanceId?: string,
+): {
 	activities: TaskActivity[]
 	activeCount: number
 	getById: (activityId: string) => TaskActivity | undefined
 } {
-	const [, setLocalRevision] = useState(0)
+	const key = getTaskViewKey({ taskId, taskInstanceId })
+	const [view, setView] = useState<{ key?: string; activities: TaskActivity[] }>({ activities: [] })
 	useEffect(() => {
-		if (!taskId) return
-		referenceCount++
-		const listener = () => setLocalRevision((value) => value + 1)
-		listeners.add(listener)
-		ensureSubscription(taskId)
-		return () => {
-			listeners.delete(listener)
-			referenceCount--
-			if (referenceCount <= 0) {
-				referenceCount = 0
-				stopSubscription()
-			}
-		}
-	}, [taskId])
-
-	const list = Array.from(activities.values()).sort(
-		(a, b) => b.createdAt - a.createdAt || a.activityId.localeCompare(b.activityId),
-	)
+		if (!taskId || !taskInstanceId) return
+		return subscribe({ taskId, taskInstanceId }, (activities) => setView({ key, activities }))
+	}, [taskId, taskInstanceId, key])
+	const list = view.key === key ? view.activities : []
+	const sorted = [...list].sort((a, b) => b.createdAt - a.createdAt || a.activityId.localeCompare(b.activityId))
 	return {
-		activities: list,
-		activeCount: list.filter((activity) => ["awaiting_approval", "running", "cancelling"].includes(activity.status)).length,
-		getById: (activityId: string) => activities.get(activityId),
+		activities: sorted,
+		activeCount: sorted.filter((activity) => ["awaiting_approval", "running", "cancelling"].includes(activity.status)).length,
+		getById: (activityId) => list.find((activity) => activity.activityId === activityId),
 	}
 }

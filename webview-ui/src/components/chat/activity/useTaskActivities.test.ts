@@ -2,7 +2,12 @@ import { act, renderHook } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 interface StreamCallbacks {
-	onResponse: (update: { snapshot: boolean; activities: Array<{ activityId: string }> }) => void
+	onResponse: (update: {
+		taskId: string
+		taskInstanceId: string
+		snapshot: boolean
+		activities: Array<{ activityId: string }>
+	}) => void
 	onError: (error: unknown) => void
 	onComplete: () => void
 }
@@ -45,11 +50,16 @@ describe("useTaskActivities", () => {
 	})
 
 	it("re-attaches after the backend closes the stream before the task is current", () => {
-		const { result, unmount } = renderHook(() => useTaskActivities("task-1"))
+		const { result, unmount } = renderHook(() => useTaskActivities("task-1", "open-1"))
 		expect(openStreams).toHaveLength(1)
 
 		act(() => {
-			openStreams[0].onResponse({ snapshot: true, activities: [{ activityId: "stale-job" }] })
+			openStreams[0].onResponse({
+				taskId: "task-1",
+				taskInstanceId: "open-1",
+				snapshot: true,
+				activities: [{ activityId: "stale-job" }],
+			})
 		})
 		expect(result.current.getById("stale-job")).toBeDefined()
 
@@ -57,7 +67,7 @@ describe("useTaskActivities", () => {
 		// not yet current. The response clears stale data before completion schedules
 		// a new stream for the same task.
 		act(() => {
-			openStreams[0].onResponse({ snapshot: true, activities: [] })
+			openStreams[0].onResponse({ taskId: "task-1", taskInstanceId: "open-1", snapshot: true, activities: [] })
 			openStreams[0].onComplete()
 		})
 		expect(result.current.getById("stale-job")).toBeUndefined()
@@ -70,7 +80,12 @@ describe("useTaskActivities", () => {
 		expect(openStreams).toHaveLength(2)
 
 		act(() => {
-			openStreams[1].onResponse({ snapshot: true, activities: [{ activityId: "job-1" }] })
+			openStreams[1].onResponse({
+				taskId: "task-1",
+				taskInstanceId: "open-1",
+				snapshot: true,
+				activities: [{ activityId: "job-1" }],
+			})
 		})
 		expect(result.current.getById("job-1")).toBeDefined()
 
@@ -78,7 +93,7 @@ describe("useTaskActivities", () => {
 		// terminal response must independently clear the stale snapshot and create
 		// another live stream rather than leaving the shared subscription orphaned.
 		act(() => {
-			openStreams[1].onResponse({ snapshot: true, activities: [] })
+			openStreams[1].onResponse({ taskId: "task-1", taskInstanceId: "open-1", snapshot: true, activities: [] })
 			openStreams[1].onComplete()
 		})
 		expect(result.current.getById("job-1")).toBeUndefined()
@@ -88,7 +103,12 @@ describe("useTaskActivities", () => {
 		expect(openStreams).toHaveLength(3)
 
 		act(() => {
-			openStreams[2].onResponse({ snapshot: true, activities: [{ activityId: "job-1" }] })
+			openStreams[2].onResponse({
+				taskId: "task-1",
+				taskInstanceId: "open-1",
+				snapshot: true,
+				activities: [{ activityId: "job-1" }],
+			})
 		})
 		expect(result.current.getById("job-1")).toBeDefined()
 
@@ -96,7 +116,7 @@ describe("useTaskActivities", () => {
 	})
 
 	it("re-attaches after a stream error", () => {
-		const { unmount } = renderHook(() => useTaskActivities("task-2"))
+		const { unmount } = renderHook(() => useTaskActivities("task-2", "open-1"))
 		expect(openStreams).toHaveLength(1)
 
 		act(() => {
@@ -110,8 +130,36 @@ describe("useTaskActivities", () => {
 		unmount()
 	})
 
+	it("isolates same-ID reopen from old responses, errors, completion and retry timers", () => {
+		const { result, rerender, unmount } = renderHook(({ instance }) => useTaskActivities("same-task", instance), {
+			initialProps: { instance: "open-1" },
+		})
+		const old = openStreams[0]
+		act(() => {
+			old.onComplete()
+		})
+		rerender({ instance: "open-2" })
+		expect(openStreams).toHaveLength(2)
+		act(() => {
+			openStreams[1].onResponse({
+				taskId: "same-task",
+				taskInstanceId: "open-2",
+				snapshot: true,
+				activities: [{ activityId: "current" }],
+			})
+			old.onResponse({ taskId: "same-task", taskInstanceId: "open-1", snapshot: true, activities: [{ activityId: "old" }] })
+			old.onError(new Error("late old error"))
+			old.onComplete()
+			vi.advanceTimersByTime(1_000)
+		})
+		expect(result.current.getById("current")).toBeDefined()
+		expect(result.current.getById("old")).toBeUndefined()
+		expect(openStreams).toHaveLength(2)
+		unmount()
+	})
+
 	it("does not re-attach after the last consumer unmounts", () => {
-		const { unmount } = renderHook(() => useTaskActivities("task-3"))
+		const { unmount } = renderHook(() => useTaskActivities("task-3", "open-1"))
 		expect(openStreams).toHaveLength(1)
 
 		act(() => {

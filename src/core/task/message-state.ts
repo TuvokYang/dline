@@ -11,6 +11,7 @@ import { getCwd, getDesktopDir } from "@/utils/path"
 import { ApiConversation } from "../storage/ApiConversation"
 import { ensureTaskDirectoryExists } from "../storage/disk"
 import { UIMessage } from "../storage/UIMessage"
+import type { TaskExecutionMessages, TaskMessageResources } from "./messages/TaskMessageResources"
 import { LegacyMessageUsageReader, type TaskUsageReader } from "./performance/task-usage-reader"
 import { TaskState } from "./TaskState"
 
@@ -56,6 +57,9 @@ interface MessageStateHandlerParams {
 	apiConversation?: ApiConversation
 	/** Metrics module read port; legacy compatibility remains inside that module. */
 	metricsReader?: TaskUsageReader
+	/** The same Task's bounded message IO before execution stores are admitted. */
+	historicalMessages?: Pick<TaskMessageResources, "getDisplayMessages" | "persistMessage">
+	getHistoricalApiLength?: () => number
 }
 
 /**
@@ -91,10 +95,18 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 	private taskDirectorySizeCache?: { bytes: number; measuredAt: number }
 
 	/** UI messages (clineMessages) — single source of truth for ui_messages.jsonl plus transient presentation overlays. */
-	public readonly uiMessage: UIMessage | undefined
+	private _uiMessage: UIMessage | undefined
+	get uiMessage(): UIMessage | undefined {
+		return this._uiMessage
+	}
 
 	/** API conversation history — single source of truth for api_conversation_history.jsonl */
-	public readonly apiConversation: ApiConversation | undefined
+	private _apiConversation: ApiConversation | undefined
+	get apiConversation(): ApiConversation | undefined {
+		return this._apiConversation
+	}
+	private readonly historicalMessages?: Pick<TaskMessageResources, "getDisplayMessages" | "persistMessage">
+	private readonly getHistoricalApiLength: () => number
 
 	constructor(params: MessageStateHandlerParams) {
 		super()
@@ -104,16 +116,33 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 		this.taskIsFavorited = params.taskIsFavorited ?? false
 		this._updateTaskHistory = params.updateTaskHistory
 		this._publishTaskHistoryClose = params.publishTaskHistoryClose ?? (() => {})
-		this.uiMessage = params.uiMessage
-		this.apiConversation = params.apiConversation
+		this._uiMessage = params.uiMessage
+		this._apiConversation = params.apiConversation
+		this.historicalMessages = params.historicalMessages
+		this.getHistoricalApiLength = params.getHistoricalApiLength ?? (() => 0)
 		this.metricsReader = params.metricsReader ?? new LegacyMessageUsageReader()
+	}
+
+	/** Attach admitted stores without replacing the Task's message coordinator. */
+	attachExecutionStores(stores: TaskExecutionMessages): void {
+		if (
+			(this._uiMessage && this._uiMessage !== stores.uiMessage) ||
+			(this._apiConversation && this._apiConversation !== stores.apiConversation)
+		) {
+			throw new Error("Task message stores already have an owner")
+		}
+		this._uiMessage = stores.uiMessage
+		this._apiConversation = stores.apiConversation
+		this.invalidateDerivedAggregates()
 	}
 
 	// ── ClineMessages (read from UIMessage store) ──
 
 	/** ClineMessages as a property getter — merges durable rows with transient presentation overlays by timestamp. */
 	get clineMessages(): ClineMessage[] {
-		const durable = this.uiMessage ? (this.uiMessage.getAll() as unknown as ClineMessage[]) : []
+		const durable = this.uiMessage
+			? (this.uiMessage.getAll() as unknown as ClineMessage[])
+			: [...(this.historicalMessages?.getDisplayMessages() ?? [])]
 		if (this.transientClineMessages.size === 0) return durable
 		const merged = new Map(durable.map((message) => [message.ts, message]))
 		for (const [ts, message] of this.transientClineMessages) merged.set(ts, message)
@@ -203,6 +232,9 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 	 * Used by incremental add paths that handle file I/O separately.
 	 */
 	private async updateTaskHistoryOnly(): Promise<void> {
+		// A bounded window cannot recompute full-history metadata. Completion and
+		// stopped-state durability keep their existing explicit owners.
+		if (this.historicalMessages && !this.uiMessage) return
 		try {
 			const allMessages = this.clineMessages
 			const persisted = allMessages.filter((m) => !m.partial)
@@ -562,7 +594,9 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 			...message,
 			partial: false,
 			conversationHistoryIndex:
-				existing?.conversationHistoryIndex ?? message.conversationHistoryIndex ?? this.apiConversationHistory.length - 1,
+				existing?.conversationHistoryIndex ??
+				message.conversationHistoryIndex ??
+				(this.apiConversation ? this.apiConversation.count : this.getHistoricalApiLength()) - 1,
 			conversationHistoryDeletedRange:
 				existing?.conversationHistoryDeletedRange ??
 				message.conversationHistoryDeletedRange ??
@@ -583,15 +617,17 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 		const transient = this.transientClineMessages.get(message.ts)
 		if (!transient) throw new Error(`Transient message ${message.ts} is unavailable for durable commit`)
 		const uiMessage = this.uiMessage
-		if (!uiMessage) throw new Error("UI message store is unavailable for durable commit")
+		if (!uiMessage && !this.historicalMessages) throw new Error("UI message store is unavailable for durable commit")
 
-		const durableIndex = uiMessage.getByTs(message.ts) ? uiMessage.findIndexByTs(message.ts) : -1
+		const durableIndex = uiMessage?.getByTs(message.ts) ? uiMessage.findIndexByTs(message.ts) : -1
 		if (!allowDurableReplacement && durableIndex >= 0) {
 			throw new Error(`Durable message ${message.ts} already exists`)
 		}
 
 		let committed: ClineMessage
-		if (durableIndex >= 0) {
+		if (!uiMessage) {
+			committed = await this.historicalMessages!.persistMessage({ ...message, partial: false })
+		} else if (durableIndex >= 0) {
 			committed = await uiMessage.updateMessage(durableIndex, { ...message, partial: false })
 			await uiMessage.flush()
 		} else {

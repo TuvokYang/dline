@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest"
 import { Task } from "../index"
 
 describe("Task.prepareFromHistory readiness", () => {
-	it("publishes Resume and readiness before starting non-blocking maintenance", async () => {
+	it("publishes canonical Resume and readiness without starting execution maintenance", async () => {
 		const order: string[] = []
 		const maintenance = new Promise<void>(() => undefined)
 		const task = {
@@ -33,7 +33,13 @@ describe("Task.prepareFromHistory readiness", () => {
 		})
 
 		expect(task.taskState.abort).toBe(true)
-		expect(order).toEqual(["resume", "environment", "ready", "maintenance"])
+		expect(order).toEqual(["resume", "ready"])
+		const resources = task as unknown as {
+			startContextWindowEnvironmentRefresh: ReturnType<typeof vi.fn>
+			historyResumeMaintenance: { run: ReturnType<typeof vi.fn> }
+		}
+		expect(resources.startContextWindowEnvironmentRefresh).not.toHaveBeenCalled()
+		expect(resources.historyResumeMaintenance.run).not.toHaveBeenCalled()
 	})
 
 	it("clears the preparing projection and republishes state when canonical preparation fails", async () => {

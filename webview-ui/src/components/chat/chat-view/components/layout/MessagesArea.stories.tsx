@@ -34,6 +34,14 @@ function ScrollFixture() {
 	const context = useMemo(
 		() => ({
 			...base,
+			taskViewState: {
+				taskId: "scroll-regression-fixture",
+				taskInstanceId: "story-opening",
+				phase: "idle" as const,
+				stateRevision: 0,
+				input: { enabled: false, acceptsText: false, acceptsImages: false, acceptsFiles: false },
+				footer: { actions: [] },
+			},
 			clineMessages: messages,
 			setClineMessages: setMessages,
 			firstItemIndex,
@@ -45,12 +53,14 @@ function ScrollFixture() {
 
 	useEffect(() => {
 		const original = TaskServiceClient.fetchMessage
-		TaskServiceClient.fetchMessage = async ({ referenceIndex, count }) => {
+		TaskServiceClient.fetchMessage = async ({ referenceIndex, count, taskId, taskInstanceId }) => {
 			const startIndex = referenceIndex < 0 ? Math.max(0, messages.length - count) : referenceIndex
 			return {
 				messages: messages.slice(startIndex, startIndex + count).map(convertClineMessageToProto),
 				startIndex,
 				totalCount: messages.length,
+				taskId,
+				taskInstanceId,
 			}
 		}
 		return () => {

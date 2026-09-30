@@ -42,12 +42,12 @@ describe("Task API rate metrics boundary", () => {
 		)
 
 		expectContains(source, "private readonly metrics: TaskMetricsOwner")
-		expectContains(composition, "legacySource: uiMessage")
-		expectContains(owner, "new TaskApiRateMetricsRepository({ taskId: options.taskId, readOnly: options.readOnly })")
+		expectContains(composition, "legacySource: { getAll: () => this.messageStateHandler.durableClineMessages }")
+		expectContains(owner, "new TaskApiRateMetricsRepository({ taskId: options.taskId, readOnly: this.readOnly })")
 		expectContains(owner, "const roundRepository = new TaskApiRequestRoundRepository({")
 		expectContains(
 			owner,
-			"const executionRepository = new TaskApiResponseExecutionRepository({ taskId: options.taskId, readOnly: options.readOnly })",
+			"const executionRepository = new TaskApiResponseExecutionRepository({ taskId: options.taskId, readOnly: this.readOnly })",
 		)
 		expectContains(owner, "roundRepository,")
 		expectContains(owner, "executionRepository,")
@@ -85,7 +85,11 @@ describe("Task API rate metrics boundary", () => {
 
 	it("starts metrics without delaying a restored Task's historical surface", async () => {
 		const source = await readFile(taskSourcePath, "utf8")
-		const prepareFromHistory = extractMethod(source, "public async prepareFromHistory(", "const isCurrent =")
+		const prepareFromHistory = extractMethod(
+			source,
+			"public async prepareFromHistory(",
+			"private async patchInterruptedCommandCards(",
+		)
 
 		// Started, not awaited, and after the surface is ready to display.
 		expectChain(prepareFromHistory, "void this.ensureApiRateMetricsInitialized()", ".catch((error) =>")
