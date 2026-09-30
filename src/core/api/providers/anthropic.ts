@@ -10,14 +10,6 @@ import { providerFetch } from "@shared/net"
 import { prioritizeApiFormat } from "@shared/providers/api-format"
 import { buildEffectiveModelInfo, selectContextTier } from "@shared/providers/effective-model-info"
 import {
-	canDisableClaudeAdaptiveThinking,
-	isClaudeAdaptiveThinkingEnabledByDefault,
-	isClaudeOpusAdaptiveThinkingModel,
-	resolveClaudeOpusAdaptiveThinking,
-	resolveClaudeThinkingDisplay,
-	resolveForcedToolUseSupport,
-} from "@shared/utils/reasoning-support"
-import {
 	type BillingAttributionMessage,
 	buildBillingAttributionBlock,
 } from "@/integrations/anthropic-claude-code/billing-attribution"
@@ -32,6 +24,7 @@ import { sanitizeAnthropicMessages } from "../transform/anthropic-format"
 import { ApiStream } from "../transform/stream"
 import { streamAnthropicMessagesEndpoint } from "../utils/anthropic-messages-endpoint"
 import { mergeAnthropicServerTools } from "../utils/messages_api_support"
+import { resolveAnthropicReasoning } from "./anthropic/reasoning"
 
 export const ANTHROPIC_FAST_MODE_BETA = "fast-mode-2026-02-01"
 
@@ -54,12 +47,6 @@ export class AnthropicHandler implements ApiHandler {
 	}
 	private get baseUrl() {
 		return this.ctx.profile.baseUrl
-	}
-	private get reasoningEffort() {
-		return this.config?.reasoning?.effort
-	}
-	private get thinkingBudgetTokens() {
-		return this.config?.reasoning?.thinkingBudget ?? 0
 	}
 	private get billingAttributionEnabled() {
 		return this.config?.claudeCodeIdentity?.enabled === true
@@ -195,7 +182,6 @@ export class AnthropicHandler implements ApiHandler {
 		const model = this.getModel()
 
 		const useFastMode = model.id.endsWith(ANTHROPIC_FAST_MODE_SUFFIX)
-		const modelId = useFastMode ? model.id.slice(0, -ANTHROPIC_FAST_MODE_SUFFIX.length) : model.id
 		const apiModelId = this.resolveApiModelId(model.id, model.info)
 		const createFastModeMessage = (
 			body: AnthropicMessageCreateParamsStreaming,
@@ -222,9 +208,7 @@ export class AnthropicHandler implements ApiHandler {
 			return Object.keys(identityHeaders).length > 0 ? { headers: identityHeaders } : undefined
 		}
 
-		const budget_tokens = this.thinkingBudgetTokens
-		const requestedThinkingEnabled =
-			this.config?.reasoning?.enableThinking ?? Boolean(this.reasoningEffort || budget_tokens > 0)
+		const reasoning = resolveAnthropicReasoning(model.info.capabilities, this.config?.reasoning)
 
 		const localNativeToolsOn = tools !== undefined && tools.length > 0
 		const requestTools = mergeAnthropicServerTools(tools, options?.serverTools)
@@ -235,55 +219,10 @@ export class AnthropicHandler implements ApiHandler {
 		const hostedServerToolsOn = (options?.serverTools?.length ?? 0) > 0
 		// A model that rejects a forced tool choice fails the whole request rather
 		// than degrading to an automatic one, so its own declaration decides this.
-		const forcedToolUseOn = resolveForcedToolUseSupport(modelId, model.info.capabilities)
-		const reasoningOn =
-			requestedThinkingEnabled && (model.info.capabilities?.supportsReasoning ?? false) && budget_tokens !== 0
-
-		// Effective model metadata is authoritative for built-in adaptive-thinking support.
-		const modelThinking = model.info.capabilities?.thinking ?? anthropicModels[modelId]?.capabilities?.thinking
-		const isCustomModel = !anthropicModels[modelId]
-		const hasReasoningEffort = requestedThinkingEnabled && this.reasoningEffort && this.reasoningEffort !== "none"
-		const supportsAdaptiveThinking =
-			modelThinking?.supported === true && modelThinking.mode === "effort" && (modelThinking.effortLevels?.length ?? 0) > 0
-		const isAdaptiveThinkingModel = isCustomModel
-			? isClaudeOpusAdaptiveThinkingModel(modelId) || Boolean(hasReasoningEffort)
-			: supportsAdaptiveThinking
-		const adaptiveThinking = isAdaptiveThinkingModel
-			? resolveClaudeOpusAdaptiveThinking(this.reasoningEffort, budget_tokens)
-			: undefined
-		const disableAdaptiveThinkingRequested =
-			this.config?.reasoning?.enableThinking === false || this.reasoningEffort === "none"
-		const adaptiveThinkingRequired = isAdaptiveThinkingModel && !canDisableClaudeAdaptiveThinking(modelId)
-		const adaptiveThinkingEnabled =
-			isAdaptiveThinkingModel &&
-			(adaptiveThinkingRequired ||
-				(!disableAdaptiveThinkingRequested &&
-					(requestedThinkingEnabled ||
-						isClaudeAdaptiveThinkingEnabledByDefault(modelId) ||
-						adaptiveThinking?.enabled === true)))
-		const supportedEfforts = modelThinking?.effortLevels ?? []
-		const adaptiveThinkingEffort =
-			adaptiveThinking?.effort === "xhigh" && !supportedEfforts.includes("xhigh") && supportedEfforts.includes("max")
-				? "max"
-				: adaptiveThinking?.effort
-		const thinkingEnabled = isAdaptiveThinkingModel ? adaptiveThinkingEnabled : reasoningOn
-		// An unset display is omitted from the request so the API default applies.
-		// The disabled config carries no thinking content, so it takes no display.
-		const thinkingDisplay = resolveClaudeThinkingDisplay(this.config?.reasoning?.display)
-		const displayField = thinkingDisplay ? { display: thinkingDisplay } : {}
-		const thinkingConfig = isAdaptiveThinkingModel
-			? adaptiveThinkingEnabled
-				? { type: "adaptive" as const, ...displayField }
-				: disableAdaptiveThinkingRequested && canDisableClaudeAdaptiveThinking(modelId)
-					? { type: "disabled" as const }
-					: undefined
-			: reasoningOn
-				? { type: "enabled" as const, budget_tokens: budget_tokens, ...displayField }
-				: undefined
-		const outputConfig =
-			isAdaptiveThinkingModel && adaptiveThinkingEnabled && adaptiveThinkingEffort
-				? { effort: adaptiveThinkingEffort }
-				: undefined
+		const forcedToolUseOn = model.info.capabilities?.supportsForcedToolUse !== false
+		const thinkingEnabled = reasoning.enabled
+		const thinkingConfig = reasoning.thinking
+		const outputConfig = reasoning.outputConfig
 		const maxOutputTokens =
 			options?.generation?.purpose === "compaction"
 				? options.generation.maxOutputTokens
@@ -306,7 +245,7 @@ export class AnthropicHandler implements ApiHandler {
 				// "Thinking isn't compatible with temperature, top_p, or top_k modifications as well as forced tool use."
 				// (https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking#important-considerations-when-using-extended-thinking)
 				// Adaptive Claude models do not support temperature.
-				temperature: isAdaptiveThinkingModel ? undefined : reasoningOn ? undefined : 0,
+				temperature: reasoning.adaptive || reasoning.enabled ? undefined : 0,
 				system: [
 					...attributionBlocks,
 					{
@@ -344,7 +283,7 @@ export class AnthropicHandler implements ApiHandler {
 			requestBody = {
 				model: apiModelId,
 				max_tokens: maxOutputTokens,
-				temperature: isAdaptiveThinkingModel ? undefined : reasoningOn ? undefined : 0,
+				temperature: reasoning.adaptive || reasoning.enabled ? undefined : 0,
 				system: [...attributionBlocks, { text: systemPrompt, type: "text" }],
 				messages: anthropicMessages,
 				tools: nativeToolsOn ? requestTools : undefined,

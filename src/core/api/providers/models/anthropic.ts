@@ -4,11 +4,10 @@
  */
 import type { ModelInfo } from "@shared/api"
 import { ServerTool, type ThinkingConfig } from "@shared/proto/dline/models/metadata"
-import {
-	ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS,
-	ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS_WITHOUT_XHIGH,
-	ANTHROPIC_REQUIRED_ADAPTIVE_REASONING_EFFORT_OPTIONS,
-} from "@shared/utils/reasoning-support"
+
+export const ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS = ["none", "low", "medium", "high", "xhigh", "max"] as const
+export const ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS_WITHOUT_XHIGH = ["none", "low", "medium", "high", "max"] as const
+export const ANTHROPIC_REQUIRED_ADAPTIVE_REASONING_EFFORT_OPTIONS = ["low", "medium", "high", "xhigh", "max"] as const
 
 // Tiers used for building 1M variant model pricing (also used by refresh scripts)
 export const CLAUDE_SONNET_1M_TIERS = [
@@ -46,23 +45,24 @@ export const CLAUDE_OPUS_1M_TIERS = [
 	},
 ]
 
-function adaptiveThinking(effortLevels: readonly string[]): ThinkingConfig {
-	return { supported: true, mode: "effort", effortLevels: [...effortLevels] }
-}
-
-/**
- * Capabilities shared by every adaptive-thinking model.
- *
- * Adaptive thinking stays on, and thinking cannot be combined with a forced
- * tool choice, so these models reject `tool_choice: any` with an error instead
- * of degrading to an automatic choice. Declaring it here keeps the rule with
- * the thinking mode that causes it, rather than repeating it per model.
- */
-function adaptiveThinkingCapabilities(effortLevels: readonly string[]): {
+/** Build a known Messages API model declaration without any model-identity inference. */
+export function adaptiveThinkingCapabilities(
+	effortLevels: readonly string[],
+	defaultEnabled = false,
+): {
 	thinking: ThinkingConfig
 	supportsForcedToolUse: boolean
 } {
-	return { thinking: adaptiveThinking(effortLevels), supportsForcedToolUse: false }
+	return {
+		thinking: {
+			supported: true,
+			mode: "effort",
+			effortLevels: [...effortLevels],
+			defaultEnabled,
+			canDisable: effortLevels.includes("none"),
+		},
+		supportsForcedToolUse: false,
+	}
 }
 
 export const anthropicModels: Record<string, ModelInfo> = {
@@ -77,7 +77,7 @@ export const anthropicModels: Record<string, ModelInfo> = {
 			supportsImages: true,
 			supportsPromptCache: true,
 			supportsReasoning: true,
-			...adaptiveThinkingCapabilities(ANTHROPIC_REQUIRED_ADAPTIVE_REASONING_EFFORT_OPTIONS),
+			...adaptiveThinkingCapabilities(ANTHROPIC_REQUIRED_ADAPTIVE_REASONING_EFFORT_OPTIONS, true),
 		},
 		pricing: {
 			inputPrice: 4.0,
@@ -97,7 +97,7 @@ export const anthropicModels: Record<string, ModelInfo> = {
 			supportsImages: true,
 			supportsPromptCache: true,
 			supportsReasoning: true,
-			...adaptiveThinkingCapabilities(ANTHROPIC_REQUIRED_ADAPTIVE_REASONING_EFFORT_OPTIONS),
+			...adaptiveThinkingCapabilities(ANTHROPIC_REQUIRED_ADAPTIVE_REASONING_EFFORT_OPTIONS, true),
 		},
 		pricing: {
 			inputPrice: 2.0,
@@ -123,7 +123,7 @@ export const anthropicModels: Record<string, ModelInfo> = {
 			supportsImages: true,
 			supportsPromptCache: true,
 			supportsReasoning: true,
-			...adaptiveThinkingCapabilities(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS),
+			...adaptiveThinkingCapabilities(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS, true),
 		},
 		pricing: {
 			inputPrice: 5.0,
@@ -145,7 +145,7 @@ export const anthropicModels: Record<string, ModelInfo> = {
 			supportsImages: true,
 			supportsPromptCache: true,
 			supportsReasoning: true,
-			...adaptiveThinkingCapabilities(ANTHROPIC_REQUIRED_ADAPTIVE_REASONING_EFFORT_OPTIONS),
+			...adaptiveThinkingCapabilities(ANTHROPIC_REQUIRED_ADAPTIVE_REASONING_EFFORT_OPTIONS, true),
 		},
 		pricing: {
 			inputPrice: 10.0,
@@ -167,7 +167,7 @@ export const anthropicModels: Record<string, ModelInfo> = {
 			supportsImages: true,
 			supportsPromptCache: true,
 			supportsReasoning: true,
-			...adaptiveThinkingCapabilities(ANTHROPIC_REQUIRED_ADAPTIVE_REASONING_EFFORT_OPTIONS),
+			...adaptiveThinkingCapabilities(ANTHROPIC_REQUIRED_ADAPTIVE_REASONING_EFFORT_OPTIONS, true),
 		},
 		pricing: {
 			inputPrice: 10.0,
@@ -207,7 +207,7 @@ export const anthropicModels: Record<string, ModelInfo> = {
 			supportsImages: true,
 			supportsPromptCache: true,
 			supportsReasoning: true,
-			...adaptiveThinkingCapabilities(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS),
+			...adaptiveThinkingCapabilities(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS, true),
 		},
 		pricing: {
 			inputPrice: 2.0,
@@ -269,7 +269,7 @@ export const anthropicModels: Record<string, ModelInfo> = {
 			supportsImages: true,
 			supportsPromptCache: true,
 			supportsReasoning: true,
-			...adaptiveThinkingCapabilities(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS),
+			...adaptiveThinkingCapabilities(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS, true),
 		},
 		pricing: {
 			inputPrice: 10.0,

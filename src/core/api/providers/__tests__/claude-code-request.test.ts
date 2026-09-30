@@ -3,6 +3,7 @@ import { DISABLED_WEB_SEARCH_ROUTING_PLAN } from "@core/prompts/__tests__/web-se
 import { ToolPromptGenerator } from "@core/prompts/generators/ToolPromptGenerator"
 import { PromptProfile } from "@core/prompts/profiles/types"
 import type { SystemPromptContext } from "@core/prompts/system-prompt/context"
+import type { ThinkingConfig } from "@shared/proto/dline/models/metadata"
 import { ApiProfile } from "@shared/proto/dline/profile"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { CLAUDE_CODE_SDK_VERSION } from "@/integrations/anthropic-claude-code/client-headers"
@@ -91,6 +92,7 @@ const BUDGET_MODEL_INFO = {
 		supportsReasoning: true,
 		supportsTools: true,
 		supportsForcedToolUse: true,
+		thinking: { supported: true, mode: "budget", maxBudget: 8_192 },
 	},
 }
 
@@ -252,6 +254,47 @@ describe("ClaudeCodeHandler request body", () => {
 		forcedRefreshes.mockClear()
 		rejections = []
 		accessTokens = ["test-access-token"]
+	})
+
+	it.each([
+		{
+			modelId: "claude-opus-5-5",
+			thinking: { supported: false },
+			reasoning: { enableThinking: true, effort: "high" },
+			expected: undefined,
+		},
+		{
+			modelId: "opaque-required",
+			thinking: { supported: true, mode: "effort", canDisable: false, effortLevels: ["high"] },
+			reasoning: { enableThinking: false, effort: "none" },
+			expected: { type: "adaptive" },
+		},
+		{
+			modelId: "opaque-default",
+			thinking: { supported: true, mode: "effort", defaultEnabled: true, effortLevels: ["high"] },
+			reasoning: {},
+			expected: { type: "adaptive" },
+		},
+		{
+			modelId: "opaque-effort",
+			thinking: { supported: true, mode: "effort", effortLevels: ["low"] },
+			reasoning: { enableThinking: true, effort: "high" },
+			expected: { type: "adaptive" },
+		},
+	])("encodes only declared subscription thinking for $modelId", async ({ modelId, thinking, reasoning, expected }) => {
+		const handler = new ClaudeCodeHandler({
+			profile: ApiProfile.create({
+				provider: "claude-code",
+				modelId,
+				modelInfo: { id: modelId, capabilities: { supportsReasoning: true, thinking: thinking as ThinkingConfig } },
+				claudeCode: { reasoning },
+			}),
+			mode: "act",
+		})
+		const body = await drain(handler)
+		expect(body.model).toBe(modelId)
+		expect(body.thinking).toEqual(expected)
+		expect(body.output_config).toBeUndefined()
 	})
 
 	it("sends the selected model unchanged", async () => {

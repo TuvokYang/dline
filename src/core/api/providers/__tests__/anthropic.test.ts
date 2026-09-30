@@ -1,5 +1,5 @@
 import { anthropicModels } from "@shared/api"
-import { ApiFormat, ServerTool } from "@shared/proto/dline/models/metadata"
+import { ApiFormat, ServerTool, type ThinkingConfig } from "@shared/proto/dline/models/metadata"
 import { ApiProfile } from "@shared/proto/dline/profile"
 import { expect } from "chai"
 import should from "should"
@@ -17,6 +17,117 @@ describe("AnthropicHandler", () => {
 		[Symbol.asyncIterator]: async function* () {
 			yield* data
 		},
+	})
+
+	it.each([
+		{
+			modelId: "claude-sonnet-4-6",
+			thinking: undefined,
+			reasoning: { effort: "max" },
+			expected: undefined,
+		},
+		{
+			modelId: "claude-opus-5-custom",
+			thinking: { supported: false },
+			reasoning: { enableThinking: true, effort: "high" },
+			expected: undefined,
+		},
+		{
+			modelId: "opaque-default",
+			thinking: { supported: true, mode: "effort", defaultEnabled: true, effortLevels: ["low"] },
+			reasoning: {},
+			expected: { type: "adaptive" },
+		},
+		{
+			modelId: "claude-opus-5-custom",
+			thinking: { supported: true, mode: "effort", canDisable: false, effortLevels: ["high"] },
+			reasoning: { enableThinking: false, effort: "none" },
+			expected: { type: "adaptive" },
+		},
+		{
+			modelId: "opaque-effort",
+			thinking: { supported: true, mode: "effort", effortLevels: ["low"] },
+			reasoning: { enableThinking: true, effort: "high" },
+			expected: { type: "adaptive" },
+		},
+		{
+			modelId: "opaque-budget",
+			thinking: undefined,
+			reasoning: { enableThinking: true, thinkingBudget: 2_048 },
+			expected: undefined,
+		},
+	])("uses effective thinking declarations for $modelId", async ({ modelId, thinking, reasoning, expected }) => {
+		const handler = new AnthropicHandler({
+			profile: ApiProfile.create({
+				provider: "anthropic",
+				apiKey: "test-api-key",
+				modelId,
+				modelInfo: {
+					id: modelId,
+					capabilities: { supportsReasoning: true, thinking: thinking as ThinkingConfig | undefined },
+				},
+				anthropic: { reasoning },
+			}),
+			mode: "act",
+		})
+		const create = vi.fn().mockResolvedValue(createAsyncIterable())
+		vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({ messages: { create } })
+		for await (const _chunk of handler.createMessage("system", [{ role: "user", content: "hello" }])) {
+		}
+		const body = create.mock.calls[0]?.[0]
+		expect(body?.model).to.equal(modelId)
+		expect(body?.thinking).to.deep.equal(expected)
+		expect(body?.output_config).to.equal(undefined)
+	})
+
+	it.each([
+		{ preference: "minimal", expected: "low" },
+		{ preference: "ultra", expected: "max" },
+	])("encodes legacy $preference only through declared Anthropic effort levels", async ({ preference, expected }) => {
+		const handler = new AnthropicHandler({
+			profile: ApiProfile.create({
+				provider: "anthropic",
+				apiKey: "test-api-key",
+				modelId: "opaque-alias-model",
+				modelInfo: {
+					capabilities: { thinking: { supported: true, mode: "effort", effortLevels: ["low", "max"] } },
+				},
+				anthropic: { reasoning: { enableThinking: true, effort: preference } },
+			}),
+			mode: "act",
+		})
+		const create = vi.fn().mockResolvedValue(createAsyncIterable())
+		vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({ messages: { create } })
+		for await (const _chunk of handler.createMessage("system", [{ role: "user", content: "hello" }])) {
+		}
+		expect(create.mock.calls[0]?.[0]?.output_config).to.deep.equal({ effort: expected })
+	})
+
+	it.each([
+		{ declared: undefined, expected: "any" },
+		{ declared: true, expected: "any" },
+		{ declared: false, expected: "auto" },
+	])("uses forced-tool declaration $declared instead of a misleading name", async ({ declared, expected }) => {
+		const handler = new AnthropicHandler({
+			profile: ApiProfile.create({
+				provider: "anthropic",
+				apiKey: "test-api-key",
+				modelId: "claude-opus-5-custom",
+				modelInfo: {
+					capabilities: { supportsPromptCache: true, supportsForcedToolUse: declared, thinking: { supported: false } },
+				},
+			}),
+			mode: "act",
+		})
+		const create = vi.fn().mockResolvedValue(createAsyncIterable())
+		vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({ messages: { create } })
+		for await (const _chunk of handler.createMessage(
+			"system",
+			[{ role: "user", content: "hello" }],
+			[{ name: "read_file", description: "Read", input_schema: { type: "object", properties: {} } }],
+		)) {
+		}
+		expect(create.mock.calls[0]?.[0]?.tool_choice).to.deep.equal({ type: expected })
 	})
 
 	describe("getModel", () => {
@@ -709,7 +820,13 @@ describe("AnthropicHandler", () => {
 					provider: "anthropic",
 					apiKey: "test-api-key",
 					modelId: "claude-sonnet-4-5",
-					modelInfo: { id: "claude-sonnet-4-5", capabilities: { supportsReasoning: true } },
+					modelInfo: {
+						id: "claude-sonnet-4-5",
+						capabilities: {
+							supportsReasoning: true,
+							thinking: { supported: true, mode: "budget", maxBudget: 8_192 },
+						},
+					},
 					anthropic: { reasoning: { enableThinking: true, thinkingBudget: 2_048, display: "omitted" } },
 				}),
 				mode: "act",
@@ -797,7 +914,7 @@ describe("AnthropicHandler", () => {
 					provider: "anthropic",
 					apiKey: "test-api-key",
 					modelId: "claude-sonnet-4-6",
-					modelInfo: { id: "claude-sonnet-4-6", capabilities: { supportsReasoning: true } },
+					modelInfo: anthropicModels["claude-sonnet-4-6"],
 					anthropic: { reasoning: { effort: "max" } },
 				}),
 				mode: "act",

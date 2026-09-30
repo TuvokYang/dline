@@ -4,13 +4,6 @@ import { Tool as AnthropicTool } from "@anthropic-ai/sdk/resources/index"
 import type { MessageCreateParamsStreaming } from "@anthropic-ai/sdk/resources/messages/messages"
 import { providerFetch } from "@shared/net"
 import { buildEffectiveModelInfo } from "@shared/providers/effective-model-info"
-import {
-	canDisableClaudeAdaptiveThinking,
-	isClaudeAdaptiveThinkingEnabledByDefault,
-	resolveClaudeOpusAdaptiveThinking,
-	resolveClaudeThinkingDisplay,
-	resolveForcedToolUseSupport,
-} from "@shared/utils/reasoning-support"
 import { buildClaudeCodeBetas } from "@/integrations/anthropic-claude-code/beta-headers"
 import {
 	type BillingAttributionMessage,
@@ -30,26 +23,7 @@ import { sanitizeAnthropicMessages } from "../transform/anthropic-format"
 import { type ApiStream } from "../transform/stream"
 import { streamAnthropicMessagesEndpoint } from "../utils/anthropic-messages-endpoint"
 import { mergeAnthropicServerTools } from "../utils/messages_api_support"
-
-/**
- * Effort levels the Messages API accepts for adaptive thinking.
- *
- * Derived from the SDK request type so a future level is a compile error here
- * rather than a rejected request at runtime.
- */
-type AdaptiveThinkingEffort = NonNullable<NonNullable<MessageCreateParamsStreaming["output_config"]>["effort"]>
-
-/** How one request asks the model for reasoning. */
-interface ClaudeCodeReasoning {
-	/** Whether reasoning output was actually requested. */
-	enabled: boolean
-	/** Whether the model uses effort-based adaptive thinking. */
-	adaptive: boolean
-	/** The `thinking` request field, or undefined to omit it. */
-	thinking?: MessageCreateParamsStreaming["thinking"]
-	/** The `output_config` request field, or undefined to omit it. */
-	outputConfig?: { effort: AdaptiveThinkingEffort }
-}
+import { type AnthropicReasoning, resolveAnthropicReasoning } from "./anthropic/reasoning"
 
 /**
  * Claude Code subscription provider.
@@ -82,12 +56,6 @@ export class ClaudeCodeHandler implements ApiHandler {
 	}
 	private get baseUrl() {
 		return this.ctx.profile.baseUrl
-	}
-	private get reasoningEffort() {
-		return this.config?.reasoning?.effort
-	}
-	private get thinkingBudgetTokens() {
-		return this.config?.reasoning?.thinkingBudget ?? 0
 	}
 
 	/** This handler always speaks the Anthropic Messages protocol. */
@@ -153,59 +121,6 @@ export class ClaudeCodeHandler implements ApiHandler {
 	}
 
 	/**
-	 * Decide how this request asks for reasoning.
-	 *
-	 * Recent Claude models take an effort level through adaptive thinking and
-	 * reject an explicit token budget, while earlier ones only understand the
-	 * budget. Sending the wrong shape is rejected outright, so the model's own
-	 * declared thinking mode selects the branch.
-	 */
-	private resolveReasoning(apiModelId: string, modelInfo: ModelInfo): ClaudeCodeReasoning {
-		const budgetTokens = this.thinkingBudgetTokens
-		const requested = this.config?.reasoning?.enableThinking ?? Boolean(this.reasoningEffort || budgetTokens > 0)
-		const disableRequested = this.config?.reasoning?.enableThinking === false || this.reasoningEffort === "none"
-		const thinking = modelInfo.capabilities?.thinking
-		// An unset display is omitted so the API default applies.
-		const display = resolveClaudeThinkingDisplay(this.config?.reasoning?.display)
-		const displayField = display ? { display } : {}
-
-		if (thinking?.supported === true && thinking.mode === "effort") {
-			const required = !canDisableClaudeAdaptiveThinking(apiModelId)
-			const adaptive = resolveClaudeOpusAdaptiveThinking(this.reasoningEffort, budgetTokens)
-			const enabled =
-				required ||
-				(!disableRequested &&
-					(requested || isClaudeAdaptiveThinkingEnabledByDefault(apiModelId) || adaptive?.enabled === true))
-			if (!enabled) {
-				return {
-					enabled: false,
-					adaptive: true,
-					thinking: disableRequested && !required ? { type: "disabled" as const } : undefined,
-				}
-			}
-			const supportedEfforts = thinking.effortLevels ?? []
-			const effort = (
-				adaptive?.effort === "xhigh" && !supportedEfforts.includes("xhigh") && supportedEfforts.includes("max")
-					? "max"
-					: adaptive?.effort
-			) as AdaptiveThinkingEffort | undefined
-			return {
-				enabled: true,
-				adaptive: true,
-				thinking: { type: "adaptive" as const, ...displayField },
-				outputConfig: effort ? { effort } : undefined,
-			}
-		}
-
-		const enabled = requested && (modelInfo.capabilities?.supportsReasoning ?? false) && budgetTokens > 0
-		return {
-			enabled,
-			adaptive: false,
-			thinking: enabled ? { type: "enabled" as const, budget_tokens: budgetTokens, ...displayField } : undefined,
-		}
-	}
-
-	/**
 	 * Choose the tool policy for a request that declares tools.
 	 *
 	 * A model that rejects forcing fails the whole request rather than degrading,
@@ -216,10 +131,10 @@ export class ClaudeCodeHandler implements ApiHandler {
 	 */
 	private resolveToolChoice(
 		model: { id: string; info: ModelInfo },
-		reasoning: ClaudeCodeReasoning,
+		reasoning: AnthropicReasoning,
 		hostedServerToolsOn: boolean,
 	) {
-		if (hostedServerToolsOn || !resolveForcedToolUseSupport(model.id, model.info.capabilities)) {
+		if (hostedServerToolsOn || model.info.capabilities?.supportsForcedToolUse === false) {
 			return { type: "auto" as const }
 		}
 		if (!reasoning.enabled) return { type: "any" as const }
@@ -266,7 +181,7 @@ export class ClaudeCodeHandler implements ApiHandler {
 		const anthropicMessages = sanitizeAnthropicMessages(messages, promptCacheOn)
 		const identity = await this.buildIdentity(anthropicMessages)
 
-		const reasoning = this.resolveReasoning(model.id, model.info)
+		const reasoning = resolveAnthropicReasoning(model.info.capabilities, this.config?.reasoning)
 		const localToolsOn = tools !== undefined && tools.length > 0
 		const requestTools = mergeAnthropicServerTools(tools, options?.serverTools)
 		const hostedServerToolsOn = (options?.serverTools?.length ?? 0) > 0
@@ -409,7 +324,8 @@ export class ClaudeCodeHandler implements ApiHandler {
 	 * over a catalog entry so a newer capability set is not downgraded.
 	 */
 	private buildModelInfo(modelId: string): ModelInfo {
-		const overrides = this.modelInfo?.capabilities ? { capabilities: this.modelInfo.capabilities } : {}
-		return buildEffectiveModelInfo(modelId, claudeCodeModels[modelId], overrides)
+		return buildEffectiveModelInfo(modelId, this.modelInfo ?? claudeCodeModels[modelId], {
+			capabilities: this.config?.capabilities,
+		})
 	}
 }

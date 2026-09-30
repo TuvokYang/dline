@@ -1,7 +1,7 @@
 import { ClaudeCodeHandler } from "@core/api/providers/claude-code"
 import { claudeCodeModels } from "@core/api/providers/models/claude-code"
 import type { ModelInfo } from "@shared/api"
-import { ServerTool } from "@shared/proto/dline/models/metadata"
+import { ApiFormat, ServerTool } from "@shared/proto/dline/models/metadata"
 import { ApiProfile } from "@shared/proto/dline/profile"
 import { describe, expect, it } from "vitest"
 
@@ -56,6 +56,21 @@ describe("ClaudeCodeHandler model resolution", () => {
 	// to survive even when it is absent from the catalog.
 	it("keeps a selected model the bundled catalog does not know", () => {
 		expect(createHandler("claude-opus-9-1-20991231").getModel().id).toBe("claude-opus-9-1-20991231")
+	})
+
+	it("preserves complete effective Profile metadata instead of treating declarations as overrides", () => {
+		const info = {
+			id: "opaque-model",
+			name: "Effective model",
+			apiFormats: [ApiFormat.ANTHROPIC_CHAT],
+			capabilities: {
+				supportsForcedToolUse: false,
+				tools: [ServerTool.WEB_SEARCH],
+				thinking: { supported: true, mode: "effort", canDisable: false, defaultEnabled: true, effortLevels: ["high"] },
+			},
+		}
+		const model = createHandlerWithModelInfo(info.id, info).getModel()
+		expect(model.info).toMatchObject(info)
 	})
 
 	it("keeps the Profile metadata of a remotely discovered model", () => {
