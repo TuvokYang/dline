@@ -43,6 +43,8 @@ const mocks = vi.hoisted(() => ({
 				capabilities: {
 					supportsReasoning: true,
 					thinking: {
+						supported: true,
+						mode: "effort",
 						effortLevels: ["none", "low", "medium", "high"],
 						maxBudget: 8_192,
 					},
@@ -134,6 +136,8 @@ describe("chat input TaskRuntimeControls", () => {
 					capabilities: {
 						supportsReasoning: true,
 						thinking: {
+							supported: true,
+							mode: "effort",
 							effortLevels: ["none", "low", "medium", "high"],
 							maxBudget: 8_192,
 						},
@@ -142,6 +146,28 @@ describe("chat input TaskRuntimeControls", () => {
 			},
 		]
 		mocks.updateTaskSettings.mockResolvedValue(undefined)
+	})
+
+	it("uses only a declared default effort when the Profile has no preference", () => {
+		Object.assign(mocks.profiles[0].openai, { reasoning: undefined })
+		Object.assign(mocks.profiles[0].modelInfo.capabilities.thinking, { defaultEffort: "low" })
+		render(<TaskRuntimeControls />)
+		expect(screen.getByRole("combobox", { name: "Task thinking override" })).toHaveTextContent("Low")
+	})
+
+	it("does not invent a default effort when none is declared", () => {
+		Object.assign(mocks.profiles[0].openai, { reasoning: undefined })
+		render(<TaskRuntimeControls />)
+		expect(screen.getByRole("combobox", { name: "Task thinking override" })).toHaveTextContent("Thinking")
+	})
+
+	it("does not offer disabled effort for a required thinking declaration", async () => {
+		Object.assign(mocks.profiles[0].modelInfo.capabilities.thinking, { canDisable: false })
+		const user = userEvent.setup()
+		render(<TaskRuntimeControls />)
+		await user.click(screen.getByRole("combobox", { name: "Task thinking override" }))
+		expect(screen.queryByRole("option", { name: "None" })).not.toBeInTheDocument()
+		expect(screen.getByRole("option", { name: "High" })).toBeInTheDocument()
 	})
 
 	it("hides Task-local controls when no Task is open", () => {
@@ -205,7 +231,7 @@ describe("chat input TaskRuntimeControls", () => {
 				usedFor: [],
 				enabled: true,
 				openai: {
-					capabilities: { supportsReasoning: true },
+					capabilities: { thinking: { supported: true, mode: "effort", effortLevels: ["high"] } },
 					reasoning: { enableThinking: true, effort: "high", thinkingBudget: 0 },
 					serviceTier: "priority",
 				},
@@ -216,7 +242,7 @@ describe("chat input TaskRuntimeControls", () => {
 		expect(screen.getByRole("combobox", { name: "Task thinking override" })).toHaveTextContent("High")
 	})
 
-	it("projects Anthropic budget from Provider enable config before model capability hydration", () => {
+	it("does not invent an Anthropic budget from Provider config when metadata is missing", () => {
 		mocks.providerCatalogAvailable = false
 		mocks.state.apiConfiguration = {
 			...mocks.state.apiConfiguration,
@@ -238,11 +264,11 @@ describe("chat input TaskRuntimeControls", () => {
 		]
 		render(<TaskRuntimeControls />)
 
-		expect(screen.getByRole("combobox", { name: "Task thinking override" })).toHaveTextContent("Budget")
-		expect(screen.getByRole("spinbutton", { name: "Task thinking budget" })).toHaveValue(2_048)
+		expect(screen.queryByRole("combobox", { name: "Task thinking override" })).not.toBeInTheDocument()
+		expect(screen.queryByRole("spinbutton", { name: "Task thinking budget" })).not.toBeInTheDocument()
 	})
 
-	it("projects DeepSeek low/high/max from Provider enable config before model capability hydration", async () => {
+	it("projects DeepSeek efforts from declared Provider overrides before catalog hydration", async () => {
 		const user = userEvent.setup()
 		mocks.providerCatalogAvailable = false
 		mocks.profiles = [
@@ -254,6 +280,7 @@ describe("chat input TaskRuntimeControls", () => {
 				usedFor: [],
 				enabled: true,
 				deepseek: {
+					capabilities: { thinking: { supported: true, mode: "effort", effortLevels: ["low", "high", "max"] } },
 					reasoning: { enableThinking: true, effort: "high", thinkingBudget: 0 },
 				},
 			},
@@ -308,7 +335,9 @@ describe("chat input TaskRuntimeControls", () => {
 				openrouter: {
 					reasoning: { enableThinking: true, effort: "high", thinkingBudget: 0 },
 				},
-				modelInfo: { capabilities: { supportsReasoning: true } },
+				modelInfo: {
+					capabilities: { thinking: { supported: true, mode: "effort", effortLevels: ["low", "high", "max"] } },
+				},
 			},
 		]
 
@@ -329,7 +358,7 @@ describe("chat input TaskRuntimeControls", () => {
 		})
 	})
 
-	it("hides Thinking when the Provider explicitly disables it despite model support", () => {
+	it("keeps declared controls available for a Task override when the Profile disables thinking", () => {
 		mocks.profiles = [
 			{
 				id: "openai-id",
@@ -339,15 +368,15 @@ describe("chat input TaskRuntimeControls", () => {
 				usedFor: [],
 				enabled: true,
 				deepseek: {
+					capabilities: { thinking: { supported: true, mode: "effort", effortLevels: ["high"] } },
 					reasoning: { enableThinking: false },
 				},
 			},
 		]
 
-		const { container } = render(<TaskRuntimeControls />)
+		render(<TaskRuntimeControls />)
 
-		expect(screen.queryByRole("combobox", { name: "Task thinking override" })).not.toBeInTheDocument()
-		expect(container).toBeEmptyDOMElement()
+		expect(screen.getByRole("combobox", { name: "Task thinking override" })).toBeEnabled()
 	})
 
 	it("hides Thinking when capability explicitly rejects a Provider enable config", () => {

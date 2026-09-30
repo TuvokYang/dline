@@ -133,23 +133,27 @@ describe("updateTaskSettings Task runtime overrides", () => {
 		expect(fixture.order).toEqual(["flush", "rebuild", "post"])
 	})
 
-	it("accepts an OpenAI effort from supportsReasoning Profile metadata", async () => {
+	it("rejects an effort not declared by ModelInfo before any Task settings write", async () => {
 		const fixture = createController()
 		getProfileModelInfo.mockReturnValue({ capabilities: { supportsReasoning: true } })
 
-		await updateTaskSettings(
-			fixture.controller,
-			UpdateTaskSettingsRequest.create({
-				taskId: "task-1",
-				settings: {
-					actModeReasoningOverrideKind: "effort",
-					actModeReasoningOverrideEffort: "high",
-				},
-			}),
-		)
+		await expect(
+			updateTaskSettings(
+				fixture.controller,
+				UpdateTaskSettingsRequest.create({
+					taskId: "task-1",
+					settings: {
+						actModeReasoningOverrideKind: "effort",
+						actModeReasoningOverrideEffort: "high",
+					},
+				}),
+			),
+		).rejects.toThrow("Reasoning effort 'high' is not supported by the selected model.")
 
-		expect(fixture.setTaskSettings).toHaveBeenCalledWith("task-1", "actModeReasoningOverrideEffort", "high")
-		expect(fixture.rebuildApiHandler).toHaveBeenCalledOnce()
+		expect(fixture.setTaskSettings).not.toHaveBeenCalled()
+		expect(fixture.setTaskSettingsBatch).not.toHaveBeenCalled()
+		expect(fixture.flushPendingState).not.toHaveBeenCalled()
+		expect(fixture.rebuildApiHandler).not.toHaveBeenCalled()
 	})
 
 	it("uses the stable Profile ID when the compatibility name is stale", async () => {

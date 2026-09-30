@@ -2,15 +2,6 @@ import type { ModelCapabilities, ThinkingConfig } from "@shared/proto/dline/mode
 import type { ApiProfile } from "@shared/proto/dline/profile"
 import type { ReasoningConfig } from "@shared/proto/dline/provider/common"
 import { PROFILE_PROVIDER_KEYS } from "@shared/providers/profile-model-info"
-import { OPENAI_REASONING_EFFORT_OPTIONS } from "@shared/storage/types"
-import {
-	ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS,
-	canDisableClaudeAdaptiveThinking,
-	DEEPSEEK_REASONING_EFFORT_OPTIONS,
-	isDeepSeekReasoningModel,
-} from "@shared/utils/reasoning-support"
-
-const DEFAULT_TASK_THINKING_BUDGET = 6_000
 
 /** Task-local reasoning policy layered over a Profile's reasoning configuration. */
 export interface TaskReasoningOverride {
@@ -21,79 +12,14 @@ export interface TaskReasoningOverride {
 
 export type TaskReasoningOverrideKind = TaskReasoningOverride["kind"]
 
-/** Resolve the Task-facing thinking capability from model metadata and the Profile runtime switch. */
-export function resolveTaskThinkingConfig(
-	provider: string | undefined,
-	capabilities: ModelCapabilities | undefined,
-	reasoning?: ReasoningConfig,
-	modelId?: string,
-): ThinkingConfig | undefined {
+/** Project declared thinking capabilities without inferring them from a Profile preference or model identity. */
+export function resolveTaskThinkingConfig(capabilities: ModelCapabilities | undefined): ThinkingConfig | undefined {
 	const thinking = capabilities?.thinking
-	const configured = resolveConfiguredThinkingState(reasoning)
-	const explicitlyUnsupported =
-		thinking?.supported === false || (capabilities?.supportsReasoning === false && thinking?.supported !== true)
-	const thinkingRequired = provider === "anthropic" && !canDisableClaudeAdaptiveThinking(modelId)
-	if ((configured === false && !thinkingRequired) || explicitlyUnsupported) return undefined
-
-	const supportsReasoning = configured === true || capabilities?.supportsReasoning === true || thinking?.supported === true
-	if (!supportsReasoning) return thinking
-
-	const configuredBudget = (reasoning?.thinkingBudget ?? 0) > 0
-	const configuredEffort = reasoning?.effort?.trim()
-	const maxBudget =
-		thinking?.maxBudget ??
-		(configuredBudget ? Math.max(DEFAULT_TASK_THINKING_BUDGET, reasoning?.thinkingBudget ?? 0) : undefined)
-
-	if (provider === "deepseek" || isDeepSeekReasoningModel(modelId)) {
-		return {
-			...thinking,
-			supported: true,
-			mode: "effort",
-			effortLevels: [...DEEPSEEK_REASONING_EFFORT_OPTIONS],
-		}
+	if (thinking?.supported !== true || capabilities?.supportsReasoning === false) return undefined
+	return {
+		...thinking,
+		...(thinking.effortLevels !== undefined ? { effortLevels: [...thinking.effortLevels] } : {}),
 	}
-	if (provider === "openai" || provider === "openai-codex") {
-		return {
-			...thinking,
-			supported: true,
-			mode: configuredBudget ? "budget" : (thinking?.mode ?? "effort"),
-			maxBudget,
-			effortLevels:
-				(thinking?.effortLevels?.length ?? 0) > 0
-					? [...(thinking?.effortLevels ?? [])]
-					: [...OPENAI_REASONING_EFFORT_OPTIONS],
-		}
-	}
-	if (provider === "anthropic") {
-		const supportsEffort = thinking?.mode === "effort" || (thinking?.effortLevels?.length ?? 0) > 0
-		if (supportsEffort || configuredEffort) {
-			return {
-				...thinking,
-				supported: true,
-				mode: "effort",
-				effortLevels:
-					(thinking?.effortLevels?.length ?? 0) > 0
-						? [...(thinking?.effortLevels ?? [])]
-						: [...ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS],
-			}
-		}
-		return {
-			...thinking,
-			supported: true,
-			mode: "budget",
-			maxBudget: maxBudget ?? DEFAULT_TASK_THINKING_BUDGET,
-			effortLevels: [],
-		}
-	}
-	return { ...thinking, supported: true, effortLevels: [...(thinking?.effortLevels ?? [])] }
-}
-
-function resolveConfiguredThinkingState(reasoning: ReasoningConfig | undefined): boolean | undefined {
-	if (reasoning?.enableThinking !== undefined) return reasoning.enableThinking
-	const effort = reasoning?.effort?.trim()
-	if (effort !== undefined) return effort !== "" && effort !== "none"
-	if (reasoning?.thinkingBudget !== undefined) return reasoning.thinkingBudget > 0
-	return undefined
 }
 
 export interface TaskReasoningOverrideFields {
@@ -181,7 +107,11 @@ export function validateTaskReasoningOverride(
 	if (normalized.kind === "effort") {
 		const effort = normalized.effort
 		if (!effort) return invalid("invalid_effort", "Reasoning effort must be a non-empty value.")
-		if (thinking?.supported !== true || !thinking.effortLevels?.includes(effort)) {
+		if (
+			thinking?.supported !== true ||
+			!thinking.effortLevels?.includes(effort) ||
+			(effort === "none" && thinking.canDisable === false)
+		) {
 			return invalid("unsupported_effort", `Reasoning effort '${effort}' is not supported by the selected model.`)
 		}
 		return { valid: true, override: { kind: "effort", effort } }
@@ -196,6 +126,9 @@ export function validateTaskReasoningOverride(
 	const maxBudget = thinking?.maxBudget
 	if (thinking?.supported !== true || maxBudget === undefined || !Number.isSafeInteger(maxBudget) || maxBudget < 0) {
 		return invalid("unsupported_budget", "Reasoning budget is not supported by the selected model.")
+	}
+	if (budgetTokens === 0 && thinking.canDisable === false) {
+		return invalid("unsupported_budget", "Thinking cannot be disabled for the selected model.")
 	}
 	if (budgetTokens > maxBudget) {
 		return invalid("budget_exceeds_max", `Reasoning budget cannot exceed ${maxBudget} tokens for the selected model.`)

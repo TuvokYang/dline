@@ -3,7 +3,7 @@ import { ApiFormat, type ThinkingConfig } from "@shared/proto/dline/models/metad
 import { type ImageGenerationProfile, ImageGenerationSource } from "@shared/proto/dline/profile"
 import { AnthropicProviderConfig } from "@shared/proto/dline/provider/anthropic"
 import type { ReasoningConfig } from "@shared/proto/dline/provider/common"
-import { PROFILE_PROVIDER_KEYS } from "@shared/providers/profile-model-info"
+import { PROFILE_PROVIDER_KEYS, resolveProfileModelInfo } from "@shared/providers/profile-model-info"
 import type { Mode } from "@shared/storage/types"
 import { resolveProfileReasoningConfig, resolveTaskThinkingConfig } from "@shared/task-reasoning"
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react"
@@ -17,21 +17,27 @@ import { getCachedProviderDefaultImageModelId, getCachedProviderDefaultModelId, 
 import { WebToolsModeControl } from "./WebToolsModeControl"
 
 function formatThinkingSummary(reasoning: ReasoningConfig | undefined, thinking: ThinkingConfig | undefined) {
-	if (reasoning?.enableThinking === false || reasoning?.effort === "none") return "Thinking: Off"
+	if (thinking?.supported !== true) return undefined
+	if (thinking.canDisable !== false && (reasoning?.enableThinking === false || reasoning?.effort === "none"))
+		return "Thinking: Off"
 
 	const budget = reasoning?.thinkingBudget ?? 0
-	if (budget > 0) return `Thinking: ${budget.toLocaleString()} tokens`
+	if (budget > 0 && thinking.maxBudget !== undefined) return `Thinking: ${budget.toLocaleString()} tokens`
 
 	const effort = reasoning?.effort?.trim()
-	if (effort) return `Thinking: ${effort.replace(/^./, (character) => character.toUpperCase())}`
-	if (thinking?.supported !== true) return reasoning?.enableThinking === true ? "Thinking: On" : undefined
+	if (effort && thinking.effortLevels?.includes(effort) && (effort !== "none" || thinking.canDisable !== false)) {
+		return `Thinking: ${effort.replace(/^./, (character) => character.toUpperCase())}`
+	}
 
 	const effortLevels = thinking.effortLevels ?? []
 	if (thinking.mode === "budget" || (effortLevels.length === 0 && thinking.maxBudget !== undefined)) {
 		return "Thinking: Budget"
 	}
-	const defaultEffort = effortLevels.includes("medium") ? "medium" : effortLevels[0]
-	return defaultEffort ? `Thinking: ${defaultEffort.replace(/^./, (character) => character.toUpperCase())}` : "Thinking: On"
+	const defaultEffort = thinking.defaultEffort
+	if (defaultEffort && effortLevels.includes(defaultEffort)) {
+		return `Thinking: ${defaultEffort.replace(/^./, (character) => character.toUpperCase())}`
+	}
+	return thinking.canDisable === false || thinking.defaultEnabled === true ? "Thinking: On" : undefined
 }
 
 interface ApiProfileCardProps {
@@ -94,7 +100,7 @@ const ApiProfileCard: React.FC<ApiProfileCardProps> = ({
 		profile.imageModelId && imageModels[profile.imageModelId] ? profile.imageModelId : defaultImageModelId
 	const models = currentCatalog.models
 	const catalogModelInfo = models[profile.modelId]
-	const selectedModelInfo = profile.modelInfo || catalogModelInfo
+	const selectedModelInfo = resolveProfileModelInfo(profile, currentCatalog)
 	const selectedApiFormat = profile.openai?.apiFormat ?? profile.modelInfo?.apiFormats?.[0] ?? catalogModelInfo?.apiFormats?.[0]
 	const supportsResponses =
 		selectedApiFormat === ApiFormat.OPENAI_RESPONSES || selectedApiFormat === ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE
@@ -117,7 +123,7 @@ const ApiProfileCard: React.FC<ApiProfileCardProps> = ({
 	// Build detailed tooltip from modelInfo
 	const info = selectedModelInfo
 	const reasoning = resolveProfileReasoningConfig(profile)
-	const thinking = resolveTaskThinkingConfig(profile.provider, info?.capabilities, reasoning, info?.id || profile.modelId)
+	const thinking = resolveTaskThinkingConfig(info?.capabilities)
 	const thinkingSummary = formatThinkingSummary(reasoning, thinking)
 	const subtitle = [providerLabel, modelLabel, thinkingSummary].filter(Boolean).join(" · ")
 	const displayLine = [profileName, subtitle].filter(Boolean).join(" · ")

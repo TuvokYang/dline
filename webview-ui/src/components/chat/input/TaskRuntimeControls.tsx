@@ -31,14 +31,10 @@ export function TaskRuntimeControls() {
 		? resolveProfileModelInfo(profile, { models: providerModels, defaultModelId: providerDefaultModelId })
 		: undefined
 	const profileReasoning = resolveProfileReasoningConfig(profile)
-	const thinking = resolveTaskThinkingConfig(
-		profile?.provider,
-		effectiveModelInfo?.capabilities,
-		profileReasoning,
-		effectiveModelInfo?.id ?? profile?.modelId,
-	)
-	const effortLevels = thinking?.effortLevels ?? []
+	const thinking = resolveTaskThinkingConfig(effectiveModelInfo?.capabilities)
+	const effortLevels = (thinking?.effortLevels ?? []).filter((effort) => thinking?.canDisable !== false || effort !== "none")
 	const maxBudget = thinking?.maxBudget
+	const minBudget = thinking?.canDisable === false ? 1 : 0
 	const supportsEffort = effortLevels.length > 0
 	const supportsBudget = Number.isSafeInteger(maxBudget) && (maxBudget ?? -1) >= 0
 	const supportsServiceTier = profileServiceTierEnabled(profile)
@@ -48,15 +44,13 @@ export function TaskRuntimeControls() {
 	const serviceTierOverride =
 		mode === "plan" ? apiConfiguration?.planModeServiceTierOverride : apiConfiguration?.actModeServiceTierOverride
 	const profileThinkingValue =
-		(profileReasoning?.thinkingBudget ?? 0) > 0
+		supportsBudget && (profileReasoning?.thinkingBudget ?? 0) > 0
 			? "budget"
-			: profileReasoning?.effort
+			: profileReasoning?.effort && effortLevels.includes(profileReasoning.effort)
 				? `effort:${profileReasoning.effort}`
-				: supportsEffort
-					? `effort:${effortLevels.includes("medium") ? "medium" : effortLevels[0]}`
-					: supportsBudget
-						? "budget"
-						: ""
+				: thinking?.defaultEffort && effortLevels.includes(thinking.defaultEffort)
+					? `effort:${thinking.defaultEffort}`
+					: ""
 	const configuredThinkingValue =
 		reasoningOverride?.kind === "effort"
 			? `effort:${reasoningOverride.effort ?? ""}`
@@ -106,8 +100,8 @@ export function TaskRuntimeControls() {
 
 	const commitBudget = () => {
 		const budgetTokens = Number(budgetValue)
-		if (!Number.isSafeInteger(budgetTokens) || budgetTokens < 0 || budgetTokens > (maxBudget ?? -1)) {
-			setError(`Thinking budget must be an integer between 0 and ${maxBudget ?? 0}.`)
+		if (!Number.isSafeInteger(budgetTokens) || budgetTokens < minBudget || budgetTokens > (maxBudget ?? -1)) {
+			setError(`Thinking budget must be an integer between ${minBudget} and ${maxBudget ?? 0}.`)
 			return
 		}
 		void commit(
@@ -144,7 +138,10 @@ export function TaskRuntimeControls() {
 										className="chat-input-control-outline !h-[18.5px] inline-flex w-auto min-w-0 max-w-full items-center justify-center gap-0 overflow-hidden rounded-sm border-0 bg-toolbar-hover px-1 py-0 text-center text-xs font-medium leading-[18px] text-foreground shadow-none transition-colors duration-150 focus-visible:ring-0"
 										showIcon={false}
 										size="sm">
-										<SelectValue className="inline-flex h-full min-w-0 items-center justify-center truncate text-center leading-[18px]" />
+										<SelectValue
+											className="inline-flex h-full min-w-0 items-center justify-center truncate text-center leading-[18px]"
+											placeholder="Thinking"
+										/>
 									</SelectTrigger>
 								</div>
 							</TooltipTrigger>
@@ -170,7 +167,7 @@ export function TaskRuntimeControls() {
 							aria-label="Task thinking budget"
 							className="w-20 rounded-sm border border-dropdown-border bg-input-background px-1 py-0.5 text-xs text-input-foreground"
 							max={maxBudget}
-							min={0}
+							min={minBudget}
 							onBlur={commitBudget}
 							onChange={(event) => setBudgetValue(event.target.value)}
 							onKeyDown={(event) => {

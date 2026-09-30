@@ -50,14 +50,19 @@ describe("Task runtime Profile overrides", () => {
 		expect(profile.openai?.serviceTier).toBe("default")
 	})
 
-	it("applies the shared DeepSeek high/max policy at the runtime handler boundary", () => {
+	it("applies declared DeepSeek efforts at the runtime handler boundary", () => {
 		const profile = ApiProfile.create({
 			id: "profile-deepseek",
 			name: "DeepSeek profile",
 			provider: "deepseek",
 			modelId: "deepseek-v4-flash",
 			enabled: true,
-			modelInfo: { capabilities: { supportsReasoning: true } },
+			modelInfo: {
+				capabilities: {
+					supportsReasoning: true,
+					thinking: { supported: true, mode: "effort", effortLevels: ["high", "max"] },
+				},
+			},
 			deepseek: {
 				reasoning: { enableThinking: true, effort: "high" },
 			},
@@ -87,6 +92,15 @@ describe("Task runtime Profile overrides", () => {
 		expect(runtimeProfile).not.toBe(profile)
 		expect(runtimeProfile.openai?.reasoning?.effort).toBe("medium")
 		expect(runtimeProfile.openai?.serviceTier).toBe("default")
+	})
+
+	it("does not admit overrides through misleading model names or an enabled Profile preference", () => {
+		const profile = createOpenAiProfile()
+		profile.modelId = "gpt-claude-deepseek-test"
+		profile.modelInfo = { id: profile.modelId, capabilities: { supportsReasoning: true } }
+		expect(() =>
+			applyTaskRuntimeOverrides(profile, { actModeReasoningOverride: { kind: "effort", effort: "high" } }, "act"),
+		).toThrow("Reasoning effort 'high' is not supported by the selected model.")
 	})
 
 	it("rejects a reasoning override not advertised by the selected model", () => {
