@@ -1,4 +1,4 @@
-import { GENERIC_REASONING_EFFORT_OPTIONS, isOpenaiReasoningEffort, type OpenaiReasoningEffort } from "@shared/storage/types"
+import { GENERIC_REASONING_EFFORT_OPTIONS } from "@shared/storage/types"
 import { memo } from "react"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -6,8 +6,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 interface ReasoningEffortSelectorProps {
 	label?: string
 	description?: string
-	allowedEfforts?: readonly OpenaiReasoningEffort[]
-	defaultEffort?: OpenaiReasoningEffort
+	allowedEfforts?: readonly string[]
+	defaultEffort?: string
 	/**
 	 * Direct reasoning effort value (preferred).
 	 * When provided, onReasoningEffortChange must also be provided.
@@ -33,11 +33,12 @@ const ReasoningEffortSelector = ({
 }: ReasoningEffortSelectorProps) => {
 	const rawEffort = reasoningEffort
 
-	const selectedEffort = isOpenaiReasoningEffort(rawEffort) && allowedEfforts.includes(rawEffort) ? rawEffort : defaultEffort
+	const selectedEffort =
+		rawEffort && allowedEfforts.includes(rawEffort) ? rawEffort : allowedEfforts.includes(defaultEffort) ? defaultEffort : ""
 
 	// Handle effort value change
 	const handleEffortChange = (value: string) => {
-		onReasoningEffortChange?.(value)
+		if (allowedEfforts.includes(value)) onReasoningEffortChange?.(value)
 	}
 
 	return (

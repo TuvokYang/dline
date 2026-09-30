@@ -6,7 +6,6 @@ import {
 	OPENAI_SERVICE_TIER_OPTIONS,
 } from "@shared/storage/types"
 import { resolveTaskThinkingConfig, validateTaskReasoningOverride } from "@shared/task-reasoning"
-import { DEEPSEEK_REASONING_EFFORT_OPTIONS, resolveDeepSeekAdaptiveThinking } from "@shared/utils/reasoning-support"
 import { expect } from "chai"
 import { describe, it } from "vitest"
 
@@ -102,13 +101,5 @@ describe("provider reasoning and service-tier options", () => {
 		expect(normalizeOpenAiServiceTier("priority")).to.equal("priority")
 		expect(normalizeOpenAiServiceTier("ultrafast")).to.equal("ultrafast")
 		expect(normalizeOpenAiServiceTier("unsupported")).to.equal(undefined)
-	})
-
-	it("supports native DeepSeek low, high and max efforts while migrating legacy xhigh", () => {
-		expect(DEEPSEEK_REASONING_EFFORT_OPTIONS).to.deep.equal(["low", "high", "max"])
-		expect(resolveDeepSeekAdaptiveThinking("low")).to.deep.equal({ enabled: true, effort: "low" })
-		expect(resolveDeepSeekAdaptiveThinking("high")).to.deep.equal({ enabled: true, effort: "high" })
-		expect(resolveDeepSeekAdaptiveThinking("max")).to.deep.equal({ enabled: true, effort: "max" })
-		expect(resolveDeepSeekAdaptiveThinking("xhigh")).to.deep.equal({ enabled: true, effort: "max" })
 	})
 })

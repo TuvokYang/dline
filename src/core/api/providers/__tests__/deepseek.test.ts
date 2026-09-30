@@ -96,6 +96,98 @@ describe("DeepSeekHandler", () => {
 		vi.restoreAllMocks()
 	})
 
+	it.each([undefined, false])("does not invent DeepSeek controls when thinking support is %s", async (supported) => {
+		const handler = new DeepSeekHandler({
+			profile: ApiProfile.create({
+				provider: "deepseek",
+				apiKey: "test-api-key",
+				modelId: "deepseek-misleading-name",
+				modelInfo: {
+					id: "deepseek-misleading-name",
+					capabilities: { supportsReasoning: true, thinking: supported === undefined ? undefined : { supported } },
+				},
+				deepseek: BaseProviderConfig.create({ reasoning: { enableThinking: true, effort: "high" } }),
+			}),
+			mode: "act",
+		})
+		const create = vi.fn().mockResolvedValue(createStream())
+		vi.spyOn(handler as unknown as { ensureClient: () => FakeClient }, "ensureClient").mockReturnValue({
+			chat: { completions: { create } },
+		})
+		await collectChunks(handler)
+		expect(create.mock.calls[0]?.[0]?.reasoning_effort).to.equal(undefined)
+		expect(create.mock.calls[0]?.[0]?.extra_body).to.equal(undefined)
+	})
+
+	it.each([
+		ApiFormat.OPENAI_CHAT,
+		ApiFormat.OPENAI_RESPONSES,
+		ApiFormat.ANTHROPIC_CHAT,
+	])("uses declared defaults on wire format %s", async (format) => {
+		const handler = new DeepSeekHandler({
+			profile: ApiProfile.create({
+				provider: "deepseek",
+				apiKey: "test-api-key",
+				modelId: "opaque-model",
+				modelInfo: {
+					id: "opaque-model",
+					apiFormats: [format],
+					capabilities: {
+						supportsReasoning: true,
+						thinking: {
+							supported: true,
+							mode: "effort",
+							defaultEnabled: true,
+							defaultEffort: "low",
+							effortLevels: ["low"],
+						},
+					},
+				},
+				deepseek: BaseProviderConfig.create({ apiFormat: format }),
+			}),
+			mode: "act",
+		})
+		const create = vi.fn().mockResolvedValue(createStream())
+		vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
+			chat: { completions: { create } },
+			responses: { create },
+		})
+		;(handler as unknown as { anthropicClient?: unknown }).anthropicClient = { messages: { create } }
+		await collectChunks(handler)
+		const body = create.mock.calls[0]?.[0]
+		if (format === ApiFormat.OPENAI_CHAT) {
+			expect(body.reasoning_effort).to.equal("low")
+		} else if (format === ApiFormat.OPENAI_RESPONSES) {
+			expect(body.reasoning?.effort).to.equal("low")
+		} else {
+			expect(body.thinking).to.deep.equal({ type: "adaptive" })
+			expect(body.output_config).to.deep.equal({ effort: "low" })
+		}
+	})
+
+	it.each([
+		{},
+		{ enableThinking: false },
+		{ effort: "none" },
+	])("preserves explicit disabled/empty DeepSeek config %s", async (reasoning) => {
+		const handler = new DeepSeekHandler({
+			profile: ApiProfile.create({
+				provider: "deepseek",
+				apiKey: "test-api-key",
+				modelId: "deepseek-v4-pro",
+				deepseek: BaseProviderConfig.create({ reasoning }),
+			}),
+			mode: "act",
+		})
+		const create = vi.fn().mockResolvedValue(createStream())
+		vi.spyOn(handler as unknown as { ensureClient: () => FakeClient }, "ensureClient").mockReturnValue({
+			chat: { completions: { create } },
+		})
+		await collectChunks(handler)
+		expect(create.mock.calls[0]?.[0]?.reasoning_effort).to.equal(undefined)
+		expect(create.mock.calls[0]?.[0]?.extra_body).to.deep.equal({ thinking: { type: "disabled" } })
+	})
+
 	describe("createMessage", () => {
 		it("routes a profile-selected Responses request through the DeepSeek Responses client", async () => {
 			const profile = ApiProfile.create({

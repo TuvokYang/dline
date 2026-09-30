@@ -11,7 +11,6 @@ import { fetch } from "@/shared/net"
 import { ApiFormat, ServerTool } from "@/shared/proto/dline/models/metadata"
 import { prioritizeApiFormat, resolveApiFormat } from "@/shared/providers/api-format"
 import { Logger } from "@/shared/services/Logger"
-import { resolveDeepSeekAdaptiveThinking } from "@/shared/utils/reasoning-support"
 import { AccountUsage, ApiHandler, ApiHandlerContext, type ApiRequestOptions } from "../"
 import { withRetry } from "../retry"
 import { getOpenAIChatOutputLimitError } from "../stream/OutputLimitExceededError"
@@ -26,6 +25,7 @@ import { ApiStream } from "../transform/stream"
 import { getOpenAIToolParams, ToolCallProcessor } from "../transform/tool-call-processor"
 import { convertOpenAIToolsToAnthropicTools, handleAnthropicMessagesApiStreamResponse } from "../utils/messages_api_support"
 import { handleResponsesApiStreamResponse } from "../utils/responses_api_support"
+import { resolveDeepSeekReasoning } from "./deepseek/reasoning"
 
 export class DeepSeekHandler implements ApiHandler {
 	private client: OpenAI | undefined
@@ -110,13 +110,7 @@ export class DeepSeekHandler implements ApiHandler {
 	}
 
 	private getThinkingSettings(model: { info: ModelInfo }) {
-		const reasoning = this.config?.reasoning
-		const adaptive = resolveDeepSeekAdaptiveThinking(reasoning?.effort)
-		const configuredEnabled = reasoning?.enableThinking ?? (reasoning ? !!reasoning.effort : adaptive.enabled)
-		return {
-			enabled: (model.info.capabilities?.supportsReasoning ?? false) && configuredEnabled && adaptive.enabled,
-			effort: adaptive.effort ?? "high",
-		}
+		return resolveDeepSeekReasoning(model.info.capabilities, this.config?.reasoning)
 	}
 
 	private async *yieldUsage(info: ModelInfo, usage: OpenAI.Completions.CompletionUsage | undefined): ApiStream {
@@ -194,7 +188,7 @@ export class DeepSeekHandler implements ApiHandler {
 				? options.generation.maxOutputTokens
 				: model.info.capabilities?.maxTokens
 
-		const supportsReasoning = model.info.capabilities?.supportsReasoning ?? false
+		const supportsReasoning = thinking.supported
 
 		// All deepseek models now use the same message conversion: V4-native format when thinking is on,
 		// plain OpenAI format otherwise. deepseek-chat and deepseek-reasoner are deprecated as of 2026-07-24.
@@ -333,7 +327,7 @@ export class DeepSeekHandler implements ApiHandler {
 			...(thinking.enabled
 				? {
 						thinking: { type: "adaptive" as const },
-						output_config: { effort: thinking.effort },
+						...(thinking.effort ? { output_config: { effort: thinking.effort } } : {}),
 					}
 				: { temperature: 0 }),
 		}

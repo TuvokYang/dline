@@ -12,12 +12,30 @@ const models = {
 	"deepseek-v4-pro": {
 		id: "deepseek-v4-pro",
 		apiFormats: [ApiFormat.OPENAI_CHAT, ApiFormat.OPENAI_RESPONSES, ApiFormat.ANTHROPIC_CHAT],
-		capabilities: { supportsReasoning: true },
+		capabilities: {
+			supportsReasoning: true,
+			thinking: {
+				supported: true,
+				mode: "effort",
+				defaultEnabled: true,
+				defaultEffort: "high",
+				effortLevels: ["low", "high", "max"],
+			},
+		},
 	} as ModelInfo,
 	"deepseek-v4-flash": {
 		id: "deepseek-v4-flash",
 		apiFormats: [ApiFormat.OPENAI_CHAT, ApiFormat.OPENAI_RESPONSES, ApiFormat.ANTHROPIC_CHAT],
-		capabilities: { supportsReasoning: true },
+		capabilities: {
+			supportsReasoning: true,
+			thinking: {
+				supported: true,
+				mode: "effort",
+				defaultEnabled: true,
+				defaultEffort: "high",
+				effortLevels: ["low", "high", "max"],
+			},
+		},
 	} as ModelInfo,
 }
 
@@ -70,6 +88,37 @@ vi.mock("@vscode/webview-ui-toolkit/react", () => ({
 }))
 
 describe("DeepSeekProvider", () => {
+	it("does not create thinking controls for an undeclared model with an enabled preference", () => {
+		const profile = {
+			id: "custom-profile",
+			provider: "deepseek",
+			modelId: "opaque-model",
+			modelInfo: { id: "opaque-model", capabilities: { supportsReasoning: true } },
+			deepseek: BaseProviderConfig.create({ reasoning: { enableThinking: true, effort: "high" } }),
+		} as unknown as ApiProfile
+		render(<DeepSeekProvider onUpdate={vi.fn()} profile={profile} showModelOptions={true} />)
+		expect(screen.queryByRole("checkbox", { name: "Enable Thinking" })).not.toBeInTheDocument()
+	})
+
+	it("uses the custom declaration default rather than a fixed high effort", () => {
+		const onUpdate = vi.fn()
+		const profile = {
+			id: "custom-profile",
+			provider: "deepseek",
+			modelId: "opaque-model",
+			modelInfo: {
+				id: "opaque-model",
+				capabilities: { thinking: { supported: true, mode: "effort", defaultEffort: "low", effortLevels: ["low"] } },
+			},
+			deepseek: BaseProviderConfig.create({ reasoning: { enableThinking: false } }),
+		} as unknown as ApiProfile
+		render(<DeepSeekProvider onUpdate={onUpdate} profile={profile} showModelOptions={true} />)
+		fireEvent.click(screen.getByRole("checkbox", { name: "Enable Thinking" }))
+		expect(onUpdate).toHaveBeenCalledWith({
+			deepseek: expect.objectContaining({ reasoning: { enableThinking: true, effort: "low" } }),
+		})
+	})
+
 	it("persists explicit Enable Thinking without a zero budget", () => {
 		const onUpdate = vi.fn()
 		const profile = {
