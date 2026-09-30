@@ -12,6 +12,45 @@ import { describe, it } from "vitest"
 import { resolveProfileModelInfo } from "../profile-model-info"
 
 describe("resolveProfileModelInfo", () => {
+	it("does not relabel stale thinking metadata as the newly selected unknown model", () => {
+		const profile = ApiProfile.create({
+			provider: "openai",
+			modelId: "new-unknown",
+			modelInfo: {
+				id: "old-known",
+				capabilities: { thinking: { supported: true, mode: "effort", effortLevels: ["low"] } },
+			},
+		})
+		const result = resolveProfileModelInfo(profile)
+		expect(result.id).to.equal("new-unknown")
+		expect(result.capabilities?.thinking).to.equal(undefined)
+	})
+
+	it("keeps a matching explicit negative/empty declaration intact", () => {
+		const profile = ApiProfile.create({
+			provider: "openai",
+			modelId: "matching-alias",
+			modelInfo: {
+				id: "matching-alias",
+				capabilities: { thinking: { supported: false, mode: "effort", effortLevels: [] } },
+			},
+		})
+		const result = resolveProfileModelInfo(profile)
+		expect(result.capabilities?.thinking).to.deep.equal(profile.modelInfo?.capabilities?.thinking)
+	})
+
+	it("uses the explicit metadata identity before an unrelated provider default", () => {
+		const profile = ApiProfile.create({
+			provider: "openai",
+			modelInfo: { id: "explicit-alias", capabilities: { thinking: { supported: false } } },
+		})
+		const result = resolveProfileModelInfo(profile, {
+			defaultModelId: "other-default",
+			models: { "other-default": { id: "other-default", capabilities: { thinking: { supported: true, mode: "budget" } } } },
+		})
+		expect(result.id).to.equal("explicit-alias")
+		expect(result.capabilities?.thinking?.supported).to.equal(false)
+	})
 	it("resolves an explicitly selected Bedrock base and preserves the custom ARN and override", () => {
 		const profile = ApiProfile.create({
 			provider: "bedrock",

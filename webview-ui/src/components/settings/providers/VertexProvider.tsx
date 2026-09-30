@@ -1,6 +1,6 @@
 import { VertexProviderConfig } from "@shared/proto/dline/provider/vertex"
+import { resolveProfileModelInfo } from "@shared/providers/profile-model-info"
 import VertexData from "@shared/providers/vertex.json"
-import { isClaudeOpusAdaptiveThinkingModel, resolveClaudeOpusAdaptiveThinking } from "@shared/utils/reasoning-support"
 import { VSCodeDropdown, VSCodeLink, VSCodeOption } from "@vscode/webview-ui-toolkit/react"
 import { useExtensionState } from "@/context/ExtensionStateContext"
 import { DROPDOWN_Z_INDEX, DropdownContainer } from "../ApiOptions"
@@ -8,24 +8,9 @@ import { DebouncedTextField } from "../common/DebouncedTextField"
 import { ModelInfoView } from "../common/ModelInfoView"
 import { ModelSelector } from "../common/ModelSelector"
 import { LockIcon, RemotelyConfiguredInputWrapper } from "../common/RemotelyConfiguredInputWrapper"
-import ReasoningEffortSelector from "../ReasoningEffortSelector"
-import ThinkingBudgetSlider from "../ThinkingBudgetSlider"
+import ThinkingControl from "../ThinkingControl"
 import type { ApiProfile } from "./ProviderProfile"
 import { useProviderModels } from "./useProviderModels"
-
-const SUPPORTED_THINKING_MODELS = [
-	"claude-sonnet-4-6",
-	"claude-sonnet-4-6:1m",
-	"claude-haiku-4-5@20251001",
-	"claude-sonnet-4-5@20250929",
-	"claude-3-7-sonnet@20250219",
-	"claude-sonnet-4@20250514",
-	"claude-opus-4@20250514",
-	"claude-opus-4-1@20250805",
-	"gemini-2.5-flash",
-	"gemini-2.5-pro",
-	"gemini-2.5-flash-lite-preview-06-17",
-]
 
 const REGIONS = VertexData.regions
 
@@ -44,15 +29,13 @@ export const VertexProvider = ({ showModelOptions, isPopup, profile, onUpdate }:
 	const vertexProjectId = pc.vertexProjectId ?? ""
 	const vertexRegion = pc.vertexRegion ?? ""
 
-	const { models, defaultModelId, modelInfoSaneDefaults } = useProviderModels("vertex")
-	const modelId = profile.modelId || defaultModelId
-	const modelInfo = profile.modelInfo ?? models[profile.modelId] ?? modelInfoSaneDefaults
-	const reasoningEffort = pc.reasoning?.effort ?? ""
-	const thinkingBudgetTokens = pc.reasoning?.thinkingBudget ? (pc.reasoning?.thinkingBudget ?? 0) : 0
-
-	const isAdaptiveThinkingModel = isClaudeOpusAdaptiveThinkingModel(modelId)
-	const adaptiveThinkingDefaultEffort =
-		resolveClaudeOpusAdaptiveThinking(reasoningEffort, thinkingBudgetTokens).effort ?? "none"
+	const { models, defaultModelId } = useProviderModels("vertex")
+	const modelInfo = resolveProfileModelInfo(profile, { models, defaultModelId })
+	const modelId = modelInfo.id
+	const thinking = modelInfo.capabilities?.thinking
+	const thinkingSupported = thinking?.supported === true && modelInfo.capabilities?.supportsReasoning !== false
+	const effortSupported = thinkingSupported && thinking?.mode === "effort"
+	const budgetSupported = thinkingSupported && thinking?.mode === "budget"
 	const persistConfig = (key: string, value: string) => onUpdate({ vertex: { ...pc, [key]: value } })
 
 	return (
@@ -122,44 +105,17 @@ export const VertexProvider = ({ showModelOptions, isPopup, profile, onUpdate }:
 						selectedModelId={modelId}
 						zIndex={DROPDOWN_Z_INDEX - 2}
 					/>
-					{isAdaptiveThinkingModel ? (
-						<ReasoningEffortSelector
-							allowedEfforts={["none", "low", "medium", "high", "xhigh"] as const}
-							defaultEffort={adaptiveThinkingDefaultEffort}
-							description="Use None to disable adaptive thinking."
-							label="Adaptive Thinking"
-							onReasoningEffortChange={(v) =>
-								onUpdate({
-									vertex: {
-										...pc,
-										reasoning: { effort: v, thinkingBudget: pc.reasoning?.thinkingBudget ?? 0 },
-									},
-								})
-							}
-							reasoningEffort={reasoningEffort}
-						/>
-					) : SUPPORTED_THINKING_MODELS.includes(modelId) ? (
-						<ThinkingBudgetSlider
-							maxBudget={modelInfo.capabilities?.thinking?.maxBudget}
-							onThinkingBudgetTokensChange={(v) =>
-								onUpdate({
-									vertex: { ...pc, reasoning: { effort: pc.reasoning?.effort ?? "", thinkingBudget: v } },
-								})
-							}
-							thinkingBudgetTokens={thinkingBudgetTokens}
-						/>
-					) : null}
-					{modelInfo.capabilities?.supportsReasoning && (
-						<ReasoningEffortSelector
-							onReasoningEffortChange={(v) =>
-								onUpdate({
-									vertex: {
-										...pc,
-										reasoning: { effort: v, thinkingBudget: pc.reasoning?.thinkingBudget ?? 0 },
-									},
-								})
-							}
-							reasoningEffort={pc.reasoning?.effort}
+					{(effortSupported || budgetSupported) && (
+						<ThinkingControl
+							defaultEffort={thinking?.defaultEffort}
+							defaultEnabled={thinking?.defaultEnabled}
+							disableSupported={thinking?.canDisable !== false}
+							effortOptions={thinking?.effortLevels ?? []}
+							maxBudget={thinking?.maxBudget}
+							mode={effortSupported ? "effort-only" : "budget-only"}
+							onReasoningConfigUpdate={(reasoning) => onUpdate({ vertex: { ...pc, reasoning } })}
+							reasoningConfig={pc.reasoning}
+							showModeSelector={false}
 						/>
 					)}
 					<ModelInfoView isPopup={isPopup} modelInfo={modelInfo} selectedModelId={modelId} />

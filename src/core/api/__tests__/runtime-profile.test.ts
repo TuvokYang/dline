@@ -11,6 +11,7 @@ function createOpenAiProfile(): ApiProfile {
 		modelId: "gpt-test",
 		enabled: true,
 		modelInfo: {
+			id: "gpt-test",
 			capabilities: {
 				thinking: {
 					supported: true,
@@ -58,6 +59,7 @@ describe("Task runtime Profile overrides", () => {
 			modelId: "deepseek-v4-flash",
 			enabled: true,
 			modelInfo: {
+				id: "deepseek-v4-flash",
 				capabilities: {
 					supportsReasoning: true,
 					thinking: { supported: true, mode: "effort", effortLevels: ["high", "max"] },

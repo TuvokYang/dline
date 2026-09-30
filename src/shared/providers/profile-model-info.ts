@@ -146,7 +146,7 @@ export function resolveProfileModelId(
 	profile: ApiProfile,
 	providerModels?: Pick<ProviderModelsConfig, "defaultModelId">,
 ): string {
-	return profile.modelId || providerModels?.defaultModelId || profile.modelInfo?.id || ""
+	return profile.modelId || profile.modelInfo?.id || providerModels?.defaultModelId || ""
 }
 
 /**
@@ -173,7 +173,8 @@ export function resolveProfileModelInfo(
 			? profile.bedrock.awsBedrockCustomModelBaseId
 			: undefined
 	const configuredBase = configuredBaseId ? providerModels?.models?.[configuredBaseId] : undefined
-	const baseModel = registryModel ?? configuredBase ?? profile.modelInfo ?? (profile.modelId ? undefined : defaultModel)
+	const matchingModel = profile.modelInfo?.id === modelId ? profile.modelInfo : undefined
+	const baseModel = registryModel ?? configuredBase ?? matchingModel ?? (profile.modelId ? undefined : defaultModel)
 
 	const modelInfo = buildEffectiveModelInfo(modelId || baseModel?.id, baseModel, {
 		...resolveProfileOverrides(profile),

@@ -1,7 +1,6 @@
-import { CLAUDE_SONNET_1M_SUFFIX } from "@shared/api"
 import { BedrockProviderConfig } from "@shared/proto/dline/provider/bedrock"
 import BedrockData from "@shared/providers/bedrock.json"
-import { isClaudeOpusAdaptiveThinkingModel, resolveClaudeOpusAdaptiveThinking } from "@shared/utils/reasoning-support"
+import { resolveProfileModelInfo } from "@shared/providers/profile-model-info"
 import {
 	VSCodeCheckbox,
 	VSCodeDropdown,
@@ -18,23 +17,9 @@ import { useExtensionState } from "@/context/ExtensionStateContext"
 import { DebouncedTextField } from "../common/DebouncedTextField"
 import { ModelInfoView } from "../common/ModelInfoView"
 import { DropdownContainer } from "../common/ModelSelector"
-import ReasoningEffortSelector from "../ReasoningEffortSelector"
-import ThinkingBudgetSlider from "../ThinkingBudgetSlider"
+import ThinkingControl from "../ThinkingControl"
 import type { ApiProfile } from "./ProviderProfile"
 import { useProviderModels } from "./useProviderModels"
-
-export const SUPPORTED_BEDROCK_THINKING_MODELS = [
-	"anthropic.claude-sonnet-4-6",
-	`anthropic.claude-sonnet-4-6${CLAUDE_SONNET_1M_SUFFIX}`,
-	"anthropic.claude-3-7-sonnet-20250219-v1:0",
-	"anthropic.claude-sonnet-4-20250514-v1:0",
-	"anthropic.claude-sonnet-4-5-20250929-v1:0",
-	`anthropic.claude-sonnet-4-20250514-v1:0${CLAUDE_SONNET_1M_SUFFIX}`,
-	`anthropic.claude-sonnet-4-5-20250929-v1:0${CLAUDE_SONNET_1M_SUFFIX}`,
-	"anthropic.claude-opus-4-1-20250805-v1:0",
-	"anthropic.claude-opus-4-20250514-v1:0",
-	"anthropic.claude-haiku-4-5-20251001-v1:0",
-]
 
 const AWS_REGIONS = BedrockData.regions
 const DROPDOWN_Z_INDEX = 1000
@@ -65,22 +50,14 @@ export const BedrockProvider = ({ showModelOptions, isPopup, profile, onUpdate }
 	const awsBedrockUsePromptCache = Boolean(pc.awsBedrockUsePromptCache)
 	const awsBedrockCustomSelected = Boolean(pc.awsBedrockCustomSelected)
 	const awsBedrockCustomModelBaseId = pc.awsBedrockCustomModelBaseId
-	const reasoningEffort = pc.reasoning?.effort
-	const thinkingBudgetTokens = pc.reasoning?.thinkingBudget
-
-	const {
-		models: bedrockModels,
-		defaultModelId: bedrockDefaultModelId,
-		modelInfoSaneDefaults: bedrockModelInfoSaneDefaults,
-	} = useProviderModels("bedrock")
-	const modelId = profile.modelId || bedrockDefaultModelId
-	const modelInfoAny = profile.modelInfo ?? bedrockModels[profile.modelId] ?? bedrockModelInfoSaneDefaults
+	const { models: bedrockModels, defaultModelId: bedrockDefaultModelId } = useProviderModels("bedrock")
+	const modelInfoAny = resolveProfileModelInfo(profile, { models: bedrockModels, defaultModelId: bedrockDefaultModelId })
+	const modelId = modelInfoAny.id
 	const modelInfo = modelInfoAny as any
-
-	const isAdaptiveThinkingModel =
-		isClaudeOpusAdaptiveThinkingModel(modelId) || isClaudeOpusAdaptiveThinkingModel(awsBedrockCustomModelBaseId)
-	const adaptiveThinkingDefaultEffort =
-		resolveClaudeOpusAdaptiveThinking(reasoningEffort, thinkingBudgetTokens).effort ?? "none"
+	const thinking = modelInfoAny.capabilities?.thinking
+	const thinkingSupported = thinking?.supported === true && modelInfoAny.capabilities?.supportsReasoning !== false
+	const effortSupported = thinkingSupported && thinking?.mode === "effort"
+	const budgetSupported = thinkingSupported && thinking?.mode === "budget"
 	const [awsEndpointSelected, setAwsEndpointSelected] = useState(!!awsBedrockEndpoint)
 
 	const persistConfig = (key: string, value: string) => {
@@ -466,7 +443,7 @@ export const BedrockProvider = ({ showModelOptions, isPopup, profile, onUpdate }
 								className="w-full mt-0.5"
 								id="bedrock-model-input"
 								initialValue={modelId}
-								onChange={(value) => onUpdate({ modelId: value })}
+								onChange={(value) => onUpdate({ modelId: value, modelInfo: undefined })}
 								placeholder="Enter custom model ID...">
 								<span className="font-medium">Model ID</span>
 							</DebouncedTextField>
@@ -478,7 +455,10 @@ export const BedrockProvider = ({ showModelOptions, isPopup, profile, onUpdate }
 									className="w-full"
 									id="bedrock-base-model-dropdown"
 									onChange={(e: any) =>
-										onUpdate({ bedrock: { ...pc, awsBedrockCustomModelBaseId: e.target.value } })
+										onUpdate({
+											modelInfo: undefined,
+											bedrock: { ...pc, awsBedrockCustomModelBaseId: e.target.value },
+										})
 									}
 									value={awsBedrockCustomModelBaseId || bedrockDefaultModelId}>
 									<VSCodeOption value="">Select a model...</VSCodeOption>
@@ -495,38 +475,22 @@ export const BedrockProvider = ({ showModelOptions, isPopup, profile, onUpdate }
 						</div>
 					)}
 
-					{isAdaptiveThinkingModel ? (
-						<ReasoningEffortSelector
-							allowedEfforts={["none", "low", "medium", "high", "xhigh"] as const}
-							defaultEffort={adaptiveThinkingDefaultEffort}
-							description="Use None to disable adaptive thinking. Higher effort increases response detail and token usage."
-							label="Adaptive Thinking"
-							onReasoningEffortChange={(v) =>
-								onUpdate({
-									bedrock: {
-										...pc,
-										reasoning: { effort: v, thinkingBudget: pc.reasoning?.thinkingBudget ?? 0 },
-									},
-								})
-							}
-							reasoningEffort={reasoningEffort}
+					{(effortSupported || budgetSupported) && (
+						<ThinkingControl
+							defaultEffort={thinking?.defaultEffort}
+							defaultEnabled={thinking?.defaultEnabled}
+							disableSupported={thinking?.canDisable !== false}
+							effortOptions={thinking?.effortLevels ?? []}
+							maxBudget={thinking?.maxBudget}
+							minBudget={1024}
+							mode={effortSupported ? "effort-only" : "budget-only"}
+							onReasoningConfigUpdate={(reasoning) => onUpdate({ bedrock: { ...pc, reasoning } })}
+							reasoningConfig={pc.reasoning}
+							showModeSelector={false}
 						/>
-					) : SUPPORTED_BEDROCK_THINKING_MODELS.includes(modelId) ||
-						(awsBedrockCustomSelected &&
-							awsBedrockCustomModelBaseId &&
-							SUPPORTED_BEDROCK_THINKING_MODELS.includes(awsBedrockCustomModelBaseId)) ? (
-						<ThinkingBudgetSlider
-							maxBudget={modelInfo.capabilities?.thinking?.maxBudget}
-							onThinkingBudgetTokensChange={(v) =>
-								onUpdate({
-									bedrock: { ...pc, reasoning: { effort: pc.reasoning?.effort ?? "", thinkingBudget: v } },
-								})
-							}
-							thinkingBudgetTokens={thinkingBudgetTokens}
-						/>
-					) : null}
+					)}
 
-					<ModelInfoView isPopup={isPopup} modelInfo={modelInfo} selectedModelId={modelId} />
+					<ModelInfoView isPopup={isPopup} modelInfo={modelInfoAny} selectedModelId={modelId} />
 				</>
 			)}
 		</div>
