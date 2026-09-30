@@ -3,9 +3,123 @@ import { ApiProfile } from "@shared/proto/dline/profile"
 import type { ReasoningConfig } from "@shared/proto/dline/provider/common"
 import { describe, expect, it, vi } from "vitest"
 import { AwsBedrockHandler } from "../bedrock"
+import { LiteLlmHandler } from "../litellm"
 import { MinimaxHandler } from "../minimax"
 import { MistralHandler } from "../mistral"
+import { RequestyHandler } from "../requesty"
 import { VertexHandler } from "../vertex"
+
+describe.each(["requesty", "litellm"] as const)("%s upstream reasoning conversion", (provider) => {
+	it.each([
+		{
+			name: "missing mode",
+			capabilities: { supportsReasoning: true },
+			upstream: "anthropic/claude-opus-5-5",
+			thinking: undefined,
+		},
+		{
+			name: "explicit false",
+			capabilities: { thinking: { supported: false, mode: "effort" } },
+			upstream: "anthropic/claude-opus-5-5",
+			thinking: undefined,
+		},
+		{
+			name: "declared budget",
+			capabilities: { thinking: { supported: true, mode: "budget", maxBudget: 1200 } },
+			upstream: "anthropic/claude-opus-5-5",
+			thinking: { type: "enabled", budget_tokens: 1200 },
+		},
+		{
+			name: "opaque non-Anthropic upstream",
+			capabilities: { thinking: { supported: true, mode: "budget" } },
+			upstream: "openai/private",
+			thinking: undefined,
+		},
+	])("encodes $name without capability inference from public aliases", async ({ capabilities, upstream, thinking }) => {
+		const modelId = provider === "requesty" ? upstream : "claude-opus-5-5-misleading-alias"
+		const profile = ApiProfile.create({
+			provider,
+			modelId,
+			modelInfo: { id: modelId, name: "Effective alias", capabilities },
+			requesty: provider === "requesty" ? { reasoning: { thinkingBudget: 1600 } } : undefined,
+			litellm: provider === "litellm" ? { reasoning: { thinkingBudget: 1600 } } : undefined,
+		})
+		const handler =
+			provider === "requesty" ? new RequestyHandler({ profile, mode: "act" }) : new LiteLlmHandler({ profile, mode: "act" })
+		const create = vi.fn().mockResolvedValue((async function* () {})())
+		;(handler as unknown as { client: unknown }).client = { chat: { completions: { create } } }
+		if (provider === "litellm") {
+			;(handler as unknown as { fetchModelsInfo: () => Promise<unknown> }).fetchModelsInfo = async () => ({
+				data: [{ model_name: modelId, litellm_params: { model: upstream }, model_info: {} }],
+			})
+		}
+		for await (const _chunk of handler.createMessage("system", [{ role: "user", content: "hi" }])) {
+		}
+		const body = create.mock.calls[0][0]
+		expect(body.model).toBe(modelId)
+		expect(body.thinking).toEqual(thinking)
+		expect(body.output_config).toBeUndefined()
+	})
+	it.each([
+		{
+			name: "declared default",
+			thinking: { supported: true, mode: "effort", effortLevels: ["low"], defaultEnabled: true, defaultEffort: "low" },
+			reasoning: {},
+			effort: "low",
+		},
+		{
+			name: "missing support",
+			thinking: { mode: "effort", effortLevels: ["high"] },
+			reasoning: { effort: "high" },
+			effort: undefined,
+		},
+		{
+			name: "unknown default",
+			thinking: { supported: true, mode: "effort", effortLevels: ["none", "medium"] },
+			reasoning: {},
+			effort: undefined,
+		},
+		{
+			name: "invalid effort",
+			thinking: { supported: true, mode: "effort", effortLevels: ["low"] },
+			reasoning: { effort: "high" },
+			effort: undefined,
+		},
+		{
+			name: "required stale disable",
+			thinking: { supported: true, mode: "effort", canDisable: false, effortLevels: ["low"] },
+			reasoning: { effort: "none" },
+			effort: undefined,
+		},
+		{
+			name: "legacy max alias",
+			thinking: { supported: true, mode: "effort", effortLevels: ["xhigh"] },
+			reasoning: { effort: "max" },
+			effort: "xhigh",
+		},
+	])("encodes OpenAI $name only from legal declarations", async ({ thinking, reasoning, effort }) => {
+		const modelId = "openai/o-misleading-alias"
+		const profile = ApiProfile.create({
+			provider,
+			modelId,
+			modelInfo: { id: modelId, capabilities: { thinking } },
+			requesty: provider === "requesty" ? { reasoning } : undefined,
+			litellm: provider === "litellm" ? { reasoning } : undefined,
+		})
+		const handler =
+			provider === "requesty" ? new RequestyHandler({ profile, mode: "act" }) : new LiteLlmHandler({ profile, mode: "act" })
+		const create = vi.fn().mockResolvedValue((async function* () {})())
+		;(handler as unknown as { client: unknown }).client = { chat: { completions: { create } } }
+		if (provider === "litellm") {
+			;(handler as unknown as { fetchModelsInfo: () => Promise<unknown> }).fetchModelsInfo = async () => ({ data: [] })
+		}
+		for await (const _chunk of handler.createMessage("system", [{ role: "user", content: "hi" }])) {
+		}
+		const body = create.mock.calls[0][0]
+		expect(body.reasoning_effort).toBe(effort)
+		expect(body.thinking).toBeUndefined()
+	})
+})
 
 describe.each(["vertex", "bedrock"] as const)("%s declared Messages API thinking", (provider) => {
 	const cases: {

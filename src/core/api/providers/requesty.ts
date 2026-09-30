@@ -1,5 +1,4 @@
 import { ModelInfo, requestyDefaultModelId, requestyDefaultModelInfo } from "@shared/api"
-import { isClaudeOpusAdaptiveThinkingModel, resolveClaudeOpusAdaptiveThinking } from "@shared/utils/reasoning-support"
 import { calculateApiCostOpenAI } from "@utils/cost"
 import OpenAI from "openai"
 import { toRequestyServiceStringUrl } from "@/shared/clients/requesty"
@@ -10,6 +9,8 @@ import { withRetry } from "../retry"
 import { convertToOpenAiMessages } from "../transform/openai-format"
 import { ApiStream } from "../transform/stream"
 import { splitInclusiveInputUsage } from "../transform/usage-normalization"
+import { resolveAnthropicReasoning } from "./anthropic/reasoning"
+import { resolveOpenAIReasoningEffort } from "./openai/reasoning"
 
 // Requesty usage includes an extra field for Anthropic use cases.
 // Safely cast the prompt token details section to the appropriate structure.
@@ -40,12 +41,6 @@ export class RequestyHandler implements ApiHandler {
 	}
 	private get baseUrl() {
 		return this.ctx.profile.baseUrl
-	}
-	private get reasoningEffort() {
-		return this.config?.reasoning?.effort
-	}
-	private get thinkingBudgetTokens() {
-		return this.config?.reasoning?.thinkingBudget ?? 0
 	}
 
 	private ensureClient(): OpenAI {
@@ -79,41 +74,23 @@ export class RequestyHandler implements ApiHandler {
 			...convertToOpenAiMessages(messages),
 		]
 
-		const reasoningEffort = this.reasoningEffort || "medium"
-		const reasoning = { reasoning_effort: reasoningEffort }
-		const reasoningArgs = model.id.startsWith("openai/o") ? reasoning : {}
-
-		const thinkingBudget = this.thinkingBudgetTokens
-		const isAdaptiveThinkingModel = isClaudeOpusAdaptiveThinkingModel(model.id)
-		const adaptiveThinking = isAdaptiveThinkingModel
-			? resolveClaudeOpusAdaptiveThinking(this.reasoningEffort, thinkingBudget)
+		// The route selects the wire format, never the capability or thinking mode.
+		const anthropicRoute = model.id.startsWith("anthropic/")
+		const anthropicReasoning = anthropicRoute
+			? resolveAnthropicReasoning(model.info.capabilities, this.config?.reasoning)
 			: undefined
-		const thinking =
-			thinkingBudget > 0
-				? { thinking: { type: "enabled", budget_tokens: thinkingBudget } }
-				: { thinking: { type: "disabled" } }
-		const supportsLegacyClaudeThinking =
-			!isAdaptiveThinkingModel &&
-			(model.id.includes("claude-3-7-sonnet") ||
-				model.id.includes("claude-4.6-sonnet") ||
-				model.id.includes("claude-sonnet-4") ||
-				model.id.includes("claude-opus-4"))
-		const thinkingArgs = isAdaptiveThinkingModel
-			? adaptiveThinking?.enabled
-				? {
-						thinking: { type: "adaptive" },
-						...(adaptiveThinking.effort ? { output_config: { effort: adaptiveThinking.effort } } : {}),
-					}
-				: {}
-			: supportsLegacyClaudeThinking
-				? thinking
-				: {}
+		const effort = anthropicRoute ? undefined : resolveOpenAIReasoningEffort(model.info.capabilities, this.config?.reasoning)
+		const reasoningArgs = effort ? { reasoning_effort: effort } : {}
+		const thinkingArgs = {
+			...(anthropicReasoning?.thinking ? { thinking: anthropicReasoning.thinking } : {}),
+			...(anthropicReasoning?.outputConfig ? { output_config: anthropicReasoning.outputConfig } : {}),
+		}
 
 		const stream = await client.chat.completions.create({
 			model: model.id,
 			max_tokens: model.info.capabilities?.maxTokens || undefined,
 			messages: openAiMessages,
-			...(isAdaptiveThinkingModel ? {} : { temperature: 0 }),
+			...(anthropicReasoning?.adaptive || anthropicReasoning?.enabled ? {} : { temperature: 0 }),
 			stream: true,
 			stream_options: { include_usage: true },
 			...reasoningArgs,
@@ -170,7 +147,7 @@ export class RequestyHandler implements ApiHandler {
 	}
 
 	getModel(): { id: string; info: ModelInfo } {
-		const modelId = this.modelId
+		const modelId = this.modelId || this.modelInfo?.id
 		const modelInfo = this.modelInfo
 		if (modelId && modelInfo) {
 			return { id: modelId, info: modelInfo }

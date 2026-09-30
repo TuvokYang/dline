@@ -1,17 +1,17 @@
 import { Anthropic } from "@anthropic-ai/sdk"
 import { LiteLLMModelInfo, liteLlmDefaultModelId, liteLlmModelInfoSaneDefaults, ModelInfo } from "@shared/api"
-import { isClaudeOpusAdaptiveThinkingModel, resolveClaudeOpusAdaptiveThinking } from "@shared/utils/reasoning-support"
 import OpenAI from "openai"
 import { findCatalogModel } from "@/core/model-registry/provider-model-lookup"
 import { buildExternalBasicHeaders } from "@/services/EnvUtils"
 import { ClineStorageMessage } from "@/shared/messages/content"
 import { createOpenAIClient, fetch } from "@/shared/net"
 import { Logger } from "@/shared/services/Logger"
-import { isAnthropicModelId } from "@/utils/model-utils"
 import { ApiHandler, ApiHandlerContext } from ".."
 import { withRetry } from "../retry"
 import { convertToOpenAiMessages } from "../transform/openai-format"
 import { ApiStream } from "../transform/stream"
+import { resolveAnthropicReasoning } from "./anthropic/reasoning"
+import { resolveOpenAIReasoningEffort } from "./openai/reasoning"
 
 /**
  * Extended chat completion parameters that include LiteLLM-specific options
@@ -111,12 +111,6 @@ export class LiteLlmHandler implements ApiHandler {
 	}
 	private get baseUrl() {
 		return this.ctx.profile.baseUrl
-	}
-	private get reasoningEffort() {
-		return this.config?.reasoning?.effort
-	}
-	private get thinkingBudgetTokens() {
-		return this.config?.reasoning?.thinkingBudget ?? 0
 	}
 
 	private ensureClient(): OpenAI {
@@ -227,34 +221,21 @@ export class LiteLlmHandler implements ApiHandler {
 			role: "system",
 			content: systemPrompt,
 		}
-		const modelId = this.modelId || liteLlmDefaultModelId
+		const model = this.getModel()
+		const modelId = model.id
 		const isOminiModel = modelId.includes("o1-mini") || modelId.includes("o3-mini") || modelId.includes("o4-mini")
 		const isCodexModel = modelId.toLowerCase().includes("codex")
-
-		// Configuration for extended thinking
-		const budgetTokens = this.thinkingBudgetTokens
-		const reasoningOn = budgetTokens !== 0
-		const isAdaptiveThinkingModel = isClaudeOpusAdaptiveThinkingModel(modelId)
-		const adaptiveThinking = isAdaptiveThinkingModel
-			? resolveClaudeOpusAdaptiveThinking(this.reasoningEffort, budgetTokens)
-			: undefined
-		const thinkingConfig = isAdaptiveThinkingModel
-			? adaptiveThinking?.enabled
-				? ({ type: "adaptive" } as any)
-				: undefined
-			: reasoningOn
-				? { type: "enabled", budget_tokens: budgetTokens }
-				: undefined
-
-		let temperature: number | undefined = (this.modelInfo as LiteLLMModelInfo | undefined)?.temperature ?? 1
-
-		if (isAdaptiveThinkingModel) {
-			temperature = undefined
-		} else if ((isOminiModel || isAnthropicModelId(modelId)) && reasoningOn) {
-			temperature = undefined // OAI omni and Anthropic extended thinking mode doesn't support temperature
-		}
-
 		const fetchedModelInfo = await this.fetchLiteLlmModelInfo(modelId)
+		// Public deployment aliases do not identify the upstream protocol. Use the
+		// explicit LiteLLM mapping only; the final ModelInfo still owns capabilities.
+		const upstream = fetchedModelInfo?.litellm_params.model
+		const anthropicRoute = upstream?.startsWith("anthropic/") === true || upstream?.startsWith("claude-") === true
+		const reasoning = anthropicRoute ? resolveAnthropicReasoning(model.info.capabilities, this.config?.reasoning) : undefined
+		const effort = anthropicRoute ? undefined : resolveOpenAIReasoningEffort(model.info.capabilities, this.config?.reasoning)
+		let temperature: number | undefined = (model.info as LiteLLMModelInfo)?.temperature ?? 1
+		if (reasoning?.adaptive || reasoning?.enabled || (isOminiModel && effort && effort !== "none")) {
+			temperature = undefined
+		}
 		// Automatically enable caching if the model supports it
 		const cacheControl =
 			(fetchedModelInfo?.model_info.supports_prompt_caching ?? false) ? { cache_control: { type: "ephemeral" } } : undefined
@@ -328,10 +309,9 @@ export class LiteLlmHandler implements ApiHandler {
 			stream: true,
 			drop_params: true,
 			...(!isCodexModel && { stream_options: { include_usage: true } }), // Codex models are only on the responses api, which doesn't take the stream_options parameter. we will need to migrate to the responses api for this to work
-			...(thinkingConfig && { thinking: thinkingConfig }), // Add thinking configuration when applicable
-			...(isAdaptiveThinkingModel && adaptiveThinking?.effort
-				? { output_config: { effort: adaptiveThinking.effort } }
-				: {}),
+			...(reasoning?.thinking ? { thinking: reasoning.thinking } : {}),
+			...(reasoning?.outputConfig ? { output_config: reasoning.outputConfig } : {}),
+			...(effort ? { reasoning_effort: effort } : {}),
 			...(this.ctx.ulid && { litellm_session_id: `cline-${this.ctx.ulid}` }), // Add session ID for LiteLLM tracking
 		} as LiteLlmChatCompletionCreateParams)
 
@@ -399,11 +379,8 @@ export class LiteLlmHandler implements ApiHandler {
 	getModel() {
 		const modelId = this.modelId || liteLlmDefaultModelId
 
-		// The discovered catalog describes the actual deployment, so it wins.
-		const catalogModelInfo = findCatalogModel(LITELLM_PROVIDER_ID, modelId)
-
-		// Fall back to provided model info or defaults if the catalog has no entry.
-		const modelInfo = catalogModelInfo || this.modelInfo || liteLlmModelInfoSaneDefaults
+		// The runtime profile already contains reconciled metadata and overrides.
+		const modelInfo = this.modelInfo || findCatalogModel(LITELLM_PROVIDER_ID, modelId) || liteLlmModelInfoSaneDefaults
 
 		return {
 			id: modelId,

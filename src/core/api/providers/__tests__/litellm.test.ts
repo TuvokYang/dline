@@ -306,7 +306,7 @@ describe("LiteLlmHandler", () => {
 			expect(model.info?.capabilities?.contextWindow).to.equal(1_000_000)
 		})
 
-		it("prefers the discovered catalog model info over user-configured liteLlmModelInfo", () => {
+		it("preserves final runtime metadata instead of rereading and replacing it from the catalog", () => {
 			const catalogInfo = {
 				id: "claude-sonnet-4-6",
 				capabilities: { contextWindow: 200_000, maxTokens: 4096, supportsImages: true, supportsPromptCache: true },
@@ -333,7 +333,8 @@ describe("LiteLlmHandler", () => {
 				mode: "act",
 			})
 			const model = h.getModel()
-			expect(model.info?.capabilities?.contextWindow).to.equal(200_000)
+			expect(model.info?.capabilities?.contextWindow).to.equal(1_000_000)
+			expect(model.info).not.to.equal(catalogInfo)
 		})
 	})
 })
