@@ -1,5 +1,5 @@
 import { ClaudeCodeProviderConfig } from "@shared/proto/dline/provider/claude_code"
-import { canDisableClaudeAdaptiveThinking, isClaudeAdaptiveThinkingEnabledByDefault } from "@shared/utils/reasoning-support"
+import { buildEffectiveModelInfo } from "@shared/providers/effective-model-info"
 import { ModelInfoView } from "../common/ModelInfoView"
 import { ModelSelector } from "../common/ModelSelector"
 import ThinkingControl from "../ThinkingControl"
@@ -22,16 +22,12 @@ interface ClaudeCodeProviderProps {
  * than an API key or a local CLI path.
  */
 export const ClaudeCodeProvider = ({ showModelOptions, isPopup, profile, onUpdate }: ClaudeCodeProviderProps) => {
-	const {
-		models: claudeCodeModels,
-		defaultModelId: claudeCodeDefaultModelId,
-		modelInfoSaneDefaults: claudeCodeModelInfoSaneDefaults,
-	} = useProviderModels("claude-code")
+	const { models: claudeCodeModels, defaultModelId: claudeCodeDefaultModelId } = useProviderModels("claude-code")
 
 	const pc = profile.claudeCode ?? ClaudeCodeProviderConfig.create()
 	const modelId = profile.modelId || claudeCodeDefaultModelId
-	const modelInfo =
-		profile.modelInfo ?? (profile.modelId ? claudeCodeModels[profile.modelId] : undefined) ?? claudeCodeModelInfoSaneDefaults
+	const baseModel = profile.modelInfo?.id === modelId ? profile.modelInfo : claudeCodeModels[modelId]
+	const modelInfo = buildEffectiveModelInfo(modelId, baseModel, { capabilities: pc.capabilities })
 
 	// The request shape follows the model's declared thinking mode: an adaptive
 	// model takes an effort level and rejects a token budget, and the reverse
@@ -39,8 +35,10 @@ export const ClaudeCodeProvider = ({ showModelOptions, isPopup, profile, onUpdat
 	// a control whose value the request would have to discard.
 	const thinking = modelInfo?.capabilities?.thinking
 	const effortOptions = thinking?.effortLevels ?? []
-	const adaptiveThinkingSupported = thinking?.supported === true && thinking.mode === "effort" && effortOptions.length > 0
-	const budgetThinkingSupported = thinking?.mode === "budget" && thinking.maxBudget !== undefined
+	const thinkingSupported = thinking?.supported === true && modelInfo.capabilities?.supportsReasoning !== false
+	const adaptiveThinkingSupported = thinkingSupported && thinking?.mode === "effort"
+	const budgetThinkingSupported = thinkingSupported && thinking?.mode === "budget"
+	const thinkingDisableSupported = thinking?.canDisable !== false
 
 	return (
 		<div>
@@ -63,14 +61,14 @@ export const ClaudeCodeProvider = ({ showModelOptions, isPopup, profile, onUpdat
 					    block itself rather than to one of the two modes. */}
 					{(adaptiveThinkingSupported || budgetThinkingSupported) && (
 						<ThinkingControl
-							defaultEffort={adaptiveThinkingSupported ? "high" : undefined}
-							defaultEnabled={adaptiveThinkingSupported && isClaudeAdaptiveThinkingEnabledByDefault(modelId)}
-							disableSupported={canDisableClaudeAdaptiveThinking(modelId)}
+							defaultEffort={thinking?.defaultEffort}
+							defaultEnabled={thinking?.defaultEnabled}
+							disableSupported={thinkingDisableSupported}
 							displayDescription={ANTHROPIC_THINKING_DISPLAY_DESCRIPTION}
 							displayLabel="Thinking Display"
 							displayOptions={ANTHROPIC_THINKING_DISPLAY_SELECTOR_OPTIONS}
 							effortDescription={
-								canDisableClaudeAdaptiveThinking(modelId)
+								thinkingDisableSupported
 									? "Use None to disable adaptive thinking. Higher effort increases response detail and token usage."
 									: "Adaptive thinking is always enabled for this model. Higher effort increases response detail and token usage."
 							}

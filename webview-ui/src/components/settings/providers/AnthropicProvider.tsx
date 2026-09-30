@@ -8,11 +8,6 @@ import {
 	selectContextTier,
 	updateSelectedContextWindow,
 } from "@shared/providers/effective-model-info"
-import {
-	ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS,
-	canDisableClaudeAdaptiveThinking,
-	isClaudeAdaptiveThinkingEnabledByDefault,
-} from "@shared/utils/reasoning-support"
 import { VSCodeCheckbox } from "@vscode/webview-ui-toolkit/react"
 import { useId } from "react"
 import styled from "styled-components"
@@ -57,7 +52,6 @@ export const AnthropicProvider = ({ showModelOptions, isPopup, profile, onUpdate
 	const {
 		models: anthropicModels,
 		defaultModelId: anthropicDefaultModelId,
-		modelInfoSaneDefaults: anthropicModelInfoSaneDefaults,
 		options: anthropicModelOptions,
 		optionOrigins,
 		refreshRemoteModels,
@@ -76,7 +70,7 @@ export const AnthropicProvider = ({ showModelOptions, isPopup, profile, onUpdate
 	// resulting custom-model metadata would then mask the catalog's own
 	// capabilities, including its hosted server tools.
 	const customModelEnabled = pc.customModelEnabled === true
-	const registryModel = anthropicModels[modelId] ?? anthropicModelInfoSaneDefaults
+	const registryModel = anthropicModels[modelId] ?? (profile.modelInfo?.id === modelId ? profile.modelInfo : { id: modelId })
 	const contextWindowTiersEnabled = customModelEnabled || Boolean(registryModel.capabilities?.contextWindowTiers?.length)
 	// The 1M long-context option is enabled by default; only an explicit false disables it.
 	const enableLongContext = pc.enableLongContext !== false
@@ -91,18 +85,16 @@ export const AnthropicProvider = ({ showModelOptions, isPopup, profile, onUpdate
 	const selectedContextTier = selectContextTier(modelInfo.capabilities, enableLongContext)
 	const contextWindowValue = selectedContextTier?.contextWindow ?? modelInfo.capabilities?.contextWindow
 
-	const adaptiveEffortOptions = modelInfo.capabilities?.thinking?.effortLevels ?? []
-	const isAdaptiveThinkingModel =
-		modelInfo.capabilities?.thinking?.supported === true &&
-		modelInfo.capabilities.thinking.mode === "effort" &&
-		adaptiveEffortOptions.length > 0
-	const adaptiveThinkingDefaultEnabled = !customModelEnabled && isClaudeAdaptiveThinkingEnabledByDefault(modelId)
-	const adaptiveThinkingDisableSupported = customModelEnabled || canDisableClaudeAdaptiveThinking(modelId)
+	const thinking = modelInfo.capabilities?.thinking
+	const thinkingSupported = thinking?.supported === true && modelInfo.capabilities?.supportsReasoning !== false
+	const isAdaptiveThinkingModel = thinkingSupported && thinking?.mode === "effort"
+	const budgetThinkingSupported = thinkingSupported && thinking?.mode === "budget"
+	const thinkingDisableSupported = thinking?.canDisable !== false
 
 	// --- Handlers ---
 	/** Commits a model id from the merged picker without touching the custom-model switch. */
 	const handleModelChange = (newModelId: string) => {
-		onUpdate({ modelId: newModelId })
+		onUpdate({ modelId: newModelId, modelInfo: anthropicModels[newModelId] })
 	}
 
 	/**
@@ -191,7 +183,7 @@ export const AnthropicProvider = ({ showModelOptions, isPopup, profile, onUpdate
 								className="w-full"
 								id={customModelFieldId}
 								initialValue={profile.modelId ?? ""}
-								onChange={(value) => onUpdate({ modelId: value })}
+								onChange={handleModelChange}
 								placeholder="Enter Model ID..."
 							/>
 						</ProfileField>
@@ -222,38 +214,29 @@ export const AnthropicProvider = ({ showModelOptions, isPopup, profile, onUpdate
 						</StyledCheckbox>
 					) : null}
 
-					{isAdaptiveThinkingModel && (
+					{(isAdaptiveThinkingModel || budgetThinkingSupported) && (
 						<ThinkingControl
-							defaultEffort={adaptiveThinkingDefaultEnabled ? "high" : undefined}
-							defaultEnabled={adaptiveThinkingDefaultEnabled}
-							disableSupported={adaptiveThinkingDisableSupported}
+							defaultEffort={thinking?.defaultEffort}
+							defaultEnabled={thinking?.defaultEnabled}
+							disableSupported={thinkingDisableSupported}
 							displayDescription={ANTHROPIC_THINKING_DISPLAY_DESCRIPTION}
 							displayLabel="Thinking Display"
 							displayOptions={ANTHROPIC_THINKING_DISPLAY_SELECTOR_OPTIONS}
 							effortDescription={
-								adaptiveThinkingDisableSupported
+								thinkingDisableSupported
 									? "Use None to disable adaptive thinking. Higher effort increases response detail and token usage."
 									: "Adaptive thinking is always enabled for this model. Higher effort increases response detail and token usage."
 							}
 							effortLabel="Adaptive Thinking"
-							effortOptions={
-								adaptiveEffortOptions.length > 0
-									? adaptiveEffortOptions
-									: ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS
-							}
-							maxBudget={modelInfo.capabilities?.thinking?.maxBudget}
+							effortOptions={thinking?.effortLevels ?? []}
+							maxBudget={thinking?.maxBudget}
 							minBudget={1024}
-							mode={customModelEnabled ? "both" : "effort-only"}
-							modeSelectorLabel="Thinking Mode"
-							modeSelectorOptions={[
-								{ value: "effort", label: "Effort" },
-								{ value: "budget", label: "Budget" },
-							]}
+							mode={isAdaptiveThinkingModel ? "effort-only" : "budget-only"}
 							onReasoningConfigUpdate={(reasoning) => {
 								onUpdate({ anthropic: { ...pc, reasoning } })
 							}}
 							reasoningConfig={pc.reasoning}
-							showModeSelector={customModelEnabled}
+							showModeSelector={false}
 						/>
 					)}
 

@@ -47,6 +47,9 @@ const adaptiveModel: ModelInfo = {
 			supported: true,
 			mode: "effort",
 			effortLevels: ["none", "low", "medium", "high", "max"],
+			defaultEnabled: false,
+			canDisable: true,
+			defaultEffort: "high",
 		},
 	} as ModelCapabilities,
 }
@@ -61,6 +64,9 @@ const defaultAdaptiveModel: ModelInfo = {
 			supported: true,
 			mode: "effort",
 			effortLevels: ["none", "low", "medium", "high", "xhigh", "max"],
+			defaultEnabled: true,
+			canDisable: true,
+			defaultEffort: "high",
 		},
 	} as ModelCapabilities,
 }
@@ -75,6 +81,9 @@ const requiredAdaptiveModel: ModelInfo = {
 			supported: true,
 			mode: "effort",
 			effortLevels: ["low", "medium", "high", "xhigh", "max"],
+			defaultEnabled: true,
+			canDisable: false,
+			defaultEffort: "high",
 		},
 	} as ModelCapabilities,
 }
@@ -178,7 +187,15 @@ vi.mock("../common/DebouncedTextField", () => ({
 	),
 }))
 vi.mock("../common/ModelAutocomplete", () => ({
-	ModelAutocomplete: ({ models, onChange, selectedModelId }: any) => (
+	ModelAutocomplete: ({
+		models,
+		onChange,
+		selectedModelId,
+	}: {
+		models: Record<string, ModelInfo>
+		onChange: (id: string, modelInfo?: ModelInfo) => void
+		selectedModelId?: string
+	}) => (
 		<input
 			aria-label="Model"
 			onChange={(event) => onChange(event.target.value, models[event.target.value])}
@@ -195,17 +212,20 @@ vi.mock("../ThinkingControl", () => ({
 		defaultEnabled,
 		disableSupported,
 		effortOptions,
+		mode,
 	}: {
 		defaultEffort?: string
 		defaultEnabled?: boolean
 		disableSupported?: boolean
 		effortOptions?: readonly string[]
+		mode: string
 	}) => (
 		<div data-testid="thinking-control">
 			<span data-testid="thinking-efforts">{effortOptions?.join(",")}</span>
 			<span data-testid="thinking-default-enabled">{String(defaultEnabled)}</span>
 			<span data-testid="thinking-default-effort">{defaultEffort}</span>
 			<span data-testid="thinking-disable-supported">{String(disableSupported)}</span>
+			<span data-testid="thinking-mode">{mode}</span>
 		</div>
 	),
 }))
@@ -227,7 +247,91 @@ vi.mock("@vscode/webview-ui-toolkit/react", () => ({
 }))
 
 describe("AnthropicProvider", () => {
-	it("marks a model outside the catalog as custom when it is committed", () => {
+	it("uses declared budget mode and defaults for an opaque custom model", () => {
+		const profile = {
+			id: "opaque-budget-profile",
+			provider: "anthropic",
+			modelId: "opaque-budget",
+			modelInfo: {
+				id: "opaque-budget",
+				capabilities: { thinking: { supported: true, mode: "budget", defaultEnabled: true, canDisable: false } },
+			},
+			anthropic: AnthropicProviderConfig.create({ customModelEnabled: true }),
+		} as ApiProfile
+		render(<AnthropicProvider onUpdate={vi.fn()} profile={profile} showModelOptions={true} />)
+		expect(screen.getByTestId("thinking-mode")).toHaveTextContent("budget-only")
+		expect(screen.getByTestId("thinking-default-enabled")).toHaveTextContent("true")
+		expect(screen.getByTestId("thinking-disable-supported")).toHaveTextContent("false")
+	})
+
+	it("does not infer thinking from an unknown model name or stored effort", () => {
+		const profile = {
+			id: "unknown-profile",
+			provider: "anthropic",
+			modelId: "claude-opus-unknown",
+			anthropic: AnthropicProviderConfig.create({ reasoning: { enableThinking: true, effort: "high" } }),
+		} as ApiProfile
+		render(<AnthropicProvider onUpdate={vi.fn()} profile={profile} showModelOptions={true} />)
+		expect(screen.queryByTestId("thinking-control")).not.toBeInTheDocument()
+		expect(screen.getByText("context:")).toBeInTheDocument()
+	})
+
+	it("merges partial thinking overrides without replacing the declared mode or levels", () => {
+		const profile = {
+			id: "override-profile",
+			provider: "anthropic",
+			modelId: defaultAdaptiveModel.id,
+			anthropic: AnthropicProviderConfig.create({
+				capabilities: { thinking: { defaultEnabled: false, defaultEffort: "low", canDisable: false } },
+			}),
+		} as ApiProfile
+		render(<AnthropicProvider onUpdate={vi.fn()} profile={profile} showModelOptions={true} />)
+		expect(screen.getByTestId("thinking-mode")).toHaveTextContent("effort-only")
+		expect(screen.getByTestId("thinking-default-effort")).toHaveTextContent("low")
+		expect(screen.getByTestId("thinking-default-enabled")).toHaveTextContent("false")
+		expect(screen.getByTestId("thinking-disable-supported")).toHaveTextContent("false")
+		expect(screen.getByTestId("thinking-efforts")).toHaveTextContent("none,low,medium,high,xhigh,max")
+	})
+
+	it("honors a coarse negative override instead of offering nested thinking controls", () => {
+		const profile = {
+			id: "negative-profile",
+			provider: "anthropic",
+			modelId: defaultAdaptiveModel.id,
+			anthropic: AnthropicProviderConfig.create({ capabilities: { supportsReasoning: false } }),
+		} as ApiProfile
+		render(<AnthropicProvider onUpdate={vi.fn()} profile={profile} showModelOptions={true} />)
+		expect(screen.queryByTestId("thinking-control")).not.toBeInTheDocument()
+	})
+
+	it("keeps a supported required model visible even when its effort declaration is empty", () => {
+		const profile = {
+			id: "empty-efforts-profile",
+			provider: "anthropic",
+			modelId: adaptiveModel.id,
+			anthropic: AnthropicProviderConfig.create({ capabilities: { thinking: { effortLevels: [], canDisable: false } } }),
+		} as ApiProfile
+		render(<AnthropicProvider onUpdate={vi.fn()} profile={profile} showModelOptions={true} />)
+		expect(screen.getByTestId("thinking-control")).toBeInTheDocument()
+		expect(screen.getByTestId("thinking-efforts")).toBeEmptyDOMElement()
+	})
+
+	it("clears stale selected metadata without changing the user's custom-model switch or overrides", () => {
+		const onUpdate = vi.fn()
+		const profile = {
+			id: "stale-selection-profile",
+			provider: "anthropic",
+			modelId: "new-opaque-id",
+			modelInfo: defaultAdaptiveModel,
+			anthropic: AnthropicProviderConfig.create({ capabilities: { maxTokens: 1234 } }),
+		} as ApiProfile
+		render(<AnthropicProvider onUpdate={onUpdate} profile={profile} showModelOptions={true} />)
+		expect(screen.queryByTestId("thinking-control")).not.toBeInTheDocument()
+		fireEvent.change(screen.getByRole("textbox", { name: "Model" }), { target: { value: "next-opaque-id" } })
+		expect(onUpdate).toHaveBeenCalledWith({ modelId: "next-opaque-id", modelInfo: undefined })
+		expect(onUpdate.mock.calls[0][0]).toHaveProperty("modelInfo", undefined)
+	})
+	it("commits a listing-only ID without changing the custom switch or inventing metadata", () => {
 		const onUpdate = vi.fn()
 		const profile = {
 			id: "profile-origin",
@@ -245,7 +349,8 @@ describe("AnthropicProvider", () => {
 
 		// The switch belongs to the user. Deriving it from catalog membership would
 		// let listing-only ids mask the catalog's own hosted capabilities.
-		expect(onUpdate).toHaveBeenCalledWith({ modelId: "claude-listing-only" })
+		expect(onUpdate).toHaveBeenCalledWith({ modelId: "claude-listing-only", modelInfo: undefined })
+		expect(onUpdate.mock.calls[0][0]).toHaveProperty("modelInfo", undefined)
 	})
 
 	it("keeps the custom-model switch on when a catalog model is committed", () => {
@@ -264,7 +369,7 @@ describe("AnthropicProvider", () => {
 		expect(screen.queryByRole("button", { name: "Open Model" })).not.toBeInTheDocument()
 		fireEvent.input(screen.getByLabelText("Model ID"), { target: { value: "claude-sonnet-4-6" } })
 
-		expect(onUpdate).toHaveBeenCalledWith({ modelId: "claude-sonnet-4-6" })
+		expect(onUpdate).toHaveBeenCalledWith({ modelId: "claude-sonnet-4-6", modelInfo: adaptiveModel })
 	})
 
 	it("uses provider capabilities for custom model updates and merged display", () => {
