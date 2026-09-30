@@ -22,6 +22,27 @@ interface ImageCatalogConfig extends ProviderModelsConfig {
 	imageModels?: Record<string, ImageModelFixture>
 }
 
+describe("thinking metadata reconciliation", () => {
+	it.each(["fill-missing", "overlay-remote"] as const)("preserves thinking subfields and explicit overrides in %s", (mode) => {
+		const declared = {
+			supported: true,
+			mode: "effort",
+			defaultEnabled: true,
+			canDisable: false,
+			defaultEffort: "declared-effort",
+			effortLevels: ["declared-effort"],
+		}
+		const updates = { supported: false, defaultEnabled: false, effortLevels: [] }
+		const base = config({ "opaque-model": { id: "opaque-model", capabilities: { thinking: declared } } })
+		const partial = config({ "opaque-model": { id: "opaque-model", capabilities: { thinking: updates } } })
+		const result =
+			mode === "fill-missing" ? reconcileProviderModels(base, partial, mode) : reconcileProviderModels(partial, base, mode)
+
+		expect(result.models["opaque-model"].capabilities?.thinking).toEqual({ ...declared, ...updates })
+		expect(base.models["opaque-model"].capabilities?.thinking?.defaultEnabled).toBe(true)
+	})
+})
+
 describe("provider image model reconciliation", () => {
 	it("refreshes built-in image models while preserving unknown user image models", () => {
 		const seed: ImageCatalogConfig = {

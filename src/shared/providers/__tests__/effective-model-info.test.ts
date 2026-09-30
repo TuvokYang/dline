@@ -5,6 +5,27 @@ import { describe, it } from "vitest"
 import { buildEffectiveModelInfo } from "../effective-model-info"
 
 describe("buildEffectiveModelInfo", () => {
+	it("merges partial thinking overrides without losing declarations or reviving false and empty values", () => {
+		const declared = {
+			supported: true,
+			mode: "effort",
+			defaultEnabled: true,
+			canDisable: false,
+			defaultEffort: "declared-effort",
+			effortLevels: ["declared-effort"],
+		}
+		const updates = { supported: false, defaultEnabled: false, effortLevels: [] }
+		const result = buildEffectiveModelInfo(
+			"opaque-model",
+			{ id: "opaque-model", capabilities: { thinking: declared } },
+			{ capabilities: { thinking: updates } },
+		)
+
+		should(result.capabilities?.thinking).deepEqual({ ...declared, ...updates })
+		declared.defaultEnabled.should.equal(true)
+		declared.effortLevels.should.deepEqual(["declared-effort"])
+	})
+
 	it("should merge provider capability and pricing overrides into a registry model", () => {
 		const registryModel: ModelInfo = {
 			id: "registry-model",
