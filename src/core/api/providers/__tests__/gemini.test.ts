@@ -48,9 +48,8 @@ describe("GeminiHandler", () => {
 	/**
 	 * Drive one request and return the config the SDK was called with.
 	 *
-	 * `resolvedModel` overrides what `getModel()` reports, which is how a
-	 * catalog entry reaches the request; this handler resolves metadata from the
-	 * bundled catalog rather than from the Profile.
+	 * `resolvedModel` can isolate wire-only checks. Profile-carried metadata
+	 * exercises the normal effective-model resolution boundary without replacing it.
 	 */
 	const captureRequestConfig = async (
 		profile: ApiProfile,
@@ -81,13 +80,13 @@ describe("GeminiHandler", () => {
 	})
 
 	it("honours a model that declares it rejects a forced tool call", async () => {
-		// No bundled Gemini model declares this today, so the declaration is
-		// injected here. Without the wiring it would be readable everywhere
-		// except the one place that decides the request.
-		const config = await captureRequestConfig(GEMINI_PROFILE, TOOL_DECLARATIONS, {
-			id: "gemini-2.5-pro",
-			info: { capabilities: { supportsTools: true, supportsForcedToolUse: false } },
-		})
+		const config = await captureRequestConfig(
+			ApiProfile.create({
+				...GEMINI_PROFILE,
+				modelInfo: { id: GEMINI_PROFILE.modelId, capabilities: { supportsTools: true, supportsForcedToolUse: false } },
+			}),
+			TOOL_DECLARATIONS,
+		)
 
 		config.toolConfig.functionCallingConfig.should.have.property("mode", "AUTO")
 	})

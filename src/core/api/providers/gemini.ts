@@ -10,7 +10,6 @@ import {
 } from "@google/genai"
 import { GeminiModelId, geminiDefaultModelId, geminiModels, ModelInfo } from "@shared/api"
 import { observeProviderStream } from "@shared/provider-attempt-observer"
-import { resolveForcedToolUseSupport } from "@shared/utils/reasoning-support"
 import { GEMINI_FLASH_MAX_OUTPUT_TOKENS, isGeminiFlashModel } from "@utils/model-utils"
 import { buildExternalBasicHeaders } from "@/services/EnvUtils"
 import { telemetryService } from "@/services/telemetry"
@@ -172,9 +171,10 @@ export class GeminiHandler implements ApiHandler {
 			// entry able to opt out without the request ignoring it.
 			requestConfig.toolConfig = {
 				functionCallingConfig: {
-					mode: resolveForcedToolUseSupport(modelId, info.capabilities)
-						? FunctionCallingConfigMode.ANY
-						: FunctionCallingConfigMode.AUTO,
+					mode:
+						info.capabilities?.supportsForcedToolUse !== false
+							? FunctionCallingConfigMode.ANY
+							: FunctionCallingConfigMode.AUTO,
 				},
 			}
 		}
@@ -373,7 +373,10 @@ export class GeminiHandler implements ApiHandler {
 	}
 
 	getModel(): { id: GeminiModelId; info: ModelInfo } {
-		const mId = this.modelId
+		const mId = this.modelId || this.modelInfo?.id
+		if (this.modelInfo) {
+			return { id: (mId || geminiDefaultModelId) as GeminiModelId, info: this.modelInfo }
+		}
 		if (mId && mId in geminiModels) {
 			const id = mId as GeminiModelId
 			return { id, info: geminiModels[id] }

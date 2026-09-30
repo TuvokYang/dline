@@ -2,7 +2,6 @@ import { Anthropic } from "@anthropic-ai/sdk"
 import { Tool as AnthropicTool } from "@anthropic-ai/sdk/resources/index"
 import { Stream as AnthropicStream } from "@anthropic-ai/sdk/streaming"
 import { providerFetch } from "@shared/net"
-import { resolveForcedToolUseSupport } from "@shared/utils/reasoning-support"
 import { buildExternalBasicHeaders } from "@/services/EnvUtils"
 import { MinimaxModelId, ModelInfo, minimaxDefaultModelId, minimaxModels } from "@/shared/api"
 import { ClineStorageMessage } from "@/shared/messages/content"
@@ -85,7 +84,7 @@ export class MinimaxHandler implements ApiHandler {
 			// A model that rejects forcing fails the whole request rather than
 			// degrading, and thinking cannot be combined with a forced choice.
 			tool_choice:
-				nativeToolsOn && resolveForcedToolUseSupport(model.id, model.info.capabilities)
+				nativeToolsOn && model.info.capabilities?.supportsForcedToolUse !== false
 					? reasoningOn
 						? undefined
 						: { type: "any" }
@@ -215,7 +214,10 @@ export class MinimaxHandler implements ApiHandler {
 	}
 
 	getModel(): { id: MinimaxModelId; info: ModelInfo } {
-		const modelId = this.modelId
+		const modelId = this.modelId || this.modelInfo?.id
+		if (this.modelInfo) {
+			return { id: (modelId || minimaxDefaultModelId) as MinimaxModelId, info: this.modelInfo }
+		}
 
 		if (modelId && modelId in minimaxModels) {
 			const id = modelId as MinimaxModelId
