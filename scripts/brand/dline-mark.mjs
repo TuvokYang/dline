@@ -109,6 +109,9 @@ const COLORS = Object.freeze({
 /** The robot is scaled around its center so the tile keeps a margin. */
 const TILE = Object.freeze({ radius: 7, margin: 1.25 })
 
+/** Activity-bar masks need less design-grid padding at their 24 px display size. */
+const ACTIVITY_BAR = Object.freeze({ size: 24, margin: 0.75 })
+
 /** Icon-font metrics shared by the glyph and the font header. */
 export const FONT = Object.freeze({ unitsPerEm: 1024, ascent: 960, descent: -64, codepoint: 0xe900 })
 
@@ -213,10 +216,10 @@ function filledPath(layout = ROBOT, margin = 0) {
 	return toPathData(markContours("default", layout), { scale, translate: [GRID / 2 - cx * scale, GRID / 2 - cy * scale] })
 }
 
-/** @param {string[]} body @param {string} [attributes] */
-function svgDocument(body, attributes = "") {
+/** @param {string[]} body @param {string} [attributes] @param {number} [size] */
+function svgDocument(body, attributes = "", size = GRID) {
 	return [
-		`<svg xmlns="http://www.w3.org/2000/svg" width="${GRID}" height="${GRID}" viewBox="0 0 ${GRID} ${GRID}"${attributes}>`,
+		`<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${GRID} ${GRID}"${attributes}>`,
 		`\t<!-- ${NOTE} -->`,
 		...body.map((line) => `\t${line}`),
 		"</svg>",
@@ -237,7 +240,7 @@ export function tileSvg() {
 
 /** Single-color robot for the activity bar, which uses the SVG as a mask and applies the theme color. */
 export function glyphSvg() {
-	return svgDocument([`<path fill="currentColor" d="${centeredPath(1)}" />`])
+	return svgDocument([`<path fill="currentColor" d="${filledPath(ROBOT, ACTIVITY_BAR.margin)}" />`], "", ACTIVITY_BAR.size)
 }
 
 /**

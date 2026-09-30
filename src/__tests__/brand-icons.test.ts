@@ -7,6 +7,7 @@ import {
 	FONT,
 	faviconSvg,
 	fontSvg,
+	glyphSvg,
 	headSize,
 	logoSvg,
 	markBounds,
@@ -48,6 +49,44 @@ describe("brand icons", () => {
 				])
 			}
 		}
+	})
+
+	it("uses a 24-pixel activity-bar canvas", async () => {
+		const { width, height } = await sharp(Buffer.from(glyphSvg())).metadata()
+		expect([width, height]).toEqual([24, 24])
+	})
+
+	it("fills the activity-bar icon without clipping or losing centering", async () => {
+		// Oversample the actual SVG mask to measure its silhouette independently of theme color.
+		const { data, info } = await sharp(Buffer.from(glyphSvg()), { density: 720 })
+			.resize(240, 240)
+			.ensureAlpha()
+			.raw()
+			.toBuffer({ resolveWithObject: true })
+		let left = info.width
+		let top = info.height
+		let right = -1
+		let bottom = -1
+		let borderAlpha = 0
+		for (let y = 0; y < info.height; y++) {
+			for (let x = 0; x < info.width; x++) {
+				const alpha = data[(y * info.width + x) * info.channels + info.channels - 1]
+				if (x === 0 || y === 0 || x === info.width - 1 || y === info.height - 1) {
+					borderAlpha = Math.max(borderAlpha, alpha)
+				}
+				if (alpha >= 128) {
+					left = Math.min(left, x)
+					top = Math.min(top, y)
+					right = Math.max(right, x)
+					bottom = Math.max(bottom, y)
+				}
+			}
+		}
+		expect(right - left + 1).toBeGreaterThanOrEqual(220)
+		expect(bottom - top + 1).toBeGreaterThanOrEqual(200)
+		expect(borderAlpha).toBe(0)
+		expect(Math.abs((left + right) / 2 - (info.width - 1) / 2)).toBeLessThanOrEqual(1)
+		expect(Math.abs((top + bottom) / 2 - (info.height - 1) / 2)).toBeLessThanOrEqual(1)
 	})
 
 	it("cuts the eyes out of the head", async () => {
