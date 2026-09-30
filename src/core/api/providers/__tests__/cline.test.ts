@@ -1,7 +1,7 @@
 import "should"
 import { openRouterDefaultModelInfo } from "@shared/api"
 import { ApiProfile } from "@shared/proto/dline/profile"
-import { afterEach, describe, it, vi } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 import { ClineAccountService } from "@/services/account/ClineAccountService"
 import { AuthService } from "@/services/auth/AuthService"
 import { ClineHandler } from "../cline"
@@ -22,6 +22,32 @@ describe("ClineHandler", () => {
 		vi.spyOn(AuthService, "getInstance").mockReturnValue({} as any)
 		return new ClineHandler(options)
 	}
+
+	it("does not lend the default model's declaration to an unknown selected alias", () => {
+		const handler = createHandler({
+			profile: ApiProfile.create({ provider: "cline", modelId: "private/unknown" }),
+			mode: "act",
+		})
+		handler.getModel().should.deepEqual({ id: "private/unknown", info: { id: "private/unknown" } })
+	})
+
+	it("passes an explicit profile disable through the complete gateway reasoning config", async () => {
+		const profile = ApiProfile.create({
+			provider: "cline",
+			modelId: "private/opaque",
+			modelInfo: {
+				capabilities: { thinking: { supported: true, mode: "effort", defaultEnabled: true, effortLevels: ["low"] } },
+			},
+			clineProvider: { reasoning: { enableThinking: false } },
+		})
+		const handler = createHandler({ profile, mode: "act" })
+		const create = vi.fn().mockResolvedValue(createAsyncIterable())
+		vi.spyOn(handler as any, "ensureClient").mockResolvedValue({ chat: { completions: { create } } })
+		for await (const _chunk of handler.createMessage("system", [{ role: "user", content: "hi" }])) {
+		}
+		expect(create.mock.calls[0][0].reasoning).toEqual({ enabled: false })
+		expect(create.mock.calls[0][0].include_reasoning).toBe(false)
+	})
 
 	it("should handle usage-only chunks when delta is missing", async () => {
 		const handler = createHandler({ profile: ApiProfile.create({ provider: "cline" }), mode: "act" })

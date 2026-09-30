@@ -1,0 +1,60 @@
+import type { ModelCapabilities } from "@shared/proto/dline/models/metadata"
+import type { ReasoningConfig } from "@shared/proto/dline/provider/common"
+import { resolveAnthropicReasoning } from "../anthropic/reasoning"
+
+export interface OpenRouterReasoning {
+	enabled: boolean
+	omitSampling: boolean
+	reasoning?: Record<string, unknown>
+	verbosity?: string
+}
+
+/** OpenRouter translates Anthropic verbosity to output_config.effort; a route never grants support. */
+export function resolveOpenRouterReasoning(
+	modelId: string,
+	capabilities: ModelCapabilities | undefined,
+	config: ReasoningConfig | undefined,
+): OpenRouterReasoning {
+	const thinking = capabilities?.thinking
+	const unsupported = { enabled: false, omitSampling: false }
+	if (capabilities?.supportsReasoning === false || thinking?.supported !== true) return unsupported
+	if (thinking.mode !== "budget" && thinking.mode !== "effort") return unsupported
+	if (modelId.startsWith("anthropic/")) {
+		const result = resolveAnthropicReasoning(capabilities, config)
+		return {
+			enabled: result.enabled,
+			omitSampling: result.adaptive || result.enabled,
+			reasoning:
+				result.thinking?.type === "enabled"
+					? { max_tokens: result.thinking.budget_tokens }
+					: result.thinking
+						? { enabled: result.enabled }
+						: undefined,
+			verbosity: result.outputConfig?.effort,
+		}
+	}
+	const disabled = config?.enableThinking === false || config?.effort?.trim().toLowerCase() === "none"
+	if (disabled && thinking.canDisable !== false) return { ...unsupported, reasoning: { enabled: false } }
+	const enabled =
+		thinking.canDisable === false ||
+		(!disabled &&
+			(config?.enableThinking ?? Boolean(config?.effort || (config?.thinkingBudget ?? 0) > 0 || thinking.defaultEnabled)))
+	if (!enabled) return unsupported
+	if (thinking.mode === "budget") {
+		const budget = config?.thinkingBudget
+		const maximum = thinking.maxBudget
+		if (budget === undefined) return { enabled: true, omitSampling: true, reasoning: { enabled: true } }
+		if (!Number.isSafeInteger(budget) || budget <= 0) return unsupported
+		if (maximum !== undefined && (!Number.isSafeInteger(maximum) || maximum <= 0)) return unsupported
+		return {
+			enabled: true,
+			omitSampling: true,
+			reasoning: { max_tokens: maximum === undefined ? budget : Math.min(budget, maximum) },
+		}
+	}
+	let effort = disabled ? undefined : config?.effort?.trim().toLowerCase() || thinking.defaultEffort
+	if (effort === "ultra" && thinking.effortLevels?.includes("max")) effort = "max"
+	const legal =
+		effort && ["minimal", "low", "medium", "high", "xhigh", "max"].includes(effort) && thinking.effortLevels?.includes(effort)
+	return { enabled: true, omitSampling: false, reasoning: legal ? { effort } : { enabled: true } }
+}

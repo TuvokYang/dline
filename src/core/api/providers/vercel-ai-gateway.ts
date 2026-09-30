@@ -82,6 +82,7 @@ export class VercelAIGatewayHandler implements ApiHandler {
 				this.reasoningEffort,
 				this.thinkingBudgetTokens,
 				tools,
+				this.config?.reasoning,
 			)
 			let didOutputUsage = false
 
@@ -154,15 +155,14 @@ export class VercelAIGatewayHandler implements ApiHandler {
 	}
 
 	getModel(): { id: string; info: ModelInfo } {
-		const modelId = this.modelId
+		const modelId = this.modelId || this.modelInfo?.id
 		const modelInfo = this.modelInfo
 		if (modelId && modelInfo) {
 			return { id: modelId, info: modelInfo }
 		}
-		// If we have a model ID but no model info, preserve the selected model ID
-		// and fall back only the metadata to defaults.
+		// An explicit unknown model keeps its identity without borrowing another model's capabilities.
 		if (modelId) {
-			return { id: modelId, info: openRouterDefaultModelInfo }
+			return { id: modelId, info: { id: modelId } }
 		}
 		return { id: openRouterDefaultModelId, info: openRouterDefaultModelInfo }
 	}

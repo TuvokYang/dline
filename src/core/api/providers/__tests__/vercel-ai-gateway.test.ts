@@ -1,7 +1,7 @@
 import "should"
 import { openRouterDefaultModelId, openRouterDefaultModelInfo } from "@shared/api"
 import { ApiProfile } from "@shared/proto/dline/profile"
-import { afterEach, describe, it, vi } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 import { VercelAIGatewayHandler } from "../vercel-ai-gateway"
 
 describe("VercelAIGatewayHandler", () => {
@@ -49,7 +49,7 @@ describe("VercelAIGatewayHandler", () => {
 
 			const result = handler.getModel()
 			result.id.should.equal("google/gemini-3.1-pro-preview")
-			result.info.should.deepEqual(openRouterDefaultModelInfo)
+			result.info.should.deepEqual({ id: "google/gemini-3.1-pro-preview" })
 		})
 
 		it("should fall back to default model when model ID is missing", () => {
@@ -65,6 +65,24 @@ describe("VercelAIGatewayHandler", () => {
 	})
 
 	describe("createMessage", () => {
+		it("passes an explicit profile disable through the complete gateway reasoning config", async () => {
+			const profile = ApiProfile.create({
+				provider: "vercel-ai-gateway",
+				modelId: "private/opaque",
+				modelInfo: {
+					capabilities: { thinking: { supported: true, mode: "effort", defaultEnabled: true, effortLevels: ["low"] } },
+				},
+				vercelAiGateway: { reasoning: { enableThinking: false } },
+			})
+			const handler = new VercelAIGatewayHandler({ profile, mode: "act" })
+			const create = vi.fn().mockResolvedValue(createAsyncIterable())
+			vi.spyOn(handler as any, "ensureClient").mockReturnValue({ chat: { completions: { create } } })
+			for await (const _chunk of handler.createMessage("system", [{ role: "user", content: "hi" }])) {
+			}
+			expect(create.mock.calls[0][0].reasoning).toEqual({ enabled: false })
+			expect(create.mock.calls[0][0].include_reasoning).toBe(false)
+		})
+
 		it("should handle usage-only chunks when delta is missing", async () => {
 			const handler = new VercelAIGatewayHandler({
 				profile: ApiProfile.create({ provider: "vercel-ai-gateway", apiKey: "test-api-key" }),

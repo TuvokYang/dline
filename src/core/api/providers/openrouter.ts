@@ -81,6 +81,7 @@ export class OpenRouterHandler implements ApiHandler {
 			this.config?.openRouterProviderSorting,
 			tools,
 			this.ctx.enableParallelToolCalling,
+			this.config?.reasoning,
 		)
 
 		let didOutputUsage = false
@@ -237,12 +238,14 @@ export class OpenRouterHandler implements ApiHandler {
 	}
 
 	getModel(): { id: string; info: ModelInfo } {
-		const modelId = this.modelId || openRouterDefaultModelId
-		// The discovered catalog wins, then the profile's stored info, then the built-in default.
-		const catalogModelInfo = findCatalogModel(OPENROUTER_PROVIDER_ID, modelId)
+		const modelId = this.modelId || this.modelInfo?.id || openRouterDefaultModelId
+		// The runtime Profile contains the reconciled declaration and explicit overrides.
 		return {
 			id: modelId,
-			info: catalogModelInfo || this.modelInfo || openRouterDefaultModelInfo,
+			info:
+				this.modelInfo ||
+				findCatalogModel(OPENROUTER_PROVIDER_ID, modelId) ||
+				(this.modelId ? { id: modelId } : openRouterDefaultModelInfo),
 		}
 	}
 }

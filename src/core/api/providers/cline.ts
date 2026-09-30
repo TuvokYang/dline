@@ -137,6 +137,7 @@ export class ClineHandler implements ApiHandler {
 				(this.config as any)?.openRouterProviderSorting,
 				tools,
 				this.ctx.enableParallelToolCalling,
+				this.config?.reasoning,
 			)
 
 			const toolCallProcessor = new ToolCallProcessor()
@@ -296,15 +297,14 @@ export class ClineHandler implements ApiHandler {
 	}
 
 	getModel(): { id: string; info: ModelInfo } {
-		const modelId = this.modelId
+		const modelId = this.modelId || this.modelInfo?.id
 		const modelInfo = this.modelInfo
 		if (modelId && modelInfo) {
 			return { id: modelId, info: modelInfo }
 		}
-		// If we have a model ID but no model info (e.g., CLI featured models),
-		// use the ID with default model info rather than falling back to a different model
+		// An explicit unknown model keeps its identity without borrowing another model's capabilities.
 		if (modelId) {
-			return { id: modelId, info: openRouterDefaultModelInfo }
+			return { id: modelId, info: { id: modelId } }
 		}
 		return { id: openRouterDefaultModelId, info: openRouterDefaultModelInfo }
 	}

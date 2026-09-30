@@ -1,4 +1,5 @@
 import "should"
+import { ModelRegistry } from "@core/model-registry/ModelRegistry"
 import { StateManager } from "@core/storage/StateManager"
 import { openRouterDefaultModelInfo } from "@shared/api"
 import { ModelInfo } from "@shared/proto/dline/models"
@@ -50,6 +51,22 @@ describe("OpenRouterHandler", () => {
 		expect(loggerWarn.mock.calls.flat().join(" ")).toContain("404")
 	})
 
+	it("preserves effective false declarations instead of replacing them with catalog metadata", () => {
+		const modelId = "anthropic/private"
+		vi.spyOn(ModelRegistry, "getInstance").mockReturnValue({
+			getProviderModels: () => ({
+				models: { [modelId]: { capabilities: { thinking: { supported: true, mode: "effort" } } } },
+			}),
+		} as unknown as ModelRegistry)
+		const profile = ApiProfile.create({
+			provider: "openrouter",
+			modelId,
+			modelInfo: { id: modelId, capabilities: { thinking: { supported: false } } },
+		})
+		const handler = new OpenRouterHandler({ profile, mode: "act" })
+		expect(handler.getModel().info.capabilities?.thinking?.supported).toBe(false)
+	})
+
 	it("uses the Profile model metadata when the dynamic OpenRouter cache is unavailable", () => {
 		const profileModelInfo = ModelInfo.create({
 			id: "vendor/native-1m-model",
@@ -72,6 +89,24 @@ describe("OpenRouterHandler", () => {
 			id: "vendor/native-1m-model",
 			info: profileModelInfo,
 		})
+	})
+
+	it("passes an explicit profile disable through the complete gateway reasoning config", async () => {
+		const profile = ApiProfile.create({
+			provider: "openrouter",
+			modelId: "private/opaque",
+			modelInfo: {
+				capabilities: { thinking: { supported: true, mode: "effort", defaultEnabled: true, effortLevels: ["low"] } },
+			},
+			openrouter: { reasoning: { enableThinking: false } },
+		})
+		const handler = new OpenRouterHandler({ profile, mode: "act" })
+		const create = vi.fn().mockResolvedValue(createAsyncIterable())
+		vi.spyOn(handler as any, "ensureClient").mockReturnValue({ chat: { completions: { create } } })
+		for await (const _chunk of handler.createMessage("system", [{ role: "user", content: "hi" }])) {
+		}
+		expect(create.mock.calls[0][0].reasoning).toEqual({ enabled: false })
+		expect(create.mock.calls[0][0].include_reasoning).toBe(false)
 	})
 
 	it("should handle usage-only chunks when delta is missing", async () => {
