@@ -1,6 +1,6 @@
 /**
  * Anthropic provider model definitions.
- * Extracted from api.ts anthropicModels (lines 184-423).
+ * Claude 5.5 metadata verified against official Anthropic model documentation (2026-09-30 UTC).
  */
 import type { ModelInfo } from "@shared/api"
 import { ServerTool, type ThinkingConfig } from "@shared/proto/dline/models/metadata"
@@ -77,7 +77,7 @@ export const anthropicModels: Record<string, ModelInfo> = {
 			supportsImages: true,
 			supportsPromptCache: true,
 			supportsReasoning: true,
-			...adaptiveThinkingCapabilities(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS),
+			...adaptiveThinkingCapabilities(ANTHROPIC_REQUIRED_ADAPTIVE_REASONING_EFFORT_OPTIONS),
 		},
 		pricing: {
 			inputPrice: 4.0,
@@ -85,6 +85,32 @@ export const anthropicModels: Record<string, ModelInfo> = {
 			cacheWritesPrice: 5.0,
 			cacheReadsPrice: 0.2,
 		},
+	},
+	"claude-sonnet-5-5": {
+		id: "claude-sonnet-5-5",
+		name: "claude-sonnet-5-5",
+		capabilities: {
+			supportsTools: true,
+			tools: [ServerTool.WEB_SEARCH, ServerTool.WEB_FETCH],
+			maxTokens: 128_000,
+			contextWindow: 1_000_000,
+			supportsImages: true,
+			supportsPromptCache: true,
+			supportsReasoning: true,
+			...adaptiveThinkingCapabilities(ANTHROPIC_REQUIRED_ADAPTIVE_REASONING_EFFORT_OPTIONS),
+		},
+		pricing: {
+			inputPrice: 2.0,
+			outputPrice: 10.0,
+			cacheWritesPrice: 2.5,
+			cacheReadsPrice: 0.2,
+		},
+	},
+	"claude-fable-5-5": {
+		id: "claude-fable-5-5",
+		name: "Claude Fable 5.5 (future placeholder)",
+		description:
+			"Future model placeholder. Official availability, capabilities and pricing are not verified; configure model overrides before use.",
 	},
 	"claude-opus-5": {
 		id: "claude-opus-5",

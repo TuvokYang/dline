@@ -60,7 +60,10 @@ export function isClaudeAdaptiveThinkingEnabledByDefault(modelId?: string): bool
 }
 
 export function canDisableClaudeAdaptiveThinking(modelId?: string): boolean {
-	return modelId?.toLowerCase().includes("claude-fable-5") !== true
+	const id = modelId?.toLowerCase() ?? ""
+	// Neither Opus nor Sonnet 5.5 accepts fully disabled thinking; keep the adaptive fallback.
+	const alwaysOn = id.includes("claude-fable-5") || /claude-(?:opus|sonnet)-5[-.]5(?:$|[-.:])/.test(id)
+	return !alwaysOn
 }
 
 /** Model capabilities this resolution reads; a subset of `ModelCapabilities`. */

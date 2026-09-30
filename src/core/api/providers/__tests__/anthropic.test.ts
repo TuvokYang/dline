@@ -622,12 +622,16 @@ describe("AnthropicHandler", () => {
 			expect(requestBody?.output_config).to.equal(undefined)
 		})
 
-		it("should keep Fable 5 adaptive thinking enabled when a stale profile requests none", async () => {
+		it.each([
+			"claude-fable-5",
+			"claude-opus-5-5",
+			"claude-sonnet-5-5",
+		])("should keep %s adaptive thinking enabled when a stale profile requests none", async (modelId) => {
 			const handler = new AnthropicHandler({
 				profile: ApiProfile.create({
 					provider: "anthropic",
 					apiKey: "test-api-key",
-					modelId: "claude-fable-5",
+					modelId,
 					anthropic: { reasoning: { enableThinking: false, effort: "none" } },
 				}),
 				mode: "act",
