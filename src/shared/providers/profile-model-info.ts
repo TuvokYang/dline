@@ -168,7 +168,12 @@ export function resolveProfileModelInfo(
 
 	const defaultModel = providerModels?.defaultModelId ? providerModels.models[providerModels.defaultModelId] : undefined
 
-	const baseModel = registryModel ?? profile.modelInfo ?? (profile.modelId ? undefined : defaultModel)
+	const configuredBaseId =
+		profile.provider === "bedrock" && profile.bedrock?.awsBedrockCustomSelected
+			? profile.bedrock.awsBedrockCustomModelBaseId
+			: undefined
+	const configuredBase = configuredBaseId ? providerModels?.models?.[configuredBaseId] : undefined
+	const baseModel = registryModel ?? configuredBase ?? profile.modelInfo ?? (profile.modelId ? undefined : defaultModel)
 
 	const modelInfo = buildEffectiveModelInfo(modelId || baseModel?.id, baseModel, {
 		...resolveProfileOverrides(profile),

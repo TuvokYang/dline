@@ -53,7 +53,7 @@ export class GeminiHandler implements ApiHandler {
 	constructor(private ctx: ApiHandlerContext) {}
 
 	private get config() {
-		return this.ctx.profile.gemini
+		return this.ctx.profile.provider === "vertex" ? this.ctx.profile.vertex : this.ctx.profile.gemini
 	}
 	private get apiKey() {
 		return this.ctx.profile.apiKey

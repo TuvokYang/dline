@@ -12,7 +12,6 @@ import {
 import { fromNodeProviderChain } from "@aws-sdk/credential-providers"
 import { type BedrockModelId, bedrockDefaultModelId, bedrockModels, CLAUDE_SONNET_1M_SUFFIX, type ModelInfo } from "@shared/api"
 import { observeProviderCall, observeProviderStreamResponse } from "@shared/provider-attempt-observer"
-import { isClaudeOpusAdaptiveThinkingModel, resolveClaudeOpusAdaptiveThinking } from "@shared/utils/reasoning-support"
 import { calculateApiCostOpenAI, calculateApiCostQwen } from "@utils/cost"
 import { ExtensionRegistryInfo } from "@/registry"
 import type { ClineStorageMessage } from "@/shared/messages/content"
@@ -22,6 +21,7 @@ import type { ApiHandler, ApiHandlerContext } from "../"
 import { withRetry } from "../retry"
 import { convertToR1Format } from "../transform/r1-format"
 import type { ApiStream } from "../transform/stream"
+import { resolveAnthropicReasoning } from "./anthropic/reasoning"
 
 // Extend AWS SDK types to include additionalModelResponseFields
 interface ExtendedMetadata {
@@ -146,12 +146,6 @@ export class AwsBedrockHandler implements ApiHandler {
 	private get baseUrl() {
 		return this.ctx.profile.baseUrl
 	}
-	private get reasoningEffort() {
-		return this.config?.reasoning?.effort
-	}
-	private get thinkingBudgetTokens() {
-		return this.config?.reasoning?.thinkingBudget ?? 0
-	}
 
 	@withRetry({ maxRetries: 4 })
 	async *createMessage(systemPrompt: string, messages: ClineStorageMessage[], tools?: ClineTool[]): ApiStream {
@@ -198,7 +192,10 @@ export class AwsBedrockHandler implements ApiHandler {
 	}
 
 	getModel(): { id: string; info: ModelInfo } {
-		const modelId = this.modelId
+		const modelId = this.modelId || this.modelInfo?.id
+		if (this.modelInfo) {
+			return { id: modelId || bedrockDefaultModelId, info: this.modelInfo }
+		}
 		if (modelId && bedrockModels[modelId]) {
 			const id = modelId as BedrockModelId
 			return { id, info: bedrockModels[id] }
@@ -216,11 +213,8 @@ export class AwsBedrockHandler implements ApiHandler {
 					info: bedrockModels[baseModel],
 				}
 			}
-			// For custom models without valid base model in bedrock model list, use default model's capabilities
-			return {
-				id: modelId,
-				info: bedrockModels[bedrockDefaultModelId],
-			}
+			// An unrecognized base cannot lend the default model's capabilities to a custom ARN.
+			return { id: modelId, info: { id: modelId } }
 		}
 
 		return {
@@ -877,18 +871,12 @@ export class AwsBedrockHandler implements ApiHandler {
 	/**
 	 * Gets inference configuration for different model types
 	 */
-	private getInferenceConfig(modelInfo: ModelInfo, modelType: "anthropic" | "nova", modelId?: string): any {
-		// For Anthropic models with thinking enabled, temperature must be 1
+	private getInferenceConfig(modelInfo: ModelInfo, modelType: "anthropic" | "nova"): any {
 		if (modelType === "anthropic") {
-			const budget_tokens = this.thinkingBudgetTokens
-			const reasoningOn = modelInfo.capabilities?.supportsReasoning && budget_tokens > 0
-
-			// Claude Opus 4.5+ uses adaptive thinking instead of budgeted extended thinking.
-			const isAdaptiveThinkingModel = isClaudeOpusAdaptiveThinkingModel(modelId)
-
+			const reasoning = resolveAnthropicReasoning(modelInfo.capabilities, this.config?.reasoning)
 			return {
 				maxTokens: modelInfo.capabilities?.maxTokens || 8192,
-				...(isAdaptiveThinkingModel ? {} : { temperature: reasoningOn ? 1 : 0 }),
+				...(reasoning.adaptive ? {} : { temperature: reasoning.enabled ? 1 : 0 }),
 			}
 		}
 
@@ -925,16 +913,7 @@ export class AwsBedrockHandler implements ApiHandler {
 		// Prepare system message with caching support
 		const systemMessages = this.prepareSystemMessages(systemPrompt, this.config?.awsBedrockUsePromptCache || false)
 
-		// Get thinking configuration
-		const budget_tokens = this.thinkingBudgetTokens
-		const reasoningOn = model.info.capabilities?.supportsReasoning && budget_tokens > 0
-		const isAdaptiveThinkingModel = isClaudeOpusAdaptiveThinkingModel(modelId)
-		const adaptiveThinking = isAdaptiveThinkingModel
-			? resolveClaudeOpusAdaptiveThinking(this.reasoningEffort, budget_tokens)
-			: undefined
-		const adaptiveThinkingEnabled = adaptiveThinking?.enabled === true
-		const adaptiveThinkingEffort = adaptiveThinking?.effort
-		const thinkingEnabled = isAdaptiveThinkingModel ? adaptiveThinkingEnabled : reasoningOn
+		const reasoning = resolveAnthropicReasoning(model.info.capabilities, this.config?.reasoning)
 
 		// Prepare request for Anthropic model using Converse API
 		const toolConfig = this.mapClineToolsToBedrockToolConfig(tools)
@@ -942,21 +921,11 @@ export class AwsBedrockHandler implements ApiHandler {
 			modelId: modelId,
 			messages: messagesWithCache,
 			system: systemMessages,
-			inferenceConfig: this.getInferenceConfig(model.info, "anthropic", modelId),
+			inferenceConfig: this.getInferenceConfig(model.info, "anthropic"),
 			...(toolConfig ? { toolConfig } : {}),
 			additionalModelRequestFields: {
-				// Add thinking configuration as per LangChain documentation
-				...(thinkingEnabled && {
-					thinking: {
-						type: isAdaptiveThinkingModel ? "adaptive" : "enabled",
-						...(isAdaptiveThinkingModel ? {} : { budget_tokens: budget_tokens }),
-					},
-				}),
-				...(adaptiveThinkingEffort && {
-					output_config: {
-						effort: adaptiveThinkingEffort,
-					},
-				}),
+				...(reasoning.thinking ? { thinking: { ...reasoning.thinking } } : {}),
+				...(reasoning.outputConfig ? { output_config: { ...reasoning.outputConfig } } : {}),
 			},
 		})
 

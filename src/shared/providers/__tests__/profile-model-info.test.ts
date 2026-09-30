@@ -12,6 +12,34 @@ import { describe, it } from "vitest"
 import { resolveProfileModelInfo } from "../profile-model-info"
 
 describe("resolveProfileModelInfo", () => {
+	it("resolves an explicitly selected Bedrock base and preserves the custom ARN and override", () => {
+		const profile = ApiProfile.create({
+			provider: "bedrock",
+			modelId: "arn:aws:bedrock:test:custom-model/example",
+			bedrock: {
+				awsBedrockCustomSelected: true,
+				awsBedrockCustomModelBaseId: "known-base",
+				capabilities: { thinking: { defaultEnabled: true } },
+			},
+		})
+		const result = resolveProfileModelInfo(profile, {
+			defaultModelId: "other-default",
+			models: {
+				"known-base": {
+					id: "known-base",
+					capabilities: { thinking: { supported: true, mode: "effort", effortLevels: ["low"] } },
+				},
+			},
+		})
+		expect(result.id).to.equal(profile.modelId)
+		expect(result.capabilities?.thinking).to.deep.equal({
+			supported: true,
+			mode: "effort",
+			effortLevels: ["low"],
+			defaultEnabled: true,
+		})
+	})
+
 	it("resolves DeepSeek context window from registry when profile modelInfo is absent", () => {
 		const profile = ApiProfile.create({
 			provider: "deepseek",

@@ -1132,6 +1132,7 @@ describe("AwsBedrockHandler", () => {
 					profile: {
 						bedrock: { awsUseCrossRegionInference: true, awsUseGlobalInference: true, awsRegion: "ap-northeast-1" },
 						modelId: "anthropic.claude-opus-4-7",
+						modelInfo: bedrockModels["anthropic.claude-opus-4-7"],
 					},
 				}),
 			)
@@ -1206,7 +1207,10 @@ describe("AwsBedrockHandler", () => {
 		it("should enable native tool calling when the selected model explicitly supports tools", () => {
 			const handler = new AwsBedrockHandler(
 				createMockContext({
-					profile: { modelId: "anthropic.claude-sonnet-4-5-20250929-v1:0" },
+					profile: {
+						modelId: "anthropic.claude-sonnet-4-5-20250929-v1:0",
+						modelInfo: bedrockModels["anthropic.claude-sonnet-4-5-20250929-v1:0"],
+					},
 				}),
 			)
 			const model = handler.getModel()

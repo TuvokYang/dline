@@ -3,11 +3,6 @@ import { AnthropicVertex } from "@anthropic-ai/vertex-sdk"
 import { FunctionDeclaration as GoogleTool } from "@google/genai"
 import { CLAUDE_SONNET_1M_SUFFIX, ModelInfo, VertexModelId, vertexDefaultModelId, vertexModels } from "@shared/api"
 import { observeProviderStream } from "@shared/provider-attempt-observer"
-import {
-	isClaudeOpusAdaptiveThinkingModel,
-	resolveClaudeOpusAdaptiveThinking,
-	resolveForcedToolUseSupport,
-} from "@shared/utils/reasoning-support"
 import { buildExternalBasicHeaders } from "@/services/EnvUtils"
 import { ClineStorageMessage } from "@/shared/messages/content"
 import { ClineTool } from "@/shared/tools"
@@ -15,6 +10,7 @@ import { ApiHandler, ApiHandlerContext } from "../"
 import { withRetry } from "../retry"
 import { sanitizeAnthropicMessages } from "../transform/anthropic-format"
 import { ApiStream } from "../transform/stream"
+import { resolveAnthropicReasoning } from "./anthropic/reasoning"
 import { GeminiHandler } from "./gemini"
 
 export class VertexHandler implements ApiHandler {
@@ -37,12 +33,6 @@ export class VertexHandler implements ApiHandler {
 	}
 	private get baseUrl() {
 		return this.ctx.profile.baseUrl
-	}
-	private get reasoningEffort() {
-		return this.config?.reasoning?.effort
-	}
-	private get thinkingBudgetTokens() {
-		return this.config?.reasoning?.thinkingBudget ?? 0
 	}
 
 	private ensureGeminiHandler(): GeminiHandler {
@@ -103,25 +93,7 @@ export class VertexHandler implements ApiHandler {
 
 		const clientAnthropic = this.ensureAnthropicClient()
 
-		// Claude implementation
-		const budget_tokens = this.thinkingBudgetTokens
-		// Use model metadata to determine if reasoning should be enabled
-		const reasoningOn = (model.info.capabilities?.supportsReasoning ?? false) && budget_tokens !== 0
-
-		// Claude Opus 4.5+ uses adaptive thinking instead of budgeted extended thinking.
-		const isAdaptiveThinkingModel = isClaudeOpusAdaptiveThinkingModel(modelId)
-		const adaptiveThinking = isAdaptiveThinkingModel
-			? resolveClaudeOpusAdaptiveThinking(this.reasoningEffort, budget_tokens)
-			: undefined
-		const adaptiveThinkingEnabled = adaptiveThinking?.enabled === true
-		const adaptiveThinkingEffort = adaptiveThinking?.effort
-		const thinkingEnabled = isAdaptiveThinkingModel ? adaptiveThinkingEnabled : reasoningOn
-		const thinkingConfig = thinkingEnabled
-			? isAdaptiveThinkingModel
-				? ({ type: "adaptive" } as any)
-				: { type: "enabled", budget_tokens: budget_tokens }
-			: undefined
-		const outputConfig = isAdaptiveThinkingModel && adaptiveThinkingEffort ? { effort: adaptiveThinkingEffort } : undefined
+		const reasoning = resolveAnthropicReasoning(model.info.capabilities, this.config?.reasoning)
 
 		// Tools are available only when native tools are enabled.
 		const nativeToolsOn = tools?.length ? tools?.length > 0 : false
@@ -131,8 +103,8 @@ export class VertexHandler implements ApiHandler {
 		const requestBody: Record<string, unknown> = {
 			model: modelId,
 			max_tokens: model.info.capabilities?.maxTokens || 8192,
-			thinking: thinkingConfig,
-			temperature: isAdaptiveThinkingModel ? undefined : reasoningOn ? undefined : 0,
+			thinking: reasoning.thinking,
+			temperature: reasoning.adaptive || reasoning.enabled ? undefined : 0,
 			system: [
 				{
 					text: systemPrompt,
@@ -151,14 +123,14 @@ export class VertexHandler implements ApiHandler {
 			// degrading, and thinking cannot be combined with a forced choice.
 			tool_choice: !nativeToolsOn
 				? undefined
-				: !resolveForcedToolUseSupport(modelId, model.info.capabilities)
+				: model.info.capabilities?.supportsForcedToolUse === false
 					? { type: "auto" }
-					: !thinkingEnabled
+					: !reasoning.enabled
 						? { type: "any" }
 						: undefined,
 		}
-		if (outputConfig) {
-			requestBody.output_config = outputConfig
+		if (reasoning.outputConfig) {
+			requestBody.output_config = reasoning.outputConfig
 		}
 
 		const stream = await observeProviderStream(
@@ -275,7 +247,10 @@ export class VertexHandler implements ApiHandler {
 	}
 
 	getModel(): { id: VertexModelId; info: ModelInfo } {
-		const modelId = this.modelId
+		const modelId = this.modelId || this.modelInfo?.id
+		if (this.modelInfo) {
+			return { id: (modelId || vertexDefaultModelId) as VertexModelId, info: this.modelInfo }
+		}
 		if (modelId && modelId in vertexModels) {
 			const id = modelId as VertexModelId
 			return { id, info: vertexModels[id] }

@@ -4,6 +4,11 @@
  */
 import { type ModelInfo } from "@shared/api"
 import { ThinkingConfig } from "@shared/proto/dline/models/metadata"
+import {
+	ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS,
+	ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS_WITHOUT_XHIGH,
+	adaptiveThinkingCapabilities,
+} from "./anthropic"
 
 const _sonnet_tiers = [
 	{
@@ -38,15 +43,10 @@ const _opus_tiers = [
 	},
 ]
 
-/**
- * Capabilities shared by the Claude generation that keeps adaptive thinking on.
- *
- * Thinking cannot be combined with a forced tool choice, so these models reject
- * `tool_choice: any` with an error rather than degrading to an automatic choice.
- * Vertex renames the models but does not change that rule, so the declaration
- * belongs here too instead of relying on the ID fallback alone.
- */
-const ADAPTIVE_THINKING_CLAUDE_CAPABILITIES = { supportsForcedToolUse: false } as const
+const ADAPTIVE_THINKING_CLAUDE_CAPABILITIES = adaptiveThinkingCapabilities(
+	ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS_WITHOUT_XHIGH,
+)
+const CLAUDE_BUDGET_THINKING: ThinkingConfig = { supported: true, mode: "budget", defaultEnabled: false, canDisable: true }
 
 export const vertexModels: Record<string, ModelInfo> = {
 	"gemini-3.1-pro-preview": {
@@ -141,6 +141,7 @@ export const vertexModels: Record<string, ModelInfo> = {
 	"claude-sonnet-4-5@20250929": {
 		id: "claude-sonnet-4-5@20250929",
 		capabilities: {
+			thinking: { ...CLAUDE_BUDGET_THINKING },
 			supportsTools: true,
 			maxTokens: 64_000,
 			contextWindow: 200_000,
@@ -158,6 +159,7 @@ export const vertexModels: Record<string, ModelInfo> = {
 	"claude-sonnet-4@20250514": {
 		id: "claude-sonnet-4@20250514",
 		capabilities: {
+			thinking: { ...CLAUDE_BUDGET_THINKING },
 			supportsTools: true,
 			maxTokens: 64_000,
 			contextWindow: 200_000,
@@ -175,6 +177,7 @@ export const vertexModels: Record<string, ModelInfo> = {
 	"claude-haiku-4-5@20251001": {
 		id: "claude-haiku-4-5@20251001",
 		capabilities: {
+			thinking: { ...CLAUDE_BUDGET_THINKING },
 			supportsTools: true,
 			maxTokens: 64_000,
 			contextWindow: 200_000,
@@ -236,7 +239,7 @@ export const vertexModels: Record<string, ModelInfo> = {
 			supportsPromptCache: true,
 			supportsReasoning: true,
 			supportsGlobalEndpoint: true,
-			...ADAPTIVE_THINKING_CLAUDE_CAPABILITIES,
+			...adaptiveThinkingCapabilities(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS),
 		},
 		pricing: {
 			inputPrice: 5.0,
@@ -255,7 +258,7 @@ export const vertexModels: Record<string, ModelInfo> = {
 			supportsPromptCache: true,
 			supportsReasoning: true,
 			supportsGlobalEndpoint: true,
-			...ADAPTIVE_THINKING_CLAUDE_CAPABILITIES,
+			...adaptiveThinkingCapabilities(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS),
 		},
 		pricing: {
 			inputPrice: 5.0,
@@ -268,6 +271,7 @@ export const vertexModels: Record<string, ModelInfo> = {
 	"claude-opus-4-5@20251101": {
 		id: "claude-opus-4-5@20251101",
 		capabilities: {
+			thinking: { ...CLAUDE_BUDGET_THINKING },
 			supportsTools: true,
 			maxTokens: 64_000,
 			contextWindow: 200_000,
@@ -285,6 +289,7 @@ export const vertexModels: Record<string, ModelInfo> = {
 	"claude-opus-4-1@20250805": {
 		id: "claude-opus-4-1@20250805",
 		capabilities: {
+			thinking: { ...CLAUDE_BUDGET_THINKING },
 			supportsTools: true,
 			maxTokens: 32_000,
 			contextWindow: 200_000,
@@ -302,6 +307,7 @@ export const vertexModels: Record<string, ModelInfo> = {
 	"claude-opus-4@20250514": {
 		id: "claude-opus-4@20250514",
 		capabilities: {
+			thinking: { ...CLAUDE_BUDGET_THINKING },
 			supportsTools: true,
 			maxTokens: 32_000,
 			contextWindow: 200_000,
