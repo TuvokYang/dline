@@ -16,6 +16,7 @@ import type {
 export interface TaskApiResponseExecutionRepositoryOptions {
 	readonly taskId: string
 	readonly location?: string
+	readonly readOnly?: boolean
 }
 
 const DEFAULT_RECENT_EXECUTION_LIMIT = 60
@@ -159,6 +160,7 @@ export class TaskApiResponseExecutionRepository implements ApiResponseExecutionR
 
 	private assertWritable(): void {
 		if (this.closing || this.closed) throw new Error("API response execution repository is closed")
+		if (this.options.readOnly) throw new Error("API response execution repository is read-only")
 	}
 }
 

@@ -33,44 +33,38 @@ function expectNotContains(source: string, unexpected: string): void {
 describe("Task API rate metrics boundary", () => {
 	it("uses Task-local active, round, and execution facts without mixing RPM bases", async () => {
 		const source = await readFile(taskSourcePath, "utf8")
-		const composition = extractMethod(
-			source,
-			"this.apiRateMetricsService = new TaskApiRateMetricsService({",
-			"this.reinitExistingTaskFromId = reinitExistingTaskFromId",
-		)
+		const owner = await readFile(path.resolve("src/core/task/performance/TaskMetricsOwner.ts"), "utf8")
+		const composition = extractMethod(source, "this.metrics = new TaskMetricsOwner({", "this.reinitExistingTaskFromId =")
 		const headerSnapshot = extractMethod(
 			source,
 			"public getApiRateSnapshot(): ApiRateSnapshot {",
 			"/** Query persisted Task-local API rate history",
 		)
 
-		expectContains(source, 'import { TaskApiRateMetricsRepository } from "./performance/task-api-rate-metrics-repository"')
+		expectContains(source, "private readonly metrics: TaskMetricsOwner")
+		expectContains(composition, "legacySource: uiMessage")
+		expectContains(owner, "new TaskApiRateMetricsRepository({ taskId: options.taskId, readOnly: options.readOnly })")
+		expectContains(owner, "const roundRepository = new TaskApiRequestRoundRepository({")
 		expectContains(
-			source,
-			'import { TaskApiResponseExecutionRepository } from "./performance/api-response-execution-repository"',
+			owner,
+			"const executionRepository = new TaskApiResponseExecutionRepository({ taskId: options.taskId, readOnly: options.readOnly })",
 		)
-		expectContains(source, "private readonly apiRateMetricsService: TaskApiRateMetricsService")
-		expectContains(composition, "new TaskApiRateMetricsRepository({ taskId })")
-		expectContains(composition, "const apiRequestRoundRepository = new TaskApiRequestRoundRepository({")
-		expectContains(composition, "legacySource: historyItem ? uiMessage : undefined")
-		expectContains(composition, "const apiResponseExecutionRepository = new TaskApiResponseExecutionRepository({ taskId })")
-		expectContains(composition, "roundRepository: apiRequestRoundRepository")
-		expectContains(composition, "executionRepository: apiResponseExecutionRepository")
-		expectContains(composition, "waitForRoundPersistence: () => this.apiRequestRoundLifecycle.waitForRoundPersistence()")
-		expectContains(
-			composition,
-			"waitForExecutionPersistence: () => this.apiRequestRoundLifecycle.waitForExecutionPersistence()",
-		)
-		expectContains(source, "return this.taskRateMetricsQueryService.query(query)")
-		expectChain(source, "this.apiRequestRoundLifecycle", ".initializeRounds()", ".catch((error) =>")
-		expectChain(source, "this.apiRequestRoundLifecycle", ".initializeExecutions()", ".catch((error) =>")
+		expectContains(owner, "roundRepository,")
+		expectContains(owner, "executionRepository,")
+		expectContains(owner, "waitForRoundPersistence: () => this.rounds.waitForRoundPersistence()")
+		expectContains(owner, "waitForExecutionPersistence: () => this.rounds.waitForExecutionPersistence()")
+		expectContains(source, "return this.metrics.reader.query(query)")
+		expectChain(owner, "this.rounds", ".initializeRounds()", ".catch((error) =>")
+		expectChain(owner, "this.rounds", ".initializeExecutions()", ".catch((error) =>")
+		expectNotContains(source, "new TaskApiRateMetricsRepository(")
 		expectNotContains(source, "private readonly apiRateTracker: ApiRateTracker")
-		expectContains(headerSnapshot, "const active = this.apiRateMetricsService.getSnapshot()")
-		expectContains(headerSnapshot, "const rounds = this.apiRequestRoundLifecycle.getSnapshot()")
-		expectContains(headerSnapshot, "const executions = this.apiRequestRoundLifecycle.getExecutionSnapshot()")
-		expectContains(headerSnapshot, "requestsPerMinute: executions.requestsPerMinute")
-		expectContains(headerSnapshot, "rpmBasis: executions.rpmBasis")
-		expectContains(headerSnapshot, "tokensPerMinute: active.tokensPerMinute")
+		expectContains(headerSnapshot, "return this.metrics.reader.getSnapshot()")
+		expectContains(owner, "const active = this.rates.getSnapshot()")
+		expectContains(owner, "const rounds = this.rounds.getSnapshot()")
+		expectContains(owner, "const executions = this.rounds.getExecutionSnapshot()")
+		expectContains(owner, "requestsPerMinute: executions.requestsPerMinute")
+		expectContains(owner, "rpmBasis: executions.rpmBasis")
+		expectContains(owner, "tokensPerMinute: active.tokensPerMinute")
 	})
 
 	/**
@@ -122,9 +116,13 @@ describe("Task API rate metrics boundary", () => {
 		const source = await readFile(taskSourcePath, "utf8")
 		const terminate = extractMethod(source, "async terminate(", "/** Close idle task terminals")
 
-		expect(terminate).toContain(
-			'withTerminateTimeout(this.apiRateMetricsService.dispose(), 5_000, "apiRateMetricsService.dispose")',
+		const owner = await readFile(path.resolve("src/core/task/performance/TaskMetricsOwner.ts"), "utf8")
+		expect(terminate).toContain('withTerminateTimeout(this.metrics.close(), 5_000, "taskMetrics.close")')
+		expect(owner).toContain("await this.usageWrites")
+		expect(owner).toContain(
+			"await Promise.allSettled([this.rates.dispose(), this.rounds.close(), this.usageRepository.close()])",
 		)
+		expect(owner).toContain("if (failure) throw failure.reason")
 		expect(terminate).not.toContain("this.apiRateTracker.dispose()")
 	})
 })

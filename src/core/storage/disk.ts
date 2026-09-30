@@ -31,6 +31,7 @@ import {
 	getDocumentsPath,
 	warmupDocumentsPathCache,
 } from "./documents-path"
+import { TASK_METRICS_DATABASE_NAME } from "./task-metrics-database"
 
 // Storage roots live in a leaf module so low-level owners can resolve them
 // without importing this module's host and Webview dependencies.
@@ -114,7 +115,8 @@ export const GlobalFileNames = {
 	taskSnapshot: "snapshot.json",
 	taskActivities: "activities.json",
 	taskApiRateMetrics: "api_rate_metrics.jsonl",
-	taskDatabase: (taskId: string) => `${taskId}.db`,
+	taskDatabase: (_taskId: string) => TASK_METRICS_DATABASE_NAME,
+	legacyTaskDatabase: (taskId: string) => `${taskId}.db`,
 	taskContext: "context.json",
 	apiConversationHistory: "api_conversation_history.jsonl",
 	contextHistory: "context_history.jsonl",

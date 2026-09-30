@@ -32,6 +32,7 @@ import {
 export interface TaskApiRateMetricsRepositoryOptions {
 	taskId: string
 	location?: string
+	readOnly?: boolean
 	legacySourcePath?: string
 	migrateLegacy?: boolean
 	now?: () => number
@@ -158,6 +159,7 @@ export class TaskApiRateMetricsRepository implements ApiRateMetricsRepository {
 	}
 
 	async compactIfNeeded(nowSecond: number): Promise<boolean> {
+		if (this.options.readOnly) return false
 		await this.initialize()
 		await this.waitForWrites()
 		if (this.logicalBytes < this.compactionThresholdBytes) return false
@@ -194,6 +196,7 @@ export class TaskApiRateMetricsRepository implements ApiRateMetricsRepository {
 			taskId: this.options.taskId,
 			...(this.options.location ? { location: this.options.location } : {}),
 			now: this.now,
+			readOnly: this.options.readOnly,
 		})
 		await this.loadMigrationMarkers()
 
@@ -207,16 +210,16 @@ export class TaskApiRateMetricsRepository implements ApiRateMetricsRepository {
 			if (migration.marker) this.rememberMigrationMarker(migration.marker)
 		}
 
-		let entities: ApiRateMetricsEntity[] = []
+		let records: ApiRateMetricsStoredRecord[] = []
 		await this.collection.transaction(async (transaction) => {
 			const current = await transaction.query()
-			const records = current.map(fromApiRateMetricsEntity)
+			records = current.map(fromApiRateMetricsEntity)
 			for (const marker of records.map(sanitizeMigrationMarker).filter((value) => value !== undefined)) {
 				this.rememberMigrationMarker(marker)
 			}
 			const metaRecords = records.filter((record): record is ApiRateMetricsMetaRecord => record.kind === "meta")
 			if (metaRecords.length === 0) {
-				if (records.length > 0) {
+				if (records.length > 0 || this.options.readOnly) {
 					throw new ApiRateMetricsFileIntegrityError(
 						`Missing API rate metrics metadata for Task ${this.options.taskId}`,
 					)
@@ -227,8 +230,8 @@ export class TaskApiRateMetricsRepository implements ApiRateMetricsRepository {
 					taskId: this.options.taskId,
 					createdAt: this.now(),
 				}
-				entities = [toApiRateMetricsEntity(this.meta)]
-				await transaction.replaceAll(entities)
+				records = [this.meta]
+				await transaction.replaceAll(records.map(toApiRateMetricsEntity))
 				return
 			}
 			if (metaRecords.length !== 1 || metaRecords[0].taskId !== this.options.taskId) {
@@ -237,14 +240,17 @@ export class TaskApiRateMetricsRepository implements ApiRateMetricsRepository {
 				)
 			}
 			this.meta = metaRecords[0]
-			entities = current
 		})
-		const records = entities.map(fromApiRateMetricsEntity)
 
 		this.logicalBytes = serializedBytes(records.filter(isFileRecord))
-		const latest = await queryMetricsEntities(this.collection, true)
-		const recentRecords = latest.records
-			.map(fromApiRateMetricsEntity)
+		const stats = await this.collection.stats()
+		const latestSeconds = new Map<number, ApiRateSecondRecord>()
+		for (const record of records) {
+			if (record.kind !== "second") continue
+			const previous = latestSeconds.get(record.second)
+			if (!previous || record.revision > previous.revision) latestSeconds.set(record.second, record)
+		}
+		const recentRecords = [...latestSeconds.values()]
 			.filter((record): record is ApiRateSecondRecord => {
 				if (record.kind !== "second") return false
 				const activity = getApiRateSecondActivitySeconds(record.signals)
@@ -278,18 +284,18 @@ export class TaskApiRateMetricsRepository implements ApiRateMetricsRepository {
 							tokensPerMinute: extrapolatePerMinute(tokenCount, activity.providerActiveSeconds),
 						}
 					: {},
-			degraded: latest.stats.degraded || this.hasDegradedMigration(),
+			degraded: stats.degraded || this.hasDegradedMigration(),
 			lastRecord,
 			recentRecords,
 		}
 		Logger.debug(
-			`[Task ${this.options.taskId}] API rate metrics initialize: durationMs=${Math.round(performance.now() - startedAt)}, storageBytes=${latest.stats.storageBytes}, records=${entities.length}, activeSeconds=${activity.activeSeconds}, degraded=${latest.stats.degraded}`,
+			`[Task ${this.options.taskId}] API rate metrics initialize: durationMs=${Math.round(performance.now() - startedAt)}, storageBytes=${stats.storageBytes}, records=${records.length}, activeSeconds=${activity.activeSeconds}, degraded=${stats.degraded}`,
 		)
 		return recovery
 	}
 
 	private shouldMigrateLegacy(): boolean {
-		return this.options.migrateLegacy ?? true
+		return !this.options.readOnly && (this.options.migrateLegacy ?? true)
 	}
 
 	private async loadMigrationMarkers(): Promise<void> {
@@ -335,6 +341,7 @@ export class TaskApiRateMetricsRepository implements ApiRateMetricsRepository {
 
 	private assertWritable(): void {
 		if (this.closing || this.closed) throw new Error("API rate metrics repository is closed")
+		if (this.options.readOnly) throw new Error("API rate metrics repository is read-only")
 	}
 }
 

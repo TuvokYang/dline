@@ -1,21 +1,20 @@
-import path from "node:path"
 import type { UnifyStore } from "@core/storage/backend/api/UnifyStore"
 import { SqliteUnifyStoreBackend } from "@core/storage/backend/sqlite/SqliteUnifyStore"
-import { ensureTaskDirectoryExists, GlobalFileNames } from "@core/storage/disk"
+import { resolveTaskMetricsDatabase } from "@core/storage/task-metrics-database"
 import { ApiRequestRoundLegacyImportEntity } from "./api-request-round-legacy-import-entity"
 
 export interface ApiRequestRoundLegacyImportCollectionOptions {
 	readonly taskId: string
 	readonly location?: string
+	readonly readOnly?: boolean
 }
 
 /** Open the legacy import entity in the same Task-local SQLite database as exact rounds. */
 export async function createApiRequestRoundLegacyImportCollection(
 	options: ApiRequestRoundLegacyImportCollectionOptions,
 ): Promise<UnifyStore<ApiRequestRoundLegacyImportEntity>> {
-	const taskDirectory = await ensureTaskDirectoryExists(options.taskId)
-	const databasePath = options.location ?? path.join(taskDirectory, GlobalFileNames.taskDatabase(options.taskId))
-	const database = await new SqliteUnifyStoreBackend().open(databasePath)
+	const databasePath = await resolveTaskMetricsDatabase(options.taskId, options.location, options.readOnly)
+	const database = await new SqliteUnifyStoreBackend().open(databasePath, { readonly: options.readOnly })
 	let store: UnifyStore<ApiRequestRoundLegacyImportEntity> | undefined
 	try {
 		store = await database.openStore(ApiRequestRoundLegacyImportEntity)

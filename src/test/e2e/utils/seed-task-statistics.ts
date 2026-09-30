@@ -68,7 +68,7 @@ export async function seedTaskStatistics(
 	taskId: string,
 	nowMs = Date.now(),
 ): Promise<SeedTaskStatisticsResult> {
-	const databasePath = path.join(dlineDocsDir, "tasks", taskId, `${taskId}.db`)
+	const databasePath = path.join(dlineDocsDir, "tasks", taskId, "metrics.db")
 	const database = await new SqliteUnifyStoreBackend().open(databasePath)
 	const roundStore = await database.openStore(ApiRequestRoundEntity)
 	const executionStore = await database.openStore(ApiResponseExecutionEntity)

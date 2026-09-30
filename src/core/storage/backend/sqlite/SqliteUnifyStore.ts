@@ -51,12 +51,13 @@ interface PragmaRow {
 }
 
 export class SqliteUnifyStoreBackend implements UnifyStoreBackend {
-	async open(location: string): Promise<UnifyStoreDatabase> {
+	async open(location: string, options: { readonly?: boolean } = {}): Promise<UnifyStoreDatabase> {
 		const lease = await registry.acquire(location, {
 			applicationId: APPLICATION_ID,
 			migrations: UNIFY_STORE_MIGRATIONS,
+			readonly: options.readonly,
 		})
-		return new SqliteUnifyStoreDatabase(lease)
+		return new SqliteUnifyStoreDatabase(lease, options.readonly ?? false)
 	}
 }
 
@@ -64,7 +65,10 @@ class SqliteUnifyStoreDatabase implements UnifyStoreDatabase {
 	private closed = false
 	private closePromise: Promise<void> | undefined
 
-	constructor(private readonly lease: SqliteDatabaseLease) {}
+	constructor(
+		private readonly lease: SqliteDatabaseLease,
+		private readonly readOnly: boolean,
+	) {}
 
 	async hasStore<TEntity extends object>(entity: StoredEntityClass<TEntity>): Promise<boolean> {
 		this.assertOpen()
@@ -78,9 +82,14 @@ class SqliteUnifyStoreDatabase implements UnifyStoreDatabase {
 		this.assertOpen()
 		await this.lease.withLock(() => {
 			this.assertOpen()
-			ensureEntitySchema(this.lease.database, entity.storage)
+			if (this.readOnly) {
+				if (!hasEntitySchema(this.lease.database, entity.storage))
+					throw new Error(`Missing entity schema ${entity.storage.schemaId}`)
+			} else {
+				ensureEntitySchema(this.lease.database, entity.storage)
+			}
 		})
-		return new UnifyStoreCore(entity.storage, new SqliteUnifyStoreDriver(this.lease, entity.storage))
+		return new UnifyStoreCore(entity.storage, new SqliteUnifyStoreDriver(this.lease, entity.storage, this.readOnly))
 	}
 
 	close(): Promise<void> {
@@ -103,6 +112,7 @@ class SqliteUnifyStoreDriver<TEntity extends object> implements UnifyStoreDriver
 	constructor(
 		private readonly lease: SqliteDatabaseLease,
 		private readonly schema: EntitySchema<TEntity>,
+		private readonly readOnly: boolean,
 	) {}
 
 	async query(query: NormalizedUnifyStoreQuery<TEntity>): Promise<UnifyStoreResult<TEntity>> {
@@ -117,7 +127,7 @@ class SqliteUnifyStoreDriver<TEntity extends object> implements UnifyStoreDriver
 	}
 
 	async insert(records: readonly TEntity[]): Promise<void> {
-		this.assertOpen()
+		this.assertWritable()
 		await this.lease.withLock(() => {
 			this.assertOpen()
 			transactionSync(this.database, () => insertEntities(this.database, this.schema, records))
@@ -125,7 +135,7 @@ class SqliteUnifyStoreDriver<TEntity extends object> implements UnifyStoreDriver
 	}
 
 	async replaceAll(records: readonly TEntity[]): Promise<void> {
-		this.assertOpen()
+		this.assertWritable()
 		await this.lease.withLock(() => {
 			this.assertOpen()
 			transactionSync(this.database, () => replaceAllEntities(this.database, this.schema, records))
@@ -138,12 +148,18 @@ class SqliteUnifyStoreDriver<TEntity extends object> implements UnifyStoreDriver
 		this.assertOpen()
 		return await this.lease.withLock(async () => {
 			this.assertOpen()
-			this.database.exec("BEGIN IMMEDIATE")
+			this.database.exec(this.readOnly ? "BEGIN" : "BEGIN IMMEDIATE")
 			try {
 				const transaction: UnifyStoreDriverTransaction<TEntity> = {
 					query: async (query) => selectEntities(this.database, this.schema, query),
-					insert: async (records) => insertEntities(this.database, this.schema, records),
-					replaceAll: async (records) => replaceAllEntities(this.database, this.schema, records),
+					insert: async (records) => {
+						this.assertWritable()
+						insertEntities(this.database, this.schema, records)
+					},
+					replaceAll: async (records) => {
+						this.assertWritable()
+						replaceAllEntities(this.database, this.schema, records)
+					},
 				}
 				const result = await operation(transaction)
 				this.database.exec("COMMIT")
@@ -176,6 +192,11 @@ class SqliteUnifyStoreDriver<TEntity extends object> implements UnifyStoreDriver
 
 	private assertOpen(): void {
 		if (this.closed) throw new Error("SQLite UnifyStore driver is closed")
+	}
+
+	private assertWritable(): void {
+		this.assertOpen()
+		if (this.readOnly) throw new Error("SQLite UnifyStore is read-only")
 	}
 }
 

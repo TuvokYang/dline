@@ -2,10 +2,8 @@ import CheckpointTracker from "@integrations/checkpoints/CheckpointTracker"
 import { EventEmitter } from "events"
 import getFolderSize from "get-folder-size"
 import { findLastIndex } from "@/shared/array"
-import { combineApiRequests } from "@/shared/combineApiRequests"
-import { combineCommandSequences } from "@/shared/combineCommandSequences"
 import { ClineMessage } from "@/shared/ExtensionMessage"
-import { getApiMetrics } from "@/shared/getApiMetrics"
+import type { ApiMetrics } from "@/shared/getApiMetrics"
 import { HistoryItem, summarizeHistoryTaskText } from "@/shared/HistoryItem"
 import { ClineStorageMessage } from "@/shared/messages/content"
 import { Logger } from "@/shared/services/Logger"
@@ -13,6 +11,7 @@ import { getCwd, getDesktopDir } from "@/utils/path"
 import { ApiConversation } from "../storage/ApiConversation"
 import { ensureTaskDirectoryExists } from "../storage/disk"
 import { UIMessage } from "../storage/UIMessage"
+import { LegacyMessageUsageReader, type TaskUsageReader } from "./performance/task-usage-reader"
 import { TaskState } from "./TaskState"
 
 // Event types for clineMessages changes
@@ -55,6 +54,8 @@ interface MessageStateHandlerParams {
 	uiMessage?: UIMessage
 	/** API conversation store — optional for tests. */
 	apiConversation?: ApiConversation
+	/** Metrics module read port; legacy compatibility remains inside that module. */
+	metricsReader?: TaskUsageReader
 }
 
 /**
@@ -85,16 +86,7 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 	private readonly transientClineMessages = new Map<number, ClineMessage>()
 	/** Bumped by every mutation that can change how messages aggregate. */
 	private messageRevision = 0
-	/** Aggregated metrics reused while the message sequence is unchanged. */
-	private historyMetricsCache?: { revision: number; metrics: ReturnType<typeof getApiMetrics> }
-	/**
-	 * Metrics over the whole sequence, kept apart from the history aggregate.
-	 *
-	 * The history row excludes the leading task message while the state push
-	 * reports every message, so one shared slot would silently change whichever
-	 * surface read it second.
-	 */
-	private stateMetricsCache?: { revision: number; metrics: ReturnType<typeof getApiMetrics> }
+	private readonly metricsReader: TaskUsageReader
 	/** Last measured task-directory size with the time it was taken. */
 	private taskDirectorySizeCache?: { bytes: number; measuredAt: number }
 
@@ -114,6 +106,7 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 		this._publishTaskHistoryClose = params.publishTaskHistoryClose ?? (() => {})
 		this.uiMessage = params.uiMessage
 		this.apiConversation = params.apiConversation
+		this.metricsReader = params.metricsReader ?? new LegacyMessageUsageReader()
 	}
 
 	// ── ClineMessages (read from UIMessage store) ──
@@ -268,12 +261,8 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 	 * exact — any add, update, delete or transient overlay change invalidates it —
 	 * while collapsing the repeated work a single unchanged sequence would cause.
 	 */
-	private readAggregatedMetrics(allMessages: ClineMessage[]): ReturnType<typeof getApiMetrics> {
-		const cached = this.historyMetricsCache
-		if (cached?.revision === this.messageRevision) return cached.metrics
-		const metrics = getApiMetrics(combineApiRequests(combineCommandSequences(allMessages.slice(1))))
-		this.historyMetricsCache = { revision: this.messageRevision, metrics }
-		return metrics
+	private readAggregatedMetrics(allMessages: ClineMessage[]): ApiMetrics {
+		return this.metricsReader.readHistoryMetrics(() => allMessages, this.messageRevision)
 	}
 
 	/**
@@ -286,12 +275,8 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 	 * push. Keying on the mutation revision keeps the result exact while
 	 * collapsing an unchanged sequence to a single computation.
 	 */
-	readStateMetrics(): ReturnType<typeof getApiMetrics> {
-		const cached = this.stateMetricsCache
-		if (cached?.revision === this.messageRevision) return cached.metrics
-		const metrics = getApiMetrics(combineApiRequests(combineCommandSequences(this.clineMessages)))
-		this.stateMetricsCache = { revision: this.messageRevision, metrics }
-		return metrics
+	readStateMetrics(): ApiMetrics {
+		return this.metricsReader.readStateMetrics(() => this.clineMessages, this.messageRevision)
 	}
 
 	/**

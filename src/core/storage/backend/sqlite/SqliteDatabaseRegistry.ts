@@ -13,6 +13,7 @@ interface ApplicationIdRow {
 export interface SqliteDatabaseOptions {
 	applicationId: number
 	migrations: readonly SqliteMigration[]
+	readonly?: boolean
 }
 
 interface RegistryEntry {
@@ -50,6 +51,7 @@ export class SqliteDatabaseRegistry {
 
 	async acquire(location: string, options: SqliteDatabaseOptions): Promise<SqliteDatabaseLease> {
 		const normalizedLocation = this.normalizeLocation(location)
+		if (options.readonly) return this.acquireReadOnly(normalizedLocation, options)
 		let entry = this.entries.get(normalizedLocation)
 		if (!entry) {
 			let pending = this.pending.get(normalizedLocation)
@@ -72,7 +74,41 @@ export class SqliteDatabaseRegistry {
 	}
 
 	getReferenceCount(location: string): number {
-		return this.entries.get(this.normalizeLocation(location))?.references ?? 0
+		const key = this.normalizeLocation(location)
+		return (this.entries.get(key)?.references ?? 0) + (this.entries.get(`${key}:readonly`)?.references ?? 0)
+	}
+
+	private async acquireReadOnly(location: string, options: SqliteDatabaseOptions): Promise<SqliteDatabaseLease> {
+		const key = `${location}:readonly`
+		let entry = this.entries.get(key)
+		if (!entry) {
+			const handle = openSqliteDatabase(location, { readonly: true })
+			try {
+				const application = handle.database.prepare("PRAGMA application_id").get() as unknown as ApplicationIdRow
+				if (application.application_id !== options.applicationId) {
+					throw new SqliteApplicationMismatchError(options.applicationId, application.application_id)
+				}
+				const version = handle.database.prepare("PRAGMA user_version").get() as unknown as { user_version: number }
+				if (version.user_version !== options.migrations.at(-1)?.version) {
+					throw new Error("SQLite read requires an already migrated database")
+				}
+				entry = {
+					handle,
+					mutex: new Mutex(),
+					references: 0,
+					applicationId: options.applicationId,
+					latestVersion: version.user_version,
+				}
+				this.entries.set(key, entry)
+			} catch (error) {
+				handle.close()
+				throw error
+			}
+		} else {
+			this.validateCompatibleOptions(entry, options)
+		}
+		entry.references += 1
+		return new SqliteDatabaseLease(entry.handle.database, entry.mutex, () => this.release(key, entry))
 	}
 
 	closeAll(): void {

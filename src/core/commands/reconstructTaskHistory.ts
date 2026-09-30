@@ -1,7 +1,9 @@
 import { getDlineDocumentsPath, getSavedClineMessages, getTaskMetadata } from "@core/storage/disk"
 import { StateManager } from "@core/storage/StateManager"
+import { TaskMetricsOwner } from "@core/task/performance/TaskMetricsOwner"
 import { HostProvider } from "@hosts/host-provider"
 import { ClineMessage } from "@shared/ExtensionMessage"
+import type { ApiMetrics } from "@shared/getApiMetrics"
 import { HistoryItem } from "@shared/HistoryItem"
 import { ShowMessageType } from "@shared/proto/dline/host/window"
 import { fileExistsAtPath } from "@utils/fs"
@@ -149,7 +151,8 @@ async function reconstructTaskHistoryItem(taskId: string): Promise<HistoryItem |
 		const metadata = await getTaskMetadata(taskId)
 
 		// Extract task information
-		const taskInfo = extractTaskInformation(clineMessages, metadata)
+		const usage = await TaskMetricsOwner.readUsage(taskId, clineMessages)
+		const taskInfo = extractTaskInformation(clineMessages, metadata, usage)
 
 		// Create HistoryItem
 		const historyItem: HistoryItem = {
@@ -187,7 +190,7 @@ interface TaskInfo {
 	conversationHistoryDeletedRange?: [number, number]
 }
 
-function extractTaskInformation(clineMessages: ClineMessage[], metadata: any): TaskInfo {
+function extractTaskInformation(clineMessages: ClineMessage[], metadata: any, usage: Readonly<ApiMetrics> | undefined): TaskInfo {
 	// Find the first user message (task description)
 	const firstUserMessage = clineMessages.find((msg) => msg.type === "say" && msg.say === "text" && msg.text)
 
@@ -209,50 +212,15 @@ function extractTaskInformation(clineMessages: ClineMessage[], metadata: any): T
 		}
 	}
 
-	// Calculate token usage from API request messages
-	let tokensIn = 0
-	let tokensOut = 0
-	let cacheWrites = 0
-	let cacheReads = 0
-	let totalCost = 0
+	// Usage belongs to the metrics module, not the history-index reconstruction.
+	let tokensIn = usage?.totalTokensIn ?? 0
+	let tokensOut = usage?.totalTokensOut ?? 0
+	let cacheWrites = usage?.totalCacheWrites ?? 0
+	let cacheReads = usage?.totalCacheReads ?? 0
+	let totalCost = usage?.totalCost ?? 0
 
-	// Look for usage-carrying messages with token info
-	const apiReqMessages = clineMessages.filter(
-		(msg) => msg.type === "say" && (msg.say === "api_req_started" || msg.say === "subagent_usage") && msg.text,
-	)
-
-	for (const msg of apiReqMessages) {
-		try {
-			if (msg.text) {
-				const apiInfo = JSON.parse(msg.text) as unknown
-				if (!apiInfo || typeof apiInfo !== "object") {
-					continue
-				}
-
-				const usage = apiInfo as Record<string, unknown>
-				if (typeof usage.tokensIn === "number" && Number.isFinite(usage.tokensIn)) {
-					tokensIn += usage.tokensIn
-				}
-				if (typeof usage.tokensOut === "number" && Number.isFinite(usage.tokensOut)) {
-					tokensOut += usage.tokensOut
-				}
-				if (typeof usage.cacheWrites === "number" && Number.isFinite(usage.cacheWrites)) {
-					cacheWrites += usage.cacheWrites
-				}
-				if (typeof usage.cacheReads === "number" && Number.isFinite(usage.cacheReads)) {
-					cacheReads += usage.cacheReads
-				}
-				if (typeof usage.cost === "number" && Number.isFinite(usage.cost)) {
-					totalCost += usage.cost
-				}
-			}
-		} catch {
-			// Ignore parsing errors
-		}
-	}
-
-	// Use metadata if available and no tokens found in messages
-	if (tokensIn === 0 && tokensOut === 0 && metadata.model_usage) {
+	// Preserve metadata-only compatibility when the metrics owner has no usage source.
+	if (!usage && metadata.model_usage) {
 		for (const usage of metadata.model_usage) {
 			tokensIn += usage.tokensIn || 0
 			tokensOut += usage.tokensOut || 0

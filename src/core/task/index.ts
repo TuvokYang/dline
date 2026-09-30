@@ -310,16 +310,10 @@ import { createNewTaskHandoff } from "./new-task/new-task-handoff"
 import { TaskTurnTelemetry } from "./observability/task-turn-telemetry"
 import type { ApiRateMetricsQuery, ApiRateMetricsQueryResult } from "./performance/api-rate-metrics-types"
 import type { ApiRateSnapshot } from "./performance/api-rate-tracker"
-import { ApiRequestRoundLifecycle } from "./performance/api-request-round-lifecycle"
-import { TaskApiRequestRoundRepository } from "./performance/api-request-round-repository"
-import { ApiRequestRoundTracker } from "./performance/api-request-round-tracker"
-import { ApiResponseExecutionLifecycle } from "./performance/api-response-execution-lifecycle"
-import { TaskApiResponseExecutionRepository } from "./performance/api-response-execution-repository"
 import type { ApiResponseExecutionToolSummary } from "./performance/api-response-execution-types"
 import type { ProviderRequestRoundAdmission, ProviderRequestRoundPort } from "./performance/provider-request-round-port"
-import { TaskApiRateMetricsRepository } from "./performance/task-api-rate-metrics-repository"
-import { isTaskRateMetricsLoopActive, TaskApiRateMetricsService } from "./performance/task-api-rate-metrics-service"
-import { TaskRateMetricsQueryService } from "./performance/task-rate-metrics-query-service"
+import { TaskMetricsOwner } from "./performance/TaskMetricsOwner"
+import { isTaskRateMetricsLoopActive } from "./performance/task-api-rate-metrics-service"
 import type { TaskRateMetricsQuery, TaskRateMetricsQueryResult } from "./performance/task-rate-metrics-types"
 import type { PresentationPriority } from "./presentation-types"
 import { PromptCacheHealthTracker } from "./prompt-cache/PromptCacheHealthTracker"
@@ -820,9 +814,9 @@ export class Task {
 	/** Execution projection belonging to the current Provider response; prompt rebuilding never reads this field. */
 	private activeProviderInputRuntime?: ResolvedPromptRuntime
 	private readonly promptCacheHealth: PromptCacheHealthTracker
-	private readonly apiRateMetricsService: TaskApiRateMetricsService
-	private readonly apiRequestRoundLifecycle: ApiRequestRoundLifecycle
-	private readonly taskRateMetricsQueryService: TaskRateMetricsQueryService
+	private readonly metrics: TaskMetricsOwner
+	private readonly apiRateMetricsService: TaskMetricsOwner["recorder"]["rates"]
+	private readonly apiRequestRoundLifecycle: TaskMetricsOwner["recorder"]["rounds"]
 	private readonly ordinaryProviderRequestRounds = new Map<number, ProviderRequestRoundAdmission>()
 	private readonly activeProviderExecutionTurns = new Map<
 		ProviderRequestRoundAdmission,
@@ -833,7 +827,6 @@ export class Task {
 		{ turnId: string; toolCount: number; admission: ProviderRequestRoundAdmission }
 	>()
 	private nextAuxiliaryProviderRoundApiIndex = 0
-	private apiRateMetricsInitialization?: Promise<void>
 	private pendingBackgroundResultIds?: { subagentIds: string[]; commandIds: string[] }
 	private pendingBackgroundCommandLineCounts?: Array<{ id: string; lineCount: number }>
 	private pendingRecentlyModifiedFilesSnapshot?: RecentlyModifiedFilesSnapshot
@@ -901,50 +894,17 @@ export class Task {
 			if (this.controllerDetached) return
 			await postStateToWebview(options)
 		}
-		this.apiRateMetricsService = new TaskApiRateMetricsService({
-			repository: new TaskApiRateMetricsRepository({ taskId }),
+		this.metrics = new TaskMetricsOwner({
 			taskId,
+			...(historyItem && uiMessage ? { legacySource: uiMessage } : {}),
 			onChanged: () => {
 				void this.postStateToWebview().catch((error) => {
-					Logger.debug(`[Task ${this.taskId}] Failed to publish API rate metrics: ${error}`)
+					Logger.debug(`[Task ${this.taskId}] Failed to publish API metrics: ${error}`)
 				})
 			},
 		})
-		const apiRequestRoundRepository = new TaskApiRequestRoundRepository({
-			taskId,
-			legacySource: historyItem ? uiMessage : undefined,
-		})
-		const apiResponseExecutionRepository = new TaskApiResponseExecutionRepository({ taskId })
-		const apiResponseExecutionLifecycle = new ApiResponseExecutionLifecycle({
-			taskId,
-			repository: apiResponseExecutionRepository,
-			onChanged: () => {
-				void this.postStateToWebview().catch((error) => {
-					Logger.debug(`[Task ${this.taskId}] Failed to publish API response execution metrics: ${error}`)
-				})
-			},
-		})
-		this.apiRequestRoundLifecycle = new ApiRequestRoundLifecycle(
-			new ApiRequestRoundTracker({
-				taskId,
-				repository: apiRequestRoundRepository,
-				onChanged: () => {
-					void this.postStateToWebview().catch((error) => {
-						Logger.debug(`[Task ${this.taskId}] Failed to publish API request round metrics: ${error}`)
-					})
-				},
-			}),
-			apiResponseExecutionLifecycle,
-		)
-		this.taskRateMetricsQueryService = new TaskRateMetricsQueryService({
-			activeMetrics: this.apiRateMetricsService,
-			roundRepository: apiRequestRoundRepository,
-			executionRepository: apiResponseExecutionRepository,
-			waitForRoundPersistence: () => this.apiRequestRoundLifecycle.waitForRoundPersistence(),
-			waitForExecutionPersistence: () => this.apiRequestRoundLifecycle.waitForExecutionPersistence(),
-			isExecutionDegraded: () => this.apiRequestRoundLifecycle.getExecutionSnapshot().degraded,
-			taskId,
-		})
+		this.apiRateMetricsService = this.metrics.recorder.rates
+		this.apiRequestRoundLifecycle = this.metrics.recorder.rounds
 		this.reinitExistingTaskFromId = reinitExistingTaskFromId
 		this.cancelTask = cancelTask
 		// Workspace-scoped and owned by the Controller: a Task must not create or
@@ -1279,6 +1239,7 @@ export class Task {
 			publishTaskHistoryClose,
 			uiMessage,
 			apiConversation,
+			metricsReader: this.metrics.reader,
 		})
 		this.historyResumeMaintenance = new HistoryResumeMaintenance({
 			cleanupLegacyStorage: async () => {
@@ -2215,71 +2176,21 @@ export class Task {
 
 	/** Return active-second TPM, complete-execution RPM, and cumulative round usage. */
 	public getApiRateSnapshot(): ApiRateSnapshot {
-		const active = this.apiRateMetricsService.getSnapshot()
-		const rounds = this.apiRequestRoundLifecycle.getSnapshot()
-		const executions = this.apiRequestRoundLifecycle.getExecutionSnapshot()
-		return {
-			...(active.activeSeconds === undefined ? {} : { activeSeconds: active.activeSeconds }),
-			...(active.tokensPerMinute === undefined ? {} : { tokensPerMinute: active.tokensPerMinute }),
-			...(executions.requestsPerMinute === undefined ? {} : { requestsPerMinute: executions.requestsPerMinute }),
-			rpmBasis: executions.rpmBasis,
-			executionCount: executions.executionCount,
-			...(executions.executionDurationMs === undefined ? {} : { executionDurationMs: executions.executionDurationMs }),
-			providerRoundCount: rounds.providerRoundCount,
-			...(rounds.totalTokensIn === undefined ? {} : { totalTokensIn: rounds.totalTokensIn }),
-			...(rounds.totalTokensOut === undefined ? {} : { totalTokensOut: rounds.totalTokensOut }),
-			...(rounds.totalCacheWrites === undefined ? {} : { totalCacheWrites: rounds.totalCacheWrites }),
-			...(rounds.totalCacheReads === undefined ? {} : { totalCacheReads: rounds.totalCacheReads }),
-			...(rounds.totalCost === undefined ? {} : { totalCost: rounds.totalCost }),
-			...(rounds.cacheHitRate === undefined ? {} : { cacheHitRate: rounds.cacheHitRate }),
-			cacheUsageAvailable: rounds.cacheUsageAvailable,
-			...(rounds.currency === undefined ? {} : { currency: rounds.currency }),
-		}
+		return this.metrics.reader.getSnapshot()
 	}
 
 	/** Query persisted Task-local API rate history without adding it to ExtensionState. */
 	public async queryApiRateMetrics(query: ApiRateMetricsQuery): Promise<ApiRateMetricsQueryResult> {
-		await this.ensureApiRateMetricsInitialized()
-		return this.apiRateMetricsService.query(query)
+		return this.metrics.queryApiRates(query)
 	}
 
 	/** Query unified Task-local TPM, complete-execution RPM, and round usage/cache history. */
 	public async queryTaskRateMetrics(query: TaskRateMetricsQuery): Promise<TaskRateMetricsQueryResult> {
-		await this.ensureApiRateMetricsInitialized()
-		return this.taskRateMetricsQueryService.query(query)
+		return this.metrics.reader.query(query)
 	}
 
 	private ensureApiRateMetricsInitialized(): Promise<void> {
-		this.apiRateMetricsInitialization ??= (() => {
-			const beganAt = performance.now()
-			const activeMetrics = this.apiRateMetricsService.initialize().finally(() => {
-				Logger.debug(
-					`[Task ${this.taskId}] API rate metrics initialization phase=active durationMs=${Math.round(performance.now() - beganAt)}`,
-				)
-			})
-			const roundMetrics = this.apiRequestRoundLifecycle
-				.initializeRounds()
-				.catch((error) => {
-					Logger.warn(`[Task ${this.taskId}] Failed to recover API request round metrics`, error)
-				})
-				.finally(() => {
-					Logger.debug(
-						`[Task ${this.taskId}] API rate metrics initialization phase=rounds durationMs=${Math.round(performance.now() - beganAt)}`,
-					)
-				})
-			const executionMetrics = this.apiRequestRoundLifecycle
-				.initializeExecutions()
-				.catch((error) => {
-					Logger.warn(`[Task ${this.taskId}] Failed to recover API response execution metrics`, error)
-				})
-				.finally(() => {
-					Logger.debug(
-						`[Task ${this.taskId}] API rate metrics initialization phase=executions durationMs=${Math.round(performance.now() - beganAt)}`,
-					)
-				})
-			return Promise.all([activeMetrics, roundMetrics, executionMetrics]).then(() => undefined)
-		})()
-		return this.apiRateMetricsInitialization
+		return this.metrics.initialize()
 	}
 
 	private async scheduleAssistantPresentation(
@@ -6469,8 +6380,7 @@ export class Task {
 					5_000,
 					"checkpointHashPersistence",
 				),
-				withTerminateTimeout(this.apiRateMetricsService.dispose(), 5_000, "apiRateMetricsService.dispose"),
-				withTerminateTimeout(this.apiRequestRoundLifecycle.close(), 5_000, "apiRequestRoundLifecycle.close"),
+				withTerminateTimeout(this.metrics.close(), 5_000, "taskMetrics.close"),
 				withTerminateTimeout(this.activityStore.waitForPersistence(), 5_000, "activityStore.waitForPersistence"),
 				withTerminateTimeout(this.browserSession.dispose(), 5_000, "browserSession.dispose"),
 				withTerminateTimeout(this.diffViewProvider.revertChanges(), 5_000, "diffViewProvider.revertChanges"),

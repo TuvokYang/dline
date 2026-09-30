@@ -1,20 +1,19 @@
-import path from "node:path"
 import type { UnifyStore } from "@core/storage/backend/api/UnifyStore"
 import { SqliteUnifyStoreBackend } from "@core/storage/backend/sqlite/SqliteUnifyStore"
-import { ensureTaskDirectoryExists, GlobalFileNames } from "@core/storage/disk"
+import { resolveTaskMetricsDatabase } from "@core/storage/task-metrics-database"
 import { ApiRequestRoundEntity } from "./api-request-round-entity"
 
 export interface ApiRequestRoundCollectionOptions {
 	readonly taskId: string
 	readonly location?: string
+	readonly readOnly?: boolean
 }
 
 export async function createApiRequestRoundCollection(
 	options: ApiRequestRoundCollectionOptions,
 ): Promise<UnifyStore<ApiRequestRoundEntity>> {
-	const taskDirectory = await ensureTaskDirectoryExists(options.taskId)
-	const databasePath = options.location ?? path.join(taskDirectory, GlobalFileNames.taskDatabase(options.taskId))
-	const database = await new SqliteUnifyStoreBackend().open(databasePath)
+	const databasePath = await resolveTaskMetricsDatabase(options.taskId, options.location, options.readOnly)
+	const database = await new SqliteUnifyStoreBackend().open(databasePath, { readonly: options.readOnly })
 	let store: UnifyStore<ApiRequestRoundEntity> | undefined
 	try {
 		store = await database.openStore(ApiRequestRoundEntity)

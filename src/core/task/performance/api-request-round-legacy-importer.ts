@@ -25,13 +25,12 @@ export interface ApiRequestRoundLegacyImportResult {
 export async function importApiRequestRoundLegacyUsage(
 	options: ApiRequestRoundLegacyImportOptions,
 ): Promise<ApiRequestRoundLegacyImportResult> {
-	if (!options.source) {
-		const marker = await options.legacyStore.query({
-			where: eq(ApiRequestRoundLegacyImportEntity.storage.fields.recordKey, LEGACY_IMPORT_MARKER_KEY),
-			limit: 1,
-		})
-		return marker.records[0] ? toImportResult(marker.records[0]) : emptyImportResult()
-	}
+	const marker = await options.legacyStore.query({
+		where: eq(ApiRequestRoundLegacyImportEntity.storage.fields.recordKey, LEGACY_IMPORT_MARKER_KEY),
+		limit: 1,
+	})
+	if (marker.records[0]) return toImportResult(marker.records[0])
+	if (!options.source) return emptyImportResult()
 
 	const exactFields = ApiRequestRoundEntity.storage.fields
 	const earliestExact = await options.exactStore.query({

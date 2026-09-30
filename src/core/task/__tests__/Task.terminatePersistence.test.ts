@@ -34,6 +34,7 @@ describe("Task termination persistence", () => {
 		const publishTaskHistoryClose = vi.fn()
 		const terminationRuntime = createTerminationRuntime(TaskPhase.CANCELLING)
 		const fakeTask = {
+			metrics: { close: vi.fn(async () => {}) },
 			promptFreshnessInvalidationCoordinator: { dispose: vi.fn() },
 			disposePromptInputFileWatcher: vi.fn(async () => {}),
 			invalidatePreparedProviderInputs: vi.fn(),
@@ -106,6 +107,7 @@ describe("Task termination persistence", () => {
 		const publishTaskHistoryClose = vi.fn()
 		const terminationRuntime = createTerminationRuntime(TaskPhase.CANCELLING)
 		const fakeTask = {
+			metrics: { close: vi.fn(async () => {}) },
 			initialCheckpointCommitPromise: new Promise<string | undefined>(() => undefined),
 			promptFreshnessInvalidationCoordinator: { dispose: vi.fn() },
 			disposePromptInputFileWatcher: vi.fn(async () => {}),
@@ -194,6 +196,7 @@ describe("Task termination persistence", () => {
 			shouldRunTaskCancelHook: vi.fn(async () => false),
 			...terminationRuntime,
 			dispatchRuntime,
+			metrics: { close: vi.fn(async () => {}) },
 			taskState: { abort: false, abandoned: false, isStreaming: false, cancelOperations: vi.fn() },
 			getActiveHookExecution: vi.fn(async () => undefined),
 			commandExecutor: { cancelBackgroundCommand: vi.fn(async () => true), dispose: vi.fn(async () => {}) },
@@ -266,6 +269,7 @@ describe("Task termination persistence", () => {
 			...terminationRuntime,
 			dispatchRuntime,
 			syncRetainedMachines,
+			metrics: { close: vi.fn(async () => {}) },
 			taskState: { abort: false, abandoned: false, isStreaming: false, cancelOperations: vi.fn() },
 			getActiveHookExecution: vi.fn(async () => undefined),
 			commandExecutor: { cancelBackgroundCommand, dispose: vi.fn(async () => {}) },

@@ -124,6 +124,21 @@ async function breakStaleLock(lockPath: string): Promise<void> {
 export class FileLock {
 	private readonly ownedLocks = new Map<string, string>()
 
+	/** Wait without creating or repairing a lock; read consumers must not mutate the protected resource. */
+	static async waitUntilUnlocked(filePath: string): Promise<void> {
+		const lockPath = lockPathFor(filePath)
+		for (let attempt = 1; attempt <= MAX_ACQUIRE_RETRIES; attempt++) {
+			try {
+				await fs.access(lockPath)
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code === "ENOENT") return
+				throw error
+			}
+			if (attempt === MAX_ACQUIRE_RETRIES) throw new Error("Resource transition is still locked")
+			await new Promise<void>((resolve) => setTimeout(resolve, ACQUIRE_RETRY_DELAY_MS))
+		}
+	}
+
 	/**
 	 * Acquire the lock for a JSONL file.
 	 *
