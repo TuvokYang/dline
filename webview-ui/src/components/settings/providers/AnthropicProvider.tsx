@@ -242,6 +242,7 @@ export const AnthropicProvider = ({ showModelOptions, isPopup, profile, onUpdate
 									: ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS
 							}
 							maxBudget={modelInfo.capabilities?.thinking?.maxBudget}
+							minBudget={1024}
 							mode={customModelEnabled ? "both" : "effort-only"}
 							modeSelectorLabel="Thinking Mode"
 							modeSelectorOptions={[

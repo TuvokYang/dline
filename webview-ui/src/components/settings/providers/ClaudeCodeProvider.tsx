@@ -77,6 +77,7 @@ export const ClaudeCodeProvider = ({ showModelOptions, isPopup, profile, onUpdat
 							effortLabel="Adaptive Thinking"
 							effortOptions={effortOptions}
 							maxBudget={thinking?.maxBudget}
+							minBudget={1024}
 							mode={adaptiveThinkingSupported ? "effort-only" : "budget-only"}
 							onReasoningConfigUpdate={(reasoning) => onUpdate({ claudeCode: { ...pc, reasoning } })}
 							reasoningConfig={pc.reasoning}

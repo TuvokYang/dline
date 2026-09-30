@@ -1,6 +1,4 @@
-import { ANTHROPIC_MAX_THINKING_BUDGET, ANTHROPIC_MIN_THINKING_BUDGET } from "@shared/api"
 import type { ReasoningConfig } from "@shared/proto/dline/provider/common"
-import { GENERIC_REASONING_EFFORT_OPTIONS, isOpenaiReasoningEffort } from "@shared/storage/types"
 import { VSCodeCheckbox } from "@vscode/webview-ui-toolkit/react"
 import { memo, useCallback, useEffect, useMemo, useState } from "react"
 import styled from "styled-components"
@@ -26,7 +24,8 @@ const RangeInput = styled.input<{ $value: number; $min: number; $max: number }>`
 	margin: 5px 0 0;
 	padding: 0;
 	background: ${(props) => {
-		const percentage = ((props.$value - props.$min) / (props.$max - props.$min)) * 100
+		const span = props.$max - props.$min
+		const percentage = span > 0 ? Math.max(0, Math.min(100, ((props.$value - props.$min) / span) * 100)) : 100
 		return `linear-gradient(to right, 
 			var(--vscode-progressBar-background) 0%,
 			var(--vscode-progressBar-background) ${percentage}%,
@@ -85,6 +84,8 @@ interface ThinkingControlProps {
 	effortDescription?: string
 	budgetLabel?: string
 	maxBudget?: number
+	/** Minimum accepted by the provider's budget wire format; not a default preference. */
+	minBudget?: number
 	defaultEnabled?: boolean
 	defaultEffort?: string
 	disableSupported?: boolean
@@ -106,11 +107,12 @@ const ThinkingControl = ({
 	reasoningConfig,
 	onReasoningConfigUpdate,
 	mode,
-	effortOptions = GENERIC_REASONING_EFFORT_OPTIONS as readonly string[],
+	effortOptions = [],
 	effortLabel = "Reasoning Effort",
 	effortDescription = "Higher effort improves depth, but uses more tokens.",
 	budgetLabel = "Thinking Budget",
-	maxBudget = ANTHROPIC_MAX_THINKING_BUDGET,
+	maxBudget,
+	minBudget = 1,
 	defaultEnabled = false,
 	defaultEffort,
 	disableSupported = true,
@@ -129,11 +131,12 @@ const ThinkingControl = ({
 		if (!disableSupported) {
 			return true
 		}
-		// Use explicit enableThinking field if present
+		if (reasoningConfig?.effort === "none") return false
+		// Use explicit enableThinking field if present.
 		if (reasoningConfig?.enableThinking !== undefined) {
 			return reasoningConfig.enableThinking
 		}
-		// Fallback: infer from effort/budget (backward compatibility)
+		// Fallback: infer preference state from effort/budget (backward compatibility).
 		// Exclude empty string '' to prevent proto3 zero-value from being treated as enabled
 		const hasEffort = !!(reasoningConfig?.effort && reasoningConfig.effort !== "none" && reasoningConfig.effort !== "")
 		const hasBudget = !!(reasoningConfig?.thinkingBudget && reasoningConfig.thinkingBudget > 0)
@@ -155,6 +158,20 @@ const ThinkingControl = ({
 
 	const effort = reasoningConfig?.effort
 	const budget = reasoningConfig?.thinkingBudget ?? 0
+	const selectableEfforts = useMemo(
+		() => effortOptions.filter((value) => value.length > 0 && (disableSupported || value !== "none")),
+		[disableSupported, effortOptions],
+	)
+	const selectedEffort =
+		effort && selectableEfforts.includes(effort)
+			? effort
+			: defaultEffort && selectableEfforts.includes(defaultEffort)
+				? defaultEffort
+				: ""
+	const minimum = Number.isSafeInteger(minBudget) && minBudget > 0 ? minBudget : 1
+	const maximum = maxBudget !== undefined && Number.isSafeInteger(maxBudget) && maxBudget > 0 ? maxBudget : undefined
+	const storedBudget =
+		Number.isSafeInteger(budget) && budget >= minimum && (maximum === undefined || budget <= maximum) ? budget : undefined
 	// Every update below rebuilds the whole config, so the current display has to be
 	// carried through explicitly or changing the effort would silently clear it.
 	const display = reasoningConfig?.display
@@ -172,8 +189,8 @@ const ThinkingControl = ({
 				const defaultMode = mode === "budget-only" ? "budget" : "effort"
 				onReasoningConfigUpdate({
 					enableThinking: true,
-					effort: defaultMode === "effort" ? (defaultEffort ?? "medium") : undefined,
-					thinkingBudget: defaultMode === "budget" ? 1024 : undefined,
+					effort: defaultMode === "effort" && selectedEffort !== "none" ? selectedEffort || undefined : undefined,
+					thinkingBudget: defaultMode === "budget" ? storedBudget : undefined,
 					display,
 				})
 			} else {
@@ -186,11 +203,12 @@ const ThinkingControl = ({
 				})
 			}
 		},
-		[defaultEffort, disableSupported, display, mode, onReasoningConfigUpdate],
+		[disableSupported, display, mode, onReasoningConfigUpdate, selectedEffort, storedBudget],
 	)
 
 	const handleEffortChange = useCallback(
 		(value: string) => {
+			if (!selectableEfforts.includes(value)) return
 			onReasoningConfigUpdate({
 				enableThinking: value !== "none",
 				effort: value,
@@ -198,35 +216,42 @@ const ThinkingControl = ({
 				display,
 			})
 		},
-		[display, onReasoningConfigUpdate],
+		[display, onReasoningConfigUpdate, selectableEfforts],
 	)
 
-	const handleBudgetSliderChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
-		const value = Number.parseInt(event.target.value, 10)
-		const clampedValue = Math.max(value, ANTHROPIC_MIN_THINKING_BUDGET)
-		setLocalBudget(clampedValue)
-	}, [])
+	const handleBudgetSliderChange = useCallback(
+		(event: React.ChangeEvent<HTMLInputElement>) => {
+			const value = Number(event.target.value)
+			if (!Number.isSafeInteger(value)) return
+			const clampedValue = Math.max(minimum, maximum === undefined ? value : Math.min(value, maximum))
+			setLocalBudget(clampedValue)
+		},
+		[minimum, maximum],
+	)
 
 	const handleBudgetSliderComplete = useCallback(() => {
+		if (!Number.isSafeInteger(localBudget) || localBudget < minimum || (maximum !== undefined && localBudget > maximum))
+			return
 		onReasoningConfigUpdate({
 			enableThinking: true,
 			effort: undefined,
 			thinkingBudget: localBudget,
 			display,
 		})
-	}, [display, localBudget, onReasoningConfigUpdate])
+	}, [display, localBudget, maximum, minimum, onReasoningConfigUpdate])
 
 	const handleModeChange = useCallback(
 		(value: string) => {
-			const newMode = value as ThinkingMode
+			if (value !== "effort" && value !== "budget") return
+			const newMode = value
 			onReasoningConfigUpdate({
 				enableThinking: true,
-				effort: newMode === "effort" ? reasoningConfig?.effort || "medium" : undefined,
-				thinkingBudget: newMode === "budget" ? reasoningConfig?.thinkingBudget || 1024 : undefined,
+				effort: newMode === "effort" && selectedEffort !== "none" ? selectedEffort || undefined : undefined,
+				thinkingBudget: newMode === "budget" ? storedBudget : undefined,
 				display,
 			})
 		},
-		[display, reasoningConfig, onReasoningConfigUpdate],
+		[display, onReasoningConfigUpdate, selectedEffort, storedBudget],
 	)
 
 	const handleDisplayChange = useCallback(
@@ -241,8 +266,14 @@ const ThinkingControl = ({
 
 	// The Enable Thinking checkbox is the single visibility gate for all thinking detail controls.
 	const showThinkingOptions = enableThinking
-	const shouldShowEffort = showThinkingOptions && (mode === "effort-only" || (mode === "both" && activeType === "effort"))
-	const shouldShowBudget = showThinkingOptions && (mode === "budget-only" || (mode === "both" && activeType === "budget"))
+	const shouldShowEffort =
+		showThinkingOptions &&
+		selectableEfforts.length > 0 &&
+		(mode === "effort-only" || (mode === "both" && activeType === "effort"))
+	const shouldShowBudget =
+		showThinkingOptions &&
+		(maxBudget === undefined || (maximum !== undefined && maximum >= minimum)) &&
+		(mode === "budget-only" || (mode === "both" && activeType === "budget"))
 	const shouldShowModeSelector = showThinkingOptions && mode === "both" && showModeSelector
 	const shouldShowDisplaySelector = showThinkingOptions && (displayOptions?.length ?? 0) > 0
 
@@ -289,20 +320,12 @@ const ThinkingControl = ({
 					{shouldShowEffort && (
 						<div style={{ marginTop: 10, marginBottom: 5 }}>
 							<Label className="text-xs font-medium">{effortLabel}</Label>
-							<Select
-								onValueChange={handleEffortChange}
-								value={
-									isOpenaiReasoningEffort(effort) && effortOptions.includes(effort)
-										? effort
-										: defaultEffort && effortOptions.includes(defaultEffort)
-											? defaultEffort
-											: effortOptions[0]
-								}>
+							<Select onValueChange={handleEffortChange} value={selectedEffort}>
 								<SelectTrigger className="w-full mt-1">
-									<SelectValue />
+									<SelectValue placeholder="Provider default" />
 								</SelectTrigger>
 								<SelectContent>
-									{effortOptions.map((opt) => (
+									{selectableEfforts.map((opt) => (
 										<SelectItem key={opt} value={opt}>
 											{opt.charAt(0).toUpperCase() + opt.slice(1)}
 										</SelectItem>
@@ -360,25 +383,37 @@ const ThinkingControl = ({
 								{budgetLabel} ({localBudget.toLocaleString()} tokens)
 							</Label>
 							<Container>
-								<RangeInput
-									$max={maxBudget}
-									$min={0}
-									$value={localBudget}
-									aria-describedby="thinking-budget-description"
-									aria-label={`${budgetLabel}: ${localBudget.toLocaleString()} tokens`}
-									aria-valuemax={maxBudget}
-									aria-valuemin={ANTHROPIC_MIN_THINKING_BUDGET}
-									aria-valuenow={localBudget}
-									id="thinking-budget-slider"
-									max={maxBudget}
-									min={0}
-									onChange={handleBudgetSliderChange}
-									onMouseUp={handleBudgetSliderComplete}
-									onTouchEnd={handleBudgetSliderComplete}
-									step={1}
-									type="range"
-									value={localBudget}
-								/>
+								{maximum !== undefined ? (
+									<RangeInput
+										$max={maximum}
+										$min={minimum}
+										$value={localBudget}
+										aria-label={`${budgetLabel}: ${localBudget.toLocaleString()} tokens`}
+										aria-valuemax={maximum}
+										aria-valuemin={minimum}
+										aria-valuenow={localBudget}
+										id="thinking-budget-slider"
+										max={maximum}
+										min={minimum}
+										onChange={handleBudgetSliderChange}
+										onMouseUp={handleBudgetSliderComplete}
+										onTouchEnd={handleBudgetSliderComplete}
+										step={1}
+										type="range"
+										value={localBudget}
+									/>
+								) : (
+									<input
+										aria-label={budgetLabel}
+										className="w-full"
+										min={minimum}
+										onBlur={handleBudgetSliderComplete}
+										onChange={handleBudgetSliderChange}
+										step={1}
+										type="number"
+										value={localBudget}
+									/>
+								)}
 							</Container>
 						</div>
 					)}
