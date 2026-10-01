@@ -1,6 +1,7 @@
-import { ApiFormat, ServerTool } from "@shared/proto/dline/models/metadata"
+import { ApiFormat, ServerTool, type ThinkingConfig } from "@shared/proto/dline/models/metadata"
 import { ApiProfile, type ImageGenerationProfile, ImageGenerationSource } from "@shared/proto/dline/profile"
 import { AnthropicProviderConfig } from "@shared/proto/dline/provider/anthropic"
+import type { ReasoningConfig } from "@shared/proto/dline/provider/common"
 import { OpenAiProviderConfig } from "@shared/proto/dline/provider/openai"
 import { fireEvent, render, screen } from "@testing-library/react"
 import { describe, expect, it, vi } from "vitest"
@@ -143,13 +144,13 @@ describe("ProviderProfileCard", () => {
 	it("shows effort-based Thinking in the second-line provider summary", () => {
 		const profile = ApiProfile.create({
 			...buildProfile(),
-			modelInfo: {
+			openai: OpenAiProviderConfig.create({
 				capabilities: {
 					supportsReasoning: true,
 					thinking: { supported: true, mode: "effort", effortLevels: ["low", "medium", "high"] },
 				},
-			},
-			openai: OpenAiProviderConfig.create({ reasoning: { enableThinking: true, effort: "high", thinkingBudget: 0 } }),
+				reasoning: { enableThinking: true, effort: "high", thinkingBudget: 0 },
+			}),
 		})
 		render(
 			<ProviderProfileCard
@@ -170,10 +171,10 @@ describe("ProviderProfileCard", () => {
 	it("shows budget-based Thinking in the second-line provider summary", () => {
 		const profile = ApiProfile.create({
 			...buildProfile(),
-			modelInfo: {
+			openai: OpenAiProviderConfig.create({
 				capabilities: { supportsReasoning: true, thinking: { supported: true, mode: "budget", maxBudget: 16_384 } },
-			},
-			openai: OpenAiProviderConfig.create({ reasoning: { enableThinking: true, effort: "", thinkingBudget: 8_192 } }),
+				reasoning: { enableThinking: true, effort: "", thinkingBudget: 8_192 },
+			}),
 		})
 		render(
 			<ProviderProfileCard
@@ -189,6 +190,95 @@ describe("ProviderProfileCard", () => {
 		)
 
 		expect(screen.getByText("openai · model-a · Thinking: 8,192 tokens")).toBeInTheDocument()
+	})
+
+	it.each<{
+		name: string
+		thinking: ThinkingConfig
+		reasoning: ReasoningConfig
+		summary?: string
+	}>([
+		{
+			name: "effort ignores a stale positive budget",
+			thinking: { supported: true, mode: "effort", effortLevels: ["low"], maxBudget: 2000 },
+			reasoning: { effort: "low", thinkingBudget: 1500 },
+			summary: "Thinking: Low",
+		},
+		{
+			name: "effort does not activate from a budget alone",
+			thinking: { supported: true, mode: "effort", effortLevels: ["low"], maxBudget: 2000 },
+			reasoning: { thinkingBudget: 1500 },
+		},
+		{
+			name: "an effort default does not imply a default-enabled model",
+			thinking: { supported: true, mode: "effort", effortLevels: ["low"], defaultEffort: "low", defaultEnabled: false },
+			reasoning: {},
+		},
+		{
+			name: "budget does not activate from an effort alone",
+			thinking: { supported: true, mode: "budget", maxBudget: 2000 },
+			reasoning: { effort: "low" },
+		},
+		{
+			name: "a maximum does not declare a mode",
+			thinking: { supported: true, maxBudget: 2000 },
+			reasoning: { enableThinking: true, thinkingBudget: 1500 },
+		},
+		{
+			name: "a budget without a declared maximum remains displayable",
+			thinking: { supported: true, mode: "budget", minBudget: 17 },
+			reasoning: { thinkingBudget: 23 },
+			summary: "Thinking: 23 tokens",
+		},
+		{
+			name: "the summary applies the effective positive-budget minimum",
+			thinking: { supported: true, mode: "budget", minBudget: 17, maxBudget: 101 },
+			reasoning: { thinkingBudget: 3 },
+			summary: "Thinking: 17 tokens",
+		},
+		{
+			name: "zero overrides a default-enabled optional budget",
+			thinking: { supported: true, mode: "budget", maxBudget: 101, defaultEnabled: true },
+			reasoning: { enableThinking: true, thinkingBudget: 0 },
+			summary: "Thinking: Off",
+		},
+		{
+			name: "required effort discards a stale disabled preference",
+			thinking: { supported: true, mode: "effort", effortLevels: ["low"], defaultEffort: "low", canDisable: false },
+			reasoning: { enableThinking: false, effort: "none" },
+			summary: "Thinking: On",
+		},
+		{
+			name: "required budget does not display stale zero as disabled",
+			thinking: { supported: true, mode: "budget", minBudget: 17, canDisable: false },
+			reasoning: { enableThinking: false, thinkingBudget: 0 },
+			summary: "Thinking: Budget",
+		},
+		{
+			name: "invalid bounds do not produce a token summary",
+			thinking: { supported: true, mode: "budget", minBudget: 17, maxBudget: 11 },
+			reasoning: { enableThinking: true, thinkingBudget: 23 },
+		},
+	])("renders the effective declaration: $name", ({ thinking, reasoning, summary }) => {
+		const onUpdate = vi.fn()
+		const profile = ApiProfile.create({
+			...buildProfile(),
+			openai: { capabilities: { thinking }, reasoning },
+		})
+		render(
+			<ProviderProfileCard
+				currentMode="act"
+				editMode={false}
+				isExpanded={false}
+				onDelete={vi.fn()}
+				onToggleExpand={vi.fn()}
+				onUpdate={onUpdate}
+				profile={profile}
+				providerOptions={providerOptions}
+			/>,
+		)
+		expect(screen.getByText(["openai", "model-a", summary].filter(Boolean).join(" · "))).toBeInTheDocument()
+		expect(onUpdate).not.toHaveBeenCalled()
 	})
 
 	it("keeps usage badges and capability icons in a right-aligned tail", () => {

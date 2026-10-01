@@ -4,6 +4,7 @@ import { type ImageGenerationProfile, ImageGenerationSource } from "@shared/prot
 import { AnthropicProviderConfig } from "@shared/proto/dline/provider/anthropic"
 import type { ReasoningConfig } from "@shared/proto/dline/provider/common"
 import { PROFILE_PROVIDER_KEYS, resolveProfileModelInfo } from "@shared/providers/profile-model-info"
+import { clampThinkingBudget, resolveThinkingBudgetBounds } from "@shared/providers/thinking-budget"
 import type { Mode } from "@shared/storage/types"
 import { resolveProfileReasoningConfig, resolveTaskThinkingConfig } from "@shared/task-reasoning"
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react"
@@ -17,27 +18,31 @@ import { getCachedProviderDefaultImageModelId, getCachedProviderDefaultModelId, 
 import { WebToolsModeControl } from "./WebToolsModeControl"
 
 function formatThinkingSummary(reasoning: ReasoningConfig | undefined, thinking: ThinkingConfig | undefined) {
-	if (thinking?.supported !== true) return undefined
-	if (thinking.canDisable !== false && (reasoning?.enableThinking === false || reasoning?.effort === "none"))
-		return "Thinking: Off"
-
-	const budget = reasoning?.thinkingBudget ?? 0
-	if (budget > 0 && thinking.maxBudget !== undefined) return `Thinking: ${budget.toLocaleString()} tokens`
-
+	if (thinking?.supported !== true || (thinking.mode !== "effort" && thinking.mode !== "budget")) return undefined
 	const effort = reasoning?.effort?.trim()
-	if (effort && thinking.effortLevels?.includes(effort) && (effort !== "none" || thinking.canDisable !== false)) {
-		return `Thinking: ${effort.replace(/^./, (character) => character.toUpperCase())}`
+	const required = thinking.canDisable === false
+	const disabled =
+		reasoning?.enableThinking === false ||
+		effort === "none" ||
+		(thinking.mode === "budget" && reasoning?.thinkingBudget === 0)
+	if (disabled && !required) return "Thinking: Off"
+
+	if (thinking.mode === "budget") {
+		if (!resolveThinkingBudgetBounds(thinking)) return undefined
+		const budget = disabled ? undefined : clampThinkingBudget(reasoning?.thinkingBudget ?? 0, thinking)
+		const enabled = required || (reasoning?.enableThinking ?? (budget !== undefined || thinking.defaultEnabled === true))
+		if (!enabled) return undefined
+		return budget !== undefined ? `Thinking: ${budget.toLocaleString()} tokens` : "Thinking: Budget"
 	}
 
-	const effortLevels = thinking.effortLevels ?? []
-	if (thinking.mode === "budget" || (effortLevels.length === 0 && thinking.maxBudget !== undefined)) {
-		return "Thinking: Budget"
-	}
-	const defaultEffort = thinking.defaultEffort
-	if (defaultEffort && effortLevels.includes(defaultEffort)) {
-		return `Thinking: ${defaultEffort.replace(/^./, (character) => character.toUpperCase())}`
-	}
-	return thinking.canDisable === false || thinking.defaultEnabled === true ? "Thinking: On" : undefined
+	const levels = thinking.effortLevels ?? []
+	const legalEffort = !disabled && effort && levels.includes(effort) ? effort : undefined
+	const enabled = required || (reasoning?.enableThinking ?? (legalEffort !== undefined || thinking.defaultEnabled === true))
+	if (!enabled) return undefined
+	const defaultEffort =
+		!disabled && thinking.defaultEffort && levels.includes(thinking.defaultEffort) ? thinking.defaultEffort : undefined
+	const selectedEffort = legalEffort ?? defaultEffort
+	return selectedEffort ? `Thinking: ${selectedEffort.replace(/^./, (character) => character.toUpperCase())}` : "Thinking: On"
 }
 
 interface ApiProfileCardProps {
