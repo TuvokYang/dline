@@ -191,6 +191,17 @@ describe("OpenAiHandler", () => {
 				chat: { enable_thinking: true, thinking_budget: 1200 },
 			},
 			{
+				name: "declared positive minimum",
+				capabilities: { thinking: { supported: true, mode: "budget", minBudget: 17, maxBudget: 101 } },
+				reasoning: { thinkingBudget: 3 },
+				chat: { enable_thinking: true, thinking_budget: 17 },
+			},
+			{
+				name: "invalid minimum range",
+				capabilities: { thinking: { supported: true, mode: "budget", minBudget: 17, maxBudget: 11 } },
+				reasoning: { thinkingBudget: 30 },
+			},
+			{
 				name: "budget mode has no invented maximum",
 				capabilities: { thinking: { supported: true, mode: "budget" } },
 				reasoning: { thinkingBudget: 40000 },

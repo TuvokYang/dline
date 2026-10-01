@@ -1,6 +1,7 @@
 import { type ThinkingConfig as GeminiThinkingConfig, ThinkingLevel } from "@google/genai"
 import type { ModelCapabilities } from "@shared/proto/dline/models/metadata"
 import type { ReasoningConfig } from "@shared/proto/dline/provider/common"
+import { clampThinkingBudget, resolveThinkingBudgetBounds } from "@shared/providers/thinking-budget"
 
 /** Encode declared Gemini thinking; omission retains the server's dynamic default. */
 export function resolveGeminiThinking(
@@ -19,17 +20,14 @@ export function resolveGeminiThinking(
 
 	if (thinking.mode === "budget") {
 		if (budget !== undefined && (!Number.isSafeInteger(budget) || budget < -1)) return undefined
-		const maximum = thinking.maxBudget
-		if (maximum !== undefined && (!Number.isSafeInteger(maximum) || maximum <= 0)) return undefined
+		if (!resolveThinkingBudgetBounds(thinking)) return undefined
 		const enabled =
 			required || (!disabled && (reasoning?.enableThinking ?? (budget !== undefined || thinking.defaultEnabled === true)))
 		if (!enabled) return undefined
 		if (disabled || budget === undefined) return { includeThoughts: true }
 		// -1 is Gemini's explicit dynamic-budget wire value, not a manufactured default.
-		return {
-			thinkingBudget: budget === -1 || maximum === undefined ? budget : Math.min(budget, maximum),
-			includeThoughts: true,
-		}
+		const thinkingBudget = budget === -1 ? budget : clampThinkingBudget(budget, thinking)
+		return thinkingBudget === undefined ? undefined : { thinkingBudget, includeThoughts: true }
 	}
 
 	const explicitLevel = disabled ? undefined : resolveLevel(effort, thinking.effortLevels)

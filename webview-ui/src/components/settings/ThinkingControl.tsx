@@ -1,4 +1,5 @@
 import type { ReasoningConfig } from "@shared/proto/dline/provider/common"
+import { resolveThinkingBudgetBounds } from "@shared/providers/thinking-budget"
 import { VSCodeCheckbox } from "@vscode/webview-ui-toolkit/react"
 import { memo, useCallback, useEffect, useMemo, useState } from "react"
 import styled from "styled-components"
@@ -84,7 +85,7 @@ interface ThinkingControlProps {
 	effortDescription?: string
 	budgetLabel?: string
 	maxBudget?: number
-	/** Minimum accepted by the provider's budget wire format; not a default preference. */
+	/** Declared positive-budget lower bound; absence stays unknown and does not select a preference. */
 	minBudget?: number
 	defaultEnabled?: boolean
 	defaultEffort?: string
@@ -112,7 +113,7 @@ const ThinkingControl = ({
 	effortDescription = "Higher effort improves depth, but uses more tokens.",
 	budgetLabel = "Thinking Budget",
 	maxBudget,
-	minBudget = 1,
+	minBudget,
 	defaultEnabled = false,
 	defaultEffort,
 	disableSupported = true,
@@ -168,10 +169,13 @@ const ThinkingControl = ({
 			: defaultEffort && selectableEfforts.includes(defaultEffort)
 				? defaultEffort
 				: ""
-	const minimum = Number.isSafeInteger(minBudget) && minBudget > 0 ? minBudget : 1
-	const maximum = maxBudget !== undefined && Number.isSafeInteger(maxBudget) && maxBudget > 0 ? maxBudget : undefined
+	const bounds = resolveThinkingBudgetBounds({ minBudget, maxBudget })
+	const minimum = bounds?.minimum ?? 1
+	const maximum = bounds?.maximum
 	const storedBudget =
-		Number.isSafeInteger(budget) && budget >= minimum && (maximum === undefined || budget <= maximum) ? budget : undefined
+		bounds && Number.isSafeInteger(budget) && budget >= minimum && (maximum === undefined || budget <= maximum)
+			? budget
+			: undefined
 	// Every update below rebuilds the whole config, so the current display has to be
 	// carried through explicitly or changing the effort would silently clear it.
 	const display = reasoningConfig?.display
@@ -271,9 +275,7 @@ const ThinkingControl = ({
 		selectableEfforts.length > 0 &&
 		(mode === "effort-only" || (mode === "both" && activeType === "effort"))
 	const shouldShowBudget =
-		showThinkingOptions &&
-		(maxBudget === undefined || (maximum !== undefined && maximum >= minimum)) &&
-		(mode === "budget-only" || (mode === "both" && activeType === "budget"))
+		showThinkingOptions && bounds !== undefined && (mode === "budget-only" || (mode === "both" && activeType === "budget"))
 	const shouldShowModeSelector = showThinkingOptions && mode === "both" && showModeSelector
 	const shouldShowDisplaySelector = showThinkingOptions && (displayOptions?.length ?? 0) > 0
 

@@ -15,6 +15,7 @@ function createOpenAiProfile(): ApiProfile {
 			capabilities: {
 				thinking: {
 					supported: true,
+					mode: "effort",
 					effortLevels: ["none", "low", "medium", "high"],
 					maxBudget: 8_192,
 				},

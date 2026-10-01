@@ -31,8 +31,9 @@ describe("thinking metadata reconciliation", () => {
 			canDisable: false,
 			defaultEffort: "declared-effort",
 			effortLevels: ["declared-effort"],
+			minBudget: 17,
 		}
-		const updates = { supported: false, defaultEnabled: false, effortLevels: [] }
+		const updates = { supported: false, defaultEnabled: false, effortLevels: [], minBudget: 0 }
 		const base = config({ "opaque-model": { id: "opaque-model", capabilities: { thinking: declared } } })
 		const partial = config({ "opaque-model": { id: "opaque-model", capabilities: { thinking: updates } } })
 		const result =

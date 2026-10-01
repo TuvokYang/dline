@@ -40,6 +40,7 @@ const mocks = vi.hoisted(() => ({
 				serviceTierEnabled: true,
 			},
 			modelInfo: {
+				id: "gpt-test",
 				capabilities: {
 					supportsReasoning: true,
 					thinking: {
@@ -133,6 +134,7 @@ describe("chat input TaskRuntimeControls", () => {
 					serviceTierEnabled: true,
 				},
 				modelInfo: {
+					id: "gpt-test",
 					capabilities: {
 						supportsReasoning: true,
 						thinking: {
@@ -146,6 +148,41 @@ describe("chat input TaskRuntimeControls", () => {
 			},
 		]
 		mocks.updateTaskSettings.mockResolvedValue(undefined)
+	})
+
+	it("rejects positive budgets below the declaration but allows zero separately without inventing a maximum", async () => {
+		const user = userEvent.setup()
+		Object.assign(mocks.profiles[0].modelInfo.capabilities.thinking, {
+			mode: "budget",
+			minBudget: 17,
+			maxBudget: undefined,
+			canDisable: true,
+		})
+		Object.assign(mocks.profiles[0].openai, { reasoning: { thinkingBudget: 20 } })
+		render(<TaskRuntimeControls />)
+		const input = screen.getByRole("spinbutton", { name: "Task thinking budget" })
+		expect(input).not.toHaveAttribute("max")
+		await user.clear(input)
+		await user.type(input, "3")
+		await user.tab()
+		expect(mocks.updateTaskSettings).not.toHaveBeenCalled()
+		expect(screen.getByRole("status")).toHaveTextContent("at least 17")
+		await user.clear(input)
+		await user.type(input, "0")
+		await user.tab()
+		expect(mocks.updateTaskSettings).toHaveBeenCalledWith("task-1", {
+			actModeReasoningOverrideKind: "budget",
+			actModeThinkingBudgetTokens: 0,
+		})
+	})
+
+	it.each([undefined, "effort"])("does not offer budget based on a stale maximum in mode %s", async (mode) => {
+		const user = userEvent.setup()
+		Object.assign(mocks.profiles[0].modelInfo.capabilities.thinking, { mode })
+		render(<TaskRuntimeControls />)
+		const trigger = screen.queryByRole("combobox", { name: "Task thinking override" })
+		if (trigger) await user.click(trigger)
+		expect(screen.queryByRole("option", { name: "Budget" })).not.toBeInTheDocument()
 	})
 
 	it("uses only a declared default effort when the Profile has no preference", () => {
@@ -336,6 +373,7 @@ describe("chat input TaskRuntimeControls", () => {
 					reasoning: { enableThinking: true, effort: "high", thinkingBudget: 0 },
 				},
 				modelInfo: {
+					id: "deepseek/deepseek-chat",
 					capabilities: { thinking: { supported: true, mode: "effort", effortLevels: ["low", "high", "max"] } },
 				},
 			},
@@ -693,8 +731,9 @@ describe("chat input TaskRuntimeControls", () => {
 				usedFor: [],
 				enabled: true,
 				modelInfo: {
+					id: "claude-test",
 					capabilities: {
-						thinking: { supported: true, maxBudget: 16_384 },
+						thinking: { supported: true, mode: "budget", maxBudget: 16_384 },
 					},
 				},
 			},

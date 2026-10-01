@@ -1,5 +1,6 @@
 import type { ModelCapabilities } from "@shared/proto/dline/models/metadata"
 import type { ReasoningConfig } from "@shared/proto/dline/provider/common"
+import { clampThinkingBudget } from "@shared/providers/thinking-budget"
 import { resolveAnthropicReasoning } from "../anthropic/reasoning"
 
 export interface VercelReasoning {
@@ -31,7 +32,10 @@ export function resolveVercelReasoning(
 						: undefined,
 		}
 	}
-	const disabled = config?.enableThinking === false || config?.effort?.trim().toLowerCase() === "none"
+	const disabled =
+		config?.enableThinking === false ||
+		config?.effort?.trim().toLowerCase() === "none" ||
+		(thinking.mode === "budget" && config?.thinkingBudget === 0)
 	if (disabled && thinking.canDisable !== false) return { ...unsupported, reasoning: { enabled: false } }
 	const enabled =
 		thinking.canDisable === false ||
@@ -39,15 +43,14 @@ export function resolveVercelReasoning(
 			(config?.enableThinking ?? Boolean(config?.effort || (config?.thinkingBudget ?? 0) > 0 || thinking.defaultEnabled)))
 	if (!enabled) return unsupported
 	if (thinking.mode === "budget") {
-		const budget = config?.thinkingBudget
-		const maximum = thinking.maxBudget
+		const budget = disabled ? undefined : config?.thinkingBudget
 		if (budget === undefined) return { enabled: true, omitSampling: true, reasoning: { enabled: true } }
-		if (!Number.isSafeInteger(budget) || budget <= 0) return unsupported
-		if (maximum !== undefined && (!Number.isSafeInteger(maximum) || maximum <= 0)) return unsupported
+		const budgetTokens = clampThinkingBudget(budget, thinking)
+		if (budgetTokens === undefined) return unsupported
 		return {
 			enabled: true,
 			omitSampling: true,
-			reasoning: { max_tokens: maximum === undefined ? budget : Math.min(budget, maximum) },
+			reasoning: { max_tokens: budgetTokens },
 		}
 	}
 	let effort = disabled ? undefined : config?.effort?.trim().toLowerCase() || thinking.defaultEffort

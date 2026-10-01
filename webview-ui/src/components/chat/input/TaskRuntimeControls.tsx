@@ -5,9 +5,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tooltip, TooltipContent, TooltipTrigger } from "@components/ui/tooltip"
 import { useExtensionState } from "@context/ExtensionStateContext"
 import { resolveProfileModelInfo } from "@shared/providers/profile-model-info"
+import { resolveThinkingBudgetBounds } from "@shared/providers/thinking-budget"
 import type { OpenAiServiceTier } from "@shared/storage/types"
 import { profileServiceTierEnabled, resolveProfileServiceTier } from "@shared/task-provider-overrides"
-import { resolveProfileReasoningConfig, resolveTaskThinkingConfig } from "@shared/task-reasoning"
+import { resolveProfileReasoningConfig, resolveTaskThinkingConfig, validateTaskReasoningOverride } from "@shared/task-reasoning"
 import { useEffect, useMemo, useState } from "react"
 import { TaskServiceTierControl } from "./TaskServiceTierControl"
 
@@ -33,10 +34,11 @@ export function TaskRuntimeControls() {
 	const profileReasoning = resolveProfileReasoningConfig(profile)
 	const thinking = resolveTaskThinkingConfig(effectiveModelInfo?.capabilities)
 	const effortLevels = (thinking?.effortLevels ?? []).filter((effort) => thinking?.canDisable !== false || effort !== "none")
-	const maxBudget = thinking?.maxBudget
-	const minBudget = thinking?.canDisable === false ? 1 : 0
-	const supportsEffort = effortLevels.length > 0
-	const supportsBudget = Number.isSafeInteger(maxBudget) && (maxBudget ?? -1) >= 0
+	const budgetBounds = thinking ? resolveThinkingBudgetBounds(thinking) : undefined
+	const maxBudget = budgetBounds?.maximum
+	const minBudget = thinking?.canDisable === false ? budgetBounds?.minimum : 0
+	const supportsEffort = thinking?.mode === "effort" && effortLevels.length > 0
+	const supportsBudget = thinking?.mode === "budget" && budgetBounds !== undefined
 	const supportsServiceTier = profileServiceTierEnabled(profile)
 
 	const reasoningOverride =
@@ -46,9 +48,9 @@ export function TaskRuntimeControls() {
 	const profileThinkingValue =
 		supportsBudget && (profileReasoning?.thinkingBudget ?? 0) > 0
 			? "budget"
-			: profileReasoning?.effort && effortLevels.includes(profileReasoning.effort)
+			: supportsEffort && profileReasoning?.effort && effortLevels.includes(profileReasoning.effort)
 				? `effort:${profileReasoning.effort}`
-				: thinking?.defaultEffort && effortLevels.includes(thinking.defaultEffort)
+				: supportsEffort && thinking?.defaultEffort && effortLevels.includes(thinking.defaultEffort)
 					? `effort:${thinking.defaultEffort}`
 					: ""
 	const configuredThinkingValue =
@@ -99,9 +101,10 @@ export function TaskRuntimeControls() {
 	}
 
 	const commitBudget = () => {
-		const budgetTokens = Number(budgetValue)
-		if (!Number.isSafeInteger(budgetTokens) || budgetTokens < minBudget || budgetTokens > (maxBudget ?? -1)) {
-			setError(`Thinking budget must be an integer between ${minBudget} and ${maxBudget ?? 0}.`)
+		const budgetTokens = budgetValue.trim() === "" ? Number.NaN : Number(budgetValue)
+		const validation = validateTaskReasoningOverride({ kind: "budget", budgetTokens }, thinking)
+		if (!validation.valid) {
+			setError(validation.message)
 			return
 		}
 		void commit(

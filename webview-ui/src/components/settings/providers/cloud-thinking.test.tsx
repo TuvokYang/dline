@@ -112,6 +112,21 @@ for (const [provider, configKey, Panel] of [
 			expect(screen.queryByRole("checkbox", { name: "Enable Thinking" })).not.toBeInTheDocument()
 		})
 
+		it("uses the effective minimum override rather than a provider constant", () => {
+			const onUpdate = vi.fn()
+			const profile = ApiProfile.create({
+				provider,
+				modelId: "budget-alias",
+				[configKey]: { capabilities: { thinking: { minBudget: 17 } }, reasoning: { thinkingBudget: 1500 } },
+			})
+			render(<Panel onUpdate={onUpdate} profile={profile} showModelOptions={true} />)
+			const slider = screen.getByRole("slider")
+			expect(slider).toHaveAttribute("min", "17")
+			fireEvent.change(slider, { target: { value: "3" } })
+			fireEvent.mouseUp(slider)
+			expect(onUpdate.mock.calls[0][0][configKey].reasoning.thinkingBudget).toBe(17)
+		})
+
 		it("persists a bounded budget edit with the existing display preference", () => {
 			const onUpdate = vi.fn()
 			const profile = ApiProfile.create({

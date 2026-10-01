@@ -1,6 +1,7 @@
 import type { MessageCreateParamsStreaming } from "@anthropic-ai/sdk/resources/messages/messages"
 import type { ModelCapabilities, ThinkingConfig } from "@shared/proto/dline/models/metadata"
 import type { ReasoningConfig } from "@shared/proto/dline/provider/common"
+import { clampThinkingBudget } from "@shared/providers/thinking-budget"
 
 type AdaptiveEffort = NonNullable<NonNullable<MessageCreateParamsStreaming["output_config"]>["effort"]>
 type ThinkingDisplay = "summarized" | "omitted"
@@ -70,7 +71,7 @@ export function resolveAnthropicReasoning(
 	const display = resolveAnthropicThinkingDisplay(reasoning?.display)
 	const displayField = display ? { display } : {}
 	if (adaptive) {
-		const preference = disableRequested ? undefined : reasoning?.effort || (budget > 0 ? "high" : thinking.defaultEffort)
+		const preference = disableRequested ? undefined : reasoning?.effort || thinking.defaultEffort
 		const effort = resolveAdaptiveEffort(preference, thinking)
 		return {
 			enabled: true,
@@ -80,10 +81,8 @@ export function resolveAnthropicReasoning(
 		}
 	}
 
-	if (!Number.isSafeInteger(budget) || budget <= 0) return { enabled: false, adaptive: false }
-	const maximum = thinking.maxBudget
-	if (maximum !== undefined && (!Number.isSafeInteger(maximum) || maximum <= 0)) return { enabled: false, adaptive: false }
-	const budgetTokens = maximum !== undefined ? Math.min(budget, maximum) : budget
+	const budgetTokens = clampThinkingBudget(budget, thinking)
+	if (budgetTokens === undefined) return { enabled: false, adaptive: false }
 	return {
 		enabled: true,
 		adaptive: false,

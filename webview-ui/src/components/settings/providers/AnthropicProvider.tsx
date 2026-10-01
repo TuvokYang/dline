@@ -230,7 +230,7 @@ export const AnthropicProvider = ({ showModelOptions, isPopup, profile, onUpdate
 							effortLabel="Adaptive Thinking"
 							effortOptions={thinking?.effortLevels ?? []}
 							maxBudget={thinking?.maxBudget}
-							minBudget={1024}
+							minBudget={thinking?.minBudget}
 							mode={isAdaptiveThinkingModel ? "effort-only" : "budget-only"}
 							onReasoningConfigUpdate={(reasoning) => {
 								onUpdate({ anthropic: { ...pc, reasoning } })

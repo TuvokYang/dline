@@ -157,6 +157,29 @@ describe("GeminiHandler", () => {
 			thinkingConfig: { thinkingBudget: 1200, includeThoughts: true },
 		},
 		{
+			name: "declared positive minimum",
+			capabilities: { thinking: { supported: true, mode: "budget", minBudget: 17, maxBudget: 101 } },
+			reasoning: { thinkingBudget: 3 },
+			thinkingConfig: { thinkingBudget: 17, includeThoughts: true },
+		},
+		{
+			name: "invalid minimum range",
+			capabilities: { thinking: { supported: true, mode: "budget", minBudget: 17, maxBudget: 11 } },
+			reasoning: { thinkingBudget: 30 },
+		},
+		{
+			name: "dynamic value remains independent of positive minimum",
+			capabilities: { thinking: { supported: true, mode: "budget", minBudget: 17 } },
+			reasoning: { thinkingBudget: -1 },
+			thinkingConfig: { thinkingBudget: -1, includeThoughts: true },
+		},
+		{
+			name: "zero disable remains independent of positive minimum",
+			capabilities: { thinking: { supported: true, mode: "budget", minBudget: 17, canDisable: true } },
+			reasoning: { thinkingBudget: 0 },
+			thinkingConfig: { thinkingBudget: 0, includeThoughts: false },
+		},
+		{
 			name: "no invented budget ceiling",
 			capabilities: { thinking: { supported: true, mode: "budget" } },
 			reasoning: { thinkingBudget: 28000 },

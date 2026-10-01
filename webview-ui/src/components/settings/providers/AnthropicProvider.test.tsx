@@ -213,12 +213,14 @@ vi.mock("../ThinkingControl", () => ({
 		disableSupported,
 		effortOptions,
 		mode,
+		minBudget,
 	}: {
 		defaultEffort?: string
 		defaultEnabled?: boolean
 		disableSupported?: boolean
 		effortOptions?: readonly string[]
 		mode: string
+		minBudget?: number
 	}) => (
 		<div data-testid="thinking-control">
 			<span data-testid="thinking-efforts">{effortOptions?.join(",")}</span>
@@ -226,6 +228,7 @@ vi.mock("../ThinkingControl", () => ({
 			<span data-testid="thinking-default-effort">{defaultEffort}</span>
 			<span data-testid="thinking-disable-supported">{String(disableSupported)}</span>
 			<span data-testid="thinking-mode">{mode}</span>
+			<span data-testid="thinking-min-budget">{String(minBudget)}</span>
 		</div>
 	),
 }))
@@ -254,7 +257,9 @@ describe("AnthropicProvider", () => {
 			modelId: "opaque-budget",
 			modelInfo: {
 				id: "opaque-budget",
-				capabilities: { thinking: { supported: true, mode: "budget", defaultEnabled: true, canDisable: false } },
+				capabilities: {
+					thinking: { supported: true, mode: "budget", minBudget: 17, defaultEnabled: true, canDisable: false },
+				},
 			},
 			anthropic: AnthropicProviderConfig.create({ customModelEnabled: true }),
 		} as ApiProfile
@@ -262,6 +267,7 @@ describe("AnthropicProvider", () => {
 		expect(screen.getByTestId("thinking-mode")).toHaveTextContent("budget-only")
 		expect(screen.getByTestId("thinking-default-enabled")).toHaveTextContent("true")
 		expect(screen.getByTestId("thinking-disable-supported")).toHaveTextContent("false")
+		expect(screen.getByTestId("thinking-min-budget")).toHaveTextContent("17")
 	})
 
 	it("does not infer thinking from an unknown model name or stored effort", () => {

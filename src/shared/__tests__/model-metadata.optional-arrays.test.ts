@@ -27,6 +27,41 @@ describe("optional repeated model metadata", () => {
 		expect(restored.capabilities).toMatchObject(capabilities)
 	})
 
+	it.each([0, 128])("preserves a declared minimum budget %s through JSON, binary and dynamic DTO transport", (minimum) => {
+		const thinking = ThinkingConfig.fromJSON({
+			supported: false,
+			mode: "budget",
+			minBudget: minimum,
+			effortLevels: ["declared-effort"],
+		})
+		const id = "opaque/minimum-fixture"
+		const models = toProtobufModels({ [id]: { id, capabilities: { thinking } } })
+		const decoded = OpenRouterCompatibleModelInfo.decode(OpenRouterCompatibleModelInfo.encode({ models }).finish())
+		for (const restored of [
+			ThinkingConfig.decode(ThinkingConfig.encode(thinking).finish()),
+			ThinkingConfig.fromJSON(ThinkingConfig.toJSON(thinking)),
+			fromProtobufModels(decoded.models)[id].capabilities?.thinking,
+		]) {
+			expect(restored).toHaveProperty("minBudget", minimum)
+			expect(restored?.supported).toBe(false)
+			expect(restored?.effortLevels).toEqual(["declared-effort"])
+		}
+		const empty = ThinkingConfig.create({ supported: false, minBudget: minimum, effortLevels: [] })
+		const objectModels = toProtobufModels({ [id]: { id, capabilities: { thinking: empty } } })
+		for (const restored of [
+			ThinkingConfig.fromJSON(ThinkingConfig.toJSON(empty)),
+			fromProtobufModels(objectModels)[id].capabilities?.thinking,
+			fromProtobufModels(
+				OpenRouterCompatibleModelInfo.fromJSON(OpenRouterCompatibleModelInfo.toJSON({ models: objectModels })).models,
+			)[id].capabilities?.thinking,
+		]) {
+			expect(restored).toMatchObject({ supported: false, minBudget: minimum, effortLevels: [] })
+		}
+		const absent = ThinkingConfig.decode(ThinkingConfig.encode(ThinkingConfig.create()).finish())
+		expect(absent.minBudget).toBeUndefined()
+		expect(ThinkingConfig.toJSON(absent)).not.toHaveProperty("minBudget")
+	})
+
 	it.each([false, true])("round-trips explicit thinking defaults and disable policy %s without collapsing absence", (value) => {
 		const declared = ThinkingConfig.create({ defaultEnabled: value, canDisable: value, defaultEffort: "declared-effort" })
 		const binary = ThinkingConfig.decode(ThinkingConfig.encode(declared).finish())

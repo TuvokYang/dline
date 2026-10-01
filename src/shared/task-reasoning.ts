@@ -2,6 +2,7 @@ import type { ModelCapabilities, ThinkingConfig } from "@shared/proto/dline/mode
 import type { ApiProfile } from "@shared/proto/dline/profile"
 import type { ReasoningConfig } from "@shared/proto/dline/provider/common"
 import { PROFILE_PROVIDER_KEYS } from "@shared/providers/profile-model-info"
+import { resolveThinkingBudgetBounds } from "@shared/providers/thinking-budget"
 
 /** Task-local reasoning policy layered over a Profile's reasoning configuration. */
 export interface TaskReasoningOverride {
@@ -65,6 +66,7 @@ export type TaskReasoningOverrideError =
 	| "invalid_budget"
 	| "negative_budget"
 	| "budget_exceeds_max"
+	| "budget_below_min"
 
 export type TaskReasoningOverrideValidation =
 	| { readonly valid: true; readonly override: TaskReasoningOverride }
@@ -109,6 +111,7 @@ export function validateTaskReasoningOverride(
 		if (!effort) return invalid("invalid_effort", "Reasoning effort must be a non-empty value.")
 		if (
 			thinking?.supported !== true ||
+			thinking.mode !== "effort" ||
 			!thinking.effortLevels?.includes(effort) ||
 			(effort === "none" && thinking.canDisable === false)
 		) {
@@ -123,15 +126,23 @@ export function validateTaskReasoningOverride(
 	}
 	if (budgetTokens < 0) return invalid("negative_budget", "Reasoning budget cannot be negative.")
 
-	const maxBudget = thinking?.maxBudget
-	if (thinking?.supported !== true || maxBudget === undefined || !Number.isSafeInteger(maxBudget) || maxBudget < 0) {
+	if (thinking?.supported !== true || thinking.mode !== "budget") {
 		return invalid("unsupported_budget", "Reasoning budget is not supported by the selected model.")
 	}
 	if (budgetTokens === 0 && thinking.canDisable === false) {
 		return invalid("unsupported_budget", "Thinking cannot be disabled for the selected model.")
 	}
-	if (budgetTokens > maxBudget) {
-		return invalid("budget_exceeds_max", `Reasoning budget cannot exceed ${maxBudget} tokens for the selected model.`)
+	if (budgetTokens === 0) return { valid: true, override: { kind: "budget", budgetTokens } }
+	const bounds = resolveThinkingBudgetBounds(thinking)
+	if (!bounds) return invalid("unsupported_budget", "The selected model declares invalid reasoning budget bounds.")
+	if (budgetTokens < bounds.minimum) {
+		return invalid(
+			"budget_below_min",
+			`Positive reasoning budget must be at least ${bounds.minimum} tokens for the selected model.`,
+		)
+	}
+	if (bounds.maximum !== undefined && budgetTokens > bounds.maximum) {
+		return invalid("budget_exceeds_max", `Reasoning budget cannot exceed ${bounds.maximum} tokens for the selected model.`)
 	}
 	return { valid: true, override: { kind: "budget", budgetTokens } }
 }

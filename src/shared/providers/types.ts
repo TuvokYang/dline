@@ -10,9 +10,10 @@ export type { ImageGenerationCapabilities, ImageModelInfo, ImagePricing, ModelCa
 
 /**
  * App-layer ThinkingConfig — compatible with model file definitions.
- * effortLevels is optional; proto conversion layer fills default [] when needed.
+ * Optional declarations retain absence through the proto conversion boundary.
  */
 export interface ThinkingConfig {
+	minBudget?: number
 	maxBudget?: number
 	supported?: boolean
 	mode?: string

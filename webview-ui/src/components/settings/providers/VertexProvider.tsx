@@ -112,6 +112,7 @@ export const VertexProvider = ({ showModelOptions, isPopup, profile, onUpdate }:
 							disableSupported={thinking?.canDisable !== false}
 							effortOptions={thinking?.effortLevels ?? []}
 							maxBudget={thinking?.maxBudget}
+							minBudget={thinking?.minBudget}
 							mode={effortSupported ? "effort-only" : "budget-only"}
 							onReasoningConfigUpdate={(reasoning) => onUpdate({ vertex: { ...pc, reasoning } })}
 							reasoningConfig={pc.reasoning}

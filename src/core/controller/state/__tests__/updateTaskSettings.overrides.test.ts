@@ -100,6 +100,7 @@ beforeEach(() => {
 		capabilities: {
 			thinking: {
 				supported: true,
+				mode: "effort",
 				effortLevels: ["none", "low", "medium", "high"],
 				maxBudget: 8_192,
 			},
@@ -131,6 +132,24 @@ describe("updateTaskSettings Task runtime overrides", () => {
 		expect(fixture.flushPendingState).toHaveBeenCalledOnce()
 		expect(fixture.rebuildApiHandler).toHaveBeenCalledOnce()
 		expect(fixture.order).toEqual(["flush", "rebuild", "post"])
+	})
+
+	it("rejects a positive budget below the effective minimum before any durable mutation", async () => {
+		const fixture = createController()
+		getProfileModelInfo.mockReturnValue({ capabilities: { thinking: { supported: true, mode: "budget", minBudget: 17 } } })
+		await expect(
+			updateTaskSettings(
+				fixture.controller,
+				UpdateTaskSettingsRequest.create({
+					taskId: "task-1",
+					settings: { actModeReasoningOverrideKind: "budget", actModeThinkingBudgetTokens: 3 },
+				}),
+			),
+		).rejects.toThrow("at least 17")
+		expect(fixture.setTaskSettings).not.toHaveBeenCalled()
+		expect(fixture.setTaskSettingsBatch).not.toHaveBeenCalled()
+		expect(fixture.flushPendingState).not.toHaveBeenCalled()
+		expect(fixture.rebuildApiHandler).not.toHaveBeenCalled()
 	})
 
 	it("rejects an effort not declared by ModelInfo before any Task settings write", async () => {
@@ -256,6 +275,7 @@ describe("updateTaskSettings Task runtime overrides", () => {
 
 	it("does not rebuild or publish when durable persistence fails", async () => {
 		const fixture = createController()
+		getProfileModelInfo.mockReturnValue({ capabilities: { thinking: { supported: true, mode: "budget", maxBudget: 8_192 } } })
 		fixture.flushPendingState.mockRejectedValueOnce(new Error("durable Task write failed"))
 
 		await expect(

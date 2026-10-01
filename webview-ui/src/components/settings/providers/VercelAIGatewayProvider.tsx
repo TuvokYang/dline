@@ -51,6 +51,7 @@ export const VercelAIGatewayProvider = ({ showModelOptions, isPopup, profile, on
 							disableSupported={thinking?.canDisable !== false}
 							effortOptions={thinking?.effortLevels ?? []}
 							maxBudget={thinking?.maxBudget}
+							minBudget={thinking?.minBudget}
 							mode={effortSupported ? "effort-only" : "budget-only"}
 							onReasoningConfigUpdate={(reasoning) => onUpdate({ vercelAiGateway: { ...pc, reasoning } })}
 							reasoningConfig={pc.reasoning}

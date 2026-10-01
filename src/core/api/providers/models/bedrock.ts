@@ -10,7 +10,13 @@ import {
 	adaptiveThinkingCapabilities,
 } from "./anthropic"
 
-const CLAUDE_BUDGET_THINKING: ThinkingConfig = { supported: true, mode: "budget", defaultEnabled: false, canDisable: true }
+const CLAUDE_BUDGET_THINKING: ThinkingConfig = {
+	supported: true,
+	mode: "budget",
+	minBudget: 1024,
+	defaultEnabled: false,
+	canDisable: true,
+}
 
 // Inlined from api.ts: CLAUDE_SONNET_1M_TIERS
 const CLAUDE_SONNET_1M_TIERS = [

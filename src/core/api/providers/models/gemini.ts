@@ -132,6 +132,7 @@ export const geminiModels: Record<string, ModelInfo> = {
 			supportsPromptCache: true,
 			thinking: ThinkingConfig.create({
 				maxBudget: 32768,
+				minBudget: 128,
 				supported: true,
 				mode: "budget",
 				defaultEnabled: true,
@@ -193,6 +194,7 @@ export const geminiModels: Record<string, ModelInfo> = {
 			supportsPromptCache: true,
 			thinking: ThinkingConfig.create({
 				maxBudget: 24576,
+				minBudget: 0,
 				supported: true,
 				mode: "budget",
 				defaultEnabled: true,

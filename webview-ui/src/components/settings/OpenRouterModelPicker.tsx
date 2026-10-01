@@ -339,6 +339,7 @@ const OpenRouterModelPicker: React.FC<OpenRouterModelPickerProps> = ({ isPopup, 
 							disableSupported={thinking?.canDisable !== false}
 							effortOptions={thinking?.effortLevels ?? []}
 							maxBudget={thinking?.maxBudget}
+							minBudget={thinking?.minBudget}
 							mode={effortSupported ? "effort-only" : "budget-only"}
 							onReasoningConfigUpdate={(reasoning) =>
 								onUpdate(

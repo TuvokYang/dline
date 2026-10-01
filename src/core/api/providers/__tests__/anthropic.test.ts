@@ -51,6 +51,24 @@ describe("AnthropicHandler", () => {
 			expected: { type: "adaptive" },
 		},
 		{
+			modelId: "opaque-minimum",
+			thinking: { supported: true, mode: "budget", minBudget: 17, maxBudget: 101 },
+			reasoning: { enableThinking: true, thinkingBudget: 3 },
+			expected: { type: "enabled", budget_tokens: 17 },
+		},
+		{
+			modelId: "opaque-invalid-minimum",
+			thinking: { supported: true, mode: "budget", minBudget: 17, maxBudget: 11 },
+			reasoning: { enableThinking: true, thinkingBudget: 30 },
+			expected: undefined,
+		},
+		{
+			modelId: "opaque-effort-with-stale-budget",
+			thinking: { supported: true, mode: "effort", defaultEnabled: true, effortLevels: ["high"] },
+			reasoning: { thinkingBudget: 3 },
+			expected: { type: "adaptive" },
+		},
+		{
 			modelId: "opaque-budget",
 			thinking: undefined,
 			reasoning: { enableThinking: true, thinkingBudget: 2_048 },

@@ -173,6 +173,22 @@ describe("ClaudeCodeProvider thinking controls", () => {
 		expect(onUpdate.mock.calls[0][0]).toHaveProperty("modelInfo", undefined)
 	})
 
+	it("uses the effective declared minimum for a custom budget model", () => {
+		const onUpdate = vi.fn()
+		const profile = {
+			id: "budget-min-profile",
+			provider: "claude-code",
+			modelId: BUDGET_MODEL,
+			claudeCode: { capabilities: { thinking: { minBudget: 17 } }, reasoning: { thinkingBudget: 1500 } },
+		} as ApiProfile
+		render(<ClaudeCodeProvider onUpdate={onUpdate} profile={profile} showModelOptions={true} />)
+		const slider = screen.getByRole("slider")
+		expect(slider).toHaveAttribute("min", "17")
+		fireEvent.change(slider, { target: { value: "3" } })
+		fireEvent.mouseUp(slider)
+		expect(onUpdate.mock.calls[0][0].claudeCode.reasoning.thinkingBudget).toBe(17)
+	})
+
 	it("offers an explicit budget editor without inventing a missing model maximum", () => {
 		const profile = {
 			id: "budget-no-max-profile",

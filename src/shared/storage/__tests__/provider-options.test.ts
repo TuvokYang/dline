@@ -64,6 +64,65 @@ describe("provider reasoning and service-tier options", () => {
 		})
 	})
 
+	it("validates positive minimum independently from zero disabling and optional ceiling", () => {
+		const thinking = { supported: true, mode: "budget", minBudget: 17, canDisable: true }
+		expect(validateTaskReasoningOverride({ kind: "budget", budgetTokens: 3 }, thinking)).to.deep.include({
+			valid: false,
+			error: "budget_below_min",
+		})
+		for (const budgetTokens of [0, 17, 100000]) {
+			expect(validateTaskReasoningOverride({ kind: "budget", budgetTokens }, thinking)).to.deep.equal({
+				valid: true,
+				override: { kind: "budget", budgetTokens },
+			})
+		}
+		expect(
+			validateTaskReasoningOverride({ kind: "budget", budgetTokens: 0 }, { ...thinking, minBudget: 0, canDisable: false }),
+		).to.deep.include({
+			valid: false,
+			error: "unsupported_budget",
+		})
+	})
+
+	it.each([undefined, "effort"])("does not infer budget mode from a bound when mode is %s", (mode) => {
+		expect(
+			validateTaskReasoningOverride(
+				{ kind: "budget", budgetTokens: 20 },
+				{ supported: true, mode, minBudget: 17, maxBudget: 101 },
+			),
+		).to.deep.include({
+			valid: false,
+			error: "unsupported_budget",
+		})
+	})
+
+	it.each([undefined, "budget"])("does not infer effort mode from a list when mode is %s", (mode) => {
+		expect(
+			validateTaskReasoningOverride({ kind: "effort", effort: "high" }, { supported: true, mode, effortLevels: ["high"] }),
+		).to.deep.include({
+			valid: false,
+			error: "unsupported_effort",
+		})
+	})
+
+	it.each([
+		-1,
+		1.5,
+		Number.NaN,
+		Number.POSITIVE_INFINITY,
+		102,
+	])("rejects malformed or contradictory minimum %s", (minBudget) => {
+		expect(
+			validateTaskReasoningOverride(
+				{ kind: "budget", budgetTokens: 30 },
+				{ supported: true, mode: "budget", minBudget, maxBudget: 101 },
+			),
+		).to.deep.include({
+			valid: false,
+			error: "unsupported_budget",
+		})
+	})
+
 	it("validates a Task budget against the declared bound", () => {
 		const thinking = resolveTaskThinkingConfig({ thinking: { supported: true, mode: "budget", maxBudget: 4_096 } })
 		expect(validateTaskReasoningOverride({ kind: "budget", budgetTokens: 2_048 }, thinking)).to.deep.equal({

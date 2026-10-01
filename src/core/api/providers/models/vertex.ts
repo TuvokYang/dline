@@ -46,7 +46,13 @@ const _opus_tiers = [
 const ADAPTIVE_THINKING_CLAUDE_CAPABILITIES = adaptiveThinkingCapabilities(
 	ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS_WITHOUT_XHIGH,
 )
-const CLAUDE_BUDGET_THINKING: ThinkingConfig = { supported: true, mode: "budget", defaultEnabled: false, canDisable: true }
+const CLAUDE_BUDGET_THINKING: ThinkingConfig = {
+	supported: true,
+	mode: "budget",
+	minBudget: 1024,
+	defaultEnabled: false,
+	canDisable: true,
+}
 
 export const vertexModels: Record<string, ModelInfo> = {
 	"gemini-3.1-pro-preview": {
@@ -351,7 +357,7 @@ export const vertexModels: Record<string, ModelInfo> = {
 			supportsImages: true,
 			supportsPromptCache: true,
 			supportsReasoning: true,
-			thinking: ThinkingConfig.create({ supported: true, mode: "budget", maxBudget: 64000 }),
+			thinking: ThinkingConfig.create({ ...CLAUDE_BUDGET_THINKING, maxBudget: 64000 }),
 		},
 		pricing: {
 			inputPrice: 3.0,
@@ -566,6 +572,7 @@ export const vertexModels: Record<string, ModelInfo> = {
 				supported: true,
 				mode: "budget",
 				maxBudget: 32768,
+				minBudget: 128,
 				defaultEnabled: true,
 				canDisable: false,
 			}),
@@ -602,6 +609,7 @@ export const vertexModels: Record<string, ModelInfo> = {
 				supported: true,
 				mode: "budget",
 				maxBudget: 24576,
+				minBudget: 1,
 				defaultEnabled: true,
 				canDisable: true,
 			}),

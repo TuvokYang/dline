@@ -103,6 +103,26 @@ describe("ThinkingControl", () => {
 		expect(screen.queryByRole("combobox")).not.toBeInTheDocument()
 	})
 
+	it.each([
+		-1,
+		1.5,
+		Number.NaN,
+		Number.POSITIVE_INFINITY,
+		3000,
+	])("does not turn an invalid minimum %s into a usable budget editor", (minBudget) => {
+		render(
+			<ThinkingControl
+				maxBudget={2000}
+				minBudget={minBudget}
+				mode="budget-only"
+				onReasoningConfigUpdate={vi.fn()}
+				reasoningConfig={{ enableThinking: true, thinkingBudget: 100 }}
+			/>,
+		)
+		expect(screen.queryByRole("slider")).not.toBeInTheDocument()
+		expect(screen.queryByRole("spinbutton")).not.toBeInTheDocument()
+	})
+
 	it("does not invent a budget maximum when the declaration omits it", () => {
 		const onUpdate = vi.fn()
 		render(

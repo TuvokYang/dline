@@ -1,5 +1,6 @@
 import type { ModelCapabilities } from "@shared/proto/dline/models/metadata"
 import type { ReasoningConfig } from "@shared/proto/dline/provider/common"
+import { clampThinkingBudget, resolveThinkingBudgetBounds } from "@shared/providers/thinking-budget"
 import type OpenAI from "openai"
 
 type OpenAIReasoningEffort = NonNullable<OpenAI.Chat.ChatCompletionCreateParams["reasoning_effort"]>
@@ -72,14 +73,13 @@ export function resolveOpenAIReasoning(
 	}
 	if (disabled && !required) return { enabled: false, mode }
 	if (budget !== undefined && (!Number.isSafeInteger(budget) || budget < 0)) return { enabled: false }
-	const maximum = thinking.maxBudget
-	if (maximum !== undefined && (!Number.isSafeInteger(maximum) || maximum <= 0)) return { enabled: false }
+	if (!resolveThinkingBudgetBounds(thinking)) return { enabled: false }
 	const enabled = required || (!disabled && (config?.enableThinking ?? ((budget ?? 0) > 0 || thinking.defaultEnabled === true)))
 	if (!enabled) return { enabled: false }
 	return {
 		enabled: true,
 		mode,
-		...(!disabled && budget !== undefined ? { budget: maximum === undefined ? budget : Math.min(budget, maximum) } : {}),
+		...(!disabled && budget !== undefined ? { budget: clampThinkingBudget(budget, thinking) } : {}),
 	}
 }
 

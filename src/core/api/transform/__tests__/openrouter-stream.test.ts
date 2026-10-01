@@ -35,6 +35,33 @@ describe.each(["openrouter", "vercel"] as const)("%s effective reasoning payload
 			payload: { max_tokens: 1200 },
 		},
 		{
+			name: "declared positive minimum on an opaque route",
+			modelId: "private/opaque",
+			capabilities: { thinking: { supported: true, mode: "budget", minBudget: 17, maxBudget: 101 } },
+			config: { thinkingBudget: 3 },
+			payload: { max_tokens: 17 },
+		},
+		{
+			name: "invalid minimum range on an opaque route",
+			modelId: "private/opaque",
+			capabilities: { thinking: { supported: true, mode: "budget", minBudget: 17, maxBudget: 11 } },
+			config: { thinkingBudget: 30 },
+		},
+		{
+			name: "zero disabled independently of positive minimum",
+			modelId: "private/opaque",
+			capabilities: { thinking: { supported: true, mode: "budget", minBudget: 17, defaultEnabled: true } },
+			config: { thinkingBudget: 0 },
+			payload: { enabled: false },
+		},
+		{
+			name: "required zero ignores stale disable instead of sending zero",
+			modelId: "private/opaque",
+			capabilities: { thinking: { supported: true, mode: "budget", minBudget: 0, canDisable: false } },
+			config: { thinkingBudget: 0 },
+			payload: { enabled: true },
+		},
+		{
 			name: "default effort",
 			modelId: "private/opaque",
 			capabilities: {
@@ -105,7 +132,7 @@ describe.each(["openrouter", "vercel"] as const)("%s effective reasoning payload
 		expect(body.model).toBe(modelId)
 		expect(body.reasoning).toEqual(provider === "vercel" && verbosity ? { enabled: true, effort: verbosity } : payload)
 		expect(body.verbosity).toBe(provider === "openrouter" ? verbosity : undefined)
-		expect(body.include_reasoning).toBe(payload !== undefined)
+		expect(body.include_reasoning).toBe(payload !== undefined && (payload as { enabled?: boolean })?.enabled !== false)
 	})
 })
 

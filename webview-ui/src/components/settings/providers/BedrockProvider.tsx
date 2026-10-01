@@ -482,7 +482,7 @@ export const BedrockProvider = ({ showModelOptions, isPopup, profile, onUpdate }
 							disableSupported={thinking?.canDisable !== false}
 							effortOptions={thinking?.effortLevels ?? []}
 							maxBudget={thinking?.maxBudget}
-							minBudget={1024}
+							minBudget={thinking?.minBudget}
 							mode={effortSupported ? "effort-only" : "budget-only"}
 							onReasoningConfigUpdate={(reasoning) => onUpdate({ bedrock: { ...pc, reasoning } })}
 							reasoningConfig={pc.reasoning}

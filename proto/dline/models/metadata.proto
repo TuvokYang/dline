@@ -27,6 +27,9 @@ message ThinkingConfig {
   optional bool can_disable = 6;
   // Default effort declared by the model metadata, not guessed by a consumer.
   optional string default_effort = 7;
+  // Lower bound for positive thinking budgets. Absence remains unknown.
+  // A zero bound does not authorize disabling thinking; can_disable owns that policy.
+  optional int64 min_budget = 8;
 }
 
 /** Context window tier for models with selectable context windows. */
