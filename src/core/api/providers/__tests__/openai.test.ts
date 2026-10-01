@@ -17,6 +17,7 @@ import type { ClineAssistantToolUseBlock, ClineStorageMessage, ClineUserToolResu
 import { mockFetchForTesting, providerFetch } from "@/shared/net"
 import { OutputLimitExceededError } from "../../stream/OutputLimitExceededError"
 import { StreamIdleTimeoutError } from "../../stream/openai-responses-stream-monitor"
+import { openAiModels } from "../models/openai"
 import { OpenAiHandler } from "../openai"
 import { OpenAiCodexHandler } from "../openai-codex"
 
@@ -281,6 +282,32 @@ describe("OpenAiHandler", () => {
 			expect(body.reasoning).to.equal(undefined)
 			expect(handler.getModel().info.capabilities?.supportsReasoning).to.equal(undefined)
 		})
+	})
+
+	it.each([
+		{ modelId: "gpt-5.4", config: undefined, expected: { effort: "none" } },
+		{ modelId: "gpt-5.6-sol", config: { effort: "max" }, expected: { effort: "max", summary: "auto" } },
+		{ modelId: "gpt-6.1-sol", config: undefined, expected: { effort: "medium", summary: "auto" } },
+		{ modelId: "gpt-5.5-pro", config: { enableThinking: false }, expected: { summary: "auto" } },
+	])("encodes the bundled $modelId default or legal preference in a real Responses request", async ({
+		modelId,
+		config,
+		expected,
+	}) => {
+		const handler = new OpenAiHandler({
+			profile: ApiProfile.create({
+				provider: "openai",
+				modelId,
+				modelInfo: openAiModels[modelId],
+				openai: { apiFormat: ApiFormat.OPENAI_RESPONSES, reasoning: config },
+			}),
+			mode: "act",
+		})
+		const create = vi.fn().mockResolvedValue(createAsyncIterable())
+		vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({ responses: { create } })
+		for await (const _chunk of handler.createMessage("system", [{ role: "user", content: "hi" }])) {
+		}
+		expect(create.mock.calls[0][0].reasoning).to.deep.equal(expected)
 	})
 
 	describe("createMessage", () => {
