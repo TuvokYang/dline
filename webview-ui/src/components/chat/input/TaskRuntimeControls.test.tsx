@@ -150,6 +150,33 @@ describe("chat input TaskRuntimeControls", () => {
 		mocks.updateTaskSettings.mockResolvedValue(undefined)
 	})
 
+	it.each([
+		{ name: "undeclared effort", mode: "effort", override: { kind: "effort", effort: "stale-level" } },
+		{ name: "budget on an effort model", mode: "effort", override: { kind: "budget", budgetTokens: 23 } },
+		{ name: "effort on a budget model", mode: "budget", override: { kind: "effort", effort: "high" } },
+		{ name: "budget below the minimum", mode: "budget", override: { kind: "budget", budgetTokens: 3 } },
+		{ name: "zero on required thinking", mode: "budget", override: { kind: "budget", budgetTokens: 0 }, required: true },
+	])("does not present $name as a valid Task override or rewrite it", async ({ mode, override, required }) => {
+		const user = userEvent.setup()
+		Object.assign(mocks.profiles[0].modelInfo.capabilities.thinking, { mode, minBudget: 17, canDisable: !required })
+		Object.assign(mocks.state.apiConfiguration, { actModeReasoningOverride: override })
+		render(<TaskRuntimeControls />)
+		const trigger = screen.getByRole("combobox", { name: "Task thinking override" })
+		expect(trigger).toHaveTextContent("Thinking")
+		expect(screen.queryByRole("spinbutton", { name: "Task thinking budget" })).not.toBeInTheDocument()
+		await user.hover(trigger)
+		expect(await screen.findByRole("tooltip")).toHaveTextContent("Thinking: Thinking")
+		expect(mocks.updateTaskSettings).not.toHaveBeenCalled()
+		expect(mocks.state.apiConfiguration).toMatchObject({ actModeReasoningOverride: override })
+	})
+
+	it("displays the normalized legal effort without persisting a normalization write", () => {
+		Object.assign(mocks.state.apiConfiguration, { actModeReasoningOverride: { kind: "effort", effort: " low " } })
+		render(<TaskRuntimeControls />)
+		expect(screen.getByRole("combobox", { name: "Task thinking override" })).toHaveTextContent("Low")
+		expect(mocks.updateTaskSettings).not.toHaveBeenCalled()
+	})
+
 	it("rejects positive budgets below the declaration but allows zero separately without inventing a maximum", async () => {
 		const user = userEvent.setup()
 		Object.assign(mocks.profiles[0].modelInfo.capabilities.thinking, {

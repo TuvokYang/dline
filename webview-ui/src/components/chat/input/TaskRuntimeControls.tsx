@@ -53,16 +53,21 @@ export function TaskRuntimeControls() {
 				: supportsEffort && thinking?.defaultEffort && effortLevels.includes(thinking.defaultEffort)
 					? `effort:${thinking.defaultEffort}`
 					: ""
+	const overrideValidation = reasoningOverride ? validateTaskReasoningOverride(reasoningOverride, thinking) : undefined
+	const validOverride = overrideValidation?.valid ? overrideValidation.override : undefined
+	// A stale override stays persisted for backend validation, but is not presented as a legal selection.
 	const configuredThinkingValue =
-		reasoningOverride?.kind === "effort"
-			? `effort:${reasoningOverride.effort ?? ""}`
-			: reasoningOverride?.kind === "budget"
-				? "budget"
-				: profileThinkingValue
+		overrideValidation?.valid === false
+			? ""
+			: validOverride?.kind === "effort"
+				? `effort:${validOverride.effort}`
+				: validOverride?.kind === "budget"
+					? "budget"
+					: profileThinkingValue
 	const configuredBudget =
-		reasoningOverride?.kind === "budget"
-			? (reasoningOverride.budgetTokens ?? 0)
-			: profileThinkingValue === "budget"
+		validOverride?.kind === "budget"
+			? (validOverride.budgetTokens ?? 0)
+			: configuredThinkingValue === "budget"
 				? (profileReasoning?.thinkingBudget ?? 0)
 				: 0
 	const configuredServiceTier =
