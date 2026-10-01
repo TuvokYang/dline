@@ -2,13 +2,17 @@
  * Unit tests for ModelRegistry.
  */
 
-// sinon import removed: using vitest globals
+import { resolveOpenRouterReasoning } from "@core/api/providers/openrouter/reasoning"
+import { resolveVercelReasoning } from "@core/api/providers/vercel-ai-gateway/reasoning"
+import { mockFetchForTesting } from "@shared/net"
 import { ApiFormat, ServerTool } from "@shared/proto/dline/models/metadata"
+import { buildEffectiveModelInfo } from "@shared/providers/effective-model-info"
 import { expect } from "chai"
 import fsPromises from "fs/promises"
 import * as path from "path"
 import { afterEach, beforeEach, describe, it, vi } from "vitest"
 import { ModelRegistry } from "../ModelRegistry"
+import { discoverProviderModels } from "../remote/model-refresh"
 
 describe("ModelRegistry", () => {
 	let registry: ModelRegistry
@@ -438,6 +442,73 @@ describe("ModelRegistry", () => {
 			const result = registry.getProviderModels("nonexistent")
 			expect(result).to.be.undefined
 		})
+	})
+
+	describe("gateway catalog reasoning authority", () => {
+		for (const provider of ["openrouter", "vercel-ai-gateway"] as const) {
+			it(`keeps coarse ${provider} listing support separate from thinking after refresh and restart`, async () => {
+				const entries = [
+					{ id: "openai/o3-opaque", supported_parameters: ["reasoning", "tools"], tags: ["reasoning"] },
+					{ id: "google/gemini-3-opaque", supported_parameters: [], tags: [] },
+					{ id: "anthropic/claude-opaque" },
+				]
+				const stale = Object.fromEntries(
+					entries.map(({ id }) => [
+						id,
+						{
+							id,
+							capabilities: { thinking: { supported: true, mode: "budget", maxBudget: 8192 } },
+						},
+					]),
+				)
+				await fsPromises.writeFile(
+					path.join(tempDir, `${provider}.json`),
+					JSON.stringify({
+						provider,
+						providerName: provider,
+						models: stale,
+					}),
+				)
+				await registry.initialize()
+				const requests: string[] = []
+				const discovered = await mockFetchForTesting(
+					async (input) => {
+						const url = new URL(String(input))
+						requests.push(url.toString())
+						if (!url.pathname.endsWith("/models")) throw new Error("Unexpected listing request")
+						return new Response(JSON.stringify({ data: entries }), {
+							headers: { "content-type": "application/json" },
+						})
+					},
+					() => discoverProviderModels(provider, {}, { persist: true, throwOnError: true }),
+				)
+				expect(requests).to.have.lengthOf(1)
+				expect(discovered[entries[0].id].capabilities).to.include({ supportsReasoning: true })
+				expect(discovered[entries[1].id].capabilities).to.include({ supportsReasoning: false })
+				expect(discovered[entries[2].id].capabilities?.supportsReasoning).to.equal(undefined)
+				await registry.dispose()
+				await registry.initialize()
+				await registry.waitForDeferredProviders()
+				const restored = registry.getProviderModels(provider)
+				expect(restored).to.exist
+				const encode = provider === "openrouter" ? resolveOpenRouterReasoning : resolveVercelReasoning
+				for (const { id } of entries) {
+					const model = restored?.models[id]
+					expect(model, id).to.exist
+					expect(model?.capabilities?.thinking, id).to.equal(undefined)
+					expect(
+						encode(id, model?.capabilities, { enableThinking: true, thinkingBudget: 4096, effort: "high" }).reasoning,
+						id,
+					).to.equal(undefined)
+				}
+				const effective = buildEffectiveModelInfo(entries[0].id, restored?.models[entries[0].id], {
+					capabilities: { thinking: { supported: true, mode: "effort", effortLevels: ["high"] } },
+				})
+				expect(encode(entries[0].id, effective.capabilities, { effort: "high" }).reasoning).to.deep.equal({
+					effort: "high",
+				})
+			})
+		}
 	})
 
 	describe("getAllProviders", () => {
