@@ -1,6 +1,6 @@
 import { ApiFormat, ServerTool } from "@shared/proto/dline/models/metadata"
 import { ApiProfile } from "@shared/proto/dline/profile"
-import { BaseProviderConfig } from "@shared/proto/dline/provider/common"
+import { BaseProviderConfig, type ReasoningConfig } from "@shared/proto/dline/provider/common"
 import { expect } from "chai"
 import type OpenAI from "openai"
 import { afterEach, describe, it, vi } from "vitest"
@@ -186,6 +186,119 @@ describe("DeepSeekHandler", () => {
 		await collectChunks(handler)
 		expect(create.mock.calls[0]?.[0]?.reasoning_effort).to.equal(undefined)
 		expect(create.mock.calls[0]?.[0]?.extra_body).to.deep.equal({ thinking: { type: "disabled" } })
+	})
+
+	const activationCases: {
+		name: string
+		format: ApiFormat
+		effortLevels: string[]
+		reasoning: ReasoningConfig
+		enabled?: boolean
+		canDisable?: boolean
+		defaultEffort?: string
+		wireEffort?: string
+	}[] = [
+		...[ApiFormat.OPENAI_CHAT, ApiFormat.OPENAI_RESPONSES, ApiFormat.ANTHROPIC_CHAT].map((format) => ({
+			name: `invalid implicit effort on format ${format}`,
+			format,
+			effortLevels: ["high"],
+			reasoning: { effort: "invalid" },
+		})),
+		{ name: "empty legal list", format: ApiFormat.OPENAI_CHAT, effortLevels: [], reasoning: { effort: "high" } },
+		{ name: "unsupported alias", format: ApiFormat.OPENAI_CHAT, effortLevels: ["high"], reasoning: { effort: "xhigh" } },
+		...(["xhigh", "ultra"] as const).map((effort) => ({
+			name: `legal implicit alias ${effort}`,
+			format: ApiFormat.OPENAI_CHAT,
+			effortLevels: ["max"],
+			reasoning: { effort },
+			enabled: true,
+			wireEffort: "max",
+		})),
+		{
+			name: "explicit enable independent of invalid effort",
+			format: ApiFormat.OPENAI_CHAT,
+			effortLevels: ["high"],
+			reasoning: { enableThinking: true, effort: "invalid" },
+			defaultEffort: "high",
+			enabled: true,
+			wireEffort: "high",
+		},
+		{
+			name: "required rejects stale disable",
+			format: ApiFormat.OPENAI_CHAT,
+			effortLevels: ["high"],
+			reasoning: { enableThinking: false, effort: "none" },
+			canDisable: false,
+			defaultEffort: "high",
+			enabled: true,
+			wireEffort: "high",
+		},
+	]
+
+	it.each(activationCases)("validates $name before enabling the actual request", async ({
+		format,
+		effortLevels,
+		reasoning,
+		enabled,
+		canDisable,
+		defaultEffort,
+		wireEffort,
+	}) => {
+		const handler = new DeepSeekHandler({
+			profile: ApiProfile.create({
+				provider: "deepseek",
+				modelId: "opaque-activation-test",
+				modelInfo: {
+					id: "opaque-activation-test",
+					apiFormats: [format],
+					capabilities: { thinking: { supported: true, mode: "effort", effortLevels, canDisable, defaultEffort } },
+				},
+				deepseek: { apiFormat: format, reasoning },
+			}),
+			mode: "act",
+		})
+		const create = vi.fn().mockResolvedValue(createStream())
+		vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
+			chat: { completions: { create } },
+			responses: { create },
+		})
+		;(handler as unknown as { anthropicClient?: unknown }).anthropicClient = { messages: { create } }
+		await collectChunks(handler)
+		const body = create.mock.calls[0][0]
+		if (format === ApiFormat.OPENAI_CHAT) {
+			expect(body.extra_body).to.deep.equal({ thinking: { type: enabled ? "enabled" : "disabled" } })
+			expect(body.reasoning_effort).to.equal(wireEffort)
+		} else if (format === ApiFormat.OPENAI_RESPONSES) expect(body).not.to.have.property("reasoning")
+		else {
+			expect(body).not.to.have.property("thinking")
+			expect(body).not.to.have.property("output_config")
+		}
+	})
+
+	it.each([
+		undefined,
+		"deepseek-v4-pro",
+	])("does not borrow stale metadata for unknown identity with source %s", async (staleId) => {
+		const handler = new DeepSeekHandler({
+			profile: ApiProfile.create({
+				provider: "deepseek",
+				modelId: "opaque-unknown-test",
+				modelInfo: staleId
+					? { id: staleId, capabilities: { thinking: { supported: true, mode: "effort", effortLevels: ["high"] } } }
+					: undefined,
+				deepseek: { reasoning: { effort: "high" } },
+			}),
+			mode: "act",
+		})
+		const create = vi.fn().mockResolvedValue(createStream())
+		vi.spyOn(handler as unknown as { ensureClient: () => FakeClient }, "ensureClient").mockReturnValue({
+			chat: { completions: { create } },
+		})
+		await collectChunks(handler)
+		expect(create.mock.calls[0][0].model).to.equal("opaque-unknown-test")
+		expect(create.mock.calls[0][0]).not.to.have.property("reasoning_effort")
+		expect(create.mock.calls[0][0]).not.to.have.property("extra_body")
+		expect(handler.getModel().info.capabilities).to.equal(undefined)
 	})
 
 	describe("createMessage", () => {

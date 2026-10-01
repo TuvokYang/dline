@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import type { ModelInfo } from "@shared/proto/dline/models"
 import { ApiFormat } from "@shared/proto/dline/models/metadata"
+import { ApiProfile as ProtoApiProfile } from "@shared/proto/dline/profile"
 import { BaseProviderConfig } from "@shared/proto/dline/provider/common"
 import { fireEvent, render, screen } from "@testing-library/react"
 import React from "react"
@@ -88,6 +89,37 @@ vi.mock("@vscode/webview-ui-toolkit/react", () => ({
 }))
 
 describe("DeepSeekProvider", () => {
+	it.each([
+		{ name: "invalid implicit effort", effort: "invalid", effortLevels: ["high"], enabled: false },
+		{ name: "empty legal list", effort: "high", effortLevels: [], enabled: false },
+		{ name: "unsupported alias", effort: "xhigh", effortLevels: ["high"], enabled: false },
+		{ name: "legal xhigh alias", effort: "xhigh", effortLevels: ["max"], enabled: true },
+		{ name: "legal ultra alias", effort: "ultra", effortLevels: ["max"], enabled: true },
+		{
+			name: "none vetoes explicit enable",
+			effort: "none",
+			effortLevels: ["none", "high"],
+			enableThinking: true,
+			enabled: false,
+		},
+	])("shows $name without rewriting preferences", ({ effort, effortLevels, enableThinking, enabled }) => {
+		const onUpdate = vi.fn()
+		const profile = ProtoApiProfile.create({
+			provider: "deepseek",
+			modelId: "opaque-activation-test",
+			modelInfo: {
+				id: "opaque-activation-test",
+				capabilities: { thinking: { supported: true, mode: "effort", effortLevels } },
+			},
+			deepseek: { reasoning: { effort, enableThinking } },
+		})
+		render(<DeepSeekProvider onUpdate={onUpdate} profile={profile} showModelOptions={true} />)
+		const checkbox = screen.getByRole("checkbox", { name: "Enable Thinking" })
+		if (enabled) expect(checkbox).toBeChecked()
+		else expect(checkbox).not.toBeChecked()
+		expect(onUpdate).not.toHaveBeenCalled()
+	})
+
 	it("does not create thinking controls for an undeclared model with an enabled preference", () => {
 		const profile = {
 			id: "custom-profile",

@@ -57,17 +57,19 @@ export const DeepSeekProvider = ({ showModelOptions, isPopup, profile, onUpdate 
 		(selectedApiFormat === ApiFormat.OPENAI_RESPONSES || selectedApiFormat === ApiFormat.ANTHROPIC_CHAT)
 
 	const reasoningConfig = profile.deepseek?.reasoning
-	const profileEffort = reasoningConfig?.effort ?? ""
 	const thinking = modelInfo.capabilities?.thinking
 	const supportsThinking =
 		modelInfo.capabilities?.supportsReasoning !== false && thinking?.supported === true && thinking.mode === "effort"
 	const effortLevels = (thinking?.effortLevels ?? []).filter((effort) => thinking?.canDisable !== false || effort !== "none")
+	const requestedEffort = reasoningConfig?.effort?.trim().toLowerCase() ?? ""
+	const profileEffort =
+		(requestedEffort === "xhigh" || requestedEffort === "ultra") && effortLevels.includes("max") ? "max" : requestedEffort
+	const legalSelection = ["low", "high", "max"].includes(profileEffort) && effortLevels.includes(profileEffort)
 	const defaultEffort = thinking?.defaultEffort && effortLevels.includes(thinking.defaultEffort) ? thinking.defaultEffort : ""
+	const disabled = reasoningConfig?.enableThinking === false || requestedEffort === "none"
 	const configuredEnabled =
 		thinking?.canDisable === false ||
-		(reasoningConfig
-			? (reasoningConfig.enableThinking ?? Boolean(profileEffort && profileEffort !== "none"))
-			: thinking?.defaultEnabled === true)
+		(!disabled && (reasoningConfig ? (reasoningConfig.enableThinking ?? legalSelection) : thinking?.defaultEnabled === true))
 	const [enableThinking, setEnableThinking] = useState(configuredEnabled)
 	const savedEffortRef = useRef<string>(effortLevels.includes(profileEffort) ? profileEffort : defaultEffort)
 

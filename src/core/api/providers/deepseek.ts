@@ -1,5 +1,5 @@
 import { Anthropic } from "@anthropic-ai/sdk"
-import { DeepSeekModelId, deepSeekDefaultModelId, deepSeekModels, ModelInfo } from "@shared/api"
+import { deepSeekDefaultModelId, deepSeekModels, ModelInfo } from "@shared/api"
 import { providerFetch } from "@shared/net"
 import { calculateApiCostOpenAI } from "@utils/cost"
 import OpenAI from "openai"
@@ -10,6 +10,7 @@ import { ClineStorageMessage } from "@/shared/messages/content"
 import { fetch } from "@/shared/net"
 import { ApiFormat, ServerTool } from "@/shared/proto/dline/models/metadata"
 import { prioritizeApiFormat, resolveApiFormat } from "@/shared/providers/api-format"
+import { resolveProfileModelId } from "@/shared/providers/profile-model-info"
 import { Logger } from "@/shared/services/Logger"
 import { AccountUsage, ApiHandler, ApiHandlerContext, type ApiRequestOptions } from "../"
 import { withRetry } from "../retry"
@@ -43,12 +44,6 @@ export class DeepSeekHandler implements ApiHandler {
 	}
 	private get apiKey() {
 		return this.ctx.profile.apiKey
-	}
-	private get modelId() {
-		return this.ctx.profile.modelId || ""
-	}
-	private get modelInfo() {
-		return this.ctx.profile.modelInfo as ModelInfo | undefined
 	}
 	private get baseUrl() {
 		return this.ctx.profile.baseUrl
@@ -336,22 +331,9 @@ export class DeepSeekHandler implements ApiHandler {
 	}
 
 	private getBaseModel(): { id: string; info: ModelInfo } {
-		const modelId = this.modelId
-		if (modelId && this.modelInfo) {
-			return { id: modelId, info: this.modelInfo }
-		}
-		// Smooth migration from deprecated model names to v4-flash:
-		// deepseek-chat → deepseek-v4-flash (non-thinking, reasoningEffort=none by default)
-		// deepseek-reasoner → deepseek-v4-flash (thinking, existing reasoningEffort setting preserved)
-		// Both now resolve to v4-flash; thinking is controlled solely by reasoningEffort.
-		if (modelId && deepSeekModels[modelId]) {
-			const id = modelId as DeepSeekModelId
-			return { id, info: deepSeekModels[id] }
-		}
-		return {
-			id: deepSeekDefaultModelId,
-			info: deepSeekModels[deepSeekDefaultModelId],
-		}
+		const id = resolveProfileModelId(this.ctx.profile, { defaultModelId: deepSeekDefaultModelId })
+		const matchingInfo = this.ctx.profile.modelInfo?.id === id ? this.ctx.profile.modelInfo : undefined
+		return { id, info: matchingInfo ?? deepSeekModels[id] ?? { id } }
 	}
 
 	getModel(): { id: string; info: ModelInfo } {

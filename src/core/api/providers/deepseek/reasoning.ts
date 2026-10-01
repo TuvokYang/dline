@@ -25,12 +25,13 @@ export function resolveDeepSeekReasoning(
 	}
 	let preference = reasoning?.effort?.trim().toLowerCase()
 	const disabled = reasoning?.enableThinking === false || preference === "none"
+	if (preference === "xhigh" || preference === "ultra") preference = "max"
+	const explicitEffort = declaredEffort(preference, thinking)
 	// An explicit empty legacy config leaves thinking off; an absent config follows the declaration.
-	const requested = reasoning?.enableThinking ?? (reasoning ? Boolean(preference) : thinking.defaultEnabled === true)
+	const requested = reasoning?.enableThinking ?? (reasoning ? explicitEffort !== undefined : thinking.defaultEnabled === true)
 	const enabled = thinking.canDisable === false || (!disabled && requested)
 	if (!enabled) return { supported: true, enabled: false }
 
-	if (preference === "xhigh" || preference === "ultra") preference = "max"
-	const effort = declaredEffort(preference, thinking) ?? declaredEffort(thinking.defaultEffort, thinking)
+	const effort = explicitEffort ?? declaredEffort(thinking.defaultEffort, thinking)
 	return { supported: true, enabled: true, effort }
 }
