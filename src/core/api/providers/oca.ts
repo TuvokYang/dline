@@ -1,5 +1,6 @@
 import { Anthropic, APIError as AnthropicAPIError } from "@anthropic-ai/sdk"
-import { liteLlmDefaultModelId, liteLlmModelInfoSaneDefaults, ModelInfo } from "@shared/api"
+import { liteLlmDefaultModelId, ModelInfo } from "@shared/api"
+import { buildEffectiveModelInfo } from "@shared/providers/effective-model-info"
 import OpenAI, { APIError as OpenAIAPIError, OpenAIError } from "openai"
 import type { ChatCompletionTool as OpenAITool } from "openai/resources/chat/completions"
 import { OcaAuthService } from "@/services/auth/oca/OcaAuthService"
@@ -25,6 +26,8 @@ import { ApiStream } from "../transform/stream"
 import { getOpenAIToolParams, ToolCallProcessor } from "../transform/tool-call-processor"
 import { convertOpenAIToolsToAnthropicTools, handleAnthropicMessagesApiStreamResponse } from "../utils/messages_api_support"
 import { handleResponsesApiStreamResponse } from "../utils/responses_api_support"
+import { resolveAnthropicReasoning } from "./anthropic/reasoning"
+import { encodeOpenAIResponsesReasoning, resolveOpenAIReasoning, resolveOpenAIReasoningEffort } from "./openai/reasoning"
 
 export class OcaHandler implements ApiHandler {
 	protected openAIClient: OpenAI | undefined
@@ -48,12 +51,6 @@ export class OcaHandler implements ApiHandler {
 	}
 	protected get baseUrl() {
 		return this.ctx.profile.baseUrl
-	}
-	protected get reasoningEffort() {
-		return this.config?.reasoning?.effort
-	}
-	protected get thinkingBudgetTokens() {
-		return this.config?.reasoning?.thinkingBudget ?? 0
 	}
 
 	protected initializeOpenAIClient(): OpenAI {
@@ -288,10 +285,15 @@ export class OcaHandler implements ApiHandler {
 		const modelId = this.modelId || liteLlmDefaultModelId
 		const isOminiModel = modelId.includes("o1-mini") || modelId.includes("o3-mini") || modelId.includes("o4-mini")
 
-		// Configuration for extended thinking
-		const budgetTokens = this.thinkingBudgetTokens
-		const reasoningOn = budgetTokens !== 0
-		const thinkingConfig = reasoningOn ? { type: "enabled", budget_tokens: budgetTokens } : undefined
+		const capabilities = this.getModel().info.capabilities
+		const manualThinking =
+			capabilities?.thinking?.mode === "budget"
+				? resolveAnthropicReasoning(capabilities, this.config?.reasoning)
+				: undefined
+		const effort = resolveOpenAIReasoningEffort(capabilities, this.config?.reasoning)
+		const reasoningOn =
+			manualThinking?.enabled === true ||
+			(capabilities?.thinking?.mode === "effort" && resolveOpenAIReasoning(capabilities, this.config?.reasoning).enabled)
 
 		let temperature: number | undefined = this.modelInfo?.temperature ?? 0
 		const maxTokens: number | undefined =
@@ -345,16 +347,14 @@ export class OcaHandler implements ApiHandler {
 			max_completion_tokens: maxTokens,
 			max_tokens: maxTokens,
 			stream_options: { include_usage: true },
-			...(thinkingConfig && { thinking: thinkingConfig }), // Add thinking configuration when applicable
+			...(manualThinking?.thinking && { thinking: manualThinking.thinking }),
 			...(this.ctx.ulid && {
 				litellm_session_id: `cline-${this.ctx.ulid}`,
 				...getOpenAIToolParams(tools),
 			}), // Add session ID for LiteLLM tracking
 		}
 
-		if (this.modelInfo?.capabilities?.supportsReasoning) {
-			chatCompletionsParams.reasoning_effort = this.reasoningEffort || ("medium" as any)
-		}
+		if (effort !== undefined) chatCompletionsParams.reasoning_effort = effort
 
 		await this.getCostRates()
 		const stream = await client.chat.completions.create(chatCompletionsParams)
@@ -464,7 +464,8 @@ export class OcaHandler implements ApiHandler {
 			throw new Error("Oracle Code Assist (OCA) model info is required for Responses API")
 		}
 
-		const reasoningOn = !!ocaModelInfo.capabilities?.supportsReasoning
+		const reasoning = encodeOpenAIResponsesReasoning(this.getModel().info.capabilities, this.config?.reasoning)
+		const reasoningOn = reasoning !== undefined && reasoning.effort !== "none"
 		if (reasoningOn) {
 			temperature = undefined
 		}
@@ -481,9 +482,7 @@ export class OcaHandler implements ApiHandler {
 			...(typeof maxOutputTokens === "number" && maxOutputTokens > 0 ? { max_output_tokens: maxOutputTokens } : {}),
 		}
 
-		if (reasoningOn) {
-			responsesParams.reasoning = { effort: this.reasoningEffort as any, summary: "auto" }
-		}
+		if (reasoning !== undefined) responsesParams.reasoning = reasoning
 
 		// Resolve management-plane pricing before the observed model send begins.
 		await this.getCostRates()
@@ -502,8 +501,8 @@ export class OcaHandler implements ApiHandler {
 
 		const modelId = this.modelId || liteLlmDefaultModelId
 
-		const budgetTokens = this.thinkingBudgetTokens
-		const reasoningOn = this.modelInfo?.capabilities?.supportsReasoning && budgetTokens !== 0
+		const reasoning = resolveAnthropicReasoning(this.getModel().info.capabilities, this.config?.reasoning)
+		const reasoningOn = reasoning.enabled
 
 		let temperature: number | undefined = this.modelInfo?.temperature ?? 0
 		const maxTokens: number | undefined =
@@ -532,16 +531,22 @@ export class OcaHandler implements ApiHandler {
 			messages: anthropicMessages,
 			stream: true,
 			tools: anthropicTools,
-			thinking: reasoningOn ? { type: "enabled", budget_tokens: budgetTokens } : undefined,
+			thinking: reasoning.thinking,
+			...(reasoning.outputConfig ? { output_config: reasoning.outputConfig } : {}),
 		})
 
 		yield* handleAnthropicMessagesApiStreamResponse(stream)
 	}
 
 	getModel() {
+		const id = this.modelId || this.modelInfo?.id || liteLlmDefaultModelId
+		const baseModel = this.modelInfo?.id === id ? this.modelInfo : undefined
 		return {
-			id: this.modelId || liteLlmDefaultModelId,
-			info: this.modelInfo || liteLlmModelInfoSaneDefaults,
+			id,
+			info: buildEffectiveModelInfo(id, baseModel, {
+				capabilities: this.config?.capabilities,
+				pricing: this.config?.pricing,
+			}),
 		}
 	}
 }

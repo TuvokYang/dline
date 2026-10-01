@@ -1,3 +1,4 @@
+import { QwenApiRegions } from "@shared/api"
 import type { ModelCapabilities } from "@shared/proto/dline/models/metadata"
 import { ApiProfile } from "@shared/proto/dline/profile"
 import type { ReasoningConfig } from "@shared/proto/dline/provider/common"
@@ -6,8 +7,107 @@ import { AwsBedrockHandler } from "../bedrock"
 import { LiteLlmHandler } from "../litellm"
 import { MinimaxHandler } from "../minimax"
 import { MistralHandler } from "../mistral"
+import { QwenHandler } from "../qwen"
 import { RequestyHandler } from "../requesty"
 import { VertexHandler } from "../vertex"
+
+const qwenBudgetCases: {
+	name: string
+	capabilities?: ModelCapabilities
+	overrides?: ModelCapabilities
+	modelInfoId?: string
+	reasoning?: ReasoningConfig
+	enable?: boolean
+	budget?: number
+}[] = [
+	{ name: "missing support", reasoning: { thinkingBudget: 23 } },
+	{ name: "unknown default", capabilities: { thinking: { supported: true, mode: "budget" } } },
+	{
+		name: "partial effective minimum override",
+		capabilities: { thinking: { supported: true, mode: "budget", minBudget: 9, maxBudget: 101 } },
+		overrides: { thinking: { minBudget: 17 } },
+		reasoning: { thinkingBudget: 3 },
+		enable: true,
+		budget: 17,
+	},
+	{
+		name: "stale complete metadata",
+		modelInfoId: "another-model",
+		capabilities: { thinking: { supported: true, mode: "budget", minBudget: 17 } },
+		reasoning: { thinkingBudget: 23 },
+	},
+	{ name: "coarse support only", capabilities: { supportsReasoning: true }, reasoning: { thinkingBudget: 23 } },
+	{
+		name: "explicit false",
+		capabilities: { thinking: { supported: false, mode: "budget" } },
+		reasoning: { thinkingBudget: 23 },
+	},
+	{ name: "missing mode", capabilities: { thinking: { supported: true, maxBudget: 101 } }, reasoning: { thinkingBudget: 23 } },
+	{
+		name: "positive minimum",
+		capabilities: { thinking: { supported: true, mode: "budget", minBudget: 17, maxBudget: 101 } },
+		reasoning: { thinkingBudget: 3 },
+		enable: true,
+		budget: 17,
+	},
+	{
+		name: "invalid bounds",
+		capabilities: { thinking: { supported: true, mode: "budget", minBudget: 17, maxBudget: 11 } },
+		reasoning: { thinkingBudget: 3 },
+	},
+	{
+		name: "optional zero disable",
+		capabilities: { thinking: { supported: true, mode: "budget", minBudget: 17, defaultEnabled: true } },
+		reasoning: { thinkingBudget: 0 },
+		enable: false,
+	},
+	{
+		name: "required zero inherits",
+		capabilities: { thinking: { supported: true, mode: "budget", minBudget: 17, canDisable: false } },
+		reasoning: { thinkingBudget: 0 },
+		enable: true,
+	},
+	{
+		name: "declared default without numeric preference",
+		capabilities: { thinking: { supported: true, mode: "budget", minBudget: 17, defaultEnabled: true } },
+		enable: true,
+	},
+	{
+		name: "fractional budget",
+		capabilities: { thinking: { supported: true, mode: "budget" } },
+		reasoning: { thinkingBudget: 1.5 },
+	},
+]
+
+describe.each([QwenApiRegions.CHINA, QwenApiRegions.INTERNATIONAL])("Qwen %s declared budget requests", (qwenApiLine) => {
+	it.each(qwenBudgetCases)("encodes $name without replacing an opaque model", async ({
+		capabilities,
+		overrides,
+		modelInfoId,
+		reasoning,
+		enable,
+		budget,
+	}) => {
+		const id = "qwen3-opaque-alias"
+		const handler = new QwenHandler({
+			profile: ApiProfile.create({
+				provider: "qwen",
+				modelId: id,
+				modelInfo: { id: modelInfoId ?? id, capabilities },
+				qwen: { qwenApiLine, reasoning, capabilities: overrides },
+			}),
+			mode: "act",
+		})
+		const create = vi.fn().mockResolvedValue((async function* () {})())
+		;(handler as unknown as { client: unknown }).client = { chat: { completions: { create } } }
+		for await (const _chunk of handler.createMessage("system", [{ role: "user", content: "hi" }])) {
+		}
+		const body = create.mock.calls[0][0]
+		expect(body.model).toBe(id)
+		expect(body.enable_thinking).toBe(enable)
+		expect(body.thinking_budget).toBe(budget)
+	})
+})
 
 describe.each(["requesty", "litellm"] as const)("%s upstream reasoning conversion", (provider) => {
 	it.each([
