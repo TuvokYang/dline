@@ -8,17 +8,15 @@ import type { ApiProfile } from "./ProviderProfile"
 interface ClineProviderProps {
 	showModelOptions: boolean
 	isPopup?: boolean
-	/** NEW: ApiProfile for profile-driven config (preferred when provided) */
-	profile?: ApiProfile
-	/** NEW: Callback to persist profile updates */
-	onUpdate?: (updates: Partial<ApiProfile>) => void
+	profile: ApiProfile
+	onUpdate: (updates: Partial<ApiProfile>) => void
 }
 
 /**
  * The Cline provider configuration component.
  * Delegates model selection to ClineModelPicker.
  */
-export const ClineProvider = ({ showModelOptions, isPopup, profile: _profile, onUpdate: _onUpdate }: ClineProviderProps) => {
+export const ClineProvider = ({ showModelOptions, isPopup, profile, onUpdate }: ClineProviderProps) => {
 	return (
 		<div>
 			{/* Cline Account Info Card */}
@@ -26,7 +24,9 @@ export const ClineProvider = ({ showModelOptions, isPopup, profile: _profile, on
 				<ClineAccountInfoCard />
 			</div>
 
-			{showModelOptions && <ClineModelPicker isPopup={isPopup} showProviderRouting={true} />}
+			{showModelOptions && (
+				<ClineModelPicker isPopup={isPopup} onUpdate={onUpdate} profile={profile} showProviderRouting={true} />
+			)}
 		</div>
 	)
 }

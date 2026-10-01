@@ -5,6 +5,8 @@ import { fireEvent, render, screen } from "@testing-library/react"
 import type { AnchorHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes } from "react"
 import { describe, expect, it, vi } from "vitest"
 import { BedrockProvider } from "./BedrockProvider"
+import { GeminiProvider } from "./GeminiProvider"
+import { VercelAIGatewayProvider } from "./VercelAIGatewayProvider"
 import { VertexProvider } from "./VertexProvider"
 
 const models: Record<string, ModelInfo> = {
@@ -45,6 +47,8 @@ vi.mock("../common/ModelInfoView", () => ({
 	ModelInfoView: ({ modelInfo }: { modelInfo: ModelInfo }) => <span data-testid="model-id">{modelInfo.id}</span>,
 }))
 vi.mock("../common/DebouncedTextField", () => ({ DebouncedTextField: () => <div /> }))
+vi.mock("../common/ApiKeyField", () => ({ ApiKeyField: () => <div /> }))
+vi.mock("../common/BaseUrlField", () => ({ BaseUrlField: () => <div /> }))
 vi.mock("../common/RemotelyConfiguredInputWrapper", () => ({
 	RemotelyConfiguredInputWrapper: ({ children }: { children: ReactNode }) => <>{children}</>,
 	LockIcon: () => <span />,
@@ -69,9 +73,11 @@ vi.mock("@vscode/webview-ui-toolkit/react", () => ({
 	VSCodeLink: (props: AnchorHTMLAttributes<HTMLAnchorElement>) => <a {...props} />,
 }))
 
-for (const [provider, Panel] of [
-	["vertex", VertexProvider],
-	["bedrock", BedrockProvider],
+for (const [provider, configKey, Panel] of [
+	["vertex", "vertex", VertexProvider],
+	["bedrock", "bedrock", BedrockProvider],
+	["gemini", "gemini", GeminiProvider],
+	["vercel-ai-gateway", "vercelAiGateway", VercelAIGatewayProvider],
 ] as const) {
 	describe(`${provider} thinking controls`, () => {
 		it("uses an opaque model's declared effort, default and disable constraint", () => {
@@ -89,7 +95,7 @@ for (const [provider, Panel] of [
 				provider,
 				modelId: "claude-opus-4-7-unknown",
 				modelInfo: models["effort-alias"],
-				[provider]: { reasoning: { enableThinking: true, effort: "high", thinkingBudget: 2000 } },
+				[configKey]: { reasoning: { enableThinking: true, effort: "high", thinkingBudget: 2000 } },
 			})
 			render(<Panel onUpdate={vi.fn()} profile={profile} showModelOptions={true} />)
 			expect(screen.queryByRole("checkbox", { name: "Enable Thinking" })).not.toBeInTheDocument()
@@ -100,7 +106,7 @@ for (const [provider, Panel] of [
 			const profile = ApiProfile.create({
 				provider,
 				modelId: "effort-alias",
-				[provider]: { capabilities: { thinking: { supported: false } } },
+				[configKey]: { capabilities: { thinking: { supported: false } } },
 			})
 			render(<Panel onUpdate={vi.fn()} profile={profile} showModelOptions={true} />)
 			expect(screen.queryByRole("checkbox", { name: "Enable Thinking" })).not.toBeInTheDocument()
@@ -111,7 +117,7 @@ for (const [provider, Panel] of [
 			const profile = ApiProfile.create({
 				provider,
 				modelId: "budget-alias",
-				[provider]: { reasoning: { thinkingBudget: 1500, display: "omitted" } },
+				[configKey]: { reasoning: { thinkingBudget: 1500, display: "omitted" } },
 			})
 			render(<Panel onUpdate={onUpdate} profile={profile} showModelOptions={true} />)
 			const slider = screen.getByRole("slider")
@@ -119,8 +125,8 @@ for (const [provider, Panel] of [
 			fireEvent.change(slider, { target: { value: "2400" } })
 			fireEvent.mouseUp(slider)
 			expect(onUpdate).toHaveBeenCalledWith({
-				[provider]: {
-					...profile[provider],
+				[configKey]: {
+					...profile[configKey],
 					reasoning: { enableThinking: true, effort: undefined, thinkingBudget: 2400, display: "omitted" },
 				},
 			})

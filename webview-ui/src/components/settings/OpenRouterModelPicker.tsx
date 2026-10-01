@@ -1,8 +1,9 @@
 import { CLAUDE_SONNET_1M_SUFFIX, openRouterDefaultModelId } from "@shared/api"
 import { StringRequest } from "@shared/proto/dline/common"
 import type { ApiProfile } from "@shared/proto/dline/profile"
+import { ClineProviderConfig } from "@shared/proto/dline/provider/cline_provider"
 import { OpenRouterProviderConfig } from "@shared/proto/dline/provider/openrouter"
-import { isClaudeOpusAdaptiveThinkingModel, resolveClaudeOpusAdaptiveThinking } from "@shared/utils/reasoning-support"
+import { buildEffectiveModelInfo } from "@shared/providers/effective-model-info"
 import { VSCodeLink, VSCodeTextField } from "@vscode/webview-ui-toolkit/react"
 import Fuse from "fuse.js"
 import type React from "react"
@@ -14,9 +15,8 @@ import { StateServiceClient } from "@/services/grpc-client"
 import { highlight } from "../history/HistoryView"
 import { ContextWindowSwitcher } from "./common/ContextWindowSwitcher"
 import { ModelInfoView } from "./common/ModelInfoView"
-import ReasoningEffortSelector from "./ReasoningEffortSelector"
-import ThinkingBudgetSlider from "./ThinkingBudgetSlider"
-import { filterOpenRouterModelIds, supportsReasoningEffortForModelId } from "./utils/providerUtils"
+import ThinkingControl from "./ThinkingControl"
+import { filterOpenRouterModelIds } from "./utils/providerUtils"
 
 // Star icon for favorites
 const StarIcon = ({ isFavorite, onClick }: { isFavorite: boolean; onClick: (e: React.MouseEvent) => void }) => {
@@ -47,10 +47,26 @@ export interface OpenRouterModelPickerProps {
 }
 
 const OpenRouterModelPicker: React.FC<OpenRouterModelPickerProps> = ({ isPopup, onUpdate, profile, showProviderRouting }) => {
-	const { favoritedModelIds, openRouterModels, refreshOpenRouterModels } = useExtensionState()
-	const selectedModelId = profile.modelId || openRouterDefaultModelId
-	const selectedModelInfo = openRouterModels[selectedModelId] ?? profile.modelInfo
-	const providerConfig = profile.openrouter ?? OpenRouterProviderConfig.create()
+	const state = useExtensionState()
+	const { favoritedModelIds } = state
+	const isCline = profile.provider === "cline"
+	const pickerModels = isCline ? (state.clineModels ?? {}) : state.openRouterModels
+	const refreshModels = isCline ? state.refreshClineModels : state.refreshOpenRouterModels
+	const selectedModelId = profile.modelId || profile.modelInfo?.id || openRouterDefaultModelId
+	const clineConfig = profile.clineProvider ?? ClineProviderConfig.create()
+	const openrouterConfig = profile.openrouter ?? OpenRouterProviderConfig.create()
+	const providerConfig = isCline ? clineConfig : openrouterConfig
+	const baseModel = pickerModels[selectedModelId] ?? (profile.modelInfo?.id === selectedModelId ? profile.modelInfo : undefined)
+	const selectedModelInfo = useMemo(
+		() =>
+			baseModel || providerConfig.capabilities
+				? buildEffectiveModelInfo(selectedModelId, baseModel, {
+						capabilities: providerConfig.capabilities,
+						pricing: providerConfig.pricing,
+					})
+				: undefined,
+		[baseModel, selectedModelId, providerConfig.capabilities, providerConfig.pricing],
+	)
 	const [searchTerm, setSearchTerm] = useState(selectedModelId)
 	const [isDropdownVisible, setIsDropdownVisible] = useState(false)
 	const [selectedIndex, setSelectedIndex] = useState(-1)
@@ -60,11 +76,11 @@ const OpenRouterModelPicker: React.FC<OpenRouterModelPickerProps> = ({ isPopup, 
 
 	const handleModelChange = (newModelId: string) => {
 		setSearchTerm(newModelId)
-		onUpdate({ modelId: newModelId, modelInfo: openRouterModels[newModelId] })
+		onUpdate({ modelId: newModelId, modelInfo: pickerModels[newModelId] })
 	}
 
 	useMount(() => {
-		refreshOpenRouterModels()
+		refreshModels()
 	})
 
 	// Sync external changes when the modelId changes
@@ -73,10 +89,10 @@ const OpenRouterModelPicker: React.FC<OpenRouterModelPickerProps> = ({ isPopup, 
 	}, [selectedModelId])
 
 	useEffect(() => {
-		if (!profile.modelId && selectedModelInfo) {
-			onUpdate({ modelId: selectedModelId, modelInfo: selectedModelInfo })
+		if (!profile.modelId && baseModel) {
+			onUpdate({ modelId: selectedModelId, modelInfo: baseModel })
 		}
-	}, [onUpdate, profile.modelId, selectedModelId, selectedModelInfo])
+	}, [onUpdate, profile.modelId, selectedModelId, baseModel])
 
 	useEffect(() => {
 		const handleClickOutside = (event: MouseEvent) => {
@@ -92,9 +108,9 @@ const OpenRouterModelPicker: React.FC<OpenRouterModelPickerProps> = ({ isPopup, 
 	}, [])
 
 	const modelIds = useMemo(() => {
-		const unfilteredModelIds = Object.keys(openRouterModels).sort((a, b) => a.localeCompare(b))
-		return filterOpenRouterModelIds(unfilteredModelIds, "openrouter")
-	}, [openRouterModels])
+		const unfilteredModelIds = Object.keys(pickerModels).sort((a, b) => a.localeCompare(b))
+		return filterOpenRouterModelIds(unfilteredModelIds, isCline ? "cline" : "openrouter")
+	}, [pickerModels, isCline])
 
 	const searchableItems = useMemo(() => {
 		return modelIds.map((id) => ({
@@ -178,39 +194,10 @@ const OpenRouterModelPicker: React.FC<OpenRouterModelPickerProps> = ({ isPopup, 
 		}
 	}, [selectedIndex])
 
-	const selectedModelIdLower = selectedModelId?.toLowerCase() || ""
-	const showAdaptiveThinkingEffort = useMemo(() => isClaudeOpusAdaptiveThinkingModel(selectedModelId), [selectedModelId])
-	const adaptiveThinkingDefaultEffort = useMemo(
-		() =>
-			resolveClaudeOpusAdaptiveThinking(providerConfig.reasoning?.effort, providerConfig.reasoning?.thinkingBudget)
-				.effort ?? "none",
-		[providerConfig.reasoning?.effort, providerConfig.reasoning?.thinkingBudget],
-	)
-	const showReasoningEffort = useMemo(
-		() => showAdaptiveThinkingEffort || supportsReasoningEffortForModelId(selectedModelId),
-		[selectedModelId, showAdaptiveThinkingEffort],
-	)
-
-	const showBudgetSlider = useMemo(() => {
-		if (showReasoningEffort) {
-			return false
-		}
-		return (
-			Object.entries(openRouterModels)?.some(([id, m]) => id === selectedModelId && m.capabilities?.thinking) ||
-			selectedModelIdLower.includes("claude-haiku-4.5") ||
-			selectedModelIdLower.includes("claude-4.5-haiku") ||
-			selectedModelIdLower.includes("claude-sonnet-4.6") ||
-			selectedModelIdLower.includes("claude-sonnet-4-6") ||
-			selectedModelIdLower.includes("claude-4.6-sonnet") ||
-			selectedModelIdLower.includes("claude-sonnet-4.5") ||
-			selectedModelIdLower.includes("claude-sonnet-4") ||
-			selectedModelIdLower.includes("claude-opus-4.1") ||
-			selectedModelIdLower.includes("claude-opus-4") ||
-			selectedModelIdLower.includes("claude-3-7-sonnet") ||
-			selectedModelIdLower.includes("claude-3.7-sonnet") ||
-			selectedModelIdLower.includes("claude-3.7-sonnet:thinking")
-		)
-	}, [openRouterModels, selectedModelId, selectedModelIdLower, showReasoningEffort])
+	const thinking = selectedModelInfo?.capabilities?.thinking
+	const thinkingSupported = thinking?.supported === true && selectedModelInfo?.capabilities?.supportsReasoning !== false
+	const effortSupported = thinkingSupported && thinking?.mode === "effort"
+	const budgetSupported = thinkingSupported && thinking?.mode === "budget"
 
 	return (
 		<div style={{ width: "100%", paddingBottom: 2 }}>
@@ -345,51 +332,36 @@ const OpenRouterModelPicker: React.FC<OpenRouterModelPickerProps> = ({ isPopup, 
 
 			{selectedModelInfo ? (
 				<>
-					{showBudgetSlider && (
-						<ThinkingBudgetSlider
-							maxBudget={selectedModelInfo.capabilities?.thinking?.maxBudget}
-							onThinkingBudgetTokensChange={(thinkingBudget) =>
-								onUpdate({
-									openrouter: {
-										...providerConfig,
-										reasoning: { ...providerConfig.reasoning, thinkingBudget },
-									},
-								})
+					{(effortSupported || budgetSupported) && (
+						<ThinkingControl
+							defaultEffort={thinking?.defaultEffort}
+							defaultEnabled={thinking?.defaultEnabled}
+							disableSupported={thinking?.canDisable !== false}
+							effortOptions={thinking?.effortLevels ?? []}
+							maxBudget={thinking?.maxBudget}
+							mode={effortSupported ? "effort-only" : "budget-only"}
+							onReasoningConfigUpdate={(reasoning) =>
+								onUpdate(
+									isCline
+										? { clineProvider: { ...clineConfig, reasoning } }
+										: { openrouter: { ...openrouterConfig, reasoning } },
+								)
 							}
-							thinkingBudgetTokens={providerConfig.reasoning?.thinkingBudget}
-						/>
-					)}
-					{showReasoningEffort && (
-						<ReasoningEffortSelector
-							allowedEfforts={
-								showAdaptiveThinkingEffort ? (["none", "low", "medium", "high", "xhigh"] as const) : undefined
-							}
-							defaultEffort={showAdaptiveThinkingEffort ? adaptiveThinkingDefaultEffort : "medium"}
-							description={
-								showAdaptiveThinkingEffort
-									? "Use None to disable adaptive thinking. Higher effort increases response detail and token usage."
-									: undefined
-							}
-							label={showAdaptiveThinkingEffort ? "Adaptive Thinking" : undefined}
-							onReasoningEffortChange={(effort) =>
-								onUpdate({
-									openrouter: {
-										...providerConfig,
-										reasoning: { ...providerConfig.reasoning, effort },
-									},
-								})
-							}
-							reasoningEffort={providerConfig.reasoning?.effort}
+							reasoningConfig={providerConfig.reasoning}
+							showModeSelector={false}
 						/>
 					)}
 
 					<ModelInfoView
 						isPopup={isPopup}
 						modelInfo={selectedModelInfo}
-						onProviderSortingChange={(openRouterProviderSorting) =>
-							onUpdate({ openrouter: { ...providerConfig, openRouterProviderSorting } })
+						onProviderSortingChange={
+							isCline
+								? undefined
+								: (openRouterProviderSorting) =>
+										onUpdate({ openrouter: { ...openrouterConfig, openRouterProviderSorting } })
 						}
-						providerSorting={providerConfig.openRouterProviderSorting}
+						providerSorting={isCline ? undefined : profile.openrouter?.openRouterProviderSorting}
 						selectedModelId={selectedModelId}
 						showProviderRouting={showProviderRouting}
 					/>

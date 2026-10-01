@@ -1,7 +1,9 @@
-// Mode import removed — no longer needed in profile-driven architecture
+import { BaseProviderConfig } from "@shared/proto/dline/provider/common"
+import { resolveProfileModelInfo } from "@shared/providers/profile-model-info"
 import { ApiKeyField } from "../common/ApiKeyField"
 import { ModelInfoView } from "../common/ModelInfoView"
 import { ModelSelector } from "../common/ModelSelector"
+import ThinkingControl from "../ThinkingControl"
 import type { ApiProfile } from "./ProviderProfile"
 import { useProviderModels } from "./useProviderModels"
 
@@ -13,9 +15,14 @@ interface VercelAIGatewayProviderProps {
 }
 
 export const VercelAIGatewayProvider = ({ showModelOptions, isPopup, profile, onUpdate }: VercelAIGatewayProviderProps) => {
-	const { models, defaultModelId, modelInfoSaneDefaults } = useProviderModels("vercel-ai-gateway")
-	const modelId = profile.modelId || defaultModelId
-	const modelInfo = profile.modelInfo ?? models[profile.modelId] ?? modelInfoSaneDefaults
+	const { models, defaultModelId } = useProviderModels("vercel-ai-gateway")
+	const pc = profile.vercelAiGateway ?? BaseProviderConfig.create()
+	const modelInfo = resolveProfileModelInfo(profile, { models, defaultModelId })
+	const modelId = modelInfo.id
+	const thinking = modelInfo.capabilities?.thinking
+	const thinkingSupported = thinking?.supported === true && modelInfo.capabilities?.supportsReasoning !== false
+	const effortSupported = thinkingSupported && thinking?.mode === "effort"
+	const budgetSupported = thinkingSupported && thinking?.mode === "budget"
 	return (
 		<div>
 			<ApiKeyField
@@ -37,6 +44,19 @@ export const VercelAIGatewayProvider = ({ showModelOptions, isPopup, profile, on
 						}
 						selectedModelId={modelId}
 					/>
+					{(effortSupported || budgetSupported) && (
+						<ThinkingControl
+							defaultEffort={thinking?.defaultEffort}
+							defaultEnabled={thinking?.defaultEnabled}
+							disableSupported={thinking?.canDisable !== false}
+							effortOptions={thinking?.effortLevels ?? []}
+							maxBudget={thinking?.maxBudget}
+							mode={effortSupported ? "effort-only" : "budget-only"}
+							onReasoningConfigUpdate={(reasoning) => onUpdate({ vercelAiGateway: { ...pc, reasoning } })}
+							reasoningConfig={pc.reasoning}
+							showModeSelector={false}
+						/>
+					)}
 					<ModelInfoView isPopup={isPopup} modelInfo={modelInfo} selectedModelId={modelId} />
 				</>
 			)}

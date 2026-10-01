@@ -1,4 +1,3 @@
-import { GENERIC_REASONING_EFFORT_OPTIONS } from "@shared/storage/types"
 import { memo } from "react"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -6,50 +5,42 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 interface ReasoningEffortSelectorProps {
 	label?: string
 	description?: string
-	allowedEfforts?: readonly string[]
+	allowedEfforts: readonly string[]
 	defaultEffort?: string
-	/**
-	 * Direct reasoning effort value (preferred).
-	 * When provided, onReasoningEffortChange must also be provided.
-	 * Falls back to apiConfiguration mode-specific fields when not set.
-	 */
 	reasoningEffort?: string
-	/** Callback when reasoning effort changes (when using direct value). */
-	onReasoningEffortChange?: (value: string) => void
+	onReasoningEffortChange: (value: string) => void
 }
 
-/**
- * Selector for reasoning effort level.
- * Uses reasoningEffort prop when provided, otherwise falls back
- * to legacy apiConfiguration mode-specific fields.
- */
+/** Display only caller-declared levels; an omitted default leaves the provider field unset. */
 const ReasoningEffortSelector = ({
 	label = "Reasoning Effort",
 	description = "Higher effort improves depth, but uses more tokens.",
-	allowedEfforts = GENERIC_REASONING_EFFORT_OPTIONS,
-	defaultEffort = "medium",
+	allowedEfforts,
+	defaultEffort,
 	reasoningEffort,
 	onReasoningEffortChange,
 }: ReasoningEffortSelectorProps) => {
-	const rawEffort = reasoningEffort
-
+	const efforts = allowedEfforts.filter((value) => value.length > 0)
 	const selectedEffort =
-		rawEffort && allowedEfforts.includes(rawEffort) ? rawEffort : allowedEfforts.includes(defaultEffort) ? defaultEffort : ""
-
-	// Handle effort value change
+		reasoningEffort && efforts.includes(reasoningEffort)
+			? reasoningEffort
+			: defaultEffort && efforts.includes(defaultEffort)
+				? defaultEffort
+				: ""
 	const handleEffortChange = (value: string) => {
-		if (allowedEfforts.includes(value)) onReasoningEffortChange?.(value)
+		if (efforts.includes(value)) onReasoningEffortChange(value)
 	}
+	if (efforts.length === 0) return null
 
 	return (
 		<div style={{ marginTop: 10, marginBottom: 5 }}>
 			<Label className="text-xs font-medium">{label}</Label>
 			<Select onValueChange={handleEffortChange} value={selectedEffort}>
 				<SelectTrigger className="w-full mt-1">
-					<SelectValue />
+					<SelectValue placeholder="Provider default" />
 				</SelectTrigger>
 				<SelectContent>
-					{allowedEfforts.map((effort) => (
+					{efforts.map((effort) => (
 						<SelectItem key={effort} value={effort}>
 							{effort.charAt(0).toUpperCase() + effort.slice(1)}
 						</SelectItem>

@@ -1,10 +1,10 @@
-// Mode import removed — no longer needed in profile-driven architecture
+import { BaseProviderConfig } from "@shared/proto/dline/provider/common"
+import { resolveProfileModelInfo } from "@shared/providers/profile-model-info"
 import { ApiKeyField } from "../common/ApiKeyField"
 import { BaseUrlField } from "../common/BaseUrlField"
 import { ModelInfoView } from "../common/ModelInfoView"
 import { ModelSelector } from "../common/ModelSelector"
-import ReasoningEffortSelector from "../ReasoningEffortSelector"
-import { supportsReasoningEffortForModelId } from "../utils/providerUtils"
+import ThinkingControl from "../ThinkingControl"
 import type { ApiProfile } from "./ProviderProfile"
 import { useProviderModels } from "./useProviderModels"
 
@@ -23,16 +23,14 @@ interface GeminiProviderProps {
  * All data sourced from ApiProfile.
  */
 export const GeminiProvider = ({ showModelOptions, isPopup, profile, onUpdate }: GeminiProviderProps) => {
-	const {
-		models: geminiModels,
-		defaultModelId: geminiDefaultModelId,
-		modelInfoSaneDefaults: geminiModelInfoSaneDefaults,
-	} = useProviderModels("gemini")
-
-	const modelId = profile.modelId || geminiDefaultModelId
-	const modelInfo =
-		profile.modelInfo ?? (profile.modelId ? geminiModels[profile.modelId] : undefined) ?? geminiModelInfoSaneDefaults
-	const showReasoningEffort = supportsReasoningEffortForModelId(modelId)
+	const { models: geminiModels, defaultModelId: geminiDefaultModelId } = useProviderModels("gemini")
+	const pc = profile.gemini ?? BaseProviderConfig.create()
+	const modelInfo = resolveProfileModelInfo(profile, { models: geminiModels, defaultModelId: geminiDefaultModelId })
+	const modelId = modelInfo.id
+	const thinking = modelInfo.capabilities?.thinking
+	const thinkingSupported = thinking?.supported === true && modelInfo.capabilities?.supportsReasoning !== false
+	const effortSupported = thinkingSupported && thinking?.mode === "effort"
+	const budgetSupported = thinkingSupported && thinking?.mode === "budget"
 
 	return (
 		<div>
@@ -64,7 +62,19 @@ export const GeminiProvider = ({ showModelOptions, isPopup, profile, onUpdate }:
 						selectedModelId={modelId}
 					/>
 
-					{showReasoningEffort && <ReasoningEffortSelector />}
+					{(effortSupported || budgetSupported) && (
+						<ThinkingControl
+							defaultEffort={thinking?.defaultEffort}
+							defaultEnabled={thinking?.defaultEnabled}
+							disableSupported={thinking?.canDisable !== false}
+							effortOptions={thinking?.effortLevels ?? []}
+							maxBudget={thinking?.maxBudget}
+							mode={effortSupported ? "effort-only" : "budget-only"}
+							onReasoningConfigUpdate={(reasoning) => onUpdate({ gemini: { ...pc, reasoning } })}
+							reasoningConfig={pc.reasoning}
+							showModeSelector={false}
+						/>
+					)}
 
 					<ModelInfoView isPopup={isPopup} modelInfo={modelInfo} selectedModelId={modelId} />
 				</>
