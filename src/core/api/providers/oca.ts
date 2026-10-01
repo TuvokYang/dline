@@ -1,6 +1,7 @@
 import { Anthropic, APIError as AnthropicAPIError } from "@anthropic-ai/sdk"
 import { liteLlmDefaultModelId, ModelInfo } from "@shared/api"
 import { buildEffectiveModelInfo } from "@shared/providers/effective-model-info"
+import { resolveProfileModelId } from "@shared/providers/profile-model-info"
 import OpenAI, { APIError as OpenAIAPIError, OpenAIError } from "openai"
 import type { ChatCompletionTool as OpenAITool } from "openai/resources/chat/completions"
 import { OcaAuthService } from "@/services/auth/oca/OcaAuthService"
@@ -44,7 +45,7 @@ export class OcaHandler implements ApiHandler {
 		return this.ctx.profile.apiKey
 	}
 	protected get modelId() {
-		return this.ctx.profile.modelId || ""
+		return resolveProfileModelId(this.ctx.profile)
 	}
 	protected get modelInfo() {
 		return this.ctx.profile.modelInfo as OcaModelInfo | undefined
@@ -539,7 +540,7 @@ export class OcaHandler implements ApiHandler {
 	}
 
 	getModel() {
-		const id = this.modelId || this.modelInfo?.id || liteLlmDefaultModelId
+		const id = this.modelId || liteLlmDefaultModelId
 		const baseModel = this.modelInfo?.id === id ? this.modelInfo : undefined
 		return {
 			id,

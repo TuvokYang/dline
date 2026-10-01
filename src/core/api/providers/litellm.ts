@@ -1,5 +1,6 @@
 import { Anthropic } from "@anthropic-ai/sdk"
 import { LiteLLMModelInfo, liteLlmDefaultModelId, liteLlmModelInfoSaneDefaults, ModelInfo } from "@shared/api"
+import { resolveProfileModelId } from "@shared/providers/profile-model-info"
 import OpenAI from "openai"
 import { findCatalogModel } from "@/core/model-registry/provider-model-lookup"
 import { buildExternalBasicHeaders } from "@/services/EnvUtils"
@@ -104,7 +105,7 @@ export class LiteLlmHandler implements ApiHandler {
 		return this.ctx.profile.apiKey
 	}
 	private get modelId() {
-		return this.ctx.profile.modelId || ""
+		return resolveProfileModelId(this.ctx.profile)
 	}
 	private get modelInfo() {
 		return this.ctx.profile.modelInfo as ModelInfo | undefined
@@ -379,8 +380,12 @@ export class LiteLlmHandler implements ApiHandler {
 	getModel() {
 		const modelId = this.modelId || liteLlmDefaultModelId
 
-		// The runtime profile already contains reconciled metadata and overrides.
-		const modelInfo = this.modelInfo || findCatalogModel(LITELLM_PROVIDER_ID, modelId) || liteLlmModelInfoSaneDefaults
+		// Only matching final metadata or the selected catalog entry may declare capabilities.
+		const matchingInfo = this.modelInfo?.id === modelId ? this.modelInfo : undefined
+		const modelInfo =
+			matchingInfo ??
+			findCatalogModel(LITELLM_PROVIDER_ID, modelId) ??
+			(this.modelId ? { id: modelId } : { ...liteLlmModelInfoSaneDefaults, id: modelId })
 
 		return {
 			id: modelId,

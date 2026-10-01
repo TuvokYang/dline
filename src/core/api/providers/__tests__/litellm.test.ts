@@ -1,7 +1,8 @@
 import { LiteLlmHandler, type LiteLlmModelInfoResponse } from "@core/api/providers/litellm"
 import { convertToOpenAiMessages } from "@core/api/transform/openai-format"
 import { ModelRegistry } from "@core/model-registry/ModelRegistry" // used in getModel tests
-import { liteLlmModelInfoSaneDefaults } from "@shared/api" // used in getModel tests
+import { liteLlmDefaultModelId } from "@shared/api"
+import type { ModelInfo } from "@shared/proto/dline/models"
 import { ApiProfile } from "@shared/proto/dline/profile"
 import { expect } from "chai"
 import { afterEach, beforeEach, describe, it, vi } from "vitest"
@@ -250,6 +251,137 @@ describe("LiteLlmHandler", () => {
 		})
 	})
 
+	describe("runtime identity requests", () => {
+		it.each([
+			"openai/opaque-upstream",
+			"anthropic/opaque-upstream",
+		])("uses profile-carried identity for the request, reasoning and usage with %s", async (upstream) => {
+			const id = "carried-public-deployment"
+			const anthropicRoute = upstream.startsWith("anthropic/")
+			handler = new LiteLlmHandler({
+				profile: ApiProfile.create({
+					provider: "litellm",
+					modelInfo: {
+						id,
+						capabilities: {
+							thinking: anthropicRoute
+								? { supported: true, mode: "budget", minBudget: 17, maxBudget: 101 }
+								: {
+										supported: true,
+										mode: "effort",
+										effortLevels: ["low"],
+										defaultEnabled: true,
+										defaultEffort: "low",
+									},
+						},
+					},
+					litellm: { reasoning: { thinkingBudget: 3 } },
+				}),
+				mode: "act",
+			})
+			mockHandlerChat()
+			mockModelFetch({
+				model_name: id,
+				litellm_params: { model: upstream },
+				model_info: { input_cost_per_token: 0.01, output_cost_per_token: 0.02 },
+			})
+			const chunks = []
+			for await (const chunk of handler.createMessage("system", [{ role: "user", content: "hello" }])) {
+				chunks.push(chunk)
+			}
+
+			const body = fakeClient.chat.completions.create.mock.calls[0][0]
+			expect(body.model).to.equal(id)
+			expect(body.thinking).to.deep.equal(anthropicRoute ? { type: "enabled", budget_tokens: 17 } : undefined)
+			expect(body.reasoning_effort).to.equal(anthropicRoute ? undefined : "low")
+			expect(body.drop_params).to.equal(true)
+			expect(chunks).to.deep.equal([
+				{ type: "text", text: "test response" },
+				{ type: "usage", inputTokens: 100, outputTokens: 50, cacheWriteTokens: 20, cacheReadTokens: 10, totalCost: 1.9 },
+			])
+		})
+
+		it.each([
+			"openai/opaque-upstream",
+			"anthropic/opaque-upstream",
+		])("rejects another identity's reasoning declaration with %s", async (upstream) => {
+			const id = "explicit-unknown-deployment"
+			const anthropicRoute = upstream.startsWith("anthropic/")
+			handler = new LiteLlmHandler({
+				profile: ApiProfile.create({
+					provider: "litellm",
+					modelId: id,
+					modelInfo: {
+						id: "another-deployment",
+						capabilities: {
+							thinking: anthropicRoute
+								? { supported: true, mode: "budget", minBudget: 17, maxBudget: 101 }
+								: { supported: true, mode: "effort", effortLevels: ["low"] },
+						},
+					},
+					litellm: { reasoning: { thinkingBudget: 23, effort: "low" } },
+				}),
+				mode: "act",
+			})
+			mockHandlerChat()
+			mockModelFetch({
+				model_name: id,
+				litellm_params: { model: upstream },
+				model_info: { input_cost_per_token: 0, output_cost_per_token: 0 },
+			})
+			const registry = vi.spyOn(ModelRegistry, "getInstance").mockReturnValue({
+				getProviderModels: () => ({ models: {} }),
+			} as unknown as ModelRegistry)
+			try {
+				for await (const _ of handler.createMessage("system", [])) {
+				}
+				const body = fakeClient.chat.completions.create.mock.calls[0][0]
+				expect(body.model).to.equal(id)
+				expect(body.thinking).to.equal(undefined)
+				expect(body.reasoning_effort).to.equal(undefined)
+				expect(body.output_config).to.equal(undefined)
+				expect(handler.getModel()).to.deep.equal({ id, info: { id } })
+			} finally {
+				registry.mockRestore()
+			}
+		})
+
+		it("uses only the selected catalog entry when directly constructed without final metadata", async () => {
+			const id = "selected-public-deployment"
+			const catalogInfo: ModelInfo = {
+				id,
+				capabilities: {
+					thinking: {
+						supported: true,
+						mode: "effort",
+						effortLevels: ["low"],
+						defaultEnabled: true,
+						defaultEffort: "low",
+					},
+				},
+			}
+			initializeHandler(id)
+			mockModelFetch({
+				model_name: id,
+				litellm_params: { model: "openai/opaque-upstream" },
+				model_info: { input_cost_per_token: 0, output_cost_per_token: 0 },
+			})
+			const registry = vi.spyOn(ModelRegistry, "getInstance").mockReturnValue({
+				getProviderModels: () => ({ models: { [id]: catalogInfo } }),
+			} as unknown as ModelRegistry)
+			try {
+				for await (const _ of handler.createMessage("system", [])) {
+				}
+				const body = fakeClient.chat.completions.create.mock.calls[0][0]
+				expect(body.model).to.equal(id)
+				expect(body.reasoning_effort).to.equal("low")
+				expect(handler.getModel().info).to.equal(catalogInfo)
+			} finally {
+				registry.mockRestore()
+			}
+		})
+	})
+
 	describe("getModel", () => {
 		let registryStub: ReturnType<typeof vi.spyOn>
 
@@ -268,14 +400,15 @@ describe("LiteLlmHandler", () => {
 			registryStub.mockRestore()
 		})
 
-		it("returns sane defaults when no liteLlmModelInfo option is provided", () => {
-			const h = new LiteLlmHandler({
+		it("keeps unknown selections minimal and aligns the unselected default identity", () => {
+			const unknown = new LiteLlmHandler({
 				profile: ApiProfile.create({ provider: "litellm", apiKey: "test", modelId: "some-model" }),
 				mode: "act",
 			})
-			const model = h.getModel()
-			expect(model.id).to.equal("some-model")
-			expect(model.info?.capabilities?.contextWindow).to.equal(liteLlmModelInfoSaneDefaults.capabilities?.contextWindow)
+			expect(unknown.getModel()).to.deep.equal({ id: "some-model", info: { id: "some-model" } })
+			const unselected = new LiteLlmHandler({ profile: ApiProfile.create({ provider: "litellm" }), mode: "act" })
+			expect(unselected.getModel().id).to.equal(liteLlmDefaultModelId)
+			expect(unselected.getModel().info.id).to.equal(liteLlmDefaultModelId)
 		})
 
 		it("returns user-configured model info when liteLlmModelInfo is provided and the catalog has no entry", () => {
