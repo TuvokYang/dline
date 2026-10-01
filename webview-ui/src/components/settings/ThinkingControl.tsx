@@ -127,24 +127,22 @@ const ThinkingControl = ({
 	displayLabel = "Reasoning Display",
 	displayDescription,
 }: ThinkingControlProps) => {
-	// Derive state from reasoningConfig
 	const enableThinking = useMemo(() => {
-		if (!disableSupported) {
-			return true
-		}
-		if (reasoningConfig?.effort === "none") return false
-		// Use explicit enableThinking field if present.
-		if (reasoningConfig?.enableThinking !== undefined) {
-			return reasoningConfig.enableThinking
-		}
-		// Fallback: infer preference state from effort/budget (backward compatibility).
-		// Exclude empty string '' to prevent proto3 zero-value from being treated as enabled
-		const hasEffort = !!(reasoningConfig?.effort && reasoningConfig.effort !== "none" && reasoningConfig.effort !== "")
-		const hasBudget = !!(reasoningConfig?.thinkingBudget && reasoningConfig.thinkingBudget > 0)
+		if (!disableSupported) return true
+		const effort = reasoningConfig?.effort?.trim()
+		const budget = reasoningConfig?.thinkingBudget
+		if (effort === "none" || (mode === "budget-only" && budget === 0)) return false
+		if (reasoningConfig?.enableThinking !== undefined) return reasoningConfig.enableThinking
+
+		// Legacy preferences only activate the mode declared by the selected model.
+		const hasEffort = mode !== "budget-only" && !!effort && effortOptions.includes(effort)
+		const hasBudget = mode !== "effort-only" && budget !== undefined && Number.isSafeInteger(budget) && budget > 0
 		return hasEffort || hasBudget || defaultEnabled
 	}, [
 		defaultEnabled,
 		disableSupported,
+		effortOptions,
+		mode,
 		reasoningConfig?.enableThinking,
 		reasoningConfig?.effort,
 		reasoningConfig?.thinkingBudget,

@@ -73,6 +73,65 @@ describe("ThinkingControl", () => {
 		expect(screen.queryByRole("combobox")).not.toBeInTheDocument()
 	})
 
+	it.each([
+		{ mode: "effort-only", reasoningConfig: { thinkingBudget: 1500 } },
+		{ mode: "budget-only", reasoningConfig: { effort: "low" } },
+	] as const)("does not enable $mode from a preference for the other mode", ({ mode, reasoningConfig }) => {
+		const onUpdate = vi.fn()
+		render(
+			<ThinkingControl
+				effortOptions={["low"]}
+				maxBudget={2000}
+				mode={mode}
+				onReasoningConfigUpdate={onUpdate}
+				reasoningConfig={reasoningConfig}
+			/>,
+		)
+		expect(screen.getByRole("checkbox", { name: "Enable Thinking" })).not.toBeChecked()
+		expect(screen.queryByRole("combobox")).not.toBeInTheDocument()
+		expect(screen.queryByRole("slider")).not.toBeInTheDocument()
+		expect(onUpdate).not.toHaveBeenCalled()
+	})
+
+	it("does not enable thinking from an effort outside the model declaration", () => {
+		render(
+			<ThinkingControl
+				effortOptions={["low"]}
+				mode="effort-only"
+				onReasoningConfigUpdate={vi.fn()}
+				reasoningConfig={{ effort: "stale-level" }}
+			/>,
+		)
+		expect(screen.getByRole("checkbox", { name: "Enable Thinking" })).not.toBeChecked()
+	})
+
+	it.each([undefined, true])("keeps a zero budget off despite an enabled default and enableThinking=%s", (enableThinking) => {
+		render(
+			<ThinkingControl
+				defaultEnabled={true}
+				maxBudget={2000}
+				mode="budget-only"
+				onReasoningConfigUpdate={vi.fn()}
+				reasoningConfig={{ enableThinking, thinkingBudget: 0 }}
+			/>,
+		)
+		expect(screen.getByRole("checkbox", { name: "Enable Thinking" })).not.toBeChecked()
+		expect(screen.queryByRole("slider")).not.toBeInTheDocument()
+	})
+
+	it.each(["effort-only", "both"] as const)("does not disable a legal effort with a stale zero budget in %s", (mode) => {
+		render(
+			<ThinkingControl
+				effortOptions={["low"]}
+				mode={mode}
+				onReasoningConfigUpdate={vi.fn()}
+				reasoningConfig={{ effort: "low", thinkingBudget: 0 }}
+			/>,
+		)
+		expect(screen.getByRole("checkbox", { name: "Enable Thinking" })).toBeChecked()
+		expect(screen.getAllByRole("combobox").some((selector) => selector.textContent === "Low")).toBe(true)
+	})
+
 	it("preserves a legal model-declared effort outside the old OpenAI whitelist", () => {
 		render(
 			<ThinkingControl
