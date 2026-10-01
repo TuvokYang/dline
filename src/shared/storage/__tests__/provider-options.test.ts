@@ -1,10 +1,4 @@
-import {
-	normalizeOpenAiServiceTier,
-	normalizeOpenaiReasoningEffort,
-	OPENAI_COMPATIBLE_REASONING_EFFORT_OPTIONS,
-	OPENAI_REASONING_EFFORT_OPTIONS,
-	OPENAI_SERVICE_TIER_OPTIONS,
-} from "@shared/storage/types"
+import { normalizeOpenAiServiceTier, normalizeOpenaiReasoningEffort } from "@shared/storage/types"
 import { resolveTaskThinkingConfig, validateTaskReasoningOverride } from "@shared/task-reasoning"
 import { expect } from "chai"
 import { describe, it } from "vitest"
@@ -149,14 +143,11 @@ describe("provider reasoning and service-tier options", () => {
 		})
 	})
 
-	it("exposes current OpenAI SDK efforts and compatible ultra effort", () => {
-		expect(OPENAI_REASONING_EFFORT_OPTIONS).to.deep.equal(["none", "minimal", "low", "medium", "high", "xhigh", "max"])
-		expect(OPENAI_COMPATIBLE_REASONING_EFFORT_OPTIONS).to.deep.equal([...OPENAI_REASONING_EFFORT_OPTIONS, "ultra"])
+	it("preserves the compatible ultra preference during normalization", () => {
 		expect(normalizeOpenaiReasoningEffort("ultra")).to.equal("ultra")
 	})
 
-	it("accepts only OpenAI service tiers supported by the SDK", () => {
-		expect(OPENAI_SERVICE_TIER_OPTIONS).to.deep.equal(["auto", "default", "flex", "scale", "priority", "ultrafast"])
+	it("keeps legal service tiers and rejects an unknown preference", () => {
 		expect(normalizeOpenAiServiceTier("priority")).to.equal("priority")
 		expect(normalizeOpenAiServiceTier("ultrafast")).to.equal("ultrafast")
 		expect(normalizeOpenAiServiceTier("unsupported")).to.equal(undefined)

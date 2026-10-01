@@ -145,8 +145,6 @@ describe("LiteLlmHandler", () => {
 				for await (const _ of handler.createMessage(systemPrompt, messages)) {
 				}
 
-				expect(fakeClient.chat.completions.create)
-
 				const callArgs = fakeClient.chat.completions.create.mock.calls[0][0]
 
 				const systemPromptMessage = callArgs.messages.shift()
@@ -196,8 +194,6 @@ describe("LiteLlmHandler", () => {
 
 				for await (const _ of handler.createMessage(systemPrompt, messages)) {
 				}
-
-				expect(fakeClient.chat.completions.create)
 
 				const callArgs = fakeClient.chat.completions.create.mock.calls[0][0]
 

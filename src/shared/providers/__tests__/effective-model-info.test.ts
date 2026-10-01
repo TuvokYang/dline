@@ -57,15 +57,15 @@ describe("buildEffectiveModelInfo", () => {
 		})
 
 		result.id.should.equal("registry-model")
-		result.name?.should.equal("Registry Model")
-		result.capabilities?.contextWindow?.should.equal(128_000)
-		result.capabilities?.maxTokens?.should.equal(64_000)
-		result.capabilities?.supportsImages?.should.equal(true)
-		;(result.capabilities as unknown as { temperature?: number }).temperature?.should.equal(0.7)
-		result.pricing?.inputPrice?.should.equal(0.5)
-		result.pricing?.outputPrice?.should.equal(2)
-		result.pricing?.cacheReadsPrice?.should.equal(0.05)
-		result.pricing?.currency?.should.equal("USD")
+		should(result.name).equal("Registry Model")
+		should(result.capabilities?.contextWindow).equal(128_000)
+		should(result.capabilities?.maxTokens).equal(64_000)
+		should(result.capabilities?.supportsImages).equal(true)
+		should(result.capabilities?.temperature).equal(0.7)
+		should(result.pricing?.inputPrice).equal(0.5)
+		should(result.pricing?.outputPrice).equal(2)
+		should(result.pricing?.cacheReadsPrice).equal(0.05)
+		should(result.pricing?.currency).equal("USD")
 	})
 
 	it("should preserve an explicit context window over inherited context tiers", () => {
@@ -84,7 +84,7 @@ describe("buildEffectiveModelInfo", () => {
 			capabilities: { contextWindow: 333_000 } as ModelCapabilities,
 		})
 
-		result.capabilities?.contextWindow?.should.equal(333_000)
+		should(result.capabilities?.contextWindow).equal(333_000)
 	})
 
 	it("should switch to the long context tier when enableLongContext is on", () => {
@@ -101,7 +101,7 @@ describe("buildEffectiveModelInfo", () => {
 
 		const result = buildEffectiveModelInfo("claude-sonnet-tiered", registryModel, { enableLongContext: true })
 
-		result.capabilities?.contextWindow?.should.equal(1_000_000)
+		should(result.capabilities?.contextWindow).equal(1_000_000)
 	})
 
 	it("should keep the standard context tier when long context is not enabled", () => {
@@ -118,7 +118,7 @@ describe("buildEffectiveModelInfo", () => {
 
 		const result = buildEffectiveModelInfo("claude-sonnet-tiered", registryModel, {})
 
-		result.capabilities?.contextWindow?.should.equal(200_000)
+		should(result.capabilities?.contextWindow).equal(200_000)
 	})
 
 	it("should preserve an explicitly empty pricing tier override", () => {
@@ -137,8 +137,8 @@ describe("buildEffectiveModelInfo", () => {
 		})
 
 		should(result.pricing?.tiers).deepEqual([])
-		result.pricing?.inputPrice?.should.equal(1)
-		result.pricing?.outputPrice?.should.equal(2)
+		should(result.pricing?.inputPrice).equal(1)
+		should(result.pricing?.outputPrice).equal(2)
 	})
 
 	it("should compose model info from provider overrides when model id is empty", () => {
@@ -155,11 +155,11 @@ describe("buildEffectiveModelInfo", () => {
 		})
 
 		result.id.should.equal("")
-		result.capabilities?.contextWindow?.should.equal(32_000)
-		result.capabilities?.supportsPromptCache?.should.equal(true)
-		;(result.capabilities as unknown as { temperature?: number }).temperature?.should.equal(0.2)
-		result.pricing?.inputPrice?.should.equal(0.1)
-		result.pricing?.outputPrice?.should.equal(0.2)
+		should(result.capabilities?.contextWindow).equal(32_000)
+		should(result.capabilities?.supportsPromptCache).equal(true)
+		should(result.capabilities?.temperature).equal(0.2)
+		should(result.pricing?.inputPrice).equal(0.1)
+		should(result.pricing?.outputPrice).equal(0.2)
 	})
 
 	it("should use the explicit model id when registry metadata is missing", () => {
@@ -170,7 +170,7 @@ describe("buildEffectiveModelInfo", () => {
 		})
 
 		result.id.should.equal("custom-model")
-		result.capabilities?.maxTokens?.should.equal(8192)
+		should(result.capabilities?.maxTokens).equal(8192)
 		should(result.pricing).be.undefined()
 	})
 })

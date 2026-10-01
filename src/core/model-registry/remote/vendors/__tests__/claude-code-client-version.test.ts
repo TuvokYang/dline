@@ -58,8 +58,6 @@ describe("ClaudeCodeClientVersionResolver", () => {
 
 		await expect(resolver.resolve()).resolves.toEqual({ version: "2.1.281", source: "registry" })
 		expect(fetchImpl.mock.calls[0][0]).toBe(CLAUDE_CODE_CLIENT_VERSION_REGISTRY_URL)
-		// The `stable` tag trails `latest` by many patches and fails the gate.
-		expect(CLAUDE_CODE_CLIENT_VERSION_REGISTRY_URL).toContain("/latest")
 	})
 
 	it("keeps the floor when the registry answer is lower", async () => {

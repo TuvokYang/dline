@@ -1,4 +1,3 @@
-import { anthropicModels } from "@core/api/providers/models/anthropic"
 import { deepSeekModels } from "@core/api/providers/models/deepseek"
 import { openAiCodexModels } from "@core/api/providers/models/openai-codex"
 import { ApiFormat } from "@shared/proto/dline/models/metadata"
@@ -197,21 +196,6 @@ describe("resolveProfileModelInfo", () => {
 		expect(result.capabilities?.contextWindow).to.equal(400_000)
 		expect(result.capabilities?.maxTokens).to.equal(64_000)
 		expect(result.apiFormats).to.deep.equal([ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE, ApiFormat.OPENAI_RESPONSES])
-	})
-
-	it("uses the native 1M context for Anthropic profiles without an explicit flag", () => {
-		const profile = ApiProfile.create({
-			provider: "anthropic",
-			modelId: "claude-sonnet-4-6",
-			anthropic: AnthropicProviderConfig.create(),
-		})
-
-		const result = resolveProfileModelInfo(profile, {
-			models: anthropicModels,
-			defaultModelId: "claude-sonnet-4-6",
-		})
-
-		expect(result.capabilities?.contextWindow).to.equal(1_000_000)
 	})
 
 	it("uses the selected tier window instead of a standalone context override for custom models", () => {

@@ -271,39 +271,6 @@ describe("ModelRegistry", () => {
 		})
 	})
 
-	describe("onChange", () => {
-		it("should register and unregister callbacks", () => {
-			const callbacks: Array<() => void> = []
-			registry.onChange(() => callbacks.push(() => {}))
-			// Callback is stored in the registry's internal array
-			expect(callbacks).to.have.lengthOf(0) // callback was pushed to internal, not our array
-		})
-
-		it("should accept multiple callbacks", () => {
-			let count = 0
-			const unsub1 = registry.onChange(() => count++)
-			const unsub2 = registry.onChange(() => count++)
-
-			// Verify both registered by checking subscription functions exist
-			expect(unsub1).to.be.a("function")
-			expect(unsub2).to.be.a("function")
-
-			// Manual cleanup
-			unsub1()
-			unsub2()
-		})
-
-		it("should unsubscribe correctly", () => {
-			let fired = 0
-			const unsub = registry.onChange(() => fired++)
-			unsub()
-
-			// After unsub, callback list should not include it
-			// We verify by checking type of unsub
-			expect(typeof unsub).to.equal("function")
-		})
-	})
-
 	describe("getProviderModels", () => {
 		it("marks every OpenAI conversation model as capable of the image generation server tool", async () => {
 			await fsPromises.writeFile(

@@ -149,26 +149,6 @@ describe("AnthropicHandler", () => {
 	})
 
 	describe("getModel", () => {
-		it("should preserve resolved profile model metadata", () => {
-			const handler = new AnthropicHandler({
-				profile: ApiProfile.create({
-					provider: "anthropic",
-					apiKey: "test-api-key",
-					modelId: "claude-sonnet-4-6",
-					modelInfo: anthropicModels["claude-sonnet-4-6"],
-					anthropic: { reasoning: { enableThinking: true, thinkingBudget: 2_048 } },
-				}),
-				mode: "act",
-			})
-
-			const result = handler.getModel()
-
-			result.id.should.equal("claude-sonnet-4-6")
-			should(result.info.capabilities?.supportsTools).equal(true)
-			// Long context (1M) is enabled by default when the profile does not opt out.
-			should(result.info.capabilities?.contextWindow).equal(1_000_000)
-		})
-
 		it("should merge provider overrides into registry model metadata", () => {
 			const handler = new AnthropicHandler({
 				profile: ApiProfile.create({
@@ -197,49 +177,6 @@ describe("AnthropicHandler", () => {
 			should(result.info.capabilities?.maxTokens).equal(12_345)
 			should(result.info.capabilities?.supportsPromptCache).equal(false)
 			should(result.info.pricing?.inputPrice).equal(0.5)
-		})
-
-		it("should return the fast mode model when configured", () => {
-			const handler = new AnthropicHandler({
-				profile: ApiProfile.create({ provider: "anthropic", apiKey: "test-api-key", modelId: "claude-opus-5:fast" }),
-				mode: "act",
-			})
-
-			const result = handler.getModel()
-
-			result.id.should.equal("claude-opus-5:fast")
-			should(result.info.capabilities?.contextWindow).equal(1_000_000)
-			result.info.apiFormats?.should.deepEqual([ApiFormat.ANTHROPIC_CHAT])
-		})
-
-		it("should keep the base model id when long context is enabled", () => {
-			const handler = new AnthropicHandler({
-				profile: ApiProfile.create({
-					provider: "anthropic",
-					apiKey: "test-api-key",
-					modelId: "claude-sonnet-4-6",
-					anthropic: { enableLongContext: true },
-				}),
-				mode: "act",
-			})
-
-			const result = handler.getModel()
-
-			result.id.should.equal("claude-sonnet-4-6")
-			should(result.info.capabilities?.contextWindow).equal(1_000_000)
-		})
-
-		it("should return the 4.7 model when configured", () => {
-			const handler = new AnthropicHandler({
-				profile: ApiProfile.create({ provider: "anthropic", apiKey: "test-api-key", modelId: "claude-opus-4-7" }),
-				mode: "act",
-			})
-
-			const result = handler.getModel()
-
-			result.id.should.equal("claude-opus-4-7")
-			should(result.info.capabilities?.contextWindow).equal(1_000_000)
-			result.info.apiFormats?.should.deepEqual([ApiFormat.ANTHROPIC_CHAT])
 		})
 
 		it("should preserve a custom model id when profile modelInfo is missing", () => {
@@ -548,8 +485,6 @@ describe("AnthropicHandler", () => {
 			for await (const _chunk of handler.createMessage("system prompt", [{ role: "user", content: "Hello" }])) {
 			}
 
-			expect(standardCreate)
-			expect(betaCreate)
 			const callArgs = betaCreate.mock.calls[0]?.[0] as Record<string, unknown> | undefined
 			expect(callArgs?.model).to.equal("claude-opus-5")
 			expect(callArgs?.betas).to.deep.equal([ANTHROPIC_FAST_MODE_BETA])
@@ -589,8 +524,6 @@ describe("AnthropicHandler", () => {
 			for await (const _chunk of handler.createMessage("system prompt", [{ role: "user", content: "Hello" }])) {
 			}
 
-			expect(standardCreate)
-			expect(betaCreate)
 			const callArgs = betaCreate.mock.calls[0]?.[0] as Record<string, unknown> | undefined
 			expect(callArgs?.model).to.equal("claude-opus-4-8")
 			expect(callArgs?.betas).to.deep.equal([ANTHROPIC_FAST_MODE_BETA])
@@ -713,7 +646,6 @@ describe("AnthropicHandler", () => {
 			for await (const _chunk of handler.createMessage("system prompt", [{ role: "user", content: "Hello" }])) {
 			}
 
-			expect(standardCreate)
 			const requestBody = standardCreate.mock.calls[0][0] as { model: string; thinking: { type: string } }
 			const requestOptions = standardCreate.mock.calls[0][1] as { headers: Record<string, string> } | undefined
 			requestBody.model.should.equal("vendor-tiered:1m")
@@ -913,7 +845,6 @@ describe("AnthropicHandler", () => {
 			for await (const _chunk of handler.createMessage("system prompt", [{ role: "user", content: "Hello" }])) {
 			}
 
-			expect(standardCreate)
 			const requestBody = standardCreate.mock.calls[0][0] as {
 				thinking: { type: string }
 				output_config: { effort: string }

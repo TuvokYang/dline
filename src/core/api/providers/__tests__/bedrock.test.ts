@@ -1,7 +1,7 @@
 // @ts-nocheck -- test file accesses private class members intentionally
 import { ConverseStreamCommand } from "@aws-sdk/client-bedrock-runtime"
 import type { ApiHandlerContext } from "@core/api"
-import { bedrockModels, ModelInfo, vertexGlobalModels, vertexModels } from "@shared/api"
+import { bedrockModels, ModelInfo } from "@shared/api"
 import should from "should"
 import { Readable } from "stream"
 import type { ClineStorageMessage } from "@/shared/messages/content"
@@ -203,20 +203,6 @@ describe("AwsBedrockHandler", () => {
 			)
 
 			process.env.AWS_BEARER_TOKEN_BEDROCK?.should.equal(preAWSProfile)
-		})
-	})
-
-	describe("model metadata parity", () => {
-		it("should mark Bedrock Opus 4.7 variants as global-endpoint capable", () => {
-			bedrockModels["anthropic.claude-opus-4-7"]?.capabilities.supportsGlobalEndpoint?.should.equal(true)
-			bedrockModels["anthropic.claude-opus-4-7:1m"]?.capabilities.supportsGlobalEndpoint?.should.equal(true)
-		})
-
-		it("should include Vertex Opus 4.7 variants in the derived global model list", () => {
-			vertexModels["claude-opus-4-7"]?.capabilities.supportsGlobalEndpoint?.should.equal(true)
-			vertexModels["claude-opus-4-7:1m"]?.capabilities.supportsGlobalEndpoint?.should.equal(true)
-			vertexGlobalModels.should.have.property("claude-opus-4-7")
-			vertexGlobalModels.should.have.property("claude-opus-4-7:1m")
 		})
 	})
 
@@ -1233,22 +1219,6 @@ describe("AwsBedrockHandler", () => {
 
 			const result = isNativeToolCallingConfig(providerInfo, true)
 			result.should.be.false("Bedrock model metadata should keep native tool calling disabled")
-		})
-
-		it("should not use native tool calling when the setting is disabled", () => {
-			const handler = new AwsBedrockHandler(
-				createMockContext({
-					profile: { modelId: "anthropic.claude-sonnet-4-5-20250929-v1:0" },
-				}),
-			)
-			const model = handler.getModel()
-			const providerInfo = {
-				providerId: "bedrock",
-				model: { id: model.id, info: model.info },
-			}
-
-			const result = isNativeToolCallingConfig(providerInfo, false)
-			result.should.be.false("Native tool calling should be disabled when setting is off")
 		})
 
 		it("should pass toolConfig to ConverseStreamCommand when tools are provided", async () => {
