@@ -2,7 +2,6 @@ import { ApiFormat, type ModelCapabilities, type ModelPricing } from "@shared/pr
 import { OpenAiCodexProviderConfig } from "@shared/proto/dline/provider/openai_codex"
 import { resolveApiFormat } from "@shared/providers/api-format"
 import { buildEffectiveModelInfo, mergeCapabilities, mergePricing } from "@shared/providers/effective-model-info"
-import { OPENAI_REASONING_EFFORT_OPTIONS } from "@shared/storage/types"
 import { VSCodeCheckbox } from "@vscode/webview-ui-toolkit/react"
 import { ApiFormatSelector } from "../common/ApiFormatSelector"
 import { ModelAutocomplete } from "../common/ModelAutocomplete"
@@ -48,12 +47,17 @@ export const OpenAiCodexProvider = ({ showModelOptions, isPopup, profile, onUpda
 		selectedModelId: profile.modelId,
 	})
 	const modelId = profile.modelId || defaultModelId
-	const registryModel = models[profile.modelId ?? ""] ?? modelInfoSaneDefaults
-	const modelInfo = buildEffectiveModelInfo(modelId, registryModel, {
+	const registryModel = models[modelId]
+	const baseModel = profile.modelInfo?.id === modelId ? profile.modelInfo : registryModel
+	const modelInfo = buildEffectiveModelInfo(modelId, baseModel, {
 		capabilities: pc.capabilities,
 		pricing: pc.pricing,
 	})
-	const supportedApiFormats = registryModel.apiFormats ?? modelInfoSaneDefaults.apiFormats ?? [ApiFormat.OPENAI_RESPONSES]
+	const thinking = modelInfo.capabilities?.thinking
+	const thinkingSupported = thinking?.supported === true && modelInfo.capabilities?.supportsReasoning !== false
+	const effortSupported = thinkingSupported && thinking?.mode === "effort"
+	const budgetSupported = thinkingSupported && thinking?.mode === "budget"
+	const supportedApiFormats = baseModel?.apiFormats ?? modelInfoSaneDefaults.apiFormats ?? [ApiFormat.OPENAI_RESPONSES]
 	const baseApiFormats = supportedApiFormats.filter((apiFormat) => apiFormat !== ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE)
 	const apiFormats = baseApiFormats.length > 0 ? baseApiFormats : [ApiFormat.OPENAI_RESPONSES]
 	const legacyWebsocketEnabled = pc.apiFormat === ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE
@@ -78,7 +82,7 @@ export const OpenAiCodexProvider = ({ showModelOptions, isPopup, profile, onUpda
 					<ModelAutocomplete
 						label="Model"
 						models={modelOptions}
-						onChange={(value) => onUpdate({ modelId: value })}
+						onChange={(value) => onUpdate({ modelId: value, modelInfo: models[value] })}
 						onOpen={refreshRemoteModels}
 						optionOrigins={optionOrigins}
 						placeholder="Search, select, or enter a model ID..."
@@ -114,21 +118,20 @@ export const OpenAiCodexProvider = ({ showModelOptions, isPopup, profile, onUpda
 							Use WebSocket transport
 						</VSCodeCheckbox>
 					) : null}
-					{/* Store reasoning under the existing proto-generated openaiCodex field. */}
-					<ThinkingControl
-						effortOptions={OPENAI_REASONING_EFFORT_OPTIONS}
-						mode="both"
-						modeSelectorLabel="Thinking Mode"
-						modeSelectorOptions={[
-							{ value: "effort", label: "Reasoning Effort" },
-							{ value: "budget", label: "Thinking Budget" },
-						]}
-						onReasoningConfigUpdate={(reasoning) => {
-							onUpdate({ openaiCodex: { ...pc, reasoning } })
-						}}
-						reasoningConfig={pc.reasoning}
-						showModeSelector={true}
-					/>
+					{(effortSupported || budgetSupported) && (
+						<ThinkingControl
+							defaultEffort={thinking?.defaultEffort}
+							defaultEnabled={thinking?.defaultEnabled}
+							disableSupported={thinking?.canDisable !== false}
+							effortOptions={thinking?.effortLevels}
+							maxBudget={thinking?.maxBudget}
+							minBudget={thinking?.minBudget}
+							mode={effortSupported ? "effort-only" : "budget-only"}
+							onReasoningConfigUpdate={(reasoning) => onUpdate({ openaiCodex: { ...pc, reasoning } })}
+							reasoningConfig={pc.reasoning}
+							showModeSelector={false}
+						/>
+					)}
 					<OpenAIServiceTierSelector
 						onServiceTierChange={(serviceTier) => onUpdate({ openaiCodex: { ...pc, serviceTier } })}
 						onServiceTierEnabledChange={(serviceTierEnabled) =>
@@ -139,7 +142,7 @@ export const OpenAiCodexProvider = ({ showModelOptions, isPopup, profile, onUpda
 					/>
 					<ModelConfiguration
 						capabilities={pc.capabilities}
-						defaults={registryModel}
+						defaults={baseModel}
 						fields={{ capabilities: ["contextWindow", "maxTokens"] }}
 						onCapabilitiesUpdate={handleCapabilitiesUpdate}
 						onPricingUpdate={handlePricingUpdate}

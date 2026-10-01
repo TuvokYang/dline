@@ -454,18 +454,24 @@ describe("OpenAIProvider", () => {
 		})
 	})
 
-	it("offers the complete compatible effort set and persists OpenAI request options", () => {
+	it("uses the declared compatible efforts while preserving OpenAI request options", () => {
 		const onUpdate = vi.fn()
 		const profile = {
 			id: "profile-1",
 			provider: "openai",
 			modelId: "gpt-custom",
+			modelInfo: {
+				id: "gpt-custom",
+				capabilities: {
+					thinking: { supported: true, mode: "effort", effortLevels: ["none", "custom"] },
+				},
+			},
 			openai: OpenAiProviderConfig.create({ customModelEnabled: true, serviceTier: "auto", serviceTierEnabled: true }),
 		} as unknown as ApiProfile
 
 		render(<OpenAIProvider onUpdate={onUpdate} profile={profile} showModelOptions={true} />)
 
-		expect(screen.getByTestId("thinking-efforts")).toHaveTextContent("none,minimal,low,medium,high,xhigh,max,ultra")
+		expect(screen.getByTestId("thinking-efforts")).toHaveTextContent("none,custom")
 		expect(screen.getByTestId("service-tier-enabled")).toHaveTextContent("true")
 
 		// Each control replaces the whole provider config, and the profile prop

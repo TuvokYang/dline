@@ -2,10 +2,12 @@
 import type { ModelInfo } from "@shared/proto/dline/models"
 import { ApiProfile } from "@shared/proto/dline/profile"
 import { fireEvent, render, screen } from "@testing-library/react"
-import type { AnchorHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes } from "react"
+import type { AnchorHTMLAttributes, ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes } from "react"
 import { describe, expect, it, vi } from "vitest"
 import { BedrockProvider } from "./BedrockProvider"
 import { GeminiProvider } from "./GeminiProvider"
+import { OpenAIProvider } from "./OpenAIProvider"
+import { OpenAiCodexProvider } from "./OpenAiCodexProvider"
 import { VercelAIGatewayProvider } from "./VercelAIGatewayProvider"
 import { VertexProvider } from "./VertexProvider"
 
@@ -32,6 +34,22 @@ const models: Record<string, ModelInfo> = {
 vi.mock("./useProviderModels", () => ({
 	useProviderModels: () => ({ models, defaultModelId: "effort-alias", modelInfoSaneDefaults: models["effort-alias"] }),
 }))
+vi.mock("./useProviderModelOptions", () => ({
+	useProviderModelOptions: () => ({
+		models,
+		defaultModelId: "effort-alias",
+		modelInfoSaneDefaults: models["effort-alias"],
+		options: models,
+		refreshRemoteModels: vi.fn(),
+	}),
+}))
+vi.mock("./OpenAiCodexOAuthControl", () => ({ OpenAiCodexOAuthControl: () => null }))
+vi.mock("../common/ModelAutocomplete", () => ({
+	ModelAutocomplete: ({ onChange }: { onChange: (value: string) => void }) => (
+		<input aria-label="Model" onChange={(event) => onChange(event.target.value)} />
+	),
+}))
+vi.mock("../common/ModelConfiguration", () => ({ ModelConfiguration: () => null }))
 vi.mock("@/context/ExtensionStateContext", () => ({ useExtensionState: () => ({ remoteConfigSettings: {} }) }))
 vi.mock("../ApiOptions", () => ({
 	DROPDOWN_Z_INDEX: 1000,
@@ -59,6 +77,11 @@ vi.mock("@/components/ui/tooltip", () => ({
 	TooltipContent: () => null,
 }))
 vi.mock("@vscode/webview-ui-toolkit/react", () => ({
+	VSCodeButton: ({ children, ...props }: ButtonHTMLAttributes<HTMLButtonElement>) => (
+		<button type="button" {...props}>
+			{children}
+		</button>
+	),
 	VSCodeCheckbox: ({ checked, disabled, onChange, children }: InputHTMLAttributes<HTMLInputElement>) => (
 		<label>
 			<input checked={checked} disabled={disabled} onChange={onChange} type="checkbox" />
@@ -78,6 +101,8 @@ for (const [provider, configKey, Panel] of [
 	["bedrock", "bedrock", BedrockProvider],
 	["gemini", "gemini", GeminiProvider],
 	["vercel-ai-gateway", "vercelAiGateway", VercelAIGatewayProvider],
+	["openai", "openai", OpenAIProvider],
+	["openai-codex", "openaiCodex", OpenAiCodexProvider],
 ] as const) {
 	describe(`${provider} thinking controls`, () => {
 		it("uses an opaque model's declared effort, default and disable constraint", () => {
@@ -100,6 +125,33 @@ for (const [provider, configKey, Panel] of [
 			render(<Panel onUpdate={vi.fn()} profile={profile} showModelOptions={true} />)
 			expect(screen.queryByRole("checkbox", { name: "Enable Thinking" })).not.toBeInTheDocument()
 			expect(screen.getByTestId("model-id")).toHaveTextContent("claude-opus-4-7-unknown")
+		})
+
+		it("does not infer a mode from a declared maximum or coarse reasoning flag", () => {
+			const profile = ApiProfile.create({
+				provider,
+				modelId: "opaque-no-mode",
+				modelInfo: {
+					id: "opaque-no-mode",
+					capabilities: { supportsReasoning: true, thinking: { supported: true, maxBudget: 3000 } },
+				},
+				[configKey]: { reasoning: { enableThinking: true, effort: "low", thinkingBudget: 2000 } },
+			})
+			render(<Panel onUpdate={vi.fn()} profile={profile} showModelOptions={true} />)
+			expect(screen.queryByRole("checkbox", { name: "Enable Thinking" })).not.toBeInTheDocument()
+		})
+
+		it("keeps an explicit empty effort list instead of offering a provider-wide whitelist", () => {
+			const profile = ApiProfile.create({
+				provider,
+				modelId: "effort-alias",
+				[configKey]: { capabilities: { thinking: { effortLevels: [] } } },
+			})
+			render(<Panel onUpdate={vi.fn()} profile={profile} showModelOptions={true} />)
+			expect(screen.getByRole("checkbox", { name: "Enable Thinking" })).toBeChecked()
+			expect(screen.queryByText("Reasoning Effort")).not.toBeInTheDocument()
+			expect(screen.queryByText("Thinking Mode")).not.toBeInTheDocument()
+			expect(screen.queryByRole("slider")).not.toBeInTheDocument()
 		})
 
 		it("honors an explicit false capability override", () => {
@@ -145,6 +197,44 @@ for (const [provider, configKey, Panel] of [
 					reasoning: { enableThinking: true, effort: undefined, thinkingBudget: 2400, display: "omitted" },
 				},
 			})
+		})
+	})
+}
+
+for (const [provider, configKey, Panel] of [
+	["openai", "openai", OpenAIProvider],
+	["openai-codex", "openaiCodex", OpenAiCodexProvider],
+] as const) {
+	describe(`${provider} selected metadata`, () => {
+		it("retains a matching complete Profile declaration instead of rereading catalog thinking", () => {
+			const profile = ApiProfile.create({
+				provider,
+				modelId: "effort-alias",
+				modelInfo: { id: "effort-alias", capabilities: { thinking: { supported: false } } },
+				[configKey]: { reasoning: { enableThinking: true, effort: "low" } },
+			})
+			render(<Panel onUpdate={vi.fn()} profile={profile} showModelOptions={true} />)
+			expect(screen.queryByRole("checkbox", { name: "Enable Thinking" })).not.toBeInTheDocument()
+		})
+
+		it("edits a declared minimum without inventing an upper bound", () => {
+			const onUpdate = vi.fn()
+			const profile = ApiProfile.create({
+				provider,
+				modelId: "unbounded-budget",
+				modelInfo: {
+					id: "unbounded-budget",
+					capabilities: { thinking: { supported: true, mode: "budget", minBudget: 17, defaultEnabled: true } },
+				},
+				[configKey]: { reasoning: { thinkingBudget: 23 } },
+			})
+			render(<Panel onUpdate={onUpdate} profile={profile} showModelOptions={true} />)
+			const input = screen.getByRole("spinbutton", { name: "Thinking Budget" })
+			expect(input).toHaveAttribute("min", "17")
+			expect(input).not.toHaveAttribute("max")
+			fireEvent.change(input, { target: { value: "3" } })
+			fireEvent.blur(input)
+			expect(onUpdate.mock.calls[0][0][configKey].reasoning.thinkingBudget).toBe(17)
 		})
 	})
 }

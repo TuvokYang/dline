@@ -4,7 +4,6 @@ import { OpenAiPromptCacheMode, OpenAiProviderConfig } from "@shared/proto/dline
 import { openAiEndpointToApiFormat, resolveApiFormat } from "@shared/providers/api-format"
 import { buildEffectiveModelInfo, mergeCapabilities, mergePricing } from "@shared/providers/effective-model-info"
 import { DEFAULT_OPENAI_RESPONSES_STREAM_IDLE_TIMEOUT_SECONDS } from "@shared/providers/openai-stream"
-import { OPENAI_COMPATIBLE_REASONING_EFFORT_OPTIONS, OPENAI_REASONING_EFFORT_OPTIONS } from "@shared/storage/types"
 import { VSCodeButton, VSCodeCheckbox } from "@vscode/webview-ui-toolkit/react"
 import { useCallback, useId, useMemo } from "react"
 import { ApiFormatSelector } from "../common/ApiFormatSelector"
@@ -86,9 +85,8 @@ export const OpenAIProvider = ({ showModelOptions, isPopup, profile, onUpdate: o
 	const customModelEnabled = pc.customModelEnabled === true
 	const modelId = profile.modelId || (customModelEnabled ? "" : defaultModelId)
 	const registryModel = customModelEnabled ? undefined : models[modelId]
-	const baseModel = customModelEnabled
-		? (profile.modelInfo ?? openAiModelInfoSaneDefaults)
-		: (registryModel ?? profile.modelInfo ?? modelInfoSaneDefaults)
+	const matchingModel = profile.modelInfo?.id === modelId ? profile.modelInfo : undefined
+	const baseModel = matchingModel ?? registryModel ?? openAiModelInfoSaneDefaults
 	const modelInfo: ModelInfo = buildEffectiveModelInfo(modelId, baseModel, {
 		capabilities: pc.capabilities,
 		pricing: pc.pricing,
@@ -96,7 +94,7 @@ export const OpenAIProvider = ({ showModelOptions, isPopup, profile, onUpdate: o
 		pricingTiersEnabled: pc.pricingTiersEnabled,
 	})
 	const compatibilityCapabilities = customModelEnabled
-		? mergeCapabilities(profile.modelInfo?.capabilities, pc.capabilities ?? {})
+		? mergeCapabilities(matchingModel?.capabilities, pc.capabilities ?? {})
 		: modelInfo.capabilities
 	const compatibilityNotice = getModelCompatibilityNotice({
 		capabilities: compatibilityCapabilities,
@@ -115,6 +113,10 @@ export const OpenAIProvider = ({ showModelOptions, isPopup, profile, onUpdate: o
 	const hostedWebSearchAvailable =
 		modelInfo.capabilities?.tools?.includes(ServerTool.WEB_SEARCH) === true &&
 		(selectedApiFormat === ApiFormat.OPENAI_RESPONSES || selectedApiFormat === ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE)
+	const thinking = modelInfo.capabilities?.thinking
+	const thinkingSupported = thinking?.supported === true && modelInfo.capabilities?.supportsReasoning !== false
+	const effortSupported = thinkingSupported && thinking?.mode === "effort"
+	const budgetSupported = thinkingSupported && thinking?.mode === "budget"
 	const openAiHeaders = pc.openAiHeaders ?? {}
 	const headerEntries: [string, string][] = Object.entries(openAiHeaders)
 
@@ -277,21 +279,20 @@ export const OpenAIProvider = ({ showModelOptions, isPopup, profile, onUpdate: o
 						value={profile.webToolsMode}
 					/>
 
-					<ThinkingControl
-						effortOptions={
-							customModelEnabled ? OPENAI_COMPATIBLE_REASONING_EFFORT_OPTIONS : OPENAI_REASONING_EFFORT_OPTIONS
-						}
-						maxBudget={modelInfo.capabilities?.thinking?.maxBudget}
-						mode="both"
-						modeSelectorLabel="Thinking Mode"
-						modeSelectorOptions={[
-							{ value: "effort", label: "Reasoning Effort" },
-							{ value: "budget", label: "Thinking Budget" },
-						]}
-						onReasoningConfigUpdate={(reasoning) => onUpdate({ openai: { ...configToUpdate(), reasoning } })}
-						reasoningConfig={pc.reasoning}
-						showModeSelector={true}
-					/>
+					{(effortSupported || budgetSupported) && (
+						<ThinkingControl
+							defaultEffort={thinking?.defaultEffort}
+							defaultEnabled={thinking?.defaultEnabled}
+							disableSupported={thinking?.canDisable !== false}
+							effortOptions={thinking?.effortLevels}
+							maxBudget={thinking?.maxBudget}
+							minBudget={thinking?.minBudget}
+							mode={effortSupported ? "effort-only" : "budget-only"}
+							onReasoningConfigUpdate={(reasoning) => onUpdate({ openai: { ...configToUpdate(), reasoning } })}
+							reasoningConfig={pc.reasoning}
+							showModeSelector={false}
+						/>
+					)}
 
 					<OpenAIServiceTierSelector
 						onServiceTierChange={(serviceTier) => onUpdate({ openai: { ...configToUpdate(), serviceTier } })}
