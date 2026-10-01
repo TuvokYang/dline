@@ -1,8 +1,10 @@
 import "should"
+import type { GenerateContentParameters, ThinkingConfig } from "@google/genai"
 import type { ModelCapabilities } from "@shared/proto/dline/models/metadata"
 import { ApiProfile } from "@shared/proto/dline/profile"
 import type { ReasoningConfig } from "@shared/proto/dline/provider/common"
 import { afterEach, describe, expect, it, vi } from "vitest"
+import { AIhubmixHandler } from "../aihubmix"
 import { GeminiHandler } from "../gemini"
 
 describe("GeminiHandler", () => {
@@ -464,5 +466,128 @@ describe("GeminiHandler", () => {
 		chunks[0].tool_call.should.not.have.property("call_id")
 		chunks[0].tool_call.function.should.not.have.property("id")
 		JSON.parse(chunks[0].tool_call.function.arguments).path.should.equal(".nvmrc")
+	})
+})
+
+describe("AIhubmix Gemini metadata authority", () => {
+	const budgetCapabilities: ModelCapabilities = {
+		thinking: { supported: true, mode: "budget", minBudget: 17, maxBudget: 31 },
+	}
+
+	const captureRequest = async (profile: ApiProfile) => {
+		const handler = new AIhubmixHandler({ profile, mode: "act" })
+		const generateContentStream = vi.fn(async (_request: GenerateContentParameters) =>
+			(async function* () {
+				yield { text: "answer" }
+			})(),
+		)
+		Object.defineProperty(handler, "ensureGeminiClient", {
+			value: () => ({ models: { generateContentStream } }),
+		})
+		const chunks = []
+		for await (const chunk of handler.createMessage("system", [{ role: "user", content: "hi" }])) {
+			chunks.push(chunk)
+		}
+		expect(chunks).toEqual([{ type: "text", text: "answer" }])
+		return { handler, request: generateContentStream.mock.calls[0][0] }
+	}
+
+	const cases: {
+		name: string
+		capabilities: ModelCapabilities
+		reasoning?: ReasoningConfig
+		thinkingConfig?: ThinkingConfig
+	}[] = [
+		{ name: "missing declaration", capabilities: { supportsReasoning: true }, reasoning: { thinkingBudget: 23 } },
+		{
+			name: "nested false",
+			capabilities: { thinking: { supported: false, mode: "budget" } },
+			reasoning: { thinkingBudget: 23 },
+		},
+		{
+			name: "coarse false veto",
+			capabilities: { ...budgetCapabilities, supportsReasoning: false },
+			reasoning: { thinkingBudget: 23 },
+		},
+		{
+			name: "minimum clamp",
+			capabilities: budgetCapabilities,
+			reasoning: { thinkingBudget: 8 },
+			thinkingConfig: { thinkingBudget: 17, includeThoughts: true },
+		},
+		{
+			name: "maximum clamp",
+			capabilities: budgetCapabilities,
+			reasoning: { thinkingBudget: 50 },
+			thinkingConfig: { thinkingBudget: 31, includeThoughts: true },
+		},
+		{
+			name: "invalid bounds",
+			capabilities: { thinking: { supported: true, mode: "budget", minBudget: 31, maxBudget: 17 } },
+			reasoning: { thinkingBudget: 23 },
+		},
+		{ name: "fractional budget", capabilities: budgetCapabilities, reasoning: { thinkingBudget: 20.5 } },
+		{
+			name: "explicit zero disables",
+			capabilities: budgetCapabilities,
+			reasoning: { thinkingBudget: 0 },
+			thinkingConfig: { thinkingBudget: 0, includeThoughts: false },
+		},
+		{
+			name: "dynamic budget",
+			capabilities: budgetCapabilities,
+			reasoning: { thinkingBudget: -1 },
+			thinkingConfig: { thinkingBudget: -1, includeThoughts: true },
+		},
+		{
+			name: "explicit disable vetoes positive preference",
+			capabilities: budgetCapabilities,
+			reasoning: { enableThinking: false, thinkingBudget: 23 },
+			thinkingConfig: { thinkingBudget: 0, includeThoughts: false },
+		},
+		{
+			name: "declared default without manufactured budget",
+			capabilities: { thinking: { ...budgetCapabilities.thinking, defaultEnabled: true } },
+			thinkingConfig: { includeThoughts: true },
+		},
+	]
+
+	it.each(cases)("encodes $name through the actual route", async ({ capabilities, reasoning, thinkingConfig }) => {
+		const profile = ApiProfile.create({
+			provider: "aihubmix",
+			modelId: "gemini-opaque-test",
+			modelInfo: { id: "gemini-opaque-test", capabilities },
+			aihubmix: { reasoning },
+		})
+		const { handler, request } = await captureRequest(profile)
+		expect(handler.getModel().info).toEqual(profile.modelInfo)
+		expect(request.model).toBe("gemini-opaque-test")
+		expect(request.config).toMatchObject({ systemInstruction: "system", temperature: 0 })
+		expect(request.config?.thinkingConfig).toEqual(thinkingConfig)
+	})
+
+	it("does not borrow a different selected model's capability", async () => {
+		const profile = ApiProfile.create({
+			provider: "aihubmix",
+			modelId: "gemini-unknown-test",
+			modelInfo: { id: "gemini-other-test", capabilities: budgetCapabilities },
+			aihubmix: { reasoning: { thinkingBudget: 23 } },
+		})
+		const { handler, request } = await captureRequest(profile)
+		expect(handler.getModel()).toEqual({ id: "gemini-unknown-test", info: { id: "gemini-unknown-test" } })
+		expect(request.model).toBe("gemini-unknown-test")
+		expect(request.config).not.toHaveProperty("thinkingConfig")
+	})
+
+	it("uses a profile-carried selection for both routing and metadata", async () => {
+		const profile = ApiProfile.create({
+			provider: "aihubmix",
+			modelInfo: { id: "gemini-private-test", capabilities: budgetCapabilities },
+			aihubmix: { reasoning: { thinkingBudget: 23 } },
+		})
+		const { handler, request } = await captureRequest(profile)
+		expect(handler.getModel()).toEqual({ id: "gemini-private-test", info: profile.modelInfo })
+		expect(request.model).toBe("gemini-private-test")
+		expect(request.config?.thinkingConfig).toEqual({ thinkingBudget: 23, includeThoughts: true })
 	})
 })
