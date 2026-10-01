@@ -1,4 +1,4 @@
-import { type ModelInfo, openAiModelInfoSaneDefaults } from "@shared/api"
+import type { ModelInfo } from "@shared/proto/dline/models"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
 export interface ModelProbeOptions {
@@ -22,8 +22,6 @@ export interface ModelProbeOptions {
 	enabled: boolean
 	/** Kept in the list so the current selection stays visible before a probe returns. */
 	selectedModelId?: string
-	/** Template for synthesized entries; the endpoint only reports IDs. */
-	template?: ModelInfo
 }
 
 export interface ModelProbeResult {
@@ -38,17 +36,11 @@ export interface ModelProbeResult {
 /**
  * Discovers model IDs from a user-configured endpoint.
  *
- * Endpoints reached this way report IDs only, so entries are synthesized from
- * `template` and marked `userDefined`. Catalog metadata comes from
- * `useProviderModels` instead.
+ * Endpoints reached this way report identities only. Mark discovered entries
+ * `userDefined` without borrowing another model's capabilities or prices;
+ * complete catalog metadata comes from `useProviderModels` instead.
  */
-export function useModelProbe({
-	probe,
-	credentialsKey,
-	enabled,
-	selectedModelId,
-	template = openAiModelInfoSaneDefaults,
-}: ModelProbeOptions): ModelProbeResult {
+export function useModelProbe({ probe, credentialsKey, enabled, selectedModelId }: ModelProbeOptions): ModelProbeResult {
 	const [discoveredIds, setDiscoveredIds] = useState<string[]>([])
 	const [loading, setLoading] = useState(false)
 	const [error, setError] = useState<Error | undefined>(undefined)
@@ -67,7 +59,6 @@ export function useModelProbe({
 	// Different credentials mean previously discovered IDs no longer describe
 	// the configured endpoint. Bumping the request id also discards responses
 	// still in flight for the old one.
-	// biome-ignore lint/correctness/useExhaustiveDependencies: resetting is keyed by the endpoint identity, not by the callback.
 	useEffect(() => {
 		if (lastCredentialsKey.current === credentialsKey) {
 			return
@@ -116,8 +107,8 @@ export function useModelProbe({
 		if (selectedModelId) {
 			ids.add(selectedModelId)
 		}
-		return Object.fromEntries(Array.from(ids).map((id) => [id, { ...template, id, name: id, userDefined: true }]))
-	}, [discoveredIds, selectedModelId, template])
+		return Object.fromEntries(Array.from(ids).map((id) => [id, { id, name: id, userDefined: true }]))
+	}, [discoveredIds, selectedModelId])
 
 	return { models, refresh, loading, error }
 }
