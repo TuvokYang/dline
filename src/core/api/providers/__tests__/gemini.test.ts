@@ -1,6 +1,8 @@
 import "should"
+import type { ModelCapabilities } from "@shared/proto/dline/models/metadata"
 import { ApiProfile } from "@shared/proto/dline/profile"
-import { afterEach, describe, it, vi } from "vitest"
+import type { ReasoningConfig } from "@shared/proto/dline/provider/common"
+import { afterEach, describe, expect, it, vi } from "vitest"
 import { GeminiHandler } from "../gemini"
 
 describe("GeminiHandler", () => {
@@ -69,6 +71,196 @@ describe("GeminiHandler", () => {
 
 		return (generateContentStream.mock.calls[0][0] as Record<string, any>).config
 	}
+
+	const reasoningCases: {
+		name: string
+		capabilities: ModelCapabilities
+		reasoning?: ReasoningConfig
+		thinkingConfig?: Record<string, unknown>
+	}[] = [
+		{
+			name: "missing declaration",
+			capabilities: { supportsReasoning: true },
+			reasoning: { effort: "high", thinkingBudget: 1000 },
+		},
+		{
+			name: "unsupported nested declaration",
+			capabilities: { thinking: { supported: false, mode: "effort", effortLevels: ["high"] } },
+			reasoning: { effort: "high" },
+		},
+		{
+			name: "coarse veto",
+			capabilities: { supportsReasoning: false, thinking: { supported: true, mode: "budget" } },
+			reasoning: { thinkingBudget: 1000 },
+		},
+		{
+			name: "missing mode",
+			capabilities: { thinking: { supported: true, effortLevels: ["high"] } },
+			reasoning: { effort: "high" },
+		},
+		{ name: "unknown defaults", capabilities: { thinking: { supported: true, mode: "effort", effortLevels: ["high"] } } },
+		{
+			name: "empty legal list",
+			capabilities: { thinking: { supported: true, mode: "effort", effortLevels: [], defaultEnabled: true } },
+			reasoning: { effort: "high" },
+			thinkingConfig: { includeThoughts: true },
+		},
+		{
+			name: "declared default",
+			capabilities: {
+				thinking: {
+					supported: true,
+					mode: "effort",
+					effortLevels: ["medium"],
+					defaultEnabled: true,
+					defaultEffort: "medium",
+				},
+			},
+			thinkingConfig: { thinkingLevel: "MEDIUM", includeThoughts: true },
+		},
+		{
+			name: "legal minimal",
+			capabilities: { thinking: { supported: true, mode: "effort", effortLevels: ["minimal"] } },
+			reasoning: { effort: "minimal" },
+			thinkingConfig: { thinkingLevel: "MINIMAL", includeThoughts: true },
+		},
+		{
+			name: "legacy xhigh alias",
+			capabilities: { thinking: { supported: true, mode: "effort", effortLevels: ["high"] } },
+			reasoning: { effort: "xhigh" },
+			thinkingConfig: { thinkingLevel: "HIGH", includeThoughts: true },
+		},
+		{
+			name: "invalid effort inherits provider level",
+			capabilities: { thinking: { supported: true, mode: "effort", effortLevels: ["low"], defaultEnabled: true } },
+			reasoning: { effort: "medium" },
+			thinkingConfig: { includeThoughts: true },
+		},
+		{
+			name: "explicit disable wins over enable",
+			capabilities: {
+				thinking: { supported: true, mode: "effort", canDisable: true, defaultEnabled: true, effortLevels: ["low"] },
+			},
+			reasoning: { effort: "none", enableThinking: true },
+			thinkingConfig: { thinkingBudget: 0, includeThoughts: false },
+		},
+		{
+			name: "required thinking rejects stale disable",
+			capabilities: { thinking: { supported: true, mode: "effort", canDisable: false, effortLevels: ["low"] } },
+			reasoning: { effort: "none", enableThinking: false },
+			thinkingConfig: { includeThoughts: true },
+		},
+		{
+			name: "budget mode ignores effort",
+			capabilities: { thinking: { supported: true, mode: "budget", effortLevels: ["high"], maxBudget: 1200 } },
+			reasoning: { thinkingBudget: 1600, effort: "high" },
+			thinkingConfig: { thinkingBudget: 1200, includeThoughts: true },
+		},
+		{
+			name: "no invented budget ceiling",
+			capabilities: { thinking: { supported: true, mode: "budget" } },
+			reasoning: { thinkingBudget: 28000 },
+			thinkingConfig: { thinkingBudget: 28000, includeThoughts: true },
+		},
+		{
+			name: "dynamic declared budget default",
+			capabilities: { thinking: { supported: true, mode: "budget", defaultEnabled: true } },
+			thinkingConfig: { includeThoughts: true },
+		},
+		{
+			name: "budget zero disables",
+			capabilities: { thinking: { supported: true, mode: "budget", canDisable: true } },
+			reasoning: { thinkingBudget: 0 },
+			thinkingConfig: { thinkingBudget: 0, includeThoughts: false },
+		},
+		{
+			name: "required budget zero inherits",
+			capabilities: { thinking: { supported: true, mode: "budget", canDisable: false } },
+			reasoning: { thinkingBudget: 0 },
+			thinkingConfig: { includeThoughts: true },
+		},
+		{
+			name: "explicit dynamic budget",
+			capabilities: { thinking: { supported: true, mode: "budget" } },
+			reasoning: { thinkingBudget: -1 },
+			thinkingConfig: { thinkingBudget: -1, includeThoughts: true },
+		},
+		{
+			name: "budget preference does not grant an effort default",
+			capabilities: { thinking: { supported: true, mode: "effort", effortLevels: ["high"] } },
+			reasoning: { thinkingBudget: 1600 },
+		},
+		{
+			name: "invalid effort does not grant activation",
+			capabilities: { thinking: { supported: true, mode: "effort", effortLevels: ["low"] } },
+			reasoning: { effort: "high" },
+		},
+		{
+			name: "negative budget",
+			capabilities: { thinking: { supported: true, mode: "budget", defaultEnabled: true } },
+			reasoning: { thinkingBudget: -2 },
+		},
+		{
+			name: "fractional budget",
+			capabilities: { thinking: { supported: true, mode: "budget", defaultEnabled: true } },
+			reasoning: { thinkingBudget: 2.5 },
+		},
+		{
+			name: "invalid declared ceiling",
+			capabilities: { thinking: { supported: true, mode: "budget", maxBudget: -10 } },
+			reasoning: { thinkingBudget: 1000 },
+		},
+	]
+	it.each(reasoningCases)("encodes $name only from effective metadata", async ({ capabilities, reasoning, thinkingConfig }) => {
+		const modelId = "gemini-3-pro-misleading-alias"
+		const config = await captureRequestConfig(
+			ApiProfile.create({
+				provider: "gemini",
+				modelId,
+				modelInfo: { id: modelId, capabilities },
+				gemini: { reasoning },
+			}),
+		)
+		expect(config.thinkingConfig).toEqual(thinkingConfig)
+	})
+
+	it("uses the Vertex-owned configuration with declared Gemini metadata", async () => {
+		const modelId = "gemini-effective-alias"
+		const config = await captureRequestConfig(
+			ApiProfile.create({
+				provider: "vertex",
+				modelId,
+				modelInfo: {
+					id: modelId,
+					capabilities: { thinking: { supported: true, mode: "effort", effortLevels: ["medium"] } },
+				},
+				vertex: { reasoning: { effort: "medium" } },
+				gemini: { reasoning: { effort: "high" } },
+			}),
+		)
+		expect(config.thinkingConfig).toEqual({ thinkingLevel: "MEDIUM", includeThoughts: true })
+	})
+
+	it.each([
+		undefined,
+		{ id: "gemini-2.5-pro", capabilities: { thinking: { supported: true, mode: "budget" } } },
+	])("preserves an explicit unknown model ID without borrowing stale or default metadata", async (modelInfo) => {
+		const modelId = "private-gemini-alias"
+		const profile = ApiProfile.create({
+			provider: "gemini",
+			modelId,
+			modelInfo,
+			gemini: { reasoning: { thinkingBudget: 1000 } },
+		})
+		const handler = new GeminiHandler({ profile, mode: "act" })
+		expect(handler.getModel()).toEqual({ id: modelId, info: { id: modelId } })
+		const generateContentStream = vi.fn().mockResolvedValue(createAsyncIterable())
+		;(handler as unknown as { ensureClient: () => unknown }).ensureClient = () => ({ models: { generateContentStream } })
+		for await (const _chunk of handler.createMessage("system", [{ role: "user", content: "hi" }])) {
+		}
+		expect(generateContentStream.mock.calls[0][0].model).toBe(modelId)
+		expect(generateContentStream.mock.calls[0][0].config.thinkingConfig).toBeUndefined()
+	})
 
 	const TOOL_DECLARATIONS = [{ name: "read_file", description: "read", parameters: { type: "object", properties: {} } }]
 	const GEMINI_PROFILE = ApiProfile.create({ provider: "gemini", apiKey: "test-api-key", modelId: "gemini-2.5-pro" })

@@ -59,7 +59,14 @@ export const vertexModels: Record<string, ModelInfo> = {
 			supportsImages: true,
 			supportsPromptCache: true,
 			supportsReasoning: true,
-			thinking: { supported: true, mode: "effort", effortLevels: ["high"] },
+			thinking: {
+				supported: true,
+				mode: "effort",
+				effortLevels: ["low", "medium", "high"],
+				defaultEnabled: true,
+				defaultEffort: "high",
+				canDisable: false,
+			},
 		},
 		pricing: {
 			inputPrice: 2.0,
@@ -76,7 +83,14 @@ export const vertexModels: Record<string, ModelInfo> = {
 			supportsImages: true,
 			supportsPromptCache: true,
 			supportsReasoning: true,
-			thinking: { supported: true, mode: "effort", effortLevels: ["high"] },
+			thinking: {
+				supported: true,
+				mode: "effort",
+				effortLevels: ["low", "high"],
+				defaultEnabled: true,
+				defaultEffort: "high",
+				canDisable: false,
+			},
 		},
 		pricing: {
 			inputPrice: 2.0,
@@ -93,7 +107,14 @@ export const vertexModels: Record<string, ModelInfo> = {
 			supportsImages: true,
 			supportsPromptCache: true,
 			supportsReasoning: true,
-			thinking: { supported: true, mode: "effort", effortLevels: ["high"] },
+			thinking: {
+				supported: true,
+				mode: "effort",
+				effortLevels: ["minimal", "low", "medium", "high"],
+				defaultEnabled: true,
+				defaultEffort: "high",
+				canDisable: false,
+			},
 		},
 		pricing: {
 			inputPrice: 0.5,
@@ -541,7 +562,13 @@ export const vertexModels: Record<string, ModelInfo> = {
 			contextWindow: 1_048_576,
 			supportsImages: true,
 			supportsPromptCache: true,
-			thinking: ThinkingConfig.create({ supported: true, mode: "budget", maxBudget: 32767 }),
+			thinking: ThinkingConfig.create({
+				supported: true,
+				mode: "budget",
+				maxBudget: 32767,
+				defaultEnabled: true,
+				canDisable: false,
+			}),
 		},
 		pricing: {
 			inputPrice: 2.5,
@@ -571,7 +598,13 @@ export const vertexModels: Record<string, ModelInfo> = {
 			contextWindow: 1_048_576,
 			supportsImages: true,
 			supportsPromptCache: true,
-			thinking: ThinkingConfig.create({ supported: true, mode: "budget", maxBudget: 24576 }),
+			thinking: ThinkingConfig.create({
+				supported: true,
+				mode: "budget",
+				maxBudget: 24576,
+				defaultEnabled: true,
+				canDisable: true,
+			}),
 		},
 		pricing: {
 			inputPrice: 0.3,
@@ -588,7 +621,13 @@ export const vertexModels: Record<string, ModelInfo> = {
 			contextWindow: 1_000_000,
 			supportsImages: true,
 			supportsPromptCache: true,
-			thinking: ThinkingConfig.create({ supported: true, mode: "budget", maxBudget: 24576 }),
+			thinking: ThinkingConfig.create({
+				supported: true,
+				mode: "budget",
+				maxBudget: 24576,
+				defaultEnabled: false,
+				canDisable: true,
+			}),
 		},
 		pricing: {
 			inputPrice: 0.1,

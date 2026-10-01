@@ -3,6 +3,10 @@
  * Extracted from api.ts minimaxModels (lines 4980-5062).
  */
 import type { ModelInfo } from "@shared/api"
+import type { ThinkingConfig } from "@shared/proto/dline/models/metadata"
+
+// M2.x thinking is always active; the Anthropic-compatible API has no budget control.
+const M2_THINKING: ThinkingConfig = { supported: true, mode: "effort", effortLevels: [], defaultEnabled: true, canDisable: false }
 
 export const minimaxModels: Record<string, ModelInfo> = {
 	"MiniMax-M2.7": {
@@ -16,6 +20,7 @@ export const minimaxModels: Record<string, ModelInfo> = {
 			supportsImages: false,
 			supportsPromptCache: true,
 			supportsReasoning: true,
+			thinking: { ...M2_THINKING },
 		},
 		pricing: {
 			inputPrice: 0.3,
@@ -35,6 +40,7 @@ export const minimaxModels: Record<string, ModelInfo> = {
 			supportsImages: false,
 			supportsPromptCache: true,
 			supportsReasoning: true,
+			thinking: { ...M2_THINKING },
 		},
 		pricing: {
 			inputPrice: 0.6,
@@ -53,6 +59,7 @@ export const minimaxModels: Record<string, ModelInfo> = {
 			supportsImages: false,
 			supportsPromptCache: true,
 			supportsReasoning: true,
+			thinking: { ...M2_THINKING },
 		},
 		pricing: {
 			inputPrice: 0.3,
@@ -71,6 +78,7 @@ export const minimaxModels: Record<string, ModelInfo> = {
 			supportsImages: false,
 			supportsPromptCache: true,
 			supportsReasoning: true,
+			thinking: { ...M2_THINKING },
 		},
 		pricing: {
 			inputPrice: 0.6,
@@ -88,6 +96,8 @@ export const minimaxModels: Record<string, ModelInfo> = {
 			contextWindow: 192_000,
 			supportsImages: false,
 			supportsPromptCache: true,
+			supportsReasoning: true,
+			thinking: { ...M2_THINKING },
 		},
 		pricing: {
 			inputPrice: 0.3,
@@ -122,6 +132,8 @@ export const minimaxModels: Record<string, ModelInfo> = {
 			contextWindow: 192_000,
 			supportsImages: false,
 			supportsPromptCache: false,
+			supportsReasoning: true,
+			thinking: { ...M2_THINKING },
 		},
 		pricing: {
 			inputPrice: 0.3,

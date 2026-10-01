@@ -10,6 +10,7 @@ import { ApiHandler, ApiHandlerContext } from "../index"
 import { withRetry } from "../retry"
 import { sanitizeAnthropicMessages } from "../transform/anthropic-format"
 import { ApiStream } from "../transform/stream"
+import { resolveMiniMaxReasoning } from "./minimax/reasoning"
 
 export class MinimaxHandler implements ApiHandler {
 	private client: Anthropic | undefined
@@ -30,9 +31,6 @@ export class MinimaxHandler implements ApiHandler {
 	}
 	private get baseUrl() {
 		return this.ctx.profile.baseUrl
-	}
-	private get thinkingBudgetTokens() {
-		return this.config?.reasoning?.thinkingBudget ?? 0
 	}
 
 	private ensureClient(): Anthropic {
@@ -67,8 +65,8 @@ export class MinimaxHandler implements ApiHandler {
 		// Tools are available only when native tools are enabled
 		const nativeToolsOn = tools?.length && tools?.length > 0
 
-		const budget_tokens = this.thinkingBudgetTokens
-		const reasoningOn = (model.info.capabilities?.supportsReasoning ?? false) && budget_tokens !== 0
+		const reasoning = resolveMiniMaxReasoning(model.info.capabilities, this.config?.reasoning)
+		const reasoningOn = reasoning.enabled
 
 		// MiniMax M2 uses Anthropic API format
 		const stream: AnthropicStream<Anthropic.RawMessageStreamEvent> = await client.messages.create({
@@ -78,7 +76,8 @@ export class MinimaxHandler implements ApiHandler {
 			messages: sanitizeAnthropicMessages(messages, false),
 			stream: true,
 			tools: nativeToolsOn ? (tools as AnthropicTool[]) : undefined,
-			thinking: reasoningOn ? { type: "enabled", budget_tokens: budget_tokens } : undefined,
+			thinking: reasoning.thinking,
+			output_config: reasoning.outputConfig,
 			// "Thinking isn't compatible with temperature, top_p, or top_k modifications"
 			temperature: reasoningOn ? undefined : 1.0, // MiniMax recommends 1.0, range is (0.0, 1.0]
 			// A model that rejects forcing fails the whole request rather than
@@ -215,14 +214,15 @@ export class MinimaxHandler implements ApiHandler {
 
 	getModel(): { id: MinimaxModelId; info: ModelInfo } {
 		const modelId = this.modelId || this.modelInfo?.id
-		if (this.modelInfo) {
-			return { id: (modelId || minimaxDefaultModelId) as MinimaxModelId, info: this.modelInfo }
+		if (modelId && this.modelInfo?.id === modelId) {
+			return { id: modelId as MinimaxModelId, info: this.modelInfo }
 		}
 
 		if (modelId && modelId in minimaxModels) {
 			const id = modelId as MinimaxModelId
 			return { id, info: minimaxModels[id] }
 		}
+		if (modelId) return { id: modelId as MinimaxModelId, info: { id: modelId } }
 		return { id: minimaxDefaultModelId, info: minimaxModels[minimaxDefaultModelId] }
 	}
 }

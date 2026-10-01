@@ -15,7 +15,14 @@ export const geminiModels: Record<string, ModelInfo> = {
 			contextWindow: 1_048_576,
 			supportsImages: true,
 			supportsPromptCache: true,
-			thinking: { supported: true, mode: "effort", effortLevels: ["high"] },
+			thinking: {
+				supported: true,
+				mode: "effort",
+				effortLevels: ["low", "medium", "high"],
+				defaultEnabled: true,
+				defaultEffort: "high",
+				canDisable: false,
+			},
 		},
 		pricing: {
 			inputPrice: 4.0,
@@ -46,7 +53,14 @@ export const geminiModels: Record<string, ModelInfo> = {
 			contextWindow: 1_048_576,
 			supportsImages: true,
 			supportsPromptCache: true,
-			thinking: { supported: true, mode: "effort", effortLevels: ["high"] },
+			thinking: {
+				supported: true,
+				mode: "effort",
+				effortLevels: ["low", "high"],
+				defaultEnabled: true,
+				defaultEffort: "high",
+				canDisable: false,
+			},
 		},
 		pricing: {
 			inputPrice: 4.0,
@@ -78,7 +92,14 @@ export const geminiModels: Record<string, ModelInfo> = {
 			supportsImages: true,
 			supportsPromptCache: true,
 			supportsReasoning: true,
-			thinking: { supported: true, mode: "effort", effortLevels: ["low"] },
+			thinking: {
+				supported: true,
+				mode: "effort",
+				effortLevels: ["minimal", "low", "medium", "high"],
+				defaultEnabled: true,
+				defaultEffort: "high",
+				canDisable: false,
+			},
 		},
 		pricing: {
 			inputPrice: 0.5,
@@ -109,7 +130,13 @@ export const geminiModels: Record<string, ModelInfo> = {
 			contextWindow: 1_048_576,
 			supportsImages: true,
 			supportsPromptCache: true,
-			thinking: ThinkingConfig.create({ maxBudget: 32767, supported: true, mode: "budget" }),
+			thinking: ThinkingConfig.create({
+				maxBudget: 32767,
+				supported: true,
+				mode: "budget",
+				defaultEnabled: true,
+				canDisable: false,
+			}),
 		},
 		pricing: {
 			inputPrice: 2.5,
@@ -141,7 +168,13 @@ export const geminiModels: Record<string, ModelInfo> = {
 			contextWindow: 1_000_000,
 			supportsImages: true,
 			supportsPromptCache: true,
-			thinking: ThinkingConfig.create({ maxBudget: 24576, supported: true, mode: "budget" }),
+			thinking: ThinkingConfig.create({
+				maxBudget: 24576,
+				supported: true,
+				mode: "budget",
+				defaultEnabled: false,
+				canDisable: true,
+			}),
 		},
 		pricing: {
 			inputPrice: 0.1,
@@ -158,7 +191,13 @@ export const geminiModels: Record<string, ModelInfo> = {
 			contextWindow: 1_048_576,
 			supportsImages: true,
 			supportsPromptCache: true,
-			thinking: ThinkingConfig.create({ maxBudget: 24576, supported: true, mode: "budget" }),
+			thinking: ThinkingConfig.create({
+				maxBudget: 24576,
+				supported: true,
+				mode: "budget",
+				defaultEnabled: true,
+				canDisable: true,
+			}),
 		},
 		pricing: {
 			inputPrice: 0.3,

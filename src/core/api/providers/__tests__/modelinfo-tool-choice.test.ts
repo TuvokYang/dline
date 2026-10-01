@@ -211,6 +211,168 @@ describe.each(["vertex", "bedrock"] as const)("%s declared Messages API thinking
 	})
 })
 
+describe("MiniMax declared thinking switch", () => {
+	const cases: {
+		name: string
+		capabilities: ModelCapabilities
+		reasoning?: ReasoningConfig
+		thinking?: unknown
+		enabled?: boolean
+		effort?: string
+	}[] = [
+		{ name: "coarse support is not a mode", capabilities: { supportsReasoning: true }, reasoning: { thinkingBudget: 1600 } },
+		{
+			name: "nested false vetoes budget",
+			capabilities: { supportsReasoning: true, thinking: { supported: false, mode: "effort" } },
+			reasoning: { thinkingBudget: 1600 },
+		},
+		{
+			name: "coarse false vetoes nested support",
+			capabilities: { supportsReasoning: false, thinking: { supported: true, mode: "effort", defaultEnabled: true } },
+		},
+		{ name: "unknown default", capabilities: { thinking: { supported: true, mode: "effort" } } },
+		{
+			name: "budget mode has no MiniMax wire",
+			capabilities: { thinking: { supported: true, mode: "budget" } },
+			reasoning: { thinkingBudget: 1600 },
+		},
+		{
+			name: "declared default ignores legacy budget",
+			capabilities: { thinking: { supported: true, mode: "effort", defaultEnabled: true } },
+			reasoning: { thinkingBudget: -1 },
+			thinking: { type: "adaptive" },
+			enabled: true,
+		},
+		{
+			name: "explicit enable sends no ignored budget",
+			capabilities: { thinking: { supported: true, mode: "effort" } },
+			reasoning: { enableThinking: true, thinkingBudget: 1600 },
+			thinking: { type: "adaptive" },
+			enabled: true,
+		},
+		{
+			name: "explicit disable",
+			capabilities: { thinking: { supported: true, mode: "effort", defaultEnabled: true } },
+			reasoning: { enableThinking: false },
+			thinking: { type: "disabled" },
+		},
+		{
+			name: "none overrides enable",
+			capabilities: { thinking: { supported: true, mode: "effort", defaultEnabled: true } },
+			reasoning: { enableThinking: true, effort: "none" },
+			thinking: { type: "disabled" },
+		},
+		{
+			name: "required ignores stale disable",
+			capabilities: { thinking: { supported: true, mode: "effort", canDisable: false } },
+			reasoning: { enableThinking: false, effort: "none" },
+			thinking: { type: "adaptive" },
+			enabled: true,
+		},
+	]
+	it.each([
+		...cases,
+		{
+			name: "legal effort",
+			capabilities: { thinking: { supported: true, mode: "effort", effortLevels: ["high"] } },
+			reasoning: { effort: "high" },
+			thinking: { type: "adaptive" },
+			enabled: true,
+			effort: "high",
+		},
+		{
+			name: "declared effort default",
+			capabilities: {
+				thinking: { supported: true, mode: "effort", effortLevels: ["low"], defaultEnabled: true, defaultEffort: "low" },
+			},
+			thinking: { type: "adaptive" },
+			enabled: true,
+			effort: "low",
+		},
+		{
+			name: "invalid effort has no wire",
+			capabilities: { thinking: { supported: true, mode: "effort", effortLevels: ["low"], defaultEnabled: true } },
+			reasoning: { effort: "high" },
+			thinking: { type: "adaptive" },
+			enabled: true,
+		},
+		{
+			name: "empty list has no effort default",
+			capabilities: {
+				thinking: { supported: true, mode: "effort", effortLevels: [], defaultEnabled: true, defaultEffort: "max" },
+			},
+			thinking: { type: "adaptive" },
+			enabled: true,
+		},
+		{
+			name: "legacy ultra alias",
+			capabilities: { thinking: { supported: true, mode: "effort", effortLevels: ["max"] } },
+			reasoning: { effort: "ultra" },
+			thinking: { type: "adaptive" },
+			enabled: true,
+			effort: "max",
+		},
+	])("encodes $name from effective metadata", async ({ capabilities, reasoning, thinking, enabled, effort }) => {
+		const modelId = "claude-misleading-minimax-alias"
+		const handler = new MinimaxHandler({
+			profile: ApiProfile.create({
+				provider: "minimax",
+				modelId,
+				modelInfo: { id: modelId, capabilities },
+				minimax: { reasoning },
+			}),
+			mode: "act",
+		})
+		const create = vi.fn().mockResolvedValue((async function* () {})())
+		;(handler as unknown as { client: unknown }).client = { messages: { create } }
+		for await (const _chunk of handler.createMessage(
+			"system",
+			[{ role: "user", content: "hi" }],
+			[{ name: "read_file", description: "Read", input_schema: { type: "object", properties: {} } }],
+		)) {
+		}
+		const body = create.mock.calls[0][0]
+		expect(body.model).toBe(modelId)
+		expect(body.thinking).toEqual(thinking)
+		expect(body.output_config).toEqual(effort ? { effort } : undefined)
+		expect(body.temperature).toBe(enabled ? undefined : 1)
+		expect(body.tool_choice).toEqual(enabled ? undefined : { type: "any" })
+	})
+	it("keeps bundled M2 thinking mandatory despite a stale Profile disable", async () => {
+		const handler = new MinimaxHandler({
+			profile: ApiProfile.create({
+				provider: "minimax",
+				modelId: "MiniMax-M2.7",
+				minimax: { reasoning: { enableThinking: false, effort: "none", thinkingBudget: 0 } },
+			}),
+			mode: "act",
+		})
+		const create = vi.fn().mockResolvedValue((async function* () {})())
+		;(handler as unknown as { client: unknown }).client = { messages: { create } }
+		for await (const _chunk of handler.createMessage("system", [{ role: "user", content: "hi" }])) {
+		}
+		expect(create.mock.calls[0][0].model).toBe("MiniMax-M2.7")
+		expect(create.mock.calls[0][0].thinking).toEqual({ type: "adaptive" })
+	})
+	it.each([
+		undefined,
+		{ id: "MiniMax-M2.7", capabilities: { supportsReasoning: true } },
+	])("keeps an explicit unknown model identity without a default envelope", async (modelInfo) => {
+		const modelId = "private-minimax-alias"
+		const handler = new MinimaxHandler({
+			profile: ApiProfile.create({ provider: "minimax", modelId, modelInfo }),
+			mode: "act",
+		})
+		expect(handler.getModel()).toEqual({ id: modelId, info: { id: modelId } })
+		const create = vi.fn().mockResolvedValue((async function* () {})())
+		;(handler as unknown as { client: unknown }).client = { messages: { create } }
+		for await (const _chunk of handler.createMessage("system", [{ role: "user", content: "hi" }])) {
+		}
+		expect(create.mock.calls[0][0].model).toBe(modelId)
+		expect(create.mock.calls[0][0].thinking).toBeUndefined()
+	})
+})
+
 /** Exercise effective declarations at the actual native request boundary, without substituting getModel. */
 describe.each(["mistral", "minimax"] as const)("%s effective native tool choice", (provider) => {
 	it.each([undefined, true, false])("uses the declared forced-tool flag %s without model-name inference", async (declared) => {

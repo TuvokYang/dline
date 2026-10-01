@@ -6,7 +6,6 @@ import {
 	type GenerateContentResponseUsageMetadata,
 	GoogleGenAI,
 	FunctionDeclaration as GoogleTool,
-	ThinkingLevel,
 } from "@google/genai"
 import { GeminiModelId, geminiDefaultModelId, geminiModels, ModelInfo } from "@shared/api"
 import { observeProviderStream } from "@shared/provider-attempt-observer"
@@ -19,21 +18,9 @@ import { ApiHandler, ApiHandlerContext } from "../"
 import { RetriableError, withRetry } from "../retry"
 import { convertAnthropicMessageToGemini } from "../transform/gemini-format"
 import { ApiStream } from "../transform/stream"
+import { resolveGeminiThinking } from "./gemini/reasoning"
 
 const rateLimitPatterns = [/got status: 429/i, /429 Too Many Requests/i, /rate limit exceeded/i, /too many requests/i]
-
-function mapReasoningEffortToGeminiThinkingLevel(effort: string): ThinkingLevel {
-	switch (effort) {
-		case "low":
-		case "medium":
-			return ThinkingLevel.LOW
-		case "high":
-		case "xhigh":
-			return ThinkingLevel.HIGH
-		default:
-			return ThinkingLevel.LOW
-	}
-}
 
 function getGeminiMaxOutputTokens(modelId: string, modelMaxTokens?: number): number | undefined {
 	if (!isGeminiFlashModel(modelId)) {
@@ -67,13 +54,6 @@ export class GeminiHandler implements ApiHandler {
 	private get baseUrl() {
 		return this.ctx.profile.baseUrl
 	}
-	private get reasoningEffort() {
-		return this.config?.reasoning?.effort
-	}
-	private get thinkingBudgetTokens() {
-		return this.config?.reasoning?.thinkingBudget ?? 0
-	}
-
 	private ensureClient(): GoogleGenAI {
 		if (!this.client) {
 			const externalHeaders = buildExternalBasicHeaders()
@@ -125,16 +105,7 @@ export class GeminiHandler implements ApiHandler {
 		const contents = messages.map(convertAnthropicMessageToGemini)
 		const responseToolCallCount = new Map<string, number>()
 
-		const _thinkingBudget = this.thinkingBudgetTokens
-		const maxBudget = info.capabilities?.thinking?.maxBudget ?? 24576
-		const thinkingBudget = Math.min(_thinkingBudget, maxBudget)
-		let thinkingLevel: ThinkingLevel | undefined
-		const rawReasoningEffort = (this.reasoningEffort || "").toLowerCase()
-		const normalizedReasoningEffort = !rawReasoningEffort || rawReasoningEffort === "none" ? "low" : rawReasoningEffort
-		if (info.capabilities?.thinking?.effortLevels) {
-			thinkingLevel = mapReasoningEffortToGeminiThinkingLevel(normalizedReasoningEffort)
-		}
-
+		const thinkingConfig = resolveGeminiThinking(info.capabilities, this.config?.reasoning)
 		const maxOutputTokens = getGeminiMaxOutputTokens(modelId, info.capabilities?.maxTokens)
 		const requestConfig: GenerateContentConfig = {
 			httpOptions: this.baseUrl ? { baseUrl: this.baseUrl } : undefined,
@@ -143,13 +114,7 @@ export class GeminiHandler implements ApiHandler {
 			...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
 		}
 
-		if (info.capabilities?.thinking) {
-			;(requestConfig as any).thinkingConfig = {
-				thinkingBudget: thinkingLevel ? undefined : thinkingBudget,
-				thinkingLevel,
-				includeThoughts: thinkingBudget > 0 || !!thinkingLevel,
-			}
-		}
+		if (thinkingConfig) requestConfig.thinkingConfig = thinkingConfig
 
 		const sdkCallStartTime = Date.now()
 		let responseId: string | undefined
@@ -374,13 +339,14 @@ export class GeminiHandler implements ApiHandler {
 
 	getModel(): { id: GeminiModelId; info: ModelInfo } {
 		const mId = this.modelId || this.modelInfo?.id
-		if (this.modelInfo) {
-			return { id: (mId || geminiDefaultModelId) as GeminiModelId, info: this.modelInfo }
+		if (mId && this.modelInfo?.id === mId) {
+			return { id: mId as GeminiModelId, info: this.modelInfo }
 		}
 		if (mId && mId in geminiModels) {
 			const id = mId as GeminiModelId
 			return { id, info: geminiModels[id] }
 		}
+		if (mId) return { id: mId as GeminiModelId, info: { id: mId } }
 		return { id: geminiDefaultModelId, info: geminiModels[geminiDefaultModelId] }
 	}
 
