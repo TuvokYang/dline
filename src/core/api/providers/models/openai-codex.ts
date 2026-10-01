@@ -16,7 +16,6 @@ export const openAiCodexModelInfoSaneDefaults: Omit<ModelInfo, "id"> = {
 		contextWindow: 372_000,
 		supportsImages: true,
 		supportsPromptCache: true,
-		supportsReasoning: true,
 		supportsStreaming: true,
 	},
 	pricing: { inputPrice: 0, outputPrice: 0 },
@@ -30,6 +29,7 @@ function codexFrontierModel(id: string, details: Pick<ModelInfo, "name" | "descr
 		apiFormats: [...(openAiCodexModelInfoSaneDefaults.apiFormats ?? [])],
 		capabilities: {
 			...openAiCodexModelInfoSaneDefaults.capabilities,
+			supportsReasoning: true,
 			tools: [...(openAiCodexModelInfoSaneDefaults.capabilities?.tools ?? [])],
 		},
 		pricing: { ...openAiCodexModelInfoSaneDefaults.pricing },

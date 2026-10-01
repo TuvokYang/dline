@@ -9,7 +9,7 @@ import {
 import { ModelInfo, OpenAiCodexModelId, openAiCodexDefaultModelId, openAiCodexModels } from "@shared/api"
 import { providerFetch } from "@shared/net"
 import { observeProviderStream } from "@shared/provider-attempt-observer"
-import { normalizeOpenAiServiceTier, normalizeOpenaiReasoningEffort } from "@shared/storage/types"
+import { normalizeOpenAiServiceTier } from "@shared/storage/types"
 import OpenAI from "openai"
 import type { ChatCompletionTool } from "openai/resources/chat/completions"
 import * as os from "os"
@@ -30,6 +30,7 @@ import { convertToOpenAIResponsesInput } from "../transform/openai-response-form
 import { ApiStream } from "../transform/stream"
 import { handleResponsesApiStreamResponse } from "../utils/responses_api_support"
 import { openAiCodexModelInfoSaneDefaults } from "./models/openai-codex"
+import { resolveCodexReasoning } from "./openai-codex/reasoning"
 import { canonicalizeOpenAiCodexResponseEvents } from "./openai-codex-response-events"
 
 const SAFE_CODEX_ERROR_CODES = new Set([
@@ -91,9 +92,6 @@ export class OpenAiCodexHandler implements ApiHandler {
 	}
 	private get reasoningConfig() {
 		return this.config?.reasoning
-	}
-	private get reasoningEffort() {
-		return this.reasoningConfig?.effort
 	}
 	private get serviceTier() {
 		return this.config?.serviceTierEnabled === false ? undefined : normalizeOpenAiServiceTier(this.config?.serviceTier)
@@ -395,10 +393,8 @@ export class OpenAiCodexHandler implements ApiHandler {
 		previousResponseId?: string,
 		options?: ApiRequestOptions,
 	): any {
-		// Determine reasoning effort. Explicit enableThinking=false disables Responses reasoning entirely.
-		const enableThinking = this.reasoningConfig?.enableThinking ?? true
-		const reasoningEffort = normalizeOpenaiReasoningEffort(this.reasoningEffort)
-		const includeReasoning = enableThinking && reasoningEffort !== "none"
+		const reasoning = resolveCodexReasoning(model.info.capabilities, this.reasoningConfig)
+		const includeReasoning = reasoning.enabled
 		const hostedWebSearch = options?.serverTools?.includes(ServerTool.WEB_SEARCH) === true
 		const responseTools: OpenAI.Responses.Tool[] = (tools ?? [])
 			.filter((tool) => tool.type === "function")
@@ -437,14 +433,7 @@ export class OpenAiCodexHandler implements ApiHandler {
 			// Compaction still uses its output cap for local fitting and budgeting,
 			// but the transport must omit this unsupported request parameter.
 			...(include.length > 0 ? { include } : {}),
-			...(includeReasoning
-				? {
-						reasoning: {
-							effort: reasoningEffort,
-							summary: "auto",
-						},
-					}
-				: {}),
+			...(reasoning.reasoning ? { reasoning: reasoning.reasoning } : {}),
 		}
 	}
 
@@ -886,22 +875,9 @@ export class OpenAiCodexHandler implements ApiHandler {
 	}
 
 	getModel(): { id: OpenAiCodexModelId; info: ModelInfo } {
-		const id = (this.modelId || openAiCodexDefaultModelId) as OpenAiCodexModelId
-		const bundled = openAiCodexModels[id] ?? { ...openAiCodexModelInfoSaneDefaults, id }
-		const override = this.modelInfo
-		const info: ModelInfo = override
-			? {
-					...bundled,
-					...override,
-					id,
-					capabilities:
-						bundled.capabilities || override.capabilities
-							? { ...bundled.capabilities, ...override.capabilities }
-							: undefined,
-					pricing: bundled.pricing || override.pricing ? { ...bundled.pricing, ...override.pricing } : undefined,
-				}
-			: bundled
-
+		const id = (this.modelId || this.modelInfo?.id || openAiCodexDefaultModelId) as OpenAiCodexModelId
+		const info =
+			this.modelInfo?.id === id ? this.modelInfo : (openAiCodexModels[id] ?? { ...openAiCodexModelInfoSaneDefaults, id })
 		return { id, info }
 	}
 }

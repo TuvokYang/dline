@@ -13,15 +13,10 @@ import { OpenAiPromptCacheMode } from "@shared/proto/dline/provider/openai"
 import { openAiEndpointToApiFormat, prioritizeApiFormat, resolveApiFormat } from "@shared/providers/api-format"
 import { buildEffectiveModelInfo } from "@shared/providers/effective-model-info"
 import { normalizeOpenAIResponsesStreamIdleTimeoutSeconds } from "@shared/providers/openai-stream"
-import { normalizeOpenAiServiceTier, normalizeOpenaiReasoningEffort } from "@shared/storage/types"
+import { normalizeOpenAiServiceTier } from "@shared/storage/types"
 import { calculateApiCostOpenAI } from "@utils/cost"
 import OpenAI from "openai"
-import type {
-	ChatCompletionChunk,
-	ChatCompletionFunctionTool,
-	ChatCompletionReasoningEffort,
-	ChatCompletionTool,
-} from "openai/resources/chat/completions"
+import type { ChatCompletionChunk, ChatCompletionFunctionTool, ChatCompletionTool } from "openai/resources/chat/completions"
 import { ClineStorageMessage } from "@/shared/messages/content"
 import { isO1Model } from "@/shared/resolve-prompt-profile"
 import { Logger } from "@/shared/services/Logger"
@@ -41,6 +36,7 @@ import { convertToR1Format } from "../transform/r1-format"
 import { ApiStream } from "../transform/stream"
 import { getOpenAIToolParams, ToolCallProcessor } from "../transform/tool-call-processor"
 import { handleResponsesApiStreamResponse } from "../utils/responses_api_support"
+import { encodeOpenAIChatReasoning, encodeOpenAIResponsesReasoning, resolveOpenAIReasoning } from "./openai/reasoning"
 import { createOpenAIClientForProfile } from "./openai-client-factory"
 
 type OpenAICompatibleCompletionUsage = NonNullable<ChatCompletionChunk["usage"]> & {
@@ -99,16 +95,13 @@ export class OpenAiHandler implements ApiHandler {
 		return this.ctx.profile.apiKey
 	}
 	private get modelId() {
-		return this.ctx.profile.modelId || ""
+		return this.ctx.profile.modelId || this.ctx.profile.modelInfo?.id || ""
 	}
 	private get modelInfo() {
 		return this.ctx.profile.modelInfo as ModelInfo | undefined
 	}
 	private get baseUrl() {
 		return this.ctx.profile.baseUrl
-	}
-	private get reasoningEffort() {
-		return this.config?.reasoning?.effort
 	}
 	private get serviceTier() {
 		return this.config?.serviceTierEnabled === true ? normalizeOpenAiServiceTier(this.config?.serviceTier) : undefined
@@ -201,7 +194,9 @@ export class OpenAiHandler implements ApiHandler {
 	private buildModelInfo(): ModelInfo {
 		return buildEffectiveModelInfo(
 			this.modelId,
-			this.modelInfo ?? openAiModels[this.modelId] ?? openAiModelInfoSaneDefaults,
+			(this.modelInfo?.id === this.modelId ? this.modelInfo : undefined) ??
+				openAiModels[this.modelId] ??
+				openAiModelInfoSaneDefaults,
 			{
 				capabilities: this.config?.capabilities,
 				pricing: this.config?.pricing,
@@ -265,7 +260,6 @@ export class OpenAiHandler implements ApiHandler {
 					? Number(configTemp)
 					: undefined
 
-		let reasoningEffort: ChatCompletionReasoningEffort | undefined
 		let maxTokens: number | undefined
 
 		if (options?.generation?.purpose === "compaction") {
@@ -280,19 +274,10 @@ export class OpenAiHandler implements ApiHandler {
 			openAiMessages = convertToR1Format([{ role: "user", content: systemPrompt }, ...messages])
 		}
 
-		const reasoningConfig = this.config?.reasoning
-		const enableThinking = reasoningConfig?.enableThinking ?? true
-		const thinkingBudget = enableThinking ? (reasoningConfig?.thinkingBudget ?? 0) : 0
-		if (enableThinking && thinkingBudget > 0) {
-			// Budget mode: use enable_thinking + thinking_budget, no effort
+		const reasoning = resolveOpenAIReasoning(model.info.capabilities, this.config?.reasoning)
+		const reasoningParams = encodeOpenAIChatReasoning(model.info.capabilities, this.config?.reasoning)
+		if (reasoning.mode === "budget" && reasoning.enabled) {
 			openAiMessages = [{ role: "developer", content: systemPrompt }, ...convertToOpenAiMessages(messages)]
-			reasoningEffort = undefined
-		} else if (enableThinking) {
-			// Effort mode: send reasoning_effort based on the config value, not model ID prefix
-			const requestedEffort = normalizeOpenaiReasoningEffort(this.reasoningEffort)
-			reasoningEffort = requestedEffort === "none" ? undefined : (requestedEffort as ChatCompletionReasoningEffort)
-		} else {
-			reasoningEffort = undefined
 		}
 
 		// o1 accepts the Lite XML contract in user messages and cannot replay native tool roles.
@@ -324,13 +309,7 @@ export class OpenAiHandler implements ApiHandler {
 				...(promptCache.promptCacheOptions ? { prompt_cache_options: promptCache.promptCacheOptions } : {}),
 				...(this.serviceTier ? { service_tier: this.serviceTier } : {}),
 			}
-			// Always pass enable_thinking so explicit false from ThinkingControl disables provider reasoning.
-			requestParams.enable_thinking = enableThinking
-			if (enableThinking && thinkingBudget > 0) {
-				requestParams.thinking_budget = thinkingBudget
-			} else if (enableThinking && reasoningEffort) {
-				requestParams.reasoning_effort = reasoningEffort
-			}
+			Object.assign(requestParams, reasoningParams)
 			if (this.config?.streamIncludeUsage !== false) {
 				requestParams.stream_options = { include_usage: true }
 			}
@@ -479,8 +458,8 @@ export class OpenAiHandler implements ApiHandler {
 		if (hostedWebSearch) {
 			responseTools.push({ type: "web_search" })
 		}
-		const enableThinking = this.config?.reasoning?.enableThinking ?? true
-		const reasoningEffort = normalizeOpenaiReasoningEffort(this.reasoningEffort)
+		const reasoning = encodeOpenAIResponsesReasoning(model.info.capabilities, this.config?.reasoning)
+		const reasoningEnabled = reasoning !== undefined && reasoning.effort !== "none"
 		const temperature = model.info.capabilities?.temperature ?? this.config?.temperature
 		const buildParams = (mode: OpenAIPromptCacheProjectionMode): OpenAI.Responses.ResponseCreateParamsStreaming => {
 			const promptCache = projectOpenAIResponsesPromptCache({
@@ -514,10 +493,8 @@ export class OpenAiHandler implements ApiHandler {
 					? { include: ["web_search_call.results" as const, "web_search_call.action.sources" as const] }
 					: {}),
 				...(this.serviceTier ? { service_tier: this.serviceTier } : {}),
-				...(enableThinking && reasoningEffort !== "none"
-					? { reasoning: { effort: reasoningEffort as ChatCompletionReasoningEffort, summary: "auto" } }
-					: {}),
-				...(!enableThinking && typeof temperature === "number" ? { temperature } : {}),
+				...(reasoning ? { reasoning } : {}),
+				...(!reasoningEnabled && typeof temperature === "number" ? { temperature } : {}),
 			}
 		}
 

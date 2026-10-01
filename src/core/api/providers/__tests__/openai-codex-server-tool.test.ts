@@ -1,7 +1,8 @@
 import { openAiCodexModels } from "@core/api/providers/models/openai-codex"
 import { mockFetchForTesting } from "@shared/net"
-import { ApiFormat, ServerTool } from "@shared/proto/dline/models/metadata"
+import { ApiFormat, type ModelCapabilities, ServerTool } from "@shared/proto/dline/models/metadata"
 import { ApiProfile } from "@shared/proto/dline/profile"
+import type { ReasoningConfig } from "@shared/proto/dline/provider/common"
 import { OpenAiCodexProviderConfig } from "@shared/proto/dline/provider/openai_codex"
 import { resolveProfileModelInfo } from "@shared/providers/profile-model-info"
 import { expect } from "chai"
@@ -24,7 +25,25 @@ const localTools: ChatCompletionTool[] = [
 
 function createHandler(): OpenAiCodexHandler {
 	return new OpenAiCodexHandler({
-		profile: ApiProfile.create({ id: "profile-a", provider: "openai-codex", modelId: "gpt-5.6-sol" }),
+		profile: ApiProfile.create({
+			id: "profile-a",
+			provider: "openai-codex",
+			modelId: "gpt-5.6-sol",
+			modelInfo: {
+				id: "gpt-5.6-sol",
+				apiFormats: [ApiFormat.OPENAI_RESPONSES],
+				capabilities: {
+					thinking: {
+						supported: true,
+						mode: "effort",
+						effortLevels: ["low"],
+						defaultEnabled: true,
+						defaultEffort: "low",
+						canDisable: false,
+					},
+				},
+			},
+		}),
 		mode: "act",
 		workspaceId: "workspace-a",
 		ulid: "task-a",
@@ -54,6 +73,109 @@ function deferred<T>() {
 describe("OpenAiCodexHandler hosted Web Search", () => {
 	afterEach(() => {
 		vi.restoreAllMocks()
+	})
+
+	const reasoningCases: {
+		name: string
+		capabilities?: ModelCapabilities
+		config?: ReasoningConfig
+		reasoning?: Record<string, unknown>
+		enabled?: boolean
+	}[] = [
+		{ name: "missing declaration", capabilities: { supportsReasoning: true }, config: { effort: "high" } },
+		{
+			name: "unsupported declaration",
+			capabilities: { thinking: { supported: false, mode: "effort", effortLevels: ["high"] } },
+			config: { effort: "high" },
+		},
+		{
+			name: "coarse veto",
+			capabilities: { supportsReasoning: false, thinking: { supported: true, mode: "effort", effortLevels: ["high"] } },
+			config: { effort: "high" },
+		},
+		{ name: "unknown defaults", capabilities: { thinking: { supported: true, mode: "effort", effortLevels: ["high"] } } },
+		{
+			name: "empty list",
+			capabilities: { thinking: { supported: true, mode: "effort", defaultEnabled: true, effortLevels: [] } },
+			config: { effort: "high" },
+			reasoning: { summary: "auto" },
+			enabled: true,
+		},
+		{
+			name: "declared default",
+			capabilities: {
+				thinking: { supported: true, mode: "effort", effortLevels: ["low"], defaultEnabled: true, defaultEffort: "low" },
+			},
+			reasoning: { effort: "low", summary: "auto" },
+			enabled: true,
+		},
+		{
+			name: "required stale disable",
+			capabilities: { thinking: { supported: true, mode: "effort", canDisable: false, effortLevels: ["low"] } },
+			config: { effort: "none", enableThinking: false },
+			reasoning: { summary: "auto" },
+			enabled: true,
+		},
+		{
+			name: "legal none",
+			capabilities: { thinking: { supported: true, mode: "effort", effortLevels: ["none", "high"] } },
+			config: { effort: "none" },
+			reasoning: { effort: "none" },
+		},
+		{
+			name: "declared Codex ultra",
+			capabilities: { thinking: { supported: true, mode: "effort", effortLevels: ["ultra"] } },
+			config: { effort: "ultra" },
+			reasoning: { effort: "ultra", summary: "auto" },
+			enabled: true,
+		},
+		{
+			name: "declared maximum",
+			capabilities: { thinking: { supported: true, mode: "effort", effortLevels: ["max"] } },
+			config: { effort: "max" },
+			reasoning: { effort: "max", summary: "auto" },
+			enabled: true,
+		},
+		{
+			name: "budget is not a Responses control",
+			capabilities: { thinking: { supported: true, mode: "budget" } },
+			config: { thinkingBudget: 1600 },
+		},
+	]
+	it.each(reasoningCases)("encodes $name at the public Codex boundary", async ({
+		capabilities,
+		config,
+		reasoning,
+		enabled,
+	}) => {
+		const modelId = "gpt-6-astra"
+		const profile = ApiProfile.create({
+			id: "profile-declared",
+			provider: "openai-codex",
+			modelId,
+			modelInfo: { id: modelId, capabilities },
+			openaiCodex: { reasoning: config },
+		})
+		const handler = new OpenAiCodexHandler({ profile, mode: "act" })
+		vi.spyOn(openAiCodexOAuthManager, "getCredentialContext").mockResolvedValue({
+			accessToken: "test-token",
+			expires: 1_900_000_000_000,
+			accountId: "test-account",
+		})
+		const bodies: Record<string, unknown>[] = []
+		;(handler as unknown as { executeRequest: (...args: unknown[]) => AsyncGenerator<never> }).executeRequest =
+			async function* (primary, fallback) {
+				bodies.push(primary as Record<string, unknown>, fallback as Record<string, unknown>)
+			}
+		await collect(handler.createMessage("system", [{ role: "user", content: "hi" }]))
+		expect(handler.getModel().info).to.deep.equal(profile.modelInfo)
+		expect(bodies).to.have.length(2)
+		for (const body of bodies) {
+			expect(body.model).to.equal(modelId)
+			expect(body.reasoning).to.deep.equal(reasoning)
+			expect(body.include).to.deep.equal(enabled ? ["reasoning.encrypted_content"] : undefined)
+			expect(body.thinking_budget).to.equal(undefined)
+		}
 	})
 
 	it("declares hosted Web Search support for Responses models", () => {
@@ -216,6 +338,8 @@ describe("OpenAiCodexHandler hosted Web Search", () => {
 		expect(handler.getModel()).to.deep.include({ id: "gpt-codex-remote" })
 		expect(handler.getModel().info).to.deep.include({ id: "gpt-codex-remote" })
 		expect(handler.getModel().info.capabilities?.supportsPromptCache).to.equal(true)
+		expect(handler.getModel().info.capabilities?.supportsReasoning).to.equal(undefined)
+		expect(handler.getModel().info.capabilities?.thinking).to.equal(undefined)
 	})
 
 	it("omits the unsupported request-scoped compaction cap from primary and fallback Responses bodies", () => {
