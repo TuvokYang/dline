@@ -1,3 +1,4 @@
+import { ModelRegistry } from "@core/model-registry/ModelRegistry"
 import { ApiFormat, ServerTool } from "@shared/proto/dline/models/metadata"
 import { ApiProfile } from "@shared/proto/dline/profile"
 import { BaseProviderConfig, type ReasoningConfig } from "@shared/proto/dline/provider/common"
@@ -6,9 +7,10 @@ import type OpenAI from "openai"
 import { afterEach, describe, it, vi } from "vitest"
 import type { ClineStorageMessage } from "@/shared/messages/content"
 import { createRequestApiScope } from "../../../task/RequestApiScope"
-import type { ApiRequestOptions } from "../../index"
+import { type ApiRequestOptions, buildApiHandlerFromProfile } from "../../index"
 import { OutputLimitExceededError } from "../../stream/OutputLimitExceededError"
 import { DeepSeekHandler } from "../deepseek"
+import { deepSeekModels } from "../models/deepseek"
 
 interface StreamChunk {
 	choices?: Array<{
@@ -803,6 +805,37 @@ describe("DeepSeekHandler", () => {
 			expect(rejected).to.equal(true)
 			expect(requestSignal?.aborted).to.equal(true)
 		})
+	})
+
+	it("consumes a saved context override through the production runtime factory", () => {
+		vi.spyOn(ModelRegistry, "getInstance").mockReturnValue({
+			getProviderModels: () => ({
+				provider: "deepseek",
+				providerName: "DeepSeek",
+				billingMode: "token",
+				models: deepSeekModels,
+				defaultModelId: "deepseek-v4-flash",
+			}),
+		} as unknown as ModelRegistry)
+		const profile = ApiProfile.create({
+			name: "deepseek-context-profile",
+			provider: "deepseek",
+			modelId: "deepseek-v4-pro",
+			modelInfo: {
+				id: "stale-model",
+				capabilities: { contextWindow: 64_000, supportsReasoning: false },
+			},
+			deepseek: BaseProviderConfig.create({ capabilities: { contextWindow: 262_144 } }),
+		})
+
+		const handler = buildApiHandlerFromProfile({ actModeProfile: profile.name }, "act", profile)
+		const resolved = handler.getModel()
+
+		expect(resolved.id).to.equal("deepseek-v4-pro")
+		expect(resolved.info.id).to.equal("deepseek-v4-pro")
+		expect(resolved.info.capabilities?.contextWindow).to.equal(262_144)
+		expect(resolved.info.capabilities?.maxTokens).to.equal(384_000)
+		expect(resolved.info.capabilities?.supportsReasoning).to.equal(true)
 	})
 
 	it("uses model metadata supplied by the profile registry", () => {

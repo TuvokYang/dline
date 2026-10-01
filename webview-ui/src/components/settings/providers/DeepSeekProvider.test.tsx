@@ -6,6 +6,7 @@ import { BaseProviderConfig } from "@shared/proto/dline/provider/common"
 import { fireEvent, render, screen } from "@testing-library/react"
 import React from "react"
 import { describe, expect, it, vi } from "vitest"
+import { flushPendingDebouncedInputs } from "../utils/useDebouncedInput"
 import { DeepSeekProvider } from "./DeepSeekProvider"
 import type { ApiProfile } from "./ProviderProfile"
 
@@ -14,6 +15,7 @@ const models = {
 		id: "deepseek-v4-pro",
 		apiFormats: [ApiFormat.OPENAI_CHAT, ApiFormat.OPENAI_RESPONSES, ApiFormat.ANTHROPIC_CHAT],
 		capabilities: {
+			contextWindow: 1_000_000,
 			supportsReasoning: true,
 			thinking: {
 				supported: true,
@@ -28,6 +30,7 @@ const models = {
 		id: "deepseek-v4-flash",
 		apiFormats: [ApiFormat.OPENAI_CHAT, ApiFormat.OPENAI_RESPONSES, ApiFormat.ANTHROPIC_CHAT],
 		capabilities: {
+			contextWindow: 1_000_000,
 			supportsReasoning: true,
 			thinking: {
 				supported: true,
@@ -67,6 +70,7 @@ vi.mock("../common/ModelAutocomplete", () => ({
 	),
 }))
 vi.mock("@vscode/webview-ui-toolkit/react", () => ({
+	VSCodeTextField: ({ children: _children, ...props }: React.InputHTMLAttributes<HTMLInputElement>) => <input {...props} />,
 	VSCodeCheckbox: ({
 		checked,
 		children,
@@ -192,6 +196,39 @@ describe("DeepSeekProvider", () => {
 		const update = onUpdate.mock.calls.at(-1)?.[0] as { deepseek?: { reasoning?: Record<string, unknown> } }
 		expect(update.deepseek?.reasoning).not.toHaveProperty("effort")
 		expect(update.deepseek?.reasoning).not.toHaveProperty("thinkingBudget")
+	})
+
+	it("persists a context override without losing a preceding API format edit or existing provider settings", async () => {
+		const onUpdate = vi.fn()
+		const profile = ProtoApiProfile.create({
+			id: "deepseek-context-profile",
+			provider: "deepseek",
+			modelId: "deepseek-v4-pro",
+			deepseek: BaseProviderConfig.create({
+				apiFormat: ApiFormat.OPENAI_CHAT,
+				reasoning: { enableThinking: false },
+				capabilities: { maxTokens: 12_345 },
+			}),
+		})
+
+		render(<DeepSeekProvider onUpdate={onUpdate} profile={profile} showModelOptions={true} />)
+
+		const format = screen.getByRole("combobox", { name: "API Format" })
+		fireEvent.change(format, { target: { value: String(ApiFormat.OPENAI_RESPONSES) } })
+
+		fireEvent.click(screen.getByRole("button", { name: "Model Configuration" }))
+		const contextWindow = screen.getByRole("textbox", { name: "Context Window Size" })
+		expect(contextWindow).toHaveValue("1000000")
+		fireEvent.input(contextWindow, { target: { value: "262144" } })
+		await flushPendingDebouncedInputs()
+
+		expect(onUpdate).toHaveBeenLastCalledWith({
+			deepseek: expect.objectContaining({
+				apiFormat: ApiFormat.OPENAI_RESPONSES,
+				reasoning: { enableThinking: false },
+				capabilities: expect.objectContaining({ maxTokens: 12_345, contextWindow: 262_144 }),
+			}),
+		})
 	})
 
 	it("shows metadata-supported API formats while retaining the complete model catalog", () => {

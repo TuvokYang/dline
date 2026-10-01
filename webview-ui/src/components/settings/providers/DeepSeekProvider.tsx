@@ -1,19 +1,22 @@
 import type { ModelInfo } from "@shared/proto/dline/models"
-import { ApiFormat, ServerTool } from "@shared/proto/dline/models/metadata"
+import { ApiFormat, type ModelCapabilities, type ModelPricing, ServerTool } from "@shared/proto/dline/models/metadata"
 import type { ReasoningConfig } from "@shared/proto/dline/provider/common"
 import { BaseProviderConfig } from "@shared/proto/dline/provider/common"
 import { resolveApiFormat } from "@shared/providers/api-format"
+import { mergeCapabilities, mergePricing } from "@shared/providers/effective-model-info"
 import { resolveProfileModelId, resolveProfileModelInfo } from "@shared/providers/profile-model-info"
 import { VSCodeCheckbox } from "@vscode/webview-ui-toolkit/react"
-import { useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { ApiFormatSelector } from "../common/ApiFormatSelector"
 import { ApiKeyField } from "../common/ApiKeyField"
 import { ModelAutocomplete } from "../common/ModelAutocomplete"
+import { ModelConfiguration } from "../common/ModelConfiguration"
 import { ModelInfoView } from "../common/ModelInfoView"
 import ReasoningEffortSelector from "../ReasoningEffortSelector"
 import { resolveDeepSeekThinkingPreference } from "./deepseek-thinking"
 import type { ApiProfile } from "./ProviderProfile"
 import { ProviderWebToolsSettings } from "./ProviderWebToolsSettings"
+import { usePendingProviderConfig } from "./usePendingProviderConfig"
 import { useProviderModelOptions } from "./useProviderModelOptions"
 
 /**
@@ -32,6 +35,16 @@ interface DeepSeekProviderProps {
  * Reasoning effort stored in deepseek.
  */
 export const DeepSeekProvider = ({ showModelOptions, isPopup, profile, onUpdate }: DeepSeekProviderProps) => {
+	const propConfig = useMemo(() => profile.deepseek ?? BaseProviderConfig.create(), [profile.deepseek])
+	const { config: pc, latest, publish } = usePendingProviderConfig(profile.id, propConfig)
+	const updateProfile = useCallback(
+		(updates: Partial<ApiProfile>) => {
+			if (updates.deepseek) publish(updates.deepseek)
+			onUpdate(updates)
+		},
+		[onUpdate, publish],
+	)
+	const configToUpdate = useCallback(() => latest(), [latest])
 	const {
 		models: deepSeekModels,
 		defaultModelId: deepSeekDefaultModelId,
@@ -47,7 +60,8 @@ export const DeepSeekProvider = ({ showModelOptions, isPopup, profile, onUpdate 
 	})
 
 	const modelId = resolveProfileModelId(profile, { defaultModelId: deepSeekDefaultModelId })
-	const pc = profile.deepseek ?? BaseProviderConfig.create()
+	const modelDefaults: ModelInfo =
+		deepSeekModels[modelId] ?? (profile.modelInfo?.id === modelId ? profile.modelInfo : ({ id: modelId } as ModelInfo))
 	const modelInfo: ModelInfo = resolveProfileModelInfo(profile, {
 		models: deepSeekModels,
 		defaultModelId: deepSeekDefaultModelId,
@@ -74,13 +88,18 @@ export const DeepSeekProvider = ({ showModelOptions, isPopup, profile, onUpdate 
 	}, [configuredEnabled])
 
 	const persistReasoning = (reasoning: ReasoningConfig) => {
-		const base = profile.deepseek ?? BaseProviderConfig.create()
-		onUpdate({
-			deepseek: {
-				...base,
-				reasoning,
-			},
-		})
+		const base = configToUpdate()
+		updateProfile({ deepseek: { ...base, reasoning } })
+	}
+
+	const handleCapabilitiesUpdate = (updates: Partial<ModelCapabilities>) => {
+		const base = configToUpdate()
+		updateProfile({ deepseek: { ...base, capabilities: mergeCapabilities(base.capabilities, updates) } })
+	}
+
+	const handlePricingUpdate = (updates: Partial<ModelPricing>) => {
+		const base = configToUpdate()
+		updateProfile({ deepseek: { ...base, pricing: mergePricing(base.pricing, updates) } })
 	}
 
 	const persistEffort = (value: string) => {
@@ -110,12 +129,13 @@ export const DeepSeekProvider = ({ showModelOptions, isPopup, profile, onUpdate 
 							// Only catalog entries carry metadata; a discovered id keeps
 							// the profile's existing model info untouched.
 							const nextModel = deepSeekModels[newModelId]
-							onUpdate({
+							const base = configToUpdate()
+							updateProfile({
 								modelId: newModelId,
 								...(nextModel ? { modelInfo: nextModel } : {}),
 								deepseek: {
-									...pc,
-									apiFormat: resolveApiFormat(pc.apiFormat, nextModel, ApiFormat.OPENAI_CHAT),
+									...base,
+									apiFormat: resolveApiFormat(base.apiFormat, nextModel, ApiFormat.OPENAI_CHAT),
 								},
 							})
 						}}
@@ -128,7 +148,10 @@ export const DeepSeekProvider = ({ showModelOptions, isPopup, profile, onUpdate 
 					<ApiFormatSelector
 						apiFormats={modelInfo?.apiFormats}
 						fallbackApiFormat={ApiFormat.OPENAI_CHAT}
-						onChange={(apiFormat) => onUpdate({ deepseek: { ...pc, apiFormat } })}
+						onChange={(apiFormat) => {
+							const base = configToUpdate()
+							updateProfile({ deepseek: { ...base, apiFormat } })
+						}}
 						selectedApiFormat={selectedApiFormat}
 					/>
 
@@ -179,6 +202,15 @@ export const DeepSeekProvider = ({ showModelOptions, isPopup, profile, onUpdate 
 							)}
 						</>
 					) : null}
+
+					<ModelConfiguration
+						capabilities={pc.capabilities}
+						defaults={modelDefaults}
+						fields={{ capabilities: ["contextWindow"] }}
+						onCapabilitiesUpdate={handleCapabilitiesUpdate}
+						onPricingUpdate={handlePricingUpdate}
+						pricing={pc.pricing}
+					/>
 
 					<ModelInfoView isPopup={isPopup} modelInfo={modelInfo} selectedModelId={modelId} />
 				</>
