@@ -7,7 +7,11 @@ import { ApiProfile } from "@shared/proto/dline/profile"
 import { Logger } from "@shared/services/Logger"
 import axios from "axios"
 import { afterEach, describe, expect, it, vi } from "vitest"
+import { ClineAccountService } from "@/services/account/ClineAccountService"
+import { AuthService } from "@/services/auth/AuthService"
+import { ClineHandler } from "../cline"
 import { OpenRouterHandler } from "../openrouter"
+import { VercelAIGatewayHandler } from "../vercel-ai-gateway"
 
 vi.mock("axios", () => ({ default: { get: vi.fn() } }))
 
@@ -107,6 +111,46 @@ describe("OpenRouterHandler", () => {
 		}
 		expect(create.mock.calls[0][0].reasoning).toEqual({ enabled: false })
 		expect(create.mock.calls[0][0].include_reasoning).toBe(false)
+	})
+
+	describe.each([
+		{ provider: "openrouter", Handler: OpenRouterHandler },
+		{ provider: "cline", Handler: ClineHandler },
+		{ provider: "vercel-ai-gateway", Handler: VercelAIGatewayHandler },
+	])("$provider budget preference presence", ({ provider, Handler }) => {
+		it.each([
+			{ config: undefined, enabled: true },
+			{ config: {}, enabled: true },
+			{ config: { thinkingBudget: 0 }, enabled: false },
+		])("preserves $config in the actual gateway request", async ({ config, enabled }) => {
+			if (provider === "cline") {
+				vi.spyOn(ClineAccountService, "getInstance").mockReturnValue({} as ClineAccountService)
+				vi.spyOn(AuthService, "getInstance").mockReturnValue({} as AuthService)
+			}
+			const modelId = "private/opaque"
+			const handler = new Handler({
+				profile: ApiProfile.create({
+					provider,
+					modelId,
+					modelInfo: {
+						id: modelId,
+						capabilities: { thinking: { supported: true, mode: "budget", defaultEnabled: true, maxBudget: 2048 } },
+					},
+					openrouter: provider === "openrouter" ? { reasoning: config } : undefined,
+					clineProvider: provider === "cline" ? { reasoning: config } : undefined,
+					vercelAiGateway: provider === "vercel-ai-gateway" ? { reasoning: config } : undefined,
+				}),
+				mode: "act",
+			})
+			const create = vi.fn().mockResolvedValue(createAsyncIterable())
+			vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
+				chat: { completions: { create } },
+			})
+			for await (const _chunk of handler.createMessage("system", [{ role: "user", content: "hi" }])) {
+			}
+			expect(create.mock.calls[0][0].reasoning).toEqual({ enabled })
+			expect(create.mock.calls[0][0].include_reasoning).toBe(enabled)
+		})
 	})
 
 	it("should handle usage-only chunks when delta is missing", async () => {

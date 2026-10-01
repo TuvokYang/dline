@@ -42,7 +42,7 @@ export class OpenRouterHandler implements ApiHandler {
 		return this.config?.reasoning?.effort
 	}
 	private get thinkingBudgetTokens() {
-		return this.config?.reasoning?.thinkingBudget ?? 0
+		return this.config?.reasoning?.thinkingBudget
 	}
 
 	private ensureClient(): OpenAI {
