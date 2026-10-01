@@ -1,12 +1,22 @@
-import type { ModelCapabilities } from "@shared/proto/dline/models/metadata"
+import type { ModelCapabilities, ThinkingConfig } from "@shared/proto/dline/models/metadata"
 import type { ReasoningConfig } from "@shared/proto/dline/provider/common"
-import { clampThinkingBudget } from "@shared/providers/thinking-budget"
+import { clampThinkingBudget, resolveThinkingBudgetBounds } from "@shared/providers/thinking-budget"
 import { resolveAnthropicReasoning } from "../anthropic/reasoning"
 
 export interface VercelReasoning {
 	enabled: boolean
 	omitSampling: boolean
 	reasoning?: Record<string, unknown>
+}
+
+function encodeEffort(preference: string | undefined, thinking: ThinkingConfig): string | undefined {
+	let effort = preference?.trim().toLowerCase()
+	if (effort === "ultra" && thinking.effortLevels?.includes("max")) effort = "max"
+	return effort &&
+		["minimal", "low", "medium", "high", "xhigh", "max"].includes(effort) &&
+		thinking.effortLevels?.includes(effort)
+		? effort
+		: undefined
 }
 
 /** Vercel's Chat Completions gateway maps reasoning.effort to the declared upstream mode. */
@@ -37,12 +47,16 @@ export function resolveVercelReasoning(
 		config?.effort?.trim().toLowerCase() === "none" ||
 		(thinking.mode === "budget" && config?.thinkingBudget === 0)
 	if (disabled && thinking.canDisable !== false) return { ...unsupported, reasoning: { enabled: false } }
+	const hasPreference =
+		thinking.mode === "budget"
+			? clampThinkingBudget(config?.thinkingBudget ?? 0, thinking) !== undefined
+			: encodeEffort(config?.effort, thinking) !== undefined
 	const enabled =
 		thinking.canDisable === false ||
-		(!disabled &&
-			(config?.enableThinking ?? Boolean(config?.effort || (config?.thinkingBudget ?? 0) > 0 || thinking.defaultEnabled)))
+		(!disabled && (config?.enableThinking ?? (hasPreference || thinking.defaultEnabled === true)))
 	if (!enabled) return unsupported
 	if (thinking.mode === "budget") {
+		if (!resolveThinkingBudgetBounds(thinking)) return unsupported
 		const budget = disabled ? undefined : config?.thinkingBudget
 		if (budget === undefined) return { enabled: true, omitSampling: true, reasoning: { enabled: true } }
 		const budgetTokens = clampThinkingBudget(budget, thinking)
@@ -53,9 +67,6 @@ export function resolveVercelReasoning(
 			reasoning: { max_tokens: budgetTokens },
 		}
 	}
-	let effort = disabled ? undefined : config?.effort?.trim().toLowerCase() || thinking.defaultEffort
-	if (effort === "ultra" && thinking.effortLevels?.includes("max")) effort = "max"
-	const legal =
-		effort && ["minimal", "low", "medium", "high", "xhigh", "max"].includes(effort) && thinking.effortLevels?.includes(effort)
-	return { enabled: true, omitSampling: false, reasoning: legal ? { effort } : { enabled: true } }
+	const effort = disabled ? undefined : encodeEffort(config?.effort?.trim() || thinking.defaultEffort, thinking)
+	return { enabled: true, omitSampling: false, reasoning: effort ? { effort } : { enabled: true } }
 }

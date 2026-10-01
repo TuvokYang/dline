@@ -71,6 +71,51 @@ describe.each(["openrouter", "vercel"] as const)("%s effective reasoning payload
 			payload: { effort: "low" },
 		},
 		{
+			name: "effort mode ignores a budget preference",
+			modelId: "private/opaque",
+			capabilities: { thinking: { supported: true, mode: "effort", effortLevels: ["low"], defaultEnabled: false } },
+			config: { thinkingBudget: 23 },
+		},
+		{
+			name: "budget mode ignores an effort preference",
+			modelId: "private/opaque",
+			capabilities: { thinking: { supported: true, mode: "budget", minBudget: 17, maxBudget: 101 } },
+			config: { effort: "low" },
+		},
+		{
+			name: "undeclared effort does not activate optional thinking",
+			modelId: "private/opaque",
+			capabilities: { thinking: { supported: true, mode: "effort", effortLevels: ["low"] } },
+			config: { effort: "stale-level" },
+		},
+		{
+			name: "Anthropic effort mode ignores a budget preference",
+			modelId: "anthropic/private",
+			capabilities: { thinking: { supported: true, mode: "effort", effortLevels: ["low"], defaultEnabled: false } },
+			config: { thinkingBudget: 23 },
+		},
+		{
+			name: "an effort default does not imply default-enabled thinking",
+			modelId: "private/opaque",
+			capabilities: {
+				thinking: { supported: true, mode: "effort", effortLevels: ["low"], defaultEffort: "low", defaultEnabled: false },
+			},
+			config: {},
+		},
+		{
+			name: "invalid budget bounds reject an explicit enable without a numeric preference",
+			modelId: "private/opaque",
+			capabilities: { thinking: { supported: true, mode: "budget", minBudget: 17, maxBudget: 11 } },
+			config: { enableThinking: true },
+		},
+		{
+			name: "effort mode keeps a legal effort despite a stale zero budget",
+			modelId: "private/opaque",
+			capabilities: { thinking: { supported: true, mode: "effort", effortLevels: ["low"] } },
+			config: { effort: "low", thinkingBudget: 0 },
+			payload: { effort: "low" },
+		},
+		{
 			name: "required stale disable",
 			modelId: "anthropic/private",
 			capabilities: { thinking: { supported: true, mode: "effort", canDisable: false, effortLevels: ["low"] } },
@@ -81,7 +126,7 @@ describe.each(["openrouter", "vercel"] as const)("%s effective reasoning payload
 			name: "illegal effort",
 			modelId: "anthropic/private",
 			capabilities: { thinking: { supported: true, mode: "effort", effortLevels: [] } },
-			config: { effort: "medium" },
+			config: { enableThinking: true, effort: "medium" },
 			payload: { enabled: true },
 		},
 		{

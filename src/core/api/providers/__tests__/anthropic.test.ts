@@ -69,6 +69,18 @@ describe("AnthropicHandler", () => {
 			expected: { type: "adaptive" },
 		},
 		{
+			modelId: "opaque-effort-disabled-by-default",
+			thinking: { supported: true, mode: "effort", defaultEnabled: false, effortLevels: ["low"] },
+			reasoning: { thinkingBudget: 23 },
+			expected: undefined,
+		},
+		{
+			modelId: "opaque-effort-with-illegal-preference",
+			thinking: { supported: true, mode: "effort", effortLevels: ["low"] },
+			reasoning: { effort: "stale-level" },
+			expected: undefined,
+		},
+		{
 			modelId: "opaque-budget",
 			thinking: undefined,
 			reasoning: { enableThinking: true, thinkingBudget: 2_048 },

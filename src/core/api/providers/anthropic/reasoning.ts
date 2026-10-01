@@ -58,7 +58,10 @@ export function resolveAnthropicReasoning(
 
 	const budget = reasoning?.thinkingBudget ?? 0
 	const disableRequested = reasoning?.enableThinking === false || reasoning?.effort?.trim().toLowerCase() === "none"
-	const requested = reasoning?.enableThinking ?? Boolean(reasoning?.effort || budget > 0)
+	const hasPreference = adaptive
+		? resolveAdaptiveEffort(reasoning?.effort, thinking) !== undefined
+		: clampThinkingBudget(budget, thinking) !== undefined
+	const requested = reasoning?.enableThinking ?? hasPreference
 	const enabled = thinking.canDisable === false || (!disableRequested && (requested || thinking.defaultEnabled === true))
 	if (!enabled) {
 		return {
