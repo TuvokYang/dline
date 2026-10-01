@@ -6,8 +6,10 @@ import type { AnchorHTMLAttributes, ButtonHTMLAttributes, InputHTMLAttributes, R
 import { describe, expect, it, vi } from "vitest"
 import { BedrockProvider } from "./BedrockProvider"
 import { GeminiProvider } from "./GeminiProvider"
+import { OcaProvider } from "./OcaProvider"
 import { OpenAIProvider } from "./OpenAIProvider"
 import { OpenAiCodexProvider } from "./OpenAiCodexProvider"
+import { QwenProvider } from "./QwenProvider"
 import { VercelAIGatewayProvider } from "./VercelAIGatewayProvider"
 import { VertexProvider } from "./VertexProvider"
 
@@ -235,6 +237,74 @@ for (const [provider, configKey, Panel] of [
 			fireEvent.change(input, { target: { value: "3" } })
 			fireEvent.blur(input)
 			expect(onUpdate.mock.calls[0][0][configKey].reasoning.thinkingBudget).toBe(17)
+		})
+	})
+}
+
+for (const [provider, configKey, Panel] of [
+	["qwen", "qwen", QwenProvider],
+	["oca", "oca", OcaProvider],
+] as const) {
+	describe(`${provider} matched budget controls`, () => {
+		it("edits the effective minimum and preserves the existing display preference", () => {
+			const onUpdate = vi.fn()
+			const profile = ApiProfile.create({
+				provider,
+				modelId: "budget-alias",
+				modelInfo: models["budget-alias"],
+				[configKey]: {
+					capabilities: { thinking: { minBudget: 17 } },
+					reasoning: { thinkingBudget: 1500, display: "omitted" },
+				},
+			})
+			render(<Panel onUpdate={onUpdate} profile={profile} showModelOptions={true} />)
+			const slider = screen.getByRole("slider")
+			expect(slider).toHaveAttribute("min", "17")
+			fireEvent.change(slider, { target: { value: "3" } })
+			fireEvent.mouseUp(slider)
+			expect(onUpdate.mock.calls[0][0][configKey].reasoning).toEqual({
+				enableThinking: true,
+				effort: undefined,
+				thinkingBudget: 17,
+				display: "omitted",
+			})
+		})
+
+		it.each(["stale", "unsupported", "missing-mode"])("does not manufacture controls for %s metadata", (state) => {
+			const profile = ApiProfile.create({
+				provider,
+				modelId: "qwen3-32b",
+				modelInfo: {
+					id: state === "stale" ? "another-model" : "qwen3-32b",
+					capabilities: {
+						thinking: {
+							supported: state !== "unsupported",
+							mode: state === "missing-mode" ? undefined : "budget",
+							maxBudget: 101,
+						},
+					},
+				},
+				[configKey]: { reasoning: { thinkingBudget: 23 } },
+			})
+			render(<Panel onUpdate={vi.fn()} profile={profile} showModelOptions={true} />)
+			expect(screen.queryByRole("checkbox", { name: /Enable Thinking/i })).not.toBeInTheDocument()
+		})
+
+		it("keeps required thinking on without persisting a fabricated budget", () => {
+			const onUpdate = vi.fn()
+			const profile = ApiProfile.create({
+				provider,
+				modelId: "required-budget",
+				modelInfo: {
+					id: "required-budget",
+					capabilities: { thinking: { supported: true, mode: "budget", minBudget: 17, canDisable: false } },
+				},
+				[configKey]: { reasoning: { enableThinking: false, thinkingBudget: 0 } },
+			})
+			render(<Panel onUpdate={onUpdate} profile={profile} showModelOptions={true} />)
+			expect(screen.getByRole("checkbox", { name: "Enable Thinking" })).toBeChecked()
+			expect(screen.getByRole("checkbox", { name: "Enable Thinking" })).toBeDisabled()
+			expect(onUpdate).not.toHaveBeenCalled()
 		})
 	})
 }

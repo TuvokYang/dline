@@ -1,26 +1,14 @@
 import { QwenApiRegions } from "@shared/api"
 import { QwenProviderConfig } from "@shared/proto/dline/provider/qwen"
+import { buildEffectiveModelInfo } from "@shared/providers/effective-model-info"
 import { VSCodeDropdown, VSCodeOption } from "@vscode/webview-ui-toolkit/react"
 import { DROPDOWN_Z_INDEX } from "../ApiOptions"
 import { ApiKeyField } from "../common/ApiKeyField"
 import { ModelInfoView } from "../common/ModelInfoView"
 import { DropdownContainer, ModelSelector } from "../common/ModelSelector"
-import ThinkingBudgetSlider from "../ThinkingBudgetSlider"
+import ThinkingControl from "../ThinkingControl"
 import type { ApiProfile } from "./ProviderProfile"
 import { useProviderModels } from "./useProviderModels"
-
-const SUPPORTED_THINKING_MODELS = [
-	"qwen3-235b-a22b",
-	"qwen3-32b",
-	"qwen3-30b-a3b",
-	"qwen3-14b",
-	"qwen3-8b",
-	"qwen3-4b",
-	"qwen3-1.7b",
-	"qwen3-0.6b",
-	"qwen-plus-latest",
-	"qwen-turbo-latest",
-]
 
 interface QwenProviderProps {
 	showModelOptions: boolean
@@ -36,14 +24,13 @@ export const QwenProvider = ({ showModelOptions, isPopup: _isPopup, profile, onU
 	const pc = profile.qwen ?? QwenProviderConfig.create()
 	const qwenApiLine = (pc.qwenApiLine as QwenApiRegions) || qwenApiOptions[0]
 
-	const {
-		models: qwenModels,
-		defaultModelId: qwenDefaultModelId,
-		modelInfoSaneDefaults: qwenModelInfoSaneDefaults,
-	} = useProviderModels("qwen")
+	const { models: qwenModels, defaultModelId: qwenDefaultModelId } = useProviderModels("qwen")
 	const modelId = profile.modelId || qwenDefaultModelId
-	const modelInfo =
-		profile.modelInfo ?? (profile.modelId ? qwenModels[profile.modelId] : undefined) ?? qwenModelInfoSaneDefaults
+	const baseModel = profile.modelInfo?.id === modelId ? profile.modelInfo : qwenModels[modelId]
+	const modelInfo = buildEffectiveModelInfo(modelId, baseModel, { capabilities: pc.capabilities, pricing: pc.pricing })
+	const thinking = modelInfo.capabilities?.thinking
+	const budgetSupported =
+		thinking?.supported === true && thinking.mode === "budget" && modelInfo.capabilities?.supportsReasoning !== false
 
 	return (
 		<div>
@@ -84,15 +71,16 @@ export const QwenProvider = ({ showModelOptions, isPopup: _isPopup, profile, onU
 						selectedModelId={modelId}
 						zIndex={DROPDOWN_Z_INDEX - 2}
 					/>
-					{SUPPORTED_THINKING_MODELS.includes(modelId) && (
-						<ThinkingBudgetSlider
-							maxBudget={modelInfo.capabilities?.thinking?.maxBudget}
-							onThinkingBudgetTokensChange={(v) =>
-								onUpdate({
-									qwen: { ...pc, reasoning: { effort: pc.reasoning?.effort ?? "", thinkingBudget: v } },
-								})
-							}
-							thinkingBudgetTokens={pc.reasoning?.thinkingBudget ?? 0}
+					{budgetSupported && (
+						<ThinkingControl
+							defaultEnabled={thinking?.defaultEnabled}
+							disableSupported={thinking?.canDisable !== false}
+							maxBudget={thinking?.maxBudget}
+							minBudget={thinking?.minBudget}
+							mode="budget-only"
+							onReasoningConfigUpdate={(reasoning) => onUpdate({ qwen: { ...pc, reasoning } })}
+							reasoningConfig={pc.reasoning}
+							showModeSelector={false}
 						/>
 					)}
 					<ModelInfoView isPopup={_isPopup} modelInfo={modelInfo} selectedModelId={modelId} />
