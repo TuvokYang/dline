@@ -335,16 +335,9 @@ export const anthropicModelInfoSaneDefaults: ModelInfo = {
 	capabilities: {
 		supportsImages: false,
 		supportsPromptCache: true,
-		supportsReasoning: true,
 		supportsTools: false,
 		maxTokens: 384000,
 		contextWindow: 1_000_000,
-		thinking: {
-			supported: true,
-			mode: "budget",
-			maxBudget: 64000,
-			effortLevels: [],
-		},
 	},
 	pricing: {
 		inputPrice: 1,
