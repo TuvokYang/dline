@@ -5,6 +5,7 @@ import { OpenAiProviderConfig } from "@shared/proto/dline/provider/openai"
 import { act, render, screen } from "@testing-library/react"
 import { useState } from "react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import { ModelInfoView } from "../common/ModelInfoView"
 import { OpenAIProvider } from "./OpenAIProvider"
 import type { ApiProfile } from "./ProviderProfile"
 
@@ -36,16 +37,6 @@ vi.mock("../common/ModelAutocomplete", () => ({ ModelAutocomplete: () => <div />
 vi.mock("../ThinkingControl", () => ({ default: () => <div /> }))
 vi.mock("../OpenAIServiceTierSelector", () => ({ default: () => <div /> }))
 vi.mock("@/services/grpc-client", () => ({ ModelsServiceClient: { refreshOpenAiModels: vi.fn() } }))
-
-/** Surfaces the merged pricing the summary would render. */
-vi.mock("../common/ModelInfoView", () => ({
-	ModelInfoView: ({ modelInfo }: { modelInfo: ModelInfo }) => (
-		<div>
-			<span data-testid="summary-input">{String(modelInfo.pricing?.inputPrice)}</span>
-			<span data-testid="summary-output">{String(modelInfo.pricing?.outputPrice)}</span>
-		</div>
-	),
-}))
 
 /**
  * Holds the profile the way the settings list does: each update replaces the
@@ -118,7 +109,38 @@ describe("OpenAIProvider pricing round trip", () => {
 			await vi.advanceTimersByTimeAsync(ECHO_DELAY_MS * 4)
 		})
 
-		expect(screen.getByTestId("summary-input")).toHaveTextContent("1.25")
-		expect(screen.getByTestId("summary-output")).toHaveTextContent("2.5")
+		expect(screen.getByText("$1.25/M")).toBeInTheDocument()
+		expect(screen.getByText("$2.50/M")).toBeInTheDocument()
+	})
+})
+
+describe("ModelInfoView thinking output pricing", () => {
+	it.each<[string, ModelCapabilities, string]>([
+		["maximum without mode", { thinking: { supported: true, maxBudget: 100 } }, "$2/M"],
+		["coarse veto", { supportsReasoning: false, thinking: { supported: true, mode: "budget", maxBudget: 100 } }, "$2/M"],
+		["nested veto", { thinking: { supported: false, mode: "budget", maxBudget: 100 } }, "$2/M"],
+		["missing support", { supportsReasoning: true, thinking: { mode: "budget", maxBudget: 100 } }, "$2/M"],
+		["effort mode", { thinking: { supported: true, mode: "effort", maxBudget: 100 } }, "$2/M"],
+		["inverted bounds", { thinking: { supported: true, mode: "budget", minBudget: 17, maxBudget: 8 } }, "$2/M"],
+		["fractional maximum", { thinking: { supported: true, mode: "budget", maxBudget: 10.5 } }, "$2/M"],
+		["zero maximum", { thinking: { supported: true, mode: "budget", maxBudget: 0 } }, "$2/M"],
+		["unbounded budget", { thinking: { supported: true, mode: "budget", minBudget: 17 } }, "$7/M"],
+		["both mode", { thinking: { supported: true, mode: "both", maxBudget: 100 } }, "$7/M"],
+	])("renders the declared output price for %s", (_label, capabilities, expected) => {
+		const modelInfo: ModelInfo = { id: "opaque-price", capabilities, pricing: { outputPrice: 2, thinkingOutputPrice: 7 } }
+		render(<ModelInfoView modelInfo={modelInfo} selectedModelId={modelInfo.id} />)
+		expect(screen.getByText(expected)).toBeInTheDocument()
+		expect(screen.queryByText(expected === "$7/M" ? "$2/M" : "$7/M")).not.toBeInTheDocument()
+	})
+
+	it("preserves a declared zero thinking output price", () => {
+		const modelInfo: ModelInfo = {
+			id: "opaque-free-thinking",
+			capabilities: { thinking: { supported: true, mode: "budget" } },
+			pricing: { outputPrice: 2, thinkingOutputPrice: 0 },
+		}
+		render(<ModelInfoView modelInfo={modelInfo} selectedModelId={modelInfo.id} />)
+		expect(screen.getByText("Free")).toBeInTheDocument()
+		expect(screen.queryByText("$2/M")).not.toBeInTheDocument()
 	})
 })

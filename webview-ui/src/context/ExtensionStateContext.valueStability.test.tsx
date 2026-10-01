@@ -1,7 +1,12 @@
-import { act, render } from "@testing-library/react"
+import { OpenRouterCompatibleModelInfo } from "@shared/proto/dline/models"
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { useEffect, useRef } from "react"
 import { describe, expect, it, vi } from "vitest"
+import { HuggingFaceModelPicker } from "../components/settings/HuggingFaceModelPicker"
 import { ExtensionStateContextProvider, useExtensionState } from "./ExtensionStateContext"
+
+const modelMocks = vi.hoisted(() => ({ refreshHicap: vi.fn(), refreshHuggingFace: vi.fn() }))
+vi.mock("../components/history/HistoryView", () => ({ highlight: vi.fn(() => []) }))
 
 vi.mock("@/services/grpc-client", () => {
 	const neverResolving = () => new Promise(() => {})
@@ -31,7 +36,8 @@ vi.mock("@/services/grpc-client", () => {
 			subscribeToOpenRouterModels: stream,
 			subscribeToLiteLlmModels: stream,
 			refreshOpenRouterModelsRpc: neverResolving,
-			refreshHicapModels: neverResolving,
+			refreshHicapModels: modelMocks.refreshHicap,
+			refreshHuggingFaceModels: modelMocks.refreshHuggingFace,
 			refreshLiteLlmModelsRpc: neverResolving,
 			refreshBasetenModelsRpc: neverResolving,
 			refreshVercelAiGatewayModelsRpc: neverResolving,
@@ -81,6 +87,108 @@ function createUnrelatedUpdateTrigger() {
 	}
 	return { Trigger, fire: () => trigger?.() }
 }
+
+function modelListing() {
+	return OpenRouterCompatibleModelInfo.create({
+		models: {
+			complete: {
+				supportsReasoning: true,
+				modelInfo: {
+					id: "payload-id-is-not-the-map-key",
+					name: "Complete fixture",
+					userDefined: true,
+					apiFormats: [],
+					capabilities: {
+						supportsReasoning: false,
+						thinking: {
+							supported: false,
+							mode: "both",
+							effortLevels: [],
+							defaultEnabled: false,
+							minBudget: 0,
+							maxBudget: 0,
+						},
+					},
+					pricing: { thinkingOutputPrice: 0 },
+				},
+			},
+			"legacy-unknown": {},
+			"legacy-thinking": {
+				thinkingConfig: { supported: true, mode: "effort", effortLevels: [], defaultEnabled: false, minBudget: 0 },
+			},
+		},
+	})
+}
+
+function ModelListingProbe({ provider }: { provider: "hicap" | "huggingface" }) {
+	const { hicapModels, huggingFaceModels, refreshHicapModels } = useExtensionState()
+	return (
+		<>
+			<button onClick={refreshHicapModels} type="button">
+				Refresh Hicap
+			</button>
+			<span data-testid="discovered-models">{JSON.stringify(provider === "hicap" ? hicapModels : huggingFaceModels)}</span>
+		</>
+	)
+}
+
+for (const provider of ["hicap", "huggingface"] as const) {
+	it(`preserves model declarations through compatibility ${provider} refresh`, async () => {
+		const refresh = provider === "hicap" ? modelMocks.refreshHicap : modelMocks.refreshHuggingFace
+		refresh.mockResolvedValueOnce(modelListing())
+		render(
+			<ExtensionStateContextProvider>
+				{provider === "huggingface" && <HuggingFaceModelPicker />}
+				<ModelListingProbe provider={provider} />
+			</ExtensionStateContextProvider>,
+		)
+		if (provider === "hicap") fireEvent.click(screen.getByRole("button", { name: "Refresh Hicap" }))
+		await waitFor(() => expect(screen.getByTestId("discovered-models")).toHaveTextContent("legacy-unknown"))
+		const models = JSON.parse(screen.getByTestId("discovered-models").textContent ?? "null")
+		expect(models.complete).toEqual({
+			id: "complete",
+			name: "Complete fixture",
+			userDefined: true,
+			apiFormats: [],
+			capabilities: {
+				supportsReasoning: false,
+				thinking: { supported: false, mode: "both", effortLevels: [], defaultEnabled: false, minBudget: 0, maxBudget: 0 },
+			},
+			pricing: { thinkingOutputPrice: 0 },
+		})
+		expect(models["legacy-unknown"].capabilities).not.toHaveProperty("supportsReasoning")
+		expect(models["legacy-unknown"].capabilities).not.toHaveProperty("thinking")
+		expect(models["legacy-thinking"].capabilities.thinking).toEqual({
+			supported: true,
+			mode: "effort",
+			effortLevels: [],
+			defaultEnabled: false,
+			minBudget: 0,
+		})
+	})
+}
+
+it("keeps the last compatibility Hicap listing when a refresh fails", async () => {
+	const diagnostic = vi.spyOn(console, "error").mockImplementation(() => {})
+	try {
+		modelMocks.refreshHicap
+			.mockResolvedValueOnce(modelListing())
+			.mockRejectedValueOnce(new Error("synthetic listing failure"))
+		render(
+			<ExtensionStateContextProvider>
+				<ModelListingProbe provider="hicap" />
+			</ExtensionStateContextProvider>,
+		)
+		fireEvent.click(screen.getByRole("button", { name: "Refresh Hicap" }))
+		await waitFor(() => expect(screen.getByTestId("discovered-models")).toHaveTextContent("legacy-unknown"))
+		const previous = screen.getByTestId("discovered-models").textContent
+		fireEvent.click(screen.getByRole("button", { name: "Refresh Hicap" }))
+		await waitFor(() => expect(diagnostic).toHaveBeenCalledWith("Failed to refresh Hicap models:", expect.any(Error)))
+		expect(screen.getByTestId("discovered-models").textContent).toBe(previous)
+	} finally {
+		diagnostic.mockRestore()
+	}
+})
 
 describe("ExtensionStateContext provider value stability", () => {
 	it("keeps the context value referentially stable across re-renders with unchanged state", async () => {

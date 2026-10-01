@@ -1,5 +1,6 @@
 import type { ModelInfo } from "@shared/api"
 import { ServerTool } from "@shared/proto/dline/models/metadata"
+import { resolveThinkingBudgetBounds } from "@shared/providers/thinking-budget"
 
 /**
  * Formats a price as a currency string
@@ -25,7 +26,14 @@ export const formatTokenPrice = (price: number) => {
  * Helper function to determine if a model supports thinking budget
  */
 export const hasThinkingBudget = (modelInfo: ModelInfo): boolean => {
-	return (modelInfo.capabilities?.thinking?.maxBudget ?? 0) > 0
+	const capabilities = modelInfo.capabilities
+	const thinking = capabilities?.thinking
+	return (
+		capabilities?.supportsReasoning !== false &&
+		thinking?.supported === true &&
+		(thinking.mode === "budget" || thinking.mode === "both") &&
+		resolveThinkingBudgetBounds(thinking) !== undefined
+	)
 }
 
 /**

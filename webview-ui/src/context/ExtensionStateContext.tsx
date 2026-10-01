@@ -1242,30 +1242,7 @@ export const ExtensionStateContextProvider: React.FC<{
 	const refreshHicapModels = useCallback(() => {
 		ModelsServiceClient.refreshHicapModels(EmptyRequest.create({}))
 			.then((response: OpenRouterCompatibleModelInfo) => {
-				const models = response.models
-				const converted: Record<string, ModelInfo> = {}
-				for (const [key, value] of Object.entries(models)) {
-					converted[key] = {
-						id: key,
-						capabilities: {
-							supportsImages: value.supportsImages ?? false,
-							supportsPromptCache: value.supportsPromptCache,
-							supportsReasoning: value.supportsReasoning ?? false,
-							contextWindow: value.contextWindow,
-							maxTokens: value.maxTokens,
-							thinking: value.thinkingConfig,
-						},
-						pricing: {
-							inputPrice: value.inputPrice,
-							outputPrice: value.outputPrice,
-							cacheWritesPrice: value.cacheWritesPrice,
-							cacheReadsPrice: value.cacheReadsPrice,
-						},
-						name: value.name,
-						description: value.description,
-					}
-				}
-				setHicapModels(converted)
+				setHicapModels(fromProtobufModels(response.models))
 			})
 			.catch((error: Error) => console.error("Failed to refresh Hicap models:", error))
 	}, [])
