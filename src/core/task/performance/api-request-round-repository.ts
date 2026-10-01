@@ -165,7 +165,7 @@ export class TaskApiRequestRoundRepository implements ApiRequestRoundRepository 
 		this.closePromise = (async () => {
 			try {
 				await this.writeSequence
-				await this.initialization
+				await this.initialization?.catch(() => undefined)
 				const results = await Promise.allSettled([this.collection?.close(), this.legacyCollection?.close()])
 				const failure = results.find((result): result is PromiseRejectedResult => result.status === "rejected")
 				if (failure) throw failure.reason

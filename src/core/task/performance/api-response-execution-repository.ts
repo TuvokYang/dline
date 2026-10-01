@@ -126,7 +126,7 @@ export class TaskApiResponseExecutionRepository implements ApiResponseExecutionR
 		this.closePromise = (async () => {
 			try {
 				await this.writeSequence
-				await this.initialization
+				await this.initialization?.catch(() => undefined)
 				await this.collection?.close()
 			} finally {
 				this.closed = true

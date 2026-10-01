@@ -82,4 +82,12 @@ describe("TaskApiResponseExecutionRepository", () => {
 			repository.append([{ ...first, taskId: "task-b", executionId: "task-b:request-a:provider:0" }]),
 		).rejects.toThrow("API response execution Task mismatch")
 	})
+
+	it("does not repeat an initialization failure while closing", async () => {
+		const repository = new TaskApiResponseExecutionRepository({ taskId: "task-a", location: root })
+		repositories.push(repository)
+
+		await expect(repository.readRecent()).rejects.toThrow()
+		await expect(repository.close()).resolves.toBeUndefined()
+	})
 })
