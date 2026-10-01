@@ -1,4 +1,5 @@
 import { SapAiCoreProviderConfig } from "@shared/proto/dline/provider/sapaicore"
+import { resolveProfileModelInfo } from "@shared/providers/profile-model-info"
 // Mode import removed — no longer needed in profile-driven architecture
 import { ApiKeyField } from "../common/ApiKeyField"
 import { DebouncedTextField } from "../common/DebouncedTextField"
@@ -16,9 +17,9 @@ interface SapAiCoreProviderProps {
 
 export const SapAiCoreProvider = ({ showModelOptions, isPopup, profile, onUpdate }: SapAiCoreProviderProps) => {
 	const pc = profile.sapaicore ?? SapAiCoreProviderConfig.create()
-	const { models, defaultModelId, modelInfoSaneDefaults } = useProviderModels("sapaicore")
-	const modelId = profile.modelId || defaultModelId
-	const modelInfo = profile.modelInfo ?? models[profile.modelId] ?? modelInfoSaneDefaults
+	const { models, defaultModelId } = useProviderModels("sapaicore")
+	const modelInfo = resolveProfileModelInfo(profile, { models, defaultModelId })
+	const modelId = modelInfo.id
 
 	const persistConfig = (key: string, value: string) => onUpdate({ sapaicore: { ...pc, [key]: value } })
 

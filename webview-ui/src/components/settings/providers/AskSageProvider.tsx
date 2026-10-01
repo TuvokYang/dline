@@ -1,4 +1,5 @@
 // Mode import removed — no longer needed in profile-driven architecture
+import { resolveProfileModelInfo } from "@shared/providers/profile-model-info"
 import { useEffect, useState } from "react"
 import { ApiKeyField } from "../common/ApiKeyField"
 import { DebouncedTextField } from "../common/DebouncedTextField"
@@ -16,15 +17,11 @@ interface AskSageProviderProps {
 
 /** AskSage provider �?all data from ApiProfile. baseUrl used for API URL. */
 export const AskSageProvider = ({ showModelOptions, isPopup, profile, onUpdate }: AskSageProviderProps) => {
-	const {
-		models: askSageModels,
-		defaultModelId: asksageDefaultModelId,
-		modelInfoSaneDefaults: asksageModelInfoSaneDefaults,
-	} = useProviderModels("asksage")
+	const { models: askSageModels, defaultModelId: asksageDefaultModelId } = useProviderModels("asksage")
 
 	const baseUrl = profile.baseUrl || "https://api.asksage.ai/server"
-	const modelId = profile.modelId || asksageDefaultModelId
-	const modelInfo = profile.modelInfo ?? askSageModels[profile.modelId] ?? asksageModelInfoSaneDefaults
+	const modelInfo = resolveProfileModelInfo(profile, { models: askSageModels, defaultModelId: asksageDefaultModelId })
+	const modelId = modelInfo.id
 
 	const [availableModels, setAvailableModels] = useState(askSageModels)
 

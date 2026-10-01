@@ -1,3 +1,4 @@
+import { resolveProfileModelInfo } from "@shared/providers/profile-model-info"
 import { ApiKeyField } from "../common/ApiKeyField"
 import { ModelInfoView } from "../common/ModelInfoView"
 import { ModelSelector } from "../common/ModelSelector"
@@ -12,9 +13,9 @@ interface CerebrasProviderProps {
 }
 
 export const CerebrasProvider = ({ showModelOptions, isPopup, profile, onUpdate }: CerebrasProviderProps) => {
-	const { models, defaultModelId, modelInfoSaneDefaults } = useProviderModels("cerebras")
-	const modelId = profile.modelId || defaultModelId
-	const modelInfo = profile.modelInfo ?? models[profile.modelId] ?? modelInfoSaneDefaults
+	const { models, defaultModelId } = useProviderModels("cerebras")
+	const modelInfo = resolveProfileModelInfo(profile, { models, defaultModelId })
+	const modelId = modelInfo.id
 	return (
 		<div>
 			<ApiKeyField

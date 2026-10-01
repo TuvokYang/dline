@@ -1,4 +1,5 @@
 // Mode import removed — no longer needed in profile-driven architecture
+import { resolveProfileModelInfo } from "@shared/providers/profile-model-info"
 import { ApiKeyField } from "../common/ApiKeyField"
 import { DebouncedTextField } from "../common/DebouncedTextField"
 import { ModelInfoView } from "../common/ModelInfoView"
@@ -14,9 +15,9 @@ interface AIhubmixProviderProps {
 }
 
 export const AIhubmixProvider = ({ showModelOptions, isPopup, profile, onUpdate }: AIhubmixProviderProps) => {
-	const { models, defaultModelId, modelInfoSaneDefaults } = useProviderModels("aihubmix")
-	const modelId = profile.modelId || defaultModelId
-	const modelInfo = profile.modelInfo ?? models[profile.modelId] ?? modelInfoSaneDefaults
+	const { models, defaultModelId } = useProviderModels("aihubmix")
+	const modelInfo = resolveProfileModelInfo(profile, { models, defaultModelId })
+	const modelId = modelInfo.id
 	return (
 		<div>
 			<ApiKeyField

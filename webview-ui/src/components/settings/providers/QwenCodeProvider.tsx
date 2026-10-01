@@ -1,4 +1,5 @@
 import { QwenCodeProviderConfig } from "@shared/proto/dline/provider/qwen_code"
+import { resolveProfileModelInfo } from "@shared/providers/profile-model-info"
 import { VSCodeLink, VSCodeTextField } from "@vscode/webview-ui-toolkit/react"
 import { ModelInfoView } from "../common/ModelInfoView"
 import { ModelSelector } from "../common/ModelSelector"
@@ -14,10 +15,10 @@ interface QwenCodeProviderProps {
 
 /** Qwen Code provider â€?all data from ApiProfile. qwenCodeOauthPath stored in providerConfig. */
 export const QwenCodeProvider = ({ showModelOptions, isPopup, profile, onUpdate }: QwenCodeProviderProps) => {
-	const { models, defaultModelId, modelInfoSaneDefaults } = useProviderModels("qwen-code")
+	const { models, defaultModelId } = useProviderModels("qwen-code")
 	const pc = profile.qwenCode ?? QwenCodeProviderConfig.create()
-	const modelId = profile.modelId || defaultModelId
-	const modelInfo = profile.modelInfo ?? models[profile.modelId] ?? modelInfoSaneDefaults
+	const modelInfo = resolveProfileModelInfo(profile, { models, defaultModelId })
+	const modelId = modelInfo.id
 
 	return (
 		<div>

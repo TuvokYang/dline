@@ -1,4 +1,5 @@
 // Mode import removed — no longer needed in profile-driven architecture
+import { resolveProfileModelInfo } from "@shared/providers/profile-model-info"
 import { ApiKeyField } from "../common/ApiKeyField"
 import { ModelInfoView } from "../common/ModelInfoView"
 import { ModelSelector } from "../common/ModelSelector"
@@ -20,14 +21,10 @@ interface MistralProviderProps {
  * All data sourced from ApiProfile.
  */
 export const MistralProvider = ({ showModelOptions, isPopup: _isPopup, profile, onUpdate }: MistralProviderProps) => {
-	const {
-		models: mistralModels,
-		defaultModelId: mistralDefaultModelId,
-		modelInfoSaneDefaults: mistralModelInfoSaneDefaults,
-	} = useProviderModels("mistral")
+	const { models: mistralModels, defaultModelId: mistralDefaultModelId } = useProviderModels("mistral")
 
-	const modelId = profile.modelId || mistralDefaultModelId
-	const modelInfo = profile.modelInfo ?? mistralModels[profile.modelId] ?? mistralModelInfoSaneDefaults
+	const modelInfo = resolveProfileModelInfo(profile, { models: mistralModels, defaultModelId: mistralDefaultModelId })
+	const modelId = modelInfo.id
 
 	return (
 		<div>

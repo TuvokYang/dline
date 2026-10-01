@@ -1,4 +1,5 @@
 // Mode import removed — no longer needed in profile-driven architecture
+import { resolveProfileModelInfo } from "@shared/providers/profile-model-info"
 import { ApiKeyField } from "../common/ApiKeyField"
 import { ModelInfoView } from "../common/ModelInfoView"
 import { ModelSelector } from "../common/ModelSelector"
@@ -14,9 +15,9 @@ interface DoubaoProviderProps {
 
 /** ByteDance Doubao provider �?all data from ApiProfile. */
 export const DoubaoProvider = ({ showModelOptions, isPopup, profile, onUpdate }: DoubaoProviderProps) => {
-	const { models, defaultModelId, modelInfoSaneDefaults } = useProviderModels("doubao")
-	const modelId = profile.modelId || defaultModelId
-	const modelInfo = profile.modelInfo ?? models[profile.modelId] ?? modelInfoSaneDefaults
+	const { models, defaultModelId } = useProviderModels("doubao")
+	const modelInfo = resolveProfileModelInfo(profile, { models, defaultModelId })
+	const modelId = modelInfo.id
 	return (
 		<div>
 			<ApiKeyField

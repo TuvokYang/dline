@@ -1,4 +1,5 @@
 // Mode import removed — no longer needed in profile-driven architecture
+import { resolveProfileModelInfo } from "@shared/providers/profile-model-info"
 import { ApiKeyField } from "../common/ApiKeyField"
 import { ModelInfoView } from "../common/ModelInfoView"
 import { ModelSelector } from "../common/ModelSelector"
@@ -13,9 +14,9 @@ interface GroqProviderProps {
 }
 
 export const GroqProvider = ({ showModelOptions, isPopup, profile, onUpdate }: GroqProviderProps) => {
-	const { models, defaultModelId, modelInfoSaneDefaults } = useProviderModels("groq")
-	const modelId = profile.modelId || defaultModelId
-	const modelInfo = profile.modelInfo ?? models[profile.modelId] ?? modelInfoSaneDefaults
+	const { models, defaultModelId } = useProviderModels("groq")
+	const modelInfo = resolveProfileModelInfo(profile, { models, defaultModelId })
+	const modelId = modelInfo.id
 	return (
 		<div>
 			<ApiKeyField
