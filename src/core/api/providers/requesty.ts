@@ -1,4 +1,5 @@
 import { ModelInfo, requestyDefaultModelId, requestyDefaultModelInfo } from "@shared/api"
+import { resolveRuntimeModel } from "@shared/providers/profile-model-info"
 import { calculateApiCostOpenAI } from "@utils/cost"
 import OpenAI from "openai"
 import { toRequestyServiceStringUrl } from "@/shared/clients/requesty"
@@ -147,11 +148,9 @@ export class RequestyHandler implements ApiHandler {
 	}
 
 	getModel(): { id: string; info: ModelInfo } {
-		const modelId = this.modelId || this.modelInfo?.id
-		const modelInfo = this.modelInfo
-		if (modelId && modelInfo) {
-			return { id: modelId, info: modelInfo }
-		}
-		return { id: requestyDefaultModelId, info: requestyDefaultModelInfo }
+		return resolveRuntimeModel(this.ctx.profile, {
+			models: { [requestyDefaultModelId]: requestyDefaultModelInfo },
+			defaultModelId: requestyDefaultModelId,
+		})
 	}
 }

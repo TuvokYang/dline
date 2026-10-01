@@ -4,6 +4,7 @@ import { Tool as AnthropicTool } from "@anthropic-ai/sdk/resources/index"
 import type { MessageCreateParamsStreaming } from "@anthropic-ai/sdk/resources/messages/messages"
 import { providerFetch } from "@shared/net"
 import { buildEffectiveModelInfo } from "@shared/providers/effective-model-info"
+import { resolveProfileModelId } from "@shared/providers/profile-model-info"
 import { buildClaudeCodeBetas } from "@/integrations/anthropic-claude-code/beta-headers"
 import {
 	type BillingAttributionMessage,
@@ -49,7 +50,7 @@ export class ClaudeCodeHandler implements ApiHandler {
 		return this.ctx.profile.id
 	}
 	private get modelId() {
-		return this.ctx.profile.modelId || ""
+		return resolveProfileModelId(this.ctx.profile)
 	}
 	private get modelInfo() {
 		return this.ctx.profile.modelInfo as ModelInfo | undefined
@@ -324,7 +325,8 @@ export class ClaudeCodeHandler implements ApiHandler {
 	 * over a catalog entry so a newer capability set is not downgraded.
 	 */
 	private buildModelInfo(modelId: string): ModelInfo {
-		return buildEffectiveModelInfo(modelId, this.modelInfo ?? claudeCodeModels[modelId], {
+		const matchingInfo = this.modelInfo?.id === modelId ? this.modelInfo : undefined
+		return buildEffectiveModelInfo(modelId, matchingInfo ?? claudeCodeModels[modelId], {
 			capabilities: this.config?.capabilities,
 		})
 	}

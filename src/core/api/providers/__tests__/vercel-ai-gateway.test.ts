@@ -70,6 +70,7 @@ describe("VercelAIGatewayHandler", () => {
 				provider: "vercel-ai-gateway",
 				modelId: "private/opaque",
 				modelInfo: {
+					id: "private/opaque",
 					capabilities: { thinking: { supported: true, mode: "effort", defaultEnabled: true, effortLevels: ["low"] } },
 				},
 				vercelAiGateway: { reasoning: { enableThinking: false } },

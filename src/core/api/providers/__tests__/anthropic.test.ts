@@ -120,6 +120,7 @@ describe("AnthropicHandler", () => {
 				apiKey: "test-api-key",
 				modelId: "opaque-alias-model",
 				modelInfo: {
+					id: "opaque-alias-model",
 					capabilities: { thinking: { supported: true, mode: "effort", effortLevels: ["low", "max"] } },
 				},
 				anthropic: { reasoning: { enableThinking: true, effort: preference } },
@@ -144,6 +145,7 @@ describe("AnthropicHandler", () => {
 				apiKey: "test-api-key",
 				modelId: "claude-opus-5-custom",
 				modelInfo: {
+					id: "claude-opus-5-custom",
 					capabilities: { supportsPromptCache: true, supportsForcedToolUse: declared, thinking: { supported: false } },
 				},
 			}),

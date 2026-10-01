@@ -1,4 +1,5 @@
 import { HuaweiCloudMaasModelId, huaweiCloudMaasDefaultModelId, huaweiCloudMaasModels, ModelInfo } from "@shared/api"
+import { resolveRuntimeModel } from "@shared/providers/profile-model-info"
 import OpenAI from "openai"
 import type { ChatCompletionTool as OpenAITool } from "openai/resources/chat/completions"
 import { ClineStorageMessage } from "@/shared/messages/content"
@@ -48,24 +49,11 @@ export class HuaweiCloudMaaSHandler implements ApiHandler {
 	}
 
 	getModel(): { id: HuaweiCloudMaasModelId; info: ModelInfo } {
-		// First priority: modelId and modelInfo (like Groq does)
-		const mid = this.modelId
-		const minfo = this.modelInfo
-		if (mid && minfo) {
-			return { id: mid as HuaweiCloudMaasModelId, info: minfo }
-		}
-
-		// Second priority: modelId with static model info
-		if (mid && mid in huaweiCloudMaasModels) {
-			const id = mid as HuaweiCloudMaasModelId
-			return { id, info: huaweiCloudMaasModels[id] }
-		}
-
-		// Default fallback
-		return {
-			id: huaweiCloudMaasDefaultModelId,
-			info: huaweiCloudMaasModels[huaweiCloudMaasDefaultModelId],
-		}
+		const model = resolveRuntimeModel(this.ctx.profile, {
+			models: huaweiCloudMaasModels,
+			defaultModelId: huaweiCloudMaasDefaultModelId,
+		})
+		return { id: model.id as HuaweiCloudMaasModelId, info: model.info }
 	}
 
 	@withRetry()

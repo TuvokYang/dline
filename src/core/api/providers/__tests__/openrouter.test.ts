@@ -100,6 +100,7 @@ describe("OpenRouterHandler", () => {
 			provider: "openrouter",
 			modelId: "private/opaque",
 			modelInfo: {
+				id: "private/opaque",
 				capabilities: { thinking: { supported: true, mode: "effort", defaultEnabled: true, effortLevels: ["low"] } },
 			},
 			openrouter: { reasoning: { enableThinking: false } },
@@ -150,6 +151,40 @@ describe("OpenRouterHandler", () => {
 			}
 			expect(create.mock.calls[0][0].reasoning).toEqual({ enabled })
 			expect(create.mock.calls[0][0].include_reasoning).toBe(enabled)
+		})
+
+		it("rejects stale metadata at the actual gateway request boundary", async () => {
+			if (provider === "cline") {
+				vi.spyOn(ClineAccountService, "getInstance").mockReturnValue({} as ClineAccountService)
+				vi.spyOn(AuthService, "getInstance").mockReturnValue({} as AuthService)
+			}
+			if (provider === "openrouter") {
+				vi.spyOn(ModelRegistry, "getInstance").mockReturnValue({
+					getProviderModels: () => ({ models: {} }),
+				} as unknown as ModelRegistry)
+			}
+			const modelId = "private/unknown-gateway"
+			const profile = ApiProfile.create({
+				provider,
+				modelId,
+				modelInfo: {
+					id: "another-model",
+					capabilities: { thinking: { supported: true, mode: "budget", defaultEnabled: true, maxBudget: 2048 } },
+				},
+				openrouter: provider === "openrouter" ? { reasoning: { thinkingBudget: 1024 } } : undefined,
+				clineProvider: provider === "cline" ? { reasoning: { thinkingBudget: 1024 } } : undefined,
+				vercelAiGateway: provider === "vercel-ai-gateway" ? { reasoning: { thinkingBudget: 1024 } } : undefined,
+			})
+			const handler = new Handler({ profile, mode: "act" })
+			const create = vi.fn().mockResolvedValue(createAsyncIterable())
+			vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
+				chat: { completions: { create } },
+			})
+			for await (const _chunk of handler.createMessage("system", [{ role: "user", content: "hi" }])) {
+			}
+			expect(create.mock.calls[0][0].model).toBe(modelId)
+			expect(create.mock.calls[0][0].reasoning).toBeUndefined()
+			expect(create.mock.calls[0][0].include_reasoning).toBe(false)
 		})
 	})
 

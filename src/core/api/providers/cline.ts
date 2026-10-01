@@ -1,5 +1,6 @@
 import { type ModelInfo, openRouterDefaultModelId, openRouterDefaultModelInfo } from "@shared/api"
 import { providerFetch } from "@shared/net"
+import { resolveProfileModelId, resolveRuntimeModel } from "@shared/providers/profile-model-info"
 import { shouldSkipReasoningForModel } from "@utils/model-utils"
 import axios from "axios"
 import OpenAI from "openai"
@@ -49,7 +50,7 @@ export class ClineHandler implements ApiHandler {
 		return this.ctx.profile.apiKey
 	}
 	private get modelId() {
-		return this.ctx.profile.modelId || ""
+		return resolveProfileModelId(this.ctx.profile)
 	}
 	private get modelInfo() {
 		return this.ctx.profile.modelInfo as ModelInfo | undefined
@@ -297,15 +298,9 @@ export class ClineHandler implements ApiHandler {
 	}
 
 	getModel(): { id: string; info: ModelInfo } {
-		const modelId = this.modelId || this.modelInfo?.id
-		const modelInfo = this.modelInfo
-		if (modelId && modelInfo) {
-			return { id: modelId, info: modelInfo }
-		}
-		// An explicit unknown model keeps its identity without borrowing another model's capabilities.
-		if (modelId) {
-			return { id: modelId, info: { id: modelId } }
-		}
-		return { id: openRouterDefaultModelId, info: openRouterDefaultModelInfo }
+		return resolveRuntimeModel(this.ctx.profile, {
+			models: { [openRouterDefaultModelId]: openRouterDefaultModelInfo },
+			defaultModelId: openRouterDefaultModelId,
+		})
 	}
 }

@@ -36,6 +36,7 @@ describe("ClineHandler", () => {
 			provider: "cline",
 			modelId: "private/opaque",
 			modelInfo: {
+				id: "private/opaque",
 				capabilities: { thinking: { supported: true, mode: "effort", defaultEnabled: true, effortLevels: ["low"] } },
 			},
 			clineProvider: { reasoning: { enableThinking: false } },

@@ -1,5 +1,6 @@
-import { GroqModelId, groqDefaultModelId, groqModels, ModelInfo } from "@shared/api"
+import { groqDefaultModelId, groqModels, ModelInfo } from "@shared/api"
 import { providerFetch } from "@shared/net"
+import { resolveRuntimeModel } from "@shared/providers/profile-model-info"
 import { calculateApiCostOpenAI } from "@utils/cost"
 import OpenAI from "openai"
 import type { ChatCompletionTool as OpenAITool } from "openai/resources/chat/completions"
@@ -294,34 +295,11 @@ export class GroqHandler implements ApiHandler {
 	 * Gets model information with enhanced family detection
 	 */
 	getModel(): { id: string; info: ModelInfo } {
-		// First priority: modelId and modelInfo from profile
-		const mid = this.modelId
-		const minfo = this.modelInfo
-		if (mid && minfo) {
-			return { id: mid, info: minfo }
-		}
-
-		// Second priority: modelId with static model info
-		if (mid && mid in groqModels) {
-			const id = mid as GroqModelId
-			return { id, info: groqModels[id] }
-		}
-
-		// Third priority: modelId fallback with static model info
-		if (mid && mid in groqModels) {
-			const id = mid as GroqModelId
-			return { id, info: groqModels[id] }
-		}
-
-		// Default fallback
-		return {
-			id: groqDefaultModelId,
-			info: groqModels[groqDefaultModelId],
-		}
+		return resolveRuntimeModel(this.ctx.profile, { models: groqModels, defaultModelId: groqDefaultModelId })
 	}
 
 	/**
-	 * Gets model family information for debugging/introspection
+	 * Gets model family information
 	 */
 	getModelFamily(): GroqModelFamily {
 		const model = this.getModel()

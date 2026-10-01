@@ -3,12 +3,16 @@ import type { ModelCapabilities } from "@shared/proto/dline/models/metadata"
 import { ApiProfile } from "@shared/proto/dline/profile"
 import type { ReasoningConfig } from "@shared/proto/dline/provider/common"
 import { describe, expect, it, vi } from "vitest"
+import { AnthropicHandler } from "../anthropic"
 import { AskSageHandler } from "../asksage"
+import { BasetenHandler } from "../baseten"
 import { AwsBedrockHandler } from "../bedrock"
 import { CerebrasHandler } from "../cerebras"
 import { DoubaoHandler } from "../doubao"
 import { FireworksHandler } from "../fireworks"
+import { GroqHandler } from "../groq"
 import { HicapHandler } from "../hicap"
+import { HuaweiCloudMaaSHandler } from "../huawei-cloud-maas"
 import { HuggingFaceHandler } from "../huggingface"
 import { LiteLlmHandler } from "../litellm"
 import { LmStudioHandler } from "../lmstudio"
@@ -29,6 +33,8 @@ import { XAIHandler } from "../xai"
 import { ZAiHandler } from "../zai"
 
 const runtimeModelHandlers = [
+	{ provider: "baseten", Handler: BasetenHandler },
+	{ provider: "bedrock", Handler: AwsBedrockHandler },
 	{ provider: "asksage", Handler: AskSageHandler },
 	{ provider: "doubao", Handler: DoubaoHandler },
 	{ provider: "fireworks", Handler: FireworksHandler },
@@ -42,7 +48,12 @@ const runtimeModelHandlers = [
 	{ provider: "cerebras", Handler: CerebrasHandler },
 	{ provider: "huggingface", Handler: HuggingFaceHandler },
 	{ provider: "together", Handler: TogetherHandler },
+	{ provider: "groq", Handler: GroqHandler },
 	{ provider: "hicap", Handler: HicapHandler },
+	{ provider: "huawei-cloud-maas", Handler: HuaweiCloudMaaSHandler },
+	{ provider: "mistral", Handler: MistralHandler },
+	{ provider: "requesty", Handler: RequestyHandler },
+	{ provider: "vertex", Handler: VertexHandler },
 	{ provider: "wandb", Handler: WandbHandler },
 	{ provider: "lmstudio", Handler: LmStudioHandler },
 	{ provider: "ollama", Handler: OllamaHandler },
@@ -105,6 +116,30 @@ describe.each(runtimeModelHandlers)("$provider final runtime metadata", ({ provi
 				: { id: "opaque-unknown-test" }
 		expect(model).toEqual({ id: "opaque-unknown-test", info })
 	})
+})
+
+it("Anthropic does not borrow stale thinking metadata for an explicit unknown ID", async () => {
+	const id = "opaque-anthropic-unknown"
+	const handler = new AnthropicHandler({
+		profile: ApiProfile.create({
+			provider: "anthropic",
+			apiKey: "test-api-key",
+			modelId: id,
+			modelInfo: {
+				id: "another-model",
+				capabilities: { thinking: { supported: true, mode: "budget", maxBudget: 2048 } },
+			},
+			anthropic: { reasoning: { thinkingBudget: 1024 } },
+		}),
+		mode: "act",
+	})
+	const create = vi.fn().mockResolvedValue((async function* () {})())
+	Object.defineProperty(handler, "ensureClient", { value: () => ({ messages: { create } }) })
+	for await (const _chunk of handler.createMessage("system", [{ role: "user", content: "hi" }])) {
+	}
+	expect(create.mock.calls[0][0].model).toBe(id)
+	expect(create.mock.calls[0][0].thinking).toBeUndefined()
+	expect(handler.getModel().info.capabilities?.thinking).toBeUndefined()
 })
 
 it.each([
@@ -317,6 +352,7 @@ describe.each(["requesty", "litellm"] as const)("%s upstream reasoning conversio
 		expect(body.thinking).toEqual(thinking)
 		expect(body.output_config).toBeUndefined()
 	})
+
 	it.each([
 		{
 			name: "declared default",
@@ -376,6 +412,28 @@ describe.each(["requesty", "litellm"] as const)("%s upstream reasoning conversio
 		expect(body.reasoning_effort).toBe(effort)
 		expect(body.thinking).toBeUndefined()
 	})
+})
+
+it("Requesty rejects stale metadata at the actual request boundary", async () => {
+	const id = "openai/private-unknown"
+	const handler = new RequestyHandler({
+		profile: ApiProfile.create({
+			provider: "requesty",
+			modelId: id,
+			modelInfo: {
+				id: "another-model",
+				capabilities: { thinking: { supported: true, mode: "effort", effortLevels: ["high"] } },
+			},
+			requesty: { reasoning: { effort: "high" } },
+		}),
+		mode: "act",
+	})
+	const create = vi.fn().mockResolvedValue((async function* () {})())
+	;(handler as unknown as { client: unknown }).client = { chat: { completions: { create } } }
+	for await (const _chunk of handler.createMessage("system", [{ role: "user", content: "hi" }])) {
+	}
+	expect(create.mock.calls[0][0].model).toBe(id)
+	expect(create.mock.calls[0][0].reasoning_effort).toBeUndefined()
 })
 
 describe.each(["vertex", "bedrock"] as const)("%s declared Messages API thinking", (provider) => {

@@ -1,6 +1,7 @@
 import { setTimeout as setTimeoutPromise } from "node:timers/promises"
 import { findCatalogModel } from "@core/model-registry/provider-model-lookup"
 import { ModelInfo, openRouterDefaultModelId, openRouterDefaultModelInfo } from "@shared/api"
+import { resolveProfileModelId } from "@shared/providers/profile-model-info"
 import { shouldSkipReasoningForModel } from "@utils/model-utils"
 import axios from "axios"
 import OpenAI from "openai"
@@ -30,7 +31,7 @@ export class OpenRouterHandler implements ApiHandler {
 		return this.ctx.profile.apiKey
 	}
 	private get modelId() {
-		return this.ctx.profile.modelId || ""
+		return resolveProfileModelId(this.ctx.profile)
 	}
 	private get modelInfo() {
 		return this.ctx.profile.modelInfo as ModelInfo | undefined
@@ -240,11 +241,12 @@ export class OpenRouterHandler implements ApiHandler {
 	getModel(): { id: string; info: ModelInfo } {
 		const modelId = this.modelId || this.modelInfo?.id || openRouterDefaultModelId
 		// The runtime Profile contains the reconciled declaration and explicit overrides.
+		const matchingInfo = this.modelInfo?.id === modelId ? this.modelInfo : undefined
 		return {
 			id: modelId,
 			info:
-				this.modelInfo ||
-				findCatalogModel(OPENROUTER_PROVIDER_ID, modelId) ||
+				matchingInfo ??
+				findCatalogModel(OPENROUTER_PROVIDER_ID, modelId) ??
 				(this.modelId ? { id: modelId } : openRouterDefaultModelInfo),
 		}
 	}

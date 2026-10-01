@@ -3,6 +3,7 @@ import { AnthropicVertex } from "@anthropic-ai/vertex-sdk"
 import { FunctionDeclaration as GoogleTool } from "@google/genai"
 import { CLAUDE_SONNET_1M_SUFFIX, ModelInfo, VertexModelId, vertexDefaultModelId, vertexModels } from "@shared/api"
 import { observeProviderStream } from "@shared/provider-attempt-observer"
+import { resolveRuntimeModel } from "@shared/providers/profile-model-info"
 import { buildExternalBasicHeaders } from "@/services/EnvUtils"
 import { ClineStorageMessage } from "@/shared/messages/content"
 import { ClineTool } from "@/shared/tools"
@@ -247,17 +248,7 @@ export class VertexHandler implements ApiHandler {
 	}
 
 	getModel(): { id: VertexModelId; info: ModelInfo } {
-		const modelId = this.modelId || this.modelInfo?.id
-		if (this.modelInfo) {
-			return { id: (modelId || vertexDefaultModelId) as VertexModelId, info: this.modelInfo }
-		}
-		if (modelId && modelId in vertexModels) {
-			const id = modelId as VertexModelId
-			return { id, info: vertexModels[id] }
-		}
-		return {
-			id: vertexDefaultModelId,
-			info: vertexModels[vertexDefaultModelId],
-		}
+		const model = resolveRuntimeModel(this.ctx.profile, { models: vertexModels, defaultModelId: vertexDefaultModelId })
+		return { id: model.id as VertexModelId, info: model.info }
 	}
 }

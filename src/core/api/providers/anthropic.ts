@@ -9,6 +9,7 @@ import { ANTHROPIC_FAST_MODE_SUFFIX, AnthropicModelId, anthropicDefaultModelId, 
 import { providerFetch } from "@shared/net"
 import { prioritizeApiFormat } from "@shared/providers/api-format"
 import { buildEffectiveModelInfo, selectContextTier } from "@shared/providers/effective-model-info"
+import { resolveProfileModelId } from "@shared/providers/profile-model-info"
 import {
 	type BillingAttributionMessage,
 	buildBillingAttributionBlock,
@@ -40,7 +41,7 @@ export class AnthropicHandler implements ApiHandler {
 		return this.ctx.profile.apiKey
 	}
 	private get modelId() {
-		return this.ctx.profile.modelId || ""
+		return resolveProfileModelId(this.ctx.profile)
 	}
 	private get modelInfo() {
 		return this.ctx.profile.modelInfo as ModelInfo | undefined
@@ -314,7 +315,7 @@ export class AnthropicHandler implements ApiHandler {
 	 */
 	getModel(): { id: AnthropicModelId; info: ModelInfo } {
 		const mid = this.modelId
-		if (mid && this.modelInfo) {
+		if (mid && this.modelInfo?.id === mid) {
 			return {
 				id: mid as AnthropicModelId,
 				info: prioritizeApiFormat(

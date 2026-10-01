@@ -12,6 +12,7 @@ import {
 import { fromNodeProviderChain } from "@aws-sdk/credential-providers"
 import { type BedrockModelId, bedrockDefaultModelId, bedrockModels, CLAUDE_SONNET_1M_SUFFIX, type ModelInfo } from "@shared/api"
 import { observeProviderCall, observeProviderStreamResponse } from "@shared/provider-attempt-observer"
+import { resolveProfileModelId } from "@shared/providers/profile-model-info"
 import { calculateApiCostOpenAI, calculateApiCostQwen } from "@utils/cost"
 import { ExtensionRegistryInfo } from "@/registry"
 import type { ClineStorageMessage } from "@/shared/messages/content"
@@ -192,9 +193,9 @@ export class AwsBedrockHandler implements ApiHandler {
 	}
 
 	getModel(): { id: string; info: ModelInfo } {
-		const modelId = this.modelId || this.modelInfo?.id
-		if (this.modelInfo) {
-			return { id: modelId || bedrockDefaultModelId, info: this.modelInfo }
+		const modelId = resolveProfileModelId(this.ctx.profile)
+		if (modelId && this.modelInfo?.id === modelId) {
+			return { id: modelId, info: this.modelInfo }
 		}
 		if (modelId && bedrockModels[modelId]) {
 			const id = modelId as BedrockModelId
@@ -216,6 +217,7 @@ export class AwsBedrockHandler implements ApiHandler {
 			// An unrecognized base cannot lend the default model's capabilities to a custom ARN.
 			return { id: modelId, info: { id: modelId } }
 		}
+		if (modelId) return { id: modelId, info: { id: modelId } }
 
 		return {
 			id: bedrockDefaultModelId,

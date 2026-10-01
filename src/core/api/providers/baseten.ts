@@ -1,5 +1,6 @@
 import { BasetenModelId, basetenDefaultModelId, basetenModels, ModelInfo } from "@shared/api"
 import { providerFetch } from "@shared/net"
+import { resolveRuntimeModel } from "@shared/providers/profile-model-info"
 import { calculateApiCostOpenAI } from "@utils/cost"
 import OpenAI from "openai"
 import type { ChatCompletionTool as OpenAITool } from "openai/resources/chat/completions"
@@ -71,33 +72,11 @@ export class BasetenHandler implements ApiHandler {
 	}
 
 	getModel(): { id: BasetenModelId; info: ModelInfo } {
-		// First priority: modelId and modelInfo from profile
-		const mid = this.modelId
-		const minfo = this.modelInfo
-		if (mid && minfo) {
-			return { id: mid as BasetenModelId, info: minfo }
-		}
-
-		// Second priority: modelId with static model info
-		if (mid && basetenModels[mid]) {
-			const id = mid as BasetenModelId
-			return { id, info: basetenModels[id] }
-		}
-
-		// Third priority: modelId fallback with static model info
-		if (mid && basetenModels[mid]) {
-			const id = mid as BasetenModelId
-			return { id, info: basetenModels[id] }
-		}
-
-		// Default fallback
-		return {
-			id: basetenDefaultModelId,
-			info: basetenModels[basetenDefaultModelId],
-		}
+		const model = resolveRuntimeModel(this.ctx.profile, { models: basetenModels, defaultModelId: basetenDefaultModelId })
+		return { id: model.id as BasetenModelId, info: model.info }
 	}
 
-	private async *yieldUsage(modelInfo: ModelInfo, usage: any): ApiStream {
+	private async *yieldUsage(modelInfo: ModelInfo, usage: OpenAI.CompletionUsage): ApiStream {
 		if (usage.prompt_tokens || usage.completion_tokens) {
 			const cost = calculateApiCostOpenAI(modelInfo, usage.prompt_tokens || 0, usage.completion_tokens || 0)
 
