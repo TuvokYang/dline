@@ -131,7 +131,7 @@ export const geminiModels: Record<string, ModelInfo> = {
 			supportsImages: true,
 			supportsPromptCache: true,
 			thinking: ThinkingConfig.create({
-				maxBudget: 32767,
+				maxBudget: 32768,
 				supported: true,
 				mode: "budget",
 				defaultEnabled: true,

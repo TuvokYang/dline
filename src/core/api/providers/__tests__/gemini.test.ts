@@ -224,6 +224,17 @@ describe("GeminiHandler", () => {
 		expect(config.thinkingConfig).toEqual(thinkingConfig)
 	})
 
+	it("caps a bundled Gemini Pro request at its declared budget ceiling", async () => {
+		const config = await captureRequestConfig(
+			ApiProfile.create({
+				provider: "gemini",
+				modelId: "gemini-2.5-pro",
+				gemini: { reasoning: { thinkingBudget: 40000 } },
+			}),
+		)
+		expect(config.thinkingConfig).toEqual({ thinkingBudget: 32768, includeThoughts: true })
+	})
+
 	it("uses the Vertex-owned configuration with declared Gemini metadata", async () => {
 		const modelId = "gemini-effective-alias"
 		const config = await captureRequestConfig(

@@ -565,7 +565,7 @@ export const vertexModels: Record<string, ModelInfo> = {
 			thinking: ThinkingConfig.create({
 				supported: true,
 				mode: "budget",
-				maxBudget: 32767,
+				maxBudget: 32768,
 				defaultEnabled: true,
 				canDisable: false,
 			}),
