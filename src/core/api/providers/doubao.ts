@@ -1,4 +1,5 @@
-import { DoubaoModelId, doubaoDefaultModelId, doubaoModels, ModelInfo } from "@shared/api"
+import { doubaoDefaultModelId, doubaoModels, ModelInfo } from "@shared/api"
+import { resolveRuntimeModel } from "@shared/providers/profile-model-info"
 import OpenAI from "openai"
 import { ClineStorageMessage } from "@/shared/messages/content"
 import { createOpenAIClient } from "@/shared/net"
@@ -52,16 +53,8 @@ export class DoubaoHandler implements ApiHandler {
 		return this.client
 	}
 
-	getModel(): { id: DoubaoModelId; info: ModelInfo } {
-		const modelId = this.modelId
-		if (modelId && doubaoModels[modelId]) {
-			const id = modelId as DoubaoModelId
-			return { id, info: doubaoModels[id] }
-		}
-		return {
-			id: doubaoDefaultModelId,
-			info: doubaoModels[doubaoDefaultModelId],
-		}
+	getModel(): { id: string; info: ModelInfo } {
+		return resolveRuntimeModel(this.ctx.profile, { models: doubaoModels, defaultModelId: doubaoDefaultModelId })
 	}
 
 	@withRetry()

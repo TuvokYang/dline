@@ -1,6 +1,7 @@
+import { resolveRuntimeModel } from "@shared/providers/profile-model-info"
 import OpenAI from "openai"
 import type { ChatCompletionTool as OpenAITool } from "openai/resources/chat/completions"
-import { ModelInfo, MoonshotModelId, moonshotDefaultModelId, moonshotModels } from "@/shared/api"
+import { ModelInfo, moonshotDefaultModelId, moonshotModels } from "@/shared/api"
 import { ClineStorageMessage } from "@/shared/messages/content"
 import { createOpenAIClient } from "@/shared/net"
 import { ApiHandler, ApiHandlerContext } from "../index"
@@ -112,13 +113,7 @@ export class MoonshotHandler implements ApiHandler {
 		}
 	}
 
-	getModel(): { id: MoonshotModelId; info: ModelInfo } {
-		const modelId = this.modelId
-
-		if (modelId && modelId in moonshotModels) {
-			const id = modelId as MoonshotModelId
-			return { id, info: moonshotModels[id] }
-		}
-		return { id: moonshotDefaultModelId, info: moonshotModels[moonshotDefaultModelId] }
+	getModel(): { id: string; info: ModelInfo } {
+		return resolveRuntimeModel(this.ctx.profile, { models: moonshotModels, defaultModelId: moonshotDefaultModelId })
 	}
 }

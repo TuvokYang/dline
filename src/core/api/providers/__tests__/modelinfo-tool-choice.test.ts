@@ -3,13 +3,170 @@ import type { ModelCapabilities } from "@shared/proto/dline/models/metadata"
 import { ApiProfile } from "@shared/proto/dline/profile"
 import type { ReasoningConfig } from "@shared/proto/dline/provider/common"
 import { describe, expect, it, vi } from "vitest"
+import { AskSageHandler } from "../asksage"
 import { AwsBedrockHandler } from "../bedrock"
+import { CerebrasHandler } from "../cerebras"
+import { DoubaoHandler } from "../doubao"
+import { FireworksHandler } from "../fireworks"
+import { HicapHandler } from "../hicap"
+import { HuggingFaceHandler } from "../huggingface"
 import { LiteLlmHandler } from "../litellm"
+import { LmStudioHandler } from "../lmstudio"
 import { MinimaxHandler } from "../minimax"
 import { MistralHandler } from "../mistral"
+import { MoonshotHandler } from "../moonshot"
+import { NebiusHandler } from "../nebius"
+import { NousResearchHandler } from "../nousresearch"
+import { OllamaHandler } from "../ollama"
 import { QwenHandler } from "../qwen"
+import { QwenCodeHandler } from "../qwen-code"
 import { RequestyHandler } from "../requesty"
+import { SambanovaHandler } from "../sambanova"
+import { TogetherHandler } from "../together"
 import { VertexHandler } from "../vertex"
+import { WandbHandler } from "../wandb"
+import { XAIHandler } from "../xai"
+import { ZAiHandler } from "../zai"
+
+const runtimeModelHandlers = [
+	{ provider: "asksage", Handler: AskSageHandler },
+	{ provider: "doubao", Handler: DoubaoHandler },
+	{ provider: "fireworks", Handler: FireworksHandler },
+	{ provider: "moonshot", Handler: MoonshotHandler },
+	{ provider: "nebius", Handler: NebiusHandler },
+	{ provider: "nousResearch", Handler: NousResearchHandler },
+	{ provider: "qwen-code", Handler: QwenCodeHandler },
+	{ provider: "sambanova", Handler: SambanovaHandler },
+	{ provider: "xai", Handler: XAIHandler },
+	{ provider: "zai", Handler: ZAiHandler },
+	{ provider: "cerebras", Handler: CerebrasHandler },
+	{ provider: "huggingface", Handler: HuggingFaceHandler },
+	{ provider: "together", Handler: TogetherHandler },
+	{ provider: "hicap", Handler: HicapHandler },
+	{ provider: "wandb", Handler: WandbHandler },
+	{ provider: "lmstudio", Handler: LmStudioHandler },
+	{ provider: "ollama", Handler: OllamaHandler },
+]
+
+describe.each(runtimeModelHandlers)("$provider final runtime metadata", ({ provider, Handler }) => {
+	it("preserves the complete matching declaration without mutation", () => {
+		const id =
+			new Handler({ profile: ApiProfile.create({ provider, apiKey: "test-api-key" }), mode: "act" }).getModel().id ||
+			"opaque-effective-test"
+		const profile = ApiProfile.create({
+			provider,
+			apiKey: "test-api-key",
+			modelId: id,
+			modelInfo: {
+				id,
+				name: "Effective custom model",
+				userDefined: true,
+				apiFormats: [],
+				pricing: { inputPrice: 0, outputPrice: 0 },
+				capabilities: {
+					maxTokens: 0,
+					contextWindow: 71,
+					supportsReasoning: false,
+					supportsTools: false,
+					tools: [],
+					thinking: {
+						supported: false,
+						mode: "budget",
+						minBudget: 0,
+						maxBudget: 0,
+						effortLevels: [],
+						defaultEnabled: false,
+						canDisable: false,
+					},
+				},
+			},
+			lmstudio: { lmStudioNumCtx: "71" },
+			ollama: { ollamaApiOptionsCtxNum: "71" },
+		})
+		const before = JSON.stringify(profile)
+		const model = new Handler({ profile, mode: "act" }).getModel()
+		expect(model).toEqual({ id: profile.modelId, info: profile.modelInfo })
+		expect(JSON.stringify(profile)).toBe(before)
+	})
+
+	it("does not borrow a stale/default declaration for an explicit unknown id", () => {
+		const profile = ApiProfile.create({
+			provider,
+			apiKey: "test-api-key",
+			modelId: "opaque-unknown-test",
+			modelInfo: { id: "another-model", capabilities: { thinking: { supported: true, mode: "budget" } } },
+			lmstudio: { lmStudioNumCtx: "71" },
+			ollama: { ollamaApiOptionsCtxNum: "71" },
+		})
+		const model = new Handler({ profile, mode: "act" }).getModel()
+		const info =
+			provider === "lmstudio" || provider === "ollama"
+				? { id: "opaque-unknown-test", capabilities: { contextWindow: 71 } }
+				: { id: "opaque-unknown-test" }
+		expect(model).toEqual({ id: "opaque-unknown-test", info })
+	})
+})
+
+it.each([
+	LmStudioHandler,
+	OllamaHandler,
+])("local context overlay does not mutate model capabilities or another instance", (Handler) => {
+	const profile = ApiProfile.create({
+		provider: Handler === LmStudioHandler ? "lmstudio" : "ollama",
+		modelId: "local-test",
+		modelInfo: { id: "local-test", capabilities: { contextWindow: 11, thinking: { supported: false } } },
+		lmstudio: { lmStudioNumCtx: "23" },
+		ollama: { ollamaApiOptionsCtxNum: "23" },
+	})
+	const first = new Handler({ profile, mode: "act" }).getModel()
+	const second = new Handler({
+		profile: ApiProfile.create({ ...profile, lmstudio: { lmStudioNumCtx: "31" }, ollama: { ollamaApiOptionsCtxNum: "31" } }),
+		mode: "act",
+	}).getModel()
+	expect(first.info.capabilities?.contextWindow).toBe(23)
+	expect(second.info.capabilities?.contextWindow).toBe(31)
+	expect(first.info.capabilities?.thinking).toEqual(profile.modelInfo?.capabilities?.thinking)
+	expect(profile.modelInfo?.capabilities?.contextWindow).toBe(11)
+})
+
+it.each([
+	{ provider: "fireworks", Handler: FireworksHandler },
+	{ provider: "together", Handler: TogetherHandler },
+	{ provider: "hicap", Handler: HicapHandler },
+	{ provider: "xai", Handler: XAIHandler },
+])("$provider sends the resolved selection without adding a new reasoning wire", async ({ provider, Handler }) => {
+	const profile = ApiProfile.create({
+		provider,
+		apiKey: "test-api-key",
+		modelInfo: {
+			id: "opaque-wire-test",
+			capabilities: { thinking: { supported: true, mode: "effort", effortLevels: ["high"] } },
+		},
+		xai: { reasoning: { effort: "high" } },
+	})
+	const handler = new Handler({ profile, mode: "act" })
+	const create = vi.fn().mockResolvedValue((async function* () {})())
+	Object.defineProperty(handler, "ensureClient", { value: () => ({ chat: { completions: { create } } }) })
+	for await (const _chunk of handler.createMessage("system", [{ role: "user", content: "hi" }])) {
+	}
+	expect(create.mock.calls[0][0].model).toBe("opaque-wire-test")
+	expect(create.mock.calls[0][0].reasoning_effort).toBeUndefined()
+})
+
+it("Ollama sends the same local context as the preserved model projection", async () => {
+	const profile = ApiProfile.create({
+		provider: "ollama",
+		modelInfo: { id: "local-wire-test", capabilities: { thinking: { supported: false } } },
+		ollama: { ollamaApiOptionsCtxNum: "23" },
+	})
+	const handler = new OllamaHandler({ profile, mode: "act" })
+	const chat = vi.fn().mockResolvedValue((async function* () {})())
+	Object.defineProperty(handler, "ensureClient", { value: () => ({ chat, abort: vi.fn() }) })
+	for await (const _chunk of handler.createMessage("system", [{ role: "user", content: "hi" }])) {
+	}
+	expect(chat.mock.calls[0][0]).toMatchObject({ model: "local-wire-test", options: { num_ctx: 23 } })
+	expect(handler.getModel().info.capabilities).toEqual({ ...profile.modelInfo?.capabilities, contextWindow: 23 })
+})
 
 const qwenBudgetCases: {
 	name: string

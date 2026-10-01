@@ -1,5 +1,6 @@
-import { CerebrasModelId, cerebrasDefaultModelId, cerebrasModels, ModelInfo } from "@shared/api"
+import { cerebrasDefaultModelId, cerebrasModels, ModelInfo } from "@shared/api"
 import { createOpenAIClient } from "@shared/net"
+import { resolveRuntimeModel } from "@shared/providers/profile-model-info"
 import OpenAI from "openai"
 import { ClineStorageMessage } from "@/shared/messages/content"
 import { ApiHandler, ApiHandlerContext } from "../index"
@@ -222,21 +223,9 @@ export class CerebrasHandler implements ApiHandler {
 	}
 
 	getModel(): { id: string; info: ModelInfo } {
-		const originalModelId = this.modelId
-		let apiModelId = originalModelId
-		if (originalModelId === "qwen-3-coder-480b-free") {
-			apiModelId = "qwen-3-coder-480b"
-			return { id: apiModelId, info: cerebrasModels[originalModelId] }
-		}
-
-		if (originalModelId && cerebrasModels[originalModelId]) {
-			const id = originalModelId as CerebrasModelId
-			return { id, info: cerebrasModels[id] }
-		}
-		return {
-			id: cerebrasDefaultModelId,
-			info: cerebrasModels[cerebrasDefaultModelId],
-		}
+		const model = resolveRuntimeModel(this.ctx.profile, { models: cerebrasModels, defaultModelId: cerebrasDefaultModelId })
+		// The free alias shares a wire route, not another selection's metadata.
+		return model.id === "qwen-3-coder-480b-free" ? { ...model, id: "qwen-3-coder-480b" } : model
 	}
 
 	/**

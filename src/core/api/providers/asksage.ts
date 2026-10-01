@@ -1,4 +1,5 @@
-import { AskSageModelId, askSageDefaultModelId, askSageDefaultURL, askSageModels, ModelInfo } from "@shared/api"
+import { askSageDefaultModelId, askSageDefaultURL, askSageModels, ModelInfo } from "@shared/api"
+import { resolveRuntimeModel } from "@shared/providers/profile-model-info"
 import { buildExternalBasicHeaders } from "@/services/EnvUtils"
 import { ClineStorageMessage } from "@/shared/messages/content"
 import { fetch, providerFetch } from "@/shared/net"
@@ -190,15 +191,7 @@ export class AskSageHandler implements ApiHandler {
 	}
 
 	getModel(): { id: string; info: ModelInfo } {
-		const modelId = this.modelId
-		if (modelId && askSageModels[modelId]) {
-			const id = modelId as AskSageModelId
-			return { id, info: askSageModels[id] }
-		}
-		return {
-			id: askSageDefaultModelId,
-			info: askSageModels[askSageDefaultModelId],
-		}
+		return resolveRuntimeModel(this.ctx.profile, { models: askSageModels, defaultModelId: askSageDefaultModelId })
 	}
 
 	private headers() {

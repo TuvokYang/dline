@@ -1,4 +1,5 @@
-import { FireworksModelId, fireworksDefaultModelId, fireworksModels, ModelInfo } from "@shared/api"
+import { fireworksDefaultModelId, fireworksModels, ModelInfo } from "@shared/api"
+import { resolveRuntimeModel } from "@shared/providers/profile-model-info"
 import OpenAI from "openai"
 import { ClineStorageMessage } from "@/shared/messages/content"
 import { createOpenAIClient } from "@/shared/net"
@@ -55,7 +56,7 @@ export class FireworksHandler implements ApiHandler {
 	@withRetry()
 	async *createMessage(systemPrompt: string, messages: ClineStorageMessage[]): ApiStream {
 		const client = this.ensureClient()
-		const modelId = this.modelId
+		const modelId = this.getModel().id
 
 		const openAiMessages: OpenAI.Chat.ChatCompletionMessageParam[] = [
 			{ role: "system", content: systemPrompt },
@@ -118,15 +119,7 @@ export class FireworksHandler implements ApiHandler {
 		}
 	}
 
-	getModel(): { id: FireworksModelId; info: ModelInfo } {
-		const modelId = this.modelId
-		if (modelId && modelId in fireworksModels) {
-			const id = modelId as FireworksModelId
-			return { id, info: fireworksModels[id] }
-		}
-		return {
-			id: fireworksDefaultModelId,
-			info: fireworksModels[fireworksDefaultModelId],
-		}
+	getModel(): { id: string; info: ModelInfo } {
+		return resolveRuntimeModel(this.ctx.profile, { models: fireworksModels, defaultModelId: fireworksDefaultModelId })
 	}
 }

@@ -1,4 +1,5 @@
-import { type ModelInfo, type NebiusModelId, nebiusDefaultModelId, nebiusModels } from "@shared/api"
+import { type ModelInfo, nebiusDefaultModelId, nebiusModels } from "@shared/api"
+import { resolveRuntimeModel } from "@shared/providers/profile-model-info"
 import OpenAI from "openai"
 import type { ChatCompletionTool as OpenAITool } from "openai/resources/chat/completions"
 import { ClineStorageMessage } from "@/shared/messages/content"
@@ -97,11 +98,6 @@ export class NebiusHandler implements ApiHandler {
 	}
 
 	getModel(): { id: string; info: ModelInfo } {
-		const modelId = this.modelId
-
-		if (modelId !== undefined && modelId in nebiusModels) {
-			return { id: modelId, info: nebiusModels[modelId as NebiusModelId] }
-		}
-		return { id: nebiusDefaultModelId, info: nebiusModels[nebiusDefaultModelId] }
+		return resolveRuntimeModel(this.ctx.profile, { models: nebiusModels, defaultModelId: nebiusDefaultModelId })
 	}
 }

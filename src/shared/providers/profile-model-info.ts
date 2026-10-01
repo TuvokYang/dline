@@ -150,6 +150,20 @@ export function resolveProfileModelId(
 }
 
 /**
+ * Consume the factory's final metadata without reapplying registry or Profile overrides.
+ * Direct handler construction falls back only to the selected catalog identity; an
+ * explicit unknown selection never borrows the provider's default declaration.
+ */
+export function resolveRuntimeModel(
+	profile: ApiProfile,
+	providerModels?: Pick<ProviderModelsConfig, "models" | "defaultModelId">,
+): { id: string; info: ModelInfo } {
+	const id = resolveProfileModelId(profile, providerModels)
+	const matchingInfo = profile.modelInfo?.id === id ? profile.modelInfo : undefined
+	return { id, info: matchingInfo ?? providerModels?.models[id] ?? { id } }
+}
+
+/**
  * Build effective ModelInfo from ApiProfile, registry metadata, and provider overrides.
  *
  * @param profile Profile containing provider and model selection.

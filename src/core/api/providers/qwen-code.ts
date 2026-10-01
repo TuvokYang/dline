@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs"
-import { ModelInfo, QwenCodeModelId, qwenCodeDefaultModelId, qwenCodeModels } from "@shared/api"
+import { ModelInfo, qwenCodeDefaultModelId, qwenCodeModels } from "@shared/api"
 import { providerFetch } from "@shared/net"
+import { resolveRuntimeModel } from "@shared/providers/profile-model-info"
 import OpenAI from "openai"
 import type { ChatCompletionTool as OpenAITool } from "openai/resources/chat/completions"
 import * as os from "os"
@@ -280,15 +281,7 @@ export class QwenCodeHandler implements ApiHandler {
 		}
 	}
 
-	getModel(): { id: QwenCodeModelId; info: ModelInfo } {
-		const modelId = this.modelId
-		if (modelId && modelId in qwenCodeModels) {
-			const id = modelId as QwenCodeModelId
-			return { id, info: qwenCodeModels[id] }
-		}
-		return {
-			id: qwenCodeDefaultModelId,
-			info: qwenCodeModels[qwenCodeDefaultModelId],
-		}
+	getModel(): { id: string; info: ModelInfo } {
+		return resolveRuntimeModel(this.ctx.profile, { models: qwenCodeModels, defaultModelId: qwenCodeDefaultModelId })
 	}
 }
