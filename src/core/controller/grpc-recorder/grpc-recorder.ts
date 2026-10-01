@@ -29,6 +29,10 @@ function isSensitiveRequest(request: GrpcRequest): boolean {
 	return SENSITIVE_METHODS_BY_SERVICE[serviceName]?.has(request.method) ?? false
 }
 
+function snapshotSessionLog(sessionLog: GrpcSessionLog): GrpcSessionLog {
+	return JSON.parse(JSON.stringify(sessionLog)) as GrpcSessionLog
+}
+
 export class GrpcRecorderNoops implements IRecorder {
 	recordRequest(_request: GrpcRequest): void {}
 	recordResponse(_requestId: string, _response: GrpcResponse): void {}
@@ -63,6 +67,7 @@ export class GrpcRecorder implements IRecorder {
 	private sessionLog: GrpcSessionLog
 	private pendingRequests: Map<string, { entry: GrpcLogEntry; startTime: number }> = new Map()
 	private filteredRequestIds = new Set<string>()
+	private writeChain: Promise<void>
 
 	constructor(
 		private fileHandler: ILogFileHandler,
@@ -74,7 +79,7 @@ export class GrpcRecorder implements IRecorder {
 			entries: [],
 		}
 
-		this.fileHandler.initialize(this.sessionLog).catch((error) => {
+		this.writeChain = this.fileHandler.initialize(snapshotSessionLog(this.sessionLog)).catch((error) => {
 			Logger.error("Failed to initialize gRPC log file:", error)
 		})
 	}
@@ -224,10 +229,19 @@ export class GrpcRecorder implements IRecorder {
 	}
 
 	private flushLogAsync(): void {
+		let snapshot: GrpcSessionLog
+		try {
+			snapshot = snapshotSessionLog(this.sessionLog)
+		} catch (error) {
+			Logger.error("Failed to snapshot gRPC log:", error)
+			return
+		}
 		setImmediate(() => {
-			this.fileHandler.write(this.sessionLog).catch((error) => {
-				Logger.error("Failed to flush gRPC log:", error)
-			})
+			this.writeChain = this.writeChain
+				.then(() => this.fileHandler.write(snapshot))
+				.catch((error) => {
+					Logger.error("Failed to flush gRPC log:", error)
+				})
 		})
 	}
 

@@ -1,7 +1,7 @@
 import { ApiFormat, ServerTool, type ThinkingConfig } from "@shared/proto/dline/models/metadata"
 import { ApiProfile, type ImageGenerationProfile, ImageGenerationSource } from "@shared/proto/dline/profile"
 import { AnthropicProviderConfig } from "@shared/proto/dline/provider/anthropic"
-import type { ReasoningConfig } from "@shared/proto/dline/provider/common"
+import { BaseProviderConfig, type ReasoningConfig } from "@shared/proto/dline/provider/common"
 import { OpenAiProviderConfig } from "@shared/proto/dline/provider/openai"
 import { fireEvent, render, screen } from "@testing-library/react"
 import { describe, expect, it, vi } from "vitest"
@@ -24,6 +24,27 @@ const providerCatalog = vi.hoisted(() => ({
 				name: "Nano Banana 2",
 			},
 		},
+	},
+	deepseek: {
+		defaultModelId: "deepseek-chat",
+		defaultImageModelId: "",
+		models: {
+			"deepseek-chat": {
+				id: "deepseek-chat",
+				name: "DeepSeek Chat",
+				capabilities: {
+					supportsReasoning: true,
+					thinking: {
+						supported: true,
+						mode: "effort",
+						effortLevels: ["low", "high", "max"],
+						defaultEnabled: true,
+						defaultEffort: "high",
+					},
+				},
+			},
+		},
+		imageModels: {},
 	},
 	openai: {
 		defaultModelId: "model-a",
@@ -79,6 +100,7 @@ const providerOptions = [
 	{ value: "openai-codex", label: "OpenAI Codex" },
 	{ value: "gemini", label: "Google Gemini" },
 	{ value: "anthropic", label: "Anthropic" },
+	{ value: "deepseek", label: "DeepSeek" },
 ]
 
 /**
@@ -166,6 +188,50 @@ describe("ProviderProfileCard", () => {
 		)
 
 		expect(screen.getByText("openai · model-a · Thinking: High")).toBeInTheDocument()
+	})
+
+	it.each<{
+		name: string
+		reasoning?: ReasoningConfig
+		summary: string
+	}>([
+		{ name: "an absent preference follows the declared default", summary: "Thinking: High" },
+		{ name: "an empty legacy preference stays off", reasoning: {}, summary: "Thinking: Off" },
+		{
+			name: "an explicit legal effort enables thinking",
+			reasoning: { enableThinking: true, effort: "low" },
+			summary: "Thinking: Low",
+		},
+		{
+			name: "an explicit disabled preference stays off",
+			reasoning: { enableThinking: false },
+			summary: "Thinking: Off",
+		},
+	])("keeps the DeepSeek card summary aligned with requests when $name", ({ reasoning, summary }) => {
+		const profile = ApiProfile.create({
+			id: `deepseek-${summary}`,
+			name: "deepseek:deepseek-chat",
+			provider: "deepseek",
+			modelId: "deepseek-chat",
+			usedFor: ["act"],
+			enabled: true,
+			...(reasoning !== undefined ? { deepseek: BaseProviderConfig.create({ reasoning }) } : {}),
+		})
+
+		render(
+			<ProviderProfileCard
+				currentMode="act"
+				editMode={false}
+				isExpanded={false}
+				onDelete={vi.fn()}
+				onToggleExpand={vi.fn()}
+				onUpdate={vi.fn()}
+				profile={profile}
+				providerOptions={providerOptions}
+			/>,
+		)
+
+		expect(screen.getByText(`deepseek · deepseek-chat · ${summary}`)).toBeInTheDocument()
 	})
 
 	it("shows budget-based Thinking in the second-line provider summary", () => {

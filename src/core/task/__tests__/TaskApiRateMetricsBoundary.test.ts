@@ -116,17 +116,14 @@ describe("Task API rate metrics boundary", () => {
 		expectNotContains(source, "this.apiRateTracker.recordExactTokens(")
 	})
 
-	it("flushes and disposes metrics within the bounded Task termination cleanup", async () => {
+	it("keeps metrics close in the required termination barrier", async () => {
 		const source = await readFile(taskSourcePath, "utf8")
 		const terminate = extractMethod(source, "async terminate(", "/** Close idle task terminals")
 
-		const owner = await readFile(path.resolve("src/core/task/performance/TaskMetricsOwner.ts"), "utf8")
-		expect(terminate).toContain('withTerminateTimeout(this.metrics.close(), 5_000, "taskMetrics.close")')
-		expect(owner).toContain("await this.usageWrites")
-		expect(owner).toContain(
-			"await Promise.allSettled([this.rates.dispose(), this.rounds.close(), this.usageRepository.close()])",
-		)
-		expect(owner).toContain("if (failure) throw failure.reason")
+		expect(terminate).toContain('withRequiredTerminateTimeout(this.metrics.close(), 5_000, "taskMetrics.close")')
+		expect(terminate).toContain("this.messageResources.close()")
+		expect(terminate).toContain("if (requiredCloseFailure !== undefined) throw requiredCloseFailure")
+		expect(terminate).not.toContain('withTerminateTimeout(this.metrics.close(), 5_000, "taskMetrics.close")')
 		expect(terminate).not.toContain("this.apiRateTracker.dispose()")
 	})
 })

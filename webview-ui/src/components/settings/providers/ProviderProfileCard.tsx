@@ -10,6 +10,7 @@ import { resolveProfileReasoningConfig, resolveTaskThinkingConfig } from "@share
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react"
 import type { ReactNode } from "react"
 import { ProfileField, ProfileForm, ProfileSection } from "../profile-ui"
+import { formatDeepSeekThinkingSummary } from "./deepseek-thinking"
 import { ProfileCapabilityIcons } from "./ProfileCapabilityIcons"
 import { ProfileUsageBadges } from "./ProfileUsageBadges"
 import type { ApiProfile } from "./ProviderProfile"
@@ -129,7 +130,10 @@ const ApiProfileCard: React.FC<ApiProfileCardProps> = ({
 	const info = selectedModelInfo
 	const reasoning = resolveProfileReasoningConfig(profile)
 	const thinking = resolveTaskThinkingConfig(info?.capabilities)
-	const thinkingSummary = formatThinkingSummary(reasoning, thinking)
+	const thinkingSummary =
+		profile.provider === "deepseek"
+			? formatDeepSeekThinkingSummary(reasoning, thinking)
+			: formatThinkingSummary(reasoning, thinking)
 	const subtitle = [providerLabel, modelLabel, thinkingSummary].filter(Boolean).join(" · ")
 	const displayLine = [profileName, subtitle].filter(Boolean).join(" · ")
 	const tooltipLines: string[] = [displayLine]

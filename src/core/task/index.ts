@@ -347,7 +347,7 @@ import { createSnapshot, hydrateSnapshot, normalizeLegacyTaskSnapshot, type Task
 import { renameTaskSnapshotWithRetry, TaskSnapshotPersistence } from "./TaskSnapshotPersistence"
 import { type TaskContinuationLease, TaskState } from "./TaskState"
 import { TaskStateManager } from "./TaskStateManager"
-import { withTerminateTimeout } from "./TaskTerminateTimeout"
+import { withRequiredTerminateTimeout, withTerminateTimeout } from "./TaskTerminateTimeout"
 import { ToolExecutor } from "./ToolExecutor"
 import { getAdvertisedNativeToolNames } from "./tools/NativeToolAdmission"
 import { ToolResultUtils } from "./tools/utils/ToolResultUtils"
@@ -598,6 +598,7 @@ export class Task {
 	private readonly contextCompactionPresentation = new ContextCompactionPresentation()
 	private readonly taskLegacyStorageCleaner = new TaskLegacyStorageCleaner()
 	private readonly contextWindowIndicator: ContextWindowIndicator
+	private contextWindowIndicatorAvailable: boolean
 	private contextWindowEnvironmentRefreshTimer?: ReturnType<typeof setInterval>
 	private contextWindowEnvironmentRefreshInFlight = false
 	private readonly contextCompactionFailureReasons = new Map<string, string>()
@@ -889,6 +890,7 @@ export class Task {
 
 		this.taskInitializationStartTime = performance.now()
 		this.restoredFromHistory = historyItem !== undefined
+		this.contextWindowIndicatorAvailable = !this.restoredFromHistory
 		this.readOnly = params.readOnly === true
 		this.messageResources = new TaskMessageResources(
 			taskId,
@@ -1499,7 +1501,9 @@ export class Task {
 			profileName: currentProfileRecord?.name ?? currentProfile,
 			mode,
 		})
-		this.taskState.contextWindowIndicator = this.contextWindowIndicator.getSnapshot()
+		this.taskState.contextWindowIndicator = this.contextWindowIndicatorAvailable
+			? this.contextWindowIndicator.getSnapshot()
+			: undefined
 
 		// Set ulid on browserSession for telemetry tracking
 		this.browserSession.setUlid(this.ulid)
@@ -1883,9 +1887,17 @@ export class Task {
 		)
 	}
 
-	/** Return the authoritative Task-local context-window indicator snapshot. */
-	public getContextWindowIndicator(): ContextWindowIndicatorSnapshot {
-		return this.contextWindowIndicator.getSnapshot()
+	/** Return the authoritative Task-local context-window indicator snapshot when segment facts are available. */
+	public getContextWindowIndicator(): ContextWindowIndicatorSnapshot | undefined {
+		return this.contextWindowIndicatorAvailable ? this.contextWindowIndicator.getSnapshot() : undefined
+	}
+
+	/** Restore only validated historical segment facts; legacy totals remain a separate fallback. */
+	private restoreHistoricalContextWindowIndicator(snapshot: TaskSnapshot | undefined): void {
+		const indicator = readHistoryContextWindowIndicator(snapshot?.contextWindowIndicator, this.taskId)
+		this.contextWindowIndicatorAvailable = indicator !== undefined
+		if (indicator) this.contextWindowIndicator.restoreHistory(indicator)
+		this.taskState.contextWindowIndicator = indicator ? this.contextWindowIndicator.getSnapshot() : undefined
 	}
 
 	/**
@@ -2843,6 +2855,7 @@ export class Task {
 			const environmentTokens = await this.estimateCurrentEnvironmentTokens(this.api, mode)
 			const durableContextTokens = options.reestimateDurable ? await this.estimateStableProjectedContext(mode) : undefined
 			const { contextWindow } = getContextWindowInfo(this.api)
+			this.contextWindowIndicatorAvailable = true
 			await this.publishContextWindowIndicatorSnapshot(
 				this.contextWindowIndicator.refreshStable({
 					durableContextTokens,
@@ -4328,9 +4341,10 @@ export class Task {
 		const decision = this.inputQueueCoordinator.resolveSnapshotWrite(snapshot.inputQueue)
 		// Capture display state with the existing durable write, not on every
 		// streamed chunk. It is a read model and must not enter runtime hydration.
-		const contextWindowIndicator = this.taskState.contextWindowIndicator
-			? cloneDeep(this.taskState.contextWindowIndicator)
-			: undefined
+		const contextWindowIndicator =
+			this.contextWindowIndicatorAvailable && this.taskState.contextWindowIndicator
+				? cloneDeep(this.taskState.contextWindowIndicator)
+				: undefined
 		const taskDir = await ensureTaskDirectoryExists(this.taskId)
 		const snapshotPath = path.join(taskDir, GlobalFileNames.taskSnapshot)
 		const tmpPath = `${snapshotPath}.tmp.${Date.now()}`
@@ -5930,16 +5944,7 @@ export class Task {
 		this.taskState.currentFocusChainChecklist = checklist ?? null
 		const snapshot = await this.loadTaskSnapshot()
 		if (this.controllerDetached) return
-		const indicator = readHistoryContextWindowIndicator(snapshot?.contextWindowIndicator, this.taskId)
-		if (indicator) {
-			this.contextWindowIndicator.restoreHistory(indicator)
-		} else {
-			this.contextWindowIndicator.refreshStable({
-				...this.contextWindowIndicator.getSnapshot(),
-				durableContextTokens: getLatestReliableContextWindowTokens(this.getContextWindowRequestPressures()),
-			})
-		}
-		this.taskState.contextWindowIndicator = this.contextWindowIndicator.getSnapshot()
+		this.restoreHistoricalContextWindowIndicator(snapshot)
 		if (snapshot?.taskId === this.taskId) {
 			try {
 				normalizeStoppedTaskSnapshot(snapshot)
@@ -6446,6 +6451,9 @@ export class Task {
 			initialRuntimeState.phase === TaskPhase.COMPLETED &&
 			initialRuntimeState.completion !== undefined
 		let cutoffRevision = initialRuntimeState.supersededEffectRevision ?? initialRuntimeState.revision
+		let terminationFailed = false
+		let terminationFailure: unknown
+		let requiredCloseFailure: unknown
 		try {
 			this.invalidatePreparedProviderInputs()
 			this.cancelPendingAutoRetry()
@@ -6633,7 +6641,6 @@ export class Task {
 					5_000,
 					"checkpointHashPersistence",
 				),
-				withTerminateTimeout(this.metrics.close(), 5_000, "taskMetrics.close"),
 				withTerminateTimeout(this.activityStore.waitForPersistence(), 5_000, "activityStore.waitForPersistence"),
 				withTerminateTimeout(this.browserSession.dispose(), 5_000, "browserSession.dispose"),
 				withTerminateTimeout(this.diffViewProvider.revertChanges(), 5_000, "diffViewProvider.revertChanges"),
@@ -6663,6 +6670,9 @@ export class Task {
 			// Wait for async cleanups with timeouts
 			await Promise.allSettled(asyncCleanups)
 			logTerminateStage("resource_cleanup")
+		} catch (error) {
+			terminationFailed = true
+			terminationFailure = error
 		} finally {
 			try {
 				try {
@@ -6677,14 +6687,29 @@ export class Task {
 				} catch (error) {
 					Logger.error("Failed to post final state after terminate", error)
 				}
-				// Store close is the durability boundary and must not be best-effort:
-				// Controller.clearTask releases the task lock only after this resolves.
-				await this.messageResources.close()
-				logTerminateStage("stores_close")
+				// Store and metrics close are lifecycle barriers, not best-effort cleanup:
+				// Controller.clearTask releases the task lock only after both resolve.
+				const requiredCloseResults = await Promise.allSettled([
+					withRequiredTerminateTimeout(this.metrics.close(), 5_000, "taskMetrics.close"),
+					this.messageResources.close(),
+				])
+				const failedClose = requiredCloseResults.find(
+					(result): result is PromiseRejectedResult => result.status === "rejected",
+				)
+				requiredCloseFailure = failedClose?.reason
+				if (!failedClose) logTerminateStage("stores_close")
 			} finally {
 				this.interactionCoordinator.completeCancellation(cancellationGeneration)
 			}
 		}
+		if (terminationFailed && requiredCloseFailure !== undefined) {
+			throw new AggregateError(
+				[terminationFailure, requiredCloseFailure],
+				"Task termination and required resource cleanup both failed",
+			)
+		}
+		if (terminationFailed) throw terminationFailure
+		if (requiredCloseFailure !== undefined) throw requiredCloseFailure
 	}
 
 	// Tools

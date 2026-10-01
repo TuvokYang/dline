@@ -11,6 +11,7 @@ import { ApiKeyField } from "../common/ApiKeyField"
 import { ModelAutocomplete } from "../common/ModelAutocomplete"
 import { ModelInfoView } from "../common/ModelInfoView"
 import ReasoningEffortSelector from "../ReasoningEffortSelector"
+import { resolveDeepSeekThinkingPreference } from "./deepseek-thinking"
 import type { ApiProfile } from "./ProviderProfile"
 import { ProviderWebToolsSettings } from "./ProviderWebToolsSettings"
 import { useProviderModelOptions } from "./useProviderModelOptions"
@@ -58,18 +59,13 @@ export const DeepSeekProvider = ({ showModelOptions, isPopup, profile, onUpdate 
 
 	const reasoningConfig = profile.deepseek?.reasoning
 	const thinking = modelInfo.capabilities?.thinking
-	const supportsThinking =
-		modelInfo.capabilities?.supportsReasoning !== false && thinking?.supported === true && thinking.mode === "effort"
-	const effortLevels = (thinking?.effortLevels ?? []).filter((effort) => thinking?.canDisable !== false || effort !== "none")
-	const requestedEffort = reasoningConfig?.effort?.trim().toLowerCase() ?? ""
-	const profileEffort =
-		(requestedEffort === "xhigh" || requestedEffort === "ultra") && effortLevels.includes("max") ? "max" : requestedEffort
-	const legalSelection = ["low", "high", "max"].includes(profileEffort) && effortLevels.includes(profileEffort)
-	const defaultEffort = thinking?.defaultEffort && effortLevels.includes(thinking.defaultEffort) ? thinking.defaultEffort : ""
-	const disabled = reasoningConfig?.enableThinking === false || requestedEffort === "none"
-	const configuredEnabled =
-		thinking?.canDisable === false ||
-		(!disabled && (reasoningConfig ? (reasoningConfig.enableThinking ?? legalSelection) : thinking?.defaultEnabled === true))
+	const thinkingPreference = resolveDeepSeekThinkingPreference(
+		reasoningConfig,
+		thinking,
+		modelInfo.capabilities?.supportsReasoning,
+	)
+	const { supported: supportsThinking, effortLevels, profileEffort, defaultEffort } = thinkingPreference
+	const configuredEnabled = thinkingPreference.enabled
 	const [enableThinking, setEnableThinking] = useState(configuredEnabled)
 	const savedEffortRef = useRef<string>(effortLevels.includes(profileEffort) ? profileEffort : defaultEffort)
 
@@ -148,8 +144,9 @@ export const DeepSeekProvider = ({ showModelOptions, isPopup, profile, onUpdate 
 								<VSCodeCheckbox
 									checked={enableThinking}
 									disabled={thinking?.canDisable === false}
-									onChange={(e: any) => {
-										const checked = e.target.checked === true
+									onChange={(event) => {
+										const target = event.target as (EventTarget & { checked?: boolean }) | null
+										const checked = target?.checked === true
 										if (!checked && thinking?.canDisable === false) return
 										const prevEffort = effortLevels.includes(profileEffort)
 											? profileEffort
