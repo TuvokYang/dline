@@ -2,6 +2,7 @@ import { ApiFormat, type ModelCapabilities, type ModelPricing } from "@shared/pr
 import { OpenAiCodexProviderConfig } from "@shared/proto/dline/provider/openai_codex"
 import { resolveApiFormat } from "@shared/providers/api-format"
 import { buildEffectiveModelInfo, mergeCapabilities, mergePricing } from "@shared/providers/effective-model-info"
+import { resolveProfileModelId } from "@shared/providers/profile-model-info"
 import { VSCodeCheckbox } from "@vscode/webview-ui-toolkit/react"
 import { ApiFormatSelector } from "../common/ApiFormatSelector"
 import { ModelAutocomplete } from "../common/ModelAutocomplete"
@@ -44,9 +45,9 @@ export const OpenAiCodexProvider = ({ showModelOptions, isPopup, profile, onUpda
 		profileId: profile.id,
 		baseUrl: profile.baseUrl,
 		apiKey: profile.apiKey,
-		selectedModelId: profile.modelId,
+		selectedModelId: resolveProfileModelId(profile),
 	})
-	const modelId = profile.modelId || defaultModelId
+	const modelId = resolveProfileModelId(profile, { defaultModelId })
 	const registryModel = models[modelId]
 	const baseModel = profile.modelInfo?.id === modelId ? profile.modelInfo : registryModel
 	const modelInfo = buildEffectiveModelInfo(modelId, baseModel, {

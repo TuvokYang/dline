@@ -9,6 +9,7 @@ import { AskSageProvider } from "./AskSageProvider"
 import { BasetenProvider } from "./BasetenProvider"
 import { BedrockProvider } from "./BedrockProvider"
 import { CerebrasProvider } from "./CerebrasProvider"
+import { DeepSeekProvider } from "./DeepSeekProvider"
 import { DoubaoProvider } from "./DoubaoProvider"
 import { FireworksProvider } from "./FireworksProvider"
 import { GeminiProvider } from "./GeminiProvider"
@@ -70,8 +71,8 @@ vi.mock("./useProviderModelOptions", () => ({
 }))
 vi.mock("./OpenAiCodexOAuthControl", () => ({ OpenAiCodexOAuthControl: () => null }))
 vi.mock("../common/ModelAutocomplete", () => ({
-	ModelAutocomplete: ({ onChange }: { onChange: (value: string) => void }) => (
-		<input aria-label="Model" onChange={(event) => onChange(event.target.value)} />
+	ModelAutocomplete: ({ onChange, selectedModelId }: { onChange: (value: string) => void; selectedModelId: string }) => (
+		<input aria-label="Model" onChange={(event) => onChange(event.target.value)} value={selectedModelId} />
 	),
 }))
 vi.mock("../common/ModelConfiguration", () => ({ ModelConfiguration: () => null }))
@@ -129,6 +130,33 @@ vi.mock("@vscode/webview-ui-toolkit/react", () => ({
 	VSCodeTextField: ({ children: _children, ...props }: InputHTMLAttributes<HTMLInputElement>) => <input {...props} />,
 	VSCodeLink: (props: AnchorHTMLAttributes<HTMLAnchorElement>) => <a {...props} />,
 }))
+
+for (const [provider, Panel] of [
+	["openai", OpenAIProvider],
+	["openai-codex", OpenAiCodexProvider],
+	["qwen", QwenProvider],
+	["deepseek", DeepSeekProvider],
+] as const) {
+	it(`${provider} preserves a profile-carried model identity before resolving thinking`, () => {
+		const onUpdate = vi.fn()
+		const profile = ApiProfile.create({
+			provider,
+			modelInfo: {
+				id: "carried-thinking",
+				capabilities: { supportsReasoning: false, thinking: { supported: false, effortLevels: [] } },
+			},
+		})
+		render(<Panel onUpdate={onUpdate} profile={profile} showModelOptions={true} />)
+		expect(screen.getByRole("textbox", { name: "Model" })).toHaveValue("carried-thinking")
+		expect(screen.getByTestId("model-id")).toHaveTextContent("carried-thinking")
+		expect(JSON.parse(screen.getByTestId("model-info").textContent ?? "null").capabilities.thinking).toEqual({
+			supported: false,
+			effortLevels: [],
+		})
+		expect(screen.queryByRole("checkbox", { name: "Enable Thinking" })).not.toBeInTheDocument()
+		expect(onUpdate).not.toHaveBeenCalled()
+	})
+}
 
 for (const [provider, configKey, Panel] of [
 	["baseten", "baseten", BasetenProvider],

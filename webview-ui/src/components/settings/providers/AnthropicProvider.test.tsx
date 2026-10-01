@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import type { ModelInfo } from "@shared/proto/dline/models"
 import type { ModelCapabilities, ModelPricing } from "@shared/proto/dline/models/metadata"
-import type { ApiProfile } from "@shared/proto/dline/profile"
+import { ApiProfile } from "@shared/proto/dline/profile"
 import { AnthropicProviderConfig } from "@shared/proto/dline/provider/anthropic"
 import { fireEvent, render, screen } from "@testing-library/react"
 import React, { type ReactNode } from "react"
@@ -250,6 +250,22 @@ vi.mock("@vscode/webview-ui-toolkit/react", () => ({
 }))
 
 describe("AnthropicProvider", () => {
+	it("keeps a profile-carried identity and declaration instead of displaying the default model", () => {
+		const onUpdate = vi.fn()
+		const profile = ApiProfile.create({
+			provider: "anthropic",
+			modelInfo: {
+				id: "carried-anthropic",
+				capabilities: { maxTokens: 17, supportsReasoning: false, thinking: { supported: false } },
+			},
+		})
+		render(<AnthropicProvider onUpdate={onUpdate} profile={profile} showModelOptions={true} />)
+		expect(screen.getByRole("textbox", { name: "Model" })).toHaveValue("carried-anthropic")
+		expect(screen.getByText("max:17")).toBeInTheDocument()
+		expect(screen.queryByTestId("thinking-control")).not.toBeInTheDocument()
+		expect(onUpdate).not.toHaveBeenCalled()
+	})
+
 	it("uses declared budget mode and defaults for an opaque custom model", () => {
 		const profile = {
 			id: "opaque-budget-profile",

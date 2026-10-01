@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 import type { ModelInfo } from "@shared/proto/dline/models"
+import { ApiProfile } from "@shared/proto/dline/profile"
 import { fireEvent, render, screen } from "@testing-library/react"
 import type { ReactNode } from "react"
 import { describe, expect, it, vi } from "vitest"
 import { ClaudeCodeProvider } from "./ClaudeCodeProvider"
-import type { ApiProfile } from "./ProviderProfile"
 
 /**
  * The panel offers the thinking controls the selected model can actually use.
@@ -48,12 +48,18 @@ vi.mock("./useProviderModels", () => ({
 	}),
 }))
 
-vi.mock("../common/ModelInfoView", () => ({ ModelInfoView: () => <div /> }))
+vi.mock("../common/ModelInfoView", () => ({
+	ModelInfoView: ({ modelInfo }: { modelInfo: ModelInfo }) => <span data-testid="model-id">{modelInfo.id}</span>,
+}))
 vi.mock("./ClaudeCodeOAuthControl", () => ({ ClaudeCodeOAuthControl: () => <div /> }))
 vi.mock("../common/ModelSelector", () => ({
-	ModelSelector: ({ onChange }: { onChange: React.ChangeEventHandler<HTMLInputElement> }) => (
-		<input aria-label="Model" onChange={onChange} />
-	),
+	ModelSelector: ({
+		onChange,
+		selectedModelId,
+	}: {
+		onChange: React.ChangeEventHandler<HTMLInputElement>
+		selectedModelId: string
+	}) => <input aria-label="Model" onChange={onChange} value={selectedModelId} />,
 }))
 vi.mock("@vscode/webview-ui-toolkit/react", () => ({
 	VSCodeCheckbox: ({
@@ -86,6 +92,19 @@ function renderPanel(modelId: string, reasoning?: Record<string, unknown>) {
 }
 
 describe("ClaudeCodeProvider thinking controls", () => {
+	it("keeps a profile-carried identity and does not read default thinking declarations", () => {
+		const onUpdate = vi.fn()
+		const profile = ApiProfile.create({
+			provider: "claude-code",
+			modelInfo: { id: "carried-claude-code", capabilities: { supportsReasoning: false, thinking: { supported: false } } },
+		})
+		render(<ClaudeCodeProvider onUpdate={onUpdate} profile={profile} showModelOptions={true} />)
+		expect(screen.getByRole("textbox", { name: "Model" })).toHaveValue("carried-claude-code")
+		expect(screen.getByTestId("model-id")).toHaveTextContent("carried-claude-code")
+		expect(screen.queryByRole("checkbox", { name: "Enable Thinking" })).not.toBeInTheDocument()
+		expect(onUpdate).not.toHaveBeenCalled()
+	})
+
 	it("uses declared defaults for an opaque alias without guessing from its name", () => {
 		const profile = {
 			id: "opaque-alias-profile",

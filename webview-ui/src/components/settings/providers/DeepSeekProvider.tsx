@@ -3,7 +3,7 @@ import { ApiFormat, ServerTool } from "@shared/proto/dline/models/metadata"
 import type { ReasoningConfig } from "@shared/proto/dline/provider/common"
 import { BaseProviderConfig } from "@shared/proto/dline/provider/common"
 import { resolveApiFormat } from "@shared/providers/api-format"
-import { resolveProfileModelInfo } from "@shared/providers/profile-model-info"
+import { resolveProfileModelId, resolveProfileModelInfo } from "@shared/providers/profile-model-info"
 import { VSCodeCheckbox } from "@vscode/webview-ui-toolkit/react"
 import { useEffect, useRef, useState } from "react"
 import { ApiFormatSelector } from "../common/ApiFormatSelector"
@@ -42,10 +42,10 @@ export const DeepSeekProvider = ({ showModelOptions, isPopup, profile, onUpdate 
 		profileId: profile.id,
 		baseUrl: profile.baseUrl,
 		apiKey: profile.apiKey,
-		selectedModelId: profile.modelId,
+		selectedModelId: resolveProfileModelId(profile),
 	})
 
-	const modelId = profile.modelId || deepSeekDefaultModelId
+	const modelId = resolveProfileModelId(profile, { defaultModelId: deepSeekDefaultModelId })
 	const pc = profile.deepseek ?? BaseProviderConfig.create()
 	const modelInfo: ModelInfo = resolveProfileModelInfo(profile, {
 		models: deepSeekModels,

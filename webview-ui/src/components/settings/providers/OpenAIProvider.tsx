@@ -4,6 +4,7 @@ import { OpenAiPromptCacheMode, OpenAiProviderConfig } from "@shared/proto/dline
 import { openAiEndpointToApiFormat, resolveApiFormat } from "@shared/providers/api-format"
 import { buildEffectiveModelInfo, mergeCapabilities, mergePricing } from "@shared/providers/effective-model-info"
 import { DEFAULT_OPENAI_RESPONSES_STREAM_IDLE_TIMEOUT_SECONDS } from "@shared/providers/openai-stream"
+import { resolveProfileModelId } from "@shared/providers/profile-model-info"
 import { VSCodeButton, VSCodeCheckbox } from "@vscode/webview-ui-toolkit/react"
 import { useCallback, useId, useMemo } from "react"
 import { ApiFormatSelector } from "../common/ApiFormatSelector"
@@ -76,14 +77,14 @@ export const OpenAIProvider = ({ showModelOptions, isPopup, profile, onUpdate: o
 		profileId: profile.id,
 		baseUrl: profile.baseUrl,
 		apiKey: profile.apiKey,
-		selectedModelId: profile.modelId,
+		selectedModelId: resolveProfileModelId(profile),
 	})
 	// The user owns this switch. Deriving it from catalog membership would flip
 	// it on for any id that only the provider's listing returned, and the
 	// resulting custom-model metadata would then mask the catalog's own
 	// capabilities, including its hosted server tools.
 	const customModelEnabled = pc.customModelEnabled === true
-	const modelId = profile.modelId || (customModelEnabled ? "" : defaultModelId)
+	const modelId = resolveProfileModelId(profile, customModelEnabled ? undefined : { defaultModelId })
 	const registryModel = customModelEnabled ? undefined : models[modelId]
 	const matchingModel = profile.modelInfo?.id === modelId ? profile.modelInfo : undefined
 	const baseModel = matchingModel ?? registryModel ?? openAiModelInfoSaneDefaults

@@ -1,6 +1,7 @@
 import { QwenApiRegions } from "@shared/api"
 import { QwenProviderConfig } from "@shared/proto/dline/provider/qwen"
 import { buildEffectiveModelInfo } from "@shared/providers/effective-model-info"
+import { resolveProfileModelId } from "@shared/providers/profile-model-info"
 import { VSCodeDropdown, VSCodeOption } from "@vscode/webview-ui-toolkit/react"
 import { DROPDOWN_Z_INDEX } from "../ApiOptions"
 import { ApiKeyField } from "../common/ApiKeyField"
@@ -25,7 +26,7 @@ export const QwenProvider = ({ showModelOptions, isPopup: _isPopup, profile, onU
 	const qwenApiLine = (pc.qwenApiLine as QwenApiRegions) || qwenApiOptions[0]
 
 	const { models: qwenModels, defaultModelId: qwenDefaultModelId } = useProviderModels("qwen")
-	const modelId = profile.modelId || qwenDefaultModelId
+	const modelId = resolveProfileModelId(profile, { defaultModelId: qwenDefaultModelId })
 	const baseModel = profile.modelInfo?.id === modelId ? profile.modelInfo : qwenModels[modelId]
 	const modelInfo = buildEffectiveModelInfo(modelId, baseModel, { capabilities: pc.capabilities, pricing: pc.pricing })
 	const thinking = modelInfo.capabilities?.thinking

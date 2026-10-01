@@ -8,6 +8,7 @@ import {
 	selectContextTier,
 	updateSelectedContextWindow,
 } from "@shared/providers/effective-model-info"
+import { resolveProfileModelId } from "@shared/providers/profile-model-info"
 import { VSCodeCheckbox } from "@vscode/webview-ui-toolkit/react"
 import { useId } from "react"
 import styled from "styled-components"
@@ -60,11 +61,11 @@ export const AnthropicProvider = ({ showModelOptions, isPopup, profile, onUpdate
 		profileId: profile.id,
 		baseUrl: profile.baseUrl,
 		apiKey: profile.apiKey,
-		selectedModelId: profile.modelId,
+		selectedModelId: resolveProfileModelId(profile),
 	})
 
 	const pc = profile.anthropic ?? AnthropicProviderConfig.create()
-	const modelId = profile.modelId || anthropicDefaultModelId
+	const modelId = resolveProfileModelId(profile, { defaultModelId: anthropicDefaultModelId })
 	// The user owns this switch. Deriving it from catalog membership would flip
 	// it on for any id that only the provider's listing returned, and the
 	// resulting custom-model metadata would then mask the catalog's own
