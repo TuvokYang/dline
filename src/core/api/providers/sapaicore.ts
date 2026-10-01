@@ -8,6 +8,7 @@ import { ChatMessage, OrchestrationClient, OrchestrationModuleConfig } from "@sa
 import { HttpDestination, transformServiceBindingToDestination } from "@sap-cloud-sdk/connectivity"
 import { ModelInfo, SapAiCoreModelId, sapAiCoreDefaultModelId, sapAiCoreModels } from "@shared/api"
 import { observeProviderCall, observeProviderStreamResponse } from "@shared/provider-attempt-observer"
+import { resolveProfileModelId } from "@shared/providers/profile-model-info"
 import axios from "axios"
 import JSON5 from "json5"
 import OpenAI from "openai"
@@ -19,6 +20,7 @@ import { ApiHandler, ApiHandlerContext } from "../"
 import { withRetry } from "../retry"
 import { convertToOpenAiMessages } from "../transform/openai-format"
 import { ApiStream } from "../transform/stream"
+import { resolveOpenAIReasoningEffort } from "./openai/reasoning"
 
 interface Deployment {
 	id: string
@@ -372,20 +374,8 @@ export class SapAiCoreHandler implements ApiHandler {
 	private get apiKey() {
 		return this.ctx.profile.apiKey
 	}
-	private get modelId() {
-		return this.ctx.profile.modelId || ""
-	}
-	private get modelInfo() {
-		return this.ctx.profile.modelInfo as ModelInfo | undefined
-	}
 	private get baseUrl() {
 		return this.ctx.profile.baseUrl
-	}
-	private get reasoningEffort() {
-		return this.config?.reasoning?.effort
-	}
-	private get thinkingBudgetTokens() {
-		return this.config?.reasoning?.thinkingBudget ?? 0
 	}
 
 	/**
@@ -739,6 +729,10 @@ export class SapAiCoreHandler implements ApiHandler {
 				stream_options: { include_usage: true },
 			}
 
+			const reasoningEffort = resolveOpenAIReasoningEffort(model.info.capabilities, this.config?.reasoning)
+			if (reasoningEffort !== undefined) payload.reasoning_effort = reasoningEffort
+
+			// SAP deployment parameter compatibility does not declare reasoning support.
 			if (
 				[
 					"o1",
@@ -754,12 +748,6 @@ export class SapAiCoreHandler implements ApiHandler {
 				].includes(model.id)
 			) {
 				delete payload.max_tokens
-				delete (payload as any).undefined as any
-
-				// Add reasoning effort for reasoning models
-				if (this.reasoningEffort) {
-					payload.reasoning_effort = this.reasoningEffort
-				}
 			}
 
 			if (model.id === "o3-mini") {
@@ -1202,13 +1190,10 @@ export class SapAiCoreHandler implements ApiHandler {
 		}
 	}
 
-	getModel(): { id: SapAiCoreModelId; info: ModelInfo } {
-		const modelId = this.modelId
-		if (modelId && modelId in sapAiCoreModels) {
-			const id = modelId as SapAiCoreModelId
-			return { id, info: sapAiCoreModels[id] }
-		}
-		return { id: sapAiCoreDefaultModelId, info: sapAiCoreModels[sapAiCoreDefaultModelId] }
+	getModel(): { id: string; info: ModelInfo } {
+		const id = resolveProfileModelId(this.ctx.profile, { defaultModelId: sapAiCoreDefaultModelId })
+		const matchingInfo = this.ctx.profile.modelInfo?.id === id ? this.ctx.profile.modelInfo : undefined
+		return { id, info: matchingInfo ?? sapAiCoreModels[id] ?? { id } }
 	}
 	private convertMessageParamToSAPMessages(messages: ClineStorageMessage[]): ChatMessage[] {
 		// Use the existing OpenAI converter since the logic is identical

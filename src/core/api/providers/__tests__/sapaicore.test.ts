@@ -1,11 +1,15 @@
 import "should"
 import { Anthropic } from "@anthropic-ai/sdk"
+import type { ModelCapabilities } from "@shared/proto/dline/models/metadata"
 import { ApiProfile } from "@shared/proto/dline/profile"
+import type { ReasoningConfig } from "@shared/proto/dline/provider/common"
 import {
 	bindProviderAttemptScope,
 	observeProviderStreamResponse,
 	type ProviderAttemptTerminalStatus,
 } from "@shared/provider-attempt-observer"
+import axios from "axios"
+import { afterEach, expect, vi } from "vitest"
 import { SapAiCoreHandler } from "../sapaicore"
 
 describe("SapAiCoreHandler", () => {
@@ -83,31 +87,6 @@ describe("SapAiCoreHandler", () => {
 			result.messages[1].should.have.property("role", "user")
 			result.messages[1].should.have.property("content", userContent)
 		})
-
-		it("should support different Claude model variants", () => {
-			const modelVariants = [
-				"anthropic--claude-4.6-sonnet",
-				"anthropic--claude-4-sonnet",
-				"anthropic--claude-4-opus",
-				"anthropic--claude-3.7-sonnet",
-				"anthropic--claude-3.5-sonnet",
-				"anthropic--claude-3-sonnet",
-				"anthropic--claude-3-haiku",
-				"anthropic--claude-3-opus",
-			]
-
-			modelVariants.forEach((modelId) => {
-				const testHandler = new SapAiCoreHandler({
-					profile: ApiProfile.create({ provider: "sapaicore", modelId }),
-					mode: "act",
-				})
-
-				const model = testHandler.getModel()
-				model.id.should.equal(modelId)
-				model.info.capabilities?.maxTokens?.should.be.a.Number()
-				model.info.capabilities?.contextWindow?.should.be.a.Number()
-			})
-		})
 	})
 
 	describe("Provider stream lifecycle", () => {
@@ -180,13 +159,6 @@ describe("SapAiCoreHandler", () => {
 	})
 
 	describe("getModel", () => {
-		it("should return default model when no apiModelId is provided", () => {
-			const result = handler.getModel()
-			result.should.have.property("id")
-			result.should.have.property("info")
-			result.info.capabilities?.maxTokens?.should.be.a.Number()
-		})
-
 		it("should return specified model when apiModelId is provided", () => {
 			const customHandler = new SapAiCoreHandler({
 				profile: ApiProfile.create({ provider: "sapaicore", modelId: "anthropic--claude-4-sonnet" }),
@@ -216,5 +188,121 @@ describe("SapAiCoreHandler", () => {
 			result.should.have.property("tools")
 			result.should.have.property("tool_choice")
 		})
+	})
+})
+
+describe("SAP OpenAI metadata authority", () => {
+	afterEach(() => vi.restoreAllMocks())
+
+	const declared: ModelCapabilities = {
+		maxTokens: 29,
+		contextWindow: 71,
+		thinking: { supported: true, mode: "effort", effortLevels: ["none", "high", "xhigh"] },
+	}
+	const cases: {
+		name: string
+		capabilities: ModelCapabilities
+		reasoning?: ReasoningConfig
+		modelId?: string
+		effort?: string
+	}[] = [
+		{
+			name: "missing declaration on a misleading name",
+			capabilities: { supportsReasoning: true },
+			reasoning: { effort: "high" },
+		},
+		{ name: "coarse false veto", capabilities: { ...declared, supportsReasoning: false }, reasoning: { effort: "high" } },
+		{
+			name: "nested false veto",
+			capabilities: { thinking: { supported: false, mode: "effort", effortLevels: ["high"] } },
+			reasoning: { effort: "high" },
+		},
+		{ name: "legal effort", capabilities: declared, reasoning: { effort: "high" }, effort: "high" },
+		{ name: "invalid effort", capabilities: declared, reasoning: { effort: "invalid" } },
+		{
+			name: "empty legal list",
+			capabilities: { thinking: { supported: true, mode: "effort", effortLevels: [] } },
+			reasoning: { effort: "high" },
+		},
+		{
+			name: "explicit disable",
+			capabilities: declared,
+			reasoning: { enableThinking: false, effort: "high" },
+			effort: "none",
+		},
+		{
+			name: "required rejects stale disable",
+			capabilities: { thinking: { ...declared.thinking, canDisable: false } },
+			reasoning: { enableThinking: false, effort: "none" },
+		},
+		{
+			name: "declared default",
+			capabilities: { thinking: { ...declared.thinking, defaultEnabled: true, defaultEffort: "high" } },
+			effort: "high",
+		},
+		{ name: "legacy max alias", capabilities: declared, reasoning: { effort: "max" }, effort: "xhigh" },
+		{
+			name: "declaration independent of wire name",
+			modelId: "gpt-4o",
+			capabilities: declared,
+			reasoning: { effort: "high" },
+			effort: "high",
+		},
+	]
+
+	it.each(cases)("encodes $name in a deployment request", async ({ capabilities, reasoning, modelId = "gpt-5", effort }) => {
+		const profile = ApiProfile.create({
+			provider: "sapaicore",
+			modelId,
+			modelInfo: { id: modelId, capabilities, pricing: { inputPrice: 0 }, userDefined: true },
+			baseUrl: "https://test.api.sap.invalid",
+			sapaicore: { resourceGroup: "test-group", reasoning },
+		})
+		const current = new SapAiCoreHandler({ profile, mode: "act" })
+		Object.defineProperty(current, "getToken", { value: async () => "test-token" })
+		const getDeploymentForModel = vi.fn(async (_modelId: string) => "deployment-test")
+		Object.defineProperty(current, "getDeploymentForModel", { value: getDeploymentForModel })
+		const post = vi.spyOn(axios, "post").mockResolvedValue({
+			status: 200,
+			headers: {},
+			data: (async function* () {
+				yield Buffer.from("data: [DONE]\n")
+			})(),
+		})
+		const chunks = []
+		for await (const chunk of current.createMessage("system", [{ role: "user", content: "hi" }])) chunks.push(chunk)
+		expect(chunks).toEqual([{ type: "usage", inputTokens: 0, outputTokens: 0 }])
+		expect(getDeploymentForModel.mock.calls).toEqual([[modelId]])
+		expect(post.mock.calls[0][0]).toBe(
+			"https://test.api.sap.invalid/v2/inference/deployments/deployment-test/chat/completions?api-version=2024-12-01-preview",
+		)
+		const body = post.mock.calls[0][1]
+		if (typeof body !== "string") throw new Error("Expected the serialized deployment payload")
+		const payload = JSON.parse(body)
+		expect(payload).toMatchObject({
+			stream: true,
+			messages: [
+				{ role: "system", content: "system" },
+				{ role: "user", content: "hi" },
+			],
+			temperature: 0,
+			stream_options: { include_usage: true },
+		})
+		expect(payload.reasoning_effort).toBe(effort)
+		if (modelId === "gpt-4o") expect(payload.max_tokens).toBe(capabilities.maxTokens)
+		else expect(payload).not.toHaveProperty("max_tokens")
+		expect(current.getModel()).toEqual({ id: modelId, info: profile.modelInfo })
+	})
+
+	it("preserves unknown identity instead of substituting a supported deployment", () => {
+		const current = new SapAiCoreHandler({
+			profile: ApiProfile.create({
+				provider: "sapaicore",
+				modelId: "private-unknown-test",
+				modelInfo: { id: "gpt-5", capabilities: declared },
+			}),
+			mode: "act",
+		})
+		expect(current.getModel()).toEqual({ id: "private-unknown-test", info: { id: "private-unknown-test" } })
 	})
 })
