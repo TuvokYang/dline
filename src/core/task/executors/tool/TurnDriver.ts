@@ -125,6 +125,7 @@ export class TurnDriver {
 			throw new Error("Finalized assistant turn does not match the canonical runtime turn")
 		}
 
+		const scopedAgentsPromise = this.ports.scopedAgents?.resolve({ turnId, tools: toolUses }) ?? Promise.resolve(undefined)
 		let manualAdmissionTail: Promise<void> = Promise.resolve()
 		const withManualAdmissionSlot = <T>(work: () => Promise<T>): Promise<T> => {
 			const run = manualAdmissionTail.then(work, work)
@@ -359,7 +360,7 @@ export class TurnDriver {
 			return "completed"
 		}
 
-		const outcome = await this.ports.scheduler.runTurn(toolUses, async (session) => {
+		const executionPromise = this.ports.scheduler.runTurn(toolUses, async (session) => {
 			const suppressHaltedBlock = async (tool: ToolUse, index: number): Promise<void> => {
 				session.markAdmissionSettled(index)
 				const dlineTid = tool.dline_tid
@@ -448,7 +449,17 @@ export class TurnDriver {
 			const outcomes = await Promise.all(toolUses.map((tool, index) => processBlock(tool, index)))
 			return outcomes.includes("halt_turn") ? "halt_turn" : "completed"
 		})
-		if (outcome === "halt_turn") return
+		const [executionResult, scopedAgentsResult] = await Promise.allSettled([executionPromise, scopedAgentsPromise])
+		if (
+			scopedAgentsResult.status === "fulfilled" &&
+			scopedAgentsResult.value &&
+			!this.ports.task.isAborted() &&
+			this.ports.task.isCurrentTask()
+		) {
+			await this.ports.scopedAgents?.commit(scopedAgentsResult.value)
+		}
+		if (executionResult.status === "rejected") throw executionResult.reason
+		if (executionResult.value === "halt_turn") return
 
 		if (compactionFitInput) this.ports.task.applyCompactionFit(compactionFitInput)
 

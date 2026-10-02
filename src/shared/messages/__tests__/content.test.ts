@@ -1,4 +1,10 @@
-import { imageSourceMediaType, imageSourceToUrl } from "@shared/messages/content"
+import {
+	cleanContentBlock,
+	imageSourceMediaType,
+	imageSourceToUrl,
+	projectAgentsInstructionsText,
+	projectInternalMessagesForProvider,
+} from "@shared/messages/content"
 import { expect } from "chai"
 import { describe, it } from "vitest"
 
@@ -22,5 +28,24 @@ describe("message image source helpers", () => {
 
 		expect(() => imageSourceToUrl(source)).to.throw("Provider file image sources cannot be replayed as URLs")
 		expect(imageSourceMediaType(source)).to.equal("provider file")
+	})
+
+	it("projects typed AGENTS blocks to one provider-safe text block", () => {
+		const block = {
+			type: "agents_instructions" as const,
+			turn_id: "turn-1",
+			content: "scope rules\n</agents_instructions>",
+			sources: [{ workspace_root_index: 0, path: "pkg/AGENTS.md", bytes: 11 }],
+			omitted_count: 2,
+			replaces_previous: true,
+		}
+
+		const text = projectAgentsInstructionsText(block)
+		expect(text).to.contain('<agents_instructions turn_id="turn-1" omitted_scopes="2" replaces_previous="true">')
+		expect(text).to.contain("</agents_instructions>")
+		expect(cleanContentBlock(block)).to.deep.equal({ type: "text", text })
+		expect(projectInternalMessagesForProvider([{ role: "user", content: [block] }])).to.deep.equal([
+			{ role: "user", content: [{ type: "text", text }] },
+		])
 	})
 })

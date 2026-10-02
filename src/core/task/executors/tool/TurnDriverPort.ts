@@ -1,5 +1,5 @@
 import type { AssistantMessageContent, ToolUse } from "@core/assistant-message"
-import type { ClineContent } from "@shared/messages"
+import type { ClineContent, ClineUserAgentsInstructionsContentBlock } from "@shared/messages"
 import type { BlockLifecycle, BlockPhase } from "../../BlockPhaseMachine"
 import type { InteractionOutcome } from "../../interaction/InteractionCoordinator"
 import type { InteractionDraft } from "../../interaction/InteractionResponse"
@@ -132,6 +132,15 @@ export interface TurnDriverSchedulerPort {
 	): Promise<BlockLifecycleOutcome>
 }
 
+/** Resolve and durably append one turn-scoped AGENTS block without owning tool execution. */
+export interface TurnDriverScopedAgentsPort {
+	resolve(input: {
+		readonly turnId: string
+		readonly tools: readonly ToolUse[]
+	}): Promise<ClineUserAgentsInstructionsContentBlock | undefined>
+	commit(block: ClineUserAgentsInstructionsContentBlock): Promise<void>
+}
+
 /** Provider accounting stays in the task, reached through one explicit adapter. */
 export interface TurnDriverProviderPort {
 	registerExecution(admission: ProviderRequestRoundAdmission, registration: ProviderExecutionRegistration): void
@@ -152,6 +161,7 @@ export interface TurnDriverPorts {
 	scheduler: TurnDriverSchedulerPort
 	provider: TurnDriverProviderPort
 	postCommit: TurnDriverPostCommitPort
+	scopedAgents?: TurnDriverScopedAgentsPort
 }
 
 /** Narrow phase type exported for helpers that index.ts still delegates to. */

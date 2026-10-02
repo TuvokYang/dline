@@ -76,7 +76,9 @@ describe("TurnDriver post-commit ordering", () => {
 				getPendingUserMessageContent: () => [],
 				markPartialToolComplete: vi.fn(),
 				recordToolCall: vi.fn(),
-				markUserMessageContentReady: vi.fn(),
+				markUserMessageContentReady: () => {
+					sequence.push("READY")
+				},
 				applyCompactionFit: vi.fn(),
 			},
 			runtime: { getState: () => runtime.getState(), dispatch },
@@ -112,6 +114,15 @@ describe("TurnDriver post-commit ordering", () => {
 				),
 			},
 			provider: { registerExecution: vi.fn() },
+			scopedAgents: {
+				resolve: async () => {
+					sequence.push("AGENTS_RESOLVE")
+					return { type: "agents_instructions", turn_id: "turn:dline-new-task", content: "rules", sources: [] }
+				},
+				commit: async () => {
+					sequence.push("AGENTS_COMMIT")
+				},
+			},
 			postCommit: {
 				takeDirective: () => directive,
 				startSuccessor,
@@ -120,8 +131,11 @@ describe("TurnDriver post-commit ordering", () => {
 
 		await driver.execute()
 
-		expect(sequence.indexOf("TURN_COMPLETED")).toBeGreaterThanOrEqual(0)
+		expect(sequence.indexOf("AGENTS_RESOLVE")).toBeGreaterThanOrEqual(0)
+		expect(sequence.indexOf("AGENTS_COMMIT")).toBeGreaterThan(sequence.indexOf("AGENTS_RESOLVE"))
+		expect(sequence.indexOf("TURN_COMPLETED")).toBeGreaterThan(sequence.indexOf("AGENTS_COMMIT"))
 		expect(sequence.indexOf("START_SUCCESSOR")).toBeGreaterThan(sequence.indexOf("TURN_COMPLETED"))
+		expect(sequence.indexOf("READY")).toBeGreaterThan(sequence.indexOf("START_SUCCESSOR"))
 		expect(startSuccessor).toHaveBeenCalledWith(directive)
 	})
 
@@ -142,6 +156,7 @@ describe("TurnDriver post-commit ordering", () => {
 		const commitInterruptedResult = vi.fn(async () => undefined)
 		const presentDenial = vi.fn(async () => undefined)
 		const run = vi.fn(async () => undefined)
+		const commitAgents = vi.fn(async () => undefined)
 		const driver = new TurnDriver({
 			task: {
 				getTaskId: () => "task-2",
@@ -204,6 +219,15 @@ describe("TurnDriver post-commit ordering", () => {
 				),
 			},
 			provider: { registerExecution: vi.fn() },
+			scopedAgents: {
+				resolve: async () => ({
+					type: "agents_instructions",
+					turn_id: "turn:dline-rejected-read",
+					content: "rules",
+					sources: [],
+				}),
+				commit: commitAgents,
+			},
 			postCommit: { takeDirective: () => undefined, startSuccessor: vi.fn() },
 		})
 
@@ -214,5 +238,6 @@ describe("TurnDriver post-commit ordering", () => {
 		// The model learns the tool was denied; the row the tool is showing has
 		// to reach a matching terminal state instead of waiting forever.
 		expect(presentDenial).toHaveBeenCalledWith(tool)
+		expect(commitAgents).toHaveBeenCalledOnce()
 	})
 })

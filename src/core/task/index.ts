@@ -208,6 +208,7 @@ import {
 	getWorkspacePromptInputWatcherRegistry,
 	type PromptInputWatcherSubscription,
 } from "@/core/prompts/system-prompt-cache/WorkspacePromptInputWatcherRegistry"
+import { TaskScopedAgentsService } from "@/core/task/scoped-agents/TaskScopedAgentsService"
 import { HostProvider } from "@/hosts/host-provider"
 import { FileEditProvider } from "@/integrations/editor/FileEditProvider"
 import {
@@ -235,6 +236,7 @@ import {
 	ClineToolResponseContent,
 	ClineUserContent,
 	ClineUserToolResultContentBlock,
+	projectInternalMessagesForProvider,
 } from "@/shared/messages"
 import { ShowMessageType } from "@/shared/proto/dline/host"
 import { ApiFormat, ServerTool } from "@/shared/proto/dline/models/metadata"
@@ -776,6 +778,18 @@ export class Task {
 				}
 			},
 		},
+		scopedAgents: {
+			resolve: ({ turnId, tools }) => this.scopedAgentsService.resolveTurn(turnId, tools),
+			commit: async (block) => {
+				if (
+					!this.taskState.userMessageContent.some(
+						(candidate) => candidate.type === "agents_instructions" && candidate.turn_id === block.turn_id,
+					)
+				) {
+					this.taskState.userMessageContent.push(block)
+				}
+			},
+		},
 		postCommit: {
 			takeDirective: (dlineTid) => this.toolExecutor.takePostCommitDirective(dlineTid),
 			startSuccessor: async (directive) => {
@@ -798,6 +812,7 @@ export class Task {
 	})
 	private readonly systemPromptCacheService: SystemPromptCacheService
 	private readonly promptFreshnessInvalidationCoordinator: PromptFreshnessInvalidationCoordinator
+	private readonly scopedAgentsService: TaskScopedAgentsService
 	private promptInputWatcherSubscription?: PromptInputWatcherSubscription
 	private promptInputFileWatcherInitialization?: Promise<void>
 	private promptFreshnessDisposed = false
@@ -978,6 +993,24 @@ export class Task {
 		this.stateManager = stateManager
 		this.taskSm = new TaskStateManager(taskId, stateManager)
 		this.workspaceManager = workspaceManager
+		this.scopedAgentsService = new TaskScopedAgentsService({
+			cwd: this.cwd,
+			workspaceRoots: () =>
+				this.workspaceManager?.getRoots().map((root) => ({ path: root.path, name: root.name })) ?? [{ path: this.cwd }],
+			isEnabled: () => {
+				const rootAgentsPath = path.resolve(this.cwd, GlobalFileNames.agentsRulesFile)
+				return this.getTaskCapabilityToggles().localAgentsRulesToggles[rootAgentsPath] !== false
+			},
+			history: () => this.messageStateHandler.apiConversationHistory,
+			trackExact: async (paths) => {
+				await this.ensurePromptInputFileWatcherInitialized()
+				await this.promptInputWatcherSubscription?.trackExact(paths)
+			},
+			onStale: () => {
+				this.systemPromptCacheService.markRulesStale()
+				void this.postStateToWebview({ immediate: true })
+			},
+		})
 
 		// DiffViewProvider opens Diff Editor during edits while FileEditProvider performs
 		// edits in the background without stealing user's editor's focus.
@@ -6829,6 +6862,7 @@ export class Task {
 		const webSearchRoutingPlan = resolveRequestWebSearchRoutingPlan(this.api, webToolsEnabled)
 		const promptContext = await this.buildPromptContext(providerInfo, webToolsEnabled, webSearchRoutingPlan)
 		await this.systemPromptCacheService.refresh({ promptContext, reason: "manual" })
+		this.scopedAgentsService.refresh()
 		await this.postStateToWebview({ immediate: true })
 	}
 
@@ -6885,7 +6919,10 @@ export class Task {
 				workflowDirectories: getWorkflowsScanDirectories(this.cwd).map((directory) => directory.path),
 				skillDirectories: getSkillsDirectoriesForScan(this.cwd).map((directory) => directory.path),
 				subagentDirectories: getSubagentsScanDirectories(this.cwd).map((directory) => directory.path),
-				invalidate: () => this.invalidatePromptFreshness("prompt_input_file"),
+				invalidate: (change) => {
+					if (change.kind === "scoped_agents") this.scopedAgentsService.markChanged(change.absolutePath)
+					else this.invalidatePromptFreshness("prompt_input_file")
+				},
 				// Pruning is a scan decision, so the recursive workspace watch never
 				// descends into trees that listing would skip anyway.
 				shouldIgnoreDirectory: (absolutePath) => this.ignoreController.shouldIgnoreDirectory(absolutePath),
@@ -7780,6 +7817,7 @@ export class Task {
 		if (refreshReason) {
 			try {
 				frozenPrompt = await this.systemPromptCacheService.refresh({ promptContext, reason: refreshReason })
+				this.scopedAgentsService.refresh()
 			} catch (error) {
 				Logger.warn(`[Task ${this.taskId}] Failed to refresh frozen system prompt after ${refreshReason}:`, error)
 				frozenPrompt = await this.systemPromptCacheService.getOrCreate({ promptContext })
@@ -7831,7 +7869,7 @@ export class Task {
 					: this.contextManager.getTruncatedMessages(cloneDeep(apiConversationHistory), deletedRange)
 		}
 
-		const messages = ensureApiMessages(managedMessages, apiConversationHistory)
+		const messages = projectInternalMessagesForProvider(ensureApiMessages(managedMessages, apiConversationHistory))
 		const serverTools = Object.freeze([
 			...new Set([...runtime.webSearchRoutingPlan.serverTools, ...requestScope.hostedImageGenerationPlan.serverTools]),
 		])

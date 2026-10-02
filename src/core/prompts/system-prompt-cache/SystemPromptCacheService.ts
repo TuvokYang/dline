@@ -100,6 +100,21 @@ export class SystemPromptCacheService {
 		return this.latestPromptFreshness
 	}
 
+	/** Mark a dynamically pinned rule scope stale without rebuilding the frozen prompt. */
+	public markRulesStale(): PromptFreshnessSnapshot {
+		const previous = this.latestPromptFreshness
+		const changes = previous.changes.some((change) => change.kind === "rules")
+			? previous.changes
+			: [...previous.changes, { kind: "rules" as const, summary: "Rules changed" }]
+		this.latestPromptFreshness = {
+			...previous,
+			status: "stale",
+			changes,
+			checkedAt: this.now(),
+		}
+		return this.latestPromptFreshness
+	}
+
 	/** Re-evaluate freshness without rebuilding or persisting the frozen prompt and tools. */
 	public async reevaluateFreshness(input: GetOrCreatePromptInput): Promise<PromptFreshnessSnapshot> {
 		return this.operationMutex.withLock(() => this.reevaluateFreshnessLocked(input))

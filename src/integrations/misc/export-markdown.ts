@@ -22,6 +22,8 @@ export function formatContentBlockToMarkdown(block: ClineContent): string {
 				input = String(block.input)
 			}
 			return `[Tool Use: ${block.name}]\n${input}`
+		case "agents_instructions":
+			return `[AGENTS Instructions]\n${block.content}`
 		case "tool_result":
 			if (typeof block.content === "string") {
 				return `[Tool${block.is_error ? " (Error)" : ""}]\n${block.content}`

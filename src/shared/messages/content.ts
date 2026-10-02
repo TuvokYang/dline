@@ -59,6 +59,20 @@ export function imageSourceMediaType(source: ClineReplayImageSource): string {
 
 export interface ClineDocumentContentBlock extends Anthropic.DocumentBlockParam, ClineSharedMessageParam {}
 
+export interface ClineUserAgentsInstructionsContentBlock extends ClineSharedMessageParam {
+	type: "agents_instructions"
+	turn_id: string
+	content: string
+	sources: readonly {
+		workspace_root_index: number
+		path: string
+		bytes: number
+		truncated?: boolean
+	}[]
+	omitted_count?: number
+	replaces_previous?: boolean
+}
+
 export interface ClineUserToolResultContentBlock extends ClineSharedMessageParam {
 	type: "tool_result"
 	/** The only canonical tool-use/result pairing identity. */
@@ -101,6 +115,7 @@ export type ClineUserContent =
 	| ClineImageContentBlock
 	| ClineDocumentContentBlock
 	| ClineUserToolResultContentBlock
+	| ClineUserAgentsInstructionsContentBlock
 
 export type ClineAssistantContent =
 	| ClineTextContentBlock
@@ -179,7 +194,32 @@ function isReplayableToAnthropic(block: ClineContent): boolean {
 /**
  * Clean a content block by removing Cline-specific fields and returning only Anthropic-compatible fields
  */
+export function projectInternalMessagesForProvider(messages: readonly ClineStorageMessage[]): ClineStorageMessage[] {
+	return messages.map((message) => {
+		if (!Array.isArray(message.content) || !message.content.some((block) => block.type === "agents_instructions")) {
+			return message
+		}
+		return {
+			...message,
+			content: message.content.map(
+				(block): ClineContent =>
+					block.type === "agents_instructions" ? { type: "text", text: projectAgentsInstructionsText(block) } : block,
+			),
+		}
+	})
+}
+
+export function projectAgentsInstructionsText(block: ClineUserAgentsInstructionsContentBlock): string {
+	const safeContent = block.content.replaceAll("</agents_instructions>", "</agents_instructions>")
+	const omitted = block.omitted_count ? ` omitted_scopes="${block.omitted_count}"` : ""
+	const replacement = block.replaces_previous ? ' replaces_previous="true"' : ""
+	return `<agents_instructions turn_id="${block.turn_id}"${omitted}${replacement}>\n${safeContent}\n</agents_instructions>`
+}
+
 export function cleanContentBlock(block: ClineContent): Anthropic.ContentBlockParam {
+	if (block.type === "agents_instructions") {
+		return { type: "text", text: projectAgentsInstructionsText(block) }
+	}
 	if (block.type === "tool_use") {
 		if (!block.function_id || !block.dline_tid) {
 			throw new Error("Canonical tool_use is missing function_id or dline_tid")
