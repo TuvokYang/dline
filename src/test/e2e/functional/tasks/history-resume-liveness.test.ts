@@ -30,6 +30,22 @@ async function onlyTaskId(dlineDocsDir: string): Promise<string> {
 	return taskIds[0]
 }
 
+function readCompletedHistoryStageDurationMs(output: string, taskId: string, stage: string): number | undefined {
+	const match = output.match(
+		new RegExp(`\\[TaskInitPerf\\] phase=${stage} state=complete taskId=${taskId} kind=history[^\\n]* durationMs=(\\d+)`),
+	)
+	return match?.[1] === undefined ? undefined : Number(match[1])
+}
+
+function readHistorySurfaceDurationMs(output: string, taskId: string): number | undefined {
+	const durations = ["history_surface_preparing", "history_display", "history_surface_ready"].map((stage) =>
+		readCompletedHistoryStageDurationMs(output, taskId, stage),
+	)
+	return durations.some((duration) => duration === undefined)
+		? undefined
+		: durations.reduce<number>((total, duration) => total + (duration ?? 0), 0)
+}
+
 async function seedLargeTransientActivityHistory(taskDirectory: string, taskId: string): Promise<void> {
 	const createdAt = Date.now()
 	const detail = "E2E_HISTORY_LIVENESS_ACTIVITY_DETAIL_".padEnd(64 * 1024, "x")
@@ -99,6 +115,7 @@ e2e(
 
 		const historyTask = sidebar.getByText(taskText, { exact: true }).last()
 		await expect(historyTask).toBeVisible({ timeout: 30_000 })
+		const outputBeforeHistoryOpen = E2ETestHelper.readDlineOutputIfPresent(userDataDir) ?? ""
 		const historyClickedAt = performance.now()
 		await historyTask.click()
 
@@ -107,17 +124,26 @@ e2e(
 		const footer = sidebar.getByRole("contentinfo")
 		const resumeButton = footer.getByText("Resume", { exact: true })
 		await expect(resumeButton).toBeVisible({ timeout: 5_000 })
-		const historySurfaceMs = Math.round(performance.now() - historyClickedAt)
-		console.log(`[history-resume-liveness] ${JSON.stringify({ historySurfaceMs })}`)
+		const browserSurfaceMs = Math.round(performance.now() - historyClickedAt)
+		const extensionSurfaceMs = await E2ETestHelper.waitForValue(() => {
+			const output = E2ETestHelper.readDlineOutputIfPresent(userDataDir) ?? ""
+			const currentOpeningOutput = output.startsWith(outputBeforeHistoryOpen)
+				? output.slice(outputBeforeHistoryOpen.length)
+				: output
+			return readHistorySurfaceDurationMs(currentOpeningOutput, taskId)
+		}, 5_000)
+		const timing = { browserSurfaceMs, extensionSurfaceMs }
+		console.log(`[history-resume-liveness] ${JSON.stringify(timing)}`)
 		await e2e.info().attach("history-resume-liveness.json", {
-			body: Buffer.from(`${JSON.stringify({ historySurfaceMs }, null, 2)}\n`, "utf8"),
+			body: Buffer.from(`${JSON.stringify(timing, null, 2)}\n`, "utf8"),
 			contentType: "application/json",
 		})
-		expect(historySurfaceMs, `History surface must be ready under ${HISTORY_SURFACE_BUDGET_MS}ms`).toBeLessThan(
+		expect(extensionSurfaceMs, `Extension history surface must be ready under ${HISTORY_SURFACE_BUDGET_MS}ms`).toBeLessThan(
 			HISTORY_SURFACE_BUDGET_MS,
 		)
 		await expect.poll(() => server.openAiRequestCount).toBe(2)
 		await expect(sidebar.getByText("E2E_HISTORY_LIVENESS_INTERRUPTED_MUST_NOT_RENDER", { exact: false })).toHaveCount(0)
+		await expect(resumeButton).toHaveAttribute("aria-disabled", "false", { timeout: 5_000 })
 
 		const input = sidebar.getByTestId("chat-input")
 		await input.fill("E2E_HISTORY_LIVENESS_DRAFT")

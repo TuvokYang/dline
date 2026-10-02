@@ -1,6 +1,15 @@
 import { describe, expect, it, vi } from "vitest"
 import { Task } from "../index"
 
+const runHistoryPreparation = (
+	Task.prototype as unknown as {
+		runHistoryPreparation(
+			this: Task,
+			options?: { isCurrent?: () => boolean; onReadyToDisplay?: () => Promise<void> },
+		): Promise<void>
+	}
+).runHistoryPreparation
+
 describe("Task.prepareFromHistory readiness", () => {
 	it("keeps Resume gated until watcher, metrics, and reconciliation complete", async () => {
 		const order: string[] = []
@@ -27,7 +36,7 @@ describe("Task.prepareFromHistory readiness", () => {
 			},
 		} as unknown as Task
 
-		await Task.prototype.prepareFromHistory.call(task, {
+		await runHistoryPreparation.call(task, {
 			isCurrent: () => true,
 			onReadyToDisplay: async () => {
 				order.push("ready")
@@ -53,7 +62,7 @@ describe("Task.prepareFromHistory readiness", () => {
 			controller: { postTaskViewPatchToWebview },
 		} as unknown as Task
 
-		await expect(Task.prototype.prepareFromHistory.call(task)).rejects.toBe(failure)
+		await expect(runHistoryPreparation.call(task)).rejects.toBe(failure)
 
 		expect(task.taskState.abort).toBe(true)
 		expect((task as unknown as { historyPreparationPending: boolean }).historyPreparationPending).toBe(true)
@@ -78,9 +87,49 @@ describe("Task.prepareFromHistory readiness", () => {
 			controller: { postTaskViewPatchToWebview },
 		} as unknown as Task
 
-		await Task.prototype.prepareFromHistory.call(task, { isCurrent: () => isCurrent })
+		await runHistoryPreparation.call(task, { isCurrent: () => isCurrent })
 
 		expect((task as unknown as { historyPreparationPending: boolean }).historyPreparationPending).toBe(true)
 		expect(postTaskViewPatchToWebview).not.toHaveBeenCalled()
+	})
+
+	it("clears the historical stop state before preparing execution for an accepted interaction", async () => {
+		type PreparationHarness = {
+			controllerDetached: boolean
+			readOnly: boolean
+			executionPreparationFenced: boolean
+			taskState: {
+				abort: boolean
+				autoRetryAttempts: number
+				resetOperationCancellation(): void
+			}
+			resetResumeExecutionState(): void
+			prepareExecutionResources(): Promise<void>
+		}
+		const taskPrototype = Task.prototype as unknown as {
+			resetResumeExecutionState(this: PreparationHarness): void
+			prepareExecutionResourcesForAcceptedInteraction(this: PreparationHarness): Promise<void>
+		}
+		const resetOperationCancellation = vi.fn()
+		const taskState = { abort: true, autoRetryAttempts: 2, resetOperationCancellation }
+		const prepareExecutionResources = vi.fn(async () => {
+			expect(taskState.abort).toBe(false)
+			expect(taskState.autoRetryAttempts).toBe(0)
+		})
+		const task: PreparationHarness = {
+			controllerDetached: false,
+			readOnly: false,
+			executionPreparationFenced: false,
+			taskState,
+			resetResumeExecutionState() {
+				taskPrototype.resetResumeExecutionState.call(this)
+			},
+			prepareExecutionResources,
+		}
+
+		await taskPrototype.prepareExecutionResourcesForAcceptedInteraction.call(task)
+
+		expect(resetOperationCancellation).toHaveBeenCalledOnce()
+		expect(prepareExecutionResources).toHaveBeenCalledOnce()
 	})
 })

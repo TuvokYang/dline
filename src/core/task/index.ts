@@ -1043,12 +1043,7 @@ export class Task {
 				async (state, durability, origin) => this.publishRuntimeTaskView(state, durability, origin),
 				async (state, durability, origin) => this.emitStateSnapshot(createSnapshot(state), durability, origin),
 				async () => this.abortExecution(),
-				async () => {
-					if (this.controllerDetached) return
-					this.taskState.resetOperationCancellation()
-					this.taskState.abort = false
-					this.taskState.autoRetryAttempts = 0
-				},
+				async () => this.resetResumeExecutionState(),
 				async (effect) => {
 					if (this.controllerDetached) return
 					this.taskState.resetOperationCancellation()
@@ -2555,7 +2550,7 @@ export class Task {
 		if (hasModeSwitchInput && this.taskState.isAwaitingPlanResponse && !shouldContinueInteraction) {
 			throw new Error("The active conversational interaction is no longer available for the mode switch.")
 		}
-		if (shouldContinueInteraction) await this.prepareExecutionResources()
+		if (shouldContinueInteraction) await this.prepareExecutionResourcesForAcceptedInteraction()
 		this.taskSm.setMode(targetMode)
 		this.pendingSystemPromptRefreshReason = "mode_switch"
 		await this.rebuildApiHandler()
@@ -5381,10 +5376,30 @@ export class Task {
 		this.readOnly = false
 	}
 
+	private resetResumeExecutionState(): void {
+		if (this.controllerDetached) return
+		this.taskState.resetOperationCancellation()
+		this.taskState.abort = false
+		this.taskState.autoRetryAttempts = 0
+	}
+
 	private assertExecutionPreparationCurrent(): void {
 		if (this.controllerDetached || this.readOnly || this.executionPreparationFenced || this.taskState.abort) {
 			throw new Error("Task execution admission was superseded")
 		}
+	}
+
+	/** Admit one already-validated interaction before opening its historical execution resources. */
+	private prepareExecutionResourcesForAcceptedInteraction(): Promise<void> {
+		try {
+			if (this.controllerDetached || this.readOnly || this.executionPreparationFenced) {
+				throw new Error("Task execution admission was superseded")
+			}
+			this.resetResumeExecutionState()
+		} catch (error) {
+			return Promise.reject(error)
+		}
+		return this.prepareExecutionResources()
 	}
 
 	/** Acquire execution resources without changing Task or interaction identity. */
@@ -5450,7 +5465,7 @@ export class Task {
 			const admission =
 				event.response.actionId === "start_new_task" || !this.restoredFromHistory
 					? Promise.resolve()
-					: this.prepareExecutionResources()
+					: this.prepareExecutionResourcesForAcceptedInteraction()
 			return admission
 				.then(() => this.interactionCoordinator.respond(event.response))
 				.then((result) => {
