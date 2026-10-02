@@ -8,6 +8,8 @@ import { WorkspacePromptInputWatcherRegistry } from "./WorkspacePromptInputWatch
 class FakeWatcher {
 	private readonly listeners = new Map<string, Array<(value: unknown) => void>>()
 	readonly close = vi.fn().mockResolvedValue(undefined)
+	readonly add = vi.fn()
+	readonly unwatch = vi.fn().mockResolvedValue(undefined)
 
 	on(event: string, listener: (value: unknown) => void): this {
 		const existing = this.listeners.get(event) ?? []
@@ -154,7 +156,7 @@ describe("WorkspacePromptInputWatcherRegistry", () => {
 		expect(watchers[0].close).not.toHaveBeenCalled()
 	})
 
-	it("closes the underlying watcher only after the last subscriber releases", async () => {
+	it("keeps the process-owned watcher warm after the last subscriber releases", async () => {
 		const first = await registry.subscribe({
 			taskId: "task-1",
 			cwd: workspaceA,
@@ -169,9 +171,10 @@ describe("WorkspacePromptInputWatcherRegistry", () => {
 		})
 
 		await first.dispose()
+		await second.dispose()
 		expect(watchers[0].close).not.toHaveBeenCalled()
 
-		await second.dispose()
+		await registry.disposeAll()
 		expect(watchers[0].close).toHaveBeenCalledTimes(1)
 	})
 
@@ -190,7 +193,7 @@ describe("WorkspacePromptInputWatcherRegistry", () => {
 		expect(watchers[0].close).not.toHaveBeenCalled()
 	})
 
-	it("creates a fresh watcher after the workspace entry was fully released", async () => {
+	it("reuses the warm watcher after the workspace temporarily has no subscribers", async () => {
 		const first = await registry.subscribe({
 			taskId: "task-1",
 			cwd: workspaceA,
@@ -201,7 +204,35 @@ describe("WorkspacePromptInputWatcherRegistry", () => {
 
 		await registry.subscribe({ taskId: "task-2", cwd: workspaceA, ...createRoots(workspaceA), invalidate: vi.fn() })
 
-		expect(watch).toHaveBeenCalledTimes(2)
+		expect(watch).toHaveBeenCalledTimes(1)
+	})
+
+	it("routes dynamically tracked child AGENTS changes only to subscribers of that exact scope", async () => {
+		const childAgents = path.join(workspaceA, "packages", "app", "AGENTS.md")
+		const firstInvalidate = vi.fn()
+		const secondInvalidate = vi.fn()
+		const first = await registry.subscribe({
+			taskId: "task-1",
+			cwd: workspaceA,
+			...createRoots(workspaceA),
+			invalidate: firstInvalidate,
+		})
+		await registry.subscribe({
+			taskId: "task-2",
+			cwd: workspaceA,
+			...createRoots(workspaceA),
+			invalidate: secondInvalidate,
+		})
+
+		await first.trackExact([childAgents])
+		expect(watchers[0].add).toHaveBeenCalledWith([childAgents])
+		watchers[0].emit("change", childAgents)
+
+		expect(firstInvalidate).toHaveBeenCalledOnce()
+		expect(secondInvalidate).not.toHaveBeenCalled()
+
+		await first.untrackExact([childAgents])
+		expect(watchers[0].unwatch).toHaveBeenCalledWith([childAgents])
 	})
 
 	it("does not invalidate subscribers for paths outside prompt inputs", async () => {

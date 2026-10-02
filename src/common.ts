@@ -10,6 +10,7 @@ import { HookDiscoveryCache } from "./core/hooks/HookDiscoveryCache"
 import { HookProcessRegistry } from "./core/hooks/HookProcessRegistry"
 import { ModelRegistry } from "./core/model-registry/ModelRegistry"
 import { ensureSeedProviders } from "./core/model-registry/seed-initializer"
+import { getWorkspacePromptInputWatcherRegistry } from "./core/prompts/system-prompt-cache/WorkspacePromptInputWatcherRegistry"
 import { StateManager } from "./core/storage/StateManager"
 import { AgentConfigLoader } from "./core/task/tools/subagent/AgentConfigLoader"
 import { ExtensionRegistryInfo } from "./registry"
@@ -297,6 +298,7 @@ export async function tearDown(): Promise<void> {
 		syncWorker().dispose()
 		await observe("shutdown.hooks", () => HookProcessRegistry.terminateAll())
 		HookDiscoveryCache.getInstance().dispose()
+		await observe("shutdown.prompt_input_monitors", () => getWorkspacePromptInputWatcherRegistry().disposeAll())
 		DlineRuntimeFileManager.stopPeriodicCleanup()
 		try {
 			await observe("shutdown.state_final_flush", () => StateManager.get().flushPendingState())

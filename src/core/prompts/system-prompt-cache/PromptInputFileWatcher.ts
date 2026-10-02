@@ -4,6 +4,15 @@ import chokidar, { type ChokidarOptions, type FSWatcher } from "chokidar"
 import { markPerfPhase, recordPerfPhase } from "@/services/telemetry/instrumentation/duration-recorder"
 import { PerfDomain } from "@/services/telemetry/instrumentation/perf-domains"
 
+export type PromptInputKind = "rule" | "workflow" | "skill" | "subagent" | "scoped_agents"
+export type PromptInputEvent = "add" | "change" | "unlink"
+
+export interface PromptInputFileChange {
+	readonly absolutePath: string
+	readonly event: PromptInputEvent
+	readonly kind: PromptInputKind
+}
+
 export interface PromptInputFileWatcherDeps {
 	readonly taskId?: string
 	readonly cwd: string
@@ -11,13 +20,11 @@ export interface PromptInputFileWatcherDeps {
 	readonly workflowDirectories: readonly string[]
 	readonly skillDirectories: readonly string[]
 	readonly subagentDirectories: readonly string[]
-	readonly invalidate: () => void
+	readonly invalidate: (change: PromptInputFileChange) => void
 	/**
 	 * Workspace exclusion rules, normally backed by the agent scope of `IgnoreController`.
-	 *
-	 * The watcher traverses `cwd` recursively, so an unpruned subtree costs one
-	 * descriptor and one event stream per file in the workspace. Callers must
-	 * supply the real rules; the default only keeps unit tests self-contained.
+	 * Static roots are narrow capability directories; dynamically tracked child
+	 * AGENTS paths are exact files and never require a recursive workspace walk.
 	 */
 	readonly shouldIgnoreDirectory?: (absolutePath: string) => boolean
 	readonly watch?: (paths: readonly string[], options: ChokidarOptions) => FSWatcher
@@ -49,9 +56,6 @@ function resolveE2EReadinessDelayMs(): number {
 	return Number(configured)
 }
 
-type PromptInputKind = "rule" | "workflow" | "skill" | "subagent"
-type PromptInputEvent = "add" | "change" | "unlink"
-
 /** Watch local files whose canonical discovery projection can affect a frozen prompt or tool snapshot. */
 export class PromptInputFileWatcher {
 	private readonly taskId: string
@@ -61,8 +65,9 @@ export class PromptInputFileWatcher {
 	private readonly skillDirectories: readonly string[]
 	private readonly subagentDirectories: readonly string[]
 	private readonly protectedDirectories: readonly string[]
+	private readonly rootRuleFiles: ReadonlySet<string>
 	private readonly watchRoots: readonly string[]
-	private readonly invalidate: () => void
+	private readonly invalidate: (change: PromptInputFileChange) => void
 	private readonly isIgnoredDirectory: (absolutePath: string) => boolean
 	private readonly watch: (paths: readonly string[], options: ChokidarOptions) => FSWatcher
 	private watcher?: FSWatcher
@@ -72,7 +77,14 @@ export class PromptInputFileWatcher {
 	private disposed = false
 	private eventLogTimer?: NodeJS.Timeout
 	private totalRelevantEvents = 0
-	private pendingEventCounts: Record<PromptInputKind, number> = { rule: 0, workflow: 0, skill: 0, subagent: 0 }
+	private readonly exactInputs = new Set<string>()
+	private pendingEventCounts: Record<PromptInputKind, number> = {
+		rule: 0,
+		workflow: 0,
+		skill: 0,
+		subagent: 0,
+		scoped_agents: 0,
+	}
 	private pendingEventTypes: Record<PromptInputEvent, number> = { add: 0, change: 0, unlink: 0 }
 
 	constructor(deps: PromptInputFileWatcherDeps) {
@@ -82,16 +94,27 @@ export class PromptInputFileWatcher {
 		this.workflowDirectories = resolveUnique(deps.workflowDirectories)
 		this.skillDirectories = resolveUnique(deps.skillDirectories)
 		this.subagentDirectories = resolveUnique(deps.subagentDirectories)
+		const localRulesDirectory = path.join(this.cwd, ".agents", "rules")
+		const cursorRulesDirectory = path.join(this.cwd, ".cursor", "rules")
+		this.rootRuleFiles = new Set(
+			resolveUnique([
+				path.join(this.cwd, "AGENTS.md"),
+				path.join(this.cwd, ".cursorrules"),
+				path.join(this.cwd, ".windsurfrules"),
+			]),
+		)
 		this.protectedDirectories = resolveUnique([
 			this.globalRulesDirectory,
-			path.join(this.cwd, ".agents", "rules"),
-			path.join(this.cwd, ".cursor", "rules"),
+			localRulesDirectory,
+			cursorRulesDirectory,
 			...this.workflowDirectories,
 			...this.skillDirectories,
 			...this.subagentDirectories,
 		])
 		this.watchRoots = resolveUnique([
-			this.cwd,
+			...this.rootRuleFiles,
+			localRulesDirectory,
+			cursorRulesDirectory,
 			this.globalRulesDirectory,
 			...this.workflowDirectories,
 			...this.skillDirectories,
@@ -100,6 +123,17 @@ export class PromptInputFileWatcher {
 		this.invalidate = deps.invalidate
 		this.isIgnoredDirectory = deps.shouldIgnoreDirectory ?? (() => false)
 		this.watch = deps.watch ?? ((paths, options) => chokidar.watch([...paths], options))
+	}
+
+	async trackExact(paths: readonly string[]): Promise<void> {
+		const additions = resolveUnique(paths).filter((candidate) => !this.exactInputs.has(candidate))
+		for (const candidate of additions) this.exactInputs.add(candidate)
+		if (additions.length > 0) this.watcher?.add(additions)
+	}
+
+	async untrackExact(paths: readonly string[]): Promise<void> {
+		const removals = resolveUnique(paths).filter((candidate) => this.exactInputs.delete(candidate))
+		if (removals.length > 0 && this.watcher) await this.watcher.unwatch(removals)
 	}
 
 	async start(): Promise<void> {
@@ -172,10 +206,11 @@ export class PromptInputFileWatcher {
 		this.watcher = watcher
 		const handle = (event: PromptInputEvent, candidate: unknown) => {
 			if (this.disposed || typeof candidate !== "string") return
-			const kind = this.getPromptInputKind(candidate)
+			const absolutePath = path.resolve(candidate)
+			const kind = this.getPromptInputKind(absolutePath)
 			if (!kind) return
 			this.recordEvent(event, kind)
-			this.invalidate()
+			this.invalidate({ absolutePath, event, kind })
 		}
 		watcher
 			.on("add", (candidate) => handle("add", candidate))
@@ -244,15 +279,16 @@ export class PromptInputFileWatcher {
 				workflows: this.pendingEventCounts.workflow,
 				skills: this.pendingEventCounts.skill,
 				subagents: this.pendingEventCounts.subagent,
+				scopedAgents: this.pendingEventCounts.scoped_agents,
 			},
 			{ taskId: this.taskId },
 		)
 		if (Logger.isDebugEnabled()) {
 			Logger.debug(
-				`[PromptInputWatcherPerf] phase=event_batch taskId=${this.taskId} events=${batchEvents} totalEvents=${this.totalRelevantEvents} add=${this.pendingEventTypes.add} change=${this.pendingEventTypes.change} unlink=${this.pendingEventTypes.unlink} rules=${this.pendingEventCounts.rule} workflows=${this.pendingEventCounts.workflow} skills=${this.pendingEventCounts.skill} subagents=${this.pendingEventCounts.subagent}`,
+				`[PromptInputWatcherPerf] phase=event_batch taskId=${this.taskId} events=${batchEvents} totalEvents=${this.totalRelevantEvents} add=${this.pendingEventTypes.add} change=${this.pendingEventTypes.change} unlink=${this.pendingEventTypes.unlink} rules=${this.pendingEventCounts.rule} workflows=${this.pendingEventCounts.workflow} skills=${this.pendingEventCounts.skill} subagents=${this.pendingEventCounts.subagent} scopedAgents=${this.pendingEventCounts.scoped_agents}`,
 			)
 		}
-		this.pendingEventCounts = { rule: 0, workflow: 0, skill: 0, subagent: 0 }
+		this.pendingEventCounts = { rule: 0, workflow: 0, skill: 0, subagent: 0, scoped_agents: 0 }
 		this.pendingEventTypes = { add: 0, change: 0, unlink: 0 }
 	}
 
@@ -267,11 +303,13 @@ export class PromptInputFileWatcher {
 		if (this.protectedDirectories.some((directory) => isWithin(directory, resolved) || isWithin(resolved, directory))) {
 			return false
 		}
+		if ([...this.exactInputs].some((input) => isWithin(resolved, input))) return false
 		return this.isIgnoredDirectory(resolved)
 	}
 
 	private getPromptInputKind(candidate: string): PromptInputKind | undefined {
 		const resolved = path.resolve(candidate)
+		if (this.exactInputs.has(resolved)) return "scoped_agents"
 		if (this.isRuleInput(resolved)) return "rule"
 		if (this.isWorkflowInput(resolved)) return "workflow"
 		if (this.isSkillInput(resolved)) return "skill"
@@ -281,12 +319,11 @@ export class PromptInputFileWatcher {
 
 	private isRuleInput(candidate: string): boolean {
 		if (isWithin(this.globalRulesDirectory, candidate)) return true
+		if (this.rootRuleFiles.has(candidate)) return true
 		if (!isWithin(this.cwd, candidate)) return false
 		const normalized = path.relative(this.cwd, candidate).split(path.sep).join("/").toLowerCase()
-		if (normalized === ".cursorrules" || normalized === ".windsurfrules") return true
-		if (normalized.startsWith(".agents/rules/")) return true
-		if (normalized.startsWith(".cursor/rules/") && normalized.endsWith(".mdc")) return true
-		return path.basename(candidate).toLowerCase() === "agents.md"
+		if (normalized === ".agents/rules" || normalized.startsWith(".agents/rules/")) return true
+		return normalized.startsWith(".cursor/rules/") && normalized.endsWith(".mdc")
 	}
 
 	private isWorkflowInput(candidate: string): boolean {

@@ -4,11 +4,9 @@ import {
 	readDirectoryRecursive,
 	scanRuleToggles,
 } from "@core/context/instructions/user-instructions/rule-helpers"
-import type { IgnoreController } from "@core/ignore/IgnoreController"
 import { formatResponse } from "@core/prompts/responses"
 import { GlobalFileNames } from "@core/storage/disk"
 import { resolveCapabilityToggles } from "@core/storage/settings/capability-toggle-store"
-import { listFiles } from "@services/glob/list-files"
 import { ClineRulesToggles } from "@shared/cline-rules"
 import { fileExistsAtPath, isDirectory } from "@utils/fs"
 import fs from "fs/promises"
@@ -179,82 +177,26 @@ export const getLocalCursorRules = async (cwd: string, toggles: ClineRulesToggle
 	return [cursorRulesFileInstructions, cursorRulesDirInstructions]
 }
 
-/**
- * Helper function to find all agents.md files recursively (case-insensitive)
- * Only searches if a top-level agents.md file exists
- */
-async function findAgentsMdFiles(cwd: string, ignoreController?: IgnoreController): Promise<string[]> {
-	try {
-		// First check if top-level agents.md exists
-		const topLevelAgentsPath = path.resolve(cwd, GlobalFileNames.agentsRulesFile)
-		const topLevelExists = await fileExistsAtPath(topLevelAgentsPath)
-
-		// Only search recursively if top-level agents.md exists
-		if (!topLevelExists) {
-			return []
-		}
-
-		// Search recursively for all agents.md files. `listFiles` yields FileInfo
-		// entries, so map to the path: returning the entries themselves made every
-		// downstream `path.resolve` throw and silently dropped all agents rules.
-		const [allFiles] = await listFiles(cwd, true, 500, { ignoreController })
-		const agentsFileName = GlobalFileNames.agentsRulesFile.toLowerCase()
-		return allFiles
-			.filter((info) => !info.isDirectory && path.basename(info.path).toLowerCase() === agentsFileName)
-			.map((info) => info.path)
-	} catch (error) {
-		Logger.error(`Failed to find agents.md files in ${cwd}:`, error)
-		return []
-	}
-}
-
-/**
- * Gather formatted agents rules - searches recursively and combines all agents.md files
- */
-export const getLocalAgentsRules = async (
-	cwd: string,
-	toggles: ClineRulesToggles,
-	ignoreController?: IgnoreController,
-	workspaceName = path.basename(cwd),
-) => {
+/** Gather the workspace-root AGENTS.md. Nested files are resolved lazily for tool target scopes. */
+export const getLocalAgentsRules = async (cwd: string, toggles: ClineRulesToggles, workspaceName = path.basename(cwd)) => {
 	const agentsRulesFilePath = path.resolve(cwd, GlobalFileNames.agentsRulesFile)
 
-	// Check if the top-level agents.md file is enabled
 	if (agentsRulesFilePath in toggles && toggles[agentsRulesFilePath] === false) {
+		return undefined
+	}
+	if (!(await fileExistsAtPath(agentsRulesFilePath)) || (await isDirectory(agentsRulesFilePath))) {
 		return undefined
 	}
 
 	try {
-		const agentsMdFiles = await findAgentsMdFiles(cwd, ignoreController)
-
-		if (agentsMdFiles.length === 0) {
-			return undefined
-		}
-
-		// Read and combine all agents.md files
-		const combinedContent = await Promise.all(
-			agentsMdFiles.map(async (filePath) => {
-				try {
-					const fullPath = path.resolve(cwd, filePath)
-					const content = (await fs.readFile(fullPath, "utf8")).trim()
-					if (content) {
-						const relativePath = path.relative(cwd, fullPath)
-						return `## ${relativePath}\n\n${content}`
-					}
-					return null
-				} catch (error) {
-					Logger.error(`Failed to read agents.md file at ${filePath}:`, error)
-					return null
-				}
-			}),
-		).then((contents) => contents.filter(Boolean).join("\n\n"))
-
-		if (combinedContent) {
-			return formatResponse.agentsRulesLocalFileInstructions(workspaceName, combinedContent)
-		}
+		const content = (await fs.readFile(agentsRulesFilePath, "utf8")).trim()
+		if (!content) return undefined
+		return formatResponse.agentsRulesLocalFileInstructions(
+			workspaceName,
+			`## ${GlobalFileNames.agentsRulesFile}\n\n${content}`,
+		)
 	} catch (error) {
-		Logger.error("Failed to read agents.md files:", error)
+		Logger.error(`Failed to read AGENTS.md file at ${agentsRulesFilePath}:`, error)
+		return undefined
 	}
-
-	return undefined
 }

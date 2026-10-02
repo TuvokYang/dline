@@ -7612,7 +7612,6 @@ export class Task {
 		const localAgentsRulesFileInstructions = await getLocalAgentsRules(
 			this.cwd,
 			taskCapabilityToggles.localAgentsRulesToggles,
-			this.ignoreController,
 			workspaceName,
 		)
 		const localRulesLoadMs = Math.round(performance.now() - stageStartedAt)

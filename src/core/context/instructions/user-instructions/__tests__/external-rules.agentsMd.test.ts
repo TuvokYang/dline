@@ -30,7 +30,7 @@ afterEach(async () => {
 })
 
 describe("getLocalAgentsRules", () => {
-	it("reads every discovered agents.md instead of dropping them on a path type error", async () => {
+	it("reads only the workspace-root AGENTS.md", async () => {
 		const cwd = await createWorkspace({
 			"AGENTS.md": "root guidance",
 			"packages/api/AGENTS.md": "api guidance",
@@ -38,8 +38,9 @@ describe("getLocalAgentsRules", () => {
 
 		const result = await getLocalAgentsRules(cwd, {})
 
+		expect(result).toContain("## AGENTS.md")
 		expect(result).toContain("root guidance")
-		expect(result).toContain("api guidance")
+		expect(result).not.toContain("api guidance")
 	})
 
 	it("returns undefined when the workspace has no top-level agents.md", async () => {

@@ -126,7 +126,7 @@ describe("PromptInputFileWatcher", () => {
 			path.join(fixture.cwd, ".cursor", "rules", "local.mdc"),
 			path.join(fixture.cwd, ".cursorrules"),
 			path.join(fixture.cwd, ".windsurfrules"),
-			path.join(fixture.cwd, "packages", "app", "AGENTS.md"),
+			path.join(fixture.cwd, "AGENTS.md"),
 			path.join(fixture.roots.workflowDirectories[0], "nested", "workflow.md"),
 			path.join(fixture.roots.workflowDirectories[1], "legacy.mdx"),
 			path.join(fixture.roots.workflowDirectories[2], "global.md"),
@@ -141,13 +141,18 @@ describe("PromptInputFileWatcher", () => {
 		expect(fixture.watch).toHaveBeenCalledOnce()
 		expect(fixture.watch.mock.calls[0]?.[0]).toEqual(
 			expect.arrayContaining([
-				fixture.cwd,
+				path.join(fixture.cwd, "AGENTS.md"),
+				path.join(fixture.cwd, ".cursorrules"),
+				path.join(fixture.cwd, ".windsurfrules"),
+				path.join(fixture.cwd, ".agents", "rules"),
+				path.join(fixture.cwd, ".cursor", "rules"),
 				fixture.roots.globalRulesDirectory,
 				...fixture.roots.workflowDirectories,
 				...fixture.roots.skillDirectories,
 				...fixture.roots.subagentDirectories,
 			]),
 		)
+		expect(fixture.watch.mock.calls[0]?.[0]).not.toContain(fixture.cwd)
 	})
 
 	it("rejects files that canonical capability discovery cannot expose", async () => {
@@ -156,6 +161,7 @@ describe("PromptInputFileWatcher", () => {
 
 		for (const filePath of [
 			path.join(fixture.cwd, "src", "index.ts"),
+			path.join(fixture.cwd, "packages", "app", "AGENTS.md"),
 			path.join(fixture.roots.workflowDirectories[0], "workflow.txt"),
 			path.join(fixture.roots.skillDirectories[0], "SKILL.md"),
 			path.join(fixture.roots.skillDirectories[0], "skill", "nested", "SKILL.md"),
