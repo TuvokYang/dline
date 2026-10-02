@@ -22,7 +22,12 @@ import { disposeTelemetryService, telemetryService } from "./services/telemetry"
 import { recordPerfPhase } from "./services/telemetry/instrumentation/duration-recorder"
 import { PerfDomain } from "./services/telemetry/instrumentation/perf-domains"
 import { PostHogClientProvider } from "./services/telemetry/providers/posthog/PostHogClientProvider"
-import { activateRuntimeTelemetry, deactivateRuntimeTelemetry } from "./services/telemetry/runtime/activation"
+import {
+	activateRuntimeTelemetry,
+	completeRuntimeSessionLedger,
+	deactivateRuntimeTelemetry,
+	markRuntimeSessionStage,
+} from "./services/telemetry/runtime/activation"
 import { getRuntimeTelemetryLifecycle } from "./services/telemetry/runtime/host"
 import { forwardRuntimeEvent } from "./services/telemetry/runtime/provider-event-bridge"
 import { cleanupTestMode } from "./services/test/TestMode"
@@ -277,6 +282,7 @@ export async function tearDown(): Promise<void> {
 	const diagnostics = getRuntimeTelemetryLifecycle()?.diagnostics
 	const observe = (stage: string, action: () => Promise<void>) => (diagnostics ? diagnostics.observe(stage, action) : action())
 	diagnostics?.phase("shutdown", "started")
+	await markRuntimeSessionStage("shutdown_started").catch(() => undefined)
 	try {
 		AgentConfigLoader.getInstance()?.dispose()
 		PostHogClientProvider.getInstance().dispose()
@@ -320,6 +326,13 @@ export async function tearDown(): Promise<void> {
 		}
 	}
 	// Telemetry deliberately does not claim that the process exited successfully.
-	await StateManager.shutdown()
-	cleanupTestMode()
+	try {
+		await StateManager.shutdown()
+		cleanupTestMode()
+	} finally {
+		// This marker means Dline deactivation completed; it is not a process-exit claim.
+		await completeRuntimeSessionLedger().catch((error) => {
+			Logger.internalError("[Dline] Runtime session ledger completion failed:", error)
+		})
+	}
 }

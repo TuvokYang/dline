@@ -97,6 +97,8 @@ export interface RuntimeTelemetryLifecycleOptions {
 	readonly onDiagnosis?: (diagnosis: RootCauseDiagnosis) => void
 	/** Canonical provider-registry sink used by the production composition root. */
 	readonly onEvent?: (event: RuntimeTelemetryEvent) => void
+	/** Best-effort observer for work that may only run after consent becomes enabled. */
+	readonly onEnabled?: () => void | Promise<void>
 	/** Supplied by the host composition root; runtime never imports task/controller owners. */
 	readonly activeTaskIds?: () => readonly string[]
 	/**
@@ -130,6 +132,7 @@ export class RuntimeTelemetryLifecycle {
 	private readonly sessionCapacity: number
 	private enabled = false
 	private disposed = false
+	private consentTransition: Promise<void> = Promise.resolve()
 
 	constructor(options: RuntimeTelemetryLifecycleOptions) {
 		this.options = options
@@ -176,10 +179,24 @@ export class RuntimeTelemetryLifecycle {
 	 * `unset` is deliberately treated as "not yet consented" rather than as an
 	 * implicit yes: the onboarding banner still owns that decision.
 	 */
-	async applyConsent(setting: TelemetrySetting): Promise<void> {
+	applyConsent(setting: TelemetrySetting): Promise<void> {
+		if (this.disposed) return Promise.resolve()
+		const transition = this.consentTransition.then(() => this.applyConsentTransition(setting))
+		this.consentTransition = transition.catch(() => undefined)
+		return transition
+	}
+
+	private async applyConsentTransition(setting: TelemetrySetting): Promise<void> {
 		if (this.disposed) return
 		if (setting === "enabled") {
 			await this.start()
+			try {
+				// Re-enter on every enabled apply so a transient reconciliation write
+				// can be retried without requiring an extension-host restart.
+				await this.options.onEnabled?.()
+			} catch {
+				// Consent application must not fail because optional diagnostics could not reconcile.
+			}
 			return
 		}
 		await this.stop({ revokePairingCode: setting === "disabled" })
@@ -249,10 +266,11 @@ export class RuntimeTelemetryLifecycle {
 
 	async dispose(): Promise<void> {
 		if (this.disposed) return
+		this.disposed = true
 		try {
+			await this.consentTransition.catch(() => undefined)
 			await this.stop({ revokePairingCode: false })
 		} finally {
-			this.disposed = true
 			this.bus.dispose()
 		}
 	}

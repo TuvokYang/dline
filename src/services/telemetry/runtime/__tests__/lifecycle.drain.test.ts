@@ -1,7 +1,7 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
-import { afterEach, beforeEach, describe, expect, it } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { RuntimeTelemetryLifecycle } from "../lifecycle"
 
 /**
@@ -48,7 +48,9 @@ describe("RuntimeTelemetryLifecycle draining", () => {
 
 	/** Accepts the OTLP post so the transport never becomes the slow path. */
 
-	function makeLifecycle(overrides: { drainIntervalMs?: number } = {}): RuntimeTelemetryLifecycle {
+	function makeLifecycle(
+		overrides: { drainIntervalMs?: number; onEnabled?: () => void | Promise<void> } = {},
+	): RuntimeTelemetryLifecycle {
 		return new RuntimeTelemetryLifecycle({
 			dataDir,
 			sessionId: SESSION_ID,
@@ -114,6 +116,43 @@ describe("RuntimeTelemetryLifecycle draining", () => {
 
 		expect(journaledEventNames(dataDir)).toHaveLength(0)
 
+		await lifecycle.dispose()
+	})
+
+	it("re-enters the enabled observer so transient reconciliation can retry", async () => {
+		const onEnabled = vi.fn().mockRejectedValueOnce(new Error("transient reconciliation failure"))
+		const lifecycle = makeLifecycle({ onEnabled })
+
+		await lifecycle.applyConsent("enabled")
+		await lifecycle.applyConsent("enabled")
+
+		expect(onEnabled).toHaveBeenCalledTimes(2)
+		expect(lifecycle.isEnabled).toBe(true)
+		await lifecycle.dispose()
+	})
+
+	it("serializes overlapping enable and disable transitions", async () => {
+		let releaseEnabled!: () => void
+		const enabledGate = new Promise<void>((resolve) => {
+			releaseEnabled = resolve
+		})
+		let observedEnabled: boolean | undefined
+		let lifecycle!: RuntimeTelemetryLifecycle
+		lifecycle = makeLifecycle({
+			onEnabled: async () => {
+				await enabledGate
+				observedEnabled = lifecycle.isEnabled
+			},
+		})
+
+		const enabling = lifecycle.applyConsent("enabled")
+		const disabling = lifecycle.applyConsent("disabled")
+		await vi.waitFor(() => expect(lifecycle.isEnabled).toBe(true))
+		releaseEnabled()
+		await Promise.all([enabling, disabling])
+
+		expect(observedEnabled).toBe(true)
+		expect(lifecycle.isEnabled).toBe(false)
 		await lifecycle.dispose()
 	})
 

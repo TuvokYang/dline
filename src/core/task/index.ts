@@ -223,6 +223,7 @@ import { ClineErrorType, ErrorService } from "@/services/error"
 import { telemetryService } from "@/services/telemetry"
 import { recordPerfPhase } from "@/services/telemetry/instrumentation/duration-recorder"
 import { PerfDomain } from "@/services/telemetry/instrumentation/perf-domains"
+import { getRuntimeTelemetryLifecycle } from "@/services/telemetry/runtime/host"
 import { ClineClient } from "@/shared/cline"
 import {
 	ClineAssistantContent,
@@ -323,6 +324,7 @@ import { isTaskRateMetricsLoopActive } from "./performance/task-api-rate-metrics
 import type { TaskRateMetricsQuery, TaskRateMetricsQueryResult } from "./performance/task-rate-metrics-types"
 import type { PresentationPriority } from "./presentation-types"
 import { PromptCacheHealthTracker } from "./prompt-cache/PromptCacheHealthTracker"
+import { projectHistoryMaintenanceTelemetry, projectResumeRecoveryTelemetry } from "./RecoveryTelemetry"
 import { RestoreHandler } from "./RestoreHandler"
 import { ReasoningIndicator } from "./reasoning-indicator"
 import { repairPersistedEncryptedReasoning } from "./reasoning-retention"
@@ -532,11 +534,13 @@ export class Task {
 	private resumeCoordinator: ResumeCoordinator
 	private readonly historyResumeMaintenance: HistoryResumeMaintenance
 	private historyPreparationPending = false
+	private historyPreparation?: Promise<void>
 	private controllerDetached = false
 	private readonly restoredFromHistory: boolean
 	private readonly messageResources: TaskMessageResources
 	private historyApiLength = 0
 	private executionPreparation?: Promise<void>
+	private executionPreparationFenced = false
 	private readOnly: boolean
 	private latestOrdinaryCompactionDiagnostic?: CompactionProviderDiagnosticSnapshot
 
@@ -1239,6 +1243,12 @@ export class Task {
 					error,
 				)
 			},
+			reportRecovery: (summary) => {
+				getRuntimeTelemetryLifecycle()?.service.recordInfo(
+					"task.recovery.completed",
+					projectResumeRecoveryTelemetry(summary),
+				)
+			},
 			hydrate: async (result) => {
 				if (this.controllerDetached || this.readOnly) throw new Error("History preparation was superseded")
 				this.taskRuntime.restore(hydrateSnapshot(result.snapshot))
@@ -1330,6 +1340,12 @@ export class Task {
 			refreshContextIndicator: () => this.refreshStableContextWindowIndicator({ reestimateDurable: true }),
 			reportFailure: (stage, error) => {
 				Logger.warn(`[Task ${this.taskId}] Historical maintenance failed during ${stage}:`, error)
+			},
+			reportCompletion: (summary) => {
+				getRuntimeTelemetryLifecycle()?.service.recordInfo(
+					"task.history_maintenance.completed",
+					projectHistoryMaintenanceTelemetry(summary),
+				)
 			},
 		})
 
@@ -5298,6 +5314,7 @@ export class Task {
 	public fenceControllerDetachment(): void {
 		if (this.controllerDetached) return
 		this.controllerDetached = true
+		this.resumeCoordinator.fence()
 		this.interactionCoordinator.fence("task_detached")
 		this.taskState.activeHookExecution?.abortController.abort()
 		this.taskState.abort = true
@@ -5364,29 +5381,40 @@ export class Task {
 		this.readOnly = false
 	}
 
+	private assertExecutionPreparationCurrent(): void {
+		if (this.controllerDetached || this.readOnly || this.executionPreparationFenced || this.taskState.abort) {
+			throw new Error("Task execution admission was superseded")
+		}
+	}
+
 	/** Acquire execution resources without changing Task or interaction identity. */
 	private prepareExecutionResources(): Promise<void> {
-		if (this.controllerDetached || this.readOnly) return Promise.reject(new Error("Task execution is not permitted"))
+		try {
+			this.assertExecutionPreparationCurrent()
+		} catch (error) {
+			return Promise.reject(error)
+		}
 		if (!this.restoredFromHistory) return Promise.resolve()
 		if (!this.executionPreparation) {
 			const preparation = (async () => {
 				await this.snapshotPersistence.flushNow()
+				this.assertExecutionPreparationCurrent()
 				const stores = await this.messageResources.openExecution()
-				if (this.controllerDetached || this.readOnly) throw new Error("Task execution admission was superseded")
+				this.assertExecutionPreparationCurrent()
 				this.messageStateHandler.attachExecutionStores(stores)
 				await this.metrics.enableRecording()
 				await this.ensureApiRateMetricsInitialized()
-				if (this.controllerDetached || this.readOnly) throw new Error("Task execution admission was superseded")
+				this.assertExecutionPreparationCurrent()
 				await this.contextManager.initializeContextHistory(await ensureTaskDirectoryExists(this.taskId))
 				await this.rebuildApiHandler()
-				if (this.controllerDetached || this.readOnly) throw new Error("Task execution admission was superseded")
+				this.assertExecutionPreparationCurrent()
 				await this.refreshStableContextWindowIndicator({ reestimateDurable: true })
-				if (this.controllerDetached || this.readOnly) throw new Error("Task execution admission was superseded")
+				this.assertExecutionPreparationCurrent()
 				this.startContextWindowEnvironmentRefresh()
 				void this.FocusChainManager?.setupFocusChainFileWatcher().catch((error) => {
 					Logger.warn(`[Task ${this.taskId}] Failed to start focus chain watcher:`, error)
 				})
-				const isCurrent = () => !this.controllerDetached && !this.readOnly
+				const isCurrent = () => !this.controllerDetached && !this.readOnly && !this.taskState.abort
 				void this.historyResumeMaintenance.run(isCurrent).catch((error) => {
 					Logger.warn(`[Task ${this.taskId}] Historical execution maintenance failed:`, error)
 				})
@@ -5999,7 +6027,16 @@ export class Task {
 	 * Only call this when the task lock is acquired (taskLockAcquired === true).
 	 * Readonly windows should stop after displayHistory() and show a lock banner.
 	 */
-	public async prepareFromHistory(options?: ResumeTaskFromHistoryOptions) {
+	public prepareFromHistory(options?: ResumeTaskFromHistoryOptions): Promise<void> {
+		if (this.historyPreparation) return this.historyPreparation
+		const preparation = this.runHistoryPreparation(options).finally(() => {
+			if (this.historyPreparation === preparation) this.historyPreparation = undefined
+		})
+		this.historyPreparation = preparation
+		return preparation
+	}
+
+	private async runHistoryPreparation(options?: ResumeTaskFromHistoryOptions): Promise<void> {
 		if (this.controllerDetached || this.readOnly) throw new Error("History preparation requires Task write permission")
 		this.taskState.abort = true
 		const isCurrent = options?.isCurrent ?? (() => true)
@@ -6440,7 +6477,18 @@ export class Task {
 
 	/** Release inert display resources without writing a termination phase or executing hooks. */
 	private async closeHistoricalDisplay(): Promise<void> {
+		this.executionPreparationFenced = true
 		this.fenceControllerDetachment()
+		const historyPreparation = this.historyPreparation
+		const executionPreparation = this.executionPreparation
+		await Promise.allSettled([
+			historyPreparation ?? Promise.resolve(),
+			executionPreparation ?? Promise.resolve(),
+			this.resumeCoordinator.waitForIdle(),
+			this.historyResumeMaintenance.waitForIdle(),
+		])
+		this.historyPreparationPending = false
+		this.messageStateHandler.publishTaskHistoryClose()
 		this.stopContextWindowEnvironmentRefresh()
 		this.promptFreshnessDisposed = true
 		this.promptFreshnessInvalidationCoordinator.dispose()
@@ -6477,6 +6525,8 @@ export class Task {
 		) {
 			return this.closeHistoricalDisplay()
 		}
+		this.executionPreparationFenced = true
+		this.resumeCoordinator.fence()
 		const terminateStartedAt = performance.now()
 		let stageStartedAt = terminateStartedAt
 		const logTerminateStage = (phase: string, details = "") => {
@@ -6596,6 +6646,15 @@ export class Task {
 				),
 			])
 			logTerminateStage("wait_superseded_operations")
+			const historyPreparation = this.historyPreparation
+			const executionPreparation = this.executionPreparation
+			await Promise.allSettled([
+				historyPreparation ?? Promise.resolve(),
+				executionPreparation ?? Promise.resolve(),
+				this.resumeCoordinator.waitForIdle(),
+				this.historyResumeMaintenance.waitForIdle(),
+			])
+			logTerminateStage("history_maintenance")
 
 			const hooksEnabled = getHooksEnabledSafe(this.stateManager.getGlobalSettingsKey("hooksEnabled"))
 			let taskCancelHookPromise = Promise.resolve()

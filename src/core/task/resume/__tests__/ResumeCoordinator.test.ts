@@ -150,6 +150,18 @@ describe("ResumeCoordinator", () => {
 		])
 	})
 
+	it("contains recovery observer failures", async () => {
+		const order: string[] = []
+		const coordinatorPorts = ports(order)
+		coordinatorPorts.reportRecovery = () => {
+			throw new Error("observer failed")
+		}
+
+		await expect(new ResumeCoordinator(coordinatorPorts).prepare("task-1")).resolves.toMatchObject({
+			snapshot: { phase: TaskPhase.PAUSED },
+		})
+	})
+
 	it("publishes the stopped interaction while ask persistence is still in flight", async () => {
 		const order: string[] = []
 		let releasePresentation!: () => void
@@ -242,6 +254,108 @@ describe("ResumeCoordinator", () => {
 		)
 	})
 
+	it("waits for both persistence writes after one fails", async () => {
+		const order: string[] = []
+		let releasePersistence!: () => void
+		const persistenceGate = new Promise<void>((resolve) => {
+			releasePersistence = resolve
+		})
+		const reportPersistenceFailure = vi.fn()
+		const coordinator = new ResumeCoordinator({
+			...ports(order),
+			presentInteraction: async () => {
+				throw new Error("interaction write failed")
+			},
+			persist: async () => {
+				order.push("persist:start")
+				await persistenceGate
+				order.push("persist:end")
+			},
+			reportPersistenceFailure,
+		})
+		let finished = false
+
+		const preparation = coordinator.prepare("task-1").finally(() => {
+			finished = true
+		})
+		await vi.waitFor(() => expect(order).toContain("persist:start"))
+		expect(finished).toBe(false)
+		expect(reportPersistenceFailure).not.toHaveBeenCalled()
+
+		releasePersistence()
+		await expect(preparation).resolves.toMatchObject({ snapshot: { phase: TaskPhase.PAUSED } })
+		expect(order).toContain("persist:end")
+		expect(reportPersistenceFailure).toHaveBeenCalledOnce()
+	})
+
+	it("fences a preparation still loading before it can write or publish", async () => {
+		const order: string[] = []
+		let releaseLoad!: () => void
+		const loadGate = new Promise<void>((resolve) => {
+			releaseLoad = resolve
+		})
+		const coordinator = new ResumeCoordinator(
+			ports(
+				order,
+				vi.fn(async (taskId: string) => {
+					await loadGate
+					return input(taskId)
+				}),
+			),
+		)
+
+		const preparation = coordinator.prepare("task-1")
+		await vi.waitFor(() => expect(order).toEqual(["load:task-1"]))
+		coordinator.fence()
+		releaseLoad()
+
+		await expect(preparation).rejects.toThrow("History preparation was superseded")
+		await expect(coordinator.waitForIdle()).resolves.toBeUndefined()
+		expect(order).toEqual(["load:task-1"])
+	})
+
+	it("drains admitted persistence before a fenced preparation settles", async () => {
+		const order: string[] = []
+		let releaseHydrate!: () => void
+		let releasePersistence!: () => void
+		const hydrateGate = new Promise<void>((resolve) => {
+			releaseHydrate = resolve
+		})
+		const persistenceGate = new Promise<void>((resolve) => {
+			releasePersistence = resolve
+		})
+		const coordinator = new ResumeCoordinator({
+			...ports(order),
+			persist: async () => {
+				order.push("persist:start")
+				await persistenceGate
+				order.push("persist:end")
+			},
+			hydrate: async () => {
+				order.push("hydrate:start")
+				await hydrateGate
+				order.push("hydrate:end")
+			},
+		})
+
+		const preparation = coordinator.prepare("task-1")
+		await vi.waitFor(() => expect(order).toContain("hydrate:start"))
+		coordinator.fence()
+		releaseHydrate()
+		let idle = false
+		const drained = coordinator.waitForIdle().then(() => {
+			idle = true
+		})
+		await vi.waitFor(() => expect(order).toContain("hydrate:end"))
+		expect(idle).toBe(false)
+		releasePersistence()
+
+		await expect(preparation).rejects.toThrow("History preparation was superseded")
+		await drained
+		expect(order).toContain("persist:end")
+		expect(order.some((entry) => entry.startsWith("publish:"))).toBe(false)
+	})
+
 	it("coalesces concurrent preparation for the same task", async () => {
 		const order: string[] = []
 		let release!: () => void
@@ -281,9 +395,20 @@ describe("ResumeCoordinator", () => {
 			.fn<ResumeCoordinatorPorts["load"]>()
 			.mockRejectedValueOnce(new Error("transient read failure"))
 			.mockResolvedValueOnce(input())
-		const coordinator = new ResumeCoordinator(ports(order, load))
+		const reportRecovery = vi.fn()
+		const coordinatorPorts = ports(order, load)
+		coordinatorPorts.reportRecovery = reportRecovery
+		const coordinator = new ResumeCoordinator(coordinatorPorts)
 
 		await expect(coordinator.prepare("task-1")).rejects.toThrow("transient read failure")
+		expect(reportRecovery).toHaveBeenNthCalledWith(1, {
+			source: "history_open",
+			outcome: "failed",
+			failureStage: "load",
+			durationMs: expect.any(Number),
+			diagnosticCodes: [],
+			persistenceFailed: false,
+		})
 		await expect(coordinator.prepare("task-1")).resolves.toMatchObject({
 			snapshot: { phase: TaskPhase.PAUSED },
 		})
@@ -301,12 +426,13 @@ describe("ResumeCoordinator", () => {
 			apiTailStartIndex: 0,
 			apiHistoryLength: 1,
 		}
-		const result = await new ResumeCoordinator(
-			ports(
-				order,
-				vi.fn(async () => missingSnapshot),
-			),
-		).prepare("task-1")
+		const reportRecovery = vi.fn()
+		const coordinatorPorts = ports(
+			order,
+			vi.fn(async () => missingSnapshot),
+		)
+		coordinatorPorts.reportRecovery = reportRecovery
+		const result = await new ResumeCoordinator(coordinatorPorts).prepare("task-1")
 
 		expect(result.snapshot.phase).toBe(TaskPhase.PAUSED)
 		expect(result.diagnostics).toContainEqual({ code: "snapshot_rebuilt", reason: "missing" })
@@ -317,6 +443,15 @@ describe("ResumeCoordinator", () => {
 			"hydrate:paused",
 			"publish:show_resume_interaction",
 		])
+		expect(reportRecovery).toHaveBeenCalledWith({
+			source: "history_open",
+			outcome: "rebuilt",
+			entryType: "show_resume_interaction",
+			durationMs: expect.any(Number),
+			diagnosticCodes: ["snapshot_rebuilt"],
+			persistenceFailed: false,
+		})
+		expect(reportRecovery.mock.calls[0]?.[0]).not.toHaveProperty("taskId")
 	})
 
 	it("reopens a resolving completion as feedback and Start New Task without executing", async () => {

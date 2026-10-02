@@ -3,6 +3,7 @@ import { getProcessTelemetrySessionId } from "../journal"
 import { clearRuntimeDiagnoses, recordRuntimeDiagnosis, setRuntimeTelemetryLifecycle } from "./host"
 import { createRuntimeTelemetryBus, setRuntimeTelemetryBus } from "./index"
 import { RuntimeTelemetryLifecycle, type RuntimeTelemetryLifecycleOptions } from "./lifecycle"
+import { RuntimeSessionLedger } from "./session-ledger"
 import {
 	drainBootstrapSignalsInto,
 	installRuntimeSignalPipeline,
@@ -30,6 +31,47 @@ import {
  * makes a bundle impossible to line up with the journal it came from.
  */
 
+let activeSessionLedger: RuntimeSessionLedger | undefined
+const pendingSessionLedgerCompletions = new Set<RuntimeSessionLedger>()
+let sessionLedgerCompletionInFlight: Promise<void> | undefined
+let runtimeActivationTransition: Promise<void> = Promise.resolve()
+
+export async function markRuntimeSessionStage(stage: "shutdown_started"): Promise<void> {
+	await activeSessionLedger?.markStage(stage)
+}
+
+export function completeRuntimeSessionLedger(): Promise<void> {
+	if (activeSessionLedger) pendingSessionLedgerCompletions.add(activeSessionLedger)
+	if (sessionLedgerCompletionInFlight) return sessionLedgerCompletionInFlight
+
+	const run = (async () => {
+		const attempted = new Set<RuntimeSessionLedger>()
+		let firstFailure: unknown
+		for (;;) {
+			if (activeSessionLedger) pendingSessionLedgerCompletions.add(activeSessionLedger)
+			const ledgers = [...pendingSessionLedgerCompletions].filter((ledger) => !attempted.has(ledger))
+			if (ledgers.length === 0) break
+			for (const ledger of ledgers) attempted.add(ledger)
+			const results = await Promise.allSettled(ledgers.map((ledger) => ledger.complete()))
+			for (const [index, result] of results.entries()) {
+				const ledger = ledgers[index]
+				if (!ledger) continue
+				if (result.status === "fulfilled") {
+					pendingSessionLedgerCompletions.delete(ledger)
+					if (activeSessionLedger === ledger) activeSessionLedger = undefined
+				} else if (firstFailure === undefined) {
+					firstFailure = result.reason
+				}
+			}
+		}
+		if (firstFailure !== undefined) throw firstFailure
+	})().finally(() => {
+		if (sessionLedgerCompletionInFlight === run) sessionLedgerCompletionInFlight = undefined
+	})
+	sessionLedgerCompletionInFlight = run
+	return run
+}
+
 export interface RuntimeTelemetryActivationOptions {
 	/** Root of the Dline data directory; the journal lives under `telemetry/`. */
 	readonly dataDir: string
@@ -38,6 +80,8 @@ export interface RuntimeTelemetryActivationOptions {
 	readonly sessionId?: string
 	/** Runtime health sampling interval. Set to 0 to disable sampling entirely. */
 	readonly samplerIntervalMs?: number
+	/** Bounded runtime event capacity; exposed for deterministic pressure tests. */
+	readonly capacity?: number
 	/** Bus drain cadence. Set to 0 to drain only on stop. */
 	readonly drainIntervalMs?: number
 	/** Canonical provider-registry sink for runtime events. */
@@ -53,22 +97,65 @@ export interface RuntimeTelemetryActivationOptions {
  * that cannot activate because its telemetry failed would be strictly worse
  * than one running without it.
  */
-export async function activateRuntimeTelemetry(options: RuntimeTelemetryActivationOptions): Promise<RuntimeTelemetryLifecycle> {
+export function activateRuntimeTelemetry(options: RuntimeTelemetryActivationOptions): Promise<RuntimeTelemetryLifecycle> {
+	const activation = runtimeActivationTransition.then(() => activateRuntimeTelemetryNow(options))
+	runtimeActivationTransition = activation.then(
+		() => undefined,
+		() => undefined,
+	)
+	return activation
+}
+
+async function activateRuntimeTelemetryNow(options: RuntimeTelemetryActivationOptions): Promise<RuntimeTelemetryLifecycle> {
 	// Replacing an existing pipeline would orphan its open sinks, so shut the
 	// previous one down before installing a successor.
-	await deactivateRuntimeTelemetry()
+	await deactivateRuntimeTelemetryNow()
+	await completeRuntimeSessionLedger().catch(() => undefined)
 
 	const sessionId = options.sessionId ?? getProcessTelemetrySessionId()
-	const bus = createRuntimeTelemetryBus({ sessionId })
+	let sessionLedger: RuntimeSessionLedger | undefined
+	try {
+		sessionLedger = new RuntimeSessionLedger({ dataDir: options.dataDir, sessionId })
+		await sessionLedger.startAndReconcile()
+		activeSessionLedger = sessionLedger
+	} catch {
+		// Runtime diagnostics must not block extension activation.
+	}
+	const bus = createRuntimeTelemetryBus({ sessionId, capacity: options.capacity })
 	setRuntimeTelemetryBus(bus)
 
-	const lifecycle = new RuntimeTelemetryLifecycle({
+	let lifecycle!: RuntimeTelemetryLifecycle
+	let admissionInFlight: Promise<void> | undefined
+	const admitPreviousSessions = (): Promise<void> => {
+		if (admissionInFlight) return admissionInFlight
+		const admission = (async () => {
+			const sessions = (await sessionLedger?.claimReconciliationsForReporting()) ?? []
+			for (const previous of sessions) {
+				const admitted = lifecycle.service.recordInfoAdmitted("runtime.previous_session_reconciled", {
+					component: "runtime",
+					operation: "session_reconcile",
+					outcome: previous.outcome,
+					...(previous.ageMs === undefined ? {} : { ageMs: previous.ageMs }),
+				})
+				if (!admitted) throw new Error("Previous-session reconciliation was not admitted to the runtime event bus")
+				await previous.commit()
+			}
+		})().finally(() => {
+			if (admissionInFlight === admission) admissionInFlight = undefined
+		})
+		admissionInFlight = admission
+		return admission
+	}
+
+	lifecycle = new RuntimeTelemetryLifecycle({
 		dataDir: options.dataDir,
 		sessionId,
 		bus,
+		capacity: options.capacity,
 		samplerIntervalMs: options.samplerIntervalMs,
 		drainIntervalMs: options.drainIntervalMs,
 		onEvent: options.onEvent,
+		onEnabled: admitPreviousSessions,
 		activeTaskIds: options.activeTaskIds,
 		// Diagnoses go to the process-wide store the export reads, and are
 		// also recorded as events so the session journal carries the
@@ -111,7 +198,13 @@ export async function activateRuntimeTelemetry(options: RuntimeTelemetryActivati
  * Safe to call when nothing is installed, which is the normal case for hosts
  * that never activated telemetry and for a second deactivation during shutdown.
  */
-export async function deactivateRuntimeTelemetry(): Promise<void> {
+export function deactivateRuntimeTelemetry(): Promise<void> {
+	const deactivation = runtimeActivationTransition.then(() => deactivateRuntimeTelemetryNow())
+	runtimeActivationTransition = deactivation.catch(() => undefined)
+	return deactivation
+}
+
+async function deactivateRuntimeTelemetryNow(): Promise<void> {
 	const previous = setRuntimeTelemetryLifecycle(undefined)
 	clearRuntimeDiagnoses()
 	if (!previous) {

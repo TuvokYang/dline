@@ -62,6 +62,16 @@ export type ResumeDiagnostic =
 			actualFunctionId: string
 	  }
 
+export interface ResumeRecoverySummary {
+	readonly source: "history_open"
+	readonly outcome: "clean" | "rebuilt" | "degraded" | "failed"
+	readonly entryType?: ResumeEntry["type"]
+	readonly failureStage?: "load" | "reconcile" | "hydrate" | "publish"
+	readonly durationMs: number
+	readonly diagnosticCodes: readonly ResumeDiagnostic["code"][]
+	readonly persistenceFailed: boolean
+}
+
 /** Complete pure result consumed by the resume coordinator. */
 export interface ResumeResult {
 	snapshot: TaskSnapshot

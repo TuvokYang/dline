@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import type { TelemetrySetting } from "@shared/TelemetrySetting"
@@ -6,9 +6,11 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { isPerfRecordingEnabled, recordPerfPhase, resetPerfRecorder } from "../../instrumentation/duration-recorder"
 import { PerfDomain } from "../../instrumentation/perf-domains"
 import { emitSignal } from "../../service/pipeline-port"
-import { activateRuntimeTelemetry, deactivateRuntimeTelemetry } from "../activation"
+import { activateRuntimeTelemetry, completeRuntimeSessionLedger, deactivateRuntimeTelemetry } from "../activation"
+import { getRuntimeTelemetryLifecycle } from "../host"
 import { getRuntimeTelemetryBus, setRuntimeTelemetryBus } from "../index"
 import { resetRuntimeSignalPipeline } from "../signal-pipeline"
+import { RuntimeEventPriority } from "../types"
 
 /**
  * Activation is what connects the pipeline to the rest of the extension.
@@ -41,6 +43,25 @@ function activate(telemetrySetting: TelemetrySetting, dataDir: string) {
 	})
 }
 
+function writeCompletedPreviousSession(dataDir: string): string {
+	const directory = path.join(dataDir, "runtime", "session-ledgers")
+	mkdirSync(directory, { recursive: true })
+	const filePath = path.join(directory, "previous-session.json")
+	writeFileSync(
+		filePath,
+		JSON.stringify({
+			schemaVersion: 1,
+			sessionId: "previous-session",
+			pid: process.pid,
+			startedAt: 100,
+			heartbeatAt: 200,
+			deactivationCompletedAt: 250,
+		}),
+		"utf8",
+	)
+	return filePath
+}
+
 describe("activateRuntimeTelemetry", () => {
 	let dataDir: string
 
@@ -51,6 +72,7 @@ describe("activateRuntimeTelemetry", () => {
 
 	afterEach(async () => {
 		await deactivateRuntimeTelemetry()
+		await completeRuntimeSessionLedger()
 		resetPerfRecorder()
 		// Drop anything still buffered so one case cannot seed the next.
 		resetRuntimeSignalPipeline()
@@ -69,6 +91,76 @@ describe("activateRuntimeTelemetry", () => {
 		expect(isPerfRecordingEnabled()).toBe(true)
 	})
 
+	it("emits and acknowledges terminal previous-session outcomes only with consent", async () => {
+		const previousFile = writeCompletedPreviousSession(dataDir)
+
+		await activate("enabled", dataDir)
+
+		const event = getRuntimeTelemetryBus()
+			.peek()
+			.find((candidate) => candidate.name === "runtime.previous_session_reconciled")
+		expect(event?.attributes).toMatchObject({
+			component: "runtime",
+			operation: "session_reconcile",
+			outcome: "deactivation_completed",
+		})
+		expect(Object.keys(event?.attributes ?? {}).sort()).toEqual(["ageMs", "component", "operation", "outcome"])
+		expect(JSON.stringify(event?.attributes)).not.toContain(dataDir)
+		expect(JSON.parse(readFileSync(previousFile, "utf8")).reconciliationReportedAt).toEqual(expect.any(Number))
+	})
+
+	it("keeps a claim replayable when the bounded event bus rejects admission", async () => {
+		const previousFile = writeCompletedPreviousSession(dataDir)
+		const lifecycle = await activateRuntimeTelemetry({
+			dataDir,
+			telemetrySetting: "disabled",
+			sessionId: SESSION_ID,
+			capacity: 1,
+			onEvent: () => {},
+			samplerIntervalMs: 0,
+		})
+		getRuntimeTelemetryBus().record({ name: "runtime.blocker", priority: RuntimeEventPriority.Invariant })
+
+		await lifecycle.applyConsent("enabled")
+		expect(existsSync(previousFile)).toBe(false)
+		expect(readdirSync(path.dirname(previousFile)).some((name) => name.includes(".report-claim-"))).toBe(true)
+		expect(
+			getRuntimeTelemetryBus()
+				.peek()
+				.map((event) => event.name),
+		).not.toContain("runtime.previous_session_reconciled")
+
+		getRuntimeTelemetryBus().drain()
+		await lifecycle.applyConsent("enabled")
+		expect(
+			getRuntimeTelemetryBus()
+				.peek()
+				.map((event) => event.name),
+		).toContain("runtime.previous_session_reconciled")
+		expect(JSON.parse(readFileSync(previousFile, "utf8")).reconciliationReportedAt).toEqual(expect.any(Number))
+	})
+
+	it("admits a pending previous-session outcome when consent becomes enabled later", async () => {
+		const previousFile = writeCompletedPreviousSession(dataDir)
+		const lifecycle = await activate("disabled", dataDir)
+
+		expect(
+			getRuntimeTelemetryBus()
+				.peek()
+				.map((event) => event.name),
+		).not.toContain("runtime.previous_session_reconciled")
+		expect(JSON.parse(readFileSync(previousFile, "utf8")).reconciliationReportedAt).toBeUndefined()
+
+		await lifecycle.applyConsent("enabled")
+		await lifecycle.applyConsent("enabled")
+		expect(
+			getRuntimeTelemetryBus()
+				.peek()
+				.filter((event) => event.name === "runtime.previous_session_reconciled"),
+		).toHaveLength(1)
+		expect(JSON.parse(readFileSync(previousFile, "utf8")).reconciliationReportedAt).toEqual(expect.any(Number))
+	})
+
 	it("follows a later consent change without a restart", async () => {
 		const lifecycle = await activate("disabled", dataDir)
 
@@ -77,6 +169,28 @@ describe("activateRuntimeTelemetry", () => {
 
 		await lifecycle.applyConsent("disabled")
 		expect(isPerfRecordingEnabled()).toBe(false)
+	})
+
+	it("serializes concurrent activation and leaves the last lifecycle installed", async () => {
+		const firstActivation = activateRuntimeTelemetry({
+			dataDir,
+			telemetrySetting: "enabled",
+			sessionId: "first-session",
+			onEvent: () => {},
+			samplerIntervalMs: 0,
+		})
+		const secondActivation = activateRuntimeTelemetry({
+			dataDir,
+			telemetrySetting: "enabled",
+			sessionId: "second-session",
+			onEvent: () => {},
+			samplerIntervalMs: 0,
+		})
+
+		const [first, second] = await Promise.all([firstActivation, secondActivation])
+		expect(first.isEnabled).toBe(false)
+		expect(second.isEnabled).toBe(true)
+		expect(getRuntimeTelemetryLifecycle()).toBe(second)
 	})
 
 	it("stops recording once the pipeline is uninstalled", async () => {
