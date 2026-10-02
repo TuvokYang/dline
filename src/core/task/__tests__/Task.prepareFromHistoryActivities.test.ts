@@ -2,25 +2,27 @@ import { describe, expect, it, vi } from "vitest"
 import { Task } from "../index"
 
 describe("Task.prepareFromHistory readiness", () => {
-	it("publishes canonical Resume and readiness without starting execution maintenance", async () => {
+	it("keeps Resume gated until watcher, metrics, and reconciliation complete", async () => {
 		const order: string[] = []
-		const maintenance = new Promise<void>(() => undefined)
 		const task = {
 			taskId: "task-1",
 			taskState: { abort: false },
+			historyPreparationPending: true,
+			controllerDetached: false,
+			ensurePromptInputFileWatcherInitialized: vi.fn(async () => {
+				order.push("watcher")
+			}),
+			ensureApiRateMetricsInitialized: vi.fn(async () => {
+				order.push("metrics")
+			}),
 			resumeCoordinator: {
 				prepare: vi.fn(async () => {
 					order.push("resume")
 				}),
 			},
-			startContextWindowEnvironmentRefresh: vi.fn(() => {
-				order.push("environment")
-			}),
-			ensureApiRateMetricsInitialized: vi.fn(async () => undefined),
-			historyResumeMaintenance: {
-				run: vi.fn(() => {
-					order.push("maintenance")
-					return maintenance
+			controller: {
+				postTaskViewPatchToWebview: vi.fn(async () => {
+					order.push("patch")
 				}),
 			},
 		} as unknown as Task
@@ -33,62 +35,52 @@ describe("Task.prepareFromHistory readiness", () => {
 		})
 
 		expect(task.taskState.abort).toBe(true)
-		expect(order).toEqual(["resume", "ready"])
-		const resources = task as unknown as {
-			startContextWindowEnvironmentRefresh: ReturnType<typeof vi.fn>
-			historyResumeMaintenance: { run: ReturnType<typeof vi.fn> }
-		}
-		expect(resources.startContextWindowEnvironmentRefresh).not.toHaveBeenCalled()
-		expect(resources.historyResumeMaintenance.run).not.toHaveBeenCalled()
+		expect(order).toEqual(["watcher", "metrics", "resume", "patch", "ready"])
+		expect((task as unknown as { historyPreparationPending: boolean }).historyPreparationPending).toBe(false)
 	})
 
-	it("clears the preparing projection and republishes state when canonical preparation fails", async () => {
+	it("keeps the preparing projection gated when canonical preparation fails", async () => {
 		const failure = new Error("snapshot unreadable")
-		const postStateToWebview = vi.fn(async () => undefined)
+		const postTaskViewPatchToWebview = vi.fn(async () => undefined)
 		const task = {
 			taskId: "task-1",
 			taskState: { abort: false },
 			historyPreparationPending: true,
-			resumeCoordinator: { prepare: vi.fn(async () => Promise.reject(failure)) },
-			postStateToWebview,
-			startContextWindowEnvironmentRefresh: vi.fn(),
+			controllerDetached: false,
+			ensurePromptInputFileWatcherInitialized: vi.fn(async () => undefined),
 			ensureApiRateMetricsInitialized: vi.fn(async () => undefined),
-			historyResumeMaintenance: { run: vi.fn(async () => undefined) },
+			resumeCoordinator: { prepare: vi.fn(async () => Promise.reject(failure)) },
+			controller: { postTaskViewPatchToWebview },
 		} as unknown as Task
 
 		await expect(Task.prototype.prepareFromHistory.call(task)).rejects.toBe(failure)
 
-		const internal = task as unknown as {
-			historyPreparationPending: boolean
-			startContextWindowEnvironmentRefresh: ReturnType<typeof vi.fn>
-			historyResumeMaintenance: { run: ReturnType<typeof vi.fn> }
-		}
 		expect(task.taskState.abort).toBe(true)
-		expect(internal.historyPreparationPending).toBe(false)
-		expect(postStateToWebview).toHaveBeenCalledWith({ immediate: true })
-		expect(internal.startContextWindowEnvironmentRefresh).not.toHaveBeenCalled()
-		expect(internal.historyResumeMaintenance.run).not.toHaveBeenCalled()
+		expect((task as unknown as { historyPreparationPending: boolean }).historyPreparationPending).toBe(true)
+		expect(postTaskViewPatchToWebview).not.toHaveBeenCalled()
 	})
 
-	it("does not start maintenance after readiness loses Task identity", async () => {
+	it("does not publish an enabled patch after readiness loses Task identity", async () => {
 		let isCurrent = true
-		const run = vi.fn(async () => undefined)
+		const postTaskViewPatchToWebview = vi.fn(async () => undefined)
 		const task = {
 			taskId: "task-1",
 			taskState: { abort: false },
-			resumeCoordinator: { prepare: vi.fn(async () => undefined) },
-			startContextWindowEnvironmentRefresh: vi.fn(),
+			historyPreparationPending: true,
+			controllerDetached: false,
+			ensurePromptInputFileWatcherInitialized: vi.fn(async () => undefined),
 			ensureApiRateMetricsInitialized: vi.fn(async () => undefined),
-			historyResumeMaintenance: { run },
+			resumeCoordinator: {
+				prepare: vi.fn(async () => {
+					isCurrent = false
+				}),
+			},
+			controller: { postTaskViewPatchToWebview },
 		} as unknown as Task
 
-		await Task.prototype.prepareFromHistory.call(task, {
-			isCurrent: () => isCurrent,
-			onReadyToDisplay: async () => {
-				isCurrent = false
-			},
-		})
+		await Task.prototype.prepareFromHistory.call(task, { isCurrent: () => isCurrent })
 
-		expect(run).not.toHaveBeenCalled()
+		expect((task as unknown as { historyPreparationPending: boolean }).historyPreparationPending).toBe(true)
+		expect(postTaskViewPatchToWebview).not.toHaveBeenCalled()
 	})
 })

@@ -72,6 +72,7 @@ export interface E2ETestConfigs {
 	isolateOsHome: boolean
 	grpcRecorderEnabled: boolean
 	grpcUnaryFaults: string | undefined
+	promptInputWatcherReadyDelayMs: number | undefined
 	installVsix: boolean
 	devWebview: boolean
 }
@@ -480,6 +481,7 @@ export const e2e = test
 		isolateOsHome: [false, { option: true }],
 		grpcRecorderEnabled: [false, { option: true }],
 		grpcUnaryFaults: [undefined, { option: true }],
+		promptInputWatcherReadyDelayMs: [undefined, { option: true }],
 		installVsix: [shouldPreinstallDlineVsix(), { option: true }],
 		devWebview: [false, { option: true }],
 	})
@@ -672,6 +674,7 @@ export const e2e = test
 				isolateOsHome,
 				grpcRecorderEnabled,
 				grpcUnaryFaults,
+				promptInputWatcherReadyDelayMs,
 				installVsix,
 				devWebview,
 				server,
@@ -760,6 +763,9 @@ export const e2e = test
 						DLINE_DOCS_DIR: dlineDocsDir,
 						...(forceStaleInitialState ? { DLINE_E2E_FORCE_STALE_INITIAL_STATE: "true" } : {}),
 						...(grpcUnaryFaults ? { DLINE_E2E_GRPC_UNARY_FAULTS: grpcUnaryFaults } : {}),
+						...(promptInputWatcherReadyDelayMs === undefined
+							? {}
+							: { DLINE_E2E_PROMPT_WATCHER_READY_DELAY_MS: String(promptInputWatcherReadyDelayMs) }),
 						GRPC_RECORDER_FILE_NAME: E2ETestHelper.generateTestFileName(testInfo.title, testInfo.project.name),
 						...(grpcRecorderEnabled ? { GRPC_RECORDER_ENABLED: "true" } : {}),
 						// GRPC_RECORDER_TESTS_FILTERS_ENABLED: "true"

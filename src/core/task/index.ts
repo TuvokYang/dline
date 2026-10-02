@@ -289,6 +289,7 @@ import { formatFocusChainTaskProgressSection } from "./focus-chain/file-utils"
 import { readHistoryContextWindowIndicator } from "./HistoryContextWindow"
 import { HistoryResumeMaintenance } from "./history/HistoryResumeMaintenance"
 import { TaskCompletionProjector } from "./history/TaskCompletionProjector"
+import { type HistoryReadinessStage, startHistoryReadinessStage } from "./history-readiness-telemetry"
 import type { QueuedInputEntry } from "./input-queue/InputQueue"
 import { InputQueueCoordinator } from "./input-queue/InputQueueCoordinator"
 import type { QueueDelivery } from "./input-queue/InputQueueDelivery"
@@ -1211,7 +1212,6 @@ export class Task {
 				this.syncRetainedMachines()
 			},
 			publishView: async () => {
-				this.historyPreparationPending = false
 				await this.controller.postTaskViewPatchToWebview()
 			},
 		})
@@ -1739,7 +1739,7 @@ export class Task {
 
 		// Inject controller context for spawn_task to create new webview panels
 		this.toolExecutor.setControllerContext(this.controller?.context)
-		this.promptInputFileWatcherInitialization = this.initializePromptInputFileWatcher()
+		if (!historyItem) this.promptInputFileWatcherInitialization = this.initializePromptInputFileWatcher()
 	}
 
 	private getEffectiveApiConfiguration(): ApiConfiguration {
@@ -5969,19 +5969,40 @@ export class Task {
 	public async prepareFromHistory(options?: ResumeTaskFromHistoryOptions) {
 		if (this.controllerDetached || this.readOnly) throw new Error("History preparation requires Task write permission")
 		this.taskState.abort = true
-		try {
-			await this.resumeCoordinator.prepare(this.taskId)
-		} catch (error) {
-			this.historyPreparationPending = false
-			await this.postStateToWebview({ immediate: true })
-			throw error
-		}
-		await options?.onReadyToDisplay?.()
 		const isCurrent = options?.isCurrent ?? (() => true)
+		const runStage = async (
+			stage: HistoryReadinessStage,
+			operation: () => Promise<void>,
+			degradeOnFailure = false,
+		): Promise<void> => {
+			const measurement = startHistoryReadinessStage(this.taskId, stage, true)
+			try {
+				await operation()
+				measurement.stop({ outcome: isCurrent() && !this.controllerDetached ? "success" : "superseded" })
+			} catch (error) {
+				if (!degradeOnFailure) {
+					measurement.stop({ outcome: "failure" })
+					throw error
+				}
+				measurement.stop({ outcome: "degraded" })
+				Logger.warn(`[Task ${this.taskId}] Historical readiness stage ${stage} degraded:`, error)
+			}
+		}
+
+		await Promise.all([
+			runStage("history_watcher", () => this.ensurePromptInputFileWatcherInitialized()),
+			runStage("history_metrics", () => this.ensureApiRateMetricsInitialized(), true),
+			runStage("history_reconciliation", async () => {
+				await this.resumeCoordinator.prepare(this.taskId)
+			}),
+		])
 		if (!isCurrent() || this.controllerDetached) return
-		void this.ensureApiRateMetricsInitialized().catch((error) => {
-			Logger.debug(`[Task ${this.taskId}] Deferred API rate metrics initialization failed: ${error}`)
-		})
+
+		const readyMeasurement = startHistoryReadinessStage(this.taskId, "history_interaction_ready", true)
+		this.historyPreparationPending = false
+		await this.controller.postTaskViewPatchToWebview()
+		readyMeasurement.stop({ outcome: isCurrent() && !this.controllerDetached ? "success" : "superseded" })
+		await options?.onReadyToDisplay?.()
 	}
 
 	private async patchInterruptedCommandCards(activityIds: ReadonlySet<string>): Promise<void> {
@@ -6845,6 +6866,12 @@ export class Task {
 		}
 	}
 
+	private ensurePromptInputFileWatcherInitialized(): Promise<void> {
+		if (this.promptFreshnessDisposed) return Promise.resolve()
+		this.promptInputFileWatcherInitialization ??= this.initializePromptInputFileWatcher()
+		return this.promptInputFileWatcherInitialization
+	}
+
 	private async initializePromptInputFileWatcher(): Promise<void> {
 		try {
 			const globalRulesDirectory = await ensureRulesDirectoryExists()
@@ -6867,6 +6894,12 @@ export class Task {
 			if (this.promptFreshnessDisposed) {
 				this.promptInputWatcherSubscription = undefined
 				await subscription.dispose()
+				return
+			}
+			await subscription.ready
+			if (this.promptFreshnessDisposed) {
+				this.promptInputWatcherSubscription = undefined
+				await subscription.dispose()
 			}
 		} catch (error) {
 			Logger.error(`[Task ${this.taskId}] Failed to initialize prompt input file watcher:`, error)
@@ -6874,10 +6907,16 @@ export class Task {
 	}
 
 	private async disposePromptInputFileWatcher(): Promise<void> {
-		await this.promptInputFileWatcherInitialization?.catch(() => undefined)
-		const subscription = this.promptInputWatcherSubscription
+		const initialization = this.promptInputFileWatcherInitialization
+		const activeSubscription = this.promptInputWatcherSubscription
+		if (activeSubscription) {
+			this.promptInputWatcherSubscription = undefined
+			await activeSubscription.dispose()
+		}
+		await initialization?.catch(() => undefined)
+		const lateSubscription = this.promptInputWatcherSubscription
 		this.promptInputWatcherSubscription = undefined
-		await subscription?.dispose()
+		await lateSubscription?.dispose()
 	}
 
 	/**

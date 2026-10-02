@@ -83,7 +83,7 @@ describe("Task API rate metrics boundary", () => {
 		)
 	})
 
-	it("starts metrics without delaying a restored Task's historical surface", async () => {
+	it("waits for metrics only after a restored Task's historical surface is published", async () => {
 		const source = await readFile(taskSourcePath, "utf8")
 		const prepareFromHistory = extractMethod(
 			source,
@@ -91,12 +91,9 @@ describe("Task API rate metrics boundary", () => {
 			"private async patchInterruptedCommandCards(",
 		)
 
-		// Started, not awaited, and after the surface is ready to display.
-		expectChain(prepareFromHistory, "void this.ensureApiRateMetricsInitialized()", ".catch((error) =>")
-		expect(prepareFromHistory).not.toContain("await this.ensureApiRateMetricsInitialized()")
-		expect(prepareFromHistory.indexOf("await options?.onReadyToDisplay?.()")).toBeLessThan(
-			prepareFromHistory.indexOf("void this.ensureApiRateMetricsInitialized()"),
-		)
+		expectContains(prepareFromHistory, 'runStage("history_metrics", () => this.ensureApiRateMetricsInitialized(), true)')
+		expectContains(prepareFromHistory, "await Promise.all([")
+		expectNotContains(prepareFromHistory, "void this.ensureApiRateMetricsInitialized()")
 	})
 
 	it("aggregates Provider usage and commits one final exact request snapshot", async () => {

@@ -63,22 +63,13 @@ export async function prepareHistoryTaskForDisplay(options: HistoryTaskReadiness
 			span.addEvent?.("task.history_prepare.displayed")
 			if (!options.isCurrent()) return finish(false)
 
-			let readyNotified = false
-			const notifyReady = async (): Promise<void> => {
-				if (readyNotified || !options.isCurrent()) return
-				readyNotified = true
-				await runStage("history_surface_ready", async () => options.onReadyToDisplay?.())
-				span.addEvent?.("task.history_prepare.ready")
-			}
-			if (!options.hasTaskLock) {
-				await notifyReady()
-				return finish(options.isCurrent())
-			}
+			await runStage("history_surface_ready", async () => options.onReadyToDisplay?.())
+			span.addEvent?.("task.history_prepare.ready")
+			if (!options.isCurrent() || !options.hasTaskLock) return finish(options.isCurrent())
 
-			await runStage("history_reconciliation", () =>
+			await runStage("history_background_prepare", () =>
 				options.prepareFromHistory({
 					isCurrent: options.isCurrent,
-					onReadyToDisplay: notifyReady,
 				}),
 			)
 			span.addEvent?.("task.history_prepare.prepared")

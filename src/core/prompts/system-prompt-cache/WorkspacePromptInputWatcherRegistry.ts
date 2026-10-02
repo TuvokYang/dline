@@ -10,6 +10,7 @@ import { PromptInputFileWatcher, type PromptInputFileWatcherDeps } from "./Promp
  * watch stays alive until the last subscriber of the workspace releases it.
  */
 export interface PromptInputWatcherSubscription {
+	readonly ready: Promise<void>
 	dispose(): Promise<void>
 }
 
@@ -101,14 +102,9 @@ export class WorkspacePromptInputWatcherRegistry {
 		}
 		const entry = this.entries.get(key) ?? this.createEntry(key, request)
 		entry.subscribers.add(subscriber)
-		try {
-			await entry.started
-		} catch (error) {
-			await this.releaseSubscriber(key, entry, subscriber)
-			throw error
-		}
 		let released = false
 		return {
+			ready: entry.started,
 			dispose: async () => {
 				if (released) return
 				released = true

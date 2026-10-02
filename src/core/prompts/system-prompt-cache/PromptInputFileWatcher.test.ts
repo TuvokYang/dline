@@ -1,6 +1,6 @@
 import path from "node:path"
 import type { ChokidarOptions, FSWatcher } from "chokidar"
-import { describe, expect, it, vi } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 import { PromptInputFileWatcher } from "./PromptInputFileWatcher"
 
 class FakeWatcher {
@@ -19,7 +19,7 @@ class FakeWatcher {
 	}
 }
 
-function createFixture(overrides: { shouldIgnoreDirectory?: (absolutePath: string) => boolean } = {}) {
+function createFixture(overrides: { shouldIgnoreDirectory?: (absolutePath: string) => boolean; autoReady?: boolean } = {}) {
 	const cwd = path.resolve("e:/workspace/project")
 	const roots = {
 		globalRulesDirectory: path.resolve("e:/documents/dline/rules"),
@@ -39,12 +39,83 @@ function createFixture(overrides: { shouldIgnoreDirectory?: (absolutePath: strin
 	}
 	const watcher = new FakeWatcher()
 	const invalidate = vi.fn()
-	const watch = vi.fn((_paths: readonly string[], _options: ChokidarOptions) => watcher as unknown as FSWatcher)
-	const inputWatcher = new PromptInputFileWatcher({ cwd, ...roots, invalidate, watch, ...overrides })
+	const watch = vi.fn((_paths: readonly string[], _options: ChokidarOptions) => {
+		if (overrides.autoReady !== false) queueMicrotask(() => watcher.emit("ready", undefined))
+		return watcher as unknown as FSWatcher
+	})
+	const inputWatcher = new PromptInputFileWatcher({
+		cwd,
+		...roots,
+		invalidate,
+		watch,
+		...(overrides.shouldIgnoreDirectory ? { shouldIgnoreDirectory: overrides.shouldIgnoreDirectory } : {}),
+	})
 	return { cwd, roots, watcher, invalidate, watch, inputWatcher }
 }
 
 describe("PromptInputFileWatcher", () => {
+	afterEach(() => {
+		vi.useRealTimers()
+		vi.unstubAllEnvs()
+	})
+
+	it("waits for the first ready event and ignores duplicate ready events", async () => {
+		const fixture = createFixture({ autoReady: false })
+		let settled = false
+		const starting = fixture.inputWatcher.start().then(() => {
+			settled = true
+		})
+
+		await Promise.resolve()
+		expect(settled).toBe(false)
+		fixture.watcher.emit("ready", undefined)
+		await starting
+		expect(settled).toBe(true)
+		fixture.watcher.emit("ready", undefined)
+		expect(fixture.watch).toHaveBeenCalledOnce()
+	})
+
+	it("delays successful readiness only when the E2E gate is configured", async () => {
+		vi.useFakeTimers()
+		vi.stubEnv("E2E_TEST", "true")
+		vi.stubEnv("DLINE_E2E_PROMPT_WATCHER_READY_DELAY_MS", "2500")
+		const fixture = createFixture({ autoReady: false })
+		let settled = false
+		const starting = fixture.inputWatcher.start().then(() => {
+			settled = true
+		})
+
+		fixture.watcher.emit("ready", undefined)
+		await vi.advanceTimersByTimeAsync(2_499)
+		expect(settled).toBe(false)
+		await vi.advanceTimersByTimeAsync(1)
+		await starting
+		expect(settled).toBe(true)
+	})
+
+	it("lets disposal supersede a configured E2E readiness delay", async () => {
+		vi.useFakeTimers()
+		vi.stubEnv("E2E_TEST", "true")
+		vi.stubEnv("DLINE_E2E_PROMPT_WATCHER_READY_DELAY_MS", "2500")
+		const fixture = createFixture({ autoReady: false })
+		const starting = fixture.inputWatcher.start()
+
+		fixture.watcher.emit("ready", undefined)
+		await fixture.inputWatcher.dispose()
+
+		await expect(starting).resolves.toBeUndefined()
+		expect(fixture.watcher.close).toHaveBeenCalledOnce()
+	})
+
+	it("settles readiness as degraded on a pre-ready watcher error", async () => {
+		const fixture = createFixture({ autoReady: false })
+		const starting = fixture.inputWatcher.start()
+
+		fixture.watcher.emit("error", new Error("watch failed"))
+
+		await expect(starting).resolves.toBeUndefined()
+	})
+
 	it("invalidates canonical Rules, Workflow, Skill, and Subagent file inputs", async () => {
 		const fixture = createFixture()
 		await fixture.inputWatcher.start()

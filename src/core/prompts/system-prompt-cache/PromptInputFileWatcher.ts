@@ -39,6 +39,16 @@ function resolveUnique(paths: readonly string[]): string[] {
 	return Array.from(new Set(paths.map((candidate) => path.resolve(candidate))))
 }
 
+function resolveE2EReadinessDelayMs(): number {
+	if (process.env.E2E_TEST !== "true") return 0
+	const configured = process.env.DLINE_E2E_PROMPT_WATCHER_READY_DELAY_MS?.trim()
+	if (!configured) return 0
+	if (!/^\d+$/.test(configured) || Number(configured) > 60_000) {
+		throw new Error(`Invalid DLINE_E2E_PROMPT_WATCHER_READY_DELAY_MS: ${configured}`)
+	}
+	return Number(configured)
+}
+
 type PromptInputKind = "rule" | "workflow" | "skill" | "subagent"
 type PromptInputEvent = "add" | "change" | "unlink"
 
@@ -56,6 +66,9 @@ export class PromptInputFileWatcher {
 	private readonly isIgnoredDirectory: (absolutePath: string) => boolean
 	private readonly watch: (paths: readonly string[], options: ChokidarOptions) => FSWatcher
 	private watcher?: FSWatcher
+	private readiness?: Promise<void>
+	private settleReadiness?: (outcome: "success" | "degraded" | "superseded") => void
+	private readinessDelayTimer?: NodeJS.Timeout
 	private disposed = false
 	private eventLogTimer?: NodeJS.Timeout
 	private totalRelevantEvents = 0
@@ -90,7 +103,9 @@ export class PromptInputFileWatcher {
 	}
 
 	async start(): Promise<void> {
-		if (this.disposed || this.watcher) return
+		if (this.disposed) return
+		if (this.watcher) return this.readiness
+		const readinessDelayMs = resolveE2EReadinessDelayMs()
 		const startedAt = performance.now()
 		markPerfPhase(
 			PerfDomain.PromptInputWatcher,
@@ -107,6 +122,46 @@ export class PromptInputFileWatcher {
 		Logger.debug(
 			`[PromptInputWatcherPerf] phase=start taskId=${this.taskId} roots=${this.watchRoots.length} protectedRoots=${this.protectedDirectories.length} includesWorkspaceRoot=${this.watchRoots.includes(this.cwd)}`,
 		)
+		let resolveReadiness!: () => void
+		this.readiness = new Promise<void>((resolve) => {
+			resolveReadiness = resolve
+		})
+		let readinessSettled = false
+		const settleReadiness = (outcome: "success" | "degraded" | "superseded") => {
+			if (readinessSettled) return
+			readinessSettled = true
+			this.settleReadiness = undefined
+			if (this.readinessDelayTimer) {
+				clearTimeout(this.readinessDelayTimer)
+				this.readinessDelayTimer = undefined
+			}
+			recordPerfPhase(
+				PerfDomain.PromptInputWatcher,
+				"ready",
+				performance.now() - startedAt,
+				{ roots: this.watchRoots.length, outcome },
+				{ taskId: this.taskId },
+			)
+			if (Logger.isDebugEnabled()) {
+				Logger.debug(
+					`[PromptInputWatcherPerf] phase=ready taskId=${this.taskId} durationMs=${Math.round(performance.now() - startedAt)} roots=${this.watchRoots.length} outcome=${outcome}`,
+				)
+			}
+			resolveReadiness()
+		}
+		const settleSuccessfulReadiness = () => {
+			if (readinessSettled || this.readinessDelayTimer) return
+			if (readinessDelayMs === 0) {
+				settleReadiness("success")
+				return
+			}
+			this.readinessDelayTimer = setTimeout(() => {
+				this.readinessDelayTimer = undefined
+				settleReadiness("success")
+			}, readinessDelayMs)
+			this.readinessDelayTimer.unref?.()
+		}
+		this.settleReadiness = settleReadiness
 		const watcher = this.watch(this.watchRoots, {
 			persistent: true,
 			ignoreInitial: true,
@@ -126,29 +181,19 @@ export class PromptInputFileWatcher {
 			.on("add", (candidate) => handle("add", candidate))
 			.on("change", (candidate) => handle("change", candidate))
 			.on("unlink", (candidate) => handle("unlink", candidate))
-			.on("ready", () => {
-				recordPerfPhase(
-					PerfDomain.PromptInputWatcher,
-					"ready",
-					performance.now() - startedAt,
-					{ roots: this.watchRoots.length },
-					{ taskId: this.taskId },
-				)
-				if (Logger.isDebugEnabled()) {
-					Logger.debug(
-						`[PromptInputWatcherPerf] phase=ready taskId=${this.taskId} durationMs=${Math.round(performance.now() - startedAt)} roots=${this.watchRoots.length}`,
-					)
-				}
-			})
+			.on("ready", settleSuccessfulReadiness)
 			.on("error", (error) => {
 				Logger.error("[PromptInputFileWatcher] Failed to watch prompt-visible inputs:", error)
+				settleReadiness("degraded")
 			})
+		return this.readiness
 	}
 
 	async dispose(): Promise<void> {
 		if (this.disposed) return
 		const startedAt = performance.now()
 		this.disposed = true
+		this.settleReadiness?.("superseded")
 		if (this.eventLogTimer) {
 			clearTimeout(this.eventLogTimer)
 			this.eventLogTimer = undefined

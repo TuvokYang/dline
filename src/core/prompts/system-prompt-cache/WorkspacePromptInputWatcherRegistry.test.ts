@@ -69,6 +69,25 @@ describe("WorkspacePromptInputWatcherRegistry", () => {
 		registry = new WorkspacePromptInputWatcherRegistry({ watch })
 	})
 
+	it("returns immediately while exposing the shared underlying readiness", async () => {
+		const subscription = await registry.subscribe({
+			taskId: "task-1",
+			cwd: workspaceA,
+			...createRoots(workspaceA),
+			invalidate: vi.fn(),
+		})
+		let ready = false
+		void subscription.ready.then(() => {
+			ready = true
+		})
+
+		await Promise.resolve()
+		expect(ready).toBe(false)
+		watchers[0].emit("ready", undefined)
+		await subscription.ready
+		expect(ready).toBe(true)
+	})
+
 	it("creates a single underlying watcher for concurrent tasks in one workspace", async () => {
 		const first = await registry.subscribe({
 			taskId: "task-1",

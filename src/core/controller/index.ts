@@ -2698,6 +2698,7 @@ export class Controller {
 		}
 		this.taskLockAcquired = true
 		this.stopLockPoll()
+		owner.beginHistoryPreparation()
 		owner.grantWriteAccess()
 		this.startLockHeartbeat(owner.taskId)
 		const { OrchestratorController } = await import("@/core/orchestrator/OrchestratorController")

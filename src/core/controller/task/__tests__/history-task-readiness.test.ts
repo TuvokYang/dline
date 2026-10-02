@@ -95,7 +95,7 @@ describe("history task readiness", () => {
 			},
 			{
 				operation: "task_init.stage",
-				stage: "history_reconciliation",
+				stage: "history_background_prepare",
 				kind: "history",
 				hasTaskLock: true,
 				outcome: "success",
@@ -140,16 +140,13 @@ describe("history task readiness", () => {
 		await readiness
 	})
 
-	it("notifies readiness exactly once and stops when the callback replaces the current Task", async () => {
+	it("publishes the displayed surface once and stops before background preparation when it replaces the current Task", async () => {
 		let isCurrent = true
 		const displayHistory = vi.fn(async () => undefined)
 		const onReadyToDisplay = vi.fn(async () => {
 			isCurrent = false
 		})
-		const prepareFromHistory = vi.fn(async (options?: { onReadyToDisplay?: () => Promise<void> }) => {
-			await options?.onReadyToDisplay?.()
-			await options?.onReadyToDisplay?.()
-		})
+		const prepareFromHistory = vi.fn(async () => undefined)
 
 		await expect(
 			prepareHistoryTaskForDisplay({
@@ -163,7 +160,7 @@ describe("history task readiness", () => {
 		).resolves.toBe(false)
 
 		expect(displayHistory).toHaveBeenCalledOnce()
-		expect(prepareFromHistory).toHaveBeenCalledOnce()
+		expect(prepareFromHistory).not.toHaveBeenCalled()
 		expect(onReadyToDisplay).toHaveBeenCalledOnce()
 	})
 
