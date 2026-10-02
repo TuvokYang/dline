@@ -24,6 +24,7 @@ const SAY: ClineMessage = { ts: 90, type: "say", say: "text", text: "status text
 function taskView(): TaskViewState {
 	return {
 		taskId: "task-1",
+		taskInstanceId: "task-instance-1",
 		phase: "awaiting_approval",
 		stateRevision: 8,
 		activeInteraction: {
@@ -136,6 +137,7 @@ describe("InteractionHost", () => {
 		await waitFor(() => expect(dispatch).toHaveBeenCalledOnce())
 		expect(dispatch).toHaveBeenCalledWith({
 			taskId: "task-1",
+			taskInstanceId: "task-instance-1",
 			turnId: "turn-1",
 			interactionId: "interaction-1",
 			actionId: "approve",
@@ -214,7 +216,11 @@ describe("InteractionHost", () => {
 
 		await waitFor(() =>
 			expect(TaskServiceClient.moveCommandToBackground).toHaveBeenCalledWith(
-				expect.objectContaining({ taskId: "task-1", activityId: "command-1" }),
+				expect.objectContaining({
+					taskId: "task-1",
+					taskInstanceId: "task-instance-1",
+					activityId: "command-1",
+				}),
 			),
 		)
 		expect(TaskServiceClient.cancelTask).not.toHaveBeenCalled()

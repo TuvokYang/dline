@@ -67,7 +67,11 @@ async function dispatchTaskAction(view: TaskViewState, action: TaskViewAction): 
 			throw new Error("The foreground activity is no longer available to continue in the background.")
 		}
 		const response = await TaskServiceClient.moveCommandToBackground(
-			MoveCommandToBackgroundRequest.create({ taskId: view.taskId, activityId: action.activityId }),
+			MoveCommandToBackgroundRequest.create({
+				taskId: view.taskId,
+				taskInstanceId: view.taskInstanceId ?? "",
+				activityId: action.activityId,
+			}),
 		)
 		if (!response.moved) {
 			throw new Error("The foreground activity is no longer available to continue in the background.")
