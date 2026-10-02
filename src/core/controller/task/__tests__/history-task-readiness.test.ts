@@ -19,19 +19,21 @@ afterEach(async () => {
 function setupTraceExporter(): {
 	readonly exporter: InMemorySpanExporter
 	readonly provider: OpenTelemetryTraceProvider
+	readonly recordHistogram: ReturnType<typeof vi.fn>
 } {
 	const exporter = new InMemorySpanExporter()
 	const provider = new OpenTelemetryTraceProvider("http://127.0.0.1:4318", {
 		processor: new SimpleSpanProcessor(exporter),
 	})
+	const recordHistogram = vi.fn()
 	configureSignalRecording({ enabled: () => true })
 	installObservabilityPipeline({
 		startSpan: (options) => provider.startSpan(options),
 		recordGauge: () => {},
-		recordHistogram: () => {},
+		recordHistogram,
 	})
 	cleanup.push(() => provider.dispose())
-	return { exporter, provider }
+	return { exporter, provider, recordHistogram }
 }
 
 describe("history task readiness", () => {
@@ -45,8 +47,8 @@ describe("history task readiness", () => {
 		])
 	})
 
-	it("records one bounded root span across display and interactive preparation", async () => {
-		const { exporter, provider } = setupTraceExporter()
+	it("records one bounded root span and low-cardinality stages across display and interactive preparation", async () => {
+		const { exporter, provider, recordHistogram } = setupTraceExporter()
 
 		await prepareHistoryTaskForDisplay({
 			taskId: "task-1",
@@ -66,6 +68,43 @@ describe("history task readiness", () => {
 			"task.history_prepare.ready",
 			"task.history_prepare.prepared",
 		])
+		const stageAttributes = recordHistogram.mock.calls
+			.filter(([name]) => name === "dline.runtime.operation.duration")
+			.map(([, , attributes]) => attributes)
+		expect(stageAttributes).toEqual([
+			{
+				operation: "task_init.stage",
+				stage: "history_surface_preparing",
+				kind: "history",
+				hasTaskLock: true,
+				outcome: "success",
+			},
+			{
+				operation: "task_init.stage",
+				stage: "history_display",
+				kind: "history",
+				hasTaskLock: true,
+				outcome: "success",
+			},
+			{
+				operation: "task_init.stage",
+				stage: "history_surface_ready",
+				kind: "history",
+				hasTaskLock: true,
+				outcome: "success",
+			},
+			{
+				operation: "task_init.stage",
+				stage: "history_reconciliation",
+				kind: "history",
+				hasTaskLock: true,
+				outcome: "success",
+			},
+		])
+		for (const attributes of stageAttributes) {
+			expect(attributes).not.toHaveProperty("taskId")
+			expect(attributes).not.toHaveProperty("elapsedMs")
+		}
 	})
 
 	it("publishes a preparing surface before full historical display is ready", async () => {

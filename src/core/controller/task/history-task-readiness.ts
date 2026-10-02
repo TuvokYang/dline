@@ -1,4 +1,9 @@
 import type { TaskViewState } from "@shared/ExtensionMessage"
+import {
+	type HistoryReadinessOutcome,
+	type HistoryReadinessStage,
+	startHistoryReadinessStage,
+} from "@/core/task/history-readiness-telemetry"
 import { runWithSignalSpan, startSignalSpan } from "@/services/telemetry/service/pipeline-port"
 
 export interface HistoryTaskReadinessOptions {
@@ -50,11 +55,11 @@ export async function prepareHistoryTaskForDisplay(options: HistoryTaskReadiness
 
 	return runWithSignalSpan(span, async () => {
 		try {
-			await options.onPreparingToDisplay?.()
+			await runStage("history_surface_preparing", async () => options.onPreparingToDisplay?.())
 			span.addEvent?.("task.history_prepare.preparing")
 			if (!options.isCurrent()) return finish(false)
 
-			await options.displayHistory()
+			await runStage("history_display", options.displayHistory)
 			span.addEvent?.("task.history_prepare.displayed")
 			if (!options.isCurrent()) return finish(false)
 
@@ -62,7 +67,7 @@ export async function prepareHistoryTaskForDisplay(options: HistoryTaskReadiness
 			const notifyReady = async (): Promise<void> => {
 				if (readyNotified || !options.isCurrent()) return
 				readyNotified = true
-				await options.onReadyToDisplay?.()
+				await runStage("history_surface_ready", async () => options.onReadyToDisplay?.())
 				span.addEvent?.("task.history_prepare.ready")
 			}
 			if (!options.hasTaskLock) {
@@ -70,10 +75,12 @@ export async function prepareHistoryTaskForDisplay(options: HistoryTaskReadiness
 				return finish(options.isCurrent())
 			}
 
-			await options.prepareFromHistory({
-				isCurrent: options.isCurrent,
-				onReadyToDisplay: notifyReady,
-			})
+			await runStage("history_reconciliation", () =>
+				options.prepareFromHistory({
+					isCurrent: options.isCurrent,
+					onReadyToDisplay: notifyReady,
+				}),
+			)
 			span.addEvent?.("task.history_prepare.prepared")
 			return finish(options.isCurrent())
 		} catch (error) {
@@ -82,6 +89,19 @@ export async function prepareHistoryTaskForDisplay(options: HistoryTaskReadiness
 			throw error
 		}
 	})
+
+	async function runStage<T>(stage: HistoryReadinessStage, operation: () => Promise<T> | T): Promise<T> {
+		const measurement = startHistoryReadinessStage(options.taskId, stage, options.hasTaskLock)
+		try {
+			const result = await operation()
+			const outcome: HistoryReadinessOutcome = options.isCurrent() ? "success" : "superseded"
+			measurement.stop({ outcome })
+			return result
+		} catch (error) {
+			measurement.stop({ outcome: "failure" })
+			throw error
+		}
+	}
 
 	function finish(current: boolean): boolean {
 		span.setAttribute("current", current)
