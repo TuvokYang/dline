@@ -5,7 +5,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { ChatState, MessageHandlers, ScrollBehavior } from "../../types/chatTypes"
 import { MessagesArea } from "./MessagesArea"
 
+interface ExtensionTestState {
+	clineMessages: ClineMessage[]
+	setClineMessages: React.Dispatch<React.SetStateAction<ClineMessage[]>>
+	firstItemIndex: number
+	setFirstItemIndex: React.Dispatch<React.SetStateAction<number>>
+	totalMessageCount: number
+	taskViewState: { taskId: string; taskInstanceId: string }
+}
+
 interface VirtuosoTestProps {
+	firstItemIndex: number
+	data: ClineMessage[]
 	atBottomStateChange?: (atBottom: boolean) => void
 	initialTopMostItemIndex?: number | { index: number; align: "end" | "start" | "center" }
 	rangeChanged?: (range: { startIndex: number; endIndex: number }) => void
@@ -18,6 +29,7 @@ const mocks = vi.hoisted(() => ({
 	totalMessageCount: 0,
 	currentMessages: [] as ClineMessage[],
 	currentFirstItemIndex: 0,
+	externalState: undefined as ExtensionTestState | undefined,
 	setCurrentMessages: undefined as React.Dispatch<React.SetStateAction<ClineMessage[]>> | undefined,
 	virtuosoProps: undefined as VirtuosoTestProps | undefined,
 	scrollToIndex: vi.fn(),
@@ -30,6 +42,8 @@ vi.mock("@/context/ExtensionStateContext", async () => {
 		useExtensionState: () => {
 			const [clineMessages, setClineMessages] = ReactModule.useState(() => mocks.initialMessages)
 			const [firstItemIndex, setFirstItemIndex] = ReactModule.useState(mocks.initialFirstItemIndex)
+
+			if (mocks.externalState) return mocks.externalState
 
 			mocks.currentMessages = clineMessages
 			mocks.currentFirstItemIndex = firstItemIndex
@@ -144,6 +158,45 @@ function renderMessagesArea(scrollBehavior = createScrollBehavior()) {
 	return scrollBehavior
 }
 
+// Unlike the static fixtures, this models ChatView deriving its rows from the
+// same provider state that MessagesArea changes after a fetch or trim.
+function renderReactiveMessagesArea() {
+	const scrollBehavior = createScrollBehavior()
+	function Harness() {
+		const [messages, setMessages] = React.useState(mocks.initialMessages)
+		const [firstItemIndex, setFirstItemIndex] = React.useState(mocks.initialFirstItemIndex)
+		mocks.currentMessages = messages
+		mocks.currentFirstItemIndex = firstItemIndex
+		mocks.setCurrentMessages = setMessages
+		mocks.externalState = {
+			clineMessages: messages,
+			setClineMessages: setMessages,
+			firstItemIndex,
+			setFirstItemIndex,
+			totalMessageCount: mocks.totalMessageCount,
+			taskViewState: { taskId: "task-1", taskInstanceId: "task-instance-1" },
+		}
+		return (
+			<MessagesArea
+				chatState={{ expandedRows: {} } as ChatState}
+				groupedMessages={messages}
+				messageHandlers={{ handleSendMessage: vi.fn() } as unknown as MessageHandlers}
+				modifiedMessages={messages}
+				onFollowupOptionSelect={vi.fn()}
+				scrollBehavior={scrollBehavior}
+				task={mocks.initialMessages[0]}
+			/>
+		)
+	}
+	render(<Harness />)
+	return scrollBehavior
+}
+
+function reportAbsoluteRange(first: number, last: number) {
+	const origin = mocks.virtuosoProps!.firstItemIndex - mocks.currentFirstItemIndex
+	mocks.virtuosoProps!.rangeChanged!({ startIndex: origin + first, endIndex: origin + last })
+}
+
 describe("MessagesArea sliding-window integration", () => {
 	beforeEach(() => {
 		mocks.fetchMessage.mockReset()
@@ -155,6 +208,7 @@ describe("MessagesArea sliding-window integration", () => {
 		mocks.currentMessages = []
 		mocks.currentFirstItemIndex = 0
 		mocks.setCurrentMessages = undefined
+		mocks.externalState = undefined
 	})
 
 	afterEach(() => {
@@ -348,5 +402,60 @@ describe("MessagesArea sliding-window integration", () => {
 		})
 		expect(mocks.currentFirstItemIndex).toBe(100)
 		expect(mocks.currentMessages).toHaveLength(700)
+	})
+	it("bounds production windows while repeatedly browsing backward and forward", async () => {
+		mocks.initialFirstItemIndex = 4600
+		mocks.initialMessages = createMessages(4600, 400)
+		mocks.totalMessageCount = 10000
+		mocks.fetchMessage.mockImplementation(async ({ referenceIndex, count }) => ({
+			messages: createMessages(referenceIndex, count),
+			startIndex: referenceIndex,
+			taskId: "task-1",
+			taskInstanceId: "task-instance-1",
+		}))
+		const scroll = renderReactiveMessagesArea()
+		scroll.disableAutoScrollRef.current = true
+		for (let cycle = 0; cycle < 3; cycle++) {
+			for (const direction of [-1, 1]) {
+				for (let step = 0; step < 12; step++) {
+					const first =
+						direction < 0
+							? mocks.currentFirstItemIndex + 20
+							: mocks.currentFirstItemIndex + mocks.currentMessages.length - 40
+					const anchorCoordinate = mocks.virtuosoProps!.firstItemIndex + first - mocks.currentFirstItemIndex
+					await act(async () => reportAbsoluteRange(first, first + 10))
+					expect(mocks.virtuosoProps!.firstItemIndex + first - mocks.currentFirstItemIndex).toBe(anchorCoordinate)
+					expect(mocks.currentMessages.length).toBeLessThanOrEqual(650)
+					expect(mocks.currentMessages.some((message) => message.ts === first + 1)).toBe(true)
+					expect(mocks.currentMessages.some((message) => message.ts === first + 11)).toBe(true)
+					expect(mocks.virtuosoProps!.data).toEqual(mocks.currentMessages)
+				}
+			}
+		}
+		expect(mocks.fetchMessage.mock.calls.length).toBeGreaterThan(40)
+	})
+
+	it("retains the browsing anchor when a large live refresh arrives", async () => {
+		renderReactiveMessagesArea().disableAutoScrollRef.current = true
+		await act(async () => reportAbsoluteRange(450, 460))
+		await act(async () => mocks.setCurrentMessages?.((messages) => [...messages, ...createMessages(700, 2000)]))
+		expect(mocks.currentMessages.length).toBeLessThanOrEqual(650)
+		expect(mocks.currentMessages.some((message) => message.ts === 451)).toBe(true)
+		expect(mocks.currentMessages.some((message) => message.ts === 461)).toBe(true)
+	})
+
+	it("bounds a growing live tail without dropping new messages", async () => {
+		mocks.initialFirstItemIndex = 0
+		mocks.initialMessages = createMessages(0, 200)
+		mocks.totalMessageCount = 200
+		renderReactiveMessagesArea()
+		for (let batch = 0; batch < 20; batch++) {
+			const end = mocks.totalMessageCount
+			mocks.totalMessageCount += 100
+			await act(async () => mocks.setCurrentMessages?.((messages) => [...messages, ...createMessages(end, 100)]))
+			await act(async () => reportAbsoluteRange(end + 80, end + 99))
+			expect(mocks.currentMessages.length).toBeLessThanOrEqual(450)
+			expect(mocks.currentMessages.at(-1)!.ts).toBe(end + 100)
+		}
 	})
 })
