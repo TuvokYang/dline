@@ -6,11 +6,13 @@ import * as ApiProfilesModule from "@core/controller/file/getApiProfiles"
 import { telemetryService } from "@services/telemetry"
 import { MAX_SUBAGENTS_PER_BATCH } from "@shared/concurrency-limits"
 import { ClineSubagentUsageInfo } from "@shared/ExtensionMessage"
+import { RetryTaskActivitiesRequest } from "@shared/proto/dline/task"
 import { createTaskCapabilityToggles } from "@shared/TaskCapabilityToggles"
 import type { TaskActivityEventInput } from "@shared/task-activity"
 import { ClineDefaultTool } from "@shared/tools"
 import { expect } from "chai"
 import { afterEach, describe, it, vi, expect as vitestExpect } from "vitest"
+import { retryTaskActivities } from "../../../../controller/task/retryTaskActivities"
 import { TaskActivityStore } from "../../../activity/TaskActivityStore"
 import { TaskState } from "../../../TaskState"
 import type { ResolvedAgentConfig } from "../../subagent/AgentConfigLoader"
@@ -1347,7 +1349,7 @@ describe("SubagentToolHandler", () => {
 		vitestExpect(setFinish).toHaveBeenCalledWith(jobId, vitestExpect.any(Function))
 	})
 
-	it("restores a persisted retry recipe after Task reopen", async () => {
+	it.each(["failed", "cancelled"] as const)("restores a persisted %s retry recipe through the controller", async (status) => {
 		const { config } = createConfig({ autoApproveSafe: true, autoApproveAll: true })
 		config.taskState.abort = true
 		const activityStore = new TaskActivityStore("task-1")
@@ -1366,8 +1368,11 @@ describe("SubagentToolHandler", () => {
 				retryable: true,
 			},
 		})
-		activityStore.update("subagent-restored", { status: "failed", error: "temporary provider failure" })
-		config.activityStore = activityStore
+		activityStore.update("subagent-restored", { status, error: "temporary provider failure" })
+		const saved = JSON.parse(JSON.stringify(activityStore.list()))
+		const reopenedStore = new TaskActivityStore("task-1", { load: async () => saved, save: async () => {} })
+		await reopenedStore.hydrate()
+		config.activityStore = reopenedStore
 		vi.spyOn(AgentConfigModule, "resolveAgentConfig").mockResolvedValue(undefined)
 		vi.spyOn(SubagentRunner.prototype, "run").mockResolvedValue({
 			status: "completed",
@@ -1375,12 +1380,29 @@ describe("SubagentToolHandler", () => {
 			stats: emptyTestStats(),
 		})
 
-		assert.equal(await restoreSubagentActivityRetry(config, "subagent-restored"), true)
-		assert.equal(activityStore.isRetryable("subagent-restored"), true)
-		assert.deepEqual(await activityStore.retry(["subagent-restored"]), ["subagent-restored"])
-		await vi.waitFor(() => assert.equal(activityStore.get("subagent-restored")?.status, "completed"))
-		assert.equal(activityStore.get("subagent-restored")?.currentAttempt, 2)
-		assert.equal(activityStore.get("subagent-restored")?.result, "recovered after reopen")
+		const controller = {
+			task: {
+				taskId: "task-1",
+				taskInstanceId: "open-1",
+				isReadOnly: () => false,
+				activityStore: reopenedStore,
+				restoreSubagentActivityRetry: (id: string) => restoreSubagentActivityRetry(config, id),
+			},
+		}
+		const response = await retryTaskActivities(
+			controller as never,
+			RetryTaskActivitiesRequest.create({
+				taskId: "task-1",
+				taskInstanceId: "open-1",
+				activityIds: ["subagent-restored"],
+			}),
+		)
+		assert.deepEqual(response.retriedActivityIds, ["subagent-restored"])
+		await vi.waitFor(() => assert.equal(reopenedStore.get("subagent-restored")?.status, "completed"))
+		assert.equal(reopenedStore.get("subagent-restored")?.currentAttempt, 2)
+		assert.equal(reopenedStore.get("subagent-restored")?.result, "recovered after reopen")
+		activityStore.dispose()
+		reopenedStore.dispose()
 	})
 
 	it("replays a restored retry with the Profile the batch item originally resolved", async () => {

@@ -3,6 +3,70 @@ import { describe, expect, it, vi } from "vitest"
 import { retryTaskActivities } from "../retryTaskActivities"
 
 describe("retryTaskActivities", () => {
+	it.each([false, "throws"])("records feedback when restoration returns %s", async (outcome) => {
+		const setRetryUnavailableReason = vi.fn()
+		const retry = vi.fn(async () => [])
+		const controller = {
+			task: {
+				taskId: "task-1",
+				taskInstanceId: "open-1",
+				isReadOnly: () => false,
+				activityStore: {
+					hasLiveRetryControl: () => false,
+					isRetryable: () => true,
+					get: () => undefined,
+					setRetryUnavailableReason,
+					retry,
+				},
+				restoreSubagentActivityRetry: vi.fn(async () => {
+					if (outcome === "throws") throw new Error("sensitive provider error")
+					return false
+				}),
+			},
+		}
+		const response = await retryTaskActivities(
+			controller as never,
+			RetryTaskActivitiesRequest.create({
+				taskId: "task-1",
+				taskInstanceId: "open-1",
+				activityIds: ["job"],
+			}),
+		)
+		expect(response.retriedActivityIds).toEqual([])
+		expect(setRetryUnavailableReason).toHaveBeenCalledWith("job", expect.stringContaining("could not be restored"))
+		expect(JSON.stringify(setRetryUnavailableReason.mock.calls)).not.toContain("sensitive provider error")
+	})
+
+	it("preserves a specific unavailable reason and still retries other activities", async () => {
+		const setRetryUnavailableReason = vi.fn()
+		const retry = vi.fn(async () => ["live"])
+		const controller = {
+			task: {
+				taskId: "task-1",
+				taskInstanceId: "open-1",
+				isReadOnly: () => false,
+				activityStore: {
+					hasLiveRetryControl: (id: string) => id === "live",
+					isRetryable: () => true,
+					get: () => ({ retryUnavailableReason: "Retry unavailable: Profile was removed." }),
+					setRetryUnavailableReason,
+					retry,
+				},
+				restoreSubagentActivityRetry: vi.fn(async () => false),
+			},
+		}
+		const response = await retryTaskActivities(
+			controller as never,
+			RetryTaskActivitiesRequest.create({
+				taskId: "task-1",
+				taskInstanceId: "open-1",
+				activityIds: ["missing", "live"],
+			}),
+		)
+		expect(response.retriedActivityIds).toEqual(["live"])
+		expect(setRetryUnavailableReason).toHaveBeenCalledWith("missing", "Retry unavailable: Profile was removed.")
+	})
+
 	it("restores a persisted retry control before retrying a reopened activity", async () => {
 		let liveRetryControl = false
 		const hasLiveRetryControl = vi.fn(() => liveRetryControl)
