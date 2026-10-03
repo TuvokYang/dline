@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { writeJsonl } from "@/core/storage/backend/jsonl/jsonl-utils"
 import { ensureTaskDirectoryExists, GlobalFileNames } from "@/core/storage/disk"
 import { UIMessage } from "@/core/storage/UIMessage"
+import { UIMessageWindowReader } from "@/core/storage/UIMessageWindowReader"
 
 describe("UIMessage history windows", () => {
 	let dlineDocsDir: string
@@ -47,6 +48,50 @@ describe("UIMessage history windows", () => {
 				messages: [{ ts: 101 }, { ts: 102 }, { ts: 103 }],
 			})
 			await expect(reader.getByTimestamp(350)).resolves.toMatchObject({ ts: 350 })
+		} finally {
+			await reader.close()
+		}
+	})
+
+	it("indexes a multi-chunk record with only linear concatenation work", async () => {
+		const filePath = path.join(dlineDocsDir, "large.jsonl")
+		const message: ClineMessage = { ts: 1, type: "say", say: "text", text: "x".repeat(4 * 1024 * 1024) }
+		const contents = `${JSON.stringify(message)}\n`
+		await fs.writeFile(filePath, contents)
+		const concat = vi.spyOn(Buffer, "concat")
+		let reader: UIMessageWindowReader | undefined
+		try {
+			reader = await UIMessageWindowReader.open(filePath)
+			const copiedBytes = concat.mock.calls.reduce(
+				(total, [fragments]) => total + fragments.reduce((size, fragment) => size + fragment.length, 0),
+				0,
+			)
+			expect(copiedBytes).toBeLessThanOrEqual(Buffer.byteLength(contents))
+			expect(reader.count).toBe(1)
+			await expect(reader.getLatest(1)).resolves.toEqual([message])
+		} finally {
+			concat.mockRestore()
+			await reader?.close()
+		}
+	})
+
+	it.each([true, false])("preserves UTF-8 offsets, CRLF, invalid rows and final newline=%s", async (finalNewline) => {
+		const filePath = path.join(dlineDocsDir, "boundaries.jsonl")
+		const prefix = JSON.stringify({ ts: 1, type: "say", say: "text", text: "" }).slice(0, -2)
+		// The four-byte character straddles the reader's 64 KiB read boundary.
+		const first = { ts: 1, type: "say", say: "text", text: "x".repeat(65535 - Buffer.byteLength(prefix)) + "😀尾" }
+		const second = { ts: 2, type: "say", say: "text", text: "中文".repeat(50000) }
+		const final = { ts: 3, type: "say", say: "text", text: "final" }
+		const contents =
+			[JSON.stringify(first), "invalid", "", JSON.stringify(second), JSON.stringify(final)].join("\r\n") +
+			(finalNewline ? "\n" : "")
+		await fs.writeFile(filePath, contents)
+		const reader = await UIMessageWindowReader.open(filePath)
+		try {
+			expect(reader.count).toBe(3)
+			await expect(reader.getPage(1, 2)).resolves.toEqual({ startIndex: 1, totalCount: 3, messages: [second, final] })
+			await expect(reader.getByTimestamp(1)).resolves.toEqual(first)
+			await expect(reader.getLatest(1)).resolves.toEqual([final])
 		} finally {
 			await reader.close()
 		}

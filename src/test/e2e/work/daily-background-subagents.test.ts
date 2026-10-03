@@ -6,6 +6,7 @@ import {
 	openWorkActivities,
 	openWorkTab,
 	prepareWorkSession,
+	scrollWorkToLatest,
 	sendWorkMessage,
 	setWorkAutoApproveAction,
 } from "@e2e/utils/work/session"
@@ -97,7 +98,7 @@ async function expectCompletedSubagentCard(
 
 e2e(
 	"daily background commands and subagents keep Activities and chat usable through foreground and background work",
-	async ({ helper, page, server, sidebar, userDataDir, workspaceDir }) => {
+	async ({ helper, page, server, sidebar, userDataDir, workspaceDir }, testInfo) => {
 		e2e.setTimeout(600_000)
 		await writeWorkSubagent(workspaceDir)
 		await prepareWorkSession(sidebar, helper)
@@ -301,18 +302,28 @@ e2e(
 
 			await sendWorkMessage(sidebar, FOREGROUND_COMMAND_REQUEST)
 			await expect(sidebar.getByText("WORK_FOREGROUND_COMMAND_OK", { exact: true })).toBeVisible({ timeout: 60_000 })
-			const foregroundCard = sidebar.getByTestId("command-card").last()
+			const foregroundCard = sidebar.getByTestId("command-card").filter({ hasText: FOREGROUND_COMMAND })
+			await expect(foregroundCard).toHaveCount(1)
 			await expect(foregroundCard.getByTestId("command-execution-mode")).toHaveText("Foreground")
-			await foregroundCard.getByRole("button", { name: FOREGROUND_COMMAND, exact: true }).click()
+			await scrollWorkToLatest(sidebar)
+			await sidebar.locator('[data-virtuoso-scroller="true"]').hover({ position: { x: 4, y: 40 } })
+			await page.mouse.wheel(0, -120)
+			const foregroundToggle = foregroundCard.getByRole("button", { name: FOREGROUND_COMMAND, exact: true })
+			await foregroundToggle.scrollIntoViewIfNeeded()
+			await foregroundToggle.click()
 			await expect(foregroundCard.getByTestId("command-output-scroll")).toContainText("WORK_FOREGROUND_COMMAND_END")
 
+			await scrollWorkToLatest(sidebar)
 			await sendWorkMessage(sidebar, HANDOFF_COMMAND_REQUEST)
-			await expect(sidebar.getByTestId("command-execution-mode").last()).toHaveText("Foreground", { timeout: 60_000 })
+			const handoffCard = sidebar.getByTestId("command-card").filter({ hasText: BACKGROUND_COMMAND })
+			await expect(handoffCard).toHaveCount(1, { timeout: 60_000 })
+			await expect(handoffCard.getByTestId("command-execution-mode")).toHaveText("Foreground", { timeout: 60_000 })
 			const footer = sidebar.getByRole("contentinfo")
 			const continueInBackground = footer.locator('vscode-button[aria-label="Continue in Background"]')
 			await expect(continueInBackground).toBeVisible({ timeout: 40_000 })
 			await continueInBackground.click()
-			await expect(sidebar.getByTestId("command-execution-mode").last()).toHaveText("Background", { timeout: 30_000 })
+			await scrollWorkToLatest(sidebar)
+			await expect(handoffCard.getByTestId("command-execution-mode")).toHaveText("Background", { timeout: 30_000 })
 
 			let activities = await openWorkActivities(sidebar)
 			const commandActivity = activities.filter({ hasText: BACKGROUND_COMMAND })
@@ -405,6 +416,56 @@ e2e(
 			])
 			expect([...parentConsumptions, ...childConsumptions].every((entry) => entry.contractError === undefined)).toBe(true)
 			await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
+		} catch (error) {
+			// Preserve the failing renderer before the task is closed below. The
+			// artifact workflow uploads files, not in-memory reporter attachments.
+			const screenshotPath = testInfo.outputPath("background-subagents-before-cleanup.png")
+			await page
+				.screenshot({ path: screenshotPath })
+				.then(() =>
+					testInfo.attach("background-subagents-before-cleanup.png", {
+						path: screenshotPath,
+						contentType: "image/png",
+					}),
+				)
+				.catch(() => undefined)
+			const htmlPath = testInfo.outputPath("background-subagents-before-cleanup.html")
+			await sidebar
+				.content()
+				.then((html) => writeFile(htmlPath, html, "utf8"))
+				.then(() =>
+					testInfo.attach("background-subagents-before-cleanup.html", { path: htmlPath, contentType: "text/html" }),
+				)
+				.catch(() => undefined)
+			const geometryPath = testInfo.outputPath("background-subagents-before-cleanup-geometry.json")
+			await sidebar
+				.locator('[data-virtuoso-scroller="true"]')
+				.evaluate((scroller) => {
+					const bounds = scroller.getBoundingClientRect()
+					return {
+						scrollTop: scroller.scrollTop,
+						scrollHeight: scroller.scrollHeight,
+						clientHeight: scroller.clientHeight,
+						bottomGap: scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight,
+						visibleRows: [...scroller.querySelectorAll<HTMLElement>("[data-message-ts]")]
+							.filter(
+								(row) =>
+									row.getBoundingClientRect().bottom > bounds.top &&
+									row.getBoundingClientRect().top < bounds.bottom,
+							)
+							.map((row) => ({ ts: row.dataset.messageTs, text: row.innerText.slice(0, 500) })),
+						bottomControlPresent: document.querySelector('button[aria-label="Scroll to bottom"]') !== null,
+					}
+				})
+				.then((geometry) => writeFile(geometryPath, JSON.stringify(geometry, null, 2), "utf8"))
+				.then(() =>
+					testInfo.attach("background-subagents-before-cleanup-geometry.json", {
+						path: geometryPath,
+						contentType: "application/json",
+					}),
+				)
+				.catch(() => undefined)
+			throw error
 		} finally {
 			if (taskStarted) {
 				const closeTask = sidebar.getByRole("button", { name: "Close Task", exact: true })

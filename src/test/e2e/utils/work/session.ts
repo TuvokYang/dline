@@ -25,6 +25,50 @@ export async function sendWorkMessage(sidebar: Frame, text: string, timeoutMs = 
 	return message
 }
 
+export async function clickWorkScrollToBottom(scroller: Locator, button: Locator): Promise<void> {
+	const isAtBottom = () => scroller.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight <= 10)
+	if (await isAtBottom()) return
+	try {
+		await button.click({ timeout: 5_000 })
+	} catch (error) {
+		// The wheel or click can reach the bottom and remove the control during actionability checks.
+		// Accept that outcome only from independent geometry; the caller still verifies settled layout.
+		if (!(await isAtBottom())) throw error
+	}
+}
+
+export async function scrollWorkToLatest(sidebar: Frame): Promise<void> {
+	const scroller = sidebar.locator('[data-virtuoso-scroller="true"]')
+	await expect(scroller).toBeVisible()
+	// Use the transcript gutter so an expanded tool's nested scroller cannot consume the wheel.
+	await scroller.hover({ position: { x: 4, y: 40 } })
+	await sidebar.page().mouse.wheel(0, 120)
+	const scrollToBottom = sidebar.getByRole("button", { name: "Scroll to bottom", exact: true })
+	await expect
+		.poll(async () => {
+			if (await scrollToBottom.count()) return true
+			return scroller.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight <= 10)
+		})
+		.toBe(true)
+	await clickWorkScrollToBottom(scroller, scrollToBottom)
+
+	// Observe layout only: never reset scrollTop or repeatedly navigate until a moving row happens to pass.
+	let previousGeometry: string | undefined
+	await expect
+		.poll(async () => {
+			const geometry = await scroller.evaluate((element) => ({
+				top: element.scrollTop,
+				height: element.scrollHeight,
+				viewport: element.clientHeight,
+			}))
+			const currentGeometry = JSON.stringify(geometry)
+			const settled = currentGeometry === previousGeometry
+			previousGeometry = currentGeometry
+			return settled && geometry.height - geometry.top - geometry.viewport <= 10
+		})
+		.toBe(true)
+}
+
 export async function setWorkAutoApproveAction(sidebar: Frame, label: string, enabled: boolean): Promise<void> {
 	await sidebar.getByLabel("Open auto-approve settings").click()
 	const checkbox = sidebar.locator("vscode-checkbox").filter({ hasText: label })
