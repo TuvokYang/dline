@@ -8,13 +8,14 @@ import { fetch } from "@/shared/net"
 import { Logger } from "@/shared/services/Logger"
 import { buildBasicClineHeaders } from "../EnvUtils"
 import { AuthService } from "./AuthService"
+import { isE2EAuthMockEnabled } from "./auth-test-mode"
 
 export class AuthServiceMock extends AuthService {
 	protected constructor(controller: Controller) {
 		super(controller)
 
-		if (process?.env?.DLINE_ENVIRONMENT !== "local") {
-			throw new Error("AuthServiceMock should only be used in local environment for testing purposes.")
+		if (!isE2EAuthMockEnabled()) {
+			throw new Error("AuthServiceMock should only be used in explicit E2E test mode.")
 		}
 
 		this._controller = controller
