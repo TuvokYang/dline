@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import type { ClineMessage } from "@shared/ExtensionMessage"
-import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { ApprovalRenderer, CommandRenderer } from "./PresentationRenderers"
 
@@ -52,6 +52,28 @@ function renderApproval(message: ClineMessage) {
 }
 
 describe("ApprovalRenderer", () => {
+	it.each(["README.md", "work-daily-exit-read.txt"])("identifies the pending read of %s despite other path labels", (path) => {
+		render(
+			<>
+				<span>{path}</span>
+				<span hidden>{path}</span>
+				<button type="button">{path}</button>
+				<div role="contentinfo">
+					<ApprovalRenderer
+						message={approvalAsk("tool", { tool: "readFile", path })}
+						onSelectionChange={vi.fn()}
+						selection={[]}
+					/>
+				</div>
+			</>,
+		)
+
+		expect(screen.getAllByText(path, { exact: true })).toHaveLength(4)
+		const summary = within(screen.getByRole("contentinfo")).getByTestId("tool-approval-summary")
+		expect(within(summary).getByText("Dline wants to read this file:", { exact: true })).toBeVisible()
+		expect(within(summary).getByText(path, { exact: true })).toBeVisible()
+	})
+
 	it.each([
 		[
 			{ tool: "readFile", path: "src/very/long/path/to/file.ts" },
