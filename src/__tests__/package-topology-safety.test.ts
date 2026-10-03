@@ -74,6 +74,32 @@ describe("package topology safety", () => {
 		expect(registryWorkflow.match(/name: \$\{\{ inputs\.artifact_name \}\}/g)).toHaveLength(3)
 	})
 
+	it("runs the required work gate against the exact VSIX packaged for the workflow", async () => {
+		const testsWorkflow = await readProjectFile(".github/workflows/test.yml")
+		const e2eWorkflow = await readProjectFile(".github/workflows/e2e.yml")
+		const releaseWorkflow = await readProjectFile(".github/workflows/release.yml")
+
+		expect(testsWorkflow).toMatch(/package:\n[\s\S]*?needs: \[typecheck, vitest\]/)
+		expect(testsWorkflow).toMatch(/e2e:\n[\s\S]*?needs: package/)
+		expect(testsWorkflow).toContain("artifact_name: ${{ needs.package.outputs.artifact_name }}")
+		expect(testsWorkflow).toContain("commit_sha: ${{ needs.package.outputs.commit_sha }}")
+
+		expect(e2eWorkflow).toContain('DLINE_E2E_INSTALL_VSIX: "1"')
+		expect(e2eWorkflow).toContain("runner: [ubuntu, windows, macos]")
+		expect(e2eWorkflow.match(/uses: actions\/download-artifact@v8/g)).toHaveLength(2)
+		expect(e2eWorkflow.match(/name: \$\{\{ inputs\.artifact_name \}\}/g)).toHaveLength(2)
+		expect(e2eWorkflow).toContain('$expectedArtifact = "dline-vsix-$env:COMMIT_SHA"')
+		expect(e2eWorkflow).toContain("Copy-Item -LiteralPath $assets[0].FullName -Destination dist/e2e.vsix -Force")
+		expect(e2eWorkflow).toContain("npx playwright test -c playwright.work.config.ts")
+		expect(e2eWorkflow).not.toContain("npm run e2e:smoke")
+		expect(e2eWorkflow).not.toContain("npm run e2e:work")
+
+		expect(releaseWorkflow).toContain("name: dline-vsix-${{ needs.verify-tag.outputs.commit_sha }}")
+		expect(releaseWorkflow).toContain('DLINE_E2E_INSTALL_VSIX: "1"')
+		expect(releaseWorkflow).toContain("npx playwright test -c playwright.functional.config.ts")
+		expect(releaseWorkflow).toContain("needs: [verify-tag, tests, functional-e2e]")
+	})
+
 	it("serializes builds against concurrent runs of the shared dist output", async () => {
 		const packageJson = JSON.parse(await readProjectFile("package.json")) as RootPackageJson
 		const scripts = packageJson.scripts ?? {}
