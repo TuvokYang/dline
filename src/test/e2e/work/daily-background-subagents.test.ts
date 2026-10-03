@@ -301,11 +301,12 @@ e2e(
 			await expect(sidebar.getByText("WORK_DAILY_BACKGROUND_READY", { exact: true })).toBeVisible({ timeout: 60_000 })
 
 			await sendWorkMessage(sidebar, FOREGROUND_COMMAND_REQUEST)
-			await expect(sidebar.getByText("WORK_FOREGROUND_COMMAND_OK", { exact: true })).toBeVisible({ timeout: 60_000 })
+			const foregroundComplete = sidebar.getByText("WORK_FOREGROUND_COMMAND_OK", { exact: true })
+			await expect(foregroundComplete).toBeVisible({ timeout: 60_000 })
 			const foregroundCard = sidebar.getByTestId("command-card").filter({ hasText: FOREGROUND_COMMAND })
 			await expect(foregroundCard).toHaveCount(1)
 			await expect(foregroundCard.getByTestId("command-execution-mode")).toHaveText("Foreground")
-			await scrollWorkToLatest(sidebar)
+			await scrollWorkToLatest(sidebar, foregroundComplete, 5_000)
 			await sidebar.locator('[data-virtuoso-scroller="true"]').hover({ position: { x: 4, y: 40 } })
 			await page.mouse.wheel(0, -120)
 			const foregroundToggle = foregroundCard.getByRole("button", { name: FOREGROUND_COMMAND, exact: true })
@@ -313,7 +314,7 @@ e2e(
 			await foregroundToggle.click()
 			await expect(foregroundCard.getByTestId("command-output-scroll")).toContainText("WORK_FOREGROUND_COMMAND_END")
 
-			await scrollWorkToLatest(sidebar)
+			await scrollWorkToLatest(sidebar, foregroundComplete, 5_000)
 			await sendWorkMessage(sidebar, HANDOFF_COMMAND_REQUEST)
 			const handoffCard = sidebar.getByTestId("command-card").filter({ hasText: BACKGROUND_COMMAND })
 			await expect(handoffCard).toHaveCount(1, { timeout: 60_000 })
@@ -322,7 +323,6 @@ e2e(
 			const continueInBackground = footer.locator('vscode-button[aria-label="Continue in Background"]')
 			await expect(continueInBackground).toBeVisible({ timeout: 40_000 })
 			await continueInBackground.click()
-			await scrollWorkToLatest(sidebar)
 			await expect(handoffCard.getByTestId("command-execution-mode")).toHaveText("Background", { timeout: 30_000 })
 
 			let activities = await openWorkActivities(sidebar)

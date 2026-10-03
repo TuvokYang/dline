@@ -187,17 +187,18 @@ e2e(
 		await setWorkAutoApproveAction(sidebar, "Edit project files", false)
 
 		await setWorkAutoApproveAction(sidebar, "Execute safe commands", true)
-		await scrollWorkToLatest(sidebar)
+		await scrollWorkToLatest(sidebar, sidebar.getByText(REPLACE_COMPLETE, { exact: true }), 5_000)
 		await sendWorkMessage(sidebar, COMMAND_REQUEST)
 		const commandCard = sidebar.getByTestId("command-card").filter({ hasText: COMMAND })
 		await expect(commandCard).toHaveCount(1, { timeout: 60_000 })
 		await expect(commandCard.getByTestId("command-execution-mode")).toHaveText("Foreground", {
 			timeout: 60_000,
 		})
-		await expect(sidebar.getByText("WORK_DAILY_COMMAND_COMPLETE", { exact: true })).toBeVisible({
+		const commandComplete = sidebar.getByText("WORK_DAILY_COMMAND_COMPLETE", { exact: true })
+		await expect(commandComplete).toBeVisible({
 			timeout: 90_000,
 		})
-		await scrollWorkToLatest(sidebar)
+		await scrollWorkToLatest(sidebar, commandComplete, 5_000)
 		// Browse back to the command before expanding it; an implicit locator scroll would compete with live-tail following.
 		await sidebar.locator('[data-virtuoso-scroller="true"]').hover({ position: { x: 4, y: 40 } })
 		await page.mouse.wheel(0, -120)
@@ -211,19 +212,19 @@ e2e(
 		await expect(commandOutput).toContainText("WORK_DAILY_COMMAND_END")
 		await setWorkAutoApproveAction(sidebar, "Execute safe commands", false)
 
-		await scrollWorkToLatest(sidebar)
+		await scrollWorkToLatest(sidebar, commandComplete, 5_000)
 		await sendWorkMessage(sidebar, EXIT_REQUEST)
 		const exitApprove = footer.getByText("Approve", { exact: true })
 		await expect(exitApprove).toBeVisible({ timeout: 60_000 })
-		await scrollWorkToLatest(sidebar)
 		await expect(readApproval).toHaveCount(1)
 		await expect(readApproval.getByText("Dline wants to read this file:", { exact: true })).toBeVisible()
 		await expect(readApproval.getByText(EXIT_READ_RELATIVE_PATH, { exact: true })).toBeVisible()
 		await exitApprove.click()
 		await expect.poll(() => server.getRequestCount(TARGET), { timeout: 60_000 }).toBe(9)
-		await scrollWorkToLatest(sidebar)
+		const exitReadFile = sidebar.getByRole("button", { name: `${EXIT_READ_RELATIVE_PATH} · lines 1-1`, exact: true })
+		await scrollWorkToLatest(sidebar, exitReadFile, 5_000)
 		const exitRead = sidebar.getByTestId("tool-group-scroll").filter({
-			has: sidebar.getByRole("button", { name: `${EXIT_READ_RELATIVE_PATH} · lines 1-1`, exact: true }),
+			has: exitReadFile,
 		})
 		await expect(exitRead).toHaveCount(1, { timeout: 30_000 })
 		await expect(exitRead.getByText("Dline read 1 file:", { exact: true })).toBeVisible({ timeout: 30_000 })
