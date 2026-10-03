@@ -1,13 +1,23 @@
 name: E2E Tests
 
 on:
-  workflow_call: {}
+  workflow_call:
+    inputs:
+      artifact_name:
+        description: Exact package workflow artifact consumed by every work E2E job.
+        type: string
+        required: true
+      commit_sha:
+        description: Exact commit SHA represented by the tested VSIX.
+        type: string
+        required: true
 
 permissions:
   contents: read
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  DLINE_E2E_INSTALL_VSIX: "1"
 
 jobs:
   work-smoke:
@@ -26,6 +36,35 @@ jobs:
         with:
           install-webview: "true"
 
+      - name: Generate Protobuf code for E2E harness
+        run: npm run protos
+
+      - name: Download tested VSIX
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: tested-vsix
+
+      - name: Normalize tested VSIX
+        shell: pwsh
+        env:
+          ARTIFACT_NAME: ${{ inputs.artifact_name }}
+          COMMIT_SHA: ${{ inputs.commit_sha }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $expectedArtifact = "dline-vsix-$env:COMMIT_SHA"
+          if ($env:ARTIFACT_NAME -ne $expectedArtifact) {
+            throw "Expected artifact '$expectedArtifact', got '$env:ARTIFACT_NAME'."
+          }
+          $assets = @(Get-ChildItem -Path tested-vsix -Filter *.vsix -File)
+          if ($assets.Count -ne 1) {
+            throw "Expected exactly one tested VSIX, found $($assets.Count)."
+          }
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          Copy-Item -LiteralPath $assets[0].FullName -Destination dist/e2e.vsix -Force
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath dist/e2e.vsix).Hash.ToLowerInvariant()
+          Write-Output "tested_vsix_sha256=$hash"
+
       - name: Cache VS Code
         uses: actions/cache@v5
         with:
@@ -40,8 +79,8 @@ jobs:
       - name: Install xvfb
         run: sudo apt-get update && sudo apt-get install -y xvfb
 
-      - name: Run work smoke
-        run: xvfb-run -a npm run e2e:smoke
+      - name: Run packaged work smoke
+        run: xvfb-run -a npx playwright test -c playwright.work.config.ts --project "work smoke"
 
       - name: Upload failed work smoke artifacts
         if: failure()
@@ -92,6 +131,35 @@ jobs:
         with:
           install-webview: "true"
 
+      - name: Generate Protobuf code for E2E harness
+        run: npm run protos
+
+      - name: Download tested VSIX
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: tested-vsix
+
+      - name: Normalize tested VSIX
+        shell: pwsh
+        env:
+          ARTIFACT_NAME: ${{ inputs.artifact_name }}
+          COMMIT_SHA: ${{ inputs.commit_sha }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $expectedArtifact = "dline-vsix-$env:COMMIT_SHA"
+          if ($env:ARTIFACT_NAME -ne $expectedArtifact) {
+            throw "Expected artifact '$expectedArtifact', got '$env:ARTIFACT_NAME'."
+          }
+          $assets = @(Get-ChildItem -Path tested-vsix -Filter *.vsix -File)
+          if ($assets.Count -ne 1) {
+            throw "Expected exactly one tested VSIX, found $($assets.Count)."
+          }
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          Copy-Item -LiteralPath $assets[0].FullName -Destination dist/e2e.vsix -Force
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath dist/e2e.vsix).Hash.ToLowerInvariant()
+          Write-Output "tested_vsix_sha256=$hash"
+
       - name: Cache VS Code
         uses: actions/cache@v5
         with:
@@ -107,13 +175,13 @@ jobs:
         if: matrix.runner == 'ubuntu'
         run: sudo apt-get update && sudo apt-get install -y xvfb
 
-      - name: Run daily shard - Linux
+      - name: Run packaged daily shard - Linux
         if: matrix.runner == 'ubuntu'
-        run: xvfb-run -a npm run e2e:work -- "src/test/e2e/work/${{ matrix.shard.file }}" --project "${{ matrix.shard.project }}" --no-deps
+        run: xvfb-run -a npx playwright test -c playwright.work.config.ts "src/test/e2e/work/${{ matrix.shard.file }}" --project "${{ matrix.shard.project }}" --no-deps
 
-      - name: Run daily shard - Non-Linux
+      - name: Run packaged daily shard - Non-Linux
         if: matrix.runner != 'ubuntu'
-        run: npm run e2e:work -- "src/test/e2e/work/${{ matrix.shard.file }}" --project "${{ matrix.shard.project }}" --no-deps
+        run: npx playwright test -c playwright.work.config.ts "src/test/e2e/work/${{ matrix.shard.file }}" --project "${{ matrix.shard.project }}" --no-deps
 
       - name: Upload failed daily workflow artifacts
         if: failure()
