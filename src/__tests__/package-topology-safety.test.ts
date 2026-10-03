@@ -97,6 +97,8 @@ describe("package topology safety", () => {
 
 		expect(releaseWorkflow).toContain("name: dline-vsix-${{ needs.verify-tag.outputs.commit_sha }}")
 		expect(releaseWorkflow).toContain('DLINE_E2E_INSTALL_VSIX: "1"')
+		expect(releaseWorkflow).toContain("name: Generate Protobuf code for E2E harness")
+		expect(releaseWorkflow).toContain("run: npm run protos")
 		expect(releaseWorkflow).toContain("npx playwright test -c playwright.functional.config.ts")
 		expect(releaseWorkflow).toContain("needs: [verify-tag, tests, functional-e2e]")
 	})
