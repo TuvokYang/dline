@@ -1,6 +1,7 @@
 import type { ClineMessage, TaskViewState } from "@shared/ExtensionMessage"
 import { describe, expect, it } from "vitest"
 import {
+	filterVisibleMessages,
 	findGroupedMessageByTs,
 	groupLowStakesTools,
 	groupMessages,
@@ -255,5 +256,51 @@ describe("groupLowStakesTools", () => {
 		expect(grouped).toHaveLength(2)
 		expect(grouped[0]).toMatchObject({ type: "say", say: "reasoning", text: "Planning next read" })
 		expect(isToolGroup(grouped[1])).toBe(true)
+	})
+})
+
+describe("filterVisibleMessages linear history filtering", () => {
+	it("preserves suffix ordering for request errors and subagent summaries", () => {
+		const messages: ClineMessage[] = [
+			{ ts: 1, type: "say", say: "api_req_started", text: "{}" },
+			{ ts: 2, type: "ask", ask: "spawn_task" },
+			{ ts: 3, type: "say", say: "use_subagents" },
+			{ ts: 4, type: "say", say: "subagent" },
+			{ ts: 5, type: "ask", ask: "api_req_failed" },
+			{ ts: 6, type: "say", say: "api_req_started", text: "{}" },
+			{ ts: 7, type: "ask", ask: "spawn_task" },
+		]
+		expect(filterVisibleMessages(messages).map((message) => message.ts)).toEqual([1, 4, 7])
+	})
+
+	it("keeps only the newest partial unless any completed duplicate exists", () => {
+		const messages = [
+			{ ...createTextMessage(1, "first"), partial: true },
+			{ ...createTextMessage(2, "completed") },
+			{ ...createTextMessage(2, "stale partial"), partial: true },
+			{ ...createTextMessage(1, "newest"), partial: true },
+			{ ...createTextMessage(3, "partial"), partial: true },
+			{ ...createTextMessage(3, "completed later") },
+		]
+		expect(filterVisibleMessages(messages)).toEqual([messages[1], messages[3], messages[5]])
+	})
+
+	it("visits request-heavy history a linear number of times", () => {
+		let reads = 0
+		const messages = Array.from(
+			{ length: 10000 },
+			(_, index): ClineMessage => ({
+				ts: index,
+				type: "say",
+				say: "api_req_started",
+				text: "{}",
+				get ask() {
+					reads++
+					return undefined
+				},
+			}),
+		)
+		expect(filterVisibleMessages(messages)).toEqual([])
+		expect(reads).toBeLessThanOrEqual(messages.length * 3)
 	})
 })

@@ -34,6 +34,7 @@ interface VisibleRowSnapshot {
 }
 
 export interface WorkScrollerSnapshot {
+	sampledAt: number
 	scrollTop: number
 	scrollHeight: number
 	clientHeight: number
@@ -243,6 +244,7 @@ export async function captureWorkScroller(sidebar: Frame): Promise<WorkScrollerS
 			})
 			.filter((row) => Number.isFinite(row.ts) && row.bottom > 0 && row.top < scroller.clientHeight)
 		return {
+			sampledAt: performance.now(),
 			scrollTop: scroller.scrollTop,
 			scrollHeight: scroller.scrollHeight,
 			clientHeight: scroller.clientHeight,
@@ -250,6 +252,155 @@ export async function captureWorkScroller(sidebar: Frame): Promise<WorkScrollerS
 			visibleRows,
 		}
 	})
+}
+
+interface WorkHistoryScrollTrace {
+	events: Record<string, unknown>[]
+	droppedEvents: number
+}
+
+/** Observe the real scroller without changing gesture timing or application state. */
+export async function observeWorkHistoryScroll(sidebar: Frame): Promise<() => Promise<WorkHistoryScrollTrace>> {
+	await sidebar.locator('[data-virtuoso-scroller="true"]').evaluate((element) => {
+		const scroller = element as HTMLElement
+		type DiagnosticWindow = Window & {
+			__dlineMarkAppScroll?: () => void
+			__workHistoryScrollTrace?: { stop: () => WorkHistoryScrollTrace }
+		}
+		const diagnosticWindow = window as DiagnosticWindow
+		diagnosticWindow.__workHistoryScrollTrace?.stop()
+		const events: Record<string, unknown>[] = []
+		let droppedEvents = 0
+		let lastApplicationMark: number | undefined
+		const restorers: (() => void)[] = []
+		const record = (kind: string, detail: Record<string, unknown> = {}) => {
+			if (events.length >= 5_000) {
+				droppedEvents++
+				return
+			}
+			const rows = scroller.querySelectorAll<HTMLElement>("[data-item-index]")
+			const list = scroller.querySelector<HTMLElement>('[data-testid="virtuoso-item-list"]')
+			events.push({
+				time: performance.now(),
+				kind,
+				scrollTop: scroller.scrollTop,
+				scrollHeight: scroller.scrollHeight,
+				clientHeight: scroller.clientHeight,
+				firstRenderedIndex: rows[0]?.dataset.itemIndex,
+				lastRenderedIndex: rows[rows.length - 1]?.dataset.itemIndex,
+				firstMessageTs: scroller.querySelector<HTMLElement>("[data-message-ts]")?.dataset.messageTs,
+				paddingTop: list?.style.paddingTop,
+				paddingBottom: list?.style.paddingBottom,
+				applicationMarkAgeMs: lastApplicationMark === undefined ? null : performance.now() - lastApplicationMark,
+				...detail,
+			})
+		}
+		const previousMark = diagnosticWindow.__dlineMarkAppScroll
+		const markDescriptor = Object.getOwnPropertyDescriptor(window, "__dlineMarkAppScroll")
+		Object.defineProperty(window, "__dlineMarkAppScroll", {
+			configurable: true,
+			value: () => {
+				lastApplicationMark = performance.now()
+				record("application-scroll-request")
+				previousMark?.()
+			},
+		})
+		restorers.push(() => {
+			if (markDescriptor) Object.defineProperty(window, "__dlineMarkAppScroll", markDescriptor)
+			else delete diagnosticWindow.__dlineMarkAppScroll
+		})
+
+		// Preserve native call arguments and return values. These wrappers only
+		// record writes; bare scroll events can still be browser/library movement.
+		for (const method of ["scrollTo", "scrollBy"] as const) {
+			const descriptor = Object.getOwnPropertyDescriptor(scroller, method)
+			const native = scroller[method].bind(scroller) as (...args: unknown[]) => void
+			Object.defineProperty(scroller, method, {
+				configurable: true,
+				value: (...args: unknown[]) => {
+					const before = scroller.scrollTop
+					const result = native(...args)
+					record(method, { args, before, after: scroller.scrollTop })
+					return result
+				},
+			})
+			restorers.push(() => {
+				if (descriptor) Object.defineProperty(scroller, method, descriptor)
+				else Reflect.deleteProperty(scroller, method)
+			})
+		}
+		const ownScrollTop = Object.getOwnPropertyDescriptor(scroller, "scrollTop")
+		const scrollTopDescriptor =
+			Object.getOwnPropertyDescriptor(Element.prototype, "scrollTop") ??
+			Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollTop")
+		if (scrollTopDescriptor?.get && scrollTopDescriptor.set) {
+			const get = scrollTopDescriptor.get.bind(scroller)
+			const set = scrollTopDescriptor.set.bind(scroller)
+			Object.defineProperty(scroller, "scrollTop", {
+				configurable: true,
+				get,
+				set: (value: number) => {
+					const before = get()
+					set(value)
+					record("scrollTop-write", { requested: value, before, after: get() })
+				},
+			})
+			restorers.push(() => {
+				if (ownScrollTop) Object.defineProperty(scroller, "scrollTop", ownScrollTop)
+				else Reflect.deleteProperty(scroller, "scrollTop")
+			})
+		}
+
+		const onWheel = (event: WheelEvent) => record("wheel", { deltaY: event.deltaY, deltaMode: event.deltaMode })
+		const onScroll = () => record("scroll")
+		const onMessage = (event: MessageEvent) => {
+			const response = event.data?.type === "grpc_response" ? event.data.grpc_response : undefined
+			const message = response?.message
+			if (Array.isArray(message?.messages) && typeof message?.startIndex === "number") {
+				// Only paging metadata: never copy full RPC payloads into artifacts.
+				record("message-page-response", {
+					requestId: response.request_id,
+					startIndex: message.startIndex,
+					totalCount: message.totalCount,
+					count: message.messages.length,
+					firstTs: message.messages[0]?.ts,
+					lastTs: message.messages.at(-1)?.ts,
+				})
+			} else if (response?.error) {
+				record("rpc-error", { requestId: response.request_id, error: response.error })
+			}
+		}
+		const listObserver = new MutationObserver(() => record("rendered-list-change"))
+		listObserver.observe(scroller, {
+			childList: true,
+			subtree: true,
+			attributes: true,
+			attributeFilter: ["style", "data-item-index"],
+		})
+		scroller.addEventListener("wheel", onWheel, { passive: true })
+		scroller.addEventListener("scroll", onScroll, { passive: true })
+		window.addEventListener("message", onMessage)
+		record("observer-start")
+		diagnosticWindow.__workHistoryScrollTrace = {
+			stop: () => {
+				record("observer-stop")
+				listObserver.disconnect()
+				scroller.removeEventListener("wheel", onWheel)
+				scroller.removeEventListener("scroll", onScroll)
+				window.removeEventListener("message", onMessage)
+				for (const restore of restorers.reverse()) restore()
+				delete diagnosticWindow.__workHistoryScrollTrace
+				return { events, droppedEvents }
+			},
+		}
+	})
+	return () =>
+		sidebar.evaluate(() => {
+			const observer = (window as Window & { __workHistoryScrollTrace?: { stop: () => WorkHistoryScrollTrace } })
+				.__workHistoryScrollTrace
+			if (!observer) throw new Error("History scroll observer is unavailable")
+			return observer.stop()
+		})
 }
 
 export function expectUniqueOrderedWorkRows(snapshot: WorkScrollerSnapshot): void {

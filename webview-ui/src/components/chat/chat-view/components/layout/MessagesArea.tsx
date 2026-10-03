@@ -18,6 +18,7 @@ import {
 	leadingBuffer,
 	type MessageWindow,
 	planWindowExtensions,
+	planWindowTrim,
 	trailingBuffer,
 	type VisibleMessageRange,
 } from "../../utils/messageWindowPlan"
@@ -669,6 +670,57 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 		[setClineMessages, setFirstItemIndex, taskViewState, taskKey],
 	)
 
+	// Trim using the real viewport, never the widened range used to request
+	// pages. Protect neighboring grouped rows too, so a trim cannot immediately
+	// trigger a row-distance fetch or split a visible browser/tool group.
+	const trimMessageWindow = useCallback(() => {
+		const visible = latestVisibleMessageRangeRef.current
+		if (!visible || isWebviewHiddenRef.current || pendingEdgeScrollRef.current || edgeJumpInFlightRef.current) return
+		if (inflightRef.current.size > 0 || pendingAnchorRef.current) return
+		const firstRow = renderRows.findIndex((row) => row.endMessageIndex >= visible.firstMessageIndex)
+		let lastRow = renderRows.length - 1
+		while (lastRow >= 0 && renderRows[lastRow].startMessageIndex > visible.lastMessageIndex) lastRow--
+		if (firstRow < 0 || lastRow < firstRow) return
+		const protectedRange = {
+			firstMessageIndex: renderRows[Math.max(0, firstRow - ROW_LOAD_THRESHOLD - 1)].startMessageIndex,
+			lastMessageIndex: renderRows[Math.min(renderRows.length - 1, lastRow + ROW_LOAD_THRESHOLD + 1)].endMessageIndex,
+		}
+		const window = currentMessageWindow()
+		// Auto-follow must retain live messages even before Virtuoso reports its
+		// new bottom range. Browsing keeps the reader's viewport instead.
+		if (!disableAutoScrollRef.current) protectedRange.lastMessageIndex = window.start + window.length - 1
+		if (!planWindowTrim(window, protectedRange)) return
+		captureBrowsingViewportAnchor()
+		setClineMessages((previous) => {
+			let messages = previous
+			let start = firstItemIndexRef.current
+			// Both far sides may exceed the limit after a backend refresh.
+			for (let side = 0; side < 2; side++) {
+				const trim = planWindowTrim({ start, length: messages.length, total: window.total }, protectedRange)
+				if (!trim) break
+				messages = trim.side === "leading" ? messages.slice(trim.count) : messages.slice(0, trim.nextLength)
+				start = trim.nextStart
+			}
+			if (start !== firstItemIndexRef.current) {
+				firstItemIndexRef.current = start
+				setFirstItemIndex(start)
+			}
+			clineMessagesLengthRef.current = messages.length
+			return messages
+		})
+	}, [
+		renderRows,
+		currentMessageWindow,
+		disableAutoScrollRef,
+		captureBrowsingViewportAnchor,
+		setClineMessages,
+		setFirstItemIndex,
+	])
+
+	useEffect(() => {
+		trimMessageWindow()
+	}, [clineMessages, isWebviewHidden, trimMessageWindow])
+
 	const requestWindowExtensions = useCallback(
 		(visible: VisibleMessageRange, anchorTs: number | null) => {
 			if (isWebviewHiddenRef.current) return
@@ -841,6 +893,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 			latestVisibleMessageRangeRef.current = visible
 			latestVisibleAnchorTsRef.current = firstVisibleRow.startMessageTs ?? null
 			captureBrowsingViewportAnchor()
+			trimMessageWindow()
 			const allLoaded = isWholeConversationLoaded(window)
 			const absoluteBottomLoaded = window.start + window.length >= window.total
 			setShowScrollToBottom(disableAutoScrollRef.current || !absoluteBottomLoaded)
@@ -879,6 +932,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 			disableAutoScrollRef,
 			setShowScrollToBottom,
 			requestWindowExtensions,
+			trimMessageWindow,
 		],
 	)
 

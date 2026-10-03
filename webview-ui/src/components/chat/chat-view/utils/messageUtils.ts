@@ -118,7 +118,21 @@ export function resolveApiErrorMessage(input: ApiErrorMessageInput): string | un
  * Filter messages that should be visible in the chat
  */
 export function filterVisibleMessages(messages: ClineMessage[]): ClineMessage[] {
-	return messages.filter((message, index, arr) => {
+	// Index suffix facts once. Per-row slice/some scans make long histories
+	// quadratic, especially while the latest request is streaming.
+	let lastSubagentIndex = -1
+	let lastApiFailureIndex = -1
+	const completedTimestamps = new Set<number>()
+	const latestPartialIndex = new Map<number, number>()
+	for (let index = 0; index < messages.length; index++) {
+		const message = messages[index]
+		if (message.type === "say" && message.say === "subagent") lastSubagentIndex = index
+		if (message.ask === "api_req_failed") lastApiFailureIndex = index
+		if (message.partial === true) latestPartialIndex.set(message.ts, index)
+		else completedTimestamps.add(message.ts)
+	}
+
+	return messages.filter((message, index) => {
 		switch (message.ask) {
 			case "completion_result":
 				// don't show a chat row for a completion_result ask without text. This specific type of message only occurs if cline wants to execute a command as part of its completion result, in which case we interject the completion_result tool with the execute_command tool.
@@ -132,7 +146,7 @@ export function filterVisibleMessages(messages: ClineMessage[]): ClineMessage[] 
 				return false
 			case "use_subagents":
 			case "spawn_task":
-				if (arr.slice(index + 1).some((candidate) => candidate.type === "say" && candidate.say === "subagent")) {
+				if (lastSubagentIndex > index) {
 					return false
 				}
 				break
@@ -140,8 +154,8 @@ export function filterVisibleMessages(messages: ClineMessage[]): ClineMessage[] 
 		// Generic partial dedup based on ts: hide stale partials when a completed
 		// version or a newer partial with the same ts is present.
 		if (message.partial === true) {
-			const hasCompleteWithSameTs = arr.some((m, i) => i !== index && m.ts === message.ts && m.partial !== true)
-			const hasNewerDuplicatePartial = arr.slice(index + 1).some((m) => m.ts === message.ts && m.partial === true)
+			const hasCompleteWithSameTs = completedTimestamps.has(message.ts)
+			const hasNewerDuplicatePartial = latestPartialIndex.get(message.ts) !== index
 			if (hasCompleteWithSameTs || hasNewerDuplicatePartial) return false
 		}
 
@@ -170,7 +184,7 @@ export function filterVisibleMessages(messages: ClineMessage[]): ClineMessage[] 
 				// Keep this row if a subsequent api_req_failed needs it as an error carrier.
 				// api_req_failed messages are filtered out and are only used to update the
 				// latest api_req_started row. If we drop the carrier row, the error is invisible.
-				if (arr.slice(index + 1).some((m) => m.ask === "api_req_failed")) {
+				if (lastApiFailureIndex > index) {
 					break
 				}
 				return false
@@ -184,7 +198,7 @@ export function filterVisibleMessages(messages: ClineMessage[]): ClineMessage[] 
 			case "mcp_server_request_started":
 				return false
 			case "use_subagents":
-				if (arr.slice(index + 1).some((candidate) => candidate.type === "say" && candidate.say === "subagent")) {
+				if (lastSubagentIndex > index) {
 					return false
 				}
 				break

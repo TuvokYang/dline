@@ -1,3 +1,4 @@
+import { writeFile } from "node:fs/promises"
 import type { MockApiConsumption, MockTokenUsage } from "@e2e/fixtures/server"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import {
@@ -6,11 +7,13 @@ import {
 	configureContextRecoveryProfiles,
 	earliestVisibleWorkHistoryIndex,
 	expectUniqueOrderedWorkRows,
+	observeWorkHistoryScroll,
 	openContextRecoveryHistoryTask,
 	openContextRecoverySidebar,
 	seedLockedLongHistoryTask,
 	selectContextRecoveryProfile,
 	unlockAndContinueContextTask,
+	type WorkScrollerSnapshot,
 	waitForPersistedTaskMarkers,
 	waitForPositivePromptCacheHealth,
 	waitForPositiveTaskCacheHit,
@@ -176,19 +179,81 @@ e2e(
 			})
 
 			let historyBrowse = await captureWorkScroller(sidebar)
-			for (
-				let attempt = 0;
-				attempt < 40 && (earliestVisibleWorkHistoryIndex(historyBrowse) ?? HISTORY_MESSAGE_COUNT) > HISTORY_BROWSE_TARGET;
-				attempt++
-			) {
-				await scroller.hover()
-				await page.mouse.wheel(0, -2_400)
-				await page.waitForTimeout(100)
-				historyBrowse = await captureWorkScroller(sidebar)
+			const historyGestures: {
+				attempt: number
+				deltaY: number
+				before: WorkScrollerSnapshot
+				after?: WorkScrollerSnapshot
+			}[] = []
+			const stopHistoryScrollObserver = await observeWorkHistoryScroll(sidebar)
+			let historyBrowsePassed = false
+			try {
+				for (
+					let attempt = 0;
+					attempt < 40 &&
+					(earliestVisibleWorkHistoryIndex(historyBrowse) ?? HISTORY_MESSAGE_COUNT) > HISTORY_BROWSE_TARGET;
+					attempt++
+				) {
+					const gesture = {
+						attempt,
+						deltaY: -2_400,
+						before: historyBrowse,
+						after: undefined as WorkScrollerSnapshot | undefined,
+					}
+					historyGestures.push(gesture)
+					await scroller.hover()
+					await page.mouse.wheel(0, gesture.deltaY)
+					// Preserve the failing cadence until the timeline establishes whether
+					// paging, gesture delivery, or a competing scroll owner caused it.
+					await page.waitForTimeout(100)
+					historyBrowse = await captureWorkScroller(sidebar)
+					gesture.after = historyBrowse
+				}
+				expect(earliestVisibleWorkHistoryIndex(historyBrowse)).toBeLessThanOrEqual(HISTORY_BROWSE_TARGET)
+				expect(historyBrowse.bottomGap).toBeGreaterThan(100)
+				expectUniqueOrderedWorkRows(historyBrowse)
+				historyBrowsePassed = true
+			} finally {
+				// The outer finally closes Electron. Capture the actual failed surface
+				// here rather than letting fixture teardown lose it after app.close().
+				if (!historyBrowsePassed) {
+					try {
+						const screenshotPath = testInfo.outputPath("history-browse-before-cleanup.png")
+						await page.screenshot({ path: screenshotPath })
+						await testInfo.attach("history-browse-before-cleanup.png", {
+							path: screenshotPath,
+							contentType: "image/png",
+						})
+					} catch (error) {
+						console.warn("Could not capture history browsing failure screenshot", error)
+					}
+				}
+				try {
+					const timeline = await stopHistoryScrollObserver().catch((error) => ({ observerError: String(error) }))
+					const timelinePath = testInfo.outputPath("history-browse-scroll-timeline.json")
+					await writeFile(
+						timelinePath,
+						JSON.stringify(
+							{
+								target: HISTORY_BROWSE_TARGET,
+								passed: historyBrowsePassed,
+								gestures: historyGestures,
+								...timeline,
+							},
+							null,
+							2,
+						),
+						"utf8",
+					)
+					await testInfo.attach("history-browse-scroll-timeline.json", {
+						path: timelinePath,
+						contentType: "application/json",
+					})
+				} catch (error) {
+					// Diagnostics must not replace the original business assertion.
+					console.warn("Could not capture history browsing scroll timeline", error)
+				}
 			}
-			expect(earliestVisibleWorkHistoryIndex(historyBrowse)).toBeLessThanOrEqual(HISTORY_BROWSE_TARGET)
-			expect(historyBrowse.bottomGap).toBeGreaterThan(100)
-			expectUniqueOrderedWorkRows(historyBrowse)
 			await scroller.hover()
 			await page.mouse.wheel(0, 120)
 			let scrollToBottom = sidebar.getByRole("button", { name: "Scroll to bottom", exact: true })
