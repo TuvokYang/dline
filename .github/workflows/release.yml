@@ -96,6 +96,9 @@ jobs:
           install-webview: "true"
           include-optional: "true"
 
+      - name: Generate Protobuf code for E2E harness
+        run: npm run protos
+
       - name: Download production VSIX
         uses: actions/download-artifact@v8
         with:
