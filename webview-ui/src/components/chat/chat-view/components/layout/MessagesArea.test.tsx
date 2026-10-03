@@ -41,6 +41,7 @@ vi.mock("@/context/ExtensionStateContext", async () => {
 				totalMessageCount: mocks.totalMessageCount,
 				firstItemIndex,
 				setFirstItemIndex,
+				taskViewState: { taskId: "task-1", taskInstanceId: "task-instance-1" },
 			}
 		},
 	}
@@ -220,7 +221,12 @@ describe("MessagesArea sliding-window integration", () => {
 	})
 
 	it("does not lose a boundary fetch when two ranges arrive within the old throttle window", async () => {
-		mocks.fetchMessage.mockResolvedValue({ messages: [], startIndex: 0 })
+		mocks.fetchMessage.mockResolvedValue({
+			messages: [],
+			startIndex: 0,
+			taskId: "task-1",
+			taskInstanceId: "task-instance-1",
+		})
 		const scrollBehavior = createScrollBehavior()
 		renderMessagesArea(scrollBehavior)
 		fireEvent.wheel(screen.getByTestId("virtuoso"), { deltaY: -100 })
@@ -240,8 +246,18 @@ describe("MessagesArea sliding-window integration", () => {
 		mocks.initialMessages = createMessages(300, 250)
 		mocks.initialFirstItemIndex = 300
 		mocks.fetchMessage
-			.mockResolvedValueOnce({ messages: createMessages(250, 50), startIndex: 250 })
-			.mockResolvedValueOnce({ messages: [], startIndex: 50 })
+			.mockResolvedValueOnce({
+				messages: createMessages(250, 50),
+				startIndex: 250,
+				taskId: "task-1",
+				taskInstanceId: "task-instance-1",
+			})
+			.mockResolvedValueOnce({
+				messages: [],
+				startIndex: 50,
+				taskId: "task-1",
+				taskInstanceId: "task-instance-1",
+			})
 		const scrollBehavior = createScrollBehavior()
 		renderMessagesArea(scrollBehavior)
 		fireEvent.wheel(screen.getByTestId("virtuoso"), { deltaY: -100 })

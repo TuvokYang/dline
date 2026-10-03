@@ -26,6 +26,8 @@ function createTerminationRuntime(phase: TaskPhase) {
 			waitForClaimedContinuations: vi.fn(async () => {}),
 			completeCancellation: vi.fn(),
 		},
+		resumeCoordinator: { fence: vi.fn(), waitForIdle: vi.fn(async () => {}) },
+		historyResumeMaintenance: { waitForIdle: vi.fn(async () => {}) },
 		taskRuntime: {
 			getState: vi.fn(() => ({ phase, revision: 1 })),
 			waitForDeferredEffectsThrough: vi.fn(async () => {}),
@@ -188,6 +190,8 @@ describe("Task termination persistence", () => {
 				waitForClaimedContinuations: vi.fn(async () => {}),
 				completeCancellation: vi.fn(),
 			},
+			resumeCoordinator: { fence: vi.fn(), waitForIdle: vi.fn(async () => {}) },
+			historyResumeMaintenance: { waitForIdle: vi.fn(async () => {}) },
 			taskRuntime: {
 				getState: vi.fn(() => ({
 					phase: TaskPhase.COMPLETED,

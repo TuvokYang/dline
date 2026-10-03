@@ -169,6 +169,7 @@ const ASK: ClineMessage = {
 function taskView(): TaskViewState {
 	return {
 		taskId: "task-1",
+		taskInstanceId: "task-instance-1",
 		phase: "awaiting_approval",
 		stateRevision: 8,
 		activeInteraction: {
@@ -264,13 +265,13 @@ describe("ChatView interaction anchor synchronization", () => {
 
 	it("keeps the active draft owner while the task title projection is temporarily unavailable", () => {
 		const rendered = renderChat([ASK])
-		expect(mocks.useChatState).toHaveBeenLastCalledWith([ASK], "task-1")
+		expect(mocks.useChatState).toHaveBeenLastCalledWith([ASK], '["task-1","task-instance-1"]')
 
 		mocks.useChatState.mockClear()
 		mocks.extensionState = { ...mocks.extensionState, taskTitleMessage: undefined }
 		rendered.rerender(chatView())
 
-		expect(mocks.useChatState).toHaveBeenLastCalledWith([ASK], "task-1")
+		expect(mocks.useChatState).toHaveBeenLastCalledWith([ASK], '["task-1","task-instance-1"]')
 	})
 
 	it("submits an ordinary between-turns request without an active interaction", async () => {
@@ -311,7 +312,7 @@ describe("ChatView interaction anchor synchronization", () => {
 	it("keeps runtime task ownership when the shared history item is temporarily unavailable", () => {
 		renderChat([ASK], taskView(), false)
 
-		expect(mocks.useChatState).toHaveBeenCalledWith([ASK], "task-1")
+		expect(mocks.useChatState).toHaveBeenCalledWith([ASK], '["task-1","task-instance-1"]')
 	})
 
 	it.each([

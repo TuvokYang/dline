@@ -18,7 +18,7 @@ describe("Task task-local mode", () => {
 		const fakeTask = {
 			taskSm: { mode: "plan", setMode: vi.fn(() => order.push("mode")) },
 			rebuildApiHandler: vi.fn(() => order.push("rebuild")),
-			prepareExecutionResources: vi.fn(async () => {
+			prepareExecutionResourcesForAcceptedInteraction: vi.fn(async () => {
 				order.push("admit")
 			}),
 			taskState: { isAwaitingPlanResponse: true, didRespondToPlanAskBySwitchingMode: false },
@@ -84,7 +84,7 @@ describe("Task task-local mode", () => {
 		const fakeTask = {
 			taskSm,
 			rebuildApiHandler: vi.fn(),
-			prepareExecutionResources: vi.fn(async () => {
+			prepareExecutionResourcesForAcceptedInteraction: vi.fn(async () => {
 				throw new Error("history unavailable")
 			}),
 			taskState: { isAwaitingPlanResponse: true, didRespondToPlanAskBySwitchingMode: false },
@@ -116,7 +116,7 @@ describe("Task task-local mode", () => {
 		const fakeTask = {
 			taskSm,
 			rebuildApiHandler: vi.fn(),
-			prepareExecutionResources: vi.fn(async () => undefined),
+			prepareExecutionResourcesForAcceptedInteraction: vi.fn(async () => undefined),
 			taskState: { isAwaitingPlanResponse: true, didRespondToPlanAskBySwitchingMode: false },
 			interactionCoordinator: {
 				canRespondForModeSwitch: vi.fn(() => true),

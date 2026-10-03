@@ -16,7 +16,10 @@ vi.mock("@/context/ExtensionStateContext", () => ({
 		vscodeTerminalExecutionMode: "backgroundExec",
 		clineMessages: [],
 		showFeatureTips: false,
-		taskViewState: undefined,
+		taskViewState: {
+			taskId: "task-1",
+			taskInstanceId: "task-instance-1",
+		},
 		currentTaskItem: { id: "task-1" },
 	}),
 }))
@@ -54,7 +57,7 @@ describe("ChatRow command cancellation", () => {
 
 		fireEvent.click(screen.getByRole("button", { name: "Cancel" }))
 
-		expect(cancelTaskActivities).toHaveBeenCalledWith("task-1", ["command-1"])
+		expect(cancelTaskActivities).toHaveBeenCalledWith("task-1", ["command-1"], "task-instance-1")
 	})
 
 	it("does not expose a global cancellation fallback without an activity identity", () => {

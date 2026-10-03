@@ -12,6 +12,7 @@ vi.mock("@/services/grpc-client", () => ({
 function resumeView(): TaskViewState {
 	return {
 		taskId: "task-1",
+		taskInstanceId: "task-instance-1",
 		phase: "paused",
 		stateRevision: 9,
 		activeInteraction: {
@@ -66,11 +67,13 @@ describe("TaskInput", () => {
 
 		expect(dispatch).toHaveBeenCalledWith({
 			taskId: "task-1",
+			taskInstanceId: "task-instance-1",
 			turnId: "turn-1",
 			interactionId: "resume-1",
 			actionId: "resume",
 			stateRevision: 9,
 			draft: { text: "continue carefully", images: [], files: [] },
+			selection: undefined,
 		})
 	})
 
@@ -120,11 +123,13 @@ describe("TaskInput", () => {
 
 		expect(dispatch).toHaveBeenCalledWith({
 			taskId: "task-1",
+			taskInstanceId: "task-instance-1",
 			turnId: "turn-1",
 			interactionId: "completion-1",
 			actionId: "reply",
 			stateRevision: 9,
 			draft: { text: "Please refine", images: [], files: [] },
+			selection: undefined,
 		})
 	})
 
@@ -209,11 +214,13 @@ describe("TaskInput", () => {
 
 		expect(dispatch).toHaveBeenCalledWith({
 			taskId: "task-1",
+			taskInstanceId: "task-instance-1",
 			turnId: "turn-1",
 			interactionId: "new-task-1",
 			actionId: "reject",
 			stateRevision: 9,
 			draft,
+			selection: undefined,
 		})
 	})
 })
