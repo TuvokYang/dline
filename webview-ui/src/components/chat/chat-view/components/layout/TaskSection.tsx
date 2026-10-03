@@ -30,6 +30,7 @@ interface TaskSectionProps {
 	forceTruncateAvailable?: boolean
 	forceTruncateTaskDisabled?: boolean
 	onCompactTask?: () => Promise<boolean>
+	onDeleteConfirmed?: () => void
 	onForceTruncateTask?: () => Promise<boolean>
 	lastProgressMessageText?: string
 	showFocusChainPlaceholder?: boolean
@@ -50,6 +51,7 @@ export const TaskSection: React.FC<TaskSectionProps> = ({
 	forceTruncateAvailable,
 	forceTruncateTaskDisabled,
 	onCompactTask,
+	onDeleteConfirmed,
 	onForceTruncateTask,
 	lastProgressMessageText,
 	showFocusChainPlaceholder,
@@ -69,6 +71,7 @@ export const TaskSection: React.FC<TaskSectionProps> = ({
 			lastProgressMessageText={lastProgressMessageText}
 			onClose={messageHandlers.handleTaskCloseButtonClick}
 			onCompactTask={onCompactTask}
+			onDeleteConfirmed={onDeleteConfirmed}
 			onForceTruncateTask={onForceTruncateTask}
 			pricing={selectedModelInfo.pricing}
 			requestsPerMinute={apiMetrics.requestsPerMinute}

@@ -123,27 +123,36 @@ vi.mock("../chat-view", () => {
 		TaskSection: ({
 			compactTaskDisabled,
 			onCompactTask,
+			onDeleteConfirmed,
 			messageHandlers,
 		}: {
 			compactTaskDisabled?: boolean
 			onCompactTask?: () => Promise<boolean>
+			onDeleteConfirmed?: () => void
 			messageHandlers: { handleTaskCloseButtonClick: () => Promise<void> }
 		}) => {
 			mocks.closeButtonAction = messageHandlers.handleTaskCloseButtonClick
-			return onCompactTask ? (
-				<button
-					aria-disabled={compactTaskDisabled ? "true" : "false"}
-					aria-label="Compact task"
-					disabled={compactTaskDisabled}
-					onClick={() => void onCompactTask()}
-					type="button">
-					Compact
-				</button>
-			) : null
+			return (
+				<div data-testid="task-section">
+					<button aria-label="Confirm task deletion" onClick={onDeleteConfirmed} type="button">
+						Delete
+					</button>
+					{onCompactTask ? (
+						<button
+							aria-disabled={compactTaskDisabled ? "true" : "false"}
+							aria-label="Compact task"
+							disabled={compactTaskDisabled}
+							onClick={() => void onCompactTask()}
+							type="button">
+							Compact
+						</button>
+					) : null}
+				</div>
+			)
 		},
 		TaskActivityPanel: () => null,
 		TaskActivityTabs: () => null,
-		WelcomeSection: () => null,
+		WelcomeSection: () => <div>Welcome</div>,
 		convertHtmlToMarkdown: async (value: string) => value,
 		filterVisibleMessages: (messages: ClineMessage[]) => messages,
 		groupLowStakesTools: (messages: ClineMessage[]) => messages,
@@ -225,6 +234,9 @@ function renderChat(
 		taskViewState: view,
 		currentTaskItem: includeHistoryItem ? { id: "task-1", task: "Task", ts: 1 } : undefined,
 		taskTitleMessage: { ts: 1, type: "say", say: "task", text: "Task" },
+		dismissHistoryTaskOpening: vi.fn(),
+		navigateToHistory: vi.fn(),
+		openHistoryTask: vi.fn(),
 	}
 	return render(chatView())
 }
@@ -298,6 +310,18 @@ describe("ChatView interaction anchor synchronization", () => {
 		expect(screen.getByRole("textbox", { name: "Task input" })).toBeEnabled()
 		expect(mocks.askResponse).not.toHaveBeenCalled()
 		expect(mocks.dispatchInteraction).not.toHaveBeenCalled()
+	})
+
+	it("closes the current Task presentation immediately when deletion is confirmed", () => {
+		renderChat([ASK])
+		expect(screen.getByTestId("task-section")).toBeInTheDocument()
+
+		fireEvent.click(screen.getByRole("button", { name: "Confirm task deletion" }))
+
+		expect(screen.queryByTestId("task-section")).not.toBeInTheDocument()
+		expect(screen.getByText("Welcome")).toBeInTheDocument()
+		expect(screen.getByRole("textbox", { name: "Task input" })).toBeDisabled()
+		expect(mocks.closeTask).not.toHaveBeenCalled()
 	})
 
 	it("retires history feedback before invoking canonical Task Close", async () => {

@@ -44,6 +44,7 @@ interface TaskHeaderProps {
 	requestsPerMinute?: number
 	tokensPerMinute?: number
 	onClose: () => Promise<void>
+	onDeleteConfirmed?: () => void
 	onCompactTask?: () => Promise<boolean>
 	onForceTruncateTask?: () => Promise<boolean>
 }
@@ -71,6 +72,7 @@ const TaskHeader: React.FC<TaskHeaderProps> = ({
 	requestsPerMinute,
 	tokensPerMinute,
 	onClose,
+	onDeleteConfirmed,
 	onCompactTask,
 	onForceTruncateTask,
 }) => {
@@ -188,7 +190,12 @@ const TaskHeader: React.FC<TaskHeaderProps> = ({
 									promptFreshness={promptFreshness}
 									taskId={taskId}
 								/>
-								<DeleteTaskButton className={BUTTON_CLASS} taskId={taskId} taskSize={currentTaskItem?.size} />
+								<DeleteTaskButton
+									className={BUTTON_CLASS}
+									onDeleteConfirmed={onDeleteConfirmed}
+									taskId={taskId}
+									taskSize={currentTaskItem?.size}
+								/>
 								{/* Only visible in development mode */}
 								{IS_DEV && <OpenDiskConversationHistoryButton className={BUTTON_CLASS} taskId={taskId} />}
 							</div>

@@ -106,8 +106,17 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 	const taskId = taskViewState?.taskId
 	const taskInstanceId = taskViewState?.taskInstanceId
 	const taskKey = getTaskViewKey(taskViewState)
+	const [locallyClosedTaskKey, setLocallyClosedTaskKey] = useState<string>()
+	const currentTaskClosedForDeletion =
+		locallyClosedTaskKey !== undefined && (taskKey === locallyClosedTaskKey || taskKey === undefined)
+	const visibleTask = currentTaskClosedForDeletion ? undefined : task
 	const contextCompactionActive = taskViewState?.contextCompaction?.active === true
 	const { activeCount } = useTaskActivities(taskId, taskInstanceId)
+	useEffect(() => {
+		if (locallyClosedTaskKey && taskKey && locallyClosedTaskKey !== taskKey) {
+			setLocallyClosedTaskKey(undefined)
+		}
+	}, [locallyClosedTaskKey, taskKey])
 	useEffect(() => {
 		setContentTab("chat")
 		setFocusedActivityId(undefined)
@@ -483,6 +492,12 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 		dismissHistoryTaskOpening()
 		await messageHandlers.handleTaskCloseButtonClick()
 	}, [dismissHistoryTaskOpening, messageHandlers.handleTaskCloseButtonClick])
+	const handleDeleteConfirmed = useCallback(() => {
+		// Deletion remains backend-owned, but the confirmed Task must leave the
+		// presentation immediately rather than waiting for lock and disk cleanup.
+		dismissHistoryTaskOpening()
+		if (taskKey) setLocallyClosedTaskKey(taskKey)
+	}, [dismissHistoryTaskOpening, taskKey])
 	const submitInteractionDraft = useCallback(
 		async (draft: InteractionDraft): Promise<AcceptedInteractionSettlement | undefined> => {
 			if (!taskViewState?.input.enterAction || !interactionSynchronized) {
@@ -645,9 +660,9 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 	)
 
 	const placeholderText = useMemo(() => {
-		const text = task ? "Type a message..." : "Type your task here..."
+		const text = visibleTask ? "Type a message..." : "Type your task here..."
 		return text
-	}, [task])
+	}, [visibleTask])
 
 	if (historyTaskOpening) {
 		return (
@@ -668,7 +683,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 		<ChatLayout isHidden={isHidden}>
 			<div className="flex flex-col flex-1 overflow-hidden">
 				{showNavbar && <Navbar />}
-				{task ? (
+				{visibleTask ? (
 					<TaskSection
 						apiMetrics={displayedApiMetrics}
 						compactTaskDisabled={compactTaskDisabled}
@@ -678,6 +693,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 						lastProgressMessageText={lastProgressMessageText}
 						messageHandlers={{ ...messageHandlers, handleTaskCloseButtonClick: handleTaskClose }}
 						onCompactTask={canRenderCompactTask ? submitCompactTask : undefined}
+						onDeleteConfirmed={handleDeleteConfirmed}
 						onForceTruncateTask={canRenderForceTruncate ? submitForceTruncateTask : undefined}
 						selectedModelInfo={{
 							contextWindow: selectedModelInfo.capabilities?.contextWindow,
@@ -686,7 +702,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 							supportsImages: selectedModelInfo.capabilities?.supportsImages || false,
 						}}
 						showFocusChainPlaceholder={showFocusChainPlaceholder}
-						task={task}
+						task={visibleTask}
 						taskId={taskViewState?.taskId}
 					/>
 				) : (
@@ -699,7 +715,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 						version={version}
 					/>
 				)}
-				{task && (
+				{visibleTask && (
 					<>
 						<TaskActivityTabs activeCount={activeCount} onChange={handleContentTabChange} value={contentTab} />
 						{contentTab === "chat" ? (
@@ -711,7 +727,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 									modifiedMessages={modifiedMessages}
 									onFollowupOptionSelect={submitFollowupOption}
 									scrollBehavior={scrollBehavior}
-									task={task}
+									task={visibleTask}
 								/>
 							</TaskActivityNavigationProvider>
 						) : taskId ? (
@@ -727,7 +743,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 				)}
 			</div>
 			<footer className="bg-(--vscode-sidebar-background) flex flex-col gap-[0.375rem] mt-3" style={{ gridRow: "2" }}>
-				{task && taskViewState ? (
+				{visibleTask && taskViewState ? (
 					<InteractionHost
 						dispatch={dispatchInteraction}
 						draft={interactionDraft}
@@ -738,16 +754,16 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 						showTimeline={false}
 						view={taskViewState}
 					/>
-				) : task && !taskViewState ? (
+				) : visibleTask && !taskViewState ? (
 					<div role="alert">Task interaction state is unavailable</div>
 				) : null}
 				<AutoApproveBar />
 				<InputSection
-					canQueueInput={queueCanDeliver}
+					canQueueInput={visibleTask ? queueCanDeliver : false}
 					chatState={chatState}
-					clineAsk={taskViewState?.activeInteraction?.taskAsk}
+					clineAsk={visibleTask ? taskViewState?.activeInteraction?.taskAsk : undefined}
 					draft={interactionDraft}
-					enabled={task ? taskInputEnabled : undefined}
+					enabled={visibleTask ? taskInputEnabled : undefined}
 					inputQueue={inputQueue.entries}
 					messageHandlers={messageHandlers}
 					onCancelQueuedInput={inputQueue.cancelEdit}
@@ -758,7 +774,11 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 					onRemoveQueuedInput={inputQueue.remove}
 					onReorderQueuedInput={inputQueue.reorder}
 					onSubmit={
-						task ? (taskViewState?.activeInteraction ? submitInteractionDraft : submitOrdinaryTaskDraft) : undefined
+						visibleTask
+							? taskViewState?.activeInteraction
+								? submitInteractionDraft
+								: submitOrdinaryTaskDraft
+							: undefined
 					}
 					onToggleQueuedMode={inputQueue.toggleMode}
 					placeholderText={placeholderText}
@@ -767,7 +787,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 					shouldDisableFilesAndImages={
 						shouldDisableFilesAndImages ||
 						Boolean(
-							task &&
+							visibleTask &&
 								(!taskViewState ||
 									!interactionSynchronized ||
 									Boolean(
@@ -778,9 +798,12 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 						)
 					}
 					submissionIdentity={
-						taskViewState?.activeInteraction?.interactionId ?? `draft-${interactionDraft.ownerRevision ?? "unowned"}`
+						visibleTask
+							? (taskViewState?.activeInteraction?.interactionId ??
+								`draft-${interactionDraft.ownerRevision ?? "unowned"}`)
+							: `draft-${interactionDraft.ownerRevision ?? "unowned"}`
 					}
-					submissionScope={taskId}
+					submissionScope={visibleTask ? taskId : undefined}
 				/>
 			</footer>
 		</ChatLayout>
