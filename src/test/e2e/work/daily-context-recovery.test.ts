@@ -1,3 +1,4 @@
+import { writeFile } from "node:fs/promises"
 import type { MockApiConsumption, MockTokenUsage } from "@e2e/fixtures/server"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import {
@@ -217,8 +218,10 @@ e2e(
 				// here rather than letting fixture teardown lose it after app.close().
 				if (!historyBrowsePassed) {
 					try {
+						const screenshotPath = testInfo.outputPath("history-browse-before-cleanup.png")
+						await page.screenshot({ path: screenshotPath })
 						await testInfo.attach("history-browse-before-cleanup.png", {
-							body: await page.screenshot(),
+							path: screenshotPath,
 							contentType: "image/png",
 						})
 					} catch (error) {
@@ -227,19 +230,23 @@ e2e(
 				}
 				try {
 					const timeline = await stopHistoryScrollObserver().catch((error) => ({ observerError: String(error) }))
-					await testInfo.attach("history-browse-scroll-timeline.json", {
-						body: Buffer.from(
-							JSON.stringify(
-								{
-									target: HISTORY_BROWSE_TARGET,
-									passed: historyBrowsePassed,
-									gestures: historyGestures,
-									...timeline,
-								},
-								null,
-								2,
-							),
+					const timelinePath = testInfo.outputPath("history-browse-scroll-timeline.json")
+					await writeFile(
+						timelinePath,
+						JSON.stringify(
+							{
+								target: HISTORY_BROWSE_TARGET,
+								passed: historyBrowsePassed,
+								gestures: historyGestures,
+								...timeline,
+							},
+							null,
+							2,
 						),
+						"utf8",
+					)
+					await testInfo.attach("history-browse-scroll-timeline.json", {
+						path: timelinePath,
 						contentType: "application/json",
 					})
 				} catch (error) {
