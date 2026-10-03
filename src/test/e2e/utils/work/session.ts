@@ -25,6 +25,18 @@ export async function sendWorkMessage(sidebar: Frame, text: string, timeoutMs = 
 	return message
 }
 
+export async function clickWorkScrollToBottom(scroller: Locator, button: Locator): Promise<void> {
+	const isAtBottom = () => scroller.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight <= 10)
+	if (await isAtBottom()) return
+	try {
+		await button.click({ timeout: 5_000 })
+	} catch (error) {
+		// The wheel or click can reach the bottom and remove the control during actionability checks.
+		// Accept that outcome only from independent geometry; the caller still verifies settled layout.
+		if (!(await isAtBottom())) throw error
+	}
+}
+
 export async function scrollWorkToLatest(sidebar: Frame): Promise<void> {
 	const scroller = sidebar.locator('[data-virtuoso-scroller="true"]')
 	await expect(scroller).toBeVisible()
@@ -38,7 +50,7 @@ export async function scrollWorkToLatest(sidebar: Frame): Promise<void> {
 			return scroller.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight <= 10)
 		})
 		.toBe(true)
-	if (await scrollToBottom.count()) await scrollToBottom.click()
+	await clickWorkScrollToBottom(scroller, scrollToBottom)
 
 	// Observe layout only: never reset scrollTop or repeatedly navigate until a moving row happens to pass.
 	let previousGeometry: string | undefined
