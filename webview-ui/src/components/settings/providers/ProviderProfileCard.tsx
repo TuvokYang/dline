@@ -10,6 +10,7 @@ import { resolveProfileReasoningConfig, resolveTaskThinkingConfig } from "@share
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react"
 import type { ReactNode } from "react"
 import { ProfileField, ProfileForm, ProfileSection } from "../profile-ui"
+import { getCurrencySymbol } from "../utils/pricingUtils"
 import { formatDeepSeekThinkingSummary } from "./deepseek-thinking"
 import { ProfileCapabilityIcons } from "./ProfileCapabilityIcons"
 import { ProfileUsageBadges } from "./ProfileUsageBadges"
@@ -141,8 +142,13 @@ const ApiProfileCard: React.FC<ApiProfileCardProps> = ({
 		const mi = info
 		if (mi.capabilities?.contextWindow)
 			tooltipLines.push(`Context: ${mi.capabilities?.contextWindow.toLocaleString()} tokens`)
-		if (mi.pricing?.inputPrice != null)
-			tooltipLines.push(`In: $${mi.pricing?.inputPrice}/M | Out: $${mi.pricing?.outputPrice ?? "?"}/M`)
+		if (mi.capabilities?.maxTokens) tooltipLines.push(`Max output: ${mi.capabilities.maxTokens.toLocaleString()} tokens`)
+		if (mi.pricing?.inputPrice != null) {
+			const currencySymbol = getCurrencySymbol(mi.pricing.currency)
+			tooltipLines.push(
+				`In: ${currencySymbol}${mi.pricing.inputPrice}/M | Out: ${currencySymbol}${mi.pricing.outputPrice ?? "?"}/M`,
+			)
+		}
 		if (mi.capabilities?.supportsReasoning)
 			tooltipLines.push(`Reasoning: ${mi.capabilities?.thinking?.effortLevels?.join(", ") || "supported"}`)
 		if (mi.capabilities?.supportsImages) tooltipLines.push("Images: supported")

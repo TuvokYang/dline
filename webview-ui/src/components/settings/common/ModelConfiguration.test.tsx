@@ -451,6 +451,34 @@ describe("ModelConfiguration", () => {
 		expect(onPricingUpdate).toHaveBeenCalledWith({ inputPrice: 0.5 })
 	})
 
+	it("shows registry pricing and currency until a profile override is written", () => {
+		const defaults: Partial<ModelInfo> = {
+			pricing: {
+				inputPrice: 3,
+				outputPrice: 6,
+				cacheWritesPrice: 3,
+				cacheReadsPrice: 0.025,
+				currency: "CNY",
+			} as ModelPricing,
+		}
+
+		render(
+			<ModelConfiguration
+				capabilities={{ supportsPromptCache: true } as ModelCapabilities}
+				defaults={defaults}
+				fields={{ pricing: ["inputPrice", "outputPrice", "cacheWritesPrice", "cacheReadsPrice"] }}
+				onCapabilitiesUpdate={vi.fn()}
+				onPricingUpdate={vi.fn()}
+			/>,
+		)
+		fireEvent.click(screen.getByRole("button", { name: /Model Configuration/i }))
+
+		expect(screen.getByLabelText("Input Price (¥/1M tokens)")).toHaveValue("3")
+		expect(screen.getByLabelText("Output Price (¥/1M tokens)")).toHaveValue("6")
+		expect(screen.getByLabelText("Cache Writes (¥/M)")).toHaveValue("3")
+		expect(screen.getByLabelText("Cache Reads (¥/M)")).toHaveValue("0.025")
+	})
+
 	it("places options with temperature before capabilities and pricing", () => {
 		render(
 			<ModelConfiguration

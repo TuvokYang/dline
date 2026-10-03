@@ -16,6 +16,8 @@ const models = {
 		apiFormats: [ApiFormat.OPENAI_CHAT, ApiFormat.OPENAI_RESPONSES, ApiFormat.ANTHROPIC_CHAT],
 		capabilities: {
 			contextWindow: 1_000_000,
+			maxTokens: 384_000,
+			supportsPromptCache: true,
 			supportsReasoning: true,
 			thinking: {
 				supported: true,
@@ -25,12 +27,21 @@ const models = {
 				effortLevels: ["low", "high", "max"],
 			},
 		},
+		pricing: {
+			inputPrice: 3,
+			outputPrice: 6,
+			cacheWritesPrice: 3,
+			cacheReadsPrice: 0.025,
+			currency: "CNY",
+		},
 	} as ModelInfo,
 	"deepseek-v4-flash": {
 		id: "deepseek-v4-flash",
 		apiFormats: [ApiFormat.OPENAI_CHAT, ApiFormat.OPENAI_RESPONSES, ApiFormat.ANTHROPIC_CHAT],
 		capabilities: {
 			contextWindow: 1_000_000,
+			maxTokens: 384_000,
+			supportsPromptCache: true,
 			supportsReasoning: true,
 			thinking: {
 				supported: true,
@@ -39,6 +50,13 @@ const models = {
 				defaultEffort: "high",
 				effortLevels: ["low", "high", "max"],
 			},
+		},
+		pricing: {
+			inputPrice: 1,
+			outputPrice: 2,
+			cacheWritesPrice: 1,
+			cacheReadsPrice: 0.02,
+			currency: "CNY",
 		},
 	} as ModelInfo,
 }
@@ -196,6 +214,25 @@ describe("DeepSeekProvider", () => {
 		const update = onUpdate.mock.calls.at(-1)?.[0] as { deepseek?: { reasoning?: Record<string, unknown> } }
 		expect(update.deepseek?.reasoning).not.toHaveProperty("effort")
 		expect(update.deepseek?.reasoning).not.toHaveProperty("thinkingBudget")
+	})
+
+	it("shows the complete DeepSeek limits and CNY pricing from registry metadata", () => {
+		const profile = ProtoApiProfile.create({
+			id: "deepseek-metadata-profile",
+			provider: "deepseek",
+			modelId: "deepseek-v4-pro",
+			deepseek: BaseProviderConfig.create(),
+		})
+
+		render(<DeepSeekProvider onUpdate={vi.fn()} profile={profile} showModelOptions={true} />)
+		fireEvent.click(screen.getByRole("button", { name: "Model Configuration" }))
+
+		expect(screen.getByRole("textbox", { name: "Context Window Size" })).toHaveValue("1000000")
+		expect(screen.getByRole("textbox", { name: "Max Output Tokens" })).toHaveValue("384000")
+		expect(screen.getByRole("textbox", { name: "Input Price (¥/1M tokens)" })).toHaveValue("3")
+		expect(screen.getByRole("textbox", { name: "Output Price (¥/1M tokens)" })).toHaveValue("6")
+		expect(screen.getByRole("textbox", { name: "Cache Writes (¥/M)" })).toHaveValue("3")
+		expect(screen.getByRole("textbox", { name: "Cache Reads (¥/M)" })).toHaveValue("0.025")
 	})
 
 	it("persists a context override without losing a preceding API format edit or existing provider settings", async () => {

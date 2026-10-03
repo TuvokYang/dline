@@ -206,7 +206,10 @@ export const DeepSeekProvider = ({ showModelOptions, isPopup, profile, onUpdate 
 					<ModelConfiguration
 						capabilities={pc.capabilities}
 						defaults={modelDefaults}
-						fields={{ capabilities: ["contextWindow"] }}
+						fields={{
+							capabilities: ["contextWindow", "maxTokens"],
+							pricing: ["inputPrice", "outputPrice", "cacheWritesPrice", "cacheReadsPrice"],
+						}}
 						onCapabilitiesUpdate={handleCapabilitiesUpdate}
 						onPricingUpdate={handlePricingUpdate}
 						pricing={pc.pricing}

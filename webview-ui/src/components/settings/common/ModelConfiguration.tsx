@@ -5,6 +5,7 @@ import { VSCodeCheckbox } from "@vscode/webview-ui-toolkit/react"
 import { useEffect, useId, useState } from "react"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { ProfileDisclosure, ProfileField, ProfileInlineGrid, ProfileSection, ProfileSectionTitle } from "../profile-ui"
+import { getCurrencySymbol } from "../utils/pricingUtils"
 import { DebouncedTextField } from "./DebouncedTextField"
 import { ContextTierEditor, PricingTierEditor } from "./ModelTierEditor"
 
@@ -189,17 +190,13 @@ export const ModelConfiguration = ({
 		)
 	}, [pricingOverrides?.tiers, defaults?.pricing?.tiers, pricingTiersEnabled])
 
-	// Derive currency symbol from pricing.currency
-	const currencySymbol = (() => {
-		const c = pricing.currency || "USD"
-		const map: Record<string, string> = {
-			USD: "$",
-			CNY: "¥",
-			EUR: "€",
-			GBP: "£",
-		}
-		return map[c] || "$"
-	})()
+	// Registry pricing remains visible until a profile override replaces one field.
+	const currency = pricing.currency || defaults?.pricing?.currency || "USD"
+	const currencySymbol = getCurrencySymbol(currency)
+	const inputPriceValue = pricing.inputPrice ?? defaults?.pricing?.inputPrice
+	const outputPriceValue = pricing.outputPrice ?? defaults?.pricing?.outputPrice
+	const cacheWritesPriceValue = pricing.cacheWritesPrice ?? defaults?.pricing?.cacheWritesPrice
+	const cacheReadsPriceValue = pricing.cacheReadsPrice ?? defaults?.pricing?.cacheReadsPrice
 
 	// Update capability field
 	const updateCapability = (field: keyof ModelCapabilities, value: ModelCapabilities[keyof ModelCapabilities]) => {
@@ -446,7 +443,7 @@ export const ModelConfiguration = ({
 						Pricing
 					</ProfileSectionTitle>
 					<ProfileField htmlFor={currencyId} label="Currency">
-						<Select onValueChange={updateCurrency} value={pricing.currency || "USD"}>
+						<Select onValueChange={updateCurrency} value={currency}>
 							<SelectTrigger className={fieldControlClass} id={currencyId}>
 								<SelectValue />
 							</SelectTrigger>
@@ -467,7 +464,7 @@ export const ModelConfiguration = ({
 										ariaLabel={`Input Price (${currencySymbol}/1M tokens)`}
 										className={fieldControlClass}
 										id={inputPriceId}
-										initialValue={pricing.inputPrice != null ? String(pricing.inputPrice) : ""}
+										initialValue={inputPriceValue != null ? String(inputPriceValue) : ""}
 										onChange={(value) => updatePricing("inputPrice", parsePrice(value, 0))}
 										placeholder={
 											defaults?.pricing?.inputPrice != null ? String(defaults.pricing.inputPrice) : ""
@@ -481,7 +478,7 @@ export const ModelConfiguration = ({
 										ariaLabel={`Output Price (${currencySymbol}/1M tokens)`}
 										className={fieldControlClass}
 										id={outputPriceId}
-										initialValue={pricing.outputPrice != null ? String(pricing.outputPrice) : ""}
+										initialValue={outputPriceValue != null ? String(outputPriceValue) : ""}
 										onChange={(value) => updatePricing("outputPrice", parsePrice(value, 0))}
 										placeholder={
 											defaults?.pricing?.outputPrice != null ? String(defaults.pricing.outputPrice) : ""
@@ -500,7 +497,7 @@ export const ModelConfiguration = ({
 										ariaLabel={`Cache Writes (${currencySymbol}/M)`}
 										className={fieldControlClass}
 										id={cacheWritesPriceId}
-										initialValue={pricing.cacheWritesPrice != null ? String(pricing.cacheWritesPrice) : ""}
+										initialValue={cacheWritesPriceValue != null ? String(cacheWritesPriceValue) : ""}
 										onChange={(value) => updatePricing("cacheWritesPrice", parsePrice(value, 0))}
 										placeholder={
 											defaults?.pricing?.cacheWritesPrice != null
@@ -516,7 +513,7 @@ export const ModelConfiguration = ({
 										ariaLabel={`Cache Reads (${currencySymbol}/M)`}
 										className={fieldControlClass}
 										id={cacheReadsPriceId}
-										initialValue={pricing.cacheReadsPrice != null ? String(pricing.cacheReadsPrice) : ""}
+										initialValue={cacheReadsPriceValue != null ? String(cacheReadsPriceValue) : ""}
 										onChange={(value) => updatePricing("cacheReadsPrice", parsePrice(value, 0))}
 										placeholder={
 											defaults?.pricing?.cacheReadsPrice != null

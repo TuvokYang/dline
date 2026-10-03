@@ -2,24 +2,38 @@ import type { ModelInfo } from "@shared/api"
 import { ServerTool } from "@shared/proto/dline/models/metadata"
 import { resolveThinkingBudgetBounds } from "@shared/providers/thinking-budget"
 
+const CURRENCY_SYMBOLS: Readonly<Record<string, string>> = {
+	USD: "$",
+	CNY: "¥",
+	EUR: "€",
+	GBP: "£",
+}
+
+/** Resolve a compact display symbol without silently changing the declared currency. */
+export const getCurrencySymbol = (currency?: string): string => {
+	const code = currency?.trim().toUpperCase() || "USD"
+	return CURRENCY_SYMBOLS[code] ?? `${code} `
+}
+
 /**
- * Formats a price as a currency string
+ * Formats a price as a currency string.
  */
-export const formatPrice = (price: number) => {
+export const formatPrice = (price: number, currency = "USD") => {
 	return new Intl.NumberFormat("en-US", {
 		style: "currency",
-		currency: "USD",
+		currency: currency.trim().toUpperCase() || "USD",
 		minimumFractionDigits: 2,
 		maximumFractionDigits: 2,
 	}).format(price)
 }
 
 /**
- * Helper function to format token prices for display
- * @param price The price per million tokens
+ * Helper function to format token prices for display.
+ * @param price The price per million tokens.
+ * @param currency ISO 4217 billing currency.
  */
-export const formatTokenPrice = (price: number) => {
-	return `${formatPrice(price)}/million tokens`
+export const formatTokenPrice = (price: number, currency = "USD") => {
+	return `${formatPrice(price, currency)}/million tokens`
 }
 
 /**

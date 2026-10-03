@@ -133,6 +133,36 @@ describe("ModelInfoView thinking output pricing", () => {
 		expect(screen.queryByText(expected === "$7/M" ? "$2/M" : "$7/M")).not.toBeInTheDocument()
 	})
 
+	it("uses the model billing currency and displays output limits and declared capabilities", () => {
+		const modelInfo: ModelInfo = {
+			id: "deepseek-cny-display",
+			capabilities: {
+				contextWindow: 1_000_000,
+				maxTokens: 384_000,
+				supportsTools: true,
+				supportsReasoning: true,
+				supportsPromptCache: true,
+			},
+			pricing: {
+				inputPrice: 3,
+				outputPrice: 6,
+				cacheWritesPrice: 3,
+				cacheReadsPrice: 0.025,
+				currency: "CNY",
+			},
+		}
+
+		render(<ModelInfoView modelInfo={modelInfo} selectedModelId={modelInfo.id} />)
+
+		expect(screen.getByText("384K")).toBeInTheDocument()
+		expect(screen.getAllByText("¥3/M")).toHaveLength(2)
+		expect(screen.getByText("¥6/M")).toBeInTheDocument()
+		expect(screen.getByText("¥0.03/M")).toBeInTheDocument()
+		expect(screen.getByText("Native Tool Calls").parentElement).toHaveTextContent("Yes")
+		expect(screen.getByText("Reasoning").parentElement).toHaveTextContent("Yes")
+		expect(screen.queryByText("$3/M")).not.toBeInTheDocument()
+	})
+
 	it("preserves a declared zero thinking output price", () => {
 		const modelInfo: ModelInfo = {
 			id: "opaque-free-thinking",
