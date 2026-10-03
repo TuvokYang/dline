@@ -36,6 +36,9 @@ jobs:
         with:
           install-webview: "true"
 
+      - name: Generate Protobuf code for E2E harness
+        run: npm run protos
+
       - name: Download tested VSIX
         uses: actions/download-artifact@v8
         with:
@@ -127,6 +130,9 @@ jobs:
         uses: ./.github/actions/setup-project
         with:
           install-webview: "true"
+
+      - name: Generate Protobuf code for E2E harness
+        run: npm run protos
 
       - name: Download tested VSIX
         uses: actions/download-artifact@v8

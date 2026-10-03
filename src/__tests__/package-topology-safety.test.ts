@@ -86,6 +86,7 @@ describe("package topology safety", () => {
 
 		expect(e2eWorkflow).toContain('DLINE_E2E_INSTALL_VSIX: "1"')
 		expect(e2eWorkflow).toContain("runner: [ubuntu, windows, macos]")
+		expect(e2eWorkflow.match(/run: npm run protos/g)).toHaveLength(2)
 		expect(e2eWorkflow.match(/uses: actions\/download-artifact@v8/g)).toHaveLength(2)
 		expect(e2eWorkflow.match(/name: \$\{\{ inputs\.artifact_name \}\}/g)).toHaveLength(2)
 		expect(e2eWorkflow).toContain('$expectedArtifact = "dline-vsix-$env:COMMIT_SHA"')
