@@ -418,16 +418,52 @@ e2e(
 			await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
 		} catch (error) {
 			// Preserve the failing renderer before the task is closed below. The
-			// fixture's later screenshot otherwise shows only the home screen.
+			// artifact workflow uploads files, not in-memory reporter attachments.
+			const screenshotPath = testInfo.outputPath("background-subagents-before-cleanup.png")
 			await page
-				.screenshot()
-				.then((body) => testInfo.attach("background-subagents-before-cleanup.png", { body, contentType: "image/png" }))
+				.screenshot({ path: screenshotPath })
+				.then(() =>
+					testInfo.attach("background-subagents-before-cleanup.png", {
+						path: screenshotPath,
+						contentType: "image/png",
+					}),
+				)
 				.catch(() => undefined)
-			await testInfo
-				.attach("background-subagents-before-cleanup.html", {
-					body: await sidebar.content().catch(() => "Renderer unavailable before cleanup"),
-					contentType: "text/html",
+			const htmlPath = testInfo.outputPath("background-subagents-before-cleanup.html")
+			await sidebar
+				.content()
+				.then((html) => writeFile(htmlPath, html, "utf8"))
+				.then(() =>
+					testInfo.attach("background-subagents-before-cleanup.html", { path: htmlPath, contentType: "text/html" }),
+				)
+				.catch(() => undefined)
+			const geometryPath = testInfo.outputPath("background-subagents-before-cleanup-geometry.json")
+			await sidebar
+				.locator('[data-virtuoso-scroller="true"]')
+				.evaluate((scroller) => {
+					const bounds = scroller.getBoundingClientRect()
+					return {
+						scrollTop: scroller.scrollTop,
+						scrollHeight: scroller.scrollHeight,
+						clientHeight: scroller.clientHeight,
+						bottomGap: scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight,
+						visibleRows: [...scroller.querySelectorAll<HTMLElement>("[data-message-ts]")]
+							.filter(
+								(row) =>
+									row.getBoundingClientRect().bottom > bounds.top &&
+									row.getBoundingClientRect().top < bounds.bottom,
+							)
+							.map((row) => ({ ts: row.dataset.messageTs, text: row.innerText.slice(0, 500) })),
+						bottomControlPresent: document.querySelector('button[aria-label="Scroll to bottom"]') !== null,
+					}
 				})
+				.then((geometry) => writeFile(geometryPath, JSON.stringify(geometry, null, 2), "utf8"))
+				.then(() =>
+					testInfo.attach("background-subagents-before-cleanup-geometry.json", {
+						path: geometryPath,
+						contentType: "application/json",
+					}),
+				)
 				.catch(() => undefined)
 			throw error
 		} finally {
