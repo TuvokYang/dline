@@ -616,6 +616,61 @@ describe("InteractionCoordinator", () => {
 		expect(runtime.getState().interaction).toBeUndefined()
 	})
 
+	it.each([
+		{ text: "Use the corrected path", images: [], files: [] },
+		{ text: "", images: ["data:image/png;base64,new-image"], files: [] },
+		{ text: "", images: [], files: ["/workspace/corrected.txt"] },
+	])("forwards detached retry feedback without replaying stale persisted input: %j", async (draft) => {
+		const startApi = vi.fn(async () => undefined)
+		const runtime = new TaskRuntime(
+			hydrateAwaitingInteraction({
+				kind: "error_retry",
+				phase: TaskPhase.AWAITING_APPROVAL,
+				turnId: "turn-retry",
+				interactionId: "retry-1",
+				apiIndex: 7,
+			}),
+			createPorts({ startApi }),
+		)
+		const coordinator = new InteractionCoordinator(runtime, { isPersistedApiRequest: () => true })
+		await coordinator.respond({
+			taskId: "task-1",
+			turnId: "turn-retry",
+			interactionId: "retry-1",
+			actionId: "retry",
+			stateRevision: runtime.getState().revision,
+			draft,
+		})
+		expect(startApi).toHaveBeenCalledExactlyOnceWith(
+			expect.objectContaining({ type: "START_API", apiIndex: 7, persistedRequest: false, draft }),
+		)
+	})
+
+	it("preserves persisted replay for a detached retry with only whitespace feedback", async () => {
+		const startApi = vi.fn(async () => undefined)
+		const runtime = new TaskRuntime(
+			hydrateAwaitingInteraction({
+				kind: "error_retry",
+				phase: TaskPhase.AWAITING_APPROVAL,
+				turnId: "turn-retry",
+				interactionId: "retry-1",
+				apiIndex: 7,
+			}),
+			createPorts({ startApi }),
+		)
+		await new InteractionCoordinator(runtime).respond({
+			taskId: "task-1",
+			turnId: "turn-retry",
+			interactionId: "retry-1",
+			actionId: "retry",
+			stateRevision: runtime.getState().revision,
+			draft: { text: "  ", images: [], files: [] },
+		})
+		expect(startApi).toHaveBeenCalledExactlyOnceWith(
+			expect.objectContaining({ type: "START_API", apiIndex: 7, persistedRequest: true }),
+		)
+	})
+
 	it("continues resume from a hydrated resolving response without duplicate user input", async () => {
 		const interactionId = "resume-crash"
 		const turnId = "resume-turn"
