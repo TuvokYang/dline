@@ -2,53 +2,68 @@ import { name, publisher, version } from "../package.json"
 import { HostProvider } from "./hosts/host-provider"
 
 /**
- * List of commands with the name of the extension they are registered under.
- * These should match the command IDs defined in package.json for each distribution package.
+ * Contribution IDs are a stable public namespace shared by every distribution package.
+ *
+ * Insiders changes package.json.name to `dline-insiders` before esbuild runs, but its
+ * commands and view IDs intentionally remain `dline.*`. Deriving contributions from
+ * the distribution name leaves the installed extension unable to resolve its Webview.
  */
+const CONTRIBUTION_NAMESPACE = "dline"
+
 const ClineCommands = {
-	PlusButton: `${name}.plusButtonClicked`,
-	McpButton: `${name}.mcpButtonClicked`,
-	SettingsButton: `${name}.settingsButtonClicked`,
-	HistoryButton: `${name}.historyButtonClicked`,
-	AccountButton: `${name}.accountButtonClicked`,
-	WorktreesButton: `${name}.worktreesButtonClicked`,
-	TerminalOutput: `${name}.addTerminalOutputToChat`,
-	AddToChat: `${name}.addToChat`,
-	FixWithCline: `${name}.fixWithCline`,
-	ExplainCode: `${name}.explainCode`,
-	ImproveCode: `${name}.improveCode`,
-	FocusChatInput: `${name}.focusChatInput`,
-	Walkthrough: `${name}.openWalkthrough`,
-	GenerateCommit: `${name}.generateGitCommitMessage`,
-	AbortCommit: `${name}.abortGitCommitMessage`,
-	ReconstructTaskHistory: `${name}.reconstructTaskHistory`,
-	RecoverUiMessages: `${name}.recoverUiMessages`,
+	PlusButton: `${CONTRIBUTION_NAMESPACE}.plusButtonClicked`,
+	McpButton: `${CONTRIBUTION_NAMESPACE}.mcpButtonClicked`,
+	SettingsButton: `${CONTRIBUTION_NAMESPACE}.settingsButtonClicked`,
+	HistoryButton: `${CONTRIBUTION_NAMESPACE}.historyButtonClicked`,
+	AccountButton: `${CONTRIBUTION_NAMESPACE}.accountButtonClicked`,
+	WorktreesButton: `${CONTRIBUTION_NAMESPACE}.worktreesButtonClicked`,
+	TerminalOutput: `${CONTRIBUTION_NAMESPACE}.addTerminalOutputToChat`,
+	AddToChat: `${CONTRIBUTION_NAMESPACE}.addToChat`,
+	FixWithCline: `${CONTRIBUTION_NAMESPACE}.fixWithCline`,
+	ExplainCode: `${CONTRIBUTION_NAMESPACE}.explainCode`,
+	ImproveCode: `${CONTRIBUTION_NAMESPACE}.improveCode`,
+	FocusChatInput: `${CONTRIBUTION_NAMESPACE}.focusChatInput`,
+	Walkthrough: `${CONTRIBUTION_NAMESPACE}.openWalkthrough`,
+	GenerateCommit: `${CONTRIBUTION_NAMESPACE}.generateGitCommitMessage`,
+	AbortCommit: `${CONTRIBUTION_NAMESPACE}.abortGitCommitMessage`,
+	ReconstructTaskHistory: `${CONTRIBUTION_NAMESPACE}.reconstructTaskHistory`,
+	RecoverUiMessages: `${CONTRIBUTION_NAMESPACE}.recoverUiMessages`,
 	// Jupyter Notebook commands
-	JupyterGenerateCell: `${name}.jupyterGenerateCell`,
-	JupyterExplainCell: `${name}.jupyterExplainCell`,
-	JupyterImproveCell: `${name}.jupyterImproveCell`,
+	JupyterGenerateCell: `${CONTRIBUTION_NAMESPACE}.jupyterGenerateCell`,
+	JupyterExplainCell: `${CONTRIBUTION_NAMESPACE}.jupyterExplainCell`,
+	JupyterImproveCell: `${CONTRIBUTION_NAMESPACE}.jupyterImproveCell`,
 }
 
-/**
- * IDs for the views registered by the extension.
- * These should match the name + view IDs defined in package.json.
- */
+const ClineViewContainerIds = {
+	ActivityBar: `${CONTRIBUTION_NAMESPACE}-ActivityBar`,
+}
+
 const ClineViewIds = {
-	Sidebar: `${name}.SidebarProvider`,
+	Sidebar: `${CONTRIBUTION_NAMESPACE}.SidebarProvider`,
 }
 
-/**
- * The registry info for the extension, including its ID, name, version, commands, and views
- * registered for the current host.
- */
-export const ExtensionRegistryInfo = {
-	id: `${publisher}.${name}`,
-	name,
-	version,
-	publisher,
-	commands: ClineCommands,
-	views: ClineViewIds,
+interface DistributionIdentity {
+	name: string
+	publisher: string
+	version: string
 }
+
+/** Build runtime identity without coupling stable contribution IDs to the distribution package name. */
+export function createExtensionRegistryInfo(distribution: DistributionIdentity) {
+	return {
+		id: `${distribution.publisher}.${distribution.name}`,
+		name: distribution.name,
+		version: distribution.version,
+		publisher: distribution.publisher,
+		contributionNamespace: CONTRIBUTION_NAMESPACE,
+		commands: ClineCommands,
+		viewContainers: ClineViewContainerIds,
+		views: ClineViewIds,
+	}
+}
+
+/** Runtime registry for the package identity compiled into the current extension bundle. */
+export const ExtensionRegistryInfo = createExtensionRegistryInfo({ name, publisher, version })
 
 export interface HostInfo {
 	/**

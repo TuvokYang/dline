@@ -9,6 +9,7 @@ import { telemetryService } from "@/services/telemetry"
 import { Logger } from "@/shared/services/Logger"
 import { openExternal } from "@/utils/env"
 import { AuthInvalidTokenError, AuthNetworkError } from "../error/ClineError"
+import { isE2EAuthMockEnabled } from "./auth-test-mode"
 import { ClineAuthProvider } from "./providers/ClineAuthProvider"
 import { LogoutReason } from "./types"
 
@@ -90,7 +91,7 @@ export class AuthService {
 				Logger.warn("Extension context was not provided to AuthService.getInstance, using default context")
 				controller = {} as Controller
 			}
-			if (process.env.E2E_TEST) {
+			if (isE2EAuthMockEnabled()) {
 				// Use require instead of import to avoid circular dependency issues
 				// eslint-disable-next-line @typescript-eslint/no-var-requires
 				const { AuthServiceMock } = require("./AuthServiceMock")
