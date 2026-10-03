@@ -1347,6 +1347,50 @@ describe("SubagentToolHandler", () => {
 		vitestExpect(setFinish).toHaveBeenCalledWith(jobId, vitestExpect.any(Function))
 	})
 
+	it.each([
+		"x".repeat(20_000),
+		"Use api_key=abcdef0123456789 for this request",
+		"Previously saved [REDACTED] instructions",
+		"Previously saved\n… [truncated]",
+	])("never executes a lossy persisted retry recipe (%#)", async (prompt) => {
+		const { config } = createConfig({ autoApproveSafe: true, autoApproveAll: true })
+		const original = new TaskActivityStore("task-1")
+		const liveRetry = vi.fn(async () => true)
+		original.create({
+			activityId: "lossy",
+			kind: "subagent",
+			executionMode: "background",
+			title: "review",
+			status: "failed",
+			retry: liveRetry,
+			retryRecipe: {
+				kind: "subagent",
+				schemaVersion: 1,
+				subagentName: "default",
+				task: "review",
+				prompt,
+				timeoutSeconds: 30,
+				retryable: true,
+			},
+		})
+		// Live callbacks retain the original instructions outside persisted display data.
+		original.setRetry("lossy", liveRetry)
+		assert.equal(original.isRetryable("lossy"), true)
+		const saved = JSON.parse(JSON.stringify(original.list()))
+		assert.ok(!JSON.stringify(saved).includes("abcdef0123456789"))
+		const restored = new TaskActivityStore("task-1", { load: async () => saved, save: async () => {} })
+		await restored.hydrate()
+		config.activityStore = restored
+		const run = vi.spyOn(SubagentRunner.prototype, "run")
+		assert.equal(restored.isRetryable("lossy"), false)
+		assert.match(restored.get("lossy")?.retryUnavailableReason ?? "", /redacted or truncated/)
+		assert.equal(await restoreSubagentActivityRetry(config, "lossy"), false)
+		assert.deepEqual(await restored.retry(["lossy"]), [])
+		vitestExpect(run).not.toHaveBeenCalled()
+		original.dispose()
+		restored.dispose()
+	})
+
 	it("restores a persisted retry recipe after Task reopen", async () => {
 		const { config } = createConfig({ autoApproveSafe: true, autoApproveAll: true })
 		config.taskState.abort = true
