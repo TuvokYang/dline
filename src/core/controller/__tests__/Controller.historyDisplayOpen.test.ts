@@ -2,7 +2,12 @@ import { Controller } from "@core/controller"
 import type { HistoryItem } from "@shared/HistoryItem"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
-const historyLoad = vi.hoisted(() => ({ load: vi.fn<() => Promise<void>>(), instances: 0 }))
+const historyLoad = vi.hoisted(() => ({
+	load: vi.fn<() => Promise<void>>(),
+	hydrate: vi.fn<() => Promise<void>>(),
+	prepare: vi.fn<() => Promise<void>>(),
+	instances: 0,
+}))
 vi.mock("@core/storage/remote-config/fetch", () => ({ fetchRemoteConfig: vi.fn() }))
 vi.mock("@/core/orchestrator/OrchestratorController", () => ({
 	OrchestratorController: { getInstance: () => ({ registerController: vi.fn() }) },
@@ -21,10 +26,13 @@ vi.mock("@core/task", () => ({
 			return this.readOnly
 		}
 		beginHistoryPreparation() {}
-		displayHistory() {
-			return historyLoad.load()
+		async displayHistory(options?: { onMessagesReady?: () => Promise<void> }) {
+			await historyLoad.load()
+			await options?.onMessagesReady?.()
+			await historyLoad.hydrate()
 		}
 		async prepareFromHistory(options?: { onReadyToDisplay?: () => Promise<void> }) {
+			await historyLoad.prepare()
 			await options?.onReadyToDisplay?.()
 		}
 	},
@@ -71,6 +79,9 @@ function createController(visibleTaskId: string) {
 	vi.spyOn(controller, "postStateToWebview").mockImplementation(async () => {
 		events.push(`post:${controller.task?.taskId ?? "none"}`)
 	})
+	vi.spyOn(controller, "postHistorySurfaceToWebview").mockImplementation(async () => {
+		events.push(`surface:${controller.task?.taskId ?? "none"}`)
+	})
 	const internals = controller as unknown as Record<string, unknown>
 	internals.ensureWorkspaceManager = vi.fn(async () => undefined)
 	internals.ensureIgnoreController = vi.fn(async () => ({}))
@@ -96,6 +107,8 @@ function createController(visibleTaskId: string) {
 describe("Controller history display open", () => {
 	beforeEach(() => {
 		historyLoad.load.mockReset()
+		historyLoad.hydrate.mockReset().mockResolvedValue(undefined)
+		historyLoad.prepare.mockReset().mockResolvedValue(undefined)
 	})
 
 	it("replaces the visible task without publishing an empty surface", async () => {
@@ -106,7 +119,7 @@ describe("Controller history display open", () => {
 
 		expect(events[0]).toBe(`clear:${JSON.stringify({ suppressPostState: true, deferTeardown: false })}`)
 		expect(events).not.toContain("post:none")
-		expect(events.slice(1).every((event) => event === "post:task-new")).toBe(true)
+		expect(events.slice(1).every((event) => event === "post:task-new" || event === "surface:task-new")).toBe(true)
 	})
 
 	it("publishes the preparing surface before the history window finishes loading", async () => {
@@ -127,7 +140,25 @@ describe("Controller history display open", () => {
 
 		expect(publishedBeforeLoad).toBe(1)
 		// The ready projection follows once the durable window is loaded.
-		expect(events.filter((event) => event === "post:task-new")).toHaveLength(3)
+		expect(events.filter((event) => event === "post:task-new")).toHaveLength(4)
+	})
+
+	it("publishes messages before optional hydration and full display before interaction preparation", async () => {
+		const hydration = deferred()
+		const preparation = deferred()
+		historyLoad.load.mockResolvedValue(undefined)
+		historyLoad.hydrate.mockReturnValue(hydration.promise)
+		historyLoad.prepare.mockReturnValue(preparation.promise)
+		const { controller, events } = createController("task-old")
+		const opening = controller.initTask(undefined, undefined, undefined, historyItem("task-new"))
+		await vi.waitFor(() => expect(events).toContain("surface:task-new"))
+		expect(events).not.toContain("post:task-new")
+		expect(historyLoad.prepare).not.toHaveBeenCalled()
+		hydration.resolve()
+		await vi.waitFor(() => expect(events).toContain("post:task-new"))
+		expect(historyLoad.prepare).toHaveBeenCalledOnce()
+		preparation.resolve()
+		await opening
 	})
 
 	it("waits for teardown when the same task is reopened", async () => {

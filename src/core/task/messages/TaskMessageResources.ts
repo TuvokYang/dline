@@ -39,6 +39,7 @@ export class TaskMessageResources {
 	private execution?: TaskExecutionMessages
 	private recoveryApiWindow?: ApiConversationReadWindow
 	private latestMessages: ClineMessage[] = []
+	private latestWindowStart?: number
 	private titleMessage?: ClineMessage
 	private readonly appendedMessages: ClineMessage[] = []
 	private readonly replacedMessages = new Map<number, ClineMessage>()
@@ -105,7 +106,7 @@ export class TaskMessageResources {
 						: Math.max(0, Math.min(Math.trunc(referenceIndex), totalCount))
 				const endIndex = Math.min(startIndex + size, totalCount)
 				const durableCount = Math.max(0, Math.min(endIndex, window.count) - startIndex)
-				const base = durableCount > 0 ? (await window.getPage(startIndex, durableCount)).messages : []
+				const base = await this.readDisplayPage(window, startIndex, durableCount)
 				return {
 					messages: [
 						...base.map((message) => this.replacedMessages.get(message.ts) ?? message),
@@ -218,6 +219,7 @@ export class TaskMessageResources {
 			this.execution = undefined
 			this.recoveryApiWindow = undefined
 			this.latestMessages = []
+			this.latestWindowStart = undefined
 			this.titleMessage = undefined
 			this.appendedMessages.length = 0
 			this.replacedMessages.clear()
@@ -232,6 +234,19 @@ export class TaskMessageResources {
 		return this.closePromise
 	}
 
+	private async readDisplayPage(window: UIMessageWindowReader, startIndex: number, count: number): Promise<ClineMessage[]> {
+		if (count === 0) return []
+		const cachedStart = this.latestWindowStart
+		if (
+			cachedStart !== undefined &&
+			startIndex >= cachedStart &&
+			startIndex + count <= cachedStart + this.latestMessages.length
+		) {
+			return this.latestMessages.slice(startIndex - cachedStart, startIndex - cachedStart + count)
+		}
+		return (await window.getPage(startIndex, count)).messages
+	}
+
 	private async loadDisplayWindow(): Promise<void> {
 		const window = await this.ports.openWindow(this.taskId)
 		try {
@@ -239,6 +254,9 @@ export class TaskMessageResources {
 			const [latest, first] = await Promise.all([window.getLatest(DISPLAY_WINDOW_SIZE), window.getPage(0, 1)])
 			this.assertOpen()
 			this.latestMessages = latest
+			// A reader may skip malformed rows; only a complete tail has reliable offsets.
+			const expectedSize = Math.min(DISPLAY_WINDOW_SIZE, window.count)
+			this.latestWindowStart = latest.length === expectedSize ? window.count - expectedSize : undefined
 			this.titleMessage = first.messages[0]
 			this.window = window
 		} catch (error) {
@@ -266,6 +284,7 @@ export class TaskMessageResources {
 			await this.window?.close()
 			this.window = undefined
 			this.latestMessages = []
+			this.latestWindowStart = undefined
 			this.titleMessage = undefined
 			this.appendedMessages.length = 0
 			this.replacedMessages.clear()

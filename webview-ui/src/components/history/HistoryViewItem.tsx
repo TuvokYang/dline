@@ -15,6 +15,7 @@ import {
 } from "lucide-react"
 import { memo, useCallback, useMemo, useState } from "react"
 import { Button } from "@/components/ui/button"
+import { useExtensionState } from "@/context/ExtensionStateContext"
 import { cn } from "@/lib/utils"
 import { TaskServiceClient } from "@/services/grpc-client"
 import { formatLargeNumber, formatSize } from "@/utils/format"
@@ -39,6 +40,7 @@ const HistoryViewItem = ({
 	handleHistorySelect,
 	selectedItems,
 }: HistoryViewItemProps) => {
+	const { openHistoryTask } = useExtensionState()
 	const [expanded, setExpanded] = useState(false)
 	const totalInputTokens = (item.tokensIn || 0) + (item.cacheWrites || 0) + (item.cacheReads || 0)
 	// Cost and completion follow the same rules as the Recent list so the two
@@ -51,11 +53,7 @@ const HistoryViewItem = ({
 		[item.id, item.isFavorited, pendingFavoriteToggles],
 	)
 
-	const handleShowTaskWithId = useCallback((id: string) => {
-		TaskServiceClient.showTaskWithId(StringRequest.create({ value: id })).catch((error) =>
-			console.error("Error showing task:", error),
-		)
-	}, [])
+	const handleShowTask = useCallback(() => openHistoryTask(item), [item, openHistoryTask])
 
 	const _handleOpenInNewWindow = useCallback((id: string, e: React.MouseEvent) => {
 		e.stopPropagation()
@@ -116,7 +114,7 @@ const HistoryViewItem = ({
 				className="flex flex-col gap-2 py-2 pl-2 pr-3 relative flex-grow min-w-0"
 				onClick={(e) => {
 					e.stopPropagation()
-					handleShowTaskWithId(item.id)
+					handleShowTask()
 				}}>
 				<div className="flex items-center gap-2">
 					<div className="line-clamp-1 overflow-hidden break-words whitespace-pre-wrap flex-1 min-w-0">

@@ -12,7 +12,7 @@ import { type ActiveInteractionView, type ClineMessage, DEFAULT_PLATFORM, type E
 import { DEFAULT_FOCUS_CHAIN_SETTINGS } from "@shared/FocusChainSettings"
 import { DEFAULT_MCP_DISPLAY_MODE } from "@shared/McpDisplayMode"
 import type { UserInfo } from "@shared/proto/dline/account"
-import { EmptyRequest } from "@shared/proto/dline/common"
+import { EmptyRequest, StringRequest } from "@shared/proto/dline/common"
 import type { OpenRouterCompatibleModelInfo } from "@shared/proto/dline/models"
 import { OnboardingModelGroup, type TerminalProfile } from "@shared/proto/dline/state"
 import { protoToAccountUsage } from "@shared/proto-conversions/account-usage-conversion"
@@ -35,7 +35,14 @@ import {
 import { Environment } from "../../../src/shared/config-types"
 import type { McpMarketplaceCatalog, McpServer, McpViewTab } from "../../../src/shared/mcp"
 import type { TaskCapabilityToggles } from "../../../src/shared/TaskCapabilityToggles"
-import { McpServiceClient, ModelsServiceClient, StateServiceClient, UiServiceClient } from "../services/grpc-client"
+import { type HistoryTaskOpening, type HistoryTaskTarget, useHistoryTaskOpening } from "../hooks/useHistoryTaskOpening"
+import {
+	McpServiceClient,
+	ModelsServiceClient,
+	StateServiceClient,
+	TaskServiceClient,
+	UiServiceClient,
+} from "../services/grpc-client"
 import { fetchTaskMessages, getTaskViewKey } from "../services/task-messages"
 import { canAppendRealtimeMessage, isMessageWindowOverfull, reconcileMessageWindow } from "./messageWindowSync"
 
@@ -148,7 +155,12 @@ function describeHydrationFailure(error: unknown): string {
  */
 export type HydrationStatus = { status: "pending" } | { status: "failed"; reason: string } | { status: "ready" }
 
+const requestHistoryTaskOpen = (id: string) => TaskServiceClient.showTaskWithId(StringRequest.create({ value: id }))
+
 export interface ExtensionStateContextType extends ExtensionState {
+	historyTaskOpening?: HistoryTaskOpening
+	openHistoryTask: (target: HistoryTaskTarget) => void
+	dismissHistoryTaskOpening: () => void
 	clineMessages: ClineMessage[]
 	setClineMessages: React.Dispatch<React.SetStateAction<ClineMessage[]>>
 	didHydrateState: boolean
@@ -430,6 +442,13 @@ export const ExtensionStateContextProvider: React.FC<{
 	// Atomic sliding window state via React 18 auto-batching
 	const [clineMessages, setClineMessages] = useState<ClineMessage[]>([])
 	const [firstItemIndex, setFirstItemIndex] = useState(0)
+	const { historyTaskOpening, openHistoryTask, dismissHistoryTaskOpening } = useHistoryTaskOpening({
+		taskViewState: state.taskViewState,
+		// Hand off once the backend window is ready, not after the next paging RPC.
+		hasMessageSurface: !!state.taskTitleMessage && (state.totalMessageCount ?? 0) > 0,
+		requestOpen: requestHistoryTaskOpen,
+		navigateToChat,
+	})
 	const clineMessagesRef = useRef<ClineMessage[]>([])
 	// Fetch callbacks resolve after their scheduling render, so reconciliation
 	// has to read the window start from a ref rather than the captured value.
@@ -1365,6 +1384,9 @@ export const ExtensionStateContextProvider: React.FC<{
 	const contextValue = useMemo<ExtensionStateContextType>(
 		() => ({
 			...state,
+			historyTaskOpening,
+			openHistoryTask,
+			dismissHistoryTaskOpening,
 			clineMessages,
 			didHydrateState,
 			hydration,
@@ -1450,6 +1472,9 @@ export const ExtensionStateContextProvider: React.FC<{
 		}),
 		[
 			state,
+			historyTaskOpening,
+			openHistoryTask,
+			dismissHistoryTaskOpening,
 			clineMessages,
 			didHydrateState,
 			hydration,

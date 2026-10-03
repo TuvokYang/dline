@@ -13,6 +13,7 @@ import HistoryPreview, {
 import HistoryViewItem from "./HistoryViewItem"
 
 const extensionState = vi.hoisted(() => ({
+	openHistoryTask: vi.fn(),
 	taskHistory: [] as HistoryItem[],
 	workspaceRoots: [{ path: "C:\\work\\current", name: "current" }],
 }))
@@ -97,13 +98,31 @@ describe("HistoryViewItem", () => {
 		fireEvent.click(deleteButton)
 
 		expect(handleDeleteHistoryItem).toHaveBeenCalledWith("task-1")
-		expect(TaskServiceClient.showTaskWithId).not.toHaveBeenCalled()
+		expect(extensionState.openHistoryTask).not.toHaveBeenCalled()
 		expect(TaskServiceClient.deleteTasksWithIds).not.toHaveBeenCalledWith(StringArrayRequest.create({ value: ["task-1"] }))
+	})
+
+	it("opens through the shared immediate-feedback boundary", () => {
+		const item = buildItem()
+		render(
+			<HistoryViewItem
+				handleDeleteHistoryItem={vi.fn()}
+				handleHistorySelect={vi.fn()}
+				index={0}
+				item={item}
+				pendingFavoriteToggles={{}}
+				selectedItems={[]}
+				toggleFavorite={vi.fn()}
+			/>,
+		)
+		fireEvent.click(screen.getByText(item.task))
+		expect(extensionState.openHistoryTask).toHaveBeenCalledWith(item)
 	})
 })
 
 describe("HistoryPreview", () => {
 	beforeEach(() => {
+		extensionState.openHistoryTask.mockClear()
 		historyListHeight = 136
 		resizeObserverCallback = undefined
 		extensionState.taskHistory = []
@@ -134,6 +153,14 @@ describe("HistoryPreview", () => {
 				}),
 			),
 		)
+	})
+
+	it("opens Recent selections through the shared immediate-feedback boundary", async () => {
+		const item = historyItem("workspace", 1)
+		vi.mocked(TaskServiceClient.getTaskHistory).mockResolvedValue({ tasks: [item], totalCount: 1 })
+		render(<HistoryPreview showHistoryView={vi.fn()} />)
+		fireEvent.click(await screen.findByText(item.task))
+		expect(extensionState.openHistoryTask).toHaveBeenCalledWith(expect.objectContaining({ id: item.id, task: item.task }))
 	})
 
 	it("switches between favorite and all task requests", async () => {

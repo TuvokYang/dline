@@ -29,6 +29,7 @@ import {
 	isActiveInteractionSynchronized,
 	type PendingSuccessorDraftTransfer,
 } from "@/task-interaction/types"
+import { HistoryTaskOpeningView } from "../history/HistoryTaskOpeningView"
 import { Navbar } from "../menu/Navbar"
 import { TaskActivityNavigationProvider } from "./activity/TaskActivityNavigationContext"
 import { DEFAULT_TASK_ACTIVITY_FILTERS, type TaskActivityFilters, TaskActivityPanel } from "./activity/TaskActivityPanel"
@@ -84,6 +85,10 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 		taskViewState,
 		currentTaskItem,
 		taskTitleMessage,
+		historyTaskOpening,
+		openHistoryTask,
+		dismissHistoryTaskOpening,
+		navigateToHistory,
 	} = useExtensionState()
 	const [contentTab, setContentTab] = useState<TaskContentTab>("chat")
 	const [focusedActivityId, setFocusedActivityId] = useState<string>()
@@ -473,6 +478,11 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 
 	// Use message handlers hook (must come after scrollBehavior so we can pass disableAutoScrollRef)
 	const messageHandlers = useMessageHandlers(messages, chatState, scrollBehavior.disableAutoScrollRef, taskId)
+	const handleTaskClose = useCallback(async () => {
+		// Retire the opening request before Close so a late RPC failure cannot reopen feedback.
+		dismissHistoryTaskOpening()
+		await messageHandlers.handleTaskCloseButtonClick()
+	}, [dismissHistoryTaskOpening, messageHandlers.handleTaskCloseButtonClick])
 	const submitInteractionDraft = useCallback(
 		async (draft: InteractionDraft): Promise<AcceptedInteractionSettlement | undefined> => {
 			if (!taskViewState?.input.enterAction || !interactionSynchronized) {
@@ -639,6 +649,21 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 		return text
 	}, [task])
 
+	if (historyTaskOpening) {
+		return (
+			<ChatLayout isHidden={isHidden}>
+				<HistoryTaskOpeningView
+					onBack={() => {
+						dismissHistoryTaskOpening()
+						navigateToHistory()
+					}}
+					onRetry={() => openHistoryTask(historyTaskOpening.target)}
+					opening={historyTaskOpening}
+				/>
+			</ChatLayout>
+		)
+	}
+
 	return (
 		<ChatLayout isHidden={isHidden}>
 			<div className="flex flex-col flex-1 overflow-hidden">
@@ -651,7 +676,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 						forceTruncateTaskDisabled={forceTruncateTaskDisabled}
 						lastApiReqTotalTokens={lastApiReqTotalTokens}
 						lastProgressMessageText={lastProgressMessageText}
-						messageHandlers={messageHandlers}
+						messageHandlers={{ ...messageHandlers, handleTaskCloseButtonClick: handleTaskClose }}
 						onCompactTask={canRenderCompactTask ? submitCompactTask : undefined}
 						onForceTruncateTask={canRenderForceTruncate ? submitForceTruncateTask : undefined}
 						selectedModelInfo={{

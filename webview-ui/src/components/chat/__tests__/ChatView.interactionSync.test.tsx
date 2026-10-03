@@ -38,6 +38,8 @@ const mocks = vi.hoisted(() => {
 		askResponse: vi.fn(async () => ({})),
 		dispatchInteraction: vi.fn(async () => ({ accepted: true, result: "accepted" })),
 		compactTask: vi.fn(async () => ({ accepted: true, result: "accepted" })),
+		closeTask: vi.fn(async () => undefined),
+		closeButtonAction: undefined as (() => Promise<void>) | undefined,
 		footerRejected: undefined as ((settlement: AcceptedInteractionSettlement) => void) | undefined,
 		useChatState: vi.fn(() => chatState),
 	}
@@ -121,11 +123,14 @@ vi.mock("../chat-view", () => {
 		TaskSection: ({
 			compactTaskDisabled,
 			onCompactTask,
+			messageHandlers,
 		}: {
 			compactTaskDisabled?: boolean
 			onCompactTask?: () => Promise<boolean>
-		}) =>
-			onCompactTask ? (
+			messageHandlers: { handleTaskCloseButtonClick: () => Promise<void> }
+		}) => {
+			mocks.closeButtonAction = messageHandlers.handleTaskCloseButtonClick
+			return onCompactTask ? (
 				<button
 					aria-disabled={compactTaskDisabled ? "true" : "false"}
 					aria-label="Compact task"
@@ -134,7 +139,8 @@ vi.mock("../chat-view", () => {
 					type="button">
 					Compact
 				</button>
-			) : null,
+			) : null
+		},
 		TaskActivityPanel: () => null,
 		TaskActivityTabs: () => null,
 		WelcomeSection: () => null,
@@ -145,7 +151,7 @@ vi.mock("../chat-view", () => {
 		useChatState: mocks.useChatState,
 		useMessageHandlers: () => ({
 			handleSendMessage: vi.fn(async () => undefined),
-			handleTaskCloseButtonClick: vi.fn(),
+			handleTaskCloseButtonClick: mocks.closeTask,
 			startNewTask: vi.fn(async () => undefined),
 		}),
 		useScrollBehavior: () => ({
@@ -260,6 +266,8 @@ describe("ChatView interaction anchor synchronization", () => {
 		mocks.chatState.setSelectedImages.mockClear()
 		mocks.chatState.setSelectedFiles.mockClear()
 		mocks.chatState.restoreDraft.mockClear()
+		mocks.closeTask.mockClear()
+		mocks.closeButtonAction = undefined
 		mocks.footerRejected = undefined
 	})
 
@@ -272,6 +280,38 @@ describe("ChatView interaction anchor synchronization", () => {
 		rendered.rerender(chatView())
 
 		expect(mocks.useChatState).toHaveBeenLastCalledWith([ASK], '["task-1","task-instance-1"]')
+	})
+
+	it("hides the previous Task input and actions during local history opening and restores them after canonical readiness", () => {
+		const rendered = renderChat([ASK])
+		expect(screen.getByRole("textbox", { name: "Task input" })).toBeEnabled()
+		mocks.extensionState = {
+			...mocks.extensionState,
+			historyTaskOpening: { target: { id: "next", task: "Next saved task" }, status: "loading", requestId: 1 },
+		}
+		rendered.rerender(chatView())
+		expect(screen.getByRole("status")).toHaveTextContent("Opening task history")
+		expect(screen.queryByRole("textbox", { name: "Task input" })).not.toBeInTheDocument()
+		expect(screen.queryByRole("button", { name: "Compact task" })).not.toBeInTheDocument()
+		mocks.extensionState = { ...mocks.extensionState, historyTaskOpening: undefined }
+		rendered.rerender(chatView())
+		expect(screen.getByRole("textbox", { name: "Task input" })).toBeEnabled()
+		expect(mocks.askResponse).not.toHaveBeenCalled()
+		expect(mocks.dispatchInteraction).not.toHaveBeenCalled()
+	})
+
+	it("retires history feedback before invoking canonical Task Close", async () => {
+		const rendered = renderChat([ASK])
+		const dismiss = vi.fn()
+		mocks.extensionState = { ...mocks.extensionState, dismissHistoryTaskOpening: dismiss }
+		rendered.rerender(chatView())
+		mocks.closeTask.mockImplementationOnce(async () => {
+			expect(dismiss).toHaveBeenCalledOnce()
+		})
+		await act(async () => {
+			await mocks.closeButtonAction?.()
+		})
+		expect(mocks.closeTask).toHaveBeenCalledOnce()
 	})
 
 	it("submits an ordinary between-turns request without an active interaction", async () => {

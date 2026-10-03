@@ -1152,12 +1152,21 @@ export class Controller {
 				if (hasTaskLock) taskInstance.beginHistoryPreparation()
 				const remainsCurrent = await prepareHistoryTaskForDisplay({
 					taskId: initializedTaskId,
-					displayHistory: () => taskInstance.displayHistory(),
+					displayHistory: () =>
+						taskInstance.displayHistory({
+							onMessagesReady: async () => {
+								if (this.task === taskInstance) await this.postHistorySurfaceToWebview()
+							},
+						}),
 					prepareFromHistory: (prepareOptions) => taskInstance.prepareFromHistory(prepareOptions),
 					hasTaskLock,
 					isCurrent: () => this.task === taskInstance,
 					onPreparingToDisplay: options?.onHistoryTaskPreparingToDisplay,
-					onReadyToDisplay: options?.onHistoryTaskReadyToDisplay,
+					onReadyToDisplay: async () => {
+						if (this.task !== taskInstance) return
+						await this.postStateToWebview({ immediate: true })
+						if (this.task === taskInstance) await options?.onHistoryTaskReadyToDisplay?.()
+					},
 				})
 				logInitStage("history_prepare", initializedTaskId, `current=${remainsCurrent}`)
 				if (!remainsCurrent) {
@@ -2055,6 +2064,27 @@ export class Controller {
 			{
 				stateRevision,
 				taskViewState: this.projectCurrentTaskViewState(),
+			},
+			this._accountUsage,
+		)
+	}
+
+	/** Publish the historical message surface independently of optional display hydration. */
+	async postHistorySurfaceToWebview(): Promise<void> {
+		const task = this.task
+		if (!task || this.uiDetached || this.disposed) return
+		this.stateManager.setActiveTaskId(task.taskId)
+		const stateRevision = ++this.nextStateRevision
+		this.latestStateRevision = Math.max(this.latestStateRevision, stateRevision)
+		const totalMessageCount = task.getDisplayMessageCount()
+		await sendStatePatch(
+			this,
+			{
+				stateRevision,
+				taskViewState: this.projectCurrentTaskViewState(task),
+				taskTitleMessage: task.getTaskTitleMessage(),
+				totalMessageCount,
+				firstItemIndex: Math.max(0, totalMessageCount - task.getDisplayMessages().length),
 			},
 			this._accountUsage,
 		)

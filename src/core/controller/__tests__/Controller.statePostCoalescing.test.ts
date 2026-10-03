@@ -112,6 +112,37 @@ describe("Controller state publication coalescing", () => {
 		expect(sendStatePatch).toHaveBeenCalledWith(controller, { stateRevision: 1, taskViewState }, undefined)
 	})
 
+	it("publishes the canonical history count and title without a full state build", async () => {
+		const { controller, buildState, setActiveTaskId } = createController("task-a")
+		const taskViewState = {
+			taskId: "task-a",
+			taskInstanceId: "opening-a",
+			stateRevision: 7,
+			input: { enabled: false },
+		} as TaskViewState
+		const taskTitleMessage = { ts: 1, type: "say", say: "task", text: "Saved task" }
+		Object.assign(controller.task!, {
+			getDisplayMessageCount: () => 512,
+			getDisplayMessages: () => Array(200),
+			getTaskTitleMessage: () => taskTitleMessage,
+		})
+		vi.spyOn(
+			controller as unknown as { projectCurrentTaskViewState(): TaskViewState },
+			"projectCurrentTaskViewState",
+		).mockReturnValue(taskViewState)
+		await controller.postHistorySurfaceToWebview()
+		expect(setActiveTaskId).toHaveBeenCalledWith("task-a")
+		expect(buildState).not.toHaveBeenCalled()
+		expect(sendStatePatch).toHaveBeenCalledWith(
+			controller,
+			{ stateRevision: 1, taskViewState, taskTitleMessage, totalMessageCount: 512, firstItemIndex: 312 },
+			undefined,
+		)
+		controller.detachUi()
+		await controller.postHistorySurfaceToWebview()
+		expect(sendStatePatch).toHaveBeenCalledOnce()
+	})
+
 	it("lets an immediate publication supersede a pending merge window", async () => {
 		vi.useFakeTimers()
 		try {

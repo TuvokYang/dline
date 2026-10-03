@@ -5,6 +5,7 @@ import { PerfDomain } from "@/services/telemetry/instrumentation/perf-domains"
 export const HISTORY_READINESS_STAGES = [
 	"history_surface_preparing",
 	"history_display",
+	"history_message_surface",
 	"history_watcher",
 	"history_metrics",
 	"history_reconciliation",

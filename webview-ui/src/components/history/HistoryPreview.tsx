@@ -72,12 +72,12 @@ export function filterHistoryPreview(
 }
 
 /** One Recent-list row: task text, timestamp, usage badge and completion state. */
-function HistoryPreviewRow({ item, onSelect }: { item: PreviewTask; onSelect: (id: string) => void }) {
+function HistoryPreviewRow({ item, onSelect }: { item: PreviewTask; onSelect: (item: PreviewTask) => void }) {
 	const usage = getTaskUsageLabel(item)
 	const timestamp = formatHistoryTimestamp(item.ts)
 
 	return (
-		<div className="history-preview-item" onClick={() => onSelect(item.id)} onContextMenu={(event) => event.preventDefault()}>
+		<div className="history-preview-item" onClick={() => onSelect(item)} onContextMenu={(event) => event.preventDefault()}>
 			<div className="history-task-content">
 				{item.isFavorited && (
 					<span
@@ -130,7 +130,7 @@ function HistoryPreviewRow({ item, onSelect }: { item: PreviewTask; onSelect: (i
 }
 
 const HistoryPreview = ({ showHistoryView }: HistoryPreviewProps) => {
-	const { taskHistory, workspaceRoots } = useExtensionState()
+	const { taskHistory, workspaceRoots, openHistoryTask } = useExtensionState()
 	const [filter, setFilter] = useState<HistoryPreviewFilter>("workspace")
 	const workspacePaths = useMemo(() => workspaceRoots.map((root) => root.path), [workspaceRoots])
 	const fallbackTasks = useMemo(
@@ -204,11 +204,7 @@ const HistoryPreview = ({ showHistoryView }: HistoryPreviewProps) => {
 		return () => observer.disconnect()
 	}, [])
 
-	const handleHistorySelect = (id: string) => {
-		TaskServiceClient.showTaskWithId(StringRequest.create({ value: id })).catch((error) =>
-			console.error("Error showing task:", error),
-		)
-	}
+	const handleHistorySelect = (item: PreviewTask) => openHistoryTask(item)
 
 	return (
 		<div className="history-preview">

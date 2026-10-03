@@ -4,6 +4,7 @@ import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { expect, type Frame } from "@playwright/test"
 
 const HISTORY_SURFACE_BUDGET_MS = 500
+const BROWSER_MESSAGE_SURFACE_BUDGET_MS = 1_500
 
 async function sendTask(sidebar: Frame, text: string): Promise<void> {
 	const input = sidebar.getByTestId("chat-input")
@@ -121,6 +122,7 @@ e2e(
 
 		await expect(sidebar.getByText(taskText, { exact: true }).first()).toBeVisible({ timeout: 5_000 })
 		await expect(sidebar.getByText("Dline read 1 file:", { exact: true })).toBeVisible({ timeout: 5_000 })
+		const browserMessageSurfaceMs = Math.round(performance.now() - historyClickedAt)
 		const footer = sidebar.getByRole("contentinfo")
 		const resumeButton = footer.getByText("Resume", { exact: true })
 		await expect(resumeButton).toBeVisible({ timeout: 5_000 })
@@ -132,7 +134,14 @@ e2e(
 				: output
 			return readHistorySurfaceDurationMs(currentOpeningOutput, taskId)
 		}, 5_000)
-		const timing = { browserSurfaceMs, extensionSurfaceMs }
+		const messageSurfaceMs = await E2ETestHelper.waitForValue(() => {
+			const output = E2ETestHelper.readDlineOutputIfPresent(userDataDir) ?? ""
+			const currentOpeningOutput = output.startsWith(outputBeforeHistoryOpen)
+				? output.slice(outputBeforeHistoryOpen.length)
+				: output
+			return readCompletedHistoryStageDurationMs(currentOpeningOutput, taskId, "history_message_surface")
+		}, 5_000)
+		const timing = { browserMessageSurfaceMs, browserSurfaceMs, messageSurfaceMs, extensionSurfaceMs }
 		console.log(`[history-resume-liveness] ${JSON.stringify(timing)}`)
 		await e2e.info().attach("history-resume-liveness.json", {
 			body: Buffer.from(`${JSON.stringify(timing, null, 2)}\n`, "utf8"),
@@ -141,6 +150,13 @@ e2e(
 		expect(extensionSurfaceMs, `Extension history surface must be ready under ${HISTORY_SURFACE_BUDGET_MS}ms`).toBeLessThan(
 			HISTORY_SURFACE_BUDGET_MS,
 		)
+		expect(messageSurfaceMs, "Message-ready publication must not wait for activity maintenance").toBeLessThan(
+			HISTORY_SURFACE_BUDGET_MS,
+		)
+		expect(browserMessageSurfaceMs, "Click-to-message visibility must include Webview transport and rendering").toBeLessThan(
+			BROWSER_MESSAGE_SURFACE_BUDGET_MS,
+		)
+		await expect(sidebar.getByTestId("history-task-opening")).toHaveCount(0)
 		await expect.poll(() => server.openAiRequestCount).toBe(2)
 		await expect(sidebar.getByText("E2E_HISTORY_LIVENESS_INTERRUPTED_MUST_NOT_RENDER", { exact: false })).toHaveCount(0)
 		await expect(resumeButton).toHaveAttribute("aria-disabled", "false", { timeout: 5_000 })

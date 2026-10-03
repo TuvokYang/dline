@@ -73,6 +73,41 @@ describe("TaskMessageResources", () => {
 		expect(window.close).toHaveBeenCalledOnce()
 	})
 
+	it("reuses the initial tail for covered pages while preserving durable overlays", async () => {
+		const { resources, messages, window } = fixture()
+		await resources.openDisplay()
+		window.getPage.mockClear()
+		expect(await resources.fetchMessages(-1, 200)).toEqual({
+			messages: messages.slice(-200),
+			totalCount: 512,
+			startIndex: 312,
+		})
+		expect((await resources.fetchMessages(320, 4)).messages).toEqual(messages.slice(320, 324))
+		const replacement = { ...messages[510], text: "updated" }
+		const appended: ClineMessage = { ts: 513, type: "ask", ask: "resume_task", text: "ready" }
+		await resources.persistMessage(replacement)
+		await resources.persistMessage(appended)
+		expect(await resources.fetchMessages(-1, 3)).toEqual({
+			messages: [replacement, messages[511], appended],
+			totalCount: 513,
+			startIndex: 510,
+		})
+		expect(window.getPage).not.toHaveBeenCalled()
+		expect((await resources.fetchMessages(310, 4)).messages).toEqual(messages.slice(310, 314))
+		expect(window.getPage).toHaveBeenCalledWith(310, 4)
+		await resources.close()
+	})
+
+	it("does not treat an incomplete initial tail as a contiguous cached page", async () => {
+		const { resources, messages, window } = fixture()
+		window.getLatest.mockResolvedValueOnce(messages.slice(-199))
+		await resources.openDisplay()
+		window.getPage.mockClear()
+		expect((await resources.fetchMessages(-1, 200)).messages).toEqual(messages.slice(-200))
+		expect(window.getPage).toHaveBeenCalledWith(312, 200)
+		await resources.close()
+	})
+
 	it("admits execution once on the same resource boundary and retains absolute paging", async () => {
 		const { resources, messages, ports, window, uiMessage, apiConversation } = fixture()
 		await resources.openDisplay()

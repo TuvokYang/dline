@@ -6007,9 +6007,23 @@ export class Task {
 	 *
 	 * Used for both readonly (locked task) and interactive resume scenarios.
 	 */
-	public async displayHistory(): Promise<void> {
+	public async displayHistory(options?: { onMessagesReady?: () => Promise<void> }): Promise<void> {
+		const surface = startHistoryReadinessStage(this.taskId, "history_message_surface", !this.readOnly)
+		try {
+			await this.messageResources.openDisplay()
+			if (this.controllerDetached) {
+				surface.stop({ outcome: "superseded" })
+				return
+			}
+			// Publish the bounded message surface before optional history presentation IO.
+			await options?.onMessagesReady?.()
+			surface.stop({ outcome: this.controllerDetached ? "superseded" : "success" })
+		} catch (error) {
+			surface.stop({ outcome: "failure" })
+			throw error
+		}
+		if (this.controllerDetached) return
 		await Promise.all([
-			this.messageResources.openDisplay(),
 			this.activityStore.hydrate().catch((error) => {
 				Logger.warn(`[Task ${this.taskId}] Failed to hydrate historical activities:`, error)
 			}),
