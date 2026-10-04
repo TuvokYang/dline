@@ -12,6 +12,7 @@ import type { ContextPressureObserverPort } from "../session/TaskProviderRequest
 import type { CompactionTrigger, LifecycleCommand } from "../stores/payload/TaskPayloadEnvelopes"
 import { shouldCompactAutomatically } from "./AutomaticCompactionPolicy"
 import type { CompactionRecoveryPort, CompactionRunOutcome } from "./CompactionRecovery"
+import type { AdmissionCompaction, AdmissionCompactionPort } from "./FinalContextWindowGuard"
 import { COMPACTION_FAILURE_MESSAGE } from "./MessageStateCompactionFailure"
 import { NOTHING_TO_COMPACT, requestTaskCompaction } from "./TaskCompactionRequest"
 
@@ -38,6 +39,8 @@ interface CompactionRunResult {
 	readonly outcome: CompactionRunOutcome
 	/** Why a run that ran failed, in the words its failure card used. */
 	readonly error?: string
+	/** No run was needed because nothing answered exists to condense. */
+	readonly nothingToCompact?: boolean
 }
 
 /**
@@ -87,11 +90,14 @@ export class CompactionRoundBarrier
 		ComposeCompactionBarrierPort,
 		CompactionSettlementObserverPort,
 		LifecycleBarrierPort,
-		CompactionRecoveryPort
+		CompactionRecoveryPort,
+		AdmissionCompactionPort
 {
 	private observed: ObservedPressure | undefined
 	/** The last round stopped on a failed automatic compaction and has not been retried. */
 	private stoppedOnFailure = false
+	/** The round being composed already compacted, so it must not summarize its own summary. */
+	private compactedThisRound = false
 	/** A `/compact` typed into a dialog reply, owed to the round that reply opens. */
 	private replied: { readonly command: LifecycleCommand; readonly generation: number } | undefined
 	/** Rounds waiting on a run, keyed by the run so a stale one only releases its own waiter. */
@@ -115,6 +121,25 @@ export class CompactionRoundBarrier
 
 	async settlement(compactionId: string): Promise<CompactionRunOutcome> {
 		return (await this.awaitRun(compactionId, false, new AbortController().signal)).outcome
+	}
+
+	/**
+	 * Compact for a round whose complete request measured over the trigger.
+	 *
+	 * The round already passed this barrier on the last request's usage; the
+	 * measurement of the request itself is the final word, but a round that
+	 * already compacted goes ahead rather than condensing its own summary.
+	 */
+	async compactForAdmission(signal: AbortSignal): Promise<AdmissionCompaction> {
+		const session = this.options.session()
+		if (!session || this.compactedThisRound || this.options.enabled?.() === false) return { kind: "skipped" }
+		this.compactedThisRound = true
+		const result = await this.compact(session, "automatic", signal)
+		if (result.nothingToCompact) return { kind: "nothing_to_compact" }
+		if (result.outcome === "completed") return { kind: "completed" }
+		if (result.outcome !== "failed") return { kind: "skipped" }
+		this.stoppedOnFailure = true
+		return { kind: "failed", error: result.error ?? COMPACTION_FAILURE_MESSAGE }
 	}
 
 	/**
@@ -193,15 +218,18 @@ export class CompactionRoundBarrier
 		this.observed = undefined
 		// This is the round the user chose to go on with instead of truncating.
 		this.stoppedOnFailure = false
+		this.compactedThisRound = false
 		const session = this.options.session()
 		if (!session) return ROUND_READY
 		if (manual) {
+			this.compactedThisRound = true
 			const { outcome } = await this.compact(session, "manual", input.signal, manual.premessage)
 			if (outcome === "completed") return ROUND_READY
 			return { kind: "withdrawn", reason: `manual_compaction_${outcome === "refused" ? "failed" : outcome}` }
 		}
 		if (!observed || !pressure || this.options.enabled?.() === false) return ROUND_READY
 		if (!shouldCompactAutomatically(this.options.state(), pressure)) return ROUND_READY
+		this.compactedThisRound = true
 		const result = await this.compact(session, "automatic", input.signal)
 		if (result.outcome !== "failed") return ROUND_READY
 		this.observed ??= observed
@@ -237,7 +265,9 @@ export class CompactionRoundBarrier
 			if (!request.accepted || !request.compactionId) {
 				this.options.onFailure?.(`${trigger} compaction not scheduled: ${request.result}`)
 				// Nothing settled yet means the context is already as small as it gets.
-				return { outcome: request.result === NOTHING_TO_COMPACT ? "completed" : "refused" }
+				return request.result === NOTHING_TO_COMPACT
+					? { outcome: "completed", nothingToCompact: true }
+					: { outcome: "refused" }
 			}
 			compactionId = request.compactionId
 		} catch (error) {

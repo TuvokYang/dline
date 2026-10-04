@@ -39,6 +39,8 @@ export interface TaskProviderRequestReporterOptions {
 	 * chat keeps the first attempt's countdown until the request settles.
 	 */
 	readonly retryView?: RetryCardView
+	/** The estimate the request about to start was admitted on; absent leaves its row without an anchor. */
+	readonly admittedEstimate?: () => number | undefined
 }
 
 /**
@@ -125,11 +127,17 @@ export class TaskProviderRequestReporter implements ProviderRequestReportPort {
 
 	async begin(input: { readonly turnId: string }): Promise<ProviderRequestRecord> {
 		const ts = this.options.nextPresentationId()
+		// The estimate the request was admitted on anchors its reported usage, so
+		// the next round's growth is measured estimate-to-estimate.
+		const estimate = this.options.admittedEstimate?.()
 		await this.options.messages.addToClineMessages({
 			ts,
 			type: "say",
 			say: "api_req_started",
-			text: JSON.stringify({ request: input.turnId } satisfies UiApiReqInfo),
+			text: JSON.stringify({
+				request: input.turnId,
+				...(estimate === undefined ? {} : { estimatedContextTokens: estimate, contextTokensSource: "estimate" as const }),
+			} satisfies UiApiReqInfo),
 		})
 		await this.options.usage?.started({
 			turnId: input.turnId,

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto"
+import { collectContextWindowRequestPressures } from "@core/context/context-management/context-pressure"
 import { getContextWindowInfo } from "@core/context/context-management/context-window-utils"
 import type { IgnoreController } from "@core/ignore/IgnoreController"
 import { LegacyInputAdapter } from "@core/input-semantics/LegacyInputAdapter"
@@ -20,6 +21,7 @@ import { CanonicalCheckpointRepository, canonicalCheckpointRef } from "../checkp
 import { renderCompactionInstruction } from "../compaction/CompactionInstruction"
 import { CompactionRequestScopes } from "../compaction/CompactionRequestScopes"
 import { CompactionRoundBarrier } from "../compaction/CompactionRoundBarrier"
+import { FinalContextWindowGuard } from "../compaction/FinalContextWindowGuard"
 import { InteractionCompactionReview } from "../compaction/InteractionCompactionReview"
 import { MessageStateCompactionFailure } from "../compaction/MessageStateCompactionFailure"
 import { MessageStateCompactionLanding } from "../compaction/MessageStateCompactionLanding"
@@ -542,6 +544,20 @@ export class TaskSessionCompositionService {
 		// Every Mode, Profile, or configuration switch ends in a handler rebuild,
 		// and the header must then describe the scope the task runs under.
 		api.onRebuilt(() => contextUsage.rebound())
+		// A run that produced nothing left the conversation as it was, which the
+		// user cannot see unless the chat says so.
+		const compactionFailure = new MessageStateCompactionFailure(messages, nextPresentationId)
+		// The request itself, not the last one's usage, decides whether a round
+		// fits; it is measured on the same frame the request is sent with.
+		const contextWindowGuard = new FinalContextWindowGuard({
+			taskId: options.taskId,
+			frames: providerRequests,
+			conversation: conversationView,
+			requestPressures: () => collectContextWindowRequestPressures(messages.clineMessages),
+			triggerOptions: readCompactTriggerOptions,
+			compaction,
+			failure: compactionFailure,
+		})
 		const opened = await openActiveTaskSession({
 			taskId: options.taskId,
 			openReason: options.openReason,
@@ -573,6 +589,7 @@ export class TaskSessionCompositionService {
 			// rather than submission because the kernel also opens rounds on its
 			// own, and those must not skip the barrier.
 			compactionBarrier: compaction,
+			contextWindowGuard,
 			// The barrier releases when the whole run ends, so it observes the
 			// executor port rather than the provider call inside it.
 			compactionSettlement: compaction,
@@ -582,9 +599,7 @@ export class TaskSessionCompositionService {
 			// A summary the user asked for is theirs to accept or regenerate before
 			// it replaces the conversation, through the same dialog every task uses.
 			compactionReview: new InteractionCompactionReview(interactions),
-			// A run that produced nothing left the conversation as it was, which the
-			// user cannot see unless the chat says so.
-			compactionFailure: new MessageStateCompactionFailure(messages, nextPresentationId),
+			compactionFailure,
 			// A `new_task` hands the conversation to a successor on the same
 			// surface. The Controller owns that surface, so it starts the successor
 			// once the runtime has durably marked this task consumed.
@@ -630,6 +645,7 @@ export class TaskSessionCompositionService {
 					api: () => api.current(),
 					promptCache,
 					compactTriggerOptions: readCompactTriggerOptions,
+					admittedEstimate: () => contextWindowGuard.admittedEstimate(),
 					// Retries happen before the stream says anything, so each attempt's
 					// card has to be delivered to the chat rather than left for the countdown.
 					retryView: {

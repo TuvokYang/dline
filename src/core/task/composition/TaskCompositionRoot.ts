@@ -9,6 +9,7 @@ import {
 } from "../executors/compaction/ProductionCompactionAdapter"
 import {
 	type ComposeCompactionBarrierPort,
+	type ComposeContextWindowGuardPort,
 	type ComposeContinuationPort,
 	type ComposeEnvironmentPort,
 	ProductionComposeAdapter,
@@ -70,6 +71,8 @@ export interface TaskCompositionOptions {
 	readonly deferRestoredCommands?: OpenTaskShellOptions["deferRestoredCommands"]
 	/** Condenses the conversation before a round is drafted; see ComposeCompactionBarrierPort. */
 	readonly compactionBarrier?: ComposeCompactionBarrierPort
+	/** Measures each round's complete request before it is drafted; see ComposeContextWindowGuardPort. */
+	readonly contextWindowGuard?: ComposeContextWindowGuardPort
 	/** Write the chat row a revealed dialog anchors to; see ProductionDialogAdapter. */
 	readonly writeDialogAnchor?: ProductionDialogAdapterOptions["writeAnchor"]
 	/** Receivers to fail when a stop makes their answer impossible; see DialogWaiterPort. */
@@ -163,6 +166,7 @@ export async function composeTask(options: TaskCompositionOptions): Promise<Task
 					environment: options.services.environment,
 					continuation: options.services.continuation,
 					compactionBarrier: options.compactionBarrier,
+					contextWindowGuard: options.contextWindowGuard,
 					retainedInputPresentation: options.retainedInputPresentation,
 					conversation: conversationView,
 				}),

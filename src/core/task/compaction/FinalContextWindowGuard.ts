@@ -1,0 +1,171 @@
+import { randomUUID } from "node:crypto"
+import {
+	estimateContextWindowCandidate,
+	resolveContextWindowProjection,
+} from "@core/context/context-management/context-window-projection"
+import {
+	type CompactTriggerOptions,
+	computeCompactTrigger,
+	computeSummarizeBudget,
+	getContextWindowInfo,
+} from "@core/context/context-management/context-window-utils"
+import type { ClineStorageMessage } from "@shared/messages/content"
+import { Logger } from "@shared/services/Logger"
+import { NO_COMPLETE_LOGICAL_TURN } from "../ContextCompactionSession"
+import { getHighContextPressureWarning, withHighContextPressureWarning } from "../environment-context"
+import type { CompactionFailurePresentationPort } from "../executors/compaction/ProductionCompactionAdapter"
+import type { ComposeContextWindowGuardPort, ContextWindowAdmission } from "../executors/compose/ProductionComposeAdapter"
+import type { ProviderRequestFramePort } from "../executors/provider/service/ProviderRequest"
+import { AUTOMATIC_COMPACTION_FAILED } from "./CompactionRoundBarrier"
+
+type RequestPressures = Parameters<typeof resolveContextWindowProjection>[0]["requestInfos"]
+type Projection = ReturnType<typeof resolveContextWindowProjection>
+
+/** How a compaction the guard asked for ended. */
+export type AdmissionCompaction =
+	| { readonly kind: "completed" }
+	/** Nothing ran: compaction is off, or this round already compacted. */
+	| { readonly kind: "skipped" }
+	/** Nothing answered exists yet, so there is nothing a summary could replace. */
+	| { readonly kind: "nothing_to_compact" }
+	| { readonly kind: "failed"; readonly error: string }
+
+/** Compacts for a round whose complete request does not fit; owned by the compaction barrier. */
+export interface AdmissionCompactionPort {
+	compactForAdmission(signal: AbortSignal): Promise<AdmissionCompaction>
+}
+
+export interface FinalContextWindowGuardOptions {
+	readonly taskId: string
+	/** The frame ordinary requests use, so the measured system prompt and tools are the ones sent. */
+	readonly frames: ProviderRequestFramePort
+	/** The provider messages the round's draft will carry, its own inputs included. */
+	readonly conversation: { messages(): Promise<ClineStorageMessage[]> }
+	/** What earlier requests reported, the baseline the candidate is measured against. */
+	readonly requestPressures: () => RequestPressures
+	readonly triggerOptions: () => CompactTriggerOptions
+	/** Absent in assemblies that never compact; the guard then only measures and warns. */
+	readonly compaction?: AdmissionCompactionPort
+	/** Shows why a round that could not be compacted stopped. */
+	readonly failure?: CompactionFailurePresentationPort
+}
+
+interface Measurement {
+	readonly candidateEstimatedTokens: number
+	readonly contextWindow: number
+	readonly modelId: string
+	readonly projection: Projection
+	readonly apiIndex: number
+}
+
+/**
+ * The last word on whether a round's request fits, taken on the request itself.
+ *
+ * The usage the previous request reported only bounds the history; this round
+ * adds its inputs, its environment, and possibly a different system prompt.
+ * Measuring the complete candidate is what lets the very first request of a
+ * task stop before the provider when it can never fit, and what tells the
+ * model, inside the request it reads, that the window is nearly full.
+ */
+export class FinalContextWindowGuard implements ComposeContextWindowGuardPort {
+	private admitted: number | undefined
+
+	constructor(private readonly options: FinalContextWindowGuardOptions) {}
+
+	/**
+	 * The estimate of the request most recently admitted.
+	 *
+	 * Recorded with the request so its reported usage has an anchor: the next
+	 * round's growth is the difference between two estimates, not between an
+	 * estimate and a figure the provider counts differently.
+	 */
+	admittedEstimate(): number | undefined {
+		return this.admitted
+	}
+
+	async admit(input: { readonly signal: AbortSignal; readonly environment?: string }): Promise<ContextWindowAdmission> {
+		let environment = input.environment
+		let measured = await this.measure(input.signal, environment)
+		if (measured.projection.shouldCompact && this.options.compaction) {
+			const compaction = await this.options.compaction.compactForAdmission(input.signal)
+			if (compaction.kind === "nothing_to_compact") return await this.refuseUncompactable()
+			if (compaction.kind === "failed") {
+				return { kind: "failed", reason: AUTOMATIC_COMPACTION_FAILED, presentation: compaction.error }
+			}
+			if (compaction.kind === "completed") measured = await this.measure(input.signal, environment)
+		}
+		const warning = getHighContextPressureWarning({
+			contextWindow: measured.contextWindow,
+			lastApiReqTotalTokens: measured.projection.projectedUsageTokens,
+			modelId: measured.modelId,
+		})
+		if (warning && environment !== undefined) {
+			const warned = withHighContextPressureWarning(environment, warning)
+			if (warned !== environment) {
+				environment = warned
+				measured = await this.measure(input.signal, environment)
+			}
+		}
+		this.admitted = measured.candidateEstimatedTokens
+		this.log(measured)
+		return { kind: "ready", ...(environment === undefined ? {} : { environment }) }
+	}
+
+	private async measure(signal: AbortSignal, environment: string | undefined): Promise<Measurement> {
+		const frame = await this.options.frames.frame(signal)
+		const history = await this.options.conversation.messages()
+		const messages: ClineStorageMessage[] =
+			environment === undefined ? history : [...history, { role: "user", content: [{ type: "text", text: environment }] }]
+		const model = frame.api.getModel()
+		const candidateEstimatedTokens = estimateContextWindowCandidate(
+			{ systemPrompt: frame.systemPrompt, messages, tools: frame.tools, serverTools: frame.options?.serverTools ?? [] },
+			{ providerId: frame.api.getProviderId?.(), modelId: model.id },
+		)
+		const { contextWindow } = getContextWindowInfo(frame.api)
+		const projection = resolveContextWindowProjection({
+			requestInfos: this.options.requestPressures(),
+			candidateEstimatedTokens,
+			contextWindow,
+			triggerTokens: computeCompactTrigger(contextWindow, computeSummarizeBudget(), this.options.triggerOptions()),
+		})
+		return { candidateEstimatedTokens, contextWindow, modelId: model.id, projection, apiIndex: apiIndexOf(history) }
+	}
+
+	/**
+	 * Stop a round that does not fit and cannot be condensed.
+	 *
+	 * Nothing has been answered yet, so no summary could replace anything and
+	 * sending the request would only fail at the provider. No run happened, so
+	 * the card a failed run writes is written here.
+	 */
+	private async refuseUncompactable(): Promise<ContextWindowAdmission> {
+		const compactionId = `compaction:admission:${randomUUID()}`
+		await this.options.failure?.present({ compactionId, attempt: `${compactionId}:1`, error: NO_COMPLETE_LOGICAL_TURN })
+		return { kind: "failed", reason: AUTOMATIC_COMPACTION_FAILED, presentation: NO_COMPLETE_LOGICAL_TURN }
+	}
+
+	private log(measured: Measurement): void {
+		const { projection } = measured
+		// One object argument, so everything after the prefix is the JSON a
+		// diagnostic reader can parse.
+		Logger.debug(`[Task ${this.options.taskId}] final context-window projection`, {
+			apiIndex: measured.apiIndex,
+			candidateEstimatedTokens: measured.candidateEstimatedTokens,
+			contextWindow: measured.contextWindow,
+			baselineTokens: projection.baselineTokens,
+			pendingDeltaTokens: projection.pendingDeltaTokens,
+			candidateDeltaTokens: projection.candidateDeltaTokens,
+			projectedUsageTokens: projection.projectedUsageTokens,
+			pressureSource: projection.pressureSource,
+			shouldCompact: projection.shouldCompact,
+		})
+	}
+}
+
+/**
+ * The ordinal of this request among the task's ordinary requests, as the
+ * alternating history counts it: two messages per answered turn before it.
+ */
+function apiIndexOf(history: readonly ClineStorageMessage[]): number {
+	return history.filter((message) => message.role === "assistant").length * 2
+}

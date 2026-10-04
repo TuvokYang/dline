@@ -86,6 +86,23 @@ export type RoundReadiness =
 	| { readonly kind: "withdrawn"; readonly reason: string }
 	| { readonly kind: "failed"; readonly reason: string; readonly presentation?: string }
 
+/**
+ * Measures the complete request a round is about to draft, before it is drafted.
+ *
+ * Only the request with its system prompt, tools, history, this round's input
+ * and its environment says whether it fits, so the decision is made here
+ * rather than from the last request's usage alone. The environment comes back
+ * because a request close to the limit carries a warning in it.
+ */
+export interface ComposeContextWindowGuardPort {
+	admit(input: { readonly signal: AbortSignal; readonly environment?: string }): Promise<ContextWindowAdmission>
+}
+
+/** Whether the measured request may be drafted, and the environment it carries if so. */
+export type ContextWindowAdmission =
+	| { readonly kind: "ready"; readonly environment?: string }
+	| { readonly kind: "failed"; readonly reason: string; readonly presentation?: string }
+
 export interface ProductionComposeAdapterOptions {
 	readonly payloads: TaskPayloadStore
 	readonly journal: ConversationJournal
@@ -95,6 +112,8 @@ export interface ProductionComposeAdapterOptions {
 	readonly continuation?: ComposeContinuationPort
 	/** Condenses the conversation before this round is drafted, when one is owed. */
 	readonly compactionBarrier?: ComposeCompactionBarrierPort
+	/** Measures the round's complete request once its inputs are journaled; absent admits every round. */
+	readonly contextWindowGuard?: ComposeContextWindowGuardPort
 	/** Projects the selected user-authored batch without model-only guidance. */
 	readonly retainedInputPresentation?: RetainedInputPresentationPort
 	/** Measures conversation growth between drafts; without it only tool results count as growth. */
@@ -192,7 +211,17 @@ export class ProductionComposeAdapter implements ComposePort {
 			})
 		}
 		if (input.signal.aborted) throw input.signal.reason
-		await this.appendEnvironment(input, state.revision, state.generation)
+		const rendered = await this.options.environment?.render({ turnId: input.turnId, signal: input.signal })
+		const admission = (await this.options.contextWindowGuard?.admit({
+			signal: input.signal,
+			...(rendered ? { environment: rendered } : {}),
+		})) ?? { kind: "ready" as const, environment: rendered }
+		if (input.signal.aborted) throw input.signal.reason
+		if (admission.kind === "failed") {
+			const { reason, presentation } = admission
+			return { failed: { reason, ...(presentation === undefined ? {} : { presentation }) } }
+		}
+		await this.appendEnvironment(input, admission.environment, state.revision, state.generation)
 		// Only the position: the conversation through it is fixed, so recording
 		// every visible payload would only grow the draft with the conversation.
 		const envelope: ProviderDraftEnvelope = {
@@ -296,8 +325,12 @@ export class ProductionComposeAdapter implements ComposePort {
 	 * legacy order: user content first, then the snapshot describing the
 	 * workspace at the moment the round was composed.
 	 */
-	private async appendEnvironment(input: ComposeRoundInput, revision: number, generation: number): Promise<void> {
-		const text = await this.options.environment?.render({ turnId: input.turnId, signal: input.signal })
+	private async appendEnvironment(
+		input: ComposeRoundInput,
+		text: string | undefined,
+		revision: number,
+		generation: number,
+	): Promise<void> {
 		if (!text) return
 		if (input.signal.aborted) throw input.signal.reason
 		const envelope: EnvironmentDetailsEnvelope = { kind: "environment_details", text }

@@ -123,6 +123,9 @@ export type ContextCompactionReprojection = TargetWindowFittingDecision & {
 	indicator?: ContextCompactionIndicatorProjection
 }
 
+/** Why a compaction cannot run before the conversation holds an answered turn. */
+export const NO_COMPLETE_LOGICAL_TURN = "No complete logical turn is available for context compaction."
+
 export type ContextCompactionSessionEvent =
 	| {
 			kind: "pass_preparing"
@@ -310,7 +313,7 @@ export class ContextCompactionSession {
 		const logicalTurnIndexMs = elapsedCompactionMs(logicalTurnIndexStartedAtMs)
 		let state = tryStartTargetWindowFitting(logicalTurnIndex, input.operationId, sourceSnapshot)
 		if (!state) {
-			const reason = "No complete logical turn is available for context compaction."
+			const reason = NO_COMPLETE_LOGICAL_TURN
 			await this.ports.publish(input, { kind: "failed", error: reason })
 			this.active.settle()
 			this.active = undefined
