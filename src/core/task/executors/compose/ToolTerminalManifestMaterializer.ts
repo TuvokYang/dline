@@ -50,12 +50,20 @@ function syntheticResult(block: ToolTerminalManifest["blocks"][number], invocati
 	}
 }
 
-/** Persist the kernel's ordered terminal view without rewriting raw journal facts. */
+const TOKEN_ESTIMATE_BYTES = 4
+
+/** Conservative text-token estimate for the terminal content added to the next request. */
+function estimateManifestTokens(manifest: ToolTerminalManifestEnvelope): number {
+	const bytes = manifest.results.reduce((total, result) => total + Buffer.byteLength(result.content, "utf8"), 0)
+	return bytes === 0 ? 0 : Math.ceil(bytes / TOKEN_ESTIMATE_BYTES)
+}
+
+/** Persist the kernel's ordered terminal view and report its projected request growth. */
 export async function materializeToolTerminalManifest(input: {
 	readonly manifest: ToolTerminalManifest
 	readonly payloads: TaskPayloadStore
 	readonly journal: ConversationJournal
-}): Promise<void> {
+}): Promise<number> {
 	const operationId = `tool.terminal_manifest:${input.manifest.turnId}`
 	const existing = await input.journal.findByOperation(operationId)
 	if (existing) {
@@ -64,7 +72,7 @@ export async function materializeToolTerminalManifest(input: {
 		const payload = decodeTaskPayload<ToolTerminalManifestEnvelope>(await input.payloads.read(existing.payloadRef))
 		if (payload.kind !== "tool_terminal_manifest" || payload.turnId !== input.manifest.turnId)
 			throw new Error("InvalidToolTerminalManifestPayload")
-		return
+		return estimateManifestTokens(payload)
 	}
 
 	const rawResults = new Map<string, JournalPayloadEntry>()
@@ -114,4 +122,5 @@ export async function materializeToolTerminalManifest(input: {
 		source: "tool",
 		causation: { turnId: input.manifest.turnId },
 	})
+	return estimateManifestTokens(envelope)
 }

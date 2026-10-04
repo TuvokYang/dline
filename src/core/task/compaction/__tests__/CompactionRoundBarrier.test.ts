@@ -103,6 +103,20 @@ describe("CompactionRoundBarrier - automatic", () => {
 		expect(p.contexts[0].trigger).toBe("automatic")
 	})
 
+	it("includes terminal-result growth that arrived after the last provider usage sample", async () => {
+		const state = running()
+		const p = probe(() => state)
+		const barrier = new CompactionRoundBarrier({ session: () => p.session, state: () => state })
+
+		barrier.observe({ contextTokens: TRIGGER - 10_000, compactTriggerTokens: TRIGGER })
+		const waiting = barrier.settleBeforeRound({ ...round(), pendingContextTokens: 10_000 })
+		await drain()
+		expect(p.scheduled).toHaveLength(1)
+
+		await run(barrier, p.scheduled[0])
+		await expect(waiting).resolves.toEqual({ kind: "ready" })
+	})
+
 	it("still lets the round through when an automatic run fails", async () => {
 		const state = running()
 		const p = probe(() => state)

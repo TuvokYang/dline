@@ -236,10 +236,10 @@ describe("JournalCompactionConversation", () => {
 		)
 		// Order matters: the next request must read the summary first, then the
 		// question it has not answered, then the user's reply to it.
-		expect(texts(messages.slice(0, 2))).toEqual(["original task", "condensed so far"])
-		expect(mentions(messages[2], "call-qna")).toBe(true)
-		expect(mentions(messages[3], PENDING_REPLY)).toBe(true)
-		expect(messages).toHaveLength(4)
+		expect(texts(messages.slice(0, 1))).toEqual(["condensed so far"])
+		expect(mentions(messages[1], "call-qna")).toBe(true)
+		expect(mentions(messages[2], PENDING_REPLY)).toBe(true)
+		expect(messages).toHaveLength(3)
 		expect(after).toBeLessThanOrEqual(messages.length)
 	})
 
@@ -255,42 +255,47 @@ describe("JournalCompactionConversation", () => {
 		const messages = await new ProviderJournalMessageMaterializer(payloads).materialize(
 			projection.visibleMessages.flatMap((entry) => (entry.payloadRef ? [entry.payloadRef] : [])),
 		)
-		expect(texts(messages.slice(0, 2))).toEqual(["original task", "condensed so far"])
-		expect(mentions(messages[3], PENDING_REPLY)).toBe(true)
-		expect(texts(messages.slice(4))).toEqual(["arrived during compaction"])
+		expect(texts(messages.slice(0, 1))).toEqual(["condensed so far"])
+		expect(mentions(messages[2], PENDING_REPLY)).toBe(true)
+		expect(texts(messages.slice(3))).toEqual(["arrived during compaction"])
 	})
 
-	it("replaces the condensed span with the summary while keeping the opening request", async () => {
+	it("replaces the condensed span, opening request included, with a user-role summary", async () => {
 		const { journal, payloads, conversation } = open()
 		await seed(journal, payloads)
 
 		await landCurrent(conversation, "compaction:1", "condensed so far")
 
-		expect(texts((await conversation.read()).messages)).toEqual(["original task", "condensed so far"])
+		const messages = await visible(journal, payloads)
+		expect(messages.map((message) => message.role)).toEqual(["user"])
+		expect(texts(messages)).toEqual(["condensed so far"])
+		// Nothing the model answered is left, so there is nothing more to condense.
+		expect((await conversation.read()).span).toBeUndefined()
 	})
 
-	it("keeps the summary out of the next compaction's condensed span", async () => {
+	it("carries the previous summary into the next compaction's condensed span", async () => {
 		const { journal, payloads, conversation } = open()
 		await seed(journal, payloads)
 		await landCurrent(conversation, "compaction:1", "first summary")
 
-		const payloadRef = await payloads.put(
-			encodeTaskPayload<UserInputEnvelope>({ kind: "user_input", text: "later question" }),
+		await write(journal, payloads, "intake:3", { kind: "user_input", text: "later question" })
+		await write(
+			journal,
+			payloads,
+			"provider:3",
+			{ kind: "provider_final", text: "later answer", turnPlan: { mode: "serial", blocks: [] } },
+			"provider",
 		)
-		await journal.append({ operationId: "intake:3", payloadRef, source: "intake" })
+		await write(journal, payloads, "intake:4", { kind: "user_input", text: "pending question" })
 		await landCurrent(conversation, "compaction:2", "second summary")
 
 		// The first summary is inside the second condensed span, so it is replaced
 		// rather than accumulated: compaction must not grow what it shrinks.
-		// "later question" has not been answered by any request yet, so it is the
-		// round in progress and stays after the summary. The earlier expectation
-		// had it condensed away, which is the same loss of unprocessed user input
-		// this contract exists to prevent.
-		const projection = await journal.project()
-		const messages = await new ProviderJournalMessageMaterializer(payloads).materialize(
-			projection.visibleMessages.flatMap((entry) => (entry.payloadRef ? [entry.payloadRef] : [])),
-		)
-		expect(texts(messages)).toEqual(["original task", "second summary", "later question"])
+		// "pending question" has not been answered by any request yet, so it is the
+		// round in progress and stays after the summary instead of being condensed
+		// unprocessed.
+		const messages = await visible(journal, payloads)
+		expect(texts(messages)).toEqual(["second summary", "pending question"])
 	})
 
 	it("offers no span when only the opening request exists, and refuses to land without one", async () => {
@@ -347,11 +352,11 @@ describe("JournalCompactionConversation", () => {
 		})
 
 		const messages = await visible(journal, payloads)
-		expect(messages.map((message) => message.role)).toEqual(["user", "assistant", "user", "user", "assistant"])
-		expect(texts(messages.slice(0, 3))).toEqual(["original task", "condensed so far", LATEST_REPLY])
-		expect(messages[2]?.content).toEqual(expect.arrayContaining([expect.objectContaining({ type: "image" })]))
-		expect(mentions(messages[3], "ENVIRONMENT_SNAPSHOT")).toBe(true)
-		expect(mentions(messages[4], "call-ready")).toBe(true)
+		expect(messages.map((message) => message.role)).toEqual(["user", "user", "user", "assistant"])
+		expect(texts(messages.slice(0, 2))).toEqual(["condensed so far", LATEST_REPLY])
+		expect(messages[1]?.content).toEqual(expect.arrayContaining([expect.objectContaining({ type: "image" })]))
+		expect(mentions(messages[2], "ENVIRONMENT_SNAPSHOT")).toBe(true)
+		expect(mentions(messages[3], "call-ready")).toBe(true)
 		// No result survives for a call the summary took away.
 		expect(messages.some((message) => mentions(message, "call-history"))).toBe(false)
 	})
@@ -378,9 +383,9 @@ describe("JournalCompactionConversation", () => {
 		})
 
 		const messages = await visible(journal, payloads)
-		expect(texts(messages.slice(0, 3))).toEqual(["original task", "condensed so far", LATEST_REPLY])
-		expect(mentions(messages[3], "call-next")).toBe(true)
-		expect(messages).toHaveLength(4)
+		expect(texts(messages.slice(0, 2))).toEqual(["condensed so far", LATEST_REPLY])
+		expect(mentions(messages[2], "call-next")).toBe(true)
+		expect(messages).toHaveLength(3)
 	})
 
 	it("condenses a finished tool round before the call that is still waiting on the user", async () => {
@@ -400,9 +405,31 @@ describe("JournalCompactionConversation", () => {
 		await landCurrent(conversation, "compaction:1", "condensed so far")
 
 		const messages = await visible(journal, payloads)
-		expect(texts(messages.slice(0, 2))).toEqual(["original task", "condensed so far"])
-		expect(mentions(messages[2], "call-ask")).toBe(true)
-		expect(messages).toHaveLength(3)
+		expect(texts(messages.slice(0, 1))).toEqual(["condensed so far"])
+		expect(mentions(messages[1], "call-ask")).toBe(true)
+		expect(messages).toHaveLength(2)
+	})
+
+	it("summarizes a completed tool round whose results no request carried yet (WS-010 AC-WS010-011-01)", async () => {
+		const { journal, payloads, conversation } = open()
+		await write(journal, payloads, "intake:1", { kind: "user_input", text: "original task" })
+		await write(journal, payloads, "provider:1", call("call-read", "read_file"), "provider")
+		await write(
+			journal,
+			payloads,
+			"tool.result:read",
+			result("call-read", [{ type: "text", text: "PENDING_RESULT" }]),
+			"tool",
+		)
+
+		const source = await conversation.read()
+
+		expect(source.continuation).toBeUndefined()
+		expect(source.messages.some((message) => mentions(message, "PENDING_RESULT"))).toBe(true)
+
+		await landCurrent(conversation, "compaction:1", "condensed so far")
+
+		expect(texts(await visible(journal, payloads))).toEqual(["condensed so far"])
 	})
 
 	it("hands the reply a summary replays on to the summary that replaces it", async () => {
@@ -421,7 +448,7 @@ describe("JournalCompactionConversation", () => {
 
 		// The model is still in the turn the reply opened, so the next summary
 		// replaces the first one without taking the reply with it.
-		expect(texts(second.messages)).toEqual(["original task", "first summary"])
+		expect(texts(second.messages)).toEqual(["first summary"])
 		expect(second.continuation).toEqual({ text: LATEST_REPLY })
 
 		await conversation.land({
@@ -433,9 +460,9 @@ describe("JournalCompactionConversation", () => {
 		})
 
 		const messages = await visible(journal, payloads)
-		expect(texts(messages.slice(0, 3))).toEqual(["original task", "second summary", LATEST_REPLY])
-		expect(mentions(messages[4], "call-ready")).toBe(true)
-		expect(messages).toHaveLength(5)
+		expect(texts(messages.slice(0, 2))).toEqual(["second summary", LATEST_REPLY])
+		expect(mentions(messages[3], "call-ready")).toBe(true)
+		expect(messages).toHaveLength(4)
 	})
 
 	it("tells a person's input from system context by what was journaled, not by the source it was filed under", async () => {

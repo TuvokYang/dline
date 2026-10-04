@@ -181,12 +181,12 @@ export class ProviderJournalMessageMaterializer {
 				return textMessage((payload as CoTaskMessageEnvelope).text)
 			case "turn_continuation":
 				return textMessage((payload as TurnContinuationEnvelope).text)
-			case "compaction_summary": {
-				// The summary speaks for the assistant turns it replaced, so it
-				// takes their role; a user-role summary would read as new input.
-				const text = (payload as CompactionSummaryEnvelope).text
-				return { role: "assistant", content: [{ type: "text", text }], ts: Date.now() }
-			}
+			case "compaction_summary":
+				// The summary replaces the conversation from its opening request on,
+				// so it opens the next request as user context, as the summary card
+				// projection always has; an assistant-first request is invalid for
+				// providers that require the conversation to start with the user.
+				return textMessage((payload as CompactionSummaryEnvelope).text)
 			case "legacy_message":
 				// Written by an older build and replayed exactly as it was sent.
 				return (payload as LegacyMessageEnvelope).message

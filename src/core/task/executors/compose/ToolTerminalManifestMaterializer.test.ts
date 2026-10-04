@@ -180,4 +180,44 @@ describe("ToolTerminalManifestMaterializer", () => {
 			"late success must not become canonical",
 		)
 	})
+
+	it("lands the terminal batch before compaction reads the round and reports its unsent growth", async () => {
+		const payloads = new InMemoryTaskPayloadStore()
+		const journal = new InMemoryConversationJournal()
+		const invocationRef = await payloads.put(encodeTaskPayload(invocation("b0")))
+		await appendRawResult(journal, payloads, "b0", "x".repeat(4_000))
+		const operationId = `tool.terminal_manifest:${TURN_ID}`
+		const observed: { manifestLanded: boolean; pendingContextTokens: number | undefined }[] = []
+		const adapter = new ProductionComposeAdapter({
+			payloads,
+			journal,
+			readState: () => createInitialTaskState("task-1"),
+			compactionBarrier: {
+				settleBeforeRound: async (input) => {
+					observed.push({
+						manifestLanded: Boolean(await journal.findByOperation(operationId)),
+						pendingContextTokens: input.pendingContextTokens,
+					})
+					return { kind: "ready" }
+				},
+			},
+		})
+
+		await adapter.compose({
+			turnId: "turn-next",
+			admittedEntryIds: [],
+			toolTerminals: {
+				turnId: TURN_ID,
+				blocks: [{ blockId: "b0", phase: "completed", invocationRef }],
+			},
+			signal: new AbortController().signal,
+		})
+
+		const manifestEntry = await journal.findByOperation(operationId)
+		if (!manifestEntry?.payloadRef) throw new Error("Missing terminal manifest")
+		const envelope = decodeTaskPayload<ToolTerminalManifestEnvelope>(await payloads.read(manifestEntry.payloadRef))
+		const resultBytes = envelope.results.reduce((total, entry) => total + Buffer.byteLength(entry.content, "utf8"), 0)
+		expect(resultBytes).toBeGreaterThan(4_000)
+		expect(observed).toEqual([{ manifestLanded: true, pendingContextTokens: Math.ceil(resultBytes / 4) }])
+	})
 })

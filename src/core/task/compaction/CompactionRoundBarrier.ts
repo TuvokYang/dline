@@ -144,13 +144,16 @@ export class CompactionRoundBarrier
 	async settleBeforeRound(input: {
 		readonly signal: AbortSignal
 		readonly lifecycle: readonly LifecycleCommand[]
+		readonly pendingContextTokens?: number
 	}): Promise<RoundReadiness> {
 		const replied = this.takeReplied()
 		const manual = mergeOwedCompactions([
 			...input.lifecycle.filter((command) => this.owns(command.commandId)),
 			...(replied ? [replied] : []),
 		])
-		const pressure = this.observed
+		const observed = this.observed
+		const pendingContextTokens = Math.max(0, input.pendingContextTokens ?? 0)
+		const pressure = observed ? { ...observed, contextTokens: observed.contextTokens + pendingContextTokens } : undefined
 		// Consumed whatever the outcome: a refused or failed compaction must not
 		// make every later round retry the same request forever.
 		this.observed = undefined

@@ -104,11 +104,6 @@ function toolNames(messages: readonly ClineStorageMessage[]): ToolNames {
 	return names
 }
 
-function resultTexts(block: ClineUserToolResultContentBlock): string[] {
-	if (typeof block.content === "string") return [block.content]
-	return block.content.flatMap((part) => (part.type === "text" ? [part.text] : []))
-}
-
 function resultParts(block: ClineUserToolResultContentBlock): Array<ClineTextContentBlock | ClineImageContentBlock> {
 	return typeof block.content === "string" ? [{ type: "text", text: block.content }] : block.content
 }
@@ -190,17 +185,25 @@ function settledEnd(messages: readonly ClineStorageMessage[], limit: number): nu
 }
 
 /**
- * Index of the last message the model has already answered.
+ * Index of the last message a summary may stand for.
  *
- * Anything after the last assistant message reached the conversation after the
- * model last spoke - a reply the user just typed, the result of a tool the
- * model is waiting on - so no request has carried it yet. Summarizing it would
- * hand the model's next request a summary of input it never processed instead
- * of the input itself. An assistant call whose result is still unsettled is
- * excluded with it, so the settled span stays provider-projectable on its own.
+ * Input a person wrote after the model last spoke opens the next turn, so no
+ * request has carried it and it stays verbatim after the summary. Tool results
+ * that answer the model's last calls are different: they close the turn the
+ * model already opened, so that completed turn is summarized whole rather than
+ * leaving its results behind without their calls (WS-010 AC-WS010-011-01). An
+ * assistant call whose result is still unsettled is excluded with it, so the
+ * settled span stays provider-projectable on its own.
  */
-function lastSettledIndex(messages: readonly ClineStorageMessage[]): number {
-	return settledEnd(messages, lastAssistantIndex(messages))
+function lastSettledIndex(items: readonly ConversationItem[], names: ToolNames): number {
+	const messages = items.map((item) => item.message)
+	let end = lastAssistantIndex(messages)
+	while (end >= 0) {
+		const next = items[end + 1]
+		if (!next || toolResults(next.message).length === 0 || opensTurn(next, names)) break
+		end++
+	}
+	return settledEnd(messages, end)
 }
 
 /** Index of the first call the model is still waiting on, or -1 when the journal answers every call. */
@@ -244,7 +247,7 @@ function settledBoundary(
 	names: ToolNames,
 ): { readonly end: number; readonly reply: boolean } {
 	const messages = items.map((item) => item.message)
-	const end = lastSettledIndex(messages)
+	const end = lastSettledIndex(items, names)
 	const start = openTurnStart(items, names)
 	const opening = messages[start]
 	if (start < 0 || start > end || !opening) return { end, reply: false }
@@ -354,19 +357,20 @@ export class JournalCompactionConversation implements CompactionConversationPort
 	/**
 	 * The settled conversation, fixed as a span when it was read.
 	 *
-	 * The opening request is part of the source but never of the span: the
-	 * summary describes that task, so condensing it would leave the model
-	 * summarizing work it cannot name.
+	 * The span starts at logical turn 0, opening request included: the summary
+	 * carries the task forward, so the next request reads the summary in place
+	 * of the request rather than both. A conversation the model has not answered
+	 * yet has nothing settled and offers no span.
 	 */
 	async read(): Promise<CompactionSource> {
 		const items = await this.items()
 		const all = items.map((item) => item.message)
 		const names = toolNames(all)
 		const { end, reply } = settledBoundary(items, names)
-		const first = items[1]
+		const first = items[0]
 		const last = items[end]
 		// Nothing condensable: the source is only read to be refused, so it stays what was settled.
-		if (end < 1 || !first || !last) return { messages: all.slice(0, lastSettledIndex(all) + 1) }
+		if (end < 0 || !first || !last) return { messages: all.slice(0, lastSettledIndex(items, names) + 1) }
 		const messages = items
 			.slice(0, end + 1)
 			.map((item, index) => (reply && index === end ? withoutReplies(item.message, names) : item.message))

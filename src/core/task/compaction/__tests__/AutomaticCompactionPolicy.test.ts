@@ -14,7 +14,16 @@ describe("automatic compaction policy", () => {
 	})
 
 	it("leaves a conversation that still fits alone", () => {
-		expect(shouldCompactAutomatically(running(), { contextTokens: TRIGGER - 1, compactTriggerTokens: TRIGGER })).toBe(false)
+		// The shared projected-usage rule keeps the 2K estimation tolerance below the trigger.
+		expect(shouldCompactAutomatically(running(), { contextTokens: TRIGGER - 2_001, compactTriggerTokens: TRIGGER })).toBe(
+			false,
+		)
+	})
+
+	it("compacts once projected usage reaches the trigger within the estimation tolerance", () => {
+		expect(shouldCompactAutomatically(running(), { contextTokens: TRIGGER - 2_000, compactTriggerTokens: TRIGGER })).toBe(
+			true,
+		)
 	})
 
 	it("does not start a second run while one already owns the next summary", () => {

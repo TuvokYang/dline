@@ -54,6 +54,8 @@ export interface ComposeCompactionBarrierPort {
 	settleBeforeRound(input: {
 		readonly signal: AbortSignal
 		readonly lifecycle: readonly LifecycleCommand[]
+		/** Text tokens added after the last provider-reported pressure sample. */
+		readonly pendingContextTokens?: number
 	}): Promise<RoundReadiness>
 }
 
@@ -106,11 +108,22 @@ export class ProductionComposeAdapter implements ComposePort {
 	async compose(input: ComposeRoundInput): Promise<ComposeRoundResult> {
 		if (input.signal.aborted) throw input.signal.reason
 		const lifecycle = await this.lifecycleOf([...this.admittedEntries(input), ...(input.respondedQueue?.entries ?? [])])
-		// Before the conversation is read, so the draft below describes what the
-		// compaction left behind rather than the one that was too large.
+		// Canonicalize the completed turn before compaction reads it. Landing the
+		// summary first and appending this manifest afterwards would reintroduce the
+		// very tool results the summary replaced.
+		const pendingContextTokens = input.toolTerminals
+			? await materializeToolTerminalManifest({
+					manifest: input.toolTerminals,
+					payloads: this.options.payloads,
+					journal: this.options.journal,
+				})
+			: 0
+		// Before the conversation is drafted, so the draft below describes what
+		// compaction left behind rather than the request that was too large.
 		const readiness = (await this.options.compactionBarrier?.settleBeforeRound({
 			signal: input.signal,
 			lifecycle,
+			pendingContextTokens,
 		})) ?? { kind: "ready" }
 		if (input.signal.aborted) throw input.signal.reason
 		if (readiness.kind === "withdrawn") return { withdrawn: { reason: readiness.reason } }
@@ -118,13 +131,6 @@ export class ProductionComposeAdapter implements ComposePort {
 		const state = this.options.readState()
 		const entries = this.admittedEntries(input)
 
-		if (input.toolTerminals) {
-			await materializeToolTerminalManifest({
-				manifest: input.toolTerminals,
-				payloads: this.options.payloads,
-				journal: this.options.journal,
-			})
-		}
 		await this.appendContinuation(input, state.generation)
 		// Tool feedback carries its model text in the paired result. These original
 		// refs carry admission metadata only: never append their text a second time.

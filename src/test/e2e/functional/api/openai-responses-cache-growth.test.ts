@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises"
+import { mkdir, readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
@@ -68,7 +68,14 @@ async function prepareRealCorpus(workspaceDir: string): Promise<readonly string[
 	return Promise.all(
 		SOURCE_SNAPSHOTS.map(async (sourceName, index) => {
 			const relativePath = path.join("cache-corpus", `cache-corpus-${String(index + 1).padStart(2, "0")}.snap`)
-			await copyFile(path.join(sourceDirectory, sourceName), path.join(workspaceDir, relativePath))
+			const source = await readFile(path.join(sourceDirectory, sourceName), "utf8")
+			// Keep the exact file identity inside the real tool result, rather than
+			// assuming read_file decorates successful content with its input path.
+			await writeFile(
+				path.join(workspaceDir, relativePath),
+				`E2E_CACHE_CORPUS ${path.basename(relativePath)}\n${source}`,
+				"utf8",
+			)
 			return relativePath.replaceAll("\\", "/")
 		}),
 	)
