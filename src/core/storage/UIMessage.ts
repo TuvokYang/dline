@@ -9,6 +9,26 @@ import { appendJsonl, canAppendJsonl, readJsonl, writeJsonl } from "./backend/js
 import { dedupeClineMessagesByTs, ensureTaskDirectoryExists, GlobalFileNames, getDlineDocumentsPath } from "./disk"
 import { UIMessageWindowReader } from "./UIMessageWindowReader"
 
+function projectPersistedMessages(messages: ClineMessage[]): ClineMessage[] {
+	const selections = new Map<number, { hasPartial: boolean; lastPartial?: number; lastComplete?: number }>()
+	for (let index = 0; index < messages.length; index++) {
+		const message = messages[index]
+		const selection = selections.get(message.ts) ?? { hasPartial: false }
+		if (message.partial === true) {
+			selection.hasPartial = true
+			selection.lastPartial = index
+		} else {
+			selection.lastComplete = index
+		}
+		selections.set(message.ts, selection)
+	}
+	return messages.filter((message, index) => {
+		const selection = selections.get(message.ts)
+		if (!selection?.hasPartial) return true
+		return index === (selection.lastComplete ?? selection.lastPartial)
+	})
+}
+
 async function ensureUiMessageFile(taskId: string): Promise<string> {
 	const dir = await ensureTaskDirectoryExists(taskId)
 	const filePath = path.join(dir, GlobalFileNames.uiMessages)
@@ -42,6 +62,10 @@ export class UIMessage {
 		const store = await openBufferedJsonlStore<ClineMessage>(filePath, {
 			schemaId: "ui-message",
 			acceptInitialItem: (message) => message.ts > 0,
+			// Older stores can contain several streaming rows for one timestamp.
+			// Prefer the complete row, or the latest partial when no complete row
+			// exists, without rewriting a large history merely because it was opened.
+			normalizeReadItems: projectPersistedMessages,
 		})
 		const stored = store.getAll()
 		const hasLegacyCheckpointHash = stored.some(

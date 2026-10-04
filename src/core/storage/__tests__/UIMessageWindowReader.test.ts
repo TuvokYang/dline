@@ -73,6 +73,27 @@ describe("UIMessage history windows", () => {
 		}
 	})
 
+	it("ignores transient partial rows while keeping the complete row with the same timestamp", async () => {
+		const taskId = "window-partial"
+		const taskDirectory = await ensureTaskDirectoryExists(taskId)
+		await writeJsonl(path.join(taskDirectory, GlobalFileNames.uiMessages), [
+			{ ts: 10, type: "say", say: "text", text: "partial", partial: true },
+			{ ts: 10, type: "say", say: "text", text: "final", partial: false },
+			{ ts: 20, type: "say", say: "text", text: "abandoned", partial: true },
+		])
+
+		const reader = await UIMessage.openWindow(taskId)
+		try {
+			expect(reader.count).toBe(2)
+			expect((await reader.getPage(0, 10)).messages).toEqual([
+				expect.objectContaining({ ts: 10, text: "final", partial: false }),
+				expect.objectContaining({ ts: 20, text: "abandoned", partial: true }),
+			])
+		} finally {
+			await reader.close()
+		}
+	})
+
 	it("reads the exact older interaction anchor and recovery suffix without unrelated message bodies", async () => {
 		const taskId = "window-recovery"
 		const taskDirectory = await ensureTaskDirectoryExists(taskId)

@@ -63,6 +63,8 @@ export interface BufferedUnifyStoreOptions<TItem extends { ts: number }> {
 	readonly subscriptionKey: string
 	readonly storeKind?: string
 	readonly acceptInitialItem?: (item: TItem) => boolean
+	/** Project compatibility rows into the logical collection without rewriting them during open. */
+	readonly normalizeReadItems?: (items: TItem[]) => TItem[]
 	readonly truncateTail?: (keepCount: number, expectedCount: number) => Promise<void>
 	/**
 	 * Replace the final `replacedCount` durable entries with `entries`, provided
@@ -99,6 +101,7 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
 	private readonly subscriptionState: SubscriptionState
 	private readonly ownedListeners = new Set<BufferedUnifyStoreChangeListener>()
 	private readonly acceptInitialItem: (item: TItem) => boolean
+	private readonly normalizeReadItems?: (items: TItem[]) => TItem[]
 	private readonly truncateTail?: (keepCount: number, expectedCount: number) => Promise<void>
 	private readonly replaceTail?: (replacement: BufferedTailReplacement<TItem>) => Promise<boolean>
 	private readonly storeKind: string
@@ -108,6 +111,8 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
 	 * only complete copy until it has been written back.
 	 */
 	private memoryRewriteRequired = false
+	/** The logical read view omitted compatibility rows still present in the physical JSONL file. */
+	private projectedPersistedRows = false
 	private flushTimer: ReturnType<typeof setInterval> | undefined
 	private closing = false
 	private closed = false
@@ -130,6 +135,7 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
 		this.ensureUniqueAppendTimestamp = options.ensureUniqueAppendTimestamp ?? false
 		this.subscriptionState = getSubscriptionState(options.subscriptionKey)
 		this.acceptInitialItem = options.acceptInitialItem ?? (() => true)
+		this.normalizeReadItems = options.normalizeReadItems
 		this.truncateTail = options.truncateTail
 		this.replaceTail = options.replaceTail
 		this.storeKind = options.storeKind ?? "other"
@@ -214,8 +220,9 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
 	async reload(force = false): Promise<void> {
 		if (!force) return
 		await this.mutex.withLock(async () => {
-			const items = await this.readCommittedItems(false)
-			this.setCommittedState(items)
+			const loaded = await this.readCommittedItems(false)
+			this.setCommittedState(loaded.items)
+			this.projectedPersistedRows = loaded.projected
 			this.dirty = false
 			this.memoryRewriteRequired = false
 		})
@@ -339,7 +346,7 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
 	async truncateAt(count: number): Promise<void> {
 		const keepCount = Math.min(this.items.length, Math.max(0, count))
 		const truncateTail = this.truncateTail
-		if (!truncateTail) {
+		if (!truncateTail || this.projectedPersistedRows) {
 			await this.mutate((items) => items.slice(0, keepCount))
 			return
 		}
@@ -388,10 +395,12 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
 			let result: TItem[] = []
 			await this.store.transaction(async (transaction) => {
 				const entities = await transaction.query({ orderBy: [asc(this.mapping.ordinal)] })
-				result = transform(entities.map((entity) => this.mapping.toItem(entity)))
+				const committed = this.projectReadItems(entities.map((entity) => this.mapping.toItem(entity))).items
+				result = transform(committed)
 				await transaction.replaceAll(result.map((item, ordinal) => this.mapping.toEntity(item, ordinal)))
 			})
 			this.setCommittedState(result)
+			this.projectedPersistedRows = false
 			this.publishCommittedChange()
 		})
 	}
@@ -429,10 +438,12 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
 	}
 
 	private async loadInitialState(): Promise<void> {
-		this.setCommittedState(await this.readCommittedItems(true))
+		const loaded = await this.readCommittedItems(true)
+		this.setCommittedState(loaded.items)
+		this.projectedPersistedRows = loaded.projected
 	}
 
-	private async readCommittedItems(initial: boolean): Promise<TItem[]> {
+	private async readCommittedItems(initial: boolean): Promise<{ items: TItem[]; projected: boolean }> {
 		const result = await this.store.query({ orderBy: [asc(this.mapping.ordinal)] })
 		const items: TItem[] = []
 		for (const entity of result.records) {
@@ -443,7 +454,7 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
 				// Invalid persisted records are isolated at the compatibility boundary.
 			}
 		}
-		return items
+		return this.projectReadItems(items)
 	}
 
 	private startFlushTimer(): void {
@@ -563,6 +574,9 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
 			await this.store.insert(entries.map((item, index) => this.mapping.toEntity(item, persisted.length + index)))
 			return { commit: "buffered_append", rewriteReason: "none", committed: this.items, changed: true }
 		}
+		// A projected compatibility row makes physical line counts differ from
+		// the logical baseline. Read and merge before any relative tail rewrite.
+		if (this.projectedPersistedRows) return undefined
 		const replaceTail = this.replaceTail
 		if (!replaceTail) return undefined
 
@@ -613,6 +627,7 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
 	 */
 	private async rewriteFromMemory(): Promise<CommitOutcome<TItem>> {
 		await this.store.replaceAll(this.items.map((item, ordinal) => this.mapping.toEntity(item, ordinal)))
+		this.projectedPersistedRows = false
 		recordDiagnostic(DiagnosticDomain.Storage, "baseline_diverged", DiagnosticOutcome.Recovered, {
 			reason: "interrupted_write",
 			store_kind: this.storeKind,
@@ -627,9 +642,11 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
 	private async commitByMerge(): Promise<CommitOutcome<TItem>> {
 		return await this.store.transaction(async (transaction): Promise<CommitOutcome<TItem>> => {
 			const entities = await transaction.query({ orderBy: [asc(this.mapping.ordinal)] })
-			const committed = entities.map((entity) => this.mapping.toItem(entity))
+			const projected = this.projectReadItems(entities.map((entity) => this.mapping.toItem(entity)))
+			const committed = projected.items
 			const merged = this.mergeWithCommitted(committed)
 			if (this.isSameCommittedSequence(committed, merged)) {
+				this.projectedPersistedRows = projected.projected
 				return { commit: "noop", rewriteReason: "no_change", committed: merged, changed: false }
 			}
 			// The merge already ran against the committed state read inside this
@@ -640,10 +657,12 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
 			const appended = this.suffixAfterUnchangedPrefixOf(committed, merged)
 			if (appended) {
 				await transaction.insert(appended.map((item, index) => this.mapping.toEntity(item, committed.length + index)))
+				this.projectedPersistedRows = projected.projected
 				return { commit: "append", rewriteReason: "none", committed: merged, changed: true }
 			}
 			const rewriteReason = this.classifyRewriteReason(committed, merged)
 			await transaction.replaceAll(merged.map((item, ordinal) => this.mapping.toEntity(item, ordinal)))
+			this.projectedPersistedRows = false
 			return { commit: "rewrite", rewriteReason, committed: merged, changed: true }
 		})
 	}
@@ -680,6 +699,12 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
 	 * objects it was given for untouched entries, so a replaced entry always
 	 * breaks reference equality and correctly forces a full rewrite.
 	 */
+	private projectReadItems(items: TItem[]): { items: TItem[]; projected: boolean } {
+		const projectedItems = this.normalizeReadItems?.(items) ?? items
+		const projected = projectedItems.length !== items.length || projectedItems.some((item, index) => item !== items[index])
+		return { items: projectedItems, projected }
+	}
+
 	private isSameCommittedSequence(committed: readonly TItem[], merged: readonly TItem[]): boolean {
 		return committed.length === merged.length && committed.every((item, index) => item === merged[index])
 	}
