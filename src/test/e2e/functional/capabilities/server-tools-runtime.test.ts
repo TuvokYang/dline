@@ -184,8 +184,11 @@ async function prepareRuntimeProfile(
 		//
 		// Stored profiles carry proto enum numbers, and the runtime ignores any
 		// non-numeric entry, so the fixture has to use ServerTool values here.
+		// Stored metadata is trusted only for the selected model identity, so it must
+		// carry that id or the runtime rejects it as stale.
 		profile.modelInfo = {
 			...profile.modelInfo,
+			id: profile.modelId,
 			capabilities: { ...profile.modelInfo?.capabilities, tools: [ServerTool.WEB_SEARCH] },
 		}
 		provider.disabledServerTools = options.supportsWebSearch ? [] : [ServerTool.WEB_SEARCH]
