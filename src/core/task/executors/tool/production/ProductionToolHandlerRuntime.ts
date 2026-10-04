@@ -75,8 +75,9 @@ export class ProductionToolHandlerRuntime {
 		for (const toolName of getToolUseNames()) this.coordinator.registerByName(toolName as ClineDefaultTool, validator)
 	}
 
-	plan(block: ToolUse, snapshot: ToolAdmissionSnapshot): ProductionToolPlan {
-		const preflight = this.coordinator.prepareAdmission(block, snapshot, async () => undefined)
+	async plan(block: ToolUse, snapshot: ToolAdmissionSnapshot): Promise<ProductionToolPlan> {
+		const initial = this.coordinator.prepareAdmission(block, snapshot, async () => undefined)
+		const preflight = initial.outcome === "admitted" && initial.confirm ? await initial.confirm() : initial
 		return {
 			attempt: randomUUID(),
 			lanes: preflight.outcome === "admitted" ? preflight.lanes : resolveToolLanes(block.name, resolveLaneContext(block)),

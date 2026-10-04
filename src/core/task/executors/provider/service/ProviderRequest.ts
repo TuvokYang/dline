@@ -86,7 +86,7 @@ export interface PreparedProviderRequest extends ProviderRequestFrame {
 	 * the handler that will send it. Absent means the request never goes stale.
 	 */
 	isCurrent?(): boolean
-	planTool(tool: ToolUse): PlannedProviderTool
+	planTool(tool: ToolUse): Promise<PlannedProviderTool>
 }
 
 /** Freezes all provider-visible request facts before the stream starts. */

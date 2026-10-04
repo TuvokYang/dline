@@ -64,6 +64,27 @@ describe("ControllerTaskSpawnLauncher peer-task port", () => {
 		expect(mocks.disposePanel).not.toHaveBeenCalled()
 	})
 
+	it("keeps an initialized peer task when cancellation arrives at the admission boundary", async () => {
+		const controller = new AbortController()
+		mocks.initTask.mockImplementationOnce(async (...args: unknown[]) => {
+			const options = args[5] as { beforeStart?: (taskId: string) => void }
+			options.beforeStart?.("child-1")
+			controller.abort("late cancellation")
+			return "child-1"
+		})
+		const launcher = new ControllerTaskSpawnLauncher({ context: {} as never, parentTaskId: "parent-1" })
+
+		await expect(
+			launcher.spawn({
+				task: "Admitted peer",
+				mode: "act",
+				profile: "parent-profile",
+				signal: controller.signal,
+			}),
+		).resolves.toEqual({ childTaskId: "child-1" })
+		expect(mocks.disposePanel).not.toHaveBeenCalled()
+	})
+
 	it("disposes the provisional panel when child initialization fails", async () => {
 		mocks.initTask.mockRejectedValueOnce(new Error("init failed"))
 		const launcher = new ControllerTaskSpawnLauncher({ context: {} as never, parentTaskId: "parent-1" })

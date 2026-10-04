@@ -37,7 +37,8 @@ export class ControllerTaskSpawnLauncher implements SpawnChildLauncher, PeerTask
 						OrchestratorController.getInstance().recordSpawn(this.options.parentTaskId, initializedChildTaskId),
 				},
 			)
-			if (input.signal.aborted) throw input.signal.reason
+			// initTask returning is the admission boundary: the peer task is already
+			// registered and running, so a later source cancellation must not roll it back.
 			admitted = true
 			return { childTaskId }
 		} finally {

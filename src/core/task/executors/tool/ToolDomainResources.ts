@@ -34,21 +34,18 @@ export interface ToolDomainResourceOptions {
 export function createToolDomainRunner(options: ToolDomainResourceOptions): ToolDomainRunner {
 	const { resources, execute, onReleaseError } = options
 
+	const report = (outcome: PromiseSettledResult<void>, order: HaltOrder): void => {
+		if (outcome.status === "rejected") onReleaseError?.(outcome.reason, order)
+	}
 	return {
 		runBlock: (command) => execute(command),
-
+		requestStop: async (order) => {
+			const [outcome] = await Promise.allSettled([resources.cancelCommand()])
+			report(outcome, order)
+		},
 		release: async (order) => {
-			// Both resets are attempted even when the first fails, so one stuck
-			// handle cannot strand the other resource in an open state.
-			const outcomes = await Promise.allSettled([resources.revertDiff(), resources.cancelCommand()])
-
-			for (const outcome of outcomes) {
-				if (outcome.status === "rejected") {
-					// A release failure is reported but never rethrown: the runtime
-					// still needs the halt receipt to know the domain is quiet.
-					onReleaseError?.(outcome.reason, order)
-				}
-			}
+			const [outcome] = await Promise.allSettled([resources.revertDiff()])
+			report(outcome, order)
 		},
 	}
 }

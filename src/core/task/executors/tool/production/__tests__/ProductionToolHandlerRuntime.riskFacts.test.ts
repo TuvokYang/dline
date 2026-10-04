@@ -37,7 +37,7 @@ function runtime(): ProductionToolHandlerRuntime {
 }
 
 async function policyVerdict(
-	approval: ReturnType<ProductionToolHandlerRuntime["plan"]>["approval"],
+	approval: Awaited<ReturnType<ProductionToolHandlerRuntime["plan"]>>["approval"],
 	actions: Record<string, boolean>,
 ): Promise<boolean> {
 	if (approval.kind !== "automatic") throw new Error(`expected an automatic approval, received ${approval.kind}`)
@@ -58,20 +58,20 @@ async function policyVerdict(
 describe("ProductionToolHandlerRuntime approval facts", () => {
 	it("keeps a safe command approved when the policy re-resolves it", async () => {
 		const actions = { executeSafeCommands: true }
-		const plan = runtime().plan(commandBlock("false"), snapshot(actions))
+		const plan = await runtime().plan(commandBlock("false"), snapshot(actions))
 
 		expect(plan.approval.kind).toBe("automatic")
 		await expect(policyVerdict(plan.approval, actions)).resolves.toBe(true)
 	})
 
-	it("does not let a safe-command grant approve a command that asked for approval", () => {
-		const plan = runtime().plan(commandBlock("true"), snapshot({ executeSafeCommands: true }))
+	it("does not let a safe-command grant approve a command that asked for approval", async () => {
+		const plan = await runtime().plan(commandBlock("true"), snapshot({ executeSafeCommands: true }))
 
 		expect(plan.approval.kind).toBe("manual")
 	})
 
-	it("publishes the classification facts rather than the resolved scope", () => {
-		const plan = runtime().plan(commandBlock("false"), snapshot({ executeSafeCommands: true }))
+	it("publishes the classification facts rather than the resolved scope", async () => {
+		const plan = await runtime().plan(commandBlock("false"), snapshot({ executeSafeCommands: true }))
 
 		if (plan.approval.kind !== "automatic") throw new Error("expected an automatic approval")
 		expect(plan.approval.riskFacts).toMatchObject({
@@ -81,5 +81,27 @@ describe("ProductionToolHandlerRuntime approval facts", () => {
 		})
 		expect(plan.approval.riskFacts).not.toHaveProperty("scope")
 		expect(plan.approval.riskFacts).not.toHaveProperty("ceiling")
+	})
+
+	it("uses the confirmed canonical admission before publishing lanes and approval", async () => {
+		const toolRuntime = runtime()
+		const confirm = vi.fn(async () => ({
+			outcome: "admitted",
+			decision: { kind: "manual", scope: "external" },
+			lanes: ["confirmed:external"],
+			presentation: { ask: "tool", body: "confirmed", notify: false },
+		}))
+		vi.spyOn(toolRuntime.coordinator, "prepareAdmission").mockReturnValue({
+			outcome: "admitted",
+			decision: { kind: "automatic", scope: "read" },
+			lanes: ["lexical:workspace"],
+			confirm,
+		} as never)
+
+		const plan = await toolRuntime.plan(commandBlock("false"), snapshot({ executeSafeCommands: true }))
+
+		expect(confirm).toHaveBeenCalledOnce()
+		expect(plan.lanes).toEqual(["confirmed:external"])
+		expect(plan.approval.kind).toBe("manual")
 	})
 })

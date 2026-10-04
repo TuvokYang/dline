@@ -48,7 +48,9 @@ export interface ToolDomainEventSink {
 /** The side-effecting work the domain owns; injected so the domain stays testable. */
 export interface ToolDomainRunner {
 	runBlock(command: ToolRunCommand): Promise<void>
-	/** Stop in-flight work and release owned resources exactly once. */
+	/** Request cancellation before the domain waits for in-flight work to settle. */
+	requestStop?(order: HaltOrder): Promise<void>
+	/** Release remaining owned resources exactly once after the drain. */
 	release(order: HaltOrder): Promise<void>
 }
 
@@ -172,9 +174,11 @@ export class ToolExecutionDomain {
 
 	private async drainHalt(order: HaltOrder): Promise<void> {
 		const pending = [...this.inFlight.entries()]
+		const stop = this.runner.requestStop ? await Promise.allSettled([this.runner.requestStop(order)]) : []
 		await Promise.allSettled(pending.map(([, work]) => work))
 		try {
 			await this.runner.release(order)
+			if (stop[0]?.status === "rejected") throw stop[0].reason
 		} finally {
 			for (const [commandId, work] of pending) {
 				if (this.inFlight.get(commandId) === work) this.inFlight.delete(commandId)

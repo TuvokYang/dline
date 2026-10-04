@@ -406,7 +406,9 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 		if (historyText.trim().length > 0) content.push({ type: "text", text: historyText })
 		const recorded = (tool: ToolUse) => !request.nativeTools || tool.isNativeToolCall === true
 		content.push(...materialized.tools.filter(recorded).map((tool) => this.toAssistantToolUse(tool)))
-		const blocks = materialized.tools.map((tool, index) => this.createBlock(request, tool, index, recorded(tool)))
+		const blocks = await Promise.all(
+			materialized.tools.map((tool, index) => this.createBlock(request, tool, index, recorded(tool))),
+		)
 		yield {
 			kind: "final",
 			turnId: request.turnId,
@@ -585,8 +587,13 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 		}
 	}
 
-	private createBlock(request: PreparedProviderRequest, tool: ToolUse, index: number, recorded: boolean): ProviderBlockOutput {
-		const planned = request.planTool(tool)
+	private async createBlock(
+		request: PreparedProviderRequest,
+		tool: ToolUse,
+		index: number,
+		recorded: boolean,
+	): Promise<ProviderBlockOutput> {
+		const planned = await request.planTool(tool)
 		const invocation: ToolInvocationEnvelope = {
 			kind: "tool_invocation",
 			toolName: tool.name,

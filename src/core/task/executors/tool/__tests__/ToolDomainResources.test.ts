@@ -17,7 +17,9 @@ describe("tool domain resource release", () => {
 		const resources = createResources()
 		const runner = createToolDomainRunner({ resources, execute: async () => undefined })
 
-		await runner.release({ haltId: "halt-1", reason: "cancel" })
+		const order = { haltId: "halt-1", reason: "cancel" } as const
+		await runner.requestStop?.(order)
+		await runner.release(order)
 
 		expect(resources.revertDiff).toHaveBeenCalledTimes(1)
 		expect(resources.cancelCommand).toHaveBeenCalledTimes(1)
@@ -50,10 +52,33 @@ describe("tool domain resource release", () => {
 		})
 		const runner = createToolDomainRunner({ resources, execute: async () => undefined })
 
-		await runner.release({ haltId: "halt-1", reason: "terminate" })
+		const order = { haltId: "halt-1", reason: "terminate" } as const
+		await runner.requestStop?.(order)
+		await runner.release(order)
 
 		// One stuck handle must not strand the other resource open.
 		expect(resources.cancelCommand).toHaveBeenCalledTimes(1)
+	})
+
+	it("requests foreground cancellation before waiting for in-flight work", async () => {
+		let finish: (() => void) | undefined
+		const resources = createResources()
+		const domain = new ToolExecutionDomain({
+			runner: createToolDomainRunner({
+				resources,
+				execute: () => new Promise<void>((resolve) => (finish = resolve)),
+			}),
+			sink: { emit: () => undefined },
+			surface: createDeniedSurface("detached_domain"),
+		})
+		domain.handle({ commandId: "cmd-1", dlineTid: "b1", invocationRef: "invocation-1" })
+
+		const halt = domain.halt({ haltId: "halt-1", reason: "cancel" })
+		await vi.waitFor(() => expect(resources.cancelCommand).toHaveBeenCalledOnce())
+		expect(resources.revertDiff).not.toHaveBeenCalled()
+		finish?.()
+		await halt
+		expect(resources.revertDiff).toHaveBeenCalledOnce()
 	})
 
 	it("reports a release failure without rethrowing, so the receipt still arrives", async () => {
