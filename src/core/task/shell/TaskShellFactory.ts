@@ -19,6 +19,7 @@ import {
 } from "./TaskExecutorAssembly"
 import { openTaskPersistence, type TaskPersistenceAssembly } from "./TaskPersistenceAssembly"
 import {
+	TaskCheckpointRestoreSuspension,
 	type TaskCheckpointRestoreSuspensionPort,
 	type TaskInputPresentationPort,
 	type TaskRetainedQueueSettlementPort,
@@ -269,11 +270,12 @@ export async function openTaskShell(options: OpenTaskShellOptions): Promise<Open
 		options.deferRestoredCommands === true,
 	)
 	const shell = new TaskShell(assembly.runtime, assembly.halt, options.inputPresentation, retainedQueueSettlement)
+	const checkpointRestore = new TaskCheckpointRestoreSuspension(assembly.runtime, retainedQueueSettlement)
 	return {
 		kind: "ready",
 		form: restored.form,
 		shell,
-		checkpointRestore: shell,
+		checkpointRestore,
 		runtime: assembly.runtime,
 		assembly,
 		payloads: persistence.payloads,

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 import { createInitialTaskState, type TaskEvent, type TaskState } from "../kernel"
 import type { EventSubmissionResult, RuntimeFacade } from "../runtime"
-import { TaskShell } from "./TaskShell"
+import { TaskCheckpointRestoreSuspension, TaskShell } from "./TaskShell"
 
 class RecordingRuntime implements RuntimeFacade {
 	readonly events: TaskEvent[] = []
@@ -103,22 +103,22 @@ describe("TaskShell", () => {
 				timedOut: ["provider"],
 			},
 		})
-		const shell = new TaskShell(runtime, { rearm: async () => undefined, forceClose: () => undefined })
+		const suspension = new TaskCheckpointRestoreSuspension(runtime)
 
-		await expect(shell.stopAndFence("restore-1")).rejects.toThrow("CheckpointRestoreHaltTimedOut:restore-1")
+		await expect(suspension.stopAndFence("restore-1")).rejects.toThrow("CheckpointRestoreHaltTimedOut:restore-1")
 		expect(runtime.order).toEqual(["submit:user.cancel", "domain-complete"])
 	})
 
 	it("keeps restore fences installed without offering a cancelled-resume dialog", async () => {
 		const runtime = new RecordingRuntime({ flow: { phase: "paused" } })
 		const rearm = vi.fn(async () => undefined)
-		const shell = new TaskShell(runtime, { rearm, forceClose: () => undefined }, undefined, {
+		const suspension = new TaskCheckpointRestoreSuspension(runtime, {
 			settle: async () => {
 				runtime.order.push("settle-queue")
 			},
 		})
 
-		await shell.stopAndFence("restore-1")
+		await suspension.stopAndFence("restore-1")
 
 		expect(runtime.events.map((event) => event.type)).toEqual(["user.cancel"])
 		expect(runtime.order).toEqual(["submit:user.cancel", "domain-complete", "quiescent", "settle-queue"])

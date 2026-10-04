@@ -1,6 +1,7 @@
 import { vi } from "vitest"
 import { createInitialTaskState, type TaskState } from "../../kernel"
 import type { ActiveTaskSession } from "../ActiveTaskSession"
+import type { InputQueueApplicationPort } from "../InputQueueApplicationPort"
 
 export interface SessionFixtureOptions {
 	readonly taskId?: string
@@ -80,6 +81,12 @@ export function createSessionFixture(options: SessionFixtureOptions = {}) {
 		...options.owners,
 	}
 
+	const inputQueue = {
+		mutate: vi.fn(async () => ({ accepted: true, result: "ok" })),
+		project: vi.fn(async () => []),
+		onTurnEndAwaiting: vi.fn(),
+	} satisfies InputQueueApplicationPort
+
 	const session = {
 		taskId,
 		task: {
@@ -92,6 +99,7 @@ export function createSessionFixture(options: SessionFixtureOptions = {}) {
 		},
 		owners,
 		inputs: { materialize: vi.fn(async (input: unknown) => input) },
+		inputQueue,
 		messages: owners.messages,
 		payloads: { put: vi.fn(async () => "payload:1"), read: vi.fn(async () => new Uint8Array()) },
 		state: vi.fn(() => state),

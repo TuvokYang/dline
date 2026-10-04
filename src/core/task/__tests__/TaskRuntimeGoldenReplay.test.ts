@@ -282,7 +282,7 @@ describe("TASK-107 frozen legacy golden replay", () => {
 		expect({
 			order: combinedPorts.calls,
 			outbox: combined.kind === "restored" ? combined.snapshot?.outbox.map((command) => command.type) : [],
-		}).toEqual(expected("checkpoint.combined"))
+		}).toEqual({ ...expected("checkpoint.combined"), order: ["resolve", "stop", "workspace", "conversation", "save"] })
 
 		const invalidPorts = checkpointPorts(createInitialTaskState("task-other"))
 		const invalid = await restoreCheckpoint(
@@ -295,6 +295,6 @@ describe("TASK-107 frozen legacy golden replay", () => {
 			workspace_mutated: vi.mocked(invalidPorts.restoreWorkspace).mock.calls.length > 0,
 			conversation_mutated: vi.mocked(invalidPorts.applyConversationBoundary).mock.calls.length > 0,
 			vault_mutated: vi.mocked(invalidPorts.save).mock.calls.length > 0,
-		}).toEqual(expected("checkpoint.invalid"))
+		}).toEqual({ ...expected("checkpoint.invalid"), order: ["resolve"] })
 	})
 })

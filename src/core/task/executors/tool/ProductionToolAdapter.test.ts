@@ -66,7 +66,9 @@ describe("createProductionToolAdapter", () => {
 			blockId: "block-1",
 			content: "file contents",
 		})
-		await options.runner.release({ haltId: "halt-1", reason: "cancel" })
+		const order = { haltId: "halt-1", reason: "cancel" } as const
+		await options.runner.requestStop?.(order)
+		await options.runner.release(order)
 		expect(revertDiff).toHaveBeenCalledOnce()
 		expect(cancelCommand).toHaveBeenCalledOnce()
 	})

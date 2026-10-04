@@ -44,6 +44,36 @@ export interface TaskInputPresentationCommit {
 	commit(): Promise<void>
 }
 
+async function haltUntilQuiescent(
+	runtime: RuntimeFacade,
+	retainedQueueSettlement: TaskRetainedQueueSettlementPort | undefined,
+	type: "user.cancel" | "user.terminate",
+	haltId: string,
+): Promise<EventSubmissionResult> {
+	const result = await runtime.submit({ type, generation: runtime.getState().generation, haltId })
+	if (result.kind === "rejected") return result
+	await runtime.waitForDomainCompletion(result.state.revision)
+	if (runtime.getState().halt.status === "stopping") return result
+	await runtime.waitForQuiescence()
+	await retainedQueueSettlement?.settle()
+	return result
+}
+
+/** Checkpoint-only halt capability kept outside the six-use-case TaskShell facade. */
+export class TaskCheckpointRestoreSuspension implements TaskCheckpointRestoreSuspensionPort {
+	constructor(
+		private readonly runtime: RuntimeFacade,
+		private readonly retainedQueueSettlement?: TaskRetainedQueueSettlementPort,
+	) {}
+
+	async stopAndFence(haltId: string): Promise<EventSubmissionResult> {
+		const result = await haltUntilQuiescent(this.runtime, this.retainedQueueSettlement, "user.cancel", haltId)
+		if (result.kind !== "rejected" && this.runtime.getState().halt.status === "stopping")
+			throw new Error(`CheckpointRestoreHaltTimedOut:${haltId}`)
+		return result
+	}
+}
+
 export class TaskShell {
 	constructor(
 		private readonly runtime: RuntimeFacade,
@@ -111,14 +141,6 @@ export class TaskShell {
 		return this.haltTask("user.terminate", haltId)
 	}
 
-	/** Stop and drain the live runtime without rearming executors or planning a resume dialog. */
-	async stopAndFence(haltId: string): Promise<EventSubmissionResult> {
-		const result = await this.haltUntilQuiescent("user.cancel", haltId)
-		if (result.kind !== "rejected" && this.runtime.getState().halt.status === "stopping")
-			throw new Error(`CheckpointRestoreHaltTimedOut:${haltId}`)
-		return result
-	}
-
 	/**
 	 * Take ownership of the task: dispatch recovered work that was held while the window did
 	 * not own the task lock, then submit `lifecycle.open`. Release happens first because an
@@ -132,7 +154,7 @@ export class TaskShell {
 
 	private async haltTask(type: "user.cancel" | "user.terminate", haltId: string): Promise<EventSubmissionResult> {
 		const activeBefore = this.runtime.getState().halt
-		let result = await this.haltUntilQuiescent(type, haltId)
+		let result = await haltUntilQuiescent(this.runtime, this.retainedQueueSettlement, type, haltId)
 		if (result.kind === "rejected") return result
 
 		if (type === "user.terminate") {
@@ -140,7 +162,7 @@ export class TaskShell {
 			const current = this.runtime.getState().halt
 			if (current.status === "stopping") {
 				forcedHaltId = current.haltId
-				result = await this.haltUntilQuiescent("user.terminate", current.haltId)
+				result = await haltUntilQuiescent(this.runtime, this.retainedQueueSettlement, "user.terminate", current.haltId)
 				if (result.kind === "rejected") return result
 			}
 			if (forcedHaltId && result.state.flow.forcedClosedParticipants?.length) this.halt.forceClose(forcedHaltId)
@@ -156,16 +178,6 @@ export class TaskShell {
 		if (this.runtime.getState().flow.phase === "terminated") return result
 		await this.halt.rearm(haltId)
 		await this.offerResume()
-		return result
-	}
-
-	private async haltUntilQuiescent(type: "user.cancel" | "user.terminate", haltId: string): Promise<EventSubmissionResult> {
-		const result = await this.runtime.submit({ type, generation: this.runtime.getState().generation, haltId })
-		if (result.kind === "rejected") return result
-		await this.runtime.waitForDomainCompletion(result.state.revision)
-		if (this.runtime.getState().halt.status === "stopping") return result
-		await this.runtime.waitForQuiescence()
-		await this.retainedQueueSettlement?.settle()
 		return result
 	}
 
