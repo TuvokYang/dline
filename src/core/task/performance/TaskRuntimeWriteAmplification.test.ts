@@ -172,6 +172,20 @@ describe.sequential("WS-051 provider write amplification gate", () => {
 	it("keeps persistent writes and logical bytes independent of stream chunk count", async () => {
 		const single = await runStreamingTurn(1)
 		const chunked = await runStreamingTurn(128)
+		const report = {
+			fixture: { finalTextBytes: FINAL_TEXT_BYTES, singleChunks: 1, chunkedChunks: 128 },
+			single,
+			chunked,
+			passed:
+				single.payloadWrites === 1 &&
+				chunked.payloadWrites === single.payloadWrites &&
+				chunked.payloadBytes === single.payloadBytes &&
+				single.journalEntries === 1 &&
+				chunked.journalEntries === 1 &&
+				single.publishedEvents === 1 &&
+				chunked.publishedEvents === 1,
+		}
+		console.log(`WS-051 write amplification gate ${JSON.stringify(report)}`)
 
 		expect(single.partialPresentations).toBe(1)
 		expect(chunked.partialPresentations).toBe(128)
@@ -199,6 +213,7 @@ describe.sequential("WS-051 provider write amplification gate", () => {
 		}
 		const report = {
 			baselineP95: LEGACY_FIRST_PRESENTATION_P95_US,
+			limitP95: FIRST_PRESENTATION_P95_GATE_US,
 			boundary: "provider-yield-to-presentation-sink",
 			measurementSamples: MEASUREMENT_SAMPLES,
 			presentationP50: percentile(presentationSamples, 0.5),
