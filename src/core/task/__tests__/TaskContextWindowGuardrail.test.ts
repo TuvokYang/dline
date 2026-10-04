@@ -99,7 +99,7 @@ describe("Task context-window final admission guard", () => {
 		expect(finalGuardIndex).toBeGreaterThanOrEqual(0)
 		expect(cancelIndex).toBeGreaterThan(finalGuardIndex)
 		expect(rerouteIndex).toBeGreaterThan(cancelIndex)
-		expect(helper).toContain("targetContinuationContent: cloneDeep(ordinaryInput)")
+		expect(helper).toContain("excludeConsumedPendingResults(ordinaryInput, consumedPendingFunctionIds)")
 		expect(helper).toContain("ordinaryInput: cloneDeep(ordinaryInput)")
 		expect(helper).not.toContain("overwriteApiConversationHistory(")
 		expect(helper).not.toContain("conversationHistoryDeletedRange =")
@@ -250,7 +250,9 @@ describe("Task context-window final admission guard", () => {
 		const completeIndex = sessionSource.indexOf('if (decision.status === "complete")', decisionIndex)
 		const commitIndex = sessionSource.indexOf("await this.ports.commit(input, state)", completeIndex)
 		const exhaustedIndex = sessionSource.indexOf('if (decision.status === "exhausted")', commitIndex)
-		const resumeIndex = requestMethod.indexOf("return this.recursivelyMakeClineRequests(originalUserContent")
+		const resumeIndex = requestMethod.indexOf(
+			"excludeConsumedPendingResults(originalUserContent, consumedPendingFunctionIds)",
+		)
 
 		expect(decisionIndex).toBeGreaterThanOrEqual(0)
 		expect(completeIndex).toBeGreaterThan(decisionIndex)

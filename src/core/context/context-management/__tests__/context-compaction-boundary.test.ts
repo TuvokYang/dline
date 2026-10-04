@@ -1,6 +1,6 @@
 import type { ClineContent, ClineStorageMessage } from "@shared/messages/content"
 import { describe, expect, it } from "vitest"
-import { projectContextCompactionBoundary } from "../context-compaction-boundary"
+import { excludeConsumedPendingResults, projectContextCompactionBoundary } from "../context-compaction-boundary"
 import { indexLogicalTurns } from "../logical-turns"
 
 function textMessage(role: "user" | "assistant", text: string): ClineStorageMessage {
@@ -78,6 +78,32 @@ describe("context compaction boundary", () => {
 		expect(sourceText).toContain("LARGE_TOOL_RESULT")
 		expect(continuationText).not.toContain("latest large turn")
 		expect(continuationText).not.toContain("LARGE_TOOL_INPUT")
+		expect([...boundary.consumedPendingFunctionIds]).toEqual(["call-read"])
+
+		const pendingWithNote: ClineContent[] = [...pendingContent, { type: "text", text: "UNSENT_NOTE" }]
+		const continuationInput = JSON.stringify(
+			excludeConsumedPendingResults(pendingWithNote, boundary.consumedPendingFunctionIds),
+		)
+		expect(continuationInput).not.toContain("LARGE_TOOL_RESULT")
+		expect(continuationInput).toContain("UNSENT_NOTE")
+	})
+
+	it("keeps tagged pending feedback in the ordinary continuation instead of consuming it", () => {
+		const activeHistory: ClineStorageMessage[] = [
+			textMessage("user", "<task>Turn A</task>"),
+			qnaToolUse("call-a"),
+			qnaToolResult("call-a", "Turn B request"),
+			qnaToolUse("call-b"),
+		]
+		const pendingContent: ClineContent[] = qnaToolResult("call-b", "LATEST_TAGGED_FEEDBACK").content as ClineContent[]
+
+		const boundary = projectContextCompactionBoundary(activeHistory, pendingContent)
+
+		expect(JSON.stringify(boundary.sourceHistory)).not.toContain("LATEST_TAGGED_FEEDBACK")
+		expect(boundary.consumedPendingFunctionIds.size).toBe(0)
+		expect(JSON.stringify(excludeConsumedPendingResults(pendingContent, boundary.consumedPendingFunctionIds))).toContain(
+			"LATEST_TAGGED_FEEDBACK",
+		)
 	})
 
 	it("uses protected-tail tool-result identity to keep an earlier turn compressible during explicit retry", () => {
