@@ -81,8 +81,12 @@ async function attachHostedWebResumeEvidence(
 	const snapshot = await E2ETestHelper.waitForValue(async () => {
 		const content = await readFile(path.join(taskDir, "snapshot.json"), "utf8").catch(() => undefined)
 		if (!content) return undefined
-		const parsed = JSON.parse(content) as { interaction?: { kind?: string; status?: string } }
-		return parsed.interaction?.kind === "hosted_web_approval" && parsed.interaction.status === "awaiting"
+		const parsed = JSON.parse(content) as {
+			interaction?: { kind?: string; status?: string; persistedRequest?: boolean }
+		}
+		const interaction = parsed.interaction
+		// The legacy approval is migrated into the Resume that owns its persisted request.
+		return interaction?.kind === "resume" && interaction.status === "awaiting" && interaction.persistedRequest === true
 			? content
 			: undefined
 	}, 30_000)
@@ -631,6 +635,8 @@ e2e(
 			await closeCurrentTask(opened.sidebar)
 			await seedLegacyHostedWebApproval(dlineDocsDir, taskId)
 
+			// Reopening migrates the obsolete pre-send approval into an explicit Resume that
+			// owns the persisted request, so no approval decision is left to replay.
 			for (let reopen = 0; reopen < 2; reopen++) {
 				await reopenTask(opened.sidebar, taskText)
 				await expect
@@ -643,7 +649,7 @@ e2e(
 						},
 						{ timeout: 30_000 },
 					)
-					.toMatchObject({ kind: "hosted_web_approval", status: "awaiting" })
+					.toMatchObject({ kind: "resume", status: "awaiting", persistedRequest: true })
 				await expect(opened.sidebar.getByRole("contentinfo").getByText("Resume", { exact: true })).toBeVisible({
 					timeout: 30_000,
 				})
