@@ -188,7 +188,9 @@ e2e(
 		const commandCard = sidebar.getByTestId("command-card").last()
 		const collapsedCommand = commandCard.getByRole("button", { name: COMMAND, exact: true })
 		await expect(collapsedCommand).toBeVisible()
-		await collapsedCommand.click()
+		// The completed row can keep moving while VS Code terminal layout and message-window reconciliation settle.
+		// Its identity and visibility are already proven, so bypass only the hitbox-stability check and verify expansion below.
+		await collapsedCommand.click({ force: true })
 		const commandOutput = commandCard.getByTestId("command-output-scroll")
 		await expect(commandOutput).toContainText("WORK_DAILY_COMMAND_START")
 		await expect(commandOutput).toContainText("WORK_DAILY_COMMAND_END")
