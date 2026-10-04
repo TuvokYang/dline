@@ -7,6 +7,11 @@ export interface HaltCommandExecutorOptions {
 	readonly onParticipantFailure?: (participantId: ParticipantId, error: unknown) => void
 }
 
+interface ForceCloseWaiter {
+	readonly promise: Promise<void>
+	readonly resolve: () => void
+}
+
 /** Marks the one failure that means "still running" rather than "stopped badly". */
 const HALT_TIMEOUT_NAME = "HaltTimeout"
 
@@ -21,6 +26,8 @@ export class HaltCommandExecutor implements CommandExecutor {
 	private readonly operations = new Map<string, Promise<void>>()
 	private readonly quiescence = new Map<string, ReadonlyMap<ParticipantId, Promise<void>>>()
 	private readonly completedHaltIds = new Set<string>()
+	private readonly forcedClosedHaltIds = new Set<string>()
+	private readonly forceCloseWaiters = new Map<string, ForceCloseWaiter>()
 	private readonly timeoutMs: number
 	private readonly onParticipantFailure: (participantId: ParticipantId, error: unknown) => void
 
@@ -43,19 +50,56 @@ export class HaltCommandExecutor implements CommandExecutor {
 		if (existing) return existing
 		if (this.completedHaltIds.has(command.haltId))
 			return Promise.reject(new Error(`Halt id already completed and was not rearmed: ${command.haltId}`))
-		const operation = this.run(command).finally(() => this.completedHaltIds.add(command.haltId))
+		const operation = this.run(command).finally(() => {
+			if (!this.forcedClosedHaltIds.has(command.haltId)) this.completedHaltIds.add(command.haltId)
+		})
 		this.operations.set(command.haltId, operation)
 		return operation
 	}
 
 	/** Retire fences only after every participant has really stopped publishing. */
 	async rearm(haltId: string): Promise<void> {
+		if (this.forcedClosedHaltIds.has(haltId)) {
+			this.clearTracking(haltId)
+			return
+		}
 		const drains = this.quiescence.get(haltId)
-		if (drains) await Promise.allSettled(drains.values())
+		if (drains) {
+			const forced = this.forceCloseWaiter(haltId)
+			await Promise.race([Promise.allSettled(drains.values()), forced.promise])
+		}
+		if (this.forcedClosedHaltIds.has(haltId)) {
+			this.clearTracking(haltId)
+			return
+		}
 		for (const participant of this.participants.values()) participant.rearm?.(haltId)
+		this.clearTracking(haltId)
+	}
+
+	/** Abandon an unresponsive halt without reopening any participant fence. */
+	forceClose(haltId: string): void {
+		this.forcedClosedHaltIds.add(haltId)
+		this.forceCloseWaiters.get(haltId)?.resolve()
 		this.operations.delete(haltId)
 		this.quiescence.delete(haltId)
 		this.completedHaltIds.delete(haltId)
+	}
+
+	private forceCloseWaiter(haltId: string): ForceCloseWaiter {
+		const existing = this.forceCloseWaiters.get(haltId)
+		if (existing) return existing
+		let resolve!: () => void
+		const promise = new Promise<void>((settle) => (resolve = settle))
+		const waiter = { promise, resolve }
+		this.forceCloseWaiters.set(haltId, waiter)
+		return waiter
+	}
+
+	private clearTracking(haltId: string): void {
+		this.operations.delete(haltId)
+		this.quiescence.delete(haltId)
+		this.completedHaltIds.delete(haltId)
+		this.forceCloseWaiters.delete(haltId)
 	}
 
 	private async run(command: HaltStopCommand): Promise<void> {

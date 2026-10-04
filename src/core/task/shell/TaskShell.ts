@@ -11,6 +11,7 @@ export interface TaskInput {
 
 export interface TaskHaltRearmPort {
 	rearm(haltId: string): Promise<void>
+	forceClose(haltId: string): void
 }
 
 /** Reconciles retained queue journal facts only after every owning writer drained. */
@@ -130,14 +131,31 @@ export class TaskShell {
 	}
 
 	private async haltTask(type: "user.cancel" | "user.terminate", haltId: string): Promise<EventSubmissionResult> {
-		const result = await this.haltUntilQuiescent(type, haltId)
+		const activeBefore = this.runtime.getState().halt
+		let result = await this.haltUntilQuiescent(type, haltId)
 		if (result.kind === "rejected") return result
+
+		if (type === "user.terminate") {
+			let forcedHaltId = activeBefore.status === "stopping" ? activeBefore.haltId : undefined
+			const current = this.runtime.getState().halt
+			if (current.status === "stopping") {
+				forcedHaltId = current.haltId
+				result = await this.haltUntilQuiescent("user.terminate", current.haltId)
+				if (result.kind === "rejected") return result
+			}
+			if (forcedHaltId && result.state.flow.forcedClosedParticipants?.length) this.halt.forceClose(forcedHaltId)
+			return result
+		}
+
 		if (this.runtime.getState().halt.status === "stopping") {
 			void this.finishTimedOutHalt(type, haltId).catch(() => undefined)
 			return result
 		}
+		// A concurrent terminate may have escalated this cancel while its original
+		// halt command was still completing. Never reopen those terminal fences.
+		if (this.runtime.getState().flow.phase === "terminated") return result
 		await this.halt.rearm(haltId)
-		if (type === "user.cancel") await this.offerResume()
+		await this.offerResume()
 		return result
 	}
 

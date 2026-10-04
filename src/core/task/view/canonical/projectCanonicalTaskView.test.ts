@@ -194,6 +194,17 @@ describe("projectCanonicalTaskView", () => {
 		})
 	})
 
+	it("projects a durable diagnostic when termination force-closes a halt participant", () => {
+		const view = projectCanonicalTaskView(
+			state({ flow: { phase: "terminated", forcedClosedParticipants: ["provider", "tool"] } }),
+		)
+
+		expect(view.diagnostics).toContainEqual({
+			code: "forced_closed",
+			message: "Task termination abandoned unresponsive halt participants: provider, tool",
+		})
+	})
+
 	it("keeps consumed tasks fully inert", () => {
 		const view = projectCanonicalTaskView(
 			state({ flow: { phase: "completed", terminalReason: "consumed", consumedRef: "child-1" } }),

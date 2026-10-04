@@ -108,6 +108,12 @@ function projectDiagnostics(
 ): readonly CanonicalTaskDiagnostic[] {
 	const diagnostics: CanonicalTaskDiagnostic[] = []
 	if (state.flow.error) diagnostics.push({ code: "task_error", message: state.flow.error })
+	if (state.flow.forcedClosedParticipants?.length) {
+		diagnostics.push({
+			code: "forced_closed",
+			message: `Task termination abandoned unresponsive halt participants: ${state.flow.forcedClosedParticipants.join(", ")}`,
+		})
+	}
 	for (const dialog of [primary, ...approvals].filter((candidate): candidate is CanonicalDialogProjection =>
 		Boolean(candidate),
 	)) {

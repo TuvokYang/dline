@@ -346,6 +346,42 @@ describe("executor loop integration", () => {
 		await vi.waitFor(() => expect(runtime.getState().dialog.primary).toMatchObject({ kind: "cancelled_resume" }))
 	})
 
+	it("force-closes an unresponsive cancel when termination escalates the same halt", async () => {
+		let runtime!: TaskRuntime
+		const neverDrains = new Promise<void>(() => undefined)
+		const providerRearm = vi.fn()
+		const events = { submit: (event: Parameters<TaskRuntime["submit"]>[0]) => runtime.submit(event) }
+		const participants = ALL_HALT_PARTICIPANTS.map(
+			(id) =>
+				new CallbackHaltParticipant({
+					id,
+					fence: () => undefined,
+					drain: id === "provider" ? () => neverDrains : async () => undefined,
+					rearm: id === "provider" ? providerRearm : undefined,
+				}),
+		)
+		const halt = new HaltCommandExecutor(participants, events, { timeoutMs: 5 })
+		runtime = new TaskRuntime({
+			initialState: { ...createInitialTaskState("task-1"), flow: { phase: "running" } },
+			vault: new InMemoryStateVault(),
+			taskView: new InMemoryTaskViewPort(),
+			publications: new InMemoryCommandPublicationStore(),
+			executors: [halt],
+		})
+		const shell = new TaskShell(runtime, halt)
+
+		await expect(shell.cancel("halt-1")).resolves.toMatchObject({ kind: "accepted" })
+		expect(runtime.getState().halt).toMatchObject({ status: "stopping", timedOut: ["provider"] })
+
+		await expect(shell.terminate("terminate-1")).resolves.toMatchObject({ kind: "accepted" })
+		expect(runtime.getState()).toMatchObject({
+			generation: 2,
+			flow: { phase: "terminated", forcedClosedParticipants: ["provider"] },
+			halt: { status: "idle", generation: 2 },
+		})
+		expect(providerRearm).not.toHaveBeenCalled()
+	})
+
 	it("runs an attempt-scoped compaction command through TaskRuntime", async () => {
 		let runtime!: TaskRuntime
 		const events = { submit: (event: Parameters<TaskRuntime["submit"]>[0]) => runtime.submit(event) }

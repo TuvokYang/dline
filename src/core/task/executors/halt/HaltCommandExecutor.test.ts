@@ -93,6 +93,29 @@ describe("HaltCommandExecutor", () => {
 		expect(failures).toEqual(["provider"])
 	})
 
+	it("force-closes a timed-out halt without reopening its participant fence", async () => {
+		const provider: HaltParticipant = {
+			id: "provider",
+			fence: vi.fn(),
+			stop: vi.fn(),
+			drain: () => new Promise<void>(() => undefined),
+			rearm: vi.fn(),
+		}
+		const executor = new HaltCommandExecutor(
+			[provider],
+			{ submit: async () => ({ kind: "accepted" as const }) },
+			{ timeoutMs: 5 },
+		)
+		await executor.execute(command(["provider"]))
+
+		const rearming = executor.rearm("halt-1")
+		await Promise.resolve()
+		executor.forceClose("halt-1")
+		await rearming
+
+		expect(provider.rearm).not.toHaveBeenCalled()
+	})
+
 	it("rearms a participant that drains after its receipt but within the deadline", async () => {
 		const events: TaskEvent[] = []
 		let releaseDrain!: () => void

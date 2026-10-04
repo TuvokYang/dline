@@ -19,10 +19,14 @@ export function validateHaltEvent(
 	state: HaltSlice,
 	event: TaskEvent,
 ): { readonly reason: "duplicate" | "identity_mismatch"; readonly message: string } | undefined {
-	if (event.type === "user.cancel" || event.type === "user.terminate")
+	if (event.type === "user.cancel")
 		return state.status === "stopping"
 			? { reason: "duplicate", message: `Halt ${state.haltId} is already in progress` }
 			: undefined
+	// Termination is the explicit escalation path for a cancel that cannot reach
+	// quiescence. The reducer records every participant that had not acknowledged
+	// the active halt before advancing to the terminal state.
+	if (event.type === "user.terminate") return undefined
 	if (event.type !== "halt.halted" && event.type !== "halt.failed" && event.type !== "lifecycle.halt_timeout") return undefined
 	if (state.status !== "stopping" || state.haltId !== event.haltId)
 		return { reason: "identity_mismatch", message: `Halt ${event.haltId} is not active` }
@@ -35,7 +39,19 @@ export function validateHaltEvent(
 
 export function reduceHalt(state: HaltSlice, event: TaskEvent): HaltReduction {
 	if (event.type === "user.cancel" || event.type === "user.terminate") {
-		if (state.status === "stopping" && state.haltId === event.haltId) return { state, commands: [] }
+		if (state.status === "stopping") {
+			if (event.type === "user.cancel") return { state, commands: [] }
+			return {
+				state: {
+					...state,
+					generation: state.generation + 1,
+					target: "terminated",
+					pending: [],
+					forcedClosed: state.pending,
+				},
+				commands: [],
+			}
+		}
 		return {
 			state: {
 				status: "stopping",

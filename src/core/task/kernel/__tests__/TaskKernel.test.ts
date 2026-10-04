@@ -159,6 +159,30 @@ describe("task kernel", () => {
 		expect(state.halt.status).toBe("idle")
 	})
 
+	it("escalates an active cancel to a durable forced-closed termination verdict", () => {
+		let state = accepted(
+			transition(createInitialTaskState("task-1"), { type: "user.cancel", generation: 0, haltId: "halt-1" }),
+		).state
+		state = accepted(
+			transition(state, {
+				type: "lifecycle.halt_timeout",
+				generation: state.generation,
+				haltId: "halt-1",
+				participantId: "provider",
+			}),
+		).state
+		const pending = state.halt.status === "stopping" ? state.halt.pending : []
+
+		const terminated = accepted(transition(state, { type: "user.terminate", generation: state.generation, haltId: "halt-1" }))
+
+		expect(terminated.commands).toEqual([])
+		expect(terminated.state).toMatchObject({
+			generation: 2,
+			flow: { phase: "terminated", forcedClosedParticipants: pending },
+			halt: { status: "idle", generation: 2 },
+		})
+	})
+
 	it("waits for all halt participants before reaching the terminal target", () => {
 		let state = accepted(
 			transition(createInitialTaskState("task-1"), { type: "user.cancel", generation: 0, haltId: "halt-1" }),

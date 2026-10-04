@@ -556,6 +556,9 @@ function applyCommandOwnership(state: TaskState, commands: readonly Command[]): 
 
 function deriveCommands(previous: TaskState, next: TaskState, event: TaskEvent): readonly Command[] {
 	if (event.type === "user.cancel" || event.type === "user.terminate") {
+		// A terminate received during an active halt is an escalation of that same
+		// barrier, not a second stop operation with a competing identity.
+		if (previous.halt.status === "stopping") return []
 		return [
 			{
 				...commandBase(next, 0),
@@ -875,6 +878,8 @@ export function transition(state: TaskState, event: TaskEvent): TransitionResult
 			flow: {
 				...next.flow,
 				phase: halt.state.target,
+				forcedClosedParticipants:
+					halt.state.forcedClosed && halt.state.forcedClosed.length > 0 ? halt.state.forcedClosed : undefined,
 				compose:
 					next.flow.compose?.status === "running" ? { ...next.flow.compose, status: "cancelled" } : next.flow.compose,
 				provider:

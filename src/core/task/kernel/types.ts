@@ -104,6 +104,8 @@ export interface FlowState {
 	readonly completionId?: string
 	readonly terminalReason?: "consumed"
 	readonly consumedRef?: string
+	/** Halt participants that termination explicitly abandoned before they acknowledged quiescence. */
+	readonly forcedClosedParticipants?: readonly ParticipantId[]
 	readonly compose?: ComposeFlowState
 	readonly provider?: ProviderFlowState
 	readonly compaction?: CompactionFlowState
@@ -274,6 +276,7 @@ export type HaltSlice =
 			readonly halted: readonly ParticipantId[]
 			readonly failed: readonly ParticipantId[]
 			readonly timedOut: readonly ParticipantId[]
+			readonly forcedClosed?: readonly ParticipantId[]
 	  }
 
 export interface TaskState {

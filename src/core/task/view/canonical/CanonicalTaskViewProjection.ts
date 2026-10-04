@@ -62,7 +62,12 @@ export interface CanonicalCompactionProjection {
 }
 
 export interface CanonicalTaskDiagnostic {
-	readonly code: "task_error" | "dialog_failed" | "dialog_receiver_generation_missing" | "approval_block_missing"
+	readonly code:
+		| "task_error"
+		| "dialog_failed"
+		| "dialog_receiver_generation_missing"
+		| "approval_block_missing"
+		| "forced_closed"
 	readonly message: string
 	readonly interactionId?: string
 	readonly blockId?: BlockId
