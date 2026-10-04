@@ -521,6 +521,10 @@ export class InteractionCoordinator {
 		persistedRequest = true,
 		retryContent?: ClineContent[],
 	): Promise<InteractionOutcome> {
+		const hasContinuationDraft = Boolean(
+			response.draft &&
+				(response.draft.text.trim().length > 0 || response.draft.images.length > 0 || response.draft.files.length > 0),
+		)
 		const continuation: TaskEvent =
 			response.actionId === "start_new_task"
 				? {
@@ -531,7 +535,7 @@ export class InteractionCoordinator {
 						type: "ERROR_RETRY_REQUESTED",
 						apiIndex,
 						draft: response.draft ?? { text: "", images: [], files: [] },
-						persistedRequest,
+						persistedRequest: hasContinuationDraft ? false : persistedRequest,
 						...(retryContent?.length ? { retryContent } : {}),
 					}
 		const committed = await this.runtime.dispatchAtAdmission(continuation)
@@ -582,12 +586,7 @@ export class InteractionCoordinator {
 				...request,
 			},
 		)
-		const hasContinuationDraft = Boolean(
-			response.draft &&
-				(response.draft.text.trim().length > 0 || response.draft.images.length > 0 || response.draft.files.length > 0),
-		)
-		const persistedRequest = hasContinuationDraft ? false : request.persistedRequest !== false
-		return this.commitErrorRetryResponse(response, request.apiIndex, persistedRequest, request.retryContent)
+		return this.commitErrorRetryResponse(response, request.apiIndex, request.persistedRequest !== false, request.retryContent)
 	}
 
 	/** Present a mistake-limit recovery and commit the selected footer action. */
