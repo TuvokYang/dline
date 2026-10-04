@@ -2,9 +2,9 @@ import { randomUUID } from "node:crypto"
 import type { ProviderRequestScope } from "../executors/provider/service/ProviderRequest"
 import type { ActiveTaskSession } from "../session/ActiveTaskSession"
 import { encodeTaskPayload } from "../stores/payload/TaskPayloadCodec"
-import type { CompactionContextEnvelope, CompactionTrigger } from "../stores/payload/TaskPayloadEnvelopes"
+import type { CompactionContextEnvelope, CompactionMode, CompactionTrigger } from "../stores/payload/TaskPayloadEnvelopes"
 
-export type TaskCompactionMode = "summarize" | "force_truncate"
+export type TaskCompactionMode = CompactionMode
 
 /**
  * Refusal reason when no answered span exists past the opening request.
@@ -52,6 +52,10 @@ export async function requestTaskCompaction(
 ): Promise<TaskCompactionRequestResult> {
 	const state = session.state()
 	if (state.revision !== input.stateRevision) return { accepted: false, result: "stale_revision" }
+	// Truncation destroys history without a summary, so it is only a way out of
+	// a round that automatic compaction already failed to make fit.
+	const recovery = input.mode === "force_truncate" ? session.owners.compactionRecovery : undefined
+	if (input.mode === "force_truncate" && !recovery?.truncationOffered()) return { accepted: false, result: "not_available" }
 	// The conversation the provider is actually sent, not the legacy message
 	// store: a summary of anything else would describe a different
 	// conversation than the one that has to shrink.
@@ -66,6 +70,7 @@ export async function requestTaskCompaction(
 	const contextRef = await session.payloads.put(
 		encodeTaskPayload<CompactionContextEnvelope>({
 			kind: "compaction_context",
+			mode: input.mode,
 			// Landing replaces this span and nothing else, so input that arrives
 			// while the summary is produced is kept rather than condensed unseen.
 			span: source.span,
@@ -76,7 +81,6 @@ export async function requestTaskCompaction(
 			...(source.replies ? { replies: source.replies } : {}),
 			trigger: input.trigger,
 			context: {
-				mode: input.mode,
 				sourceHistory: source.messages,
 				// Where each summarized message lives, so a summary that covers
 				// only the oldest turns lands on exactly those turns.
@@ -99,5 +103,11 @@ export async function requestTaskCompaction(
 		scopes?.release(compactionId)
 		return { accepted: false, result: submission.reason }
 	}
-	return { accepted: true, result: "scheduled", compactionId }
+	if (!recovery) return { accepted: true, result: "scheduled", compactionId }
+	// The user retries right after confirming, so the answer waits until the
+	// history is actually gone: a Retry that raced the landing would compact again.
+	const outcome = await recovery.settlement(compactionId)
+	return outcome === "completed"
+		? { accepted: true, result: "truncated", compactionId }
+		: { accepted: false, result: `truncation_${outcome}` }
 }

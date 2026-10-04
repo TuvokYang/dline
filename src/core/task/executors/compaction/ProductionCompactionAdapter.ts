@@ -1,3 +1,4 @@
+import { formatResponse } from "@core/prompts/responses"
 import {
 	type CompactionLandingInput,
 	type CompactionLandingPort,
@@ -175,6 +176,12 @@ export class ProductionCompactionAdapter implements CompactionPort {
 		input: CompactionExecutionInput,
 		context: CompactionContextEnvelope,
 	): Promise<{ readonly result: unknown; readonly summary?: CompactionSummary }> {
+		if (context.mode === "force_truncate") {
+			// The provider just failed to summarize this span, so nothing is asked
+			// of it; the user already confirmed the loss, so nothing is reviewed.
+			const summary = { summary: formatResponse.contextTruncationNotice() }
+			return { result: summary, summary }
+		}
 		const review = context.trigger === "manual" ? this.options.review : undefined
 		let requestContext = context.context
 		for (let regenerations = 0; ; regenerations++) {

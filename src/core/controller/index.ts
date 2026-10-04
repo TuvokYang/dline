@@ -2503,6 +2503,7 @@ export class Controller {
 				isRequested: (activityId) => commands.isBackgroundHandoffRequested(activityId),
 			},
 			session.owners.providerRetry?.active === true,
+			session.owners.compactionRecovery?.truncationOffered() === true,
 		)
 	}
 

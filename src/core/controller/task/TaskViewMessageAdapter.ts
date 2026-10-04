@@ -87,6 +87,7 @@ export function adaptCanonicalTaskView(
 	messages: readonly UiMessage[] = [],
 	handoff?: BackgroundHandoffAvailabilityPort,
 	automaticRetry = false,
+	truncationOffered = false,
 ): TaskViewState {
 	const dialog = owningDialog(view)
 	const kind = dialog ? interactionKind(dialog.kind) : undefined
@@ -140,6 +141,9 @@ export function adaptCanonicalTaskView(
 	// surface falls back to task-level affordances instead of orphaned buttons.
 	const anchored = Boolean(dialog && anchor)
 	const input = dialog && kind && anchored ? projectInteractionInput(dialog, kind) : DISABLED_INPUT
+	// Truncation destroys history, so it is offered only beside the Retry it
+	// replaces: the round a failed automatic compaction stopped, awaiting the user.
+	const forceTruncateAvailable = truncationOffered && anchored && dialog?.kind === "error_retry" && dialog.status === "awaiting"
 	return {
 		taskId: view.taskId,
 		phase: taskViewPhase(view),
@@ -151,6 +155,7 @@ export function adaptCanonicalTaskView(
 		...(view.compaction?.status === "scheduled" || view.compaction?.status === "running"
 			? { contextCompaction: { active: true as const, operationId: view.compaction.compactionId } }
 			: {}),
+		...(forceTruncateAvailable ? { forceTruncateAvailable: true } : {}),
 		input,
 		footer: { actions: anchored && interactionActions.length > 0 ? interactionActions : taskActions },
 	}

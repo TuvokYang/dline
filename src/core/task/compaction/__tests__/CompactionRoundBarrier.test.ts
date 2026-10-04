@@ -191,6 +191,48 @@ describe("CompactionRoundBarrier - automatic", () => {
 		expect(p.submitted).toEqual([])
 	})
 
+	it("offers truncation only while the round a failed automatic run stopped awaits a retry", async () => {
+		const state = running()
+		const p = probe(() => state)
+		const barrier = new CompactionRoundBarrier({ session: () => p.session, state: () => state })
+		expect(barrier.truncationOffered()).toBe(false)
+
+		barrier.observe({ contextTokens: TRIGGER, compactTriggerTokens: TRIGGER })
+		const failed = barrier.settleBeforeRound(round())
+		await drain()
+		await run(barrier, p.scheduled[0], "reject")
+		await failed
+		expect(barrier.truncationOffered()).toBe(true)
+
+		// Retrying is the user's other choice; the offer belonged to the stopped round.
+		const retried = barrier.settleBeforeRound(round())
+		expect(barrier.truncationOffered()).toBe(false)
+		await drain()
+		await run(barrier, p.scheduled[1])
+		await retried
+	})
+
+	it("lets the retried round through once a run replaced the conversation the failure measured", async () => {
+		const state = running()
+		const p = probe(() => state)
+		const barrier = new CompactionRoundBarrier({ session: () => p.session, state: () => state })
+
+		barrier.observe({ contextTokens: TRIGGER, compactTriggerTokens: TRIGGER })
+		const failed = barrier.settleBeforeRound(round())
+		await drain()
+		await run(barrier, p.scheduled[0], "reject")
+		await failed
+
+		// A truncation the user confirmed lands between the failure and the retry.
+		const settlement = barrier.settlement("compaction:truncate")
+		await run(barrier, "compaction:truncate")
+		await expect(settlement).resolves.toBe("completed")
+		expect(barrier.truncationOffered()).toBe(false)
+
+		await expect(barrier.settleBeforeRound(round())).resolves.toEqual({ kind: "ready" })
+		expect(p.scheduled).toHaveLength(1)
+	})
+
 	it("does not let a stale run release a newer round waiting on its own run", async () => {
 		const state = running()
 		const p = probe(() => state)
@@ -233,7 +275,8 @@ describe("CompactionRoundBarrier - manual", () => {
 
 		await expect(waiting).resolves.toEqual({ kind: "ready" })
 		expect(p.contexts[0].trigger).toBe("manual")
-		expect(p.contexts[0].context).toMatchObject({ mode: "summarize", guidance: "keep the audit" })
+		expect(p.contexts[0].mode).toBe("summarize")
+		expect(p.contexts[0].context).toMatchObject({ guidance: "keep the audit" })
 	})
 
 	it("runs once for every /compact the round owes, keeping each one's guidance in order", async () => {

@@ -455,27 +455,6 @@ export class TaskSessionCompositionService {
 		// The footer shows Retry and Cancel only while a countdown owns the
 		// request, so every change of that ownership republishes the view.
 		const providerRetry = new ProviderRetryGate(() => void options.publishState().catch(() => undefined))
-		const owners: TaskSessionOwners = {
-			identity: { taskId: options.taskId, taskIncarnationId },
-			nextPresentationId,
-			compactionScopes,
-			providerRetry,
-			settings,
-			messages,
-			activities,
-			api,
-			prompt,
-			promptCache,
-			toolState,
-			toolExecution,
-			interactions,
-			browser: tool.browser,
-			commands: tool.commands,
-			files: tool.services.taskFileTracker,
-			checkpoints: tool.checkpoints,
-			apiRateSnapshot: () => performance.getSnapshot(),
-			queryRateMetrics: (query) => performance.query(query),
-		}
 		// The whole auto-condense setting group defines the trigger and the window a
 		// compaction may use. Passing only the percent would silently ignore the
 		// reserve bounds and the absolute cap the user configured.
@@ -496,6 +475,30 @@ export class TaskSessionCompositionService {
 			enabled: () => options.stateManager.getGlobalSettingsKey("useAutoCondense") === true,
 			onFailure: (message) => Logger.warn(message),
 		})
+		const owners: TaskSessionOwners = {
+			identity: { taskId: options.taskId, taskIncarnationId },
+			nextPresentationId,
+			compactionScopes,
+			// The barrier is what saw the automatic compaction fail, so it alone
+			// knows when truncating is the way out it leaves the user.
+			compactionRecovery: compaction,
+			providerRetry,
+			settings,
+			messages,
+			activities,
+			api,
+			prompt,
+			promptCache,
+			toolState,
+			toolExecution,
+			interactions,
+			browser: tool.browser,
+			commands: tool.commands,
+			files: tool.services.taskFileTracker,
+			checkpoints: tool.checkpoints,
+			apiRateSnapshot: () => performance.getSnapshot(),
+			queryRateMetrics: (query) => performance.query(query),
+		}
 		// The pressure a settled request reported lives in memory, so a task
 		// reopened by a chat restore would send one uncompacted request before
 		// noticing that the rewound conversation is still full. Only a restore

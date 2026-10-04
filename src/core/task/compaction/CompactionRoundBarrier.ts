@@ -11,6 +11,7 @@ import type { LifecycleBarrierPort } from "../session/TaskInputAdmission"
 import type { ContextPressureObserverPort } from "../session/TaskProviderRequestReporter"
 import type { CompactionTrigger, LifecycleCommand } from "../stores/payload/TaskPayloadEnvelopes"
 import { shouldCompactAutomatically } from "./AutomaticCompactionPolicy"
+import type { CompactionRecoveryPort, CompactionRunOutcome } from "./CompactionRecovery"
 import { COMPACTION_FAILURE_MESSAGE } from "./MessageStateCompactionFailure"
 import { NOTHING_TO_COMPACT, requestTaskCompaction } from "./TaskCompactionRequest"
 
@@ -32,15 +33,6 @@ const ROUND_READY: RoundReadiness = { kind: "ready" }
 
 /** Why a round stopped after the automatic compaction it waited on failed. */
 export const AUTOMATIC_COMPACTION_FAILED = "automatic_compaction_failed"
-
-/**
- * How one compaction request ended, as far as the round waiting on it cares.
- *
- * `refused` means no run happened - the request was not scheduled - so nobody
- * was told anything failed. `timed_out` means the round stopped waiting while
- * the run may still be going.
- */
-type CompactionRunOutcome = "completed" | "failed" | "withdrawn" | "refused" | "timed_out"
 
 interface CompactionRunResult {
 	readonly outcome: CompactionRunOutcome
@@ -90,9 +82,16 @@ interface ObservedPressure {
  * guarded submissions would let every continued round skip it.
  */
 export class CompactionRoundBarrier
-	implements ContextPressureObserverPort, ComposeCompactionBarrierPort, CompactionSettlementObserverPort, LifecycleBarrierPort
+	implements
+		ContextPressureObserverPort,
+		ComposeCompactionBarrierPort,
+		CompactionSettlementObserverPort,
+		LifecycleBarrierPort,
+		CompactionRecoveryPort
 {
 	private observed: ObservedPressure | undefined
+	/** The last round stopped on a failed automatic compaction and has not been retried. */
+	private stoppedOnFailure = false
 	/** A `/compact` typed into a dialog reply, owed to the round that reply opens. */
 	private replied: { readonly command: LifecycleCommand; readonly generation: number } | undefined
 	/** Rounds waiting on a run, keyed by the run so a stale one only releases its own waiter. */
@@ -108,6 +107,14 @@ export class CompactionRoundBarrier
 
 	owns(commandId: string): boolean {
 		return commandId === COMPACT_COMMAND_ID
+	}
+
+	truncationOffered(): boolean {
+		return this.stoppedOnFailure
+	}
+
+	async settlement(compactionId: string): Promise<CompactionRunOutcome> {
+		return (await this.awaitRun(compactionId, false, new AbortController().signal)).outcome
 	}
 
 	/**
@@ -137,6 +144,10 @@ export class CompactionRoundBarrier
 				try {
 					const result = await port.run(input)
 					settled = { outcome: "completed" }
+					// The pressure was measured on the conversation this run just
+					// replaced, so it no longer says anything about the next round.
+					this.observed = undefined
+					this.stoppedOnFailure = false
 					return result
 				} catch (error) {
 					// A stop or a withdrawn review is the user's own decision, not a failure.
@@ -180,6 +191,8 @@ export class CompactionRoundBarrier
 		// Consumed whatever the outcome: a refused or failed compaction must not
 		// make every later round retry the same request forever.
 		this.observed = undefined
+		// This is the round the user chose to go on with instead of truncating.
+		this.stoppedOnFailure = false
 		const session = this.options.session()
 		if (!session) return ROUND_READY
 		if (manual) {
@@ -192,6 +205,7 @@ export class CompactionRoundBarrier
 		const result = await this.compact(session, "automatic", input.signal)
 		if (result.outcome !== "failed") return ROUND_READY
 		this.observed ??= observed
+		this.stoppedOnFailure = true
 		return {
 			kind: "failed",
 			reason: AUTOMATIC_COMPACTION_FAILED,

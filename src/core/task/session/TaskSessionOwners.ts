@@ -3,6 +3,7 @@ import type { ICheckpointManager } from "@integrations/checkpoints/types"
 import type { CommandExecutor } from "@integrations/terminal/CommandExecutor"
 import type { BrowserSession } from "@services/browser/BrowserSession"
 import type { TaskActivityStore } from "../activity/TaskActivityStore"
+import type { CompactionRecoveryPort } from "../compaction/CompactionRecovery"
 import type { CompactionRequestScopes } from "../compaction/CompactionRequestScopes"
 import type { ProviderRetryGate } from "../executors/provider/service/ProviderRetryGate"
 import type { MessageStateHandler } from "../message-state"
@@ -45,6 +46,8 @@ export interface TaskSessionOwners {
 	readonly nextPresentationId?: PresentationIdSequence
 	/** Handlers a compaction run is sent under instead of the task's own; absent means every run uses the task's handler. */
 	readonly compactionScopes?: CompactionRequestScopes
+	/** What a failed automatic compaction leaves the user to do; absent means no truncation is ever offered. */
+	readonly compactionRecovery?: CompactionRecoveryPort
 	/** The automatic retry countdown of the provider request, which a manual Retry may cut short. */
 	readonly providerRetry?: ProviderRetryGate
 }

@@ -217,8 +217,18 @@ export interface ToolTerminalManifestEnvelope {
  */
 export type CompactionTrigger = "automatic" | "manual" | "transition"
 
+/**
+ * What replaces the span: a summary the model writes, or a fixed notice.
+ *
+ * Truncation is the user's last resort once automatic compaction failed: it
+ * drops the span without asking the provider that just failed to summarize it.
+ */
+export type CompactionMode = "summarize" | "force_truncate"
+
 export interface CompactionContextEnvelope {
 	readonly kind: "compaction_context"
+	/** Absent in contexts written before modes were recorded; treated as summarize. */
+	readonly mode?: CompactionMode
 	/** Journal span the request summarizes; landing replaces exactly this span. */
 	readonly span?: { readonly from: JournalWatermark; readonly to: JournalWatermark }
 	/** The user's reply the span ends on, which landing replays after the summary instead of condensing. */
