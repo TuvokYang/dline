@@ -67,6 +67,54 @@ describe("ProductionCompactionAdapter", () => {
 		])
 	})
 
+	// The run stopped once the oldest turns were summarized: the newer turns and
+	// the reply the span ended on are still where the conversation left off, so
+	// the summary lands on the covered part only and carries no reply.
+	it("lands a summary that covered only the oldest turns on those turns alone", async () => {
+		const payloads = new MemoryPayloads()
+		const span = { from: { seq: 2 }, to: { seq: 9 } }
+		const context: CompactionContextEnvelope = {
+			kind: "compaction_context",
+			span,
+			continuation: { text: "latest reply" },
+			trigger: "automatic",
+			context: { sourceHistory: [] },
+		}
+		const contextRef = await payloads.put(encodeTaskPayload(context))
+		const landed: unknown[] = []
+		const triggers: unknown[] = []
+		const adapter = new ProductionCompactionAdapter({
+			payloads,
+			service: {
+				run: async ({ trigger }) => {
+					triggers.push(trigger)
+					return { summary: "oldest turns", coveredThrough: 5 }
+				},
+			},
+			landing: { land: async (input) => void landed.push(input) },
+		})
+
+		await adapter.run({
+			compactionId: "compact-1",
+			attempt: "attempt-1",
+			contextRef,
+			signal: new AbortController().signal,
+			publish: () => undefined,
+		})
+
+		expect(triggers).toEqual(["automatic"])
+		expect(landed).toEqual([
+			{
+				compactionId: "compact-1",
+				attempt: "attempt-1",
+				summary: "oldest turns",
+				coveredThrough: 5,
+				span: { from: { seq: 2 }, to: { seq: 5 } },
+				signal: expect.any(AbortSignal),
+			},
+		])
+	})
+
 	it("lands a manual summary only after the user accepts it, regenerating with their feedback first", async () => {
 		const payloads = new MemoryPayloads()
 		const context: CompactionContextEnvelope = {

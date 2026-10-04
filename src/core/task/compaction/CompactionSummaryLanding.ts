@@ -19,6 +19,11 @@ export interface CompactionSummary {
 	readonly assistantText?: string
 	/** Span the request summarized; a journal landing without one is refused, never re-derived. */
 	readonly span?: CompactionSpan
+	/**
+	 * Journal seq of the last message the summary stands for, when it covers
+	 * only the oldest part of the span; absent means the whole span.
+	 */
+	readonly coveredThrough?: number
 }
 
 /**
@@ -82,5 +87,10 @@ export function readCompactionSummary(result: unknown): CompactionSummary | unde
 	const summary = readText((result as { summary?: unknown }).summary)
 	if (!summary) return undefined
 	const assistantText = readText((result as { assistantText?: unknown }).assistantText)
-	return assistantText === undefined ? { summary } : { summary, assistantText }
+	const coveredThrough = (result as { coveredThrough?: unknown }).coveredThrough
+	return {
+		summary,
+		...(assistantText === undefined ? {} : { assistantText }),
+		...(typeof coveredThrough === "number" && Number.isSafeInteger(coveredThrough) ? { coveredThrough } : {}),
+	}
 }

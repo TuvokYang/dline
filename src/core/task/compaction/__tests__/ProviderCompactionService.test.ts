@@ -6,7 +6,14 @@ import type { ProviderRequestFrame } from "../../executors/provider/service/Prov
 import { CompactionRequestScopes } from "../CompactionRequestScopes"
 import { ProviderCompactionService } from "../ProviderCompactionService"
 
-const SOURCE: ClineStorageMessage[] = [{ role: "user", content: [{ type: "text", text: "original task" }] }]
+/** One complete logical turn: the smallest conversation a Pass can summarize. */
+const SOURCE: ClineStorageMessage[] = [
+	{ role: "user", content: [{ type: "text", text: "original task" }] },
+	{ role: "assistant", content: [{ type: "text", text: "first answer" }] },
+]
+
+/** A Pass is only accepted with the usage the provider reported for it. */
+const USAGE = { type: "usage", inputTokens: 100, outputTokens: 10 }
 
 interface FrameProbe {
 	readonly frame: ProviderRequestFrame
@@ -27,6 +34,7 @@ function probe(chunks: readonly unknown[], limits: ModelLimits = { contextWindow
 			calls.push(args)
 			return (async function* () {
 				for (const chunk of chunks) yield chunk
+				yield USAGE
 			})()
 		},
 		abort: () => undefined,
@@ -148,19 +156,29 @@ describe("ProviderCompactionService", () => {
 		expect(outputCap(absolute.calls)).toBeLessThan(50_000)
 	})
 
-	it("falls back to a bounded budget without a zero hard limit when no room is measurable", async () => {
+	// A Pass that cannot fit the window is refused before anything is sent:
+	// sending it with a guessed budget only fails at the provider after paying
+	// for the input.
+	it("refuses a Pass that cannot fit the window without sending it", async () => {
 		const { frame, calls } = probe([{ type: "text", text: SUMMARY_TEXT }], { contextWindow: 64, maxTokens: 64_000 })
 
-		await run(service(frame), { sourceHistory: SOURCE })
-
-		expect(outputCap(calls)).toBe(30_000)
-		expect(lastText(calls)).toBe("SUMMARIZE_INSTRUCTION:lite")
+		await expect(run(service(frame), { sourceHistory: SOURCE })).rejects.toThrow(/cannot fit in one compaction Pass/)
+		expect(calls).toHaveLength(0)
 	})
 
-	it("appends the user's guidance and rejection feedback to the instruction of this request only", async () => {
-		const { frame, calls } = probe([{ type: "text", text: SUMMARY_TEXT }], { contextWindow: 64, maxTokens: 64_000 })
+	it("refuses a conversation with no complete logical turn without sending it", async () => {
+		const { frame, calls } = probe([{ type: "text", text: SUMMARY_TEXT }])
 
-		await run(service(frame), { sourceHistory: SOURCE, guidance: " keep the audit ", feedback: "mention the tests" })
+		await expect(run(service(frame), { sourceHistory: SOURCE.slice(0, 1) })).rejects.toThrow(
+			"No complete logical turn is available for context compaction.",
+		)
+		expect(calls).toHaveLength(0)
+	})
+
+	it("appends the user's guidance after the instruction of this request only", async () => {
+		const { frame, calls } = probe([{ type: "text", text: SUMMARY_TEXT }])
+
+		await run(service(frame), { sourceHistory: SOURCE, guidance: " keep the audit " })
 
 		const messages = calls[0]?.[1] as ClineStorageMessage[]
 		// The source prefix is untouched, so the cache the ordinary request built still applies.
@@ -168,27 +186,66 @@ describe("ProviderCompactionService", () => {
 		expect(messages[messages.length - 1]).toMatchObject({
 			role: "user",
 			content: [
-				{
-					type: "text",
-					text: [
-						"SUMMARIZE_INSTRUCTION:lite",
-						"<user_guidance>\nkeep the audit\n</user_guidance>",
-						"<summary_feedback>\nmention the tests\n</summary_feedback>",
-					].join("\n\n"),
-				},
+				{ type: "text", text: expect.stringMatching(/^SUMMARIZE_INSTRUCTION:lite/) },
+				{ type: "text", text: "<user_guidance>\nkeep the audit\n</user_guidance>" },
 			],
 		})
 	})
 
+	// Regenerate carries the user's latest word on the summary, so the
+	// rejected request's guidance does not steer the next one.
+	it("replaces the guidance with rejection feedback on a regenerated request", async () => {
+		const { frame, calls } = probe([{ type: "text", text: SUMMARY_TEXT }])
+
+		await run(service(frame), { sourceHistory: SOURCE, guidance: "keep the audit", feedback: "mention the tests" })
+
+		const messages = calls[0]?.[1] as ClineStorageMessage[]
+		expect(messages[messages.length - 1]?.content).toEqual([
+			{ type: "text", text: expect.stringMatching(/^SUMMARIZE_INSTRUCTION:lite/) },
+			{ type: "text", text: "<summary_feedback>\nmention the tests\n</summary_feedback>" },
+		])
+	})
+
 	it("sends the bare instruction when guidance and feedback are blank", async () => {
-		const { frame, calls } = probe([{ type: "text", text: SUMMARY_TEXT }], { contextWindow: 64, maxTokens: 64_000 })
+		const { frame, calls } = probe([{ type: "text", text: SUMMARY_TEXT }])
 
 		await run(service(frame), { sourceHistory: SOURCE, guidance: "  ", feedback: "" })
 
 		const messages = calls[0]?.[1] as ClineStorageMessage[]
-		expect(messages[messages.length - 1]).toMatchObject({
-			content: [{ type: "text", text: "SUMMARIZE_INSTRUCTION:lite" }],
-		})
+		expect(messages[messages.length - 1]?.content).toEqual([
+			{ type: "text", text: expect.stringMatching(/^SUMMARIZE_INSTRUCTION:lite/) },
+		])
+	})
+
+	// The oldest turn alone did not fit with the next one, and once it was
+	// summarized the conversation fit: the newer turn stays verbatim, so the
+	// summary must land on the older turn only.
+	it("stops after the oldest turns once the next request fits and reports where the summary ends", async () => {
+		const { frame, calls } = probe([{ type: "text", text: SUMMARY_TEXT }], { contextWindow: 200_000, maxTokens: 64_000 })
+		const source: ClineStorageMessage[] = [
+			{ role: "user", content: [{ type: "text", text: "task A" }] },
+			{ role: "assistant", content: [{ type: "text", text: "a".repeat(400_000) }] },
+			{ role: "user", content: [{ type: "text", text: "task B" }] },
+			{ role: "assistant", content: [{ type: "text", text: "b".repeat(400_000) }] },
+		]
+
+		const result = await run(
+			service(frame, () => ({ triggerPercent: 95 })),
+			{
+				sourceHistory: source,
+				sourceRanges: [
+					[11, 11],
+					[12, 12],
+					[13, 13],
+					[14, 14],
+				],
+			},
+		)
+
+		expect(calls).toHaveLength(1)
+		expect(JSON.stringify(calls[0]?.[1])).toContain("task A")
+		expect(JSON.stringify(calls[0]?.[1])).not.toContain("task B")
+		expect(result).toEqual({ summary: "THE SUMMARY", coveredThrough: 12 })
 	})
 
 	it("requests the summary from the handler a run is bound to", async () => {

@@ -1,16 +1,40 @@
-import type { CompactTriggerOptions } from "@core/context/context-management/context-window-utils"
-import type { ClineStorageMessage } from "@shared/messages/content"
-import { Logger } from "@shared/services/Logger"
+import { randomUUID } from "node:crypto"
+import { createCompactionConversationRange } from "@core/context/context-management/compaction-conversation-range"
+import { CompactionPassBudgetError } from "@core/context/context-management/compaction-pass-budget-error"
+import { resolveCompactionWindowBudget } from "@core/context/context-management/compaction-window-budget"
+import { estimateContextWindowCandidate } from "@core/context/context-management/context-window-projection"
+import {
+	COMPACTION_CLOSURE_RESERVE_TOKENS,
+	type CompactTriggerOptions,
+	computeSummarizeBudget,
+	getContextWindowInfo,
+	MIN_COMPACTION_SUMMARY_OUTPUT_TOKENS,
+	resolveCompactTriggerPolicy,
+} from "@core/context/context-management/context-window-utils"
+import { buildSummaryRefitGuidance } from "@core/context/context-management/summary-refit"
+import { decideTargetWindowFitting } from "@core/context/context-management/TargetWindowFittingService"
+import {
+	buildCompactionPassHistory,
+	buildTargetCandidateHistory,
+	type TargetWindowFittingState,
+} from "@core/context/context-management/target-window-fitting"
+import type { ClineContent, ClineStorageMessage } from "@shared/messages/content"
+import { ClineDefaultTool } from "@shared/tools"
+import { getRetryDelay, MAX_AUTO_RETRY_ATTEMPTS } from "../auto-retry"
+import {
+	type ContextCompactionPassRequest,
+	ContextCompactionSession,
+	type ContextCompactionSessionEvent,
+	type ContextCompactionSessionInput,
+	type ContextCompactionSessionPorts,
+	type ContextCompactionTriggerKind,
+} from "../ContextCompactionSession"
 import type { ProductionCompactionService } from "../executors/compaction/ProductionCompactionAdapter"
 import type { ProviderRequestFrame, ProviderRequestFramePort } from "../executors/provider/service/ProviderRequest"
-import { planCompactionRequest } from "./CompactionRequestPlan"
+import { ExplicitInstructionRegistry } from "../explicit-instructions/ExplicitInstructionRegistry"
+import { ExplicitInstructionRequestScope } from "../explicit-instructions/ExplicitInstructionRequestScope"
+import type { CompactionTrigger } from "../stores/payload/TaskPayloadEnvelopes"
 import type { CompactionRequestScopeReader } from "./CompactionRequestScopes"
-import { normalizeCompactionResponse } from "./CompactionResponseNormalizer"
-import {
-	foldNativeCompactionSummary,
-	type NativeCompactionSummaryState,
-	readNativeCompactionSummary,
-} from "./NativeCompactionSummary"
 
 export interface ProviderCompactionServiceOptions {
 	/** The frame ordinary requests use; compaction must share it to keep the provider prefix cache. */
@@ -30,10 +54,16 @@ export interface ProviderCompactionServiceOptions {
 	 * context transition that compacts for the target it is about to adopt.
 	 */
 	readonly scopes?: CompactionRequestScopeReader
+	/** Pause before an automatic retry of a failed Pass; defaults to the task retry schedule. */
+	readonly waitForRetry?: (retryAttempt: number, signal: AbortSignal) => Promise<void>
 }
 
 interface CompactionContext {
 	readonly sourceHistory: ClineStorageMessage[]
+	/** Journal position of each source message; absent in contexts written before partial landing. */
+	readonly sourceRanges?: ReadonlyArray<readonly [number, number]>
+	/** Visible messages after the span, carried by the next request after the summary. */
+	readonly tail?: ClineStorageMessage[]
 	/** Caller-imposed ceiling on the summary; the window budget still applies below it. */
 	readonly maxOutputTokens?: number
 	/** What the user asked this summary to keep; part of this request only. */
@@ -42,104 +72,313 @@ interface CompactionContext {
 	readonly feedback?: string
 }
 
-/**
- * The closing message of a compaction request.
- *
- * The user's own words follow the instruction so the model reads them as
- * constraints on this summary. They are never journaled: once the summary
- * lands, the guidance has done its work and must not reappear in later turns.
- */
-function renderRequest(instruction: string, context: CompactionContext): string {
-	const parts = [instruction]
-	if (context.guidance?.trim()) parts.push(`<user_guidance>\n${context.guidance.trim()}\n</user_guidance>`)
-	if (context.feedback?.trim()) parts.push(`<summary_feedback>\n${context.feedback.trim()}\n</summary_feedback>`)
-	return parts.join("\n\n")
+/** What a completed run hands to landing. */
+export interface ProviderCompactionResult {
+	readonly summary: string
+	/**
+	 * Journal seq of the last message the summary stands for.
+	 *
+	 * Earlier than the span end when summarizing the oldest turns already made
+	 * the next request fit: the turns after it stay verbatim.
+	 */
+	readonly coveredThrough?: number
 }
 
 function isCompactionContext(value: unknown): value is CompactionContext {
 	return Boolean(value && typeof value === "object" && Array.isArray((value as { sourceHistory?: unknown }).sourceHistory))
 }
 
-function extractSummary(assistantText: string): string {
-	const match = /<summarize_task>\s*<context>([\s\S]*?)<\/context>\s*<\/summarize_task>/.exec(assistantText)
-	if (!match) throw new Error("Compaction response did not contain summarize_task context")
-	const summary = match[1].trim()
-	if (!summary) throw new Error("Compaction response contained an empty context")
-	return summary
+/**
+ * The user's words that ride on every Pass of this run and never on the target.
+ *
+ * Regeneration feedback replaces `/compact` guidance rather than adding to it,
+ * so the request is steered by the user's latest word on the summary.
+ */
+function passGuidanceOf(context: CompactionContext): ClineContent[] {
+	if (context.feedback?.trim()) {
+		return [{ type: "text", text: `<summary_feedback>\n${context.feedback.trim()}\n</summary_feedback>` }]
+	}
+	if (context.guidance?.trim()) return [{ type: "text", text: `<user_guidance>\n${context.guidance.trim()}\n</user_guidance>` }]
+	return []
+}
+
+/** A manual run is reviewed by the user, so a failure is theirs to retry rather than the run's. */
+function sessionTriggerOf(trigger: CompactionTrigger | undefined): ContextCompactionTriggerKind {
+	return trigger === "manual" ? "manual_compact_command" : "auto_compaction"
+}
+
+function smallestLimit(...limits: Array<number | undefined>): number | undefined {
+	const defined = limits.filter((limit): limit is number => typeof limit === "number" && Number.isFinite(limit) && limit > 0)
+	return defined.length > 0 ? Math.min(...defined) : undefined
+}
+
+/** Wait for one retry delay, ending early with the run when it is stopped. */
+function delayRetry(retryAttempt: number, signal: AbortSignal): Promise<void> {
+	return new Promise((resolve, reject) => {
+		if (signal.aborted) return reject(signal.reason)
+		const onAbort = () => {
+			clearTimeout(timer)
+			reject(signal.reason)
+		}
+		const timer = setTimeout(() => {
+			signal.removeEventListener("abort", onAbort)
+			resolve()
+		}, getRetryDelay(retryAttempt))
+		signal.addEventListener("abort", onAbort, { once: true })
+	})
 }
 
 /**
- * Runs one provider-backed compaction request outside the ordinary turn stream.
+ * Runs one compaction as a sequence of hidden Passes outside the ordinary turn stream.
  *
- * The request is the ordinary request with one more user message: the same
- * handler, system prompt, tools and task namespace, followed by the source
- * conversation and then the summarize instruction. Everything before the
- * instruction is therefore a prefix the provider has already cached, so the
- * compaction reads the conversation it condenses from cache instead of
- * re-sending it as a new prompt.
+ * Each Pass is the ordinary request's frame - the same handler, system prompt,
+ * tools and task namespace - followed by the cumulative summary, the oldest
+ * turns not yet summarized, and the summarize instruction. Passes continue
+ * turn by turn until the next request projected from the summary and the
+ * remaining turns fits below 80% of the effective window, so a conversation
+ * larger than one request is condensed without dropping any turn and a
+ * conversation that only just overflowed keeps its recent turns verbatim.
  */
 export class ProviderCompactionService implements ProductionCompactionService {
+	/** One registry per task: every Pass request authorizes exactly one summarize_task consumption. */
+	private readonly registry = new ExplicitInstructionRegistry()
+
 	constructor(private readonly options: ProviderCompactionServiceOptions) {}
 
 	async run(input: Parameters<ProductionCompactionService["run"]>[0]): Promise<unknown> {
 		if (!isCompactionContext(input.context)) throw new Error("InvalidCompactionContext")
 		if (input.signal.aborted) throw input.signal.reason
-		const frame = await this.options.frames.frame(input.signal, this.options.scopes?.resolve(input.compactionId))
+		const scope = this.options.scopes?.resolve(input.compactionId)
+		const frame = await this.options.frames.frame(input.signal, scope)
 		// A stop during frame resolution happened before the listener below exists.
 		if (input.signal.aborted) throw input.signal.reason
 		const context = input.context
-		const plan = planCompactionRequest({
-			frame,
-			sourceHistory: context.sourceHistory,
-			closingRequest: (budgetGuidance) => renderRequest(this.options.instruction(frame, budgetGuidance), context),
-			triggerOptions: this.options.triggerOptions?.(),
-			summaryOutputLimitTokens: context.maxOutputTokens,
+		const outcome: { committed?: TargetWindowFittingState; failure?: string } = {}
+		const session = new ContextCompactionSession(this.ports(frame, context, input, outcome), {
+			maxRetryAttempts: MAX_AUTO_RETRY_ATTEMPTS,
 		})
-		if (!plan.fits) {
-			Logger.warn(
-				`[Compaction] ${input.compactionId}: estimated input leaves no output room in the window; sending with fallback budget ${plan.maxOutputTokens}`,
-			)
-		}
-		const abort = () => frame.api.abort?.()
+		// The session checks its signal between steps; aborting the handler is
+		// what ends a provider stream that is already running.
+		const abort = () => session.cancel(input.compactionId)
 		input.signal.addEventListener("abort", abort, { once: true })
-		let assistantText = ""
-		// A provider with native tools answers with a `summarize_task` call, so the
-		// summary never reaches the text channel this method otherwise reads.
-		let nativeSummary: NativeCompactionSummaryState = {}
 		try {
-			const stream = frame.api.createMessage(frame.systemPrompt, plan.messages, frame.tools, {
-				...frame.options,
-				generation: { purpose: "compaction", maxOutputTokens: plan.maxOutputTokens },
-			})
-			for await (const chunk of stream) {
-				if (input.signal.aborted) throw input.signal.reason
-				if (chunk.type === "tool_calls") {
-					nativeSummary = foldNativeCompactionSummary(nativeSummary, {
-						functionId: chunk.function_id,
-						name: chunk.tool_call.function.name,
-						arguments: chunk.tool_call.function.arguments,
-						argumentsMode: chunk.argumentsMode,
-					})
-					continue
-				}
-				if (chunk.type !== "text") continue
-				assistantText += chunk.text
-				input.publish({
-					kind: "compaction_partial",
-					compactionId: input.compactionId,
-					attempt: input.attempt,
-					text: normalizeCompactionResponse(assistantText).assistantText,
-				})
+			const result = await session.run(this.sessionInput(frame, context, input, scope?.mode))
+			if (input.signal.aborted) throw input.signal.reason
+			const summary = outcome.committed?.cumulativeSummary
+			if (result !== "completed" || !outcome.committed || !summary) {
+				throw new Error(outcome.failure ?? "Context compaction did not complete.")
 			}
+			const coveredThrough = coveredSeq(outcome.committed, context)
+			return coveredThrough === undefined ? { summary } : { summary, coveredThrough }
 		} finally {
 			input.signal.removeEventListener("abort", abort)
 		}
-		const normalized = normalizeCompactionResponse(assistantText).assistantText
-		const summary = readNativeCompactionSummary(nativeSummary)
-		// The prose still carries whatever the model said around the call, so the
-		// stored transcript stays faithful even when the summary came natively.
-		return summary
-			? { summary, assistantText: normalized }
-			: { summary: extractSummary(normalized), assistantText: normalized }
 	}
+
+	private sessionInput(
+		frame: ProviderRequestFrame,
+		context: CompactionContext,
+		input: Parameters<ProductionCompactionService["run"]>[0],
+		mode: ContextCompactionSessionInput["targetMode"] | undefined,
+	): ContextCompactionSessionInput {
+		const ranges = context.sourceRanges
+		return {
+			operationId: input.compactionId,
+			trigger: sessionTriggerOf(input.trigger),
+			taskNamespace: frame.options?.taskNamespace,
+			compactionApi: frame.api,
+			targetApi: frame.api,
+			// Only the ports below read the Mode, and they read the frame instead.
+			targetMode: mode ?? "act",
+			sourceHistory: context.sourceHistory,
+			...(ranges && ranges.length === context.sourceHistory.length
+				? { sourceCanonicalRanges: ranges.map(([from, to]) => [from, to] as const) }
+				: {}),
+			targetContinuationHistory: context.tail ?? [],
+			passGuidance: passGuidanceOf(context),
+			signal: input.signal,
+		}
+	}
+
+	private ports(
+		frame: ProviderRequestFrame,
+		context: CompactionContext,
+		input: Parameters<ProductionCompactionService["run"]>[0],
+		outcome: { committed?: TargetWindowFittingState; failure?: string },
+	): ContextCompactionSessionPorts {
+		const estimator = { providerId: frame.api.getProviderId?.(), modelId: frame.api.getModel().id }
+		const policy = () =>
+			resolveCompactTriggerPolicy(
+				getContextWindowInfo(frame.api).contextWindow,
+				computeSummarizeBudget(),
+				this.options.triggerOptions?.(),
+			)
+		return {
+			getPassInputCeiling: () => policy().passInputCeilingTokens,
+			// Only an indivisible turn may use the window up to the closure reserve.
+			getSingleTurnInputCeiling: () =>
+				Math.max(
+					0,
+					policy().hardPassContextWindowTokens -
+						COMPACTION_CLOSURE_RESERVE_TOKENS -
+						MIN_COMPACTION_SUMMARY_OUTPUT_TOKENS,
+				),
+			estimatePassInput: async (sessionInput, passHistory) => {
+				const request = this.passRequest(frame, sessionInput, passHistory, undefined, undefined, "estimate")
+				try {
+					return estimateContextWindowCandidate(request.providerInput, estimator)
+				} finally {
+					request.explicitInstructions.cancel()
+				}
+			},
+			buildPassRequest: async (sessionInput, state, feedback, passHistory) =>
+				this.passRequest(
+					frame,
+					sessionInput,
+					passHistory ?? buildCompactionPassHistory(state),
+					feedback,
+					smallestLimit(state.nextPassSummaryCarryLimitTokens, context.maxOutputTokens),
+					"send",
+				),
+			buildSummaryRefitRequest: async (sessionInput, state, carryLimitTokens, refitAttempt) => {
+				if (!state.cumulativeSummary) throw new Error("Summary refit requires an existing cumulative summary")
+				return this.passRequest(
+					frame,
+					sessionInput,
+					[{ role: "user", content: [{ type: "text", text: state.cumulativeSummary }] }],
+					[{ type: "text", text: buildSummaryRefitGuidance(carryLimitTokens, refitAttempt) }],
+					carryLimitTokens,
+					"send",
+				)
+			},
+			reprojectTarget: async (_sessionInput, state) => {
+				const messages = buildTargetCandidateHistory(state, context.tail ?? [])
+				const candidateEstimatedTokens = estimateContextWindowCandidate(
+					{
+						systemPrompt: frame.systemPrompt,
+						messages,
+						tools: frame.tools,
+						serverTools: frame.options?.serverTools ?? [],
+					},
+					estimator,
+				)
+				return decideTargetWindowFitting({
+					candidateEstimatedTokens,
+					providerContextWindow: getContextWindowInfo(frame.api).contextWindow,
+					...this.options.triggerOptions?.(),
+					hasMoreTurns: state.coveredTurnCount < state.turns.length,
+				})
+			},
+			stageAcceptedPass: async () => {},
+			commit: async (_sessionInput, state) => {
+				outcome.committed = { ...state }
+			},
+			publish: async (_sessionInput, event) => {
+				if (event.kind === "failed") outcome.failure = event.error
+				const text = partialSummaryOf(event)
+				if (text !== undefined) {
+					input.publish({ kind: "compaction_partial", compactionId: input.compactionId, attempt: input.attempt, text })
+				}
+			},
+			waitForRetry: (_sessionInput, retryAttempt, signal) =>
+				(this.options.waitForRetry ?? delayRetry)(retryAttempt, signal),
+		}
+	}
+
+	/**
+	 * Build one hidden Pass request on the ordinary frame.
+	 *
+	 * The closing message carries the instruction, the window budget the model
+	 * must respect, and this run's guidance. Every request gets its own explicit
+	 * instruction scope, so each Pass authorizes exactly one summary.
+	 */
+	private passRequest(
+		frame: ProviderRequestFrame,
+		input: ContextCompactionSessionInput,
+		passHistory: readonly ClineStorageMessage[],
+		feedback: readonly ClineContent[] | undefined,
+		summaryOutputLimitTokens: number | undefined,
+		purpose: "send" | "estimate",
+	): ContextCompactionPassRequest {
+		const scope = new ExplicitInstructionRequestScope(this.registry, { requestId: randomUUID(), attemptId: randomUUID() })
+		scope.register({
+			type: "summarize_task",
+			source: input.trigger,
+			targetTool: ClineDefaultTool.SUMMARIZE_TASK,
+			operationId: input.operationId,
+		})
+		try {
+			const ts = Date.now()
+			const closing = [...(feedback ?? input.passGuidance ?? [])]
+			const buildMessages = (budgetGuidance: string): ClineStorageMessage[] => [
+				...passHistory,
+				{
+					role: "user",
+					content: [{ type: "text", text: this.options.instruction(frame, budgetGuidance) }, ...closing],
+					ts,
+				},
+			]
+			const policy = resolveCompactTriggerPolicy(
+				getContextWindowInfo(frame.api).contextWindow,
+				computeSummarizeBudget(),
+				this.options.triggerOptions?.(),
+			)
+			const serverTools = frame.options?.serverTools ?? []
+			const model = frame.api.getModel()
+			const { budget, messages } = resolveCompactionWindowBudget({
+				contextWindow: policy.hardPassContextWindowTokens,
+				maxOutputTokens: model.info.capabilities?.maxTokens,
+				summaryOutputLimitTokens,
+				systemPrompt: frame.systemPrompt,
+				tools: frame.tools,
+				serverTools,
+				closureReserveTokens: COMPACTION_CLOSURE_RESERVE_TOKENS,
+				// The planner sizes the Pass range with this same estimator; measuring
+				// differently here would refuse a range the planner cannot shrink.
+				estimator: { providerId: frame.api.getProviderId?.(), modelId: model.id },
+				buildMessages,
+			})
+			if (
+				budget.decision !== "ready" &&
+				purpose === "send" &&
+				budget.estimatedInputTokens > policy.passInputCeilingTokens
+			) {
+				// Structured so the session narrows the range with the measurement
+				// that refused it instead of reproposing the same range.
+				throw new CompactionPassBudgetError({
+					estimatedInputTokens: budget.estimatedInputTokens,
+					contextWindow: policy.hardPassContextWindowTokens,
+					availableRemainder: budget.availableRemainder,
+					estimatedTextTokens: budget.estimatedTextTokens,
+					estimatedImageTokens: budget.estimatedImageTokens,
+				})
+			}
+			return {
+				providerInput: {
+					systemPrompt: frame.systemPrompt,
+					messages,
+					tools: frame.tools,
+					serverTools,
+					providerOutputCap: budget.providerOutputCap,
+				},
+				explicitInstructions: scope,
+				initialAttemptId: scope.createConsumePort().identity.attemptId,
+			}
+		} catch (error) {
+			scope.cancel()
+			throw error
+		}
+	}
+}
+
+/** The streamed summary a Pass or refit has produced so far, if this event carries one. */
+function partialSummaryOf(event: ContextCompactionSessionEvent): string | undefined {
+	return event.kind === "pass_partial" || event.kind === "summary_refit_partial" ? event.content : undefined
+}
+
+/** Journal seq of the last summarized message, when the context recorded where its messages live. */
+function coveredSeq(state: TargetWindowFittingState, context: CompactionContext): number | undefined {
+	const last = context.sourceRanges?.at(-1)
+	if (!last || context.sourceRanges?.length !== context.sourceHistory.length) return undefined
+	return createCompactionConversationRange(state, last[1]).apiConversationRange[1]
 }

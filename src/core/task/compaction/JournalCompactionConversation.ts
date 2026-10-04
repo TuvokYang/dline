@@ -17,6 +17,16 @@ import type { CompactionLandingInput, CompactionLandingPort, CompactionSpan } fr
 /** What a compaction summarizes, and the journal span the summary will stand for. */
 export interface CompactionSource {
 	readonly messages: ClineStorageMessage[]
+	/**
+	 * Journal position of each message in `messages`, as `[seq, seq]`.
+	 *
+	 * A summary may stand for only the oldest turns of the span when the rest
+	 * already fits, so landing needs to know where each summarized message
+	 * lives to shrink the span to what was actually covered.
+	 */
+	readonly sourceRanges?: ReadonlyArray<readonly [number, number]>
+	/** Visible messages after the span, which the next request carries after the summary. */
+	readonly tail?: ClineStorageMessage[]
 	/** Absent when nothing past the opening request has been answered yet. */
 	readonly span?: CompactionSpan
 	/**
@@ -371,12 +381,15 @@ export class JournalCompactionConversation implements CompactionConversationPort
 		const last = items[end]
 		// Nothing condensable: the source is only read to be refused, so it stays what was settled.
 		if (end < 0 || !first || !last) return { messages: all.slice(0, lastSettledIndex(items, names) + 1) }
-		const messages = items
-			.slice(0, end + 1)
-			.map((item, index) => (reply && index === end ? withoutReplies(item.message, names) : item.message))
+		const covered = items.slice(0, end + 1)
+		const messages = covered.map((item, index) =>
+			reply && index === end ? withoutReplies(item.message, names) : item.message,
+		)
+		const sourceRanges = covered.map(({ entry }) => [entry.watermark.seq, entry.watermark.seq] as const)
+		const tail = items.slice(end + 1).map((item) => item.message)
 		const span = { from: first.entry.watermark, to: last.entry.watermark }
 		const continuation = reply ? replyContinuation(last.message, names) : carriedContinuation(items, end)
-		return continuation ? { messages, span, continuation } : { messages, span }
+		return continuation ? { messages, sourceRanges, tail, span, continuation } : { messages, sourceRanges, tail, span }
 	}
 
 	/**

@@ -76,6 +76,12 @@ export async function requestTaskCompaction(
 			context: {
 				mode: input.mode,
 				sourceHistory: source.messages,
+				// Where each summarized message lives, so a summary that covers
+				// only the oldest turns lands on exactly those turns.
+				...(source.sourceRanges ? { sourceRanges: source.sourceRanges } : {}),
+				// What the next request carries after the summary, so the run can
+				// tell when the conversation already fits and stop early.
+				...(source.tail ? { tail: source.tail } : {}),
 				...(input.guidance ? { guidance: input.guidance } : {}),
 			},
 		}),

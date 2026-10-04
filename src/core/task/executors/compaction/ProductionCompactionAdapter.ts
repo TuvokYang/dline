@@ -1,11 +1,16 @@
 import {
+	type CompactionLandingInput,
 	type CompactionLandingPort,
 	type CompactionSummary,
 	readCompactionSummary,
 } from "../../compaction/CompactionSummaryLanding"
 import type { TaskPayloadStore } from "../../stores"
 import { decodeTaskPayload, encodeTaskPayload } from "../../stores/payload/TaskPayloadCodec"
-import type { CompactionContextEnvelope, CompactionResultEnvelope } from "../../stores/payload/TaskPayloadEnvelopes"
+import type {
+	CompactionContextEnvelope,
+	CompactionResultEnvelope,
+	CompactionTrigger,
+} from "../../stores/payload/TaskPayloadEnvelopes"
 import type { CompactionExecutionInput, CompactionPort } from "./CompactionCommandExecutor"
 
 export interface ProductionCompactionService {
@@ -13,9 +18,31 @@ export interface ProductionCompactionService {
 		readonly compactionId: string
 		readonly attempt: string
 		readonly context: unknown
+		/** Who asked; a manual run is the user's to retry, so its failed Passes are not replayed. */
+		readonly trigger?: CompactionTrigger
 		readonly signal: AbortSignal
 		readonly publish: CompactionExecutionInput["publish"]
 	}): Promise<unknown>
+}
+
+/**
+ * The span a summary actually replaces, and whether the reply it ended on goes with it.
+ *
+ * A summary that covered only the oldest turns stands for those turns alone;
+ * the rest of the span stays verbatim, and so does the reply at its end, which
+ * is still where the conversation left off.
+ */
+function landedSpan(
+	context: CompactionContextEnvelope,
+	summary: CompactionSummary,
+): Pick<CompactionLandingInput, "span" | "continuation"> {
+	const span = context.span
+	if (!span) return {}
+	const coveredThrough = summary.coveredThrough
+	if (coveredThrough === undefined || coveredThrough >= span.to.seq) {
+		return { span, ...(context.continuation === undefined ? {} : { continuation: context.continuation }) }
+	}
+	return { span: { from: span.from, to: { ...span.to, seq: coveredThrough } } }
 }
 
 /**
@@ -116,8 +143,7 @@ export class ProductionCompactionAdapter implements CompactionPort {
 				attempt: input.attempt,
 				signal: input.signal,
 				...summary,
-				...(context.span === undefined ? {} : { span: context.span }),
-				...(context.continuation === undefined ? {} : { continuation: context.continuation }),
+				...landedSpan(context, summary),
 			})
 			if (input.signal.aborted) throw input.signal.reason
 		}
@@ -140,7 +166,11 @@ export class ProductionCompactionAdapter implements CompactionPort {
 		const review = context.trigger === "manual" ? this.options.review : undefined
 		let requestContext = context.context
 		for (let regenerations = 0; ; regenerations++) {
-			const result = await this.options.service.run({ ...input, context: requestContext })
+			const result = await this.options.service.run({
+				...input,
+				context: requestContext,
+				...(context.trigger === undefined ? {} : { trigger: context.trigger }),
+			})
 			if (input.signal.aborted) throw input.signal.reason
 			const summary = readCompactionSummary(result)
 			if (!review || !summary) return { result, summary }
