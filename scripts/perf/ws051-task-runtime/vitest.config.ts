@@ -9,7 +9,7 @@ const probe = process.env.WS051_PROBE
 if (!harnessRoot || !targetRoot || (variant !== "candidate" && variant !== "legacy")) {
 	throw new Error("WS051 harness root, target root, and variant are required")
 }
-if (probe !== "cold-start" && probe !== "retained-heap") {
+if (probe !== "cold-start" && probe !== "prompt-context" && probe !== "retained-heap") {
 	throw new Error(`Unsupported WS051 probe: ${probe ?? "missing"}`)
 }
 
@@ -20,6 +20,10 @@ export default defineConfig({
 	resolve: {
 		alias: {
 			"@perf/task-entry": resolve(targetRoot, "src/core/task/index.ts"),
+			"@perf/prompt-context-entry": resolve(
+				targetRoot,
+				variant === "candidate" ? "src/core/task/prompt/TaskPromptContextOwner.ts" : "src/core/task/index.ts",
+			),
 			"@perf/retained-fixture": resolve(__dirname, retainedFixture),
 			"@perf/kernel": resolve(targetRoot, "src/core/task/kernel/index.ts"),
 			"@perf/candidate-runtime": resolve(targetRoot, "src/core/task/runtime/TaskRuntime.ts"),

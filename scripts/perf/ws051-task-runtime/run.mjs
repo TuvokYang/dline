@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process"
-import { writeFileSync } from "node:fs"
-import { resolve } from "node:path"
+import { mkdirSync, writeFileSync } from "node:fs"
+import { dirname, resolve } from "node:path"
 import process from "node:process"
 
 const WARMUPS = 5
@@ -14,6 +14,7 @@ const config = resolve(scriptRoot, "vitest.config.ts")
 const output = process.env.WS051_PERF_OUTPUT
 	? resolve(harnessRoot, process.env.WS051_PERF_OUTPUT)
 	: resolve(harnessRoot, "tmp/ws051-runtime-performance/report.json")
+mkdirSync(dirname(output), { recursive: true })
 
 function percentile(samples, value) {
 	const sorted = [...samples].sort((left, right) => left - right)
@@ -69,6 +70,26 @@ function summarize(samples, field) {
 	}
 }
 
+function summarizeAggregate(sampleResult, field) {
+	if (sampleResult.warmups !== WARMUPS || sampleResult.measurements !== MEASUREMENTS) {
+		throw new Error(`Unexpected aggregate sample geometry: ${JSON.stringify(sampleResult)}`)
+	}
+	const values = sampleResult[field]
+	if (!Array.isArray(values) || values.length !== MEASUREMENTS) {
+		throw new Error(`Expected ${MEASUREMENTS} aggregate measurements for ${sampleResult.metric}/${sampleResult.variant}`)
+	}
+	if (!values.every((value) => Number.isFinite(value) && value >= 0)) {
+		throw new Error(`Aggregate measurements contain an invalid value for ${sampleResult.metric}/${sampleResult.variant}`)
+	}
+	return {
+		samples: values,
+		p50: percentile(values, 0.5),
+		p95: percentile(values, 0.95),
+		pid: sampleResult.pid,
+		runId: sampleResult.runId,
+	}
+}
+
 const roots = { legacy: legacyRoot, candidate: harnessRoot }
 const report = {
 	schemaVersion: 1,
@@ -85,9 +106,67 @@ const report = {
 	metrics: {},
 }
 
-const probes = (process.env.WS051_PROBES ?? "cold-start,retained-heap").split(",")
+const probes = (process.env.WS051_PROBES ?? "cold-start,prompt-context,retained-heap").split(",")
 for (const probe of probes) {
-	if (probe !== "cold-start" && probe !== "retained-heap") throw new Error(`Unsupported WS051 probe: ${probe}`)
+	if (probe !== "cold-start" && probe !== "prompt-context" && probe !== "retained-heap") {
+		throw new Error(`Unsupported WS051 probe: ${probe}`)
+	}
+
+	if (probe === "prompt-context") {
+		const legacySample = sample(probe, "legacy", roots.legacy, 0)
+		const candidateSample = sample(probe, "candidate", roots.candidate, 0)
+		const legacy = summarizeAggregate(legacySample, "samplesMs")
+		const candidate = summarizeAggregate(candidateSample, "samplesMs")
+		const equivalence = {
+			normalization: "optional transport booleans are canonicalized with === true; raw contexts remain recorded",
+			contextDigest: legacySample.contextDigest === candidateSample.contextDigest,
+			contextBytes: legacySample.contextBytes === candidateSample.contextBytes,
+			rawContextDigest: legacySample.rawContextDigest === candidateSample.rawContextDigest,
+			rawContextBytes: legacySample.rawContextBytes === candidateSample.rawContextBytes,
+			callDigest: legacySample.callDigest === candidateSample.callDigest,
+			taskCapabilityToggles: legacySample.taskCapabilityToggles === candidateSample.taskCapabilityToggles,
+			legacy: {
+				contextDigest: legacySample.contextDigest,
+				contextBytes: legacySample.contextBytes,
+				context: legacySample.context,
+				rawContextDigest: legacySample.rawContextDigest,
+				rawContextBytes: legacySample.rawContextBytes,
+				rawContext: legacySample.rawContext,
+				callDigest: legacySample.callDigest,
+				callTrace: legacySample.callTrace,
+				taskCapabilityToggles: legacySample.taskCapabilityToggles,
+			},
+			candidate: {
+				contextDigest: candidateSample.contextDigest,
+				contextBytes: candidateSample.contextBytes,
+				context: candidateSample.context,
+				rawContextDigest: candidateSample.rawContextDigest,
+				rawContextBytes: candidateSample.rawContextBytes,
+				rawContext: candidateSample.rawContext,
+				callDigest: candidateSample.callDigest,
+				callTrace: candidateSample.callTrace,
+				taskCapabilityToggles: candidateSample.taskCapabilityToggles,
+			},
+		}
+		const equivalent =
+			equivalence.contextDigest && equivalence.contextBytes && equivalence.callDigest && equivalence.taskCapabilityToggles
+		const limit = { p95: legacy.p95 * 1.1 }
+		const passed = equivalent && candidate.p95 <= limit.p95
+		report.metrics[probe] = {
+			unit: "milliseconds",
+			boundary: "fixed-F0 capability discovery through immutable SystemPromptContext",
+			legacy,
+			candidate,
+			equivalence,
+			limit,
+			passed,
+		}
+		console.log(`WS-051 ${probe} ${JSON.stringify(report.metrics[probe])}`)
+		writeFileSync(output, `${JSON.stringify(report, null, 2)}\n`, "utf8")
+		if (!passed) process.exitCode = 1
+		continue
+	}
+
 	const collected = { legacy: [], candidate: [] }
 	for (let index = 0; index < RUNS; index++) {
 		const order = index % 2 === 0 ? ["legacy", "candidate"] : ["candidate", "legacy"]
