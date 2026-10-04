@@ -1,6 +1,6 @@
 import type { EntryId } from "../../kernel"
 import type { TaskEventSink } from "../contracts"
-import { InboundEventSource } from "../inbound/InboundEventSource"
+import { InboundEventSource } from "../shared/InboundEventSource"
 
 export interface CoTaskArrival {
 	readonly entryId: EntryId

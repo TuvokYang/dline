@@ -43,7 +43,6 @@ describe("ProviderCommandExecutor", () => {
 						{
 							kind: "partial",
 							transientId: "stream-1",
-							payloadRef: "payload:partial",
 							projection: { text: "partial" },
 						},
 						{
@@ -81,6 +80,76 @@ describe("ProviderCommandExecutor", () => {
 		])
 	})
 
+	it("finishes presentation and kernel settlement when cancellation lands after the final journal append", async () => {
+		const recorded = recorder()
+		const journal = new InMemoryConversationJournal()
+		const presentation = { showPartial: vi.fn(), commit: vi.fn(async () => undefined) }
+		let stop: () => void = () => undefined
+		const finalize = journal.finalizeTransient.bind(journal)
+		vi.spyOn(journal, "finalizeTransient").mockImplementation(async (input) => {
+			const result = await finalize(input)
+			stop()
+			return result
+		})
+		const executor = new ProviderCommandExecutor(
+			"task-1",
+			{
+				start: () =>
+					chunks([
+						{ kind: "partial", transientId: "stream-1", text: "answer" },
+						{
+							kind: "final",
+							transientId: "stream-1",
+							turnId: "turn-request",
+							payloadRef: "payload:final",
+							text: "answer",
+							turnPlan: { mode: "serial", blocks: [] },
+						},
+					]),
+			},
+			journal,
+			new InMemoryTaskViewPort(),
+			recorded.sink,
+			presentation,
+		)
+		stop = () => executor.cancelAll("provider_cancel")
+
+		await executor.execute(command)
+
+		expect(presentation.commit).toHaveBeenCalledWith({ transientId: "stream-1", text: "answer" })
+		expect(recorded.events).toEqual([
+			expect.objectContaining({ type: "provider.turn_ready", finalPayloadRef: "payload:final" }),
+		])
+	})
+
+	it("replays an existing durable final without requesting the provider again", async () => {
+		const recorded = recorder()
+		const journal = new InMemoryConversationJournal()
+		await journal.append({
+			operationId: "provider.final:provider:1",
+			payloadRef: "payload:existing",
+			source: "provider",
+			causation: { commandId: "provider:old", originRevision: 1, generation: 0, turnId: "turn-request" },
+		})
+		const start = vi.fn(() => chunks([]))
+		const recoverFinal = vi.fn(async () => ({ turnPlan: { mode: "serial" as const, blocks: [] } }))
+		const port = { start, recoverFinal }
+		const executor = new ProviderCommandExecutor("task-1", port, journal, new InMemoryTaskViewPort(), recorded.sink)
+
+		await executor.execute(command)
+
+		expect(start).not.toHaveBeenCalled()
+		expect(recoverFinal).toHaveBeenCalledWith("payload:existing")
+		expect(recorded.events).toEqual([
+			expect.objectContaining({
+				type: "provider.turn_ready",
+				turnId: "turn-request",
+				finalPayloadRef: "payload:existing",
+				journalWatermark: { seq: 1 },
+			}),
+		])
+	})
+
 	it("journals what a stopped reply already said and settles its rows, without planning a turn", async () => {
 		const recorded = recorder()
 		const journal = new InMemoryConversationJournal()
@@ -93,7 +162,6 @@ describe("ProviderCommandExecutor", () => {
 					yield {
 						kind: "partial",
 						transientId: "stream-1",
-						payloadRef: "payload:partial",
 						text: "",
 						reasoning: "THOUGHT",
 					} as ProviderExecutionChunk
@@ -133,13 +201,14 @@ describe("ProviderCommandExecutor", () => {
 	it("withdraws the streamed rows of a reply stopped before it produced anything to keep", async () => {
 		const recorded = recorder()
 		const journal = new InMemoryConversationJournal()
+		const discardTransient = vi.spyOn(journal, "discardTransient")
 		const presentation = { showPartial: vi.fn(), commit: vi.fn(async () => undefined) }
 		let stop: () => void = () => undefined
 		const executor = new ProviderCommandExecutor(
 			"task-1",
 			{
 				start: async function* () {
-					yield { kind: "partial", transientId: "stream-1", payloadRef: "payload:partial" } as ProviderExecutionChunk
+					yield { kind: "partial", transientId: "stream-1" } as ProviderExecutionChunk
 					stop()
 				},
 			},
@@ -153,8 +222,71 @@ describe("ProviderCommandExecutor", () => {
 		await executor.execute(command)
 
 		expect(await journal.read()).toEqual([])
+		expect(discardTransient).toHaveBeenCalledWith("stream-1")
 		expect(presentation.commit).toHaveBeenCalledWith({ transientId: "stream-1", text: "" })
 		expect(recorded.events).toEqual([])
+	})
+
+	it("withdraws an undurable partial when the provider stream fails", async () => {
+		const recorded = recorder()
+		const journal = new InMemoryConversationJournal()
+		const discardTransient = vi.spyOn(journal, "discardTransient")
+		const presentation = { showPartial: vi.fn(), commit: vi.fn(async () => undefined) }
+		const executor = new ProviderCommandExecutor(
+			"task-1",
+			{
+				start: async function* () {
+					yield { kind: "partial", transientId: "stream-1", text: "partial" } as ProviderExecutionChunk
+					throw new Error("provider stream failed")
+				},
+			},
+			journal,
+			new InMemoryTaskViewPort(),
+			recorded.sink,
+			presentation,
+		)
+
+		await executor.execute(command)
+
+		expect(await journal.read()).toEqual([])
+		expect(discardTransient).toHaveBeenCalledWith("stream-1")
+		expect(presentation.commit).toHaveBeenCalledWith({ transientId: "stream-1", text: "" })
+		expect(recorded.events).toEqual([expect.objectContaining({ type: "provider.failed" })])
+	})
+
+	it("reports a storage failure after cancellation instead of swallowing it as an abort", async () => {
+		const recorded = recorder()
+		const journal = new InMemoryConversationJournal()
+		const discardTransient = vi.spyOn(journal, "discardTransient")
+		vi.spyOn(journal, "finalizeTransient").mockRejectedValueOnce(new Error("journal unavailable"))
+		const presentation = { showPartial: vi.fn(), commit: vi.fn(async () => undefined) }
+		let stop: () => void = () => undefined
+		const executor = new ProviderCommandExecutor(
+			"task-1",
+			{
+				start: async function* () {
+					yield { kind: "partial", transientId: "stream-1", text: "partial" } as ProviderExecutionChunk
+					stop()
+					yield {
+						kind: "interrupted",
+						transientId: "stream-1",
+						payloadRef: "payload:interrupted",
+						text: "partial",
+					} as ProviderExecutionChunk
+				},
+			},
+			journal,
+			new InMemoryTaskViewPort(),
+			recorded.sink,
+			presentation,
+		)
+		stop = () => executor.cancelAll("provider_cancel")
+
+		await executor.execute(command)
+
+		expect(discardTransient).toHaveBeenCalledWith("stream-1")
+		expect(presentation.commit).toHaveBeenCalledWith({ transientId: "stream-1", text: "" })
+		expect(recorded.events).toEqual([expect.objectContaining({ type: "provider.failed" })])
 	})
 
 	it("rejects a final chunk for another turn", async () => {
@@ -202,7 +334,7 @@ describe("ProviderCommandExecutor", () => {
 							payloadRef: "payload:final",
 							turnPlan: { mode: "serial", blocks: [] },
 						},
-						{ kind: "partial", transientId: "late", payloadRef: "payload:late" },
+						{ kind: "partial", transientId: "late" },
 					]),
 			},
 			journal,
@@ -383,7 +515,7 @@ describe("ProviderCommandExecutor request reporting", () => {
 				start: () =>
 					chunks([
 						{ kind: "retry", notice },
-						{ kind: "partial", transientId: "stream-1", payloadRef: "payload:partial" },
+						{ kind: "partial", transientId: "stream-1" },
 						{
 							kind: "final",
 							transientId: "stream-1",
@@ -415,7 +547,7 @@ describe("ProviderCommandExecutor request reporting", () => {
 			{
 				start: () =>
 					chunks([
-						{ kind: "partial", transientId: "stream-1", payloadRef: "payload:partial" },
+						{ kind: "partial", transientId: "stream-1" },
 						{ kind: "retry", notice: { attempt: 1, maxAttempts: 5, delayMs: 3000, errorMessage: "{}" } },
 					]),
 			},

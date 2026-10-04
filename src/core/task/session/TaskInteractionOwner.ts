@@ -1,4 +1,6 @@
 import { Logger } from "@shared/services/Logger"
+import type { RetainedInputPresentationPort } from "../executors/compose/RetainedInputPresentationPort"
+import type { InteractionKind } from "../interaction/Interaction"
 import { InteractionCancellationError } from "../interaction/InteractionCancellationError"
 import type { CompleteInteractionRequest, InteractionOutcome, OpenInteractionRequest } from "../interaction/InteractionProtocol"
 import { getInteraction } from "../interaction/InteractionRegistry"
@@ -6,10 +8,16 @@ import type { DialogActionRule, TaskEvent } from "../kernel"
 import type { MessageStateHandler } from "../message-state"
 import type { RuntimeDiagnosticSink } from "../runtime"
 import type { TaskPayloadStore } from "../stores"
-import { encodeTaskPayload } from "../stores/payload/TaskPayloadCodec"
-import type { DialogPresentationEnvelope } from "../stores/payload/TaskPayloadEnvelopes"
+import { decodeTaskPayload, encodeTaskPayload } from "../stores/payload/TaskPayloadCodec"
+import type { DialogDraftEnvelope, DialogPresentationEnvelope } from "../stores/payload/TaskPayloadEnvelopes"
 import type { TaskInteractionPorts } from "../tools/types/TaskConfig"
 import type { ActiveTaskSession } from "./ActiveTaskSession"
+import type {
+	CanonicalQueueTurnEndDelivery,
+	CanonicalQueueTurnEndPort,
+	CanonicalQueueTurnEndResult,
+} from "./InputQueueApplicationPort"
+import { RetainedInputPresenter } from "./RetainedInputPresenter"
 import type { UnownedDialogContinuationPort, UnownedDialogOutcome, UnownedDialogResolution } from "./UnownedDialogContinuation"
 
 interface PendingInteraction {
@@ -34,10 +42,22 @@ function actionRules(kind: OpenInteractionRequest["kind"]): readonly DialogActio
 	return [...rules, { actionId: enterAction, payloadPolicy: "draft" }]
 }
 
+const QUEUE_TURN_END_INTERACTIONS: ReadonlySet<InteractionKind> = new Set([
+	"followup",
+	"make_plan",
+	"qna_response",
+	"generate_report",
+	"status_acknowledgment",
+	"completion",
+])
+
 /** Owns causal interaction receivers while the kernel remains the lifecycle authority. */
-export class TaskInteractionOwner implements TaskInteractionPorts {
+export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueueTurnEndPort {
 	private session?: ActiveTaskSession
+	private retainedPresentation?: RetainedInputPresentationPort
 	private readonly pending = new Map<string, PendingInteraction>()
+	/** Serializes duplicate reveal callbacks, never owns response membership. */
+	private readonly restoring = new Map<string, Promise<void>>()
 	/** Set while a halt holds the dialog domain; see suspend. */
 	private suspendedReason: string | undefined
 
@@ -53,6 +73,11 @@ export class TaskInteractionOwner implements TaskInteractionPorts {
 	bind(session: ActiveTaskSession): void {
 		if (this.session) throw new Error("Task interaction owner is already bound")
 		this.session = session
+		this.retainedPresentation = new RetainedInputPresenter(
+			this.payloads,
+			this.messages,
+			session.owners?.nextPresentationId ?? (() => Math.max(Date.now(), (this.messages.clineMessages.at(-1)?.ts ?? 0) + 1)),
+		)
 	}
 
 	open(request: OpenInteractionRequest): Promise<InteractionOutcome> {
@@ -120,7 +145,9 @@ export class TaskInteractionOwner implements TaskInteractionPorts {
 		if (pending) {
 			this.pending.delete(interactionId)
 			pending.resolve(outcome)
-			void this.retire(interactionId)
+			// A queued answer must remain recoverable until the tool runner has
+			// journaled its result. Terminal tool feedback retires this owner.
+			if (!this.session?.state().dialog.primary?.acceptedResponse?.queuedInput) void this.retire(interactionId)
 			return
 		}
 		// Read the kind before retiring: the continuation needs to know what it is
@@ -151,6 +178,149 @@ export class TaskInteractionOwner implements TaskInteractionPorts {
 	/** Accept receivers again: a cancelled task may resume and ask anew. */
 	resume(): void {
 		this.suspendedReason = undefined
+	}
+
+	/** Forward one durably revealed turn-ending interaction to retained-input settling. */
+	async awaiting(boundary: { readonly turnId: string; readonly interactionId: string; readonly kind: string }): Promise<void> {
+		if (!QUEUE_TURN_END_INTERACTIONS.has(boundary.kind as InteractionKind)) return
+		const session = this.session
+		const interaction = session?.state().dialog.primary
+		if (
+			!session ||
+			this.suspendedReason ||
+			session.state().halt.status !== "idle" ||
+			interaction?.interactionId !== boundary.interactionId ||
+			interaction.turnId !== boundary.turnId
+		)
+			return
+		if (this.pending.has(boundary.interactionId)) {
+			session.inputQueue.onTurnEndAwaiting({ ...boundary, kind: boundary.kind as InteractionKind })
+			return
+		}
+		if (!interaction.acceptedResponse?.queuedInput) return
+		const existing = this.restoring.get(boundary.interactionId)
+		if (existing) return existing
+		const recovery = this.restoreQueuedResponse(boundary.interactionId).finally(() =>
+			this.restoring.delete(boundary.interactionId),
+		)
+		this.restoring.set(boundary.interactionId, recovery)
+		return recovery
+	}
+
+	private async restoreQueuedResponse(interactionId: string): Promise<void> {
+		const session = this.requireSession()
+		const interaction = session.state().dialog.primary
+		const response = interaction?.acceptedResponse
+		if (interaction?.interactionId !== interactionId || !response?.queuedInput || !response.draftRef) return
+		const generation = session.state().generation
+		const current = () =>
+			!this.suspendedReason &&
+			session.state().halt.status === "idle" &&
+			session.state().generation === generation &&
+			session.state().dialog.primary?.acceptedResponse === response
+		try {
+			const draft = decodeTaskPayload<DialogDraftEnvelope>(await this.payloads.read(response.draftRef))
+			if (draft.kind !== "dialog_draft") throw new Error(`InvalidQueuedDialogDraft:${interactionId}`)
+			const presentation = await this.retainedPresentation?.prepare(response.queuedInput)
+			if (!current()) return
+			await presentation?.commit()
+			if (!current()) return
+			await this.settleUnowned(interactionId, interaction.kind, {
+				actionId: response.actionId as InteractionOutcome["actionId"],
+				feedbackPresented: true,
+				draft: {
+					text: draft.text,
+					images: [...draft.images],
+					files: [...draft.files],
+					...(draft.semanticInput === undefined ? {} : { semanticInput: draft.semanticInput }),
+				},
+			})
+		} catch (error) {
+			// The accepted response remains the owner; never enqueue or respond again.
+			Logger.error(`[inputQueue] Could not restore accepted response ${interactionId}`, error)
+		}
+	}
+
+	/** Submit a retained batch as the response owned by its turn-ending tool. */
+	async deliverTurnEnd(delivery: CanonicalQueueTurnEndDelivery): Promise<CanonicalQueueTurnEndResult> {
+		const session = this.session
+		const interaction = session?.state().dialog.primary
+		if (
+			!session ||
+			!this.pending.has(delivery.interaction.interactionId) ||
+			interaction?.interactionId !== delivery.interaction.interactionId ||
+			interaction.turnId !== delivery.interaction.turnId ||
+			interaction.status !== "awaiting" ||
+			interaction.receiverGeneration === undefined ||
+			session.state().generation !== delivery.generation ||
+			session.state().halt.status === "stopping"
+		)
+			return "stale"
+
+		const draftRef = await this.payloads.put(
+			encodeTaskPayload<DialogDraftEnvelope>({
+				kind: "dialog_draft",
+				text: delivery.modelDraft.text,
+				images: [...delivery.modelDraft.images],
+				files: [...delivery.modelDraft.files],
+				...(delivery.modelDraft.semanticInput === undefined ? {} : { semanticInput: delivery.modelDraft.semanticInput }),
+			}),
+		)
+		const actionId = getInteraction(delivery.interaction.kind).input.enterAction ?? "reply"
+		const presentation = await this.retainedPresentation?.prepare({
+			deliveryId: delivery.deliveryId,
+			mode: delivery.mode,
+			entries: delivery.entries,
+		})
+		const submitted = await session.task.respond({
+			type: "dialog.respond",
+			taskId: session.taskId,
+			turnId: interaction.turnId,
+			interactionId: interaction.interactionId,
+			stateRevision: session.state().revision,
+			receiverGeneration: interaction.receiverGeneration,
+			actionId,
+			draftRef,
+			queueDeliveryId: delivery.deliveryId,
+			queueDeliveryEntries: delivery.entries,
+			queueDeliveryMode: delivery.mode,
+			generation: delivery.generation,
+		})
+		if (submitted.kind === "rejected") {
+			const current = session.state()
+			return this.pending.has(interaction.interactionId) &&
+				current.generation === delivery.generation &&
+				current.halt.status === "idle" &&
+				current.dialog.primary?.interactionId === interaction.interactionId &&
+				current.dialog.primary.status === "awaiting"
+				? "changed"
+				: "stale"
+		}
+		try {
+			await submitted.receipt.durable
+		} catch (error) {
+			Logger.error(`[inputQueue] Dialog response ${delivery.deliveryId} was not durable`, error)
+			return "uncertain"
+		}
+		try {
+			await presentation?.commit()
+		} catch (error) {
+			// The model-facing response is already durable. Presentation failure must
+			// not release it back to the queue and send it a second time.
+			Logger.error(`[inputQueue] Could not present delivered input ${delivery.deliveryId}`, error)
+		}
+		if (!this.pending.has(interaction.interactionId) || session.state().generation !== delivery.generation) return "accepted"
+		this.resolve(interaction.interactionId, {
+			actionId,
+			feedbackPresented: true,
+			draft: {
+				text: delivery.modelDraft.text,
+				images: [...delivery.modelDraft.images],
+				files: [...delivery.modelDraft.files],
+				...(delivery.modelDraft.semanticInput === undefined ? {} : { semanticInput: delivery.modelDraft.semanticInput }),
+			},
+		})
+		return "accepted"
 	}
 
 	/** Clear the provider-failure dialog made obsolete by a successful Profile rebuild. */
@@ -205,14 +375,34 @@ export class TaskInteractionOwner implements TaskInteractionPorts {
 	 * and remove the only control the user has left.
 	 */
 	private async settleUnowned(interactionId: string, kind: string, outcome: InteractionOutcome): Promise<void> {
-		const resolution = { interactionId, kind, outcome }
-		// Retiring is what frees the dialog slot, and the continuation opens its
-		// round into that slot. So the decision is taken first and the retire is
-		// submitted before the round starts: asking afterwards would let the new
-		// round begin while the answered dialog is still the active primary.
+		const session = this.session
+		const generation = session?.state().generation
+		const isCurrent = () =>
+			session !== undefined &&
+			!this.suspendedReason &&
+			session.state().generation === generation &&
+			session.state().halt.status === "idle"
+		const queuedInput = session?.state().dialog.primary?.acceptedResponse?.queuedInput
+		const resolution: UnownedDialogResolution = {
+			interactionId,
+			kind,
+			outcome,
+			...(queuedInput ? { queuedInput, isCurrent } : {}),
+		}
 		const accepted = this.unownedContinuation?.accepts(resolution) ?? false
-		if (accepted) await this.retire(interactionId)
-		const continuation = accepted ? await this.carryOn(resolution) : "declined"
+		let continuation: UnownedDialogOutcome = "declined"
+		let retired = false
+		if (accepted) {
+			// A restored tool stages its paired result before retirement so a crash
+			// between these awaits never loses both the answer and its owner.
+			const prepared = (await this.unownedContinuation?.prepare?.(resolution)) ?? true
+			if (!isCurrent()) return
+			if (prepared) {
+				retired = await this.retire(interactionId, generation)
+				if (!isCurrent()) return
+				continuation = retired ? await this.carryOn(resolution) : "failed"
+			} else continuation = "failed"
+		}
 		// Recorded for every unowned answer, not only the ones that went nowhere.
 		// Whether a restored dialog resumed the task or was left answerable is
 		// the difference between a task that continues and one that appears to
@@ -226,7 +416,7 @@ export class TaskInteractionOwner implements TaskInteractionPorts {
 		// The answer reached nothing, so the question it answered is still open.
 		// Reopening keeps it answerable instead of leaving the task paused with
 		// no dialog, which is what disabled the composer for good.
-		if (continuation === "failed") await this.reopen(interactionId)
+		if (continuation === "failed" && retired) await this.reopen(interactionId)
 	}
 
 	/** Put a retired interaction back in play after its continuation failed. */
@@ -262,19 +452,23 @@ export class TaskInteractionOwner implements TaskInteractionPorts {
 	}
 
 	/** Tell the kernel this receiver has consumed the response. */
-	private async retire(interactionId: string): Promise<void> {
+	private async retire(interactionId: string, generation = this.session?.state().generation): Promise<boolean> {
 		const session = this.session
-		if (!session) return
+		if (!session || generation === undefined) return false
 		try {
-			await session.assembly.runtime.submit({
+			const result = await session.assembly.runtime.submit({
 				type: "dialog.resolved",
-				generation: session.state().generation,
+				generation,
 				interactionId,
 			})
+			if (result.kind === "rejected") return false
+			await result.receipt?.durable
+			return true
 		} catch (error) {
 			// A retired interaction only affects later dialogs, so a failure here
 			// must be visible without failing the answer the user already gave.
 			Logger.warn(`Failed to retire interaction ${interactionId}: ${error instanceof Error ? error.message : error}`)
+			return false
 		}
 	}
 

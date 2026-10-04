@@ -1,8 +1,9 @@
 import type { TransactionalUnifyStoreDatabase, UnifyStore } from "@core/storage/backend/api/UnifyStore"
 import { eq } from "@core/storage/backend/api/UnifyStoreQuery"
-import { stableJsonStringify } from "@shared/stable-json"
 import type { Command } from "../../kernel"
 import type {
+	BackgroundDeliveryLedger,
+	BackgroundDeliveryRecord,
 	CommandPublicationStore,
 	ConversationJournal,
 	JournalAppendInput,
@@ -12,9 +13,10 @@ import type {
 	JournalWatermark,
 	TaskPayloadStore,
 } from "../contracts"
+import { journalOperationFingerprint } from "../JournalOperationIdentity"
 import { compareJournalWatermarks, rebuildJournalProjection } from "../JournalProjection"
 import { assertTaskPayloadRef, taskPayloadRef } from "../payload/TaskPayloadRef"
-import { CommandPublicationRow, JournalEntryRow, PayloadRow } from "./entities"
+import { BackgroundDeliveryRow, CommandPublicationRow, JournalEntryRow, PayloadRow } from "./entities"
 
 type EntryContent = Omit<JournalEntry, "version" | "operationId" | "kind" | "watermark">
 
@@ -23,7 +25,7 @@ type EntryContent = Omit<JournalEntry, "version" | "operationId" | "kind" | "wat
  * so a retried call and the row reloaded after a restart compare equal.
  */
 function fingerprintOf(kind: JournalEntryKind, content: EntryContent): string {
-	return stableJsonStringify({ kind, content })
+	return journalOperationFingerprint(kind, content)
 }
 
 function contentOf(entry: JournalEntry): EntryContent {
@@ -43,7 +45,7 @@ export class SqliteConversationJournal implements ConversationJournal {
 	private current: JournalWatermark = { seq: 0 }
 	private readonly entries: JournalEntry[] = []
 	private readonly operations = new Map<string, { readonly fingerprint: string; readonly entry: JournalEntry }>()
-	private readonly transient = new Map<string, string>()
+	private readonly transient = new Set<string>()
 	private writeTail: Promise<void> = Promise.resolve()
 
 	private constructor(private readonly store: UnifyStore<JournalEntryRow>) {}
@@ -90,20 +92,26 @@ export class SqliteConversationJournal implements ConversationJournal {
 		return rebuildJournalProjection(this.entries, through ?? this.current)
 	}
 
-	appendTransient(transientId: string, payloadRef: string): void {
-		this.transient.set(transientId, payloadRef)
+	appendTransient(transientId: string): void {
+		this.transient.add(transientId)
+	}
+
+	discardTransient(transientId: string): void {
+		this.transient.delete(transientId)
 	}
 
 	finalizeTransient(input: JournalAppendInput & { readonly transientId: string }): Promise<JournalAppendResult> {
 		return this.enqueue(async () => {
-			const resolved = input.payloadRef || this.transient.get(input.transientId)
-			if (!resolved) throw new Error(`Unknown transient journal entry: ${input.transientId}`)
-			const result = await this.record("message", input.operationId, {
-				payloadRef: resolved,
+			const content = {
+				payloadRef: input.payloadRef,
 				source: input.source,
 				causation: input.causation,
 				transientId: input.transientId,
-			})
+			}
+			const existing = this.idempotent(input.operationId, "message", content)
+			if (existing) return existing
+			if (!this.transient.has(input.transientId)) throw new Error(`Unknown transient journal entry: ${input.transientId}`)
+			const result = await this.record("message", input.operationId, content)
 			this.transient.delete(input.transientId)
 			return result
 		})
@@ -205,6 +213,66 @@ export class SqliteCommandPublicationStore implements CommandPublicationStore {
 	}
 }
 
+/** Producer-owned background results retained across crashes until canonical intake accepts them. */
+export class SqliteBackgroundDeliveryLedger implements BackgroundDeliveryLedger {
+	private writeTail: Promise<void> = Promise.resolve()
+
+	private constructor(
+		private readonly store: UnifyStore<BackgroundDeliveryRow>,
+		private readonly records: Map<string, BackgroundDeliveryRecord>,
+	) {}
+
+	static async open(store: UnifyStore<BackgroundDeliveryRow>): Promise<SqliteBackgroundDeliveryLedger> {
+		const { records } = await store.query()
+		return new SqliteBackgroundDeliveryLedger(store, new Map(records.map((row) => [row.entryId, row.toRecord()])))
+	}
+
+	stage(delivery: Omit<BackgroundDeliveryRecord, "state">): Promise<BackgroundDeliveryRecord> {
+		return this.enqueue(async () => {
+			const existing = this.records.get(delivery.entryId)
+			if (existing) {
+				if (
+					existing.producerKind !== delivery.producerKind ||
+					existing.producerId !== delivery.producerId ||
+					existing.attempt !== delivery.attempt ||
+					existing.text !== delivery.text
+				) {
+					throw new Error(`BackgroundDeliveryConflict:${delivery.entryId}`)
+				}
+				return existing
+			}
+			const record: BackgroundDeliveryRecord = { ...delivery, state: "pending" }
+			await this.store.insert([BackgroundDeliveryRow.fromRecord(record)])
+			this.records.set(record.entryId, record)
+			return record
+		})
+	}
+
+	async listPending(): Promise<readonly BackgroundDeliveryRecord[]> {
+		await this.writeTail
+		return [...this.records.values()].filter((record) => record.state === "pending")
+	}
+
+	acknowledge(entryId: string): Promise<void> {
+		return this.enqueue(async () => {
+			const existing = this.records.get(entryId)
+			if (!existing || existing.state === "acknowledged") return
+			const acknowledged: BackgroundDeliveryRecord = { ...existing, state: "acknowledged" }
+			await this.store.upsert([BackgroundDeliveryRow.fromRecord(acknowledged)])
+			this.records.set(entryId, acknowledged)
+		})
+	}
+
+	private enqueue<T>(operation: () => Promise<T>): Promise<T> {
+		const result = this.writeTail.then(operation)
+		this.writeTail = result.then(
+			() => undefined,
+			() => undefined,
+		)
+		return result
+	}
+}
+
 /** Content-addressed payloads stored in `journal.db`; equal bytes are stored once. */
 export class SqliteTaskPayloadStore implements TaskPayloadStore {
 	constructor(private readonly store: UnifyStore<PayloadRow>) {}
@@ -228,10 +296,16 @@ export class SqliteTaskPayloadStore implements TaskPayloadStore {
 	}
 }
 
+/** Opens only the content-addressed payload collection for read-mostly projections. */
+export async function openTaskPayloadStore(database: TransactionalUnifyStoreDatabase): Promise<SqliteTaskPayloadStore> {
+	return new SqliteTaskPayloadStore(await database.openStore(PayloadRow))
+}
+
 /** The kernel's durable stores of one task, all in the same `journal.db`. */
 export interface TaskJournalStores {
 	readonly journal: SqliteConversationJournal
 	readonly publications: SqliteCommandPublicationStore
+	readonly backgroundDeliveries: SqliteBackgroundDeliveryLedger
 	readonly payloads: SqliteTaskPayloadStore
 }
 
@@ -239,10 +313,11 @@ export interface TaskJournalStores {
 export async function openTaskJournalStores(database: TransactionalUnifyStoreDatabase): Promise<TaskJournalStores> {
 	const entries = await database.openStore(JournalEntryRow)
 	const publications = await database.openStore(CommandPublicationRow)
-	const payloads = await database.openStore(PayloadRow)
+	const backgroundDeliveries = await database.openStore(BackgroundDeliveryRow)
 	return {
 		journal: await SqliteConversationJournal.open(entries),
 		publications: await SqliteCommandPublicationStore.open(publications),
-		payloads: new SqliteTaskPayloadStore(payloads),
+		backgroundDeliveries: await SqliteBackgroundDeliveryLedger.open(backgroundDeliveries),
+		payloads: await openTaskPayloadStore(database),
 	}
 }

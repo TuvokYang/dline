@@ -13,6 +13,16 @@ export interface TaskHaltRearmPort {
 	rearm(haltId: string): Promise<void>
 }
 
+/** Reconciles retained queue journal facts only after every owning writer drained. */
+export interface TaskRetainedQueueSettlementPort {
+	settle(): Promise<void>
+}
+
+/** Stops every executor for checkpoint restore and deliberately keeps their fences installed. */
+export interface TaskCheckpointRestoreSuspensionPort {
+	stopAndFence(haltId: string): Promise<EventSubmissionResult>
+}
+
 /**
  * Shows an accepted submission as the user's own chat row.
  *
@@ -38,6 +48,7 @@ export class TaskShell {
 		private readonly runtime: RuntimeFacade,
 		private readonly halt: TaskHaltRearmPort,
 		private readonly presentation?: TaskInputPresentationPort,
+		private readonly retainedQueueSettlement?: TaskRetainedQueueSettlementPort,
 	) {}
 
 	async start(input: TaskInput): Promise<EventSubmissionResult> {
@@ -65,7 +76,7 @@ export class TaskShell {
 	async respond(action: TaskUiAction): Promise<EventSubmissionResult> {
 		const dialog = await this.runtime.submit({
 			type: "dialog.responded",
-			generation: this.runtime.getState().generation,
+			generation: action.generation ?? this.runtime.getState().generation,
 			taskId: action.taskId,
 			turnId: action.turnId,
 			interactionId: action.interactionId,
@@ -74,6 +85,9 @@ export class TaskShell {
 			actionId: action.type === "approval.respond" ? (action.approved ? "approve" : "reject") : action.actionId,
 			draftRef: action.draftRef,
 			selectionRef: action.selectionRef,
+			queueDeliveryId: action.queueDeliveryId,
+			queueDeliveryEntries: action.queueDeliveryEntries,
+			queueDeliveryMode: action.queueDeliveryMode,
 		})
 		if (dialog.kind === "rejected" || action.type === "dialog.respond") return dialog
 		await this.runtime.waitForDurable(dialog.state.revision)
@@ -84,6 +98,7 @@ export class TaskShell {
 			blockId: action.blockId,
 			interactionId: action.interactionId,
 			approved: action.approved,
+			feedbackRef: action.draftRef,
 		})
 	}
 
@@ -95,24 +110,52 @@ export class TaskShell {
 		return this.haltTask("user.terminate", haltId)
 	}
 
+	/** Stop and drain the live runtime without rearming executors or planning a resume dialog. */
+	async stopAndFence(haltId: string): Promise<EventSubmissionResult> {
+		const result = await this.haltUntilQuiescent("user.cancel", haltId)
+		if (result.kind !== "rejected" && this.runtime.getState().halt.status === "stopping")
+			throw new Error(`CheckpointRestoreHaltTimedOut:${haltId}`)
+		return result
+	}
+
 	/**
 	 * Take ownership of the task: dispatch recovered work that was held while the window did
 	 * not own the task lock, then submit `lifecycle.open`. Release happens first because an
 	 * interrupted task is paused and rejects `lifecycle.open`, yet its recovered work still runs.
 	 */
-	open(): Promise<EventSubmissionResult> {
+	async open(): Promise<EventSubmissionResult> {
+		await this.retainedQueueSettlement?.settle()
 		this.runtime.releaseRestoredCommands()
 		return this.runtime.submit({ type: "lifecycle.open", generation: this.runtime.getState().generation })
 	}
 
 	private async haltTask(type: "user.cancel" | "user.terminate", haltId: string): Promise<EventSubmissionResult> {
-		const result = await this.runtime.submit({ type, generation: this.runtime.getState().generation, haltId })
+		const result = await this.haltUntilQuiescent(type, haltId)
 		if (result.kind === "rejected") return result
-		await this.runtime.waitForDomainCompletion(result.state.revision)
-		await this.runtime.waitForQuiescence()
+		if (this.runtime.getState().halt.status === "stopping") {
+			void this.finishTimedOutHalt(type, haltId).catch(() => undefined)
+			return result
+		}
 		await this.halt.rearm(haltId)
 		if (type === "user.cancel") await this.offerResume()
 		return result
+	}
+
+	private async haltUntilQuiescent(type: "user.cancel" | "user.terminate", haltId: string): Promise<EventSubmissionResult> {
+		const result = await this.runtime.submit({ type, generation: this.runtime.getState().generation, haltId })
+		if (result.kind === "rejected") return result
+		await this.runtime.waitForDomainCompletion(result.state.revision)
+		if (this.runtime.getState().halt.status === "stopping") return result
+		await this.runtime.waitForQuiescence()
+		await this.retainedQueueSettlement?.settle()
+		return result
+	}
+
+	private async finishTimedOutHalt(type: "user.cancel" | "user.terminate", haltId: string): Promise<void> {
+		await this.halt.rearm(haltId)
+		await this.runtime.waitForQuiescence()
+		await this.retainedQueueSettlement?.settle()
+		if (type === "user.cancel") await this.offerResume()
 	}
 
 	/**

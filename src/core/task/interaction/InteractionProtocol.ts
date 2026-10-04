@@ -39,6 +39,8 @@ export interface InteractionOutcome {
 	actionId: InteractionResponse["actionId"]
 	draft?: InteractionDraft
 	selection?: InteractionSelection
+	/** A causal presentation owner already handled the pure user-authored row. */
+	feedbackPresented?: boolean
 }
 
 export interface InteractionAnchor {

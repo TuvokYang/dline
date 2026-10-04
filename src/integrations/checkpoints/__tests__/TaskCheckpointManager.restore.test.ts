@@ -5,6 +5,7 @@ vi.unmock("@integrations/checkpoints")
 
 import { DefaultToolHandlerState } from "@/core/task/tools/state/ToolHandlerState"
 import { createTaskCheckpointManager } from "../index"
+import type { CanonicalCheckpointPort } from "../types"
 
 interface RestoreHarness {
 	manager: ReturnType<typeof createTaskCheckpointManager>
@@ -26,6 +27,7 @@ function createHarness(
 	trackedFiles?: string[],
 	apiHistoryLength = 2,
 	conversationRewind?: { rewindTo: ReturnType<typeof vi.fn> },
+	canonicalCheckpoint?: CanonicalCheckpointPort,
 ): RestoreHarness {
 	const taskState = Object.assign(new DefaultToolHandlerState(), {
 		userMessageContent: [{ type: "text", text: "active user content" }],
@@ -81,6 +83,7 @@ function createHarness(
 			messageStateHandler,
 			taskState,
 			...(conversationRewind === undefined ? {} : { conversationRewind }),
+			...(canonicalCheckpoint === undefined ? {} : { canonicalCheckpoint }),
 			...(trackedFiles === undefined
 				? {}
 				: { taskFileTracker: { getAllModifiedFiles: vi.fn().mockReturnValue(trackedFiles) } }),
@@ -457,6 +460,61 @@ describe("TaskCheckpointManager restore isolation", () => {
 			expect(harness.resetHead).not.toHaveBeenCalled()
 			expect(rewindTo).not.toHaveBeenCalled()
 		})
+	})
+
+	it("uses the canonical transaction before clearing legacy presentation state", async () => {
+		const order: string[] = []
+		const canonicalRestore = vi.fn(async () => {
+			order.push("canonical")
+			return { kind: "restored" as const, diagnostics: [] }
+		})
+		const harness = createHarness(
+			[
+				{ ts: 42, type: "say", say: "checkpoint_created", conversationHistoryIndex: 0 },
+				{ ts: 43, type: "say", say: "text" },
+			],
+			undefined,
+			2,
+			{ rewindTo: vi.fn() },
+			{ capture: vi.fn(), restore: canonicalRestore },
+		)
+		harness.clearTransientClineMessages.mockImplementation(() => {
+			order.push("clear-transient")
+			return []
+		})
+
+		await harness.manager.restoreCheckpoint(42, "task")
+
+		expect(canonicalRestore).toHaveBeenCalledWith(
+			expect.objectContaining({ messageTs: 42, mode: "chat_only", restoreWorkspace: expect.any(Function) }),
+		)
+		expect(order).toEqual(["canonical", "clear-transient"])
+		expect(harness.restoreChatRuntime).toHaveBeenCalledWith({ apiIndex: 1 })
+	})
+
+	it("leaves legacy stores untouched when canonical validation rejects the restore", async () => {
+		const canonicalRestore = vi.fn(async () => ({
+			kind: "rejected" as const,
+			diagnostics: [{ code: "canonical_missing", message: "checkpoint bundle missing" }],
+		}))
+		const harness = createHarness(
+			[
+				{ ts: 42, type: "say", say: "checkpoint_created", conversationHistoryIndex: 0 },
+				{ ts: 43, type: "say", say: "text" },
+			],
+			undefined,
+			2,
+			{ rewindTo: vi.fn() },
+			{ capture: vi.fn(), restore: canonicalRestore },
+		)
+
+		const result = await harness.manager.restoreCheckpoint(42, "task")
+
+		expect(result.checkpointManagerErrorMessage).toBe("checkpoint bundle missing")
+		expect(harness.clearTransientClineMessages).not.toHaveBeenCalled()
+		expect(harness.truncateUiHistory).not.toHaveBeenCalled()
+		expect(harness.truncateContextHistory).not.toHaveBeenCalled()
+		expect(harness.restoreChatRuntime).not.toHaveBeenCalled()
 	})
 
 	it("continues an edited chat restore exactly once through the typed runtime", async () => {

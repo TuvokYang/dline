@@ -209,6 +209,32 @@ describe("dispatchInteraction", () => {
 		)
 	})
 
+	it("accepts an awaiting approval observed before an unrelated task revision", async () => {
+		const host = controller(approvalState())
+
+		const result = await dispatchInteraction(
+			host.value as never,
+			DispatchInteractionRequest.create({
+				taskId: "task-1",
+				turnId: "turn-1",
+				interactionId: "interaction-1",
+				actionId: "approve",
+				stateRevision: 11,
+				draft: { text: "approve from the observed view", images: [], files: [] },
+			}),
+		)
+
+		expect(result).toMatchObject({ accepted: true, result: "accepted" })
+		expect(host.respond).toHaveBeenCalledWith(
+			expect.objectContaining({
+				type: "approval.respond",
+				interactionId: "interaction-1",
+				stateRevision: 11,
+				receiverGeneration: 3,
+			}),
+		)
+	})
+
 	it("presents one handler-owned terminal state after an accepted manual rejection", async () => {
 		const host = controller(approvalState())
 
@@ -231,7 +257,7 @@ describe("dispatchInteraction", () => {
 				turnId: "turn-1",
 				interactionId: "interaction-1",
 				actionId: "reply",
-				stateRevision: 11,
+				stateRevision: 10,
 			}),
 		)
 		const invalid = await dispatchInteraction(

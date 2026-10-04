@@ -5,7 +5,7 @@ import type { MaterializedPayload, ProviderJournalMessageMaterializer } from "./
 
 /** One visible journal entry together with what it contributes to the provider conversation. */
 export interface ConversationViewEntry extends MaterializedPayload {
-	readonly entry: JournalEntry
+	readonly entry: JournalEntry & { readonly payloadRef: string }
 }
 
 type PayloadEntry = JournalEntry & { readonly payloadRef: string }
@@ -54,12 +54,14 @@ export class JournalConversationView implements ConversationHistoryReader {
 		// Sequential on purpose: a first render of a long history may read many
 		// attachments, and the order they are read in must not depend on timing.
 		for (const entry of visible) entries.push({ entry, ...(await this.render(entry.payloadRef)) })
+		const superseded = new Set(entries.flatMap((item) => [...(item.supersededPayloadRefs ?? [])]))
+		const canonical = entries.filter((item) => !superseded.has(item.entry.payloadRef))
 		if (this.isLatest(projection.through)) {
-			this.retainOnly(visible)
-			this.latestSize = entries.reduce((count, item) => count + item.messages.length, 0)
+			this.retainOnly(canonical.map((item) => item.entry))
+			this.latestSize = canonical.reduce((count, item) => count + item.messages.length, 0)
 			this.countedThrough = projection.through.seq
 		}
-		return entries
+		return canonical
 	}
 
 	/**

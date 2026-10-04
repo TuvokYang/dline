@@ -1,10 +1,20 @@
 import { describe, expect, it, vi } from "vitest"
-import { createInitialTaskState } from "../kernel"
+import { createInitialTaskState, type TaskState } from "../kernel"
 import { ALL_HALT_PARTICIPANTS } from "../kernel/machines/halt"
 import { TaskRuntime } from "../runtime"
-import { InMemoryCommandPublicationStore, InMemoryConversationJournal, InMemoryStateVault, InMemoryTaskViewPort } from "../stores"
+import { TaskShell } from "../shell/TaskShell"
+import {
+	InMemoryCommandPublicationStore,
+	InMemoryConversationJournal,
+	InMemoryStateVault,
+	InMemoryTaskPayloadStore,
+	InMemoryTaskViewPort,
+} from "../stores"
+import { decodeTaskPayload, encodeTaskPayload } from "../stores/payload/TaskPayloadCodec"
+import type { ProviderDraftEnvelope, UserInputEnvelope } from "../stores/payload/TaskPayloadEnvelopes"
 import { CompactionCommandExecutor } from "./compaction"
 import { ComposeCommandExecutor } from "./compose"
+import { ProductionComposeAdapter } from "./compose/ProductionComposeAdapter"
 import { DialogCommandExecutor } from "./dialog"
 import { CallbackHaltParticipant, HaltCommandExecutor } from "./halt"
 import { PolicyCommandExecutor } from "./policy"
@@ -83,6 +93,97 @@ describe("executor loop integration", () => {
 		// Every composed round runs its turn, and every turn lands one journal entry.
 		expect(provider).toHaveBeenCalledTimes(compose.mock.calls.length)
 		expect(await journal.read()).toHaveLength(provider.mock.calls.length)
+	})
+
+	it("retracts a staged retained batch when removal wins before compose completion", async () => {
+		const payloads = new InMemoryTaskPayloadStore()
+		const journal = new InMemoryConversationJournal()
+		const refs = await Promise.all(
+			["A", "B"].map((text) => payloads.put(encodeTaskPayload<UserInputEnvelope>({ kind: "user_input", text }))),
+		)
+		const base = createInitialTaskState("task-1")
+		const initialState: TaskState = {
+			...base,
+			flow: { phase: "running" },
+			turn: {
+				turnId: "turn-1",
+				mode: "serial",
+				blocks: [
+					{
+						blockId: "tool-1",
+						attempt: "attempt-1",
+						index: 0,
+						phase: "executing",
+						lanes: [],
+						turnEnding: false,
+						invocationRef: "invocation:1",
+					},
+				],
+				manualApprovalBlockIds: [],
+				automaticApprovalBlockIds: [],
+				executingBlockIds: ["tool-1"],
+			},
+			intake: {
+				...base.intake,
+				queued: refs.map((payloadRef, sequence) => ({
+					entryId: `retained-${sequence}`,
+					payloadRef,
+					source: "user" as const,
+					mode: "steering" as const,
+					sequence,
+					state: "accepted" as const,
+					queue: { editing: false },
+				})),
+			},
+		}
+		let releaseDraft!: () => void
+		let announceDraft!: () => void
+		const draftReached = new Promise<void>((resolve) => (announceDraft = resolve))
+		const draftGate = new Promise<void>((resolve) => (releaseDraft = resolve))
+		const put = payloads.put.bind(payloads)
+		vi.spyOn(payloads, "put").mockImplementation(async (bytes) => {
+			const payload = decodeTaskPayload<ProviderDraftEnvelope | UserInputEnvelope>(bytes)
+			if (payload.kind === "provider_draft") {
+				announceDraft()
+				await draftGate
+			}
+			return put(bytes)
+		})
+		let runtime!: TaskRuntime
+		const events = { submit: (event: Parameters<TaskRuntime["submit"]>[0]) => runtime.submit(event) }
+		const adapter = new ProductionComposeAdapter({ payloads, journal, readState: () => runtime.getState() })
+		const providerExecute = vi.fn(async () => undefined)
+		runtime = new TaskRuntime({
+			initialState,
+			vault: new InMemoryStateVault(),
+			taskView: new InMemoryTaskViewPort(),
+			publications: new InMemoryCommandPublicationStore(),
+			executors: [new ComposeCommandExecutor(adapter, events), { domain: "provider", execute: providerExecute }],
+		})
+
+		await runtime.submit({
+			type: "tool.completed",
+			generation: 0,
+			turnId: "turn-1",
+			blockId: "tool-1",
+			attempt: "attempt-1",
+		})
+		await draftReached
+		expect(runtime.getState().intake.queued.map((entry) => entry.state)).toEqual(["reserved", "reserved"])
+		await runtime.submit({ type: "input_queue.removed", generation: 0, entryId: "retained-0" })
+		releaseDraft()
+		await runtime.waitForQuiescence()
+
+		expect(providerExecute).not.toHaveBeenCalled()
+		expect(runtime.getState()).toMatchObject({ flow: { phase: "waiting", compose: { status: "cancelled" } } })
+		expect(runtime.getState().intake.queued).toEqual([
+			expect.objectContaining({ entryId: "retained-1", state: "released", queue: { editing: false } }),
+		])
+		expect((await journal.project()).visibleMessages).toEqual([])
+		expect((await journal.read()).map((entry) => entry.operationId)).toEqual([
+			expect.stringMatching(/^intake\.retained:/),
+			expect.stringMatching(/^intake\.retained\.retract:/),
+		])
 	})
 
 	/** Settle the runtime until none of the watched executors is invoked again. */
@@ -184,6 +285,41 @@ describe("executor loop integration", () => {
 		await runtime.waitForQuiescence()
 		expect(runtime.getState().turn.blocks[0]).toMatchObject({ phase: "ready", policy: { status: "completed" } })
 		expect(toolCommands).toEqual(["tool.run"])
+	})
+
+	it("returns a timed-out cancel without waiting forever and settles after the late drain", async () => {
+		let runtime!: TaskRuntime
+		let releaseProvider!: () => void
+		const providerDrain = new Promise<void>((resolve) => (releaseProvider = resolve))
+		const providerRearm = vi.fn()
+		const events = { submit: (event: Parameters<TaskRuntime["submit"]>[0]) => runtime.submit(event) }
+		const participants = ALL_HALT_PARTICIPANTS.map(
+			(id) =>
+				new CallbackHaltParticipant({
+					id,
+					fence: () => undefined,
+					drain: id === "provider" ? () => providerDrain : async () => undefined,
+					rearm: id === "provider" ? providerRearm : undefined,
+				}),
+		)
+		const halt = new HaltCommandExecutor(participants, events, { timeoutMs: 5 })
+		runtime = new TaskRuntime({
+			initialState: { ...createInitialTaskState("task-1"), flow: { phase: "running" } },
+			vault: new InMemoryStateVault(),
+			taskView: new InMemoryTaskViewPort(),
+			publications: new InMemoryCommandPublicationStore(),
+			executors: [halt],
+		})
+		const shell = new TaskShell(runtime, halt)
+
+		await expect(shell.cancel("halt-1")).resolves.toMatchObject({ kind: "accepted" })
+		expect(runtime.getState().halt).toMatchObject({ status: "stopping", timedOut: ["provider"] })
+		expect(providerRearm).not.toHaveBeenCalled()
+
+		releaseProvider()
+		await vi.waitFor(() => expect(runtime.getState().flow.phase).toBe("paused"))
+		await vi.waitFor(() => expect(providerRearm).toHaveBeenCalledWith("halt-1"))
+		await vi.waitFor(() => expect(runtime.getState().dialog.primary).toMatchObject({ kind: "cancelled_resume" }))
 	})
 
 	it("runs the nine-participant halt barrier and spawn lease through TaskRuntime", async () => {

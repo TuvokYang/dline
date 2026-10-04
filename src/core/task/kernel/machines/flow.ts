@@ -1,8 +1,18 @@
-import type { Command, CompactionFlowState, FlowState, TaskEvent } from "../types"
+import type { Command, CompactionFlowState, ComposeRoundCommand, FlowState, TaskEvent } from "../types"
 
 export interface FlowReduction {
 	readonly state: FlowState
 	readonly commands: readonly Command[]
+}
+
+type ComposeRoundPayload = Omit<ComposeRoundCommand, "commandId" | "originRevision" | "generation" | "type" | "turnId">
+
+/** Every compose command opens one replay-stable business turn. */
+export function composeRoundCommand(
+	base: Pick<ComposeRoundCommand, "commandId" | "originRevision" | "generation">,
+	payload: ComposeRoundPayload,
+): ComposeRoundCommand {
+	return { ...base, type: "compose.round", turnId: `turn:${base.commandId}`, ...payload }
 }
 
 /**
@@ -80,8 +90,34 @@ export function reduceFlow(state: FlowState, event: TaskEvent): FlowReduction {
 				},
 				commands: [],
 			}
+		case "dialog.responded":
+			return {
+				state:
+					event.queueDeliveryId && event.queueDeliveryEntries && event.queueDeliveryMode
+						? {
+								...state,
+								pendingQueueResponse: {
+									deliveryId: event.queueDeliveryId,
+									entries: event.queueDeliveryEntries,
+									mode: event.queueDeliveryMode,
+								},
+							}
+						: state,
+				commands: [],
+			}
 		case "compose.completed":
-			return { state: { ...state, compose: state.compose && { ...state.compose, status: "completed" } }, commands: [] }
+			return {
+				state: {
+					...state,
+					pendingQueueResponse: state.compose?.respondedQueue ? undefined : state.pendingQueueResponse,
+					compose: state.compose && {
+						...state.compose,
+						status: "completed",
+						...(event.queueJournalReceipt === undefined ? {} : { queueJournalReceipt: event.queueJournalReceipt }),
+					},
+				},
+				commands: [],
+			}
 		case "compose.failed":
 			return {
 				state: {

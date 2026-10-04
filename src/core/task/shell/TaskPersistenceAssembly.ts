@@ -1,5 +1,5 @@
 import { ensureInstanceLayout, InstanceDatabase, openInstanceStorage } from "../../storage/instance"
-import { FileTaskStateVault, openTaskJournalStores, type TaskPayloadStore } from "../stores"
+import { type BackgroundDeliveryLedger, FileTaskStateVault, openTaskJournalStores, type TaskPayloadStore } from "../stores"
 import type { TaskPersistencePorts } from "./TaskExecutorAssembly"
 
 /** The one module that writes `journal.db`: every kernel commit goes through it. */
@@ -8,6 +8,8 @@ export const KERNEL_COMMIT_WRITER = "kernel-commit"
 export interface TaskPersistenceAssembly {
 	readonly ports: Omit<TaskPersistencePorts, "taskView">
 	readonly payloads: TaskPayloadStore
+	/** Required for file-backed production assemblies; omitted by explicit in-memory test assemblies. */
+	readonly backgroundDeliveries?: BackgroundDeliveryLedger
 	/** Closes `journal.db`; idempotent. Absent for in-memory assemblies that own no files. */
 	readonly close?: () => Promise<void>
 }
@@ -30,6 +32,7 @@ export async function openTaskPersistence(taskId: string): Promise<TaskPersisten
 				journal: stores.journal,
 			},
 			payloads: stores.payloads,
+			backgroundDeliveries: stores.backgroundDeliveries,
 			close: () => storage.close(),
 		}
 	} catch (error) {

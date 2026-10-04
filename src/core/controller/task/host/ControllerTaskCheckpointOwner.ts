@@ -2,7 +2,9 @@ import type { ContextManager } from "@core/context/context-management/ContextMan
 import type { FileContextTracker } from "@core/context/context-tracking/FileContextTracker"
 import type { Controller } from "@core/controller"
 import type { StateManager } from "@core/storage/StateManager"
+import type { TaskSessionCheckpointPort } from "@core/task/composition/TaskSessionHostFactory"
 import type { MessageStateHandler } from "@core/task/message-state"
+import type { CheckpointRestoreFence } from "@core/task/session/ActiveTaskSession"
 import type { DefaultToolHandlerState } from "@core/task/tools/state/ToolHandlerState"
 import type { TaskCallbacks } from "@core/task/tools/types/TaskConfig"
 import type { WorkspaceRootManager } from "@core/workspace/WorkspaceRootManager"
@@ -25,6 +27,7 @@ export interface ControllerTaskCheckpointOwnerOptions {
 	readonly say: TaskCallbacks["say"]
 	readonly workspaceManager?: WorkspaceRootManager
 	readonly conversationRewind?: ConversationRewindPort
+	readonly checkpoints: TaskSessionCheckpointPort
 }
 
 /**
@@ -39,6 +42,7 @@ export interface ControllerTaskCheckpointOwnerOptions {
  */
 export class ControllerTaskCheckpointOwner {
 	readonly manager: ICheckpointManager
+	private pendingRestoreFence: CheckpointRestoreFence | undefined
 
 	constructor(private readonly options: ControllerTaskCheckpointOwnerOptions) {
 		this.manager = buildCheckpointManager({
@@ -52,6 +56,17 @@ export class ControllerTaskCheckpointOwner {
 			taskFileTracker: options.taskFileTracker,
 			workspaceManager: options.workspaceManager,
 			conversationRewind: options.conversationRewind,
+			canonicalCheckpoint: {
+				capture: (input) => options.checkpoints.capture(input),
+				restore: async (input) => {
+					const restored = await options.checkpoints.restore(input)
+					if (restored.result.kind === "restored") {
+						if (!restored.fence) throw new Error("Canonical checkpoint restore completed without a session fence")
+						this.pendingRestoreFence = restored.fence
+					}
+					return restored.result
+				},
+			},
 			updateTaskHistory: (historyItem) => options.controller.updateTaskHistory(historyItem),
 			say: (...args) => options.say(...(args as Parameters<TaskCallbacks["say"]>)),
 			cancelTask: () => options.controller.cancelTask(),
@@ -75,7 +90,10 @@ export class ControllerTaskCheckpointOwner {
 		// Reopened as an interactive session that knows it was restored: a history
 		// display would leave nothing to resume, and an ordinary resume would plan
 		// whatever dialog the rewound conversation last ended in.
-		await this.options.controller.reopenTaskForCheckpointRestore(this.options.taskId)
+		const fence = this.pendingRestoreFence
+		if (!fence) throw new Error(`Checkpoint chat restore for ${this.options.taskId} has no canonical session fence`)
+		await this.options.controller.reopenTaskForCheckpointRestore(this.options.taskId, fence)
+		this.pendingRestoreFence = undefined
 		const session = this.options.controller.task
 		if (!session || session.taskId !== this.options.taskId) {
 			throw new Error(`Checkpoint chat restore could not reopen task ${this.options.taskId}`)

@@ -6,13 +6,14 @@ import type { HistoryItem } from "@shared/HistoryItem"
 import { DispatchInteractionRequest } from "@shared/proto/dline/task"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { ensureTaskDirectoryExists, GlobalFileNames } from "@/core/storage/disk"
-import { ensureInstanceLayout } from "@/core/storage/instance"
+import { ensureInstanceLayout, InstanceDatabase, openInstanceStorage } from "@/core/storage/instance"
 import { UIMessage } from "@/core/storage/UIMessage"
 import { UIMessageWindowReader } from "@/core/storage/UIMessageWindowReader"
 import { TaskActivityPersistence } from "@/core/task/activity/TaskActivityPersistence"
 import { TaskActivityStore } from "@/core/task/activity/TaskActivityStore"
 import { createInitialTaskState, type DialogInteraction, type TaskState } from "@/core/task/kernel"
-import { FileTaskStateVault } from "@/core/task/stores"
+import { FileTaskStateVault, openTaskJournalStores } from "@/core/task/stores"
+import { encodeTaskPayload } from "@/core/task/stores/payload/TaskPayloadCodec"
 import { HistoryDisplaySession } from "../HistoryDisplaySession"
 
 function createHistoryItem(taskId: string): HistoryItem {
@@ -39,6 +40,27 @@ async function seedMessages(taskId: string, messages: readonly UiMessage[]): Pro
 async function persistSnapshot(taskId: string, state: TaskState): Promise<void> {
 	const layout = await ensureInstanceLayout({ taskId })
 	await new FileTaskStateVault(layout.stateFile).save({ state, outbox: [] })
+}
+
+async function persistUserInputPayload(taskId: string): Promise<string> {
+	const layout = await ensureInstanceLayout({ taskId })
+	const storage = openInstanceStorage(layout.root)
+	try {
+		const stores = await openTaskJournalStores(
+			await storage.openDatabase(InstanceDatabase.Journal, "history-display-test-seed"),
+		)
+		return await stores.payloads.put(
+			encodeTaskPayload({
+				kind: "user_input",
+				text: "Retained after restart",
+				images: ["data:image/png;base64,retained"],
+				files: ["retained.txt"],
+				activeQuote: "durable quote",
+			}),
+		)
+	} finally {
+		await storage.close()
+	}
 }
 
 /** Write a state file in the retired runtime's shape, which no kernel reader accepts. */
@@ -111,6 +133,52 @@ describe("HistoryDisplaySession", () => {
 			expect(session.accepts(requestFor(session))).toBe(true)
 			expect(session.accepts(requestFor(session, { stateRevision: 1 }))).toBe(false)
 			expect(session.accepts(requestFor(session, { interactionId: "stale-interaction" }))).toBe(false)
+		} finally {
+			await session.dispose()
+		}
+	})
+
+	it("materializes retained input from the canonical snapshot without starting a Task runtime", async () => {
+		const taskId = "history-retained-input"
+		await seedMessages(taskId, [{ ts: 10, type: "say", say: "task", text: "Original task" }])
+		const payloadRef = await persistUserInputPayload(taskId)
+		await persistSnapshot(taskId, {
+			...createInitialTaskState(taskId),
+			revision: 4,
+			flow: { phase: "paused" },
+			intake: {
+				queued: [
+					{
+						entryId: "retained-1",
+						payloadRef,
+						source: "user",
+						mode: "steering",
+						sequence: 3,
+						queue: { editing: false },
+						state: "accepted",
+					},
+				],
+				background: [],
+				coTask: [],
+			},
+		})
+		const session = new HistoryDisplaySession(createHistoryItem(taskId))
+
+		try {
+			await session.load()
+
+			expect(session.getInputQueue()).toEqual([
+				{
+					id: "retained-1",
+					text: "Retained after restart",
+					images: ["data:image/png;base64,retained"],
+					files: ["retained.txt"],
+					activeQuote: "durable quote",
+					mode: "steering",
+					editing: false,
+					sequence: 3,
+				},
+			])
 		} finally {
 			await session.dispose()
 		}

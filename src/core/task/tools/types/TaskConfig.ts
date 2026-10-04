@@ -15,7 +15,6 @@ import type { UrlContentFetcher } from "@services/browser/UrlContentFetcher"
 import type { McpHub } from "@services/mcp/McpHub"
 import type { AutoApprovalSettings } from "@shared/AutoApprovalSettings"
 import type { BrowserSettings } from "@shared/BrowserSettings"
-import type { ClineExtensionContext } from "@shared/cline/context"
 import type { CommandStatus, UiAsk, UiSay } from "@shared/ExtensionMessage"
 import type { FocusChainSettings } from "@shared/FocusChainSettings"
 import type { ClineContent, ClineToolResponseContent } from "@shared/messages/content"
@@ -27,6 +26,8 @@ import { WorkspaceRootManager } from "@/core/workspace"
 import type { ContextManager } from "../../../context/context-management/ContextManager"
 import type { StateManager } from "../../../storage/StateManager"
 import type { TaskActivityStore } from "../../activity/TaskActivityStore"
+import type { BackgroundResultDeliveryPort } from "../../background/BackgroundResultDeliveryPort"
+import type { PeerTaskSpawnPort } from "../../executors/spawn/PeerTaskSpawnPort"
 import type { ToolBlockStatePort } from "../../executors/tool/ToolBlockStatePort"
 import type {
 	CompleteInteractionRequest,
@@ -126,9 +127,11 @@ export interface TaskConfig {
 	/** Task-owned Provider round admission for nested compaction and subagent requests. */
 	providerRequestRounds?: ProviderRequestRoundPort
 
-	/** VSCode extension context, required by spawn_task to create new webview panels. */
-	controllerContext?: ClineExtensionContext
+	/** Host-owned peer-task launcher; absent on headless runtimes. */
+	peerTaskSpawner?: PeerTaskSpawnPort
 
+	/** Producer-owned durable ingress for background command and subagent results. */
+	backgroundResults?: BackgroundResultDeliveryPort
 	/** Task-local background subagent job manager. */
 	subagentJobManager?: SubagentJobManager
 

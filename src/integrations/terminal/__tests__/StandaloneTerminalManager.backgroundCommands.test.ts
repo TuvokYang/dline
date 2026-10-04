@@ -8,27 +8,7 @@ import { afterEach, describe, it, vi } from "vitest"
 import { StandaloneTerminalManager } from "../standalone/StandaloneTerminalManager"
 import type { BackgroundCommand, TerminalProcessResultPromise } from "../types"
 
-/**
- * Create a background command record for state transition tests.
- * @param id Command identifier.
- * @returns Background command record with pending injection state.
- */
-function createCommand(id: string): BackgroundCommand {
-	return {
-		id,
-		command: "npm test",
-		startTime: Date.now(),
-		status: "completed",
-		origin: "explicit_background",
-		cancellationOwner: "explicit",
-		logFilePath: "logs/command.log",
-		lineCount: 1,
-		injectionState: "pending",
-		process: {} as TerminalProcessResultPromise,
-	}
-}
-
-describe("StandaloneTerminalManager background command injection state", () => {
+describe("StandaloneTerminalManager background command lifecycle", () => {
 	afterEach(() => {
 		vi.useRealTimers()
 	})
@@ -317,23 +297,32 @@ describe("StandaloneTerminalManager background command injection state", () => {
 		}
 	})
 
-	it("moves background command injection state forward only", () => {
+	it("settles only after output and log drain while failed delivery remains pending", async () => {
 		const manager = new StandaloneTerminalManager()
-		const managerState = manager as unknown as { backgroundCommands: Map<string, BackgroundCommand> }
-		const command = createCommand("command_1")
-		managerState.backgroundCommands.set(command.id, command)
+		const process = new EventEmitter() as TerminalProcessResultPromise
+		const expectedLogPath = path.join(DlineRuntimeFileManager.getTempDir(), "command_settlement.log")
+		await fs.rm(expectedLogPath, { force: true })
+		let observedLog = ""
+		const settled = vi.fn(async (command: Readonly<BackgroundCommand>) => {
+			observedLog = await fs.readFile(command.logFilePath ?? "", "utf8")
+			throw new Error("canonical ingress unavailable")
+		})
+		manager.bindBackgroundCommandSettlement({ settled })
 
-		manager.markBackgroundCommandsConsumed([command.id])
-		assert.equal(manager.getBackgroundCommand(command.id)?.injectionState, "pending")
+		try {
+			const command = manager.trackBackgroundCommand(process, "npm test", "command_settlement")
+			process.emit("line", "complete output", "stdout")
+			process.emit("completed", { exitCode: 0, signal: null })
 
-		manager.markBackgroundCommandsInjected([command.id])
-		assert.equal(manager.getBackgroundCommand(command.id)?.injectionState, "injected")
+			await manager.readBackgroundCommandOutput(command.id)
 
-		manager.markBackgroundCommandsConsumed([command.id])
-		assert.equal(manager.getBackgroundCommand(command.id)?.injectionState, "consumed")
-
-		manager.markBackgroundCommandsInjected([command.id])
-		assert.equal(manager.getBackgroundCommand(command.id)?.injectionState, "consumed")
+			expect(settled).toHaveBeenCalledOnce()
+			assert.equal(observedLog, "[O] complete output\n")
+			assert.equal(command.process, undefined)
+		} finally {
+			await manager.disposeBackgroundCommands()
+			await fs.rm(expectedLogPath, { force: true })
+		}
 	})
 
 	it("retains the function id and advances the API output baseline to the sent snapshot", async () => {

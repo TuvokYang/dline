@@ -15,9 +15,14 @@ import {
 } from "../../../storage/instance"
 import type { Command } from "../../kernel"
 import { openTaskJournalStores } from "../sqlite"
-import { CommandPublicationRow, JournalEntryRow, PayloadRow } from "../sqlite/entities"
+import { BackgroundDeliveryRow, CommandPublicationRow, JournalEntryRow, PayloadRow } from "../sqlite/entities"
 
-const JOURNAL_ENTITIES = [JournalEntryRow, CommandPublicationRow, PayloadRow] as unknown as StoredEntityClass<object>[]
+const JOURNAL_ENTITIES = [
+	JournalEntryRow,
+	CommandPublicationRow,
+	PayloadRow,
+	BackgroundDeliveryRow,
+] as unknown as StoredEntityClass<object>[]
 const encoder = new TextEncoder()
 
 const PREPARE_KEY = "dialog.prepare:interaction-1"
@@ -73,6 +78,7 @@ describe("switching journal.db between SQLite and JSONL", () => {
 				projection: await stores.journal.project(),
 				payloads: payloads.map((bytes) => Array.from(bytes)),
 				published: await stores.publications.has(PREPARE_KEY),
+				backgroundDeliveries: await stores.backgroundDeliveries.listPending(),
 			}
 		} finally {
 			await storage.close()
@@ -100,6 +106,13 @@ describe("switching journal.db between SQLite and JSONL", () => {
 		await stores.journal.supersedeRange({ operationId: "compact:1", from: { seq: 1 }, to: { seq: 1 }, replacementRef: first })
 		await stores.journal.tombstone({ operationId: "tombstone:1", target: { seq: 2 } })
 		await stores.publications.mark(command, PREPARE_KEY)
+		await stores.backgroundDeliveries.stage({
+			entryId: "background:subagent:job-1:attempt:1",
+			producerKind: "subagent",
+			producerId: "job-1",
+			attempt: 1,
+			text: "background result",
+		})
 		await writer.close()
 		const before = await snapshot(taskId)
 		expect(before.backend).toBe(from)

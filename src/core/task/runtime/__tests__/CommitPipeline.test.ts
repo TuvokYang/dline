@@ -129,6 +129,24 @@ describe("CommitPipeline", () => {
 		])
 	})
 
+	it("keeps the durable frontier valid below a later failed revision", async () => {
+		const vault = new ControlledVault()
+		const pipeline = new CommitPipeline(vault, view())
+		const first = pipeline.commit(state(1), [])
+		await settle()
+		vault.release()
+		await first.durable
+
+		vault.failNext = new Error("disk full")
+		const second = pipeline.commit(state(2), [])
+		await settle()
+		vault.release()
+		await expect(second.durable).rejects.toThrow("disk full")
+
+		await expect(pipeline.flushThrough(1)).resolves.toBeUndefined()
+		await expect(pipeline.flushThrough(2)).rejects.toThrow("disk full")
+	})
+
 	it("fails the batch and every later commit once a write fails", async () => {
 		const vault = new ControlledVault()
 		const diagnostics: RuntimeDiagnostic[] = []
@@ -140,13 +158,12 @@ describe("CommitPipeline", () => {
 		vault.release()
 
 		await expect(first.durable).rejects.toThrow("disk full")
-		await expect(pipeline.commit(state(2), []).durable).rejects.toThrow("disk full")
+		await expect(pipeline.flushThrough(1)).rejects.toThrow("disk full")
+		await expect(pipeline.flushAll()).rejects.toThrow("disk full")
+		expect(() => pipeline.commit(state(2), [])).toThrow("disk full")
 		expect(pipeline.failed).toBe(true)
 		expect(vault.gates).toHaveLength(0)
 		expect(taskView.seen).toEqual([])
-		expect(diagnostics.map((entry) => [entry.code, entry.revision])).toEqual([
-			["durability_failed", 1],
-			["durability_failed", 2],
-		])
+		expect(diagnostics.map((entry) => [entry.code, entry.revision])).toEqual([["durability_failed", 1]])
 	})
 })

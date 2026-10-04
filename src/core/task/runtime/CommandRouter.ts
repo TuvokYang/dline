@@ -7,6 +7,7 @@ export function domainFor(command: Command): ExecutorDomain {
 		case "provider.start":
 			return "provider"
 		case "tool.run":
+		case "tool.retire":
 			return "tool"
 		case "dialog.prepare":
 		case "dialog.reveal":
@@ -42,28 +43,41 @@ export class CommandRouter {
 		const domain = domainFor(command)
 		const executor = this.executors.get(domain)
 		if (!executor) throw new Error(`No command executor registered for ${domain}`)
-		const completion = Promise.resolve()
-			.then(() => executor.execute(command))
-			.catch((error) => {
-				this.diagnostics?.record({
-					source: "router",
-					code: "command_failed",
-					message: error instanceof Error ? error.message : String(error),
-					revision: command.originRevision,
-					commandId: command.commandId,
-				})
-				throw error
-			})
+		// Calling execute is the admission boundary: every executor registers its
+		// owned operation before returning the completion promise. The outbox may
+		// admit the next command once dispatch returns without waiting for the
+		// effect itself to settle.
+		let completion: Promise<void>
+		try {
+			completion = Promise.resolve(executor.execute(command))
+		} catch (error) {
+			this.recordFailure(command, error)
+			throw error
+		}
+		completion = completion.catch((error) => {
+			this.recordFailure(command, error)
+			throw error
+		})
 		const dispatch = { command, domain, completion }
 		this.active.set(command.commandId, dispatch)
 		void completion.finally(() => this.active.delete(command.commandId)).catch(() => undefined)
 		return dispatch
 	}
 
+	private recordFailure(command: Command, error: unknown): void {
+		this.diagnostics?.record({
+			source: "router",
+			code: "command_failed",
+			message: error instanceof Error ? error.message : String(error),
+			revision: command.originRevision,
+			commandId: command.commandId,
+		})
+	}
+
 	async waitForRevision(revision: number): Promise<void> {
 		await Promise.all(
 			[...this.active.values()]
-				.filter((dispatch) => dispatch.command.originRevision <= revision)
+				.filter((dispatch) => dispatch.command.originRevision === revision)
 				.map((dispatch) => dispatch.completion),
 		)
 	}

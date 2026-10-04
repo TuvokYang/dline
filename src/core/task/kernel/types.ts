@@ -73,6 +73,9 @@ export interface CommandFlowState {
 export interface ComposeFlowState extends CommandFlowState {
 	readonly admittedEntryIds: readonly EntryId[]
 	readonly turnId?: TurnId
+	readonly respondedQueue?: QueuedInputResponse
+	/** Atomic journal handoff for the retained tool-round batch. */
+	readonly queueJournalReceipt?: QueueJournalReceipt
 }
 
 export interface ProviderFlowState extends CommandFlowState {
@@ -125,6 +128,8 @@ export interface FlowState {
 	readonly consecutiveMistakeCount?: number
 	/** Live user-configured ceiling captured with the latest reported tool outcome. */
 	readonly maxConsecutiveMistakes?: number
+	/** Admission metadata of a retained batch already accepted as tool feedback. */
+	readonly pendingQueueResponse?: QueuedInputResponse
 }
 
 export interface KernelBlock {
@@ -135,7 +140,22 @@ export interface KernelBlock {
 	readonly lanes: readonly string[]
 	readonly turnEnding: boolean
 	readonly invocationRef: string
+	readonly approvalFeedbackRef?: string
 	readonly policy?: PolicyEvaluationState
+}
+
+export type ToolTerminalPhase = Extract<BlockPhase, "completed" | "failed" | "rejected" | "skipped" | "cancelled">
+
+export interface ToolTerminalManifestEntry {
+	readonly blockId: BlockId
+	readonly phase: ToolTerminalPhase
+	readonly invocationRef: string
+	readonly approvalFeedbackRef?: string
+}
+
+export interface ToolTerminalManifest {
+	readonly turnId: TurnId
+	readonly blocks: readonly ToolTerminalManifestEntry[]
 }
 
 export interface TurnSlice {
@@ -154,12 +174,36 @@ export interface DialogActionRule {
 	readonly payloadPolicy: DialogPayloadPolicy
 }
 
+export interface QueuePayloadIdentity {
+	readonly entryId: EntryId
+	readonly payloadRef: string
+}
+
+export interface QueuedInputResponse {
+	readonly deliveryId: string
+	readonly mode: "queued" | "steering"
+	readonly entries: readonly QueuePayloadIdentity[]
+}
+
+export interface QueueJournalReceipt {
+	readonly deliveryId: string
+	readonly entries: readonly QueuePayloadIdentity[]
+	readonly journalWatermark: JournalWatermark
+}
+
+export interface QueueSettlementEvidence {
+	readonly deliveryId: string
+	readonly outcome: "released" | "consumed"
+	readonly journalWatermark?: JournalWatermark
+}
+
 export interface DialogAcceptedResponse {
 	readonly actionId: string
 	readonly stateRevision: number
 	readonly receiverGeneration: number
 	readonly draftRef?: string
 	readonly selectionRef?: string
+	readonly queuedInput?: QueuedInputResponse
 }
 
 export interface DialogInteraction {
@@ -188,12 +232,27 @@ export interface DialogSlice {
 	readonly interrupted?: DialogInteraction
 }
 
+export type InputQueueDeliveryPoint = "turn_end" | "tool_round"
+
+export interface InputQueueDeliveryReservation {
+	readonly deliveryId: string
+	readonly point: InputQueueDeliveryPoint
+	readonly ownerId: string
+	readonly generation: number
+}
+
 export interface IntakeEntry {
 	readonly entryId: EntryId
 	readonly payloadRef: string
 	readonly source: "user" | "background" | "cotask"
 	readonly mode: "queued" | "steering"
 	readonly sequence: number
+	/** Present only for user-retained queue entries; direct submissions omit it. */
+	readonly queue?: {
+		readonly editing: boolean
+		/** Durable owner of a delivery that has not yet settled. */
+		readonly delivery?: InputQueueDeliveryReservation
+	}
 	readonly state: "accepted" | "reserved" | "included" | "consumed" | "released" | "uncertain"
 	readonly journalWatermark?: JournalWatermark
 }
@@ -202,6 +261,14 @@ export interface IntakeSlice {
 	readonly queued: readonly IntakeEntry[]
 	readonly background: readonly IntakeEntry[]
 	readonly coTask: readonly IntakeEntry[]
+}
+
+/** Durable proof that the legacy `snapshot.json.inputQueue` authority was consumed. */
+export interface LegacyInputQueueMigrationV1 {
+	readonly sourceFingerprint: string
+	readonly importedEntryCount: number
+	readonly skippedDeliveringCount: number
+	readonly skippedInvalidCount: number
 }
 
 export type HaltSlice =
@@ -225,6 +292,7 @@ export interface TaskState {
 	readonly turn: TurnSlice
 	readonly dialog: DialogSlice
 	readonly intake: IntakeSlice
+	readonly legacyInputQueueV1?: LegacyInputQueueMigrationV1
 	readonly halt: HaltSlice
 	readonly journalWatermark?: JournalWatermark
 }
@@ -244,6 +312,36 @@ export type UserEvent =
 	  })
 	| (EventBase & { readonly type: "user.cancel"; readonly haltId: HaltId })
 	| (EventBase & { readonly type: "user.terminate"; readonly haltId: HaltId })
+
+export type InputQueueEvent =
+	| (EventBase & {
+			readonly type: "input_queue.enqueued"
+			readonly entryId: EntryId
+			readonly payloadRef: string
+	  })
+	| (EventBase & { readonly type: "input_queue.mode_toggled"; readonly entryId: EntryId })
+	| (EventBase & { readonly type: "input_queue.reordered"; readonly entryId: EntryId; readonly targetIndex: number })
+	| (EventBase & { readonly type: "input_queue.edit_started"; readonly entryId: EntryId })
+	| (EventBase & {
+			readonly type: "input_queue.edit_committed"
+			readonly entryId: EntryId
+			readonly payloadRef: string
+	  })
+	| (EventBase & { readonly type: "input_queue.edit_cancelled"; readonly entryId: EntryId })
+	| (EventBase & { readonly type: "input_queue.removed"; readonly entryId: EntryId })
+	| (EventBase & {
+			readonly type: "input_queue.delivery_reserved"
+			readonly deliveryId: string
+			readonly point: InputQueueDeliveryPoint
+			readonly ownerId: string
+	  })
+	| (EventBase & { readonly type: "input_queue.delivery_released"; readonly deliveryId: string })
+	| (EventBase & {
+			readonly type: "input_queue.delivery_reconciled"
+			readonly deliveryId: string
+			readonly outcome: "released" | "consumed"
+			readonly journalWatermark?: JournalWatermark
+	  })
 interface CommandFeedbackEvent extends EventBase {
 	readonly commandId: CommandId
 	readonly originRevision: number
@@ -307,6 +405,10 @@ export type DialogEvent =
 			readonly actionId: string
 			readonly draftRef?: string
 			readonly selectionRef?: string
+			/** Atomically consumes a retained queue delivery with this accepted response. */
+			readonly queueDeliveryId?: string
+			readonly queueDeliveryEntries?: readonly QueuePayloadIdentity[]
+			readonly queueDeliveryMode?: "queued" | "steering"
 	  })
 	| (EventBase & { readonly type: "dialog.reopened"; readonly interactionId: InteractionId })
 	| (EventBase & { readonly type: "dialog.resolved"; readonly interactionId: InteractionId })
@@ -318,8 +420,18 @@ export type BackgroundEvent = EventBase & {
 	readonly sequence?: number
 }
 export type ComposeEvent =
-	| (CommandFeedbackEvent & { readonly type: "compose.completed"; readonly draftRef: string; readonly turnId?: TurnId })
-	| (CommandFeedbackEvent & { readonly type: "compose.failed"; readonly message: string; readonly turnId?: TurnId })
+	| (CommandFeedbackEvent & {
+			readonly type: "compose.completed"
+			readonly draftRef: string
+			readonly turnId?: TurnId
+			readonly queueJournalReceipt?: QueueJournalReceipt
+	  })
+	| (CommandFeedbackEvent & {
+			readonly type: "compose.failed"
+			readonly message: string
+			readonly turnId?: TurnId
+			readonly queueDisposition?: "released" | "uncertain"
+	  })
 	/**
 	 * The round was given up before any request was drafted.
 	 *
@@ -328,7 +440,12 @@ export type ComposeEvent =
 	 * sent. Unlike a failure it is not an error to retry: the command's own
 	 * domain already told the user, and the task simply waits for them.
 	 */
-	| (CommandFeedbackEvent & { readonly type: "compose.withdrawn"; readonly reason: string; readonly turnId?: TurnId })
+	| (CommandFeedbackEvent & {
+			readonly type: "compose.withdrawn"
+			readonly reason: string
+			readonly turnId?: TurnId
+			readonly queueDisposition?: "released" | "uncertain"
+	  })
 export type CompactionEvent =
 	| (EventBase & {
 			readonly type: "compaction.requested"
@@ -378,6 +495,7 @@ export type ApprovalEvent =
 			readonly blockId: BlockId
 			readonly interactionId: InteractionId
 			readonly approved: boolean
+			readonly feedbackRef?: string
 	  })
 	| (CommandFeedbackEvent & {
 			readonly type: "approval.evaluated" | "approval.failed"
@@ -437,6 +555,7 @@ export type LifecycleEvent =
 
 export type TaskEvent =
 	| UserEvent
+	| InputQueueEvent
 	| ProviderEvent
 	| ToolEvent
 	| DialogEvent
@@ -473,6 +592,10 @@ export type ToolRunCommand = CommandBase & {
 	readonly mode: "serial" | "parallel"
 	readonly blocks: readonly ToolRunBlock[]
 }
+export type ToolRetireCommand = CommandBase & {
+	readonly type: "tool.retire"
+	readonly turnId: TurnId
+}
 interface DialogCommandInput {
 	readonly interactionId: InteractionId
 	readonly turnId: TurnId
@@ -498,6 +621,11 @@ export type ComposeRoundCommand = CommandBase & {
 	readonly type: "compose.round"
 	readonly turnId?: TurnId
 	readonly admittedEntryIds: readonly EntryId[]
+	readonly toolTerminals?: ToolTerminalManifest
+	/** Retained steering batch carried by this round, when one was selected. */
+	readonly queueDelivery?: InputQueueDeliveryReservation
+	/** Original admission metadata of feedback paired with a turn-ending result. */
+	readonly respondedQueue?: QueuedInputResponse
 	/** Present when the kernel continued the conversation on its own. */
 	readonly continuation?: TurnContinuationReason
 }
@@ -530,6 +658,7 @@ export type TaskSpawnCommand = CommandBase & {
 export type Command =
 	| ProviderStartCommand
 	| ToolRunCommand
+	| ToolRetireCommand
 	| DialogCommand
 	| ComposeRoundCommand
 	| CompactionRunCommand
@@ -564,6 +693,8 @@ export interface HydrateInput {
 	 * the task is rebuilt from the journal instead.
 	 */
 	readonly unavailablePayloads?: ReadonlySet<string>
+	/** Journal facts reconciled under the task lock before the pure hydrate step. */
+	readonly queueSettlements?: readonly QueueSettlementEvidence[]
 }
 export type HydrateForm = "interrupted" | "completed" | "error" | "consumed" | "new"
 

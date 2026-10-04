@@ -13,6 +13,7 @@ import type { UiMessage } from "@/shared/ExtensionMessage"
 vi.unmock("@integrations/checkpoints")
 
 import { createTaskCheckpointManager } from "../index"
+import type { CanonicalCheckpointPort } from "../types"
 
 type CreateCheckpointTracker = (
 	taskId: string,
@@ -23,7 +24,7 @@ type CreateCheckpointTracker = (
 function createManager(
 	createCheckpointTracker: CreateCheckpointTracker,
 	initialError?: string,
-	options?: { messages?: UiMessage[]; tracker?: CheckpointTracker },
+	options?: { messages?: UiMessage[]; tracker?: CheckpointTracker; canonicalCheckpoint?: CanonicalCheckpointPort },
 ) {
 	const messages = options?.messages ?? []
 	const taskState: { taskId: string; checkpointManagerErrorMessage?: string } = {
@@ -56,6 +57,7 @@ function createManager(
 			},
 			taskState,
 			workspaceManager: { getPrimaryRoot: () => ({ path: "C:/workspace" }) },
+			...(options?.canonicalCheckpoint ? { canonicalCheckpoint: options.canonicalCheckpoint } : {}),
 		} as never,
 		{
 			updateTaskHistory: vi.fn(),
@@ -169,6 +171,20 @@ describe("TaskCheckpointManager checkpoint initialization", () => {
 		expect(harness.taskState.checkpointManagerErrorMessage).toContain("Git must be installed")
 	})
 
+	it("captures a chat-only canonical bundle when file checkpoints are unavailable", async () => {
+		const messages: UiMessage[] = []
+		const capture = vi.fn(async () => undefined)
+		const create = vi.fn<CreateCheckpointTracker>().mockRejectedValue(new Error("Git unavailable"))
+		const harness = createManager(create, undefined, {
+			messages,
+			canonicalCheckpoint: { capture, restore: vi.fn() },
+		})
+
+		await harness.manager.saveCheckpoint()
+
+		expect(capture).toHaveBeenCalledExactlyOnceWith({ messageTs: 42 })
+	})
+
 	it("binds the first chat checkpoint to the initialized shadow baseline when no files were tracked", async () => {
 		const messages: UiMessage[] = []
 		const baselineHash = "shadow-baseline-hash"
@@ -177,7 +193,12 @@ describe("TaskCheckpointManager checkpoint initialization", () => {
 			commit: vi.fn().mockResolvedValue(baselineHash),
 		} as unknown as CheckpointTracker
 		const create = vi.fn<CreateCheckpointTracker>().mockResolvedValue(tracker)
-		const harness = createManager(create, undefined, { messages, tracker })
+		const capture = vi.fn(async () => undefined)
+		const harness = createManager(create, undefined, {
+			messages,
+			tracker,
+			canonicalCheckpoint: { capture, restore: vi.fn() },
+		})
 
 		await harness.manager.saveCheckpoint()
 
@@ -196,6 +217,7 @@ describe("TaskCheckpointManager checkpoint initialization", () => {
 		expect(harness.flushMessageUpdate.mock.invocationCallOrder[0]).toBeLessThan(
 			harness.postStateToWebview.mock.invocationCallOrder[0],
 		)
+		expect(capture).toHaveBeenCalledExactlyOnceWith({ messageTs: 42, workspaceRef: baselineHash })
 	})
 
 	it("durably binds a completion checkpoint before posting its updated UI state", async () => {

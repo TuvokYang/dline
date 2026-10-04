@@ -166,6 +166,44 @@ describe("TaskInteractionOwner", () => {
 		expect(submitted).toEqual(["dialog.requested", "dialog.requested", "dialog.resolved"])
 	})
 
+	it("keeps a delivered queued response owned until terminal tool feedback", async () => {
+		const state = restoredPrimary("i-queued", "followup")
+		const primary = state.dialog.primary!
+		const { owner, submitted, whenSubmitted } = createOwner({
+			state: () => ({
+				...state,
+				dialog: {
+					...state.dialog,
+					primary: {
+						...primary,
+						status: "resolving",
+						acceptedResponse: {
+							actionId: "reply",
+							stateRevision: 0,
+							receiverGeneration: 0,
+							draftRef: "sha256:draft",
+							queuedInput: {
+								deliveryId: "delivery-1",
+								mode: "queued",
+								entries: [{ entryId: "entry-1", payloadRef: "sha256:raw" }],
+							},
+						},
+					},
+				},
+			}),
+		})
+		const waiting = owner.open({
+			turnId: "turn-restored",
+			interactionId: "i-queued",
+			kind: "followup",
+			presentation: "question",
+		})
+		await whenSubmitted()
+		owner.resolve("i-queued", { actionId: "reply", feedbackPresented: true })
+		await expect(waiting).resolves.toMatchObject({ actionId: "reply", feedbackPresented: true })
+		expect(submitted).toEqual(["dialog.requested"])
+	})
+
 	// Retiring says the answer reached whoever had to act on it. When the
 	// continuation carries the task on, that is true and the dialog must be
 	// released so the next one can open.

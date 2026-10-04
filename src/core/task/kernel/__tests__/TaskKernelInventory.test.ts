@@ -1,110 +1,20 @@
-import { readdirSync, readFileSync, statSync } from "node:fs"
+import { readFileSync } from "node:fs"
 import path from "node:path"
-import { ts } from "ts-morph"
 import { describe, expect, it } from "vitest"
+import { productionFiles, scanImportGraph } from "../../__tests__/architecture/import-graph"
+import { TASK_101_FIELDS } from "../../__tests__/architecture/task-field-closure"
 
 const REPO = path.resolve(__dirname, "../../../../..")
 const TASK_INDEX = path.join(REPO, "src/core/task/index.ts")
+const TASK_INDEX_PATH = "src/core/task/index.ts"
+const SOURCE_ROOTS = [path.join(REPO, "src"), path.join(REPO, "webview-ui/src")]
+const IMPORT_GRAPH = scanImportGraph({
+	repoRoot: REPO,
+	tsconfigPath: path.join(REPO, "tsconfig.json"),
+	roots: SOURCE_ROOTS,
+})
 
-const EXPECTED_TASK_FIELDS = [
-	"taskId",
-	"ulid",
-	"taskTelemetry",
-	"initialTaskTitle",
-	"taskIsFavorited",
-	"cwd",
-	"taskInitializationStartTime",
-	"taskState",
-	"taskController",
-	"taskRuntime",
-	"completionProjector",
-	"interactionCoordinator",
-	"resumeCoordinator",
-	"historyResumeMaintenance",
-	"historyPreparationPending",
-	"controllerDetached",
-	"restoredFromHistory",
-	"latestOrdinaryCompactionDiagnostic",
-	"stateMutex",
-	"controller",
-	"mcpHub",
-	"_mcpNotificationCb",
-	"api",
-	"terminalManager",
-	"urlContentFetcher",
-	"browserSession",
-	"contextManager",
-	"modeSwitchCompaction",
-	"contextCompactionSession",
-	"taskHeaderCompactionSettlement",
-	"contextCompactionPresentation",
-	"taskLegacyStorageCleaner",
-	"contextWindowIndicator",
-	"contextWindowEnvironmentRefreshTimer",
-	"contextWindowEnvironmentRefreshInFlight",
-	"contextCompactionFailureReasons",
-	"contextCompactionRetryProgress",
-	"diffViewProvider",
-	"checkpointManager",
-	"initialCheckpointCommitPromise",
-	"checkpointHashPersistenceChain",
-	"ignoreController",
-	"commandPermissionController",
-	"toolExecutor",
-	"activityStore",
-	"useNativeToolCalls",
-	"streamHandler",
-	"identityFactory",
-	"explicitInstructionRegistry",
-	"compactionRequestReplay",
-	"compactionRetryPolicy",
-	"terminalExecutionMode",
-	"fileContextTracker",
-	"taskFileTracker",
-	"modelContextTracker",
-	"environmentContextTracker",
-	"FocusChainManager",
-	"updateTaskHistory",
-	"postStateToWebview",
-	"reinitExistingTaskFromId",
-	"cancelTask",
-	"stateManager",
-	"taskSm",
-	"messageStateHandler",
-	"workspaceManager",
-	"commandExecutor",
-	"isRemoteWorkspaceEnvironment",
-	"remoteWorkspaceDetectionSettled",
-	"remoteWorkspaceDetectionPromise",
-	"presentationScheduler",
-	"pendingReasoningText",
-	"snapshotPersistence",
-	"projectionScheduler",
-	"toolDomainLedger",
-	"toolDomain",
-	"turnToolScheduler",
-	"turnDriver",
-	"promptLifecycle",
-	"latestTaskSnapshot",
-	"inputQueue",
-	"activeProviderInputRuntime",
-	"promptCacheHealth",
-	"apiRateMetricsService",
-	"apiRequestRoundLifecycle",
-	"providerRequestRounds",
-	"taskRateMetricsQueryService",
-	"apiRateMetricsInitialization",
-	"pendingBackgroundResultIds",
-	"environmentProjection",
-	"ordinaryRequestInputReplay",
-	"ordinaryContextIndicatorLineageByApiIndex",
-	"ordinaryContextIndicatorReceivingByApiIndex",
-	"contextCompactionIndicatorReceivingByAttemptId",
-	"autoRetry",
-	"presentationSchedulingDisabled",
-	"restoreHandler",
-	"lastGeneratedMessageTs",
-] as const
+const EXPECTED_TASK_FIELDS = TASK_101_FIELDS
 
 const EXPECTED_TASK_INDEX_CONSUMERS = [] as const
 
@@ -132,62 +42,15 @@ function stripComments(source: string): string {
 	return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/[^\n]*/g, "$1")
 }
 
-function productionFiles(directory: string): string[] {
-	return readdirSync(directory).flatMap((entry) => {
-		const absolute = path.join(directory, entry)
-		const relative = path.relative(REPO, absolute).replaceAll("\\", "/")
-		if (relative.includes("/__tests__/") || /\.(?:test|spec)\.[jt]sx?$/.test(entry)) return []
-		return statSync(absolute).isDirectory() ? productionFiles(absolute) : /\.[jt]sx?$/.test(entry) ? [absolute] : []
-	})
-}
-
-function resolvesTaskIndex(importer: string, specifier: string): boolean {
-	if (/^@(?:core|\/core)\/task(?:\/index(?:\.ts)?)?$/.test(specifier)) return true
-	if (!specifier.startsWith(".")) return false
-	const resolved = path.resolve(path.dirname(importer), specifier)
-	return resolved === path.dirname(TASK_INDEX) || resolved === TASK_INDEX.replace(/\.ts$/, "") || resolved === TASK_INDEX
-}
-
-function importedSpecifiers(source: string, fileName = "inventory.ts"): string[] {
-	const file = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true)
-	const specifiers: string[] = []
-	const record = (node: ts.Node | undefined) => {
-		if (node && (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node))) specifiers.push(node.text)
-	}
-	const visit = (node: ts.Node): void => {
-		if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
-			record(node.moduleSpecifier)
-		} else if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)) {
-			record(node.moduleReference.expression)
-		} else if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument)) {
-			record(node.argument.literal)
-		} else if (
-			ts.isCallExpression(node) &&
-			(node.expression.kind === ts.SyntaxKind.ImportKeyword ||
-				(ts.isIdentifier(node.expression) && node.expression.text === "require"))
-		) {
-			record(node.arguments[0])
-		}
-		ts.forEachChild(node, visit)
-	}
-	visit(file)
-	return specifiers
-}
-
 function taskIndexConsumers(): string[] {
-	return [path.join(REPO, "src"), path.join(REPO, "webview-ui/src")]
-		.flatMap(productionFiles)
-		.filter((file) => {
-			return importedSpecifiers(readFileSync(file, "utf8"), file).some((specifier) => resolvesTaskIndex(file, specifier))
-		})
-		.map((file) => path.relative(REPO, file).replaceAll("\\", "/"))
+	return IMPORT_GRAPH.filter((edge) => edge.target.kind === "workspace" && edge.target.path === TASK_INDEX_PATH)
+		.map((edge) => edge.importer)
+		.filter((file, index, files) => files.indexOf(file) === index)
 		.sort()
 }
 
 function taskViewFiles(): string[] {
-	const roots = [path.join(REPO, "src"), path.join(REPO, "webview-ui/src")]
-	return roots
-		.flatMap(productionFiles)
+	return productionFiles(SOURCE_ROOTS)
 		.filter((file) => /\b(?:TaskViewState|taskViewState)\b/.test(stripComments(readFileSync(file, "utf8"))))
 		.map((file) => path.relative(REPO, file).replaceAll("\\", "/"))
 		.sort()
@@ -200,44 +63,11 @@ describe("TASK-101 machine inventories", () => {
 		const source = readFileSync(TASK_INDEX, "utf8")
 		expect(source.includes("export class Task")).toBe(false)
 		expect(source.split("\n").length).toBeLessThan(1000)
-		expect(EXPECTED_TASK_FIELDS).toHaveLength(97)
+		expect(EXPECTED_TASK_FIELDS).toHaveLength(109)
 	})
 
 	it("locks direct, barrel-resolved and dynamic production consumers of task index", () => {
 		expect(taskIndexConsumers()).toEqual([...EXPECTED_TASK_INDEX_CONSUMERS].sort())
-	})
-
-	it("recognizes every supported task-barrel import form", () => {
-		const importer = path.join(REPO, "src/core/controller/example.ts")
-		const specifiers = importedSpecifiers(`
-			import type { Task } from "@core/task"
-			import "@/core/task/index.ts"
-			const dynamic = import("../task/index")
-			const required = require("../task/index.ts")
-			export { Task } from "../task"
-		`)
-
-		expect(specifiers.sort()).toEqual(
-			["@core/task", "../task", "@/core/task/index.ts", "../task/index", "../task/index.ts"].sort(),
-		)
-		expect(specifiers.every((specifier) => resolvesTaskIndex(importer, specifier))).toBe(true)
-		expect(resolvesTaskIndex(importer, "../task/shell/Task")).toBe(false)
-	})
-
-	it("parses module references rather than matching import examples inside strings", () => {
-		const specifiers = importedSpecifiers(
-			[
-				`const note = "from '@core/task'"`,
-				`const example = 'import("@core/task")'`,
-				`// import("@core/task")`,
-				`type Lazy = import(/* type query */ "@core/task/index.ts").Task`,
-				"const dynamic = import(`../task/index`, { with: { type: 'json' } })",
-				`const required = require(/* bridge */ "../task/index.ts")`,
-				`import Alias = require("@core/task")`,
-			].join("\n"),
-		)
-
-		expect(specifiers).toEqual(["@core/task/index.ts", "../task/index", "../task/index.ts", "@core/task"])
 	})
 
 	it("locks every production TaskViewState type or field consumer", () => {
@@ -246,7 +76,7 @@ describe("TASK-101 machine inventories", () => {
 
 	it("keeps every kernel production file below the 1000-line architecture limit", () => {
 		const kernelRoot = path.join(REPO, "src/core/task/kernel")
-		const oversized = productionFiles(kernelRoot)
+		const oversized = productionFiles([kernelRoot])
 			.map((file) => ({
 				file: path.relative(REPO, file).replaceAll("\\", "/"),
 				lines: readFileSync(file, "utf8").split(/\r?\n/).length,

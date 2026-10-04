@@ -51,6 +51,11 @@ export interface DialogWaiterPort {
 	resume(): void
 }
 
+/** Observes a dialog only after its awaiting state is durable. */
+export interface DialogAwaitingPort {
+	awaiting(boundary: { readonly turnId: string; readonly interactionId: string; readonly kind: string }): void | Promise<void>
+}
+
 /** Executes durable dialog prepare/reveal phases without waiting for a user response. */
 export class DialogCommandExecutor implements CommandExecutor, HaltParticipant {
 	readonly domain = "dialog" as const
@@ -62,6 +67,7 @@ export class DialogCommandExecutor implements CommandExecutor, HaltParticipant {
 		private readonly port: DialogExecutionPort,
 		private readonly events: TaskEventSink,
 		private readonly waiters?: DialogWaiterPort,
+		private readonly awaiting?: DialogAwaitingPort,
 	) {}
 
 	execute(command: Command): Promise<void> {
@@ -123,8 +129,17 @@ export class DialogCommandExecutor implements CommandExecutor, HaltParticipant {
 				originRevision: command.originRevision,
 				interactionId: command.interactionId,
 			})
-			if (presented.kind === "rejected")
+			if (presented.kind === "rejected") {
 				await this.port.dismiss?.({ ...command, signal: controller.signal, reason: "presentation_feedback_rejected" })
+				return
+			}
+			await presented.durable
+			if (controller.signal.aborted) return
+			await this.awaiting?.awaiting({
+				turnId: command.turnId,
+				interactionId: command.interactionId,
+				kind: command.kind,
+			})
 		} catch (error) {
 			if (isExecutionAbort(error, controller.signal)) return
 			await this.events.submit({

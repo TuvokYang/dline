@@ -1,4 +1,13 @@
-import { type Command, type HydrateForm, type HydrateInput, hydrate, requiredPayloadRefs, type TaskState } from "../kernel"
+import { settleRetainedQueueDeliveries } from "../executors/compose/RetainedQueueSettlement"
+import {
+	type Command,
+	type HydrateForm,
+	type HydrateInput,
+	hydrate,
+	type QueueSettlementEvidence,
+	requiredPayloadRefs,
+	type TaskState,
+} from "../kernel"
 import type { RuntimeDiagnosticSink, TaskRuntime } from "../runtime"
 import { commandEffectKey } from "../runtime/DurableCommandOutbox"
 import type { DurableTaskSnapshot, TaskPayloadStore, TaskViewPort } from "../stores"
@@ -9,7 +18,12 @@ import {
 	type TaskPersistencePorts,
 } from "./TaskExecutorAssembly"
 import { openTaskPersistence, type TaskPersistenceAssembly } from "./TaskPersistenceAssembly"
-import { type TaskInputPresentationPort, TaskShell } from "./TaskShell"
+import {
+	type TaskCheckpointRestoreSuspensionPort,
+	type TaskInputPresentationPort,
+	type TaskRetainedQueueSettlementPort,
+	TaskShell,
+} from "./TaskShell"
 
 /**
  * Rebuild causes that describe a normal open rather than a fault.
@@ -47,6 +61,7 @@ export interface OpenTaskShellResult {
 	readonly kind: "ready"
 	readonly form: HydrateForm
 	readonly shell: TaskShell
+	readonly checkpointRestore: TaskCheckpointRestoreSuspensionPort
 	readonly runtime: TaskRuntime
 	readonly assembly: TaskExecutorAssembly
 	readonly payloads: TaskPayloadStore
@@ -122,15 +137,96 @@ async function unavailablePayloads(payloads: TaskPayloadStore, state: TaskState 
 	return unavailable
 }
 
+function recordQueueSettlementFailures(
+	failures: readonly { readonly deliveryId: string; readonly message: string }[],
+	diagnostics: RuntimeDiagnosticSink | undefined,
+	revision: number,
+): void {
+	for (const failure of failures) {
+		diagnostics?.record({
+			source: "hydrate",
+			code: "retained_queue_settlement_failed",
+			message: `${failure.deliveryId}: ${failure.message}`,
+			severity: "failure",
+			revision,
+		})
+	}
+}
+
+async function inspectQueueSettlements(
+	state: Readonly<TaskState>,
+	persistence: TaskPersistenceAssembly,
+	diagnostics: RuntimeDiagnosticSink | undefined,
+): Promise<readonly QueueSettlementEvidence[]> {
+	const result = await settleRetainedQueueDeliveries(state, persistence.payloads, persistence.ports.journal)
+	recordQueueSettlementFailures(result.failures, diagnostics, state.revision)
+	return result.decisions
+}
+
+function createRuntimeQueueSettlement(
+	runtime: TaskRuntime,
+	persistence: TaskPersistenceAssembly,
+	diagnostics: RuntimeDiagnosticSink | undefined,
+	deferredRestore: boolean,
+): TaskRetainedQueueSettlementPort {
+	let restorePending = deferredRestore
+	return {
+		settle: async () => {
+			let state = runtime.getState()
+			if (restorePending) {
+				restorePending = false
+				try {
+					state = (await persistence.ports.vault.load(state.taskId))?.state ?? state
+				} catch (error) {
+					diagnostics?.record({
+						source: "hydrate",
+						code: "retained_queue_snapshot_unreadable",
+						message: error instanceof Error ? error.message : String(error),
+						severity: "failure",
+						revision: state.revision,
+					})
+					return
+				}
+			}
+			const decisions = await inspectQueueSettlements(state, persistence, diagnostics)
+			for (const decision of decisions) {
+				const submitted = await runtime.submit({
+					type: "input_queue.delivery_reconciled",
+					generation: runtime.getState().generation,
+					deliveryId: decision.deliveryId,
+					outcome: decision.outcome,
+					journalWatermark: decision.journalWatermark,
+				})
+				if (submitted.kind === "rejected") {
+					diagnostics?.record({
+						source: "hydrate",
+						code: "retained_queue_settlement_rejected",
+						message: `${decision.deliveryId}: ${submitted.diagnostic.message}`,
+						severity: "failure",
+						revision: runtime.getState().revision,
+					})
+					continue
+				}
+				await submitted.receipt.durable
+			}
+		},
+	}
+}
+
 export async function openTaskShell(options: OpenTaskShellOptions): Promise<OpenTaskShellResult> {
 	const persistence = options.persistence ?? (await openTaskPersistence(options.taskId))
 	const durable = await loadSnapshot(persistence, options.taskId, options.diagnostics)
+	const queueSettlements =
+		durable?.state && !options.deferRestoredCommands
+			? await inspectQueueSettlements(durable.state, persistence, options.diagnostics)
+			: []
 	const restored = hydrate({
 		taskId: options.taskId,
 		snapshot: durable?.state,
 		journalTail: persistence.ports.journal.watermark(),
 		openReason: options.openReason,
 		unavailablePayloads: await unavailablePayloads(persistence.payloads, durable?.state),
+		queueSettlements,
 	})
 
 	const ports: TaskPersistencePorts = { ...persistence.ports, taskView: options.taskView }
@@ -166,10 +262,18 @@ export async function openTaskShell(options: OpenTaskShellOptions): Promise<Open
 		restoredOutbox,
 		deferRestoredCommands: options.deferRestoredCommands,
 	})
+	const retainedQueueSettlement = createRuntimeQueueSettlement(
+		assembly.runtime,
+		persistence,
+		options.diagnostics,
+		options.deferRestoredCommands === true,
+	)
+	const shell = new TaskShell(assembly.runtime, assembly.halt, options.inputPresentation, retainedQueueSettlement)
 	return {
 		kind: "ready",
 		form: restored.form,
-		shell: new TaskShell(assembly.runtime, assembly.halt, options.inputPresentation),
+		shell,
+		checkpointRestore: shell,
 		runtime: assembly.runtime,
 		assembly,
 		payloads: persistence.payloads,

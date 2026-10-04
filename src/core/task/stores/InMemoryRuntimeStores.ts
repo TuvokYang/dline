@@ -1,5 +1,7 @@
 import type { Command, TaskState } from "../kernel"
 import type {
+	BackgroundDeliveryLedger,
+	BackgroundDeliveryRecord,
 	CommandPublicationStore,
 	ConversationJournal,
 	DurableTaskSnapshot,
@@ -12,6 +14,7 @@ import type {
 	TaskPayloadStore,
 	TaskViewPort,
 } from "./contracts"
+import { journalOperationFingerprint } from "./JournalOperationIdentity"
 import { compareJournalWatermarks, rebuildJournalProjection } from "./JournalProjection"
 import { assertTaskPayloadRef, taskPayloadRef } from "./payload/TaskPayloadRef"
 
@@ -52,6 +55,37 @@ export class InMemoryCommandPublicationStore implements CommandPublicationStore 
 	}
 }
 
+export class InMemoryBackgroundDeliveryLedger implements BackgroundDeliveryLedger {
+	private readonly records = new Map<string, BackgroundDeliveryRecord>()
+
+	async stage(delivery: Omit<BackgroundDeliveryRecord, "state">): Promise<BackgroundDeliveryRecord> {
+		const existing = this.records.get(delivery.entryId)
+		if (existing) {
+			if (
+				existing.producerKind !== delivery.producerKind ||
+				existing.producerId !== delivery.producerId ||
+				existing.attempt !== delivery.attempt ||
+				existing.text !== delivery.text
+			) {
+				throw new Error(`BackgroundDeliveryConflict:${delivery.entryId}`)
+			}
+			return existing
+		}
+		const record: BackgroundDeliveryRecord = { ...delivery, state: "pending" }
+		this.records.set(record.entryId, record)
+		return record
+	}
+
+	async listPending(): Promise<readonly BackgroundDeliveryRecord[]> {
+		return [...this.records.values()].filter((record) => record.state === "pending")
+	}
+
+	async acknowledge(entryId: string): Promise<void> {
+		const existing = this.records.get(entryId)
+		if (existing) this.records.set(entryId, { ...existing, state: "acknowledged" })
+	}
+}
+
 /** Content-addressed payloads kept in memory, with the same references as the durable store. */
 export class InMemoryTaskPayloadStore implements TaskPayloadStore {
 	private readonly payloads = new Map<string, Uint8Array>()
@@ -74,7 +108,7 @@ export class InMemoryConversationJournal implements ConversationJournal {
 	private current: JournalWatermark = { seq: 0 }
 	private readonly entries: JournalEntry[] = []
 	private readonly operations = new Map<string, { readonly fingerprint: string; readonly entry: JournalEntry }>()
-	private readonly transient = new Map<string, string>()
+	private readonly transient = new Set<string>()
 
 	watermark(): JournalWatermark {
 		return this.current
@@ -104,19 +138,25 @@ export class InMemoryConversationJournal implements ConversationJournal {
 		return rebuildJournalProjection(this.entries, through)
 	}
 
-	appendTransient(transientId: string, payloadRef: string): void {
-		this.transient.set(transientId, payloadRef)
+	appendTransient(transientId: string): void {
+		this.transient.add(transientId)
+	}
+
+	discardTransient(transientId: string): void {
+		this.transient.delete(transientId)
 	}
 
 	async finalizeTransient(input: JournalAppendInput & { readonly transientId: string }): Promise<JournalAppendResult> {
-		const resolved = input.payloadRef || this.transient.get(input.transientId)
-		if (!resolved) throw new Error(`Unknown transient journal entry: ${input.transientId}`)
-		const result = this.record("message", input.operationId, {
-			payloadRef: resolved,
+		const content = {
+			payloadRef: input.payloadRef,
 			source: input.source,
 			causation: input.causation,
 			transientId: input.transientId,
-		})
+		}
+		const existing = this.idempotent(input.operationId, "message", content)
+		if (existing) return existing
+		if (!this.transient.has(input.transientId)) throw new Error(`Unknown transient journal entry: ${input.transientId}`)
+		const result = this.record("message", input.operationId, content)
 		this.transient.delete(input.transientId)
 		return result
 	}
@@ -161,7 +201,7 @@ export class InMemoryConversationJournal implements ConversationJournal {
 		kind: JournalEntryKind,
 		entry: Omit<JournalEntry, "version" | "operationId" | "kind" | "watermark">,
 	): JournalAppendResult | undefined {
-		const fingerprint = JSON.stringify({ kind, entry })
+		const fingerprint = journalOperationFingerprint(kind, entry)
 		const existing = this.operations.get(operationId)
 		if (!existing) return undefined
 		if (existing.fingerprint !== fingerprint) throw new Error(`Journal operation conflict: ${operationId}`)
@@ -178,7 +218,7 @@ export class InMemoryConversationJournal implements ConversationJournal {
 		this.current = { seq: this.current.seq + 1 }
 		const recorded: JournalEntry = { ...entry, version: 1, operationId, kind, watermark: this.current }
 		this.entries.push(recorded)
-		this.operations.set(operationId, { fingerprint: JSON.stringify({ kind, entry }), entry: recorded })
+		this.operations.set(operationId, { fingerprint: journalOperationFingerprint(kind, entry), entry: recorded })
 		return { watermark: this.current, disposition: "appended" }
 	}
 }

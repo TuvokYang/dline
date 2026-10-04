@@ -41,20 +41,16 @@ describe("HaltCommandExecutor", () => {
 		expect(events.every((event) => event.type === "halt.halted")).toBe(true)
 	})
 
-	// Replaces an earlier expectation that rearm waits for a stuck drain without
-	// any bound. That wait was the deadlock: a participant that never drains made
-	// rearm outlive a halt the kernel had already completed, so `terminate` never
-	// returned and every later lifecycle operation queued behind the unfinished
-	// teardown. The stop's own deadline now governs both paths, and the
-	// participant that missed it keeps its fence instead of being freed.
-	it("bounds a stuck participant and completes the halt without clearing its fence", async () => {
+	it("reports a timed-out participant without clearing its pending fence", async () => {
 		const failures: ParticipantId[] = []
 		const events: TaskEvent[] = []
+		let releaseProvider!: () => void
+		const providerDrain = new Promise<void>((resolve) => (releaseProvider = resolve))
 		const provider: HaltParticipant = {
 			id: "provider",
 			fence: vi.fn(),
 			stop: vi.fn(),
-			drain: () => new Promise<void>(() => undefined),
+			drain: () => providerDrain,
 			rearm: vi.fn(),
 		}
 		const tool: HaltParticipant = {
@@ -73,16 +69,28 @@ describe("HaltCommandExecutor", () => {
 		expect(provider.fence).toHaveBeenCalledTimes(1)
 		expect(events).toEqual(
 			expect.arrayContaining([
-				expect.objectContaining({ type: "halt.failed", participantId: "provider" }),
+				expect.objectContaining({ type: "lifecycle.halt_timeout", participantId: "provider" }),
 				expect.objectContaining({ type: "halt.halted", participantId: "tool" }),
 			]),
 		)
+		expect(events.some((event) => event.type === "halt.failed" && event.participantId === "provider")).toBe(false)
 
-		await executor.rearm("halt-1")
-
-		expect(tool.rearm).toHaveBeenCalledWith("halt-1")
+		let rearmed = false
+		const rearming = executor.rearm("halt-1").then(() => {
+			rearmed = true
+		})
+		await new Promise((resolve) => setTimeout(resolve, 10))
+		expect(rearmed).toBe(false)
 		expect(provider.rearm).not.toHaveBeenCalled()
-		expect(failures).toEqual(["provider", "provider"])
+
+		releaseProvider()
+		await rearming
+		await vi.waitFor(() =>
+			expect(events.some((event) => event.type === "halt.halted" && event.participantId === "provider")).toBe(true),
+		)
+		expect(tool.rearm).toHaveBeenCalledWith("halt-1")
+		expect(provider.rearm).toHaveBeenCalledWith("halt-1")
+		expect(failures).toEqual(["provider"])
 	})
 
 	it("rearms a participant that drains after its receipt but within the deadline", async () => {

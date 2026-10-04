@@ -72,7 +72,7 @@ export class TaskRuntime implements RuntimeFacade {
 
 	async waitForDomainCompletion(revision: number): Promise<void> {
 		await this.commits.flushThrough(revision)
-		await this.outbox.whenPublishedThrough(revision)
+		await this.outbox.whenAdmitted(revision)
 		await this.router.waitForRevision(revision)
 	}
 

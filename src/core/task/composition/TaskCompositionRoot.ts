@@ -7,14 +7,14 @@ import {
 	ProductionCompactionAdapter,
 	type ProductionCompactionService,
 } from "../executors/compaction/ProductionCompactionAdapter"
-import type { ComposeBackgroundResultsPort } from "../executors/compose/ComposeBackgroundResultsPort"
 import {
 	type ComposeCompactionBarrierPort,
 	type ComposeContinuationPort,
 	type ComposeEnvironmentPort,
 	ProductionComposeAdapter,
 } from "../executors/compose/ProductionComposeAdapter"
-import type { DialogWaiterPort } from "../executors/dialog/DialogCommandExecutor"
+import type { RetainedInputPresentationPort } from "../executors/compose/RetainedInputPresentationPort"
+import type { DialogAwaitingPort, DialogWaiterPort } from "../executors/dialog/DialogCommandExecutor"
 import { ProductionDialogAdapter, type ProductionDialogAdapterOptions } from "../executors/dialog/ProductionDialogAdapter"
 import {
 	ProductionApprovalPolicyAdapter,
@@ -39,6 +39,7 @@ import { createSuccessorHandoffPublisher, type TaskSuccessorPort } from "../new-
 import type { RuntimeDiagnosticSink, TaskRuntime } from "../runtime"
 import { Task } from "../shell/Task"
 import type { TaskExecutorAssembly } from "../shell/TaskExecutorAssembly"
+import type { TaskCheckpointRestoreSuspensionPort } from "../shell/TaskShell"
 import { type OpenTaskShellOptions, openTaskShell } from "../shell/TaskShellFactory"
 import type { TaskPayloadStore, TaskViewPort } from "../stores"
 
@@ -57,8 +58,6 @@ export interface TaskCompositionServices {
 	readonly environment?: ComposeEnvironmentPort
 	/** Explains a round the kernel opened; absent in headless assemblies. */
 	readonly continuation?: ComposeContinuationPort
-	/** Delivers finished background work; absent when a task runs none. */
-	readonly backgroundResults?: ComposeBackgroundResultsPort
 }
 
 export interface TaskCompositionOptions {
@@ -69,6 +68,7 @@ export interface TaskCompositionOptions {
 	readonly diagnostics?: RuntimeDiagnosticSink
 	readonly persistence?: OpenTaskShellOptions["persistence"]
 	readonly inputPresentation?: OpenTaskShellOptions["inputPresentation"]
+	readonly retainedInputPresentation?: RetainedInputPresentationPort
 	readonly deferRestoredCommands?: OpenTaskShellOptions["deferRestoredCommands"]
 	/** Condenses the conversation before a round is drafted; see ComposeCompactionBarrierPort. */
 	readonly compactionBarrier?: ComposeCompactionBarrierPort
@@ -76,6 +76,8 @@ export interface TaskCompositionOptions {
 	readonly writeDialogAnchor?: ProductionDialogAdapterOptions["writeAnchor"]
 	/** Receivers to fail when a stop makes their answer impossible; see DialogWaiterPort. */
 	readonly dialogWaiters?: DialogWaiterPort
+	/** Learns when a revealed dialog is durably answerable. */
+	readonly dialogAwaiting?: DialogAwaitingPort
 	/** Shows the assistant's prose as a chat row; see ProviderTextPresentationPort. */
 	readonly providerPresentation?: ProviderTextPresentationPort
 	/** Records what each request consumed; see ProviderRequestReportPort. */
@@ -114,6 +116,7 @@ export interface TaskCompositionOptions {
 
 export interface TaskCompositionResult {
 	readonly task: Task
+	readonly checkpointRestore: TaskCheckpointRestoreSuspensionPort
 	readonly runtime: TaskRuntime
 	readonly assembly: TaskExecutorAssembly
 	readonly payloads: TaskPayloadStore
@@ -163,8 +166,8 @@ export async function composeTask(options: TaskCompositionOptions): Promise<Task
 					readState,
 					environment: options.services.environment,
 					continuation: options.services.continuation,
-					backgroundResults: options.services.backgroundResults,
 					compactionBarrier: options.compactionBarrier,
+					retainedInputPresentation: options.retainedInputPresentation,
 				}),
 				compaction: instrumentCompaction(
 					new ProductionCompactionAdapter({
@@ -189,6 +192,7 @@ export async function composeTask(options: TaskCompositionOptions): Promise<Task
 						writeAnchor: options.writeDialogAnchor,
 					}),
 					waiters: options.dialogWaiters,
+					awaiting: options.dialogAwaiting,
 				},
 				policy: new ProductionApprovalPolicyAdapter({ readSnapshot: options.services.readApprovalPolicy }),
 				tool: createProductionToolAdapter({
@@ -219,6 +223,7 @@ export async function composeTask(options: TaskCompositionOptions): Promise<Task
 			runtime: opened.runtime,
 			payloads: opened.payloads,
 		}),
+		checkpointRestore: opened.checkpointRestore,
 		runtime: opened.runtime,
 		assembly: opened.assembly,
 		payloads: opened.payloads,

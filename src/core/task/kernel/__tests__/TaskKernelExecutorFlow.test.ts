@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest"
+import { toolTerminalManifestPayload } from "../machines/turn"
 import { transition } from "../transition"
 import type { ComposeRoundCommand, KernelBlock, ProviderStartCommand, TaskState, TransitionResult } from "../types"
 import { createInitialTaskState } from "../types"
@@ -86,9 +87,56 @@ describe("task kernel executor flow", () => {
 				attempt: "attempt-b2",
 			}),
 		)
-		expect(result.commands).toEqual([
-			expect.objectContaining({ type: "compose.round", turnId: "turn-1", admittedEntryIds: [] }),
-		])
+		const retire = result.commands.find((command) => command.type === "tool.retire")
+		const compose = result.commands.find((command) => command.type === "compose.round")
+		expect(retire).toMatchObject({ type: "tool.retire", turnId: "turn-1" })
+		expect(compose).toMatchObject({ type: "compose.round", admittedEntryIds: [] })
+		if (!compose || compose.type !== "compose.round") throw new Error("expected next compose command")
+		expect(compose.toolTerminals).toEqual({
+			turnId: "turn-1",
+			blocks: [
+				{ blockId: "b1", phase: "completed", invocationRef: "invocation:b1" },
+				{ blockId: "b2", phase: "completed", invocationRef: "invocation:b2" },
+			],
+		})
+		expect(compose.turnId).toBe(`turn:${compose.commandId}`)
+		expect(compose.turnId).not.toBe("turn-1")
+	})
+
+	it("freezes every terminal phase in stable block order without reordering kernel state", () => {
+		const turn: TaskState["turn"] = {
+			turnId: "turn-1",
+			mode: "parallel",
+			blocks: [
+				block("b3", 3, "cancelled"),
+				{ ...block("b1", 1, "rejected"), approvalFeedbackRef: "feedback:b1" },
+				block("b4", 4, "skipped"),
+				block("b0", 0, "completed"),
+				block("b2", 2, "failed"),
+			],
+			manualApprovalBlockIds: [],
+			automaticApprovalBlockIds: [],
+			executingBlockIds: [],
+		}
+
+		expect(toolTerminalManifestPayload(turn)).toEqual({
+			toolTerminals: {
+				turnId: "turn-1",
+				blocks: [
+					{ blockId: "b0", phase: "completed", invocationRef: "invocation:b0" },
+					{
+						blockId: "b1",
+						phase: "rejected",
+						invocationRef: "invocation:b1",
+						approvalFeedbackRef: "feedback:b1",
+					},
+					{ blockId: "b2", phase: "failed", invocationRef: "invocation:b2" },
+					{ blockId: "b3", phase: "cancelled", invocationRef: "invocation:b3" },
+					{ blockId: "b4", phase: "skipped", invocationRef: "invocation:b4" },
+				],
+			},
+		})
+		expect(turn.blocks.map((candidate) => candidate.blockId)).toEqual(["b3", "b1", "b4", "b0", "b2"])
 	})
 
 	it("turns compose failure into an error-recovery presentation command", () => {

@@ -1,4 +1,4 @@
-import type { InputQueueMutation } from "@core/task/input-queue/InputQueueMutation"
+import type { CanonicalInputQueueMutation } from "@core/task/session/InputQueueApplicationPort"
 import type { SemanticInputDocument } from "@shared/input-semantics/document"
 import type { InputQueueDraft as WireInputQueueDraft } from "@shared/proto/dline/task"
 import { MutateInputQueueRequest, MutateInputQueueResponse } from "@shared/proto/dline/task"
@@ -18,9 +18,8 @@ interface DecodedDraft {
 /**
  * Decode the submitted structure at the transport boundary.
  *
- * An undecodable document is dropped and diagnosed rather than stored: the queue
- * would otherwise retain a structure no later stage can validate, and the user's
- * text is still deliverable on its own.
+ * An undecodable document is refused rather than reinterpreted as text: otherwise
+ * inert pasted command nodes could be admitted as live command authority.
  */
 function toDraft(wire: WireInputQueueDraft | undefined): DecodedDraft | undefined {
 	if (!wire) return undefined
@@ -29,8 +28,8 @@ function toDraft(wire: WireInputQueueDraft | undefined): DecodedDraft | undefine
 
 	const decoded = fromProtoSemanticInputDocument(wireDocument)
 	if (!decoded.ok) {
-		Logger.warn(`[inputQueue] Dropping undecodable semantic input: ${decoded.diagnostic.code}`)
-		return draft
+		Logger.warn(`[inputQueue] Refusing undecodable semantic input: ${decoded.diagnostic.code}`)
+		throw new Error("InvalidQueueSemanticInput")
 	}
 	return { ...draft, semanticInput: decoded.document }
 }
@@ -41,19 +40,24 @@ function toDraft(wire: WireInputQueueDraft | undefined): DecodedDraft | undefine
  * Only one field is ever set by the transport; anything else is reported as a
  * missing operation by the queue itself rather than being guessed at here.
  */
-function toMutation(request: MutateInputQueueRequest): InputQueueMutation {
-	return {
-		enqueue: request.enqueue && { draft: toDraft(request.enqueue.draft) },
-		toggleMode: request.toggleMode,
-		reorder: request.reorder,
-		beginEdit: request.beginEdit,
-		commitEdit: request.commitEdit && {
+function toMutation(request: MutateInputQueueRequest): CanonicalInputQueueMutation | undefined {
+	if (request.enqueue) return { kind: "enqueue", draft: toDraft(request.enqueue.draft) ?? emptyDraft() }
+	if (request.toggleMode) return { kind: "toggle_mode", entryId: request.toggleMode.entryId }
+	if (request.reorder) return { kind: "reorder", entryId: request.reorder.entryId, targetIndex: request.reorder.targetIndex }
+	if (request.beginEdit) return { kind: "begin_edit", entryId: request.beginEdit.entryId }
+	if (request.commitEdit)
+		return {
+			kind: "commit_edit",
 			entryId: request.commitEdit.entryId,
-			draft: toDraft(request.commitEdit.draft),
-		},
-		cancelEdit: request.cancelEdit,
-		remove: request.remove,
-	}
+			draft: toDraft(request.commitEdit.draft) ?? emptyDraft(),
+		}
+	if (request.cancelEdit) return { kind: "cancel_edit", entryId: request.cancelEdit.entryId }
+	if (request.remove) return { kind: "remove", entryId: request.remove.entryId }
+	return undefined
+}
+
+function emptyDraft(): DecodedDraft {
+	return { text: "", images: [], files: [] }
 }
 
 /**
@@ -68,9 +72,16 @@ export async function mutateInputQueue(
 	request: MutateInputQueueRequest,
 ): Promise<MutateInputQueueResponse> {
 	const task = controller.task
-	if (!task || (request.taskId && task.taskId !== request.taskId) || !task.owners.inputQueue) {
+	if (!task || (request.taskId && task.taskId !== request.taskId)) {
 		return MutateInputQueueResponse.create({ accepted: false, result: "missing_task" })
 	}
-	const outcome = await task.owners.inputQueue.mutate(toMutation(request))
+	let mutation: CanonicalInputQueueMutation | undefined
+	try {
+		mutation = toMutation(request)
+	} catch {
+		return MutateInputQueueResponse.create({ accepted: false, result: "invalid_payload" })
+	}
+	if (!mutation) return MutateInputQueueResponse.create({ accepted: false, result: "missing_operation" })
+	const outcome = await task.inputQueue.mutate(mutation)
 	return MutateInputQueueResponse.create(outcome)
 }

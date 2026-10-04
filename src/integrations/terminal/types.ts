@@ -4,7 +4,7 @@
  * the StandaloneTerminalManager used in CLI/JetBrains environments.
  */
 
-import type { CommandExecutionMode, CommandStatus, SubagentInjectionState } from "@shared/ExtensionMessage"
+import type { CommandExecutionMode, CommandStatus } from "@shared/ExtensionMessage"
 import type { ClineToolResponseContent } from "@shared/messages"
 import type { EventEmitter } from "events"
 import type { WindowsProcessTreeProvider } from "./process-tree"
@@ -334,6 +334,10 @@ export interface BackgroundCommandScope {
 	taskId?: string
 }
 
+export interface BackgroundCommandSettlementListener {
+	settled(command: Readonly<BackgroundCommand>): Promise<void>
+}
+
 export interface BackgroundCommand {
 	/** Unique identifier for the background command */
 	id: string
@@ -368,8 +372,6 @@ export interface BackgroundCommand {
 	lastApiSentLineCount?: number
 	/** Exit code if the command completed or errored */
 	exitCode?: number
-	/** Context injection lifecycle state for background command visibility */
-	injectionState?: SubagentInjectionState
 	/**
 	 * The terminal process running the command.
 	 *

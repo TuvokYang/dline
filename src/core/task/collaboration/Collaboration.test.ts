@@ -1,20 +1,11 @@
-import { createHash } from "node:crypto"
 import { describe, expect, it } from "vitest"
-import { CoTaskDeliveryGateway, InMemoryTargetPayloadStore } from "./CoTaskDeliveryGateway"
-import {
-	type CoTaskIngressEntry,
-	createTaskDirectoryRegistry,
-	type RegistrationGeneration,
-	type TaskIncarnationId,
-} from "./TaskDirectory"
+import { InMemoryCoTaskApprovalLedger } from "./CoTaskApprovalLedger"
+import type { AttestedDeliveryIntent } from "./CoTaskDeliveryGateway"
+import { createTaskDirectoryRegistry, type TaskIncarnationId } from "./TaskDirectory"
 
 const incarnation = (value: string) => value as TaskIncarnationId
 
-function sha256(payload: Uint8Array): string {
-	return createHash("sha256").update(payload).digest("hex")
-}
-
-describe("task collaboration", () => {
+describe("task collaboration contracts", () => {
 	it("keeps directory projection read-only and fences stale status updates", () => {
 		const registry = createTaskDirectoryRegistry()
 		const ingress = { snapshot: () => ({ closing: false, pending: 0, limit: 4 }), accept: async () => undefined }
@@ -46,74 +37,26 @@ describe("task collaboration", () => {
 		).toBe(false)
 	})
 
-	it("copies payload ownership, deduplicates retries and rejects capacity without target mutation", async () => {
-		const registry = createTaskDirectoryRegistry()
-		const entries: CoTaskIngressEntry[] = []
-		let pending = 0
-		const registration = registry.registrar.register({
-			taskId: "target",
-			taskIncarnationId: incarnation("target-inc"),
-			createdAt: "2026-09-19T00:00:00Z",
-			kind: "main",
-			initialStatus: {
-				taskIncarnationId: incarnation("target-inc"),
-				statusRevision: 1,
-				summary: "target",
-				phase: "running",
-				activeWriteIntents: [],
-			},
-			ingress: {
-				snapshot: () => ({ closing: false, pending, limit: 1 }),
-				accept: async (entry) => {
-					entries.push(entry)
-					pending++
-				},
-			},
-		})
-		const sourcePayloads = new Map<string, Uint8Array>([["sender:payload", new TextEncoder().encode("hello")]])
-		const targetPayloads = new InMemoryTargetPayloadStore()
-		const gateway = new CoTaskDeliveryGateway(
-			registry.ingressResolver,
-			{ verify: async () => ({ kind: "verified", principalId: "principal-1" }) },
-			{
-				read: async (payloadRef) => {
-					const payload = sourcePayloads.get(payloadRef)
-					if (!payload) throw new Error("source missing")
-					return payload
-				},
-			},
-			targetPayloads,
-		)
-		const intent = {
+	it("binds an approval to the complete principal, source, target and payload scope", async () => {
+		const ledger = new InMemoryCoTaskApprovalLedger()
+		const scope: Omit<AttestedDeliveryIntent, "approvalRef"> = {
 			deliveryId: "delivery-1",
-			fromTaskId: "sender",
-			fromTaskIncarnationId: incarnation("sender-inc"),
+			fromTaskId: "source",
+			fromTaskIncarnationId: incarnation("source-inc"),
 			toTaskId: "target",
 			toTaskIncarnationId: incarnation("target-inc"),
-			targetRegistrationGeneration: registration.descriptor.registrationGeneration as RegistrationGeneration,
-			senderPrincipalId: "principal-1",
-			approvalRef: "approval-1",
-			payloadRef: "sender:payload",
-			payloadHash: sha256(sourcePayloads.get("sender:payload")!),
-			dedupeKey: "same-message",
+			targetRegistrationGeneration: 1 as never,
+			senderPrincipalId: "task:source:source-inc",
+			payloadRef: "sha256:payload",
+			payloadHash: "payload-hash",
+			dedupeKey: "message-1",
 		}
-		const admitted = await gateway.deliver(intent)
-		expect(admitted.kind).toBe("admitted")
-		sourcePayloads.delete("sender:payload")
-		if (admitted.kind === "admitted")
-			expect(new TextDecoder().decode(await targetPayloads.read(admitted.payloadRef))).toBe("hello")
-		expect(await gateway.deliver(intent)).toMatchObject({ kind: "duplicate", entryId: "cotask:delivery-1" })
+		const grant = ledger.issue(scope)
+		const intent = { ...scope, approvalRef: grant.approvalRef }
 
-		sourcePayloads.set("sender:payload-2", new TextEncoder().encode("second"))
-		const before = [...entries]
-		const capacity = await gateway.deliver({
-			...intent,
-			deliveryId: "delivery-2",
-			dedupeKey: "second-message",
-			payloadRef: "sender:payload-2",
-			payloadHash: sha256(sourcePayloads.get("sender:payload-2")!),
-		})
-		expect(capacity).toEqual({ kind: "target_capacity_exceeded", pending: 1, limit: 1 })
-		expect(entries).toEqual(before)
+		expect(await ledger.verify(intent)).toEqual({ kind: "verified", principalId: scope.senderPrincipalId })
+		expect(await ledger.verify({ ...intent, payloadHash: "tampered" })).toEqual({ kind: "invalid" })
+		ledger.consume(intent)
+		expect(await ledger.verify(intent)).toEqual({ kind: "verified", principalId: scope.senderPrincipalId })
 	})
 })

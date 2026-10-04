@@ -1,27 +1,21 @@
-import { readdirSync, readFileSync, statSync } from "node:fs"
 import path from "node:path"
 import { describe, expect, it } from "vitest"
+import { edgeKey, scanImportGraph } from "../__tests__/architecture/import-graph"
 
-const TASK_ROOT = path.resolve(__dirname, "..")
-
-function productionFiles(directory: string): string[] {
-	return readdirSync(directory).flatMap((entry) => {
-		const absolute = path.join(directory, entry)
-		if (statSync(absolute).isDirectory()) return productionFiles(absolute)
-		return /\.ts$/.test(entry) && !entry.endsWith(".test.ts") ? [absolute] : []
-	})
-}
+const REPO = path.resolve(__dirname, "../../../..")
+const TASK_ROOT = path.join(REPO, "src/core/task")
+const TASK_INDEX = "src/core/task/index.ts"
 
 describe("ToolResponse import boundary", () => {
 	it("keeps ToolResponse consumers on the leaf type instead of the task barrel", () => {
-		const violations = productionFiles(TASK_ROOT)
-			.filter((file) => readFileSync(file, "utf8").includes("ToolResponse"))
-			.filter((file) => file !== path.join(TASK_ROOT, "index.ts"))
-			.filter((file) => {
-				const source = readFileSync(file, "utf8")
-				return /ToolResponse[^\n]*from ["'](?:@core\/task|(?:\.\.\/)+(?:index)?)["']/.test(source)
-			})
-			.map((file) => path.relative(TASK_ROOT, file).replaceAll("\\", "/"))
+		const violations = scanImportGraph({
+			repoRoot: REPO,
+			tsconfigPath: path.join(REPO, "tsconfig.json"),
+			roots: [TASK_ROOT],
+		})
+			.filter((edge) => edge.target.kind === "workspace" && edge.target.path === TASK_INDEX)
+			.filter((edge) => edge.bindings.some((binding) => binding.imported === "ToolResponse"))
+			.map(edgeKey)
 		expect(violations).toEqual([])
 	})
 })

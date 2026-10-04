@@ -1,4 +1,4 @@
-import type { BlockId, InteractionId, TaskId, TurnId } from "../kernel"
+import type { BlockId, InteractionId, QueuePayloadIdentity, TaskId, TurnId } from "../kernel"
 
 interface DialogResponseFields {
 	readonly taskId: TaskId
@@ -8,6 +8,12 @@ interface DialogResponseFields {
 	readonly receiverGeneration: number
 	readonly draftRef?: string
 	readonly selectionRef?: string
+	/** Retained queue delivery consumed atomically with a dialog response. */
+	readonly queueDeliveryId?: string
+	readonly queueDeliveryEntries?: readonly QueuePayloadIdentity[]
+	readonly queueDeliveryMode?: "queued" | "steering"
+	/** Internal responses retain their original receiver generation across awaits. */
+	readonly generation?: number
 }
 
 export type TaskUiAction =

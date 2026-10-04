@@ -195,7 +195,7 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
 		if (outcome.actionId === "start_new_task") {
 			return prefix
 		}
-		await sayFeedbackOnce(config, "messageResponse", text, images, completionFiles)
+		await sayFeedbackOnce(config, "messageResponse", text, images, completionFiles, outcome)
 
 		// Run UserPromptSubmit hook when user provides post-completion feedback
 		let hookContextModification: string | undefined

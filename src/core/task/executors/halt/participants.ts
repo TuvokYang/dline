@@ -1,5 +1,4 @@
-import type { ParticipantId } from "../../kernel"
-import { ALL_HALT_PARTICIPANTS } from "../../kernel/machines/halt"
+import { ALL_HALT_PARTICIPANTS, type ParticipantId } from "../../kernel"
 import type { HaltOrder, HaltParticipant } from "../contracts"
 
 export interface CallbackHaltParticipantOptions {

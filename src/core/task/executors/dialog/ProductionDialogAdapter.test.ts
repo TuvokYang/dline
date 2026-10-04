@@ -73,6 +73,9 @@ describe("ProductionDialogAdapter", () => {
 			disposition: "created",
 		})
 		await expect(adapter.prepare(prepare())).resolves.toMatchObject({ disposition: "existing" })
+		await expect(
+			adapter.prepare({ ...prepare(), commandId: "dialog-replayed", originRevision: 9, generation: 2 }),
+		).resolves.toMatchObject({ disposition: "existing", journalRef: "journal:1" })
 		await expect(adapter.reveal(reveal())).resolves.toEqual({ disposition: "revealed" })
 		await expect(adapter.reveal(reveal())).resolves.toEqual({ disposition: "already_revealed" })
 		expect(taskView.transient).toEqual([

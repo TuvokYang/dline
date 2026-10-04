@@ -6,6 +6,7 @@ import { TaskShell } from "./TaskShell"
 class RecordingRuntime implements RuntimeFacade {
 	readonly events: TaskEvent[] = []
 	readonly durable: number[] = []
+	readonly order: string[] = []
 	released = 0
 	private state: TaskState = createInitialTaskState("task-1")
 
@@ -19,6 +20,7 @@ class RecordingRuntime implements RuntimeFacade {
 
 	async submit(event: TaskEvent): Promise<EventSubmissionResult> {
 		this.events.push(event)
+		this.order.push(`submit:${event.type}`)
 		this.state = { ...this.state, revision: this.state.revision + 1 }
 		return {
 			kind: "accepted",
@@ -34,13 +36,16 @@ class RecordingRuntime implements RuntimeFacade {
 		return Promise.resolve()
 	}
 	waitForDomainCompletion(): Promise<void> {
+		this.order.push("domain-complete")
 		return Promise.resolve()
 	}
 	waitForQuiescence(): Promise<void> {
+		this.order.push("quiescent")
 		return Promise.resolve()
 	}
 	releaseRestoredCommands(): void {
 		this.released += 1
+		this.order.push("release-restored")
 	}
 }
 
@@ -85,6 +90,70 @@ describe("TaskShell", () => {
 		])
 	})
 
+	it("fails checkpoint restore closed when a halt participant is still timed out", async () => {
+		const runtime = new RecordingRuntime({
+			halt: {
+				status: "stopping",
+				generation: 1,
+				haltId: "restore-1",
+				target: "paused",
+				pending: ["provider"],
+				halted: [],
+				failed: [],
+				timedOut: ["provider"],
+			},
+		})
+		const shell = new TaskShell(runtime, { rearm: async () => undefined })
+
+		await expect(shell.stopAndFence("restore-1")).rejects.toThrow("CheckpointRestoreHaltTimedOut:restore-1")
+		expect(runtime.order).toEqual(["submit:user.cancel", "domain-complete"])
+	})
+
+	it("keeps restore fences installed without offering a cancelled-resume dialog", async () => {
+		const runtime = new RecordingRuntime({ flow: { phase: "paused" } })
+		const rearm = vi.fn(async () => undefined)
+		const shell = new TaskShell(runtime, { rearm }, undefined, {
+			settle: async () => {
+				runtime.order.push("settle-queue")
+			},
+		})
+
+		await shell.stopAndFence("restore-1")
+
+		expect(runtime.events.map((event) => event.type)).toEqual(["user.cancel"])
+		expect(runtime.order).toEqual(["submit:user.cancel", "domain-complete", "quiescent", "settle-queue"])
+		expect(rearm).not.toHaveBeenCalled()
+	})
+
+	it("settles retained queue facts after halt writers drain and before rearm", async () => {
+		const runtime = new RecordingRuntime({ flow: { phase: "paused" } })
+		const shell = new TaskShell(
+			runtime,
+			{
+				rearm: async () => {
+					runtime.order.push("rearm")
+				},
+			},
+			undefined,
+			{
+				settle: async () => {
+					runtime.order.push("settle-queue")
+				},
+			},
+		)
+
+		await shell.cancel("halt-1")
+
+		expect(runtime.order).toEqual([
+			"submit:user.cancel",
+			"domain-complete",
+			"quiescent",
+			"settle-queue",
+			"rearm",
+			"submit:dialog.requested",
+		])
+	})
+
 	it("leaves a terminated task alone, because there is nothing to resume", async () => {
 		const runtime = new RecordingRuntime({ flow: { phase: "running" } })
 		const shell = new TaskShell(runtime, { rearm: async () => undefined })
@@ -117,14 +186,19 @@ describe("TaskShell", () => {
 		expect(runtime.events.map((event) => event.type)).toEqual(["user.cancel"])
 	})
 
-	it("releases held recovered commands when the window opens the task", async () => {
+	it("settles recovered queue facts before releasing held commands", async () => {
 		const runtime = new RecordingRuntime()
-		const shell = new TaskShell(runtime, { rearm: async () => undefined })
+		const shell = new TaskShell(runtime, { rearm: async () => undefined }, undefined, {
+			settle: async () => {
+				runtime.order.push("settle-queue")
+			},
+		})
 
 		expect(runtime.released).toBe(0)
 		await shell.open()
 
 		expect(runtime.released).toBe(1)
 		expect(runtime.events.map((event) => event.type)).toEqual(["lifecycle.open"])
+		expect(runtime.order).toEqual(["settle-queue", "release-restored", "submit:lifecycle.open"])
 	})
 })

@@ -6,7 +6,6 @@ import type {
 	ProviderDraftEnvelope,
 	ProviderFinalEnvelope,
 	ProviderInterruptedEnvelope,
-	ProviderPartialEnvelope,
 } from "../../stores/payload/TaskPayloadEnvelopes"
 import type { ProviderExecutionChunk, ProviderExecutionInput, ProviderExecutionPort } from "./ProviderCommandExecutor"
 import type { ProviderRetryNotice } from "./service/ProviderRequestReport"
@@ -62,6 +61,12 @@ export interface ProductionProviderAdapterOptions {
 export class ProductionProviderAdapter implements ProviderExecutionPort {
 	constructor(private readonly options: ProductionProviderAdapterOptions) {}
 
+	async recoverFinal(payloadRef: string) {
+		const payload = decodeTaskPayload<ProviderFinalEnvelope>(await this.options.payloads.read(payloadRef))
+		if (payload.kind !== "provider_final") throw new Error("InvalidProviderFinalPayload")
+		return { turnPlan: payload.turnPlan }
+	}
+
 	async *start(input: ProviderExecutionInput): AsyncIterable<ProviderExecutionChunk> {
 		const draft = decodeTaskPayload<ProviderDraftEnvelope>(await this.options.payloads.read(input.draftRef))
 		if (draft.kind !== "provider_draft") throw new Error("InvalidProviderDraftPayload")
@@ -86,13 +91,11 @@ export class ProductionProviderAdapter implements ProviderExecutionPort {
 				continue
 			}
 			if (chunk.kind === "partial") {
-				const payload: ProviderPartialEnvelope = { kind: "provider_partial", text: chunk.text }
 				yield {
 					kind: "partial",
 					transientId: chunk.transientId,
-					payloadRef: await this.options.payloads.put(encodeTaskPayload(payload)),
-					// Carried beside the ref so presentation does not have to read the
-					// payload store back on every streamed chunk.
+					// Partial content stays in the transient plane; only final or
+					// interrupted replies receive durable payload references.
 					text: chunk.text,
 					...(chunk.reasoning === undefined ? {} : { reasoning: chunk.reasoning }),
 					...(chunk.projection === undefined ? {} : { projection: chunk.projection }),

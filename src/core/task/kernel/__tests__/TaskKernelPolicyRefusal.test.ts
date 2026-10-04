@@ -78,6 +78,34 @@ describe("task kernel policy refusal", () => {
 		expect(refused.state.flow.phase).toBe("waiting")
 	})
 
+	it("cascades a serial policy refusal to every later unstarted block", () => {
+		const state = pendingPolicyTurn()
+		const refused = evaluate(
+			requestPolicy({
+				...state,
+				turn: {
+					...state.turn,
+					blocks: [
+						...state.turn.blocks,
+						{
+							blockId: "b2",
+							index: 1,
+							phase: "pending",
+							attempt: "attempt:b2",
+							invocationRef: "invocation:b2",
+							lanes: [],
+							turnEnding: false,
+						},
+					],
+				},
+			}),
+			false,
+		)
+
+		expect(refused.state.turn.blocks.map((block) => block.phase)).toEqual(["rejected", "skipped"])
+		expect(refused.state.flow.phase).toBe("waiting")
+	})
+
 	it("keeps the flow running when the policy approves, because the block still has to execute", () => {
 		const approved = evaluate(requestPolicy(pendingPolicyTurn()), true)
 

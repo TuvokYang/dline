@@ -42,8 +42,9 @@ export class EventLoop {
 						queued.result.resolve(reduced)
 						continue
 					}
+					const persistable = this.outbox.persistableAfter(reduced.commands)
+					const receipt = this.commits.commit(reduced.state, persistable)
 					this.state = reduced.state
-					const receipt = this.commits.commit(reduced.state, this.outbox.persistableAfter(reduced.commands))
 					this.outbox.enqueue(reduced.commands, receipt)
 					queued.result.resolve({ kind: "accepted", state: reduced.state, commands: reduced.commands, receipt })
 				} catch (error) {

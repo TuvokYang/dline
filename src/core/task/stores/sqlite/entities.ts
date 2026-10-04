@@ -1,6 +1,14 @@
 import { column, defineEntity } from "@core/storage/backend/api/EntitySchema"
 import type { Command } from "../../kernel"
-import type { JournalCausation, JournalEntry, JournalEntryKind, JournalSource } from "../contracts"
+import type {
+	BackgroundDeliveryProducerKind,
+	BackgroundDeliveryRecord,
+	BackgroundDeliveryState,
+	JournalCausation,
+	JournalEntry,
+	JournalEntryKind,
+	JournalSource,
+} from "../contracts"
 
 const JOURNAL_ENTRY_KINDS = [
 	"message",
@@ -12,6 +20,12 @@ const JOURNAL_ENTRY_KINDS = [
 ] as const satisfies readonly JournalEntryKind[]
 
 const JOURNAL_SOURCES = ["provider", "tool", "dialog", "intake", "system"] as const satisfies readonly JournalSource[]
+const BACKGROUND_DELIVERY_PRODUCERS = [
+	"command",
+	"subagent",
+	"subagent_batch",
+] as const satisfies readonly BackgroundDeliveryProducerKind[]
+const BACKGROUND_DELIVERY_STATES = ["pending", "acknowledged"] as const satisfies readonly BackgroundDeliveryState[]
 
 const CAUSATION_TEXT_FIELDS = ["commandId", "turnId", "interactionId"] as const
 const CAUSATION_NUMBER_FIELDS = ["originRevision", "generation"] as const
@@ -142,6 +156,55 @@ export class CommandPublicationRow {
 
 	static of(command: Command, effectKey: string): CommandPublicationRow {
 		return new CommandPublicationRow(effectKey, command.commandId, command.originRevision, command.generation, command.type)
+	}
+}
+
+/** Producer result retained until canonical background intake durably accepts it. */
+export class BackgroundDeliveryRow {
+	static readonly storage = defineEntity<BackgroundDeliveryRow>()({
+		schemaId: "task-background-delivery",
+		version: 1,
+		columns: {
+			entryId: column.text({ primary: true }),
+			producerKind: column.enumText(BACKGROUND_DELIVERY_PRODUCERS),
+			producerId: column.text(),
+			attempt: column.integer(),
+			text: column.text(),
+			state: column.enumText(BACKGROUND_DELIVERY_STATES),
+		},
+		hydrate: (values) =>
+			new BackgroundDeliveryRow(
+				values.entryId,
+				values.producerKind,
+				values.producerId,
+				values.attempt,
+				values.text,
+				values.state,
+			),
+	})
+
+	constructor(
+		readonly entryId: string,
+		readonly producerKind: BackgroundDeliveryProducerKind,
+		readonly producerId: string,
+		readonly attempt: number,
+		readonly text: string,
+		readonly state: BackgroundDeliveryState,
+	) {}
+
+	static fromRecord(record: BackgroundDeliveryRecord): BackgroundDeliveryRow {
+		return new BackgroundDeliveryRow(
+			record.entryId,
+			record.producerKind,
+			record.producerId,
+			record.attempt,
+			record.text,
+			record.state,
+		)
+	}
+
+	toRecord(): BackgroundDeliveryRecord {
+		return { ...this }
 	}
 }
 

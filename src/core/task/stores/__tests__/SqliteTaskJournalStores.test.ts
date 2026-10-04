@@ -106,6 +106,14 @@ describe("SQLite task journal stores", () => {
 				causation: { turnId: "turn-1", commandId: "command-1" },
 			}),
 		).resolves.toEqual({ watermark: { seq: 1 }, disposition: "existing" })
+		await expect(
+			journal.append({
+				operationId: "intake:1",
+				payloadRef: "payload-1",
+				source: "intake",
+				causation: { turnId: "turn-replayed", commandId: "command-replayed", generation: 3 },
+			}),
+		).resolves.toEqual({ watermark: { seq: 1 }, disposition: "existing" })
 		await expect(journal.append({ operationId: "intake:1", payloadRef: "other", source: "intake" })).rejects.toThrow(
 			"Journal operation conflict: intake:1",
 		)
@@ -113,19 +121,34 @@ describe("SQLite task journal stores", () => {
 		expect(await journal.read()).toHaveLength(1)
 	})
 
-	it("finalizes a transient entry with the payload it buffered", async () => {
+	it("finalizes a transient identity with the durable payload supplied at settlement", async () => {
 		const first = await openStores("task-transient")
 		const { journal } = first.stores
-		journal.appendTransient("draft-1", "draft-payload")
+		journal.appendTransient("draft-1")
 		await expect(
-			journal.finalizeTransient({ operationId: "provider:1", payloadRef: "", source: "provider", transientId: "draft-1" }),
+			journal.finalizeTransient({
+				operationId: "provider:1",
+				payloadRef: "draft-payload",
+				source: "provider",
+				transientId: "draft-1",
+			}),
 		).resolves.toEqual({ watermark: { seq: 1 }, disposition: "appended" })
 		await expect(
 			journal.finalizeTransient({ operationId: "provider:2", payloadRef: "", source: "provider", transientId: "missing" }),
 		).rejects.toThrow("Unknown transient journal entry: missing")
 		await first.storage.close()
 
-		const [entry] = await (await openStores("task-transient")).stores.journal.read()
+		const reopened = (await openStores("task-transient")).stores.journal
+		await expect(
+			reopened.finalizeTransient({
+				operationId: "provider:1",
+				payloadRef: "draft-payload",
+				source: "provider",
+				transientId: "draft-replayed",
+				causation: { commandId: "replayed", generation: 2 },
+			}),
+		).resolves.toEqual({ watermark: { seq: 1 }, disposition: "existing" })
+		const [entry] = await reopened.read()
 		expect(entry).toMatchObject({ operationId: "provider:1", payloadRef: "draft-payload", transientId: "draft-1" })
 	})
 
@@ -143,6 +166,31 @@ describe("SQLite task journal stores", () => {
 		expect(await publications.has(prepareCommand.prepareKey)).toBe(true)
 		expect(await publications.has("dialog.prepare:other")).toBe(false)
 		expect(decoder.decode(await payloads.read(payloadRef))).toBe("hello")
+	})
+
+	it("reopens pending background deliveries and keeps acknowledged records out of replay", async () => {
+		const first = await openStores("task-background-delivery")
+		const staged = {
+			entryId: "background:subagent:job-1:attempt:2",
+			producerKind: "subagent" as const,
+			producerId: "job-1",
+			attempt: 2,
+			text: "# Background Results\n## Background Subagent Results\n- job-1: completed",
+		}
+		await expect(first.stores.backgroundDeliveries.stage(staged)).resolves.toEqual({ ...staged, state: "pending" })
+		await first.storage.close()
+
+		const second = await openStores("task-background-delivery")
+		await expect(second.stores.backgroundDeliveries.listPending()).resolves.toEqual([{ ...staged, state: "pending" }])
+		await expect(second.stores.backgroundDeliveries.stage(staged)).resolves.toEqual({ ...staged, state: "pending" })
+		await expect(second.stores.backgroundDeliveries.stage({ ...staged, text: "different" })).rejects.toThrow(
+			"BackgroundDeliveryConflict",
+		)
+		await second.stores.backgroundDeliveries.acknowledge(staged.entryId)
+		await second.storage.close()
+
+		const third = await openStores("task-background-delivery")
+		await expect(third.stores.backgroundDeliveries.listPending()).resolves.toEqual([])
 	})
 
 	it("distinguishes a malformed payload reference from a missing payload", async () => {

@@ -1,4 +1,4 @@
-import type { ClineContent, ClineStorageMessage } from "@shared/messages/content"
+import type { ClineContent, ClineStorageMessage, ClineUserContent } from "@shared/messages/content"
 import { replayDurableToolResult } from "../../../DurableToolResult"
 import type { ExplicitInstructionDeclaration } from "../../../explicit-instructions/types"
 import type { TaskPayloadStore } from "../../../stores"
@@ -7,6 +7,7 @@ import type {
 	BackgroundResultsEnvelope,
 	CompactionContinuation,
 	CompactionSummaryEnvelope,
+	CoTaskMessageEnvelope,
 	DialogDraftEnvelope,
 	DialogSelectionEnvelope,
 	EnvironmentDetailsEnvelope,
@@ -15,6 +16,7 @@ import type {
 	ProviderInterruptedEnvelope,
 	TaskHandoffEnvelope,
 	ToolResultEnvelope,
+	ToolTerminalManifestEnvelope,
 	TurnContinuationEnvelope,
 	UserInputEnvelope,
 } from "../../../stores/payload/TaskPayloadEnvelopes"
@@ -26,10 +28,12 @@ type JournalPayload =
 	| DialogDraftEnvelope
 	| DialogSelectionEnvelope
 	| BackgroundResultsEnvelope
+	| CoTaskMessageEnvelope
 	| EnvironmentDetailsEnvelope
 	| ProviderFinalEnvelope
 	| ProviderInterruptedEnvelope
 	| ToolResultEnvelope
+	| ToolTerminalManifestEnvelope
 	| TaskHandoffEnvelope
 	| TurnContinuationEnvelope
 	| LegacyMessageEnvelope
@@ -57,6 +61,7 @@ export interface MaterializedPayload {
 	readonly messages: readonly ClineStorageMessage[]
 	/** The reply a landed summary carries, handed on when a later span takes the summary. */
 	readonly continuation?: CompactionContinuation
+	readonly supersededPayloadRefs?: readonly string[]
 }
 
 /** Rebuilds the provider conversation exclusively from the append-only journal payload sequence. */
@@ -96,7 +101,16 @@ export class ProviderJournalMessageMaterializer {
 		if (reply) messages.push(reply)
 		const continuation =
 			payload.kind === "compaction_summary" ? (payload as CompactionSummaryEnvelope).continuation : undefined
-		return continuation ? { kind: payload.kind, messages, continuation } : { kind: payload.kind, messages }
+		const supersededPayloadRefs =
+			payload.kind === "tool_terminal_manifest"
+				? (payload as ToolTerminalManifestEnvelope).supersededPayloadRefs
+				: undefined
+		return {
+			kind: payload.kind,
+			messages,
+			...(continuation === undefined ? {} : { continuation }),
+			...(supersededPayloadRefs === undefined ? {} : { supersededPayloadRefs }),
+		}
 	}
 
 	/** A condensed reply the model has not answered returns after its summary, as the user wrote it. */
@@ -155,12 +169,16 @@ export class ProviderJournalMessageMaterializer {
 				if (!content) throw new Error(`InvalidDurableToolResult:${result.blockId}`)
 				return { role: "user", content, ts: Date.now() }
 			}
+			case "tool_terminal_manifest":
+				return this.materializeToolTerminalManifest(payload as ToolTerminalManifestEnvelope)
 			case "task_handoff":
 				return textMessage((payload as TaskHandoffEnvelope).context)
 			case "environment_details":
 				return textMessage((payload as EnvironmentDetailsEnvelope).text)
 			case "background_results":
 				return textMessage((payload as BackgroundResultsEnvelope).text)
+			case "cotask_message":
+				return textMessage((payload as CoTaskMessageEnvelope).text)
 			case "turn_continuation":
 				return textMessage((payload as TurnContinuationEnvelope).text)
 			case "compaction_summary": {
@@ -177,5 +195,21 @@ export class ProviderJournalMessageMaterializer {
 			default:
 				return undefined
 		}
+	}
+
+	private async materializeToolTerminalManifest(
+		manifest: ToolTerminalManifestEnvelope,
+	): Promise<ClineStorageMessage | undefined> {
+		const content: ClineUserContent[] = []
+		for (const result of manifest.results) {
+			const replay = replayDurableToolResult(result.content)
+			if (!replay) throw new Error(`InvalidDurableToolResult:${result.blockId}`)
+			content.push(...replay)
+			if (!result.feedbackRef) continue
+			const feedback = decodeTaskPayload<DialogDraftEnvelope>(await this.payloads.read(result.feedbackRef))
+			if (feedback.kind !== "dialog_draft") throw new Error(`InvalidToolApprovalFeedback:${result.blockId}`)
+			content.push(...(await buildUserFeedbackContent(feedback.text, [...feedback.images], [...feedback.files])))
+		}
+		return content.length === 0 ? undefined : { role: "user", content, ts: Date.now() }
 	}
 }

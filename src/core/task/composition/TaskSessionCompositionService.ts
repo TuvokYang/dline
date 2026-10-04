@@ -1,8 +1,5 @@
 import { randomUUID } from "node:crypto"
 import { getContextWindowInfo } from "@core/context/context-management/context-window-utils"
-import type { Controller } from "@core/controller"
-import { inputSemanticCatalogService } from "@core/controller/slash/input-semantic-catalog"
-import { sendPartialMessageEvent } from "@core/controller/ui/subscribeToPartialMessage"
 import type { IgnoreController } from "@core/ignore/IgnoreController"
 import { LegacyInputAdapter } from "@core/input-semantics/LegacyInputAdapter"
 import { SemanticInputAdmissionService } from "@core/input-semantics/SemanticInputAdmissionService"
@@ -11,15 +8,15 @@ import { TaskSemanticInputAdmission } from "@core/input-semantics/TaskSemanticIn
 import type { StateManager } from "@core/storage/StateManager"
 import { isMultiRootEnabled } from "@core/workspace/multi-root-utils"
 import type { WorkspaceRootManager } from "@core/workspace/WorkspaceRootManager"
-import type { McpHub } from "@services/mcp/McpHub"
 import type { HistoryItem } from "@shared/HistoryItem"
-import { convertClineMessageToProto } from "@shared/proto-conversions/cline-message"
 import { Logger } from "@shared/services/Logger"
 import type { TaskCapabilityToggles } from "@shared/TaskCapabilityToggles"
 import type { ApiConversation } from "../../storage/ApiConversation"
 import type { UIMessage } from "../../storage/UIMessage"
 import { TaskActivityPersistence } from "../activity/TaskActivityPersistence"
 import { TaskActivityStore } from "../activity/TaskActivityStore"
+import { formatBackgroundCommandResult } from "../background/BackgroundContextInjector"
+import { CanonicalCheckpointRepository, canonicalCheckpointRef } from "../checkpoints/CanonicalCheckpointRepository"
 import { renderCompactionInstruction } from "../compaction/CompactionInstruction"
 import { CompactionRequestScopes } from "../compaction/CompactionRequestScopes"
 import { CompactionRoundBarrier } from "../compaction/CompactionRoundBarrier"
@@ -35,8 +32,15 @@ import { ProviderRetryGate } from "../executors/provider/service/ProviderRetryGa
 import { DefaultProductionToolExecutionService } from "../executors/tool/production/DefaultProductionToolExecutionService"
 import { ProductionToolHandlerRuntime } from "../executors/tool/production/ProductionToolHandlerRuntime"
 import { TaskTurnAuthority } from "../explicit-instructions/TurnAuthority"
+import {
+	LegacyInputQueueCleanupPendingError,
+	legacyInputQueueSource,
+	migrateLegacyInputQueue,
+} from "../input-queue/LegacyInputQueueMigration"
 import type { TaskState } from "../kernel"
 import { MessageStateHandler } from "../message-state"
+import { TaskPerformanceOwner } from "../performance/TaskPerformanceOwner"
+import { TaskPerformanceRequestReporter } from "../performance/TaskPerformanceRequestReporter"
 import { TaskPromptContextOwner } from "../prompt/TaskPromptContextOwner"
 import { TaskPromptLifecycle } from "../prompt/TaskPromptLifecycle"
 import { PromptCacheHealthTracker } from "../prompt-cache/PromptCacheHealthTracker"
@@ -49,9 +53,11 @@ import { ProviderTextPresenter } from "../session/ProviderTextPresenter"
 import type { RealtimeMessagePublisher } from "../session/RealtimeMessagePublisher"
 import { readRestoredContextPressure } from "../session/RestoredContextPressure"
 import { RestoredToolDialogContinuation } from "../session/RestoredToolDialogContinuation"
+import { RetainedInputPresenter } from "../session/RetainedInputPresenter"
 import { SessionResourceScope } from "../session/SessionResourceScope"
 import { TaskApiHandlerOwner } from "../session/TaskApiHandlerOwner"
-import { TaskBackgroundResultsOwner } from "../session/TaskBackgroundResultsOwner"
+import { TaskBackgroundIngressOwner } from "../session/TaskBackgroundIngressOwner"
+import { TaskCollaborationSessionOwner } from "../session/TaskCollaborationSessionOwner"
 import { TaskContextUsageProjection } from "../session/TaskContextUsageProjection"
 import { TaskEnvironmentOwner } from "../session/TaskEnvironmentOwner"
 import { TaskInputPresenter } from "../session/TaskInputPresenter"
@@ -66,13 +72,15 @@ import {
 	ResumeDialogContinuation,
 	type TaskResumptionPort as ResumeDialogContinuationPorts,
 } from "../session/UnownedDialogContinuation"
+import { restoreCheckpoint as restoreCanonicalCheckpoint } from "../shell/checkpoint-restore"
 import { openTaskPersistence, type TaskPersistenceAssembly } from "../shell/TaskPersistenceAssembly"
-import type { TaskViewPort } from "../stores"
+import { InMemoryBackgroundDeliveryLedger, type TaskViewPort } from "../stores"
 import { JournalConversationRewind } from "../stores/JournalConversationRewind"
 import { TaskStateManager } from "../TaskStateManager"
 import { DefaultToolHandlerState } from "../tools/state/ToolHandlerState"
 import { ToolValidator } from "../tools/ToolValidator"
 import type { TaskSessionHostFactory } from "./TaskSessionHostFactory"
+import type { TaskSessionPorts } from "./TaskSessionPorts"
 
 /**
  * Message stores the caller opened for this incarnation.
@@ -91,8 +99,7 @@ export interface TaskSessionMessageHost {
 }
 
 export interface TaskSessionPromptHost {
-	readonly controller: Controller
-	readonly mcpHub: McpHub
+	readonly ports: TaskSessionPorts
 	readonly ignoreController: IgnoreController
 	readonly workspaceManager?: WorkspaceRootManager
 	readonly terminalExecutionMode: "vscodeTerminal" | "backgroundExec"
@@ -106,6 +113,12 @@ export interface TaskSessionPromptHost {
 
 export interface OpenTaskSessionCompositionOptions {
 	readonly taskId: string
+	readonly collaboration: {
+		readonly writable: boolean
+		readonly summary: string
+		readonly kind: "main" | "spawned"
+		readonly createdAt: string
+	}
 	readonly taskIncarnationId?: string
 	readonly openReason: "new" | "resume" | "crash_recovery" | "checkpoint_restore"
 	/**
@@ -150,15 +163,25 @@ export class TaskSessionCompositionService {
 		resources: SessionResourceScope,
 	): Promise<ActiveTaskSession> {
 		const taskIncarnationId = options.taskIncarnationId ?? randomUUID()
-		// Before the kernel reads the journal tail, so a task from an older build
-		// hydrates with the conversation it already had.
-		if (!options.deferRestoredCommands) await this.importLegacyConversation(options, persistence)
+		// Before the kernel reads either durable source, so a task from an older
+		// build hydrates with the conversation and retained input it already had.
+		if (!options.deferRestoredCommands) {
+			await this.importLegacyConversation(options, persistence)
+			await this.importLegacyInputQueue(options, persistence)
+		}
 		const settings = new TaskStateManager(options.taskId, options.stateManager)
 		const toolState = new DefaultToolHandlerState()
 		// One view per task: requests, compaction and every conversation reader
 		// share it, and each journal payload is rendered once rather than once per round.
 		const journalMessages = new ProviderJournalMessageMaterializer(persistence.payloads)
 		const conversationView = new JournalConversationView(persistence.ports.journal, journalMessages)
+		const conversationRewind = new JournalConversationRewind(persistence.ports.journal, conversationView)
+		const checkpointRepository = new CanonicalCheckpointRepository({
+			taskId: options.taskId,
+			vault: persistence.ports.vault,
+			journal: persistence.ports.journal,
+			payloads: persistence.payloads,
+		})
 		const messages = new MessageStateHandler({
 			taskId: options.taskId,
 			ulid: taskIncarnationId,
@@ -184,6 +207,11 @@ export class TaskSessionCompositionService {
 		})
 		await activities.hydrate()
 		let session: ActiveTaskSession | undefined
+		let collaboration: TaskCollaborationSessionOwner | undefined
+		const backgroundIngress = new TaskBackgroundIngressOwner(
+			() => this.requireSession(session),
+			persistence.backgroundDeliveries ?? new InMemoryBackgroundDeliveryLedger(),
+		)
 		// Command dispatch, publication, commit and unowned dialog continuation all
 		// run with no caller to reject, so one sink carries every decision they
 		// make. A task that stops replaying restored commands, or accepts an answer
@@ -209,7 +237,7 @@ export class TaskSessionCompositionService {
 					journal: persistence.ports.journal,
 					messages,
 					nextPresentationId: () => nextPresentationId(),
-					publishRow: (row) => sendPartialMessageEvent(options.prompt.controller, convertClineMessageToProto(row)),
+					publishRow: (row) => options.prompt.ports.presentation.publish(row),
 				},
 				resumption,
 				new ResumeDialogContinuation(resumption, () => toolState.resetMistakeLimitState()),
@@ -228,10 +256,16 @@ export class TaskSessionCompositionService {
 			warn: (message) => Logger.warn(message),
 		})
 		const readState = (): Readonly<TaskState> => this.requireSession(session).state()
+		const performance = await TaskPerformanceOwner.open({
+			taskId: options.taskId,
+			readState,
+			legacyMessages: () => messages.clineMessages,
+			onChanged: () => void options.publishState().catch(() => undefined),
+		})
+		resources.add({ release: () => performance.release() })
 		const promptContext = new TaskPromptContextOwner({
 			identity: { taskId: options.taskId, cwd: options.cwd },
-			controller: options.prompt.controller,
-			mcpHub: options.prompt.mcpHub,
+			host: options.prompt.ports.promptContext,
 			stateManager: options.stateManager,
 			taskStateManager: settings,
 			getMessageStateHandler: () => messages,
@@ -293,13 +327,59 @@ export class TaskSessionCompositionService {
 			toolState,
 			interactions,
 			readState,
+			checkpoints: {
+				capture: async (input) => {
+					await checkpointRepository.capture({
+						checkpointRef: canonicalCheckpointRef(options.taskId, input.messageTs),
+						...(input.workspaceRef === undefined ? {} : { workspaceRef: input.workspaceRef }),
+					})
+				},
+				restore: async (input) => {
+					const checkpointRef = canonicalCheckpointRef(options.taskId, input.messageTs)
+					let fence: Awaited<ReturnType<ActiveTaskSession["stopForCheckpointRestore"]>> | undefined
+					const result = await restoreCanonicalCheckpoint(
+						{ taskId: options.taskId, checkpointRef, mode: input.mode },
+						{
+							stopAndFence: async () => {
+								fence = await this.requireSession(session).stopForCheckpointRestore(
+									`checkpoint.restore:${input.messageTs}:${randomUUID()}`,
+								)
+							},
+							resolve: () => checkpointRepository.resolve(checkpointRef),
+							restoreWorkspace: input.restoreWorkspace,
+							applyConversationBoundary: async (boundary) => {
+								await conversationRewind.rewindTo({
+									operationId: `checkpoint.restore:${checkpointRef}`,
+									target: boundary,
+								})
+								return boundary
+							},
+							save: (snapshot) => persistence.ports.vault.save(snapshot),
+						},
+					)
+					return { result, ...(fence === undefined ? {} : { fence }) }
+				},
+			},
 			// A chat restore undoes what was said after the restored row in the
 			// conversation the provider is sent, which only this task's journal holds.
-			conversationRewind: new JournalConversationRewind(persistence.ports.journal, conversationView),
+			conversationRewind,
 		})
 		resources.add({ release: () => tool.browser.dispose() })
 		resources.add({ release: () => tool.commands.dispose() })
 		for (const release of tool.releases ?? []) resources.add(release)
+		tool.commands.bindBackgroundCommandSettlement({
+			settled: (command) =>
+				backgroundIngress.publish({
+					entryId: `background:command:${command.id}:attempt:1`,
+					producerKind: "command",
+					producerId: command.id,
+					attempt: 1,
+					text: ["# Background Results", "## Background Command Results", formatBackgroundCommandResult(command)].join(
+						"\n",
+					),
+					acknowledge: () => undefined,
+				}),
+		})
 		const toolRuntime = new ProductionToolHandlerRuntime(new ToolValidator(options.prompt.ignoreController))
 		// One owner per task session: the provider request grants the turn's
 		// authority and the tool gate reads it back under the same turn identity.
@@ -314,6 +394,7 @@ export class TaskSessionCompositionService {
 			messages,
 			payloads: persistence.payloads,
 			activities,
+			backgroundResults: backgroundIngress,
 			api,
 			toolState,
 			services: tool.services,
@@ -323,14 +404,15 @@ export class TaskSessionCompositionService {
 			readCapabilityToggles: options.prompt.readCapabilityToggles,
 			readTurnAuthority: (turnId) => turnAuthority.read(turnId),
 			workspaceManager: options.prompt.workspaceManager,
-			providerRequestRounds: tool.providerRequestRounds,
-			controllerContext: tool.controllerContext,
+			providerRequestRounds: performance.providerRequestRounds,
+			peerTaskSpawner: tool.peerTaskSpawner,
 			terminalExecutionMode: options.prompt.terminalExecutionMode,
 		})
 		const environment = tool.terminals
 			? new TaskEnvironmentOwner({
 					taskId: options.taskId,
 					cwd: options.cwd,
+					host: options.prompt.ports.environment,
 					stateManager: options.stateManager,
 					settings,
 					api,
@@ -345,10 +427,6 @@ export class TaskSessionCompositionService {
 					readState,
 				})
 			: undefined
-		// Background work outlives the round that started it, so its results
-		// need a later round to carry them; without this the model never learns
-		// what a backgrounded command or subagent produced.
-		const backgroundResults = new TaskBackgroundResultsOwner({ subagents: toolExecution, commands: tool.commands })
 		const providerRequests = new TaskProviderRequestFactory({
 			taskId: options.taskId,
 			stateManager: options.stateManager,
@@ -365,9 +443,11 @@ export class TaskSessionCompositionService {
 		const nextPresentationId = createPresentationIdSequence()
 		const realtimeMessages: RealtimeMessagePublisher = {
 			publish: (row) => {
-				void sendPartialMessageEvent(options.prompt.controller, convertClineMessageToProto(row)).catch((error) =>
-					Logger.debug(`[Task ${options.taskId}] Realtime message could not reach the Webview: ${String(error)}`),
-				)
+				void options.prompt.ports.presentation
+					.publish(row)
+					.catch((error) =>
+						Logger.debug(`[Task ${options.taskId}] Realtime message could not reach the Webview: ${String(error)}`),
+					)
 			},
 		}
 		const compactionScopes = new CompactionRequestScopes()
@@ -392,9 +472,8 @@ export class TaskSessionCompositionService {
 			commands: tool.commands,
 			files: tool.services.taskFileTracker,
 			checkpoints: tool.checkpoints,
-			inputQueue: tool.inputQueue,
-			apiRateSnapshot: tool.apiRateSnapshot,
-			queryRateMetrics: tool.queryRateMetrics,
+			apiRateSnapshot: () => performance.getSnapshot(),
+			queryRateMetrics: (query) => performance.query(query),
 		}
 		// The whole auto-condense setting group defines the trigger and the window a
 		// compaction may use. Passing only the percent would silently ignore the
@@ -472,6 +551,7 @@ export class TaskSessionCompositionService {
 					// Applied first and synchronously, so the view it informs never
 					// delays the figure and a failing view cannot skip it.
 					contextUsage.committed(state)
+					collaboration?.committed(state)
 					await options.taskView.notifyCommitted(state)
 				},
 				notifyTransient: (taskId, projection) => options.taskView.notifyTransient(taskId, projection),
@@ -483,6 +563,7 @@ export class TaskSessionCompositionService {
 			// so its guidance shapes the summary instead of reaching the model.
 			lifecycleBarriers: compaction,
 			inputPresentation: new TaskInputPresenter(persistence.payloads, messages, nextPresentationId),
+			retainedInputPresentation: new RetainedInputPresenter(persistence.payloads, messages, nextPresentationId),
 			// A round that would overflow the window waits for the summary first,
 			// so the request it sends is the one that fits. It guards compose
 			// rather than submission because the kernel also opens rounds on its
@@ -511,14 +592,7 @@ export class TaskSessionCompositionService {
 					actModeProfileId: settings.actModeProfileId,
 					actModeProfile: settings.actModeProfile,
 				}),
-				start: async (handoff) => {
-					await options.prompt.controller.startSuccessorTask(
-						options.taskId,
-						handoff.context,
-						handoff.taskSettings,
-						handoff.initialUserContent,
-					)
-				},
+				start: (handoff) => options.prompt.ports.successor.start(options.taskId, handoff),
 				onError: (error) =>
 					Logger.error(`[Task ${options.taskId}] Failed to start the New Task successor: ${String(error)}`),
 			},
@@ -529,6 +603,9 @@ export class TaskSessionCompositionService {
 			// can never be answered. The owner holds those receivers, so it is what
 			// the stop releases.
 			dialogWaiters: interactions,
+			// Retained input may answer only after the reveal is durable and the
+			// canonical interaction is awaiting a response.
+			dialogAwaiting: interactions,
 			// A reply that calls no tool has no block to render it, so the prose
 			// itself is what the chat must show.
 			providerPresentation: new ProviderTextPresenter(messages, nextPresentationId, realtimeMessages),
@@ -538,35 +615,40 @@ export class TaskSessionCompositionService {
 			}),
 			// Every request records what it consumed, which is the only fact the
 			// task has about context pressure, cache health and cost.
-			providerRequestReport: new TaskProviderRequestReporter({
-				// Compaction is the only consumer that acts on context pressure, and
-				// it can only learn it from the request that reported its usage.
-				pressure: compaction,
-				usage: contextUsage,
-				messages,
-				nextPresentationId,
-				api: () => api.current(),
-				promptCache,
-				compactTriggerOptions: readCompactTriggerOptions,
-				// Retries happen before the stream says anything, so each attempt's
-				// card has to be delivered to the chat rather than left for the countdown.
-				retryView: {
-					showRow: (row) => sendPartialMessageEvent(options.prompt.controller, convertClineMessageToProto(row)),
-					publishState: options.publishState,
-				},
-				// Subscriptions report no token counts, so today's figures on the
-				// usage surfaces are counted here, against the Profile that served the request.
-				profileTokens: {
-					activeProfileId: () => activeProfile().profileId,
-					record: (profileId, increment) => {
-						void options.prompt.controller
-							.recordProfileTokenUsage(profileId, increment)
-							.catch((error) =>
-								Logger.debug(`[Task ${options.taskId}] Failed to record daily Profile tokens: ${String(error)}`),
-							)
+			providerRequestReport: new TaskPerformanceRequestReporter(
+				new TaskProviderRequestReporter({
+					// Compaction is the only consumer that acts on context pressure, and
+					// it can only learn it from the request that reported its usage.
+					pressure: compaction,
+					usage: contextUsage,
+					messages,
+					nextPresentationId,
+					api: () => api.current(),
+					promptCache,
+					compactTriggerOptions: readCompactTriggerOptions,
+					// Retries happen before the stream says anything, so each attempt's
+					// card has to be delivered to the chat rather than left for the countdown.
+					retryView: {
+						showRow: (row) => options.prompt.ports.presentation.publish(row),
+						publishState: options.publishState,
 					},
-				},
-			}),
+					// Subscriptions report no token counts, so today's figures on the
+					// usage surfaces are counted here, against the Profile that served the request.
+					profileTokens: {
+						activeProfileId: () => activeProfile().profileId,
+						record: (profileId, increment) => {
+							void options.prompt.ports.profileUsage
+								.record(profileId, increment)
+								.catch((error) =>
+									Logger.debug(
+										`[Task ${options.taskId}] Failed to record daily Profile tokens: ${String(error)}`,
+									),
+								)
+						},
+					},
+				}),
+				performance,
+			),
 			services: {
 				// One sequence for both producers: chat rows are ordered by this id,
 				// so the user's own row and the blocks it causes must be drawn from
@@ -594,7 +676,6 @@ export class TaskSessionCompositionService {
 				toolSurface: tool.surface,
 				toolScheduler: toolExecution.turnScheduler,
 				environment,
-				backgroundResults,
 				// A continued round has to say why it exists, and the wording
 				// depends on how tools were offered for the current provider.
 				continuation: new TurnContinuationRenderer({ usesNativeToolCalls }),
@@ -625,6 +706,25 @@ export class TaskSessionCompositionService {
 			releases: [resources],
 		})
 		session = opened
+		opened.bindBackgroundIngress(backgroundIngress)
+		collaboration = new TaskCollaborationSessionOwner({
+			runtime: options.prompt.ports.collaboration,
+			taskId: options.taskId,
+			taskIncarnationId,
+			createdAt: options.collaboration.createdAt,
+			kind: options.collaboration.kind,
+			summary: options.collaboration.summary,
+			state: () => opened.state(),
+			ingress: opened.assembly.cotask,
+			payloads: opened.payloads,
+		})
+		opened.bindCollaboration(collaboration)
+		resources.add({
+			release: async () => {
+				await collaboration?.release()
+			},
+		})
+		if (options.collaboration.writable) collaboration.activate()
 		interactions.bind(session)
 		return session
 	}
@@ -650,6 +750,35 @@ export class TaskSessionCompositionService {
 			if (imported > 0) Logger.info(`[Task ${options.taskId}] Imported ${imported} legacy conversation messages`)
 		} catch (error) {
 			Logger.warn(`[Task ${options.taskId}] Legacy conversation import failed; it resumes on the next open`, error)
+		}
+	}
+
+	/** Move the retired snapshot queue into canonical intake before kernel hydrate. */
+	private async importLegacyInputQueue(
+		options: OpenTaskSessionCompositionOptions,
+		persistence: TaskPersistenceAssembly,
+	): Promise<void> {
+		try {
+			const result = await migrateLegacyInputQueue({
+				taskId: options.taskId,
+				source: await legacyInputQueueSource(options.taskId),
+				vault: persistence.ports.vault,
+				payloads: persistence.payloads,
+			})
+			if (result.kind === "imported") {
+				Logger.info(
+					`[Task ${options.taskId}] Imported ${result.importedEntries} legacy queued inputs; skipped ${result.skippedDeliveringEntries} possibly delivered and ${result.skippedInvalidEntries} invalid entries`,
+				)
+			}
+		} catch (error) {
+			if (error instanceof LegacyInputQueueCleanupPendingError) {
+				Logger.warn(
+					`[Task ${options.taskId}] Legacy input queue cleanup failed; canonical state is safe and cleanup resumes on the next open`,
+					error.cause,
+				)
+				return
+			}
+			throw error
 		}
 	}
 
@@ -692,7 +821,7 @@ export class TaskSessionCompositionService {
 				undefined,
 				options.stateManager.getCanonicalSettingsKey("imageGenerationEnabled") === true,
 			).providerInfo
-		const service = () => inputSemanticCatalogService(options.prompt.controller)
+		const service = () => options.prompt.ports.semanticCatalog
 		const admission = new SemanticInputAdmissionService({
 			catalog: () => service().current(),
 			mentions: new TaskMentionResolver(() => ({

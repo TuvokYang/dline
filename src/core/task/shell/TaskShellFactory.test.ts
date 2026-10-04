@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest"
+import { RetainedInputJournalBatch } from "../executors/compose/RetainedInputJournalBatch"
 import { createDeniedSurface } from "../executors/tool/ToolDomainSurface"
 import { TurnToolScheduler } from "../executors/tool/TurnToolScheduler"
 import {
@@ -13,9 +14,11 @@ import {
 	InMemoryCommandPublicationStore,
 	InMemoryConversationJournal,
 	InMemoryStateVault,
+	InMemoryTaskPayloadStore,
 	InMemoryTaskViewPort,
 	type TaskPayloadStore,
 } from "../stores"
+import { encodeTaskPayload } from "../stores/payload/TaskPayloadCodec"
 import { openTaskShell } from "./TaskShellFactory"
 
 const payloads: TaskPayloadStore = {
@@ -57,6 +60,67 @@ function execution(reveal: () => void) {
 function accepted(result: TransitionResult): Extract<TransitionResult, { kind: "accepted" }> {
 	if (result.kind !== "accepted") throw new Error(result.diagnostic.message)
 	return result
+}
+
+async function retainedCrashFixture() {
+	const payloadStore = new InMemoryTaskPayloadStore()
+	const journal = new InMemoryConversationJournal()
+	const entries = await Promise.all(
+		["A", "B"].map(async (text, index) => ({
+			entryId: `retained-${index}`,
+			payloadRef: await payloadStore.put(encodeTaskPayload({ kind: "user_input", text })),
+		})),
+	)
+	const delivery = {
+		deliveryId: "delivery-crash-1",
+		point: "tool_round" as const,
+		ownerId: "compose-crash-1",
+		generation: 0,
+	}
+	const receipt = await new RetainedInputJournalBatch(payloadStore, journal).stage({
+		deliveryId: delivery.deliveryId,
+		entries,
+		generation: 0,
+		signal: new AbortController().signal,
+	})
+	const base = createInitialTaskState("task-1")
+	const state: TaskState = {
+		...base,
+		revision: 5,
+		flow: {
+			phase: "running",
+			compose: {
+				commandId: delivery.ownerId,
+				originRevision: 4,
+				status: "completed",
+				admittedEntryIds: entries.map((entry) => entry.entryId),
+				queueJournalReceipt: {
+					deliveryId: receipt.deliveryId,
+					entries: receipt.entries,
+					journalWatermark: receipt.watermark,
+				},
+			},
+		},
+		intake: {
+			...base.intake,
+			queued: entries.map((entry, sequence) => ({
+				...entry,
+				source: "user" as const,
+				mode: "steering" as const,
+				sequence,
+				state: "included" as const,
+				queue: { editing: false, delivery },
+			})),
+		},
+	}
+	const vault = new InMemoryStateVault()
+	await vault.save({ state, outbox: [] })
+	return {
+		state,
+		journal,
+		payloads: payloadStore,
+		persistence: { ports: { vault, journal, publications: new InMemoryCommandPublicationStore() }, payloads: payloadStore },
+	}
 }
 
 function awaitingProvider(): { readonly state: TaskState; readonly command: ProviderStartCommand } {
@@ -303,6 +367,51 @@ describe("openTaskShell", () => {
 		)
 		// The unreadable snapshot is the fault; rebuilding without it is the recovery.
 		expect(recorded).toContainEqual(expect.objectContaining({ code: "snapshot_unreadable", severity: "failure" }))
+	})
+
+	it("retracts an unconsumed retained batch before hydrate and releases its canonical entries", async () => {
+		const fixture = await retainedCrashFixture()
+		const opened = await openTaskShell({
+			taskId: "task-1",
+			openReason: "crash_recovery",
+			execution: execution(() => undefined),
+			taskView: new InMemoryTaskViewPort(),
+			persistence: fixture.persistence,
+		})
+
+		expect(
+			opened.runtime.getState().intake.queued.map((entry) => ({ state: entry.state, delivery: entry.queue?.delivery })),
+		).toEqual([
+			{ state: "released", delivery: undefined },
+			{ state: "released", delivery: undefined },
+		])
+		expect((await fixture.journal.project()).visibleMessages).toEqual([])
+	})
+
+	it("defers retained batch reconciliation until the window owns and opens the task", async () => {
+		const fixture = await retainedCrashFixture()
+		const opened = await openTaskShell({
+			taskId: "task-1",
+			openReason: "crash_recovery",
+			execution: execution(() => undefined),
+			taskView: new InMemoryTaskViewPort(),
+			persistence: fixture.persistence,
+			deferRestoredCommands: true,
+		})
+
+		expect(opened.runtime.getState().intake.queued.map((entry) => entry.state)).toEqual(["uncertain", "uncertain"])
+		expect((await fixture.journal.project()).visibleMessages).toHaveLength(1)
+
+		await opened.shell.open()
+		await opened.runtime.waitForQuiescence()
+
+		expect(
+			opened.runtime.getState().intake.queued.map((entry) => ({ state: entry.state, delivery: entry.queue?.delivery })),
+		).toEqual([
+			{ state: "released", delivery: undefined },
+			{ state: "released", delivery: undefined },
+		])
+		expect((await fixture.journal.project()).visibleMessages).toEqual([])
 	})
 
 	it("does not replay a provider command when its final journal entry is ahead of the snapshot", async () => {

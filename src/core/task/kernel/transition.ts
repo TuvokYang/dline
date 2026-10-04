@@ -1,8 +1,16 @@
 import { reduceDialog, withoutAbandonedReview } from "./machines/dialog"
-import { expireAbandonedCompaction, reduceFlow } from "./machines/flow"
-import { ALL_HALT_PARTICIPANTS, reduceHalt } from "./machines/halt"
-import { intakeHasCapacity, pendingIntakeEntryIds, reduceIntake, reserveIntakeEntries } from "./machines/intake"
-import { reduceTurn } from "./machines/turn"
+import { composeRoundCommand, expireAbandonedCompaction, reduceFlow } from "./machines/flow"
+import { ALL_HALT_PARTICIPANTS, reduceHalt, validateHaltEvent } from "./machines/halt"
+import {
+	intakeHasCapacity,
+	pendingIntakeEntryIds,
+	reduceIntake,
+	reserveIntakeEntries,
+	reserveRetainedQueueEntries,
+	retainedQueueDeliveryEntries,
+	selectRetainedQueueEntryIds,
+} from "./machines/intake"
+import { reduceTurn, toolTerminalManifestPayload } from "./machines/turn"
 import type {
 	Command,
 	Diagnostic,
@@ -79,9 +87,14 @@ function hasRequiredPayload(
 }
 
 function validateEvent(state: TaskState, event: TaskEvent): ValidationFailure | undefined {
-	if (event.type === "user.submit" || event.type === "background.ready" || event.type === "cotask.received") {
+	if (
+		event.type === "user.submit" ||
+		event.type === "background.ready" ||
+		event.type === "cotask.received" ||
+		event.type === "input_queue.enqueued"
+	) {
 		const entries =
-			event.type === "user.submit"
+			event.type === "user.submit" || event.type === "input_queue.enqueued"
 				? state.intake.queued
 				: event.type === "background.ready"
 					? state.intake.background
@@ -90,15 +103,47 @@ function validateEvent(state: TaskState, event: TaskEvent): ValidationFailure | 
 			return { reason: "duplicate", message: `Entry ${event.entryId} already exists` }
 		if (!intakeHasCapacity(entries)) return { reason: "capacity_exceeded", message: "Intake box capacity exceeded" }
 	}
-	if ((event.type === "user.cancel" || event.type === "user.terminate") && state.halt.status === "stopping") {
-		return { reason: "duplicate", message: `Halt ${state.halt.haltId} is already in progress` }
+	if (
+		event.type === "input_queue.mode_toggled" ||
+		event.type === "input_queue.reordered" ||
+		event.type === "input_queue.edit_started" ||
+		event.type === "input_queue.edit_committed" ||
+		event.type === "input_queue.edit_cancelled" ||
+		event.type === "input_queue.removed"
+	) {
+		const entry = state.intake.queued.find((candidate) => candidate.entryId === event.entryId)
+		if (!entry || entry.source !== "user" || entry.queue === undefined)
+			return { reason: "identity_mismatch", message: `Retained input ${event.entryId} does not exist` }
+		if (event.type !== "input_queue.removed" && entry.state !== "accepted" && entry.state !== "released")
+			return { reason: "phase_invalid", message: `Retained input ${event.entryId} is not mutable from ${entry.state}` }
 	}
-	if (event.type === "halt.halted" || event.type === "halt.failed") {
-		if (state.halt.status !== "stopping" || state.halt.haltId !== event.haltId)
-			return { reason: "identity_mismatch", message: `Halt ${event.haltId} is not active` }
-		if (!state.halt.pending.includes(event.participantId))
-			return { reason: "duplicate", message: `${event.participantId} already acknowledged halt ${event.haltId}` }
+	if (event.type === "input_queue.delivery_reconciled") {
+		const delivery = retainedQueueDeliveryEntries(state.intake, event.deliveryId)
+		if (delivery.length === 0)
+			return { reason: "identity_mismatch", message: `Queue delivery ${event.deliveryId} cannot be reconciled` }
+		if (event.outcome === "consumed" && !event.journalWatermark)
+			return { reason: "phase_invalid", message: "Consumed queue settlement requires a journal watermark" }
 	}
+	if (event.type === "input_queue.delivery_reserved") {
+		if (state.halt.status === "stopping" || state.flow.phase === "paused")
+			return { reason: "phase_invalid", message: "Retained input cannot be reserved while halted" }
+		if (
+			event.point === "turn_end" &&
+			(state.dialog.primary?.interactionId !== event.ownerId || state.dialog.primary.status !== "awaiting")
+		)
+			return { reason: "identity_mismatch", message: "Retained delivery has no awaiting owner" }
+		if (retainedQueueDeliveryEntries(state.intake, event.deliveryId).length > 0)
+			return { reason: "duplicate", message: `Queue delivery ${event.deliveryId} is already reserved` }
+		if (selectRetainedQueueEntryIds(state.intake, event.point).length === 0)
+			return { reason: "phase_invalid", message: `No retained input is deliverable at ${event.point}` }
+	}
+	if (
+		event.type === "input_queue.delivery_released" &&
+		retainedQueueDeliveryEntries(state.intake, event.deliveryId).length === 0
+	)
+		return { reason: "identity_mismatch", message: `Queue delivery ${event.deliveryId} is not reserved` }
+	const invalidHalt = validateHaltEvent(state.halt, event)
+	if (invalidHalt) return invalidHalt
 	if (event.type.startsWith("tool.")) {
 		const toolEvent = event as Extract<
 			TaskEvent,
@@ -187,8 +232,40 @@ function validateEvent(state: TaskState, event: TaskEvent): ValidationFailure | 
 			return { reason: "duplicate", message: `Compose command ${event.commandId} already settled` }
 		if (state.halt.status === "stopping" || state.flow.phase === "paused" || state.flow.phase === "terminated")
 			return { reason: "phase_invalid", message: "Compose feedback arrived after task halt" }
-		if (event.type === "compose.completed" && event.draftRef.length === 0)
-			return { reason: "identity_mismatch", message: "Compose completion has no draft reference" }
+		if (event.type === "compose.completed") {
+			if (event.draftRef.length === 0)
+				return { reason: "identity_mismatch", message: "Compose completion has no draft reference" }
+			const retained = state.intake.queued
+				.filter(
+					(entry) => owner.admittedEntryIds.includes(entry.entryId) && entry.queue?.delivery?.point === "tool_round",
+				)
+				.sort(
+					(left, right) => owner.admittedEntryIds.indexOf(left.entryId) - owner.admittedEntryIds.indexOf(right.entryId),
+				)
+			const receipt = event.queueJournalReceipt
+			if (retained.length > 0 && !receipt)
+				return { reason: "identity_mismatch", message: "Retained compose completion has no journal receipt" }
+			if (receipt) {
+				if (
+					receipt.deliveryId.length === 0 ||
+					receipt.journalWatermark.seq <= 0 ||
+					receipt.entries.length !== retained.length
+				)
+					return { reason: "identity_mismatch", message: "Retained compose receipt is malformed" }
+				if (
+					retained.some(
+						(entry, index) =>
+							entry.state !== "reserved" ||
+							entry.queue?.delivery?.deliveryId !== receipt.deliveryId ||
+							entry.queue.delivery.ownerId !== event.commandId ||
+							entry.queue.delivery.generation !== event.generation ||
+							entry.entryId !== receipt.entries[index]?.entryId ||
+							entry.payloadRef !== receipt.entries[index]?.payloadRef,
+					)
+				)
+					return { reason: "identity_mismatch", message: "Retained compose receipt does not match its live batch" }
+			}
+		}
 	}
 	if (event.type === "provider.turn_ready" || event.type === "provider.failed") {
 		const owner = state.flow.provider
@@ -291,6 +368,8 @@ function validateEvent(state: TaskState, event: TaskEvent): ValidationFailure | 
 				event.receiverGeneration !== interaction.receiverGeneration
 			)
 				return { reason: "identity_mismatch", message: "Interaction response is outside its causal window" }
+			if (interaction.acceptedResponse?.queuedInput)
+				return { reason: "duplicate", message: "Retained response is already committed" }
 			if (interaction.status !== "awaiting")
 				return {
 					reason: interaction.status === "resolving" ? "duplicate" : "phase_invalid",
@@ -300,6 +379,37 @@ function validateEvent(state: TaskState, event: TaskEvent): ValidationFailure | 
 			if (!rule) return { reason: "identity_mismatch", message: `Action ${event.actionId} is not valid` }
 			if (!hasRequiredPayload(rule.payloadPolicy, event))
 				return { reason: "phase_invalid", message: `Action ${event.actionId} is missing required payload` }
+			if (event.queueDeliveryId) {
+				if (state.halt.status === "stopping" || state.flow.phase === "paused")
+					return { reason: "phase_invalid", message: "Retained delivery cannot respond after halt" }
+				const delivery = retainedQueueDeliveryEntries(state.intake, event.queueDeliveryId)
+				if (
+					delivery.length === 0 ||
+					delivery.some(
+						(entry) =>
+							entry.state !== "reserved" ||
+							entry.queue?.delivery?.point !== "turn_end" ||
+							entry.queue.delivery.generation !== event.generation ||
+							entry.queue.delivery.ownerId !== event.interactionId,
+					)
+				)
+					return {
+						reason: "identity_mismatch",
+						message: `Queue delivery ${event.queueDeliveryId} does not own this response`,
+					}
+				const expected = event.queueDeliveryEntries
+				if (
+					!expected ||
+					expected.length !== delivery.length ||
+					delivery.some(
+						(entry, index) =>
+							entry.entryId !== expected[index]?.entryId || entry.payloadRef !== expected[index]?.payloadRef,
+					)
+				)
+					return { reason: "identity_mismatch", message: "Retained delivery content changed before response" }
+				if (!event.queueDeliveryMode || delivery.some((entry) => entry.mode !== event.queueDeliveryMode))
+					return { reason: "identity_mismatch", message: "Retained delivery mode does not match its response" }
+			}
 		}
 	}
 	if (event.type === "lifecycle.spawn_requested") {
@@ -394,6 +504,9 @@ function applyCommandOwnership(state: TaskState, commands: readonly Command[]): 
 	let next = state
 	for (const command of commands) {
 		if (command.type === "compose.round") {
+			const retained = command.queueDelivery
+				? reserveRetainedQueueEntries(next.intake, command.admittedEntryIds, command.queueDelivery)
+				: next.intake
 			next = {
 				...next,
 				flow: {
@@ -404,9 +517,10 @@ function applyCommandOwnership(state: TaskState, commands: readonly Command[]): 
 						status: "running",
 						admittedEntryIds: command.admittedEntryIds,
 						turnId: command.turnId,
+						...(command.respondedQueue ? { respondedQueue: command.respondedQueue } : {}),
 					},
 				},
-				intake: reserveIntakeEntries(next.intake, command.admittedEntryIds),
+				intake: reserveIntakeEntries(retained, command.admittedEntryIds),
 			}
 		}
 		if (command.type === "provider.start") {
@@ -545,6 +659,15 @@ function deriveCommands(previous: TaskState, next: TaskState, event: TaskEvent):
 		}
 	}
 	if (
+		(event.type === "approval.evaluated" || event.type === "approval.responded") &&
+		event.approved === false &&
+		!allBlocksTerminal(previous) &&
+		allBlocksTerminal(next) &&
+		next.turn.turnId
+	) {
+		return [{ ...commandBase(next, 0), type: "tool.retire", turnId: next.turn.turnId }]
+	}
+	if (
 		(event.type === "user.submit" || event.type === "background.ready" || event.type === "cotask.received") &&
 		previous.flow.phase !== "terminated" &&
 		!hasActiveRound(previous)
@@ -554,14 +677,12 @@ function deriveCommands(previous: TaskState, next: TaskState, event: TaskEvent):
 			return interaction ? [{ ...commandBase(next, 0), type: "dialog.prepare", ...dialogCommandInput(interaction) }] : []
 		}
 		return [
-			{
-				...commandBase(next, 0),
-				type: "compose.round",
-				turnId: next.turn.blocks.length > 0 ? next.turn.turnId : undefined,
+			composeRoundCommand(commandBase(next, 0), {
 				// Anything still waiting rides along with the arrival that opened
 				// this round, so an entry that arrived mid-round is not left behind.
 				admittedEntryIds: pendingIntakeEntryIds(next.intake),
-			},
+				...toolTerminalManifestPayload(next.turn),
+			}),
 		]
 	}
 	if (
@@ -573,13 +694,25 @@ function deriveCommands(previous: TaskState, next: TaskState, event: TaskEvent):
 		if (!previous.dialog.primary && next.dialog.primary?.kind === MISTAKE_LIMIT_DIALOG_KIND) {
 			return [{ ...commandBase(next, 0), type: "dialog.prepare", ...dialogCommandInput(next.dialog.primary) }]
 		}
+		const completedTurnId = next.turn.turnId
+		if (!completedTurnId) return []
+		const retained = selectRetainedQueueEntryIds(next.intake, "tool_round")
+		const compose = composeRoundCommand(commandBase(next, 1), {
+			admittedEntryIds: [...pendingIntakeEntryIds(next.intake), ...retained],
+			...toolTerminalManifestPayload(next.turn),
+		})
+		const queueDelivery =
+			retained.length > 0
+				? {
+						deliveryId: `queue:tool_round:${compose.commandId}`,
+						point: "tool_round" as const,
+						ownerId: compose.commandId,
+						generation: next.generation,
+					}
+				: undefined
 		return [
-			{
-				...commandBase(next, 0),
-				type: "compose.round",
-				turnId: next.turn.turnId,
-				admittedEntryIds: pendingIntakeEntryIds(next.intake),
-			},
+			{ ...commandBase(next, 0), type: "tool.retire", turnId: completedTurnId },
+			queueDelivery === undefined ? compose : { ...compose, queueDelivery },
 		]
 	}
 	if (event.type === "compose.completed") {
@@ -598,13 +731,13 @@ function deriveCommands(previous: TaskState, next: TaskState, event: TaskEvent):
 			// itself, so it opens a round regardless of the text-only budget.
 			const pending = pendingIntakeEntryIds(next.intake)
 			if (pending.length > 0 && canOpenNextRound(next)) {
-				return [{ ...commandBase(next, 0), type: "compose.round", admittedEntryIds: pending }]
+				return [composeRoundCommand(commandBase(next, 0), { admittedEntryIds: pending })]
 			}
 			if (!previous.dialog.primary && next.dialog.primary?.kind === MISTAKE_LIMIT_DIALOG_KIND) {
 				return [{ ...commandBase(next, 0), type: "dialog.prepare", ...dialogCommandInput(next.dialog.primary) }]
 			}
 			return continuesWithoutTools(next)
-				? [{ ...commandBase(next, 0), type: "compose.round", admittedEntryIds: [], continuation: "no_tools_used" }]
+				? [composeRoundCommand(commandBase(next, 0), { admittedEntryIds: [], continuation: "no_tools_used" })]
 				: []
 		}
 		const readyBlocks = next.turn.blocks.filter((block) => block.phase === "ready")
@@ -775,7 +908,9 @@ export function transition(state: TaskState, event: TaskEvent): TransitionResult
 				? maxWatermark(state.journalWatermark, event.journalWatermark)
 				: event.type === "dialog.prepared" && event.journalWatermark
 					? maxWatermark(state.journalWatermark, event.journalWatermark)
-					: state.journalWatermark,
+					: event.type === "input_queue.delivery_reconciled" && event.journalWatermark
+						? maxWatermark(state.journalWatermark, event.journalWatermark)
+						: state.journalWatermark,
 	}
 	next = installArrivalWakeup(next, event, nextRevision)
 	next = installMistakeLimit(next, event, nextRevision)
@@ -845,7 +980,12 @@ export function transition(state: TaskState, event: TaskEvent): TransitionResult
 		...dialog.commands,
 		...intake.commands,
 		...halt.commands,
-		...deriveCommands(state, next, event),
+		...deriveCommands(state, next, event).map(
+			(command): Command =>
+				command.type === "compose.round" && next.flow.pendingQueueResponse
+					? { ...command, respondedQueue: next.flow.pendingQueueResponse }
+					: command,
+		),
 	]
 	next = applyCommandOwnership(next, commands)
 	return { kind: "accepted", state: next, commands }

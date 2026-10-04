@@ -142,6 +142,7 @@ function createConfig(options?: {
 		vscodeTerminalExecutionMode: "backgroundExec",
 		enableParallelToolCalling: true,
 		context: {},
+		backgroundResults: { publish: vi.fn().mockResolvedValue(undefined) },
 		taskState,
 		taskController: { rejectActiveBlock: vi.fn() },
 		messageState: {},
@@ -532,8 +533,9 @@ describe("SubagentToolHandler", () => {
 		assert.ok((result as string).includes("boom"))
 	})
 
-	it("retains only a retryable foreground batch item and injects its recovered result", async () => {
+	it("retains only a retryable foreground batch item and publishes its recovered result", async () => {
 		const { config } = createConfig({ autoApproveSafe: true, autoApproveAll: true })
+		const publish = vi.mocked(config.backgroundResults!.publish)
 		const setRetry = vi.fn()
 		config.activityStore = {
 			create: vi.fn(),
@@ -586,16 +588,18 @@ describe("SubagentToolHandler", () => {
 		assert.match(String(result), /user can restart it with the Retry control/i)
 		assert.match(String(result), /do not treat this failure as a completed result/i)
 		assert.equal(config.subagentJobManager?.listJobs().length, 1)
-		assert.equal(config.subagentJobManager?.listInjectableResults().length, 0)
+		vitestExpect(publish).not.toHaveBeenCalled()
 		const retryRegistration = setRetry.mock.calls.find(([, callback]) => typeof callback === "function")
 		assert.ok(retryRegistration)
 		assert.equal(await retryRegistration[1](), true)
 		await vi.waitFor(() => assert.equal(config.subagentJobManager?.listJobs()[0]?.status, "completed"))
-		const [injectable] = config.subagentJobManager?.listInjectableResults() ?? []
-		assert.equal(injectable?.kind, "single")
-		if (injectable?.kind !== "single") assert.fail("recovered foreground batch item should inject as one job")
-		assert.equal(injectable.job.result, "recovered batch item")
-		assert.equal(injectable.job.task, "retry")
+		await vi.waitFor(() => vitestExpect(publish).toHaveBeenCalledOnce())
+		const delivery = publish.mock.calls[0][0]
+		assert.equal(delivery.producerKind, "subagent")
+		assert.equal(delivery.attempt, 2)
+		assert.match(delivery.text, /recovered batch item/)
+		assert.match(delivery.text, /retry/)
+		assert.doesNotMatch(delivery.text, /sensitive provider diagnostic/)
 	})
 
 	it("reports cancelled batch entries without counting them as successes", async () => {
@@ -1118,7 +1122,7 @@ describe("SubagentToolHandler", () => {
 		vitestExpect(createActivity).toHaveBeenCalledWith(
 			vitestExpect.objectContaining({ executionMode: "foreground", cancellationOwner: "task" }),
 		)
-		assert.deepEqual(config.subagentJobManager?.listInjectableResults(), [])
+		vitestExpect(vi.mocked(config.backgroundResults!.publish)).not.toHaveBeenCalled()
 	})
 
 	it("hands a running foreground subagent to the background while retaining its task-scoped budget slot", async () => {
@@ -1342,7 +1346,11 @@ describe("SubagentToolHandler", () => {
 		assert.ok(jobId)
 		assert.equal(await retry(), true)
 		await vi.waitFor(() => assert.equal(config.subagentJobManager?.getJob(jobId)?.status, "completed"))
-		assert.equal(config.subagentJobManager?.listInjectableResults().length, 1)
+		await vi.waitFor(() => vitestExpect(config.backgroundResults!.publish).toHaveBeenCalledOnce())
+		const delivery = vi.mocked(config.backgroundResults!.publish).mock.calls[0][0]
+		assert.equal(delivery.producerId, jobId)
+		assert.equal(delivery.attempt, 2)
+		assert.match(delivery.text, /recovered background result/)
 		vitestExpect(setCancel).toHaveBeenCalledWith(jobId, vitestExpect.any(Function))
 		vitestExpect(setFinish).toHaveBeenCalledWith(jobId, vitestExpect.any(Function))
 	})
@@ -1592,35 +1600,35 @@ describe("SubagentToolHandler", () => {
 
 	it("keeps fast background batch completion mapped to item entries", async () => {
 		const { config, callbacks } = createConfig({ autoApproveSafe: true, autoApproveAll: true })
+		const fastJob = {
+			jobId: "subagent_1",
+			batchJobId: "subagent_batch_1",
+			task: "fast",
+			prompt: "<task>fast</task><context>ctx</context>",
+			status: "completed" as const,
+			startedAt: Date.now(),
+			finishedAt: Date.now(),
+			timeoutSeconds: 30,
+			result: "fast done",
+			attempt: 1,
+		}
+		const fastBatch = {
+			batchJobId: "subagent_batch_1",
+			status: "completed" as const,
+			startedAt: Date.now(),
+			finishedAt: Date.now(),
+			timeoutSeconds: 30,
+			itemJobIds: [fastJob.jobId],
+		}
 		config.subagentJobManager = {
 			startBatch: vi.fn((input) => {
-				const batch = {
-					batchJobId: "subagent_batch_1",
-					status: "completed" as const,
-					startedAt: Date.now(),
-					finishedAt: Date.now(),
-					timeoutSeconds: input.timeoutSeconds,
-					itemJobIds: ["subagent_1"],
-					injectionState: "pending" as const,
-				}
+				const batch = { ...fastBatch, timeoutSeconds: input.timeoutSeconds }
+				const job = { ...fastJob, timeoutSeconds: input.timeoutSeconds }
 				input.onCreated?.(batch)
-				void input.onStatusChange?.(
-					{
-						jobId: "subagent_1",
-						batchJobId: "subagent_batch_1",
-						task: "fast",
-						prompt: "<task>fast</task><context>ctx</context>",
-						status: "completed" as const,
-						startedAt: Date.now(),
-						finishedAt: Date.now(),
-						timeoutSeconds: input.timeoutSeconds,
-						result: "fast done",
-						injectionState: "pending" as const,
-					},
-					batch,
-				)
+				void input.onStatusChange?.(job, batch)
 				return batch
 			}),
+			getJob: vi.fn((jobId) => (jobId === fastJob.jobId ? fastJob : undefined)),
 		} as unknown as TaskConfig["subagentJobManager"]
 		const handler = new UseSubagentsToolHandler()
 

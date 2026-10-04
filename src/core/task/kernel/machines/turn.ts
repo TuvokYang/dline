@@ -1,4 +1,4 @@
-import type { Command, KernelBlock, TaskEvent, TurnSlice } from "../types"
+import type { Command, KernelBlock, TaskEvent, ToolTerminalManifest, TurnSlice } from "../types"
 
 export interface TurnReduction {
 	readonly state: TurnSlice
@@ -6,6 +6,23 @@ export interface TurnReduction {
 }
 
 const TERMINAL_PHASES: ReadonlySet<KernelBlock["phase"]> = new Set(["completed", "failed", "rejected", "skipped", "cancelled"])
+
+export function toolTerminalManifestPayload(state: TurnSlice): { readonly toolTerminals?: ToolTerminalManifest } {
+	if (!state.turnId || state.blocks.length === 0 || state.blocks.some((block) => !TERMINAL_PHASES.has(block.phase))) return {}
+	return {
+		toolTerminals: {
+			turnId: state.turnId,
+			blocks: [...state.blocks]
+				.sort((left, right) => left.index - right.index)
+				.map((block) => ({
+					blockId: block.blockId,
+					phase: block.phase as ToolTerminalManifest["blocks"][number]["phase"],
+					invocationRef: block.invocationRef,
+					...(block.approvalFeedbackRef === undefined ? {} : { approvalFeedbackRef: block.approvalFeedbackRef }),
+				})),
+		},
+	}
+}
 
 function replaceBlock(blocks: readonly KernelBlock[], blockId: string, phase: KernelBlock["phase"]): readonly KernelBlock[] {
 	return blocks.map((block) => (block.blockId === blockId ? { ...block, phase } : block))
@@ -127,9 +144,13 @@ export function reduceTurn(state: TurnSlice, event: TaskEvent): TurnReduction {
 	}
 	if (event.type === "approval.responded") {
 		if (state.turnId !== event.turnId || !state.manualApprovalBlockIds.includes(event.blockId)) return { state, commands: [] }
-		const decidedBlocks = event.approved
-			? replaceBlock(state.blocks, event.blockId, "ready")
-			: rejectAndSkipLater(state.blocks, event.blockId)
+		const decidedBlocks = (
+			event.approved ? replaceBlock(state.blocks, event.blockId, "ready") : rejectAndSkipLater(state.blocks, event.blockId)
+		).map((block) =>
+			block.blockId === event.blockId && event.feedbackRef !== undefined
+				? { ...block, approvalFeedbackRef: event.feedbackRef }
+				: block,
+		)
 		const terminalized = new Set(
 			decidedBlocks
 				.filter((block) => block.phase === "rejected" || block.phase === "skipped")
@@ -144,6 +165,30 @@ export function reduceTurn(state: TurnSlice, event: TaskEvent): TurnReduction {
 						? { ...block, policy: { ...block.policy, status: "cancelled" as const } }
 						: block,
 				),
+				manualApprovalBlockIds: state.manualApprovalBlockIds.filter((id) => !terminalized.has(id)),
+				automaticApprovalBlockIds: state.automaticApprovalBlockIds.filter((id) => !terminalized.has(id)),
+			},
+			commands: [],
+		}
+	}
+	if (event.type === "approval.evaluated" && !event.approved) {
+		const decidedBlocks = rejectAndSkipLater(state.blocks, event.blockId)
+		const terminalized = new Set(
+			decidedBlocks
+				.filter((block) => block.phase === "rejected" || block.phase === "skipped")
+				.map((block) => block.blockId),
+		)
+		return {
+			state: {
+				...state,
+				blocks: decidedBlocks.map((block) => {
+					if (block.blockId === event.blockId) {
+						return { ...block, policy: block.policy && { ...block.policy, status: "completed" as const } }
+					}
+					return terminalized.has(block.blockId) && block.policy?.status === "running"
+						? { ...block, policy: { ...block.policy, status: "cancelled" as const } }
+						: block
+				}),
 				manualApprovalBlockIds: state.manualApprovalBlockIds.filter((id) => !terminalized.has(id)),
 				automaticApprovalBlockIds: state.automaticApprovalBlockIds.filter((id) => !terminalized.has(id)),
 			},

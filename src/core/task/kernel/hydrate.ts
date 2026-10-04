@@ -90,7 +90,13 @@ export function requiredPayloadRefs(state: TaskState): readonly string[] {
 		const response = interaction.acceptedResponse
 		if (response?.draftRef) refs.add(response.draftRef)
 		if (response?.selectionRef) refs.add(response.selectionRef)
+		if (response?.queuedInput) {
+			for (const entry of response.queuedInput.entries) refs.add(entry.payloadRef)
+			const block = state.turn.blocks.find((candidate) => candidate.blockId === interaction.interactionId)
+			if (block) refs.add(block.invocationRef)
+		}
 	}
+	for (const entry of state.flow.pendingQueueResponse?.entries ?? []) refs.add(entry.payloadRef)
 	return [...refs]
 }
 
@@ -205,6 +211,11 @@ function normalizeInteraction(interaction: DialogInteraction, generation: number
 		prepare: undefined,
 		reveal: undefined,
 	}
+	if (interaction.acceptedResponse?.queuedInput && interaction.journalRef) {
+		// Re-reveal the durable answer's owner so the new session can continue it;
+		// the queue was already consumed and must not be claimed a second time.
+		return { ...normalized, status: "prepared" }
+	}
 	if (interaction.status !== "resolving") return normalized
 	return { ...normalized, status: "awaiting" }
 }
@@ -212,6 +223,7 @@ function normalizeInteraction(interaction: DialogInteraction, generation: number
 function normalizeState(
 	snapshot: TaskState,
 	form: Exclude<HydrateForm, "new">,
+	queueSettlements: HydrateInput["queueSettlements"] = [],
 ): { readonly state: TaskState; readonly diagnostics: readonly Diagnostic[] } {
 	const generation = snapshot.generation + 1
 	const revision = snapshot.revision + 1
@@ -225,12 +237,35 @@ function normalizeState(
 			normalizeInteraction(interaction, generation),
 		]),
 	)
+	const settlementByDelivery = new Map(queueSettlements.map((settlement) => [settlement.deliveryId, settlement] as const))
 	const normalizeEntries = (entries: TaskState["intake"]["queued"] = []) =>
 		entries.map((entry) => {
-			if (entry.state !== "reserved" && entry.state !== "included" && entry.state !== "uncertain") return entry
-			if (!entry.journalWatermark) return { ...entry, state: "uncertain" as const }
+			const normalized = entry.queue ? { ...entry, queue: { ...entry.queue, editing: false } } : entry
+			if (entry.state !== "reserved" && entry.state !== "included" && entry.state !== "uncertain") return normalized
+			const delivery = entry.queue?.delivery
+			const withoutDelivery = () => {
+				if (!normalized.queue) return normalized
+				const { delivery: _delivery, ...queue } = normalized.queue
+				return { ...normalized, queue }
+			}
+			// A turn-end reservation sends nothing until the response commit atomically
+			// consumes it. A reserved snapshot therefore proves it was never delivered.
+			if (entry.state === "reserved" && delivery?.point === "turn_end")
+				return { ...withoutDelivery(), state: "released" as const }
+			if (delivery?.point === "tool_round") {
+				const settlement = settlementByDelivery.get(delivery.deliveryId)
+				if (!settlement) return { ...normalized, state: "uncertain" as const }
+				if (settlement.outcome === "released") return { ...withoutDelivery(), state: "released" as const }
+				if (!settlement.journalWatermark) return { ...normalized, state: "uncertain" as const }
+				return {
+					...withoutDelivery(),
+					state: "consumed" as const,
+					journalWatermark: settlement.journalWatermark,
+				}
+			}
+			if (!entry.journalWatermark) return { ...normalized, state: "uncertain" as const }
 			return {
-				...entry,
+				...normalized,
 				state: isAfter(entry.journalWatermark, snapshot.journalWatermark ?? { seq: 0 })
 					? ("released" as const)
 					: ("consumed" as const),
@@ -247,7 +282,12 @@ function normalizeState(
 		// whatever form the task restores into.
 		flow:
 			form === "interrupted"
-				? { phase: "paused" }
+				? {
+						phase: "paused",
+						...(snapshot.flow.pendingQueueResponse
+							? { pendingQueueResponse: snapshot.flow.pendingQueueResponse }
+							: {}),
+					}
 				: { ...snapshot.flow, compaction: expireAbandonedCompaction(snapshot.flow.compaction, "compaction_interrupted") },
 		turn: {
 			...snapshot.turn,
@@ -474,7 +514,7 @@ export function hydrate(input: HydrateInput): HydrateResult {
 	if (unusable) return hydrateWithoutSnapshot(input, unusable)
 	const snapshot = input.openReason === "checkpoint_restore" ? rewoundSnapshot(input.snapshot) : input.snapshot
 	const form = classify(snapshot)
-	const normalized = normalizeState(snapshot, form)
+	const normalized = normalizeState(snapshot, form, input.queueSettlements)
 	const commands = form === "consumed" ? [] : initialCommands(normalized.state)
 	return {
 		kind: "ready",

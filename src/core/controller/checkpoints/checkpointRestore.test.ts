@@ -3,10 +3,7 @@ import { CheckpointRestoreRequest } from "@shared/proto/dline/checkpoints"
 import { describe, expect, it, vi } from "vitest"
 import { checkpointRestore } from "./checkpointRestore"
 
-/**
- * Chat restore cancels the live turn through the Task facade; the checkpoint
- * owner performs the file restore. Both are observed separately here.
- */
+/** The checkpoint owner, not the RPC boundary, owns validation and runtime fencing. */
 function createController() {
 	const cancel = vi.fn(async () => ({ kind: "accepted" as const }))
 	const restoreCheckpoint = vi.fn().mockResolvedValue({})
@@ -45,16 +42,19 @@ describe("checkpointRestore controller", () => {
 			}),
 		)
 
-		expect(cancel).toHaveBeenCalledOnce()
+		expect(cancel).not.toHaveBeenCalled()
 		expect(restoreCheckpoint).toHaveBeenCalledWith(42, "task", undefined, undefined)
 	})
 
-	it.each(["task", "taskAndWorkspace"] as const)("interrupts runtime before %s restore", async (restoreType) => {
+	it.each([
+		"task",
+		"taskAndWorkspace",
+	] as const)("delegates %s restore without a separate cancel lifecycle", async (restoreType) => {
 		const { controller, cancel, restoreCheckpoint } = createController()
 
 		await checkpointRestore(controller as never, CheckpointRestoreRequest.create({ number: 42, restoreType }))
 
-		expect(cancel).toHaveBeenCalledOnce()
+		expect(cancel).not.toHaveBeenCalled()
 		expect(restoreCheckpoint).toHaveBeenCalledWith(42, restoreType, undefined, undefined)
 	})
 })

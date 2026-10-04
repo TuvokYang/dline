@@ -93,7 +93,7 @@ describe("TaskSessionCompositionService", () => {
 			if (stage === "host factory") throw failure
 			return {
 				browser: { dispose: browserDispose },
-				commands: { dispose: commandsDispose },
+				commands: { dispose: commandsDispose, bindBackgroundCommandSettlement: vi.fn() },
 				releases: [{ release: hostRelease }],
 				// Fail after acquisition, not in a mock of the whole composition.
 				get services() {
@@ -109,7 +109,7 @@ describe("TaskSessionCompositionService", () => {
 				getTaskCacheRef: () => ({ mode: "act" }),
 				getApiConfigurationForTask: () => ({}),
 			} as never,
-			prompt: {} as never,
+			prompt: { ports: { promptContext: {} } } as never,
 			hostFactory: { create },
 			publishState: async () => undefined,
 		}

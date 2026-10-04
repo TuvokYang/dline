@@ -5,8 +5,10 @@ import {
 	type ConfigurableCeilings,
 	type PermissionScopeContext,
 	resolveApprovalKind,
-} from "../../kernel/turn/approval-kind"
-import { resolveToolLanes, type ToolLane, type ToolLaneContext } from "../../kernel/turn/tool-lanes"
+	resolveToolLanes,
+	type ToolLane,
+	type ToolLaneContext,
+} from "../../kernel"
 
 /**
  * Two-phase tool admission.

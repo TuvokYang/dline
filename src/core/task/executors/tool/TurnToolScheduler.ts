@@ -68,6 +68,13 @@ export class TurnToolScheduler {
 		this.active = undefined
 	}
 
+	/** Release the completed turn without allowing a stale retire to cancel its successor. */
+	retireTurn(turnId: string): void {
+		if (this.active?.turnId !== turnId) return
+		this.active.pool.cancelAll()
+		this.active = undefined
+	}
+
 	/** Re-run admission after the configured ceiling changed. */
 	notifyLimitChanged(): void {
 		this.active?.pool.notifyLimitChanged()

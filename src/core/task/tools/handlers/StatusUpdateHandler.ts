@@ -75,7 +75,14 @@ export class StatusUpdateHandler implements IToolHandler, IPartialBlockHandler {
 			// The note typed with Acknowledge or Stop is the user's own message, so it
 			// is shown in the chat just as a follow-up reply is.
 			if (outcome.draft?.text?.trim() || outcome.draft?.images.length || outcome.draft?.files.length) {
-				await sayFeedbackOnce(config, "messageResponse", outcome.draft.text, outcome.draft.images, outcome.draft.files)
+				await sayFeedbackOnce(
+					config,
+					"messageResponse",
+					outcome.draft.text,
+					outcome.draft.images,
+					outcome.draft.files,
+					outcome,
+				)
 			}
 			if (outcome.actionId === "stop") {
 				return formatResponse.toolResult(`[STATUS_UPDATE] User chose to stop.${feedback} Wait for further instructions.`)

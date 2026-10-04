@@ -4,11 +4,12 @@ import type { ToolUse } from "@core/assistant-message"
 import type { StateManager } from "@core/storage/StateManager"
 import { isMultiRootEnabled } from "@core/workspace/multi-root-utils"
 import type { WorkspaceRootManager } from "@core/workspace/WorkspaceRootManager"
-import type { ClineExtensionContext } from "@shared/cline/context"
 import { resolveMaxParallelSubagents } from "@shared/concurrency-limits"
 import type { TaskCapabilityToggles } from "@shared/TaskCapabilityToggles"
 import { ClineDefaultTool } from "@shared/tools"
 import type { TaskActivityStore } from "../activity/TaskActivityStore"
+import type { BackgroundResultDeliveryPort } from "../background/BackgroundResultDeliveryPort"
+import type { PeerTaskSpawnPort } from "../executors/spawn/PeerTaskSpawnPort"
 import {
 	materializeToolInvocation,
 	type ProductionToolConfigFactory,
@@ -42,6 +43,7 @@ export interface TaskToolExecutionOwnerOptions {
 	readonly messages: MessageStateHandler
 	readonly payloads: TaskPayloadStore
 	readonly activities: TaskActivityStore
+	readonly backgroundResults: BackgroundResultDeliveryPort
 	readonly api: TaskApiHandlerOwner
 	readonly toolState: DefaultToolHandlerState
 	readonly services: TaskServices
@@ -53,7 +55,7 @@ export interface TaskToolExecutionOwnerOptions {
 	readonly readTurnAuthority: (turnId: string | undefined) => ExplicitInstructionConsumePort | undefined
 	readonly workspaceManager?: WorkspaceRootManager
 	readonly providerRequestRounds?: ProviderRequestRoundPort
-	readonly controllerContext?: ClineExtensionContext
+	readonly peerTaskSpawner: PeerTaskSpawnPort
 	readonly terminalExecutionMode: "vscodeTerminal" | "backgroundExec"
 	readonly toolRuntime: ProductionToolHandlerRuntime
 }
@@ -181,8 +183,9 @@ export class TaskToolExecutionOwner implements ProductionToolConfigFactory {
 			coordinator: input.coordinator,
 			identityFactory: this.identities,
 			activityStore: this.options.activities,
+			backgroundResults: this.options.backgroundResults,
 			providerRequestRounds: this.options.providerRequestRounds,
-			controllerContext: this.options.controllerContext,
+			peerTaskSpawner: this.options.peerTaskSpawner,
 			subagentJobManager: this.subagentJobManager,
 			subagentFanoutBudget: this.subagentFanoutBudget,
 		}

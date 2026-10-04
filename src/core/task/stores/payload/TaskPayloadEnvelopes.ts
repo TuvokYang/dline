@@ -2,7 +2,13 @@ import type { SemanticInputDocument } from "@shared/input-semantics/document"
 import type { ClineAssistantContent, ClineStorageMessage } from "@shared/messages/content"
 import type { ClineMessageModelInfo } from "@shared/messages/metrics"
 import type { ExplicitInstructionDeclaration } from "../../explicit-instructions/types"
-import type { JournalWatermark, ProviderTurnApproval, ProviderTurnPlan, TurnContinuationReason } from "../../kernel"
+import type {
+	JournalWatermark,
+	ProviderTurnApproval,
+	ProviderTurnPlan,
+	ToolTerminalPhase,
+	TurnContinuationReason,
+} from "../../kernel"
 
 /**
  * A lifecycle command the user placed, carried with the input that named it.
@@ -23,6 +29,7 @@ export interface UserInputEnvelope {
 	readonly text?: string
 	readonly images?: readonly string[]
 	readonly files?: readonly string[]
+	readonly activeQuote?: string
 	readonly context?: string
 	/** The submitted structure, kept so a later stage addresses nodes by identity. */
 	readonly semanticInput?: SemanticInputDocument
@@ -108,6 +115,18 @@ export interface BackgroundResultsEnvelope {
 	readonly text: string
 }
 
+/** A least-authority message copied between two live task payload stores. */
+export interface CoTaskMessageEnvelope {
+	readonly kind: "cotask_message"
+	readonly text: string
+	readonly source: {
+		readonly taskId: string
+		readonly taskIncarnationId: string
+		readonly principalId: string
+		readonly deliveryId: string
+	}
+}
+
 export interface ProviderPartialEnvelope {
 	readonly kind: "provider_partial"
 	readonly text: string
@@ -173,6 +192,20 @@ export interface ToolResultEnvelope {
 	readonly blockId: string
 	readonly content: string
 	readonly failed?: boolean
+}
+
+export interface ToolTerminalManifestEnvelope {
+	readonly kind: "tool_terminal_manifest"
+	readonly turnId: string
+	readonly results: readonly {
+		readonly blockId: string
+		readonly phase: ToolTerminalPhase
+		readonly content: string
+		readonly failed?: boolean
+		readonly feedbackRef?: string
+	}[]
+	/** Raw result and approval-feedback payloads replaced by this ordered projection. */
+	readonly supersededPayloadRefs: readonly string[]
 }
 
 /**

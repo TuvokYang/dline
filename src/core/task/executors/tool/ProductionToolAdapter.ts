@@ -80,7 +80,7 @@ async function persistApprovalFeedback(options: ProductionToolAdapterOptions, co
 		operationId: `tool.approval_feedback:${command.commandId}`,
 		payloadRef: await options.payloads.put(encodeTaskPayload(envelope)),
 		source: "dialog",
-		causation: { commandId: command.commandId, turnId: command.turnId },
+		causation: { commandId: command.commandId, turnId: command.turnId, interactionId: command.dlineTid },
 	})
 }
 

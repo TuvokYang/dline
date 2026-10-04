@@ -32,15 +32,17 @@ export class TaskInputMaterializer {
 	) {}
 
 	async materialize(envelope: Omit<UserInputEnvelope, "kind">, mode: TaskInput["mode"] = "queued"): Promise<TaskInput> {
-		const admitted = await this.review(envelope)
 		return {
 			entryId: this.identity.nextEntryId(),
 			sequence: this.identity.nextSequence(),
 			mode,
-			payloadRef: await this.payloads.put(
-				encodeTaskPayload<UserInputEnvelope>({ kind: "user_input", ...envelope, ...admitted }),
-			),
+			payloadRef: await this.materializePayload(envelope),
 		}
+	}
+
+	async materializePayload(envelope: Omit<UserInputEnvelope, "kind">): Promise<string> {
+		const admitted = await this.review(envelope)
+		return this.payloads.put(encodeTaskPayload<UserInputEnvelope>({ kind: "user_input", ...envelope, ...admitted }))
 	}
 
 	/** Refusing here keeps a rejected submission out of the journal entirely. */

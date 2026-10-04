@@ -23,12 +23,19 @@ import type {
  * still the tool's result, so it has to be recorded as that result rather than
  * as new input the model would read as an unrelated message.
  */
-const RESTORED_TOOL_DIALOG_KINDS: ReadonlySet<string> = new Set(["followup", "status_acknowledgment"])
+const RESTORED_TOOL_DIALOG_KINDS: ReadonlySet<string> = new Set([
+	"followup",
+	"make_plan",
+	"qna_response",
+	"generate_report",
+	"status_acknowledgment",
+	"completion",
+])
 
 export interface RestoredToolDialogPorts {
 	readonly state: () => Readonly<TaskState>
 	readonly payloads: Pick<TaskPayloadStore, "read" | "put">
-	readonly journal: Pick<ConversationJournal, "append">
+	readonly journal: Pick<ConversationJournal, "append" | "findByOperation" | "read">
 	readonly messages: Pick<
 		MessageStateHandler,
 		"clineMessages" | "addToClineMessages" | "updateClineMessage" | "flushMessageUpdate"
@@ -72,18 +79,21 @@ export class RestoredToolDialogContinuation implements UnownedDialogContinuation
 	accepts(resolution: UnownedDialogResolution): boolean {
 		// Stop is accepted here even though it ends a generic dialog: for a
 		// restored tool it is still the tool's answer, which the model must see.
-		return this.restoredBlock(resolution) !== undefined || this.fallback.accepts(resolution)
+		return this.restoredBlock(resolution) !== undefined || (!resolution.queuedInput && this.fallback.accepts(resolution))
 	}
 
-	async continue(resolution: UnownedDialogResolution): Promise<UnownedDialogOutcome> {
+	async prepare(resolution: UnownedDialogResolution): Promise<boolean> {
 		const block = this.restoredBlock(resolution)
-		if (!block) return this.fallback.continue(resolution)
+		if (!block) return !resolution.queuedInput
 		try {
 			const invocation = decodeTaskPayload<ToolInvocationEnvelope>(await this.ports.payloads.read(block.invocationRef))
 			const kind = invocation.kind === "tool_invocation" ? interactionKindForToolName(invocation.toolName) : undefined
-			if (!kind) return this.fallback.continue(resolution)
+			if (!kind || kind !== resolution.kind || invocation.dlineTid !== block.blockId) return false
+			await this.present(resolution, resolution.outcome.draft)
+			const turnId = this.ports.state().turn.turnId
+			const operationId = `tool.restored_result:${turnId ?? "none"}:${block.blockId}`
+			if (await this.hasResult(operationId, turnId, block.blockId)) return true
 			const draft = resolution.outcome.draft
-			await this.present(resolution, draft)
 			const result = await projectInteractionContinuation({
 				kind,
 				functionId: invocation.functionId,
@@ -96,23 +106,47 @@ export class RestoredToolDialogContinuation implements UnownedDialogContinuation
 				blockId: invocation.dlineTid,
 				content: serializeDurableToolResult(result, toolResultReplayOf(invocation)),
 			}
-			const turnId = this.ports.state().turn.turnId
+			const payloadRef = await this.ports.payloads.put(encodeTaskPayload(envelope))
+			if (resolution.isCurrent && !resolution.isCurrent()) return false
 			await this.ports.journal.append({
-				operationId: `tool.restored_result:${turnId ?? "none"}:${block.blockId}`,
-				payloadRef: await this.ports.payloads.put(encodeTaskPayload(envelope)),
+				operationId,
+				payloadRef,
 				source: "tool",
 				causation: { ...(turnId === undefined ? {} : { turnId }), interactionId: resolution.interactionId },
 			})
-			await this.resumption.submit(await this.resumption.materialize({}))
+			return true
+		} catch (error) {
+			Logger.error(`Failed to prepare restored tool interaction ${resolution.interactionId}`, error)
+			return false
+		}
+	}
+
+	async continue(resolution: UnownedDialogResolution): Promise<UnownedDialogOutcome> {
+		if (!this.restoredBlock(resolution)) return resolution.queuedInput ? "declined" : this.fallback.continue(resolution)
+		try {
+			if (!(await this.prepare(resolution))) return "failed"
+			const input = await this.resumption.materialize({})
+			if (resolution.isCurrent && !resolution.isCurrent()) return "declined"
+			await this.resumption.submit(input)
 			return "continued"
 		} catch (error) {
-			Logger.error(
-				`Failed to continue restored tool interaction ${resolution.interactionId}: ${
-					error instanceof Error ? error.message : error
-				}`,
-			)
+			Logger.error(`Failed to continue restored tool interaction ${resolution.interactionId}`, error)
 			return "failed"
 		}
+	}
+
+	/** The live runner may have journaled its result just before the process died. */
+	private async hasResult(operationId: string, turnId: string | undefined, blockId: string): Promise<boolean> {
+		if (await this.ports.journal.findByOperation(operationId)) return true
+		const state = this.ports.state()
+		const lowerBound = state.dialog.primary?.journalWatermark ?? state.journalWatermark
+		for (const entry of await this.ports.journal.read(lowerBound)) {
+			if (entry.kind !== "message" || entry.source !== "tool" || !entry.payloadRef || entry.causation?.turnId !== turnId)
+				continue
+			const payload = decodeTaskPayload<ToolResultEnvelope>(await this.ports.payloads.read(entry.payloadRef))
+			if (payload.kind === "tool_result" && payload.blockId === blockId) return true
+		}
+		return false
 	}
 
 	/** The cancelled block a restored tool dialog belongs to, if this is one. */
@@ -136,11 +170,14 @@ export class RestoredToolDialogContinuation implements UnownedDialogContinuation
 				await this.publish(messages.clineMessages[index])
 			}
 		}
-		if (!draft?.text && !draft?.images.length && !draft?.files.length) return
+		if (resolution.outcome.feedbackPresented || (!draft?.text && !draft?.images.length && !draft?.files.length)) return
+		const interactionId = `tool-feedback:${resolution.interactionId}`
+		if (messages.clineMessages.some((message) => message.interactionId === interactionId)) return
 		await messages.addToClineMessages({
 			ts: this.ports.nextPresentationId(),
 			type: "say",
 			say: "user_feedback",
+			interactionId,
 			text: draft?.text ?? "",
 			images: [...(draft?.images ?? [])],
 			files: [...(draft?.files ?? [])],

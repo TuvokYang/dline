@@ -4,10 +4,8 @@ import { readContextTokens } from "@core/context/context-management/context-pres
 import { getContextWindowInfo } from "@core/context/context-management/context-window-utils"
 import type { FileContextTracker, RecentlyModifiedFilesSnapshot } from "@core/context/context-tracking/FileContextTracker"
 import type { IgnoreController } from "@core/ignore/IgnoreController"
-import { OrchestratorController } from "@core/orchestrator/OrchestratorController"
 import { PromptProfile } from "@core/prompts/profiles/types"
 import { formatResponse } from "@core/prompts/responses"
-import { buildActiveTasksSection } from "@core/task/active-tasks/ActiveTaskContextProvider"
 import {
 	type BackgroundSubagentProvider,
 	buildTaskBackgroundEnvironmentSection,
@@ -29,9 +27,9 @@ import { resolvePromptProfile } from "@shared/resolve-prompt-profile"
 import type { Mode } from "@shared/storage/types"
 import { arePathsEqual, getDesktopDir } from "@utils/path"
 import { filterExistingFiles } from "@utils/tabFiltering"
-import { HostProvider } from "@/hosts/host-provider"
 import type { CommandExecutor } from "@/integrations/terminal"
 import type { StateManager } from "../../storage/StateManager"
+import type { TaskEnvironmentHost } from "../composition/TaskSessionPorts"
 
 interface EnvironmentIdentity {
 	readonly taskId: string
@@ -74,6 +72,7 @@ interface EnvironmentTracking {
 
 export interface TaskEnvironmentProjectionOptions {
 	readonly identity: EnvironmentIdentity
+	readonly host: TaskEnvironmentHost
 	readonly workspace: EnvironmentWorkspace
 	readonly runtime: EnvironmentRuntime
 	readonly conversation: EnvironmentConversation
@@ -123,7 +122,7 @@ export class TaskEnvironmentProjection {
 		requestPromptProfile?: PromptProfile,
 		buildOptions: EnvironmentDetailsOptions = {},
 	): Promise<string> {
-		const host = await HostProvider.env.getHostVersion({})
+		const host = await this.options.host.getHostVersion()
 		const effectiveApi = buildOptions.api ?? this.options.runtime.getApi()
 		const effectiveMode = buildOptions.mode ?? this.options.runtime.getMode()
 		const platform = host.platform || "Unknown"
@@ -160,12 +159,12 @@ export class TaskEnvironmentProjection {
 	}
 
 	private async visibleFilesSection(platform: string): Promise<string> {
-		const raw = (await HostProvider.window.getVisibleTabs({})).paths
+		const raw = await this.options.host.getVisibleFiles()
 		return this.pathSection(platform, "Visible Files", raw)
 	}
 
 	private async openTabsSection(platform: string): Promise<string> {
-		const raw = (await HostProvider.window.getOpenTabs({})).paths
+		const raw = await this.options.host.getOpenTabs()
 		return this.pathSection(platform, "Open Tabs", raw)
 	}
 
@@ -181,8 +180,7 @@ export class TaskEnvironmentProjection {
 
 	private activeTasksSection(): string {
 		if (this.options.workspace.stateManager.getGlobalSettingsKey("showActiveTasksInEnvDetails") === false) return ""
-		const section = buildActiveTasksSection({
-			controllers: OrchestratorController.getInstance().getActiveControllers(),
+		const section = this.options.host.buildActiveTasksSection({
 			currentCwd: this.options.identity.cwd,
 			excludeTaskId: this.options.identity.taskId,
 		})

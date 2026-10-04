@@ -9,38 +9,6 @@ import { DefaultToolHandlerState } from "../../state/ToolHandlerState"
 import type { TaskConfig } from "../../types/TaskConfig"
 import { SpawnTaskHandler } from "../SpawnTaskHandler"
 
-const spawnMocks = vi.hoisted(() => ({
-	createPanel: vi.fn(async () => undefined),
-	disposePanel: vi.fn(async () => undefined),
-	initTask: vi.fn(),
-	clearTask: vi.fn(async () => undefined),
-	disposeController: vi.fn(async () => undefined),
-	recordSpawn: vi.fn(),
-	spawnTask: vi.fn(),
-}))
-
-vi.mock("@/hosts/vscode/VscodeWebviewPanelProvider", () => ({
-	VscodeWebviewPanelProvider: class {
-		readonly controller = {
-			initTask: spawnMocks.initTask,
-			clearTask: spawnMocks.clearTask,
-			dispose: spawnMocks.disposeController,
-		}
-
-		createPanel = spawnMocks.createPanel
-		dispose = spawnMocks.disposePanel
-	},
-}))
-
-vi.mock("@/core/orchestrator/OrchestratorController", () => ({
-	OrchestratorController: {
-		getInstance: () => ({
-			recordSpawn: spawnMocks.recordSpawn,
-			spawnTask: spawnMocks.spawnTask,
-		}),
-	},
-}))
-
 function createTaskState(consecutiveMistakeCount = 0): DefaultToolHandlerState {
 	const state = new DefaultToolHandlerState()
 	state.consecutiveMistakeCount = consecutiveMistakeCount
@@ -154,20 +122,7 @@ describe("SpawnTaskHandler", () => {
 			["plan", "parent-plan-profile"],
 			["act", "parent-act-profile"],
 		] as const)("starts the child in %s mode without waiting for its task loop", async (requestedMode, expectedProfile) => {
-			const neverCompletes = new Promise<void>(() => undefined)
-			spawnMocks.initTask.mockImplementation(async (...args: unknown[]) => {
-				const options = args[5] as
-					| {
-							startInBackground?: boolean
-							beforeStart?: (taskId: string) => Promise<void> | void
-					  }
-					| undefined
-				if (options?.startInBackground !== true) {
-					await neverCompletes
-				}
-				await options?.beforeStart?.("child-1")
-				return "child-1"
-			})
+			const spawn = vi.fn(async () => ({ childTaskId: "child-1" }))
 			const config = {
 				taskId: "parent-1",
 				mode: "plan",
@@ -181,7 +136,7 @@ describe("SpawnTaskHandler", () => {
 						}),
 					},
 				},
-				controllerContext: {},
+				peerTaskSpawner: { spawn },
 			} as unknown as TaskConfig
 
 			const execution = handler.execute(config, {
@@ -197,19 +152,19 @@ describe("SpawnTaskHandler", () => {
 			expect(result).not.toBe("SPAWN_BLOCKED")
 			expect(result).toContain(`${requestedMode.toUpperCase()} task`)
 			expect(result).toContain("child-1")
-			expect(spawnMocks.initTask).toHaveBeenCalledWith(
-				"Background child",
-				undefined,
-				undefined,
-				undefined,
-				{ planModeProfile: expectedProfile, actModeProfile: expectedProfile, mode: requestedMode },
-				expect.objectContaining({ startInBackground: true }),
-			)
-			expect(spawnMocks.recordSpawn).toHaveBeenCalledWith("parent-1", "child-1")
+			expect(spawn).toHaveBeenCalledWith({
+				task: "Background child",
+				mode: requestedMode,
+				profile: expectedProfile,
+				context: "Context",
+				signal: config.taskState.operationSignal,
+			})
 		})
 
-		it("disposes the new panel when child initialization fails", async () => {
-			spawnMocks.initTask.mockRejectedValueOnce(new Error("init failed"))
+		it("reports an error when the host-owned peer spawner fails", async () => {
+			const spawn = vi.fn(async () => {
+				throw new Error("init failed")
+			})
 			const config = {
 				taskId: "parent-1",
 				mode: "plan",
@@ -223,7 +178,7 @@ describe("SpawnTaskHandler", () => {
 						getGlobalSettingsKey: () => "plan",
 					},
 				},
-				controllerContext: {},
+				peerTaskSpawner: { spawn },
 			} as unknown as TaskConfig
 
 			const result = await handler.execute(config, {
@@ -233,7 +188,7 @@ describe("SpawnTaskHandler", () => {
 			} as unknown as ToolUse)
 
 			expect(result).toMatch(/init failed/i)
-			expect(spawnMocks.disposePanel).toHaveBeenCalledOnce()
+			expect(spawn).toHaveBeenCalledOnce()
 		})
 	})
 
@@ -250,7 +205,7 @@ describe("SpawnTaskHandler", () => {
 					say: async () => {},
 				},
 				services: { stateManager: {} },
-				controllerContext: undefined,
+				peerTaskSpawner: undefined,
 			} as unknown as TaskConfig
 
 			const result = await handler.execute(config, {

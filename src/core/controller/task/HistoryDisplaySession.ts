@@ -1,21 +1,23 @@
 import type { TaskViewState, UiMessage } from "@shared/ExtensionMessage"
 import type { HistoryItem } from "@shared/HistoryItem"
+import type { QueuedInputEntry } from "@shared/InputQueue"
 import type { DispatchInteractionRequest } from "@shared/proto/dline/task"
 import { Logger } from "@shared/services/Logger"
-import { resolveInstanceLayout } from "@/core/storage/instance"
+import { InstanceDatabase, instanceDatabaseExists, openInstanceStorage, resolveInstanceLayout } from "@/core/storage/instance"
 import { UIMessage } from "@/core/storage/UIMessage"
 import type { UIMessageWindowPage, UIMessageWindowReader } from "@/core/storage/UIMessageWindowReader"
 import { TaskActivityPersistence } from "@/core/task/activity/TaskActivityPersistence"
 import { TaskActivityStore } from "@/core/task/activity/TaskActivityStore"
 import { getInteraction } from "@/core/task/interaction/InteractionRegistry"
 import type { TaskState } from "@/core/task/kernel"
-import { FileTaskStateVault } from "@/core/task/stores"
+import { FileTaskStateVault, openTaskPayloadStore } from "@/core/task/stores"
 import { TaskPhase } from "@/core/task/TaskPhase"
 import { projectCanonicalTaskView } from "@/core/task/view/canonical/projectCanonicalTaskView"
 import {
 	type HistoryDisplayInteractionKind,
 	projectHistoryDisplayState,
 } from "@/core/task/view/canonical/projectHistoryDisplayState"
+import { materializeCanonicalInputQueue } from "@/core/task/view/materializeCanonicalInputQueue"
 import { projectHistoryPreparingView } from "./history-task-readiness"
 import { adaptCanonicalTaskView } from "./TaskViewMessageAdapter"
 
@@ -29,6 +31,7 @@ import { adaptCanonicalTaskView } from "./TaskViewMessageAdapter"
  * and the Controller promotes the session into a real Task.
  */
 const HISTORY_MESSAGE_WINDOW_SIZE = 200
+const HISTORY_INPUT_QUEUE_READER = "history-input-queue-reader"
 
 export class HistoryDisplaySession {
 	readonly activityStore: TaskActivityStore
@@ -44,6 +47,7 @@ export class HistoryDisplaySession {
 	private durableMessageCount = 0
 	private syntheticMessage?: UiMessage
 	private taskTitleMessage?: UiMessage
+	private inputQueue: QueuedInputEntry[] = []
 	private viewState: TaskViewState
 	private locked = false
 	private loaded = false
@@ -81,12 +85,14 @@ export class HistoryDisplaySession {
 			])
 			if (this.disposed) return
 
-			const projected = this.projectSnapshot(snapshot, durableMessages)
+			const inputQueue = await this.readInputQueue(snapshot)
 			if (this.disposed) return
+			const projected = this.projectSnapshot(snapshot, durableMessages)
 			this.durableMessageCount = reader.count
 			this.syntheticMessage = projected.syntheticMessage
 			this.messages = projected.messages
 			this.taskTitleMessage = taskTitlePage.messages[0]
+			this.inputQueue = [...inputQueue]
 			this.viewState = projected.view
 			this.loaded = true
 		} catch (error) {
@@ -107,6 +113,11 @@ export class HistoryDisplaySession {
 
 	getTaskTitleMessage(): UiMessage | undefined {
 		return this.taskTitleMessage
+	}
+
+	/** Retained input projected from the same immutable snapshot as the history interaction. */
+	getInputQueue(): readonly QueuedInputEntry[] {
+		return this.inputQueue
 	}
 
 	async fetchMessages(referenceIndex: number, count: number): Promise<UIMessageWindowPage> {
@@ -179,6 +190,7 @@ export class HistoryDisplaySession {
 		this.messages = []
 		this.syntheticMessage = undefined
 		this.taskTitleMessage = undefined
+		this.inputQueue = []
 		this.durableMessageCount = 0
 		await Promise.all([reader?.close(), this.releaseActivities()])
 	}
@@ -207,6 +219,29 @@ export class HistoryDisplaySession {
 			return (await new FileTaskStateVault(layout.stateFile).load(this.taskId))?.state
 		} catch {
 			return undefined
+		}
+	}
+
+	private async readInputQueue(snapshot: TaskState | undefined): Promise<readonly QueuedInputEntry[]> {
+		const hasVisibleInput = snapshot?.intake.queued.some(
+			(entry) =>
+				entry.source === "user" &&
+				entry.queue !== undefined &&
+				(entry.state === "accepted" || entry.state === "released"),
+		)
+		if (!snapshot || !hasVisibleInput) return []
+
+		const layout = await resolveInstanceLayout({ taskId: this.taskId })
+		if (!(await instanceDatabaseExists(layout, InstanceDatabase.Journal))) return []
+		const storage = openInstanceStorage(layout.root)
+		try {
+			const database = await storage.openDatabase(InstanceDatabase.Journal, HISTORY_INPUT_QUEUE_READER)
+			return await materializeCanonicalInputQueue(snapshot, await openTaskPayloadStore(database))
+		} catch (error) {
+			Logger.warn(`[HistoryDisplay] Failed to read retained input for task ${this.taskId}:`, error)
+			return []
+		} finally {
+			await storage.close()
 		}
 	}
 

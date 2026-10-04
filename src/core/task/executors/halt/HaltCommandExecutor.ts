@@ -48,49 +48,14 @@ export class HaltCommandExecutor implements CommandExecutor {
 		return operation
 	}
 
-	/**
-	 * Retire the fences once the stop has settled, under the stop's own deadline.
-	 *
-	 * The drains are awaited a second time here because a receipt only says the
-	 * stop was reported, not that the participant stopped publishing. The wait
-	 * must use the same bound as the receipts: awaiting without one made a single
-	 * participant that never drains outlive a halt the kernel had already
-	 * completed, so the caller waited forever and every later lifecycle operation
-	 * queued behind it.
-	 *
-	 * A participant that misses the deadline keeps its fence. It is still running,
-	 * and clearing the fence would let its output reach a task that has stopped.
-	 */
+	/** Retire fences only after every participant has really stopped publishing. */
 	async rearm(haltId: string): Promise<void> {
-		const stalled = await this.settleDrains(this.quiescence.get(haltId))
-		for (const participant of this.participants.values()) {
-			if (stalled.has(participant.id)) continue
-			participant.rearm?.(haltId)
-		}
+		const drains = this.quiescence.get(haltId)
+		if (drains) await Promise.allSettled(drains.values())
+		for (const participant of this.participants.values()) participant.rearm?.(haltId)
 		this.operations.delete(haltId)
 		this.quiescence.delete(haltId)
 		this.completedHaltIds.delete(haltId)
-	}
-
-	/** The participants that were still draining when the deadline expired. */
-	private async settleDrains(drains: ReadonlyMap<ParticipantId, Promise<void>> | undefined): Promise<Set<ParticipantId>> {
-		const stalled = new Set<ParticipantId>()
-		if (!drains) return stalled
-		await Promise.all(
-			[...drains].map(async ([participantId, drain]) => {
-				try {
-					await this.withTimeout(drain)
-				} catch (error) {
-					// A drain that rejected has stopped, just badly, and its receipt
-					// already reported that. Only an unmet deadline means the
-					// participant is still live and must stay fenced.
-					if (!isDeadlineMiss(error)) return
-					stalled.add(participantId)
-					this.onParticipantFailure(participantId, error)
-				}
-			}),
-		)
-		return stalled
 	}
 
 	private async run(command: HaltStopCommand): Promise<void> {
@@ -131,11 +96,17 @@ export class HaltCommandExecutor implements CommandExecutor {
 					await this.failed(command, participantId, fenceFailure)
 					return
 				}
+				const drain = drains.get(participantId)!
 				try {
-					await this.withTimeout(drains.get(participantId)!)
+					await this.withTimeout(drain)
 					await this.receipt(command, participantId, "halt.halted")
 				} catch (error) {
-					await this.failed(command, participantId, error)
+					if (isDeadlineMiss(error)) {
+						await this.timedOut(command, participantId, error)
+						this.observeLateSettlement(command, participantId, drain)
+					} else {
+						await this.failed(command, participantId, error)
+					}
 				}
 			}),
 		)
@@ -157,6 +128,25 @@ export class HaltCommandExecutor implements CommandExecutor {
 		} finally {
 			if (timer) clearTimeout(timer)
 		}
+	}
+
+	private async timedOut(command: HaltStopCommand, participantId: ParticipantId, error: unknown): Promise<void> {
+		this.onParticipantFailure(participantId, error)
+		const result = await this.events.submit({
+			type: "lifecycle.halt_timeout",
+			generation: command.generation,
+			haltId: command.haltId,
+			participantId,
+			message: error instanceof Error ? error.message : String(error),
+		})
+		if (result.kind === "rejected") throw new Error(executorFailure(`halt.${participantId}`, new Error("TimeoutRejected")))
+	}
+
+	private observeLateSettlement(command: HaltStopCommand, participantId: ParticipantId, drain: Promise<void>): void {
+		void drain
+			.then(() => this.receipt(command, participantId, "halt.halted"))
+			.catch((error) => this.failed(command, participantId, error))
+			.catch((error) => this.onParticipantFailure(participantId, error))
 	}
 
 	private async failed(command: HaltStopCommand, participantId: ParticipantId, error: unknown): Promise<void> {

@@ -160,7 +160,7 @@ function checkpointPorts(snapshot: TaskState): CheckpointRestorePorts & { readon
 		stopAndFence: vi.fn(async () => void calls.push("stop")),
 		resolve: vi.fn(async () => {
 			calls.push("resolve")
-			return { snapshot, boundary: { seq: 4 }, workspaceRef: "workspace:1" }
+			return { snapshot: { state: snapshot, outbox: [] }, boundary: { seq: 4 }, workspaceRef: "workspace:1" }
 		}),
 		restoreWorkspace: vi.fn(async () => {
 			calls.push("workspace")

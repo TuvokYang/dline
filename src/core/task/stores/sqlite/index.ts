@@ -1,6 +1,8 @@
-export { CommandPublicationRow, JournalEntryRow, PayloadRow } from "./entities"
+export { BackgroundDeliveryRow, CommandPublicationRow, JournalEntryRow, PayloadRow } from "./entities"
 export {
 	openTaskJournalStores,
+	openTaskPayloadStore,
+	SqliteBackgroundDeliveryLedger,
 	SqliteCommandPublicationStore,
 	SqliteConversationJournal,
 	SqliteTaskPayloadStore,

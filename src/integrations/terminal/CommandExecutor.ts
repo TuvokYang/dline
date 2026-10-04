@@ -36,6 +36,7 @@ import {
 import { StandaloneTerminalManager } from "./standalone/StandaloneTerminalManager"
 import type {
 	BackgroundCommand,
+	BackgroundCommandSettlementListener,
 	CommandCancellationOwner,
 	CommandCancellationResult,
 	CommandExecutionOptions,
@@ -94,6 +95,7 @@ export class CommandExecutor {
 	private readonly cancellationOwners = new Map<string, CommandCancellationOwner>()
 	private readonly cancelledActivityIds = new Set<string>()
 	private readonly pendingHandoffs = new Map<string, { promise: Promise<void>; resolve: () => void }>()
+	private releaseBackgroundCommandSettlement: (() => void) | undefined
 	private readyBackgroundHandoffActivityId: string | undefined
 	private requestedBackgroundHandoffActivityId: string | undefined
 
@@ -919,6 +921,8 @@ export class CommandExecutor {
 	 * unreachable but alive for the remaining lifetime of the extension host.
 	 */
 	async dispose(): Promise<void> {
+		this.releaseBackgroundCommandSettlement?.()
+		this.releaseBackgroundCommandSettlement = undefined
 		this.processes.clear()
 		this.activityIdsByFunctionId.clear()
 		this.functionIdsByActivityId.clear()
@@ -974,25 +978,15 @@ export class CommandExecutor {
 		return this.standaloneManager.getAllBackgroundCommands()
 	}
 
+	/** Route settled detached commands to the task session that owns model delivery. */
+	bindBackgroundCommandSettlement(listener: BackgroundCommandSettlementListener): void {
+		this.releaseBackgroundCommandSettlement?.()
+		this.releaseBackgroundCommandSettlement = this.standaloneManager.bindBackgroundCommandSettlement(listener)
+	}
+
 	/** Read output retained in memory or in the lazily-created background log. */
 	readBackgroundCommandOutput(command: BackgroundCommand): Promise<string> {
 		return this.standaloneManager.readBackgroundCommandOutput(command.id)
-	}
-
-	/**
-	 * Mark background commands as injected into model context.
-	 * @param ids Background command identifiers.
-	 */
-	markBackgroundCommandsInjected(ids: string[]): void {
-		this.standaloneManager.markBackgroundCommandsInjected(ids)
-	}
-
-	/**
-	 * Mark background commands as consumed by a sent model request.
-	 * @param ids Background command identifiers.
-	 */
-	markBackgroundCommandsConsumed(ids: string[]): void {
-		this.standaloneManager.markBackgroundCommandsConsumed(ids)
 	}
 
 	/** Advance output baselines after their Environment metadata reaches the model. */

@@ -96,6 +96,8 @@ export function createSessionFixture(options: SessionFixtureOptions = {}) {
 		payloads: { put: vi.fn(async () => "payload:1"), read: vi.fn(async () => new Uint8Array()) },
 		state: vi.fn(() => state),
 		projectView: vi.fn(() => undefined),
+		stopForCheckpointRestore: vi.fn(async () => ({})),
+		disposeAfterCheckpointRestore: vi.fn(async () => undefined),
 		dispose: vi.fn(async () => undefined),
 		...options.session,
 	}

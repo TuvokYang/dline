@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto"
 import { CheckpointRestoreRequest } from "@shared/proto/dline/checkpoints"
 import { Empty } from "@shared/proto/dline/common"
 import pWaitFor from "p-wait-for"
@@ -22,16 +21,9 @@ export async function checkpointRestore(controller: Controller, request: Checkpo
 			throw error
 		})
 
-		// File-only restore must not alter the active conversation runtime.
-		// Chat restore owns stream termination because it rewinds persisted conversation state.
-		if (request.restoreType !== "workspace") {
-			try {
-				if (controller.task) await controller.task.task.cancel(randomUUID())
-			} catch (error) {
-				Logger.error("[checkpointRestore] interrupt failed (non-fatal):", error)
-			}
-		}
-
+		// The checkpoint owner owns validation, stop/fence and reopen as one transaction.
+		// Pre-cancelling here used the ordinary cancel path, which rearmed executors and
+		// offered a cancelled-resume dialog before the restore had even been validated.
 		await controller.task?.owners.checkpoints?.restoreCheckpoint(
 			request.number,
 			request.restoreType as ClineCheckpointRestore,

@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
 import type { TaskState } from "../../kernel"
 import { createInitialTaskState } from "../../kernel"
-import { deferred } from "../../runtime/deferred"
 import type { TaskPayloadStore } from "../../stores/contracts"
 import { InMemoryConversationJournal } from "../../stores/InMemoryRuntimeStores"
 import { decodeTaskPayload, encodeTaskPayload } from "../../stores/payload/TaskPayloadCodec"
@@ -55,130 +54,118 @@ async function journaledKinds(journal: InMemoryConversationJournal, store: Retur
 }
 
 describe("ProductionComposeAdapter background results", () => {
-	it("delivers finished background work in the round it composes", async () => {
+	it("keeps retained steering order and preserves per-input authority in model-only projections", async () => {
 		const store = payloadStore()
 		const journal = new InMemoryConversationJournal()
-		const entryRef = await store.put(encodeTaskPayload({ kind: "user_input", text: "collect" }))
-		const state = stateWithEntry(entryRef)
-		const commit = vi.fn()
-		const adapter = new ProductionComposeAdapter({
-			payloads: store,
-			journal,
-			readState: () => state,
-			backgroundResults: {
-				collect: vi.fn(async () => ({ text: "# Background Results\n## Background Command Results", commit })),
-			},
-		})
-
-		await adapter.compose({ admittedEntryIds: ["entry-1"], signal: new AbortController().signal })
-
-		const projection = await journal.project()
-		const delivered = projection.visibleMessages
-			.map((entry) => (entry.payloadRef ? store.contents.get(entry.payloadRef) : undefined))
-			.filter((payload): payload is Uint8Array => payload !== undefined)
-			.map((payload) => decodeTaskPayload(payload) as { kind: string; text?: string })
-			.find((payload) => payload.kind === "background_results")
-		expect(delivered?.text).toContain("# Background Results")
-		expect(commit).toHaveBeenCalledOnce()
-	})
-
-	it("journals background results after the round's input and before its environment", async () => {
-		const store = payloadStore()
-		const journal = new InMemoryConversationJournal()
-		const entryRef = await store.put(encodeTaskPayload({ kind: "user_input", text: "collect" }))
-		const state = stateWithEntry(entryRef)
-		const adapter = new ProductionComposeAdapter({
-			payloads: store,
-			journal,
-			readState: () => state,
-			backgroundResults: { collect: async () => ({ text: "# Background Results", commit: vi.fn() }) },
-			environment: { render: async () => "<environment_details>now</environment_details>" },
-		})
-
-		await adapter.compose({ admittedEntryIds: ["entry-1"], signal: new AbortController().signal })
-
-		expect(await journaledKinds(journal, store)).toEqual(["user_input", "background_results", "environment_details"])
-	})
-
-	it("keeps collected results pending when the journal append fails", async () => {
-		const store = payloadStore()
-		const journal = new InMemoryConversationJournal()
-		const append = journal.append.bind(journal)
-		vi.spyOn(journal, "append").mockImplementation(async (entry) => {
-			if (entry.operationId.startsWith("background:")) throw new Error("journal unavailable")
-			return append(entry)
-		})
-		const entryRef = await store.put(encodeTaskPayload({ kind: "user_input", text: "collect" }))
-		const state = stateWithEntry(entryRef)
-		const commit = vi.fn()
-		const adapter = new ProductionComposeAdapter({
-			payloads: store,
-			journal,
-			readState: () => state,
-			backgroundResults: { collect: async () => ({ text: "# Background Results", commit }) },
-		})
-
-		await expect(adapter.compose({ admittedEntryIds: ["entry-1"], signal: new AbortController().signal })).rejects.toThrow(
-			"journal unavailable",
+		const a = await store.put(
+			encodeTaskPayload({
+				kind: "user_input",
+				text: "raw A",
+				admittedText: "expanded A",
+				explicitInstructions: [{ token: "A" }],
+			}),
 		)
-		expect(commit).not.toHaveBeenCalled()
+		const b = await store.put(
+			encodeTaskPayload({
+				kind: "user_input",
+				text: "raw B",
+				admittedText: "expanded B",
+				explicitInstructions: [{ token: "B" }],
+			}),
+		)
+		const base = createInitialTaskState("task-1")
+		const delivery = {
+			deliveryId: "queue:tool_round:compose-1",
+			point: "tool_round" as const,
+			ownerId: "compose-1",
+			generation: 0,
+		}
+		const state: TaskState = {
+			...base,
+			intake: {
+				...base.intake,
+				queued: [
+					{
+						entryId: "a",
+						payloadRef: a,
+						source: "user",
+						mode: "steering",
+						sequence: 1,
+						state: "reserved",
+						queue: { editing: false, delivery },
+					},
+					{
+						entryId: "b",
+						payloadRef: b,
+						source: "user",
+						mode: "steering",
+						sequence: 0,
+						state: "reserved",
+						queue: { editing: false, delivery },
+					},
+				],
+			},
+		}
+		const adapter = new ProductionComposeAdapter({ payloads: store, journal, readState: () => state })
+		const result = await adapter.compose({
+			admittedEntryIds: ["b", "a"],
+			queueDelivery: delivery,
+			signal: new AbortController().signal,
+		})
+		if (!("draftRef" in result)) throw new Error("Missing provider draft")
+		const draft = decodeTaskPayload<{ inputPayloadRefs: string[] }>(await store.read(result.draftRef))
+		const payloads = await Promise.all(
+			draft.inputPayloadRefs.map(async (ref) =>
+				decodeTaskPayload<{ text: string; admittedText: string; explicitInstructions: unknown[] }>(await store.read(ref)),
+			),
+		)
+		expect(payloads.map((payload) => payload.text)).toEqual(["raw B", "raw A"])
+		expect(payloads.map((payload) => payload.explicitInstructions)).toEqual([[{ token: "B" }], [{ token: "A" }]])
+		expect(payloads.map((payload) => payload.admittedText)).toEqual(["expanded B", "expanded A"])
+		expect(decodeTaskPayload<{ admittedText: string }>(await store.read(b)).admittedText).toBe("expanded B")
+		const staged = (await journal.project()).visibleMessages[0]
+		const batch = decodeTaskPayload<{ admittedText: string; retainedInputBatch: { entries: unknown[] } }>(
+			await store.read(staged.payloadRef!),
+		)
+		expect(batch.admittedText).toContain("sent by the user while work was in progress")
+		expect(batch.admittedText.indexOf("expanded B")).toBeLessThan(batch.admittedText.indexOf("expanded A"))
+		expect(batch.retainedInputBatch.entries).toHaveLength(2)
+		expect(result.queueJournalReceipt?.deliveryId).toBe(delivery.deliveryId)
 	})
 
-	it("acknowledges a durable result even when cancellation arrives during its append", async () => {
+	it("carries accepted queue response lifecycle and authority without appending its model text twice", async () => {
 		const store = payloadStore()
 		const journal = new InMemoryConversationJournal()
-		const append = journal.append.bind(journal)
-		const appending = deferred<void>()
-		const persisted = deferred<void>()
-		vi.spyOn(journal, "append").mockImplementation(async (entry) => {
-			if (entry.operationId.startsWith("background:")) {
-				appending.resolve()
-				await persisted.promise
-			}
-			return append(entry)
-		})
-		const entryRef = await store.put(encodeTaskPayload({ kind: "user_input", text: "collect" }))
-		const state = stateWithEntry(entryRef)
-		const commit = vi.fn()
+		const ref = await store.put(
+			encodeTaskPayload({
+				kind: "user_input",
+				text: "/compact audit",
+				admittedText: "",
+				lifecycle: { commandId: "command.compact", premessage: "audit" },
+			}),
+		)
+		const settleBeforeRound = vi.fn(async () => ({ kind: "ready" as const }))
 		const adapter = new ProductionComposeAdapter({
 			payloads: store,
 			journal,
-			readState: () => state,
-			backgroundResults: { collect: async () => ({ text: "# Background Results", commit }) },
-			environment: { render: async () => "environment" },
+			readState: () => createInitialTaskState("task-1"),
+			compactionBarrier: { settleBeforeRound },
 		})
-		const cancellation = new AbortController()
-		const composing = adapter.compose({ admittedEntryIds: ["entry-1"], signal: cancellation.signal })
-		const stopped = expect(composing).rejects.toThrow("round cancelled")
-		await appending.promise
-		expect(commit).not.toHaveBeenCalled()
-
-		cancellation.abort(new Error("round cancelled"))
-		persisted.resolve()
-		await stopped
-
-		expect(commit).toHaveBeenCalledOnce()
-		expect(await journaledKinds(journal, store)).toEqual(["user_input", "background_results"])
-	})
-
-	it("stays silent when no background work finished", async () => {
-		const store = payloadStore()
-		const journal = new InMemoryConversationJournal()
-		const entryRef = await store.put(encodeTaskPayload({ kind: "user_input", text: "plain" }))
-		const state = stateWithEntry(entryRef)
-		const adapter = new ProductionComposeAdapter({
-			payloads: store,
-			journal,
-			readState: () => state,
-			backgroundResults: { collect: async () => undefined },
+		const result = await adapter.compose({
+			admittedEntryIds: [],
+			respondedQueue: { deliveryId: "response-1", mode: "queued", entries: [{ entryId: "a", payloadRef: ref }] },
+			signal: new AbortController().signal,
 		})
-
-		await adapter.compose({ admittedEntryIds: ["entry-1"], signal: new AbortController().signal })
-
-		expect(await journaledKinds(journal, store)).toEqual(["user_input"])
+		expect(settleBeforeRound).toHaveBeenCalledWith(
+			expect.objectContaining({ lifecycle: [{ commandId: "command.compact", premessage: "audit" }] }),
+		)
+		expect(await journaledKinds(journal, store)).toEqual([])
+		if (!("draftRef" in result)) throw new Error("Missing provider draft")
+		expect(decodeTaskPayload<{ inputPayloadRefs: string[] }>(await store.read(result.draftRef)).inputPayloadRefs).toEqual([
+			ref,
+		])
 	})
-
-	it("composes without a background port, as a headless assembly does", async () => {
+	it("composes without a background producer dependency, as a headless assembly does", async () => {
 		const store = payloadStore()
 		const journal = new InMemoryConversationJournal()
 		const entryRef = await store.put(encodeTaskPayload({ kind: "user_input", text: "headless" }))

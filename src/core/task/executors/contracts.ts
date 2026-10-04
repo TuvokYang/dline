@@ -1,7 +1,7 @@
 import { Logger } from "@shared/services/Logger"
 import type { HaltStopCommand, ParticipantId, TaskEvent } from "../kernel"
 
-export type TaskEventSubmission = { readonly kind: "accepted" } | { readonly kind: "rejected" }
+export type TaskEventSubmission = { readonly kind: "accepted"; readonly durable?: Promise<void> } | { readonly kind: "rejected" }
 
 export interface TaskEventSink {
 	submit(event: TaskEvent): Promise<TaskEventSubmission>
@@ -25,8 +25,10 @@ export interface HaltParticipant {
 	rearm?(haltId: string): void
 }
 
-export function isExecutionAbort(_error: unknown, signal: AbortSignal): boolean {
-	return signal.aborted
+export function isExecutionAbort(error: unknown, signal: AbortSignal): boolean {
+	if (!signal.aborted) return false
+	if (error === signal.reason) return true
+	return error instanceof Error && error.name === "AbortError"
 }
 
 /**

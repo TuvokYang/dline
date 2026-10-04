@@ -5,7 +5,6 @@ import type { BrowserSession } from "@services/browser/BrowserSession"
 import type { TaskActivityStore } from "../activity/TaskActivityStore"
 import type { CompactionRequestScopes } from "../compaction/CompactionRequestScopes"
 import type { ProviderRetryGate } from "../executors/provider/service/ProviderRetryGate"
-import type { TaskInputQueueService } from "../input-queue/TaskInputQueueService"
 import type { MessageStateHandler } from "../message-state"
 import type { ApiRateSnapshot } from "../performance/api-rate-tracker"
 import type { TaskRateMetricsQuery, TaskRateMetricsQueryResult } from "../performance/task-rate-metrics-types"
@@ -42,7 +41,6 @@ export interface TaskSessionOwners {
 	readonly checkpoints?: ICheckpointManager
 	readonly apiRateSnapshot?: () => ApiRateSnapshot
 	readonly queryRateMetrics?: (query: TaskRateMetricsQuery) => Promise<TaskRateMetricsQueryResult>
-	readonly inputQueue?: TaskInputQueueService
 	/** The session's single chat-row id sequence; a host that adds a row must draw from it to keep causal order. */
 	readonly nextPresentationId?: PresentationIdSequence
 	/** Handlers a compaction run is sent under instead of the task's own; absent means every run uses the task's handler. */

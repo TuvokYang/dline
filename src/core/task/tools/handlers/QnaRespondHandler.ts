@@ -76,7 +76,7 @@ export class QnaRespondHandler implements IToolHandler, IPartialBlockHandler {
 		if (config.taskState.didRespondToPlanAskBySwitchingMode) {
 			config.taskState.didRespondToPlanAskBySwitchingMode = false
 			if (text || (images && images.length > 0) || fileContentString) {
-				await sayFeedbackOnce(config, "messageResponse", text, images, files)
+				await sayFeedbackOnce(config, "messageResponse", text, images, files, outcome)
 			}
 			const switchMessage = text
 				? renderPrompt("toolHandlers", "planSwitchToActWithMessage", { TEXT: text })
@@ -85,7 +85,7 @@ export class QnaRespondHandler implements IToolHandler, IPartialBlockHandler {
 		}
 
 		if (text || (images && images.length > 0) || fileContentString) {
-			await sayFeedbackOnce(config, "messageResponse", text, images, files)
+			await sayFeedbackOnce(config, "messageResponse", text, images, files, outcome)
 			return formatResponse.toolResult(`<feedback>\n${text}\n</feedback>`, images, fileContentString)
 		}
 

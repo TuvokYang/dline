@@ -16,6 +16,24 @@ export const ALL_HALT_PARTICIPANTS: readonly ParticipantId[] = [
 	"spawn",
 ]
 
+export function validateHaltEvent(
+	state: HaltSlice,
+	event: TaskEvent,
+): { readonly reason: "duplicate" | "identity_mismatch"; readonly message: string } | undefined {
+	if (event.type === "user.cancel" || event.type === "user.terminate")
+		return state.status === "stopping"
+			? { reason: "duplicate", message: `Halt ${state.haltId} is already in progress` }
+			: undefined
+	if (event.type !== "halt.halted" && event.type !== "halt.failed" && event.type !== "lifecycle.halt_timeout") return undefined
+	if (state.status !== "stopping" || state.haltId !== event.haltId)
+		return { reason: "identity_mismatch", message: `Halt ${event.haltId} is not active` }
+	if (event.participantId && !state.pending.includes(event.participantId))
+		return { reason: "duplicate", message: `${event.participantId} already acknowledged halt ${event.haltId}` }
+	if (event.type === "lifecycle.halt_timeout" && event.participantId && state.timedOut.includes(event.participantId))
+		return { reason: "duplicate", message: `${event.participantId} already timed out for halt ${event.haltId}` }
+	return undefined
+}
+
 export function reduceHalt(state: HaltSlice, event: TaskEvent): HaltReduction {
 	if (event.type === "user.cancel" || event.type === "user.terminate") {
 		if (state.status === "stopping" && state.haltId === event.haltId) return { state, commands: [] }
@@ -50,7 +68,13 @@ export function reduceHalt(state: HaltSlice, event: TaskEvent): HaltReduction {
 			commands: [],
 		}
 	}
-	if (event.type === "lifecycle.halt_timeout" && event.haltId === state.haltId)
-		return { state: { ...state, timedOut: state.pending }, commands: [] }
+	if (event.type === "lifecycle.halt_timeout" && event.haltId === state.haltId) {
+		const timedOut = event.participantId
+			? state.timedOut.includes(event.participantId)
+				? state.timedOut
+				: [...state.timedOut, event.participantId]
+			: [...new Set([...state.timedOut, ...state.pending])]
+		return { state: { ...state, timedOut }, commands: [] }
+	}
 	return { state, commands: [] }
 }

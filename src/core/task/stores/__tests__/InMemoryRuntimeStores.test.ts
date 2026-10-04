@@ -7,12 +7,19 @@ describe("InMemoryConversationJournal", () => {
 	it("tracks idempotent append and projection markers on one contiguous sequence", async () => {
 		const journal = new InMemoryConversationJournal()
 		const first = await journal.append(message("message:1", "message:1"))
-		const duplicate = await journal.append(message("message:1", "message:1"))
-		journal.appendTransient("stream-1", "partial")
+		const duplicate = await journal.append({ ...message("message:1", "message:1"), causation: { commandId: "replayed" } })
+		journal.appendTransient("stream-1")
 		const finalized = await journal.finalizeTransient({
 			...message("message:2", "message:2"),
 			transientId: "stream-1",
 		})
+		await expect(
+			journal.finalizeTransient({
+				...message("message:2", "message:2"),
+				transientId: "stream-replayed",
+				causation: { commandId: "replayed", generation: 2 },
+			}),
+		).resolves.toEqual({ watermark: finalized.watermark, disposition: "existing" })
 		const tombstone = await journal.tombstone({ operationId: "tombstone:1", target: first.watermark })
 		const checkpoint = await journal.checkpointMarker({ operationId: "checkpoint:1", checkpointRef: "checkpoint:1" })
 		const later = await journal.append(message("message:3", "message:3"))

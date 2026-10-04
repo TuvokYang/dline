@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest"
-import type { TaskEvent, ToolRunCommand } from "../../../kernel"
+import type { Command, TaskEvent, ToolRunCommand } from "../../../kernel"
+import { CommandRouter } from "../../../runtime/CommandRouter"
+import { DurableCommandOutbox } from "../../../runtime/DurableCommandOutbox"
+import type { CommandPublicationStore } from "../../../stores/contracts"
 import { ToolCommandExecutor } from "../ToolCommandExecutor"
 import { createDeniedSurface } from "../ToolDomainSurface"
 import type { ToolRunCommand as DomainToolRunCommand, ToolDomainRunner } from "../ToolExecutionDomain"
@@ -52,6 +55,16 @@ function cancelledBlocks(events: TaskEvent[]): string[] {
 	return events.flatMap((event) => (event.type === "tool.cancelled" ? [event.blockId] : []))
 }
 
+function publications(): CommandPublicationStore {
+	const marked = new Set<string>()
+	return {
+		has: async (effectKey) => marked.has(effectKey),
+		mark: async (_command: Command, effectKey) => {
+			if (effectKey) marked.add(effectKey)
+		},
+	}
+}
+
 describe("ToolCommandExecutor", () => {
 	it("reuses the tool domain while preserving per-block identity under out-of-order completion", async () => {
 		const { executor, runner, settlers, events } = harness()
@@ -71,6 +84,37 @@ describe("ToolCommandExecutor", () => {
 		expect(runner.runBlock).toHaveBeenCalledWith(
 			expect.objectContaining({ dlineTid: "b1", invocationRef: "invocation:b1", mode: "parallel" }),
 		)
+	})
+
+	it("retires only the named turn and releases its terminal scheduling state", async () => {
+		const scheduler = new TurnToolScheduler({ readConfiguredLimit: () => 4 })
+		await scheduler.schedule({
+			turnId: "turn-1",
+			mode: "parallel",
+			block: { blockId: "ending", attempt: "a1", invocationRef: "ending", index: 0, lanes: [], turnEnding: true },
+			run: async () => undefined,
+		})
+
+		scheduler.retireTurn("turn-stale")
+		const skippedRun = vi.fn(async () => undefined)
+		const skipped = await scheduler.schedule({
+			turnId: "turn-1",
+			mode: "parallel",
+			block: { blockId: "stale", attempt: "a2", invocationRef: "stale", index: 1, lanes: [], turnEnding: false },
+			run: skippedRun,
+		})
+		expect(skipped.skipped).toBe(true)
+		expect(skippedRun).not.toHaveBeenCalled()
+
+		scheduler.retireTurn("turn-1")
+		const freshRun = vi.fn(async () => undefined)
+		await scheduler.schedule({
+			turnId: "turn-1",
+			mode: "parallel",
+			block: { blockId: "fresh", attempt: "a3", invocationRef: "fresh", index: 1, lanes: [], turnEnding: false },
+			run: freshRun,
+		})
+		expect(freshRun).toHaveBeenCalledOnce()
 	})
 
 	it("keeps the halt fence until explicit rearm and converts pre-halt work to cancellation", async () => {
@@ -150,6 +194,31 @@ describe("ToolCommandExecutor", () => {
 		await vi.waitFor(() => expect(startedBlocks(events)).toEqual(["b1", "done"]))
 		settlers.get("done")?.resolve()
 		await ending
+	})
+
+	it("admits an approved sibling through the outbox while a turn-ending sibling is waiting", async () => {
+		const { executor, runner, settlers, events } = harness()
+		const base = command()
+		const router = new CommandRouter([executor])
+		const outbox = new DurableCommandOutbox(router, publications())
+		const ending: ToolRunCommand = {
+			...base,
+			commandId: "ready-first",
+			originRevision: 4,
+			blocks: [{ blockId: "done", attempt: "a3", invocationRef: "invocation:done", index: 1, lanes: [], turnEnding: true }],
+		}
+		const approved: ToolRunCommand = { ...base, commandId: "approved-later", originRevision: 5, blocks: [base.blocks[0]] }
+
+		outbox.enqueue([ending], { revision: 4, durable: Promise.resolve() })
+		await new Promise((resolve) => setTimeout(resolve, 5))
+		expect(runner.runBlock).not.toHaveBeenCalled()
+
+		outbox.enqueue([approved], { revision: 5, durable: Promise.resolve() })
+		await vi.waitFor(() => expect(startedBlocks(events)).toEqual(["b1"]))
+		settlers.get("b1")?.resolve()
+		await vi.waitFor(() => expect(startedBlocks(events)).toEqual(["b1", "done"]))
+		settlers.get("done")?.resolve()
+		await outbox.whenIdle()
 	})
 
 	it("reports a queued block as cancelled without starting it when the turn is fenced", async () => {

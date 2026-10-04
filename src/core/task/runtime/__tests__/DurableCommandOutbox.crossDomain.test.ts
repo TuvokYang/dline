@@ -4,6 +4,7 @@ import type { CommandPublicationStore } from "../../stores/contracts"
 import { CommandRouter } from "../CommandRouter"
 import type { CommandExecutor } from "../contracts"
 import { DurableCommandOutbox } from "../DurableCommandOutbox"
+import { deferred } from "../deferred"
 
 /**
  * A turn-ending tool waits for the dialog it opened, so the dialog's reveal has
@@ -130,7 +131,61 @@ describe("DurableCommandOutbox cross-domain publication", () => {
 		expect(outbox.pendingCount).toBe(0)
 	})
 
-	it("keeps one domain's commands in their original order", async () => {
+	it("admits the next command in one domain before the previous effect completes", async () => {
+		const firstCompletion = deferred<void>()
+		const admissions: number[] = []
+		const router = new CommandRouter([
+			{
+				domain: "tool",
+				execute: (command: Command) => {
+					admissions.push(command.originRevision)
+					return command.originRevision === 4 ? firstCompletion.promise : Promise.resolve()
+				},
+			},
+		])
+		const outbox = new DurableCommandOutbox(router, publications())
+
+		outbox.enqueue([toolRun(4)], { revision: 4, durable: Promise.resolve() })
+		outbox.enqueue([toolRun(5)], { revision: 5, durable: Promise.resolve() })
+
+		await vi.waitFor(() => expect(admissions).toEqual([4, 5]))
+		firstCompletion.resolve()
+		await outbox.whenIdle()
+	})
+
+	it("waits for the requested command revision without joining older stuck effects", async () => {
+		const older = deferred<void>()
+		const router = new CommandRouter([
+			{
+				domain: "tool",
+				execute: (command) => (command.originRevision === 4 ? older.promise : Promise.resolve()),
+			},
+		])
+		router.dispatch(toolRun(4))
+		router.dispatch(toolRun(5))
+
+		await expect(router.waitForRevision(5)).resolves.toBeUndefined()
+		expect(router.inFlightCount).toBe(1)
+		older.resolve()
+		await router.waitForQuiescence()
+	})
+
+	it("keeps an admitted command durable until its effect is published", async () => {
+		const completion = deferred<void>()
+		const router = new CommandRouter([{ domain: "tool", execute: () => completion.promise }])
+		const outbox = new DurableCommandOutbox(router, publications())
+		const admitted = toolRun(4)
+
+		outbox.enqueue([admitted], { revision: 4, durable: Promise.resolve() })
+		await vi.waitFor(() => expect(outbox.pendingCount).toBe(1))
+		expect(outbox.persistableAfter([])).toEqual([admitted])
+
+		completion.resolve()
+		await outbox.whenIdle()
+		expect(outbox.persistableAfter([])).toEqual([])
+	})
+
+	it("keeps one domain's admissions in their original order", async () => {
 		const order: number[] = []
 		const router = new CommandRouter([
 			{

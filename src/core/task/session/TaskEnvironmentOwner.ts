@@ -4,6 +4,7 @@ import type { WorkspaceRootManager } from "@core/workspace/WorkspaceRootManager"
 import type { CommandExecutor } from "@integrations/terminal/CommandExecutor"
 import type { ITerminalManager } from "@integrations/terminal/types"
 import type { BackgroundSubagentProvider } from "../background/BackgroundContextInjector"
+import type { TaskEnvironmentHost } from "../composition/TaskSessionPorts"
 import { TaskEnvironmentProjection } from "../environment/TaskEnvironmentProjection"
 import type { ComposeEnvironmentPort } from "../executors/compose/ProductionComposeAdapter"
 import type { TaskState } from "../kernel"
@@ -16,6 +17,7 @@ import type { TaskApiHandlerOwner } from "./TaskApiHandlerOwner"
 export interface TaskEnvironmentOwnerOptions {
 	readonly taskId: string
 	readonly cwd: string
+	readonly host: TaskEnvironmentHost
 	readonly stateManager: StateManager
 	readonly settings: TaskStateManager
 	readonly api: TaskApiHandlerOwner
@@ -45,6 +47,7 @@ export class TaskEnvironmentOwner implements ComposeEnvironmentPort {
 	constructor(options: TaskEnvironmentOwnerOptions) {
 		this.projection = new TaskEnvironmentProjection({
 			identity: { taskId: options.taskId, cwd: options.cwd },
+			host: options.host,
 			workspace: {
 				stateManager: options.stateManager,
 				manager: options.workspaceManager,

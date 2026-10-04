@@ -3,15 +3,16 @@ import type { ConversationJournal } from "../../stores"
 import type { TaskPayloadStore } from "../../stores/contracts"
 import { decodeTaskPayload, encodeTaskPayload } from "../../stores/payload/TaskPayloadCodec"
 import type {
-	BackgroundResultsEnvelope,
 	EnvironmentDetailsEnvelope,
 	LifecycleCommand,
 	ProviderDraftEnvelope,
 	TurnContinuationEnvelope,
 	UserInputEnvelope,
 } from "../../stores/payload/TaskPayloadEnvelopes"
-import type { ComposeBackgroundResultsPort } from "./ComposeBackgroundResultsPort"
 import type { ComposePort, ComposeRoundInput, ComposeRoundResult } from "./ComposeCommandExecutor"
+import { type RetainedBatchReceipt, RetainedInputJournalBatch } from "./RetainedInputJournalBatch"
+import type { RetainedInputPresentationCommit, RetainedInputPresentationPort } from "./RetainedInputPresentationPort"
+import { materializeToolTerminalManifest } from "./ToolTerminalManifestMaterializer"
 
 /**
  * Renders the dynamic environment block for one provider round.
@@ -66,19 +67,45 @@ export interface ProductionComposeAdapterOptions {
 	readonly environment?: ComposeEnvironmentPort
 	/** Explains a continued round to the model; absent in headless assemblies. */
 	readonly continuation?: ComposeContinuationPort
-	/** Delivers finished background work; absent when a task runs none. */
-	readonly backgroundResults?: ComposeBackgroundResultsPort
 	/** Condenses the conversation before this round is drafted, when one is owed. */
 	readonly compactionBarrier?: ComposeCompactionBarrierPort
+	/** Projects the selected user-authored batch without model-only guidance. */
+	readonly retainedInputPresentation?: RetainedInputPresentationPort
 }
 
 /** Materializes admitted intake entries into one immutable provider draft. */
 export class ProductionComposeAdapter implements ComposePort {
-	constructor(private readonly options: ProductionComposeAdapterOptions) {}
+	private readonly retainedBatches: RetainedInputJournalBatch
+
+	constructor(private readonly options: ProductionComposeAdapterOptions) {
+		this.retainedBatches = new RetainedInputJournalBatch(options.payloads, options.journal)
+	}
+
+	async preparePresentation(input: ComposeRoundInput): Promise<RetainedInputPresentationCommit | undefined> {
+		if (!input.queueDelivery || !this.options.retainedInputPresentation) return undefined
+		const entries = this.admittedEntries(input).filter((entry) => entry.queue !== undefined)
+		if (entries.length === 0) return undefined
+		return this.options.retainedInputPresentation.prepare({
+			deliveryId: input.queueDelivery.deliveryId,
+			mode: "steering",
+			entries,
+		})
+	}
+
+	async rollbackRetainedQueue(input: ComposeRoundInput): Promise<"released"> {
+		if (!input.queueDelivery) return "released"
+		const evidence = await this.retainedBatches.inspect(input.queueDelivery.deliveryId)
+		if (evidence.kind === "absent" || evidence.kind === "retracted") return "released"
+		await this.retainedBatches.retract({
+			deliveryId: evidence.receipt.deliveryId,
+			entries: evidence.receipt.entries,
+		})
+		return "released"
+	}
 
 	async compose(input: ComposeRoundInput): Promise<ComposeRoundResult> {
 		if (input.signal.aborted) throw input.signal.reason
-		const lifecycle = await this.lifecycleOf(this.admittedEntries(input))
+		const lifecycle = await this.lifecycleOf([...this.admittedEntries(input), ...(input.respondedQueue?.entries ?? [])])
 		// Before the conversation is read, so the draft below describes what the
 		// compaction left behind rather than the one that was too large.
 		const readiness = (await this.options.compactionBarrier?.settleBeforeRound({
@@ -91,8 +118,22 @@ export class ProductionComposeAdapter implements ComposePort {
 		const state = this.options.readState()
 		const entries = this.admittedEntries(input)
 
+		if (input.toolTerminals) {
+			await materializeToolTerminalManifest({
+				manifest: input.toolTerminals,
+				payloads: this.options.payloads,
+				journal: this.options.journal,
+			})
+		}
 		await this.appendContinuation(input, state.generation)
-		for (const entry of entries) {
+		// Tool feedback carries its model text in the paired result. These original
+		// refs carry admission metadata only: never append their text a second time.
+		const inputPayloadRefs: string[] = [...(input.respondedQueue?.entries.map((entry) => entry.payloadRef) ?? [])]
+		const retainedEntries = entries.filter((entry) => entry.queue !== undefined)
+		const ordinaryEntries = entries.filter((entry) => entry.queue === undefined)
+		inputPayloadRefs.push(...entries.map((entry) => entry.payloadRef))
+		for (const entry of ordinaryEntries) {
+			if (input.signal.aborted) throw input.signal.reason
 			await this.options.journal.append({
 				operationId: `intake:${entry.source}:${entry.entryId}`,
 				payloadRef: entry.payloadRef,
@@ -100,8 +141,18 @@ export class ProductionComposeAdapter implements ComposePort {
 				causation: { generation: state.generation, turnId: input.turnId },
 			})
 		}
+		let queueReceipt: RetainedBatchReceipt | undefined
+		if (input.queueDelivery) {
+			if (retainedEntries.length === 0) throw new Error("RetainedDeliveryMissingEntries")
+			queueReceipt = await this.retainedBatches.stage({
+				deliveryId: input.queueDelivery.deliveryId,
+				entries: retainedEntries.map(({ entryId, payloadRef }) => ({ entryId, payloadRef })),
+				generation: input.queueDelivery.generation,
+				turnId: input.turnId,
+				signal: input.signal,
+			})
+		}
 		if (input.signal.aborted) throw input.signal.reason
-		await this.appendBackgroundResults(input, state.revision, state.generation)
 		await this.appendEnvironment(input, state.revision, state.generation)
 		// Only the position: the conversation through it is fixed, so recording
 		// every visible payload would only grow the draft with the conversation.
@@ -109,14 +160,25 @@ export class ProductionComposeAdapter implements ComposePort {
 			kind: "provider_draft",
 			admittedEntryIds: input.admittedEntryIds,
 			...(input.continuation === undefined ? {} : { continuation: input.continuation }),
-			inputPayloadRefs: entries.map((entry) => entry.payloadRef),
+			inputPayloadRefs,
 			journalThrough: this.options.journal.watermark(),
 			turnId: input.turnId,
 		}
 		for (const payloadRef of envelope.inputPayloadRefs) {
 			decodeTaskPayload(await this.options.payloads.read(payloadRef))
 		}
-		return { draftRef: await this.options.payloads.put(encodeTaskPayload(envelope)) }
+		return {
+			draftRef: await this.options.payloads.put(encodeTaskPayload(envelope)),
+			...(queueReceipt === undefined
+				? {}
+				: {
+						queueJournalReceipt: {
+							deliveryId: queueReceipt.deliveryId,
+							entries: queueReceipt.entries,
+							journalWatermark: queueReceipt.watermark,
+						},
+					}),
+		}
 	}
 
 	private admittedEntries(input: ComposeRoundInput) {
@@ -125,7 +187,9 @@ export class ProductionComposeAdapter implements ComposePort {
 			input.admittedEntryIds.includes(entry.entryId),
 		)
 		if (entries.length !== input.admittedEntryIds.length) throw new Error("AdmittedIntakeEntryMissing")
-		return entries
+		return [...entries].sort(
+			(left, right) => input.admittedEntryIds.indexOf(left.entryId) - input.admittedEntryIds.indexOf(right.entryId),
+		)
 	}
 
 	/**
@@ -162,28 +226,6 @@ export class ProductionComposeAdapter implements ComposePort {
 			source: "system",
 			causation: { generation, turnId: input.turnId },
 		})
-	}
-
-	/**
-	 * Journal background results between the round's inputs and its environment.
-	 *
-	 * They answer work the model already started, so they belong after what the
-	 * user just said and before the snapshot of the workspace as it is now.
-	 * Journaling is what makes the delivery durable, so the port only marks the
-	 * results delivered once the entry is written.
-	 */
-	private async appendBackgroundResults(input: ComposeRoundInput, revision: number, generation: number): Promise<void> {
-		const lease = await this.options.backgroundResults?.collect({ signal: input.signal })
-		if (!lease) return
-		if (input.signal.aborted) throw input.signal.reason
-		const envelope: BackgroundResultsEnvelope = { kind: "background_results", text: lease.text }
-		await this.options.journal.append({
-			operationId: `background:${revision}`,
-			payloadRef: await this.options.payloads.put(encodeTaskPayload(envelope)),
-			source: "system",
-			causation: { generation, turnId: input.turnId },
-		})
-		lease.commit()
 	}
 
 	/**

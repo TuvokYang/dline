@@ -446,7 +446,6 @@ describe("CommandExecutor explicit background execution", () => {
 			id: "command_101_1",
 			origin: "explicit_background",
 			cancellationOwner: "explicit",
-			injectionState: "pending",
 			lineCount: 0,
 			logFilePath: "C:\\Temp\\command_101_1.log",
 			process: processPromise,

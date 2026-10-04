@@ -97,7 +97,7 @@ export class MakePlanHandler implements IToolHandler, IPartialBlockHandler {
 		config.taskState.isAwaitingPlanResponse = false
 
 		if (text || (images && images.length > 0) || (responseFiles && responseFiles.length > 0)) {
-			await sayFeedbackOnce(config, "messageResponse", text, images, responseFiles)
+			await sayFeedbackOnce(config, "messageResponse", text, images, responseFiles, outcome)
 		}
 
 		let fileContentString = ""

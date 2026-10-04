@@ -23,7 +23,7 @@ import type { ClineContent } from "../../shared/messages/content"
 import { type ChatRestoreBoundary, resolveChatRestoreBoundary } from "./chat-restore-boundary"
 import { resolveCompletionDiffBaseHash } from "./completion-diff"
 import { CHECKPOINT_TRACKER_ATTEMPT_TIMEOUT_MS } from "./initializer"
-import type { ConversationRewindPort, ICheckpointManager } from "./types"
+import type { CanonicalCheckpointPort, ConversationRewindPort, ICheckpointManager } from "./types"
 
 /**
  * Consecutive staging failures tolerated before the user is told that
@@ -97,6 +97,7 @@ interface CheckpointManagerServices {
 	readonly workspaceManager?: WorkspaceRootManager
 	/** Rewinds the task's journal conversation; required only to restore a journal-bounded card. */
 	readonly conversationRewind?: ConversationRewindPort
+	readonly canonicalCheckpoint?: CanonicalCheckpointPort
 }
 interface CheckpointManagerCallbacks {
 	readonly updateTaskHistory: UpdateTaskHistoryFunction
@@ -174,6 +175,16 @@ export class TaskCheckpointManager implements ICheckpointManager {
 		await this.callbacks.postStateToWebview()
 	}
 
+	private async captureCanonicalCheckpoint(messageIndex: number | undefined, workspaceRef?: string): Promise<void> {
+		const checkpoint = this.services.canonicalCheckpoint
+		const message = messageIndex === undefined ? undefined : this.services.messageStateHandler.clineMessages[messageIndex]
+		if (!checkpoint || !message) return
+		await checkpoint.capture({
+			messageTs: message.ts,
+			...(workspaceRef === undefined ? {} : { workspaceRef }),
+		})
+	}
+
 	// ============================================================================
 	// Public API - Core checkpoints operations
 	// ============================================================================
@@ -197,6 +208,13 @@ export class TaskCheckpointManager implements ICheckpointManager {
 			})
 
 			let checkpointMessageIndex: number | undefined
+			const completionMessageIndex = (): number | undefined => {
+				const index =
+					completionMessageTs === undefined
+						? findLastIndex(clineMessages, (message) => message.say === "completion_result")
+						: clineMessages.findIndex((message) => message.ts === completionMessageTs)
+				return index === -1 ? undefined : index
+			}
 			if (!isAttemptCompletionMessage) {
 				if (clineMessages.at(-1)?.say === "checkpoint_created") {
 					return
@@ -221,6 +239,9 @@ export class TaskCheckpointManager implements ICheckpointManager {
 				Logger.debug(
 					`[TaskCheckpointManager] File checkpoint unavailable for task ${this.task.taskId}; keeping chat checkpoint only`,
 				)
+				await this.captureCanonicalCheckpoint(
+					isAttemptCompletionMessage ? completionMessageIndex() : checkpointMessageIndex,
+				)
 				return
 			}
 
@@ -229,8 +250,9 @@ export class TaskCheckpointManager implements ICheckpointManager {
 					return
 				}
 
+				let commitHash: string | undefined
 				try {
-					const commitHash = await this.state.checkpointTracker.commit()
+					commitHash = await this.state.checkpointTracker.commit()
 					if (commitHash) {
 						await this.persistCheckpointHash(checkpointMessageIndex, commitHash)
 					}
@@ -242,6 +264,7 @@ export class TaskCheckpointManager implements ICheckpointManager {
 					)
 					await this.reportStagingHealth()
 				}
+				await this.captureCanonicalCheckpoint(checkpointMessageIndex, commitHash)
 				return
 			}
 
@@ -249,6 +272,7 @@ export class TaskCheckpointManager implements ICheckpointManager {
 			const lastCompletionResultMessage = findLast(recentMessages, (m) => m.say === "completion_result")
 			if (lastCompletionResultMessage?.lastCheckpointHash) {
 				Logger.log("Completion checkpoint already exists, skipping duplicate checkpoint creation")
+				await this.captureCanonicalCheckpoint(completionMessageIndex(), lastCompletionResultMessage.lastCheckpointHash)
 				return
 			}
 
@@ -258,22 +282,13 @@ export class TaskCheckpointManager implements ICheckpointManager {
 				Logger.debug(
 					`[TaskCheckpointManager] No file checkpoint hash for completion message in task ${this.task.taskId}; using chat checkpoint only`,
 				)
+				await this.captureCanonicalCheckpoint(completionMessageIndex())
 				return
 			}
 
-			if (completionMessageTs !== undefined) {
-				const targetMessageIndex = this.services.messageStateHandler.clineMessages.findIndex(
-					(m) => m.ts === completionMessageTs,
-				)
-				if (targetMessageIndex !== -1) {
-					await this.persistCheckpointHash(targetMessageIndex, commitHash)
-				}
-			} else if (lastCompletionResultMessage) {
-				const targetMessageIndex = this.services.messageStateHandler.clineMessages.indexOf(lastCompletionResultMessage)
-				if (targetMessageIndex !== -1) {
-					await this.persistCheckpointHash(targetMessageIndex, commitHash)
-				}
-			}
+			const targetMessageIndex = completionMessageIndex()
+			if (targetMessageIndex !== undefined) await this.persistCheckpointHash(targetMessageIndex, commitHash)
+			await this.captureCanonicalCheckpoint(targetMessageIndex, commitHash)
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : "Unknown error"
 			Logger.error(`[TaskCheckpointManager] Failed to save checkpoint for task ${this.task.taskId}:`, errorMessage)
@@ -333,7 +348,7 @@ export class TaskCheckpointManager implements ICheckpointManager {
 			// are dropped before the boundary is resolved. Keeping them made the loaded
 			// length disagree with the durable count, which rejected the restore outright
 			// and left in-flight compaction cards rendered after the rewind.
-			if (restoreType !== "workspace") {
+			if (restoreType !== "workspace" && !this.services.canonicalCheckpoint) {
 				this.services.messageStateHandler.clearTransientClineMessages()
 			}
 			const clineMessages =
@@ -365,6 +380,16 @@ export class TaskCheckpointManager implements ICheckpointManager {
 			// A chat restore the task cannot complete is refused before the workspace
 			// is touched; otherwise the files would rewind while the chat stays put.
 			if (chatRestoreBoundary) this.assertChatRestoreAdmissible(message, chatRestoreBoundary, editedText)
+			if (chatRestoreBoundary && this.services.canonicalCheckpoint) {
+				return this.restoreCanonicalCheckpoint({
+					message,
+					messageIndex,
+					messageTs,
+					restoreType: restoreType as "task" | "taskAndWorkspace",
+					editedText,
+					boundary: chatRestoreBoundary,
+				})
+			}
 			const workspaceRestoreResult =
 				restoreType === "task"
 					? undefined
@@ -422,6 +447,68 @@ export class TaskCheckpointManager implements ICheckpointManager {
 				checkpointManagerErrorMessage: errorMessage,
 			}
 		}
+	}
+
+	private async restoreCanonicalCheckpoint(input: {
+		readonly message: UiMessage
+		readonly messageIndex: number
+		readonly messageTs: number
+		readonly restoreType: "task" | "taskAndWorkspace"
+		readonly editedText?: string
+		readonly boundary: ChatRestoreBoundary
+	}): Promise<CheckpointRestoreStateUpdate> {
+		const canonical = this.services.canonicalCheckpoint
+		if (!canonical) throw new Error("Canonical checkpoint port is unavailable")
+		let workspaceRestoreResult: WorkspaceRestoreResult | undefined
+		const restored = await canonical.restore({
+			messageTs: input.message.ts,
+			mode: input.restoreType === "task" ? "chat_only" : "combined",
+			restoreWorkspace: async (workspaceRef) => {
+				workspaceRestoreResult = await this.restoreWorkspaceReference(workspaceRef)
+				return workspaceRestoreResult.status === "restored"
+					? { ok: true }
+					: {
+							ok: false,
+							diagnostic: { code: "workspace_restore_failed", message: workspaceRestoreResult.error },
+						}
+			},
+		})
+		if (restored.kind === "rejected") {
+			const message =
+				restored.diagnostics.map((diagnostic) => diagnostic.message).join("; ") || "Checkpoint restore rejected"
+			sendRelinquishControlEvent(this.task.controller)
+			return { checkpointManagerErrorMessage: message }
+		}
+
+		this.services.messageStateHandler.clearTransientClineMessages()
+		const workspaceRestoreError = workspaceRestoreResult?.status === "failed" ? workspaceRestoreResult.error : undefined
+		const successfulRestoreType: ClineCheckpointRestore =
+			input.restoreType === "taskAndWorkspace" && workspaceRestoreError ? "task" : input.restoreType
+		await this.restoreChatCheckpoint(
+			input.message,
+			input.messageIndex,
+			input.messageTs,
+			input.editedText,
+			successfulRestoreType === "taskAndWorkspace",
+			input.boundary,
+			true,
+		)
+		await this.finalizeSuccessfulRestore(
+			successfulRestoreType,
+			input.messageTs,
+			input.editedText,
+			workspaceRestoreResult?.status === "restored" ? workspaceRestoreResult.checkpointHash : undefined,
+			input.boundary,
+		)
+		const update: CheckpointRestoreStateUpdate = {}
+		if (this.state.conversationHistoryDeletedRange !== undefined) {
+			update.conversationHistoryDeletedRange = this.state.conversationHistoryDeletedRange
+		}
+		if (workspaceRestoreError) update.checkpointManagerErrorMessage = workspaceRestoreError
+		else if (this.state.checkpointManagerErrorMessage !== undefined) {
+			update.checkpointManagerErrorMessage = this.state.checkpointManagerErrorMessage
+		}
+		return update
 	}
 
 	/**
@@ -636,19 +723,8 @@ export class TaskCheckpointManager implements ICheckpointManager {
 		messageTs: number,
 		offset?: number,
 	): Promise<WorkspaceRestoreResult> {
-		if (!this.config.enableCheckpoints) {
-			const errorMessage = "Checkpoints are disabled in settings."
-			Logger.error(`[TaskCheckpointManager] ${errorMessage} for task ${this.task.taskId}`)
-			HostProvider.window.showMessage({ type: ShowMessageType.ERROR, message: errorMessage })
-			return { status: "failed", error: errorMessage }
-		}
-
-		if (!this.state.checkpointTracker) {
-			this.state.checkpointTracker = await this.checkpointTrackerCheckAndInit()
-		}
-
 		const checkpointHash = message.lastCheckpointHash ?? lastMessageWithHash?.lastCheckpointHash
-		if (!checkpointHash || !this.state.checkpointTracker) {
+		if (!checkpointHash) {
 			const errorMessage = "Failed to restore checkpoint: No valid checkpoint hash found"
 			Logger.error(`[TaskCheckpointManager] ${errorMessage} for task ${this.task.taskId}`)
 			HostProvider.window.showMessage({ type: ShowMessageType.ERROR, message: errorMessage })
@@ -660,6 +736,27 @@ export class TaskCheckpointManager implements ICheckpointManager {
 			Logger.warn(
 				`[TaskCheckpointManager] Message ${messageTs} has no checkpoint hash, falling back to previous checkpoint for task ${this.task.taskId}`,
 			)
+		}
+		const diagnosticPrefix = usesFallback && offset ? "Failed to restore offset checkpoint" : "Failed to restore checkpoint"
+		return this.restoreWorkspaceReference(checkpointHash, diagnosticPrefix)
+	}
+
+	private async restoreWorkspaceReference(
+		checkpointHash: string,
+		diagnosticPrefix = "Failed to restore checkpoint",
+	): Promise<WorkspaceRestoreResult> {
+		if (!this.config.enableCheckpoints) {
+			const errorMessage = "Checkpoints are disabled in settings."
+			Logger.error(`[TaskCheckpointManager] ${errorMessage} for task ${this.task.taskId}`)
+			HostProvider.window.showMessage({ type: ShowMessageType.ERROR, message: errorMessage })
+			return { status: "failed", error: errorMessage }
+		}
+		if (!this.state.checkpointTracker) this.state.checkpointTracker = await this.checkpointTrackerCheckAndInit()
+		if (!this.state.checkpointTracker) {
+			const errorMessage = "Failed to restore checkpoint: No valid checkpoint hash found"
+			Logger.error(`[TaskCheckpointManager] ${errorMessage} for task ${this.task.taskId}`)
+			HostProvider.window.showMessage({ type: ShowMessageType.ERROR, message: errorMessage })
+			return { status: "failed", error: errorMessage }
 		}
 
 		try {
@@ -675,8 +772,6 @@ export class TaskCheckpointManager implements ICheckpointManager {
 			return { status: "restored", checkpointHash }
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : "Unknown error"
-			const isOffsetFallback = usesFallback && Boolean(offset)
-			const diagnosticPrefix = isOffsetFallback ? "Failed to restore offset checkpoint" : "Failed to restore checkpoint"
 			Logger.error(`[TaskCheckpointManager] ${diagnosticPrefix} for task ${this.task.taskId}:`, errorMessage)
 			const restoreError = `${diagnosticPrefix}: ${errorMessage}`
 			HostProvider.window.showMessage({ type: ShowMessageType.ERROR, message: restoreError })
@@ -801,9 +896,11 @@ export class TaskCheckpointManager implements ICheckpointManager {
 		editedText: string | undefined,
 		workspaceRestored: boolean,
 		boundary: ChatRestoreBoundary,
+		conversationAlreadyRewound = false,
 	): Promise<void> {
 		this.assertChatRestoreAdmissible(message, boundary, editedText)
-		const journalRewound = await this.rewindConversation(message, messageTs, editedText, boundary)
+		const journalRewound =
+			conversationAlreadyRewound || (await this.rewindConversation(message, messageTs, editedText, boundary))
 		// The boundary indexes the durable sequence, so the deleted slice must read it too.
 		const deletedMessages = this.services.messageStateHandler.durableClineMessages.slice(boundary.uiKeepCount)
 		this.abortAndClearState()

@@ -90,7 +90,7 @@ export async function dispatchInteraction(
 	// A closed task can still own a durable interaction rendered from history.
 	if (!session) return (await controller.dispatchHistoryDisplayInteraction(request)) ?? response(false, "missing_task")
 	const state = session.state()
-	if (request.taskId !== session.taskId || request.stateRevision !== state.revision) return response(false, "stale_interaction")
+	if (request.taskId !== session.taskId) return response(false, "stale_interaction")
 	// An interrupted task parks its recovery dialog under `interrupted`, so Resume
 	// must be answerable there as well as on a live primary.
 	const owner = [state.dialog.primary, state.dialog.interrupted].find(
@@ -101,7 +101,13 @@ export async function dispatchInteraction(
 		([, interaction]) => interaction.interactionId === request.interactionId,
 	)
 	const interaction = primary ?? approvalEntry?.[1]
-	if (!interaction || interaction.turnId !== request.turnId || interaction.status !== "awaiting")
+	if (
+		!interaction ||
+		interaction.turnId !== request.turnId ||
+		interaction.status !== "awaiting" ||
+		request.stateRevision < interaction.createdRevision ||
+		request.stateRevision > state.revision
+	)
 		return response(false, "stale_interaction")
 	if (!interaction.actionRules.some((rule) => rule.actionId === request.actionId)) return response(false, "invalid_action")
 	if (interaction.receiverGeneration === undefined) return response(false, "invalid_runtime_event")
@@ -158,7 +164,7 @@ export async function dispatchInteraction(
 				taskId: session.taskId,
 				turnId: interaction.turnId,
 				interactionId: interaction.interactionId,
-				stateRevision: state.revision,
+				stateRevision: request.stateRevision,
 				receiverGeneration: interaction.receiverGeneration,
 				blockId: approvalEntry[0],
 				approved: request.actionId === "approve",
@@ -170,7 +176,7 @@ export async function dispatchInteraction(
 				taskId: session.taskId,
 				turnId: interaction.turnId,
 				interactionId: interaction.interactionId,
-				stateRevision: state.revision,
+				stateRevision: request.stateRevision,
 				receiverGeneration: interaction.receiverGeneration,
 				actionId: request.actionId,
 				draftRef,

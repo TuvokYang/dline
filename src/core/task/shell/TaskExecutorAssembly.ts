@@ -3,7 +3,12 @@ import { CompactionCommandExecutor, type CompactionPort } from "../executors/com
 import { ComposeCommandExecutor, type ComposePort } from "../executors/compose/ComposeCommandExecutor"
 import type { HaltParticipant, TaskEventSink, TaskEventSubmission } from "../executors/contracts"
 import { CoTaskIngressExecutor } from "../executors/cotask/CoTaskIngressExecutor"
-import { DialogCommandExecutor, type DialogExecutionPort, type DialogWaiterPort } from "../executors/dialog/DialogCommandExecutor"
+import {
+	type DialogAwaitingPort,
+	DialogCommandExecutor,
+	type DialogExecutionPort,
+	type DialogWaiterPort,
+} from "../executors/dialog/DialogCommandExecutor"
 import { HaltCommandExecutor, type HaltCommandExecutorOptions } from "../executors/halt/HaltCommandExecutor"
 import { assertCompleteHaltParticipants } from "../executors/halt/participants"
 import { type ApprovalPolicyPort, PolicyCommandExecutor } from "../executors/policy/PolicyCommandExecutor"
@@ -33,6 +38,8 @@ export interface DialogPorts {
 	readonly execution: DialogExecutionPort
 	/** Receivers to fail when a stop makes their answer impossible; see DialogWaiterPort. */
 	readonly waiters?: DialogWaiterPort
+	/** Learns when a revealed dialog is durably answerable. */
+	readonly awaiting?: DialogAwaitingPort
 }
 
 export interface TaskExecutionPorts {
@@ -84,7 +91,7 @@ class BoundTaskEventSink implements TaskEventSink {
 	async submit(event: TaskEvent): Promise<TaskEventSubmission> {
 		if (!this.runtime) throw new Error("Task event sink is not bound")
 		const result = await this.runtime.submit(event)
-		return { kind: result.kind }
+		return result.kind === "accepted" ? { kind: "accepted", durable: result.receipt.durable } : { kind: "rejected" }
 	}
 }
 
@@ -106,7 +113,12 @@ export function createTaskExecutorAssembly(options: TaskExecutorAssemblyOptions)
 		options.execution.provider.report,
 	)
 	const tool = new ToolCommandExecutor(options.execution.tool, events)
-	const dialog = new DialogCommandExecutor(options.execution.dialog.execution, events, options.execution.dialog.waiters)
+	const dialog = new DialogCommandExecutor(
+		options.execution.dialog.execution,
+		events,
+		options.execution.dialog.waiters,
+		options.execution.dialog.awaiting,
+	)
 	const compose = new ComposeCommandExecutor(options.execution.compose, events)
 	const compaction = new CompactionCommandExecutor(options.execution.compaction, events, (projection) =>
 		options.persistence.taskView.notifyTransient(options.taskId, projection),

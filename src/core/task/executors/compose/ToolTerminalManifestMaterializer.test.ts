@@ -1,0 +1,183 @@
+import { describe, expect, it } from "vitest"
+import { serializeDurableToolResult } from "../../DurableToolResult"
+import { createInitialTaskState, type ToolTerminalManifest } from "../../kernel"
+import { InMemoryConversationJournal, InMemoryTaskPayloadStore } from "../../stores"
+import { decodeTaskPayload, encodeTaskPayload } from "../../stores/payload/TaskPayloadCodec"
+import type {
+	DialogDraftEnvelope,
+	ProviderDraftEnvelope,
+	ToolInvocationEnvelope,
+	ToolResultEnvelope,
+	ToolTerminalManifestEnvelope,
+} from "../../stores/payload/TaskPayloadEnvelopes"
+import { JournalConversationView } from "../provider/service/JournalConversationView"
+import { ProviderJournalMessageMaterializer } from "../provider/service/ProviderJournalMessageMaterializer"
+import { ProductionComposeAdapter } from "./ProductionComposeAdapter"
+
+const TURN_ID = "turn-tools"
+
+type MaterializedContent = {
+	readonly type: string
+	readonly dline_tid?: string
+	readonly content?: string | readonly { readonly type: string; readonly text?: string }[]
+	readonly text?: string
+}
+
+function invocation(blockId: string): ToolInvocationEnvelope {
+	return {
+		kind: "tool_invocation",
+		toolName: "read_file",
+		input: { path: `${blockId}.ts` },
+		functionId: `function:${blockId}`,
+		dlineTid: blockId,
+		presentationId: Number(blockId.slice(1)) + 1,
+		isNativeToolCall: true,
+	}
+}
+
+function result(blockId: string, text: string, failed = false): ToolResultEnvelope {
+	return {
+		kind: "tool_result",
+		blockId,
+		content: serializeDurableToolResult({
+			type: "tool_result",
+			function_id: `function:${blockId}`,
+			dline_tid: blockId,
+			content: [{ type: "text", text }],
+			...(failed ? { is_error: true } : {}),
+		}),
+		...(failed ? { failed: true } : {}),
+	}
+}
+
+async function appendRawResult(
+	journal: InMemoryConversationJournal,
+	payloads: InMemoryTaskPayloadStore,
+	blockId: string,
+	text: string,
+	failed = false,
+): Promise<string> {
+	const payloadRef = await payloads.put(encodeTaskPayload(result(blockId, text, failed)))
+	await journal.append({
+		operationId: `raw-result:${blockId}`,
+		payloadRef,
+		source: "tool",
+		causation: { turnId: TURN_ID },
+	})
+	return payloadRef
+}
+
+function resultText(block: MaterializedContent): string {
+	if (typeof block.content === "string") return block.content
+	return (block.content ?? []).flatMap((part) => (part.type === "text" && part.text ? [part.text] : [])).join("\n")
+}
+
+describe("ToolTerminalManifestMaterializer", () => {
+	it("keeps raw arrival facts while projecting one ordered and idempotent terminal tool batch", async () => {
+		const payloads = new InMemoryTaskPayloadStore()
+		const journal = new InMemoryConversationJournal()
+		const invocationRefs = new Map<string, string>()
+		for (const blockId of ["b0", "b1", "b2", "b3", "b4"]) {
+			invocationRefs.set(blockId, await payloads.put(encodeTaskPayload(invocation(blockId))))
+		}
+
+		// Physical completion order is intentionally different from provider block order.
+		const failedRef = await appendRawResult(journal, payloads, "b2", "failed:b2", true)
+		const completedRef = await appendRawResult(journal, payloads, "b0", "completed:b0")
+		const lateSuccessRef = await appendRawResult(journal, payloads, "b3", "late success must not become canonical")
+		const feedbackRef = await payloads.put(
+			encodeTaskPayload<DialogDraftEnvelope>({
+				kind: "dialog_draft",
+				text: "reject b1 and keep the audit note",
+				images: [],
+				files: [],
+			}),
+		)
+		await journal.append({
+			operationId: "raw-feedback:b1",
+			payloadRef: feedbackRef,
+			source: "dialog",
+			causation: { turnId: TURN_ID, interactionId: "b1" },
+		})
+
+		const manifest: ToolTerminalManifest = {
+			turnId: TURN_ID,
+			blocks: [
+				{ blockId: "b0", phase: "completed", invocationRef: invocationRefs.get("b0")! },
+				{
+					blockId: "b1",
+					phase: "rejected",
+					invocationRef: invocationRefs.get("b1")!,
+					approvalFeedbackRef: feedbackRef,
+				},
+				{ blockId: "b2", phase: "failed", invocationRef: invocationRefs.get("b2")! },
+				{ blockId: "b3", phase: "cancelled", invocationRef: invocationRefs.get("b3")! },
+				{ blockId: "b4", phase: "skipped", invocationRef: invocationRefs.get("b4")! },
+			],
+		}
+		const adapter = new ProductionComposeAdapter({
+			payloads,
+			journal,
+			readState: () => createInitialTaskState("task-1"),
+		})
+		const input = {
+			turnId: "turn-next",
+			admittedEntryIds: [],
+			toolTerminals: manifest,
+			signal: new AbortController().signal,
+		}
+
+		const first = await adapter.compose(input)
+		const second = await adapter.compose(input)
+		if (!("draftRef" in first) || !("draftRef" in second)) throw new Error("Expected provider drafts")
+		const firstDraft = decodeTaskPayload<ProviderDraftEnvelope>(await payloads.read(first.draftRef))
+		const secondDraft = decodeTaskPayload<ProviderDraftEnvelope>(await payloads.read(second.draftRef))
+		expect(secondDraft.journalThrough).toEqual(firstDraft.journalThrough)
+
+		const physical = await journal.read()
+		const rawResultEntries = physical.filter((entry) => entry.operationId.startsWith("raw-result:"))
+		const rawBlockIds = await Promise.all(
+			rawResultEntries.map(async (entry) => {
+				if (!entry.payloadRef) throw new Error("Raw result missing payload")
+				return decodeTaskPayload<ToolResultEnvelope>(await payloads.read(entry.payloadRef)).blockId
+			}),
+		)
+		expect(rawBlockIds).toEqual(["b2", "b0", "b3"])
+		expect(physical.filter((entry) => entry.operationId === `tool.terminal_manifest:${TURN_ID}`)).toHaveLength(1)
+
+		const manifestEntry = await journal.findByOperation(`tool.terminal_manifest:${TURN_ID}`)
+		if (!manifestEntry?.payloadRef) throw new Error("Missing terminal manifest")
+		const envelope = decodeTaskPayload<ToolTerminalManifestEnvelope>(await payloads.read(manifestEntry.payloadRef))
+		expect(envelope.results.map(({ blockId, phase, failed }) => ({ blockId, phase, failed }))).toEqual([
+			{ blockId: "b0", phase: "completed", failed: undefined },
+			{ blockId: "b1", phase: "rejected", failed: true },
+			{ blockId: "b2", phase: "failed", failed: true },
+			{ blockId: "b3", phase: "cancelled", failed: true },
+			{ blockId: "b4", phase: "skipped", failed: true },
+		])
+		expect(new Set(envelope.supersededPayloadRefs)).toEqual(new Set([completedRef, feedbackRef, failedRef, lateSuccessRef]))
+
+		const view = new JournalConversationView(journal, new ProviderJournalMessageMaterializer(payloads))
+		const messages = await view.messages(firstDraft.journalThrough)
+		expect(messages).toHaveLength(1)
+		const content = (messages[0]?.content ?? []) as readonly MaterializedContent[]
+		const toolResults = content.filter((block) => block.type === "tool_result")
+		expect(toolResults.map((block) => block.dline_tid)).toEqual(["b0", "b1", "b2", "b3", "b4"])
+		expect(toolResults.map(resultText)).toEqual([
+			"completed:b0",
+			"Tool call rejected; it was not admitted or executed.",
+			"failed:b2",
+			"Tool call cancelled before a canonical result was accepted. Verify observable state before retrying.",
+			"Tool call skipped because an earlier call ended or rejected the turn; it was not executed.",
+		])
+		const rejectedIndex = content.findIndex((block) => block.type === "tool_result" && block.dline_tid === "b1")
+		expect(content[rejectedIndex + 1]).toEqual({
+			type: "text",
+			text: "<user_message>\nreject b1 and keep the audit note\n</user_message>",
+		})
+		expect(JSON.stringify(messages)).not.toContain("late success must not become canonical")
+		expect(JSON.stringify(decodeTaskPayload(await payloads.read(lateSuccessRef)))).toContain(
+			"late success must not become canonical",
+		)
+	})
+})

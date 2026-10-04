@@ -67,6 +67,10 @@ export class ToolCommandExecutor implements CommandExecutor, HaltParticipant {
 	}
 
 	execute(command: Command): Promise<void> {
+		if (command.type === "tool.retire") {
+			this.scheduler.retireTurn(command.turnId)
+			return Promise.resolve()
+		}
 		if (command.type !== "tool.run") return Promise.reject(new Error(`Tool executor cannot run ${command.type}`))
 		if (this.fencedHaltId) return Promise.resolve()
 		const completion = Promise.all(command.blocks.map((block) => this.executeBlock(command, block))).then(() => undefined)

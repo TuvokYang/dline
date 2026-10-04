@@ -173,6 +173,7 @@ export class ControllerTaskSessionHostFactory implements TaskSessionHostFactory 
 			say: callbackOwner.callbacks.say,
 			workspaceManager: this.options.workspaceManager,
 			conversationRewind: context.conversationRewind,
+			checkpoints: context.checkpoints,
 		})
 		callbackOwner.bindCheckpointManager(checkpointOwner.manager)
 		await callbackOwner.initialize()
@@ -185,6 +186,10 @@ export class ControllerTaskSessionHostFactory implements TaskSessionHostFactory 
 			openInteraction: (request) => context.interactions.open(request as never),
 			diff: () => diffViewProvider,
 		}
+		const spawn = new ControllerTaskSpawnLauncher({
+			context: this.options.context,
+			parentTaskId: context.taskId,
+		})
 		return {
 			services,
 			callbacks: callbackOwner.callbacks,
@@ -193,12 +198,8 @@ export class ControllerTaskSessionHostFactory implements TaskSessionHostFactory 
 			terminals: terminalManager,
 			checkpoints: checkpointOwner.manager,
 			surface,
-			spawn: new ControllerTaskSpawnLauncher({
-				context: this.options.context,
-				parent: this.options.controller,
-				parentTaskId: context.taskId,
-			}),
-			controllerContext: this.options.context,
+			spawn,
+			peerTaskSpawner: spawn,
 			releases: [{ release: () => callbackOwner.dispose() }, { release: async () => fileContextTracker.dispose() }],
 		}
 	}

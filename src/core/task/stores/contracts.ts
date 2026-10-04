@@ -64,7 +64,10 @@ export interface ConversationJournal {
 	read(after?: JournalWatermark, through?: JournalWatermark): Promise<readonly JournalEntry[]>
 	findByOperation(operationId: string): Promise<JournalEntry | undefined>
 	project(through?: JournalWatermark): Promise<JournalProjection>
-	appendTransient(transientId: string, payloadRef: string): void
+	/** Tracks a live stream in memory; partial content is never a durable payload. */
+	appendTransient(transientId: string): void
+	/** Drops a stream that ended without a durable final or interrupted payload. */
+	discardTransient(transientId: string): void
 	finalizeTransient(input: JournalAppendInput & { readonly transientId: string }): Promise<JournalAppendResult>
 	tombstone(input: { readonly operationId: string; readonly target: JournalWatermark }): Promise<JournalAppendResult>
 	truncateBoundary(input: { readonly operationId: string; readonly target: JournalWatermark }): Promise<JournalAppendResult>
@@ -95,6 +98,25 @@ export interface ConversationJournal {
 export interface CommandPublicationStore {
 	has(effectKey: string): Promise<boolean>
 	mark(command: Command, effectKey?: string): Promise<void>
+}
+
+export type BackgroundDeliveryProducerKind = "command" | "subagent" | "subagent_batch"
+export type BackgroundDeliveryState = "pending" | "acknowledged"
+
+/** Producer-owned result retained durably until canonical intake accepts it. */
+export interface BackgroundDeliveryRecord {
+	readonly entryId: string
+	readonly producerKind: BackgroundDeliveryProducerKind
+	readonly producerId: string
+	readonly attempt: number
+	readonly text: string
+	readonly state: BackgroundDeliveryState
+}
+
+export interface BackgroundDeliveryLedger {
+	stage(delivery: Omit<BackgroundDeliveryRecord, "state">): Promise<BackgroundDeliveryRecord>
+	listPending(): Promise<readonly BackgroundDeliveryRecord[]>
+	acknowledge(entryId: string): Promise<void>
 }
 
 /** Content-addressed bytes that journal entries and kernel state refer to by reference. */

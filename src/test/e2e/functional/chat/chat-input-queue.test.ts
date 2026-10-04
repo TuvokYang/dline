@@ -1,5 +1,5 @@
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
-import { expect } from "@playwright/test"
+import { type ElectronApplication, expect } from "@playwright/test"
 
 /**
  * The queue only exists while the composer is blocked, so every test here first
@@ -331,35 +331,77 @@ e2e(
 	},
 )
 
-e2e("Chat input queue - cancel keeps the queue and a reload restores it", async ({ helper, server, sidebar, userDataDir }) => {
-	e2e.setTimeout(180_000)
-	await helper.signin(sidebar)
-	server.resetOpenAiMock()
-	server.enqueueOpenAiResponses({
-		type: "tool",
-		name: "attempt_completion",
-		arguments: { result: "E2E_QUEUE_CANCEL_DONE" },
-		delayMs: 30_000,
-	})
+e2e(
+	"Chat input queue - cancel keeps the queue and a reload restores it",
+	async ({ helper, openVSCode, server, userDataDir, workspaceDir }) => {
+		e2e.setTimeout(240_000)
+		let app: ElectronApplication | undefined
+		try {
+			app = await openVSCode(workspaceDir)
+			let page = await app.firstWindow()
+			await E2ETestHelper.openClineSidebar(page)
+			let sidebar = await helper.getSidebar(page)
+			await helper.signin(sidebar)
+			server.resetOpenAiMock()
+			server.enqueueOpenAiResponses({
+				type: "tool",
+				name: "attempt_completion",
+				arguments: { result: "E2E_QUEUE_CANCEL_DONE" },
+				delayMs: 30_000,
+			})
 
-	const input = sidebar.getByTestId("chat-input")
-	await input.fill("E2E_QUEUE_CANCEL_TASK")
-	await sidebar.getByTestId("send-button").click()
-	await expect.poll(() => server.openAiRequestCount, { timeout: 60_000 }).toBe(1)
+			const input = sidebar.getByTestId("chat-input")
+			await input.fill("E2E_QUEUE_CANCEL_TASK")
+			await sidebar.getByTestId("send-button").click()
+			await expect.poll(() => server.openAiRequestCount, { timeout: 60_000 }).toBe(1)
 
-	const cancel = sidebar.getByRole("button", { name: "Cancel", exact: true }).first()
-	await expect(cancel).toBeVisible({ timeout: 30_000 })
+			const cancel = sidebar.getByRole("button", { name: "Cancel", exact: true }).first()
+			await expect(cancel).toBeVisible({ timeout: 30_000 })
 
-	await input.fill("E2E_SURVIVES_CANCEL")
-	await input.press("Enter")
-	await expect(sidebar.getByTestId("input-queue-toggle")).toContainText("Queue 1", { timeout: 30_000 })
+			await input.fill("E2E_SURVIVES_CANCEL")
+			await input.press("Enter")
+			await expect(sidebar.getByTestId("input-queue-toggle")).toContainText("Queue 1", { timeout: 30_000 })
 
-	// Cancelling abandons the in-flight work, but retained input belongs to the
-	// user: only an explicit delete may discard it.
-	await cancel.click()
-	await expect(sidebar.getByTestId("input-queue-toggle")).toContainText("Queue 1", { timeout: 60_000 })
+			// Cancelling abandons the in-flight work, but retained input belongs to the
+			// user: only an explicit delete may discard it.
+			await cancel.click()
+			await expect(sidebar.getByTestId("input-queue-toggle")).toContainText("Queue 1", { timeout: 60_000 })
 
-	await sidebar.getByTestId("input-queue-toggle").click()
-	await expect(sidebar.getByTestId("input-queue-overlay")).toContainText("E2E_SURVIVES_CANCEL")
-	await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
-})
+			await app.close()
+			helper.clearCachedFrame()
+			app = undefined
+
+			app = await openVSCode(workspaceDir)
+			const reopenedApp = app
+			page = await reopenedApp.firstWindow()
+			await E2ETestHelper.openClineSidebar(page)
+			sidebar = await helper.getSidebar(page)
+			const historyTask = sidebar.locator(".history-preview-item").filter({ hasText: "E2E_QUEUE_CANCEL_TASK" })
+			await expect(historyTask).toHaveCount(1, { timeout: 30_000 })
+			await historyTask.click()
+			helper.clearCachedFrame()
+			sidebar = await E2ETestHelper.waitForValue(async () => {
+				for (const candidatePage of reopenedApp.windows()) {
+					for (const frame of candidatePage.frames()) {
+						if (frame.isDetached()) continue
+						const hasQueue = (await frame.getByTestId("input-queue-toggle").count()) > 0
+						const hasResume = (await frame.getByRole("button", { name: "Resume", exact: true }).count()) > 0
+						if (hasQueue && hasResume) return frame
+					}
+				}
+				return undefined
+			}, 60_000)
+			await expect(sidebar.getByRole("button", { name: "Resume", exact: true }).first()).toBeVisible({ timeout: 30_000 })
+			await expect(sidebar.getByTestId("hydration-pending")).toHaveCount(0, { timeout: 30_000 })
+			await expect(sidebar.getByTestId("hydration-failed")).toHaveCount(0)
+			await expect(sidebar.getByTestId("input-queue-toggle")).toContainText("Queue 1", { timeout: 60_000 })
+			await sidebar.getByTestId("input-queue-toggle").click()
+			await expect(sidebar.getByTestId("input-queue-overlay")).toContainText("E2E_SURVIVES_CANCEL")
+			expect(server.openAiRequestCount).toBe(1)
+			await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
+		} finally {
+			await app?.close()
+			helper.clearCachedFrame()
+		}
+	},
+)

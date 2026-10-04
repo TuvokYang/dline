@@ -78,7 +78,7 @@ export class GenerateReportHandler implements IToolHandler, IPartialBlockHandler
 		}
 
 		if (text || (images && images.length > 0) || fileContentString) {
-			await sayFeedbackOnce(config, "messageResponse", text, images, files)
+			await sayFeedbackOnce(config, "messageResponse", text, images, files, outcome)
 			return formatResponse.toolResult(`<feedback>\n${text}\n</feedback>`, images, fileContentString)
 		}
 

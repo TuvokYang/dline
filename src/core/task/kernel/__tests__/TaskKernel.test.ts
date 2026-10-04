@@ -94,7 +94,7 @@ describe("task kernel", () => {
 				originRevision: 1,
 				generation: 0,
 				type: "compose.round",
-				turnId: undefined,
+				turnId: "turn:task-1:1:0",
 				admittedEntryIds: ["entry-1"],
 			},
 		])
@@ -130,6 +130,33 @@ describe("task kernel", () => {
 		)
 		expect(result.state.dialog.primary).toMatchObject({ status: "prepared", journalRef: "journal:1", receiverGeneration: 3 })
 		expect(result.commands[0]).toMatchObject({ type: "dialog.reveal", interactionId: "i-1", journalRef: "journal:1" })
+	})
+
+	it("keeps a timed-out halt participant pending and visible until it really stops", () => {
+		let state = accepted(
+			transition(createInitialTaskState("task-1"), { type: "user.cancel", generation: 0, haltId: "halt-1" }),
+		).state
+		state = accepted(
+			transition(state, {
+				type: "lifecycle.halt_timeout",
+				generation: state.generation,
+				haltId: "halt-1",
+				participantId: "provider",
+			}),
+		).state
+
+		expect(state.halt).toMatchObject({ status: "stopping", timedOut: ["provider"] })
+		if (state.halt.status !== "stopping") throw new Error("expected stopping")
+		expect(state.halt.pending).toContain("provider")
+		expect(state.flow.phase).not.toBe("paused")
+
+		for (const participantId of [...state.halt.pending]) {
+			state = accepted(
+				transition(state, { type: "halt.halted", generation: state.generation, haltId: "halt-1", participantId }),
+			).state
+		}
+		expect(state.flow.phase).toBe("paused")
+		expect(state.halt.status).toBe("idle")
 	})
 
 	it("waits for all halt participants before reaching the terminal target", () => {

@@ -11,6 +11,11 @@ import { ProductionProviderAdapter } from "./ProductionProviderAdapter"
 class MemoryPayloads implements TaskPayloadStore {
 	private sequence = 0
 	private readonly values = new Map<string, Uint8Array>()
+
+	get storedCount(): number {
+		return this.values.size
+	}
+
 	async put(payload: Uint8Array): Promise<string> {
 		const ref = `payload:${++this.sequence}`
 		this.values.set(ref, payload)
@@ -24,7 +29,7 @@ class MemoryPayloads implements TaskPayloadStore {
 }
 
 describe("ProductionProviderAdapter", () => {
-	it("materializes partial, final, and tool invocation payload refs", async () => {
+	it("keeps partial content transient and materializes final and tool invocation payload refs", async () => {
 		const payloads = new MemoryPayloads()
 		const draft: ProviderDraftEnvelope = {
 			kind: "provider_draft",
@@ -72,6 +77,10 @@ describe("ProductionProviderAdapter", () => {
 		const chunks = []
 		for await (const chunk of adapter.start({ draftRef, signal: new AbortController().signal })) chunks.push(chunk)
 		expect(chunks).toHaveLength(2)
+		expect(chunks[0]).toMatchObject({ kind: "partial", transientId: "stream-1", text: "hel" })
+		expect(chunks[0]).not.toHaveProperty("payloadRef")
+		// Draft, tool invocation and final are durable; the partial is not.
+		expect(payloads.storedCount).toBe(3)
 		const final = chunks[1]
 		if (final.kind !== "final") throw new Error("expected final")
 		const storedFinal = decodeTaskPayload<ProviderFinalEnvelope>(await payloads.read(final.payloadRef))

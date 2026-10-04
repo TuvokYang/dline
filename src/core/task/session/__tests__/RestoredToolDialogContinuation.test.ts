@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest"
-import type { TaskState } from "../../kernel"
+import { createInitialTaskState, type TaskState } from "../../kernel"
 import type { TaskInput } from "../../shell/TaskShell"
 import { decodeTaskPayload, encodeTaskPayload } from "../../stores/payload/TaskPayloadCodec"
 import type { ToolInvocationEnvelope, ToolResultEnvelope } from "../../stores/payload/TaskPayloadEnvelopes"
@@ -34,16 +34,25 @@ function harness(options: { readonly toolName: string; readonly phase?: string; 
 			return `ref:put-${puts.length}`
 		}),
 	} as unknown as RestoredToolDialogPorts["payloads"]
-	const journal = { append: vi.fn(async () => ({ watermark: { seq: 9 }, disposition: "appended" as const })) }
+	const journal = {
+		append: vi.fn(async () => ({ watermark: { seq: 9 }, disposition: "appended" as const })),
+		findByOperation: vi.fn(async () => undefined),
+		read: vi.fn(async () => []),
+	}
 	const clineMessages = [{ ts: 1, type: "ask", ask: "followup", interactionId: TID, text: options.askText }]
 	const messages = {
 		clineMessages,
-		addToClineMessages: vi.fn(async () => undefined),
+		addToClineMessages: vi.fn(async (row) => {
+			clineMessages.push(row)
+		}),
 		updateClineMessage: vi.fn(async () => undefined),
 		flushMessageUpdate: vi.fn(async () => undefined),
 	} as unknown as RestoredToolDialogPorts["messages"]
+	const initial = createInitialTaskState("task-1")
 	const state = {
+		...initial,
 		turn: {
+			...initial.turn,
 			turnId: "turn-1",
 			blocks: [{ blockId: TID, phase: options.phase ?? "cancelled", invocationRef: "ref:invocation" }],
 		},

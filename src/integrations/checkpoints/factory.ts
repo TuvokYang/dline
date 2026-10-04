@@ -6,7 +6,7 @@ import { WorkspaceRootManager } from "@core/workspace/WorkspaceRootManager"
 import { type CheckpointRuntimeState, createTaskCheckpointManager } from "@integrations/checkpoints"
 import { MultiRootCheckpointManager } from "@integrations/checkpoints/MultiRootCheckpointManager"
 import { TaskFileTracker } from "@integrations/checkpoints/TaskFileTracker"
-import type { ConversationRewindPort, ICheckpointManager } from "@integrations/checkpoints/types"
+import type { CanonicalCheckpointPort, ConversationRewindPort, ICheckpointManager } from "@integrations/checkpoints/types"
 import type { DiffViewProvider } from "@integrations/editor/DiffViewProvider"
 import { StateManager } from "@/core/storage/StateManager"
 
@@ -43,6 +43,7 @@ type BuildArgs = {
 	workspaceManager?: WorkspaceRootManager
 	/** Rewinds the task's journal conversation when a journal-bounded card is restored. */
 	conversationRewind?: ConversationRewindPort
+	canonicalCheckpoint?: CanonicalCheckpointPort
 
 	// callbacks for single-root TaskCheckpointManager
 	updateTaskHistory: (historyItem: any) => Promise<any[]>
@@ -75,6 +76,7 @@ export function buildCheckpointManager(args: BuildArgs): ICheckpointManager {
 		taskFileTracker,
 		workspaceManager,
 		conversationRewind,
+		canonicalCheckpoint,
 		updateTaskHistory,
 		say,
 		cancelTask,
@@ -110,6 +112,7 @@ export function buildCheckpointManager(args: BuildArgs): ICheckpointManager {
 			taskState,
 			workspaceManager,
 			conversationRewind,
+			canonicalCheckpoint,
 		},
 		{
 			updateTaskHistory,

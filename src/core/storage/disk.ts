@@ -94,6 +94,12 @@ export async function ensureTaskDirectoryExists(taskId: string): Promise<string>
 	await fs.mkdir(dir, { recursive: true })
 	return dir
 }
+
+/** Compatibility source written by task runtimes before canonical `state.json` ownership. */
+export async function getLegacyTaskSnapshotPath(taskId: string): Promise<string> {
+	return path.join(await ensureTaskDirectoryExists(taskId), GlobalFileNames.taskSnapshot)
+}
+
 export async function ensureRulesDirectoryExists(): Promise<string> {
 	const d = await getDlineDocumentsPath()
 	const dir = path.join(d, "rules")

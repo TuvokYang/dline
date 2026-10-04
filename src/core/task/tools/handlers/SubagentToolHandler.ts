@@ -10,6 +10,7 @@ import { calculateApiUsageStatistics } from "@/shared/api-usage"
 import { Logger } from "@/shared/services/Logger"
 import { ClineDefaultTool } from "@/shared/tools"
 import type { BackgroundHandoffResult } from "../../activity/TaskActivityStore"
+import { formatBackgroundSubagentDelivery, formatBackgroundSubagentResult } from "../../background/BackgroundContextInjector"
 import {
 	type AgentBaseConfig,
 	listEnabledAgentConfigs,
@@ -31,7 +32,7 @@ import {
 	type SubagentRunStats,
 } from "../subagent/SubagentExecutor"
 import { getSubagentFanoutBudget, type SubagentFanoutBudget, type SubagentSlot } from "../subagent/SubagentFanoutBudget"
-import { SubagentJobManager } from "../subagent/SubagentJobManager"
+import { type SubagentBatchRecord, SubagentJobManager, type SubagentJobRecord } from "../subagent/SubagentJobManager"
 import { parseUseSubagentRequest, parseUseSubagentsRequest } from "../subagent/SubagentRequestParser"
 import { SubagentRunner } from "../subagent/SubagentRunner"
 import type { IFullyManagedTool, IPreparableToolHandler, ToolHandlerPreparationResult } from "../ToolExecutorCoordinator"
@@ -78,6 +79,75 @@ function previewBatchPrompts(streamed: string): string[] {
 function backgroundSubagentResult(kind: "started" | "continued", target: "job" | "batch job", id: string): string {
 	const verb = kind === "started" ? "Started" : "Continued"
 	return `${verb} background subagent ${target}: ${id}. ${LATER_REQUEST_RESULT_NOTICE}`
+}
+
+async function publishSubagentSettlement(config: TaskConfig, job: SubagentJobRecord, batch?: SubagentBatchRecord): Promise<void> {
+	const delivery = config.backgroundResults
+	if (!delivery || job.retryable) return
+	const manager = getSubagentJobManager(config)
+	const result = batch
+		? (() => {
+				if (batch.status === "running") return undefined
+				const jobs = batch.itemJobIds
+					.map((jobId) => manager.getJob(jobId))
+					.filter((candidate): candidate is SubagentJobRecord => candidate !== undefined)
+				if (jobs.length !== batch.itemJobIds.length || jobs.some((candidate) => candidate.retryable)) return undefined
+				return { kind: "batch" as const, batch, jobs }
+			})()
+		: { kind: "single" as const, job }
+	if (!result) return
+	const producerId = result.kind === "single" ? result.job.jobId : result.batch.batchJobId
+	const attempt =
+		result.kind === "single" ? result.job.attempt : Math.max(1, ...result.jobs.map((candidate) => candidate.attempt))
+	await delivery.publish({
+		entryId: `background:${result.kind === "single" ? "subagent" : "subagent-batch"}:${producerId}:attempt:${attempt}`,
+		producerKind: result.kind === "single" ? "subagent" : "subagent_batch",
+		producerId,
+		attempt,
+		text: formatBackgroundSubagentDelivery(result),
+		acknowledge: () => undefined,
+	})
+}
+
+async function publishHandedOffBatchResults(
+	config: TaskConfig,
+	batchId: string,
+	entries: readonly SubagentStatusItem[],
+	results: readonly SubagentExecResult[],
+): Promise<void> {
+	const delivery = config.backgroundResults
+	if (!delivery) return
+	const completed = entries.filter((_entry, index) => !results[index]?.retryable)
+	if (completed.length === 0) return
+	const text = [
+		"# Background Results",
+		"## Background Subagent Results",
+		`- ${batchId}: completed`,
+		...completed.map(
+			(entry) =>
+				`  ${formatBackgroundSubagentResult({
+					jobId: entry.jobId ?? `${batchId}:${entry.index}`,
+					subagentName: entry.subagentName,
+					task: entry.task ?? entry.prompt,
+					prompt: entry.prompt,
+					status: entry.status === "pending" ? "failed" : entry.status,
+					startedAt: entry.startedAt ?? Date.now(),
+					finishedAt: entry.finishedAt,
+					timeoutSeconds: entry.timeoutSeconds ?? 0,
+					result: entry.result,
+					error: entry.error,
+					attempt: 1,
+				})}`,
+		),
+	].join("\n")
+	await delivery.publish({
+		entryId: `background:subagent-batch:${batchId}:attempt:1`,
+		producerKind: "subagent_batch",
+		producerId: batchId,
+		attempt: 1,
+		text,
+		acknowledge: () => undefined,
+	})
 }
 
 /**
@@ -468,6 +538,7 @@ export async function restoreSubagentActivityRetry(config: TaskConfig, activityI
 			if (jobRecord.stats) applyStats(entry, jobRecord.stats)
 			updateActivityFromEntry(config, entry)
 			bindRetry(jobRecord.retryable === true)
+			await publishSubagentSettlement(config, jobRecord)
 		},
 	})
 	bindRetry(true)
@@ -945,6 +1016,7 @@ export class UseSubagentToolHandler implements IFullyManagedTool, IPreparableToo
 						false,
 						block.ts,
 					)
+					await publishSubagentSettlement(config, jobRecord)
 				},
 			})
 			await config.callbacks.say(
@@ -1079,6 +1151,7 @@ export class UseSubagentToolHandler implements IFullyManagedTool, IPreparableToo
 					false,
 					block.ts,
 				)
+				await publishSubagentSettlement(config, jobRecord)
 			},
 		})
 		await config.callbacks.say(
@@ -1105,10 +1178,6 @@ export class UseSubagentToolHandler implements IFullyManagedTool, IPreparableToo
 				return formatResponse.toolResult(backgroundSubagentResult("continued", "job", foregroundJob.jobId))
 			}
 			result = outcome.result
-			if (!result.retryable) {
-				subagentJobManager.markInjected([foregroundJob.jobId])
-				subagentJobManager.markConsumed([foregroundJob.jobId])
-			}
 		} finally {
 			config.taskState.isExecutingSubagent = false
 		}
@@ -1339,6 +1408,7 @@ export class UseSubagentsToolHandler implements IFullyManagedTool, IPreparableTo
 						false,
 						block.ts,
 					)
+					await publishSubagentSettlement(config, jobRecord, batchRecord)
 				},
 			})
 			await config.callbacks.say(
@@ -1532,6 +1602,7 @@ export class UseSubagentsToolHandler implements IFullyManagedTool, IPreparableTo
 							false,
 							block.ts,
 						)
+						await publishSubagentSettlement(config, jobRecord)
 					},
 				})
 				config.activityStore?.setRetry?.(entry.jobId, async () => {
@@ -1566,6 +1637,7 @@ export class UseSubagentsToolHandler implements IFullyManagedTool, IPreparableTo
 				block.ts,
 			)
 			await emitUsage(config, entries)
+			if (background) await publishHandedOffBatchResults(config, batchId, entries, completedResults)
 		}
 		if (handedOff) {
 			void runResultsPromise

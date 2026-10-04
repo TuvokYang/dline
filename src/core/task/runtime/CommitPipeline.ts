@@ -32,6 +32,9 @@ export class CommitPipeline {
 	private writing: Promise<void> | undefined
 	private viewTail: Promise<void> = Promise.resolve()
 	private readonly receipts = new Map<number, Promise<void>>()
+	private latestRevision = 0
+	private durableRevision = 0
+	private failedFromRevision: number | undefined
 	private fatalError: Error | undefined
 
 	constructor(
@@ -41,14 +44,11 @@ export class CommitPipeline {
 	) {}
 
 	commit(state: TaskState, outbox: readonly Command[]): CommitReceipt {
+		if (this.fatalError) throw this.fatalError
 		const completion = deferred<void>()
 		const durable = completion.promise
+		this.latestRevision = Math.max(this.latestRevision, state.revision)
 		this.track(state.revision, durable)
-		if (this.fatalError) {
-			this.recordDurabilityFailure(this.fatalError, state.revision)
-			completion.reject(this.fatalError)
-			return { revision: state.revision, durable }
-		}
 		const waiter: Waiter = { revision: state.revision, resolve: completion.resolve, reject: completion.reject }
 		if (this.pending) {
 			this.pending.state = state
@@ -64,14 +64,16 @@ export class CommitPipeline {
 
 	/** Resolves once every commit through `revision` is on disk; the view may still be catching up. */
 	async flushThrough(revision: number): Promise<void> {
+		this.assertDurability(revision)
 		await Promise.all(
 			[...this.receipts.entries()].filter(([candidate]) => candidate <= revision).map(([, receipt]) => receipt),
 		)
+		this.assertDurability(revision)
 	}
 
-	/** Resolves once every commit is on disk and the view has been told about all of them. */
+	/** Resolves once every admitted commit is on disk and the view has been told about all of them. */
 	async flushAll(): Promise<void> {
-		await Promise.all([...this.receipts.values()])
+		await this.flushThrough(this.latestRevision)
 		await this.viewTail
 	}
 
@@ -86,6 +88,7 @@ export class CommitPipeline {
 					this.fail(error, batch)
 					return
 				}
+				this.durableRevision = Math.max(this.durableRevision, batch.state.revision)
 				for (const waiter of batch.waiters) waiter.resolve()
 				this.publish(batch.committed)
 			}
@@ -98,6 +101,7 @@ export class CommitPipeline {
 		const fatal = error instanceof Error ? error : new Error(String(error))
 		this.fatalError ??= fatal
 		const rejected = [...batch.waiters, ...(this.pending?.waiters ?? [])]
+		this.failedFromRevision ??= Math.min(...rejected.map(({ revision }) => revision))
 		this.pending = undefined
 		for (const waiter of rejected) {
 			this.recordDurabilityFailure(fatal, waiter.revision)
@@ -127,6 +131,11 @@ export class CommitPipeline {
 				if (this.receipts.get(revision) === durable) this.receipts.delete(revision)
 			})
 			.catch(() => undefined)
+	}
+
+	private assertDurability(revision: number): void {
+		if (revision <= this.durableRevision) return
+		if (this.fatalError && this.failedFromRevision !== undefined && revision >= this.failedFromRevision) throw this.fatalError
 	}
 
 	private recordDurabilityFailure(error: Error, revision: number): void {

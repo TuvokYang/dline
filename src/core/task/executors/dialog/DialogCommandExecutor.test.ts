@@ -56,6 +56,40 @@ describe("DialogCommandExecutor", () => {
 		])
 	})
 
+	it("notifies awaiting observers only after the presented state is durable", async () => {
+		let makeDurable!: () => void
+		const durable = new Promise<void>((resolve) => {
+			makeDurable = resolve
+		})
+		const awaiting = { awaiting: vi.fn(async () => undefined) }
+		const executor = new DialogCommandExecutor(
+			{
+				prepare: async () => ({
+					journalRef: "journal:1",
+					journalWatermark: { seq: 1 },
+					receiverGeneration: 4,
+					disposition: "created" as const,
+				}),
+				reveal: async () => ({ disposition: "revealed" as const }),
+			},
+			{ submit: async () => ({ kind: "accepted" as const, durable }) },
+			undefined,
+			awaiting,
+		)
+
+		const running = executor.execute(reveal())
+		await Promise.resolve()
+		expect(awaiting.awaiting).not.toHaveBeenCalled()
+
+		makeDurable()
+		await running
+		expect(awaiting.awaiting).toHaveBeenCalledExactlyOnceWith({
+			turnId: "turn-1",
+			interactionId: "i-1",
+			kind: "followup",
+		})
+	})
+
 	it("dismisses a reveal whose presented feedback loses the causal race", async () => {
 		const dismiss = vi.fn(async () => undefined)
 		const executor = new DialogCommandExecutor(

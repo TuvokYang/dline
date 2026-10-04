@@ -9,8 +9,13 @@ import { normalizeWorkspaceRelativeInputPath } from "@/core/workspace/utils/norm
 import { parseWorkspaceInlinePath } from "@/core/workspace/utils/parseWorkspaceInlinePath"
 import { DlineRuntimeFileManager } from "@/services/runtime-files/DlineRuntimeFileManager"
 import { PATCH_MARKERS } from "@/shared/Patch"
-import type { ConfigurableCeilings, PermissionScopeContext } from "../../kernel/turn/approval-kind"
-import { PATH_SCOPED_TOOLS, resolveLaneContext, type ToolLaneContext } from "../../kernel/turn/tool-lanes"
+import {
+	type ConfigurableCeilings,
+	PATH_SCOPED_TOOLS,
+	type PermissionScopeContext,
+	resolveLaneContext,
+	type ToolLaneContext,
+} from "../../kernel"
 import { findReplaceTextFiles } from "../../tools/utils/replace-text-files"
 import {
 	admitToolCall,

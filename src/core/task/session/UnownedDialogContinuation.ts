@@ -2,6 +2,7 @@ import { formatResponse } from "@core/prompts/responses"
 import type { SemanticInputDocument } from "@shared/input-semantics/document"
 import { Logger } from "@shared/services/Logger"
 import type { InteractionOutcome } from "../interaction/InteractionProtocol"
+import type { QueuedInputResponse } from "../kernel"
 import { createResumeSubmissionContext } from "../resume/ResumeProvenance"
 import type { TaskInput } from "../shell/TaskShell"
 
@@ -11,6 +12,10 @@ export interface UnownedDialogResolution {
 	/** The kernel's dialog kind, which says what the continuation is resuming from. */
 	readonly kind: string
 	readonly outcome: InteractionOutcome
+	/** A consumed retained batch may only continue as its original tool result. */
+	readonly queuedInput?: QueuedInputResponse
+	/** Fences async preparation and resumption against a newer session generation. */
+	readonly isCurrent?: () => boolean
 }
 
 /**
@@ -47,6 +52,8 @@ export interface UnownedDialogContinuationPort {
 	 */
 	accepts(resolution: UnownedDialogResolution): boolean
 
+	/** Make the answer durable before its owner releases the dialog slot. */
+	prepare?(resolution: UnownedDialogResolution): Promise<boolean>
 	continue(resolution: UnownedDialogResolution): Promise<UnownedDialogOutcome>
 }
 
@@ -100,7 +107,7 @@ export class ResumeDialogContinuation implements UnownedDialogContinuationPort {
 	) {}
 
 	accepts(resolution: UnownedDialogResolution): boolean {
-		return !TASK_ENDING_ACTIONS.has(resolution.outcome.actionId)
+		return !resolution.queuedInput && !TASK_ENDING_ACTIONS.has(resolution.outcome.actionId)
 	}
 
 	async continue(resolution: UnownedDialogResolution): Promise<UnownedDialogOutcome> {
@@ -124,6 +131,7 @@ export class ResumeDialogContinuation implements UnownedDialogContinuationPort {
 				...(context === undefined ? {} : { context }),
 				...(draft?.semanticInput === undefined ? {} : { semanticInput: draft.semanticInput }),
 			})
+			if (resolution.isCurrent && !resolution.isCurrent()) return "declined"
 			if (processAnyway) this.resetMistakes?.()
 			await this.resumption.submit(input)
 			return "continued"

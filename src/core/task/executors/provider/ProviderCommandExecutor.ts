@@ -15,8 +15,7 @@ export type ProviderExecutionChunk =
 	| {
 			readonly kind: "partial"
 			readonly transientId: string
-			readonly payloadRef: string
-			/** The prose streamed so far, for presentation; the payload stays authoritative. */
+			/** The prose streamed so far, kept only in the transient presentation plane. */
 			readonly text?: string
 			/** The reasoning streamed so far, for presentation. */
 			readonly reasoning?: string
@@ -74,6 +73,7 @@ export interface ProviderExecutionInput {
 
 export interface ProviderExecutionPort {
 	start(input: ProviderExecutionInput): AsyncIterable<ProviderExecutionChunk>
+	recoverFinal?(payloadRef: string): Promise<{ readonly turnPlan: ProviderTurnPlan }>
 	recordUsage?(usage: Readonly<Record<string, number>>): void
 }
 
@@ -150,7 +150,7 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
 	private async run(command: ProviderStartCommand, controller: AbortController): Promise<void> {
 		let finalResult: ProviderTurnOutcome | undefined
 		try {
-			finalResult = await this.consume(command, controller.signal)
+			finalResult = (await this.recoverFinal(command)) ?? (await this.consume(command, controller.signal))
 		} catch (error) {
 			if (isExecutionAbort(error, controller.signal)) return
 			const presentation = presentationOf(error)
@@ -165,7 +165,7 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
 			})
 			return
 		}
-		if (!finalResult || controller.signal.aborted) return
+		if (!finalResult) return
 		await this.events.submit({
 			type: "provider.turn_ready",
 			generation: command.generation,
@@ -176,6 +176,21 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
 			journalWatermark: finalResult.journalWatermark,
 			turnPlan: finalResult.chunk.turnPlan,
 		})
+	}
+
+	private async recoverFinal(command: ProviderStartCommand): Promise<ProviderTurnOutcome | undefined> {
+		const entry = await this.journal.findByOperation(`provider.final:${command.commandId}`)
+		if (!entry) return undefined
+		if (entry.kind !== "message" || entry.source !== "provider" || !entry.payloadRef)
+			throw new Error("InvalidProviderFinalJournalEntry")
+		if (!this.port.recoverFinal) throw new Error("ProviderFinalRecoveryUnavailable")
+		const recovered = await this.port.recoverFinal(entry.payloadRef)
+		const turnId = entry.causation?.turnId ?? command.turnId
+		if (!turnId) throw new Error("MissingProviderFinalTurnIdentity")
+		return {
+			chunk: { kind: "final", turnId, payloadRef: entry.payloadRef, turnPlan: recovered.turnPlan },
+			journalWatermark: entry.watermark,
+		}
 	}
 
 	private async consume(command: ProviderStartCommand, signal: AbortSignal): Promise<ProviderTurnOutcome | undefined> {
@@ -257,103 +272,116 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
 		let interrupted: Extract<ProviderExecutionChunk, { kind: "interrupted" }> | undefined
 		let transientId: string | undefined
 		let retrying = false
-		for await (const chunk of this.port.start({ draftRef: command.draftRef, turnId: command.turnId, signal })) {
-			if (chunk.kind === "interrupted") {
-				interrupted = chunk
-				continue
-			}
-			// Keep draining after a stop: the stream ends by itself once the provider
-			// notices, and only then does it report what the reply had already said.
-			if (signal.aborted) continue
-			if (finalChunk) {
+		let durableTerminal = false
+		try {
+			for await (const chunk of this.port.start({ draftRef: command.draftRef, turnId: command.turnId, signal })) {
+				if (chunk.kind === "interrupted") {
+					interrupted = chunk
+					continue
+				}
+				// Keep draining after a stop: the stream ends by itself once the provider
+				// notices, and only then does it report what the reply had already said.
+				if (signal.aborted) continue
+				if (finalChunk) {
+					if (chunk.kind === "usage") {
+						this.absorbUsage(usage, chunk.usage)
+						continue
+					}
+					throw new Error("ChunkAfterFinal")
+				}
+				if (chunk.kind === "retry") {
+					// A retry is only legal before the stream produced anything.
+					if (transientId) throw new Error("RetryAfterStreamStarted")
+					retrying = true
+					await this.noteRetry(record, chunk.notice)
+					continue
+				}
+				if (retrying) {
+					retrying = false
+					await this.noteRecovered(record)
+				}
+				if (chunk.kind === "partial") {
+					if (transientId && transientId !== chunk.transientId) throw new Error("MultipleTransientStreams")
+					transientId = chunk.transientId
+					this.journal.appendTransient(chunk.transientId)
+					this.taskView.notifyTransient(
+						this.taskId,
+						chunk.projection ?? { kind: "provider.partial", transientId: chunk.transientId },
+					)
+					this.presentation?.showPartial({
+						transientId: chunk.transientId,
+						text: chunk.text ?? "",
+						...(chunk.reasoning === undefined ? {} : { reasoning: chunk.reasoning }),
+					})
+					continue
+				}
 				if (chunk.kind === "usage") {
 					this.absorbUsage(usage, chunk.usage)
 					continue
 				}
-				throw new Error("ChunkAfterFinal")
+				if (transientId && chunk.transientId !== transientId) throw new Error("FinalTransientIdentityMismatch")
+				if (command.turnId && chunk.turnId !== command.turnId) throw new Error("ProviderTurnIdentityMismatch")
+				finalChunk = chunk
 			}
-			if (chunk.kind === "retry") {
-				// A retry is only legal before the stream produced anything.
-				if (transientId) throw new Error("RetryAfterStreamStarted")
-				retrying = true
-				await this.noteRetry(record, chunk.notice)
-				continue
-			}
-			if (retrying) {
-				retrying = false
-				await this.noteRecovered(record)
-			}
-			if (chunk.kind === "partial") {
-				if (transientId && transientId !== chunk.transientId) throw new Error("MultipleTransientStreams")
-				transientId = chunk.transientId
-				this.journal.appendTransient(chunk.transientId, chunk.payloadRef)
-				this.taskView.notifyTransient(
-					this.taskId,
-					chunk.projection ?? { kind: "provider.partial", payloadRef: chunk.payloadRef },
-				)
-				this.presentation?.showPartial({
-					transientId: chunk.transientId,
-					text: chunk.text ?? "",
-					...(chunk.reasoning === undefined ? {} : { reasoning: chunk.reasoning }),
+			if (signal.aborted) {
+				if (!interrupted) throw signal.reason
+				await this.persistInterruption(command, interrupted, transientId)
+				durableTerminal = true
+				await this.presentation?.commit({
+					transientId: interrupted.transientId,
+					text: interrupted.text ?? "",
+					...(interrupted.reasoning === undefined ? {} : { reasoning: interrupted.reasoning }),
 				})
-				continue
+				return undefined
 			}
-			if (chunk.kind === "usage") {
-				this.absorbUsage(usage, chunk.usage)
-				continue
+			if (!finalChunk) throw new Error("MissingFinalChunk")
+			const journalInput = {
+				operationId: `provider.final:${command.commandId}`,
+				payloadRef: finalChunk.payloadRef,
+				source: "provider" as const,
+				causation: {
+					commandId: command.commandId,
+					originRevision: command.originRevision,
+					generation: command.generation,
+					turnId: finalChunk.turnId,
+				},
 			}
-			if (transientId && chunk.transientId !== transientId) throw new Error("FinalTransientIdentityMismatch")
-			if (command.turnId && chunk.turnId !== command.turnId) throw new Error("ProviderTurnIdentityMismatch")
-			finalChunk = chunk
+			const appended = finalChunk.transientId
+				? await this.journal.finalizeTransient({ ...journalInput, transientId: finalChunk.transientId })
+				: await this.journal.append(journalInput)
+			durableTerminal = true
+			// Settled only after the journal accepted the turn: a row shown as final
+			// before its durable entry exists would survive a crash the turn did not.
+			if (finalChunk.transientId) {
+				await this.presentation?.commit({
+					transientId: finalChunk.transientId,
+					text: finalChunk.text ?? "",
+					...(finalChunk.reasoning === undefined ? {} : { reasoning: finalChunk.reasoning }),
+				})
+			}
+			return { chunk: finalChunk, journalWatermark: appended.watermark }
+		} catch (error) {
+			if (transientId && !durableTerminal) await this.withdrawTransient(transientId)
+			throw error
 		}
-		if (signal.aborted) {
-			await this.recordInterruption(command, interrupted, transientId)
-			return undefined
-		}
-		if (!finalChunk) throw new Error("MissingFinalChunk")
-		const journalInput = {
-			operationId: `provider.final:${command.commandId}`,
-			payloadRef: finalChunk.payloadRef,
-			source: "provider" as const,
-			causation: {
-				commandId: command.commandId,
-				originRevision: command.originRevision,
-				generation: command.generation,
-				turnId: finalChunk.turnId,
-			},
-		}
-		const appended = finalChunk.transientId
-			? await this.journal.finalizeTransient({ ...journalInput, transientId: finalChunk.transientId })
-			: await this.journal.append(journalInput)
-		if (signal.aborted) return undefined
-		// Settled only after the journal accepted the turn: a row shown as final
-		// before its durable entry exists would survive a crash the turn did not.
-		if (finalChunk.transientId) {
-			await this.presentation?.commit({
-				transientId: finalChunk.transientId,
-				text: finalChunk.text ?? "",
-				...(finalChunk.reasoning === undefined ? {} : { reasoning: finalChunk.reasoning }),
-			})
-		}
-		return { chunk: finalChunk, journalWatermark: appended.watermark }
+	}
+
+	private async withdrawTransient(transientId: string): Promise<void> {
+		this.journal.discardTransient(transientId)
+		await this.presentation?.commit({ transientId, text: "" })
 	}
 
 	/**
-	 * Keep what a stopped reply had already said.
+	 * Persist what a stopped reply had already said before its rows settle.
 	 *
-	 * Journaled under the command's identity, so a stop that is reported twice
-	 * records it once, and settled on screen only after it is durable. A stop
-	 * before anything streamed leaves nothing behind.
+	 * The caller marks the terminal durable immediately after this resolves, so
+	 * later cancellation or presentation failure cannot retract the journal fact.
 	 */
-	private async recordInterruption(
+	private async persistInterruption(
 		command: ProviderStartCommand,
-		interrupted: Extract<ProviderExecutionChunk, { kind: "interrupted" }> | undefined,
+		interrupted: Extract<ProviderExecutionChunk, { kind: "interrupted" }>,
 		streamedTransientId: string | undefined,
 	): Promise<void> {
-		if (!interrupted) {
-			if (streamedTransientId) await this.presentation?.commit({ transientId: streamedTransientId, text: "" })
-			return
-		}
 		const journalInput = {
 			operationId: `provider.interrupted:${command.commandId}`,
 			payloadRef: interrupted.payloadRef,
@@ -367,10 +395,5 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
 		}
 		if (streamedTransientId) await this.journal.finalizeTransient({ ...journalInput, transientId: streamedTransientId })
 		else await this.journal.append(journalInput)
-		await this.presentation?.commit({
-			transientId: interrupted.transientId,
-			text: interrupted.text ?? "",
-			...(interrupted.reasoning === undefined ? {} : { reasoning: interrupted.reasoning }),
-		})
 	}
 }

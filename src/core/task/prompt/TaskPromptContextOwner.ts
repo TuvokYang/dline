@@ -1,23 +1,14 @@
 import path from "node:path"
 import type { ApiProviderInfo } from "@core/api"
 import type { WebSearchRoutingPlan } from "@core/api/server-tools"
-import {
-	getGlobalClineRules,
-	getLocalClineRules,
-	refreshClineRulesToggles,
-} from "@core/context/instructions/user-instructions/agent-rules"
+import { getGlobalClineRules, getLocalClineRules } from "@core/context/instructions/user-instructions/agent-rules"
 import {
 	getLocalAgentsRules,
 	getLocalCursorRules,
 	getLocalWindsurfRules,
-	refreshExternalRulesToggles,
 } from "@core/context/instructions/user-instructions/external-rules"
 import { RuleContextBuilder } from "@core/context/instructions/user-instructions/RuleContextBuilder"
 import { discoverAvailableSkills } from "@core/context/instructions/user-instructions/skills"
-import { refreshWorkflowToggles } from "@core/context/instructions/user-instructions/workflows"
-import type { Controller } from "@core/controller"
-import { refreshSkills } from "@core/controller/file/refreshSkills"
-import { refreshSubagents } from "@core/controller/file/refreshSubagents"
 import type { IgnoreController } from "@core/ignore/IgnoreController"
 import { resolveAvailableImageModelId } from "@core/image-generation/runtime"
 import { formatResponse } from "@core/prompts/responses"
@@ -26,7 +17,6 @@ import { ensureRulesDirectoryExists } from "@core/storage/disk"
 import type { StateManager } from "@core/storage/StateManager"
 import { isMultiRootEnabled } from "@core/workspace/multi-root-utils"
 import type { WorkspaceRootManager } from "@core/workspace/WorkspaceRootManager"
-import type { McpHub } from "@services/mcp/McpHub"
 import { DEFAULT_LANGUAGE_SETTINGS, getLanguageKey, type LanguageDisplay } from "@shared/Languages"
 import { resolvePromptProfile } from "@shared/resolve-prompt-profile"
 import type { Mode } from "@shared/storage/types"
@@ -38,11 +28,11 @@ import {
 } from "@shared/TaskCapabilityToggles"
 import { DEFAULT_TERMINAL_COMMAND_TIMEOUT_SECONDS } from "@shared/terminal-settings"
 import { ClineDefaultTool } from "@shared/tools"
-import { HostProvider } from "@/hosts/host-provider"
 import { recordPerfPhase } from "@/services/telemetry/instrumentation/duration-recorder"
 import { PerfDomain } from "@/services/telemetry/instrumentation/perf-domains"
 import { ClineClient } from "@/shared/cline"
 import { Logger } from "@/shared/services/Logger"
+import type { TaskPromptContextHost } from "../composition/TaskSessionPorts"
 import type { MessageStateHandler } from "../message-state"
 import type { TaskStateManager } from "../TaskStateManager"
 
@@ -67,8 +57,7 @@ interface PromptContextRuntime {
 
 export interface TaskPromptContextOwnerOptions {
 	readonly identity: PromptContextIdentity
-	readonly controller: Controller
-	readonly mcpHub: McpHub
+	readonly host: TaskPromptContextHost
 	readonly stateManager: StateManager
 	readonly taskStateManager: TaskStateManager
 	readonly getMessageStateHandler: () => MessageStateHandler
@@ -88,7 +77,7 @@ export class TaskPromptContextOwner {
 	): Promise<SystemPromptContext> {
 		const startedAt = performance.now()
 		let stageStartedAt = startedAt
-		const host = await HostProvider.env.getHostVersion({})
+		const host = await this.options.host.getHostVersion()
 		const hostMs = Math.round(performance.now() - stageStartedAt)
 		const ide = host?.platform || "Unknown"
 		const isCliEnvironment = host.clineType === ClineClient.Cli
@@ -107,25 +96,23 @@ export class TaskPromptContextOwner {
 				: ""
 
 		stageStartedAt = performance.now()
-		const { globalToggles, localToggles } = await refreshClineRulesToggles(this.options.controller, this.options.identity.cwd)
+		const { globalToggles, localToggles } = await this.options.host.refreshClineRules(this.options.identity.cwd)
 		const dlineRulesDiscoveryMs = Math.round(performance.now() - stageStartedAt)
 		stageStartedAt = performance.now()
-		const { windsurfLocalToggles, cursorLocalToggles, agentsLocalToggles } = await refreshExternalRulesToggles(
-			this.options.controller,
+		const { windsurfLocalToggles, cursorLocalToggles, agentsLocalToggles } = await this.options.host.refreshExternalRules(
 			this.options.identity.cwd,
 		)
 		const externalRulesDiscoveryMs = Math.round(performance.now() - stageStartedAt)
 		stageStartedAt = performance.now()
-		const { globalWorkflowToggles, localWorkflowToggles } = await refreshWorkflowToggles(
-			this.options.controller,
+		const { globalWorkflowToggles, localWorkflowToggles } = await this.options.host.refreshWorkflows(
 			this.options.identity.cwd,
 		)
 		const workflowsDiscoveryMs = Math.round(performance.now() - stageStartedAt)
 		stageStartedAt = performance.now()
-		const refreshedSkills = await refreshSkills(this.options.controller)
+		const refreshedSkills = await this.options.host.refreshSkills()
 		const skillsRefreshMs = Math.round(performance.now() - stageStartedAt)
 		stageStartedAt = performance.now()
-		const refreshedSubagents = await refreshSubagents(this.options.controller)
+		const refreshedSubagents = await this.options.host.refreshSubagents()
 		const subagentsRefreshMs = Math.round(performance.now() - stageStartedAt)
 		const remoteConfigSettings = this.options.stateManager.getRemoteConfigSettings()
 		const remoteRulesToggles = this.options.stateManager.getGlobalStateKey("remoteRulesToggles") ?? {}
@@ -169,7 +156,7 @@ export class TaskPromptContextOwner {
 				refreshedSubagents.localSubagents.map((agent) => [agent.path, agent.enabled]),
 			),
 			mcpServers: Object.fromEntries(
-				this.options.controller.getMcpServersForOwner().map((server) => [server.name, server.disabled !== true]),
+				this.options.host.getMcpServers().map((server) => [server.name, server.disabled !== true]),
 			),
 		})
 		const taskCapabilityToggles = reconcileTaskCapabilityToggles(currentTaskToggles, discoveredTaskToggles)
@@ -298,8 +285,8 @@ export class TaskPromptContextOwner {
 				this.options.stateManager.getGlobalSettingsKey("mcpEnabled") === true
 					? {
 							getServers: () =>
-								this.options.mcpHub
-									.getServersForOwner(this.options.controller.mcpOwnerId)
+								this.options.host
+									.getMcpServers()
 									.filter((server) => taskCapabilityToggles.mcpServers[server.name] === true),
 						}
 					: undefined,

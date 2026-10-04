@@ -1,0 +1,303 @@
+import { readFile } from "node:fs/promises"
+import { getLegacyTaskSnapshotPath } from "@core/storage/disk"
+import type { SemanticInputDocument } from "@shared/input-semantics/document"
+import { validateSemanticInputDocument } from "@shared/input-semantics/validation"
+import { hashStableJson } from "@shared/stable-json"
+import { writeJsonAtomic } from "@shared/storage/atomic-file"
+import { createInitialTaskState, type IntakeEntry, type LegacyInputQueueMigrationV1 } from "../kernel"
+import type { StateVault, TaskPayloadStore } from "../stores"
+import { encodeTaskPayload } from "../stores/payload/TaskPayloadCodec"
+import type { UserInputEnvelope } from "../stores/payload/TaskPayloadEnvelopes"
+
+export interface LegacyInputQueueSourceDocument {
+	readonly fingerprint: string
+	readonly entries: readonly unknown[]
+}
+
+/** Compatibility source for the retired `snapshot.json.inputQueue` authority. */
+export interface LegacyInputQueueSource {
+	read(): Promise<LegacyInputQueueSourceDocument | undefined>
+	removeInputQueue(expectedFingerprint: string): Promise<void>
+}
+
+export type LegacyInputQueueMigrationResult =
+	| {
+			readonly kind: "none"
+			readonly importedEntries: 0
+			readonly skippedDeliveringEntries: 0
+			readonly skippedInvalidEntries: 0
+	  }
+	| {
+			readonly kind: "imported" | "cleaned"
+			readonly importedEntries: number
+			readonly skippedDeliveringEntries: number
+			readonly skippedInvalidEntries: number
+	  }
+
+export class LegacyInputQueueIntegrityError extends Error {
+	constructor(message: string) {
+		super(message)
+		this.name = "LegacyInputQueueIntegrityError"
+	}
+}
+
+/** Canonical state is durable; only retirement of the old source remains to retry. */
+export class LegacyInputQueueCleanupPendingError extends Error {
+	override readonly cause: unknown
+
+	constructor(cause: unknown) {
+		super("Canonical input queue was saved, but the legacy inputQueue field could not be removed")
+		this.name = "LegacyInputQueueCleanupPendingError"
+		this.cause = cause
+	}
+}
+
+function record(value: unknown): Record<string, unknown> | undefined {
+	return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined
+}
+
+function stringList(value: unknown): readonly string[] {
+	return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : []
+}
+
+function semanticInput(value: unknown): SemanticInputDocument | undefined {
+	const candidate = record(value) as SemanticInputDocument | undefined
+	if (!candidate) return undefined
+	try {
+		return validateSemanticInputDocument(candidate).length === 0 ? candidate : undefined
+	} catch {
+		return undefined
+	}
+}
+
+function sourceFingerprint(entries: readonly unknown[]): string {
+	return hashStableJson(entries)
+}
+
+function isMissingFile(error: unknown): boolean {
+	return (error as NodeJS.ErrnoException | undefined)?.code === "ENOENT"
+}
+
+function parseSnapshot(value: unknown): Record<string, unknown> {
+	const parsed = record(value)
+	if (!parsed) throw new LegacyInputQueueIntegrityError("Legacy snapshot is not a JSON object")
+	return parsed
+}
+
+/** File-backed source that removes only the retired field and preserves every unrelated snapshot property. */
+export class FileLegacyInputQueueSource implements LegacyInputQueueSource {
+	constructor(private readonly filePath: string) {}
+
+	async read(): Promise<LegacyInputQueueSourceDocument | undefined> {
+		let raw: string
+		try {
+			raw = await readFile(this.filePath, "utf8")
+		} catch (error) {
+			if (isMissingFile(error)) return undefined
+			throw error
+		}
+		let snapshot: Record<string, unknown>
+		try {
+			snapshot = parseSnapshot(JSON.parse(raw))
+		} catch (error) {
+			if (error instanceof LegacyInputQueueIntegrityError) throw error
+			throw new LegacyInputQueueIntegrityError(`Legacy snapshot cannot be decoded: ${String(error)}`)
+		}
+		if (!("inputQueue" in snapshot)) return undefined
+		if (!Array.isArray(snapshot.inputQueue)) {
+			throw new LegacyInputQueueIntegrityError("Legacy snapshot inputQueue is not an array")
+		}
+		return { entries: snapshot.inputQueue, fingerprint: sourceFingerprint(snapshot.inputQueue) }
+	}
+
+	async removeInputQueue(expectedFingerprint: string): Promise<void> {
+		let raw: string
+		try {
+			raw = await readFile(this.filePath, "utf8")
+		} catch (error) {
+			if (isMissingFile(error)) return
+			throw error
+		}
+		let snapshot: Record<string, unknown>
+		try {
+			snapshot = parseSnapshot(JSON.parse(raw))
+		} catch (error) {
+			if (error instanceof LegacyInputQueueIntegrityError) throw error
+			throw new LegacyInputQueueIntegrityError(`Legacy snapshot cannot be decoded during cleanup: ${String(error)}`)
+		}
+		if (!("inputQueue" in snapshot)) return
+		if (!Array.isArray(snapshot.inputQueue)) {
+			throw new LegacyInputQueueIntegrityError("Legacy snapshot inputQueue changed to a non-array value")
+		}
+		const currentFingerprint = sourceFingerprint(snapshot.inputQueue)
+		if (currentFingerprint !== expectedFingerprint) {
+			throw new LegacyInputQueueIntegrityError(
+				`Legacy inputQueue changed before cleanup (${expectedFingerprint} != ${currentFingerprint})`,
+			)
+		}
+		const { inputQueue: _retired, ...remaining } = snapshot
+		await writeJsonAtomic(this.filePath, remaining)
+	}
+}
+
+export async function legacyInputQueueSource(taskId: string): Promise<LegacyInputQueueSource> {
+	return new FileLegacyInputQueueSource(await getLegacyTaskSnapshotPath(taskId))
+}
+
+interface NormalizedLegacyInput {
+	readonly entryId: string
+	readonly mode: "queued" | "steering"
+	readonly envelope: UserInputEnvelope
+}
+
+interface NormalizedLegacyQueue {
+	readonly entries: readonly NormalizedLegacyInput[]
+	readonly skippedDelivering: number
+	readonly skippedInvalid: number
+}
+
+function normalizedIdentity(
+	raw: Record<string, unknown>,
+	index: number,
+	fingerprint: string,
+	existingIds: ReadonlySet<string>,
+	importedIds: Set<string>,
+): string {
+	const requested =
+		typeof raw.id === "string" && raw.id.length > 0 ? raw.id : `legacy-input-${fingerprint.slice(7, 19)}-${index}`
+	if (existingIds.has(requested)) {
+		throw new LegacyInputQueueIntegrityError(`Legacy inputQueue entry id already exists in canonical state: ${requested}`)
+	}
+	if (!importedIds.has(requested)) return requested
+	let suffix = 1
+	let candidate = `${requested}-legacy-${index}-${suffix}`
+	while (existingIds.has(candidate) || importedIds.has(candidate)) {
+		suffix += 1
+		candidate = `${requested}-legacy-${index}-${suffix}`
+	}
+	return candidate
+}
+
+function normalizeLegacyQueue(
+	values: readonly unknown[],
+	fingerprint: string,
+	existingIds: ReadonlySet<string>,
+): NormalizedLegacyQueue {
+	const entries: NormalizedLegacyInput[] = []
+	const importedIds = new Set<string>()
+	let skippedDelivering = 0
+	let skippedInvalid = 0
+	for (let index = 0; index < values.length; index += 1) {
+		const raw = record(values[index])
+		if (!raw || typeof raw.text !== "string") {
+			skippedInvalid += 1
+			continue
+		}
+		if (raw.delivering === true) {
+			skippedDelivering += 1
+			continue
+		}
+		const entryId = normalizedIdentity(raw, index, fingerprint, existingIds, importedIds)
+		importedIds.add(entryId)
+		const document = semanticInput(raw.semanticInput)
+		entries.push({
+			entryId,
+			mode: raw.mode === "steering" ? "steering" : "queued",
+			envelope: {
+				kind: "user_input",
+				text: raw.text,
+				images: stringList(raw.images),
+				files: stringList(raw.files),
+				...(typeof raw.activeQuote === "string" ? { activeQuote: raw.activeQuote } : {}),
+				...(document ? { semanticInput: document } : {}),
+			},
+		})
+	}
+	return { entries, skippedDelivering, skippedInvalid }
+}
+
+function migrationResult(kind: "imported" | "cleaned", marker: LegacyInputQueueMigrationV1): LegacyInputQueueMigrationResult {
+	return {
+		kind,
+		importedEntries: marker.importedEntryCount,
+		skippedDeliveringEntries: marker.skippedDeliveringCount,
+		skippedInvalidEntries: marker.skippedInvalidCount,
+	}
+}
+
+async function retireSource(source: LegacyInputQueueSource, marker: LegacyInputQueueMigrationV1): Promise<void> {
+	try {
+		await source.removeInputQueue(marker.sourceFingerprint)
+	} catch (error) {
+		if (error instanceof LegacyInputQueueIntegrityError) throw error
+		throw new LegacyInputQueueCleanupPendingError(error)
+	}
+}
+
+/**
+ * Imports `snapshot.json.inputQueue` into canonical state exactly once.
+ *
+ * Payload writes are content addressed. The state and marker are saved together
+ * before the old field is removed, so a failed cleanup can only retry cleanup;
+ * it can never enqueue the same user input twice.
+ */
+export async function migrateLegacyInputQueue(input: {
+	readonly taskId: string
+	readonly source: LegacyInputQueueSource
+	readonly vault: StateVault
+	readonly payloads: TaskPayloadStore
+}): Promise<LegacyInputQueueMigrationResult> {
+	const source = await input.source.read()
+	if (!source) {
+		return { kind: "none", importedEntries: 0, skippedDeliveringEntries: 0, skippedInvalidEntries: 0 }
+	}
+	const durable = await input.vault.load(input.taskId)
+	const existingMarker = durable?.state.legacyInputQueueV1
+	if (existingMarker) {
+		if (existingMarker.sourceFingerprint !== source.fingerprint) {
+			throw new LegacyInputQueueIntegrityError(
+				`Legacy inputQueue changed after migration (${existingMarker.sourceFingerprint} != ${source.fingerprint})`,
+			)
+		}
+		await retireSource(input.source, existingMarker)
+		return migrationResult("cleaned", existingMarker)
+	}
+
+	const base = durable ?? { state: createInitialTaskState(input.taskId), outbox: [] }
+	if (base.state.intake.queued.some((entry) => entry.queue !== undefined && entry.state !== "consumed")) {
+		throw new LegacyInputQueueIntegrityError("Canonical retained input already exists without a legacy migration marker")
+	}
+	const existingIds = new Set(base.state.intake.queued.map((entry) => entry.entryId))
+	const normalized = normalizeLegacyQueue(source.entries, source.fingerprint, existingIds)
+	const firstSequence = Math.max(-1, ...base.state.intake.queued.map((entry) => entry.sequence)) + 1
+	const imported: IntakeEntry[] = []
+	for (let index = 0; index < normalized.entries.length; index += 1) {
+		const entry = normalized.entries[index]
+		const payloadRef = await input.payloads.put(encodeTaskPayload(entry.envelope))
+		imported.push({
+			entryId: entry.entryId,
+			payloadRef,
+			source: "user",
+			mode: entry.mode,
+			sequence: firstSequence + index,
+			queue: { editing: false },
+			state: "accepted",
+		})
+	}
+	const marker: LegacyInputQueueMigrationV1 = {
+		sourceFingerprint: source.fingerprint,
+		importedEntryCount: imported.length,
+		skippedDeliveringCount: normalized.skippedDelivering,
+		skippedInvalidCount: normalized.skippedInvalid,
+	}
+	await input.vault.save({
+		state: {
+			...base.state,
+			intake: { ...base.state.intake, queued: [...base.state.intake.queued, ...imported] },
+			legacyInputQueueV1: marker,
+		},
+		outbox: base.outbox,
+	})
+	await retireSource(input.source, marker)
+	return migrationResult("imported", marker)
+}

@@ -114,7 +114,7 @@ import { UIMessage } from "../storage/UIMessage"
 import type { ActiveTaskDescriptor } from "../task/active-tasks/ActiveTaskContextProvider"
 import type { TaskActivityStore } from "../task/activity/TaskActivityStore"
 import { TaskSessionCompositionService } from "../task/composition/TaskSessionCompositionService"
-import type { ActiveTaskSession } from "../task/session/ActiveTaskSession"
+import type { ActiveTaskSession, CheckpointRestoreFence } from "../task/session/ActiveTaskSession"
 import { KernelTaskViewPort } from "../task/view/KernelTaskViewPort"
 import { readDiscoveredToggles } from "./file/capability-discovery-cache"
 import {
@@ -139,6 +139,7 @@ import { dispatchInteraction } from "./task/dispatchInteraction"
 import { HistoryDisplaySession } from "./task/HistoryDisplaySession"
 import { prepareHistoryTaskForDisplay } from "./task/history-task-readiness"
 import { ControllerTaskSessionHostFactory } from "./task/host/ControllerTaskSessionHostFactory"
+import { ControllerTaskSessionPorts } from "./task/host/ControllerTaskSessionPorts"
 import { ControllerTransitionCompactionPort } from "./task/host/ControllerTransitionCompactionPort"
 import { replyWithTransitionDraft } from "./task/replyWithTransitionDraft"
 import { adaptCanonicalTaskView } from "./task/TaskViewMessageAdapter"
@@ -182,6 +183,8 @@ type InitTaskOptions = {
 	activateHistory?: boolean
 	/** Why an existing task is opened; defaults to an ordinary resume. */
 	openReason?: "resume" | "checkpoint_restore"
+	/** Process-local directory classification fixed before the session registers. */
+	taskKind?: "main" | "spawned"
 	/** Structured meaning of the opening text; when present Core never re-reads `task`. */
 	semanticInput?: import("@shared/input-semantics/document").SemanticInputDocument
 }
@@ -197,6 +200,7 @@ export type TaskLifecycleScope = {
 		preserveCompletedState?: boolean
 		suppressPostState?: boolean
 		deferTeardown?: boolean
+		checkpointRestoreFence?: CheckpointRestoreFence
 	}): Promise<void>
 }
 
@@ -1130,6 +1134,12 @@ export class Controller {
 		this.task = await new TaskSessionCompositionService().open({
 			taskId,
 			openReason: historyItem ? (options?.openReason ?? "resume") : "new",
+			collaboration: {
+				writable: this.taskLockAcquired,
+				summary: historyItem?.task ?? task ?? "",
+				kind: options?.taskKind ?? "main",
+				createdAt: new Date().toISOString(),
+			},
 			// Another window owns the task: recovered work waits for `task.open()`,
 			// which runs only once this window acquires the lock.
 			deferRestoredCommands: !this.taskLockAcquired,
@@ -1144,8 +1154,7 @@ export class Controller {
 				publishTaskHistoryClose: () => workspaceHistoryManager.closeTask(workspaceHistorySession),
 			},
 			prompt: {
-				controller: this,
-				mcpHub: this.mcpHub,
+				ports: new ControllerTaskSessionPorts(this),
 				ignoreController,
 				workspaceManager: this.workspaceManager,
 				terminalExecutionMode,
@@ -1192,7 +1201,10 @@ export class Controller {
 		try {
 			if (historyItem) {
 				await options?.onHistoryTaskPreparingToDisplay?.()
-				if (this.taskLockAcquired) await taskInstance.task.open()
+				if (this.taskLockAcquired) {
+					await taskInstance.task.open()
+					await taskInstance.activateBackgroundIngress()
+				}
 				await options?.onHistoryTaskReadyToDisplay?.()
 				logInitStage("history_prepare", initializedTaskId, `current=${this.task === taskInstance}`)
 				if (this.task !== taskInstance) return initializedTaskId
@@ -1474,11 +1486,19 @@ export class Controller {
 	 * opened as a restore so the runtime plans a resume from the rewound state
 	 * instead of whatever dialog the discarded tail last ended in.
 	 */
-	async reopenTaskForCheckpointRestore(taskId: string): Promise<void> {
-		const history = await this.getTaskWithId(taskId)
-		await this.initTask(undefined, undefined, undefined, history.historyItem, undefined, {
-			activateHistory: true,
-			openReason: "checkpoint_restore",
+	async reopenTaskForCheckpointRestore(taskId: string, fence: CheckpointRestoreFence): Promise<void> {
+		await this.runTaskLifecycleOperation(async (scope) => {
+			const active = this.task
+			if (!active || active.taskId !== taskId || active.owners.identity.taskIncarnationId !== fence.taskIncarnationId) {
+				throw new Error(`Checkpoint restore session changed for task ${taskId}`)
+			}
+			const history = await this.getTaskWithId(taskId)
+			await scope.clearTask({ suppressPostState: true, checkpointRestoreFence: fence })
+			await this.initTask(undefined, undefined, undefined, history.historyItem, undefined, {
+				activateHistory: true,
+				openReason: "checkpoint_restore",
+				skipInitialClear: true,
+			})
 		})
 	}
 
@@ -2814,7 +2834,9 @@ export class Controller {
 			 * The projection is optional so a task stub without a queue still
 			 * builds state instead of throwing.
 			 */
-			inputQueue: this.task?.owners.inputQueue?.snapshot() ?? [],
+			inputQueue: this.task
+				? [...(await this.task.inputQueue.project())]
+				: [...(this.historyDisplaySession?.getInputQueue() ?? [])],
 			/** Complete interaction view projected only from canonical runtime state. */
 			taskViewState: this.projectCurrentTaskViewState(rawMessages),
 		}
@@ -3095,7 +3117,9 @@ export class Controller {
 		// Publish the stopped interaction state after the task becomes writable.
 		if (this.task) {
 			try {
+				this.task.activateCollaboration()
 				await this.task.task.open()
+				await this.task.activateBackgroundIngress()
 			} catch (error) {
 				Logger.error(`[Lock] Failed to prepare task ${taskId} after unlock:`, error)
 			}
@@ -3207,6 +3231,7 @@ export class Controller {
 		preserveCompletedState?: boolean
 		suppressPostState?: boolean
 		deferTeardown?: boolean
+		checkpointRestoreFence?: CheckpointRestoreFence
 	}) {
 		const startedAt = performance.now()
 		let stageStartedAt = startedAt
@@ -3246,6 +3271,7 @@ export class Controller {
 		// between the task view and the recent-tasks view purely from `this.task`,
 		// so releasing the reference here is what returns the user to Recent; every
 		// remaining step is durability work that no longer has a visible effect.
+		task?.beginClose()
 		task?.owners.prompt.beginDispose()
 		this.task = undefined
 		this.historyDisplaySession = undefined
@@ -3258,7 +3284,15 @@ export class Controller {
 
 		const teardown = Promise.all([
 			historyDisplay?.dispose(),
-			task ? this.teardownDetachedTask(task, taskId, options?.preserveCompletedState === true, logCloseStage) : undefined,
+			task
+				? this.teardownDetachedTask(
+						task,
+						taskId,
+						options?.preserveCompletedState === true,
+						logCloseStage,
+						options?.checkpointRestoreFence,
+					)
+				: undefined,
 		]).then(() => undefined)
 		if (options?.deferTeardown) {
 			const pending = teardown.finally(() => {
@@ -3287,6 +3321,7 @@ export class Controller {
 		taskId: string | undefined,
 		preserveCompletedState: boolean,
 		logCloseStage: (phase: string, details?: string) => void,
+		checkpointRestoreFence?: CheckpointRestoreFence,
 	): Promise<void> {
 		try {
 			if (task) {
@@ -3294,8 +3329,14 @@ export class Controller {
 				await this.stateManager.clearTaskSettings(taskId)
 				logCloseStage("task_settings_clear")
 			}
-			await task?.dispose(randomUUID())
-			logCloseStage("task_terminate", `preserveCompleted=${preserveCompletedState}`)
+			if (task) {
+				if (checkpointRestoreFence) await task.disposeAfterCheckpointRestore(checkpointRestoreFence)
+				else await task.dispose(randomUUID())
+			}
+			logCloseStage(
+				checkpointRestoreFence ? "task_checkpoint_release" : "task_terminate",
+				`preserveCompleted=${preserveCompletedState}`,
+			)
 			// Stop lock heartbeat and polling only after terminate() completes, so a
 			// task that is still flushing keeps its lock until its stores are closed.
 			if (this.lockHeartbeatTimer) {
@@ -3316,6 +3357,9 @@ export class Controller {
 			}
 		} catch (error) {
 			Logger.error(`[Controller] Task teardown failed for ${taskId ?? "none"}:`, error)
+			// A checkpoint reopen must not create a second writer when the fenced
+			// incarnation failed to release its stores or task lock.
+			if (checkpointRestoreFence) throw error
 		}
 	}
 

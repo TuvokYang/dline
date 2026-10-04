@@ -1,4 +1,5 @@
 import type { ClineAskResponse } from "@shared/WebviewMessage"
+import type { InteractionOutcome } from "../../interaction/InteractionProtocol"
 import type { TaskConfig } from "../types/TaskConfig"
 
 /**
@@ -41,7 +42,9 @@ export async function sayFeedbackOnce(
 	text?: string,
 	images?: string[],
 	files?: string[],
+	presentation?: Pick<InteractionOutcome, "feedbackPresented">,
 ): Promise<void> {
+	if (presentation?.feedbackPresented) return
 	if (!isAckedFeedback(config, response, text, images, files)) {
 		await config.callbacks.say("user_feedback", text ?? "", images, files)
 	}

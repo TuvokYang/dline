@@ -72,6 +72,15 @@ function updateInteraction(
 			receiverGeneration: event.receiverGeneration,
 			draftRef: event.draftRef,
 			selectionRef: event.selectionRef,
+			...(event.queueDeliveryId && event.queueDeliveryEntries && event.queueDeliveryMode
+				? {
+						queuedInput: {
+							deliveryId: event.queueDeliveryId,
+							entries: event.queueDeliveryEntries,
+							mode: event.queueDeliveryMode,
+						},
+					}
+				: {}),
 		},
 	}
 }
@@ -91,6 +100,15 @@ export function withoutAbandonedReview(dialog: DialogSlice, compaction: Compacti
 }
 
 export function reduceDialog(state: DialogSlice, event: TaskEvent, nextRevision: number): DialogReduction {
+	if (
+		(event.type === "tool.completed" || event.type === "tool.failed") &&
+		state.primary?.interactionId === event.blockId &&
+		state.primary.acceptedResponse?.queuedInput
+	) {
+		// The tool runner journals its result before terminal feedback. Keep the
+		// accepted owner recoverable until that durable boundary, not just delivery.
+		return { state: { ...state, primary: state.interrupted, interrupted: undefined }, commands: [] }
+	}
 	if (event.type === "provider.turn_ready") {
 		const approvalsByBlock = { ...state.approvalsByBlock }
 		for (const block of event.turnPlan.blocks) {

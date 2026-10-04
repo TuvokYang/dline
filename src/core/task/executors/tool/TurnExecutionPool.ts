@@ -1,5 +1,5 @@
 import { telemetryService } from "@/services/telemetry"
-import { type AdmissionBlock, type AdmissionRefusal, decideAdmission, poolHasDrained } from "../../kernel/turn/pool-admission"
+import { type AdmissionBlock, type AdmissionRefusal, decideAdmission, poolHasDrained } from "../../kernel"
 import { BoundedGate, type GatePermit } from "../../runtime/concurrency/BoundedGate"
 
 /**

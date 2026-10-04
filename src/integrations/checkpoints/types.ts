@@ -1,3 +1,17 @@
+import type { CheckpointRestoreMode, CheckpointRestoreResult, WorkspaceRestoreResult } from "@core/task/shell/checkpoint-restore"
+
+/**
+ * Canonical task-state checkpoint boundary consumed by the legacy presentation/file adapter.
+ */
+export interface CanonicalCheckpointPort {
+	capture(input: { readonly messageTs: number; readonly workspaceRef?: string }): Promise<void>
+	restore(input: {
+		readonly messageTs: number
+		readonly mode: CheckpointRestoreMode
+		readonly restoreWorkspace: (workspaceRef: string) => Promise<WorkspaceRestoreResult>
+	}): Promise<CheckpointRestoreResult>
+}
+
 /**
  * Returns a task's provider conversation to an earlier journal position.
  *

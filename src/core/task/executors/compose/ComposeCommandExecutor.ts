@@ -1,10 +1,23 @@
-import type { Command, ComposeRoundCommand, TurnContinuationReason } from "../../kernel"
+import { Logger } from "@shared/services/Logger"
+import type {
+	Command,
+	ComposeRoundCommand,
+	InputQueueDeliveryReservation,
+	QueuedInputResponse,
+	QueueJournalReceipt,
+	ToolTerminalManifest,
+	TurnContinuationReason,
+} from "../../kernel"
 import type { CommandExecutor } from "../../runtime"
 import { executorFailure, type HaltOrder, type HaltParticipant, isExecutionAbort, type TaskEventSink } from "../contracts"
+import type { RetainedInputPresentationCommit } from "./RetainedInputPresentationPort"
 
 export interface ComposeRoundInput {
 	readonly turnId?: string
 	readonly admittedEntryIds: readonly string[]
+	readonly queueDelivery?: InputQueueDeliveryReservation
+	readonly respondedQueue?: QueuedInputResponse
+	readonly toolTerminals?: ToolTerminalManifest
 	/**
 	 * Why the kernel opened this round without a submission, when it did.
 	 *
@@ -23,10 +36,16 @@ export interface ComposeRoundInput {
  * a lifecycle command the round had to carry out first did not complete, so
  * nothing the user still wants remains to be sent.
  */
-export type ComposeRoundResult = { readonly draftRef: string } | { readonly withdrawn: { readonly reason: string } }
+export type ComposeRoundResult =
+	| { readonly draftRef: string; readonly queueJournalReceipt?: QueueJournalReceipt }
+	| { readonly withdrawn: { readonly reason: string } }
 
 export interface ComposePort {
 	compose(input: ComposeRoundInput): Promise<ComposeRoundResult>
+	/** Reserves row order before composing; publishing waits for accepted feedback. */
+	preparePresentation?(input: ComposeRoundInput): Promise<RetainedInputPresentationCommit | undefined>
+	/** Retracts any staged retained batch without deciding its kernel lifecycle. */
+	rollbackRetainedQueue?(input: ComposeRoundInput): Promise<"released" | "uncertain">
 }
 
 interface ActiveComposeCommand {
@@ -84,16 +103,23 @@ export class ComposeCommandExecutor implements CommandExecutor, HaltParticipant 
 	}
 
 	private async run(command: ComposeRoundCommand, controller: AbortController): Promise<void> {
+		const input: ComposeRoundInput = {
+			turnId: command.turnId,
+			admittedEntryIds: command.admittedEntryIds,
+			...(command.queueDelivery === undefined ? {} : { queueDelivery: command.queueDelivery }),
+			...(command.respondedQueue === undefined ? {} : { respondedQueue: command.respondedQueue }),
+			...(command.toolTerminals === undefined ? {} : { toolTerminals: command.toolTerminals }),
+			...(command.continuation === undefined ? {} : { continuation: command.continuation }),
+			signal: controller.signal,
+		}
 		let result: ComposeRoundResult
+		let presentation: RetainedInputPresentationCommit | undefined
 		try {
-			result = await this.port.compose({
-				turnId: command.turnId,
-				admittedEntryIds: command.admittedEntryIds,
-				...(command.continuation === undefined ? {} : { continuation: command.continuation }),
-				signal: controller.signal,
-			})
+			presentation = await this.port.preparePresentation?.(input)
+			result = await this.port.compose(input)
 		} catch (error) {
 			if (isExecutionAbort(error, controller.signal)) return
+			const queueDisposition = await this.rollbackRetainedQueue(input)
 			await this.events.submit({
 				type: "compose.failed",
 				generation: command.generation,
@@ -101,6 +127,7 @@ export class ComposeCommandExecutor implements CommandExecutor, HaltParticipant 
 				originRevision: command.originRevision,
 				turnId: command.turnId,
 				message: executorFailure("compose", error),
+				...(queueDisposition === undefined ? {} : { queueDisposition }),
 			})
 			return
 		}
@@ -117,17 +144,51 @@ export class ComposeCommandExecutor implements CommandExecutor, HaltParticipant 
 			return
 		}
 		if (!result.draftRef) throw new Error("MissingDraftRef")
-		await this.events.submit(this.completed(command, result.draftRef))
+		const completed = await this.events.submit(this.completed(command, result))
+		if (completed.kind === "rejected") {
+			const queueDisposition = await this.rollbackRetainedQueue(input)
+			if (queueDisposition !== undefined) {
+				await this.events.submit({
+					type: "compose.withdrawn",
+					generation: command.generation,
+					commandId: command.commandId,
+					originRevision: command.originRevision,
+					turnId: command.turnId,
+					reason: "compose_completion_rejected",
+					queueDisposition,
+				})
+			}
+			return
+		}
+		await completed.durable
+		try {
+			await presentation?.commit()
+		} catch (error) {
+			// A durable draft must not be resent because its chat mirror failed.
+			Logger.error("[inputQueue] Could not present a composed retained-input batch", error)
+		}
 	}
 
-	private completed(command: ComposeRoundCommand, draftRef: string) {
+	private async rollbackRetainedQueue(input: ComposeRoundInput): Promise<"released" | "uncertain" | undefined> {
+		if (!input.queueDelivery) return undefined
+		if (!this.port.rollbackRetainedQueue) return "uncertain"
+		try {
+			return await this.port.rollbackRetainedQueue(input)
+		} catch (error) {
+			Logger.error("[inputQueue] Could not retract a failed retained-input batch", error)
+			return "uncertain"
+		}
+	}
+
+	private completed(command: ComposeRoundCommand, result: Extract<ComposeRoundResult, { readonly draftRef: string }>) {
 		return {
 			type: "compose.completed" as const,
 			generation: command.generation,
 			commandId: command.commandId,
 			originRevision: command.originRevision,
 			turnId: command.turnId,
-			draftRef,
+			draftRef: result.draftRef,
+			...(result.queueJournalReceipt === undefined ? {} : { queueJournalReceipt: result.queueJournalReceipt }),
 		}
 	}
 }

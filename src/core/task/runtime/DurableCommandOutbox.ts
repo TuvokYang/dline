@@ -9,6 +9,12 @@ interface PendingCommand {
 	fenced: boolean
 }
 
+interface PendingPublication {
+	readonly command: Command
+	readonly completion: Promise<void>
+	fenced: boolean
+}
+
 function isImmediate(command: Command): boolean {
 	return command.type === "dialog.prepare" || command.type === "halt.stop"
 }
@@ -32,6 +38,7 @@ export function commandEffectKey(command: Command): string {
 export class DurableCommandOutbox {
 	private readonly pending = new Map<ExecutorDomain, PendingCommand[]>()
 	private readonly drains = new Map<ExecutorDomain, Promise<void>>()
+	private readonly publicationsInFlight = new Map<string, PendingPublication>()
 
 	constructor(
 		private readonly router: CommandRouter,
@@ -41,7 +48,10 @@ export class DurableCommandOutbox {
 
 	persistableAfter(commands: readonly Command[]): readonly Command[] {
 		const haltRevision = commands.find((command) => command.type === "halt.stop")?.originRevision
-		const retained = this.allPending()
+		const retained = [
+			...[...this.publicationsInFlight.values()].map((entry) => ({ command: entry.command, fenced: entry.fenced })),
+			...this.allPending(),
+		]
 			.filter((entry) => !entry.fenced && (haltRevision === undefined || entry.command.originRevision >= haltRevision))
 			.map((entry) => entry.command)
 		const incoming = commands.filter((command) => !isImmediate(command))
@@ -80,19 +90,25 @@ export class DurableCommandOutbox {
 		this.scheduleAll()
 	}
 
-	async whenPublishedThrough(revision: number): Promise<void> {
-		while (this.allPending().some((entry) => !entry.fenced && entry.command.originRevision <= revision)) {
+	async whenAdmitted(revision: number): Promise<void> {
+		while (this.allPending().some((entry) => !entry.fenced && entry.command.originRevision === revision)) {
 			this.scheduleAll()
 			await this.settleActiveDrains()
 		}
 	}
 
 	async whenIdle(): Promise<void> {
-		while (this.drains.size > 0) await this.settleActiveDrains()
+		while (this.drains.size > 0 || this.publicationsInFlight.size > 0) {
+			await this.settleActiveDrains()
+			await this.settlePublicationsThrough(Number.POSITIVE_INFINITY)
+		}
 	}
 
 	get pendingCount(): number {
-		return this.allPending().filter((entry) => !entry.fenced).length
+		return (
+			this.allPending().filter((entry) => !entry.fenced).length +
+			[...this.publicationsInFlight.values()].filter((entry) => !entry.fenced).length
+		)
 	}
 
 	/** Every queued entry across domains, for accounting that spans the whole outbox. */
@@ -115,8 +131,21 @@ export class DurableCommandOutbox {
 		await Promise.allSettled(active)
 	}
 
+	private async settlePublicationsThrough(revision: number): Promise<void> {
+		while (true) {
+			const active = [...this.publicationsInFlight.values()]
+				.filter(({ command }) => command.originRevision <= revision)
+				.map(({ completion }) => completion)
+			if (active.length === 0) return
+			await Promise.allSettled(active)
+		}
+	}
+
 	private fenceBefore(revision: number): void {
 		for (const entry of this.allPending()) {
+			if (entry.command.originRevision < revision) entry.fenced = true
+		}
+		for (const entry of this.publicationsInFlight.values()) {
 			if (entry.command.originRevision < revision) entry.fenced = true
 		}
 	}
@@ -170,10 +199,9 @@ export class DurableCommandOutbox {
 					continue
 				}
 				const effectKey = commandEffectKey(entry.command)
-				if (!(await this.publications.has(effectKey))) {
+				if (!this.publicationsInFlight.has(effectKey) && !(await this.publications.has(effectKey))) {
 					const dispatch = this.router.dispatch(entry.command)
-					await dispatch.completion
-					await this.publications.mark(entry.command, effectKey)
+					this.trackPublication(entry.command, effectKey, dispatch.completion)
 				}
 			} catch (error) {
 				this.diagnostics?.record({
@@ -186,5 +214,24 @@ export class DurableCommandOutbox {
 			}
 			queue.shift()
 		}
+	}
+
+	private trackPublication(command: Command, effectKey: string, effectCompletion: Promise<void>): void {
+		const completion = effectCompletion
+			.then(() => this.publications.mark(command, effectKey))
+			.catch((error) => {
+				this.diagnostics?.record({
+					source: "outbox",
+					code: "durable_publish_failed",
+					message: error instanceof Error ? error.message : String(error),
+					revision: command.originRevision,
+					commandId: command.commandId,
+				})
+			})
+			.finally(() => {
+				if (this.publicationsInFlight.get(effectKey)?.completion === completion)
+					this.publicationsInFlight.delete(effectKey)
+			})
+		this.publicationsInFlight.set(effectKey, { command, completion, fenced: false })
 	}
 }

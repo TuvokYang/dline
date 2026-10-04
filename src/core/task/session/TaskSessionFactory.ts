@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto"
 import { composeTask, type TaskCompositionOptions } from "../composition/TaskCompositionRoot"
 import { ActiveTaskSession, type ActiveTaskSessionReleasePort } from "./ActiveTaskSession"
+import { CanonicalInputQueueApplication } from "./CanonicalInputQueueApplication"
 import type { LifecycleBarrierPort, TaskInputAdmissionPort } from "./TaskInputAdmission"
 import { type TaskInputIdentityPort, TaskInputMaterializer } from "./TaskInputMaterializer"
 import type { TaskSessionOwners } from "./TaskSessionOwners"
@@ -26,17 +27,20 @@ function createInputIdentity(taskId: string): TaskInputIdentityPort {
 /** Open one task session; opening an existing task always succeeds, see `hydrate`. */
 export async function openActiveTaskSession(options: OpenActiveTaskSessionOptions): Promise<ActiveTaskSession> {
 	const composed = await composeTask(options)
+	const inputs = new TaskInputMaterializer(
+		composed.payloads,
+		options.inputIdentity ?? createInputIdentity(options.taskId),
+		options.inputAdmission,
+		options.lifecycleBarriers,
+	)
 	return new ActiveTaskSession({
 		task: composed.task,
+		checkpointRestore: composed.checkpointRestore,
 		readState: () => composed.runtime.getState(),
 		assembly: composed.assembly,
 		payloads: composed.payloads,
-		inputs: new TaskInputMaterializer(
-			composed.payloads,
-			options.inputIdentity ?? createInputIdentity(options.taskId),
-			options.inputAdmission,
-			options.lifecycleBarriers,
-		),
+		inputs,
+		inputQueue: new CanonicalInputQueueApplication(composed.runtime, inputs, composed.payloads, options.owners.interactions),
 		owners: options.owners,
 		approvalFeedback: composed.approvalFeedback,
 		conversation: composed.conversation,
