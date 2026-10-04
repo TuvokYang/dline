@@ -2,7 +2,11 @@ import type { CompactionSettlementObserverPort } from "../compaction/CompactionR
 import { type CompactionLandingPort, CompositeCompactionLanding } from "../compaction/CompactionSummaryLanding"
 import { type CompactionConversationPort, JournalCompactionConversation } from "../compaction/JournalCompactionConversation"
 import type { CompactionPort } from "../executors/compaction/CompactionCommandExecutor"
-import type { CompactionFailurePresentationPort, CompactionReviewPort } from "../executors/compaction/ProductionCompactionAdapter"
+import type {
+	CompactionFailurePresentationPort,
+	CompactionProgressWithdrawalPort,
+	CompactionReviewPort,
+} from "../executors/compaction/ProductionCompactionAdapter"
 import {
 	ProductionCompactionAdapter,
 	type ProductionCompactionService,
@@ -98,6 +102,8 @@ export interface TaskCompositionOptions {
 	readonly compactionReview?: CompactionReviewPort
 	/** Shows a compaction that failed to produce a summary; see CompactionFailurePresentationPort. */
 	readonly compactionFailure?: CompactionFailurePresentationPort
+	/** Clears a run's progress when it ends without a record; see CompactionProgressWithdrawalPort. */
+	readonly compactionProgress?: CompactionProgressWithdrawalPort
 	/**
 	 * The task's in-memory conversation over `persistence`; see JournalConversationView.
 	 *
@@ -180,6 +186,7 @@ export async function composeTask(options: TaskCompositionOptions): Promise<Task
 						]),
 						review: options.compactionReview,
 						failure: options.compactionFailure,
+						progress: options.compactionProgress,
 					}),
 					options.compactionSettlement,
 				),

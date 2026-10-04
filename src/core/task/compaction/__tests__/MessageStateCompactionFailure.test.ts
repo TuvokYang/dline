@@ -1,6 +1,7 @@
 import type { UiMessage } from "@shared/ExtensionMessage"
 import { describe, expect, it } from "vitest"
 import type { MessageStateHandler } from "../../message-state"
+import { MessageStateCompactionCards } from "../MessageStateCompactionCards"
 import { COMPACTION_FAILURE_MESSAGE, MessageStateCompactionFailure } from "../MessageStateCompactionFailure"
 
 function recordingMessages() {
@@ -17,7 +18,7 @@ describe("MessageStateCompactionFailure", () => {
 	it("writes the standalone failure form of the compaction card without any partial summary", async () => {
 		const { handler, rows } = recordingMessages()
 		let next = 100
-		const failure = new MessageStateCompactionFailure(handler, () => next++)
+		const failure = new MessageStateCompactionFailure(new MessageStateCompactionCards(handler, () => next++))
 
 		await failure.present({ compactionId: "compaction:1", attempt: "compaction:1:1" })
 

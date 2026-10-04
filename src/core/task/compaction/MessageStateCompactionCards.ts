@@ -1,4 +1,4 @@
-import type { UiSayTool } from "@shared/ExtensionMessage"
+import type { UiMessage, UiSayTool } from "@shared/ExtensionMessage"
 import { ContextCompactionPresentation, type ContextCompactionPresentationSnapshot } from "../ContextCompactionPresentation"
 import type { ContextCompactionSessionEvent } from "../ContextCompactionSession"
 import type { MessageStateHandler } from "../message-state"
@@ -21,22 +21,28 @@ export interface CompactionProgressPort {
 	 * republishing the task per chunk would cost more than the summary itself.
 	 */
 	present(operationId: string, event: ContextCompactionSessionEvent): boolean
-	/**
-	 * Withdraw the run's progress cards; the landed summary or the failure card
-	 * replaces them. Returns whether any card was withdrawn.
-	 */
-	settle(operationId: string): boolean
+}
+
+/** Writes the card a run ends with: its landed summary, or why it failed. */
+export interface CompactionRecordPort {
+	record(operationId: string, card: UiSayTool): Promise<void>
 }
 
 /**
- * Progress cards as transient chat rows, one per execution unit.
+ * Every chat card of a compaction run, from its first Pass to its record.
  *
- * Rows are transient because they describe work in flight: the durable record
- * of a run is the summary card its landing writes, or the failure card. Each
- * unit keeps one row across its attempts, so a retry rewrites the card the
+ * Progress rows are transient because they describe work in flight. Each unit
+ * keeps one row across its attempts, so a retry rewrites the card the
  * interrupted attempt showed instead of stacking another one.
+ *
+ * The record takes over the row of the last card the run showed, as main
+ * commits its final Pass card, instead of removing the progress and adding a
+ * new row. Removing one row and adding another leaves the message count where
+ * it was, and the chat only fetches rows when that count moves, so it kept
+ * rendering the withdrawn progress card - a second summary beside the landed
+ * one, a broken-off attempt's text, or a partial row that held the composer.
  */
-export class MessageStateCompactionProgress implements CompactionProgressPort {
+export class MessageStateCompactionCards implements CompactionProgressPort, CompactionRecordPort {
 	private readonly presentation = new ContextCompactionPresentation()
 
 	constructor(
@@ -61,15 +67,60 @@ export class MessageStateCompactionProgress implements CompactionProgressPort {
 		return !isStreamedText(event)
 	}
 
-	settle(operationId: string): boolean {
+	async record(operationId: string, card: UiSayTool): Promise<void> {
+		const row = { type: "say", say: "tool", partial: false, text: JSON.stringify(card) } satisfies Partial<UiMessage>
+		const ts = this.claim(operationId)
+		if (ts === undefined) {
+			await this.messages.addToClineMessages({ ts: this.nextPresentationId(), ...row })
+			return
+		}
+		// Placed where the conversation stands now, as a newly added row would be:
+		// the progress card was drawn before the run changed the conversation.
+		const conversationSize = await this.messages.currentConversationSize()
+		const { message, persistence } = this.messages.beginDurableClineMessage({
+			ts,
+			...row,
+			conversationHistoryIndex: conversationSize - 1,
+		})
+		// A rewritten row keeps the message count, so it is delivered as a row.
+		this.realtime?.publish(message)
+		await persistence
+	}
+
+	/**
+	 * Withdraw the cards of a run that ended without a record, as a stopped run
+	 * does. Returns whether any card was withdrawn.
+	 */
+	withdraw(operationId: string): boolean {
 		let withdrawn = false
-		for (const snapshot of this.presentation.getSnapshots(operationId)) {
-			if (snapshot.existingTs !== undefined) {
-				withdrawn = this.messages.removeTransientClineMessage(snapshot.existingTs) || withdrawn
-			}
+		for (const ts of this.shownRows(operationId)) {
+			withdrawn = this.messages.removeTransientClineMessage(ts) || withdrawn
 		}
 		this.presentation.clear(operationId)
 		return withdrawn
+	}
+
+	/**
+	 * Hand the run's latest card to its record and withdraw the others.
+	 *
+	 * A card that is no longer on screen - a restore cleared it - is not
+	 * reclaimed: writing the record there would place it at the rewound point.
+	 */
+	private claim(operationId: string): number | undefined {
+		const shown = this.shownRows(operationId)
+		this.presentation.clear(operationId)
+		if (shown.length === 0) return undefined
+		const latest = Math.max(...shown)
+		for (const ts of shown) {
+			if (ts !== latest) this.messages.removeTransientClineMessage(ts)
+		}
+		return this.messages.clineMessages.some((message) => message.ts === latest) ? latest : undefined
+	}
+
+	private shownRows(operationId: string): number[] {
+		return this.presentation
+			.getSnapshots(operationId)
+			.flatMap((snapshot) => (snapshot.existingTs === undefined ? [] : [snapshot.existingTs]))
 	}
 
 	private snapshotOf(
@@ -116,8 +167,8 @@ export class MessageStateCompactionProgress implements CompactionProgressPort {
 			case "summary_refit_completed":
 				return presentation.completeSummaryRefit(event.passIdentity, event.attempt, event.content)
 			case "failed":
-				// The failure card the run's failure port writes is the record; the
-				// progress card only has to go.
+				// The failure card the run's failure port records takes this card's
+				// place; drawing the failure here as well would show it twice.
 				return undefined
 		}
 	}

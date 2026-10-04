@@ -35,7 +35,7 @@ import { ExplicitInstructionRegistry } from "../explicit-instructions/ExplicitIn
 import { ExplicitInstructionRequestScope } from "../explicit-instructions/ExplicitInstructionRequestScope"
 import type { CompactionTrigger } from "../stores/payload/TaskPayloadEnvelopes"
 import type { CompactionRequestScopeReader } from "./CompactionRequestScopes"
-import type { CompactionProgressPort } from "./MessageStateCompactionProgress"
+import type { CompactionProgressPort } from "./MessageStateCompactionCards"
 
 export interface ProviderCompactionServiceOptions {
 	/** The frame ordinary requests use; compaction must share it to keep the provider prefix cache. */
@@ -174,9 +174,9 @@ export class ProviderCompactionService implements ProductionCompactionService {
 			const coveredThrough = coveredSeq(outcome.committed, context)
 			return coveredThrough === undefined ? { summary } : { summary, coveredThrough }
 		} finally {
+			// The cards stay: the landed summary or the failure card takes over the
+			// last one, and the run's owner withdraws them when neither comes.
 			input.signal.removeEventListener("abort", abort)
-			// The landed summary card or the failure card takes over from here.
-			if (this.options.progress?.settle(input.compactionId)) this.republish(input)
 		}
 	}
 
@@ -287,7 +287,7 @@ export class ProviderCompactionService implements ProductionCompactionService {
 		}
 	}
 
-	/** Ask the task view to redraw, so a progress step or a withdrawn card reaches the chat. */
+	/** Ask the task view to redraw, so a progress step reaches the chat. */
 	private republish(input: Parameters<ProductionCompactionService["run"]>[0]): void {
 		input.publish({ kind: "compaction_progress", compactionId: input.compactionId, attempt: input.attempt })
 	}

@@ -101,6 +101,18 @@ export interface CompactionFailurePresentationPort {
 	present(input: { readonly compactionId: string; readonly attempt: string; readonly error?: string }): Promise<void>
 }
 
+/**
+ * Withdraws the progress a run still shows when it ends without a record.
+ *
+ * A landed summary and a failure card each take over the run's progress card;
+ * a stopped run, or one withdrawn in review, writes neither, and its card would
+ * otherwise stay on screen as if the run were still working.
+ */
+export interface CompactionProgressWithdrawalPort {
+	/** Returns whether any card was withdrawn. */
+	withdraw(compactionId: string): boolean
+}
+
 export interface ProductionCompactionAdapterOptions {
 	readonly payloads: TaskPayloadStore
 	readonly service: ProductionCompactionService
@@ -110,6 +122,8 @@ export interface ProductionCompactionAdapterOptions {
 	readonly review?: CompactionReviewPort
 	/** Shows a run that failed; absent in headless assemblies, where the kernel event is the record. */
 	readonly failure?: CompactionFailurePresentationPort
+	/** Clears the progress of a run that ended without a record; absent where no progress is shown. */
+	readonly progress?: CompactionProgressWithdrawalPort
 }
 
 /**
@@ -140,6 +154,10 @@ export class ProductionCompactionAdapter implements CompactionPort {
 				})
 			}
 			throw error
+		} finally {
+			if (this.options.progress?.withdraw(input.compactionId)) {
+				input.publish({ kind: "compaction_progress", compactionId: input.compactionId, attempt: input.attempt })
+			}
 		}
 	}
 

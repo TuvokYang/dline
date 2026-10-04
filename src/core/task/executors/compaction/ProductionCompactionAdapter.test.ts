@@ -411,4 +411,78 @@ describe("ProductionCompactionAdapter", () => {
 		).rejects.toBeInstanceOf(CompactionReviewWithdrawnError)
 		expect(presented).toEqual([])
 	})
+
+	it("withdraws the progress of a run that ended without a record and redraws the view", async () => {
+		const payloads = new MemoryPayloads()
+		const contextRef = await payloads.put(
+			encodeTaskPayload<CompactionContextEnvelope>({
+				kind: "compaction_context",
+				trigger: "manual",
+				context: { sourceHistory: [] },
+			}),
+		)
+		const withdrawn: string[] = []
+		const published: unknown[] = []
+		const adapter = new ProductionCompactionAdapter({
+			payloads,
+			service: { run: async () => ({ summary: "pending" }) },
+			review: {
+				review: async () => {
+					throw new CompactionReviewWithdrawnError("dialog_cancel")
+				},
+			},
+			progress: {
+				withdraw: (compactionId) => {
+					withdrawn.push(compactionId)
+					return true
+				},
+			},
+		})
+
+		await expect(
+			adapter.run({
+				compactionId: "compact-1",
+				attempt: "attempt-1",
+				contextRef,
+				signal: new AbortController().signal,
+				publish: (projection) => void published.push(projection),
+			}),
+		).rejects.toBeInstanceOf(CompactionReviewWithdrawnError)
+		expect(withdrawn).toEqual(["compact-1"])
+		expect(published).toEqual([{ kind: "compaction_progress", compactionId: "compact-1", attempt: "attempt-1" }])
+	})
+
+	it("withdraws only after the landing recorded the run, so the record can take over its card", async () => {
+		const payloads = new MemoryPayloads()
+		const contextRef = await payloads.put(
+			encodeTaskPayload<CompactionContextEnvelope>({
+				kind: "compaction_context",
+				context: { sourceHistory: [] },
+			}),
+		)
+		const order: string[] = []
+		const published: unknown[] = []
+		const adapter = new ProductionCompactionAdapter({
+			payloads,
+			service: { run: async () => ({ summary: "landed" }) },
+			landing: { land: async () => void order.push("land") },
+			progress: {
+				withdraw: () => {
+					order.push("withdraw")
+					// The landing took the card over, so nothing was left.
+					return false
+				},
+			},
+		})
+
+		await adapter.run({
+			compactionId: "compact-1",
+			attempt: "attempt-1",
+			contextRef,
+			signal: new AbortController().signal,
+			publish: (projection) => void published.push(projection),
+		})
+		expect(order).toEqual(["land", "withdraw"])
+		expect(published).toEqual([])
+	})
 })

@@ -23,9 +23,9 @@ import { CompactionRequestScopes } from "../compaction/CompactionRequestScopes"
 import { CompactionRoundBarrier } from "../compaction/CompactionRoundBarrier"
 import { FinalContextWindowGuard } from "../compaction/FinalContextWindowGuard"
 import { InteractionCompactionReview } from "../compaction/InteractionCompactionReview"
+import { MessageStateCompactionCards } from "../compaction/MessageStateCompactionCards"
 import { MessageStateCompactionFailure } from "../compaction/MessageStateCompactionFailure"
 import { MessageStateCompactionLanding } from "../compaction/MessageStateCompactionLanding"
-import { MessageStateCompactionProgress } from "../compaction/MessageStateCompactionProgress"
 import { ProviderCompactionService } from "../compaction/ProviderCompactionService"
 import { importLegacyConversation } from "../conversation/LegacyConversationImport"
 import { DefaultProductionProviderService } from "../executors/provider/service/DefaultProductionProviderService"
@@ -544,9 +544,13 @@ export class TaskSessionCompositionService {
 		// Every Mode, Profile, or configuration switch ends in a handler rebuild,
 		// and the header must then describe the scope the task runs under.
 		api.onRebuilt(() => contextUsage.rebound())
+		// Each Pass, and a Pass that broke off and is sent again, shows its own card
+		// while the run works; the landed summary or the failure card takes over
+		// the last one.
+		const compactionCards = new MessageStateCompactionCards(messages, nextPresentationId, realtimeMessages)
 		// A run that produced nothing left the conversation as it was, which the
 		// user cannot see unless the chat says so.
-		const compactionFailure = new MessageStateCompactionFailure(messages, nextPresentationId)
+		const compactionFailure = new MessageStateCompactionFailure(compactionCards)
 		// The request itself, not the last one's usage, decides whether a round
 		// fits; it is measured on the same frame the request is sent with.
 		const contextWindowGuard = new FinalContextWindowGuard({
@@ -595,11 +599,12 @@ export class TaskSessionCompositionService {
 			compactionSettlement: compaction,
 			// A summary only shrinks the context once it replaces the history it
 			// summarized and is shown as the card the user can restore from.
-			compactionLanding: new MessageStateCompactionLanding(messages, nextPresentationId),
+			compactionLanding: new MessageStateCompactionLanding(compactionCards),
 			// A summary the user asked for is theirs to accept or regenerate before
 			// it replaces the conversation, through the same dialog every task uses.
 			compactionReview: new InteractionCompactionReview(interactions),
 			compactionFailure,
+			compactionProgress: compactionCards,
 			// A `new_task` hands the conversation to a successor on the same
 			// surface. The Controller owns that surface, so it starts the successor
 			// once the runtime has durably marked this task consumed.
@@ -713,9 +718,7 @@ export class TaskSessionCompositionService {
 						}),
 					triggerOptions: readCompactTriggerOptions,
 					scopes: compactionScopes,
-					// The summary card only exists once the run lands; until then each
-					// Pass, and a Pass that broke off and is sent again, needs its own card.
-					progress: new MessageStateCompactionProgress(messages, nextPresentationId, realtimeMessages),
+					progress: compactionCards,
 				}),
 				readApprovalPolicy: () => ({
 					settings: options.stateManager.getGlobalSettingsKey("autoApprovalSettings"),

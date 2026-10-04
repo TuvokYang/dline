@@ -1,7 +1,6 @@
 import type { UiSayTool } from "@shared/ExtensionMessage"
-import type { MessageStateHandler } from "../message-state"
-import type { PresentationIdSequence } from "../session/PresentationIdSequence"
 import type { CompactionLandingPort, CompactionSummary } from "./CompactionSummaryLanding"
+import type { CompactionRecordPort } from "./MessageStateCompactionCards"
 
 /**
  * Shows a finished summary as the card the user reads and restores from.
@@ -17,32 +16,18 @@ import type { CompactionLandingPort, CompactionSummary } from "./CompactionSumma
  * the conversation to.
  */
 export class MessageStateCompactionLanding implements CompactionLandingPort {
-	/**
-	 * @param nextPresentationId The task's shared row-ordering sequence. The card
-	 * must draw from it like every other producer: `addToClineMessages` rejects a
-	 * message without a `ts`, and a private clock reading would sort the card
-	 * against rows the provider service already stamped from the sequence.
-	 */
-	constructor(
-		private readonly messages: MessageStateHandler,
-		private readonly nextPresentationId: PresentationIdSequence,
-	) {}
+	/** @param cards Writes the card in place of the run's progress card, or as a new row when it showed none. */
+	constructor(private readonly cards: CompactionRecordPort) {}
 
 	async land(input: { readonly compactionId: string; readonly attempt: string } & CompactionSummary): Promise<void> {
-		await this.messages.addToClineMessages({
-			ts: this.nextPresentationId(),
-			type: "say",
-			say: "tool",
-			partial: false,
-			text: JSON.stringify({
-				tool: "summarizeTask",
-				content: input.summary,
-				compactionStatus: "completed",
-				compactionOperationId: input.compactionId,
-				compactionUnitKind: "pass",
-				compactionDurable: true,
-				...(input.span ? { compactionJournalBoundary: { seq: input.span.to.seq } } : {}),
-			} satisfies UiSayTool),
-		})
+		await this.cards.record(input.compactionId, {
+			tool: "summarizeTask",
+			content: input.summary,
+			compactionStatus: "completed",
+			compactionOperationId: input.compactionId,
+			compactionUnitKind: "pass",
+			compactionDurable: true,
+			...(input.span ? { compactionJournalBoundary: { seq: input.span.to.seq } } : {}),
+		} satisfies UiSayTool)
 	}
 }

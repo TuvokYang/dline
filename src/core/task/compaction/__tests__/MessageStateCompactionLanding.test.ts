@@ -1,6 +1,7 @@
 import type { UiMessage, UiSayTool } from "@shared/ExtensionMessage"
 import { describe, expect, it } from "vitest"
 import type { MessageStateHandler } from "../../message-state"
+import { MessageStateCompactionCards } from "../MessageStateCompactionCards"
 import { MessageStateCompactionLanding } from "../MessageStateCompactionLanding"
 
 interface RecordedHistoryEntry {
@@ -41,10 +42,15 @@ function createSequence(start = 1_000): () => number {
 	}
 }
 
+/** A landing for a run that showed no progress card, so the card is a new row. */
+function createLanding(handler: MessageStateHandler): MessageStateCompactionLanding {
+	return new MessageStateCompactionLanding(new MessageStateCompactionCards(handler, createSequence()))
+}
+
 describe("MessageStateCompactionLanding", () => {
 	it("stamps the card with the shared presentation sequence", async () => {
 		const { handler, rows } = createMessageStub([{ role: "user", content: "original task" }])
-		const landing = new MessageStateCompactionLanding(handler, createSequence())
+		const landing = createLanding(handler)
 
 		await landing.land({ compactionId: "compaction-1", attempt: "attempt-1", summary: "the summary" })
 
@@ -57,7 +63,7 @@ describe("MessageStateCompactionLanding", () => {
 
 	it("writes a completed summarizeTask card carrying the summary and operation identity", async () => {
 		const { handler, rows } = createMessageStub([{ role: "user", content: "original task" }])
-		const landing = new MessageStateCompactionLanding(handler, createSequence())
+		const landing = createLanding(handler)
 
 		await landing.land({ compactionId: "compaction-7", attempt: "attempt-2", summary: "compressed history" })
 
@@ -79,7 +85,7 @@ describe("MessageStateCompactionLanding", () => {
 			{ role: "user", content: "step two" },
 		]
 		const { handler, readHistory } = createMessageStub(original)
-		const landing = new MessageStateCompactionLanding(handler, createSequence())
+		const landing = createLanding(handler)
 
 		await landing.land({ compactionId: "compaction-1", attempt: "attempt-1", summary: "the summary" })
 
@@ -90,7 +96,7 @@ describe("MessageStateCompactionLanding", () => {
 
 	it("records the last replaced journal entry as the card's restore boundary", async () => {
 		const { handler, rows } = createMessageStub([{ role: "user", content: "original task" }])
-		const landing = new MessageStateCompactionLanding(handler, createSequence())
+		const landing = createLanding(handler)
 
 		await landing.land({
 			compactionId: "compaction-1",
@@ -107,7 +113,7 @@ describe("MessageStateCompactionLanding", () => {
 
 	it("offers no restore boundary for a summary that carried no span", async () => {
 		const { handler, rows } = createMessageStub([{ role: "user", content: "original task" }])
-		const landing = new MessageStateCompactionLanding(handler, createSequence())
+		const landing = createLanding(handler)
 
 		await landing.land({ compactionId: "compaction-1", attempt: "attempt-1", summary: "the summary" })
 
@@ -117,7 +123,7 @@ describe("MessageStateCompactionLanding", () => {
 
 	it("advances the sequence per landing so repeated compactions stay ordered", async () => {
 		const { handler, rows } = createMessageStub([{ role: "user", content: "original task" }])
-		const landing = new MessageStateCompactionLanding(handler, createSequence())
+		const landing = createLanding(handler)
 
 		await landing.land({ compactionId: "compaction-1", attempt: "attempt-1", summary: "first" })
 		await landing.land({ compactionId: "compaction-2", attempt: "attempt-1", summary: "second" })
