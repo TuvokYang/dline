@@ -10,8 +10,8 @@ export interface OpenActiveTaskSessionOptions extends TaskCompositionOptions {
 	readonly inputIdentity?: TaskInputIdentityPort
 	readonly owners: TaskSessionOwners
 	readonly releases?: readonly ActiveTaskSessionReleasePort[]
-	/** Reviews each submission before it is journaled; omitted only where no catalog exists. */
-	readonly inputAdmission?: TaskInputAdmissionPort
+	/** Reviews every submission before it becomes durable task input. */
+	readonly inputAdmission: TaskInputAdmissionPort
 	/** Carries out lifecycle commands such as `/compact`; absent means they stay prose. */
 	readonly lifecycleBarriers?: LifecycleBarrierPort
 }

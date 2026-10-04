@@ -5,7 +5,7 @@ export interface CommitReceipt {
 	readonly durable: Promise<void>
 }
 
-export type ExecutorDomain = "provider" | "tool" | "dialog" | "compose" | "compaction" | "policy" | "halt" | "spawn"
+export type ExecutorDomain = "provider" | "tool" | "dialog" | "compose" | "compaction" | "policy" | "halt"
 
 export interface CommandExecutor {
 	readonly domain: ExecutorDomain

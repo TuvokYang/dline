@@ -92,9 +92,6 @@ function execution() {
 			surface: createDeniedSurface("detached_domain"),
 			scheduler: new TurnToolScheduler({ readConfiguredLimit: () => undefined }),
 		},
-		spawn: {
-			prepare: async () => ({ admit: async () => ({ childTaskId: "child-1" }), dispose: async () => undefined }),
-		},
 	}
 }
 

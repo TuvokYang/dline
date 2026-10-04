@@ -93,13 +93,6 @@ export interface CompactionFlowState {
 	readonly message?: string
 }
 
-export interface SpawnFlowState extends CommandFlowState {
-	readonly spawnAttempt: AttemptId
-	readonly handoffRef: string
-	readonly childTaskId?: TaskId
-	readonly message?: string
-}
-
 export interface PolicyEvaluationState extends CommandFlowState {
 	readonly interactionId: InteractionId
 	readonly policyRevision: number
@@ -114,7 +107,6 @@ export interface FlowState {
 	readonly compose?: ComposeFlowState
 	readonly provider?: ProviderFlowState
 	readonly compaction?: CompactionFlowState
-	readonly spawn?: SpawnFlowState
 	/**
 	 * How many turns in a row answered without calling any tool.
 	 *
@@ -520,18 +512,6 @@ export type HaltEvent = EventBase & {
 export type LifecycleEvent =
 	| (EventBase & { readonly type: "lifecycle.open" | "lifecycle.close" })
 	| (EventBase & {
-			readonly type: "lifecycle.spawn_requested"
-			readonly spawnAttempt: AttemptId
-			readonly handoffRef: string
-			readonly haltId?: HaltId
-	  })
-	| (CommandFeedbackEvent & {
-			readonly type: "lifecycle.spawned" | "lifecycle.spawn_failed"
-			readonly spawnAttempt: AttemptId
-			readonly childTaskId?: TaskId
-			readonly message?: string
-	  })
-	| (EventBase & {
 			readonly type: "lifecycle.halt_timeout"
 			readonly haltId: HaltId
 			readonly participantId?: ParticipantId
@@ -649,12 +629,6 @@ export type HaltStopCommand = CommandBase & {
 	readonly participantIds: readonly ParticipantId[]
 	readonly reason: "cancel" | "terminate" | "close"
 }
-export type TaskSpawnCommand = CommandBase & {
-	readonly type: "task.spawn"
-	readonly spawnAttempt: AttemptId
-	readonly handoffRef: string
-	readonly haltId?: HaltId
-}
 export type Command =
 	| ProviderStartCommand
 	| ToolRunCommand
@@ -664,7 +638,6 @@ export type Command =
 	| CompactionRunCommand
 	| ApprovalEvaluateCommand
 	| HaltStopCommand
-	| TaskSpawnCommand
 
 export type RejectReason =
 	| "generation_mismatch"

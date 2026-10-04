@@ -4,7 +4,6 @@ import type { ITerminalManager } from "@integrations/terminal/types"
 import type { BrowserSession } from "@services/browser/BrowserSession"
 import type { TaskActivityStore } from "../activity/TaskActivityStore"
 import type { PeerTaskSpawnPort } from "../executors/spawn/PeerTaskSpawnPort"
-import type { SpawnChildLauncher } from "../executors/spawn/ProductionSpawnAdapter"
 import type { ToolDomainSurface } from "../executors/tool/ToolDomainSurface"
 import type { TaskState } from "../kernel"
 import type { MessageStateHandler } from "../message-state"
@@ -57,7 +56,6 @@ export interface TaskSessionHostResources {
 	readonly terminals?: ITerminalManager
 	readonly checkpoints?: ICheckpointManager
 	readonly surface: ToolDomainSurface
-	readonly spawn: SpawnChildLauncher
 	readonly peerTaskSpawner: PeerTaskSpawnPort
 	readonly providerRequestRounds?: ProviderRequestRoundPort
 	readonly apiRateSnapshot?: () => ApiRateSnapshot

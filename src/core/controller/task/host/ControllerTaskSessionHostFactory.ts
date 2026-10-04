@@ -186,7 +186,7 @@ export class ControllerTaskSessionHostFactory implements TaskSessionHostFactory 
 			openInteraction: (request) => context.interactions.open(request as never),
 			diff: () => diffViewProvider,
 		}
-		const spawn = new ControllerTaskSpawnLauncher({
+		const peerTaskSpawner = new ControllerTaskSpawnLauncher({
 			context: this.options.context,
 			parentTaskId: context.taskId,
 		})
@@ -198,8 +198,7 @@ export class ControllerTaskSessionHostFactory implements TaskSessionHostFactory 
 			terminals: terminalManager,
 			checkpoints: checkpointOwner.manager,
 			surface,
-			spawn,
-			peerTaskSpawner: spawn,
+			peerTaskSpawner,
 			releases: [{ release: () => callbackOwner.dispose() }, { release: async () => fileContextTracker.dispose() }],
 		}
 	}

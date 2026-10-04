@@ -701,7 +701,6 @@ export class TaskSessionCompositionService {
 						approveAll: options.stateManager.getGlobalSettingsKey("autoApproveAllToggled") === true,
 					},
 				}),
-				spawn: tool.spawn,
 			},
 			releases: [resources],
 		})

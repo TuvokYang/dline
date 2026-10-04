@@ -49,18 +49,12 @@ function assembly() {
 				surface: createDeniedSurface("detached_domain"),
 				scheduler: new TurnToolScheduler({ readConfiguredLimit: () => undefined }),
 			},
-			spawn: {
-				prepare: async () => ({
-					admit: async () => ({ childTaskId: "child-1" }),
-					dispose: async () => undefined,
-				}),
-			},
 		},
 	})
 }
 
 describe("TaskExecutorAssembly", () => {
-	it("assembles each command domain once and all nine halt participants", () => {
+	it("assembles each command domain once and every halt participant", () => {
 		const assembled = assembly()
 		expect(assembled.executors.map((executor) => executor.domain).sort()).toEqual([
 			"compaction",
@@ -69,7 +63,6 @@ describe("TaskExecutorAssembly", () => {
 			"halt",
 			"policy",
 			"provider",
-			"spawn",
 			"tool",
 		])
 		expect(assembled.participants.map((participant) => participant.id).sort()).toEqual([...ALL_HALT_PARTICIPANTS].sort())

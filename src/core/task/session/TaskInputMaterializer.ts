@@ -26,7 +26,7 @@ export class TaskInputMaterializer {
 	constructor(
 		private readonly payloads: TaskPayloadStore,
 		private readonly identity: TaskInputIdentityPort,
-		private readonly admission?: TaskInputAdmissionPort,
+		private readonly admission: TaskInputAdmissionPort,
 		/** Takes over lifecycle commands such as `/compact`; absent means they stay prose. */
 		private readonly barriers?: LifecycleBarrierPort,
 	) {}
@@ -47,8 +47,6 @@ export class TaskInputMaterializer {
 
 	/** Refusing here keeps a rejected submission out of the journal entirely. */
 	private async review(envelope: Omit<UserInputEnvelope, "kind">): Promise<Partial<UserInputEnvelope>> {
-		if (!this.admission) return {}
-
 		const result = await this.admission.admit(envelope)
 		if (!result.ok) throw new SemanticInputRejectedError(result.diagnostics)
 
@@ -88,7 +86,7 @@ export class TaskInputMaterializer {
 	 */
 	async reviewReply(reply: Omit<UserInputEnvelope, "kind">): Promise<ReviewedReply | undefined> {
 		const barriers = this.barriers
-		if (!this.admission || !barriers || !reply.text) return undefined
+		if (!barriers || !reply.text) return undefined
 		const result = await this.admission.admit(reply)
 		if (!result.ok) return undefined
 		const owned = this.ownedBarrier(result.admitted)

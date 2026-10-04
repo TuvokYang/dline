@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest"
 import type { IntakeEntry } from "../kernel"
-import { admittedTaskInputEvent } from "./AdmittedTaskInput"
 import { selectIntakeEntries } from "./IntakeAdmission"
 
 const entry = (
@@ -18,12 +17,6 @@ const entry = (
 })
 
 describe("intake contracts", () => {
-	it.each(["prefilled", "user_typed"] as const)("normalizes %s through the same submit event", (origin) => {
-		expect(
-			admittedTaskInputEvent({ entryId: "entry-1", payloadRef: "input:1", origin, mode: "queued", sequence: 4 }, 2),
-		).toEqual({ type: "user.submit", generation: 2, entryId: "entry-1", payloadRef: "input:1", mode: "queued", sequence: 4 })
-	})
-
 	it("preserves steering priority, sequence order and turn-end queued admission", () => {
 		const entries = [
 			entry("queued-2", "queued", 2),

@@ -24,13 +24,6 @@ function services(provider: ReturnType<typeof vi.fn>): TaskCompositionServices {
 		toolSurface: createDeniedSurface("detached_domain"),
 		toolScheduler: new TurnToolScheduler({ readConfiguredLimit: () => undefined }),
 		tool: { execute: vi.fn(async () => ({ content: "done" })) },
-		spawn: {
-			reserve: vi.fn(async () => ({
-				childTaskId: "child",
-				admit: async () => undefined,
-				dispose: async () => undefined,
-			})),
-		},
 	} as unknown as TaskCompositionServices
 }
 
@@ -42,9 +35,10 @@ describe("TaskCompositionRoot", () => {
 			ports: { vault: new InMemoryStateVault(), publications: new InMemoryCommandPublicationStore(), journal },
 			payloads,
 		}
-		const provider = vi.fn(() => ({
+		const provider = vi.fn(({ turnId }: { turnId?: string }) => ({
 			async *[Symbol.asyncIterator]() {
-				yield { kind: "final" as const, turnId: "turn-1", text: "answer", mode: "serial" as const, blocks: [] }
+				if (!turnId) throw new Error("expected provider turn identity")
+				yield { kind: "final" as const, turnId, text: "answer", mode: "serial" as const, blocks: [] }
 			},
 		}))
 		const result = await composeTask({

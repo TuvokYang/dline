@@ -7,6 +7,7 @@ import type { TaskExecutorAssembly } from "../shell/TaskExecutorAssembly"
 import type { TaskPayloadStore } from "../stores"
 import { ActiveTaskSession } from "./ActiveTaskSession"
 import type { InputQueueApplicationPort } from "./InputQueueApplicationPort"
+import type { TaskInputAdmissionPort } from "./TaskInputAdmission"
 import { TaskInputMaterializer } from "./TaskInputMaterializer"
 import type { TaskSessionOwners } from "./TaskSessionOwners"
 
@@ -26,11 +27,35 @@ function createInputQueue(): InputQueueApplicationPort {
 	return { mutate: vi.fn(), project: vi.fn(async () => []), onTurnEndAwaiting: vi.fn() }
 }
 
+const admittingPlainText: TaskInputAdmissionPort = {
+	admit: async (input) => ({
+		ok: true,
+		admitted: {
+			document: {
+				schemaVersion: 1,
+				parserVersion: "test",
+				catalogRevision: "test",
+				documentId: "test-input",
+				rawText: input.text ?? "",
+				nodes: [{ kind: "text", text: input.text ?? "" }],
+				resources: [],
+			},
+			admittedText: input.text ?? "",
+			authorizedTools: [],
+			explicitInstructions: [],
+		},
+	}),
+}
+
+function createInputs(payloads: TaskPayloadStore): TaskInputMaterializer {
+	return new TaskInputMaterializer(payloads, { nextEntryId: () => "entry-1", nextSequence: () => 0 }, admittingPlainText)
+}
+
 describe("ActiveTaskSession", () => {
 	it("keeps state/query ownership outside the six-use-case Task facade", () => {
 		const task = { taskId: "task-1", terminate: vi.fn() } as unknown as Task
 		const payloads = { put: vi.fn(), read: vi.fn() } as unknown as TaskPayloadStore
-		const inputs = new TaskInputMaterializer(payloads, { nextEntryId: () => "entry-1", nextSequence: () => 0 })
+		const inputs = createInputs(payloads)
 		const state = createInitialTaskState("task-1")
 		const session = new ActiveTaskSession({
 			task,
@@ -63,7 +88,7 @@ describe("ActiveTaskSession", () => {
 			readState: () => createInitialTaskState("task-1"),
 			assembly: {} as TaskExecutorAssembly,
 			payloads,
-			inputs: new TaskInputMaterializer(payloads, { nextEntryId: () => "entry-1", nextSequence: () => 0 }),
+			inputs: createInputs(payloads),
 			inputQueue: createInputQueue(),
 			owners: createOwners(),
 			approvalFeedback: new InMemoryToolApprovalFeedbackLedger(),
@@ -88,7 +113,7 @@ describe("ActiveTaskSession", () => {
 			readState: () => createInitialTaskState("task-1"),
 			assembly: {} as TaskExecutorAssembly,
 			payloads,
-			inputs: new TaskInputMaterializer(payloads, { nextEntryId: () => "entry-1", nextSequence: () => 0 }),
+			inputs: createInputs(payloads),
 			inputQueue: createInputQueue(),
 			owners: createOwners(),
 			approvalFeedback: new InMemoryToolApprovalFeedbackLedger(),
@@ -136,7 +161,7 @@ describe("ActiveTaskSession", () => {
 			readState: () => state,
 			assembly: {} as TaskExecutorAssembly,
 			payloads,
-			inputs: new TaskInputMaterializer(payloads, { nextEntryId: () => "entry-1", nextSequence: () => 0 }),
+			inputs: createInputs(payloads),
 			inputQueue: createInputQueue(),
 			owners: createOwners(),
 			approvalFeedback: new InMemoryToolApprovalFeedbackLedger(),
@@ -166,7 +191,7 @@ describe("ActiveTaskSession", () => {
 			readState: () => createInitialTaskState("task-1"),
 			assembly: {} as TaskExecutorAssembly,
 			payloads,
-			inputs: new TaskInputMaterializer(payloads, { nextEntryId: () => "entry-1", nextSequence: () => 0 }),
+			inputs: createInputs(payloads),
 			inputQueue: createInputQueue(),
 			owners: createOwners(),
 			approvalFeedback: new InMemoryToolApprovalFeedbackLedger(),

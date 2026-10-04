@@ -11,7 +11,7 @@ import {
 	InMemoryTaskViewPort,
 } from "../stores"
 import { decodeTaskPayload, encodeTaskPayload } from "../stores/payload/TaskPayloadCodec"
-import type { ProviderDraftEnvelope, UserInputEnvelope } from "../stores/payload/TaskPayloadEnvelopes"
+import type { ProviderDraftEnvelope, ToolInvocationEnvelope, UserInputEnvelope } from "../stores/payload/TaskPayloadEnvelopes"
 import { CompactionCommandExecutor } from "./compaction"
 import { ComposeCommandExecutor } from "./compose"
 import { ProductionComposeAdapter } from "./compose/ProductionComposeAdapter"
@@ -19,7 +19,6 @@ import { DialogCommandExecutor } from "./dialog"
 import { CallbackHaltParticipant, HaltCommandExecutor } from "./halt"
 import { PolicyCommandExecutor } from "./policy"
 import { ProviderCommandExecutor } from "./provider"
-import { SpawnCoordinator } from "./spawn"
 
 describe("executor loop integration", () => {
 	it("runs two compose to provider rounds through TaskRuntime", async () => {
@@ -40,13 +39,14 @@ describe("executor loop integration", () => {
 				return result
 			},
 		}
-		const provider = vi.fn(({ draftRef }: { draftRef: string }) => ({
+		const provider = vi.fn(({ draftRef, turnId }: { draftRef: string; turnId?: string }) => ({
 			async *[Symbol.asyncIterator]() {
+				if (!turnId) throw new Error("expected provider turn identity")
 				turn += 1
 				yield {
 					kind: "final" as const,
-					turnId: `turn-${turn}`,
-					payloadRef: `answer:${draftRef}`,
+					turnId,
+					payloadRef: `answer:${draftRef}:${turn}`,
 					turnPlan: { mode: "serial" as const, blocks: [] },
 				}
 			},
@@ -101,6 +101,17 @@ describe("executor loop integration", () => {
 		const refs = await Promise.all(
 			["A", "B"].map((text) => payloads.put(encodeTaskPayload<UserInputEnvelope>({ kind: "user_input", text }))),
 		)
+		const invocationRef = await payloads.put(
+			encodeTaskPayload<ToolInvocationEnvelope>({
+				kind: "tool_invocation",
+				toolName: "read_file",
+				input: { path: "README.md" },
+				functionId: "call-1",
+				dlineTid: "tool-1",
+				presentationId: 1,
+				isNativeToolCall: false,
+			}),
+		)
 		const base = createInitialTaskState("task-1")
 		const initialState: TaskState = {
 			...base,
@@ -116,7 +127,7 @@ describe("executor loop integration", () => {
 						phase: "executing",
 						lanes: [],
 						turnEnding: false,
-						invocationRef: "invocation:1",
+						invocationRef,
 					},
 				],
 				manualApprovalBlockIds: [],
@@ -158,16 +169,26 @@ describe("executor loop integration", () => {
 			vault: new InMemoryStateVault(),
 			taskView: new InMemoryTaskViewPort(),
 			publications: new InMemoryCommandPublicationStore(),
-			executors: [new ComposeCommandExecutor(adapter, events), { domain: "provider", execute: providerExecute }],
+			executors: [
+				new ComposeCommandExecutor(adapter, events),
+				{ domain: "tool", execute: async () => undefined },
+				{ domain: "provider", execute: providerExecute },
+			],
 		})
 
-		await runtime.submit({
+		const completion = await runtime.submit({
 			type: "tool.completed",
 			generation: 0,
 			turnId: "turn-1",
 			blockId: "tool-1",
 			attempt: "attempt-1",
 		})
+		expect(completion).toMatchObject({
+			kind: "accepted",
+			commands: [{ type: "tool.retire" }, { type: "compose.round" }],
+		})
+		if (completion.kind !== "accepted") throw new Error(`Expected accepted completion, got ${completion.kind}`)
+		await completion.receipt.durable
 		await draftReached
 		expect(runtime.getState().intake.queued.map((entry) => entry.state)).toEqual(["reserved", "reserved"])
 		await runtime.submit({ type: "input_queue.removed", generation: 0, entryId: "retained-0" })
@@ -179,8 +200,11 @@ describe("executor loop integration", () => {
 		expect(runtime.getState().intake.queued).toEqual([
 			expect.objectContaining({ entryId: "retained-1", state: "released", queue: { editing: false } }),
 		])
-		expect((await journal.project()).visibleMessages).toEqual([])
+		expect((await journal.project()).visibleMessages).toEqual([
+			expect.objectContaining({ operationId: "tool.terminal_manifest:turn-1", source: "tool" }),
+		])
 		expect((await journal.read()).map((entry) => entry.operationId)).toEqual([
+			"tool.terminal_manifest:turn-1",
 			expect.stringMatching(/^intake\.retained:/),
 			expect.stringMatching(/^intake\.retained\.retract:/),
 		])
@@ -320,43 +344,6 @@ describe("executor loop integration", () => {
 		await vi.waitFor(() => expect(runtime.getState().flow.phase).toBe("paused"))
 		await vi.waitFor(() => expect(providerRearm).toHaveBeenCalledWith("halt-1"))
 		await vi.waitFor(() => expect(runtime.getState().dialog.primary).toMatchObject({ kind: "cancelled_resume" }))
-	})
-
-	it("runs the nine-participant halt barrier and spawn lease through TaskRuntime", async () => {
-		let runtime!: TaskRuntime
-		const events = { submit: (event: Parameters<TaskRuntime["submit"]>[0]) => runtime.submit(event) }
-		const participants = ALL_HALT_PARTICIPANTS.map(
-			(id) => new CallbackHaltParticipant({ id, fence: () => undefined, drain: async () => undefined }),
-		)
-		runtime = new TaskRuntime({
-			initialState: { ...createInitialTaskState("task-1"), flow: { phase: "running" } },
-			vault: new InMemoryStateVault(),
-			taskView: new InMemoryTaskViewPort(),
-			publications: new InMemoryCommandPublicationStore(),
-			executors: [
-				new HaltCommandExecutor(participants, events),
-				new SpawnCoordinator(
-					{
-						prepare: async () => ({
-							admit: async () => ({ childTaskId: "child-1" }),
-							dispose: async () => undefined,
-						}),
-					},
-					events,
-				),
-			],
-		})
-		await runtime.submit({
-			type: "lifecycle.spawn_requested",
-			generation: 0,
-			spawnAttempt: "spawn-1",
-			handoffRef: "handoff:1",
-		})
-		await runtime.waitForQuiescence()
-		expect(runtime.getState().flow.spawn).toMatchObject({ status: "completed", childTaskId: "child-1" })
-		await runtime.submit({ type: "user.cancel", generation: 0, haltId: "halt-1" })
-		await runtime.waitForQuiescence()
-		expect(runtime.getState().flow.phase).toBe("paused")
 	})
 
 	it("runs an attempt-scoped compaction command through TaskRuntime", async () => {

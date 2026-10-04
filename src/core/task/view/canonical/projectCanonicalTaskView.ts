@@ -22,7 +22,6 @@ function hasRunningCommand(state: Readonly<TaskState>): boolean {
 		state.flow.phase === "running" ||
 		state.flow.compose?.status === "running" ||
 		state.flow.provider?.status === "running" ||
-		state.flow.spawn?.status === "running" ||
 		state.flow.compaction?.status === "scheduled" ||
 		state.flow.compaction?.status === "running" ||
 		state.turn.executingBlockIds.length > 0

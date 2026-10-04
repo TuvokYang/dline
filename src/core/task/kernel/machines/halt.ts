@@ -13,7 +13,6 @@ export const ALL_HALT_PARTICIPANTS: readonly ParticipantId[] = [
 	"policy",
 	"background",
 	"cotask",
-	"spawn",
 ]
 
 export function validateHaltEvent(

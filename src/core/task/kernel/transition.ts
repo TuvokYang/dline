@@ -412,25 +412,6 @@ function validateEvent(state: TaskState, event: TaskEvent): ValidationFailure | 
 			}
 		}
 	}
-	if (event.type === "lifecycle.spawn_requested") {
-		if (state.flow.spawn?.status === "running")
-			return { reason: "duplicate", message: `Spawn ${state.flow.spawn.spawnAttempt} is already active` }
-		if (state.halt.status === "stopping" || state.flow.phase === "paused" || state.flow.phase === "terminated")
-			return { reason: "phase_invalid", message: "Task cannot spawn while halted" }
-	}
-	if (event.type === "lifecycle.spawned" || event.type === "lifecycle.spawn_failed") {
-		const owner = state.flow.spawn
-		if (
-			!owner ||
-			owner.commandId !== event.commandId ||
-			owner.originRevision !== event.originRevision ||
-			owner.spawnAttempt !== event.spawnAttempt
-		)
-			return { reason: "identity_mismatch", message: `Spawn feedback ${event.commandId} is not active` }
-		if (owner.status !== "running") return { reason: "duplicate", message: `Spawn ${event.spawnAttempt} already settled` }
-		if (state.halt.status === "stopping" || state.flow.phase === "paused" || state.flow.phase === "terminated")
-			return { reason: "phase_invalid", message: "Spawn feedback arrived after task halt" }
-	}
 	if (event.type === "lifecycle.open" && state.flow.phase !== "idle")
 		return { reason: "phase_invalid", message: `Task cannot open from ${state.flow.phase}` }
 	if (event.type === "lifecycle.consumed") {
@@ -566,21 +547,6 @@ function applyCommandOwnership(state: TaskState, commands: readonly Command[]): 
 								}
 							: block,
 					),
-				},
-			}
-		}
-		if (command.type === "task.spawn") {
-			next = {
-				...next,
-				flow: {
-					...next.flow,
-					spawn: {
-						commandId: command.commandId,
-						originRevision: command.originRevision,
-						status: "running",
-						spawnAttempt: command.spawnAttempt,
-						handoffRef: command.handoffRef,
-					},
 				},
 			}
 		}
@@ -792,17 +758,6 @@ function deriveCommands(previous: TaskState, next: TaskState, event: TaskEvent):
 			},
 		]
 	}
-	if (event.type === "lifecycle.spawn_requested") {
-		return [
-			{
-				...commandBase(next, 0),
-				type: "task.spawn",
-				spawnAttempt: event.spawnAttempt,
-				handoffRef: event.handoffRef,
-				haltId: event.haltId,
-			},
-		]
-	}
 	if (
 		(event.type === "provider.failed" || event.type === "compose.failed") &&
 		!previous.dialog.primary &&
@@ -926,7 +881,6 @@ export function transition(state: TaskState, event: TaskEvent): TransitionResult
 					next.flow.provider?.status === "running"
 						? { ...next.flow.provider, status: "cancelled" }
 						: next.flow.provider,
-				spawn: next.flow.spawn?.status === "running" ? { ...next.flow.spawn, status: "cancelled" } : next.flow.spawn,
 				compaction: expireAbandonedCompaction(next.flow.compaction, "compaction_cancelled"),
 			},
 			// Read against the compaction as it was before expiry above.

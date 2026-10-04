@@ -93,6 +93,18 @@ const refusing: TaskInputAdmissionPort = {
 	}),
 }
 
+const admittingPlainText: TaskInputAdmissionPort = {
+	admit: async (input) => ({
+		ok: true,
+		admitted: {
+			document: { ...document, rawText: input.text ?? "", nodes: [{ kind: "text", text: input.text ?? "" }] },
+			admittedText: input.text ?? "",
+			authorizedTools: [],
+			explicitInstructions: [],
+		},
+	}),
+}
+
 describe("TaskInputMaterializer", () => {
 	it("stores the raw text, the document and the admitted projection side by side", async () => {
 		const store = recordingPayloads()
@@ -115,16 +127,17 @@ describe("TaskInputMaterializer", () => {
 		await expect(materializer.materialize({ text: "/compact" })).rejects.toBeInstanceOf(SemanticInputRejectedError)
 	})
 
-	it("stays a plain materializer when no admission is configured", async () => {
+	it("requires an explicit admission result even for plain text", async () => {
 		const store = recordingPayloads()
-		const materializer = new TaskInputMaterializer(store.payloads, identity)
+		const materializer = new TaskInputMaterializer(store.payloads, identity, admittingPlainText)
 
 		const input = await materializer.materialize({ text: "hello" }, "steering")
 
 		expect(input.mode).toBe("steering")
 		const envelope = store.lastEnvelope()
 		expect(envelope.text).toBe("hello")
-		expect(envelope.admittedText).toBeUndefined()
+		expect(envelope.admittedText).toBe("hello")
+		expect(envelope.authorizedTools).toEqual([])
 	})
 
 	it("takes an owned barrier out of the turn and carries it with the input instead", async () => {

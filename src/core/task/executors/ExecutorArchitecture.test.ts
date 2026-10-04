@@ -3,7 +3,7 @@ import { Project } from "ts-morph"
 import { describe, expect, it } from "vitest"
 
 const ROOT = path.resolve(__dirname)
-const DOMAINS = ["provider", "compose", "compaction", "tool", "dialog", "policy", "halt", "spawn", "background", "cotask"]
+const DOMAINS = ["provider", "compose", "compaction", "tool", "dialog", "policy", "halt", "background", "cotask"]
 const project = new Project({
 	tsConfigFilePath: path.resolve(ROOT, "../../../../tsconfig.json"),
 	skipAddingFilesFromTsConfig: true,
@@ -37,9 +37,7 @@ describe("TASK-105 executor architecture", () => {
 	})
 
 	it("does not let command executors read kernel state or import production composition surfaces", () => {
-		const commandExecutors = production.filter((source) =>
-			/CommandExecutor\.ts$|SpawnCoordinator\.ts$/.test(source.getBaseName()),
-		)
+		const commandExecutors = production.filter((source) => /CommandExecutor\.ts$/.test(source.getBaseName()))
 		const forbidden = [/\bgetState\s*\(/, /(?:^|\/)core\/task(?:\/index)?["']/, /\/controller\//, /\/proto\//, /webview-ui/]
 		const violations = commandExecutors
 			.filter((source) => forbidden.some((pattern) => pattern.test(source.getFullText())))

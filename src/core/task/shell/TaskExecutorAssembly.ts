@@ -18,7 +18,6 @@ import {
 	type ProviderTextPresentationPort,
 } from "../executors/provider/ProviderCommandExecutor"
 import type { ProviderRequestReportPort } from "../executors/provider/service/ProviderRequestReport"
-import { SpawnCoordinator, type SpawnPort } from "../executors/spawn/SpawnCoordinator"
 import { ToolCommandExecutor, type ToolCommandExecutorOptions } from "../executors/tool/ToolCommandExecutor"
 import type { TaskEvent, TaskState } from "../kernel"
 import { type CommandExecutor, type RuntimeDiagnosticSink, type RuntimeFacade, TaskRuntime } from "../runtime"
@@ -49,7 +48,6 @@ export interface TaskExecutionPorts {
 	readonly dialog: DialogPorts
 	readonly policy: ApprovalPolicyPort
 	readonly tool: ToolCommandExecutorOptions
-	readonly spawn: SpawnPort
 }
 
 export interface TaskPersistencePorts {
@@ -126,21 +124,10 @@ export function createTaskExecutorAssembly(options: TaskExecutorAssemblyOptions)
 	const policy = new PolicyCommandExecutor(options.execution.policy, events)
 	const background = new BackgroundIngressExecutor(generation, events)
 	const cotask = new CoTaskIngressExecutor(generation, events)
-	const spawn = new SpawnCoordinator(options.execution.spawn, events)
-	const participants: readonly HaltParticipant[] = [
-		provider,
-		tool,
-		dialog,
-		compose,
-		compaction,
-		policy,
-		background,
-		cotask,
-		spawn,
-	]
+	const participants: readonly HaltParticipant[] = [provider, tool, dialog, compose, compaction, policy, background, cotask]
 	assertCompleteHaltParticipants(participants)
 	const halt = new HaltCommandExecutor(participants, events, options.halt)
-	const executors: readonly CommandExecutor[] = [provider, tool, dialog, compose, compaction, policy, halt, spawn]
+	const executors: readonly CommandExecutor[] = [provider, tool, dialog, compose, compaction, policy, halt]
 
 	runtime = new TaskRuntime({
 		initialState: options.initialState,

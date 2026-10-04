@@ -4,6 +4,7 @@ import type { EventSubmissionResult, RuntimeFacade } from "../runtime"
 import type { TaskPayloadStore } from "../stores"
 import { CanonicalInputQueueApplication } from "./CanonicalInputQueueApplication"
 import type { CanonicalQueueTurnEndPort } from "./InputQueueApplicationPort"
+import type { TaskInputAdmissionPort } from "./TaskInputAdmission"
 import { TaskInputMaterializer } from "./TaskInputMaterializer"
 
 function deferred() {
@@ -14,6 +15,26 @@ function deferred() {
 		reject = refused
 	})
 	return { promise, resolve, reject }
+}
+
+const admittingPlainText: TaskInputAdmissionPort = {
+	admit: async (input) => ({
+		ok: true,
+		admitted: {
+			document: {
+				schemaVersion: 1,
+				parserVersion: "test",
+				catalogRevision: "test",
+				documentId: "test-input",
+				rawText: input.text ?? "",
+				nodes: [{ kind: "text", text: input.text ?? "" }],
+				resources: [],
+			},
+			admittedText: input.text ?? "",
+			authorizedTools: [],
+			explicitInstructions: [],
+		},
+	}),
 }
 
 function harness(deliveryResult: "accepted" | "stale" | "failed" | "uncertain" = "accepted") {
@@ -70,10 +91,14 @@ function harness(deliveryResult: "accepted" | "stale" | "failed" | "uncertain" =
 		releaseRestoredCommands: vi.fn(),
 	}
 	let entrySequence = 0
-	const inputs = new TaskInputMaterializer(payloads, {
-		nextEntryId: () => `entry-${++entrySequence}`,
-		nextSequence: () => entrySequence,
-	})
+	const inputs = new TaskInputMaterializer(
+		payloads,
+		{
+			nextEntryId: () => `entry-${++entrySequence}`,
+			nextSequence: () => entrySequence,
+		},
+		admittingPlainText,
+	)
 	const deliverTurnEnd = vi.fn<CanonicalQueueTurnEndPort["deliverTurnEnd"]>(async () => deliveryResult)
 	return {
 		application: new CanonicalInputQueueApplication(runtime, inputs, payloads, { deliverTurnEnd }),

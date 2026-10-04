@@ -20,8 +20,6 @@ export function domainFor(command: Command): ExecutorDomain {
 			return "policy"
 		case "halt.stop":
 			return "halt"
-		case "task.spawn":
-			return "spawn"
 	}
 }
 

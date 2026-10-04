@@ -25,7 +25,6 @@ import type { ProviderTextPresentationPort } from "../executors/provider/Provide
 import { JournalConversationView } from "../executors/provider/service/JournalConversationView"
 import { ProviderJournalMessageMaterializer } from "../executors/provider/service/ProviderJournalMessageMaterializer"
 import type { ProviderRequestReportPort } from "../executors/provider/service/ProviderRequestReport"
-import { ProductionSpawnAdapter, type SpawnChildLauncher } from "../executors/spawn/ProductionSpawnAdapter"
 import {
 	createProductionToolAdapter,
 	type ProductionToolAdapterOptions,
@@ -53,7 +52,6 @@ export interface TaskCompositionServices {
 	readonly toolScheduler: TurnToolScheduler
 	readonly compaction: ProductionCompactionService
 	readonly readApprovalPolicy: ProductionApprovalPolicyAdapterOptions["readSnapshot"]
-	readonly spawn: SpawnChildLauncher
 	/** Renders the per-round environment block; absent in headless assemblies. */
 	readonly environment?: ComposeEnvironmentPort
 	/** Explains a round the kernel opened; absent in headless assemblies. */
@@ -211,7 +209,6 @@ export async function composeTask(options: TaskCompositionOptions): Promise<Task
 						? createSuccessorHandoffPublisher({ runtime: () => runtime, successor: options.successor })
 						: undefined,
 				}),
-				spawn: new ProductionSpawnAdapter({ payloads: persistence.payloads, launcher: options.services.spawn }),
 			}
 		},
 	})
