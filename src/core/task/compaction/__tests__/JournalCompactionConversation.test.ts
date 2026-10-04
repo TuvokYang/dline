@@ -388,6 +388,35 @@ describe("JournalCompactionConversation", () => {
 		expect(messages).toHaveLength(3)
 	})
 
+	it("summarizes the only round a reply completes, and replays the reply after the summary", async () => {
+		const { journal, payloads, conversation } = open()
+		await write(journal, payloads, "intake:1", { kind: "user_input", text: "original task" })
+		await write(journal, payloads, "environment:1", { kind: "environment_details", text: "ENVIRONMENT_SNAPSHOT" }, "system")
+		await write(journal, payloads, "provider:1", call("call-ask"), "provider")
+		await write(journal, payloads, "tool.result:ask", result("call-ask", [feedback(LATEST_REPLY)]), "tool")
+
+		const source = await conversation.read()
+
+		// Stopping before the call would leave no answered round to summarize, so
+		// the round the reply completes is summarized, its call still paired.
+		expect(source.span).toBeDefined()
+		expect(source.messages.some((message) => mentions(message, "original task"))).toBe(true)
+		expect(source.messages.some((message) => mentions(message, "call-ask"))).toBe(true)
+		expect(source.messages.some((message) => mentions(message, LATEST_REPLY))).toBe(false)
+		expect(source.continuation).toEqual({ text: LATEST_REPLY })
+
+		await conversation.land({
+			compactionId: "compaction:1",
+			attempt: "compaction:1:1",
+			summary: "condensed so far",
+			span: source.span,
+			continuation: source.continuation,
+		})
+
+		const messages = await visible(journal, payloads)
+		expect(texts(messages)).toEqual(["condensed so far", LATEST_REPLY])
+	})
+
 	it("condenses a finished tool round before the call that is still waiting on the user", async () => {
 		const { journal, payloads, conversation } = open()
 		await write(journal, payloads, "intake:1", { kind: "user_input", text: "original task" })

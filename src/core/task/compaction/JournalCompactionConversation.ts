@@ -244,6 +244,26 @@ function openTurnStart(items: readonly ConversationItem[], names: ToolNames): nu
 }
 
 /**
+ * Index of the user's reply to the model's last call when that call closes the
+ * only round so far, or -1.
+ *
+ * With an answered round before the call, that round is what gets summarized
+ * and the call stays verbatim with its reply. Without one, stopping before the
+ * call leaves nothing a summary could stand for, though the round the reply
+ * completes is finished. That round is summarized instead, ending on the reply
+ * so its call keeps a result, and the reply itself is carried past the summary
+ * as the input of the round being composed.
+ */
+function onlyRoundReply(items: readonly ConversationItem[], names: ToolNames, end: number): number {
+	const messages = items.map((item) => item.message)
+	if (messages.slice(0, end + 1).some((message) => message.role === "assistant")) return -1
+	const reply = lastAssistantIndex(messages) + 1
+	const answer = items[reply]
+	if (reply === 0 || !answer || userReplies(answer.message, names).length === 0) return -1
+	return settledEnd(messages, reply) === reply ? reply : -1
+}
+
+/**
  * The last message a summary may stand for, and whether it is the user's reply
  * opening the turn that is still waiting on them.
  *
@@ -259,8 +279,12 @@ function settledBoundary(
 	const messages = items.map((item) => item.message)
 	const end = lastSettledIndex(items, names)
 	const start = openTurnStart(items, names)
+	if (start < 0) {
+		const reply = onlyRoundReply(items, names, end)
+		return reply < 0 ? { end, reply: false } : { end: reply, reply: true }
+	}
 	const opening = messages[start]
-	if (start < 0 || start > end || !opening) return { end, reply: false }
+	if (start > end || !opening) return { end, reply: false }
 	if (userReplies(opening, names).length === 0) return { end: settledEnd(messages, start - 1), reply: false }
 	const replyEnd = settledEnd(messages, start)
 	return { end: replyEnd, reply: replyEnd === start }
