@@ -34,8 +34,6 @@ const retryAttemptLabel = (attempt: number): string => `Attempt ${attempt} of ${
 const RETRY_EXHAUSTED_TEXT = `All ${MAX_AUTO_RETRY_ATTEMPTS} automatic attempts were used.`
 /** The original request plus every automatic retry the product schedules. */
 const EXHAUSTED_RETRY_REQUEST_COUNT = MAX_AUTO_RETRY_ATTEMPTS + 1
-/** Logged once the task-start terminal warm pool has no preparation left in flight. */
-const TERMINAL_WARM_SETTLED_PATTERN = /\[TerminalPool\] operation=ensureWarm .* warming=0/
 
 const REPORT_TITLE = "E2E workspace inspection report"
 const REPORT_CONTENT = "E2E_REPORT_REVIEW_REQUIRED: README and workspace listing were inspected."
@@ -1190,8 +1188,7 @@ e2e(
 				type: "tool",
 				name: "attempt_completion",
 				arguments: { result: "E2E_UNSENT_DRAFT_AUTOMATIC_RETRY_DONE" },
-				// Keeps the recovered request open long enough to type after the terminal warm pool settles.
-				delayMs: 12_000,
+				delayMs: 5_000,
 			},
 			{
 				type: "error",
@@ -1207,15 +1204,8 @@ e2e(
 		await expect.poll(() => server.getRequestCount("deepseek-chat"), { timeout: 60_000 }).toBe(2)
 		await expect(errorBox.getByText("Automatic retry in progress", { exact: true })).toBeVisible()
 
-		// Warm terminal preparation shows and hides the terminal panel, and VS Code moves keyboard
-		// focus to the editor when the panel hides. Typing must start after that host side effect.
-		await expect
-			.poll(async () => TERMINAL_WARM_SETTLED_PATTERN.test(await E2ETestHelper.readDlineOutput(userDataDir)), {
-				timeout: 60_000,
-			})
-			.toBe(true)
-		await expect(errorBox.getByText("Automatic retry in progress", { exact: true })).toBeVisible()
-
+		// Typing overlaps the task-start terminal warm-up on purpose: preparing a warm
+		// terminal must never move keyboard focus away from the chat input.
 		const unsentDraft = "E2E_AUTOMATIC_RETRY_DRAFT_MUST_STAY_LOCAL"
 		const input = sidebar.getByTestId("chat-input")
 		await input.click()
