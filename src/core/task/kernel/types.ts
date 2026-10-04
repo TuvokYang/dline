@@ -424,6 +424,8 @@ export type ComposeEvent =
 	| (CommandFeedbackEvent & {
 			readonly type: "compose.failed"
 			readonly message: string
+			/** The failure as the chat's error box should render it, when the failing domain described it. */
+			readonly presentation?: string
 			readonly turnId?: TurnId
 			readonly queueDisposition?: "released" | "uncertain"
 	  })

@@ -156,6 +156,25 @@ describe("task kernel executor flow", () => {
 		expect(result.commands).toEqual([expect.objectContaining({ type: "dialog.prepare", kind: "error_retry" })])
 	})
 
+	it("presents a compose failure in the words of the domain that failed", () => {
+		const compose = activeCompose()
+		const result = accepted(
+			transition(compose.state, {
+				type: "compose.failed",
+				generation: 0,
+				commandId: compose.command.commandId,
+				originRevision: compose.command.originRevision,
+				turnId: "turn-1",
+				message: "automatic_compaction_failed",
+				presentation: "Provider rejected the compaction Pass",
+			}),
+		)
+		expect(result.state.dialog.primary).toMatchObject({
+			kind: "error_retry",
+			presentationRef: "Provider rejected the compaction Pass",
+		})
+	})
+
 	// The chat renders the presentation as the failure itself: the provider's
 	// own description (a 403 naming the invalid Profile) must reach it, not an
 	// interaction id that names no cause.

@@ -150,10 +150,11 @@ export function reduceDialog(state: DialogSlice, event: TaskEvent, nextRevision:
 	}
 	if ((event.type === "provider.failed" || event.type === "compose.failed") && !state.primary) {
 		const interactionId = `error:${event.type}:${nextRevision}`
-		// The chat renders the presentation as the failure itself, so a provider
-		// that described it (an invalid Profile, a quota) is shown in its own
-		// words; the interaction id is only a fallback that names no cause.
-		const presentation = event.type === "provider.failed" ? event.presentation : undefined
+		// The chat renders the presentation as the failure itself, so a domain
+		// that described it (an invalid Profile, a quota, a failed compaction) is
+		// shown in its own words; the interaction id is only a fallback that
+		// names no cause.
+		const presentation = event.presentation
 		return {
 			state: {
 				...state,

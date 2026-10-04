@@ -72,6 +72,36 @@ describe("ComposeCommandExecutor", () => {
 		expect(JSON.stringify(recorded.events)).not.toContain("secret-token")
 	})
 
+	it("fails a round whose owed work failed, carrying its domain's own explanation", async () => {
+		const recorded = recorder()
+		const rollbackRetainedQueue = vi.fn(async () => "released" as const)
+		const executor = new ComposeCommandExecutor(
+			{
+				compose: vi.fn(async () => ({
+					failed: { reason: "automatic_compaction_failed", presentation: "Provider rejected the Pass" },
+				})),
+				rollbackRetainedQueue,
+			},
+			recorded.sink,
+		)
+
+		await executor.execute(queuedCommand)
+
+		expect(rollbackRetainedQueue).toHaveBeenCalledTimes(1)
+		expect(recorded.events).toEqual([
+			{
+				type: "compose.failed",
+				generation: 0,
+				commandId: "compose:1",
+				originRevision: 1,
+				turnId: "turn-1",
+				message: "automatic_compaction_failed",
+				presentation: "Provider rejected the Pass",
+				queueDisposition: "released",
+			},
+		])
+	})
+
 	it("retracts a retained batch before reporting a compose failure", async () => {
 		const recorded = recorder()
 		const rollbackRetainedQueue = vi.fn(async () => "released" as const)

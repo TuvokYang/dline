@@ -11,6 +11,7 @@ import type { LifecycleBarrierPort } from "../session/TaskInputAdmission"
 import type { ContextPressureObserverPort } from "../session/TaskProviderRequestReporter"
 import type { CompactionTrigger, LifecycleCommand } from "../stores/payload/TaskPayloadEnvelopes"
 import { shouldCompactAutomatically } from "./AutomaticCompactionPolicy"
+import { COMPACTION_FAILURE_MESSAGE } from "./MessageStateCompactionFailure"
 import { NOTHING_TO_COMPACT, requestTaskCompaction } from "./TaskCompactionRequest"
 
 /** The catalog identity of the manual compaction command and its aliases. */
@@ -29,8 +30,23 @@ const COMPACTION_BARRIER_TIMEOUT_MS = 120_000
 
 const ROUND_READY: RoundReadiness = { kind: "ready" }
 
-/** How one compaction run ended, as far as the round waiting on it cares. */
-type CompactionRunOutcome = "completed" | "failed" | "withdrawn"
+/** Why a round stopped after the automatic compaction it waited on failed. */
+export const AUTOMATIC_COMPACTION_FAILED = "automatic_compaction_failed"
+
+/**
+ * How one compaction request ended, as far as the round waiting on it cares.
+ *
+ * `refused` means no run happened - the request was not scheduled - so nobody
+ * was told anything failed. `timed_out` means the round stopped waiting while
+ * the run may still be going.
+ */
+type CompactionRunOutcome = "completed" | "failed" | "withdrawn" | "refused" | "timed_out"
+
+interface CompactionRunResult {
+	readonly outcome: CompactionRunOutcome
+	/** Why a run that ran failed, in the words its failure card used. */
+	readonly error?: string
+}
 
 /**
  * Learns when a compaction run has finished.
@@ -80,9 +96,9 @@ export class CompactionRoundBarrier
 	/** A `/compact` typed into a dialog reply, owed to the round that reply opens. */
 	private replied: { readonly command: LifecycleCommand; readonly generation: number } | undefined
 	/** Rounds waiting on a run, keyed by the run so a stale one only releases its own waiter. */
-	private readonly waiters = new Map<string, (outcome: CompactionRunOutcome) => void>()
+	private readonly waiters = new Map<string, (result: CompactionRunResult) => void>()
 	/** The last run that ended before any round waited on it. */
-	private unclaimed: { readonly compactionId: string; readonly outcome: CompactionRunOutcome } | undefined
+	private unclaimed: { readonly compactionId: string; readonly result: CompactionRunResult } | undefined
 
 	constructor(private readonly options: CompactionRoundBarrierOptions) {}
 
@@ -117,17 +133,20 @@ export class CompactionRoundBarrier
 	instrument(port: CompactionPort): CompactionPort {
 		return {
 			run: async (input: CompactionExecutionInput): Promise<CompactionExecutionResult> => {
-				let outcome: CompactionRunOutcome = "failed"
+				let settled: CompactionRunResult = { outcome: "failed" }
 				try {
 					const result = await port.run(input)
-					outcome = "completed"
+					settled = { outcome: "completed" }
 					return result
 				} catch (error) {
 					// A stop or a withdrawn review is the user's own decision, not a failure.
-					if (input.signal.aborted || error instanceof CompactionReviewWithdrawnError) outcome = "withdrawn"
+					if (input.signal.aborted || error instanceof CompactionReviewWithdrawnError)
+						settled = { outcome: "withdrawn" }
+					else if (error instanceof Error && error.message.trim())
+						settled = { outcome: "failed", error: error.message.trim() }
 					throw error
 				} finally {
-					this.settle(input.compactionId, outcome)
+					this.settle(input.compactionId, settled)
 				}
 			},
 		}
@@ -140,6 +159,10 @@ export class CompactionRoundBarrier
 	 * one: it condenses the same conversation, and running both would summarize
 	 * a summary. Its outcome decides the round - the user asked for a smaller
 	 * context before going on, so a failed or withdrawn one gives the round up.
+	 *
+	 * An automatic run that failed stops the round too: the request it was
+	 * clearing room for would not fit, and the user is the one to retry. The
+	 * pressure stays recorded so the round that retries compacts again.
 	 */
 	async settleBeforeRound(input: {
 		readonly signal: AbortSignal
@@ -160,13 +183,20 @@ export class CompactionRoundBarrier
 		const session = this.options.session()
 		if (!session) return ROUND_READY
 		if (manual) {
-			const outcome = await this.compact(session, "manual", input.signal, manual.premessage)
-			return outcome === "completed" ? ROUND_READY : { kind: "withdrawn", reason: `manual_compaction_${outcome}` }
+			const { outcome } = await this.compact(session, "manual", input.signal, manual.premessage)
+			if (outcome === "completed") return ROUND_READY
+			return { kind: "withdrawn", reason: `manual_compaction_${outcome === "refused" ? "failed" : outcome}` }
 		}
-		if (!pressure || this.options.enabled?.() === false) return ROUND_READY
+		if (!observed || !pressure || this.options.enabled?.() === false) return ROUND_READY
 		if (!shouldCompactAutomatically(this.options.state(), pressure)) return ROUND_READY
-		await this.compact(session, "automatic", input.signal)
-		return ROUND_READY
+		const result = await this.compact(session, "automatic", input.signal)
+		if (result.outcome !== "failed") return ROUND_READY
+		this.observed ??= observed
+		return {
+			kind: "failed",
+			reason: AUTOMATIC_COMPACTION_FAILED,
+			presentation: result.error ?? COMPACTION_FAILURE_MESSAGE,
+		}
 	}
 
 	/** A reply's command, unless a stop since it was accepted retired it. */
@@ -181,24 +211,28 @@ export class CompactionRoundBarrier
 		trigger: Exclude<CompactionTrigger, "transition">,
 		signal: AbortSignal,
 		guidance?: string,
-	): Promise<CompactionRunOutcome> {
+	): Promise<CompactionRunResult> {
+		let compactionId: string
 		try {
-			const outcome = await requestTaskCompaction(session, {
+			const request = await requestTaskCompaction(session, {
 				stateRevision: this.options.state().revision,
 				mode: "summarize",
 				trigger,
 				...(guidance ? { guidance } : {}),
 			})
-			if (!outcome.accepted || !outcome.compactionId) {
-				this.options.onFailure?.(`${trigger} compaction not scheduled: ${outcome.result}`)
+			if (!request.accepted || !request.compactionId) {
+				this.options.onFailure?.(`${trigger} compaction not scheduled: ${request.result}`)
 				// Nothing settled yet means the context is already as small as it gets.
-				return outcome.result === NOTHING_TO_COMPACT ? "completed" : "failed"
+				return { outcome: request.result === NOTHING_TO_COMPACT ? "completed" : "refused" }
 			}
-			return await this.awaitRun(outcome.compactionId, trigger === "automatic", signal)
+			compactionId = request.compactionId
 		} catch (error) {
-			this.options.onFailure?.(`${trigger} compaction failed: ${error instanceof Error ? error.message : String(error)}`)
-			return "failed"
+			this.options.onFailure?.(
+				`${trigger} compaction not scheduled: ${error instanceof Error ? error.message : String(error)}`,
+			)
+			return { outcome: "refused" }
 		}
+		return await this.awaitRun(compactionId, trigger === "automatic", signal)
 	}
 
 	/**
@@ -207,13 +241,13 @@ export class CompactionRoundBarrier
 	 * A stopped round stops waiting even if the run never reports back, because
 	 * the stop may have fenced it before it could.
 	 */
-	private async awaitRun(compactionId: string, bounded: boolean, signal: AbortSignal): Promise<CompactionRunOutcome> {
+	private async awaitRun(compactionId: string, bounded: boolean, signal: AbortSignal): Promise<CompactionRunResult> {
 		const unclaimed = this.unclaimed
 		if (unclaimed?.compactionId === compactionId) {
 			this.unclaimed = undefined
-			return unclaimed.outcome
+			return unclaimed.result
 		}
-		const settled = new Promise<CompactionRunOutcome>((resolve) => this.waiters.set(compactionId, resolve))
+		const settled = new Promise<CompactionRunResult>((resolve) => this.waiters.set(compactionId, resolve))
 		try {
 			const released = untilAborted(settled, signal)
 			return bounded ? await this.withTimeout(released) : await released
@@ -222,11 +256,11 @@ export class CompactionRoundBarrier
 		}
 	}
 
-	private async withTimeout(promise: Promise<CompactionRunOutcome>): Promise<CompactionRunOutcome> {
+	private async withTimeout(promise: Promise<CompactionRunResult>): Promise<CompactionRunResult> {
 		const limit = this.options.barrierTimeoutMs ?? COMPACTION_BARRIER_TIMEOUT_MS
 		let timer: ReturnType<typeof setTimeout> | undefined
-		const deadline = new Promise<CompactionRunOutcome>((resolve) => {
-			timer = setTimeout(() => resolve("failed"), limit)
+		const deadline = new Promise<CompactionRunResult>((resolve) => {
+			timer = setTimeout(() => resolve({ outcome: "timed_out" }), limit)
 		})
 		try {
 			return await Promise.race([promise, deadline])
@@ -235,14 +269,14 @@ export class CompactionRoundBarrier
 		}
 	}
 
-	private settle(compactionId: string, outcome: CompactionRunOutcome): void {
+	private settle(compactionId: string, result: CompactionRunResult): void {
 		const waiter = this.waiters.get(compactionId)
 		if (waiter) {
 			this.waiters.delete(compactionId)
-			waiter(outcome)
+			waiter(result)
 			return
 		}
-		this.unclaimed = { compactionId, outcome }
+		this.unclaimed = { compactionId, result }
 	}
 }
 
@@ -261,12 +295,12 @@ function mergeOwedCompactions(owed: readonly LifecycleCommand[]): LifecycleComma
 	return { ...first, premessage: guidance.join("\n\n") }
 }
 
-/** Resolve with the run's outcome, or as withdrawn as soon as the signal aborts. */
-async function untilAborted(promise: Promise<CompactionRunOutcome>, signal: AbortSignal): Promise<CompactionRunOutcome> {
-	if (signal.aborted) return "withdrawn"
+/** Resolve with the run's result, or as withdrawn as soon as the signal aborts. */
+async function untilAborted(promise: Promise<CompactionRunResult>, signal: AbortSignal): Promise<CompactionRunResult> {
+	if (signal.aborted) return { outcome: "withdrawn" }
 	let release: () => void = () => undefined
-	const aborted = new Promise<CompactionRunOutcome>((resolve) => {
-		release = () => resolve("withdrawn")
+	const aborted = new Promise<CompactionRunResult>((resolve) => {
+		release = () => resolve({ outcome: "withdrawn" })
 	})
 	signal.addEventListener("abort", release, { once: true })
 	try {

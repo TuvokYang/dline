@@ -91,7 +91,8 @@ export interface CompactionReviewPort {
  * chat lives, so this module never writes UI rows.
  */
 export interface CompactionFailurePresentationPort {
-	present(input: { readonly compactionId: string; readonly attempt: string }): Promise<void>
+	/** `error` is the reason the run failed, shown to the user; absent when there is none to state. */
+	present(input: { readonly compactionId: string; readonly attempt: string; readonly error?: string }): Promise<void>
 }
 
 export interface ProductionCompactionAdapterOptions {
@@ -125,7 +126,13 @@ export class ProductionCompactionAdapter implements CompactionPort {
 			// A stop is the user's own decision and needs no explanation; anything
 			// else left the conversation unchanged without them knowing.
 			const stopped = input.signal.aborted || error instanceof CompactionReviewWithdrawnError
-			if (!stopped) await this.options.failure?.present({ compactionId: input.compactionId, attempt: input.attempt })
+			if (!stopped) {
+				await this.options.failure?.present({
+					compactionId: input.compactionId,
+					attempt: input.attempt,
+					...(error instanceof Error && error.message ? { error: error.message } : {}),
+				})
+			}
 			throw error
 		}
 	}

@@ -117,7 +117,7 @@ describe("CompactionRoundBarrier - automatic", () => {
 		await expect(waiting).resolves.toEqual({ kind: "ready" })
 	})
 
-	it("still lets the round through when an automatic run fails", async () => {
+	it("stops the round with the run's reason when an automatic run fails", async () => {
 		const state = running()
 		const p = probe(() => state)
 		const barrier = new CompactionRoundBarrier({ session: () => p.session, state: () => state })
@@ -127,7 +127,45 @@ describe("CompactionRoundBarrier - automatic", () => {
 		await drain()
 		await run(barrier, p.scheduled[0], "reject")
 
-		await expect(waiting).resolves.toEqual({ kind: "ready" })
+		await expect(waiting).resolves.toEqual({
+			kind: "failed",
+			reason: "automatic_compaction_failed",
+			presentation: "provider refused",
+		})
+	})
+
+	it("compacts again on the round that retries a failed automatic run", async () => {
+		const state = running()
+		const p = probe(() => state)
+		const barrier = new CompactionRoundBarrier({ session: () => p.session, state: () => state })
+
+		barrier.observe({ contextTokens: TRIGGER, compactTriggerTokens: TRIGGER })
+		const failed = barrier.settleBeforeRound(round())
+		await drain()
+		await run(barrier, p.scheduled[0], "reject")
+		await failed
+
+		// The context is still over its trigger, so the retried round owes the same compaction.
+		const retried = barrier.settleBeforeRound(round())
+		await drain()
+		expect(p.scheduled).toHaveLength(2)
+		await run(barrier, p.scheduled[1])
+		await expect(retried).resolves.toEqual({ kind: "ready" })
+	})
+
+	it("does not owe a retried round a compaction that succeeded", async () => {
+		const state = running()
+		const p = probe(() => state)
+		const barrier = new CompactionRoundBarrier({ session: () => p.session, state: () => state })
+
+		barrier.observe({ contextTokens: TRIGGER, compactTriggerTokens: TRIGGER })
+		const first = barrier.settleBeforeRound(round())
+		await drain()
+		await run(barrier, p.scheduled[0])
+		await first
+
+		await expect(barrier.settleBeforeRound(round())).resolves.toEqual({ kind: "ready" })
+		expect(p.scheduled).toHaveLength(1)
 	})
 
 	it("releases a round whose automatic run never reports back", async () => {

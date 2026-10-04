@@ -34,11 +34,14 @@ export interface ComposeRoundInput {
  *
  * Either a draft for the provider, or the round given up before any draft:
  * a lifecycle command the round had to carry out first did not complete, so
- * nothing the user still wants remains to be sent.
+ * nothing the user still wants remains to be sent. `withdrawn` is the user's
+ * own decision; `failed` is work the round owed that failed, which the user
+ * is offered to retry, and whose domain already explained it.
  */
 export type ComposeRoundResult =
 	| { readonly draftRef: string; readonly queueJournalReceipt?: QueueJournalReceipt }
 	| { readonly withdrawn: { readonly reason: string } }
+	| { readonly failed: { readonly reason: string; readonly presentation?: string } }
 
 export interface ComposePort {
 	compose(input: ComposeRoundInput): Promise<ComposeRoundResult>
@@ -132,6 +135,22 @@ export class ComposeCommandExecutor implements CommandExecutor, HaltParticipant 
 			return
 		}
 		if (controller.signal.aborted) return
+		if ("failed" in result) {
+			// An expected outcome its own domain presented, not an executor fault.
+			Logger.warn(`[compose] Round stopped before drafting: ${result.failed.reason}`)
+			const queueDisposition = await this.rollbackRetainedQueue(input)
+			await this.events.submit({
+				type: "compose.failed",
+				generation: command.generation,
+				commandId: command.commandId,
+				originRevision: command.originRevision,
+				turnId: command.turnId,
+				message: result.failed.reason,
+				...(result.failed.presentation === undefined ? {} : { presentation: result.failed.presentation }),
+				...(queueDisposition === undefined ? {} : { queueDisposition }),
+			})
+			return
+		}
 		if ("withdrawn" in result) {
 			await this.events.submit({
 				type: "compose.withdrawn",

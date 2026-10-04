@@ -29,6 +29,7 @@ import {
 	type ContextCompactionSessionPorts,
 	type ContextCompactionTriggerKind,
 } from "../ContextCompactionSession"
+import { CompactionRunFailedError } from "../executors/compaction/CompactionCommandExecutor"
 import type { ProductionCompactionService } from "../executors/compaction/ProductionCompactionAdapter"
 import type { ProviderRequestFrame, ProviderRequestFramePort } from "../executors/provider/service/ProviderRequest"
 import { ExplicitInstructionRegistry } from "../explicit-instructions/ExplicitInstructionRegistry"
@@ -166,7 +167,7 @@ export class ProviderCompactionService implements ProductionCompactionService {
 			if (input.signal.aborted) throw input.signal.reason
 			const summary = outcome.committed?.cumulativeSummary
 			if (result !== "completed" || !outcome.committed || !summary) {
-				throw new Error(outcome.failure ?? "Context compaction did not complete.")
+				throw new CompactionRunFailedError(outcome.failure ?? "Context compaction did not complete.")
 			}
 			const coveredThrough = coveredSeq(outcome.committed, context)
 			return coveredThrough === undefined ? { summary } : { summary, coveredThrough }

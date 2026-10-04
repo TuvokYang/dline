@@ -1,3 +1,4 @@
+import { Logger } from "@shared/services/Logger"
 import type { Command, CompactionRunCommand } from "../../kernel"
 import type { CommandExecutor } from "../../runtime"
 import { executorFailure, type HaltOrder, type HaltParticipant, isExecutionAbort, type TaskEventSink } from "../contracts"
@@ -16,6 +17,28 @@ export interface CompactionExecutionResult {
 
 export interface CompactionPort {
 	run(input: CompactionExecutionInput): Promise<CompactionExecutionResult>
+}
+
+/**
+ * A run that failed for a reason its port already told the user.
+ *
+ * A provider refusing a Pass, or a conversation with no complete turn, is an
+ * expected outcome rather than a fault in the executor, so it is recorded as a
+ * warning instead of an error. The message is the reason the user was shown.
+ */
+export class CompactionRunFailedError extends Error {
+	constructor(message: string, options?: { readonly cause?: unknown }) {
+		super(message, options)
+		this.name = "CompactionRunFailed"
+	}
+}
+
+/** Report one failed run, at the severity its cause deserves. */
+function runFailure(error: unknown): string {
+	if (!(error instanceof CompactionRunFailedError)) return executorFailure("compaction", error)
+	const failure = `compaction execution failed (${error.name})`
+	Logger.warn(`${failure}: ${error.message}`)
+	return failure
 }
 
 interface ActiveCompaction {
@@ -111,7 +134,7 @@ export class CompactionCommandExecutor implements CommandExecutor, HaltParticipa
 					generation: command.generation,
 					compactionId: command.compactionId,
 					attempt: command.attempt,
-					message: executorFailure("compaction", error),
+					message: runFailure(error),
 				})
 			return
 		}

@@ -3,12 +3,7 @@ import type { CompactionFailurePresentationPort } from "../executors/compaction/
 import type { MessageStateHandler } from "../message-state"
 import type { PresentationIdSequence } from "../session/PresentationIdSequence"
 
-/**
- * User-facing text for a compaction that produced nothing to land.
- *
- * The provider's own diagnostic stays in the logs: it can name limits, request
- * details or partial output, none of which the user can act on from the chat.
- */
+/** User-facing text for a compaction that failed without a reason it could state. */
 export const COMPACTION_FAILURE_MESSAGE = "Conversation compaction failed before completion. The conversation was left unchanged."
 
 /**
@@ -25,7 +20,11 @@ export class MessageStateCompactionFailure implements CompactionFailurePresentat
 		private readonly nextPresentationId: PresentationIdSequence,
 	) {}
 
-	async present(input: { readonly compactionId: string; readonly attempt: string }): Promise<void> {
+	/**
+	 * The card states why the run failed, as main's failure card does: whether
+	 * the user retries, waits or force-truncates depends on that reason.
+	 */
+	async present(input: { readonly compactionId: string; readonly attempt: string; readonly error?: string }): Promise<void> {
 		await this.messages.addToClineMessages({
 			ts: this.nextPresentationId(),
 			type: "say",
@@ -39,7 +38,7 @@ export class MessageStateCompactionFailure implements CompactionFailurePresentat
 				compactionAttemptId: input.attempt,
 				compactionUnitKind: "failure",
 				compactionDurable: true,
-				error: COMPACTION_FAILURE_MESSAGE,
+				error: input.error?.trim() ? input.error.trim() : COMPACTION_FAILURE_MESSAGE,
 			} satisfies UiSayTool),
 		})
 	}

@@ -37,9 +37,19 @@ describe("automatic compaction policy", () => {
 	})
 
 	it("does not compact a task that has no next request to protect", () => {
-		for (const phase of ["paused", "terminated", "completed", "error"] as const) {
+		for (const phase of ["paused", "terminated"] as const) {
 			const stopped = running({ flow: { phase } })
 			expect(shouldCompactAutomatically(stopped, { contextTokens: TRIGGER, compactTriggerTokens: TRIGGER })).toBe(false)
+		}
+	})
+
+	// The phase only advances once the next request settles, so a round retried
+	// after a failure, or a follow-up after a completion, is composed while the
+	// phase still names the previous outcome - and its request still needs room.
+	it("compacts the round a retry or a follow-up opens", () => {
+		for (const phase of ["error", "completed"] as const) {
+			const reopened = running({ flow: { phase } })
+			expect(shouldCompactAutomatically(reopened, { contextTokens: TRIGGER, compactTriggerTokens: TRIGGER })).toBe(true)
 		}
 	})
 

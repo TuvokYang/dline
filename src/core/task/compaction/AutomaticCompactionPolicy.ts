@@ -16,14 +16,19 @@ export interface CompactionPressure {
  * judged after a request settles. The comparison is the shared projected-usage
  * rule, which keeps the estimation tolerance below the trigger exactly as the
  * ordinary request guard does. A run already scheduled or in flight owns the
- * next summary, and a halting or finished task has no next request to protect,
- * so neither case starts another one.
+ * next summary, and a halting, paused or terminated task has no next request
+ * to protect, so neither case starts another one.
+ *
+ * It is asked while a round is being composed, and the phase only advances
+ * once that round's request settles. A round opened by Retry after a failure,
+ * or by a follow-up after a completion, therefore still reads `error` or
+ * `completed` - and its request needs the room exactly as much.
  */
 export function shouldCompactAutomatically(state: TaskState, pressure: CompactionPressure): boolean {
 	if (pressure.compactTriggerTokens <= 0) return false
 	if (!shouldCompactProjectedUsage(pressure.contextTokens, pressure.compactTriggerTokens)) return false
 	if (state.halt.status === "stopping") return false
-	if (["paused", "terminated", "completed", "error"].includes(state.flow.phase)) return false
+	if (state.flow.phase === "paused" || state.flow.phase === "terminated") return false
 	return !isCompactionInFlight(state)
 }
 

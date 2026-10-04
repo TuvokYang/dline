@@ -59,8 +59,17 @@ export interface ComposeCompactionBarrierPort {
 	}): Promise<RoundReadiness>
 }
 
-/** Whether a round may be drafted once the barrier settled. */
-export type RoundReadiness = { readonly kind: "ready" } | { readonly kind: "withdrawn"; readonly reason: string }
+/**
+ * Whether a round may be drafted once the barrier settled.
+ *
+ * `withdrawn` gives the round up as the user's own decision; `failed` stops it
+ * because what it owed did not happen, so the user is offered a retry.
+ * `presentation` is the failure as the user should read it.
+ */
+export type RoundReadiness =
+	| { readonly kind: "ready" }
+	| { readonly kind: "withdrawn"; readonly reason: string }
+	| { readonly kind: "failed"; readonly reason: string; readonly presentation?: string }
 
 export interface ProductionComposeAdapterOptions {
 	readonly payloads: TaskPayloadStore
@@ -127,6 +136,10 @@ export class ProductionComposeAdapter implements ComposePort {
 		})) ?? { kind: "ready" }
 		if (input.signal.aborted) throw input.signal.reason
 		if (readiness.kind === "withdrawn") return { withdrawn: { reason: readiness.reason } }
+		if (readiness.kind === "failed") {
+			const { reason, presentation } = readiness
+			return { failed: { reason, ...(presentation === undefined ? {} : { presentation }) } }
+		}
 		// Read again: the compaction advanced the revision this round is keyed by.
 		const state = this.options.readState()
 		const entries = this.admittedEntries(input)

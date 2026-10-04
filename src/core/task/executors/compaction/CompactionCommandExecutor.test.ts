@@ -1,6 +1,7 @@
+import { Logger } from "@shared/services/Logger"
 import { describe, expect, it, vi } from "vitest"
 import type { CompactionRunCommand, TaskEvent } from "../../kernel"
-import { CompactionCommandExecutor } from "./CompactionCommandExecutor"
+import { CompactionCommandExecutor, CompactionRunFailedError } from "./CompactionCommandExecutor"
 
 function command(attempt = "attempt-1", contextRef = "manual:ctx"): CompactionRunCommand {
 	return {
@@ -70,6 +71,31 @@ describe("CompactionCommandExecutor", () => {
 			expect.objectContaining({ type: "compaction.failed", message: "compaction execution failed (Error)" }),
 		])
 		expect(JSON.stringify(recorded.events)).not.toContain("secret-context")
+	})
+
+	it("records a run failure its port already presented as a warning, not an error", async () => {
+		const error = vi.spyOn(Logger, "error").mockImplementation(() => undefined)
+		const warn = vi.spyOn(Logger, "warn").mockImplementation(() => undefined)
+		try {
+			const recorded = recorder()
+			const executor = new CompactionCommandExecutor(
+				{ run: vi.fn(async () => Promise.reject(new CompactionRunFailedError("Provider rejected the Pass"))) },
+				recorded.sink,
+			)
+			await executor.execute(command())
+			expect(recorded.events).toEqual([
+				expect.objectContaining({ type: "compaction.started" }),
+				expect.objectContaining({
+					type: "compaction.failed",
+					message: "compaction execution failed (CompactionRunFailed)",
+				}),
+			])
+			expect(error).not.toHaveBeenCalled()
+			expect(warn).toHaveBeenCalledWith(expect.stringContaining("Provider rejected the Pass"))
+		} finally {
+			error.mockRestore()
+			warn.mockRestore()
+		}
 	})
 
 	it("rejects a concurrent replacement and leaves attempt ownership to the kernel", async () => {
