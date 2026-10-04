@@ -3,6 +3,7 @@ import path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import {
+	expectWorkMessageVisible,
 	openWorkActivities,
 	openWorkTab,
 	prepareWorkSession,
@@ -66,27 +67,6 @@ async function configureTerminalHandoff(page: Page, sidebar: Frame): Promise<voi
 	await expect(handoffSeconds).toHaveValue("1")
 	await sidebar.getByRole("button", { name: "Done", exact: true }).click()
 	await expect(sidebar.getByTestId("chat-input")).toBeVisible()
-}
-
-async function expectWorkMessageVisible(
-	sidebar: Frame,
-	text: string,
-	options: { exact?: boolean; timeout?: number } = {},
-): Promise<void> {
-	const message = sidebar.getByText(text, { exact: options.exact ?? true }).last()
-	const scrollToBottom = sidebar.getByRole("button", { name: "Scroll to bottom", exact: true })
-	await expect
-		.poll(
-			async () => {
-				if (await message.isVisible().catch(() => false)) return true
-				if (await scrollToBottom.isVisible().catch(() => false)) {
-					await scrollToBottom.click().catch(() => undefined)
-				}
-				return message.isVisible().catch(() => false)
-			},
-			{ timeout: options.timeout ?? 60_000 },
-		)
-		.toBe(true)
 }
 
 async function approveSubagentIfRequested(sidebar: Frame, task: string): Promise<void> {
@@ -344,13 +324,13 @@ e2e(
 			const handoffCard = handoffCommandButton.locator("xpath=ancestor::*[@data-testid='command-card'][1]")
 			await expect(handoffCard.getByTestId("command-execution-mode")).toHaveText("Background", { timeout: 30_000 })
 			await sendWorkMessage(sidebar, DURING_COMMAND_INPUT)
-			await expectWorkMessageVisible(sidebar, "WORK_DURING_BACKGROUND_COMMAND_OK")
+			await expectWorkMessageVisible(sidebar, "WORK_DURING_BACKGROUND_COMMAND_OK", { timeout: 60_000 })
 
 			activities = await openWorkActivities(sidebar)
 			await expect(commandActivity).toHaveAttribute("data-activity-status", "completed", { timeout: 60_000 })
 			await openWorkTab(sidebar)
 			await sendWorkMessage(sidebar, COLLECT_COMMAND_INPUT)
-			await expectWorkMessageVisible(sidebar, "WORK_BACKGROUND_COMMAND_RESULT_OK")
+			await expectWorkMessageVisible(sidebar, "WORK_BACKGROUND_COMMAND_RESULT_OK", { timeout: 60_000 })
 
 			await sendWorkMessage(sidebar, FOREGROUND_SUBAGENT_REQUEST)
 			await approveSubagentIfRequested(sidebar, FOREGROUND_CHILD_TASK)
@@ -382,13 +362,13 @@ e2e(
 			const subagentActivity = sidebar.locator(`[data-testid="activity-item"][data-activity-id="${subagentActivityId}"]`)
 			await openWorkTab(sidebar)
 			await sendWorkMessage(sidebar, DURING_SUBAGENT_INPUT)
-			await expectWorkMessageVisible(sidebar, "WORK_DURING_BACKGROUND_SUBAGENT_OK")
+			await expectWorkMessageVisible(sidebar, "WORK_DURING_BACKGROUND_SUBAGENT_OK", { timeout: 60_000 })
 
 			activities = await openWorkActivities(sidebar)
 			await expect(subagentActivity).toHaveAttribute("data-activity-status", "completed", { timeout: 60_000 })
 			await openWorkTab(sidebar)
 			await sendWorkMessage(sidebar, COLLECT_SUBAGENT_INPUT)
-			await expectWorkMessageVisible(sidebar, COMPLETE, { exact: false })
+			await expectWorkMessageVisible(sidebar, COMPLETE, { exact: false, timeout: 60_000 })
 			await expectCompletedSubagentCard(
 				sidebar,
 				BACKGROUND_CHILD_TASK,
