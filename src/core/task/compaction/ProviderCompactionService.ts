@@ -24,7 +24,6 @@ import { getRetryDelay, MAX_AUTO_RETRY_ATTEMPTS } from "../auto-retry"
 import {
 	type ContextCompactionPassRequest,
 	ContextCompactionSession,
-	type ContextCompactionSessionEvent,
 	type ContextCompactionSessionInput,
 	type ContextCompactionSessionPorts,
 	type ContextCompactionTriggerKind,
@@ -36,6 +35,7 @@ import { ExplicitInstructionRegistry } from "../explicit-instructions/ExplicitIn
 import { ExplicitInstructionRequestScope } from "../explicit-instructions/ExplicitInstructionRequestScope"
 import type { CompactionTrigger } from "../stores/payload/TaskPayloadEnvelopes"
 import type { CompactionRequestScopeReader } from "./CompactionRequestScopes"
+import type { CompactionProgressPort } from "./MessageStateCompactionProgress"
 
 export interface ProviderCompactionServiceOptions {
 	/** The frame ordinary requests use; compaction must share it to keep the provider prefix cache. */
@@ -57,6 +57,8 @@ export interface ProviderCompactionServiceOptions {
 	readonly scopes?: CompactionRequestScopeReader
 	/** Pause before an automatic retry of a failed Pass; defaults to the task retry schedule. */
 	readonly waitForRetry?: (retryAttempt: number, signal: AbortSignal) => Promise<void>
+	/** Shows the run while it works: each Pass, and a Pass that broke off and is sent again. */
+	readonly progress?: CompactionProgressPort
 }
 
 interface CompactionContext {
@@ -173,6 +175,8 @@ export class ProviderCompactionService implements ProductionCompactionService {
 			return coveredThrough === undefined ? { summary } : { summary, coveredThrough }
 		} finally {
 			input.signal.removeEventListener("abort", abort)
+			// The landed summary card or the failure card takes over from here.
+			if (this.options.progress?.settle(input.compactionId)) this.republish(input)
 		}
 	}
 
@@ -276,14 +280,16 @@ export class ProviderCompactionService implements ProductionCompactionService {
 			},
 			publish: async (_sessionInput, event) => {
 				if (event.kind === "failed") outcome.failure = event.error
-				const text = partialSummaryOf(event)
-				if (text !== undefined) {
-					input.publish({ kind: "compaction_partial", compactionId: input.compactionId, attempt: input.attempt, text })
-				}
+				if (this.options.progress?.present(input.compactionId, event)) this.republish(input)
 			},
 			waitForRetry: (_sessionInput, retryAttempt, signal) =>
 				(this.options.waitForRetry ?? delayRetry)(retryAttempt, signal),
 		}
+	}
+
+	/** Ask the task view to redraw, so a progress step or a withdrawn card reaches the chat. */
+	private republish(input: Parameters<ProductionCompactionService["run"]>[0]): void {
+		input.publish({ kind: "compaction_progress", compactionId: input.compactionId, attempt: input.attempt })
 	}
 
 	/**
@@ -370,11 +376,6 @@ export class ProviderCompactionService implements ProductionCompactionService {
 			throw error
 		}
 	}
-}
-
-/** The streamed summary a Pass or refit has produced so far, if this event carries one. */
-function partialSummaryOf(event: ContextCompactionSessionEvent): string | undefined {
-	return event.kind === "pass_partial" || event.kind === "summary_refit_partial" ? event.content : undefined
 }
 
 /** Journal seq of the last summarized message, when the context recorded where its messages live. */

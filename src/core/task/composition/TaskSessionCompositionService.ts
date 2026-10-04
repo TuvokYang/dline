@@ -23,6 +23,7 @@ import { CompactionRoundBarrier } from "../compaction/CompactionRoundBarrier"
 import { InteractionCompactionReview } from "../compaction/InteractionCompactionReview"
 import { MessageStateCompactionFailure } from "../compaction/MessageStateCompactionFailure"
 import { MessageStateCompactionLanding } from "../compaction/MessageStateCompactionLanding"
+import { MessageStateCompactionProgress } from "../compaction/MessageStateCompactionProgress"
 import { ProviderCompactionService } from "../compaction/ProviderCompactionService"
 import { importLegacyConversation } from "../conversation/LegacyConversationImport"
 import { DefaultProductionProviderService } from "../executors/provider/service/DefaultProductionProviderService"
@@ -693,6 +694,9 @@ export class TaskSessionCompositionService {
 						}),
 					triggerOptions: readCompactTriggerOptions,
 					scopes: compactionScopes,
+					// The summary card only exists once the run lands; until then each
+					// Pass, and a Pass that broke off and is sent again, needs its own card.
+					progress: new MessageStateCompactionProgress(messages, nextPresentationId, realtimeMessages),
 				}),
 				readApprovalPolicy: () => ({
 					settings: options.stateManager.getGlobalSettingsKey("autoApprovalSettings"),
