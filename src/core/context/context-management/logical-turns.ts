@@ -73,7 +73,10 @@ export function indexLogicalTurns(history: readonly ClineStorageMessage[]): Logi
 			turnStart = messageIndex
 		}
 
-		if (userAuthored && results.length === 0 && messageIndex > turnStart) {
+		// Input that arrives before the round was answered - the environment
+		// snapshot the journal stores beside a request, or a second message - is
+		// part of that same round, not the start of another one.
+		if (userAuthored && results.length === 0 && messageIndex > turnStart && hasAssistantResponse) {
 			if (openToolUses.size > 0) {
 				protectedStartIndex = turnStart
 				break
