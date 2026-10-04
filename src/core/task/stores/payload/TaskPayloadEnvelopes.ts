@@ -223,6 +223,8 @@ export interface CompactionContextEnvelope {
 	readonly span?: { readonly from: JournalWatermark; readonly to: JournalWatermark }
 	/** The user's reply the span ends on, which landing replays after the summary instead of condensing. */
 	readonly continuation?: CompactionContinuation
+	/** Replies inside the span that a summary covering only the oldest turns may have to land on. */
+	readonly replies?: readonly CompactionReplyBoundary[]
 	/** Absent in contexts written before triggers were recorded; treated as automatic. */
 	readonly trigger?: CompactionTrigger
 	readonly context: unknown
@@ -259,6 +261,21 @@ export interface CompactionContinuation {
 	readonly text: string
 	readonly images?: readonly string[]
 	readonly files?: readonly string[]
+}
+
+/**
+ * A user's reply inside a condensed span, located by the call it answers.
+ *
+ * A summary that stops right after that call would land without the call's
+ * result, which then answers nothing. Landing takes the reply as well and
+ * replays it after the summary, as it does for the reply a whole span ends on.
+ */
+export interface CompactionReplyBoundary {
+	/** Journal position of the call the reply answers. */
+	readonly callSeq: number
+	/** Journal position of the reply itself. */
+	readonly replySeq: number
+	readonly continuation: CompactionContinuation
 }
 
 /**

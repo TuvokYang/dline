@@ -72,6 +72,8 @@ export async function requestTaskCompaction(
 			// The reply the span ends on is the user's open input, not history:
 			// landing replays it after the summary rather than condensing it.
 			...(source.continuation ? { continuation: source.continuation } : {}),
+			// A summary of only the oldest turns lands each call with its reply.
+			...(source.replies ? { replies: source.replies } : {}),
 			trigger: input.trigger,
 			context: {
 				mode: input.mode,

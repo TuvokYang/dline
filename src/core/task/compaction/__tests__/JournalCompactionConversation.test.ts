@@ -417,6 +417,36 @@ describe("JournalCompactionConversation", () => {
 		expect(texts(messages)).toEqual(["condensed so far", LATEST_REPLY])
 	})
 
+	it("locates each reply by its call, so a summary of only the oldest turns lands them together", async () => {
+		const { journal, payloads, conversation } = open()
+		await write(journal, payloads, "intake:1", { kind: "user_input", text: "original task" })
+		await write(journal, payloads, "provider:1", call("call-a"), "provider")
+		await write(journal, payloads, "tool.result:a", result("call-a", [feedback(LATEST_REPLY)]), "tool")
+		await write(journal, payloads, "provider:2", call("call-b", "read_file"), "provider")
+		await write(journal, payloads, "tool.result:b", result("call-b", [{ type: "text", text: "FILE_CONTENTS" }]), "tool")
+
+		const source = await conversation.read()
+
+		expect(source.replies).toEqual([{ callSeq: 2, replySeq: 3, continuation: { text: LATEST_REPLY } }])
+		const [boundary] = source.replies ?? []
+		if (!source.span || !boundary) throw new Error("expected a span with a reply")
+		// What a summary that covered only the first turn lands on.
+		await conversation.land({
+			compactionId: "compaction:1",
+			attempt: "compaction:1:1",
+			summary: "turn A",
+			span: { from: source.span.from, to: { seq: boundary.replySeq } },
+			continuation: boundary.continuation,
+		})
+
+		const messages = await visible(journal, payloads)
+		expect(texts(messages.slice(0, 2))).toEqual(["turn A", LATEST_REPLY])
+		expect(mentions(messages[2], "call-b")).toBe(true)
+		expect(mentions(messages[3], "FILE_CONTENTS")).toBe(true)
+		// The answer did not stay behind as a result whose call the summary replaced.
+		expect(messages.some((message) => mentions(message, "call-a"))).toBe(false)
+	})
+
 	it("condenses a finished tool round before the call that is still waiting on the user", async () => {
 		const { journal, payloads, conversation } = open()
 		await write(journal, payloads, "intake:1", { kind: "user_input", text: "original task" })

@@ -115,6 +115,44 @@ describe("ProductionCompactionAdapter", () => {
 		])
 	})
 
+	it("lands the user's answer with the call a partial summary ended on, and replays the answer", async () => {
+		const payloads = new MemoryPayloads()
+		const span = { from: { seq: 1 }, to: { seq: 11 } }
+		const context: CompactionContextEnvelope = {
+			kind: "compaction_context",
+			span,
+			replies: [
+				{ callSeq: 3, replySeq: 6, continuation: { text: "answer to turn A" } },
+				{ callSeq: 8, replySeq: 11, continuation: { text: "answer to turn B" } },
+			],
+			trigger: "automatic",
+			context: { sourceHistory: [] },
+		}
+		const contextRef = await payloads.put(encodeTaskPayload(context))
+		const landed: unknown[] = []
+		const adapter = new ProductionCompactionAdapter({
+			payloads,
+			service: { run: async () => ({ summary: "turn A", coveredThrough: 3 }) },
+			landing: { land: async (input) => void landed.push(input) },
+		})
+
+		await adapter.run({
+			compactionId: "compact-1",
+			attempt: "attempt-1",
+			contextRef,
+			signal: new AbortController().signal,
+			publish: () => undefined,
+		})
+
+		// Stopping at the call would leave its answer behind as a result without a call.
+		expect(landed).toEqual([
+			expect.objectContaining({
+				span: { from: { seq: 1 }, to: { seq: 6 } },
+				continuation: { text: "answer to turn A" },
+			}),
+		])
+	})
+
 	it("lands a manual summary only after the user accepts it, regenerating with their feedback first", async () => {
 		const payloads = new MemoryPayloads()
 		const context: CompactionContextEnvelope = {

@@ -11,7 +11,11 @@ import { type ClineDefaultTool, CONVERSATIONAL_TOOL_NAMES } from "@shared/tools"
 import type { JournalConversationView } from "../executors/provider/service/JournalConversationView"
 import type { ConversationJournal, JournalEntry, TaskPayloadStore } from "../stores"
 import { encodeTaskPayload } from "../stores/payload/TaskPayloadCodec"
-import type { CompactionContinuation, CompactionSummaryEnvelope } from "../stores/payload/TaskPayloadEnvelopes"
+import type {
+	CompactionContinuation,
+	CompactionReplyBoundary,
+	CompactionSummaryEnvelope,
+} from "../stores/payload/TaskPayloadEnvelopes"
 import type { CompactionLandingInput, CompactionLandingPort, CompactionSpan } from "./CompactionSummaryLanding"
 
 /** What a compaction summarizes, and the journal span the summary will stand for. */
@@ -38,6 +42,8 @@ export interface CompactionSource {
 	 * condensed and the reply itself survives the summary verbatim.
 	 */
 	readonly continuation?: CompactionContinuation
+	/** Replies inside the span, so a summary of only its oldest turns still lands each call with its result. */
+	readonly replies?: readonly CompactionReplyBoundary[]
 }
 
 /**
@@ -363,6 +369,23 @@ function withoutReplies(message: ClineStorageMessage, names: ToolNames): ClineSt
 	}
 }
 
+/** Each reply the span holds, located by the call it answers. */
+function replyBoundaries(covered: readonly ConversationItem[], names: ToolNames): CompactionReplyBoundary[] {
+	return covered.flatMap((item) => {
+		const answered = new Set(userReplies(item.message, names).map((block) => block.function_id))
+		if (answered.size === 0) return []
+		const call = covered.find((candidate) => toolUseIds(candidate.message).some((id) => answered.has(id)))
+		if (!call) return []
+		return [
+			{
+				callSeq: call.entry.watermark.seq,
+				replySeq: item.entry.watermark.seq,
+				continuation: replyContinuation(item.message, names),
+			},
+		]
+	})
+}
+
 /** A reply a landed summary already carries, which a span ending on that summary has to carry on. */
 function carriedContinuation(items: readonly ConversationItem[], end: number): CompactionContinuation | undefined {
 	const next = items[end + 1]
@@ -413,7 +436,15 @@ export class JournalCompactionConversation implements CompactionConversationPort
 		const tail = items.slice(end + 1).map((item) => item.message)
 		const span = { from: first.entry.watermark, to: last.entry.watermark }
 		const continuation = reply ? replyContinuation(last.message, names) : carriedContinuation(items, end)
-		return continuation ? { messages, sourceRanges, tail, span, continuation } : { messages, sourceRanges, tail, span }
+		const replies = replyBoundaries(covered, names)
+		return {
+			messages,
+			sourceRanges,
+			tail,
+			span,
+			...(continuation ? { continuation } : {}),
+			...(replies.length > 0 ? { replies } : {}),
+		}
 	}
 
 	/**

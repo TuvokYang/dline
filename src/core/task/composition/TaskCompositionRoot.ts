@@ -140,15 +140,13 @@ export async function composeTask(options: TaskCompositionOptions): Promise<Task
 			// The journal is what provider requests are materialized from, so it is
 			// both what a compaction has to read and what it has to shrink. Landing
 			// anywhere else leaves the next request exactly as large as before.
-			conversation = new JournalCompactionConversation(
-				persistence.ports.journal,
-				persistence.payloads,
+			const conversationView =
 				options.conversationView ??
-					new JournalConversationView(
-						persistence.ports.journal,
-						new ProviderJournalMessageMaterializer(persistence.payloads),
-					),
-			)
+				new JournalConversationView(
+					persistence.ports.journal,
+					new ProviderJournalMessageMaterializer(persistence.payloads),
+				)
+			conversation = new JournalCompactionConversation(persistence.ports.journal, persistence.payloads, conversationView)
 			return {
 				provider: {
 					execution: new ProductionProviderAdapter({
@@ -166,6 +164,7 @@ export async function composeTask(options: TaskCompositionOptions): Promise<Task
 					continuation: options.services.continuation,
 					compactionBarrier: options.compactionBarrier,
 					retainedInputPresentation: options.retainedInputPresentation,
+					conversation: conversationView,
 				}),
 				compaction: instrumentCompaction(
 					new ProductionCompactionAdapter({

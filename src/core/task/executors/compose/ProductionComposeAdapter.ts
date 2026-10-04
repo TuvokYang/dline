@@ -1,5 +1,7 @@
+import { estimateContextValueBreakdown } from "@core/context/context-management/context-window-projection"
+import type { ClineStorageMessage } from "@shared/messages/content"
 import type { TaskState, TurnContinuationReason } from "../../kernel"
-import type { ConversationJournal } from "../../stores"
+import type { ConversationJournal, JournalWatermark } from "../../stores"
 import type { TaskPayloadStore } from "../../stores/contracts"
 import { decodeTaskPayload, encodeTaskPayload } from "../../stores/payload/TaskPayloadCodec"
 import type {
@@ -33,6 +35,19 @@ export interface ComposeEnvironmentPort {
  */
 export interface ComposeContinuationPort {
 	render(reason: TurnContinuationReason): string | undefined
+}
+
+/**
+ * The provider conversation by journal entry, as provider requests materialize it.
+ *
+ * Compose measures how much the conversation grew since the last draft from
+ * the same view a request is built from, so the measure describes what the
+ * next request will actually carry.
+ */
+export interface ComposeConversationPort {
+	entries(): Promise<
+		readonly { readonly entry: { readonly watermark: JournalWatermark }; readonly messages: readonly ClineStorageMessage[] }[]
+	>
 }
 
 /**
@@ -82,11 +97,15 @@ export interface ProductionComposeAdapterOptions {
 	readonly compactionBarrier?: ComposeCompactionBarrierPort
 	/** Projects the selected user-authored batch without model-only guidance. */
 	readonly retainedInputPresentation?: RetainedInputPresentationPort
+	/** Measures conversation growth between drafts; without it only tool results count as growth. */
+	readonly conversation?: ComposeConversationPort
 }
 
 /** Materializes admitted intake entries into one immutable provider draft. */
 export class ProductionComposeAdapter implements ComposePort {
 	private readonly retainedBatches: RetainedInputJournalBatch
+	/** Journal position the last draft of this session fixed, which the last request carried. */
+	private draftedThrough: JournalWatermark | undefined
 
 	constructor(private readonly options: ProductionComposeAdapterOptions) {
 		this.retainedBatches = new RetainedInputJournalBatch(options.payloads, options.journal)
@@ -120,13 +139,14 @@ export class ProductionComposeAdapter implements ComposePort {
 		// Canonicalize the completed turn before compaction reads it. Landing the
 		// summary first and appending this manifest afterwards would reintroduce the
 		// very tool results the summary replaced.
-		const pendingContextTokens = input.toolTerminals
+		const terminalTokens = input.toolTerminals
 			? await materializeToolTerminalManifest({
 					manifest: input.toolTerminals,
 					payloads: this.options.payloads,
 					journal: this.options.journal,
 				})
 			: 0
+		const pendingContextTokens = (await this.growthSinceLastDraft()) ?? terminalTokens
 		// Before the conversation is drafted, so the draft below describes what
 		// compaction left behind rather than the request that was too large.
 		const readiness = (await this.options.compactionBarrier?.settleBeforeRound({
@@ -186,8 +206,10 @@ export class ProductionComposeAdapter implements ComposePort {
 		for (const payloadRef of envelope.inputPayloadRefs) {
 			decodeTaskPayload(await this.options.payloads.read(payloadRef))
 		}
+		const draftRef = await this.options.payloads.put(encodeTaskPayload(envelope))
+		this.draftedThrough = envelope.journalThrough
 		return {
-			draftRef: await this.options.payloads.put(encodeTaskPayload(envelope)),
+			draftRef,
 			...(queueReceipt === undefined
 				? {}
 				: {
@@ -198,6 +220,28 @@ export class ProductionComposeAdapter implements ComposePort {
 						},
 					}),
 		}
+	}
+
+	/**
+	 * Tokens the conversation gained after the position the last draft fixed.
+	 *
+	 * Provider usage measures the request that draft became, but counts the
+	 * model's answer only by its output tokens, which say nothing about how
+	 * large that answer is once it is replayed as input - a reply written into
+	 * tool arguments is the clearest case. Everything journaled since the draft
+	 * (the answer, its tool results, anything else the round produced) is what
+	 * the next request carries on top of the measured one, which is the same
+	 * difference main estimates between the next candidate and the last one.
+	 * Undefined until this session has drafted a round to measure from.
+	 */
+	private async growthSinceLastDraft(): Promise<number | undefined> {
+		const through = this.draftedThrough
+		const conversation = this.options.conversation
+		if (!through || !conversation) return undefined
+		const added = (await conversation.entries())
+			.filter(({ entry }) => entry.watermark.seq > through.seq)
+			.flatMap((item) => [...item.messages])
+		return added.length === 0 ? 0 : estimateContextValueBreakdown(added).totalTokens
 	}
 
 	private admittedEntries(input: ComposeRoundInput) {

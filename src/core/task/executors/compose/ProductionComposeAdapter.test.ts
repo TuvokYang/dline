@@ -4,6 +4,8 @@ import { createInitialTaskState } from "../../kernel"
 import type { TaskPayloadStore } from "../../stores/contracts"
 import { InMemoryConversationJournal } from "../../stores/InMemoryRuntimeStores"
 import { decodeTaskPayload, encodeTaskPayload } from "../../stores/payload/TaskPayloadCodec"
+import { JournalConversationView } from "../provider/service/JournalConversationView"
+import { ProviderJournalMessageMaterializer } from "../provider/service/ProviderJournalMessageMaterializer"
 import { ProductionComposeAdapter } from "./ProductionComposeAdapter"
 
 /** Minimal payload store: content-addressing is irrelevant to round composition. */
@@ -257,5 +259,44 @@ describe("ProductionComposeAdapter draft", () => {
 		expect(journal.watermark()).toEqual({ seq: 22 })
 		expect(draft).not.toHaveProperty("journalPayloadRefs")
 		expect(draft.inputPayloadRefs).toEqual([entryRef])
+	})
+
+	it("reports the model's answer journaled since the last draft as growth, not only tool results", async () => {
+		const store = payloadStore()
+		const journal = new InMemoryConversationJournal()
+		const entryRef = await store.put(encodeTaskPayload({ kind: "user_input", text: "task" }))
+		const state = stateWithEntry(entryRef)
+		const pending: (number | undefined)[] = []
+		const adapter = new ProductionComposeAdapter({
+			payloads: store,
+			journal,
+			readState: () => state,
+			conversation: new JournalConversationView(journal, new ProviderJournalMessageMaterializer(store)),
+			compactionBarrier: {
+				settleBeforeRound: async (input) => {
+					pending.push(input.pendingContextTokens)
+					return { kind: "ready" }
+				},
+			},
+		})
+		const signal = new AbortController().signal
+
+		await adapter.compose({ admittedEntryIds: ["entry-1"], signal })
+		// Usage reports this answer as a handful of output tokens; replayed, it is ~10K of input.
+		await journal.append({
+			operationId: "provider:1",
+			payloadRef: await store.put(
+				encodeTaskPayload({ kind: "provider_final", text: "A".repeat(40_000), turnPlan: { mode: "serial", blocks: [] } }),
+			),
+			source: "provider",
+		})
+		await adapter.compose({ admittedEntryIds: [], signal })
+		await adapter.compose({ admittedEntryIds: [], signal })
+
+		// Nothing was drafted before the first round, so only tool results could count.
+		expect(pending[0]).toBe(0)
+		expect(pending[1]).toBeGreaterThanOrEqual(10_000)
+		// The answer belongs to the request the second draft fixed, so it is not counted again.
+		expect(pending[2]).toBe(0)
 	})
 })

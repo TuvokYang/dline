@@ -26,11 +26,14 @@ export interface ProductionCompactionService {
 }
 
 /**
- * The span a summary actually replaces, and whether the reply it ended on goes with it.
+ * The span a summary actually replaces, and whether a reply goes with it.
  *
  * A summary that covered only the oldest turns stands for those turns alone;
  * the rest of the span stays verbatim, and so does the reply at its end, which
- * is still where the conversation left off.
+ * is still where the conversation left off. When those turns end on a call the
+ * user answered, the answer opens the next turn, which the summary did not
+ * cover: the landed span takes the answer as well, so the call is not left
+ * behind as a result without a call, and replays it after the summary.
  */
 function landedSpan(
 	context: CompactionContextEnvelope,
@@ -42,6 +45,8 @@ function landedSpan(
 	if (coveredThrough === undefined || coveredThrough >= span.to.seq) {
 		return { span, ...(context.continuation === undefined ? {} : { continuation: context.continuation }) }
 	}
+	const answer = context.replies?.find((reply) => reply.callSeq === coveredThrough)
+	if (answer) return { span: { from: span.from, to: { ...span.to, seq: answer.replySeq } }, continuation: answer.continuation }
 	return { span: { from: span.from, to: { ...span.to, seq: coveredThrough } } }
 }
 
