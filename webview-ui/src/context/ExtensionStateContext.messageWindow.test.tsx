@@ -686,6 +686,55 @@ describe("ExtensionStateContext persisted message reconciliation", () => {
 		expect(screen.getAllByText("streaming feedback")).toHaveLength(1)
 	})
 
+	it("updates a finalized command row when its execution mode changes through the realtime stream", async () => {
+		const foregroundCommand = convertClineMessageToProto({
+			ts: 20,
+			type: "say",
+			say: "command",
+			text: 'node -e "setTimeout(() => {}, 12000)"',
+			partial: false,
+			commandStatus: "running",
+			commandExecutionMode: "foreground",
+		})
+		const backgroundCommand = convertClineMessageToProto({
+			ts: 20,
+			type: "say",
+			say: "command",
+			text: 'node -e "setTimeout(() => {}, 12000)"',
+			partial: false,
+			commandStatus: "running",
+			commandExecutionMode: "background",
+		})
+		vi.mocked(TaskServiceClient.fetchMessage).mockResolvedValueOnce({
+			taskId: "task-1",
+			taskInstanceId: "open-1",
+			messages: [foregroundCommand],
+			startIndex: 0,
+			totalCount: 1,
+		})
+
+		render(
+			<ExtensionStateContextProvider>
+				<MessageProbe />
+			</ExtensionStateContextProvider>,
+		)
+		await waitFor(() => expect(subscriptions.state).toBeDefined())
+		act(() => {
+			subscriptions.state?.onResponse({ stateJson: JSON.stringify(stateSnapshot({ revision: 1, total: 1 })) })
+		})
+		await waitFor(() => expect(screen.getByTestId("command-execution-mode")).toHaveTextContent("Foreground"))
+
+		act(() => {
+			subscriptions.partial?.onResponse({
+				...backgroundCommand,
+				taskId: "task-1",
+				taskInstanceId: "open-1",
+			})
+		})
+
+		await waitFor(() => expect(screen.getByTestId("command-execution-mode")).toHaveTextContent("Background"))
+	})
+
 	it("fetches the missing tail when persisted user_feedback increases the total but its stream event is lost", async () => {
 		const initial = convertClineMessageToProto({ ts: 10, type: "say", say: "text", text: "assistant" })
 		const feedback = convertClineMessageToProto({ ts: 20, type: "say", say: "user_feedback", text: "visible feedback" })
