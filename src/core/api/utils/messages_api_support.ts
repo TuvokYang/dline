@@ -58,6 +58,21 @@ interface AnthropicServerToolUsage {
 	server_tool_use?: { web_search_requests?: number; web_fetch_requests?: number } | null
 }
 
+interface AnthropicOutputTokenDetails {
+	output_tokens_details?: { thinking_tokens?: number } | null
+}
+
+/**
+ * Reasoning share of `output_tokens`, which stays the inclusive billed total.
+ * Returned only when the provider reports it so absent detail never reads as zero thinking.
+ */
+export function getThinkingTokens(usage: AnthropicOutputTokenDetails): { thoughtsTokenCount: number } | undefined {
+	const thinkingTokens = usage.output_tokens_details?.thinking_tokens
+	return typeof thinkingTokens === "number" && Number.isFinite(thinkingTokens)
+		? { thoughtsTokenCount: Math.max(0, thinkingTokens) }
+		: undefined
+}
+
 function getServerToolUsage(usage: AnthropicServerToolUsage) {
 	const webSearchRequests = usage.server_tool_use?.web_search_requests
 	const webFetchRequests = usage.server_tool_use?.web_fetch_requests
@@ -169,6 +184,7 @@ export async function* handleAnthropicMessagesApiStreamResponse(
 					outputTokens: usage.output_tokens || 0,
 					cacheWriteTokens: usage.cache_creation_input_tokens || undefined,
 					cacheReadTokens: usage.cache_read_input_tokens || undefined,
+					...getThinkingTokens(usage),
 					...(serverToolUsage === undefined ? {} : { serverToolUsage }),
 				}
 				break
@@ -179,6 +195,7 @@ export async function* handleAnthropicMessagesApiStreamResponse(
 					type: "usage",
 					inputTokens: 0,
 					outputTokens: chunk.usage.output_tokens || 0,
+					...getThinkingTokens(chunk.usage),
 					...(serverToolUsage === undefined ? {} : { serverToolUsage }),
 				}
 				if (chunk.delta?.stop_reason === "max_tokens") {

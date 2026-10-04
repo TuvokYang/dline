@@ -275,11 +275,11 @@ function toTokenQuality(quality: TaskRateUsageQuality): ApiRateTokenQuality | un
 	}
 }
 
+/** Thoughts are a share of output, so they are not a separate term. */
 function totalUsageTokens(aggregate: RoundUsageAggregate): number {
 	return (
 		(aggregate.inputTokens ?? 0) +
 		(aggregate.outputTokens ?? 0) +
-		(aggregate.thoughtsTokens ?? 0) +
 		(aggregate.cacheWriteTokens ?? 0) +
 		(aggregate.cacheReadTokens ?? 0)
 	)

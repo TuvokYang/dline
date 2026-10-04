@@ -35,7 +35,12 @@ export interface ApiStreamUsageChunk {
 	outputTokens: number
 	cacheWriteTokens?: number
 	cacheReadTokens?: number
-	thoughtsTokenCount?: number // openrouter
+	/**
+	 * Reasoning share of `outputTokens`. `outputTokens` is always the inclusive billed output, so
+	 * consumers must never add this value to it again; providers whose native output count excludes
+	 * reasoning fold it into `outputTokens` at their boundary.
+	 */
+	thoughtsTokenCount?: number
 	totalCost?: number // openrouter
 	serverToolUsage?: {
 		webSearchRequests?: number

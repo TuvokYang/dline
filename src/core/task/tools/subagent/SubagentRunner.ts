@@ -1125,7 +1125,9 @@ export class SubagentRunner {
 								roundUsageReported = true
 								roundCacheUsageReported ||=
 									chunk.cacheWriteTokens !== undefined || chunk.cacheReadTokens !== undefined
-								roundUsageAccumulator.apply(chunk)
+								// Providers may resend cumulative usage snapshots; only the
+								// accumulator's delta is new and may be added to running totals.
+								const { delta: usageDelta } = roundUsageAccumulator.apply(chunk)
 								if (chunk.thoughtsTokenCount !== undefined) {
 									roundThoughtsReported = true
 									const thoughtsTokens = Math.max(0, Math.floor(chunk.thoughtsTokenCount))
@@ -1137,14 +1139,14 @@ export class SubagentRunner {
 								if (chunk.totalCost !== undefined && Number.isFinite(chunk.totalCost) && chunk.totalCost >= 0) {
 									roundTotalCost = Math.max(roundTotalCost ?? 0, chunk.totalCost)
 								}
-								stats.inputTokens += chunk.inputTokens || 0
-								stats.outputTokens += chunk.outputTokens || 0
-								stats.cacheWriteTokens += chunk.cacheWriteTokens || 0
-								stats.cacheReadTokens += chunk.cacheReadTokens || 0
-								requestUsage.inputTokens += chunk.inputTokens || 0
-								requestUsage.outputTokens += chunk.outputTokens || 0
-								requestUsage.cacheWriteTokens += chunk.cacheWriteTokens || 0
-								requestUsage.cacheReadTokens += chunk.cacheReadTokens || 0
+								stats.inputTokens += usageDelta.inputTokens
+								stats.outputTokens += usageDelta.outputTokens
+								stats.cacheWriteTokens += usageDelta.cacheWriteTokens
+								stats.cacheReadTokens += usageDelta.cacheReadTokens
+								requestUsage.inputTokens += usageDelta.inputTokens
+								requestUsage.outputTokens += usageDelta.outputTokens
+								requestUsage.cacheWriteTokens += usageDelta.cacheWriteTokens
+								requestUsage.cacheReadTokens += usageDelta.cacheReadTokens
 								requestUsage.totalTokens =
 									requestUsage.inputTokens +
 									requestUsage.outputTokens +
