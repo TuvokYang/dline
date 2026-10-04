@@ -169,10 +169,15 @@ const PREVIEW_PARSE_REGISTRY = {
 }
 
 function proseOf(blocks: ReturnType<typeof parseAssistantMessageV2>): string {
-	return blocks
-		.filter((block) => block.type === "text")
-		.map((block) => block.content)
-		.join("\n\n")
+	let prose = ""
+	let hasText = false
+	for (const block of blocks) {
+		if (block.type !== "text") continue
+		if (hasText) prose += "\n\n"
+		prose += block.content
+		hasText = true
+	}
+	return prose
 }
 
 /**
@@ -268,8 +273,8 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 		const sameTurn = { ...input.draft, turnId: prepared.turnId }
 		const turn = new TurnRequest(prepared, () => this.options.requests.prepare(sameTurn, input.signal))
 		const transientId = `provider:${prepared.turnId}`
-		const textParts: string[] = []
-		const reasoningParts: string[] = []
+		let text = ""
+		let reasoningText = ""
 		// Replay needs what the provider signed, not only what it said: Anthropic
 		// drops an unsigned thinking block and the Responses API replays summaries
 		// and encrypted items, so the same accumulator dev and subagents use folds them.
@@ -302,8 +307,8 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 						yield { kind: "usage", usage: usageRecord(chunk) }
 						break
 					case "text":
-						textParts.push(chunk.text)
-						yield { kind: "partial", transientId, text: visibleAssistantText(textParts.join("")) }
+						text += chunk.text
+						yield { kind: "partial", transientId, text: visibleAssistantText(text) }
 						break
 					case "reasoning":
 						reasoning.processReasoningDelta({
@@ -316,14 +321,14 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 							redacted_phase: chunk.redacted_phase,
 						})
 						if (!chunk.reasoning) break
-						reasoningParts.push(chunk.reasoning)
+						reasoningText += chunk.reasoning
 						// Shown while it streams, as dev did: a long think is otherwise
 						// indistinguishable from a stalled request.
 						yield {
 							kind: "partial",
 							transientId,
-							text: visibleAssistantText(textParts.join("")),
-							reasoning: reasoningParts.join(""),
+							text: visibleAssistantText(text),
+							reasoning: reasoningText,
 						}
 						break
 					case "tool_calls":
@@ -335,7 +340,7 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 						yield {
 							kind: "partial",
 							transientId,
-							text: visibleAssistantText(textParts.join("")),
+							text: visibleAssistantText(text),
 							projection: {
 								kind: "provider.tool_partial",
 								dlineTid: chunk.dline_tid,
@@ -348,7 +353,7 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 						yield {
 							kind: "partial",
 							transientId,
-							text: visibleAssistantText(textParts.join("")),
+							text: visibleAssistantText(text),
 							projection: {
 								kind: "provider.server_tool",
 								tool: chunk.tool,
@@ -377,11 +382,7 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 			const reasoningContent: ClineAssistantContent[] = [...reasoning.getRedactedThinking()]
 			const thinking = reasoning.getCurrentReasoning()
 			if (thinking) reasoningContent.push(thinking)
-			const interrupted = interruptedTurn(
-				reasoningContent,
-				reasoningParts.join(""),
-				visibleAssistantText(textParts.join("")),
-			)
+			const interrupted = interruptedTurn(reasoningContent, reasoningText, visibleAssistantText(text))
 			if (interrupted) yield { kind: "interrupted", transientId, ...interrupted }
 			return
 		}
@@ -393,15 +394,15 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 		const request = turn.request
 		const materialized =
 			request.nativeTools || nativeTools.size > 0
-				? this.materializeNativeTools(nativeTools, textParts.join(""))
-				: this.materializeXmlTools(textParts.join(""))
+				? this.materializeNativeTools(nativeTools, text)
+				: this.materializeXmlTools(text)
 		const content: ClineAssistantContent[] = [...reasoning.getRedactedThinking()]
 		const thinking = reasoning.getCurrentReasoning()
 		if (thinking) content.push(thinking)
 		// History records what the model actually sent. A call it wrote as markup
 		// beside native tools stays markup there: turning it into a native call
 		// would replay an invented call id the provider never issued.
-		const historyText = request.nativeTools ? textParts.join("") : materialized.text
+		const historyText = request.nativeTools ? text : materialized.text
 		if (historyText.trim().length > 0) content.push({ type: "text", text: historyText })
 		const recorded = (tool: ToolUse) => !request.nativeTools || tool.isNativeToolCall === true
 		content.push(...materialized.tools.filter(recorded).map((tool) => this.toAssistantToolUse(tool)))
@@ -411,7 +412,7 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 			turnId: request.turnId,
 			transientId,
 			text: materialized.text,
-			...(reasoningParts.length > 0 ? { reasoning: reasoningParts.join("") } : {}),
+			...(reasoningText.length > 0 ? { reasoning: reasoningText } : {}),
 			content,
 			...(request.modelInfo === undefined ? {} : { modelInfo: request.modelInfo }),
 			mode: blocks.length > 1 ? request.mode : "serial",
