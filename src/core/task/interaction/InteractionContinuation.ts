@@ -5,6 +5,7 @@ import { processFilesIntoText } from "@integrations/misc/extract-text"
 import type { ChatContent } from "@shared/ChatContent"
 import type { ClineTextContentBlock, ClineToolResponseContent, ClineUserToolResultContentBlock } from "@shared/messages/content"
 import { ClineDefaultTool } from "@shared/tools"
+import { ToolResultUtils } from "../tools/utils/ToolResultUtils"
 import type { InteractionKind } from "./Interaction"
 
 export interface InteractionContinuationInput {
@@ -45,7 +46,7 @@ export async function projectInteractionContinuation(
 		type: "tool_result",
 		function_id: input.functionId,
 		dline_tid: input.dlineTid,
-		content: await projectResponseContent(input),
+		content: ToolResultUtils.boundContent(await projectResponseContent(input)),
 	}
 }
 

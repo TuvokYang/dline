@@ -9,6 +9,7 @@ import type { ToolInvocationEnvelope } from "../../../stores/payload/TaskPayload
 import { normalizeToolExecutionResult, type ToolPostCommitDirective } from "../../../tools/ToolExecutionResult"
 import type { ToolExecutorCoordinator } from "../../../tools/ToolExecutorCoordinator"
 import type { TaskConfig } from "../../../tools/types/TaskConfig"
+import { ToolResultUtils } from "../../../tools/utils/ToolResultUtils"
 import type { ProductionToolExecutionService } from "../ProductionToolAdapter"
 import type { ToolDomainSurface } from "../ToolDomainSurface"
 import type { ToolRunCommand } from "../ToolExecutionDomain"
@@ -108,7 +109,7 @@ function serializeResult(
 				type: "tool_result",
 				function_id: invocation.functionId,
 				dline_tid: invocation.dlineTid,
-				content: response,
+				content: ToolResultUtils.boundContent(response),
 				...(failed ? { is_error: true } : {}),
 			},
 			toolResultReplayOf(invocation),

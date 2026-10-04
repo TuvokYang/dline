@@ -1,3 +1,4 @@
+import { MAX_TOOL_RESULT_TEXT_BYTES } from "@shared/content-limits"
 import { describe, expect, it } from "vitest"
 import { replayDurableToolResult } from "../../../../DurableToolResult"
 import type { ToolInvocationEnvelope } from "../../../../stores/payload/TaskPayloadEnvelopes"
@@ -61,6 +62,33 @@ describe("DefaultProductionToolExecutionService", () => {
 				content: REFUSAL,
 			},
 		])
+	})
+
+	// A conversational reply is the user's text returned as the tool's result,
+	// so nothing upstream bounds it; an unbounded reply rides along in every
+	// later request and alone can push the conversation past its window.
+	it("bounds an oversized handler result to the canonical tool result limit", async () => {
+		const reply = `<feedback>\n${"x".repeat(MAX_TOOL_RESULT_TEXT_BYTES * 2)}\n</feedback>`
+		const service = new DefaultProductionToolExecutionService({
+			config: { create: () => ({}) as TaskConfig },
+			runtime: {
+				coordinator: {},
+				execute: async () => reply,
+				restoreSubagentRetry: async () => false,
+			} as unknown as ProductionToolHandlerRuntime,
+		})
+
+		const { content } = await service.execute({
+			command: { commandId: "command-1", turnId: "turn-1", dlineTid: INVOCATION.dlineTid, invocationRef: "ref-1" },
+			invocation: { ...INVOCATION, toolName: "qna_respond" },
+			surface: createDeniedSurface("detached_domain"),
+		})
+
+		const [result] = replayDurableToolResult(content) ?? []
+		const text = result?.type === "tool_result" && typeof result.content === "string" ? result.content : ""
+		expect(text.startsWith("<feedback>\n")).toBe(true)
+		expect(text).toContain("[FILE TRUNCATED:")
+		expect(Buffer.byteLength(text, "utf8")).toBeLessThanOrEqual(MAX_TOOL_RESULT_TEXT_BYTES)
 	})
 
 	it("reuses the manual approval anchor timestamp for the handler lifecycle row", async () => {

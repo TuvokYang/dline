@@ -90,6 +90,20 @@ export class ToolResultUtils {
 		return [...baseContent, ...ToolResultUtils.flattenFeedback(feedbackContent)]
 	}
 
+	/**
+	 * Bound the text one canonical tool result contributes to the conversation.
+	 *
+	 * Every executed result, whichever path produced it, is held to the same
+	 * ceiling: a result that escapes it reaches every later request verbatim and
+	 * can by itself push the conversation past the window it was sized for.
+	 * Non-text blocks are kept as they are.
+	 */
+	static boundContent(content: ToolResponse): ToolResponse {
+		return typeof content === "string"
+			? truncateContent(content, MAX_TOOL_RESULT_TEXT_BYTES)
+			: ToolResultUtils.boundStructuredResult(content)
+	}
+
 	/** Bound one tool result's generated text while preserving non-text blocks and user feedback. */
 	private static boundStructuredResult(content: Exclude<ToolResponse, string>): ToolResponse {
 		let remainingBytes = MAX_TOOL_RESULT_TEXT_BYTES
