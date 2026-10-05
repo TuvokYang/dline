@@ -5,8 +5,8 @@ import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import {
 	pauseTaskAfterToolResult,
 	pauseTaskBetweenTurns,
+	readTaskConversationText,
 	readTaskRuntimeState,
-	readTaskUiMessagesText,
 	rewriteTaskConversation,
 	rewriteTaskUiMessages,
 } from "@e2e/utils/task-instance-store"
@@ -197,9 +197,11 @@ async function recreateInterruptedStreamingSnapshot(dlineDocsDir: string, taskId
 }
 
 async function recreateRecoveredUnpairedToolTail(dlineDocsDir: string, taskId: string, commandMarker: string): Promise<void> {
-	const uiMessages = await readTaskUiMessagesText(dlineDocsDir, taskId)
-	expect(uiMessages).toContain('"say":"partial_tool_result"')
-	expect(uiMessages).toContain(commandMarker)
+	// The durable command result lives in the conversation journal, which is the
+	// only place the runtime records it; there is no separate UI copy to check.
+	const conversation = await readTaskConversationText(dlineDocsDir, taskId)
+	expect(conversation).toContain('"type":"tool_result"')
+	expect(conversation).toContain(commandMarker)
 
 	// The result stays durable in the journal; only its canonical turn pairing is undone.
 	await pauseTaskAfterToolResult(dlineDocsDir, taskId, "execute_command")
