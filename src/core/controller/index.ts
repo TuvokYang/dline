@@ -36,6 +36,7 @@ import { settingsAffectPromptFreshness } from "@core/prompts/system-prompt-cache
 import * as SecretsManager from "@core/storage/secrets"
 import { capabilityResourceId } from "@core/storage/settings/capability-resource-id"
 import { type CapabilityKind, mergeScopedToggles, readScopedToggles } from "@core/storage/settings/capability-toggle-store"
+import { successorSubmission } from "@core/task/new-task/new-task-handoff"
 import { detectWorkspaceRoots } from "@core/workspace/detection"
 import { setupWorkspaceManager } from "@core/workspace/setup"
 import type { WorkspaceRootManager } from "@core/workspace/WorkspaceRootManager"
@@ -1215,13 +1216,17 @@ export class Controller {
 					beforeStart: options?.beforeStart,
 					start: async () => {
 						const hookContext = await this.collectTaskStartHookContext(taskInstance, task ?? "")
+						const handoff = successorSubmission(options?.initialUserContent ?? [])
+						const submittedImages = [...(images ?? []), ...handoff.images]
 						const input = await taskInstance.inputs.materialize({
 							text: task,
-							images,
+							images: submittedImages.length > 0 ? submittedImages : images,
 							files,
 							...(options?.semanticInput === undefined ? {} : { semanticInput: options.semanticInput }),
 							context:
-								[...(options?.context ?? []), ...(hookContext ? [hookContext] : [])].join("\n\n") || undefined,
+								[...(options?.context ?? []), ...handoff.context, ...(hookContext ? [hookContext] : [])].join(
+									"\n\n",
+								) || undefined,
 						})
 						await taskInstance.task.start(input)
 					},
