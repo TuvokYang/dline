@@ -47,9 +47,9 @@ function awaiting(kind: string): TaskState {
 /** Publication is best effort and ordered behind earlier redraws, so tests let it drain. */
 const drained = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
 
-async function request(harness: ReturnType<typeof createProjection>, turnId: string, contextTokens: number) {
+async function request(harness: ReturnType<typeof createProjection>, turnId: string, contextTokens: number, outputTokens = 0) {
 	await harness.projection.started({ turnId, contextWindow: WINDOW })
-	await harness.projection.record({ turnId, contextTokens, contextWindow: WINDOW })
+	await harness.projection.record({ turnId, contextTokens, outputTokens, contextWindow: WINDOW })
 	await drained()
 }
 
@@ -65,13 +65,37 @@ describe("TaskContextUsageProjection", () => {
 		await harness.projection.started({ turnId: "turn-1", contextWindow: WINDOW })
 		expect(harness.target.contextWindowIndicator).toMatchObject({ phase: "sending", contextWindow: WINDOW, mode: "act" })
 
-		await harness.projection.record({ turnId: "turn-1", contextTokens: 630_100, contextWindow: WINDOW })
+		await harness.projection.record({ turnId: "turn-1", contextTokens: 630_100, outputTokens: 0, contextWindow: WINDOW })
 		expect(harness.target.contextWindowIndicator).toMatchObject({ taskId: "task-1", phase: "receiving" })
 		expect(total(harness)).toBe(630_100)
 		// The header only redraws on a published state, so a snapshot that is
 		// written but never published is as good as missing.
 		await drained()
 		expect(harness.publish).toHaveBeenCalledTimes(2)
+	})
+
+	it("shows the response as received and makes the round's input durable for the next request", async () => {
+		const harness = createProjection()
+		await request(harness, "turn-1", 6_100, 100)
+
+		harness.projection.committed(awaiting("qna_response"))
+		expect(harness.target.contextWindowIndicator).toMatchObject({
+			phase: "receiving",
+			durableContextTokens: 0,
+			receivingTokens: 100,
+			stagedTokens: 6_000,
+		})
+
+		await harness.projection.started({ turnId: "turn-2", contextWindow: WINDOW })
+		expect(harness.target.contextWindowIndicator).toMatchObject({ phase: "sending", durableContextTokens: 6_000 })
+
+		await harness.projection.record({ turnId: "turn-2", contextTokens: 6_600, outputTokens: 100, contextWindow: WINDOW })
+		expect(harness.target.contextWindowIndicator).toMatchObject({
+			phase: "receiving",
+			durableContextTokens: 6_000,
+			receivingTokens: 100,
+		})
+		expect(total(harness)).toBe(6_600)
 	})
 
 	it("keeps the figure in flight while a dialog of the same run awaits an answer", async () => {
@@ -106,7 +130,7 @@ describe("TaskContextUsageProjection", () => {
 
 		await expect(harness.projection.started({ turnId: "turn-1", contextWindow: WINDOW })).resolves.toBeUndefined()
 		await expect(
-			harness.projection.record({ turnId: "turn-1", contextTokens: 10, contextWindow: WINDOW }),
+			harness.projection.record({ turnId: "turn-1", contextTokens: 10, outputTokens: 0, contextWindow: WINDOW }),
 		).resolves.toBeUndefined()
 		await drained()
 		expect(harness.target.contextWindowIndicator?.phase).toBe("receiving")
@@ -123,7 +147,7 @@ describe("TaskContextUsageProjection", () => {
 			},
 		} as TaskState)
 
-		await harness.projection.record({ turnId: "turn-1", contextTokens: 90_000, contextWindow: WINDOW })
+		await harness.projection.record({ turnId: "turn-1", contextTokens: 90_000, outputTokens: 0, contextWindow: WINDOW })
 		await harness.projection.unmeasured({ turnId: "turn-1" })
 
 		expect(harness.target.contextWindowIndicator).toMatchObject({ phase: "sending", lineage: { kind: "compaction_pass" } })
@@ -179,7 +203,7 @@ describe("TaskContextUsageProjection", () => {
 		const harness = createProjection("plan")
 
 		await harness.projection.started({ turnId: "turn-1", contextWindow: 200_000 })
-		await harness.projection.record({ turnId: "turn-1", contextTokens: 10_000, contextWindow: 200_000 })
+		await harness.projection.record({ turnId: "turn-1", contextTokens: 10_000, outputTokens: 0, contextWindow: 200_000 })
 		await request(harness, "turn-2", 12_000)
 
 		expect(harness.target.contextWindowIndicator).toMatchObject({ contextWindow: WINDOW, mode: "plan" })

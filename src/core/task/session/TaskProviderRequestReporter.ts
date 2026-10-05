@@ -85,7 +85,17 @@ export interface ProfileTokenUsagePort {
  */
 export interface ContextUsageObserverPort {
 	started(request: { readonly turnId: string; readonly contextWindow: number }): Promise<void>
-	record(usage: { readonly turnId: string; readonly contextTokens: number; readonly contextWindow: number }): Promise<void>
+	/**
+	 * `contextTokens` is everything the request left in the window; `outputTokens`
+	 * is the part the response itself produced, which shows as received until
+	 * the round settles.
+	 */
+	record(usage: {
+		readonly turnId: string
+		readonly contextTokens: number
+		readonly outputTokens: number
+		readonly contextWindow: number
+	}): Promise<void>
 	/** The request ended without a usable figure: cancelled, failed, or reported nothing. */
 	unmeasured(request: { readonly turnId: string }): Promise<void>
 }
@@ -196,7 +206,8 @@ export class TaskProviderRequestReporter implements ProviderRequestReportPort {
 		this.options.pressure?.observe({ contextTokens, compactTriggerTokens })
 		// A request that reported no usage says nothing about occupancy; showing
 		// zero would read as an emptied window rather than an unknown one.
-		if (contextTokens > 0) await this.options.usage?.record({ turnId, contextTokens, contextWindow })
+		if (contextTokens > 0)
+			await this.options.usage?.record({ turnId, contextTokens, outputTokens: tokens.outputTokens, contextWindow })
 		else await this.options.usage?.unmeasured({ turnId })
 	}
 

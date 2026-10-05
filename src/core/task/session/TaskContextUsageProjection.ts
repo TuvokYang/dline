@@ -94,6 +94,7 @@ export class TaskContextUsageProjection implements ContextUsageObserverPort {
 	async record(usage: {
 		readonly turnId: string
 		readonly contextTokens: number
+		readonly outputTokens: number
 		readonly contextWindow: number
 	}): Promise<void> {
 		// A compaction condenses the conversation this figure describes; its own
@@ -102,8 +103,15 @@ export class TaskContextUsageProjection implements ContextUsageObserverPort {
 		// A report whose request is no longer in flight here still states the occupancy.
 		if (!this.inFlight(usage.turnId)) this.begin(usage)
 		const indicator = this.indicatorFor(usage.contextWindow)
+		// The response is what the round received; the rest of the figure is what
+		// it sent. Only the received part stays apart until the round settles, so
+		// the next request finds this round's input already durable.
 		this.show(
-			indicator.receive({ lineage: this.lineage, receivingTokens: 0, authoritativeContextTokens: usage.contextTokens }),
+			indicator.receive({
+				lineage: this.lineage,
+				receivingTokens: usage.outputTokens,
+				authoritativeContextTokens: usage.contextTokens,
+			}),
 		)
 		this.publish()
 	}

@@ -177,7 +177,7 @@ describe("TaskProviderRequestReporter", () => {
 		const record = await harness.reporter.begin({ turnId: "turn-1" })
 		await record.settle({ usage: { inputTokens: 80_000, outputTokens: 100 }, outcome: "completed" })
 
-		expect(harness.usages).toEqual([{ turnId: "turn-1", contextTokens: 80_100, contextWindow: 200_000 }])
+		expect(harness.usages).toEqual([{ turnId: "turn-1", contextTokens: 80_100, outputTokens: 100, contextWindow: 200_000 }])
 		expect(harness.lifecycle).toEqual(["started:turn-1", "record:turn-1"])
 	})
 
