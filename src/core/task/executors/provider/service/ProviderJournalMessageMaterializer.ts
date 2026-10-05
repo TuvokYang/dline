@@ -97,8 +97,7 @@ export class ProviderJournalMessageMaterializer {
 		const messages: ClineStorageMessage[] = []
 		const message = await this.materializePayload(payload)
 		if (message) messages.push(message)
-		const reply = await this.materializeContinuation(payload)
-		if (reply) messages.push(reply)
+		messages.push(...(await this.materializeContinuation(payload)))
 		const continuation =
 			payload.kind === "compaction_summary" ? (payload as CompactionSummaryEnvelope).continuation : undefined
 		const supersededPayloadRefs =
@@ -113,17 +112,24 @@ export class ProviderJournalMessageMaterializer {
 		}
 	}
 
-	/** A condensed reply the model has not answered returns after its summary, as the user wrote it. */
-	private async materializeContinuation(payload: JournalPayload): Promise<ClineStorageMessage | undefined> {
-		if (payload.kind !== "compaction_summary") return undefined
+	/**
+	 * A condensed reply the model has not answered returns after its summary.
+	 *
+	 * The recorded exchange returns as it was, so the reply is still the result
+	 * of its call. A summary landed before exchanges were recorded only has the
+	 * user-authored text, which returns as ordinary input.
+	 */
+	private async materializeContinuation(payload: JournalPayload): Promise<ClineStorageMessage[]> {
+		if (payload.kind !== "compaction_summary") return []
 		const continuation = (payload as CompactionSummaryEnvelope).continuation
-		if (!continuation) return undefined
+		if (!continuation) return []
+		if (continuation.exchange && continuation.exchange.length > 0) return structuredClone([...continuation.exchange])
 		const content = await buildUserFeedbackContent(
 			continuation.text,
 			continuation.images === undefined ? undefined : [...continuation.images],
 			continuation.files === undefined ? undefined : [...continuation.files],
 		)
-		return content.length === 0 ? undefined : { role: "user", content, ts: Date.now() }
+		return content.length === 0 ? [] : [{ role: "user", content, ts: Date.now() }]
 	}
 
 	private async materializePayload(payload: JournalPayload): Promise<ClineStorageMessage | undefined> {

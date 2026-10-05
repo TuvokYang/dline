@@ -341,7 +341,8 @@ describe("JournalCompactionConversation", () => {
 		expect(source.messages.some((message) => mentions(message, LATEST_REPLY))).toBe(false)
 		expect(source.messages.some((message) => mentions(message, "ENVIRONMENT_SNAPSHOT"))).toBe(false)
 		expect(source.messages.some((message) => mentions(message, "call-ready"))).toBe(false)
-		expect(source.continuation).toEqual({ text: LATEST_REPLY, images: ["data:image/png;base64,AAAA"] })
+		expect(source.continuation).toMatchObject({ text: LATEST_REPLY, images: ["data:image/png;base64,AAAA"] })
+		expect(source.continuation?.exchange?.map((message) => message.role)).toEqual(["assistant", "user"])
 
 		await conversation.land({
 			compactionId: "compaction:1",
@@ -352,13 +353,16 @@ describe("JournalCompactionConversation", () => {
 		})
 
 		const messages = await visible(journal, payloads)
-		expect(messages.map((message) => message.role)).toEqual(["user", "user", "user", "assistant"])
-		expect(texts(messages.slice(0, 2))).toEqual(["condensed so far", LATEST_REPLY])
-		expect(messages[1]?.content).toEqual(expect.arrayContaining([expect.objectContaining({ type: "image" })]))
-		expect(mentions(messages[2], "ENVIRONMENT_SNAPSHOT")).toBe(true)
-		expect(mentions(messages[3], "call-ready")).toBe(true)
-		// No result survives for a call the summary took away.
-		expect(messages.some((message) => mentions(message, "call-history"))).toBe(false)
+		expect(messages.map((message) => message.role)).toEqual(["user", "assistant", "user", "user", "assistant"])
+		expect(texts(messages.slice(0, 1))).toEqual(["condensed so far"])
+		// The reply returns as the result of the call it answers, image included.
+		expect(mentions(messages[1], "call-history")).toBe(true)
+		expect(mentions(messages[2], "call-history")).toBe(true)
+		expect(mentions(messages[2], LATEST_REPLY)).toBe(true)
+		expect(mentions(messages[2], "AAAA")).toBe(true)
+		expect(mentions(messages[3], "ENVIRONMENT_SNAPSHOT")).toBe(true)
+		expect(mentions(messages[4], "call-ready")).toBe(true)
+		expect(JSON.stringify(messages).split(LATEST_REPLY)).toHaveLength(2)
 	})
 
 	it("summarizes the finished turns before that reply, and replays only the reply", async () => {
@@ -372,7 +376,7 @@ describe("JournalCompactionConversation", () => {
 
 		expect(texts(source.messages.slice(0, 4))).toEqual(["original task", "first answer", "follow up", "second answer"])
 		expect(source.messages.some((message) => mentions(message, LATEST_REPLY))).toBe(false)
-		expect(source.continuation).toEqual({ text: LATEST_REPLY })
+		expect(source.continuation).toMatchObject({ text: LATEST_REPLY })
 
 		await conversation.land({
 			compactionId: "compaction:1",
@@ -383,9 +387,12 @@ describe("JournalCompactionConversation", () => {
 		})
 
 		const messages = await visible(journal, payloads)
-		expect(texts(messages.slice(0, 2))).toEqual(["condensed so far", LATEST_REPLY])
-		expect(mentions(messages[2], "call-next")).toBe(true)
-		expect(messages).toHaveLength(3)
+		expect(messages.map((message) => message.role)).toEqual(["user", "assistant", "user", "assistant"])
+		expect(texts(messages.slice(0, 1))).toEqual(["condensed so far"])
+		expect(mentions(messages[1], "call-question")).toBe(true)
+		expect(mentions(messages[2], "call-question")).toBe(true)
+		expect(mentions(messages[2], LATEST_REPLY)).toBe(true)
+		expect(mentions(messages[3], "call-next")).toBe(true)
 	})
 
 	it("summarizes the only round a reply completes, and replays the reply after the summary", async () => {
@@ -403,7 +410,7 @@ describe("JournalCompactionConversation", () => {
 		expect(source.messages.some((message) => mentions(message, "original task"))).toBe(true)
 		expect(source.messages.some((message) => mentions(message, "call-ask"))).toBe(true)
 		expect(source.messages.some((message) => mentions(message, LATEST_REPLY))).toBe(false)
-		expect(source.continuation).toEqual({ text: LATEST_REPLY })
+		expect(source.continuation).toMatchObject({ text: LATEST_REPLY })
 
 		await conversation.land({
 			compactionId: "compaction:1",
@@ -413,8 +420,14 @@ describe("JournalCompactionConversation", () => {
 			continuation: source.continuation,
 		})
 
+		// The summary stands for the task; the call and the reply answering it stay a pair.
 		const messages = await visible(journal, payloads)
-		expect(texts(messages)).toEqual(["condensed so far", LATEST_REPLY])
+		expect(messages.map((message) => message.role)).toEqual(["user", "assistant", "user"])
+		expect(texts(messages.slice(0, 1))).toEqual(["condensed so far"])
+		expect(mentions(messages[1], "call-ask")).toBe(true)
+		expect(mentions(messages[2], "call-ask")).toBe(true)
+		expect(mentions(messages[2], LATEST_REPLY)).toBe(true)
+		expect(JSON.stringify(messages).split(LATEST_REPLY)).toHaveLength(2)
 	})
 
 	it("locates each reply by its call, so a summary of only the oldest turns lands them together", async () => {
@@ -427,7 +440,8 @@ describe("JournalCompactionConversation", () => {
 
 		const source = await conversation.read()
 
-		expect(source.replies).toEqual([{ callSeq: 2, replySeq: 3, continuation: { text: LATEST_REPLY } }])
+		expect(source.replies).toMatchObject([{ callSeq: 2, replySeq: 3, continuation: { text: LATEST_REPLY } }])
+		expect(source.replies?.[0]?.continuation.exchange).toHaveLength(2)
 		const [boundary] = source.replies ?? []
 		if (!source.span || !boundary) throw new Error("expected a span with a reply")
 		// What a summary that covered only the first turn lands on.
@@ -440,11 +454,13 @@ describe("JournalCompactionConversation", () => {
 		})
 
 		const messages = await visible(journal, payloads)
-		expect(texts(messages.slice(0, 2))).toEqual(["turn A", LATEST_REPLY])
-		expect(mentions(messages[2], "call-b")).toBe(true)
-		expect(mentions(messages[3], "FILE_CONTENTS")).toBe(true)
-		// The answer did not stay behind as a result whose call the summary replaced.
-		expect(messages.some((message) => mentions(message, "call-a"))).toBe(false)
+		expect(texts(messages.slice(0, 1))).toEqual(["turn A"])
+		// The answer returns with the call it answers rather than as a result without one.
+		expect(mentions(messages[1], "call-a")).toBe(true)
+		expect(mentions(messages[2], "call-a")).toBe(true)
+		expect(mentions(messages[2], LATEST_REPLY)).toBe(true)
+		expect(mentions(messages[3], "call-b")).toBe(true)
+		expect(mentions(messages[4], "FILE_CONTENTS")).toBe(true)
 	})
 
 	it("condenses a finished tool round before the call that is still waiting on the user", async () => {
@@ -507,8 +523,10 @@ describe("JournalCompactionConversation", () => {
 
 		// The model is still in the turn the reply opened, so the next summary
 		// replaces the first one without taking the reply with it.
-		expect(texts(second.messages)).toEqual(["first summary"])
-		expect(second.continuation).toEqual({ text: LATEST_REPLY })
+		expect(mentions(second.messages[0], "first summary")).toBe(true)
+		expect(second.messages.some((message) => mentions(message, LATEST_REPLY))).toBe(false)
+		expect(second.continuation).toMatchObject({ text: LATEST_REPLY })
+		expect(second.continuation?.exchange).toHaveLength(2)
 
 		await conversation.land({
 			compactionId: "compaction:2",
@@ -519,9 +537,11 @@ describe("JournalCompactionConversation", () => {
 		})
 
 		const messages = await visible(journal, payloads)
-		expect(texts(messages.slice(0, 2))).toEqual(["second summary", LATEST_REPLY])
-		expect(mentions(messages[3], "call-ready")).toBe(true)
-		expect(messages).toHaveLength(4)
+		expect(messages.map((message) => message.role)).toEqual(["user", "assistant", "user", "user", "assistant"])
+		expect(texts(messages.slice(0, 1))).toEqual(["second summary"])
+		expect(mentions(messages[2], LATEST_REPLY)).toBe(true)
+		expect(mentions(messages[4], "call-ready")).toBe(true)
+		expect(JSON.stringify(messages).split(LATEST_REPLY)).toHaveLength(2)
 	})
 
 	it("tells a person's input from system context by what was journaled, not by the source it was filed under", async () => {
@@ -536,7 +556,7 @@ describe("JournalCompactionConversation", () => {
 		const source = await conversation.read()
 
 		expect(source.messages.some((message) => mentions(message, LATEST_REPLY))).toBe(false)
-		expect(source.continuation).toEqual({ text: LATEST_REPLY })
+		expect(source.continuation).toMatchObject({ text: LATEST_REPLY })
 	})
 
 	it("stops before a tool result no call issued", async () => {
@@ -563,7 +583,7 @@ describe("JournalCompactionConversation", () => {
 
 		const { continuation } = await conversation.read()
 
-		expect(continuation).toEqual({ text: `  indented reply\n\n${file}` })
+		expect(continuation).toMatchObject({ text: `  indented reply\n\n${file}` })
 	})
 
 	it("replays a reply that contains its own wrapper's closing tag in full", async () => {
@@ -574,7 +594,7 @@ describe("JournalCompactionConversation", () => {
 
 		const { continuation } = await conversation.read()
 
-		expect(continuation).toEqual({ text: "print </feedback> literally" })
+		expect(continuation).toMatchObject({ text: "print </feedback> literally" })
 	})
 
 	it("treats a file-only answer as the user's reply and drops the handler's framing", async () => {
@@ -588,7 +608,7 @@ describe("JournalCompactionConversation", () => {
 		const source = await conversation.read()
 
 		expect(source.messages.some((message) => mentions(message, "FILE_ONLY_BODY"))).toBe(false)
-		expect(source.continuation).toEqual({ text: file })
+		expect(source.continuation).toMatchObject({ text: file })
 	})
 
 	it("treats an image-only answer to a question as the user's reply", async () => {
@@ -602,7 +622,7 @@ describe("JournalCompactionConversation", () => {
 		const source = await conversation.read()
 
 		expect(source.messages.some((message) => mentions(message, "BBBB"))).toBe(false)
-		expect(source.continuation).toEqual({ text: "", images: ["data:image/png;base64,BBBB"] })
+		expect(source.continuation).toMatchObject({ text: "", images: ["data:image/png;base64,BBBB"] })
 	})
 
 	it("replays a retried landing of the same attempt instead of conflicting with it", async () => {

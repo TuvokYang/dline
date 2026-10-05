@@ -261,16 +261,25 @@ export interface CompactionSummaryEnvelope {
 	 *
 	 * A reply written into a tool result belongs to the protected continuation
 	 * (WS-010 §2), yet the result must stay paired with its call, so both are
-	 * condensed and the reply is replayed after the summary as ordinary input.
+	 * condensed and replayed verbatim after the summary.
 	 */
 	readonly continuation?: CompactionContinuation
 }
 
-/** The user-authored part of a condensed reply, replayed verbatim after the summary. */
+/** A condensed reply, replayed verbatim after the summary. */
 export interface CompactionContinuation {
+	/** The user-authored part of the reply. */
 	readonly text: string
 	readonly images?: readonly string[]
 	readonly files?: readonly string[]
+	/**
+	 * The call the reply answers through the reply itself, as the provider saw them.
+	 *
+	 * Replaying the exchange keeps the reply the result of the call it answers,
+	 * as main does with the pending result after a compaction. Summaries landed
+	 * before the exchange was recorded replay `text` as ordinary input instead.
+	 */
+	readonly exchange?: readonly ClineStorageMessage[]
 }
 
 /**

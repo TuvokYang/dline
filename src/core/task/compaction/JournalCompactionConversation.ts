@@ -322,15 +322,40 @@ function hasUserContentTag(text: string): boolean {
 }
 
 /**
- * The reply as the user wrote it, with its images and attached files, to be
- * replayed after the summary.
+ * The call a reply answers through the reply itself, verbatim.
  *
- * Only what the user authored survives: the body of the first wrapped reply
- * and the files they attached, kept verbatim even if a file happens to contain
- * a tag. The handler's own framing ("Result: Done", "User continued the
- * conversation.") describes the call, which the summary already covers.
+ * Replayed after the summary, the reply stays the result of the call it
+ * answers rather than becoming input that answers nothing. Everything between
+ * the call and the reply goes with them so every call in the exchange keeps
+ * its result.
  */
-function replyContinuation(message: ClineStorageMessage, names: ToolNames): CompactionContinuation {
+function replyExchange(
+	items: readonly ConversationItem[],
+	replyIndex: number,
+	names: ToolNames,
+): ClineStorageMessage[] | undefined {
+	const reply = items[replyIndex]
+	if (!reply) return undefined
+	const answered = new Set(userReplies(reply.message, names).map((block) => block.function_id))
+	for (let index = replyIndex - 1; index >= 0; index--) {
+		const item = items[index]
+		if (!item || !toolUseIds(item.message).some((id) => answered.has(id))) continue
+		return items.slice(index, replyIndex + 1).map(({ message }) => message)
+	}
+	return undefined
+}
+
+/**
+ * The reply at `replyIndex`, to be replayed after the summary.
+ *
+ * The exchange carries the reply as the result of its call. The user-authored
+ * part is kept as well: the body of the first wrapped reply and the files they
+ * attached, kept verbatim even if a file happens to contain a tag, without the
+ * handler's own framing ("Result: Done", "User continued the conversation.").
+ */
+function replyContinuation(items: readonly ConversationItem[], replyIndex: number, names: ToolNames): CompactionContinuation {
+	const message = items[replyIndex]?.message
+	if (!message) return { text: "" }
 	const texts: string[] = []
 	const images: string[] = []
 	for (const block of userReplies(message, names)) {
@@ -352,7 +377,8 @@ function replyContinuation(message: ClineStorageMessage, names: ToolNames): Comp
 		}
 	}
 	const text = texts.filter((value) => value.trim().length > 0).join("\n\n")
-	return images.length > 0 ? { text, images } : { text }
+	const exchange = replyExchange(items, replyIndex, names)
+	return { text, ...(images.length > 0 ? { images } : {}), ...(exchange ? { exchange } : {}) }
 }
 
 /** The same message with the reply replaced by a note, so the summary keeps the pairing but not the reply. */
@@ -371,7 +397,7 @@ function withoutReplies(message: ClineStorageMessage, names: ToolNames): ClineSt
 
 /** Each reply the span holds, located by the call it answers. */
 function replyBoundaries(covered: readonly ConversationItem[], names: ToolNames): CompactionReplyBoundary[] {
-	return covered.flatMap((item) => {
+	return covered.flatMap((item, index) => {
 		const answered = new Set(userReplies(item.message, names).map((block) => block.function_id))
 		if (answered.size === 0) return []
 		const call = covered.find((candidate) => toolUseIds(candidate.message).some((id) => answered.has(id)))
@@ -380,7 +406,7 @@ function replyBoundaries(covered: readonly ConversationItem[], names: ToolNames)
 			{
 				callSeq: call.entry.watermark.seq,
 				replySeq: item.entry.watermark.seq,
-				continuation: replyContinuation(item.message, names),
+				continuation: replyContinuation(covered, index, names),
 			},
 		]
 	})
@@ -435,7 +461,7 @@ export class JournalCompactionConversation implements CompactionConversationPort
 		const sourceRanges = covered.map(({ entry }) => [entry.watermark.seq, entry.watermark.seq] as const)
 		const tail = items.slice(end + 1).map((item) => item.message)
 		const span = { from: first.entry.watermark, to: last.entry.watermark }
-		const continuation = reply ? replyContinuation(last.message, names) : carriedContinuation(items, end)
+		const continuation = reply ? replyContinuation(items, end, names) : carriedContinuation(items, end)
 		const replies = replyBoundaries(covered, names)
 		return {
 			messages,
@@ -491,9 +517,10 @@ export class JournalCompactionConversation implements CompactionConversationPort
 	/**
 	 * The visible conversation, one item per provider message.
 	 *
-	 * A landed summary that carries a reply materializes as two messages from
-	 * one entry, so both share that entry's watermark: a later span that takes
-	 * the summary takes its reply with it, and hands the reply on.
+	 * A landed summary that carries a reply materializes as several messages
+	 * from one entry - the summary, then the replayed exchange - so all share
+	 * that entry's watermark: a later span that takes the summary takes its
+	 * reply with it, and hands the reply on.
 	 */
 	private async items(): Promise<ConversationItem[]> {
 		const items: ConversationItem[] = []
