@@ -5,7 +5,7 @@ import { NEW_TASK_FEEDBACK_CONTINUATION_MARKER } from "../new-task-continuation"
 import { buildNewTaskFeedbackContent, findLatestNewTaskFeedback } from "../new-task-feedback"
 
 vi.mock("@integrations/misc/extract-text", () => ({
-	processFilesIntoText: vi.fn(async (files: string[]) => `files:${files.join(",")}`),
+	processFilesIntoContent: vi.fn(async (files: string[]) => [{ type: "text", text: `files:${files.join(",")}` }]),
 }))
 
 function assistantNewTask(functionId: string, dlineTid: string): ClineStorageMessage {
