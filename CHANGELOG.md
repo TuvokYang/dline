@@ -19,6 +19,7 @@
 - 从 Cline 迁移时不再导入无法在 Dline 打开或恢复的旧任务历史；设置、规则、工作流与 MCP 配置仍按既有路径迁移
 - 切换模型时，先前模型的可读推理会降级为带 `<prior_model_reasoning>` 标记的普通上下文；不可重放的加密推理和响应 ID 不再传给新模型，并在后续用户轮次补充模型切换提示
 - `dev-vX.Y.Z` 预发布改用正式扩展 `tuvokyang.dline` 的 Marketplace pre-release 轨道，并由同一带预发布标记的 VSIX 发布到 GitHub 与 Open VSX；Insiders 仍保持独立扩展和时间戳版本，文档站从 `dev` 持续部署
+- 修改系统提示词，增强 Skill 与 Workflow 的主动调用提示
 
 ### Fixed
 - 修复只声明托管 Web 能力就弹出请求级审批的问题；`Use Web` 仍控制 Dline 本地 Web 工具的审批，旧托管审批快照只有在请求确属持久化历史尾部时才能经显式 Resume 恢复
@@ -37,6 +38,12 @@
 - 修复 Anthropic 与 Claude Code 托管工具返回 `pause_turn` 后无法继续的问题；续传请求保留托管工具身份和累计用量
 - 修复多根工作区中单个 Git tracker 失败会丢失全部 checkpoint 的问题；现在可保留聊天 checkpoint，并支持根对齐引用、旧历史迁移以及部分根的 diff、恢复、完成和命令文件归属
 - 修复 Marketplace README 的链接和图片跟随默认分支、导致安装页与实际包版本不一致的问题；打包时改为固定到发布标签或确切提交，并恢复 Changelog 入口
+- 修复托管 Web Search 与 Web Fetch 的调用和结果未进入后续上下文的问题；Anthropic、Claude Code 与 OpenAI Responses 现保存托管工具调用，并只在声明相同托管工具的同协议请求中回放，子代理同样生效；Anthropic 与 Claude Code 共用同一 Messages 请求构建与传输路径
+- 修复 fast mode 路由未携带可选 Claude Code 身份请求头的问题，身份标识不再取决于所选速度
+- 修复附加的 PDF 被截断为文本发送的问题；在 Provider 限额内作为原生文档完整发送，未声明文档输入能力的 Provider 仍回退为文本
+- 修复在输入框拖放或粘贴 PDF 等文件后无法像图片一样作为附件引用的问题；拖入 Webview 时需按住 Shift
+- 修复输入框长文本显示被截断且没有滚动条的问题；100 KB 级文本可完整输入并滚动查看
+- 修复反馈中附带的图片与 PDF 以 base64 文本进入上下文的问题；现作为原生图片与文档块发送，Responses、DeepSeek、Gemini 与 Ollama 的工具结果图片也改为原生投影
 
 ## [0.9.3]
 

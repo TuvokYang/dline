@@ -19,6 +19,7 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 - Migration from Cline no longer imports task history that Dline cannot open or resume; settings, rules, workflows, and MCP configuration keep their existing migration paths
 - When switching models, readable reasoning from the previous model becomes ordinary context tagged `<prior_model_reasoning>`; opaque reasoning and response IDs are not replayed to the new model, and a model-switch notice is added to the following user turn
 - `dev-vX.Y.Z` pre-releases now use the Marketplace pre-release track of the production `tuvokyang.dline` extension and publish the same pre-release-marked VSIX to GitHub and Open VSX; Insiders remains a separate extension with timestamped versions, and the documentation site deploys continuously from `dev`
+- Revised the system prompt to strengthen the guidance for proactively invoking Skills and Workflows
 
 ### Fixed
 - Fixed request-level approval appearing merely because hosted Web capabilities were declared; `Use Web` still governs Dline-owned local Web tools, and legacy hosted-approval snapshots require an explicit Resume only for a matching persisted history tail
@@ -37,6 +38,12 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 - Fixed Anthropic and Claude Code hosted-tool turns stopping after `pause_turn`; continuation requests preserve hosted-tool identity and cumulative usage
 - Fixed one failed Git tracker in a multi-root workspace removing all checkpoints; chat checkpoints remain available, with root-aligned references, legacy history migration, and partial-root diff, restore, completion, and command-file ownership
 - Fixed Marketplace README links and images following the default branch and drifting from the installed package; packaging now pins them to the release tag or exact commit and restores the Changelog entry
+- Fixed hosted Web Search and Web Fetch calls and results missing from later context; Anthropic, Claude Code, and OpenAI Responses now store hosted tool calls and replay them only to same-protocol requests that declare the same hosted tool, including in subagents; Anthropic and Claude Code share one Messages request-building and transport path
+- Fixed the fast-mode route omitting the optional Claude Code identity headers, so the identity no longer depends on the selected speed
+- Fixed attached PDFs being sent as truncated text; they are now sent whole as native documents within provider limits, and providers that declare no document input still fall back to text
+- Fixed files such as PDFs dropped or pasted into the input box not being attached like images; dropping into the Webview requires holding Shift
+- Fixed long input text being cut off without a scrollbar; text of 100 KB and more can be entered in full and scrolled
+- Fixed images and PDFs attached to feedback entering context as base64 text; they are now sent as native image and document blocks, and tool-result images are projected natively for Responses, DeepSeek, Gemini, and Ollama
 
 ## [0.9.3]
 
