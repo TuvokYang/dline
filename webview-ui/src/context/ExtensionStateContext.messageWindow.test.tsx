@@ -92,6 +92,68 @@ function MessageProbe() {
 	)
 }
 
+type MessageWindowState = Pick<
+	ReturnType<typeof useExtensionState>,
+	"clineMessages" | "firstItemIndex" | "setClineMessages" | "setFirstItemIndex"
+>
+type MessagePage = Awaited<ReturnType<typeof TaskServiceClient.fetchMessage>>
+
+function MessageWindowProbe({ observe }: { observe: (window: MessageWindowState) => void }) {
+	observe(useExtensionState())
+	return null
+}
+
+function messagePage(start: number, end: number, total = end, taskInstanceId = "open-1"): MessagePage {
+	return {
+		taskId: "task-1",
+		taskInstanceId,
+		messages: Array.from({ length: end - start }, (_, offset) =>
+			convertClineMessageToProto({
+				ts: start + offset + 1,
+				type: "say",
+				say: "text",
+				text: `Message ${start + offset + 1}`,
+			}),
+		),
+		startIndex: start,
+		totalCount: total,
+	}
+}
+
+function deferredMessagePage() {
+	let resolve!: (page: MessagePage) => void
+	let reject!: (error: Error) => void
+	const promise = new Promise<MessagePage>((onResolve, onReject) => {
+		resolve = onResolve
+		reject = onReject
+	})
+	return { promise, resolve, reject }
+}
+
+async function publishMessageTotal(revision: number, total: number, taskInstanceId = "open-1") {
+	const snapshot = stateSnapshot({ revision, total })
+	await act(async () => {
+		subscriptions.state?.onResponse({
+			stateJson: JSON.stringify({ ...snapshot, taskViewState: { ...snapshot.taskViewState, taskInstanceId } }),
+		})
+	})
+}
+
+async function mountMessageWindow(total = 33) {
+	let current!: MessageWindowState
+	render(
+		<ExtensionStateContextProvider>
+			<MessageWindowProbe
+				observe={(window) => {
+					current = window
+				}}
+			/>
+		</ExtensionStateContextProvider>,
+	)
+	await publishMessageTotal(1, total)
+	return () => current
+}
+
 function InteractionProbe({
 	observedTaskIds,
 	showTimeline = true,
@@ -275,6 +337,308 @@ describe("ExtensionStateContext persisted message reconciliation", () => {
 		vi.mocked(TaskServiceClient.dispatchInteraction).mockReset().mockResolvedValue({ accepted: true, result: "accepted" })
 		subscriptions.state = undefined
 		subscriptions.partial = undefined
+	})
+
+	it.each([38, 45])("catches up a live tail when total grows during a bounded fetch reporting %i", async (responseTotal) => {
+		const bounded = deferredMessagePage()
+		vi.mocked(TaskServiceClient.fetchMessage)
+			.mockResolvedValueOnce(messagePage(0, 33))
+			.mockReturnValueOnce(bounded.promise)
+			.mockResolvedValueOnce(messagePage(38, 45))
+		const current = await mountMessageWindow()
+		expect(current().clineMessages).toHaveLength(33)
+
+		await publishMessageTotal(2, 38)
+		expect(TaskServiceClient.fetchMessage).toHaveBeenLastCalledWith({
+			taskId: "task-1",
+			taskInstanceId: "open-1",
+			referenceIndex: 33,
+			count: 5,
+		})
+		await publishMessageTotal(3, 45)
+		expect(TaskServiceClient.fetchMessage).toHaveBeenCalledTimes(2)
+		await act(async () => {
+			bounded.resolve(messagePage(33, 38, responseTotal))
+		})
+
+		expect(TaskServiceClient.fetchMessage).toHaveBeenNthCalledWith(3, {
+			taskId: "task-1",
+			taskInstanceId: "open-1",
+			referenceIndex: 38,
+			count: 7,
+		})
+		expect(current().firstItemIndex).toBe(0)
+		expect(current().clineMessages.map((message) => message.ts)).toEqual(Array.from({ length: 45 }, (_, index) => index + 1))
+	})
+
+	it.each(["rejected", "empty"])("retries a %s live-tail response on the next state update", async (outcome) => {
+		const pending = deferredMessagePage()
+		vi.mocked(TaskServiceClient.fetchMessage)
+			.mockResolvedValueOnce(messagePage(0, 33))
+			.mockReturnValueOnce(pending.promise)
+			.mockResolvedValueOnce(messagePage(33, 45))
+		const current = await mountMessageWindow()
+		await publishMessageTotal(2, 38)
+		await act(async () => {
+			if (outcome === "rejected") pending.reject(new Error("temporary RPC failure"))
+			else pending.resolve(messagePage(33, 33, 38))
+		})
+		expect(TaskServiceClient.fetchMessage).toHaveBeenCalledTimes(2)
+		await publishMessageTotal(3, 45)
+		expect(current().clineMessages).toHaveLength(45)
+		expect(TaskServiceClient.fetchMessage).toHaveBeenCalledTimes(3)
+	})
+
+	it("drains more than one bounded page without skipping or duplicating messages", async () => {
+		vi.mocked(TaskServiceClient.fetchMessage)
+			.mockResolvedValueOnce(messagePage(0, 33))
+			.mockResolvedValueOnce(messagePage(33, 233, 440))
+			.mockResolvedValueOnce(messagePage(233, 433, 440))
+			.mockResolvedValueOnce(messagePage(433, 440))
+		const current = await mountMessageWindow()
+		await publishMessageTotal(2, 440)
+		expect(current().clineMessages.map((message) => message.ts)).toEqual(Array.from({ length: 440 }, (_, index) => index + 1))
+		expect(TaskServiceClient.fetchMessage).toHaveBeenNthCalledWith(3, {
+			taskId: "task-1",
+			taskInstanceId: "open-1",
+			referenceIndex: 233,
+			count: 200,
+		})
+		expect(TaskServiceClient.fetchMessage).toHaveBeenNthCalledWith(4, {
+			taskId: "task-1",
+			taskInstanceId: "open-1",
+			referenceIndex: 433,
+			count: 7,
+		})
+	})
+
+	it("does not skip persisted rows when realtime messages arrive during a bounded fetch", async () => {
+		const pending = deferredMessagePage()
+		vi.mocked(TaskServiceClient.fetchMessage)
+			.mockResolvedValueOnce(messagePage(0, 33))
+			.mockReturnValueOnce(pending.promise)
+			.mockResolvedValueOnce(messagePage(34, 36))
+		const current = await mountMessageWindow()
+		await publishMessageTotal(2, 34)
+		act(() => {
+			subscriptions.partial?.onResponse({ ...messagePage(35, 36).messages[0], taskId: "task-1", taskInstanceId: "open-1" })
+		})
+		await publishMessageTotal(3, 36)
+		await act(async () => {
+			pending.resolve(messagePage(33, 34, 36))
+		})
+		expect(TaskServiceClient.fetchMessage).toHaveBeenLastCalledWith({
+			taskId: "task-1",
+			taskInstanceId: "open-1",
+			referenceIndex: 34,
+			count: 2,
+		})
+		expect(current().clineMessages.map((message) => message.ts)).toEqual(Array.from({ length: 36 }, (_, index) => index + 1))
+	})
+
+	it("retains the durable cursor after a failed page with optimistic realtime rows", async () => {
+		const pending = deferredMessagePage()
+		vi.mocked(TaskServiceClient.fetchMessage)
+			.mockResolvedValueOnce(messagePage(0, 33))
+			.mockReturnValueOnce(pending.promise)
+			.mockRejectedValueOnce(new Error("temporary RPC failure"))
+			.mockResolvedValueOnce(messagePage(34, 36))
+		const current = await mountMessageWindow()
+		await publishMessageTotal(2, 34)
+		act(() => {
+			subscriptions.partial?.onResponse({ ...messagePage(35, 36).messages[0], taskId: "task-1", taskInstanceId: "open-1" })
+		})
+		await publishMessageTotal(3, 36)
+		await act(async () => {
+			pending.resolve(messagePage(33, 34, 36))
+		})
+		await publishMessageTotal(4, 36)
+		expect(TaskServiceClient.fetchMessage).toHaveBeenLastCalledWith({
+			taskId: "task-1",
+			taskInstanceId: "open-1",
+			referenceIndex: 34,
+			count: 2,
+		})
+		expect(current().clineMessages.map((message) => message.ts)).toEqual(Array.from({ length: 36 }, (_, index) => index + 1))
+	})
+
+	it("retains the durable cursor when realtime rows arrive after a failed fetch", async () => {
+		const retry = deferredMessagePage()
+		vi.mocked(TaskServiceClient.fetchMessage)
+			.mockResolvedValueOnce(messagePage(0, 33))
+			.mockRejectedValueOnce(new Error("temporary RPC failure"))
+			.mockReturnValueOnce(retry.promise)
+			.mockResolvedValueOnce(messagePage(34, 35))
+		const current = await mountMessageWindow()
+		await publishMessageTotal(2, 34)
+		act(() => {
+			subscriptions.partial?.onResponse({ ...messagePage(34, 35).messages[0], taskId: "task-1", taskInstanceId: "open-1" })
+		})
+		expect(TaskServiceClient.fetchMessage).toHaveBeenLastCalledWith({
+			taskId: "task-1",
+			taskInstanceId: "open-1",
+			referenceIndex: 33,
+			count: 1,
+		})
+		await publishMessageTotal(3, 35)
+		await act(async () => {
+			retry.resolve(messagePage(33, 34, 35))
+		})
+		expect(TaskServiceClient.fetchMessage).toHaveBeenLastCalledWith({
+			taskId: "task-1",
+			taskInstanceId: "open-1",
+			referenceIndex: 34,
+			count: 1,
+		})
+		expect(current().clineMessages.map((message) => message.ts)).toEqual(Array.from({ length: 35 }, (_, index) => index + 1))
+	})
+
+	it("keeps the serialized live-tail control contiguous without duplicate requests", async () => {
+		const bounded = deferredMessagePage()
+		vi.mocked(TaskServiceClient.fetchMessage)
+			.mockResolvedValueOnce(messagePage(0, 33))
+			.mockReturnValueOnce(bounded.promise)
+			.mockResolvedValueOnce(messagePage(38, 45))
+		const current = await mountMessageWindow()
+		await publishMessageTotal(2, 38)
+		await act(async () => {
+			bounded.resolve(messagePage(33, 38))
+		})
+		expect(current().clineMessages).toHaveLength(38)
+		await publishMessageTotal(3, 45)
+		expect(current().clineMessages).toHaveLength(45)
+		expect(TaskServiceClient.fetchMessage).toHaveBeenCalledTimes(3)
+	})
+
+	it("preserves a deliberate historical window while totals grow and a tail request settles", async () => {
+		const bounded = deferredMessagePage()
+		vi.mocked(TaskServiceClient.fetchMessage).mockResolvedValueOnce(messagePage(0, 33)).mockReturnValueOnce(bounded.promise)
+		const current = await mountMessageWindow()
+		await publishMessageTotal(2, 38)
+		act(() => {
+			current().setClineMessages(current().clineMessages.slice(0, 10))
+			current().setFirstItemIndex(0)
+		})
+		await publishMessageTotal(3, 45)
+		await act(async () => {
+			bounded.resolve(messagePage(0, 38, 45))
+		})
+		await publishMessageTotal(4, 46)
+		act(() => {
+			subscriptions.partial?.onResponse({
+				...messagePage(45, 46).messages[0],
+				taskId: "task-1",
+				taskInstanceId: "open-1",
+			})
+		})
+		expect(current().firstItemIndex).toBe(0)
+		expect(current().clineMessages).toHaveLength(10)
+		expect(TaskServiceClient.fetchMessage).toHaveBeenCalledTimes(2)
+	})
+
+	it("invalidates an in-flight tail on truncate without letting its finalizer release the replacement lock", async () => {
+		const bounded = deferredMessagePage()
+		const replacement = deferredMessagePage()
+		vi.mocked(TaskServiceClient.fetchMessage)
+			.mockResolvedValueOnce(messagePage(0, 33))
+			.mockReturnValueOnce(bounded.promise)
+			.mockReturnValueOnce(replacement.promise)
+			.mockResolvedValueOnce(messagePage(20, 22))
+		const current = await mountMessageWindow()
+		await publishMessageTotal(2, 38)
+		vi.useFakeTimers()
+		try {
+			await publishMessageTotal(3, 20)
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(200)
+			})
+			expect(TaskServiceClient.fetchMessage).toHaveBeenNthCalledWith(3, {
+				taskId: "task-1",
+				taskInstanceId: "open-1",
+				referenceIndex: -1,
+				count: 200,
+			})
+			await act(async () => {
+				bounded.resolve(messagePage(33, 38))
+			})
+			expect(current().clineMessages).toHaveLength(33)
+			await publishMessageTotal(4, 22)
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(200)
+			})
+			expect(TaskServiceClient.fetchMessage).toHaveBeenCalledTimes(3)
+			await act(async () => {
+				replacement.resolve(messagePage(0, 20))
+			})
+			expect(current().clineMessages).toHaveLength(22)
+			expect(TaskServiceClient.fetchMessage).toHaveBeenCalledTimes(4)
+		} finally {
+			vi.useRealTimers()
+		}
+	})
+
+	it("replaces a pending bootstrap when its task is truncated to a positive total", async () => {
+		const bootstrap = deferredMessagePage()
+		vi.mocked(TaskServiceClient.fetchMessage).mockReturnValueOnce(bootstrap.promise).mockResolvedValueOnce(messagePage(0, 20))
+		const current = await mountMessageWindow()
+		vi.useFakeTimers()
+		try {
+			await publishMessageTotal(2, 20)
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(200)
+			})
+			expect(current().clineMessages).toHaveLength(20)
+			await act(async () => {
+				bootstrap.resolve(messagePage(0, 33))
+			})
+			expect(current().clineMessages).toHaveLength(20)
+			expect(TaskServiceClient.fetchMessage).toHaveBeenCalledTimes(2)
+		} finally {
+			vi.useRealTimers()
+		}
+	})
+
+	it("does not repopulate a cleared task from an in-flight tail", async () => {
+		const bounded = deferredMessagePage()
+		vi.mocked(TaskServiceClient.fetchMessage).mockResolvedValueOnce(messagePage(0, 33)).mockReturnValueOnce(bounded.promise)
+		const current = await mountMessageWindow()
+		await publishMessageTotal(2, 38)
+		await publishMessageTotal(3, 0)
+		await act(async () => {
+			bounded.resolve(messagePage(33, 38))
+		})
+		expect(current().clineMessages).toHaveLength(0)
+		expect(current().firstItemIndex).toBe(0)
+		expect(TaskServiceClient.fetchMessage).toHaveBeenCalledTimes(2)
+	})
+
+	it("ignores an old task tail while the reopened task catches up its own bootstrap", async () => {
+		const bounded = deferredMessagePage()
+		const reopened = deferredMessagePage()
+		vi.mocked(TaskServiceClient.fetchMessage)
+			.mockResolvedValueOnce(messagePage(0, 33))
+			.mockReturnValueOnce(bounded.promise)
+			.mockReturnValueOnce(reopened.promise)
+			.mockResolvedValueOnce(messagePage(10, 12, 12, "open-2"))
+		const current = await mountMessageWindow()
+		await publishMessageTotal(2, 38)
+		await publishMessageTotal(3, 10, "open-2")
+		await act(async () => {
+			bounded.resolve(messagePage(33, 38))
+		})
+		expect(current().clineMessages).toHaveLength(0)
+		await publishMessageTotal(4, 12, "open-2")
+		expect(TaskServiceClient.fetchMessage).toHaveBeenCalledTimes(3)
+		await act(async () => {
+			reopened.resolve(messagePage(0, 10, 10, "open-2"))
+		})
+		expect(current().clineMessages).toHaveLength(12)
+		expect(TaskServiceClient.fetchMessage).toHaveBeenLastCalledWith({
+			taskId: "task-1",
+			taskInstanceId: "open-2",
+			referenceIndex: 10,
+			count: 2,
+		})
 	})
 
 	it("keeps capability setter identities stable across extension state revisions", async () => {
@@ -773,8 +1137,9 @@ describe("ExtensionStateContext persisted message reconciliation", () => {
 			.mockResolvedValueOnce({
 				taskId: "task-1",
 				taskInstanceId: "open-1",
-				messages: [initial, feedback, later],
-				startIndex: 0,
+				messages: [feedback, later],
+				startIndex: 1,
+				totalCount: 3,
 			})
 
 		render(
@@ -796,6 +1161,12 @@ describe("ExtensionStateContext persisted message reconciliation", () => {
 		await waitFor(() => expect(screen.getByText("missed feedback")).toBeVisible())
 		expect(screen.getAllByText("later response")).toHaveLength(1)
 		expect(TaskServiceClient.fetchMessage).toHaveBeenCalledTimes(2)
+		expect(TaskServiceClient.fetchMessage).toHaveBeenLastCalledWith({
+			taskId: "task-1",
+			taskInstanceId: "open-1",
+			referenceIndex: 1,
+			count: 2,
+		})
 		expect(
 			screen.getByText("missed feedback").compareDocumentPosition(screen.getByText("later response")) &
 				Node.DOCUMENT_POSITION_FOLLOWING,
