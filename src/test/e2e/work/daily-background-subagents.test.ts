@@ -307,12 +307,15 @@ e2e(
 			await expect(foregroundCard.getByTestId("command-output-scroll")).toContainText("WORK_FOREGROUND_COMMAND_END")
 
 			await sendWorkMessage(sidebar, HANDOFF_COMMAND_REQUEST)
-			await expect(sidebar.getByTestId("command-execution-mode").last()).toHaveText("Foreground", { timeout: 60_000 })
+			// A running card is expanded and has no command-name button; that button only exists
+			// once the card collapses after completion, which is too late for the handoff action.
+			const handoffCard = sidebar.getByTestId("command-card").filter({ hasText: BACKGROUND_COMMAND })
+			await expect(handoffCard.getByTestId("command-execution-mode")).toHaveText("Foreground", { timeout: 60_000 })
 			const footer = sidebar.getByRole("contentinfo")
 			const continueInBackground = footer.locator('vscode-button[aria-label="Continue in Background"]')
 			await expect(continueInBackground).toBeVisible({ timeout: 40_000 })
 			await continueInBackground.click()
-			await expect(sidebar.getByTestId("command-execution-mode").last()).toHaveText("Background", { timeout: 30_000 })
+			await expect(handoffCard.getByTestId("command-execution-mode")).toHaveText("Background", { timeout: 30_000 })
 
 			let activities = await openWorkActivities(sidebar)
 			const commandActivity = activities.filter({ hasText: BACKGROUND_COMMAND })
