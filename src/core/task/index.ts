@@ -1626,9 +1626,7 @@ export class Task {
 			},
 			updateBackgroundCommandState: (isRunning: boolean) =>
 				this.controller.updateBackgroundCommandState(isRunning, this.taskId),
-			onHandoffAvailabilityChanged: () => {
-				void this.postStateToWebview({ immediate: true })
-			},
+			onHandoffAvailabilityChanged: () => this.controller.postTaskViewPatchToWebview(),
 			updateClineMessage: async (
 				index: number,
 				updates: {
@@ -7957,7 +7955,9 @@ export class Task {
 					: this.contextManager.getTruncatedMessages(cloneDeep(apiConversationHistory), deletedRange)
 		}
 
-		const messages = projectInternalMessagesForProvider(ensureApiMessages(managedMessages, apiConversationHistory))
+		const messages = projectInternalMessagesForProvider(ensureApiMessages(managedMessages, apiConversationHistory), {
+			hostedToolReplayProtocol: requestScope.api.getHostedToolReplayProtocol?.(),
+		})
 		const serverTools = Object.freeze([
 			...new Set([...runtime.webSearchRoutingPlan.serverTools, ...requestScope.hostedImageGenerationPlan.serverTools]),
 		])
@@ -9845,6 +9845,8 @@ export class Task {
 			let assistantMessage = "" // For UI display (includes XML)
 			let assistantTextOnly = "" // For API history (text only, no tool XML)
 			let assistantTextSignature: string | undefined
+			// Completed provider-hosted calls the protocol needs back verbatim on later requests.
+			const hostedToolBlocks: ClineAssistantContent[] = []
 
 			this.taskState.isStreaming = true
 			let didReceiveUsageChunk = false
@@ -9993,6 +9995,7 @@ export class Task {
 							break
 						}
 						case "server_tool": {
+							if (chunk.replay) hostedToolBlocks.push(chunk.replay)
 							if (await this.toolExecutor.consumeServerToolChunk(chunk)) didScheduleAnyContent = true
 							break
 						}
@@ -10408,6 +10411,8 @@ export class Task {
 				if (thinkingBlock) {
 					assistantContent.push({ ...thinkingBlock })
 				}
+				// Hosted calls ran before the visible answer, so they precede it in the stored turn.
+				assistantContent.push(...hostedToolBlocks)
 
 				// Only add text block if there's actual text (not just tool XML)
 				const hasAssistantText = assistantTextOnly.trim().length > 0
