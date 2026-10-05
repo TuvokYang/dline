@@ -1,7 +1,12 @@
-import type { ContextWindowIndicatorLineage, ContextWindowIndicatorSnapshot } from "@shared/context-window-indicator"
+import {
+	type ContextWindowIndicatorLineage,
+	type ContextWindowIndicatorSnapshot,
+	getContextWindowIndicatorTotalTokens,
+} from "@shared/context-window-indicator"
 import { Logger } from "@shared/services/Logger"
 import type { Mode } from "@shared/storage/types"
 import { ContextWindowIndicator } from "../ContextWindowIndicator"
+import { projectAuthoritativeContextWindowIndicatorSegments } from "../ContextWindowIndicatorProjection"
 import type { TaskState } from "../kernel"
 import type { ContextUsageObserverPort } from "./TaskProviderRequestReporter"
 
@@ -75,6 +80,8 @@ export class TaskContextUsageProjection implements ContextUsageObserverPort {
 	private sequence = 0
 	private lineage: ContextWindowIndicatorLineage = { kind: "baseline" }
 	private publication: Promise<void> = Promise.resolve()
+	/** Tokens the conversation gained after the last provider report, not yet carried by any request. */
+	private pendingTail = 0
 
 	constructor(private readonly options: TaskContextUsageProjectionOptions) {}
 
@@ -99,6 +106,18 @@ export class TaskContextUsageProjection implements ContextUsageObserverPort {
 			indicator.receive({ lineage: this.lineage, receivingTokens: 0, authoritativeContextTokens: usage.contextTokens }),
 		)
 		this.publish()
+	}
+
+	/**
+	 * Records what the round added after the last provider report.
+	 *
+	 * A compaction scheduled before the next ordinary request condenses this
+	 * tail as well, so its own request is shown carrying it. Nothing is drawn
+	 * here: an ordinary request reports the tail itself once it is sent.
+	 */
+	staged(input: { readonly pendingContextTokens: number }): void {
+		const tokens = input.pendingContextTokens
+		this.pendingTail = Number.isFinite(tokens) && tokens > 0 ? Math.floor(tokens) : 0
 	}
 
 	/** A request that reported nothing, or never entered the conversation, leaves the previous figure standing. */
@@ -147,6 +166,8 @@ export class TaskContextUsageProjection implements ContextUsageObserverPort {
 	 * anything keeps the figure it had.
 	 */
 	compacted(input: { readonly contextTokens: number; readonly contextWindow: number }): void {
+		// The summary replaced whatever tail the round had added.
+		this.pendingTail = 0
 		const scope = this.options.scope()
 		const measured = {
 			durableContextTokens: input.contextTokens,
@@ -205,8 +226,10 @@ export class TaskContextUsageProjection implements ContextUsageObserverPort {
 	 *
 	 * Compaction runs in its own execution domain and never passes through the
 	 * provider reporter, so the committed run is the only sign it is in flight.
-	 * Its figure is the conversation it condenses; the smaller context arrives
-	 * with the first request after it lands.
+	 * Its figure is the conversation it condenses: the last reported occupancy
+	 * plus the tail the round added since, which the summary request carries
+	 * although no provider has measured it yet. The tail is taken once; a retried
+	 * attempt starts from a figure that already includes it.
 	 */
 	private beginCompaction(state: Readonly<TaskState>): boolean {
 		const compaction = compactionInFlight(state)
@@ -215,6 +238,13 @@ export class TaskContextUsageProjection implements ContextUsageObserverPort {
 		const indicator = this.indicator
 		const current = indicator.getSnapshot()
 		const scope = this.options.scope()
+		const tail = this.pendingTail
+		this.pendingTail = 0
+		const segments = projectAuthoritativeContextWindowIndicatorSegments({
+			projectedTotalTokens: getContextWindowIndicatorTotalTokens(current) + tail,
+			durableContextTokens: current.durableContextTokens,
+			estimatedEnvironmentTokens: current.environmentTokens,
+		})
 		this.lineage = {
 			kind: "compaction_pass",
 			operationId: compaction.compactionId,
@@ -225,9 +255,9 @@ export class TaskContextUsageProjection implements ContextUsageObserverPort {
 		this.show(
 			indicator.beginSend({
 				lineage: this.lineage,
-				durableContextTokens: current.durableContextTokens,
-				pendingSendTokens: 0,
-				environmentTokens: current.environmentTokens,
+				durableContextTokens: segments.durableContextTokens,
+				pendingSendTokens: segments.pendingSendTokens,
+				environmentTokens: segments.environmentTokens,
 				contextWindow: current.contextWindow,
 				profileId: scope.profileId,
 				profileName: scope.profileName,
@@ -248,6 +278,8 @@ export class TaskContextUsageProjection implements ContextUsageObserverPort {
 
 	/** Opens a request under the window of the handler that sent it and the scope the task runs under. */
 	private begin(request: { readonly turnId: string; readonly contextWindow: number }): void {
+		// An ordinary request carries the tail and reports it as part of its own occupancy.
+		this.pendingTail = 0
 		const indicator = this.indicatorFor(request.contextWindow)
 		const scope = this.options.scope()
 		this.lineage = {

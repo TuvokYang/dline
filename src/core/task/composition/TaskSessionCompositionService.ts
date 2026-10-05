@@ -597,8 +597,15 @@ export class TaskSessionCompositionService {
 			// A round that would overflow the window waits for the summary first,
 			// so the request it sends is the one that fits. It guards compose
 			// rather than submission because the kernel also opens rounds on its
-			// own, and those must not skip the barrier.
-			compactionBarrier: compaction,
+			// own, and those must not skip the barrier. The tail the round adds is
+			// handed to the header first, so a compaction it schedules is shown
+			// carrying what it condenses.
+			compactionBarrier: {
+				settleBeforeRound: (input) => {
+					contextUsage.staged({ pendingContextTokens: input.pendingContextTokens ?? 0 })
+					return compaction.settleBeforeRound(input)
+				},
+			},
 			contextWindowGuard,
 			// The barrier releases when the whole run ends, so it observes the
 			// executor port rather than the provider call inside it.

@@ -209,6 +209,54 @@ describe("TaskContextUsageProjection", () => {
 		expect(harness.target.contextWindowIndicator?.phase).toBe("stable")
 	})
 
+	it("shows a compaction as the reported context plus the tail the round added since", async () => {
+		const harness = createProjection()
+		await request(harness, "turn-1", 17_392)
+		// The run continues after this report, so the figure is still receiving.
+		await request(harness, "turn-2", 930_100)
+		harness.projection.staged({ pendingContextTokens: 66_000 })
+		const compaction = (attempt: string) =>
+			({
+				...running(),
+				flow: {
+					phase: "running",
+					compaction: { compactionId: "compaction:1", attempt, contextRef: "ref-1", status: "scheduled" },
+				},
+			}) as TaskState
+
+		harness.projection.committed(compaction("compaction:1:1"))
+		expect(harness.target.contextWindowIndicator).toMatchObject({
+			phase: "sending",
+			lineage: { kind: "compaction_pass" },
+			pendingSendTokens: 66_000,
+		})
+		expect(total(harness)).toBe(996_100)
+
+		// A retried attempt starts from a figure that already carries the tail.
+		harness.projection.committed(compaction("compaction:1:2"))
+		expect(total(harness)).toBe(996_100)
+
+		harness.projection.compacted({ contextTokens: 17_000, contextWindow: WINDOW })
+		expect(total(harness)).toBe(17_000)
+	})
+
+	it("drops a staged tail once an ordinary request carries it", async () => {
+		const harness = createProjection()
+		await request(harness, "turn-1", 500_000)
+		harness.projection.staged({ pendingContextTokens: 40_000 })
+		await request(harness, "turn-2", 540_000)
+
+		harness.projection.committed({
+			...running(),
+			flow: {
+				phase: "running",
+				compaction: { compactionId: "compaction:1", attempt: "compaction:1:1", contextRef: "ref-1", status: "scheduled" },
+			},
+		} as TaskState)
+
+		expect(total(harness)).toBe(540_000)
+	})
+
 	it("names the Profile a request was sent under", async () => {
 		const harness = createProjection()
 
