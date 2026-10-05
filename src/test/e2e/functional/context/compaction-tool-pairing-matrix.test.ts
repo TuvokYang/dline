@@ -3,6 +3,7 @@ import path from "node:path"
 import type { MockApiConsumption } from "@e2e/fixtures/server"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
+import { pauseTaskBetweenTurns, seedTaskConversation } from "@e2e/utils/task-instance-store"
 import { expect, type Frame, type Page } from "@playwright/test"
 import type { ElectronApplication } from "playwright"
 
@@ -331,18 +332,17 @@ async function onlyTaskId(dlineDocsDir: string): Promise<string> {
 }
 
 async function seedCanonicalToolRound(dlineDocsDir: string, taskId: string, scenario: PairingScenario): Promise<void> {
-	const taskDirectory = path.join(dlineDocsDir, "tasks", taskId)
 	const now = Date.now()
 	const history = [
 		{
-			role: "user",
-			content: [{ type: "text", text: `<task>E2E_COMPACTION_PAIRING_${scenario.id.toUpperCase()}</task>` }],
+			role: "user" as const,
+			content: [{ type: "text" as const, text: `<task>E2E_COMPACTION_PAIRING_${scenario.id.toUpperCase()}</task>` }],
 			ts: now,
 		},
 		{
-			role: "assistant",
+			role: "assistant" as const,
 			content: scenario.tools.map((tool) => ({
-				type: "tool_use",
+				type: "tool_use" as const,
 				function_id: tool.functionId,
 				dline_tid: tool.dlineTid,
 				name: tool.name,
@@ -351,55 +351,21 @@ async function seedCanonicalToolRound(dlineDocsDir: string, taskId: string, scen
 			ts: now + 1,
 		},
 		{
-			role: "user",
+			role: "user" as const,
 			content: scenario.tools.map((tool) => ({
-				type: "tool_result",
+				type: "tool_result" as const,
 				function_id: tool.functionId,
 				dline_tid: tool.dlineTid,
-				content: [{ type: "text", text: tool.result }],
+				content: [{ type: "text" as const, text: tool.result }],
 			})),
 			ts: now + 2,
 		},
 	]
-	await writeFile(
-		path.join(taskDirectory, "api_conversation_history.jsonl"),
-		`${history.map((message) => JSON.stringify(message)).join("\n")}\n`,
-		"utf8",
-	)
-
-	const snapshotPath = path.join(taskDirectory, "snapshot.json")
-	const snapshot = JSON.parse(await readFile(snapshotPath, "utf8")) as PersistedRecord
-	const turnId = `turn:e2e-compaction-pairing:${scenario.id}`
-	snapshot.phase = "between_turns"
-	snapshot.apiIndex = 1
-	snapshot.revision = typeof snapshot.revision === "number" ? snapshot.revision + 1 : 1
-	snapshot.anchor = { apiIndex: 1, turnId }
-	snapshot.turn = {
-		turnId,
-		assistantApiIndex: 1,
-		mode: scenario.tools.length > 1 ? "parallel" : "serial",
-		blocks: scenario.tools.map((tool) => ({
-			dlineTid: tool.dlineTid,
-			functionId: tool.functionId,
-			toolName: tool.name,
-			phase: "completed",
-		})),
-	}
-	for (const key of [
-		"interaction",
-		"interruptedInteraction",
-		"cancellation",
-		"completion",
-		"runtimeError",
-		"error",
-		"awaiting",
-		"approval",
-		"execution",
-		"resume",
-	]) {
-		delete snapshot[key]
-	}
-	await writeFile(snapshotPath, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8")
+	// The runtime keeps the conversation in the task journal and its state in
+	// state.json; the seeded round replaces the conversation, and the task
+	// waits between turns for the next message.
+	await seedTaskConversation(dlineDocsDir, taskId, history)
+	await pauseTaskBetweenTurns(dlineDocsDir, taskId)
 }
 
 function expectCompletePairing(consumption: MockApiConsumption, scenario: { label: string }): void {
