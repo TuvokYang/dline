@@ -2,7 +2,7 @@ import { readdir, readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
-import { readTaskUiMessagesText } from "@e2e/utils/task-instance-store"
+import { pauseTaskBetweenTurns, readTaskUiMessagesText, seedTaskConversation } from "@e2e/utils/task-instance-store"
 import { expect, type Frame, type Locator, type Page } from "@playwright/test"
 import type { ElectronApplication } from "playwright"
 
@@ -428,42 +428,16 @@ async function seedLargeCompactionHistory(
 	taskId: string,
 	turns: readonly { user: string; assistant: string }[],
 ): Promise<number> {
-	const taskDirectory = path.join(dlineDocsDir, "tasks", taskId)
 	const now = Date.now()
 	const history = turns.flatMap((turn, index) => [
-		{ role: "user", content: [{ type: "text", text: turn.user }], ts: now + index * 2 },
-		{ role: "assistant", content: [{ type: "text", text: turn.assistant }], ts: now + index * 2 + 1 },
+		{ role: "user" as const, content: [{ type: "text" as const, text: turn.user }], ts: now + index * 2 },
+		{ role: "assistant" as const, content: [{ type: "text" as const, text: turn.assistant }], ts: now + index * 2 + 1 },
 	])
-	await writeFile(
-		path.join(taskDirectory, "api_conversation_history.jsonl"),
-		`${history.map((message) => JSON.stringify(message)).join("\n")}\n`,
-		"utf8",
-	)
-
-	const snapshotPath = path.join(taskDirectory, "snapshot.json")
-	const snapshot = JSON.parse(await readFile(snapshotPath, "utf8")) as Record<string, unknown>
-	const assistantApiIndex = history.length - 1
-	const turnId = `turn:e2e-bug011-large:${taskId}`
-	snapshot.phase = "between_turns"
-	snapshot.apiIndex = assistantApiIndex
-	snapshot.revision = typeof snapshot.revision === "number" ? snapshot.revision + 1 : 1
-	snapshot.anchor = { apiIndex: assistantApiIndex, turnId }
-	snapshot.turn = { turnId, assistantApiIndex, mode: "serial", blocks: [] }
-	for (const key of [
-		"interaction",
-		"interruptedInteraction",
-		"cancellation",
-		"completion",
-		"runtimeError",
-		"error",
-		"awaiting",
-		"approval",
-		"execution",
-		"resume",
-	]) {
-		delete snapshot[key]
-	}
-	await writeFile(snapshotPath, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8")
+	// The runtime keeps the conversation in the task journal and its state in
+	// state.json; the seeded history replaces the conversation, and the task
+	// waits between turns for the next message.
+	await seedTaskConversation(dlineDocsDir, taskId, history)
+	await pauseTaskBetweenTurns(dlineDocsDir, taskId)
 	return estimateTokens({ systemPrompt: "", messages: history, tools: [], serverTools: [] })
 }
 
