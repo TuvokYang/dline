@@ -38,12 +38,18 @@ describe("ApiKeyAnthropicTransport", () => {
 		expect(betaCreate).not.toHaveBeenCalled()
 	})
 
-	it("routes fast mode through the beta endpoint with the fast-mode beta and speed", async () => {
+	it("routes fast mode through the beta endpoint with the same identity headers as the stable route", async () => {
 		const { client, create, betaCreate } = fakeClient()
+		const transport = new ApiKeyAnthropicTransport(client, true)
 
-		await new ApiKeyAnthropicTransport(client, true).open(body, { "user-agent": "ignored" })
+		await transport.open(body, { "user-agent": "claude-cli/1.0.0" })
+		await transport.open(body, {})
 
-		expect(betaCreate).toHaveBeenCalledWith({ ...body, betas: [ANTHROPIC_FAST_MODE_BETA], speed: "fast" })
+		const fastBody = { ...body, betas: [ANTHROPIC_FAST_MODE_BETA], speed: "fast" }
+		expect(betaCreate.mock.calls).toEqual([
+			[fastBody, { headers: { "user-agent": "claude-cli/1.0.0" } }],
+			[fastBody, undefined],
+		])
 		expect(create).not.toHaveBeenCalled()
 	})
 })

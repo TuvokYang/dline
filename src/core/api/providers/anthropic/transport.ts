@@ -30,8 +30,8 @@ function requestOptions(headers: Record<string, string>): { headers: Record<stri
 /**
  * API-key transport for the anthropic provider.
  *
- * Fast mode exists only on the beta endpoint, selected by its beta flag and `speed`. That route has never
- * carried per-request headers, so it keeps the exact request it sent before.
+ * Fast mode exists only on the beta endpoint, selected by its beta flag and `speed`. Both routes carry the
+ * same per-request identity headers, so the declared client identity does not depend on the selected speed.
  */
 export class ApiKeyAnthropicTransport implements AnthropicMessagesTransport {
 	constructor(
@@ -41,11 +41,14 @@ export class ApiKeyAnthropicTransport implements AnthropicMessagesTransport {
 
 	open(body: AnthropicMessagesRequestBody, headers: Record<string, string>): Promise<AnthropicMessagesStream> {
 		if (this.fastMode) {
-			return (this.client.beta.messages.create as unknown as BetaCreate)({
-				...body,
-				betas: [ANTHROPIC_FAST_MODE_BETA],
-				speed: "fast",
-			})
+			return (this.client.beta.messages.create as unknown as BetaCreate)(
+				{
+					...body,
+					betas: [ANTHROPIC_FAST_MODE_BETA],
+					speed: "fast",
+				},
+				requestOptions(headers),
+			)
 		}
 		return this.client.messages.create(body, requestOptions(headers)) as Promise<AnthropicMessagesStream>
 	}
