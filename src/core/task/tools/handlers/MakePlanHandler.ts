@@ -12,7 +12,7 @@ import type { IPartialBlockHandler, IToolHandler } from "../ToolExecutorCoordina
 import { interactionId, interactionTurnId, type TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
 import { getTaskCompletionTelemetry } from "../utils"
-import { sayFeedbackOnce } from "../utils/UserFeedbackUtils"
+import { attachToolFeedbackFiles, sayFeedbackOnce } from "../utils/UserFeedbackUtils"
 
 const MAKE_PLAN_ASK = "make_plan" as const
 
@@ -100,11 +100,7 @@ export class MakePlanHandler implements IToolHandler, IPartialBlockHandler {
 			await sayFeedbackOnce(config, "messageResponse", text, images, responseFiles)
 		}
 
-		let fileContentString = ""
-		if (responseFiles && responseFiles.length > 0) {
-			const { processFilesIntoText } = await import("@integrations/misc/extract-text")
-			fileContentString = await processFilesIntoText(responseFiles)
-		}
+		const fileContentString = await attachToolFeedbackFiles(config.taskState.userMessageContent, responseFiles)
 
 		telemetryService.captureTaskCompleted(config.ulid ?? "", getTaskCompletionTelemetry(config))
 

@@ -1,6 +1,7 @@
 import { Anthropic } from "@anthropic-ai/sdk"
 import { Content, GenerateContentResponse, Part } from "@google/genai"
-import { ClineStorageMessage } from "@/shared/messages/content"
+import { ClineImageContentBlock, ClineStorageMessage } from "@/shared/messages/content"
+import { splitToolResultContent } from "./tool-result-content"
 
 // Source: https://ai.google.dev/gemini-api/docs/thought-signatures#faqs
 // While injecting custom function call blocks into the request is strongly discouraged,
@@ -10,25 +11,24 @@ import { ClineStorageMessage } from "@/shared/messages/content"
 // "context_engineering_is_the_way_to_go" or "skip_thought_signature_validator" in the thought signature field to skip validation.
 const GEMINI_DUMMY_THOUGHT_SIGNATURE = "skip_thought_signature_validator"
 
+function geminiInlineImage(block: ClineImageContentBlock): Part {
+	if (block.source.type !== "base64") {
+		throw new Error("Unsupported image source type")
+	}
+	return { inlineData: { data: block.source.data, mimeType: block.source.media_type } }
+}
+
 export function convertAnthropicContentToGemini(content: string | ClineStorageMessage["content"]): Part[] {
 	if (typeof content === "string") {
 		return [{ text: content }]
 	}
 	return content
-		.flatMap((block): Part | undefined => {
+		.flatMap((block): Part | Part[] | undefined => {
 			switch (block.type) {
 				case "text":
 					return { text: block.text, thoughtSignature: block.signature }
 				case "image":
-					if (block.source.type !== "base64") {
-						throw new Error("Unsupported image source type")
-					}
-					return {
-						inlineData: {
-							data: block.source.data,
-							mimeType: block.source.media_type,
-						},
-					}
+					return geminiInlineImage(block)
 				case "tool_use":
 					return {
 						functionCall: {
@@ -38,15 +38,15 @@ export function convertAnthropicContentToGemini(content: string | ClineStorageMe
 						// Thought signature is required, so provide a dummy one if not present
 						thoughtSignature: block.signature || GEMINI_DUMMY_THOUGHT_SIGNATURE,
 					}
-				case "tool_result":
-					return {
-						functionResponse: {
-							name: block.function_id,
-							response: {
-								result: block.content,
-							},
-						},
-					}
+				case "tool_result": {
+					// The function response carries text; its images follow as inline parts so they reach
+					// the model as images rather than as base64 inside the response JSON.
+					const { text, images } = splitToolResultContent(block.content)
+					return [
+						{ functionResponse: { name: block.function_id, response: { result: text } } },
+						...images.map(geminiInlineImage),
+					]
+				}
 				case "thinking":
 					return {
 						text: block.thinking,

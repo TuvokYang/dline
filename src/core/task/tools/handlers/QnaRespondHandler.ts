@@ -8,7 +8,7 @@ import type { InteractionOutcome } from "../../interaction/InteractionCoordinato
 import type { IPartialBlockHandler, IToolHandler } from "../ToolExecutorCoordinator"
 import { interactionId, interactionTurnId, type TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
-import { sayFeedbackOnce } from "../utils/UserFeedbackUtils"
+import { attachToolFeedbackFiles, sayFeedbackOnce } from "../utils/UserFeedbackUtils"
 
 /**
  * QnaRespondHandler — handles the qna_respond tool.
@@ -67,11 +67,7 @@ export class QnaRespondHandler implements IToolHandler, IPartialBlockHandler {
 		const images = outcome.draft?.images
 		const files = outcome.draft?.files
 
-		let fileContentString = ""
-		if (files && files.length > 0) {
-			const { processFilesIntoText } = await import("@integrations/misc/extract-text")
-			fileContentString = await processFilesIntoText(files)
-		}
+		const fileContentString = await attachToolFeedbackFiles(config.taskState.userMessageContent, files)
 
 		if (config.taskState.didRespondToPlanAskBySwitchingMode) {
 			config.taskState.didRespondToPlanAskBySwitchingMode = false

@@ -226,6 +226,31 @@ export async function processFilesIntoContent(
 	return [{ type: "text", text: header }, ...documents]
 }
 
+/** Attached files of a tool result, split by where each can travel. */
+export interface ToolResultAttachments {
+	/** Text for inside the tool result; empty when no file was attached. */
+	text: string
+	/** PDFs for the same user message after the tool result, where native document blocks are allowed. */
+	documents: ClineUserAttachedDocumentBlock[]
+}
+
+const PDFS_FOLLOW_NOTE = "(The attached PDFs follow this tool result as documents.)"
+
+/**
+ * Load files a user attached while answering a tool, such as feedback on an approval or a follow-up answer.
+ *
+ * A tool result carries only text and images, so PDFs are returned separately for the caller to place
+ * beside the result; extracting them into the result instead would lose the document and cost context
+ * for its text. Every other file becomes the same `<file_content>` text {@link processFilesIntoText} makes.
+ */
+export async function processFilesForToolResult(files: string[] | undefined): Promise<ToolResultAttachments> {
+	if (!files?.length) return { text: "", documents: [] }
+	const content = await processFilesIntoContent(files)
+	const documents = content.filter((block): block is ClineUserAttachedDocumentBlock => block.type === "attached_document")
+	const text = content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("\n\n")
+	return { text: documents.length > 0 ? `${text}\n\n${PDFS_FOLLOW_NOTE}` : text, documents }
+}
+
 function isPdfPath(filePath: string): boolean {
 	return path.extname(filePath).toLowerCase() === ".pdf"
 }

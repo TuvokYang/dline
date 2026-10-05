@@ -13,6 +13,7 @@ import {
 } from "@/shared/messages/content"
 import { Logger } from "@/shared/services/Logger"
 import { getResultFunctionId, getUseFunctionId, projectChatFunctionId } from "./tool-identity-projector"
+import { splitToolResultContent } from "./tool-result-content"
 
 /**
  * Project canonical history into DeepSeek Responses input without provider-owned replay IDs.
@@ -59,6 +60,7 @@ export function convertDeepSeekResponsesInput(messages: ClineStorageMessage[]): 
 			input.push({ role: "user", content })
 			content = []
 		}
+		const toolResultImages: ClineImageContentBlock[] = []
 
 		for (const part of message.content) {
 			if (part.type === "text") {
@@ -67,14 +69,22 @@ export function convertDeepSeekResponsesInput(messages: ClineStorageMessage[]): 
 				content.push({ type: "input_image", detail: "auto", image_url: imageSourceToUrl(part.source) })
 			} else if (part.type === "tool_result") {
 				flushContent()
-				input.push({
-					type: "function_call_output",
-					call_id: getResultFunctionId(part),
-					output: typeof part.content === "string" ? part.content : JSON.stringify(part.content),
-				})
+				const result = splitToolResultContent(part.content)
+				toolResultImages.push(...result.images)
+				input.push({ type: "function_call_output", call_id: getResultFunctionId(part), output: result.text })
 			}
 		}
 		flushContent()
+		if (toolResultImages.length > 0) {
+			input.push({
+				role: "user",
+				content: toolResultImages.map((image) => ({
+					type: "input_image",
+					detail: "auto",
+					image_url: imageSourceToUrl(image.source),
+				})),
+			})
+		}
 	}
 
 	return input
@@ -537,36 +547,19 @@ function convertUser(msg: ClineStorageMessage): DeepSeekModelMessage[] {
 	const seenToolIds = new Set<string>()
 
 	for (const tr of toolResultBlocks) {
-		let content: string
-		if (typeof tr.content === "string") {
-			content = tr.content
-		} else if (Array.isArray(tr.content)) {
-			const imageNoteParts: string[] = []
-			for (const p of tr.content) {
-				if (p.type === "text") {
-					imageNoteParts.push(p.text)
-				} else if (p.type === "image") {
-					imageNoteParts.push("(see following user message for image)")
-				}
-			}
-			content = imageNoteParts.join("\n")
-		} else {
-			content = ""
-		}
-
-		// Defensive: if tool_use_id is empty, send as user text to avoid
-		// "Messages with role 'tool' must be a response to a preceding
-		// message with 'tool_calls'" from OpenAI-compatible APIs
 		const functionId = getResultFunctionId(tr)
 		if (seenToolIds.has(functionId)) {
 			continue
 		}
 		seenToolIds.add(functionId)
 
+		// A tool message carries text only; its images join the following user message as image parts.
+		const { text, images } = splitToolResultContent(tr.content ?? "")
+		imageBlocks.push(...images)
 		result.push({
 			role: "tool",
 			tool_call_id: projectChatFunctionId(functionId),
-			content,
+			content: text,
 		} as DeepSeekModelMessage)
 	}
 

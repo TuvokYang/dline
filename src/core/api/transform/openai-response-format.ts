@@ -1,13 +1,16 @@
 import {
 	ResponseInput,
 	ResponseInputFile,
+	ResponseInputImage,
 	ResponseInputMessageContentList,
+	ResponseInputText,
 	ResponseReasoningItem,
 } from "openai/resources/responses/responses"
 import {
 	type ClineAssistantHostedToolBlock,
 	type ClineDocumentContentBlock,
 	ClineStorageMessage,
+	type ClineToolResponseContent,
 	imageSourceMediaType,
 	imageSourceToUrl,
 	isHostedToolBlock,
@@ -30,6 +33,25 @@ export function responsesInputFile(block: ClineDocumentContentBlock): ResponseIn
 		filename: block.title || "document.pdf",
 		file_data: `data:${block.source.media_type};base64,${block.source.data}`,
 	}
+}
+
+/**
+ * Responses `function_call_output.output` for one tool result.
+ *
+ * Text-only results stay one plain string. A result that carries images becomes native `input_text` and
+ * `input_image` items, so the model sees the image itself instead of its base64 text, which it cannot
+ * interpret and which costs context for every character.
+ */
+export function responsesToolOutput(content: ClineToolResponseContent): string | Array<ResponseInputText | ResponseInputImage> {
+	if (typeof content === "string") return content
+	if (!content.some((block) => block.type === "image")) {
+		return content.map((block) => (block.type === "text" ? block.text : "")).join("\n")
+	}
+	return content.map((block) =>
+		block.type === "image"
+			? { type: "input_image", detail: "auto", image_url: imageSourceToUrl(block.source) }
+			: { type: "input_text", text: block.text },
+	)
 }
 
 /** Hosted tool names a Responses request declares, used to decide which stored hosted calls it may replay. */
@@ -191,7 +213,7 @@ export function convertToOpenAIResponsesInput(
 	// which the Responses API rejects with "No tool call found for tool output".
 	const sentCallIds = new Set<string>()
 	// Demoted orphan outputs accumulated across messages, flushed as user text.
-	const demotedOutputs: string[] = []
+	const demotedOutputs: ResponseInputMessageContentList = []
 
 	for (const m of messages) {
 		if (typeof m.content === "string") {
@@ -329,13 +351,15 @@ export function convertToOpenAIResponsesInput(
 						}
 						const functionId = getResultFunctionId(part)
 						const projectedCallId = projectChatFunctionId(functionId)
-						const output = typeof part.content === "string" ? part.content : JSON.stringify(part.content)
+						const output = responsesToolOutput(part.content)
 						if (!sentCallIds.has(projectedCallId)) {
 							// The pairing function_call is not in the sent history (truncated or
 							// never recorded). Emitting an orphaned function_call_output would
-							// fail the request, so keep the output as plain user text.
-							if (output) {
-								demotedOutputs.push(output)
+							// fail the request, so keep the output as ordinary user content.
+							if (typeof output !== "string") {
+								demotedOutputs.push(...output)
+							} else if (output) {
+								demotedOutputs.push({ type: "input_text", text: output })
 							}
 							break
 						}
@@ -353,12 +377,9 @@ export function convertToOpenAIResponsesInput(
 			if (messageContent.length > 0) {
 				allItems.push({ role: m.role, content: [...messageContent] })
 			}
-			// Flush demoted orphan outputs as plain user text.
+			// Flush demoted orphan outputs as ordinary user content.
 			if (demotedOutputs.length > 0) {
-				allItems.push({
-					role: m.role,
-					content: demotedOutputs.map((output) => ({ type: "input_text", text: output })),
-				})
+				allItems.push({ role: m.role, content: [...demotedOutputs] })
 				demotedOutputs.length = 0
 			}
 		}

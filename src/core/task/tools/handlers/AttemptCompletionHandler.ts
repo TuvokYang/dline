@@ -5,7 +5,6 @@ import { getHooksEnabledSafe } from "@core/hooks/hooks-utils"
 import * as NotificationHook from "@core/hooks/notification-hook"
 import { getPrompt, renderPrompt } from "@core/prompts/i18n"
 import { formatResponse } from "@core/prompts/responses"
-import { processFilesIntoText } from "@integrations/misc/extract-text"
 import { showSystemNotification } from "@integrations/notifications"
 import { telemetryService } from "@services/telemetry"
 import { findLastIndex } from "@shared/array"
@@ -19,7 +18,7 @@ import type { IPartialBlockHandler, IToolHandler } from "../ToolExecutorCoordina
 import { interactionId, interactionTurnId, type TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
 import { getTaskCompletionTelemetry } from "../utils"
-import { sayFeedbackOnce } from "../utils/UserFeedbackUtils"
+import { attachToolFeedbackFiles, sayFeedbackOnce } from "../utils/UserFeedbackUtils"
 
 const TASK_PREVIEW_MAX_CHARS = 8000
 
@@ -208,7 +207,7 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
 			})
 		}
 
-		const fileContentString = completionFiles?.length ? await processFilesIntoText(completionFiles) : ""
+		const fileContentString = await attachToolFeedbackFiles(config.taskState.userMessageContent, completionFiles)
 		if (fileContentString) {
 			toolResults.push({
 				type: "text" as const,

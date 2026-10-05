@@ -7,7 +7,7 @@ import type { InteractionOutcome } from "../../interaction/InteractionCoordinato
 import type { IPartialBlockHandler, IToolHandler } from "../ToolExecutorCoordinator"
 import { interactionId, interactionTurnId, type TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
-import { sayFeedbackOnce } from "../utils/UserFeedbackUtils"
+import { attachToolFeedbackFiles, sayFeedbackOnce } from "../utils/UserFeedbackUtils"
 
 export class GenerateReportHandler implements IToolHandler, IPartialBlockHandler {
 	readonly name = ClineDefaultTool.GENERATE_REPORT
@@ -60,6 +60,7 @@ export class GenerateReportHandler implements IToolHandler, IPartialBlockHandler
 		const files = outcome.draft?.files
 
 		config.taskState.isAwaitingPlanResponse = false
+		const fileContentString = await attachToolFeedbackFiles(config.taskState.userMessageContent, files)
 
 		// Handle mode switching response (same as MakePlanHandler)
 		if (config.taskState.didRespondToPlanAskBySwitchingMode) {
@@ -67,14 +68,7 @@ export class GenerateReportHandler implements IToolHandler, IPartialBlockHandler
 			const switchMsg = text
 				? renderPrompt("toolHandlers", "planSwitchToActWithMessage", { TEXT: text })
 				: getPrompt("toolHandlers", "planSwitchToAct")
-			// fileContentString is empty at this point, pass images directly
-			return formatResponse.toolResult(switchMsg, images, "")
-		}
-
-		let fileContentString = ""
-		if (files && files.length > 0) {
-			const { processFilesIntoText } = await import("@integrations/misc/extract-text")
-			fileContentString = await processFilesIntoText(files)
+			return formatResponse.toolResult(switchMsg, images, fileContentString)
 		}
 
 		if (text || (images && images.length > 0) || fileContentString) {

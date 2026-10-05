@@ -103,6 +103,35 @@ describe("ContextManager canonical tool-result recovery", () => {
 		expect(JSON.stringify(projected.input)).not.toContain("function_call_output")
 	})
 
+	it("keeps the images of a demoted Dline-owned result as native image blocks", () => {
+		const imageData = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+		const history: ClineStorageMessage[] = [
+			{ role: "user", content: [{ type: "text", text: "Initial task" }] },
+			{ role: "assistant", content: [{ type: "text", text: "Attempted an internal XML tool call" }] },
+			{
+				role: "user",
+				content: [
+					{
+						type: "tool_result",
+						function_id: "dline_function_screenshot",
+						dline_tid: "dline_tid_screenshot",
+						content: [
+							{ type: "text", text: "Screenshot attached." },
+							{ type: "image", source: { type: "base64", media_type: "image/png", data: imageData } },
+						],
+					},
+				],
+			},
+		]
+
+		const repaired = new ContextManager().getTruncatedMessages(history, undefined) as ClineStorageMessage[]
+
+		expect(repaired[2].content).toEqual([
+			{ type: "text", text: "Screenshot attached." },
+			{ type: "image", source: { type: "base64", media_type: "image/png", data: imageData } },
+		])
+	})
+
 	it("removes an orphaned result after a compacted summary while preserving explicit user feedback", () => {
 		const history: ClineStorageMessage[] = [
 			{ role: "user", content: [{ type: "text", text: "Compacted summary" }] },

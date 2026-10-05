@@ -143,7 +143,7 @@ import { TaskFileTracker } from "@integrations/checkpoints/TaskFileTracker"
 import { ICheckpointManager } from "@integrations/checkpoints/types"
 import { DiffViewProvider } from "@integrations/editor/DiffViewProvider"
 import { formatContentBlockToMarkdown } from "@integrations/misc/export-markdown"
-import { processFilesIntoContent, processFilesIntoText } from "@integrations/misc/extract-text"
+import { processFilesIntoContent } from "@integrations/misc/extract-text"
 import { showSystemNotification } from "@integrations/notifications"
 import type {
 	CommandCancellationResult,
@@ -356,6 +356,7 @@ import { withRequiredTerminateTimeout, withTerminateTimeout } from "./TaskTermin
 import { ToolExecutor } from "./ToolExecutor"
 import { getAdvertisedNativeToolNames } from "./tools/NativeToolAdmission"
 import { ToolResultUtils } from "./tools/utils/ToolResultUtils"
+import { attachToolFeedbackFiles } from "./tools/utils/UserFeedbackUtils"
 import { updateApiReqMsg } from "./utils"
 import { buildUserFeedbackContent } from "./utils/buildUserFeedbackContent"
 import { processUserContentTags } from "./utils/processUserContentTags"
@@ -758,7 +759,7 @@ export class Task {
 				return outcome
 			},
 			stageFeedback: async (tool, draft) => {
-				const fileContent = draft.files.length > 0 ? await processFilesIntoText(draft.files) : ""
+				const fileContent = await attachToolFeedbackFiles(this.taskState.userMessageContent, draft.files)
 				ToolResultUtils.pushAdditionalToolFeedback(
 					this.taskState.userMessageContent,
 					draft.text,
@@ -2614,7 +2615,7 @@ export class Task {
 			projectInteraction?: (
 				interaction: NonNullable<ReturnType<TaskRuntime["getState"]>["interaction"]>,
 				lifecycle: NonNullable<ReturnType<TaskRuntime["getState"]>["turn"]>["blocks"][number],
-			) => ClineContent | Promise<ClineContent>
+			) => ClineContent[] | Promise<ClineContent[]>
 		},
 	): Promise<number> {
 		if (this.controllerDetached || this.readOnly) throw new Error("Task context projection requires write permission")
@@ -2644,7 +2645,7 @@ export class Task {
 					deferMissingDlineTids: [interaction.interactionId],
 				})
 				if (options.projectInteraction) {
-					continuationContent.push(await options.projectInteraction(interaction, lifecycle))
+					continuationContent.push(...(await options.projectInteraction(interaction, lifecycle)))
 				} else if (options.chatContent) {
 					continuationContent.push(
 						...(await buildUserFeedbackContent(
@@ -3616,14 +3617,14 @@ export class Task {
 		})
 		if (trigger === "mode_switch") {
 			continuation.push(
-				await projectModeSwitchContinuation({
+				...(await projectModeSwitchContinuation({
 					kind: interaction.kind,
 					functionId: lifecycle.functionId,
 					dlineTid: lifecycle.dlineTid,
 					sourceMode: this.taskSm.mode,
 					targetMode,
 					chatContent,
-				}),
+				})),
 			)
 		} else if (chatContent) {
 			continuation.push(...(await buildUserFeedbackContent(chatContent.message, chatContent.images, chatContent.files)))
