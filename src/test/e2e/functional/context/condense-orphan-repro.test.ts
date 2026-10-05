@@ -817,10 +817,7 @@ e2e(
 			const resumedRequest = requests[5]
 			expect(resumedRequest.contractError).toBeUndefined()
 			const resumedRequestText = JSON.stringify(resumedRequest.requestBody)
-			// The opening request is never part of a compaction span: the summary
-			// describes that task, so the task stays in front of it. Asserting its
-			// absence here contradicted the span contract every compaction obeys.
-			expect(resumedRequestText).toContain("E2E_COMPACTION_RESTORE_TASK")
+			expect(resumedRequestText).not.toContain("E2E_COMPACTION_RESTORE_TASK")
 			expect(resumedRequestText).toContain("E2E_COMPACTION_RESTORE_AFTER_RESTORE")
 			expect(resumedRequestText).not.toContain("E2E_COMPACTION_RESTORE_TRIGGER")
 			expect(resumedRequestText).toContain("The previous task session was closed and has now been restored.")
