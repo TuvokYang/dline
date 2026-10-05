@@ -168,7 +168,8 @@ async function isLegacyArray(handle: FileHandle, size: number): Promise<boolean>
 async function buildRecordIndex(handle: FileHandle, size: number): Promise<MessageRecordLocation[]> {
 	const latestByTimestamp = new Map<number, MessageRecordLocation>()
 	let filePosition = 0
-	let pending = Buffer.alloc(0)
+	let pending: Buffer[] = []
+	let pendingLength = 0
 	let pendingOffset = 0
 	let ordinal = 0
 
@@ -197,19 +198,31 @@ async function buildRecordIndex(handle: FileHandle, size: number): Promise<Messa
 		const { bytesRead } = await handle.read(chunk, 0, length, filePosition)
 		if (bytesRead === 0) break
 		const current = chunk.subarray(0, bytesRead)
-		const dataOffset = pending.length > 0 ? pendingOffset : filePosition
-		const data = pending.length > 0 ? Buffer.concat([pending, current]) : current
 		let lineStart = 0
-		for (let index = 0; index < data.length; index++) {
-			if (data[index] !== 0x0a) continue
-			accept(data.subarray(lineStart, index), dataOffset + lineStart)
+		// Scan each incoming byte once. Retain fragments until a line completes,
+		// rather than repeatedly copying and rescanning a growing image/text row.
+		for (let index = 0; index < current.length; index++) {
+			if (current[index] !== 0x0a) continue
+			const fragment = current.subarray(lineStart, index)
+			if (pendingLength > 0) {
+				pending.push(fragment)
+				accept(Buffer.concat(pending, pendingLength + fragment.length), pendingOffset)
+				pending = []
+				pendingLength = 0
+			} else {
+				accept(fragment, filePosition + lineStart)
+			}
 			lineStart = index + 1
 		}
-		pending = Buffer.from(data.subarray(lineStart))
-		pendingOffset = dataOffset + lineStart
+		if (lineStart < current.length) {
+			if (pendingLength === 0) pendingOffset = filePosition + lineStart
+			const fragment = current.subarray(lineStart)
+			pending.push(fragment)
+			pendingLength += fragment.length
+		}
 		filePosition += bytesRead
 	}
-	if (pending.length > 0) accept(pending, pendingOffset)
+	if (pendingLength > 0) accept(Buffer.concat(pending, pendingLength), pendingOffset)
 
 	return [...latestByTimestamp.values()].sort((left, right) => left.ordinal - right.ordinal)
 }

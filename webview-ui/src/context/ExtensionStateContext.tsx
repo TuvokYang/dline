@@ -469,6 +469,8 @@ export const ExtensionStateContextProvider: React.FC<{
 
 	const prevTotalRef = useRef(0)
 	const refetchLockRef = useRef(false)
+	const liveTailEndRef = useRef<number | undefined>(undefined)
+	const liveTailCursorRef = useRef<number | undefined>(undefined)
 	// Stabilize window after cancel: delay refetch by 200ms so rapid state
 	// changes (remove partials, postState, total update) settle before
 	// triggering a Virtuoso data swap that causes layout jitter.
@@ -499,8 +501,61 @@ export const ExtensionStateContextProvider: React.FC<{
 		const fetchCurrentMessages = (referenceIndex: number, count: number) =>
 			fetchTaskMessages(state.taskViewState, referenceIndex, count)
 
+		// A live-tail fetch owns the lock for its entire catch-up chain. Totals
+		// may advance while an RPC is pending; only the committed end advances
+		// the cursor, never the response's advertised total.
+		const fetchLiveTail = async (referenceIndex: number, replace = false): Promise<void> => {
+			const generation = messageFetchGenerationRef.current
+			const taskKey = currentTaskViewKey
+			const isCurrent = () => generation === messageFetchGenerationRef.current && taskKey === currentTaskViewKeyRef.current
+			refetchLockRef.current = true
+			liveTailEndRef.current = firstItemIndexRef.current + clineMessagesRef.current.length
+			try {
+				let cursor = referenceIndex
+				liveTailCursorRef.current = cursor >= 0 ? cursor : undefined
+				while (isCurrent()) {
+					const previousEnd = firstItemIndexRef.current + clineMessagesRef.current.length
+					const resp = await fetchCurrentMessages(
+						cursor,
+						cursor < 0 ? 200 : Math.min(200, totalMessageCountRef.current - cursor),
+					)
+					if (!isCurrent()) return
+					// Paging backwards deliberately abandons following the live tail.
+					if (!replace && firstItemIndexRef.current + clineMessagesRef.current.length < previousEnd) {
+						liveTailEndRef.current = undefined
+						return
+					}
+					const converted = resp.messages.map(convertProtoToClineMessage)
+					const startIndex = Math.max(0, resp.startIndex)
+					const reconciled = replace
+						? { messages: converted, startIndex }
+						: applyFetchedMessageWindow(
+								clineMessagesRef.current,
+								firstItemIndexRef.current,
+								converted,
+								startIndex,
+								Number(resp.totalCount ?? 0),
+							)
+					commitMessageWindow(reconciled.messages, reconciled.startIndex)
+					const end = reconciled.startIndex + reconciled.messages.length
+					liveTailEndRef.current = end
+					const fetchedEnd = startIndex + converted.length
+					const previousCursor = cursor
+					replace = false
+					cursor = Math.min(end, fetchedEnd)
+					liveTailCursorRef.current = cursor
+					if (cursor >= totalMessageCountRef.current || cursor <= previousCursor || converted.length === 0) return
+				}
+			} catch {
+				// A later state update can retry; don't spin on an empty/failed RPC.
+			} finally {
+				if (isCurrent()) refetchLockRef.current = false
+			}
+		}
+
 		const fetchLatestWindow = (scheduledTaskViewKey: string | undefined, expectedInteraction?: ActiveInteractionView) => {
 			const scheduledGeneration = messageFetchGenerationRef.current
+			const bootstrapping = clineMessagesRef.current.length === 0
 			// The key records that this interaction's anchor is now *hydrated*,
 			// so it is written only once the committed window actually contains
 			// the anchor. Recording it here, before the request, would mark a
@@ -607,7 +662,16 @@ export const ExtensionStateContextProvider: React.FC<{
 					}
 				}
 			}
-			void fetchAttempt(-1, Boolean(expectedInteraction))
+			void fetchAttempt(-1, Boolean(expectedInteraction)).then(() => {
+				if (
+					bootstrapping &&
+					scheduledGeneration === messageFetchGenerationRef.current &&
+					scheduledTaskViewKey === currentTaskViewKeyRef.current
+				) {
+					const end = firstItemIndexRef.current + clineMessagesRef.current.length
+					if (end > 0 && end < totalMessageCountRef.current && !refetchLockRef.current) void fetchLiveTail(end)
+				}
+			})
 		}
 
 		if (currentTaskViewKey !== prevRefetchTaskViewKeyRef.current) {
@@ -622,9 +686,8 @@ export const ExtensionStateContextProvider: React.FC<{
 			lastInteractionFetchKeyRef.current = undefined
 			inFlightInteractionFetchRef.current = undefined
 			bootstrapResolvedRef.current = false
-			firstItemIndexRef.current = 0
-			setClineMessages([])
-			setFirstItemIndex(0)
+			commitMessageWindow([], 0)
+			liveTailEndRef.current = undefined
 			prevTotalRef.current = total
 			if (total > 0) {
 				fetchLatestWindow(currentTaskViewKey, projectedInteraction)
@@ -634,13 +697,14 @@ export const ExtensionStateContextProvider: React.FC<{
 		currentTaskViewKeyRef.current = currentTaskViewKey
 
 		if (total === 0) {
+			messageFetchGenerationRef.current++
+			refetchLockRef.current = false
 			if (cancelStabilizeTimerRef.current) {
 				clearTimeout(cancelStabilizeTimerRef.current)
 				cancelStabilizeTimerRef.current = null
 			}
-			firstItemIndexRef.current = 0
-			setClineMessages([])
-			setFirstItemIndex(0)
+			commitMessageWindow([], 0)
+			liveTailEndRef.current = undefined
 			prevTotalRef.current = 0
 			lastInteractionFetchKeyRef.current = undefined
 			inFlightInteractionFetchRef.current = undefined
@@ -653,89 +717,51 @@ export const ExtensionStateContextProvider: React.FC<{
 			return
 		}
 		const knownEndIndex = firstItemIndex + clineMessages.length
-		const windowCoveredPreviousTail = knownEndIndex >= prevTotalRef.current
+		const windowCoveredPreviousTail =
+			knownEndIndex >= prevTotalRef.current ||
+			(liveTailEndRef.current !== undefined && knownEndIndex >= liveTailEndRef.current)
 		const durableTailMayHaveReplacedPartial =
 			total > prevTotalRef.current && knownEndIndex === total && localTailMessage?.partial === true
-		if (durableTailMayHaveReplacedPartial && !refetchLockRef.current) {
-			const scheduledTaskViewKey = currentTaskViewKeyRef.current
-			refetchLockRef.current = true
-			fetchCurrentMessages(-1, 200)
-				.then((resp) => {
-					if (currentTaskViewKeyRef.current !== scheduledTaskViewKey) {
-						return
-					}
-					const converted = resp.messages.map((message) => convertProtoToClineMessage(message))
-					const startIndex = Math.max(0, resp.startIndex)
-					const reconciled = applyFetchedMessageWindow(
-						clineMessagesRef.current,
-						firstItemIndexRef.current,
-						converted,
-						startIndex,
-						Number(resp.totalCount ?? 0),
-					)
-					commitMessageWindow(reconciled.messages, reconciled.startIndex)
-				})
-				.catch(() => {})
-				.finally(() => {
-					if (currentTaskViewKeyRef.current === scheduledTaskViewKey) refetchLockRef.current = false
-				})
-		} else if (knownEndIndex < total && windowCoveredPreviousTail && !refetchLockRef.current) {
-			const scheduledTaskViewKey = currentTaskViewKeyRef.current
-			refetchLockRef.current = true
-			fetchCurrentMessages(knownEndIndex, Math.min(200, total - knownEndIndex))
-				.then((resp) => {
-					if (currentTaskViewKeyRef.current !== scheduledTaskViewKey) {
-						return
-					}
-					const converted = resp.messages.map((message) => convertProtoToClineMessage(message))
-					const startIndex = Math.max(0, resp.startIndex)
-					const reconciled = applyFetchedMessageWindow(
-						clineMessagesRef.current,
-						firstItemIndexRef.current,
-						converted,
-						startIndex,
-						Number(resp.totalCount ?? 0),
-					)
-					commitMessageWindow(reconciled.messages, reconciled.startIndex)
-				})
-				.catch(() => {})
-				.finally(() => {
-					if (currentTaskViewKeyRef.current === scheduledTaskViewKey) refetchLockRef.current = false
-				})
+		const totalShrank = total < prevTotalRef.current
+		if (totalShrank) {
+			messageFetchGenerationRef.current++
+			refetchLockRef.current = false
+			inFlightInteractionFetchRef.current = undefined
 		}
-		// Refetch when the local window can no longer be reconciled from state
-		// alone: the total shrank, or it claims more messages than exist because
-		// a restore truncated the tail and appended replacements.
-		// Delayed by 200ms via cancelStabilizeTimerRef so rapid state changes
-		// (remove partials, postState, total update) settle before triggering
-		// a Virtuoso data swap that causes layout jitter.
-		const windowContradictsTotal =
-			total < prevTotalRef.current || isMessageWindowOverfull(clineMessages.length, firstItemIndex, total)
-		if (prevTotalRef.current !== 0 && windowContradictsTotal && clineMessages.length > 0 && !refetchLockRef.current) {
-			if (cancelStabilizeTimerRef.current) {
-				clearTimeout(cancelStabilizeTimerRef.current)
-			}
-			const scheduledTaskViewKey = currentTaskViewKeyRef.current
+		const windowContradictsTotal = totalShrank || isMessageWindowOverfull(clineMessages.length, firstItemIndex, total)
+		if (prevTotalRef.current !== 0 && windowContradictsTotal && !refetchLockRef.current) {
+			if (cancelStabilizeTimerRef.current) clearTimeout(cancelStabilizeTimerRef.current)
+			const generation = messageFetchGenerationRef.current
+			// Reserve the lock during stabilization, too, so intervening state
+			// updates cannot schedule a competing replacement.
+			refetchLockRef.current = true
 			cancelStabilizeTimerRef.current = setTimeout(() => {
 				cancelStabilizeTimerRef.current = null
-				if (currentTaskViewKeyRef.current !== scheduledTaskViewKey) {
+				if (generation !== messageFetchGenerationRef.current || currentTaskViewKeyRef.current !== currentTaskViewKey)
 					return
-				}
-				refetchLockRef.current = true
-				fetchCurrentMessages(-1, 200)
-					.then((resp) => {
-						if (currentTaskViewKeyRef.current !== scheduledTaskViewKey) {
-							return
-						}
-						const converted = resp.messages.map((m) => convertProtoToClineMessage(m))
-						const startIndex = Math.max(0, resp.startIndex)
-						commitMessageWindow(converted, startIndex)
-					})
-					.catch(() => {})
-					.finally(() => {
-						if (currentTaskViewKeyRef.current === scheduledTaskViewKey) refetchLockRef.current = false
-					})
+				void fetchLiveTail(-1, true)
 			}, 200)
+		} else if (durableTailMayHaveReplacedPartial && !refetchLockRef.current) {
+			void fetchLiveTail(-1)
+		} else if (
+			(knownEndIndex < total ||
+				(liveTailEndRef.current !== undefined &&
+					knownEndIndex >= liveTailEndRef.current &&
+					(liveTailCursorRef.current ?? total) < total)) &&
+			windowCoveredPreviousTail &&
+			!refetchLockRef.current
+		) {
+			// Realtime messages may be ahead of the last durable boundary and
+			// cannot prove that intervening persisted rows were delivered.
+			void fetchLiveTail(
+				Math.min(
+					knownEndIndex,
+					prevTotalRef.current,
+					liveTailEndRef.current !== undefined && knownEndIndex >= liveTailEndRef.current
+						? (liveTailCursorRef.current ?? knownEndIndex)
+						: knownEndIndex,
+				),
+			)
 		}
 
 		const activeInteraction = projectedInteraction
@@ -1225,6 +1251,7 @@ export const ExtensionStateContextProvider: React.FC<{
 		// A retry re-runs this effect, so the cleanup above tears down the
 		// failed stream before a fresh subscription replaces it.
 		hydrationAttempt,
+		commitMessageWindow,
 	])
 
 	// Safety net for task switches while HistoryView is open. The primary
