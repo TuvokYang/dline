@@ -1,3 +1,6 @@
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import os from "node:os"
+import path from "node:path"
 import type { ClineMessage } from "@shared/ExtensionMessage"
 import { describe, expect, it, vi } from "vitest"
 import { type TaskMessageResourcePorts, TaskMessageResources } from "./TaskMessageResources"
@@ -124,6 +127,56 @@ describe("TaskMessageResources", () => {
 		expect(apiConversation.close).toHaveBeenCalledOnce()
 		await expect(resources.fetchMessages(-1, 2)).rejects.toThrow("closed")
 	})
+
+	it("releases the display reader before opening the writable UI store", async () => {
+		const { resources, ports, window } = fixture()
+		await resources.openDisplay()
+		const released = deferred<undefined>()
+		window.close.mockReturnValueOnce(released.promise)
+
+		const admission = resources.openExecution()
+		await vi.waitFor(() => expect(window.close).toHaveBeenCalledOnce())
+		expect(ports.openUiMessages).not.toHaveBeenCalled()
+
+		released.resolve(undefined)
+		await admission
+		expect(ports.openUiMessages).toHaveBeenCalledOnce()
+		await resources.close()
+	})
+
+	it.runIf(process.platform === "win32")(
+		"admits a duplicate complete history after releasing the Windows display-file handle",
+		async () => {
+			const previousDocsDir = process.env.DLINE_DOCS_DIR
+			const docsDir = await mkdtemp(path.join(os.tmpdir(), "dline-task-message-resources-"))
+			const taskId = "windows-history-admission"
+			const taskDir = path.join(docsDir, "tasks", taskId)
+			let resources: TaskMessageResources | undefined
+			try {
+				process.env.DLINE_DOCS_DIR = docsDir
+				await mkdir(taskDir, { recursive: true })
+				await writeFile(
+					path.join(taskDir, "ui_messages.jsonl"),
+					`${[
+						JSON.stringify({ ts: 1, type: "say", say: "task", text: "task" }),
+						JSON.stringify({ ts: 2, type: "say", say: "text", text: "old", partial: false }),
+						JSON.stringify({ ts: 2, type: "say", say: "text", text: "final", partial: false }),
+					].join("\n")}\n`,
+					"utf8",
+				)
+				resources = new TaskMessageResources(taskId)
+				await resources.openDisplay()
+
+				await expect(resources.openExecution()).resolves.toBeDefined()
+				expect(resources.getDisplayMessages().map((message) => message.text)).toEqual(["task", "final"])
+			} finally {
+				await resources?.close().catch(() => undefined)
+				if (previousDocsDir === undefined) delete process.env.DLINE_DOCS_DIR
+				else process.env.DLINE_DOCS_DIR = previousDocsDir
+				await rm(docsDir, { recursive: true, force: true })
+			}
+		},
+	)
 
 	it("persists canonical asks in order without creating an execution history cache", async () => {
 		const { resources, ports } = fixture()

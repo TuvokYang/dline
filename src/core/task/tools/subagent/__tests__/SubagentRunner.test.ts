@@ -2292,6 +2292,45 @@ describe("SubagentRunner", () => {
 		assert.equal(completeTurnEndAwaitingUser.mock.calls.length, 0)
 	})
 
+	// BUGFIX-112: the Anthropic endpoint re-emits cumulative snapshots, so summing raw
+	// chunks doubled subagent input tokens. Running totals must follow the resolved delta.
+	it.each([
+		[
+			"cumulative snapshots",
+			[
+				{ type: "usage", usageMode: "snapshot", inputTokens: 10, outputTokens: 0 },
+				{ type: "usage", usageMode: "snapshot", inputTokens: 10, outputTokens: 2 },
+			],
+		],
+		[
+			"explicit deltas",
+			[
+				{ type: "usage", usageMode: "delta", inputTokens: 10, outputTokens: 1 },
+				{ type: "usage", usageMode: "delta", inputTokens: 0, outputTokens: 1 },
+			],
+		],
+	])("counts each provider token once when usage arrives as %s", async (_label, usageChunks) => {
+		const createMessage = vi.fn().mockImplementation(async function* () {
+			yield* usageChunks
+			yield {
+				type: "tool_calls",
+				function_id: "usage-once-complete",
+				tool_call: { function: { name: ClineDefaultTool.ATTEMPT, arguments: JSON.stringify({ result: "done" }) } },
+			}
+		})
+		stubSystemPrompt(false)
+		vi.spyOn(skills, "discoverSkills").mockResolvedValue([])
+		vi.spyOn(skills, "getAvailableSkills").mockReturnValue([])
+		stubApiHandler(createMessage)
+		initializeHostProvider()
+
+		const result = await new SubagentRunner(createTaskConfig(false)).run("Count usage once", () => {})
+
+		assert.equal(result.status, "completed", result.error)
+		assert.equal(result.stats.inputTokens, 10)
+		assert.equal(result.stats.outputTokens, 2)
+	})
+
 	// BUGFIX-022: retry classification is a deny-list. Only account-level failures
 	// that cannot recover by waiting short-circuit the backoff sequence.
 	it.each([

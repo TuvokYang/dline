@@ -272,6 +272,11 @@ export class TaskMessageResources {
 			await this.displayOpening
 			await Promise.allSettled(admittedReads)
 			this.assertOpen()
+			// Windows does not allow an atomic rename over a file while the bounded
+			// history reader still owns a read handle. Retire that handle before the
+			// writable store runs any compatibility normalization.
+			await this.retireDisplayWindowForExecution()
+			this.assertOpen()
 			uiMessage = await this.ports.openUiMessages(this.taskId)
 			this.assertOpen()
 			apiConversation = await this.ports.openApiConversation(this.taskId)
@@ -280,9 +285,7 @@ export class TaskMessageResources {
 			this.execution = execution
 			this.recoveryApiWindow = undefined
 			// Reads issued during admission wait on executionOpening and cannot
-			// race a full-store load or hold the retired display reader open.
-			await this.window?.close()
-			this.window = undefined
+			// race the full-store load after the display handle is retired.
 			this.latestMessages = []
 			this.latestWindowStart = undefined
 			this.titleMessage = undefined
@@ -294,6 +297,16 @@ export class TaskMessageResources {
 			await Promise.allSettled([uiMessage?.close(), apiConversation?.close()])
 			throw error
 		}
+	}
+
+	private async retireDisplayWindowForExecution(): Promise<void> {
+		const window = this.window
+		if (window) await window.close()
+		if (this.window === window) this.window = undefined
+		// A failed execution admission can reopen a fresh display window; keeping
+		// the resolved opening promise would otherwise claim that the closed reader
+		// is still available.
+		this.displayOpening = undefined
 	}
 
 	private read<T>(operation: () => Promise<T>): Promise<T> {

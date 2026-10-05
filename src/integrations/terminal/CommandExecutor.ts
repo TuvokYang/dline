@@ -488,7 +488,10 @@ export class CommandExecutor {
 			// When "Proceed While Running" is triggered, track the command in the manager
 			// Returns the log file path so the orchestrator can send it to the UI
 			// existingOutput contains all output lines captured so far
-			onProceedWhileRunning: (existingOutput: TerminalOutputLine[], timing: { startedAt: number; deadlineAt?: number }) => {
+			onProceedWhileRunning: async (
+				existingOutput: TerminalOutputLine[],
+				timing: { startedAt: number; deadlineAt?: number },
+			) => {
 				if (backgroundCommand) {
 					return {
 						backgroundCommandId: backgroundCommand.id,
@@ -553,7 +556,10 @@ export class CommandExecutor {
 					const messages = this.callbacks.getClineMessages() as Array<{ ts?: number }>
 					const commandIndex = messages.findIndex((message) => message.ts === options.commandTs)
 					if (commandIndex !== -1) {
-						void this.callbacks.updateClineMessage(commandIndex, { commandExecutionMode: "background" })
+						// Persist the canonical command mode before clearing the handoff state.
+						// Clearing publishes an immediate Task projection; starting this write
+						// without awaiting it lets that projection capture the old foreground mode.
+						await this.callbacks.updateClineMessage(commandIndex, { commandExecutionMode: "background" })
 					}
 				}
 				this.clearBackgroundHandoffState(activityId)

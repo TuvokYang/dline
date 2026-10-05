@@ -188,7 +188,8 @@ describe("responses_api_support hosted tools", () => {
 				provider_metadata: { response_id: "resp_cache_usage" },
 			},
 		])
-		expect(calculateCost.mock.calls).to.deep.equal([[{ id: "test-model" }, 1_000, 35, 300, 500]])
+		// `output_tokens` already includes `reasoning_tokens`, so cost is never charged for them twice.
+		expect(calculateCost.mock.calls).to.deep.equal([[{ id: "test-model" }, 1_000, 25, 300, 500]])
 	})
 
 	it("falls back to cache_miss_tokens for compatible Responses providers", async () => {

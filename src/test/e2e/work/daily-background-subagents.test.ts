@@ -32,7 +32,7 @@ const BACKGROUND_CHILD_CONTEXT = "Read README.md, remain active briefly, and ret
 const BACKGROUND_CHILD_RESULT = "WORK_BACKGROUND_SUBAGENT_CHILD_OK"
 const COMPLETE = "WORK_DAILY_BACKGROUND_SUBAGENTS_COMPLETE"
 const FOREGROUND_COMMAND = `node -e "console.log('WORK_FOREGROUND_COMMAND_START'); console.log('WORK_FOREGROUND_COMMAND_END')"`
-const BACKGROUND_COMMAND = `node -e "console.log('WORK_BACKGROUND_COMMAND_START'); setTimeout(()=>console.log('WORK_BACKGROUND_COMMAND_END'),12000)"`
+const BACKGROUND_COMMAND = `node -e "console.log('WORK_BACKGROUND_COMMAND_START'); setTimeout(()=>console.log('WORK_BACKGROUND_COMMAND_END'),30000)"`
 
 async function writeWorkSubagent(workspaceDir: string): Promise<void> {
 	const directory = path.join(workspaceDir, ".agents", "subagents")
@@ -149,7 +149,7 @@ e2e(
 					workdirectory: ".",
 					requires_approval: false,
 					synchronous: true,
-					timeout: 30,
+					timeout: 60,
 				},
 				expectedRequestIncludes: [HANDOFF_COMMAND_REQUEST],
 			},

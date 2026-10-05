@@ -350,6 +350,39 @@ describe("GeminiHandler", () => {
 		requestArgs.config.should.not.have.property("maxOutputTokens")
 	})
 
+	it("folds thoughts into output so thoughtsTokenCount stays a share of outputTokens", async () => {
+		const handler = new GeminiHandler({
+			profile: ApiProfile.create({ provider: "gemini", apiKey: "test-api-key", modelId: "gemini-2.5-pro" }),
+			mode: "act",
+		})
+		vi.spyOn(handler as any, "ensureClient").mockReturnValue({
+			models: {
+				generateContentStream: vi.fn().mockResolvedValue(
+					createAsyncIterable([
+						{
+							responseId: "resp-thoughts",
+							usageMetadata: {
+								promptTokenCount: 10,
+								candidatesTokenCount: 20,
+								cachedContentTokenCount: 0,
+								thoughtsTokenCount: 30,
+							},
+						},
+					]),
+				),
+			},
+		} as any)
+
+		const usage: any[] = []
+		for await (const chunk of handler.createMessage("system", [{ role: "user", content: "hi" }] as any)) {
+			if (chunk.type === "usage") usage.push(chunk)
+		}
+
+		usage.should.have.length(1)
+		usage[0].outputTokens.should.equal(50)
+		usage[0].thoughtsTokenCount.should.equal(30)
+	})
+
 	it("should emit unique tool call IDs when multiple function calls share one responseId", async () => {
 		const handler = new GeminiHandler({
 			profile: ApiProfile.create({ provider: "gemini", apiKey: "test-api-key" }),
