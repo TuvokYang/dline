@@ -17,7 +17,7 @@ import { normalizeOpenAiServiceTier } from "@shared/storage/types"
 import { calculateApiCostOpenAI } from "@utils/cost"
 import OpenAI from "openai"
 import type { ChatCompletionChunk, ChatCompletionFunctionTool, ChatCompletionTool } from "openai/resources/chat/completions"
-import { ClineStorageMessage } from "@/shared/messages/content"
+import { ClineStorageMessage, type HostedToolReplayProtocol } from "@/shared/messages/content"
 import { isO1Model } from "@/shared/resolve-prompt-profile"
 import { Logger } from "@/shared/services/Logger"
 import { ApiHandler, ApiHandlerContext, type ApiRequestOptions } from "../index"
@@ -31,7 +31,7 @@ import {
 	projectOpenAIChatPromptCache,
 	projectOpenAIResponsesPromptCache,
 } from "../transform/openai-prompt-cache"
-import { convertToOpenAIResponsesInput } from "../transform/openai-response-format"
+import { convertToOpenAIResponsesInput, declaredResponsesHostedToolNames } from "../transform/openai-response-format"
 import { convertToR1Format } from "../transform/r1-format"
 import { ApiStream } from "../transform/stream"
 import { getOpenAIToolParams, ToolCallProcessor } from "../transform/tool-call-processor"
@@ -176,10 +176,16 @@ export class OpenAiHandler implements ApiHandler {
 	}
 
 	supportsServerTool(tool: ServerTool): boolean {
-		return (
-			tool === ServerTool.WEB_SEARCH &&
-			(this.apiFormat === ApiFormat.OPENAI_RESPONSES || this.apiFormat === ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE)
-		)
+		return tool === ServerTool.WEB_SEARCH && this.usesResponsesApi()
+	}
+
+	/** Hosted Web Search calls this endpoint ran go back verbatim; Chat Completions has no hosted call to replay. */
+	getHostedToolReplayProtocol(): HostedToolReplayProtocol | undefined {
+		return this.usesResponsesApi() ? "openai_responses" : undefined
+	}
+
+	private usesResponsesApi(): boolean {
+		return this.apiFormat === ApiFormat.OPENAI_RESPONSES || this.apiFormat === ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE
 	}
 
 	/**
@@ -227,7 +233,7 @@ export class OpenAiHandler implements ApiHandler {
 		this.requestController?.abort()
 		const requestController = new AbortController()
 		this.requestController = requestController
-		if (this.apiFormat === ApiFormat.OPENAI_RESPONSES || this.apiFormat === ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE) {
+		if (this.usesResponsesApi()) {
 			try {
 				yield* this.createResponsesMessage(systemPrompt, messages, requestController, tools, options)
 			} finally {
@@ -442,7 +448,10 @@ export class OpenAiHandler implements ApiHandler {
 	): ApiStream {
 		const client = this.ensureClient()
 		const model = this.getModel()
-		const converted = convertToOpenAIResponsesInput(messages, { usePreviousResponseId: false })
+		const converted = convertToOpenAIResponsesInput(messages, {
+			usePreviousResponseId: false,
+			replayHostedTools: declaredResponsesHostedToolNames(options?.serverTools),
+		})
 		const hostedWebSearch = options?.serverTools?.includes(ServerTool.WEB_SEARCH) === true
 		const input = converted.input
 		const responseTools: OpenAI.Responses.Tool[] = (tools ?? [])

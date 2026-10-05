@@ -88,8 +88,10 @@ describe("hosted tool replay blocks", () => {
 		expect(projectInternalMessagesForProvider([assistant], { hostedToolReplayProtocol: "anthropic_messages" })).to.deep.equal(
 			[assistant],
 		)
-		expect(projectInternalMessagesForProvider([assistant])).to.deep.equal([
-			{ role: "assistant", content: [{ type: "text", text: "Summary of the page" }] },
-		])
+		const textOnly = [{ role: "assistant", content: [{ type: "text", text: "Summary of the page" }] }]
+		expect(projectInternalMessagesForProvider([assistant])).to.deep.equal(textOnly)
+		expect(projectInternalMessagesForProvider([assistant], { hostedToolReplayProtocol: "openai_responses" })).to.deep.equal(
+			textOnly,
+		)
 	})
 })

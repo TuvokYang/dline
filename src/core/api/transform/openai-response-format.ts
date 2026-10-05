@@ -1,6 +1,64 @@
 import { ResponseInput, ResponseInputMessageContentList, ResponseReasoningItem } from "openai/resources/responses/responses"
-import { ClineStorageMessage, imageSourceMediaType, imageSourceToUrl, isHostedToolBlock } from "@/shared/messages/content"
+import {
+	type ClineAssistantHostedToolBlock,
+	ClineStorageMessage,
+	imageSourceMediaType,
+	imageSourceToUrl,
+	isHostedToolBlock,
+} from "@/shared/messages/content"
+import { ServerTool } from "@/shared/proto/dline/models/metadata"
 import { getResultFunctionId, getUseFunctionId, projectChatFunctionId } from "./tool-identity-projector"
+
+/** Hosted tool that produced each replayable Responses output item type. */
+const RESPONSES_HOSTED_ITEM_TOOLS: ReadonlyMap<string, string> = new Map([["web_search_call", "web_search"]])
+
+/** Hosted tool names a Responses request declares, used to decide which stored hosted calls it may replay. */
+export function declaredResponsesHostedToolNames(serverTools?: readonly ServerTool[]): ReadonlySet<string> {
+	return new Set(serverTools?.includes(ServerTool.WEB_SEARCH) ? ["web_search"] : [])
+}
+
+/**
+ * Record one finished Responses Web Search call so later requests can send it back verbatim, as Codex does.
+ *
+ * Only the fields of the Responses `web_search_call` input item are kept (`type`, `id`, `status`, `action`).
+ * Search `results` appear only when a request opts in through `include` and are not part of the input item.
+ * Returns undefined when the item has no action, because the input item cannot be rebuilt without one.
+ */
+export function createResponsesWebSearchReplay(item: {
+	id: string
+	status?: unknown
+	action?: unknown
+}): ClineAssistantHostedToolBlock | undefined {
+	if (typeof item.action !== "object" || item.action === null) return undefined
+	return {
+		type: "hosted_tool",
+		protocol: "openai_responses",
+		blocks: [
+			{
+				type: "web_search_call",
+				id: item.id,
+				status: typeof item.status === "string" ? item.status : "completed",
+				action: item.action,
+			},
+		],
+	}
+}
+
+/**
+ * Native Responses items of one stored hosted call, or none when this request cannot replay it: the call
+ * came from another protocol, or the request does not declare the hosted tool that ran it.
+ */
+function replayableResponsesItems(
+	block: ClineAssistantHostedToolBlock,
+	replayHostedTools: ReadonlySet<string> | undefined,
+): Array<Record<string, unknown>> {
+	if (block.protocol !== "openai_responses" || !replayHostedTools?.size) return []
+	const declared = block.blocks.every((item) => {
+		const tool = typeof item.type === "string" ? RESPONSES_HOSTED_ITEM_TOOLS.get(item.type) : undefined
+		return tool !== undefined && replayHostedTools.has(tool)
+	})
+	return declared ? block.blocks : []
+}
 
 /**
  * Converts an array of ClineStorageMessage objects (extension of Anthropic format) to a ResponseInput array to use with OpenAI's Responses API.
@@ -74,7 +132,15 @@ import { getResultFunctionId, getUseFunctionId, projectChatFunctionId } from "./
  */
 export function convertToOpenAIResponsesInput(
 	_messages: ClineStorageMessage[],
-	options?: { usePreviousResponseId?: boolean },
+	options?: {
+		usePreviousResponseId?: boolean
+		/**
+		 * Hosted tool names declared by this request. A stored Responses hosted call is sent back as its
+		 * native output item only when its tool is in this set; otherwise it is dropped like any other
+		 * hosted block, so a request never carries a hosted item for a tool it does not declare.
+		 */
+		replayHostedTools?: ReadonlySet<string>
+	},
 ): {
 	input: ResponseInput
 	previousResponseId?: string
@@ -120,8 +186,8 @@ export function convertToOpenAIResponsesInput(
 			const assistantItems: any[] = []
 
 			for (const part of m.content) {
-				// Hosted replay blocks are native to another protocol; Responses input has no equivalent item.
 				if (isHostedToolBlock(part)) {
+					assistantItems.push(...replayableResponsesItems(part, options?.replayHostedTools))
 					continue
 				}
 				const responseId = part.provider_metadata?.response_id

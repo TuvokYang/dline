@@ -1182,6 +1182,52 @@ describe("OpenAiHandler", () => {
 			expect(handler.supportsServerTool(ServerTool.WEB_SEARCH)).to.equal(true)
 		})
 
+		it("replays a stored hosted web_search_call only while the request still declares hosted Web Search", async () => {
+			const createHandler = (apiFormat: ApiFormat) =>
+				new OpenAiHandler({
+					profile: ApiProfile.create({
+						provider: "openai",
+						apiKey: "test-api-key",
+						modelId: "gpt-compatible-responses",
+						openai: OpenAiProviderConfig.create({ apiFormat }),
+					}),
+					mode: "act",
+				})
+			const handler = createHandler(ApiFormat.OPENAI_RESPONSES)
+			const responsesCreate = vi.fn().mockImplementation(async () => createAsyncIterable())
+			vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
+				responses: { create: responsesCreate },
+			})
+			const webSearchCall = {
+				type: "web_search_call",
+				id: "ws_1",
+				status: "completed",
+				action: { type: "search", query: "Dline" },
+			}
+			const history: ClineStorageMessage[] = [
+				{ role: "user", content: "Search" },
+				{
+					role: "assistant",
+					content: [
+						{ type: "hosted_tool", protocol: "openai_responses", blocks: [webSearchCall] },
+						{ type: "text", text: "Found it." },
+					],
+				},
+				{ role: "user", content: "Continue" },
+			]
+
+			for (const serverTools of [[ServerTool.WEB_SEARCH], []]) {
+				for await (const _chunk of handler.createMessage("system prompt", history, [], { serverTools })) {
+				}
+			}
+
+			const [declared, undeclared] = responsesCreate.mock.calls.map((call) => call[0]?.input as any[])
+			expect(declared.filter((item) => item.type === "web_search_call")).to.deep.equal([webSearchCall])
+			expect(undeclared.some((item) => item.type === "web_search_call")).to.equal(false)
+			expect(handler.getHostedToolReplayProtocol()).to.equal("openai_responses")
+			expect(createHandler(ApiFormat.OPENAI_CHAT).getHostedToolReplayProtocol()).to.equal(undefined)
+		})
+
 		it("keeps generate_image local and does not project Hosted image options into the main Responses request", async () => {
 			const handler = new OpenAiHandler({
 				profile: ApiProfile.create({

@@ -441,8 +441,14 @@ describe("OpenAiCodexHandler hosted Web Search", () => {
 					action: { query: "Dline" },
 					results: [{ title: "Dline result", url: "https://example.com/dline" }],
 				},
+				replay: {
+					type: "hosted_tool",
+					protocol: "openai_responses",
+					blocks: [{ type: "web_search_call", id: "ws_1", status: "completed", action: { query: "Dline" } }],
+				},
 			},
 		])
+		expect(handler.getHostedToolReplayProtocol()).to.equal("openai_responses")
 	})
 
 	it("uses shared Responses stitching without duplicating snapshots and preserves replay metadata", async () => {
@@ -631,6 +637,11 @@ describe("OpenAiCodexHandler hosted Web Search", () => {
 				tool: ServerTool.WEB_SEARCH,
 				phase: "failed",
 				error: { code: "search_failed" },
+				replay: {
+					type: "hosted_tool",
+					protocol: "openai_responses",
+					blocks: [{ type: "web_search_call", id: "ws_failed", status: "failed", action: { code: "search_failed" } }],
+				},
 			},
 		])
 	})

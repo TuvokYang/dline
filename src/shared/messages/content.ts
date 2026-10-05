@@ -109,14 +109,16 @@ export interface ClineAssistantThinkingBlock extends Anthropic.ThinkingBlock, Cl
 export interface ClineAssistantRedactedThinkingBlock extends Anthropic.RedactedThinkingBlockParam, ClineSharedMessageParam {}
 
 /** Wire protocols whose provider-hosted tool blocks can be replayed verbatim on a later request. */
-export type HostedToolReplayProtocol = "anthropic_messages"
+export type HostedToolReplayProtocol = "anthropic_messages" | "openai_responses"
 
 /**
  * One completed provider-hosted tool call, kept verbatim so a later request to the protocol that ran it
- * carries the call and its result back to the model.
+ * carries the call back to the model.
  *
- * `blocks` holds the provider-native call block followed by its result block, in response order. No other
- * protocol can interpret them, so every projection for a different protocol drops the whole block.
+ * `blocks` holds the provider-native items of that call in response order: Anthropic Messages stores the
+ * `server_tool_use` block followed by its result block, OpenAI Responses stores the single output item
+ * that records the call. No other protocol can interpret them, so every projection for a different
+ * protocol drops the whole block.
  */
 export interface ClineAssistantHostedToolBlock {
 	type: "hosted_tool"
