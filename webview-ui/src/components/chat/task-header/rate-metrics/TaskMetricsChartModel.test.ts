@@ -108,13 +108,14 @@ describe("TaskMetricsChartModel", () => {
 		expect(
 			readTaskMetricsSeriesValue(point(0, { rpmBasis: TaskRateRpmBasis.TASK_RATE_RPM_BASIS_PROVIDER_DURATION }), "rpm"),
 		).toBeUndefined()
-		expect(readTaskMetricsSeriesValue(point(0), "totalTokens")).toBe(140)
-		expect(readTaskMetricsSeriesValue(point(0, { tokenCount: undefined }), "totalTokens")).toBe(140)
+		// Thoughts (5) are a share of output (20), so the total is 100 + 20 + 10 + 5.
+		expect(readTaskMetricsSeriesValue(point(0), "totalTokens")).toBe(135)
+		expect(readTaskMetricsSeriesValue(point(0, { tokenCount: undefined }), "totalTokens")).toBe(135)
 	})
 
 	it("never reports Total Tokens below a rendered token part when the active-second estimate lags", () => {
-		expect(readTaskMetricsSeriesValue(point(0, { tokenCount: 3 }), "totalTokens")).toBe(140)
-		expect(readTaskMetricsSeriesValue(point(0, { tokenCount: 900 }), "totalTokens")).toBe(140)
+		expect(readTaskMetricsSeriesValue(point(0, { tokenCount: 3 }), "totalTokens")).toBe(135)
+		expect(readTaskMetricsSeriesValue(point(0, { tokenCount: 900 }), "totalTokens")).toBe(135)
 		expect(
 			readTaskMetricsSeriesValue(
 				point(0, {

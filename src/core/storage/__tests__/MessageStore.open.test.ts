@@ -33,11 +33,10 @@ describe("message store open boundaries", () => {
 	it("opens a canonical UI JSONL file without rewriting it", async () => {
 		const taskDir = await createTaskDir("canonical-ui")
 		const filePath = path.join(taskDir, "ui_messages.jsonl")
-		const original =
-			[
-				JSON.stringify({ ts: 100, type: "say", say: "task", text: "task" }),
-				JSON.stringify({ ts: 200, type: "say", say: "reasoning", text: "thinking", partial: false }),
-			].join("\n") + "\n"
+		const original = `${[
+			JSON.stringify({ ts: 100, type: "say", say: "task", text: "task" }),
+			JSON.stringify({ ts: 200, type: "say", say: "reasoning", text: "thinking", partial: false }),
+		].join("\n")}\n`
 		await writeFile(filePath, original, "utf8")
 		const before = await stat(filePath)
 
@@ -50,16 +49,73 @@ describe("message store open boundaries", () => {
 		expect(after.mtimeMs).toBe(before.mtimeMs)
 	})
 
-	it("migrates duplicate UI timestamps once while keeping the last occurrence", async () => {
+	it("ignores superseded partial UI rows without rewriting the JSONL file", async () => {
+		const taskDir = await createTaskDir("partial-ui")
+		const filePath = path.join(taskDir, "ui_messages.jsonl")
+		const original = `${[
+			JSON.stringify({ ts: 100, type: "say", say: "reasoning", text: "partial", partial: true }),
+			JSON.stringify({ ts: 100, type: "say", say: "reasoning", text: "final", partial: false }),
+			JSON.stringify({ ts: 200, type: "say", say: "text", text: "tail" }),
+			JSON.stringify({ ts: 300, type: "say", say: "reasoning", text: "interrupted", partial: true }),
+		].join("\n")}\n`
+		await writeFile(filePath, original, "utf8")
+		const before = await stat(filePath)
+
+		const firstOpen = await UIMessage.open("partial-ui")
+		expect(firstOpen.getAll()).toEqual([
+			expect.objectContaining({ ts: 100, text: "final", partial: false }),
+			expect.objectContaining({ ts: 200, text: "tail" }),
+			expect.objectContaining({ ts: 300, text: "interrupted", partial: true }),
+		])
+		await firstOpen.close()
+
+		const secondOpen = await UIMessage.open("partial-ui")
+		expect(secondOpen.getAll()).toHaveLength(3)
+		await secondOpen.close()
+		const after = await stat(filePath)
+
+		expect(await readFile(filePath, "utf8")).toBe(original)
+		expect(after.mtimeMs).toBe(before.mtimeMs)
+	})
+
+	it("canonicalizes projected partial rows when a later durable update requires a rewrite", async () => {
+		const taskDir = await createTaskDir("partial-ui-update")
+		const filePath = path.join(taskDir, "ui_messages.jsonl")
+		await writeFile(
+			filePath,
+			`${[
+				JSON.stringify({ ts: 100, type: "say", say: "reasoning", text: "partial", partial: true }),
+				JSON.stringify({ ts: 100, type: "say", say: "reasoning", text: "final", partial: false }),
+				JSON.stringify({ ts: 200, type: "say", say: "text", text: "tail" }),
+			].join("\n")}\n`,
+			"utf8",
+		)
+
+		const store = await UIMessage.open("partial-ui-update")
+		await store.updateMessage(0, { text: "updated" })
+		await store.flush()
+		await store.close()
+
+		const persisted = (await readFile(filePath, "utf8"))
+			.split(/\r?\n/)
+			.filter(Boolean)
+			.map((line) => JSON.parse(line) as { ts: number; text?: string; partial?: boolean })
+		expect(persisted).toEqual([
+			expect.objectContaining({ ts: 100, text: "updated", partial: false }),
+			expect.objectContaining({ ts: 200, text: "tail" }),
+		])
+	})
+
+	it("migrates duplicate complete UI timestamps once while keeping the last occurrence", async () => {
 		const taskDir = await createTaskDir("duplicate-ui")
 		const filePath = path.join(taskDir, "ui_messages.jsonl")
 		await writeFile(
 			filePath,
-			[
-				JSON.stringify({ ts: 100, type: "say", say: "reasoning", text: "partial", partial: true }),
+			`${[
+				JSON.stringify({ ts: 100, type: "say", say: "reasoning", text: "old", partial: false }),
 				JSON.stringify({ ts: 100, type: "say", say: "reasoning", text: "final", partial: false }),
 				JSON.stringify({ ts: 200, type: "say", say: "text", text: "tail" }),
-			].join("\n") + "\n",
+			].join("\n")}\n`,
 			"utf8",
 		)
 

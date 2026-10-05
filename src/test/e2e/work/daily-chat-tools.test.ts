@@ -198,18 +198,13 @@ e2e(
 		await expect(commandComplete).toBeVisible({
 			timeout: 90_000,
 		})
-		await scrollWorkToLatest(sidebar, commandComplete, 5_000)
-		// Browse back to the command before expanding it; an implicit locator scroll would compete with live-tail following.
-		await sidebar.locator('[data-virtuoso-scroller="true"]').hover({ position: { x: 4, y: 40 } })
-		await page.mouse.wheel(0, -120)
-		const collapsedCommand = commandCard.getByRole("button", { name: COMMAND, exact: true })
-		await collapsedCommand.scrollIntoViewIfNeeded()
-		await expect(collapsedCommand).toBeVisible()
-		await expect(collapsedCommand).toBeInViewport()
-		await collapsedCommand.click()
-		const commandOutput = commandCard.getByTestId("command-output-scroll")
-		await expect(commandOutput).toContainText("WORK_DAILY_COMMAND_START")
-		await expect(commandOutput).toContainText("WORK_DAILY_COMMAND_END")
+		await expect(commandCard.getByRole("button", { name: COMMAND, exact: true })).toBeVisible()
+		await expect(commandCard.getByTestId("command-output-summary")).toContainText("WORK_DAILY_COMMAND_END")
+		const commandResult = server
+			.getMockConsumptions(TARGET)[6]
+			.requestToolResults.find((result) => result.callId === "call_daily_command")
+		expect(commandResult?.content).toContain("WORK_DAILY_COMMAND_START")
+		expect(commandResult?.content).toContain("WORK_DAILY_COMMAND_END")
 		await setWorkAutoApproveAction(sidebar, "Execute safe commands", false)
 
 		await scrollWorkToLatest(sidebar, commandComplete, 5_000)

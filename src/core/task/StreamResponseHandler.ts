@@ -408,7 +408,9 @@ class ReasoningHandler {
 			return null
 		}
 
-		if (!this.pendingReasoning.summary.length && !this.pendingReasoning.content) {
+		// A signature alone is a complete Anthropic thinking block: the provider returned the
+		// reasoning without readable text, and the block must still be replayed unmodified.
+		if (!this.pendingReasoning.summary.length && !this.pendingReasoning.content && !this.pendingReasoning.signature) {
 			return null
 		}
 

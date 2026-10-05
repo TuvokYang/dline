@@ -329,6 +329,10 @@ function openAiProfile(
 							supportsImages: true,
 							supportsPromptCache: true,
 							supportsTools: true,
+							// A custom model grants no reasoning by default; the mock declares the
+							// effort capability its highReasoning() configuration relies on.
+							supportsReasoning: true,
+							thinking: { supported: true, mode: "effort", effortLevels: ["none", "low", "medium", "high"] },
 						},
 						pricing: {
 							inputPrice: 1,

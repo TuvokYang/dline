@@ -1157,7 +1157,8 @@ export class SapAiCoreHandler implements ApiHandler {
 								yield {
 									type: "usage",
 									inputTokens: promptTokens - cacheReadTokens,
-									outputTokens,
+									// Gemini `candidatesTokenCount` excludes thoughts; the stream contract counts them in output.
+									outputTokens: outputTokens + thoughtsTokenCount,
 									thoughtsTokenCount,
 									cacheReadTokens,
 									cacheWriteTokens: 0,
