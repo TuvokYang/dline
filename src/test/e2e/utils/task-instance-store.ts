@@ -5,12 +5,22 @@ import type { TaskActivityRecord } from "@shared/task-activity"
 import { TaskActivityRow } from "@/core/storage/activities/TaskActivityRow"
 import { LEGACY_ACTIVITY_FILE } from "@/core/storage/activities/TaskActivityRowStore"
 import { asc } from "@/core/storage/backend/api/UnifyStoreQuery"
-import { InstanceDatabase, InstanceLayout, openInstanceStorage } from "@/core/storage/instance"
+import { InstanceDatabase, InstanceLayout, instanceDatabaseExists, openInstanceStorage } from "@/core/storage/instance"
 import { openUiMessageRows } from "@/core/storage/messages/openUiMessageRows"
 import { readUiMessages } from "@/core/storage/messages/readUiMessages"
 import { readJournalConversation } from "@/core/task/conversation/JournalConversationReader"
+import {
+	type MaterializedPayload,
+	ProviderJournalMessageMaterializer,
+} from "@/core/task/executors/provider/service/ProviderJournalMessageMaterializer"
 import type { KernelBlock } from "@/core/task/kernel"
-import { type JournalSource, openTaskJournalStores, type TaskJournalStores } from "@/core/task/stores"
+import {
+	type JournalEntry,
+	type JournalSource,
+	openTaskJournalStores,
+	rebuildJournalProjection,
+	type TaskJournalStores,
+} from "@/core/task/stores"
 import { FileTaskStateVault } from "@/core/task/stores/FileTaskStateVault"
 import { decodeTaskPayload, encodeTaskPayload } from "@/core/task/stores/payload/TaskPayloadCodec"
 import type {
@@ -94,14 +104,66 @@ export async function readTaskConversation(dlineDocsDir: string, taskId: string)
 }
 
 /**
- * The provider conversation as one JSON line per message, the shape the legacy history file had.
+ * A journal entry as the history file saw it.
  *
- * `ts` is left out: the journal stamps each message when it renders it, so two
- * reads of an unchanged conversation differ only there. Without it, equal text
- * means the task holds the same conversation.
+ * Compaction and context-window truncation never removed messages from
+ * `api_conversation_history.jsonl`; they only changed what later requests
+ * carried. In the journal both are a `supersede_range` overlay. Kept as a
+ * checkpoint marker the overlay still holds its position, so a later rewind or
+ * boundary that names it resolves, but it hides nothing and shows no summary.
+ */
+function asHistoryEntry(entry: JournalEntry): JournalEntry {
+	return entry.kind === "supersede_range" ? { ...entry, kind: "checkpoint_marker" } : entry
+}
+
+/**
+ * The provider history of a task, the way the legacy history file held it.
+ *
+ * Rewinds, tombstones and truncation boundaries still apply, as a checkpoint
+ * restore rewrote the file; summaries and truncation notices do not, so the
+ * spans they replaced for the model stay in the history.
+ */
+async function readJournalHistory(root: string): Promise<ClineStorageMessage[] | undefined> {
+	const layout = new InstanceLayout(root)
+	if (!(await instanceDatabaseExists(layout, InstanceDatabase.Journal))) return undefined
+	const storage = openInstanceStorage(root)
+	try {
+		const { journal, payloads } = await openTaskJournalStores(
+			await storage.openDatabase(InstanceDatabase.Journal, E2E_READER),
+		)
+		const entries = (await journal.read()).map(asHistoryEntry)
+		if (entries.length === 0) return undefined
+		const materializer = new ProviderJournalMessageMaterializer(payloads)
+		const rendered: Array<MaterializedPayload & { readonly payloadRef: string }> = []
+		for (const entry of rebuildJournalProjection(entries).visibleMessages) {
+			if (entry.payloadRef)
+				rendered.push({ payloadRef: entry.payloadRef, ...(await materializer.materializeEntry(entry.payloadRef)) })
+		}
+		const replaced = new Set(rendered.flatMap((item) => [...(item.supersededPayloadRefs ?? [])]))
+		return rendered.filter((item) => !replaced.has(item.payloadRef)).flatMap((item) => [...item.messages])
+	} finally {
+		await storage.close()
+	}
+}
+
+/**
+ * The provider history as one JSON line per message, the shape the legacy history file had.
+ *
+ * Unlike {@link readTaskConversation}, this is the history rather than the
+ * model's current view: a span a summary replaced stays, and the summary does
+ * not appear. `ts` is left out: the journal stamps each message when it renders
+ * it, so two reads of an unchanged history differ only there. Without it, equal
+ * text means the task holds the same history.
  */
 export async function readTaskConversationText(dlineDocsDir: string, taskId: string): Promise<string> {
-	const messages = await readTaskConversation(dlineDocsDir, taskId)
+	const root = taskRoot(dlineDocsDir, taskId)
+	let history: ClineStorageMessage[] | undefined
+	try {
+		history = await readJournalHistory(root)
+	} catch {
+		// A journal the extension is still creating reads as absent until its first commit.
+	}
+	const messages = history ?? (await readLegacyConversation(root))
 	const lines = messages.map(({ ts: _renderedAt, ...message }) => JSON.stringify(message))
 	return lines.length === 0 ? "" : `${lines.join("\n")}\n`
 }
