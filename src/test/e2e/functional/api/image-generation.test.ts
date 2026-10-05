@@ -263,7 +263,10 @@ e2e(
 			expect(hostedImageConsumptions()).toHaveLength(0)
 			await expect(sidebar.getByText("E2E_IMAGE_REJECTED_OK", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
 
-			await sidebar.getByRole("button", { name: "Close Task", exact: true }).click()
+			const closeTask = sidebar.getByRole("button", { name: "Close Task", exact: true })
+			await closeTask.click()
+			// The chat input exists on both views; a send before the home view renders targets the closing task.
+			await expect(closeTask).toHaveCount(0)
 			await sendTask(sidebar, approvedTask)
 			await expect(pendingCard.getByText("Dline wants to generate an image", { exact: true })).toBeVisible({
 				timeout: 60_000,

@@ -401,7 +401,9 @@ function claudeCodeProfile(id: string, name: string, baseUrl: string): StoredApi
 		name,
 		provider: "claude-code",
 		baseUrl,
-		modelId: "claude-sonnet-4-5-20250929",
+		// Must stay in the Claude Code catalog: an unlisted model declares no native
+		// tool support, so the request would silently fall back to XML tools.
+		modelId: "claude-sonnet-4-6",
 		usedFor: ["act", "plan", "subagents"],
 		enabled: true,
 		claudeCode: {},
