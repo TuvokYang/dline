@@ -22,6 +22,7 @@ import {
 	ClineStorageMessage,
 	ClineTextContentBlock,
 	ClineUserContent,
+	projectInternalMessagesForProvider,
 } from "@shared/messages"
 import { resolvePromptProfile } from "@shared/resolve-prompt-profile"
 import { Logger } from "@shared/services/Logger"
@@ -1033,6 +1034,9 @@ export class SubagentRunner {
 				let assistantText = ""
 				let assistantTextSignature: string | undefined
 				let requestId: string | undefined
+				// Completed provider-hosted calls (web search/fetch results) the endpoint needs back
+				// verbatim on later requests; without them the subagent loses what it just looked up.
+				const hostedToolBlocks: ClineAssistantContent[] = []
 				const countedHostedServerToolIds = new Set<string>()
 				// Both a provider-sent `failed` phase and a force-close from
 				// `finalizeOpen` emit through this same callback, so collecting here
@@ -1107,6 +1111,7 @@ export class SubagentRunner {
 						assistantText = ""
 						assistantTextSignature = undefined
 						requestId = undefined
+						hostedToolBlocks.length = 0
 					},
 					onProgress,
 					() =>
@@ -1194,6 +1199,7 @@ export class SubagentRunner {
 								break
 							case "server_tool": {
 								requestId = requestId ?? chunk.provider_metadata?.response_id
+								if (chunk.replay) hostedToolBlocks.push(chunk.replay)
 								await activeHostedServerToolLifecycle.consume(chunk)
 								break
 							}
@@ -1354,6 +1360,8 @@ export class SubagentRunner {
 				if (thinkingBlock) {
 					assistantContent.push({ ...thinkingBlock })
 				}
+				// Hosted calls ran before the visible answer, so they precede it in the stored turn.
+				assistantContent.push(...hostedToolBlocks)
 				if (assistantText.trim().length > 0) {
 					onProgress({ event: { kind: "assistant_message", phase: "final", text: assistantText } })
 					assistantContent.push({
@@ -1883,14 +1891,20 @@ export class SubagentRunner {
 				model: modelId,
 				source: "subagent" as const,
 			}
+			// Same endpoint projection as the parent task: hosted blocks only reach the protocol that
+			// can replay them, and attached PDFs only reach endpoints that read them natively.
+			const providerConversation = projectInternalMessagesForProvider(truncatedConversation, {
+				hostedToolReplayProtocol: api.getHostedToolReplayProtocol?.(),
+				documentInput: api.getDocumentInputLimits?.(),
+			})
 			await recordProviderAdapterInput(roundContext, {
 				systemPrompt,
-				messages: truncatedConversation,
+				messages: providerConversation,
 				tools: nativeTools,
 			})
 			const providerStream = recordProviderAdapterOutput(
 				roundContext,
-				api.createMessage(systemPrompt, truncatedConversation, nativeTools, {
+				api.createMessage(systemPrompt, providerConversation, nativeTools, {
 					serverTools: webSearchRoutingPlan.serverTools,
 					retryOwner: "subagent",
 				}),

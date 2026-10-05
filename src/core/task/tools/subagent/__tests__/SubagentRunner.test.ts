@@ -717,6 +717,120 @@ describe("SubagentRunner", () => {
 		expect(config.coordinator.getHandler).not.toHaveBeenCalledWith(ClineDefaultTool.WEB_SEARCH)
 	})
 
+	describe("hosted tool replay", () => {
+		const hostedReplay = {
+			type: "hosted_tool",
+			protocol: "anthropic_messages",
+			blocks: [
+				{ type: "server_tool_use", id: "srvtoolu_1", name: "web_search", input: { query: "latest Dline docs" } },
+				{ type: "web_search_tool_result", tool_use_id: "srvtoolu_1", content: [{ title: "Dline docs" }] },
+			],
+		}
+
+		/** First request searches and answers without a tool call; the second completes. */
+		function searchThenComplete() {
+			return vi
+				.fn()
+				.mockImplementationOnce(async function* () {
+					yield {
+						type: "server_tool",
+						function_id: "srv-search-replay",
+						tool: ServerTool.WEB_SEARCH,
+						phase: "started",
+						input: { query: "latest Dline docs" },
+					}
+					yield {
+						type: "server_tool",
+						function_id: "srv-search-replay",
+						tool: ServerTool.WEB_SEARCH,
+						phase: "completed",
+						result: [{ title: "Dline docs" }],
+						replay: hostedReplay,
+					}
+					yield { type: "text", text: "The docs say X." }
+				})
+				.mockImplementation(async function* () {
+					yield {
+						type: "tool_calls",
+						function_id: "complete-after-replay",
+						tool_call: {
+							function: { name: ClineDefaultTool.ATTEMPT, arguments: JSON.stringify({ result: "done" }) },
+						},
+					}
+				})
+		}
+
+		async function runWithReplayProtocol(createMessage: ReturnType<typeof vi.fn>, protocol: string | undefined) {
+			stubSystemPrompt(false)
+			vi.spyOn(skills, "discoverSkills").mockResolvedValue([])
+			vi.spyOn(skills, "getAvailableSkills").mockReturnValue([])
+			vi.spyOn(coreApi, "buildApiHandler").mockReturnValue({
+				abort: vi.fn(),
+				getProviderId: () => "anthropic",
+				supportsServerTool: (tool: ServerTool) => tool === ServerTool.WEB_SEARCH,
+				getHostedToolReplayProtocol: () => protocol,
+				getModel: () => ({
+					id: "anthropic/claude-sonnet-4.5",
+					info: {
+						contextWindow: 200_000,
+						apiFormats: [ApiFormat.ANTHROPIC_CHAT],
+						supportsPromptCache: true,
+						capabilities: {
+							contextWindow: 200_000,
+							supportsImages: false,
+							supportsPromptCache: true,
+							supportsTools: true,
+							tools: [ServerTool.WEB_SEARCH],
+						},
+					},
+				}),
+				createMessage,
+			} as never)
+			initializeHostProvider()
+			return new SubagentRunner(createTaskConfig(false, { clineWebToolsEnabled: true }), "web-researcher", {
+				name: "web-researcher",
+				description: "Researches current information on the web.",
+				tools: [ClineDefaultTool.WEB_SEARCH, ClineDefaultTool.ATTEMPT],
+				systemPrompt: "",
+			}).run("Search remotely", () => {})
+		}
+
+		function assistantBlocksOfLaterRequest(createMessage: ReturnType<typeof vi.fn>) {
+			const messages = createMessage.mock.calls[1][1] as Array<{ role: string; content: unknown }>
+			return messages
+				.filter((message) => message.role === "assistant" && Array.isArray(message.content))
+				.flatMap((message) => message.content as Array<{ type: string }>)
+		}
+
+		it("replays the completed hosted search to the endpoint that ran it, before the answer text", async () => {
+			const createMessage = searchThenComplete()
+
+			const result = await runWithReplayProtocol(createMessage, "anthropic_messages")
+
+			assert.equal(result.status, "completed", result.error)
+			const blocks = assistantBlocksOfLaterRequest(createMessage)
+			const hostedIndex = blocks.findIndex((block) => block.type === "hosted_tool")
+			const textIndex = blocks.findIndex(
+				(block) => block.type === "text" && (block as { text?: string }).text === "The docs say X.",
+			)
+			expect(blocks[hostedIndex]).toEqual(hostedReplay)
+			expect(textIndex).toBeGreaterThan(hostedIndex)
+		})
+
+		it("drops hosted blocks for an endpoint that cannot replay their protocol", async () => {
+			const createMessage = searchThenComplete()
+
+			const result = await runWithReplayProtocol(createMessage, undefined)
+
+			assert.equal(result.status, "completed", result.error)
+			const blocks = assistantBlocksOfLaterRequest(createMessage)
+			expect(blocks.some((block) => block.type === "hosted_tool")).toBe(false)
+			expect(blocks.some((block) => block.type === "text" && (block as { text?: string }).text === "The docs say X.")).toBe(
+				true,
+			)
+		})
+	})
+
 	it.each([
 		{ allowed: [ClineDefaultTool.WEB_FETCH], serverTools: [ServerTool.WEB_FETCH] },
 		{ allowed: [ClineDefaultTool.WEB_SEARCH], serverTools: [ServerTool.WEB_SEARCH] },
