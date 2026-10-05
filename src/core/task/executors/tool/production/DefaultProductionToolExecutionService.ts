@@ -9,6 +9,7 @@ import type { ToolInvocationEnvelope } from "../../../stores/payload/TaskPayload
 import { normalizeToolExecutionResult, type ToolPostCommitDirective } from "../../../tools/ToolExecutionResult"
 import type { ToolExecutorCoordinator } from "../../../tools/ToolExecutorCoordinator"
 import type { TaskConfig } from "../../../tools/types/TaskConfig"
+import { ToolDisplayUtils } from "../../../tools/utils/ToolDisplayUtils"
 import { ToolResultUtils } from "../../../tools/utils/ToolResultUtils"
 import type { ProductionToolExecutionService } from "../ProductionToolAdapter"
 import type { ToolDomainSurface } from "../ToolDomainSurface"
@@ -98,21 +99,32 @@ async function presentUnadvertisedHostedWebSearch(
 	return message
 }
 
+/**
+ * Serialize what the call returned as the result the next request carries.
+ *
+ * A string result opens with the call's description, as main sends it: the
+ * description names what the call acted on, so results with the same text -
+ * two copies of one file - stay distinct to the model and to the prefix cache.
+ */
 function serializeResult(
 	invocation: ToolInvocationEnvelope,
 	response: ClineToolResponseContent,
+	description: string,
 	failed = false,
 ): ProductionToolExecutionResult {
+	const described = typeof response === "string"
 	return {
 		content: serializeDurableToolResult(
 			{
 				type: "tool_result",
 				function_id: invocation.functionId,
 				dline_tid: invocation.dlineTid,
-				content: ToolResultUtils.boundContent(response),
+				content: ToolResultUtils.boundContent(
+					described ? ToolResultUtils.describeTextResult(description, response) : response,
+				),
 				...(failed ? { is_error: true } : {}),
 			},
-			toolResultReplayOf(invocation),
+			toolResultReplayOf(invocation, described),
 		),
 		...(failed ? { failed: true } : {}),
 	}
@@ -154,6 +166,7 @@ export class DefaultProductionToolExecutionService implements ProductionToolExec
 			(message) => message.interactionId === `approval:${input.invocation.dlineTid}`,
 		)
 		if (approvalAnchor) block.ts = approvalAnchor.ts
+		const description = ToolDisplayUtils.getToolDescription(block, this.options.runtime.coordinator)
 		if (
 			input.invocation.isNativeToolCall &&
 			input.invocation.toolName === ClineDefaultTool.WEB_SEARCH &&
@@ -161,12 +174,12 @@ export class DefaultProductionToolExecutionService implements ProductionToolExec
 		) {
 			const fallback = canFallbackUnadvertisedWebSearch(config)
 			const message = await presentUnadvertisedHostedWebSearch(config, block, fallback, config.webSearchRoutingPlan.mode)
-			if (!fallback) return serializeResult(input.invocation, formatResponse.toolError(message), true)
+			if (!fallback) return serializeResult(input.invocation, formatResponse.toolError(message), description, true)
 			config = createLocalWebSearchFallbackConfig(config)
 		}
 		const result = normalizeToolExecutionResult(await this.options.runtime.execute(config, block))
 		return {
-			...serializeResult(input.invocation, result.response),
+			...serializeResult(input.invocation, result.response, description),
 			...(result.postCommit === undefined ? {} : { postCommit: result.postCommit }),
 		}
 	}

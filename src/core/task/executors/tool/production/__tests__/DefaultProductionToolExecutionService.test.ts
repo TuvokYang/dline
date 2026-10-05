@@ -22,7 +22,7 @@ const INVOCATION: ToolInvocationEnvelope = {
 /** A handler runtime whose gate refuses every call, as the central explicit-only gate does. */
 function refusingRuntime(): ProductionToolHandlerRuntime {
 	return {
-		coordinator: {},
+		coordinator: { getHandler: () => undefined },
 		execute: async () => REFUSAL,
 		restoreSubagentRetry: async () => false,
 	} as unknown as ProductionToolHandlerRuntime
@@ -54,12 +54,13 @@ describe("DefaultProductionToolExecutionService", () => {
 	it("persists the result of a recorded call as a result paired with that call", async () => {
 		const content = await execute(INVOCATION)
 
+		// A string result opens with the call it answers, as main sends it.
 		expect(replayDurableToolResult(content)).toEqual([
 			{
 				type: "tool_result",
 				function_id: "dline_function_01",
 				dline_tid: "dline_tid_01",
-				content: REFUSAL,
+				content: `[summarize_task] Result:\n${REFUSAL}`,
 			},
 		])
 	})
@@ -72,7 +73,7 @@ describe("DefaultProductionToolExecutionService", () => {
 		const service = new DefaultProductionToolExecutionService({
 			config: { create: () => ({}) as TaskConfig },
 			runtime: {
-				coordinator: {},
+				coordinator: { getHandler: () => undefined },
 				execute: async () => reply,
 				restoreSubagentRetry: async () => false,
 			} as unknown as ProductionToolHandlerRuntime,
@@ -86,7 +87,7 @@ describe("DefaultProductionToolExecutionService", () => {
 
 		const [result] = replayDurableToolResult(content) ?? []
 		const text = result?.type === "tool_result" && typeof result.content === "string" ? result.content : ""
-		expect(text.startsWith("<feedback>\n")).toBe(true)
+		expect(text.startsWith("[qna_respond] Result:\n<feedback>\n")).toBe(true)
 		expect(text).toContain("[FILE TRUNCATED:")
 		expect(Buffer.byteLength(text, "utf8")).toBeLessThanOrEqual(MAX_TOOL_RESULT_TEXT_BYTES)
 	})
@@ -94,7 +95,7 @@ describe("DefaultProductionToolExecutionService", () => {
 	it("reuses the manual approval anchor timestamp for the handler lifecycle row", async () => {
 		let receivedPresentationTs: number | undefined
 		const runtime = {
-			coordinator: {},
+			coordinator: { getHandler: () => undefined },
 			execute: async (_config: TaskConfig, block: { ts?: number }) => {
 				receivedPresentationTs = block.ts
 				return REFUSAL

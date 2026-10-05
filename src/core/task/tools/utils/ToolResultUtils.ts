@@ -98,6 +98,17 @@ export class ToolResultUtils {
 	 * can by itself push the conversation past the window it was sized for.
 	 * Non-text blocks are kept as they are.
 	 */
+	/**
+	 * The text a tool's string result is sent as: the call, then what it returned.
+	 *
+	 * The description names what the call acted on - the file read, the command
+	 * run - so two calls that returned the same text stay distinguishable to the
+	 * model, and a provider prefix built from them does not collapse.
+	 */
+	static describeTextResult(description: string, text: string): string {
+		return `${description} Result:\n${text || "(tool did not return anything)"}`
+	}
+
 	static boundContent(content: ToolResponse): ToolResponse {
 		return typeof content === "string"
 			? truncateContent(content, MAX_TOOL_RESULT_TEXT_BYTES)
@@ -205,8 +216,6 @@ export class ToolResultUtils {
 		}
 
 		if (typeof content === "string") {
-			const resultText = content || "(tool did not return anything)"
-
 			// Try to get description from coordinator first, otherwise use the provided function
 			const description = coordinator
 				? (() => {
@@ -221,7 +230,10 @@ export class ToolResultUtils {
 			// replaces the older one (e.g. "SEARCH block not found"). The final
 			// result is what the AI sees, and ensureToolResultsFollowToolUse
 			// deduplicates by function_id before sending to the API.
-			const boundedResult = truncateContent(`${description} Result:\n${resultText}`, MAX_TOOL_RESULT_TEXT_BYTES)
+			const boundedResult = truncateContent(
+				ToolResultUtils.describeTextResult(description, content),
+				MAX_TOOL_RESULT_TEXT_BYTES,
+			)
 			const mergedContent = ToolResultUtils.mergeTextResult(boundedResult, pendingFeedback)
 			return storeResult(ToolResultUtils.createResult(mergedContent, block, isError))
 		}

@@ -13,11 +13,18 @@ export const DURABLE_TOOL_RESULT_VERSION = 1 as const
 export interface DurableToolResultTextReplay {
 	readonly kind: "text"
 	readonly toolName: string
+	/**
+	 * Whether the content already opens with the call's own `Result:` header.
+	 * Absent on rows written before results carried it, which get the header
+	 * from the tool name when replayed.
+	 */
+	readonly described?: boolean
 }
 
 interface PersistedTextReplay {
 	kind: "text"
 	tool_name: string
+	described?: true
 }
 
 interface DurableToolResultV1 {
@@ -61,7 +68,7 @@ function readTextReplay(value: unknown): DurableToolResultTextReplay | undefined
 	if (!isRecord(value) || value.kind !== "text" || typeof value.tool_name !== "string" || value.tool_name.length === 0) {
 		return false
 	}
-	return { kind: "text", toolName: value.tool_name }
+	return { kind: "text", toolName: value.tool_name, ...(value.described === true ? { described: true } : {}) }
 }
 
 /**
@@ -70,11 +77,15 @@ function readTextReplay(value: unknown): DurableToolResultTextReplay | undefined
  * @param invocation The tool name and the replay the provider boundary chose for the call.
  * @returns A text replay for a call that was never recorded as a tool call; otherwise undefined.
  */
-export function toolResultReplayOf(invocation: {
-	readonly toolName: string
-	readonly resultReplay?: "text"
-}): DurableToolResultTextReplay | undefined {
-	return invocation.resultReplay === "text" ? { kind: "text", toolName: invocation.toolName } : undefined
+export function toolResultReplayOf(
+	invocation: {
+		readonly toolName: string
+		readonly resultReplay?: "text"
+	},
+	described = false,
+): DurableToolResultTextReplay | undefined {
+	if (invocation.resultReplay !== "text") return undefined
+	return { kind: "text", toolName: invocation.toolName, ...(described ? { described: true } : {}) }
 }
 
 /**
@@ -93,7 +104,15 @@ export function serializeDurableToolResult(
 		dline_tid: result.dline_tid,
 		content: result.content,
 		is_error: result.is_error ?? null,
-		...(replay === undefined ? {} : { replay: { kind: replay.kind, tool_name: replay.toolName } }),
+		...(replay === undefined
+			? {}
+			: {
+					replay: {
+						kind: replay.kind,
+						tool_name: replay.toolName,
+						...(replay.described ? { described: true as const } : {}),
+					},
+				}),
 	}
 	return JSON.stringify(persisted)
 }
@@ -159,11 +178,13 @@ export function parseDurableToolResult(text: string): ClineUserToolResultContent
 }
 
 /** Present a result whose call was never recorded as prose the model can read beside its own markup. */
-function textReplayContent(block: ClineUserToolResultContentBlock, toolName: string): ClineUserContent[] {
+function textReplayContent(block: ClineUserToolResultContentBlock, replay: DurableToolResultTextReplay): ClineUserContent[] {
 	const parts = typeof block.content === "string" ? [{ type: "text" as const, text: block.content }] : block.content
 	const text = parts.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n\n")
 	const images = parts.filter((part) => part.type === "image")
-	return [{ type: "text", text: `[${toolName}] Result:\n${text || "(tool did not return anything)"}` }, ...images]
+	const described =
+		replay.described && text ? text : `[${replay.toolName}] Result:\n${text || "(tool did not return anything)"}`
+	return [{ type: "text", text: described }, ...images]
 }
 
 /**
@@ -172,7 +193,7 @@ function textReplayContent(block: ClineUserToolResultContentBlock, toolName: str
  * @returns The paired canonical result, or prose for a call that was never recorded as a tool call.
  */
 export function replayContentOf(record: DurableToolResultRecord): ClineUserContent[] {
-	return record.replay ? textReplayContent(record.block, record.replay.toolName) : [record.block]
+	return record.replay ? textReplayContent(record.block, record.replay) : [record.block]
 }
 
 /** Parse and replay a serialized durable result; undefined when it is not one. */
