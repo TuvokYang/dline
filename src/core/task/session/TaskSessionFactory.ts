@@ -44,6 +44,7 @@ export async function openActiveTaskSession(options: OpenActiveTaskSessionOption
 		owners: options.owners,
 		approvalFeedback: composed.approvalFeedback,
 		conversation: composed.conversation,
+		contextTruncation: composed.contextTruncation,
 		releases: options.releases,
 	})
 }

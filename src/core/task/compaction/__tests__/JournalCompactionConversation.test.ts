@@ -640,4 +640,77 @@ describe("JournalCompactionConversation", () => {
 
 		expect((await journal.read()).length).toBe(settled)
 	})
+
+	describe("context-window truncation", () => {
+		const NOTICE = "TRUNCATION_NOTICE"
+
+		/** Three answered questions; the last answer is the input the next request carries. */
+		async function seedAnsweredRounds(journal: InMemoryConversationJournal, payloads: MemoryPayloads) {
+			await write(journal, payloads, "intake:1", { kind: "user_input", text: "TASK_INPUT" })
+			await write(journal, payloads, "provider:1", call("round-1"), "provider")
+			await write(journal, payloads, "tool.result:1", result("round-1", [feedback("MIDDLE_REPLY")]), "tool")
+			await write(journal, payloads, "provider:2", call("round-2"), "provider")
+			await write(journal, payloads, "tool.result:2", result("round-2", [feedback("LATE_REPLY")]), "tool")
+			await write(journal, payloads, "provider:3", call("round-3"), "provider")
+			await write(journal, payloads, "tool.result:3", result("round-3", [feedback("CONTINUE_REPLY")]), "tool")
+		}
+
+		/** Every call is answered and every result answers a call, in order. */
+		function paired(messages: readonly ClineStorageMessage[]): boolean {
+			const open = new Set<string>()
+			for (const message of messages) {
+				for (const block of Array.isArray(message.content) ? message.content : []) {
+					if (block.type === "tool_use") open.add(block.function_id)
+					if (block.type === "tool_result" && !open.delete(block.function_id)) return false
+				}
+			}
+			return open.size === 0
+		}
+
+		it("keeps the opening input and the open reply, replacing three quarters of the settled history with the notice", async () => {
+			const { journal, payloads, conversation } = open()
+			await seedAnsweredRounds(journal, payloads)
+
+			const through = await conversation.truncate({ notice: NOTICE })
+
+			const messages = await visible(journal, payloads)
+			expect(through).toEqual((await journal.read()).at(-1)?.watermark)
+			expect(messages.map((message) => message.role)).toEqual(["user", "user", "assistant", "user", "assistant", "user"])
+			expect(mentions(messages[0], "TASK_INPUT")).toBe(true)
+			expect(mentions(messages[1], NOTICE)).toBe(true)
+			expect(messages.some((message) => mentions(message, "MIDDLE_REPLY"))).toBe(false)
+			expect(mentions(messages[3], "LATE_REPLY")).toBe(true)
+			expect(mentions(messages[5], "CONTINUE_REPLY")).toBe(true)
+			expect(paired(messages)).toBe(true)
+		})
+
+		it("keeps shrinking on each refusal, replacing the earlier notice, until nothing settled is left", async () => {
+			const { journal, payloads, conversation } = open()
+			await seedAnsweredRounds(journal, payloads)
+
+			await conversation.truncate({ notice: NOTICE })
+			const second = await conversation.truncate({ notice: NOTICE })
+			const messages = await visible(journal, payloads)
+
+			expect(second).toBeDefined()
+			expect(messages.map((message) => message.role)).toEqual(["user", "user", "assistant", "user"])
+			expect(messages.filter((message) => mentions(message, NOTICE))).toHaveLength(1)
+			expect(messages.some((message) => mentions(message, "LATE_REPLY"))).toBe(false)
+			expect(mentions(messages[3], "CONTINUE_REPLY")).toBe(true)
+			expect(paired(messages)).toBe(true)
+
+			const records = (await journal.read()).length
+			await expect(conversation.truncate({ notice: NOTICE })).resolves.toBeUndefined()
+			expect((await journal.read()).length).toBe(records)
+		})
+
+		it("removes nothing while only the opening input is settled", async () => {
+			const { journal, payloads, conversation } = open()
+			await write(journal, payloads, "intake:1", { kind: "user_input", text: "TASK_INPUT" })
+			await write(journal, payloads, "provider:1", call("round-1"), "provider")
+
+			await expect(conversation.truncate({ notice: NOTICE })).resolves.toBeUndefined()
+			expect(await journal.read()).toHaveLength(2)
+		})
+	})
 })

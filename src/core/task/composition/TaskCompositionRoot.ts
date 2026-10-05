@@ -1,6 +1,10 @@
 import type { CompactionSettlementObserverPort } from "../compaction/CompactionRoundBarrier"
 import { type CompactionLandingPort, CompositeCompactionLanding } from "../compaction/CompactionSummaryLanding"
-import { type CompactionConversationPort, JournalCompactionConversation } from "../compaction/JournalCompactionConversation"
+import {
+	type CompactionConversationPort,
+	type ContextTruncationPort,
+	JournalCompactionConversation,
+} from "../compaction/JournalCompactionConversation"
 import type { CompactionPort } from "../executors/compaction/CompactionCommandExecutor"
 import type {
 	CompactionFailurePresentationPort,
@@ -131,6 +135,8 @@ export interface TaskCompositionResult {
 	readonly approvalFeedback: ToolApprovalFeedbackLedger
 	/** The conversation a compaction summarizes: what the provider is actually sent. */
 	readonly conversation: CompactionConversationPort
+	/** Shrinks that same conversation when the provider refuses a request as too long. */
+	readonly contextTruncation: ContextTruncationPort
 }
 
 /** Let an observer see the run end without making compaction depend on one. */
@@ -236,5 +242,6 @@ export async function composeTask(options: TaskCompositionOptions): Promise<Task
 		payloads: opened.payloads,
 		approvalFeedback,
 		conversation,
+		contextTruncation: conversation,
 	}
 }

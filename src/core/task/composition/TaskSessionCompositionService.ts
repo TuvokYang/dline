@@ -6,6 +6,7 @@ import { LegacyInputAdapter } from "@core/input-semantics/LegacyInputAdapter"
 import { SemanticInputAdmissionService } from "@core/input-semantics/SemanticInputAdmissionService"
 import { TaskCommandExpander, TaskMentionResolver } from "@core/input-semantics/TaskEntityResolvers"
 import { TaskSemanticInputAdmission } from "@core/input-semantics/TaskSemanticInputAdmission"
+import { formatResponse } from "@core/prompts/responses"
 import type { StateManager } from "@core/storage/StateManager"
 import { isMultiRootEnabled } from "@core/workspace/multi-root-utils"
 import type { WorkspaceRootManager } from "@core/workspace/WorkspaceRootManager"
@@ -715,6 +716,14 @@ export class TaskSessionCompositionService {
 					nextPresentationId,
 					retry: providerRetry,
 					serverTools: new HostedServerToolPresenter(options.taskId, messages, nextPresentationId, realtimeMessages),
+					// With auto-compaction on, the window is managed before a request
+					// is sent; with it off, a refusal for length is the first sign
+					// the conversation no longer fits, so the oldest history is dropped.
+					contextRecovery: {
+						enabled: () => options.stateManager.getGlobalSettingsKey("useAutoCondense") !== true,
+						truncate: async (signal) =>
+							session?.contextTruncation?.truncate({ notice: formatResponse.contextTruncationNotice(), signal }),
+					},
 				}),
 				tool: new DefaultProductionToolExecutionService({ config: toolExecution, runtime: toolRuntime }),
 				toolResources: {

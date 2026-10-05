@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto"
 import { USER_CONTENT_TAGS } from "@shared/messages/constants"
 import {
 	type ClineImageContentBlock,
@@ -9,7 +10,7 @@ import {
 import { Logger } from "@shared/services/Logger"
 import { type ClineDefaultTool, CONVERSATIONAL_TOOL_NAMES } from "@shared/tools"
 import type { JournalConversationView } from "../executors/provider/service/JournalConversationView"
-import type { ConversationJournal, JournalEntry, TaskPayloadStore } from "../stores"
+import type { ConversationJournal, JournalEntry, JournalWatermark, TaskPayloadStore } from "../stores"
 import { encodeTaskPayload } from "../stores/payload/TaskPayloadCodec"
 import type {
 	CompactionContinuation,
@@ -56,6 +57,12 @@ export interface CompactionSource {
  */
 export interface CompactionConversationPort {
 	read(): Promise<CompactionSource>
+}
+
+/** Removes the oldest settled history so a request the provider refused as too long fits again. */
+export interface ContextTruncationPort {
+	/** Resolves the truncation record's position, or undefined when nothing settled can be removed. */
+	truncate(input: { readonly notice: string; readonly signal?: AbortSignal }): Promise<JournalWatermark | undefined>
 }
 
 interface ConversationItem {
@@ -412,6 +419,52 @@ function replyBoundaries(covered: readonly ConversationItem[], names: ToolNames)
 	})
 }
 
+/**
+ * Index of the first message context-window truncation may remove, or -1.
+ *
+ * What the task is stays: the opening input, or the summary that took its
+ * place. A landed summary and the exchange it replays are one journal record
+ * and a range cannot split a record, so the head extends past all of it.
+ */
+function truncationStart(items: readonly ConversationItem[], names: ToolNames): number {
+	const opening = items.findIndex((item) => opensTurn(item, names) || item.kind === "compaction_summary")
+	if (opening < 0) return -1
+	let start = opening + 1
+	while (start < items.length && items[start]?.entry === items[opening]?.entry) start++
+	return start < items.length ? start : -1
+}
+
+/** Whether each prefix pairs every call with its result and every result with its call. */
+function closedPrefixes(messages: readonly ClineStorageMessage[]): boolean[] {
+	const open = new Set<string>()
+	let orphaned = false
+	return messages.map((message) => {
+		for (const id of toolUseIds(message)) open.add(id)
+		for (const id of toolResultIds(message)) {
+			if (!open.delete(id)) orphaned = true
+		}
+		return !orphaned && open.size === 0
+	})
+}
+
+/**
+ * Where truncation ends: nearest `target`, within `[first, last]`, on an index
+ * that closes both its tool pairing and its journal entry; -1 when none does.
+ *
+ * Every call up to the cut has its result before it, so what follows answers
+ * only calls that follow it too, and the remaining conversation needs no
+ * pairing repair. A cut is looked for at or before the target first, so no
+ * more is removed than three quarters; past it only when that finds none, so
+ * a refusal is never answered by removing nothing.
+ */
+function truncationCut(items: readonly ConversationItem[], first: number, target: number, last: number): number {
+	const closed = closedPrefixes(items.map((item) => item.message))
+	const cuts = (index: number) => closed[index] === true && items[index + 1]?.entry !== items[index]?.entry
+	for (let index = Math.min(target, last); index >= first; index--) if (cuts(index)) return index
+	for (let index = target + 1; index <= last; index++) if (cuts(index)) return index
+	return -1
+}
+
 /** A reply a landed summary already carries, which a span ending on that summary has to carry on. */
 function carriedContinuation(items: readonly ConversationItem[], end: number): CompactionContinuation | undefined {
 	const next = items[end + 1]
@@ -430,7 +483,7 @@ function carriedContinuation(items: readonly ConversationItem[], end: number): C
  * rewrite, because the journal is append-only. The superseded span stays on
  * disk, so a replay can still explain what the summary stands for.
  */
-export class JournalCompactionConversation implements CompactionConversationPort, CompactionLandingPort {
+export class JournalCompactionConversation implements CompactionConversationPort, CompactionLandingPort, ContextTruncationPort {
 	constructor(
 		private readonly journal: ConversationJournal,
 		private readonly payloads: TaskPayloadStore,
@@ -512,6 +565,56 @@ export class JournalCompactionConversation implements CompactionConversationPort
 			to: span.to,
 			replacementRef,
 		})
+	}
+
+	/**
+	 * Remove the oldest settled history after a provider refused the request as
+	 * longer than its context window, the recovery used when auto-compaction is off.
+	 *
+	 * The opening input stays verbatim. Three quarters of the settled history
+	 * after it is replaced by `notice`, so the model knows history is missing
+	 * rather than reading a conversation with an unexplained gap. Input the
+	 * user is still waiting on is never removed, and the cut moves back until
+	 * every call before it has its result.
+	 *
+	 * @returns The truncation record's position, which the resent request has
+	 * to be projected through; undefined when nothing settled can be removed.
+	 */
+	async truncate(input: { readonly notice: string; readonly signal?: AbortSignal }): Promise<JournalWatermark | undefined> {
+		const items = await this.items()
+		const names = toolNames(items.map((item) => item.message))
+		const start = truncationStart(items, names)
+		const boundary = settledBoundary(items, names)
+		// A reply the boundary ends on opens the turn still waiting on the user.
+		const settled = boundary.reply ? boundary.end - 1 : boundary.end
+		// The range has to take some of what the model said; a range of only
+		// earlier notices would answer the refusal by removing nothing.
+		const said = items.findIndex((item, index) => index >= start && item.message.role === "assistant")
+		if (start < 0 || said < 0 || settled < said) return undefined
+		const quarters = Math.floor(((settled - start + 1) * 3) / 4)
+		const cut = truncationCut(items, said, Math.max(start + quarters - 1, said), settled)
+		const first = items[start]
+		const last = items[cut]
+		if (cut < said || !first || !last) return undefined
+		const operationId = `context.truncate:${randomUUID()}`
+		const replacementRef = await this.payloads.put(
+			encodeTaskPayload<CompactionSummaryEnvelope>({
+				kind: "compaction_summary",
+				compactionId: operationId,
+				text: input.notice,
+			}),
+		)
+		if (input.signal?.aborted) return undefined
+		const { watermark } = await this.journal.supersedeRange({
+			operationId,
+			from: first.entry.watermark,
+			to: last.entry.watermark,
+			replacementRef,
+		})
+		Logger.warn(
+			`[compaction] context window exceeded; truncated ${cut - start + 1} of ${items.length} messages (seq ${first.entry.watermark.seq}-${last.entry.watermark.seq})`,
+		)
+		return watermark
 	}
 
 	/**

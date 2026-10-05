@@ -8,6 +8,7 @@ import type {
 import { createStreamNormalizer, normalizeApiStream } from "@core/api/transform/stream-identity-normalizer"
 import { parseAssistantMessageV2, type ToolUse } from "@core/assistant-message"
 import { isDeterministicToolPairingError } from "@core/context/context-management/compaction-retryability"
+import { checkContextWindowExceededError } from "@core/context/context-management/context-error-handling"
 import type { ClineAssistantContent, ClineAssistantToolUseBlock, ClineStorageMessage } from "@shared/messages/content"
 import { Logger } from "@shared/services/Logger"
 import { ClineError } from "@/services/error"
@@ -20,6 +21,7 @@ import {
 	waitRetryDelayUnlessAborted,
 } from "../../../auto-retry"
 import { StreamResponseHandler } from "../../../StreamResponseHandler"
+import type { JournalWatermark } from "../../../stores"
 import type {
 	ProviderBlockOutput,
 	ProviderDraftEnvelope,
@@ -68,6 +70,21 @@ export interface ProviderServerToolPresentationPort {
 
 export type { ProviderServerToolRequestContext }
 
+/**
+ * How a request the provider refused as longer than its context window is recovered.
+ *
+ * With auto-compaction off nothing shrinks the conversation ahead of the
+ * request, so the refusal is the first sign it no longer fits. Truncating
+ * the oldest settled history and resending at once is what the user gets
+ * instead of a dead end.
+ */
+export interface ProviderContextRecoveryPort {
+	/** Whether this recovery applies now; auto-compaction owns the window when it is on. */
+	enabled(): boolean
+	/** Remove settled history; resolves the position to resend through, or undefined when nothing is left to remove. */
+	truncate(signal: AbortSignal): Promise<JournalWatermark | undefined>
+}
+
 export interface DefaultProductionProviderServiceOptions {
 	readonly requests: ProviderRequestFactory
 	readonly identities?: IdentityFactory
@@ -75,6 +92,7 @@ export interface DefaultProductionProviderServiceOptions {
 	readonly onUsage?: (usage: Readonly<Record<string, number>>) => void
 	readonly retry?: ProviderRetryPolicy
 	readonly serverTools?: ProviderServerToolPresentationPort
+	readonly contextRecovery?: ProviderContextRecoveryPort
 }
 
 /**
@@ -85,11 +103,16 @@ export interface DefaultProductionProviderServiceOptions {
  * through another provider's handler loses every tool that provider cannot
  * read. The replacement is prepared from the same draft and turn, so the
  * conversation it carries is unchanged.
+ *
+ * The one exception is a conversation truncated to fit the context window:
+ * the turn is then projected through the truncation record, and stays so.
  */
 class TurnRequest {
+	private through: JournalWatermark | undefined
+
 	constructor(
 		private current: PreparedProviderRequest,
-		private readonly prepareAgain: () => Promise<PreparedProviderRequest>,
+		private readonly prepareAgain: (through: JournalWatermark | undefined) => Promise<PreparedProviderRequest>,
 	) {}
 
 	get request(): PreparedProviderRequest {
@@ -100,8 +123,14 @@ class TurnRequest {
 	async refreshIfStale(): Promise<boolean> {
 		if (this.current.isCurrent?.() !== false) return false
 		Logger.info("[provider] the task replaced its handler while the request waited; preparing it for the new handler")
-		this.current = await this.prepareAgain()
+		this.current = await this.prepareAgain(this.through)
 		return true
+	}
+
+	/** Prepare the turn again over the journal through `through`, after its conversation was truncated. */
+	async projectThrough(through: JournalWatermark): Promise<void> {
+		this.through = through
+		this.current = await this.prepareAgain(through)
 	}
 
 	/** Abandoning the stream also withdraws the turn's one-shot authority. */
@@ -271,7 +300,9 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 		// Only a replaced handler prepares it again, for the same turn.
 		const prepared = await this.options.requests.prepare(input.draft, input.signal)
 		const sameTurn = { ...input.draft, turnId: prepared.turnId }
-		const turn = new TurnRequest(prepared, () => this.options.requests.prepare(sameTurn, input.signal))
+		const turn = new TurnRequest(prepared, (through) =>
+			this.options.requests.prepare(through ? { ...sameTurn, journalThrough: through } : sameTurn, input.signal),
+		)
 		const transientId = `provider:${prepared.turnId}`
 		let text = ""
 		let reasoningText = ""
@@ -467,6 +498,18 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 			pairingRebuilt ? repairProviderPairing(request.messages) : request.messages
 		let messages = messagesOf(turn.request)
 		let retries = 0
+		// The first refusal for length is truncated and resent at once; each
+		// later one waits out a retry and truncates again, until the retry
+		// budget is spent or nothing settled is left to remove.
+		let truncated = false
+		const truncate = async (): Promise<boolean> => {
+			const through = await this.options.contextRecovery?.truncate(signal)
+			if (!through || signal.aborted) return false
+			await turn.projectThrough(through)
+			messages = messagesOf(turn.request)
+			Logger.warn("[provider] request exceeded the context window; resending with truncated history")
+			return true
+		}
 		for (;;) {
 			const request = turn.request
 			const provider: ProviderIdentity = { providerId: request.api.getProviderId?.(), modelId: request.api.getModel().id }
@@ -494,7 +537,14 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 				Logger.warn("[provider] request rejected for tool pairing; sending it once with canonical pairing")
 				continue
 			}
-			if (retries >= this.retry.maxAttempts || !isRetryableProviderError(failure, provider)) throw failure
+			const truncates = checkContextWindowExceededError(failure) && this.options.contextRecovery?.enabled() === true
+			if (truncates && !truncated) {
+				truncated = true
+				if (await truncate()) continue
+				if (signal.aborted) return undefined
+				throw failure
+			}
+			if (retries >= this.retry.maxAttempts || !(truncates || isRetryableProviderError(failure, provider))) throw failure
 			retries++
 			const delayMs = this.retry.delayMs(retries)
 			Logger.warn(`[provider] request failed before its first chunk; retry ${retries} in ${delayMs}ms`, failure)
@@ -508,6 +558,11 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 				},
 			}
 			if (!(await this.retry.wait(delayMs, signal))) return undefined
+			if (truncates) {
+				if (await truncate()) continue
+				if (signal.aborted) return undefined
+				throw failure
+			}
 			if (await turn.refreshIfStale()) messages = messagesOf(turn.request)
 		}
 	}

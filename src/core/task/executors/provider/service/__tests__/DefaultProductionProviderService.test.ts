@@ -5,7 +5,11 @@ import { describe, expect, it, vi } from "vitest"
 import type { ProviderDraftEnvelope } from "../../../../stores/payload/TaskPayloadEnvelopes"
 import type { ProductionProviderChunk } from "../../ProductionProviderAdapter"
 import { presentationOf } from "../../ProviderFailure"
-import { DefaultProductionProviderService, type ProviderRetryPolicy } from "../DefaultProductionProviderService"
+import {
+	DefaultProductionProviderService,
+	type ProviderContextRecoveryPort,
+	type ProviderRetryPolicy,
+} from "../DefaultProductionProviderService"
 import type { PreparedProviderRequest } from "../ProviderRequest"
 
 /** A provider that streams the given chunks and nothing else. */
@@ -453,7 +457,11 @@ const FROZEN_MESSAGES: ClineStorageMessage[] = [
  * A provider whose attempts play out in order, and a factory that counts how
  * often the request had to be prepared.
  */
-function scripted(attempts: readonly Attempt[], retry: Partial<ProviderRetryPolicy> = {}) {
+function scripted(
+	attempts: readonly Attempt[],
+	retry: Partial<ProviderRetryPolicy> = {},
+	contextRecovery?: ProviderContextRecoveryPort,
+) {
 	const sent: ClineStorageMessage[][] = []
 	let call = 0
 	const api = {
@@ -492,6 +500,7 @@ function scripted(attempts: readonly Attempt[], retry: Partial<ProviderRetryPoli
 		requests: { prepare },
 		nextPresentationId: () => ++id,
 		retry: policy,
+		contextRecovery,
 	})
 	return { service, api, request, prepare, sent, waits }
 }
@@ -772,5 +781,69 @@ describe("DefaultProductionProviderService request retry", () => {
 
 		expect(await failureOf(harness.service)).toBe(failure)
 		expect(call).toBe(1)
+	})
+})
+
+describe("DefaultProductionProviderService context-window recovery", () => {
+	const tooLong = () => httpError(400, "This request exceeds the model's maximum context window.")
+
+	function recovery(enabled: boolean, positions: ReadonlyArray<{ seq: number } | undefined>) {
+		let next = 0
+		return {
+			enabled: () => enabled,
+			truncate: vi.fn(async () => positions[Math.min(next++, positions.length - 1)]),
+		}
+	}
+
+	it("truncates and resends at once, through the truncation, without spending a retry", async () => {
+		const port = recovery(true, [{ seq: 42 }])
+		const harness = scripted([{ error: tooLong() }, { chunks: [text("Recovered answer.")] }], {}, port)
+
+		const chunks = await collect(harness.service)
+
+		expect(port.truncate).toHaveBeenCalledOnce()
+		expect(harness.api.createMessage).toHaveBeenCalledTimes(2)
+		expect(chunks.filter((chunk) => chunk.kind === "retry")).toEqual([])
+		expect(harness.waits).toEqual([])
+		expect(harness.prepare).toHaveBeenCalledTimes(2)
+		expect(harness.prepare).toHaveBeenLastCalledWith(
+			expect.objectContaining({ journalThrough: { seq: 42 } }),
+			expect.anything(),
+		)
+	})
+
+	it("waits out a retry before each later truncation, until the retry budget is spent", async () => {
+		const failure = tooLong()
+		const port = recovery(true, [{ seq: 1 }, { seq: 2 }, { seq: 3 }])
+		const harness = scripted([{ error: failure }], { maxAttempts: 2 }, port)
+
+		expect(await failureOf(harness.service)).toBe(failure)
+		expect(port.truncate).toHaveBeenCalledTimes(3)
+		expect(harness.api.createMessage).toHaveBeenCalledTimes(4)
+		expect(harness.waits).toEqual([1000, 2000])
+		expect(harness.prepare).toHaveBeenLastCalledWith(
+			expect.objectContaining({ journalThrough: { seq: 3 } }),
+			expect.anything(),
+		)
+	})
+
+	it("fails with the refusal once nothing settled is left to remove", async () => {
+		const failure = tooLong()
+		const port = recovery(true, [undefined])
+		const harness = scripted([{ error: failure }], {}, port)
+
+		expect(await failureOf(harness.service)).toBe(failure)
+		expect(port.truncate).toHaveBeenCalledOnce()
+		expect(harness.api.createMessage).toHaveBeenCalledOnce()
+	})
+
+	it("leaves the refusal to the task when auto-compaction owns the context window", async () => {
+		const failure = tooLong()
+		const port = recovery(false, [{ seq: 1 }])
+		const harness = scripted([{ error: failure }], {}, port)
+
+		expect(await failureOf(harness.service)).toBe(failure)
+		expect(port.truncate).not.toHaveBeenCalled()
+		expect(harness.api.createMessage).toHaveBeenCalledOnce()
 	})
 })

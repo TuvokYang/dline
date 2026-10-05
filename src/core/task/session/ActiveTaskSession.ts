@@ -1,4 +1,4 @@
-import type { CompactionConversationPort } from "../compaction/JournalCompactionConversation"
+import type { CompactionConversationPort, ContextTruncationPort } from "../compaction/JournalCompactionConversation"
 import type { ToolApprovalFeedbackLedger } from "../executors/tool/ToolApprovalFeedbackLedger"
 import type { TaskState } from "../kernel"
 import type { MessageStateHandler } from "../message-state"
@@ -40,6 +40,8 @@ export interface ActiveTaskSessionOptions {
 	readonly approvalFeedback: ToolApprovalFeedbackLedger
 	/** The conversation a compaction reads: exactly what the provider is sent. */
 	readonly conversation: CompactionConversationPort
+	/** Shrinks that conversation when the provider refuses a request as longer than its window. */
+	readonly contextTruncation?: ContextTruncationPort
 	readonly releases?: readonly ActiveTaskSessionReleasePort[]
 }
 
@@ -55,6 +57,7 @@ export class ActiveTaskSession {
 	readonly owners: TaskSessionOwners
 	readonly approvalFeedback: ToolApprovalFeedbackLedger
 	readonly conversation: CompactionConversationPort
+	readonly contextTruncation: ContextTruncationPort | undefined
 	private disposePromise: Promise<void> | undefined
 	private disposeMode: "ordinary" | "checkpoint_restore" | undefined
 	private checkpointRestoreFencePromise: Promise<CheckpointRestoreFence> | undefined
@@ -73,6 +76,7 @@ export class ActiveTaskSession {
 		this.messages = options.owners.messages
 		this.approvalFeedback = options.approvalFeedback
 		this.conversation = options.conversation
+		this.contextTruncation = options.contextTruncation
 	}
 
 	state(): Readonly<TaskState> {
