@@ -12,6 +12,7 @@ import {
 } from "@e2e/utils/task-instance-store"
 import { expect, type Frame, type Page } from "@playwright/test"
 import type { ElectronApplication } from "playwright"
+import type { ClineStorageMessage } from "@/shared/messages/content"
 
 interface StoredProfile {
 	name: string
@@ -139,8 +140,22 @@ async function onlyTaskId(dlineDocsDir: string): Promise<string> {
 	return taskIds[0]
 }
 
+function isQnaRespondAssistant(message: ClineStorageMessage): boolean {
+	return (
+		message.role === "assistant" &&
+		Array.isArray(message.content) &&
+		(message.content as unknown[]).some(
+			(block) => typeof block === "object" && block !== null && (block as PersistedRecord).name === "qna_respond",
+		)
+	)
+}
+
 async function recreateInterruptedStreamingSnapshot(dlineDocsDir: string, taskId: string): Promise<void> {
-	await rewriteTaskConversation(dlineDocsDir, taskId, (apiMessages) => {
+	await rewriteTaskConversation(dlineDocsDir, taskId, (journaled) => {
+		// Closing the task settles the pending interaction in the journal; the
+		// recreated snapshot is the conversation as it stood while it was pending.
+		const pendingIndex = journaled.findLastIndex(isQnaRespondAssistant)
+		const apiMessages = pendingIndex < 0 ? journaled : journaled.slice(0, pendingIndex + 1)
 		const pendingAssistant = apiMessages.at(-1)
 		const qnaToolUse = Array.isArray(pendingAssistant?.content)
 			? ((pendingAssistant.content as unknown[]).find(
@@ -170,11 +185,11 @@ async function recreateInterruptedStreamingSnapshot(dlineDocsDir: string, taskId
 	})
 
 	await rewriteTaskUiMessages(dlineDocsDir, taskId, (uiMessages) => {
-		const pendingAsk = uiMessages.at(-1)
-		if (pendingAsk?.type !== "ask" || pendingAsk.ask !== "qna_respond") {
+		const pendingIndex = uiMessages.findLastIndex((message) => message.type === "ask" && message.ask === "qna_respond")
+		if (pendingIndex < 0) {
 			throw new Error("Expected the setup task to end with a pending qna_respond UI interaction")
 		}
-		return uiMessages.slice(0, -1)
+		return uiMessages.slice(0, pendingIndex)
 	})
 
 	// The runtime reopens any task that stopped mid-run paused, offering Resume.
