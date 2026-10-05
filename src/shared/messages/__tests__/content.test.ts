@@ -1,5 +1,8 @@
 import {
+	type ClineAssistantHostedToolBlock,
+	type ClineStorageMessage,
 	cleanContentBlock,
+	convertClineStorageToAnthropicMessage,
 	imageSourceMediaType,
 	imageSourceToUrl,
 	projectAgentsInstructionsText,
@@ -46,6 +49,47 @@ describe("message image source helpers", () => {
 		expect(cleanContentBlock(block)).to.deep.equal({ type: "text", text })
 		expect(projectInternalMessagesForProvider([{ role: "user", content: [block] }])).to.deep.equal([
 			{ role: "user", content: [{ type: "text", text }] },
+		])
+	})
+})
+
+describe("hosted tool replay blocks", () => {
+	const call = { type: "server_tool_use", id: "srv_fetch", name: "web_fetch", input: { url: "https://example.com" } }
+	const result = { type: "web_fetch_tool_result", tool_use_id: "srv_fetch", content: { type: "web_fetch_result" } }
+	const hosted: ClineAssistantHostedToolBlock = { type: "hosted_tool", protocol: "anthropic_messages", blocks: [call, result] }
+	const assistant: ClineStorageMessage = {
+		role: "assistant",
+		content: [hosted, { type: "text", text: "Summary of the page" }],
+	}
+
+	it("expands a stored hosted call into its native blocks when the request declares that tool", () => {
+		const converted = convertClineStorageToAnthropicMessage(assistant, "anthropic", {
+			replayHostedTools: new Set(["web_fetch"]),
+		})
+
+		expect(converted.content).to.deep.equal([call, result, { type: "text", text: "Summary of the page" }])
+	})
+
+	it("drops a stored hosted call the request does not declare", () => {
+		const converted = convertClineStorageToAnthropicMessage(assistant, "anthropic", {
+			replayHostedTools: new Set(["web_search"]),
+		})
+
+		expect(converted.content).to.deep.equal([{ type: "text", text: "Summary of the page" }])
+	})
+
+	it("drops stored hosted calls for Anthropic-format endpoints that never run them", () => {
+		expect(convertClineStorageToAnthropicMessage(assistant).content).to.deep.equal([
+			{ type: "text", text: "Summary of the page" },
+		])
+	})
+
+	it("keeps hosted blocks only for the provider protocol that can replay them", () => {
+		expect(projectInternalMessagesForProvider([assistant], { hostedToolReplayProtocol: "anthropic_messages" })).to.deep.equal(
+			[assistant],
+		)
+		expect(projectInternalMessagesForProvider([assistant])).to.deep.equal([
+			{ role: "assistant", content: [{ type: "text", text: "Summary of the page" }] },
 		])
 	})
 })

@@ -1,4 +1,4 @@
-import type { ClineProviderMetadata } from "@shared/messages/content"
+import type { ClineAssistantHostedToolBlock, ClineProviderMetadata } from "@shared/messages/content"
 import type { ServerTool } from "@shared/proto/dline/models/metadata"
 
 export type ApiStream = AsyncGenerator<ApiProviderStreamChunk>
@@ -60,6 +60,11 @@ interface ApiServerToolChunkBase {
 	input?: unknown
 	result?: unknown
 	error?: unknown
+	/**
+	 * Verbatim call and result blocks, present only on the terminal event of a hosted call whose protocol
+	 * requires them back on later requests. The consumer stores them in the assistant turn as-is.
+	 */
+	replay?: ClineAssistantHostedToolBlock
 	provider_metadata?: ClineProviderMetadata
 }
 

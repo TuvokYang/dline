@@ -7,15 +7,72 @@ import type {
 } from "@anthropic-ai/sdk/resources/messages/messages"
 import { Tool as AnthropicTool, type ToolUnion as AnthropicToolUnion } from "@anthropic-ai/sdk/resources/messages/messages"
 import type { ChatCompletionTool as OpenAITool } from "openai/resources/chat/completions"
+import type { ClineAssistantHostedToolBlock } from "@/shared/messages/content"
 import { ServerTool } from "@/shared/proto/dline/models/metadata"
 import { OutputLimitExceededError } from "../stream/OutputLimitExceededError"
-import { ApiStream } from "../transform/stream"
+import type { ApiRawStreamServerToolChunk, ApiStream } from "../transform/stream"
 
 export type AnthropicMessagesStreamEvent = Anthropic.RawMessageStreamEvent | BetaRawMessageStreamEvent
 
 export interface AnthropicMessagesStreamState {
 	/** Provider-native hosted calls that may complete in a later pause_turn response. */
 	startedServerToolCallIds?: Set<string>
+	/**
+	 * Verbatim call blocks of those hosted calls, completed with their streamed input.
+	 * Kept across pause_turn responses so a result arriving later still pairs with its call.
+	 */
+	serverToolUseBlocks?: Map<string, Record<string, unknown>>
+}
+
+/**
+ * Hosted tools whose call and result are stored for replay on later requests.
+ *
+ * Anthropic only lets the model cite or re-fetch what it saw if those blocks come back. Sandbox
+ * execution is left out: its results are bound to a provider container this request never pins.
+ */
+const REPLAYED_HOSTED_TOOLS: ReadonlySet<ServerTool> = new Set([ServerTool.WEB_SEARCH, ServerTool.WEB_FETCH])
+
+/** Pair a completed hosted call with its result block, consuming the stored call. */
+function takeHostedToolReplay(
+	tool: ServerTool,
+	resultBlock: { tool_use_id: string },
+	serverToolUseBlocks: Map<string, Record<string, unknown>>,
+): ClineAssistantHostedToolBlock | undefined {
+	const callBlock = serverToolUseBlocks.get(resultBlock.tool_use_id)
+	serverToolUseBlocks.delete(resultBlock.tool_use_id)
+	if (!callBlock || !REPLAYED_HOSTED_TOOLS.has(tool)) return undefined
+	return {
+		type: "hosted_tool",
+		protocol: "anthropic_messages",
+		blocks: [callBlock, { ...(resultBlock as unknown as Record<string, unknown>) }],
+	}
+}
+
+/**
+ * Fail every hosted call the provider left open when its logical response ended without continuing it.
+ *
+ * Naming the stop reason turns an otherwise silent gap into evidence of why no result arrived, for
+ * example a parallel client tool call that ended the turn before the hosted tool ran.
+ */
+export function* closeOpenServerToolCalls(
+	state: Required<AnthropicMessagesStreamState>,
+	stopReason: string | null | undefined,
+): Generator<ApiRawStreamServerToolChunk> {
+	for (const functionId of state.startedServerToolCallIds) {
+		const name = state.serverToolUseBlocks.get(functionId)?.name
+		const tool = typeof name === "string" ? SERVER_TOOL_BY_PROVIDER_NAME[name] : undefined
+		if (tool === undefined) continue
+		const ending = stopReason ? `stop_reason: ${stopReason}` : "no stop_reason"
+		yield {
+			type: "server_tool",
+			function_id: functionId,
+			tool,
+			phase: "failed",
+			error: `Anthropic response ended (${ending}) before the hosted ${name} call returned a result.`,
+		}
+	}
+	state.startedServerToolCallIds.clear()
+	state.serverToolUseBlocks.clear()
 }
 
 /**
@@ -165,6 +222,15 @@ export function mergeAnthropicServerTools(
 	return merged.length > 0 ? merged : undefined
 }
 
+/**
+ * Native names of the hosted tools a request declares, read from the same declarations the request sends,
+ * so stored hosted calls are replayed only for tools the request actually exposes.
+ */
+export function declaredAnthropicHostedToolNames(serverTools?: readonly ServerTool[]): ReadonlySet<string> {
+	const declarations = mergeAnthropicServerTools(undefined, serverTools) ?? []
+	return new Set(declarations.flatMap((tool) => ("name" in tool && typeof tool.name === "string" ? [tool.name] : [])))
+}
+
 export async function* handleAnthropicMessagesApiStreamResponse(
 	stream: AsyncIterable<AnthropicMessagesStreamEvent>,
 	state?: AnthropicMessagesStreamState,
@@ -172,6 +238,7 @@ export async function* handleAnthropicMessagesApiStreamResponse(
 	const lastStartedToolCall = { id: "", name: "", arguments: "" }
 	const activeServerToolCall = { id: "", name: "", arguments: "", input: undefined as unknown }
 	const startedServerToolCallIds = state?.startedServerToolCallIds ?? new Set<string>()
+	const serverToolUseBlocks = state?.serverToolUseBlocks ?? new Map<string, Record<string, unknown>>()
 
 	for await (const chunk of stream) {
 		switch (chunk?.type) {
@@ -241,6 +308,7 @@ export async function* handleAnthropicMessagesApiStreamResponse(
 							break
 						}
 						startedServerToolCallIds.add(chunk.content_block.id)
+						serverToolUseBlocks.set(chunk.content_block.id, { ...chunk.content_block })
 						lastStartedToolCall.id = ""
 						lastStartedToolCall.name = ""
 						lastStartedToolCall.arguments = ""
@@ -261,12 +329,14 @@ export async function* handleAnthropicMessagesApiStreamResponse(
 						if (!startedServerToolCallIds.delete(chunk.content_block.tool_use_id)) break
 						const result = chunk.content_block.content
 						const failed = !Array.isArray(result) && result.type === "web_search_tool_result_error"
+						const replay = takeHostedToolReplay(ServerTool.WEB_SEARCH, chunk.content_block, serverToolUseBlocks)
 						yield {
 							type: "server_tool",
 							function_id: chunk.content_block.tool_use_id,
 							tool: ServerTool.WEB_SEARCH,
 							phase: failed ? "failed" : "completed",
 							...(failed ? { error: result } : { result }),
+							...(replay ? { replay } : {}),
 						}
 						break
 					}
@@ -274,12 +344,14 @@ export async function* handleAnthropicMessagesApiStreamResponse(
 						if (!startedServerToolCallIds.delete(chunk.content_block.tool_use_id)) break
 						const result = chunk.content_block.content
 						const failed = result.type === "web_fetch_tool_result_error"
+						const replay = takeHostedToolReplay(ServerTool.WEB_FETCH, chunk.content_block, serverToolUseBlocks)
 						yield {
 							type: "server_tool",
 							function_id: chunk.content_block.tool_use_id,
 							tool: ServerTool.WEB_FETCH,
 							phase: failed ? "failed" : "completed",
 							...(failed ? { error: result } : { result }),
+							...(replay ? { replay } : {}),
 						}
 						break
 					}
@@ -287,6 +359,7 @@ export async function* handleAnthropicMessagesApiStreamResponse(
 					case "bash_code_execution_tool_result":
 					case "text_editor_code_execution_tool_result": {
 						if (!startedServerToolCallIds.delete(chunk.content_block.tool_use_id)) break
+						serverToolUseBlocks.delete(chunk.content_block.tool_use_id)
 						const result = chunk.content_block.content
 						const failed = isCodeExecutionError(result)
 						yield {
@@ -368,6 +441,8 @@ export async function* handleAnthropicMessagesApiStreamResponse(
 							!Array.isArray(streamedInput)
 								? { ...initialInput, ...streamedInput }
 								: streamedInput
+						const callBlock = serverToolUseBlocks.get(activeServerToolCall.id)
+						if (callBlock) callBlock.input = input
 						yield {
 							type: "server_tool",
 							function_id: activeServerToolCall.id,

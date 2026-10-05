@@ -39,7 +39,7 @@ const messageStart = (
 	},
 })
 
-const messageDelta = (stopReason: "end_turn" | "pause_turn", outputTokens: number) => ({
+const messageDelta = (stopReason: "end_turn" | "pause_turn" | "tool_use" | null, outputTokens: number) => ({
 	type: "message_delta",
 	delta: { stop_reason: stopReason, stop_sequence: null },
 	usage: {
@@ -221,6 +221,67 @@ describe("streamAnthropicMessagesEndpoint", () => {
 			{ phase: "started", tool: ServerTool.WEB_SEARCH, functionId: "srv_cross_response" },
 			{ phase: "completed", tool: ServerTool.WEB_SEARCH, functionId: "srv_cross_response" },
 		])
+	})
+
+	it("attaches the verbatim call and result to a hosted fetch paired across a pause_turn boundary", async () => {
+		const call = {
+			type: "server_tool_use",
+			id: "srv_fetch_cross",
+			name: "web_fetch",
+			input: { url: "https://example.test/page" },
+			caller: { type: "direct" },
+		}
+		const result = {
+			type: "web_fetch_tool_result",
+			tool_use_id: "srv_fetch_cross",
+			content: { type: "web_fetch_result", url: "https://example.test/page", content: { type: "document" } },
+			caller: { type: "direct" },
+		}
+		const responses = [
+			[{ type: "content_block_start", index: 0, content_block: call }, messageDelta("pause_turn", 1)],
+			[{ type: "content_block_start", index: 0, content_block: result }, messageDelta("end_turn", 1)],
+		]
+		const chunks = await collect(
+			streamAnthropicMessagesEndpoint({
+				messages: [{ role: "user", content: "Fetch" }],
+				openStream: async () => createAsyncIterable(responses.shift() ?? []),
+			}),
+		)
+
+		const completed = chunks.find((chunk) => chunk.type === "server_tool" && chunk.phase === "completed")
+		expect(completed?.replay).toEqual({ type: "hosted_tool", protocol: "anthropic_messages", blocks: [call, result] })
+	})
+
+	it("fails a hosted call left open by the final response and names its stop reason", async () => {
+		const chunks = await collect(
+			streamAnthropicMessagesEndpoint({
+				messages: [{ role: "user", content: "Fetch" }],
+				openStream: async () =>
+					createAsyncIterable([
+						{
+							type: "content_block_start",
+							index: 0,
+							content_block: {
+								type: "server_tool_use",
+								id: "srv_fetch_open",
+								name: "web_fetch",
+								input: { url: "https://example.test/slow" },
+								caller: { type: "direct" },
+							},
+						},
+						{ type: "content_block_stop", index: 0 },
+						messageDelta("tool_use", 3),
+					]),
+			}),
+		)
+
+		const lifecycle = chunks.filter((chunk) => chunk.type === "server_tool")
+		expect(lifecycle.map((chunk) => chunk.phase)).toEqual(["started", "failed"])
+		expect(lifecycle.at(-1)).toMatchObject({
+			function_id: "srv_fetch_open",
+			tool: ServerTool.WEB_FETCH,
+			error: "Anthropic response ended (stop_reason: tool_use) before the hosted web_fetch call returned a result.",
+		})
 	})
 
 	it("fails closed when pause_turn has no assistant content", async () => {

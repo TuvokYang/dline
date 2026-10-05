@@ -162,6 +162,52 @@ describe("AnthropicHandler", () => {
 		expect(create.mock.calls[0]?.[0]?.tool_choice).to.deep.equal({ type: expected })
 	})
 
+	it.each([
+		{ supportsPromptCache: true, serverTools: [ServerTool.WEB_FETCH], replayed: true },
+		{ supportsPromptCache: false, serverTools: [ServerTool.WEB_FETCH], replayed: true },
+		{ supportsPromptCache: true, serverTools: [], replayed: false },
+	])("replays a stored hosted fetch only while the request declares it (cache $supportsPromptCache, replayed $replayed)", async ({
+		supportsPromptCache,
+		serverTools,
+		replayed,
+	}) => {
+		const handler = new AnthropicHandler({
+			profile: ApiProfile.create({
+				provider: "anthropic",
+				apiKey: "test-api-key",
+				modelId: "claude-opus-5-custom",
+				modelInfo: { id: "claude-opus-5-custom", capabilities: { supportsPromptCache, thinking: { supported: false } } },
+			}),
+			mode: "act",
+		})
+		const call = { type: "server_tool_use", id: "srv_fetch", name: "web_fetch", input: { url: "https://example.com" } }
+		const result = { type: "web_fetch_tool_result", tool_use_id: "srv_fetch", content: { type: "web_fetch_result" } }
+		const create = vi.fn().mockResolvedValue(createAsyncIterable())
+		vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({ messages: { create } })
+		for await (const _chunk of handler.createMessage(
+			"system",
+			[
+				{ role: "user", content: "Read the page" },
+				{
+					role: "assistant",
+					content: [
+						{ type: "hosted_tool", protocol: "anthropic_messages", blocks: [call, result] },
+						{ type: "text", text: "The page says hello" },
+					],
+				},
+				{ role: "user", content: "What did it say?" },
+			],
+			undefined,
+			{ serverTools },
+		)) {
+		}
+
+		const assistantContent = create.mock.calls[0]?.[0]?.messages?.[1]?.content as Array<{ type: string }>
+		expect(assistantContent.map((block) => block.type)).to.deep.equal(
+			replayed ? ["server_tool_use", "web_fetch_tool_result", "text"] : ["text"],
+		)
+	})
+
 	describe("getModel", () => {
 		it("should merge provider overrides into registry model metadata", () => {
 			const handler = new AnthropicHandler({

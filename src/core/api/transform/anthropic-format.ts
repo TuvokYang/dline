@@ -1,5 +1,9 @@
 import { Anthropic } from "@anthropic-ai/sdk"
-import { ClineStorageMessage, convertClineStorageToAnthropicMessage } from "@/shared/messages/content"
+import {
+	type AnthropicMessageConversionOptions,
+	ClineStorageMessage,
+	convertClineStorageToAnthropicMessage,
+} from "@/shared/messages/content"
 
 /**
  * Converts Cline storage messages to Anthropic API format with optional cache control.
@@ -10,14 +14,16 @@ import { ClineStorageMessage, convertClineStorageToAnthropicMessage } from "@/sh
  *
  * @param clineMessages - Array of Cline storage messages to convert
  * @param supportCache - Whether to add ephemeral cache control breakpoints
+ * @param options - Conversion options; hosted tool blocks are replayed only when the endpoint runs them
  * @returns Array of Anthropic-compatible messages with cache control applied
  */
 export function sanitizeAnthropicMessages(
 	clineMessages: ClineStorageMessage[],
 	supportCache: boolean,
+	options: AnthropicMessageConversionOptions = {},
 ): Array<Anthropic.MessageParam> {
 	const anthropicMessages = clineMessages
-		.map((msg) => convertClineStorageToAnthropicMessage(msg))
+		.map((msg) => convertClineStorageToAnthropicMessage(msg, undefined, options))
 		.filter((msg) => !isEmptyAssistantMessage(msg))
 	if (!supportCache) {
 		return anthropicMessages

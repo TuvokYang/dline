@@ -18,6 +18,11 @@ const createAsyncIterable = (events: any[]) =>
 		},
 	}) as any
 
+/** The stored replay pair a terminal hosted event carries: the native call followed by its native result. */
+function hostedReplay(call: Record<string, unknown>, result: Record<string, unknown>) {
+	return { type: "hosted_tool", protocol: "anthropic_messages", blocks: [call, result] }
+}
+
 async function collectChunks(events: any[], startedServerToolCallIds?: Set<string>) {
 	const chunks: any[] = []
 	for await (const chunk of handleAnthropicMessagesApiStreamResponse(createAsyncIterable(events), {
@@ -446,6 +451,16 @@ describe("messages_api_support", () => {
 					tool: ServerTool.WEB_SEARCH,
 					phase: "completed",
 					result,
+					replay: hostedReplay(
+						{
+							type: "server_tool_use",
+							id: "srv_web_1",
+							name: "web_search",
+							input: { query: "Dline" },
+							caller: { type: "direct" },
+						},
+						{ type: "web_search_tool_result", tool_use_id: "srv_web_1", content: result, caller: { type: "direct" } },
+					),
 				},
 			])
 			expect(chunks.some((chunk) => chunk.type === "tool_calls")).to.equal(false)
@@ -491,6 +506,21 @@ describe("messages_api_support", () => {
 					tool: ServerTool.WEB_SEARCH,
 					phase: "failed",
 					error,
+					replay: hostedReplay(
+						{
+							type: "server_tool_use",
+							id: "srv_web_error",
+							name: "web_search",
+							input: {},
+							caller: { type: "direct" },
+						},
+						{
+							type: "web_search_tool_result",
+							tool_use_id: "srv_web_error",
+							content: error,
+							caller: { type: "direct" },
+						},
+					),
 				},
 			])
 		})
@@ -559,6 +589,40 @@ describe("messages_api_support", () => {
 			expect(startedServerToolCallIds.size).to.equal(0)
 		})
 
+		it("replays a hosted call paired across Messages responses when the stream state is shared", async () => {
+			const state = {
+				startedServerToolCallIds: new Set<string>(),
+				serverToolUseBlocks: new Map<string, Record<string, unknown>>(),
+			}
+			const collectWithState = async (events: any[]) => {
+				const chunks: any[] = []
+				for await (const chunk of handleAnthropicMessagesApiStreamResponse(createAsyncIterable(events), state)) {
+					chunks.push(chunk)
+				}
+				return chunks
+			}
+			const call = {
+				type: "server_tool_use",
+				id: "srv_fetch_paused",
+				name: "web_fetch",
+				input: { url: "https://example.com/paused" },
+				caller: { type: "direct" },
+			}
+			const resultBlock = {
+				type: "web_fetch_tool_result",
+				tool_use_id: "srv_fetch_paused",
+				content: { type: "web_fetch_result", url: "https://example.com/paused", content: { type: "document" } },
+				caller: { type: "direct" },
+			}
+
+			await collectWithState([{ type: "content_block_start", index: 0, content_block: call }])
+			const completed = await collectWithState([{ type: "content_block_start", index: 0, content_block: resultBlock }])
+
+			expect(completed).to.have.length(1)
+			expect(completed[0].replay).to.deep.equal(hostedReplay(call, resultBlock))
+			expect(state.serverToolUseBlocks.size).to.equal(0)
+		})
+
 		it("emits a hosted web fetch lifecycle and fetch usage without local tool_calls", async () => {
 			const result = {
 				type: "web_fetch_result",
@@ -614,7 +678,28 @@ describe("messages_api_support", () => {
 					phase: "in_progress",
 					input: { url: "https://example.com/page" },
 				},
-				{ type: "server_tool", function_id: "srv_fetch_1", tool: ServerTool.WEB_FETCH, phase: "completed", result },
+				{
+					type: "server_tool",
+					function_id: "srv_fetch_1",
+					tool: ServerTool.WEB_FETCH,
+					phase: "completed",
+					result,
+					replay: hostedReplay(
+						{
+							type: "server_tool_use",
+							id: "srv_fetch_1",
+							name: "web_fetch",
+							input: { url: "https://example.com/page" },
+							caller: { type: "direct" },
+						},
+						{
+							type: "web_fetch_tool_result",
+							tool_use_id: "srv_fetch_1",
+							content: result,
+							caller: { type: "direct" },
+						},
+					),
+				},
 				{
 					type: "usage",
 					inputTokens: 0,
@@ -659,7 +744,28 @@ describe("messages_api_support", () => {
 					phase: "started",
 					input: { url: "https://unseen.example.com" },
 				},
-				{ type: "server_tool", function_id: "srv_fetch_error", tool: ServerTool.WEB_FETCH, phase: "failed", error },
+				{
+					type: "server_tool",
+					function_id: "srv_fetch_error",
+					tool: ServerTool.WEB_FETCH,
+					phase: "failed",
+					error,
+					replay: hostedReplay(
+						{
+							type: "server_tool_use",
+							id: "srv_fetch_error",
+							name: "web_fetch",
+							input: { url: "https://unseen.example.com" },
+							caller: { type: "direct" },
+						},
+						{
+							type: "web_fetch_tool_result",
+							tool_use_id: "srv_fetch_error",
+							content: error,
+							caller: { type: "direct" },
+						},
+					),
+				},
 			])
 		})
 

@@ -1,7 +1,12 @@
 import type { ContentBlockParam, MessageParam } from "@anthropic-ai/sdk/resources/messages/messages"
 import type { ApiStream, ApiStreamUsageChunk } from "../transform/stream"
 import { ApiUsageAccumulator, type NormalizedApiUsage } from "../transform/usage-accumulator"
-import { type AnthropicMessagesStreamEvent, handleAnthropicMessagesApiStreamResponse } from "./messages_api_support"
+import {
+	type AnthropicMessagesStreamEvent,
+	type AnthropicMessagesStreamState,
+	closeOpenServerToolCalls,
+	handleAnthropicMessagesApiStreamResponse,
+} from "./messages_api_support"
 
 /** Maximum number of automatic requests one Dline request may add after pause_turn. */
 export const DEFAULT_ANTHROPIC_PAUSE_TURN_CONTINUATIONS = 4
@@ -239,7 +244,11 @@ function resolveContinuationLimit(value: number | undefined): number {
  */
 export async function* streamAnthropicMessagesEndpoint(options: AnthropicMessagesEndpointOptions): ApiStream {
 	const maxContinuations = resolveContinuationLimit(options.maxPauseTurnContinuations)
-	const startedServerToolCallIds = new Set<string>()
+	// Hosted calls may start in one response and complete in a pause_turn continuation.
+	const serverToolState: Required<AnthropicMessagesStreamState> = {
+		startedServerToolCallIds: new Set<string>(),
+		serverToolUseBlocks: new Map<string, Record<string, unknown>>(),
+	}
 	let messages = [...options.messages]
 	let continuationCount = 0
 	let completedUsage = emptyUsage()
@@ -251,9 +260,10 @@ export async function* streamAnthropicMessagesEndpoint(options: AnthropicMessage
 		const requestExtensions = emptyUsageExtensions()
 		const stream = await options.openStream(messages)
 
-		for await (const chunk of handleAnthropicMessagesApiStreamResponse(observeAnthropicStream(stream, collector), {
-			startedServerToolCallIds,
-		})) {
+		for await (const chunk of handleAnthropicMessagesApiStreamResponse(
+			observeAnthropicStream(stream, collector),
+			serverToolState,
+		)) {
 			if (chunk.type !== "usage") {
 				yield chunk
 				continue
@@ -263,7 +273,10 @@ export async function* streamAnthropicMessagesEndpoint(options: AnthropicMessage
 			yield cumulativeUsageChunk(chunk, completedUsage, usage, completedExtensions, requestExtensions)
 		}
 
-		if (collector.stopReason !== "pause_turn") return
+		if (collector.stopReason !== "pause_turn") {
+			yield* closeOpenServerToolCalls(serverToolState, collector.stopReason)
+			return
+		}
 		const replayContent = collector.content()
 		if (replayContent.length === 0) {
 			throw new Error("Anthropic Messages returned pause_turn without assistant content to continue.")

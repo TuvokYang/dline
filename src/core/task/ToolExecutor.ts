@@ -205,6 +205,18 @@ function buildCodeExecutionMessage(update: HostedServerToolUpdate, providerId: s
 	}
 }
 
+/** Display names for providers that run hosted tools; unknown providers keep their identifier. */
+const HOSTED_PROVIDER_LABELS: Readonly<Record<string, string>> = {
+	openai: "OpenAI",
+	deepseek: "DeepSeek",
+	anthropic: "Anthropic",
+	"claude-code": "Claude Code",
+}
+
+function hostedProviderLabel(providerId: string): string {
+	return HOSTED_PROVIDER_LABELS[providerId] ?? providerId
+}
+
 export class ToolExecutor {
 	/** Assigned by the Task composition root after construction. */
 	private _controllerContext?: ClineExtensionContext
@@ -362,7 +374,7 @@ export class ToolExecutor {
 		this.webSearchRoutingPlan = plan
 		this.hostedServerToolLifecycle = new ServerToolLifecycle(plan, allowHosted, async (update) => {
 			const providerId = this.api.getProviderId?.() ?? "provider"
-			const providerLabel = providerId === "openai" ? "OpenAI" : providerId === "deepseek" ? "DeepSeek" : providerId
+			const providerLabel = hostedProviderLabel(providerId)
 			// Each hosted tool reports a differently shaped payload, so the message is
 			// built from the tool that actually ran rather than a single fixed shape.
 			const message =
@@ -475,7 +487,7 @@ export class ToolExecutor {
 
 	private async presentUnadvertisedHostedWebSearch(block: ToolUse, fallback: boolean, mode: WebToolsMode): Promise<string> {
 		const providerId = this.api.getProviderId?.() ?? "provider"
-		const providerLabel = providerId === "openai" ? "OpenAI" : providerId === "deepseek" ? "DeepSeek" : providerId
+		const providerLabel = hostedProviderLabel(providerId)
 		const query =
 			typeof block.params?.query === "string" && block.params.query.trim() ? block.params.query.trim() : "Web search"
 		const message = fallback

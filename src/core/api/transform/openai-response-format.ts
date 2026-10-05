@@ -1,5 +1,5 @@
 import { ResponseInput, ResponseInputMessageContentList, ResponseReasoningItem } from "openai/resources/responses/responses"
-import { ClineStorageMessage, imageSourceMediaType, imageSourceToUrl } from "@/shared/messages/content"
+import { ClineStorageMessage, imageSourceMediaType, imageSourceToUrl, isHostedToolBlock } from "@/shared/messages/content"
 import { getResultFunctionId, getUseFunctionId, projectChatFunctionId } from "./tool-identity-projector"
 
 /**
@@ -120,6 +120,10 @@ export function convertToOpenAIResponsesInput(
 			const assistantItems: any[] = []
 
 			for (const part of m.content) {
+				// Hosted replay blocks are native to another protocol; Responses input has no equivalent item.
+				if (isHostedToolBlock(part)) {
+					continue
+				}
 				const responseId = part.provider_metadata?.response_id
 				switch (part.type) {
 					case "thinking":

@@ -108,6 +108,22 @@ export interface ClineAssistantThinkingBlock extends Anthropic.ThinkingBlock, Cl
 
 export interface ClineAssistantRedactedThinkingBlock extends Anthropic.RedactedThinkingBlockParam, ClineSharedMessageParam {}
 
+/** Wire protocols whose provider-hosted tool blocks can be replayed verbatim on a later request. */
+export type HostedToolReplayProtocol = "anthropic_messages"
+
+/**
+ * One completed provider-hosted tool call, kept verbatim so a later request to the protocol that ran it
+ * carries the call and its result back to the model.
+ *
+ * `blocks` holds the provider-native call block followed by its result block, in response order. No other
+ * protocol can interpret them, so every projection for a different protocol drops the whole block.
+ */
+export interface ClineAssistantHostedToolBlock {
+	type: "hosted_tool"
+	protocol: HostedToolReplayProtocol
+	blocks: Array<Record<string, unknown>>
+}
+
 export type ClineToolResponseContent = ClinePromptInputContent | Array<ClineTextContentBlock | ClineImageContentBlock>
 
 export type ClineUserContent =
@@ -124,8 +140,13 @@ export type ClineAssistantContent =
 	| ClineAssistantToolUseBlock
 	| ClineAssistantThinkingBlock
 	| ClineAssistantRedactedThinkingBlock
+	| ClineAssistantHostedToolBlock
 
 export type ClineContent = ClineUserContent | ClineAssistantContent
+
+export function isHostedToolBlock(block: ClineContent): block is ClineAssistantHostedToolBlock {
+	return block.type === "hosted_tool"
+}
 
 /**
  * An extension of Anthropic.MessageParam that includes Cline-specific fields.
@@ -155,6 +176,28 @@ export interface ClineStorageMessage {
 	ts?: number
 }
 
+export interface AnthropicMessageConversionOptions {
+	/**
+	 * Hosted tool names declared by the current request. A stored Anthropic hosted call is expanded back
+	 * into its native call and result blocks only when its tool is in this set, so a request never
+	 * references a hosted tool it does not declare. Endpoints that do not run Anthropic hosted tools
+	 * leave this unset and every hosted block is dropped.
+	 */
+	replayHostedTools?: ReadonlySet<string>
+}
+
+/** Name of the hosted tool a stored replay block invokes, read from its native `server_tool_use` call. */
+function hostedToolName(block: ClineAssistantHostedToolBlock): string | undefined {
+	const call = block.blocks.find((native) => native.type === "server_tool_use")
+	return typeof call?.name === "string" ? call.name : undefined
+}
+
+function replaysHostedBlock(block: ClineAssistantHostedToolBlock, options: AnthropicMessageConversionOptions): boolean {
+	if (block.protocol !== "anthropic_messages" || !options.replayHostedTools) return false
+	const name = hostedToolName(block)
+	return name !== undefined && options.replayHostedTools.has(name)
+}
+
 /**
  * Converts ClineStorageMessage to Anthropic.MessageParam by removing Cline-specific fields
  * Cline-specific fields (like modelInfo, reasoning_details) are properly omitted.
@@ -162,6 +205,7 @@ export interface ClineStorageMessage {
 export function convertClineStorageToAnthropicMessage(
 	clineMessage: ClineStorageMessage,
 	provider = "anthropic",
+	options: AnthropicMessageConversionOptions = {},
 ): Anthropic.MessageParam {
 	const { role, content } = clineMessage
 
@@ -174,9 +218,12 @@ export function convertClineStorageToAnthropicMessage(
 
 	// Handle array content - strip Cline-specific fields for non-reasoning_details providers
 	const shouldCleanContent = !REASONING_DETAILS_PROVIDERS.includes(provider)
-	const cleanedContent = shouldCleanContent
-		? filteredContent.map(cleanContentBlock)
-		: (filteredContent as Anthropic.MessageParam["content"])
+	const cleanedContent = filteredContent.flatMap((block): Anthropic.ContentBlockParam[] => {
+		if (isHostedToolBlock(block)) {
+			return replaysHostedBlock(block, options) ? (block.blocks as unknown as Anthropic.ContentBlockParam[]) : []
+		}
+		return [shouldCleanContent ? cleanContentBlock(block) : (block as Anthropic.ContentBlockParam)]
+	})
 
 	return { role, content: cleanedContent }
 }
@@ -191,20 +238,38 @@ function isReplayableToAnthropic(block: ClineContent): boolean {
 	return block.type !== "thinking" || !!block.signature
 }
 
+export interface ProviderProjectionOptions {
+	/** Hosted tool protocol the target endpoint replays; hosted blocks of any other protocol are dropped. */
+	hostedToolReplayProtocol?: HostedToolReplayProtocol
+}
+
 /**
- * Clean a content block by removing Cline-specific fields and returning only Anthropic-compatible fields
+ * Project Dline-internal content blocks into the shape every provider converter understands.
+ *
+ * Agents instructions become ordinary text, and hosted tool blocks survive only for the protocol that can
+ * replay them, so no converter ever receives a block type it cannot send.
  */
-export function projectInternalMessagesForProvider(messages: readonly ClineStorageMessage[]): ClineStorageMessage[] {
+export function projectInternalMessagesForProvider(
+	messages: readonly ClineStorageMessage[],
+	options: ProviderProjectionOptions = {},
+): ClineStorageMessage[] {
+	const keepsHostedBlock = (block: ClineAssistantHostedToolBlock) => block.protocol === options.hostedToolReplayProtocol
 	return messages.map((message) => {
-		if (!Array.isArray(message.content) || !message.content.some((block) => block.type === "agents_instructions")) {
+		if (
+			!Array.isArray(message.content) ||
+			!message.content.some(
+				(block) => block.type === "agents_instructions" || (isHostedToolBlock(block) && !keepsHostedBlock(block)),
+			)
+		) {
 			return message
 		}
 		return {
 			...message,
-			content: message.content.map(
-				(block): ClineContent =>
-					block.type === "agents_instructions" ? { type: "text", text: projectAgentsInstructionsText(block) } : block,
-			),
+			content: message.content.flatMap((block): ClineContent[] => {
+				if (block.type === "agents_instructions") return [{ type: "text", text: projectAgentsInstructionsText(block) }]
+				if (isHostedToolBlock(block) && !keepsHostedBlock(block)) return []
+				return [block]
+			}),
 		}
 	})
 }
