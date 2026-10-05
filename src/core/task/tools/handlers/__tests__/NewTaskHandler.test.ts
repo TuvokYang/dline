@@ -1,7 +1,9 @@
 import type { ToolUse } from "@core/assistant-message"
 import { describe, expect, it, vi } from "vitest"
+import { NEW_TASK_FEEDBACK_CONTINUATION_MARKER } from "../../../new-task/new-task-continuation"
 import { DefaultToolHandlerState } from "../../state/ToolHandlerState"
 import type { TaskConfig } from "../../types/TaskConfig"
+import { sayFeedbackOnce } from "../../utils/UserFeedbackUtils"
 import { NewTaskHandler } from "../NewTaskHandler"
 
 vi.mock("@core/prompts/i18n", () => ({
@@ -81,6 +83,13 @@ describe("NewTaskHandler", () => {
 
 		const result = await new NewTaskHandler().execute(config, createBlock("Successor task context"))
 
+		expect(config.interactions.open).toHaveBeenCalledWith({
+			turnId: "turn:tid-new-task",
+			interactionId: "tid-new-task",
+			kind: "new_task",
+			presentation: "Successor task context",
+			existingTs: 100,
+		})
 		expect(result).toMatchObject({
 			response: "New task confirmed",
 			postCommit: {
@@ -90,6 +99,28 @@ describe("NewTaskHandler", () => {
 				dlineTid: "tid-new-task",
 			},
 		})
+	})
+
+	it("returns Regenerate Context feedback to the model as a marked result instead of handing off", async () => {
+		const config = createConfig({ actionId: "reject", text: "Narrow the scope", files: ["/workspace/a.md"] })
+
+		const result = await new NewTaskHandler().execute(config, createBlock("Successor task context"))
+
+		expect(result).not.toHaveProperty("postCommit")
+		expect(result).toEqual([
+			{
+				type: "text",
+				text: `${NEW_TASK_FEEDBACK_CONTINUATION_MARKER}\nThe user provided feedback instead of creating a new task:\n<feedback>\nNarrow the scope\n</feedback>`,
+			},
+		])
+		expect(sayFeedbackOnce).toHaveBeenCalledWith(
+			config,
+			"noButtonClicked",
+			"Narrow the scope",
+			[],
+			["/workspace/a.md"],
+			expect.objectContaining({ actionId: "reject" }),
+		)
 	})
 
 	it("keeps the existing missing-context error path", async () => {

@@ -50,4 +50,6 @@ export const KERNEL_CONVERSATIONAL_TOOL_IDS: ReadonlySet<string> = new Set([
 	KernelToolId.ACT_MODE,
 	KernelToolId.ASK,
 	KernelToolId.GENERATE_REPORT,
+	// The Start New Task / Regenerate Context choice is the interaction itself.
+	KernelToolId.NEW_TASK,
 ])

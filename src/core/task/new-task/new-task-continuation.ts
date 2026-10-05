@@ -1,5 +1,10 @@
 import type { ExplicitInstructionDeclaration } from "@core/task/explicit-instructions/types"
-import type { ClineContent, ClineUserToolResultContentBlock } from "@shared/messages/content"
+import type {
+	ClineAssistantToolUseBlock,
+	ClineContent,
+	ClineStorageMessage,
+	ClineUserToolResultContentBlock,
+} from "@shared/messages/content"
 import { ClineDefaultTool } from "@shared/tools"
 
 /** Stable handler-owned marker for one New Task feedback tool result. */
@@ -62,4 +67,28 @@ export function deriveNewTaskFeedbackContinuation(
 			dlineTid: result.dline_tid,
 		},
 	}
+}
+
+/**
+ * Derive the continuation a provider request grants from the conversation it sends.
+ *
+ * The request answers the content after the last assistant message, so only a
+ * feedback result there can authorize this round; every retained tool call is
+ * a candidate for the declaration it must pair with.
+ */
+export function deriveNewTaskFeedbackContinuationFromConversation(
+	messages: readonly ClineStorageMessage[],
+): ExplicitInstructionDeclaration | undefined {
+	let lastAssistant = messages.length - 1
+	while (lastAssistant >= 0 && messages[lastAssistant].role !== "assistant") lastAssistant--
+	if (lastAssistant < 0) return undefined
+	const userContent = messages
+		.slice(lastAssistant + 1)
+		.flatMap((message) => (message.role === "user" && Array.isArray(message.content) ? message.content : []))
+	const assistantContent = messages.flatMap((message) =>
+		message.role === "assistant" && Array.isArray(message.content)
+			? message.content.filter((block): block is ClineAssistantToolUseBlock => block.type === "tool_use")
+			: [],
+	)
+	return deriveNewTaskFeedbackContinuation({ userContent, assistantContent, persistedRequest: false })
 }

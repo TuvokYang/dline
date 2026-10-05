@@ -42,6 +42,7 @@ import {
 } from "../input-queue/LegacyInputQueueMigration"
 import type { TaskState } from "../kernel"
 import { MessageStateHandler } from "../message-state"
+import { buildNewTaskFeedbackContent, findLatestNewTaskFeedback } from "../new-task/new-task-feedback"
 import { TaskPerformanceOwner } from "../performance/TaskPerformanceOwner"
 import { TaskPerformanceRequestReporter } from "../performance/TaskPerformanceRequestReporter"
 import { TaskPromptContextOwner } from "../prompt/TaskPromptContextOwner"
@@ -619,6 +620,16 @@ export class TaskSessionCompositionService {
 					actModeProfileId: settings.actModeProfileId,
 					actModeProfile: settings.actModeProfile,
 				}),
+				// Read after the source is consumed, so the conversation is the one
+				// the user approved and its Regenerate Context rows are final.
+				feedback: async (source) =>
+					buildNewTaskFeedbackContent(
+						findLatestNewTaskFeedback({
+							apiHistory: await conversationView.read(),
+							uiHistory: messages.clineMessages,
+							approvedSource: source,
+						}),
+					),
 				start: (handoff) => options.prompt.ports.successor.start(options.taskId, handoff),
 				onError: (error) =>
 					Logger.error(`[Task ${options.taskId}] Failed to start the New Task successor: ${String(error)}`),

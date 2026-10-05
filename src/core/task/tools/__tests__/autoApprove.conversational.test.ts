@@ -11,6 +11,8 @@ const CONVERSATIONAL_TOOLS = [
 	ClineDefaultTool.ASK,
 	ClineDefaultTool.GENERATE_REPORT,
 	ClineDefaultTool.STATUS_UPDATE,
+	// Handing the conversation to a successor is always the user's choice.
+	ClineDefaultTool.NEW_TASK,
 ] as const
 
 describe("canonical conversational approval", () => {
@@ -22,5 +24,17 @@ describe("canonical conversational approval", () => {
 		for (const toolName of CONVERSATIONAL_TOOLS) {
 			expect(resolveApprovalKind({ toolName, settings: DEFAULT_AUTO_APPROVAL_SETTINGS, blanket }).kind).toBe("none")
 		}
+	})
+
+	it("keeps new_task out of automatic approval even with every read toggle on", () => {
+		const settings = {
+			...DEFAULT_AUTO_APPROVAL_SETTINGS,
+			actions: { ...DEFAULT_AUTO_APPROVAL_SETTINGS.actions, readFiles: true, readFilesExternally: true },
+		}
+
+		expect(resolveApprovalKind({ toolName: ClineDefaultTool.NEW_TASK, settings })).toMatchObject({
+			kind: "none",
+			scope: "conversational",
+		})
 	})
 })

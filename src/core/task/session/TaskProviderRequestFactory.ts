@@ -17,6 +17,7 @@ import type {
 import type { ProductionToolHandlerRuntime } from "../executors/tool/production/ProductionToolHandlerRuntime"
 import type { ToolAdmissionSnapshot } from "../executors/tool/ToolAdmissionRegistry"
 import type { TaskTurnAuthority } from "../explicit-instructions/TurnAuthority"
+import { deriveNewTaskFeedbackContinuationFromConversation } from "../new-task/new-task-continuation"
 import type { TaskPromptContextOwner } from "../prompt/TaskPromptContextOwner"
 import type { TaskPromptLifecycle } from "../prompt/TaskPromptLifecycle"
 import { createRequestApiScope } from "../RequestApiScope"
@@ -49,11 +50,14 @@ export class TaskProviderRequestFactory implements ProviderRequestFactory, Provi
 		const messages = await this.conversationOf(draft)
 		const turnId = draft.turnId ?? randomUUID()
 		// Authority is derived from the durable admitted input, so a recovered or
-		// retried turn grants exactly what the user named and nothing more.
-		const authority = this.options.authority.grant(
-			turnId,
-			await this.options.messages.collectAuthority(draft.inputPayloadRefs),
-		)
+		// retried turn grants exactly what the user named and nothing more. A
+		// Regenerate Context reply is the user's word too: it re-authorizes the
+		// new_task the user asked to see again.
+		const continuation = deriveNewTaskFeedbackContinuationFromConversation(messages)
+		const authority = this.options.authority.grant(turnId, [
+			...(await this.options.messages.collectAuthority(draft.inputPayloadRefs)),
+			...(continuation ? [continuation] : []),
+		])
 		return {
 			...frame,
 			messages,

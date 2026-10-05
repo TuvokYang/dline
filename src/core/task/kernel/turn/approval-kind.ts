@@ -214,7 +214,6 @@ const DIRECT_SCOPES: Partial<Record<KernelToolId, PermissionScope>> = {
 	[KernelToolId.GENERATE_IMAGE]: "generate_image",
 	[KernelToolId.TODO]: "focus_chain",
 	[KernelToolId.CHANGE_TODO_LIST]: "focus_chain",
-	[KernelToolId.NEW_TASK]: "subagent",
 	[KernelToolId.SPAWN_TASK]: "subagent",
 	[KernelToolId.USE_SUBAGENT]: "subagent",
 	[KernelToolId.USE_SUBAGENTS]: "subagent",
