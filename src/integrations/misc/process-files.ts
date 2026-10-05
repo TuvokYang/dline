@@ -2,16 +2,67 @@ import fs from "fs/promises"
 import sizeOf from "image-size"
 import * as path from "path"
 import { HostProvider } from "@/hosts/host-provider"
+import { DlineRuntimeFileManager } from "@/services/runtime-files/DlineRuntimeFileManager"
+import {
+	ATTACHABLE_FILE_EXTENSIONS,
+	ATTACHABLE_IMAGE_EXTENSIONS,
+	formatAttachmentLimit,
+	isAttachableFileName,
+	maxAttachmentBytes,
+} from "@/shared/attachments"
 import { ShowMessageType } from "@/shared/proto/dline/host/window"
 import { Logger } from "@/shared/services/Logger"
-import { MAX_ATTACHED_PDF_BYTES } from "./extract-text"
 
-/** Largest non-image, non-PDF attachment; its text is extracted into the conversation. */
-const MAX_ATTACHED_TEXT_FILE_BYTES = 20 * 1000 * 1024
+function rejectAttachment(message: string): undefined {
+	HostProvider.window.showMessage({ type: ShowMessageType.ERROR, message })
+	return undefined
+}
 
-/** PDFs are kept whole for native document input, so they follow the provider PDF limit instead. */
-function maxAttachmentBytes(filePath: string): number {
-	return path.extname(filePath).toLowerCase() === ".pdf" ? MAX_ATTACHED_PDF_BYTES : MAX_ATTACHED_TEXT_FILE_BYTES
+/**
+ * Check that a non-image file on disk can be attached; reports the reason to the user when it cannot.
+ * Returns the absolute path to attach, or undefined when the file is rejected.
+ */
+export async function validateAttachmentPath(filePath: string): Promise<string | undefined> {
+	const name = path.basename(filePath)
+	if (!isAttachableFileName(name)) {
+		return rejectAttachment(`Unsupported attachment: ${name} was skipped.`)
+	}
+	try {
+		const stats = await fs.stat(filePath)
+		if (!stats.isFile()) {
+			return rejectAttachment(`Not a file: ${name} was skipped.`)
+		}
+		if (stats.size > maxAttachmentBytes(name)) {
+			Logger.warn(`File too large, skipping: ${filePath}`)
+			return rejectAttachment(`File too large: ${name} was skipped (size exceeds ${formatAttachmentLimit(name)}).`)
+		}
+	} catch (error) {
+		Logger.error(`Error checking file size for ${filePath}:`, error)
+		return rejectAttachment(`Could not check file size for ${name}, skipping.`)
+	}
+	return filePath
+}
+
+/**
+ * Write a dropped or pasted file that has no host path (only bytes) into Dline's managed temp area,
+ * so it can be attached like a picked file. Returns the staged path, or undefined when rejected.
+ */
+export async function stageAttachmentBytes(fileName: string, data: Uint8Array): Promise<string | undefined> {
+	const name = path.basename(fileName)
+	if (!isAttachableFileName(name)) {
+		return rejectAttachment(`Unsupported attachment: ${name} was skipped.`)
+	}
+	if (data.byteLength > maxAttachmentBytes(name)) {
+		return rejectAttachment(`File too large: ${name} was skipped (size exceeds ${formatAttachmentLimit(name)}).`)
+	}
+	try {
+		const stagedPath = await DlineRuntimeFileManager.createAttachmentPath(name)
+		await fs.writeFile(stagedPath, data)
+		return stagedPath
+	} catch (error) {
+		Logger.error(`Failed to stage attachment ${name}:`, error)
+		return rejectAttachment(`Could not attach ${name}.`)
+	}
 }
 
 /**
@@ -19,8 +70,8 @@ function maxAttachmentBytes(filePath: string): number {
  * For models which don't support images, will not allow them to be selected
  */
 export async function selectFiles(imagesAllowed: boolean): Promise<{ images: string[]; files: string[] }> {
-	const IMAGE_EXTENSIONS = ["png", "jpg", "jpeg", "webp"] // supported by anthropic and openrouter
-	const OTHER_FILE_EXTENSIONS = ["xml", "json", "txt", "log", "md", "docx", "ipynb", "pdf", "xlsx", "csv"]
+	const IMAGE_EXTENSIONS = [...ATTACHABLE_IMAGE_EXTENSIONS]
+	const OTHER_FILE_EXTENSIONS = [...ATTACHABLE_FILE_EXTENSIONS]
 
 	const showDialogueResponse = await HostProvider.window.showOpenDialogue({
 		canSelectMany: true,
@@ -72,27 +123,8 @@ export async function selectFiles(imagesAllowed: boolean): Promise<{ images: str
 
 			return { type: "image", data: `data:${mimeType};base64,${base64}` }
 		}
-		// for standard models we will check the size of the file to ensure its not too large
-		try {
-			const stats = await fs.stat(filePath)
-			const maxBytes = maxAttachmentBytes(filePath)
-			if (stats.size > maxBytes) {
-				Logger.warn(`File too large, skipping: ${filePath}`)
-				HostProvider.window.showMessage({
-					type: ShowMessageType.ERROR,
-					message: `File too large: ${path.basename(filePath)} was skipped (size exceeds ${Math.round(maxBytes / (1000 * 1000))}MB).`,
-				})
-				return null
-			}
-		} catch (error) {
-			Logger.error(`Error checking file size for ${filePath}:`, error)
-			HostProvider.window.showMessage({
-				type: ShowMessageType.ERROR,
-				message: `Could not check file size for ${path.basename(filePath)}, skipping.`,
-			})
-			return null
-		}
-		return { type: "file", data: filePath }
+		const attachablePath = await validateAttachmentPath(filePath)
+		return attachablePath ? { type: "file", data: attachablePath } : null
 	})
 
 	const dataUrlsWithNulls = await Promise.all(processFilesPromises)

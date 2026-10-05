@@ -2,7 +2,13 @@ import { DEFAULT_CHAT_INPUT_SEND_SHORTCUT, getChatInputSendShortcutLabel } from 
 import { mentionRegex, mentionRegexGlobal } from "@shared/context-mentions"
 import type { ClineAsk } from "@shared/ExtensionMessage"
 import { EmptyRequest, StringRequest } from "@shared/proto/dline/common"
-import { FileSearchRequest, FileSearchType, RefreshedDlineToggles, RelativePathsRequest } from "@shared/proto/dline/file"
+import {
+	FileSearchRequest,
+	FileSearchType,
+	RefreshedDlineToggles,
+	RelativePathsRequest,
+	StageAttachmentRequest,
+} from "@shared/proto/dline/file"
 import { type SlashCommand } from "@shared/slashCommands"
 import { Mode } from "@shared/storage/types"
 import { AtSignIcon, PlusIcon } from "lucide-react"
@@ -26,6 +32,12 @@ import { useTaskCapabilityToggles } from "@/hooks/useTaskCapabilityToggles"
 import { cn } from "@/lib/utils"
 import { FileServiceClient, SlashServiceClient } from "@/services/grpc-client"
 import { shouldSendChatInput } from "@/utils/chat-input-shortcut"
+import {
+	classifyTransferFiles,
+	isDocumentAttachmentUri,
+	parseAttachableFileUris,
+	readResourceUris,
+} from "@/utils/composer-transfer"
 import {
 	ContextMenuOptionType,
 	getContextMenuOptionIndex,
@@ -54,6 +66,15 @@ import ServersToggleModal from "./ServersToggleModal"
 import { UsageBar } from "./UsageBar"
 
 const { MAX_IMAGES_AND_FILES_PER_MESSAGE } = CHAT_CONSTANTS
+
+/** Visible rows before the composer scrolls; a visible scrollbar takes over past this height. */
+const CHAT_INPUT_MAX_ROWS = 15
+
+/**
+ * Above this length (~20K characters) the composer stops re-scanning the whole text for @mentions and
+ * /commands on every keystroke, so pasting 100KB+ stays responsive. There is no limit on input length.
+ */
+const MAX_HIGHLIGHTED_INPUT_LENGTH = 20_000
 
 const getImageDimensions = (dataUrl: string): Promise<{ width: number; height: number }> => {
 	return new Promise((resolve, reject) => {
@@ -1015,11 +1036,87 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 			}, 3000)
 		}, [])
 
+		/** Adds host paths of attached files, respecting the per-message attachment limit. */
+		const appendAttachmentPaths = useCallback(
+			(paths: string[]) => {
+				if (paths.length === 0) {
+					return
+				}
+				setSelectedFiles((previous) => {
+					const availableSlots = MAX_IMAGES_AND_FILES_PER_MESSAGE - selectedImages.length - previous.length
+					const added = paths.filter((filePath) => !previous.includes(filePath)).slice(0, Math.max(0, availableSlots))
+					return added.length > 0 ? [...previous, ...added] : previous
+				})
+			},
+			[selectedImages.length, setSelectedFiles],
+		)
+
+		/** Attaches files the host can read by URI (Explorer drops, Linux file-manager URIs). */
+		const attachFileUris = useCallback(
+			async (uris: string[]) => {
+				try {
+					const response = await FileServiceClient.resolveAttachmentUris(RelativePathsRequest.create({ uris }))
+					appendAttachmentPaths(response.values)
+				} catch (error) {
+					console.error("Error resolving dropped attachments:", error)
+				}
+			},
+			[appendAttachmentPaths],
+		)
+
+		/** Sends files that only exist as bytes in the Webview to the host, which stages them as attachments. */
+		const stageAttachmentFiles = useCallback(
+			async (files: File[]) => {
+				const stagedPaths: string[] = []
+				for (const file of files) {
+					try {
+						const data = new Uint8Array(await file.arrayBuffer())
+						const response = await FileServiceClient.stageAttachment(
+							StageAttachmentRequest.create({ fileName: file.name, data }),
+						)
+						if (response.value) {
+							stagedPaths.push(response.value)
+						}
+					} catch (error) {
+						console.error(`Error attaching ${file.name}:`, error)
+					}
+				}
+				appendAttachmentPaths(stagedPaths)
+			},
+			[appendAttachmentPaths],
+		)
+
 		const handlePaste = useCallback(
 			async (e: React.ClipboardEvent) => {
 				const items = e.clipboardData.items
 
+				// Files copied in a file manager arrive as clipboard files (images keep the image path below).
+				const pastedFiles = classifyTransferFiles(Array.from(e.clipboardData.files ?? []))
+				if (pastedFiles.attachments.length > 0 || (pastedFiles.rejected.length > 0 && pastedFiles.images.length === 0)) {
+					if (pastedFiles.rejected.length > 0) {
+						showUnsupportedFileErrorMessage()
+					}
+					if (pastedFiles.attachments.length > 0) {
+						e.preventDefault()
+						if (!shouldDisableFilesAndImages) {
+							await stageAttachmentFiles(pastedFiles.attachments)
+						}
+						if (pastedFiles.images.length === 0) {
+							return
+						}
+					}
+				}
+
 				const pastedText = e.clipboardData.getData("text")
+				// Linux file managers copy files as file:// URIs in the text payload.
+				const pastedFileUris = parseAttachableFileUris(pastedText)
+				if (pastedFileUris.length > 0) {
+					e.preventDefault()
+					if (!shouldDisableFilesAndImages) {
+						await attachFileUris(pastedFileUris)
+					}
+					return
+				}
 				// Check if the pasted content is a URL, add space after so user can easily delete if they don't want it
 				const urlRegex = /^\S+:\/\/\S+$/
 				if (urlRegex.test(pastedText.trim())) {
@@ -1107,6 +1204,8 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 				setInputValue,
 				inputValue,
 				showDimensionErrorMessage,
+				stageAttachmentFiles,
+				attachFileUris,
 			],
 		)
 
@@ -1124,18 +1223,37 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 			setIsMouseDownOnMenu(true)
 		}, [])
 
+		/** Keeps the highlight overlay scrolled with the textarea; scrolling never needs a re-highlight. */
+		const syncHighlightScroll = useCallback(() => {
+			if (!textAreaRef.current || !highlightLayerRef.current) {
+				return
+			}
+			highlightLayerRef.current.scrollTop = textAreaRef.current.scrollTop
+			highlightLayerRef.current.scrollLeft = textAreaRef.current.scrollLeft
+		}, [])
+
 		const updateHighlights = useCallback(() => {
 			if (!textAreaRef.current || !highlightLayerRef.current) {
 				return
 			}
 
 			let processedText = textAreaRef.current.value
-
-			processedText = processedText
 				.replace(/\n$/, "\n\n")
 				.replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" })[c] || c)
-				// highlight @mentions
-				.replace(mentionRegexGlobal, '<mark class="mention-context-textarea-highlight">$&</mark>')
+
+			// Very large pastes skip the per-keystroke mention and command scans so typing stays responsive;
+			// the overlay still mirrors the text so layout and scrolling stay aligned.
+			if (processedText.length > MAX_HIGHLIGHTED_INPUT_LENGTH) {
+				highlightLayerRef.current.innerHTML = processedText
+				syncHighlightScroll()
+				return
+			}
+
+			// highlight @mentions
+			processedText = processedText.replace(
+				mentionRegexGlobal,
+				'<mark class="mention-context-textarea-highlight">$&</mark>',
+			)
 
 			// Highlight only the FIRST valid /slash-command in the text
 			// Only one slash command is processed per message, so we only highlight the first one
@@ -1173,9 +1291,9 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 			})
 
 			highlightLayerRef.current.innerHTML = processedText
-			highlightLayerRef.current.scrollTop = textAreaRef.current.scrollTop
-			highlightLayerRef.current.scrollLeft = textAreaRef.current.scrollLeft
+			syncHighlightScroll()
 		}, [
+			syncHighlightScroll,
 			effectiveLocalWorkflowToggles,
 			effectiveGlobalWorkflowToggles,
 			effectiveRemoteWorkflowToggles,
@@ -1335,24 +1453,8 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 
 		const handleDragEnter = (e: React.DragEvent) => {
 			e.preventDefault()
+			// File names and types are not reliable until drop, so supported types are checked in onDrop.
 			setIsDraggingOver(true)
-
-			// Check if files are being dragged
-			if (e.dataTransfer.types.includes("Files")) {
-				// Check if any of the files are not images
-				const items = Array.from(e.dataTransfer.items)
-				const hasNonImageFile = items.some((item) => {
-					if (item.kind === "file") {
-						const type = item.type.split("/")[0]
-						return type !== "image"
-					}
-					return false
-				})
-
-				if (hasNonImageFile) {
-					showUnsupportedFileErrorMessage()
-				}
-			}
 		}
 		/**
 		 * Handles the drag over event to allow dropping.
@@ -1410,31 +1512,13 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 				unsupportedFileTimerRef.current = null
 			}
 
-			// --- 1. VSCode Explorer Drop Handling ---
-			let uris: string[] = []
-			const resourceUrlsData = e.dataTransfer.getData("resourceurls")
-			const vscodeUriListData = e.dataTransfer.getData("application/vnd.code.uri-list")
-
-			// 1a. Try 'resourceurls' first (used for multi-select)
-			if (resourceUrlsData) {
-				try {
-					uris = JSON.parse(resourceUrlsData)
-					uris = uris.map((uri) => decodeURIComponent(uri))
-				} catch (error) {
-					console.error("Failed to parse resourceurls JSON:", error)
-					uris = [] // Reset if parsing failed
-				}
+			// --- 1. VS Code Explorer drop: binary documents are attached, everything else is mentioned ---
+			const resourceUris = readResourceUris(e.dataTransfer)
+			const documentUris = resourceUris.filter(isDocumentAttachmentUri)
+			const validUris = resourceUris.filter((uri) => !isDocumentAttachmentUri(uri))
+			if (documentUris.length > 0 && !shouldDisableFilesAndImages) {
+				void attachFileUris(documentUris)
 			}
-
-			// 1b. Fallback to 'application/vnd.code.uri-list' (newline separated)
-			if (uris.length === 0 && vscodeUriListData) {
-				uris = vscodeUriListData.split("\n").map((uri) => uri.trim())
-			}
-
-			// 1c. Filter for valid schemes (file or vscode-file) and non-empty strings
-			const validUris = uris.filter(
-				(uri) => uri && (uri.startsWith("vscode-file:") || uri.startsWith("file:") || uri.startsWith("vscode-remote:")),
-			)
 
 			if (validUris.length > 0) {
 				setPendingInsertions([])
@@ -1456,22 +1540,39 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 				return
 			}
 
-			const text = e.dataTransfer.getData("text")
-			if (text) {
-				handleTextDrop(text)
+			if (resourceUris.length > 0) {
 				return
 			}
 
-			// --- 3. Image Drop Handling ---
-			// Only proceed if it wasn't a VSCode resource or plain text drop
-			const files = Array.from(e.dataTransfer.files)
-			const acceptedTypes = ["png", "jpeg", "webp"]
-			const imageFiles = files.filter((file) => {
-				const [type, subtype] = file.type.split("/")
-				return type === "image" && acceptedTypes.includes(subtype)
-			})
+			// --- 2. OS file-manager drop: files arrive as bytes without a host path ---
+			const droppedFiles = classifyTransferFiles(Array.from(e.dataTransfer.files))
+			if (droppedFiles.rejected.length > 0) {
+				showUnsupportedFileErrorMessage()
+			}
+			const hasDroppedFiles =
+				droppedFiles.images.length + droppedFiles.attachments.length + droppedFiles.rejected.length > 0
+			if (!hasDroppedFiles) {
+				// --- 3. Text drop; Linux file managers may send files as file:// URIs only ---
+				const text = e.dataTransfer.getData("text")
+				const droppedFileUris = parseAttachableFileUris(text)
+				if (droppedFileUris.length > 0) {
+					if (!shouldDisableFilesAndImages) {
+						void attachFileUris(droppedFileUris)
+					}
+				} else if (text) {
+					handleTextDrop(text)
+				}
+				return
+			}
 
-			if (shouldDisableFilesAndImages || imageFiles.length === 0) {
+			if (shouldDisableFilesAndImages) {
+				return
+			}
+			if (droppedFiles.attachments.length > 0) {
+				void stageAttachmentFiles(droppedFiles.attachments)
+			}
+			const imageFiles = droppedFiles.images
+			if (imageFiles.length === 0) {
 				return
 			}
 
@@ -1564,7 +1665,9 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 					)}
 					{showUnsupportedFileError && (
 						<div className="absolute inset-2.5 bg-[rgba(var(--vscode-errorForeground-rgb),0.1)] border-2 border-error rounded-xs flex items-center justify-center z-10 pointer-events-none">
-							<span className="text-error font-bold text-xs">Files other than images are currently disabled</span>
+							<span className="text-error font-bold text-xs">
+								Unsupported or too large: attach images, PDF, Word, Excel or text files (PDF up to 50MB)
+							</span>
 						</div>
 					)}
 					{showSlashCommandsMenu && (
@@ -1618,6 +1721,9 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 							wordWrap: "break-word",
 							color: "transparent",
 							overflow: "hidden",
+							// Reserve the same scrollbar gutter as the textarea so both wrap text identically.
+							scrollbarWidth: "thin",
+							scrollbarGutter: "stable",
 							fontFamily: "var(--vscode-font-family)",
 							fontSize: "var(--vscode-editor-font-size)",
 							lineHeight: "var(--vscode-editor-line-height)",
@@ -1631,7 +1737,7 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 					/>
 					<DynamicTextArea
 						data-testid="chat-input"
-						maxRows={10}
+						maxRows={CHAT_INPUT_MAX_ROWS}
 						minRows={3}
 						onBlur={handleBlur}
 						onChange={(e) => {
@@ -1652,7 +1758,7 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 						onKeyUp={handleKeyUp}
 						onMouseUp={updateCursorPosition}
 						onPaste={handlePaste}
-						onScroll={() => updateHighlights()}
+						onScroll={syncHighlightScroll}
 						onSelect={updateCursorPosition}
 						placeholder={showUnsupportedFileError || showDimensionError ? "" : placeholderText}
 						ref={(el) => {
@@ -1675,8 +1781,10 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 							lineHeight: "var(--vscode-editor-line-height)",
 							resize: "none",
 							overflowX: "hidden",
-							overflowY: "scroll",
-							scrollbarWidth: "none",
+							overflowY: "auto",
+							// A visible scrollbar shows that long input continues beyond the visible rows.
+							scrollbarWidth: "thin",
+							scrollbarGutter: "stable",
 							// Since we have maxRows, when text is long enough it starts to overflow the bottom padding, appearing behind the thumbnails. To fix this, we use a transparent border to push the text up instead. (https://stackoverflow.com/questions/42631947/maintaining-a-padding-inside-of-text-area/52538410#52538410)
 							// borderTop: "9px solid transparent",
 							borderLeft: 0,

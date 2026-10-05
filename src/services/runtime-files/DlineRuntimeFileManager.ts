@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto"
 import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
@@ -7,6 +8,9 @@ const MAX_TOTAL_SIZE_BYTES = 2 * 1024 * 1024 * 1024
 const MAX_FILE_AGE_MS = 50 * 60 * 60 * 1000
 const CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000
 const TEMP_FILE_STEM_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
+const ATTACHMENTS_DIRECTORY = "attachments"
+/** Characters that are invalid in a file name on at least one supported platform. */
+const UNSAFE_FILE_NAME_CHARACTERS = /[<>:"/\\|?*\u0000-\u001f]/g
 
 interface TempFileInfo {
 	readonly path: string
@@ -19,9 +23,10 @@ interface CleanupResult {
 	readonly freedBytes: number
 }
 
-/** Owns Dline temporary log paths and their retention lifecycle. */
+/** Owns Dline temporary log paths, staged attachments, and their retention lifecycle. */
 class DlineRuntimeFileManagerImpl {
 	private readonly tempDir = path.join(os.tmpdir(), "dline")
+	private readonly attachmentsDir = path.join(this.tempDir, ATTACHMENTS_DIRECTORY)
 	private readonly legacyTempDir = path.join(os.tmpdir(), "cline")
 	private cleanupIntervalId: NodeJS.Timeout | null = null
 	private initialized = false
@@ -62,14 +67,27 @@ class DlineRuntimeFileManagerImpl {
 		return path.join(this.tempDir, `${stableStem}.log`)
 	}
 
+	/**
+	 * Reserve a unique path for a user attachment that arrived as bytes without a host path.
+	 * Each attachment gets its own directory so the file keeps its original base name, which is
+	 * what the model sees. Staged attachments follow the same age-based retention as logs.
+	 */
+	async createAttachmentPath(fileName: string): Promise<string> {
+		const safeName = path.basename(fileName).replace(UNSAFE_FILE_NAME_CHARACTERS, "_").trim() || "attachment"
+		const directory = path.join(this.attachmentsDir, randomUUID())
+		await fs.promises.mkdir(directory, { recursive: true })
+		return path.join(directory, safeName)
+	}
+
 	async cleanup(): Promise<CleanupResult> {
 		try {
 			this.ensureTempDirExists()
 			const current = await this.cleanupDirectory(this.tempDir)
 			const legacy = await this.cleanupDirectory(this.legacyTempDir)
+			const attachments = await this.cleanupAttachmentDirectories()
 			const result = {
-				deletedCount: current.deletedCount + legacy.deletedCount,
-				freedBytes: current.freedBytes + legacy.freedBytes,
+				deletedCount: current.deletedCount + legacy.deletedCount + attachments.deletedCount,
+				freedBytes: current.freedBytes + legacy.freedBytes + attachments.freedBytes,
 			}
 
 			if (result.deletedCount > 0) {
@@ -168,6 +186,42 @@ class DlineRuntimeFileManagerImpl {
 			}
 		}
 
+		return { deletedCount, freedBytes }
+	}
+
+	/** Remove staged attachment directories whose contents are older than the retention window. */
+	private async cleanupAttachmentDirectories(): Promise<CleanupResult> {
+		let entries: fs.Dirent[]
+		try {
+			entries = await fs.promises.readdir(this.attachmentsDir, { withFileTypes: true })
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+				return { deletedCount: 0, freedBytes: 0 }
+			}
+			throw error
+		}
+
+		const now = Date.now()
+		let deletedCount = 0
+		let freedBytes = 0
+		for (const entry of entries) {
+			if (!entry.isDirectory()) {
+				continue
+			}
+			const directory = path.join(this.attachmentsDir, entry.name)
+			const files = await this.readFileInfos(directory, await fs.promises.readdir(directory).catch(() => []))
+			const newest = files.reduce((latest, file) => Math.max(latest, file.mtime), 0)
+			if (files.length > 0 && now - newest <= MAX_FILE_AGE_MS) {
+				continue
+			}
+			try {
+				await fs.promises.rm(directory, { recursive: true, force: true })
+				deletedCount += files.length
+				freedBytes += files.reduce((sum, file) => sum + file.size, 0)
+			} catch {
+				// Best effort: a file may still be open by a pending send.
+			}
+		}
 		return { deletedCount, freedBytes }
 	}
 

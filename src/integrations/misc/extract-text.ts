@@ -7,6 +7,7 @@ import mammoth from "mammoth"
 import * as path from "path"
 // @ts-expect-error-next-line
 import pdf from "pdf-parse/lib/pdf-parse"
+import { MAX_ATTACHED_PDF_BYTES } from "@/shared/attachments"
 import { truncateContent } from "@/shared/content-limits"
 import type { ClineTextContentBlock, ClineUserAttachedDocumentBlock } from "@/shared/messages/content"
 import { Logger } from "@/shared/services/Logger"
@@ -192,9 +193,6 @@ async function extractTextFromExcel(filePath: string): Promise<string> {
 		throw new Error(`Failed to extract text from Excel: ${error.message}`)
 	}
 }
-
-/** Largest PDF accepted as an attachment: the biggest native PDF input of any supported provider. */
-export const MAX_ATTACHED_PDF_BYTES = 50 * 1000 * 1000
 
 const ATTACHED_FILES_HEADER = "Files attached by the user:"
 
