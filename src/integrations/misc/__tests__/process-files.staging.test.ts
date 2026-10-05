@@ -35,12 +35,24 @@ describe("attachment staging", () => {
 		await fs.rm(path.dirname(stagedPath as string), { recursive: true, force: true })
 	})
 
-	it("rejects unsupported types and oversized PDFs without writing anything", async () => {
+	it("stages a file of any other type when its content is text", async () => {
+		const bytes = new TextEncoder().encode("fn main() {}\n")
+
+		const stagedPath = await stageAttachmentBytes("main.rs", bytes)
+
+		expect(path.basename(stagedPath as string)).toBe("main.rs")
+		expect(new Uint8Array(await fs.readFile(stagedPath as string))).toEqual(bytes)
+		expect(showMessage).not.toHaveBeenCalled()
+		await fs.rm(path.dirname(stagedPath as string), { recursive: true, force: true })
+	})
+
+	it("rejects binary content read as text and oversized PDFs without writing anything", async () => {
 		expect(await stageAttachmentBytes("tool.exe", new Uint8Array(4))).toBeUndefined()
 		const oversized = { byteLength: 50 * 1000 * 1000 + 1 } as Uint8Array
 		expect(await stageAttachmentBytes("big.pdf", oversized)).toBeUndefined()
 
 		expect(showMessage).toHaveBeenCalledTimes(2)
+		expect(showMessage.mock.calls[0][0].message).toContain("Not a text file: tool.exe")
 		expect(showMessage.mock.calls[1][0].message).toContain("50MB")
 	})
 
@@ -52,12 +64,19 @@ describe("attachment staging", () => {
 		await fs.rm(path.dirname(stagedPath as string), { recursive: true, force: true })
 	})
 
-	it("validates on-disk attachments by type, kind, and size", async () => {
+	it("validates on-disk attachments by kind, size, and text content", async () => {
 		const pdfPath = path.join(workDir, "a.pdf")
 		await fs.writeFile(pdfPath, "%PDF-1.4")
+		const sourcePath = path.join(workDir, "lib.rs")
+		await fs.writeFile(sourcePath, "pub fn answer() -> u32 { 42 }\n")
+		const blobPath = path.join(workDir, "blob.dat")
+		await fs.writeFile(blobPath, Buffer.from([0x00, 0x01, 0x02, 0x00, 0xff, 0x00]))
 
 		expect(await validateAttachmentPath(pdfPath)).toBe(pdfPath)
+		expect(await validateAttachmentPath(sourcePath)).toBe(sourcePath)
+		expect(await validateAttachmentPath(blobPath)).toBeUndefined()
 		expect(await validateAttachmentPath(path.join(workDir, "missing.pdf"))).toBeUndefined()
 		expect(await validateAttachmentPath(workDir)).toBeUndefined()
+		expect(showMessage.mock.calls.some(([request]) => request.message.includes("Not a text file: blob.dat"))).toBe(true)
 	})
 })

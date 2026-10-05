@@ -8,7 +8,10 @@
 /** Image types every image-capable provider accepts as inline image input. */
 export const ATTACHABLE_IMAGE_EXTENSIONS: readonly string[] = ["png", "jpg", "jpeg", "webp"]
 
-/** Non-image files the composer attaches; PDFs are sent natively, the rest as extracted text. */
+/**
+ * Document types the "Add files" picker offers. Drops and pastes are not limited to this list: any
+ * non-image file attaches, and everything except binary documents is read as text.
+ */
 export const ATTACHABLE_FILE_EXTENSIONS: readonly string[] = [
 	"xml",
 	"json",
@@ -25,7 +28,7 @@ export const ATTACHABLE_FILE_EXTENSIONS: readonly string[] = [
 /** PDFs are kept whole for native document input, so they follow the largest provider PDF limit. */
 export const MAX_ATTACHED_PDF_BYTES = 50 * 1000 * 1000
 
-/** Other non-image attachments are extracted into text, so they keep the historical picker limit. */
+/** Other non-image attachments are read into text, so they share the text input limit. */
 export const MAX_ATTACHED_TEXT_FILE_BYTES = 20 * 1000 * 1024
 
 /** Lower-case extension without the leading dot, or an empty string when the name has none. */
@@ -37,11 +40,6 @@ export function attachmentExtension(fileName: string): string {
 
 export function isAttachableImageName(fileName: string): boolean {
 	return ATTACHABLE_IMAGE_EXTENSIONS.includes(attachmentExtension(fileName))
-}
-
-/** Whether a non-image file can be attached by path (the "Add files" picker accepts the same set). */
-export function isAttachableFileName(fileName: string): boolean {
-	return ATTACHABLE_FILE_EXTENSIONS.includes(attachmentExtension(fileName))
 }
 
 export function isPdfFileName(fileName: string): boolean {
@@ -56,6 +54,14 @@ const BINARY_DOCUMENT_EXTENSIONS: readonly string[] = ["pdf", "docx", "xlsx"]
 
 export function isBinaryDocumentName(fileName: string): boolean {
 	return BINARY_DOCUMENT_EXTENSIONS.includes(attachmentExtension(fileName))
+}
+
+/**
+ * Whether an attached file is read as plain text: every non-image file except binary documents,
+ * whatever its extension. The host rejects such a file when its content turns out not to be text.
+ */
+export function isTextAttachmentName(fileName: string): boolean {
+	return !isBinaryDocumentName(fileName)
 }
 
 /** Largest accepted size for a non-image attachment with this name. */

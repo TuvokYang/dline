@@ -51,6 +51,7 @@ e2e("Chat input - files dropped from the OS file manager become attachments", as
 		[
 			{ name: "os-drop-report.pdf", type: "application/pdf", text: MINIMAL_PDF },
 			{ name: "os-drop-notes.txt", type: "text/plain", text: "os drop notes" },
+			{ name: "os-drop-main.rs", type: "", text: "fn main() {}\n" },
 		],
 		[],
 	)
@@ -58,6 +59,7 @@ e2e("Chat input - files dropped from the OS file manager become attachments", as
 	expect(dropReturned).toBe(false)
 	await expect(sidebar.getByTitle("os-drop-report.pdf")).toBeVisible({ timeout: 15_000 })
 	await expect(sidebar.getByTitle("os-drop-notes.txt")).toBeVisible({ timeout: 15_000 })
+	await expect(sidebar.getByTitle("os-drop-main.rs")).toBeVisible({ timeout: 15_000 })
 	await expect(input).toHaveValue("")
 	await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
 })

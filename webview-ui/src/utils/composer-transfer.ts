@@ -1,4 +1,4 @@
-import { isAttachableFileName, isAttachableImageName, isBinaryDocumentName, maxAttachmentBytes } from "@shared/attachments"
+import { isAttachableImageName, isBinaryDocumentName, maxAttachmentBytes } from "@shared/attachments"
 
 /**
  * Classifies what a drop or paste delivers to the chat composer.
@@ -52,7 +52,7 @@ export function isDocumentAttachmentUri(uri: string): boolean {
 }
 
 /**
- * The `file://` URIs in a plain-text payload when the payload is nothing but attachable file URIs
+ * The `file://` URIs in a plain-text payload when the payload is nothing but non-image file URIs
  * (Linux file managers copy or drag files this way). Any other text yields an empty list so it is
  * still inserted as text.
  */
@@ -64,20 +64,23 @@ export function parseAttachableFileUris(text: string): string[] {
 	if (lines.length === 0) {
 		return []
 	}
-	const allAttachable = lines.every((line) => line.startsWith("file://") && isAttachableFileName(uriFileName(line)))
+	const allAttachable = lines.every((line) => line.startsWith("file://") && !isAttachableImageName(uriFileName(line)))
 	return allAttachable ? lines : []
 }
 
 export interface TransferFileClassification {
 	/** Inline images, read into data URLs by the Webview. */
 	readonly images: File[]
-	/** Attachable files sent to the extension host to be staged as attachments. */
+	/**
+	 * Every other file within its size limit, sent to the extension host to be staged as an attachment.
+	 * Files other than PDF, Word and Excel are read as text; the host rejects content that is not text.
+	 */
 	readonly attachments: File[]
-	/** Unsupported types or files above the attachment size limit. */
+	/** Files above their attachment size limit (PDF 50MB, everything else the text input limit). */
 	readonly rejected: File[]
 }
 
-/** Splits dropped or pasted files into inline images, attachable files, and rejected files. */
+/** Splits dropped or pasted files into inline images, attachable files, and oversized files. */
 export function classifyTransferFiles(files: readonly File[]): TransferFileClassification {
 	const images: File[] = []
 	const attachments: File[] = []
@@ -85,7 +88,7 @@ export function classifyTransferFiles(files: readonly File[]): TransferFileClass
 	for (const file of files) {
 		if (INLINE_IMAGE_TYPES.includes(file.type) || (!file.type && isAttachableImageName(file.name))) {
 			images.push(file)
-		} else if (isAttachableFileName(file.name) && file.size <= maxAttachmentBytes(file.name)) {
+		} else if (file.size <= maxAttachmentBytes(file.name)) {
 			attachments.push(file)
 		} else {
 			rejected.push(file)

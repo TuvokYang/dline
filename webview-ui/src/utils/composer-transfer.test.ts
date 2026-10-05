@@ -29,7 +29,7 @@ describe("composer transfer classification", () => {
 		expect(uris).toEqual(["file:///home/u/a.xlsx"])
 	})
 
-	it("splits OS-dropped files into images, attachable files, and rejected files", () => {
+	it("splits OS-dropped files into images, attachable files, and oversized files", () => {
 		const screenshot = file("shot.png", "image/png")
 		const pdf = file("paper.pdf", "application/pdf", 30 * 1000 * 1000)
 		const hugePdf = file("huge.pdf", "application/pdf", 60 * 1000 * 1000)
@@ -38,8 +38,21 @@ describe("composer transfer classification", () => {
 		const result = classifyTransferFiles([screenshot, pdf, hugePdf, archive])
 
 		expect(result.images).toEqual([screenshot])
-		expect(result.attachments).toEqual([pdf])
-		expect(result.rejected).toEqual([hugePdf, archive])
+		expect(result.attachments).toEqual([pdf, archive])
+		expect(result.rejected).toEqual([hugePdf])
+	})
+
+	it("attaches files of any other type as text up to the text input limit", () => {
+		const source = file("main.rs", "")
+		const config = file("settings.conf", "text/plain", 20 * 1000 * 1024)
+		const hugeLog = file("trace.log", "text/plain", 20 * 1000 * 1024 + 1)
+		const gif = file("anim.gif", "image/gif")
+
+		const result = classifyTransferFiles([source, config, hugeLog, gif])
+
+		expect(result.images).toEqual([])
+		expect(result.attachments).toEqual([source, config, gif])
+		expect(result.rejected).toEqual([hugeLog])
 	})
 
 	it("treats text made only of attachable file URIs as attachments (Linux file managers)", () => {
@@ -49,9 +62,13 @@ describe("composer transfer classification", () => {
 		])
 	})
 
-	it("keeps ordinary text and non-attachable file URIs as text", () => {
+	it("attaches file URIs of any non-image type", () => {
+		expect(parseAttachableFileUris("file:///home/u/script.sh")).toEqual(["file:///home/u/script.sh"])
+	})
+
+	it("keeps ordinary text and image file URIs as text", () => {
 		expect(parseAttachableFileUris("see file:///home/u/a.pdf")).toEqual([])
-		expect(parseAttachableFileUris("file:///home/u/script.sh")).toEqual([])
+		expect(parseAttachableFileUris("file:///home/u/a.png")).toEqual([])
 		expect(parseAttachableFileUris("https://example.com/a.pdf")).toEqual([])
 	})
 })

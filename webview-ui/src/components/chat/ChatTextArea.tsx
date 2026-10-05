@@ -1666,7 +1666,7 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 					{showUnsupportedFileError && (
 						<div className="absolute inset-2.5 bg-[rgba(var(--vscode-errorForeground-rgb),0.1)] border-2 border-error rounded-xs flex items-center justify-center z-10 pointer-events-none">
 							<span className="text-error font-bold text-xs">
-								Unsupported or too large: attach images, PDF, Word, Excel or text files (PDF up to 50MB)
+								File too large: PDF up to 50MB, other files up to 20MB
 							</span>
 						</div>
 					)}

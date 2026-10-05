@@ -1,5 +1,6 @@
 import fs from "fs/promises"
 import sizeOf from "image-size"
+import { isBinaryFile } from "isbinaryfile"
 import * as path from "path"
 import { HostProvider } from "@/hosts/host-provider"
 import { DlineRuntimeFileManager } from "@/services/runtime-files/DlineRuntimeFileManager"
@@ -7,7 +8,7 @@ import {
 	ATTACHABLE_FILE_EXTENSIONS,
 	ATTACHABLE_IMAGE_EXTENSIONS,
 	formatAttachmentLimit,
-	isAttachableFileName,
+	isTextAttachmentName,
 	maxAttachmentBytes,
 } from "@/shared/attachments"
 import { ShowMessageType } from "@/shared/proto/dline/host/window"
@@ -18,15 +19,16 @@ function rejectAttachment(message: string): undefined {
 	return undefined
 }
 
+function rejectNonTextAttachment(name: string): undefined {
+	return rejectAttachment(`Not a text file: ${name} was skipped. Attach images, PDF, Word, Excel, or text files.`)
+}
+
 /**
  * Check that a non-image file on disk can be attached; reports the reason to the user when it cannot.
  * Returns the absolute path to attach, or undefined when the file is rejected.
  */
 export async function validateAttachmentPath(filePath: string): Promise<string | undefined> {
 	const name = path.basename(filePath)
-	if (!isAttachableFileName(name)) {
-		return rejectAttachment(`Unsupported attachment: ${name} was skipped.`)
-	}
 	try {
 		const stats = await fs.stat(filePath)
 		if (!stats.isFile()) {
@@ -36,9 +38,12 @@ export async function validateAttachmentPath(filePath: string): Promise<string |
 			Logger.warn(`File too large, skipping: ${filePath}`)
 			return rejectAttachment(`File too large: ${name} was skipped (size exceeds ${formatAttachmentLimit(name)}).`)
 		}
+		if (isTextAttachmentName(name) && (await isBinaryFile(filePath))) {
+			return rejectNonTextAttachment(name)
+		}
 	} catch (error) {
-		Logger.error(`Error checking file size for ${filePath}:`, error)
-		return rejectAttachment(`Could not check file size for ${name}, skipping.`)
+		Logger.error(`Error checking attachment ${filePath}:`, error)
+		return rejectAttachment(`Could not read ${name}, skipping.`)
 	}
 	return filePath
 }
@@ -49,13 +54,13 @@ export async function validateAttachmentPath(filePath: string): Promise<string |
  */
 export async function stageAttachmentBytes(fileName: string, data: Uint8Array): Promise<string | undefined> {
 	const name = path.basename(fileName)
-	if (!isAttachableFileName(name)) {
-		return rejectAttachment(`Unsupported attachment: ${name} was skipped.`)
-	}
 	if (data.byteLength > maxAttachmentBytes(name)) {
 		return rejectAttachment(`File too large: ${name} was skipped (size exceeds ${formatAttachmentLimit(name)}).`)
 	}
 	try {
+		if (isTextAttachmentName(name) && (await isBinaryFile(Buffer.from(data.buffer, data.byteOffset, data.byteLength)))) {
+			return rejectNonTextAttachment(name)
+		}
 		const stagedPath = await DlineRuntimeFileManager.createAttachmentPath(name)
 		await fs.writeFile(stagedPath, data)
 		return stagedPath
