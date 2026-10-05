@@ -21,6 +21,8 @@ import { CanonicalCheckpointRepository, canonicalCheckpointRef } from "../checkp
 import { renderCompactionInstruction } from "../compaction/CompactionInstruction"
 import { CompactionRequestScopes } from "../compaction/CompactionRequestScopes"
 import { CompactionRoundBarrier } from "../compaction/CompactionRoundBarrier"
+import { CompositeCompactionLanding } from "../compaction/CompactionSummaryLanding"
+import { ContextUsageCompactionLanding } from "../compaction/ContextUsageCompactionLanding"
 import { FinalContextWindowGuard } from "../compaction/FinalContextWindowGuard"
 import { InteractionCompactionReview } from "../compaction/InteractionCompactionReview"
 import { MessageStateCompactionCards } from "../compaction/MessageStateCompactionCards"
@@ -602,8 +604,17 @@ export class TaskSessionCompositionService {
 			// executor port rather than the provider call inside it.
 			compactionSettlement: compaction,
 			// A summary only shrinks the context once it replaces the history it
-			// summarized and is shown as the card the user can restore from.
-			compactionLanding: new MessageStateCompactionLanding(compactionCards),
+			// summarized and is shown as the card the user can restore from; the
+			// header then reads the condensed figure instead of waiting for the
+			// next request to report it.
+			compactionLanding: new CompositeCompactionLanding([
+				new MessageStateCompactionLanding(compactionCards),
+				new ContextUsageCompactionLanding({
+					frames: providerRequests,
+					conversation: conversationView,
+					usage: contextUsage,
+				}),
+			]),
 			// A summary the user asked for is theirs to accept or regenerate before
 			// it replaces the conversation, through the same dialog every task uses.
 			compactionReview: new InteractionCompactionReview(interactions),

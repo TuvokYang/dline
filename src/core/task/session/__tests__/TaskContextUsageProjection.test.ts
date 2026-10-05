@@ -266,6 +266,49 @@ describe("TaskContextUsageProjection", () => {
 		expect(harness.publish).not.toHaveBeenCalled()
 	})
 
+	it("settles on the condensed figure as soon as a summary lands, before the next request reports", async () => {
+		const harness = createProjection()
+		await request(harness, "turn-1", 800_000)
+		const compacting = (status: "running" | "completed") =>
+			({
+				...running(),
+				flow: { phase: "running", compaction: { compactionId: "c:1", attempt: "c:1:1", contextRef: "r", status } },
+			}) as TaskState
+		harness.projection.committed(compacting("running"))
+		expect(harness.target.contextWindowIndicator?.phase).toBe("sending")
+
+		harness.projection.compacted({ contextTokens: 120_000, contextWindow: WINDOW })
+		expect(harness.target.contextWindowIndicator?.phase).toBe("stable")
+		expect(total(harness)).toBe(120_000)
+
+		// The run ending afterwards leaves the condensed figure, and the next request starts from it.
+		harness.projection.committed(compacting("completed"))
+		expect(total(harness)).toBe(120_000)
+		await harness.projection.started({ turnId: "turn-2", contextWindow: WINDOW })
+		expect(total(harness)).toBe(120_000)
+	})
+
+	it("keeps the full figure when a compaction ends without landing a summary", async () => {
+		const harness = createProjection()
+		await request(harness, "turn-1", 800_000)
+		harness.projection.committed({
+			...running(),
+			flow: { phase: "running", compaction: { compactionId: "c:1", attempt: "c:1:1", contextRef: "r", status: "running" } },
+		} as TaskState)
+		harness.projection.committed(running())
+		expect(harness.target.contextWindowIndicator?.phase).toBe("stable")
+		expect(total(harness)).toBe(800_000)
+	})
+
+	it("opens the figure from a landed summary when no request has reported yet", () => {
+		const harness = createProjection("plan")
+
+		harness.projection.compacted({ contextTokens: 50_000, contextWindow: WINDOW })
+
+		expect(harness.target.contextWindowIndicator).toMatchObject({ phase: "stable", mode: "plan", contextWindow: WINDOW })
+		expect(total(harness)).toBe(50_000)
+	})
+
 	it("treats only a stopped flow or an offered completion as a run at rest", () => {
 		expect(isRunAtRest(running())).toBe(false)
 		expect(isRunAtRest(awaiting("followup"))).toBe(false)

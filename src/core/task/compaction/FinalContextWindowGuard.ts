@@ -1,13 +1,9 @@
 import { randomUUID } from "node:crypto"
-import {
-	estimateContextWindowCandidate,
-	resolveContextWindowProjection,
-} from "@core/context/context-management/context-window-projection"
+import { resolveContextWindowProjection } from "@core/context/context-management/context-window-projection"
 import {
 	type CompactTriggerOptions,
 	computeCompactTrigger,
 	computeSummarizeBudget,
-	getContextWindowInfo,
 } from "@core/context/context-management/context-window-utils"
 import type { ClineStorageMessage } from "@shared/messages/content"
 import { Logger } from "@shared/services/Logger"
@@ -17,6 +13,7 @@ import type { CompactionFailurePresentationPort } from "../executors/compaction/
 import type { ComposeContextWindowGuardPort, ContextWindowAdmission } from "../executors/compose/ProductionComposeAdapter"
 import type { ProviderRequestFramePort } from "../executors/provider/service/ProviderRequest"
 import { AUTOMATIC_COMPACTION_FAILED } from "./CompactionRoundBarrier"
+import { estimateFramedRequest } from "./FramedRequestEstimate"
 
 type RequestPressures = Parameters<typeof resolveContextWindowProjection>[0]["requestInfos"]
 type Projection = ReturnType<typeof resolveContextWindowProjection>
@@ -112,23 +109,23 @@ export class FinalContextWindowGuard implements ComposeContextWindowGuardPort {
 	}
 
 	private async measure(signal: AbortSignal, environment: string | undefined): Promise<Measurement> {
-		const frame = await this.options.frames.frame(signal)
 		const history = await this.options.conversation.messages()
 		const messages: ClineStorageMessage[] =
 			environment === undefined ? history : [...history, { role: "user", content: [{ type: "text", text: environment }] }]
-		const model = frame.api.getModel()
-		const candidateEstimatedTokens = estimateContextWindowCandidate(
-			{ systemPrompt: frame.systemPrompt, messages, tools: frame.tools, serverTools: frame.options?.serverTools ?? [] },
-			{ providerId: frame.api.getProviderId?.(), modelId: model.id },
-		)
-		const { contextWindow } = getContextWindowInfo(frame.api)
+		const estimate = await estimateFramedRequest(this.options.frames, messages, signal)
 		const projection = resolveContextWindowProjection({
 			requestInfos: this.options.requestPressures(),
-			candidateEstimatedTokens,
-			contextWindow,
-			triggerTokens: computeCompactTrigger(contextWindow, computeSummarizeBudget(), this.options.triggerOptions()),
+			candidateEstimatedTokens: estimate.tokens,
+			contextWindow: estimate.contextWindow,
+			triggerTokens: computeCompactTrigger(estimate.contextWindow, computeSummarizeBudget(), this.options.triggerOptions()),
 		})
-		return { candidateEstimatedTokens, contextWindow, modelId: model.id, projection, apiIndex: apiIndexOf(history) }
+		return {
+			candidateEstimatedTokens: estimate.tokens,
+			contextWindow: estimate.contextWindow,
+			modelId: estimate.modelId,
+			projection,
+			apiIndex: apiIndexOf(history),
+		}
 	}
 
 	/**

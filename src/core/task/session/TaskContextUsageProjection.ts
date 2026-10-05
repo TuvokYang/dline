@@ -137,6 +137,44 @@ export class TaskContextUsageProjection implements ContextUsageObserverPort {
 	}
 
 	/**
+	 * Settles the figure on the conversation a landed summary left behind.
+	 *
+	 * The summary has replaced the history, so the context is already smaller;
+	 * waiting for the next request to report it would show the full figure to
+	 * every reader in between - the header, a Mode or Profile switch deciding
+	 * whether the target window fits, a subagent sizing its budget. Only a
+	 * landing calls this, so a run that failed or stopped without condensing
+	 * anything keeps the figure it had.
+	 */
+	compacted(input: { readonly contextTokens: number; readonly contextWindow: number }): void {
+		const scope = this.options.scope()
+		const measured = {
+			durableContextTokens: input.contextTokens,
+			pendingSendTokens: 0,
+			environmentTokens: 0,
+			contextWindow: input.contextWindow,
+			profileId: scope.profileId,
+			profileName: scope.profileName,
+			mode: scope.mode,
+		}
+		if (!this.indicator) {
+			this.indicator = new ContextWindowIndicator({ taskId: this.options.taskId, ...measured })
+			this.show(this.indicator.getSnapshot())
+			this.publish()
+			return
+		}
+		const condensed =
+			this.lineage.kind === "compaction_pass"
+				? this.indicator.commit({ lineage: this.lineage, ...measured, allowDecrease: true })
+				: this.indicator.rebaseDurable(measured)
+		// The rebased figure carries the baseline lineage; settling under it ends the commit.
+		if (condensed.lineage.kind === "baseline") this.lineage = condensed.lineage
+		this.show(condensed)
+		this.settle()
+		this.publish()
+	}
+
+	/**
 	 * Redraws the header in the order the figures changed.
 	 *
 	 * Best effort and never awaited by the caller: a provider request and a
