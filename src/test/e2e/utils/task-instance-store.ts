@@ -166,6 +166,93 @@ export async function readTaskRuntimeState(dlineDocsDir: string, taskId: string)
 }
 
 /**
+ * The task's turn-ending interaction as the E2E assertions describe it.
+ *
+ * `phase` and `blockPhase` keep the task-level vocabulary the assertions use
+ * (`executing`, `auto_executing`, `streaming`, `completed`); everything is
+ * derived from `state.json` plus the anchored chat rows.
+ */
+export interface TaskInteractionView {
+	phase?: string
+	completionId?: string
+	interactionId?: string
+	interactionKind?: string
+	interactionStatus?: string
+	/** The current turn when it owns the interaction's block. */
+	interactionTurnId?: string
+	anchorInteractionId?: string
+	/** The current turn when it owns the anchored interaction's block. */
+	anchorTurnId?: string
+	turnId?: string
+	/** The current turn's turn-ending block. */
+	blockId?: string
+	blockPhase?: string
+}
+
+const COMPLETION_DIALOG_KIND = "completion"
+const COMPLETION_ROW_ASK = "completion_result"
+
+/** Reads the task's turn-ending interaction from durable storage; safe while the task is open. */
+export async function readTaskInteractionView(dlineDocsDir: string, taskId: string): Promise<TaskInteractionView> {
+	const [state, messages] = await Promise.all([
+		readTaskRuntimeState(dlineDocsDir, taskId),
+		readTaskUiMessages(dlineDocsDir, taskId),
+	])
+	if (!state) return {}
+	const interaction = state.dialog.primary
+	const block = state.turn.blocks.find((candidate) => candidate.turnEnding)
+	const anchorInteractionId = anchoredInteractionId(state, messages)
+	const owningTurn = (id: string | undefined) =>
+		id && state.turn.blocks.some((candidate) => candidate.blockId === id) ? state.turn.turnId : undefined
+	return {
+		phase: interactionPhase(state),
+		completionId: state.flow.completionId ?? (awaitsCompletion(state) ? interaction?.interactionId : undefined),
+		interactionId: interaction?.interactionId,
+		interactionKind: interaction?.kind,
+		interactionStatus: interaction?.status,
+		interactionTurnId: owningTurn(interaction?.interactionId),
+		anchorInteractionId,
+		anchorTurnId: owningTurn(anchorInteractionId),
+		turnId: state.turn.turnId,
+		blockId: block?.blockId,
+		blockPhase:
+			block && block.phase === "executing" && !isManuallyApproved(state, block.blockId) ? "auto_executing" : block?.phase,
+	}
+}
+
+/** An awaiting completion dialog is the task's finished state: the result is out and only the user's reply remains. */
+function awaitsCompletion(state: TaskRuntimeState): boolean {
+	return state.dialog.primary?.kind === COMPLETION_DIALOG_KIND && state.dialog.primary.status === "awaiting"
+}
+
+function interactionPhase(state: TaskRuntimeState): string {
+	if (state.flow.phase === "completed" || awaitsCompletion(state)) return "completed"
+	if (state.flow.provider?.status === "running") return "streaming"
+	if (state.turn.executingBlockIds.length > 0) return "executing"
+	return state.flow.phase
+}
+
+function isManuallyApproved(state: TaskRuntimeState, blockId: string): boolean {
+	return state.turn.manualApprovalBlockIds.includes(blockId)
+}
+
+/**
+ * The interaction the chat is anchored to.
+ *
+ * A dialog only reaches `awaiting` after its reveal wrote the row it anchors
+ * to, so an awaiting dialog is the anchor even before that row is flushed.
+ * Once answered, the latest anchored row stays the anchor, except that
+ * answering a completion reopens the task and releases it.
+ */
+function anchoredInteractionId(state: TaskRuntimeState, messages: readonly UiMessage[]): string | undefined {
+	const primary = state.dialog.primary
+	if (primary?.status === "awaiting") return primary.interactionId
+	const latest = messages.findLast((message) => message.type === "ask" && message.interactionId)
+	if (latest?.ask === COMPLETION_ROW_ASK && state.flow.phase !== "completed") return undefined
+	return latest?.interactionId
+}
+
+/**
  * Leaves a closed task waiting for the user between turns, its watermark at the journal tail.
  *
  * The runtime has no idle phase for a task that stopped mid-run: it reopens

@@ -3,7 +3,12 @@ import * as path from "node:path"
 import type { MockApiConsumption } from "@e2e/fixtures/server"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
-import { readTaskConversationText, readTaskUiMessagesText } from "@e2e/utils/task-instance-store"
+import {
+	readTaskConversationText,
+	readTaskInteractionView,
+	readTaskUiMessagesText,
+	type TaskInteractionView,
+} from "@e2e/utils/task-instance-store"
 import { expect, type Frame, type Locator, type TestInfo } from "@playwright/test"
 import { MAX_TOOL_RESULT_TEXT_BYTES } from "@shared/content-limits"
 import type { ElectronApplication } from "playwright"
@@ -18,18 +23,6 @@ interface StoredProfile {
 			contextWindow?: number
 		}
 	}
-}
-
-interface StoredCompletionSnapshot {
-	phase?: string
-	completion?: { completionId?: string }
-	interaction?: {
-		interactionId?: string
-		kind?: string
-		status?: string
-	}
-	anchor?: { interactionId?: string }
-	turn?: { blocks?: Array<{ dlineTid?: string; phase?: string; toolName?: string }> }
 }
 
 const COMPACT_SIGNAL = "__dline_mode_switch_compact__"
@@ -406,20 +399,20 @@ async function taskDirectoryIds(dlineDocsDir: string): Promise<string[]> {
 	}
 }
 
-async function readCompletionSnapshot(dlineDocsDir: string, taskId: string): Promise<StoredCompletionSnapshot> {
-	return JSON.parse(await readFile(path.join(dlineDocsDir, "tasks", taskId, "snapshot.json"), "utf8"))
+async function readCompletionSnapshot(dlineDocsDir: string, taskId: string): Promise<TaskInteractionView> {
+	return readTaskInteractionView(dlineDocsDir, taskId)
 }
 
-function completionSnapshotState(snapshot: StoredCompletionSnapshot) {
-	const completionBlock = snapshot.turn?.blocks?.find((block) => block.toolName === "attempt_completion")
+// The completion turns here call only `attempt_completion`, so it is the turn-ending block.
+function completionSnapshotState(snapshot: TaskInteractionView) {
 	return {
 		phase: snapshot.phase,
-		completionId: snapshot.completion?.completionId,
-		interactionId: snapshot.interaction?.interactionId,
-		interactionKind: snapshot.interaction?.kind,
-		interactionStatus: snapshot.interaction?.status,
-		anchorInteractionId: snapshot.anchor?.interactionId,
-		completionBlockId: completionBlock?.dlineTid,
+		completionId: snapshot.completionId,
+		interactionId: snapshot.interactionId,
+		interactionKind: snapshot.interactionKind,
+		interactionStatus: snapshot.interactionStatus,
+		anchorInteractionId: snapshot.anchorInteractionId,
+		completionBlockId: snapshot.blockId,
 	}
 }
 
