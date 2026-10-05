@@ -1,11 +1,11 @@
 ---
 name: release
-description: Promote a fully verified release candidate from dev to main, create the production tag, and observe the tested GitHub Release and Marketplace gates.
+description: Squash a fully verified release candidate from dev into one main commit, back-merge it into dev, create the production tag, and observe the tested GitHub Release and Marketplace gates.
 ---
 
 # Production Release
 
-Promote a verified release candidate from `dev` to `main`, create the production tag, and observe the automated GitHub Release and Marketplace gates.
+Squash a verified release candidate from `dev` into one `main` commit, back-merge that commit into `dev`, create the production tag, and observe the automated GitHub Release and Marketplace gates. `main` keeps one commit per release, not the `dev` history.
 
 Follow `repository-and-release` before using this workflow. Repository identity, remote aliases, URLs, and writable destinations must be discovered at runtime.
 
@@ -37,7 +37,15 @@ git rev-parse refs/remotes/<remote>/main
 git merge-base refs/remotes/<remote>/dev refs/remotes/<remote>/main
 ```
 
-Record those exact remote `dev` and `main` SHAs, their merge base, and the commits proposed for promotion. Use the fully qualified refs for every diff, ancestry check, gate binding, and promotion preview; bare local `dev`/`main` refs are not remote facts.
+Record those exact remote `dev` and `main` SHAs, their merge base, and the changes proposed for promotion. Use the fully qualified refs for every diff, ancestry check, gate binding, and promotion preview; bare local `dev`/`main` refs are not remote facts.
+
+The remote `main` head must already be an ancestor of the remote `dev` head:
+
+```text
+git merge-base --is-ancestor refs/remotes/<remote>/main refs/remotes/<remote>/dev
+```
+
+A failure means the previous release's back-merge is missing. Stop and complete that back-merge on `dev` first; squashing on top of it would reapply already-released changes.
 
 ## 2. Verify the release contract on dev
 
@@ -78,36 +86,61 @@ Show the user:
 
 - `<repository>` and the resolved destination URL;
 - verified `dev` SHA and current remote `main` SHA;
-- merge/promotion method;
-- commits entering `main`;
+- the squash method and the release commit message `release: X.Y.Z`, whose body summarizes the release from the bilingual changelog;
+- `git diff --stat refs/remotes/<remote>/main <verified-dev-sha>`, the change set entering `main`;
+- the back-merge that will follow on `dev`;
 - verification evidence;
 - recovery approach if the destination changes before the write.
 
-Obtain a separate authorization to write `main`. If promotion is represented as a PR, its head is `dev` and base is `main`; this is a release promotion, not an ordinary feature PR.
+Obtain a separate authorization to write `main`; it covers the squash commit, the `main` push, and the back-merge push to `dev`. If a hosting platform represents promotion as a PR, use its squash-merge mode with head `dev` and base `main`; this is a release promotion, not an ordinary feature PR, and the back-merge below is still required.
 
-## 5. Promote and re-verify main
+## 5. Squash, back-merge, and re-verify
 
-Perform only the approved promotion. Do not merge a feature or bugfix branch directly to `main`.
+Perform only the approved promotion. Do not merge a feature or bugfix branch directly to `main`, and never fast-forward or `--no-ff` merge `dev` into `main`.
 
-After promotion, fetch the explicit destination ref again and verify:
+On a checkout of `main` that matches `refs/remotes/<remote>/main`:
 
 ```text
-git fetch <remote> refs/heads/main:refs/remotes/<remote>/main
-git rev-parse refs/remotes/<remote>/main
+git merge --squash <verified-dev-sha>
+git commit -m "release: X.Y.Z" -m "<summary from the changelog>"
+git diff --quiet <verified-dev-sha> HEAD
+git push <remote> HEAD:refs/heads/main
 ```
 
-- the final `main` SHA is the expected promoted commit;
-- the verified `dev` release candidate is in `main` history;
+`git diff --quiet` must succeed: the squash commit's tree has to equal the verified `dev` tree. Any difference blocks the push, because the tested artifact would no longer describe what `main` ships.
+
+Then back-merge on `dev` so the squash commit becomes an ancestor of `dev` without changing `dev` content:
+
+```text
+git switch dev
+git merge -s ours --no-edit <squash-sha>
+git diff --quiet <verified-dev-sha> HEAD
+git push <remote> HEAD:refs/heads/dev
+```
+
+If remote `dev` moved after the verified SHA, merge the squash commit into the current `dev` head instead; the tree check then compares against that head before the merge. The back-merge push is a normal fast-forward; never force it.
+
+Fetch both refs again and verify:
+
+```text
+git fetch <remote> refs/heads/main:refs/remotes/<remote>/main refs/heads/dev:refs/remotes/<remote>/dev
+git rev-parse refs/remotes/<remote>/main
+git merge-base --is-ancestor refs/remotes/<remote>/main refs/remotes/<remote>/dev
+```
+
+- the final `main` SHA is the squash commit and its parent is the previous `main` head;
+- the squash commit's tree equals the verified `dev` tree;
+- `main` is an ancestor of `dev`, so the back-merge landed;
 - version and changelog files are unchanged;
 - the production tag does not yet exist.
 
-If remote `main` moved unexpectedly, stop instead of overwriting it.
+If remote `main` or `dev` moved unexpectedly, stop instead of overwriting it.
 
 ## 6. Create and push the production tag
 
 Tag creation and tag push require authorization separate from the `main` promotion.
 
-Create `vX.Y.Z` only at the final verified `main` commit, then show the tag object and target SHA before pushing it to the resolved remote.
+Create `vX.Y.Z` only at the final verified squash commit at the `main` head, then show the tag object and target SHA before pushing it to the resolved remote. `release.yml` rejects a tag that is not the current `main` head.
 
 Never move an existing tag and never create a production tag from a commit outside `main` history.
 
@@ -128,7 +161,7 @@ Do not manually replace the release asset or publish a locally rebuilt VSIX. Mar
 
 Report:
 
-- repository and final `main` SHA;
+- repository, final `main` squash SHA, and the `dev` back-merge SHA;
 - release version and production tag;
 - dev integration and production workflow evidence;
 - GitHub Release and VSIX asset status;
