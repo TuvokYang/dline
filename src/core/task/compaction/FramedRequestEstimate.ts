@@ -2,12 +2,16 @@ import { estimateContextWindowCandidate } from "@core/context/context-management
 import { getContextWindowInfo } from "@core/context/context-management/context-window-utils"
 import type { ClineStorageMessage } from "@shared/messages/content"
 import type { ProviderRequestFramePort } from "../executors/provider/service/ProviderRequest"
+import type { CompactionProviderInput } from "./CompactionRequestReplay"
 
 /** What one provider request would occupy, and the window it is measured against. */
 export interface FramedRequestEstimate {
 	readonly tokens: number
 	readonly contextWindow: number
+	readonly providerId?: string
 	readonly modelId: string
+	/** The framed input that was measured, so its parts can be measured apart. */
+	readonly input: CompactionProviderInput
 }
 
 /**
@@ -24,9 +28,13 @@ export async function estimateFramedRequest(
 ): Promise<FramedRequestEstimate> {
 	const frame = await frames.frame(signal)
 	const model = frame.api.getModel()
-	const tokens = estimateContextWindowCandidate(
-		{ systemPrompt: frame.systemPrompt, messages, tools: frame.tools, serverTools: frame.options?.serverTools ?? [] },
-		{ providerId: frame.api.getProviderId?.(), modelId: model.id },
-	)
-	return { tokens, contextWindow: getContextWindowInfo(frame.api).contextWindow, modelId: model.id }
+	const providerId = frame.api.getProviderId?.()
+	const input: CompactionProviderInput = {
+		systemPrompt: frame.systemPrompt,
+		messages,
+		tools: frame.tools,
+		serverTools: frame.options?.serverTools ?? [],
+	}
+	const tokens = estimateContextWindowCandidate(input, { providerId, modelId: model.id })
+	return { tokens, contextWindow: getContextWindowInfo(frame.api).contextWindow, providerId, modelId: model.id, input }
 }

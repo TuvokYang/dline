@@ -6,7 +6,11 @@ import {
 import { Logger } from "@shared/services/Logger"
 import type { Mode } from "@shared/storage/types"
 import { ContextWindowIndicator } from "../ContextWindowIndicator"
-import { projectAuthoritativeContextWindowIndicatorSegments } from "../ContextWindowIndicatorProjection"
+import {
+	type ContextWindowIndicatorSegments,
+	type ContextWindowRequestOpening,
+	projectAuthoritativeContextWindowIndicatorSegments,
+} from "../ContextWindowIndicatorProjection"
 import type { TaskState } from "../kernel"
 import type { ContextUsageObserverPort } from "./TaskProviderRequestReporter"
 
@@ -87,7 +91,11 @@ export class TaskContextUsageProjection implements ContextUsageObserverPort {
 
 	constructor(private readonly options: TaskContextUsageProjectionOptions) {}
 
-	async started(request: { readonly turnId: string; readonly contextWindow: number }): Promise<void> {
+	async started(request: {
+		readonly turnId: string
+		readonly contextWindow: number
+		readonly opening?: ContextWindowRequestOpening
+	}): Promise<void> {
 		if (this.compactionShown()) return
 		this.begin(request)
 		this.publish()
@@ -329,11 +337,16 @@ export class TaskContextUsageProjection implements ContextUsageObserverPort {
 	}
 
 	/** Opens a request under the window of the handler that sent it and the scope the task runs under. */
-	private begin(request: { readonly turnId: string; readonly contextWindow: number }): void {
+	private begin(request: {
+		readonly turnId: string
+		readonly contextWindow: number
+		readonly opening?: ContextWindowRequestOpening
+	}): void {
 		// An ordinary request carries the tail and reports it as part of its own occupancy.
 		this.pendingTail = 0
 		const indicator = this.indicatorFor(request.contextWindow)
 		const scope = this.options.scope()
+		const segments = openingSegments(indicator.getSnapshot(), request.opening)
 		this.lineage = {
 			kind: "ordinary",
 			requestId: request.turnId,
@@ -343,9 +356,9 @@ export class TaskContextUsageProjection implements ContextUsageObserverPort {
 		this.show(
 			indicator.beginSend({
 				lineage: this.lineage,
-				durableContextTokens: indicator.getSnapshot().durableContextTokens,
-				pendingSendTokens: 0,
-				environmentTokens: 0,
+				durableContextTokens: segments.durableContextTokens,
+				pendingSendTokens: segments.pendingSendTokens,
+				environmentTokens: segments.environmentTokens,
 				contextWindow: request.contextWindow,
 				profileId: scope.profileId,
 				profileName: scope.profileName,
@@ -382,4 +395,28 @@ export class TaskContextUsageProjection implements ContextUsageObserverPort {
 		})
 		return this.indicator
 	}
+}
+
+/**
+ * The figure an ordinary request shows while it is being sent.
+ *
+ * Before any provider has reported, the local estimate of the admitted request
+ * is the only figure, split into what was sent before and what this round adds.
+ * Once a report exists it sets the scale: the request shows the occupancy it is
+ * projected to reach, with the resting context kept and only the environment
+ * taken from the estimate, because the two counts must never be subtracted
+ * from each other. A request admitted without a measurement keeps the resting
+ * figure and adds nothing until the provider reports.
+ */
+function openingSegments(
+	current: ContextWindowIndicatorSnapshot,
+	opening: ContextWindowRequestOpening | undefined,
+): Pick<ContextWindowIndicatorSegments, "durableContextTokens" | "pendingSendTokens" | "environmentTokens"> {
+	if (!opening) return { durableContextTokens: current.durableContextTokens, pendingSendTokens: 0, environmentTokens: 0 }
+	if (opening.unmeasured && current.revision === 0) return opening.segments
+	return projectAuthoritativeContextWindowIndicatorSegments({
+		projectedTotalTokens: opening.projectedUsageTokens,
+		durableContextTokens: current.durableContextTokens,
+		estimatedEnvironmentTokens: opening.segments.environmentTokens,
+	})
 }

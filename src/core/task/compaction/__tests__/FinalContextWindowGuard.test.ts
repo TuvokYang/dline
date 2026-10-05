@@ -33,6 +33,19 @@ vi.mock("@core/context/context-management/context-window-projection", () => ({
 	}),
 }))
 
+/** The requests the guard split for the indicator; only the admitted one should be. */
+const splits: { providerInput: { messages: ClineStorageMessage[] }; durableMessageCount: number }[] = []
+const SPLIT = { durableContextTokens: 200, pendingSendTokens: 60, environmentTokens: 40, totalTokens: 300 }
+
+// Splitting a request into indicator segments has its own tests; here only
+// which request is split, and where its round's input starts, is observed.
+vi.mock("../../ContextWindowIndicatorProjection", () => ({
+	estimateContextWindowIndicatorSegments: (input: (typeof splits)[number]) => {
+		splits.push(input)
+		return SPLIT
+	},
+}))
+
 vi.mock("@core/context/context-management/context-window-utils", () => ({
 	getContextWindowInfo: () => ({ contextWindow: CONTEXT_WINDOW }),
 	computeSummarizeBudget: () => 0,
@@ -84,6 +97,7 @@ describe("FinalContextWindowGuard", () => {
 	beforeEach(() => {
 		estimates.length = 0
 		measuredMessages.length = 0
+		splits.length = 0
 	})
 
 	it("admits a request that fits without compacting and records its estimate", async () => {
@@ -97,6 +111,24 @@ describe("FinalContextWindowGuard", () => {
 		expect(guard.admittedEstimate()).toBe(300)
 		// The round's environment is measured as the trailing user message it will be sent as.
 		expect(lastText(measuredMessages[0])).toBe(ENVIRONMENT)
+	})
+
+	it("opens the admitted request on its own split, with the round's input after the history it carries", async () => {
+		estimates.push(300)
+		const { guard } = harness()
+
+		await guard.admit({ signal: new AbortController().signal, environment: ENVIRONMENT })
+
+		expect(guard.admittedRequest()).toEqual({
+			estimatedTokens: 300,
+			projectedUsageTokens: 300,
+			segments: SPLIT,
+			unmeasured: true,
+		})
+		expect(splits).toHaveLength(1)
+		// Everything before the latest message was sent already; the environment follows the round's input.
+		expect(splits[0]?.durableMessageCount).toBe(HISTORY.length - 1)
+		expect(lastText(splits[0]?.providerInput.messages)).toBe(ENVIRONMENT)
 	})
 
 	it("compacts a request over the trigger and measures the compacted candidate again", async () => {

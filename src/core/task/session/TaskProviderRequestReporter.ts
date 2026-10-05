@@ -6,6 +6,7 @@ import {
 } from "@core/context/context-management/context-window-utils"
 import { Logger } from "@shared/services/Logger"
 import type { UiApiReqCancelReason, UiApiReqInfo, UiMessage } from "@/shared/ExtensionMessage"
+import type { ContextWindowRequestOpening } from "../ContextWindowIndicatorProjection"
 import type {
 	ProviderRequestOutcome,
 	ProviderRequestRecord,
@@ -39,8 +40,11 @@ export interface TaskProviderRequestReporterOptions {
 	 * chat keeps the first attempt's countdown until the request settles.
 	 */
 	readonly retryView?: RetryCardView
-	/** The estimate the request about to start was admitted on; absent leaves its row without an anchor. */
-	readonly admittedEstimate?: () => number | undefined
+	/**
+	 * What the request about to start was admitted on; absent leaves its row
+	 * without an anchor and its sending state without an estimate.
+	 */
+	readonly admittedRequest?: () => ContextWindowRequestOpening | undefined
 }
 
 /**
@@ -84,7 +88,12 @@ export interface ProfileTokenUsagePort {
  * the reporter; a headless assembly that renders nothing leaves the port out.
  */
 export interface ContextUsageObserverPort {
-	started(request: { readonly turnId: string; readonly contextWindow: number }): Promise<void>
+	/** `opening` is what the request was admitted on, which its sending state shows until the provider reports. */
+	started(request: {
+		readonly turnId: string
+		readonly contextWindow: number
+		readonly opening?: ContextWindowRequestOpening
+	}): Promise<void>
 	/**
 	 * `contextTokens` is everything the request left in the window; `outputTokens`
 	 * is the part the response itself produced, which shows as received until
@@ -151,7 +160,8 @@ export class TaskProviderRequestReporter implements ProviderRequestReportPort {
 		const ts = this.options.nextPresentationId()
 		// The estimate the request was admitted on anchors its reported usage, so
 		// the next round's growth is measured estimate-to-estimate.
-		const estimate = this.options.admittedEstimate?.()
+		const opening = this.options.admittedRequest?.()
+		const estimate = opening?.estimatedTokens
 		await this.options.messages.addToClineMessages({
 			ts,
 			type: "say",
@@ -162,7 +172,7 @@ export class TaskProviderRequestReporter implements ProviderRequestReportPort {
 			} satisfies UiApiReqInfo),
 		})
 		const { contextWindow } = getContextWindowInfo(this.options.api())
-		await this.options.usage?.started({ turnId: input.turnId, contextWindow })
+		await this.options.usage?.started({ turnId: input.turnId, contextWindow, ...(opening ? { opening } : {}) })
 		const retryCard = new RetryCard(this.options.messages, this.options.nextPresentationId, this.options.retryView)
 		const profileId = this.options.profileTokens?.activeProfileId()
 		return {

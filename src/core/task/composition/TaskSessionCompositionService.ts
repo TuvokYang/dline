@@ -683,7 +683,7 @@ export class TaskSessionCompositionService {
 					api: () => api.current(),
 					promptCache,
 					compactTriggerOptions: readCompactTriggerOptions,
-					admittedEstimate: () => contextWindowGuard.admittedEstimate(),
+					admittedRequest: () => contextWindowGuard.admittedRequest(),
 					// Retries happen before the stream says anything, so each attempt's
 					// card has to be delivered to the chat rather than left for the countdown.
 					retryView: {

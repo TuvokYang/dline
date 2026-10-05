@@ -15,6 +15,18 @@ export interface ContextWindowIndicatorSegments {
 	totalTokens: number
 }
 
+/** What an admitted ordinary request is measured at when it opens on the indicator. */
+export interface ContextWindowRequestOpening {
+	/** The local estimate of the complete request. */
+	readonly estimatedTokens: number
+	/** The occupancy the request is projected to reach, on the scale earlier reports set. */
+	readonly projectedUsageTokens: number
+	/** The estimate split into the history the request carries, the round's own input, and the environment. */
+	readonly segments: ContextWindowIndicatorSegments
+	/** No earlier request reported usage, so the local estimate is the only figure there is. */
+	readonly unmeasured: boolean
+}
+
 export interface EstimateContextWindowIndicatorSegmentsInput extends ContextWindowCandidateEstimator {
 	providerInput: CompactionProviderInput
 	/** Number of leading messages already represented by the durable segment. */

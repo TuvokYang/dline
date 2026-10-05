@@ -8,12 +8,13 @@ import {
 import type { ClineStorageMessage } from "@shared/messages/content"
 import { Logger } from "@shared/services/Logger"
 import { NO_COMPLETE_LOGICAL_TURN } from "../ContextCompactionSession"
+import { type ContextWindowRequestOpening, estimateContextWindowIndicatorSegments } from "../ContextWindowIndicatorProjection"
 import { getHighContextPressureWarning, withHighContextPressureWarning } from "../environment-context"
 import type { CompactionFailurePresentationPort } from "../executors/compaction/ProductionCompactionAdapter"
 import type { ComposeContextWindowGuardPort, ContextWindowAdmission } from "../executors/compose/ProductionComposeAdapter"
 import type { ProviderRequestFramePort } from "../executors/provider/service/ProviderRequest"
 import { AUTOMATIC_COMPACTION_FAILED } from "./CompactionRoundBarrier"
-import { estimateFramedRequest } from "./FramedRequestEstimate"
+import { estimateFramedRequest, type FramedRequestEstimate } from "./FramedRequestEstimate"
 
 type RequestPressures = Parameters<typeof resolveContextWindowProjection>[0]["requestInfos"]
 type Projection = ReturnType<typeof resolveContextWindowProjection>
@@ -48,10 +49,10 @@ export interface FinalContextWindowGuardOptions {
 }
 
 interface Measurement {
-	readonly candidateEstimatedTokens: number
-	readonly contextWindow: number
-	readonly modelId: string
+	readonly estimate: FramedRequestEstimate
 	readonly projection: Projection
+	/** Leading messages that were already sent before this round; the rest is the round's own input. */
+	readonly sentMessageCount: number
 	readonly apiIndex: number
 }
 
@@ -65,7 +66,7 @@ interface Measurement {
  * model, inside the request it reads, that the window is nearly full.
  */
 export class FinalContextWindowGuard implements ComposeContextWindowGuardPort {
-	private admitted: number | undefined
+	private admitted: ContextWindowRequestOpening | undefined
 
 	constructor(private readonly options: FinalContextWindowGuardOptions) {}
 
@@ -77,6 +78,11 @@ export class FinalContextWindowGuard implements ComposeContextWindowGuardPort {
 	 * estimate and a figure the provider counts differently.
 	 */
 	admittedEstimate(): number | undefined {
+		return this.admitted?.estimatedTokens
+	}
+
+	/** The request most recently admitted, as the context-window indicator opens it. */
+	admittedRequest(): ContextWindowRequestOpening | undefined {
 		return this.admitted
 	}
 
@@ -92,9 +98,9 @@ export class FinalContextWindowGuard implements ComposeContextWindowGuardPort {
 			if (compaction.kind === "completed") measured = await this.measure(input.signal, environment)
 		}
 		const warning = getHighContextPressureWarning({
-			contextWindow: measured.contextWindow,
+			contextWindow: measured.estimate.contextWindow,
 			lastApiReqTotalTokens: measured.projection.projectedUsageTokens,
-			modelId: measured.modelId,
+			modelId: measured.estimate.modelId,
 		})
 		if (warning && environment !== undefined) {
 			const warned = withHighContextPressureWarning(environment, warning)
@@ -103,7 +109,7 @@ export class FinalContextWindowGuard implements ComposeContextWindowGuardPort {
 				measured = await this.measure(input.signal, environment)
 			}
 		}
-		this.admitted = measured.candidateEstimatedTokens
+		this.admitted = this.admission(measured)
 		this.log(measured)
 		return { kind: "ready", ...(environment === undefined ? {} : { environment }) }
 	}
@@ -120,11 +126,33 @@ export class FinalContextWindowGuard implements ComposeContextWindowGuardPort {
 			triggerTokens: computeCompactTrigger(estimate.contextWindow, computeSummarizeBudget(), this.options.triggerOptions()),
 		})
 		return {
-			candidateEstimatedTokens: estimate.tokens,
-			contextWindow: estimate.contextWindow,
-			modelId: estimate.modelId,
+			estimate,
 			projection,
+			// The round's own input is the latest message; the environment, when
+			// present, follows it as a message of its own.
+			sentMessageCount: Math.max(0, history.length - 1),
 			apiIndex: apiIndexOf(history),
+		}
+	}
+
+	/**
+	 * Splits the admitted request the way its sending state shows it.
+	 *
+	 * Only the request that is actually sent is split, so the extra measuring
+	 * happens once per round rather than on every measurement admission takes.
+	 */
+	private admission(measured: Measurement): ContextWindowRequestOpening {
+		const { estimate, projection } = measured
+		return {
+			estimatedTokens: estimate.tokens,
+			projectedUsageTokens: projection.projectedUsageTokens,
+			segments: estimateContextWindowIndicatorSegments({
+				providerInput: estimate.input,
+				durableMessageCount: measured.sentMessageCount,
+				providerId: estimate.providerId,
+				modelId: estimate.modelId,
+			}),
+			unmeasured: this.options.requestPressures().length === 0,
 		}
 	}
 
@@ -147,8 +175,8 @@ export class FinalContextWindowGuard implements ComposeContextWindowGuardPort {
 		// diagnostic reader can parse.
 		Logger.debug(`[Task ${this.options.taskId}] final context-window projection`, {
 			apiIndex: measured.apiIndex,
-			candidateEstimatedTokens: measured.candidateEstimatedTokens,
-			contextWindow: measured.contextWindow,
+			candidateEstimatedTokens: measured.estimate.tokens,
+			contextWindow: measured.estimate.contextWindow,
 			baselineTokens: projection.baselineTokens,
 			pendingDeltaTokens: projection.pendingDeltaTokens,
 			candidateDeltaTokens: projection.candidateDeltaTokens,

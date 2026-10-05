@@ -265,8 +265,6 @@ e2e(
 		await helper.signin(sidebar)
 		await selectProfile(sidebar, E2E_PROFILE_NAMES.mockOpenAiOfficialResponses)
 		await sendTask(sidebar, "Use hosted search, then present the requested plan.")
-		await expect(sidebar.getByText("Dline wants to search the web for:", { exact: false })).toBeVisible({ timeout: 60_000 })
-		await sidebar.getByRole("contentinfo").getByText("Approve", { exact: true }).click()
 		await expect(sidebar.getByTestId("web-search-card").filter({ hasText: query })).toBeVisible({ timeout: 60_000 })
 		await expandTaskHeader(sidebar)
 

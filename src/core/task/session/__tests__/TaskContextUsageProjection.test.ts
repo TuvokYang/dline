@@ -98,6 +98,55 @@ describe("TaskContextUsageProjection", () => {
 		expect(total(harness)).toBe(6_600)
 	})
 
+	it("opens the first request on the admitted estimate, split into what was sent, what the round adds, and the environment", async () => {
+		const harness = createProjection()
+
+		await harness.projection.started({
+			turnId: "turn-1",
+			contextWindow: WINDOW,
+			opening: {
+				estimatedTokens: 5_500,
+				projectedUsageTokens: 5_500,
+				segments: { durableContextTokens: 5_000, pendingSendTokens: 300, environmentTokens: 200, totalTokens: 5_500 },
+				unmeasured: true,
+			},
+		})
+
+		expect(harness.target.contextWindowIndicator).toMatchObject({
+			phase: "sending",
+			durableContextTokens: 5_000,
+			pendingSendTokens: 300,
+			environmentTokens: 200,
+		})
+		expect(total(harness)).toBe(5_500)
+	})
+
+	it("opens a later request at its projected occupancy without subtracting the estimate from the reported figure", async () => {
+		const harness = createProjection()
+		await request(harness, "turn-1", 6_100, 100)
+		harness.projection.committed(awaiting("qna_response"))
+
+		await harness.projection.started({
+			turnId: "turn-2",
+			contextWindow: WINDOW,
+			opening: {
+				// A local estimate on another scale than the provider's count; only its environment is used.
+				estimatedTokens: 90_000,
+				projectedUsageTokens: 7_000,
+				segments: { durableContextTokens: 89_000, pendingSendTokens: 800, environmentTokens: 200, totalTokens: 90_000 },
+				unmeasured: false,
+			},
+		})
+
+		expect(harness.target.contextWindowIndicator).toMatchObject({
+			phase: "sending",
+			durableContextTokens: 6_000,
+			pendingSendTokens: 800,
+			environmentTokens: 200,
+		})
+		expect(total(harness)).toBe(7_000)
+	})
+
 	it("shows a streaming response by the provider's figure before its final usage settles it", async () => {
 		const harness = createProjection()
 		await request(harness, "turn-1", 6_100, 100)
