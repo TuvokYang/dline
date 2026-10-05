@@ -19,6 +19,34 @@ export interface NewTaskFeedbackHistory {
 	readonly approvedSource: NewTaskConsumedState
 }
 
+/**
+ * The conversation as one user message per provider request, the shape the
+ * legacy history stored and `findLatestNewTaskFeedback` reads.
+ *
+ * The journal renders each payload of a request on its own, so the tool
+ * results and environment details of one round arrive as consecutive user
+ * messages; read separately, the feedback would not precede the approval.
+ */
+export function perRequestHistory(messages: readonly ClineStorageMessage[]): ClineStorageMessage[] {
+	const merged: ClineStorageMessage[] = []
+	for (const message of messages) {
+		const previous = merged[merged.length - 1]
+		if (message.role !== "user" || previous?.role !== "user") {
+			merged.push(message)
+			continue
+		}
+		merged[merged.length - 1] = {
+			...previous,
+			content: [...contentBlocks(previous.content), ...contentBlocks(message.content)],
+		} as ClineStorageMessage
+	}
+	return merged
+}
+
+function contentBlocks(content: ClineStorageMessage["content"]): ClineContent[] {
+	return typeof content === "string" ? [{ type: "text", text: content }] : [...content]
+}
+
 /** Create an owned empty feedback value for a successor handoff. */
 export function emptyNewTaskFeedback(): NewTaskFeedback {
 	return { text: "", images: [], files: [] }

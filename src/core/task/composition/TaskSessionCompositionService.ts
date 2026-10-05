@@ -42,7 +42,7 @@ import {
 } from "../input-queue/LegacyInputQueueMigration"
 import type { TaskState } from "../kernel"
 import { MessageStateHandler } from "../message-state"
-import { buildNewTaskFeedbackContent, findLatestNewTaskFeedback } from "../new-task/new-task-feedback"
+import { buildNewTaskFeedbackContent, findLatestNewTaskFeedback, perRequestHistory } from "../new-task/new-task-feedback"
 import { TaskPerformanceOwner } from "../performance/TaskPerformanceOwner"
 import { TaskPerformanceRequestReporter } from "../performance/TaskPerformanceRequestReporter"
 import { TaskPromptContextOwner } from "../prompt/TaskPromptContextOwner"
@@ -625,7 +625,7 @@ export class TaskSessionCompositionService {
 				feedback: async (source) =>
 					buildNewTaskFeedbackContent(
 						findLatestNewTaskFeedback({
-							apiHistory: await conversationView.read(),
+							apiHistory: perRequestHistory(await conversationView.read()),
 							uiHistory: messages.clineMessages,
 							approvedSource: source,
 						}),
