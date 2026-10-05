@@ -9,9 +9,15 @@ import { InstanceDatabase, InstanceLayout, openInstanceStorage } from "@/core/st
 import { openUiMessageRows } from "@/core/storage/messages/openUiMessageRows"
 import { readUiMessages } from "@/core/storage/messages/readUiMessages"
 import { readJournalConversation } from "@/core/task/conversation/JournalConversationReader"
+import type { KernelBlock } from "@/core/task/kernel"
 import { type JournalSource, openTaskJournalStores, type TaskJournalStores } from "@/core/task/stores"
 import { FileTaskStateVault } from "@/core/task/stores/FileTaskStateVault"
-import { encodeTaskPayload } from "@/core/task/stores/payload/TaskPayloadCodec"
+import { decodeTaskPayload, encodeTaskPayload } from "@/core/task/stores/payload/TaskPayloadCodec"
+import type {
+	ProviderFinalEnvelope,
+	ToolInvocationEnvelope,
+	ToolResultEnvelope,
+} from "@/core/task/stores/payload/TaskPayloadEnvelopes"
 import type { ClineStorageMessage } from "@/shared/messages/content"
 
 /**
@@ -179,6 +185,79 @@ export async function pauseTaskBetweenTurns(dlineDocsDir: string, taskId: string
 			flow: { phase: "paused" },
 			dialog: { approvalsByBlock: {} },
 			turn: { ...state.turn, blocks: [], manualApprovalBlockIds: [], automaticApprovalBlockIds: [], executingBlockIds: [] },
+			halt: { status: "idle", generation: state.generation },
+			journalWatermark: tail,
+		},
+		outbox: [],
+	})
+}
+
+/**
+ * Leaves a closed task paused after `toolName`'s result was journaled but
+ * before compose canonicalized that turn, as a crash in between would.
+ *
+ * The runtime journals a tool result before it completes the block, and
+ * compose then writes the turn's terminal manifest. Rewinding to just before
+ * the manifest keeps the raw result visible and the turn's blocks completed,
+ * so reopening the task resumes into a compose that must pair them again.
+ */
+export async function pauseTaskAfterToolResult(dlineDocsDir: string, taskId: string, toolName: string): Promise<void> {
+	const root = taskRoot(dlineDocsDir, taskId)
+	const vault = new FileTaskStateVault(new InstanceLayout(root).stateFile)
+	const durable = await vault.load(taskId)
+	if (!durable) throw new Error(`Expected runtime state for task ${taskId}`)
+	const { turn, tail } = await withFixtureJournal(root, async ({ journal, payloads }) => {
+		const entries = await journal.read()
+		const decode = async <T>(payloadRef: string) => decodeTaskPayload<T>(await payloads.read(payloadRef))
+		for (const entry of entries) {
+			if (entry.kind !== "message" || entry.source !== "provider" || !entry.payloadRef) continue
+			const final = await decode<ProviderFinalEnvelope>(entry.payloadRef)
+			if (final.kind !== "provider_final") continue
+			let dlineTid: string | undefined
+			for (const plan of final.turnPlan.blocks) {
+				const invocation = await decode<ToolInvocationEnvelope>(plan.invocationRef)
+				if (invocation.toolName === toolName) dlineTid = invocation.dlineTid
+			}
+			if (!dlineTid) continue
+			let turnId: string | undefined
+			for (const candidate of entries) {
+				if (candidate.source !== "tool" || !candidate.payloadRef || !candidate.causation?.turnId) continue
+				const result = await decode<ToolResultEnvelope>(candidate.payloadRef)
+				if (result.kind === "tool_result" && result.blockId === dlineTid) turnId = candidate.causation.turnId
+			}
+			if (!turnId) throw new Error(`Expected a journaled ${toolName} result`)
+			const manifest = await journal.findByOperation(`tool.terminal_manifest:${turnId}`)
+			if (!manifest) throw new Error(`Expected compose to have canonicalized the ${toolName} turn`)
+			await journal.rewind({
+				operationId: `e2e-seed:${Date.now()}:rewind`,
+				target: { seq: manifest.watermark.seq - 1 },
+			})
+			const blocks: KernelBlock[] = final.turnPlan.blocks.map((plan) => ({
+				blockId: plan.blockId,
+				index: plan.index,
+				phase: "completed",
+				attempt: plan.attempt,
+				lanes: plan.lanes,
+				turnEnding: plan.turnEnding,
+				invocationRef: plan.invocationRef,
+			}))
+			return { turn: { turnId, mode: final.turnPlan.mode, blocks }, tail: journal.watermark() }
+		}
+		throw new Error(`Expected a provider turn that called ${toolName}`)
+	})
+	const state = durable.state
+	await vault.save({
+		state: {
+			...state,
+			flow: { phase: "paused" },
+			turn: {
+				...state.turn,
+				...turn,
+				manualApprovalBlockIds: [],
+				automaticApprovalBlockIds: [],
+				executingBlockIds: [],
+			},
+			dialog: { approvalsByBlock: {} },
 			halt: { status: "idle", generation: state.generation },
 			journalWatermark: tail,
 		},

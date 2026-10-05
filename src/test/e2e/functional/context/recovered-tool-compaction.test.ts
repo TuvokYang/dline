@@ -2,7 +2,14 @@ import { readdir, readFile, writeFile } from "node:fs/promises"
 import * as path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
-import { readTaskUiMessagesText, rewriteTaskUiMessages } from "@e2e/utils/task-instance-store"
+import {
+	pauseTaskAfterToolResult,
+	pauseTaskBetweenTurns,
+	readTaskRuntimeState,
+	readTaskUiMessagesText,
+	rewriteTaskConversation,
+	rewriteTaskUiMessages,
+} from "@e2e/utils/task-instance-store"
 import { expect, type Frame, type Page } from "@playwright/test"
 import type { ElectronApplication } from "playwright"
 
@@ -133,40 +140,34 @@ async function onlyTaskId(dlineDocsDir: string): Promise<string> {
 }
 
 async function recreateInterruptedStreamingSnapshot(dlineDocsDir: string, taskId: string): Promise<void> {
-	const taskDirectory = path.join(dlineDocsDir, "tasks", taskId)
-	const apiHistoryPath = path.join(taskDirectory, "api_conversation_history.jsonl")
-	const snapshotPath = path.join(taskDirectory, "snapshot.json")
-	const apiMessages = (await readFile(apiHistoryPath, "utf8"))
-		.split(/\r?\n/)
-		.filter(Boolean)
-		.map((line) => JSON.parse(line) as PersistedRecord)
-	const pendingAssistant = apiMessages.at(-1)
-	const qnaToolUse = Array.isArray(pendingAssistant?.content)
-		? (pendingAssistant.content.find(
-				(block) => typeof block === "object" && block !== null && (block as PersistedRecord).name === "qna_respond",
-			) as PersistedRecord | undefined)
-		: undefined
-	const functionId = qnaToolUse?.function_id
-	const dlineTid = qnaToolUse?.dline_tid
-	if (pendingAssistant?.role !== "assistant" || typeof functionId !== "string" || typeof dlineTid !== "string") {
-		throw new Error("Expected the setup task to end with a canonical qna_respond assistant message")
-	}
-	const completedApiMessages = [
-		...apiMessages,
-		{
-			role: "user",
-			content: [
-				{
-					type: "tool_result",
-					function_id: functionId,
-					dline_tid: dlineTid,
-					content: [{ type: "text", text: "E2E_RECOVERED_RESUME_SETUP_ACK" }],
-				},
-			],
-			ts: Date.now(),
-		},
-	]
-	await writeFile(apiHistoryPath, `${completedApiMessages.map((message) => JSON.stringify(message)).join("\n")}\n`, "utf8")
+	await rewriteTaskConversation(dlineDocsDir, taskId, (apiMessages) => {
+		const pendingAssistant = apiMessages.at(-1)
+		const qnaToolUse = Array.isArray(pendingAssistant?.content)
+			? ((pendingAssistant.content as unknown[]).find(
+					(block) => typeof block === "object" && block !== null && (block as PersistedRecord).name === "qna_respond",
+				) as PersistedRecord | undefined)
+			: undefined
+		const functionId = qnaToolUse?.function_id
+		const dlineTid = qnaToolUse?.dline_tid
+		if (pendingAssistant?.role !== "assistant" || typeof functionId !== "string" || typeof dlineTid !== "string") {
+			throw new Error("Expected the setup task to end with a canonical qna_respond assistant message")
+		}
+		return [
+			...apiMessages,
+			{
+				role: "user",
+				content: [
+					{
+						type: "tool_result",
+						function_id: functionId,
+						dline_tid: dlineTid,
+						content: [{ type: "text", text: "E2E_RECOVERED_RESUME_SETUP_ACK" }],
+					},
+				],
+				ts: Date.now(),
+			} as (typeof apiMessages)[number],
+		]
+	})
 
 	await rewriteTaskUiMessages(dlineDocsDir, taskId, (uiMessages) => {
 		const pendingAsk = uiMessages.at(-1)
@@ -176,104 +177,17 @@ async function recreateInterruptedStreamingSnapshot(dlineDocsDir: string, taskId
 		return uiMessages.slice(0, -1)
 	})
 
-	const snapshot = JSON.parse(await readFile(snapshotPath, "utf8")) as PersistedRecord
-	const apiIndex = completedApiMessages.length - 1
-	const turnId = `resume-turn:${taskId}`
-	snapshot.phase = "streaming"
-	snapshot.apiIndex = apiIndex
-	snapshot.revision = typeof snapshot.revision === "number" ? snapshot.revision + 1 : 1
-	snapshot.anchor = { apiIndex, turnId }
-	snapshot.turn = { turnId, assistantApiIndex: apiIndex + 1, mode: "parallel", blocks: [] }
-	delete snapshot.interaction
-	delete snapshot.interruptedInteraction
-	delete snapshot.cancellation
-	delete snapshot.completion
-	delete snapshot.runtimeError
-	delete snapshot.error
-	await writeFile(snapshotPath, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8")
+	// The runtime reopens any task that stopped mid-run paused, offering Resume.
+	await pauseTaskBetweenTurns(dlineDocsDir, taskId)
 }
 
 async function recreateRecoveredUnpairedToolTail(dlineDocsDir: string, taskId: string, commandMarker: string): Promise<void> {
-	const taskDirectory = path.join(dlineDocsDir, "tasks", taskId)
-	const apiHistoryPath = path.join(taskDirectory, "api_conversation_history.jsonl")
-	const snapshotPath = path.join(taskDirectory, "snapshot.json")
 	const uiMessages = await readTaskUiMessagesText(dlineDocsDir, taskId)
 	expect(uiMessages).toContain('"say":"partial_tool_result"')
 	expect(uiMessages).toContain(commandMarker)
 
-	const apiMessages = (await readFile(apiHistoryPath, "utf8"))
-		.split(/\r?\n/)
-		.filter(Boolean)
-		.map((line) => JSON.parse(line) as PersistedRecord)
-	const assistantIndex = apiMessages.findIndex((message) => {
-		if (message.role !== "assistant" || !Array.isArray(message.content)) return false
-		return message.content.some((block) => {
-			if (typeof block !== "object" || block === null) return false
-			const candidate = block as PersistedRecord
-			return candidate.type === "tool_use" && candidate.name === "execute_command"
-		})
-	})
-	if (assistantIndex < 0) throw new Error("Expected the setup task to persist an execute_command assistant message")
-
-	const toolUse = (apiMessages[assistantIndex]?.content as unknown[]).find((block): block is PersistedRecord => {
-		if (typeof block !== "object" || block === null) return false
-		const candidate = block as PersistedRecord
-		return candidate.type === "tool_use" && candidate.name === "execute_command"
-	})
-	const functionId = toolUse?.function_id
-	const dlineTid = toolUse?.dline_tid
-	if (typeof functionId !== "string" || typeof dlineTid !== "string") {
-		throw new Error("Expected execute_command to have canonical function_id and dline_tid")
-	}
-
-	await writeFile(
-		apiHistoryPath,
-		`${apiMessages
-			.slice(0, assistantIndex + 1)
-			.map((message) => JSON.stringify(message))
-			.join("\n")}\n`,
-		"utf8",
-	)
-
-	const snapshot = JSON.parse(await readFile(snapshotPath, "utf8")) as PersistedRecord
-	const existingTurn = typeof snapshot.turn === "object" && snapshot.turn !== null ? (snapshot.turn as PersistedRecord) : {}
-	const existingBlocks = Array.isArray(existingTurn.blocks) ? existingTurn.blocks : []
-	const existingBlock = existingBlocks.find((block): block is PersistedRecord => {
-		if (typeof block !== "object" || block === null) return false
-		const candidate = block as PersistedRecord
-		return candidate.functionId === functionId || candidate.dlineTid === dlineTid
-	})
-	const turnId = typeof existingTurn.turnId === "string" ? existingTurn.turnId : `turn:${dlineTid}`
-	snapshot.phase = "between_turns"
-	snapshot.apiIndex = assistantIndex
-	snapshot.revision = typeof snapshot.revision === "number" ? snapshot.revision + 1 : 1
-	snapshot.anchor = { apiIndex: assistantIndex, turnId }
-	snapshot.turn = {
-		...existingTurn,
-		turnId,
-		assistantApiIndex: assistantIndex,
-		mode: "serial",
-		blocks: [
-			{
-				...(existingBlock ?? {}),
-				dlineTid,
-				functionId,
-				toolName: "execute_command",
-				phase: "completed",
-			},
-		],
-	}
-	delete snapshot.interaction
-	delete snapshot.interruptedInteraction
-	delete snapshot.cancellation
-	delete snapshot.completion
-	delete snapshot.runtimeError
-	delete snapshot.error
-	delete snapshot.awaiting
-	delete snapshot.approval
-	delete snapshot.execution
-	delete snapshot.resume
-	await writeFile(snapshotPath, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8")
+	// The result stays durable in the journal; only its canonical turn pairing is undone.
+	await pauseTaskAfterToolResult(dlineDocsDir, taskId, "execute_command")
 }
 
 e2e(
@@ -458,19 +372,14 @@ e2e(
 			const retryBeforeReload = footer.getByText("Retry", { exact: true })
 			await expect(retryBeforeReload).toBeVisible()
 			await expect(retryBeforeReload).toBeEnabled()
-			const retrySnapshotPath = path.join(dlineDocsDir, "tasks", taskId, "snapshot.json")
+			// The runtime dialog holds no replay recipe, so the reload alone is what
+			// leaves only the durable error interaction behind.
 			await expect
 				.poll(async () => {
-					const snapshot = JSON.parse(await readFile(retrySnapshotPath, "utf8")) as PersistedRecord
-					const interaction = snapshot.interaction as PersistedRecord | undefined
+					const interaction = (await readTaskRuntimeState(dlineDocsDir, taskId))?.dialog.primary
 					return `${String(interaction?.kind)}:${String(interaction?.status)}`
 				})
 				.toBe("error_retry:awaiting")
-			const legacySnapshot = JSON.parse(await readFile(retrySnapshotPath, "utf8")) as PersistedRecord
-			const legacyInteraction = legacySnapshot.interaction as PersistedRecord
-			delete legacyInteraction.persistedRequest
-			delete legacyInteraction.retryContent
-			await writeFile(retrySnapshotPath, `${JSON.stringify(legacySnapshot, null, 2)}\n`, "utf8")
 
 			// Reload the extension host after the terminal compaction failure so the
 			// in-memory replay recipe is gone while the active error interaction remains.
