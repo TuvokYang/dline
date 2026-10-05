@@ -74,18 +74,18 @@ function cardOf(row: UiMessage | undefined): UiSayTool {
 }
 
 describe("MessageStateCompactionCards", () => {
-	it("rewrites a broken-off Pass's card as retrying instead of stacking another", () => {
+	it("rewrites a broken-off Pass's card as retrying instead of stacking another", async () => {
 		const { handler, rows } = createMessageStub()
 		const published: UiMessage[] = []
 		const progress = new MessageStateCompactionCards(handler, sequence(), { publish: (row) => published.push(row) })
 		const first = pass(0)
 
-		progress.present(OPERATION, event({ kind: "pass_started", passIdentity: first, attempt: attempt0 }))
-		progress.present(
+		await progress.present(OPERATION, event({ kind: "pass_started", passIdentity: first, attempt: attempt0 }))
+		await progress.present(
 			OPERATION,
 			event({ kind: "pass_partial", passIdentity: first, attempt: attempt0, content: "half a sum" }),
 		)
-		const republish = progress.present(
+		const republish = await progress.present(
 			OPERATION,
 			event({
 				kind: "pass_retry",
@@ -119,40 +119,138 @@ describe("MessageStateCompactionCards", () => {
 		expect(published.map((message) => message.ts)).toEqual([501, 501, 501])
 	})
 
-	it("leaves streamed text to the realtime row rather than republishing the task per chunk", () => {
+	it("leaves streamed text to the realtime row rather than republishing the task per chunk", async () => {
 		const { handler } = createMessageStub()
 		const progress = new MessageStateCompactionCards(handler, sequence())
 		const first = pass(0)
 
-		expect(progress.present(OPERATION, event({ kind: "pass_started", passIdentity: first, attempt: attempt0 }))).toBe(true)
-		expect(progress.present(OPERATION, event({ kind: "pass_receiving", passIdentity: first, attempt: attempt0 }))).toBe(false)
+		expect(await progress.present(OPERATION, event({ kind: "pass_started", passIdentity: first, attempt: attempt0 }))).toBe(
+			true,
+		)
+		expect(await progress.present(OPERATION, event({ kind: "pass_receiving", passIdentity: first, attempt: attempt0 }))).toBe(
+			false,
+		)
 		expect(
-			progress.present(OPERATION, event({ kind: "pass_partial", passIdentity: first, attempt: attempt0, content: "more" })),
+			await progress.present(
+				OPERATION,
+				event({ kind: "pass_partial", passIdentity: first, attempt: attempt0, content: "more" }),
+			),
 		).toBe(false)
 	})
 
-	it("gives each Pass its own card and withdraws them all when the run ends without a record", () => {
+	it("gives each Pass its own card and withdraws them all when the run ends without a record", async () => {
 		const { handler, rows } = createMessageStub()
 		const progress = new MessageStateCompactionCards(handler, sequence())
 
-		progress.present(OPERATION, event({ kind: "pass_started", passIdentity: pass(0), attempt: attempt0 }))
-		progress.present(OPERATION, event({ kind: "pass_started", passIdentity: pass(1), attempt: attempt0 }))
+		await progress.present(OPERATION, event({ kind: "pass_started", passIdentity: pass(0), attempt: attempt0 }))
+		await progress.present(OPERATION, event({ kind: "pass_started", passIdentity: pass(1), attempt: attempt0 }))
 		expect(rows.size).toBe(2)
 
 		expect(progress.withdraw(OPERATION)).toBe(true)
 		expect(rows.size).toBe(0)
 		// A withdrawn run has nothing left to withdraw, and a later run starts fresh.
 		expect(progress.withdraw(OPERATION)).toBe(false)
-		progress.present(OPERATION, event({ kind: "pass_started", passIdentity: pass(0), attempt: attempt0 }))
+		await progress.present(OPERATION, event({ kind: "pass_started", passIdentity: pass(0), attempt: attempt0 }))
 		expect([...rows.keys()]).toEqual([503])
+	})
+
+	it("keeps each step a multi-Pass run builds on and lands the run on its final Pass", async () => {
+		const { handler, rows, durable } = createMessageStub(9)
+		const cards = new MessageStateCompactionCards(handler, sequence())
+		const overBudget = { status: "continue" }
+		const withinBudget = { status: "complete" }
+
+		await cards.present(OPERATION, event({ kind: "pass_started", passIdentity: pass(0), attempt: attempt0 }))
+		await cards.present(
+			OPERATION,
+			event({ kind: "pass_completed", passIdentity: pass(0), attempt: attempt0, content: "first", projection: overBudget }),
+		)
+		await cards.present(OPERATION, event({ kind: "summary_refit_preparing", passIdentity: pass(0), refitAttempt: 1 }))
+		await cards.present(
+			OPERATION,
+			event({ kind: "summary_refit_started", passIdentity: pass(0), refitAttempt: 1, attempt: attempt1 }),
+		)
+		await cards.present(
+			OPERATION,
+			event({ kind: "summary_refit_completed", passIdentity: pass(0), attempt: attempt1, content: "refit" }),
+		)
+		await cards.present(OPERATION, event({ kind: "pass_started", passIdentity: pass(1), attempt: attempt0 }))
+		await cards.present(
+			OPERATION,
+			event({
+				kind: "pass_completed",
+				passIdentity: pass(1),
+				attempt: attempt0,
+				content: "final",
+				projection: withinBudget,
+			}),
+		)
+
+		// The over-budget Pass and the refit are records of their own as soon as they complete.
+		expect([...durable]).toEqual([501, 502])
+		expect(cardOf(rows.get(501))).toMatchObject({
+			content: "first",
+			compactionStatus: "completed",
+			compactionUnitKind: "pass",
+			compactionUnitIndex: 0,
+			compactionDurable: true,
+		})
+		expect(cardOf(rows.get(502))).toMatchObject({
+			content: "refit",
+			compactionUnitKind: "summary_refit",
+			compactionUnitIndex: 0,
+			compactionDurable: true,
+		})
+		expect(rows.get(503)?.partial).toBe(true)
+
+		await cards.record(OPERATION, {
+			tool: "summarizeTask",
+			content: "final",
+			compactionStatus: "completed",
+			compactionOperationId: OPERATION,
+			compactionUnitKind: "pass",
+			compactionDurable: true,
+		})
+
+		expect([...rows.keys()]).toEqual([501, 502, 503])
+		expect(cardOf(rows.get(503))).toMatchObject({
+			content: "final",
+			compactionUnitKind: "pass",
+			compactionUnitIndex: 1,
+			compactionPassIndex: 1,
+			compactionDurable: true,
+		})
+		expect(rows.get(503)?.partial).toBe(false)
+	})
+
+	it("keeps the completed steps of a run that stops before it lands", async () => {
+		const { handler, rows } = createMessageStub()
+		const cards = new MessageStateCompactionCards(handler, sequence())
+
+		await cards.present(OPERATION, event({ kind: "pass_started", passIdentity: pass(0), attempt: attempt0 }))
+		await cards.present(
+			OPERATION,
+			event({
+				kind: "pass_completed",
+				passIdentity: pass(0),
+				attempt: attempt0,
+				content: "first",
+				projection: { status: "continue" },
+			}),
+		)
+		await cards.present(OPERATION, event({ kind: "pass_started", passIdentity: pass(1), attempt: attempt0 }))
+
+		expect(cards.withdraw(OPERATION)).toBe(true)
+		expect([...rows.keys()]).toEqual([501])
+		expect(cardOf(rows.get(501))).toMatchObject({ content: "first", compactionDurable: true })
 	})
 
 	it("records the run on its last card's row and delivers the rewrite as a row", async () => {
 		const { handler, rows, durable } = createMessageStub(9)
 		const published: UiMessage[] = []
 		const cards = new MessageStateCompactionCards(handler, sequence(), { publish: (row) => published.push(row) })
-		cards.present(OPERATION, event({ kind: "pass_started", passIdentity: pass(0), attempt: attempt0 }))
-		cards.present(OPERATION, event({ kind: "pass_started", passIdentity: pass(1), attempt: attempt0 }))
+		await cards.present(OPERATION, event({ kind: "pass_started", passIdentity: pass(0), attempt: attempt0 }))
+		await cards.present(OPERATION, event({ kind: "pass_started", passIdentity: pass(1), attempt: attempt0 }))
 		published.length = 0
 
 		await cards.record(OPERATION, { tool: "summarizeTask", content: "landed", compactionStatus: "completed" })
@@ -181,7 +279,7 @@ describe("MessageStateCompactionCards", () => {
 	it("does not reclaim a card a restore already cleared", async () => {
 		const { handler, rows } = createMessageStub()
 		const cards = new MessageStateCompactionCards(handler, sequence())
-		cards.present(OPERATION, event({ kind: "pass_started", passIdentity: pass(0), attempt: attempt0 }))
+		await cards.present(OPERATION, event({ kind: "pass_started", passIdentity: pass(0), attempt: attempt0 }))
 		handler.removeTransientClineMessage(501)
 
 		await cards.record(OPERATION, { tool: "summarizeTask", content: "", compactionStatus: "failed" })
@@ -190,12 +288,12 @@ describe("MessageStateCompactionCards", () => {
 		expect([...rows.keys()]).toEqual([502])
 	})
 
-	it("draws no progress card for a failure, which the failure card records", () => {
+	it("draws no progress card for a failure, which the failure card records", async () => {
 		const { handler, rows } = createMessageStub()
 		const progress = new MessageStateCompactionCards(handler, sequence())
 
-		progress.present(OPERATION, event({ kind: "pass_started", passIdentity: pass(0), attempt: attempt0 }))
-		expect(progress.present(OPERATION, event({ kind: "failed", error: "provider unavailable" }))).toBe(false)
+		await progress.present(OPERATION, event({ kind: "pass_started", passIdentity: pass(0), attempt: attempt0 }))
+		expect(await progress.present(OPERATION, event({ kind: "failed", error: "provider unavailable" }))).toBe(false)
 		expect(cardOf(rows.get(501)).compactionStatus).toBe("waiting")
 	})
 })

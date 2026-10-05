@@ -280,7 +280,7 @@ export class ProviderCompactionService implements ProductionCompactionService {
 			},
 			publish: async (_sessionInput, event) => {
 				if (event.kind === "failed") outcome.failure = event.error
-				if (this.options.progress?.present(input.compactionId, event)) this.republish(input)
+				if (await this.options.progress?.present(input.compactionId, event)) this.republish(input)
 			},
 			waitForRetry: (_sessionInput, retryAttempt, signal) =>
 				(this.options.waitForRetry ?? delayRetry)(retryAttempt, signal),

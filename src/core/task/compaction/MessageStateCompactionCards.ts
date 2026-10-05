@@ -16,11 +16,11 @@ export interface CompactionProgressPort {
 	/**
 	 * Reflect one session event.
 	 *
-	 * Returns whether the change is a step the whole view should be republished
+	 * Resolves whether the change is a step the whole view should be republished
 	 * for. Streamed text is not: it reaches the open chat row by row, and
 	 * republishing the task per chunk would cost more than the summary itself.
 	 */
-	present(operationId: string, event: ContextCompactionSessionEvent): boolean
+	present(operationId: string, event: ContextCompactionSessionEvent): Promise<boolean>
 }
 
 /** Writes the card a run ends with: its landed summary, or why it failed. */
@@ -34,6 +34,10 @@ export interface CompactionRecordPort {
  * Progress rows are transient because they describe work in flight. Each unit
  * keeps one row across its attempts, so a retry rewrites the card the
  * interrupted attempt showed instead of stacking another one.
+ *
+ * A unit the run builds on - a Pass that left the target over budget, or a
+ * summary refit - is kept as soon as it completes: the next unit starts from
+ * it, so it stays in the chat as the step it was, even if the run later stops.
  *
  * The record takes over the row of the last card the run showed, as main
  * commits its final Pass card, instead of removing the progress and adding a
@@ -51,7 +55,7 @@ export class MessageStateCompactionCards implements CompactionProgressPort, Comp
 		private readonly realtime?: RealtimeMessagePublisher,
 	) {}
 
-	present(operationId: string, event: ContextCompactionSessionEvent): boolean {
+	async present(operationId: string, event: ContextCompactionSessionEvent): Promise<boolean> {
 		const snapshot = this.snapshotOf(operationId, event)
 		if (!snapshot) return false
 		const ts = snapshot.existingTs ?? this.nextPresentationId()
@@ -64,21 +68,53 @@ export class MessageStateCompactionCards implements CompactionProgressPort, Comp
 		})
 		if (snapshot.existingTs === undefined) this.presentation.bindMessageTs(snapshot, ts)
 		this.realtime?.publish(row)
+		if (isKeptStep(event)) await this.keep({ ...snapshot, existingTs: ts })
 		return !isStreamedText(event)
 	}
 
 	async record(operationId: string, card: UiSayTool): Promise<void> {
-		const row = { type: "say", say: "tool", partial: false, text: JSON.stringify(card) } satisfies Partial<UiMessage>
-		const ts = this.claim(operationId)
-		if (ts === undefined) {
+		const claimed = this.claim(operationId)
+		// A landed Pass keeps the identity of the unit whose row it takes over.
+		const recorded = claimed && claimed.unitKind === card.compactionUnitKind ? { ...unitIdentityOf(claimed), ...card } : card
+		const row = { type: "say", say: "tool", partial: false, text: JSON.stringify(recorded) } satisfies Partial<UiMessage>
+		if (claimed?.existingTs === undefined) {
 			await this.messages.addToClineMessages({ ts: this.nextPresentationId(), ...row })
 			return
 		}
+		await this.commitRow({ ts: claimed.existingTs, ...row })
+	}
+
+	/**
+	 * Withdraw the cards of a run that ended without a record, as a stopped run
+	 * does. Returns whether any card was withdrawn.
+	 */
+	withdraw(operationId: string): boolean {
+		let withdrawn = false
+		for (const { existingTs } of this.transientUnits(operationId)) {
+			withdrawn = this.messages.removeTransientClineMessage(existingTs) || withdrawn
+		}
+		this.presentation.clear(operationId)
+		return withdrawn
+	}
+
+	/** Write a completed step the run builds on as a card of its own. */
+	private async keep(snapshot: ContextCompactionPresentationSnapshot & { existingTs: number }): Promise<void> {
+		await this.commitRow({
+			ts: snapshot.existingTs,
+			type: "say",
+			say: "tool",
+			partial: false,
+			text: JSON.stringify({ ...cardOf(snapshot), compactionDurable: true } satisfies UiSayTool),
+		})
+		this.presentation.markDurable(snapshot)
+	}
+
+	/** Turn a shown progress row into the durable row it ends as. */
+	private async commitRow(row: Omit<UiMessage, "conversationHistoryIndex">): Promise<void> {
 		// Placed where the conversation stands now, as a newly added row would be:
 		// the progress card was drawn before the run changed the conversation.
 		const conversationSize = await this.messages.currentConversationSize()
 		const { message, persistence } = this.messages.beginDurableClineMessage({
-			ts,
 			...row,
 			conversationHistoryIndex: conversationSize - 1,
 		})
@@ -88,39 +124,28 @@ export class MessageStateCompactionCards implements CompactionProgressPort, Comp
 	}
 
 	/**
-	 * Withdraw the cards of a run that ended without a record, as a stopped run
-	 * does. Returns whether any card was withdrawn.
-	 */
-	withdraw(operationId: string): boolean {
-		let withdrawn = false
-		for (const ts of this.shownRows(operationId)) {
-			withdrawn = this.messages.removeTransientClineMessage(ts) || withdrawn
-		}
-		this.presentation.clear(operationId)
-		return withdrawn
-	}
-
-	/**
-	 * Hand the run's latest card to its record and withdraw the others.
+	 * Hand the run's latest transient card to its record and withdraw the others.
 	 *
 	 * A card that is no longer on screen - a restore cleared it - is not
 	 * reclaimed: writing the record there would place it at the rewound point.
+	 * Kept steps are already records of their own and stay as they are.
 	 */
-	private claim(operationId: string): number | undefined {
-		const shown = this.shownRows(operationId)
+	private claim(operationId: string): ContextCompactionPresentationSnapshot | undefined {
+		const shown = this.transientUnits(operationId).sort((left, right) => right.existingTs - left.existingTs)
 		this.presentation.clear(operationId)
-		if (shown.length === 0) return undefined
-		const latest = Math.max(...shown)
-		for (const ts of shown) {
-			if (ts !== latest) this.messages.removeTransientClineMessage(ts)
-		}
-		return this.messages.clineMessages.some((message) => message.ts === latest) ? latest : undefined
+		const [latest, ...older] = shown
+		for (const { existingTs } of older) this.messages.removeTransientClineMessage(existingTs)
+		if (!latest) return undefined
+		const onScreen = this.messages.clineMessages.some((message) => message.ts === latest.existingTs)
+		return onScreen ? latest : { ...latest, existingTs: undefined }
 	}
 
-	private shownRows(operationId: string): number[] {
+	private transientUnits(operationId: string): (ContextCompactionPresentationSnapshot & { existingTs: number })[] {
 		return this.presentation
 			.getSnapshots(operationId)
-			.flatMap((snapshot) => (snapshot.existingTs === undefined ? [] : [snapshot.existingTs]))
+			.flatMap((snapshot) =>
+				snapshot.existingTs === undefined || snapshot.durable ? [] : [{ ...snapshot, existingTs: snapshot.existingTs }],
+			)
 	}
 
 	private snapshotOf(
@@ -174,6 +199,15 @@ export class MessageStateCompactionCards implements CompactionProgressPort, Comp
 	}
 }
 
+/**
+ * Completed units the run goes on from, which main keeps as cards of their own.
+ * The Pass that brings the target within budget is not one: the run's record
+ * lands on its card.
+ */
+function isKeptStep(event: ContextCompactionSessionEvent): boolean {
+	return (event.kind === "pass_completed" && event.projection.status !== "complete") || event.kind === "summary_refit_completed"
+}
+
 /** Events that only carry more of a summary already on screen. */
 function isStreamedText(event: ContextCompactionSessionEvent): boolean {
 	return (
@@ -194,11 +228,18 @@ function cardOf(snapshot: ContextCompactionPresentationSnapshot): UiSayTool {
 		...(snapshot.retryAttempt !== undefined ? { retryAttempt: snapshot.retryAttempt } : {}),
 		...(snapshot.maxRetryAttempts !== undefined ? { maxRetryAttempts: snapshot.maxRetryAttempts } : {}),
 		compactionOperationId: snapshot.operationId,
+		...unitIdentityOf(snapshot),
+		compactionDurable: false,
+	} satisfies UiSayTool
+}
+
+/** Which execution unit of the run a card shows. */
+function unitIdentityOf(snapshot: ContextCompactionPresentationSnapshot): Partial<UiSayTool> {
+	return {
 		compactionUnitKind: snapshot.unitKind,
 		compactionUnitIndex: snapshot.unitIndex,
-		compactionDurable: false,
 		...(snapshot.passIdentity ? { compactionPassIndex: snapshot.passIdentity.passIndex } : {}),
 		...(snapshot.attempt ? { compactionAttemptIndex: snapshot.attempt.attemptIndex } : {}),
 		...(snapshot.attempt ? { compactionAttemptId: snapshot.attempt.authorizationAttemptId } : {}),
-	} satisfies UiSayTool
+	}
 }
