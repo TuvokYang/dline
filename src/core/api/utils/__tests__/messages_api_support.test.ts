@@ -294,6 +294,30 @@ describe("messages_api_support", () => {
 			])
 		})
 
+		it("reports the thinking share of output tokens without changing the billed output total", async () => {
+			const chunks = await collectChunks([
+				{
+					type: "message_delta",
+					usage: {
+						output_tokens: 13_654,
+						output_tokens_details: { thinking_tokens: 13_600 },
+					},
+				},
+				{
+					type: "message_delta",
+					usage: {
+						output_tokens: 40,
+						output_tokens_details: null,
+					},
+				},
+			])
+
+			expect(chunks).to.deep.equal([
+				{ type: "usage", inputTokens: 0, outputTokens: 13_654, thoughtsTokenCount: 13_600 },
+				{ type: "usage", inputTokens: 0, outputTokens: 40 },
+			])
+		})
+
 		it("emits tool call chunks and resets tool state on block stop", async () => {
 			const chunks = await collectChunks([
 				{

@@ -270,12 +270,7 @@ function createLegacyMarker(taskId: string, nowMs: number): ApiRequestRoundLegac
 	})
 }
 
+/** Thoughts are a share of output, so they are not a separate term. */
 function totalRoundTokens(round: ApiRequestRoundRecord): number {
-	return (
-		(round.inputTokens ?? 0) +
-		(round.outputTokens ?? 0) +
-		(round.thoughtsTokens ?? 0) +
-		(round.cacheWriteTokens ?? 0) +
-		(round.cacheReadTokens ?? 0)
-	)
+	return (round.inputTokens ?? 0) + (round.outputTokens ?? 0) + (round.cacheWriteTokens ?? 0) + (round.cacheReadTokens ?? 0)
 }

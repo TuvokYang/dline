@@ -351,13 +351,8 @@ export async function* handleResponsesApiStreamResponse(
 				const cacheWriteTokens = getResponsesCacheWriteTokens(usage.input_tokens_details)
 				const reasoningTokens = usage.output_tokens_details?.reasoning_tokens || 0
 				const totalTokens = usage.total_tokens || 0
-				const totalCost = await calculateCost(
-					modelInfo,
-					inputTokens,
-					outputTokens + reasoningTokens,
-					cacheWriteTokens,
-					cacheReadTokens,
-				)
+				// Responses `output_tokens` already includes `reasoning_tokens`.
+				const totalCost = await calculateCost(modelInfo, inputTokens, outputTokens, cacheWriteTokens, cacheReadTokens)
 				Logger.log(`Total tokens from Responses API usage: ${totalTokens}`)
 				const nonCachedInputTokens = Math.max(0, inputTokens - cacheReadTokens - cacheWriteTokens)
 				yield {

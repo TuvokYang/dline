@@ -1626,9 +1626,7 @@ export class Task {
 			},
 			updateBackgroundCommandState: (isRunning: boolean) =>
 				this.controller.updateBackgroundCommandState(isRunning, this.taskId),
-			onHandoffAvailabilityChanged: () => {
-				void this.postStateToWebview({ immediate: true })
-			},
+			onHandoffAvailabilityChanged: () => this.controller.postTaskViewPatchToWebview(),
 			updateClineMessage: async (
 				index: number,
 				updates: {

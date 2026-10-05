@@ -11,6 +11,7 @@ interface MessageRecordLocation {
 	offset: number
 	length: number
 	ordinal: number
+	partial: boolean
 	conversationHistoryIndex?: number
 	interactionId?: string
 }
@@ -175,11 +176,16 @@ async function buildRecordIndex(handle: FileHandle, size: number): Promise<Messa
 	const accept = (line: Buffer, offset: number): void => {
 		const message = parseMessageLine(line)
 		if (!message) return
+		const previous = latestByTimestamp.get(message.ts)
+		// A complete row is authoritative over partial streaming snapshots. If a
+		// task stopped before completion, keep the latest partial instead.
+		if (message.partial === true && previous && !previous.partial) return
 		latestByTimestamp.set(message.ts, {
 			ts: message.ts,
 			offset,
 			length: line.length,
 			ordinal,
+			partial: message.partial === true,
 			conversationHistoryIndex: message.conversationHistoryIndex,
 			interactionId: message.interactionId,
 		})
@@ -242,6 +248,8 @@ function dedupeMessages(messages: ClineMessage[]): ClineMessage[] {
 	const latestByTimestamp = new Map<number, { message: ClineMessage; ordinal: number }>()
 	for (let ordinal = 0; ordinal < messages.length; ordinal++) {
 		const message = messages[ordinal]
+		const previous = latestByTimestamp.get(message.ts)
+		if (message.partial === true && previous && previous.message.partial !== true) continue
 		latestByTimestamp.set(message.ts, { message, ordinal })
 	}
 	return [...latestByTimestamp.values()].sort((left, right) => left.ordinal - right.ordinal).map(({ message }) => message)
