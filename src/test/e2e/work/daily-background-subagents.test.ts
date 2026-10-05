@@ -3,10 +3,10 @@ import path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import {
-	expectWorkMessageVisible,
 	openWorkActivities,
 	openWorkTab,
 	prepareWorkSession,
+	scrollWorkToLatest,
 	sendWorkMessage,
 	setWorkAutoApproveAction,
 } from "@e2e/utils/work/session"
@@ -98,7 +98,7 @@ async function expectCompletedSubagentCard(
 
 e2e(
 	"daily background commands and subagents keep Activities and chat usable through foreground and background work",
-	async ({ helper, page, server, sidebar, userDataDir, workspaceDir }) => {
+	async ({ helper, page, server, sidebar, userDataDir, workspaceDir }, testInfo) => {
 		e2e.setTimeout(600_000)
 		await writeWorkSubagent(workspaceDir)
 		await prepareWorkSession(sidebar, helper)
@@ -301,36 +301,43 @@ e2e(
 			await expect(sidebar.getByText("WORK_DAILY_BACKGROUND_READY", { exact: true })).toBeVisible({ timeout: 60_000 })
 
 			await sendWorkMessage(sidebar, FOREGROUND_COMMAND_REQUEST)
-			await expect(sidebar.getByText("WORK_FOREGROUND_COMMAND_OK", { exact: true })).toBeVisible({ timeout: 60_000 })
-			const foregroundCard = sidebar.getByTestId("command-card").last()
+			const foregroundComplete = sidebar.getByText("WORK_FOREGROUND_COMMAND_OK", { exact: true })
+			await expect(foregroundComplete).toBeVisible({ timeout: 60_000 })
+			const foregroundCard = sidebar.getByTestId("command-card").filter({ hasText: FOREGROUND_COMMAND })
+			await expect(foregroundCard).toHaveCount(1)
 			await expect(foregroundCard.getByTestId("command-execution-mode")).toHaveText("Foreground")
-			await foregroundCard.getByRole("button", { name: FOREGROUND_COMMAND, exact: true }).click()
+			await scrollWorkToLatest(sidebar, foregroundComplete, 5_000)
+			await sidebar.locator('[data-virtuoso-scroller="true"]').hover({ position: { x: 4, y: 40 } })
+			await page.mouse.wheel(0, -120)
+			const foregroundToggle = foregroundCard.getByRole("button", { name: FOREGROUND_COMMAND, exact: true })
+			await foregroundToggle.scrollIntoViewIfNeeded()
+			await foregroundToggle.click()
 			await expect(foregroundCard.getByTestId("command-output-scroll")).toContainText("WORK_FOREGROUND_COMMAND_END")
 
+			await scrollWorkToLatest(sidebar, foregroundComplete, 5_000)
 			await sendWorkMessage(sidebar, HANDOFF_COMMAND_REQUEST)
+			const handoffCard = sidebar.getByTestId("command-card").filter({ hasText: BACKGROUND_COMMAND })
+			await expect(handoffCard).toHaveCount(1, { timeout: 60_000 })
+			await expect(handoffCard.getByTestId("command-execution-mode")).toHaveText("Foreground", { timeout: 60_000 })
 			const footer = sidebar.getByRole("contentinfo")
 			const continueInBackground = footer.locator('vscode-button[aria-label="Continue in Background"]')
-			// TaskView is the interaction authority and may lead the persisted message window in packaged mode.
 			await expect(continueInBackground).toBeVisible({ timeout: 40_000 })
 			await continueInBackground.click()
+			await expect(handoffCard.getByTestId("command-execution-mode")).toHaveText("Background", { timeout: 30_000 })
 
 			let activities = await openWorkActivities(sidebar)
 			const commandActivity = activities.filter({ hasText: BACKGROUND_COMMAND })
 			await expect(commandActivity).toHaveCount(1, { timeout: 30_000 })
 			await expect(commandActivity).toHaveAttribute("data-activity-status", "running")
 			await openWorkTab(sidebar)
-			const handoffCommandButton = sidebar.getByRole("button", { name: BACKGROUND_COMMAND, exact: true })
-			await expect(handoffCommandButton).toBeVisible({ timeout: 60_000 })
-			const handoffCard = handoffCommandButton.locator("xpath=ancestor::*[@data-testid='command-card'][1]")
-			await expect(handoffCard.getByTestId("command-execution-mode")).toHaveText("Background", { timeout: 30_000 })
 			await sendWorkMessage(sidebar, DURING_COMMAND_INPUT)
-			await expectWorkMessageVisible(sidebar, "WORK_DURING_BACKGROUND_COMMAND_OK", { timeout: 60_000 })
+			await expect(sidebar.getByText("WORK_DURING_BACKGROUND_COMMAND_OK", { exact: true })).toBeVisible({ timeout: 60_000 })
 
 			activities = await openWorkActivities(sidebar)
 			await expect(commandActivity).toHaveAttribute("data-activity-status", "completed", { timeout: 60_000 })
 			await openWorkTab(sidebar)
 			await sendWorkMessage(sidebar, COLLECT_COMMAND_INPUT)
-			await expectWorkMessageVisible(sidebar, "WORK_BACKGROUND_COMMAND_RESULT_OK", { timeout: 60_000 })
+			await expect(sidebar.getByText("WORK_BACKGROUND_COMMAND_RESULT_OK", { exact: true })).toBeVisible({ timeout: 60_000 })
 
 			await sendWorkMessage(sidebar, FOREGROUND_SUBAGENT_REQUEST)
 			await approveSubagentIfRequested(sidebar, FOREGROUND_CHILD_TASK)
@@ -362,13 +369,15 @@ e2e(
 			const subagentActivity = sidebar.locator(`[data-testid="activity-item"][data-activity-id="${subagentActivityId}"]`)
 			await openWorkTab(sidebar)
 			await sendWorkMessage(sidebar, DURING_SUBAGENT_INPUT)
-			await expectWorkMessageVisible(sidebar, "WORK_DURING_BACKGROUND_SUBAGENT_OK", { timeout: 60_000 })
+			await expect(sidebar.getByText("WORK_DURING_BACKGROUND_SUBAGENT_OK", { exact: true })).toBeVisible({
+				timeout: 60_000,
+			})
 
 			activities = await openWorkActivities(sidebar)
 			await expect(subagentActivity).toHaveAttribute("data-activity-status", "completed", { timeout: 60_000 })
 			await openWorkTab(sidebar)
 			await sendWorkMessage(sidebar, COLLECT_SUBAGENT_INPUT)
-			await expectWorkMessageVisible(sidebar, COMPLETE, { exact: false, timeout: 60_000 })
+			await expect(sidebar.getByText(COMPLETE, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
 			await expectCompletedSubagentCard(
 				sidebar,
 				BACKGROUND_CHILD_TASK,
@@ -407,6 +416,56 @@ e2e(
 			])
 			expect([...parentConsumptions, ...childConsumptions].every((entry) => entry.contractError === undefined)).toBe(true)
 			await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
+		} catch (error) {
+			// Preserve the failing renderer before the task is closed below. The
+			// artifact workflow uploads files, not in-memory reporter attachments.
+			const screenshotPath = testInfo.outputPath("background-subagents-before-cleanup.png")
+			await page
+				.screenshot({ path: screenshotPath })
+				.then(() =>
+					testInfo.attach("background-subagents-before-cleanup.png", {
+						path: screenshotPath,
+						contentType: "image/png",
+					}),
+				)
+				.catch(() => undefined)
+			const htmlPath = testInfo.outputPath("background-subagents-before-cleanup.html")
+			await sidebar
+				.content()
+				.then((html) => writeFile(htmlPath, html, "utf8"))
+				.then(() =>
+					testInfo.attach("background-subagents-before-cleanup.html", { path: htmlPath, contentType: "text/html" }),
+				)
+				.catch(() => undefined)
+			const geometryPath = testInfo.outputPath("background-subagents-before-cleanup-geometry.json")
+			await sidebar
+				.locator('[data-virtuoso-scroller="true"]')
+				.evaluate((scroller) => {
+					const bounds = scroller.getBoundingClientRect()
+					return {
+						scrollTop: scroller.scrollTop,
+						scrollHeight: scroller.scrollHeight,
+						clientHeight: scroller.clientHeight,
+						bottomGap: scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight,
+						visibleRows: [...scroller.querySelectorAll<HTMLElement>("[data-message-ts]")]
+							.filter(
+								(row) =>
+									row.getBoundingClientRect().bottom > bounds.top &&
+									row.getBoundingClientRect().top < bounds.bottom,
+							)
+							.map((row) => ({ ts: row.dataset.messageTs, text: row.innerText.slice(0, 500) })),
+						bottomControlPresent: document.querySelector('button[aria-label="Scroll to bottom"]') !== null,
+					}
+				})
+				.then((geometry) => writeFile(geometryPath, JSON.stringify(geometry, null, 2), "utf8"))
+				.then(() =>
+					testInfo.attach("background-subagents-before-cleanup-geometry.json", {
+						path: geometryPath,
+						contentType: "application/json",
+					}),
+				)
+				.catch(() => undefined)
+			throw error
 		} finally {
 			if (taskStarted) {
 				const closeTask = sidebar.getByRole("button", { name: "Close Task", exact: true })

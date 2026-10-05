@@ -1,7 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises"
 import * as path from "node:path"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
-import { prepareWorkSession, sendWorkMessage, setWorkAutoApproveAction } from "@e2e/utils/work/session"
+import { prepareWorkSession, scrollWorkToLatest, sendWorkMessage, setWorkAutoApproveAction } from "@e2e/utils/work/session"
 import { expect } from "@playwright/test"
 
 const TARGET = "openai-compatible-chat" as const
@@ -15,6 +15,8 @@ const REPLACE_BEFORE = "WORK_DAILY_REPLACE_BEFORE"
 const REPLACE_AFTER = "WORK_DAILY_REPLACE_AFTER"
 const COMMAND_REQUEST = "WORK_DAILY_COMMAND_REQUEST"
 const EXIT_REQUEST = "WORK_DAILY_EXIT_REQUEST"
+const EXIT_READ_RELATIVE_PATH = "work-daily-exit-read.txt"
+const EXIT_READ_CONTENT = "WORK_DAILY_EXIT_READ_CONTENT"
 const EXIT_RESUME_NOTE = "WORK_DAILY_EXIT_RESUME_NOTE"
 const EXIT_CLOSED = "WORK_DAILY_EXITED_RESPONSE_MUST_NOT_RENDER"
 const EXIT_RESUMED = "WORK_DAILY_EXIT_RESUME_OK"
@@ -30,6 +32,7 @@ e2e(
 		e2e.setTimeout(600_000)
 		const replacePath = path.join(workspaceDir, REPLACE_RELATIVE_PATH)
 		await writeFile(replacePath, `${REPLACE_BEFORE}\n`, "utf8")
+		await writeFile(path.join(workspaceDir, EXIT_READ_RELATIVE_PATH), `${EXIT_READ_CONTENT}\n`, "utf8")
 		await prepareWorkSession(sidebar, helper)
 		await setWorkAutoApproveAction(sidebar, "Read project files", false)
 		await setWorkAutoApproveAction(sidebar, "Edit project files", false)
@@ -109,7 +112,7 @@ e2e(
 				type: "tool",
 				id: "call_daily_exit_read",
 				name: "read_file",
-				arguments: { path: "README.md" },
+				arguments: { path: EXIT_READ_RELATIVE_PATH },
 				expectedRequestIncludes: [EXIT_REQUEST],
 			},
 			{
@@ -118,14 +121,14 @@ e2e(
 				name: "qna_respond",
 				arguments: { response: EXIT_CLOSED },
 				delayMs: 30_000,
-				expectedToolResults: [{ callId: "call_daily_exit_read", contentIncludes: "# Test Workspace" }],
+				expectedToolResults: [{ callId: "call_daily_exit_read", contentIncludes: EXIT_READ_CONTENT }],
 			},
 			{
 				type: "tool",
 				id: "call_daily_exit_resumed",
 				name: "qna_respond",
 				arguments: { response: EXIT_RESUMED },
-				expectedToolResults: [{ callId: "call_daily_exit_read", contentIncludes: "# Test Workspace" }],
+				expectedToolResults: [{ callId: "call_daily_exit_read", contentIncludes: EXIT_READ_CONTENT }],
 				expectedRequestIncludes: ["The previous task session was closed and has now been restored.", EXIT_RESUME_NOTE],
 			},
 			{
@@ -160,10 +163,16 @@ e2e(
 		const footer = sidebar.getByRole("contentinfo")
 		const approve = footer.getByText("Approve", { exact: true })
 		await expect(approve).toHaveCount(1, { timeout: 60_000 })
-		await expect(sidebar.getByText("README.md", { exact: false }).last()).toBeVisible({ timeout: 30_000 })
+		const readApproval = footer.getByTestId("tool-approval-summary")
+		await expect(readApproval).toHaveCount(1)
+		await expect(readApproval.getByText("Dline wants to read this file:", { exact: true })).toBeVisible()
+		await expect(readApproval.getByText("README.md", { exact: true })).toBeVisible({ timeout: 30_000 })
 		await sidebar.getByTestId("chat-input").fill(READ_NOTE)
 		await approve.click()
-		await expect(sidebar.getByText("Dline read 1 file:", { exact: true })).toBeVisible({ timeout: 30_000 })
+		const firstRead = sidebar.getByTestId("tool-group-scroll").filter({
+			has: sidebar.getByRole("button", { name: "README.md · lines 1-3", exact: true }),
+		})
+		await expect(firstRead.getByText("Dline read 1 file:", { exact: true })).toBeVisible({ timeout: 30_000 })
 		await expect(sidebar.getByText("WORK_DAILY_READ_COMPLETE", { exact: true })).toBeVisible({
 			timeout: 60_000,
 		})
@@ -178,29 +187,48 @@ e2e(
 		await setWorkAutoApproveAction(sidebar, "Edit project files", false)
 
 		await setWorkAutoApproveAction(sidebar, "Execute safe commands", true)
+		await scrollWorkToLatest(sidebar, sidebar.getByText(REPLACE_COMPLETE, { exact: true }), 5_000)
 		await sendWorkMessage(sidebar, COMMAND_REQUEST)
-		await expect(sidebar.getByTestId("command-execution-mode").last()).toHaveText("Foreground", {
+		const commandCard = sidebar.getByTestId("command-card").filter({ hasText: COMMAND })
+		await expect(commandCard).toHaveCount(1, { timeout: 60_000 })
+		await expect(commandCard.getByTestId("command-execution-mode")).toHaveText("Foreground", {
 			timeout: 60_000,
 		})
-		await expect(sidebar.getByText("WORK_DAILY_COMMAND_COMPLETE", { exact: true })).toBeVisible({
+		const commandComplete = sidebar.getByText("WORK_DAILY_COMMAND_COMPLETE", { exact: true })
+		await expect(commandComplete).toBeVisible({
 			timeout: 90_000,
 		})
-		const commandCard = sidebar.getByTestId("command-card").last()
-		await expect(commandCard.getByRole("button", { name: COMMAND, exact: true })).toBeVisible()
-		await expect(commandCard.getByTestId("command-output-summary")).toContainText("WORK_DAILY_COMMAND_END")
-		const commandResult = server
-			.getMockConsumptions(TARGET)[6]
-			.requestToolResults.find((result) => result.callId === "call_daily_command")
-		expect(commandResult?.content).toContain("WORK_DAILY_COMMAND_START")
-		expect(commandResult?.content).toContain("WORK_DAILY_COMMAND_END")
+		await scrollWorkToLatest(sidebar, commandComplete, 5_000)
+		// Browse back to the command before expanding it; an implicit locator scroll would compete with live-tail following.
+		await sidebar.locator('[data-virtuoso-scroller="true"]').hover({ position: { x: 4, y: 40 } })
+		await page.mouse.wheel(0, -120)
+		const collapsedCommand = commandCard.getByRole("button", { name: COMMAND, exact: true })
+		await collapsedCommand.scrollIntoViewIfNeeded()
+		await expect(collapsedCommand).toBeVisible()
+		await expect(collapsedCommand).toBeInViewport()
+		await collapsedCommand.click()
+		const commandOutput = commandCard.getByTestId("command-output-scroll")
+		await expect(commandOutput).toContainText("WORK_DAILY_COMMAND_START")
+		await expect(commandOutput).toContainText("WORK_DAILY_COMMAND_END")
 		await setWorkAutoApproveAction(sidebar, "Execute safe commands", false)
 
+		await scrollWorkToLatest(sidebar, commandComplete, 5_000)
 		await sendWorkMessage(sidebar, EXIT_REQUEST)
 		const exitApprove = footer.getByText("Approve", { exact: true })
 		await expect(exitApprove).toBeVisible({ timeout: 60_000 })
+		await expect(readApproval).toHaveCount(1)
+		await expect(readApproval.getByText("Dline wants to read this file:", { exact: true })).toBeVisible()
+		await expect(readApproval.getByText(EXIT_READ_RELATIVE_PATH, { exact: true })).toBeVisible()
 		await exitApprove.click()
 		await expect.poll(() => server.getRequestCount(TARGET), { timeout: 60_000 }).toBe(9)
-		await expect(sidebar.getByText("Dline read 1 file:", { exact: true }).last()).toBeVisible({ timeout: 30_000 })
+		const exitReadFile = sidebar.getByRole("button", { name: `${EXIT_READ_RELATIVE_PATH} · lines 1-1`, exact: true })
+		await scrollWorkToLatest(sidebar, exitReadFile, 5_000)
+		const exitRead = sidebar.getByTestId("tool-group-scroll").filter({
+			has: exitReadFile,
+		})
+		await expect(exitRead).toHaveCount(1, { timeout: 30_000 })
+		await expect(exitRead.getByText("Dline read 1 file:", { exact: true })).toBeVisible({ timeout: 30_000 })
+		await expect(exitRead).toBeInViewport()
 		await sidebar.getByRole("button", { name: "Close Task", exact: true }).click()
 		await E2ETestHelper.dismissWhatsNewModal(sidebar)
 		await page.getByRole("button", { name: "History", exact: true }).click()

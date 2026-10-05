@@ -15,34 +15,87 @@ export async function expectWorkComposerReady(sidebar: Frame, timeoutMs = 30_000
 	await expect(sidebar.getByTestId("send-button")).toBeVisible({ timeout: timeoutMs })
 }
 
-export async function expectWorkMessageVisible(
-	sidebar: Frame,
-	text: string,
-	options: { exact?: boolean; timeout?: number } = {},
-): Promise<Locator> {
-	const message = sidebar.getByText(text, { exact: options.exact ?? true }).last()
-	const scrollToBottom = sidebar.getByRole("button", { name: "Scroll to bottom", exact: true })
-	await expect
-		.poll(
-			async () => {
-				if (await message.isVisible().catch(() => false)) return true
-				if (await scrollToBottom.isVisible().catch(() => false)) {
-					await scrollToBottom.click().catch(() => undefined)
-				}
-				return message.isVisible().catch(() => false)
-			},
-			{ timeout: options.timeout ?? 30_000 },
-		)
-		.toBe(true)
-	return message
-}
-
 export async function sendWorkMessage(sidebar: Frame, text: string, timeoutMs = 30_000): Promise<Locator> {
 	const input = sidebar.getByTestId("chat-input")
 	await expect(input).toBeEnabled({ timeout: timeoutMs })
 	await input.fill(text)
 	await sidebar.getByTestId("send-button").click()
-	return expectWorkMessageVisible(sidebar, text, { timeout: timeoutMs })
+	const message = sidebar.getByText(text, { exact: true }).first()
+	await expect(message).toBeVisible({ timeout: timeoutMs })
+	return message
+}
+
+export async function clickWorkScrollToBottom(
+	button: Locator,
+	assertLatestReady: () => Promise<void>,
+	timeoutMs = 5_000,
+): Promise<void> {
+	if (await button.count()) {
+		try {
+			await button.click({ timeout: Math.min(5_000, timeoutMs) })
+		} catch (error) {
+			// Reaching the intended tail can remove the control during click actionability checks.
+			// A control that is still present must remain normally clickable.
+			if (await button.count()) throw error
+		}
+	}
+	// Neither a missing control nor the bottom of a loaded message window proves arrival at the conversation tail.
+	await assertLatestReady()
+}
+
+export async function waitForWorkNavigationReady(
+	button: Locator,
+	isLatestInViewport: () => Promise<boolean>,
+	timeoutMs = 5_000,
+): Promise<void> {
+	await expect.poll(async () => (await button.count()) > 0 || (await isLatestInViewport()), { timeout: timeoutMs }).toBe(true)
+}
+
+export async function scrollWorkToLatest(sidebar: Frame, expectedLatest: Locator, timeoutMs = 5_000): Promise<void> {
+	const scroller = sidebar.locator('[data-virtuoso-scroller="true"]')
+	await expect(scroller).toBeVisible()
+	// Use the transcript gutter so an expanded tool's nested scroller cannot consume the wheel.
+	await scroller.hover({ position: { x: 4, y: 40 } })
+	await sidebar.page().mouse.wheel(0, 120)
+	const scrollToBottom = sidebar.getByRole("button", { name: "Scroll to bottom", exact: true })
+	const availabilityDeadline = Date.now() + timeoutMs
+	await waitForWorkNavigationReady(
+		scrollToBottom,
+		async () => {
+			if (!(await expectedLatest.isVisible())) return false
+			// Virtualized overscan can mount a CSS-visible target outside the viewport before the control appears.
+			return expectedLatest.evaluateAll(
+				(elements, observationTimeoutMs) => {
+					if (elements.length !== 1) return false
+					return new Promise<boolean>((resolve, reject) => {
+						const observer = new IntersectionObserver(([entry]) => {
+							window.clearTimeout(timer)
+							observer.disconnect()
+							resolve(entry.intersectionRatio > 0)
+						})
+						const timer = window.setTimeout(() => {
+							observer.disconnect()
+							reject(new Error("Timed out observing the latest Work item in the viewport"))
+						}, observationTimeoutMs)
+						observer.observe(elements[0])
+					})
+				},
+				Math.max(1, availabilityDeadline - Date.now()),
+			)
+		},
+		timeoutMs,
+	)
+	await clickWorkScrollToBottom(
+		scrollToBottom,
+		async () => {
+			// Preserve the old availability/click/final-check phase bounds; both semantic assertions share the final phase.
+			const deadline = Date.now() + timeoutMs
+			const remainingTimeout = () => Math.max(1, deadline - Date.now())
+			await expect(expectedLatest).toBeVisible({ timeout: remainingTimeout() })
+			await expect(expectedLatest).toBeInViewport({ timeout: remainingTimeout() })
+		},
+		timeoutMs,
+	)
 }
 
 export async function setWorkAutoApproveAction(sidebar: Frame, label: string, enabled: boolean): Promise<void> {

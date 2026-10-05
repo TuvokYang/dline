@@ -26,6 +26,29 @@ describe("TaskActivityStore bounded payload", () => {
 		})
 	}
 
+	it.each([
+		{ task: "review", prompt: "x".repeat(16 * 1024), retryable: true },
+		{ task: "review", prompt: "x".repeat(16 * 1024 + 1), retryable: false },
+		{ task: "secret=abcdef0123456789", prompt: "review", retryable: false },
+	])("preserves retry eligibility across update and hydration ($retryable)", async ({ task, prompt, retryable }) => {
+		const original = new TaskActivityStore("task-bounded")
+		createSubagentActivity(original, "item-1", "review")
+		original.update("item-1", {
+			status: "failed",
+			retryRecipe: { kind: "subagent", schemaVersion: 1, task, prompt, timeoutSeconds: 60, retryable: true },
+		})
+		const saved = JSON.parse(JSON.stringify(original.list()))
+		const restored = new TaskActivityStore("task-bounded", { load: async () => saved, save: async () => {} })
+		await restored.hydrate()
+		assert.equal(restored.isRetryable("item-1"), retryable)
+		assert.equal(restored.get("item-1")?.retryRecipe?.retryable, retryable)
+		assert.ok(!JSON.stringify(restored.list()).includes("abcdef0123456789"))
+		if (retryable) assert.equal(restored.get("item-1")?.retryRecipe?.prompt, prompt)
+		else assert.match(restored.get("item-1")?.retryUnavailableReason ?? "", /redacted or truncated/)
+		original.dispose()
+		restored.dispose()
+	})
+
 	it("bounds the prompt detail captured at creation", () => {
 		const store = new TaskActivityStore("task-bounded")
 		createSubagentActivity(store, "item-1", HUGE)

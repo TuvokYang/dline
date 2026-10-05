@@ -60,22 +60,23 @@ function boundFieldText(text: string): string {
 	return `${safeText.slice(0, MAX_TEXT_FIELD_CHARS)}${TRUNCATION_NOTICE}`
 }
 
-/**
- * Apply the same field ceiling to a retry recipe.
- *
- * A recipe carries the task and prompt verbatim so a failed run can be
- * replayed, and every item of a large batch persists its own copy. Left raw it
- * would be the one payload that escapes both the ceiling and redaction, so the
- * stored text is bounded on the way in.
- *
- * @param recipe Recipe as supplied by the caller.
- * @returns Recipe whose free text is redacted and bounded.
- */
+/** A display-safe recipe is executable only when its input survived unchanged. */
+function isLosslessRetryRecipe(recipe: SubagentRetryRecipe): boolean {
+	return [recipe.task, recipe.prompt].every(
+		(text) => boundFieldText(text) === text && !text.includes("[REDACTED]") && !text.includes(TRUNCATION_NOTICE),
+	)
+}
+
+const LOSSY_RETRY_REASON =
+	"Retry unavailable after reopen: the saved task or prompt was redacted or truncated. Start a new subagent with the original instructions."
+
+/** Keep persisted recipes bounded and secret-free, without replaying edited instructions. */
 function boundRetryRecipe(recipe: SubagentRetryRecipe): SubagentRetryRecipe {
 	return {
 		...recipe,
 		task: boundFieldText(recipe.task),
 		prompt: boundFieldText(recipe.prompt),
+		retryable: recipe.retryable && isLosslessRetryRecipe(recipe),
 	}
 }
 
@@ -720,7 +721,11 @@ export class TaskActivityStore {
 			// the raw prompt the ceiling exists to prevent.
 			retryRecipe: activity.retryRecipe ? boundRetryRecipe(activity.retryRecipe) : undefined,
 			retryUnavailableReason:
-				activity.retryUnavailableReason === undefined ? undefined : redactSensitiveText(activity.retryUnavailableReason),
+				activity.retryRecipe && !isLosslessRetryRecipe(activity.retryRecipe)
+					? LOSSY_RETRY_REASON
+					: activity.retryUnavailableReason === undefined
+						? undefined
+						: redactSensitiveText(activity.retryUnavailableReason),
 			events: activity.events.map((event) => this.redactEvent({ ...event })),
 		}
 	}
