@@ -348,7 +348,10 @@ export class TaskSessionCompositionService {
 									`checkpoint.restore:${input.messageTs}:${randomUUID()}`,
 								)
 							},
-							resolve: () => checkpointRepository.resolve(checkpointRef),
+							resolve: () =>
+								input.journalTarget
+									? checkpointRepository.resolveAt(input.journalTarget)
+									: checkpointRepository.resolve(checkpointRef),
 							restoreWorkspace: input.restoreWorkspace,
 							applyConversationBoundary: async (boundary) => {
 								await conversationRewind.rewindTo({

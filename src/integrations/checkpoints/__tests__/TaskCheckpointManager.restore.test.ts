@@ -460,6 +460,47 @@ describe("TaskCheckpointManager restore isolation", () => {
 			expect(harness.resetHead).not.toHaveBeenCalled()
 			expect(rewindTo).not.toHaveBeenCalled()
 		})
+
+		it("restores the card through the canonical transaction at the position before the compaction", async () => {
+			const rewindTo = vi.fn()
+			const canonicalRestore = vi.fn(async () => ({ kind: "restored" as const, diagnostics: [] }))
+			const harness = createHarness(
+				journalMessages(),
+				undefined,
+				2,
+				{ rewindTo },
+				{ capture: vi.fn(), restore: canonicalRestore },
+			)
+
+			const result = await harness.manager.restoreCheckpoint(30, "task")
+
+			expect(result.checkpointManagerErrorMessage).toBeUndefined()
+			expect(canonicalRestore).toHaveBeenCalledWith(
+				expect.objectContaining({ messageTs: 30, mode: "chat_only", journalTarget: { seq: 6 } }),
+			)
+			// The transaction rewinds the journal itself; the manager only drops the card and what follows.
+			expect(rewindTo).not.toHaveBeenCalled()
+			expect(harness.truncateUiHistory).toHaveBeenCalledWith(2)
+			expect(harness.restoreChatRuntime).toHaveBeenCalledOnce()
+		})
+
+		it("reports a failed canonical restore instead of throwing, with nothing truncated", async () => {
+			const canonicalRestore = vi.fn().mockRejectedValue(new Error("CanonicalCheckpointBoundaryAhead"))
+			const harness = createHarness(
+				journalMessages(),
+				undefined,
+				2,
+				{ rewindTo: vi.fn() },
+				{ capture: vi.fn(), restore: canonicalRestore },
+			)
+
+			const result = await harness.manager.restoreCheckpoint(30, "task")
+
+			expect(result.checkpointManagerErrorMessage).toBe("CanonicalCheckpointBoundaryAhead")
+			expect(harness.truncateUiHistory).not.toHaveBeenCalled()
+			expect(harness.truncateContextHistory).not.toHaveBeenCalled()
+			expect(harness.restoreChatRuntime).not.toHaveBeenCalled()
+		})
 	})
 
 	it("uses the canonical transaction before clearing legacy presentation state", async () => {

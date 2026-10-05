@@ -25,6 +25,8 @@ export interface TaskSessionCheckpointPort {
 	restore(input: {
 		readonly messageTs: number
 		readonly mode: CheckpointRestoreMode
+		/** Restore to this journal position instead of a checkpoint captured at `messageTs`. */
+		readonly journalTarget?: { readonly seq: number }
 		readonly restoreWorkspace: (workspaceRef: string) => Promise<WorkspaceRestoreResult>
 	}): Promise<{ readonly result: CheckpointRestoreResult; readonly fence?: CheckpointRestoreFence }>
 }

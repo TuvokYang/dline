@@ -51,6 +51,22 @@ describe("CanonicalCheckpointRepository", () => {
 		})
 	})
 
+	it("resolves the current task at an earlier journal position without a captured bundle", async () => {
+		const subject = await fixture()
+
+		await expect(subject.repository.resolveAt({ seq: 1 })).resolves.toEqual({
+			snapshot: subject.snapshot,
+			boundary: { seq: 1 },
+		})
+	})
+
+	it("refuses a position the journal has not reached", async () => {
+		const subject = await fixture()
+
+		await expect(subject.repository.resolveAt({ seq: 3 })).rejects.toThrow("CanonicalCheckpointBoundaryAhead")
+		await expect(subject.repository.resolveAt({ seq: -1 })).rejects.toThrow("InvalidCanonicalCheckpointBoundary")
+	})
+
 	it("does not expose a marker when payload persistence fails", async () => {
 		const subject = await fixture()
 		const failure = new Error("payload write failed")

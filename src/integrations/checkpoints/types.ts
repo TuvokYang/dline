@@ -8,6 +8,11 @@ export interface CanonicalCheckpointPort {
 	restore(input: {
 		readonly messageTs: number
 		readonly mode: CheckpointRestoreMode
+		/**
+		 * Where the conversation stood before the row, when the row recorded it
+		 * instead of capturing a checkpoint (a compaction card).
+		 */
+		readonly journalTarget?: { readonly seq: number }
 		readonly restoreWorkspace: (workspaceRef: string) => Promise<WorkspaceRestoreResult>
 	}): Promise<CheckpointRestoreResult>
 }

@@ -381,7 +381,9 @@ export class TaskCheckpointManager implements ICheckpointManager {
 			// is touched; otherwise the files would rewind while the chat stays put.
 			if (chatRestoreBoundary) this.assertChatRestoreAdmissible(message, chatRestoreBoundary, editedText)
 			if (chatRestoreBoundary && this.services.canonicalCheckpoint) {
-				return this.restoreCanonicalCheckpoint({
+				// Awaited here so a refused or failed restore lands in the catch below
+				// instead of escaping to the caller with nothing restored.
+				return await this.restoreCanonicalCheckpoint({
 					message,
 					messageIndex,
 					messageTs,
@@ -463,6 +465,7 @@ export class TaskCheckpointManager implements ICheckpointManager {
 		const restored = await canonical.restore({
 			messageTs: input.message.ts,
 			mode: input.restoreType === "task" ? "chat_only" : "combined",
+			...(input.boundary.journalTarget === undefined ? {} : { journalTarget: input.boundary.journalTarget }),
 			restoreWorkspace: async (workspaceRef) => {
 				workspaceRestoreResult = await this.restoreWorkspaceReference(workspaceRef)
 				return workspaceRestoreResult.status === "restored"

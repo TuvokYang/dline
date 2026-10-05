@@ -470,13 +470,19 @@ function continuedCounters(input: HydrateInput): { readonly revision: number; re
  * The task is therefore rebuilt as interrupted, which offers to resume from
  * the restored point instead of reopening whatever the tail last ended in.
  *
+ * The state has observed exactly the restored tail, so a watermark past it is
+ * brought back to it. A checkpoint captured at its own boundary already sits
+ * there; restoring a compaction card to the position before it does not.
+ *
  * A consumed task is left alone: it was handed to a successor, and restoring
  * its chat does not take that back.
  */
-function rewoundSnapshot(snapshot: TaskState): TaskState {
+function rewoundSnapshot(snapshot: TaskState, tail: JournalWatermark): TaskState {
 	if (classify(snapshot) === "consumed") return snapshot
 	return {
 		...snapshot,
+		journalWatermark:
+			snapshot.journalWatermark && isAfter(snapshot.journalWatermark, tail) ? tail : snapshot.journalWatermark,
 		flow: { phase: "paused" },
 		turn: {
 			...snapshot.turn,
@@ -510,9 +516,14 @@ export function hydrate(input: HydrateInput): HydrateResult {
 	if (!input.snapshot) {
 		return hydrateWithoutSnapshot(input, invalid("snapshot_missing", "Recovered from the journal without a runtime snapshot"))
 	}
-	const unusable = validateSnapshot(input, input.snapshot)
+	// A restore discards the tail behind the snapshot first, so what has to be
+	// continuable is the rewound state, not the facts about the discarded tail.
+	const snapshot =
+		input.openReason === "checkpoint_restore" && isShaped(input.snapshot)
+			? rewoundSnapshot(input.snapshot, input.journalTail)
+			: input.snapshot
+	const unusable = validateSnapshot(input, snapshot)
 	if (unusable) return hydrateWithoutSnapshot(input, unusable)
-	const snapshot = input.openReason === "checkpoint_restore" ? rewoundSnapshot(input.snapshot) : input.snapshot
 	const form = classify(snapshot)
 	const normalized = normalizeState(snapshot, form, input.queueSettlements)
 	const commands = form === "consumed" ? [] : initialCommands(normalized.state)

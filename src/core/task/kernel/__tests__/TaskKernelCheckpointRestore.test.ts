@@ -72,6 +72,36 @@ describe("hydrate for a checkpoint restore", () => {
 		expect(result.initialCommands.map((command) => command.type)).toEqual(["dialog.prepare"])
 	})
 
+	it("restores to a journal position before the snapshot's own, as a compaction card restore does", () => {
+		const snapshot: TaskState = {
+			...completedSnapshot(),
+			dialog: { primary: { ...completion(), status: "prepared" }, approvalsByBlock: {} },
+		}
+
+		const result = hydrate({ taskId: TASK_ID, snapshot, journalTail: { seq: 6 }, openReason: "checkpoint_restore" })
+
+		expect(result.kind).toBe("ready")
+		if (result.kind !== "ready") return
+		expect(result.rebuilt).toBe(false)
+		expect(result.form).toBe("interrupted")
+		expect(result.state.journalWatermark).toEqual({ seq: 6 })
+		expect(result.state.dialog.primary).toMatchObject({ kind: "resume", status: "planned" })
+	})
+
+	it("still refuses a snapshot ahead of the journal when the task is only reopened", () => {
+		const result = hydrate({
+			taskId: TASK_ID,
+			snapshot: completedSnapshot(),
+			journalTail: { seq: 6 },
+			openReason: "resume",
+		})
+
+		expect(result.kind).toBe("ready")
+		if (result.kind !== "ready") return
+		expect(result.rebuilt).toBe(true)
+		expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toContain("journal_ahead_of_tail")
+	})
+
 	it("keeps an ordinary resume of the same task on its completion dialog", () => {
 		const result = hydrate({
 			taskId: TASK_ID,

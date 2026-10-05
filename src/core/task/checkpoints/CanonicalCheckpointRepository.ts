@@ -107,6 +107,26 @@ export class CanonicalCheckpointRepository {
 		return this.readRecord(checkpointRef, marker)
 	}
 
+	/**
+	 * The task as it stands, taken back to an earlier position of its own journal.
+	 *
+	 * A row that recorded where the conversation stood before it - a compaction
+	 * card - is restorable without a captured bundle: the journal still holds
+	 * everything up to that position, and restoring discards what came after.
+	 * No workspace reference is attached, so a combined restore is refused.
+	 */
+	async resolveAt(boundary: JournalWatermark): Promise<CanonicalCheckpointRecord> {
+		assertBoundary(boundary)
+		if (compareJournalWatermarks(boundary, this.options.journal.watermark()) > 0) {
+			throw new Error("CanonicalCheckpointBoundaryAhead")
+		}
+		const snapshot = await this.options.vault.load(this.options.taskId)
+		if (!snapshot) throw new Error("CanonicalCheckpointSnapshotMissing")
+		if (snapshot.state.taskId !== this.options.taskId) throw new Error("CanonicalCheckpointIdentityMismatch")
+		await this.assertPayloadClosure(snapshot.state)
+		return { snapshot, boundary }
+	}
+
 	private async findMarker(checkpointRef: string): Promise<string | undefined> {
 		const marker = await this.options.journal.findByOperation(markerOperation(checkpointRef))
 		if (!marker) return undefined
