@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { transition } from "../transition"
-import type { TaskEvent, TaskState, TransitionResult } from "../types"
+import type { ProviderTurnBlockPlan, TaskEvent, TaskState, TransitionResult } from "../types"
 import { createInitialTaskState } from "../types"
 
 function accepted(result: TransitionResult): Extract<TransitionResult, { kind: "accepted" }> {
@@ -314,5 +314,62 @@ describe("task kernel causal dialog", () => {
 		state = accepted(transition(state, { type: "dialog.resolved", generation: 0, interactionId: "interrupt" })).state
 		expect(state.dialog.primary).toMatchObject({ interactionId: "primary", status: "awaiting" })
 		expect(state.dialog.interrupted).toBeUndefined()
+	})
+
+	it("carries a planned approval's surface ask unchanged to prepare and reveal", () => {
+		// The kernel never interprets the ask; it only has to deliver it, because
+		// the anchor row is unreadable when written with another ask than the body.
+		const block: ProviderTurnBlockPlan = {
+			blockId: "b1",
+			attempt: "attempt-b1",
+			index: 0,
+			lanes: [],
+			turnEnding: false,
+			invocationRef: "invocation:b1",
+			approval: {
+				kind: "manual",
+				interactionId: "approval:b1",
+				presentationRef: "npm test",
+				presentationAsk: "command",
+				actionRules: [{ actionId: "approve", payloadPolicy: "draft" }],
+			},
+		}
+		const awaitingProvider: TaskState = {
+			...createInitialTaskState("task-1"),
+			revision: 4,
+			flow: {
+				phase: "running",
+				provider: { commandId: "provider:1", originRevision: 4, status: "running", turnId: "turn-1" },
+			},
+		}
+		const ready = accepted(
+			transition(awaitingProvider, {
+				type: "provider.turn_ready",
+				generation: 0,
+				commandId: "provider:1",
+				originRevision: 4,
+				turnId: "turn-1",
+				finalPayloadRef: "final:1",
+				journalWatermark: { seq: 3 },
+				turnPlan: { mode: "serial", blocks: [block] },
+			}),
+		)
+		expect(ready.commands).toContainEqual(
+			expect.objectContaining({ type: "dialog.prepare", interactionId: "approval:b1", presentationAsk: "command" }),
+		)
+		const prepare = findInteraction(ready.state, "approval:b1")?.prepare
+		if (!prepare) throw new Error("Missing prepare owner for approval:b1")
+		const prepared = accepted(
+			transition(ready.state, {
+				type: "dialog.prepared",
+				generation: 0,
+				commandId: prepare.commandId,
+				originRevision: prepare.originRevision,
+				interactionId: "approval:b1",
+				journalRef: "journal:1",
+				receiverGeneration: 0,
+			}),
+		)
+		expect(prepared.commands[0]).toMatchObject({ type: "dialog.reveal", presentationAsk: "command" })
 	})
 })

@@ -18,6 +18,8 @@ export type ProviderTurnApproval =
 			readonly kind: "manual"
 			readonly interactionId: InteractionId
 			readonly presentationRef: string
+			/** Surface ask that renders this approval; opaque to the kernel and carried as-is. */
+			readonly presentationAsk?: string
 			readonly actionRules: readonly DialogActionRule[]
 	  }
 	| {
@@ -207,6 +209,8 @@ export interface DialogInteraction {
 	readonly status: "planned" | "prepared" | "awaiting" | "resolving" | "failed"
 	readonly createdRevision: number
 	readonly presentationRef: string
+	/** Surface ask that renders this dialog when it differs from the kind's default. */
+	readonly presentationAsk?: string
 	readonly actionRules: readonly DialogActionRule[]
 	readonly journalRef?: string
 	readonly journalWatermark?: JournalWatermark
@@ -586,6 +590,7 @@ interface DialogCommandInput {
 	readonly turnId: TurnId
 	readonly kind: string
 	readonly presentationRef: string
+	readonly presentationAsk?: string
 	readonly actionRules: readonly DialogActionRule[]
 	readonly blockId?: BlockId
 	readonly prepareKey: string

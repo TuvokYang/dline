@@ -57,6 +57,9 @@ function approval(block: ToolUse, result: ReturnType<ToolExecutorCoordinator["pr
 		kind: "manual",
 		interactionId,
 		presentationRef: result.presentation?.body ?? JSON.stringify(block.params),
+		// The body format depends on the ask (a command line is plain text, a tool
+		// row is JSON), so the anchor must be written with the same ask that built it.
+		...(result.presentation?.ask === undefined ? {} : { presentationAsk: result.presentation.ask }),
 		actionRules: [
 			// Approving with a note is a normal workflow ("approve, but read it this
 			// way"), so approve carries the composer draft exactly like reject does.

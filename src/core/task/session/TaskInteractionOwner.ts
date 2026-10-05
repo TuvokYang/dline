@@ -106,8 +106,17 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
 	 * comes from the turn plan and has no such moment, so the dialog executor
 	 * calls this at reveal. Writing once keeps the anchor unique, which is what
 	 * the surface requires before it will dispatch a response.
+	 *
+	 * `ask` overrides the kind's default when the body was built for another
+	 * row type: a command approval carries a plain command line, which a `tool`
+	 * row would try to parse as JSON.
 	 */
-	async anchor(request: { readonly interactionId: string; readonly kind: string; readonly body: string }): Promise<void> {
+	async anchor(request: {
+		readonly interactionId: string
+		readonly kind: string
+		readonly body: string
+		readonly ask?: string
+	}): Promise<void> {
 		if (this.messages.clineMessages.some((message) => message.interactionId === request.interactionId)) return
 		const definition = getInteraction(request.kind as OpenInteractionRequest["kind"])
 		// The row must sort after everything already written. Wall-clock time is
@@ -118,7 +127,7 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
 		await this.messages.addToClineMessages({
 			ts: Math.max(Date.now(), latestTs + 1),
 			type: "ask",
-			ask: definition.taskAsk,
+			ask: (request.ask ?? definition.taskAsk) as typeof definition.taskAsk,
 			text: request.body,
 			interactionId: request.interactionId,
 			partial: false,

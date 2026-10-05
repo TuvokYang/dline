@@ -341,6 +341,7 @@ function dialogCommandInput(interaction: DialogInteraction) {
 		turnId: interaction.turnId,
 		kind: interaction.kind,
 		presentationRef: interaction.presentationRef,
+		...(interaction.presentationAsk === undefined ? {} : { presentationAsk: interaction.presentationAsk }),
 		actionRules: interaction.actionRules,
 		blockId: interaction.blockId,
 		prepareKey: interaction.prepareKey ?? `dialog.prepare:${interaction.interactionId}`,
