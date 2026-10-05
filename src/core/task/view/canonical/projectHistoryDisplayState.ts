@@ -63,6 +63,11 @@ function revealedApprovals(snapshot: TaskState | undefined): Readonly<Record<str
 export function projectHistoryDisplayState(taskId: string, snapshot: TaskState | undefined): HistoryDisplayProjection {
 	const owned = ownedSnapshot(taskId, snapshot)
 	const base = owned ?? createInitialTaskState(taskId)
+	// A consumed task handed its conversation to a successor. Like the kernel's
+	// consumed hydrate form it is inert: history offers nothing to resume or answer.
+	if (owned?.flow.terminalReason === "consumed") {
+		return { state: { ...owned, dialog: { approvalsByBlock: {} } } }
+	}
 	const durable = revealedInteraction(owned)
 	const approvals = revealedApprovals(owned)
 	if (durable) {
