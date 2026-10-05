@@ -7,10 +7,12 @@ import { getClaudeCodeProfileSessionRegistry } from "@/integrations/anthropic-cl
 import { ClaudeCodeUsageClient, toAccountUsage } from "@/integrations/anthropic-claude-code/usage"
 import { ClaudeCodeModelId, claudeCodeDefaultModelId, claudeCodeModels, type ModelInfo } from "@/shared/api"
 import type { AccountUsageData } from "@/shared/ExtensionMessage"
+import type { DocumentInputLimits } from "@/shared/messages/attached-documents"
 import { ClineStorageMessage, type HostedToolReplayProtocol } from "@/shared/messages/content"
 import { ApiFormat, ServerTool } from "@/shared/proto/dline/models/metadata"
 import { getClaudeCodeClientVersionResolver } from "../../model-registry/remote/vendors/claude-code-client-version"
 import { type ApiHandler, type ApiHandlerContext, type ApiRequestOptions } from ".."
+import { anthropicMessagesDocumentLimits } from "../document-input-limits"
 import { withRetry } from "../retry"
 import { type ApiStream } from "../transform/stream"
 import { streamAnthropicMessagesEndpoint } from "../utils/anthropic-messages-endpoint"
@@ -70,6 +72,10 @@ export class ClaudeCodeHandler implements ApiHandler {
 	/** Hosted calls this endpoint ran must come back verbatim for the model to keep their results. */
 	getHostedToolReplayProtocol(): HostedToolReplayProtocol {
 		return "anthropic_messages"
+	}
+
+	getDocumentInputLimits(): DocumentInputLimits | undefined {
+		return anthropicMessagesDocumentLimits(this.getModel().info)
 	}
 
 	/**

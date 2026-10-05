@@ -12,6 +12,8 @@ export function formatContentBlockToMarkdown(block: ClineContent): string {
 			return `[Image]`
 		case "document":
 			return `[Document]`
+		case "attached_document":
+			return `[PDF: ${block.path}]`
 		case "tool_use":
 			let input: string
 			if (typeof block.input === "object" && block.input !== null) {

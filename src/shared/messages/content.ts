@@ -1,4 +1,10 @@
 import { Anthropic } from "@anthropic-ai/sdk"
+import {
+	type DocumentInputLimits,
+	isAttachedDocumentBlock,
+	projectAttachedDocument,
+	selectNativeDocuments,
+} from "./attached-documents"
 import { ClineMessageMetricsInfo, ClineMessageModelInfo } from "./metrics"
 import { isForeignReasoningForAnthropic, isReasoningBlock } from "./reasoning-origin"
 
@@ -57,7 +63,32 @@ export function imageSourceMediaType(source: ClineReplayImageSource): string {
 	return source.type === "url" ? "remote URL" : "provider file"
 }
 
-export interface ClineDocumentContentBlock extends Anthropic.DocumentBlockParam, ClineSharedMessageParam {}
+export interface ClineDocumentContentBlock extends Anthropic.DocumentBlockParam, ClineSharedMessageParam {
+	/** Page count of a projected PDF, used only for context estimation and never sent to a provider. */
+	page_count?: number
+}
+
+/**
+ * A PDF the user attached, kept whole in history so each request can decide how to send it.
+ *
+ * Endpoints that read PDFs natively receive the bytes as a document within their documented size and page
+ * limits; every other endpoint, and any PDF beyond those limits, receives `fallback_text`, the same
+ * extracted `<file_content>` text attachments produced before native PDF input existed.
+ */
+export interface ClineUserAttachedDocumentBlock extends ClineSharedMessageParam {
+	type: "attached_document"
+	/** Path shown to the model, in POSIX form. */
+	path: string
+	media_type: "application/pdf"
+	/** Base64-encoded file bytes. */
+	data: string
+	/** Decoded file size in bytes, so request budgets never decode `data`. */
+	byte_length: number
+	/** Page count reported by the PDF parser. */
+	page_count?: number
+	/** Extracted-text projection used when the PDF is not sent natively. */
+	fallback_text: string
+}
 
 export interface ClineUserAgentsInstructionsContentBlock extends ClineSharedMessageParam {
 	type: "agents_instructions"
@@ -134,6 +165,7 @@ export type ClineUserContent =
 	| ClineDocumentContentBlock
 	| ClineUserToolResultContentBlock
 	| ClineUserAgentsInstructionsContentBlock
+	| ClineUserAttachedDocumentBlock
 
 export type ClineAssistantContent =
 	| ClineTextContentBlock
@@ -224,7 +256,11 @@ export function convertClineStorageToAnthropicMessage(
 		if (isHostedToolBlock(block)) {
 			return replaysHostedBlock(block, options) ? (block.blocks as unknown as Anthropic.ContentBlockParam[]) : []
 		}
-		return [shouldCleanContent ? cleanContentBlock(block) : (block as Anthropic.ContentBlockParam)]
+		return [
+			shouldCleanContent || isAttachedDocumentBlock(block)
+				? cleanContentBlock(block)
+				: (block as Anthropic.ContentBlockParam),
+		]
 	})
 
 	return { role, content: cleanedContent }
@@ -243,24 +279,31 @@ function isReplayableToAnthropic(block: ClineContent): boolean {
 export interface ProviderProjectionOptions {
 	/** Hosted tool protocol the target endpoint replays; hosted blocks of any other protocol are dropped. */
 	hostedToolReplayProtocol?: HostedToolReplayProtocol
+	/** Native PDF capacity of the target endpoint; absent when it cannot read PDFs. */
+	documentInput?: DocumentInputLimits
 }
 
 /**
  * Project Dline-internal content blocks into the shape every provider converter understands.
  *
- * Agents instructions become ordinary text, and hosted tool blocks survive only for the protocol that can
- * replay them, so no converter ever receives a block type it cannot send.
+ * Agents instructions become ordinary text, hosted tool blocks survive only for the protocol that can
+ * replay them, and attached PDFs become native documents only within the endpoint's request budget, so no
+ * converter ever receives a block type it cannot send.
  */
 export function projectInternalMessagesForProvider(
 	messages: readonly ClineStorageMessage[],
 	options: ProviderProjectionOptions = {},
 ): ClineStorageMessage[] {
 	const keepsHostedBlock = (block: ClineAssistantHostedToolBlock) => block.protocol === options.hostedToolReplayProtocol
+	const nativeDocuments = selectNativeDocuments(messages, options.documentInput)
 	return messages.map((message) => {
 		if (
 			!Array.isArray(message.content) ||
 			!message.content.some(
-				(block) => block.type === "agents_instructions" || (isHostedToolBlock(block) && !keepsHostedBlock(block)),
+				(block) =>
+					block.type === "agents_instructions" ||
+					isAttachedDocumentBlock(block) ||
+					(isHostedToolBlock(block) && !keepsHostedBlock(block)),
 			)
 		) {
 			return message
@@ -269,6 +312,9 @@ export function projectInternalMessagesForProvider(
 			...message,
 			content: message.content.flatMap((block): ClineContent[] => {
 				if (block.type === "agents_instructions") return [{ type: "text", text: projectAgentsInstructionsText(block) }]
+				if (isAttachedDocumentBlock(block)) {
+					return projectAttachedDocument(block, nativeDocuments.has(block), options.documentInput)
+				}
 				if (isHostedToolBlock(block) && !keepsHostedBlock(block)) return []
 				return [block]
 			}),
@@ -286,6 +332,10 @@ export function projectAgentsInstructionsText(block: ClineUserAgentsInstructions
 export function cleanContentBlock(block: ClineContent): Anthropic.ContentBlockParam {
 	if (block.type === "agents_instructions") {
 		return { type: "text", text: projectAgentsInstructionsText(block) }
+	}
+	if (isAttachedDocumentBlock(block)) {
+		// Only reachable when a caller skipped provider projection; text is the one form every endpoint reads.
+		return { type: "text", text: block.fallback_text }
 	}
 	if (block.type === "tool_use") {
 		if (!block.function_id || !block.dline_tid) {
@@ -319,6 +369,7 @@ export function cleanContentBlock(block: ClineContent): Anthropic.ContentBlockPa
 		"function_id" in block ||
 		"dline_tid" in block ||
 		"summary" in block ||
+		"page_count" in block ||
 		(block.type !== "thinking" && "signature" in block)
 
 	if (!hasClineFields) {
@@ -326,7 +377,8 @@ export function cleanContentBlock(block: ClineContent): Anthropic.ContentBlockPa
 	}
 
 	// Removes Cline-specific fields & the signature field that's added for Gemini.
-	const { reasoning_details, provider_metadata, call_id, item_id, function_id, dline_tid, summary, ...rest } = block as any
+	const { reasoning_details, provider_metadata, call_id, item_id, function_id, dline_tid, summary, page_count, ...rest } =
+		block as any
 
 	// Remove signature from non-thinking blocks that were added for Gemini
 	if (block.type !== "thinking" && rest.signature) {

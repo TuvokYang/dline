@@ -6,8 +6,10 @@ import { buildEffectiveModelInfo, selectContextTier } from "@shared/providers/ef
 import { resolveProfileModelId } from "@shared/providers/profile-model-info"
 import type { BillingAttributionMessage } from "@/integrations/anthropic-claude-code/billing-attribution"
 import { buildExternalBasicHeaders } from "@/services/EnvUtils"
+import type { DocumentInputLimits } from "@/shared/messages/attached-documents"
 import { ClineStorageMessage, type HostedToolReplayProtocol } from "@/shared/messages/content"
 import { ApiFormat, ServerTool } from "@/shared/proto/dline/models/metadata"
+import { anthropicMessagesDocumentLimits } from "../document-input-limits"
 import { ApiHandler, ApiHandlerContext, type ApiRequestOptions } from "../index"
 import { withRetry } from "../retry"
 import { ApiStream } from "../transform/stream"
@@ -74,6 +76,10 @@ export class AnthropicHandler implements ApiHandler {
 	/** Hosted calls this endpoint ran must come back verbatim for the model to keep their results. */
 	getHostedToolReplayProtocol(): HostedToolReplayProtocol {
 		return "anthropic_messages"
+	}
+
+	getDocumentInputLimits(): DocumentInputLimits | undefined {
+		return anthropicMessagesDocumentLimits(this.getModel().info)
 	}
 
 	private contextWindowTiersEnabled(modelId: string): boolean {

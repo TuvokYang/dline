@@ -143,7 +143,7 @@ import { TaskFileTracker } from "@integrations/checkpoints/TaskFileTracker"
 import { ICheckpointManager } from "@integrations/checkpoints/types"
 import { DiffViewProvider } from "@integrations/editor/DiffViewProvider"
 import { formatContentBlockToMarkdown } from "@integrations/misc/export-markdown"
-import { processFilesIntoText } from "@integrations/misc/extract-text"
+import { processFilesIntoContent, processFilesIntoText } from "@integrations/misc/extract-text"
 import { showSystemNotification } from "@integrations/notifications"
 import type {
 	CommandCancellationResult,
@@ -4579,10 +4579,7 @@ export class Task {
 			staged.push(...formatResponse.imageBlocks([...delivery.images]))
 		}
 		if (delivery.files.length > 0) {
-			const fileContent = await processFilesIntoText([...delivery.files])
-			if (fileContent) {
-				staged.push({ type: "text", text: fileContent })
-			}
+			staged.push(...(await processFilesIntoContent([...delivery.files])))
 		}
 		this.taskState.userMessageContent.push(...staged)
 	}
@@ -5579,13 +5576,7 @@ export class Task {
 		}
 
 		if (files && files.length > 0) {
-			const fileContentString = await processFilesIntoText(files)
-			if (fileContentString) {
-				userContent.push({
-					type: "text",
-					text: fileContentString,
-				})
-			}
+			userContent.push(...(await processFilesIntoContent(files)))
 		}
 		const filesProcessedAt = performance.now()
 		recordPerfPhase(
@@ -7957,6 +7948,7 @@ export class Task {
 
 		const messages = projectInternalMessagesForProvider(ensureApiMessages(managedMessages, apiConversationHistory), {
 			hostedToolReplayProtocol: requestScope.api.getHostedToolReplayProtocol?.(),
+			documentInput: requestScope.api.getDocumentInputLimits?.(),
 		})
 		const serverTools = Object.freeze([
 			...new Set([...runtime.webSearchRoutingPlan.serverTools, ...requestScope.hostedImageGenerationPlan.serverTools]),

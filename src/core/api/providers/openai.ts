@@ -17,9 +17,11 @@ import { normalizeOpenAiServiceTier } from "@shared/storage/types"
 import { calculateApiCostOpenAI } from "@utils/cost"
 import OpenAI from "openai"
 import type { ChatCompletionChunk, ChatCompletionFunctionTool, ChatCompletionTool } from "openai/resources/chat/completions"
+import type { DocumentInputLimits } from "@/shared/messages/attached-documents"
 import { ClineStorageMessage, type HostedToolReplayProtocol } from "@/shared/messages/content"
 import { isO1Model } from "@/shared/resolve-prompt-profile"
 import { Logger } from "@/shared/services/Logger"
+import { openAiResponsesDocumentLimits } from "../document-input-limits"
 import { ApiHandler, ApiHandlerContext, type ApiRequestOptions } from "../index"
 import { withRetry } from "../retry"
 import { getOpenAIChatOutputLimitError } from "../stream/OutputLimitExceededError"
@@ -182,6 +184,11 @@ export class OpenAiHandler implements ApiHandler {
 	/** Hosted Web Search calls this endpoint ran go back verbatim; Chat Completions has no hosted call to replay. */
 	getHostedToolReplayProtocol(): HostedToolReplayProtocol | undefined {
 		return this.usesResponsesApi() ? "openai_responses" : undefined
+	}
+
+	/** Responses accepts inline PDFs as `input_file`; Chat Completions keeps extracted text. */
+	getDocumentInputLimits(): DocumentInputLimits | undefined {
+		return this.usesResponsesApi() ? openAiResponsesDocumentLimits(this.getModel().info) : undefined
 	}
 
 	private usesResponsesApi(): boolean {

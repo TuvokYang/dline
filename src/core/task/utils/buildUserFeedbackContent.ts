@@ -1,6 +1,6 @@
 import { formatResponse } from "@core/prompts/responses"
-import { processFilesIntoText } from "@integrations/misc/extract-text"
-import type { ClineImageContentBlock, ClineTextContentBlock } from "@shared/messages/content"
+import { processFilesIntoContent } from "@integrations/misc/extract-text"
+import type { ClineImageContentBlock, ClineTextContentBlock, ClineUserAttachedDocumentBlock } from "@shared/messages/content"
 
 /**
  * Builds an array of ClineContent blocks from user feedback inputs.
@@ -10,15 +10,15 @@ import type { ClineImageContentBlock, ClineTextContentBlock } from "@shared/mess
  *
  * @param text Optional feedback text from user
  * @param images Optional array of base64 image data
- * @param files Optional array of file paths to include
+ * @param files Optional array of file paths to include; PDFs are kept whole for native document input
  * @returns Array of user content blocks ready for hook processing (may be empty if no content provided)
  */
 export async function buildUserFeedbackContent(
 	text?: string,
 	images?: string[],
 	files?: string[],
-): Promise<Array<ClineTextContentBlock | ClineImageContentBlock>> {
-	const content: Array<ClineTextContentBlock | ClineImageContentBlock> = []
+): Promise<Array<ClineTextContentBlock | ClineImageContentBlock | ClineUserAttachedDocumentBlock>> {
+	const content: Array<ClineTextContentBlock | ClineImageContentBlock | ClineUserAttachedDocumentBlock> = []
 
 	if (text) {
 		content.push({
@@ -32,13 +32,7 @@ export async function buildUserFeedbackContent(
 	}
 
 	if (files && files.length > 0) {
-		const fileContentString = await processFilesIntoText(files)
-		if (fileContentString) {
-			content.push({
-				type: "text",
-				text: fileContentString,
-			})
-		}
+		content.push(...(await processFilesIntoContent(files)))
 	}
 
 	return content

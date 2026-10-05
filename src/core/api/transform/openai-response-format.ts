@@ -1,6 +1,12 @@
-import { ResponseInput, ResponseInputMessageContentList, ResponseReasoningItem } from "openai/resources/responses/responses"
+import {
+	ResponseInput,
+	ResponseInputFile,
+	ResponseInputMessageContentList,
+	ResponseReasoningItem,
+} from "openai/resources/responses/responses"
 import {
 	type ClineAssistantHostedToolBlock,
+	type ClineDocumentContentBlock,
 	ClineStorageMessage,
 	imageSourceMediaType,
 	imageSourceToUrl,
@@ -11,6 +17,20 @@ import { getResultFunctionId, getUseFunctionId, projectChatFunctionId } from "./
 
 /** Hosted tool that produced each replayable Responses output item type. */
 const RESPONSES_HOSTED_ITEM_TOOLS: ReadonlyMap<string, string> = new Map([["web_search_call", "web_search"]])
+
+/**
+ * Responses `input_file` for a base64 PDF document block; other document sources have no Responses form.
+ *
+ * `file_data` carries the PDF as a data URL, the form the Responses API accepts for inline files.
+ */
+export function responsesInputFile(block: ClineDocumentContentBlock): ResponseInputFile | undefined {
+	if (block.source.type !== "base64") return undefined
+	return {
+		type: "input_file",
+		filename: block.title || "document.pdf",
+		file_data: `data:${block.source.media_type};base64,${block.source.data}`,
+	}
+}
 
 /** Hosted tool names a Responses request declares, used to decide which stored hosted calls it may replay. */
 export function declaredResponsesHostedToolNames(serverTools?: readonly ServerTool[]): ReadonlySet<string> {
@@ -296,6 +316,11 @@ export function convertToOpenAIResponsesInput(
 							image_url: imageSourceToUrl(part.source),
 						})
 						break
+					case "document": {
+						const file = responsesInputFile(part)
+						if (file) messageContent.push(file)
+						break
+					}
 					case "tool_result": {
 						// Flush any pending message content before adding tool result
 						if (messageContent.length > 0) {

@@ -4,6 +4,15 @@ import * as path from "path"
 import { HostProvider } from "@/hosts/host-provider"
 import { ShowMessageType } from "@/shared/proto/dline/host/window"
 import { Logger } from "@/shared/services/Logger"
+import { MAX_ATTACHED_PDF_BYTES } from "./extract-text"
+
+/** Largest non-image, non-PDF attachment; its text is extracted into the conversation. */
+const MAX_ATTACHED_TEXT_FILE_BYTES = 20 * 1000 * 1024
+
+/** PDFs are kept whole for native document input, so they follow the provider PDF limit instead. */
+function maxAttachmentBytes(filePath: string): number {
+	return path.extname(filePath).toLowerCase() === ".pdf" ? MAX_ATTACHED_PDF_BYTES : MAX_ATTACHED_TEXT_FILE_BYTES
+}
 
 /**
  * Supports processing of images and other file types
@@ -66,11 +75,12 @@ export async function selectFiles(imagesAllowed: boolean): Promise<{ images: str
 		// for standard models we will check the size of the file to ensure its not too large
 		try {
 			const stats = await fs.stat(filePath)
-			if (stats.size > 20 * 1000 * 1024) {
+			const maxBytes = maxAttachmentBytes(filePath)
+			if (stats.size > maxBytes) {
 				Logger.warn(`File too large, skipping: ${filePath}`)
 				HostProvider.window.showMessage({
 					type: ShowMessageType.ERROR,
-					message: `File too large: ${path.basename(filePath)} was skipped (size exceeds 20MB).`,
+					message: `File too large: ${path.basename(filePath)} was skipped (size exceeds ${Math.round(maxBytes / (1000 * 1000))}MB).`,
 				})
 				return null
 			}
