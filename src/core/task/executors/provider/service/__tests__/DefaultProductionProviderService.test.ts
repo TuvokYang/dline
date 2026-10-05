@@ -254,6 +254,27 @@ describe("DefaultProductionProviderService", () => {
 		expect(chunks.find((chunk) => chunk.kind === "final")).toMatchObject({ reasoning: "THINK_MORE", text: "Answer." })
 	})
 
+	// dev showed the response filling the window while it streamed; without it
+	// the header froze on the request's input until the final usage arrived.
+	it("reports what the response occupies while it streams, then the provider's own output", async () => {
+		const usage = (inputTokens: number, outputTokens: number) =>
+			({ type: "usage", inputTokens, outputTokens, cacheReadTokens: 1_000, cacheWriteTokens: 500 }) as ApiStreamChunk
+		const chunks = await run([usage(5_500, 0), text("x".repeat(400)), text("y".repeat(400)), usage(0, 30)], true)
+
+		const receiving = chunks.filter((chunk) => chunk.kind === "receiving")
+		expect(receiving).toEqual([
+			// The provider reports the input first: the figure is already its own.
+			{ kind: "receiving", receivingTokens: 0, authoritativeContextTokens: 7_000 },
+			// Until it reports output, the received part is the generated text's estimate.
+			{ kind: "receiving", receivingTokens: 100, authoritativeContextTokens: 7_000 },
+			{ kind: "receiving", receivingTokens: 200, authoritativeContextTokens: 7_000 },
+			// Its own output count then replaces the estimate.
+			{ kind: "receiving", receivingTokens: 30, authoritativeContextTokens: 7_030 },
+		])
+		// Occupancy is presentation only; the settled turn is unchanged.
+		expect(chunks.find((chunk) => chunk.kind === "final")).toMatchObject({ text: `${"x".repeat(400)}${"y".repeat(400)}` })
+	})
+
 	// dev kept a stopped reply as an assistant message closed by an interruption
 	// notice, so the next request continued from what the model had said.
 	it("reports what a stopped reply already said, without the call it was still writing", async () => {

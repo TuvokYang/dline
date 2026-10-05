@@ -8,7 +8,7 @@ import type {
 	ProviderInterruptedEnvelope,
 } from "../../stores/payload/TaskPayloadEnvelopes"
 import type { ProviderExecutionChunk, ProviderExecutionInput, ProviderExecutionPort } from "./ProviderCommandExecutor"
-import type { ProviderRetryNotice } from "./service/ProviderRequestReport"
+import type { ProviderReceivingEstimate, ProviderRetryNotice } from "./service/ProviderRequestReport"
 
 export type ProductionProviderChunk =
 	| {
@@ -20,6 +20,8 @@ export type ProductionProviderChunk =
 			readonly projection?: Readonly<Record<string, unknown>>
 	  }
 	| { readonly kind: "usage"; readonly usage: Readonly<Record<string, number>> }
+	/** How much the streaming response occupies so far. */
+	| ({ readonly kind: "receiving" } & ProviderReceivingEstimate)
 	/** The request failed before its first chunk and will be sent again. */
 	| { readonly kind: "retry"; readonly notice: ProviderRetryNotice }
 	/** The user stopped the reply; what it already said is kept, and nothing it was still calling runs. */
@@ -86,7 +88,7 @@ export class ProductionProviderAdapter implements ProviderExecutionPort {
 			// Drained rather than left: returning here would close the service before
 			// it reports what the stopped reply had already said.
 			if (input.signal.aborted) continue
-			if (chunk.kind === "usage" || chunk.kind === "retry") {
+			if (chunk.kind === "usage" || chunk.kind === "retry" || chunk.kind === "receiving") {
 				yield chunk
 				continue
 			}

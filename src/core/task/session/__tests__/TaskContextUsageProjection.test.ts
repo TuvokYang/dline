@@ -98,6 +98,58 @@ describe("TaskContextUsageProjection", () => {
 		expect(total(harness)).toBe(6_600)
 	})
 
+	it("shows a streaming response by the provider's figure before its final usage settles it", async () => {
+		const harness = createProjection()
+		await request(harness, "turn-1", 6_100, 100)
+		const drawn: Array<string | undefined> = []
+		harness.publish.mockImplementation(async () => {
+			drawn.push(harness.target.contextWindowIndicator?.phase)
+		})
+		await harness.projection.started({ turnId: "turn-2", contextWindow: WINDOW })
+
+		// Before the provider reports anything, the generated text is all there is to show.
+		harness.projection.receiving({
+			turnId: "turn-2",
+			receivingTokens: 50,
+			authoritativeContextTokens: 0,
+			contextWindow: WINDOW,
+		})
+		await drained()
+		// The first delta arrives before the view drew the request; it must not hide it.
+		expect(drawn).toEqual(["sending", "receiving"])
+		expect(harness.target.contextWindowIndicator).toMatchObject({ phase: "receiving", receivingTokens: 50 })
+		expect(total(harness)).toBe(6_050)
+		const redraws = harness.publish.mock.calls.length
+
+		// Providers such as Anthropic report the input first; output is still an estimate.
+		harness.projection.receiving({
+			turnId: "turn-2",
+			receivingTokens: 900,
+			authoritativeContextTokens: 7_000,
+			contextWindow: WINDOW,
+		})
+		// A request that is no longer in flight cannot move the figure.
+		harness.projection.receiving({
+			turnId: "turn-1",
+			receivingTokens: 5,
+			authoritativeContextTokens: 9_999,
+			contextWindow: WINDOW,
+		})
+		// Deltas arrive faster than the view redraws, so one redraw carries them all.
+		await drained()
+		expect(harness.publish).toHaveBeenCalledTimes(redraws + 1)
+		expect(harness.target.contextWindowIndicator).toMatchObject({
+			phase: "receiving",
+			durableContextTokens: 6_000,
+			receivingTokens: 900,
+		})
+		expect(total(harness)).toBe(7_000)
+
+		await harness.projection.record({ turnId: "turn-2", contextTokens: 7_800, outputTokens: 800, contextWindow: WINDOW })
+		expect(harness.target.contextWindowIndicator).toMatchObject({ phase: "receiving", receivingTokens: 800 })
+		expect(total(harness)).toBe(7_800)
+	})
+
 	it("keeps the figure in flight while a dialog of the same run awaits an answer", async () => {
 		const harness = createProjection()
 		await request(harness, "turn-1", 630_100)

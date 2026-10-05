@@ -96,6 +96,18 @@ export interface ContextUsageObserverPort {
 		readonly outputTokens: number
 		readonly contextWindow: number
 	}): Promise<void>
+	/**
+	 * The response grew while it streams, before `record` settles it.
+	 *
+	 * `authoritativeContextTokens` is zero until the provider reports usage;
+	 * `receivingTokens` is a local estimate until it reports output.
+	 */
+	receiving?(estimate: {
+		readonly turnId: string
+		readonly receivingTokens: number
+		readonly authoritativeContextTokens: number
+		readonly contextWindow: number
+	}): void
 	/** The request ended without a usable figure: cancelled, failed, or reported nothing. */
 	unmeasured(request: { readonly turnId: string }): Promise<void>
 }
@@ -149,15 +161,16 @@ export class TaskProviderRequestReporter implements ProviderRequestReportPort {
 				...(estimate === undefined ? {} : { estimatedContextTokens: estimate, contextTokensSource: "estimate" as const }),
 			} satisfies UiApiReqInfo),
 		})
-		await this.options.usage?.started({
-			turnId: input.turnId,
-			contextWindow: getContextWindowInfo(this.options.api()).contextWindow,
-		})
+		const { contextWindow } = getContextWindowInfo(this.options.api())
+		await this.options.usage?.started({ turnId: input.turnId, contextWindow })
 		const retryCard = new RetryCard(this.options.messages, this.options.nextPresentationId, this.options.retryView)
 		const profileId = this.options.profileTokens?.activeProfileId()
 		return {
 			retrying: (notice) => retryCard.show(notice),
 			recovered: () => retryCard.withdraw(),
+			receiving: async (estimate) => {
+				this.options.usage?.receiving?.({ turnId: input.turnId, contextWindow, ...estimate })
+			},
 			settle: async (settlement) => {
 				// A request that failed after retrying keeps its card as the record of
 				// the attempts; any other ending makes the countdown obsolete.

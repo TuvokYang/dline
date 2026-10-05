@@ -33,6 +33,19 @@ export interface ProviderRetryNotice {
 	readonly errorMessage: string
 }
 
+/**
+ * What a streaming response has occupied so far, before its final usage settles it.
+ *
+ * `receivingTokens` is the provider's reported output once it reports one and a
+ * local estimate of the generated text, reasoning, and tool arguments until
+ * then. `authoritativeContextTokens` is the provider's total so far, zero while
+ * it has reported nothing; providers such as Anthropic report the input first.
+ */
+export interface ProviderReceivingEstimate {
+	readonly receivingTokens: number
+	readonly authoritativeContextTokens: number
+}
+
 export interface ProviderRequestRecord {
 	/**
 	 * The request failed before its first chunk and is sent again after the notice's delay.
@@ -42,6 +55,12 @@ export interface ProviderRequestRecord {
 	retrying?(notice: ProviderRetryNotice): Promise<void>
 	/** A replayed request produced its first chunk, so the retry is over. */
 	recovered?(): Promise<void>
+	/**
+	 * The response grew while it streams.
+	 *
+	 * Optional because an assembly that shows no context occupancy has nothing to update.
+	 */
+	receiving?(estimate: ProviderReceivingEstimate): Promise<void>
 	/**
 	 * Settle the record with what the request actually consumed.
 	 *

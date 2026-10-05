@@ -5,6 +5,7 @@ import { executorFailure, type HaltOrder, type HaltParticipant, isExecutionAbort
 import { presentationOf } from "./ProviderFailure"
 import {
 	mergeProviderUsage,
+	type ProviderReceivingEstimate,
 	type ProviderRequestOutcome,
 	type ProviderRequestRecord,
 	type ProviderRequestReportPort,
@@ -22,6 +23,8 @@ export type ProviderExecutionChunk =
 			readonly projection?: Readonly<Record<string, unknown>>
 	  }
 	| { readonly kind: "usage"; readonly usage: Readonly<Record<string, number>> }
+	/** How much the streaming response occupies so far; presentation only, never journaled. */
+	| ({ readonly kind: "receiving" } & ProviderReceivingEstimate)
 	/** The request failed before its first chunk and will be sent again; nothing reached the journal. */
 	| { readonly kind: "retry"; readonly notice: ProviderRetryNotice }
 	/**
@@ -253,6 +256,14 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
 		}
 	}
 
+	private async noteReceiving(record: ProviderRequestRecord | undefined, estimate: ProviderReceivingEstimate): Promise<void> {
+		try {
+			await record?.receiving?.(estimate)
+		} catch {
+			// Reporting must not change provider execution semantics.
+		}
+	}
+
 	private absorbUsage(accumulated: UsageAccumulator, usage: Readonly<Record<string, number>>): void {
 		accumulated.value = mergeProviderUsage(accumulated.value, usage)
 		try {
@@ -282,6 +293,15 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
 				// Keep draining after a stop: the stream ends by itself once the provider
 				// notices, and only then does it report what the reply had already said.
 				if (signal.aborted) continue
+				// Handled before anything else: it carries no content, so it is neither
+				// a first chunk ending a retry nor a reply that could be the final one.
+				if (chunk.kind === "receiving") {
+					await this.noteReceiving(record, {
+						receivingTokens: chunk.receivingTokens,
+						authoritativeContextTokens: chunk.authoritativeContextTokens,
+					})
+					continue
+				}
 				if (finalChunk) {
 					if (chunk.kind === "usage") {
 						this.absorbUsage(usage, chunk.usage)

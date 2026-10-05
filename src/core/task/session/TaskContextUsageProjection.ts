@@ -80,6 +80,8 @@ export class TaskContextUsageProjection implements ContextUsageObserverPort {
 	private sequence = 0
 	private lineage: ContextWindowIndicatorLineage = { kind: "baseline" }
 	private publication: Promise<void> = Promise.resolve()
+	/** A streaming redraw is already queued; it will read the latest figure when it runs. */
+	private streamingRedrawQueued = false
 	/** Tokens the conversation gained after the last provider report, not yet carried by any request. */
 	private pendingTail = 0
 
@@ -114,6 +116,48 @@ export class TaskContextUsageProjection implements ContextUsageObserverPort {
 			}),
 		)
 		this.publish()
+	}
+
+	/**
+	 * Shows the response as received while it streams.
+	 *
+	 * The provider's figure, once it reports one, already counts the input, so
+	 * the header shows the request's real occupancy before the final usage
+	 * arrives; until then the received part is an estimate of what the response
+	 * has generated. `record` settles both with the provider's final count.
+	 */
+	receiving(estimate: {
+		readonly turnId: string
+		readonly receivingTokens: number
+		readonly authoritativeContextTokens: number
+		readonly contextWindow: number
+	}): void {
+		const indicator = this.indicator
+		if (!this.inFlight(estimate.turnId) || !indicator) return
+		const before = indicator.getSnapshot().revision
+		const received = indicator.receive({
+			lineage: this.lineage,
+			receivingTokens: estimate.receivingTokens,
+			authoritativeContextTokens: estimate.authoritativeContextTokens,
+		})
+		if (received.revision === before) return
+		// A stream grows on every delta, so its redraws coalesce. The figure is
+		// shown only when its redraw runs: a redraw reads the figure at that
+		// moment, and showing it now would let the first deltas overwrite the
+		// request's sending state before the view ever drew it.
+		if (this.streamingRedrawQueued) return
+		this.streamingRedrawQueued = true
+		this.publication = this.publication
+			.then(() => {
+				this.streamingRedrawQueued = false
+				if (this.inFlight(estimate.turnId)) this.show(indicator.getSnapshot())
+				return this.options.publish()
+			})
+			.catch((error) => {
+				Logger.warn(
+					`[ContextUsage] failed to publish context usage: ${error instanceof Error ? error.message : String(error)}`,
+				)
+			})
 	}
 
 	/**

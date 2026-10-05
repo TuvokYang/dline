@@ -540,6 +540,51 @@ describe("ProviderCommandExecutor request reporting", () => {
 		expect(await journal.read()).toEqual([expect.objectContaining({ payloadRef: "payload:final" })])
 	})
 
+	it("forwards streaming occupancy without ending a retry, journaling it, or mistaking it for the reply", async () => {
+		const receiving = vi.fn(async () => {})
+		const recovered = vi.fn(async () => {})
+		const settle = vi.fn(async () => {})
+		const journal = new InMemoryConversationJournal()
+		const executor = new ProviderCommandExecutor(
+			"task-1",
+			{
+				start: () =>
+					chunks([
+						{ kind: "retry", notice: { attempt: 1, maxAttempts: 5, delayMs: 0, errorMessage: "{}" } },
+						{ kind: "receiving", receivingTokens: 0, authoritativeContextTokens: 6_500 },
+						{ kind: "partial", transientId: "stream-1" },
+						{ kind: "receiving", receivingTokens: 12, authoritativeContextTokens: 6_500 },
+						{
+							kind: "final",
+							transientId: "stream-1",
+							turnId: "turn-request",
+							payloadRef: "payload:final",
+							turnPlan: { mode: "serial", blocks: [] },
+						},
+						// A late figure after the reply is still only presentation.
+						{ kind: "receiving", receivingTokens: 20, authoritativeContextTokens: 6_520 },
+					]),
+			},
+			journal,
+			new InMemoryTaskViewPort(),
+			recorder().sink,
+			undefined,
+			{ begin: async () => ({ retrying: async () => {}, recovered, receiving, settle }) },
+		)
+
+		await executor.execute(command)
+
+		expect(receiving.mock.calls).toEqual([
+			[{ receivingTokens: 0, authoritativeContextTokens: 6_500 }],
+			[{ receivingTokens: 12, authoritativeContextTokens: 6_500 }],
+			[{ receivingTokens: 20, authoritativeContextTokens: 6_520 }],
+		])
+		// Only the first content chunk ends the retry.
+		expect(recovered).toHaveBeenCalledOnce()
+		expect(settle).toHaveBeenCalledWith({ usage: undefined, outcome: "completed" })
+		expect(await journal.read()).toEqual([expect.objectContaining({ payloadRef: "payload:final" })])
+	})
+
 	it("rejects a retry after the stream already produced output", async () => {
 		const recorded = recorder()
 		const executor = new ProviderCommandExecutor(

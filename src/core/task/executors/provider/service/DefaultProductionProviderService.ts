@@ -20,6 +20,7 @@ import {
 	type ProviderIdentity,
 	waitRetryDelayUnlessAborted,
 } from "../../../auto-retry"
+import { ContextWindowReceivingTracker } from "../../../ContextWindowReceivingTracker"
 import { StreamResponseHandler } from "../../../StreamResponseHandler"
 import type { JournalWatermark } from "../../../stores"
 import type {
@@ -320,6 +321,10 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 		let turnEnded = false
 		let serverTools: ProviderServerToolPresentationSession | undefined
 		let streamFailed = false
+		// What the response occupies while it streams; the final usage settles it.
+		const receiving = new ContextWindowReceivingTracker()
+		let receivingTokens = 0
+		let authoritativeContextTokens = 0
 
 		try {
 			const stream = yield* this.openStream(turn, input.signal)
@@ -393,6 +398,15 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 							},
 						}
 						break
+				}
+				const estimate = receiving.apply(chunk)
+				if (
+					estimate.receivingTokens !== receivingTokens ||
+					estimate.authoritativeContextTokens !== authoritativeContextTokens
+				) {
+					receivingTokens = estimate.receivingTokens
+					authoritativeContextTokens = estimate.authoritativeContextTokens
+					yield { kind: "receiving", receivingTokens, authoritativeContextTokens }
 				}
 			}
 		} catch (error) {
