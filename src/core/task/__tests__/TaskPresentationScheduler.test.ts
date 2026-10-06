@@ -160,6 +160,77 @@ describe("TaskPresentationScheduler", () => {
 		flushCount.should.equal(2)
 	})
 
+	it("keeps the in-flight completion handle when a flush starts while the previous cycle is settling", async () => {
+		// A cycle clears `flushInProgress` inside its own completion and only
+		// afterwards resumes to release its handle. An immediate request landing
+		// between the two starts the next cycle, which must keep its handle:
+		// `flushNow()` waits on that handle while a flush is in progress, and
+		// waiting on a missing one spins on microtasks without ever letting the
+		// pending flush finish. The exact gap depends on microtask ordering, so
+		// the request is issued at every depth around it.
+		type LaneView = { flushInProgress: boolean; currentFlushCompletion?: Promise<unknown> }
+		const orphanedDepths: number[] = []
+
+		for (let depth = 0; depth <= 8; depth += 1) {
+			const releases: Array<() => void> = []
+			const scheduler = new TaskPresentationScheduler({
+				flush: () =>
+					new Promise<void>((resolve) => {
+						releases.push(resolve)
+					}),
+				getDelayMs: () => 0,
+			})
+
+			scheduler.requestFlush("immediate")
+			releases[0]?.()
+			let gap = Promise.resolve()
+			for (let step = 0; step < depth; step += 1) gap = gap.then(() => undefined)
+			void gap.then(() => scheduler.requestFlush("immediate"))
+			await new Promise((resolve) => setTimeout(resolve, 0))
+
+			const lane = (scheduler as unknown as { lane: LaneView }).lane
+			if (lane.flushInProgress && !lane.currentFlushCompletion) orphanedDepths.push(depth)
+			for (const release of releases.slice(1)) release()
+			await scheduler.dispose()
+		}
+
+		orphanedDepths.should.deepEqual([])
+	})
+
+	it("lets flushNow finish when it waits on a flush that started while the previous cycle was settling", async () => {
+		// The follow-up flush resolves on a timer, as real I/O does, so a
+		// flushNow that spun on microtasks instead of awaiting its handle would
+		// never let it finish.
+		for (let depth = 0; depth <= 8; depth += 1) {
+			let releaseFirst: (() => void) | undefined
+			let flushCount = 0
+			const scheduler = new TaskPresentationScheduler({
+				flush: () => {
+					flushCount += 1
+					if (flushCount === 1) {
+						return new Promise<void>((resolve) => {
+							releaseFirst = resolve
+						})
+					}
+					return new Promise<void>((resolve) => setTimeout(resolve, 0))
+				},
+				getDelayMs: () => 0,
+			})
+
+			scheduler.requestFlush("immediate")
+			releaseFirst?.()
+			let gap = Promise.resolve()
+			for (let step = 0; step < depth; step += 1) gap = gap.then(() => undefined)
+			let afterSettle = gap.then(() => scheduler.requestFlush("immediate"))
+			for (let step = 0; step < 10; step += 1) afterSettle = afterSettle.then(() => undefined)
+
+			await afterSettle.then(() => scheduler.flushNow())
+
+			flushCount.should.be.aboveOrEqual(2)
+			await scheduler.dispose()
+		}
+	})
+
 	it("runs an immediate follow-up flush requested during an in-flight flush", async () => {
 		let resolveFirstFlush: (() => void) | undefined
 		let flushCount = 0
