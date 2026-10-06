@@ -53,9 +53,11 @@ function invalid(message: string): ApiProfileRecoveryResult {
 	}
 }
 
+const adoptedIdentities = vi.fn<(mode: string, profileId: string, profileName: string) => void>()
+
 function createOwner() {
 	const stateManager = { getApiConfigurationForTask: vi.fn(() => ({})) } as unknown as StateManager
-	const settings = { mode: "act" } as TaskStateManager
+	const settings = { mode: "act", adoptResolvedProfileIdentity: adoptedIdentities } as unknown as TaskStateManager
 	return new TaskApiHandlerOwner({ taskId: "task-1", taskIncarnationId: "incarnation-1", stateManager, settings })
 }
 
@@ -71,8 +73,26 @@ async function firstRequestFailure(handler: ApiHandler): Promise<unknown> {
 describe("TaskApiHandlerOwner", () => {
 	beforeEach(() => {
 		built.length = 0
+		adoptedIdentities.mockReset()
 		resolutions.cached.mockReset().mockReturnValue(valid(profile("source")))
 		resolutions.fresh.mockReset().mockResolvedValue(valid(profile("source")))
+	})
+
+	// Dev bound the task to the Profile its rebuild resolved, so History Resume
+	// and later rebuilds follow the Profile that now serves requests.
+	it("binds the task to the Profile a rebuild resolves, but never to a session fallback", async () => {
+		const owner = createOwner()
+		expect(adoptedIdentities).not.toHaveBeenCalled()
+
+		resolutions.fresh.mockResolvedValueOnce(valid(profile("target")))
+		await owner.rebuild()
+		expect(adoptedIdentities).toHaveBeenCalledExactlyOnceWith("act", "target-id", "target")
+
+		resolutions.fresh.mockResolvedValueOnce({ ...valid(profile("fallback")), usedFallback: true })
+		await owner.rebuild()
+		resolutions.fresh.mockResolvedValueOnce(invalid(AZURE_ERROR))
+		await owner.rebuild()
+		expect(adoptedIdentities).toHaveBeenCalledTimes(1)
 	})
 
 	it("serves the task through the Profile its binding resolves to", () => {

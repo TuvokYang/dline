@@ -87,8 +87,21 @@ export class TaskApiHandlerOwner {
 		const next = this.build(resolution, mode)
 		this.handler = next
 		if (options.abortPrevious) previous.abort?.()
+		this.adoptResolvedIdentity(resolution, mode)
 		this.notifyRebuilt(next)
 		return next
+	}
+
+	/**
+	 * Bind the task to the Profile the rebuild resolved, as dev did.
+	 *
+	 * The binding is what History Resume and later rebuilds read, so it must
+	 * follow the Profile now serving requests. A session fallback serves
+	 * requests without becoming the binding.
+	 */
+	private adoptResolvedIdentity(resolution: ApiProfileRecoveryResult, mode: Mode): void {
+		if (resolution.usedFallback || !resolution.resolvedProfileId || !resolution.resolvedProfile) return
+		this.options.settings.adoptResolvedProfileIdentity(mode, resolution.resolvedProfileId, resolution.resolvedProfile)
 	}
 
 	private configuration(): ApiConfiguration {

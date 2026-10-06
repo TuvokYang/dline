@@ -136,8 +136,8 @@ async function readTaskSettings(dlineDocsDir: string, taskId: string): Promise<S
  *
  * The task runtime keeps no separate Profile-invalid flag to seed (dev ignored
  * the legacy snapshot field as well): the stale state is the persisted
- * `error_retry` dialog and its failure row, which History Resume must not
- * trust over the Profile as it is now.
+ * `error_retry` dialog, whose presentation carries the failure message, and its
+ * anchor row. History Resume must not trust that state over the Profile as it is now.
  */
 async function awaitPersistedProfileInvalid(
 	dlineDocsDir: string,
@@ -149,17 +149,20 @@ async function awaitPersistedProfileInvalid(
 		const state = await readTaskRuntimeState(dlineDocsDir, taskId)
 		const dialog = state?.dialog.primary
 		if (dialog?.kind !== "error_retry") return undefined
+		const presentation = parsePresentation(dialog.presentationRef)
+		if (presentation?.message !== message || !presentation.message.includes(profile.name)) return undefined
 		const rows = await readTaskUiMessages(dlineDocsDir, taskId)
-		return rows.some(
-			(row) =>
-				row.ask === "api_req_failed" &&
-				row.interactionId === dialog.interactionId &&
-				row.text?.includes(message) === true &&
-				row.text.includes(profile.name),
-		)
-			? true
-			: undefined
+		return rows.some((row) => row.interactionId === dialog.interactionId) ? true : undefined
 	}, 30_000)
+}
+
+function parsePresentation(presentationRef: string | undefined): { message?: string } | undefined {
+	if (!presentationRef) return undefined
+	try {
+		return JSON.parse(presentationRef) as { message?: string }
+	} catch {
+		return undefined
+	}
 }
 
 async function reopenTask(page: Page, sidebar: Frame, taskText: string): Promise<void> {
