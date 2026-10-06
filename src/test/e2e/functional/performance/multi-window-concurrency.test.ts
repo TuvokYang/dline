@@ -10,7 +10,7 @@ import type { MockApiConsumption } from "@e2e/fixtures/server"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { openTab } from "@e2e/utils/common"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
-import { readTaskConversationText } from "@e2e/utils/task-instance-store"
+import { readTaskConversationText, readTaskInteractionView } from "@e2e/utils/task-instance-store"
 import { expect, type Frame, type Locator, type Page } from "@playwright/test"
 
 const DLINE_RELOAD_NOTIFICATION =
@@ -107,23 +107,8 @@ async function findTaskIdByHistoryMarker(dlineDocsDir: string, marker: string): 
 }
 
 async function waitForQnaInteraction(dlineDocsDir: string, taskId: string): Promise<void> {
-	const readState = async () => {
-		const snapshotText = await readFile(path.join(dlineDocsDir, "tasks", taskId, "snapshot.json"), "utf8")
-		const snapshot = JSON.parse(snapshotText) as {
-			phase?: string
-			interaction?: { interactionId?: string; kind?: string; status?: string }
-			turn?: { blocks?: Array<{ dlineTid?: string; phase?: string; toolName?: string }> }
-		}
-		const block = snapshot.turn?.blocks?.find((candidate) => candidate.toolName === "qna_respond")
-		return {
-			phase: snapshot.phase,
-			interactionId: snapshot.interaction?.interactionId,
-			interactionKind: snapshot.interaction?.kind,
-			interactionStatus: snapshot.interaction?.status,
-			blockId: block?.dlineTid,
-			blockPhase: block?.phase,
-		}
-	}
+	// The turn-ending block is the qna_respond call that opened the dialog.
+	const readState = () => readTaskInteractionView(dlineDocsDir, taskId)
 	await expect.poll(readState, { timeout: 30_000 }).toMatchObject({
 		phase: "executing",
 		interactionKind: "qna_response",
@@ -1418,12 +1403,13 @@ e2e(
 		await E2ETestHelper.dismissWhatsNewModal(panel)
 		await expect(panel.getByText(panelTask, { exact: true }).first()).toBeVisible({ timeout: 30_000 })
 		await expect(panel.getByTestId("chat-input")).toBeEnabled()
-		const restoredSnapshotText = await readFile(path.join(dlineDocsDir, "tasks", panelTaskId, "snapshot.json"), "utf8")
-		const restoredSnapshot = JSON.parse(restoredSnapshotText) as {
-			interaction?: { interactionId?: string; kind?: string }
-			turn?: { blocks?: Array<{ dlineTid?: string; toolName?: string }> }
+		const restoredView = await readTaskInteractionView(dlineDocsDir, panelTaskId)
+		const restoredSnapshotText = JSON.stringify(restoredView)
+		const restoredSnapshot = {
+			interaction: { interactionId: restoredView.interactionId, kind: restoredView.interactionKind },
 		}
-		const completionBlock = restoredSnapshot.turn?.blocks?.find((block) => block.toolName === "attempt_completion")
+		// The turn-ending block is the attempt_completion call.
+		const completionBlock = restoredView.blockId === undefined ? undefined : { dlineTid: restoredView.blockId }
 		expect(restoredSnapshot.interaction?.kind, restoredSnapshotText).toBe("completion")
 		expect(restoredSnapshot.interaction?.interactionId, restoredSnapshotText).toBe(completionBlock?.dlineTid)
 		await selectProfile(panel, E2E_PROFILE_NAMES.mockOpenAiResponses)

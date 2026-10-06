@@ -2,9 +2,12 @@ import { access, readdir, readFile, writeFile } from "node:fs/promises"
 import * as path from "node:path"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import {
+	pauseTaskBetweenTurns,
 	readTaskActivities,
+	readTaskRuntimeState,
 	readTaskUiMessages,
 	rewriteTaskActivities,
+	rewriteTaskConversation,
 	rewriteTaskUiMessages,
 } from "@e2e/utils/task-instance-store"
 import { expect, type Frame, type Locator } from "@playwright/test"
@@ -165,6 +168,12 @@ async function seedPersistedRunningCommand(dlineDocsDir: string, taskId: string,
 	return activityId
 }
 
+/** The task's pending turn-ending dialog or block approval, from `state.json`. */
+async function readPendingDialog(dlineDocsDir: string, taskId: string) {
+	const state = await readTaskRuntimeState(dlineDocsDir, taskId)
+	return { state, dialog: state?.dialog.primary ?? Object.values(state?.dialog.approvalsByBlock ?? {})[0] }
+}
+
 async function readTaskSnapshot(
 	dlineDocsDir: string,
 	taskId: string,
@@ -172,24 +181,30 @@ async function readTaskSnapshot(
 	interaction?: { interactionId: string; turnId: string; kind: string }
 	turn?: { turnId: string; blocks: Array<{ dlineTid: string }> }
 }> {
-	return JSON.parse(await readFile(path.join(dlineDocsDir, "tasks", taskId, "snapshot.json"), "utf8"))
+	const { state, dialog } = await readPendingDialog(dlineDocsDir, taskId)
+	const turnId = state?.turn.turnId
+	return {
+		// A block approval is keyed by its block, which is the tool call's dline_tid.
+		interaction: dialog && {
+			interactionId: dialog.blockId ?? dialog.interactionId,
+			turnId: dialog.turnId,
+			kind: dialog.presentationAsk === "command" ? "command_approval" : dialog.kind,
+		},
+		turn: state && turnId ? { turnId, blocks: state.turn.blocks.map((block) => ({ dlineTid: block.blockId })) } : undefined,
+	}
 }
 
 /** Simulate a late incomplete stream replacing the durable approval presentation. */
 async function markPersistedApprovalAnchorPartial(dlineDocsDir: string, taskId: string): Promise<void> {
-	const taskDir = path.join(dlineDocsDir, "tasks", taskId)
-	const snapshot = JSON.parse(await readFile(path.join(taskDir, "snapshot.json"), "utf8")) as {
-		interaction?: { interactionId?: string; anchor?: { messageTs?: number } }
-	}
-	const interactionId = snapshot.interaction?.interactionId
-	const messageTs = snapshot.interaction?.anchor?.messageTs
-	if (!interactionId || typeof messageTs !== "number") {
-		throw new Error("Expected a persisted approval interaction with a message anchor")
+	const { dialog } = await readPendingDialog(dlineDocsDir, taskId)
+	const ids = new Set([dialog?.interactionId, dialog?.blockId].filter((id): id is string => typeof id === "string"))
+	if (ids.size === 0) {
+		throw new Error("Expected a persisted approval interaction")
 	}
 
 	await rewriteTaskUiMessages(dlineDocsDir, taskId, (messages) => {
-		const anchor = asRecords(messages).find(
-			(message) => message.type === "ask" && message.ts === messageTs && message.interactionId === interactionId,
+		const anchor = asRecords(messages).findLast(
+			(message) => message.type === "ask" && typeof message.interactionId === "string" && ids.has(message.interactionId),
 		)
 		if (!anchor) {
 			throw new Error("Expected the persisted approval ask owned by the active interaction")
@@ -201,44 +216,32 @@ async function markPersistedApprovalAnchorPartial(dlineDocsDir: string, taskId: 
 }
 
 async function simulateIncompleteTurnEndContinuation(dlineDocsDir: string, taskId: string): Promise<void> {
-	const taskDir = path.join(dlineDocsDir, "tasks", taskId)
 	const uiMessages = asRecords(await readTaskUiMessages(dlineDocsDir, taskId))
 	const ask = uiMessages.findLast((message) => message.type === "ask" && message.ask === "qna_respond")
 	const interactionId = typeof ask?.interactionId === "string" ? ask.interactionId : undefined
-	const apiIndex = typeof ask?.conversationHistoryIndex === "number" ? ask.conversationHistoryIndex : undefined
-	if (!interactionId || apiIndex === undefined || apiIndex < 0) {
-		throw new Error("Expected one persisted qna_respond ask with a causal API index")
+	if (!interactionId) {
+		throw new Error("Expected one persisted qna_respond ask")
 	}
 
-	const snapshotPath = path.join(taskDir, "snapshot.json")
-	const snapshot = JSON.parse(await readFile(snapshotPath, "utf8")) as Record<string, unknown>
-	const interaction = snapshot.interaction as { interactionId?: unknown } | undefined
-	if (interaction?.interactionId !== interactionId || !snapshot.turn) {
-		throw new Error("Expected the closed task snapshot to retain the pending qna continuation")
-	}
-	delete snapshot.turn
-	await writeFile(snapshotPath, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8")
-
-	const apiHistoryPath = path.join(taskDir, "api_conversation_history.jsonl")
-	const apiHistory = (await readFile(apiHistoryPath, "utf8")).split(/\r?\n/).filter(Boolean)
-	const causalMessage = JSON.parse(apiHistory[apiIndex] ?? "null") as {
-		role?: unknown
-		ts?: unknown
-		content?: Array<{ type?: unknown; dline_tid?: unknown }>
-	} | null
-	if (
-		causalMessage?.role !== "assistant" ||
-		!Array.isArray(causalMessage.content) ||
-		!causalMessage.content.some((block) => block.type === "tool_use" && block.dline_tid === interactionId)
-	) {
-		throw new Error("Expected the qna ask to reference its canonical assistant tool block")
-	}
-	apiHistory[apiIndex] = JSON.stringify({
-		role: "assistant",
-		content: "Earlier details no longer contain the pending turn-end tool declaration.",
-		ts: causalMessage.ts,
+	// The conversation loses the pending turn-end tool declaration, so the
+	// reopened task can no longer resume that turn.
+	await rewriteTaskConversation(dlineDocsDir, taskId, (messages) => {
+		const declares = (content: unknown) =>
+			Array.isArray(content) &&
+			content.some(
+				(block: { type?: unknown; dline_tid?: unknown }) =>
+					block.type === "tool_use" && block.dline_tid === interactionId,
+			)
+		const index = messages.findLastIndex((message) => message.role === "assistant" && declares(message.content))
+		if (index === -1) {
+			throw new Error("Expected the qna ask to reference its canonical assistant tool block")
+		}
+		return [
+			...messages.slice(0, index),
+			{ ...messages[index], content: "Earlier details no longer contain the pending turn-end tool declaration." },
+		]
 	})
-	await writeFile(apiHistoryPath, `${apiHistory.join("\n")}\n`, "utf8")
+	await pauseTaskBetweenTurns(dlineDocsDir, taskId)
 }
 
 async function appendPersistedTimelineTail(dlineDocsDir: string, taskId: string, count: number): Promise<void> {

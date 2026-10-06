@@ -2,6 +2,7 @@ import { readdir, readFile, writeFile } from "node:fs/promises"
 import * as path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
+import { readTaskInteractionView } from "@e2e/utils/task-instance-store"
 import { expect, type Frame } from "@playwright/test"
 import type { ElectronApplication } from "playwright"
 
@@ -72,7 +73,13 @@ async function readTaskSettings(dlineDocsDir: string, taskId: string): Promise<S
 }
 
 async function readSnapshot(dlineDocsDir: string, taskId: string): Promise<StoredSnapshot> {
-	return JSON.parse(await readFile(path.join(dlineDocsDir, "tasks", taskId, "snapshot.json"), "utf8")) as StoredSnapshot
+	const view = await readTaskInteractionView(dlineDocsDir, taskId)
+	return {
+		phase: view.phase,
+		interaction: view.interactionId
+			? { interactionId: view.interactionId, kind: view.interactionKind, status: view.interactionStatus }
+			: undefined,
+	}
 }
 
 async function selectProfile(sidebar: Frame, profileName: string): Promise<void> {
