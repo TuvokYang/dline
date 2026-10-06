@@ -356,6 +356,73 @@ describe("HistoryDisplaySession", () => {
 		}
 	})
 
+	describe("work an earlier owner left running", () => {
+		const command = "node long-running.js"
+
+		async function seedRunningCommand(taskId: string): Promise<void> {
+			await seedMessages(taskId, [
+				{ ts: 10, type: "say", say: "task", text: "Original task" },
+				{ ts: 11, type: "say", say: "command", text: command, activityId: "orphan", commandStatus: "running" },
+			])
+			const writer = new TaskActivityPersistence(taskId)
+			const persistedStore = new TaskActivityStore(taskId, writer)
+			persistedStore.create({ activityId: "orphan", kind: "command", executionMode: "background", title: command })
+			persistedStore.update("orphan", { status: "running" })
+			await persistedStore.waitForPersistence()
+			persistedStore.dispose()
+			await writer.close()
+		}
+
+		async function readDurable(taskId: string) {
+			const persistence = new TaskActivityPersistence(taskId)
+			const activities = new TaskActivityStore(taskId, persistence)
+			const messages = await UIMessage.open(taskId)
+			try {
+				await activities.hydrate()
+				return {
+					activity: activities.get("orphan")?.status,
+					row: messages.getAll().find((message) => message.activityId === "orphan")?.commandStatus,
+				}
+			} finally {
+				activities.dispose()
+				await persistence.close()
+				await messages.close()
+			}
+		}
+
+		it("records it as interrupted, durably and in the shown row, when no other instance holds the task", async () => {
+			const taskId = "history-orphaned-command"
+			await seedRunningCommand(taskId)
+			const session = new HistoryDisplaySession(createHistoryItem(taskId))
+
+			try {
+				await session.load({ ownerless: Promise.resolve(true) })
+				expect(session.activityStore.get("orphan")?.status).toBe("interrupted")
+				expect(session.getMessages().find((message) => message.activityId === "orphan")?.commandStatus).toBe(
+					"interrupted",
+				)
+			} finally {
+				await session.dispose()
+			}
+			expect(await readDurable(taskId)).toEqual({ activity: "interrupted", row: "interrupted" })
+		})
+
+		it("leaves it running when another instance holds the task", async () => {
+			const taskId = "history-owned-command"
+			await seedRunningCommand(taskId)
+			const session = new HistoryDisplaySession(createHistoryItem(taskId))
+
+			try {
+				await session.load({ ownerless: Promise.resolve(false) })
+				expect(session.activityStore.get("orphan")?.status).toBe("running")
+				expect(session.getMessages().find((message) => message.activityId === "orphan")?.commandStatus).toBe("running")
+			} finally {
+				await session.dispose()
+			}
+			expect(await readDurable(taskId)).toEqual({ activity: "running", row: "running" })
+		})
+	})
+
 	it("preserves canonical awaiting interaction identity when the durable anchor matches", async () => {
 		const taskId = "history-canonical-resume"
 		const turnId = "turn-canonical"

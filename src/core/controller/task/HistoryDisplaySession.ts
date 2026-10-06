@@ -32,6 +32,26 @@ import { adaptCanonicalTaskView, anchoredInteractionId } from "./TaskViewMessage
 const HISTORY_MESSAGE_WINDOW_SIZE = 200
 const HISTORY_INPUT_QUEUE_READER = "history-input-queue-reader"
 
+export interface HistoryDisplayLoadOptions {
+	/**
+	 * Resolves true once the lock check shows no other instance holds the task.
+	 *
+	 * Work the task left running then has no owner left to finish it, so the
+	 * display records it as interrupted, as opening a task did before the
+	 * display existed. A task another instance holds keeps its running work.
+	 */
+	readonly ownerless?: Promise<boolean>
+}
+
+/** A command row still showing work whose activity was found interrupted. */
+function isInterruptedCommandCard(message: UiMessage, activityIds: ReadonlySet<string>): boolean {
+	return (
+		message.activityId !== undefined &&
+		activityIds.has(message.activityId) &&
+		(message.commandStatus === "pending" || message.commandStatus === "running")
+	)
+}
+
 export class HistoryDisplaySession {
 	readonly activityStore: TaskActivityStore
 	/** The occupancy the task last showed, drawn by the header until the task runs again. */
@@ -69,7 +89,7 @@ export class HistoryDisplaySession {
 		return this.loaded
 	}
 
-	async load(): Promise<void> {
+	async load(options?: HistoryDisplayLoadOptions): Promise<void> {
 		if (this.loaded || this.disposed) return
 
 		const reader = await UIMessage.openWindow(this.taskId)
@@ -79,12 +99,14 @@ export class HistoryDisplaySession {
 		}
 		this.messageReader = reader
 		try {
-			const [durableMessages, snapshot, taskTitlePage] = await Promise.all([
+			const [latestMessages, snapshot, taskTitlePage, interruptedActivityIds] = await Promise.all([
 				reader.getLatest(HISTORY_MESSAGE_WINDOW_SIZE),
 				this.readSnapshot(),
 				reader.getPage(0, 1),
-				this.hydrateActivities(),
+				this.hydrateActivities(options?.ownerless),
 			])
+			if (this.disposed) return
+			const durableMessages = await this.patchInterruptedCommandCards(latestMessages, interruptedActivityIds)
 			if (this.disposed) return
 
 			const inputQueue = await this.readInputQueue(snapshot)
@@ -202,13 +224,57 @@ export class HistoryDisplaySession {
 		await Promise.all([reader?.close(), this.releaseActivities()])
 	}
 
-	/** Read the persisted activities, then give `activities.db` back to its writer. */
-	private async hydrateActivities(): Promise<void> {
+	/**
+	 * Read the persisted activities, then give `activities.db` back to its writer.
+	 *
+	 * Recovery runs inside the same writer window, so an ownerless task's
+	 * orphaned work is recorded as interrupted before the database is released.
+	 */
+	private async hydrateActivities(ownerless: Promise<boolean> | undefined): Promise<ReadonlySet<string>> {
 		try {
 			await this.activityStore.hydrate()
+			return await this.recoverOrphanedActivities(ownerless)
 		} finally {
 			await this.releaseActivities()
 		}
+	}
+
+	private async recoverOrphanedActivities(ownerless: Promise<boolean> | undefined): Promise<ReadonlySet<string>> {
+		if (!ownerless || !(await ownerless) || this.disposed) return new Set()
+		try {
+			return new Set(await this.activityStore.recoverInterruptedActivities())
+		} catch (error) {
+			Logger.warn(`[HistoryDisplay] Failed to recover interrupted activities for task ${this.taskId}:`, error)
+			return new Set()
+		}
+	}
+
+	/**
+	 * Settle the command rows of interrupted activities, durably and in the window.
+	 *
+	 * The row is what the chat draws, so a row left running would keep offering
+	 * Cancel for a process nobody owns. A failed write still shows the row as
+	 * interrupted here: its activity already is.
+	 */
+	private async patchInterruptedCommandCards(window: UiMessage[], activityIds: ReadonlySet<string>): Promise<UiMessage[]> {
+		if (activityIds.size === 0) return window
+		try {
+			const store = await UIMessage.open(this.taskId)
+			try {
+				for (const [index, message] of store.getAll().entries()) {
+					if (isInterruptedCommandCard(message, activityIds)) {
+						await store.updateMessage(index, { commandStatus: "interrupted" })
+					}
+				}
+			} finally {
+				await store.close()
+			}
+		} catch (error) {
+			Logger.warn(`[HistoryDisplay] Failed to settle interrupted command rows for task ${this.taskId}:`, error)
+		}
+		return window.map((message) =>
+			isInterruptedCommandCard(message, activityIds) ? { ...message, commandStatus: "interrupted" } : message,
+		)
 	}
 
 	private async releaseActivities(): Promise<void> {

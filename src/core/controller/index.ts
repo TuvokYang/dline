@@ -1358,7 +1358,8 @@ export class Controller {
 		const remainsCurrent = await prepareHistoryTaskForDisplay({
 			taskId: session.taskId,
 			displayHistory: async () => {
-				const [[, lockedByAnotherInstance]] = await Promise.all([durableFacts, session.load()])
+				const ownerless = durableFacts.then(([, lockedByAnotherInstance]) => !lockedByAnotherInstance)
+				const [[, lockedByAnotherInstance]] = await Promise.all([durableFacts, session.load({ ownerless })])
 				if (this.historyDisplaySession !== session || !lockedByAnotherInstance) return
 				session.markLocked()
 				// The surface no longer owns the lock a previous task held, so an
