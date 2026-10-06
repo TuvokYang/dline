@@ -259,7 +259,6 @@ export const ChatRowContent = memo(
 			checkpointManagerErrorMessage,
 			showFeatureTips,
 			taskViewState,
-			currentTaskItem,
 		} = useExtensionState()
 		const [seeNewChangesDisabled, setSeeNewChangesDisabled] = useState(false)
 		const [explainChangesDisabled, setExplainChangesDisabled] = useState(false)
@@ -335,10 +334,13 @@ export const ChatRowContent = memo(
 			(message.commandStatus === "completed" || message.commandStatus === undefined) &&
 			!isCommandSkipped
 
+		// The canonical task view names the running task; the history item can be
+		// absent while a task runs, which used to hide the row's Cancel.
+		const runningTaskId = taskViewState?.taskId
 		const cancelCommand =
 			onCancelCommand ??
-			(message.activityId && currentTaskItem?.id
-				? () => void cancelTaskActivities(currentTaskItem.id, [message.activityId as string])
+			(message.activityId && runningTaskId
+				? () => void cancelTaskActivities(runningTaskId, [message.activityId as string])
 				: undefined)
 
 		const isMcpServerResponding = isLast && lastModifiedMessage?.say === "mcp_server_request_started"
