@@ -2,6 +2,7 @@ import type { ClineSayTool } from "@shared/ExtensionMessage"
 import type { HostedWebSearchOperation } from "@shared/web-tools"
 import { ChevronDownIcon, ChevronRightIcon, SearchIcon, TriangleAlertIcon } from "lucide-react"
 import { useState } from "react"
+import HostedCallDeferredNotice from "./HostedCallDeferredNotice"
 
 interface WebSearchRowProps {
 	messageType: "ask" | "say"
@@ -64,6 +65,7 @@ const WebSearchRow = ({ messageType, query, webSearch }: WebSearchRowProps) => {
 						{detail}
 					</div>
 				))}
+				{webSearch?.status === "deferred" && <HostedCallDeferredNotice action="search" testId="web-search-deferred" />}
 				{webSearch?.error && (
 					<div className="flex items-start gap-2 rounded border border-error/40 bg-error/10 p-2 text-error">
 						<TriangleAlertIcon className="mt-0.5 size-3 shrink-0" />

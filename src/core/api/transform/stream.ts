@@ -49,7 +49,13 @@ export interface ApiStreamUsageChunk {
 	provider_metadata?: ClineProviderMetadata
 }
 
-export type ApiServerToolPhase = "started" | "in_progress" | "preview" | "searching" | "completed" | "failed"
+/**
+ * Lifecycle of one provider-hosted call.
+ *
+ * `deferred` is non-terminal: the provider stopped before running the call because a client tool was called in
+ * the same parallel group, and runs it at the start of the request that returns those client tool results.
+ */
+export type ApiServerToolPhase = "started" | "in_progress" | "preview" | "searching" | "deferred" | "completed" | "failed"
 
 interface ApiServerToolChunkBase {
 	type: "server_tool"
@@ -61,8 +67,9 @@ interface ApiServerToolChunkBase {
 	result?: unknown
 	error?: unknown
 	/**
-	 * Verbatim call and result blocks, present only on the terminal event of a hosted call whose protocol
-	 * requires them back on later requests. The consumer stores them in the assistant turn as-is.
+	 * Verbatim provider blocks the consumer stores in the assistant turn as-is, for protocols that require
+	 * hosted calls back on later requests. A terminal event carries the call with its result, or only the
+	 * result when the call was deferred by an earlier response; a `deferred` event carries only the call.
 	 */
 	replay?: ClineAssistantHostedToolBlock
 	provider_metadata?: ClineProviderMetadata

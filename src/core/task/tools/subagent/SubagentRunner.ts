@@ -7,6 +7,7 @@ import { createIdentityFactory, type IdentityFactory } from "@core/api/transform
 import type { ApiProviderStreamChunk } from "@core/api/transform/stream"
 import { createStreamNormalizer, normalizeApiStream } from "@core/api/transform/stream-identity-normalizer"
 import { ApiUsageAccumulator } from "@core/api/transform/usage-accumulator"
+import { declaredAnthropicHostedToolNames } from "@core/api/utils/messages_api_support"
 import { parseAssistantMessageV2, ToolUse } from "@core/assistant-message"
 import { discoverAvailableSkills } from "@core/context/instructions/user-instructions/skills"
 import { createImageProfileResolverForProfile } from "@core/image-generation/runtime"
@@ -24,6 +25,7 @@ import {
 	ClineUserContent,
 	projectInternalMessagesForProvider,
 } from "@shared/messages"
+import { splitResumedHostedResults } from "@shared/messages/hosted-tool-deferral"
 import { resolvePromptProfile } from "@shared/resolve-prompt-profile"
 import { Logger } from "@shared/services/Logger"
 import { ClineDefaultTool, ClineTool } from "@shared/tools"
@@ -42,7 +44,8 @@ import { calculateApiCostAnthropic } from "@/utils/cost"
 import { isNativeToolCallingConfig, isNextGenModelFamily } from "@/utils/model-utils"
 import { TaskState } from "../../TaskState"
 import { canonicalizeAttemptCompletionParams } from "../attempt-completion-params"
-import { ServerToolLifecycle } from "../ServerToolLifecycle"
+import { partitionDeferredHostedCalls } from "../deferred-hosted-rows"
+import { type DeferredServerToolCall, ServerToolLifecycle } from "../ServerToolLifecycle"
 import { ToolExecutorCoordinator } from "../ToolExecutorCoordinator"
 import { ToolValidator } from "../ToolValidator"
 import type { TaskConfig } from "../types/TaskConfig"
@@ -88,6 +91,8 @@ const MAX_HOSTED_SERVER_TOOL_RECOVERIES = 2
 const HOSTED_SERVER_TOOL_STREAM_FAILED_REASON = "Provider stream failed before this hosted tool call returned a result."
 const HOSTED_SERVER_TOOL_STREAM_ENDED_REASON = "Provider stream ended before this hosted tool call returned a result."
 const HOSTED_SERVER_TOOL_CANCELLED_REASON = "Subagent run cancelled before this hosted tool call returned a result."
+const HOSTED_SERVER_TOOL_DEFERRED_ABANDONED_REASON =
+	"The provider never ran this deferred hosted call: no later request of the subagent could resume it."
 const INITIAL_STREAM_RETRY_DELAYS_MS = [5_000, 8_000, 11_000, 14_000, 17_000] as const
 const MAX_INITIAL_STREAM_ATTEMPTS = INITIAL_STREAM_RETRY_DELAYS_MS.length + 1
 const SUBAGENT_COMPLETION_CALL_EXAMPLE =
@@ -804,6 +809,8 @@ export class SubagentRunner {
 			contextUsagePercentage: 0,
 		}
 		let activeHostedServerToolLifecycle: ServerToolLifecycle | undefined
+		// Hosted calls a response deferred behind its client tools; the next request of this run may resume them.
+		let deferredHostedCalls: DeferredServerToolCall[] = []
 		let activeProviderExecution: ProviderExecutionCompletion | undefined
 
 		try {
@@ -1086,6 +1093,17 @@ export class SubagentRunner {
 					})
 				})
 
+				const deferral = partitionDeferredHostedCalls(deferredHostedCalls, conversation, {
+					protocol: api.getHostedToolReplayProtocol?.(),
+					replayHostedTools: declaredAnthropicHostedToolNames(requestWebSearchRoutingPlan?.serverTools),
+				})
+				deferredHostedCalls = []
+				activeHostedServerToolLifecycle.adopt(deferral.abandoned)
+				await activeHostedServerToolLifecycle.failDeferred(HOSTED_SERVER_TOOL_DEFERRED_ABANDONED_REASON)
+				activeHostedServerToolLifecycle.adopt(deferral.carried)
+				for (const call of deferral.carried) countedHostedServerToolIds.add(call.dlineTid)
+				const carriedTraceIds = new Map(deferral.carried.map((call) => [call.functionId, call.dlineTid]))
+
 				const providerRequestRound = this.baseConfig.providerRequestRounds?.admit({ source: "subagent" })
 				const providerExecution = new ProviderExecutionCompletion(providerRequestRound)
 				activeProviderExecution = providerExecution
@@ -1120,7 +1138,12 @@ export class SubagentRunner {
 							contextWindow: stats.contextWindow,
 						}),
 				)
-				const stream = normalizeApiStream(providerStream, createStreamNormalizer(this.identityFactory))
+				const stream = normalizeApiStream(
+					providerStream,
+					createStreamNormalizer(this.identityFactory, {
+						carriedServerToolTraceId: (functionId) => carriedTraceIds.get(functionId),
+					}),
+				)
 
 				try {
 					for await (const chunk of stream) {
@@ -1290,6 +1313,7 @@ export class SubagentRunner {
 				}
 
 				await activeHostedServerToolLifecycle.finalizeOpen(HOSTED_SERVER_TOOL_STREAM_ENDED_REASON)
+				deferredHostedCalls = activeHostedServerToolLifecycle.deferredCalls()
 
 				// A clean end needs no notice: the provider already surfaced the failed
 				// call inside the response the model just produced, so the model has
@@ -1361,7 +1385,9 @@ export class SubagentRunner {
 					assistantContent.push({ ...thinkingBlock })
 				}
 				// Hosted calls ran before the visible answer, so they precede it in the stored turn.
-				assistantContent.push(...hostedToolBlocks)
+				const hostedTurn = splitResumedHostedResults(hostedToolBlocks)
+				assistantContent.unshift(...hostedTurn.resumed)
+				assistantContent.push(...hostedTurn.others)
 				if (assistantText.trim().length > 0) {
 					onProgress({ event: { kind: "assistant_message", phase: "final", text: assistantText } })
 					assistantContent.push({
@@ -1643,6 +1669,8 @@ export class SubagentRunner {
 		} finally {
 			activeProviderExecution?.finish()
 			await activeHostedServerToolLifecycle?.finalizeOpen(HOSTED_SERVER_TOOL_STREAM_ENDED_REASON)
+			// The run makes no further request, so nothing can resume what is still deferred.
+			await activeHostedServerToolLifecycle?.failDeferred(HOSTED_SERVER_TOOL_DEFERRED_ABANDONED_REASON)
 			this.activeApiAbort = undefined
 			this.activeRetryAbortController = undefined
 			this.interruptionController = undefined

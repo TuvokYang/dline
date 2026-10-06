@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks"
 import path from "node:path"
 import { ApiHandler, resolveProviderFromProfile } from "@core/api"
+import { recordHostedToolDeferralResolved } from "@core/api/observability/hosted-tool-deferral"
 import type { WebSearchRoutingPlan } from "@core/api/server-tools"
 import type { IdentityFactory } from "@core/api/transform/block-identity"
 import type { ApiStreamServerToolChunk } from "@core/api/transform/stream"
@@ -30,8 +31,13 @@ import {
 	normalizeHostedCodeExecutionOperation,
 } from "@shared/code-execution-tools"
 import { resolveMaxParallelSubagents } from "@shared/concurrency-limits"
-import { ClineAsk, ClineSay, ClineSayTool, type CommandStatus } from "@shared/ExtensionMessage"
-import { ClineContent, type ClineToolResponseContent, type ClineUserToolResultContentBlock } from "@shared/messages/content"
+import { ClineAsk, type ClineMessage, ClineSay, ClineSayTool, type CommandStatus } from "@shared/ExtensionMessage"
+import {
+	ClineContent,
+	type ClineStorageMessage,
+	type ClineToolResponseContent,
+	type ClineUserToolResultContentBlock,
+} from "@shared/messages/content"
 import { ServerTool } from "@shared/proto/dline/models/metadata"
 import { WebToolsMode } from "@shared/proto/dline/provider/common"
 import { Logger } from "@shared/services/Logger"
@@ -39,7 +45,12 @@ import type { Mode } from "@shared/storage/types"
 import type { TaskCapabilityToggles } from "@shared/TaskCapabilityToggles"
 import { ClineDefaultTool, toolUseNames } from "@shared/tools"
 import { ClineAskResponse } from "@shared/WebviewMessage"
-import { normalizeWebSearchItems } from "@shared/web-tools"
+import {
+	type HostedCallPresentation,
+	normalizeHostedWebFetchContent,
+	normalizeWebSearchItems,
+	type WebToolPresentationStatus,
+} from "@shared/web-tools"
 import { isParallelToolCallingEnabled, modelDoesntSupportWebp } from "@/utils/model-utils"
 import { ToolUse } from "../assistant-message"
 import { ContextManager } from "../context/context-management/ContextManager"
@@ -67,6 +78,7 @@ import { resolveRequestWebSearchRoutingPlan } from "./RequestApiScope"
 import { TaskController } from "./TaskController"
 import { TaskState } from "./TaskState"
 import { canonicalizeAttemptCompletionParams } from "./tools/attempt-completion-params"
+import { type DeferredHostedRow, planDeferredHostedRows } from "./tools/deferred-hosted-rows"
 import { type HostedImageGenerationContext, HostedImageGenerationLifecycle } from "./tools/HostedImageGenerationLifecycle"
 import { isInternalNativeToolName, normalizeNativeToolName } from "./tools/NativeToolAdmission"
 import { type HostedServerToolUpdate, ServerToolLifecycle } from "./tools/ServerToolLifecycle"
@@ -95,6 +107,27 @@ type ToolResponse = ClineToolResponseContent
 
 export { canonicalizeAttemptCompletionParams } from "./tools/attempt-completion-params"
 
+/** Failure shown on a deferred row once the conversation no longer lets the provider run its call. */
+const DEFERRED_HOSTED_CALL_ABANDONED_REASON =
+	"The provider never ran this deferred hosted call: the conversation moved on before a request could resume it."
+
+/** Row status of a hosted web call; a started call is still running. */
+function webToolStatus(update: HostedServerToolUpdate): WebToolPresentationStatus {
+	return update.status === "started" ? "running" : update.status
+}
+
+/** A deferred row names its hosted call, so the request that resumes it finishes this row. */
+/** Tool name a hosted call is recorded under, matching the client tool of the same capability. */
+function hostedToolName(tool: ServerTool): string {
+	if (tool === ServerTool.WEB_FETCH) return ClineDefaultTool.WEB_FETCH
+	if (tool === ServerTool.CODE_EXECUTION) return "code_execution"
+	return ClineDefaultTool.WEB_SEARCH
+}
+
+function deferredHostedCall(update: HostedServerToolUpdate): { hostedCall?: HostedCallPresentation } {
+	return update.status === "deferred" ? { hostedCall: { functionId: update.functionId, traceId: update.dlineTid } } : {}
+}
+
 /** Present one hosted Web Search call. */
 function buildWebSearchMessage(update: HostedServerToolUpdate, providerId: string, providerLabel: string): ClineSayTool {
 	const items = normalizeWebSearchItems(update.result)
@@ -106,7 +139,7 @@ function buildWebSearchMessage(update: HostedServerToolUpdate, providerId: strin
 		operationIsLocatedInWorkspace: false,
 		webSearch: {
 			schemaVersion: 1,
-			status: update.status === "failed" ? "failed" : update.status === "completed" ? "completed" : "running",
+			status: webToolStatus(update),
 			source: {
 				id: `${providerId}-hosted`,
 				label: `${providerLabel} Web Search`,
@@ -117,6 +150,7 @@ function buildWebSearchMessage(update: HostedServerToolUpdate, providerId: strin
 			operation: update.operation,
 			...(items.length > 0 ? { items } : {}),
 			...(update.error === undefined ? {} : { error: update.error }),
+			...deferredHostedCall(update),
 		},
 	}
 }
@@ -147,6 +181,7 @@ function hostedFetchError(update: HostedServerToolUpdate): string | undefined {
 function buildWebFetchMessage(update: HostedServerToolUpdate, providerId: string, providerLabel: string): ClineSayTool {
 	const url = hostedFetchUrl(update)
 	const error = hostedFetchError(update)
+	const content = normalizeHostedWebFetchContent(update.result)
 	return {
 		tool: "webFetch",
 		path: url,
@@ -154,7 +189,7 @@ function buildWebFetchMessage(update: HostedServerToolUpdate, providerId: string
 		operationIsLocatedInWorkspace: false,
 		webFetch: {
 			schemaVersion: 1,
-			status: update.status === "failed" ? "failed" : update.status === "completed" ? "completed" : "running",
+			status: webToolStatus(update),
 			source: {
 				id: `${providerId}-hosted`,
 				label: `${providerLabel} Web Fetch`,
@@ -162,7 +197,9 @@ function buildWebFetchMessage(update: HostedServerToolUpdate, providerId: string
 				provider: providerId,
 			},
 			url,
+			...(content === undefined ? {} : { content }),
 			...(error === undefined ? {} : { error }),
+			...deferredHostedCall(update),
 		},
 	}
 }
@@ -372,31 +409,128 @@ export class ToolExecutor {
 		this.promptRuntime = undefined
 		this.webToolsEnabled = webToolsEnabled
 		this.webSearchRoutingPlan = plan
-		this.hostedServerToolLifecycle = new ServerToolLifecycle(plan, allowHosted, async (update) => {
-			const providerId = this.api.getProviderId?.() ?? "provider"
-			const providerLabel = hostedProviderLabel(providerId)
-			// Each hosted tool reports a differently shaped payload, so the message is
-			// built from the tool that actually ran rather than a single fixed shape.
-			const message =
-				update.tool === ServerTool.CODE_EXECUTION
-					? buildCodeExecutionMessage(update, providerId, providerLabel)
-					: update.tool === ServerTool.WEB_FETCH
-						? buildWebFetchMessage(update, providerId, providerLabel)
-						: buildWebSearchMessage(update, providerId, providerLabel)
-			const messageTs = await this.say(
-				"tool",
-				JSON.stringify(message),
-				undefined,
-				undefined,
-				update.partial,
-				this.hostedServerToolMessageTs.get(update.dlineTid),
-			)
-			if (messageTs !== undefined) this.hostedServerToolMessageTs.set(update.dlineTid, messageTs)
-		})
+		this.hostedServerToolLifecycle = new ServerToolLifecycle(plan, allowHosted, (update) =>
+			this.onHostedServerToolUpdate(update),
+		)
 		this.hostedServerToolMessageTs.clear()
+		this.carriedServerToolTraceIds = new Map()
+	}
+
+	/**
+	 * Show one hosted call update and, when the call first settles, count it as tool work.
+	 *
+	 * A hosted call is real work the model asked for: it becomes the latest tool, so a narration
+	 * after it is not mistaken for a consecutive narration, and identical repeats trip the same
+	 * loop detection as client tools.
+	 */
+	private async onHostedServerToolUpdate(update: HostedServerToolUpdate): Promise<void> {
+		if (update.settled) {
+			this.checkRepeatedToolCall(hostedToolName(update.tool), toolCallSignature({ query: update.query }))
+		}
+		await this.writeHostedServerToolRow(update)
+	}
+
+	/**
+	 * Record a finished tool call and react when the model keeps repeating it.
+	 *
+	 * Comparing against the previous call and becoming the previous call are one step,
+	 * so this stays synchronous and no await can fall between them.
+	 */
+	private checkRepeatedToolCall(toolName: string, signature: string): void {
+		const loopCheck = recordToolCall(this.taskState, toolName, signature)
+		if (loopCheck.softWarning) {
+			this.taskState.userMessageContent.push({
+				type: "text",
+				text: formatResponse.repeatedToolCall(toolName, LOOP_DETECTION_SOFT_THRESHOLD),
+			})
+		}
+		if (loopCheck.hardEscalation) {
+			this.taskState.consecutiveMistakeCount = this.stateManager.getGlobalSettingsKey("maxConsecutiveMistakes")
+		}
+	}
+
+	/** Write one hosted call update into the chat row that call owns. */
+	private async writeHostedServerToolRow(update: HostedServerToolUpdate, providerId?: string): Promise<void> {
+		const provider = providerId ?? this.api.getProviderId?.() ?? "provider"
+		const providerLabel = hostedProviderLabel(provider)
+		// Each hosted tool reports a differently shaped payload, so the message is
+		// built from the tool that actually ran rather than a single fixed shape.
+		const message =
+			update.tool === ServerTool.CODE_EXECUTION
+				? buildCodeExecutionMessage(update, provider, providerLabel)
+				: update.tool === ServerTool.WEB_FETCH
+					? buildWebFetchMessage(update, provider, providerLabel)
+					: buildWebSearchMessage(update, provider, providerLabel)
+		const messageTs = await this.say(
+			"tool",
+			JSON.stringify(message),
+			undefined,
+			undefined,
+			update.partial,
+			this.hostedServerToolMessageTs.get(update.dlineTid),
+		)
+		if (messageTs !== undefined) this.hostedServerToolMessageTs.set(update.dlineTid, messageTs)
+	}
+
+	/**
+	 * Hand the request about to start the hosted calls earlier responses deferred.
+	 *
+	 * Calls this request resumes keep their row and trace identity, so their result completes the row that
+	 * announced them. Calls no request can run any more fail in place. Must follow the routing-plan setup of
+	 * the same request, which resets the per-request hosted state.
+	 */
+	public async carryDeferredServerToolCalls(context: {
+		messages: readonly ClineMessage[]
+		history: readonly ClineStorageMessage[]
+		replayHostedTools?: ReadonlySet<string>
+	}): Promise<void> {
+		const plan = planDeferredHostedRows(context.messages, context.history, {
+			protocol: this.api.getHostedToolReplayProtocol?.(),
+			replayHostedTools: context.replayHostedTools,
+		})
+		for (const row of plan.abandoned) await this.abandonDeferredServerToolRow(row)
+		for (const row of plan.carried) {
+			this.hostedServerToolMessageTs.set(row.dlineTid, row.ts)
+			this.carriedServerToolTraceIds.set(row.functionId, row.dlineTid)
+		}
+		this.hostedServerToolLifecycle?.adopt(plan.carried)
+	}
+
+	/** Trace identity of a deferred hosted call the current request resumes. */
+	public carriedServerToolTraceId(functionId: string): string | undefined {
+		return this.carriedServerToolTraceIds.get(functionId)
+	}
+
+	private async abandonDeferredServerToolRow(row: DeferredHostedRow): Promise<void> {
+		this.hostedServerToolMessageTs.set(row.dlineTid, row.ts)
+		try {
+			await this.writeHostedServerToolRow(
+				{
+					dlineTid: row.dlineTid,
+					functionId: row.functionId,
+					tool: row.tool,
+					status: "failed",
+					partial: false,
+					query: row.query,
+					operation: row.operation,
+					...(row.input === undefined ? {} : { input: row.input }),
+					error: DEFERRED_HOSTED_CALL_ABANDONED_REASON,
+				},
+				row.providerId,
+			)
+		} finally {
+			this.hostedServerToolMessageTs.delete(row.dlineTid)
+		}
+		recordHostedToolDeferralResolved({
+			apiFormat: "anthropic_messages",
+			hostedTool: row.tool === ServerTool.WEB_FETCH ? "web_fetch" : "web_search",
+			resolution: "not_resumed",
+		})
 	}
 
 	private hostedServerToolMessageTs = new Map<string, number>()
+	/** Provider call id → trace identity of the deferred calls the current request resumes. */
+	private carriedServerToolTraceIds = new Map<string, string>()
 	private hostedImageGenerationMessageTs = new Map<string, number>()
 
 	/** Freeze the provider-hosted image route for the current Provider input. */
@@ -1428,21 +1562,7 @@ export class ToolExecutor {
 				if (this.taskState.abort) return
 			}
 
-			// --- Repeated tool call loop detection ---
-			// Comparing against the previous call and becoming the previous
-			// call are one step, so no await can fall between them here.
-			const loopCheck = recordToolCall(this.taskState, block.name, toolCallSignature(block.params))
-
-			if (loopCheck.softWarning) {
-				this.taskState.userMessageContent.push({
-					type: "text",
-					text: formatResponse.repeatedToolCall(block.name, LOOP_DETECTION_SOFT_THRESHOLD),
-				})
-			}
-
-			if (loopCheck.hardEscalation) {
-				this.taskState.consecutiveMistakeCount = this.stateManager.getGlobalSettingsKey("maxConsecutiveMistakes")
-			}
+			this.checkRepeatedToolCall(block.name, toolCallSignature(block.params))
 
 			// Check abort before running PostToolUse hook (success path)
 			if (this.taskState.abort) {

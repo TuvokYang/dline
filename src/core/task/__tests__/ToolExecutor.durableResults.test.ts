@@ -6,7 +6,13 @@ import { ApiFormat, ServerTool } from "@shared/proto/dline/models/metadata"
 import { WebToolsMode } from "@shared/proto/dline/provider/common"
 import { ClineDefaultTool } from "@shared/tools"
 import { describe, expect, it, vi } from "vitest"
-import type { ClineUserToolResultContentBlock } from "@/shared/messages/content"
+import type { ClineMessage } from "@/shared/ExtensionMessage"
+import type {
+	ClineAssistantHostedToolBlock,
+	ClineStorageMessage,
+	ClineUserToolResultContentBlock,
+	HostedToolReplayProtocol,
+} from "@/shared/messages/content"
 import { InteractionCancellationError } from "../interaction/InteractionCancellationError"
 import { ToolExecutor } from "../ToolExecutor"
 import { ToolResultUtils } from "../tools/utils/ToolResultUtils"
@@ -37,6 +43,7 @@ interface HarnessOptions {
 	allowedNativeToolNames?: string[]
 	focusChainEnabled?: boolean
 	providerId?: string
+	hostedToolReplayProtocol?: HostedToolReplayProtocol
 	webToolsEnabled?: boolean
 	webSearchRoutingPlan?: WebSearchRoutingPlan
 }
@@ -93,6 +100,7 @@ function createHarness(options: HarnessOptions = {}) {
 		},
 		api: {
 			getProviderId: () => options.providerId ?? "openai",
+			getHostedToolReplayProtocol: () => options.hostedToolReplayProtocol,
 		},
 		autoApprover: { shouldAutoApproveTool: vi.fn(() => false) },
 		getMode: () => (options.strictPlan ? "plan" : "act"),
@@ -511,6 +519,248 @@ describe("ToolExecutor durable tool results", () => {
 				}),
 			}),
 		])
+	})
+
+	it("carries the full fetched document text on a completed provider-hosted Web Fetch row", async () => {
+		const plan = resolveWebSearchRoutingPlan({
+			enabled: true,
+			modelInfo: { capabilities: { tools: [ServerTool.WEB_FETCH] } },
+			selectedApiFormat: ApiFormat.ANTHROPIC_CHAT,
+			localAvailable: true,
+			remoteAdapterAvailable: true,
+			remoteWebFetchAdapterAvailable: true,
+		})
+		const { executor, say } = createHarness({ providerId: "anthropic" })
+		const hosted = executor as unknown as {
+			hostedServerToolMessageTs: Map<string, number>
+			setWebSearchRoutingPlan(plan: WebSearchRoutingPlan, webToolsEnabled: boolean): void
+			consumeServerToolChunk(chunk: ApiStreamServerToolChunk): Promise<boolean>
+		}
+		hosted.hostedServerToolMessageTs = new Map()
+		hosted.setWebSearchRoutingPlan(plan, true)
+		const fetchChunk = {
+			type: "server_tool",
+			function_id: "srvtoolu_fetch_ok",
+			dline_tid: "trace-fetch-ok",
+			tool: ServerTool.WEB_FETCH,
+		} as const
+		const pageText = `# Current docs\n\n${"Fetched paragraph. ".repeat(400)}`
+
+		await hosted.consumeServerToolChunk({ ...fetchChunk, phase: "started", input: { url: "https://example.com/docs" } })
+		await hosted.consumeServerToolChunk({
+			...fetchChunk,
+			phase: "completed",
+			result: {
+				type: "web_fetch_result",
+				url: "https://example.com/docs",
+				content: { type: "document", source: { type: "text", media_type: "text/plain", data: pageText } },
+			},
+		})
+
+		const rows = hostedToolRows(say)
+		expect(rows.at(-1)).toEqual(
+			expect.objectContaining({
+				tool: "webFetch",
+				webFetch: expect.objectContaining({ status: "completed", url: "https://example.com/docs", content: pageText }),
+			}),
+		)
+	})
+
+	describe("hosted call accounting", () => {
+		const searchPlan = resolveWebSearchRoutingPlan({
+			enabled: true,
+			modelInfo: { capabilities: { tools: [ServerTool.WEB_SEARCH] } },
+			selectedApiFormat: ApiFormat.ANTHROPIC_CHAT,
+			localAvailable: true,
+			remoteAdapterAvailable: true,
+		})
+
+		function hostedHarness() {
+			const harness = createHarness({ providerId: "anthropic" })
+			const hosted = harness.executor as unknown as {
+				hostedServerToolMessageTs: Map<string, number>
+				taskState: { lastToolName: string; lastToolParams: string; consecutiveIdenticalToolCount: number }
+				setWebSearchRoutingPlan(plan: WebSearchRoutingPlan, webToolsEnabled: boolean): void
+				consumeServerToolChunk(chunk: ApiStreamServerToolChunk): Promise<boolean>
+			}
+			hosted.hostedServerToolMessageTs = new Map()
+			hosted.setWebSearchRoutingPlan(searchPlan, true)
+			Object.assign(hosted.taskState, { lastToolName: "", lastToolParams: "", consecutiveIdenticalToolCount: 0 })
+			return { ...harness, hosted }
+		}
+
+		async function runSearch(
+			hosted: ReturnType<typeof hostedHarness>["hosted"],
+			id: string,
+			query: string,
+			extraCompleted = 0,
+		) {
+			const chunk = { type: "server_tool", function_id: id, dline_tid: `trace-${id}`, tool: ServerTool.WEB_SEARCH } as const
+			await hosted.consumeServerToolChunk({ ...chunk, phase: "started", input: { query } })
+			await hosted.consumeServerToolChunk({ ...chunk, phase: "completed", result: [] })
+			for (let i = 0; i < extraCompleted; i++) {
+				await hosted.consumeServerToolChunk({ ...chunk, phase: "completed", result: [{ url: `https://e.com/${i}` }] })
+			}
+		}
+
+		it("records a settled hosted call as the last tool, so a following narration is not consecutive", async () => {
+			const { hosted } = hostedHarness()
+			hosted.taskState.lastToolName = "act_mode_respond"
+
+			await runSearch(hosted, "srvtoolu_a", "dline release notes")
+
+			expect(hosted.taskState.lastToolName).toBe("web_search")
+			expect(hosted.taskState.consecutiveIdenticalToolCount).toBe(1)
+		})
+
+		it("counts one hosted call once even when the provider enriches its completed result", async () => {
+			const { hosted } = hostedHarness()
+
+			await runSearch(hosted, "srvtoolu_b", "same query", 2)
+
+			expect(hosted.taskState.consecutiveIdenticalToolCount).toBe(1)
+		})
+
+		it("warns about repeated identical hosted calls like a repeated local tool", async () => {
+			const { hosted, userMessageContent } = hostedHarness()
+
+			for (const id of ["srvtoolu_1", "srvtoolu_2", "srvtoolu_3"]) await runSearch(hosted, id, "same query")
+
+			expect(hosted.taskState.consecutiveIdenticalToolCount).toBe(3)
+			expect(JSON.stringify(userMessageContent)).toContain("web_search")
+			expect(userMessageContent.some((block) => block.type === "text")).toBe(true)
+		})
+	})
+
+	describe("Anthropic deferred hosted calls", () => {
+		const anthropicSearchPlan = resolveWebSearchRoutingPlan({
+			enabled: true,
+			modelInfo: { capabilities: { tools: [ServerTool.WEB_SEARCH] } },
+			selectedApiFormat: ApiFormat.ANTHROPIC_CHAT,
+			localAvailable: true,
+			remoteAdapterAvailable: true,
+		})
+		const searchChunk = {
+			type: "server_tool",
+			function_id: "srvtoolu_deferred",
+			dline_tid: "trace-search",
+			tool: ServerTool.WEB_SEARCH,
+		} as const
+		const callSegment: ClineAssistantHostedToolBlock = {
+			type: "hosted_tool",
+			protocol: "anthropic_messages",
+			segment: "call",
+			blocks: [
+				{ type: "server_tool_use", id: "srvtoolu_deferred", name: "web_search", input: { query: "deferred search" } },
+			],
+		}
+		const deferredTurn: ClineStorageMessage[] = [
+			{ role: "user", content: [{ type: "text", text: "search and read" }] },
+			{
+				role: "assistant",
+				content: [
+					callSegment,
+					{
+						type: "tool_use",
+						function_id: "toolu_read",
+						dline_tid: "trace-read",
+						name: "read_file",
+						input: { path: "a.ts" },
+					},
+				],
+			},
+			{
+				role: "user",
+				content: [{ type: "tool_result", function_id: "toolu_read", dline_tid: "trace-read", content: "file body" }],
+			},
+		]
+		type HostedDeferralHarness = {
+			setWebSearchRoutingPlan(plan: WebSearchRoutingPlan, webToolsEnabled: boolean): void
+			consumeServerToolChunk(chunk: ApiStreamServerToolChunk): Promise<boolean>
+			finalizeServerToolCalls(reason: string): Promise<void>
+			carryDeferredServerToolCalls(context: {
+				messages: readonly ClineMessage[]
+				history: readonly ClineStorageMessage[]
+				replayHostedTools?: ReadonlySet<string>
+			}): Promise<void>
+			carriedServerToolTraceId(functionId: string): string | undefined
+		}
+
+		/** Defer one search in request N and return its durable row as the next request would read it. */
+		async function deferSearch(): Promise<{
+			hosted: HostedDeferralHarness
+			say: ReturnType<typeof vi.fn>
+			row: ClineMessage
+		}> {
+			const { executor, say } = createHarness({ providerId: "anthropic", hostedToolReplayProtocol: "anthropic_messages" })
+			say.mockImplementation(async (...args: unknown[]) => (args[5] as number | undefined) ?? 100)
+			const hosted = executor as unknown as HostedDeferralHarness
+			// The harness skips the constructor, so instance-field maps are installed by hand.
+			Object.assign(hosted, { hostedServerToolMessageTs: new Map() })
+			hosted.setWebSearchRoutingPlan(anthropicSearchPlan, true)
+			await hosted.consumeServerToolChunk({ ...searchChunk, phase: "started", input: { query: "deferred search" } })
+			await hosted.consumeServerToolChunk({ ...searchChunk, phase: "deferred", input: { query: "deferred search" } })
+			await hosted.finalizeServerToolCalls("Provider stream ended before the hosted tool returned a result.")
+			const lastCall = say.mock.calls.at(-1) as unknown[]
+			return { hosted, say, row: { ts: 100, type: "say", say: "tool", text: String(lastCall[1]) } }
+		}
+
+		it("persists a deferred call as a durable row that names its hosted call", async () => {
+			const { say } = await deferSearch()
+
+			const lastCall = say.mock.calls.at(-1) as unknown[]
+			expect(lastCall[4]).toBe(false)
+			expect(hostedToolRows(say).at(-1)).toMatchObject({
+				tool: "webSearch",
+				webSearch: {
+					status: "deferred",
+					query: "deferred search",
+					hostedCall: { functionId: "srvtoolu_deferred", traceId: "trace-search" },
+				},
+			})
+		})
+
+		it("completes the deferred row in place when the next response returns the result", async () => {
+			const { hosted, say, row } = await deferSearch()
+			hosted.setWebSearchRoutingPlan(anthropicSearchPlan, true)
+
+			await hosted.carryDeferredServerToolCalls({
+				messages: [row],
+				history: deferredTurn,
+				replayHostedTools: new Set(["web_search"]),
+			})
+			expect(hosted.carriedServerToolTraceId("srvtoolu_deferred")).toBe("trace-search")
+			await hosted.consumeServerToolChunk({
+				...searchChunk,
+				phase: "completed",
+				result: [{ type: "web_search_result", url: "https://example.com", title: "Example" }],
+			})
+
+			const lastCall = say.mock.calls.at(-1) as unknown[]
+			expect(lastCall[4]).toBe(false)
+			expect(lastCall[5]).toBe(100)
+			const completed = hostedToolRows(say).at(-1) as { webSearch: Record<string, unknown> }
+			expect(completed.webSearch).toMatchObject({ status: "completed", query: "deferred search" })
+			expect(completed.webSearch.hostedCall).toBeUndefined()
+		})
+
+		it("fails the deferred row in place when the next request cannot resume the call", async () => {
+			const { hosted, say, row } = await deferSearch()
+			hosted.setWebSearchRoutingPlan(anthropicSearchPlan, true)
+
+			await hosted.carryDeferredServerToolCalls({
+				messages: [row],
+				history: [...deferredTurn, { role: "assistant", content: [{ type: "text", text: "answer" }] }],
+				replayHostedTools: new Set(["web_search"]),
+			})
+
+			expect(hosted.carriedServerToolTraceId("srvtoolu_deferred")).toBeUndefined()
+			const lastCall = say.mock.calls.at(-1) as unknown[]
+			expect(lastCall[5]).toBe(100)
+			expect(hostedToolRows(say).at(-1)).toMatchObject({
+				webSearch: { status: "failed", source: { provider: "anthropic" } },
+			})
+		})
 	})
 })
 

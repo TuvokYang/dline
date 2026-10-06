@@ -1,4 +1,16 @@
-export type WebToolPresentationStatus = "running" | "completed" | "failed"
+/**
+ * `deferred` marks a provider-hosted call the provider announced but will only run at the start of its next
+ * response, after the local tool calls of the same turn return their results.
+ */
+export type WebToolPresentationStatus = "running" | "deferred" | "completed" | "failed"
+
+/** Identity of a deferred hosted call, so the request that resumes it can finish the same row. */
+export interface HostedCallPresentation {
+	/** Provider-native call id that pairs the call with its result. */
+	functionId: string
+	/** Dline trace identity the call carries across both responses. */
+	traceId: string
+}
 
 export interface WebToolSourcePresentation {
 	id: string
@@ -27,6 +39,8 @@ export interface WebSearchPresentationV1 {
 	operation?: HostedWebSearchOperation
 	items?: WebSearchItemPresentation[]
 	error?: string
+	/** Present only while the row is deferred. */
+	hostedCall?: HostedCallPresentation
 }
 
 export interface WebFetchPresentationV1 {
@@ -37,6 +51,8 @@ export interface WebFetchPresentationV1 {
 	prompt?: string
 	content?: string
 	error?: string
+	/** Present only while the row is deferred. */
+	hostedCall?: HostedCallPresentation
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -101,6 +117,21 @@ function normalizeSearchItem(value: unknown): WebSearchItemPresentation | undefi
 		...(title ? { title } : {}),
 		...(snippet ? { snippet } : {}),
 	}
+}
+
+/**
+ * Read the fetched page text from a provider-hosted Web Fetch result.
+ *
+ * Anthropic returns the page as a document whose text source carries the full body. Binary sources such as base64
+ * PDFs have no displayable text, so they yield `undefined` rather than raw encoded bytes.
+ */
+export function normalizeHostedWebFetchContent(result: unknown): string | undefined {
+	const content = asRecord(result)?.content
+	if (typeof content === "string") return nonEmptyString(content) ? content : undefined
+
+	const source = asRecord(asRecord(content)?.source)
+	if (source?.type !== "text" || typeof source.data !== "string") return undefined
+	return nonEmptyString(source.data) ? source.data : undefined
 }
 
 /** Normalize provider-native and local Web Search payloads before they cross the UI message boundary. */

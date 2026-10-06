@@ -3,9 +3,26 @@ import type { ApiStreamServerToolChunk } from "@core/api/transform/stream"
 import { ServerTool } from "@shared/proto/dline/models/metadata"
 import { type HostedWebSearchOperation, normalizeHostedWebSearchOperation } from "@shared/web-tools"
 
-export type HostedServerToolUpdateStatus = "started" | "completed" | "failed"
+/** `deferred` is durable but not terminal: the call completes or fails in a later response. */
+export type HostedServerToolUpdateStatus = "started" | "deferred" | "completed" | "failed"
+
+/** A deferred hosted call handed from the response that announced it to the response that may run it. */
+export interface DeferredServerToolCall {
+	readonly dlineTid: string
+	readonly functionId: string
+	readonly tool: ServerTool
+	readonly query: string
+	readonly operation: HostedWebSearchOperation
+	readonly input?: unknown
+}
 
 export interface HostedServerToolUpdate {
+	/**
+	 * Set only on the update where the provider first ends the call, so consumers count each call
+	 * the provider ran exactly once. Calls Dline closes itself, because the stream ended or no
+	 * request resumed them, never carry it.
+	 */
+	readonly settled?: true
 	readonly dlineTid: string
 	readonly functionId: string
 	readonly tool: ServerTool
@@ -58,8 +75,22 @@ const PHASE_RANK: Readonly<Record<ApiStreamServerToolChunk["phase"], number>> = 
 	in_progress: 1,
 	preview: 1,
 	searching: 1,
-	completed: 2,
-	failed: 2,
+	deferred: 2,
+	completed: 3,
+	failed: 3,
+}
+
+function statusOf(phase: ApiStreamServerToolChunk["phase"]): HostedServerToolUpdateStatus {
+	switch (phase) {
+		case "failed":
+			return "failed"
+		case "completed":
+			return "completed"
+		case "deferred":
+			return "deferred"
+		default:
+			return "started"
+	}
 }
 
 /** Keys that name what a hosted call worked on; a fetch names its target by URL. */
@@ -249,14 +280,15 @@ export class ServerToolLifecycle {
 		state.resultEmitted = chunk.phase === "completed" && chunk.result !== undefined
 		this.calls.set(chunk.dline_tid, state)
 
-		const status: HostedServerToolUpdateStatus =
-			chunk.phase === "failed" ? "failed" : state.terminal ? "completed" : "started"
+		const status = statusOf(chunk.phase)
 		await this.emit({
 			dlineTid: chunk.dline_tid,
 			functionId: chunk.function_id,
 			tool: chunk.tool,
 			status,
-			partial: !state.terminal,
+			...(state.terminal ? { settled: true } : {}),
+			// A deferred row must survive the response that parks it, so it is written durably.
+			partial: status === "started",
 			query,
 			operation,
 			...(input === undefined ? {} : { input }),
@@ -271,10 +303,58 @@ export class ServerToolLifecycle {
 		return true
 	}
 
-	/** Close every started call when a response ends, is cancelled, or is retried. */
+	/**
+	 * Take over calls an earlier response deferred, so the result this response brings completes them under
+	 * their original identity instead of opening new calls.
+	 */
+	adopt(calls: readonly DeferredServerToolCall[]): void {
+		for (const call of calls) {
+			if (!this.enabled || this.routingPlan === undefined || !isHostedToolRouted(this.routingPlan, call.tool)) continue
+			this.calls.set(call.dlineTid, {
+				functionId: call.functionId,
+				tool: call.tool,
+				phase: "deferred",
+				query: call.query,
+				operation: call.operation,
+				input: call.input,
+				terminal: false,
+				resultEmitted: false,
+			})
+		}
+	}
+
+	/** Calls still waiting for a later response to run them. */
+	deferredCalls(): DeferredServerToolCall[] {
+		return [...this.calls]
+			.filter(([, state]) => state.phase === "deferred")
+			.map(([dlineTid, state]) => ({
+				dlineTid,
+				functionId: state.functionId,
+				tool: state.tool,
+				query: state.query,
+				operation: state.operation,
+				...(state.input === undefined ? {} : { input: state.input }),
+			}))
+	}
+
+	/**
+	 * Close every started call when a response ends, is cancelled, or is retried.
+	 *
+	 * Deferred calls stay open: they belong to the conversation, and only the next request decides whether
+	 * the provider still runs them. Close them with `failDeferred` once no request can.
+	 */
 	async finalizeOpen(reason: string): Promise<void> {
+		await this.failWhere((state) => state.phase !== "deferred", reason)
+	}
+
+	/** Close the deferred calls no later request will resume. */
+	async failDeferred(reason: string): Promise<void> {
+		await this.failWhere((state) => state.phase === "deferred", reason)
+	}
+
+	private async failWhere(selects: (state: HostedServerToolState) => boolean, reason: string): Promise<void> {
 		for (const [dlineTid, state] of this.calls) {
-			if (state.terminal) continue
+			if (state.terminal || !selects(state)) continue
 			state.phase = "failed"
 			state.terminal = true
 			await this.emit({

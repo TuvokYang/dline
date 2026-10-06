@@ -39,7 +39,8 @@ describe("Task provider-hosted tool replay", () => {
 	it("stores hosted blocks after reasoning and before the visible answer", async () => {
 		const method = extractRequestMethod(await readFile(taskSourcePath, "utf8"))
 		const thinking = method.indexOf("assistantContent.push({ ...thinkingBlock })")
-		const hosted = method.indexOf("assistantContent.push(...hostedToolBlocks)")
+		expect(method).toContain("assistantContent.unshift(...hostedTurn.resumed)")
+		const hosted = method.indexOf("assistantContent.push(...hostedTurn.others)")
 		const text = method.indexOf("const hasAssistantText = assistantTextOnly.trim().length > 0")
 
 		expect(thinking).toBeGreaterThanOrEqual(0)

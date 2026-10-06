@@ -1069,6 +1069,87 @@ for (const scenario of [
 			}
 		},
 	)
+
+	e2e(
+		`ServerTool runtime - ${scenario.label} resumes a hosted search deferred behind a client tool in the next request`,
+		async ({ dlineDir, dlineDocsDir, dlineHomeDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
+			e2e.setTimeout(180_000)
+			expectIsolatedDirectories(dlineDir, dlineHomeDir, dlineDocsDir)
+			await prepareRuntimeProfile(dlineDir, scenario.profileName, {
+				enabled: true,
+				mode: "WEB_TOOLS_MODE_AUTO",
+				modelId: scenario.label === "Claude Code" ? "claude-sonnet-5" : undefined,
+				supportsWebSearch: true,
+			})
+			const marker = scenario.marker.toLowerCase()
+			const searchId = `srv_web_${marker}_deferred`
+			const readCallId = `call_${marker}_deferred_read`
+			const query = `Dline ${scenario.label} deferred search`
+			const resultTitle = `E2E_${scenario.marker}_DEFERRED_RESULT`
+			const resultUrl = `https://example.test/${marker}-deferred`
+			const completion = `E2E_${scenario.marker}_DEFERRED_SEARCH_OK`
+			server.enqueueResponses(
+				scenario.target,
+				{
+					type: "anthropic-deferred-web-search",
+					id: searchId,
+					query,
+					followupTools: [{ id: readCallId, name: "read_file", arguments: { path: "README.md" } }],
+				},
+				{
+					// The provider runs the deferred search first, so the next response opens with its result.
+					type: "anthropic-orphan-web-search-result",
+					id: searchId,
+					results: [{ title: resultTitle, url: resultUrl }],
+					followupTools: [
+						{ id: `call_${marker}_deferred_done`, name: "attempt_completion", arguments: { result: completion } },
+					],
+					expectedToolResults: [{ callId: readCallId, contentIncludes: "# Test Workspace" }],
+					expectedRequestIncludes: [searchId],
+				},
+				{
+					type: "error",
+					status: 500,
+					code: "unexpected_deferred_search_request",
+					message: "The deferred hosted search was resumed more than once",
+				},
+			)
+
+			let app: ElectronApplication | undefined
+			try {
+				const opened = await openSidebar(openVSCode, workspaceDir, helper)
+				app = opened.app
+				await setAutoApproveAction(opened.sidebar, "Use Web", true)
+				await sendTask(opened.sidebar, `Use ${scenario.label} hosted search while reading the README, then finish.`)
+				await expect(opened.sidebar.getByText(completion, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
+				await expectHostedLifecycle(opened.sidebar, query, { title: resultTitle, url: resultUrl })
+				await expect(opened.sidebar.getByTestId("web-search-card").filter({ hasText: query })).toHaveCount(1)
+				await expect(opened.sidebar.getByTestId("web-search-deferred")).toHaveCount(0)
+				await expect.poll(() => server.getMockConsumptions(scenario.target).length).toBe(2)
+
+				const [deferred, resumed] = server.getMockConsumptions(scenario.target)
+				expect(deferred.contractError).toBeUndefined()
+				expect(resumed.contractError).toBeUndefined()
+				const resumedMessages =
+					(resumed.requestBody as { messages?: Array<{ role?: string; content?: unknown }> }).messages ?? []
+				const followUp = resumedMessages.at(-1)
+				const carriedAssistant = resumedMessages.at(-2)
+				// The Messages API only runs the deferred call when the follow-up turn holds nothing but tool results.
+				expect(followUp?.role).toBe("user")
+				expect(Array.isArray(followUp?.content)).toBe(true)
+				expect((followUp?.content as Array<{ type?: string }>).every((block) => block.type === "tool_result")).toBe(true)
+				expect(carriedAssistant?.role).toBe("assistant")
+				const carriedBlocks = carriedAssistant?.content as Array<{ type?: string; id?: string }>
+				expect(carriedBlocks.some((block) => block.type === "server_tool_use" && block.id === searchId)).toBe(true)
+				expect(JSON.stringify(carriedBlocks)).not.toContain("web_search_tool_result")
+				expect(server.getSearxngSearchRequests()).toHaveLength(0)
+				await expect(opened.sidebar.getByText("API Request Failed", { exact: true })).toHaveCount(0)
+				await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
+			} finally {
+				await app?.close()
+			}
+		},
+	)
 }
 
 e2e(
