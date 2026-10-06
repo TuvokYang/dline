@@ -1,5 +1,5 @@
 import { getRetryDelay, MAX_AUTO_RETRY_ATTEMPTS } from "../../../auto-retry"
-import type { ProviderRetryPolicy } from "./DefaultProductionProviderService"
+import type { ProviderRetryPolicy, ProviderRetryWait } from "./DefaultProductionProviderService"
 
 /**
  * The automatic retry schedule, with the user able to cut a wait short.
@@ -15,7 +15,7 @@ import type { ProviderRetryPolicy } from "./DefaultProductionProviderService"
 export class ProviderRetryGate implements ProviderRetryPolicy {
 	readonly maxAttempts = MAX_AUTO_RETRY_ATTEMPTS
 	private sequence = false
-	private release: (() => void) | undefined
+	private release: ((outcome: ProviderRetryWait) => void) | undefined
 
 	/** @param onChange Publishes the footer when the sequence starts or ends. */
 	constructor(private readonly onChange?: () => void) {}
@@ -29,35 +29,50 @@ export class ProviderRetryGate implements ProviderRetryPolicy {
 		return getRetryDelay(attempt)
 	}
 
-	wait(delayMs: number, signal: AbortSignal): Promise<boolean> {
+	wait(delayMs: number, signal: AbortSignal): Promise<ProviderRetryWait> {
 		this.setSequence(true)
-		if (signal.aborted) return Promise.resolve(false)
-		return new Promise<boolean>((resolve) => {
-			const finish = (proceed: boolean) => {
+		if (signal.aborted) return Promise.resolve("cancelled")
+		return new Promise<ProviderRetryWait>((resolve) => {
+			const finish = (outcome: ProviderRetryWait) => {
 				clearTimeout(timer)
 				signal.removeEventListener("abort", onAbort)
-				if (this.release === now) this.release = undefined
-				resolve(proceed)
+				if (this.release === finish) this.release = undefined
+				resolve(outcome)
 			}
-			const now = () => finish(true)
-			const onAbort = () => finish(false)
-			const timer = setTimeout(now, Math.max(0, delayMs))
+			const onAbort = () => finish("cancelled")
+			const timer = setTimeout(() => finish("send"), Math.max(0, delayMs))
 			signal.addEventListener("abort", onAbort, { once: true })
-			this.release = now
+			this.release = finish
 		})
 	}
 
 	/** Send the scheduled attempt now; false when no countdown is running. */
 	retryNow(): boolean {
-		const release = this.release
-		if (!release) return false
-		release()
-		return true
+		return this.end("send")
+	}
+
+	/**
+	 * End the countdown and hand its failure back to the user, who then decides
+	 * with Retry; false when no countdown is running.
+	 *
+	 * A Profile switch does this: the countdown retries a failure of the Profile
+	 * the user just left, so silently sending it again, to either Profile, would
+	 * spend a request the user did not ask for.
+	 */
+	handBack(): boolean {
+		return this.end("handed_back")
 	}
 
 	/** The request produced its stream or failed for good, so the sequence is over. */
 	settled(): void {
 		this.setSequence(false)
+	}
+
+	private end(outcome: ProviderRetryWait): boolean {
+		const release = this.release
+		if (!release) return false
+		release(outcome)
+		return true
 	}
 
 	private setSequence(active: boolean): void {

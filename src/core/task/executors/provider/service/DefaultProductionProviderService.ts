@@ -42,13 +42,20 @@ interface PendingNativeTool {
 	signature?: string
 }
 
+/**
+ * How a retry wait ended: `send` the next attempt, `cancelled` by the request's
+ * signal, or `handed_back` to the user, which ends the request with the failure
+ * the countdown was retrying.
+ */
+export type ProviderRetryWait = "send" | "cancelled" | "handed_back"
+
 /** How a request that failed before its first chunk is sent again. */
 export interface ProviderRetryPolicy {
 	readonly maxAttempts: number
 	/** Delay before one-based retry `attempt`. */
 	delayMs(attempt: number): number
-	/** Resolve true once the delay elapsed, false as soon as the signal aborts. */
-	wait(delayMs: number, signal: AbortSignal): Promise<boolean>
+	/** Resolve `send` once the delay elapsed, `cancelled` as soon as the signal aborts. */
+	wait(delayMs: number, signal: AbortSignal): Promise<ProviderRetryWait>
 	/** The request left its retry loop: it produced a stream, failed for good, or was cancelled. */
 	settled?(): void
 }
@@ -57,7 +64,7 @@ export interface ProviderRetryPolicy {
 export const DEFAULT_PROVIDER_RETRY_POLICY: ProviderRetryPolicy = {
 	maxAttempts: MAX_AUTO_RETRY_ATTEMPTS,
 	delayMs: getRetryDelay,
-	wait: waitRetryDelayUnlessAborted,
+	wait: async (delayMs, signal) => ((await waitRetryDelayUnlessAborted(delayMs, signal)) ? "send" : "cancelled"),
 }
 
 export interface ProviderServerToolPresentationSession {
@@ -571,7 +578,11 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 					errorMessage: describeProviderError(request, failure, provider),
 				},
 			}
-			if (!(await this.retry.wait(delayMs, signal))) return undefined
+			const waited = await this.retry.wait(delayMs, signal)
+			if (waited === "cancelled" || signal.aborted) return undefined
+			// The user took the failure back, so it ends the request as an
+			// exhausted budget would, and the chat offers Retry for it.
+			if (waited === "handed_back") throw failure
 			if (truncates) {
 				if (await truncate()) continue
 				if (signal.aborted) return undefined

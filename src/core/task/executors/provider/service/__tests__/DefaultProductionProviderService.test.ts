@@ -514,7 +514,7 @@ function scripted(
 			retry.wait ??
 			(async (delayMs) => {
 				waits.push(delayMs)
-				return true
+				return "send" as const
 			}),
 	}
 	let id = 0
@@ -671,7 +671,7 @@ describe("DefaultProductionProviderService request retry", () => {
 		const harness = scripted([{ error: httpError(503, "Service Unavailable") }], {
 			wait: async () => {
 				controller.abort()
-				return false
+				return "cancelled" as const
 			},
 		})
 
@@ -679,6 +679,16 @@ describe("DefaultProductionProviderService request retry", () => {
 
 		expect(harness.api.createMessage).toHaveBeenCalledOnce()
 		expect(chunks.map((chunk) => chunk.kind)).toEqual(["retry"])
+	})
+
+	it("fails with the retried error, sending nothing more, when the user takes the countdown back", async () => {
+		const rateLimited = httpError(429, "Too Many Requests")
+		const harness = scripted([{ error: rateLimited }, { chunks: [text("never sent")] }], {
+			wait: async () => "handed_back" as const,
+		})
+
+		expect(await failureOf(harness.service)).toBe(rateLimited)
+		expect(harness.api.createMessage).toHaveBeenCalledOnce()
 	})
 
 	// BUGFIX-092 in the v2 runtime: the frozen prompt and tools are one
@@ -731,7 +741,7 @@ describe("DefaultProductionProviderService request retry", () => {
 				wait: async () => {
 					// The user switches Profile while the retry countdown runs.
 					current = targetApi
-					return true
+					return "send" as const
 				},
 			},
 		})
@@ -778,7 +788,7 @@ describe("DefaultProductionProviderService request retry", () => {
 				planTool: () => ({ attempt: "attempt-1", lanes: [], turnEnding: false, approval: { kind: "none" } }),
 			} as unknown as PreparedProviderRequest
 		})
-		const wait = vi.fn(async () => true)
+		const wait = vi.fn(async () => "send" as const)
 		const service = new DefaultProductionProviderService({
 			requests: { prepare },
 			nextPresentationId: () => 1,

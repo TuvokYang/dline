@@ -56,14 +56,18 @@ describe("Controller Profile switch integration", () => {
 		const setProfileIdentityBindings = vi.fn()
 		const rebuild = vi.fn(async () => undefined)
 		const dismissProviderFailure = vi.fn(async () => undefined)
+		const handBack = vi.fn(() => true)
+		const flushPendingState = vi.fn(async () => undefined)
 		const restartAccountUsagePolling = vi.fn()
 		const fakeController = {
+			stateManager: { flushPendingState },
 			task: createSessionFixture({
 				taskId: "task-1",
 				owners: {
 					settings: { mode: "act" as const, setProfileIdentityBindings },
 					api: { rebuild },
 					interactions: { dismissProviderFailure },
+					providerRetry: { handBack },
 				},
 			}),
 			// Occupancy is read by the Controller from the live indicator.
@@ -120,6 +124,11 @@ describe("Controller Profile switch integration", () => {
 			{ clearRuntimeOverrides: true },
 		)
 		expect(rebuild).toHaveBeenCalledWith({ abortPrevious: true })
+		// The switch is reported only once the binding is on disk.
+		expect(flushPendingState).toHaveBeenCalledOnce()
+		// The source Profile's retry countdown is handed back once the target is bound.
+		expect(handBack).toHaveBeenCalledOnce()
+		expect(rebuild.mock.invocationCallOrder[0]).toBeLessThan(handBack.mock.invocationCallOrder[0])
 		expect(dismissProviderFailure).toHaveBeenCalledOnce()
 		expect(restartAccountUsagePolling).toHaveBeenCalledOnce()
 	})
@@ -127,8 +136,10 @@ describe("Controller Profile switch integration", () => {
 	it("switches Profiles while a Mode transition still owns its own transaction", async () => {
 		const setProfileIdentityBindings = vi.fn()
 		const rebuild = vi.fn(async () => undefined)
+		const flushPendingState = vi.fn(async () => undefined)
 		const restartAccountUsagePolling = vi.fn()
 		const fakeController = {
+			stateManager: { flushPendingState },
 			task: createSessionFixture({
 				taskId: "task-1",
 				owners: {
@@ -179,6 +190,57 @@ describe("Controller Profile switch integration", () => {
 			{ act: { profileId: "target-id", profileName: "target-profile" } },
 			{ clearRuntimeOverrides: true },
 		)
+		expect(flushPendingState).toHaveBeenCalledOnce()
 		expect(restartAccountUsagePolling).toHaveBeenCalledOnce()
+	})
+
+	it("restores the previous bindings and handler when the switch cannot be persisted", async () => {
+		const previous = { plan: { profileId: "source-id", profileName: "source-profile" } }
+		const setProfileIdentityBindings = vi.fn(() => previous)
+		const restoreProfileState = vi.fn()
+		const rebuild = vi.fn(async () => undefined)
+		const handBack = vi.fn(() => true)
+		const flushPendingState = vi.fn(async () => {
+			throw new Error("disk full")
+		})
+		const fakeController = {
+			stateManager: { flushPendingState },
+			task: createSessionFixture({
+				taskId: "task-1",
+				owners: {
+					settings: { mode: "act" as const, setProfileIdentityBindings, restoreProfileState },
+					api: { rebuild },
+					providerRetry: { handBack },
+				},
+			}),
+			getOccupiedContextTokens: () => 0,
+			resolveTaskProfileName: vi.fn(() => "source-profile"),
+			resolveProfileTarget: vi.fn(() => undefined),
+			validateProfileSwitch: vi.fn(() => true),
+			postStateToWebview: vi.fn(async () => undefined),
+			restartAccountUsagePolling: vi.fn(),
+		}
+		const createContextTransitionEngine = Reflect.get(Controller.prototype, "createContextTransitionEngine") as (
+			this: typeof fakeController,
+		) => ContextTransitionEngine
+		const createProfileSwitchCoordinator = Reflect.get(Controller.prototype, "createProfileSwitchCoordinator") as (
+			this: typeof fakeController,
+		) => ProfileSwitchCoordinator
+		Object.assign(fakeController, { profileTransitionEngine: createContextTransitionEngine.call(fakeController) })
+		const coordinator = createProfileSwitchCoordinator.call(fakeController)
+
+		const result = await coordinator.request({
+			taskId: "task-1",
+			targetProfileId: "target-id",
+			targetProfile: "target-profile",
+			targetModes: ["act"],
+		})
+
+		expect(result.status).toBe("rejected")
+		expect(restoreProfileState).toHaveBeenCalledWith(previous)
+		// Rebuilt once for the target and once more back onto the restored bindings.
+		expect(rebuild).toHaveBeenCalledTimes(2)
+		// An uncommitted switch leaves the running retry countdown alone.
+		expect(handBack).not.toHaveBeenCalled()
 	})
 })

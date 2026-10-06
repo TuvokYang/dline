@@ -17,7 +17,7 @@ describe("ProviderRetryGate", () => {
 		await Promise.resolve()
 		expect(settled).toBe(false)
 		await vi.advanceTimersByTimeAsync(1)
-		await expect(waited).resolves.toBe(true)
+		await expect(waited).resolves.toBe("send")
 	})
 
 	// A manual Retry during the countdown must send the scheduled attempt now,
@@ -27,9 +27,22 @@ describe("ProviderRetryGate", () => {
 		const waited = gate.wait(30_000, new AbortController().signal)
 
 		expect(gate.retryNow()).toBe(true)
-		await expect(waited).resolves.toBe(true)
+		await expect(waited).resolves.toBe("send")
 		// The countdown is spent; a second click has nothing left to release.
 		expect(gate.retryNow()).toBe(false)
+	})
+
+	// A Profile switch ends the countdown of a failure the user left behind;
+	// the request then fails instead of sending it again on its own.
+	it("hands the countdown's failure back to the user instead of sending", async () => {
+		const gate = new ProviderRetryGate()
+		const waited = gate.wait(30_000, new AbortController().signal)
+
+		expect(gate.handBack()).toBe(true)
+		await expect(waited).resolves.toBe("handed_back")
+		// Neither a late Retry nor the elapsed delay revives the countdown.
+		expect(gate.retryNow()).toBe(false)
+		expect(gate.handBack()).toBe(false)
 	})
 
 	it("ends the wait without retrying when the request is cancelled", async () => {
@@ -39,8 +52,9 @@ describe("ProviderRetryGate", () => {
 
 		controller.abort()
 
-		await expect(waited).resolves.toBe(false)
+		await expect(waited).resolves.toBe("cancelled")
 		expect(gate.retryNow()).toBe(false)
+		expect(gate.handBack()).toBe(false)
 	})
 
 	it("owns the footer from the first countdown until the request settles", async () => {

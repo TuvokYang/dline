@@ -1725,6 +1725,10 @@ export class Controller {
 						if (rebuilt) await session.owners.api.rebuild({ abortPrevious: true })
 						throw error
 					}
+					// A running retry countdown retries a failure of the Profile the user
+					// just left; the failure goes back to them with Retry rather than being
+					// sent again on its own.
+					session.owners.providerRetry?.handBack()
 					await session.owners.interactions.dismissProviderFailure()
 					if ((await replyWithTransitionDraft(this, operation.chatContent, session)) === "rejected") {
 						Logger.warn(
