@@ -105,6 +105,12 @@ interface CheckpointManagerCallbacks {
 	readonly restoreChatRuntime: (input: { apiIndex: number; editedText?: string }) => Promise<void>
 	readonly say: SayFunction
 	readonly postStateToWebview: () => Promise<void>
+	/**
+	 * Redraws one row the view already shows. A state post only carries the
+	 * task view, so a row patched after it was published stays stale on screen
+	 * until something republishes it.
+	 */
+	readonly publishMessage: (message: UiMessage) => Promise<void>
 }
 interface CheckpointManagerInternalState {
 	conversationHistoryDeletedRange?: [number, number]
@@ -187,7 +193,21 @@ export class TaskCheckpointManager implements ICheckpointManager {
 			lastCheckpointHash: commitHash,
 		})
 		await this.services.messageStateHandler.flushMessageUpdate(messageIndex)
+		await this.publishPatchedRow(messageIndex)
 		await this.callbacks.postStateToWebview()
+	}
+
+	/** View delivery only: the hash is already durable, so a failed redraw must not fail the checkpoint. */
+	private async publishPatchedRow(messageIndex: number): Promise<void> {
+		const row = this.services.messageStateHandler.clineMessages[messageIndex]
+		if (!row) return
+		try {
+			await this.callbacks.publishMessage(row)
+		} catch (error) {
+			Logger.warn(
+				`[TaskCheckpointManager] Could not publish checkpoint row ${messageIndex} for task ${this.task.taskId}: ${error instanceof Error ? error.message : String(error)}`,
+			)
+		}
 	}
 
 	private async captureCanonicalCheckpoint(messageIndex: number | undefined, workspaceRef?: string): Promise<void> {

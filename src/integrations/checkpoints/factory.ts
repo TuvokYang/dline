@@ -8,6 +8,7 @@ import { MultiRootCheckpointManager } from "@integrations/checkpoints/MultiRootC
 import { TaskFileTracker } from "@integrations/checkpoints/TaskFileTracker"
 import type { CanonicalCheckpointPort, ConversationRewindPort, ICheckpointManager } from "@integrations/checkpoints/types"
 import type { DiffViewProvider } from "@integrations/editor/DiffViewProvider"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import { StateManager } from "@/core/storage/StateManager"
 
 /**
@@ -51,6 +52,7 @@ type BuildArgs = {
 	cancelTask: () => Promise<void>
 	restoreChatRuntime: (input: { apiIndex: number; editedText?: string }) => Promise<void>
 	postStateToWebview: () => Promise<void>
+	publishMessage: (message: UiMessage) => Promise<void>
 
 	// initial state for single-root
 	initialConversationHistoryDeletedRange?: [number, number]
@@ -82,6 +84,7 @@ export function buildCheckpointManager(args: BuildArgs): ICheckpointManager {
 		cancelTask,
 		restoreChatRuntime,
 		postStateToWebview,
+		publishMessage,
 		initialConversationHistoryDeletedRange,
 		initialCheckpointManagerErrorMessage,
 		stateManager,
@@ -120,6 +123,7 @@ export function buildCheckpointManager(args: BuildArgs): ICheckpointManager {
 			cancelTask,
 			restoreChatRuntime,
 			postStateToWebview,
+			publishMessage,
 		},
 		{
 			conversationHistoryDeletedRange: initialConversationHistoryDeletedRange,

@@ -12,7 +12,9 @@ import { buildCheckpointManager } from "@integrations/checkpoints/factory"
 import type { TaskFileTracker } from "@integrations/checkpoints/TaskFileTracker"
 import type { ConversationRewindPort, ICheckpointManager } from "@integrations/checkpoints/types"
 import type { DiffViewProvider } from "@integrations/editor/DiffViewProvider"
+import { convertClineMessageToProto } from "@shared/proto-conversions/cline-message"
 import { Logger } from "@shared/services/Logger"
+import { sendPartialMessageEvent } from "../../ui/subscribeToPartialMessage"
 
 export interface ControllerTaskCheckpointOwnerOptions {
 	readonly controller: Controller
@@ -72,6 +74,7 @@ export class ControllerTaskCheckpointOwner {
 			cancelTask: () => options.controller.cancelTask(),
 			restoreChatRuntime: (input) => this.reopenAfterChatRestore(input),
 			postStateToWebview: () => options.controller.postStateToWebview(),
+			publishMessage: (message) => sendPartialMessageEvent(options.controller, convertClineMessageToProto(message)),
 			initialConversationHistoryDeletedRange: options.toolState.conversationHistoryDeletedRange,
 			initialCheckpointManagerErrorMessage: options.toolState.checkpointManagerErrorMessage,
 			stateManager: options.stateManager,

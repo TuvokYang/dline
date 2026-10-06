@@ -94,6 +94,7 @@ function createHarness(
 			restoreChatRuntime,
 			say: vi.fn().mockResolvedValue(100),
 			postStateToWebview,
+			publishMessage: vi.fn().mockResolvedValue(undefined),
 		} as never,
 		{
 			checkpointTracker: { resetHead, restoreFiles } as never,

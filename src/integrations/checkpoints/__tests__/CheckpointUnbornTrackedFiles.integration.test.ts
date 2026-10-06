@@ -109,6 +109,7 @@ function createManagerHarness(input: {
 			restoreChatRuntime: vi.fn().mockResolvedValue(undefined),
 			say,
 			postStateToWebview: vi.fn().mockResolvedValue(undefined),
+			publishMessage: vi.fn().mockResolvedValue(undefined),
 		} as never,
 		{},
 	)

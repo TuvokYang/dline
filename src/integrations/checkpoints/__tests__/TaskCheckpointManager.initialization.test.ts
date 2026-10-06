@@ -42,6 +42,7 @@ function createManager(
 		Object.assign(messages[index], updates)
 	})
 	const flushMessageUpdate = vi.fn().mockResolvedValue(undefined)
+	const publishMessage = vi.fn(async (_message: UiMessage) => undefined)
 	const manager = createTaskCheckpointManager(
 		{ taskId: "task-1", controller: {} } as never,
 		{ enableCheckpoints: true, createCheckpointTracker },
@@ -65,13 +66,22 @@ function createManager(
 			restoreChatRuntime: vi.fn(),
 			say,
 			postStateToWebview,
+			publishMessage,
 		} as never,
 		{
 			checkpointManagerErrorMessage: initialError,
 			...(options?.tracker ? { checkpointTracker: options.tracker } : {}),
 		},
 	)
-	return { manager, taskState, setCheckpointTracker, postStateToWebview, updateClineMessage, flushMessageUpdate }
+	return {
+		manager,
+		taskState,
+		setCheckpointTracker,
+		postStateToWebview,
+		publishMessage,
+		updateClineMessage,
+		flushMessageUpdate,
+	}
 }
 
 describe("TaskCheckpointManager checkpoint initialization", () => {
@@ -217,7 +227,37 @@ describe("TaskCheckpointManager checkpoint initialization", () => {
 		expect(harness.flushMessageUpdate.mock.invocationCallOrder[0]).toBeLessThan(
 			harness.postStateToWebview.mock.invocationCallOrder[0],
 		)
+		// The row is already on screen without a hash; only republishing it
+		// lets the view offer the file restore for this checkpoint.
+		expect(harness.publishMessage).toHaveBeenCalledExactlyOnceWith(
+			expect.objectContaining({ ts: 42, say: "checkpoint_created", lastCheckpointHash: baselineHash }),
+		)
+		expect(harness.flushMessageUpdate.mock.invocationCallOrder[0]).toBeLessThan(
+			harness.publishMessage.mock.invocationCallOrder[0],
+		)
 		expect(capture).toHaveBeenCalledExactlyOnceWith({ messageTs: 42, workspaceRef: baselineHash })
+	})
+
+	it("keeps a durable checkpoint hash when republishing its row fails", async () => {
+		const messages: UiMessage[] = []
+		const tracker = {
+			setTaskFileTracker: vi.fn(),
+			commit: vi.fn().mockResolvedValue("baseline-hash"),
+			getConsecutiveStagingFailures: vi.fn().mockReturnValue(0),
+		} as unknown as CheckpointTracker
+		const capture = vi.fn(async () => undefined)
+		const harness = createManager(vi.fn<CreateCheckpointTracker>().mockResolvedValue(tracker), undefined, {
+			messages,
+			tracker,
+			canonicalCheckpoint: { capture, restore: vi.fn() },
+		})
+		harness.publishMessage.mockRejectedValueOnce(new Error("webview closed"))
+
+		await harness.manager.saveCheckpoint()
+
+		expect(messages[0]).toMatchObject({ lastCheckpointHash: "baseline-hash" })
+		expect(harness.postStateToWebview).toHaveBeenCalled()
+		expect(capture).toHaveBeenCalledExactlyOnceWith({ messageTs: 42, workspaceRef: "baseline-hash" })
 	})
 
 	it("durably binds a completion checkpoint before posting its updated UI state", async () => {
@@ -289,6 +329,7 @@ describe("TaskCheckpointManager checkpoint initialization", () => {
 						return ts
 					},
 					postStateToWebview,
+					publishMessage: vi.fn().mockResolvedValue(undefined),
 				} as never,
 				{ checkpointTracker: tracker },
 			)
