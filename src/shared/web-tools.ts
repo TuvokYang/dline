@@ -119,6 +119,21 @@ function normalizeSearchItem(value: unknown): WebSearchItemPresentation | undefi
 	}
 }
 
+/**
+ * Read the fetched page text from a provider-hosted Web Fetch result.
+ *
+ * Anthropic returns the page as a document whose text source carries the full body. Binary sources such as base64
+ * PDFs have no displayable text, so they yield `undefined` rather than raw encoded bytes.
+ */
+export function normalizeHostedWebFetchContent(result: unknown): string | undefined {
+	const content = asRecord(result)?.content
+	if (typeof content === "string") return nonEmptyString(content) ? content : undefined
+
+	const source = asRecord(asRecord(content)?.source)
+	if (source?.type !== "text" || typeof source.data !== "string") return undefined
+	return nonEmptyString(source.data) ? source.data : undefined
+}
+
 /** Normalize provider-native and local Web Search payloads before they cross the UI message boundary. */
 export function normalizeWebSearchItems(result: unknown): WebSearchItemPresentation[] {
 	const record = asRecord(result)

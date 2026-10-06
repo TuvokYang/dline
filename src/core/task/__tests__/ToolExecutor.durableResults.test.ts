@@ -521,6 +521,51 @@ describe("ToolExecutor durable tool results", () => {
 		])
 	})
 
+	it("carries the full fetched document text on a completed provider-hosted Web Fetch row", async () => {
+		const plan = resolveWebSearchRoutingPlan({
+			enabled: true,
+			modelInfo: { capabilities: { tools: [ServerTool.WEB_FETCH] } },
+			selectedApiFormat: ApiFormat.ANTHROPIC_CHAT,
+			localAvailable: true,
+			remoteAdapterAvailable: true,
+			remoteWebFetchAdapterAvailable: true,
+		})
+		const { executor, say } = createHarness({ providerId: "anthropic" })
+		const hosted = executor as unknown as {
+			hostedServerToolMessageTs: Map<string, number>
+			setWebSearchRoutingPlan(plan: WebSearchRoutingPlan, webToolsEnabled: boolean): void
+			consumeServerToolChunk(chunk: ApiStreamServerToolChunk): Promise<boolean>
+		}
+		hosted.hostedServerToolMessageTs = new Map()
+		hosted.setWebSearchRoutingPlan(plan, true)
+		const fetchChunk = {
+			type: "server_tool",
+			function_id: "srvtoolu_fetch_ok",
+			dline_tid: "trace-fetch-ok",
+			tool: ServerTool.WEB_FETCH,
+		} as const
+		const pageText = `# Current docs\n\n${"Fetched paragraph. ".repeat(400)}`
+
+		await hosted.consumeServerToolChunk({ ...fetchChunk, phase: "started", input: { url: "https://example.com/docs" } })
+		await hosted.consumeServerToolChunk({
+			...fetchChunk,
+			phase: "completed",
+			result: {
+				type: "web_fetch_result",
+				url: "https://example.com/docs",
+				content: { type: "document", source: { type: "text", media_type: "text/plain", data: pageText } },
+			},
+		})
+
+		const rows = hostedToolRows(say)
+		expect(rows.at(-1)).toEqual(
+			expect.objectContaining({
+				tool: "webFetch",
+				webFetch: expect.objectContaining({ status: "completed", url: "https://example.com/docs", content: pageText }),
+			}),
+		)
+	})
+
 	describe("Anthropic deferred hosted calls", () => {
 		const anthropicSearchPlan = resolveWebSearchRoutingPlan({
 			enabled: true,

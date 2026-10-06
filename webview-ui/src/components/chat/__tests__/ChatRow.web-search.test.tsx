@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react"
 import React from "react"
-import { describe, expect, it, vi } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 import { ChatRowContent } from "../ChatRow"
 
 void React
@@ -360,8 +360,8 @@ describe("ChatRow hosted Web Search rendering", () => {
 		expect(link.firstElementChild).toHaveClass("break-all", "text-left", "[direction:ltr]")
 	})
 
-	it("renders completed Web Fetch content in a 40vh scroll container", () => {
-		render(
+	describe("fetched Web Fetch content", () => {
+		const completedFetch = (content: string) => (
 			<ChatRowContent
 				{...baseProps}
 				message={{
@@ -375,28 +375,64 @@ describe("ChatRow hosted Web Search rendering", () => {
 						webFetch: {
 							schemaVersion: 1,
 							status: "completed",
-							source: { id: "browser", label: "Browser Web Fetch", execution: "dline" },
+							source: { id: "anthropic-hosted", label: "Anthropic Web Fetch", execution: "hosted" },
 							url: "https://example.com/docs",
-							prompt: "Extract the current docs",
-							content: "# Current docs\n\nFetched content marker",
+							content,
 						},
 					}),
 				}}
-			/>,
+			/>
 		)
 
-		expect(screen.getByText("Browser Web Fetch (Dline)")).toBeInTheDocument()
-		const toggle = screen.getByTestId("web-fetch-details-toggle")
-		expect(toggle).toHaveAttribute("aria-expanded", "false")
-		expect(screen.queryByTestId("web-fetch-results")).not.toBeInTheDocument()
-		expect(screen.queryByText("Fetched content marker", { exact: false })).not.toBeInTheDocument()
+		/** jsdom has no layout, so the measured content height is supplied for the scroll area. */
+		const withMeasuredContent = (scrollHeight: number, clientHeight: number) => {
+			vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(scrollHeight)
+			vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(clientHeight)
+		}
 
-		fireEvent.click(toggle)
+		afterEach(() => {
+			vi.restoreAllMocks()
+		})
 
-		expect(toggle).toHaveAttribute("aria-expanded", "true")
-		expect(screen.getByText("Fetched content marker", { exact: false })).toBeInTheDocument()
-		expect(screen.getByTestId("web-fetch-card")).toHaveClass("max-h-[40vh]", "overflow-y-auto")
-		expect(screen.getByTestId("web-fetch-results")).not.toHaveClass("max-h-[40vh]", "overflow-y-auto")
+		it("previews the full content in a collapsed scroll area while the card itself does not scroll", () => {
+			render(completedFetch("# Current docs\n\nFetched content marker"))
+
+			expect(screen.getByText("Anthropic Web Fetch (Hosted)")).toBeInTheDocument()
+			const results = screen.getByTestId("web-fetch-results")
+			expect(results).toHaveTextContent("Fetched content marker")
+			expect(results).toHaveClass("max-h-[120px]", "overflow-y-auto")
+			expect(screen.getByTestId("web-fetch-card")).not.toHaveClass("max-h-[40vh]", "overflow-y-auto")
+		})
+
+		it("omits the toggle bar when the content fits the collapsed height", () => {
+			withMeasuredContent(80, 80)
+			render(completedFetch("short page"))
+
+			expect(screen.getByTestId("web-fetch-results")).toHaveTextContent("short page")
+			expect(screen.queryByTestId("web-fetch-details-toggle")).not.toBeInTheDocument()
+		})
+
+		it("pins a toggle bar outside the scroll area when the content overflows, switching between both heights", () => {
+			withMeasuredContent(2400, 120)
+			render(completedFetch(`# Long page\n\n${"Fetched paragraph. ".repeat(600)}`))
+
+			const results = screen.getByTestId("web-fetch-results")
+			const toggle = screen.getByTestId("web-fetch-details-toggle")
+			expect(results).not.toContainElement(toggle)
+			expect(toggle).toHaveAttribute("aria-expanded", "false")
+			expect(results).toHaveClass("max-h-[120px]")
+
+			fireEvent.click(toggle)
+
+			expect(toggle).toHaveAttribute("aria-expanded", "true")
+			expect(results).toHaveClass("max-h-[60vh]", "overflow-y-auto")
+			expect(results).not.toHaveClass("max-h-[120px]")
+
+			fireEvent.click(toggle)
+
+			expect(toggle).toHaveAttribute("aria-expanded", "false")
+			expect(results).toHaveClass("max-h-[120px]")
+		})
 	})
 
 	it("explains that a deferred hosted search waits for the next request", () => {

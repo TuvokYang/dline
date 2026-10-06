@@ -45,7 +45,12 @@ import type { Mode } from "@shared/storage/types"
 import type { TaskCapabilityToggles } from "@shared/TaskCapabilityToggles"
 import { ClineDefaultTool, toolUseNames } from "@shared/tools"
 import { ClineAskResponse } from "@shared/WebviewMessage"
-import { type HostedCallPresentation, normalizeWebSearchItems, type WebToolPresentationStatus } from "@shared/web-tools"
+import {
+	type HostedCallPresentation,
+	normalizeHostedWebFetchContent,
+	normalizeWebSearchItems,
+	type WebToolPresentationStatus,
+} from "@shared/web-tools"
 import { isParallelToolCallingEnabled, modelDoesntSupportWebp } from "@/utils/model-utils"
 import { ToolUse } from "../assistant-message"
 import { ContextManager } from "../context/context-management/ContextManager"
@@ -169,6 +174,7 @@ function hostedFetchError(update: HostedServerToolUpdate): string | undefined {
 function buildWebFetchMessage(update: HostedServerToolUpdate, providerId: string, providerLabel: string): ClineSayTool {
 	const url = hostedFetchUrl(update)
 	const error = hostedFetchError(update)
+	const content = normalizeHostedWebFetchContent(update.result)
 	return {
 		tool: "webFetch",
 		path: url,
@@ -184,6 +190,7 @@ function buildWebFetchMessage(update: HostedServerToolUpdate, providerId: string
 				provider: providerId,
 			},
 			url,
+			...(content === undefined ? {} : { content }),
 			...(error === undefined ? {} : { error }),
 			...deferredHostedCall(update),
 		},
