@@ -2,6 +2,7 @@ import { type UiAsk, type UiMessage, type UiSay } from "@shared/ExtensionMessage
 import type { ClineAskResponse } from "@shared/WebviewMessage"
 import pWaitFor from "p-wait-for"
 import type { ClineMessageModelInfo } from "@/shared/messages"
+import { createCanonicalAskRow } from "./ask-row"
 import type { MessageStateHandler } from "./message-state"
 
 const ABORT_ALLOWED_SAY_TYPES = new Set<UiSay>(["hook_status", "hook_output_stream", "deleted_api_reqs", "state_snapshot"])
@@ -134,18 +135,7 @@ export class MessageChannel {
 
 	/** Build the canonical complete ask row shared by ordinary and recovered presentation paths. */
 	private createAskMessage(type: UiAsk, text: string | undefined, askTs: number, interactionId?: string): UiMessage {
-		const commandPresentation = type === "command" ? { commandStatus: "pending" as const, exitCode: undefined } : {}
-		const interactionIdentity = interactionId ? { interactionId } : {}
-		return {
-			ts: askTs,
-			type: "ask",
-			say: undefined,
-			ask: type,
-			text,
-			partial: false,
-			...interactionIdentity,
-			...commandPresentation,
-		}
+		return createCanonicalAskRow(type, text, askTs, interactionId)
 	}
 
 	private shouldMessageInvalidateAsk(message: UiMessage): boolean {

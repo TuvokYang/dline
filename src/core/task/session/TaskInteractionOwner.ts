@@ -1,5 +1,7 @@
 import { findLast } from "@shared/array"
+import type { UiAsk } from "@shared/ExtensionMessage"
 import { Logger } from "@shared/services/Logger"
+import { createCanonicalAskRow } from "../ask-row"
 import type { RetainedInputPresentationPort } from "../executors/compose/RetainedInputPresentationPort"
 import type { InteractionKind } from "../interaction/Interaction"
 import { InteractionCancellationError } from "../interaction/InteractionCancellationError"
@@ -128,14 +130,14 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
 		// rows around it, and a row that sorts before its own tool output makes
 		// the chat collapse the pair into two separate entries.
 		const latestTs = this.messages.clineMessages.at(-1)?.ts ?? 0
-		await this.messages.addToClineMessages({
-			ts: Math.max(Date.now(), latestTs + 1),
-			type: "ask",
-			ask: (request.ask ?? definition.taskAsk) as typeof definition.taskAsk,
-			text: request.body,
-			interactionId: request.interactionId,
-			partial: false,
-		})
+		await this.messages.addToClineMessages(
+			createCanonicalAskRow(
+				(request.ask ?? definition.taskAsk) as UiAsk,
+				request.body,
+				Math.max(Date.now(), latestTs + 1),
+				request.interactionId,
+			),
+		)
 	}
 
 	/**
@@ -518,14 +520,7 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
 		)
 		const definition = getInteraction(request.kind)
 		const anchorTs = request.existingTs ?? Date.now()
-		const anchor = {
-			ts: anchorTs,
-			type: "ask" as const,
-			ask: definition.taskAsk,
-			text: request.presentation,
-			interactionId: request.interactionId,
-			partial: false,
-		}
+		const anchor = createCanonicalAskRow(definition.taskAsk, request.presentation, anchorTs, request.interactionId)
 		if (this.messages.clineMessages.some((message) => message.ts === anchorTs))
 			await this.messages.finalizeClineMessage(anchor)
 		else await this.messages.addToClineMessages(anchor)
