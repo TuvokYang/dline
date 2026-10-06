@@ -28,6 +28,7 @@ import type {
 	ToolInvocationEnvelope,
 	ToolResultEnvelope,
 } from "@/core/task/stores/payload/TaskPayloadEnvelopes"
+import { historyDisplayAnchorRow, projectHistoryDisplayState } from "@/core/task/view/canonical/projectHistoryDisplayState"
 import type { ClineStorageMessage } from "@/shared/messages/content"
 
 /**
@@ -260,7 +261,36 @@ export async function readTaskInteractionView(dlineDocsDir: string, taskId: stri
 		readTaskRuntimeState(dlineDocsDir, taskId),
 		readTaskUiMessages(dlineDocsDir, taskId),
 	])
-	if (!state) return {}
+	return state ? interactionViewOf(state, messages) : {}
+}
+
+/** What a task reopened from History shows before the user answers it. */
+export interface HistoryDisplayView {
+	readonly view: TaskInteractionView
+	/** The stored chat history, followed by the anchor row of an interaction the display synthesized. */
+	readonly messages: UiMessage[]
+}
+
+/**
+ * Reads a closed task the way the History display renders it.
+ *
+ * The display writes nothing: a task that stopped without reaching an
+ * interaction is offered Resume through a dialog and anchor row that exist only
+ * in memory until the user answers. The production projection is applied here
+ * so assertions see that dialog instead of the bare stored state.
+ */
+export async function readHistoryDisplay(dlineDocsDir: string, taskId: string): Promise<HistoryDisplayView> {
+	const [state, stored] = await Promise.all([
+		readTaskRuntimeState(dlineDocsDir, taskId),
+		readTaskUiMessages(dlineDocsDir, taskId),
+	])
+	if (!state) return { view: {}, messages: stored }
+	const display = projectHistoryDisplayState(taskId, state)
+	const messages = display.synthetic ? [...stored, historyDisplayAnchorRow(display.synthetic, stored)] : stored
+	return { view: interactionViewOf(display.state, messages), messages }
+}
+
+function interactionViewOf(state: TaskRuntimeState, messages: readonly UiMessage[]): TaskInteractionView {
 	const interaction = state.dialog.primary
 	const block = state.turn.blocks.find((candidate) => candidate.turnEnding)
 	const anchorInteractionId = anchoredInteractionId(state, messages)

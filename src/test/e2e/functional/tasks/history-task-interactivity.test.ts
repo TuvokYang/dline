@@ -1,4 +1,4 @@
-import { readdir, readFile, writeFile } from "node:fs/promises"
+import { readdir, writeFile } from "node:fs/promises"
 import * as path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
@@ -14,7 +14,7 @@ import {
 	LARGE_PROJECT_TOTAL_TRACKED_FILES,
 	type LargeRealProjectFixture,
 } from "@e2e/utils/large-real-project-fixture"
-import { readTaskUiMessages, rewriteTaskActivities, rewriteTaskUiMessages } from "@e2e/utils/task-instance-store"
+import { readHistoryDisplay, rewriteTaskActivities, rewriteTaskUiMessages } from "@e2e/utils/task-instance-store"
 import { expect, type Frame, type Page, type TestInfo } from "@playwright/test"
 import type { TaskActivityRecord } from "@shared/task-activity"
 import type { ElectronApplication } from "playwright"
@@ -124,8 +124,27 @@ async function seedLargeTransientActivityHistory(dlineDocsDir: string, taskId: s
 }
 
 async function readSnapshot(taskDirectory: string): Promise<StoredInteractionSnapshot | undefined> {
-	const content = await readFile(path.join(taskDirectory, "snapshot.json"), "utf8").catch(() => undefined)
-	return content ? (JSON.parse(content) as StoredInteractionSnapshot) : undefined
+	const dlineDocsDir = path.dirname(path.dirname(taskDirectory))
+	const taskId = path.basename(taskDirectory)
+	// The History display writes nothing until it is answered; read what it renders.
+	const { view, messages } = await readHistoryDisplay(dlineDocsDir, taskId)
+	if (!view.phase) return undefined
+	// state.json keeps no anchor; it is the ask row the dialog's reveal wrote.
+	const row = messages.findLast((message) => message.type === "ask" && message.interactionId === view.interactionId)
+	return {
+		taskId,
+		phase: view.phase,
+		completion: view.completionId ? { completionId: view.completionId } : undefined,
+		anchor: view.anchorInteractionId ? { interactionId: view.anchorInteractionId } : undefined,
+		interaction: view.interactionId
+			? {
+					interactionId: view.interactionId,
+					kind: view.interactionKind,
+					status: view.interactionStatus,
+					anchor: row ? { messageTs: row.ts, messageType: row.type } : undefined,
+				}
+			: undefined,
+	}
 }
 
 async function waitForSnapshotInteraction(
@@ -138,8 +157,9 @@ async function waitForSnapshotInteraction(
 	}, 30_000)
 }
 
+/** The rows the History display renders, including an anchor row it synthesized and has not written. */
 async function readUiMessages(dlineDocsDir: string, taskId: string): Promise<Array<Record<string, unknown>>> {
-	return (await readTaskUiMessages(dlineDocsDir, taskId)) as unknown as Array<Record<string, unknown>>
+	return (await readHistoryDisplay(dlineDocsDir, taskId)).messages as unknown as Array<Record<string, unknown>>
 }
 
 async function rewriteCompletionAskAsLegacy(dlineDocsDir: string, taskId: string): Promise<Record<string, unknown>> {

@@ -2,7 +2,7 @@ import { readdir, readFile, writeFile } from "node:fs/promises"
 import * as path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
-import { readTaskInteractionView } from "@e2e/utils/task-instance-store"
+import { readHistoryDisplay } from "@e2e/utils/task-instance-store"
 import { expect, type Frame } from "@playwright/test"
 import type { ElectronApplication } from "playwright"
 
@@ -72,8 +72,13 @@ async function readTaskSettings(dlineDocsDir: string, taskId: string): Promise<S
 	return JSON.parse(await readFile(path.join(dlineDocsDir, "tasks", taskId, "settings.json"), "utf8")) as StoredTaskSettings
 }
 
+/**
+ * The interaction a reopened task offers, read the way its history display projects it.
+ * A task closed mid-request is durably terminated; Resume is the dialog its display
+ * synthesizes from that state rather than one written to disk.
+ */
 async function readSnapshot(dlineDocsDir: string, taskId: string): Promise<StoredSnapshot> {
-	const view = await readTaskInteractionView(dlineDocsDir, taskId)
+	const { view } = await readHistoryDisplay(dlineDocsDir, taskId)
 	return {
 		phase: view.phase,
 		interaction: view.interactionId
