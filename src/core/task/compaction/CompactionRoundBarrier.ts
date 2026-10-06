@@ -19,21 +19,13 @@ import { NOTHING_TO_COMPACT, requestTaskCompaction } from "./TaskCompactionReque
 /** The catalog identity of the manual compaction command and its aliases. */
 export const COMPACT_COMMAND_ID = "command.compact"
 
-/**
- * How long a round waits for an automatic compaction it scheduled.
- *
- * That wait exists to order two requests, not to guarantee one. A compaction
- * that never reports back - a fenced executor during shutdown, a provider that
- * stops answering - must not strand the round behind it, because the round is
- * what the user is waiting on. A compaction the user asked for is not bounded:
- * it waits on their review, which has no deadline.
- */
-const COMPACTION_BARRIER_TIMEOUT_MS = 120_000
-
 const ROUND_READY: RoundReadiness = { kind: "ready" }
 
 /** Why a round stopped after the automatic compaction it waited on failed. */
 export const AUTOMATIC_COMPACTION_FAILED = "automatic_compaction_failed"
+
+/** Why a round stopped after the automatic compaction it waited on was cancelled or abandoned. */
+export const AUTOMATIC_COMPACTION_WITHDRAWN = "automatic_compaction_withdrawn"
 
 interface CompactionRunResult {
 	readonly outcome: CompactionRunOutcome
@@ -61,8 +53,6 @@ export interface CompactionRoundBarrierOptions {
 	readonly enabled?: () => boolean
 	/** Reports a scheduling failure; compaction must not break the round that waited for it. */
 	readonly onFailure?: (message: string) => void
-	/** Bounds how long one round waits on an automatic run; tests override it to stay fast. */
-	readonly barrierTimeoutMs?: number
 }
 
 interface ObservedPressure {
@@ -120,7 +110,26 @@ export class CompactionRoundBarrier
 	}
 
 	async settlement(compactionId: string): Promise<CompactionRunOutcome> {
-		return (await this.awaitRun(compactionId, false, new AbortController().signal)).outcome
+		return (await this.awaitRun(compactionId, new AbortController().signal)).outcome
+	}
+
+	/**
+	 * Release every round waiting on a run the kernel no longer has in flight.
+	 *
+	 * A round waits for its compaction without a deadline, as dev does: the
+	 * request it is clearing room for must not be sent before the summary lands.
+	 * A run can still end without reporting back - the kernel expires an
+	 * abandoned slot when a halt completes, or the executor is fenced before it
+	 * starts - and only the committed state says so. Completed and failed runs
+	 * never reach this path: their executor settles the waiter before it submits
+	 * the terminal event the kernel commits.
+	 */
+	committed(state: Readonly<TaskState>): void {
+		for (const [compactionId, release] of [...this.waiters]) {
+			if (!isAbandoned(state, compactionId)) continue
+			this.waiters.delete(compactionId)
+			release({ outcome: "withdrawn" })
+		}
 	}
 
 	/**
@@ -137,6 +146,7 @@ export class CompactionRoundBarrier
 		const result = await this.compact(session, "automatic", signal)
 		if (result.nothingToCompact) return { kind: "nothing_to_compact" }
 		if (result.outcome === "completed") return { kind: "completed" }
+		if (result.outcome === "withdrawn") return { kind: "withdrawn" }
 		if (result.outcome !== "failed") return { kind: "skipped" }
 		this.stoppedOnFailure = true
 		return { kind: "failed", error: result.error ?? COMPACTION_FAILURE_MESSAGE }
@@ -198,7 +208,9 @@ export class CompactionRoundBarrier
 	 *
 	 * An automatic run that failed stops the round too: the request it was
 	 * clearing room for would not fit, and the user is the one to retry. The
-	 * pressure stays recorded so the round that retries compacts again.
+	 * pressure stays recorded so the round that retries compacts again. One that
+	 * was cancelled or abandoned stops it the same way, as dev does, rather than
+	 * sending the request it was meant to make room for.
 	 */
 	async settleBeforeRound(input: {
 		readonly signal: AbortSignal
@@ -231,6 +243,7 @@ export class CompactionRoundBarrier
 		if (!shouldCompactAutomatically(this.options.state(), pressure)) return ROUND_READY
 		this.compactedThisRound = true
 		const result = await this.compact(session, "automatic", input.signal)
+		if (result.outcome === "withdrawn") return { kind: "withdrawn", reason: AUTOMATIC_COMPACTION_WITHDRAWN }
 		if (result.outcome !== "failed") return ROUND_READY
 		this.observed ??= observed
 		this.stoppedOnFailure = true
@@ -276,40 +289,28 @@ export class CompactionRoundBarrier
 			)
 			return { outcome: "refused" }
 		}
-		return await this.awaitRun(compactionId, trigger === "automatic", signal)
+		return await this.awaitRun(compactionId, signal)
 	}
 
 	/**
-	 * Wait for one run by identity.
+	 * Wait for one run by identity, with no deadline.
 	 *
 	 * A stopped round stops waiting even if the run never reports back, because
-	 * the stop may have fenced it before it could.
+	 * the stop may have fenced it before it could; a run the kernel has already
+	 * abandoned releases the round through `committed`.
 	 */
-	private async awaitRun(compactionId: string, bounded: boolean, signal: AbortSignal): Promise<CompactionRunResult> {
+	private async awaitRun(compactionId: string, signal: AbortSignal): Promise<CompactionRunResult> {
 		const unclaimed = this.unclaimed
 		if (unclaimed?.compactionId === compactionId) {
 			this.unclaimed = undefined
 			return unclaimed.result
 		}
+		if (isAbandoned(this.options.state(), compactionId)) return { outcome: "withdrawn" }
 		const settled = new Promise<CompactionRunResult>((resolve) => this.waiters.set(compactionId, resolve))
 		try {
-			const released = untilAborted(settled, signal)
-			return bounded ? await this.withTimeout(released) : await released
+			return await untilAborted(settled, signal)
 		} finally {
 			this.waiters.delete(compactionId)
-		}
-	}
-
-	private async withTimeout(promise: Promise<CompactionRunResult>): Promise<CompactionRunResult> {
-		const limit = this.options.barrierTimeoutMs ?? COMPACTION_BARRIER_TIMEOUT_MS
-		let timer: ReturnType<typeof setTimeout> | undefined
-		const deadline = new Promise<CompactionRunResult>((resolve) => {
-			timer = setTimeout(() => resolve({ outcome: "timed_out" }), limit)
-		})
-		try {
-			return await Promise.race([promise, deadline])
-		} finally {
-			if (timer) clearTimeout(timer)
 		}
 	}
 
@@ -337,6 +338,20 @@ function mergeOwedCompactions(owed: readonly LifecycleCommand[]): LifecycleComma
 	if (!first) return undefined
 	const guidance = owed.map((command) => command.premessage.trim()).filter((text) => text.length > 0)
 	return { ...first, premessage: guidance.join("\n\n") }
+}
+
+/**
+ * Whether the kernel's compaction slot shows this run will never report back.
+ *
+ * The slot has moved on to another run, or holds this one in a terminal status
+ * its executor did not settle. An empty slot proves nothing either way, so the
+ * round keeps waiting on the run or on its own stop.
+ */
+function isAbandoned(state: Readonly<TaskState>, compactionId: string): boolean {
+	const compaction = state.flow.compaction
+	if (!compaction) return false
+	if (compaction.compactionId !== compactionId) return true
+	return compaction.status !== "scheduled" && compaction.status !== "running"
 }
 
 /** Resolve with the run's result, or as withdrawn as soon as the signal aborts. */

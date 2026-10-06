@@ -1,14 +1,15 @@
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 import type { CompactionPort } from "../../executors/compaction/CompactionCommandExecutor"
 import { CompactionReviewWithdrawnError } from "../../executors/compaction/ProductionCompactionAdapter"
 import { createInitialTaskState, type TaskState } from "../../kernel"
 import type { ActiveTaskSession } from "../../session/ActiveTaskSession"
 import { decodeTaskPayload } from "../../stores/payload/TaskPayloadCodec"
 import type { CompactionContextEnvelope, LifecycleCommand } from "../../stores/payload/TaskPayloadEnvelopes"
-import { COMPACT_COMMAND_ID, CompactionRoundBarrier } from "../CompactionRoundBarrier"
+import { AUTOMATIC_COMPACTION_WITHDRAWN, COMPACT_COMMAND_ID, CompactionRoundBarrier } from "../CompactionRoundBarrier"
 
 const TRIGGER = 100_000
-const TEST_BARRIER_TIMEOUT_MS = 50
+/** Far beyond any deadline the barrier could have had: dev waits on the run itself. */
+const LONG_WAIT_MS = 10 * 60_000
 
 /** A conversation with a settled span, so a request is scheduled rather than refused. */
 const COMPACTABLE = {
@@ -51,6 +52,14 @@ function probe(state: () => TaskState, submission: { kind: string; reason?: stri
 
 function running(generation = 0): TaskState {
 	return { ...createInitialTaskState("task-1"), generation, flow: { phase: "running" } }
+}
+
+/** The state after the kernel committed `compactionId` into its compaction slot with `status`. */
+function withCompaction(state: TaskState, compactionId: string, status: "running" | "expired"): TaskState {
+	return {
+		...state,
+		flow: { ...state.flow, compaction: { compactionId, attempt: `${compactionId}:1`, contextRef: "ctx-ref", status } },
+	} as TaskState
 }
 
 const COMPACT: LifecycleCommand = { commandId: COMPACT_COMMAND_ID, premessage: "keep the audit" }
@@ -168,17 +177,116 @@ describe("CompactionRoundBarrier - automatic", () => {
 		expect(p.scheduled).toHaveLength(1)
 	})
 
-	it("releases a round whose automatic run never reports back", async () => {
-		const state = running()
+	it("keeps the round waiting on its automatic run with no deadline", async () => {
+		vi.useFakeTimers()
+		try {
+			const state = running()
+			const p = probe(() => state)
+			const barrier = new CompactionRoundBarrier({ session: () => p.session, state: () => state })
+
+			barrier.observe({ contextTokens: TRIGGER, compactTriggerTokens: TRIGGER })
+			let settled = false
+			const waiting = barrier.settleBeforeRound(round()).then((readiness) => {
+				settled = true
+				return readiness
+			})
+			await vi.advanceTimersByTimeAsync(LONG_WAIT_MS)
+			expect(settled).toBe(false)
+
+			await run(barrier, p.scheduled[0])
+			await expect(waiting).resolves.toEqual({ kind: "ready" })
+		} finally {
+			vi.useRealTimers()
+		}
+	})
+
+	it("stops a round whose automatic run the kernel abandoned without reporting back", async () => {
+		let state = running()
 		const p = probe(() => state)
-		const barrier = new CompactionRoundBarrier({
-			session: () => p.session,
-			state: () => state,
-			barrierTimeoutMs: TEST_BARRIER_TIMEOUT_MS,
-		})
+		const barrier = new CompactionRoundBarrier({ session: () => p.session, state: () => state })
 
 		barrier.observe({ contextTokens: TRIGGER, compactTriggerTokens: TRIGGER })
-		await expect(barrier.settleBeforeRound(round())).resolves.toEqual({ kind: "ready" })
+		let settled = false
+		const waiting = barrier.settleBeforeRound(round()).then((readiness) => {
+			settled = true
+			return readiness
+		})
+		await drain()
+		const [compactionId] = p.scheduled
+
+		// A commit that still shows the run in flight, or shows nothing, proves nothing.
+		barrier.committed(state)
+		state = withCompaction(state, compactionId, "running")
+		barrier.committed(state)
+		await drain()
+		expect(settled).toBe(false)
+
+		state = withCompaction(state, compactionId, "expired")
+		barrier.committed(state)
+		await expect(waiting).resolves.toEqual({ kind: "withdrawn", reason: AUTOMATIC_COMPACTION_WITHDRAWN })
+	})
+
+	it("stops a round whose automatic run was replaced in the kernel's slot", async () => {
+		let state = running()
+		const p = probe(() => state)
+		const barrier = new CompactionRoundBarrier({ session: () => p.session, state: () => state })
+
+		barrier.observe({ contextTokens: TRIGGER, compactTriggerTokens: TRIGGER })
+		const waiting = barrier.settleBeforeRound(round())
+		await drain()
+
+		state = withCompaction(state, "compaction:someone-else", "running")
+		barrier.committed(state)
+		await expect(waiting).resolves.toEqual({ kind: "withdrawn", reason: AUTOMATIC_COMPACTION_WITHDRAWN })
+	})
+
+	it("stops waiting on an automatic run as withdrawn when the round itself is stopped", async () => {
+		const state = running()
+		const p = probe(() => state)
+		const barrier = new CompactionRoundBarrier({ session: () => p.session, state: () => state })
+		const stop = new AbortController()
+
+		barrier.observe({ contextTokens: TRIGGER, compactTriggerTokens: TRIGGER })
+		const waiting = barrier.settleBeforeRound(round([], stop.signal))
+		await drain()
+		stop.abort("compose_cancelled")
+
+		await expect(waiting).resolves.toEqual({ kind: "withdrawn", reason: AUTOMATIC_COMPACTION_WITHDRAWN })
+	})
+
+	it("waits for an admission compaction with no deadline and stops when the kernel abandons it", async () => {
+		vi.useFakeTimers()
+		try {
+			let state = running()
+			const p = probe(() => state)
+			const barrier = new CompactionRoundBarrier({ session: () => p.session, state: () => state })
+
+			let settled = false
+			const waiting = barrier.compactForAdmission(new AbortController().signal).then((result) => {
+				settled = true
+				return result
+			})
+			await vi.advanceTimersByTimeAsync(LONG_WAIT_MS)
+			expect(settled).toBe(false)
+
+			state = withCompaction(state, p.scheduled[0], "expired")
+			barrier.committed(state)
+			await expect(waiting).resolves.toEqual({ kind: "withdrawn" })
+		} finally {
+			vi.useRealTimers()
+		}
+	})
+
+	it("resolves a recovery settlement as withdrawn once the kernel abandons the run", async () => {
+		let state = running()
+		const barrier = new CompactionRoundBarrier({ session: () => undefined, state: () => state })
+
+		const settlement = barrier.settlement("compaction:truncate")
+		await drain()
+		state = withCompaction(state, "compaction:truncate", "expired")
+		barrier.committed(state)
+
+		await expect(settlement).resolves.toBe("withdrawn")
 	})
 
 	it("leaves the conversation alone when automatic compaction is disabled", async () => {
@@ -339,25 +447,26 @@ describe("CompactionRoundBarrier - manual", () => {
 		expect(p.contexts.map((context) => context.trigger)).toEqual(["manual"])
 	})
 
-	it("waits past the automatic deadline while the user reviews", async () => {
-		const state = running()
-		const p = probe(() => state)
-		const barrier = new CompactionRoundBarrier({
-			session: () => p.session,
-			state: () => state,
-			barrierTimeoutMs: TEST_BARRIER_TIMEOUT_MS,
-		})
+	it("keeps waiting while the user reviews, however long it takes", async () => {
+		vi.useFakeTimers()
+		try {
+			const state = running()
+			const p = probe(() => state)
+			const barrier = new CompactionRoundBarrier({ session: () => p.session, state: () => state })
 
-		let settled = false
-		const waiting = barrier.settleBeforeRound(round([COMPACT])).then(() => {
-			settled = true
-		})
-		await new Promise((resolve) => setTimeout(resolve, TEST_BARRIER_TIMEOUT_MS * 3))
-		expect(settled).toBe(false)
+			let settled = false
+			const waiting = barrier.settleBeforeRound(round([COMPACT])).then(() => {
+				settled = true
+			})
+			await vi.advanceTimersByTimeAsync(LONG_WAIT_MS)
+			expect(settled).toBe(false)
 
-		await run(barrier, p.scheduled[0])
-		await waiting
-		expect(settled).toBe(true)
+			await run(barrier, p.scheduled[0])
+			await waiting
+			expect(settled).toBe(true)
+		} finally {
+			vi.useRealTimers()
+		}
 	})
 
 	it("stops waiting as withdrawn when the round itself is stopped", async () => {

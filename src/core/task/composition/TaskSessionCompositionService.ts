@@ -600,6 +600,7 @@ export class TaskSessionCompositionService {
 					// Applied first and synchronously, so the view it informs never
 					// delays the figure and a failing view cannot skip it.
 					contextUsage.committed(state)
+					compaction.committed(state)
 					collaboration?.committed(state)
 					await options.taskView.notifyCommitted(state)
 				},

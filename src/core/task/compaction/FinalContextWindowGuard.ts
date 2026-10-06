@@ -13,7 +13,7 @@ import { getHighContextPressureWarning, withHighContextPressureWarning } from ".
 import type { CompactionFailurePresentationPort } from "../executors/compaction/ProductionCompactionAdapter"
 import type { ComposeContextWindowGuardPort, ContextWindowAdmission } from "../executors/compose/ProductionComposeAdapter"
 import type { ProviderRequestFramePort } from "../executors/provider/service/ProviderRequest"
-import { AUTOMATIC_COMPACTION_FAILED } from "./CompactionRoundBarrier"
+import { AUTOMATIC_COMPACTION_FAILED, AUTOMATIC_COMPACTION_WITHDRAWN } from "./CompactionRoundBarrier"
 import { estimateFramedRequest, type FramedRequestEstimate } from "./FramedRequestEstimate"
 
 type RequestPressures = Parameters<typeof resolveContextWindowProjection>[0]["requestInfos"]
@@ -26,6 +26,8 @@ export type AdmissionCompaction =
 	| { readonly kind: "skipped" }
 	/** Nothing answered exists yet, so there is nothing a summary could replace. */
 	| { readonly kind: "nothing_to_compact" }
+	/** The run was cancelled or abandoned, so the request it was making room for must not go out. */
+	| { readonly kind: "withdrawn" }
 	| { readonly kind: "failed"; readonly error: string }
 
 /** Compacts for a round whose complete request does not fit; owned by the compaction barrier. */
@@ -92,6 +94,7 @@ export class FinalContextWindowGuard implements ComposeContextWindowGuardPort {
 		if (measured.projection.shouldCompact && this.options.compaction) {
 			const compaction = await this.options.compaction.compactForAdmission(input.signal)
 			if (compaction.kind === "nothing_to_compact") return await this.refuseUncompactable()
+			if (compaction.kind === "withdrawn") return { kind: "withdrawn", reason: AUTOMATIC_COMPACTION_WITHDRAWN }
 			if (compaction.kind === "failed") {
 				return { kind: "failed", reason: AUTOMATIC_COMPACTION_FAILED, presentation: compaction.error }
 			}

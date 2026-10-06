@@ -5,7 +5,7 @@
  * was told anything failed. `timed_out` means the waiter stopped waiting while
  * the run may still be going.
  */
-export type CompactionRunOutcome = "completed" | "failed" | "withdrawn" | "refused" | "timed_out"
+export type CompactionRunOutcome = "completed" | "failed" | "withdrawn" | "refused"
 
 /**
  * The way out a failed automatic compaction leaves the user.

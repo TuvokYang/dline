@@ -101,6 +101,7 @@ export interface ComposeContextWindowGuardPort {
 /** Whether the measured request may be drafted, and the environment it carries if so. */
 export type ContextWindowAdmission =
 	| { readonly kind: "ready"; readonly environment?: string }
+	| { readonly kind: "withdrawn"; readonly reason: string }
 	| { readonly kind: "failed"; readonly reason: string; readonly presentation?: string }
 
 export interface ProductionComposeAdapterOptions {
@@ -217,6 +218,7 @@ export class ProductionComposeAdapter implements ComposePort {
 			...(rendered ? { environment: rendered } : {}),
 		})) ?? { kind: "ready" as const, environment: rendered }
 		if (input.signal.aborted) throw input.signal.reason
+		if (admission.kind === "withdrawn") return { withdrawn: { reason: admission.reason } }
 		if (admission.kind === "failed") {
 			const { reason, presentation } = admission
 			return { failed: { reason, ...(presentation === undefined ? {} : { presentation }) } }
