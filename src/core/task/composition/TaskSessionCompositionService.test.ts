@@ -5,7 +5,11 @@ import { TaskActivityStore } from "../activity/TaskActivityStore"
 import { TaskPromptLifecycle } from "../prompt/TaskPromptLifecycle"
 import type { TaskPersistenceAssembly } from "../shell/TaskPersistenceAssembly"
 import { InMemoryConversationJournal } from "../stores/InMemoryRuntimeStores"
-import { type OpenTaskSessionCompositionOptions, TaskSessionCompositionService } from "./TaskSessionCompositionService"
+import {
+	cancelRunningActivities,
+	type OpenTaskSessionCompositionOptions,
+	TaskSessionCompositionService,
+} from "./TaskSessionCompositionService"
 
 const persistenceMock = vi.hoisted(() => ({ open: vi.fn() }))
 
@@ -130,5 +134,47 @@ describe("TaskSessionCompositionService", () => {
 			expect(browserDispose).toHaveBeenCalledOnce()
 			expect(commandsDispose).toHaveBeenCalledOnce()
 		}
+	})
+})
+
+describe("cancelRunningActivities", () => {
+	it("ends a running command as cancelled even when the kill reports a failure", async () => {
+		const store = new TaskActivityStore("task-close")
+		// The command executor reports the killed process as a failure before
+		// its canceller resolves; closing must still record the user-facing
+		// outcome as a cancellation.
+		const cancel = vi.fn(async () => {
+			store.update("background-command", { status: "failed", error: "Terminated by SIGTERM" })
+		})
+		store.create({
+			activityId: "background-command",
+			kind: "command",
+			executionMode: "background",
+			cancellationOwner: "explicit",
+			title: "npm run dev",
+			cancel,
+		})
+		store.create({
+			activityId: "finished-command",
+			kind: "command",
+			executionMode: "foreground",
+			title: "npm test",
+		})
+		store.update("finished-command", { status: "completed" })
+
+		await cancelRunningActivities(store)
+
+		expect(cancel).toHaveBeenCalledOnce()
+		expect(store.get("background-command")?.status).toBe("cancelled")
+		expect(store.get("finished-command")?.status).toBe("completed")
+	})
+
+	it("does nothing when no activity is running", async () => {
+		const store = new TaskActivityStore("task-close")
+		const cancel = vi.spyOn(store, "cancel")
+
+		await cancelRunningActivities(store)
+
+		expect(cancel).not.toHaveBeenCalled()
 	})
 })

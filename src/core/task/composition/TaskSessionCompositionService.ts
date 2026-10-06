@@ -86,6 +86,7 @@ import { openTaskPersistence, type TaskPersistenceAssembly } from "../shell/Task
 import { InMemoryBackgroundDeliveryLedger, type TaskViewPort } from "../stores"
 import { JournalConversationRewind } from "../stores/JournalConversationRewind"
 import { TaskStateManager } from "../TaskStateManager"
+import { withTerminateTimeout } from "../TaskTerminateTimeout"
 import { DefaultToolHandlerState } from "../tools/state/ToolHandlerState"
 import { ToolValidator } from "../tools/ToolValidator"
 import type { TaskSessionHostFactory } from "./TaskSessionHostFactory"
@@ -379,7 +380,15 @@ export class TaskSessionCompositionService {
 			conversationRewind,
 		})
 		resources.add({ release: () => tool.browser.dispose() })
-		resources.add({ release: () => tool.commands.dispose() })
+		resources.add({
+			release: async () => {
+				try {
+					await cancelRunningActivities(activities)
+				} finally {
+					await tool.commands.dispose()
+				}
+			},
+		})
 		for (const release of tool.releases ?? []) resources.add(release)
 		tool.commands.bindBackgroundCommandSettlement({
 			settled: (command) =>
@@ -938,4 +947,21 @@ export class TaskSessionCompositionService {
 			admission,
 		)
 	}
+}
+
+/** How long closing a task waits for its running activities to acknowledge cancellation. */
+const CLOSE_ACTIVITY_CANCEL_TIMEOUT_MS = 5_000
+
+/**
+ * End every activity still running when the session closes as cancelled.
+ *
+ * The store marks each activity before its canceller stops the work, so the
+ * process kill that follows is not recorded as a command failure. Without this
+ * a background command left running at close persisted as `failed` with the
+ * kill signal as its error.
+ */
+export async function cancelRunningActivities(activities: TaskActivityStore): Promise<void> {
+	const running = activities.listRunning().map((activity) => activity.activityId)
+	if (running.length === 0) return
+	await withTerminateTimeout(activities.cancel(running), CLOSE_ACTIVITY_CANCEL_TIMEOUT_MS, "cancelRunningActivities")
 }

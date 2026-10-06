@@ -129,12 +129,21 @@ export class ControllerTaskSessionHostFactory implements TaskSessionHostFactory 
 					kind: "command",
 					executionMode: input.executionMode,
 					cancellationOwner: input.cancellationOwner,
-					title: input.command,
+					// The title is the one-line label; the full command is the detail
+					// the Activities view and a reopened task show.
+					title: input.command.split(/\r?\n/, 1)[0].slice(0, 240) || "Command",
+					detail: input.command,
 					timeoutSeconds: input.timeoutSeconds,
 					cancel: input.cancel,
 				})
 			},
-			updateCommandActivity: (activityId, patch) => context.activities.update(activityId, patch),
+			updateCommandActivity: (activityId, patch) => {
+				const { lineCount, ...activityPatch } = patch
+				context.activities.update(activityId, {
+					...activityPatch,
+					metrics: lineCount === undefined ? undefined : { lineCount },
+				})
+			},
 			appendCommandActivityOutput: (activityId, text) => context.activities.appendOutput(activityId, text),
 		}
 		const terminalConfiguration = {
