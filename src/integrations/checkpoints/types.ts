@@ -62,6 +62,18 @@ export interface ICheckpointManager {
 
 	commit(): Promise<string | undefined>
 
+	/**
+	 * Show the task's first restore point and start capturing the workspace it returns to.
+	 * Resolves once the row exists; the baseline keeps building in the background.
+	 */
+	beginInitialCheckpoint?(): Promise<void>
+
+	/** Resolves once the baseline started by `beginInitialCheckpoint` is durable or has failed; never rejects. */
+	awaitInitialCheckpoint?(): Promise<void>
+
+	/** Stop persisting checkpoint results; called before the task's stores close. */
+	dispose?(): void
+
 	presentMultifileDiff?(messageTs: number, seeNewChangesSinceLastTaskCompletion: boolean): Promise<void>
 
 	// Optional method for multi-root specific initialization

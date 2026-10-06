@@ -206,6 +206,14 @@ export interface TaskCallbacks {
 	 */
 	saveCheckpoint?: (isAttemptCompletionMessage?: boolean, completionMessageTs?: number) => Promise<void>
 
+	/**
+	 * Wait until the task's baseline restore point exists.
+	 *
+	 * Optional like `saveCheckpoint`: only a surface with workspace history
+	 * builds a baseline while the first request is in flight.
+	 */
+	awaitInitialCheckpoint?: () => Promise<void>
+
 	sayAndCreateMissingParamError: (
 		toolName: ClineDefaultTool,
 		paramName: string,

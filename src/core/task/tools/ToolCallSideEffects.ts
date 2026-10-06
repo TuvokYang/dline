@@ -22,6 +22,11 @@ export interface ToolCallSideEffectPort {
 	readonly reportProgress?: (progress: string) => Promise<void>
 	/** Commit a restore point, for a surface that tracks workspace history. */
 	readonly commitCheckpoint?: () => Promise<void>
+	/**
+	 * Wait until the task's baseline restore point exists, for a surface that
+	 * builds one while the first request is in flight.
+	 */
+	readonly awaitInitialCheckpoint?: () => Promise<void>
 }
 
 /**
@@ -51,6 +56,27 @@ export function resolveToolCallSideEffects(config: TaskConfig): ToolCallSideEffe
 			? {}
 			: { reportProgress: (progress: string) => callbacks.updateFCListFromToolResponse!(progress) }),
 		...(callbacks?.saveCheckpoint === undefined ? {} : { commitCheckpoint: () => callbacks.saveCheckpoint!() }),
+		...(callbacks?.awaitInitialCheckpoint === undefined
+			? {}
+			: { awaitInitialCheckpoint: () => callbacks.awaitInitialCheckpoint!() }),
+	}
+}
+
+/**
+ * Hold a tool that may touch the workspace until the baseline restore point exists.
+ *
+ * The baseline is built in parallel with the first provider request, so a
+ * read-only tool may overlap it, but anything else could change files the
+ * baseline has not captured yet and leave no state to restore to. That
+ * includes `attempt_completion`, whose own checkpoint would otherwise build the
+ * baseline between showing the result and offering the next step.
+ */
+export async function awaitToolCallPreconditions(port: ToolCallSideEffectPort, tool: ClineDefaultTool): Promise<void> {
+	if (!port.awaitInitialCheckpoint || (READ_ONLY_TOOLS as readonly ClineDefaultTool[]).includes(tool)) return
+	try {
+		await port.awaitInitialCheckpoint()
+	} catch (error) {
+		Logger.error(`Initial checkpoint failed before ${tool}`, error instanceof Error ? error : undefined)
 	}
 }
 

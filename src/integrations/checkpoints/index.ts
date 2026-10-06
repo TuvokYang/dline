@@ -151,6 +151,21 @@ export class TaskCheckpointManager implements ICheckpointManager {
 	private readonly taskState: CheckpointRuntimeState
 
 	private state: CheckpointManagerInternalState
+	/**
+	 * The baseline restore point started with the task's first request.
+	 *
+	 * Undefined before it starts and after a waiter observed it settle, so a
+	 * later tool never waits on it again.
+	 */
+	private initialBaseline: Promise<void> | undefined
+	private initialCheckpointStarted = false
+	/**
+	 * Set when the task incarnation releases its resources.
+	 *
+	 * A baseline still building at that point must not write into stores that
+	 * are about to close; the shadow commit itself is harmless and is left to finish.
+	 */
+	private disposed = false
 
 	constructor(
 		task: CheckpointManagerTask,
@@ -207,7 +222,6 @@ export class TaskCheckpointManager implements ICheckpointManager {
 				}
 			})
 
-			let checkpointMessageIndex: number | undefined
 			const completionMessageIndex = (): number | undefined => {
 				const index =
 					completionMessageTs === undefined
@@ -219,16 +233,8 @@ export class TaskCheckpointManager implements ICheckpointManager {
 				if (clineMessages.at(-1)?.say === "checkpoint_created") {
 					return
 				}
-
-				const messageTs = await this.callbacks.say("checkpoint_created")
-				if (messageTs !== undefined) {
-					const targetMessageIndex = this.services.messageStateHandler.clineMessages.findIndex(
-						(m) => m.ts === messageTs,
-					)
-					if (targetMessageIndex !== -1) {
-						checkpointMessageIndex = targetMessageIndex
-					}
-				}
+				await this.commitCheckpointRow(await this.sayCheckpointRow())
+				return
 			}
 
 			if (!this.state.checkpointTracker && !this.state.checkpointManagerErrorMessage) {
@@ -239,32 +245,7 @@ export class TaskCheckpointManager implements ICheckpointManager {
 				Logger.debug(
 					`[TaskCheckpointManager] File checkpoint unavailable for task ${this.task.taskId}; keeping chat checkpoint only`,
 				)
-				await this.captureCanonicalCheckpoint(
-					isAttemptCompletionMessage ? completionMessageIndex() : checkpointMessageIndex,
-				)
-				return
-			}
-
-			if (!isAttemptCompletionMessage) {
-				if (checkpointMessageIndex === undefined) {
-					return
-				}
-
-				let commitHash: string | undefined
-				try {
-					commitHash = await this.state.checkpointTracker.commit()
-					if (commitHash) {
-						await this.persistCheckpointHash(checkpointMessageIndex, commitHash)
-					}
-					await this.reportStagingHealth()
-				} catch (error) {
-					Logger.error(
-						`[TaskCheckpointManager] Failed to create checkpoint commit for task ${this.task.taskId}:`,
-						error,
-					)
-					await this.reportStagingHealth()
-				}
-				await this.captureCanonicalCheckpoint(checkpointMessageIndex, commitHash)
+				await this.captureCanonicalCheckpoint(completionMessageIndex())
 				return
 			}
 
@@ -293,6 +274,101 @@ export class TaskCheckpointManager implements ICheckpointManager {
 			const errorMessage = error instanceof Error ? error.message : "Unknown error"
 			Logger.error(`[TaskCheckpointManager] Failed to save checkpoint for task ${this.task.taskId}:`, errorMessage)
 		}
+	}
+
+	/**
+	 * Show the task's first restore point and start capturing the workspace it returns to.
+	 *
+	 * Resolves once the row exists, so it precedes the request that follows it;
+	 * the shadow-repository baseline keeps building while that request runs.
+	 * Only the first call starts anything: a task has one baseline.
+	 */
+	async beginInitialCheckpoint(): Promise<void> {
+		if (!this.config.enableCheckpoints || this.initialCheckpointStarted) return
+		this.initialCheckpointStarted = true
+		try {
+			const rowIndex = await this.sayCheckpointRow()
+			this.initialBaseline = this.commitCheckpointRow(rowIndex).catch((error) => {
+				this.logCommitFailure("Failed to create the baseline checkpoint", error)
+			})
+		} catch (error) {
+			Logger.error(`[TaskCheckpointManager] Failed to open the baseline checkpoint for task ${this.task.taskId}:`, error)
+		}
+	}
+
+	/**
+	 * Wait until the baseline started by {@link beginInitialCheckpoint} is durable or has failed.
+	 *
+	 * Never rejects: a missing baseline costs the restore point, not the tool
+	 * that is waiting for it.
+	 */
+	async awaitInitialCheckpoint(): Promise<void> {
+		const baseline = this.initialBaseline
+		if (!baseline) return
+		await baseline
+		if (this.initialBaseline === baseline) this.initialBaseline = undefined
+	}
+
+	/**
+	 * Stop persisting checkpoint results for this task incarnation.
+	 *
+	 * Called before the task's stores close. Work already running keeps its
+	 * shadow commit but no longer writes rows or canonical bundles.
+	 */
+	dispose(): void {
+		this.disposed = true
+	}
+
+	/** A failure after disposal is the expected end of abandoned work, not a fault. */
+	private logCommitFailure(summary: string, error: unknown): void {
+		const message = `[TaskCheckpointManager] ${summary} for task ${this.task.taskId}:`
+		if (this.disposed) Logger.debug(message, error)
+		else Logger.error(message, error)
+	}
+
+	/** Publish a `checkpoint_created` row and return its index, or undefined when it was not written. */
+	private async sayCheckpointRow(): Promise<number | undefined> {
+		const messageTs = await this.callbacks.say("checkpoint_created")
+		if (messageTs === undefined) return undefined
+		const index = this.services.messageStateHandler.clineMessages.findIndex((message) => message.ts === messageTs)
+		return index === -1 ? undefined : index
+	}
+
+	/**
+	 * Commit the workspace behind an already published checkpoint row.
+	 *
+	 * Without a usable shadow repository the row still becomes a chat-only
+	 * restore point, so restoring the conversation keeps working.
+	 */
+	private async commitCheckpointRow(checkpointMessageIndex: number | undefined): Promise<void> {
+		if (!this.state.checkpointTracker && !this.state.checkpointManagerErrorMessage) {
+			await this.checkpointTrackerCheckAndInit()
+		}
+		if (this.disposed) return
+		if (!this.state.checkpointTracker) {
+			Logger.debug(
+				`[TaskCheckpointManager] File checkpoint unavailable for task ${this.task.taskId}; keeping chat checkpoint only`,
+			)
+			await this.captureCanonicalCheckpoint(checkpointMessageIndex)
+			return
+		}
+		if (checkpointMessageIndex === undefined) return
+
+		let commitHash: string | undefined
+		try {
+			commitHash = await this.state.checkpointTracker.commit()
+			if (this.disposed) return
+			if (commitHash) {
+				await this.persistCheckpointHash(checkpointMessageIndex, commitHash)
+			}
+			await this.reportStagingHealth()
+		} catch (error) {
+			this.logCommitFailure("Failed to create checkpoint commit", error)
+			if (this.disposed) return
+			await this.reportStagingHealth()
+		}
+		if (this.disposed) return
+		await this.captureCanonicalCheckpoint(checkpointMessageIndex, commitHash)
 	}
 
 	/**

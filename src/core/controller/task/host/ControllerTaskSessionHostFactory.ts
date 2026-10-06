@@ -199,7 +199,13 @@ export class ControllerTaskSessionHostFactory implements TaskSessionHostFactory 
 			checkpoints: checkpointOwner.manager,
 			surface,
 			peerTaskSpawner,
-			releases: [{ release: () => callbackOwner.dispose() }, { release: async () => fileContextTracker.dispose() }],
+			releases: [
+				{ release: () => callbackOwner.dispose() },
+				{ release: async () => fileContextTracker.dispose() },
+				// Released with the tool owners, before storage closes, so a baseline
+				// still building cannot write into a closed message store.
+				{ release: async () => checkpointOwner.manager.dispose?.() },
+			],
 		}
 	}
 }

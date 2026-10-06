@@ -55,6 +55,7 @@ import { createRequestApiScope } from "../RequestApiScope"
 import { LoggingRuntimeDiagnostics } from "../runtime"
 import type { ActiveTaskSession } from "../session/ActiveTaskSession"
 import { HostedServerToolPresenter } from "../session/HostedServerToolPresenter"
+import { InitialCheckpointRequestReporter } from "../session/InitialCheckpointRequestReporter"
 import { createPresentationIdSequence } from "../session/PresentationIdSequence"
 import { ProviderTextPresenter } from "../session/ProviderTextPresenter"
 import type { RealtimeMessagePublisher } from "../session/RealtimeMessagePublisher"
@@ -671,41 +672,48 @@ export class TaskSessionCompositionService {
 				limit: options.stateManager.getGlobalSettingsKey("maxConsecutiveMistakes") ?? 3,
 			}),
 			// Every request records what it consumed, which is the only fact the
-			// task has about context pressure, cache health and cost.
-			providerRequestReport: new TaskPerformanceRequestReporter(
-				new TaskProviderRequestReporter({
-					// Compaction is the only consumer that acts on context pressure, and
-					// it can only learn it from the request that reported its usage.
-					pressure: compaction,
-					usage: contextUsage,
-					messages,
-					nextPresentationId,
-					api: () => api.current(),
-					promptCache,
-					compactTriggerOptions: readCompactTriggerOptions,
-					admittedRequest: () => contextWindowGuard.admittedRequest(),
-					// Retries happen before the stream says anything, so each attempt's
-					// card has to be delivered to the chat rather than left for the countdown.
-					retryView: {
-						showRow: (row) => options.prompt.ports.presentation.publish(row),
-						publishState: options.publishState,
-					},
-					// Subscriptions report no token counts, so today's figures on the
-					// usage surfaces are counted here, against the Profile that served the request.
-					profileTokens: {
-						activeProfileId: () => activeProfile().profileId,
-						record: (profileId, increment) => {
-							void options.prompt.ports.profileUsage
-								.record(profileId, increment)
-								.catch((error) =>
-									Logger.debug(
-										`[Task ${options.taskId}] Failed to record daily Profile tokens: ${String(error)}`,
-									),
-								)
+			// task has about context pressure, cache health and cost. The first one
+			// also opens the baseline restore point the workspace can return to.
+			providerRequestReport: new InitialCheckpointRequestReporter(
+				new TaskPerformanceRequestReporter(
+					new TaskProviderRequestReporter({
+						// Compaction is the only consumer that acts on context pressure, and
+						// it can only learn it from the request that reported its usage.
+						pressure: compaction,
+						usage: contextUsage,
+						messages,
+						nextPresentationId,
+						api: () => api.current(),
+						promptCache,
+						compactTriggerOptions: readCompactTriggerOptions,
+						admittedRequest: () => contextWindowGuard.admittedRequest(),
+						// Retries happen before the stream says anything, so each attempt's
+						// card has to be delivered to the chat rather than left for the countdown.
+						retryView: {
+							showRow: (row) => options.prompt.ports.presentation.publish(row),
+							publishState: options.publishState,
 						},
-					},
-				}),
-				performance,
+						// Subscriptions report no token counts, so today's figures on the
+						// usage surfaces are counted here, against the Profile that served the request.
+						profileTokens: {
+							activeProfileId: () => activeProfile().profileId,
+							record: (profileId, increment) => {
+								void options.prompt.ports.profileUsage
+									.record(profileId, increment)
+									.catch((error) =>
+										Logger.debug(
+											`[Task ${options.taskId}] Failed to record daily Profile tokens: ${String(error)}`,
+										),
+									)
+							},
+						},
+					}),
+					performance,
+				),
+				{
+					checkpoints: tool.checkpoints,
+					hasRequested: () => messages.clineMessages.some((message) => message.say === "api_req_started"),
+				},
 			),
 			services: {
 				// One sequence for both producers: chat rows are ordered by this id,

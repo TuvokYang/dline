@@ -42,7 +42,7 @@ import { UseMcpToolHandler } from "./handlers/UseMcpToolHandler"
 import { WebFetchToolHandler } from "./handlers/WebFetchToolHandler"
 import { WebSearchToolHandler } from "./handlers/WebSearchToolHandler"
 import { WriteToFileToolHandler } from "./handlers/WriteToFileToolHandler"
-import { applyToolCallSideEffects, resolveToolCallSideEffects } from "./ToolCallSideEffects"
+import { applyToolCallSideEffects, awaitToolCallPreconditions, resolveToolCallSideEffects } from "./ToolCallSideEffects"
 import type { ToolHandlerResult } from "./ToolExecutionResult"
 import { ToolValidator } from "./ToolValidator"
 import type { TaskConfig } from "./types/TaskConfig"
@@ -318,11 +318,13 @@ export class ToolExecutorCoordinator {
 			// from a spent one instead of retrying a call that can never run.
 			return formatResponse.toolError(`Explicit-only tool '${block.name}' was rejected: ${authorized.code}.`)
 		}
-		const result = await handler.execute(authorized.config, block)
 		// Effects that ride on a call without belonging to any tool. The surface
 		// decides which of them it has, so a task with no checklist and no
 		// workspace history runs the same tools without supplying either.
-		await applyToolCallSideEffects(resolveToolCallSideEffects(config), block, handler.name)
+		const effects = resolveToolCallSideEffects(config)
+		await awaitToolCallPreconditions(effects, handler.name)
+		const result = await handler.execute(authorized.config, block)
+		await applyToolCallSideEffects(effects, block, handler.name)
 		return result
 	}
 

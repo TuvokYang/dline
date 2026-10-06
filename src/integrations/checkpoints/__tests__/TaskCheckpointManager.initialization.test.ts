@@ -306,6 +306,93 @@ describe("TaskCheckpointManager checkpoint initialization", () => {
 		}
 	})
 
+	it("shows the baseline row before the shadow commit finishes and lets a writer wait for it", async () => {
+		const messages: UiMessage[] = []
+		let releaseCommit: (hash: string) => void = () => undefined
+		const tracker = {
+			setTaskFileTracker: vi.fn(),
+			commit: vi.fn(() => new Promise<string>((resolve) => (releaseCommit = resolve))),
+		} as unknown as CheckpointTracker
+		const create = vi.fn<CreateCheckpointTracker>().mockResolvedValue(tracker)
+		const harness = createManager(create, undefined, { messages, tracker })
+
+		await harness.manager.beginInitialCheckpoint()
+
+		expect(messages).toEqual([expect.objectContaining({ say: "checkpoint_created" })])
+		let settled = false
+		const waiting = harness.manager.awaitInitialCheckpoint().then(() => {
+			settled = true
+		})
+		await vi.waitFor(() => expect(tracker.commit).toHaveBeenCalledOnce())
+		expect(settled).toBe(false)
+
+		releaseCommit("baseline-hash")
+		await waiting
+		expect(messages[0]).toMatchObject({ lastCheckpointHash: "baseline-hash" })
+	})
+
+	it("starts only one baseline and never rejects a waiter when the commit fails", async () => {
+		const messages: UiMessage[] = []
+		const tracker = {
+			setTaskFileTracker: vi.fn(),
+			commit: vi.fn().mockRejectedValue(new Error("shadow index is locked")),
+		} as unknown as CheckpointTracker
+		const create = vi.fn<CreateCheckpointTracker>().mockResolvedValue(tracker)
+		const harness = createManager(create, undefined, { messages, tracker })
+
+		await harness.manager.beginInitialCheckpoint()
+		await harness.manager.beginInitialCheckpoint()
+
+		await expect(harness.manager.awaitInitialCheckpoint()).resolves.toBeUndefined()
+		expect(messages.filter((message) => message.say === "checkpoint_created")).toHaveLength(1)
+		expect(tracker.commit).toHaveBeenCalledOnce()
+		expect(messages[0]).not.toHaveProperty("lastCheckpointHash")
+	})
+
+	it("stops persisting a baseline that finishes after the task released its stores", async () => {
+		const messages: UiMessage[] = []
+		let releaseCommit: (hash: string) => void = () => undefined
+		const tracker = {
+			setTaskFileTracker: vi.fn(),
+			commit: vi.fn(() => new Promise<string>((resolve) => (releaseCommit = resolve))),
+		} as unknown as CheckpointTracker
+		const capture = vi.fn(async () => undefined)
+		const create = vi.fn<CreateCheckpointTracker>().mockResolvedValue(tracker)
+		const harness = createManager(create, undefined, {
+			messages,
+			tracker,
+			canonicalCheckpoint: { capture, restore: vi.fn() },
+		})
+
+		await harness.manager.beginInitialCheckpoint()
+		await vi.waitFor(() => expect(tracker.commit).toHaveBeenCalledOnce())
+		harness.manager.dispose()
+		releaseCommit("late-baseline-hash")
+		await harness.manager.awaitInitialCheckpoint()
+
+		expect(harness.updateClineMessage).not.toHaveBeenCalled()
+		expect(capture).not.toHaveBeenCalled()
+		expect(messages[0]).not.toHaveProperty("lastCheckpointHash")
+	})
+
+	it("does not open a baseline when checkpoints are disabled", async () => {
+		const messages: UiMessage[] = []
+		const create = vi.fn<CreateCheckpointTracker>()
+		const disabled = createTaskCheckpointManager(
+			{ taskId: "task-1", controller: {} } as never,
+			{ enableCheckpoints: false, createCheckpointTracker: create },
+			{ messageStateHandler: { clineMessages: messages } } as never,
+			{ say: vi.fn() } as never,
+			{},
+		)
+
+		await disabled.beginInitialCheckpoint()
+
+		await expect(disabled.awaitInitialCheckpoint()).resolves.toBeUndefined()
+		expect(messages).toEqual([])
+		expect(create).not.toHaveBeenCalled()
+	})
+
 	it("does not retry a permanent missing Git capability error", async () => {
 		const create = vi.fn<CreateCheckpointTracker>().mockRejectedValue(new Error("Git must be installed to use checkpoints."))
 		const harness = createManager(create)
