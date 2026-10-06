@@ -81,6 +81,11 @@ function owningDialog(view: CanonicalTaskViewProjection): CanonicalDialogProject
 	return owner ?? view.primary ?? view.interrupted ?? view.approvals[0]
 }
 
+/** Interaction whose ask row {@link adaptCanonicalTaskView} needs as the anchor, if any dialog owns the surface. */
+export function anchoredInteractionId(view: CanonicalTaskViewProjection): string | undefined {
+	return owningDialog(view)?.interactionId
+}
+
 /** Decorate one canonical Task projection with message-anchor and Webview presentation metadata. */
 export function adaptCanonicalTaskView(
 	view: CanonicalTaskViewProjection,

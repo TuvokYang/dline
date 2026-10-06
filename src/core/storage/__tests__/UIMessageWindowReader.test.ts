@@ -73,6 +73,29 @@ describe("UIMessage history windows", () => {
 		}
 	})
 
+	it("finds the last ask an interaction revealed in stored rows and in a not-yet-imported legacy file", async () => {
+		const rows: UiMessage[] = [
+			{ ts: 10, type: "ask", ask: "tool", text: "first reveal", interactionId: "interaction-1" },
+			{ ts: 20, type: "ask", ask: "tool", text: "final reveal", interactionId: "interaction-1" },
+			{ ts: 30, type: "say", say: "text", text: "answer", interactionId: "interaction-1" },
+		]
+		const writer = await UIMessage.open("window-ask-rows")
+		await writer.overwrite(rows)
+		await writer.close()
+		const legacyDirectory = await ensureTaskDirectoryExists("window-ask-legacy")
+		await writeJsonl(path.join(legacyDirectory, GlobalFileNames.uiMessages), rows)
+
+		for (const taskId of ["window-ask-rows", "window-ask-legacy"]) {
+			const reader = await UIMessage.openWindow(taskId)
+			try {
+				await expect(reader.getLastAsk("interaction-1")).resolves.toMatchObject({ ts: 20, text: "final reveal" })
+				await expect(reader.getLastAsk("interaction-missing")).resolves.toBeUndefined()
+			} finally {
+				await reader.close()
+			}
+		}
+	})
+
 	it("uses a bounded reader for new tasks and rejects reads after close", async () => {
 		const reader = await UIMessage.openWindow("window-close")
 		expect(reader.count).toBe(0)

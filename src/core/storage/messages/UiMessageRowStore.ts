@@ -56,6 +56,8 @@ function encodeAll(records: readonly UiMessageRecord[]) {
 
 const ROW_ORDINAL = UiMessageRow.storage.fields.ordinal
 const ROW_TIMESTAMP = UiMessageRow.storage.fields.ts
+const ROW_TYPE = UiMessageRow.storage.fields.type
+const ROW_INTERACTION_ID = UiMessageRow.storage.fields.interactionId
 const ATTACHMENT_ORDINAL = UiMessageAttachmentRow.storage.fields.ordinal
 
 function toRecords(rows: readonly UiMessageRow[], attachments: readonly UiMessageAttachmentRow[]): UiMessageRecord[] {
@@ -183,6 +185,20 @@ export class UiMessageRowStore implements UnifyStore<UiMessageRecord> {
 	/** The last record stored with timestamp `ts`, which is the one the chat shows for it. */
 	async findLastByTimestamp(ts: number): Promise<UiMessageRecord | undefined> {
 		const [row] = (await this.rows.query({ where: eq(ROW_TIMESTAMP, ts), orderBy: [desc(ROW_ORDINAL)], limit: 1 })).records
+		if (!row) return undefined
+		const attachments = (await this.attachments.query({ where: eq(ATTACHMENT_ORDINAL, row.ordinal) })).records
+		return toRecords([row], attachments)[0]
+	}
+
+	/** The last ask row revealed for `interactionId`, which is the row an interaction anchors to. */
+	async findLastAskByInteractionId(interactionId: string): Promise<UiMessageRecord | undefined> {
+		const [row] = (
+			await this.rows.query({
+				where: and(eq(ROW_TYPE, "ask"), eq(ROW_INTERACTION_ID, interactionId)),
+				orderBy: [desc(ROW_ORDINAL)],
+				limit: 1,
+			})
+		).records
 		if (!row) return undefined
 		const attachments = (await this.attachments.query({ where: eq(ATTACHMENT_ORDINAL, row.ordinal) })).records
 		return toRecords([row], attachments)[0]

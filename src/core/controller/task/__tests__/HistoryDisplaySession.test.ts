@@ -68,6 +68,61 @@ async function writeLegacySnapshot(stateFile: string, snapshot: Record<string, u
 	await fs.writeFile(stateFile, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8")
 }
 
+/** `count` ordinary rows written after `afterTs`, enough to push earlier rows out of the latest window. */
+function laterRows(afterTs: number, count: number): UiMessage[] {
+	return Array.from({ length: count }, (_, index) => ({
+		ts: afterTs + index + 1,
+		type: "say" as const,
+		say: "text" as const,
+		text: `later-${index}`,
+	}))
+}
+
+/** A stopped turn whose one tool block still waits for a manual approval. */
+function pendingApprovalState(taskId: string, turnId: string, blockId: string, interactionId: string): TaskState {
+	return {
+		...createInitialTaskState(taskId),
+		revision: 7,
+		flow: { phase: "waiting" },
+		turn: {
+			turnId,
+			mode: "serial",
+			blocks: [
+				{
+					blockId,
+					index: 0,
+					phase: "awaiting_approval",
+					attempt: `attempt-${blockId}`,
+					lanes: [],
+					turnEnding: false,
+					invocationRef: `invocation:${blockId}`,
+				},
+			],
+			manualApprovalBlockIds: [blockId],
+			automaticApprovalBlockIds: [],
+			executingBlockIds: [],
+		},
+		dialog: {
+			approvalsByBlock: {
+				[blockId]: {
+					turnId,
+					interactionId,
+					kind: "tool_approval",
+					status: "awaiting",
+					createdRevision: 6,
+					presentationRef: interactionId,
+					actionRules: [
+						{ actionId: "approve", payloadPolicy: "draft" },
+						{ actionId: "reject", payloadPolicy: "draft" },
+					],
+					blockId,
+					receiverGeneration: 0,
+				},
+			},
+		},
+	}
+}
+
 function stoppedState(taskId: string, revision: number, primary: DialogInteraction): TaskState {
 	return {
 		...createInitialTaskState(taskId),
@@ -436,6 +491,82 @@ describe("HistoryDisplaySession", () => {
 			expect(view.footer.actions).toEqual([])
 			expect(view.diagnostic).toEqual({ code: "interaction_anchor_missing", interactionId })
 			expect(session.getMessages()).toEqual([partialAnchor])
+		} finally {
+			await session.dispose()
+		}
+	})
+
+	it("keeps an approval actionable when later rows push its anchor out of the latest window", async () => {
+		const taskId = "history-anchor-outside-window"
+		const turnId = "turn-old-approval"
+		const blockId = "block-old-approval"
+		const interactionId = "approval:dline_tid_old_approval"
+		const anchorTs = 100
+		await seedMessages(taskId, [
+			{
+				ts: anchorTs,
+				type: "ask",
+				ask: "tool",
+				text: JSON.stringify({ tool: "readFile", path: "old.txt" }),
+				partial: false,
+				interactionId,
+			},
+			...laterRows(anchorTs, 250),
+		])
+		await persistSnapshot(taskId, pendingApprovalState(taskId, turnId, blockId, interactionId))
+		const session = new HistoryDisplaySession(createHistoryItem(taskId))
+
+		try {
+			await session.load()
+
+			const view = session.getViewState()
+			expect(view.activeInteraction).toMatchObject({
+				taskId,
+				turnId,
+				interactionId,
+				kind: "tool_approval",
+				status: "awaiting",
+				askMessageTs: anchorTs,
+				anchorVerified: true,
+			})
+			expect(view.diagnostic).toBeUndefined()
+			expect(view.footer.actions.map((action) => action.type)).toEqual(["approve", "reject"])
+			// The anchor is projection evidence only: the retained window stays the latest page.
+			expect(session.getMessages()).toHaveLength(200)
+			expect(session.getMessages().some((message) => message.interactionId === interactionId)).toBe(false)
+			expect(session.accepts(requestFor(session, { actionId: "approve" }))).toBe(true)
+		} finally {
+			await session.dispose()
+		}
+	})
+
+	it("fails closed when the anchor outside the latest window is still partial", async () => {
+		const taskId = "history-partial-anchor-outside-window"
+		const turnId = "turn-partial-old-approval"
+		const blockId = "block-partial-old-approval"
+		const interactionId = "approval:dline_tid_partial_old_approval"
+		const anchorTs = 100
+		await seedMessages(taskId, [
+			{
+				ts: anchorTs,
+				type: "ask",
+				ask: "tool",
+				text: JSON.stringify({ tool: "readFile", path: "" }),
+				partial: true,
+				interactionId,
+			},
+			...laterRows(anchorTs, 250),
+		])
+		await persistSnapshot(taskId, pendingApprovalState(taskId, turnId, blockId, interactionId))
+		const session = new HistoryDisplaySession(createHistoryItem(taskId))
+
+		try {
+			await session.load()
+
+			const view = session.getViewState()
+			expect(view.activeInteraction).toBeUndefined()
+			expect(view.input).toEqual({ enabled: false, acceptsText: false, acceptsImages: false, acceptsFiles: false })
+			expect(view.diagnostic).toEqual({ code: "interaction_anchor_missing", interactionId })
 		} finally {
 			await session.dispose()
 		}

@@ -19,7 +19,7 @@ import {
 } from "@/core/task/view/canonical/projectHistoryDisplayState"
 import { materializeCanonicalInputQueue } from "@/core/task/view/materializeCanonicalInputQueue"
 import { projectHistoryPreparingView } from "./history-task-readiness"
-import { adaptCanonicalTaskView } from "./TaskViewMessageAdapter"
+import { adaptCanonicalTaskView, anchoredInteractionId } from "./TaskViewMessageAdapter"
 
 /**
  * Lightweight owner for a historical surface before the user resumes execution.
@@ -87,7 +87,8 @@ export class HistoryDisplaySession {
 
 			const inputQueue = await this.readInputQueue(snapshot)
 			if (this.disposed) return
-			const projected = this.projectSnapshot(snapshot, durableMessages)
+			const projected = await this.projectSnapshot(reader, snapshot, durableMessages)
+			if (this.disposed) return
 			this.durableMessageCount = reader.count
 			this.syntheticMessage = projected.syntheticMessage
 			this.messages = projected.messages
@@ -250,13 +251,19 @@ export class HistoryDisplaySession {
 	 * reached an interaction still owes the user a way back in, so the display
 	 * projection synthesizes one and this method supplies its anchor row.
 	 */
-	private projectSnapshot(
+	private async projectSnapshot(
+		reader: UIMessageWindowReader,
 		snapshot: TaskState | undefined,
 		durableMessages: UiMessage[],
-	): { messages: UiMessage[]; view: TaskViewState; syntheticMessage?: UiMessage } {
+	): Promise<{ messages: UiMessage[]; view: TaskViewState; syntheticMessage?: UiMessage }> {
 		const display = projectHistoryDisplayState(this.taskId, snapshot)
 		if (!display.synthetic) {
-			return { messages: durableMessages, view: this.projectView(display.state, durableMessages) }
+			const view = projectCanonicalTaskView(display.state)
+			const anchor = await this.findAnchorOutsideWindow(reader, anchoredInteractionId(view), durableMessages)
+			// The anchor only proves the dialog is answerable; the retained window
+			// stays the latest page, and the surface pages back to the row itself.
+			const evidence = anchor ? [...durableMessages, anchor] : durableMessages
+			return { messages: durableMessages, view: adaptCanonicalTaskView(view, evidence) }
 		}
 		const syntheticMessage: UiMessage = {
 			ts: durableMessages.reduce((latest, message) => Math.max(latest, message.ts), 0) + 1,
@@ -272,6 +279,27 @@ export class HistoryDisplaySession {
 
 	private projectView(state: TaskState, messages: readonly UiMessage[]): TaskViewState {
 		return adaptCanonicalTaskView(projectCanonicalTaskView(state), messages)
+	}
+
+	/**
+	 * Find the ask row a stopped dialog anchors to when later rows have pushed it
+	 * out of the latest window. Rows inside the window always win, including a
+	 * still-partial one, so a reveal that never finished keeps failing closed.
+	 */
+	private async findAnchorOutsideWindow(
+		reader: UIMessageWindowReader,
+		interactionId: string | undefined,
+		windowMessages: readonly UiMessage[],
+	): Promise<UiMessage | undefined> {
+		if (!interactionId) return undefined
+		if (windowMessages.some((message) => message.type === "ask" && message.interactionId === interactionId)) return undefined
+		try {
+			const anchor = await reader.getLastAsk(interactionId)
+			return anchor?.type === "ask" && anchor.interactionId === interactionId && !anchor.partial ? anchor : undefined
+		} catch (error) {
+			Logger.warn(`[HistoryDisplay] Failed to read the interaction anchor for task ${this.taskId}:`, error)
+			return undefined
+		}
 	}
 }
 

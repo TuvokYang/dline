@@ -450,7 +450,7 @@ export class TaskSessionCompositionService {
 			tools: toolRuntime,
 			readAdmissionSnapshot: (block) => toolExecution.readAdmissionSnapshot(block),
 		})
-		const nextPresentationId = createPresentationIdSequence()
+		const nextPresentationId = createPresentationIdSequence(Date.now, () => messages.latestMessageTs())
 		const realtimeMessages: RealtimeMessagePublisher = {
 			publish: (row) => {
 				void options.prompt.ports.presentation

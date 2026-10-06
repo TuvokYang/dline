@@ -14,6 +14,7 @@ interface WindowSource {
 	readonly count: number
 	read(start: number, end: number): Promise<UiMessage[]>
 	findByTimestamp(timestamp: number): Promise<UiMessage | undefined>
+	findLastAsk(interactionId: string): Promise<UiMessage | undefined>
 	close(): Promise<void>
 }
 
@@ -30,6 +31,10 @@ class RowSource implements WindowSource {
 
 	async findByTimestamp(timestamp: number): Promise<UiMessage | undefined> {
 		return (await this.rows.findLastByTimestamp(timestamp))?.message
+	}
+
+	async findLastAsk(interactionId: string): Promise<UiMessage | undefined> {
+		return (await this.rows.findLastAskByInteractionId(interactionId))?.message
 	}
 
 	close(): Promise<void> {
@@ -51,6 +56,14 @@ class LegacySource implements WindowSource {
 
 	async findByTimestamp(timestamp: number): Promise<UiMessage | undefined> {
 		return this.messages.find((message) => message.ts === timestamp)
+	}
+
+	async findLastAsk(interactionId: string): Promise<UiMessage | undefined> {
+		for (let index = this.messages.length - 1; index >= 0; index--) {
+			const message = this.messages[index]
+			if (message.type === "ask" && message.interactionId === interactionId) return message
+		}
+		return undefined
 	}
 
 	async close(): Promise<void> {}
@@ -108,6 +121,17 @@ export class UIMessageWindowReader {
 	async getByTimestamp(timestamp: number): Promise<UiMessage | undefined> {
 		this.assertOpen()
 		return await this.source.findByTimestamp(timestamp)
+	}
+
+	/**
+	 * The last ask row revealed for `interactionId`, wherever it sits in the history.
+	 *
+	 * An interaction stays answerable after later rows push its anchor out of the
+	 * latest window, so the anchor is looked up by identity rather than by page.
+	 */
+	async getLastAsk(interactionId: string): Promise<UiMessage | undefined> {
+		this.assertOpen()
+		return await this.source.findLastAsk(interactionId)
 	}
 
 	async close(): Promise<void> {

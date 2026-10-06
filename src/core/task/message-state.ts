@@ -140,6 +140,17 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 		return [...merged.values()].sort((left, right) => left.ts - right.ts)
 	}
 
+	/**
+	 * The highest timestamp of any row, durable or transient, without
+	 * materializing the merged history. New rows must be stamped above it.
+	 */
+	latestMessageTs(): number | undefined {
+		const store = this.uiMessage
+		let latest = store && store.count > 0 ? store.getAt(store.count - 1)?.ts : undefined
+		for (const ts of this.transientClineMessages.keys()) latest = latest === undefined ? ts : Math.max(latest, ts)
+		return latest
+	}
+
 	set clineMessages(msgs: UiMessage[]) {
 		if (!this.uiMessage) return
 		// Replacing the whole sequence changes every derived aggregate, and this
