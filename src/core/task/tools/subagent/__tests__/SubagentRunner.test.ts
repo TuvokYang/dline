@@ -829,6 +829,151 @@ describe("SubagentRunner", () => {
 				true,
 			)
 		})
+
+		describe("deferred hosted calls", () => {
+			const deferredCall = { type: "server_tool_use", id: "srvtoolu_deferred", name: "web_search", input: { query: "q" } }
+			const deferredResult = { type: "web_search_tool_result", tool_use_id: "srvtoolu_deferred", content: [{ title: "Q" }] }
+			const searchChunk = { type: "server_tool", function_id: "srvtoolu_deferred", tool: ServerTool.WEB_SEARCH } as const
+			const listFiles = {
+				type: "tool_calls",
+				function_id: "toolu_list",
+				tool_call: { function: { name: ClineDefaultTool.LIST_FILES, arguments: JSON.stringify({ path: "." }) } },
+			}
+			const complete = {
+				type: "tool_calls",
+				function_id: "toolu_complete",
+				tool_call: { function: { name: ClineDefaultTool.ATTEMPT, arguments: JSON.stringify({ result: "done" }) } },
+			}
+
+			async function* deferSearchBehind(clientTool: object) {
+				yield { ...searchChunk, phase: "started", input: { query: "q" } }
+				yield {
+					...searchChunk,
+					phase: "deferred",
+					input: { query: "q" },
+					replay: { type: "hosted_tool", protocol: "anthropic_messages", segment: "call", blocks: [deferredCall] },
+				}
+				yield clientTool
+			}
+
+			// Anthropic only defers a hosted call behind native client tool calls, whose results come back as tool_result.
+			async function runDeferral(createMessage: ReturnType<typeof vi.fn>) {
+				stubSystemPrompt(true)
+				vi.spyOn(skills, "discoverSkills").mockResolvedValue([])
+				vi.spyOn(skills, "getAvailableSkills").mockReturnValue([])
+				vi.spyOn(coreApi, "buildApiHandler").mockReturnValue({
+					abort: vi.fn(),
+					getProviderId: () => "anthropic",
+					supportsServerTool: (tool: ServerTool) => tool === ServerTool.WEB_SEARCH,
+					getHostedToolReplayProtocol: () => "anthropic_messages",
+					getModel: () => ({
+						id: "anthropic/claude-sonnet-4.5",
+						info: {
+							contextWindow: 200_000,
+							apiFormats: [ApiFormat.ANTHROPIC_CHAT],
+							supportsPromptCache: true,
+							capabilities: {
+								contextWindow: 200_000,
+								supportsImages: false,
+								supportsPromptCache: true,
+								supportsTools: true,
+								tools: [ServerTool.WEB_SEARCH],
+							},
+						},
+					}),
+					createMessage,
+				} as never)
+				initializeHostProvider()
+				const progress = vi.fn()
+				const result = await new SubagentRunner(
+					createTaskConfig(true, { clineWebToolsEnabled: true }),
+					"web-researcher",
+					{
+						name: "web-researcher",
+						description: "Researches current information on the web.",
+						tools: [ClineDefaultTool.WEB_SEARCH, ClineDefaultTool.LIST_FILES, ClineDefaultTool.ATTEMPT],
+						systemPrompt: "",
+					},
+				).run("Search and list", progress)
+				const searchEvents = progress.mock.calls
+					.map(([update]) => update.event)
+					.filter((event) => event?.toolName === "web_search")
+				return { result, searchEvents }
+			}
+
+			it("completes the deferred search in the next request under one tool call", async () => {
+				const createMessage = vi
+					.fn()
+					.mockImplementationOnce(() => deferSearchBehind(listFiles))
+					.mockImplementationOnce(async function* () {
+						yield {
+							...searchChunk,
+							phase: "completed",
+							result: [{ title: "Q" }],
+							replay: {
+								type: "hosted_tool",
+								protocol: "anthropic_messages",
+								segment: "result",
+								blocks: [deferredResult],
+							},
+						}
+						yield { type: "text", text: "Found Q." }
+						yield complete
+					})
+
+				const { result, searchEvents } = await runDeferral(createMessage)
+
+				assert.equal(result.status, "completed", result.error)
+				expect(new Set(searchEvents.map((event) => event.toolCallId)).size).toBe(1)
+				expect(searchEvents.at(-1)).toMatchObject({ kind: "tool_result", toolStatus: "completed" })
+				expect(searchEvents.some((event) => event.toolStatus === "failed")).toBe(false)
+				const resumedTurn = (createMessage.mock.calls[1][1] as Array<{ role: string; content: unknown }>).at(-1)
+				expect(resumedTurn?.role).toBe("user")
+			})
+
+			it("stores the resumed result first in the assistant turn that carries it", async () => {
+				const createMessage = vi
+					.fn()
+					.mockImplementationOnce(() => deferSearchBehind(listFiles))
+					.mockImplementationOnce(async function* () {
+						yield { type: "reasoning", reasoning: "thinking about Q" }
+						yield {
+							...searchChunk,
+							phase: "completed",
+							result: [{ title: "Q" }],
+							replay: {
+								type: "hosted_tool",
+								protocol: "anthropic_messages",
+								segment: "result",
+								blocks: [deferredResult],
+							},
+						}
+						yield { type: "text", text: "Found Q." }
+						yield listFiles
+					})
+					.mockImplementation(async function* () {
+						yield complete
+					})
+
+				const { result } = await runDeferral(createMessage)
+
+				assert.equal(result.status, "completed", result.error)
+				const assistants = (createMessage.mock.calls[2][1] as Array<{ role: string; content: unknown }>).filter(
+					(message) => message.role === "assistant",
+				)
+				const resumedTurn = assistants.at(-1)?.content as Array<{ type: string; segment?: string }>
+				expect(resumedTurn[0]).toMatchObject({ type: "hosted_tool", segment: "result" })
+			})
+
+			it("fails a deferred search when the run ends before any request could resume it", async () => {
+				const createMessage = vi.fn().mockImplementationOnce(() => deferSearchBehind(complete))
+
+				const { result, searchEvents } = await runDeferral(createMessage)
+
+				assert.equal(result.status, "completed", result.error)
+				expect(searchEvents.at(-1)).toMatchObject({ kind: "tool_result", toolStatus: "failed" })
+			})
+		})
 	})
 
 	it.each([

@@ -193,6 +193,17 @@ export type OpenAiMockResponse =
 			followupTools?: readonly MockToolCall[]
 	  } & MockResponseOptions)
 	| ({
+			/**
+			 * Anthropic mixed turn: the hosted search is deferred behind client tool calls, so the response ends with
+			 * `stop_reason: tool_use` and a `server_tool_use` that has no result. The provider runs it at the start of
+			 * the next request, which `anthropic-orphan-web-search-result` with the same id scripts.
+			 */
+			type: "anthropic-deferred-web-search"
+			id?: string
+			query: string
+			followupTools: readonly MockToolCall[]
+	  } & MockResponseOptions)
+	| ({
 			type: "usage-then-error"
 			status: number
 			message: string
@@ -317,7 +328,38 @@ function getResponseToolCalls(response: Exclude<OpenAiMockResponse, { type: "err
 	) {
 		return response.followupTools ?? []
 	}
+	if (response.type === "anthropic-deferred-web-search") return response.followupTools
 	return []
+}
+
+/**
+ * Mirrors the Anthropic Messages contract for a deferred hosted call: when the last assistant turn carries a
+ * `server_tool_use` without its result, the request is only accepted if the following user turn contains nothing
+ * but `tool_result` blocks. Returns the rejection reason, or undefined for a valid request.
+ */
+function anthropicDeferredHostedCallViolation(messages: readonly unknown[]): string | undefined {
+	let lastAssistantIndex = messages.length - 1
+	while (lastAssistantIndex >= 0 && (messages[lastAssistantIndex] as { role?: unknown } | undefined)?.role !== "assistant") {
+		lastAssistantIndex--
+	}
+	if (lastAssistantIndex === -1) return undefined
+	const assistantContent = (messages[lastAssistantIndex] as { content?: unknown }).content
+	if (!Array.isArray(assistantContent)) return undefined
+	const blocks = assistantContent as Array<{ type?: unknown; id?: unknown; tool_use_id?: unknown }>
+	const answeredIds = new Set(blocks.filter((block) => typeof block.tool_use_id === "string").map((block) => block.tool_use_id))
+	const danglingIds = blocks
+		.filter((block) => block.type === "server_tool_use" && typeof block.id === "string" && !answeredIds.has(block.id))
+		.map((block) => block.id as string)
+	if (danglingIds.length === 0) return undefined
+	const followUp = messages[lastAssistantIndex + 1] as { role?: unknown; content?: unknown } | undefined
+	const followUpContent = followUp?.role === "user" ? followUp.content : undefined
+	const onlyToolResults =
+		Array.isArray(followUpContent) &&
+		followUpContent.length > 0 &&
+		followUpContent.every((block) => (block as { type?: unknown }).type === "tool_result")
+	return onlyToolResults
+		? undefined
+		: `server_tool_use ${danglingIds.join(", ")} has no result, so the next user message must contain only tool_result blocks`
 }
 
 function splitStreamText(text: string, chunkSize?: number): string[] {
@@ -1203,6 +1245,16 @@ export class ClineApiServerMock {
 					if (!validRequest) {
 						return sendJson({ error: { message: `Invalid ${target} request shape` } }, 400)
 					}
+					const deferredHostedCallViolation =
+						protocol === "anthropic-messages"
+							? anthropicDeferredHostedCallViolation(parsed.messages as unknown[])
+							: undefined
+					if (deferredHostedCallViolation) {
+						return sendJson(
+							{ type: "error", error: { type: "invalid_request_error", message: deferredHostedCallViolation } },
+							400,
+						)
+					}
 					const {
 						response: scriptedResponse,
 						usage,
@@ -1265,6 +1317,11 @@ export class ClineApiServerMock {
 					if (!usage) throw new Error(`Successful ${target} response is missing usage`)
 					if (scriptedResponse.type === "usage-then-error" && protocol !== "anthropic-messages") {
 						throw new Error(`usage-then-error is only supported for anthropic-messages, received ${protocol}`)
+					}
+					if (scriptedResponse.type === "anthropic-deferred-web-search" && protocol !== "anthropic-messages") {
+						throw new Error(
+							`anthropic-deferred-web-search is only supported for anthropic-messages, received ${protocol}`,
+						)
 					}
 					if (scriptedResponse.type === "responses-stream-error" && protocol !== "openai-responses") {
 						throw new Error(`responses-stream-error is only supported for openai-responses, received ${protocol}`)
@@ -1936,7 +1993,8 @@ export class ClineApiServerMock {
 							: [{ type: "text", text: messageText }]
 					const hostedSearchId =
 						scriptedResponse.type === "hosted-web-search" ||
-						scriptedResponse.type === "anthropic-orphan-web-search-result"
+						scriptedResponse.type === "anthropic-orphan-web-search-result" ||
+						scriptedResponse.type === "anthropic-deferred-web-search"
 							? (scriptedResponse.id ?? `srv_web_${generationId}`)
 							: undefined
 					const hostedResultBlock =
@@ -1971,7 +2029,17 @@ export class ClineApiServerMock {
 								]
 							: scriptedResponse.type === "anthropic-orphan-web-search-result" && hostedResultBlock
 								? [hostedResultBlock]
-								: []
+								: scriptedResponse.type === "anthropic-deferred-web-search" && hostedSearchId
+									? [
+											{
+												type: "server_tool_use",
+												id: hostedSearchId,
+												name: "web_search",
+												input: { query: scriptedResponse.query },
+												caller: { type: "direct" },
+											},
+										]
+									: []
 					const contentBlocks = [...hostedContentBlocks, ...ordinaryContentBlocks]
 					const thinkingBlock = scriptedResponse.reasoning
 						? {

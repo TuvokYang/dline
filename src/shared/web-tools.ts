@@ -1,4 +1,16 @@
-export type WebToolPresentationStatus = "running" | "completed" | "failed"
+/**
+ * `deferred` marks a provider-hosted call the provider announced but will only run at the start of its next
+ * response, after the local tool calls of the same turn return their results.
+ */
+export type WebToolPresentationStatus = "running" | "deferred" | "completed" | "failed"
+
+/** Identity of a deferred hosted call, so the request that resumes it can finish the same row. */
+export interface HostedCallPresentation {
+	/** Provider-native call id that pairs the call with its result. */
+	functionId: string
+	/** Dline trace identity the call carries across both responses. */
+	traceId: string
+}
 
 export interface WebToolSourcePresentation {
 	id: string
@@ -27,6 +39,8 @@ export interface WebSearchPresentationV1 {
 	operation?: HostedWebSearchOperation
 	items?: WebSearchItemPresentation[]
 	error?: string
+	/** Present only while the row is deferred. */
+	hostedCall?: HostedCallPresentation
 }
 
 export interface WebFetchPresentationV1 {
@@ -37,6 +51,8 @@ export interface WebFetchPresentationV1 {
 	prompt?: string
 	content?: string
 	error?: string
+	/** Present only while the row is deferred. */
+	hostedCall?: HostedCallPresentation
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

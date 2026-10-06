@@ -52,13 +52,27 @@ export function normalizeApiStream(stream: ApiStream, normalizer: StreamIdentity
 	return normalized
 }
 
+export interface StreamNormalizerOptions {
+	/**
+	 * Trace identity a hosted call already holds from an earlier response, looked up by provider function id.
+	 *
+	 * A provider may run a hosted call one response after announcing it; reusing the trace identity keeps
+	 * both responses on one call instead of opening a second.
+	 */
+	carriedServerToolTraceId?: (functionId: string) => string | undefined
+}
+
 /**
  * Create a response-local canonical stream normalizer.
  *
  * @param factory Task-local allocator for Dline-owned identities.
+ * @param options Identities carried in from earlier responses.
  * @returns Stream normalizer that preserves provider function identities.
  */
-export function createStreamNormalizer(factory: IdentityFactory): StreamIdentityNormalizer {
+export function createStreamNormalizer(
+	factory: IdentityFactory,
+	options: StreamNormalizerOptions = {},
+): StreamIdentityNormalizer {
 	const toolStates = new Map<string, ToolIdentityState>()
 
 	/**
@@ -115,7 +129,7 @@ export function createStreamNormalizer(factory: IdentityFactory): StreamIdentity
 		const state =
 			existing ??
 			({
-				dline_tid: factory.nextTraceId(),
+				dline_tid: carriedTraceId(chunk) ?? factory.nextTraceId(),
 				function_id: chunk.function_id,
 			} satisfies ToolIdentityState)
 		toolStates.set(key, state)
@@ -124,6 +138,10 @@ export function createStreamNormalizer(factory: IdentityFactory): StreamIdentity
 			dline_tid: state.dline_tid,
 			function_id: state.function_id,
 		}
+	}
+
+	function carriedTraceId(chunk: RawIdentifiedChunk): string | undefined {
+		return chunk.type === "server_tool" ? options.carriedServerToolTraceId?.(chunk.function_id) : undefined
 	}
 
 	return {

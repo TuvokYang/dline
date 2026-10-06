@@ -360,4 +360,84 @@ describe("ServerToolLifecycle", () => {
 		expect(await lifecycle.consume({ ...chunk("started"), tool: ServerTool.WEB_FETCH })).toBe(false)
 		expect(updates).toEqual([])
 	})
+
+	describe("deferred hosted calls", () => {
+		it("parks a deferred call as one durable update that stream termination leaves open", async () => {
+			const updates: Array<{ status: string; partial: boolean; query: string }> = []
+			const lifecycle = new ServerToolLifecycle(hostedPlan, true, (update) => {
+				updates.push({ status: update.status, partial: update.partial, query: update.query })
+			})
+
+			await lifecycle.consume(chunk("started"))
+			await lifecycle.consume(chunk("deferred"))
+			await lifecycle.consume(chunk("deferred"))
+			await lifecycle.finalizeOpen("stream ended before hosted result")
+
+			expect(updates).toEqual([
+				{ status: "started", partial: true, query: "lifecycle query" },
+				{ status: "deferred", partial: false, query: "lifecycle query" },
+			])
+		})
+
+		it("completes an adopted deferred call under its original identity", async () => {
+			const updates: Array<{ dlineTid: string; status: string; query: string; result?: unknown }> = []
+			const lifecycle = new ServerToolLifecycle(hostedPlan, true, (update) => {
+				updates.push({ dlineTid: update.dlineTid, status: update.status, query: update.query, result: update.result })
+			})
+			lifecycle.adopt([
+				{
+					dlineTid: "trace-1",
+					functionId: "provider-call-1",
+					tool: ServerTool.WEB_SEARCH,
+					query: "lifecycle query",
+					operation: { type: "search", queries: ["lifecycle query"] },
+				},
+			])
+
+			const result = [{ url: "https://example.com" }]
+			await lifecycle.consume({ ...chunk("completed", undefined), result })
+
+			expect(updates).toEqual([{ dlineTid: "trace-1", status: "completed", query: "lifecycle query", result }])
+		})
+
+		it("leaves an adopted call deferred when the resuming response is cancelled", async () => {
+			const updates: unknown[] = []
+			const lifecycle = new ServerToolLifecycle(hostedPlan, true, (update) => {
+				updates.push(update)
+			})
+			lifecycle.adopt([
+				{
+					dlineTid: "trace-1",
+					functionId: "provider-call-1",
+					tool: ServerTool.WEB_SEARCH,
+					query: "lifecycle query",
+					operation: { type: "search", queries: ["lifecycle query"] },
+				},
+			])
+
+			await lifecycle.finalizeOpen("cancelled")
+
+			expect(updates).toEqual([])
+		})
+
+		it("fails an adopted call when the provider reports the deferred result missing", async () => {
+			const updates: Array<{ status: string; error?: string }> = []
+			const lifecycle = new ServerToolLifecycle(hostedPlan, true, (update) => {
+				updates.push({ status: update.status, error: update.error })
+			})
+			lifecycle.adopt([
+				{
+					dlineTid: "trace-1",
+					functionId: "provider-call-1",
+					tool: ServerTool.WEB_SEARCH,
+					query: "lifecycle query",
+					operation: { type: "search", queries: ["lifecycle query"] },
+				},
+			])
+
+			await lifecycle.consume({ ...chunk("failed", undefined), error: "deferred result missing" })
+
+			expect(updates).toEqual([{ status: "failed", error: "deferred result missing" }])
+		})
+	})
 })

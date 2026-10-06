@@ -143,17 +143,30 @@ export interface ClineAssistantRedactedThinkingBlock extends Anthropic.RedactedT
 export type HostedToolReplayProtocol = "anthropic_messages" | "openai_responses"
 
 /**
- * One completed provider-hosted tool call, kept verbatim so a later request to the protocol that ran it
+ * Part of a hosted call that spans two assistant turns.
+ *
+ * Anthropic defers a hosted call grouped with a client tool call: the response that issued it ends without
+ * a result (`call`), and the response to the request carrying the client tool results opens with that
+ * result (`result`). The two halves pair by the provider call id, never by position.
+ */
+export type HostedToolReplaySegment = "call" | "result"
+
+/**
+ * One provider-hosted tool call, kept verbatim so a later request to the protocol that ran it
  * carries the call back to the model.
  *
  * `blocks` holds the provider-native items of that call in response order: Anthropic Messages stores the
  * `server_tool_use` block followed by its result block, OpenAI Responses stores the single output item
  * that records the call. No other protocol can interpret them, so every projection for a different
  * protocol drops the whole block.
+ *
+ * `segment` is absent for a call stored with its result. A deferred Anthropic call is stored as a `call`
+ * segment in the turn that issued it and a `result` segment in the turn that received it.
  */
 export interface ClineAssistantHostedToolBlock {
 	type: "hosted_tool"
 	protocol: HostedToolReplayProtocol
+	segment?: HostedToolReplaySegment
 	blocks: Array<Record<string, unknown>>
 }
 
@@ -218,18 +231,46 @@ export interface AnthropicMessageConversionOptions {
 	 * leave this unset and every hosted block is dropped.
 	 */
 	replayHostedTools?: ReadonlySet<string>
+	/**
+	 * Provider call ids of deferred hosted segments this request must not carry, because the call can no
+	 * longer be resumed or its result has lost its call. Complete hosted blocks are never omitted here.
+	 */
+	omitHostedCallIds?: ReadonlySet<string>
 }
 
-/** Name of the hosted tool a stored replay block invokes, read from its native `server_tool_use` call. */
-function hostedToolName(block: ClineAssistantHostedToolBlock): string | undefined {
+/** Native result block suffix Anthropic appends to the hosted tool name, as in `web_search_tool_result`. */
+const ANTHROPIC_HOSTED_RESULT_SUFFIX = "_tool_result"
+
+/**
+ * Name of the hosted tool a stored replay block invokes.
+ *
+ * Read from its native `server_tool_use` call, or from the result block type when the block holds only the
+ * result of a call deferred by an earlier turn.
+ */
+export function hostedToolName(block: ClineAssistantHostedToolBlock): string | undefined {
 	const call = block.blocks.find((native) => native.type === "server_tool_use")
-	return typeof call?.name === "string" ? call.name : undefined
+	if (call) return typeof call.name === "string" ? call.name : undefined
+	if (block.segment !== "result") return undefined
+	const resultType = block.blocks[0]?.type
+	return typeof resultType === "string" && resultType.endsWith(ANTHROPIC_HOSTED_RESULT_SUFFIX)
+		? resultType.slice(0, -ANTHROPIC_HOSTED_RESULT_SUFFIX.length)
+		: undefined
+}
+
+/** Provider call id a deferred hosted segment belongs to; undefined for a complete hosted block. */
+export function hostedSegmentCallId(block: ClineAssistantHostedToolBlock): string | undefined {
+	const native = block.blocks[0]
+	if (block.segment === "call") return typeof native?.id === "string" ? native.id : undefined
+	if (block.segment === "result") return typeof native?.tool_use_id === "string" ? native.tool_use_id : undefined
+	return undefined
 }
 
 function replaysHostedBlock(block: ClineAssistantHostedToolBlock, options: AnthropicMessageConversionOptions): boolean {
 	if (block.protocol !== "anthropic_messages" || !options.replayHostedTools) return false
 	const name = hostedToolName(block)
-	return name !== undefined && options.replayHostedTools.has(name)
+	if (name === undefined || !options.replayHostedTools.has(name)) return false
+	const segmentCallId = hostedSegmentCallId(block)
+	return segmentCallId === undefined || !options.omitHostedCallIds?.has(segmentCallId)
 }
 
 /**

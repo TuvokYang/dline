@@ -4,6 +4,7 @@ import type { WebSearchRoutingPlan } from "@core/api/server-tools"
 import { createIdentityFactory } from "@core/api/transform/block-identity"
 import { ApiStream } from "@core/api/transform/stream"
 import { createStreamNormalizer, normalizeApiStream } from "@core/api/transform/stream-identity-normalizer"
+import { declaredAnthropicHostedToolNames } from "@core/api/utils/messages_api_support"
 import { AssistantMessageContent, parseAssistantMessageV2, TextStreamContent, ToolUse } from "@core/assistant-message"
 import { ContextManager } from "@core/context/context-management/ContextManager"
 import {
@@ -181,6 +182,7 @@ import {
 import { HistoryItem } from "@shared/HistoryItem"
 import { DEFAULT_LANGUAGE_SETTINGS, getLanguageKey, LanguageDisplay } from "@shared/Languages"
 import { USER_CONTENT_TAGS } from "@shared/messages/constants"
+import { splitResumedHostedResults } from "@shared/messages/hosted-tool-deferral"
 import type { PromptCacheHealthSnapshot } from "@shared/PromptCacheHealth"
 import type { PromptFreshnessSnapshot } from "@shared/PromptFreshness"
 import type { ReasoningConfig } from "@shared/proto/dline/provider/common"
@@ -8055,6 +8057,11 @@ export class Task {
 		} else {
 			this.toolExecutor.setWebSearchRoutingPlan(requestScope.webSearchRoutingPlan, requestScope.webToolsEnabled)
 		}
+		await this.toolExecutor.carryDeferredServerToolCalls({
+			messages: this.messageStateHandler.clineMessages,
+			history: apiConversationMessages,
+			replayHostedTools: declaredAnthropicHostedToolNames(serverTools),
+		})
 		this.toolExecutor.setHostedImageGenerationContext({
 			enabled: serverTools.includes(ServerTool.IMAGE_GENERATION),
 			providerId: providerInfo.providerId,
@@ -9871,7 +9878,12 @@ export class Task {
 
 			const { toolUseHandler, reasonsHandler } = this.streamHandler.getHandlers()
 			const providerStream = this.attemptApiRequest(previousApiReqIndex, requestScope, apiIndex, 0, continuation) // yields only if the first chunk is successful, otherwise will allow the user to retry the request (most likely due to rate limit error, which gets thrown on the first chunk)
-			const stream = normalizeApiStream(providerStream, createStreamNormalizer(this.identityFactory))
+			const stream = normalizeApiStream(
+				providerStream,
+				createStreamNormalizer(this.identityFactory, {
+					carriedServerToolTraceId: (functionId) => this.toolExecutor.carriedServerToolTraceId(functionId),
+				}),
+			)
 
 			let assistantMessageId = ""
 			let assistantMessage = "" // For UI display (includes XML)
@@ -10443,8 +10455,11 @@ export class Task {
 				if (thinkingBlock) {
 					assistantContent.push({ ...thinkingBlock })
 				}
-				// Hosted calls ran before the visible answer, so they precede it in the stored turn.
-				assistantContent.push(...hostedToolBlocks)
+				// Hosted calls ran before the visible answer, so they precede it in the stored turn. Results of
+				// calls an earlier response deferred open the turn, where the provider sent them.
+				const hostedTurn = splitResumedHostedResults(hostedToolBlocks)
+				assistantContent.unshift(...hostedTurn.resumed)
+				assistantContent.push(...hostedTurn.others)
 
 				// Only add text block if there's actual text (not just tool XML)
 				const hasAssistantText = assistantTextOnly.trim().length > 0

@@ -3,6 +3,7 @@ import { StringRequest } from "@shared/proto/dline/common"
 import { ChevronDownIcon, ChevronRightIcon, Link2Icon, TriangleAlertIcon } from "lucide-react"
 import { useState } from "react"
 import { UiServiceClient } from "@/services/grpc-client"
+import HostedCallDeferredNotice from "./HostedCallDeferredNotice"
 
 interface WebFetchRowProps {
 	messageType: "ask" | "say"
@@ -46,6 +47,7 @@ const WebFetchRow = ({ messageType, url, webFetch }: WebFetchRowProps) => {
 					<span className="ph-no-capture block break-all text-left [direction:ltr]">{resolvedUrl}</span>
 				</button>
 				{webFetch?.prompt && <div className="ph-no-capture break-words text-xs text-description">{webFetch.prompt}</div>}
+				{webFetch?.status === "deferred" && <HostedCallDeferredNotice action="fetch" testId="web-fetch-deferred" />}
 				{webFetch?.error && (
 					<div className="flex items-start gap-2 rounded border border-error/40 bg-error/10 p-2 text-error">
 						<TriangleAlertIcon className="mt-0.5 size-3 shrink-0" />

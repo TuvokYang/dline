@@ -398,4 +398,91 @@ describe("ChatRow hosted Web Search rendering", () => {
 		expect(screen.getByTestId("web-fetch-card")).toHaveClass("max-h-[40vh]", "overflow-y-auto")
 		expect(screen.getByTestId("web-fetch-results")).not.toHaveClass("max-h-[40vh]", "overflow-y-auto")
 	})
+
+	it("explains that a deferred hosted search waits for the next request", () => {
+		render(
+			<ChatRowContent
+				{...baseProps}
+				message={{
+					ts: 8,
+					type: "say",
+					say: "tool",
+					partial: false,
+					text: JSON.stringify({
+						tool: "webSearch",
+						path: "deferred search",
+						webSearch: {
+							schemaVersion: 1,
+							status: "deferred",
+							source: { id: "anthropic-hosted", label: "Anthropic Web Search", execution: "hosted" },
+							query: "deferred search",
+							hostedCall: { functionId: "srvtoolu_deferred", traceId: "trace-search" },
+						},
+					}),
+				}}
+			/>,
+		)
+
+		const notice = screen.getByTestId("web-search-deferred")
+		expect(notice).toHaveTextContent("Waiting for the local tool results")
+		expect(notice).toHaveTextContent("next request")
+		expect(screen.getByText("deferred search")).toBeInTheDocument()
+		expect(screen.getByTestId("web-search-card").querySelector(".animate-spin")).toBeNull()
+	})
+
+	it("explains that a deferred hosted fetch waits for the next request", () => {
+		render(
+			<ChatRowContent
+				{...baseProps}
+				message={{
+					ts: 9,
+					type: "say",
+					say: "tool",
+					partial: false,
+					text: JSON.stringify({
+						tool: "webFetch",
+						path: "https://example.com/deferred",
+						webFetch: {
+							schemaVersion: 1,
+							status: "deferred",
+							source: { id: "anthropic-hosted", label: "Anthropic Web Fetch", execution: "hosted" },
+							url: "https://example.com/deferred",
+							hostedCall: { functionId: "srvtoolu_fetch", traceId: "trace-fetch" },
+						},
+					}),
+				}}
+			/>,
+		)
+
+		const notice = screen.getByTestId("web-fetch-deferred")
+		expect(notice).toHaveTextContent("Waiting for the local tool results")
+		expect(notice).toHaveTextContent("next request")
+		expect(screen.getByTestId("web-fetch-card").querySelector(".animate-spin")).toBeNull()
+	})
+
+	it("does not show the deferral notice once the hosted search completes", () => {
+		render(
+			<ChatRowContent
+				{...baseProps}
+				message={{
+					ts: 10,
+					type: "say",
+					say: "tool",
+					partial: false,
+					text: JSON.stringify({
+						tool: "webSearch",
+						path: "deferred search",
+						webSearch: {
+							schemaVersion: 1,
+							status: "completed",
+							query: "deferred search",
+							hostedCall: { functionId: "srvtoolu_deferred", traceId: "trace-search" },
+						},
+					}),
+				}}
+			/>,
+		)
+
+		expect(screen.queryByTestId("web-search-deferred")).not.toBeInTheDocument()
+	})
 })

@@ -1,11 +1,14 @@
 import type { ContentBlockParam, MessageParam } from "@anthropic-ai/sdk/resources/messages/messages"
-import type { ApiStream, ApiStreamUsageChunk } from "../transform/stream"
+import { hostedToolName } from "@/shared/messages/content"
+import { recordHostedToolDeferralResolved, recordHostedToolDeferred } from "../observability/hosted-tool-deferral"
+import type { ApiRawStreamServerToolChunk, ApiStream, ApiStreamUsageChunk } from "../transform/stream"
 import { ApiUsageAccumulator, type NormalizedApiUsage } from "../transform/usage-accumulator"
 import {
 	type AnthropicMessagesStreamEvent,
 	type AnthropicMessagesStreamState,
 	closeOpenServerToolCalls,
 	handleAnthropicMessagesApiStreamResponse,
+	isResumableHostedToolName,
 } from "./messages_api_support"
 
 /** Maximum number of automatic requests one Dline request may add after pause_turn. */
@@ -148,6 +151,8 @@ class AnthropicAssistantContentCollector {
 	private readonly blocks = new Map<number, MutableContentBlock>()
 	private readonly inputJson = new Map<number, string>()
 	stopReason: string | null | undefined
+	/** Client `tool_use` blocks in this response; any of them defers the hosted calls grouped with it. */
+	clientToolUseCount = 0
 
 	observe(event: AnthropicMessagesStreamEvent): void {
 		switch (event.type) {
@@ -162,6 +167,7 @@ class AnthropicAssistantContentCollector {
 				const block = { ...source }
 				if (Array.isArray(source.citations)) block.citations = [...source.citations]
 				this.blocks.set(event.index, block)
+				if (source.type === "tool_use") this.clientToolUseCount += 1
 				break
 			}
 			case "content_block_delta": {
@@ -248,7 +254,9 @@ export async function* streamAnthropicMessagesEndpoint(options: AnthropicMessage
 	const serverToolState: Required<AnthropicMessagesStreamState> = {
 		startedServerToolCallIds: new Set<string>(),
 		serverToolUseBlocks: new Map<string, Record<string, unknown>>(),
+		resumedServerToolCallIds: new Set<string>(),
 	}
+	seedResumedHostedCalls(options.messages, serverToolState)
 	let messages = [...options.messages]
 	let continuationCount = 0
 	let completedUsage = emptyUsage()
@@ -265,6 +273,7 @@ export async function* streamAnthropicMessagesEndpoint(options: AnthropicMessage
 			serverToolState,
 		)) {
 			if (chunk.type !== "usage") {
+				if (chunk.type === "server_tool" && chunk.replay?.segment === "result") reportResumedResult(chunk)
 				yield chunk
 				continue
 			}
@@ -274,7 +283,21 @@ export async function* streamAnthropicMessagesEndpoint(options: AnthropicMessage
 		}
 
 		if (collector.stopReason !== "pause_turn") {
-			yield* closeOpenServerToolCalls(serverToolState, collector.stopReason)
+			const resumedBeforeClose = new Set(serverToolState.resumedServerToolCallIds)
+			const callNames = new Map([...serverToolState.serverToolUseBlocks].map(([id, block]) => [id, String(block.name)]))
+			const closing = [
+				...closeOpenServerToolCalls(serverToolState, collector.stopReason, {
+					clientToolCallCount: collector.clientToolUseCount,
+				}),
+			]
+			reportClosedHostedCalls(closing, {
+				resumedBeforeClose,
+				callNames,
+				stopReason: collector.stopReason,
+				clientToolCallCount: collector.clientToolUseCount,
+				pauseTurnContinuation: continuationCount,
+			})
+			yield* closing
 			return
 		}
 		const replayContent = collector.content()
@@ -289,5 +312,67 @@ export async function* streamAnthropicMessagesEndpoint(options: AnthropicMessage
 		completedExtensions = addUsageExtensions(completedExtensions, requestExtensions)
 		messages = [...messages, { role: "assistant", content: replayContent }]
 		continuationCount += 1
+	}
+}
+
+/**
+ * Mark the hosted calls this request resumes: calls the final assistant turn left without a result, followed by
+ * a user message holding only tool results. The request projection carries such a call only in that shape, and
+ * Anthropic runs it before generating, so its result opens this request's response.
+ */
+function seedResumedHostedCalls(messages: readonly MessageParam[], state: Required<AnthropicMessagesStreamState>): void {
+	const followUp = messages.at(-1)
+	const turn = messages.at(-2)
+	if (followUp?.role !== "user" || turn?.role !== "assistant") return
+	if (!Array.isArray(followUp.content) || !Array.isArray(turn.content)) return
+	if (followUp.content.length === 0 || !followUp.content.every((block) => block.type === "tool_result")) return
+	const blocks = turn.content as unknown as Array<Record<string, unknown>>
+	const answered = new Set(blocks.flatMap((block) => (typeof block.tool_use_id === "string" ? [block.tool_use_id] : [])))
+	for (const block of blocks) {
+		if (block.type !== "server_tool_use" || typeof block.id !== "string" || answered.has(block.id)) continue
+		if (!isResumableHostedToolName(block.name)) continue
+		state.startedServerToolCallIds.add(block.id)
+		state.serverToolUseBlocks.set(block.id, { ...block })
+		state.resumedServerToolCallIds.add(block.id)
+	}
+}
+
+function reportResumedResult(chunk: Pick<ApiRawStreamServerToolChunk, "phase" | "replay">): void {
+	if (!chunk.replay) return
+	recordHostedToolDeferralResolved({
+		apiFormat: "anthropic_messages",
+		hostedTool: hostedToolName(chunk.replay) ?? "unknown",
+		resolution: chunk.phase === "failed" ? "result_error" : "result_received",
+	})
+}
+
+interface ClosedHostedCallsContext {
+	resumedBeforeClose: ReadonlySet<string>
+	callNames: ReadonlyMap<string, string>
+	stopReason: string | null | undefined
+	clientToolCallCount: number
+	pauseTurnContinuation: number
+}
+
+/** Report hosted calls the logical response deferred, and resumed calls whose result never arrived. */
+function reportClosedHostedCalls(closing: readonly ApiRawStreamServerToolChunk[], context: ClosedHostedCallsContext): void {
+	const deferred = closing.filter((chunk) => chunk.phase === "deferred")
+	for (const chunk of deferred) {
+		recordHostedToolDeferred({
+			apiFormat: "anthropic_messages",
+			hostedTool: context.callNames.get(chunk.function_id) ?? "unknown",
+			stopReason: context.stopReason ?? "none",
+			deferredCallCount: deferred.length,
+			clientToolCallCount: context.clientToolCallCount,
+			pauseTurnContinuation: context.pauseTurnContinuation,
+		})
+	}
+	for (const chunk of closing) {
+		if (chunk.phase !== "failed" || !context.resumedBeforeClose.has(chunk.function_id)) continue
+		recordHostedToolDeferralResolved({
+			apiFormat: "anthropic_messages",
+			hostedTool: context.callNames.get(chunk.function_id) ?? "unknown",
+			resolution: "missing_result",
+		})
 	}
 }

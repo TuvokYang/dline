@@ -22,6 +22,11 @@ export interface AnthropicMessagesStreamState {
 	 * Kept across pause_turn responses so a result arriving later still pairs with its call.
 	 */
 	serverToolUseBlocks?: Map<string, Record<string, unknown>>
+	/**
+	 * Calls an earlier logical response deferred behind client tool calls, which this request resumes.
+	 * Their result opens the response without a `server_tool_use` of its own and is replayed alone.
+	 */
+	resumedServerToolCallIds?: Set<string>
 }
 
 /**
@@ -32,47 +37,92 @@ export interface AnthropicMessagesStreamState {
  */
 const REPLAYED_HOSTED_TOOLS: ReadonlySet<ServerTool> = new Set([ServerTool.WEB_SEARCH, ServerTool.WEB_FETCH])
 
-/** Pair a completed hosted call with its result block, consuming the stored call. */
+/** Whether a deferred call to this provider-native hosted tool can be carried to the next request. */
+export function isResumableHostedToolName(name: unknown): boolean {
+	const tool = typeof name === "string" ? SERVER_TOOL_BY_PROVIDER_NAME[name] : undefined
+	return tool !== undefined && REPLAYED_HOSTED_TOOLS.has(tool)
+}
+
+/**
+ * Pair a completed hosted call with its result block, consuming the stored call.
+ *
+ * A result for a call deferred by an earlier response is replayed alone: its call is already stored with
+ * the turn that issued it.
+ */
 function takeHostedToolReplay(
 	tool: ServerTool,
 	resultBlock: { tool_use_id: string },
 	serverToolUseBlocks: Map<string, Record<string, unknown>>,
+	resumedServerToolCallIds: Set<string> | undefined,
 ): ClineAssistantHostedToolBlock | undefined {
 	const callBlock = serverToolUseBlocks.get(resultBlock.tool_use_id)
 	serverToolUseBlocks.delete(resultBlock.tool_use_id)
-	if (!callBlock || !REPLAYED_HOSTED_TOOLS.has(tool)) return undefined
-	return {
-		type: "hosted_tool",
-		protocol: "anthropic_messages",
-		blocks: [callBlock, { ...(resultBlock as unknown as Record<string, unknown>) }],
-	}
+	const resumed = resumedServerToolCallIds?.delete(resultBlock.tool_use_id) === true
+	if (!REPLAYED_HOSTED_TOOLS.has(tool)) return undefined
+	const nativeResult = { ...(resultBlock as unknown as Record<string, unknown>) }
+	if (resumed) return { type: "hosted_tool", protocol: "anthropic_messages", segment: "result", blocks: [nativeResult] }
+	if (!callBlock) return undefined
+	return { type: "hosted_tool", protocol: "anthropic_messages", blocks: [callBlock, nativeResult] }
+}
+
+export interface CloseOpenServerToolCallsOptions {
+	/** Client `tool_use` blocks in the final response; any of them defers hosted calls of the same group. */
+	clientToolCallCount: number
 }
 
 /**
- * Fail every hosted call the provider left open when its logical response ended without continuing it.
+ * Settle every hosted call still open when a logical response ended without continuing it.
  *
- * Naming the stop reason turns an otherwise silent gap into evidence of why no result arrived, for
- * example a parallel client tool call that ended the turn before the hosted tool ran.
+ * A response that stops for client tool calls defers its open hosted calls to the request that returns those
+ * results, so a replayable call is reported `deferred` together with its call block. Every other open call
+ * failed, and its stop reason is named so the gap is diagnosable.
  */
 export function* closeOpenServerToolCalls(
 	state: Required<AnthropicMessagesStreamState>,
 	stopReason: string | null | undefined,
+	options: CloseOpenServerToolCallsOptions = { clientToolCallCount: 0 },
 ): Generator<ApiRawStreamServerToolChunk> {
+	const deferredByClientTools = stopReason === "tool_use" && options.clientToolCallCount > 0
 	for (const functionId of state.startedServerToolCallIds) {
-		const name = state.serverToolUseBlocks.get(functionId)?.name
+		const callBlock = state.serverToolUseBlocks.get(functionId)
+		const name = callBlock?.name
 		const tool = typeof name === "string" ? SERVER_TOOL_BY_PROVIDER_NAME[name] : undefined
 		if (tool === undefined) continue
-		const ending = stopReason ? `stop_reason: ${stopReason}` : "no stop_reason"
-		yield {
-			type: "server_tool",
-			function_id: functionId,
-			tool,
-			phase: "failed",
-			error: `Anthropic response ended (${ending}) before the hosted ${name} call returned a result.`,
+		if (state.resumedServerToolCallIds.has(functionId)) {
+			yield failedServerToolChunk(
+				functionId,
+				tool,
+				`Anthropic did not return the result of the deferred hosted ${name} call at the start of this response.`,
+			)
+			continue
 		}
+		if (deferredByClientTools && callBlock && REPLAYED_HOSTED_TOOLS.has(tool)) {
+			yield {
+				type: "server_tool",
+				function_id: functionId,
+				tool,
+				phase: "deferred",
+				input: callBlock.input,
+				replay: { type: "hosted_tool", protocol: "anthropic_messages", segment: "call", blocks: [{ ...callBlock }] },
+			}
+			continue
+		}
+		const ending = stopReason ? `stop_reason: ${stopReason}` : "no stop_reason"
+		yield failedServerToolChunk(
+			functionId,
+			tool,
+			deferredByClientTools
+				? `Anthropic deferred the hosted ${name} call behind a client tool call, and Dline cannot resume a deferred hosted ${name} call.`
+				: `Anthropic response ended (${ending}) before the hosted ${name} call returned a result.`,
+		)
 	}
 	state.startedServerToolCallIds.clear()
 	state.serverToolUseBlocks.clear()
+	state.resumedServerToolCallIds.clear()
+}
+
+function failedServerToolChunk(functionId: string, tool: ServerTool, error: string): ApiRawStreamServerToolChunk {
+	return { type: "server_tool", function_id: functionId, tool, phase: "failed", error }
 }
 
 /**
@@ -239,6 +289,7 @@ export async function* handleAnthropicMessagesApiStreamResponse(
 	const activeServerToolCall = { id: "", name: "", arguments: "", input: undefined as unknown }
 	const startedServerToolCallIds = state?.startedServerToolCallIds ?? new Set<string>()
 	const serverToolUseBlocks = state?.serverToolUseBlocks ?? new Map<string, Record<string, unknown>>()
+	const resumedServerToolCallIds = state?.resumedServerToolCallIds
 
 	for await (const chunk of stream) {
 		switch (chunk?.type) {
@@ -329,7 +380,12 @@ export async function* handleAnthropicMessagesApiStreamResponse(
 						if (!startedServerToolCallIds.delete(chunk.content_block.tool_use_id)) break
 						const result = chunk.content_block.content
 						const failed = !Array.isArray(result) && result.type === "web_search_tool_result_error"
-						const replay = takeHostedToolReplay(ServerTool.WEB_SEARCH, chunk.content_block, serverToolUseBlocks)
+						const replay = takeHostedToolReplay(
+							ServerTool.WEB_SEARCH,
+							chunk.content_block,
+							serverToolUseBlocks,
+							resumedServerToolCallIds,
+						)
 						yield {
 							type: "server_tool",
 							function_id: chunk.content_block.tool_use_id,
@@ -344,7 +400,12 @@ export async function* handleAnthropicMessagesApiStreamResponse(
 						if (!startedServerToolCallIds.delete(chunk.content_block.tool_use_id)) break
 						const result = chunk.content_block.content
 						const failed = result.type === "web_fetch_tool_result_error"
-						const replay = takeHostedToolReplay(ServerTool.WEB_FETCH, chunk.content_block, serverToolUseBlocks)
+						const replay = takeHostedToolReplay(
+							ServerTool.WEB_FETCH,
+							chunk.content_block,
+							serverToolUseBlocks,
+							resumedServerToolCallIds,
+						)
 						yield {
 							type: "server_tool",
 							function_id: chunk.content_block.tool_use_id,
@@ -360,6 +421,7 @@ export async function* handleAnthropicMessagesApiStreamResponse(
 					case "text_editor_code_execution_tool_result": {
 						if (!startedServerToolCallIds.delete(chunk.content_block.tool_use_id)) break
 						serverToolUseBlocks.delete(chunk.content_block.tool_use_id)
+						resumedServerToolCallIds?.delete(chunk.content_block.tool_use_id)
 						const result = chunk.content_block.content
 						const failed = isCodeExecutionError(result)
 						yield {
