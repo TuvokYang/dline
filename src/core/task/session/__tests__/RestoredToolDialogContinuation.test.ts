@@ -50,7 +50,9 @@ function harness(options: {
 		findByOperation: vi.fn(async () => undefined),
 		read: vi.fn(async () =>
 			options.interrupted
-				? [{ kind: "message", source: "tool", payloadRef: "ref:interruption", causation: { turnId: "turn-1" } }]
+				? ([
+						{ kind: "message", source: "tool", payloadRef: "ref:interruption", causation: { turnId: "turn-1" } },
+					] as never[])
 				: [],
 		),
 	}
