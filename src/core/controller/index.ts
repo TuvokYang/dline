@@ -81,6 +81,7 @@ import {
 } from "@/core/storage/TaskCompletionBackfill"
 import { readHistoryContextWindowIndicator } from "@/core/task/HistoryContextWindow"
 import { resolveTaskPanelTitle } from "@/core/task/TaskPanelTitle"
+import { TaskStateManager } from "@/core/task/TaskStateManager"
 import { HostProvider } from "@/hosts/host-provider"
 import { ExtensionRegistryInfo } from "@/registry"
 import { AuthService } from "@/services/auth/AuthService"
@@ -1965,6 +1966,9 @@ export class Controller {
 			return { status: "rejected", error: "Profile switch requires at least one target mode." }
 		}
 
+		const display = this.historyDisplaySession
+		if (!this.task && display) return this.commitHistoryDisplayProfile(display, resolution, uniqueModes)
+
 		if (!this.task) {
 			const updates: Partial<Settings> = {}
 			for (const mode of uniqueModes) {
@@ -1990,6 +1994,38 @@ export class Controller {
 			targetModes: uniqueModes,
 			chatContent,
 		})
+	}
+
+	/**
+	 * Bind the task a read-only history panel shows to the selected Profile.
+	 *
+	 * Dev resumes a reopened task as a live Task, so the switch lands on that
+	 * task's binding and never on global state. The display session has no live
+	 * Task, but the panel's switcher and the task it promotes to on send both
+	 * read the task's own binding, so the same write keeps the windows
+	 * independent. The binding is saved before reporting success because
+	 * promotion reloads task settings from disk.
+	 */
+	private async commitHistoryDisplayProfile(
+		display: HistoryDisplaySession,
+		resolution: { readonly profileId: string; readonly profileName: string },
+		modes: readonly Mode[],
+	): Promise<ProfileSwitchRequestResult> {
+		if (display.isLocked()) return { status: "rejected", error: "Task is read-only in this window." }
+		const taskSettings = new TaskStateManager(display.taskId, this.stateManager)
+		const binding = { profileId: resolution.profileId, profileName: resolution.profileName }
+		const bindings: Partial<Record<Mode, typeof binding>> = {}
+		for (const mode of modes) bindings[mode] = binding
+		const previous = taskSettings.setProfileIdentityBindings(bindings, { clearRuntimeOverrides: true })
+		try {
+			await this.stateManager.flushPendingState()
+		} catch (error) {
+			taskSettings.restoreProfileState(previous)
+			return { status: "rejected", error: error instanceof Error ? error.message : String(error) }
+		}
+		this.restartAccountUsagePolling()
+		await this.postStateToWebview({ immediate: true })
+		return { status: "switched", operationId: randomUUID() }
 	}
 
 	async confirmProfileSwitch(operationId: string): Promise<ProfileSwitchRequestResult> {
