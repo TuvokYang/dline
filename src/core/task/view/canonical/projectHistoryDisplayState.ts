@@ -1,3 +1,5 @@
+import type { UiMessage } from "@shared/ExtensionMessage"
+import { getInteraction } from "../../interaction/InteractionRegistry"
 import {
 	createInitialTaskState,
 	type DialogActionRule,
@@ -26,6 +28,27 @@ export interface HistoryDisplayProjection {
 	readonly synthetic?: {
 		readonly interactionId: string
 		readonly kind: HistoryDisplayInteractionKind
+	}
+}
+
+/**
+ * The ask row a synthesized interaction anchors to, placed after the durable history.
+ *
+ * It exists only in the display: nothing is written until the user answers and
+ * the task is promoted. A completed task asks to resume rather than replaying
+ * its completion row.
+ */
+export function historyDisplayAnchorRow(
+	synthetic: NonNullable<HistoryDisplayProjection["synthetic"]>,
+	durableMessages: readonly UiMessage[],
+): UiMessage {
+	return {
+		ts: durableMessages.reduce((latest, message) => Math.max(latest, message.ts), 0) + 1,
+		type: "ask",
+		ask: synthetic.kind === "completion" ? "resume_completed_task" : getInteraction(synthetic.kind).taskAsk,
+		text: "",
+		partial: false,
+		interactionId: synthetic.interactionId,
 	}
 }
 

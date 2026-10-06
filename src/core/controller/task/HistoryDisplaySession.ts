@@ -13,10 +13,7 @@ import type { TaskState } from "@/core/task/kernel"
 import { FileTaskStateVault, openTaskPayloadStore } from "@/core/task/stores"
 import { TaskPhase } from "@/core/task/TaskPhase"
 import { projectCanonicalTaskView } from "@/core/task/view/canonical/projectCanonicalTaskView"
-import {
-	type HistoryDisplayInteractionKind,
-	projectHistoryDisplayState,
-} from "@/core/task/view/canonical/projectHistoryDisplayState"
+import { historyDisplayAnchorRow, projectHistoryDisplayState } from "@/core/task/view/canonical/projectHistoryDisplayState"
 import { materializeCanonicalInputQueue } from "@/core/task/view/materializeCanonicalInputQueue"
 import { projectHistoryPreparingView } from "./history-task-readiness"
 import { adaptCanonicalTaskView, anchoredInteractionId } from "./TaskViewMessageAdapter"
@@ -265,14 +262,7 @@ export class HistoryDisplaySession {
 			const evidence = anchor ? [...durableMessages, anchor] : durableMessages
 			return { messages: durableMessages, view: adaptCanonicalTaskView(view, evidence) }
 		}
-		const syntheticMessage: UiMessage = {
-			ts: durableMessages.reduce((latest, message) => Math.max(latest, message.ts), 0) + 1,
-			type: "ask",
-			ask: historyDisplayTaskAsk(display.synthetic.kind),
-			text: "",
-			partial: false,
-			interactionId: display.synthetic.interactionId,
-		}
+		const syntheticMessage = historyDisplayAnchorRow(display.synthetic, durableMessages)
 		const messages = [...durableMessages, syntheticMessage]
 		return { messages, view: this.projectView(display.state, messages), syntheticMessage }
 	}
@@ -301,9 +291,4 @@ export class HistoryDisplaySession {
 			return undefined
 		}
 	}
-}
-
-/** A completed task reopened from history asks to resume rather than replaying its completion row. */
-function historyDisplayTaskAsk(kind: HistoryDisplayInteractionKind): UiMessage["ask"] {
-	return kind === "completion" ? "resume_completed_task" : getInteraction(kind).taskAsk
 }
