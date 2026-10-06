@@ -1,15 +1,10 @@
 import type { ClineSayTool } from "@shared/ExtensionMessage"
 import { StringRequest } from "@shared/proto/dline/common"
 import { ChevronDownIcon, ChevronRightIcon, Link2Icon, TriangleAlertIcon } from "lucide-react"
-import { type RefObject, useLayoutEffect, useRef, useState } from "react"
+import { useState } from "react"
 import { cn } from "@/lib/utils"
 import { UiServiceClient } from "@/services/grpc-client"
 import HostedCallDeferredNotice from "./HostedCallDeferredNotice"
-
-/** Collapsed preview height of the fetched content, matching the collapsed command output. */
-const COLLAPSED_CONTENT_HEIGHT = "max-h-[120px]"
-/** Expanded height, matching the other long chat cards so one page cannot take over the view. */
-const EXPANDED_CONTENT_HEIGHT = "max-h-[60vh]"
 
 interface WebFetchRowProps {
 	messageType: "ask" | "say"
@@ -25,58 +20,38 @@ function sourceLabel(webFetch: ClineSayTool["webFetch"]): string | undefined {
 }
 
 /**
- * Whether the content is taller than the collapsed preview.
+ * The fetched page, collapsed by default so a long page never floods the chat.
  *
- * Measured only while collapsed: once expanded the element grows, and the toggle must stay available to collapse it.
+ * While collapsed the text is not rendered at all; expanded, it scrolls inside a bounded area and the
+ * toggle bar stays outside that area, so it remains reachable however far the page is scrolled.
  */
-function useOverflowsCollapsedHeight(ref: RefObject<HTMLElement | null>, content: string | undefined, expanded: boolean) {
-	const [overflows, setOverflows] = useState(false)
-	// biome-ignore lint/correctness/useExhaustiveDependencies: the text change itself must re-measure, because the ResizeObserver that would notice it is not available in every host.
-	useLayoutEffect(() => {
-		const element = ref.current
-		if (!element || expanded) return
-		const measure = () => setOverflows(element.scrollHeight > element.clientHeight)
-		measure()
-		if (typeof ResizeObserver === "undefined") return
-		const observer = new ResizeObserver(measure)
-		observer.observe(element)
-		return () => observer.disconnect()
-	}, [content, expanded])
-	return overflows
-}
-
 const FetchedContent = ({ content }: { content: string }) => {
 	const [expanded, setExpanded] = useState(false)
-	const scrollRef = useRef<HTMLDivElement>(null)
-	const overflows = useOverflowsCollapsedHeight(scrollRef, content, expanded)
 
 	return (
-		<div className="border-t border-editor-widget-border/50 pt-2">
-			<div
-				className={cn(
-					"overflow-y-auto overscroll-contain pr-1",
-					expanded ? EXPANDED_CONTENT_HEIGHT : COLLAPSED_CONTENT_HEIGHT,
-				)}
-				data-testid="web-fetch-results"
-				ref={scrollRef}>
-				<div className="ph-no-capture break-words whitespace-pre-wrap text-xs">{content}</div>
-			</div>
-			{(overflows || expanded) && (
-				<button
-					aria-expanded={expanded}
-					aria-label={expanded ? "Collapse fetched web content" : "Expand fetched web content"}
-					className="mt-1 flex w-full shrink-0 cursor-pointer items-center gap-1 border-0 border-t border-editor-widget-border/50 bg-transparent pt-1.5 text-left text-xs text-description"
-					data-testid="web-fetch-details-toggle"
-					onClick={() => setExpanded((value) => !value)}
-					type="button">
-					{expanded ? (
-						<ChevronDownIcon aria-hidden="true" className="size-3 shrink-0" />
-					) : (
-						<ChevronRightIcon aria-hidden="true" className="size-3 shrink-0" />
-					)}
-					<span>{expanded ? "Collapse fetched content" : "Show all fetched content"}</span>
-				</button>
+		<div className="border-t border-editor-widget-border/50 pt-1.5">
+			{expanded && (
+				<div className="max-h-[40vh] overflow-y-auto overscroll-contain pr-1" data-testid="web-fetch-results">
+					<div className="ph-no-capture break-words whitespace-pre-wrap text-xs">{content}</div>
+				</div>
 			)}
+			<button
+				aria-expanded={expanded}
+				aria-label={expanded ? "Collapse fetched web content" : "Expand fetched web content"}
+				className={cn(
+					"flex w-full shrink-0 cursor-pointer items-center gap-1 border-0 bg-transparent text-left text-xs text-description",
+					expanded && "mt-1 border-t border-editor-widget-border/50 pt-1.5",
+				)}
+				data-testid="web-fetch-details-toggle"
+				onClick={() => setExpanded((value) => !value)}
+				type="button">
+				{expanded ? (
+					<ChevronDownIcon aria-hidden="true" className="size-3 shrink-0" />
+				) : (
+					<ChevronRightIcon aria-hidden="true" className="size-3 shrink-0" />
+				)}
+				<span>{expanded ? "Collapse fetched content" : "Show fetched content"}</span>
+			</button>
 		</div>
 	)
 }

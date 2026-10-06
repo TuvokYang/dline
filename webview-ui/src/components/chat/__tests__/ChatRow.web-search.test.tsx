@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react"
 import React from "react"
-import { afterEach, describe, expect, it, vi } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 import { ChatRowContent } from "../ChatRow"
 
 void React
@@ -384,54 +384,32 @@ describe("ChatRow hosted Web Search rendering", () => {
 			/>
 		)
 
-		/** jsdom has no layout, so the measured content height is supplied for the scroll area. */
-		const withMeasuredContent = (scrollHeight: number, clientHeight: number) => {
-			vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(scrollHeight)
-			vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(clientHeight)
-		}
-
-		afterEach(() => {
-			vi.restoreAllMocks()
-		})
-
-		it("previews the full content in a collapsed scroll area while the card itself does not scroll", () => {
+		it("starts collapsed and renders none of the fetched page until it is expanded", () => {
 			render(completedFetch("# Current docs\n\nFetched content marker"))
 
 			expect(screen.getByText("Anthropic Web Fetch (Hosted)")).toBeInTheDocument()
-			const results = screen.getByTestId("web-fetch-results")
-			expect(results).toHaveTextContent("Fetched content marker")
-			expect(results).toHaveClass("max-h-[120px]", "overflow-y-auto")
+			expect(screen.getByTestId("web-fetch-details-toggle")).toHaveAttribute("aria-expanded", "false")
+			expect(screen.queryByTestId("web-fetch-results")).not.toBeInTheDocument()
+			expect(screen.queryByText(/Fetched content marker/)).not.toBeInTheDocument()
 			expect(screen.getByTestId("web-fetch-card")).not.toHaveClass("max-h-[40vh]", "overflow-y-auto")
 		})
 
-		it("omits the toggle bar when the content fits the collapsed height", () => {
-			withMeasuredContent(80, 80)
-			render(completedFetch("short page"))
-
-			expect(screen.getByTestId("web-fetch-results")).toHaveTextContent("short page")
-			expect(screen.queryByTestId("web-fetch-details-toggle")).not.toBeInTheDocument()
-		})
-
-		it("pins a toggle bar outside the scroll area when the content overflows, switching between both heights", () => {
-			withMeasuredContent(2400, 120)
+		it("expands the page into a bounded scroll area with the toggle bar pinned outside it", () => {
 			render(completedFetch(`# Long page\n\n${"Fetched paragraph. ".repeat(600)}`))
+			const toggle = screen.getByTestId("web-fetch-details-toggle")
+
+			fireEvent.click(toggle)
 
 			const results = screen.getByTestId("web-fetch-results")
-			const toggle = screen.getByTestId("web-fetch-details-toggle")
-			expect(results).not.toContainElement(toggle)
-			expect(toggle).toHaveAttribute("aria-expanded", "false")
-			expect(results).toHaveClass("max-h-[120px]")
-
-			fireEvent.click(toggle)
-
 			expect(toggle).toHaveAttribute("aria-expanded", "true")
-			expect(results).toHaveClass("max-h-[60vh]", "overflow-y-auto")
-			expect(results).not.toHaveClass("max-h-[120px]")
+			expect(results).toHaveTextContent("Fetched paragraph.")
+			expect(results).toHaveClass("max-h-[40vh]", "overflow-y-auto")
+			expect(results).not.toContainElement(toggle)
 
 			fireEvent.click(toggle)
 
 			expect(toggle).toHaveAttribute("aria-expanded", "false")
-			expect(results).toHaveClass("max-h-[120px]")
+			expect(screen.queryByTestId("web-fetch-results")).not.toBeInTheDocument()
 		})
 	})
 
