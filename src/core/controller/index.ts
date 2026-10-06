@@ -1712,11 +1712,17 @@ export class Controller {
 						Object.fromEntries(operation.targetModes.map((mode) => [mode, binding])),
 						{ clearRuntimeOverrides: true },
 					)
+					let rebuilt = false
 					try {
 						await session.owners.api.rebuild({ abortPrevious: true })
+						rebuilt = true
+						// The switch is committed only once the binding is on disk, as dev
+						// did: History Resume and other windows read the task settings file.
+						await this.stateManager.flushPendingState()
 					} catch (error) {
-						// The handler was never replaced, so the bindings must not claim it was.
+						// Neither the handler nor the bindings may claim a switch that did not commit.
 						session.owners.settings.restoreProfileState(previous)
+						if (rebuilt) await session.owners.api.rebuild({ abortPrevious: true })
 						throw error
 					}
 					await session.owners.interactions.dismissProviderFailure()
