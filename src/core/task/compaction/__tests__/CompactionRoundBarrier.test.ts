@@ -112,18 +112,21 @@ describe("CompactionRoundBarrier - automatic", () => {
 		expect(p.contexts[0].trigger).toBe("automatic")
 	})
 
-	it("includes terminal-result growth that arrived after the last provider usage sample", async () => {
+	it("leaves growth since the last provider usage to the guard that measures the complete request", async () => {
 		const state = running()
 		const p = probe(() => state)
 		const barrier = new CompactionRoundBarrier({ session: () => p.session, state: () => state })
 
+		// Large tool results arrived after a request that reported usage below
+		// the trigger. Dev decides on the reported usage alone before the round
+		// and lets the final guard measure the request carrying those results.
 		barrier.observe({ contextTokens: TRIGGER - 10_000, compactTriggerTokens: TRIGGER })
-		const waiting = barrier.settleBeforeRound({ ...round(), pendingContextTokens: 10_000 })
-		await drain()
-		expect(p.scheduled).toHaveLength(1)
+		// The compose port still reports the growth; it feeds the usage view only.
+		const composed = { ...round(), pendingContextTokens: 60_000 }
+		const waiting = barrier.settleBeforeRound(composed)
 
-		await run(barrier, p.scheduled[0])
 		await expect(waiting).resolves.toEqual({ kind: "ready" })
+		expect(p.scheduled).toHaveLength(0)
 	})
 
 	it("stops the round with the run's reason when an automatic run fails", async () => {

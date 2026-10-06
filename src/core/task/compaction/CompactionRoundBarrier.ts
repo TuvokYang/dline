@@ -211,11 +211,17 @@ export class CompactionRoundBarrier
 	 * pressure stays recorded so the round that retries compacts again. One that
 	 * was cancelled or abandoned stops it the same way, as dev does, rather than
 	 * sending the request it was meant to make room for.
+	 *
+	 * The automatic decision reads only the pressure providers reported, as
+	 * dev's pre-request check does. What the round adds on top - tool results,
+	 * the answer replayed as input, the environment - is measured on the
+	 * complete request by the final context-window guard, which compacts when
+	 * that request would not fit. Adding a separate estimate of the same growth
+	 * here compacted rounds whose request still fit.
 	 */
 	async settleBeforeRound(input: {
 		readonly signal: AbortSignal
 		readonly lifecycle: readonly LifecycleCommand[]
-		readonly pendingContextTokens?: number
 	}): Promise<RoundReadiness> {
 		const replied = this.takeReplied()
 		const manual = mergeOwedCompactions([
@@ -223,8 +229,6 @@ export class CompactionRoundBarrier
 			...(replied ? [replied] : []),
 		])
 		const observed = this.observed
-		const pendingContextTokens = Math.max(0, input.pendingContextTokens ?? 0)
-		const pressure = observed ? { ...observed, contextTokens: observed.contextTokens + pendingContextTokens } : undefined
 		// Consumed whatever the outcome: a refused or failed compaction must not
 		// make every later round retry the same request forever.
 		this.observed = undefined
@@ -239,8 +243,8 @@ export class CompactionRoundBarrier
 			if (outcome === "completed") return ROUND_READY
 			return { kind: "withdrawn", reason: `manual_compaction_${outcome === "refused" ? "failed" : outcome}` }
 		}
-		if (!observed || !pressure || this.options.enabled?.() === false) return ROUND_READY
-		if (!shouldCompactAutomatically(this.options.state(), pressure)) return ROUND_READY
+		if (!observed || this.options.enabled?.() === false) return ROUND_READY
+		if (!shouldCompactAutomatically(this.options.state(), observed)) return ROUND_READY
 		this.compactedThisRound = true
 		const result = await this.compact(session, "automatic", input.signal)
 		if (result.outcome === "withdrawn") return { kind: "withdrawn", reason: AUTOMATIC_COMPACTION_WITHDRAWN }
