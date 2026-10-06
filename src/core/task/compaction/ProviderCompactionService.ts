@@ -30,6 +30,7 @@ import {
 } from "../ContextCompactionSession"
 import { CompactionRunFailedError } from "../executors/compaction/CompactionCommandExecutor"
 import type { ProductionCompactionService } from "../executors/compaction/ProductionCompactionAdapter"
+import { repairProviderPairing } from "../executors/provider/service/ProviderPairingRepair"
 import type { ProviderRequestFrame, ProviderRequestFramePort } from "../executors/provider/service/ProviderRequest"
 import { ExplicitInstructionRegistry } from "../explicit-instructions/ExplicitInstructionRegistry"
 import { ExplicitInstructionRequestScope } from "../explicit-instructions/ExplicitInstructionRequestScope"
@@ -257,7 +258,9 @@ export class ProviderCompactionService implements ProductionCompactionService {
 				)
 			},
 			reprojectTarget: async (_sessionInput, state) => {
-				const messages = buildTargetCandidateHistory(state, context.tail ?? [])
+				// Measured as it would be sent: dev repairs tool pairing before
+				// estimating, so an orphaned result in the kept tail is not counted.
+				const messages = repairProviderPairing(buildTargetCandidateHistory(state, context.tail ?? []))
 				const candidateEstimatedTokens = estimateContextWindowCandidate(
 					{
 						systemPrompt: frame.systemPrompt,
