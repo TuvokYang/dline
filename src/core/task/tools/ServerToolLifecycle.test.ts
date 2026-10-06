@@ -69,6 +69,32 @@ describe("ServerToolLifecycle", () => {
 		])
 	})
 
+	it("marks only the update where the provider first ends a call as settled", async () => {
+		const updates: Array<{ dlineTid: string; status: string; settled?: true }> = []
+		const lifecycle = new ServerToolLifecycle(hostedPlan, true, (update) => {
+			updates.push({ dlineTid: update.dlineTid, status: update.status, settled: update.settled })
+		})
+		const second = (phase: ApiStreamServerToolChunk["phase"]) => ({
+			...chunk(phase),
+			function_id: "provider-call-2",
+			dline_tid: "trace-2",
+		})
+
+		await lifecycle.consume(chunk("started"))
+		await lifecycle.consume(chunk("completed"))
+		await lifecycle.consume({ ...chunk("completed"), result: [{ url: "https://example.com" }] })
+		await lifecycle.consume(second("started"))
+		await lifecycle.finalizeOpen("stream ended before hosted result")
+
+		expect(updates).toEqual([
+			{ dlineTid: "trace-1", status: "started", settled: undefined },
+			{ dlineTid: "trace-1", status: "completed", settled: true },
+			{ dlineTid: "trace-1", status: "completed", settled: undefined },
+			{ dlineTid: "trace-2", status: "started", settled: undefined },
+			{ dlineTid: "trace-2", status: "failed", settled: undefined },
+		])
+	})
+
 	it("enriches terminal-first hosted calls with a late query and result without duplicate updates", async () => {
 		const result = {
 			action: {

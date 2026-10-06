@@ -117,6 +117,13 @@ function webToolStatus(update: HostedServerToolUpdate): WebToolPresentationStatu
 }
 
 /** A deferred row names its hosted call, so the request that resumes it finishes this row. */
+/** Tool name a hosted call is recorded under, matching the client tool of the same capability. */
+function hostedToolName(tool: ServerTool): string {
+	if (tool === ServerTool.WEB_FETCH) return ClineDefaultTool.WEB_FETCH
+	if (tool === ServerTool.CODE_EXECUTION) return "code_execution"
+	return ClineDefaultTool.WEB_SEARCH
+}
+
 function deferredHostedCall(update: HostedServerToolUpdate): { hostedCall?: HostedCallPresentation } {
 	return update.status === "deferred" ? { hostedCall: { functionId: update.functionId, traceId: update.dlineTid } } : {}
 }
@@ -403,10 +410,43 @@ export class ToolExecutor {
 		this.webToolsEnabled = webToolsEnabled
 		this.webSearchRoutingPlan = plan
 		this.hostedServerToolLifecycle = new ServerToolLifecycle(plan, allowHosted, (update) =>
-			this.writeHostedServerToolRow(update),
+			this.onHostedServerToolUpdate(update),
 		)
 		this.hostedServerToolMessageTs.clear()
 		this.carriedServerToolTraceIds = new Map()
+	}
+
+	/**
+	 * Show one hosted call update and, when the call first settles, count it as tool work.
+	 *
+	 * A hosted call is real work the model asked for: it becomes the latest tool, so a narration
+	 * after it is not mistaken for a consecutive narration, and identical repeats trip the same
+	 * loop detection as client tools.
+	 */
+	private async onHostedServerToolUpdate(update: HostedServerToolUpdate): Promise<void> {
+		if (update.settled) {
+			this.checkRepeatedToolCall(hostedToolName(update.tool), toolCallSignature({ query: update.query }))
+		}
+		await this.writeHostedServerToolRow(update)
+	}
+
+	/**
+	 * Record a finished tool call and react when the model keeps repeating it.
+	 *
+	 * Comparing against the previous call and becoming the previous call are one step,
+	 * so this stays synchronous and no await can fall between them.
+	 */
+	private checkRepeatedToolCall(toolName: string, signature: string): void {
+		const loopCheck = recordToolCall(this.taskState, toolName, signature)
+		if (loopCheck.softWarning) {
+			this.taskState.userMessageContent.push({
+				type: "text",
+				text: formatResponse.repeatedToolCall(toolName, LOOP_DETECTION_SOFT_THRESHOLD),
+			})
+		}
+		if (loopCheck.hardEscalation) {
+			this.taskState.consecutiveMistakeCount = this.stateManager.getGlobalSettingsKey("maxConsecutiveMistakes")
+		}
 	}
 
 	/** Write one hosted call update into the chat row that call owns. */
@@ -1522,21 +1562,7 @@ export class ToolExecutor {
 				if (this.taskState.abort) return
 			}
 
-			// --- Repeated tool call loop detection ---
-			// Comparing against the previous call and becoming the previous
-			// call are one step, so no await can fall between them here.
-			const loopCheck = recordToolCall(this.taskState, block.name, toolCallSignature(block.params))
-
-			if (loopCheck.softWarning) {
-				this.taskState.userMessageContent.push({
-					type: "text",
-					text: formatResponse.repeatedToolCall(block.name, LOOP_DETECTION_SOFT_THRESHOLD),
-				})
-			}
-
-			if (loopCheck.hardEscalation) {
-				this.taskState.consecutiveMistakeCount = this.stateManager.getGlobalSettingsKey("maxConsecutiveMistakes")
-			}
+			this.checkRepeatedToolCall(block.name, toolCallSignature(block.params))
 
 			// Check abort before running PostToolUse hook (success path)
 			if (this.taskState.abort) {

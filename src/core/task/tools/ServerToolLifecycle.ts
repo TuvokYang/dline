@@ -17,6 +17,12 @@ export interface DeferredServerToolCall {
 }
 
 export interface HostedServerToolUpdate {
+	/**
+	 * Set only on the update where the provider first ends the call, so consumers count each call
+	 * the provider ran exactly once. Calls Dline closes itself, because the stream ended or no
+	 * request resumed them, never carry it.
+	 */
+	readonly settled?: true
 	readonly dlineTid: string
 	readonly functionId: string
 	readonly tool: ServerTool
@@ -280,6 +286,7 @@ export class ServerToolLifecycle {
 			functionId: chunk.function_id,
 			tool: chunk.tool,
 			status,
+			...(state.terminal ? { settled: true } : {}),
 			// A deferred row must survive the response that parks it, so it is written durably.
 			partial: status === "started",
 			query,

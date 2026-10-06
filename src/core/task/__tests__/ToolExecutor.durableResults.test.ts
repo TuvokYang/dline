@@ -566,6 +566,72 @@ describe("ToolExecutor durable tool results", () => {
 		)
 	})
 
+	describe("hosted call accounting", () => {
+		const searchPlan = resolveWebSearchRoutingPlan({
+			enabled: true,
+			modelInfo: { capabilities: { tools: [ServerTool.WEB_SEARCH] } },
+			selectedApiFormat: ApiFormat.ANTHROPIC_CHAT,
+			localAvailable: true,
+			remoteAdapterAvailable: true,
+		})
+
+		function hostedHarness() {
+			const harness = createHarness({ providerId: "anthropic" })
+			const hosted = harness.executor as unknown as {
+				hostedServerToolMessageTs: Map<string, number>
+				taskState: { lastToolName: string; lastToolParams: string; consecutiveIdenticalToolCount: number }
+				setWebSearchRoutingPlan(plan: WebSearchRoutingPlan, webToolsEnabled: boolean): void
+				consumeServerToolChunk(chunk: ApiStreamServerToolChunk): Promise<boolean>
+			}
+			hosted.hostedServerToolMessageTs = new Map()
+			hosted.setWebSearchRoutingPlan(searchPlan, true)
+			Object.assign(hosted.taskState, { lastToolName: "", lastToolParams: "", consecutiveIdenticalToolCount: 0 })
+			return { ...harness, hosted }
+		}
+
+		async function runSearch(
+			hosted: ReturnType<typeof hostedHarness>["hosted"],
+			id: string,
+			query: string,
+			extraCompleted = 0,
+		) {
+			const chunk = { type: "server_tool", function_id: id, dline_tid: `trace-${id}`, tool: ServerTool.WEB_SEARCH } as const
+			await hosted.consumeServerToolChunk({ ...chunk, phase: "started", input: { query } })
+			await hosted.consumeServerToolChunk({ ...chunk, phase: "completed", result: [] })
+			for (let i = 0; i < extraCompleted; i++) {
+				await hosted.consumeServerToolChunk({ ...chunk, phase: "completed", result: [{ url: `https://e.com/${i}` }] })
+			}
+		}
+
+		it("records a settled hosted call as the last tool, so a following narration is not consecutive", async () => {
+			const { hosted } = hostedHarness()
+			hosted.taskState.lastToolName = "act_mode_respond"
+
+			await runSearch(hosted, "srvtoolu_a", "dline release notes")
+
+			expect(hosted.taskState.lastToolName).toBe("web_search")
+			expect(hosted.taskState.consecutiveIdenticalToolCount).toBe(1)
+		})
+
+		it("counts one hosted call once even when the provider enriches its completed result", async () => {
+			const { hosted } = hostedHarness()
+
+			await runSearch(hosted, "srvtoolu_b", "same query", 2)
+
+			expect(hosted.taskState.consecutiveIdenticalToolCount).toBe(1)
+		})
+
+		it("warns about repeated identical hosted calls like a repeated local tool", async () => {
+			const { hosted, userMessageContent } = hostedHarness()
+
+			for (const id of ["srvtoolu_1", "srvtoolu_2", "srvtoolu_3"]) await runSearch(hosted, id, "same query")
+
+			expect(hosted.taskState.consecutiveIdenticalToolCount).toBe(3)
+			expect(JSON.stringify(userMessageContent)).toContain("web_search")
+			expect(userMessageContent.some((block) => block.type === "text")).toBe(true)
+		})
+	})
+
 	describe("Anthropic deferred hosted calls", () => {
 		const anthropicSearchPlan = resolveWebSearchRoutingPlan({
 			enabled: true,
