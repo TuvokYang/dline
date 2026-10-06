@@ -102,5 +102,11 @@ export function useBrowsingScrollAnchor(
 		}
 	}, [capture, invalidate, scheduleRestore, scroller])
 
-	return { capture, scheduleRestore }
+	// Another writer has taken over the position for the current content change
+	// (the list's own scroll-to-index after older history merges in). A second
+	// correction measured while that one is still settling would interrupt it,
+	// so drop the pending restore and let the next scroll capture afresh.
+	const release = invalidate
+
+	return { capture, scheduleRestore, release }
 }

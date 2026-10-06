@@ -9,6 +9,7 @@ interface VirtuosoTestProps {
 	atBottomStateChange?: (atBottom: boolean) => void
 	initialTopMostItemIndex?: number | { index: number; align: "end" | "start" | "center" }
 	rangeChanged?: (range: { startIndex: number; endIndex: number }) => void
+	scrollerRef?: (element: HTMLElement | Window | null) => void
 }
 
 const mocks = vi.hoisted(() => ({
@@ -21,6 +22,10 @@ const mocks = vi.hoisted(() => ({
 	setCurrentMessages: undefined as React.Dispatch<React.SetStateAction<ClineMessage[]>> | undefined,
 	virtuosoProps: undefined as VirtuosoTestProps | undefined,
 	scrollToIndex: vi.fn(),
+	/** Row wrappers the mock list renders; zero keeps the scroller detached. */
+	renderedRowCount: 0,
+	/** Timestamp of the message the first rendered row shows. */
+	firstRenderedTs: 0,
 }))
 
 vi.mock("@/context/ExtensionStateContext", async () => {
@@ -64,10 +69,28 @@ vi.mock("react-virtuoso", async () => {
 		ReactModule.useImperativeHandle(ref, () => ({
 			scrollToIndex: mocks.scrollToIndex,
 		}))
-		return ReactModule.createElement("div", {
-			"data-testid": "virtuoso",
-			"data-virtuoso-scroller": "true",
-		})
+		const { scrollerRef } = props
+		const attachScroller = ReactModule.useCallback(
+			(element: HTMLDivElement | null) => {
+				if (mocks.renderedRowCount > 0) scrollerRef?.(element)
+			},
+			[scrollerRef],
+		)
+		// Item wrappers carry the same attributes the real list renders:
+		// `data-index` is the position in `data`, `data-item-index` the public
+		// index, and the message row inside renders `data-message-ts`.
+		const rows = Array.from({ length: mocks.renderedRowCount }, (_, index) =>
+			ReactModule.createElement(
+				"div",
+				{ key: index, "data-index": index, "data-item-index": index + 1000 },
+				ReactModule.createElement("div", { "data-message-ts": mocks.firstRenderedTs + index }),
+			),
+		)
+		return ReactModule.createElement(
+			"div",
+			{ "data-testid": "virtuoso", "data-virtuoso-scroller": "true", ref: attachScroller },
+			...rows,
+		)
 	})
 
 	return { Virtuoso }
@@ -155,11 +178,14 @@ describe("MessagesArea sliding-window integration", () => {
 		mocks.currentMessages = []
 		mocks.currentFirstItemIndex = 0
 		mocks.setCurrentMessages = undefined
+		mocks.renderedRowCount = 0
+		mocks.firstRenderedTs = 0
 	})
 
 	afterEach(() => {
 		cleanup()
 		vi.useRealTimers()
+		vi.restoreAllMocks()
 	})
 
 	it("keeps the sticky overlay transparent outside the visible message", () => {
@@ -271,6 +297,71 @@ describe("MessagesArea sliding-window integration", () => {
 		})
 		expect(mocks.fetchMessage.mock.calls[0][0]).toMatchObject({ referenceIndex: 100, count: 200 })
 		expect(mocks.fetchMessage.mock.calls[1][0]).toMatchObject({ referenceIndex: 50, count: 200 })
+	})
+
+	it("keeps the row the reader can see in place when older history merges in ahead of it", async () => {
+		// The rendered range Virtuoso reports includes overscan above the
+		// viewport. Aligning its first row to the top after the merge pushed the
+		// rows the reader was looking at out of view. The restore must target the
+		// first row that intersects the viewport, at the offset it had.
+		const viewport = { top: 100, height: 500 }
+		const rowHeight = 50
+		// Row 5 is the first one on screen and starts 20px above the viewport top.
+		const rowTop = (index: number) => viewport.top - 20 + (index - 5) * rowHeight
+		vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+			const box =
+				this.dataset.testid === "virtuoso"
+					? viewport
+					: this.dataset.itemIndex !== undefined
+						? { top: rowTop(Number(this.dataset.index)), height: rowHeight }
+						: { top: 0, height: 0 }
+			return {
+				top: box.top,
+				bottom: box.top + box.height,
+				height: box.height,
+				left: 0,
+				right: 300,
+				width: 300,
+				x: 0,
+				y: box.top,
+				toJSON: () => ({}),
+			}
+		})
+		mocks.renderedRowCount = 21
+		// The rendered band starts at the first loaded message (ts 301), so row 5 shows ts 306.
+		mocks.firstRenderedTs = 301
+		mocks.initialMessages = createMessages(300, 250)
+		mocks.initialFirstItemIndex = 300
+		mocks.fetchMessage
+			.mockResolvedValueOnce({
+				messages: createMessages(250, 50),
+				startIndex: 250,
+				taskId: "task-1",
+				taskInstanceId: "task-instance-1",
+			})
+			.mockResolvedValue({
+				messages: [],
+				startIndex: 50,
+				taskId: "task-1",
+				taskInstanceId: "task-instance-1",
+			})
+		renderMessagesArea()
+		fireEvent.wheel(screen.getByTestId("virtuoso"), { deltaY: -100 })
+
+		act(() => {
+			mocks.virtuosoProps?.rangeChanged({ startIndex: 0, endIndex: 20 })
+		})
+
+		// The second request is planned from the merged window, so seeing it
+		// proves the first merge has been committed and rendered.
+		await waitFor(() => {
+			expect(mocks.fetchMessage).toHaveBeenCalledTimes(2)
+		})
+		// This harness passes fixed grouped rows, so the anchored row keeps its
+		// position in `data`; what matters is that it is the visible row, not
+		// the overscan row at index 0, and that its cut-off is preserved.
+		expect(mocks.scrollToIndex).toHaveBeenCalledTimes(1)
+		expect(mocks.scrollToIndex).toHaveBeenCalledWith({ index: 5, align: "start", behavior: "auto", offset: 20 })
 	})
 
 	it("does not surrender browsing ownership to a transient at-bottom report", () => {

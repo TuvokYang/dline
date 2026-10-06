@@ -141,6 +141,29 @@ async function captureScroller(sidebar: Frame): Promise<ScrollerSnapshot> {
 	})
 }
 
+/** Interval between two equal scroll positions that count as settled. */
+const SCROLL_SETTLE_SAMPLE_MS = 200
+const SCROLL_SETTLE_TIMEOUT_MS = 10_000
+
+/**
+ * Capture the scroller once the wheel input that preceded it has been applied.
+ *
+ * A wheel delta is applied asynchronously and animated, so a snapshot taken a
+ * fixed delay after `mouse.wheel` can predate part or all of that scroll; an
+ * anchor read from it then "moves" by the rest of the user's own gesture.
+ */
+async function captureSettledScroller(sidebar: Frame): Promise<ScrollerSnapshot> {
+	let previous = await captureScroller(sidebar)
+	const deadline = Date.now() + SCROLL_SETTLE_TIMEOUT_MS
+	while (Date.now() < deadline) {
+		await sidebar.page().waitForTimeout(SCROLL_SETTLE_SAMPLE_MS)
+		const current = await captureScroller(sidebar)
+		if (current.scrollTop === previous.scrollTop && current.scrollHeight === previous.scrollHeight) return current
+		previous = current
+	}
+	throw new Error(`the Chat scroller did not settle within ${SCROLL_SETTLE_TIMEOUT_MS}ms`)
+}
+
 function expectUniqueOrderedRows(snapshot: ScrollerSnapshot): void {
 	const timestamps = snapshot.visibleRows.map((row) => row.ts)
 	expect(new Set(timestamps).size, "visible Chat rows must have unique message identities").toBe(timestamps.length)
@@ -260,6 +283,7 @@ e2e.describe("Chat message window scroll", () => {
 					BROWSE_TARGET_INDEX,
 				)
 				expect(browsing.bottomGap, "browsing old messages must move away from the live tail").toBeGreaterThan(100)
+				browsing = await captureSettledScroller(sidebar)
 				expectUniqueOrderedRows(browsing)
 				const anchor = browsing.visibleRows.find((row) => row.top >= -1)
 				expect(anchor, "the browser must expose a stable visible row anchor").toBeDefined()
@@ -394,6 +418,7 @@ e2e.describe("Chat message window scroll", () => {
 					browsing = await captureScroller(sidebar)
 				}
 				expect(browsing.bottomGap, "wheel input must move away from the streaming tail").toBeGreaterThan(500)
+				browsing = await captureSettledScroller(sidebar)
 				expectUniqueOrderedRows(browsing)
 				const anchor = browsing.visibleRows.find((row) => row.top >= -1)
 				if (!anchor) throw new Error("stream browsing must expose a stable visible anchor")
