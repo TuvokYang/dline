@@ -22,12 +22,14 @@ import type { ClineContent, ClineStorageMessage } from "@shared/messages/content
 import { ClineDefaultTool } from "@shared/tools"
 import { getRetryDelay, MAX_AUTO_RETRY_ATTEMPTS } from "../auto-retry"
 import {
+	type ContextCompactionIndicatorProjection,
 	type ContextCompactionPassRequest,
 	ContextCompactionSession,
 	type ContextCompactionSessionInput,
 	type ContextCompactionSessionPorts,
 	type ContextCompactionTriggerKind,
 } from "../ContextCompactionSession"
+import { estimateContextWindowIndicatorSegments } from "../ContextWindowIndicatorProjection"
 import { CompactionRunFailedError } from "../executors/compaction/CompactionCommandExecutor"
 import type { ProductionCompactionService } from "../executors/compaction/ProductionCompactionAdapter"
 import { repairProviderPairing } from "../executors/provider/service/ProviderPairingRepair"
@@ -37,6 +39,16 @@ import { ExplicitInstructionRequestScope } from "../explicit-instructions/Explic
 import type { CompactionTrigger } from "../stores/payload/TaskPayloadEnvelopes"
 import type { CompactionRequestScopeReader } from "./CompactionRequestScopes"
 import type { CompactionProgressPort } from "./MessageStateCompactionCards"
+
+/** The environment block the next request would carry, rendered without consuming what it reports. */
+export interface CompactionEnvironmentPreview {
+	preview(input: { readonly signal: AbortSignal }): Promise<string | undefined>
+}
+
+/** Receives the next request each accepted Pass projects, for the context-window indicator. */
+export interface CompactionIndicatorPort {
+	passProjected(compactionId: string, projection: ContextCompactionIndicatorProjection): void
+}
 
 export interface ProviderCompactionServiceOptions {
 	/** The frame ordinary requests use; compaction must share it to keep the provider prefix cache. */
@@ -60,6 +72,10 @@ export interface ProviderCompactionServiceOptions {
 	readonly waitForRetry?: (retryAttempt: number, signal: AbortSignal) => Promise<void>
 	/** Shows the run while it works: each Pass, and a Pass that broke off and is sent again. */
 	readonly progress?: CompactionProgressPort
+	/** Adds the environment block to the measured next request; absent in headless assemblies. */
+	readonly environment?: CompactionEnvironmentPreview
+	/** Shows each accepted Pass's projected next request; absent in headless assemblies. */
+	readonly indicator?: CompactionIndicatorPort
 }
 
 interface CompactionContext {
@@ -257,25 +273,45 @@ export class ProviderCompactionService implements ProductionCompactionService {
 					"send",
 				)
 			},
-			reprojectTarget: async (_sessionInput, state) => {
-				// Measured as it would be sent: dev repairs tool pairing before
-				// estimating, so an orphaned result in the kept tail is not counted.
-				const messages = repairProviderPairing(buildTargetCandidateHistory(state, context.tail ?? []))
-				const candidateEstimatedTokens = estimateContextWindowCandidate(
-					{
-						systemPrompt: frame.systemPrompt,
-						messages,
-						tools: frame.tools,
-						serverTools: frame.options?.serverTools ?? [],
-					},
-					estimator,
+			reprojectTarget: async (sessionInput, state) => {
+				// Measured as it would be sent, as dev does: the next request carries
+				// a fresh environment block, and tool pairing is repaired before
+				// estimating so an orphaned result in the kept tail is not counted.
+				const environment = await this.options.environment?.preview({ signal: sessionInput.signal ?? input.signal })
+				const continuation: ClineStorageMessage[] = environment
+					? [{ role: "user", content: [{ type: "text", text: environment }], ts: Date.now() }]
+					: []
+				const messages = repairProviderPairing(
+					buildTargetCandidateHistory(state, [...(context.tail ?? []), ...continuation]),
 				)
-				return decideTargetWindowFitting({
-					candidateEstimatedTokens,
-					providerContextWindow: getContextWindowInfo(frame.api).contextWindow,
+				const providerInput = {
+					systemPrompt: frame.systemPrompt,
+					messages,
+					tools: frame.tools,
+					serverTools: frame.options?.serverTools ?? [],
+				}
+				const contextWindow = getContextWindowInfo(frame.api).contextWindow
+				const decision = decideTargetWindowFitting({
+					candidateEstimatedTokens: estimateContextWindowCandidate(providerInput, estimator),
+					providerContextWindow: contextWindow,
 					...this.options.triggerOptions?.(),
 					hasMoreTurns: state.coveredTurnCount < state.turns.length,
 				})
+				const segments = estimateContextWindowIndicatorSegments({
+					providerInput,
+					durableMessageCount: Math.max(0, messages.length - continuation.length),
+					...estimator,
+				})
+				return {
+					...decision,
+					indicator: {
+						durableContextTokens: segments.durableContextTokens,
+						pendingSendTokens: segments.pendingSendTokens,
+						environmentTokens: segments.environmentTokens,
+						contextWindow,
+						mode: sessionInput.targetMode,
+					},
+				}
 			},
 			stageAcceptedPass: async () => {},
 			commit: async (_sessionInput, state) => {
@@ -283,6 +319,9 @@ export class ProviderCompactionService implements ProductionCompactionService {
 			},
 			publish: async (_sessionInput, event) => {
 				if (event.kind === "failed") outcome.failure = event.error
+				if (event.kind === "pass_completed" && event.projection.indicator) {
+					this.options.indicator?.passProjected(input.compactionId, event.projection.indicator)
+				}
 				if (await this.options.progress?.present(input.compactionId, event)) this.republish(input)
 			},
 			waitForRetry: (_sessionInput, retryAttempt, signal) =>

@@ -239,6 +239,43 @@ export class TaskContextUsageProjection implements ContextUsageObserverPort {
 	}
 
 	/**
+	 * Shows the next request an accepted compaction Pass projects.
+	 *
+	 * Each Pass condenses the conversation further, so the figure follows it
+	 * down Pass by Pass instead of standing at the full size until landing, as
+	 * dev's per-Pass indicator commit did. A Pass of a run this figure does not
+	 * show - one replaced, or already over - is ignored.
+	 */
+	compactionPassProjected(
+		compactionId: string,
+		pass: {
+			readonly durableContextTokens: number
+			readonly pendingSendTokens: number
+			readonly environmentTokens: number
+			readonly contextWindow: number
+		},
+	): void {
+		const indicator = this.indicator
+		if (!indicator || this.lineage.kind !== "compaction_pass" || this.lineage.operationId !== compactionId) return
+		const scope = this.options.scope()
+		this.show(
+			indicator.commit({
+				lineage: this.lineage,
+				durableContextTokens: pass.durableContextTokens,
+				pendingSendTokens: pass.pendingSendTokens,
+				environmentTokens: pass.environmentTokens,
+				contextWindow: pass.contextWindow,
+				profileId: scope.profileId,
+				profileName: scope.profileName,
+				mode: scope.mode,
+				allowDecrease: true,
+			}),
+		)
+		this.settle()
+		this.publish()
+	}
+
+	/**
 	 * Settles the figure on the conversation a landed summary left behind.
 	 *
 	 * The summary has replaced the history, so the context is already smaller;

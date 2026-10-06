@@ -74,4 +74,17 @@ export class TaskEnvironmentOwner implements ComposeEnvironmentPort {
 		this.projection.acknowledgeRequestSnapshots()
 		return text
 	}
+
+	/**
+	 * The block the next round would carry, without consuming anything it reports.
+	 *
+	 * A compaction measures the request it is condensing toward; that request
+	 * has not been sent, so the snapshots it describes must still be new to it.
+	 */
+	async preview(input: { readonly signal: AbortSignal }): Promise<string | undefined> {
+		if (input.signal.aborted) throw input.signal.reason
+		const text = await this.projection.build(!this.renderedFileDetails, undefined, { preview: true })
+		if (input.signal.aborted) throw input.signal.reason
+		return text
+	}
 }

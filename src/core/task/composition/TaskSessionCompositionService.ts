@@ -786,6 +786,11 @@ export class TaskSessionCompositionService {
 					triggerOptions: readCompactTriggerOptions,
 					scopes: compactionScopes,
 					progress: compactionCards,
+					environment,
+					indicator: {
+						passProjected: (compactionId, projection) =>
+							contextUsage.compactionPassProjected(compactionId, projection),
+					},
 				}),
 				readApprovalPolicy: () => ({
 					settings: options.stateManager.getGlobalSettingsKey("autoApprovalSettings"),

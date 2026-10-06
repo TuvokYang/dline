@@ -366,6 +366,38 @@ describe("TaskContextUsageProjection", () => {
 		expect(total(harness)).toBe(17_000)
 	})
 
+	it("follows each accepted Pass of the shown compaction down and ignores a Pass of another run", async () => {
+		const harness = createProjection()
+		await request(harness, "turn-1", 930_100)
+		harness.projection.committed({
+			...running(),
+			flow: {
+				phase: "running",
+				compaction: { compactionId: "compaction:1", attempt: "compaction:1:1", contextRef: "ref-1", status: "scheduled" },
+			},
+		} as TaskState)
+		expect(total(harness)).toBe(930_100)
+
+		const pass = { durableContextTokens: 400_000, pendingSendTokens: 2_000, environmentTokens: 3_000, contextWindow: WINDOW }
+		harness.projection.compactionPassProjected("compaction:0", pass)
+		expect(total(harness)).toBe(930_100)
+
+		harness.projection.compactionPassProjected("compaction:1", pass)
+		// Settling folds the Pass's pending tail into the durable figure.
+		expect(harness.target.contextWindowIndicator).toMatchObject({
+			phase: "stable",
+			lineage: { kind: "compaction_pass", operationId: "compaction:1" },
+			durableContextTokens: 402_000,
+			pendingSendTokens: 0,
+			environmentTokens: 3_000,
+		})
+		expect(total(harness)).toBe(405_000)
+
+		// A later Pass condenses further, so the figure keeps following it down.
+		harness.projection.compactionPassProjected("compaction:1", { ...pass, durableContextTokens: 150_000 })
+		expect(total(harness)).toBe(155_000)
+	})
+
 	it("drops a staged tail once an ordinary request carries it", async () => {
 		const harness = createProjection()
 		await request(harness, "turn-1", 500_000)

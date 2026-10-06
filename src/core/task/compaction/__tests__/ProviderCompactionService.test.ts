@@ -1,7 +1,7 @@
 import { DISABLED_WEB_SEARCH_ROUTING_PLAN } from "@core/prompts/__tests__/web-search-routing-fixtures"
 import { PromptProfile } from "@core/prompts/profiles/types"
 import type { ClineStorageMessage } from "@shared/messages/content"
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 import type { ProviderRequestFrame } from "../../executors/provider/service/ProviderRequest"
 import { CompactionRequestScopes } from "../CompactionRequestScopes"
 import { ProviderCompactionService } from "../ProviderCompactionService"
@@ -60,9 +60,12 @@ function probe(chunks: readonly unknown[], limits: ModelLimits = { contextWindow
 	}
 }
 
+type ServiceOptions = ConstructorParameters<typeof ProviderCompactionService>[0]
+
 function service(
 	frame: ProviderRequestFrame,
-	triggerOptions?: ConstructorParameters<typeof ProviderCompactionService>[0]["triggerOptions"],
+	triggerOptions?: ServiceOptions["triggerOptions"],
+	ports: Pick<ServiceOptions, "environment" | "indicator"> = {},
 ): ProviderCompactionService {
 	return new ProviderCompactionService({
 		frames: { frame: async () => frame },
@@ -70,7 +73,24 @@ function service(
 		// it is kept out of the instruction text these cases compare.
 		instruction: (resolved, budget) => `SUMMARIZE_INSTRUCTION:${resolved.profile}${budget ? `\n${budget}` : ""}`,
 		...(triggerOptions ? { triggerOptions } : {}),
+		...ports,
 	})
+}
+
+/** Two turns that each take about half of a 200k window, so one Pass is enough on its own. */
+const TWO_LARGE_TURNS = {
+	sourceHistory: [
+		{ role: "user", content: [{ type: "text", text: "task A" }] },
+		{ role: "assistant", content: [{ type: "text", text: "a".repeat(400_000) }] },
+		{ role: "user", content: [{ type: "text", text: "task B" }] },
+		{ role: "assistant", content: [{ type: "text", text: "b".repeat(400_000) }] },
+	] satisfies ClineStorageMessage[],
+	sourceRanges: [
+		[11, 11],
+		[12, 12],
+		[13, 13],
+		[14, 14],
+	],
 }
 
 function lastText(calls: unknown[][]): string {
@@ -246,6 +266,39 @@ describe("ProviderCompactionService", () => {
 		expect(JSON.stringify(calls[0]?.[1])).toContain("task A")
 		expect(JSON.stringify(calls[0]?.[1])).not.toContain("task B")
 		expect(result).toEqual({ summary: "THE SUMMARY", coveredThrough: 12 })
+	})
+
+	it("measures the next request with the environment block it will carry, as dev does", async () => {
+		const { frame, calls } = probe([{ type: "text", text: SUMMARY_TEXT }], { contextWindow: 200_000, maxTokens: 64_000 })
+		const preview = vi.fn(async () => `<environment_details>${"e".repeat(400_000)}</environment_details>`)
+
+		const result = await run(
+			service(frame, () => ({ triggerPercent: 95 }), { environment: { preview } }),
+			TWO_LARGE_TURNS,
+		)
+
+		// The kept turn plus the environment no longer fits, so a second Pass condenses it too.
+		expect(calls).toHaveLength(2)
+		expect(preview).toHaveBeenCalledWith({ signal: expect.any(AbortSignal) })
+		expect(result).toEqual({ summary: "THE SUMMARY", coveredThrough: 14 })
+	})
+
+	it("hands each accepted Pass's projected next request to the indicator", async () => {
+		const { frame } = probe([{ type: "text", text: SUMMARY_TEXT }], { contextWindow: 200_000, maxTokens: 64_000 })
+		const passProjected = vi.fn()
+
+		await run(
+			service(frame, () => ({ triggerPercent: 95 }), { indicator: { passProjected } }),
+			TWO_LARGE_TURNS,
+		)
+
+		expect(passProjected).toHaveBeenCalledTimes(1)
+		const [compactionId, projection] = passProjected.mock.calls[0] ?? []
+		expect(compactionId).toBe("compaction:1")
+		expect(projection).toMatchObject({ contextWindow: 200_000, environmentTokens: 0, pendingSendTokens: 0 })
+		// The kept turn alone is about a quarter of the window; the full source was half of it.
+		expect(projection.durableContextTokens).toBeGreaterThan(50_000)
+		expect(projection.durableContextTokens).toBeLessThan(150_000)
 	})
 
 	it("requests the summary from the handler a run is bound to", async () => {
