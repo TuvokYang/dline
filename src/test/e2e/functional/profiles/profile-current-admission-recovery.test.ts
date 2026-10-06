@@ -1,7 +1,8 @@
-import { readdir, readFile, writeFile } from "node:fs/promises"
+import { readdir, readFile } from "node:fs/promises"
 import * as path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
+import { readTaskRuntimeState, readTaskUiMessages } from "@e2e/utils/task-instance-store"
 import { expect, type Frame, type Locator, type Page } from "@playwright/test"
 
 interface StoredProfile {
@@ -16,16 +17,6 @@ interface StoredProfile {
 interface StoredTaskSettings {
 	actModeProfileId?: string
 	actModeProfile?: string
-}
-
-interface StoredSnapshot extends Record<string, unknown> {
-	phase?: string
-	profileInvalid?: {
-		profileId?: string
-		displayName?: string
-		reason: string
-		message: string
-	}
 }
 
 const profilesPath = (dlineDir: string): string => path.join(dlineDir, "data", "settings", "api_profiles.json")
@@ -140,24 +131,35 @@ async function readTaskSettings(dlineDocsDir: string, taskId: string): Promise<S
 	return JSON.parse(await readFile(path.join(dlineDocsDir, "tasks", taskId, "settings.json"), "utf8")) as StoredTaskSettings
 }
 
-async function injectLegacyProfileInvalid(
+/**
+ * Wait until the closed task has persisted the invalid-Profile failure it will reopen with.
+ *
+ * The task runtime keeps no separate Profile-invalid flag to seed (dev ignored
+ * the legacy snapshot field as well): the stale state is the persisted
+ * `error_retry` dialog and its failure row, which History Resume must not
+ * trust over the Profile as it is now.
+ */
+async function awaitPersistedProfileInvalid(
 	dlineDocsDir: string,
 	taskId: string,
 	profile: StoredProfile,
 	message: string,
 ): Promise<void> {
-	const snapshotPath = path.join(dlineDocsDir, "tasks", taskId, "snapshot.json")
-	const snapshot = await E2ETestHelper.waitForValue(async () => {
-		const parsed = JSON.parse(await readFile(snapshotPath, "utf8")) as StoredSnapshot
-		return parsed.phase === "cancelling" ? parsed : undefined
+	await E2ETestHelper.waitForValue(async () => {
+		const state = await readTaskRuntimeState(dlineDocsDir, taskId)
+		const dialog = state?.dialog.primary
+		if (dialog?.kind !== "error_retry") return undefined
+		const rows = await readTaskUiMessages(dlineDocsDir, taskId)
+		return rows.some(
+			(row) =>
+				row.ask === "api_req_failed" &&
+				row.interactionId === dialog.interactionId &&
+				row.text?.includes(message) === true &&
+				row.text.includes(profile.name),
+		)
+			? true
+			: undefined
 	}, 30_000)
-	snapshot.profileInvalid = {
-		profileId: profile.id,
-		displayName: profile.name,
-		reason: "configuration_invalid",
-		message,
-	}
-	await writeFile(snapshotPath, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8")
 }
 
 async function reopenTask(page: Page, sidebar: Frame, taskText: string): Promise<void> {
@@ -277,7 +279,7 @@ e2e(
 		const taskId = await onlyTaskId(dlineDocsDir)
 		await sidebar.getByRole("button", { name: "Close Task", exact: true }).click()
 		await expect(sidebar.getByTestId("chat-input")).toHaveAttribute("placeholder", "Type your task here...")
-		await injectLegacyProfileInvalid(dlineDocsDir, taskId, sourceProfile, error)
+		await awaitPersistedProfileInvalid(dlineDocsDir, taskId, sourceProfile, error)
 
 		await setAzureIdentity(page, sidebar, dlineDir, profileName, false)
 		await reopenTask(page, sidebar, taskText)

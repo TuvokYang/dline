@@ -9,6 +9,7 @@ import type { ApiConfiguration } from "@shared/api"
 import type { ApiProfile } from "@shared/proto/dline/profile"
 import type { Mode } from "@shared/storage/types"
 import type { OpenAiCodexProfileAuthStatus } from "@/integrations/openai-codex/oauth"
+import { ProfileNotValidError } from "./profile-admission"
 
 export type ApiProfileInvalidReason =
 	| "missing"
@@ -394,10 +395,16 @@ export async function resolveTaskApiProfileFresh(
 	return resolveTaskApiProfile(configuration, mode, historyProviderId, await readApiProfilesFresh())
 }
 
+/**
+ * The handler a task runs under while its Profile cannot serve requests.
+ *
+ * The task stays readable; each request it would send fails before reaching
+ * any provider with a ProfileNotValidError naming what the user must change.
+ */
 export function createUnavailableApiHandler(message: string): ApiHandler {
 	return {
 		createMessage: async function* (): ApiStream {
-			throw new Error(message)
+			throw new ProfileNotValidError(message)
 		},
 		getModel: () => ({
 			id: "unavailable",

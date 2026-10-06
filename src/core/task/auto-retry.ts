@@ -2,6 +2,7 @@ import { setTimeout as setTimeoutPromise } from "node:timers/promises"
 import { isOutputLimitExceededError } from "@core/api/stream/OutputLimitExceededError"
 import { checkContextWindowExceededError } from "@core/context/context-management/context-error-handling"
 import { ClineError, ClineErrorType } from "@/services/error"
+import { ProfileNotValidError } from "./profile-admission"
 
 /**
  * Backoff schedule for one automatic retry sequence, indexed by attempt.
@@ -132,6 +133,8 @@ function nestedStatusOf(error: unknown, parsed: ClineError): number {
 export function isRetryableProviderError(error: unknown, provider: ProviderIdentity = {}): boolean {
 	// A cancelled run is not a provider failure and must not be replayed.
 	if (error instanceof Error && error.name === "AbortError") return false
+	// Only fixing or switching the Profile can admit this request.
+	if (error instanceof ProfileNotValidError) return false
 	if (isOutputLimitExceededError(error)) return false
 	// The same frozen request cannot fit on a second attempt either.
 	if (checkContextWindowExceededError(error)) return false

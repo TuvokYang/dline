@@ -2,6 +2,7 @@ import type { ApiHandler } from "@core/api"
 import type { ApiStreamChunk } from "@core/api/transform/stream"
 import type { ClineStorageMessage } from "@shared/messages/content"
 import { describe, expect, it, vi } from "vitest"
+import { ProfileNotValidError } from "../../../../profile-admission"
 import type { ProviderDraftEnvelope } from "../../../../stores/payload/TaskPayloadEnvelopes"
 import type { ProductionProviderChunk } from "../../ProductionProviderAdapter"
 import { presentationOf } from "../../ProviderFailure"
@@ -571,6 +572,19 @@ describe("DefaultProductionProviderService request retry", () => {
 
 		expect(await failureOf(harness.service)).toBe(failure)
 		expect(harness.api.createMessage).toHaveBeenCalledTimes(3)
+	})
+
+	// As in dev, a request the Profile cannot admit goes straight to the error
+	// box: only fixing or switching the Profile can change its outcome.
+	it("fails a request its Profile cannot admit at once, with no retry countdown", async () => {
+		const failure = new ProfileNotValidError(
+			'Profile not valid: "azure" requires an Azure endpoint for Azure Identity authentication.',
+		)
+		const harness = scripted([{ error: failure }], { maxAttempts: 5 })
+
+		expect(await failureOf(harness.service)).toBe(failure)
+		expect(harness.api.createMessage).toHaveBeenCalledTimes(1)
+		expect(harness.waits).toEqual([])
 	})
 
 	// The chat's error box explains a failure in the provider's words. The
