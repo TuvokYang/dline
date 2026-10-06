@@ -215,6 +215,9 @@ export class ControllerTaskCallbacksOwner {
 		// commandTs is how a command_output row finds the command it belongs to;
 		// dropping it here leaves the output orphaned and never rendered.
 		const message: UiMessage = { ts, type: "say", say: type, text, images, files, partial, commandTs }
+		// The command executor moves a row from pending to running by finding it
+		// pending, and the row only offers Cancel while it is pending or running.
+		if (type === "command" && !partial) message.commandStatus = this.commandStatusAt(ts)
 		if (partial) {
 			await this.options.messages.upsertClineMessageInMemory(message)
 			await this.publishRow(message, `partial ${type} row ${ts}`)
@@ -223,6 +226,11 @@ export class ControllerTaskCallbacksOwner {
 			await this.publishRow(message, `finalized ${type} row ${ts}`)
 		} else await this.options.messages.addToClineMessages(message)
 		return ts
+	}
+
+	/** A command row keeps the status its execution already reached; a new one waits to run. */
+	private commandStatusAt(ts: number): UiMessage["commandStatus"] {
+		return this.options.messages.clineMessages.find((candidate) => candidate.ts === ts)?.commandStatus ?? "pending"
 	}
 
 	private async ask(

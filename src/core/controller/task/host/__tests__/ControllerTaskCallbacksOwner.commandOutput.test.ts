@@ -64,6 +64,24 @@ describe("ControllerTaskCallbacksOwner say", () => {
 		expect(written[0].commandTs).toBeUndefined()
 	})
 
+	it("finalizes a command row as pending so its execution can mark it running", async () => {
+		const { handler, written } = messageStore()
+		written.push({ ts: 77, type: "say", say: "command", text: "npm test", partial: true })
+
+		await owner(handler).callbacks.say("command", "npm test", undefined, undefined, false, 77)
+
+		expect(written.at(-1)).toMatchObject({ ts: 77, say: "command", partial: false, commandStatus: "pending" })
+	})
+
+	it("keeps the status a command row already reached when it is finalized again", async () => {
+		const { handler, written } = messageStore()
+		written.push({ ts: 78, type: "say", say: "command", text: "npm test", commandStatus: "running" })
+
+		await owner(handler).callbacks.say("command", "npm test", undefined, undefined, false, 78)
+
+		expect(written.at(-1)).toMatchObject({ ts: 78, commandStatus: "running" })
+	})
+
 	it("publishes a finalized row after replacing its in-memory partial", async () => {
 		const { handler, written } = messageStore()
 		written.push({ ts: 99, type: "ask", ask: "tool", text: "awaiting", partial: true })
