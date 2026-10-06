@@ -53,7 +53,10 @@ export async function validateAttachmentPath(filePath: string): Promise<string |
  * so it can be attached like a picked file. Returns the staged path, or undefined when rejected.
  */
 export async function stageAttachmentBytes(fileName: string, data: Uint8Array): Promise<string | undefined> {
-	const name = path.basename(fileName)
+	// The name comes from the Webview, whose platform can differ from the extension host (for example a
+	// Windows client attached to a Linux remote). The win32 rules treat both "/" and "\" as separators,
+	// so the leaf name is the same on every host.
+	const name = path.win32.basename(fileName)
 	if (data.byteLength > maxAttachmentBytes(name)) {
 		return rejectAttachment(`File too large: ${name} was skipped (size exceeds ${formatAttachmentLimit(name)}).`)
 	}

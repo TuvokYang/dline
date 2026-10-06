@@ -56,8 +56,11 @@ describe("attachment staging", () => {
 		expect(showMessage.mock.calls[1][0].message).toContain("50MB")
 	})
 
-	it("strips directory components from the dropped name", async () => {
-		const stagedPath = await stageAttachmentBytes("..\\..\\evil.pdf", new Uint8Array(1))
+	it.each([
+		"..\\..\\evil.pdf",
+		"../../evil.pdf",
+	])("strips directory components from the dropped name %s on every host", async (droppedName) => {
+		const stagedPath = await stageAttachmentBytes(droppedName, new Uint8Array(1))
 
 		expect(path.basename(stagedPath as string)).toBe("evil.pdf")
 		expect(DlineRuntimeFileManager.isManagedPath(stagedPath as string)).toBe(true)
