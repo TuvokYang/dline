@@ -1039,6 +1039,15 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 					rangeChanged={handleRangeChanged}
 					ref={virtuosoRef}
 					scrollerRef={scrollerRef}
+					// Correct for re-measured rows inside the resize-observer
+					// callback instead of deferring to the next animation frame.
+					// Deferred, a row measured above the viewport paints for one
+					// frame at its new height before the compensating scroll
+					// lands, which shows as the content jumping and snapping back
+					// (70px while browsing history, 300-400px while a reply
+					// streams). Done in the callback, the correction lands before
+					// that frame is painted.
+					skipAnimationFrameInResizeObserver
 					// Browser scroll anchoring stays off.
 					//
 					// Not because the rows are positioned out of flow -- they are
