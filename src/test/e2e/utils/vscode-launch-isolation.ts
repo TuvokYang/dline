@@ -65,6 +65,21 @@ export function resolveWorkerExtensionsSlot(
 }
 
 /**
+ * Keep a test window rendering at full rate when it is covered, unfocused or
+ * behind another test's window.
+ *
+ * Chromium otherwise throttles animation frames and timers to about once a
+ * second, which starves every frame-sampled measurement and stalls
+ * Playwright's actionability checks. Playwright passes the same switches when
+ * it launches Chromium itself; it does not when it launches Electron.
+ */
+export const FULL_RATE_RENDERING_ARGUMENTS: readonly string[] = [
+	"--disable-renderer-backgrounding",
+	"--disable-backgrounding-occluded-windows",
+	"--disable-background-timer-throttling",
+]
+
+/**
  * Build launch arguments that select exactly one extension source.
  *
  * Packaged runs load the VSIX from the isolated extension directory. Source runs disable installed
