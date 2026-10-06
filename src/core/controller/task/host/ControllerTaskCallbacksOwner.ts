@@ -119,7 +119,11 @@ export class ControllerTaskCallbacksOwner {
 			cancelRunningCommandTool: () => this.requireCommandExecutor().cancelBackgroundCommand(),
 			doesLatestTaskCompletionHaveNewChanges: () =>
 				this.checkpointManager?.doesLatestTaskCompletionHaveNewChanges() ?? Promise.resolve(false),
-			updateFCListFromToolResponse: (progress) => this.focusChain.updateFCListFromToolResponse(progress),
+			updateFCListFromToolResponse: async (progress) => {
+				await this.focusChain.updateFCListFromToolResponse(progress)
+				// The tab title carries checklist progress, as on dev.
+				void options.controller.syncPanelTitle()
+			},
 			postStateToWebview: () => options.controller.postStateToWebview(),
 			reinitExistingTaskFromId: (taskId) => options.controller.reinitExistingTaskFromId(taskId),
 			cancelTask: () => this.requestCancellation(),
@@ -195,6 +199,8 @@ export class ControllerTaskCallbacksOwner {
 
 	async initialize(): Promise<void> {
 		await this.focusChain.setupFocusChainFileWatcher()
+		// A checklist loaded from disk changes the title's progress suffix.
+		void this.options.controller.syncPanelTitle()
 	}
 
 	async dispose(): Promise<void> {

@@ -80,6 +80,7 @@ import {
 	TaskCompletionBackfill,
 } from "@/core/storage/TaskCompletionBackfill"
 import { readHistoryContextWindowIndicator } from "@/core/task/HistoryContextWindow"
+import { resolveTaskPanelTitle } from "@/core/task/TaskPanelTitle"
 import { HostProvider } from "@/hosts/host-provider"
 import { ExtensionRegistryInfo } from "@/registry"
 import { AuthService } from "@/services/auth/AuthService"
@@ -224,6 +225,12 @@ export class Controller {
 
 	task?: ActiveTaskSession
 	private historyDisplaySession?: HistoryDisplaySession
+	/**
+	 * Task text known when the task was constructed, keyed by task so a stale
+	 * entry can never title another task. A background start writes the `task`
+	 * row after the first title sync, so this text titles the tab until then.
+	 */
+	private initialPanelTitle?: { readonly taskId: string; readonly text: string }
 
 	mcpHub: McpHub
 	readonly mcpOwnerId = randomUUID()
@@ -1196,6 +1203,8 @@ export class Controller {
 		this.restartAccountUsagePolling()
 		const taskInstance = this.task
 		const initializedTaskId = taskInstance.taskId
+		const initialTitleText = task ?? historyItem?.task
+		this.initialPanelTitle = initialTitleText ? { taskId: initializedTaskId, text: initialTitleText } : undefined
 
 		// Register this controller so active task discovery covers every initTask path.
 		const { OrchestratorController } = await import("@/core/orchestrator/OrchestratorController")
@@ -2082,10 +2091,13 @@ export class Controller {
 		if (this.uiDetached || this.disposed || !this.getCurrentTaskId()) {
 			return
 		}
-		const taskText =
-			this.task?.owners.messages.clineMessages.find((message) => message.say === "task")?.text?.trim() ??
-			this.historyDisplaySession?.historyItem.task?.trim()
-		const resolvedTitle = taskText ? (taskText.length > 50 ? `${taskText.slice(0, 47)}...` : taskText) : "Dline"
+		const session = this.task
+		const resolvedTitle = resolveTaskPanelTitle({
+			taskRow: session?.owners.messages.clineMessages.find((message) => message.say === "task")?.text,
+			initialTask: session && this.initialPanelTitle?.taskId === session.taskId ? this.initialPanelTitle.text : undefined,
+			historyTask: this.historyDisplaySession?.historyItem.task,
+			checklist: session?.owners.toolState.currentFocusChainChecklist ?? null,
+		})
 		try {
 			const { WebviewProviderRegistry } = await import("@/core/webview/WebviewProviderRegistry")
 			const { VscodeWebviewPanelProvider } = await import("@/hosts/vscode/VscodeWebviewPanelProvider")
