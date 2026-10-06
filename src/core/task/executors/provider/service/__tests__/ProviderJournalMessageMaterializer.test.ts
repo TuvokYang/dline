@@ -100,6 +100,47 @@ describe("ProviderJournalMessageMaterializer", () => {
 		expect(message?.content).toEqual([{ type: "text", text: "<user_message>\nexpanded text\n</user_message>" }])
 	})
 
+	// The submission that opens a task reaches the model as `<task>`, exactly as
+	// the legacy runtime sent it; only later input is a `<user_message>`.
+	it("sends the task's opening submission as the task", async () => {
+		const materializer = new ProviderJournalMessageMaterializer(
+			payloadStore({
+				"ref-1": encodeTaskPayload({
+					kind: "user_input",
+					entryId: "entry-1",
+					text: "raw mirror",
+					admittedText: "E2E_OPENING_TASK",
+					opensTask: true,
+				}),
+			}),
+		)
+
+		const [message] = await materializer.materialize(["ref-1"])
+
+		expect(message?.content).toEqual([{ type: "text", text: "<task>\nE2E_OPENING_TASK\n</task>" }])
+	})
+
+	it("keeps the opening submission's context as its own block after the task", async () => {
+		const materializer = new ProviderJournalMessageMaterializer(
+			payloadStore({
+				"ref-1": encodeTaskPayload({
+					kind: "user_input",
+					entryId: "entry-1",
+					text: "do the thing",
+					context: "WORKSPACE_POLICY",
+					opensTask: true,
+				}),
+			}),
+		)
+
+		const [message] = await materializer.materialize(["ref-1"])
+
+		expect(message?.content).toEqual([
+			{ type: "text", text: "<task>\ndo the thing\n</task>" },
+			{ type: "text", text: "<context>\nWORKSPACE_POLICY\n</context>" },
+		])
+	})
+
 	const refused = {
 		type: "tool_result" as const,
 		function_id: "dline_function_01",

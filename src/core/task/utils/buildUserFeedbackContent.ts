@@ -43,3 +43,29 @@ export async function buildUserFeedbackContent(
 
 	return content
 }
+
+/**
+ * Builds the content of the submission that opens a task.
+ *
+ * Mirrors the legacy task start: the text is the `<task>`, images follow it,
+ * submission context (a TaskStart hook or a spawn handoff) is its own
+ * `<context>` block rather than part of what the user typed, and file
+ * contents come last.
+ */
+export async function buildTaskOpeningContent(
+	text?: string,
+	context?: string,
+	images?: string[],
+	files?: string[],
+): Promise<Array<ClineTextContentBlock | ClineImageContentBlock>> {
+	const content: Array<ClineTextContentBlock | ClineImageContentBlock> = []
+	if (text) content.push({ type: "text", text: `<task>\n${text}\n</task>` })
+	if (images && images.length > 0) content.push(...formatResponse.imageBlocks(images))
+	const trimmedContext = context?.trim()
+	if (trimmedContext) content.push({ type: "text", text: `<context>\n${trimmedContext}\n</context>` })
+	if (files && files.length > 0) {
+		const fileContentString = await processFilesIntoText(files)
+		if (fileContentString) content.push({ type: "text", text: fileContentString })
+	}
+	return content
+}

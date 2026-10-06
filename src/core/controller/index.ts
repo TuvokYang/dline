@@ -1243,6 +1243,7 @@ export class Controller {
 								[...(options?.context ?? []), ...handoff.context, ...(hookContext ? [hookContext] : [])].join(
 									"\n\n",
 								) || undefined,
+							opensTask: true,
 						})
 						await taskInstance.task.start(input)
 					},

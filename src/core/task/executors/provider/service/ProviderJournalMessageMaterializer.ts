@@ -20,7 +20,7 @@ import type {
 	TurnContinuationEnvelope,
 	UserInputEnvelope,
 } from "../../../stores/payload/TaskPayloadEnvelopes"
-import { buildUserFeedbackContent } from "../../../utils/buildUserFeedbackContent"
+import { buildTaskOpeningContent, buildUserFeedbackContent } from "../../../utils/buildUserFeedbackContent"
 
 type JournalPayload =
 	| UserInputEnvelope
@@ -136,15 +136,22 @@ export class ProviderJournalMessageMaterializer {
 		switch (payload.kind) {
 			case "user_input": {
 				const input = payload as UserInputEnvelope
-				const content = await buildUserFeedbackContent(
-					// The admitted projection carries the expanded commands and mentions;
-					// raw text is only the mirror the chat row renders. Submission context
-					// such as a TaskStart hook or a spawn handoff is separate from what the
-					// user typed, so it has to be appended rather than replace the text.
-					appendSubmissionContext(input.admittedText ?? input.text, input.context),
-					input.images === undefined ? undefined : [...input.images],
-					input.files === undefined ? undefined : [...input.files],
-				)
+				const content = input.opensTask
+					? await buildTaskOpeningContent(
+							input.admittedText ?? input.text,
+							input.context,
+							input.images === undefined ? undefined : [...input.images],
+							input.files === undefined ? undefined : [...input.files],
+						)
+					: await buildUserFeedbackContent(
+							// The admitted projection carries the expanded commands and mentions;
+							// raw text is only the mirror the chat row renders. Submission context
+							// such as a TaskStart hook or a spawn handoff is separate from what the
+							// user typed, so it has to be appended rather than replace the text.
+							appendSubmissionContext(input.admittedText ?? input.text, input.context),
+							input.images === undefined ? undefined : [...input.images],
+							input.files === undefined ? undefined : [...input.files],
+						)
 				return content.length === 0 ? undefined : { role: "user", content, ts: Date.now() }
 			}
 			case "dialog_draft": {

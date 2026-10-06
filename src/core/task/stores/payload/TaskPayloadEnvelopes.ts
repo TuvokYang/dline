@@ -41,6 +41,12 @@ export interface UserInputEnvelope {
 	readonly explicitInstructions?: readonly ExplicitInstructionDeclaration[]
 	/** The lifecycle command this input carries out before the round that admits it. */
 	readonly lifecycle?: LifecycleCommand
+	/**
+	 * Marks the submission that opened the task. The model receives it as the
+	 * `<task>`; every later input, and any payload written without this mark,
+	 * arrives as a `<user_message>`.
+	 */
+	readonly opensTask?: boolean
 }
 
 export interface DialogDraftEnvelope {
