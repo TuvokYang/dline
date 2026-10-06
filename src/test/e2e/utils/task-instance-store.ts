@@ -28,7 +28,8 @@ import type {
 	ToolInvocationEnvelope,
 	ToolResultEnvelope,
 } from "@/core/task/stores/payload/TaskPayloadEnvelopes"
-import { historyDisplayAnchorRow, projectHistoryDisplayState } from "@/core/task/view/canonical/projectHistoryDisplayState"
+import { projectHistoryDisplayState } from "@/core/task/view/canonical/projectHistoryDisplayState"
+import { historyDisplayAnchorRow } from "@/core/task/view/historyDisplayAnchorRow"
 import type { ClineStorageMessage } from "@/shared/messages/content"
 
 /**
