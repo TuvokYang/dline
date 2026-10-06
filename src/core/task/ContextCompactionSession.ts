@@ -8,6 +8,8 @@ import { createCompactionSourceSnapshot } from "@core/context/context-management
 import {
 	type InternalCompactionAttemptIdentity,
 	type InternalCompactionPassRetryEvent,
+	isUnusableCompactionSummaryError,
+	type RunInternalCompactionPassWithRetryInput,
 	runInternalCompactionPassWithRetry,
 } from "@core/context/context-management/internal-compaction-pass"
 import { indexLogicalTurns } from "@core/context/context-management/logical-turns"
@@ -380,10 +382,6 @@ export class ContextCompactionSession {
 					try {
 						while (true) {
 							const providerRequestRound = this.ports.providerRequestRounds?.admit({ source: "compaction" })
-							const automaticReplayAllowed = !isManualTrigger(input.trigger)
-							const retryPolicy = new CompactionRetryPolicy(
-								automaticReplayAllowed ? this.options.maxRetryAttempts : 0,
-							)
 							const result = await runInternalCompactionPassWithRetry({
 								api: input.compactionApi,
 								providerInput: request.providerInput,
@@ -391,8 +389,7 @@ export class ContextCompactionSession {
 								taskNamespace: input.taskNamespace,
 								providerRequestRound,
 								passIdentity,
-								retryPolicy,
-								allowOpenAiMaxOutputReplay: automaticReplayAllowed,
+								...createPassRetryScope(input.trigger, this.options.maxRetryAttempts),
 								initialAttemptIndex: attemptIndex,
 								attemptIdFactory: (candidateAttemptIndex) =>
 									candidateAttemptIndex === attemptIndex
@@ -641,7 +638,6 @@ export class ContextCompactionSession {
 		})
 		try {
 			const providerRequestRound = this.ports.providerRequestRounds?.admit({ source: "compaction" })
-			const automaticReplayAllowed = !isManualTrigger(input.trigger)
 			const result = await runInternalCompactionPassWithRetry({
 				api: input.compactionApi,
 				providerInput: request.providerInput,
@@ -649,8 +645,7 @@ export class ContextCompactionSession {
 				taskNamespace: input.taskNamespace,
 				providerRequestRound,
 				passIdentity,
-				retryPolicy: new CompactionRetryPolicy(automaticReplayAllowed ? this.options.maxRetryAttempts : 0),
-				allowOpenAiMaxOutputReplay: automaticReplayAllowed,
+				...createPassRetryScope(input.trigger, this.options.maxRetryAttempts),
 				attemptIdFactory: (attemptIndex) =>
 					attemptIndex === 0
 						? request.initialAttemptId
@@ -766,6 +761,31 @@ function formatCompactionPlanningFailure(
 	return result.kind === "summary_carry_overflow"
 		? `The cumulative compaction summary cannot be carried into Pass ${result.turnIndex + 1} (${breakdown}).`
 		: `Logical turn ${result.turnIndex + 1} cannot fit in one compaction Pass without content truncation (${breakdown}).`
+}
+
+/** A user-started Pass retries only summaries the model failed to produce, and only twice. */
+const MANUAL_UNUSABLE_SUMMARY_RETRY_ATTEMPTS = 2
+
+type PassRetryScope = Pick<
+	RunInternalCompactionPassWithRetryInput,
+	"retryPolicy" | "retryableFailure" | "allowOpenAiMaxOutputReplay"
+>
+
+/**
+ * Select the Pass retry budget for one trigger.
+ *
+ * Manual compaction keeps transient failures user-visible, but an answer without summarize_task is
+ * replayed with a correction because the user explicitly asked for a summary.
+ */
+function createPassRetryScope(trigger: ContextCompactionTriggerKind, automaticMaxRetryAttempts: number): PassRetryScope {
+	if (!isManualTrigger(trigger)) {
+		return { retryPolicy: new CompactionRetryPolicy(automaticMaxRetryAttempts), allowOpenAiMaxOutputReplay: true }
+	}
+	return {
+		retryPolicy: new CompactionRetryPolicy(MANUAL_UNUSABLE_SUMMARY_RETRY_ATTEMPTS),
+		retryableFailure: isUnusableCompactionSummaryError,
+		allowOpenAiMaxOutputReplay: false,
+	}
 }
 
 function isManualTrigger(trigger: ContextCompactionTriggerKind): boolean {

@@ -327,7 +327,11 @@ describe("Task context-window final admission guard", () => {
 		// Retry must keep the gated request's identity: a persisted request is replayed, never re-appended.
 		expect(presenter).toContain("persistedRequest: boolean")
 		expect(presenter).not.toContain("persistedRequest: false")
-		expect(requestMethod.match(/if \(result === "failed"\)/g)).toHaveLength(2)
+		// Automatic, ordinary, and manual /cmd:compact failures each present the terminal recovery interaction.
+		expect(requestMethod.match(/if \(result === "failed"\)/g)).toHaveLength(3)
+		expect(requestMethod).toMatch(
+			/await this\.presentTerminalCompactionFailure\(operationId, apiIndex, userContent, persistedRequest\)/,
+		)
 		expect(
 			requestMethod.match(
 				/await this\.presentTerminalCompactionFailure\(\s*operationId,\s*apiIndex,\s*ordinaryCompactionInput,\s*persistedRequest,?\s*\)/g,

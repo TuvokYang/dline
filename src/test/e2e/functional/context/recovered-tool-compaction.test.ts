@@ -1,5 +1,6 @@
 import { readdir, readFile, writeFile } from "node:fs/promises"
 import * as path from "node:path"
+import type { MockApiConsumption } from "@e2e/fixtures/server"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { expect, type Frame, type Page } from "@playwright/test"
@@ -17,6 +18,9 @@ interface StoredProfile {
 }
 
 type PersistedRecord = Record<string, unknown>
+
+const COMPACT_INSTRUCTION_MARKER = "The current conversation is rapidly running out of context"
+const COMPACTION_CORRECTION_MARKER = "The previous compaction attempt did not return a usable summarize_task call"
 
 const profilesPath = (dlineDir: string): string => path.join(dlineDir, "data", "settings", "api_profiles.json")
 const settingsPath = (dlineDir: string): string => path.join(dlineDir, "data", "settings", "settings.json")
@@ -94,6 +98,81 @@ async function sendTask(sidebar: Frame, text: string): Promise<void> {
 	await input.press("Enter")
 	await expect(input).toHaveValue("")
 	await expect(sidebar.getByText(text, { exact: true }).last()).toBeVisible()
+}
+
+interface RecoveredResumeLaunch {
+	dlineDocsDir: string
+	helper: E2ETestHelper
+	openVSCode: (workspacePath: string) => Promise<ElectronApplication>
+	workspaceDir: string
+	waitForSetupRequest: () => Promise<void>
+}
+
+interface RecoveredResumeSession {
+	app: ElectronApplication
+	page: Page
+	sidebar: Frame
+	taskId: string
+}
+
+/** Run one setup turn, rewrite it into an interrupted stream, and reopen it at the Resume prompt. */
+async function launchRecoveredResumeTask(
+	launch: RecoveredResumeLaunch,
+	setupTask: string,
+	readyMarker: string,
+): Promise<RecoveredResumeSession> {
+	const firstApp = await launch.openVSCode(launch.workspaceDir)
+	try {
+		const first = await openSidebar(firstApp, launch.helper)
+		await sendTask(first.sidebar, setupTask)
+		await expect(first.sidebar.getByText(readyMarker, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
+		await launch.waitForSetupRequest()
+		await closeCurrentTask(first.sidebar)
+	} finally {
+		await firstApp.close()
+		launch.helper.clearCachedFrame()
+	}
+
+	const taskId = await onlyTaskId(launch.dlineDocsDir)
+	await recreateInterruptedStreamingSnapshot(launch.dlineDocsDir, taskId)
+	const app = await launch.openVSCode(launch.workspaceDir)
+	try {
+		const { page, sidebar } = await openSidebar(app, launch.helper)
+		await reopenTask(page, sidebar, setupTask)
+		return { app, page, sidebar, taskId }
+	} catch (error) {
+		await app.close()
+		throw error
+	}
+}
+
+async function replyToResume(sidebar: Frame, reply: string): Promise<void> {
+	const resumeButton = sidebar.getByRole("contentinfo").getByText("Resume", { exact: true })
+	const input = sidebar.getByTestId("chat-input")
+	await expect(resumeButton).toBeVisible({ timeout: 30_000 })
+	await expect(input).toBeEnabled()
+	await input.fill(reply)
+	await resumeButton.click()
+	await expect(input).toHaveValue("")
+}
+
+async function readTaskSnapshot(dlineDocsDir: string, taskId: string): Promise<PersistedRecord> {
+	return JSON.parse(await readFile(path.join(dlineDocsDir, "tasks", taskId, "snapshot.json"), "utf8")) as PersistedRecord
+}
+
+function requestInputItems(consumption: MockApiConsumption | undefined): string[] {
+	const input = (consumption?.requestBody as PersistedRecord | undefined)?.input
+	if (!Array.isArray(input)) throw new Error("Expected an OpenAI Responses request with an input array")
+	return input.map((item) => JSON.stringify(item))
+}
+
+/** The corrective note must travel inside the same input item as the compaction instruction. */
+function expectCorrectionInsideCompactionInstruction(consumption: MockApiConsumption | undefined): void {
+	const items = requestInputItems(consumption)
+	const instructionItems = items.filter((item) => item.includes(COMPACT_INSTRUCTION_MARKER))
+	expect(instructionItems).toHaveLength(1)
+	expect(instructionItems[0]).toContain(COMPACTION_CORRECTION_MARKER)
+	expect(items.filter((item) => item.includes(COMPACTION_CORRECTION_MARKER))).toHaveLength(1)
 }
 
 async function setAutoApproveAction(sidebar: Frame, label: string, enabled: boolean): Promise<void> {
@@ -504,6 +583,285 @@ e2e(
 		} finally {
 			await firstApp?.close()
 			await resumedApp?.close()
+		}
+	},
+)
+
+e2e(
+	"Recovered Resume - /cmd:compact reply opens the manual summary review instead of a hydrated interaction mismatch",
+	async ({ dlineDocsDir, dlineDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
+		e2e.setTimeout(240_000)
+		await configureResponsesAutoCompaction(dlineDir)
+		server.resetOpenAiMock()
+		const setupTask = "E2E_RESUME_MANUAL_COMPACT_SETUP"
+		const summaryMarker = "E2E_RESUME_MANUAL_COMPACT_SUMMARY"
+		server.enqueueResponses(
+			"openai-compatible-responses",
+			{
+				type: "tool",
+				id: "call_resume_manual_ready",
+				name: "qna_respond",
+				arguments: { response: "E2E_RESUME_MANUAL_COMPACT_READY" },
+				usage: { inputTokens: 20_000, outputTokens: 100 },
+			},
+			{
+				type: "tool",
+				id: "call_resume_manual_summary",
+				name: "summarize_task",
+				arguments: { context: `${summaryMarker} preserves the recovered task.` },
+				expectedRequestIncludes: [COMPACT_INSTRUCTION_MARKER, setupTask],
+				expectedRequestExcludes: ["/cmd:compact", COMPACTION_CORRECTION_MARKER],
+				usage: { inputTokens: 20_000, outputTokens: 200 },
+			},
+			{
+				type: "tool",
+				id: "call_resume_manual_continued",
+				name: "qna_respond",
+				arguments: { response: "E2E_RESUME_MANUAL_COMPACT_CONTINUED" },
+				expectedRequestIncludes: [summaryMarker],
+				expectedRequestExcludes: [COMPACT_INSTRUCTION_MARKER, "/cmd:compact"],
+				usage: { inputTokens: 2_000, outputTokens: 100 },
+			},
+		)
+
+		let session: RecoveredResumeSession | undefined
+		try {
+			session = await launchRecoveredResumeTask(
+				{
+					dlineDocsDir,
+					helper,
+					openVSCode,
+					workspaceDir,
+					waitForSetupRequest: () => expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(1),
+				},
+				setupTask,
+				"E2E_RESUME_MANUAL_COMPACT_READY",
+			)
+			const { sidebar } = session
+			await replyToResume(sidebar, "/cmd:compact")
+
+			await expect(sidebar.getByText(summaryMarker, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
+			await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(2)
+			const confirmButton = sidebar.locator('vscode-button[aria-label="Condense Conversation"]')
+			await expect(confirmButton).toBeVisible({ timeout: 60_000 })
+			await expect(sidebar.getByTestId("compaction-failure")).toHaveCount(0)
+			expect(E2ETestHelper.readDlineOutputIfPresent(userDataDir) ?? "").not.toContain("hydrated_interaction_mismatch")
+
+			await confirmButton.click()
+			await expect(confirmButton).toHaveCount(0)
+			await expect(sidebar.getByText("E2E_RESUME_MANUAL_COMPACT_CONTINUED", { exact: false }).last()).toBeVisible({
+				timeout: 60_000,
+			})
+			await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(3)
+			for (const request of server.getMockConsumptions("openai-compatible-responses")) {
+				expect(request.contractError).toBeUndefined()
+			}
+			await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
+		} finally {
+			await session?.app.close()
+		}
+	},
+)
+
+e2e(
+	"Recovered Resume - /cmd:compact retries unusable summaries with the correction inside the compaction instruction",
+	async ({ dlineDocsDir, dlineDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
+		e2e.setTimeout(240_000)
+		await configureResponsesAutoCompaction(dlineDir)
+		server.resetOpenAiMock()
+		const setupTask = "E2E_RESUME_MANUAL_RETRY_SETUP"
+		const summaryMarker = "E2E_RESUME_MANUAL_RETRY_SUMMARY"
+		const residueToolPath = "E2E_RESUME_MANUAL_RESIDUE_TOOL_PATH"
+		const residueText = "E2E_RESUME_MANUAL_RESIDUE_TEXT"
+		server.enqueueResponses(
+			"openai-compatible-responses",
+			{
+				type: "tool",
+				id: "call_resume_retry_ready",
+				name: "qna_respond",
+				arguments: { response: "E2E_RESUME_MANUAL_RETRY_READY" },
+				usage: { inputTokens: 20_000, outputTokens: 100 },
+			},
+			{
+				type: "tool",
+				id: "call_resume_retry_wrong_tool",
+				name: "read_file",
+				arguments: { path: residueToolPath },
+				expectedRequestIncludes: [COMPACT_INSTRUCTION_MARKER, setupTask],
+				expectedRequestExcludes: ["/cmd:compact", COMPACTION_CORRECTION_MARKER],
+				usage: { inputTokens: 20_000, outputTokens: 50 },
+			},
+			{
+				type: "message",
+				text: residueText,
+				expectedRequestIncludes: [COMPACT_INSTRUCTION_MARKER, COMPACTION_CORRECTION_MARKER],
+				expectedRequestExcludes: [residueToolPath],
+				usage: { inputTokens: 20_000, outputTokens: 50 },
+			},
+			{
+				type: "tool",
+				id: "call_resume_retry_summary",
+				name: "summarize_task",
+				arguments: { context: `${summaryMarker} preserves the recovered task.` },
+				expectedRequestIncludes: [COMPACT_INSTRUCTION_MARKER, COMPACTION_CORRECTION_MARKER],
+				expectedRequestExcludes: [residueToolPath, residueText],
+				usage: { inputTokens: 20_000, outputTokens: 200 },
+			},
+			{
+				type: "tool",
+				id: "call_resume_retry_continued",
+				name: "qna_respond",
+				arguments: { response: "E2E_RESUME_MANUAL_RETRY_CONTINUED" },
+				expectedRequestIncludes: [summaryMarker],
+				expectedRequestExcludes: [COMPACT_INSTRUCTION_MARKER, COMPACTION_CORRECTION_MARKER, residueToolPath, residueText],
+				usage: { inputTokens: 2_000, outputTokens: 100 },
+			},
+		)
+
+		let session: RecoveredResumeSession | undefined
+		try {
+			session = await launchRecoveredResumeTask(
+				{
+					dlineDocsDir,
+					helper,
+					openVSCode,
+					workspaceDir,
+					waitForSetupRequest: () => expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(1),
+				},
+				setupTask,
+				"E2E_RESUME_MANUAL_RETRY_READY",
+			)
+			const { sidebar } = session
+			await replyToResume(sidebar, "/cmd:compact")
+
+			const confirmButton = sidebar.locator('vscode-button[aria-label="Condense Conversation"]')
+			await expect(confirmButton).toBeVisible({ timeout: 120_000 })
+			await expect(sidebar.getByText(summaryMarker, { exact: false }).last()).toBeVisible()
+			await expect(sidebar.getByTestId("compaction-failure")).toHaveCount(0)
+			expect(server.getRequestCount("openai-compatible-responses")).toBe(4)
+			const requests = server.getMockConsumptions("openai-compatible-responses")
+			for (const request of requests) expect(request.contractError).toBeUndefined()
+			expect(requestInputItems(requests[1]).some((item) => item.includes(COMPACTION_CORRECTION_MARKER))).toBe(false)
+			expectCorrectionInsideCompactionInstruction(requests[2])
+			expectCorrectionInsideCompactionInstruction(requests[3])
+
+			await confirmButton.click()
+			await expect(confirmButton).toHaveCount(0)
+			await expect(sidebar.getByText("E2E_RESUME_MANUAL_RETRY_CONTINUED", { exact: false }).last()).toBeVisible({
+				timeout: 60_000,
+			})
+			await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(5)
+			expect(server.getMockConsumptions("openai-compatible-responses")[4]?.contractError).toBeUndefined()
+			expect(E2ETestHelper.readDlineOutputIfPresent(userDataDir) ?? "").not.toContain("hydrated_interaction_mismatch")
+			await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
+		} finally {
+			await session?.app.close()
+		}
+	},
+)
+
+e2e(
+	"Recovered Resume - /cmd:compact exhausting retries offers Retry and settles the context indicator",
+	async ({ dlineDocsDir, dlineDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
+		e2e.setTimeout(300_000)
+		await configureResponsesAutoCompaction(dlineDir)
+		server.resetOpenAiMock()
+		const setupTask = "E2E_RESUME_MANUAL_EXHAUSTED_SETUP"
+		const summaryMarker = "E2E_RESUME_MANUAL_EXHAUSTED_SUMMARY"
+		const unusableAttempt = (index: number) => ({
+			type: "message" as const,
+			text: `E2E_RESUME_MANUAL_EXHAUSTED_TEXT_${index}`,
+			expectedRequestIncludes: [COMPACT_INSTRUCTION_MARKER],
+			usage: { inputTokens: 20_000, outputTokens: 50 },
+		})
+		server.enqueueResponses(
+			"openai-compatible-responses",
+			{
+				type: "tool",
+				id: "call_resume_exhausted_ready",
+				name: "qna_respond",
+				arguments: { response: "E2E_RESUME_MANUAL_EXHAUSTED_READY" },
+				usage: { inputTokens: 20_000, outputTokens: 100 },
+			},
+			unusableAttempt(1),
+			unusableAttempt(2),
+			unusableAttempt(3),
+			{
+				type: "tool",
+				id: "call_resume_exhausted_summary",
+				name: "summarize_task",
+				arguments: { context: `${summaryMarker} preserves the recovered task.` },
+				expectedRequestIncludes: [COMPACT_INSTRUCTION_MARKER],
+				expectedRequestExcludes: [COMPACTION_CORRECTION_MARKER, "E2E_RESUME_MANUAL_EXHAUSTED_TEXT_"],
+				usage: { inputTokens: 20_000, outputTokens: 200 },
+			},
+			{
+				type: "tool",
+				id: "call_resume_exhausted_continued",
+				name: "qna_respond",
+				arguments: { response: "E2E_RESUME_MANUAL_EXHAUSTED_CONTINUED" },
+				expectedRequestIncludes: [summaryMarker],
+				expectedRequestExcludes: [COMPACT_INSTRUCTION_MARKER, COMPACTION_CORRECTION_MARKER],
+				usage: { inputTokens: 2_000, outputTokens: 100 },
+			},
+		)
+
+		let session: RecoveredResumeSession | undefined
+		try {
+			session = await launchRecoveredResumeTask(
+				{
+					dlineDocsDir,
+					helper,
+					openVSCode,
+					workspaceDir,
+					waitForSetupRequest: () => expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(1),
+				},
+				setupTask,
+				"E2E_RESUME_MANUAL_EXHAUSTED_READY",
+			)
+			const { page, sidebar, taskId } = session
+			await replyToResume(sidebar, "/cmd:compact")
+
+			await expect(sidebar.getByTestId("compaction-failure")).toBeVisible({ timeout: 120_000 })
+			await expect.poll(() => server.getRequestCount("openai-compatible-responses"), { timeout: 60_000 }).toBe(4)
+			const footer = sidebar.getByRole("contentinfo")
+			const retryButton = footer.getByText("Retry", { exact: true })
+			await expect(retryButton).toBeVisible({ timeout: 30_000 })
+			await expect(retryButton).toBeEnabled()
+			await expect
+				.poll(async () => {
+					const interaction = (await readTaskSnapshot(dlineDocsDir, taskId)).interaction as PersistedRecord | undefined
+					return `${String(interaction?.kind)}:${String(interaction?.status)}`
+				})
+				.toBe("error_retry:awaiting")
+			await expect
+				.poll(async () => {
+					const indicator = (await readTaskSnapshot(dlineDocsDir, taskId)).contextWindowIndicator as
+						| PersistedRecord
+						| undefined
+					return `${String(indicator?.phase)}:${Number(indicator?.receivingTokens ?? 0)}:${Number(indicator?.pendingSendTokens ?? 0)}`
+				})
+				.toBe("stable:0:0")
+			// Two automatic retries are the whole budget; no fourth compaction attempt may start on its own.
+			await page.waitForTimeout(3_000)
+			expect(server.getRequestCount("openai-compatible-responses")).toBe(4)
+
+			await retryButton.click()
+			const confirmButton = sidebar.locator('vscode-button[aria-label="Condense Conversation"]')
+			await expect(confirmButton).toBeVisible({ timeout: 60_000 })
+			await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(5)
+			await confirmButton.click()
+			await expect(sidebar.getByText("E2E_RESUME_MANUAL_EXHAUSTED_CONTINUED", { exact: false }).last()).toBeVisible({
+				timeout: 60_000,
+			})
+			await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(6)
+			for (const request of server.getMockConsumptions("openai-compatible-responses")) {
+				expect(request.contractError).toBeUndefined()
+			}
+			expect(E2ETestHelper.readDlineOutputIfPresent(userDataDir) ?? "").not.toContain("hydrated_interaction_mismatch")
+			await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir, [/did not return a valid summarize_task/i])
+		} finally {
+			await session?.app.close()
 		}
 	},
 )

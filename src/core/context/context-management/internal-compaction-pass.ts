@@ -79,6 +79,8 @@ export interface RunInternalCompactionPassWithRetryInput
 	passIdentity: CompactionPassIdentity
 	retryPolicy: CompactionRetryPolicy
 	allowOpenAiMaxOutputReplay?: boolean
+	/** Failures eligible for the ordinary Pass retry budget; defaults to every transient compaction failure. */
+	retryableFailure?(error: unknown): boolean
 	initialAttemptIndex?: number
 	attemptIdFactory(attemptIndex: number): string
 	waitForRetry(retryAttempt: number): Promise<void>
@@ -347,11 +349,8 @@ export async function runInternalCompactionPassWithRetry(
 			}
 			// A suspected truncation has already consumed its single reduced replay above,
 			// so it must not fall through into ordinary same-cap Pass retries.
-			if (
-				isOpenAiMaxOutputFailure(error) ||
-				isSuspectedCompactionOutputTruncation(error) ||
-				!isRetryableCompactionError(error)
-			) {
+			const isRetryableFailure = input.retryableFailure ?? isRetryableCompactionError
+			if (isOpenAiMaxOutputFailure(error) || isSuspectedCompactionOutputTruncation(error) || !isRetryableFailure(error)) {
 				throw error
 			}
 
@@ -370,8 +369,11 @@ export async function runInternalCompactionPassWithRetry(
 			})
 			await input.waitForRetry(retryDecision.retryAttempt)
 			currentAttempt = nextAttempt
-			// Keep the current provider input, so a reduced OpenAI max-output replay cap survives ordinary Pass retries.
-			currentProviderInput = cloneDeep(currentProviderInput)
+			// Keep the current output cap, so a reduced OpenAI max-output replay cap survives ordinary Pass retries.
+			// An unusable summary is retried from the frozen input plus one correction, never the failed attempt's output.
+			currentProviderInput = isUnusableCompactionSummaryError(error)
+				? { ...withCompactionCorrection(frozenProviderInput), providerOutputCap: currentProviderInput.providerOutputCap }
+				: cloneDeep(currentProviderInput)
 		}
 	}
 }
@@ -427,6 +429,41 @@ function parseSummaryArguments(value: string): string | undefined {
 /** Marks a Pass whose native arguments arrived but never yielded a usable summary. */
 const SUSPECTED_OUTPUT_TRUNCATION = Symbol.for("dline.compaction.suspectedOutputTruncation")
 
+/** Marks a Pass that answered with text or another tool instead of any summarize_task arguments. */
+const UNUSABLE_SUMMARY = Symbol.for("dline.compaction.unusableSummary")
+
+/** Appended to the compaction instruction message when a retry follows an unusable summary. */
+export const COMPACTION_CORRECTION_NOTE =
+	"The previous compaction attempt did not return a usable summarize_task call. Respond only by calling summarize_task with the complete context summary; do not call any other tool and do not reply with plain text."
+
+/**
+ * Report whether a Pass failed because the model never produced summarize_task arguments.
+ *
+ * @param error The failure raised while settling one compaction Pass.
+ * @returns True when a corrected retry of the same frozen Pass may succeed.
+ */
+export function isUnusableCompactionSummaryError(error: unknown): boolean {
+	return typeof error === "object" && error !== null && UNUSABLE_SUMMARY in error
+}
+
+/**
+ * Build the retry input for an unusable summary from the frozen Pass input.
+ *
+ * The correction travels inside the final message, which carries the compaction instruction,
+ * so the cached prompt prefix and the tool list stay byte-identical across attempts.
+ */
+function withCompactionCorrection(frozenProviderInput: CompactionProviderInput): CompactionProviderInput {
+	const corrected = cloneDeep(frozenProviderInput)
+	const instructionMessage = corrected.messages.at(-1)
+	if (!instructionMessage) return corrected
+	const correction = { type: "text" as const, text: COMPACTION_CORRECTION_NOTE }
+	instructionMessage.content =
+		typeof instructionMessage.content === "string"
+			? [{ type: "text" as const, text: instructionMessage.content }, correction]
+			: [...instructionMessage.content, correction]
+	return corrected
+}
+
 /**
  * Report whether a Pass failure looks like a Provider output-cap truncation.
  *
@@ -449,7 +486,7 @@ export function isSuspectedCompactionOutputTruncation(error: unknown): boolean {
 function createUnusableSummaryError(nativeArguments: ReadonlyMap<string, string>): Error {
 	const error = new Error("Internal compaction Pass did not return a valid summarize_task context")
 	const receivedArgumentText = [...nativeArguments.values()].some((value) => value.trim().length > 0)
-	return receivedArgumentText ? Object.assign(error, { [SUSPECTED_OUTPUT_TRUNCATION]: true }) : error
+	return Object.assign(error, { [receivedArgumentText ? SUSPECTED_OUTPUT_TRUNCATION : UNUSABLE_SUMMARY]: true })
 }
 
 /**

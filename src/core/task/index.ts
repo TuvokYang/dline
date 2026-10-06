@@ -1083,19 +1083,19 @@ export class Task {
 					}
 					const runtimeState = this.taskRuntime.getState()
 					const retryBaseContent = effect.retryContent?.length ? cloneDeep(effect.retryContent) : undefined
+					// The assembler already appends the pending non-tool content after the turn's tool
+					// results; appending it again would replay the user's text (and any slash command
+					// authorization it declares) twice in one request.
 					const normalizedRetryContent =
 						retryBaseContent && runtimeState.turn
-							? [
-									...collectResumeTurnContent({
-										blocks: runtimeState.turn.blocks,
-										assistantApiIndex: runtimeState.turn.assistantApiIndex,
-										apiHistory: this.messageStateHandler.apiConversationHistory,
-										uiHistory: this.messageStateHandler.clineMessages,
-										pendingContent: retryBaseContent,
-										synthesizeMissing: "all",
-									}),
-									...retryBaseContent.filter((item) => item.type !== "tool_result"),
-								]
+							? collectResumeTurnContent({
+									blocks: runtimeState.turn.blocks,
+									assistantApiIndex: runtimeState.turn.assistantApiIndex,
+									apiHistory: this.messageStateHandler.apiConversationHistory,
+									uiHistory: this.messageStateHandler.clineMessages,
+									pendingContent: retryBaseContent,
+									synthesizeMissing: "all",
+								})
 							: retryBaseContent
 					const retryFeedbackContent = normalizedRetryContent
 						? await buildUserFeedbackContent(effect.draft?.text, effect.draft?.images, effect.draft?.files)
@@ -2138,6 +2138,15 @@ export class Task {
 		await this.publishContextWindowIndicatorSnapshot(this.contextWindowIndicator.settle({ lineage: rolledBack.lineage }))
 		this.ordinaryContextIndicatorLineageByApiIndex.delete(apiIndex)
 		this.ordinaryContextIndicatorReceivingByApiIndex.delete(apiIndex)
+	}
+
+	/** Restore the last stable indicator when a compaction operation ends without committing a summary. */
+	private async rollbackContextCompactionIndicator(operationId: string): Promise<void> {
+		const lineage = this.contextWindowIndicator.getSnapshot().lineage
+		if (lineage.kind !== "compaction_pass" || lineage.operationId !== operationId) return
+		const rolledBack = this.contextWindowIndicator.rollback({ lineage })
+		await this.publishContextWindowIndicatorSnapshot(rolledBack)
+		await this.publishContextWindowIndicatorSnapshot(this.contextWindowIndicator.settle({ lineage: rolledBack.lineage }))
 	}
 
 	private getContextCompactionIndicatorLineage(
@@ -3286,8 +3295,11 @@ export class Task {
 				break
 			case "failed":
 				if (input.signal?.aborted) this.contextCompactionRetryProgress.delete(input.operationId)
-				if (input.trigger === "auto_compaction") this.contextCompactionFailureReasons.set(input.operationId, event.error)
+				if (input.trigger === "auto_compaction" || input.trigger === "manual_compact_command") {
+					this.contextCompactionFailureReasons.set(input.operationId, event.error)
+				}
 				this.contextCompactionIndicatorReceivingByAttemptId.clear()
+				await this.rollbackContextCompactionIndicator(input.operationId)
 				this.taskState.targetWindowFittingState = undefined
 				this.taskState.targetWindowFittingProjection = undefined
 				this.taskState.compactionFittingRequired = false
@@ -9418,6 +9430,9 @@ export class Task {
 							block.text.replace(/<\/?(?:task|feedback|answer|user_message)>/gi, "").trim().length > 0,
 					)
 					requestScope.explicitInstructions.cancel()
+					// A /cmd:compact reply resolves the resume prompt, but the request gate still holds it
+					// as resolving; release it first so the manual review card can open its own interaction.
+					await this.interactionCoordinator.releaseApiContinuationForRequestGate()
 					const operationId = `manual-compaction:${this.taskId}:${apiIndex}:${this.genMessageTs()}`
 					const result = await this.runManualContextCompaction(
 						operationId,
@@ -9426,6 +9441,10 @@ export class Task {
 						includeFileDetails,
 						userContent,
 					)
+					if (result === "failed") {
+						await this.presentTerminalCompactionFailure(operationId, apiIndex, userContent, persistedRequest)
+						return true
+					}
 					if (result !== "completed") return true
 					this.promptCacheHealth.recordCompactionResult(true)
 					return this.recursivelyMakeClineRequests([], includeFileDetails, {

@@ -6,7 +6,7 @@ import { ExplicitInstructionRequestScope } from "@core/task/explicit-instruction
 import { ClineDefaultTool } from "@shared/tools"
 import { describe, expect, it, vi } from "vitest"
 import { CompactionRetryPolicy } from "../compaction-retry-policy"
-import { runInternalCompactionPassWithRetry } from "../internal-compaction-pass"
+import { isUnusableCompactionSummaryError, runInternalCompactionPassWithRetry } from "../internal-compaction-pass"
 
 const passIdentity = {
 	operationId: "operation-hidden-pass",
@@ -85,12 +85,33 @@ function streamingSummaryStream(): ApiStream {
 	})()
 }
 
+const CORRECTION_MARKER = "The previous compaction attempt did not return a usable summarize_task call"
+
+/** A Pass that answers with plain text and another tool instead of summarize_task. */
+function wrongToolStream(residue: string): ApiStream {
+	return (async function* () {
+		yield { type: "text" as const, text: residue }
+		yield {
+			type: "tool_calls" as const,
+			function_id: "call-other-tool",
+			phase: "completed" as const,
+			tool_index: 0,
+			tool_call: { function: { name: "read_file", arguments: JSON.stringify({ path: residue }) } },
+		}
+		yield { type: "usage" as const, inputTokens: 100, outputTokens: 20 }
+	})()
+}
+
 function streamingXmlSummaryStream(): ApiStream {
 	return (async function* () {
 		yield { type: "text" as const, text: "<summarize_task><context>First" }
 		yield { type: "text" as const, text: " partial</context></summarize_task>" }
 		yield { type: "usage" as const, inputTokens: 100, outputTokens: 20 }
 	})()
+}
+
+function cloneDeepJson<T>(value: T): T {
+	return JSON.parse(JSON.stringify(value)) as T
 }
 
 describe("internal compaction Pass retry owner", () => {
@@ -366,6 +387,69 @@ describe("internal compaction Pass retry owner", () => {
 			}),
 		).rejects.toThrow("network failure")
 		expect(waitForRetry).toHaveBeenCalledOnce()
+	})
+
+	it("retries an unusable summary from the frozen input with the correction inside the instruction message", async () => {
+		const calls: unknown[] = []
+		const api = {
+			createMessage: (_systemPrompt, messages) => {
+				calls.push(cloneDeepJson(messages))
+				return calls.length < 3
+					? wrongToolStream(`RESIDUE_ATTEMPT_${calls.length}`)
+					: successfulStream("Corrected summary")
+			},
+			getModel: () => ({ id: "test-model", info: { id: "test-model" } }),
+		} satisfies ApiHandler
+		const frozenInput = cloneDeepJson(providerInput)
+
+		const result = await runInternalCompactionPassWithRetry({
+			api,
+			providerInput,
+			explicitInstructions: createInstructions(),
+			passIdentity,
+			retryPolicy: new CompactionRetryPolicy(2),
+			attemptIdFactory: (attemptIndex) => `attempt-${attemptIndex}`,
+			waitForRetry: async () => undefined,
+		})
+
+		expect(result).toMatchObject({ summary: "Corrected summary", attemptIndex: 2 })
+		expect(calls).toHaveLength(3)
+		expect(calls[0]).toEqual(providerInput.messages)
+		for (const retryMessages of calls.slice(1)) {
+			const messages = retryMessages as Array<{ role: string; content: Array<{ type: string; text: string }> }>
+			expect(messages).toHaveLength(providerInput.messages.length)
+			const instructionMessage = messages.at(-1)
+			expect(instructionMessage?.content.slice(0, -1)).toEqual(providerInput.messages.at(-1)?.content)
+			expect(instructionMessage?.content.at(-1)?.text).toContain(CORRECTION_MARKER)
+			expect(JSON.stringify(messages).split(CORRECTION_MARKER)).toHaveLength(2)
+			expect(JSON.stringify(messages)).not.toContain("RESIDUE_ATTEMPT_")
+		}
+		expect(providerInput).toEqual(frozenInput)
+	})
+
+	it("limits retries to unusable summaries when the caller scopes the retry policy", async () => {
+		let requestCount = 0
+		const api = {
+			createMessage: () => {
+				requestCount++
+				return failingStream(Object.assign(new Error("503 overloaded"), { status: 503 }))
+			},
+			getModel: () => ({ id: "test-model", info: { id: "test-model" } }),
+		} satisfies ApiHandler
+
+		await expect(
+			runInternalCompactionPassWithRetry({
+				api,
+				providerInput,
+				explicitInstructions: createInstructions(),
+				passIdentity,
+				retryPolicy: new CompactionRetryPolicy(2),
+				retryableFailure: isUnusableCompactionSummaryError,
+				attemptIdFactory: (attemptIndex) => `attempt-${attemptIndex}`,
+				waitForRetry: async () => undefined,
+			}),
+		).rejects.toThrow("503 overloaded")
+		expect(requestCount).toBe(1)
 	})
 
 	it("owns the one OpenAI max-output replay and reduces only the frozen output cap", async () => {
