@@ -1,3 +1,4 @@
+import { findLast } from "@shared/array"
 import { Logger } from "@shared/services/Logger"
 import type { RetainedInputPresentationPort } from "../executors/compose/RetainedInputPresentationPort"
 import type { InteractionKind } from "../interaction/Interaction"
@@ -41,6 +42,9 @@ function actionRules(kind: OpenInteractionRequest["kind"]): readonly DialogActio
 	if (!enterAction || rules.some((rule) => rule.actionId === enterAction)) return rules
 	return [...rules, { actionId: enterAction, payloadPolicy: "draft" }]
 }
+
+/** How every Profile-validity failure is described (see ApiProfileRecovery); only these are resolved by a Profile switch. */
+const INVALID_PROFILE_FAILURE_PREFIX = "Profile not valid:"
 
 const QUEUE_TURN_END_INTERACTIONS: ReadonlySet<InteractionKind> = new Set([
 	"followup",
@@ -332,11 +336,18 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
 		return "accepted"
 	}
 
-	/** Clear the provider-failure dialog made obsolete by a successful Profile rebuild. */
+	/**
+	 * Clear the provider-failure dialog made obsolete by a successful Profile rebuild.
+	 *
+	 * Only a failure that reported the Profile itself as invalid is resolved by
+	 * switching Profiles. Any other failure, such as a rate limit, keeps its
+	 * dialog so the user can still retry it through the newly bound Profile.
+	 */
 	async dismissProviderFailure(): Promise<void> {
 		const session = this.session
 		const interaction = session?.state().dialog.primary
 		if (!session || interaction?.kind !== "error_retry") return
+		if (!this.reportsInvalidProfile(interaction)) return
 		try {
 			const result = await session.assembly.runtime.submit({
 				type: "dialog.dismissed",
@@ -357,6 +368,16 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
 				`Failed to dismiss provider failure ${interaction.interactionId}: ${error instanceof Error ? error.message : error}`,
 			)
 		}
+	}
+
+	/** The failure text the dialog shows: its anchored ask row, else the description it was raised with. */
+	private reportsInvalidProfile(interaction: { readonly interactionId: string; readonly presentationRef?: string }): boolean {
+		const anchor = findLast(
+			this.messages.clineMessages,
+			(message) =>
+				message.type === "ask" && message.ask === "api_req_failed" && message.interactionId === interaction.interactionId,
+		)
+		return (anchor?.text ?? interaction.presentationRef ?? "").includes(INVALID_PROFILE_FAILURE_PREFIX)
 	}
 
 	dispose(reason = "task_disposed"): void {

@@ -126,19 +126,20 @@ describe("TaskInteractionOwner", () => {
 		expect(submitted).toEqual([])
 	})
 
-	it("dismisses the active provider failure and removes its obsolete rows", async () => {
+	it("dismisses an invalid-Profile failure and removes its obsolete rows", async () => {
+		const failure = 'Profile not valid: "azure-profile" requires an Azure endpoint for Azure Identity authentication.'
 		const messages = createMessages([
-			{ ts: 1, type: "say", say: "error_retry", text: '{"errorMessage":"Profile not valid"}' },
+			{ ts: 1, type: "say", say: "error_retry", text: JSON.stringify({ errorMessage: failure }) },
 			{
 				ts: 2,
 				type: "ask",
 				ask: "api_req_failed",
-				text: "Profile not valid",
+				text: failure,
 				interactionId: "i-error",
 			},
 		])
 		const restored = restoredPrimary("i-error", "error_retry")
-		const state = () => ({ ...restored, flow: { phase: "error" as const, error: "Profile not valid" } })
+		const state = () => ({ ...restored, flow: { phase: "error" as const, error: failure } })
 		const { owner, submitted } = createOwner({ messages, state })
 
 		await owner.dismissProviderFailure()
@@ -146,6 +147,24 @@ describe("TaskInteractionOwner", () => {
 		expect(submitted).toEqual(["dialog.dismissed"])
 		expect(messages.removeMessagesByTs).toHaveBeenCalledWith([1, 2])
 		expect(messages.clineMessages).toEqual([])
+	})
+
+	it("keeps a rate-limit failure retryable across a Profile switch", async () => {
+		const failure = "429 E2E_PROFILE_SWITCH_429_RATE_LIMIT"
+		const rows = [
+			{ ts: 1, type: "say" as const, say: "error_retry" as const, text: JSON.stringify({ errorMessage: failure }) },
+			{ ts: 2, type: "ask" as const, ask: "api_req_failed" as const, text: failure, interactionId: "i-error" },
+		]
+		const messages = createMessages(rows)
+		const restored = restoredPrimary("i-error", "error_retry")
+		const state = () => ({ ...restored, flow: { phase: "error" as const, error: failure } })
+		const { owner, submitted } = createOwner({ messages, state })
+
+		await owner.dismissProviderFailure()
+
+		expect(submitted).toEqual([])
+		expect(messages.removeMessagesByTs).not.toHaveBeenCalled()
+		expect(messages.clineMessages).toEqual(rows)
 	})
 
 	it("stays usable after a stop, because a cancelled task may resume", async () => {
