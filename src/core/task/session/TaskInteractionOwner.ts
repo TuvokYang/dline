@@ -98,11 +98,16 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
 		const session = this.session
 		if (!session || this.suspendedReason) return
 		const state = session.state()
-		const block =
-			state.turn.turnId === request.turnId
-				? state.turn.blocks.find((candidate) => candidate.blockId === request.interactionId)
-				: undefined
-		if (!block) return
+		// Handlers name their turn after the tool call (`interactionTurnId`), while the
+		// kernel names it after the compose command that produced it. The block id is
+		// the identity both share, so the block is found by it and the event carries
+		// the kernel's own turn.
+		const turnId = state.turn.turnId
+		const block = turnId ? state.turn.blocks.find((candidate) => candidate.blockId === request.interactionId) : undefined
+		if (!turnId || !block) {
+			Logger.debug(`[TaskInteractionOwner] Completion ${request.interactionId} has no block in the active turn`)
+			return
+		}
 		try {
 			const presentationRef = await this.payloads.put(
 				encodeTaskPayload<DialogPresentationEnvelope>({
@@ -116,7 +121,7 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
 			const result = await session.assembly.runtime.submit({
 				type: "tool.completion_presented",
 				generation: session.state().generation,
-				turnId: request.turnId,
+				turnId,
 				blockId: block.blockId,
 				attempt: block.attempt,
 				presentationRef,
