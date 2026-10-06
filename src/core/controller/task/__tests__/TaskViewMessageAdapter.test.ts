@@ -1,4 +1,4 @@
-import { createInitialTaskState } from "@core/task/kernel"
+import { createInitialTaskState, transition } from "@core/task/kernel"
 import { projectCanonicalTaskView } from "@core/task/view/canonical/projectCanonicalTaskView"
 import { describe, expect, it } from "vitest"
 import { adaptCanonicalTaskView } from "../TaskViewMessageAdapter"
@@ -40,6 +40,50 @@ describe("adaptCanonicalTaskView", () => {
 			anchorVerified: true,
 		})
 		expect(view.input).toMatchObject({ enabled: true, enterAction: "reply" })
+	})
+
+	it("opens the composer for one reply after a dismissed provider failure, as dev's profile recovery", () => {
+		const initial = createInitialTaskState("task-1")
+		const failed = {
+			...initial,
+			flow: { phase: "error" as const, error: "Profile not valid" },
+			dialog: {
+				approvalsByBlock: {},
+				primary: {
+					interactionId: "error:provider.failed:1",
+					turnId: "turn-1",
+					kind: "error_retry",
+					status: "awaiting" as const,
+					createdRevision: 1,
+					presentationRef: "Profile not valid",
+					receiverGeneration: 0,
+					actionRules: [{ actionId: "retry", payloadPolicy: "draft" as const }],
+				},
+			},
+		}
+		const dismissed = transition(failed, {
+			type: "dialog.dismissed",
+			generation: 0,
+			interactionId: "error:provider.failed:1",
+		})
+		if (dismissed.kind !== "accepted") throw new Error(`dismissal rejected: ${dismissed.kind}`)
+
+		const view = adaptCanonicalTaskView(projectCanonicalTaskView(dismissed.state))
+
+		expect(view.phase).toBe("between_turns")
+		expect(view.activeInteraction).toBeUndefined()
+		expect(view.input).toEqual({
+			enabled: true,
+			acceptsText: true,
+			acceptsImages: true,
+			acceptsFiles: true,
+			enterAction: "reply",
+		})
+		expect(view.footer.actions).toEqual([])
+
+		// A plain waiting task without the admission keeps the composer closed.
+		const plain = adaptCanonicalTaskView(projectCanonicalTaskView({ ...initial, flow: { phase: "waiting" } }))
+		expect(plain.input.enabled).toBe(false)
 	})
 
 	it("projects canonical halt and compaction without legacy runtime options", () => {

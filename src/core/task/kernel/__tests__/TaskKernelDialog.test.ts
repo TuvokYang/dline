@@ -281,9 +281,42 @@ describe("task kernel causal dialog", () => {
 			transition(state, { type: "dialog.dismissed", generation: 0, interactionId: "error:provider.failed:1" }),
 		)
 
-		expect(result.state.flow).toEqual({ phase: "waiting", error: undefined })
+		expect(result.state.flow).toEqual({ phase: "waiting", error: undefined, replyAdmission: "profile_recovery" })
 		expect(result.state.dialog.primary).toBeUndefined()
 		expect(result.commands).toEqual([])
+
+		// The user's next submission spends the one reply the dismissal admitted.
+		const replied = accepted(
+			transition(result.state, { type: "user.submit", generation: 0, entryId: "entry-1", payloadRef: "payload:1" }),
+		)
+		expect(replied.state.flow.replyAdmission).toBeUndefined()
+	})
+
+	it("admits no recovery reply when the dismissed dialog did not stop the round", () => {
+		const initial = createInitialTaskState("task-1")
+		const state: TaskState = {
+			...initial,
+			flow: { phase: "waiting" },
+			dialog: {
+				...initial.dialog,
+				primary: {
+					interactionId: "error:provider.failed:1",
+					turnId: "turn-1",
+					kind: "error_retry",
+					status: "awaiting",
+					createdRevision: 1,
+					presentationRef: "Profile not valid",
+					actionRules: [{ actionId: "retry", payloadPolicy: "draft" }],
+					receiverGeneration: 0,
+				},
+			},
+		}
+
+		const result = accepted(
+			transition(state, { type: "dialog.dismissed", generation: 0, interactionId: "error:provider.failed:1" }),
+		)
+
+		expect(result.state.flow.replyAdmission).toBeUndefined()
 	})
 
 	it("restores the interrupted interaction atomically when the interrupt resolves", () => {

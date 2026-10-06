@@ -14,6 +14,15 @@ const DISABLED_INPUT: TaskInputViewState = {
 	acceptsFiles: false,
 }
 
+/** One ordinary reply admitted without an owning dialog, as dev's profile-recovery input. */
+const REPLY_INPUT: TaskInputViewState = {
+	enabled: true,
+	acceptsText: true,
+	acceptsImages: true,
+	acceptsFiles: true,
+	enterAction: "reply",
+}
+
 /** Sends the scheduled automatic retry now; dispatched to the task, not to a dialog. */
 const AUTOMATIC_RETRY_ACTION: TaskViewAction = {
 	type: "retry",
@@ -145,7 +154,12 @@ export function adaptCanonicalTaskView(
 	// Without its anchor row the dialog has nothing to pin its controls to, so the
 	// surface falls back to task-level affordances instead of orphaned buttons.
 	const anchored = Boolean(dialog && anchor)
-	const input = dialog && kind && anchored ? projectInteractionInput(dialog, kind) : DISABLED_INPUT
+	const input =
+		dialog && kind && anchored
+			? projectInteractionInput(dialog, kind)
+			: !dialog && view.input.mode === "reply"
+				? { ...REPLY_INPUT }
+				: DISABLED_INPUT
 	// Truncation destroys history, so it is offered only beside the Retry it
 	// replaces: the round a failed automatic compaction stopped, awaiting the user.
 	const forceTruncateAvailable = truncationOffered && anchored && dialog?.kind === "error_retry" && dialog.status === "awaiting"

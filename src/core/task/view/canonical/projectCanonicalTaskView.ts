@@ -98,6 +98,7 @@ function projectInput(
 	}
 	if (terminal !== "active") return { mode: "disabled" }
 	if (state.flow.phase === "idle") return { mode: "disabled" }
+	if (state.flow.phase === "waiting" && state.flow.replyAdmission === "profile_recovery") return { mode: "reply" }
 	return { mode: "queued" }
 }
 

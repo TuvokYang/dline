@@ -103,6 +103,12 @@ export interface PolicyEvaluationState extends CommandFlowState {
 export interface FlowState {
 	readonly phase: FlowPhase
 	readonly error?: string
+	/**
+	 * One ordinary reply the user may send after a dismissed provider failure,
+	 * as dev's `ordinaryInput: profile_recovery`. Any other waiting state keeps
+	 * the composer closed; the next submission or turn spends the permission.
+	 */
+	readonly replyAdmission?: "profile_recovery"
 	readonly completionId?: string
 	readonly terminalReason?: "consumed"
 	readonly consumedRef?: string

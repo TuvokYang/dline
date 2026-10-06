@@ -42,11 +42,18 @@ export function reduceFlow(state: FlowState, event: TaskEvent): FlowReduction {
 			// so answering Resume produced no reply at all.
 			// It also ends any text-only streak: the user spoke, so whatever bound
 			// the previous streak no longer applies to the round they just opened.
+			// Submitting also spends a recovery reply admission.
 			return {
 				state:
 					state.phase === "paused"
-						? { ...state, phase: "initializing", textOnlyTurnStreak: 0, consecutiveMistakeCount: 0 }
-						: { ...state, textOnlyTurnStreak: 0, consecutiveMistakeCount: 0 },
+						? {
+								...state,
+								phase: "initializing",
+								textOnlyTurnStreak: 0,
+								consecutiveMistakeCount: 0,
+								replyAdmission: undefined,
+							}
+						: { ...state, textOnlyTurnStreak: 0, consecutiveMistakeCount: 0, replyAdmission: undefined },
 				commands: [],
 			}
 		case "provider.turn_ready":
@@ -55,6 +62,7 @@ export function reduceFlow(state: FlowState, event: TaskEvent): FlowReduction {
 					...state,
 					phase: "running",
 					error: undefined,
+					replyAdmission: undefined,
 					// A turn that planned no block ends with nothing that could
 					// report completion, so the streak is what later decides
 					// whether the round is continued or handed back to the user.
@@ -86,6 +94,7 @@ export function reduceFlow(state: FlowState, event: TaskEvent): FlowReduction {
 					...state,
 					phase: "error",
 					error: event.message,
+					replyAdmission: undefined,
 					provider: state.provider && { ...state.provider, status: "failed" },
 				},
 				commands: [],
@@ -143,8 +152,14 @@ export function reduceFlow(state: FlowState, event: TaskEvent): FlowReduction {
 		case "dialog.failed":
 			return { state: { ...state, phase: "error", error: event.message }, commands: [] }
 		case "dialog.dismissed":
+			// Dismissing the failure that stopped the round hands the task back to
+			// the user with one ordinary reply, as dev's `profile_recovery` input:
+			// without it the composer stays closed because no dialog owns it.
 			return {
-				state: state.phase === "error" ? { ...state, phase: "waiting", error: undefined } : state,
+				state:
+					state.phase === "error"
+						? { ...state, phase: "waiting", error: undefined, replyAdmission: "profile_recovery" }
+						: state,
 				commands: [],
 			}
 		case "compaction.requested":

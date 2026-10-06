@@ -4,7 +4,11 @@ export type CanonicalTaskTerminal = "active" | "completed" | "error" | "consumed
 
 export type CanonicalTaskActivity = "idle" | "working" | "waiting" | "waiting_for_dialog" | "halting" | "terminal"
 
-export type CanonicalTaskInputMode = "disabled" | "queued" | "dialog"
+/**
+ * `reply` admits one ordinary submission while no dialog owns the input, after
+ * the user dismissed the failure that stopped the round.
+ */
+export type CanonicalTaskInputMode = "disabled" | "queued" | "dialog" | "reply"
 
 export interface CanonicalTaskInputProjection {
 	readonly mode: CanonicalTaskInputMode
