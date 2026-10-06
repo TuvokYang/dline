@@ -278,6 +278,8 @@ export class Controller {
 	private readonly profileSwitchCoordinator: ProfileSwitchCoordinator
 	private nextStateRevision = 0
 	private latestStateRevision = 0
+	/** Counts publications started, so a dropped build can tell whether a newer one is on its way. */
+	private publicationSequence = 0
 	/** Pending coalescing window for non-immediate state publications. */
 	private pendingStatePostTimer?: ReturnType<typeof setTimeout>
 	/**
@@ -2496,10 +2498,22 @@ export class Controller {
 		)
 	}
 
-	/** Build the current state once and hand it to delivery when still current. */
+	/**
+	 * Build the current state once and hand it to delivery when still current.
+	 *
+	 * A build is dropped when a later one finished first. Unary state reads
+	 * (getLatestState, getProcessInfo) build state too but never deliver it to
+	 * the subscription, so a publication they overtake must publish again:
+	 * once an interaction is revealed the task commits nothing more, and the
+	 * revealed dialog would otherwise never reach the webview.
+	 */
 	private async publishState(options?: PostStateOptions): Promise<void> {
+		const publication = ++this.publicationSequence
 		const state = await this.getStateToPostToWebview()
-		if (!this.isStateCurrent(state.stateRevision)) return
+		if (!this.isStateCurrent(state.stateRevision)) {
+			if (publication === this.publicationSequence) this.scheduleCoalescedStatePost()
+			return
+		}
 		await sendStateUpdate(this, state, this._accountUsage, options)
 	}
 
@@ -2511,7 +2525,9 @@ export class Controller {
 			if (!this.isUiAttached()) return
 			// The window already absorbed the delay, so delivery must not queue
 			// this behind a second debounce of the same length.
-			void this.publishState({ immediate: true })
+			this.publishState({ immediate: true }).catch((error: unknown) => {
+				Logger.error("[Controller] Coalesced state publication failed:", error)
+			})
 		}, STATE_POST_COALESCE_MS)
 	}
 
