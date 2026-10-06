@@ -802,6 +802,117 @@ describe("ExtensionStateContext persisted message reconciliation", () => {
 		).toBeTruthy()
 	})
 
+	it("keeps catching up to the tail when the total grows while a tail fetch is still running", async () => {
+		const initial = convertClineMessageToProto({ ts: 10, type: "say", say: "text", text: "assistant" })
+		const toolResult = convertClineMessageToProto({ ts: 20, type: "say", say: "text", text: "tool result" })
+		const finalReply = convertClineMessageToProto({ ts: 30, type: "say", say: "text", text: "final reply" })
+		let releaseFirstCatchUp: (() => void) | undefined
+		vi.mocked(TaskServiceClient.fetchMessage)
+			.mockResolvedValueOnce({ taskId: "task-1", taskInstanceId: "open-1", messages: [initial], startIndex: 0 })
+			.mockImplementationOnce(
+				() =>
+					new Promise((resolve) => {
+						releaseFirstCatchUp = () =>
+							resolve({ taskId: "task-1", taskInstanceId: "open-1", messages: [toolResult], startIndex: 1 })
+					}),
+			)
+			.mockResolvedValueOnce({ taskId: "task-1", taskInstanceId: "open-1", messages: [finalReply], startIndex: 2 })
+
+		render(
+			<ExtensionStateContextProvider>
+				<MessageProbe />
+			</ExtensionStateContextProvider>,
+		)
+		await waitFor(() => expect(subscriptions.state).toBeDefined())
+		act(() => {
+			subscriptions.state?.onResponse({ stateJson: JSON.stringify(stateSnapshot({ revision: 1, total: 1 })) })
+		})
+		await waitFor(() => expect(screen.getByText("assistant")).toBeVisible())
+
+		// The tail grows by one message whose stream event was lost, so the
+		// window starts catching up.
+		act(() => {
+			subscriptions.state?.onResponse({ stateJson: JSON.stringify(stateSnapshot({ revision: 2, total: 2 })) })
+		})
+		await waitFor(() => expect(TaskServiceClient.fetchMessage).toHaveBeenCalledTimes(2))
+
+		// More messages land before that catch-up answers. The window was still
+		// following the tail, so it has to keep going once the first page lands.
+		act(() => {
+			subscriptions.state?.onResponse({ stateJson: JSON.stringify(stateSnapshot({ revision: 3, total: 3 })) })
+		})
+		await act(async () => {
+			releaseFirstCatchUp?.()
+		})
+
+		await waitFor(() => expect(screen.getByText("final reply")).toBeVisible())
+		expect(screen.getAllByText("tool result")).toHaveLength(1)
+		expect(
+			screen.getByText("tool result").compareDocumentPosition(screen.getByText("final reply")) &
+				Node.DOCUMENT_POSITION_FOLLOWING,
+		).toBeTruthy()
+	})
+
+	it("reaches the tail when the total grows while a compaction replacement is still in flight", async () => {
+		const message = (ts: number, text: string) => convertClineMessageToProto({ ts, type: "say", say: "text", text })
+		let backend = [message(10, "first"), message(20, "condensed away"), message(30, "also condensed")]
+		let holdNextFetch = false
+		let releaseHeldFetch: (() => void) | undefined
+		// A fake backend that slices pages by request, answering from the
+		// conversation as it was when the request arrived, like a slow response.
+		vi.mocked(TaskServiceClient.fetchMessage).mockImplementation(async (request) => {
+			const snapshot = backend
+			const count = request.count || 200
+			const startIndex = request.referenceIndex < 0 ? Math.max(0, snapshot.length - count) : request.referenceIndex
+			const page = {
+				taskId: "task-1",
+				taskInstanceId: "open-1",
+				messages: snapshot.slice(startIndex, startIndex + count),
+				startIndex,
+				totalCount: snapshot.length,
+			}
+			if (holdNextFetch) {
+				holdNextFetch = false
+				await new Promise<void>((resolve) => {
+					releaseHeldFetch = resolve
+				})
+			}
+			return page
+		})
+
+		render(
+			<ExtensionStateContextProvider>
+				<MessageProbe />
+			</ExtensionStateContextProvider>,
+		)
+		await waitFor(() => expect(subscriptions.state).toBeDefined())
+		act(() => {
+			subscriptions.state?.onResponse({ stateJson: JSON.stringify(stateSnapshot({ revision: 1, total: 3 })) })
+		})
+		await waitFor(() => expect(screen.getByText("also condensed")).toBeVisible())
+		const callsBeforeCompaction = vi.mocked(TaskServiceClient.fetchMessage).mock.calls.length
+
+		// Compaction shrinks the conversation, so the window is replaced from the
+		// latest page. That replacement is still in flight when the turn goes on.
+		backend = [message(10, "first"), message(40, "summary")]
+		holdNextFetch = true
+		act(() => {
+			subscriptions.state?.onResponse({ stateJson: JSON.stringify(stateSnapshot({ revision: 2, total: 2 })) })
+		})
+		await waitFor(() => expect(vi.mocked(TaskServiceClient.fetchMessage).mock.calls.length).toBe(callsBeforeCompaction + 1))
+		backend = [message(10, "first"), message(40, "summary"), message(50, "tool result"), message(60, "final reply")]
+		act(() => {
+			subscriptions.state?.onResponse({ stateJson: JSON.stringify(stateSnapshot({ revision: 3, total: 4 })) })
+		})
+		await act(async () => {
+			releaseHeldFetch?.()
+		})
+
+		await waitFor(() => expect(screen.getByText("final reply")).toBeVisible())
+		expect(screen.queryByText("condensed away")).toBeNull()
+		expect(screen.getAllByText("summary")).toHaveLength(1)
+	})
+
 	it("replaces a stale realtime partial when durable state publishes a different tail at the same total", async () => {
 		const initial = convertClineMessageToProto({ ts: 10, type: "say", say: "text", text: "assistant" })
 		const stalePartial = convertClineMessageToProto({
