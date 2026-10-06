@@ -24,8 +24,19 @@ function invocation(toolName: string): ToolInvocationEnvelope {
 	}
 }
 
-function harness(options: { readonly toolName: string; readonly phase?: string; readonly askText?: string }) {
-	const stored = new Map<string, unknown>([["ref:invocation", encodeTaskPayload(invocation(options.toolName))]])
+function harness(options: {
+	readonly toolName: string
+	readonly phase?: string
+	readonly askText?: string
+	/** The runner journaled the interruption as the tool's failed result before the process died. */
+	readonly interrupted?: boolean
+	readonly fallbackAccepts?: boolean
+}) {
+	const interruption: ToolResultEnvelope = { kind: "tool_result", blockId: TID, content: "interrupted", failed: true }
+	const stored = new Map<string, unknown>([
+		["ref:invocation", encodeTaskPayload(invocation(options.toolName))],
+		["ref:interruption", encodeTaskPayload(interruption)],
+	])
 	const puts: unknown[] = []
 	const payloads = {
 		read: vi.fn(async (ref: string) => stored.get(ref)),
@@ -37,7 +48,11 @@ function harness(options: { readonly toolName: string; readonly phase?: string; 
 	const journal = {
 		append: vi.fn(async () => ({ watermark: { seq: 9 }, disposition: "appended" as const })),
 		findByOperation: vi.fn(async () => undefined),
-		read: vi.fn(async () => []),
+		read: vi.fn(async () =>
+			options.interrupted
+				? [{ kind: "message", source: "tool", payloadRef: "ref:interruption", causation: { turnId: "turn-1" } }]
+				: [],
+		),
 	}
 	const clineMessages = [{ ts: 1, type: "ask", ask: "followup", interactionId: TID, text: options.askText }]
 	const messages = {
@@ -60,8 +75,8 @@ function harness(options: { readonly toolName: string; readonly phase?: string; 
 	const input: TaskInput = { entryId: "entry-1", payloadRef: "sha256:input" }
 	const resumption = { materialize: vi.fn(async () => input), submit: vi.fn(async () => undefined) }
 	const fallback: UnownedDialogContinuationPort & { readonly continue: ReturnType<typeof vi.fn> } = {
-		accepts: vi.fn(() => false),
-		continue: vi.fn(async () => "declined" as const),
+		accepts: vi.fn(() => options.fallbackAccepts ?? false),
+		continue: vi.fn(async () => (options.fallbackAccepts ? ("continued" as const) : ("declined" as const))),
 	}
 	const publishRow = vi.fn(async () => undefined)
 	const continuation = new RestoredToolDialogContinuation(
@@ -119,6 +134,42 @@ describe("RestoredToolDialogContinuation", () => {
 
 		expect(h.journaledResult().content).toContain("User chose to stop")
 		expect(h.journaledResult().content).toContain("STOP_DRAFT")
+	})
+
+	it("submits the reply as new input when the interrupted tool already has its failed result", async () => {
+		const h = harness({ toolName: "qna_respond", interrupted: true, fallbackAccepts: true })
+		const resolution = {
+			interactionId: TID,
+			kind: "qna_response",
+			outcome: { actionId: "reply" as const, draft: { text: "REPLY_AFTER_RESTORE", images: [], files: [] } },
+		}
+
+		expect(h.continuation.accepts(resolution)).toBe(true)
+		await expect(h.continuation.prepare(resolution)).resolves.toBe(true)
+		await expect(h.continuation.continue(resolution)).resolves.toBe("continued")
+
+		// A second result for a settled call would be dropped or duplicated; the
+		// reply has to travel as ordinary input, which also writes its own row.
+		expect(h.fallback.continue).toHaveBeenCalledWith(resolution)
+		expect(h.journal.append).not.toHaveBeenCalled()
+		expect(h.messages.addToClineMessages).not.toHaveBeenCalled()
+		expect(h.resumption.materialize).not.toHaveBeenCalled()
+	})
+
+	it("still resumes without new input when the generic path declines an interrupted tool's answer", async () => {
+		const h = harness({ toolName: "qna_respond", interrupted: true })
+		const resolution = {
+			interactionId: TID,
+			kind: "qna_response",
+			outcome: { actionId: "stop" as const, draft: { text: "STOP_AFTER_RESTORE", images: [], files: [] } },
+		}
+
+		await expect(h.continuation.continue(resolution)).resolves.toBe("continued")
+
+		expect(h.fallback.continue).not.toHaveBeenCalled()
+		expect(h.journal.append).not.toHaveBeenCalled()
+		expect(h.resumption.materialize).toHaveBeenCalledWith({})
+		expect(h.resumption.submit).toHaveBeenCalledOnce()
 	})
 
 	it("keeps the acknowledgment wording for Acknowledge", async () => {
