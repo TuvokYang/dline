@@ -111,6 +111,23 @@ export function reduceTurn(state: TurnSlice, event: TaskEvent): TurnReduction {
 			commands: [],
 		}
 	}
+	if (event.type === "tool.completion_presented") {
+		if (state.turnId !== event.turnId) return { state, commands: [] }
+		return {
+			state: {
+				...state,
+				blocks: state.blocks.map((block) =>
+					block.blockId === event.blockId && block.attempt === event.attempt
+						? {
+								...block,
+								presentedCompletion: { presentationRef: event.presentationRef, actionRules: event.actionRules },
+							}
+						: block,
+				),
+			},
+			commands: [],
+		}
+	}
 	if (event.type === "lifecycle.consumed") {
 		if (state.turnId !== event.turnId) return { state, commands: [] }
 		// The consuming block already made its result durable, so it is done. Every

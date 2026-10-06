@@ -59,6 +59,14 @@ export interface SayPresentationRequest {
 export interface TaskInteractionPorts {
 	open(request: OpenInteractionRequest): Promise<InteractionOutcome>
 	complete(request: CompleteInteractionRequest): Promise<InteractionOutcome>
+	/**
+	 * Record that this completion's result is about to be shown, before it is.
+	 *
+	 * A terminate that lands while the completion is still committing then
+	 * leaves the task finished with this completion as its dialog. Never fails
+	 * the caller: without it a close in that window only loses the completion.
+	 */
+	stageCompletion?(request: CompleteInteractionRequest): Promise<void>
 	say(request: SayPresentationRequest): Promise<void>
 }
 

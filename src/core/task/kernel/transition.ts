@@ -10,6 +10,7 @@ import {
 	retainedQueueDeliveryEntries,
 	selectRetainedQueueEntryIds,
 } from "./machines/intake"
+import { settleTerminatedTurn } from "./machines/terminate"
 import { reduceTurn, toolTerminalManifestPayload } from "./machines/turn"
 import type {
 	Command,
@@ -148,7 +149,7 @@ function validateEvent(state: TaskState, event: TaskEvent): ValidationFailure | 
 	if (event.type.startsWith("tool.")) {
 		const toolEvent = event as Extract<
 			TaskEvent,
-			{ type: "tool.started" | "tool.completed" | "tool.failed" | "tool.cancelled" }
+			{ type: "tool.started" | "tool.completed" | "tool.failed" | "tool.cancelled" | "tool.completion_presented" }
 		>
 		if (state.turn.turnId !== toolEvent.turnId)
 			return { reason: "identity_mismatch", message: `Turn ${toolEvent.turnId} is not active` }
@@ -166,6 +167,13 @@ function validateEvent(state: TaskState, event: TaskEvent): ValidationFailure | 
 				reason: TERMINAL_BLOCK_PHASES.has(block.phase) ? "duplicate" : "phase_invalid",
 				message: `Block ${block.blockId} cannot finish from ${block.phase}`,
 			}
+		if (toolEvent.type === "tool.completion_presented") {
+			if (state.halt.status !== "idle")
+				return { reason: "phase_invalid", message: "A stopping task cannot present a completion" }
+			if (!block.turnEnding) return { reason: "phase_invalid", message: `Block ${block.blockId} does not end the turn` }
+			if (block.presentedCompletion)
+				return { reason: "duplicate", message: `Block ${block.blockId} already presented its completion` }
+		}
 	}
 	if (event.type === "approval.requested") {
 		if (state.turn.turnId !== event.turnId || !state.turn.blocks.some((block) => block.blockId === event.blockId))
@@ -901,6 +909,7 @@ export function transition(state: TaskState, event: TaskEvent): TransitionResult
 			},
 			halt: { status: "idle", generation: halt.state.generation },
 		}
+		if (halt.state.target === "terminated") next = settleTerminatedTurn(next, nextRevision)
 	}
 	if (event.type === "lifecycle.consumed") {
 		// The successor owns the conversation now, so no question is left for the

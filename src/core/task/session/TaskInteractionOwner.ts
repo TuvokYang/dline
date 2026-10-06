@@ -94,6 +94,73 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
 		return this.request({ ...request, kind: "completion" })
 	}
 
+	async stageCompletion(request: CompleteInteractionRequest): Promise<void> {
+		const session = this.session
+		if (!session || this.suspendedReason) return
+		const state = session.state()
+		const block =
+			state.turn.turnId === request.turnId
+				? state.turn.blocks.find((candidate) => candidate.blockId === request.interactionId)
+				: undefined
+		if (!block) return
+		try {
+			const presentationRef = await this.payloads.put(
+				encodeTaskPayload<DialogPresentationEnvelope>({
+					kind: "dialog_presentation",
+					presentationKind: "completion",
+					body: request.presentation,
+					existingTs: request.existingTs,
+					completionId: request.completionId,
+				}),
+			)
+			const result = await session.assembly.runtime.submit({
+				type: "tool.completion_presented",
+				generation: session.state().generation,
+				turnId: request.turnId,
+				blockId: block.blockId,
+				attempt: block.attempt,
+				presentationRef,
+				actionRules: actionRules("completion"),
+			})
+			if (result.kind === "rejected")
+				Logger.debug(`[TaskInteractionOwner] Completion ${block.blockId} was not staged: ${result.reason}`)
+		} catch (error) {
+			Logger.warn(
+				`[TaskInteractionOwner] Failed to stage completion ${block.blockId}: ${error instanceof Error ? error.message : error}`,
+			)
+		}
+	}
+
+	/**
+	 * Give a completion that a terminate installed the anchor row its request would have written.
+	 *
+	 * The terminate stopped the completion before it asked for its dialog, so
+	 * the result is still a plain row and nothing would let the user answer it.
+	 * Called after the halt settles and before the stores close.
+	 */
+	async anchorStagedCompletion(): Promise<void> {
+		const primary = this.session?.state().dialog.primary
+		if (primary?.kind !== "completion" || primary.status !== "planned") return
+		if (this.messages.clineMessages.some((message) => message.interactionId === primary.interactionId)) return
+		try {
+			const envelope = decodeTaskPayload<DialogPresentationEnvelope>(await this.payloads.read(primary.presentationRef))
+			const anchorTs = envelope.existingTs ?? Math.max(Date.now(), (this.messages.clineMessages.at(-1)?.ts ?? 0) + 1)
+			const anchor = createCanonicalAskRow(
+				getInteraction("completion").taskAsk,
+				envelope.body,
+				anchorTs,
+				primary.interactionId,
+			)
+			if (this.messages.clineMessages.some((message) => message.ts === anchorTs))
+				await this.messages.finalizeClineMessage(anchor)
+			else await this.messages.addToClineMessages(anchor)
+		} catch (error) {
+			Logger.warn(
+				`[TaskInteractionOwner] Failed to anchor staged completion ${primary.interactionId}: ${error instanceof Error ? error.message : error}`,
+			)
+		}
+	}
+
 	async say(request: Parameters<TaskInteractionPorts["say"]>[0]): Promise<void> {
 		await this.messages.addToClineMessages({
 			ts: request.existingTs ?? Date.now(),

@@ -144,6 +144,19 @@ export interface KernelBlock {
 	readonly invocationRef: string
 	readonly approvalFeedbackRef?: string
 	readonly policy?: PolicyEvaluationState
+	/**
+	 * A turn-ending completion whose result is already on screen.
+	 *
+	 * Recorded before the result row is shown, so a terminate that lands while
+	 * the completion is still being committed can leave the task finished
+	 * instead of interrupted.
+	 */
+	readonly presentedCompletion?: PresentedCompletion
+}
+
+export interface PresentedCompletion {
+	readonly presentationRef: string
+	readonly actionRules: readonly DialogActionRule[]
 }
 
 export type ToolTerminalPhase = Extract<BlockPhase, "completed" | "failed" | "rejected" | "skipped" | "cancelled">
@@ -367,14 +380,22 @@ export type ProviderEvent =
 			/** The provider's own description of the failure, as the chat's error box renders it. */
 			readonly presentation?: string
 	  })
-export type ToolEvent = EventBase & {
-	readonly type: "tool.started" | "tool.completed" | "tool.failed" | "tool.cancelled"
-	readonly turnId: TurnId
-	readonly blockId: BlockId
-	readonly message?: string
-	readonly mistakeCount?: number
-	readonly mistakeLimit?: number
-}
+export type ToolEvent =
+	| (EventBase & {
+			readonly type: "tool.started" | "tool.completed" | "tool.failed" | "tool.cancelled"
+			readonly turnId: TurnId
+			readonly blockId: BlockId
+			readonly message?: string
+			readonly mistakeCount?: number
+			readonly mistakeLimit?: number
+	  })
+	| (EventBase & {
+			readonly type: "tool.completion_presented"
+			readonly turnId: TurnId
+			readonly blockId: BlockId
+			readonly presentationRef: string
+			readonly actionRules: readonly DialogActionRule[]
+	  })
 interface DialogRequestEvent extends EventBase {
 	readonly interactionId: InteractionId
 	readonly turnId: TurnId

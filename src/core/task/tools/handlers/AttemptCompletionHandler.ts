@@ -126,7 +126,16 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
 	private async commitAndPresentCompletion(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
 		const result = block.params.result
 		if (!result) throw new Error("Invalid attempt_completion continuation result")
+		const completion = {
+			turnId: interactionTurnId(block),
+			interactionId: interactionId(block),
+			completionId: interactionId(block),
+			presentation: result,
+			existingTs: block.ts,
+		}
 
+		// Staged before the result is shown: a close from here on keeps the task finished.
+		await config.interactions.stageCompletion?.(completion)
 		await commitCompletion({
 			publishResult: () => config.callbacks.say("completion_result", result, undefined, undefined, false, block.ts),
 			// A task surface without workspace history has nothing to commit, so
@@ -151,13 +160,7 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
 			{ message: result },
 		)
 
-		const outcome = await config.interactions.complete({
-			turnId: interactionTurnId(block),
-			interactionId: interactionId(block),
-			completionId: interactionId(block),
-			presentation: result,
-			existingTs: block.ts,
-		})
+		const outcome = await config.interactions.complete(completion)
 		return this.continueInteraction(config, block, outcome)
 	}
 

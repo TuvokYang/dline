@@ -15,7 +15,8 @@ function createOwners(): TaskSessionOwners {
 	return {
 		identity: { taskId: "task-1", taskIncarnationId: "incarnation-1" },
 		messages: {} as MessageStateHandler,
-	} as TaskSessionOwners
+		interactions: { anchorStagedCompletion: vi.fn(async () => undefined) },
+	} as unknown as TaskSessionOwners
 }
 
 function createConversation() {

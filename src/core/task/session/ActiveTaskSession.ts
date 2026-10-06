@@ -149,6 +149,8 @@ export class ActiveTaskSession {
 	private async disposeOwnedResources(haltId: string): Promise<void> {
 		this.beginClose()
 		await this.task.terminate(haltId)
+		// Written before the stores close, so the completion a terminate kept is answerable on reopen.
+		await this.owners.interactions.anchorStagedCompletion()
 		await releaseSessionResources(this.options.releases ?? [])
 	}
 }
