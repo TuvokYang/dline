@@ -1,3 +1,4 @@
+import type { ContextWindowIndicatorSnapshot } from "@shared/context-window-indicator"
 import type { TaskViewState, UiMessage } from "@shared/ExtensionMessage"
 import type { HistoryItem } from "@shared/HistoryItem"
 import type { QueuedInputEntry } from "@shared/InputQueue"
@@ -8,6 +9,7 @@ import { UIMessage } from "@/core/storage/UIMessage"
 import type { UIMessageWindowPage, UIMessageWindowReader } from "@/core/storage/UIMessageWindowReader"
 import { TaskActivityPersistence } from "@/core/task/activity/TaskActivityPersistence"
 import { TaskActivityStore } from "@/core/task/activity/TaskActivityStore"
+import { readHistoryContextWindowIndicator } from "@/core/task/HistoryContextWindow"
 import { getInteraction } from "@/core/task/interaction/InteractionRegistry"
 import type { TaskState } from "@/core/task/kernel"
 import { FileTaskStateVault, openTaskPayloadStore } from "@/core/task/stores"
@@ -32,6 +34,8 @@ const HISTORY_INPUT_QUEUE_READER = "history-input-queue-reader"
 
 export class HistoryDisplaySession {
 	readonly activityStore: TaskActivityStore
+	/** The occupancy the task last showed, drawn by the header until the task runs again. */
+	private readonly contextWindowIndicator: ContextWindowIndicatorSnapshot | undefined
 	/**
 	 * `activities.db` admits one writer, and opening it is what claims that
 	 * role. A display only reads, so it releases the database as soon as the
@@ -54,6 +58,7 @@ export class HistoryDisplaySession {
 		this.activityPersistence = new TaskActivityPersistence(historyItem.id)
 		this.activityStore = new TaskActivityStore(historyItem.id, this.activityPersistence)
 		this.viewState = projectHistoryPreparingView({ taskId: historyItem.id, phase: TaskPhase.IDLE, revision: 0 })
+		this.contextWindowIndicator = readHistoryContextWindowIndicator(historyItem.contextWindowIndicator, historyItem.id)
 	}
 
 	get taskId(): string {
@@ -111,6 +116,10 @@ export class HistoryDisplaySession {
 
 	getTaskTitleMessage(): UiMessage | undefined {
 		return this.taskTitleMessage
+	}
+
+	getContextWindowIndicator(): ContextWindowIndicatorSnapshot | undefined {
+		return this.contextWindowIndicator
 	}
 
 	/** Retained input projected from the same immutable snapshot as the history interaction. */

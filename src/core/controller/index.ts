@@ -47,7 +47,7 @@ import { McpHub } from "@services/mcp/McpHub"
 import type { ModelInfo } from "@shared/api"
 import type { ChatContent } from "@shared/ChatContent"
 import { resolveMaxParallelSubagents, resolveMaxParallelToolCalls } from "@shared/concurrency-limits"
-import { getContextWindowIndicatorTotalTokens } from "@shared/context-window-indicator"
+import { type ContextWindowIndicatorSnapshot, getContextWindowIndicatorTotalTokens } from "@shared/context-window-indicator"
 import type { ExtensionState, Platform, TaskViewState, UiMessage } from "@shared/ExtensionMessage"
 import type { ApiMetrics } from "@shared/getApiMetrics"
 import type { HistoryItem } from "@shared/HistoryItem"
@@ -79,6 +79,7 @@ import {
 	TASK_COMPLETION_BACKFILL_GENERATION,
 	TaskCompletionBackfill,
 } from "@/core/storage/TaskCompletionBackfill"
+import { readHistoryContextWindowIndicator } from "@/core/task/HistoryContextWindow"
 import { HostProvider } from "@/hosts/host-provider"
 import { ExtensionRegistryInfo } from "@/registry"
 import { AuthService } from "@/services/auth/AuthService"
@@ -1187,6 +1188,9 @@ export class Controller {
 				workspaceManager: this.workspaceManager,
 			}),
 			publishState: () => this.postStateToWebview(),
+			restoredContextWindowIndicator: historyItem
+				? readHistoryContextWindowIndicator(historyItem.contextWindowIndicator, taskId)
+				: undefined,
 		})
 		logInitStage("task_construct", taskId)
 		this.restartAccountUsagePolling()
@@ -1682,7 +1686,7 @@ export class Controller {
 	}
 
 	private getOccupiedContextTokens(): number {
-		const indicator = this.task?.owners.toolState.contextWindowIndicator
+		const indicator = shownContextWindowIndicator(this.task, this.historyDisplaySession)
 		return indicator ? getContextWindowIndicatorTotalTokens(indicator) : 0
 	}
 
@@ -2703,7 +2707,7 @@ export class Controller {
 			...(aggregatedMetrics ?? getApiMetrics(rawMessages)),
 			...(this.task?.owners.apiRateSnapshot?.() ?? {}),
 		}
-		const contextWindowIndicator = this.task?.owners.toolState.contextWindowIndicator
+		const contextWindowIndicator = shownContextWindowIndicator(this.task, this.historyDisplaySession)
 		const lastApiReqTotalTokens = contextWindowIndicator
 			? getContextWindowIndicatorTotalTokens(contextWindowIndicator)
 			: undefined
@@ -3446,4 +3450,12 @@ export class Controller {
 		}
 		this.stateManager.setGlobalState("taskHistory", history)
 	}
+}
+
+/** The running task's figure, or the one a stopped task last showed while only its history is open. */
+function shownContextWindowIndicator(
+	task: ActiveTaskSession | undefined,
+	historyDisplay: HistoryDisplaySession | undefined,
+): ContextWindowIndicatorSnapshot | undefined {
+	return task?.owners.toolState.contextWindowIndicator ?? historyDisplay?.getContextWindowIndicator()
 }

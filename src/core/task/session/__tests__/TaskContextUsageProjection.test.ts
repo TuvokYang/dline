@@ -1,5 +1,5 @@
 import { createInitialTaskState, type TaskState } from "@core/task/kernel"
-import { getContextWindowIndicatorTotalTokens } from "@shared/context-window-indicator"
+import { type ContextWindowIndicatorSnapshot, getContextWindowIndicatorTotalTokens } from "@shared/context-window-indicator"
 import type { Mode } from "@shared/storage/types"
 import { describe, expect, it, vi } from "vitest"
 import {
@@ -7,15 +7,16 @@ import {
 	type ContextUsageTarget,
 	isRunAtRest,
 	TaskContextUsageProjection,
+	type TaskContextUsageProjectionOptions,
 } from "../TaskContextUsageProjection"
 
 const WINDOW = 1_000_000
 
-function createProjection(mode: Mode = "act") {
+function createProjection(mode: Mode = "act", options: Pick<TaskContextUsageProjectionOptions, "settled" | "restored"> = {}) {
 	const target: ContextUsageTarget = {}
 	const publish = vi.fn(async () => {})
 	let scope: ContextUsageScope = { mode, profileId: "profile-source", profileName: "Source", contextWindow: WINDOW }
-	const projection = new TaskContextUsageProjection({ taskId: "task-1", target, scope: () => scope, publish })
+	const projection = new TaskContextUsageProjection({ taskId: "task-1", target, scope: () => scope, publish, ...options })
 	const switchTo = (next: ContextUsageScope) => {
 		scope = next
 	}
@@ -482,6 +483,46 @@ describe("TaskContextUsageProjection", () => {
 		expect(total(harness)).toBe(50_000)
 	})
 
+	it("draws the figure a stopped task last showed until its first request reports", async () => {
+		const harness = createProjection("act", { restored: stoppedFigure("task-1") })
+
+		expect(harness.target.contextWindowIndicator).toMatchObject({
+			phase: "stable",
+			revision: 7,
+			environmentTokens: 1_500,
+			contextWindow: WINDOW,
+		})
+		expect(total(harness)).toBe(43_500)
+		// The opening session publishes its first state itself.
+		await drained()
+		expect(harness.publish).not.toHaveBeenCalled()
+
+		await request(harness, "turn-1", 50_000)
+		expect(total(harness)).toBe(50_000)
+	})
+
+	it("draws nothing from a figure saved for another task", () => {
+		const harness = createProjection("act", { restored: stoppedFigure("task-2") })
+
+		expect(harness.target.contextWindowIndicator).toBeUndefined()
+	})
+
+	it("saves the figure once it settles as the resting context", async () => {
+		const settled = vi.fn()
+		const harness = createProjection("act", { settled })
+		await request(harness, "turn-1", 6_100, 100)
+		expect(settled).not.toHaveBeenCalled()
+
+		const idle = { ...running(), flow: { phase: "idle" } } as TaskState
+		harness.projection.committed(idle)
+		expect(harness.target.contextWindowIndicator?.phase).toBe("stable")
+		expect(settled).toHaveBeenCalledTimes(1)
+
+		// A commit that leaves the figure as it was has nothing new to save.
+		harness.projection.committed(idle)
+		expect(settled).toHaveBeenCalledTimes(1)
+	})
+
 	it("treats only a stopped flow or an offered completion as a run at rest", () => {
 		expect(isRunAtRest(running())).toBe(false)
 		expect(isRunAtRest(awaiting("followup"))).toBe(false)
@@ -491,3 +532,21 @@ describe("TaskContextUsageProjection", () => {
 		}
 	})
 })
+
+function stoppedFigure(taskId: string): ContextWindowIndicatorSnapshot {
+	return {
+		taskId,
+		revision: 7,
+		epoch: 3,
+		phase: "stable",
+		durableContextTokens: 40_000,
+		pendingSendTokens: 0,
+		receivingTokens: 0,
+		stagedTokens: 2_000,
+		environmentTokens: 1_500,
+		contextWindow: WINDOW,
+		mode: "act",
+		updatedAt: 1,
+		lineage: { kind: "baseline" },
+	}
+}

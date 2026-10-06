@@ -193,6 +193,42 @@ describe("HistoryDisplaySession", () => {
 		}
 	})
 
+	it("draws the context-window figure the task last showed and ignores one saved for another task", () => {
+		const taskId = "history-context-window"
+		const saved = {
+			taskId,
+			revision: 9,
+			epoch: 2,
+			phase: "receiving",
+			durableContextTokens: 12_000,
+			pendingSendTokens: 0,
+			receivingTokens: 400,
+			stagedTokens: 600,
+			environmentTokens: 900,
+			contextWindow: 200_000,
+			mode: "act",
+			updatedAt: 1,
+			lineage: { kind: "ordinary", requestId: "turn-2", requestSequence: 2, attemptId: "turn-2" },
+		} as const
+
+		const session = new HistoryDisplaySession({ ...createHistoryItem(taskId), contextWindowIndicator: saved })
+		expect(session.getContextWindowIndicator()).toMatchObject({
+			taskId,
+			phase: "stable",
+			revision: 9,
+			receivingTokens: 0,
+			environmentTokens: 900,
+			contextWindow: 200_000,
+		})
+
+		const foreign = new HistoryDisplaySession({
+			...createHistoryItem(taskId),
+			contextWindowIndicator: { ...saved, taskId: "another-task" },
+		})
+		expect(foreign.getContextWindowIndicator()).toBeUndefined()
+		expect(new HistoryDisplaySession(createHistoryItem(taskId)).getContextWindowIndicator()).toBeUndefined()
+	})
+
 	it("materializes retained input from the canonical snapshot without starting a Task runtime", async () => {
 		const taskId = "history-retained-input"
 		await seedMessages(taskId, [{ ts: 10, type: "say", say: "task", text: "Original task" }])

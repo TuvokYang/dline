@@ -129,6 +129,17 @@ export class ContextWindowIndicator {
 		this.stableBaseline = this.createStableBaseline()
 	}
 
+	/** Adopt a validated historical display baseline; execution must re-estimate its input. */
+	restoreHistory(snapshot: ContextWindowIndicatorSnapshot): void {
+		if (snapshot.taskId !== this.current.taskId || snapshot.phase !== "stable") {
+			throw new Error("Historical Context baseline requires the matching stopped Task")
+		}
+		this.current = cloneSnapshot(snapshot)
+		this.completedExchangeTokens = 0
+		this.pendingInputTokens = 0
+		this.stableBaseline = this.createStableBaseline()
+	}
+
 	getSnapshot(): ContextWindowIndicatorSnapshot {
 		return cloneSnapshot(this.current)
 	}

@@ -4,6 +4,7 @@ import getFolderSize from "get-folder-size"
 import { findLastIndex } from "@/shared/array"
 import { combineApiRequests } from "@/shared/combineApiRequests"
 import { combineCommandSequences } from "@/shared/combineCommandSequences"
+import type { ContextWindowIndicatorSnapshot } from "@/shared/context-window-indicator"
 import { UiMessage } from "@/shared/ExtensionMessage"
 import { getApiMetrics } from "@/shared/getApiMetrics"
 import { HistoryItem, summarizeHistoryTaskText } from "@/shared/HistoryItem"
@@ -14,6 +15,7 @@ import { ApiConversation } from "../storage/ApiConversation"
 import { ensureTaskDirectoryExists } from "../storage/disk"
 import { UIMessage } from "../storage/UIMessage"
 import type { ConversationHistoryReader } from "./conversation/ConversationHistoryReader"
+import { readHistoryContextWindowIndicator } from "./HistoryContextWindow"
 
 // Event types for clineMessages changes
 export type ClineMessageChangeType = "add" | "update" | "delete" | "set"
@@ -46,6 +48,8 @@ export interface RegisteredClineMessagePersistence {
 export interface MessageTaskMetadataSource {
 	readonly conversationHistoryDeletedRange?: HistoryItem["conversationHistoryDeletedRange"]
 	readonly checkpointManagerErrorMessage?: string
+	/** Occupancy the task header shows; saved so a reopened task can draw it before sending. */
+	readonly contextWindowIndicator?: ContextWindowIndicatorSnapshot
 }
 
 export interface MessageStateHandlerParams {
@@ -335,6 +339,9 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 				conversationHistoryDeletedRange: this.metadata.conversationHistoryDeletedRange,
 				isFavorited: this.taskIsFavorited,
 				checkpointManagerErrorMessage: this.metadata.checkpointManagerErrorMessage,
+				// Stored as the stopped baseline a reopen will draw: a request still
+				// in flight when the task closed never reaches the conversation.
+				contextWindowIndicator: readHistoryContextWindowIndicator(this.metadata.contextWindowIndicator, this.taskId),
 				modelId: lastModelInfo?.modelInfo?.modelId,
 				providerId: lastModelInfo?.modelInfo?.providerId,
 				mode: lastModelInfo?.modelInfo?.mode,

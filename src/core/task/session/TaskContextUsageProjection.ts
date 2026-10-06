@@ -66,6 +66,15 @@ export interface TaskContextUsageProjectionOptions {
 	readonly scope: () => ContextUsageScope
 	/** Pushes the new snapshot to the view; the header only redraws on a published state. */
 	readonly publish: () => Promise<void>
+	/**
+	 * Runs after the figure settles as the resting context.
+	 *
+	 * A settle usually follows the last row the run wrote, so nothing else would
+	 * save the figure a reopened task draws; this is where that save happens.
+	 */
+	readonly settled?: () => void
+	/** The figure the task showed when it last stopped, drawn until its first request reports. */
+	readonly restored?: ContextWindowIndicatorSnapshot
 }
 
 /**
@@ -89,7 +98,21 @@ export class TaskContextUsageProjection implements ContextUsageObserverPort {
 	/** Tokens the conversation gained after the last provider report, not yet carried by any request. */
 	private pendingTail = 0
 
-	constructor(private readonly options: TaskContextUsageProjectionOptions) {}
+	constructor(private readonly options: TaskContextUsageProjectionOptions) {
+		const restored = options.restored
+		if (restored?.taskId !== options.taskId || restored.phase !== "stable") return
+		// Seeded without a publish: the session is still opening and its first
+		// published state already carries this figure.
+		this.indicator = new ContextWindowIndicator({
+			taskId: options.taskId,
+			durableContextTokens: 0,
+			environmentTokens: 0,
+			contextWindow: restored.contextWindow,
+			mode: restored.mode,
+		})
+		this.indicator.restoreHistory(restored)
+		this.show(this.indicator.getSnapshot())
+	}
 
 	async started(request: {
 		readonly turnId: string
@@ -374,6 +397,7 @@ export class TaskContextUsageProjection implements ContextUsageObserverPort {
 		const settled = this.indicator.settle({ lineage: this.lineage })
 		if (settled.revision === before) return false
 		this.show(settled)
+		this.options.settled?.()
 		return true
 	}
 

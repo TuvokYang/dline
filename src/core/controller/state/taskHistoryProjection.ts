@@ -9,6 +9,9 @@ import { type HistoryItem, MAX_HISTORY_TASK_TEXT_LENGTH, summarizeHistoryTaskTex
  * their original size is exactly what made state payloads reach megabytes: the
  * 100-entry cap in `buildState()` limits how many entries are sent, not how
  * many bytes each one carries.
+ *
+ * The saved context-window figure is left out for the same reason: only the
+ * task's own panel draws it, and it reads the stored entry, not this list.
  */
 
 export interface TaskHistoryProjection {
@@ -30,7 +33,8 @@ export function projectTaskHistory(items: readonly HistoryItem[] | undefined): T
 	}
 
 	let truncatedCount = 0
-	const projected = items.map((item) => {
+	const projected = items.map((stored) => {
+		const item = withoutContextWindowIndicator(stored)
 		if (typeof item.task !== "string" || item.task.length <= MAX_HISTORY_TASK_TEXT_LENGTH) {
 			return item
 		}
@@ -39,4 +43,10 @@ export function projectTaskHistory(items: readonly HistoryItem[] | undefined): T
 	})
 
 	return { items: projected, truncatedCount }
+}
+
+function withoutContextWindowIndicator(item: HistoryItem): HistoryItem {
+	if (item.contextWindowIndicator === undefined) return item
+	const { contextWindowIndicator: _omitted, ...listed } = item
+	return listed
 }

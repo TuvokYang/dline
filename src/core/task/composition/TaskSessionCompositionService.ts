@@ -10,6 +10,7 @@ import { formatResponse } from "@core/prompts/responses"
 import type { StateManager } from "@core/storage/StateManager"
 import { isMultiRootEnabled } from "@core/workspace/multi-root-utils"
 import type { WorkspaceRootManager } from "@core/workspace/WorkspaceRootManager"
+import type { ContextWindowIndicatorSnapshot } from "@shared/context-window-indicator"
 import type { HistoryItem } from "@shared/HistoryItem"
 import { Logger } from "@shared/services/Logger"
 import type { TaskCapabilityToggles } from "@shared/TaskCapabilityToggles"
@@ -141,6 +142,8 @@ export interface OpenTaskSessionCompositionOptions {
 	readonly prompt: TaskSessionPromptHost
 	readonly hostFactory: TaskSessionHostFactory
 	readonly publishState: () => Promise<void>
+	/** The context-window figure the task showed when it last stopped. */
+	readonly restoredContextWindowIndicator?: ContextWindowIndicatorSnapshot
 }
 
 /** The only production composition root for one task incarnation. */
@@ -548,6 +551,11 @@ export class TaskSessionCompositionService {
 				contextWindow: getContextWindowInfo(api.current()).contextWindow,
 			}),
 			publish: options.publishState,
+			// Saved with the history row, which is what a reopened task draws first.
+			settled: () => void messages.updateTaskHistory(),
+			// A checkpoint restore rewinds the conversation, so the figure from
+			// before it describes a context the task no longer has.
+			restored: options.openReason === "checkpoint_restore" ? undefined : options.restoredContextWindowIndicator,
 		})
 		// Every Mode, Profile, or configuration switch ends in a handler rebuild,
 		// and the header must then describe the scope the task runs under.
