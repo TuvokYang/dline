@@ -121,7 +121,7 @@ export class ControllerTaskCallbacksOwner {
 			updateFCListFromToolResponse: (progress) => this.focusChain.updateFCListFromToolResponse(progress),
 			postStateToWebview: () => options.controller.postStateToWebview(),
 			reinitExistingTaskFromId: (taskId) => options.controller.reinitExistingTaskFromId(taskId),
-			cancelTask: () => options.controller.cancelTask(),
+			cancelTask: () => this.requestCancellation(),
 			updateTaskHistory: (update) => options.controller.updateTaskHistory(update as never),
 			applyLatestBrowserSettings: () => this.applyLatestBrowserSettings(),
 			switchToActMode: () => options.controller.togglePlanActMode("act"),
@@ -137,6 +137,23 @@ export class ControllerTaskCallbacksOwner {
 			runUserPromptSubmitHook: (content, context) => this.runUserPromptSubmitHook(content, context),
 			updateClineMessage: (index, updates) => this.updateClineMessage(index, updates),
 		}
+	}
+
+	/**
+	 * Cancel the task on behalf of work that runs inside it.
+	 *
+	 * Every caller of this callback (a PreToolUse hook, a PreCompact hook) runs
+	 * inside a halt participant, and the halt drains that participant's in-flight
+	 * work before the cancel settles. Awaiting the settled cancel would make the
+	 * caller wait for itself until the halt deadline expires. The runtime event
+	 * loop admits the cancel synchronously when it is requested, so every event the
+	 * caller produces after this returns is reduced behind the halt.
+	 */
+	private requestCancellation(): Promise<void> {
+		void this.options.controller.cancelTask().catch((error: unknown) => {
+			Logger.error(`[Task ${this.options.taskId}] In-task cancellation failed:`, error)
+		})
+		return Promise.resolve()
 	}
 
 	/**
