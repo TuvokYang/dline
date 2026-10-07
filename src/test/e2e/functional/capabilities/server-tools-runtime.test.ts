@@ -102,21 +102,39 @@ async function attachHostedWebResumeEvidence(
 	}
 }
 
-async function prepareWebFetchBrowser(dlineDir: string, dlineHomeDir: string): Promise<void> {
-	const workerDirectoryName = path.basename(path.dirname(dlineHomeDir))
-	const seedDir = path.join(E2ETestHelper.PUPPETEER_CACHE_DIR, workerDirectoryName)
-	const prepareSeed = async (): Promise<void> => {
+/** Budget for downloading the Chromium build once per worker; it is spent outside every test's own timeout. */
+const WEB_FETCH_CHROMIUM_SEED_TIMEOUT_MS = 600_000
+
+async function downloadChromiumSeed(seedDir: string): Promise<string> {
+	const download = async (): Promise<void> => {
 		await mkdir(seedDir, { recursive: true })
 		const stats = await PCR({ downloadPath: seedDir })
 		await access(stats.executablePath)
 	}
 	try {
-		await prepareSeed()
+		await download()
 	} catch {
 		await rm(seedDir, { recursive: true, force: true })
-		await prepareSeed()
+		await download()
 	}
+	return seedDir
+}
 
+/**
+ * Local Web Fetch launches a real Chromium build that is downloaded from the network. The download runs as a worker
+ * fixture with its own budget, so a slow mirror cannot consume the timeout of whichever Web Fetch test runs first.
+ */
+const webFetchE2e = e2e.extend<Record<never, never>, { webFetchChromiumSeed: string }>({
+	webFetchChromiumSeed: [
+		async ({}, use, workerInfo) => {
+			const seedDir = path.join(E2ETestHelper.PUPPETEER_CACHE_DIR, `worker-${workerInfo.workerIndex}`)
+			await use(await downloadChromiumSeed(seedDir))
+		},
+		{ scope: "worker", timeout: WEB_FETCH_CHROMIUM_SEED_TIMEOUT_MS },
+	],
+})
+
+async function prepareWebFetchBrowser(dlineDir: string, dlineHomeDir: string, seedDir: string): Promise<void> {
 	const testPuppeteerDir = path.join(dlineHomeDir, "puppeteer")
 	await rm(testPuppeteerDir, { recursive: true, force: true })
 	await cp(seedDir, testPuppeteerDir, { recursive: true })
@@ -1281,9 +1299,19 @@ e2e(
 	},
 )
 
-e2e(
+webFetchE2e(
 	"ServerTool runtime - OpenAI Responses manual Web Fetch reaches a terminal state within the product budget",
-	async ({ dlineDir, dlineDocsDir, dlineHomeDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
+	async ({
+		dlineDir,
+		dlineDocsDir,
+		dlineHomeDir,
+		helper,
+		openVSCode,
+		server,
+		userDataDir,
+		webFetchChromiumSeed,
+		workspaceDir,
+	}) => {
 		e2e.setTimeout(120_000)
 		expectIsolatedDirectories(dlineDir, dlineHomeDir, dlineDocsDir)
 		await prepareRuntimeProfile(dlineDir, E2E_PROFILE_NAMES.mockOpenAiResponses, {
@@ -1291,7 +1319,7 @@ e2e(
 			mode: "WEB_TOOLS_MODE_FORCE_LOCAL",
 			supportsWebSearch: true,
 		})
-		await prepareWebFetchBrowser(dlineDir, dlineHomeDir)
+		await prepareWebFetchBrowser(dlineDir, dlineHomeDir, webFetchChromiumSeed)
 		const url = `${server.baseUrl}/mock/web-fetch/page`
 		const prompt = "Return the local Web Fetch page content within the product budget"
 		const completion = "E2E_RESPONSES_MANUAL_WEB_FETCH_TERMINAL"
@@ -1357,9 +1385,19 @@ const webFetchCases = [
 ] as const
 
 for (const testCase of webFetchCases) {
-	e2e(
+	webFetchE2e(
 		`ServerTool runtime - ${testCase.title} executes local Web Fetch without a Cline login`,
-		async ({ dlineDir, dlineDocsDir, dlineHomeDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
+		async ({
+			dlineDir,
+			dlineDocsDir,
+			dlineHomeDir,
+			helper,
+			openVSCode,
+			server,
+			userDataDir,
+			webFetchChromiumSeed,
+			workspaceDir,
+		}) => {
 			e2e.setTimeout(300_000)
 			expectIsolatedDirectories(dlineDir, dlineHomeDir, dlineDocsDir)
 			await prepareRuntimeProfile(dlineDir, testCase.profileName, {
@@ -1367,7 +1405,7 @@ for (const testCase of webFetchCases) {
 				mode: "WEB_TOOLS_MODE_AUTO",
 				supportsWebSearch: true,
 			})
-			await prepareWebFetchBrowser(dlineDir, dlineHomeDir)
+			await prepareWebFetchBrowser(dlineDir, dlineHomeDir, webFetchChromiumSeed)
 			const url = `${server.baseUrl}/mock/web-fetch/page`
 			const prompt = "Extract the local Web Fetch marker"
 			const completion = `E2E_${testCase.target.toUpperCase().replaceAll("-", "_")}_WEB_FETCH_OK`
@@ -1440,9 +1478,19 @@ for (const testCase of webFetchCases) {
 	)
 }
 
-e2e(
+webFetchE2e(
 	"ServerTool runtime - checkpoint Restore cancels an established Web Fetch before the first Resume",
-	async ({ dlineDir, dlineDocsDir, dlineHomeDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
+	async ({
+		dlineDir,
+		dlineDocsDir,
+		dlineHomeDir,
+		helper,
+		openVSCode,
+		server,
+		userDataDir,
+		webFetchChromiumSeed,
+		workspaceDir,
+	}) => {
 		e2e.setTimeout(480_000)
 		expectIsolatedDirectories(dlineDir, dlineHomeDir, dlineDocsDir)
 		await prepareRuntimeProfile(dlineDir, E2E_PROFILE_NAMES.mockOpenAiResponses, {
@@ -1450,7 +1498,7 @@ e2e(
 			mode: "WEB_TOOLS_MODE_FORCE_LOCAL",
 			supportsWebSearch: true,
 		})
-		await prepareWebFetchBrowser(dlineDir, dlineHomeDir)
+		await prepareWebFetchBrowser(dlineDir, dlineHomeDir, webFetchChromiumSeed)
 		const warmUrl = `${server.baseUrl}/mock/web-fetch/page`
 		const delayedUrl = `${server.baseUrl}/mock/web-fetch/page?delayMs=30000`
 		const resumeDraft = "E2E_WEB_FETCH_RESTORE_FIRST_RESUME_DRAFT"
@@ -1640,9 +1688,19 @@ e2e(
 	},
 )
 
-e2e(
+webFetchE2e(
 	"ServerTool runtime - local Web Fetch failure is replayed to the model and restored as one terminal card",
-	async ({ dlineDir, dlineDocsDir, dlineHomeDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
+	async ({
+		dlineDir,
+		dlineDocsDir,
+		dlineHomeDir,
+		helper,
+		openVSCode,
+		server,
+		userDataDir,
+		webFetchChromiumSeed,
+		workspaceDir,
+	}) => {
 		e2e.setTimeout(300_000)
 		expectIsolatedDirectories(dlineDir, dlineHomeDir, dlineDocsDir)
 		await prepareRuntimeProfile(dlineDir, E2E_PROFILE_NAMES.mockOpenAi, {
@@ -1650,7 +1708,7 @@ e2e(
 			mode: "WEB_TOOLS_MODE_AUTO",
 			supportsWebSearch: true,
 		})
-		await prepareWebFetchBrowser(dlineDir, dlineHomeDir)
+		await prepareWebFetchBrowser(dlineDir, dlineHomeDir, webFetchChromiumSeed)
 		const url = "http://127.0.0.1:1/e2e-web-fetch-failure"
 		const prompt = "Extract content from the intentionally unreachable page"
 		const taskText = "Attempt the unreachable local Web Fetch, report its error, then finish."
