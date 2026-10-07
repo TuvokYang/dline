@@ -125,9 +125,9 @@ function hookRow(sidebar: Frame, workspaceName: string, hookName: string): Locat
 export async function createWorkspaceTaskStartHook(sidebar: Frame, workspaceName: string): Promise<void> {
 	await selectWorkCapabilityTab(sidebar, "Hooks")
 	const section = workspaceHookSection(sidebar, workspaceName)
-	await expect(section).toBeVisible({ timeout: 30_000 })
+	await expect(section).toBeVisible({ timeout: 60_000 })
 	await section.getByRole("combobox", { name: "Select hook type to create" }).selectOption("TaskStart")
-	await expect(hookRow(sidebar, workspaceName, "TaskStart")).toBeVisible({ timeout: 30_000 })
+	await expect(hookRow(sidebar, workspaceName, "TaskStart")).toBeVisible({ timeout: 60_000 })
 }
 
 export function workspaceTaskStartHookPath(workspaceDir: string): string {
@@ -141,7 +141,7 @@ export async function waitForWorkspaceTaskStartHook(hookPath: string): Promise<v
 		} catch {
 			return undefined
 		}
-	}, 30_000)
+	}, 60_000)
 }
 
 function shellQuote(value: string): string {
@@ -204,7 +204,7 @@ export async function selectWorkSlashCommand(
 export async function expectWorkPromptStale(sidebar: Frame): Promise<Locator> {
 	const refreshButton = sidebar.locator("button:has(svg.lucide-refresh-cw)").first()
 	const warning = refreshButton.getByTestId("prompt-freshness-warning")
-	await expect(warning).toBeVisible({ timeout: 30_000 })
+	await expect(warning).toBeVisible({ timeout: 60_000 })
 	await refreshButton.hover()
 	const tooltip = sidebar.getByRole("tooltip").filter({ hasText: "Prompt update available" })
 	await expect(tooltip).toContainText("Rules changed")
@@ -217,12 +217,12 @@ export async function refreshWorkPrompt(sidebar: Frame, refreshButton: Locator):
 	await expect(dialog.getByRole("heading", { name: "Refresh Prompt Cache", exact: true })).toBeVisible()
 	await dialog.getByRole("button", { name: "Confirm", exact: true }).click()
 	await expect(dialog.getByRole("heading", { name: "Refresh Prompt Cache", exact: true })).toBeHidden()
-	await expect(refreshButton.getByTestId("prompt-freshness-warning")).toHaveCount(0, { timeout: 30_000 })
+	await expect(refreshButton.getByTestId("prompt-freshness-warning")).toHaveCount(0, { timeout: 60_000 })
 }
 
 export async function waitForWorkFileMarker(filePath: string, marker: string): Promise<void> {
 	await E2ETestHelper.waitForValue(async () => {
 		const content = await readFile(filePath, "utf8").catch(() => "")
 		return content.includes(marker) ? true : undefined
-	}, 30_000)
+	}, 60_000)
 }

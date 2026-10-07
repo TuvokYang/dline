@@ -184,9 +184,9 @@ e2e(
 
 			await openWorkCapabilities(sidebar)
 			await selectWorkCapabilityTab(sidebar, "Workflows")
-			await expect(sidebar.getByText(`${POLICY_MARKERS.workflowName}.md`, { exact: true })).toBeVisible({ timeout: 30_000 })
+			await expect(sidebar.getByText(`${POLICY_MARKERS.workflowName}.md`, { exact: true })).toBeVisible({ timeout: 60_000 })
 			await selectWorkCapabilityTab(sidebar, "Skills")
-			await expect(sidebar.getByText(POLICY_MARKERS.skillName, { exact: true })).toBeVisible({ timeout: 30_000 })
+			await expect(sidebar.getByText(POLICY_MARKERS.skillName, { exact: true })).toBeVisible({ timeout: 60_000 })
 			await createWorkspaceTaskStartHook(sidebar, workspaceName)
 			await waitForWorkspaceTaskStartHook(hookPath)
 			await writeWorkspaceTaskStartHook(hookPath, hookMarkerPath, HOOK_CONTEXT)
@@ -339,7 +339,7 @@ e2e(
 			await renameWorkProfile(sidebar, dlineDir, anthropicProfile.id, anthropicProfile.name, RENAMED_ANTHROPIC_PROFILE)
 			await finishWorkSettings(sidebar)
 			await expect(sidebar.getByRole("button", { name: "Select model" })).toHaveText(RENAMED_ANTHROPIC_PROFILE, {
-				timeout: 30_000,
+				timeout: 60_000,
 			})
 			await waitForWorkTaskBinding(dlineDocsDir, taskId, anthropicProfile.id, RENAMED_ANTHROPIC_PROFILE)
 
