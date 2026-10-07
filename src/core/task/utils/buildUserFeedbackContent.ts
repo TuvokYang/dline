@@ -44,6 +44,38 @@ export async function buildUserFeedbackContent(
 	return content
 }
 
+/** How approval feedback reads inside the result of the tool call it answered. */
+export function toolApprovalFeedbackText(text: string | undefined): string {
+	return text?.trim()
+		? `The user provided the following feedback:\n<feedback>\n${text}\n</feedback>`
+		: "The user provided additional content:"
+}
+
+/**
+ * Builds the blocks approval feedback adds to the result of the tool call it
+ * answered, so the model reads the user's words beside that call's outcome.
+ *
+ * @returns No blocks when the feedback carried no text, image, or file content.
+ */
+export async function buildToolApprovalFeedbackContent(
+	text?: string,
+	images?: string[],
+	files?: string[],
+): Promise<Array<ClineTextContentBlock | ClineImageContentBlock>> {
+	const fileContentString = files && files.length > 0 ? await processFilesIntoText(files) : undefined
+	const hasText = Boolean(text?.trim())
+	const hasImages = Boolean(images && images.length > 0)
+	const hasFileContent = Boolean(fileContentString?.trim())
+	if (!hasText && !hasImages && !hasFileContent) return []
+
+	const content: Array<ClineTextContentBlock | ClineImageContentBlock> = [
+		{ type: "text", text: toolApprovalFeedbackText(text) },
+	]
+	if (hasImages) content.push(...formatResponse.imageBlocks(images))
+	if (hasFileContent && fileContentString) content.push({ type: "text", text: fileContentString })
+	return content
+}
+
 /**
  * Builds the content of the submission that opens a task.
  *

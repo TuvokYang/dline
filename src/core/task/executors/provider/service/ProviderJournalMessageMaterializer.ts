@@ -20,7 +20,11 @@ import type {
 	TurnContinuationEnvelope,
 	UserInputEnvelope,
 } from "../../../stores/payload/TaskPayloadEnvelopes"
-import { buildTaskOpeningContent, buildUserFeedbackContent } from "../../../utils/buildUserFeedbackContent"
+import {
+	buildTaskOpeningContent,
+	buildToolApprovalFeedbackContent,
+	buildUserFeedbackContent,
+} from "../../../utils/buildUserFeedbackContent"
 
 type JournalPayload =
 	| UserInputEnvelope
@@ -38,6 +42,21 @@ type JournalPayload =
 	| TurnContinuationEnvelope
 	| LegacyMessageEnvelope
 	| { readonly kind: string; readonly [key: string]: unknown }
+
+/**
+ * Approval feedback belongs inside the result of the call it answered, as the
+ * legacy tool path merged it; a result replayed as prose takes it after itself.
+ */
+function withApprovalFeedback(replay: ClineUserContent[], feedback: ClineUserContent[]): ClineUserContent[] {
+	if (feedback.length === 0) return replay
+	const index = replay.findIndex((block) => block.type === "tool_result")
+	if (index === -1) return [...replay, ...feedback]
+	return replay.map((block, position) => {
+		if (position !== index || block.type !== "tool_result") return block
+		const base = typeof block.content === "string" ? [{ type: "text" as const, text: block.content }] : block.content
+		return { ...block, content: [...base, ...feedback] } as typeof block
+	})
+}
 
 function textMessage(text: string): ClineStorageMessage {
 	return { role: "user", content: [{ type: "text", text }], ts: Date.now() }
@@ -217,12 +236,15 @@ export class ProviderJournalMessageMaterializer {
 		for (const result of manifest.results) {
 			const replay = replayDurableToolResult(result.content)
 			if (!replay) throw new Error(`InvalidDurableToolResult:${result.blockId}`)
-			content.push(...replay)
-			if (!result.feedbackRef) continue
-			const feedback = decodeTaskPayload<DialogDraftEnvelope>(await this.payloads.read(result.feedbackRef))
-			if (feedback.kind !== "dialog_draft") throw new Error(`InvalidToolApprovalFeedback:${result.blockId}`)
-			content.push(...(await buildUserFeedbackContent(feedback.text, [...feedback.images], [...feedback.files])))
+			content.push(...withApprovalFeedback(replay, await this.approvalFeedback(result)))
 		}
 		return content.length === 0 ? undefined : { role: "user", content, ts: Date.now() }
+	}
+
+	private async approvalFeedback(result: ToolTerminalManifestEnvelope["results"][number]): Promise<ClineUserContent[]> {
+		if (!result.feedbackRef) return []
+		const feedback = decodeTaskPayload<DialogDraftEnvelope>(await this.payloads.read(result.feedbackRef))
+		if (feedback.kind !== "dialog_draft") throw new Error(`InvalidToolApprovalFeedback:${result.blockId}`)
+		return buildToolApprovalFeedbackContent(feedback.text, [...feedback.images], [...feedback.files])
 	}
 }

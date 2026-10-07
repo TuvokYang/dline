@@ -3,6 +3,7 @@ import { formatResponse } from "@core/prompts/responses"
 import { MAX_TOOL_RESULT_TEXT_BYTES, truncateContent } from "@shared/content-limits"
 import type { ClineContent, ClineUserToolResultContentBlock } from "@/shared/messages/content"
 import { Logger } from "@/shared/services/Logger"
+import { toolApprovalFeedbackText } from "../../utils/buildUserFeedbackContent"
 import type { ToolExecutorCoordinator } from "../ToolExecutorCoordinator"
 import type { ToolResponse } from "../ToolResponse"
 
@@ -263,12 +264,11 @@ export class ToolResultUtils {
 			return
 		}
 
-		// Build the feedback text only if we have meaningful feedback
-		const feedbackText = hasMeaningfulFeedback
-			? `The user provided the following feedback:\n<feedback>\n${feedback}\n</feedback>`
-			: "The user provided additional content:"
-
-		const content = formatResponse.toolResult(feedbackText, images, hasMeaningfulFileContent ? fileContentString : undefined)
+		const content = formatResponse.toolResult(
+			toolApprovalFeedbackText(hasMeaningfulFeedback ? feedback : undefined),
+			images,
+			hasMeaningfulFileContent ? fileContentString : undefined,
+		)
 		userMessageContent.push({
 			type: "tool_feedback",
 			content,

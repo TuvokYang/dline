@@ -203,16 +203,13 @@ describe("ToolTerminalManifestMaterializer", () => {
 		expect(toolResults.map((block) => block.dline_tid)).toEqual(["b0", "b1", "b2", "b3", "b4"])
 		expect(toolResults.map(resultText)).toEqual([
 			"completed:b0",
-			"Tool call rejected; it was not admitted or executed.",
+			"Tool call rejected; it was not admitted or executed.\nThe user provided the following feedback:\n<feedback>\nreject b1 and keep the audit note\n</feedback>",
 			"failed:b2",
 			"Tool call cancelled before a canonical result was accepted. Verify observable state before retrying.",
 			"Tool call skipped because an earlier call ended or rejected the turn; it was not executed.",
 		])
-		const rejectedIndex = content.findIndex((block) => block.type === "tool_result" && block.dline_tid === "b1")
-		expect(content[rejectedIndex + 1]).toEqual({
-			type: "text",
-			text: "<user_message>\nreject b1 and keep the audit note\n</user_message>",
-		})
+		// The approval feedback travels inside the rejected call's result, not beside it.
+		expect(content.filter((block) => block.type !== "tool_result")).toEqual([])
 		expect(JSON.stringify(messages)).not.toContain("late success must not become canonical")
 		expect(JSON.stringify(decodeTaskPayload(await payloads.read(lateSuccessRef)))).toContain(
 			"late success must not become canonical",

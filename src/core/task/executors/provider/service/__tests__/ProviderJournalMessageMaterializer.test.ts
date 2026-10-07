@@ -198,6 +198,46 @@ describe("ProviderJournalMessageMaterializer", () => {
 		expect(JSON.stringify(message)).not.toContain("dline_function_")
 	})
 
+	// The legacy tool path merged a refusal's feedback into the refused call's
+	// result; a separate user block leaves the model's view of that call without it.
+	it("merges approval feedback into the result of the call it answered", async () => {
+		const denied = { ...refused, content: [{ type: "text" as const, text: "The user denied this operation." }] }
+		const materializer = new ProviderJournalMessageMaterializer(
+			payloadStore({
+				manifest: encodeTaskPayload({
+					kind: "tool_terminal_manifest",
+					turnId: "turn-1",
+					results: [
+						{
+							blockId: "dline_tid_01",
+							phase: "rejected",
+							content: serializeDurableToolResult(denied),
+							failed: true,
+							feedbackRef: "feedback",
+						},
+					],
+					supersededPayloadRefs: [],
+				}),
+				feedback: encodeTaskPayload({ kind: "dialog_draft", text: "read the docs instead", images: [], files: [] }),
+			}),
+		)
+
+		const [message] = await materializer.materialize(["manifest"])
+
+		expect(message?.content).toEqual([
+			{
+				...denied,
+				content: [
+					...denied.content,
+					{
+						type: "text",
+						text: "The user provided the following feedback:\n<feedback>\nread the docs instead\n</feedback>",
+					},
+				],
+			},
+		])
+	})
+
 	// A request to another model projects this turn as foreign history only if
 	// the producer survives the journal; without it a switch loses the reasoning.
 	it("restores the model that wrote a reply", async () => {
