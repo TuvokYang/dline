@@ -1,5 +1,4 @@
 import { getPrompt, renderPrompt } from "@core/prompts/i18n"
-import { processFilesIntoText } from "@integrations/misc/extract-text"
 import { showSystemNotification } from "@integrations/notifications"
 import { findLastIndex, parsePartialArrayString } from "@shared/array"
 import { ClineAsk, ClineAskQuestion } from "@shared/ExtensionMessage"
@@ -12,7 +11,7 @@ import type { InteractionOutcome } from "../../interaction/InteractionCoordinato
 import type { IPartialBlockHandler, IToolHandler } from "../ToolExecutorCoordinator"
 import { interactionId, interactionTurnId, type TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
-import { sayFeedbackOnce } from "../utils/UserFeedbackUtils"
+import { attachToolFeedbackFiles, sayFeedbackOnce } from "../utils/UserFeedbackUtils"
 
 export class AskFollowupQuestionToolHandler implements IToolHandler, IPartialBlockHandler {
 	readonly name = ClineDefaultTool.ASK
@@ -109,12 +108,7 @@ export class AskFollowupQuestionToolHandler implements IToolHandler, IPartialBlo
 		}
 		await sayFeedbackOnce(config, "messageResponse", text, images, followupFiles)
 
-		// Process any attached files
-		let fileContentString = ""
-		if (followupFiles && followupFiles.length > 0) {
-			fileContentString = await processFilesIntoText(followupFiles)
-		}
-
+		const fileContentString = await attachToolFeedbackFiles(config.taskState.userMessageContent, followupFiles)
 		return formatResponse.toolResult(`<feedback>\n${text}\n</feedback>`, images, fileContentString)
 	}
 }

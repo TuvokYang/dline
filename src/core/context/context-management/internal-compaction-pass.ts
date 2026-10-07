@@ -2,38 +2,44 @@ import type { ApiHandler } from "@core/api"
 import { isOutputLimitExceededError } from "@core/api/stream/OutputLimitExceededError"
 import { createIdentityFactory } from "@core/api/transform/block-identity"
 import type { ApiProviderStreamChunk } from "@core/api/transform/stream"
-import { ApiUsageAccumulator } from "@core/api/transform/usage-accumulator"
 import { parseAssistantMessageV2, type ToolUse } from "@core/assistant-message"
-import type { CompactionProviderInput } from "@core/task/compaction/CompactionRequestReplay"
+import type { CompactionProviderInput } from "@core/task/compaction/CompactionProviderInput"
 import type { ExplicitInstructionRequestScope } from "@core/task/explicit-instructions/ExplicitInstructionRequestScope"
 import type { ProviderRequestRoundAdmission } from "@core/task/performance/provider-request-round-port"
+import { TaskRequestUsageTracker } from "@core/task/TaskRequestUsageTracker"
+import type { CompactionSummaryFailureKind } from "@shared/context-compaction-failure"
 import { ClineDefaultTool } from "@shared/tools"
 import cloneDeep from "clone-deep"
+import {
+	type CompactionAttemptDiagnostics,
+	type CompactionAttemptNextAction,
+	CompactionReplyObservation,
+	type InternalCompactionUsage,
+} from "./compaction-attempt-diagnostics"
+import {
+	CompactionAuthorizationError,
+	type CompactionFailureKind,
+	CompactionSummaryRejectedError,
+	classifyCompactionFailure,
+	classifySummarizeTaskReply,
+	isCorrectableCompactionFailure,
+	toReminderKind,
+	withCompactionRetryReminder,
+} from "./compaction-attempt-failure"
 import type { InternalCompactionProviderTiming } from "./compaction-phase-timing"
 import { elapsedCompactionMs } from "./compaction-phase-timing"
 import type { CompactionRetryPolicy } from "./compaction-retry-policy"
 import { isRetryableCompactionError } from "./compaction-retryability"
 import type { CompactionPassIdentity } from "./target-window-fitting"
 
-export interface InternalCompactionUsage {
-	inputTokens: number
-	outputTokens: number
-	cacheWriteTokens: number
-	cacheReadTokens: number
-	totalTokens: number
-}
-
-export interface InternalCompactionSettlement {
-	usage?: InternalCompactionUsage
-	error?: unknown
-}
+export type { CompactionAttemptDiagnostics, InternalCompactionUsage } from "./compaction-attempt-diagnostics"
 
 export interface InternalCompactionPassResult {
 	summary: string
+	/** Ordered checklist the model reported inside the accepted block, when focus chain is enabled. */
+	taskProgress?: string
 	usage?: InternalCompactionUsage
 	timing: InternalCompactionProviderTiming
-	/** Provider stream settlement that may finish after the summary is safe to checkpoint. */
-	settlement?: Promise<InternalCompactionSettlement>
 }
 
 export interface RunInternalCompactionPassInput {
@@ -48,6 +54,8 @@ export interface RunInternalCompactionPassInput {
 	onChunk?(chunk: unknown): void | Promise<void>
 	/** Streamed summary snapshots delivered without retry lifecycle state. */
 	onSummaryUpdate?(context: string): void | Promise<void>
+	/** Content-free outcome of this attempt, reported exactly once before it returns or throws. */
+	onAttemptSettled?(diagnostics: CompactionAttemptDiagnostics): void
 }
 
 export interface InternalCompactionAttemptIdentity {
@@ -64,6 +72,7 @@ export type InternalCompactionPassRetryEvent =
 			maxRetryAttempts: number
 			failedAttempt: InternalCompactionAttemptIdentity
 			nextAttempt: InternalCompactionAttemptIdentity
+			failureKind: CompactionFailureKind
 			error: unknown
 	  }
 	| {
@@ -71,20 +80,24 @@ export type InternalCompactionPassRetryEvent =
 			providerOutputCap: number
 			failedAttempt: InternalCompactionAttemptIdentity
 			nextAttempt: InternalCompactionAttemptIdentity
+			failureKind: CompactionFailureKind
 			error: unknown
 	  }
 
 export interface RunInternalCompactionPassWithRetryInput
-	extends Omit<RunInternalCompactionPassInput, "attemptId" | "onChunk" | "onSummaryUpdate"> {
+	extends Omit<RunInternalCompactionPassInput, "attemptId" | "onChunk" | "onSummaryUpdate" | "onAttemptSettled"> {
 	passIdentity: CompactionPassIdentity
 	retryPolicy: CompactionRetryPolicy
 	allowOpenAiMaxOutputReplay?: boolean
+	/** Failures eligible for the ordinary Pass retry budget; defaults to correctable and transient failures. */
+	retryableFailure?(error: unknown): boolean
 	initialAttemptIndex?: number
 	attemptIdFactory(attemptIndex: number): string
 	waitForRetry(retryAttempt: number): Promise<void>
 	onRetry?(event: InternalCompactionPassRetryEvent): void | Promise<void>
 	onChunk?(chunk: unknown, attempt: InternalCompactionAttemptIdentity): void | Promise<void>
 	onSummaryUpdate?(context: string, attempt: InternalCompactionAttemptIdentity): void | Promise<void>
+	onAttemptSettled?(diagnostics: CompactionAttemptDiagnostics): void
 }
 
 class CompactionPresentationQueue {
@@ -130,7 +143,13 @@ class CompactionPresentationQueue {
 	}
 }
 
-/** Execute one compaction Provider request without ordinary UI or history side effects. */
+/**
+ * Execute one compaction Provider request without ordinary UI or history side effects.
+ *
+ * The reply is the explicit-instruction text block `<summarize_task><context>…</context></summarize_task>`.
+ * The whole stream is read before the block is parsed, so a Provider error after a closed block
+ * (for example an output-limit stop while the model wrote trailing text) cannot discard it.
+ */
 export async function runInternalCompactionPass(input: RunInternalCompactionPassInput): Promise<InternalCompactionPassResult> {
 	input.explicitInstructions.beginProviderAttempt(input.attemptId)
 	const consumePort = input.explicitInstructions.createConsumePort()
@@ -156,224 +175,279 @@ export async function runInternalCompactionPass(input: RunInternalCompactionPass
 	)
 	const stream = input.providerRequestRound?.bindAttempt(providerStream, input.taskAttempt ?? 0) ?? providerStream
 
-	let assistantText = ""
-	let nativeSummary: string | undefined
-	let usage: InternalCompactionUsage | undefined
-	let cacheUsageReported = false
-	const usageAccumulator = new ApiUsageAccumulator()
+	const observation = new CompactionReplyObservation(input.providerInput.tools)
+	const usageTracker = new TaskRequestUsageTracker()
+	let usageReported = false
 	const presentationQueue = new CompactionPresentationQueue()
 	let lastPublishedSummary: string | undefined
-	let completedSummary: string | undefined
-	let resolveCompletedSummary!: (summary: string) => void
-	const completedSummaryPromise = new Promise<string>((resolve) => {
-		resolveCompletedSummary = resolve
-	})
-	const nativeArguments = new Map<string, string>()
-	const publishSummarySnapshot = (context: string | undefined): void => {
-		const snapshot = context?.trim()
-		if (!snapshot || snapshot === lastPublishedSummary) return
-		lastPublishedSummary = snapshot
-		if (input.onSummaryUpdate) presentationQueue.enqueue(() => input.onSummaryUpdate?.(snapshot))
-	}
-
-	const processChunk = (chunk: ApiProviderStreamChunk | undefined, publishChunk: boolean): void => {
-		if (!chunk) return
-		if (publishChunk && input.onChunk) presentationQueue.enqueue(() => input.onChunk?.(chunk))
-		switch (chunk.type) {
-			case "text":
-				assistantText += chunk.text
-				publishSummarySnapshot(parseXmlSummarySnapshot(assistantText))
-				break
-			case "tool_calls": {
-				if (chunk.tool_call.function.name !== ClineDefaultTool.SUMMARIZE_TASK) break
-				const key = chunk.tool_index === undefined ? chunk.function_id : String(chunk.tool_index)
-				const next = normalizeArguments(chunk.tool_call.function.arguments)
-				// Responses-family adapters emit the complete arguments twice: once as the
-				// argument delta and again on output_item.done. A chunk that is already a
-				// complete summary payload is authoritative; otherwise keep appending
-				// incremental deltas until a complete payload arrives.
-				const completeSnapshot = parseSummaryArguments(next)
-				if (completeSnapshot !== undefined) {
-					nativeArguments.set(key, next)
-					nativeSummary = completeSnapshot
-					publishSummarySnapshot(completeSnapshot)
-				} else {
-					const accumulated = `${nativeArguments.get(key) ?? ""}${next}`
-					nativeArguments.set(key, accumulated)
-					publishSummarySnapshot(parsePartialSummaryArguments(accumulated))
-					// Chat-family adapters emit complete argument chunks without a completion phase.
-					if (chunk.phase === undefined || chunk.phase === "completed") {
-						const completed = parseSummaryArguments(accumulated)
-						if (completed !== undefined) {
-							nativeSummary = completed
-							publishSummarySnapshot(completed)
-						}
-					}
-				}
-				if (chunk.phase === "completed") {
-					const completed = nativeSummary ?? parseSummaryArguments(nativeArguments.get(key) ?? "")
-					if (completed !== undefined && completedSummary === undefined) {
-						completedSummary = completed
-						resolveCompletedSummary(completed)
-					}
-				}
-				break
-			}
-			case "usage": {
-				cacheUsageReported ||= chunk.cacheWriteTokens !== undefined || chunk.cacheReadTokens !== undefined
-				const current = usageAccumulator.apply(chunk).usage
-				usage = {
-					...current,
-					totalTokens: current.inputTokens + current.outputTokens + current.cacheWriteTokens + current.cacheReadTokens,
-				}
-				break
-			}
-			case "reasoning":
-			case "server_tool":
-				break
-		}
-	}
-
-	const attachRoundUsage = (): void => {
-		if (!usage) return
-		input.providerRequestRound?.attachExactUsage({
-			inputTokens: usage.inputTokens,
-			outputTokens: usage.outputTokens,
-			cacheWriteTokens: usage.cacheWriteTokens,
-			cacheReadTokens: usage.cacheReadTokens,
-			cacheUsageReported,
+	let summaryUpdateQueued = false
+	// Each summary update ships the whole summary to the Webview and waits for delivery, so queueing
+	// one per text chunk lets the card replay stale snapshots long after the Provider has finished.
+	// Keep at most one update queued and read the latest reply text only when it runs.
+	const scheduleSummaryUpdate = (): void => {
+		if (!input.onSummaryUpdate || summaryUpdateQueued) return
+		summaryUpdateQueued = true
+		presentationQueue.enqueue(() => {
+			summaryUpdateQueued = false
+			const snapshot = parseSummarizeTaskCalls(observation.text).at(-1)?.params.context?.trim()
+			if (!snapshot || snapshot === lastPublishedSummary) return
+			lastPublishedSummary = snapshot
+			return input.onSummaryUpdate?.(snapshot)
 		})
 	}
 
-	const pumpStream = async (): Promise<InternalCompactionSettlement> => {
-		try {
-			for await (const chunk of stream) {
-				firstChunkAtMs ??= performance.now()
-				processChunk(chunk, completedSummary === undefined)
-			}
-			await presentationQueue.flush()
-			if (completedSummary === undefined) {
-				// Truncated native arguments never parse as complete JSON, so a Pass that
-				// streamed a usable summary was discarded together with every token it
-				// cost. The partial reader already backs the streamed presentation, so it
-				// is trusted here as the final fallback before declaring the Pass unusable.
-				const summary = nativeSummary ?? parseXmlSummary(assistantText) ?? parseSalvagedNativeSummary(nativeArguments)
-				if (!summary) {
-					throw createUnusableSummaryError(nativeArguments)
-				}
-				completedSummary = summary
-				resolveCompletedSummary(summary)
-			}
-			if (!usage || usage.totalTokens <= 0) {
-				throw new Error("Internal compaction Pass did not return reliable usage")
-			}
-			return { usage }
-		} catch (error) {
-			await presentationQueue.flush()
-			if (completedSummary !== undefined) return { usage, error }
-			throw error
-		} finally {
-			attachRoundUsage()
+	const processChunk = (chunk: ApiProviderStreamChunk | undefined): void => {
+		if (!chunk) return
+		if (input.onChunk) presentationQueue.enqueue(() => input.onChunk?.(chunk))
+		observation.record(chunk)
+		if (chunk.type === "text") scheduleSummaryUpdate()
+		if (chunk.type === "usage") {
+			usageTracker.apply(chunk)
+			usageReported = true
 		}
 	}
 
-	const settlement = pumpStream()
-	const summary = await Promise.race([
-		completedSummaryPromise,
-		settlement.then(() => {
-			if (!completedSummary) throw new Error("Internal compaction Pass completed without an accepted summary")
-			return completedSummary
-		}),
-	])
-	await presentationQueue.flush()
+	const readUsage = (): InternalCompactionUsage | undefined => {
+		if (!usageReported) return undefined
+		const snapshot = usageTracker.getSnapshot()
+		const totalTokens = snapshot.inputTokens + snapshot.outputTokens + snapshot.cacheWriteTokens + snapshot.cacheReadTokens
+		if (totalTokens <= 0) return undefined
+		return {
+			inputTokens: snapshot.inputTokens,
+			outputTokens: snapshot.outputTokens,
+			cacheWriteTokens: snapshot.cacheWriteTokens,
+			cacheReadTokens: snapshot.cacheReadTokens,
+			totalTokens,
+			...(snapshot.thoughtsTokens === undefined ? {} : { thoughtsTokens: snapshot.thoughtsTokens }),
+		}
+	}
+
+	const attachUsage = (): void => {
+		if (!usageReported) return
+		const snapshot = usageTracker.getSnapshot()
+		input.providerRequestRound?.attachExactUsage({
+			inputTokens: snapshot.inputTokens,
+			outputTokens: snapshot.outputTokens,
+			cacheWriteTokens: snapshot.cacheWriteTokens,
+			cacheReadTokens: snapshot.cacheReadTokens,
+			...(snapshot.thoughtsTokens === undefined ? {} : { thoughtsTokens: snapshot.thoughtsTokens }),
+			cacheUsageReported: snapshot.cacheUsageReported,
+		})
+	}
+
+	let streamError: unknown
+	let closedBeforeStreamEnd = false
+	const iterator = stream[Symbol.asyncIterator]()
+	try {
+		for (let next = await iterator.next(); !next.done; next = await iterator.next()) {
+			firstChunkAtMs ??= performance.now()
+			processChunk(next.value)
+			// Like any tool call, summarize_task runs as soon as it closes; the task must not wait for the Provider tail.
+			if (next.value.type === "text" && endsWithClosedSummarizeTaskCall(observation.text)) {
+				closedBeforeStreamEnd = true
+				break
+			}
+		}
+	} catch (error) {
+		streamError = error
+	}
+	if (closedBeforeStreamEnd) {
+		// Within the grace period the tail is observed like the rest of the reply; after it, usage is only recorded.
+		let applyTailUsage = (chunk: Extract<ApiProviderStreamChunk, { type: "usage" }>): void => processChunk(chunk)
+		const tail = drainUsageTail(iterator, (chunk) => applyTailUsage(chunk))
+		if (await settlesWithin(tail, USAGE_TAIL_GRACE_MS)) {
+			attachUsage()
+		} else {
+			applyTailUsage = (chunk) => {
+				usageTracker.apply(chunk)
+				usageReported = true
+			}
+			void tail.then(attachUsage)
+		}
+	} else {
+		attachUsage()
+	}
+
+	const settledAtMs = performance.now()
+	const usage = readUsage()
+	const timing: InternalCompactionProviderTiming = {
+		providerTtfbMs: elapsedCompactionMs(providerStartedAtMs, firstChunkAtMs ?? settledAtMs),
+		streamMs: elapsedCompactionMs(firstChunkAtMs ?? providerStartedAtMs, settledAtMs),
+	}
+	const reportAttempt = (fields: Pick<CompactionAttemptDiagnostics, "outcome" | "failureKind" | "trailingChars">): void => {
+		try {
+			input.onAttemptSettled?.(
+				observation.toDiagnostics({
+					...fields,
+					attemptIndex: input.taskAttempt ?? 0,
+					authorizationAttemptId: input.attemptId ?? "",
+					...(input.providerInput.providerOutputCap === undefined
+						? {}
+						: { providerOutputCap: input.providerInput.providerOutputCap }),
+					...(usage ? { usage } : {}),
+					...timing,
+				}),
+			)
+		} catch {
+			// Diagnostics are observational and must never decide the compaction outcome.
+		}
+	}
+
+	try {
+		await presentationQueue.flush()
+	} catch (error) {
+		reportAttempt({ outcome: "failed", failureKind: classifyCompactionFailure(error) })
+		throw error
+	}
+
+	const accepted = findClosedSummarizeTaskCall(observation.text)
+	if (!accepted) {
+		const failureKind = classifySummarizeTaskReply({
+			call: parseSummarizeTaskCalls(observation.text).at(-1),
+			text: observation.text,
+			nativeToolCallNames: observation.calledToolNames,
+			outputLimitReached: observation.stopReason === "output_limit" || isOutputLimitExceededError(streamError),
+		})
+		// A transport or cancellation failure explains the missing call better than the reply shape;
+		// an output-limit error is kept as-is so the OpenAI reduced-cap replay can recognize it.
+		const failure = streamError ?? new CompactionSummaryRejectedError(failureKind)
+		reportAttempt({ outcome: "failed", failureKind: streamError ? classifyCompactionFailure(streamError) : failureKind })
+		throw failure
+	}
+
 	const consumed = consumePort.consumeTool(ClineDefaultTool.SUMMARIZE_TASK)
 	if (!consumed.ok) {
-		throw new Error(`Internal compaction summarize_task authorization failed: ${consumed.code}`)
+		reportAttempt({ outcome: "failed", failureKind: "authorization_failed" })
+		throw new CompactionAuthorizationError(consumed.code)
 	}
-	const summaryCompletedAtMs = performance.now()
+	reportAttempt({ outcome: "accepted", trailingChars: accepted.trailingChars })
+	const taskProgress = accepted.call.params.task_progress?.trim()
 	return {
-		summary,
-		...(usage && usage.totalTokens > 0 ? { usage } : {}),
-		timing: {
-			providerTtfbMs: elapsedCompactionMs(providerStartedAtMs, firstChunkAtMs ?? summaryCompletedAtMs),
-			streamMs: elapsedCompactionMs(firstChunkAtMs ?? providerStartedAtMs, summaryCompletedAtMs),
-		},
-		settlement,
+		summary: accepted.summary,
+		...(taskProgress ? { taskProgress } : {}),
+		...(usage ? { usage } : {}),
+		timing,
 	}
 }
 
-/** Own every attempt for one immutable hidden Pass without entering Task auto-retry. */
+/**
+ * Own every attempt for one immutable hidden Pass without entering Task auto-retry.
+ *
+ * Every retry starts from the frozen Pass input. A correctable failure adds exactly one reminder
+ * naming what was wrong with the previous reply; a transient Provider failure replays the
+ * previous attempt's input unchanged.
+ */
 export async function runInternalCompactionPassWithRetry(
 	input: RunInternalCompactionPassWithRetryInput,
 ): Promise<InternalCompactionPassAttemptResult> {
 	const frozenProviderInput = cloneDeep(input.providerInput)
 	let currentProviderInput = cloneDeep(frozenProviderInput)
 	let currentAttempt = createAttemptIdentity(input, input.initialAttemptIndex ?? 0)
+	let currentReminder: CompactionSummaryFailureKind | undefined
 	let openAiMaxOutputReplayUsed = false
 
 	while (true) {
+		const attempt = currentAttempt
+		const reminderKind = currentReminder
+		// Hold the attempt diagnostics until the retry decision is known, so each report names its next action.
+		let settled: CompactionAttemptDiagnostics | undefined
+		const reportAttempt = (nextAction: CompactionAttemptNextAction): void => {
+			if (!settled) return
+			input.onAttemptSettled?.({ ...settled, ...(reminderKind ? { reminderKind } : {}), nextAction })
+			settled = undefined
+		}
 		try {
 			const result = await runInternalCompactionPass({
 				api: input.api,
 				providerInput: currentProviderInput,
 				explicitInstructions: input.explicitInstructions,
 				taskNamespace: input.taskNamespace,
-				attemptId: currentAttempt.authorizationAttemptId,
+				attemptId: attempt.authorizationAttemptId,
 				providerRequestRound: input.providerRequestRound,
-				taskAttempt: currentAttempt.attemptIndex,
-				onChunk: (chunk) => input.onChunk?.(chunk, currentAttempt),
-				onSummaryUpdate: (context) => input.onSummaryUpdate?.(context, currentAttempt),
+				taskAttempt: attempt.attemptIndex,
+				onChunk: (chunk) => input.onChunk?.(chunk, attempt),
+				onSummaryUpdate: (context) => input.onSummaryUpdate?.(context, attempt),
+				onAttemptSettled: (diagnostics) => {
+					settled = diagnostics
+				},
 			})
+			reportAttempt("accept")
 			input.retryPolicy.reset()
-			return { ...result, ...currentAttempt }
+			return { ...result, ...attempt }
 		} catch (error) {
+			const failureKind = classifyCompactionFailure(error)
 			const replayCap =
 				input.allowOpenAiMaxOutputReplay === false
 					? undefined
 					: getOpenAiMaxOutputReplayCap(frozenProviderInput.providerOutputCap, error, openAiMaxOutputReplayUsed)
 			if (replayCap !== undefined) {
+				reportAttempt("retry")
 				openAiMaxOutputReplayUsed = true
-				const nextAttempt = createAttemptIdentity(input, currentAttempt.attemptIndex + 1)
-				currentProviderInput = { ...cloneDeep(frozenProviderInput), providerOutputCap: replayCap }
+				const nextAttempt = createAttemptIdentity(input, attempt.attemptIndex + 1)
+				currentReminder = "output_limit"
+				currentProviderInput = {
+					...withCompactionRetryReminder(frozenProviderInput, "output_limit"),
+					providerOutputCap: replayCap,
+				}
 				await input.onRetry?.({
 					kind: "openai_max_output_replay",
 					providerOutputCap: replayCap,
-					failedAttempt: currentAttempt,
+					failedAttempt: attempt,
 					nextAttempt,
+					failureKind,
 					error,
 				})
 				currentAttempt = nextAttempt
 				continue
 			}
-			// A suspected truncation has already consumed its single reduced replay above,
-			// so it must not fall through into ordinary same-cap Pass retries.
-			if (
-				isOpenAiMaxOutputFailure(error) ||
-				isSuspectedCompactionOutputTruncation(error) ||
-				!isRetryableCompactionError(error)
-			) {
+
+			const isRetryableFailure = input.retryableFailure ?? isRetryableCompactionFailure
+			if (!isRetryableFailure(error)) {
+				reportAttempt("fail")
 				throw error
 			}
-
 			const retryDecision = input.retryPolicy.registerFailure(input.passIdentity)
 			if (retryDecision.action === "exhausted") {
+				reportAttempt("fail")
 				throw error
 			}
-			const nextAttempt = createAttemptIdentity(input, currentAttempt.attemptIndex + 1)
+			reportAttempt("retry")
+
+			const nextAttempt = createAttemptIdentity(input, attempt.attemptIndex + 1)
 			await input.onRetry?.({
 				kind: "pass_retry",
 				retryAttempt: retryDecision.retryAttempt,
 				maxRetryAttempts: retryDecision.maxRetryAttempts,
-				failedAttempt: currentAttempt,
+				failedAttempt: attempt,
 				nextAttempt,
+				failureKind,
 				error,
 			})
 			await input.waitForRetry(retryDecision.retryAttempt)
 			currentAttempt = nextAttempt
-			// Keep the current provider input, so a reduced OpenAI max-output replay cap survives ordinary Pass retries.
-			currentProviderInput = cloneDeep(currentProviderInput)
+			// Keep the current output cap, so a reduced OpenAI max-output replay cap survives ordinary Pass retries.
+			const nextReminder = toReminderKind(failureKind)
+			if (nextReminder) {
+				currentReminder = nextReminder
+				currentProviderInput = {
+					...withCompactionRetryReminder(frozenProviderInput, nextReminder),
+					providerOutputCap: currentProviderInput.providerOutputCap,
+				}
+			}
 		}
 	}
+}
+
+/**
+ * Default retry eligibility for automatic compaction.
+ *
+ * Reply-shape and output-limit failures are always worth one more reminded attempt; Provider
+ * failures follow HTTP retryability; authorization and cancellation failures are terminal.
+ */
+export function isRetryableCompactionFailure(error: unknown): boolean {
+	if (isCorrectableCompactionFailure(error)) return true
+	if (classifyCompactionFailure(error) !== "provider_error") return false
+	return isRetryableCompactionError(error)
 }
 
 function createAttemptIdentity(
@@ -391,10 +465,7 @@ function getOpenAiMaxOutputReplayCap(
 	error: unknown,
 	replayUsed: boolean,
 ): number | undefined {
-	if (replayUsed || initialProviderOutputCap === undefined) return undefined
-	// A reported max-output failure and an unreadable argument payload both mean the
-	// summary did not fit the cap, so both earn the same single reduced replay.
-	if (!isOpenAiMaxOutputFailure(error) && !isSuspectedCompactionOutputTruncation(error)) return undefined
+	if (replayUsed || initialProviderOutputCap === undefined || !isOpenAiMaxOutputFailure(error)) return undefined
 	const replayCap = Math.floor(initialProviderOutputCap * 0.9)
 	return replayCap > 0 ? replayCap : undefined
 }
@@ -407,87 +478,11 @@ function isOpenAiMaxOutputFailure(error: unknown): boolean {
 	)
 }
 
-function normalizeArguments(value: unknown): string {
-	if (typeof value === "string") return value
-	if (value === undefined) return ""
-	return JSON.stringify(value)
-}
+const SUMMARIZE_TASK_CLOSE_TAG = `</${ClineDefaultTool.SUMMARIZE_TASK}>`
 
-function parseSummaryArguments(value: string): string | undefined {
-	try {
-		const parsed: unknown = JSON.parse(value)
-		if (typeof parsed !== "object" || parsed === null || !("context" in parsed)) return undefined
-		const context = (parsed as { context?: unknown }).context
-		return typeof context === "string" && context.trim() ? context.trim() : undefined
-	} catch {
-		return undefined
-	}
-}
-
-/** Marks a Pass whose native arguments arrived but never yielded a usable summary. */
-const SUSPECTED_OUTPUT_TRUNCATION = Symbol.for("dline.compaction.suspectedOutputTruncation")
-
-/**
- * Report whether a Pass failure looks like a Provider output-cap truncation.
- *
- * The Provider does not always report a `length` stop reason, so an unparsable
- * argument payload is the only available signal that the summary was cut off.
- *
- * @param error The failure raised while settling one compaction Pass.
- * @returns True when the same Pass is worth replaying under a smaller output cap.
- */
-export function isSuspectedCompactionOutputTruncation(error: unknown): boolean {
-	return typeof error === "object" && error !== null && SUSPECTED_OUTPUT_TRUNCATION in error
-}
-
-/**
- * Build the terminal error for a Pass that produced no usable summarize_task context.
- *
- * @param nativeArguments Accumulated raw argument text per tool-call key.
- * @returns The error, tagged when argument text arrived but could not be read.
- */
-function createUnusableSummaryError(nativeArguments: ReadonlyMap<string, string>): Error {
-	const error = new Error("Internal compaction Pass did not return a valid summarize_task context")
-	const receivedArgumentText = [...nativeArguments.values()].some((value) => value.trim().length > 0)
-	return receivedArgumentText ? Object.assign(error, { [SUSPECTED_OUTPUT_TRUNCATION]: true }) : error
-}
-
-/**
- * Recover the longest usable summary from native arguments that never completed.
- *
- * @param nativeArguments Accumulated raw argument text per tool-call key.
- * @returns The salvaged summary, or undefined when no fragment carries content.
- */
-function parseSalvagedNativeSummary(nativeArguments: ReadonlyMap<string, string>): string | undefined {
-	let salvaged: string | undefined
-	for (const accumulated of nativeArguments.values()) {
-		const candidate = parseSummaryArguments(accumulated) ?? parsePartialSummaryArguments(accumulated)
-		if (candidate && (salvaged === undefined || candidate.length > salvaged.length)) salvaged = candidate
-	}
-	return salvaged
-}
-
-function parsePartialSummaryArguments(value: string): string | undefined {
-	const match = value.match(/"context"\s*:\s*"((?:[^"\\]|\\.)*)/)
-	if (!match) return undefined
-	try {
-		const context: unknown = JSON.parse(`"${match[1]}"`)
-		return typeof context === "string" && context.trim() ? context.trim() : undefined
-	} catch {
-		return undefined
-	}
-}
-
-function parseXmlSummary(text: string): string | undefined {
-	return parseXmlSummaryBlock(text, false)
-}
-
-function parseXmlSummarySnapshot(text: string): string | undefined {
-	return parseXmlSummaryBlock(text, true)
-}
-
-function parseXmlSummaryBlock(text: string, allowPartial: boolean): string | undefined {
-	if (!text.trim()) return undefined
+/** Parse every summarize_task explicit-instruction call in the reply with the standard tool parser. */
+function parseSummarizeTaskCalls(text: string): ToolUse[] {
+	if (!text.trim()) return []
 	let ts = 0
 	const identities = createIdentityFactory(() => String(++ts))
 	const blocks = parseAssistantMessageV2(text, {
@@ -497,17 +492,77 @@ function parseXmlSummaryBlock(text: string, allowPartial: boolean): string | und
 			dline_tid: identities.nextTraceId(),
 		}),
 	})
-	const summaries = blocks.filter(
-		(block): block is ToolUse =>
-			block.type === "tool_use" &&
-			block.name === ClineDefaultTool.SUMMARIZE_TASK &&
-			(allowPartial || !block.partial) &&
-			typeof block.params.context === "string" &&
-			block.params.context.trim().length > 0,
-	)
-	// A model may emit several summarize_task blocks in one response, for example a
-	// revised summary after a first draft. Requiring exactly one block rejected a
-	// response that did carry a usable summary, which burned the whole Pass and its
-	// tokens. The last complete block is the model's final answer, so it wins.
-	return summaries.at(-1)?.params.context?.trim()
+	return blocks.filter((block): block is ToolUse => block.type === "tool_use" && block.name === ClineDefaultTool.SUMMARIZE_TASK)
+}
+
+interface ClosedSummarizeTaskCall {
+	call: ToolUse
+	summary: string
+	/** Characters written after the call closed; ignored. */
+	trailingChars: number
+}
+
+/**
+ * Providers send usage right after the closing text.
+ * is attached to the Provider round when it arrives.
+ */
+const USAGE_TAIL_GRACE_MS = 2_000
+
+async function settlesWithin(tail: Promise<void>, graceMs: number): Promise<boolean> {
+	let timer: ReturnType<typeof setTimeout> | undefined
+	const expired = new Promise<false>((resolve) => {
+		timer = setTimeout(() => resolve(false), graceMs)
+	})
+	try {
+		return await Promise.race([tail.then(() => true as const), expired])
+	} finally {
+		clearTimeout(timer)
+	}
+}
+
+/** True when the streamed reply currently ends with a closed summarize_task call that carries a summary. */
+function endsWithClosedSummarizeTaskCall(text: string): boolean {
+	const settled = text.trimEnd()
+	if (!settled.endsWith(SUMMARIZE_TASK_CLOSE_TAG)) return false
+	const call = parseSummarizeTaskCalls(settled).at(-1)
+	return call !== undefined && !call.partial && Boolean(call.params.context?.trim())
+}
+
+/**
+ * Reads the rest of a Provider stream after the summary was accepted. Only usage matters there; a failing tail
+ * cannot invalidate the accepted summary, so it only ends the drain.
+ */
+async function drainUsageTail(
+	iterator: AsyncIterator<ApiProviderStreamChunk>,
+	applyUsage: (chunk: Extract<ApiProviderStreamChunk, { type: "usage" }>) => void,
+): Promise<void> {
+	try {
+		for (let next = await iterator.next(); !next.done; next = await iterator.next()) {
+			if (next.value.type === "usage") applyUsage(next.value)
+		}
+	} catch {
+		// The usage recorded before the failure is still attached by the caller.
+	}
+}
+
+/**
+ * Find the closed summarize_task call that carries the summary.
+ *
+ * The standard parser only treats `</summarize_task>` at the end of the text as terminal, which
+ * protects quoted closing tags while a reply streams. Once the reply has settled, anything written
+ * after a closed call is ignored, so each closing tag is tried as the end of the reply, starting
+ * from the last one, and the last closed call with a non-empty context wins.
+ */
+function findClosedSummarizeTaskCall(text: string): ClosedSummarizeTaskCall | undefined {
+	let closeStart = text.lastIndexOf(SUMMARIZE_TASK_CLOSE_TAG)
+	while (closeStart >= 0) {
+		const replyEnd = closeStart + SUMMARIZE_TASK_CLOSE_TAG.length
+		const call = parseSummarizeTaskCalls(text.slice(0, replyEnd))
+			.filter((candidate) => !candidate.partial && candidate.params.context?.trim())
+			.at(-1)
+		const summary = call?.params.context?.trim()
+		if (call && summary) return { call, summary, trailingChars: text.length - replyEnd }
+		closeStart = closeStart > 0 ? text.lastIndexOf(SUMMARIZE_TASK_CLOSE_TAG, closeStart - 1) : -1
+	}
+	return undefined
 }

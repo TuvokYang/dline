@@ -80,9 +80,15 @@ function isDlineOwnedFunctionId(functionId: string): boolean {
 	return functionId.startsWith(DLINE_FUNCTION_PREFIX)
 }
 
-/** Serialize a Dline-owned tool result before demoting it to ordinary user text. */
-function serializeToolResultContent(block: ClineUserToolResultContentBlock): string {
-	return typeof block.content === "string" ? block.content : JSON.stringify(block.content)
+/**
+ * Demote a Dline-owned tool result to ordinary user content.
+ *
+ * Text stays text and images stay native image blocks; serializing the parts would put their base64
+ * bytes into the context as text.
+ */
+function demoteToolResultContent(block: ClineUserToolResultContentBlock): ClineContent[] {
+	if (typeof block.content === "string") return block.content ? [{ type: "text", text: block.content }] : []
+	return (block.content ?? []).filter((part) => part.type !== "text" || part.text)
 }
 
 /** Recover only explicitly tagged user input before discarding an orphaned result. */
@@ -518,10 +524,7 @@ export class ContextManager {
 
 				removedOrphan = true
 				if (isDlineOwnedFunctionId(this.getResultFunctionId(block))) {
-					const demotedOutput = serializeToolResultContent(block)
-					if (demotedOutput) {
-						retainedContent.push({ type: "text", text: demotedOutput })
-					}
+					retainedContent.push(...demoteToolResultContent(block))
 					continue
 				}
 

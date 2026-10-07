@@ -1,5 +1,5 @@
 import { formatResponse } from "@core/prompts/responses"
-import { processFilesIntoText } from "@integrations/misc/extract-text"
+import { processFilesIntoContent } from "@integrations/misc/extract-text"
 import type { ClineMessage } from "@shared/ExtensionMessage"
 import type { ClineContent, ClineStorageMessage } from "@shared/messages"
 import type { BlockLifecycle } from "../BlockPhaseMachine"
@@ -23,10 +23,7 @@ export interface MistakeLimitContinuationInput {
 async function buildMistakeFeedbackContent(input: MistakeLimitContinuationInput["feedback"]): Promise<ClineContent[]> {
 	const content: ClineContent[] = [{ type: "text", text: formatResponse.tooManyMistakes(input.text) }]
 	if (input.images?.length) content.push(...formatResponse.imageBlocks(input.images))
-	if (input.files?.length) {
-		const fileContent = await processFilesIntoText(input.files)
-		if (fileContent) content.push({ type: "text", text: fileContent })
-	}
+	if (input.files?.length) content.push(...(await processFilesIntoContent(input.files)))
 	return content
 }
 

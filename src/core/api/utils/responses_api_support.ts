@@ -3,7 +3,9 @@ import { ModelInfo } from "@/shared/api"
 import { ServerTool } from "@/shared/proto/dline/models/metadata"
 import { Logger } from "@/shared/services/Logger"
 import { OutputLimitExceededError } from "../stream/OutputLimitExceededError"
+import { createResponsesWebSearchReplay } from "../transform/openai-response-format"
 import { createResponsesRegistry, createResponsesToolChunk } from "../transform/responses-identity-registry"
+import { normalizeResponsesStopReason } from "../transform/stop-reason"
 import type { ApiRawStreamServerToolChunk, ApiServerToolPhase } from "../transform/stream"
 
 interface ResponsesInputTokenDetails {
@@ -77,7 +79,7 @@ export function mapResponsesImageGenerationEvent(event: any): ApiRawStreamServer
 function createWebSearchChunk(
 	functionId: string,
 	phase: ApiServerToolPhase,
-	payload?: Pick<ApiRawStreamServerToolChunk, "input" | "result" | "error">,
+	payload?: Pick<ApiRawStreamServerToolChunk, "input" | "result" | "error" | "replay">,
 ): ApiRawStreamServerToolChunk {
 	return {
 		type: "server_tool",
@@ -99,13 +101,16 @@ export function mapResponsesWebSearchEvent(event: any): ApiRawStreamServerToolCh
 		if (event.type === "response.output_item.added") {
 			return createWebSearchChunk(item.id, "started", { input: item.action })
 		}
+		// The finished item is the call record later requests send back; Codex keeps failed calls too.
+		const replay = createResponsesWebSearchReplay(item)
 		return item.status === "failed"
-			? createWebSearchChunk(item.id, "failed", { error: item.action })
+			? createWebSearchChunk(item.id, "failed", { error: item.action, ...(replay ? { replay } : {}) })
 			: createWebSearchChunk(item.id, "completed", {
 					result: {
 						action: item.action,
 						...(Array.isArray(item.results) ? { results: item.results } : {}),
 					},
+					...(replay ? { replay } : {}),
 				})
 	}
 
@@ -355,6 +360,7 @@ export async function* handleResponsesApiStreamResponse(
 				const totalCost = await calculateCost(modelInfo, inputTokens, outputTokens, cacheWriteTokens, cacheReadTokens)
 				Logger.log(`Total tokens from Responses API usage: ${totalTokens}`)
 				const nonCachedInputTokens = Math.max(0, inputTokens - cacheReadTokens - cacheWriteTokens)
+				const stopReason = normalizeResponsesStopReason(chunk.response.status)
 				yield {
 					type: "usage",
 					inputTokens: nonCachedInputTokens,
@@ -364,6 +370,7 @@ export async function* handleResponsesApiStreamResponse(
 					thoughtsTokenCount: reasoningTokens,
 					totalCost: totalCost,
 					provider_metadata: { response_id: chunk.response.id },
+					...(stopReason ? { stopReason } : {}),
 				} as const
 			}
 		}

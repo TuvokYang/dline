@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useRef } from "react"
 import type { ScrollBehavior } from "../types/chatTypes"
+import { isTailOnlyUpdate, type MessageIdentity } from "../utils/messageWindowChange"
 
 type Anchor = { ts: string; top: number }
 
 /** Preserve layout shifts, never undo a newer user scroll within the same virtual range. */
 export function useBrowsingScrollAnchor(
-	messages: readonly unknown[],
+	messages: readonly MessageIdentity[],
 	taskKey: string | number | undefined,
 	scroller: HTMLElement | null,
 	{ disableAutoScrollRef, requestProgrammaticScroll, virtuosoRef }: ScrollBehavior,
@@ -14,6 +15,7 @@ export function useBrowsingScrollAnchor(
 	const pendingRef = useRef(false)
 	const contentChangeRef = useRef(false)
 	const epochRef = useRef(0)
+	const previousMessagesRef = useRef(messages)
 
 	const invalidate = useCallback(() => {
 		epochRef.current += 1
@@ -67,7 +69,13 @@ export function useBrowsingScrollAnchor(
 	}, [invalidate, taskKey])
 
 	useLayoutEffect(() => {
-		void messages
+		const previous = previousMessagesRef.current
+		previousMessagesRef.current = messages
+		// A reply streaming in only rewrites or extends the end of the window,
+		// which cannot move the rows being read; the list compensates any row
+		// above that changes size. Restoring here would undo the reader's own
+		// scroll that is still in flight.
+		if (isTailOnlyUpdate(previous, messages)) return
 		if (disableAutoScrollRef.current && anchorRef.current) {
 			contentChangeRef.current = true
 			scheduleRestore()
@@ -102,5 +110,11 @@ export function useBrowsingScrollAnchor(
 		}
 	}, [capture, invalidate, scheduleRestore, scroller])
 
-	return { capture, scheduleRestore }
+	// Another writer has taken over the position for the current content change
+	// (the list's own scroll-to-index after older history merges in). A second
+	// correction measured while that one is still settling would interrupt it,
+	// so drop the pending restore and let the next scroll capture afresh.
+	const release = invalidate
+
+	return { capture, scheduleRestore, release }
 }

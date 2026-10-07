@@ -1,5 +1,7 @@
 import type { ClineMessage, ClineSayTool, CompactionConversationRange } from "@shared/ExtensionMessage"
-import type { ClineStorageMessage } from "@shared/messages/content"
+import type { ClineStorageMessage, ClineUserToolResultContentBlock } from "@shared/messages/content"
+import { compactionSummaryMessage } from "./compaction-summary-message"
+import { hasTaggedUserFeedback } from "./logical-turns"
 
 export type CanonicalMessageRange = readonly [startIndex: number, endIndex: number]
 
@@ -52,6 +54,8 @@ export function projectCompactionContext(input: CompactionContextProjectionInput
 	const canonicalMessageIndexes: Array<number | undefined> = []
 	const sourceCanonicalRanges: Array<CanonicalMessageRange | undefined> = []
 	const canonicalRanges: CanonicalMessageRange[] = []
+	// Tool use identity -> last canonical index the summarizing Pass could see.
+	const summarizedToolUses = new Map<string, number>()
 	let activeRangeStart: number | undefined
 	let cardIndex = 0
 
@@ -59,14 +63,20 @@ export function projectCompactionContext(input: CompactionContextProjectionInput
 		while (cards[cardIndex]?.range.apiConversationRange[0] === index) {
 			const card = cards[cardIndex]
 			if (card.summary.trim()) {
-				messages.push(summaryMessage(card.summary))
+				messages.push(compactionSummaryMessage(card.summary))
 				canonicalMessageIndexes.push(undefined)
 				sourceCanonicalRanges.push(card.range.apiConversationRange)
 			}
 			cardIndex += 1
 		}
 
-		if (isExcluded(index, deletedRanges) || isCoveredByCard(index, cards)) {
+		const coveringCard = findCoveringCard(index, cards)
+		if (coveringCard) collectToolUses(input.canonicalHistory[index], coveringCard, summarizedToolUses)
+		const message =
+			isExcluded(index, deletedRanges) || coveringCard
+				? undefined
+				: withoutSummarizedToolResults(input.canonicalHistory[index], index, summarizedToolUses)
+		if (!message) {
 			if (activeRangeStart !== undefined) {
 				canonicalRanges.push([activeRangeStart, index - 1])
 				activeRangeStart = undefined
@@ -74,7 +84,7 @@ export function projectCompactionContext(input: CompactionContextProjectionInput
 			continue
 		}
 		activeRangeStart ??= index
-		messages.push(input.canonicalHistory[index])
+		messages.push(message)
 		canonicalMessageIndexes.push(index)
 		sourceCanonicalRanges.push([index, index])
 	}
@@ -140,10 +150,49 @@ function isExcluded(index: number, ranges: readonly CanonicalMessageRange[]): bo
 	return ranges.some(([start, end]) => index >= start && index <= end)
 }
 
-function isCoveredByCard(index: number, cards: readonly CompletedCompactionCardProjection[]): boolean {
-	return cards.some(({ range }) => index >= range.apiConversationRange[0] && index <= range.apiConversationRange[1])
+function findCoveringCard(
+	index: number,
+	cards: readonly CompletedCompactionCardProjection[],
+): CompletedCompactionCardProjection | undefined {
+	return cards.find(({ range }) => index >= range.apiConversationRange[0] && index <= range.apiConversationRange[1])
 }
 
-function summaryMessage(summary: string): ClineStorageMessage {
-	return { role: "user", content: [{ type: "text", text: summary }] }
+function collectToolUses(
+	message: ClineStorageMessage,
+	card: CompletedCompactionCardProjection,
+	summarizedToolUses: Map<string, number>,
+): void {
+	if (message.role !== "assistant" || !Array.isArray(message.content)) return
+	for (const block of message.content) {
+		if (block.type === "tool_use" && block.function_id) {
+			summarizedToolUses.set(block.function_id, card.range.preCompactionApiEndIndex)
+		}
+	}
+}
+
+/**
+ * A Pass consumes plain results that were still pending when it ran; its summary already carries their payload.
+ * Results that were durable before the Pass, or that carry tagged user feedback, were never summarized and stay.
+ */
+function isConsumedBySummary(
+	block: ClineUserToolResultContentBlock,
+	messageIndex: number,
+	summarizedToolUses: ReadonlyMap<string, number>,
+): boolean {
+	const preCompactionApiEndIndex = summarizedToolUses.get(block.function_id)
+	return preCompactionApiEndIndex !== undefined && messageIndex > preCompactionApiEndIndex && !hasTaggedUserFeedback(block)
+}
+
+/** Returns the message itself when nothing is omitted, and undefined when nothing provider-visible remains. */
+function withoutSummarizedToolResults(
+	message: ClineStorageMessage,
+	messageIndex: number,
+	summarizedToolUses: ReadonlyMap<string, number>,
+): ClineStorageMessage | undefined {
+	if (summarizedToolUses.size === 0 || message.role !== "user" || !Array.isArray(message.content)) return message
+	const content = message.content.filter(
+		(block) => block.type !== "tool_result" || !isConsumedBySummary(block, messageIndex, summarizedToolUses),
+	)
+	if (content.length === message.content.length) return message
+	return content.length > 0 ? ({ ...message, content } as ClineStorageMessage) : undefined
 }

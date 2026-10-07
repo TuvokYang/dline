@@ -119,6 +119,19 @@ describe("ChatRow hosted Web Search rendering", () => {
 		expect(screen.getByTestId("web-search-card")).toHaveClass("max-h-[40vh]", "overflow-hidden")
 		expect(screen.getByTestId("web-search-card")).not.toHaveClass("overflow-y-auto")
 		expect(screen.getByTestId("web-search-results")).toHaveClass("overflow-y-auto")
+
+		const header = screen.getByTestId("web-search-header")
+		expect(header).toHaveAttribute("aria-expanded", "true")
+		fireEvent.click(header)
+
+		expect(header).toHaveAttribute("aria-expanded", "false")
+		expect(toggle).toHaveAttribute("aria-expanded", "false")
+		expect(screen.queryByTestId("web-search-results")).not.toBeInTheDocument()
+
+		fireEvent.click(header)
+
+		expect(toggle).toHaveAttribute("aria-expanded", "true")
+		expect(screen.getByText("Dline result")).toBeInTheDocument()
 	})
 
 	it("renders all normalized search queries instead of the generic hosted placeholder", () => {
@@ -360,8 +373,8 @@ describe("ChatRow hosted Web Search rendering", () => {
 		expect(link.firstElementChild).toHaveClass("break-all", "text-left", "[direction:ltr]")
 	})
 
-	it("renders completed Web Fetch content in a 40vh scroll container", () => {
-		render(
+	describe("fetched Web Fetch content", () => {
+		const completedFetch = (content: string) => (
 			<ChatRowContent
 				{...baseProps}
 				message={{
@@ -375,27 +388,147 @@ describe("ChatRow hosted Web Search rendering", () => {
 						webFetch: {
 							schemaVersion: 1,
 							status: "completed",
-							source: { id: "browser", label: "Browser Web Fetch", execution: "dline" },
+							source: { id: "anthropic-hosted", label: "Anthropic Web Fetch", execution: "hosted" },
 							url: "https://example.com/docs",
-							prompt: "Extract the current docs",
-							content: "# Current docs\n\nFetched content marker",
+							content,
+						},
+					}),
+				}}
+			/>
+		)
+
+		it("starts collapsed and renders none of the fetched page until it is expanded", () => {
+			render(completedFetch("# Current docs\n\nFetched content marker"))
+
+			expect(screen.getByText("Anthropic Web Fetch (Hosted)")).toBeInTheDocument()
+			expect(screen.getByTestId("web-fetch-details-toggle")).toHaveAttribute("aria-expanded", "false")
+			expect(screen.queryByTestId("web-fetch-results")).not.toBeInTheDocument()
+			expect(screen.queryByText(/Fetched content marker/)).not.toBeInTheDocument()
+			expect(screen.getByTestId("web-fetch-card")).not.toHaveClass("max-h-[40vh]", "overflow-y-auto")
+		})
+
+		it("toggles the fetched page from the card title, keeping the toggle bar above the page", () => {
+			render(completedFetch(`# Long page\n\n${"Fetched paragraph. ".repeat(600)}`))
+			const header = screen.getByTestId("web-fetch-header")
+			const toggle = screen.getByTestId("web-fetch-details-toggle")
+			expect(header).toHaveAttribute("aria-expanded", "false")
+
+			fireEvent.click(header)
+
+			const results = screen.getByTestId("web-fetch-results")
+			expect(header).toHaveAttribute("aria-expanded", "true")
+			expect(toggle).toHaveAttribute("aria-expanded", "true")
+			expect(toggle.compareDocumentPosition(results) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+
+			fireEvent.click(header)
+
+			expect(toggle).toHaveAttribute("aria-expanded", "false")
+			expect(screen.queryByTestId("web-fetch-results")).not.toBeInTheDocument()
+		})
+
+		it("expands the page into a bounded scroll area with the toggle bar pinned outside it", () => {
+			render(completedFetch(`# Long page\n\n${"Fetched paragraph. ".repeat(600)}`))
+			const toggle = screen.getByTestId("web-fetch-details-toggle")
+
+			fireEvent.click(toggle)
+
+			const results = screen.getByTestId("web-fetch-results")
+			expect(toggle).toHaveAttribute("aria-expanded", "true")
+			expect(results).toHaveTextContent("Fetched paragraph.")
+			expect(results).toHaveClass("max-h-[40vh]", "overflow-y-auto")
+			expect(results).not.toContainElement(toggle)
+
+			fireEvent.click(toggle)
+
+			expect(toggle).toHaveAttribute("aria-expanded", "false")
+			expect(screen.queryByTestId("web-fetch-results")).not.toBeInTheDocument()
+		})
+	})
+
+	it("explains that a deferred hosted search waits for the next request", () => {
+		render(
+			<ChatRowContent
+				{...baseProps}
+				message={{
+					ts: 8,
+					type: "say",
+					say: "tool",
+					partial: false,
+					text: JSON.stringify({
+						tool: "webSearch",
+						path: "deferred search",
+						webSearch: {
+							schemaVersion: 1,
+							status: "deferred",
+							source: { id: "anthropic-hosted", label: "Anthropic Web Search", execution: "hosted" },
+							query: "deferred search",
+							hostedCall: { functionId: "srvtoolu_deferred", traceId: "trace-search" },
 						},
 					}),
 				}}
 			/>,
 		)
 
-		expect(screen.getByText("Browser Web Fetch (Dline)")).toBeInTheDocument()
-		const toggle = screen.getByTestId("web-fetch-details-toggle")
-		expect(toggle).toHaveAttribute("aria-expanded", "false")
-		expect(screen.queryByTestId("web-fetch-results")).not.toBeInTheDocument()
-		expect(screen.queryByText("Fetched content marker", { exact: false })).not.toBeInTheDocument()
+		const notice = screen.getByTestId("web-search-deferred")
+		expect(notice).toHaveTextContent("Waiting for the local tool results")
+		expect(notice).toHaveTextContent("next request")
+		expect(screen.getByText("deferred search")).toBeInTheDocument()
+		expect(screen.getByTestId("web-search-card").querySelector(".animate-spin")).toBeNull()
+	})
 
-		fireEvent.click(toggle)
+	it("explains that a deferred hosted fetch waits for the next request", () => {
+		render(
+			<ChatRowContent
+				{...baseProps}
+				message={{
+					ts: 9,
+					type: "say",
+					say: "tool",
+					partial: false,
+					text: JSON.stringify({
+						tool: "webFetch",
+						path: "https://example.com/deferred",
+						webFetch: {
+							schemaVersion: 1,
+							status: "deferred",
+							source: { id: "anthropic-hosted", label: "Anthropic Web Fetch", execution: "hosted" },
+							url: "https://example.com/deferred",
+							hostedCall: { functionId: "srvtoolu_fetch", traceId: "trace-fetch" },
+						},
+					}),
+				}}
+			/>,
+		)
 
-		expect(toggle).toHaveAttribute("aria-expanded", "true")
-		expect(screen.getByText("Fetched content marker", { exact: false })).toBeInTheDocument()
-		expect(screen.getByTestId("web-fetch-card")).toHaveClass("max-h-[40vh]", "overflow-y-auto")
-		expect(screen.getByTestId("web-fetch-results")).not.toHaveClass("max-h-[40vh]", "overflow-y-auto")
+		const notice = screen.getByTestId("web-fetch-deferred")
+		expect(notice).toHaveTextContent("Waiting for the local tool results")
+		expect(notice).toHaveTextContent("next request")
+		expect(screen.getByTestId("web-fetch-card").querySelector(".animate-spin")).toBeNull()
+	})
+
+	it("does not show the deferral notice once the hosted search completes", () => {
+		render(
+			<ChatRowContent
+				{...baseProps}
+				message={{
+					ts: 10,
+					type: "say",
+					say: "tool",
+					partial: false,
+					text: JSON.stringify({
+						tool: "webSearch",
+						path: "deferred search",
+						webSearch: {
+							schemaVersion: 1,
+							status: "completed",
+							query: "deferred search",
+							hostedCall: { functionId: "srvtoolu_deferred", traceId: "trace-search" },
+						},
+					}),
+				}}
+			/>,
+		)
+
+		expect(screen.queryByTestId("web-search-deferred")).not.toBeInTheDocument()
 	})
 })

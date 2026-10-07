@@ -16,6 +16,8 @@ import { asc } from "../api/UnifyStoreQuery"
 
 const L2_MAX_SIZE = 500
 const DEFAULT_FLUSH_INTERVAL_MS = 1_000
+/** Ceiling for the delay between periodic flushes after repeated failures. */
+const MAX_PERIODIC_FLUSH_BACKOFF_MS = 30_000
 /**
  * Duration past which one commit is reported as slow.
  *
@@ -40,6 +42,14 @@ function collectionSizeBand(count: number): string {
 		if (count < bound) return `<${bound}`
 	}
 	return `>=${COLLECTION_SIZE_BANDS.at(-1)}`
+}
+
+/** Bookkeeping for the timer-driven flush; explicit flush() calls ignore it. */
+interface PeriodicFlushState {
+	inFlight: boolean
+	failures: number
+	retryAt: number
+	lastErrorCode?: string
 }
 
 /** What a commit wrote and how, for the state update and its telemetry. */
@@ -114,6 +124,7 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
 	/** The logical read view omitted compatibility rows still present in the physical JSONL file. */
 	private projectedPersistedRows = false
 	private flushTimer: ReturnType<typeof setInterval> | undefined
+	private periodicFlush: PeriodicFlushState = { inFlight: false, failures: 0, retryAt: 0 }
 	private closing = false
 	private closed = false
 	private closePromise: Promise<void> | undefined
@@ -459,9 +470,43 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
 
 	private startFlushTimer(): void {
 		this.flushTimer = setInterval(() => {
-			void this.flush().catch(() => undefined)
+			void this.runPeriodicFlush()
 		}, this.flushIntervalMs)
 		this.flushTimer.unref?.()
+	}
+
+	/**
+	 * One timer-driven flush.
+	 *
+	 * Ticks never overlap, so a slow commit does not queue another behind the
+	 * mutex every interval. A commit that keeps failing (a destination locked by
+	 * another process, a full disk) backs off up to MAX_PERIODIC_FLUSH_BACKOFF_MS
+	 * instead of staging a new temp file every second. The failure is logged when
+	 * it starts and whenever its error code changes, not on every retry.
+	 */
+	private async runPeriodicFlush(): Promise<void> {
+		const state = this.periodicFlush
+		if (state.inFlight || Date.now() < state.retryAt) return
+		state.inFlight = true
+		try {
+			await this.flush()
+			if (state.failures > 0) {
+				Logger.info(`[BufferedUnifyStore] periodic flush recovered: store=${this.storeKind}, failures=${state.failures}`)
+			}
+			this.periodicFlush = { inFlight: false, failures: 0, retryAt: 0 }
+		} catch (error) {
+			const code = (error as NodeJS.ErrnoException | undefined)?.code ?? "UNKNOWN"
+			state.failures++
+			if (state.failures === 1 || code !== state.lastErrorCode) {
+				Logger.warn(
+					`[BufferedUnifyStore] periodic flush failed: store=${this.storeKind}, code=${code}, failures=${state.failures}`,
+				)
+			}
+			state.lastErrorCode = code
+			state.retryAt = Date.now() + Math.min(this.flushIntervalMs * 2 ** state.failures, MAX_PERIODIC_FLUSH_BACKOFF_MS)
+		} finally {
+			state.inFlight = false
+		}
 	}
 
 	private async flushLocked(): Promise<void> {

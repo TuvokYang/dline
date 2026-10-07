@@ -97,9 +97,30 @@ describe("responses_api_support hosted tools", () => {
 				tool: ServerTool.WEB_SEARCH,
 				phase: "completed",
 				result: { action: completedAction, results: completedResults },
+				// Only the Responses input item fields are kept for replay; search results are not.
+				replay: {
+					type: "hosted_tool",
+					protocol: "openai_responses",
+					blocks: [{ type: "web_search_call", id: "ws_1", status: "completed", action: completedAction }],
+				},
 			},
 		])
 		expect(chunks.some((chunk) => chunk.type === "tool_calls")).to.equal(false)
+	})
+
+	it("keeps no replay for a finished web_search_call that carries no action", async () => {
+		const chunks = await collectChunks([
+			{
+				type: "response.output_item.done",
+				output_index: 0,
+				sequence_number: 1,
+				item: { type: "web_search_call", id: "ws_bare", status: "completed" },
+			},
+		])
+
+		expect(chunks).to.have.length(1)
+		expect(chunks[0]).to.include({ phase: "completed", function_id: "ws_bare" })
+		expect(chunks[0]).not.to.have.property("replay")
 	})
 
 	it("emits hosted image partials as ephemeral preview chunks", async () => {
@@ -474,6 +495,11 @@ describe("responses_api_support hosted tools", () => {
 				tool: ServerTool.WEB_SEARCH,
 				phase: "failed",
 				error: action,
+				replay: {
+					type: "hosted_tool",
+					protocol: "openai_responses",
+					blocks: [{ type: "web_search_call", id: "ws_error", status: "failed", action }],
+				},
 			},
 		])
 	})

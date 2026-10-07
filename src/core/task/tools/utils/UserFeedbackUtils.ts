@@ -1,5 +1,24 @@
+import type { ClineContent } from "@shared/messages/content"
 import type { ClineAskResponse } from "@shared/WebviewMessage"
 import type { TaskConfig } from "../types/TaskConfig"
+
+/**
+ * Load files the user attached while answering a tool and return the text for its tool result.
+ *
+ * PDFs are queued in the pending user message instead, where they follow the tool results and reach the
+ * model as native documents within the request's document budget.
+ * @param userMessageContent Pending next-user-message content of the task.
+ * @param files Attached file paths, if any.
+ * @returns `<file_content>` text for the tool result; empty when nothing was attached.
+ */
+export async function attachToolFeedbackFiles(userMessageContent: ClineContent[], files: string[] | undefined): Promise<string> {
+	if (!files?.length) return ""
+	// Loaded on demand: the extractor pulls in the PDF and spreadsheet parsers.
+	const { processFilesForToolResult } = await import("@integrations/misc/extract-text")
+	const { text, documents } = await processFilesForToolResult(files)
+	userMessageContent.push(...documents)
+	return text
+}
 
 /**
  * Checks whether a received ask response has already been rendered as visible user feedback.

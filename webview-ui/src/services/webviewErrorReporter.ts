@@ -6,6 +6,19 @@ const MAX_REPORTS_PER_SESSION = 20
 const MAX_MESSAGE_LENGTH = 1_000
 const MAX_STACK_LENGTH = 4_000
 
+/**
+ * Notices the browser delivers through the window "error" event although no
+ * code failed. A ResizeObserver loop notice means size changes made inside an
+ * observer callback are delivered on the next frame instead of this one. The
+ * chat list corrects re-measured rows inside that callback
+ * (react-virtuoso `skipAnimationFrameInResizeObserver`), which the library
+ * documents as producing exactly this notice.
+ */
+const BENIGN_BROWSER_NOTICES = new Set([
+	"ResizeObserver loop completed with undelivered notifications.",
+	"ResizeObserver loop limit exceeded",
+])
+
 const reportedSignatures = new Set<string>()
 let reportCount = 0
 let globalHandlersInstalled = false
@@ -40,8 +53,16 @@ export function reportWebviewError(kind: WebviewErrorKind, error: unknown, compo
 export function installGlobalWebviewErrorReporting(): void {
 	if (globalHandlersInstalled) return
 	globalHandlersInstalled = true
-	window.addEventListener("error", (event) => reportWebviewError("uncaught", event.error ?? event.message))
+	window.addEventListener("error", (event) => {
+		if (isBenignBrowserNotice(event)) return
+		reportWebviewError("uncaught", event.error ?? event.message)
+	})
 	window.addEventListener("unhandledrejection", (event) => reportWebviewError("unhandled_rejection", event.reason))
+}
+
+/** A notice carries no thrown value; anything that was thrown is a real failure even if its text matches. */
+function isBenignBrowserNotice(event: ErrorEvent): boolean {
+	return event.error == null && BENIGN_BROWSER_NOTICES.has(event.message)
 }
 
 function normalizeError(error: unknown): { name: string; message: string; stack?: string } {

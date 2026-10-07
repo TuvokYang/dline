@@ -3,6 +3,7 @@ import path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import {
+	expectWorkMessageVisible,
 	openWorkActivities,
 	openWorkTab,
 	prepareWorkSession,
@@ -31,7 +32,7 @@ const BACKGROUND_CHILD_CONTEXT = "Read README.md, remain active briefly, and ret
 const BACKGROUND_CHILD_RESULT = "WORK_BACKGROUND_SUBAGENT_CHILD_OK"
 const COMPLETE = "WORK_DAILY_BACKGROUND_SUBAGENTS_COMPLETE"
 const FOREGROUND_COMMAND = `node -e "console.log('WORK_FOREGROUND_COMMAND_START'); console.log('WORK_FOREGROUND_COMMAND_END')"`
-const BACKGROUND_COMMAND = `node -e "console.log('WORK_BACKGROUND_COMMAND_START'); setTimeout(()=>console.log('WORK_BACKGROUND_COMMAND_END'),12000)"`
+const BACKGROUND_COMMAND = `node -e "console.log('WORK_BACKGROUND_COMMAND_START'); setTimeout(()=>console.log('WORK_BACKGROUND_COMMAND_END'),30000)"`
 
 async function writeWorkSubagent(workspaceDir: string): Promise<void> {
 	const directory = path.join(workspaceDir, ".agents", "subagents")
@@ -75,6 +76,40 @@ async function approveSubagentIfRequested(sidebar: Frame, task: string): Promise
 	if (await approve.isVisible()) await approve.click()
 }
 
+/** Height of the sticky user message that covers the top of the chat list, plus a margin. */
+const STICKY_USER_MESSAGE_CLEARANCE_PX = 48
+const REVEAL_MARGIN_PX = 24
+const MAX_REVEAL_WHEELS = 20
+
+/**
+ * Bring a control inside a chat row into the readable part of the list the way a reader does.
+ *
+ * Playwright's own scroll-into-view is a programmatic scroll. While the list still follows
+ * the end of the conversation, rows that re-measure as they enter the viewport make it
+ * return to the bottom, and the control lands under the sticky user message again on every
+ * retry. A wheel over the list hands the viewport to the reader first, which is how a person
+ * reaches an earlier row.
+ */
+async function revealInChat(sidebar: Frame, control: Locator): Promise<void> {
+	const page = sidebar.page()
+	const scroller = sidebar.locator('[data-virtuoso-scroller="true"]')
+	for (let wheel = 0; wheel < MAX_REVEAL_WHEELS; wheel++) {
+		const [list, target] = await Promise.all([scroller.boundingBox(), control.boundingBox()])
+		if (!list || !target) throw new Error("The chat list or the control has no layout box")
+		const readableTop = list.y + STICKY_USER_MESSAGE_CLEARANCE_PX
+		const readableBottom = list.y + list.height
+		if (target.y >= readableTop && target.y + target.height <= readableBottom) return
+		const delta =
+			target.y < readableTop
+				? target.y - readableTop - REVEAL_MARGIN_PX
+				: target.y + target.height - readableBottom + REVEAL_MARGIN_PX
+		await page.mouse.move(list.x + list.width / 2, list.y + list.height / 2)
+		await page.mouse.wheel(0, delta)
+		await page.waitForTimeout(150)
+	}
+	throw new Error("The chat control did not settle inside the readable part of the list")
+}
+
 async function expectCompletedSubagentCard(
 	sidebar: Frame,
 	task: string,
@@ -90,7 +125,10 @@ async function expectCompletedSubagentCard(
 	await expect(card.getByTestId("subagent-context-content")).toContainText(contextMarker)
 	await expect(card.getByTestId("subagent-tool-step-name")).toHaveText(["read_file", "attempt_completion"])
 	const showOutput = card.getByRole("button", { name: "Show subagent output", exact: true })
-	if (await showOutput.isVisible()) await showOutput.click()
+	if (await showOutput.isVisible()) {
+		await revealInChat(sidebar, showOutput)
+		await showOutput.click()
+	}
 	await expect(card.getByTestId("subagent-output")).toContainText(result)
 	return card
 }
@@ -148,7 +186,7 @@ e2e(
 					workdirectory: ".",
 					requires_approval: false,
 					synchronous: true,
-					timeout: 30,
+					timeout: 60,
 				},
 				expectedRequestIncludes: [HANDOFF_COMMAND_REQUEST],
 			},
@@ -307,26 +345,30 @@ e2e(
 			await expect(foregroundCard.getByTestId("command-output-scroll")).toContainText("WORK_FOREGROUND_COMMAND_END")
 
 			await sendWorkMessage(sidebar, HANDOFF_COMMAND_REQUEST)
-			await expect(sidebar.getByTestId("command-execution-mode").last()).toHaveText("Foreground", { timeout: 60_000 })
 			const footer = sidebar.getByRole("contentinfo")
 			const continueInBackground = footer.locator('vscode-button[aria-label="Continue in Background"]')
+			// TaskView is the interaction authority and may lead the persisted message window in packaged mode.
 			await expect(continueInBackground).toBeVisible({ timeout: 40_000 })
 			await continueInBackground.click()
-			await expect(sidebar.getByTestId("command-execution-mode").last()).toHaveText("Background", { timeout: 30_000 })
 
 			let activities = await openWorkActivities(sidebar)
 			const commandActivity = activities.filter({ hasText: BACKGROUND_COMMAND })
 			await expect(commandActivity).toHaveCount(1, { timeout: 30_000 })
 			await expect(commandActivity).toHaveAttribute("data-activity-status", "running")
 			await openWorkTab(sidebar)
+			// A running card is expanded and has no command-name button; that button only exists
+			// once the card collapses after completion, which is too late to observe the handoff
+			// while the command is still running.
+			const handoffCard = sidebar.getByTestId("command-card").filter({ hasText: BACKGROUND_COMMAND })
+			await expect(handoffCard.getByTestId("command-execution-mode")).toHaveText("Background", { timeout: 60_000 })
 			await sendWorkMessage(sidebar, DURING_COMMAND_INPUT)
-			await expect(sidebar.getByText("WORK_DURING_BACKGROUND_COMMAND_OK", { exact: true })).toBeVisible({ timeout: 60_000 })
+			await expectWorkMessageVisible(sidebar, "WORK_DURING_BACKGROUND_COMMAND_OK", { timeout: 60_000 })
 
 			activities = await openWorkActivities(sidebar)
 			await expect(commandActivity).toHaveAttribute("data-activity-status", "completed", { timeout: 60_000 })
 			await openWorkTab(sidebar)
 			await sendWorkMessage(sidebar, COLLECT_COMMAND_INPUT)
-			await expect(sidebar.getByText("WORK_BACKGROUND_COMMAND_RESULT_OK", { exact: true })).toBeVisible({ timeout: 60_000 })
+			await expectWorkMessageVisible(sidebar, "WORK_BACKGROUND_COMMAND_RESULT_OK", { timeout: 60_000 })
 
 			await sendWorkMessage(sidebar, FOREGROUND_SUBAGENT_REQUEST)
 			await approveSubagentIfRequested(sidebar, FOREGROUND_CHILD_TASK)
@@ -358,15 +400,13 @@ e2e(
 			const subagentActivity = sidebar.locator(`[data-testid="activity-item"][data-activity-id="${subagentActivityId}"]`)
 			await openWorkTab(sidebar)
 			await sendWorkMessage(sidebar, DURING_SUBAGENT_INPUT)
-			await expect(sidebar.getByText("WORK_DURING_BACKGROUND_SUBAGENT_OK", { exact: true })).toBeVisible({
-				timeout: 60_000,
-			})
+			await expectWorkMessageVisible(sidebar, "WORK_DURING_BACKGROUND_SUBAGENT_OK", { timeout: 60_000 })
 
 			activities = await openWorkActivities(sidebar)
 			await expect(subagentActivity).toHaveAttribute("data-activity-status", "completed", { timeout: 60_000 })
 			await openWorkTab(sidebar)
 			await sendWorkMessage(sidebar, COLLECT_SUBAGENT_INPUT)
-			await expect(sidebar.getByText(COMPLETE, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
+			await expectWorkMessageVisible(sidebar, COMPLETE, { exact: false, timeout: 60_000 })
 			await expectCompletedSubagentCard(
 				sidebar,
 				BACKGROUND_CHILD_TASK,

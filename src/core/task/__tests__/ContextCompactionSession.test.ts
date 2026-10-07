@@ -1,10 +1,11 @@
 import type { ApiHandler } from "@core/api"
 import { OutputLimitExceededError } from "@core/api/stream/OutputLimitExceededError"
+import { renderCompactionRetryReminder } from "@core/context/context-management/compaction-attempt-failure"
 import { estimateContextWindowCandidate } from "@core/context/context-management/context-window-projection"
 import { computeSummarizeBudget, resolveCompactTriggerPolicy } from "@core/context/context-management/context-window-utils"
 import type { TargetWindowFittingDecision } from "@core/context/context-management/TargetWindowFittingService"
 import { buildCompactionPassHistory } from "@core/context/context-management/target-window-fitting"
-import type { CompactionProviderInput } from "@core/task/compaction/CompactionRequestReplay"
+import type { CompactionProviderInput } from "@core/task/compaction/CompactionProviderInput"
 import { ExplicitInstructionRegistry } from "@core/task/explicit-instructions/ExplicitInstructionRegistry"
 import { ExplicitInstructionRequestScope } from "@core/task/explicit-instructions/ExplicitInstructionRequestScope"
 import type { ClineStorageMessage } from "@shared/messages/content"
@@ -30,14 +31,14 @@ function decision(status: TargetWindowFittingDecision["status"]): TargetWindowFi
 	}
 }
 
+/** Render the plain-text reply the compaction explicit instruction asks the model for. */
+function summaryBlock(summary: string): string {
+	return `<summarize_task>\n<context>\n${summary}\n</context>\n</summarize_task>`
+}
+
 function useSuccessfulCompactionStream(): void {
 	API.createMessage = vi.fn(async function* () {
-		yield {
-			type: "tool_calls",
-			function_id: "f",
-			tool_index: 0,
-			tool_call: { function: { name: "summarize_task", arguments: JSON.stringify({ context: "summary" }) } },
-		}
+		yield { type: "text", text: summaryBlock("summary") }
 		yield { type: "usage", inputTokens: 10, outputTokens: 5, cacheWriteTokens: 0, cacheReadTokens: 0 }
 	}) as ApiHandler["createMessage"]
 }
@@ -361,14 +362,7 @@ describe("ContextCompactionSession", () => {
 		const api = {
 			createMessage: vi.fn(async function* () {
 				const summary = summaries[providerCall++]
-				yield {
-					type: "tool_calls",
-					function_id: `large-summary-${providerCall}`,
-					tool_index: 0,
-					tool_call: {
-						function: { name: "summarize_task", arguments: JSON.stringify({ context: summary }) },
-					},
-				}
+				yield { type: "text", text: summaryBlock(summary) }
 			}),
 		} as unknown as ApiHandler
 		const session = new ContextCompactionSession(ports, { maxRetryAttempts: 1 })
@@ -398,14 +392,11 @@ describe("ContextCompactionSession", () => {
 		expect(ports.commit).toHaveBeenCalledWith(
 			expect.objectContaining({ operationId: "operation-800k-multi-pass" }),
 			expect.objectContaining({ passIndex: 2, coveredTurnCount: 2, cumulativeSummary: "FINAL_800K_ROLLING_SUMMARY" }),
+			{ acceptedPassCount: 2 },
 		)
 	})
 
-	it.each([
-		["ordinary failure", new Error("manual compaction failed")],
-		["OpenAI max-output termination", new OutputLimitExceededError("openai_responses", "max_output_tokens")],
-	] as const)("does not automatically replay a manual Pass after %s", async (_case, failure) => {
-		const ports = createPorts()
+	function useManualFailureRequest(ports: ContextCompactionSessionPorts): void {
 		ports.buildPassRequest = vi.fn(async (_input, state) => {
 			const explicitInstructions = new ExplicitInstructionRequestScope(new ExplicitInstructionRegistry(), {
 				requestId: `manual-failure-request-${state.passIndex}`,
@@ -418,28 +409,36 @@ describe("ContextCompactionSession", () => {
 				operationId: state.operationId,
 			})
 			return {
-				providerInput: { providerOutputCap: 1_000 } as CompactionProviderInput,
+				providerInput: {
+					systemPrompt: "system",
+					messages: [{ role: "user", content: [{ type: "text", text: "compact the history" }] }],
+					tools: [],
+					serverTools: [],
+					providerOutputCap: 1_000,
+				} as CompactionProviderInput,
 				explicitInstructions,
 				initialAttemptId: `manual-failure-attempt-${state.passIndex}`,
 			}
 		})
-		const api = {
+	}
+
+	function unclosedSummaryThen(failure: Error): ApiHandler {
+		return {
 			createMessage: vi.fn(async function* () {
-				yield {
-					type: "tool_calls",
-					function_id: "manual-failure",
-					tool_index: 0,
-					tool_call: {
-						function: { name: "summarize_task", arguments: '{"context":"damaged partial"' },
-					},
-				}
+				yield { type: "text", text: "<summarize_task>\n<context>\ndamaged partial" }
 				throw failure
 			}),
 		} as unknown as ApiHandler
+	}
+
+	it("does not automatically replay a manual Pass after an ordinary Provider failure", async () => {
+		const ports = createPorts()
+		useManualFailureRequest(ports)
+		const api = unclosedSummaryThen(new Error("manual compaction failed"))
 		const session = new ContextCompactionSession(ports, { maxRetryAttempts: 3 })
 
 		const result = await session.run({
-			operationId: `operation-manual-failure-${_case}`,
+			operationId: "operation-manual-provider-failure",
 			trigger: "task_header",
 			compactionApi: api,
 			targetApi: api,
@@ -451,8 +450,55 @@ describe("ContextCompactionSession", () => {
 		expect(api.createMessage).toHaveBeenCalledOnce()
 		const events = vi.mocked(ports.publish).mock.calls.map(([, event]) => event)
 		expect(events.some((event) => event.kind === "pass_retry")).toBe(false)
-		expect(events.at(-1)).toMatchObject({ kind: "failed" })
+		expect(events.at(-1)).toMatchObject({ kind: "failed", failureKind: "provider_error" })
 		expect(ports.reprojectTarget).not.toHaveBeenCalled()
+	})
+
+	it("retries a manual Pass cut off at the output limit with an output-limit reminder", async () => {
+		const ports = createPorts()
+		useManualFailureRequest(ports)
+		let providerCall = 0
+		const api = {
+			createMessage: vi.fn(async function* () {
+				if (providerCall++ === 0) {
+					yield { type: "text", text: "<summarize_task>\n<context>\ndamaged partial" }
+					throw new OutputLimitExceededError("openai_responses", "max_output_tokens")
+				}
+				yield { type: "text", text: summaryBlock("compact manual summary") }
+			}),
+		} as unknown as ApiHandler
+		const session = new ContextCompactionSession(ports, { maxRetryAttempts: 3 })
+
+		const result = await session.run({
+			operationId: "operation-manual-output-limit",
+			trigger: "task_header",
+			compactionApi: api,
+			targetApi: api,
+			targetMode: "act",
+			sourceHistory: HISTORY,
+		})
+
+		expect(result).toBe("completed")
+		expect(api.createMessage).toHaveBeenCalledTimes(2)
+		const reminder = renderCompactionRetryReminder("output_limit")
+		const requestTexts = (call: Parameters<ApiHandler["createMessage"]> | undefined): string[] =>
+			(call?.[1] ?? []).flatMap((message) =>
+				typeof message.content === "string"
+					? [message.content]
+					: message.content.flatMap((block) => (block.type === "text" ? [block.text] : [])),
+			)
+		const [firstRequest, retryRequest] = vi.mocked(api.createMessage).mock.calls
+		expect(requestTexts(firstRequest)).not.toContain(reminder)
+		expect(requestTexts(retryRequest)).toContain(reminder)
+		const events = vi.mocked(ports.publish).mock.calls.map(([, event]) => event)
+		const retries = events.filter((event) => event.kind === "pass_retry")
+		expect(retries).toHaveLength(1)
+		expect(retries[0]).toMatchObject({ event: { kind: "pass_retry", failureKind: "output_limit" } })
+		expect(ports.commit).toHaveBeenCalledWith(
+			expect.objectContaining({ operationId: "operation-manual-output-limit" }),
+			expect.objectContaining({ cumulativeSummary: "compact manual summary" }),
+			{ acceptedPassCount: 1 },
+		)
 	})
 
 	it("owns planning through commit for one accepted Pass", async () => {
@@ -503,7 +549,7 @@ describe("ContextCompactionSession", () => {
 			kind: "pass_receiving",
 			passIdentity: { operationId: "operation-1", passIndex: 0 },
 			attempt: { attemptIndex: 0, authorizationAttemptId: "attempt-0" },
-			chunk: { type: "tool_calls" },
+			chunk: { type: "text" },
 		})
 		expect(events[2]).not.toHaveProperty("state")
 		expect(events[3]).toMatchObject({
@@ -550,36 +596,22 @@ describe("ContextCompactionSession", () => {
 		expect(publish.mock.invocationCallOrder[5]).toBeLessThan(vi.mocked(ports.commit).mock.invocationCallOrder[0])
 	})
 
-	it("commits an accepted projection without waiting for tail settlement", async () => {
+	it("commits a closed automatic summary even when the Provider stream fails after it", async () => {
 		const ports = createPorts()
-		let releaseTail!: () => void
-		const tailGate = new Promise<void>((resolve) => {
-			releaseTail = resolve
-		})
 		const api = {
 			createMessage: vi.fn(async function* () {
 				yield {
-					type: "tool_calls",
-					function_id: "call-summary-checkpoint-boundary",
-					phase: "completed",
-					tool_index: 0,
-					tool_call: {
-						function: {
-							name: ClineDefaultTool.SUMMARIZE_TASK,
-							arguments: JSON.stringify({
-								context:
-									"The accepted summary records the stable architecture, the completed implementation work, the remaining verification boundary, and the precise next action.",
-							}),
-						},
-					},
+					type: "text",
+					text: summaryBlock(
+						"The accepted summary records the stable architecture, the completed implementation work, the remaining verification boundary, and the precise next action.",
+					),
 				}
-				await tailGate
 				throw new Error("provider connection closed after summary completion")
 			}),
 		} as unknown as ApiHandler
 		const session = new ContextCompactionSession(ports, { maxRetryAttempts: 3 })
 
-		const completion = session.run({
+		const result = await session.run({
 			operationId: "operation-completed-summary-tail-error",
 			trigger: "auto_compaction",
 			compactionApi: api,
@@ -588,19 +620,9 @@ describe("ContextCompactionSession", () => {
 			sourceHistory: HISTORY,
 		})
 
-		await vi.waitFor(() => {
-			expect(ports.stageAcceptedPass).toHaveBeenCalledOnce()
-			const events = vi.mocked(ports.publish).mock.calls.map(([, event]) => event)
-			expect(events.some((event) => event.kind === "pass_completed")).toBe(true)
-		})
-
-		try {
-			await vi.waitFor(() => expect(ports.commit).toHaveBeenCalledOnce(), { timeout: 100 })
-			await expect(completion).resolves.toBe("completed")
-		} finally {
-			releaseTail()
-		}
+		expect(result).toBe("completed")
 		expect(api.createMessage).toHaveBeenCalledOnce()
+		expect(ports.stageAcceptedPass).toHaveBeenCalledOnce()
 		expect(ports.commit).toHaveBeenCalledOnce()
 		const events = vi.mocked(ports.publish).mock.calls.map(([, event]) => event)
 		expect(events.some((event) => event.kind === "pass_retry")).toBe(false)
@@ -612,19 +634,10 @@ describe("ContextCompactionSession", () => {
 		const api = {
 			createMessage: vi.fn(async function* () {
 				yield {
-					type: "tool_calls",
-					function_id: "call-manual-summary-tail-failure",
-					phase: "completed",
-					tool_index: 0,
-					tool_call: {
-						function: {
-							name: ClineDefaultTool.SUMMARIZE_TASK,
-							arguments: JSON.stringify({
-								context:
-									"The manually reviewed summary preserves the approved design, the accepted implementation state, and the remaining verification work.",
-							}),
-						},
-					},
+					type: "text",
+					text: summaryBlock(
+						"The manually reviewed summary preserves the approved design, the accepted implementation state, and the remaining verification work.",
+					),
 				}
 				throw new Error("manual provider stream failed after summary completion")
 			}),
@@ -680,12 +693,7 @@ describe("ContextCompactionSession", () => {
 		const api = {
 			createMessage: vi.fn(async function* () {
 				const summary = requestCount++ === 0 ? "first unconfirmed summary" : "confirmed summary"
-				yield {
-					type: "tool_calls",
-					function_id: `f-${requestCount}`,
-					tool_index: 0,
-					tool_call: { function: { name: "summarize_task", arguments: JSON.stringify({ context: summary }) } },
-				}
+				yield { type: "text", text: summaryBlock(summary) }
 				yield { type: "usage", inputTokens: 10, outputTokens: 5, cacheWriteTokens: 0, cacheReadTokens: 0 }
 			}),
 		} as unknown as ApiHandler
@@ -734,6 +742,75 @@ describe("ContextCompactionSession", () => {
 		})
 	})
 
+	function streamSummaryWithProgress(summaries: readonly string[], progress: readonly string[]): ApiHandler {
+		let providerCall = 0
+		return {
+			createMessage: vi.fn(async function* () {
+				const call = providerCall++
+				yield {
+					type: "text",
+					text: `<summarize_task>\n<context>\n${summaries[call]}\n</context>\n<task_progress>\n${progress[call]}\n</task_progress>\n</summarize_task>`,
+				}
+				yield { type: "usage", inputTokens: 100, outputTokens: 50, cacheWriteTokens: 0, cacheReadTokens: 0 }
+			}),
+		} as unknown as ApiHandler
+	}
+
+	it("commits the task progress of a single Pass that covers every turn", async () => {
+		const ports = createPorts()
+		const api = streamSummaryWithProgress(["SINGLE_PASS_SUMMARY"], ["- [x] Single pass step"])
+		const session = new ContextCompactionSession(ports, { maxRetryAttempts: 1 })
+
+		const result = await session.run({
+			operationId: "operation-single-pass-progress",
+			trigger: "auto_compaction",
+			compactionApi: api,
+			targetApi: api,
+			targetMode: "act",
+			sourceHistory: HISTORY,
+		})
+
+		expect(result).toBe("completed")
+		expect(api.createMessage).toHaveBeenCalledOnce()
+		expect(ports.commit).toHaveBeenCalledWith(
+			expect.objectContaining({ operationId: "operation-single-pass-progress" }),
+			expect.objectContaining({ passIndex: 1, coveredTurnCount: 2 }),
+			{ acceptedPassCount: 1, taskProgress: "- [x] Single pass step" },
+		)
+	})
+
+	it("never commits task progress from the Passes of an iterative compaction", async () => {
+		const ports = createPorts()
+		ports.getPassInputCeiling = () => 5_000
+		ports.estimatePassInput = vi.fn(async (_input, history) => {
+			const serialized = JSON.stringify(history)
+			return serialized.includes("turn one") && serialized.includes("turn two") ? 6_000 : 1_000
+		})
+		ports.reprojectTarget = vi.fn().mockResolvedValueOnce(decision("continue")).mockResolvedValueOnce(decision("complete"))
+		const api = streamSummaryWithProgress(
+			["ITERATIVE_SUMMARY_ONE", "ITERATIVE_SUMMARY_TWO"],
+			["- [ ] Stale first pass step", "- [x] Partial second pass step"],
+		)
+		const session = new ContextCompactionSession(ports, { maxRetryAttempts: 1 })
+
+		const result = await session.run({
+			operationId: "operation-iterative-progress",
+			trigger: "auto_compaction",
+			compactionApi: api,
+			targetApi: api,
+			targetMode: "act",
+			sourceHistory: HISTORY,
+		})
+
+		expect(result).toBe("completed")
+		expect(api.createMessage).toHaveBeenCalledTimes(2)
+		expect(ports.commit).toHaveBeenCalledOnce()
+		const [, committedState, outcome] = vi.mocked(ports.commit).mock.calls[0]
+		expect(committedState).toMatchObject({ passIndex: 2, coveredTurnCount: 2, cumulativeSummary: "ITERATIVE_SUMMARY_TWO" })
+		expect(outcome).toEqual({ acceptedPassCount: 2 })
+		expect(outcome).not.toHaveProperty("taskProgress")
+	})
+
 	it("refits an oversized cumulative summary before replanning the same uncovered turn", async () => {
 		const ports = createPorts()
 		ports.getPassInputCeiling = () => 5_000
@@ -759,14 +836,7 @@ describe("ContextCompactionSession", () => {
 		const api = {
 			createMessage: vi.fn(async function* () {
 				const summary = summaries[providerCall++]
-				yield {
-					type: "tool_calls",
-					function_id: `summary-${providerCall}`,
-					tool_index: 0,
-					tool_call: {
-						function: { name: "summarize_task", arguments: JSON.stringify({ context: summary }) },
-					},
-				}
+				yield { type: "text", text: summaryBlock(summary) }
 				yield { type: "usage", inputTokens: 100, outputTokens: 50, cacheWriteTokens: 0, cacheReadTokens: 0 }
 			}),
 		} as unknown as ApiHandler
@@ -795,6 +865,7 @@ describe("ContextCompactionSession", () => {
 		expect(ports.commit).toHaveBeenCalledWith(
 			expect.objectContaining({ operationId: "operation-summary-refit" }),
 			expect.objectContaining({ passIndex: 2, coveredTurnCount: 2, cumulativeSummary: "FINAL_ROLLING_SUMMARY" }),
+			{ acceptedPassCount: 2 },
 		)
 		const events = vi.mocked(ports.publish).mock.calls.map(([, event]) => event)
 		expect(events.filter((event) => event.kind === "pass_started")).toHaveLength(2)
@@ -852,14 +923,7 @@ describe("ContextCompactionSession", () => {
 		const api = {
 			createMessage: vi.fn(async function* () {
 				const summary = summaries[providerCall++]
-				yield {
-					type: "tool_calls",
-					function_id: `summary-exhausted-${providerCall}`,
-					tool_index: 0,
-					tool_call: {
-						function: { name: "summarize_task", arguments: JSON.stringify({ context: summary }) },
-					},
-				}
+				yield { type: "text", text: summaryBlock(summary) }
 			}),
 		} as unknown as ApiHandler
 		const session = new ContextCompactionSession(ports, { maxRetryAttempts: 1 })

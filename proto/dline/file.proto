@@ -38,6 +38,12 @@ service FileService {
   // Convert URIs to workspace-relative paths
   rpc getRelativePaths(RelativePathsRequest) returns (RelativePaths);
 
+  // Stages a dropped or pasted file that only exists as bytes and returns the host path to attach (empty when rejected)
+  rpc stageAttachment(StageAttachmentRequest) returns (String);
+
+  // Resolves dropped or pasted file URIs to host paths the composer attaches; rejected files are omitted
+  rpc resolveAttachmentUris(RelativePathsRequest) returns (StringArray);
+
   // Search for files in the workspace with fuzzy matching
   rpc searchFiles(FileSearchRequest) returns (FileSearchResults);
 
@@ -228,6 +234,13 @@ message RelativePathsRequest {
 // Response containing the converted relative paths
 message RelativePaths {
   repeated string paths = 1;
+}
+
+// A file dropped or pasted into the composer that has no host path, only its bytes
+message StageAttachmentRequest {
+  Metadata metadata = 1;
+  string file_name = 2;
+  bytes data = 3;
 }
 
 // Enum for file search type filtering

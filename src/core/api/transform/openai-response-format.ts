@@ -1,6 +1,106 @@
-import { ResponseInput, ResponseInputMessageContentList, ResponseReasoningItem } from "openai/resources/responses/responses"
-import { ClineStorageMessage, imageSourceMediaType, imageSourceToUrl } from "@/shared/messages/content"
+import {
+	ResponseInput,
+	ResponseInputFile,
+	ResponseInputImage,
+	ResponseInputMessageContentList,
+	ResponseInputText,
+	ResponseReasoningItem,
+} from "openai/resources/responses/responses"
+import {
+	type ClineAssistantHostedToolBlock,
+	type ClineDocumentContentBlock,
+	ClineStorageMessage,
+	type ClineToolResponseContent,
+	imageSourceMediaType,
+	imageSourceToUrl,
+	isHostedToolBlock,
+} from "@/shared/messages/content"
+import { ServerTool } from "@/shared/proto/dline/models/metadata"
 import { getResultFunctionId, getUseFunctionId, projectChatFunctionId } from "./tool-identity-projector"
+
+/** Hosted tool that produced each replayable Responses output item type. */
+const RESPONSES_HOSTED_ITEM_TOOLS: ReadonlyMap<string, string> = new Map([["web_search_call", "web_search"]])
+
+/**
+ * Responses `input_file` for a base64 PDF document block; other document sources have no Responses form.
+ *
+ * `file_data` carries the PDF as a data URL, the form the Responses API accepts for inline files.
+ */
+export function responsesInputFile(block: ClineDocumentContentBlock): ResponseInputFile | undefined {
+	if (block.source.type !== "base64") return undefined
+	return {
+		type: "input_file",
+		filename: block.title || "document.pdf",
+		file_data: `data:${block.source.media_type};base64,${block.source.data}`,
+	}
+}
+
+/**
+ * Responses `function_call_output.output` for one tool result.
+ *
+ * Text-only results stay one plain string. A result that carries images becomes native `input_text` and
+ * `input_image` items, so the model sees the image itself instead of its base64 text, which it cannot
+ * interpret and which costs context for every character.
+ */
+export function responsesToolOutput(content: ClineToolResponseContent): string | Array<ResponseInputText | ResponseInputImage> {
+	if (typeof content === "string") return content
+	if (!content.some((block) => block.type === "image")) {
+		return content.map((block) => (block.type === "text" ? block.text : "")).join("\n")
+	}
+	return content.map((block) =>
+		block.type === "image"
+			? { type: "input_image", detail: "auto", image_url: imageSourceToUrl(block.source) }
+			: { type: "input_text", text: block.text },
+	)
+}
+
+/** Hosted tool names a Responses request declares, used to decide which stored hosted calls it may replay. */
+export function declaredResponsesHostedToolNames(serverTools?: readonly ServerTool[]): ReadonlySet<string> {
+	return new Set(serverTools?.includes(ServerTool.WEB_SEARCH) ? ["web_search"] : [])
+}
+
+/**
+ * Record one finished Responses Web Search call so later requests can send it back verbatim, as Codex does.
+ *
+ * Only the fields of the Responses `web_search_call` input item are kept (`type`, `id`, `status`, `action`).
+ * Search `results` appear only when a request opts in through `include` and are not part of the input item.
+ * Returns undefined when the item has no action, because the input item cannot be rebuilt without one.
+ */
+export function createResponsesWebSearchReplay(item: {
+	id: string
+	status?: unknown
+	action?: unknown
+}): ClineAssistantHostedToolBlock | undefined {
+	if (typeof item.action !== "object" || item.action === null) return undefined
+	return {
+		type: "hosted_tool",
+		protocol: "openai_responses",
+		blocks: [
+			{
+				type: "web_search_call",
+				id: item.id,
+				status: typeof item.status === "string" ? item.status : "completed",
+				action: item.action,
+			},
+		],
+	}
+}
+
+/**
+ * Native Responses items of one stored hosted call, or none when this request cannot replay it: the call
+ * came from another protocol, or the request does not declare the hosted tool that ran it.
+ */
+function replayableResponsesItems(
+	block: ClineAssistantHostedToolBlock,
+	replayHostedTools: ReadonlySet<string> | undefined,
+): Array<Record<string, unknown>> {
+	if (block.protocol !== "openai_responses" || !replayHostedTools?.size) return []
+	const declared = block.blocks.every((item) => {
+		const tool = typeof item.type === "string" ? RESPONSES_HOSTED_ITEM_TOOLS.get(item.type) : undefined
+		return tool !== undefined && replayHostedTools.has(tool)
+	})
+	return declared ? block.blocks : []
+}
 
 /**
  * Converts an array of ClineStorageMessage objects (extension of Anthropic format) to a ResponseInput array to use with OpenAI's Responses API.
@@ -74,7 +174,15 @@ import { getResultFunctionId, getUseFunctionId, projectChatFunctionId } from "./
  */
 export function convertToOpenAIResponsesInput(
 	_messages: ClineStorageMessage[],
-	options?: { usePreviousResponseId?: boolean },
+	options?: {
+		usePreviousResponseId?: boolean
+		/**
+		 * Hosted tool names declared by this request. A stored Responses hosted call is sent back as its
+		 * native output item only when its tool is in this set; otherwise it is dropped like any other
+		 * hosted block, so a request never carries a hosted item for a tool it does not declare.
+		 */
+		replayHostedTools?: ReadonlySet<string>
+	},
 ): {
 	input: ResponseInput
 	previousResponseId?: string
@@ -105,7 +213,7 @@ export function convertToOpenAIResponsesInput(
 	// which the Responses API rejects with "No tool call found for tool output".
 	const sentCallIds = new Set<string>()
 	// Demoted orphan outputs accumulated across messages, flushed as user text.
-	const demotedOutputs: string[] = []
+	const demotedOutputs: ResponseInputMessageContentList = []
 
 	for (const m of messages) {
 		if (typeof m.content === "string") {
@@ -120,6 +228,10 @@ export function convertToOpenAIResponsesInput(
 			const assistantItems: any[] = []
 
 			for (const part of m.content) {
+				if (isHostedToolBlock(part)) {
+					assistantItems.push(...replayableResponsesItems(part, options?.replayHostedTools))
+					continue
+				}
 				const responseId = part.provider_metadata?.response_id
 				switch (part.type) {
 					case "thinking":
@@ -226,6 +338,11 @@ export function convertToOpenAIResponsesInput(
 							image_url: imageSourceToUrl(part.source),
 						})
 						break
+					case "document": {
+						const file = responsesInputFile(part)
+						if (file) messageContent.push(file)
+						break
+					}
 					case "tool_result": {
 						// Flush any pending message content before adding tool result
 						if (messageContent.length > 0) {
@@ -234,13 +351,15 @@ export function convertToOpenAIResponsesInput(
 						}
 						const functionId = getResultFunctionId(part)
 						const projectedCallId = projectChatFunctionId(functionId)
-						const output = typeof part.content === "string" ? part.content : JSON.stringify(part.content)
+						const output = responsesToolOutput(part.content)
 						if (!sentCallIds.has(projectedCallId)) {
 							// The pairing function_call is not in the sent history (truncated or
 							// never recorded). Emitting an orphaned function_call_output would
-							// fail the request, so keep the output as plain user text.
-							if (output) {
-								demotedOutputs.push(output)
+							// fail the request, so keep the output as ordinary user content.
+							if (typeof output !== "string") {
+								demotedOutputs.push(...output)
+							} else if (output) {
+								demotedOutputs.push({ type: "input_text", text: output })
 							}
 							break
 						}
@@ -258,12 +377,9 @@ export function convertToOpenAIResponsesInput(
 			if (messageContent.length > 0) {
 				allItems.push({ role: m.role, content: [...messageContent] })
 			}
-			// Flush demoted orphan outputs as plain user text.
+			// Flush demoted orphan outputs as ordinary user content.
 			if (demotedOutputs.length > 0) {
-				allItems.push({
-					role: m.role,
-					content: demotedOutputs.map((output) => ({ type: "input_text", text: output })),
-				})
+				allItems.push({ role: m.role, content: [...demotedOutputs] })
 				demotedOutputs.length = 0
 			}
 		}

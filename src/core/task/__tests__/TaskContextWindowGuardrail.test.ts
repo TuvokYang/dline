@@ -99,7 +99,7 @@ describe("Task context-window final admission guard", () => {
 		expect(finalGuardIndex).toBeGreaterThanOrEqual(0)
 		expect(cancelIndex).toBeGreaterThan(finalGuardIndex)
 		expect(rerouteIndex).toBeGreaterThan(cancelIndex)
-		expect(helper).toContain("targetContinuationContent: cloneDeep(ordinaryInput)")
+		expect(helper).toContain("excludeConsumedPendingResults(ordinaryInput, consumedPendingFunctionIds)")
 		expect(helper).toContain("ordinaryInput: cloneDeep(ordinaryInput)")
 		expect(helper).not.toContain("overwriteApiConversationHistory(")
 		expect(helper).not.toContain("conversationHistoryDeletedRange =")
@@ -171,7 +171,7 @@ describe("Task context-window final admission guard", () => {
 		const taskHeader = extractMethod(source, "public async compactTask(", "/** Apply one explicit legacy history truncation")
 
 		expect(invalidator).toContain("this.ordinaryRequestInputReplay.clear()")
-		expect(invalidator).toContain("this.compactionRequestReplay.clear()")
+		expect(source).not.toContain("compactionRequestReplay")
 		for (const method of [ordinary, manual, transition, taskHeader]) {
 			expect(method).toContain("this.invalidatePreparedProviderInputs()")
 		}
@@ -248,9 +248,13 @@ describe("Task context-window final admission guard", () => {
 		const requestMethod = extractMethod(taskSource, "async recursivelyMakeClineRequests(", "async loadContext(")
 		const decisionIndex = sessionSource.indexOf("const decision = projection")
 		const completeIndex = sessionSource.indexOf('if (decision.status === "complete")', decisionIndex)
-		const commitIndex = sessionSource.indexOf("await this.ports.commit(input, state)", completeIndex)
+		const commitIndex = sessionSource.indexOf("await this.ports.commit(input, state,", completeIndex)
 		const exhaustedIndex = sessionSource.indexOf('if (decision.status === "exhausted")', commitIndex)
-		const resumeIndex = requestMethod.indexOf("return this.recursivelyMakeClineRequests(originalUserContent")
+		// The resumed request persists the complete input; only the provider projection omits summarized results.
+		const resumeIndex = requestMethod.search(
+			/runOrdinaryContextCompaction\([\s\S]*?return this\.recursivelyMakeClineRequests\(\s*originalUserContent,/,
+		)
+		expect(requestMethod).not.toContain("excludeConsumedPendingResults(originalUserContent")
 
 		expect(decisionIndex).toBeGreaterThanOrEqual(0)
 		expect(completeIndex).toBeGreaterThan(decisionIndex)
@@ -273,7 +277,7 @@ describe("Task context-window final admission guard", () => {
 		expect(sessionCall).toBeGreaterThanOrEqual(0)
 		expect(sessionCall).toBeLessThan(apiStartedIndex)
 		expect(sessionCall).toBeLessThan(persistenceIndex)
-		expect(sessionSource).toContain("runInternalCompactionPassWithRetry({")
+		expect(sessionSource).toContain("runInternalCompactionPassWithRetry(")
 		expect(sessionSource).not.toContain("compactionRequestReplay")
 	})
 
@@ -325,7 +329,11 @@ describe("Task context-window final admission guard", () => {
 		// Retry must keep the gated request's identity: a persisted request is replayed, never re-appended.
 		expect(presenter).toContain("persistedRequest: boolean")
 		expect(presenter).not.toContain("persistedRequest: false")
-		expect(requestMethod.match(/if \(result === "failed"\)/g)).toHaveLength(2)
+		// Automatic, ordinary, and manual /cmd:compact failures each present the terminal recovery interaction.
+		expect(requestMethod.match(/if \(result === "failed"\)/g)).toHaveLength(3)
+		expect(requestMethod).toMatch(
+			/await this\.presentTerminalCompactionFailure\(operationId, apiIndex, userContent, persistedRequest\)/,
+		)
 		expect(
 			requestMethod.match(
 				/await this\.presentTerminalCompactionFailure\(\s*operationId,\s*apiIndex,\s*ordinaryCompactionInput,\s*persistedRequest,?\s*\)/g,
@@ -412,7 +420,7 @@ describe("Task context-window final admission guard", () => {
 		expect(method).toContain("this.contextCompactionPresentation.complete(")
 		expect(method).toContain("this.contextCompactionPresentation.prepareSummaryRefit(")
 		expect(method).toContain("this.contextCompactionPresentation.completeSummaryRefit(")
-		expect(method).toContain("this.contextCompactionPresentation.fail(input.operationId, event.error)")
+		expect(method).toContain("this.contextCompactionPresentation.fail(input.operationId, event.error, event.failureKind)")
 		expect(method).toContain("this.publishContextCompactionSnapshot(input, snapshot)")
 		expect(method).toContain("this.commitContextCompactionSnapshot(input, durableSnapshot)")
 		expect(source).toContain("compactionDurable: partial === false")

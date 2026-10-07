@@ -25,6 +25,7 @@ import {
 	createVSCodeExtensionLaunchArguments,
 	createWorkerExtensionsDir,
 	ensureDlineVsixInstalled,
+	FULL_RATE_RENDERING_ARGUMENTS,
 	portableEnvironment,
 	resolveWorkerExtensionsSlot,
 	shouldPreinstallDlineVsix,
@@ -777,6 +778,7 @@ export const e2e = test
 						...(cdpPort !== undefined ? [`--remote-debugging-port=${cdpPort}`] : []),
 						"--disable-updates",
 						"--disable-workspace-trust",
+						...FULL_RATE_RENDERING_ARGUMENTS,
 						...(launchOptions.windowSize
 							? [`--window-size=${launchOptions.windowSize.width},${launchOptions.windowSize.height}`]
 							: []),

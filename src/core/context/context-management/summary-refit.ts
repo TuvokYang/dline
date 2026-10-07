@@ -37,7 +37,7 @@ export function buildSummaryRefitGuidance(carryLimitTokens: number, refitAttempt
 Rewrite only the cumulative compaction summary supplied immediately before this instruction.
 Preserve every fact required to continue the task, but remove repetition and lower-value detail.
 Do not add facts, process any uncovered logical turn, or change the task state.
-The complete summarize_task response has a hard limit of ${carryLimitTokens} tokens.
+The complete response, including reasoning and the <summarize_task> block, has a hard limit of ${carryLimitTokens} tokens.
 This is bounded refit attempt ${refitAttempt} of ${MAX_SUMMARY_REFIT_ATTEMPTS}; return a strictly smaller summary.`
 }
 

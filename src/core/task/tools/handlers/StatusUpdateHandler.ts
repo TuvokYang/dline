@@ -2,37 +2,17 @@ import type { ToolUse } from "@core/assistant-message"
 import { formatResponse } from "@core/prompts/responses"
 import { ClineDefaultTool } from "@shared/tools"
 import type { ToolResponse } from "../../index"
+import { statusFeedbackText } from "../../interaction/InteractionContinuation"
 import type { IPartialBlockHandler, IToolHandler } from "../ToolExecutorCoordinator"
 import { interactionId, interactionTurnId, type TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
+import { attachToolFeedbackFiles } from "../utils/UserFeedbackUtils"
 
 export class StatusUpdateHandler implements IToolHandler, IPartialBlockHandler {
 	readonly name = ClineDefaultTool.STATUS_UPDATE
 
 	getDescription(block: ToolUse): string {
 		return `[${block.name}]`
-	}
-
-	/**
-	 * Format optional acknowledgment feedback for the tool result.
-	 * @param text User-entered acknowledgment or stop reason.
-	 * @param images Selected image payload identifiers.
-	 * @param files Selected file payload identifiers.
-	 * @returns Formatted feedback suffix for the next model turn.
-	 */
-	private formatFeedback(text?: string, images?: string[], files?: string[]): string {
-		const parts: string[] = []
-		const trimmedText = text?.trim()
-		if (trimmedText) {
-			parts.push(`<feedback>\n${trimmedText}\n</feedback>`)
-		}
-		if (images && images.length > 0) {
-			parts.push(`Images: ${images.join(", ")}`)
-		}
-		if (files && files.length > 0) {
-			parts.push(`Files: ${files.join(", ")}`)
-		}
-		return parts.length > 0 ? `\n${parts.join("\n")}` : ""
 	}
 
 	async handlePartialBlock(block: ToolUse, uiHelpers: StronglyTypedUIHelpers): Promise<void> {
@@ -70,11 +50,14 @@ export class StatusUpdateHandler implements IToolHandler, IPartialBlockHandler {
 				presentation: response,
 				existingTs: block.ts,
 			})
-			const feedback = this.formatFeedback(outcome.draft?.text, outcome.draft?.images, outcome.draft?.files)
-			if (outcome.actionId === "stop") {
-				return formatResponse.toolResult(`[STATUS_UPDATE] User chose to stop.${feedback} Wait for further instructions.`)
-			}
-			return formatResponse.toolResult(`[STATUS_UPDATE] User acknowledged.${feedback} Continue with your next tool call.`)
+			// Attached images and files reach the model as their own blocks, never as data URLs in the text.
+			const feedback = statusFeedbackText(outcome.draft?.text)
+			const fileContent = await attachToolFeedbackFiles(config.taskState.userMessageContent, outcome.draft?.files)
+			const message =
+				outcome.actionId === "stop"
+					? `[STATUS_UPDATE] User chose to stop.${feedback} Wait for further instructions.`
+					: `[STATUS_UPDATE] User acknowledged.${feedback} Continue with your next tool call.`
+			return formatResponse.toolResult(message, outcome.draft?.images, fileContent)
 		}
 
 		const toolMsg = JSON.stringify({ tool: "statusUpdate", content: response })

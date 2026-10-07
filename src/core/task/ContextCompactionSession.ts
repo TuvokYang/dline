@@ -1,4 +1,12 @@
 import type { ApiHandler } from "@core/api"
+import type {
+	CompactionAttemptDiagnostics,
+	InternalCompactionUsage,
+} from "@core/context/context-management/compaction-attempt-diagnostics"
+import {
+	classifyCompactionFailure,
+	isCorrectableCompactionFailure,
+} from "@core/context/context-management/compaction-attempt-failure"
 import type { CanonicalMessageRange } from "@core/context/context-management/compaction-context-projection"
 import { isCompactionPassBudgetError } from "@core/context/context-management/compaction-pass-budget-error"
 import { planNextCompactionPass } from "@core/context/context-management/compaction-pass-planner"
@@ -7,7 +15,9 @@ import { CompactionRetryPolicy } from "@core/context/context-management/compacti
 import { createCompactionSourceSnapshot } from "@core/context/context-management/compaction-source-snapshot"
 import {
 	type InternalCompactionAttemptIdentity,
+	type InternalCompactionPassAttemptResult,
 	type InternalCompactionPassRetryEvent,
+	type RunInternalCompactionPassWithRetryInput,
 	runInternalCompactionPassWithRetry,
 } from "@core/context/context-management/internal-compaction-pass"
 import { indexLogicalTurns } from "@core/context/context-management/logical-turns"
@@ -23,14 +33,16 @@ import {
 	acceptCompactionPass,
 	applyCompactionPassPlan,
 	getCompactionPassIdentity,
+	isIterativeCompactionPass,
 	refitCompactionSummary,
 	type TargetWindowFittingState,
 	tryStartTargetWindowFitting,
 } from "@core/context/context-management/target-window-fitting"
-import type { CompactionProviderInput } from "@core/task/compaction/CompactionRequestReplay"
+import type { CompactionProviderInput } from "@core/task/compaction/CompactionProviderInput"
 import type { ExplicitInstructionRequestScope } from "@core/task/explicit-instructions/ExplicitInstructionRequestScope"
 import type { ProviderRequestRoundAdmission, ProviderRequestRoundPort } from "@core/task/performance/provider-request-round-port"
 import type { ChatContent } from "@shared/ChatContent"
+import type { CompactionFailureKind } from "@shared/context-compaction-failure"
 import type { ClineContent, ClineStorageMessage } from "@shared/messages/content"
 import type { Mode } from "@shared/storage/types"
 import cloneDeep from "clone-deep"
@@ -206,7 +218,13 @@ export type ContextCompactionSessionEvent =
 			refitAttempt: number
 			carryLimitTokens: number
 	  }
-	| { kind: "failed"; state?: TargetWindowFittingState; error: string }
+	| {
+			kind: "failed"
+			state?: TargetWindowFittingState
+			error: string
+			/** Present only when the operation ended because its Provider attempts were exhausted or cancelled. */
+			failureKind?: CompactionFailureKind
+	  }
 
 export interface ContextCompactionSessionPorts {
 	/** Maximum estimated input one Pass request may carry, including the reserve concession. */
@@ -243,12 +261,26 @@ export interface ContextCompactionSessionPorts {
 		state: TargetWindowFittingState,
 		projection: ContextCompactionReprojection,
 	): Promise<void>
-	commit(input: ContextCompactionSessionInput, state: TargetWindowFittingState): Promise<void>
+	commit(
+		input: ContextCompactionSessionInput,
+		state: TargetWindowFittingState,
+		outcome: ContextCompactionCommitOutcome,
+	): Promise<void>
 	publish(input: ContextCompactionSessionInput, event: ContextCompactionSessionEvent): Promise<void>
 	waitForRetry(input: ContextCompactionSessionInput, retryAttempt: number, signal: AbortSignal): Promise<void>
-	recordUsage?(usage: { inputTokens: number; outputTokens: number; cacheWriteTokens: number; cacheReadTokens: number }): void
+	recordUsage?(usage: InternalCompactionUsage): void
 	recordTiming?(timing: ContextCompactionPhaseTiming): void
+	/** Content-free outcome of every Provider attempt, accepted or failed, for logs and telemetry. */
+	recordCompactionAttempt?(input: ContextCompactionSessionInput, diagnostics: CompactionAttemptDiagnostics): void
 	providerRequestRounds?: ProviderRequestRoundPort
+}
+
+/** Facts from the accepted Passes that the commit applies beside the compacted history. */
+export interface ContextCompactionCommitOutcome {
+	/** Ordered checklist from a single Pass that covered every turn; iterative compaction never reports one. */
+	taskProgress?: string
+	/** Accepted Passes in this operation, excluding summary refits. */
+	acceptedPassCount: number
 }
 
 export interface ContextCompactionSessionOptions {
@@ -279,6 +311,8 @@ export class ContextCompactionSession {
 		state?: TargetWindowFittingState
 		settled: Promise<void>
 		settle: () => void
+		/** The error that ended the latest Provider attempt sequence, kept to classify the terminal failure. */
+		attemptFailure?: { error: unknown; kind: CompactionFailureKind }
 	}
 
 	constructor(
@@ -319,6 +353,7 @@ export class ContextCompactionSession {
 		this.active.state = snapshotFittingState(state)
 
 		let consecutiveSummaryRefitAttempts = 0
+		const commitOutcome: ContextCompactionCommitOutcome = { acceptedPassCount: 0 }
 		try {
 			while (true) {
 				try {
@@ -380,19 +415,15 @@ export class ContextCompactionSession {
 					try {
 						while (true) {
 							const providerRequestRound = this.ports.providerRequestRounds?.admit({ source: "compaction" })
-							const automaticReplayAllowed = !isManualTrigger(input.trigger)
-							const retryPolicy = new CompactionRetryPolicy(
-								automaticReplayAllowed ? this.options.maxRetryAttempts : 0,
-							)
-							const result = await runInternalCompactionPassWithRetry({
+							const result = await this.runProviderAttempts(providerRequestRound, {
 								api: input.compactionApi,
 								providerInput: request.providerInput,
 								explicitInstructions: request.explicitInstructions,
 								taskNamespace: input.taskNamespace,
 								providerRequestRound,
 								passIdentity,
-								retryPolicy,
-								allowOpenAiMaxOutputReplay: automaticReplayAllowed,
+								...createPassRetryScope(input.trigger, this.options.maxRetryAttempts),
+								onAttemptSettled: (diagnostics) => this.ports.recordCompactionAttempt?.(input, diagnostics),
 								initialAttemptIndex: attemptIndex,
 								attemptIdFactory: (candidateAttemptIndex) =>
 									candidateAttemptIndex === attemptIndex
@@ -431,7 +462,6 @@ export class ContextCompactionSession {
 									})
 								},
 							})
-							this.completeProviderExecution(result, providerRequestRound)
 							this.assertCurrent(input.operationId, signal)
 							const completedAttempt: InternalCompactionAttemptIdentity = {
 								attemptIndex: result.attemptIndex,
@@ -470,6 +500,8 @@ export class ContextCompactionSession {
 								continue
 							}
 
+							// An iterative Pass sees only part of the task; its checklist would overwrite newer progress.
+							const reportsTaskProgress = !isIterativeCompactionPass(state)
 							const nextState = acceptCompactionPass(state, result.summary).state
 							const reprojectionStartedAtMs = performance.now()
 							projection = await this.ports.reprojectTarget(input, snapshotFittingState(nextState))
@@ -479,6 +511,10 @@ export class ContextCompactionSession {
 							this.assertCurrent(input.operationId, signal)
 							state = nextState
 							consecutiveSummaryRefitAttempts = 0
+							commitOutcome.acceptedPassCount += 1
+							if (result.taskProgress && reportsTaskProgress) {
+								commitOutcome.taskProgress = result.taskProgress
+							}
 							if (this.active?.operationId === input.operationId) this.active.state = snapshotFittingState(state)
 							await this.ports.publish(input, {
 								kind: "pass_completed",
@@ -512,7 +548,7 @@ export class ContextCompactionSession {
 					if (!projection) throw new Error("Accepted compaction Pass is missing its target reprojection.")
 					const decision = projection
 					if (decision.status === "complete") {
-						await this.ports.commit(input, state)
+						await this.ports.commit(input, state, { ...commitOutcome })
 						return "completed"
 					}
 					if (decision.status === "exhausted") {
@@ -527,7 +563,12 @@ export class ContextCompactionSession {
 			}
 		} catch (error) {
 			const reason = error instanceof Error ? error.message : String(error)
-			await this.ports.publish(input, { kind: "failed", state: snapshotFittingState(state), error: reason })
+			await this.ports.publish(input, {
+				kind: "failed",
+				state: snapshotFittingState(state),
+				error: reason,
+				failureKind: this.resolveTerminalFailureKind(error, signal),
+			})
 			return signal.aborted ? "cancelled" : "failed"
 		} finally {
 			const active = this.active?.operationId === input.operationId ? this.active : undefined
@@ -641,16 +682,15 @@ export class ContextCompactionSession {
 		})
 		try {
 			const providerRequestRound = this.ports.providerRequestRounds?.admit({ source: "compaction" })
-			const automaticReplayAllowed = !isManualTrigger(input.trigger)
-			const result = await runInternalCompactionPassWithRetry({
+			const result = await this.runProviderAttempts(providerRequestRound, {
 				api: input.compactionApi,
 				providerInput: request.providerInput,
 				explicitInstructions: request.explicitInstructions,
 				taskNamespace: input.taskNamespace,
 				providerRequestRound,
 				passIdentity,
-				retryPolicy: new CompactionRetryPolicy(automaticReplayAllowed ? this.options.maxRetryAttempts : 0),
-				allowOpenAiMaxOutputReplay: automaticReplayAllowed,
+				...createPassRetryScope(input.trigger, this.options.maxRetryAttempts),
+				onAttemptSettled: (diagnostics) => this.ports.recordCompactionAttempt?.(input, diagnostics),
 				attemptIdFactory: (attemptIndex) =>
 					attemptIndex === 0
 						? request.initialAttemptId
@@ -688,7 +728,6 @@ export class ContextCompactionSession {
 					})
 				},
 			})
-			this.completeProviderExecution(result, providerRequestRound)
 			this.assertCurrent(input.operationId, signal)
 			let nextState: TargetWindowFittingState
 			try {
@@ -722,28 +761,36 @@ export class ContextCompactionSession {
 		}
 	}
 
-	private completeProviderExecution(
-		result: Awaited<ReturnType<typeof runInternalCompactionPassWithRetry>>,
-		providerRequestRound?: ProviderRequestRoundAdmission,
-	): void {
-		if (!result.settlement) {
+	/**
+	 * Run every attempt of one Pass inside its Provider execution round.
+	 *
+	 * The round is completed whether the attempts produce a summary or fail, so a failed
+	 * compaction never leaves a pending execution behind in the usage store.
+	 */
+	private async runProviderAttempts(
+		providerRequestRound: ProviderRequestRoundAdmission | undefined,
+		passInput: RunInternalCompactionPassWithRetryInput,
+	): Promise<InternalCompactionPassAttemptResult> {
+		if (this.active) this.active.attemptFailure = undefined
+		try {
+			return await runInternalCompactionPassWithRetry(passInput)
+		} catch (error) {
+			if (this.active) this.active.attemptFailure = { error, kind: classifyCompactionFailure(error) }
+			throw error
+		} finally {
 			providerRequestRound?.completeProviderOnly()
-			return
 		}
-		void result.settlement.catch(() => undefined).finally(() => providerRequestRound?.completeProviderOnly())
 	}
 
-	private recordAcceptedPassUsage(result: Awaited<ReturnType<typeof runInternalCompactionPassWithRetry>>): void {
-		if (!result.settlement) {
-			if (result.usage) this.ports.recordUsage?.(result.usage)
-			return
-		}
-		void result.settlement
-			.then((settlement) => {
-				const usage = settlement.usage ?? result.usage
-				if (usage) this.ports.recordUsage?.(usage)
-			})
-			.catch(() => undefined)
+	/** Classify only failures raised by the Provider attempts themselves; planning and fitting errors stay unclassified. */
+	private resolveTerminalFailureKind(error: unknown, signal: AbortSignal): CompactionFailureKind | undefined {
+		if (signal.aborted) return "cancelled"
+		const attemptFailure = this.active?.attemptFailure
+		return attemptFailure && attemptFailure.error === error ? attemptFailure.kind : undefined
+	}
+
+	private recordAcceptedPassUsage(result: InternalCompactionPassAttemptResult): void {
+		if (result.usage) this.ports.recordUsage?.(result.usage)
 	}
 
 	private assertCurrent(operationId: string, signal: AbortSignal): void {
@@ -766,6 +813,32 @@ function formatCompactionPlanningFailure(
 	return result.kind === "summary_carry_overflow"
 		? `The cumulative compaction summary cannot be carried into Pass ${result.turnIndex + 1} (${breakdown}).`
 		: `Logical turn ${result.turnIndex + 1} cannot fit in one compaction Pass without content truncation (${breakdown}).`
+}
+
+/** A user-started Pass retries only replies the model can correct, and only twice. */
+const MANUAL_CORRECTABLE_REPLY_RETRY_ATTEMPTS = 2
+
+type PassRetryScope = Pick<
+	RunInternalCompactionPassWithRetryInput,
+	"retryPolicy" | "retryableFailure" | "allowOpenAiMaxOutputReplay"
+>
+
+/**
+ * Select the Pass retry budget for one trigger.
+ *
+ * Manual compaction keeps transient Provider failures user-visible, but a reply without a usable
+ * <summarize_task> block, or one cut off at the output limit, is replayed with a reminder because
+ * the user explicitly asked for a summary.
+ */
+function createPassRetryScope(trigger: ContextCompactionTriggerKind, automaticMaxRetryAttempts: number): PassRetryScope {
+	if (!isManualTrigger(trigger)) {
+		return { retryPolicy: new CompactionRetryPolicy(automaticMaxRetryAttempts), allowOpenAiMaxOutputReplay: true }
+	}
+	return {
+		retryPolicy: new CompactionRetryPolicy(MANUAL_CORRECTABLE_REPLY_RETRY_ATTEMPTS),
+		retryableFailure: isCorrectableCompactionFailure,
+		allowOpenAiMaxOutputReplay: false,
+	}
 }
 
 function isManualTrigger(trigger: ContextCompactionTriggerKind): boolean {

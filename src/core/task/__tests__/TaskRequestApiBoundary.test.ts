@@ -99,9 +99,11 @@ describe("Task request API boundary", () => {
 			"private async persistApiRequestUserMessage(",
 		)
 
-		expect(method).toContain("candidate.function_id === block.function_id")
-		expect(method).toContain("candidate.dline_tid === block.dline_tid")
-		expect(method).toContain("CONVERSATIONAL_TOOL_NAMES.has")
+		// The pairing rule itself is covered behaviourally in conversationalFeedbackTrust.test.ts; the Task must
+		// consult both the live stream and the persisted assistant message the result answers.
+		expect(method).toContain("isConversationalFeedbackResult(")
+		expect(method).toContain("this.taskState.assistantMessageContent")
+		expect(method).toContain("this.messageStateHandler.apiConversationHistory")
 	})
 
 	it("resumes a durable Hosted request without repeating preprocessing, history append, or approval", async () => {
@@ -284,85 +286,20 @@ describe("Task request API boundary", () => {
 		expect(method).not.toContain('updateContextCompactionStatus("running"')
 	})
 
-	it("normalizes authorized compaction text for streaming parsing and final persistence", async () => {
+	it("keeps compaction reply parsing and retry out of the ordinary request loop", async () => {
 		const source = await readFile(taskSourcePath, "utf8")
-		const method = extractMethod(source, "async recursivelyMakeClineRequests(", "async loadContext(")
-		const streamingNormalization = method.indexOf("normalizeCompactionResponse(assistantMessage).assistantText")
-		const parseIndex = method.indexOf("parseAssistantMessageV2(assistantMessageForParsing", streamingNormalization)
-		const finalMessageNormalization = method.indexOf(
-			"assistantMessage = normalizeCompactionResponse(assistantMessage).assistantText",
-			parseIndex,
-		)
-		const finalTextNormalization = method.indexOf(
-			"assistantTextOnly = normalizeCompactionResponse(assistantTextOnly).assistantText",
-			finalMessageNormalization,
-		)
-		const historyAppend = method.indexOf("addToApiConversationHistory({", finalTextNormalization)
 
-		expect(streamingNormalization).toBeGreaterThanOrEqual(0)
-		expect(parseIndex).toBeGreaterThan(streamingNormalization)
-		expect(finalMessageNormalization).toBeGreaterThan(parseIndex)
-		expect(finalTextNormalization).toBeGreaterThan(finalMessageNormalization)
-		expect(historyAppend).toBeGreaterThan(finalTextNormalization)
-	})
-
-	it("cleans failed compaction attempts before protocol-specific or ordinary retry decisions", async () => {
-		const source = await readFile(taskSourcePath, "utf8")
-		const providerMethod = extractMethod(source, "async *attemptApiRequest(", "// Block identity is now assigned")
-		const requestMethod = extractMethod(source, "async recursivelyMakeClineRequests(", "async loadContext(")
-
-		const firstChunkDecision = providerMethod.indexOf("const openAiMaxOutputReplayDecision")
-		const firstChunkCleanup = providerMethod.indexOf(
-			"await this.discardFailedCompactionAttempt(apiIndex)",
-			firstChunkDecision,
-		)
-		const firstChunkOrdinaryClassification = providerMethod.indexOf("const isContextWindowExceededError", firstChunkCleanup)
-		const streamDecision = requestMethod.indexOf("const openAiMaxOutputReplayDecision")
-		const streamCleanup = requestMethod.lastIndexOf("await this.discardFailedCompactionAttempt(apiIndex)", streamDecision)
-		const streamOrdinaryClassification = requestMethod.indexOf(
-			"const retryDecision = getStreamRetryDecision({",
-			streamDecision,
-		)
-
-		expect(firstChunkDecision).toBeGreaterThanOrEqual(0)
-		expect(firstChunkCleanup).toBeGreaterThan(firstChunkDecision)
-		expect(firstChunkOrdinaryClassification).toBeGreaterThan(firstChunkCleanup)
-		expect(streamCleanup).toBeGreaterThanOrEqual(0)
-		expect(streamDecision).toBeGreaterThan(streamCleanup)
-		expect(streamOrdinaryClassification).toBeGreaterThan(streamDecision)
-	})
-
-	it("waits for the failed stream lifecycle to close before dispatching an OpenAI max-output replay", async () => {
-		const source = await readFile(taskSourcePath, "utf8")
-		const method = extractMethod(
-			source,
-			"private scheduleCompactionReplay(",
-			"/** Continue Task-owned recovery after an automatic compaction attempt has been fully discarded. */",
-		)
-		const releaseBarrier = method.indexOf("pWaitFor(() => !this.taskState.isStreaming")
-		const currentTaskGuard = method.indexOf("if (this.controller.task !== this || this.taskState.abort) return")
-		const dispatch = method.indexOf('this.dispatchRuntime({ type: "API_RETRY_SCHEDULED", apiIndex })')
-
-		expect(releaseBarrier).toBeGreaterThanOrEqual(0)
-		expect(currentTaskGuard).toBeGreaterThan(releaseBarrier)
-		expect(dispatch).toBeGreaterThan(currentTaskGuard)
-		expect(method).not.toContain("scheduleAutoRetry(")
-	})
-
-	it("keeps ordinary automatic compaction retries eligible without changing their frozen cap", async () => {
-		const source = await readFile(taskSourcePath, "utf8")
-		const providerMethod = extractMethod(source, "async *attemptApiRequest(", "// Block identity is now assigned")
-		const recoveryMethod = extractMethod(
-			source,
-			"private async recoverAutomaticCompactionFailure(",
-			"async handleWebviewAskResponse(",
-		)
-
-		expect(recoveryMethod).toContain("isSpendLimitError: false")
-		expect(recoveryMethod).toContain("this.scheduleAutoRetry(")
-		expect(recoveryMethod).toContain('type: "API_RETRY_SCHEDULED", apiIndex')
-		expect(recoveryMethod).not.toContain("prepareOpenAiMaxOutputReplay(")
-		expect(providerMethod).toContain("this.compactionRequestReplay.getProviderInput(apiIndex)")
+		// The hidden compaction Pass owns parsing, reminders and retries; the main loop must not
+		// normalize, replay or recover a compaction reply on its own.
+		for (const removedPath of [
+			"normalizeCompactionResponse(",
+			"compactionRequestReplay",
+			"scheduleCompactionReplay(",
+			"recoverAutomaticCompactionFailure(",
+			"discardFailedCompactionAttempt(",
+		]) {
+			expect(source).not.toContain(removedPath)
+		}
 	})
 
 	it("flushes the finalized assistant tool turn before executing its tools", async () => {
@@ -379,7 +316,7 @@ describe("Task request API boundary", () => {
 		expect(finalizedTurn).toBeGreaterThan(historyFlush)
 	})
 
-	it("rejects invalid compaction output before the ordinary continuation path", async () => {
+	it("rejects invalid manual compaction output before the ordinary continuation path", async () => {
 		const source = await readFile(taskSourcePath, "utf8")
 		const method = extractMethod(source, "async recursivelyMakeClineRequests(", "async loadContext(")
 		const finalizedTurn = method.indexOf("await this.turnDriver.execute({")
@@ -387,36 +324,13 @@ describe("Task request API boundary", () => {
 			"this.taskState.isInternalContextCompactionRequest || this.taskState.isManualContextCompactionRequest",
 			finalizedTurn,
 		)
-		const automaticCleanup = method.indexOf("await this.discardFailedCompactionAttempt(apiIndex)", invalidOutput)
-		const automaticRecovery = method.indexOf(
-			"await this.recoverAutomaticCompactionFailure(apiIndex, errorMessage, requestScope, userContent)",
-			automaticCleanup,
-		)
-		const manualCleanup = method.indexOf("await this.discardFailedManualCompactionAttempt(apiIndex)", automaticRecovery)
+		const manualCleanup = method.indexOf("await this.discardFailedManualCompactionAttempt(apiIndex)", invalidOutput)
 		const ordinaryContinuation = method.indexOf("const phaseAfterAssistantTurn", manualCleanup)
 
 		expect(finalizedTurn).toBeGreaterThanOrEqual(0)
 		expect(invalidOutput).toBeGreaterThan(finalizedTurn)
-		expect(automaticCleanup).toBeGreaterThan(invalidOutput)
-		expect(automaticRecovery).toBeGreaterThan(automaticCleanup)
-		expect(manualCleanup).toBeGreaterThan(automaticRecovery)
+		expect(manualCleanup).toBeGreaterThan(invalidOutput)
 		expect(ordinaryContinuation).toBeGreaterThan(manualCleanup)
-	})
-
-	it("tail-truncates failed automatic compaction output before restoring the pre-attempt mistake counter", async () => {
-		const source = await readFile(taskSourcePath, "utf8")
-		const method = extractMethod(source, "private async discardFailedCompactionAttempt(", "private parsePreviousTokens(")
-		const baselineRead = method.indexOf("getInitialConsecutiveMistakeCount(apiIndex)")
-		const historyRollback = method.indexOf("truncateApiConversationHistory(historyIndex + 1)", baselineRead)
-		const counterRestore = method.indexOf(
-			"this.taskState.consecutiveMistakeCount = initialConsecutiveMistakeCount",
-			historyRollback,
-		)
-
-		expect(baselineRead).toBeGreaterThanOrEqual(0)
-		expect(historyRollback).toBeGreaterThan(baselineRead)
-		expect(method).not.toContain("overwriteApiConversationHistory(")
-		expect(counterRestore).toBeGreaterThan(historyRollback)
 	})
 
 	it("updates the same compaction row from the existing retry owner", async () => {
@@ -460,23 +374,6 @@ describe("Task request API boundary", () => {
 		expect(promptBranch).toContain("await this.recoverApiFailure({")
 		expect(promptBranch).toContain("return true")
 		expect(promptBranch).not.toContain('return outcome.actionId === "start_new_task"')
-	})
-
-	it("marks automatic compaction recovery as an unsaved continuation", async () => {
-		const source = await readFile(taskSourcePath, "utf8")
-		const recoveryMethod = extractMethod(
-			source,
-			"private async recoverAutomaticCompactionFailure(",
-			"async handleWebviewAskResponse(",
-		)
-		const promptBranchStart = recoveryMethod.indexOf('await this.updateContextCompactionStatus("failed"')
-		const recoveryCallStart = recoveryMethod.indexOf("await this.recoverApiFailure({", promptBranchStart)
-		const recoveryCallEnd = recoveryMethod.indexOf("})", recoveryCallStart)
-		const recoveryCall = recoveryMethod.slice(recoveryCallStart, recoveryCallEnd)
-
-		expect(promptBranchStart).toBeGreaterThanOrEqual(0)
-		expect(recoveryCallStart).toBeGreaterThan(promptBranchStart)
-		expect(recoveryCall).toContain("persistedRequest: false")
 	})
 
 	it("closes or cancels explicit authority at every terminal request boundary", async () => {

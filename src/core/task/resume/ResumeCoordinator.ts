@@ -59,6 +59,8 @@ export class ResumeCoordinator {
 		try {
 			input = await this.ports.load(taskId)
 		} catch (error) {
+			// Detachment aborts the in-flight load; that supersedes the preparation rather than failing it.
+			this.assertCurrent()
 			this.reportRecovery({
 				source: "history_open",
 				outcome: "failed",
@@ -75,6 +77,7 @@ export class ResumeCoordinator {
 		try {
 			result = reconcileResume(input)
 		} catch (error) {
+			this.assertCurrent()
 			this.reportRecovery({
 				source: "history_open",
 				outcome: "failed",

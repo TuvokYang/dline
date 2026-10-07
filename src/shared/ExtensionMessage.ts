@@ -10,6 +10,7 @@ import type { ChatInputSendShortcut } from "./ChatInputSendShortcut"
 import { ClineFeatureSetting } from "./ClineFeatureSetting"
 import { ClineRulesToggles } from "./cline-rules"
 import type { CodeExecutionPresentationV1 } from "./code-execution-tools"
+import type { CompactionFailureKind } from "./context-compaction-failure"
 import type { ContextWindowIndicatorSnapshot } from "./context-window-indicator"
 import { FocusChainSettings } from "./FocusChainSettings"
 import { HistoryItem } from "./HistoryItem"
@@ -583,6 +584,8 @@ export interface ClineSayTool {
 	compactionDurable?: boolean
 	/** Actionable compaction failure detail. */
 	error?: string
+	/** Content-free classification of the latest failed compaction attempt on this card. */
+	compactionFailureKind?: CompactionFailureKind
 	/** One-based retry attempt currently scheduled. */
 	retryAttempt?: number
 	/** Maximum automatic retry attempts. */

@@ -265,8 +265,7 @@ e2e(
 		await helper.signin(sidebar)
 		await selectProfile(sidebar, E2E_PROFILE_NAMES.mockOpenAiOfficialResponses)
 		await sendTask(sidebar, "Use hosted search, then present the requested plan.")
-		await expect(sidebar.getByText("Dline wants to search the web for:", { exact: false })).toBeVisible({ timeout: 60_000 })
-		await sidebar.getByRole("contentinfo").getByText("Approve", { exact: true }).click()
+		// Provider-hosted Web Search runs without a Local Web approval step.
 		await expect(sidebar.getByTestId("web-search-card").filter({ hasText: query })).toBeVisible({ timeout: 60_000 })
 		await expandTaskHeader(sidebar)
 
@@ -303,6 +302,8 @@ e2e(
 			(calibrated.receivingTokens * calibrated.minorFactor * 100) / calibrated.contextWindow,
 			4,
 		)
+		await expect(sidebar.getByRole("contentinfo").getByText("Approve", { exact: true })).toHaveCount(0)
+		await expect(sidebar.getByText("Dline wants to search the web for:", { exact: true })).toHaveCount(0)
 
 		const narrowLayout = await sidebar.evaluate(() => {
 			document.documentElement.style.width = "180px"

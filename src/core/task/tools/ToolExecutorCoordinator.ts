@@ -36,7 +36,6 @@ import { SearchFilesToolHandler } from "./handlers/SearchFilesToolHandler"
 import { SpawnTaskHandler } from "./handlers/SpawnTaskHandler"
 import { StatusUpdateHandler } from "./handlers/StatusUpdateHandler"
 import { restoreSubagentActivityRetry, UseSubagentsToolHandler, UseSubagentToolHandler } from "./handlers/SubagentToolHandler"
-import { SummarizeTaskHandler } from "./handlers/SummarizeTaskHandler"
 import { UseMcpToolHandler } from "./handlers/UseMcpToolHandler"
 import { WebFetchToolHandler } from "./handlers/WebFetchToolHandler"
 import { WebSearchToolHandler } from "./handlers/WebSearchToolHandler"
@@ -187,7 +186,8 @@ export class ToolExecutorCoordinator {
 		[ClineDefaultTool.WEB_FETCH]: (_v: ToolValidator) => new WebFetchToolHandler(),
 		[ClineDefaultTool.WEB_SEARCH]: (_v: ToolValidator) => new WebSearchToolHandler(),
 		[ClineDefaultTool.CONDENSE]: (_v: ToolValidator) => undefined,
-		[ClineDefaultTool.SUMMARIZE_TASK]: (_v: ToolValidator) => new SummarizeTaskHandler(_v),
+		// Compaction summaries arrive as explicit-instruction text owned by ContextCompactionSession, never as a tool call.
+		[ClineDefaultTool.SUMMARIZE_TASK]: (_v: ToolValidator) => undefined,
 		[ClineDefaultTool.REPORT_BUG]: (_v: ToolValidator) => new ReportBugHandler(),
 		[ClineDefaultTool.NEW_RULE]: (v: ToolValidator) =>
 			new SharedToolHandler(ClineDefaultTool.NEW_RULE, new WriteToFileToolHandler(v)),

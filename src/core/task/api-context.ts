@@ -50,6 +50,10 @@ function getContentText(block: ClineContent): string {
 		return block.content
 	}
 
+	if (block.type === "attached_document") {
+		return block.fallback_text
+	}
+
 	if (block.type === "tool_result") {
 		if (typeof block.content === "string") {
 			return block.content

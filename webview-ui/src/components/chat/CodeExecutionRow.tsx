@@ -2,6 +2,7 @@ import type { CodeExecutionPresentationV1, HostedCodeExecutionOperation } from "
 import type { ClineSayTool } from "@shared/ExtensionMessage"
 import { ChevronDownIcon, ChevronRightIcon, TerminalIcon, TriangleAlertIcon } from "lucide-react"
 import { useState } from "react"
+import ToolCardHeader from "./ToolCardHeader"
 
 interface CodeExecutionRowProps {
 	messageType: "ask" | "say"
@@ -66,13 +67,16 @@ const CodeExecutionRow = ({ messageType, codeExecution, description }: CodeExecu
 			output.returnCode !== undefined ||
 			(output.files?.length ?? 0) > 0)
 	const [outputExpanded, setOutputExpanded] = useState(true)
+	const toggleOutput = () => setOutputExpanded((expanded) => !expanded)
 
 	return (
 		<div className="flex max-h-[40vh] flex-col overflow-hidden pr-1" data-testid="code-execution-card">
-			<div className="mb-3 flex shrink-0 items-center gap-2.5">
-				<TerminalIcon className="size-3" />
-				<span className="font-bold">{operationTitle(messageType, operation)}</span>
-			</div>
+			<ToolCardHeader
+				expansion={hasOutput ? { expanded: outputExpanded, onToggle: toggleOutput } : undefined}
+				icon={<TerminalIcon className="size-3" />}
+				testId="code-execution-header"
+				title={operationTitle(messageType, operation)}
+			/>
 			<div className="flex min-h-0 flex-1 flex-col space-y-2 overflow-hidden rounded-xs border border-editor-group-border bg-code px-2.5 py-[9px] select-text">
 				<div className="flex items-center justify-between gap-2">
 					{sourceLabel && <div className="text-xs font-semibold text-description">{sourceLabel}</div>}
@@ -109,7 +113,7 @@ const CodeExecutionRow = ({ messageType, codeExecution, description }: CodeExecu
 							aria-label={outputExpanded ? "Collapse execution output" : "Expand execution output"}
 							className="flex w-full cursor-pointer items-center gap-1 border-0 border-t border-editor-widget-border/50 bg-transparent pt-2 text-left text-xs text-description"
 							data-testid="code-execution-output-toggle"
-							onClick={() => setOutputExpanded((expanded) => !expanded)}
+							onClick={toggleOutput}
 							type="button">
 							{outputExpanded ? (
 								<ChevronDownIcon aria-hidden="true" className="size-3 shrink-0" />

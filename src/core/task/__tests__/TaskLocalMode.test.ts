@@ -23,6 +23,9 @@ describe("Task task-local mode", () => {
 			}),
 			taskState: { isAwaitingPlanResponse: true, didRespondToPlanAskBySwitchingMode: false },
 			interactionCoordinator: {
+				settleModeSwitchInteraction: vi.fn(async () => {
+					order.push("settle")
+				}),
 				canRespondForModeSwitch: vi.fn(() => true),
 				respondForModeSwitch: vi.fn(async () => {
 					order.push("wake")
@@ -42,7 +45,7 @@ describe("Task task-local mode", () => {
 			files: ["file"],
 		})
 
-		expect(order).toEqual(["admit", "mode", "rebuild", "wake", "flush"])
+		expect(order).toEqual(["settle", "admit", "mode", "rebuild", "wake", "flush"])
 		expect(fakeTask.interactionCoordinator.respondForModeSwitch).toHaveBeenCalledWith({
 			text: "continue",
 			images: ["image"],
@@ -89,6 +92,7 @@ describe("Task task-local mode", () => {
 			}),
 			taskState: { isAwaitingPlanResponse: true, didRespondToPlanAskBySwitchingMode: false },
 			interactionCoordinator: {
+				settleModeSwitchInteraction: vi.fn(async () => undefined),
 				canRespondForModeSwitch: vi.fn(() => true),
 				respondForModeSwitch: vi.fn(async () => true),
 			},
@@ -119,6 +123,7 @@ describe("Task task-local mode", () => {
 			prepareExecutionResourcesForAcceptedInteraction: vi.fn(async () => undefined),
 			taskState: { isAwaitingPlanResponse: true, didRespondToPlanAskBySwitchingMode: false },
 			interactionCoordinator: {
+				settleModeSwitchInteraction: vi.fn(async () => undefined),
 				canRespondForModeSwitch: vi.fn(() => true),
 				respondForModeSwitch: vi.fn(async () => false),
 			},

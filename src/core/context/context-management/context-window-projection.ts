@@ -12,6 +12,13 @@ const AREA_IMAGE_TOKENS_PER_PIXEL_DIVISOR = 750
  * magnitude and can push an otherwise feasible request past the context window.
  */
 const IMAGE_TOKEN_FALLBACK = 1600
+/**
+ * Upper end of Anthropic's documented 1,500-3,000 tokens per PDF page (extracted text plus the page image).
+ * A native PDF is charged per page instead of by its base64 size, which would overstate it many times over.
+ */
+const PDF_PAGE_TOKENS = 3000
+/** Page estimate for a PDF without a recorded page count; PDFs rarely average less than this per page. */
+const PDF_BYTES_PER_PAGE_GUESS = 75_000
 
 /**
  * How a provider prices an image once the canonical base64 block has been transformed.
@@ -97,6 +104,14 @@ export function estimateContextValueBreakdown(
 	let imageTokens = 0
 	const normalized =
 		JSON.stringify(value, (_key, candidate: unknown) => {
+			if (isAttachedPdf(candidate)) {
+				imageTokens += estimateAttachedPdfTokens(candidate)
+				return { type: candidate.type, path: candidate.path }
+			}
+			if (isBase64PdfDocument(candidate)) {
+				imageTokens += estimatePdfDocumentTokens(candidate)
+				return { type: candidate.type, title: candidate.title }
+			}
 			if (!isBase64ImageSource(candidate)) return candidate
 			imageTokens += estimateImageTokens(candidate, model)
 			return { ...candidate, data: "" }
@@ -189,6 +204,54 @@ function findLatestEstimate(requestInfos: readonly ContextWindowRequestPressure[
 		if (estimatedTokens > 0) return estimatedTokens
 	}
 	return 0
+}
+
+interface AttachedPdfCandidate {
+	type: "attached_document"
+	path?: unknown
+	page_count?: unknown
+	fallback_text: string
+}
+
+interface PdfDocumentCandidate {
+	type: "document"
+	title?: unknown
+	page_count?: unknown
+	source: { type: "base64"; media_type: "application/pdf"; data: string }
+}
+
+/** A canonical attached PDF, whichever form the request ends up sending it in. */
+function isAttachedPdf(value: unknown): value is AttachedPdfCandidate {
+	if (typeof value !== "object" || value === null) return false
+	const block = value as { type?: unknown; fallback_text?: unknown }
+	return block.type === "attached_document" && typeof block.fallback_text === "string"
+}
+
+function isBase64PdfDocument(value: unknown): value is PdfDocumentCandidate {
+	if (typeof value !== "object" || value === null) return false
+	const block = value as { type?: unknown; source?: { type?: unknown; media_type?: unknown; data?: unknown } }
+	return (
+		block.type === "document" &&
+		block.source?.type === "base64" &&
+		block.source.media_type === "application/pdf" &&
+		typeof block.source.data === "string"
+	)
+}
+
+/**
+ * An attached PDF is sent either natively or as its extracted text, so charge the larger of the two;
+ * the estimate then holds whichever projection the target endpoint receives.
+ */
+function estimateAttachedPdfTokens(block: AttachedPdfCandidate): number {
+	const textTokens = Math.ceil(Buffer.byteLength(block.fallback_text, "utf8") / TOKEN_ESTIMATE_BYTES)
+	const pageTokens = typeof block.page_count === "number" ? block.page_count * PDF_PAGE_TOKENS : 0
+	return Math.max(1, textTokens, pageTokens)
+}
+
+function estimatePdfDocumentTokens(block: PdfDocumentCandidate): number {
+	if (typeof block.page_count === "number") return Math.max(1, block.page_count * PDF_PAGE_TOKENS)
+	const decodedBytes = Math.floor((block.source.data.length * 3) / 4)
+	return Math.max(1, Math.ceil(decodedBytes / PDF_BYTES_PER_PAGE_GUESS)) * PDF_PAGE_TOKENS
 }
 
 function isBase64ImageSource(value: unknown): value is { type: "base64"; media_type: string; data: string } {

@@ -1,12 +1,14 @@
 import type { ClineStorageMessage } from "@shared/messages/content"
 import { describe, expect, it } from "vitest"
 import { createCompactionSourceSnapshot, materializeCompactionSourceRange } from "../compaction-source-snapshot"
+import { compactionSummaryMessage } from "../compaction-summary-message"
 import { indexLogicalTurns } from "../logical-turns"
 import {
 	acceptCompactionPass,
 	applyCompactionPassPlan,
 	buildCompactionPassHistory,
 	buildTargetCandidateHistory,
+	isIterativeCompactionPass,
 	refitCompactionSummary,
 	startTargetWindowFitting,
 	type TargetWindowFittingState,
@@ -201,6 +203,18 @@ describe("target window rolling fitting", () => {
 		expect(refitted.turns).toBe(afterFirst.turns)
 	})
 
+	it("treats a later Pass or a first Pass that leaves turns uncovered as iterative", () => {
+		const initial = startFitting(createHistory(), "operation-iterative")
+		const lastTurnIndex = initial.turns.length - 1
+		expect(lastTurnIndex).toBeGreaterThan(0)
+
+		expect(isIterativeCompactionPass(planThrough(initial, lastTurnIndex))).toBe(false)
+		const partialFirstPass = planThrough(initial, 0)
+		expect(isIterativeCompactionPass(partialFirstPass)).toBe(true)
+		const afterFirst = acceptCompactionPass(partialFirstPass, "E2E_ITERATIVE_SUMMARY").state
+		expect(isIterativeCompactionPass(planThrough(afterFirst, lastTurnIndex))).toBe(true)
+	})
+
 	it("builds the ordinary target candidate by concatenating complete message ranges without rewriting content", () => {
 		const initial = startFitting(createHistory(), "operation-target")
 		const afterFirst = acceptCompactionPass(planThrough(initial, 0), "E2E_ROLLING_SUMMARY_ONE").state
@@ -219,7 +233,7 @@ describe("target window rolling fitting", () => {
 			...continuation,
 		]
 
-		expect(targetHistory[0]).toEqual(message("user", "E2E_ROLLING_SUMMARY_ONE"))
+		expect(targetHistory[0]).toEqual(compactionSummaryMessage("E2E_ROLLING_SUMMARY_ONE"))
 		expect(targetHistory.slice(1)).toEqual(expectedMessages)
 	})
 

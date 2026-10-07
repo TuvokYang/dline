@@ -81,8 +81,12 @@ async function attachHostedWebResumeEvidence(
 	const snapshot = await E2ETestHelper.waitForValue(async () => {
 		const content = await readFile(path.join(taskDir, "snapshot.json"), "utf8").catch(() => undefined)
 		if (!content) return undefined
-		const parsed = JSON.parse(content) as { interaction?: { kind?: string; status?: string } }
-		return parsed.interaction?.kind === "hosted_web_approval" && parsed.interaction.status === "awaiting"
+		const parsed = JSON.parse(content) as {
+			interaction?: { kind?: string; status?: string; persistedRequest?: boolean }
+		}
+		const interaction = parsed.interaction
+		// The legacy approval is migrated into the Resume that owns its persisted request.
+		return interaction?.kind === "resume" && interaction.status === "awaiting" && interaction.persistedRequest === true
 			? content
 			: undefined
 	}, 30_000)
@@ -184,8 +188,11 @@ async function prepareRuntimeProfile(
 		//
 		// Stored profiles carry proto enum numbers, and the runtime ignores any
 		// non-numeric entry, so the fixture has to use ServerTool values here.
+		// Stored metadata is trusted only for the selected model identity, so it must
+		// carry that id or the runtime rejects it as stale.
 		profile.modelInfo = {
 			...profile.modelInfo,
+			id: profile.modelId,
 			capabilities: { ...profile.modelInfo?.capabilities, tools: [ServerTool.WEB_SEARCH] },
 		}
 		provider.disabledServerTools = options.supportsWebSearch ? [] : [ServerTool.WEB_SEARCH]
@@ -306,11 +313,12 @@ async function setAutoApproveAction(sidebar: Frame, label: string, enabled: bool
 }
 
 /**
- * Assert the 40vh height budget of a tool card.
+ * Assert the 40vh height budget of a tool card region.
  *
- * Cards cap their own height but differ in who scrolls: the Web Fetch card
- * scrolls itself, while the Web Search card clips and lets its results region
- * scroll. Only the height budget is shared, so that is what this checks.
+ * The bounded element differs per card: the Web Fetch card keeps its toggle
+ * bar outside and bounds only the expanded results region, which scrolls,
+ * while the Web Search card caps itself and lets its results region scroll.
+ * Only the height budget is shared, so that is what this checks.
  */
 async function expect40VhCard(card: Locator, shouldScroll = false): Promise<void> {
 	await expect(card).toBeVisible({ timeout: 60_000 })
@@ -628,6 +636,8 @@ e2e(
 			await closeCurrentTask(opened.sidebar)
 			await seedLegacyHostedWebApproval(dlineDocsDir, taskId)
 
+			// Reopening migrates the obsolete pre-send approval into an explicit Resume that
+			// owns the persisted request, so no approval decision is left to replay.
 			for (let reopen = 0; reopen < 2; reopen++) {
 				await reopenTask(opened.sidebar, taskText)
 				await expect
@@ -640,7 +650,7 @@ e2e(
 						},
 						{ timeout: 30_000 },
 					)
-					.toMatchObject({ kind: "hosted_web_approval", status: "awaiting" })
+					.toMatchObject({ kind: "resume", status: "awaiting", persistedRequest: true })
 				await expect(opened.sidebar.getByRole("contentinfo").getByText("Resume", { exact: true })).toBeVisible({
 					timeout: 30_000,
 				})
@@ -1052,6 +1062,87 @@ for (const scenario of [
 				expect(JSON.stringify(replayedAssistant?.content)).toContain("server_tool_use")
 				expect(JSON.stringify(replayedAssistant?.content)).toContain("web_search_tool_result")
 				expect(JSON.stringify(replayedAssistant?.content)).toContain(resultTitle)
+				expect(server.getSearxngSearchRequests()).toHaveLength(0)
+				await expect(opened.sidebar.getByText("API Request Failed", { exact: true })).toHaveCount(0)
+				await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
+			} finally {
+				await app?.close()
+			}
+		},
+	)
+
+	e2e(
+		`ServerTool runtime - ${scenario.label} resumes a hosted search deferred behind a client tool in the next request`,
+		async ({ dlineDir, dlineDocsDir, dlineHomeDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
+			e2e.setTimeout(180_000)
+			expectIsolatedDirectories(dlineDir, dlineHomeDir, dlineDocsDir)
+			await prepareRuntimeProfile(dlineDir, scenario.profileName, {
+				enabled: true,
+				mode: "WEB_TOOLS_MODE_AUTO",
+				modelId: scenario.label === "Claude Code" ? "claude-sonnet-5" : undefined,
+				supportsWebSearch: true,
+			})
+			const marker = scenario.marker.toLowerCase()
+			const searchId = `srv_web_${marker}_deferred`
+			const readCallId = `call_${marker}_deferred_read`
+			const query = `Dline ${scenario.label} deferred search`
+			const resultTitle = `E2E_${scenario.marker}_DEFERRED_RESULT`
+			const resultUrl = `https://example.test/${marker}-deferred`
+			const completion = `E2E_${scenario.marker}_DEFERRED_SEARCH_OK`
+			server.enqueueResponses(
+				scenario.target,
+				{
+					type: "anthropic-deferred-web-search",
+					id: searchId,
+					query,
+					followupTools: [{ id: readCallId, name: "read_file", arguments: { path: "README.md" } }],
+				},
+				{
+					// The provider runs the deferred search first, so the next response opens with its result.
+					type: "anthropic-orphan-web-search-result",
+					id: searchId,
+					results: [{ title: resultTitle, url: resultUrl }],
+					followupTools: [
+						{ id: `call_${marker}_deferred_done`, name: "attempt_completion", arguments: { result: completion } },
+					],
+					expectedToolResults: [{ callId: readCallId, contentIncludes: "# Test Workspace" }],
+					expectedRequestIncludes: [searchId],
+				},
+				{
+					type: "error",
+					status: 500,
+					code: "unexpected_deferred_search_request",
+					message: "The deferred hosted search was resumed more than once",
+				},
+			)
+
+			let app: ElectronApplication | undefined
+			try {
+				const opened = await openSidebar(openVSCode, workspaceDir, helper)
+				app = opened.app
+				await setAutoApproveAction(opened.sidebar, "Use Web", true)
+				await sendTask(opened.sidebar, `Use ${scenario.label} hosted search while reading the README, then finish.`)
+				await expect(opened.sidebar.getByText(completion, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
+				await expectHostedLifecycle(opened.sidebar, query, { title: resultTitle, url: resultUrl })
+				await expect(opened.sidebar.getByTestId("web-search-card").filter({ hasText: query })).toHaveCount(1)
+				await expect(opened.sidebar.getByTestId("web-search-deferred")).toHaveCount(0)
+				await expect.poll(() => server.getMockConsumptions(scenario.target).length).toBe(2)
+
+				const [deferred, resumed] = server.getMockConsumptions(scenario.target)
+				expect(deferred.contractError).toBeUndefined()
+				expect(resumed.contractError).toBeUndefined()
+				const resumedMessages =
+					(resumed.requestBody as { messages?: Array<{ role?: string; content?: unknown }> }).messages ?? []
+				const followUp = resumedMessages.at(-1)
+				const carriedAssistant = resumedMessages.at(-2)
+				// The Messages API only runs the deferred call when the follow-up turn holds nothing but tool results.
+				expect(followUp?.role).toBe("user")
+				expect(Array.isArray(followUp?.content)).toBe(true)
+				expect((followUp?.content as Array<{ type?: string }>).every((block) => block.type === "tool_result")).toBe(true)
+				expect(carriedAssistant?.role).toBe("assistant")
+				const carriedBlocks = carriedAssistant?.content as Array<{ type?: string; id?: string }>
+				expect(carriedBlocks.some((block) => block.type === "server_tool_use" && block.id === searchId)).toBe(true)
+				expect(JSON.stringify(carriedBlocks)).not.toContain("web_search_tool_result")
 				expect(server.getSearxngSearchRequests()).toHaveLength(0)
 				await expect(opened.sidebar.getByText("API Request Failed", { exact: true })).toHaveCount(0)
 				await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
@@ -1530,7 +1621,7 @@ for (const testCase of webFetchCases) {
 				const fetchResults = fetchCard.getByTestId("web-fetch-results")
 				await expect(fetchResults).toContainText("E2E\\_WEB\\_FETCH\\_PAGE\\_CONTENT\\_00")
 				await expect(fetchResults).toContainText("E2E\\_WEB\\_FETCH\\_PAGE\\_CONTENT\\_31")
-				await expect40VhCard(fetchCard, true)
+				await expect40VhCard(fetchResults, true)
 				await expect(opened.sidebar.getByText(completion, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
 
 				const consumptions = server.getMockConsumptions(testCase.target)

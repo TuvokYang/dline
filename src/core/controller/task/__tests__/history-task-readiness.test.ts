@@ -187,6 +187,42 @@ describe("history task readiness", () => {
 		expect(onReadyToDisplay).not.toHaveBeenCalled()
 	})
 
+	it("treats a preparation aborted by Task detachment as superseded instead of failing", async () => {
+		let isCurrent = true
+		const prepareFromHistory = vi.fn(async () => {
+			isCurrent = false
+			throw new Error("task_detached")
+		})
+
+		await expect(
+			prepareHistoryTaskForDisplay({
+				taskId: "task-1",
+				displayHistory: async () => undefined,
+				prepareFromHistory,
+				hasTaskLock: true,
+				isCurrent: () => isCurrent,
+			}),
+		).resolves.toBe(false)
+
+		expect(prepareFromHistory).toHaveBeenCalledOnce()
+	})
+
+	it("still rejects when background preparation fails while the Task owns the surface", async () => {
+		const failure = new Error("history unreadable")
+
+		await expect(
+			prepareHistoryTaskForDisplay({
+				taskId: "task-1",
+				displayHistory: async () => undefined,
+				prepareFromHistory: async () => {
+					throw failure
+				},
+				hasTaskLock: true,
+				isCurrent: () => true,
+			}),
+		).rejects.toBe(failure)
+	})
+
 	it("reveals readonly history after display without running interactive preparation", async () => {
 		const displayHistory = vi.fn(async () => undefined)
 		const prepareFromHistory = vi.fn(async () => undefined)

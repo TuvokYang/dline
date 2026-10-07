@@ -1,33 +1,26 @@
-import { Anthropic } from "@anthropic-ai/sdk"
-import type {
-	MessageCreateParamsStreaming as BetaMessageCreateParamsStreaming,
-	BetaRawMessageStreamEvent,
-} from "@anthropic-ai/sdk/resources/beta/messages/messages"
+import type { Anthropic } from "@anthropic-ai/sdk"
 import { Tool as AnthropicTool } from "@anthropic-ai/sdk/resources/index"
-import type { MessageCreateParamsStreaming as AnthropicMessageCreateParamsStreaming } from "@anthropic-ai/sdk/resources/messages/messages"
 import { ANTHROPIC_FAST_MODE_SUFFIX, AnthropicModelId, anthropicDefaultModelId, anthropicModels, ModelInfo } from "@shared/api"
-import { providerFetch } from "@shared/net"
 import { prioritizeApiFormat } from "@shared/providers/api-format"
 import { buildEffectiveModelInfo, selectContextTier } from "@shared/providers/effective-model-info"
 import { resolveProfileModelId } from "@shared/providers/profile-model-info"
-import {
-	type BillingAttributionMessage,
-	buildBillingAttributionBlock,
-} from "@/integrations/anthropic-claude-code/billing-attribution"
-import { buildClaudeCodeClientHeaders } from "@/integrations/anthropic-claude-code/client-headers"
+import type { BillingAttributionMessage } from "@/integrations/anthropic-claude-code/billing-attribution"
 import { buildExternalBasicHeaders } from "@/services/EnvUtils"
-import { ClineStorageMessage } from "@/shared/messages/content"
+import type { DocumentInputLimits } from "@/shared/messages/attached-documents"
+import { ClineStorageMessage, type HostedToolReplayProtocol } from "@/shared/messages/content"
 import { ApiFormat, ServerTool } from "@/shared/proto/dline/models/metadata"
-import { getClaudeCodeClientVersionResolver } from "../../model-registry/remote/vendors/claude-code-client-version"
+import { anthropicMessagesDocumentLimits } from "../document-input-limits"
 import { ApiHandler, ApiHandlerContext, type ApiRequestOptions } from "../index"
 import { withRetry } from "../retry"
-import { sanitizeAnthropicMessages } from "../transform/anthropic-format"
 import { ApiStream } from "../transform/stream"
 import { streamAnthropicMessagesEndpoint } from "../utils/anthropic-messages-endpoint"
-import { mergeAnthropicServerTools } from "../utils/messages_api_support"
+import { createAnthropicClient } from "./anthropic/client-factory"
+import { buildClaudeCodeIdentity, type ClaudeCodeIdentity } from "./anthropic/identity"
 import { resolveAnthropicReasoning } from "./anthropic/reasoning"
+import { anthropicPromptCacheOn, buildAnthropicMessagesRequest, prepareAnthropicMessages } from "./anthropic/request-builder"
+import { ApiKeyAnthropicTransport } from "./anthropic/transport"
 
-export const ANTHROPIC_FAST_MODE_BETA = "fast-mode-2026-02-01"
+export { ANTHROPIC_FAST_MODE_BETA } from "./anthropic/transport"
 
 export class AnthropicHandler implements ApiHandler {
 	private client: Anthropic | undefined
@@ -54,36 +47,21 @@ export class AnthropicHandler implements ApiHandler {
 	}
 
 	/**
-	 * Build the optional Claude Code identity for one request.
+	 * Resolve the opt-in Claude Code identity for one request.
 	 *
 	 * Returns nothing when the toggle is off so the request stays byte-identical
-	 * to one built without this feature. A missing or unusable client version
-	 * also yields nothing: declaring a malformed version is worse than not
-	 * declaring one.
-	 *
-	 * The attribution block and the headers are produced from a single resolved
-	 * version on purpose. Upstream compares the User-Agent against the block's
-	 * `cc_version`, so two independent resolutions could disagree across a cache
-	 * expiry and mark the request as a third-party client.
+	 * to one built without this feature. An identity that cannot be built is
+	 * dropped as well, because an API-key request is valid without it.
 	 */
-	private async buildClaudeCodeIdentity(
-		messages: readonly BillingAttributionMessage[],
-	): Promise<{ systemBlocks: Array<{ type: "text"; text: string }>; headers: Record<string, string> }> {
-		const empty = { systemBlocks: [], headers: {} }
-		if (!this.billingAttributionEnabled) return empty
+	private async resolveClaudeCodeIdentity(messages: readonly BillingAttributionMessage[]): Promise<ClaudeCodeIdentity> {
+		if (!this.billingAttributionEnabled) return { systemBlocks: [], headers: {} }
 		const identity = this.config?.claudeCodeIdentity
-		const override = identity?.clientVersionOverride?.trim()
-		const clientVersion = override || (await getClaudeCodeClientVersionResolver().resolve()).version
-		try {
-			return {
-				systemBlocks: [
-					buildBillingAttributionBlock({ messages, clientVersion, entrypoint: identity?.entrypointOverride }),
-				],
-				headers: buildClaudeCodeClientHeaders(clientVersion),
-			}
-		} catch {
-			return empty
-		}
+		return buildClaudeCodeIdentity({
+			policy: "optional",
+			messages,
+			clientVersionOverride: identity?.clientVersionOverride,
+			entrypointOverride: identity?.entrypointOverride,
+		})
 	}
 
 	/** This handler always speaks the Anthropic Messages protocol. */
@@ -93,6 +71,15 @@ export class AnthropicHandler implements ApiHandler {
 
 	supportsServerTool(tool: ServerTool): boolean {
 		return tool === ServerTool.WEB_SEARCH || tool === ServerTool.CODE_EXECUTION || tool === ServerTool.WEB_FETCH
+	}
+
+	/** Hosted calls this endpoint ran must come back verbatim for the model to keep their results. */
+	getHostedToolReplayProtocol(): HostedToolReplayProtocol {
+		return "anthropic_messages"
+	}
+
+	getDocumentInputLimits(): DocumentInputLimits | undefined {
+		return anthropicMessagesDocumentLimits(this.getModel().info)
 	}
 
 	private contextWindowTiersEnabled(modelId: string): boolean {
@@ -157,13 +144,10 @@ export class AnthropicHandler implements ApiHandler {
 				throw new Error("Anthropic API key is required")
 			}
 			try {
-				this.client = new Anthropic({
-					apiKey: this.apiKey,
-					baseURL: this.baseUrl || undefined,
-					maxRetries: 0,
-					defaultHeaders: buildExternalBasicHeaders(),
-					fetch: providerFetch,
-				})
+				this.client = createAnthropicClient(
+					{ kind: "api_key", apiKey: this.apiKey },
+					{ baseUrl: this.baseUrl, defaultHeaders: buildExternalBasicHeaders() },
+				)
 			} catch (error) {
 				throw new Error(`Error creating Anthropic client: ${error.message}`)
 			}
@@ -178,133 +162,28 @@ export class AnthropicHandler implements ApiHandler {
 		tools?: AnthropicTool[],
 		options?: ApiRequestOptions,
 	): ApiStream {
-		const client = this.ensureClient()
-
 		const model = this.getModel()
+		const transport = new ApiKeyAnthropicTransport(this.ensureClient(), model.id.endsWith(ANTHROPIC_FAST_MODE_SUFFIX))
 
-		const useFastMode = model.id.endsWith(ANTHROPIC_FAST_MODE_SUFFIX)
-		const apiModelId = this.resolveApiModelId(model.id, model.info)
-		const createFastModeMessage = (
-			body: AnthropicMessageCreateParamsStreaming,
-		): Promise<AsyncIterable<BetaRawMessageStreamEvent>> => {
-			return (
-				client.beta.messages.create as unknown as (
-					params: BetaMessageCreateParamsStreaming & { speed: "fast" },
-				) => Promise<AsyncIterable<BetaRawMessageStreamEvent>>
-			)({
-				...body,
-				betas: [ANTHROPIC_FAST_MODE_BETA],
-				speed: "fast",
-			})
-		}
-
-		/**
-		 * Builds the per-request options.
-		 *
-		 * Identity headers are per-request rather than client defaults because
-		 * the declared version is resolved asynchronously and must match the
-		 * attribution block built for this same request.
-		 */
-		const requestOptions = (identityHeaders: Record<string, string>) => {
-			return Object.keys(identityHeaders).length > 0 ? { headers: identityHeaders } : undefined
-		}
-
-		const reasoning = resolveAnthropicReasoning(model.info.capabilities, this.config?.reasoning)
-
-		const localNativeToolsOn = tools !== undefined && tools.length > 0
-		const requestTools = mergeAnthropicServerTools(tools, options?.serverTools)
-		// Tools are available only when local functions or resolved hosted tools are enabled.
-		const nativeToolsOn = requestTools !== undefined && requestTools.length > 0
-		// `tool_choice: any` only admits client tools, so forcing it would make a merged
-		// hosted server tool unreachable for the whole request.
-		const hostedServerToolsOn = (options?.serverTools?.length ?? 0) > 0
-		// A model that rejects a forced tool choice fails the whole request rather
-		// than degrading to an automatic one, so its own declaration decides this.
-		const forcedToolUseOn = model.info.capabilities?.supportsForcedToolUse !== false
-		const thinkingEnabled = reasoning.enabled
-		const thinkingConfig = reasoning.thinking
-		const outputConfig = reasoning.outputConfig
-		const maxOutputTokens =
-			options?.generation?.purpose === "compaction"
-				? options.generation.maxOutputTokens
-				: model.info.capabilities?.maxTokens || 8192
-		let requestBody: AnthropicMessageCreateParamsStreaming & Record<string, unknown>
-		let identityHeaders: Record<string, string>
-
-		if (model.info.capabilities?.supportsPromptCache) {
-			const anthropicMessages = sanitizeAnthropicMessages(messages, true)
-			// The attribution block leads the system array, matching real client
-			// traffic. It carries no cache_control of its own, so the breakpoint
-			// stays on the system prompt below.
-			const claudeCodeIdentity = await this.buildClaudeCodeIdentity(anthropicMessages)
-			const attributionBlocks = claudeCodeIdentity.systemBlocks
-			identityHeaders = claudeCodeIdentity.headers
-			requestBody = {
-				model: apiModelId,
-				thinking: thinkingConfig,
-				max_tokens: maxOutputTokens,
-				// "Thinking isn't compatible with temperature, top_p, or top_k modifications as well as forced tool use."
-				// (https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking#important-considerations-when-using-extended-thinking)
-				// Adaptive Claude models do not support temperature.
-				temperature: reasoning.adaptive || reasoning.enabled ? undefined : 0,
-				system: [
-					...attributionBlocks,
-					{
-						text: systemPrompt,
-						type: "text",
-						cache_control: { type: "ephemeral" },
-					},
-				], // setting cache breakpoint for system prompt so new tasks can reuse it
-				messages: anthropicMessages,
-				// tools, // cache breakpoints go from tools > system > messages, and since tools dont change, we can just set the breakpoint at the end of system (this avoids having to set a breakpoint at the end of tools which by itself does not meet min requirements for haiku caching)
-				stream: true,
-				tools: nativeToolsOn ? requestTools : undefined,
-				// tool_choice options:
-				// - none: disables tool use, even if tools are provided. Claude will not call any tools.
-				// - auto: allows Claude to decide whether to call any provided tools or not. This is the default value when tools are provided.
-				// - any: tells Claude that it must use one of the provided tools, but doesn't force a particular tool.
-				// Thinking cannot be combined with forced tool use, so a thinking
-				// request leaves the choice to the API default.
-				tool_choice: !localNativeToolsOn
-					? undefined
-					: hostedServerToolsOn || !forcedToolUseOn
-						? { type: "auto" }
-						: !thinkingEnabled
-							? { type: "any" }
-							: undefined,
-			}
-			if (outputConfig) {
-				requestBody.output_config = outputConfig
-			}
-		} else {
-			const anthropicMessages = sanitizeAnthropicMessages(messages, false)
-			const claudeCodeIdentity = await this.buildClaudeCodeIdentity(anthropicMessages)
-			const attributionBlocks = claudeCodeIdentity.systemBlocks
-			identityHeaders = claudeCodeIdentity.headers
-			requestBody = {
-				model: apiModelId,
-				max_tokens: maxOutputTokens,
-				temperature: reasoning.adaptive || reasoning.enabled ? undefined : 0,
-				system: [...attributionBlocks, { text: systemPrompt, type: "text" }],
-				messages: anthropicMessages,
-				tools: nativeToolsOn ? requestTools : undefined,
-				tool_choice: thinkingEnabled ? undefined : { type: "auto" },
-				stream: true,
-				thinking: thinkingConfig,
-			}
-			if (outputConfig) {
-				requestBody.output_config = outputConfig
-			}
-		}
+		const anthropicMessages = prepareAnthropicMessages(messages, model.info, options)
+		const claudeCodeIdentity = await this.resolveClaudeCodeIdentity(anthropicMessages)
+		const requestBody = buildAnthropicMessagesRequest({
+			model: this.resolveApiModelId(model.id, model.info),
+			modelInfo: model.info,
+			systemPrompt,
+			systemPrefix: claudeCodeIdentity.systemBlocks,
+			messages: anthropicMessages,
+			reasoning: resolveAnthropicReasoning(model.info.capabilities, this.config?.reasoning),
+			tools,
+			options,
+			// The route for models without prompt caching has never forced a tool choice; keep that request shape.
+			forcedToolChoice: anthropicPromptCacheOn(model.info) ? "model_declared" : "never",
+		})
 
 		yield* streamAnthropicMessagesEndpoint({
 			messages: requestBody.messages,
-			openStream: (continuationMessages) => {
-				const continuationBody = { ...requestBody, messages: continuationMessages }
-				return useFastMode
-					? createFastModeMessage(continuationBody)
-					: client.messages.create(continuationBody, requestOptions(identityHeaders))
-			},
+			openStream: (continuationMessages) =>
+				transport.open({ ...requestBody, messages: continuationMessages }, claudeCodeIdentity.headers),
 		})
 	}
 

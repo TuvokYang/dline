@@ -26,6 +26,7 @@ export enum DiagnosticDomain {
 	Capability = "capability",
 	Storage = "storage",
 	Workspace = "workspace",
+	Provider = "provider",
 }
 
 /**
@@ -56,6 +57,8 @@ export const DIAGNOSTIC_KINDS = {
 	// full read-and-merge commit that the in-memory baseline exists to avoid.
 	[DiagnosticDomain.Storage]: ["lock_contended", "stale_lock_broken", "write_retry", "baseline_diverged"],
 	[DiagnosticDomain.Workspace]: ["root_unresolved", "watcher_restarted"],
+	// A provider-hosted call the provider postponed to the next request, and how that postponement ended.
+	[DiagnosticDomain.Provider]: ["hosted_tool_deferred", "hosted_tool_deferral_resolved"],
 } as const satisfies Record<DiagnosticDomain, readonly string[]>
 
 /** Diagnostic kinds valid for `D`. */

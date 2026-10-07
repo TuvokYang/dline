@@ -302,7 +302,7 @@ async function startTaskAndWaitForRuntimeControls(
 	target: MockApiTarget,
 	server: ClineApiServerMock,
 	markers: { task: string; prompt: string; completion: string },
-	options: { onStreaming?: () => Promise<void>; streamingDelayMs?: number; supportsThinking?: boolean } = {},
+	options: { onStreaming?: () => Promise<void>; streamingDelayMs?: number } = {},
 ): Promise<void> {
 	server.enqueueResponses(
 		target,
@@ -325,12 +325,8 @@ async function startTaskAndWaitForRuntimeControls(
 	await expect.poll(() => server.getRequestCount(target), { timeout: 30_000 }).toBe(1)
 	await expect(sidebar.getByRole("contentinfo").getByText("Cancel", { exact: true })).toBeVisible({ timeout: 30_000 })
 	const thinkingControl = sidebar.getByRole("combobox", { name: "Task thinking override" })
-	if (options.supportsThinking === false) {
-		await expect(thinkingControl).toHaveCount(0)
-	} else {
-		await expect(thinkingControl).toBeVisible()
-		await expect(thinkingControl).toBeEnabled()
-	}
+	await expect(thinkingControl).toBeVisible()
+	await expect(thinkingControl).toBeEnabled()
 	const serviceTierControl = sidebar.getByRole("button", { name: "Task service tier" })
 	if (target === "openai-compatible-chat" || target === "openai-compatible-responses") {
 		await expect(serviceTierControl).toBeVisible()
@@ -622,7 +618,7 @@ e2e(
 )
 
 e2e(
-	"Task runtime controls - DeepSeek settings update exposes and operates Thinking in the same Task",
+	"Task runtime controls - DeepSeek keeps the declared Thinking override and re-projects Profile effort in the same Task",
 	async ({ dlineDir, dlineDocsDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
 		e2e.setTimeout(240_000)
 		await configureDefaultProfile(dlineDir, E2E_PROFILE_NAMES.mockDeepSeek, disableDeepSeekThinking)
@@ -635,8 +631,10 @@ e2e(
 				prompt: "E2E_DEEPSEEK_PROVIDER_ENABLE_THINKING_READY",
 				completion: "E2E_DEEPSEEK_PROVIDER_ENABLE_THINKING_DONE",
 			}
-			await startTaskAndWaitForRuntimeControls(sidebar, "deepseek-chat", server, markers, { supportsThinking: false })
-			await expect(sidebar.getByRole("combobox", { name: "Task thinking override" })).toHaveCount(0)
+			// Task capability comes from declared model metadata, not the Profile switch:
+			// DeepSeek declares effort levels, so the override stays available while the
+			// Profile has thinking disabled.
+			await startTaskAndWaitForRuntimeControls(sidebar, "deepseek-chat", server, markers)
 
 			await openApiSettings(page, sidebar)
 			const card = await openProfileEditor(sidebar, E2E_PROFILE_NAMES.mockDeepSeek)
@@ -1146,8 +1144,11 @@ e2e(
 	async ({ dlineDir, dlineDocsDir, helper, openVSCode, server, userDataDir, workspaceDir }, testInfo) => {
 		e2e.setTimeout(240_000)
 		const profileBefore = await configureDefaultProfile(dlineDir, E2E_PROFILE_NAMES.mockAnthropic, (profile) => {
-			profile.modelId = "dline-e2e-budget-anthropic"
+			const budgetModelId = "dline-e2e-budget-anthropic"
+			profile.modelId = budgetModelId
+			// Profile model metadata applies only when its identity matches the selected model.
 			profile.modelInfo = {
+				id: budgetModelId,
 				capabilities: {
 					supportsReasoning: true,
 					supportsTools: true,

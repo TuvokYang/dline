@@ -19,14 +19,14 @@ import { resolveOpenAiCodexRuntimeConfig } from "@/integrations/openai-codex/run
 import { openAiCodexUsageClient, toAccountUsage } from "@/integrations/openai-codex/usage"
 import { ExtensionRegistryInfo } from "@/registry"
 import { buildExternalBasicHeaders } from "@/services/EnvUtils"
-import { ClineStorageMessage } from "@/shared/messages/content"
+import { ClineStorageMessage, type HostedToolReplayProtocol } from "@/shared/messages/content"
 import { ApiFormat, ServerTool } from "@/shared/proto/dline/models/metadata"
 import { Logger } from "@/shared/services/Logger"
 import { redactDiagnosticString } from "@/shared/services/logging/safe-diagnostic-value"
 import { AccountUsage, type AccountUsageResetResult, ApiHandler, ApiHandlerContext, type ApiRequestOptions } from "../"
 import { isOutputLimitExceededError, OutputLimitExceededError } from "../stream/OutputLimitExceededError"
 import { projectOpenAIResponsesPromptCache } from "../transform/openai-prompt-cache"
-import { convertToOpenAIResponsesInput } from "../transform/openai-response-format"
+import { convertToOpenAIResponsesInput, declaredResponsesHostedToolNames } from "../transform/openai-response-format"
 import { ApiStream } from "../transform/stream"
 import { handleResponsesApiStreamResponse } from "../utils/responses_api_support"
 import { openAiCodexModelInfoSaneDefaults } from "./models/openai-codex"
@@ -274,6 +274,15 @@ export class OpenAiCodexHandler implements ApiHandler {
 		if (tool !== ServerTool.WEB_SEARCH) {
 			return false
 		}
+		return this.usesResponsesApi()
+	}
+
+	/** Hosted Web Search calls this endpoint ran go back verbatim on later requests, as Codex replays them. */
+	getHostedToolReplayProtocol(): HostedToolReplayProtocol | undefined {
+		return this.usesResponsesApi() ? "openai_responses" : undefined
+	}
+
+	private usesResponsesApi(): boolean {
 		const apiFormat = this.getModel().info.apiFormats?.[0]
 		return apiFormat === ApiFormat.OPENAI_RESPONSES || apiFormat === ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE
 	}
@@ -339,6 +348,7 @@ export class OpenAiCodexHandler implements ApiHandler {
 			const useWebsocketMode = this.shouldUseWebsocketMode(this.getSelectedApiFormat())
 			const { input, previousResponseId } = convertToOpenAIResponsesInput(messages, {
 				usePreviousResponseId: useWebsocketMode,
+				replayHostedTools: declaredResponsesHostedToolNames(options?.serverTools),
 			})
 			const usePreviousResponseId = useWebsocketMode && !!previousResponseId
 

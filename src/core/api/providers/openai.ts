@@ -17,9 +17,11 @@ import { normalizeOpenAiServiceTier } from "@shared/storage/types"
 import { calculateApiCostOpenAI } from "@utils/cost"
 import OpenAI from "openai"
 import type { ChatCompletionChunk, ChatCompletionFunctionTool, ChatCompletionTool } from "openai/resources/chat/completions"
-import { ClineStorageMessage } from "@/shared/messages/content"
+import type { DocumentInputLimits } from "@/shared/messages/attached-documents"
+import { ClineStorageMessage, type HostedToolReplayProtocol } from "@/shared/messages/content"
 import { isO1Model } from "@/shared/resolve-prompt-profile"
 import { Logger } from "@/shared/services/Logger"
+import { openAiResponsesDocumentLimits } from "../document-input-limits"
 import { ApiHandler, ApiHandlerContext, type ApiRequestOptions } from "../index"
 import { withRetry } from "../retry"
 import { getOpenAIChatOutputLimitError } from "../stream/OutputLimitExceededError"
@@ -31,8 +33,9 @@ import {
 	projectOpenAIChatPromptCache,
 	projectOpenAIResponsesPromptCache,
 } from "../transform/openai-prompt-cache"
-import { convertToOpenAIResponsesInput } from "../transform/openai-response-format"
+import { convertToOpenAIResponsesInput, declaredResponsesHostedToolNames } from "../transform/openai-response-format"
 import { convertToR1Format } from "../transform/r1-format"
+import { normalizeOpenAIFinishReason } from "../transform/stop-reason"
 import { ApiStream } from "../transform/stream"
 import { getOpenAIToolParams, ToolCallProcessor } from "../transform/tool-call-processor"
 import { handleResponsesApiStreamResponse } from "../utils/responses_api_support"
@@ -176,10 +179,21 @@ export class OpenAiHandler implements ApiHandler {
 	}
 
 	supportsServerTool(tool: ServerTool): boolean {
-		return (
-			tool === ServerTool.WEB_SEARCH &&
-			(this.apiFormat === ApiFormat.OPENAI_RESPONSES || this.apiFormat === ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE)
-		)
+		return tool === ServerTool.WEB_SEARCH && this.usesResponsesApi()
+	}
+
+	/** Hosted Web Search calls this endpoint ran go back verbatim; Chat Completions has no hosted call to replay. */
+	getHostedToolReplayProtocol(): HostedToolReplayProtocol | undefined {
+		return this.usesResponsesApi() ? "openai_responses" : undefined
+	}
+
+	/** Responses accepts inline PDFs as `input_file`; Chat Completions keeps extracted text. */
+	getDocumentInputLimits(): DocumentInputLimits | undefined {
+		return this.usesResponsesApi() ? openAiResponsesDocumentLimits(this.getModel().info) : undefined
+	}
+
+	private usesResponsesApi(): boolean {
+		return this.apiFormat === ApiFormat.OPENAI_RESPONSES || this.apiFormat === ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE
 	}
 
 	/**
@@ -227,7 +241,7 @@ export class OpenAiHandler implements ApiHandler {
 		this.requestController?.abort()
 		const requestController = new AbortController()
 		this.requestController = requestController
-		if (this.apiFormat === ApiFormat.OPENAI_RESPONSES || this.apiFormat === ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE) {
+		if (this.usesResponsesApi()) {
 			try {
 				yield* this.createResponsesMessage(systemPrompt, messages, requestController, tools, options)
 			} finally {
@@ -331,6 +345,8 @@ export class OpenAiHandler implements ApiHandler {
 		const toolCallProcessor = new ToolCallProcessor()
 
 		let usageYielded = false
+		// The finish reason usually arrives on the chunk before the usage-only chunk.
+		let stopReason: ReturnType<typeof normalizeOpenAIFinishReason>
 
 		for await (const chunk of stream) {
 			const delta = chunk.choices?.[0]?.delta
@@ -354,6 +370,7 @@ export class OpenAiHandler implements ApiHandler {
 			if (options?.generation?.purpose === "compaction" && chunk.choices?.[0]?.finish_reason === "tool_calls") {
 				yield* toolCallProcessor.completeToolCalls()
 			}
+			stopReason = normalizeOpenAIFinishReason(chunk.choices?.[0]?.finish_reason) ?? stopReason
 
 			if (chunk.usage && !usageYielded) {
 				usageYielded = true
@@ -392,6 +409,7 @@ export class OpenAiHandler implements ApiHandler {
 					cacheReadTokens,
 					cacheWriteTokens,
 					totalCost,
+					...(stopReason ? { stopReason } : {}),
 				}
 			}
 
@@ -442,7 +460,10 @@ export class OpenAiHandler implements ApiHandler {
 	): ApiStream {
 		const client = this.ensureClient()
 		const model = this.getModel()
-		const converted = convertToOpenAIResponsesInput(messages, { usePreviousResponseId: false })
+		const converted = convertToOpenAIResponsesInput(messages, {
+			usePreviousResponseId: false,
+			replayHostedTools: declaredResponsesHostedToolNames(options?.serverTools),
+		})
 		const hostedWebSearch = options?.serverTools?.includes(ServerTool.WEB_SEARCH) === true
 		const input = converted.input
 		const responseTools: OpenAI.Responses.Tool[] = (tools ?? [])

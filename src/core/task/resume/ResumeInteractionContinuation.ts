@@ -24,7 +24,7 @@ export async function projectResumeOrdinaryInput(input: {
 		const toolUse = findToolUse(input.apiHistory, result)
 		const kind = toolUse ? interactionKindForToolName(toolUse.name) : undefined
 		if (!kind) continue
-		toolResults[index] = await projectInteractionContinuation({
+		const continuation = await projectInteractionContinuation({
 			kind,
 			functionId: result.function_id,
 			dlineTid: result.dline_tid,
@@ -34,7 +34,8 @@ export async function projectResumeOrdinaryInput(input: {
 				files: input.draft.files,
 			},
 		})
-		return { content: toolResults, draftEmbedded: true }
+		toolResults[index] = continuation.toolResult
+		return { content: [...toolResults, ...continuation.documents], draftEmbedded: true }
 	}
 
 	return { content: toolResults, draftEmbedded: false }

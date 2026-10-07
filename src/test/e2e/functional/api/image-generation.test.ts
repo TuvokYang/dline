@@ -263,7 +263,10 @@ e2e(
 			expect(hostedImageConsumptions()).toHaveLength(0)
 			await expect(sidebar.getByText("E2E_IMAGE_REJECTED_OK", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
 
-			await sidebar.getByRole("button", { name: "Close Task", exact: true }).click()
+			const closeTask = sidebar.getByRole("button", { name: "Close Task", exact: true })
+			await closeTask.click()
+			// The chat input exists on both views; a send before the home view renders targets the closing task.
+			await expect(closeTask).toHaveCount(0)
 			await sendTask(sidebar, approvedTask)
 			await expect(pendingCard.getByText("Dline wants to generate an image", { exact: true })).toBeVisible({
 				timeout: 60_000,
@@ -607,9 +610,9 @@ e2e(
 			expect(firstToolResult?.content).toContain(GENERATED_ARTIFACT_ID)
 			expect(firstToolResult?.content).not.toContain(PNG_1X1_BASE64)
 			expect(firstToolResult?.content).not.toContain("data:image/")
-			const firstToolResultBlocks = JSON.parse(firstToolResult?.content ?? "[]") as Array<{ type?: string; text?: string }>
-			const firstToolResultText = firstToolResultBlocks.find((block) => block.type === "text")?.text
-			const firstToolResultPayload = JSON.parse(firstToolResultText?.split(" Result:\n")[1] ?? "{}") as {
+			// A text-only tool result reaches the Responses API as plain text, not as serialized content blocks.
+			expect(firstToolResult?.content).toMatch(/^\[generate_image\b/)
+			const firstToolResultPayload = JSON.parse(firstToolResult?.content?.split(" Result:\n")[1] ?? "{}") as {
 				artifacts?: Array<{ id?: string; path?: string }>
 			}
 			expect(firstToolResultPayload.artifacts).toEqual([

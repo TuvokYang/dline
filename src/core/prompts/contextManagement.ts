@@ -37,6 +37,3 @@ export const summarizeTask = (
 		}).text
 	}\n`
 }
-
-export const continuationPrompt = (summaryText: string) =>
-	`${runtimeGenerator.generate("contextManagement.continuationPrompt", { SUMMARY_TEXT: summaryText }).text}\n`

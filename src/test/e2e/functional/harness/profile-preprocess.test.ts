@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto"
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises"
 import * as os from "node:os"
 import * as path from "node:path"
+import { getClaudeCodeProfileAuthFileName } from "@core/storage/secrets/ClaudeCodeProfileAuthPath"
 import { getOpenAiCodexProfileAuthFileName } from "@core/storage/secrets/OpenAiCodexProfileAuthPath"
 import { SETTINGS_MIGRATION_VERSION, SETTINGS_MIGRATION_VERSION_KEY } from "@core/storage/settings/settings-types"
 import { E2E_PROFILE_NAMES, prepareE2EState } from "@e2e/utils/api-profile"
@@ -105,10 +106,19 @@ test("mock E2E profile preprocessing ignores local profiles, secrets, and live e
 		const apiKeys = await readJson<Record<string, { apiKey: string; name: string }>>(
 			path.join(dlineDir, "data", "secrets", "api_keys.json"),
 		)
-		expect(Object.values(apiKeys)).toHaveLength(Object.values(E2E_PROFILE_NAMES).length)
+		// Claude Code is subscription-only: its credential is a per-Profile OAuth document, not an API key.
+		const { mockClaudeCode, ...apiKeyProfileNames } = E2E_PROFILE_NAMES
+		const expectedApiKeyNames = Object.values(apiKeyProfileNames)
+		const apiKeyNames = Object.values(apiKeys).map(({ name }) => name)
+		expect(Object.values(apiKeys)).toHaveLength(expectedApiKeyNames.length)
 		expect(Object.values(apiKeys).every(({ apiKey }) => apiKey === "dline-e2e-api-key")).toBe(true)
-		expect(Object.values(apiKeys).map(({ name }) => name)).toEqual(expect.arrayContaining(Object.values(E2E_PROFILE_NAMES)))
-		expect(await readdir(path.join(dlineDir, "data", "secrets"))).toEqual(["api_keys.json"])
+		expect(apiKeyNames).toEqual(expect.arrayContaining(expectedApiKeyNames))
+		expect(apiKeyNames).not.toContain(mockClaudeCode)
+		const claudeCodeAuthFile = getClaudeCodeProfileAuthFileName("dline-e2e-mock-claude-code")
+		expect((await readdir(path.join(dlineDir, "data", "secrets"))).sort()).toEqual(
+			["api_keys.json", claudeCodeAuthFile].sort(),
+		)
+		expect(await readJson(path.join(dlineDir, "data", "secrets", claudeCodeAuthFile))).toMatchObject({ type: "oauth" })
 		await expect(
 			readFile(path.join(dlineDir, "data", "secrets", getOpenAiCodexProfileAuthFileName(staleProfileId)), "utf8"),
 		).rejects.toMatchObject({ code: "ENOENT" })

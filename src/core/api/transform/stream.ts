@@ -1,4 +1,4 @@
-import type { ClineProviderMetadata } from "@shared/messages/content"
+import type { ClineAssistantHostedToolBlock, ClineProviderMetadata } from "@shared/messages/content"
 import type { ServerTool } from "@shared/proto/dline/models/metadata"
 
 export type ApiStream = AsyncGenerator<ApiProviderStreamChunk>
@@ -46,10 +46,27 @@ export interface ApiStreamUsageChunk {
 		webSearchRequests?: number
 		webFetchRequests?: number
 	}
+	/** Normalized reason the Provider stopped generating, when the adapter observed one. */
+	stopReason?: ApiStopReason
 	provider_metadata?: ClineProviderMetadata
 }
 
-export type ApiServerToolPhase = "started" | "in_progress" | "preview" | "searching" | "completed" | "failed"
+/**
+ * Provider-neutral stop reason.
+ *
+ * `output_limit` covers Anthropic `max_tokens`, OpenAI Chat `length`, and Responses
+ * `max_output_tokens`; `other` keeps an unrecognized native reason distinguishable from
+ * a stream that never reported one.
+ */
+export type ApiStopReason = "end_turn" | "tool_use" | "output_limit" | "stop_sequence" | "content_filter" | "other"
+
+/**
+ * Lifecycle of one provider-hosted call.
+ *
+ * `deferred` is non-terminal: the provider stopped before running the call because a client tool was called in
+ * the same parallel group, and runs it at the start of the request that returns those client tool results.
+ */
+export type ApiServerToolPhase = "started" | "in_progress" | "preview" | "searching" | "deferred" | "completed" | "failed"
 
 interface ApiServerToolChunkBase {
 	type: "server_tool"
@@ -60,6 +77,12 @@ interface ApiServerToolChunkBase {
 	input?: unknown
 	result?: unknown
 	error?: unknown
+	/**
+	 * Verbatim provider blocks the consumer stores in the assistant turn as-is, for protocols that require
+	 * hosted calls back on later requests. A terminal event carries the call with its result, or only the
+	 * result when the call was deferred by an earlier response; a `deferred` event carries only the call.
+	 */
+	replay?: ClineAssistantHostedToolBlock
 	provider_metadata?: ClineProviderMetadata
 }
 

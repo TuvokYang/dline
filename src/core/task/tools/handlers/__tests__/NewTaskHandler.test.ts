@@ -76,11 +76,33 @@ function createBlock(context?: string): ToolUse {
 }
 
 describe("NewTaskHandler", () => {
+	it("streams the partial context into the new_task ask instead of a tool row", async () => {
+		const ask = vi.fn(async () => ({ response: "messageResponse" }))
+		const say = vi.fn(async () => undefined)
+		const block = { ...createBlock("Partial successor"), partial: true } as ToolUse
+
+		await new NewTaskHandler().handlePartialBlock(block, {
+			ask,
+			say,
+			removeClosingTag: (_block: ToolUse, _tag: string, text?: string) => text ?? "",
+		} as never)
+
+		expect(ask).toHaveBeenCalledWith("new_task", "Partial successor", true, { existingTs: 100 })
+		expect(say).not.toHaveBeenCalled()
+	})
+
 	it("returns a successor directive for approve even when a draft is present", async () => {
 		const config = createConfig({ actionId: "approve", text: "This draft must not change the action" })
 
 		const result = await new NewTaskHandler().execute(config, createBlock("Successor task context"))
 
+		expect(config.interactions.open).toHaveBeenCalledWith({
+			turnId: expect.any(String),
+			interactionId: expect.any(String),
+			kind: "new_task",
+			presentation: "Successor task context",
+			existingTs: 100,
+		})
 		expect(result).toMatchObject({
 			response: "New task confirmed",
 			postCommit: {
@@ -90,6 +112,30 @@ describe("NewTaskHandler", () => {
 				dlineTid: "tid-new-task",
 			},
 		})
+	})
+
+	it("returns feedback continuation for reject with text and attachments", async () => {
+		const config = createConfig({
+			actionId: "reject",
+			text: "Keep the migration constraints",
+			images: ["image-1"],
+			files: ["file-1"],
+		})
+
+		const result = await new NewTaskHandler().execute(config, createBlock("Initial context"))
+
+		expect(result).not.toHaveProperty("postCommit")
+		expect(JSON.stringify(result)).toContain("The user provided feedback instead of creating a new task")
+		expect(JSON.stringify(result)).toContain("Keep the migration constraints")
+	})
+
+	it("treats an empty reject as feedback instead of confirming task creation", async () => {
+		const config = createConfig({ actionId: "reject" })
+
+		const result = await new NewTaskHandler().execute(config, createBlock("Initial context"))
+
+		expect(result).not.toHaveProperty("postCommit")
+		expect(JSON.stringify(result)).toContain("The user provided feedback instead of creating a new task")
 	})
 
 	it("keeps the existing missing-context error path", async () => {

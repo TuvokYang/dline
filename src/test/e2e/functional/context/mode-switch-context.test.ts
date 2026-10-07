@@ -1463,7 +1463,8 @@ e2e(
 		e2e.setTimeout(150_000)
 		await configureAutoCompact(dlineDir, false)
 		const partialSummary = "E2E_MANUAL_INCOMPLETE_PARTIAL_MUST_NOT_RENDER"
-		const serializedArguments = JSON.stringify({ context: partialSummary })
+		// The whole summary streams, but neither </context> nor </summarize_task> ever arrives.
+		const streamedCallPrefix = `<summarize_task>\n<context>\n${partialSummary}\n`
 		server.enqueueResponses(
 			"openai-compatible-responses",
 			{
@@ -1486,9 +1487,15 @@ e2e(
 				id: "call_manual_incomplete_summary",
 				name: "summarize_task",
 				arguments: { context: partialSummary },
-				truncateAfter: serializedArguments.length - 1,
+				truncateAfter: streamedCallPrefix.length,
 				expectedRequestIncludes: [COMPACT_INSTRUCTION_MARKER, "E2E_MANUAL_INCOMPLETE_GUIDANCE"],
 				expectedRequestExcludes: ["/compact"],
+			},
+			// The max-output replay of the cut summary fails at the Provider, which ends the hidden Pass.
+			{
+				type: "error",
+				status: 400,
+				message: "E2E_MANUAL_INCOMPLETE_REPLAY_FAILURE",
 			},
 		)
 
@@ -1511,10 +1518,12 @@ e2e(
 			await expect(sidebar.getByText(partialSummary, { exact: false })).not.toBeVisible()
 			await expect(sidebar.locator('vscode-button[aria-label="Condense Conversation"]')).toHaveCount(0)
 			await expect(sidebar.locator('vscode-button[aria-label="Regenerate Summary"]')).toHaveCount(0)
-			await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(3)
+			await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(4)
 			const requests = server.getMockConsumptions("openai-compatible-responses")
 			expect(requests[2].responseType).toBe("truncated-tool")
 			expect(requests[2].contractError).toBeUndefined()
+			expect(requests[3].responseType).toBe("error")
+			expect(JSON.stringify(requests[3].requestBody)).toContain("# Retry Reminder")
 			expect(requests[2].requestToolResults).not.toContainEqual(
 				expect.objectContaining({ callId: "call_manual_incomplete_summary" }),
 			)

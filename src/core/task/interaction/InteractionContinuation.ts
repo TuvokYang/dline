@@ -1,9 +1,14 @@
 import type { ImageBlockParam } from "@anthropic-ai/sdk/resources/messages/messages"
 import { getPrompt, renderPrompt } from "@core/prompts/i18n"
 import { formatResponse } from "@core/prompts/responses"
-import { processFilesIntoText } from "@integrations/misc/extract-text"
+import { processFilesForToolResult } from "@integrations/misc/extract-text"
 import type { ChatContent } from "@shared/ChatContent"
-import type { ClineTextContentBlock, ClineToolResponseContent, ClineUserToolResultContentBlock } from "@shared/messages/content"
+import type {
+	ClineTextContentBlock,
+	ClineToolResponseContent,
+	ClineUserAttachedDocumentBlock,
+	ClineUserToolResultContentBlock,
+} from "@shared/messages/content"
 import { ClineDefaultTool } from "@shared/tools"
 import type { InteractionKind } from "./Interaction"
 
@@ -35,23 +40,36 @@ export function interactionKindForToolName(name: string): InteractionKind | unde
 	}
 }
 
-/** Project the canonical tool result produced by one conversational interaction response. */
-export async function projectInteractionContinuation(
-	input: InteractionContinuationInput,
-): Promise<ClineUserToolResultContentBlock> {
+/** User-message content produced by one conversational interaction response. */
+export interface InteractionContinuation {
+	toolResult: ClineUserToolResultContentBlock
+	/** PDFs attached to the response, which follow the tool results of the same user message natively. */
+	documents: ClineUserAttachedDocumentBlock[]
+}
+
+/** Project the canonical tool result, and any attached PDFs, produced by one conversational interaction response. */
+export async function projectInteractionContinuation(input: InteractionContinuationInput): Promise<InteractionContinuation> {
+	const attachments = await processFilesForToolResult(input.chatContent?.files)
 	return {
-		type: "tool_result",
-		function_id: input.functionId,
-		dline_tid: input.dlineTid,
-		content: await projectResponseContent(input),
+		toolResult: {
+			type: "tool_result",
+			function_id: input.functionId,
+			dline_tid: input.dlineTid,
+			content: projectResponseContent(input, attachments.text),
+		},
+		documents: attachments.documents,
 	}
 }
 
-async function projectResponseContent(input: InteractionContinuationInput): Promise<ClineToolResponseContent> {
+/** `<feedback>` suffix of a status acknowledgment; images and files travel as their own blocks. */
+export function statusFeedbackText(text?: string): string {
+	const trimmedText = text?.trim()
+	return trimmedText ? `\n<feedback>\n${trimmedText}\n</feedback>` : ""
+}
+
+function projectResponseContent(input: InteractionContinuationInput, fileContent: string): ClineToolResponseContent {
 	const text = input.chatContent?.message
 	const images = input.chatContent?.images
-	const files = input.chatContent?.files
-	const fileContent = files?.length ? await processFilesIntoText(files) : ""
 
 	switch (input.kind) {
 		case "make_plan":
@@ -66,10 +84,12 @@ async function projectResponseContent(input: InteractionContinuationInput): Prom
 					: "User continued the conversation."
 			return formatResponse.toolResult(message, images, fileContent)
 		}
-		case "status_acknowledgment": {
-			const feedback = formatStatusFeedback(text, images, files)
-			return formatResponse.toolResult(`[STATUS_UPDATE] User acknowledged.${feedback} Continue with your next tool call.`)
-		}
+		case "status_acknowledgment":
+			return formatResponse.toolResult(
+				`[STATUS_UPDATE] User acknowledged.${statusFeedbackText(text)} Continue with your next tool call.`,
+				images,
+				fileContent,
+			)
 		case "completion": {
 			const content: Array<ClineTextContentBlock | ImageBlockParam> = [
 				{ type: "text", text: "[attempt_completion] Result: Done" },
@@ -89,13 +109,4 @@ async function projectResponseContent(input: InteractionContinuationInput): Prom
 		default:
 			return formatResponse.toolResult(`<feedback>\n${text ?? ""}\n</feedback>`, images, fileContent)
 	}
-}
-
-function formatStatusFeedback(text?: string, images?: string[], files?: string[]): string {
-	const parts: string[] = []
-	const trimmedText = text?.trim()
-	if (trimmedText) parts.push(`<feedback>\n${trimmedText}\n</feedback>`)
-	if (images?.length) parts.push(`Images: ${images.join(", ")}`)
-	if (files?.length) parts.push(`Files: ${files.join(", ")}`)
-	return parts.length > 0 ? `\n${parts.join("\n")}` : ""
 }

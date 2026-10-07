@@ -1,4 +1,5 @@
 import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { ClineStorageMessage } from "@shared/messages/content"
 import {
 	ApiConversation,
 	type ApiConversationReadWindow,
@@ -38,6 +39,7 @@ export class TaskMessageResources {
 	private executionOpening?: Promise<TaskExecutionMessages>
 	private execution?: TaskExecutionMessages
 	private recoveryApiWindow?: ApiConversationReadWindow
+	private retainedRecoveryApiMessages?: ReadonlyMap<number, ClineStorageMessage>
 	private latestMessages: ClineMessage[] = []
 	private latestWindowStart?: number
 	private titleMessage?: ClineMessage
@@ -146,12 +148,35 @@ export class TaskMessageResources {
 		return this.read(async () => {
 			const window = await ApiConversation.readWindow(this.taskId, options)
 			this.recoveryApiWindow = window
+			this.retainedRecoveryApiMessages = undefined
 			return window
 		})
 	}
 
+	/**
+	 * Release the loaded recovery window once the stopped projection is hydrated,
+	 * keeping only the records it still addresses. A legacy history without a
+	 * snapshot loads its complete API history, which must not stay resident per
+	 * open history surface.
+	 */
+	retainRecoveryApiMessages(indices: readonly number[]): void {
+		const window = this.recoveryApiWindow
+		if (!window) return
+		const retained = new Map<number, ClineStorageMessage>()
+		for (const index of indices) {
+			const message = window.getAt(index)
+			if (message) retained.set(index, message)
+		}
+		this.recoveryApiWindow = undefined
+		this.retainedRecoveryApiMessages = retained
+	}
+
 	getApiMessageAt(index: number) {
-		return this.execution?.apiConversation.getAt(index) ?? this.recoveryApiWindow?.getAt(index)
+		return (
+			this.execution?.apiConversation.getAt(index) ??
+			this.recoveryApiWindow?.getAt(index) ??
+			this.retainedRecoveryApiMessages?.get(index)
+		)
 	}
 
 	/** Supply exact stopped-state recovery records, not an alternate runtime projection. */
@@ -218,6 +243,7 @@ export class TaskMessageResources {
 			this.window = undefined
 			this.execution = undefined
 			this.recoveryApiWindow = undefined
+			this.retainedRecoveryApiMessages = undefined
 			this.latestMessages = []
 			this.latestWindowStart = undefined
 			this.titleMessage = undefined
@@ -284,6 +310,7 @@ export class TaskMessageResources {
 			const execution = { uiMessage, apiConversation }
 			this.execution = execution
 			this.recoveryApiWindow = undefined
+			this.retainedRecoveryApiMessages = undefined
 			// Reads issued during admission wait on executionOpening and cannot
 			// race the full-store load after the display handle is retired.
 			this.latestMessages = []

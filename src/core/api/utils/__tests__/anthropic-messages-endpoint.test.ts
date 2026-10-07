@@ -1,6 +1,9 @@
 import { ServerTool } from "@shared/proto/dline/models/metadata"
-import { describe, expect, it, vi } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
+import { recordDiagnostic } from "@/services/telemetry/instrumentation/diagnostic-recorder"
 import { streamAnthropicMessagesEndpoint } from "../anthropic-messages-endpoint"
+
+vi.mock("@/services/telemetry/instrumentation/diagnostic-recorder", () => ({ recordDiagnostic: vi.fn() }))
 
 function createAsyncIterable(events: readonly unknown[], onClose?: () => void): AsyncIterable<any> {
 	return {
@@ -39,7 +42,7 @@ const messageStart = (
 	},
 })
 
-const messageDelta = (stopReason: "end_turn" | "pause_turn", outputTokens: number) => ({
+const messageDelta = (stopReason: "end_turn" | "pause_turn" | "tool_use" | null, outputTokens: number) => ({
 	type: "message_delta",
 	delta: { stop_reason: stopReason, stop_sequence: null },
 	usage: {
@@ -223,6 +226,67 @@ describe("streamAnthropicMessagesEndpoint", () => {
 		])
 	})
 
+	it("attaches the verbatim call and result to a hosted fetch paired across a pause_turn boundary", async () => {
+		const call = {
+			type: "server_tool_use",
+			id: "srv_fetch_cross",
+			name: "web_fetch",
+			input: { url: "https://example.test/page" },
+			caller: { type: "direct" },
+		}
+		const result = {
+			type: "web_fetch_tool_result",
+			tool_use_id: "srv_fetch_cross",
+			content: { type: "web_fetch_result", url: "https://example.test/page", content: { type: "document" } },
+			caller: { type: "direct" },
+		}
+		const responses = [
+			[{ type: "content_block_start", index: 0, content_block: call }, messageDelta("pause_turn", 1)],
+			[{ type: "content_block_start", index: 0, content_block: result }, messageDelta("end_turn", 1)],
+		]
+		const chunks = await collect(
+			streamAnthropicMessagesEndpoint({
+				messages: [{ role: "user", content: "Fetch" }],
+				openStream: async () => createAsyncIterable(responses.shift() ?? []),
+			}),
+		)
+
+		const completed = chunks.find((chunk) => chunk.type === "server_tool" && chunk.phase === "completed")
+		expect(completed?.replay).toEqual({ type: "hosted_tool", protocol: "anthropic_messages", blocks: [call, result] })
+	})
+
+	it("fails a hosted call left open by the final response and names its stop reason", async () => {
+		const chunks = await collect(
+			streamAnthropicMessagesEndpoint({
+				messages: [{ role: "user", content: "Fetch" }],
+				openStream: async () =>
+					createAsyncIterable([
+						{
+							type: "content_block_start",
+							index: 0,
+							content_block: {
+								type: "server_tool_use",
+								id: "srv_fetch_open",
+								name: "web_fetch",
+								input: { url: "https://example.test/slow" },
+								caller: { type: "direct" },
+							},
+						},
+						{ type: "content_block_stop", index: 0 },
+						messageDelta("tool_use", 3),
+					]),
+			}),
+		)
+
+		const lifecycle = chunks.filter((chunk) => chunk.type === "server_tool")
+		expect(lifecycle.map((chunk) => chunk.phase)).toEqual(["started", "failed"])
+		expect(lifecycle.at(-1)).toMatchObject({
+			function_id: "srv_fetch_open",
+			tool: ServerTool.WEB_FETCH,
+			error: "Anthropic response ended (stop_reason: tool_use) before the hosted web_fetch call returned a result.",
+		})
+	})
+
 	it("fails closed when pause_turn has no assistant content", async () => {
 		const stream = streamAnthropicMessagesEndpoint({
 			messages: [{ role: "user", content: "Search" }],
@@ -271,5 +335,205 @@ describe("streamAnthropicMessagesEndpoint", () => {
 		await expect(stream.next()).resolves.toMatchObject({ value: { type: "text", text: "partial" }, done: false })
 		await stream.return(undefined)
 		expect(closed).toBe(true)
+	})
+})
+
+describe("streamAnthropicMessagesEndpoint mixed hosted and client tool turns", () => {
+	const searchQuery = "CEC 2025 competition single objective bound constrained benchmark"
+	const deferredCall = {
+		type: "server_tool_use",
+		id: "srvtoolu_mixed",
+		name: "web_search",
+		input: { query: searchQuery },
+		caller: { type: "direct" },
+	}
+	const searchResult = {
+		type: "web_search_tool_result",
+		tool_use_id: "srvtoolu_mixed",
+		content: [{ type: "web_search_result", url: "https://example.test/cec", title: "CEC", encrypted_content: "e" }],
+		caller: { type: "direct" },
+	}
+
+	const mixedResponse = (serverToolName = "web_search") => [
+		{
+			type: "content_block_start",
+			index: 0,
+			content_block: { type: "text", text: "Searching and reading.", citations: null },
+		},
+		{ type: "content_block_stop", index: 0 },
+		{
+			type: "content_block_start",
+			index: 1,
+			content_block: {
+				type: "server_tool_use",
+				id: "srvtoolu_mixed",
+				name: serverToolName,
+				input: {},
+				caller: { type: "direct" },
+			},
+		},
+		{
+			type: "content_block_delta",
+			index: 1,
+			delta: { type: "input_json_delta", partial_json: JSON.stringify({ query: searchQuery }) },
+		},
+		{ type: "content_block_stop", index: 1 },
+		{
+			type: "content_block_start",
+			index: 2,
+			content_block: { type: "tool_use", id: "toolu_read", name: "read_file", input: {} },
+		},
+		{ type: "content_block_delta", index: 2, delta: { type: "input_json_delta", partial_json: '{"path":"a.ts"}' } },
+		{ type: "content_block_stop", index: 2 },
+		messageDelta("tool_use", 4),
+	]
+
+	const resumeMessages = [
+		{ role: "user" as const, content: "Research and read" },
+		{
+			role: "assistant" as const,
+			content: [
+				deferredCall,
+				{ type: "text" as const, text: "Searching and reading." },
+				{ type: "tool_use" as const, id: "toolu_read", name: "read_file", input: { path: "a.ts" } },
+			],
+		},
+		{
+			role: "user" as const,
+			content: [
+				{ type: "tool_result" as const, tool_use_id: "toolu_read", content: [{ type: "text" as const, text: "body" }] },
+			],
+		},
+	] as any[]
+
+	afterEach(() => {
+		vi.unstubAllEnvs()
+		vi.mocked(recordDiagnostic).mockClear()
+	})
+
+	it("defers a hosted call grouped with a client tool instead of failing it", async () => {
+		const chunks = await collect(
+			streamAnthropicMessagesEndpoint({
+				messages: [{ role: "user", content: "Research and read" }],
+				openStream: async () => createAsyncIterable(mixedResponse()),
+			}),
+		)
+
+		const lifecycle = chunks.filter((chunk) => chunk.type === "server_tool")
+		expect(lifecycle.map((chunk) => chunk.phase)).toEqual(["started", "searching", "deferred"])
+		expect(lifecycle.at(-1)).toMatchObject({
+			function_id: "srvtoolu_mixed",
+			tool: ServerTool.WEB_SEARCH,
+			replay: { type: "hosted_tool", protocol: "anthropic_messages", segment: "call", blocks: [deferredCall] },
+		})
+		expect(chunks.some((chunk) => chunk.type === "tool_calls" && chunk.function_id === "toolu_read")).toBe(true)
+	})
+
+	it("completes a deferred call whose result opens the next request's response", async () => {
+		const chunks = await collect(
+			streamAnthropicMessagesEndpoint({
+				messages: resumeMessages,
+				openStream: async () =>
+					createAsyncIterable([
+						{ type: "content_block_start", index: 0, content_block: searchResult },
+						{
+							type: "content_block_start",
+							index: 1,
+							content_block: { type: "text", text: "Found it.", citations: null },
+						},
+						messageDelta("end_turn", 2),
+					]),
+			}),
+		)
+
+		const lifecycle = chunks.filter((chunk) => chunk.type === "server_tool")
+		expect(lifecycle).toHaveLength(1)
+		expect(lifecycle[0]).toMatchObject({
+			function_id: "srvtoolu_mixed",
+			tool: ServerTool.WEB_SEARCH,
+			phase: "completed",
+			replay: { type: "hosted_tool", protocol: "anthropic_messages", segment: "result", blocks: [searchResult] },
+		})
+	})
+
+	it("fails a resumed call when the next response never returns its result", async () => {
+		const chunks = await collect(
+			streamAnthropicMessagesEndpoint({
+				messages: resumeMessages,
+				openStream: async () =>
+					createAsyncIterable([
+						{
+							type: "content_block_start",
+							index: 0,
+							content_block: { type: "text", text: "No search.", citations: null },
+						},
+						messageDelta("end_turn", 1),
+					]),
+			}),
+		)
+
+		const lifecycle = chunks.filter((chunk) => chunk.type === "server_tool")
+		expect(lifecycle).toHaveLength(1)
+		expect(lifecycle[0]).toMatchObject({ function_id: "srvtoolu_mixed", phase: "failed" })
+		expect(lifecycle[0].error).toMatch(/did not return the result of the deferred hosted web_search call/)
+	})
+
+	it("fails a deferred sandbox call with a reason that names why it cannot resume", async () => {
+		const chunks = await collect(
+			streamAnthropicMessagesEndpoint({
+				messages: [{ role: "user", content: "Run and read" }],
+				openStream: async () => createAsyncIterable(mixedResponse("code_execution")),
+			}),
+		)
+
+		const terminal = chunks.filter((chunk) => chunk.type === "server_tool").at(-1)
+		expect(terminal).toMatchObject({ tool: ServerTool.CODE_EXECUTION, phase: "failed" })
+		expect(terminal.error).toMatch(/cannot resume a deferred hosted code_execution call/)
+		expect(terminal.replay).toBeUndefined()
+	})
+
+	it("records the deferral and its resolution as content-free diagnostics only in development mode", async () => {
+		vi.stubEnv("IS_DEV", "true")
+		await collect(
+			streamAnthropicMessagesEndpoint({
+				messages: [{ role: "user", content: "Research and read" }],
+				openStream: async () => createAsyncIterable(mixedResponse()),
+			}),
+		)
+		await collect(
+			streamAnthropicMessagesEndpoint({
+				messages: resumeMessages,
+				openStream: async () =>
+					createAsyncIterable([
+						{ type: "content_block_start", index: 0, content_block: searchResult },
+						messageDelta("end_turn", 1),
+					]),
+			}),
+		)
+
+		const calls = vi.mocked(recordDiagnostic).mock.calls
+		expect(calls.map(([domain, kind, outcome]) => [domain, kind, outcome])).toEqual([
+			["provider", "hosted_tool_deferred", "observed"],
+			["provider", "hosted_tool_deferral_resolved", "recovered"],
+		])
+		expect(calls[0][3]).toMatchObject({
+			api_format: "anthropic_messages",
+			hosted_tool: "web_search",
+			stop_reason: "tool_use",
+			deferred_call_count: 1,
+			client_tool_call_count: 1,
+		})
+		expect(calls[1][3]).toMatchObject({ hosted_tool: "web_search", resolution: "result_received" })
+		expect(JSON.stringify(calls)).not.toContain(searchQuery)
+
+		vi.mocked(recordDiagnostic).mockClear()
+		vi.stubEnv("IS_DEV", "false")
+		await collect(
+			streamAnthropicMessagesEndpoint({
+				messages: [{ role: "user", content: "Research and read" }],
+				openStream: async () => createAsyncIterable(mixedResponse()),
+			}),
+		)
+		expect(recordDiagnostic).not.toHaveBeenCalled()
 	})
 })

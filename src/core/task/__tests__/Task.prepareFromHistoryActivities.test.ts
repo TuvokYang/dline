@@ -1,5 +1,14 @@
+import { sendPartialMessageEvent } from "@core/controller/ui/subscribeToPartialMessage"
 import { describe, expect, it, vi } from "vitest"
 import { Task } from "../index"
+
+// A factory without importOriginal: the real module sits in an import cycle with
+// the generated ProtoBus registry, so every export is replaced explicitly.
+vi.mock("@core/controller/ui/subscribeToPartialMessage", () => ({
+	subscribeToPartialMessage: vi.fn(async () => undefined),
+	registerPartialMessageCallback: vi.fn(() => () => undefined),
+	sendPartialMessageEvent: vi.fn(async () => undefined),
+}))
 
 const runHistoryPreparation = (
 	Task.prototype as unknown as {
@@ -29,6 +38,9 @@ describe("Task.prepareFromHistory readiness", () => {
 					order.push("resume")
 				}),
 			},
+			recoverInterruptedHistoryActivities: vi.fn(async () => {
+				order.push("interrupted")
+			}),
 			controller: {
 				postTaskViewPatchToWebview: vi.fn(async () => {
 					order.push("patch")
@@ -44,7 +56,7 @@ describe("Task.prepareFromHistory readiness", () => {
 		})
 
 		expect(task.taskState.abort).toBe(true)
-		expect(order).toEqual(["watcher", "metrics", "resume", "patch", "ready"])
+		expect(order).toEqual(["watcher", "metrics", "resume", "interrupted", "patch", "ready"])
 		expect((task as unknown as { historyPreparationPending: boolean }).historyPreparationPending).toBe(false)
 	})
 
@@ -59,6 +71,7 @@ describe("Task.prepareFromHistory readiness", () => {
 			ensurePromptInputFileWatcherInitialized: vi.fn(async () => undefined),
 			ensureApiRateMetricsInitialized: vi.fn(async () => undefined),
 			resumeCoordinator: { prepare: vi.fn(async () => Promise.reject(failure)) },
+			recoverInterruptedHistoryActivities: vi.fn(async () => undefined),
 			controller: { postTaskViewPatchToWebview },
 		} as unknown as Task
 
@@ -84,6 +97,7 @@ describe("Task.prepareFromHistory readiness", () => {
 					isCurrent = false
 				}),
 			},
+			recoverInterruptedHistoryActivities: vi.fn(async () => undefined),
 			controller: { postTaskViewPatchToWebview },
 		} as unknown as Task
 
@@ -131,5 +145,79 @@ describe("Task.prepareFromHistory readiness", () => {
 
 		expect(resetOperationCancellation).toHaveBeenCalledOnce()
 		expect(prepareExecutionResources).toHaveBeenCalledOnce()
+	})
+
+	it("admits an Activity Retry on a reopened Task through the accepted-interaction path", async () => {
+		const order: string[] = []
+		const restoreSubagentRetry = vi.fn(async () => {
+			order.push("retry")
+			return true
+		})
+		const task = {
+			controllerDetached: false,
+			readOnly: false,
+			restoredFromHistory: true,
+			prepareExecutionResourcesForAcceptedInteraction: vi.fn(async () => {
+				order.push("admit")
+			}),
+			prepareExecutionResources: vi.fn(async () => {
+				order.push("prepare-only")
+			}),
+			toolExecutor: { restoreSubagentRetry },
+		}
+		const restoreSubagentActivityRetry = (
+			Task.prototype as unknown as { restoreSubagentActivityRetry(this: typeof task, id: string): Promise<boolean> }
+		).restoreSubagentActivityRetry
+
+		await expect(restoreSubagentActivityRetry.call(task, "subagent-1")).resolves.toBe(true)
+		expect(order).toEqual(["admit", "retry"])
+		expect(restoreSubagentRetry).toHaveBeenCalledWith("subagent-1")
+
+		order.length = 0
+		task.restoredFromHistory = false
+		await restoreSubagentActivityRetry.call(task, "subagent-2")
+		expect(order).toEqual(["prepare-only", "retry"])
+	})
+
+	it("recovers interrupted command cards before execution stores exist", async () => {
+		const runningCard = { ts: 10, type: "ask", ask: "command", activityId: "cmd-1", commandStatus: "running" }
+		const unrelatedCard = { ts: 11, type: "ask", ask: "command", activityId: "cmd-2", commandStatus: "running" }
+		const persistMessage = vi.fn(async (message: Record<string, unknown>) => message)
+		const updateClineMessage = vi.fn(async () => undefined)
+		const task = {
+			taskId: "task-1",
+			messageResources: { hasExecutionStores: false, persistMessage },
+			messageStateHandler: { clineMessages: [runningCard, unrelatedCard], updateClineMessage },
+			controller: {},
+		}
+		const patchInterruptedCommandCards = (
+			Task.prototype as unknown as {
+				patchInterruptedCommandCards(this: typeof task, ids: ReadonlySet<string>): Promise<void>
+			}
+		).patchInterruptedCommandCards
+
+		await patchInterruptedCommandCards.call(task, new Set(["cmd-1"]))
+
+		expect(persistMessage).toHaveBeenCalledOnce()
+		expect(persistMessage).toHaveBeenCalledWith({ ...runningCard, commandStatus: "interrupted" })
+		expect(updateClineMessage).not.toHaveBeenCalled()
+		expect(sendPartialMessageEvent).toHaveBeenCalledOnce()
+	})
+
+	it("keeps history readiness available when interrupted activity recovery fails", async () => {
+		const task = {
+			taskId: "task-1",
+			controllerDetached: false,
+			activityStore: {
+				recoverInterruptedActivities: vi.fn(async () => Promise.reject(new Error("activities unreadable"))),
+			},
+			patchInterruptedCommandCards: vi.fn(async () => undefined),
+		}
+		const recoverInterruptedHistoryActivities = (
+			Task.prototype as unknown as { recoverInterruptedHistoryActivities(this: typeof task): Promise<void> }
+		).recoverInterruptedHistoryActivities
+
+		await expect(recoverInterruptedHistoryActivities.call(task)).resolves.toBeUndefined()
+		expect(task.patchInterruptedCommandCards).not.toHaveBeenCalled()
 	})
 })

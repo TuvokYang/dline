@@ -170,6 +170,63 @@ describe("InteractionCoordinator", () => {
 		expect(runtime.getState().interaction).toBeUndefined()
 	})
 
+	it("holds a mode-switch draft until a just-opened conversational interaction is awaiting", async () => {
+		let presentAsk!: () => void
+		const askPresented = new Promise<void>((resolve) => {
+			presentAsk = resolve
+		})
+		const runtime = new TaskRuntime(
+			createTaskRuntimeState({ taskId: "task-1", phase: TaskPhase.STREAMING }),
+			createPorts({
+				appendAsk: async () => {
+					await askPresented
+					return { uiMessageTs: 100 }
+				},
+			}),
+		)
+		const coordinator = new InteractionCoordinator(runtime)
+		const outcomePromise = coordinator.open({
+			turnId: "turn-opening",
+			interactionId: "plan-opening",
+			kind: "make_plan",
+			presentation: "Plan ready",
+		})
+		await vi.waitFor(() => expect(runtime.getState().interaction?.status).toBe("opening"))
+		expect(coordinator.canRespondForModeSwitch()).toBe(false)
+
+		let settled = false
+		const settling = coordinator.settleModeSwitchInteraction().then(() => {
+			settled = true
+		})
+		await new Promise((resolve) => setTimeout(resolve, 20))
+		expect(settled).toBe(false)
+
+		presentAsk()
+		await settling
+		expect(coordinator.canRespondForModeSwitch()).toBe(true)
+		await expect(coordinator.respondForModeSwitch({ text: "switch draft", images: [], files: [] })).resolves.toBe(true)
+		await expect(outcomePromise).resolves.toMatchObject({
+			actionId: "reply",
+			draft: { text: "switch draft", images: [], files: [] },
+		})
+	})
+
+	it("bounds the mode-switch presentation wait and settles immediately without an opening interaction", async () => {
+		const runtime = new TaskRuntime(
+			createTaskRuntimeState({ taskId: "task-1", phase: TaskPhase.STREAMING }),
+			createPorts({ appendAsk: () => new Promise(() => undefined) }),
+		)
+		const coordinator = new InteractionCoordinator(runtime)
+		await expect(coordinator.settleModeSwitchInteraction(10)).resolves.toBeUndefined()
+
+		void coordinator
+			.open({ turnId: "turn-stuck", interactionId: "plan-stuck", kind: "make_plan", presentation: "Plan ready" })
+			.catch(() => undefined)
+		await vi.waitFor(() => expect(runtime.getState().interaction?.status).toBe("opening"))
+		await expect(coordinator.settleModeSwitchInteraction(20)).resolves.toBeUndefined()
+		expect(coordinator.canRespondForModeSwitch()).toBe(false)
+	})
+
 	it("waits for one causal response and resolves the active interaction", async () => {
 		const runtime = new TaskRuntime(createTaskRuntimeState({ taskId: "task-1", phase: TaskPhase.STREAMING }), createPorts())
 		const coordinator = new InteractionCoordinator(runtime)

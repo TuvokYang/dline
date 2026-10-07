@@ -4,7 +4,7 @@ import {
 } from "@core/context/context-management/context-window-projection"
 import type { ClineStorageMessage } from "@shared/messages/content"
 import cloneDeep from "clone-deep"
-import type { CompactionProviderInput } from "./compaction/CompactionRequestReplay"
+import type { CompactionProviderInput } from "./compaction/CompactionProviderInput"
 
 const ENVIRONMENT_DETAILS_PATTERN = /^<environment_details>[\s\S]*<\/environment_details>$/i
 
