@@ -68,7 +68,12 @@ describe("TaskPerformanceOwner", () => {
 
 		owner.committed(committedIn("waiting", "turn-a"))
 		owner.committed(committedIn("waiting", "turn-a"))
+		// A later request streams before the state names its turn, and stays open.
 		owner.bindOrdinaryAttempt("turn-b", 0, empty())
+		owner.committed(committedIn("running", "turn-a"))
+		expect(complete).toHaveBeenCalledTimes(1)
+		// A completion offered to the user ends the run while the flow stays open.
+		owner.committed(committedIn("running", "turn-b"), true)
 		await owner.release()
 
 		expect(admit.mock.calls).toEqual([
@@ -76,7 +81,7 @@ describe("TaskPerformanceOwner", () => {
 			[0, 1],
 			[1, 0],
 		])
-		expect(complete).toHaveBeenCalledTimes(1)
+		expect(complete).toHaveBeenCalledTimes(2)
 		expect(usage).toHaveBeenCalledWith(
 			0,
 			expect.objectContaining({ inputTokens: 10, outputTokens: 2, cacheUsageReported: false }),

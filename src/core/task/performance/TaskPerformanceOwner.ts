@@ -33,6 +33,8 @@ export class TaskPerformanceOwner {
 	private readonly queryService: TaskRateMetricsQueryService
 	/** The logical round of each turn whose provider request is still open, keyed by turn. */
 	private readonly ordinaryRounds = new Map<string, number>()
+	/** The turn whose request was bound last; its round is open until the run rests. */
+	private latestOrdinaryTurnId: string | undefined
 	private nextOrdinaryApiIndex = 0
 	private closed = false
 
@@ -106,11 +108,15 @@ export class TaskPerformanceOwner {
 	 *
 	 * Active seconds accrue only while the loop runs, as dev's loop flag did,
 	 * so a task waiting on the user or at rest stops adding to the rates.
+	 *
+	 * A run at rest also ends its request round, even when the flow stays open
+	 * for the user's reply to a completion: dev completed the round once that
+	 * ask was durable, which is what gives the history its request rate.
 	 */
-	committed(state: Readonly<TaskState>): void {
+	committed(state: Readonly<TaskState>, runAtRest = false): void {
 		const loopActive = LOOP_ACTIVE_PHASES.has(state.flow.phase)
 		this.activeMetrics.setTaskLoopActive(loopActive)
-		this.completeSettledRounds(state.turn.turnId, loopActive)
+		this.completeSettledRounds(state.turn.turnId, loopActive && !runAtRest)
 	}
 
 	/**
@@ -120,6 +126,7 @@ export class TaskPerformanceOwner {
 	 * often it was sent, as dev's request rounds did.
 	 */
 	bindOrdinaryAttempt<T>(turnId: string, attempt: number, stream: AsyncIterable<T>): AsyncIterable<T> {
+		this.latestOrdinaryTurnId = turnId
 		let apiIndex = this.ordinaryRounds.get(turnId)
 		if (apiIndex === undefined) {
 			apiIndex = this.nextOrdinaryApiIndex++
@@ -157,10 +164,16 @@ export class TaskPerformanceOwner {
 		})
 	}
 
-	/** A turn that stopped running ends its round; a cancelled one is dropped. */
-	private completeSettledRounds(currentTurnId: string | undefined, loopActive: boolean): void {
+	/**
+	 * A turn that stopped running ends its round; a cancelled one is dropped.
+	 *
+	 * While the run goes on, the turn the state names and the turn whose request
+	 * was sent last both stay open: the state only names a turn once its reply
+	 * is ready, so a request still streaming belongs to the latter.
+	 */
+	private completeSettledRounds(currentTurnId: string | undefined, running: boolean): void {
 		for (const [turnId, apiIndex] of this.ordinaryRounds) {
-			if (loopActive && turnId === currentTurnId) continue
+			if (running && (turnId === currentTurnId || turnId === this.latestOrdinaryTurnId)) continue
 			this.rounds.completeTurn(this.rounds.getOrdinary(apiIndex))
 			this.ordinaryRounds.delete(turnId)
 		}

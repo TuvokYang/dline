@@ -72,7 +72,7 @@ import { SessionResourceScope } from "../session/SessionResourceScope"
 import { TaskApiHandlerOwner } from "../session/TaskApiHandlerOwner"
 import { TaskBackgroundIngressOwner } from "../session/TaskBackgroundIngressOwner"
 import { TaskCollaborationSessionOwner } from "../session/TaskCollaborationSessionOwner"
-import { TaskContextUsageProjection } from "../session/TaskContextUsageProjection"
+import { isRunAtRest, TaskContextUsageProjection } from "../session/TaskContextUsageProjection"
 import { TaskEnvironmentOwner } from "../session/TaskEnvironmentOwner"
 import { TaskInputPresenter } from "../session/TaskInputPresenter"
 import { TaskInteractionOwner } from "../session/TaskInteractionOwner"
@@ -629,7 +629,7 @@ export class TaskSessionCompositionService {
 					contextUsage.committed(state)
 					compaction.committed(state)
 					collaboration?.committed(state)
-					performance.committed(state)
+					performance.committed(state, isRunAtRest(state))
 					// The verdict reaches History before the view reads it back.
 					await completion?.sync(state).catch((error: unknown) => {
 						Logger.warn(
