@@ -1,4 +1,4 @@
-import { registerPartialMessageCallback } from "@core/controller/ui/subscribeToPartialMessage"
+import { registerPartialMessageCallback, subscribeToPartialMessage } from "@core/controller/ui/subscribeToPartialMessage"
 import type { MessageStateHandler } from "@core/task/message-state"
 import { createPresentationIdSequence } from "@core/task/session/PresentationIdSequence"
 import type { UiMessage } from "@shared/ExtensionMessage"
@@ -30,9 +30,9 @@ function messageStore(): { handler: MessageStateHandler; written: UiMessage[] } 
 	return { handler, written }
 }
 
-function owner(messages: MessageStateHandler): ControllerTaskCallbacksOwner {
+function owner(messages: MessageStateHandler, controller: object = {}): ControllerTaskCallbacksOwner {
 	return new ControllerTaskCallbacksOwner({
-		controller: {} as never,
+		controller: controller as never,
 		taskId: "task-1",
 		stateManager: {
 			getGlobalSettingsKey: () => ({ enabled: false, remindClineInterval: 6 }),
@@ -147,6 +147,28 @@ describe("ControllerTaskCallbacksOwner say", () => {
 
 		expect(written).toEqual([expect.objectContaining({ ts, text: "hosted search failed", partial: false })])
 		expect(delivered).toEqual([{ ts, text: "hosted search failed", partial: false }])
+	})
+
+	// An approved write says the user's note before it saves the file. Waiting
+	// for the view to take that row held the save back by seconds.
+	it("returns from a new complete row without waiting for the view to take it", async () => {
+		const { handler, written } = messageStore()
+		const controller = {}
+		let offered = 0
+		await subscribeToPartialMessage(controller as never, {} as never, () => {
+			offered++
+			return new Promise<void>(() => {})
+		})
+
+		const said = owner(handler, controller).callbacks.say("user_feedback", "E2E_WRITE_APPROVAL_NOTE")
+		const outcome = await Promise.race([
+			said.then(() => "returned"),
+			new Promise((resolve) => setTimeout(resolve, 50, "held")),
+		])
+
+		expect(outcome).toBe("returned")
+		expect(offered).toBe(1)
+		expect(written).toEqual([expect.objectContaining({ say: "user_feedback", text: "E2E_WRITE_APPROVAL_NOTE" })])
 	})
 
 	it("publishes a partial row after updating the in-memory message", async () => {

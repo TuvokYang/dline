@@ -242,8 +242,10 @@ export class ControllerTaskCallbacksOwner {
 		} else {
 			// The view refetches its window by index, so a complete row inserted
 			// behind one it already received can be skipped; dev pushed every new row.
+			// The push is not awaited: the caller (an approved write saving its file,
+			// for one) must not wait on the view, and a busy view delayed it by seconds.
 			await this.options.messages.addToClineMessages(message)
-			await this.publishRow(message, `added ${type} row ${ts}`)
+			void this.publishRow(message, `added ${type} row ${ts}`)
 		}
 		return ts
 	}
