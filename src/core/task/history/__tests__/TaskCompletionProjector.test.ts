@@ -26,6 +26,26 @@ describe("TaskCompletionProjector", () => {
 		])
 	})
 
+	// The kernel presents a completion as the completion dialog offered to the
+	// user while the flow stays running; it never writes a completion identity.
+	it("treats an offered completion dialog as completed and a closed session as no verdict", async () => {
+		const persist = vi.fn(async () => true)
+		const projector = new TaskCompletionProjector({ taskId: "task-1", persist })
+		const withDialog = (state: TaskState, kind: string, status: string): TaskState =>
+			({ ...state, dialog: { ...state.dialog, primary: { interactionId: "i-1", kind, status } } }) as unknown as TaskState
+
+		await expect(projector.sync(withDialog(runtimeState("waiting", 2), "completion", "awaiting"))).resolves.toBe(true)
+		await expect(projector.sync(withDialog(runtimeState("waiting", 3), "completion", "resolving"))).resolves.toBe(false)
+		await expect(projector.sync(runtimeState("completed", 4))).resolves.toBe(false)
+		await expect(projector.sync(runtimeState("terminated", 5))).resolves.toBe(false)
+		await expect(projector.sync(withDialog(runtimeState("running", 6), "question", "awaiting"))).resolves.toBe(true)
+
+		expect(persist.mock.calls).toEqual([
+			[{ taskId: "task-1", isCompleted: true, revision: 2 }],
+			[{ taskId: "task-1", isCompleted: false, revision: 6 }],
+		])
+	})
+
 	it("advances the local revision watermark without persisting an unchanged value", async () => {
 		const persist = vi.fn(async () => true)
 		const projector = new TaskCompletionProjector({ taskId: "task-1", persist })
