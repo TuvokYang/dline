@@ -47,8 +47,12 @@ function decodeDraftDocument(request: DispatchInteractionRequest): {
  * The dialog handler echoes only the text a reply keeps; when the command took
  * everything, that is nothing, and the user's own row would never appear.
  * Keyed by the interaction so a replayed dispatch cannot show it twice, and
- * flushed before the reply is acknowledged: once the dialog is answered no
+ * durable before the reply is acknowledged: once the dialog is answered no
  * replay can recreate a row a crash dropped from the buffer.
+ *
+ * The row is registered before the first await, so it is in the chat before
+ * the caller releases the command and the dialog: a summary they produce
+ * quickly is published after the user's row, as dev shows the reply first.
  */
 async function showConsumedReply(
 	messages: MessageStateHandler,
@@ -62,7 +66,7 @@ async function showConsumedReply(
 	// the reply ahead of the summary and the turn it causes.
 	const lastTs = messages.clineMessages.at(-1)?.ts ?? 0
 	const ts = nextPresentationId ? nextPresentationId() : Math.max(Date.now(), lastTs + 1)
-	await messages.addToClineMessages({
+	const registered = messages.beginDurableClineMessage({
 		ts,
 		type: "say",
 		say: "user_feedback",
@@ -71,7 +75,7 @@ async function showConsumedReply(
 		files: [...draft.files],
 		interactionId: rowId,
 	})
-	await messages.flushUiMessages()
+	await registered.persistence
 }
 
 function normalizeResult(reason: string): DispatchInteractionResult {

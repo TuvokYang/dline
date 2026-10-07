@@ -38,6 +38,8 @@ interface ControllerOptions {
 	readonly rejected?: boolean
 	/** Make the chat-row write fail, as a broken message store would. */
 	readonly rowWriteFails?: boolean
+	/** Hold the chat row's durable write until the returned release is called. */
+	readonly holdRowWrite?: boolean
 }
 
 function controller(taskState: TaskState = state(), options: ControllerOptions = {}) {
@@ -61,9 +63,19 @@ function controller(taskState: TaskState = state(), options: ControllerOptions =
 	const clineMessages: Array<{ ts: number; say?: string; text?: string; interactionId?: string }> = [
 		{ ts: 100, say: "text", text: "earlier row" },
 	]
-	const addToClineMessages = vi.fn(async (row: (typeof clineMessages)[number]) => {
-		if (options.rowWriteFails) throw new Error("message store unavailable")
+	let releaseRowWrite = () => {}
+	const rowWritten = new Promise<void>((release) => {
+		releaseRowWrite = release
+	})
+	// The row is visible as soon as it is registered; only its durable write is deferred.
+	const beginDurableClineMessage = vi.fn((row: (typeof clineMessages)[number]) => {
 		clineMessages.push(row)
+		const persistence = options.rowWriteFails
+			? Promise.reject(new Error("message store unavailable"))
+			: options.holdRowWrite
+				? rowWritten.then(() => row)
+				: Promise.resolve(row)
+		return { message: row, persistence }
 	})
 	const approvalFeedback = new InMemoryToolApprovalFeedbackLedger()
 	return {
@@ -75,7 +87,7 @@ function controller(taskState: TaskState = state(), options: ControllerOptions =
 				payloads: { put },
 				inputs: { reviewReply },
 				approvalFeedback,
-				messages: { clineMessages, addToClineMessages, flushUiMessages: vi.fn(async () => {}) },
+				messages: { clineMessages, beginDurableClineMessage },
 				owners: { interactions: { resolve }, toolExecution: { presentDenial } },
 			},
 		},
@@ -84,7 +96,8 @@ function controller(taskState: TaskState = state(), options: ControllerOptions =
 		resolve,
 		presentDenial,
 		clineMessages,
-		addToClineMessages,
+		beginDurableClineMessage,
+		releaseRowWrite: () => releaseRowWrite(),
 		approvalFeedback,
 	}
 }
@@ -302,6 +315,44 @@ describe("dispatchInteraction", () => {
 		)
 	})
 
+	// The command and the answered dialog go on to produce the summary, so the
+	// user's row has to be in the chat before either is released, or a fast
+	// summary is published without it.
+	it("registers a consumed reply before the command runs and the dialog is answered", async () => {
+		const order: string[] = []
+		const host = controller(state(), {
+			reviewed: { text: "", commit: () => order.push("commit") },
+			holdRowWrite: true,
+		})
+		host.beginDurableClineMessage.mockImplementationOnce((row) => {
+			order.push("row")
+			host.clineMessages.push(row)
+			return { message: row, persistence: new Promise((settle) => setTimeout(() => settle(row), 0)) }
+		})
+		host.resolve.mockImplementation(() => order.push("resolve"))
+
+		const result = await dispatchInteraction(host.value as never, compactReply())
+
+		expect(result).toMatchObject({ accepted: true, result: "accepted" })
+		expect(order).toEqual(["row", "commit", "resolve"])
+	})
+
+	it("answers the dialog without waiting for the consumed reply's durable write", async () => {
+		const host = controller(state(), { reviewed: { text: "", commit: vi.fn() }, holdRowWrite: true })
+
+		const dispatched = dispatchInteraction(host.value as never, compactReply())
+		await vi.waitFor(() => expect(host.resolve).toHaveBeenCalledOnce())
+		let settled = false
+		void dispatched.then(() => {
+			settled = true
+		})
+		await Promise.resolve()
+		expect(settled).toBe(false)
+
+		host.releaseRowWrite()
+		await expect(dispatched).resolves.toMatchObject({ accepted: true, result: "accepted" })
+	})
+
 	it("shows a consumed reply once when the same dispatch is replayed", async () => {
 		const host = controller(state(), { reviewed: { text: "", commit: vi.fn() } })
 
@@ -316,7 +367,7 @@ describe("dispatchInteraction", () => {
 
 		await dispatchInteraction(host.value as never, compactReply("then continue /compact"))
 
-		expect(host.addToClineMessages).not.toHaveBeenCalled()
+		expect(host.beginDurableClineMessage).not.toHaveBeenCalled()
 		expect(host.resolve).toHaveBeenCalledWith(
 			"interaction-1",
 			expect.objectContaining({ draft: { text: "then continue", images: [], files: [] } }),
@@ -330,7 +381,7 @@ describe("dispatchInteraction", () => {
 		const result = await dispatchInteraction(host.value as never, compactReply())
 
 		expect(result).toMatchObject({ accepted: false, result: "stale_interaction" })
-		expect(host.addToClineMessages).not.toHaveBeenCalled()
+		expect(host.beginDurableClineMessage).not.toHaveBeenCalled()
 		expect(commit).not.toHaveBeenCalled()
 		expect(host.resolve).not.toHaveBeenCalled()
 	})
