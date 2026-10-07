@@ -6119,6 +6119,7 @@ export class Task {
 			runStage("history_metrics", () => this.ensureApiRateMetricsInitialized(), true),
 			runStage("history_reconciliation", async () => {
 				await this.resumeCoordinator.prepare(this.taskId)
+				await this.recoverInterruptedHistoryActivities()
 			}),
 		])
 		if (!isCurrent() || this.controllerDetached) return
@@ -6133,12 +6134,34 @@ export class Task {
 	private async patchInterruptedCommandCards(activityIds: ReadonlySet<string>): Promise<void> {
 		for (const [index, message] of this.messageStateHandler.clineMessages.entries()) {
 			if (
-				message.activityId &&
-				activityIds.has(message.activityId) &&
-				(message.commandStatus === "pending" || message.commandStatus === "running")
+				!message.activityId ||
+				!activityIds.has(message.activityId) ||
+				(message.commandStatus !== "pending" && message.commandStatus !== "running")
 			) {
-				await this.messageStateHandler.updateClineMessage(index, { commandStatus: "interrupted" })
+				continue
 			}
+			if (this.messageResources.hasExecutionStores) {
+				await this.messageStateHandler.updateClineMessage(index, { commandStatus: "interrupted" })
+				continue
+			}
+			// A reopened Task shows history before execution stores exist, so the
+			// card is persisted as a historical row and pushed to the loaded window.
+			const stored = await this.messageResources.persistMessage({ ...message, commandStatus: "interrupted" })
+			await sendPartialMessageEvent(this.controller, convertClineMessageToProto(stored), this)
+		}
+	}
+
+	/**
+	 * Show persisted in-flight activities as interrupted as soon as a reopened Task
+	 * holds its lock. Their processes did not survive the previous session, so a
+	 * Running card with Cancel would offer a control that no longer owns anything.
+	 */
+	private async recoverInterruptedHistoryActivities(): Promise<void> {
+		try {
+			const activityIds = new Set(await this.activityStore.recoverInterruptedActivities())
+			if (activityIds.size > 0 && !this.controllerDetached) await this.patchInterruptedCommandCards(activityIds)
+		} catch (error) {
+			Logger.warn(`[Task ${this.taskId}] Interrupted activity recovery degraded:`, error)
 		}
 	}
 
@@ -6933,7 +6956,11 @@ export class Task {
 
 	/** Rebind one persisted failed subagent before an Activity Retry action. */
 	public async restoreSubagentActivityRetry(activityId: string): Promise<boolean> {
-		await this.prepareExecutionResources()
+		// Retry on a reopened Task is an explicit execution admission, so it leaves
+		// the historical stop state the same way an accepted interaction does.
+		await (this.restoredFromHistory
+			? this.prepareExecutionResourcesForAcceptedInteraction()
+			: this.prepareExecutionResources())
 		if (this.controllerDetached || this.readOnly) return false
 		return this.toolExecutor.restoreSubagentRetry(activityId)
 	}
