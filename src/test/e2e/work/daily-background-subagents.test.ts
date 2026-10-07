@@ -76,6 +76,40 @@ async function approveSubagentIfRequested(sidebar: Frame, task: string): Promise
 	if (await approve.isVisible()) await approve.click()
 }
 
+/** Height of the sticky user message that covers the top of the chat list, plus a margin. */
+const STICKY_USER_MESSAGE_CLEARANCE_PX = 48
+const REVEAL_MARGIN_PX = 24
+const MAX_REVEAL_WHEELS = 20
+
+/**
+ * Bring a control inside a chat row into the readable part of the list the way a reader does.
+ *
+ * Playwright's own scroll-into-view is a programmatic scroll. While the list still follows
+ * the end of the conversation, rows that re-measure as they enter the viewport make it
+ * return to the bottom, and the control lands under the sticky user message again on every
+ * retry. A wheel over the list hands the viewport to the reader first, which is how a person
+ * reaches an earlier row.
+ */
+async function revealInChat(sidebar: Frame, control: Locator): Promise<void> {
+	const page = sidebar.page()
+	const scroller = sidebar.locator('[data-virtuoso-scroller="true"]')
+	for (let wheel = 0; wheel < MAX_REVEAL_WHEELS; wheel++) {
+		const [list, target] = await Promise.all([scroller.boundingBox(), control.boundingBox()])
+		if (!list || !target) throw new Error("The chat list or the control has no layout box")
+		const readableTop = list.y + STICKY_USER_MESSAGE_CLEARANCE_PX
+		const readableBottom = list.y + list.height
+		if (target.y >= readableTop && target.y + target.height <= readableBottom) return
+		const delta =
+			target.y < readableTop
+				? target.y - readableTop - REVEAL_MARGIN_PX
+				: target.y + target.height - readableBottom + REVEAL_MARGIN_PX
+		await page.mouse.move(list.x + list.width / 2, list.y + list.height / 2)
+		await page.mouse.wheel(0, delta)
+		await page.waitForTimeout(150)
+	}
+	throw new Error("The chat control did not settle inside the readable part of the list")
+}
+
 async function expectCompletedSubagentCard(
 	sidebar: Frame,
 	task: string,
@@ -91,7 +125,10 @@ async function expectCompletedSubagentCard(
 	await expect(card.getByTestId("subagent-context-content")).toContainText(contextMarker)
 	await expect(card.getByTestId("subagent-tool-step-name")).toHaveText(["read_file", "attempt_completion"])
 	const showOutput = card.getByRole("button", { name: "Show subagent output", exact: true })
-	if (await showOutput.isVisible()) await showOutput.click()
+	if (await showOutput.isVisible()) {
+		await revealInChat(sidebar, showOutput)
+		await showOutput.click()
+	}
 	await expect(card.getByTestId("subagent-output")).toContainText(result)
 	return card
 }
