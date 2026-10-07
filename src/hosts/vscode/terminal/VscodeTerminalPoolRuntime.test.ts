@@ -15,18 +15,27 @@ function preparation(): VscodeTerminalPoolPreparation {
 	}
 }
 
-function terminalInfo(): TerminalInfo {
-	let shellIntegration: { executeCommand: ReturnType<typeof vi.fn> } | undefined
+function readyShellIntegration() {
+	return {
+		executeCommand: vi.fn(() => ({
+			async *read() {
+				yield ""
+			},
+		})),
+	}
+}
+
+/**
+ * Model a VS Code terminal. A background terminal gains shell integration after its
+ * process starts; a deferred one only activates once it is revealed.
+ */
+function terminalInfo(activation: "background" | "deferred-until-shown"): TerminalInfo {
+	let shellIntegration: ReturnType<typeof readyShellIntegration> | undefined
+	if (activation === "background") setTimeout(() => (shellIntegration = readyShellIntegration()), 10)
 	const terminal = {
 		processId: Promise.resolve(1),
 		show: vi.fn(() => {
-			shellIntegration = {
-				executeCommand: vi.fn(() => ({
-					async *read() {
-						yield ""
-					},
-				})),
-			}
+			shellIntegration = readyShellIntegration()
 		}),
 		hide: vi.fn(),
 		get shellIntegration() {
@@ -45,23 +54,35 @@ function terminalInfo(): TerminalInfo {
 describe("DefaultVscodeTerminalPoolRuntime", () => {
 	beforeEach(() => vi.restoreAllMocks())
 
-	it("activates a new terminal before waiting for shell integration and hides it after preparation", async () => {
-		const runtime = new DefaultVscodeTerminalPoolRuntime(100)
-		const terminal = terminalInfo()
+	it("prepares a terminal that activates in the background without touching the panel", async () => {
+		const runtime = new DefaultVscodeTerminalPoolRuntime(100, 60_000, 1_000)
+		const terminal = terminalInfo("background")
 
 		await runtime.prepareTerminal(terminal, preparation(), {} as TerminalLaunchConfiguration)
 
+		expect(terminal.terminal.shellIntegration?.executeCommand).toBeDefined()
+		expect(terminal.terminal.show).not.toHaveBeenCalled()
+		// Hiding the panel moves VS Code keyboard focus to the editor group.
+		expect(terminal.terminal.hide).not.toHaveBeenCalled()
+	})
+
+	it("reveals a deferred terminal with preserved focus and never hides the panel", async () => {
+		const runtime = new DefaultVscodeTerminalPoolRuntime(100, 60_000, 20)
+		const terminal = terminalInfo("deferred-until-shown")
+
+		await runtime.prepareTerminal(terminal, preparation(), {} as TerminalLaunchConfiguration)
+
+		expect(terminal.terminal.show).toHaveBeenCalledOnce()
 		expect(terminal.terminal.show).toHaveBeenCalledWith(true)
-		expect(terminal.terminal.hide).toHaveBeenCalledOnce()
-		expect(vi.mocked(terminal.terminal.show).mock.invocationCallOrder[0]).toBeLessThan(
-			vi.mocked(terminal.terminal.hide).mock.invocationCallOrder[0],
-		)
+		expect(terminal.terminal.hide).not.toHaveBeenCalled()
 	})
 
 	it("keeps the background warm budget above the foreground shell wait setting", async () => {
-		const runtime = new DefaultVscodeTerminalPoolRuntime(100, 60_000)
-		runtime.setShellIntegrationTimeout(15_000)
-		const terminal = terminalInfo()
+		// The foreground wait is shorter than the reveal grace, so only the warm budget
+		// can keep a deferred terminal alive long enough to be revealed.
+		const runtime = new DefaultVscodeTerminalPoolRuntime(100, 60_000, 200)
+		runtime.setShellIntegrationTimeout(50)
+		const terminal = terminalInfo("deferred-until-shown")
 
 		await runtime.prepareTerminal(terminal, preparation(), {} as TerminalLaunchConfiguration)
 
