@@ -73,6 +73,46 @@ describe("createProductionToolAdapter", () => {
 		expect(cancelCommand).toHaveBeenCalledOnce()
 	})
 
+	// The handler returns attached PDFs with its result; storing each as its own
+	// payload is what lets the next request place them after the result.
+	it("stores the documents a result carries and references them from the result", async () => {
+		const payloads = new MemoryPayloads()
+		const journal = new InMemoryConversationJournal()
+		const document = {
+			type: "attached_document" as const,
+			path: "/work/spec.pdf",
+			media_type: "application/pdf" as const,
+			data: "JVBERi0xLjQKJSVFT0YK",
+			byte_length: 16,
+			fallback_text: "Hello PDF",
+		}
+		const options = createProductionToolAdapter({
+			payloads,
+			journal,
+			resources: { revertDiff: async () => undefined, cancelCommand: async () => undefined },
+			surface: createDeniedSurface("detached_domain"),
+			service: { execute: async () => ({ content: "answered", documents: [document] }) },
+			scheduler: new TurnToolScheduler({ readConfiguredLimit: () => undefined }),
+		})
+
+		await options.runner.runBlock({
+			commandId: "command-1",
+			turnId: "turn-1",
+			dlineTid: "block-1",
+			invocationRef: await payloads.put(encodeTaskPayload(INVOCATION)),
+		})
+
+		const entry = await journal.findByOperation("tool.result:command-1")
+		if (!entry?.payloadRef) throw new Error("missing result")
+		const result = decodeTaskPayload<ToolResultEnvelope>(await payloads.read(entry.payloadRef))
+		expect(result).toMatchObject({ kind: "tool_result", blockId: "block-1", content: "answered" })
+		expect(result.documentPayloadRefs).toHaveLength(1)
+		expect(decodeTaskPayload(await payloads.read(result.documentPayloadRefs?.[0] ?? ""))).toEqual({
+			kind: "attached_document",
+			document,
+		})
+	})
+
 	it("journals the approval feedback its block carries, after the result", async () => {
 		// An approval is planned from the turn, so a note typed while approving is
 		// not an intake entry; journaling it here is its only route to the provider.

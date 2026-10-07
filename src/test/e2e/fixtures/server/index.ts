@@ -157,6 +157,8 @@ interface MockResponseOptions {
 	expectedRequestExcludes?: readonly string[]
 	/** Reject incomplete historical tool-call pairing like strict production Providers do. */
 	requireCompleteToolPairing?: boolean
+	/** Anthropic Messages terminal reason used to exercise provider-owned continuation. */
+	anthropicStopReason?: "end_turn" | "pause_turn"
 }
 
 export type OpenAiMockResponse =
@@ -164,7 +166,12 @@ export type OpenAiMockResponse =
 	| ({ type: "truncated-message"; text: string; truncateAfter?: number } & MockResponseOptions)
 	| ({ type: "tool" } & MockToolCall & MockResponseOptions)
 	| ({ type: "tool-with-completion-snapshots" } & MockToolCall & MockResponseOptions)
-	| ({ type: "truncated-tool"; truncateAfter: number } & MockToolCall & MockResponseOptions)
+	| ({
+			type: "truncated-tool"
+			/** Offset into the JSON arguments; for explicit-instruction tools, into the rendered XML call text. */
+			truncateAfter: number
+	  } & MockToolCall &
+			MockResponseOptions)
 	| ({ type: "tools"; tools: readonly MockToolCall[] } & MockResponseOptions)
 	| ({
 			type: "hosted-web-search"
@@ -189,6 +196,17 @@ export type OpenAiMockResponse =
 			id?: string
 			results: readonly MockHostedWebSearchResult[]
 			followupTools?: readonly MockToolCall[]
+	  } & MockResponseOptions)
+	| ({
+			/**
+			 * Anthropic mixed turn: the hosted search is deferred behind client tool calls, so the response ends with
+			 * `stop_reason: tool_use` and a `server_tool_use` that has no result. The provider runs it at the start of
+			 * the next request, which `anthropic-orphan-web-search-result` with the same id scripts.
+			 */
+			type: "anthropic-deferred-web-search"
+			id?: string
+			query: string
+			followupTools: readonly MockToolCall[]
 	  } & MockResponseOptions)
 	| ({
 			type: "usage-then-error"
@@ -315,7 +333,57 @@ function getResponseToolCalls(response: Exclude<OpenAiMockResponse, { type: "err
 	) {
 		return response.followupTools ?? []
 	}
+	if (response.type === "anthropic-deferred-web-search") return response.followupTools
 	return []
+}
+
+/**
+ * Explicit-instruction tools are never registered as native provider tools: the model invokes them by writing the
+ * XML documented in the explicit instruction into its reply. A scripted call to one of them is therefore rendered
+ * as assistant text, while the consumption record keeps the scripted tool identity.
+ */
+const EXPLICIT_INSTRUCTION_TOOL_NAMES: ReadonlySet<string> = new Set(["summarize_task"])
+
+function isExplicitInstructionCall(tool: MockToolCall): boolean {
+	return EXPLICIT_INSTRUCTION_TOOL_NAMES.has(tool.name)
+}
+
+/** Renders a scripted call as the XML invocation, keeping the scripted parameter order. */
+function renderExplicitInstructionCall(tool: MockToolCall): string {
+	const parameters = Object.entries(tool.arguments).map(
+		([name, value]) => `<${name}>\n${typeof value === "string" ? value : JSON.stringify(value)}\n</${name}>\n`,
+	)
+	return `<${tool.name}>\n${parameters.join("")}</${tool.name}>`
+}
+
+/**
+ * Mirrors the Anthropic Messages contract for a deferred hosted call: when the last assistant turn carries a
+ * `server_tool_use` without its result, the request is only accepted if the following user turn contains nothing
+ * but `tool_result` blocks. Returns the rejection reason, or undefined for a valid request.
+ */
+function anthropicDeferredHostedCallViolation(messages: readonly unknown[]): string | undefined {
+	let lastAssistantIndex = messages.length - 1
+	while (lastAssistantIndex >= 0 && (messages[lastAssistantIndex] as { role?: unknown } | undefined)?.role !== "assistant") {
+		lastAssistantIndex--
+	}
+	if (lastAssistantIndex === -1) return undefined
+	const assistantContent = (messages[lastAssistantIndex] as { content?: unknown }).content
+	if (!Array.isArray(assistantContent)) return undefined
+	const blocks = assistantContent as Array<{ type?: unknown; id?: unknown; tool_use_id?: unknown }>
+	const answeredIds = new Set(blocks.filter((block) => typeof block.tool_use_id === "string").map((block) => block.tool_use_id))
+	const danglingIds = blocks
+		.filter((block) => block.type === "server_tool_use" && typeof block.id === "string" && !answeredIds.has(block.id))
+		.map((block) => block.id as string)
+	if (danglingIds.length === 0) return undefined
+	const followUp = messages[lastAssistantIndex + 1] as { role?: unknown; content?: unknown } | undefined
+	const followUpContent = followUp?.role === "user" ? followUp.content : undefined
+	const onlyToolResults =
+		Array.isArray(followUpContent) &&
+		followUpContent.length > 0 &&
+		followUpContent.every((block) => (block as { type?: unknown }).type === "tool_result")
+	return onlyToolResults
+		? undefined
+		: `server_tool_use ${danglingIds.join(", ")} has no result, so the next user message must contain only tool_result blocks`
 }
 
 function splitStreamText(text: string, chunkSize?: number): string[] {
@@ -1215,6 +1283,16 @@ export class ClineApiServerMock {
 					if (!validRequest) {
 						return sendJson({ error: { message: `Invalid ${target} request shape` } }, 400)
 					}
+					const deferredHostedCallViolation =
+						protocol === "anthropic-messages"
+							? anthropicDeferredHostedCallViolation(parsed.messages as unknown[])
+							: undefined
+					if (deferredHostedCallViolation) {
+						return sendJson(
+							{ type: "error", error: { type: "invalid_request_error", message: deferredHostedCallViolation } },
+							400,
+						)
+					}
 					const {
 						response: scriptedResponse,
 						usage,
@@ -1278,6 +1356,11 @@ export class ClineApiServerMock {
 					if (scriptedResponse.type === "usage-then-error" && protocol !== "anthropic-messages") {
 						throw new Error(`usage-then-error is only supported for anthropic-messages, received ${protocol}`)
 					}
+					if (scriptedResponse.type === "anthropic-deferred-web-search" && protocol !== "anthropic-messages") {
+						throw new Error(
+							`anthropic-deferred-web-search is only supported for anthropic-messages, received ${protocol}`,
+						)
+					}
 					if (scriptedResponse.type === "responses-stream-error" && protocol !== "openai-responses") {
 						throw new Error(`responses-stream-error is only supported for openai-responses, received ${protocol}`)
 					}
@@ -1290,11 +1373,32 @@ export class ClineApiServerMock {
 									prompt_cache_miss_tokens: usage.cacheWriteTokens ?? 0,
 								}
 							: openAiUsage
+					const scriptedToolCalls = getResponseToolCalls(scriptedResponse)
+					const responseToolCalls = scriptedToolCalls.filter((tool) => !isExplicitInstructionCall(tool))
+					const explicitInstructionCalls = scriptedToolCalls.filter(isExplicitInstructionCall)
+					if (explicitInstructionCalls.length > 0 && responseToolCalls.length > 0) {
+						throw new Error("A scripted response cannot mix explicit-instruction calls with native tool calls")
+					}
+					const explicitInstructionText = explicitInstructionCalls.map(renderExplicitInstructionCall).join("\n")
+					// Explicit-instruction text streams like native tool arguments: chunked by the tool argument
+					// options and cut short by a truncated-tool script.
+					const explicitInstructionDeltas = explicitInstructionText
+						? splitStreamText(
+								scriptedResponse.type === "truncated-tool"
+									? explicitInstructionText.slice(0, scriptedResponse.truncateAfter)
+									: explicitInstructionText,
+								scriptedResponse.toolArgumentChunkSize,
+							)
+						: undefined
+					const explicitInstructionTruncated =
+						explicitInstructionDeltas !== undefined && scriptedResponse.type === "truncated-tool"
 					const messageText =
 						scriptedResponse.type === "message" || scriptedResponse.type === "truncated-message"
 							? scriptedResponse.text
-							: ""
-					const responseToolCalls = getResponseToolCalls(scriptedResponse)
+							: explicitInstructionText
+					const anthropicStopReason =
+						scriptedResponse.anthropicStopReason ??
+						(responseToolCalls.length > 0 ? "tool_use" : explicitInstructionTruncated ? "max_tokens" : "end_turn")
 					const writeSse = (data: unknown, event?: string) => {
 						if (res.destroyed || res.writableEnded) return
 						res.write(`${event ? `event: ${event}\n` : ""}data: ${JSON.stringify(data)}\n\n`)
@@ -1331,7 +1435,7 @@ export class ClineApiServerMock {
 						const streamedMessageText =
 							scriptedResponse.type === "truncated-message"
 								? messageText.slice(0, scriptedResponse.truncateAfter ?? messageText.length)
-								: messageText
+								: (explicitInstructionDeltas?.join("") ?? messageText)
 						const responseDelta = {
 							role: "assistant",
 							...(toolCalls.length > 0 ? { tool_calls: toolCalls } : { content: streamedMessageText }),
@@ -1402,6 +1506,25 @@ export class ClineApiServerMock {
 										if (!(await waitForOpenConnection(scriptedResponse.toolArgumentChunkDelayMs))) return
 									}
 								}
+							} else if (explicitInstructionDeltas && explicitInstructionDeltas.length > 1) {
+								for (const [chunkIndex, textChunk] of explicitInstructionDeltas.entries()) {
+									writeChunk([
+										{
+											index: 0,
+											delta: {
+												...(chunkIndex === 0
+													? {
+															role: "assistant",
+															...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
+														}
+													: {}),
+												content: textChunk,
+											},
+											finish_reason: null,
+										},
+									])
+									if (!(await waitForOpenConnection(scriptedResponse.toolArgumentChunkDelayMs))) return
+								}
 							} else {
 								writeChunk([
 									{
@@ -1424,7 +1547,12 @@ export class ClineApiServerMock {
 									{
 										index: 0,
 										delta: {},
-										finish_reason: toolCalls.length > 0 ? "tool_calls" : "stop",
+										finish_reason:
+											toolCalls.length > 0
+												? "tool_calls"
+												: explicitInstructionTruncated
+													? "length"
+													: "stop",
 									},
 								],
 								chatUsage,
@@ -1531,7 +1659,7 @@ export class ClineApiServerMock {
 							status: "completed",
 							model,
 							output: reasoningItem ? [reasoningItem, ...outputItems] : outputItems,
-							output_text: scriptedResponse.type === "message" ? scriptedResponse.text : "",
+							output_text: scriptedResponse.type === "message" ? scriptedResponse.text : explicitInstructionText,
 							usage: {
 								input_tokens: openAiUsage.prompt_tokens,
 								input_tokens_details: openAiUsage.prompt_tokens_details,
@@ -1888,16 +2016,24 @@ export class ClineApiServerMock {
 								},
 								"response.output_item.added",
 							)
-							writeSse(
-								{
-									type: "response.output_text.delta",
-									item_id: messageOutputItem.id,
-									output_index: outputIndex,
-									content_index: 0,
-									delta: messageText,
-								},
-								"response.output_text.delta",
-							)
+							for (const textDelta of explicitInstructionDeltas ?? [messageText]) {
+								writeSse(
+									{
+										type: "response.output_text.delta",
+										item_id: messageOutputItem.id,
+										output_index: outputIndex,
+										content_index: 0,
+										delta: textDelta,
+									},
+									"response.output_text.delta",
+								)
+								if (
+									explicitInstructionDeltas &&
+									!(await waitForOpenConnection(scriptedResponse.toolArgumentChunkDelayMs))
+								) {
+									return
+								}
+							}
 						}
 						if (scriptedResponse.type === "truncated-tool") {
 							writeSse(
@@ -1946,7 +2082,8 @@ export class ClineApiServerMock {
 							: [{ type: "text", text: messageText }]
 					const hostedSearchId =
 						scriptedResponse.type === "hosted-web-search" ||
-						scriptedResponse.type === "anthropic-orphan-web-search-result"
+						scriptedResponse.type === "anthropic-orphan-web-search-result" ||
+						scriptedResponse.type === "anthropic-deferred-web-search"
 							? (scriptedResponse.id ?? `srv_web_${generationId}`)
 							: undefined
 					const hostedResultBlock =
@@ -1981,7 +2118,17 @@ export class ClineApiServerMock {
 								]
 							: scriptedResponse.type === "anthropic-orphan-web-search-result" && hostedResultBlock
 								? [hostedResultBlock]
-								: []
+								: scriptedResponse.type === "anthropic-deferred-web-search" && hostedSearchId
+									? [
+											{
+												type: "server_tool_use",
+												id: hostedSearchId,
+												name: "web_search",
+												input: { query: scriptedResponse.query },
+												caller: { type: "direct" },
+											},
+										]
+									: []
 					const contentBlocks = [...hostedContentBlocks, ...ordinaryContentBlocks]
 					const thinkingBlock = scriptedResponse.reasoning
 						? {
@@ -1997,7 +2144,7 @@ export class ClineApiServerMock {
 							role: "assistant",
 							model,
 							content: thinkingBlock ? [thinkingBlock, ...contentBlocks] : contentBlocks,
-							stop_reason: responseToolCalls.length > 0 ? "tool_use" : "end_turn",
+							stop_reason: anthropicStopReason,
 							stop_sequence: null,
 							usage: { ...messageUsage, output_tokens: usage.outputTokens },
 						})
@@ -2129,14 +2276,22 @@ export class ClineApiServerMock {
 							},
 							"content_block_start",
 						)
-						writeSse(
-							{
-								type: "content_block_delta",
-								index: contentBlockIndex,
-								delta: { type: "text_delta", text: messageText },
-							},
-							"content_block_delta",
-						)
+						for (const textDelta of explicitInstructionDeltas ?? [messageText]) {
+							writeSse(
+								{
+									type: "content_block_delta",
+									index: contentBlockIndex,
+									delta: { type: "text_delta", text: textDelta },
+								},
+								"content_block_delta",
+							)
+							if (
+								explicitInstructionDeltas &&
+								!(await waitForOpenConnection(scriptedResponse.toolArgumentChunkDelayMs))
+							) {
+								return
+							}
+						}
 						writeSse({ type: "content_block_stop", index: contentBlockIndex }, "content_block_stop")
 					}
 					if (!(await waitForOpenConnection(scriptedResponse.beforeUsageDelayMs))) return
@@ -2144,7 +2299,7 @@ export class ClineApiServerMock {
 						{
 							type: "message_delta",
 							delta: {
-								stop_reason: responseToolCalls.length > 0 ? "tool_use" : "end_turn",
+								stop_reason: anthropicStopReason,
 								stop_sequence: null,
 							},
 							usage: { output_tokens: usage.outputTokens },

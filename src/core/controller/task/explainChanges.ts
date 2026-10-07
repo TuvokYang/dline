@@ -1,5 +1,3 @@
-import type CheckpointTracker from "@integrations/checkpoints/CheckpointTracker"
-import { resolveCompletionDiffBaseHash } from "@integrations/checkpoints/completion-diff"
 import { Empty } from "@shared/proto/dline/common"
 import { ExplainChangesRequest } from "@shared/proto/dline/task"
 import { HostProvider } from "@/hosts/host-provider"
@@ -50,62 +48,19 @@ export async function explainChanges(controller: Controller, request: ExplainCha
 			return Empty.create({})
 		}
 
-		// Checkpoints can be disabled per task; the owner then has no tracker to diff against.
-		if (!controller.stateManager.getGlobalSettingsKey("enableCheckpointsSetting")) {
-			HostProvider.window.showMessage({
-				type: ShowMessageType.INFORMATION,
-				message: "Checkpoints are disabled in settings. Cannot review changes.",
-			})
-			relinquishButton()
-			return Empty.create({})
-		}
-
 		const messageStateHandler = controller.task.owners.messages
-
-		// Find the message
-		const clineMessages = messageStateHandler.clineMessages
-		const messageIndex = clineMessages.findIndex((m) => m.ts === request.messageTs)
-		const message = clineMessages[messageIndex]
-
-		if (!message) {
-			Logger.error(`[explainChanges] Message not found for timestamp ${request.messageTs}`)
+		// The manager resolves the comparison base and every workspace root, as Compare does.
+		let changedFiles
+		try {
+			changedFiles = await checkpointManager.getTaskChangesForCheckpoint(request.messageTs)
+		} catch (error) {
+			const errorMessage = error instanceof Error ? error.message : "Unable to load checkpoint changes"
+			Logger.error(`[explainChanges] Failed to load checkpoint changes:`, errorMessage)
+			HostProvider.window.showMessage({ type: ShowMessageType.ERROR, message: errorMessage })
 			relinquishButton()
 			return Empty.create({})
 		}
-
-		const hash = message.lastCheckpointHash
-		if (!hash) {
-			Logger.error(`[explainChanges] No checkpoint hash found for message ${request.messageTs}`)
-			relinquishButton()
-			return Empty.create({})
-		}
-
-		// The owner performs single-flight tracker initialization; a failure is
-		// already reported to the user through the checkpoint error message.
-		const checkpointTracker: CheckpointTracker | undefined = await checkpointManager.checkpointTrackerCheckAndInit?.()
-		if (!checkpointTracker) {
-			Logger.error(`[explainChanges] Checkpoint tracker not available`)
-			HostProvider.window.showMessage({
-				type: ShowMessageType.ERROR,
-				message: "Checkpoint tracker not available",
-			})
-			relinquishButton()
-			return Empty.create({})
-		}
-
-		const previousCheckpointHash = resolveCompletionDiffBaseHash(clineMessages, messageIndex)
-
-		if (!previousCheckpointHash) {
-			HostProvider.window.showMessage({
-				type: ShowMessageType.ERROR,
-				message: "Unexpected error: No checkpoint hash found",
-			})
-			relinquishButton()
-			return Empty.create({})
-		}
-
-		const changedFiles = await checkpointTracker.getTaskDiffSet(previousCheckpointHash, hash)
-		if (!changedFiles?.length) {
+		if (!changedFiles.length) {
 			HostProvider.window.showMessage({
 				type: ShowMessageType.INFORMATION,
 				message: "No changes found to review",

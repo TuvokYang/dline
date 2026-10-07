@@ -1,6 +1,7 @@
 import type { ClineStorageMessage } from "@shared/messages/content"
 import { hashCompactionValue } from "./compaction-hash"
 import { estimateCompactionSourceRangeTokens } from "./compaction-source-snapshot"
+import { compactionSummaryMessage } from "./compaction-summary-message"
 import { getEstimationTolerance } from "./context-window-utils"
 import {
 	buildCompactionPassHistoryForRange,
@@ -157,7 +158,7 @@ async function estimateStaticPassCosts(
 	const requestEnvelopeTokens = await estimateExactInput([], "request_envelope")
 	if (!input.state.cumulativeSummary) return { requestEnvelopeTokens, summaryCarryTokens: 0 }
 	const summaryOnlyEstimatedInputTokens = await estimateExactInput(
-		[summaryMessage(input.state.cumulativeSummary)],
+		[compactionSummaryMessage(input.state.cumulativeSummary)],
 		"summary_carry",
 	)
 	return {
@@ -346,11 +347,4 @@ function normalizeTokenCount(value: number): number {
 
 function hashPassHistory(history: readonly ClineStorageMessage[]): string {
 	return hashCompactionValue(history)
-}
-
-function summaryMessage(summary: string): ClineStorageMessage {
-	return {
-		role: "user",
-		content: [{ type: "text", text: summary }],
-	}
 }

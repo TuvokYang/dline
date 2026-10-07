@@ -57,18 +57,23 @@ describe("fetchMessage durable user_feedback integration", () => {
 
 		const reopened = await UIMessage.open(taskId)
 		const persistedMessages = [...reopened.getAll()]
+		const opening = { taskId, taskInstanceId: "open-feedback" }
+		// The Controller pages the opened surface's durable messages; this double
+		// serves them straight from the reopened store.
+		const controller = {
+			currentOpening: () => opening,
+			fetchCurrentTaskMessages: async (referenceIndex: number, count: number) => {
+				const startIndex = referenceIndex === -1 ? Math.max(0, persistedMessages.length - count) : referenceIndex
+				return {
+					messages: persistedMessages.slice(startIndex, startIndex + count),
+					totalCount: persistedMessages.length,
+					startIndex,
+				}
+			},
+		}
 		const response = await fetchMessage(
-			{
-				fetchCurrentTaskMessages: async (referenceIndex: number, count: number) => {
-					const startIndex = referenceIndex === -1 ? Math.max(0, persistedMessages.length - count) : referenceIndex
-					return {
-						messages: persistedMessages.slice(startIndex, startIndex + count),
-						totalCount: persistedMessages.length,
-						startIndex,
-					}
-				},
-			} as never,
-			FetchMessageRequest.create({ referenceIndex: -1, count: 20 }),
+			controller as never,
+			FetchMessageRequest.create({ taskId, taskInstanceId: "open-feedback", referenceIndex: -1, count: 20 }),
 		)
 		const messages = response.messages.map(convertProtoToClineMessage)
 

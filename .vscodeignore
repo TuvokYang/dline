@@ -34,7 +34,7 @@ go.work.sum
 tsconfig.tsbuildinfo
 .worktreeinclude
 CHANGELOG_OLD.md
-README_en.md
+README_zh.md
 SECURITY.md
 implementation_plan.md
 
@@ -76,6 +76,7 @@ webview-ui/README.md
 webview-ui/package.json
 webview-ui/package-lock.json
 webview-ui/node_modules/**
+webview-ui/node_modules
 webview-ui/.vite-port
 webview-ui/.storybook/**
 webview-ui/storybook-static/**
@@ -95,7 +96,9 @@ old_docs/**
 assets/icons/**
 !assets/icons/icon.png
 !assets/icons/icon.svg
-!assets/icons/cline-bot.woff
+!assets/icons/panel-dark.svg
+!assets/icons/panel-light.svg
+!assets/icons/dline-icon.woff
 
 # Ignore E2E build files
 e2e-build.mjs

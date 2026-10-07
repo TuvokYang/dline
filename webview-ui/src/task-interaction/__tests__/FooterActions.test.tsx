@@ -7,6 +7,7 @@ import { FooterActions } from "../FooterActions"
 function approvalView(): TaskViewState {
 	return {
 		taskId: "task-1",
+		taskInstanceId: "task-instance-1",
 		phase: "awaiting_approval",
 		stateRevision: 8,
 		activeInteraction: {
@@ -69,6 +70,7 @@ describe("FooterActions", () => {
 		await waitFor(() => expect(dispatch).toHaveBeenCalledOnce())
 		expect(dispatch).toHaveBeenCalledWith({
 			taskId: "task-1",
+			taskInstanceId: "task-instance-1",
 			turnId: "turn-1",
 			interactionId: "interaction-1",
 			actionId: "approve",
@@ -185,6 +187,7 @@ describe("FooterActions", () => {
 		await waitFor(() => expect(dispatch).toHaveBeenCalledOnce())
 		expect(dispatch).toHaveBeenCalledWith({
 			taskId: "task-1",
+			taskInstanceId: "task-instance-1",
 			turnId: "turn-1",
 			interactionId: "interaction-1",
 			actionId: "confirm_utility",
@@ -241,6 +244,7 @@ describe("FooterActions", () => {
 		await waitFor(() => expect(dispatch).toHaveBeenCalledOnce())
 		expect(dispatch).toHaveBeenCalledWith({
 			taskId: "task-1",
+			taskInstanceId: "task-instance-1",
 			turnId: "turn-1",
 			interactionId: "interaction-1",
 			actionId: "approve",
@@ -299,6 +303,7 @@ describe("FooterActions", () => {
 		await waitFor(() => expect(dispatch).toHaveBeenCalledOnce())
 		expect(dispatch).toHaveBeenCalledWith({
 			taskId: "task-1",
+			taskInstanceId: "task-instance-1",
 			turnId: "turn-1",
 			interactionId: "interaction-1",
 			actionId: "reject",
@@ -347,6 +352,7 @@ describe("FooterActions", () => {
 		await waitFor(() => expect(dispatch).toHaveBeenCalledOnce())
 		expect(dispatch).toHaveBeenCalledWith({
 			taskId: "task-1",
+			taskInstanceId: "task-instance-1",
 			turnId: "turn-1",
 			interactionId: "interaction-1",
 			actionId: "reject",

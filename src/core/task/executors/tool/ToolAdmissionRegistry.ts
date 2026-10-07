@@ -2,6 +2,7 @@ import fs from "node:fs/promises"
 import path from "node:path"
 import { isTaskReadScopePath } from "@core/artifacts/runtime"
 import type { ToolUse } from "@core/assistant-message"
+import { getTaskTempDirectory } from "@core/storage/task-temp"
 import type { AutoApprovalSettings } from "@shared/AutoApprovalSettings"
 import { type BrowserAction, browserActions, type UiAsk, type UiSayTool } from "@shared/ExtensionMessage"
 import { ClineDefaultTool } from "@shared/tools"
@@ -17,6 +18,7 @@ import {
 	type ToolLaneContext,
 } from "../../kernel"
 import { findReplaceTextFiles } from "../../tools/utils/replace-text-files"
+import { declaresWritePath, resolveToolPathParam } from "../../tools/utils/tool-path-params"
 import {
 	admitToolCall,
 	rejectToolCall,
@@ -61,9 +63,9 @@ const REQUIRED_PARAMETERS: Partial<Record<ClineDefaultTool, readonly RequiredPar
 	[ClineDefaultTool.ATTEMPT]: ["result"],
 	[ClineDefaultTool.BASH]: ["command", "requires_approval"],
 	[ClineDefaultTool.KILL_COMMAND]: ["function_id"],
-	[ClineDefaultTool.FILE_EDIT]: [["path", "absolutePath"], "diff"],
+	[ClineDefaultTool.FILE_EDIT]: ["diff"],
 	[ClineDefaultTool.FILE_READ]: ["path"],
-	[ClineDefaultTool.FILE_NEW]: [["path", "absolutePath"], "content"],
+	[ClineDefaultTool.FILE_NEW]: ["content"],
 	[ClineDefaultTool.SEARCH]: ["path", "regex"],
 	[ClineDefaultTool.LIST_FILES]: ["path"],
 	[ClineDefaultTool.LIST_CODE_DEF]: ["path"],
@@ -78,7 +80,7 @@ const REQUIRED_PARAMETERS: Partial<Record<ClineDefaultTool, readonly RequiredPar
 	[ClineDefaultTool.WEB_FETCH]: ["url", "prompt"],
 	[ClineDefaultTool.WEB_SEARCH]: ["query"],
 	[ClineDefaultTool.SUMMARIZE_TASK]: ["context"],
-	[ClineDefaultTool.NEW_RULE]: [["path", "absolutePath"], "content"],
+	[ClineDefaultTool.NEW_RULE]: ["content"],
 	[ClineDefaultTool.APPLY_PATCH]: ["input"],
 	[ClineDefaultTool.GENERATE_EXPLANATION]: ["title"],
 	[ClineDefaultTool.LOAD_MCP]: ["name"],
@@ -131,6 +133,12 @@ function hasValue(value: unknown): boolean {
 }
 
 function validateParameters(block: ToolUse, toolName: ClineDefaultTool): string | undefined {
+	if (declaresWritePath(toolName)) {
+		const resolution = resolveToolPathParam(block.params)
+		if (resolution.error) return resolution.error
+		if (!resolution.param) return `Missing required parameter 'path' for tool '${block.name}'.`
+	}
+
 	for (const requirement of REQUIRED_PARAMETERS[toolName] ?? []) {
 		const alternatives = typeof requirement === "string" ? [requirement] : requirement
 		if (!alternatives.some((name) => hasValue(parameterValue(block, name)))) {
@@ -173,6 +181,10 @@ function validateParameters(block: ToolUse, toolName: ClineDefaultTool): string 
 
 function declaredPaths(block: ToolUse, toolName?: ClineDefaultTool): string[] {
 	const params = block.params as Record<string, unknown> | undefined
+	if (toolName && declaresWritePath(toolName)) {
+		const resolution = resolveToolPathParam(block.params)
+		return resolution.param ? [resolution.param.value] : []
+	}
 	if (toolName === ClineDefaultTool.APPLY_PATCH && typeof params?.input === "string") {
 		const paths: string[] = []
 		for (const line of params.input.split("\n")) {
@@ -190,7 +202,7 @@ function declaredPaths(block: ToolUse, toolName?: ClineDefaultTool): string[] {
 			? params?.workdirectory
 			: toolName === ClineDefaultTool.REPLACE_TEXT
 				? params?.file_pattern
-				: (params?.path ?? params?.absolutePath ?? params?.file_path)
+				: (params?.path ?? params?.file_path)
 	return typeof candidate === "string" && candidate.trim() ? [candidate] : []
 }
 
@@ -229,6 +241,27 @@ function resolveLexicalPath(candidate: string | undefined, snapshot: ToolAdmissi
 	return path.isAbsolute(normalizedInput) ? path.resolve(normalizedInput) : path.resolve(snapshot.cwd, normalizedInput)
 }
 
+/**
+ * Roots whose contents count as project files for permission scope.
+ *
+ * The current task's temp directory holds the task's own command logs and scratch files, so reading,
+ * searching, or writing there is project work rather than an external access.
+ */
+function projectRoots(snapshot: ToolAdmissionSnapshot): readonly string[] {
+	const workspaceRoots = snapshot.workspaceRoots.length > 0 ? snapshot.workspaceRoots : [snapshot.cwd]
+	const taskTempRoot = resolveTaskTempRoot(snapshot.taskId)
+	return taskTempRoot ? [...workspaceRoots, taskTempRoot] : workspaceRoots
+}
+
+function resolveTaskTempRoot(taskId: string): string | undefined {
+	try {
+		return getTaskTempDirectory(taskId)
+	} catch {
+		// A snapshot without a valid task identity has no task temp directory to trust.
+		return undefined
+	}
+}
+
 function isTrustedTaskRead(toolName: ClineDefaultTool, absolutePath: string, snapshot: ToolAdmissionSnapshot): boolean {
 	return (
 		toolName === ClineDefaultTool.FILE_READ &&
@@ -241,7 +274,7 @@ function resolveScopeContext(
 	toolName: ClineDefaultTool,
 	snapshot: ToolAdmissionSnapshot,
 ): PermissionScopeContext {
-	const roots = snapshot.workspaceRoots.length > 0 ? snapshot.workspaceRoots : [snapshot.cwd]
+	const roots = projectRoots(snapshot)
 	const absolutePaths = declaredPaths(block, toolName).map((candidate) => resolveLexicalPath(candidate, snapshot))
 	const requiresApproval = String(parameterValue(block, "requires_approval") ?? "").toLowerCase() === "true"
 	return {
@@ -332,7 +365,7 @@ async function confirmScopeContext(
 		return { scope: { ...lexical, isExternalPath: true }, canonicalPaths: [], confirmationFailed: true }
 	}
 	const resolvedPaths = canonicalPaths.filter((candidate): candidate is string => candidate !== undefined)
-	const roots = snapshot.workspaceRoots.length > 0 ? snapshot.workspaceRoots : [snapshot.cwd]
+	const roots = projectRoots(snapshot)
 	const canonicalRoots = await Promise.all(roots.map(async (root) => (await canonicalizePath(root)) ?? path.resolve(root)))
 	return {
 		scope: {

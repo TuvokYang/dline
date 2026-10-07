@@ -1505,13 +1505,16 @@ export class DiffParser {
 
 	private describeMatchFailure(match: Exclude<SearchMatch, { kind: "unique" }>): BlockFailure {
 		if (match.kind === "ambiguous") {
+			const promptKey = match.part === "skip_tail" ? "diffSkipTailAmbiguous" : "diffSearchAmbiguous"
+			const commonEnv: PromptEnv = {
+				MATCH_COUNT: String(match.candidateLines.length),
+				MATCH_MODE: MATCH_TIER_LABELS[match.tier],
+				LINE_NUMBERS: formatCandidateLines(match.candidateLines),
+			}
+			const env: PromptEnv = match.part === "skip_tail" ? { ...commonEnv, HEAD_LINE: String(match.headLine) } : commonEnv
 			return {
 				errorCode: DIFF_ERROR_CODE.AMBIGUOUS_MATCH,
-				errorMessage: renderPrompt("replaceInFile", "diffSearchAmbiguous", {
-					MATCH_COUNT: String(match.candidateLines.length),
-					MATCH_MODE: MATCH_TIER_LABELS[match.tier],
-					LINE_NUMBERS: formatCandidateLines(match.candidateLines),
-				}),
+				errorMessage: renderPrompt("replaceInFile", promptKey, env),
 			}
 		}
 		if (match.part === "skip_tail") {

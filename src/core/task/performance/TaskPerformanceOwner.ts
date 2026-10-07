@@ -1,3 +1,4 @@
+import { findExistingTaskMetricsDatabase } from "@core/storage/task-metrics-database"
 import type { UiMessage } from "@shared/ExtensionMessage"
 import type { TaskState } from "../kernel"
 import type { ApiRateSnapshot } from "./api-rate-tracker"
@@ -10,7 +11,6 @@ import type { ProviderRequestRoundPort } from "./provider-request-round-port"
 import { TaskProviderRequestRoundOwner } from "./TaskProviderRequestRoundOwner"
 import { TaskApiRateMetricsRepository } from "./task-api-rate-metrics-repository"
 import { TaskApiRateMetricsService } from "./task-api-rate-metrics-service"
-import { findExistingTaskMetricsDatabase } from "./task-metrics-database"
 import { TaskRateMetricsQueryService } from "./task-rate-metrics-query-service"
 import type { TaskRateMetricsQuery, TaskRateMetricsQueryResult } from "./task-rate-metrics-types"
 
@@ -21,6 +21,11 @@ export interface TaskPerformanceOwnerOptions {
 	readonly onChanged?: () => void
 	/** An explicit metrics database, used as is instead of the task's own layout. */
 	readonly location?: string
+	/**
+	 * Read what a past run recorded without writing: no legacy import, no wrapper
+	 * migration, no compaction, and a read-only database connection.
+	 */
+	readonly readOnly?: boolean
 }
 
 /** Owns every task-local rate metric lifecycle and its durable repositories. */
@@ -39,14 +44,16 @@ export class TaskPerformanceOwner {
 	private closed = false
 
 	private constructor(options: TaskPerformanceOwnerOptions) {
-		const location = options.location
-		const activeRepository = new TaskApiRateMetricsRepository({ taskId: options.taskId, location })
+		const { taskId, location } = options
+		const readOnly = options.readOnly === true
+		const activeRepository = new TaskApiRateMetricsRepository({ taskId, location, readOnly })
 		const roundRepository = new TaskApiRequestRoundRepository({
-			taskId: options.taskId,
+			taskId,
 			location,
-			legacySource: { getAll: () => options.legacyMessages() },
+			readOnly,
+			...(readOnly ? {} : { legacySource: { getAll: () => options.legacyMessages() } }),
 		})
-		const executionRepository = new TaskApiResponseExecutionRepository({ taskId: options.taskId, location })
+		const executionRepository = new TaskApiResponseExecutionRepository({ taskId, location, readOnly })
 		this.activeMetrics = new TaskApiRateMetricsService({
 			repository: activeRepository,
 			taskId: options.taskId,
@@ -96,11 +103,14 @@ export class TaskPerformanceOwner {
 	 * Open the metrics a past run recorded, for a view that is not running the task.
 	 *
 	 * Resolves undefined when the task never recorded metrics, so viewing it
-	 * creates no task directory and no empty database.
+	 * creates no task directory and no empty database. The owner is read-only:
+	 * the view never imports, migrates or compacts the past run's metrics.
 	 */
-	static async openExisting(options: Omit<TaskPerformanceOwnerOptions, "location">): Promise<TaskPerformanceOwner | undefined> {
+	static async openExisting(
+		options: Omit<TaskPerformanceOwnerOptions, "location" | "readOnly">,
+	): Promise<TaskPerformanceOwner | undefined> {
 		const location = await findExistingTaskMetricsDatabase(options.taskId)
-		return location ? TaskPerformanceOwner.open({ ...options, location }) : undefined
+		return location ? TaskPerformanceOwner.open({ ...options, location, readOnly: true }) : undefined
 	}
 
 	/**

@@ -2,11 +2,9 @@ import CheckpointTracker from "@integrations/checkpoints/CheckpointTracker"
 import { EventEmitter } from "events"
 import getFolderSize from "get-folder-size"
 import { findLastIndex } from "@/shared/array"
-import { combineApiRequests } from "@/shared/combineApiRequests"
-import { combineCommandSequences } from "@/shared/combineCommandSequences"
 import type { ContextWindowIndicatorSnapshot } from "@/shared/context-window-indicator"
 import { UiMessage } from "@/shared/ExtensionMessage"
-import { getApiMetrics } from "@/shared/getApiMetrics"
+import type { ApiMetrics } from "@/shared/getApiMetrics"
 import { HistoryItem, summarizeHistoryTaskText } from "@/shared/HistoryItem"
 import { ClineStorageMessage } from "@/shared/messages/content"
 import { Logger } from "@/shared/services/Logger"
@@ -16,6 +14,7 @@ import { ensureTaskDirectoryExists } from "../storage/disk"
 import { UIMessage } from "../storage/UIMessage"
 import type { ConversationHistoryReader } from "./conversation/ConversationHistoryReader"
 import { readHistoryContextWindowIndicator } from "./HistoryContextWindow"
+import { MessageUsageProjection } from "./performance/MessageUsageProjection"
 
 // Event types for clineMessages changes
 export type ClineMessageChangeType = "add" | "update" | "delete" | "set"
@@ -100,8 +99,10 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 	private messageRevision = 0
 	/** Bumped when positional message windows must be fetched again. */
 	private messageWindowRevision = 0
+	/** Usage read from message facts; caches each request's scalar usage instead of its body. */
+	private readonly usageProjection = new MessageUsageProjection()
 	/** Aggregated metrics reused while the message sequence is unchanged. */
-	private historyMetricsCache?: { revision: number; metrics: ReturnType<typeof getApiMetrics> }
+	private historyMetricsCache?: { revision: number; metrics: ApiMetrics }
 	/**
 	 * Metrics over the whole sequence, kept apart from the history aggregate.
 	 *
@@ -109,7 +110,7 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 	 * reports every message, so one shared slot would silently change whichever
 	 * surface read it second.
 	 */
-	private stateMetricsCache?: { revision: number; metrics: ReturnType<typeof getApiMetrics> }
+	private stateMetricsCache?: { revision: number; metrics: ApiMetrics }
 	/** Last measured task-directory size with the time it was taken. */
 	private taskDirectorySizeCache?: { bytes: number; measuredAt: number }
 
@@ -359,10 +360,10 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 	 * exact — any add, update, delete or transient overlay change invalidates it —
 	 * while collapsing the repeated work a single unchanged sequence would cause.
 	 */
-	private readAggregatedMetrics(allMessages: UiMessage[]): ReturnType<typeof getApiMetrics> {
+	private readAggregatedMetrics(allMessages: UiMessage[]): ApiMetrics {
 		const cached = this.historyMetricsCache
 		if (cached?.revision === this.messageRevision) return cached.metrics
-		const metrics = getApiMetrics(combineApiRequests(combineCommandSequences(allMessages.slice(1))))
+		const metrics = this.usageProjection.read(allMessages.slice(1))
 		this.historyMetricsCache = { revision: this.messageRevision, metrics }
 		return metrics
 	}
@@ -377,10 +378,10 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 	 * push. Keying on the mutation revision keeps the result exact while
 	 * collapsing an unchanged sequence to a single computation.
 	 */
-	readStateMetrics(): ReturnType<typeof getApiMetrics> {
+	readStateMetrics(): ApiMetrics {
 		const cached = this.stateMetricsCache
 		if (cached?.revision === this.messageRevision) return cached.metrics
-		const metrics = getApiMetrics(combineApiRequests(combineCommandSequences(this.clineMessages)))
+		const metrics = this.usageProjection.read(this.clineMessages)
 		this.stateMetricsCache = { revision: this.messageRevision, metrics }
 		return metrics
 	}

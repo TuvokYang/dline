@@ -201,6 +201,21 @@
 			"plugins": [
 				"src/dev/grit/use-cache-service.grit"
 			]
+		},
+		{
+			// Biome analyses only the frontmatter of Astro components, so imports and
+			// variables used solely in the template markup look unused.
+			"includes": [
+				"**/*.astro"
+			],
+			"linter": {
+				"rules": {
+					"correctness": {
+						"noUnusedImports": "off",
+						"noUnusedVariables": "off"
+					}
+				}
+			}
 		}
 	]
 }

@@ -85,6 +85,10 @@ const POLICY_MARKERS: WorkPolicyMarkers = {
 
 const USAGE: MockTokenUsage = { inputTokens: 3_000, outputTokens: 100 }
 
+function xmlAttemptCompletion(result: string): string {
+	return `<attempt_completion>\n<result>${result}</result>\n</attempt_completion>`
+}
+
 function responseNames(consumptions: readonly MockApiConsumption[]): string[] {
 	return consumptions.map((consumption) => consumption.toolName ?? consumption.responseType)
 }
@@ -193,10 +197,8 @@ e2e(
 			server.enqueueResponses(
 				DEEPSEEK_TARGET,
 				{
-					type: "tool",
-					id: "call_work_policy_skill",
-					name: "attempt_completion",
-					arguments: { result: SKILL_READY },
+					type: "message",
+					text: xmlAttemptCompletion(SKILL_READY),
 					usage: USAGE,
 					expectedRequestIncludes: [
 						SKILL_TASK_MARKER,
@@ -209,10 +211,8 @@ e2e(
 					expectedRequestExcludes: [`/skills:${POLICY_MARKERS.skillName}`],
 				},
 				{
-					type: "tool",
-					id: "call_work_policy_deepseek",
-					name: "attempt_completion",
-					arguments: { result: DEEPSEEK_READY },
+					type: "message",
+					text: xmlAttemptCompletion(DEEPSEEK_READY),
 					usage: USAGE,
 					expectedRequestIncludes: [
 						TASK_MARKER,
@@ -225,10 +225,8 @@ e2e(
 					expectedRequestExcludes: [POLICY_MARKERS.globalRuleV2, `/workflow:${POLICY_MARKERS.workflowName}`],
 				},
 				{
-					type: "tool",
-					id: "call_work_policy_deepseek_frozen",
-					name: "attempt_completion",
-					arguments: { result: DEEPSEEK_FROZEN_READY },
+					type: "message",
+					text: xmlAttemptCompletion(DEEPSEEK_FROZEN_READY),
 					usage: USAGE,
 					expectedRequestIncludes: [
 						DEEPSEEK_STALE_INPUT,
@@ -406,11 +404,7 @@ e2e(
 			const deepSeekConsumptions = server.getMockConsumptions(DEEPSEEK_TARGET)
 			const openAiConsumptions = server.getMockConsumptions(OPENAI_TARGET)
 			const anthropicConsumptions = server.getMockConsumptions(ANTHROPIC_TARGET)
-			expect(responseNames(deepSeekConsumptions)).toEqual([
-				"attempt_completion",
-				"attempt_completion",
-				"attempt_completion",
-			])
+			expect(responseNames(deepSeekConsumptions)).toEqual(["message", "message", "message"])
 			expect(responseNames(openAiConsumptions)).toEqual(["attempt_completion"])
 			expect(responseNames(anthropicConsumptions)).toEqual(["attempt_completion", "attempt_completion"])
 			expectProviderRequest(deepSeekConsumptions[0], "deepseek-chat", DEEPSEEK_MODEL)

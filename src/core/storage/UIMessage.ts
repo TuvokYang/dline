@@ -1,9 +1,10 @@
+import { normalizeStoredCheckpointMessage } from "@shared/checkpoints"
 import path from "path"
 import { UiMessage } from "@/shared/ExtensionMessage"
 import type { BufferedUnifyStore } from "./backend/api/UnifyStore"
 import { BufferedUnifyStore as BufferedStore } from "./backend/core/BufferedUnifyStore"
 import { dedupeClineMessagesByTs } from "./disk"
-import { ensureInstanceLayout, InstanceDatabase } from "./instance"
+import { ensureInstanceLayout, InstanceDatabase, resolveInstanceLayout } from "./instance"
 import { importLegacyUiMessages } from "./messages/importLegacyUiMessages"
 import { openUiMessageRows, UI_MESSAGE_WRITER } from "./messages/openUiMessageRows"
 import { UI_MESSAGE_ORDINAL, UI_MESSAGE_TIMESTAMP } from "./messages/UiMessageRowStore"
@@ -53,16 +54,25 @@ export class UIMessage {
 			},
 		})
 		const stored = store.getAll()
-		if (new Set(stored.map((message) => message.ts)).size !== stored.length) {
-			await store.mutate((current) => dedupeClineMessagesByTs(current))
+		// Rows written before checkpoint references became multi-root carry a scalar hash.
+		const hasLegacyCheckpointHash = stored.some(
+			(message) => typeof (message as { lastCheckpointHash?: unknown }).lastCheckpointHash === "string",
+		)
+		if (new Set(stored.map((message) => message.ts)).size !== stored.length || hasLegacyCheckpointHash) {
+			await store.mutate((current) => dedupeClineMessagesByTs(current).map(normalizeStoredCheckpointMessage))
 		}
 		return new UIMessage(store)
 	}
 
-	/** Opens a bounded read-only window over a task's history; it never writes. */
+	/**
+	 * Opens a bounded read-only window over a task's history.
+	 *
+	 * It never writes: a missing task directory, database or legacy file yields an
+	 * empty window instead of creating anything on disk.
+	 */
 	static async openWindow(taskId: string): Promise<UIMessageWindowReader> {
-		const layout = await ensureInstanceLayout({ taskId })
-		return await UIMessageWindowReader.open(layout.root)
+		const layout = await resolveInstanceLayout({ taskId })
+		return await UIMessageWindowReader.open(layout)
 	}
 
 	// ── Read ──

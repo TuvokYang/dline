@@ -1,0 +1,45 @@
+---
+title: Capability Toggle Scopes
+description: Understand where rule, workflow, skill, subagent, and MCP toggles are saved, and how task, workspace, and global settings combine.
+---
+
+import { Aside } from "@astrojs/starlight/components"
+
+Rules, workflows, skills, subagents, and MCP servers can each be turned on or off. Where that choice is saved depends on whether a task is open.
+
+## Where a toggle is saved
+
+The capabilities panel and the MCP servers popup show the current storage layer in a line under their tabs:
+
+| Situation | Notice | Effect |
+|---|---|---|
+| No task is open (start screen) | **Toggles saved for this workspace** | Applies to new tasks started in this workspace |
+| A task is open | **Toggles saved for this task only** | Applies only to the open task; other tasks and the workspace default are untouched |
+
+Global preferences sit underneath both and apply across every workspace.
+
+<Aside>
+Where a resource comes from and where its toggle is saved are separate. A rule discovered in your global rules directory can still be switched off for one task only. Section headings in the panel name the origin; the notice names the layer the change is written to.
+</Aside>
+
+## How scopes combine
+
+The effective state is resolved from the strongest scope that has an entry:
+
+```text
+task override → workspace override → global override → resource default
+```
+
+A resource with no entry in a scope **inherits** from the next one; it is not treated as disabled. So a task only records the toggles you actually changed in it, and everything else keeps following the workspace and global settings.
+
+## Effect on a running task
+
+A task freezes its system prompt and tool list when it starts. Changing a toggle in the middle of a task does not silently rewrite that snapshot: the **Refresh Prompt Cache** button in the task header shows a warning icon and lists what changed, for example `Rules changed` or `MCP tools changed`. Select it and confirm to rebuild the prompt with the new toggles. Refreshing causes one prompt-cache miss.
+
+![Turning off a skill and a workflow for one task, then seeing the stale-prompt warning](@docs-assets/marketplace/r6-capability-scopes.gif)
+
+## Related pages
+
+- [Rules](/customization/rules/), [Workflows](/customization/workflows/), [Skills](/customization/skills/), [Subagents](/features/subagents/)
+- [MCP servers](/mcp/mcp-overview/) and [Hooks](/customization/hooks/)
+- [Complete usage guide: task header](/usage/ide/#task-header)

@@ -1,3 +1,4 @@
+import type { ClineUserAttachedDocumentBlock } from "@shared/messages/content"
 import type { ToolResponse } from "./ToolResponse"
 
 /** Data-only successor directive executed only after the canonical tool result and turn are closed. */
@@ -13,6 +14,13 @@ export type ToolPostCommitDirective = StartSuccessorTaskPostCommitDirective
 /** Extended handler result that preserves existing ToolResponse source compatibility. */
 export interface ToolExecutionResult {
 	readonly response: ToolResponse
+	/**
+	 * PDFs the user attached to this call's answer.
+	 *
+	 * A tool result carries only text and images, so documents travel beside it
+	 * and the provider request places them after the result they belong to.
+	 */
+	readonly documents?: readonly ClineUserAttachedDocumentBlock[]
 	readonly postCommit?: ToolPostCommitDirective
 }
 
@@ -26,4 +34,12 @@ export function isToolExecutionResult(result: ToolHandlerResult): result is Tool
 /** Normalize legacy handler responses into one execution envelope. */
 export function normalizeToolExecutionResult(result: ToolHandlerResult): ToolExecutionResult {
 	return isToolExecutionResult(result) ? result : { response: result }
+}
+
+/** Pair a response with the documents that follow it, keeping a bare response when there are none. */
+export function withToolDocuments(
+	response: ToolResponse,
+	documents: readonly ClineUserAttachedDocumentBlock[],
+): ToolHandlerResult {
+	return documents.length === 0 ? response : { response, documents }
 }

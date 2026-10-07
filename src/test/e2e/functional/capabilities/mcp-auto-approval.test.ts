@@ -66,11 +66,15 @@ async function setToolAutoApprove(sidebar: Frame, enabled: boolean): Promise<voi
 	await expect(sidebar.getByText("Tools (1)", { exact: true })).toBeVisible({ timeout: 60_000 })
 	const checkbox = sidebar.locator(`vscode-checkbox[data-tool="${MCP_TOOL_NAME}"]`)
 	await expect(checkbox).toHaveCount(1)
-	if ((await checkbox.isChecked()) !== enabled) {
+	// Read the element property for both the decision and the assertion: the toolkit
+	// renders aria-checked asynchronously, so isChecked() can still report the default
+	// state of a freshly expanded row and skip the toggle.
+	const isChecked = () => checkbox.evaluate((element) => Boolean((element as HTMLInputElement).checked))
+	if ((await isChecked()) !== enabled) {
 		await checkbox.focus()
 		await checkbox.press("Space")
 	}
-	await expect.poll(() => checkbox.evaluate((element) => Boolean((element as HTMLInputElement).checked))).toBe(enabled)
+	await expect.poll(isChecked).toBe(enabled)
 }
 
 async function returnToChat(sidebar: Frame): Promise<void> {

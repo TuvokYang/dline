@@ -4,6 +4,11 @@
  */
 import { type ModelInfo } from "@shared/api"
 import { ThinkingConfig } from "@shared/proto/dline/models/metadata"
+import {
+	ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS,
+	ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS_WITHOUT_XHIGH,
+	adaptiveThinkingCapabilities,
+} from "./anthropic"
 
 const _sonnet_tiers = [
 	{
@@ -38,15 +43,16 @@ const _opus_tiers = [
 	},
 ]
 
-/**
- * Capabilities shared by the Claude generation that keeps adaptive thinking on.
- *
- * Thinking cannot be combined with a forced tool choice, so these models reject
- * `tool_choice: any` with an error rather than degrading to an automatic choice.
- * Vertex renames the models but does not change that rule, so the declaration
- * belongs here too instead of relying on the ID fallback alone.
- */
-const ADAPTIVE_THINKING_CLAUDE_CAPABILITIES = { supportsForcedToolUse: false } as const
+const ADAPTIVE_THINKING_CLAUDE_CAPABILITIES = adaptiveThinkingCapabilities(
+	ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS_WITHOUT_XHIGH,
+)
+const CLAUDE_BUDGET_THINKING: ThinkingConfig = {
+	supported: true,
+	mode: "budget",
+	minBudget: 1024,
+	defaultEnabled: false,
+	canDisable: true,
+}
 
 export const vertexModels: Record<string, ModelInfo> = {
 	"gemini-3.1-pro-preview": {
@@ -59,7 +65,14 @@ export const vertexModels: Record<string, ModelInfo> = {
 			supportsImages: true,
 			supportsPromptCache: true,
 			supportsReasoning: true,
-			thinking: { supported: true, mode: "effort", effortLevels: ["high"] },
+			thinking: {
+				supported: true,
+				mode: "effort",
+				effortLevels: ["low", "medium", "high"],
+				defaultEnabled: true,
+				defaultEffort: "high",
+				canDisable: false,
+			},
 		},
 		pricing: {
 			inputPrice: 2.0,
@@ -76,7 +89,14 @@ export const vertexModels: Record<string, ModelInfo> = {
 			supportsImages: true,
 			supportsPromptCache: true,
 			supportsReasoning: true,
-			thinking: { supported: true, mode: "effort", effortLevels: ["high"] },
+			thinking: {
+				supported: true,
+				mode: "effort",
+				effortLevels: ["low", "high"],
+				defaultEnabled: true,
+				defaultEffort: "high",
+				canDisable: false,
+			},
 		},
 		pricing: {
 			inputPrice: 2.0,
@@ -93,7 +113,14 @@ export const vertexModels: Record<string, ModelInfo> = {
 			supportsImages: true,
 			supportsPromptCache: true,
 			supportsReasoning: true,
-			thinking: { supported: true, mode: "effort", effortLevels: ["high"] },
+			thinking: {
+				supported: true,
+				mode: "effort",
+				effortLevels: ["minimal", "low", "medium", "high"],
+				defaultEnabled: true,
+				defaultEffort: "high",
+				canDisable: false,
+			},
 		},
 		pricing: {
 			inputPrice: 0.5,
@@ -141,6 +168,7 @@ export const vertexModels: Record<string, ModelInfo> = {
 	"claude-sonnet-4-5@20250929": {
 		id: "claude-sonnet-4-5@20250929",
 		capabilities: {
+			thinking: { ...CLAUDE_BUDGET_THINKING },
 			supportsTools: true,
 			maxTokens: 64_000,
 			contextWindow: 200_000,
@@ -158,6 +186,7 @@ export const vertexModels: Record<string, ModelInfo> = {
 	"claude-sonnet-4@20250514": {
 		id: "claude-sonnet-4@20250514",
 		capabilities: {
+			thinking: { ...CLAUDE_BUDGET_THINKING },
 			supportsTools: true,
 			maxTokens: 64_000,
 			contextWindow: 200_000,
@@ -175,6 +204,7 @@ export const vertexModels: Record<string, ModelInfo> = {
 	"claude-haiku-4-5@20251001": {
 		id: "claude-haiku-4-5@20251001",
 		capabilities: {
+			thinking: { ...CLAUDE_BUDGET_THINKING },
 			supportsTools: true,
 			maxTokens: 64_000,
 			contextWindow: 200_000,
@@ -236,7 +266,7 @@ export const vertexModels: Record<string, ModelInfo> = {
 			supportsPromptCache: true,
 			supportsReasoning: true,
 			supportsGlobalEndpoint: true,
-			...ADAPTIVE_THINKING_CLAUDE_CAPABILITIES,
+			...adaptiveThinkingCapabilities(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS),
 		},
 		pricing: {
 			inputPrice: 5.0,
@@ -255,7 +285,7 @@ export const vertexModels: Record<string, ModelInfo> = {
 			supportsPromptCache: true,
 			supportsReasoning: true,
 			supportsGlobalEndpoint: true,
-			...ADAPTIVE_THINKING_CLAUDE_CAPABILITIES,
+			...adaptiveThinkingCapabilities(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS),
 		},
 		pricing: {
 			inputPrice: 5.0,
@@ -268,6 +298,7 @@ export const vertexModels: Record<string, ModelInfo> = {
 	"claude-opus-4-5@20251101": {
 		id: "claude-opus-4-5@20251101",
 		capabilities: {
+			thinking: { ...CLAUDE_BUDGET_THINKING },
 			supportsTools: true,
 			maxTokens: 64_000,
 			contextWindow: 200_000,
@@ -285,6 +316,7 @@ export const vertexModels: Record<string, ModelInfo> = {
 	"claude-opus-4-1@20250805": {
 		id: "claude-opus-4-1@20250805",
 		capabilities: {
+			thinking: { ...CLAUDE_BUDGET_THINKING },
 			supportsTools: true,
 			maxTokens: 32_000,
 			contextWindow: 200_000,
@@ -302,6 +334,7 @@ export const vertexModels: Record<string, ModelInfo> = {
 	"claude-opus-4@20250514": {
 		id: "claude-opus-4@20250514",
 		capabilities: {
+			thinking: { ...CLAUDE_BUDGET_THINKING },
 			supportsTools: true,
 			maxTokens: 32_000,
 			contextWindow: 200_000,
@@ -324,7 +357,7 @@ export const vertexModels: Record<string, ModelInfo> = {
 			supportsImages: true,
 			supportsPromptCache: true,
 			supportsReasoning: true,
-			thinking: ThinkingConfig.create({ supported: true, mode: "budget", maxBudget: 64000 }),
+			thinking: ThinkingConfig.create({ ...CLAUDE_BUDGET_THINKING, maxBudget: 64000 }),
 		},
 		pricing: {
 			inputPrice: 3.0,
@@ -535,7 +568,14 @@ export const vertexModels: Record<string, ModelInfo> = {
 			contextWindow: 1_048_576,
 			supportsImages: true,
 			supportsPromptCache: true,
-			thinking: ThinkingConfig.create({ supported: true, mode: "budget", maxBudget: 32767 }),
+			thinking: ThinkingConfig.create({
+				supported: true,
+				mode: "budget",
+				maxBudget: 32768,
+				minBudget: 128,
+				defaultEnabled: true,
+				canDisable: false,
+			}),
 		},
 		pricing: {
 			inputPrice: 2.5,
@@ -565,7 +605,14 @@ export const vertexModels: Record<string, ModelInfo> = {
 			contextWindow: 1_048_576,
 			supportsImages: true,
 			supportsPromptCache: true,
-			thinking: ThinkingConfig.create({ supported: true, mode: "budget", maxBudget: 24576 }),
+			thinking: ThinkingConfig.create({
+				supported: true,
+				mode: "budget",
+				maxBudget: 24576,
+				minBudget: 1,
+				defaultEnabled: true,
+				canDisable: true,
+			}),
 		},
 		pricing: {
 			inputPrice: 0.3,
@@ -582,7 +629,13 @@ export const vertexModels: Record<string, ModelInfo> = {
 			contextWindow: 1_000_000,
 			supportsImages: true,
 			supportsPromptCache: true,
-			thinking: ThinkingConfig.create({ supported: true, mode: "budget", maxBudget: 24576 }),
+			thinking: ThinkingConfig.create({
+				supported: true,
+				mode: "budget",
+				maxBudget: 24576,
+				defaultEnabled: false,
+				canDisable: true,
+			}),
 		},
 		pricing: {
 			inputPrice: 0.1,

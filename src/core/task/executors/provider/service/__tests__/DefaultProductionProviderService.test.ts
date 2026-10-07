@@ -991,3 +991,43 @@ describe("DefaultProductionProviderService context-window recovery", () => {
 		expect(harness.api.createMessage).toHaveBeenCalledOnce()
 	})
 })
+
+describe("DefaultProductionProviderService endpoint projection", () => {
+	const attachedPdf = {
+		type: "attached_document",
+		path: "/work/spec.pdf",
+		media_type: "application/pdf",
+		data: "JVBERi0xLjQK",
+		byte_length: 9,
+		fallback_text: "EXTRACTED_PDF_TEXT",
+	}
+
+	function withPdf(documentInput?: { maxTotalBytes: number }) {
+		const harness = scripted([{ chunks: [text("ok")] }])
+		;(harness.request as { messages: ClineStorageMessage[] }).messages = [
+			{ role: "user", content: [{ type: "text", text: "read this" }, attachedPdf] } as ClineStorageMessage,
+		]
+		;(harness.api as { getDocumentInputLimits?: unknown }).getDocumentInputLimits = () => documentInput
+		return harness
+	}
+
+	it("sends an attached PDF as a native document when the endpoint reads PDFs", async () => {
+		const harness = withPdf({ maxTotalBytes: 1_000 })
+
+		await collect(harness.service)
+
+		const content = harness.sent[0][0].content as Array<{ type: string }>
+		expect(content.some((block) => block.type === "document")).toBe(true)
+		expect(content.some((block) => block.type === "attached_document")).toBe(false)
+	})
+
+	it("sends the extracted text of an attached PDF to an endpoint that cannot read PDFs", async () => {
+		const harness = withPdf(undefined)
+
+		await collect(harness.service)
+
+		const content = harness.sent[0][0].content as Array<{ type: string; text?: string }>
+		expect(content.some((block) => block.type === "document" || block.type === "attached_document")).toBe(false)
+		expect(content.some((block) => block.text?.includes("EXTRACTED_PDF_TEXT"))).toBe(true)
+	})
+})

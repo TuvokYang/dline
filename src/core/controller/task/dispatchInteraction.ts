@@ -7,6 +7,7 @@ import { type DispatchInteractionRequest, DispatchInteractionResponse } from "@s
 import { fromProtoSemanticInputDocument } from "@shared/proto-conversions/input-semantics/document"
 import { Logger } from "@shared/services/Logger"
 import type { Controller } from ".."
+import { describeDispatch } from "./describeInteractionDispatch"
 
 /** Stable protocol outcomes for expected interaction response races. */
 type DispatchInteractionResult =
@@ -121,7 +122,14 @@ export async function dispatchInteraction(
 	// A closed task can still own a durable interaction rendered from history.
 	if (!session) return (await controller.dispatchHistoryDisplayInteraction(request)) ?? response(false, "missing_task")
 	const state = session.state()
-	if (request.taskId !== session.taskId) return response(false, "stale_interaction")
+	// A response is bound to the opening that rendered it: the same task reopened
+	// is a different opening, and a dialog shown by the previous one is stale.
+	if (request.taskId !== session.taskId || !request.taskInstanceId || request.taskInstanceId !== session.taskInstanceId) {
+		Logger.warn(
+			`[dispatchInteraction] Refused a reply from another opening of task ${session.taskId}: ${describeDispatch(request)}`,
+		)
+		return response(false, "stale_interaction")
+	}
 	// An interrupted task parks its recovery dialog under `interrupted`, so Resume
 	// must be answerable there as well as on a live primary.
 	const owner = [state.dialog.primary, state.dialog.interrupted].find(

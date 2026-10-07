@@ -1,4 +1,5 @@
 import { MoonshotProviderConfig } from "@shared/proto/dline/provider/moonshot"
+import { resolveProfileModelInfo } from "@shared/providers/profile-model-info"
 import { VSCodeDropdown, VSCodeOption } from "@vscode/webview-ui-toolkit/react"
 import { ApiKeyField } from "../common/ApiKeyField"
 import { ModelInfoView } from "../common/ModelInfoView"
@@ -15,10 +16,10 @@ interface MoonshotProviderProps {
 
 /** Moonshot AI provider �?all data from ApiProfile. moonshotVersion stored in providerConfig. */
 export const MoonshotProvider = ({ showModelOptions, isPopup, profile, onUpdate }: MoonshotProviderProps) => {
-	const { models, defaultModelId, modelInfoSaneDefaults } = useProviderModels("moonshot")
+	const { models, defaultModelId } = useProviderModels("moonshot")
 	const pc = profile.moonshot ?? MoonshotProviderConfig.create()
-	const modelId = profile.modelId || defaultModelId
-	const modelInfo = profile.modelInfo ?? models[profile.modelId] ?? modelInfoSaneDefaults
+	const modelInfo = resolveProfileModelInfo(profile, { models, defaultModelId })
+	const modelId = modelInfo.id
 	const moonshotVersion = (pc.moonshotVersion as string) || "v1"
 
 	return (

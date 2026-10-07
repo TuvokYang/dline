@@ -7,7 +7,9 @@ import mammoth from "mammoth"
 import * as path from "path"
 // @ts-expect-error-next-line
 import pdf from "pdf-parse/lib/pdf-parse"
+import { MAX_ATTACHED_PDF_BYTES } from "@/shared/attachments"
 import { truncateContent } from "@/shared/content-limits"
+import type { ClineTextContentBlock, ClineUserAttachedDocumentBlock } from "@/shared/messages/content"
 import { Logger } from "@/shared/services/Logger"
 import { sanitizeNotebookForLLM } from "./notebook-utils"
 
@@ -192,33 +194,100 @@ async function extractTextFromExcel(filePath: string): Promise<string> {
 	}
 }
 
+const ATTACHED_FILES_HEADER = "Files attached by the user:"
+
 /**
  * Helper function used to load file(s) and format them into a string
  */
 export async function processFilesIntoText(files: string[]): Promise<string> {
-	const fileContentsPromises = files.map(async (filePath) => {
-		try {
-			// Check if file exists and is binary
-			//const isBinary = await isBinaryFile(filePath).catch(() => false)
-			//if (isBinary) {
-			//	return `<file_content path="${filePath.toPosix()}">\n(Binary file, unable to display content)\n</file_content>`
-			//}
-			const content = await extractTextFromFile(filePath)
-			return `<file_content path="${filePath.toPosix()}">\n${content}\n</file_content>`
-		} catch (error) {
-			Logger.error(`Error processing file ${filePath}:`, error)
-			return `<file_content path="${filePath.toPosix()}">\nError fetching content: ${error.message}\n</file_content>`
-		}
-	})
+	const fileContents = await Promise.all(files.map(readFileContentEntry))
+	return fileContents.length > 0 ? `${ATTACHED_FILES_HEADER}\n\n${fileContents.join("\n\n")}` : ""
+}
 
-	const fileContents = await Promise.all(fileContentsPromises)
+/**
+ * Load attached files as user-message content.
+ *
+ * PDFs keep their bytes so each request can send them natively where the endpoint allows it; their
+ * extracted text travels with them as the fallback. Every other file becomes the same `<file_content>`
+ * text {@link processFilesIntoText} produces. A PDF that cannot be parsed is attached as its error text
+ * only, because an endpoint would reject it on every later request of the task.
+ */
+export async function processFilesIntoContent(
+	files: string[],
+): Promise<Array<ClineTextContentBlock | ClineUserAttachedDocumentBlock>> {
+	if (files.length === 0) return []
+	const pdfResults = await Promise.all(files.filter(isPdfPath).map(readAttachedPdf))
+	const documents = pdfResults.filter((result): result is ClineUserAttachedDocumentBlock => typeof result !== "string")
+	const textEntries = [
+		...(await Promise.all(files.filter((filePath) => !isPdfPath(filePath)).map(readFileContentEntry))),
+		...pdfResults.filter((result): result is string => typeof result === "string"),
+	]
+	const header = textEntries.length > 0 ? `${ATTACHED_FILES_HEADER}\n\n${textEntries.join("\n\n")}` : ATTACHED_FILES_HEADER
+	return [{ type: "text", text: header }, ...documents]
+}
 
-	const validFileContents = fileContents.filter((content) => content !== null).join("\n\n")
+/** Attached files of a tool result, split by where each can travel. */
+export interface ToolResultAttachments {
+	/** Text for inside the tool result; empty when no file was attached. */
+	text: string
+	/** PDFs for the same user message after the tool result, where native document blocks are allowed. */
+	documents: ClineUserAttachedDocumentBlock[]
+}
 
-	if (validFileContents) {
-		return `Files attached by the user:\n\n${validFileContents}`
+const PDFS_FOLLOW_NOTE = "(The attached PDFs follow this tool result as documents.)"
+
+/**
+ * Load files a user attached while answering a tool, such as feedback on an approval or a follow-up answer.
+ *
+ * A tool result carries only text and images, so PDFs are returned separately for the caller to place
+ * beside the result; extracting them into the result instead would lose the document and cost context
+ * for its text. Every other file becomes the same `<file_content>` text {@link processFilesIntoText} makes.
+ */
+export async function processFilesForToolResult(files: string[] | undefined): Promise<ToolResultAttachments> {
+	if (!files?.length) return { text: "", documents: [] }
+	const content = await processFilesIntoContent(files)
+	const documents = content.filter((block): block is ClineUserAttachedDocumentBlock => block.type === "attached_document")
+	const text = content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("\n\n")
+	return { text: documents.length > 0 ? `${text}\n\n${PDFS_FOLLOW_NOTE}` : text, documents }
+}
+
+function isPdfPath(filePath: string): boolean {
+	return path.extname(filePath).toLowerCase() === ".pdf"
+}
+
+function formatFileContent(filePath: string, content: string): string {
+	return `<file_content path="${filePath.toPosix()}">\n${content}\n</file_content>`
+}
+
+async function readFileContentEntry(filePath: string): Promise<string> {
+	try {
+		return formatFileContent(filePath, await extractTextFromFile(filePath))
+	} catch (error) {
+		Logger.error(`Error processing file ${filePath}:`, error)
+		return formatFileContent(filePath, `Error fetching content: ${error.message}`)
 	}
+}
 
-	// returns empty string if no files were loaded properly
-	return ""
+/** Read a PDF once for both its bytes and its extracted text; returns error text when it cannot be used. */
+async function readAttachedPdf(filePath: string): Promise<ClineUserAttachedDocumentBlock | string> {
+	try {
+		const { size } = await fs.stat(filePath)
+		if (size > MAX_ATTACHED_PDF_BYTES) {
+			throw new Error(`PDF exceeds the ${MAX_ATTACHED_PDF_BYTES / (1000 * 1000)} MB attachment limit.`)
+		}
+		const bytes = await fs.readFile(filePath)
+		const parsed = await pdf(bytes)
+		return {
+			type: "attached_document",
+			path: filePath.toPosix(),
+			media_type: "application/pdf",
+			data: bytes.toString("base64"),
+			byte_length: bytes.byteLength,
+			...(typeof parsed.numpages === "number" ? { page_count: parsed.numpages } : {}),
+			fallback_text: formatFileContent(filePath, truncateContent(parsed.text)),
+		}
+	} catch (error) {
+		Logger.error(`Error processing PDF ${filePath}:`, error)
+		return formatFileContent(filePath, `Error fetching content: ${error.message}`)
+	}
 }

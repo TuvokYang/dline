@@ -202,18 +202,29 @@ describe("DiffParser SKIP ranges", () => {
 		"",
 	].join("\n")
 
-	it("deletes the whole range from head to nearest tail", () => {
-		const result = runDiff(block(["export function legacy() {", "....... SKIP", "}"], []), source)
+	it("deletes the whole range when the head and multi-line tail identify one location", () => {
+		const result = runDiff(block(["export function legacy() {", "....... SKIP", "  return 2", "}"], []), source)
 		const [only] = result.blocks
 		expect(only.hasError).to.be.false
 		expect(only.startLine).to.equal(2)
 		expect(only.endLine).to.equal(7)
-		expect(only.skippedLines).to.equal(4)
+		expect(only.skippedLines).to.equal(3)
 		expect(result.newContent).to.equal("const x = 1\n\nexport function keep() {\n}\n")
 	})
 
+	it("rejects a SKIP range when its tail matches multiple locations", () => {
+		const result = runDiff(block(["export function legacy() {", "....... SKIP", "}"], []), source)
+		const [only] = result.blocks
+		expect(only.errorCode).to.equal("AMBIGUOUS_MATCH")
+		expect(only.errorMessage).to.include("head matched line 2").and.include("2 locations").and.include("lines 7, 10")
+		expect(result.newContent).to.equal(source)
+	})
+
 	it("uses the block delimiter length for the SKIP marker", () => {
-		const result = runDiff(block(["export function legacy() {", "......... SKIP", "}"], ["// removed"], 9), source)
+		const result = runDiff(
+			block(["export function legacy() {", "......... SKIP", "  return 2", "}"], ["// removed"], 9),
+			source,
+		)
 		expect(result.blocks[0].hasError).to.be.false
 		expect(result.newContent).to.include("// removed\n\nexport function keep()")
 	})

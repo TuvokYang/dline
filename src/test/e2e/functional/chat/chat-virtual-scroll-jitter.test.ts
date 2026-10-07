@@ -542,7 +542,6 @@ async function installScrollObserver(sidebar: Frame): Promise<void> {
 		}
 
 		scroller.addEventListener("scroll", () => record("scroll"), { passive: true })
-
 		Object.defineProperty(window, "__dlineScrollEvents", { value: records, configurable: true })
 
 		// P1: what the reader was actually shown.
@@ -1730,6 +1729,349 @@ async function readContinuousSamples(sidebar: Frame): Promise<AnchorSample[]> {
 	return sidebar.evaluate(() => (window as unknown as { __dlineLiveSamples?: AnchorSample[] }).__dlineLiveSamples ?? [])
 }
 
+/**
+ * One rendering cycle in the state it was painted.
+ *
+ * `scrollTop`, `anchorTop` and `trackedTs` keep the `AnchorSample` shape, so the
+ * direction checks written for the animation-frame series read this one too.
+ */
+interface PaintedFrame extends AnchorSample {
+	/** Viewport top of every row intersecting the viewport, keyed by message timestamp. */
+	visible: Record<string, number>
+	/** Running total of the programmatic scroll writes recorded up to this read. */
+	programmaticTotal: number
+	/** Whether this cycle's read was replaced after the resize-observation broadcast. */
+	afterResize: boolean
+}
+
+/**
+ * Sample the state each rendering cycle actually paints.
+ *
+ * The continuous sampler reads inside animation-frame callbacks, which run
+ * before the resize-observation broadcast. A list that corrects a newly
+ * measured row inside that broadcast — what `skipAnimationFrameInResizeObserver`
+ * makes react-virtuoso do — therefore appears there as a displacement that
+ * never reached the screen, and a gate reading that series rejects a list that
+ * paints nothing wrong.
+ *
+ * The animation-frame read here is only provisional. Observers are notified in
+ * creation order and a new observation is always notified once, so an observer
+ * created afresh in every animation frame is notified after every observer the
+ * page already has — react-virtuoso's, and the chat's own scroller observer,
+ * which is recreated whenever the rendered window changes length — and replaces
+ * the provisional read with the state that frame paints. A single observer
+ * created when sampling starts would fall behind any observer recreated later
+ * and read the content before that observer corrected it. A correction the list
+ * defers to the next animation frame is read in that frame, which is also when
+ * it is painted, so a deferred correction still shows as the displacement the
+ * reader saw first.
+ */
+async function startPaintSampling(sidebar: Frame, durationMs: number): Promise<void> {
+	await sidebar.evaluate(
+		({ duration }) => {
+			const scroller = document.querySelector<HTMLElement>('[data-virtuoso-scroller="true"]')
+			const list = scroller?.querySelector<HTMLElement>('[data-testid="virtuoso-item-list"]')
+			if (!scroller || !list) throw new Error("the virtuoso list must exist before sampling painted frames")
+			const writes = (window as unknown as { __dlineScrollEvents?: Array<{ delta: number; source: string }> })
+				.__dlineScrollEvents
+			if (!writes) throw new Error("the scroll observer must be installed before sampling painted frames")
+
+			// Only writers count: a bare `scroll` record is the browser reporting a
+			// change somebody else made, including the reader's own wheel.
+			let counted = writes.length
+			let programmaticTotal = 0
+			const readProgrammaticTotal = (): number => {
+				for (; counted < writes.length; counted++) {
+					const write = writes[counted]
+					if (write && write.source !== "scroll") programmaticTotal += write.delta
+				}
+				return programmaticTotal
+			}
+
+			let anchorTs: string | null = null
+			const frames: Array<{
+				time: number
+				scrollTop: number
+				anchorTop: number | null
+				trackedTs: string | null
+				visible: Record<string, number>
+				programmaticTotal: number
+				afterResize: boolean
+			}> = []
+			const capture = (afterResize: boolean) => {
+				const bounds = scroller.getBoundingClientRect()
+				const middle = scroller.clientHeight / 2
+				const visible: Record<string, number> = {}
+				let middleTs: string | null = null
+				let middleDistance = Number.POSITIVE_INFINITY
+				for (const row of scroller.querySelectorAll<HTMLElement>("[data-message-ts]")) {
+					const ts = row.dataset.messageTs
+					if (!ts) continue
+					const rect = row.getBoundingClientRect()
+					if (rect.bottom <= bounds.top || rect.top >= bounds.bottom) continue
+					const top = rect.top - bounds.top
+					visible[ts] = top
+					const distance = Math.abs(top - middle)
+					if (distance < middleDistance) {
+						middleDistance = distance
+						middleTs = ts
+					}
+				}
+				// Hold one row while it stays visible, as the continuous sampler does,
+				// so consecutive frames compare a row against itself.
+				if (anchorTs === null || visible[anchorTs] === undefined) anchorTs = middleTs
+				return {
+					time: performance.now(),
+					scrollTop: scroller.scrollTop,
+					anchorTop: anchorTs === null ? null : (visible[anchorTs] ?? null),
+					trackedTs: anchorTs,
+					visible,
+					programmaticTotal: readProgrammaticTotal(),
+					afterResize,
+				}
+			}
+
+			const deadline = performance.now() + duration
+			let observer: ResizeObserver | null = null
+			// A correction delivered in a later pass of the same broadcast (an
+			// observation that changed during an earlier pass) runs after the
+			// earlier read. An observation created during one pass is delivered
+			// in the next, after the page's own, as long as its target is deeper
+			// than the shallowest target delivered in the pass before, so a fresh
+			// observer on a progressively deeper zero-size probe re-reads the
+			// frame after every further pass. The chain stops at the first pass
+			// that changed nothing, which is the state the broadcast ends in and
+			// the frame paints: nothing runs between the broadcast and the paint.
+			// Being reads, the probes change no delivery the page itself makes.
+			const probeChain: HTMLElement[] = []
+			const probeRoot = document.createElement("div")
+			probeRoot.style.cssText = "position:fixed;left:0;top:0;width:0;height:0;overflow:hidden;pointer-events:none"
+			let parent: HTMLElement = probeRoot
+			for (let depth = 0; depth < 96; depth++) {
+				const child = document.createElement("div")
+				parent.appendChild(child)
+				probeChain.push(child)
+				parent = child
+			}
+			document.body.appendChild(probeRoot)
+			// Deeper than the list, so the first probe is delivered in the pass
+			// right after the list's own.
+			const firstProbe = 40
+			const signatureOf = (frame: ReturnType<typeof capture>) =>
+				`${frame.scrollTop}|${scroller.scrollHeight}|${JSON.stringify(frame.visible)}`
+			let late: ResizeObserver | null = null
+			const rereadUntilSettled = (step: number, previous: string) => {
+				late?.disconnect()
+				late = null
+				const probe = probeChain[step]
+				if (!probe) return
+				late = new ResizeObserver(() => {
+					late?.disconnect()
+					late = null
+					if (frames.length === 0) return
+					const reread = capture(true)
+					frames[frames.length - 1] = reread
+					const signature = signatureOf(reread)
+					if (signature !== previous) rereadUntilSettled(step + 1, signature)
+				})
+				late.observe(probe)
+			}
+			// The list element is what react-virtuoso itself observes, at the same
+			// depth, so whenever its notification is delivered or deferred within a
+			// frame, this one is treated the same way and still comes after it. It
+			// is looked up again each frame in case the list remounted.
+			const observeThisFrame = () => {
+				observer?.disconnect()
+				const current = scroller.querySelector<HTMLElement>('[data-testid="virtuoso-item-list"]')
+				observer = current
+					? new ResizeObserver(() => {
+							if (frames.length === 0) return
+							const first = capture(true)
+							frames[frames.length - 1] = first
+							rereadUntilSettled(firstProbe, signatureOf(first))
+						})
+					: null
+				if (current) observer?.observe(current)
+			}
+
+			const tick = () => {
+				frames.push(capture(false))
+				if (performance.now() < deadline) {
+					observeThisFrame()
+					requestAnimationFrame(tick)
+				} else {
+					observer?.disconnect()
+					late?.disconnect()
+					probeRoot.remove()
+				}
+			}
+			requestAnimationFrame(tick)
+			Object.defineProperty(window, "__dlinePaintedFrames", { value: frames, configurable: true })
+		},
+		{ duration: durationMs },
+	)
+}
+
+async function readPaintedFrames(sidebar: Frame): Promise<PaintedFrame[]> {
+	return sidebar.evaluate(() => (window as unknown as { __dlinePaintedFrames?: PaintedFrame[] }).__dlinePaintedFrames ?? [])
+}
+
+interface RenderingState {
+	/** Sidebar clock, comparable with every sample time. */
+	time: number
+	visibility: string
+	focused: boolean
+}
+
+/**
+ * Read whether the sidebar document is being rendered at full rate.
+ *
+ * A hidden or throttled document delivers animation frames and timers far
+ * more slowly than the samplers assume, so a coverage shortfall must say
+ * whether the page was rendering at all before it is read as a product fault.
+ */
+async function readRenderingState(sidebar: Frame): Promise<RenderingState> {
+	return sidebar.evaluate(() => ({
+		time: performance.now(),
+		visibility: document.visibilityState,
+		focused: document.hasFocus(),
+	}))
+}
+
+function describeRendering(label: string, state: RenderingState): string {
+	return `${label}@${Math.round(state.time)}ms visibility=${state.visibility} focused=${state.focused}`
+}
+
+/** Summarise how often a sampler actually ran, which a shortfall alone cannot tell. */
+function describeCadence(times: number[]): string {
+	const first = times[0]
+	const last = times.at(-1)
+	if (first === undefined || last === undefined || times.length < 2) return `samples=${times.length}`
+	const intervals = times
+		.slice(1)
+		.map((time, index) => time - (times[index] ?? time))
+		.sort((a, b) => a - b)
+	const median = intervals[Math.floor(intervals.length / 2)] ?? 0
+	const longest = intervals.at(-1) ?? 0
+	return `samples=${times.length} span=${Math.round(first)}..${Math.round(last)}ms medianInterval=${median.toFixed(1)}ms longestInterval=${Math.round(longest)}ms`
+}
+
+/** Tell an anchor that left the viewport apart from a sampler that never ran. */
+function describeSettleSamples(samples: AnchorSample[]): string {
+	const scrollTops = samples.map((sample) => sample.scrollTop)
+	const firstUnresolved = samples.findIndex((sample) => sample.anchorTop === null)
+	return `${describeCadence(samples.map((sample) => sample.time))} scrollTop=${Math.round(scrollTops[0] ?? 0)}->${Math.round(scrollTops.at(-1) ?? 0)} (min=${Math.round(Math.min(...scrollTops))}, max=${Math.round(Math.max(...scrollTops))}) firstUnresolved=${firstUnresolved}`
+}
+
+interface PaintedShift {
+	/** Index of the later of the two compared frames. */
+	frame: number
+	time: number
+	/** Movement of the visible content that the reader's own scrolling does not explain. */
+	shift: number
+	readerScroll: number
+	sharedRows: number
+}
+
+/**
+ * How far the visible content moved between painted frames beyond the reader's scrolling.
+ *
+ * The reader's share of a scroll change is what remains after every recorded
+ * programmatic write is removed, so a list that grows above the viewport and
+ * scrolls by the same amount to hold its place reports nothing, while a stray
+ * write over unchanged content reports its full size.
+ *
+ * The visible row with the smallest remainder speaks for the frame. A row
+ * reflowing inside the viewport moves only the rows below it; a remainder that
+ * every visible row shares is the viewport itself jumping under the reader.
+ */
+function paintedShifts(frames: PaintedFrame[]): PaintedShift[] {
+	const shifts: PaintedShift[] = []
+	for (let index = 1; index < frames.length; index++) {
+		const previous = frames[index - 1]
+		const current = frames[index]
+		if (!previous || !current) continue
+		const readerScroll = current.scrollTop - previous.scrollTop - (current.programmaticTotal - previous.programmaticTotal)
+		let smallest: number | null = null
+		let sharedRows = 0
+		for (const [ts, top] of Object.entries(current.visible)) {
+			const before = previous.visible[ts]
+			if (before === undefined) continue
+			sharedRows++
+			const remainder = top - before + readerScroll
+			if (smallest === null || Math.abs(remainder) < Math.abs(smallest)) smallest = remainder
+		}
+		if (smallest === null) continue
+		shifts.push({ frame: index, time: current.time, shift: smallest, readerScroll, sharedRows })
+	}
+	return shifts
+}
+
+/** A displacement a reader can see, matched with the same reversal used by the step-level gate. */
+const PAINT_FLASH_MIN_PX = 60
+/** Long enough for a correction deferred by one or two frames to land. */
+const PAINT_FLASH_WINDOW_MS = 100
+
+/**
+ * Painted frames where the content jumped and came back without the reader scrolling.
+ *
+ * A list that measures a row late paints the uncorrected layout for one or more
+ * frames and then corrects it, which is the tremor being reported: out, then
+ * back, within a few frames.
+ */
+interface PaintedFlash {
+	at: number
+	out: number
+	back: number
+	frames: number
+	/** Painted-frame indexes of the outward and the returning movement. */
+	outFrame: number
+	backFrame: number
+}
+
+function paintedFlashes(shifts: PaintedShift[]): PaintedFlash[] {
+	const flashes: PaintedFlash[] = []
+	let index = 0
+	while (index < shifts.length) {
+		const out = shifts[index]
+		let matched = index
+		if (out && Math.abs(out.shift) >= PAINT_FLASH_MIN_PX) {
+			for (let next = index + 1; next < shifts.length; next++) {
+				const back = shifts[next]
+				if (!back || back.time - out.time > PAINT_FLASH_WINDOW_MS) break
+				if (Math.abs(back.shift) >= PAINT_FLASH_MIN_PX && Math.sign(back.shift) !== Math.sign(out.shift)) {
+					flashes.push({
+						at: Math.round(out.time),
+						out: Math.round(out.shift),
+						back: Math.round(back.shift),
+						frames: next - index,
+						outFrame: out.frame,
+						backFrame: back.frame,
+					})
+					matched = next
+					break
+				}
+			}
+		}
+		index = matched + 1
+	}
+	return flashes
+}
+
+/** The painted frames around a flash, for reading the mechanism straight from the run output. */
+function describeFlash(frames: PaintedFrame[], flash: PaintedFlash) {
+	return frames.slice(Math.max(0, flash.outFrame - 2), flash.backFrame + 2).map((frame) => ({
+		t: Math.round(frame.time),
+		scrollTop: Math.round(frame.scrollTop),
+		programmatic: Math.round(frame.programmaticTotal),
+		afterResize: frame.afterResize,
+		rows: Object.entries(frame.visible)
+			.slice(0, 3)
+			.map(([ts, top]) => `${ts.slice(-4)}@${Math.round(top)}`),
+		rowCount: Object.keys(frame.visible).length,
+	}))
+}
+
 interface CoordinateRecord {
 	time: number
 	origin: number | null
@@ -2071,6 +2413,7 @@ e2e.describe("Chat virtual scroll jitter", () => {
 				// the settle wait, and the periodic DOM trace adds to that. The window
 				// has to outlast the whole drive or the tail goes unmeasured.
 				await startContinuousSampling(sidebar, 150_000)
+				await startPaintSampling(sidebar, 150_000)
 
 				// Drive it the way a reader does. An earlier version of this control
 				// assigned `scrollTop` in a tight rAF loop, which moves the list
@@ -2140,6 +2483,14 @@ e2e.describe("Chat virtual scroll jitter", () => {
 					step: number
 					scrollTop: number
 					rows: Record<string, number>
+					/**
+					 * Rows intersecting the viewport. `rows` also holds the
+					 * overscan above and below it, which the reader cannot see:
+					 * when the list corrects for a row measured above the
+					 * viewport, the overscan rows above that row move on screen
+					 * by the full correction while the visible content stays put.
+					 */
+					visible: string[]
 					padding: number
 					/** Rendered item index keyed by message timestamp. */
 					indices: Record<string, string>
@@ -2151,6 +2502,17 @@ e2e.describe("Chat virtual scroll jitter", () => {
 					 */
 					totalCount: number
 					firstIndex: string | null
+					/**
+					 * Running total of the programmatic scroll writes so far.
+					 *
+					 * `scrollTop` moves for the reader's wheel and for every
+					 * correction the list makes for rows measured above the
+					 * viewport. Only the first is the reader's, so the
+					 * difference between two frames' totals is taken out of
+					 * their scroll change before it is compared with how far a
+					 * row moved on screen.
+					 */
+					programmaticTotal: number
 				}
 				const visualFrames: VisualFrame[] = []
 				const captureVisual = async (step: number): Promise<VisualFrame | null> =>
@@ -2159,10 +2521,13 @@ e2e.describe("Chat virtual scroll jitter", () => {
 						if (!scroller) return null
 						const viewport = scroller.getBoundingClientRect()
 						const rows: Record<string, number> = {}
+						const visible: string[] = []
 						for (const row of scroller.querySelectorAll<HTMLElement>("[data-message-ts]")) {
 							const ts = row.dataset.messageTs
 							if (!ts) continue
-							rows[ts] = Math.round(row.getBoundingClientRect().top - viewport.top)
+							const rect = row.getBoundingClientRect()
+							rows[ts] = Math.round(rect.top - viewport.top)
+							if (rect.bottom > viewport.top && rect.top < viewport.bottom) visible.push(ts)
 						}
 						// The list expresses the space above the window as
 						// padding. When it re-seats the window it changes this
@@ -2198,6 +2563,7 @@ e2e.describe("Chat virtual scroll jitter", () => {
 							step: currentStep,
 							scrollTop: Math.round(scroller.scrollTop),
 							rows,
+							visible,
 							padding,
 							indices,
 							// No code wrote the scroller on the flagged frame,
@@ -2218,6 +2584,22 @@ e2e.describe("Chat virtual scroll jitter", () => {
 							// coincide with one of those merges.
 							totalCount: scroller.querySelectorAll("[data-item-index]").length,
 							firstIndex: scroller.querySelector("[data-item-index]")?.getAttribute("data-item-index") ?? null,
+							programmaticTotal: (() => {
+								const state = window as unknown as {
+									__dlineScrollEvents?: Array<{ delta: number; source: string }>
+									__dlineVisualWrites?: { counted: number; total: number }
+								}
+								const writes = state.__dlineScrollEvents ?? []
+								const tally = state.__dlineVisualWrites ?? { counted: 0, total: 0 }
+								state.__dlineVisualWrites = tally
+								for (; tally.counted < writes.length; tally.counted++) {
+									const write = writes[tally.counted]
+									// A bare `scroll` record is the effect of a write or of
+									// the wheel, never a writer of its own.
+									if (write && write.source !== "scroll") tally.total += write.delta
+								}
+								return tally.total
+							})(),
 						}
 					}, step)
 
@@ -2284,15 +2666,27 @@ e2e.describe("Chat virtual scroll jitter", () => {
 						const previous = visualFrames[position - 1]
 						if (!previous) return null
 						const scrolled = frame.scrollTop - previous.scrollTop
-						// Every row present in both frames is compared, and the
+						// Only the reader's own share of the scroll explains
+						// movement on screen. The rest of `scrolled` is the list
+						// correcting for rows measured above the viewport, and a
+						// correction that holds the content in place is exactly
+						// what must not be reported: adding it back counted every
+						// 363px compensation for a newly measured code card as a
+						// 363px jump, while the rows on screen moved by precisely
+						// one wheel step.
+						const programmatic = frame.programmaticTotal - previous.programmaticTotal
+						const readerScroll = scrolled - programmatic
+						// Every row visible in both frames is compared, and the
 						// worst disagreement is reported. Rows that scrolled out
 						// of the window simply do not appear in both.
+						const visibleBefore = new Set(previous.visible)
 						let worst: { ts: string; moved: number; residual: number } | null = null
-						for (const [ts, top] of Object.entries(frame.rows)) {
+						for (const ts of frame.visible) {
+							const top = frame.rows[ts]
 							const before = previous.rows[ts]
-							if (before === undefined) continue
+							if (top === undefined || before === undefined || !visibleBefore.has(ts)) continue
 							const moved = top - before
-							const residual = moved + scrolled
+							const residual = moved + readerScroll
 							if (!worst || Math.abs(residual) > Math.abs(worst.residual)) {
 								worst = { ts, moved, residual }
 							}
@@ -2302,10 +2696,15 @@ e2e.describe("Chat virtual scroll jitter", () => {
 							step: frame.step,
 							ts: worst.ts,
 							scrolled,
+							programmatic,
 							moved: worst.moved,
 							// Zero when the row moved exactly as far as the
-							// list scrolled.
+							// reader scrolled.
 							residual: worst.residual,
+							// The figure the gate used to read: the row's change of
+							// position in the content, which a compensated
+							// measurement moves without moving anything on screen.
+							contentResidual: worst.moved + scrolled,
 							// A scroll matched by an equal padding change is
 							// the list re-seating its window, which leaves the
 							// content where it was.
@@ -3362,9 +3761,48 @@ e2e.describe("Chat virtual scroll jitter", () => {
 				// Jitter is a reversal: the content goes one way and comes back
 				// with no scrolling to account for either leg. That is what the
 				// screenshots confirmed, and it is what this gates on.
+				//
+				// The step-level frames above are taken between wheel steps, so a
+				// displacement painted for a frame or two and corrected before the
+				// next step never reaches them. The painted series covers every
+				// rendering cycle in the state it was shown, which is where a late
+				// measurement correction would be seen.
+				const paintedFrames = await readPaintedFrames(sidebar)
+				const painted = paintedShifts(paintedFrames)
+				const flashes = paintedFlashes(painted)
+				console.log(
+					"[painted] frames:",
+					paintedFrames.length,
+					"; replaced after the resize broadcast:",
+					paintedFrames.filter((frame) => frame.afterResize).length,
+					"; flashes:",
+					flashes.length,
+					JSON.stringify(flashes.slice(0, 6)),
+				)
+				console.log(
+					"[painted] largest unexplained shifts:",
+					JSON.stringify(
+						[...painted]
+							.sort((a, b) => Math.abs(b.shift) - Math.abs(a.shift))
+							.slice(0, 6)
+							.map((entry) => ({
+								at: Math.round(entry.time),
+								shift: Math.round(entry.shift),
+								readerScroll: Math.round(entry.readerScroll),
+								rows: entry.sharedRows,
+							})),
+					),
+				)
+				expect(painted.length, "the painted series must cover the drive, otherwise it proves nothing").toBeGreaterThan(
+					plan.length,
+				)
 				expect(
 					reversals.length,
 					`content must not move against the direction of travel (${reversals.length} reversal(s): ${JSON.stringify(reversals.slice(0, 3))})`,
+				).toBe(0)
+				expect(
+					flashes.length,
+					`painted content must not jump and return without the reader scrolling (${JSON.stringify(flashes.slice(0, 3))})`,
 				).toBe(0)
 			} finally {
 				if (app) await app.close().catch(() => undefined)
@@ -3434,6 +3872,7 @@ e2e.describe("Chat virtual scroll jitter", () => {
 
 				// From here no input is issued. Anything that still moves the anchor
 				// is the application restoring position, not the user scrolling.
+				const settleStart = await readRenderingState(sidebar)
 				const diagnostics = await sampleSettling(sidebar, anchorRow.ts)
 				await attachDiagnostics(testInfo, diagnostics)
 
@@ -3442,7 +3881,7 @@ e2e.describe("Chat virtual scroll jitter", () => {
 				const resolvedSamples = diagnostics.samples.filter((sample) => sample.anchorTop !== null)
 				expect(
 					resolvedSamples.length,
-					"the sampled anchor must stay resolvable, otherwise no jitter measurement was taken",
+					`the sampled anchor must stay resolvable, otherwise no jitter measurement was taken (${describeRendering("settleStart", settleStart)}; ${describeSettleSamples(diagnostics.samples)})`,
 				).toBeGreaterThan(SETTLE_SAMPLE_COUNT / 2)
 
 				// A single legitimate correction spends its distance once and stops.
@@ -3674,7 +4113,10 @@ e2e.describe("Chat virtual scroll jitter", () => {
 				// a scroll: it skips the frames where a newly mounted row is measured
 				// and lands outside what the measurement can attribute to scrolling.
 				await startContinuousSampling(sidebar, 20_000)
+				await startPaintSampling(sidebar, 20_000)
+				const samplingStart = await readRenderingState(sidebar)
 				await scroller.hover()
+				const driveStart = await readRenderingState(sidebar)
 				const streamLegs = [
 					{ delta: -75, steps: 24 },
 					{ delta: 75, steps: 12 },
@@ -3688,6 +4130,7 @@ e2e.describe("Chat virtual scroll jitter", () => {
 					}
 				}
 
+				const driveEnd = await readRenderingState(sidebar)
 				const streamingLive = await readContinuousSamples(sidebar)
 				const streamingDisplacement = largestContentDisplacement(streamingLive)
 				const causes = await readDisplacementCauses(sidebar)
@@ -3731,19 +4174,69 @@ e2e.describe("Chat virtual scroll jitter", () => {
 				// better — the tail grows while the window slides — so the
 				// figure is reported and the gate is content travelling against
 				// the scroll, which a one-way slide cannot produce.
-				const streamingBackward = countBackwardFrames(streamingLive, 1)
+				//
+				// Counted on painted frames. The animation-frame series reads
+				// before the resize broadcast, so a row measured smaller than its
+				// estimate shows there as content stepping back by the difference
+				// even when the list corrects it before the frame is painted.
+				const streamingPainted = await readPaintedFrames(sidebar)
+				const streamingBackward = countBackwardFrames(streamingPainted, 1)
+				const streamingFlashes = paintedFlashes(paintedShifts(streamingPainted))
 				console.log(
 					"[probe] streaming content displacement (diagnostic):",
 					Math.round(streamingDisplacement.pixels),
 					"px at",
 					streamingDisplacement.atTime,
-					"; backward frames:",
+					"; backward painted frames:",
 					streamingBackward,
+					"; backward animation-frame reads (diagnostic):",
+					countBackwardFrames(streamingLive, 1),
+					"; painted frames:",
+					streamingPainted.length,
+					"; flashes:",
+					JSON.stringify(streamingFlashes.slice(0, 6)),
 				)
+				expect(
+					streamingPainted.length,
+					`the painted series must cover the streaming drive, otherwise it proves nothing (${[
+						describeRendering("samplingStart", samplingStart),
+						describeRendering("driveStart", driveStart),
+						describeRendering("driveEnd", driveEnd),
+						describeCadence(streamingPainted.map((frame) => frame.time)),
+					].join("; ")})`,
+				).toBeGreaterThan(streamLegs.reduce((total, leg) => total + leg.steps, 0))
 				expect(
 					streamingBackward,
 					`a growing tail must not move content against the scroll direction (backwardFrames=${streamingBackward}, largest displacement=${Math.round(streamingDisplacement.pixels)}px at t=${streamingDisplacement.atTime})`,
 				).toBeLessThanOrEqual(1)
+				for (const flash of streamingFlashes.slice(0, 3)) {
+					const around = describeFlash(streamingPainted, flash)
+					const from = (around[0]?.t ?? 0) - 1
+					const to = (around[around.length - 1]?.t ?? 0) + 1
+					const writes = await sidebar.evaluate(
+						({ from, to }) =>
+							(
+								(
+									window as unknown as {
+										__dlineScrollEvents?: Array<{ time: number; source: string; delta: number }>
+									}
+								).__dlineScrollEvents ?? []
+							)
+								.filter((event) => event.time >= from && event.time <= to && event.source !== "scroll")
+								.map((event) => ({
+									t: Math.round(event.time),
+									delta: Math.round(event.delta),
+									source: event.source,
+								})),
+						{ from, to },
+					)
+					console.log("[painted] streaming flash frames:", JSON.stringify(around))
+					console.log("[painted] streaming flash writes:", JSON.stringify(writes))
+				}
+				expect(
+					streamingFlashes.length,
+					`painted content must not jump and return while the tail grows (${JSON.stringify(streamingFlashes.slice(0, 3))})`,
+				).toBe(0)
 
 				const visibleRows = await captureVisibleRows(sidebar)
 				const anchorRow = visibleRows[0]
@@ -3752,13 +4245,14 @@ e2e.describe("Chat virtual scroll jitter", () => {
 
 				// Input stops here while the stream is still open, so the tail is the
 				// only thing still changing.
+				const settleStart = await readRenderingState(sidebar)
 				const diagnostics = await sampleSettling(sidebar, anchorRow.ts)
 				await attachDiagnostics(testInfo, diagnostics)
 
 				const resolvedSamples = diagnostics.samples.filter((sample) => sample.anchorTop !== null)
 				expect(
 					resolvedSamples.length,
-					"the streaming anchor must stay resolvable, otherwise nothing was measured",
+					`the streaming anchor must stay resolvable, otherwise nothing was measured (${describeRendering("settleStart", settleStart)}; ${describeSettleSamples(diagnostics.samples)})`,
 				).toBeGreaterThan(SETTLE_SAMPLE_COUNT / 2)
 
 				const jump = largestAnchorJump(diagnostics.samples)

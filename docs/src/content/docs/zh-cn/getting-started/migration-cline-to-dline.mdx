@@ -1,0 +1,68 @@
+---
+title: 从 Cline 迁移
+description: Dline 启动时如何把 Cline 的设置、全局能力文件和部分缓存复制到 Dline 的存储位置，以及哪些内容不会迁移。
+---
+
+import { Aside } from "@astrojs/starlight/components"
+
+如果你之前用过 Cline，Dline 启动时会检查旧的 Cline 数据，并把可迁移的内容复制到 Dline 自己的存储位置。迁移只做复制，不会修改或删除任何 Cline 文件。
+
+## 何时运行
+
+- 每次扩展启动时都会检查一次。只有至少一项内容满足“源有内容、目标不存在或为空”时才会真正迁移。
+- 迁移期间会显示通知 **Dline: Migrating legacy Cline data...**，进度文字为 **Copying data into empty Dline locations...**。
+- 至少复制成功一项后，会显示 **Dline: Data migrated - …**，列出已处理的项目。
+- 每一步单独执行。某一步失败时，Dline 记录错误并继续下一步，不会阻止扩展启动。
+
+## 迁移内容
+
+下表按执行顺序列出。`<Documents>` 指操作系统的“文档”目录，`<documents-root>` 指 Dline 文档根目录，默认是 `<Documents>/dline`。
+
+| 顺序 | 来源 | 目标 | 条件 |
+|---|---|---|---|
+| 1 | `~/.cline/data/` | `~/.dline/data/` | 目标不存在或为空 |
+| 2 | `~/.cline/endpoints.json` | `~/.dline/endpoints.json` | 目标文件不存在 |
+| 3 | `<Documents>/Cline/settings/cline_mcp_settings.json` | `<documents-root>/settings/mcp_settings.json` | 目标文件不存在 |
+| 4 | `<Documents>/Cline/` 的其余内容，不含顶层 `tasks/` | `<documents-root>/` | 执行这一步时文档根目录不存在或为空 |
+| 5 | 旧扩展存储中的 `checkpoints/` | `<documents-root>/checkpoints/` | 目标不存在或为空 |
+| 6 | 旧扩展存储中的 `puppeteer/` | `~/.dline/puppeteer/` | 目标不存在或为空 |
+| 7 | 旧扩展存储中的 `cache/sync-queue.json` | `~/.dline/cache/sync-queue.json` | 目标文件不存在 |
+
+“旧扩展存储”是 VS Code 为扩展 `saoudrizwan.claude-dev` 或 `cline.cline` 分配的全局存储目录，与 Dline 的全局存储目录位于同一个父目录下。第 5–7 步各自使用第一个包含对应内容的旧目录。
+
+判断“为空”时，会忽略 `.DS_Store`、`Thumbs.db` 和 `desktop.ini`。第 1、6、7 步的目标固定位于 `~/.dline` 下，设置 `DLINE_DIR` 不会改变迁移目标。
+
+## 不会迁移的内容
+
+**任务历史不会迁移。** `<Documents>/Cline/tasks/` 和旧扩展存储中的任务记录都会留在原处。Dline 用 SQLite 索引任务，并为每个任务保存 Cline 任务目录中没有的运行状态，因此旧任务无法在 Dline 中打开或恢复。
+
+迁移也不会合并数据：目标位置已经有内容时，这一项直接跳过，已有的 Dline 数据不会被覆盖。
+
+## 跳过迁移
+
+满足以下任一条件时，整个迁移不会运行：
+
+| 环境变量 | 效果 |
+|---|---|
+| `DLINE_SKIP_MIGRATION=1` | 跳过迁移 |
+| `DLINE_HOME_DIR` 已设置 | 使用自定义路径，跳过迁移 |
+| `DLINE_DOCS_DIR` 已设置 | 使用自定义路径，跳过迁移 |
+
+这些变量的含义见[配置](/zh-cn/getting-started/config/)。
+
+## 迁移后检查
+
+1. 打开服务商设置，确认原有配置还在。
+2. 打开 MCP 服务器设置，确认服务器列表还在。参见 [MCP 概览](/zh-cn/mcp/mcp-overview/)。
+3. 检查全局规则和工作流是否能在 Dline 中看到。
+
+## 故障排查
+
+<Aside type="caution" title="规则或工作流没有迁移过来">
+第 4 步只在文档根目录仍为空时执行。如果第 3 步已经复制了 MCP 设置文件，或者你之前运行过 Dline，文档根目录就不再为空，`<Documents>/Cline/` 的其余内容会被跳过。这时需要手动把需要的文件复制到 `<documents-root>` 下对应的目录。
+</Aside>
+
+- **手动复制时的目录名**：Dline 的全局目录名是小写的：`rules/`、`workflows/`、`skills/`、`hooks/`、`mcp/`。自动迁移会保留原目录名。在区分大小写的文件系统上，如果旧目录名的大小写不同（例如 `Rules`），需要改成对应的小写名称。
+- **MCP 设置文件名不同**：Cline 使用 `cline_mcp_settings.json`，Dline 使用 `mcp_settings.json`。手动复制时要改名。
+- **迁移没有运行**：检查是否设置了上表中的环境变量，并确认目标位置确实不存在或为空。
+- **想继续使用 Cline**：迁移不会改动 Cline 的文件，原有数据仍保留在原位置。

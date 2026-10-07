@@ -1,5 +1,6 @@
-import { type ModelInfo, openAiModelInfoSaneDefaults } from "@shared/api"
+import { type ModelInfo } from "@shared/api"
 import { observeProviderStream } from "@shared/provider-attempt-observer"
+import { resolveRuntimeModel } from "@shared/providers/profile-model-info"
 import { type Config, type Message, Ollama } from "ollama"
 import type { ChatCompletionTool } from "openai/resources/chat/completions"
 import { buildExternalBasicHeaders } from "@/services/EnvUtils"
@@ -179,19 +180,12 @@ export class OllamaHandler implements ApiHandler {
 	}
 
 	getModel(): { id: string; info: ModelInfo } {
+		const model = resolveRuntimeModel(this.ctx.profile)
 		return {
-			id: this.modelId,
+			...model,
 			info: {
-				...openAiModelInfoSaneDefaults,
-				capabilities: {
-					supportsImages: openAiModelInfoSaneDefaults.capabilities?.supportsImages ?? false,
-					supportsPromptCache: openAiModelInfoSaneDefaults.capabilities?.supportsPromptCache ?? false,
-					supportsReasoning: openAiModelInfoSaneDefaults.capabilities?.supportsReasoning ?? false,
-					supportsGlobalEndpoint: openAiModelInfoSaneDefaults.capabilities?.supportsGlobalEndpoint,
-					maxTokens: openAiModelInfoSaneDefaults.capabilities?.maxTokens,
-					contextWindow: Number(this.ollamaApiOptionsCtxNum),
-					thinking: openAiModelInfoSaneDefaults.capabilities?.thinking,
-				},
+				...model.info,
+				capabilities: { ...model.info.capabilities, contextWindow: Number(this.ollamaApiOptionsCtxNum) },
 			},
 		}
 	}

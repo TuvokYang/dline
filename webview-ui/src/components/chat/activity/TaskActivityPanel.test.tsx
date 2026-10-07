@@ -276,7 +276,7 @@ describe("TaskActivityPanel", () => {
 	})
 
 	it("defaults to active activities in creation order and exposes exact cancellation", () => {
-		render(<TaskActivityPanel taskId="task-1" />)
+		render(<TaskActivityPanel taskId="task-1" taskInstanceId="task-instance-1" />)
 
 		const items = screen.getAllByTestId("activity-item")
 		expect(items).toHaveLength(1)
@@ -313,7 +313,7 @@ describe("TaskActivityPanel", () => {
 		expect(cancelButton).toHaveClass("h-5", "self-center", "bg-[#c42b2b]", "text-white!", "text-[11px]")
 		expect(cancelButton).not.toHaveClass("bg-button-background", "text-button-foreground", "hover:bg-button-hover")
 		fireEvent.click(cancelButton)
-		expect(cancelTaskActivities).toHaveBeenCalledWith("task-1", ["new-command"])
+		expect(cancelTaskActivities).toHaveBeenCalledWith("task-1", ["new-command"], "task-instance-1")
 	})
 
 	it("shows Finish and Retry only for capable subagent activities", async () => {
@@ -352,7 +352,9 @@ describe("TaskActivityPanel", () => {
 		let resolveRetry!: () => void
 		finishTaskActivities.mockImplementationOnce(() => new Promise<void>((resolve) => (resolveFinish = resolve)))
 		retryTaskActivities.mockImplementationOnce(() => new Promise<void>((resolve) => (resolveRetry = resolve)))
-		render(<TaskActivityPanel filters={{ status: "all", kind: "subagent" }} taskId="task-1" />)
+		render(
+			<TaskActivityPanel filters={{ status: "all", kind: "subagent" }} taskId="task-1" taskInstanceId="task-instance-1" />,
+		)
 		const finishButton = screen.getByRole("button", { name: "Finish" })
 		const retryButton = screen.getByRole("button", { name: "Retry" })
 
@@ -362,9 +364,9 @@ describe("TaskActivityPanel", () => {
 		fireEvent.click(retryButton)
 
 		expect(finishTaskActivities).toHaveBeenCalledTimes(1)
-		expect(finishTaskActivities).toHaveBeenCalledWith("task-1", ["running-agent"])
+		expect(finishTaskActivities).toHaveBeenCalledWith("task-1", ["running-agent"], "task-instance-1")
 		expect(retryTaskActivities).toHaveBeenCalledTimes(1)
-		expect(retryTaskActivities).toHaveBeenCalledWith("task-1", ["retry-agent"])
+		expect(retryTaskActivities).toHaveBeenCalledWith("task-1", ["retry-agent"], "task-instance-1")
 		expect(finishButton).toBeDisabled()
 		expect(retryButton).toBeDisabled()
 		expect(screen.getAllByRole("button", { name: "Finish" })).toHaveLength(1)

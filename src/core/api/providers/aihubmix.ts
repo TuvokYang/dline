@@ -3,6 +3,7 @@ import { GenerateContentConfig, GoogleGenAI } from "@google/genai"
 import { ModelInfo } from "@shared/api"
 import { providerFetch } from "@shared/net"
 import { observeProviderStream } from "@shared/provider-attempt-observer"
+import { resolveProfileModelId } from "@shared/providers/profile-model-info"
 import OpenAI from "openai"
 import { buildExternalBasicHeaders } from "@/services/EnvUtils"
 import { ApiHandler, ApiHandlerContext } from "../index"
@@ -11,6 +12,7 @@ import { sanitizeAnthropicMessages } from "../transform/anthropic-format"
 import { convertAnthropicMessageToGemini } from "../transform/gemini-format"
 import { convertToOpenAiMessages } from "../transform/openai-format"
 import { ApiStream } from "../transform/stream"
+import { resolveGeminiThinking } from "./gemini/reasoning"
 
 export class AIhubmixHandler implements ApiHandler {
 	private anthropicClient: Anthropic | undefined
@@ -26,19 +28,13 @@ export class AIhubmixHandler implements ApiHandler {
 		return this.ctx.profile.apiKey
 	}
 	private get modelId() {
-		return this.ctx.profile.modelId || ""
+		return this.getModel().id
 	}
 	private get modelInfo() {
-		return this.ctx.profile.modelInfo as ModelInfo | undefined
+		return this.getModel().info
 	}
 	private get baseUrl() {
 		return this.ctx.profile.baseUrl
-	}
-	private get reasoningEffort() {
-		return this.config?.reasoning?.effort
-	}
-	private get thinkingBudgetTokens() {
-		return this.config?.reasoning?.thinkingBudget ?? 0
 	}
 
 	private get appCode() {
@@ -159,7 +155,7 @@ export class AIhubmixHandler implements ApiHandler {
 
 	private async *createAnthropicMessage(systemPrompt: string, messages: any[]): ApiStream {
 		const client = this.ensureAnthropicClient()
-		const modelId = this.modelId || "claude-3-5-sonnet-20241022"
+		const modelId = this.modelId
 
 		// Sanitize messages to remove Cline-specific fields like call_id that are not allowed by Anthropic API
 		const sanitizedMessages = sanitizeAnthropicMessages(messages, false)
@@ -214,7 +210,7 @@ export class AIhubmixHandler implements ApiHandler {
 
 	private async *createOpenaiResponseMessage(systemPrompt: string, messages: any[]): ApiStream {
 		const client = this.ensureOpenaiClient()
-		const modelId = this.modelId || "gpt-4o-mini"
+		const modelId = this.modelId
 
 		const input = (messages || []).map((m: any) => {
 			const role = m.role || "user"
@@ -259,7 +255,7 @@ export class AIhubmixHandler implements ApiHandler {
 
 	private async *createOpenaiMessage(systemPrompt: string, messages: any[]): ApiStream {
 		const client = this.ensureOpenaiClient()
-		const modelId = this.modelId || "gpt-4o-mini"
+		const modelId = this.modelId
 
 		const openaiMessages = [{ role: "system", content: systemPrompt }, ...convertToOpenAiMessages(messages)]
 
@@ -295,7 +291,7 @@ export class AIhubmixHandler implements ApiHandler {
 
 	private async *createGeminiMessage(systemPrompt: string, messages: any[]): ApiStream {
 		const client = this.ensureGeminiClient()
-		const modelId = this.modelId || "gemini-2.0-flash-exp"
+		const modelId = this.modelId
 
 		const contents = messages.map(convertAnthropicMessageToGemini)
 
@@ -304,11 +300,9 @@ export class AIhubmixHandler implements ApiHandler {
 			temperature: 0,
 		}
 
-		if (this.thinkingBudgetTokens) {
-			;(requestConfig as any).thinkingConfig = {
-				thinkingBudget: this.thinkingBudgetTokens,
-				includeThoughts: true,
-			}
+		const thinkingConfig = resolveGeminiThinking(this.modelInfo.capabilities, this.config?.reasoning)
+		if (thinkingConfig) {
+			requestConfig.thinkingConfig = thinkingConfig
 		}
 
 		const stream = await observeProviderStream(() =>
@@ -327,18 +321,25 @@ export class AIhubmixHandler implements ApiHandler {
 	}
 
 	getModel(): { id: string; info: ModelInfo } {
+		const selectedId = resolveProfileModelId(this.ctx.profile)
+		const id = selectedId || "gpt-4o-mini"
+		const matchingInfo = this.ctx.profile.modelInfo?.id === id ? this.ctx.profile.modelInfo : undefined
 		return {
-			id: this.modelId || "gpt-4o-mini",
-			info: this.modelInfo || {
-				id: "gpt-4o-mini",
-				description: "AIhubmix unified model provider",
-				capabilities: {
-					maxTokens: 8192,
-					contextWindow: 128000,
-					supportsImages: true,
-					supportsPromptCache: false,
-				},
-			},
+			id,
+			info:
+				matchingInfo ??
+				(selectedId
+					? { id }
+					: {
+							id,
+							description: "AIhubmix unified model provider",
+							capabilities: {
+								maxTokens: 8192,
+								contextWindow: 128000,
+								supportsImages: true,
+								supportsPromptCache: false,
+							},
+						}),
 		}
 	}
 }

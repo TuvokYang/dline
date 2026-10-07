@@ -1,4 +1,5 @@
-import { ModelInfo, SambanovaModelId, sambanovaDefaultModelId, sambanovaModels } from "@shared/api"
+import { ModelInfo, sambanovaDefaultModelId, sambanovaModels } from "@shared/api"
+import { resolveRuntimeModel } from "@shared/providers/profile-model-info"
 import OpenAI from "openai"
 import type { ChatCompletionTool as OpenAITool } from "openai/resources/chat/completions"
 import { ClineStorageMessage } from "@/shared/messages/content"
@@ -98,14 +99,6 @@ export class SambanovaHandler implements ApiHandler {
 	}
 
 	getModel(): { id: string; info: ModelInfo } {
-		const modelId = this.modelId
-		if (modelId && modelId in sambanovaModels) {
-			const id = modelId as SambanovaModelId
-			return { id, info: sambanovaModels[id] }
-		}
-		return {
-			id: sambanovaDefaultModelId,
-			info: sambanovaModels[sambanovaDefaultModelId],
-		}
+		return resolveRuntimeModel(this.ctx.profile, { models: sambanovaModels, defaultModelId: sambanovaDefaultModelId })
 	}
 }

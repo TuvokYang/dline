@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest"
 import { StreamResponseHandler } from "../StreamResponseHandler"
 
 describe("StreamResponseHandler malformed write path characterization", () => {
-	it("recovers an unescaped sibling Windows absolute path after JSON parsing fails", () => {
+	it("recovers an unescaped sibling Windows relative path after JSON parsing fails", () => {
 		const handler = new StreamResponseHandler(() => 300)
 		const toolHandler = handler.getHandlers().toolUseHandler
 		const identity = {
@@ -11,8 +11,8 @@ describe("StreamResponseHandler malformed write path characterization", () => {
 			dline_tid: "dline_tid_malformed_external_write",
 			provider_metadata: {},
 		}
-		const siblingPath = String.raw`E:\workspace\vscode\u000workspace\xxx\proof.txt`
-		const malformedArguments = `{"absolutePath":"${siblingPath}","content":"risk proof"}`
+		const siblingPath = String.raw`..\u000workspace\xxx\proof.txt`
+		const malformedArguments = `{"path":"${siblingPath}","content":"risk proof"}`
 
 		expect(() => JSON.parse(malformedArguments)).toThrow()
 
@@ -27,18 +27,16 @@ describe("StreamResponseHandler malformed write path characterization", () => {
 
 		const stored = toolHandler.getFinalizedToolUse(identity.dline_tid)
 		const runtime = toolHandler.getPartialToolUsesAsContent()[0]
-		const projectPath = String.raw`E:\workspace\vscode\dline`
-		const relativeToProject = path.win32.relative(projectPath, siblingPath)
 
 		expect(stored?.input).toMatchObject({
-			absolutePath: siblingPath,
+			path: siblingPath,
 			content: "risk proof",
 		})
 		expect(runtime?.params).toMatchObject({
-			absolutePath: siblingPath,
+			path: siblingPath,
 			content: "risk proof",
 		})
-		expect(path.win32.isAbsolute(runtime?.params.absolutePath ?? "")).toBe(true)
-		expect(relativeToProject).toMatch(/^\.\.[\\/]/)
+		expect(path.win32.isAbsolute(runtime?.params.path ?? "")).toBe(false)
+		expect(runtime?.params.path).toMatch(/^\.\.[\\/]/)
 	})
 })

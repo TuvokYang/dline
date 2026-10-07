@@ -267,8 +267,10 @@ e2e(
 			await expect(sidebar.getByText(rejectedPrompt, { exact: true }).last()).toBeVisible()
 			expect(hostedImageConsumptions()).toHaveLength(0)
 
-			await sidebar.getByRole("button", { name: "Close Task", exact: true }).click()
-			await expect(sidebar.getByRole("button", { name: "Close Task", exact: true })).toHaveCount(0)
+			const closeTask = sidebar.getByRole("button", { name: "Close Task", exact: true })
+			await closeTask.click()
+			// The chat input exists on both views; a send before the home view renders targets the closing task.
+			await expect(closeTask).toHaveCount(0)
 			await expect(sidebar.getByTestId("chat-input")).toHaveAttribute("placeholder", "Type your task here...")
 			await sendTask(sidebar, approvedTask)
 			await expect(pendingCard.getByText("Dline wants to generate an image", { exact: true })).toBeVisible({

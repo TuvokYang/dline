@@ -1,0 +1,67 @@
+---
+/**
+ * Starlight Hero override: the default title and tagline, with the still 3D
+ * mascot, holding its songbird on one hand, in the image column. The mascot
+ * starts lower than the title, so title and robot sit on a diagonal. It is
+ * shown, and three.js downloaded, only while the hero has two columns.
+ */
+import Default from "@astrojs/starlight/components/Hero.astro"
+
+const isChinese = Astro.locals.starlightRoute.lang.toLowerCase().startsWith("zh")
+const label = isChinese ? "手托小鸟的 Dline 机器人" : "The Dline robot with a songbird on its hand"
+---
+
+<div class="dline-hero">
+	<Default />
+	<div class="dline-hero-mascot" role="img" aria-label={label} hidden></div>
+</div>
+
+<script>
+	import { showMascotWhen } from "../mascot/lazy-mount.js"
+
+	const stage = document.querySelector<HTMLElement>(".dline-hero-mascot")
+	if (stage) showMascotWhen(stage, "(min-width: 50rem)", { still: true })
+</script>
+
+<style>
+	.dline-hero-mascot[hidden] {
+		display: none;
+	}
+	/*
+	 * Mirrors Starlight's two-column hero (7fr text, 4fr image, 3% gap): the
+	 * default hero spans both tracks and keeps its text in the first, so the
+	 * mascot can take the second without changing the text measure.
+	 */
+	@media (min-width: 50rem) {
+		.dline-hero {
+			display: grid;
+			grid-template-columns: 7fr 4fr;
+			column-gap: 3%;
+		}
+		.dline-hero > :global(.hero) {
+			grid-area: 1 / 1 / 2 / 3;
+			align-self: start;
+		}
+		/* Starts about one title line below the title, which sets up the diagonal. */
+		.dline-hero-mascot {
+			grid-area: 1 / 2 / 2 / 3;
+			justify-self: center;
+			width: min(100%, 25rem);
+			aspect-ratio: 1 / 1;
+			margin-block-start: calc(
+				clamp(2.5rem, calc(1rem + 10vmin), 10rem) +
+					clamp(var(--sl-text-3xl), calc(0.25rem + 5vw), var(--sl-text-6xl))
+			);
+		}
+	}
+	@media (max-width: 49.99rem) {
+		.dline-hero-mascot {
+			display: none;
+		}
+	}
+	@media print {
+		.dline-hero-mascot {
+			display: none;
+		}
+	}
+</style>

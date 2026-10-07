@@ -17,7 +17,10 @@ vi.mock("@/context/ExtensionStateContext", () => ({
 		clineMessages: [],
 		showFeatureTips: false,
 		// A running task has a canonical view but may not have a history item yet.
-		taskViewState: { taskId: "task-1" },
+		taskViewState: {
+			taskId: "task-1",
+			taskInstanceId: "task-instance-1",
+		},
 		currentTaskItem: undefined,
 	}),
 }))
@@ -55,7 +58,7 @@ describe("ChatRow command cancellation", () => {
 
 		fireEvent.click(screen.getByRole("button", { name: "Cancel" }))
 
-		expect(cancelTaskActivities).toHaveBeenCalledWith("task-1", ["command-1"])
+		expect(cancelTaskActivities).toHaveBeenCalledWith("task-1", ["command-1"], "task-instance-1")
 	})
 
 	it("does not expose a global cancellation fallback without an activity identity", () => {

@@ -96,6 +96,66 @@ describe("UIMessage history windows", () => {
 		}
 	})
 
+	it("ignores transient partial rows while keeping the complete row with the same timestamp", async () => {
+		const taskId = "window-partial"
+		const taskDirectory = await ensureTaskDirectoryExists(taskId)
+		await writeJsonl(path.join(taskDirectory, GlobalFileNames.uiMessages), [
+			{ ts: 10, type: "say", say: "text", text: "partial", partial: true },
+			{ ts: 10, type: "say", say: "text", text: "final", partial: false },
+			{ ts: 20, type: "say", say: "text", text: "abandoned", partial: true },
+		])
+
+		const reader = await UIMessage.openWindow(taskId)
+		try {
+			expect(reader.count).toBe(2)
+			expect((await reader.getPage(0, 10)).messages).toEqual([
+				expect.objectContaining({ ts: 10, text: "final", partial: false }),
+				expect.objectContaining({ ts: 20, text: "abandoned", partial: true }),
+			])
+		} finally {
+			await reader.close()
+		}
+	})
+
+	it("promotes a legacy scalar checkpoint hash while reading a not-yet-imported file", async () => {
+		const taskId = "window-legacy-checkpoint"
+		const taskDirectory = await ensureTaskDirectoryExists(taskId)
+		await writeJsonl(path.join(taskDirectory, GlobalFileNames.uiMessages), [
+			{ ts: 10, type: "say", say: "checkpoint_created", lastCheckpointHash: "abc123" },
+		])
+
+		const reader = await UIMessage.openWindow(taskId)
+		try {
+			await expect(reader.getByTimestamp(10)).resolves.toMatchObject({ lastCheckpointHash: ["abc123"] })
+		} finally {
+			await reader.close()
+		}
+	})
+
+	it("does not create a missing Task directory or database for display-only access", async () => {
+		const taskId = "missing-readonly-history"
+		const reader = await UIMessage.openWindow(taskId)
+		expect(reader.count).toBe(0)
+		await reader.close()
+		await expect(fs.access(path.join(dlineDocsDir, "tasks", taskId))).rejects.toMatchObject({ code: "ENOENT" })
+	})
+
+	it("does not create messages.db when reading an existing task that has only a legacy file", async () => {
+		const taskId = "legacy-only-history"
+		const taskDirectory = await ensureTaskDirectoryExists(taskId)
+		await writeJsonl(path.join(taskDirectory, GlobalFileNames.uiMessages), [
+			{ ts: 10, type: "say", say: "text", text: "old" },
+		])
+
+		const reader = await UIMessage.openWindow(taskId)
+		try {
+			expect(reader.count).toBe(1)
+		} finally {
+			await reader.close()
+		}
+		expect((await fs.readdir(taskDirectory)).filter((name) => name.startsWith("messages.db"))).toEqual([])
+	})
+
 	it("uses a bounded reader for new tasks and rejects reads after close", async () => {
 		const reader = await UIMessage.openWindow("window-close")
 		expect(reader.count).toBe(0)

@@ -1,3 +1,4 @@
+import * as path from "path"
 import { describe, expect, it, vi } from "vitest"
 import type { UiMessage } from "@/shared/ExtensionMessage"
 
@@ -28,6 +29,7 @@ function createHarness(
 	apiHistoryLength = 2,
 	conversationRewind?: { rewindTo: ReturnType<typeof vi.fn> },
 	canonicalCheckpoint?: CanonicalCheckpointPort,
+	workspacePath?: string,
 ): RestoreHarness {
 	const taskState = Object.assign(new DefaultToolHandlerState(), {
 		userMessageContent: [{ type: "text", text: "active user content" }],
@@ -87,6 +89,14 @@ function createHarness(
 			...(trackedFiles === undefined
 				? {}
 				: { taskFileTracker: { getAllModifiedFiles: vi.fn().mockReturnValue(trackedFiles) } }),
+			...(workspacePath
+				? {
+						workspaceManager: {
+							getPrimaryRoot: () => ({ path: workspacePath }),
+							getRoots: () => [{ path: workspacePath }],
+						},
+					}
+				: {}),
 		} as never,
 		{
 			updateTaskHistory: vi.fn().mockResolvedValue([]),
@@ -118,7 +128,7 @@ function createHarness(
 
 describe("TaskCheckpointManager restore isolation", () => {
 	it("restores workspace files without clearing active chat state", async () => {
-		const harness = createHarness([{ ts: 42, type: "say", say: "checkpoint_created", lastCheckpointHash: "hash-1" }])
+		const harness = createHarness([{ ts: 42, type: "say", say: "checkpoint_created", lastCheckpointHash: ["hash-1"] }])
 
 		await harness.manager.restoreCheckpoint(42, "workspace")
 
@@ -139,6 +149,31 @@ describe("TaskCheckpointManager restore isolation", () => {
 		expect(harness.clearTransientClineMessages).not.toHaveBeenCalled()
 	})
 
+	it("resolves a current single root by persisted identity instead of the first hash", async () => {
+		const rootA = path.resolve("C:/workspace-a")
+		const rootB = path.resolve("C:/workspace-b")
+		const harness = createHarness(
+			[
+				{
+					ts: 42,
+					type: "say",
+					say: "checkpoint_created",
+					lastCheckpointHash: ["hash-a", "hash-b"],
+					checkpointWorkspaceRoots: [rootA, rootB],
+				},
+			],
+			undefined,
+			2,
+			undefined,
+			undefined,
+			rootB,
+		)
+
+		await harness.manager.restoreCheckpoint(42, "workspace")
+
+		expect(harness.resetHead).toHaveBeenCalledWith("hash-b")
+	})
+
 	it("truncates a durable compaction failure card that follows the restore point", async () => {
 		// A failed compaction carries no compactionConversationRange, so it is an ordinary
 		// durable row. Restoring an earlier point must rewind past it and remove it.
@@ -157,7 +192,7 @@ describe("TaskCheckpointManager restore isolation", () => {
 			}),
 		} as UiMessage
 		const harness = createHarness([
-			{ ts: 42, type: "say", say: "checkpoint_created", lastCheckpointHash: "hash-1" },
+			{ ts: 42, type: "say", say: "checkpoint_created", lastCheckpointHash: ["hash-1"] },
 			failureCard,
 		])
 
@@ -169,7 +204,7 @@ describe("TaskCheckpointManager restore isolation", () => {
 
 	it("drops transient presentation overlays before resolving the chat boundary", async () => {
 		const harness = createHarness([
-			{ ts: 42, type: "say", say: "checkpoint_created", lastCheckpointHash: "hash-1" },
+			{ ts: 42, type: "say", say: "checkpoint_created", lastCheckpointHash: ["hash-1"] },
 			{ ts: 43, type: "say", say: "text", text: "later" },
 		])
 
@@ -184,7 +219,7 @@ describe("TaskCheckpointManager restore isolation", () => {
 	it("restores only files owned by the active task when file tracking is available", async () => {
 		const taskFiles = ["e:/workspace/panel-a-checkpoint.txt"]
 		const harness = createHarness(
-			[{ ts: 42, type: "say", say: "checkpoint_created", lastCheckpointHash: "hash-1" }],
+			[{ ts: 42, type: "say", say: "checkpoint_created", lastCheckpointHash: ["hash-1"] }],
 			taskFiles,
 		)
 
@@ -230,7 +265,7 @@ describe("TaskCheckpointManager restore isolation", () => {
 				type: "say",
 				say: "checkpoint_created",
 				conversationHistoryIndex: 0,
-				lastCheckpointHash: "hash-1",
+				lastCheckpointHash: ["hash-1"],
 			},
 			{ ts: 43, type: "say", say: "text" },
 		]
@@ -248,7 +283,7 @@ describe("TaskCheckpointManager restore isolation", () => {
 
 	it("uses the preceding file checkpoint while restoring the selected chat point", async () => {
 		const harness = createHarness([
-			{ ts: 41, type: "say", say: "checkpoint_created", lastCheckpointHash: "fallback-hash" },
+			{ ts: 41, type: "say", say: "checkpoint_created", lastCheckpointHash: ["fallback-hash"] },
 			{ ts: 42, type: "say", say: "text", conversationHistoryIndex: 0 },
 			{ ts: 43, type: "say", say: "text" },
 		])
@@ -282,7 +317,7 @@ describe("TaskCheckpointManager restore isolation", () => {
 				type: "say",
 				say: "checkpoint_created",
 				conversationHistoryIndex: 0,
-				lastCheckpointHash: "hash-1",
+				lastCheckpointHash: ["hash-1"],
 			},
 			{ ts: 43, type: "say", say: "text" },
 		])
@@ -437,7 +472,7 @@ describe("TaskCheckpointManager restore isolation", () => {
 
 		it("refuses a task-and-workspace restore before rewinding files when no journal is available", async () => {
 			const messages = journalMessages()
-			messages[2] = { ...messages[2], lastCheckpointHash: "hash-card" }
+			messages[2] = { ...messages[2], lastCheckpointHash: ["hash-card"] }
 			const harness = createHarness(messages, undefined, 2)
 
 			const result = await harness.manager.restoreCheckpoint(30, "taskAndWorkspace")
@@ -452,7 +487,7 @@ describe("TaskCheckpointManager restore isolation", () => {
 		it("refuses to edit a journal-bounded card before rewinding files", async () => {
 			const rewindTo = vi.fn().mockResolvedValue(undefined)
 			const messages = journalMessages()
-			messages[2] = { ...messages[2], lastCheckpointHash: "hash-card" }
+			messages[2] = { ...messages[2], lastCheckpointHash: ["hash-card"] }
 			const harness = createHarness(messages, undefined, 2, { rewindTo })
 
 			const result = await harness.manager.restoreCheckpoint(30, "taskAndWorkspace", undefined, "edited")

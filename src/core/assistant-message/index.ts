@@ -22,6 +22,8 @@ export const toolParamNames = [
 	"workdirectory",
 	"requires_approval",
 	"path",
+	// Legacy parser alias for frozen schemas and persisted task messages. New
+	// canonical tool descriptors advertise only workspace-relative `path`.
 	"absolutePath",
 	"content",
 	"diff",

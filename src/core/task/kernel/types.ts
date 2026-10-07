@@ -709,6 +709,11 @@ export interface HydrateInput {
 	readonly unavailablePayloads?: ReadonlySet<string>
 	/** Journal facts reconciled under the task lock before the pure hydrate step. */
 	readonly queueSettlements?: readonly QueueSettlementEvidence[]
+	/**
+	 * Awaiting interactions whose durable anchor row did not survive (missing,
+	 * partial, or duplicated). The shell reads the rows; hydrate only re-reveals.
+	 */
+	readonly unanchoredInteractionIds?: ReadonlySet<string>
 }
 export type HydrateForm = "interrupted" | "completed" | "error" | "consumed" | "new"
 

@@ -4,6 +4,8 @@ import { expect, type Frame, type Locator, type Page } from "@playwright/test"
 import { E2E_PROFILE_NAMES } from "../utils/api-profile"
 import { E2ETestHelper } from "../utils/helpers"
 import { demo } from "./utils/demo-fixture"
+import { dismissDemoNotifications } from "./utils/png-asset"
+import { STEP_SETTLE_MS, WINDOW_RECORDING } from "./utils/recording-presets"
 
 const SIDEBAR_TASK = "Review the workspace from the sidebar."
 const LEFT_PANEL_TASK = "Plan the implementation from the first editor."
@@ -125,16 +127,6 @@ async function createDlinePanel(page: Page): Promise<Frame> {
 	return panel
 }
 
-async function clearVisibleNotificationToasts(page: Page): Promise<void> {
-	const notifications = page.locator(".notifications-toasts.visible .notification-toast")
-	while ((await notifications.count()) > 0) {
-		const clearButton = notifications.first().locator(".codicon-notifications-clear")
-		await expect(clearButton).toBeVisible()
-		await clearButton.click()
-	}
-	await expect(notifications).toHaveCount(0)
-}
-
 async function findActiveEditorTab(page: Page): Promise<Locator> {
 	const groups = page.locator(".editor-group-container")
 	const activeGroupIndex = await groups.evaluateAll((elements) =>
@@ -192,142 +184,159 @@ async function waitForReasoning(frame: Frame, reasoning: string): Promise<void> 
 	await expect(frame.getByText(reasoning, { exact: false }).last()).toBeVisible({ timeout: 30_000 })
 }
 
-demo("R3", async ({ dlineDir, finishRecording, helper, pace, page, registerRecording, server, sidebar, userDataDir }) => {
-	const rightProfileId = await disableHostedWebTools(dlineDir)
-	await helper.signin(sidebar)
+demo(
+	"R3",
+	async ({ dlineDir, finishRecording, focusCamera, helper, pace, page, registerRecording, server, sidebar, userDataDir }) => {
+		const rightProfileId = await disableHostedWebTools(dlineDir)
+		await helper.signin(sidebar)
 
-	await selectProfile(sidebar, E2E_PROFILE_NAMES.mockDeepSeek)
-	server.resetOpenAiMock()
-	server.enqueueResponses("deepseek-chat", {
-		type: "tool",
-		id: "call_r3_sidebar_ready",
-		name: "qna_respond",
-		arguments: { response: SIDEBAR_READY },
-		expectedRequestIncludes: [SIDEBAR_TASK],
-	})
-	await sendAndWait(sidebar, SIDEBAR_TASK, SIDEBAR_READY)
+		await selectProfile(sidebar, E2E_PROFILE_NAMES.mockDeepSeek)
+		server.resetOpenAiMock()
+		server.enqueueResponses("deepseek-chat", {
+			type: "tool",
+			id: "call_r3_sidebar_ready",
+			name: "qna_respond",
+			arguments: { response: SIDEBAR_READY },
+			expectedRequestIncludes: [SIDEBAR_TASK],
+		})
+		await sendAndWait(sidebar, SIDEBAR_TASK, SIDEBAR_READY)
 
-	const leftPanel = await createDlinePanel(page)
-	await selectProfile(leftPanel, E2E_PROFILE_NAMES.mockOpenAiResponses)
-	server.enqueueResponses("openai-compatible-responses", {
-		type: "tool",
-		id: "call_r3_left_ready",
-		name: "qna_respond",
-		arguments: { response: LEFT_PANEL_READY },
-		expectedRequestIncludes: [LEFT_PANEL_TASK],
-	})
-	await sendAndWait(leftPanel, LEFT_PANEL_TASK, LEFT_PANEL_READY)
+		const leftPanel = await createDlinePanel(page)
+		await selectProfile(leftPanel, E2E_PROFILE_NAMES.mockOpenAiResponses)
+		server.enqueueResponses("openai-compatible-responses", {
+			type: "tool",
+			id: "call_r3_left_ready",
+			name: "qna_respond",
+			arguments: { response: LEFT_PANEL_READY },
+			expectedRequestIncludes: [LEFT_PANEL_TASK],
+		})
+		await sendAndWait(leftPanel, LEFT_PANEL_TASK, LEFT_PANEL_READY)
 
-	const sidebarProfile = sidebar.getByRole("button", { name: "Select model" })
-	const leftProfile = leftPanel.getByRole("button", { name: "Select model" })
-	await expect(sidebarProfile).toHaveText(E2E_PROFILE_NAMES.mockDeepSeek)
-	await expect(leftProfile).toHaveText(E2E_PROFILE_NAMES.mockOpenAiResponses)
+		const sidebarProfile = sidebar.getByRole("button", { name: "Select model" })
+		const leftProfile = leftPanel.getByRole("button", { name: "Select model" })
+		await expect(sidebarProfile).toHaveText(E2E_PROFILE_NAMES.mockDeepSeek)
+		await expect(leftProfile).toHaveText(E2E_PROFILE_NAMES.mockOpenAiResponses)
 
-	await setDefaultProfileForNewTask(dlineDir, rightProfileId)
-	await page.waitForTimeout(500)
-	await prepareRightEditorGroup(page)
+		await setDefaultProfileForNewTask(dlineDir, rightProfileId)
+		await page.waitForTimeout(500)
+		await prepareRightEditorGroup(page)
 
-	server.resetOpenAiMock()
-	server.enqueueResponses("deepseek-chat", {
-		type: "tool",
-		id: "call_r3_sidebar_done",
-		name: "attempt_completion",
-		reasoning: SIDEBAR_REASONING,
-		afterReasoningDelayMs: SIDEBAR_STREAM_HOLD_MS,
-		arguments: { result: SIDEBAR_DONE },
-		usage: { inputTokens: 19_000, outputTokens: 40, cacheReadTokens: 19_000, reasoningTokens: 20 },
-		expectedRequestIncludes: [SIDEBAR_TURN],
-	})
-	server.enqueueResponses("openai-compatible-responses", {
-		type: "tool",
-		id: "call_r3_left_done",
-		name: "attempt_completion",
-		reasoning: LEFT_PANEL_REASONING,
-		afterReasoningDelayMs: LEFT_PANEL_STREAM_HOLD_MS,
-		arguments: { result: LEFT_PANEL_DONE },
-		usage: { inputTokens: 22_000, outputTokens: 44, cacheReadTokens: 21_000, reasoningTokens: 20 },
-		expectedRequestIncludes: [LEFT_PANEL_TURN],
-	})
-	server.enqueueResponses("openai-official-responses", {
-		type: "tool",
-		id: "call_r3_right_done",
-		name: "attempt_completion",
-		reasoning: RIGHT_PANEL_REASONING,
-		afterReasoningDelayMs: RIGHT_PANEL_STREAM_HOLD_MS,
-		arguments: { result: RIGHT_PANEL_DONE },
-		expectedRequestIncludes: [RIGHT_PANEL_TASK],
-	})
+		server.resetOpenAiMock()
+		server.enqueueResponses("deepseek-chat", {
+			type: "tool",
+			id: "call_r3_sidebar_done",
+			name: "attempt_completion",
+			reasoning: SIDEBAR_REASONING,
+			afterReasoningDelayMs: SIDEBAR_STREAM_HOLD_MS,
+			arguments: { result: SIDEBAR_DONE },
+			usage: { inputTokens: 19_000, outputTokens: 40, cacheReadTokens: 19_000, reasoningTokens: 20 },
+			expectedRequestIncludes: [SIDEBAR_TURN],
+		})
+		server.enqueueResponses("openai-compatible-responses", {
+			type: "tool",
+			id: "call_r3_left_done",
+			name: "attempt_completion",
+			reasoning: LEFT_PANEL_REASONING,
+			afterReasoningDelayMs: LEFT_PANEL_STREAM_HOLD_MS,
+			arguments: { result: LEFT_PANEL_DONE },
+			usage: { inputTokens: 22_000, outputTokens: 44, cacheReadTokens: 21_000, reasoningTokens: 20 },
+			expectedRequestIncludes: [LEFT_PANEL_TURN],
+		})
+		server.enqueueResponses("openai-official-responses", {
+			type: "tool",
+			id: "call_r3_right_done",
+			name: "attempt_completion",
+			reasoning: RIGHT_PANEL_REASONING,
+			afterReasoningDelayMs: RIGHT_PANEL_STREAM_HOLD_MS,
+			arguments: { result: RIGHT_PANEL_DONE },
+			expectedRequestIncludes: [RIGHT_PANEL_TASK],
+		})
 
-	await clearVisibleNotificationToasts(page)
-	await registerRecording("r3-parallel-tasks")
-	const rightPanel = await createDlinePanel(page)
-	await moveActivePanelToRightGroup(page)
+		await dismissDemoNotifications(page)
+		await registerRecording("r3-parallel-tasks", WINDOW_RECORDING)
+		await focusCamera(page.getByRole("button", { name: "New Task", exact: true }), STEP_SETTLE_MS)
+		const rightPanel = await createDlinePanel(page)
+		await moveActivePanelToRightGroup(page)
 
-	const rightProfile = rightPanel.getByRole("button", { name: "Select model" })
-	await Promise.all([
-		...([sidebar, leftPanel, rightPanel] as const).map((frame) =>
-			expect(frame.getByTestId("chat-input")).toBeVisible({ timeout: 30_000 }),
-		),
-		expect(sidebarProfile).toHaveText(E2E_PROFILE_NAMES.mockDeepSeek),
-		expect(leftProfile).toHaveText(E2E_PROFILE_NAMES.mockOpenAiResponses),
-		expect(rightProfile).toHaveText(E2E_PROFILE_NAMES.mockOpenAiOfficialResponses),
-	])
+		const rightProfile = rightPanel.getByRole("button", { name: "Select model" })
+		await Promise.all([
+			...([sidebar, leftPanel, rightPanel] as const).map((frame) =>
+				expect(frame.getByTestId("chat-input")).toBeVisible({ timeout: 30_000 }),
+			),
+			expect(sidebarProfile).toHaveText(E2E_PROFILE_NAMES.mockDeepSeek),
+			expect(leftProfile).toHaveText(E2E_PROFILE_NAMES.mockOpenAiResponses),
+			expect(rightProfile).toHaveText(E2E_PROFILE_NAMES.mockOpenAiOfficialResponses),
+		])
 
-	await sendPrompt(sidebar, SIDEBAR_TURN)
-	await pace(BETWEEN_SENDS_MS)
-	await sendPrompt(leftPanel, LEFT_PANEL_TURN)
-	await pace(BETWEEN_SENDS_MS)
-	await sendPrompt(rightPanel, RIGHT_PANEL_TASK)
-	await Promise.all([
-		waitForReasoning(sidebar, SIDEBAR_REASONING),
-		waitForReasoning(leftPanel, LEFT_PANEL_REASONING),
-		waitForReasoning(rightPanel, RIGHT_PANEL_REASONING),
-	])
+		// Three independent tasks side by side: frame all of their model pickers and inputs at once.
+		const taskInputs = [sidebar, leftPanel, rightPanel].map((frame) => frame.getByTestId("chat-input"))
+		await focusCamera([...taskInputs, sidebarProfile, leftProfile, rightProfile], STEP_SETTLE_MS)
+		await sendPrompt(sidebar, SIDEBAR_TURN)
+		await pace(BETWEEN_SENDS_MS)
+		await sendPrompt(leftPanel, LEFT_PANEL_TURN)
+		await pace(BETWEEN_SENDS_MS)
+		await sendPrompt(rightPanel, RIGHT_PANEL_TASK)
+		await Promise.all([
+			waitForReasoning(sidebar, SIDEBAR_REASONING),
+			waitForReasoning(leftPanel, LEFT_PANEL_REASONING),
+			waitForReasoning(rightPanel, RIGHT_PANEL_REASONING),
+		])
+		await focusCamera(
+			[
+				sidebar.getByText(SIDEBAR_REASONING, { exact: false }).last(),
+				leftPanel.getByText(LEFT_PANEL_REASONING, { exact: false }).last(),
+				rightPanel.getByText(RIGHT_PANEL_REASONING, { exact: false }).last(),
+			],
+			0,
+		)
 
-	const cancelButtons = [sidebar, leftPanel, rightPanel].map((frame) =>
-		frame.getByRole("button", { name: "Cancel", exact: true }).first(),
-	)
-	await Promise.all(cancelButtons.map((button) => expect(button).toBeVisible()))
-	await pace()
-	await Promise.all(cancelButtons.map((button) => expect(button).toBeVisible()))
+		const cancelButtons = [sidebar, leftPanel, rightPanel].map((frame) =>
+			frame.getByRole("button", { name: "Cancel", exact: true }).first(),
+		)
+		await Promise.all(cancelButtons.map((button) => expect(button).toBeVisible()))
+		await pace()
+		await Promise.all(cancelButtons.map((button) => expect(button).toBeVisible()))
 
-	await Promise.all([
-		expect(sidebar.getByText(SIDEBAR_DONE, { exact: false }).last()).toBeVisible({ timeout: 30_000 }),
-		expect(leftPanel.getByText(LEFT_PANEL_DONE, { exact: false }).last()).toBeVisible({ timeout: 30_000 }),
-		expect(rightPanel.getByText(RIGHT_PANEL_DONE, { exact: false }).last()).toBeVisible({ timeout: 30_000 }),
-	])
-	await pace()
-	await finishRecording()
+		const completions = [
+			sidebar.getByText(SIDEBAR_DONE, { exact: false }).last(),
+			leftPanel.getByText(LEFT_PANEL_DONE, { exact: false }).last(),
+			rightPanel.getByText(RIGHT_PANEL_DONE, { exact: false }).last(),
+		]
+		await Promise.all(completions.map((completion) => expect(completion).toBeVisible({ timeout: 30_000 })))
+		await focusCamera(completions, 0)
+		await pace()
+		await finishRecording()
 
-	await Promise.all([
-		expect(sidebarProfile).toHaveText(E2E_PROFILE_NAMES.mockDeepSeek),
-		expect(leftProfile).toHaveText(E2E_PROFILE_NAMES.mockOpenAiResponses),
-		expect(rightProfile).toHaveText(E2E_PROFILE_NAMES.mockOpenAiOfficialResponses),
-	])
-	await expect(sidebar.getByText(LEFT_PANEL_REASONING, { exact: false })).toHaveCount(0)
-	await expect(sidebar.getByText(RIGHT_PANEL_REASONING, { exact: false })).toHaveCount(0)
-	await expect(leftPanel.getByText(SIDEBAR_REASONING, { exact: false })).toHaveCount(0)
-	await expect(leftPanel.getByText(RIGHT_PANEL_REASONING, { exact: false })).toHaveCount(0)
-	await expect(rightPanel.getByText(SIDEBAR_REASONING, { exact: false })).toHaveCount(0)
-	await expect(rightPanel.getByText(LEFT_PANEL_REASONING, { exact: false })).toHaveCount(0)
+		await Promise.all([
+			expect(sidebarProfile).toHaveText(E2E_PROFILE_NAMES.mockDeepSeek),
+			expect(leftProfile).toHaveText(E2E_PROFILE_NAMES.mockOpenAiResponses),
+			expect(rightProfile).toHaveText(E2E_PROFILE_NAMES.mockOpenAiOfficialResponses),
+		])
+		await expect(sidebar.getByText(LEFT_PANEL_REASONING, { exact: false })).toHaveCount(0)
+		await expect(sidebar.getByText(RIGHT_PANEL_REASONING, { exact: false })).toHaveCount(0)
+		await expect(leftPanel.getByText(SIDEBAR_REASONING, { exact: false })).toHaveCount(0)
+		await expect(leftPanel.getByText(RIGHT_PANEL_REASONING, { exact: false })).toHaveCount(0)
+		await expect(rightPanel.getByText(SIDEBAR_REASONING, { exact: false })).toHaveCount(0)
+		await expect(rightPanel.getByText(LEFT_PANEL_REASONING, { exact: false })).toHaveCount(0)
 
-	const sidebarConsumptions = server.getMockConsumptions("deepseek-chat")
-	const leftConsumptions = server.getMockConsumptions("openai-compatible-responses")
-	const rightConsumptions = server.getMockConsumptions("openai-official-responses")
-	expect(sidebarConsumptions).toHaveLength(1)
-	expect(leftConsumptions).toHaveLength(1)
-	expect(rightConsumptions).toHaveLength(1)
-	expect(sidebarConsumptions[0]?.contractError).toBeUndefined()
-	expect(leftConsumptions[0]?.contractError).toBeUndefined()
-	expect(rightConsumptions[0]?.contractError).toBeUndefined()
-	expect(sidebarConsumptions[0]?.requestToolResults[0]?.content).not.toContain(LEFT_PANEL_TURN)
-	expect(leftConsumptions[0]?.requestToolResults[0]?.content).not.toContain(SIDEBAR_TURN)
-	expect(rightConsumptions[0]?.requestToolResults).toHaveLength(0)
-	const receivedAtMs = [
-		sidebarConsumptions[0]?.receivedAtMs ?? 0,
-		leftConsumptions[0]?.receivedAtMs ?? 0,
-		rightConsumptions[0]?.receivedAtMs ?? 0,
-	]
-	expect(Math.max(...receivedAtMs) - Math.min(...receivedAtMs)).toBeLessThan(REQUEST_OVERLAP_WINDOW_MS)
-	await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
-})
+		const sidebarConsumptions = server.getMockConsumptions("deepseek-chat")
+		const leftConsumptions = server.getMockConsumptions("openai-compatible-responses")
+		const rightConsumptions = server.getMockConsumptions("openai-official-responses")
+		expect(sidebarConsumptions).toHaveLength(1)
+		expect(leftConsumptions).toHaveLength(1)
+		expect(rightConsumptions).toHaveLength(1)
+		expect(sidebarConsumptions[0]?.contractError).toBeUndefined()
+		expect(leftConsumptions[0]?.contractError).toBeUndefined()
+		expect(rightConsumptions[0]?.contractError).toBeUndefined()
+		expect(sidebarConsumptions[0]?.requestToolResults[0]?.content).not.toContain(LEFT_PANEL_TURN)
+		expect(leftConsumptions[0]?.requestToolResults[0]?.content).not.toContain(SIDEBAR_TURN)
+		expect(rightConsumptions[0]?.requestToolResults).toHaveLength(0)
+		const receivedAtMs = [
+			sidebarConsumptions[0]?.receivedAtMs ?? 0,
+			leftConsumptions[0]?.receivedAtMs ?? 0,
+			rightConsumptions[0]?.receivedAtMs ?? 0,
+		]
+		expect(Math.max(...receivedAtMs) - Math.min(...receivedAtMs)).toBeLessThan(REQUEST_OVERLAP_WINDOW_MS)
+		await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
+	},
+)

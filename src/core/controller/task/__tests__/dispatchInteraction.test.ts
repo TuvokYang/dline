@@ -82,6 +82,7 @@ function controller(taskState: TaskState = state(), options: ControllerOptions =
 		value: {
 			task: {
 				taskId: "task-1",
+				taskInstanceId: "open-1",
 				state: () => taskState,
 				task: { respond },
 				payloads: { put },
@@ -135,6 +136,7 @@ function approvalState(): TaskState {
 function approveWith(text: string) {
 	return DispatchInteractionRequest.create({
 		taskId: "task-1",
+		taskInstanceId: "open-1",
 		turnId: "turn-1",
 		interactionId: "interaction-1",
 		actionId: "approve",
@@ -146,6 +148,7 @@ function approveWith(text: string) {
 function rejectApproval() {
 	return DispatchInteractionRequest.create({
 		taskId: "task-1",
+		taskInstanceId: "open-1",
 		turnId: "turn-1",
 		interactionId: "interaction-1",
 		actionId: "reject",
@@ -156,6 +159,7 @@ function rejectApproval() {
 function compactReply(text = "/compact keep the API notes") {
 	return DispatchInteractionRequest.create({
 		taskId: "task-1",
+		taskInstanceId: "open-1",
 		turnId: "turn-1",
 		interactionId: "interaction-1",
 		actionId: "reply",
@@ -170,6 +174,7 @@ describe("dispatchInteraction", () => {
 		const result = await dispatchInteraction(
 			host.value as never,
 			DispatchInteractionRequest.create({
+				taskInstanceId: "open-1",
 				taskId: "task-1",
 				turnId: "turn-1",
 				interactionId: "interaction-1",
@@ -206,6 +211,7 @@ describe("dispatchInteraction", () => {
 		function startNewTask() {
 			return DispatchInteractionRequest.create({
 				taskId: "task-1",
+				taskInstanceId: "open-1",
 				turnId: "turn-1",
 				interactionId: "interaction-1",
 				actionId: "start_new_task",
@@ -302,6 +308,7 @@ describe("dispatchInteraction", () => {
 		await dispatchInteraction(
 			host.value as never,
 			DispatchInteractionRequest.create({
+				taskInstanceId: "open-1",
 				taskId: "task-1",
 				turnId: "turn-1",
 				interactionId: "interaction-1",
@@ -322,6 +329,7 @@ describe("dispatchInteraction", () => {
 			host.value as never,
 			DispatchInteractionRequest.create({
 				taskId: "task-1",
+				taskInstanceId: "open-1",
 				turnId: "turn-1",
 				interactionId: "interaction-1",
 				actionId: "approve",
@@ -369,6 +377,7 @@ describe("dispatchInteraction", () => {
 		const invalid = await dispatchInteraction(
 			host.value as never,
 			DispatchInteractionRequest.create({
+				taskInstanceId: "open-1",
 				taskId: "task-1",
 				turnId: "turn-1",
 				interactionId: "interaction-1",
@@ -379,6 +388,22 @@ describe("dispatchInteraction", () => {
 
 		expect(stale).toMatchObject({ accepted: false, result: "stale_interaction" })
 		expect(invalid).toMatchObject({ accepted: false, result: "invalid_action" })
+		expect(host.respond).not.toHaveBeenCalled()
+	})
+
+	it("refuses a response rendered by another opening of the same task", async () => {
+		const host = controller()
+		const otherOpening = await dispatchInteraction(
+			host.value as never,
+			DispatchInteractionRequest.create({ ...compactReply("go on"), taskInstanceId: "open-previous" }),
+		)
+		const noOpening = await dispatchInteraction(
+			host.value as never,
+			DispatchInteractionRequest.create({ ...compactReply("go on"), taskInstanceId: "" }),
+		)
+
+		expect(otherOpening).toMatchObject({ accepted: false, result: "stale_interaction" })
+		expect(noOpening).toMatchObject({ accepted: false, result: "stale_interaction" })
 		expect(host.respond).not.toHaveBeenCalled()
 	})
 

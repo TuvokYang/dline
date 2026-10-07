@@ -164,8 +164,10 @@ e2e(
 		expect(browserMessageSurfaceMs, "Click-to-message visibility must include Webview transport and rendering").toBeLessThan(
 			BROWSER_MESSAGE_SURFACE_BUDGET_MS,
 		)
+		await expect(sidebar.getByTestId("history-task-opening")).toHaveCount(0)
 		await expect.poll(() => server.openAiRequestCount).toBe(2)
 		await expect(sidebar.getByText("E2E_HISTORY_LIVENESS_INTERRUPTED_MUST_NOT_RENDER", { exact: false })).toHaveCount(0)
+		await expect(resumeButton).toHaveAttribute("aria-disabled", "false", { timeout: 5_000 })
 
 		const input = sidebar.getByTestId("chat-input")
 		await input.fill("E2E_HISTORY_LIVENESS_DRAFT")

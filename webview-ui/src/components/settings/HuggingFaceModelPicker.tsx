@@ -1,5 +1,6 @@
-import { huggingFaceDefaultModelId, huggingFaceModels, type ModelInfo } from "@shared/api"
+import { huggingFaceDefaultModelId, huggingFaceModels } from "@shared/api"
 import { EmptyRequest } from "@shared/proto/dline/common"
+import { fromProtobufModels } from "@shared/proto-conversions/models/typeConversion"
 import { VSCodeTextField } from "@vscode/webview-ui-toolkit/react"
 import Fuse from "fuse.js"
 import React, { KeyboardEvent, useEffect, useMemo, useRef, useState } from "react"
@@ -51,31 +52,10 @@ const HuggingFaceModelPicker: React.FC<HuggingFaceModelPickerProps> = ({ isPopup
 	useMount(() => {
 		ModelsServiceClient.refreshHuggingFaceModels(EmptyRequest.create({}))
 			.then((response) => {
-				const converted: Record<string, ModelInfo> = {
+				setHuggingFaceModels({
 					[huggingFaceDefaultModelId]: huggingFaceModels[huggingFaceDefaultModelId],
-				}
-				for (const [key, value] of Object.entries(response.models)) {
-					converted[key] = {
-						id: key,
-						capabilities: {
-							supportsImages: value.supportsImages ?? false,
-							supportsPromptCache: value.supportsPromptCache,
-							supportsReasoning: value.supportsReasoning ?? false,
-							contextWindow: value.contextWindow,
-							maxTokens: value.maxTokens,
-							thinking: value.thinkingConfig,
-						},
-						pricing: {
-							inputPrice: value.inputPrice,
-							outputPrice: value.outputPrice,
-							cacheWritesPrice: value.cacheWritesPrice,
-							cacheReadsPrice: value.cacheReadsPrice,
-						},
-						name: value.name,
-						description: value.description,
-					}
-				}
-				setHuggingFaceModels(converted)
+					...fromProtobufModels(response.models),
+				})
 			})
 			.catch((err) => {
 				console.error("Failed to refresh Hugging Face models:", err)

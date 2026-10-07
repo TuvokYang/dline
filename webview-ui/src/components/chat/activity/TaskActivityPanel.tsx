@@ -127,16 +127,18 @@ function CommandActivityOutput({ activity }: { activity: TaskActivity }) {
 
 export function TaskActivityPanel({
 	taskId,
+	taskInstanceId,
 	focusActivityId,
 	filters,
 	onFiltersChange,
 }: {
 	taskId: string
+	taskInstanceId?: string
 	focusActivityId?: string
 	filters?: TaskActivityFilters
 	onFiltersChange?: (filters: TaskActivityFilters) => void
 }) {
-	const { activities } = useTaskActivities(taskId)
+	const { activities } = useTaskActivities(taskId, taskInstanceId)
 	const [internalFilters, setInternalFilters] = useState<TaskActivityFilters>(DEFAULT_TASK_ACTIVITY_FILTERS)
 	const selectedFilters = filters ?? internalFilters
 	const [expanded, setExpanded] = useState<Record<string, boolean>>({})
@@ -365,7 +367,9 @@ export function TaskActivityPanel({
 										className="h-5 self-center bg-button-background px-2 py-0 text-[11px] leading-none text-button-foreground hover:bg-button-hover"
 										disabled={isPending(finishKey)}
 										onClick={() =>
-											void runControl(finishKey, () => finishTaskActivities(taskId, [activity.activityId]))
+											void runControl(finishKey, () =>
+												finishTaskActivities(taskId, [activity.activityId], taskInstanceId ?? ""),
+											)
 										}
 										size="xs">
 										Finish
@@ -379,7 +383,7 @@ export function TaskActivityPanel({
 											disabled={isPending(retryKey)}
 											onClick={() =>
 												void runControl(retryKey, () =>
-													retryTaskActivities(taskId, [activity.activityId]),
+													retryTaskActivities(taskId, [activity.activityId], taskInstanceId ?? ""),
 												)
 											}
 											size="xs">
@@ -390,7 +394,9 @@ export function TaskActivityPanel({
 									<Button
 										className="h-5 self-center px-2 py-0 text-[11px] leading-none"
 										disabled={activity.status === "cancelling"}
-										onClick={() => void cancelTaskActivities(taskId, [activity.activityId])}
+										onClick={() =>
+											void cancelTaskActivities(taskId, [activity.activityId], taskInstanceId ?? "")
+										}
 										size="xs"
 										variant="danger">
 										Cancel

@@ -21,6 +21,7 @@ interface DeleteTaskButtonProps {
 	taskId?: string
 	taskSize?: number
 	className?: string
+	onDeleteConfirmed?: () => void
 }
 
 /**
@@ -28,7 +29,7 @@ interface DeleteTaskButtonProps {
  * @param props Task deletion button properties.
  * @returns Task delete button and optional confirmation dialog.
  */
-const DeleteTaskButton: React.FC<DeleteTaskButtonProps> = ({ taskId, className, taskSize }) => {
+const DeleteTaskButton: React.FC<DeleteTaskButtonProps> = ({ taskId, className, taskSize, onDeleteConfirmed }) => {
 	const [confirmOpen, setConfirmOpen] = useState(false)
 	const [deleting, setDeleting] = useState(false)
 
@@ -56,9 +57,12 @@ const DeleteTaskButton: React.FC<DeleteTaskButtonProps> = ({ taskId, className, 
 	const handleConfirm = async () => {
 		if (!taskId || deleting) return
 		setDeleting(true)
+		setConfirmOpen(false)
+		// Confirmation closes the current presentation immediately. The canonical
+		// deletion RPC continues to own lock release, task detachment and storage cleanup.
+		onDeleteConfirmed?.()
 		try {
 			await TaskServiceClient.deleteTasksWithIds(StringArrayRequest.create({ value: [taskId] }))
-			setConfirmOpen(false)
 		} finally {
 			setDeleting(false)
 		}

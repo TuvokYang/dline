@@ -5,9 +5,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tooltip, TooltipContent, TooltipTrigger } from "@components/ui/tooltip"
 import { useExtensionState } from "@context/ExtensionStateContext"
 import { resolveProfileModelInfo } from "@shared/providers/profile-model-info"
+import { resolveThinkingBudgetBounds } from "@shared/providers/thinking-budget"
 import type { OpenAiServiceTier } from "@shared/storage/types"
 import { profileServiceTierEnabled, resolveProfileServiceTier } from "@shared/task-provider-overrides"
-import { resolveProfileReasoningConfig, resolveTaskThinkingConfig } from "@shared/task-reasoning"
+import { resolveProfileReasoningConfig, resolveTaskThinkingConfig, validateTaskReasoningOverride } from "@shared/task-reasoning"
 import { useEffect, useMemo, useState } from "react"
 import { TaskServiceTierControl } from "./TaskServiceTierControl"
 
@@ -17,7 +18,7 @@ export function TaskRuntimeControls() {
 	const { profiles } = useApiProfiles()
 	const [error, setError] = useState<string>()
 
-	const taskId = taskViewState?.taskId ?? currentTaskItem?.id
+	const taskId = taskViewState?.taskId
 	const profileId = mode === "plan" ? apiConfiguration?.planModeProfileId : apiConfiguration?.actModeProfileId
 	const profileName = mode === "plan" ? apiConfiguration?.planModeProfile : apiConfiguration?.actModeProfile
 	const profile = useMemo(
@@ -31,16 +32,13 @@ export function TaskRuntimeControls() {
 		? resolveProfileModelInfo(profile, { models: providerModels, defaultModelId: providerDefaultModelId })
 		: undefined
 	const profileReasoning = resolveProfileReasoningConfig(profile)
-	const thinking = resolveTaskThinkingConfig(
-		profile?.provider,
-		effectiveModelInfo?.capabilities,
-		profileReasoning,
-		effectiveModelInfo?.id ?? profile?.modelId,
-	)
-	const effortLevels = thinking?.effortLevels ?? []
-	const maxBudget = thinking?.maxBudget
-	const supportsEffort = effortLevels.length > 0
-	const supportsBudget = Number.isSafeInteger(maxBudget) && (maxBudget ?? -1) >= 0
+	const thinking = resolveTaskThinkingConfig(effectiveModelInfo?.capabilities)
+	const effortLevels = (thinking?.effortLevels ?? []).filter((effort) => thinking?.canDisable !== false || effort !== "none")
+	const budgetBounds = thinking ? resolveThinkingBudgetBounds(thinking) : undefined
+	const maxBudget = budgetBounds?.maximum
+	const minBudget = thinking?.canDisable === false ? budgetBounds?.minimum : 0
+	const supportsEffort = thinking?.mode === "effort" && effortLevels.length > 0
+	const supportsBudget = thinking?.mode === "budget" && budgetBounds !== undefined
 	const supportsServiceTier = profileServiceTierEnabled(profile)
 
 	const reasoningOverride =
@@ -48,25 +46,28 @@ export function TaskRuntimeControls() {
 	const serviceTierOverride =
 		mode === "plan" ? apiConfiguration?.planModeServiceTierOverride : apiConfiguration?.actModeServiceTierOverride
 	const profileThinkingValue =
-		(profileReasoning?.thinkingBudget ?? 0) > 0
+		supportsBudget && (profileReasoning?.thinkingBudget ?? 0) > 0
 			? "budget"
-			: profileReasoning?.effort
+			: supportsEffort && profileReasoning?.effort && effortLevels.includes(profileReasoning.effort)
 				? `effort:${profileReasoning.effort}`
-				: supportsEffort
-					? `effort:${effortLevels.includes("medium") ? "medium" : effortLevels[0]}`
-					: supportsBudget
-						? "budget"
-						: ""
+				: supportsEffort && thinking?.defaultEffort && effortLevels.includes(thinking.defaultEffort)
+					? `effort:${thinking.defaultEffort}`
+					: ""
+	const overrideValidation = reasoningOverride ? validateTaskReasoningOverride(reasoningOverride, thinking) : undefined
+	const validOverride = overrideValidation?.valid ? overrideValidation.override : undefined
+	// A stale override stays persisted for backend validation, but is not presented as a legal selection.
 	const configuredThinkingValue =
-		reasoningOverride?.kind === "effort"
-			? `effort:${reasoningOverride.effort ?? ""}`
-			: reasoningOverride?.kind === "budget"
-				? "budget"
-				: profileThinkingValue
+		overrideValidation?.valid === false
+			? ""
+			: validOverride?.kind === "effort"
+				? `effort:${validOverride.effort}`
+				: validOverride?.kind === "budget"
+					? "budget"
+					: profileThinkingValue
 	const configuredBudget =
-		reasoningOverride?.kind === "budget"
-			? (reasoningOverride.budgetTokens ?? 0)
-			: profileThinkingValue === "budget"
+		validOverride?.kind === "budget"
+			? (validOverride.budgetTokens ?? 0)
+			: configuredThinkingValue === "budget"
 				? (profileReasoning?.thinkingBudget ?? 0)
 				: 0
 	const configuredServiceTier =
@@ -105,9 +106,10 @@ export function TaskRuntimeControls() {
 	}
 
 	const commitBudget = () => {
-		const budgetTokens = Number(budgetValue)
-		if (!Number.isSafeInteger(budgetTokens) || budgetTokens < 0 || budgetTokens > (maxBudget ?? -1)) {
-			setError(`Thinking budget must be an integer between 0 and ${maxBudget ?? 0}.`)
+		const budgetTokens = budgetValue.trim() === "" ? Number.NaN : Number(budgetValue)
+		const validation = validateTaskReasoningOverride({ kind: "budget", budgetTokens }, thinking)
+		if (!validation.valid) {
+			setError(validation.message)
 			return
 		}
 		void commit(
@@ -144,7 +146,10 @@ export function TaskRuntimeControls() {
 										className="chat-input-control-outline !h-[18.5px] inline-flex w-auto min-w-0 max-w-full items-center justify-center gap-0 overflow-hidden rounded-sm border-0 bg-toolbar-hover px-1 py-0 text-center text-xs font-medium leading-[18px] text-foreground shadow-none transition-colors duration-150 focus-visible:ring-0"
 										showIcon={false}
 										size="sm">
-										<SelectValue className="inline-flex h-full min-w-0 items-center justify-center truncate text-center leading-[18px]" />
+										<SelectValue
+											className="inline-flex h-full min-w-0 items-center justify-center truncate text-center leading-[18px]"
+											placeholder="Thinking"
+										/>
 									</SelectTrigger>
 								</div>
 							</TooltipTrigger>
@@ -170,7 +175,7 @@ export function TaskRuntimeControls() {
 							aria-label="Task thinking budget"
 							className="w-20 rounded-sm border border-dropdown-border bg-input-background px-1 py-0.5 text-xs text-input-foreground"
 							max={maxBudget}
-							min={0}
+							min={minBudget}
 							onBlur={commitBudget}
 							onChange={(event) => setBudgetValue(event.target.value)}
 							onKeyDown={(event) => {

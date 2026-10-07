@@ -7,7 +7,8 @@ import type { WebToolsMode } from "@shared/proto/dline/provider/common"
 import { resolveProfileDisabledServerTools } from "@shared/providers/profile-model-info"
 import { Mode } from "@shared/storage/types"
 import { ClineError } from "@/services/error"
-import { ClineStorageMessage } from "@/shared/messages/content"
+import type { DocumentInputLimits } from "@/shared/messages/attached-documents"
+import { ClineStorageMessage, type HostedToolReplayProtocol } from "@/shared/messages/content"
 import { ClineTool } from "@/shared/tools"
 import { getProfileModelInfo } from "./model-info"
 import { instrumentApiHandler } from "./observability/instrument-api-handler"
@@ -135,6 +136,13 @@ export interface ApiHandler {
 	getModel(): ApiHandlerModel
 	/** Report protocol-adapter support without consulting provider or model identifiers. */
 	supportsServerTool?(tool: ServerTool): boolean
+	/**
+	 * Protocol of the provider-hosted tool blocks this handler accepts back verbatim on later requests.
+	 * Hosted blocks stored from any other protocol are dropped before the handler sees the history.
+	 */
+	getHostedToolReplayProtocol?(): HostedToolReplayProtocol | undefined
+	/** Native PDF capacity of one request; absent when the endpoint cannot read PDFs natively. */
+	getDocumentInputLimits?(): DocumentInputLimits | undefined
 	getApiStreamUsage?(): Promise<ApiStreamUsageChunk | undefined>
 	/** Query account-level usage/balance from the provider. Returns undefined if not supported. */
 	getAccountUsage?(): Promise<AccountUsage | undefined>

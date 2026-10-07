@@ -15,14 +15,34 @@ export async function expectWorkComposerReady(sidebar: Frame, timeoutMs = 30_000
 	await expect(sidebar.getByTestId("send-button")).toBeVisible({ timeout: timeoutMs })
 }
 
+export async function expectWorkMessageVisible(
+	sidebar: Frame,
+	text: string,
+	options: { exact?: boolean; timeout?: number } = {},
+): Promise<Locator> {
+	const message = sidebar.getByText(text, { exact: options.exact ?? true }).last()
+	const scrollToBottom = sidebar.getByRole("button", { name: "Scroll to bottom", exact: true })
+	await expect
+		.poll(
+			async () => {
+				if (await message.isVisible().catch(() => false)) return true
+				if (await scrollToBottom.isVisible().catch(() => false)) {
+					await scrollToBottom.click().catch(() => undefined)
+				}
+				return message.isVisible().catch(() => false)
+			},
+			{ timeout: options.timeout ?? 30_000 },
+		)
+		.toBe(true)
+	return message
+}
+
 export async function sendWorkMessage(sidebar: Frame, text: string, timeoutMs = 30_000): Promise<Locator> {
 	const input = sidebar.getByTestId("chat-input")
 	await expect(input).toBeEnabled({ timeout: timeoutMs })
 	await input.fill(text)
 	await sidebar.getByTestId("send-button").click()
-	const message = sidebar.getByText(text, { exact: true }).first()
-	await expect(message).toBeVisible({ timeout: timeoutMs })
-	return message
+	return expectWorkMessageVisible(sidebar, text, { timeout: timeoutMs })
 }
 
 export async function setWorkAutoApproveAction(sidebar: Frame, label: string, enabled: boolean): Promise<void> {

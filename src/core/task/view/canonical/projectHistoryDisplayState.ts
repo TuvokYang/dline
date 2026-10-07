@@ -56,11 +56,23 @@ function revealedApprovals(snapshot: TaskState | undefined): Readonly<Record<str
 	)
 }
 
+export interface HistoryDisplayOptions {
+	/**
+	 * The durable dialogs have no single complete anchor row, so history cannot
+	 * present them; the task is offered through its recovery interaction instead.
+	 */
+	readonly unanchored?: boolean
+}
+
 /**
  * Project the read-only task state used to render a historical task without
  * starting its runtime, acquiring its lock, or writing any durable state.
  */
-export function projectHistoryDisplayState(taskId: string, snapshot: TaskState | undefined): HistoryDisplayProjection {
+export function projectHistoryDisplayState(
+	taskId: string,
+	snapshot: TaskState | undefined,
+	options: HistoryDisplayOptions = {},
+): HistoryDisplayProjection {
 	const owned = ownedSnapshot(taskId, snapshot)
 	const base = owned ?? createInitialTaskState(taskId)
 	// A consumed task handed its conversation to a successor. Like the kernel's
@@ -68,8 +80,8 @@ export function projectHistoryDisplayState(taskId: string, snapshot: TaskState |
 	if (owned?.flow.terminalReason === "consumed") {
 		return { state: { ...owned, dialog: { approvalsByBlock: {} } } }
 	}
-	const durable = revealedInteraction(owned)
-	const approvals = revealedApprovals(owned)
+	const durable = options.unanchored ? undefined : revealedInteraction(owned)
+	const approvals = options.unanchored ? {} : revealedApprovals(owned)
 	if (durable) {
 		return { state: { ...base, dialog: { primary: durable, approvalsByBlock: approvals } } }
 	}

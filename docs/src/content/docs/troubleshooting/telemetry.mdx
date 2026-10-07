@@ -1,0 +1,47 @@
+---
+title: Telemetry and Diagnostics
+description: Learn how Dline asks for consent for usage data and error reports, where the data goes by default, what is masked, and how to export a diagnostic bundle.
+---
+
+import { Aside } from "@astrojs/starlight/components"
+
+Dline asks for consent to "usage data" and "error reports" separately. Neither kind of data is sent without your consent.
+
+## Consent settings
+
+**Settings → About** has two independent options:
+
+- **Allow usage reporting** for usage data;
+- **Allow error reporting** for error reports.
+
+Both are unchecked by default. Only an explicit check counts as consent; while an option is unchecked (including when it was never set), that category is neither collected nor sent. Your organization's remote configuration can turn telemetry off, but cannot turn it on for you.
+
+When VS Code's own telemetry setting (`telemetry.telemetryLevel`) is off, Dline does not send telemetry to remote endpoints either.
+
+## Where the data goes
+
+- By default, consented data is sent in OpenTelemetry format (OTLP over HTTP/protobuf) to `http://127.0.0.1:4318` on **your own machine**. The data is received only if you run an OTLP collector locally.
+- Your organization can point it at a different OTLP endpoint through remote configuration.
+- With consent, Dline also writes local session journals in JSONL format for diagnostics.
+
+<Aside>
+By default, Dline does not send telemetry to any fixed external service.
+</Aside>
+
+## What is masked
+
+Before sending, Dline masks:
+
+- prompts, commands, and command output;
+- credentials;
+- identity-related fields.
+
+What is kept includes provider and model names, numeric values such as token usage, and other length-limited structured fields.
+
+<Aside type="caution">
+Consented events include an anonymous installation identifier (`distinct_id`) that tells installations apart and is not masked. Do not assume telemetry contains no identifier at all.
+</Aside>
+
+## Exporting a diagnostic bundle
+
+With **Allow error reporting** checked, **Settings → About** shows **Export diagnostic bundle**. It creates a ZIP file locally, redacts it again before writing, and does not upload it. When you run into a problem, you can review the bundle before deciding whether to attach it to an issue.

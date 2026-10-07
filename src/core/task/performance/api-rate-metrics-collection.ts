@@ -1,25 +1,26 @@
 import type { UnifyStore } from "@core/storage/backend/api/UnifyStore"
 import { SqliteUnifyStoreBackend } from "@core/storage/backend/sqlite/SqliteUnifyStore"
+import { resolveTaskMetricsDatabase } from "@core/storage/task-metrics-database"
 import { LegacyApiRateMetricsWrapperEntity } from "./api-rate-metrics-legacy-wrapper-entity"
 import { ApiRateMetricsEntity } from "./api-rate-metrics-record-codec"
 import { migrateApiRateMetricsWrapper } from "./api-rate-metrics-wrapper-migration"
-import { resolveTaskMetricsDatabase } from "./task-metrics-database"
 
 export interface ApiRateMetricsCollectionFactoryOptions {
 	readonly taskId: string
 	readonly location?: string
+	readonly readOnly?: boolean
 	readonly now?: () => number
 }
 
 export async function createApiRateMetricsCollection(
 	options: ApiRateMetricsCollectionFactoryOptions,
 ): Promise<UnifyStore<ApiRateMetricsEntity>> {
-	const databasePath = await resolveTaskMetricsDatabase(options.taskId, options.location)
-	const database = await new SqliteUnifyStoreBackend().open(databasePath)
+	const databasePath = await resolveTaskMetricsDatabase(options.taskId, options.location, options.readOnly)
+	const database = await new SqliteUnifyStoreBackend().open(databasePath, { readonly: options.readOnly })
 	let legacyStore: UnifyStore<LegacyApiRateMetricsWrapperEntity> | undefined
 	let store: UnifyStore<ApiRateMetricsEntity> | undefined
 	try {
-		if (await database.hasStore(LegacyApiRateMetricsWrapperEntity)) {
+		if (!options.readOnly && (await database.hasStore(LegacyApiRateMetricsWrapperEntity))) {
 			legacyStore = await database.openStore(LegacyApiRateMetricsWrapperEntity)
 		}
 		store = await database.openStore(ApiRateMetricsEntity)

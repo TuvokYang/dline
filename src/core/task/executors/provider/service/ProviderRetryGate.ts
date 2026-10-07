@@ -1,4 +1,4 @@
-import { getRetryDelay, MAX_AUTO_RETRY_ATTEMPTS } from "../../../auto-retry"
+import { getRetryDelay, MAX_AUTO_RETRY_ATTEMPTS } from "../../../auto-retry-schedule"
 import type { ProviderRetryPolicy, ProviderRetryWait } from "./DefaultProductionProviderService"
 
 /**

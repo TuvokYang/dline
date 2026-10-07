@@ -6,7 +6,7 @@ export interface HistoryTaskReadinessOptions {
 	taskId: string
 	displayHistory: () => Promise<void>
 	onPreparingToDisplay?: () => Promise<void>
-	prepareFromHistory: (options: { onReadyToDisplay?: () => Promise<void>; isCurrent?: () => boolean }) => Promise<void>
+	prepareFromHistory: (options: { isCurrent?: () => boolean }) => Promise<void>
 	hasTaskLock: boolean
 	isCurrent: () => boolean
 	onReadyToDisplay?: () => Promise<void>
@@ -59,27 +59,18 @@ export async function prepareHistoryTaskForDisplay(options: HistoryTaskReadiness
 			span.addEvent?.("task.history_prepare.displayed")
 			if (!options.isCurrent()) return finish(false)
 
-			let readyNotified = false
-			const notifyReady = async (): Promise<void> => {
-				if (readyNotified || !options.isCurrent()) return
-				readyNotified = true
-				await runStage("history_surface_ready", async () => options.onReadyToDisplay?.())
-				span.addEvent?.("task.history_prepare.ready")
-			}
-			if (!options.hasTaskLock) {
-				await notifyReady()
-				return finish(options.isCurrent())
-			}
+			// The displayed surface is published before any background preparation,
+			// so opening a task never waits for work its first frame does not need.
+			await runStage("history_surface_ready", async () => options.onReadyToDisplay?.())
+			span.addEvent?.("task.history_prepare.ready")
+			if (!options.isCurrent() || !options.hasTaskLock) return finish(options.isCurrent())
 
-			await runStage("history_background_prepare", () =>
-				options.prepareFromHistory({
-					isCurrent: options.isCurrent,
-					onReadyToDisplay: notifyReady,
-				}),
-			)
+			await runStage("history_background_prepare", () => options.prepareFromHistory({ isCurrent: options.isCurrent }))
 			span.addEvent?.("task.history_prepare.prepared")
 			return finish(options.isCurrent())
 		} catch (error) {
+			// A detached or replaced Task aborts its own preparation; that is a superseded load, not a failure.
+			if (!options.isCurrent()) return finish(false)
 			span.recordException(error)
 			span.end("failure")
 			throw error

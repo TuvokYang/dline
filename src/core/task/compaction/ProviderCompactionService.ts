@@ -20,7 +20,7 @@ import {
 } from "@core/context/context-management/target-window-fitting"
 import type { ClineContent, ClineStorageMessage } from "@shared/messages/content"
 import { ClineDefaultTool } from "@shared/tools"
-import { getRetryDelay, MAX_AUTO_RETRY_ATTEMPTS } from "../auto-retry"
+import { getRetryDelay, MAX_AUTO_RETRY_ATTEMPTS } from "../auto-retry-schedule"
 import {
 	type ContextCompactionIndicatorProjection,
 	type ContextCompactionPassRequest,

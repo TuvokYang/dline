@@ -8,6 +8,7 @@ import { type TaskRateMetricsResolution, useTaskRateMetrics } from "./useTaskRat
 
 interface TaskRateMetricsDialogProps {
 	taskId?: string
+	taskInstanceId?: string
 	open: boolean
 	onOpenChange: (open: boolean) => void
 }
@@ -29,11 +30,11 @@ const CHART_TYPE_OPTIONS: Array<{ value: TaskMetricsChartType; icon: "bar" | "li
 ]
 
 /** Show Task-local API rate history on demand. */
-export function TaskRateMetricsDialog({ taskId, open, onOpenChange }: TaskRateMetricsDialogProps) {
+export function TaskRateMetricsDialog({ taskId, taskInstanceId, open, onOpenChange }: TaskRateMetricsDialogProps) {
 	const [resolution, setResolution] = useState<TaskRateMetricsResolution>("hour")
 	const [view, setView] = useState<TaskMetricsView>("tokenCache")
 	const [chartType, setChartType] = useState<TaskMetricsChartType>("line")
-	const { data, loading, error, refresh } = useTaskRateMetrics({ taskId, resolution, enabled: open })
+	const { data, loading, error, refresh } = useTaskRateMetrics({ taskId, taskInstanceId, resolution, enabled: open })
 
 	return (
 		<Dialog onOpenChange={onOpenChange} open={open}>

@@ -1,8 +1,13 @@
 import { GrpcRecorder, IRecorder } from "@core/controller/grpc-recorder/grpc-recorder"
-import type { GrpcLogEntry } from "@core/controller/grpc-recorder/types"
+import type { ILogFileHandler } from "@core/controller/grpc-recorder/log-file-handler"
+import type { GrpcLogEntry, GrpcSessionLog } from "@core/controller/grpc-recorder/types"
 import { expect } from "chai"
 import { ExtensionMessage } from "@/shared/ExtensionMessage"
 import { GrpcRequest } from "@/shared/WebviewMessage"
+
+function nextImmediate(): Promise<void> {
+	return new Promise((resolve) => setImmediate(resolve))
+}
 
 describe("grpc-recorder", () => {
 	let recorder: IRecorder
@@ -15,6 +20,45 @@ describe("grpc-recorder", () => {
 	})
 
 	describe("GrpcRecorder", () => {
+		it("serializes immutable file snapshots so overlapping flushes cannot corrupt the recorder", async () => {
+			let releaseFirstWrite!: () => void
+			const firstWrite = new Promise<void>((resolve) => {
+				releaseFirstWrite = resolve
+			})
+			const writes: GrpcSessionLog[] = []
+			const handler: ILogFileHandler = {
+				initialize: async () => {},
+				write: async (snapshot) => {
+					writes.push(snapshot)
+					if (writes.length === 1) await firstWrite
+				},
+			}
+			const recorder = new GrpcRecorder(handler)
+			const request = {
+				service: "dline.TaskService",
+				method: "getTaskRateMetrics",
+				message: {},
+				request_id: "serialized-request",
+				is_streaming: false,
+			}
+
+			recorder.recordRequest(request)
+			await nextImmediate()
+			expect(writes).length(1)
+			expect(writes[0].entries[0].status).equal("pending")
+
+			recorder.recordResponse(request.request_id, { request_id: request.request_id, message: {} })
+			await nextImmediate()
+			expect(writes).length(1)
+
+			releaseFirstWrite()
+			await nextImmediate()
+			await nextImmediate()
+			expect(writes).length(2)
+			expect(writes[0].entries[0].status).equal("pending")
+			expect(writes[1].entries[0].status).equal("completed")
+		})
+
 		it("matches multiple request, response and stats", async () => {
 			interface UseCase {
 				request: GrpcRequest

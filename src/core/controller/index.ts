@@ -1,5 +1,4 @@
 import { createHash, randomUUID } from "node:crypto"
-import type { Anthropic } from "@anthropic-ai/sdk"
 import { accountUsageCoordinator } from "@core/account-usage/AccountUsageCoordinator"
 import { addDailyTokens, readDailyTokens, type TokenIncrement } from "@core/account-usage/daily-token-ledger"
 import {
@@ -73,7 +72,7 @@ import open from "open"
 import Mutex from "p-mutex"
 import * as path from "path"
 import { ClineEnv } from "@/config"
-import { getDlineDocumentsPath, getDlineDocumentsPathSync } from "@/core/storage/disk"
+import { cleanupStaleTaskTempFiles, getDlineDocumentsPath, getDlineDocumentsPathSync } from "@/core/storage/disk"
 import {
 	readPersistedTaskCompletion,
 	TASK_COMPLETION_BACKFILL_DELAY_MS,
@@ -105,7 +104,6 @@ import { getCwd, getDesktopDir } from "@/utils/path"
 import { isNativeToolCallingConfig } from "../../utils/model-utils"
 import { ModelRegistry } from "../model-registry/ModelRegistry"
 import { ApiConversation } from "../storage/ApiConversation"
-import { readJsonl } from "../storage/backend/jsonl/jsonl-utils"
 import {
 	ensureMcpServersDirectoryExists,
 	ensureSettingsDirectoryExists,
@@ -139,7 +137,7 @@ import type { ProfileSwitchOperation, ResolvedProfileTarget } from "./profile-sw
 import { projectFocusChainHistory } from "./state/focusChainHistoryProjection"
 import { cleanupStateSubscriptions, sendAccountUsageUpdate, sendStatePatch, sendStateUpdate } from "./state/subscribeToState"
 import { projectTaskHistory } from "./state/taskHistoryProjection"
-import { awaitDispatchableDialog } from "./task/awaitDispatchableDialog"
+import { awaitDispatchableDialog, dispatchableDialog } from "./task/awaitDispatchableDialog"
 import { composeBackgroundHandoffAvailability } from "./task/BackgroundHandoffAvailability"
 import { describeDialogState, describeDispatch } from "./task/describeInteractionDispatch"
 import { dispatchInteraction } from "./task/dispatchInteraction"
@@ -149,6 +147,7 @@ import { prepareHistoryTaskForDisplay } from "./task/history-task-readiness"
 import { ControllerTaskSessionHostFactory } from "./task/host/ControllerTaskSessionHostFactory"
 import { ControllerTaskSessionPorts } from "./task/host/ControllerTaskSessionPorts"
 import { ControllerTransitionCompactionPort } from "./task/host/ControllerTransitionCompactionPort"
+import { type TaskOpening } from "./task/opened-task"
 import { replyWithTransitionDraft } from "./task/replyWithTransitionDraft"
 import { selectTaskRateMetricsQuery, type TaskRateMetricsQueryFn } from "./task/TaskRateMetricsSource"
 import { adaptCanonicalTaskView } from "./task/TaskViewMessageAdapter"
@@ -463,6 +462,10 @@ export class Controller {
 	private lockPollTimer?: NodeJS.Timeout
 	// Invalidates poll rounds that are already suspended on an await
 	private lockPollGeneration = 0
+	private readonly lockTakeoverTimers = new Set<NodeJS.Timeout>()
+	// Replaced on every heartbeat start, so a tick from an earlier lease cannot act
+	private lockHeartbeatLease?: { readonly taskId: string }
+	private lockHeartbeatPending?: Promise<void>
 	// Whether the current task has an active lock
 	private taskLockAcquired = false
 	// Account usage data (refreshed every 60s, zero overhead on state push)
@@ -848,7 +851,17 @@ export class Controller {
 	*/
 	/** Return the task identity owned by either the interactive runtime or lightweight history display. */
 	getCurrentTaskId(): string | undefined {
-		return this.task?.taskId ?? this.historyDisplaySession?.taskId
+		return this.currentOpening()?.taskId
+	}
+
+	/**
+	 * The opening this Controller currently shows: the interactive session or
+	 * the lightweight history display. Each opening carries its own instance id,
+	 * so reopening the same task yields a different opening and every RPC bound
+	 * to the previous one is recognisably stale.
+	 */
+	currentOpening(): TaskOpening | undefined {
+		return this.task ?? this.historyDisplaySession
 	}
 
 	/** Return the activity store owned by the exact visible task surface. */
@@ -1082,7 +1095,10 @@ export class Controller {
 		fetchRemoteConfig(this)
 
 		if (!options?.skipInitialClear) {
-			await this.clearTask()
+			// Opening a task from History replaces one visible task with another:
+			// the empty surface in between must not reach the Webview, or it shows
+			// the home view until the history display publishes its first frame.
+			await this.clearTask(historyItem ? { suppressPostState: true } : undefined)
 			logInitStage("initial_clear")
 		}
 
@@ -1135,6 +1151,10 @@ export class Controller {
 			Logger.debug(`[Task ${taskId}] Task lock acquired`)
 			this.startLockHeartbeat(taskId)
 			await this.pruneOwnedCommandLogs(taskId)
+			// Holding the lock means no other window writes here, so stale temp files are a crashed writer's.
+			void cleanupStaleTaskTempFiles(taskId).catch((error) =>
+				Logger.warn(`[Task ${taskId}] Stale temp file cleanup failed:`, error),
+			)
 		} else {
 			Logger.debug(`[Task ${taskId}] Task locked by another instance - read-only mode`)
 			// Start polling for lock release in the background
@@ -1187,8 +1207,12 @@ export class Controller {
 			publishCommitted: async () => this.postStateToWebview(),
 			publishTransient: () => void this.postStateToWebview(),
 		})
+		// This opening's identity. The session adopts it as its incarnation, so
+		// every row, page and activity the session publishes is attributed to it.
+		const opening: TaskOpening = { taskId, taskInstanceId: randomUUID() }
 		this.task = await new TaskSessionCompositionService().open({
 			taskId,
+			taskIncarnationId: opening.taskInstanceId,
 			openReason: historyItem ? (options?.openReason ?? "resume") : "new",
 			collaboration: {
 				writable: this.taskLockAcquired,
@@ -1217,7 +1241,7 @@ export class Controller {
 				},
 			},
 			prompt: {
-				ports: new ControllerTaskSessionPorts(this),
+				ports: new ControllerTaskSessionPorts(this, opening),
 				ignoreController,
 				workspaceManager: this.workspaceManager,
 				terminalExecutionMode,
@@ -1471,7 +1495,7 @@ export class Controller {
 				// settles are redrawn in place once it finishes.
 				const onMaintained = async (rows: readonly UiMessage[]) => {
 					if (this.historyDisplaySession !== session) return
-					await Promise.all(rows.map((row) => sendPartialMessageEvent(this, convertClineMessageToProto(row))))
+					await Promise.all(rows.map((row) => sendPartialMessageEvent(this, convertClineMessageToProto(row), session)))
 					await this.postStateToWebview()
 				}
 				const [owned] = await Promise.all([ownerless, session.load({ ownerless, onMaintained, deferMaintenance: true })])
@@ -1540,6 +1564,15 @@ export class Controller {
 					isCurrent: () => this.task === session,
 				})
 				const state = session.state()
+				if (!interaction && dispatchableDialog(state)) {
+					// The history surface offered an action the restored task no longer
+					// does, e.g. Resume over a dialog whose torn row hydrate revealed
+					// again. That dialog is now shown, and the user's draft is kept.
+					Logger.warn(
+						`[HistoryDisplay] Promoted task ${session.taskId} offers no ${request.actionId}: ${describeDialogState(state)}`,
+					)
+					return DispatchInteractionResponse.create({ accepted: false, result: "stale_interaction" })
+				}
 				if (!interaction) {
 					// Without this the promoted task simply stopped: no command ran,
 					// no error surfaced, and the only visible effect was an input
@@ -1554,6 +1587,9 @@ export class Controller {
 					DispatchInteractionRequest.create({
 						...request,
 						taskId: session.taskId,
+						// The reply was rendered by the display's opening; promotion is the
+						// one place it legitimately moves to the runtime's own opening.
+						taskInstanceId: session.taskInstanceId,
 						turnId: interaction.turnId,
 						interactionId: interaction.interactionId,
 						stateRevision: state.revision,
@@ -2239,7 +2275,7 @@ export class Controller {
 	 * Syncs the editor tab title for the panel hosting this controller's task.
 	 * Called when task description or focus chain progress changes.
 	 *
-	 * The title is always derived from {@link Task.getPanelTitle} so the focus
+	 * The title is always derived from {@link resolveTaskPanelTitle} so the focus
 	 * chain progress suffix can never be dropped by a caller passing raw text.
 	 */
 	async syncPanelTitle(): Promise<void> {
@@ -2516,7 +2552,6 @@ export class Controller {
 		uiMessagesFilePath: string
 		contextHistoryFilePath: string
 		taskMetadataFilePath: string
-		apiConversationHistory: Anthropic.MessageParam[]
 	}> {
 		const history = this.stateManager.getGlobalStateKey("taskHistory")
 		const historyItem = history.find((item) => item.id === id)
@@ -2526,13 +2561,8 @@ export class Controller {
 			const uiMessagesFilePath = path.join(taskDirPath, GlobalFileNames.uiMessages)
 			const contextHistoryFilePath = path.join(taskDirPath, GlobalFileNames.contextHistory)
 			const taskMetadataFilePath = path.join(taskDirPath, GlobalFileNames.taskMetadata)
-			// A task exists while its directory does. Its conversation lives in the
-			// task journal, so the legacy history file is read only when a task
-			// written before the journal still has one.
+			// A task exists while its directory does; its conversation lives in the task journal.
 			if (await fileExistsAtPath(taskDirPath)) {
-				const apiConversationHistory = (await fileExistsAtPath(apiConversationHistoryFilePath))
-					? await readJsonl<Anthropic.MessageParam>(apiConversationHistoryFilePath)
-					: []
 				return {
 					historyItem,
 					taskDirPath,
@@ -2540,7 +2570,6 @@ export class Controller {
 					uiMessagesFilePath,
 					contextHistoryFilePath,
 					taskMetadataFilePath,
-					apiConversationHistory,
 				}
 			}
 		}
@@ -2696,27 +2725,37 @@ export class Controller {
 	 * whose interaction is absent. Defaulting to the task's own rows keeps the
 	 * interaction-only patch equivalent to the full state build; the parameter
 	 * remains for callers that already materialized the same window.
+	 *
+	 * Every view names the opening it belongs to; the Webview keys its message
+	 * window, pages and activity streams by that opening.
 	 */
 	private projectCurrentTaskViewState(messages?: readonly UiMessage[]): TaskViewState | undefined {
 		const historyDisplay = this.historyDisplaySession
-		if (historyDisplay) return historyDisplay.getViewState()
+		if (historyDisplay) return { ...historyDisplay.getViewState(), taskInstanceId: historyDisplay.taskInstanceId }
 		const session = this.task
 		if (!session) return undefined
 		const rows = messages ?? this.getCurrentTaskMessages()
-		return adaptCanonicalTaskView(
+		const view = adaptCanonicalTaskView(
 			session.projectView(),
 			rows,
 			composeBackgroundHandoffAvailability(session.owners.commands, session.owners.activities),
 			session.owners.providerRetry?.active === true,
 			session.owners.compactionRecovery?.truncationOffered() === true,
 		)
+		return { ...view, taskInstanceId: session.taskInstanceId }
 	}
 
 	/** Build a monotonic extension state while preserving the public non-optional contract. */
 	async getStateToPostToWebview(): Promise<ExtensionState> {
 		if (this.uiDetached || this.disposed) this.stateBuildsAfterDetach++
 		const revision = ++this.nextStateRevision
-		const state = await this.buildState(revision)
+		// A build that straddles an opening switch would mix two openings' state.
+		let owner = this.currentOpening()
+		let state = await this.buildState(revision)
+		while (owner !== this.currentOpening() && !this.disposed && !this.uiDetached) {
+			owner = this.currentOpening()
+			state = await this.buildState(revision)
+		}
 		if (revision > this.latestStateRevision) {
 			this.latestStateRevision = revision
 		}
@@ -2832,7 +2871,7 @@ export class Controller {
 		// entries on every access, so a second read costs another full pass over
 		// a conversation that can hold tens of thousands of messages.
 		const rawMessages = [...this.getCurrentTaskMessages()]
-		// Build a synthetic taskTitleMessage for backward compatibility with frontend.
+		// The title is presentation metadata, never a Task identity.
 		// A history display retains only the latest message window, so its first
 		// durable message is read separately rather than forcing a full history load.
 		const taskTitleMessage =
@@ -2893,7 +2932,7 @@ export class Controller {
 				Logger.warn("Failed to aggregate api metrics:", error)
 			}
 		}
-		const { getApiMetrics, getLastTaskProgressText } = await import("@shared/getApiMetrics")
+		const { getApiMetrics, getLastApiReqTotalTokens, getLastTaskProgressText } = await import("@shared/getApiMetrics")
 		const apiMetrics = {
 			// Combining parses each paired request as a whole, so a single
 			// malformed entry fails the aggregate outright. The per-message pass
@@ -2906,7 +2945,7 @@ export class Controller {
 		const contextWindowIndicator = shownContextWindowIndicator(this.task, this.historyDisplaySession)
 		const lastApiReqTotalTokens = contextWindowIndicator
 			? getContextWindowIndicatorTotalTokens(contextWindowIndicator)
-			: undefined
+			: getLastApiReqTotalTokens(rawMessages) || undefined
 
 		// If currentFocusChainChecklist is null, fall back to searching
 		// the full message list (not the window slice) for task_progress.
@@ -3223,38 +3262,19 @@ export class Controller {
 	private startLockPoll(taskId: string) {
 		this.stopLockPoll()
 		const generation = this.lockPollGeneration
-		// `taskLockAcquired` tracks the interactive runtime only. A read-only
-		// history display owns no Task, so a round stays valid while that session
-		// is still the current surface waiting for the lock to be released.
-		const awaitsReadOnlyHistoryLock = () =>
-			this.historyDisplaySession?.taskId === taskId && this.historyDisplaySession.isLocked()
-		const isCurrentRound = () =>
-			generation === this.lockPollGeneration && !this.disposed && (!this.taskLockAcquired || awaitsReadOnlyHistoryLock())
-		this.lockPollTimer = setInterval(async () => {
-			if (!isCurrentRound()) return
-			try {
+		// Bound to the opening that started polling, so a close or reopen in
+		// between can never be taken over by a stale round.
+		const owner = this.currentOpening()
+		this.lockPollTimer = setInterval(() => {
+			void this.runTaskLifecycleOperation(async () => {
+				if (generation !== this.lockPollGeneration || this.currentOpening() !== owner || this.disposed) return
+				if (!owner || owner.taskId !== taskId || this.taskLockAcquired) return
+				// Only a released or stale lock is worth a takeover attempt.
 				const status = await this.lockService.checkTaskLock(taskId)
 				if (status.isLocked && !status.isStale) return
-				// A round that started before an unlock or takeover must not
-				// acquire on top of it: clearInterval cannot cancel a callback
-				// that is already suspended on an await.
-				if (!isCurrentRound()) return
-
-				const acquired = await this.lockService.acquireTaskLock(taskId)
-				if (!acquired) return
-				if (!isCurrentRound()) {
-					// Ownership changed while acquiring, so this round has no
-					// claim on the lock it just took.
-					await this.lockService.releaseTaskLock(taskId)
-					return
-				}
-
-				Logger.debug(`[Lock] Auto-acquired lock for task ${taskId} after polling`)
-				await this.activateTaskAfterUnlock(taskId)
-			} catch (error) {
-				Logger.warn(`[Lock] Poll error for task ${taskId}:`, error)
-			}
-		}, 30000) // Poll every 30 seconds
+				await this.takeOverTaskAfterUnlock(owner)
+			}).catch((error) => Logger.warn(`[Lock] Poll error for task ${taskId}:`, error))
+		}, 30000)
 	}
 
 	/**
@@ -3262,6 +3282,8 @@ export class Controller {
 	 */
 	private stopLockPoll() {
 		this.lockPollGeneration++
+		for (const timer of this.lockTakeoverTimers) clearTimeout(timer)
+		this.lockTakeoverTimers.clear()
 		if (this.lockPollTimer) {
 			clearInterval(this.lockPollTimer)
 			this.lockPollTimer = undefined
@@ -3279,17 +3301,25 @@ export class Controller {
 	 * @param taskId The task ID that was unlocked
 	 */
 	scheduleTakeoverAfterUnlock(taskId: string): void {
-		setTimeout(() => {
-			void this.takeOverTaskAfterUnlock(taskId).catch((error) => {
+		const owner = this.currentOpening()
+		if (!owner || owner.taskId !== taskId) return
+		const timer = setTimeout(() => {
+			this.lockTakeoverTimers.delete(timer)
+			void this.runTaskLifecycleOperation(() => this.takeOverTaskAfterUnlock(owner)).catch((error) => {
 				Logger.error(`[Lock] Failed to take over task ${taskId} after unlock:`, error)
 			})
 		}, 0)
+		this.lockTakeoverTimers.add(timer)
 	}
 
-	/** Acquire the released lock and activate the task, or resume polling when it was taken. */
-	private async takeOverTaskAfterUnlock(taskId: string): Promise<void> {
-		if (this.disposed || this.taskLockAcquired) return
-
+	/**
+	 * Acquire the released lock and activate the opening, or keep polling when
+	 * another instance took it first. Called only inside the Task lifecycle
+	 * lane, so a close or reopen cannot interleave with the takeover.
+	 */
+	private async takeOverTaskAfterUnlock(owner: TaskOpening): Promise<void> {
+		if (this.disposed || this.currentOpening() !== owner || this.taskLockAcquired) return
+		const taskId = owner.taskId
 		const acquired = await this.lockService.acquireTaskLock(taskId)
 		if (!acquired) {
 			// Another instance won the released lock. Stay read-only and let the
@@ -3298,21 +3328,17 @@ export class Controller {
 			await this.postStateToWebview()
 			return
 		}
-
-		await this.activateTaskAfterUnlock(taskId)
-	}
-
-	/**
-	 * Activate the task once this instance holds its lock.
-	 * Transitions the task from read-only mode to full interactive mode,
-	 * starts the lock heartbeat, and pushes updated state to the webview.
-	 *
-	 * @param taskId The task ID whose lock is now held by this instance
-	 */
-	async activateTaskAfterUnlock(taskId: string) {
+		if (this.disposed || this.currentOpening() !== owner) {
+			await this.releaseOwnedTaskLock(taskId)
+			return
+		}
 		this.taskLockAcquired = true
 		this.stopLockPoll()
 		this.startLockHeartbeat(taskId)
+		// Holding the lock means no other window writes here, so stale temp files are a crashed writer's.
+		void cleanupStaleTaskTempFiles(taskId).catch((error) =>
+			Logger.warn(`[Task ${taskId}] Stale temp file cleanup failed:`, error),
+		)
 
 		// A lightweight history display owns the read-only projection itself, so
 		// clearing the lock has to reach the session too. Without this the banner
@@ -3338,14 +3364,52 @@ export class Controller {
 		Logger.debug(`[Lock] Task ${taskId} activated after force-unlock`)
 	}
 
-	/** Keep a single heartbeat alive for the lock this instance holds. */
+	/**
+	 * Keep the lock this instance holds fresh until teardown drains it.
+	 *
+	 * The lease is bound to the task id, not to a session object: the lock is
+	 * acquired before the interactive session exists, and an unlocked history
+	 * display holds it without one.
+	 */
 	private startLockHeartbeat(taskId: string): void {
-		if (this.lockHeartbeatTimer) {
-			clearInterval(this.lockHeartbeatTimer)
-		}
+		if (this.lockHeartbeatTimer) clearInterval(this.lockHeartbeatTimer)
+		const lease = { taskId }
+		this.lockHeartbeatLease = lease
 		this.lockHeartbeatTimer = setInterval(() => {
-			this.lockService.touchTaskLock(taskId).catch(() => {})
+			if (this.lockHeartbeatLease !== lease || this.lockHeartbeatPending) return
+			const pending = this.lockService
+				.touchTaskLock(taskId)
+				.then((held) => {
+					const opening = this.currentOpening()
+					if (held || this.lockHeartbeatLease !== lease || opening?.taskId !== taskId) return
+					// Another instance owns the lock now, so this opening must stop writing.
+					Logger.warn(`[Lock] Ownership lost for task ${taskId}`)
+					void this.clearTask({ expectedOpening: opening }).catch((error) =>
+						Logger.error("[Lock] Failed to close lock-lost task:", error),
+					)
+				})
+				.catch((error) => Logger.warn(`[Lock] Heartbeat failed for task ${taskId}:`, error))
+			this.lockHeartbeatPending = pending
+			void pending.finally(() => {
+				if (this.lockHeartbeatPending === pending) this.lockHeartbeatPending = undefined
+			})
 		}, 60000)
+	}
+
+	/** Stop the heartbeat for this task and drain an in-flight touch before the lock is released. */
+	private async stopLockHeartbeat(taskId: string): Promise<void> {
+		if (this.lockHeartbeatLease?.taskId !== taskId) return
+		this.lockHeartbeatLease = undefined
+		if (this.lockHeartbeatTimer) clearInterval(this.lockHeartbeatTimer)
+		this.lockHeartbeatTimer = undefined
+		await this.lockHeartbeatPending
+	}
+
+	private async releaseOwnedTaskLock(taskId: string): Promise<void> {
+		const status = await this.lockService.checkTaskLock(taskId)
+		if (status.isLocked && status.lockedBy === this.lockService.instanceAddress) {
+			await this.lockService.releaseTaskLock(taskId)
+		}
 	}
 
 	/**
@@ -3412,15 +3476,20 @@ export class Controller {
 		})
 	}
 
-	/** Replace one source-owned Task with an independent successor on the same surface. */
+	/**
+	 * Replace one source-owned Task with an independent successor on the same surface.
+	 *
+	 * Bound to the exact opening that asked for it: the same task closed and
+	 * reopened in between is a different opening and is left alone.
+	 */
 	async startSuccessorTask(
-		expectedTaskId: string,
+		source: TaskOpening,
 		task: string,
 		taskSettings: Partial<Settings>,
 		initialUserContent: readonly ClineUserContent[],
 	): Promise<string | undefined> {
 		return this.runTaskLifecycleOperation(async (scope) => {
-			if (this.task?.taskId !== expectedTaskId) return undefined
+			if (!this.isCurrentOpening(source)) return undefined
 			await scope.clearTask({ suppressPostState: true })
 			return this.initTask(task, undefined, undefined, undefined, taskSettings, {
 				startInBackground: true,
@@ -3430,8 +3499,23 @@ export class Controller {
 		})
 	}
 
-	async clearTask(options?: { clearPanelState?: boolean; preserveCompletedState?: boolean; deferTeardown?: boolean }) {
-		return this.runTaskLifecycleOperation((scope) => scope.clearTask(options))
+	async clearTask(options?: {
+		clearPanelState?: boolean
+		preserveCompletedState?: boolean
+		suppressPostState?: boolean
+		deferTeardown?: boolean
+		/** Clear only while this opening is still the one shown. */
+		expectedOpening?: TaskOpening
+	}) {
+		return this.runTaskLifecycleOperation((scope) => {
+			if (options?.expectedOpening && !this.isCurrentOpening(options.expectedOpening)) return Promise.resolve()
+			return scope.clearTask(options)
+		})
+	}
+
+	private isCurrentOpening(opening: TaskOpening): boolean {
+		const current = this.currentOpening()
+		return current?.taskId === opening.taskId && current.taskInstanceId === opening.taskInstanceId
 	}
 
 	private async clearTaskWithinLifecycle(options?: {
@@ -3446,6 +3530,8 @@ export class Controller {
 		const task = this.task
 		const historyDisplay = this.historyDisplaySession
 		const taskId = task?.taskId ?? historyDisplay?.taskId
+		// An unlocked history display holds the task lock without an interactive session.
+		const holdsLock = this.taskLockAcquired
 		const logCloseStage = (phase: string, details = "") => {
 			const now = performance.now()
 			recordPerfPhase(
@@ -3483,6 +3569,8 @@ export class Controller {
 		task?.owners.prompt.beginDispose()
 		this.task = undefined
 		this.historyDisplaySession = undefined
+		// A poll round must not take over a task this surface no longer shows.
+		this.stopLockPoll()
 		this.workspaceHistorySession = undefined
 		this.restartAccountUsagePolling()
 		if (!options?.suppressPostState) {
@@ -3492,7 +3580,7 @@ export class Controller {
 
 		const teardown = Promise.all([
 			historyDisplay?.dispose(),
-			task
+			task || holdsLock
 				? this.teardownDetachedTask(
 						task,
 						taskId,
@@ -3502,17 +3590,18 @@ export class Controller {
 					)
 				: undefined,
 		]).then(() => undefined)
+		const pending = teardown.then(() => {
+			if (this.pendingTaskTeardown === pending) this.pendingTaskTeardown = undefined
+		})
+		this.pendingTaskTeardown = pending
+		// Keep a rejected drain as the next lifecycle operation's admission barrier.
+		// The close surface may already have returned, but failure cannot authorize a new writer.
+		void pending.catch(() => undefined)
 		if (options?.deferTeardown) {
-			const pending = teardown.finally(() => {
-				if (this.pendingTaskTeardown === pending) {
-					this.pendingTaskTeardown = undefined
-				}
-			})
-			this.pendingTaskTeardown = pending
 			logCloseStage("teardown_deferred")
 			return
 		}
-		await teardown
+		await pending
 		logCloseStage("complete", `suppressPostState=${options?.suppressPostState === true}`)
 	}
 
@@ -3520,9 +3609,9 @@ export class Controller {
 	 * Release every durable resource owned by a Task that is already detached.
 	 *
 	 * Nothing here changes what the user sees, so it may run after the surface has
-	 * moved on. Failures are logged rather than rethrown: the caller may have
-	 * returned already, and the next lifecycle operation still awaits this promise
-	 * before it may create or resume another Task.
+	 * moved on. The close surface may have returned, but the next lifecycle operation
+	 * still awaits this drain. A failed drain retains the admission barrier rather
+	 * than silently admitting a replacement over unclosed resources.
 	 */
 	private async teardownDetachedTask(
 		task: ActiveTaskSession | undefined,
@@ -3536,38 +3625,36 @@ export class Controller {
 				// Clear task settings cache when task ends
 				await this.stateManager.clearTaskSettings(taskId)
 				logCloseStage("task_settings_clear")
-			}
-			if (task) {
 				if (checkpointRestoreFence) await task.disposeAfterCheckpointRestore(checkpointRestoreFence)
 				else await task.dispose(randomUUID())
+				logCloseStage(
+					checkpointRestoreFence ? "task_checkpoint_release" : "task_terminate",
+					`preserveCompleted=${preserveCompletedState}`,
+				)
 			}
-			logCloseStage(
-				checkpointRestoreFence ? "task_checkpoint_release" : "task_terminate",
-				`preserveCompleted=${preserveCompletedState}`,
-			)
-			// Stop lock heartbeat and polling only after terminate() completes, so a
-			// task that is still flushing keeps its lock until its stores are closed.
-			if (this.lockHeartbeatTimer) {
-				clearInterval(this.lockHeartbeatTimer)
-				this.lockHeartbeatTimer = undefined
-			}
-			this.stopLockPoll()
+			if (!taskId) return
+			// Stop the lock heartbeat only after dispose() completes, so a task that
+			// is still flushing keeps its lock until its stores are closed.
+			await this.stopLockHeartbeat(taskId)
 			this.taskLockAcquired = false
-			// Release file lock so other instances can open the task
-			if (taskId) {
-				await this.lockService.releaseTaskLock(taskId).catch((e) => Logger.error("Failed to release lock:", e))
-				logCloseStage("lock_release")
-				const { OrchestratorController } = await import("@/core/orchestrator/OrchestratorController")
-				OrchestratorController.getInstance().unregisterController(taskId)
+			// Release file lock so other instances can open the task. Only a lock
+			// this instance owns is released; a read-only opening holds none.
+			await this.releaseOwnedTaskLock(taskId)
+			logCloseStage("lock_release")
+			const { OrchestratorController } = await import("@/core/orchestrator/OrchestratorController")
+			const orchestrator = OrchestratorController.getInstance()
+			if (orchestrator.getController(taskId) === this) {
+				orchestrator.unregisterController(taskId)
 				// Release file ownership in the global checkpoint registry
 				const { WorkspaceFileRegistry } = await import("@integrations/checkpoints/WorkspaceFileRegistry")
 				WorkspaceFileRegistry.getInstance().releaseTask(taskId)
 			}
 		} catch (error) {
 			Logger.error(`[Controller] Task teardown failed for ${taskId ?? "none"}:`, error)
-			// A checkpoint reopen must not create a second writer when the fenced
-			// incarnation failed to release its stores or task lock.
-			if (checkpointRestoreFence) throw error
+			// A failed drain stays the next lifecycle operation's admission barrier:
+			// neither a checkpoint reopen nor a new opening may become a second
+			// writer over stores or a task lock that were not released.
+			throw error
 		}
 	}
 

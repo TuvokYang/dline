@@ -95,6 +95,7 @@ e2e(
 		const parentResult = "E2E_STREAM_READ_ERROR_DIAGNOSTIC_PARENT_DONE"
 		const approvalFeedback = "E2E_STREAM_READ_ERROR_APPROVAL_FEEDBACK"
 		const approvalFilePath = path.join(workspaceDir, "stream-error-approval.txt")
+		const approvalRelativePath = path.relative(workspaceDir, approvalFilePath)
 		await writeResponsesSubagent(workspaceDir, agentName)
 
 		await helper.signin(sidebar)
@@ -105,7 +106,7 @@ e2e(
 				id: "call_stream_read_error_approval_boundary",
 				name: "write_to_file",
 				arguments: {
-					absolutePath: approvalFilePath,
+					path: approvalRelativePath,
 					content: "approval boundary reached\n",
 				},
 			},

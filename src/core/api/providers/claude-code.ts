@@ -1,54 +1,26 @@
-import { Anthropic } from "@anthropic-ai/sdk"
-import type { BetaRawMessageStreamEvent } from "@anthropic-ai/sdk/resources/beta/messages/messages"
+import type { Anthropic } from "@anthropic-ai/sdk"
 import { Tool as AnthropicTool } from "@anthropic-ai/sdk/resources/index"
-import type { MessageCreateParamsStreaming } from "@anthropic-ai/sdk/resources/messages/messages"
-import { providerFetch } from "@shared/net"
 import { buildEffectiveModelInfo } from "@shared/providers/effective-model-info"
-import {
-	canDisableClaudeAdaptiveThinking,
-	isClaudeAdaptiveThinkingEnabledByDefault,
-	resolveClaudeOpusAdaptiveThinking,
-	resolveClaudeThinkingDisplay,
-	resolveForcedToolUseSupport,
-} from "@shared/utils/reasoning-support"
-import { buildClaudeCodeBetas } from "@/integrations/anthropic-claude-code/beta-headers"
-import {
-	type BillingAttributionMessage,
-	buildBillingAttributionBlock,
-} from "@/integrations/anthropic-claude-code/billing-attribution"
-import { buildClaudeCodeClientHeaders } from "@/integrations/anthropic-claude-code/client-headers"
+import { resolveProfileModelId } from "@shared/providers/profile-model-info"
+import type { BillingAttributionMessage } from "@/integrations/anthropic-claude-code/billing-attribution"
 import { getClaudeCodeProfileSessionRegistry } from "@/integrations/anthropic-claude-code/registry"
 import { ClaudeCodeUsageClient, toAccountUsage } from "@/integrations/anthropic-claude-code/usage"
 import { ClaudeCodeModelId, claudeCodeDefaultModelId, claudeCodeModels, type ModelInfo } from "@/shared/api"
 import type { AccountUsageData } from "@/shared/ExtensionMessage"
-import { ClineStorageMessage } from "@/shared/messages/content"
+import type { DocumentInputLimits } from "@/shared/messages/attached-documents"
+import { ClineStorageMessage, type HostedToolReplayProtocol } from "@/shared/messages/content"
 import { ApiFormat, ServerTool } from "@/shared/proto/dline/models/metadata"
 import { getClaudeCodeClientVersionResolver } from "../../model-registry/remote/vendors/claude-code-client-version"
 import { type ApiHandler, type ApiHandlerContext, type ApiRequestOptions } from ".."
+import { anthropicMessagesDocumentLimits } from "../document-input-limits"
 import { withRetry } from "../retry"
-import { sanitizeAnthropicMessages } from "../transform/anthropic-format"
 import { type ApiStream } from "../transform/stream"
-import { handleAnthropicMessagesApiStreamResponse, mergeAnthropicServerTools } from "../utils/messages_api_support"
-
-/**
- * Effort levels the Messages API accepts for adaptive thinking.
- *
- * Derived from the SDK request type so a future level is a compile error here
- * rather than a rejected request at runtime.
- */
-type AdaptiveThinkingEffort = NonNullable<NonNullable<MessageCreateParamsStreaming["output_config"]>["effort"]>
-
-/** How one request asks the model for reasoning. */
-interface ClaudeCodeReasoning {
-	/** Whether reasoning output was actually requested. */
-	enabled: boolean
-	/** Whether the model uses effort-based adaptive thinking. */
-	adaptive: boolean
-	/** The `thinking` request field, or undefined to omit it. */
-	thinking?: MessageCreateParamsStreaming["thinking"]
-	/** The `output_config` request field, or undefined to omit it. */
-	outputConfig?: { effort: AdaptiveThinkingEffort }
-}
+import { streamAnthropicMessagesEndpoint } from "../utils/anthropic-messages-endpoint"
+import { createAnthropicClient } from "./anthropic/client-factory"
+import { buildClaudeCodeIdentity, type ClaudeCodeIdentity } from "./anthropic/identity"
+import { resolveAnthropicReasoning } from "./anthropic/reasoning"
+import { buildAnthropicMessagesRequest, prepareAnthropicMessages } from "./anthropic/request-builder"
+import { ClaudeCodeSubscriptionTransport } from "./anthropic/transport"
 
 /**
  * Claude Code subscription provider.
@@ -74,19 +46,13 @@ export class ClaudeCodeHandler implements ApiHandler {
 		return this.ctx.profile.id
 	}
 	private get modelId() {
-		return this.ctx.profile.modelId || ""
+		return resolveProfileModelId(this.ctx.profile)
 	}
 	private get modelInfo() {
 		return this.ctx.profile.modelInfo as ModelInfo | undefined
 	}
 	private get baseUrl() {
 		return this.ctx.profile.baseUrl
-	}
-	private get reasoningEffort() {
-		return this.config?.reasoning?.effort
-	}
-	private get thinkingBudgetTokens() {
-		return this.config?.reasoning?.thinkingBudget ?? 0
 	}
 
 	/** This handler always speaks the Anthropic Messages protocol. */
@@ -101,6 +67,15 @@ export class ClaudeCodeHandler implements ApiHandler {
 	 */
 	supportsServerTool(tool: ServerTool): boolean {
 		return tool === ServerTool.WEB_SEARCH || tool === ServerTool.WEB_FETCH
+	}
+
+	/** Hosted calls this endpoint ran must come back verbatim for the model to keep their results. */
+	getHostedToolReplayProtocol(): HostedToolReplayProtocol {
+		return "anthropic_messages"
+	}
+
+	getDocumentInputLimits(): DocumentInputLimits | undefined {
+		return anthropicMessagesDocumentLimits(this.getModel().info)
 	}
 
 	/**
@@ -118,111 +93,10 @@ export class ClaudeCodeHandler implements ApiHandler {
 	 *
 	 * Unlike the anthropic provider, where this is an opt-in disguise, the
 	 * subscription endpoint requires it: the token is only accepted from a
-	 * caller presenting itself as the Claude Code client. Sending the request
-	 * anyway without a User-Agent or attribution block would trade a local,
-	 * explainable failure for a remote 401 that names the wrong cause.
+	 * caller presenting itself as the Claude Code client.
 	 */
-	private async buildIdentity(
-		messages: readonly BillingAttributionMessage[],
-	): Promise<{ systemBlocks: Array<{ type: "text"; text: string }>; headers: Record<string, string> }> {
-		const clientVersion = (await getClaudeCodeClientVersionResolver().resolve()).version
-		try {
-			return {
-				systemBlocks: [buildBillingAttributionBlock({ messages, clientVersion })],
-				headers: buildClaudeCodeClientHeaders(clientVersion),
-			}
-		} catch (error) {
-			throw new Error(
-				`Claude Code client identity could not be built, so the subscription request was not sent: ${
-					error instanceof Error ? error.message : String(error)
-				}`,
-			)
-		}
-	}
-
-	/**
-	 * Whether upstream rejected the request because of the credential itself.
-	 *
-	 * Only 401 qualifies. A 403 is a decision about what the account may do,
-	 * which a new token cannot change, so refreshing would hide the real
-	 * reason behind an unrelated failure.
-	 */
-	private isUnauthorized(error: unknown): boolean {
-		return typeof error === "object" && error !== null && (error as { status?: unknown }).status === 401
-	}
-
-	/**
-	 * Decide how this request asks for reasoning.
-	 *
-	 * Recent Claude models take an effort level through adaptive thinking and
-	 * reject an explicit token budget, while earlier ones only understand the
-	 * budget. Sending the wrong shape is rejected outright, so the model's own
-	 * declared thinking mode selects the branch.
-	 */
-	private resolveReasoning(apiModelId: string, modelInfo: ModelInfo): ClaudeCodeReasoning {
-		const budgetTokens = this.thinkingBudgetTokens
-		const requested = this.config?.reasoning?.enableThinking ?? Boolean(this.reasoningEffort || budgetTokens > 0)
-		const disableRequested = this.config?.reasoning?.enableThinking === false || this.reasoningEffort === "none"
-		const thinking = modelInfo.capabilities?.thinking
-		// An unset display is omitted so the API default applies.
-		const display = resolveClaudeThinkingDisplay(this.config?.reasoning?.display)
-		const displayField = display ? { display } : {}
-
-		if (thinking?.supported === true && thinking.mode === "effort") {
-			const required = !canDisableClaudeAdaptiveThinking(apiModelId)
-			const adaptive = resolveClaudeOpusAdaptiveThinking(this.reasoningEffort, budgetTokens)
-			const enabled =
-				required ||
-				(!disableRequested &&
-					(requested || isClaudeAdaptiveThinkingEnabledByDefault(apiModelId) || adaptive?.enabled === true))
-			if (!enabled) {
-				return {
-					enabled: false,
-					adaptive: true,
-					thinking: disableRequested && !required ? { type: "disabled" as const } : undefined,
-				}
-			}
-			const supportedEfforts = thinking.effortLevels ?? []
-			const effort = (
-				adaptive?.effort === "xhigh" && !supportedEfforts.includes("xhigh") && supportedEfforts.includes("max")
-					? "max"
-					: adaptive?.effort
-			) as AdaptiveThinkingEffort | undefined
-			return {
-				enabled: true,
-				adaptive: true,
-				thinking: { type: "adaptive" as const, ...displayField },
-				outputConfig: effort ? { effort } : undefined,
-			}
-		}
-
-		const enabled = requested && (modelInfo.capabilities?.supportsReasoning ?? false) && budgetTokens > 0
-		return {
-			enabled,
-			adaptive: false,
-			thinking: enabled ? { type: "enabled" as const, budget_tokens: budgetTokens, ...displayField } : undefined,
-		}
-	}
-
-	/**
-	 * Choose the tool policy for a request that declares tools.
-	 *
-	 * A model that rejects forcing fails the whole request rather than degrading,
-	 * so its own declaration decides this. Manual extended thinking cannot be
-	 * combined with a forced choice either, which leaves the API default.
-	 * `tool_choice: any` only admits client tools, so forcing it while a hosted
-	 * tool is merged would make that tool unreachable.
-	 */
-	private resolveToolChoice(
-		model: { id: string; info: ModelInfo },
-		reasoning: ClaudeCodeReasoning,
-		hostedServerToolsOn: boolean,
-	) {
-		if (hostedServerToolsOn || !resolveForcedToolUseSupport(model.id, model.info.capabilities)) {
-			return { type: "auto" as const }
-		}
-		if (!reasoning.enabled) return { type: "any" as const }
-		return undefined
+	private buildIdentity(messages: readonly BillingAttributionMessage[]): Promise<ClaudeCodeIdentity> {
+		return buildClaudeCodeIdentity({ policy: "required", messages })
 	}
 
 	/**
@@ -238,16 +112,19 @@ export class ClaudeCodeHandler implements ApiHandler {
 			return this.client
 		}
 		this.clientAccessToken = accessToken
-		this.client = new Anthropic({
-			// A subscription token is a bearer credential, not an API key; sending
-			// it as `x-api-key` is rejected.
-			apiKey: null,
-			authToken: accessToken,
-			maxRetries: 0,
-			...(this.baseUrl ? { baseURL: this.baseUrl } : {}),
-			fetch: providerFetch,
-		})
+		this.client = createAnthropicClient({ kind: "bearer", token: accessToken }, { baseUrl: this.baseUrl })
 		return this.client
+	}
+
+	/**
+	 * Force a credential refresh after upstream rejected the token, then bind a client to the result.
+	 *
+	 * The registry may already have rotated the credential for another caller, so the refreshed token is read
+	 * back rather than assumed.
+	 */
+	private async renewClient(): Promise<Anthropic> {
+		await getClaudeCodeProfileSessionRegistry().forceRefresh(this.profileId)
+		return this.ensureClient(await this.resolveAccessToken())
 	}
 
 	@withRetry()
@@ -258,103 +135,32 @@ export class ClaudeCodeHandler implements ApiHandler {
 		options?: ApiRequestOptions,
 	): ApiStream {
 		const accessToken = await this.resolveAccessToken()
-		const client = this.ensureClient(accessToken)
+		const transport = new ClaudeCodeSubscriptionTransport(this.ensureClient(accessToken), () => this.renewClient())
 		const model = this.getModel()
 
-		const promptCacheOn = model.info.capabilities?.supportsPromptCache ?? false
-		const anthropicMessages = sanitizeAnthropicMessages(messages, promptCacheOn)
+		const anthropicMessages = prepareAnthropicMessages(messages, model.info, options)
 		const identity = await this.buildIdentity(anthropicMessages)
-
-		const reasoning = this.resolveReasoning(model.id, model.info)
-		const localToolsOn = tools !== undefined && tools.length > 0
-		const requestTools = mergeAnthropicServerTools(tools, options?.serverTools)
-		const hostedServerToolsOn = (options?.serverTools?.length ?? 0) > 0
-
-		const maxOutputTokens =
-			options?.generation?.purpose === "compaction"
-				? options.generation.maxOutputTokens
-				: model.info.capabilities?.maxTokens || 8192
-
-		const requestBody: MessageCreateParamsStreaming & Record<string, unknown> = {
+		const requestBody = buildAnthropicMessagesRequest({
 			model: model.id,
-			max_tokens: maxOutputTokens,
-			// "Thinking isn't compatible with temperature, top_p, or top_k modifications
-			// as well as forced tool use." Adaptive models reject temperature outright.
-			temperature: reasoning.adaptive || reasoning.enabled ? undefined : 0,
-			// The attribution block leads the system array, matching real client traffic.
-			// It carries no cache_control of its own, so the breakpoint stays on the
-			// system prompt and a new task can reuse the cached prefix.
-			system: [
-				...identity.systemBlocks,
-				{
-					type: "text" as const,
-					text: systemPrompt,
-					...(promptCacheOn ? { cache_control: { type: "ephemeral" as const } } : {}),
-				},
-			],
+			modelInfo: model.info,
+			systemPrompt,
+			systemPrefix: identity.systemBlocks,
 			messages: anthropicMessages,
-			stream: true,
-			...(reasoning.thinking ? { thinking: reasoning.thinking } : {}),
-			...(requestTools ? { tools: requestTools } : {}),
-			...(localToolsOn ? { tool_choice: this.resolveToolChoice(model, reasoning, hostedServerToolsOn) } : {}),
-		}
-		if (reasoning.outputConfig) {
-			requestBody.output_config = reasoning.outputConfig
-		}
+			reasoning: resolveAnthropicReasoning(model.info.capabilities, this.config?.reasoning),
+			tools,
+			options,
+			forcedToolChoice: "model_declared",
+		})
 
-		const stream = await this.openStream(client, requestBody, identity.headers)
-
-		for await (const chunk of handleAnthropicMessagesApiStreamResponse(stream)) {
+		for await (const chunk of streamAnthropicMessagesEndpoint({
+			messages: requestBody.messages,
+			openStream: (continuationMessages) =>
+				transport.open({ ...requestBody, messages: continuationMessages }, identity.headers),
+		})) {
 			// A subscription is billed by plan, not per request, so reporting a
 			// token-derived cost here would invent a charge the user never incurs.
 			yield chunk.type === "usage" ? { ...chunk, totalCost: 0 } : chunk
 		}
-	}
-
-	/**
-	 * Open the response stream, recovering once from a rejected credential.
-	 *
-	 * Expiry is predicted from the stored lifetime, so a token revoked early
-	 * still looks valid and upstream answers 401. Retrying is safe only here,
-	 * before any event has been yielded: once the stream has produced output,
-	 * a second request would duplicate what the caller already consumed.
-	 */
-	private async openStream(
-		client: Anthropic,
-		requestBody: MessageCreateParamsStreaming & Record<string, unknown>,
-		headers: Record<string, string>,
-	): Promise<AsyncIterable<BetaRawMessageStreamEvent>> {
-		try {
-			return await this.postMessage(client, requestBody, headers)
-		} catch (error) {
-			if (!this.isUnauthorized(error)) throw error
-			// The registry may already have rotated the credential for another
-			// caller, so the refreshed token is read back rather than assumed.
-			await getClaudeCodeProfileSessionRegistry().forceRefresh(this.profileId)
-			const renewed = this.ensureClient(await this.resolveAccessToken())
-			return this.postMessage(renewed, requestBody, headers)
-		}
-	}
-
-	/**
-	 * Send one request through the beta namespace, which posts to
-	 * `/v1/messages?beta=true`.
-	 *
-	 * Several declared betas are beta-API features, so the stable route would
-	 * not serve what the beta set asks for. The SDK renders `betas` into the
-	 * `anthropic-beta` header, keeping route and header from drifting apart.
-	 */
-	private postMessage(
-		client: Anthropic,
-		requestBody: MessageCreateParamsStreaming & Record<string, unknown>,
-		headers: Record<string, string>,
-	): Promise<AsyncIterable<BetaRawMessageStreamEvent>> {
-		return (
-			client.beta.messages.create as unknown as (
-				params: MessageCreateParamsStreaming & Record<string, unknown>,
-				options: { headers: Record<string, string> },
-			) => Promise<AsyncIterable<BetaRawMessageStreamEvent>>
-		)({ ...requestBody, betas: buildClaudeCodeBetas() }, { headers })
 	}
 
 	/**
@@ -401,7 +207,9 @@ export class ClaudeCodeHandler implements ApiHandler {
 	 * over a catalog entry so a newer capability set is not downgraded.
 	 */
 	private buildModelInfo(modelId: string): ModelInfo {
-		const overrides = this.modelInfo?.capabilities ? { capabilities: this.modelInfo.capabilities } : {}
-		return buildEffectiveModelInfo(modelId, claudeCodeModels[modelId], overrides)
+		const matchingInfo = this.modelInfo?.id === modelId ? this.modelInfo : undefined
+		return buildEffectiveModelInfo(modelId, matchingInfo ?? claudeCodeModels[modelId], {
+			capabilities: this.config?.capabilities,
+		})
 	}
 }

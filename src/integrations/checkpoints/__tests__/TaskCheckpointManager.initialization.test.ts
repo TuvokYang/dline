@@ -12,8 +12,15 @@ import type { UiMessage } from "@/shared/ExtensionMessage"
 
 vi.unmock("@integrations/checkpoints")
 
+import { createCheckpointReferenceSet } from "@shared/checkpoints"
+import { encodeCheckpointWorkspaceRef } from "../checkpoint-references"
 import { createTaskCheckpointManager } from "../index"
 import type { CanonicalCheckpointPort } from "../types"
+
+/** The canonical reference a single-root workspace binds to its shadow commit. */
+function singleRootWorkspaceRef(hash: string): string {
+	return encodeCheckpointWorkspaceRef(createCheckpointReferenceSet([hash], ["C:/workspace"]))
+}
 
 type CreateCheckpointTracker = (
 	taskId: string,
@@ -216,10 +223,14 @@ describe("TaskCheckpointManager checkpoint initialization", () => {
 		expect(messages).toEqual([
 			expect.objectContaining({
 				say: "checkpoint_created",
-				lastCheckpointHash: baselineHash,
+				lastCheckpointHash: [baselineHash],
+				checkpointWorkspaceRoots: ["C:/workspace"],
 			}),
 		])
-		expect(harness.updateClineMessage).toHaveBeenCalledWith(0, { lastCheckpointHash: baselineHash })
+		expect(harness.updateClineMessage).toHaveBeenCalledWith(0, {
+			lastCheckpointHash: [baselineHash],
+			checkpointWorkspaceRoots: ["C:/workspace"],
+		})
 		expect(harness.flushMessageUpdate).toHaveBeenCalledWith(0)
 		expect(harness.updateClineMessage.mock.invocationCallOrder[0]).toBeLessThan(
 			harness.flushMessageUpdate.mock.invocationCallOrder[0],
@@ -230,12 +241,12 @@ describe("TaskCheckpointManager checkpoint initialization", () => {
 		// The row is already on screen without a hash; only republishing it
 		// lets the view offer the file restore for this checkpoint.
 		expect(harness.publishMessage).toHaveBeenCalledExactlyOnceWith(
-			expect.objectContaining({ ts: 42, say: "checkpoint_created", lastCheckpointHash: baselineHash }),
+			expect.objectContaining({ ts: 42, say: "checkpoint_created", lastCheckpointHash: [baselineHash] }),
 		)
 		expect(harness.flushMessageUpdate.mock.invocationCallOrder[0]).toBeLessThan(
 			harness.publishMessage.mock.invocationCallOrder[0],
 		)
-		expect(capture).toHaveBeenCalledExactlyOnceWith({ messageTs: 42, workspaceRef: baselineHash })
+		expect(capture).toHaveBeenCalledExactlyOnceWith({ messageTs: 42, workspaceRef: singleRootWorkspaceRef(baselineHash) })
 	})
 
 	it("keeps a durable checkpoint hash when republishing its row fails", async () => {
@@ -255,9 +266,12 @@ describe("TaskCheckpointManager checkpoint initialization", () => {
 
 		await harness.manager.saveCheckpoint()
 
-		expect(messages[0]).toMatchObject({ lastCheckpointHash: "baseline-hash" })
+		expect(messages[0]).toMatchObject({ lastCheckpointHash: ["baseline-hash"] })
 		expect(harness.postStateToWebview).toHaveBeenCalled()
-		expect(capture).toHaveBeenCalledExactlyOnceWith({ messageTs: 42, workspaceRef: "baseline-hash" })
+		expect(capture).toHaveBeenCalledExactlyOnceWith({
+			messageTs: 42,
+			workspaceRef: singleRootWorkspaceRef("baseline-hash"),
+		})
 	})
 
 	it("durably binds a completion checkpoint before posting its updated UI state", async () => {
@@ -276,8 +290,13 @@ describe("TaskCheckpointManager checkpoint initialization", () => {
 
 		await harness.manager.saveCheckpoint(true, completionMessage.ts)
 
-		expect(messages[0]).toEqual(expect.objectContaining({ lastCheckpointHash: completionHash }))
-		expect(harness.updateClineMessage).toHaveBeenCalledWith(0, { lastCheckpointHash: completionHash })
+		expect(messages[0]).toEqual(
+			expect.objectContaining({ lastCheckpointHash: [completionHash], checkpointWorkspaceRoots: ["C:/workspace"] }),
+		)
+		expect(harness.updateClineMessage).toHaveBeenCalledWith(0, {
+			lastCheckpointHash: [completionHash],
+			checkpointWorkspaceRoots: ["C:/workspace"],
+		})
 		expect(harness.flushMessageUpdate).toHaveBeenCalledWith(0)
 		expect(harness.flushMessageUpdate.mock.invocationCallOrder[0]).toBeLessThan(
 			harness.postStateToWebview.mock.invocationCallOrder[0],
@@ -303,7 +322,7 @@ describe("TaskCheckpointManager checkpoint initialization", () => {
 				commit: vi.fn().mockResolvedValue(checkpointHash),
 			} as unknown as CheckpointTracker
 			let nextMessageTs = 100
-			const hashesObservedByPost: Array<string | undefined> = []
+			const hashesObservedByPost: Array<string[] | undefined> = []
 			const postStateToWebview = vi.fn(async () => {
 				const reopenedAtPost = await UIMessage.open(taskId)
 				hashesObservedByPost.push(reopenedAtPost.getAll().at(-1)?.lastCheckpointHash)
@@ -337,8 +356,8 @@ describe("TaskCheckpointManager checkpoint initialization", () => {
 			await manager.saveCheckpoint()
 
 			const reopened = await UIMessage.open(taskId)
-			expect(reopened.getAll().at(-1)?.lastCheckpointHash).toBe(checkpointHash)
-			expect(hashesObservedByPost.at(-1)).toBe(checkpointHash)
+			expect(reopened.getAll().at(-1)?.lastCheckpointHash).toEqual([checkpointHash])
+			expect(hashesObservedByPost.at(-1)).toEqual([checkpointHash])
 		} finally {
 			if (previousDocsDir === undefined) delete process.env.DLINE_DOCS_DIR
 			else process.env.DLINE_DOCS_DIR = previousDocsDir
@@ -369,7 +388,7 @@ describe("TaskCheckpointManager checkpoint initialization", () => {
 
 		releaseCommit("baseline-hash")
 		await waiting
-		expect(messages[0]).toMatchObject({ lastCheckpointHash: "baseline-hash" })
+		expect(messages[0]).toMatchObject({ lastCheckpointHash: ["baseline-hash"] })
 	})
 
 	it("starts only one baseline and never rejects a waiter when the commit fails", async () => {

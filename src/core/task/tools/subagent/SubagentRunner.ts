@@ -7,6 +7,7 @@ import { createIdentityFactory, type IdentityFactory } from "@core/api/transform
 import type { ApiProviderStreamChunk } from "@core/api/transform/stream"
 import { createStreamNormalizer, normalizeApiStream } from "@core/api/transform/stream-identity-normalizer"
 import { ApiUsageAccumulator } from "@core/api/transform/usage-accumulator"
+import { declaredAnthropicHostedToolNames } from "@core/api/utils/messages_api_support"
 import { parseAssistantMessageV2, ToolUse } from "@core/assistant-message"
 import { discoverAvailableSkills } from "@core/context/instructions/user-instructions/skills"
 import { createImageProfileResolverForProfile } from "@core/image-generation/runtime"
@@ -22,7 +23,9 @@ import {
 	ClineStorageMessage,
 	ClineTextContentBlock,
 	ClineUserContent,
+	projectInternalMessagesForProvider,
 } from "@shared/messages"
+import { splitResumedHostedResults } from "@shared/messages/hosted-tool-deferral"
 import { resolvePromptProfile } from "@shared/resolve-prompt-profile"
 import { Logger } from "@shared/services/Logger"
 import { ClineDefaultTool, ClineTool } from "@shared/tools"
@@ -40,7 +43,8 @@ import { ApiFormat, ServerTool } from "@/shared/proto/dline/models/metadata"
 import { calculateApiCostAnthropic } from "@/utils/cost"
 import { isNativeToolCallingConfig, isNextGenModelFamily } from "@/utils/model-utils"
 import { canonicalizeAttemptCompletionParams } from "../attempt-completion-params"
-import { ServerToolLifecycle } from "../ServerToolLifecycle"
+import { partitionDeferredHostedCalls } from "../deferred-hosted-rows"
+import { type DeferredServerToolCall, ServerToolLifecycle } from "../ServerToolLifecycle"
 import { DefaultToolHandlerState, type ToolHandlerState } from "../state/ToolHandlerState"
 import { ToolExecutorCoordinator } from "../ToolExecutorCoordinator"
 import { ToolValidator } from "../ToolValidator"
@@ -87,6 +91,8 @@ const MAX_HOSTED_SERVER_TOOL_RECOVERIES = 2
 const HOSTED_SERVER_TOOL_STREAM_FAILED_REASON = "Provider stream failed before this hosted tool call returned a result."
 const HOSTED_SERVER_TOOL_STREAM_ENDED_REASON = "Provider stream ended before this hosted tool call returned a result."
 const HOSTED_SERVER_TOOL_CANCELLED_REASON = "Subagent run cancelled before this hosted tool call returned a result."
+const HOSTED_SERVER_TOOL_DEFERRED_ABANDONED_REASON =
+	"The provider never ran this deferred hosted call: no later request of the subagent could resume it."
 const INITIAL_STREAM_RETRY_DELAYS_MS = [5_000, 8_000, 11_000, 14_000, 17_000] as const
 const MAX_INITIAL_STREAM_ATTEMPTS = INITIAL_STREAM_RETRY_DELAYS_MS.length + 1
 const SUBAGENT_COMPLETION_CALL_EXAMPLE =
@@ -812,6 +818,8 @@ export class SubagentRunner {
 			contextUsagePercentage: 0,
 		}
 		let activeHostedServerToolLifecycle: ServerToolLifecycle | undefined
+		// Hosted calls a response deferred behind its client tools; the next request of this run may resume them.
+		let deferredHostedCalls: DeferredServerToolCall[] = []
 		let activeProviderExecution: ProviderExecutionCompletion | undefined
 
 		try {
@@ -1044,6 +1052,9 @@ export class SubagentRunner {
 				let assistantText = ""
 				let assistantTextSignature: string | undefined
 				let requestId: string | undefined
+				// Completed provider-hosted calls (web search/fetch results) the endpoint needs back
+				// verbatim on later requests; without them the subagent loses what it just looked up.
+				const hostedToolBlocks: ClineAssistantContent[] = []
 				const countedHostedServerToolIds = new Set<string>()
 				// Both a provider-sent `failed` phase and a force-close from
 				// `finalizeOpen` emit through this same callback, so collecting here
@@ -1093,6 +1104,17 @@ export class SubagentRunner {
 					})
 				})
 
+				const deferral = partitionDeferredHostedCalls(deferredHostedCalls, conversation, {
+					protocol: api.getHostedToolReplayProtocol?.(),
+					replayHostedTools: declaredAnthropicHostedToolNames(requestWebSearchRoutingPlan?.serverTools),
+				})
+				deferredHostedCalls = []
+				activeHostedServerToolLifecycle.adopt(deferral.abandoned)
+				await activeHostedServerToolLifecycle.failDeferred(HOSTED_SERVER_TOOL_DEFERRED_ABANDONED_REASON)
+				activeHostedServerToolLifecycle.adopt(deferral.carried)
+				for (const call of deferral.carried) countedHostedServerToolIds.add(call.dlineTid)
+				const carriedTraceIds = new Map(deferral.carried.map((call) => [call.functionId, call.dlineTid]))
+
 				const providerRequestRound = this.baseConfig.providerRequestRounds?.admit({ source: "subagent" })
 				const providerExecution = new ProviderExecutionCompletion(providerRequestRound)
 				activeProviderExecution = providerExecution
@@ -1118,6 +1140,7 @@ export class SubagentRunner {
 						assistantText = ""
 						assistantTextSignature = undefined
 						requestId = undefined
+						hostedToolBlocks.length = 0
 					},
 					onProgress,
 					() =>
@@ -1126,7 +1149,12 @@ export class SubagentRunner {
 							contextWindow: stats.contextWindow,
 						}),
 				)
-				const stream = normalizeApiStream(providerStream, createStreamNormalizer(this.identityFactory))
+				const stream = normalizeApiStream(
+					providerStream,
+					createStreamNormalizer(this.identityFactory, {
+						carriedServerToolTraceId: (functionId) => carriedTraceIds.get(functionId),
+					}),
+				)
 
 				try {
 					for await (const chunk of stream) {
@@ -1136,7 +1164,9 @@ export class SubagentRunner {
 								roundUsageReported = true
 								roundCacheUsageReported ||=
 									chunk.cacheWriteTokens !== undefined || chunk.cacheReadTokens !== undefined
-								roundUsageAccumulator.apply(chunk)
+								// Providers may resend cumulative usage snapshots; only the
+								// accumulator's delta is new and may be added to running totals.
+								const { delta: usageDelta } = roundUsageAccumulator.apply(chunk)
 								if (chunk.thoughtsTokenCount !== undefined) {
 									roundThoughtsReported = true
 									const thoughtsTokens = Math.max(0, Math.floor(chunk.thoughtsTokenCount))
@@ -1148,14 +1178,14 @@ export class SubagentRunner {
 								if (chunk.totalCost !== undefined && Number.isFinite(chunk.totalCost) && chunk.totalCost >= 0) {
 									roundTotalCost = Math.max(roundTotalCost ?? 0, chunk.totalCost)
 								}
-								stats.inputTokens += chunk.inputTokens || 0
-								stats.outputTokens += chunk.outputTokens || 0
-								stats.cacheWriteTokens += chunk.cacheWriteTokens || 0
-								stats.cacheReadTokens += chunk.cacheReadTokens || 0
-								requestUsage.inputTokens += chunk.inputTokens || 0
-								requestUsage.outputTokens += chunk.outputTokens || 0
-								requestUsage.cacheWriteTokens += chunk.cacheWriteTokens || 0
-								requestUsage.cacheReadTokens += chunk.cacheReadTokens || 0
+								stats.inputTokens += usageDelta.inputTokens
+								stats.outputTokens += usageDelta.outputTokens
+								stats.cacheWriteTokens += usageDelta.cacheWriteTokens
+								stats.cacheReadTokens += usageDelta.cacheReadTokens
+								requestUsage.inputTokens += usageDelta.inputTokens
+								requestUsage.outputTokens += usageDelta.outputTokens
+								requestUsage.cacheWriteTokens += usageDelta.cacheWriteTokens
+								requestUsage.cacheReadTokens += usageDelta.cacheReadTokens
 								requestUsage.totalTokens =
 									requestUsage.inputTokens +
 									requestUsage.outputTokens +
@@ -1203,6 +1233,7 @@ export class SubagentRunner {
 								break
 							case "server_tool": {
 								requestId = requestId ?? chunk.provider_metadata?.response_id
+								if (chunk.replay) hostedToolBlocks.push(chunk.replay)
 								await activeHostedServerToolLifecycle.consume(chunk)
 								break
 							}
@@ -1293,6 +1324,7 @@ export class SubagentRunner {
 				}
 
 				await activeHostedServerToolLifecycle.finalizeOpen(HOSTED_SERVER_TOOL_STREAM_ENDED_REASON)
+				deferredHostedCalls = activeHostedServerToolLifecycle.deferredCalls()
 
 				// A clean end needs no notice: the provider already surfaced the failed
 				// call inside the response the model just produced, so the model has
@@ -1363,6 +1395,10 @@ export class SubagentRunner {
 				if (thinkingBlock) {
 					assistantContent.push({ ...thinkingBlock })
 				}
+				// Hosted calls ran before the visible answer, so they precede it in the stored turn.
+				const hostedTurn = splitResumedHostedResults(hostedToolBlocks)
+				assistantContent.unshift(...hostedTurn.resumed)
+				assistantContent.push(...hostedTurn.others)
 				if (assistantText.trim().length > 0) {
 					onProgress({ event: { kind: "assistant_message", phase: "final", text: assistantText } })
 					assistantContent.push({
@@ -1646,6 +1682,8 @@ export class SubagentRunner {
 			try {
 				activeProviderExecution?.finish()
 				await activeHostedServerToolLifecycle?.finalizeOpen(HOSTED_SERVER_TOOL_STREAM_ENDED_REASON)
+				// The run makes no further request, so nothing can resume what is still deferred.
+				await activeHostedServerToolLifecycle?.failDeferred(HOSTED_SERVER_TOOL_DEFERRED_ABANDONED_REASON)
 			} finally {
 				this.activeApiAbort = undefined
 				this.activeRetryAbortController = undefined
@@ -1898,14 +1936,20 @@ export class SubagentRunner {
 				model: modelId,
 				source: "subagent" as const,
 			}
+			// Same endpoint projection as the parent task: hosted blocks only reach the protocol that
+			// can replay them, and attached PDFs only reach endpoints that read them natively.
+			const providerConversation = projectInternalMessagesForProvider(truncatedConversation, {
+				hostedToolReplayProtocol: api.getHostedToolReplayProtocol?.(),
+				documentInput: api.getDocumentInputLimits?.(),
+			})
 			await recordProviderAdapterInput(roundContext, {
 				systemPrompt,
-				messages: truncatedConversation,
+				messages: providerConversation,
 				tools: nativeTools,
 			})
 			const providerStream = recordProviderAdapterOutput(
 				roundContext,
-				api.createMessage(systemPrompt, truncatedConversation, nativeTools, {
+				api.createMessage(systemPrompt, providerConversation, nativeTools, {
 					serverTools: webSearchRoutingPlan.serverTools,
 					retryOwner: "subagent",
 				}),

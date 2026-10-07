@@ -1,6 +1,7 @@
 import { setTimeout as setTimeoutPromise } from "node:timers/promises"
 import { findCatalogModel } from "@core/model-registry/provider-model-lookup"
 import { ModelInfo, openRouterDefaultModelId, openRouterDefaultModelInfo } from "@shared/api"
+import { resolveProfileModelId } from "@shared/providers/profile-model-info"
 import { shouldSkipReasoningForModel } from "@utils/model-utils"
 import axios from "axios"
 import OpenAI from "openai"
@@ -30,7 +31,7 @@ export class OpenRouterHandler implements ApiHandler {
 		return this.ctx.profile.apiKey
 	}
 	private get modelId() {
-		return this.ctx.profile.modelId || ""
+		return resolveProfileModelId(this.ctx.profile)
 	}
 	private get modelInfo() {
 		return this.ctx.profile.modelInfo as ModelInfo | undefined
@@ -42,7 +43,7 @@ export class OpenRouterHandler implements ApiHandler {
 		return this.config?.reasoning?.effort
 	}
 	private get thinkingBudgetTokens() {
-		return this.config?.reasoning?.thinkingBudget ?? 0
+		return this.config?.reasoning?.thinkingBudget
 	}
 
 	private ensureClient(): OpenAI {
@@ -81,6 +82,7 @@ export class OpenRouterHandler implements ApiHandler {
 			this.config?.openRouterProviderSorting,
 			tools,
 			this.ctx.enableParallelToolCalling,
+			this.config?.reasoning,
 		)
 
 		let didOutputUsage = false
@@ -237,12 +239,15 @@ export class OpenRouterHandler implements ApiHandler {
 	}
 
 	getModel(): { id: string; info: ModelInfo } {
-		const modelId = this.modelId || openRouterDefaultModelId
-		// The discovered catalog wins, then the profile's stored info, then the built-in default.
-		const catalogModelInfo = findCatalogModel(OPENROUTER_PROVIDER_ID, modelId)
+		const modelId = this.modelId || this.modelInfo?.id || openRouterDefaultModelId
+		// The runtime Profile contains the reconciled declaration and explicit overrides.
+		const matchingInfo = this.modelInfo?.id === modelId ? this.modelInfo : undefined
 		return {
 			id: modelId,
-			info: catalogModelInfo || this.modelInfo || openRouterDefaultModelInfo,
+			info:
+				matchingInfo ??
+				findCatalogModel(OPENROUTER_PROVIDER_ID, modelId) ??
+				(this.modelId ? { id: modelId } : openRouterDefaultModelInfo),
 		}
 	}
 }

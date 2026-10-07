@@ -1,6 +1,8 @@
+import { estimateContextValueBreakdown } from "@core/context/context-management/context-window-projection"
 import { serializeDurableToolResult, toolResultReplayOf } from "../../DurableToolResult"
 import type { ToolTerminalManifest, ToolTerminalPhase } from "../../kernel"
 import type { ConversationJournal, JournalEntry, TaskPayloadStore } from "../../stores"
+import { readAttachedDocuments } from "../../stores/payload/AttachedDocuments"
 import { decodeTaskPayload, encodeTaskPayload } from "../../stores/payload/TaskPayloadCodec"
 import type {
 	ToolInvocationEnvelope,
@@ -88,10 +90,23 @@ async function terminalResult(
 
 const TOKEN_ESTIMATE_BYTES = 4
 
-/** Conservative text-token estimate for the terminal content added to the next request. */
-function estimateManifestTokens(manifest: ToolTerminalManifestEnvelope): number {
+/**
+ * Conservative token estimate for the terminal content added to the next request.
+ *
+ * Attached PDFs are charged with the request estimator, which counts whichever of the
+ * native document or its extracted text the endpoint may receive.
+ */
+async function estimateManifestTokens(
+	manifest: ToolTerminalManifestEnvelope,
+	payloads: Pick<TaskPayloadStore, "read">,
+): Promise<number> {
 	const bytes = manifest.results.reduce((total, result) => total + Buffer.byteLength(result.content, "utf8"), 0)
-	return bytes === 0 ? 0 : Math.ceil(bytes / TOKEN_ESTIMATE_BYTES)
+	const textTokens = bytes === 0 ? 0 : Math.ceil(bytes / TOKEN_ESTIMATE_BYTES)
+	const documents = await readAttachedDocuments(
+		payloads,
+		manifest.results.flatMap((result) => result.documentPayloadRefs ?? []),
+	)
+	return documents.length === 0 ? textTokens : textTokens + estimateContextValueBreakdown(documents).totalTokens
 }
 
 /** Persist the kernel's ordered terminal view and report its projected request growth. */
@@ -109,7 +124,7 @@ export async function materializeToolTerminalManifest(input: {
 		const payload = decodeTaskPayload<ToolTerminalManifestEnvelope>(await input.payloads.read(existing.payloadRef))
 		if (payload.kind !== "tool_terminal_manifest" || payload.turnId !== input.manifest.turnId)
 			throw new Error("InvalidToolTerminalManifestPayload")
-		return estimateManifestTokens(payload)
+		return estimateManifestTokens(payload, input.payloads)
 	}
 
 	const rawResults = new Map<string, JournalPayloadEntry>()
@@ -158,6 +173,7 @@ export async function materializeToolTerminalManifest(input: {
 			content: result.content,
 			...(result.failed === undefined ? {} : { failed: result.failed }),
 			...(feedbackRef === undefined ? {} : { feedbackRef }),
+			...(result.documentPayloadRefs?.length ? { documentPayloadRefs: result.documentPayloadRefs } : {}),
 		})
 	}
 
@@ -173,5 +189,5 @@ export async function materializeToolTerminalManifest(input: {
 		source: "tool",
 		causation: { turnId: input.manifest.turnId },
 	})
-	return estimateManifestTokens(envelope)
+	return estimateManifestTokens(envelope, input.payloads)
 }

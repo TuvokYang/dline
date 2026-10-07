@@ -1,4 +1,6 @@
+import { normalizeStoredCheckpointMessage } from "@shared/checkpoints"
 import type { UiMessage } from "@/shared/ExtensionMessage"
+import { InstanceDatabase, type InstanceLayout, instanceDatabaseExists } from "./instance"
 import { readLegacyUiMessages } from "./messages/importLegacyUiMessages"
 import { openUiMessageRows, UI_MESSAGE_READER } from "./messages/openUiMessageRows"
 import type { UiMessageRowStore } from "./messages/UiMessageRowStore"
@@ -26,15 +28,15 @@ class RowSource implements WindowSource {
 	) {}
 
 	async read(start: number, end: number): Promise<UiMessage[]> {
-		return (await this.rows.readRange(start, end)).map((record) => record.message)
+		return (await this.rows.readRange(start, end)).map((record) => normalizeStoredCheckpointMessage(record.message))
 	}
 
 	async findByTimestamp(timestamp: number): Promise<UiMessage | undefined> {
-		return (await this.rows.findLastByTimestamp(timestamp))?.message
+		return normalizeRow((await this.rows.findLastByTimestamp(timestamp))?.message)
 	}
 
 	async findLastAsk(interactionId: string): Promise<UiMessage | undefined> {
-		return (await this.rows.findLastAskByInteractionId(interactionId))?.message
+		return normalizeRow((await this.rows.findLastAskByInteractionId(interactionId))?.message)
 	}
 
 	close(): Promise<void> {
@@ -82,12 +84,17 @@ export class UIMessageWindowReader {
 
 	private constructor(private readonly source: WindowSource) {}
 
-	static async open(instanceRoot: string): Promise<UIMessageWindowReader> {
-		const rows = await openUiMessageRows(instanceRoot, UI_MESSAGE_READER)
+	/** Opening never creates the instance directory or `messages.db`; absent storage reads as empty. */
+	static async open(layout: InstanceLayout): Promise<UIMessageWindowReader> {
+		if (!(await instanceDatabaseExists(layout, InstanceDatabase.Messages))) {
+			const legacy = await readLegacyUiMessages(layout.root)
+			return new UIMessageWindowReader(new LegacySource(legacy?.messages ?? []))
+		}
+		const rows = await openUiMessageRows(layout.root, UI_MESSAGE_READER)
 		try {
 			const count = await rows.count()
 			if (count > 0) return new UIMessageWindowReader(new RowSource(rows, count))
-			const legacy = await readLegacyUiMessages(instanceRoot)
+			const legacy = await readLegacyUiMessages(layout.root)
 			if (!legacy) return new UIMessageWindowReader(new RowSource(rows, 0))
 			await rows.close()
 			return new UIMessageWindowReader(new LegacySource(legacy.messages))
@@ -143,4 +150,8 @@ export class UIMessageWindowReader {
 	private assertOpen(): void {
 		if (this.closed) throw new Error("UIMessageWindowReader is closed")
 	}
+}
+
+function normalizeRow(message: UiMessage | undefined): UiMessage | undefined {
+	return message ? normalizeStoredCheckpointMessage(message) : undefined
 }

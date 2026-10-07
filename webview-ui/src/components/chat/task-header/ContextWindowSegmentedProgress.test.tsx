@@ -218,6 +218,46 @@ describe("ContextWindowSegmentedProgress", () => {
 		}
 	})
 
+	it("reveals the settled round as Staged once the settle animation ends", () => {
+		vi.useFakeTimers()
+		try {
+			const { rerender } = render(<ContextWindowSegmentedProgress snapshot={snapshot()} />)
+			rerender(
+				<ContextWindowSegmentedProgress
+					snapshot={snapshot({ revision: 2, phase: "stable", receivingTokens: 0, stagedTokens: 12_000 })}
+				/>,
+			)
+
+			act(() => vi.advanceTimersByTime(720))
+
+			expect(screen.getByTestId("context-window-segmented-progress")).toHaveAttribute("data-motion", "none")
+			const staged = screen.getByTestId("context-window-segment-staged")
+			expect(staged).toHaveAttribute("data-tokens", "12000")
+			expect(staged.style.width).toBe("12%")
+			expect(staged.style.opacity).toBe("1")
+		} finally {
+			vi.useRealTimers()
+		}
+	})
+
+	it("keeps Staged visible when a stable snapshot only refreshes the pending estimate", () => {
+		const { rerender } = render(
+			<ContextWindowSegmentedProgress
+				snapshot={snapshot({ revision: 2, phase: "stable", receivingTokens: 0, stagedTokens: 12_000 })}
+			/>,
+		)
+		rerender(
+			<ContextWindowSegmentedProgress
+				snapshot={snapshot({ revision: 3, phase: "stable", receivingTokens: 0, stagedTokens: 13_000 })}
+			/>,
+		)
+
+		expect(screen.getByTestId("context-window-segmented-progress")).toHaveAttribute("data-motion", "none")
+		const staged = screen.getByTestId("context-window-segment-staged")
+		expect(staged).toHaveAttribute("data-tokens", "13000")
+		expect(staged.style.width).toBe("13%")
+	})
+
 	it("animates temporary segments outward during rollback", () => {
 		const { rerender } = render(<ContextWindowSegmentedProgress snapshot={snapshot()} />)
 

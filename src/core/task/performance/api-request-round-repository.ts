@@ -18,6 +18,7 @@ import type {
 export interface TaskApiRequestRoundRepositoryOptions {
 	readonly taskId: string
 	readonly location?: string
+	readonly readOnly?: boolean
 	readonly legacySource?: LegacyUiMessageSource
 	readonly clock?: () => number
 }
@@ -164,7 +165,7 @@ export class TaskApiRequestRoundRepository implements ApiRequestRoundRepository 
 		this.closePromise = (async () => {
 			try {
 				await this.writeSequence
-				await this.initialization
+				await this.initialization?.catch(() => undefined)
 				const results = await Promise.allSettled([this.collection?.close(), this.legacyCollection?.close()])
 				const failure = results.find((result): result is PromiseRejectedResult => result.status === "rejected")
 				if (failure) throw failure.reason
@@ -183,6 +184,7 @@ export class TaskApiRequestRoundRepository implements ApiRequestRoundRepository 
 			this.collection = await createApiRequestRoundCollection(this.options)
 			try {
 				this.legacyCollection = await createApiRequestRoundLegacyImportCollection(this.options)
+				if (this.options.readOnly) return
 				const result = await importApiRequestRoundLegacyUsage({
 					taskId: this.options.taskId,
 					exactStore: this.collection,
@@ -247,6 +249,7 @@ export class TaskApiRequestRoundRepository implements ApiRequestRoundRepository 
 
 	private assertWritable(): void {
 		if (this.closing || this.closed) throw new Error("API request round repository is closed")
+		if (this.options.readOnly) throw new Error("API request round repository is read-only")
 	}
 }
 

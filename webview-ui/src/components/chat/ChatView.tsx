@@ -17,6 +17,7 @@ import { useShowNavbar } from "@/context/PlatformContext"
 import { FileServiceClient, TaskServiceClient, UiServiceClient } from "@/services/grpc-client"
 import { composeSubmission, newComposerDocumentId, provenanceForRecalledDraft } from "@/services/input-semantics/paste-provenance"
 import { useInputSemanticCatalog } from "@/services/input-semantics/useInputSemanticCatalog"
+import { getTaskViewKey } from "@/services/task-messages"
 import { createInteractionDispatchGate } from "@/task-interaction/dispatch-gate"
 import { InteractionHost } from "@/task-interaction/InteractionHost"
 import { isPresentationKind } from "@/task-interaction/renderer-registry"
@@ -31,6 +32,7 @@ import {
 	isActiveInteractionSynchronized,
 	type PendingSuccessorDraftTransfer,
 } from "@/task-interaction/types"
+import { HistoryTaskOpeningView } from "../history/HistoryTaskOpeningView"
 import { Navbar } from "../menu/Navbar"
 import { TaskActivityNavigationProvider } from "./activity/TaskActivityNavigationContext"
 import { DEFAULT_TASK_ACTIVITY_FILTERS, type TaskActivityFilters, TaskActivityPanel } from "./activity/TaskActivityPanel"
@@ -87,6 +89,10 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 		taskViewState,
 		currentTaskItem,
 		taskTitleMessage,
+		historyTaskOpening,
+		openHistoryTask,
+		dismissHistoryTaskOpening,
+		navigateToHistory,
 	} = useExtensionState()
 	const [contentTab, setContentTab] = useState<TaskContentTab>("chat")
 	const [focusedActivityId, setFocusedActivityId] = useState<string>()
@@ -108,17 +114,36 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 	// The canonical view is the authority on whether a task is open at all; the
 	// history item only supplies the id while the view is still catching up.
 	const taskId = taskViewState?.taskId ?? (task ? currentTaskItem?.id : undefined)
+	const taskInstanceId = taskViewState?.taskInstanceId
+	const taskKey = getTaskViewKey(taskViewState)
+	const [locallyClosedTaskKey, setLocallyClosedTaskKey] = useState<string>()
+	const currentTaskClosedForDeletion =
+		locallyClosedTaskKey !== undefined && (taskKey === locallyClosedTaskKey || taskKey === undefined)
+	const visibleTask = currentTaskClosedForDeletion ? undefined : task
 	const contextCompactionActive = taskViewState?.contextCompaction?.active === true
-	const { activeCount } = useTaskActivities(taskId)
+	const { activeCount } = useTaskActivities(taskId, taskInstanceId)
+	useEffect(() => {
+		if (locallyClosedTaskKey && taskKey && locallyClosedTaskKey !== taskKey) {
+			setLocallyClosedTaskKey(undefined)
+		}
+	}, [locallyClosedTaskKey, taskKey])
+	// Navigation belongs to the task the reader is looking at. Promoting a
+	// history display into the task's runtime starts a new opening of the same
+	// task, and the Activities Retry that caused it must not send the reader
+	// back to the Work tab. Closing and reopening still resets it, because the
+	// task id passes through undefined in between.
 	useEffect(() => {
 		setContentTab("chat")
 		setFocusedActivityId(undefined)
 		setActivityFilters(DEFAULT_TASK_ACTIVITY_FILTERS)
+	}, [taskId])
+	// A pending command belongs to the opening that sent it.
+	useEffect(() => {
 		compactCommandPendingRef.current = false
 		setCompactCommandPending(false)
 		forceTruncateTaskRpcPendingRef.current = false
 		setForceTruncateTaskRpcPending(false)
-	}, [taskId])
+	}, [taskId, taskInstanceId])
 	const handleContentTabChange = useCallback((nextTab: TaskContentTab) => {
 		setContentTab(nextTab)
 		if (nextTab === "chat") setFocusedActivityId(undefined)
@@ -149,7 +174,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 	const lastApiReqTotalTokens = lastApiReqTotalTokensFromState
 
 	// Use custom hooks for state management
-	const chatState = useChatState(messages, taskId)
+	const chatState = useChatState(messages, taskKey)
 	// Retained input the user typed while the task was busy. The backend owns it;
 	// this only projects it and forwards the user's changes.
 	const inputQueue = useInputQueue(taskId)
@@ -203,9 +228,9 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 		ownerRevision: draftRevisionRef.current,
 		...(draftSemanticInput === undefined ? {} : { semanticInput: draftSemanticInput }),
 	}
-	const taskSessionRef = useRef({ taskId, epoch: 0 })
-	if (taskSessionRef.current.taskId !== taskId) {
-		taskSessionRef.current = { taskId, epoch: taskSessionRef.current.epoch + 1 }
+	const taskSessionRef = useRef({ taskId, taskInstanceId, epoch: 0 })
+	if (taskSessionRef.current.taskId !== taskId || taskSessionRef.current.taskInstanceId !== taskInstanceId) {
+		taskSessionRef.current = { taskId, taskInstanceId, epoch: taskSessionRef.current.epoch + 1 }
 	}
 	const sessionEpoch = taskSessionRef.current.epoch
 	const currentTaskIdRef = useRef(taskId)
@@ -257,16 +282,13 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 		if (!pendingSuccessorDraft || !taskId || taskId === pendingSuccessorDraft.sourceTaskId) {
 			return
 		}
-		const successorStateStable =
-			currentTaskItem?.id === taskId &&
-			taskViewState?.taskId === taskId &&
-			taskTitleMessage?.text === pendingSuccessorDraft.context
+		const successorStateStable = taskViewState?.taskId === taskId && taskTitleMessage?.text === pendingSuccessorDraft.context
 		if (!successorStateStable) {
 			return
 		}
 		restoreDraft(pendingSuccessorDraft.draft)
 		setPendingSuccessorDraft(undefined)
-	}, [currentTaskItem?.id, pendingSuccessorDraft, restoreDraft, taskId, taskTitleMessage?.text, taskViewState?.taskId])
+	}, [pendingSuccessorDraft, restoreDraft, taskId, taskTitleMessage?.text, taskViewState?.taskId])
 
 	useEffect(() => {
 		const handleCopy = async (e: ClipboardEvent) => {
@@ -503,6 +525,17 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 
 	// Use message handlers hook (must come after scrollBehavior so we can pass disableAutoScrollRef)
 	const messageHandlers = useMessageHandlers(messages, chatState, scrollBehavior.disableAutoScrollRef, taskId)
+	const handleTaskClose = useCallback(async () => {
+		// Retire the opening request before Close so a late RPC failure cannot reopen feedback.
+		dismissHistoryTaskOpening()
+		await messageHandlers.handleTaskCloseButtonClick()
+	}, [dismissHistoryTaskOpening, messageHandlers.handleTaskCloseButtonClick])
+	const handleDeleteConfirmed = useCallback(() => {
+		// Deletion remains backend-owned, but the confirmed Task must leave the
+		// presentation immediately rather than waiting for lock and disk cleanup.
+		dismissHistoryTaskOpening()
+		if (taskKey) setLocallyClosedTaskKey(taskKey)
+	}, [dismissHistoryTaskOpening, taskKey])
 	const submitInteractionDraft = useCallback(
 		async (draft: InteractionDraft): Promise<AcceptedInteractionSettlement | undefined> => {
 			if (!taskViewState?.input.enterAction || !interactionSynchronized) {
@@ -681,15 +714,30 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 	)
 
 	const placeholderText = useMemo(() => {
-		const text = task ? "Type a message..." : "Type your task here..."
+		const text = visibleTask ? "Type a message..." : "Type your task here..."
 		return text
-	}, [task])
+	}, [visibleTask])
+
+	if (historyTaskOpening) {
+		return (
+			<ChatLayout isHidden={isHidden}>
+				<HistoryTaskOpeningView
+					onBack={() => {
+						dismissHistoryTaskOpening()
+						navigateToHistory()
+					}}
+					onRetry={() => openHistoryTask(historyTaskOpening.target)}
+					opening={historyTaskOpening}
+				/>
+			</ChatLayout>
+		)
+	}
 
 	return (
 		<ChatLayout isHidden={isHidden}>
 			<div className="flex flex-col flex-1 overflow-hidden">
 				{showNavbar && <Navbar />}
-				{task ? (
+				{visibleTask ? (
 					<TaskSection
 						apiMetrics={displayedApiMetrics}
 						compactTaskDisabled={compactTaskDisabled}
@@ -697,8 +745,9 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 						forceTruncateTaskDisabled={forceTruncateTaskDisabled}
 						lastApiReqTotalTokens={lastApiReqTotalTokens}
 						lastProgressMessageText={lastProgressMessageText}
-						messageHandlers={messageHandlers}
+						messageHandlers={{ ...messageHandlers, handleTaskCloseButtonClick: handleTaskClose }}
 						onCompactTask={canRenderCompactTask ? submitCompactTask : undefined}
+						onDeleteConfirmed={handleDeleteConfirmed}
 						onForceTruncateTask={canRenderForceTruncate ? submitForceTruncateTask : undefined}
 						selectedModelInfo={{
 							contextWindow: selectedModelInfo.capabilities?.contextWindow,
@@ -707,7 +756,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 							supportsImages: selectedModelInfo.capabilities?.supportsImages || false,
 						}}
 						showFocusChainPlaceholder={showFocusChainPlaceholder}
-						task={task}
+						task={visibleTask}
 						taskId={taskViewState?.taskId}
 					/>
 				) : (
@@ -720,7 +769,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 						version={version}
 					/>
 				)}
-				{task && (
+				{visibleTask && (
 					<>
 						<TaskActivityTabs activeCount={activeCount} onChange={handleContentTabChange} value={contentTab} />
 						{contentTab === "chat" ? (
@@ -732,7 +781,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 									modifiedMessages={modifiedMessages}
 									onFollowupOptionSelect={submitFollowupOption}
 									scrollBehavior={scrollBehavior}
-									task={task}
+									task={visibleTask}
 								/>
 							</TaskActivityNavigationProvider>
 						) : taskId ? (
@@ -741,13 +790,14 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 								focusActivityId={focusedActivityId}
 								onFiltersChange={handleActivityFiltersChange}
 								taskId={taskId}
+								taskInstanceId={taskInstanceId}
 							/>
 						) : null}
 					</>
 				)}
 			</div>
 			<footer className="bg-(--vscode-sidebar-background) flex flex-col gap-[0.375rem] mt-3" style={{ gridRow: "2" }}>
-				{task && taskViewState ? (
+				{visibleTask && taskViewState ? (
 					<InteractionHost
 						dispatch={dispatchInteraction}
 						draft={interactionDraft}
@@ -758,16 +808,16 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 						showTimeline={false}
 						view={taskViewState}
 					/>
-				) : task && !taskViewState ? (
+				) : visibleTask && !taskViewState ? (
 					<div role="alert">Task interaction state is unavailable</div>
 				) : null}
 				<AutoApproveBar />
 				<InputSection
-					canQueueInput={queueCanDeliver}
+					canQueueInput={visibleTask ? queueCanDeliver : false}
 					chatState={chatState}
-					clineAsk={taskViewState?.activeInteraction?.taskAsk}
+					clineAsk={visibleTask ? taskViewState?.activeInteraction?.taskAsk : undefined}
 					draft={interactionDraft}
-					enabled={task ? taskInputEnabled : undefined}
+					enabled={visibleTask ? taskInputEnabled : undefined}
 					inputQueue={inputQueue.entries}
 					messageHandlers={messageHandlers}
 					onCancelQueuedInput={inputQueue.cancelEdit}
@@ -778,7 +828,11 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 					onRemoveQueuedInput={inputQueue.remove}
 					onReorderQueuedInput={inputQueue.reorder}
 					onSubmit={
-						task ? (taskViewState?.activeInteraction ? submitInteractionDraft : submitOrdinaryTaskDraft) : undefined
+						visibleTask
+							? taskViewState?.activeInteraction
+								? submitInteractionDraft
+								: submitOrdinaryTaskDraft
+							: undefined
 					}
 					onToggleQueuedMode={inputQueue.toggleMode}
 					placeholderText={placeholderText}
@@ -788,7 +842,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 					shouldDisableFilesAndImages={
 						shouldDisableFilesAndImages ||
 						Boolean(
-							task &&
+							visibleTask &&
 								(!taskViewState ||
 									!interactionSynchronized ||
 									Boolean(
@@ -799,9 +853,12 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 						)
 					}
 					submissionIdentity={
-						taskViewState?.activeInteraction?.interactionId ?? `draft-${interactionDraft.ownerRevision ?? "unowned"}`
+						visibleTask
+							? (taskViewState?.activeInteraction?.interactionId ??
+								`draft-${interactionDraft.ownerRevision ?? "unowned"}`)
+							: `draft-${interactionDraft.ownerRevision ?? "unowned"}`
 					}
-					submissionScope={taskId}
+					submissionScope={visibleTask ? taskId : undefined}
 				/>
 			</footer>
 		</ChatLayout>

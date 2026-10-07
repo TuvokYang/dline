@@ -149,6 +149,5 @@ describe("adaptCanonicalTaskView reply input", () => {
 
 		expect(view.activeInteraction).toBeUndefined()
 		expect(view.input.enabled).toBe(false)
-		expect(view.diagnostic).toMatchObject({ code: "interaction_anchor_missing" })
 	})
 })

@@ -1,0 +1,64 @@
+---
+title: 遥测系统
+description: Dline 遥测的分层结构：从采集 API、领域记录器，到受同意控制的提供方、运行时诊断管线和诊断包。
+---
+
+import { Aside } from "@astrojs/starlight/components"
+
+遥测代码位于 `src/services/telemetry/`。它的设计目标是：生产方从激活的第一行代码起就能记录事件，而同意、内容策略和投递方式集中在一处决定。面向用户的同意说明见[遥测与诊断](/zh-cn/troubleshooting/telemetry/)。
+
+## 分层
+
+| 层 | 位置 | 职责 |
+|---|---|---|
+| 调用入口 | `index.ts`、`TelemetryService.ts` | 全扩展使用的 `telemetryService.capture*()` 合同 |
+| 领域记录器 | `events/` | 任务、工具、UI、用户、工作区和 Hook 事件；事件目录；错误与运行时记录器 |
+| 埋点工具 | `instrumentation/` | 耗时记录、性能域和诊断事件 |
+| 生产方合同 | `service/pipeline-port.ts` | 生产方与记录管线之间唯一的端口 |
+| 投递 | `service/provider-registry.ts`、`providers/` | 分发到 OpenTelemetry、PostHog 和旧版适配器 |
+| 本地日志 | `journal/` | 以 OTLP 形态写入的 JSONL 会话日志 |
+| 运行时诊断 | `runtime/` | 事件总线、生命周期、内容策略、传输、导出和分析 |
+
+## 调用入口
+
+`telemetryService` 是一个代理：导入模块时不会构造服务，第一次调用时同步创建，因此 `capture*` 始终是普通同步调用。提供方和宿主元数据异步挂载；在它们就绪之前，提供方注册表把信号放入有界缓冲区，就绪后按顺序重放。
+
+`TelemetryService` 有意保持精简，只负责公开的 `capture*` 名称，其余逻辑都委托出去。关闭之后，迟到的调用只会到达一个没有提供方的服务，因此不会产生副作用，也不会重建单例。
+
+## 生产方与管线端口
+
+埋点工具、领域记录器和运行时管线只通过 `pipeline-port.ts` 交互：
+
+- 生产方只描述上报的是哪类事实；队列优先级和淘汰策略属于管线内部。
+- 管线建立之前记录的信号进入有界的启动缓冲区，满时淘汰最旧的一条。
+- 安装管线不会自动冲刷该缓冲区。是否接纳启动早期的事实属于同意决策，由生命周期负责。
+- 生产方是否记录由一个谓词决定，因此同意设置变化后无需重启扩展宿主即可生效。
+
+`category-policy.ts` 用于单独开关某些噪声较大的事件类别，它与同意无关：同意决定遥测是否存在。
+
+## 提供方
+
+提供方注册表持有全部提供方，并隔离每一次调用，因此某个厂商 SDK 抛错或卡住不会影响调用方。OpenTelemetry 提供方通过 `OpenTelemetryExporterFactory` 导出日志、指标和链路。默认端点是本机采集器 `http://127.0.0.1:4318`，组织可以通过远程配置覆盖。网络请求遵循[网络与代理](/zh-cn/troubleshooting/networking-and-proxies/)中的共享传输规则。
+
+## 运行时诊断
+
+`runtime/lifecycle.ts` 把 **Allow error reporting** 选项转换为运行或停止的诊断管线，是唯一决定诊断数据能否写盘或联网的地方。
+
+- `runtime-event-bus.ts` 是唯一的有界缓冲区，按优先级淘汰。
+- 生命周期定时把总线中的事件排入各个输出端：会话日志和 OTLP 日志传输。关闭时先冲刷已记录的事件，再关闭输出端。
+- `transports/session-journal.ts` 每行追加一条 OTLP 日志记录，标准采集器可以用 `filelog` receiver 读取该目录。写入是尽力而为，失败只计数，不向上抛出。
+- `content-policy.ts` 是属性集合的边界：拒绝携带提示词、命令、输出或凭据的字段，并跟踪每个属性的基数。
+- `export/` 负责 **Export diagnostic bundle** 背后的诊断包 ZIP，写入前会再次脱敏。
+- `analysis/`、`performance/` 和 `reproduction/` 分别包含根因分析器、带阈值策略的运行时采样器，以及诊断使用的场景重放。
+
+<Aside type="caution">
+生产方不得记录提示词、命令输出、文件内容、token 或请求头。新增属性时要在内容策略中显式声明，并优先使用有界枚举而不是自由文本，以保证基数可控。
+</Aside>
+
+## 新增事件
+
+1. 在 `events/catalog.ts` 中登记事件，并从所属领域记录器上报，不要直接在 UI 或 Controller 代码中调用。
+2. 属性保持结构化且有界；依赖内容策略，而不是临时手动脱敏。
+3. 为记录器编写聚焦测试；事件跨越新边界时，同时扩展架构或同意边界测试。
+
+相关测试包括 `telemetry-architecture.test.ts`、`TelemetryService.test.ts`、`pipeline-port.test.ts`、`runtime/__tests__/consent-boundary.test.ts`、`lifecycle.drain.test.ts`、`session-journal.test.ts` 和 `bundle-builder.test.ts`。

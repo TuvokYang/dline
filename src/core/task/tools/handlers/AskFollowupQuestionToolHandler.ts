@@ -1,5 +1,4 @@
 import { getPrompt, renderPrompt } from "@core/prompts/i18n"
-import { processFilesIntoText } from "@integrations/misc/extract-text"
 import { showSystemNotification } from "@integrations/notifications"
 import { findLastIndex, parsePartialArrayString } from "@shared/array"
 import { UiAsk, UiAskQuestion } from "@shared/ExtensionMessage"
@@ -8,11 +7,11 @@ import { telemetryService } from "@/services/telemetry"
 import { ToolUse } from "../../../assistant-message"
 import { formatResponse } from "../../../prompts/responses"
 import type { InteractionOutcome } from "../../interaction/InteractionProtocol"
+import { type ToolHandlerResult, withToolDocuments } from "../ToolExecutionResult"
 import type { IPartialBlockHandler, IToolHandler } from "../ToolExecutorCoordinator"
-import type { ToolResponse } from "../ToolResponse"
 import { interactionId, interactionTurnId, type TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
-import { sayFeedbackOnce } from "../utils/UserFeedbackUtils"
+import { attachToolFeedbackFiles, sayFeedbackOnce } from "../utils/UserFeedbackUtils"
 
 export class AskFollowupQuestionToolHandler implements IToolHandler, IPartialBlockHandler {
 	readonly name = ClineDefaultTool.ASK
@@ -32,7 +31,7 @@ export class AskFollowupQuestionToolHandler implements IToolHandler, IPartialBlo
 		await uiHelpers.ask("followup" as UiAsk, JSON.stringify(sharedMessage), true, { existingTs: block.ts }).catch(() => {})
 	}
 
-	async execute(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
+	async execute(config: TaskConfig, block: ToolUse): Promise<ToolHandlerResult> {
 		const question: string | undefined = block.params.question
 		const optionsRaw: string | undefined = block.params.options
 
@@ -78,7 +77,7 @@ export class AskFollowupQuestionToolHandler implements IToolHandler, IPartialBlo
 	}
 
 	/** Consume a follow-up response without replaying notification or presentation setup. */
-	async continueInteraction(config: TaskConfig, block: ToolUse, outcome: InteractionOutcome): Promise<ToolResponse> {
+	async continueInteraction(config: TaskConfig, block: ToolUse, outcome: InteractionOutcome): Promise<ToolHandlerResult> {
 		const optionsRaw: string | undefined = block.params.options
 		const options = parsePartialArrayString(optionsRaw || "[]")
 		const sharedMessage = { question: block.params.question || "", options } satisfies UiAskQuestion
@@ -109,12 +108,10 @@ export class AskFollowupQuestionToolHandler implements IToolHandler, IPartialBlo
 		}
 		await sayFeedbackOnce(config, "messageResponse", text, images, followupFiles, outcome)
 
-		// Process any attached files
-		let fileContentString = ""
-		if (followupFiles && followupFiles.length > 0) {
-			fileContentString = await processFilesIntoText(followupFiles)
-		}
-
-		return formatResponse.toolResult(`<feedback>\n${text}\n</feedback>`, images, fileContentString)
+		const attachments = await attachToolFeedbackFiles(followupFiles)
+		return withToolDocuments(
+			formatResponse.toolResult(`<feedback>\n${text}\n</feedback>`, images, attachments.text),
+			attachments.documents,
+		)
 	}
 }

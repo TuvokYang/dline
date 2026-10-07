@@ -2,46 +2,26 @@ import { LiteLLMModelInfo, ModelInfo, OcaModelInfo } from "@shared/api"
 import {
 	OpenRouterModelInfo,
 	LiteLLMModelInfo as ProtoLiteLLMModelInfo,
+	ModelInfo as ProtoModelInfo,
 	OcaModelInfo as ProtoOcaModelInfo,
 	OpenAiCompatibleModelInfo as ProtoOpenAiCompatibleModelInfo,
 } from "@shared/proto/dline/models"
 import { ThinkingConfig } from "@shared/proto/dline/models/metadata"
 
-/**
- * Convert protobuf ThinkingConfig to application ThinkingConfig
- * Converts empty arrays to undefined for optional fields
- */
+/** Preserve declarations without deriving support or mode from a budget value. */
 function convertThinkingConfig(protoConfig: ThinkingConfig | undefined): ThinkingConfig | undefined {
-	if (!protoConfig) {
-		return undefined
-	}
-
-	return {
-		supported: true,
-		mode: protoConfig.maxBudget ? "budget" : "effort",
-		maxBudget: protoConfig.maxBudget ?? undefined,
-		effortLevels: protoConfig.effortLevels ?? [],
-	}
+	return protoConfig
+		? { ...protoConfig, effortLevels: protoConfig.effortLevels === undefined ? undefined : [...protoConfig.effortLevels] }
+		: undefined
 }
 
-/**
- * Convert application ThinkingConfig to protobuf ThinkingConfig
- * Converts undefined to empty arrays for proto fields
- */
 function toProtobufThinkingConfig(appConfig: ThinkingConfig | undefined): ThinkingConfig | undefined {
-	if (!appConfig) {
-		return undefined
-	}
-
-	return ThinkingConfig.create({
-		maxBudget: appConfig.maxBudget,
-	})
+	return appConfig ? ThinkingConfig.create(appConfig) : undefined
 }
 
-/**
- * Convert protobuf OpenRouterModelInfo to application ModelInfo
- */
+/** Read the complete declaration, falling back to the legacy projection only when absent. */
 export function fromProtobufModelInfo(protoInfo: OpenRouterModelInfo): ModelInfo {
+	if (protoInfo.modelInfo) return ProtoModelInfo.fromPartial(protoInfo.modelInfo)
 	return {
 		id: "", // id resolved from map key by caller
 		capabilities: {
@@ -61,6 +41,9 @@ export function fromProtobufModelInfo(protoInfo: OpenRouterModelInfo): ModelInfo
 			tiers: protoInfo.tiers.length > 0 ? protoInfo.tiers : undefined,
 		},
 		description: protoInfo.description,
+		name: protoInfo.name,
+		temperature: protoInfo.temperature,
+		apiFormats: protoInfo.apiFormat !== undefined ? [protoInfo.apiFormat] : undefined,
 	}
 }
 
@@ -69,6 +52,11 @@ export function fromProtobufModelInfo(protoInfo: OpenRouterModelInfo): ModelInfo
  */
 export function toProtobufModelInfo(modelInfo: ModelInfo): OpenRouterModelInfo {
 	return OpenRouterModelInfo.create({
+		modelInfo: ProtoModelInfo.fromPartial(modelInfo),
+		name: modelInfo.name,
+		temperature: modelInfo.temperature,
+		apiFormat: modelInfo.apiFormats?.[0],
+		currency: modelInfo.pricing?.currency,
 		maxTokens: modelInfo.capabilities?.maxTokens,
 		contextWindow: modelInfo.capabilities?.contextWindow,
 		supportsImages: modelInfo.capabilities?.supportsImages,
@@ -171,7 +159,7 @@ export function fromProtobufOcaModelInfo(protoInfo: ProtoOcaModelInfo): OcaModel
 export function fromProtobufModels(protoModels: Record<string, OpenRouterModelInfo>): Record<string, ModelInfo> {
 	const result: Record<string, ModelInfo> = {}
 	for (const [key, value] of Object.entries(protoModels)) {
-		result[key] = fromProtobufModelInfo(value)
+		result[key] = { ...fromProtobufModelInfo(value), id: key }
 	}
 	return result
 }

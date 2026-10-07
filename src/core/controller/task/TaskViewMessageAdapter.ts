@@ -168,9 +168,6 @@ export function adaptCanonicalTaskView(
 		phase: taskViewPhase(view),
 		stateRevision: view.revision,
 		activeInteraction,
-		...(dialog && !anchor
-			? { diagnostic: { code: "interaction_anchor_missing" as const, interactionId: dialog.interactionId } }
-			: {}),
 		...(view.compaction?.status === "scheduled" || view.compaction?.status === "running"
 			? { contextCompaction: { active: true as const, operationId: view.compaction.compactionId } }
 			: {}),

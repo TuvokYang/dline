@@ -36,11 +36,10 @@ describe("message store open boundaries", () => {
 	it("imports a UI JSONL file into messages.db once and keeps it byte-for-byte as .migrated", async () => {
 		const taskDir = await createTaskDir("canonical-ui")
 		const filePath = path.join(taskDir, "ui_messages.jsonl")
-		const original =
-			[
-				JSON.stringify({ ts: 100, type: "say", say: "task", text: "task" }),
-				JSON.stringify({ ts: 200, type: "say", say: "reasoning", text: "thinking", partial: false }),
-			].join("\n") + "\n"
+		const original = `${[
+			JSON.stringify({ ts: 100, type: "say", say: "task", text: "task" }),
+			JSON.stringify({ ts: 200, type: "say", say: "reasoning", text: "thinking", partial: false }),
+		].join("\n")}\n`
 		await writeFile(filePath, original, "utf8")
 
 		const store = await UIMessage.open("canonical-ui")
@@ -58,16 +57,39 @@ describe("message store open boundaries", () => {
 		expect((await stat(migratedPath)).mtimeMs).toBe(migratedStat.mtimeMs)
 	})
 
+	it("imports the complete row of a timestamp over partial streaming rows around it", async () => {
+		const taskDir = await createTaskDir("partial-ui")
+		await writeFile(
+			path.join(taskDir, "ui_messages.jsonl"),
+			`${[
+				JSON.stringify({ ts: 100, type: "say", say: "reasoning", text: "partial", partial: true }),
+				JSON.stringify({ ts: 100, type: "say", say: "reasoning", text: "final", partial: false }),
+				JSON.stringify({ ts: 100, type: "say", say: "reasoning", text: "late partial", partial: true }),
+				JSON.stringify({ ts: 200, type: "say", say: "text", text: "tail" }),
+				JSON.stringify({ ts: 300, type: "say", say: "reasoning", text: "interrupted", partial: true }),
+			].join("\n")}\n`,
+			"utf8",
+		)
+
+		const store = await UIMessage.open("partial-ui")
+		expect(store.getAll()).toEqual([
+			expect.objectContaining({ ts: 100, text: "final", partial: false }),
+			expect.objectContaining({ ts: 200, text: "tail" }),
+			expect.objectContaining({ ts: 300, text: "interrupted", partial: true }),
+		])
+		await store.close()
+	})
+
 	it("imports duplicate UI timestamps once while keeping the last occurrence", async () => {
 		const taskDir = await createTaskDir("duplicate-ui")
 		const filePath = path.join(taskDir, "ui_messages.jsonl")
 		await writeFile(
 			filePath,
-			[
-				JSON.stringify({ ts: 100, type: "say", say: "reasoning", text: "partial", partial: true }),
+			`${[
+				JSON.stringify({ ts: 100, type: "say", say: "reasoning", text: "old", partial: false }),
 				JSON.stringify({ ts: 100, type: "say", say: "reasoning", text: "final", partial: false }),
 				JSON.stringify({ ts: 200, type: "say", say: "text", text: "tail" }),
-			].join("\n") + "\n",
+			].join("\n")}\n`,
 			"utf8",
 		)
 

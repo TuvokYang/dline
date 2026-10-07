@@ -1,5 +1,3 @@
-import { ANTHROPIC_THINKING_DISPLAY_OPTIONS } from "@shared/utils/reasoning-support"
-
 /**
  * Selector options for the Anthropic `thinking.display` request field.
  *
@@ -9,10 +7,8 @@ import { ANTHROPIC_THINKING_DISPLAY_OPTIONS } from "@shared/utils/reasoning-supp
  */
 export const ANTHROPIC_THINKING_DISPLAY_SELECTOR_OPTIONS = [
 	{ value: "none", label: "None" },
-	...ANTHROPIC_THINKING_DISPLAY_OPTIONS.map((option) => ({
-		value: option,
-		label: option.charAt(0).toUpperCase() + option.slice(1),
-	})),
+	{ value: "summarized", label: "Summarized" },
+	{ value: "omitted", label: "Omitted" },
 ] as const
 
 export const ANTHROPIC_THINKING_DISPLAY_DESCRIPTION =

@@ -186,12 +186,13 @@ e2e(
 			timeout: 90_000,
 		})
 		const commandCard = sidebar.getByTestId("command-card").last()
-		const collapsedCommand = commandCard.getByRole("button", { name: COMMAND, exact: true })
-		await expect(collapsedCommand).toBeVisible()
-		await collapsedCommand.click()
-		const commandOutput = commandCard.getByTestId("command-output-scroll")
-		await expect(commandOutput).toContainText("WORK_DAILY_COMMAND_START")
-		await expect(commandOutput).toContainText("WORK_DAILY_COMMAND_END")
+		await expect(commandCard.getByRole("button", { name: COMMAND, exact: true })).toBeVisible()
+		await expect(commandCard.getByTestId("command-output-summary")).toContainText("WORK_DAILY_COMMAND_END")
+		const commandResult = server
+			.getMockConsumptions(TARGET)[6]
+			.requestToolResults.find((result) => result.callId === "call_daily_command")
+		expect(commandResult?.content).toContain("WORK_DAILY_COMMAND_START")
+		expect(commandResult?.content).toContain("WORK_DAILY_COMMAND_END")
 		await setWorkAutoApproveAction(sidebar, "Execute safe commands", false)
 
 		await sendWorkMessage(sidebar, EXIT_REQUEST)

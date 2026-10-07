@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest"
+import { convertClineStorageToAnthropicMessage } from "@/shared/messages/content"
 import { isForeignReasoningForAnthropic } from "@/shared/messages/reasoning-origin"
 import { MAX_ENCRYPTED_REASONING_ITEMS } from "../reasoning-retention"
 import { StreamResponseHandler } from "../StreamResponseHandler"
@@ -125,6 +126,35 @@ describe("ReasoningHandler reasoning origin shape", () => {
 		expect(isForeignReasoningForAnthropic(persisted(reasonsHandler.getCurrentReasoning()))).toBe(false)
 		expect(isForeignReasoningForAnthropic(persisted(redacted))).toBe(false)
 		expect(redacted.data).toBe("claude-ciphertext")
+	})
+
+	it("keeps a signature-only Anthropic thinking block so it is replayed unmodified", () => {
+		const { reasonsHandler } = createHandler().getHandlers()
+
+		// Anthropic may stream a thinking block whose text is empty and whose signature arrives alone.
+		reasonsHandler.processReasoningDelta({ reasoning: "" })
+		reasonsHandler.processReasoningDelta({ reasoning: "", signature: "claude-signature" })
+
+		const thinking = persisted(reasonsHandler.getCurrentReasoning())
+		expect(thinking).toMatchObject({ type: "thinking", thinking: "", signature: "claude-signature" })
+
+		const replayed = convertClineStorageToAnthropicMessage({
+			role: "assistant",
+			content: [thinking, { type: "text", text: "done" }],
+		})
+		expect(replayed.content).toEqual([
+			{ type: "thinking", thinking: "", signature: "claude-signature" },
+			{ type: "text", text: "done" },
+		])
+	})
+
+	it("still drops reasoning that carries neither text, summary nor signature", () => {
+		const { reasonsHandler } = createHandler().getHandlers()
+
+		reasonsHandler.processReasoningDelta({ reasoning: "" })
+
+		expect(reasonsHandler.hasReceivedReasoning()).toBe(true)
+		expect(reasonsHandler.getCurrentReasoning()).toBeNull()
 	})
 
 	it("records OpenAI Responses encrypted reasoning as foreign to Anthropic", () => {

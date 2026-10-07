@@ -44,8 +44,8 @@ const ModelSwitcher: React.FC<ModelSwitcherProps> = ({ onOpenSettings }) => {
 
 	// A completed Task can remain open and accept another turn even when its
 	// history item or title message is temporarily absent from the state window.
-	const taskId = taskViewState?.taskId ?? currentTaskItem?.id
-	const hasActiveTask = Boolean(taskId) || Boolean(taskTitleMessage)
+	const taskId = taskViewState?.taskId
+	const hasActiveTask = Boolean(taskId)
 	const profileSwitchFlow = useProfileSwitch({ profileSwitch })
 
 	useEffect(() => {

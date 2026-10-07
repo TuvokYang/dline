@@ -1,5 +1,7 @@
+import type { ClineUserAttachedDocumentBlock } from "@shared/messages/content"
 import { serializeDurableToolResult, toolResultReplayOf } from "../../DurableToolResult"
 import type { ConversationJournal, TaskPayloadStore } from "../../stores"
+import { putAttachedDocuments } from "../../stores/payload/AttachedDocuments"
 import { decodeTaskPayload, encodeTaskPayload } from "../../stores/payload/TaskPayloadCodec"
 import type { DialogDraftEnvelope, ToolInvocationEnvelope, ToolResultEnvelope } from "../../stores/payload/TaskPayloadEnvelopes"
 import type { ToolPostCommitDirective } from "../../tools/ToolExecutionResult"
@@ -15,7 +17,12 @@ export interface ProductionToolExecutionService {
 		readonly command: ToolRunCommand
 		readonly invocation: ToolInvocationEnvelope
 		readonly surface: ToolDomainSurface
-	}): Promise<{ readonly content: string; readonly failed?: boolean; readonly postCommit?: ToolPostCommitDirective }>
+	}): Promise<{
+		readonly content: string
+		readonly failed?: boolean
+		readonly documents?: readonly ClineUserAttachedDocumentBlock[]
+		readonly postCommit?: ToolPostCommitDirective
+	}>
 }
 
 export interface ProductionToolAdapterOptions {
@@ -49,9 +56,18 @@ export interface ProductionToolAdapterOptions {
 async function persistResult(
 	options: ProductionToolAdapterOptions,
 	command: ToolRunCommand,
-	result: Omit<ToolResultEnvelope, "kind" | "blockId">,
+	result: Omit<ToolResultEnvelope, "kind" | "blockId" | "documentPayloadRefs"> & {
+		readonly documents?: readonly ClineUserAttachedDocumentBlock[]
+	},
 ): Promise<void> {
-	const envelope: ToolResultEnvelope = { kind: "tool_result", blockId: command.dlineTid, ...result }
+	const { documents, ...outcome } = result
+	const documentPayloadRefs = await putAttachedDocuments(options.payloads, documents)
+	const envelope: ToolResultEnvelope = {
+		kind: "tool_result",
+		blockId: command.dlineTid,
+		...outcome,
+		...(documentPayloadRefs ? { documentPayloadRefs } : {}),
+	}
 	const payloadRef = await options.payloads.put(encodeTaskPayload(envelope))
 	await options.journal.append({
 		operationId: `tool.result:${command.commandId}`,
@@ -116,6 +132,7 @@ export function createProductionToolAdapter(options: ProductionToolAdapterOption
 					await persistResult(options, command, {
 						content: result.content,
 						...(result.failed === undefined ? {} : { failed: result.failed }),
+						...(result.documents === undefined ? {} : { documents: result.documents }),
 					})
 					await persistApprovalFeedback(options, command)
 					if (result.postCommit) await options.publishPostCommit?.({ command, directive: result.postCommit })

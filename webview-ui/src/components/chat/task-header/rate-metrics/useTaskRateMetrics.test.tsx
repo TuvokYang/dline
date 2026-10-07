@@ -1,7 +1,15 @@
 import { type GetTaskRateMetricsResponse, TaskRateMetricsResolution as ProtoResolution } from "@shared/proto/dline/task"
 import { act, renderHook, waitFor } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { type TaskRateMetricsResolution, useTaskRateMetrics } from "./useTaskRateMetrics"
+import {
+	type TaskRateMetricsResolution,
+	type UseTaskRateMetricsOptions,
+	useTaskRateMetrics as useRateMetrics,
+} from "./useTaskRateMetrics"
+
+function useTaskRateMetrics(options: UseTaskRateMetricsOptions) {
+	return useRateMetrics({ taskInstanceId: "open-1", ...options })
+}
 
 const mocks = vi.hoisted(() => ({
 	getTaskRateMetrics: vi.fn(),
@@ -28,6 +36,8 @@ function deferred<T>() {
 function response(activeSeconds: number, bucketMs = 60_000): GetTaskRateMetricsResponse {
 	const bucketEndMs = Math.floor(NOW_MS / bucketMs) * bucketMs
 	return {
+		taskId: "task-1",
+		taskInstanceId: "open-1",
 		points: [
 			{
 				bucketStartMs: bucketEndMs - bucketMs,
@@ -134,6 +144,41 @@ describe("useTaskRateMetrics", () => {
 				maxPoints: 24,
 			}),
 		)
+	})
+
+	it.each(["success", "error"])("isolates a late %s from a previous opening of the same Task", async (settlement) => {
+		const previous = deferred<GetTaskRateMetricsResponse>()
+		const current = deferred<GetTaskRateMetricsResponse>()
+		mocks.getTaskRateMetrics.mockReturnValueOnce(previous.promise).mockReturnValueOnce(current.promise)
+		const { result, rerender } = renderHook(
+			({ taskInstanceId }) => useTaskRateMetrics({ enabled: true, resolution: "minute", taskId: "task-1", taskInstanceId }),
+			{ initialProps: { taskInstanceId: "open-1" } },
+		)
+		rerender({ taskInstanceId: "open-2" })
+		expect(result.current.data).toBeUndefined()
+		expect(result.current.error).toBeUndefined()
+		await act(async () => {
+			if (settlement === "success") previous.resolve(response(1))
+			else previous.reject(new Error("old owner failed"))
+		})
+		expect(result.current.loading).toBe(true)
+		expect(result.current.data).toBeUndefined()
+		expect(result.current.error).toBeUndefined()
+		await act(async () => current.resolve({ ...response(8), taskInstanceId: "open-2" }))
+		expect(result.current.data?.points.some(({ activeSeconds }) => activeSeconds === 8)).toBe(true)
+		expect(mocks.getTaskRateMetrics).toHaveBeenLastCalledWith(expect.objectContaining({ taskInstanceId: "open-2" }))
+	})
+
+	it("does not query without a canonical opening even when a durable Task id exists", () => {
+		renderHook(() => useTaskRateMetrics({ enabled: true, resolution: "minute", taskId: "task-1", taskInstanceId: undefined }))
+		expect(mocks.getTaskRateMetrics).not.toHaveBeenCalled()
+	})
+
+	it("rejects a response tagged with a different Task opening", async () => {
+		mocks.getTaskRateMetrics.mockResolvedValueOnce({ ...response(2), taskInstanceId: "previous-open" })
+		const { result } = renderHook(() => useTaskRateMetrics({ enabled: true, resolution: "minute", taskId: "task-1" }))
+		await waitFor(() => expect(result.current.error).toContain("different Task opening"))
+		expect(result.current.data).toBeUndefined()
 	})
 
 	it("surfaces an RPC error and retries on demand", async () => {

@@ -1,0 +1,43 @@
+---
+title: 网络与代理
+description: 了解 Dline 在 VS Code 中的网络请求走哪条路径、哪些部分例外，以及排查代理和证书问题时应检查什么。
+---
+
+import { Aside } from "@astrojs/starlight/components"
+
+本页说明 Dline 在 VS Code 中发出网络请求的方式，帮助你在企业代理或受限网络中排查连接问题。
+
+## 请求走哪条路径
+
+Dline 的大部分网络请求（包括大多数模型服务商的 API 请求）经过一个共享的网络层。在 VS Code 中，这一层使用 VS Code 扩展宿主提供的 `fetch`，代理与系统证书的处理依赖 VS Code 本身。
+
+因此，排查代理问题时，请先按 VS Code 的[网络配置说明](https://code.visualstudio.com/docs/setup/network)确认编辑器本身能够通过代理访问网络。
+
+<Aside>
+Dline 自身不会读取 VS Code 的 `http.proxy`、`http.proxyStrictSSL` 设置或 `NODE_EXTRA_CA_CERTS` 环境变量。这些设置是否对 Dline 的请求生效，取决于 VS Code 如何处理扩展宿主中的网络请求。
+</Aside>
+
+## 例外情况
+
+以下部分不经过上述共享网络层，需要单独检查：
+
+| 部分 | 网络路径 |
+|---|---|
+| Amazon Bedrock | 使用 AWS SDK 自身的请求处理，Dline 不为其注入代理配置 |
+| 浏览器工具、本地网页搜索与抓取 | 通过浏览器（Puppeteer）访问网页。可在浏览器设置中使用 **Custom Browser Arguments (Optional)** 传入浏览器参数，或开启 **Use remote browser connection** 连接远程浏览器 |
+| MCP：Streamable HTTP | 使用共享网络层 |
+| MCP：SSE | 仅 OAuth 相关的连接使用共享网络层，其余由 MCP SDK 处理 |
+| MCP：stdio | 启动独立进程，网络行为由该进程决定；可在 MCP 配置的 `env` 中为它设置代理环境变量 |
+
+MCP 配置方式参见 [MCP 概览](/zh-cn/mcp/mcp-overview/)。
+
+## 排查步骤
+
+1. **确认编辑器网络正常**：在同一台机器上，VS Code 的其他联网功能（例如扩展市场）能否正常使用。
+2. **确认服务商地址**：如果使用 OpenAI 兼容等可自定义地址的服务商，检查 Base URL 是否能从本机访问，参见 [OpenAI 兼容服务商](/zh-cn/provider-config/openai-compatible/)。
+3. **区分出错的功能**：只有网页工具或 MCP 失败、而模型请求正常时，按上表检查对应的例外路径。
+4. **查看日志**：Dline 的日志输出到 VS Code 的输出面板，写入前会对敏感信息做脱敏处理。
+
+<Aside type="caution">
+错误信息因服务商和出错环节而异，Dline 没有统一的“代理错误”提示。例如网页抓取失败会显示 `Web fetch failed: …`，其后是底层错误。
+</Aside>

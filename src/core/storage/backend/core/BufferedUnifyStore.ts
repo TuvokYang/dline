@@ -1,4 +1,6 @@
 import Mutex from "p-mutex"
+import { DiagnosticDomain, DiagnosticOutcome } from "@/services/telemetry/instrumentation/diagnostic-events"
+import { recordDiagnostic } from "@/services/telemetry/instrumentation/diagnostic-recorder"
 import { recordPerfPhase, startPerfPhase } from "@/services/telemetry/instrumentation/duration-recorder"
 import { PerfDomain } from "@/services/telemetry/instrumentation/perf-domains"
 import { runWithSignalSpan, type SignalSpanHandle, startSignalSpan } from "@/services/telemetry/service/pipeline-port"
@@ -14,6 +16,8 @@ import { asc } from "../api/UnifyStoreQuery"
 
 const L2_MAX_SIZE = 500
 const DEFAULT_FLUSH_INTERVAL_MS = 1_000
+/** Ceiling for the delay between periodic flushes after repeated failures. */
+const MAX_PERIODIC_FLUSH_BACKOFF_MS = 30_000
 /**
  * Duration past which one commit is reported as slow.
  *
@@ -40,6 +44,22 @@ function collectionSizeBand(count: number): string {
 	return `>=${COLLECTION_SIZE_BANDS.at(-1)}`
 }
 
+/** Bookkeeping for the timer-driven flush; explicit flush() calls ignore it. */
+interface PeriodicFlushState {
+	inFlight: boolean
+	failures: number
+	retryAt: number
+	lastErrorCode?: string
+}
+
+/** What a commit wrote and how, for the state update and its telemetry. */
+interface CommitOutcome<TItem> {
+	readonly commit: string
+	readonly rewriteReason: string
+	readonly committed: TItem[]
+	readonly changed: boolean
+}
+
 export interface BufferedUnifyStoreMapping<TEntity extends object, TItem extends { ts: number }> {
 	readonly ordinal: EntityFieldRef<TEntity, number>
 	readonly timestamp: EntityFieldRef<TEntity, number>
@@ -53,7 +73,26 @@ export interface BufferedUnifyStoreOptions<TItem extends { ts: number }> {
 	readonly subscriptionKey: string
 	readonly storeKind?: string
 	readonly acceptInitialItem?: (item: TItem) => boolean
+	/** Project compatibility rows into the logical collection without rewriting them during open. */
+	readonly normalizeReadItems?: (items: TItem[]) => TItem[]
 	readonly truncateTail?: (keepCount: number, expectedCount: number) => Promise<void>
+	/**
+	 * Replace the final `replacedCount` durable entries with `entries`, provided
+	 * the durable collection still ends with `expectedTailTimestamps`.
+	 *
+	 * Resolves false without writing when it does not, so the store can fall
+	 * back to reading and merging the whole collection. A backend that cannot
+	 * check its tail cheaply leaves this unset and always merges.
+	 */
+	readonly replaceTail?: (replacement: BufferedTailReplacement<TItem>) => Promise<boolean>
+}
+
+export interface BufferedTailReplacement<TItem> {
+	/** Timestamps the durable collection must end with, in order; empty asserts it is empty. */
+	readonly expectedTailTimestamps: readonly number[]
+	/** Final durable entries to replace; zero appends. Never more than the expected tail. */
+	readonly replacedCount: number
+	readonly entries: readonly TItem[]
 }
 
 interface SubscriptionState {
@@ -72,9 +111,20 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
 	private readonly subscriptionState: SubscriptionState
 	private readonly ownedListeners = new Set<BufferedUnifyStoreChangeListener>()
 	private readonly acceptInitialItem: (item: TItem) => boolean
+	private readonly normalizeReadItems?: (items: TItem[]) => TItem[]
 	private readonly truncateTail?: (keepCount: number, expectedCount: number) => Promise<void>
+	private readonly replaceTail?: (replacement: BufferedTailReplacement<TItem>) => Promise<boolean>
 	private readonly storeKind: string
+	/**
+	 * Set when a tail write failed after it may have cut the durable tail. The
+	 * file can then no longer be described by the baseline, and memory is the
+	 * only complete copy until it has been written back.
+	 */
+	private memoryRewriteRequired = false
+	/** The logical read view omitted compatibility rows still present in the physical JSONL file. */
+	private projectedPersistedRows = false
 	private flushTimer: ReturnType<typeof setInterval> | undefined
+	private periodicFlush: PeriodicFlushState = { inFlight: false, failures: 0, retryAt: 0 }
 	private closing = false
 	private closed = false
 	private closePromise: Promise<void> | undefined
@@ -96,7 +146,9 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
 		this.ensureUniqueAppendTimestamp = options.ensureUniqueAppendTimestamp ?? false
 		this.subscriptionState = getSubscriptionState(options.subscriptionKey)
 		this.acceptInitialItem = options.acceptInitialItem ?? (() => true)
+		this.normalizeReadItems = options.normalizeReadItems
 		this.truncateTail = options.truncateTail
+		this.replaceTail = options.replaceTail
 		this.storeKind = options.storeKind ?? "other"
 	}
 
@@ -179,9 +231,11 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
 	async reload(force = false): Promise<void> {
 		if (!force) return
 		await this.mutex.withLock(async () => {
-			const items = await this.readCommittedItems(false)
-			this.setCommittedState(items)
+			const loaded = await this.readCommittedItems(false)
+			this.setCommittedState(loaded.items)
+			this.projectedPersistedRows = loaded.projected
 			this.dirty = false
+			this.memoryRewriteRequired = false
 		})
 	}
 
@@ -203,6 +257,7 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
 	async appendDurable(item: TItem): Promise<TItem> {
 		this.assertWritable()
 		return await this.mutex.withLock(async () => {
+			await this.settleInterruptedWrite()
 			const tailAdditions = this.dirty ? this.getPureTailAdditions() : []
 			if (!tailAdditions) {
 				throw new Error("BufferedUnifyStore.appendDurable requires a clean or append-only buffer")
@@ -214,6 +269,9 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
 	async commitPendingAndAppendDurable(item: TItem): Promise<TItem> {
 		this.assertWritable()
 		return await this.mutex.withLock(async () => {
+			// A pure tail would otherwise be inserted after a collection an
+			// earlier failed tail write may have cut. Same guard as appendDurable.
+			await this.settleInterruptedWrite()
 			let tailAdditions = this.dirty ? this.getPureTailAdditions() : []
 			if (!tailAdditions) {
 				// Committed under the same lock, so no other write can slip in
@@ -320,12 +378,15 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
 	async truncateAt(count: number): Promise<void> {
 		const keepCount = Math.min(this.items.length, Math.max(0, count))
 		const truncateTail = this.truncateTail
-		if (!truncateTail) {
+		if (!truncateTail || this.projectedPersistedRows) {
 			await this.mutate((items) => items.slice(0, keepCount))
 			return
 		}
 		this.assertWritable()
 		await this.mutex.withLock(async () => {
+			// Tail truncation counts lines against the baseline, which an
+			// interrupted tail write left untrustworthy.
+			await this.settleInterruptedWrite()
 			const retained = this.items.slice(0, keepCount)
 			const persistedPrefixLength = Math.min(keepCount, this.persistedItems.length)
 			for (let index = 0; index < persistedPrefixLength; index++) {
@@ -366,10 +427,12 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
 			let result: TItem[] = []
 			await this.store.transaction(async (transaction) => {
 				const entities = await transaction.query({ orderBy: [asc(this.mapping.ordinal)] })
-				result = transform(entities.map((entity) => this.mapping.toItem(entity)))
+				const committed = this.projectReadItems(entities.map((entity) => this.mapping.toItem(entity))).items
+				result = transform(committed)
 				await transaction.replaceAll(result.map((item, ordinal) => this.mapping.toEntity(item, ordinal)))
 			})
 			this.setCommittedState(result)
+			this.projectedPersistedRows = false
 			this.publishCommittedChange()
 		})
 	}
@@ -407,10 +470,12 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
 	}
 
 	private async loadInitialState(): Promise<void> {
-		this.setCommittedState(await this.readCommittedItems(true))
+		const loaded = await this.readCommittedItems(true)
+		this.setCommittedState(loaded.items)
+		this.projectedPersistedRows = loaded.projected
 	}
 
-	private async readCommittedItems(initial: boolean): Promise<TItem[]> {
+	private async readCommittedItems(initial: boolean): Promise<{ items: TItem[]; projected: boolean }> {
 		const result = await this.store.query({ orderBy: [asc(this.mapping.ordinal)] })
 		const items: TItem[] = []
 		for (const entity of result.records) {
@@ -421,14 +486,48 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
 				// Invalid persisted records are isolated at the compatibility boundary.
 			}
 		}
-		return items
+		return this.projectReadItems(items)
 	}
 
 	private startFlushTimer(): void {
 		this.flushTimer = setInterval(() => {
-			void this.flush().catch(() => undefined)
+			void this.runPeriodicFlush()
 		}, this.flushIntervalMs)
 		this.flushTimer.unref?.()
+	}
+
+	/**
+	 * One timer-driven flush.
+	 *
+	 * Ticks never overlap, so a slow commit does not queue another behind the
+	 * mutex every interval. A commit that keeps failing (a destination locked by
+	 * another process, a full disk) backs off up to MAX_PERIODIC_FLUSH_BACKOFF_MS
+	 * instead of staging a new temp file every second. The failure is logged when
+	 * it starts and whenever its error code changes, not on every retry.
+	 */
+	private async runPeriodicFlush(): Promise<void> {
+		const state = this.periodicFlush
+		if (state.inFlight || Date.now() < state.retryAt) return
+		state.inFlight = true
+		try {
+			await this.flush()
+			if (state.failures > 0) {
+				Logger.info(`[BufferedUnifyStore] periodic flush recovered: store=${this.storeKind}, failures=${state.failures}`)
+			}
+			this.periodicFlush = { inFlight: false, failures: 0, retryAt: 0 }
+		} catch (error) {
+			const code = (error as NodeJS.ErrnoException | undefined)?.code ?? "UNKNOWN"
+			state.failures++
+			if (state.failures === 1 || code !== state.lastErrorCode) {
+				Logger.warn(
+					`[BufferedUnifyStore] periodic flush failed: store=${this.storeKind}, code=${code}, failures=${state.failures}`,
+				)
+			}
+			state.lastErrorCode = code
+			state.retryAt = Date.now() + Math.min(this.flushIntervalMs * 2 ** state.failures, MAX_PERIODIC_FLUSH_BACKOFF_MS)
+		} finally {
+			state.inFlight = false
+		}
 	}
 
 	private async flushLocked(): Promise<void> {
@@ -492,51 +591,129 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
 	}
 
 	private async commitShape(span?: SignalSpanHandle): Promise<void> {
-		// Both commit shapes report under one phase so a silent fall back to
+		// Every commit shape reports under one phase so a silent fall back to
 		// rewriting the whole collection shows up as a shift in the `commit`
 		// dimension instead of only as user-visible slowness.
 		const phase = startPerfPhase(PerfDomain.BufferedStore, "flush_commit")
 		const startedAt = performance.now()
-		// The same two facts the metric carries. A duration alone would leave a
+		const outcome = (await this.commitFromMemory()) ?? (await this.commitByMerge())
+		this.setCommittedState(outcome.committed)
+		this.dirty = false
+		this.memoryRewriteRequired = false
+		if (outcome.changed) this.publishCommittedChange()
+		const size = collectionSizeBand(outcome.committed.length)
+		phase.stop({ commit: outcome.commit, size, store_kind: this.storeKind, rewrite_reason: outcome.rewriteReason })
+		// The same facts the metric carries. A duration alone would leave a
 		// reader unable to tell a large history from a store that stopped
 		// appending, which is the distinction the span exists to show.
-		const describe = (commit: string, size: string, rewriteReason: string): void => {
-			span?.setAttribute("commit", commit)
-			span?.setAttribute("size", size)
-			span?.setAttribute("store_kind", this.storeKind)
-			span?.setAttribute("rewrite_reason", rewriteReason)
+		span?.setAttribute("commit", outcome.commit)
+		span?.setAttribute("size", size)
+		span?.setAttribute("store_kind", this.storeKind)
+		span?.setAttribute("rewrite_reason", outcome.rewriteReason)
+		this.reportSlowCommit(startedAt, outcome.commit, outcome.committed.length)
+	}
+
+	/**
+	 * Commit from memory, without reading the durable collection.
+	 *
+	 * A task holds the only writable handle on its message files, so the
+	 * baseline already says what the collection holds and a commit only has
+	 * to write what changed since. Returns undefined when the merge commit has
+	 * to run instead: the backend cannot check its tail, or the tail no longer
+	 * ends the way the baseline says.
+	 *
+	 * Cutting and appending are two writes, so a crash between them loses the
+	 * replaced entries from disk while every earlier entry stays intact. That is
+	 * accepted: a task resumed after a crash is already reported as interrupted,
+	 * and paying a whole-file rewrite on every edit is what made long tasks slow.
+	 */
+	private async commitFromMemory(): Promise<CommitOutcome<TItem> | undefined> {
+		if (this.memoryRewriteRequired) return await this.rewriteFromMemory()
+		const persisted = this.persistedItems
+		const firstChange = this.firstChangedIndex()
+		if (firstChange === undefined) {
+			return { commit: "noop", rewriteReason: "no_change", committed: this.items, changed: false }
 		}
-		const tailAdditions = this.getPureTailAdditions()
-		if (tailAdditions) {
-			await this.store.insert(
-				tailAdditions.map((item, index) => this.mapping.toEntity(item, this.persistedItems.length + index)),
-			)
-			this.setCommittedState([...this.persistedItems, ...tailAdditions])
-			this.dirty = false
-			this.publishCommittedChange()
-			phase.stop({
-				commit: "buffered_append",
-				size: collectionSizeBand(this.items.length),
-				store_kind: this.storeKind,
-				rewrite_reason: "none",
+		const replacedCount = persisted.length - firstChange
+		const entries = this.items.slice(firstChange)
+		if (replacedCount === 0 && !this.ensureUniqueAppendTimestamp) {
+			await this.store.insert(entries.map((item, index) => this.mapping.toEntity(item, persisted.length + index)))
+			return { commit: "buffered_append", rewriteReason: "none", committed: this.items, changed: true }
+		}
+		// A projected compatibility row makes physical line counts differ from
+		// the logical baseline. Read and merge before any relative tail rewrite.
+		if (this.projectedPersistedRows) return undefined
+		const replaceTail = this.replaceTail
+		if (!replaceTail) return undefined
+
+		// One untouched entry before the replaced ones is checked as well, so
+		// a writer that appended after the baseline cannot line up by chance.
+		// A store that forces unique timestamps relies on this even for a pure
+		// append: its entries were made unique against memory, not against a
+		// line another handle may have added.
+		const anchor = Math.max(0, firstChange - 1)
+		let replaced: boolean
+		try {
+			replaced = await replaceTail({
+				expectedTailTimestamps: persisted.slice(anchor).map((item) => item.ts),
+				replacedCount,
+				entries,
 			})
-			describe("buffered_append", collectionSizeBand(this.items.length), "none")
-			this.reportSlowCommit(startedAt, "buffered_append", this.items.length)
-			return
+		} catch (error) {
+			// The tail may already be cut, so the baseline no longer describes
+			// the collection and memory holds its only complete copy.
+			this.memoryRewriteRequired = true
+			throw error
 		}
-		let merged: TItem[] = []
-		let commit = "rewrite"
-		let rewriteReason = "patch"
-		let committedChange = true
-		await this.store.transaction(async (transaction) => {
+		if (!replaced) {
+			recordDiagnostic(DiagnosticDomain.Storage, "baseline_diverged", DiagnosticOutcome.Degraded, {
+				reason: "tail_mismatch",
+				store_kind: this.storeKind,
+			})
+			return undefined
+		}
+		if (replacedCount === 0) {
+			return { commit: "buffered_append", rewriteReason: "none", committed: this.items, changed: true }
+		}
+		return {
+			commit: "tail_rewrite",
+			rewriteReason: this.classifyRewriteReason(persisted, this.items),
+			committed: this.items,
+			changed: true,
+		}
+	}
+
+	/**
+	 * Write memory back as the whole collection after a tail write failed
+	 * partway.
+	 *
+	 * Merging would read the cut file and keep it cut: an entry memory never
+	 * changed still matches the baseline, so it would look settled even though
+	 * its line is gone.
+	 */
+	private async rewriteFromMemory(): Promise<CommitOutcome<TItem>> {
+		await this.store.replaceAll(this.items.map((item, ordinal) => this.mapping.toEntity(item, ordinal)))
+		this.projectedPersistedRows = false
+		recordDiagnostic(DiagnosticDomain.Storage, "baseline_diverged", DiagnosticOutcome.Recovered, {
+			reason: "interrupted_write",
+			store_kind: this.storeKind,
+		})
+		return { commit: "rewrite", rewriteReason: "recovery", committed: this.items, changed: true }
+	}
+
+	/**
+	 * Read the committed collection, merge local changes into it, and write
+	 * the result. Used whenever memory cannot vouch for what the file holds.
+	 */
+	private async commitByMerge(): Promise<CommitOutcome<TItem>> {
+		return await this.store.transaction(async (transaction): Promise<CommitOutcome<TItem>> => {
 			const entities = await transaction.query({ orderBy: [asc(this.mapping.ordinal)] })
-			const committed = entities.map((entity) => this.mapping.toItem(entity))
-			merged = this.mergeWithCommitted(committed)
+			const projected = this.projectReadItems(entities.map((entity) => this.mapping.toItem(entity)))
+			const committed = projected.items
+			const merged = this.mergeWithCommitted(committed)
 			if (this.isSameCommittedSequence(committed, merged)) {
-				commit = "noop"
-				rewriteReason = "no_change"
-				committedChange = false
-				return
+				this.projectedPersistedRows = projected.projected
+				return { commit: "noop", rewriteReason: "no_change", committed: merged, changed: false }
 			}
 			// The merge already ran against the committed state read inside this
 			// transaction, so when it only grew a tail there is nothing to rewrite.
@@ -545,25 +722,24 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
 			// cross-process timestamp allocation fully intact.
 			const appended = this.suffixAfterUnchangedPrefixOf(committed, merged)
 			if (appended) {
-				commit = "append"
-				rewriteReason = "none"
 				await transaction.insert(appended.map((item, index) => this.mapping.toEntity(item, committed.length + index)))
-				return
+				this.projectedPersistedRows = projected.projected
+				return { commit: "append", rewriteReason: "none", committed: merged, changed: true }
 			}
-			rewriteReason = this.classifyRewriteReason(committed, merged)
+			const rewriteReason = this.classifyRewriteReason(committed, merged)
 			await transaction.replaceAll(merged.map((item, ordinal) => this.mapping.toEntity(item, ordinal)))
+			this.projectedPersistedRows = false
+			return { commit: "rewrite", rewriteReason, committed: merged, changed: true }
 		})
-		this.setCommittedState(merged)
-		this.dirty = false
-		if (committedChange) this.publishCommittedChange()
-		phase.stop({
-			commit,
-			size: collectionSizeBand(merged.length),
-			store_kind: this.storeKind,
-			rewrite_reason: rewriteReason,
-		})
-		describe(commit, collectionSizeBand(merged.length), rewriteReason)
-		this.reportSlowCommit(startedAt, commit, merged.length)
+	}
+
+	/**
+	 * Write memory back first when an earlier tail write may have cut the
+	 * collection. Operations that write relative to the baseline would
+	 * otherwise build on a file that no longer matches it.
+	 */
+	private async settleInterruptedWrite(): Promise<void> {
+		if (this.memoryRewriteRequired) await this.flushLocked()
 	}
 
 	/**
@@ -589,6 +765,12 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
 	 * objects it was given for untouched entries, so a replaced entry always
 	 * breaks reference equality and correctly forces a full rewrite.
 	 */
+	private projectReadItems(items: TItem[]): { items: TItem[]; projected: boolean } {
+		const projectedItems = this.normalizeReadItems?.(items) ?? items
+		const projected = projectedItems.length !== items.length || projectedItems.some((item, index) => item !== items[index])
+		return { items: projectedItems, projected }
+	}
+
 	private isSameCommittedSequence(committed: readonly TItem[], merged: readonly TItem[]): boolean {
 		return committed.length === merged.length && committed.every((item, index) => item === merged[index])
 	}
@@ -606,6 +788,23 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
 			if (merged[index] !== committed[index]) return undefined
 		}
 		return merged.slice(committed.length)
+	}
+
+	/** Index of the first entry that differs from the baseline, or undefined when none does. */
+	private firstChangedIndex(): number | undefined {
+		const shared = Math.min(this.items.length, this.persistedItems.length)
+		for (let index = 0; index < shared; index++) {
+			if (!this.isUnchangedAt(index)) return index
+		}
+		return this.items.length === this.persistedItems.length ? undefined : shared
+	}
+
+	private isUnchangedAt(index: number): boolean {
+		const item = this.items[index]
+		const baseline = this.persistedItems[index]
+		// Staging replaces whole entries, so an untouched entry is still the
+		// very object the baseline captured and needs no serialization.
+		return item === baseline || JSON.stringify(item) === JSON.stringify(baseline)
 	}
 
 	private getPureTailAdditions(): TItem[] | undefined {

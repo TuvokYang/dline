@@ -11,8 +11,14 @@ import type { TaskSessionPorts } from "@core/task/composition/TaskSessionPorts"
 import { convertClineMessageToProto } from "@shared/proto-conversions/cline-message"
 import { HostProvider } from "@/hosts/host-provider"
 import { sendPartialMessageEvent } from "../../ui/subscribeToPartialMessage"
+import type { TaskOpening } from "../opened-task"
 
-/** Adapts Controller and IDE services to the narrow ports owned by one task session. */
+/**
+ * Adapts Controller and IDE services to the narrow ports owned by one task session.
+ *
+ * One instance serves exactly one opening: every row it presents is attributed
+ * to that opening so the Webview never merges it into another one.
+ */
 export class ControllerTaskSessionPorts implements TaskSessionPorts {
 	readonly collaboration: TaskSessionPorts["collaboration"]
 	readonly promptContext: TaskSessionPorts["promptContext"]
@@ -22,7 +28,10 @@ export class ControllerTaskSessionPorts implements TaskSessionPorts {
 	readonly successor: TaskSessionPorts["successor"]
 	readonly profileUsage: TaskSessionPorts["profileUsage"]
 
-	constructor(private readonly controller: Controller) {
+	constructor(
+		private readonly controller: Controller,
+		opening: TaskOpening,
+	) {
 		const semanticCatalog = inputSemanticCatalogService(controller)
 		this.collaboration = OrchestratorController.getInstance().collaboration
 		this.promptContext = {
@@ -47,7 +56,7 @@ export class ControllerTaskSessionPorts implements TaskSessionPorts {
 				}),
 		}
 		this.presentation = {
-			publish: (row) => sendPartialMessageEvent(controller, convertClineMessageToProto(row)),
+			publish: (row) => sendPartialMessageEvent(controller, convertClineMessageToProto(row), opening),
 		}
 		this.semanticCatalog = {
 			current: () => semanticCatalog.current(),
@@ -55,12 +64,8 @@ export class ControllerTaskSessionPorts implements TaskSessionPorts {
 		}
 		this.successor = {
 			start: async (sourceTaskId, handoff) => {
-				await controller.startSuccessorTask(
-					sourceTaskId,
-					handoff.context,
-					handoff.taskSettings,
-					handoff.initialUserContent,
-				)
+				if (sourceTaskId !== opening.taskId) return
+				await controller.startSuccessorTask(opening, handoff.context, handoff.taskSettings, handoff.initialUserContent)
 			},
 		}
 		this.profileUsage = {

@@ -5,6 +5,16 @@ import type { TaskPayloadStore } from "../../../../stores"
 import { encodeTaskPayload } from "../../../../stores/payload/TaskPayloadCodec"
 import { ProviderJournalMessageMaterializer } from "../ProviderJournalMessageMaterializer"
 
+const attachedPdf = {
+	type: "attached_document" as const,
+	path: "/work/spec.pdf",
+	media_type: "application/pdf" as const,
+	data: "JVBERi0xLjQKJSVFT0YK",
+	byte_length: 16,
+	page_count: 1,
+	fallback_text: '<file_content path="/work/spec.pdf">\nHello PDF\n</file_content>',
+}
+
 function payloadStore(payloads: Readonly<Record<string, Uint8Array>>): TaskPayloadStore {
 	return {
 		read: async (ref: string) => payloads[ref],
@@ -236,6 +246,71 @@ describe("ProviderJournalMessageMaterializer", () => {
 				],
 			},
 		])
+	})
+
+	// A tool result holds only text and images, so a PDF the user attached to an
+	// answer travels as its own payload and reaches the model after the result.
+	it("places the documents attached to a raw result after that result", async () => {
+		const materializer = new ProviderJournalMessageMaterializer(
+			payloadStore({
+				"ref-1": encodeTaskPayload({
+					kind: "tool_result",
+					blockId: "dline_tid_01",
+					content: serializeDurableToolResult(refused),
+					documentPayloadRefs: ["doc-1"],
+				}),
+				"doc-1": encodeTaskPayload({ kind: "attached_document", document: attachedPdf }),
+			}),
+		)
+
+		const [message] = await materializer.materialize(["ref-1"])
+
+		expect(message?.content).toEqual([refused, attachedPdf])
+	})
+
+	// Providers require every result of the previous assistant turn at the start of
+	// the next user message; a document between two results would break the pairing.
+	it("opens a terminal manifest with every result and appends the attached documents", async () => {
+		const second = { ...refused, function_id: "dline_function_02", dline_tid: "dline_tid_02" }
+		const materializer = new ProviderJournalMessageMaterializer(
+			payloadStore({
+				manifest: encodeTaskPayload({
+					kind: "tool_terminal_manifest",
+					turnId: "turn-1",
+					results: [
+						{
+							blockId: "dline_tid_01",
+							phase: "completed",
+							content: serializeDurableToolResult(refused),
+							documentPayloadRefs: ["doc-1"],
+						},
+						{ blockId: "dline_tid_02", phase: "completed", content: serializeDurableToolResult(second) },
+					],
+					supersededPayloadRefs: [],
+				}),
+				"doc-1": encodeTaskPayload({ kind: "attached_document", document: attachedPdf }),
+			}),
+		)
+
+		const [message] = await materializer.materialize(["manifest"])
+
+		expect(message?.content).toEqual([refused, second, attachedPdf])
+	})
+
+	it("rejects a document reference that names another payload kind", async () => {
+		const materializer = new ProviderJournalMessageMaterializer(
+			payloadStore({
+				"ref-1": encodeTaskPayload({
+					kind: "tool_result",
+					blockId: "dline_tid_01",
+					content: serializeDurableToolResult(refused),
+					documentPayloadRefs: ["not-a-doc"],
+				}),
+				"not-a-doc": encodeTaskPayload({ kind: "dialog_draft", text: "x", images: [], files: [] }),
+			}),
+		)
+
+		await expect(materializer.materialize(["ref-1"])).rejects.toThrow("InvalidAttachedDocumentPayload")
 	})
 
 	// A request to another model projects this turn as foreign history only if

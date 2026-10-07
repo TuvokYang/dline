@@ -6,6 +6,7 @@ import type { InteractionOutcome } from "../interaction/InteractionProtocol"
 import type { KernelBlock, TaskState } from "../kernel"
 import type { MessageStateHandler } from "../message-state"
 import type { ConversationJournal, TaskPayloadStore } from "../stores"
+import { putAttachedDocuments } from "../stores/payload/AttachedDocuments"
 import { decodeTaskPayload, encodeTaskPayload } from "../stores/payload/TaskPayloadCodec"
 import type { ToolInvocationEnvelope, ToolResultEnvelope } from "../stores/payload/TaskPayloadEnvelopes"
 import type {
@@ -101,10 +102,12 @@ export class RestoredToolDialogContinuation implements UnownedDialogContinuation
 				chatContent: { message: draft?.text, images: draft?.images, files: draft?.files },
 				actionId: resolution.outcome.actionId,
 			})
+			const documentPayloadRefs = await putAttachedDocuments(this.ports.payloads, result.documents)
 			const envelope: ToolResultEnvelope = {
 				kind: "tool_result",
 				blockId: invocation.dlineTid,
-				content: serializeDurableToolResult(result, toolResultReplayOf(invocation)),
+				content: serializeDurableToolResult(result.toolResult, toolResultReplayOf(invocation)),
+				...(documentPayloadRefs ? { documentPayloadRefs } : {}),
 			}
 			const payloadRef = await this.ports.payloads.put(encodeTaskPayload(envelope))
 			if (resolution.isCurrent && !resolution.isCurrent()) return false

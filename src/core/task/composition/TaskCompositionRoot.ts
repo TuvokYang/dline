@@ -80,6 +80,8 @@ export interface TaskCompositionOptions {
 	/** Words a user's refusal the way the refused tool reports it. */
 	readonly toolDenial?: ToolDenialPort
 	readonly deferRestoredCommands?: OpenTaskShellOptions["deferRestoredCommands"]
+	/** The chat rows restored dialogs anchor to; see OpenTaskShellOptions. */
+	readonly readAnchorRows?: OpenTaskShellOptions["readAnchorRows"]
 	/** Condenses the conversation before a round is drafted; see ComposeCompactionBarrierPort. */
 	readonly compactionBarrier?: ComposeCompactionBarrierPort
 	/** Measures each round's complete request before it is drafted; see ComposeContextWindowGuardPort. */

@@ -5,6 +5,8 @@ import type { InputQueueApplicationPort } from "../InputQueueApplicationPort"
 
 export interface SessionFixtureOptions {
 	readonly taskId?: string
+	/** The opening this session belongs to; the real session reads it from its incarnation. */
+	readonly taskInstanceId?: string
 	/** Replaces the whole kernel state; use `patchState` for a partial override. */
 	readonly state?: TaskState
 	readonly patchState?: (state: TaskState) => TaskState
@@ -28,7 +30,7 @@ export function createSessionFixture(options: SessionFixtureOptions = {}) {
 	const state = options.patchState ? options.patchState(base) : base
 
 	const owners = {
-		identity: { taskId, taskIncarnationId: `${taskId}-incarnation` },
+		identity: { taskId, taskIncarnationId: options.taskInstanceId ?? `${taskId}-incarnation` },
 		settings: {
 			mode: "act" as const,
 			taskCapabilityToggles: {},
@@ -89,6 +91,7 @@ export function createSessionFixture(options: SessionFixtureOptions = {}) {
 
 	const session = {
 		taskId,
+		taskInstanceId: (owners.identity as { taskIncarnationId: string }).taskIncarnationId,
 		task: {
 			start: vi.fn(async () => undefined),
 			submitInput: vi.fn(async () => undefined),

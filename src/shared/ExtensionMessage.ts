@@ -10,6 +10,7 @@ import type { ChatInputSendShortcut } from "./ChatInputSendShortcut"
 import { ClineFeatureSetting } from "./ClineFeatureSetting"
 import { ClineRulesToggles } from "./cline-rules"
 import type { CodeExecutionPresentationV1 } from "./code-execution-tools"
+import type { CompactionFailureKind } from "./context-compaction-failure"
 import type { ContextWindowIndicatorSnapshot } from "./context-window-indicator"
 import { FocusChainSettings } from "./FocusChainSettings"
 import { HistoryItem } from "./HistoryItem"
@@ -310,7 +311,10 @@ export interface UiMessage {
 	commandTs?: number
 	exitCode?: number
 	logPath?: string
-	lastCheckpointHash?: string
+	/** Ordered shadow revisions aligned with checkpointWorkspaceRoots. Legacy scalar values are promoted on read. */
+	lastCheckpointHash?: string[]
+	/** Workspace root identities captured with lastCheckpointHash so root reordering cannot misroute a restore. */
+	checkpointWorkspaceRoots?: string[]
 	isCheckpointCheckedOut?: boolean
 	/**
 	 * Whether this completion produced workspace changes that can be diffed.
@@ -501,12 +505,6 @@ export interface TaskViewAction {
 	activityId?: string
 }
 
-/** Diagnostic for an interaction that cannot be projected to its persisted ask anchor. */
-export interface TaskViewDiagnostic {
-	code: "interaction_anchor_missing" | "interaction_anchor_is_say"
-	interactionId: string
-}
-
 /** Input capabilities projected for the current active interaction. */
 export interface TaskInputViewState {
 	enabled: boolean
@@ -545,10 +543,11 @@ export interface TaskContextCompactionViewState {
 /** Complete backend projection consumed by the Webview interaction host. */
 export interface TaskViewState {
 	taskId: string
+	/** Ephemeral canonical Task opening; never stored in a runtime snapshot. */
+	taskInstanceId?: string
 	phase: TaskViewPhase
 	stateRevision: number
 	activeInteraction?: ActiveInteractionView
-	diagnostic?: TaskViewDiagnostic
 	contextCompaction?: TaskContextCompactionViewState
 	/** True only while terminal automatic-compaction recovery offers explicit history truncation. */
 	forceTruncateAvailable?: boolean
@@ -603,6 +602,8 @@ export interface UiSayTool {
 	compactionJournalBoundary?: { readonly seq: number }
 	/** Actionable compaction failure detail. */
 	error?: string
+	/** Content-free classification of the latest failed compaction attempt on this card. */
+	compactionFailureKind?: CompactionFailureKind
 	/** One-based retry attempt currently scheduled. */
 	retryAttempt?: number
 	/** Maximum automatic retry attempts. */

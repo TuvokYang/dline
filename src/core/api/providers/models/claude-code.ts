@@ -5,31 +5,13 @@
  * each model declares the same capabilities, including hosted web search.
  */
 import type { ModelInfo } from "@shared/api"
-import { ServerTool, type ThinkingConfig } from "@shared/proto/dline/models/metadata"
+import { ServerTool } from "@shared/proto/dline/models/metadata"
 import {
 	ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS,
 	ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS_WITHOUT_XHIGH,
 	ANTHROPIC_REQUIRED_ADAPTIVE_REASONING_EFFORT_OPTIONS,
-} from "@shared/utils/reasoning-support"
-
-function adaptiveThinking(effortLevels: readonly string[]): ThinkingConfig {
-	return { supported: true, mode: "effort", effortLevels: [...effortLevels] }
-}
-
-/**
- * Capabilities shared by every adaptive-thinking model.
- *
- * Adaptive thinking stays on, and thinking cannot be combined with a forced
- * tool choice, so these models reject `tool_choice: any` with an error instead
- * of degrading to an automatic choice. Declaring it here keeps the rule with
- * the thinking mode that causes it, rather than repeating it per model.
- */
-function adaptiveThinkingCapabilities(effortLevels: readonly string[]): {
-	thinking: ThinkingConfig
-	supportsForcedToolUse: boolean
-} {
-	return { thinking: adaptiveThinking(effortLevels), supportsForcedToolUse: false }
-}
+	adaptiveThinkingCapabilities,
+} from "./anthropic"
 
 /**
  * Models offered to a Claude Code subscription.
@@ -54,7 +36,7 @@ export const claudeCodeModels: Record<string, ModelInfo> = {
 			supportsImages: true,
 			supportsPromptCache: true,
 			supportsReasoning: true,
-			...adaptiveThinkingCapabilities(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS),
+			...adaptiveThinkingCapabilities(ANTHROPIC_REQUIRED_ADAPTIVE_REASONING_EFFORT_OPTIONS, true),
 		},
 		pricing: {
 			inputPrice: 4.0,
@@ -76,7 +58,7 @@ export const claudeCodeModels: Record<string, ModelInfo> = {
 			supportsImages: true,
 			supportsPromptCache: true,
 			supportsReasoning: true,
-			...adaptiveThinkingCapabilities(ANTHROPIC_REQUIRED_ADAPTIVE_REASONING_EFFORT_OPTIONS),
+			...adaptiveThinkingCapabilities(ANTHROPIC_REQUIRED_ADAPTIVE_REASONING_EFFORT_OPTIONS, true),
 		},
 		pricing: {
 			inputPrice: 10.0,
@@ -97,7 +79,7 @@ export const claudeCodeModels: Record<string, ModelInfo> = {
 			supportsImages: true,
 			supportsPromptCache: true,
 			supportsReasoning: true,
-			...adaptiveThinkingCapabilities(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS),
+			...adaptiveThinkingCapabilities(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS, true),
 		},
 		pricing: {
 			inputPrice: 2.0,
@@ -118,7 +100,7 @@ export const claudeCodeModels: Record<string, ModelInfo> = {
 			supportsImages: true,
 			supportsPromptCache: true,
 			supportsReasoning: true,
-			...adaptiveThinkingCapabilities(ANTHROPIC_REQUIRED_ADAPTIVE_REASONING_EFFORT_OPTIONS),
+			...adaptiveThinkingCapabilities(ANTHROPIC_REQUIRED_ADAPTIVE_REASONING_EFFORT_OPTIONS, true),
 		},
 		pricing: {
 			inputPrice: 10.0,
@@ -138,7 +120,7 @@ export const claudeCodeModels: Record<string, ModelInfo> = {
 			supportsImages: true,
 			supportsPromptCache: true,
 			supportsReasoning: true,
-			...adaptiveThinkingCapabilities(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS),
+			...adaptiveThinkingCapabilities(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS, true),
 		},
 		pricing: {
 			inputPrice: 5.0,

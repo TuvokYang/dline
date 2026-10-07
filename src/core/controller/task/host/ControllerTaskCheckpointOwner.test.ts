@@ -37,6 +37,7 @@ function fixture(result: "restored" | "rejected" = "restored") {
 	const owner = new ControllerTaskCheckpointOwner({
 		controller,
 		taskId: "task-1",
+		taskInstanceId: "open-1",
 		stateManager: { getGlobalSettingsKey: vi.fn(() => true) },
 		messages: {},
 		toolState: {},

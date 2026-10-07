@@ -362,11 +362,9 @@ e2e(
 			await setCapability(card, "Enable Thinking", true)
 			await expect(card.getByText("Reasoning Effort", { exact: true }).last()).toBeVisible()
 			await waitForProfile(dlineDir, profileName, (profile) => profile.openai?.reasoning?.enableThinking === true)
-			await selectLabeledOption(card, firstSidebar, "Thinking Mode", "Thinking Budget")
-			await waitForProfile(dlineDir, profileName, (profile) => profile.openai?.reasoning?.thinkingBudget === 1_024)
-			await selectLabeledOption(card, firstSidebar, "Thinking Mode", "Reasoning Effort")
-			await selectLabeledOption(card, firstSidebar, "Reasoning Effort", "Ultra")
-			await waitForProfile(dlineDir, profileName, (profile) => profile.openai?.reasoning?.effort === "ultra")
+			// The model declares effort mode, so the card offers only its declared effort levels.
+			await selectLabeledOption(card, firstSidebar, "Reasoning Effort", "Medium")
+			await waitForProfile(dlineDir, profileName, (profile) => profile.openai?.reasoning?.effort === "medium")
 			await setCapability(card, "Enable Service Tier", false)
 			await expect(card.getByText("Service Tier", { exact: true }).last()).not.toBeVisible()
 			// The stored profile omits a disabled flag rather than writing false, so
@@ -427,7 +425,7 @@ e2e(
 			await setCapability(reopenedCard, "Enable Thinking", true)
 			await expectAdvancedValue(reopenedCard, "Prompt Caching", "Yes")
 			await expect(reopenedCard.getByText("Reasoning Effort", { exact: true }).last()).toBeVisible()
-			await expect(reopenedCard.getByText("Ultra", { exact: true }).last()).toBeVisible()
+			await expect(reopenedCard.getByText("Medium", { exact: true }).last()).toBeVisible()
 			await expect(reopenedCard.getByText("Priority", { exact: true }).last()).toBeVisible()
 			await expect(reopenedCard.locator('vscode-text-field[placeholder="Header name"] input')).toHaveValue("X-Dline-E2E")
 			await expect(reopenedCard.locator('vscode-text-field[placeholder="Header value"] input')).toHaveValue("header-value")
@@ -485,8 +483,7 @@ e2e(
 		const responsesCard = await openModelConfiguration(sidebar, E2E_PROFILE_NAMES.mockOpenAiResponses)
 		await setTextField(responsesCard, "Context Window Size", "262144")
 		await setCapability(responsesCard, "Enable Thinking", true)
-		await selectLabeledOption(responsesCard, sidebar, "Thinking Mode", "Reasoning Effort")
-		await selectLabeledOption(responsesCard, sidebar, "Reasoning Effort", "Ultra")
+		await selectLabeledOption(responsesCard, sidebar, "Reasoning Effort", "Medium")
 		// The tier list only renders once the profile opts in.
 		await setCapability(responsesCard, "Enable Service Tier", true)
 		await selectLabeledOption(responsesCard, sidebar, "Service Tier", "Flex")
@@ -496,7 +493,7 @@ e2e(
 			(profile) =>
 				profile.openai?.apiFormat === "OPENAI_RESPONSES" &&
 				profile.openai.capabilities?.contextWindow === 262_144 &&
-				profile.openai.reasoning?.effort === "ultra" &&
+				profile.openai.reasoning?.effort === "medium" &&
 				profile.openai.serviceTier === "flex",
 		)
 
@@ -579,19 +576,19 @@ e2e(
 		const responsesRequest = server.getMockConsumptions("openai-compatible-responses")[0]
 		expect(responsesRequest).toMatchObject({
 			protocol: "openai-responses",
-			thinking: { mode: "effort", effort: "ultra" },
+			thinking: { mode: "effort", effort: "medium" },
 		})
 		expect(responsesRequest.requestBody).toMatchObject({
 			model: "dline-e2e-model",
 			service_tier: "flex",
-			reasoning: { effort: "ultra" },
+			reasoning: { effort: "medium" },
 		})
 		await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
 	},
 )
 
 e2e(
-	"Mode-specific profiles - Plan uses OpenAI Max and Act uses Anthropic High",
+	"Mode-specific profiles - Plan uses OpenAI Medium and Act uses Anthropic High",
 	async ({ dlineDir, helper, page, server, sidebar, userDataDir }) => {
 		e2e.setTimeout(210_000)
 		await helper.signin(sidebar)
@@ -599,15 +596,14 @@ e2e(
 
 		const openAiCard = await openModelConfiguration(sidebar, E2E_PROFILE_NAMES.mockOpenAi)
 		await setCapability(openAiCard, "Enable Thinking", true)
-		await selectLabeledOption(openAiCard, sidebar, "Thinking Mode", "Reasoning Effort")
-		await selectLabeledOption(openAiCard, sidebar, "Reasoning Effort", "Max")
+		await selectLabeledOption(openAiCard, sidebar, "Reasoning Effort", "Medium")
 		await waitForProfile(
 			dlineDir,
 			E2E_PROFILE_NAMES.mockOpenAi,
 			(profile) =>
 				profile.provider === "openai" &&
 				profile.openai?.reasoning?.enableThinking === true &&
-				profile.openai.reasoning.effort === "max",
+				profile.openai.reasoning.effort === "medium",
 		)
 
 		const anthropicCard = await openProfileEditor(sidebar, E2E_PROFILE_NAMES.mockAnthropic)
@@ -711,11 +707,11 @@ e2e(
 		const planRequest = server.getMockConsumptions("openai-compatible-chat")[0]
 		expect(planRequest).toMatchObject({
 			protocol: "openai-chat",
-			thinking: { mode: "effort", effort: "max" },
+			thinking: { mode: "effort", effort: "medium" },
 		})
 		expect(planRequest.requestBody).toMatchObject({
 			model: "dline-e2e-model",
-			reasoning_effort: "max",
+			reasoning_effort: "medium",
 		})
 
 		await actMode.evaluate((element) => element.click())

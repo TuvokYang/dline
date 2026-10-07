@@ -1,3 +1,4 @@
+import { mergeCapabilities } from "@shared/providers/effective-model-info"
 import type { ImageModelInfo, ModelInfo, ProviderModelsConfig } from "@shared/providers/types"
 
 export type ProviderModelReconciliationMode = "fill-missing" | "refresh-built-ins" | "overlay-remote" | "replace"
@@ -6,7 +7,10 @@ function mergeBuiltInModelDefaults(seed: ModelInfo, stored: ModelInfo): ModelInf
 	return {
 		...seed,
 		...stored,
-		capabilities: seed.capabilities || stored.capabilities ? { ...seed.capabilities, ...stored.capabilities } : undefined,
+		capabilities:
+			seed.capabilities || stored.capabilities
+				? mergeCapabilities(seed.capabilities, stored.capabilities ?? {})
+				: undefined,
 		pricing: seed.pricing || stored.pricing ? { ...seed.pricing, ...stored.pricing } : undefined,
 		apiFormats: stored.apiFormats ?? seed.apiFormats,
 	}
@@ -67,7 +71,7 @@ function overlayRemoteModel(remote: ModelInfo, stored: ModelInfo): ModelInfo {
 		...withoutUndefined(remote),
 		capabilities:
 			remote.capabilities || stored.capabilities
-				? { ...stored.capabilities, ...(remote.capabilities ? withoutUndefined(remote.capabilities) : {}) }
+				? mergeCapabilities(stored.capabilities, remote.capabilities ?? {})
 				: undefined,
 		pricing: remote.pricing ? { ...stored.pricing, ...withoutUndefined(remote.pricing) } : stored.pricing,
 		apiFormats: remote.apiFormats ?? stored.apiFormats,

@@ -7,12 +7,12 @@ import type { UiMakePlanResponse } from "@/shared/ExtensionMessage"
 import { Logger } from "@/shared/services/Logger"
 import { ClineDefaultTool } from "@/shared/tools"
 import type { InteractionOutcome } from "../../interaction/InteractionProtocol"
+import { type ToolHandlerResult, withToolDocuments } from "../ToolExecutionResult"
 import type { IPartialBlockHandler, IToolHandler } from "../ToolExecutorCoordinator"
-import type { ToolResponse } from "../ToolResponse"
 import { interactionId, interactionTurnId, type TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
 import { getTaskCompletionTelemetry } from "../utils"
-import { sayFeedbackOnce } from "../utils/UserFeedbackUtils"
+import { attachToolFeedbackFiles, sayFeedbackOnce } from "../utils/UserFeedbackUtils"
 
 const MAKE_PLAN_ASK = "make_plan" as const
 
@@ -36,7 +36,7 @@ export class MakePlanHandler implements IToolHandler, IPartialBlockHandler {
 		await uiHelpers.ask(MAKE_PLAN_ASK, JSON.stringify(sharedMessage), true, { existingTs: block.ts }).catch(() => {})
 	}
 
-	async execute(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
+	async execute(config: TaskConfig, block: ToolUse): Promise<ToolHandlerResult> {
 		const response: string | undefined = block.params.response
 		const needsMoreExploration: boolean = block.params.needs_more_exploration === "true"
 
@@ -89,7 +89,7 @@ export class MakePlanHandler implements IToolHandler, IPartialBlockHandler {
 	}
 
 	/** Consume a make_plan response without replaying presentation or mode-switch setup. */
-	async continueInteraction(config: TaskConfig, _block: ToolUse, outcome: InteractionOutcome): Promise<ToolResponse> {
+	async continueInteraction(config: TaskConfig, _block: ToolUse, outcome: InteractionOutcome): Promise<ToolHandlerResult> {
 		const text = outcome.draft?.text
 		const images = outcome.draft?.images
 		const responseFiles = outcome.draft?.files
@@ -100,11 +100,8 @@ export class MakePlanHandler implements IToolHandler, IPartialBlockHandler {
 			await sayFeedbackOnce(config, "messageResponse", text, images, responseFiles, outcome)
 		}
 
-		let fileContentString = ""
-		if (responseFiles && responseFiles.length > 0) {
-			const { processFilesIntoText } = await import("@integrations/misc/extract-text")
-			fileContentString = await processFilesIntoText(responseFiles)
-		}
+		const attachments = await attachToolFeedbackFiles(responseFiles)
+		const fileContentString = attachments.text
 
 		telemetryService.captureTaskCompleted(config.ulid ?? "", getTaskCompletionTelemetry(config))
 
@@ -116,9 +113,12 @@ export class MakePlanHandler implements IToolHandler, IPartialBlockHandler {
 			const result = formatResponse.toolResult(switchMsg, images, fileContentString)
 			// Reset the flag after using it to prevent it from persisting
 			config.taskState.didRespondToPlanAskBySwitchingMode = false
-			return result
+			return withToolDocuments(result, attachments.documents)
 		}
 		// if we didn't switch to ACT MODE, then we can just send the user_feedback message
-		return formatResponse.toolResult(`<feedback>\n${text}\n</feedback>`, images, fileContentString)
+		return withToolDocuments(
+			formatResponse.toolResult(`<feedback>\n${text}\n</feedback>`, images, fileContentString),
+			attachments.documents,
+		)
 	}
 }

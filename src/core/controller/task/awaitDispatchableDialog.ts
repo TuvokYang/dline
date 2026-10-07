@@ -29,6 +29,8 @@ export interface AwaitDispatchableDialogOptions {
  *
  * The wait ends early once the task is stopping or no longer current: the
  * caller holds the lifecycle lock, and no dialog can become answerable then.
+ * It also ends once no dialog is still being prepared or revealed, because only
+ * such a dialog can still turn into one that accepts the action.
  */
 export async function awaitDispatchableDialog(
 	source: DialogStateSource,
@@ -40,14 +42,23 @@ export async function awaitDispatchableDialog(
 		const dispatchable = dispatchableDialog(state, options.actionId)
 		if (dispatchable) return dispatchable
 		if (state.halt.status === "stopping" || options.isCurrent?.() === false) return undefined
+		if (!hasUnrevealedDialog(state)) return undefined
 		if (Date.now() >= deadline) return undefined
 		await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS))
 	}
 }
 
+function dialogs(state: TaskState): readonly (DialogInteraction | undefined)[] {
+	return [state.dialog.primary, state.dialog.interrupted, ...Object.values(state.dialog.approvalsByBlock)]
+}
+
+function hasUnrevealedDialog(state: TaskState): boolean {
+	return dialogs(state).some((interaction) => interaction?.status === "planned" || interaction?.status === "prepared")
+}
+
 /** Select the dialog that can currently accept the historical response being promoted. */
 export function dispatchableDialog(state: TaskState, actionId?: string): DialogInteraction | undefined {
-	return [state.dialog.primary, state.dialog.interrupted, ...Object.values(state.dialog.approvalsByBlock)].find(
+	return dialogs(state).find(
 		(interaction): interaction is DialogInteraction =>
 			interaction !== undefined &&
 			interaction.status === "awaiting" &&

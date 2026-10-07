@@ -248,6 +248,46 @@ describe("ToolTerminalManifestMaterializer", () => {
 		expect(new Set(envelope.supersededPayloadRefs)).toEqual(new Set([failedRef, restoredRef]))
 	})
 
+	// The manifest replaces the raw result, so it must keep the attached PDFs the
+	// raw result referenced and charge them to the next request's growth.
+	it("carries the documents of a raw result and counts them in the projected growth", async () => {
+		const payloads = new InMemoryTaskPayloadStore()
+		const journal = new InMemoryConversationJournal()
+		const invocationRef = await payloads.put(encodeTaskPayload(invocation("b0")))
+		const documentRef = await payloads.put(
+			encodeTaskPayload({
+				kind: "attached_document",
+				document: {
+					type: "attached_document",
+					path: "/work/spec.pdf",
+					media_type: "application/pdf",
+					data: "JVBERi0xLjQKJSVFT0YK",
+					byte_length: 16,
+					page_count: 3,
+					fallback_text: "Hello PDF",
+				},
+			}),
+		)
+		const plain = result("b0", "answered")
+		await journal.append({
+			operationId: "raw-result:b0",
+			payloadRef: await payloads.put(encodeTaskPayload({ ...plain, documentPayloadRefs: [documentRef] })),
+			source: "tool",
+			causation: { turnId: TURN_ID },
+		})
+		const manifest = { turnId: TURN_ID, blocks: [{ blockId: "b0", phase: "completed", invocationRef }] } as never
+
+		const growth = await materializeToolTerminalManifest({ manifest, payloads, journal })
+
+		const manifestEntry = await journal.findByOperation(`tool.terminal_manifest:${TURN_ID}`)
+		const envelope = decodeTaskPayload<ToolTerminalManifestEnvelope>(await payloads.read(manifestEntry!.payloadRef!))
+		expect(envelope.results[0]?.documentPayloadRefs).toEqual([documentRef])
+		const textOnly = Math.ceil(Buffer.byteLength(plain.content, "utf8") / 4)
+		expect(growth).toBeGreaterThan(textOnly)
+		// A replayed manifest reports the same growth instead of dropping the documents.
+		await expect(materializeToolTerminalManifest({ manifest, payloads, journal })).resolves.toBe(growth)
+	})
+
 	// A completion's dialog is keyed by its block, so the dialog's own presentation
 	// shares the call's turn and interaction. Reading it as the user's approval
 	// feedback made the next request fail to materialize, and a restored

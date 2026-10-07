@@ -2,7 +2,7 @@ import { Mistral } from "@mistralai/mistralai"
 import { HTTPClient } from "@mistralai/mistralai/lib/http"
 import { Tool as MistralTool } from "@mistralai/mistralai/models/components/tool"
 import { MistralModelId, ModelInfo, mistralDefaultModelId, mistralModels } from "@shared/api"
-import { resolveForcedToolUseSupport } from "@shared/utils/reasoning-support"
+import { resolveRuntimeModel } from "@shared/providers/profile-model-info"
 import type { ChatCompletionTool as OpenAITool } from "openai/resources/chat/completions"
 import { buildExternalBasicHeaders } from "@/services/EnvUtils"
 import { ClineStorageMessage } from "@/shared/messages/content"
@@ -95,7 +95,7 @@ export class MistralHandler implements ApiHandler {
 		const nativeToolsOn = (tools?.length ?? 0) > 0
 		// A model that rejects a forced choice fails the whole request rather than
 		// degrading to an automatic one.
-		const forcedToolUseOn = resolveForcedToolUseSupport(model.id, model.info.capabilities)
+		const forcedToolUseOn = model.info.capabilities?.supportsForcedToolUse !== false
 		const stream = await client.chat
 			.stream({
 				model: model.id,
@@ -157,14 +157,7 @@ export class MistralHandler implements ApiHandler {
 	}
 
 	getModel(): { id: MistralModelId; info: ModelInfo } {
-		const modelId = this.modelId
-		if (modelId && modelId in mistralModels) {
-			const id = modelId as MistralModelId
-			return { id, info: mistralModels[id] }
-		}
-		return {
-			id: mistralDefaultModelId,
-			info: mistralModels[mistralDefaultModelId],
-		}
+		const model = resolveRuntimeModel(this.ctx.profile, { models: mistralModels, defaultModelId: mistralDefaultModelId })
+		return { id: model.id as MistralModelId, info: model.info }
 	}
 }

@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       channel:
-        description: Release channel (insiders, preview, or production).
+        description: Release channel (insiders, pre-release, or production).
         type: string
         required: true
       commit_sha:
@@ -12,7 +12,7 @@ on:
         type: string
         required: true
       release_tag:
-        description: Exact release tag for Preview and Production (unused for Insiders).
+        description: Exact release tag for pre-release and Production (unused for Insiders).
         type: string
         required: false
         default: ""
@@ -91,16 +91,16 @@ jobs:
               branch=dev
               expected_artifact="registry-vsix-${COMMIT_SHA}"
               ;;
-            preview|production)
-              if [[ "$CHANNEL" == 'preview' ]]; then
+            pre-release|production)
+              if [[ "$CHANNEL" == 'pre-release' ]]; then
                 if [[ "$GITHUB_EVENT_NAME" != 'push' || ! "$GITHUB_REF" =~ ^refs/tags/dev-v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
-                  echo "Error: Preview requires an exact dev-vX.Y.Z tag push."
+                  echo "Error: pre-release requires an exact dev-vX.Y.Z tag push."
                   exit 1
                 fi
                 version="${BASH_REMATCH[1]}"
                 branch=dev
                 expected_artifact="dline-vsix-${COMMIT_SHA}"
-                expected_asset="dline-preview-${version}.vsix"
+                expected_asset="dline-${version}-pre-release.vsix"
                 expected_tag="dev-v${version}"
               else
                 branch=main
@@ -195,11 +195,26 @@ jobs:
             (.version | test("^[0-9]+\\.[0-9]+\\.[0-9]+$")) and
             (
               ($channel == "insiders" and .name == "dline-insiders" and .preview == true and $asset == ("dline-insiders-" + .version + ".vsix")) or
-              ($channel == "preview" and .name == "dline-preview" and .preview == true and .version == $version) or
+              ($channel == "pre-release" and .name == "dline" and .preview != true and .version == $version) or
               ($channel == "production" and .name == "dline" and .preview != true and .version == $version)
             )
           ' "$manifest_path" >/dev/null; then
             echo "Error: VSIX manifest does not match the release channel."
+            exit 1
+          fi
+          # The VSIX pre-release marker, not the extension name, selects the
+          # Marketplace track of tuvokyang.dline; it must match the channel.
+          if unzip -p "$vsix_path" extension.vsixmanifest | grep -q 'Id="Microsoft.VisualStudio.Code.PreRelease"'; then
+            marked_pre_release=true
+          else
+            marked_pre_release=false
+          fi
+          if [[ "$CHANNEL" == 'pre-release' && "$marked_pre_release" != 'true' ]]; then
+            echo "Error: pre-release VSIX is missing the Marketplace pre-release marker."
+            exit 1
+          fi
+          if [[ "$CHANNEL" == 'production' && "$marked_pre_release" == 'true' ]]; then
+            echo "Error: production VSIX is marked as a pre-release."
             exit 1
           fi
 
@@ -250,6 +265,7 @@ jobs:
         id: publish
         env:
           VSCE_PAT: ${{ secrets.DLINE_VSCODE_RELEASE_PUBLISH_PAT }}
+          CHANNEL: ${{ inputs.channel }}
           ASSET_NAME: ${{ inputs.asset_name }}
           EXPECTED_SHA256: ${{ inputs.expected_sha256 }}
           VSCE_BIN: ${{ steps.vsce.outputs.bin }}
@@ -284,9 +300,15 @@ jobs:
             fail "Marketplace package changed after verification."
           fi
 
+          track_args=()
+          if [[ "$CHANNEL" == 'pre-release' ]]; then
+            # vsce verifies the package carries the pre-release marker.
+            track_args=(--pre-release)
+          fi
+
           for attempt in 1 2 3; do
             set +e
-            publish_output=$("$VSCE_BIN" publish --skip-duplicate --packagePath "$vsix_path" 2>&1)
+            publish_output=$("$VSCE_BIN" publish --skip-duplicate "${track_args[@]}" --packagePath "$vsix_path" 2>&1)
             publish_status=$?
             set -e
             echo "$publish_output"
@@ -385,6 +407,8 @@ jobs:
             fail "Open VSX package changed after verification."
           fi
 
+          # Open VSX reads the pre-release track from the VSIX marker verified
+          # in verify-source, so both channels publish the file unchanged.
           set +e
           "$OVSX_BIN" publish "$vsix_path" --skip-duplicate
           publish_status=$?

@@ -29,13 +29,45 @@ describe("package-vsix release channels", () => {
 		expect(source).not.toMatch(/function isOnTag\b/)
 	})
 
-	it("names each channel distinctly", async () => {
+	it("keeps the production identity for pre-releases and renames only Insiders", async () => {
 		const source = await readPackageVsix()
 
-		expect(source).toContain('const PREVIEW_SUFFIX = "-preview"')
+		// A pre-release is tuvokyang.dline on the Marketplace pre-release track,
+		// selected by the VSIX pre-release marker rather than a separate name.
+		expect(source).toContain('const PRE_RELEASE_CHANNEL = "pre-release"')
+		expect(source).toContain('if (channel !== "insiders") return false')
+		expect(source).toContain("const preRelease = channel === PRE_RELEASE_CHANNEL")
 		expect(source).toContain('const INSIDERS_SUFFIX = "-insiders"')
-		expect(source).toContain('const PREVIEW_DISPLAY_SUFFIX = " (Preview)"')
 		expect(source).toContain('const INSIDERS_DISPLAY_SUFFIX = " (Insiders)"')
+		expect(source).not.toContain("-preview")
+	})
+
+	it("publishes dev-vX.Y.Z to the pre-release track of the production extension", async () => {
+		const draft = await fs.readFile(path.join(PROJECT_ROOT, ".github/workflows/release-draft.yml"), "utf8")
+		const registries = await fs.readFile(path.join(PROJECT_ROOT, ".github/workflows/publish-vsix-registries.yml"), "utf8")
+		const packager = await fs.readFile(path.join(PROJECT_ROOT, "scripts/vsix-packager.mjs"), "utf8")
+
+		expect(draft).toContain("package_channel: pre-release")
+		expect(draft).toContain('.name == "dline" and')
+		expect(draft).toContain("Microsoft.VisualStudio.Code.PreRelease")
+		expect(draft).not.toContain("dline-preview")
+		expect(registries).toContain('($channel == "pre-release" and .name == "dline" and .preview != true')
+		expect(registries).toContain("track_args=(--pre-release)")
+		expect(registries).toContain("Error: production VSIX is marked as a pre-release.")
+		expect(packager).toContain("preRelease: options.preRelease")
+	})
+
+	it("packages an explicit Insiders build even when a dev-vX.Y.Z tag names the same commit", async () => {
+		const source = await readPackageVsix()
+
+		// A dev-vX.Y.Z tag must name the dev head, and every dev push packages
+		// that head as Insiders. The explicit Insiders branch therefore resolves
+		// before any tag lookup instead of rejecting a tagged commit.
+		expect(source).not.toContain("Insiders packaging requires an untagged commit")
+		const insidersBranch = source.slice(source.indexOf('if (requestedChannel === "insiders") {'))
+		const insidersReturn = insidersBranch.indexOf('return { channel: "insiders"')
+		expect(insidersReturn).toBeGreaterThan(-1)
+		expect(insidersReturn).toBeLessThan(insidersBranch.indexOf("getExactTag()"))
 	})
 
 	it("derives the insiders patch from a unix timestamp", async () => {

@@ -618,6 +618,7 @@ export class TaskSessionCompositionService {
 			taskId: options.taskId,
 			openReason: options.openReason,
 			deferRestoredCommands: options.deferRestoredCommands,
+			readAnchorRows: () => messages.durableClineMessages,
 			persistence,
 			conversationView,
 			// A request's figure stays in flight until the run it belongs to comes

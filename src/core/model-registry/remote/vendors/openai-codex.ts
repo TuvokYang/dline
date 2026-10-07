@@ -17,6 +17,26 @@ import {
 	openAiCodexClientVersionResolver,
 } from "./openai-codex-client-version"
 
+/** Decode the backend's explicit effort presets without consulting model identities. */
+function readListedThinking(raw: unknown): ModelCapabilities["thinking"] {
+	if (!isRecord(raw) || !Array.isArray(raw.supported_reasoning_levels)) return undefined
+	const effortLevels = raw.supported_reasoning_levels.flatMap((option) => {
+		const effort = readString(option, "effort")?.trim()
+		return effort ? [effort] : []
+	})
+	if (raw.supported_reasoning_levels.length > 0 && effortLevels.length === 0) return undefined
+	const supported = effortLevels.some((effort) => effort !== "none")
+	const candidate = readString(raw, "default_reasoning_level")?.trim()
+	const defaultEffort = candidate && effortLevels.includes(candidate) ? candidate : undefined
+	return {
+		supported,
+		mode: "effort",
+		effortLevels,
+		...(supported ? { canDisable: effortLevels.includes("none") } : {}),
+		...(defaultEffort !== undefined ? { defaultEffort, defaultEnabled: defaultEffort !== "none" } : {}),
+	}
+}
+
 /** Stable fallback retained for callers that need the minimum supported listing version. */
 export const OPENAI_CODEX_MODEL_LIST_CLIENT_VERSION = OPENAI_CODEX_MODEL_LIST_MINIMUM_VERSION
 
@@ -161,9 +181,13 @@ export class OpenAiCodexModelSource extends ModelListingSource {
 		const listed = Object.fromEntries(
 			Object.entries(super.readCapabilities(raw)).filter(([, value]) => value !== undefined),
 		) as ModelCapabilities
+		const thinking = readListedThinking(raw)
+		const supportsReasoning = listed.supportsReasoning === false ? false : (thinking?.supported ?? listed.supportsReasoning)
 		return {
 			...openAiCodexModelInfoSaneDefaults.capabilities,
 			...listed,
+			...(supportsReasoning !== undefined ? { supportsReasoning } : {}),
+			...(thinking ? { thinking: { ...thinking, supported: supportsReasoning } } : {}),
 		}
 	}
 

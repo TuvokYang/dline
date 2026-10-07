@@ -19,7 +19,7 @@ describe("projectInteractionContinuation", () => {
 			chatContent: { message: "x".repeat(MAX_TOOL_RESULT_TEXT_BYTES * 2) },
 		})
 
-		const text = textOf(result.content)
+		const text = textOf(result.toolResult.content)
 		expect(text.startsWith("<feedback>\n")).toBe(true)
 		expect(text).toContain("[FILE TRUNCATED:")
 		expect(Buffer.byteLength(text, "utf8")).toBeLessThanOrEqual(MAX_TOOL_RESULT_TEXT_BYTES)
@@ -33,6 +33,7 @@ describe("projectInteractionContinuation", () => {
 			chatContent: { message: "short answer" },
 		})
 
-		expect(textOf(result.content)).toBe("<feedback>\nshort answer\n</feedback>")
+		expect(textOf(result.toolResult.content)).toBe("<feedback>\nshort answer\n</feedback>")
+		expect(result.documents).toEqual([])
 	})
 })

@@ -1,25 +1,20 @@
 import { createIdentityFactory, type IdentityFactory } from "@core/api/transform/block-identity"
-import type {
-	ApiStreamChunk,
-	ApiStreamServerToolChunk,
-	ApiStreamToolCallsChunk,
-	ApiStreamUsageChunk,
-} from "@core/api/transform/stream"
+import type { ApiStreamChunk, ApiStreamServerToolChunk, ApiStreamToolCallsChunk } from "@core/api/transform/stream"
 import { createStreamNormalizer, normalizeApiStream } from "@core/api/transform/stream-identity-normalizer"
 import { parseAssistantMessageV2, type ToolUse } from "@core/assistant-message"
 import { isDeterministicToolPairingError } from "@core/context/context-management/compaction-retryability"
 import { checkContextWindowExceededError } from "@core/context/context-management/context-error-handling"
-import type { ClineAssistantContent, ClineAssistantToolUseBlock, ClineStorageMessage } from "@shared/messages/content"
+import {
+	type ClineAssistantContent,
+	type ClineAssistantToolUseBlock,
+	type ClineStorageMessage,
+	projectInternalMessagesForProvider,
+} from "@shared/messages/content"
 import { Logger } from "@shared/services/Logger"
 import { ClineError } from "@/services/error"
 import { isTurnEndingToolName } from "../../../assistant-message-order"
-import {
-	getRetryDelay,
-	isRetryableProviderError,
-	MAX_AUTO_RETRY_ATTEMPTS,
-	type ProviderIdentity,
-	waitRetryDelayUnlessAborted,
-} from "../../../auto-retry"
+import { isRetryableProviderError, type ProviderIdentity, waitRetryDelayUnlessAborted } from "../../../auto-retry"
+import { getRetryDelay, MAX_AUTO_RETRY_ATTEMPTS } from "../../../auto-retry-schedule"
 import { ContextWindowReceivingTracker } from "../../../ContextWindowReceivingTracker"
 import { StreamResponseHandler } from "../../../StreamResponseHandler"
 import type { JournalWatermark } from "../../../stores"
@@ -32,6 +27,7 @@ import type { ProductionProviderChunk, ProductionProviderService } from "../Prod
 import { ProviderFailure } from "../ProviderFailure"
 import { repairProviderPairing } from "./ProviderPairingRepair"
 import type { PreparedProviderRequest, ProviderRequestFactory, ProviderServerToolRequestContext } from "./ProviderRequest"
+import { ProviderUsageIncrements } from "./ProviderUsageIncrements"
 
 /** The automatic retries one turn may still spend, shared by every send of it. */
 interface RetryBudget {
@@ -172,23 +168,25 @@ async function* continueFrom<T>(first: T, rest: AsyncIterator<T>): AsyncGenerato
 }
 
 /** Release a failed attempt's stream; a stream that already failed has nothing left to report. */
+/**
+ * Shape the canonical history for the endpoint this request targets.
+ *
+ * Hosted tool blocks replay only to the protocol that produced them, and
+ * attached PDFs become native documents only within the endpoint's document
+ * budget; every other PDF is sent as its extracted text.
+ */
+function projectForEndpoint(request: PreparedProviderRequest, messages: ClineStorageMessage[]): ClineStorageMessage[] {
+	return projectInternalMessagesForProvider(messages, {
+		hostedToolReplayProtocol: request.api.getHostedToolReplayProtocol?.(),
+		documentInput: request.api.getDocumentInputLimits?.(),
+	})
+}
+
 async function closeQuietly(iterator: AsyncIterator<unknown> | undefined): Promise<void> {
 	try {
 		await iterator?.return?.(undefined)
 	} catch {
 		// The attempt already failed; its cleanup error carries no new information.
-	}
-}
-
-function usageRecord(chunk: ApiStreamUsageChunk): Record<string, number> {
-	return {
-		inputTokens: chunk.inputTokens,
-		outputTokens: chunk.outputTokens,
-		cacheWriteTokens: chunk.cacheWriteTokens ?? 0,
-		cacheReadTokens: chunk.cacheReadTokens ?? 0,
-		thoughtsTokenCount: chunk.thoughtsTokenCount ?? 0,
-		totalCost: chunk.totalCost ?? 0,
-		webSearchRequests: chunk.serverToolUsage?.webSearchRequests ?? 0,
 	}
 }
 
@@ -356,6 +354,7 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 		let streamFailed = false
 		// What the response occupies while it streams; the final usage settles it.
 		let receiving = new ContextWindowReceivingTracker()
+		let usage = new ProviderUsageIncrements()
 		let receivingTokens = 0
 		let authoritativeContextTokens = 0
 
@@ -375,7 +374,7 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 						}
 						switch (chunk.type) {
 							case "usage":
-								yield { kind: "usage", usage: usageRecord(chunk) }
+								yield { kind: "usage", usage: usage.next(chunk) }
 								break
 							case "text":
 								text += chunk.text
@@ -472,6 +471,7 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 					reasoning = newReasoning()
 					nativeTools.clear()
 					receiving = new ContextWindowReceivingTracker()
+					usage = new ProviderUsageIncrements()
 					receivingTokens = 0
 					authoritativeContextTokens = 0
 					yield { kind: "retry", notice }
@@ -615,7 +615,7 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 	): AsyncGenerator<ProductionProviderChunk, AsyncIterable<ApiStreamChunk> | undefined> {
 		let pairingRebuilt = false
 		const messagesOf = (request: PreparedProviderRequest): ClineStorageMessage[] =>
-			pairingRebuilt ? repairProviderPairing(request.messages) : request.messages
+			projectForEndpoint(request, pairingRebuilt ? repairProviderPairing(request.messages) : request.messages)
 		let messages = messagesOf(turn.request)
 		// The first refusal for length is truncated and resent at once; each
 		// later one waits out a retry and truncates again, until the retry

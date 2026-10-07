@@ -4,11 +4,11 @@ import { formatResponse } from "@core/prompts/responses"
 import type { UiQnaResponse } from "@shared/ExtensionMessage"
 import { ClineDefaultTool } from "@shared/tools"
 import type { InteractionOutcome } from "../../interaction/InteractionProtocol"
+import { type ToolHandlerResult, withToolDocuments } from "../ToolExecutionResult"
 import type { IPartialBlockHandler, IToolHandler } from "../ToolExecutorCoordinator"
-import type { ToolResponse } from "../ToolResponse"
 import { interactionId, interactionTurnId, type TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
-import { sayFeedbackOnce } from "../utils/UserFeedbackUtils"
+import { attachToolFeedbackFiles, sayFeedbackOnce } from "../utils/UserFeedbackUtils"
 
 /**
  * QnaRespondHandler — handles the qna_respond tool.
@@ -32,7 +32,7 @@ export class QnaRespondHandler implements IToolHandler, IPartialBlockHandler {
 		}
 	}
 
-	async execute(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
+	async execute(config: TaskConfig, block: ToolUse): Promise<ToolHandlerResult> {
 		const response: string | undefined = (block.params as Record<string, string | undefined>).response
 
 		if (!response) {
@@ -61,17 +61,14 @@ export class QnaRespondHandler implements IToolHandler, IPartialBlockHandler {
 	}
 
 	/** Consume a Q&A response without replaying presentation or other pre-response work. */
-	async continueInteraction(config: TaskConfig, _block: ToolUse, outcome: InteractionOutcome): Promise<ToolResponse> {
+	async continueInteraction(config: TaskConfig, _block: ToolUse, outcome: InteractionOutcome): Promise<ToolHandlerResult> {
 		config.taskState.isAwaitingPlanResponse = false
 		const text = outcome.draft?.text
 		const images = outcome.draft?.images
 		const files = outcome.draft?.files
 
-		let fileContentString = ""
-		if (files && files.length > 0) {
-			const { processFilesIntoText } = await import("@integrations/misc/extract-text")
-			fileContentString = await processFilesIntoText(files)
-		}
+		const attachments = await attachToolFeedbackFiles(files)
+		const fileContentString = attachments.text
 
 		if (config.taskState.didRespondToPlanAskBySwitchingMode) {
 			config.taskState.didRespondToPlanAskBySwitchingMode = false
@@ -81,12 +78,15 @@ export class QnaRespondHandler implements IToolHandler, IPartialBlockHandler {
 			const switchMessage = text
 				? renderPrompt("toolHandlers", "planSwitchToActWithMessage", { TEXT: text })
 				: getPrompt("toolHandlers", "planSwitchToAct")
-			return formatResponse.toolResult(switchMessage, images, fileContentString)
+			return withToolDocuments(formatResponse.toolResult(switchMessage, images, fileContentString), attachments.documents)
 		}
 
 		if (text || (images && images.length > 0) || fileContentString) {
 			await sayFeedbackOnce(config, "messageResponse", text, images, files, outcome)
-			return formatResponse.toolResult(`<feedback>\n${text}\n</feedback>`, images, fileContentString)
+			return withToolDocuments(
+				formatResponse.toolResult(`<feedback>\n${text}\n</feedback>`, images, fileContentString),
+				attachments.documents,
+			)
 		}
 
 		return formatResponse.toolResult("User continued the conversation.")

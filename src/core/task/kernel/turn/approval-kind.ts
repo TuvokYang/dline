@@ -99,10 +99,11 @@ export type ConfigurableCeilings = Partial<Record<PermissionScope, ApprovalCeili
  * approval would deadlock the turn: the approval being waited for is the
  * interaction the tool has not been allowed to present. `status_update` joins
  * the conversational set because it likewise owns whether to block, which is
- * the same rule the existing runtime applies.
+ * the same rule the existing runtime applies. `new_task` presents its own
+ * approve-or-feedback interaction before the successor task starts.
  */
 function ownsItsInteraction(tool: KernelToolId): boolean {
-	return tool === KernelToolId.STATUS_UPDATE || KERNEL_CONVERSATIONAL_TOOL_IDS.has(tool)
+	return tool === KernelToolId.STATUS_UPDATE || tool === KernelToolId.NEW_TASK || KERNEL_CONVERSATIONAL_TOOL_IDS.has(tool)
 }
 
 /**

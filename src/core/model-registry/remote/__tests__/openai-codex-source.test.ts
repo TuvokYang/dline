@@ -1,3 +1,4 @@
+import { resolveCodexReasoning } from "@core/api/providers/openai-codex/reasoning"
 import { ApiFormat } from "@shared/proto/dline/models/metadata"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { openAiCodexOAuthManager } from "@/integrations/openai-codex/oauth"
@@ -37,7 +38,13 @@ describe("OpenAiCodexModelSource", () => {
 				return jsonResponse({
 					models: [
 						{ slug: "gpt-reserve", supported_in_api: true, visibility: "hide" },
-						{ slug: "gpt-5.6-sol", supported_in_api: true, visibility: "list" },
+						{
+							slug: "gpt-5.6-sol",
+							supported_in_api: true,
+							visibility: "list",
+							supported_reasoning_levels: [{ effort: "high" }],
+							default_reasoning_level: "high",
+						},
 						{ slug: "gpt-5.6-terra", supported_in_api: true, visibility: "list" },
 						{ slug: "gpt-5.6-luna", supported_in_api: true, visibility: "list" },
 						{ slug: "gpt-5.5", supported_in_api: true, visibility: "list" },
@@ -71,6 +78,44 @@ describe("OpenAiCodexModelSource", () => {
 		expect(requests[0].headers.get("originator")).toBeNull()
 		expect(requests[0].headers.get("version")).toBe(clientVersion)
 		expect(requests[0].headers.get("User-Agent")).toBe(`Dline/${ExtensionRegistryInfo.version}`)
+	})
+
+	it.each([
+		{ levels: [{ effort: "none" }, { effort: "high" }], defaultLevel: "none", supported: true, expected: { effort: "none" } },
+		{ levels: [{ effort: "high" }], defaultLevel: "high", supported: true, expected: { effort: "high", summary: "auto" } },
+		{ levels: [], defaultLevel: "high", supported: false, expected: undefined },
+		{ levels: [{ effort: "" }, null], defaultLevel: "high", supported: undefined, expected: undefined },
+		{ levels: undefined, defaultLevel: undefined, supported: undefined, expected: undefined },
+	])("encodes only the effort metadata returned by an opaque Codex listing: $levels", async ({
+		levels,
+		defaultLevel,
+		supported,
+		expected,
+	}) => {
+		vi.spyOn(openAiCodexOAuthManager, "getCredentialContext").mockResolvedValue({
+			accessToken: "test-access",
+			expires: 1_900_000_000_000,
+		})
+		const source = new OpenAiCodexModelSource(fixedClientVersionSource("0.200.0"))
+		const models = await mockFetchForTesting(
+			async () =>
+				jsonResponse({
+					models: [
+						{
+							slug: "gpt-opaque-test",
+							supported_in_api: true,
+							supported_reasoning_levels: levels,
+							default_reasoning_level: defaultLevel,
+						},
+					],
+				}),
+			() => source.fetchModels({ profileId: "test-profile" }),
+		)
+		const capabilities = models["gpt-opaque-test"].capabilities
+		expect(capabilities?.supportsReasoning).toBe(supported)
+		expect(resolveCodexReasoning(capabilities, {}).reasoning).toEqual(expected)
+		if (levels?.length === 0) expect(capabilities?.thinking?.effortLevels).toEqual([])
+		if (supported === undefined) expect(capabilities?.thinking).toBeUndefined()
 	})
 
 	it("refreshes the full credential snapshot once after a 401", async () => {

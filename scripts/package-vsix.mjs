@@ -5,20 +5,25 @@
  *
  * Local invocations derive the channel from the branch and exact tag at HEAD.
  * CI can pass `--channel` explicitly so pull-request packages remain neutral
- * while dev, preview, and production runs receive their public identities:
+ * while dev, pre-release, and production runs receive their public identities:
  *
- * | Channel      | name             | version                    |
- * | ------------ | ---------------- | -------------------------- |
- * | ci           | dline            | package.json version       |
- * | production   | dline            | X.Y.Z (from `vX.Y.Z`)      |
- * | preview      | dline-preview    | X.Y.Z (from `dev-vX.Y.Z`)  |
- * | insiders     | dline-insiders   | major.minor.<unix seconds> |
+ * | Channel      | name             | version                    | Marketplace track |
+ * | ------------ | ---------------- | -------------------------- | ----------------- |
+ * | ci           | dline            | package.json version       | -                 |
+ * | production   | dline            | X.Y.Z (from `vX.Y.Z`)      | release           |
+ * | pre-release  | dline            | X.Y.Z (from `dev-vX.Y.Z`)  | pre-release       |
+ * | insiders     | dline-insiders   | major.minor.<unix seconds> | release           |
+ *
+ * Pre-release and production share the `tuvokyang.dline` extension; only the
+ * VSIX pre-release marker (vsce `preRelease`) puts a build on the pre-release
+ * track.
  *
  * GitHub distribution follows the same channel contract:
  * - untagged main runs CI only and is rejected by automatic release packaging;
  * - vX.Y.Z publishes stable assets after full validation or a manager override;
- * - dev-vX.Y.Z publishes a public Preview prerelease;
- * - untagged dev publishes a per-commit maintainers-only Insiders draft and registries.
+ * - dev-vX.Y.Z publishes a public GitHub pre-release and the Marketplace pre-release track;
+ * - every dev push publishes a per-commit maintainers-only Insiders draft and registries,
+ *   including the dev head that a dev-vX.Y.Z tag names.
  *
  * Tagged channels require the tag, package.json, and both changelogs to agree.
  * The rolling insiders channel replaces the patch with a timestamp and skips
@@ -46,11 +51,10 @@ const PRODUCTION_TAG_PATTERN = /^v(\d+\.\d+\.\d+)$/
 const DEV_TAG_PATTERN = /^dev-v(\d+\.\d+\.\d+)$/
 const INSIDERS_DRAFT_TAG_PATTERN = /^insiders-[0-9a-f]{40}$/
 
-const PREVIEW_SUFFIX = "-preview"
-const PREVIEW_DISPLAY_SUFFIX = " (Preview)"
+const PRE_RELEASE_CHANNEL = "pre-release"
 const INSIDERS_SUFFIX = "-insiders"
 const INSIDERS_DISPLAY_SUFFIX = " (Insiders)"
-const SUPPORTED_CHANNELS = new Set(["auto", "ci", "production", "preview", "insiders"])
+const SUPPORTED_CHANNELS = new Set(["auto", "ci", "production", PRE_RELEASE_CHANNEL, "insiders"])
 
 /**
  * Run a git command and return its trimmed output.
@@ -112,26 +116,25 @@ function getCurrentBranch() {
 }
 
 /**
- * Git ref the packaged README should link against.
+ * Git ref the packaged README links and images are pinned to.
  *
- * The marketplace README is authored with `/blob/main/` links, which are correct
- * only for a production build. A preview or insiders VSIX ships code from `dev`,
- * so those links must resolve to the packaged revision instead of the default
- * branch; otherwise the changelog and translated README describe a different
- * build, and a document that exists only on `dev` 404s.
+ * The marketplace README links to repository files with relative paths, and
+ * every one of them must resolve to the revision this VSIX ships: a Preview or
+ * Insiders build comes from `dev`, whose changelog and demos differ from the
+ * default branch.
  *
- * A tag is preferred because it is immutable. A rolling insiders build has no
- * tag, so it falls back to the exact commit rather than the moving branch.
+ * A release tag is preferred because it is immutable and readable. An
+ * untagged build (Insiders, CI) is pinned to the exact commit rather than the
+ * moving branch.
  *
- * @param {"ci"|"production"|"preview"|"insiders"} channel Resolved channel.
  * @param {string|null} tag Release tag at HEAD, when present.
- * @returns {string|null} Ref to link against, or null to keep authored links.
+ * @returns {string} Tag or commit SHA to link against.
  */
-function resolveDocumentationRef(channel, tag) {
-	if (channel === "production") return tag
+function resolveDocumentationRef(tag) {
 	if (tag) return tag
 	const commit = tryGit("git rev-parse HEAD")
-	return commit ?? getCurrentBranch()
+	if (!commit) fail("Cannot resolve HEAD; the packaged README links need an exact commit.")
+	return commit
 }
 
 /**
@@ -210,7 +213,7 @@ function createInsidersVersion(packageVersion) {
  * Resolve which channel the current HEAD belongs to.
  *
  * @param {string} packageVersion Version currently in package.json.
- * @returns {{channel: "production"|"preview"|"insiders", version: string, tag: string|null}}
+ * @returns {{channel: "production"|"pre-release"|"insiders", version: string, tag: string|null}}
  */
 function resolveChannel(packageVersion) {
 	const branch = getCurrentBranch()
@@ -231,7 +234,7 @@ function resolveChannel(packageVersion) {
 			fail(`Development tag '${tag}' is checked out on '${branch}'. A dev release tag must live on dev.`)
 		}
 		assertReleaseVersionConsistency(tag, devTag[1], packageVersion)
-		return { channel: "preview", version: devTag[1], tag }
+		return { channel: PRE_RELEASE_CHANNEL, version: devTag[1], tag }
 	}
 
 	if (tag !== null) {
@@ -254,22 +257,24 @@ function resolveChannel(packageVersion) {
  *
  * @param {string} requestedChannel Requested channel.
  * @param {string} packageVersion Version currently in package.json.
- * @returns {{channel: "ci"|"production"|"preview"|"insiders", version: string, tag: string|null}}
+ * @returns {{channel: "ci"|"production"|"pre-release"|"insiders", version: string, tag: string|null}}
  */
 function resolveRequestedChannel(requestedChannel, packageVersion) {
 	if (requestedChannel === "auto") {
 		return resolveChannel(packageVersion)
 	}
 
+	if (requestedChannel === "insiders") {
+		// Insiders is a separate extension versioned by timestamp, so a release
+		// tag cannot change its identity. A dev-vX.Y.Z tag must name the dev head,
+		// which is exactly the commit the dev push packages as Insiders; rejecting
+		// tagged commits would fail every pre-release's dev Tests run.
+		return { channel: "insiders", version: createInsidersVersion(packageVersion), tag: null }
+	}
+
 	const tag = getExactTag()
 	if (requestedChannel === "ci") {
 		return { channel: "ci", version: packageVersion, tag }
-	}
-	if (requestedChannel === "insiders") {
-		if (tag !== null) {
-			fail(`Insiders packaging requires an untagged commit, but HEAD has tag '${tag}'.`)
-		}
-		return { channel: "insiders", version: createInsidersVersion(packageVersion), tag: null }
 	}
 
 	const pattern = requestedChannel === "production" ? PRODUCTION_TAG_PATTERN : DEV_TAG_PATTERN
@@ -301,7 +306,7 @@ function parseArguments(argv) {
 			outputPath = argv[index + 1]
 			index += 1
 		} else if (argument === "--help" || argument === "-h") {
-			console.log("Usage: npm run vsix -- [--channel auto|ci|insiders|preview|production] [--out <path>]")
+			console.log("Usage: npm run vsix -- [--channel auto|ci|insiders|pre-release|production] [--out <path>]")
 			process.exit(0)
 		} else {
 			fail(`Unknown argument '${argument}'.`)
@@ -321,20 +326,22 @@ function parseArguments(argv) {
 /**
  * Apply a channel identity to a package manifest in place.
  *
+ * Only Insiders is a separate extension. A pre-release keeps the production
+ * identity: it is the same extension on the Marketplace pre-release track, so
+ * its manifest must not diverge from the release it precedes.
+ *
  * @param {object} pkg Parsed package.json.
- * @param {"ci"|"production"|"preview"|"insiders"} channel Target channel.
+ * @param {"ci"|"production"|"pre-release"|"insiders"} channel Target channel.
  * @param {string} version Version to publish.
  * @returns {boolean} True when the manifest was modified.
  */
 function applyChannelIdentity(pkg, channel, version) {
-	if (channel === "ci" || channel === "production") return false
+	if (channel !== "insiders") return false
 
-	const suffix = channel === "preview" ? PREVIEW_SUFFIX : INSIDERS_SUFFIX
-	const displaySuffix = channel === "preview" ? PREVIEW_DISPLAY_SUFFIX : INSIDERS_DISPLAY_SUFFIX
-	const displayName = pkg.displayName + displaySuffix
+	const displayName = pkg.displayName + INSIDERS_DISPLAY_SUFFIX
 
 	pkg.preview = true
-	pkg.name += suffix
+	pkg.name += INSIDERS_SUFFIX
 	pkg.displayName = displayName
 	pkg.version = version
 	if (pkg.contributes?.viewsContainers?.activitybar?.title) {
@@ -350,13 +357,13 @@ const packageVersion = readPackageJson().version
 const { channel, version, tag } = resolveRequestedChannel(requestedChannel, packageVersion)
 const resolvedOutputPath = outputPath ? (path.isAbsolute(outputPath) ? outputPath : path.join(PROJECT_ROOT, outputPath)) : null
 
-const documentationRef = resolveDocumentationRef(channel, tag)
+const documentationRef = resolveDocumentationRef(tag)
 
 console.log(`[package-vsix] Git hash: ${getGitHash()}`)
 console.log(`[package-vsix] Tag: ${tag ?? "(none)"}`)
 console.log(`[package-vsix] Channel: ${channel}`)
 console.log(`[package-vsix] Version: ${version}`)
-console.log(`[package-vsix] Documentation ref: ${documentationRef ?? "(authored default)"}`)
+console.log(`[package-vsix] Documentation ref: ${documentationRef}`)
 
 await withMarketplaceReadme(
 	async (cleanups) => {
@@ -382,11 +389,15 @@ await withMarketplaceReadme(
 			fs.mkdirSync(destinationDirectory, { recursive: true })
 		}
 
-		console.log(`[package-vsix] Packaging through the VSCE API${resolvedOutputPath ? `: ${resolvedOutputPath}` : ""}`)
+		const preRelease = channel === PRE_RELEASE_CHANNEL
+		console.log(
+			`[package-vsix] Packaging through the VSCE API${preRelease ? " as a pre-release" : ""}${resolvedOutputPath ? `: ${resolvedOutputPath}` : ""}`,
+		)
 		await packageVsix({
 			cwd: PROJECT_ROOT,
 			mode: "build-and-pack",
 			packagePath: resolvedOutputPath,
+			preRelease,
 		})
 		console.log("[package-vsix] Package completed successfully!")
 	},

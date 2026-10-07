@@ -19,6 +19,8 @@ import { sendPartialMessageEvent } from "../../ui/subscribeToPartialMessage"
 export interface ControllerTaskCheckpointOwnerOptions {
 	readonly controller: Controller
 	readonly taskId: string
+	/** The opening this manager serves; rows it publishes are attributed to it. */
+	readonly taskInstanceId: string
 	readonly stateManager: StateManager
 	readonly messages: MessageStateHandler
 	readonly toolState: DefaultToolHandlerState
@@ -74,7 +76,11 @@ export class ControllerTaskCheckpointOwner {
 			cancelTask: () => options.controller.cancelTask(),
 			restoreChatRuntime: (input) => this.reopenAfterChatRestore(input),
 			postStateToWebview: () => options.controller.postStateToWebview(),
-			publishMessage: (message) => sendPartialMessageEvent(options.controller, convertClineMessageToProto(message)),
+			publishMessage: (message) =>
+				sendPartialMessageEvent(options.controller, convertClineMessageToProto(message), {
+					taskId: options.taskId,
+					taskInstanceId: options.taskInstanceId,
+				}),
 			initialConversationHistoryDeletedRange: options.toolState.conversationHistoryDeletedRange,
 			initialCheckpointManagerErrorMessage: options.toolState.checkpointManagerErrorMessage,
 			stateManager: options.stateManager,

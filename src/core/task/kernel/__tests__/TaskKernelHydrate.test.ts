@@ -112,6 +112,57 @@ describe("task kernel hydrate forms", () => {
 	})
 
 	it.each([
+		["prepared", "journal:7", "dialog.reveal"],
+		["planned", undefined, "dialog.prepare"],
+	] as const)("restores an approval whose anchor row was torn as %s so it is revealed again", (status, journalRef, command) => {
+		const interactionId = "approval:dline_tid_torn"
+		const awaiting = {
+			interactionId,
+			turnId: "turn-1",
+			kind: "tool_approval",
+			status: "awaiting",
+			createdRevision: 3,
+			presentationRef: interactionId,
+			actionRules: [{ actionId: "approve", payloadPolicy: "draft" }],
+			blockId: "block-1",
+			receiverGeneration: 0,
+			...(journalRef ? { journalRef } : {}),
+		} satisfies DialogInteraction
+		const snapshot: TaskState = {
+			...base(),
+			turn: {
+				...base().turn,
+				blocks: [
+					{
+						blockId: "block-1",
+						index: 0,
+						phase: "awaiting_approval",
+						attempt: "attempt-1",
+						lanes: [],
+						turnEnding: false,
+						invocationRef: "invocation:1",
+					},
+				],
+				manualApprovalBlockIds: ["block-1"],
+			},
+			dialog: { approvalsByBlock: { "block-1": awaiting } },
+		}
+
+		const result = hydrate({
+			taskId: "task-1",
+			snapshot,
+			journalTail: { seq: 10 },
+			openReason: "crash_recovery",
+			unanchoredInteractionIds: new Set([interactionId]),
+		})
+
+		expect(result.state.dialog.approvalsByBlock["block-1"]).toMatchObject({ interactionId, status })
+		expect(result.initialCommands).toEqual([expect.objectContaining({ type: command, interactionId })])
+		// The same snapshot with its row intact is answered where it stands.
+		expect(ready(snapshot).state.dialog.approvalsByBlock["block-1"]).toMatchObject({ status: "awaiting" })
+	})
+
+	it.each([
 		["completed", { phase: "completed", completionId: "completion-1" }, "completion"],
 		["error", { phase: "error", error: "provider failed" }, "error_retry"],
 	] as const)("normalizes %s without automatic execution", (form, flow, kind) => {

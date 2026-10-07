@@ -1,6 +1,6 @@
 import type { ApiHandler, ApiRequestOptions } from "@core/api"
 import type { TargetWindowFittingDecision } from "@core/context/context-management/TargetWindowFittingService"
-import type { CompactionProviderInput } from "@core/task/compaction/CompactionRequestReplay"
+import type { CompactionProviderInput } from "@core/task/compaction/CompactionProviderInput"
 import { ExplicitInstructionRegistry } from "@core/task/explicit-instructions/ExplicitInstructionRegistry"
 import { ExplicitInstructionRequestScope } from "@core/task/explicit-instructions/ExplicitInstructionRequestScope"
 import type { ClineStorageMessage } from "@shared/messages/content"
@@ -89,15 +89,8 @@ describe("ContextCompactionSession Task cache namespace", () => {
 			requestOptions = options
 			return (async function* () {
 				yield {
-					type: "tool_calls" as const,
-					function_id: "summary-call",
-					tool_index: 0,
-					tool_call: {
-						function: {
-							name: ClineDefaultTool.SUMMARIZE_TASK,
-							arguments: JSON.stringify({ context: "summary" }),
-						},
-					},
+					type: "text" as const,
+					text: "<summarize_task>\n<context>\nsummary\n</context>\n</summarize_task>",
 				}
 				yield { type: "usage" as const, inputTokens: 10, outputTokens: 5 }
 			})()

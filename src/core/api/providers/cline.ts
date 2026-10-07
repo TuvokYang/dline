@@ -1,5 +1,6 @@
 import { type ModelInfo, openRouterDefaultModelId, openRouterDefaultModelInfo } from "@shared/api"
 import { providerFetch } from "@shared/net"
+import { resolveProfileModelId, resolveRuntimeModel } from "@shared/providers/profile-model-info"
 import { shouldSkipReasoningForModel } from "@utils/model-utils"
 import axios from "axios"
 import OpenAI from "openai"
@@ -49,7 +50,7 @@ export class ClineHandler implements ApiHandler {
 		return this.ctx.profile.apiKey
 	}
 	private get modelId() {
-		return this.ctx.profile.modelId || ""
+		return resolveProfileModelId(this.ctx.profile)
 	}
 	private get modelInfo() {
 		return this.ctx.profile.modelInfo as ModelInfo | undefined
@@ -61,7 +62,7 @@ export class ClineHandler implements ApiHandler {
 		return this.config?.reasoning?.effort
 	}
 	private get thinkingBudgetTokens() {
-		return this.config?.reasoning?.thinkingBudget ?? 0
+		return this.config?.reasoning?.thinkingBudget
 	}
 
 	private async ensureClient(): Promise<OpenAI> {
@@ -137,6 +138,7 @@ export class ClineHandler implements ApiHandler {
 				(this.config as any)?.openRouterProviderSorting,
 				tools,
 				this.ctx.enableParallelToolCalling,
+				this.config?.reasoning,
 			)
 
 			const toolCallProcessor = new ToolCallProcessor()
@@ -296,16 +298,9 @@ export class ClineHandler implements ApiHandler {
 	}
 
 	getModel(): { id: string; info: ModelInfo } {
-		const modelId = this.modelId
-		const modelInfo = this.modelInfo
-		if (modelId && modelInfo) {
-			return { id: modelId, info: modelInfo }
-		}
-		// If we have a model ID but no model info (e.g., CLI featured models),
-		// use the ID with default model info rather than falling back to a different model
-		if (modelId) {
-			return { id: modelId, info: openRouterDefaultModelInfo }
-		}
-		return { id: openRouterDefaultModelId, info: openRouterDefaultModelInfo }
+		return resolveRuntimeModel(this.ctx.profile, {
+			models: { [openRouterDefaultModelId]: openRouterDefaultModelInfo },
+			defaultModelId: openRouterDefaultModelId,
+		})
 	}
 }

@@ -3,6 +3,7 @@ import { ClineMessage as ProtoUiMessage } from "@shared/proto/dline/ui"
 import { Logger } from "@/shared/services/Logger"
 import { getRequestRegistry, StreamingResponseHandler } from "../grpc-handler"
 import { Controller } from "../index"
+import type { TaskOpening } from "../task/opened-task"
 
 // Per-controller subscriptions to isolate partial messages between independent webviews.
 const subs = new Map<Controller, Set<StreamingResponseHandler<ProtoUiMessage>>>()
@@ -55,10 +56,24 @@ export function registerPartialMessageCallback(callback: PartialMessageCallback)
 
 /**
  * Send a partial message event to a specific controller's subscribers.
+ *
+ * Every row carries the opening that produced it: the Webview only merges rows
+ * whose opening matches the view it shows, so a late row from a closed or
+ * replaced opening cannot land in the next one. A row is also dropped here when
+ * the Controller already shows a different opening. While no opening is current
+ * (a session still composing) the row is delivered and the Webview decides.
  * @param controller The controller whose subscribers should receive the event
  * @param partialMessage The ProtoUiMessage to send
+ * @param owner The opening that produced the row
  */
-export async function sendPartialMessageEvent(controller: Controller, partialMessage: ProtoUiMessage): Promise<void> {
+export async function sendPartialMessageEvent(
+	controller: Controller,
+	partialMessage: ProtoUiMessage,
+	owner: TaskOpening,
+): Promise<void> {
+	const current = controller.currentOpening()
+	if (current && (current.taskId !== owner.taskId || current.taskInstanceId !== owner.taskInstanceId)) return
+	partialMessage = { ...partialMessage, taskId: owner.taskId, taskInstanceId: owner.taskInstanceId }
 	// Send to gRPC stream subscribers of this controller
 	const set = subs.get(controller)
 	const streamPromises: Promise<void>[] = []

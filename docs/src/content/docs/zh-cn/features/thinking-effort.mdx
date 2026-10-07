@@ -1,0 +1,37 @@
+---
+title: 思考强度
+description: 不修改 Profile，只为当前任务调整思考强度、思考预算或 OpenAI 服务等级。
+---
+
+import { Aside } from "@astrojs/starlight/components"
+
+Profile 保存模型的默认推理设置。打开任务后，可以在输入工具栏中只为这个任务覆盖这些设置。Profile 本身不会改变，其他任务也保留各自的设置。
+
+## 控件位置
+
+打开任务且当前模型支持思考时，输入工具栏的模型名称旁会出现思考选择器。它显示当前值，例如 **Medium** 或 **Budget**；悬停可以看到 `Thinking: <值>`。
+
+可选项来自模型元数据：
+
+| 选项 | 含义 |
+|---|---|
+| 强度档位（例如 **Low**、**Medium**、**High**） | 让模型使用固定的推理强度，只列出模型支持的档位 |
+| **Budget** | 为模型设置思考 token 预算。选中后会出现数字输入框，填入 0 到模型上限之间的值，按 `Enter` 或离开输入框即生效 |
+
+模型不支持思考，或 Profile 关闭了思考时，选择器不会显示。
+
+## 覆盖规则
+
+- **只作用于当前任务。** 值保存在任务自己的设置中，不会成为全局默认值，也不会修改 Profile。
+- **按模式区分。** Plan 模式和 Act 模式分别保存覆盖值，因为两种模式可以使用不同的 Profile。
+- **按模型校验。** 模型未列出的强度档位、负数预算或超过模型上限的预算都会被拒绝，错误信息显示在控件旁。
+- **默认继承 Profile。** 在选择新值之前，任务使用 Profile 的推理设置。
+- **子代理不受影响。** 子代理使用各自 Profile 的设置，主任务的思考覆盖不会作用到子代理。参见[子代理](/zh-cn/features/subagents/)。
+
+## OpenAI 服务等级
+
+对于启用了服务等级的 OpenAI 和 OpenAI Codex Profile，思考选择器旁会出现一个只有图标的 **Task service tier** 按钮，可以为当前任务选择 **Auto**、**Default**、**Flex**、**Scale**、**Priority** 或 **Ultrafast**。与思考覆盖相同，这个选择按任务、按模式分别保存。
+
+<Aside type="tip">
+如果要修改所有新任务的默认值，请直接编辑 Profile。参见[模型配置 Profile](/zh-cn/getting-started/authorizing-with-dline/)。
+</Aside>

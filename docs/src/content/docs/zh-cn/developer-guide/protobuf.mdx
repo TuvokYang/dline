@@ -1,0 +1,65 @@
+---
+title: Protobuf 与 ProtoBus
+description: Dline 如何用 Protobuf 定义 Webview、Controller 与宿主桥接之间的类型化合同，以及新增 RPC 的完整步骤。
+---
+
+import { Aside, Steps } from "@astrojs/starlight/components"
+
+Dline 用 Protobuf 定义 Webview、核心 Controller 和宿主桥接之间的类型化合同。Webview 与扩展之间的 RPC 是经 VS Code `postMessage` 传递的 ProtoBus 请求/响应信封；生成的 API 看起来像 gRPC，但不经过网络 socket。
+
+## 源文件布局
+
+| 位置 | 内容 | Protobuf 包 |
+|---|---|---|
+| `proto/dline/*.proto` | 应用与 Webview 服务，例如 `task.proto`、`state.proto`、`mcp.proto` | `dline` |
+| `proto/dline/host/` | IDE 宿主服务：`diff`、`env`、`language`、`testing`、`window`、`workspace` | `dline.host` |
+| `proto/dline/models/` | 模型元数据，例如 `ApiFormat` | `dline.models` |
+| `proto/dline/provider/` | 服务商相关消息 | `dline.provider` |
+| `proto/dline/common.proto` | 共享消息 | `dline` |
+
+Proto 文件之间的 import 路径以 `dline/` 为根。命名约定：服务用 `PascalCaseService`，RPC 方法用 `camelCase`，消息和枚举用 `PascalCase`，字段用 `snake_case`（生成 TypeScript 时会转换）。
+
+## 生成代码
+
+```bash
+npm run protos
+```
+
+`scripts/build-proto.mjs` 收集 `proto/**/*.proto`，清理旧输出后重新生成：
+
+| 输出 | 内容 |
+|---|---|
+| `src/shared/proto/` | TypeScript 消息类型和 barrel 文件 |
+| `src/generated/grpc-js/` | grpc-js 服务定义 |
+| `src/generated/nice-grpc/` | nice-grpc 客户端 |
+| `src/generated/hosts/` | ProtoBus 服务注册和宿主桥接胶水代码 |
+| `webview-ui/src/services/grpc-client.ts` | Webview 使用的客户端 |
+| `dist-standalone/proto/descriptor_set.pb` | 描述符集 |
+
+生成完成后，`postprotos` 脚本会用 Biome 格式化生成的代码。**不要手工修改生成的文件**；输出不对时，修改 `.proto` 源文件或生成脚本。
+
+## 新增一个 RPC
+
+<Steps>
+
+1. **定义合同**：在负责该领域的 `.proto` 文件中添加消息和 RPC，宿主能力放在 `proto/dline/host/`。明确可选、重复和默认值语义，以及错误和取消的行为。已有字段编号不能改作他用；删除字段时按需要用 `reserved` 保留编号和名称。
+
+2. **重新生成**：运行 `npm run protos`，检查生成代码的 diff 中没有意外删除或命名空间变化。
+
+3. **实现处理器**：应用服务的处理器放在 `src/core/controller/<目录>/<方法名>.ts`，目录名是去掉 `Service` 后缀、首字母小写的服务名。例如 `task.proto` 中的 `TaskService.cancelTask` 由 `src/core/controller/task/cancelTask.ts` 实现。生成脚本按这个约定在 `src/generated/hosts/vscode/protobus-services.ts` 中导入并注册处理器，不需要再手工维护注册表。宿主桥接的处理器放在 `src/hosts/vscode/hostbridge/<服务>/`。
+
+4. **从调用方使用**：Webview 从 `webview-ui/src/services/grpc-client.ts` 导入生成的客户端，从 `@shared/proto/dline/...` 导入消息类型。已有 RPC 负责的交互，不要改用临时拼装的 `postMessage` 对象。
+
+5. **验证**：运行 `npm run check-types` 和 `npm run lint`，再运行处理器、转换和传输的相关测试。流式 RPC 还需要测试取消和释放。
+
+</Steps>
+
+## 枚举与消息转换
+
+部分持久化或界面使用的枚举需要在 `src/shared/proto-conversions/` 中做显式的双向转换。新增枚举值时要检查两个方向的转换函数。
+
+在 Proto 中新增字段，并不会自动让它进入 Controller 状态投影、Webview 默认值、持久化或校验，需要沿完整的数据流逐一接上。
+
+<Aside type="caution">
+`npm run protos` 执行成功，只说明代码生成成功，不能证明处理器已注册、调用方已使用新合同。
+</Aside>

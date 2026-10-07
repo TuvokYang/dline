@@ -104,8 +104,10 @@ export const TELEMETRY_EVENTS = {
 		FOCUS_CHAIN_INCOMPLETE_ON_COMPLETION: "task.focus_chain_incomplete_on_completion",
 		FOCUS_CHAIN_LIST_OPENED: "task.focus_chain_list_opened",
 		FOCUS_CHAIN_LIST_WRITTEN: "task.focus_chain_list_written",
-		// Tracks when the context window is auto-condensed with the summarize_task tool call
+		// Tracks one committed context compaction (explicit-instruction <summarize_task> summary)
 		AUTO_COMPACT: "task.summarize_task",
+		// Tracks every compaction Provider attempt with content-free diagnostics
+		COMPACTION_ATTEMPT: "task.compaction_attempt",
 		// Tracks when slash commands or workflows are activated
 		SLASH_COMMAND_USED: "task.slash_command_used",
 		// Feature and rule toggles

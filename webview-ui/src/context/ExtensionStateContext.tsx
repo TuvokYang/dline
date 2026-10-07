@@ -12,10 +12,9 @@ import { type ActiveInteractionView, DEFAULT_PLATFORM, type ExtensionState, type
 import { DEFAULT_FOCUS_CHAIN_SETTINGS } from "@shared/FocusChainSettings"
 import { DEFAULT_MCP_DISPLAY_MODE } from "@shared/McpDisplayMode"
 import type { UserInfo } from "@shared/proto/dline/account"
-import { EmptyRequest } from "@shared/proto/dline/common"
+import { EmptyRequest, StringRequest } from "@shared/proto/dline/common"
 import type { OpenRouterCompatibleModelInfo } from "@shared/proto/dline/models"
 import { OnboardingModelGroup, type TerminalProfile } from "@shared/proto/dline/state"
-import { FetchMessageRequest } from "@shared/proto/dline/task"
 import { protoToAccountUsage } from "@shared/proto-conversions/account-usage-conversion"
 import { convertProtoToClineMessage } from "@shared/proto-conversions/cline-message"
 import { convertProtoMcpServersToMcpServers } from "@shared/proto-conversions/mcp/mcp-server-conversion"
@@ -36,6 +35,7 @@ import {
 import { Environment } from "../../../src/shared/config-types"
 import type { McpMarketplaceCatalog, McpServer, McpViewTab } from "../../../src/shared/mcp"
 import type { TaskCapabilityToggles } from "../../../src/shared/TaskCapabilityToggles"
+import { type HistoryTaskOpening, type HistoryTaskTarget, useHistoryTaskOpening } from "../hooks/useHistoryTaskOpening"
 import {
 	McpServiceClient,
 	ModelsServiceClient,
@@ -43,10 +43,8 @@ import {
 	TaskServiceClient,
 	UiServiceClient,
 } from "../services/grpc-client"
+import { fetchTaskMessages, getTaskViewKey } from "../services/task-messages"
 import { canAppendRealtimeMessage, isMessageWindowOverfull, reconcileMessageWindow } from "./messageWindowSync"
-
-const getTaskViewKey = (taskId?: string, taskTitleMessageTs?: number) =>
-	taskId ?? (taskTitleMessageTs != null ? `task-title:${taskTitleMessageTs}` : undefined)
 
 type ExtensionStatePatch = {
 	__dlineStatePatch: true
@@ -165,7 +163,12 @@ function describeHydrationFailure(error: unknown): string {
  */
 export type HydrationStatus = { status: "pending" } | { status: "failed"; reason: string } | { status: "ready" }
 
+const requestHistoryTaskOpen = (id: string) => TaskServiceClient.showTaskWithId(StringRequest.create({ value: id }))
+
 export interface ExtensionStateContextType extends ExtensionState {
+	historyTaskOpening?: HistoryTaskOpening
+	openHistoryTask: (target: HistoryTaskTarget) => void
+	dismissHistoryTaskOpening: () => void
 	clineMessages: UiMessage[]
 	setClineMessages: React.Dispatch<React.SetStateAction<UiMessage[]>>
 	didHydrateState: boolean
@@ -447,6 +450,13 @@ export const ExtensionStateContextProvider: React.FC<{
 	// Atomic sliding window state via React 18 auto-batching
 	const [clineMessages, setClineMessages] = useState<UiMessage[]>([])
 	const [firstItemIndex, setFirstItemIndex] = useState(0)
+	const { historyTaskOpening, openHistoryTask, dismissHistoryTaskOpening } = useHistoryTaskOpening({
+		taskViewState: state.taskViewState,
+		// Hand off once the backend window is ready, not after the next paging RPC.
+		hasMessageSurface: !!state.taskTitleMessage && (state.totalMessageCount ?? 0) > 0,
+		requestOpen: requestHistoryTaskOpen,
+		navigateToChat,
+	})
 	const clineMessagesRef = useRef<UiMessage[]>([])
 	// Fetch callbacks resolve after their scheduling render, so reconciliation
 	// has to read the window start from a ref rather than the captured value.
@@ -483,8 +493,9 @@ export const ExtensionStateContextProvider: React.FC<{
 	// changes (remove partials, postState, total update) settle before
 	// triggering a Virtuoso data swap that causes layout jitter.
 	const cancelStabilizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-	const initialTaskViewKey = getTaskViewKey(state.currentTaskItem?.id, state.taskTitleMessage?.ts)
+	const initialTaskViewKey = getTaskViewKey(state.taskViewState)
 	const currentTaskViewKeyRef = useRef<string | undefined>(initialTaskViewKey)
+	currentTaskViewKeyRef.current = initialTaskViewKey
 	const messageFetchGenerationRef = useRef(0)
 	const prevRefetchTaskViewKeyRef = useRef<string | undefined>(initialTaskViewKey)
 	const prevHistoryTaskViewKeyRef = useRef<string | undefined>(initialTaskViewKey)
@@ -507,11 +518,15 @@ export const ExtensionStateContextProvider: React.FC<{
 	// Reset when task is cleared, bootstrap on task switch, and reconcile gaps
 	// when a durable tail message arrives without its realtime event.
 	useEffect(() => {
-		const currentTaskViewKey = getTaskViewKey(state.currentTaskItem?.id, state.taskTitleMessage?.ts)
+		const currentTaskViewKey = getTaskViewKey(state.taskViewState)
 		const total = state.totalMessageCount ?? 0
 		const messageWindowRevision = state.messageWindowRevision ?? 0
 		const preserveOmittedPartials =
 			state.taskViewState?.footer.actions.some((action) => action.type === "cancel" && action.enabled) === true
+		// Pages are fenced to the task opening the view shows, so a late page of a
+		// previous opening can never merge into this one.
+		const fetchCurrentMessages = (referenceIndex: number, count: number) =>
+			fetchTaskMessages(state.taskViewState, referenceIndex, count)
 
 		const fetchLatestWindow = (scheduledTaskViewKey: string | undefined, expectedInteraction?: ActiveInteractionView) => {
 			const scheduledGeneration = messageFetchGenerationRef.current
@@ -546,7 +561,7 @@ export const ExtensionStateContextProvider: React.FC<{
 			): Promise<void> => {
 				const localTimestampsAtFetchStart = new Set(clineMessagesRef.current.map((message) => message.ts))
 				try {
-					const resp = await TaskServiceClient.fetchMessage(FetchMessageRequest.create({ referenceIndex, count: 200 }))
+					const resp = await fetchCurrentMessages(referenceIndex, 200)
 					if (
 						messageFetchGenerationRef.current !== scheduledGeneration ||
 						currentTaskViewKeyRef.current !== scheduledTaskViewKey
@@ -605,6 +620,11 @@ export const ExtensionStateContextProvider: React.FC<{
 						}
 					}
 				} catch {
+					if (
+						currentTaskViewKeyRef.current !== scheduledTaskViewKey ||
+						messageFetchGenerationRef.current !== scheduledGeneration
+					)
+						return
 					if (
 						referenceIndex === -1 &&
 						total > 0 &&
@@ -682,9 +702,7 @@ export const ExtensionStateContextProvider: React.FC<{
 					const localTimestampsAtFetchStart = new Set(clineMessagesRef.current.map((message) => message.ts))
 					let progressed = false
 					try {
-						const resp = await TaskServiceClient.fetchMessage(
-							FetchMessageRequest.create({ referenceIndex: fetchLatest ? -1 : knownEnd, count: TAIL_PAGE_SIZE }),
-						)
+						const resp = await fetchCurrentMessages(fetchLatest ? -1 : knownEnd, TAIL_PAGE_SIZE)
 						if (!ownsSync()) return
 						const converted = resp.messages.map((message) => convertProtoToClineMessage(message))
 						const reconciled = applyFetchedMessageWindow(
@@ -839,8 +857,7 @@ export const ExtensionStateContextProvider: React.FC<{
 
 		if (!tailCatchUpDeferred) prevTotalRef.current = total
 	}, [
-		state.currentTaskItem?.id,
-		state.taskTitleMessage?.ts,
+		state.taskViewState,
 		state.totalMessageCount,
 		state.messageWindowRevision,
 		state.taskViewState?.footer.actions,
@@ -945,6 +962,14 @@ export const ExtensionStateContextProvider: React.FC<{
 						}
 						stateRevisionRef.current = stateData.stateRevision ?? 0
 						if (!isPatch) hydratedStateRef.current = true
+						if (!isPatch || Object.hasOwn(stateData, "taskViewState")) {
+							const nextKey = getTaskViewKey(stateData.taskViewState)
+							if (nextKey !== currentTaskViewKeyRef.current) {
+								currentTaskViewKeyRef.current = nextKey
+								messageFetchGenerationRef.current++
+								commitMessageWindow([], 0)
+							}
+						}
 						setState((prevState) => {
 							const { __dlineStatePatch: _patchMarker, ...stateFields } = stateData as ExtensionStatePatch
 							// Versioning logic for autoApprovalSettings
@@ -1115,7 +1140,10 @@ export const ExtensionStateContextProvider: React.FC<{
 					}
 
 					const partialMessage = convertProtoToClineMessage(protoMessage)
+					const sourceKey = getTaskViewKey(protoMessage)
+					if (!sourceKey || sourceKey !== currentTaskViewKeyRef.current) return
 					setClineMessages((prev) => {
+						if (sourceKey !== currentTaskViewKeyRef.current) return prev
 						const existingIndex = prev.findIndex((msg) => msg.ts === partialMessage.ts)
 						if (existingIndex >= 0 && prev[existingIndex].partial !== true && partialMessage.partial === true) {
 							return prev
@@ -1311,7 +1339,7 @@ export const ExtensionStateContextProvider: React.FC<{
 	// navigation path is the backend history-ready event; this only handles a
 	// missed event without closing HistoryView just because a task already exists.
 	useEffect(() => {
-		const currentTaskViewKey = getTaskViewKey(state.currentTaskItem?.id, state.taskTitleMessage?.ts)
+		const currentTaskViewKey = getTaskViewKey(state.taskViewState)
 		const prevTaskViewKey = prevHistoryTaskViewKeyRef.current
 
 		if (!showHistory) {
@@ -1324,7 +1352,7 @@ export const ExtensionStateContextProvider: React.FC<{
 		}
 
 		prevHistoryTaskViewKeyRef.current = currentTaskViewKey
-	}, [state.currentTaskItem?.id, state.taskTitleMessage?.ts, showHistory, navigateToChat])
+	}, [state.taskViewState, showHistory, navigateToChat])
 
 	const refreshOpenRouterModels = useCallback(() => {
 		ModelsServiceClient.refreshOpenRouterModelsRpc(EmptyRequest.create({}))
@@ -1341,30 +1369,7 @@ export const ExtensionStateContextProvider: React.FC<{
 	const refreshHicapModels = useCallback(() => {
 		ModelsServiceClient.refreshHicapModels(EmptyRequest.create({}))
 			.then((response: OpenRouterCompatibleModelInfo) => {
-				const models = response.models
-				const converted: Record<string, ModelInfo> = {}
-				for (const [key, value] of Object.entries(models)) {
-					converted[key] = {
-						id: key,
-						capabilities: {
-							supportsImages: value.supportsImages ?? false,
-							supportsPromptCache: value.supportsPromptCache,
-							supportsReasoning: value.supportsReasoning ?? false,
-							contextWindow: value.contextWindow,
-							maxTokens: value.maxTokens,
-							thinking: value.thinkingConfig,
-						},
-						pricing: {
-							inputPrice: value.inputPrice,
-							outputPrice: value.outputPrice,
-							cacheWritesPrice: value.cacheWritesPrice,
-							cacheReadsPrice: value.cacheReadsPrice,
-						},
-						name: value.name,
-						description: value.description,
-					}
-				}
-				setHicapModels(converted)
+				setHicapModels(fromProtobufModels(response.models))
 			})
 			.catch((error: Error) => console.error("Failed to refresh Hicap models:", error))
 	}, [])
@@ -1487,6 +1492,9 @@ export const ExtensionStateContextProvider: React.FC<{
 	const contextValue = useMemo<ExtensionStateContextType>(
 		() => ({
 			...state,
+			historyTaskOpening,
+			openHistoryTask,
+			dismissHistoryTaskOpening,
 			clineMessages,
 			didHydrateState,
 			hydration,
@@ -1572,6 +1580,9 @@ export const ExtensionStateContextProvider: React.FC<{
 		}),
 		[
 			state,
+			historyTaskOpening,
+			openHistoryTask,
+			dismissHistoryTaskOpening,
 			clineMessages,
 			didHydrateState,
 			hydration,

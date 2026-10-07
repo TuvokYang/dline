@@ -134,6 +134,52 @@ describe("TaskInteractionOwner", () => {
 		expect(submitted).toEqual([])
 	})
 
+	it.each([
+		["partial", [{ ts: 10, partial: true }]],
+		[
+			"duplicated",
+			[
+				{ ts: 10, partial: false },
+				{ ts: 11, partial: false },
+			],
+		],
+	] as const)("replaces a %s anchor row with exactly one complete row", async (_shape, torn) => {
+		const rows: UiMessage[] = [
+			{ ts: 1, type: "say", say: "text", text: "kept" },
+			...torn.map((row) => ({
+				...row,
+				type: "ask" as const,
+				ask: "tool" as const,
+				text: "{}",
+				interactionId: "approval-1",
+			})),
+		]
+		const messages = createMessages(rows)
+		vi.mocked(messages.addToClineMessages).mockImplementation(async (row) => {
+			rows.push(row as UiMessage)
+		})
+		const { owner } = createOwner({ messages, nextPresentationId: () => 50 })
+
+		await owner.anchor({ interactionId: "approval-1", kind: "tool_approval", body: '{"tool":"readFile","path":"a.txt"}' })
+
+		const anchors = rows.filter((row) => row.type === "ask" && row.interactionId === "approval-1")
+		expect(anchors).toHaveLength(1)
+		expect(anchors[0]).toMatchObject({ ask: "tool", text: '{"tool":"readFile","path":"a.txt"}' })
+		expect(anchors[0].partial).not.toBe(true)
+		expect(rows[0]).toMatchObject({ ts: 1, text: "kept" })
+	})
+
+	it("keeps a single complete anchor row as it is", async () => {
+		const anchor: UiMessage = { ts: 10, type: "ask", ask: "tool", text: "{}", partial: false, interactionId: "approval-1" }
+		const messages = createMessages([anchor])
+		const { owner } = createOwner({ messages })
+
+		await owner.anchor({ interactionId: "approval-1", kind: "tool_approval", body: "{}" })
+
+		expect(messages.removeMessagesByTs).not.toHaveBeenCalled()
+		expect(messages.addToClineMessages).not.toHaveBeenCalled()
+	})
+
 	it("dismisses an invalid-Profile failure and removes its obsolete rows", async () => {
 		const failure = 'Profile not valid: "azure-profile" requires an Azure endpoint for Azure Identity authentication.'
 		const messages = createMessages([

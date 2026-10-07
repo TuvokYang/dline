@@ -29,11 +29,16 @@ const EXPECTED = [
 	"",
 ].join("\n")
 
-/** A SEARCH head given only as a line prefix, a SKIP range, and a one-line tail. */
+/**
+ * A SEARCH head given only as a line prefix, a SKIP range, and a tail that is
+ * unique after the head. A bare `}` tail would also match the end of `beta`,
+ * and an ambiguous SKIP tail is rejected rather than resolved to the first match.
+ */
 const PREFIX_SKIP_DIFF = [
 	"------- SEARCH",
 	"export function alpha",
 	"....... SKIP",
+	"  return doubled + tripled",
 	"}",
 	"=======",
 	"export function alpha(value: number): number {",
@@ -75,7 +80,7 @@ e2e(
 						callId: "call_prefix_skip",
 						contentIncludes: [
 							"successfully replaced",
-							"replaced original lines 1-5, including 3 lines inside the SKIP range",
+							"replaced original lines 1-5, including 2 lines inside the SKIP range",
 						],
 					},
 				],

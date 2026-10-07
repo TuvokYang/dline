@@ -19,7 +19,7 @@ class FakeWatcher {
 	}
 }
 
-function createFixture(overrides: { shouldIgnoreDirectory?: (absolutePath: string) => boolean } = {}) {
+function createFixture(overrides: { shouldIgnoreDirectory?: (absolutePath: string) => boolean; autoReady?: boolean } = {}) {
 	const cwd = path.resolve("e:/workspace/project")
 	const roots = {
 		globalRulesDirectory: path.resolve("e:/documents/dline/rules"),
@@ -39,12 +39,56 @@ function createFixture(overrides: { shouldIgnoreDirectory?: (absolutePath: strin
 	}
 	const watcher = new FakeWatcher()
 	const invalidate = vi.fn()
-	const watch = vi.fn((_paths: readonly string[], _options: ChokidarOptions) => watcher as unknown as FSWatcher)
-	const inputWatcher = new PromptInputFileWatcher({ cwd, ...roots, invalidate, watch, ...overrides })
+	const watch = vi.fn((_paths: readonly string[], _options: ChokidarOptions) => {
+		if (overrides.autoReady !== false) queueMicrotask(() => watcher.emit("ready", undefined))
+		return watcher as unknown as FSWatcher
+	})
+	const inputWatcher = new PromptInputFileWatcher({
+		cwd,
+		...roots,
+		invalidate,
+		watch,
+		...(overrides.shouldIgnoreDirectory ? { shouldIgnoreDirectory: overrides.shouldIgnoreDirectory } : {}),
+	})
 	return { cwd, roots, watcher, invalidate, watch, inputWatcher }
 }
 
 describe("PromptInputFileWatcher", () => {
+	it("waits for the first ready event and ignores duplicate ready events", async () => {
+		const fixture = createFixture({ autoReady: false })
+		let settled = false
+		const starting = fixture.inputWatcher.start().then(() => {
+			settled = true
+		})
+
+		await Promise.resolve()
+		expect(settled).toBe(false)
+		fixture.watcher.emit("ready", undefined)
+		await starting
+		expect(settled).toBe(true)
+		fixture.watcher.emit("ready", undefined)
+		expect(fixture.watch).toHaveBeenCalledOnce()
+	})
+
+	it("lets disposal supersede readiness that has not arrived", async () => {
+		const fixture = createFixture({ autoReady: false })
+		const starting = fixture.inputWatcher.start()
+
+		await fixture.inputWatcher.dispose()
+
+		await expect(starting).resolves.toBeUndefined()
+		expect(fixture.watcher.close).toHaveBeenCalledOnce()
+	})
+
+	it("settles readiness as degraded on a pre-ready watcher error", async () => {
+		const fixture = createFixture({ autoReady: false })
+		const starting = fixture.inputWatcher.start()
+
+		fixture.watcher.emit("error", new Error("watch failed"))
+
+		await expect(starting).resolves.toBeUndefined()
+	})
+
 	it("invalidates canonical Rules, Workflow, Skill, and Subagent file inputs", async () => {
 		const fixture = createFixture()
 		await fixture.inputWatcher.start()
@@ -55,7 +99,7 @@ describe("PromptInputFileWatcher", () => {
 			path.join(fixture.cwd, ".cursor", "rules", "local.mdc"),
 			path.join(fixture.cwd, ".cursorrules"),
 			path.join(fixture.cwd, ".windsurfrules"),
-			path.join(fixture.cwd, "packages", "app", "AGENTS.md"),
+			path.join(fixture.cwd, "AGENTS.md"),
 			path.join(fixture.roots.workflowDirectories[0], "nested", "workflow.md"),
 			path.join(fixture.roots.workflowDirectories[1], "legacy.mdx"),
 			path.join(fixture.roots.workflowDirectories[2], "global.md"),
@@ -70,13 +114,18 @@ describe("PromptInputFileWatcher", () => {
 		expect(fixture.watch).toHaveBeenCalledOnce()
 		expect(fixture.watch.mock.calls[0]?.[0]).toEqual(
 			expect.arrayContaining([
-				fixture.cwd,
+				path.join(fixture.cwd, "AGENTS.md"),
+				path.join(fixture.cwd, ".cursorrules"),
+				path.join(fixture.cwd, ".windsurfrules"),
+				path.join(fixture.cwd, ".agents", "rules"),
+				path.join(fixture.cwd, ".cursor", "rules"),
 				fixture.roots.globalRulesDirectory,
 				...fixture.roots.workflowDirectories,
 				...fixture.roots.skillDirectories,
 				...fixture.roots.subagentDirectories,
 			]),
 		)
+		expect(fixture.watch.mock.calls[0]?.[0]).not.toContain(fixture.cwd)
 	})
 
 	it("rejects files that canonical capability discovery cannot expose", async () => {
@@ -85,6 +134,7 @@ describe("PromptInputFileWatcher", () => {
 
 		for (const filePath of [
 			path.join(fixture.cwd, "src", "index.ts"),
+			path.join(fixture.cwd, "packages", "app", "AGENTS.md"),
 			path.join(fixture.roots.workflowDirectories[0], "workflow.txt"),
 			path.join(fixture.roots.skillDirectories[0], "SKILL.md"),
 			path.join(fixture.roots.skillDirectories[0], "skill", "nested", "SKILL.md"),

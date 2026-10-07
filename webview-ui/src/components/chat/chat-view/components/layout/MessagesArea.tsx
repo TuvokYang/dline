@@ -1,5 +1,4 @@
 import type { UiMessage } from "@shared/ExtensionMessage"
-import { FetchMessageRequest } from "@shared/proto/dline/task"
 import { convertProtoToClineMessage } from "@shared/proto-conversions/cline-message"
 import type React from "react"
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
@@ -7,7 +6,7 @@ import { Virtuoso } from "react-virtuoso"
 import { StickyUserMessage } from "@/components/chat/task-header/StickyUserMessage"
 import { useExtensionState } from "@/context/ExtensionStateContext"
 import { cn } from "@/lib/utils"
-import { TaskServiceClient } from "@/services/grpc-client"
+import { fetchTaskMessages, getTaskViewKey } from "@/services/task-messages"
 import { isApiReqActive } from "@/utils/streaming"
 
 import { useBrowsingScrollAnchor } from "../../hooks/useBrowsingScrollAnchor"
@@ -26,6 +25,7 @@ import {
 import { buildMessageRowKey, getBottomFollowIntent, mergeMessageWindow } from "../../utils/messageWindowUtils"
 import { advanceRowCoordinate, ROW_INDEX_BASE, type RowCoordinate } from "../../utils/rowCoordinate"
 import { LAYOUT_SETTLE_RETRY_MS } from "../../utils/scrollArbiter"
+import { findFirstVisibleMessage } from "../../utils/viewportRowAnchor"
 import { decideWindowGrowth, SCROLL_SETTLE_MS } from "../../utils/windowGrowthTiming"
 import { createMessageRenderer } from "../messages/MessageRenderer"
 
@@ -61,17 +61,24 @@ type RenderRow = {
 	endMessageTs?: number
 }
 
-type PendingAnchor = {
-	ts: number
-	align: "start" | "center" | "end"
-}
-
 type ScrollEdge = "top" | "bottom"
 type UserScrollIntent = { direction: "up" | "down"; recordedAt: number }
 type TailMessageSnapshot = {
 	ts: number
 	contentSignature: string
 	renderSignature: string
+}
+/**
+ * The row the reader was looking at when older history was merged in ahead of
+ * it, read from the layout at the moment of the merge.
+ */
+type MergeAnchor = {
+	/** A message in the anchored row; still found after the row is regrouped. */
+	ts: number
+	/** Where the row's top sat in the viewport, restored after the merge. */
+	viewportOffset: number
+	/** Window start before the merge; the anchor only applies once it moves. */
+	windowStart: number
 }
 
 function createTailMessageSnapshot(message: UiMessage | undefined): TailMessageSnapshot | null {
@@ -98,20 +105,23 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 	messageHandlers,
 	onFollowupOptionSelect,
 }) => {
-	const { clineMessages, setClineMessages, totalMessageCount, firstItemIndex, setFirstItemIndex } = useExtensionState()
+	const { clineMessages, setClineMessages, totalMessageCount, firstItemIndex, setFirstItemIndex, taskViewState } =
+		useExtensionState()
+	const taskKey = getTaskViewKey(taskViewState)
+	const taskKeyRef = useRef(taskKey)
+	taskKeyRef.current = taskKey
 
 	const firstItemIndexRef = useRef(firstItemIndex)
 	const clineMessagesLengthRef = useRef(clineMessages.length)
 	const inflightRef = useRef<Set<string>>(new Set())
-	const pendingAnchorRef = useRef<PendingAnchor | null>(null)
 	const pendingEdgeScrollRef = useRef<ScrollEdge | null>(null)
+	const pendingMergeAnchorRef = useRef<MergeAnchor | null>(null)
 	const latestVisibleMessageRangeRef = useRef<VisibleMessageRange | null>(null)
 	const latestExtensionRangeRef = useRef<VisibleMessageRange | null>(null)
-	const latestVisibleAnchorTsRef = useRef<number | null>(null)
 	const userScrollIntentRef = useRef<UserScrollIntent | null>(null)
 	/** When the reader last moved the viewport, used to defer window growth. */
 	const lastScrollAtRef = useRef<number | null>(null)
-	const deferredGrowthRef = useRef<{ visible: VisibleMessageRange; anchorTs: number | null } | null>(null)
+	const deferredGrowthRef = useRef<VisibleMessageRange | null>(null)
 	const deferredGrowthTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 	/**
 	 * Indirection so the visibility listener can replay a deferred fetch.
@@ -124,8 +134,11 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 	const scrollerRef = useCallback((element: HTMLElement | Window | null) => {
 		setScroller(element instanceof HTMLElement ? element : null)
 	}, [])
-	const { capture: captureBrowsingViewportAnchor, scheduleRestore: scheduleBrowsingViewportAnchorRestore } =
-		useBrowsingScrollAnchor(clineMessages, task.ts, scroller, scrollBehavior)
+	const {
+		capture: captureBrowsingViewportAnchor,
+		scheduleRestore: scheduleBrowsingViewportAnchorRestore,
+		release: releaseBrowsingViewportAnchor,
+	} = useBrowsingScrollAnchor(clineMessages, taskKey, scroller, scrollBehavior)
 	const windowVersionRef = useRef(0)
 	const edgeJumpInFlightRef = useRef<ScrollEdge | null>(null)
 
@@ -141,7 +154,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 	isWebviewHiddenRef.current = isWebviewHidden
 	const tailMessageSnapshotRef = useRef<TailMessageSnapshot | null>(null)
 	// A hidden snapshot belongs to exactly one Task and is invalidated on visibility restoration.
-	const cachedVisibleMessagesRef = useRef<{ taskTs: number; rows: (UiMessage | UiMessage[])[] } | null>(null)
+	const cachedVisibleMessagesRef = useRef<{ taskKey: string | undefined; rows: (UiMessage | UiMessage[])[] } | null>(null)
 
 	// Layout effects run before passive effects. Keep these mirrors current during
 	// render so initial async hydration can calculate the real loaded bottom.
@@ -154,19 +167,21 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 	// Reset auto-scroll flag when entering a new task so the view scrolls
 	// to the bottom instead of staying wherever the previous task left it.
 	useLayoutEffect(() => {
-		void task.ts
+		void taskKey
 		scrollBehavior.disableAutoScrollRef.current = false
 		windowVersionRef.current += 1
 		inflightRef.current.clear()
-		pendingAnchorRef.current = null
 		pendingEdgeScrollRef.current = null
+		pendingMergeAnchorRef.current = null
 		latestVisibleMessageRangeRef.current = null
 		latestExtensionRangeRef.current = null
-		latestVisibleAnchorTsRef.current = null
 		userScrollIntentRef.current = null
 		tailMessageSnapshotRef.current = null
 		scrollBehavior.cancelProgrammaticScroll()
-	}, [task.ts, scrollBehavior.cancelProgrammaticScroll, scrollBehavior.disableAutoScrollRef])
+		return () => {
+			windowVersionRef.current += 1
+		}
+	}, [taskKey, scrollBehavior.cancelProgrammaticScroll, scrollBehavior.disableAutoScrollRef])
 
 	const {
 		virtuosoRef,
@@ -281,7 +296,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 		// cached snapshot so Virtuoso stays idle instead of re-laying-out invisibly.
 		if (isWebviewHidden) {
 			const cached = cachedVisibleMessagesRef.current
-			if (cached?.taskTs === task.ts) {
+			if (cached && cached.taskKey === taskKey) {
 				return cached.rows
 			}
 		}
@@ -297,9 +312,9 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 		}
 		// Always update the cache when we compute a fresh result so the next
 		// hidden-cycle can reuse it.
-		cachedVisibleMessagesRef.current = { taskTs: task.ts, rows: result }
+		cachedVisibleMessagesRef.current = { taskKey, rows: result }
 		return result
-	}, [isWebviewHidden, renderRows, task.ts])
+	}, [isWebviewHidden, renderRows, taskKey])
 
 	const findRowOffsetByMessageTs = useCallback(
 		(ts: number) => {
@@ -315,10 +330,10 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 	)
 
 	const scrollToRowOffset = useCallback(
-		(index: number, align: "start" | "center" | "end" = "start", behavior: "auto" | "smooth" = "smooth") => {
+		(index: number, align: "start" | "center" | "end" = "start", behavior: "auto" | "smooth" = "smooth", offset = 0) => {
 			// Announce that the next scroll write belongs to the application.
 			//
-			// The pending-anchor restore and sticky navigation reach the list
+			// The merge-anchor restore and sticky navigation reach the list
 			// directly rather than through the scroll arbiter, so without this
 			// the diagnostics see a write with no application mark and attribute
 			// it to the list's own compensation. Reading the mark is test-only;
@@ -328,6 +343,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 				index,
 				align,
 				behavior,
+				offset,
 			})
 		},
 		[virtuosoRef],
@@ -418,6 +434,10 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 	}, [handleMeasuredLayoutChange, scroller])
 
 	useLayoutEffect(() => {
+		// Re-evaluated for every committed window. An edge jump can replace the
+		// window with one of the same length, so the row count alone would not
+		// bring this effect back to finish the jump.
+		void renderRows
 		const pendingEdge = pendingEdgeScrollRef.current
 		if (pendingEdge) {
 			// The jump replaced the whole window, but React can run this effect
@@ -430,19 +450,37 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 			pendingEdgeScrollRef.current = null
 			// Row heights are unknown until Virtuoso measures the new window.
 			scrollToLoadedEdge(pendingEdge, "auto", true)
-			return
 		}
 
-		const pendingAnchor = pendingAnchorRef.current
-		if (!pendingAnchor) return
-		if (renderRows.length === 0) return
+		// The first commit after a leading merge was requested is the merge
+		// itself; when the merge was dropped nothing re-renders, and the next
+		// unrelated commit discards the anchor because the window did not grow.
+		const mergeAnchor = pendingMergeAnchorRef.current
+		if (!mergeAnchor) return
+		pendingMergeAnchorRef.current = null
+		if (firstItemIndex >= mergeAnchor.windowStart) return
 
-		const rowOffset = findRowOffsetByMessageTs(pendingAnchor.ts)
+		// Rows inserted above the viewport have estimated heights, so the list
+		// alone cannot hold the reader's place. Put the row the reader was
+		// looking at back where it was in the viewport — not merely at the top,
+		// and not the overscan row above it, which is what the first rendered
+		// row of the range is.
+		const rowOffset = findRowOffsetByMessageTs(mergeAnchor.ts)
 		if (rowOffset < 0) return
-
-		pendingAnchorRef.current = null
-		scrollToRowOffset(rowOffset, pendingAnchor.align, "auto")
-	}, [renderRows.length, findRowOffsetByMessageTs, isEdgeWindowReady, scrollToLoadedEdge, scrollToRowOffset])
+		scrollToRowOffset(rowOffset, "start", "auto", -mergeAnchor.viewportOffset)
+		// The list keeps re-targeting this row while the inserted rows are
+		// measured. The browsing anchor queued its own correction for the same
+		// content change; measured mid-settle it would cut that short.
+		releaseBrowsingViewportAnchor()
+	}, [
+		renderRows,
+		firstItemIndex,
+		findRowOffsetByMessageTs,
+		isEdgeWindowReady,
+		releaseBrowsingViewportAnchor,
+		scrollToLoadedEdge,
+		scrollToRowOffset,
+	])
 
 	useEffect(() => clearEdgeScrollTimers, [clearEdgeScrollTimers])
 
@@ -594,32 +632,42 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 		return buildMessageRowKey(item, index)
 	}, [])
 
+	/**
+	 * Read the row the reader is looking at, so a leading merge can keep it in place.
+	 *
+	 * @returns The anchor for the current layout, or null when it cannot be read.
+	 */
+	const readMergeAnchor = useCallback((): MergeAnchor | null => {
+		// A hidden view is not laid out, so there is no position to keep.
+		if (!scroller || isWebviewHiddenRef.current) return null
+		const visible = findFirstVisibleMessage(scroller)
+		if (!visible) return null
+		return { ts: visible.ts, viewportOffset: visible.viewportOffset, windowStart: firstItemIndexRef.current }
+	}, [scroller])
+
 	const fetchAndMerge = useCallback(
-		async (start: number, count: number, anchor?: PendingAnchor) => {
+		async (start: number, count: number, side: WindowSide) => {
 			const key = `${start}:${count}`
 			if (inflightRef.current.has(key)) return false
 
 			inflightRef.current.add(key)
 			const requestVersion = windowVersionRef.current
 
-			if (anchor) {
-				pendingAnchorRef.current = anchor
-			}
-
 			try {
-				const resp = await TaskServiceClient.fetchMessage(FetchMessageRequest.create({ referenceIndex: start, count }))
+				const resp = await fetchTaskMessages(taskViewState, start, count)
+				if (taskKeyRef.current !== taskKey) return false
 				const msgs = resp.messages.map((message) => convertProtoToClineMessage(message))
 				const si = resp.startIndex
 
-				if (requestVersion !== windowVersionRef.current) {
-					if (anchor) pendingAnchorRef.current = null
-					return false
-				}
+				if (requestVersion !== windowVersionRef.current) return false
+				if (msgs.length === 0) return false
 
-				if (msgs.length === 0) {
-					if (anchor) pendingAnchorRef.current = null
-					return false
-				}
+				// Read immediately before the state update so the anchor matches
+				// what is on screen when the new rows commit, however long the
+				// fetch took or how far the reader scrolled meanwhile. A trailing
+				// merge appends below the viewport and leaves any pending leading
+				// anchor alone.
+				if (side === "leading") pendingMergeAnchorRef.current = readMergeAnchor()
 
 				let merged = false
 
@@ -647,24 +695,19 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 					return result.messages
 				})
 
-				if (!merged && anchor) {
-					pendingAnchorRef.current = null
-				}
-
 				return merged
 			} catch (e) {
-				if (anchor) pendingAnchorRef.current = null
 				console.error("fetchMessage:", e)
 				return false
 			} finally {
-				inflightRef.current.delete(key)
+				if (taskKeyRef.current === taskKey) inflightRef.current.delete(key)
 			}
 		},
-		[setClineMessages, setFirstItemIndex],
+		[readMergeAnchor, setClineMessages, setFirstItemIndex, taskViewState, taskKey],
 	)
 
 	const requestWindowExtensions = useCallback(
-		(visible: VisibleMessageRange, anchorTs: number | null, restrictTo?: WindowSide) => {
+		(visible: VisibleMessageRange, restrictTo?: WindowSide) => {
 			if (isWebviewHiddenRef.current) return
 
 			const window = currentMessageWindow()
@@ -700,21 +743,13 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 				// Remembered rather than dropped: the reader may stop scrolling
 				// without Virtuoso publishing another range, and the fetch would
 				// never be asked for again.
-				deferredGrowthRef.current = { visible, anchorTs }
+				deferredGrowthRef.current = visible
 			} else {
 				deferredGrowthRef.current = null
 			}
 
 			for (const extension of extensions) {
-				if (extension.side === "leading") {
-					if (anchorTs == null) continue
-					void fetchAndMerge(extension.startIndex, extension.count, {
-						ts: anchorTs,
-						align: "start",
-					})
-					continue
-				}
-				void fetchAndMerge(extension.startIndex, extension.count)
+				void fetchAndMerge(extension.startIndex, extension.count, extension.side)
 			}
 		},
 		[currentMessageWindow, fetchAndMerge],
@@ -733,7 +768,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 			const deferred = deferredGrowthRef.current
 			if (!deferred) return
 			deferredGrowthRef.current = null
-			requestWindowExtensions(deferred.visible, deferred.anchorTs)
+			requestWindowExtensions(deferred)
 		}, SCROLL_SETTLE_MS)
 	}, [requestWindowExtensions])
 
@@ -746,7 +781,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 		const deferred = deferredGrowthRef.current
 		if (!deferred) return
 		deferredGrowthRef.current = null
-		requestWindowExtensions(deferred.visible, deferred.anchorTs)
+		requestWindowExtensions(deferred)
 	}, [requestWindowExtensions])
 
 	useLayoutEffect(() => {
@@ -767,20 +802,14 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 			windowVersionRef.current += 1
 			const requestVersion = windowVersionRef.current
 			inflightRef.current.clear()
-			pendingAnchorRef.current = null
 			latestVisibleMessageRangeRef.current = null
 			latestExtensionRangeRef.current = null
-			latestVisibleAnchorTsRef.current = null
+			pendingMergeAnchorRef.current = null
 			pendingEdgeScrollRef.current = edge
 
 			try {
-				const request =
-					edge === "top"
-						? FetchMessageRequest.create({ referenceIndex: 0, count: LOAD_COUNT })
-						: FetchMessageRequest.create({ referenceIndex: -1, count: LOAD_COUNT })
-
-				const resp = await TaskServiceClient.fetchMessage(request)
-				if (requestVersion !== windowVersionRef.current) return
+				const resp = await fetchTaskMessages(taskViewState, edge === "top" ? 0 : -1, LOAD_COUNT)
+				if (taskKeyRef.current !== taskKey || requestVersion !== windowVersionRef.current) return
 
 				const converted = resp.messages.map((message) => convertProtoToClineMessage(message))
 				const nextFirstItemIndex = Math.max(0, resp.startIndex)
@@ -794,15 +823,20 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 					pendingEdgeScrollRef.current = null
 				}
 			} catch (e) {
+				if (taskKeyRef.current !== taskKey || requestVersion !== windowVersionRef.current) return
 				pendingEdgeScrollRef.current = null
 				console.error("fetchMessage:", e)
 			} finally {
-				if (edgeJumpInFlightRef.current === edge) {
+				if (
+					taskKeyRef.current === taskKey &&
+					requestVersion === windowVersionRef.current &&
+					edgeJumpInFlightRef.current === edge
+				) {
 					edgeJumpInFlightRef.current = null
 				}
 			}
 		},
-		[setClineMessages, setFirstItemIndex],
+		[setClineMessages, setFirstItemIndex, taskViewState, taskKey],
 	)
 
 	const handleRangeChanged = useCallback(
@@ -824,18 +858,20 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 			const toLocalRow = (index: number) => Math.min(Math.max(index - rowCoordinate.firstItemIndex, 0), lastRow)
 			const localStart = toLocalRow(range.startIndex)
 			const localEnd = toLocalRow(range.endIndex)
-			const firstVisibleRow = renderRows[localStart]
-			const lastVisibleRow = renderRows[localEnd]
+			// The range covers every rendered row, including the overscan
+			// beyond both edges of the viewport, so these are the rendered
+			// bounds rather than the rows the reader can see.
+			const firstRenderedRow = renderRows[localStart]
+			const lastRenderedRow = renderRows[localEnd]
 
-			if (!firstVisibleRow || !lastVisibleRow) return
+			if (!firstRenderedRow || !lastRenderedRow) return
 
 			const window = currentMessageWindow()
 			const visible: VisibleMessageRange = {
-				firstMessageIndex: firstVisibleRow.startMessageIndex,
-				lastMessageIndex: lastVisibleRow.endMessageIndex,
+				firstMessageIndex: firstRenderedRow.startMessageIndex,
+				lastMessageIndex: lastRenderedRow.endMessageIndex,
 			}
 			latestVisibleMessageRangeRef.current = visible
-			latestVisibleAnchorTsRef.current = firstVisibleRow.startMessageTs ?? null
 			captureBrowsingViewportAnchor()
 			const allLoaded = isWholeConversationLoaded(window)
 			const absoluteBottomLoaded = window.start + window.length >= window.total
@@ -851,7 +887,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 				// self-defeating: the window stayed short of the conversation end,
 				// which is exactly the condition that suppresses the follow intent,
 				// so every later message stayed outside both the window and the view.
-				if (!absoluteBottomLoaded) requestWindowExtensions(visible, null, "trailing")
+				if (!absoluteBottomLoaded) requestWindowExtensions(visible, "trailing")
 				return
 			}
 
@@ -871,7 +907,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 			}
 
 			latestExtensionRangeRef.current = rowUrgency
-			requestWindowExtensions(rowUrgency, latestVisibleAnchorTsRef.current)
+			requestWindowExtensions(rowUrgency)
 		},
 		[
 			captureBrowsingViewportAnchor,
@@ -892,10 +928,10 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 
 		const visible = latestExtensionRangeRef.current
 		if (!visible) return
-		requestWindowExtensions(visible, latestVisibleAnchorTsRef.current)
+		requestWindowExtensions(visible)
 	}, [clineMessages.length, firstItemIndex, requestWindowExtensions])
 
-	const virtuosoInstanceKey = `${task.ts}:${clineMessages.length === 0 ? "empty" : "loaded"}`
+	const virtuosoInstanceKey = `${taskKey}:${clineMessages.length === 0 ? "empty" : "loaded"}`
 
 	// Floating button: scroll listener for visibility + wheel listener for direction.
 	// Attached to Virtuoso inner scroller, not the outer scrollContainerRef.
@@ -1011,6 +1047,15 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 					rangeChanged={handleRangeChanged}
 					ref={virtuosoRef}
 					scrollerRef={scrollerRef}
+					// Correct for re-measured rows inside the resize-observer
+					// callback instead of deferring to the next animation frame.
+					// Deferred, a row measured above the viewport paints for one
+					// frame at its new height before the compensating scroll
+					// lands, which shows as the content jumping and snapping back
+					// (70px while browsing history, 300-400px while a reply
+					// streams). Done in the callback, the correction lands before
+					// that frame is painted.
+					skipAnimationFrameInResizeObserver
 					// Browser scroll anchoring stays off.
 					//
 					// Not because the rows are positioned out of flow -- they are

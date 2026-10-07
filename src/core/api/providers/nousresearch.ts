@@ -1,4 +1,5 @@
-import { ModelInfo, NousResearchModelId, nousResearchDefaultModelId, nousResearchModels } from "@shared/api"
+import { ModelInfo, nousResearchDefaultModelId, nousResearchModels } from "@shared/api"
+import { resolveRuntimeModel } from "@shared/providers/profile-model-info"
 import OpenAI from "openai"
 import { ClineStorageMessage } from "@/shared/messages/content"
 import { createOpenAIClient } from "@/shared/net"
@@ -89,13 +90,7 @@ export class NousResearchHandler implements ApiHandler {
 		}
 	}
 
-	getModel(): { id: NousResearchModelId; info: ModelInfo } {
-		const modelId = this.modelId
-
-		if (modelId && modelId in nousResearchModels) {
-			const id = modelId as NousResearchModelId
-			return { id, info: nousResearchModels[id] }
-		}
-		return { id: nousResearchDefaultModelId, info: nousResearchModels[nousResearchDefaultModelId] }
+	getModel(): { id: string; info: ModelInfo } {
+		return resolveRuntimeModel(this.ctx.profile, { models: nousResearchModels, defaultModelId: nousResearchDefaultModelId })
 	}
 }

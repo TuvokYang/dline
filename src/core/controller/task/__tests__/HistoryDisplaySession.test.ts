@@ -140,6 +140,7 @@ function requestFor(
 	if (!interaction) throw new Error("Expected an active history interaction")
 	return DispatchInteractionRequest.create({
 		taskId: interaction.taskId,
+		taskInstanceId: session.taskInstanceId,
 		turnId: interaction.turnId,
 		interactionId: interaction.interactionId,
 		actionId: "resume",
@@ -188,6 +189,8 @@ describe("HistoryDisplaySession", () => {
 			expect(session.accepts(requestFor(session))).toBe(true)
 			expect(session.accepts(requestFor(session, { stateRevision: 1 }))).toBe(false)
 			expect(session.accepts(requestFor(session, { interactionId: "stale-interaction" }))).toBe(false)
+			// The same dialog rendered by an earlier opening of the task is stale.
+			expect(session.accepts(requestFor(session, { taskInstanceId: "earlier-opening" }))).toBe(false)
 		} finally {
 			await session.dispose()
 		}
@@ -607,7 +610,7 @@ describe("HistoryDisplaySession", () => {
 		}
 	})
 
-	it("fails closed when a canonical approval anchor is still partial", async () => {
+	it("offers Resume when a canonical approval anchor is still partial", async () => {
 		const taskId = "history-partial-approval"
 		const turnId = "turn-partial-approval"
 		const interactionId = "interaction-partial-approval"
@@ -643,12 +646,20 @@ describe("HistoryDisplaySession", () => {
 		try {
 			await session.load()
 
-			const view = session.getViewState()
-			expect(view.activeInteraction).toBeUndefined()
-			expect(view.input).toEqual({ enabled: false, acceptsText: false, acceptsImages: false, acceptsFiles: false })
-			expect(view.footer.actions).toEqual([])
-			expect(view.diagnostic).toEqual({ code: "interaction_anchor_missing", interactionId })
-			expect(session.getMessages()).toEqual([partialAnchor])
+			// The torn row cannot carry the approval, so the display offers the
+			// recovery the promoted runtime re-reveals the approval through.
+			expect(session.getViewState().activeInteraction).toMatchObject({
+				taskId,
+				interactionId: `history-display:${taskId}:resume`,
+				kind: "resume",
+				status: "awaiting",
+			})
+			expect(session.getMessages()).toEqual([
+				partialAnchor,
+				expect.objectContaining({ type: "ask", ask: "resume_task", partial: false }),
+			])
+			expect(session.accepts(requestFor(session))).toBe(true)
+			expect(session.accepts(requestFor(session, { interactionId }))).toBe(false)
 		} finally {
 			await session.dispose()
 		}
@@ -687,7 +698,6 @@ describe("HistoryDisplaySession", () => {
 				askMessageTs: anchorTs,
 				anchorVerified: true,
 			})
-			expect(view.diagnostic).toBeUndefined()
 			expect(view.footer.actions.map((action) => action.type)).toEqual(["approve", "reject"])
 			// The anchor is projection evidence only: the retained window stays the latest page.
 			expect(session.getMessages()).toHaveLength(200)
@@ -698,7 +708,7 @@ describe("HistoryDisplaySession", () => {
 		}
 	})
 
-	it("fails closed when the anchor outside the latest window is still partial", async () => {
+	it("offers Resume when the anchor outside the latest window is still partial", async () => {
 		const taskId = "history-partial-anchor-outside-window"
 		const turnId = "turn-partial-old-approval"
 		const blockId = "block-partial-old-approval"
@@ -721,10 +731,14 @@ describe("HistoryDisplaySession", () => {
 		try {
 			await session.load()
 
-			const view = session.getViewState()
-			expect(view.activeInteraction).toBeUndefined()
-			expect(view.input).toEqual({ enabled: false, acceptsText: false, acceptsImages: false, acceptsFiles: false })
-			expect(view.diagnostic).toEqual({ code: "interaction_anchor_missing", interactionId })
+			expect(session.getViewState().activeInteraction).toMatchObject({
+				taskId,
+				interactionId: `history-display:${taskId}:resume`,
+				kind: "resume",
+				status: "awaiting",
+			})
+			expect(session.getMessages().at(-1)).toMatchObject({ type: "ask", ask: "resume_task", partial: false })
+			expect(session.accepts(requestFor(session))).toBe(true)
 		} finally {
 			await session.dispose()
 		}

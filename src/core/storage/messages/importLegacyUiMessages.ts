@@ -1,5 +1,6 @@
 import { access, rename } from "node:fs/promises"
 import path from "node:path"
+import { normalizeStoredCheckpointMessage } from "@shared/checkpoints"
 import type { UiMessage } from "@/shared/ExtensionMessage"
 import { Logger } from "@/shared/services/Logger"
 import { readJsonl } from "../backend/jsonl/jsonl-utils"
@@ -28,11 +29,23 @@ async function firstLegacyFile(instanceRoot: string): Promise<string | undefined
 	return undefined
 }
 
-/** Later lines win for a repeated timestamp, at the position of their last write, as the JSONL store did. */
+/**
+ * One row per timestamp, at the position of its chosen write, as the JSONL store showed it.
+ *
+ * Older stores can hold several streaming rows for one timestamp. A complete row is
+ * authoritative over partial snapshots written after it; without a complete row the
+ * latest partial wins, because the task stopped before the message finished.
+ */
 function latestPerTimestamp(messages: readonly UiMessage[]): UiMessage[] {
 	const latest = new Map<number, { message: UiMessage; ordinal: number }>()
-	messages.forEach((message, ordinal) => latest.set(message.ts, { message, ordinal }))
-	return [...latest.values()].sort((left, right) => left.ordinal - right.ordinal).map(({ message }) => message)
+	messages.forEach((message, ordinal) => {
+		const previous = latest.get(message.ts)
+		if (message.partial === true && previous && previous.message.partial !== true) return
+		latest.set(message.ts, { message, ordinal })
+	})
+	return [...latest.values()]
+		.sort((left, right) => left.ordinal - right.ordinal)
+		.map(({ message }) => normalizeStoredCheckpointMessage(message))
 }
 
 function sameTimestamps(expected: readonly UiMessage[], stored: readonly UiMessageRecord[]): boolean {
@@ -47,8 +60,9 @@ export interface LegacyUiMessages {
 /**
  * Reads the legacy chat history of one instance without changing it.
  *
- * Invalid lines are skipped and a repeated timestamp keeps its last write, so the
- * result is what the JSONL store would have shown.
+ * Invalid lines are skipped, a repeated timestamp keeps its complete row (or its
+ * last partial), and scalar checkpoint hashes are promoted to the multi-root form,
+ * so the result is what the JSONL store would have shown.
  */
 export async function readLegacyUiMessages(instanceRoot: string): Promise<LegacyUiMessages | undefined> {
 	const file = await firstLegacyFile(instanceRoot)

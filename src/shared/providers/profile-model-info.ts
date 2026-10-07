@@ -146,7 +146,21 @@ export function resolveProfileModelId(
 	profile: ApiProfile,
 	providerModels?: Pick<ProviderModelsConfig, "defaultModelId">,
 ): string {
-	return profile.modelId || providerModels?.defaultModelId || profile.modelInfo?.id || ""
+	return profile.modelId || profile.modelInfo?.id || providerModels?.defaultModelId || ""
+}
+
+/**
+ * Consume the factory's final metadata without reapplying registry or Profile overrides.
+ * Direct handler construction falls back only to the selected catalog identity; an
+ * explicit unknown selection never borrows the provider's default declaration.
+ */
+export function resolveRuntimeModel(
+	profile: ApiProfile,
+	providerModels?: Pick<ProviderModelsConfig, "models" | "defaultModelId">,
+): { id: string; info: ModelInfo } {
+	const id = resolveProfileModelId(profile, providerModels)
+	const matchingInfo = profile.modelInfo?.id === id ? profile.modelInfo : undefined
+	return { id, info: matchingInfo ?? providerModels?.models[id] ?? { id } }
 }
 
 /**
@@ -168,7 +182,13 @@ export function resolveProfileModelInfo(
 
 	const defaultModel = providerModels?.defaultModelId ? providerModels.models[providerModels.defaultModelId] : undefined
 
-	const baseModel = registryModel ?? profile.modelInfo ?? (profile.modelId ? undefined : defaultModel)
+	const configuredBaseId =
+		profile.provider === "bedrock" && profile.bedrock?.awsBedrockCustomSelected
+			? profile.bedrock.awsBedrockCustomModelBaseId
+			: undefined
+	const configuredBase = configuredBaseId ? providerModels?.models?.[configuredBaseId] : undefined
+	const matchingModel = profile.modelInfo?.id === modelId ? profile.modelInfo : undefined
+	const baseModel = registryModel ?? configuredBase ?? matchingModel ?? (profile.modelId ? undefined : defaultModel)
 
 	const modelInfo = buildEffectiveModelInfo(modelId || baseModel?.id, baseModel, {
 		...resolveProfileOverrides(profile),

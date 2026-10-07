@@ -1,0 +1,90 @@
+---
+title: Z AI（智谱）
+description: 获取 Z AI / 智谱开放平台 API Key，并在 Dline 中配置 GLM 模型。
+---
+
+import { Steps, TabItem, Tabs } from "@astrojs/starlight/components"
+
+Z AI（原智谱 AI）提供 GLM 系列模型，具备混合推理与智能体能力，适合推理、编程和智能体类应用。
+
+**官网：** [z.ai/model-api](https://z.ai/model-api)（国际）｜ [open.bigmodel.cn](https://open.bigmodel.cn/)（中国大陆）
+
+## 获取 API Key
+
+<Tabs>
+<TabItem label="国际">
+
+<Steps>
+
+1. 访问 [z.ai/model-api](https://z.ai/model-api)，注册或登录账号。
+
+2. 在控制台中打开 [API Key 管理页](https://z.ai/manage-apikey/apikey-list)。
+
+3. 创建新的 API Key。
+
+4. 立即复制并妥善保存 Key。
+
+</Steps>
+
+</TabItem>
+<TabItem label="中国大陆">
+
+<Steps>
+
+1. 访问[智谱开放平台](https://open.bigmodel.cn/)，注册或登录账号。
+
+2. 在[控制台](https://open.bigmodel.cn/console/overview)中找到 API Key 管理。
+
+3. 创建新的 API Key。
+
+4. 立即复制并妥善保存 Key。
+
+</Steps>
+
+</TabItem>
+</Tabs>
+
+两个地区的价格不同，以各自平台公布的价格为准。
+
+## 在 Dline 中配置
+
+通用步骤见[模型配置](/zh-cn/getting-started/authorizing-with-dline/)。
+
+<Steps>
+
+1. 点击 Dline 面板标题栏的 **Settings** 按钮。
+
+2. 在 **Provider** 中选择 **Z AI**。
+
+3. 在 **Z AI Entrypoint** 中根据所在地区选择接入点：
+   - `api.z.ai`：国际
+   - `open.bigmodel.cn`：中国大陆
+
+4. 把 Key 粘贴到 **Z AI API Key** 输入框。
+
+5. 在 **Model** 中选择模型。
+
+</Steps>
+
+## GLM Coding Plan
+
+Z AI 提供面向编程场景的订阅套餐，按提示次数而不是传统的 API 用量计费。
+
+<Steps>
+
+1. 访问 [z.ai/subscribe](https://z.ai/subscribe) 选择套餐。
+
+2. 订阅后登录 Z AI 控制台，为套餐创建 API Key。
+
+3. 在 Dline 中选择 **Z AI**，把该 Key 粘贴到 **Z AI API Key** 输入框。
+
+</Steps>
+
+## 接入点
+
+| 接入点 | API 地址 |
+| --- | --- |
+| 国际（`api.z.ai`） | `https://api.z.ai/api/paas/v4` |
+| 中国大陆（`open.bigmodel.cn`） | `https://open.bigmodel.cn/api/paas/v4` |
+
+接入点决定请求发往的地址，请选择与你的 Key 所属平台一致的接入点。

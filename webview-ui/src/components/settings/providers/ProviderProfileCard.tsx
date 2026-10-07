@@ -3,12 +3,15 @@ import { ApiFormat, type ThinkingConfig } from "@shared/proto/dline/models/metad
 import { type ImageGenerationProfile, ImageGenerationSource } from "@shared/proto/dline/profile"
 import { AnthropicProviderConfig } from "@shared/proto/dline/provider/anthropic"
 import type { ReasoningConfig } from "@shared/proto/dline/provider/common"
-import { PROFILE_PROVIDER_KEYS } from "@shared/providers/profile-model-info"
+import { PROFILE_PROVIDER_KEYS, resolveProfileModelInfo } from "@shared/providers/profile-model-info"
+import { clampThinkingBudget, resolveThinkingBudgetBounds } from "@shared/providers/thinking-budget"
 import type { Mode } from "@shared/storage/types"
 import { resolveProfileReasoningConfig, resolveTaskThinkingConfig } from "@shared/task-reasoning"
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react"
 import type { ReactNode } from "react"
 import { ProfileField, ProfileForm, ProfileSection } from "../profile-ui"
+import { getCurrencySymbol } from "../utils/pricingUtils"
+import { formatDeepSeekThinkingSummary } from "./deepseek-thinking"
 import { ProfileCapabilityIcons } from "./ProfileCapabilityIcons"
 import { ProfileUsageBadges } from "./ProfileUsageBadges"
 import type { ApiProfile } from "./ProviderProfile"
@@ -17,21 +20,31 @@ import { getCachedProviderDefaultImageModelId, getCachedProviderDefaultModelId, 
 import { WebToolsModeControl } from "./WebToolsModeControl"
 
 function formatThinkingSummary(reasoning: ReasoningConfig | undefined, thinking: ThinkingConfig | undefined) {
-	if (reasoning?.enableThinking === false || reasoning?.effort === "none") return "Thinking: Off"
-
-	const budget = reasoning?.thinkingBudget ?? 0
-	if (budget > 0) return `Thinking: ${budget.toLocaleString()} tokens`
-
+	if (thinking?.supported !== true || (thinking.mode !== "effort" && thinking.mode !== "budget")) return undefined
 	const effort = reasoning?.effort?.trim()
-	if (effort) return `Thinking: ${effort.replace(/^./, (character) => character.toUpperCase())}`
-	if (thinking?.supported !== true) return reasoning?.enableThinking === true ? "Thinking: On" : undefined
+	const required = thinking.canDisable === false
+	const disabled =
+		reasoning?.enableThinking === false ||
+		effort === "none" ||
+		(thinking.mode === "budget" && reasoning?.thinkingBudget === 0)
+	if (disabled && !required) return "Thinking: Off"
 
-	const effortLevels = thinking.effortLevels ?? []
-	if (thinking.mode === "budget" || (effortLevels.length === 0 && thinking.maxBudget !== undefined)) {
-		return "Thinking: Budget"
+	if (thinking.mode === "budget") {
+		if (!resolveThinkingBudgetBounds(thinking)) return undefined
+		const budget = disabled ? undefined : clampThinkingBudget(reasoning?.thinkingBudget ?? 0, thinking)
+		const enabled = required || (reasoning?.enableThinking ?? (budget !== undefined || thinking.defaultEnabled === true))
+		if (!enabled) return undefined
+		return budget !== undefined ? `Thinking: ${budget.toLocaleString()} tokens` : "Thinking: Budget"
 	}
-	const defaultEffort = effortLevels.includes("medium") ? "medium" : effortLevels[0]
-	return defaultEffort ? `Thinking: ${defaultEffort.replace(/^./, (character) => character.toUpperCase())}` : "Thinking: On"
+
+	const levels = thinking.effortLevels ?? []
+	const legalEffort = !disabled && effort && levels.includes(effort) ? effort : undefined
+	const enabled = required || (reasoning?.enableThinking ?? (legalEffort !== undefined || thinking.defaultEnabled === true))
+	if (!enabled) return undefined
+	const defaultEffort =
+		!disabled && thinking.defaultEffort && levels.includes(thinking.defaultEffort) ? thinking.defaultEffort : undefined
+	const selectedEffort = legalEffort ?? defaultEffort
+	return selectedEffort ? `Thinking: ${selectedEffort.replace(/^./, (character) => character.toUpperCase())}` : "Thinking: On"
 }
 
 interface ApiProfileCardProps {
@@ -94,7 +107,7 @@ const ApiProfileCard: React.FC<ApiProfileCardProps> = ({
 		profile.imageModelId && imageModels[profile.imageModelId] ? profile.imageModelId : defaultImageModelId
 	const models = currentCatalog.models
 	const catalogModelInfo = models[profile.modelId]
-	const selectedModelInfo = profile.modelInfo || catalogModelInfo
+	const selectedModelInfo = resolveProfileModelInfo(profile, currentCatalog)
 	const selectedApiFormat = profile.openai?.apiFormat ?? profile.modelInfo?.apiFormats?.[0] ?? catalogModelInfo?.apiFormats?.[0]
 	const supportsResponses =
 		selectedApiFormat === ApiFormat.OPENAI_RESPONSES || selectedApiFormat === ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE
@@ -117,8 +130,11 @@ const ApiProfileCard: React.FC<ApiProfileCardProps> = ({
 	// Build detailed tooltip from modelInfo
 	const info = selectedModelInfo
 	const reasoning = resolveProfileReasoningConfig(profile)
-	const thinking = resolveTaskThinkingConfig(profile.provider, info?.capabilities, reasoning, info?.id || profile.modelId)
-	const thinkingSummary = formatThinkingSummary(reasoning, thinking)
+	const thinking = resolveTaskThinkingConfig(info?.capabilities)
+	const thinkingSummary =
+		profile.provider === "deepseek"
+			? formatDeepSeekThinkingSummary(reasoning, thinking)
+			: formatThinkingSummary(reasoning, thinking)
 	const subtitle = [providerLabel, modelLabel, thinkingSummary].filter(Boolean).join(" · ")
 	const displayLine = [profileName, subtitle].filter(Boolean).join(" · ")
 	const tooltipLines: string[] = [displayLine]
@@ -126,8 +142,13 @@ const ApiProfileCard: React.FC<ApiProfileCardProps> = ({
 		const mi = info
 		if (mi.capabilities?.contextWindow)
 			tooltipLines.push(`Context: ${mi.capabilities?.contextWindow.toLocaleString()} tokens`)
-		if (mi.pricing?.inputPrice != null)
-			tooltipLines.push(`In: $${mi.pricing?.inputPrice}/M | Out: $${mi.pricing?.outputPrice ?? "?"}/M`)
+		if (mi.capabilities?.maxTokens) tooltipLines.push(`Max output: ${mi.capabilities.maxTokens.toLocaleString()} tokens`)
+		if (mi.pricing?.inputPrice != null) {
+			const currencySymbol = getCurrencySymbol(mi.pricing.currency)
+			tooltipLines.push(
+				`In: ${currencySymbol}${mi.pricing.inputPrice}/M | Out: ${currencySymbol}${mi.pricing.outputPrice ?? "?"}/M`,
+			)
+		}
 		if (mi.capabilities?.supportsReasoning)
 			tooltipLines.push(`Reasoning: ${mi.capabilities?.thinking?.effortLevels?.join(", ") || "supported"}`)
 		if (mi.capabilities?.supportsImages) tooltipLines.push("Images: supported")

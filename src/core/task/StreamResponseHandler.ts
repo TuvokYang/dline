@@ -301,7 +301,7 @@ class ToolUseHandler {
 	private extractPartialJsonFields(partialJson: string): Record<string, any> {
 		const result: Record<string, any> = {}
 		// Phase 1: Require closing quote for all fields.
-		// Without the closing quote guard, truncated values (e.g. "absolutePath":"e)
+		// Without the closing quote guard, truncated path values (e.g. "path":"s)
 		// leak into handlePartialBlock, which opens the diff editor at the wrong path
 		// and the real path is never applied because isEditing stays true.
 		const closedPattern = /"(\w+)":\s*"((?:[^"\\]|\\.)*)"/g
@@ -408,7 +408,9 @@ class ReasoningHandler {
 			return null
 		}
 
-		if (!this.pendingReasoning.summary.length && !this.pendingReasoning.content) {
+		// A signature alone is a complete Anthropic thinking block: the provider returned the
+		// reasoning without readable text, and the block must still be replayed unmodified.
+		if (!this.pendingReasoning.summary.length && !this.pendingReasoning.content && !this.pendingReasoning.signature) {
 			return null
 		}
 

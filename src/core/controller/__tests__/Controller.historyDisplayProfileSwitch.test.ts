@@ -50,6 +50,8 @@ describe("Controller Profile switch on a history display", () => {
 		return {
 			task: undefined,
 			historyDisplaySession: { taskId: TASK_ID, isLocked: () => locked },
+			// No Profile adoption is in flight for this display.
+			historyDisplayProfileBindings: new WeakMap(),
 			stateManager: state,
 			profileSwitchCoordinator: { request: vi.fn() },
 			postStateToWebview: vi.fn(async () => undefined),

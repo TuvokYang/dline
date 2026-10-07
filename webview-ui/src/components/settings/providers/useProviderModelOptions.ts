@@ -10,7 +10,7 @@ import { type ProviderModelsResult, useProviderModels } from "./useProviderModel
  *
  * `catalog` entries carry pricing and capabilities the local registry ships.
  * `remote` entries exist only in the vendor's listing, so the picker marks
- * them as newly discovered and their metadata is synthesized from defaults.
+ * them as newly discovered without inventing capabilities or prices.
  */
 export type ModelOptionOrigin = "catalog" | "remote"
 
@@ -72,22 +72,20 @@ export function useProviderModelOptions({
 		return response.values
 	}, [apiKey, baseUrl, profileId, providerId])
 
-	// The probe hook synthesizes entries from a template; the catalog defaults
-	// keep a discovered model's context window realistic until it is selected.
+	// Listing-only entries carry identity; catalog declarations are merged separately.
 	const { models: discovered, refresh: refreshRemoteModels } = useModelProbe({
 		probe,
 		credentialsKey: `${providerId}|${profileId ?? ""}|${baseUrl ?? ""}|${apiKey ?? ""}`,
 		enabled: true,
-		template: catalog.modelInfoSaneDefaults,
 	})
 
 	const options = useMemo<Record<string, ModelInfo>>(() => {
 		const merged: Record<string, ModelInfo> = { ...discovered, ...catalog.models }
 		if (selectedModelId && !merged[selectedModelId]) {
-			merged[selectedModelId] = { ...catalog.modelInfoSaneDefaults, id: selectedModelId, name: selectedModelId }
+			merged[selectedModelId] = { id: selectedModelId, name: selectedModelId }
 		}
 		return merged
-	}, [catalog.models, catalog.modelInfoSaneDefaults, discovered, selectedModelId])
+	}, [catalog.models, discovered, selectedModelId])
 
 	// The merged record loses each id's source because catalog metadata
 	// overwrites the synthesized entry, so the origin is derived from the

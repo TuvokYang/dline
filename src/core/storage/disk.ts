@@ -47,6 +47,14 @@ export {
 /** Maximum age for task history lock file before it's considered stale (10 seconds). */
 const _TASK_HISTORY_LOCK_TIMEOUT_MS = 10_000
 
+/**
+ * Remove temp files a crashed writer left in a task directory.
+ * Call only while holding the task lock, so no other process is writing there.
+ */
+export async function cleanupStaleTaskTempFiles(taskId: string): Promise<void> {
+	await removeStaleAtomicTempFiles(await ensureTaskDirectoryExists(taskId))
+}
+
 export const GlobalFileNames = {
 	apiConversationAll: "api_conversation_all.jsonl",
 	taskSnapshot: "snapshot.json",

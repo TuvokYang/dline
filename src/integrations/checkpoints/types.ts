@@ -1,4 +1,6 @@
 import type { CheckpointRestoreMode, CheckpointRestoreResult, WorkspaceRestoreResult } from "@core/task/shell/checkpoint-restore"
+import type { CheckpointReferenceSet } from "@shared/checkpoints"
+import type { CheckpointChangedFile } from "./CheckpointTracker"
 
 /**
  * Canonical task-state checkpoint boundary consumed by the legacy presentation/file adapter.
@@ -50,8 +52,8 @@ export interface ConversationRewindPort {
 }
 
 /**
- * Common interface for checkpoint managers
- * Allows single-root and multi-root managers to be used interchangeably
+ * Task checkpoint owner contract. One implementation serves single- and
+ * multi-root workspaces; multi-root file operations go through its root coordinator.
  */
 export interface ICheckpointManager {
 	saveCheckpoint(isAttemptCompletionMessage?: boolean, completionMessageTs?: number): Promise<void>
@@ -60,7 +62,9 @@ export interface ICheckpointManager {
 
 	doesLatestTaskCompletionHaveNewChanges(): Promise<boolean>
 
-	commit(): Promise<string | undefined>
+	getTaskChangesForCheckpoint(messageTs: number): Promise<CheckpointChangedFile[]>
+
+	commit(): Promise<CheckpointReferenceSet | undefined>
 
 	/**
 	 * Show the task's first restore point and start capturing the workspace it returns to.
@@ -75,9 +79,6 @@ export interface ICheckpointManager {
 	dispose?(): void
 
 	presentMultifileDiff?(messageTs: number, seeNewChangesSinceLastTaskCompletion: boolean): Promise<void>
-
-	// Optional method for multi-root specific initialization
-	initialize?(): Promise<void>
 
 	// Optional method for checking and initializing checkpoint tracker
 	checkpointTrackerCheckAndInit?(): Promise<any>

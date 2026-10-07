@@ -6,7 +6,14 @@ import { useId } from "react"
 import styled from "styled-components"
 import { ModelDescriptionMarkdown } from "../ModelDescriptionMarkdown"
 import { ProfileField } from "../profile-ui"
-import { formatPrice, hasThinkingBudget, supportsBrowserUse, supportsImages, supportsPromptCache } from "../utils/pricingUtils"
+import {
+	formatPrice,
+	getCurrencySymbol,
+	hasThinkingBudget,
+	supportsBrowserUse,
+	supportsImages,
+	supportsPromptCache,
+} from "../utils/pricingUtils"
 
 // ========== Styled Components ==========
 
@@ -80,20 +87,21 @@ function CapabilityValue({ supported }: { supported: boolean }) {
  * Format price for compact display (e.g., "$5/M" for $5 per million tokens)
  * Price is already in per-million format from OpenRouter
  */
-const formatCompactPrice = (price: number | undefined): string => {
+const formatCompactPrice = (price: number | undefined, currency?: string): string => {
 	if (price === undefined) {
 		return "N/A"
 	}
 	if (price === 0) {
 		return "Free"
 	}
+	const symbol = getCurrencySymbol(currency)
 	if (price < 0.01) {
-		return `$${price.toFixed(4)}/M`
+		return `${symbol}${price.toFixed(4)}/M`
 	}
 	if (price < 1) {
-		return `$${price.toFixed(2)}/M`
+		return `${symbol}${price.toFixed(2)}/M`
 	}
-	return `$${price % 1 === 0 ? price : price.toFixed(2)}/M`
+	return `${symbol}${price % 1 === 0 ? price : price.toFixed(2)}/M`
 }
 
 /**
@@ -117,6 +125,7 @@ const formatCompactContext = (contextWindow: number | undefined): string => {
 const formatTiers = (
 	tiers: PricingTier[],
 	priceType: "inputPrice" | "outputPrice" | "cacheReadsPrice" | "cacheWritesPrice",
+	currency?: string,
 ): JSX.Element[] => {
 	if (!tiers || tiers.length === 0) {
 		return []
@@ -133,7 +142,7 @@ const formatTiers = (
 
 			return (
 				<span key={`tier-${tier.contextWindow}`} style={{ paddingLeft: "15px" }}>
-					{formatPrice(price)}/million tokens (
+					{formatPrice(price, currency)}/million tokens (
 					{tier.contextWindow === Number.POSITIVE_INFINITY || tier.contextWindow >= Number.MAX_SAFE_INTEGER ? (
 						<span>
 							{">"} {prevLimit.toLocaleString()} input tokens
@@ -178,11 +187,15 @@ export const ModelInfoView = ({
 	const hasThinkingConfig = hasThinkingBudget(modelInfo)
 	const hasTiers = !!modelInfo.pricing?.tiers && modelInfo.pricing.tiers.length > 0
 	const contextTiers = modelInfo.capabilities?.contextWindowTiers ?? []
+	const currency = modelInfo.pricing?.currency
 
 	// Capability checks
 	const hasImages = supportsImages(modelInfo)
 	const hasBrowser = supportsBrowserUse(modelInfo)
 	const hasCaching = !isGemini && supportsPromptCache(modelInfo)
+	const hasNativeTools = modelInfo.capabilities?.supportsTools === true
+	const hasReasoning =
+		modelInfo.capabilities?.supportsReasoning === true || modelInfo.capabilities?.thinking?.supported === true
 
 	// Check if we have cache pricing to show in Advanced section
 	const hasCachePricing =
@@ -203,10 +216,16 @@ export const ModelInfoView = ({
 						<InfoValue>{formatCompactContext(modelInfo.capabilities?.contextWindow)}</InfoValue>
 					</InfoItem>
 				)}
+				{modelInfo.capabilities?.maxTokens !== undefined && modelInfo.capabilities.maxTokens > 0 && (
+					<InfoItem>
+						<InfoLabel>Max Output: </InfoLabel>
+						<InfoValue>{formatCompactContext(modelInfo.capabilities.maxTokens)}</InfoValue>
+					</InfoItem>
+				)}
 				{modelInfo.pricing?.inputPrice !== undefined && (
 					<InfoItem>
 						<InfoLabel>Input: </InfoLabel>
-						<InfoValue>{formatCompactPrice(modelInfo.pricing.inputPrice)}</InfoValue>
+						<InfoValue>{formatCompactPrice(modelInfo.pricing.inputPrice, currency)}</InfoValue>
 					</InfoItem>
 				)}
 				{modelInfo.pricing?.outputPrice !== undefined && (
@@ -214,8 +233,8 @@ export const ModelInfoView = ({
 						<InfoLabel>Output: </InfoLabel>
 						<InfoValue>
 							{hasThinkingConfig && modelInfo.pricing?.thinkingOutputPrice !== undefined
-								? formatCompactPrice(modelInfo.pricing.thinkingOutputPrice)
-								: formatCompactPrice(modelInfo.pricing.outputPrice)}
+								? formatCompactPrice(modelInfo.pricing.thinkingOutputPrice, currency)
+								: formatCompactPrice(modelInfo.pricing.outputPrice, currency)}
 						</InfoValue>
 					</InfoItem>
 				)}
@@ -231,6 +250,14 @@ export const ModelInfoView = ({
 				<AdvancedRow>
 					<AdvancedLabel>Browser</AdvancedLabel>
 					<CapabilityValue supported={hasBrowser} />
+				</AdvancedRow>
+				<AdvancedRow>
+					<AdvancedLabel>Native Tool Calls</AdvancedLabel>
+					<CapabilityValue supported={hasNativeTools} />
+				</AdvancedRow>
+				<AdvancedRow>
+					<AdvancedLabel>Reasoning</AdvancedLabel>
+					<CapabilityValue supported={hasReasoning} />
 				</AdvancedRow>
 				{!isGemini && (
 					<AdvancedRow>
@@ -257,13 +284,13 @@ export const ModelInfoView = ({
 						{modelInfo.pricing?.cacheReadsPrice !== undefined && (
 							<AdvancedRow>
 								<AdvancedLabel>Cache Reads</AdvancedLabel>
-								<AdvancedValue>{formatCompactPrice(modelInfo.pricing?.cacheReadsPrice)}</AdvancedValue>
+								<AdvancedValue>{formatCompactPrice(modelInfo.pricing?.cacheReadsPrice, currency)}</AdvancedValue>
 							</AdvancedRow>
 						)}
 						{modelInfo.pricing?.cacheWritesPrice !== undefined && (
 							<AdvancedRow>
 								<AdvancedLabel>Cache Writes</AdvancedLabel>
-								<AdvancedValue>{formatCompactPrice(modelInfo.pricing?.cacheWritesPrice)}</AdvancedValue>
+								<AdvancedValue>{formatCompactPrice(modelInfo.pricing?.cacheWritesPrice, currency)}</AdvancedValue>
 							</AdvancedRow>
 						)}
 					</>
@@ -275,21 +302,25 @@ export const ModelInfoView = ({
 						<div style={{ fontWeight: 500, marginBottom: 4 }}>Tiered Pricing:</div>
 						<AdvancedRow>
 							<AdvancedLabel>Input</AdvancedLabel>
-							<AdvancedValue>{formatTiers(modelInfo.pricing.tiers, "inputPrice")}</AdvancedValue>
+							<AdvancedValue>{formatTiers(modelInfo.pricing.tiers, "inputPrice", currency)}</AdvancedValue>
 						</AdvancedRow>
 						<AdvancedRow>
 							<AdvancedLabel>Output</AdvancedLabel>
-							<AdvancedValue>{formatTiers(modelInfo.pricing.tiers, "outputPrice")}</AdvancedValue>
+							<AdvancedValue>{formatTiers(modelInfo.pricing.tiers, "outputPrice", currency)}</AdvancedValue>
 						</AdvancedRow>
 						{modelInfo.capabilities?.supportsPromptCache && (
 							<>
 								<AdvancedRow>
 									<AdvancedLabel>Cache Writes</AdvancedLabel>
-									<AdvancedValue>{formatTiers(modelInfo.pricing.tiers, "cacheWritesPrice")}</AdvancedValue>
+									<AdvancedValue>
+										{formatTiers(modelInfo.pricing.tiers, "cacheWritesPrice", currency)}
+									</AdvancedValue>
 								</AdvancedRow>
 								<AdvancedRow>
 									<AdvancedLabel>Cache Reads</AdvancedLabel>
-									<AdvancedValue>{formatTiers(modelInfo.pricing.tiers, "cacheReadsPrice")}</AdvancedValue>
+									<AdvancedValue>
+										{formatTiers(modelInfo.pricing.tiers, "cacheReadsPrice", currency)}
+									</AdvancedValue>
 								</AdvancedRow>
 							</>
 						)}

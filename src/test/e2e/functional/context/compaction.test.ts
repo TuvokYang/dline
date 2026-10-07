@@ -67,6 +67,25 @@ function estimateTokens(value: unknown): number {
 
 const TRUNCATED_SUMMARY_MARKER = "E2E_CHAT_COMPACTION_TRUNCATED_RESPONSE_SHOULD_NOT_SURVIVE"
 const HIGH_CONTEXT_PRESSURE_MARKER = "# High Context Pressure"
+const RETRY_REMINDER_HEADING = "# Retry Reminder"
+
+/** A retry appends one reminder text block to the frozen compaction request; everything else must stay identical. */
+function withoutRetryReminder(body: Record<string, unknown>): Record<string, unknown> {
+	if (!Array.isArray(body.input)) return body
+	return {
+		...body,
+		input: body.input.map((item) => {
+			const content = (item as { content?: unknown }).content
+			if (!Array.isArray(content)) return item
+			return {
+				...(item as Record<string, unknown>),
+				content: content.filter(
+					(part) => !String((part as { text?: unknown }).text ?? "").includes(RETRY_REMINDER_HEADING),
+				),
+			}
+		}),
+	}
+}
 const OPENAI_E2E_MODEL_MAX_OUTPUT_TOKENS = 8_192
 const ONE_PIXEL_PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
 const ONE_PIXEL_PNG_BASE64_PREFIX = ONE_PIXEL_PNG_BASE64.slice(0, -4)
@@ -414,6 +433,8 @@ async function reopenTask(page: Page, sidebar: Frame, taskText: string): Promise
 	await historyTask.click()
 	await expect(sidebar.getByRole("button", { name: "Close Task", exact: true })).toBeVisible({ timeout: 30_000 })
 	await expect(sidebar.getByText(taskText, { exact: true }).first()).toBeVisible({ timeout: 30_000 })
+	// The message surface is published before resume preparation finishes, so wait until the task admits input.
+	await expect(sidebar.getByTestId("send-button")).toHaveAttribute("aria-disabled", "false", { timeout: 30_000 })
 }
 
 async function onlyTaskId(dlineDocsDir: string): Promise<string> {
@@ -971,7 +992,8 @@ e2e(
 			const retryRequestBody = requests[2].requestBody as Record<string, unknown>
 			expect(firstRequestBody).not.toHaveProperty("max_output_tokens")
 			expect(retryRequestBody).not.toHaveProperty("max_output_tokens")
-			expect(retryRequestBody).toEqual(firstRequestBody)
+			expect(JSON.stringify(retryRequestBody)).toContain(RETRY_REMINDER_HEADING)
+			expect(withoutRetryReminder(retryRequestBody)).toEqual(firstRequestBody)
 			expect(JSON.stringify(requests[2].requestBody)).not.toContain(damagedSummary)
 			expect(JSON.stringify(requests[2].requestBody)).not.toContain(interruptedThinking)
 			expect(JSON.stringify(requests[3].requestBody)).toContain(recoveredSummary)
@@ -1140,6 +1162,125 @@ e2e(
 			).toBeVisible()
 			expect(server.getRequestCount("openai-compatible-responses")).toBe(0)
 			await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir, [/No complete logical turn/i])
+		} finally {
+			await app.close()
+		}
+	},
+)
+
+/**
+ * A completed compaction starts a new context-pressure boundary. When the first
+ * ordinary request after it fails transiently and the user retries manually, the
+ * retry must replay that persisted request. Re-reading the pre-compaction
+ * Provider usage would compact again a history that only holds the summary and
+ * fail with "No complete logical turn", repeating on every later Retry.
+ */
+e2e(
+	"Auto compact - manual retry after a post-compaction Provider failure replays the request without recompacting",
+	async ({ dlineDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
+		e2e.setTimeout(360_000)
+		await configureTriggerBoundary(dlineDir, 1_000_000, 272_000)
+		const compactionInstruction = "The current conversation is rapidly running out of context"
+		const belowFeedback = "E2E_POST_COMPACTION_RETRY_BELOW_CONTINUE"
+		const triggerFeedback = "E2E_POST_COMPACTION_RETRY_TRIGGER_CONTINUE"
+		const summaryMarker = "E2E_POST_COMPACTION_RETRY_SUMMARY"
+		const completionMarker = "E2E_POST_COMPACTION_RETRY_OK"
+		const failureMarker = "E2E_POST_COMPACTION_RETRY_503"
+		const failureCode = "e2e_post_compaction_retry_503"
+		const compactTriggerTokens = 268_500
+		// The last pre-compaction Provider usage stays inside the shared 2K tolerance,
+		// so any gate that ignores the compaction boundary would compact again.
+		const belowPreviousTokens = compactTriggerTokens - 3_000
+		const triggerPreviousTokens = compactTriggerTokens - 1_000
+		// Transport-level retries may consume several responses per Task attempt, so
+		// queue more failures than one automatic sequence can use and drop the rest
+		// before the manual Retry.
+		const queuedFailures = 40
+		const setupRequests = 3
+		server.enqueueResponses(
+			"openai-compatible-responses",
+			{
+				type: "tool",
+				id: "call_post_compaction_retry_below",
+				name: "qna_respond",
+				arguments: { response: "E2E_POST_COMPACTION_RETRY_BELOW_READY" },
+				usage: { inputTokens: belowPreviousTokens - 100, outputTokens: 100 },
+			},
+			{
+				type: "tool",
+				id: "call_post_compaction_retry_exact",
+				name: "qna_respond",
+				arguments: { response: "E2E_POST_COMPACTION_RETRY_EXACT_READY" },
+				usage: { inputTokens: triggerPreviousTokens - 100, outputTokens: 100 },
+				expectedRequestExcludes: [compactionInstruction],
+			},
+			{
+				type: "tool",
+				id: "call_post_compaction_retry_summary",
+				name: "summarize_task",
+				arguments: { context: summaryMarker },
+				expectedRequestIncludes: [compactionInstruction],
+				expectedRequestExcludes: [triggerFeedback],
+			},
+			...Array.from({ length: queuedFailures }, () => ({
+				type: "error" as const,
+				status: 503,
+				code: failureCode,
+				message: failureMarker,
+			})),
+		)
+
+		const app = await openVSCode(workspaceDir)
+		try {
+			const sidebar = await openSidebar(app, helper)
+			await sendTask(sidebar, "E2E_POST_COMPACTION_RETRY_TASK")
+			await expect(sidebar.getByText("E2E_POST_COMPACTION_RETRY_BELOW_READY", { exact: false }).last()).toBeVisible({
+				timeout: 60_000,
+			})
+			await sendTask(sidebar, belowFeedback)
+			await expect(sidebar.getByText("E2E_POST_COMPACTION_RETRY_EXACT_READY", { exact: false }).last()).toBeVisible({
+				timeout: 60_000,
+			})
+			await sendTask(sidebar, triggerFeedback)
+
+			// Compaction succeeds; the first ordinary request after it exhausts the automatic budget.
+			await expect(sidebar.getByTestId("error-retry-countdown")).toContainText("automatic attempts were used", {
+				timeout: 240_000,
+			})
+			server.clearPendingResponses("openai-compatible-responses")
+			const requestsBeforeRetry = server.getMockConsumptions("openai-compatible-responses")
+			const failedRequestCount = requestsBeforeRetry.length
+			expect(failedRequestCount).toBeGreaterThan(setupRequests)
+			expect(requestsBeforeRetry[2]).toMatchObject({ responseType: "tool", toolName: "summarize_task" })
+			expect(requestsBeforeRetry.slice(setupRequests).every((request) => request.status === 503)).toBe(true)
+			const failedRequestText = JSON.stringify(requestsBeforeRetry[setupRequests].requestBody)
+			expect(failedRequestText).toContain(summaryMarker)
+			expect(failedRequestText).not.toContain(compactionInstruction)
+			const failedFeedbackCount = countOccurrences(failedRequestText, triggerFeedback)
+			expect(failedFeedbackCount).toBeGreaterThan(0)
+
+			server.enqueueResponses("openai-compatible-responses", {
+				type: "tool",
+				id: "call_post_compaction_retry_complete",
+				name: "attempt_completion",
+				arguments: { result: completionMarker },
+				expectedRequestIncludes: [summaryMarker, triggerFeedback],
+				expectedRequestExcludes: [compactionInstruction],
+			})
+			const retry = sidebar.locator('vscode-button[aria-label="Retry"]').last()
+			await expect(retry).toBeVisible()
+			await retry.click()
+
+			await expect(sidebar.getByText(completionMarker, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
+			await expect(sidebar.getByText("Conversation Compaction Failed", { exact: true })).toHaveCount(0)
+			await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(failedRequestCount + 1)
+			const requests = server.getMockConsumptions("openai-compatible-responses")
+			expect(requests.filter((request) => request.toolName === "summarize_task")).toHaveLength(1)
+			// The manual Retry replays the persisted request; it must not append a second copy of the feedback.
+			const replayedRequestText = JSON.stringify(requests[failedRequestCount].requestBody)
+			expect(countOccurrences(replayedRequestText, triggerFeedback)).toBe(failedFeedbackCount)
+			expect(requests.every((request) => request.contractError === undefined)).toBe(true)
+			await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir, [new RegExp(failureMarker), new RegExp(failureCode)])
 		} finally {
 			await app.close()
 		}
@@ -1798,7 +1939,7 @@ e2e(
 			},
 			{
 				type: "message",
-				text: "<thinking>recovered summary</thinking><summarize_task><context>E2E_CHAT_COMPACTION_RETRY_SUMMARY is complete.</context></summarize_task>",
+				text: "<thinking>recovered summary</thinking><summarize_task><context>E2E_CHAT_COMPACTION_RETRY_SUMMARY is complete.</context></summarize_task>\nLet me know if anything else is needed.",
 				delayMs: 2_000,
 				usage: { inputTokens: 125_000, outputTokens: 100 },
 				expectedRequestIncludes: [
@@ -1847,6 +1988,66 @@ e2e(
 			expect(JSON.stringify(requests[3].requestBody)).not.toContain(TRUNCATED_SUMMARY_MARKER)
 			await expect(sidebar.getByText(TRUNCATED_SUMMARY_MARKER, { exact: false })).toHaveCount(0)
 			await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir, [/Connection error|ECONNRESET|fetch failed/])
+		} finally {
+			await app.close()
+		}
+	},
+)
+
+// Regression for task 1791122313218: the summary ended at </context> without </summarize_task>.
+e2e(
+	"OpenAI compaction - unclosed summarize_task retries with a reminder and accepts a closed call with trailing text",
+	async ({ dlineDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
+		e2e.setTimeout(180_000)
+		await configureChatAutoCompaction(dlineDir)
+		const unclosedMarker = "E2E_CHAT_UNCLOSED_SUMMARY_MARKER"
+		server.enqueueResponses(
+			"openai-compatible-chat",
+			{
+				type: "tool",
+				id: "call_chat_unclosed_ready",
+				name: "qna_respond",
+				arguments: { response: "E2E_CHAT_UNCLOSED_READY" },
+				usage: { inputTokens: 125_000, outputTokens: 100 },
+			},
+			{
+				type: "message",
+				text: `<summarize_task>\n<context>\n${unclosedMarker}\n</context>\n`,
+				usage: { inputTokens: 125_000, outputTokens: 100 },
+				expectedRequestIncludes: ["The current conversation is rapidly running out of context"],
+				expectedRequestExcludes: ["# Retry Reminder"],
+			},
+			{
+				type: "message",
+				text: "<summarize_task>\n<context>\nE2E_CHAT_UNCLOSED_RECOVERED_SUMMARY is complete.\n</context>\n</summarize_task>\nDone.",
+				usage: { inputTokens: 125_000, outputTokens: 100 },
+				expectedRequestIncludes: ["The current conversation is rapidly running out of context", "# Retry Reminder"],
+				expectedRequestExcludes: [unclosedMarker],
+			},
+			{
+				type: "tool",
+				id: "call_chat_unclosed_complete",
+				name: "attempt_completion",
+				arguments: { result: "E2E_CHAT_UNCLOSED_OK" },
+				expectedRequestIncludes: ["E2E_CHAT_UNCLOSED_RECOVERED_SUMMARY", "E2E_CHAT_UNCLOSED_CONTINUE"],
+				expectedRequestExcludes: [unclosedMarker, "# Retry Reminder"],
+			},
+		)
+
+		const app = await openVSCode(workspaceDir)
+		try {
+			const sidebar = await openSidebar(app, helper)
+			await sendTask(sidebar, "E2E_CHAT_UNCLOSED_TASK")
+			await expect(sidebar.getByText("E2E_CHAT_UNCLOSED_READY", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
+			await sendTask(sidebar, "E2E_CHAT_UNCLOSED_CONTINUE")
+			await expect(sidebar.getByText("E2E_CHAT_UNCLOSED_OK", { exact: false }).last()).toBeVisible({ timeout: 120_000 })
+
+			await expect.poll(() => server.getRequestCount("openai-compatible-chat")).toBe(4)
+			for (const request of server.getMockConsumptions("openai-compatible-chat")) {
+				expect(request.contractError).toBeUndefined()
+			}
+			await expect(sidebar.getByText(unclosedMarker, { exact: false })).toHaveCount(0)
+			await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir, [/did not return a usable <summarize_task>/i])
 		} finally {
 			await app.close()
 		}
@@ -1922,8 +2123,8 @@ e2e(
 			await expect(sidebar.getByTestId("compaction-failure")).toBeVisible({ timeout: 120_000 })
 			await sidebar.getByRole("button", { name: "Retry", exact: true }).last().click()
 
-			// The retried hidden Pass is request #5: attempt 0 (truncated) -> max-output replay ->
-			// normal retry after the replay -> successful summary. Assert ordering and immutable wire input there.
+			// Request #3 is truncated, #4 replays it with the output-limit reminder and fails at the Provider,
+			// and #5 is the fresh hidden Pass started by Retry. Assert ordering and immutable wire input there.
 			await expect
 				.poll(() => server.getRequestCount("openai-compatible-responses"), { timeout: 120_000 })
 				.toBeGreaterThanOrEqual(5)
@@ -1939,8 +2140,11 @@ e2e(
 			for (const requestBody of [maxOutputReplayBody, normalRetryBody, successfulRetryBody]) {
 				expect(requestBody).not.toHaveProperty("max_output_tokens")
 			}
-			expect(normalRetryBody).toEqual(maxOutputReplayBody)
-			expect(successfulRetryBody).toEqual(normalRetryBody)
+			expect(JSON.stringify(maxOutputReplayBody)).not.toContain(RETRY_REMINDER_HEADING)
+			expect(JSON.stringify(normalRetryBody)).toContain(RETRY_REMINDER_HEADING)
+			expect(JSON.stringify(successfulRetryBody)).not.toContain(RETRY_REMINDER_HEADING)
+			expect(withoutRetryReminder(normalRetryBody)).toEqual(maxOutputReplayBody)
+			expect(successfulRetryBody).toEqual(maxOutputReplayBody)
 			expect(JSON.stringify(requests[4].requestBody)).not.toContain(damagedSummary)
 		} finally {
 			await app.close()

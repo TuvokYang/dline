@@ -61,9 +61,12 @@ export class ControllerTaskSessionHostFactory implements TaskSessionHostFactory 
 	): Promise<TaskSessionHostResources> {
 		const host = HostProvider.get()
 		const browserFactory = () => new BrowserSession(this.options.stateManager)
+		// The incarnation is this opening's identity: rows it publishes are attributed to it.
+		const opening = { taskId: context.taskId, taskInstanceId: context.taskIncarnationId }
 		const callbackOwner = new ControllerTaskCallbacksOwner({
 			controller: this.options.controller,
 			taskId: context.taskId,
+			taskInstanceId: context.taskIncarnationId,
 			stateManager: this.options.stateManager,
 			messages: context.messages,
 			interactions: context.interactions,
@@ -116,11 +119,13 @@ export class ControllerTaskSessionHostFactory implements TaskSessionHostFactory 
 				// command whose change is already durable.
 				const row = context.messages.clineMessages[index]
 				if (!row) return
-				void sendPartialMessageEvent(this.options.controller, convertClineMessageToProto(row)).catch((error: unknown) => {
-					Logger.warn(
-						`[Task ${context.taskId}] Could not publish the patched row ${index}: ${error instanceof Error ? error.message : String(error)}`,
-					)
-				})
+				void sendPartialMessageEvent(this.options.controller, convertClineMessageToProto(row), opening).catch(
+					(error: unknown) => {
+						Logger.warn(
+							`[Task ${context.taskId}] Could not publish the patched row ${index}: ${error instanceof Error ? error.message : String(error)}`,
+						)
+					},
+				)
 			},
 			getClineMessages: () => context.messages.clineMessages,
 			addToUserMessageContent: (content) => context.toolState.userMessageContent.push(content as never),
@@ -173,6 +178,7 @@ export class ControllerTaskSessionHostFactory implements TaskSessionHostFactory 
 		const checkpointOwner = new ControllerTaskCheckpointOwner({
 			controller: this.options.controller,
 			taskId: context.taskId,
+			taskInstanceId: context.taskIncarnationId,
 			stateManager: this.options.stateManager,
 			messages: context.messages,
 			toolState: context.toolState,

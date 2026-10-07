@@ -16,8 +16,8 @@ fix directly on dev, or use an independent bugfix branch
   -> focused verification
   -> if using a PR: independent source branch -> dev
   -> complete integrated dev gate
-  -> dev-to-main release promotion
-  -> vX.Y.Z on the verified main commit
+  -> squash promotion to main and back-merge into dev
+  -> vX.Y.Z on the verified main squash commit
 ```
 
 A hotfix does not authorize direct development on `main`, a feature/bugfix PR to `main`, or a production tag from an old detached tag.
@@ -51,7 +51,7 @@ Merge both the fix and version preparation into `dev`, then run the complete int
 
 ## 4. Promote and release
 
-Only after the `dev` gate passes, load `release` to promote `dev` to `main`, re-verify the final `main` commit, and create the production `vX.Y.Z` tag.
+Only after the `dev` gate passes, load `release` to squash `dev` into one `main` commit, back-merge it into `dev`, re-verify the final `main` commit, and create the production `vX.Y.Z` tag.
 
 The standard Release and Marketplace workflows must package and publish the tested artifact. Do not rebuild or manually replace the release VSIX.
 

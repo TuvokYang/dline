@@ -41,6 +41,8 @@ const mocks = vi.hoisted(() => {
 		askResponse: vi.fn(async () => ({})),
 		dispatchInteraction: vi.fn(async () => ({ accepted: true, result: "accepted" })),
 		compactTask: vi.fn(async () => ({ accepted: true, result: "accepted" })),
+		closeTask: vi.fn(async () => undefined),
+		closeButtonAction: undefined as (() => Promise<void>) | undefined,
 		footerRejected: undefined as ((settlement: AcceptedInteractionSettlement) => void) | undefined,
 		useChatState: vi.fn(() => chatState),
 	}
@@ -136,23 +138,36 @@ vi.mock("../chat-view", () => {
 		TaskSection: ({
 			compactTaskDisabled,
 			onCompactTask,
+			onDeleteConfirmed,
+			messageHandlers,
 		}: {
 			compactTaskDisabled?: boolean
 			onCompactTask?: () => Promise<boolean>
-		}) =>
-			onCompactTask ? (
-				<button
-					aria-disabled={compactTaskDisabled ? "true" : "false"}
-					aria-label="Compact task"
-					disabled={compactTaskDisabled}
-					onClick={() => void onCompactTask()}
-					type="button">
-					Compact
-				</button>
-			) : null,
+			onDeleteConfirmed?: () => void
+			messageHandlers: { handleTaskCloseButtonClick: () => Promise<void> }
+		}) => {
+			mocks.closeButtonAction = messageHandlers.handleTaskCloseButtonClick
+			return (
+				<div data-testid="task-section">
+					<button aria-label="Confirm task deletion" onClick={onDeleteConfirmed} type="button">
+						Delete
+					</button>
+					{onCompactTask ? (
+						<button
+							aria-disabled={compactTaskDisabled ? "true" : "false"}
+							aria-label="Compact task"
+							disabled={compactTaskDisabled}
+							onClick={() => void onCompactTask()}
+							type="button">
+							Compact
+						</button>
+					) : null}
+				</div>
+			)
+		},
 		TaskActivityPanel: () => null,
 		TaskActivityTabs: () => null,
-		WelcomeSection: () => null,
+		WelcomeSection: () => <div>Welcome</div>,
 		convertHtmlToMarkdown: async (value: string) => value,
 		filterVisibleMessages: (messages: UiMessage[]) => messages,
 		groupLowStakesTools: (messages: UiMessage[]) => messages,
@@ -160,7 +175,7 @@ vi.mock("../chat-view", () => {
 		useChatState: mocks.useChatState,
 		useMessageHandlers: () => ({
 			handleSendMessage: vi.fn(async () => undefined),
-			handleTaskCloseButtonClick: vi.fn(),
+			handleTaskCloseButtonClick: mocks.closeTask,
 			startNewTask: vi.fn(async () => undefined),
 		}),
 		useStoppedReasoningExpansion: () => undefined,
@@ -185,6 +200,7 @@ const ASK: UiMessage = {
 function taskView(): TaskViewState {
 	return {
 		taskId: "task-1",
+		taskInstanceId: "task-instance-1",
 		phase: "awaiting_approval",
 		stateRevision: 8,
 		activeInteraction: {
@@ -234,6 +250,9 @@ function renderChat(
 		taskViewState: view,
 		currentTaskItem: includeHistoryItem ? { id: "task-1", task: "Task", ts: 1 } : undefined,
 		taskTitleMessage: { ts: 1, type: "say", say: "task", text: "Task" },
+		dismissHistoryTaskOpening: vi.fn(),
+		navigateToHistory: vi.fn(),
+		openHistoryTask: vi.fn(),
 	}
 	return render(chatView())
 }
@@ -275,18 +294,64 @@ describe("ChatView interaction anchor synchronization", () => {
 		mocks.chatState.setSelectedImages.mockClear()
 		mocks.chatState.setSelectedFiles.mockClear()
 		mocks.chatState.restoreDraft.mockClear()
+		mocks.closeTask.mockClear()
+		mocks.closeButtonAction = undefined
 		mocks.footerRejected = undefined
 	})
 
 	it("keeps the active draft owner while the task title projection is temporarily unavailable", () => {
 		const rendered = renderChat([ASK])
-		expect(mocks.useChatState).toHaveBeenLastCalledWith([ASK], "task-1")
+		expect(mocks.useChatState).toHaveBeenLastCalledWith([ASK], '["task-1","task-instance-1"]')
 
 		mocks.useChatState.mockClear()
 		mocks.extensionState = { ...mocks.extensionState, taskTitleMessage: undefined }
 		rendered.rerender(chatView())
 
-		expect(mocks.useChatState).toHaveBeenLastCalledWith([ASK], "task-1")
+		expect(mocks.useChatState).toHaveBeenLastCalledWith([ASK], '["task-1","task-instance-1"]')
+	})
+
+	it("hides the previous Task input and actions during local history opening and restores them after canonical readiness", () => {
+		const rendered = renderChat([ASK])
+		expect(screen.getByRole("textbox", { name: "Task input" })).toBeEnabled()
+		mocks.extensionState = {
+			...mocks.extensionState,
+			historyTaskOpening: { target: { id: "next", task: "Next saved task" }, status: "loading", requestId: 1 },
+		}
+		rendered.rerender(chatView())
+		expect(screen.getByRole("status")).toHaveTextContent("Opening task history")
+		expect(screen.queryByRole("textbox", { name: "Task input" })).not.toBeInTheDocument()
+		expect(screen.queryByRole("button", { name: "Compact task" })).not.toBeInTheDocument()
+		mocks.extensionState = { ...mocks.extensionState, historyTaskOpening: undefined }
+		rendered.rerender(chatView())
+		expect(screen.getByRole("textbox", { name: "Task input" })).toBeEnabled()
+		expect(mocks.askResponse).not.toHaveBeenCalled()
+		expect(mocks.dispatchInteraction).not.toHaveBeenCalled()
+	})
+
+	it("closes the current Task presentation immediately when deletion is confirmed", () => {
+		renderChat([ASK])
+		expect(screen.getByTestId("task-section")).toBeInTheDocument()
+
+		fireEvent.click(screen.getByRole("button", { name: "Confirm task deletion" }))
+
+		expect(screen.queryByTestId("task-section")).not.toBeInTheDocument()
+		expect(screen.getByText("Welcome")).toBeInTheDocument()
+		expect(screen.getByRole("textbox", { name: "Task input" })).toBeDisabled()
+		expect(mocks.closeTask).not.toHaveBeenCalled()
+	})
+
+	it("retires history feedback before invoking canonical Task Close", async () => {
+		const rendered = renderChat([ASK])
+		const dismiss = vi.fn()
+		mocks.extensionState = { ...mocks.extensionState, dismissHistoryTaskOpening: dismiss }
+		rendered.rerender(chatView())
+		mocks.closeTask.mockImplementationOnce(async () => {
+			expect(dismiss).toHaveBeenCalledOnce()
+		})
+		await act(async () => {
+			await mocks.closeButtonAction?.()
+		})
+		expect(mocks.closeTask).toHaveBeenCalledOnce()
 	})
 
 	it("submits an ordinary between-turns request without an active interaction", async () => {
@@ -327,7 +392,7 @@ describe("ChatView interaction anchor synchronization", () => {
 	it("keeps runtime task ownership when the shared history item is temporarily unavailable", () => {
 		renderChat([ASK], taskView(), false)
 
-		expect(mocks.useChatState).toHaveBeenCalledWith([ASK], "task-1")
+		expect(mocks.useChatState).toHaveBeenCalledWith([ASK], '["task-1","task-instance-1"]')
 	})
 
 	it.each([

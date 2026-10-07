@@ -40,6 +40,17 @@ function getGitHash() {
 }
 
 /**
+ * Full SHA of HEAD, which GitHub resolves unambiguously in blob and raw URLs.
+ * @returns {string}
+ */
+function tryGitFullHash() {
+	return execSync("git rev-parse HEAD", {
+		cwd: PROJECT_ROOT,
+		encoding: "utf-8",
+	}).trim()
+}
+
+/**
  * Check if current HEAD is on a git tag.
  * @returns {boolean}
  */
@@ -94,15 +105,15 @@ const onTag = isOnTag()
 const onMain = isOnMainBranch()
 const hash = getGitHash()
 
-// The marketplace README links to /blob/main/. A dev VSIX is built from an
-// arbitrary branch, so pin those links to the exact commit being packaged;
-// otherwise the bundled documentation describes main rather than this build.
-const documentationRef = onMain ? null : hash
+// A dev VSIX is built from an arbitrary branch, so the marketplace README's
+// repository links are pinned to the exact commit being packaged rather than
+// the default branch.
+const documentationRef = tryGitFullHash()
 
 console.log(`[package-dev] Git hash: ${hash}`)
 console.log(`[package-dev] On tag: ${onTag}`)
 console.log(`[package-dev] On main branch: ${onMain}`)
-console.log(`[package-dev] Documentation ref: ${documentationRef ?? "(authored default)"}`)
+console.log(`[package-dev] Documentation ref: ${documentationRef}`)
 
 /**
  * Verify the built bundle is a dev build right before packing.

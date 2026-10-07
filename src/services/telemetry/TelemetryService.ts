@@ -13,7 +13,12 @@ import { telemetryDevelopmentModeMetadata } from "./development-mode"
 import { TELEMETRY_EVENTS, TELEMETRY_METRICS, type TelemetryCategory } from "./events/catalog"
 import { HookEventRecorder, type HookExecutionMetadata, type HookExecutionStatus } from "./events/hook-recorder"
 import { TaskAggregates } from "./events/task-aggregates"
-import { TaskEventRecorder, type TokenUsage } from "./events/task-recorder"
+import {
+	type CompactionAttemptTelemetry,
+	type CompactionCommitTelemetry,
+	TaskEventRecorder,
+	type TokenUsage,
+} from "./events/task-recorder"
 import {
 	type AiOutputArgs,
 	type ExecutionPool,
@@ -388,8 +393,13 @@ export class TelemetryService {
 		provider: string,
 		currentTokens: number,
 		maxContextWindow: number,
+		details?: CompactionCommitTelemetry,
 	) {
-		this.task.captureSummarizeTask(ulid, modelId, provider, currentTokens, maxContextWindow)
+		this.task.captureSummarizeTask(ulid, modelId, provider, currentTokens, maxContextWindow, details)
+	}
+
+	public captureCompactionAttempt(ulid: string, attempt: CompactionAttemptTelemetry) {
+		this.task.captureCompactionAttempt(ulid, attempt)
 	}
 
 	public captureTaskFeedback(ulid: string, feedbackType: TaskFeedbackType) {

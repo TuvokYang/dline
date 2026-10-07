@@ -8,6 +8,7 @@ import * as typescript from "typescript"
 import { defineConfig, type Plugin, type PluginOption, type ViteDevServer } from "vite"
 import checker from "vite-plugin-checker"
 import { supportsVitePluginCheckerTypeScript } from "./vite-checker-compatibility"
+import { virtuosoUpwardCompensationPlugin } from "./vite-virtuoso-upward-compensation"
 
 // Custom plugin to write the server port to a file
 const writePortToFile = (): Plugin => {
@@ -32,7 +33,7 @@ const writePortToFile = (): Plugin => {
 }
 
 const isDevBuild = process.argv.includes("--dev-build")
-const plugins: PluginOption[] = [react(), tailwindcss(), writePortToFile()]
+const plugins: PluginOption[] = [virtuosoUpwardCompensationPlugin(), react(), tailwindcss(), writePortToFile()]
 if (supportsVitePluginCheckerTypeScript(typescript)) {
 	plugins.push(checker({ typescript: true }) as Plugin)
 } else {

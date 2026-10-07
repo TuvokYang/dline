@@ -11,7 +11,7 @@ const mocks = vi.hoisted(() => ({
 	setShowWelcome: vi.fn(),
 }))
 
-vi.mock("@/assets/ClineLogoWhite", () => ({
+vi.mock("@/assets/DlineLogo", () => ({
 	default: () => <div data-testid="dline-logo" />,
 }))
 

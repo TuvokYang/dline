@@ -25,13 +25,13 @@ export function calculateApiUsageStatistics(usage: ApiUsageTokenCounts): ApiUsag
 	const outputTokens = nonNegativeFinite(usage.outputTokens)
 	const cacheWriteTokens = nonNegativeFinite(usage.cacheWriteTokens)
 	const cacheReadTokens = nonNegativeFinite(usage.cacheReadTokens)
-	const thoughtsTokens = nonNegativeFinite(usage.thoughtsTokens)
 	const totalInputTokens = inputTokens + cacheWriteTokens + cacheReadTokens
 	const cacheHitRatePercent = totalInputTokens > 0 ? roundToTwoDecimals((cacheReadTokens / totalInputTokens) * 100) : 0
 
 	return {
 		totalInputTokens,
-		totalTokens: totalInputTokens + outputTokens + thoughtsTokens,
+		// `thoughtsTokens` is a share of `outputTokens`, never an additional term.
+		totalTokens: totalInputTokens + outputTokens,
 		cacheHit: cacheReadTokens > 0,
 		cacheHitRatePercent,
 	}

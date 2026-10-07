@@ -14,18 +14,28 @@ import { type DisplayedRateMetricsSource, selectTaskRateMetricsQuery } from "../
 
 interface RateMetricsTask {
 	taskId: string
+	taskInstanceId?: string
 	queryTaskRateMetrics(query: TaskRateMetricsQuery): Promise<TaskRateMetricsQueryResult>
+}
+
+function session(task: RateMetricsTask) {
+	return createSessionFixture({
+		taskId: task.taskId,
+		taskInstanceId: task.taskInstanceId ?? "open-1",
+		owners: { queryRateMetrics: task.queryTaskRateMetrics },
+	})
 }
 
 /** Resolve through the Controller's selector so the handler sees the production running/History precedence. */
 function controller(task?: RateMetricsTask, displayed?: DisplayedRateMetricsSource) {
-	const running = task
-		? createSessionFixture({ taskId: task.taskId, owners: { queryRateMetrics: task.queryTaskRateMetrics } })
-		: undefined
-	return {
-		task: running,
-		resolveTaskRateMetricsQuery: (taskId: string) => selectTaskRateMetricsQuery(taskId, running, displayed),
+	// A Controller shows one opening at a time: the running session, or else the History display.
+	const historyDisplay = displayed ? { taskId: displayed.taskId, taskInstanceId: "open-1" } : undefined
+	const owner = {
+		task: task ? session(task) : undefined,
+		currentOpening: () => owner.task ?? historyDisplay,
+		resolveTaskRateMetricsQuery: (taskId: string) => selectTaskRateMetricsQuery(taskId, owner.task, displayed),
 	}
+	return owner
 }
 
 function emptyResult(): TaskRateMetricsQueryResult {
@@ -35,6 +45,7 @@ function emptyResult(): TaskRateMetricsQueryResult {
 function request(overrides: Partial<GetTaskRateMetricsRequest> = {}): GetTaskRateMetricsRequest {
 	return GetTaskRateMetricsRequest.create({
 		taskId: "task-1",
+		taskInstanceId: "open-1",
 		resolution: TaskRateMetricsResolution.TASK_RATE_METRICS_RESOLUTION_HOUR,
 		startMs: 1_500,
 		endMs: 61_001,
@@ -215,8 +226,8 @@ describe("getTaskRateMetrics", () => {
 		expect(response.points[0]?.providerDurationMs).toBeUndefined()
 	})
 
-	it("rejects a query when no Task is active", async () => {
-		await expect(getTaskRateMetrics(controller() as never, request())).rejects.toThrow("active Task")
+	it("rejects a query when no Task is open", async () => {
+		await expect(getTaskRateMetrics(controller() as never, request())).rejects.toThrow("opened Task instance")
 	})
 
 	it("rejects a query for a different Task without reading its metrics", async () => {
@@ -230,7 +241,7 @@ describe("getTaskRateMetrics", () => {
 
 		await expect(
 			getTaskRateMetrics(controller({ taskId: "task-1", queryTaskRateMetrics }) as never, request({ taskId: "task-2" })),
-		).rejects.toThrow("active Task")
+		).rejects.toThrow("opened Task instance")
 		expect(queryTaskRateMetrics).not.toHaveBeenCalled()
 	})
 
@@ -247,9 +258,14 @@ describe("getTaskRateMetrics", () => {
 	})
 
 	it("rejects a running task whose metrics owner is not open yet", async () => {
-		const running = createSessionFixture({ taskId: "task-1", owners: { queryRateMetrics: undefined } })
+		const running = createSessionFixture({
+			taskId: "task-1",
+			taskInstanceId: "open-1",
+			owners: { queryRateMetrics: undefined },
+		})
 		const pending = {
 			task: running,
+			currentOpening: () => running,
 			resolveTaskRateMetricsQuery: (taskId: string) => selectTaskRateMetricsQuery(taskId, running, undefined),
 		}
 
@@ -284,10 +300,48 @@ describe("getTaskRateMetrics", () => {
 				) as never,
 				request({ taskId: "task-3" }),
 			),
-		).rejects.toThrow("active Task")
+		).rejects.toThrow("opened Task instance")
 
 		expect(runningQuery).toHaveBeenCalledOnce()
 		expect(displayedQuery).not.toHaveBeenCalled()
+	})
+
+	it("rejects a request from a previous opening of the same Task before reading", async () => {
+		const queryTaskRateMetrics = vi.fn()
+		await expect(
+			getTaskRateMetrics(
+				controller({ taskId: "task-1", queryTaskRateMetrics }) as never,
+				request({ taskInstanceId: "previous-open" }),
+			),
+		).rejects.toThrow("opened Task instance")
+		expect(queryTaskRateMetrics).not.toHaveBeenCalled()
+	})
+
+	it.each(["closed", "reopened"])("discards a query completed after its Task is %s", async (replacement) => {
+		let resolve!: (value: TaskRateMetricsQueryResult) => void
+		const queryTaskRateMetrics = vi.fn(
+			() =>
+				new Promise<TaskRateMetricsQueryResult>((done) => {
+					resolve = done
+				}),
+		)
+		const owner = controller({ taskId: "task-1", queryTaskRateMetrics })
+		const pending = getTaskRateMetrics(owner as never, request())
+		owner.task =
+			replacement === "closed"
+				? undefined
+				: session({ taskId: "task-1", taskInstanceId: "open-2", queryTaskRateMetrics: vi.fn() })
+		resolve({ points: [], degraded: false, truncated: false })
+		await expect(pending).rejects.toThrow("opened Task instance")
+	})
+
+	it("reads the open session's metrics without activating it", async () => {
+		const queryTaskRateMetrics = vi.fn(async () => emptyResult())
+		const owner = controller({ taskId: "task-1", queryTaskRateMetrics })
+		const result = await getTaskRateMetrics(owner as never, request())
+		expect(result).toMatchObject({ taskId: "task-1", taskInstanceId: "open-1", points: [] })
+		expect(owner.task?.task.open).not.toHaveBeenCalled()
+		expect(owner.task?.task.start).not.toHaveBeenCalled()
 	})
 
 	it("rejects an unspecified resolution before querying persistence", async () => {

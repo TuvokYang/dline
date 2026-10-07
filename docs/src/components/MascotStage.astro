@@ -1,0 +1,58 @@
+---
+/**
+ * The live 3D mascot. The stage is a button: activating it replays the
+ * warm-up routine. The three.js module loads lazily and only when the
+ * table-of-contents column is visible, so narrow screens never download it.
+ */
+const route = Astro.locals.starlightRoute
+const isChinese = route.lang.toLowerCase().startsWith("zh")
+const label = isChinese ? "Dline 机器人：点击重播热身操" : "Dline robot: click to replay its warm-up"
+// Only pages with a table-of-contents column have room for the stage.
+const hasToc = Boolean(route.toc)
+---
+
+{hasToc && <button type="button" class="dline-mascot" aria-label={label} title={label} hidden />}
+
+<script>
+	import { showMascotWhen } from "../mascot/lazy-mount.js"
+
+	const stage = document.querySelector<HTMLButtonElement>(".dline-mascot")
+	if (stage) {
+		const mascot = showMascotWhen(stage, "(min-width: 72rem)")
+		stage.addEventListener("click", () => mascot.replay())
+	}
+</script>
+
+<style>
+	/*
+	 * The stage scales with the window (a third of its shorter side), so the
+	 * robot keeps the same proportion to the page at every size.
+	 */
+	.dline-mascot {
+		position: fixed;
+		inset-inline-end: 0.25rem;
+		inset-block-end: 0.25rem;
+		z-index: 1;
+		width: clamp(12rem, 33vmin, 28rem);
+		aspect-ratio: 1 / 1;
+		padding: 0;
+		border: 0;
+		border-radius: 0.75rem;
+		background: none;
+		cursor: pointer;
+	}
+	.dline-mascot:focus-visible {
+		outline: 2px solid var(--sl-color-accent);
+		outline-offset: 2px;
+	}
+	@media (max-width: 71.99rem) {
+		.dline-mascot {
+			display: none;
+		}
+	}
+	@media print {
+		.dline-mascot {
+			display: none;
+		}
+	}
+</style>

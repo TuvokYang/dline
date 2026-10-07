@@ -12,7 +12,7 @@ import { UnifyStoreCore, type UnifyStoreDriver, type UnifyStoreDriverTransaction
 import { evaluateUnifyStoreQuery, type NormalizedUnifyStoreQuery } from "../core/UnifyStoreQueryEvaluator"
 import { FileLock } from "./FileLock"
 import type { JsonlRecordCodec } from "./JsonlRecordCodec"
-import { appendJsonl, canAppendJsonl, readJsonl, truncateJsonlTail, writeJsonl } from "./jsonl-utils"
+import { appendJsonl, canAppendJsonl, readJsonl, replaceJsonlTail, truncateJsonlTail, writeJsonl } from "./jsonl-utils"
 
 /**
  * Single-file JSONL stores for the legacy per-task message files.
@@ -90,6 +90,12 @@ export async function openBufferedJsonlStore<TItem extends { ts: number }>(
 			storeKind: bufferedStoreKind(options.schemaId),
 			truncateTail: (keepCount, expectedCount) =>
 				fileLock.withLock(filePath, () => truncateJsonlTail(filePath, keepCount, expectedCount)),
+			// Buffered rows persist their payload as the line itself, so the
+			// items can be written without going through the row codec.
+			replaceTail: ({ expectedTailTimestamps, replacedCount, entries }) =>
+				fileLock.withLock(filePath, () =>
+					replaceJsonlTail(filePath, { expectedTailTimestamps, replacedLineCount: replacedCount, entries }),
+				),
 		},
 	})
 }

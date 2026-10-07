@@ -1,9 +1,10 @@
 import { ApiProfile } from "@shared/proto/dline/profile"
+import type { ReasoningConfig } from "@shared/proto/dline/provider/common"
 import { expect } from "chai"
 import type { ChatCompletionTool } from "openai/resources/chat/completions"
 import { afterEach, beforeEach, describe, it, vi } from "vitest"
 import { ClineStorageMessage } from "@/shared/messages/content"
-import { ApiFormat, ServerTool } from "@/shared/proto/dline/models/metadata"
+import { ApiFormat, type ModelCapabilities, ServerTool } from "@/shared/proto/dline/models/metadata"
 import { OutputLimitExceededError } from "../../stream/OutputLimitExceededError"
 import { OcaHandler } from "../oca"
 
@@ -44,6 +45,150 @@ describe("OcaHandler.createMessage", () => {
 
 	afterEach(() => {
 		vi.restoreAllMocks()
+	})
+
+	const reasoningCases: {
+		name: string
+		capabilities: ModelCapabilities
+		overrides?: ModelCapabilities
+		modelInfoId?: string
+		reasoning?: ReasoningConfig
+		budget?: number
+		effort?: string
+	}[] = [
+		{
+			name: "partial effective minimum override",
+			capabilities: { thinking: { supported: true, mode: "budget", minBudget: 9, maxBudget: 101 } },
+			overrides: { thinking: { minBudget: 17 } },
+			reasoning: { thinkingBudget: 3 },
+			budget: 17,
+		},
+		{
+			name: "stale complete metadata",
+			modelInfoId: "another-model",
+			capabilities: { thinking: { supported: true, mode: "budget", minBudget: 17 } },
+			reasoning: { thinkingBudget: 23 },
+		},
+		{
+			name: "coarse support only",
+			capabilities: { supportsReasoning: true },
+			reasoning: { thinkingBudget: 23, effort: "high" },
+		},
+		{
+			name: "explicit unsupported",
+			capabilities: { supportsReasoning: true, thinking: { supported: false, mode: "budget" } },
+			reasoning: { thinkingBudget: 23 },
+		},
+		{
+			name: "positive declared minimum",
+			capabilities: { thinking: { supported: true, mode: "budget", minBudget: 17, maxBudget: 101 } },
+			reasoning: { thinkingBudget: 3 },
+			budget: 17,
+		},
+		{
+			name: "invalid bounds",
+			capabilities: { thinking: { supported: true, mode: "budget", minBudget: 17, maxBudget: 11 } },
+			reasoning: { thinkingBudget: 3 },
+		},
+		{
+			name: "declared effort default",
+			capabilities: {
+				supportsReasoning: true,
+				thinking: { supported: true, mode: "effort", effortLevels: ["low"], defaultEnabled: true, defaultEffort: "low" },
+			},
+			effort: "low",
+		},
+	]
+	for (const apiFormat of [ApiFormat.OPENAI_CHAT, ApiFormat.OPENAI_RESPONSES, ApiFormat.ANTHROPIC_CHAT]) {
+		it.each(reasoningCases)(`encodes $name from final declarations on protocol ${apiFormat}`, async ({
+			capabilities,
+			overrides,
+			modelInfoId,
+			reasoning,
+			budget,
+			effort,
+		}) => {
+			const id = "oca-opaque"
+			const handler = new OcaHandler({
+				profile: ApiProfile.create({
+					provider: "oca",
+					modelId: id,
+					modelInfo: { id: modelInfoId ?? id, apiFormats: [apiFormat], capabilities },
+					oca: { reasoning, capabilities: overrides },
+				}),
+				mode: "act",
+			})
+			const create = vi.fn().mockResolvedValue(emptyStream)
+			const clientPorts = handler as unknown as { ensureOpenAIClient(): unknown; ensureAnthropicClient(): unknown }
+			vi.spyOn(clientPorts, "ensureOpenAIClient").mockReturnValue({
+				chat: { completions: { create } },
+				responses: { create },
+			})
+			vi.spyOn(clientPorts, "ensureAnthropicClient").mockReturnValue({ messages: { create } })
+			await collectChunks(handler.createMessage("system", messages))
+			const body = create.mock.calls[0][0]
+			expect(body.model).to.equal(id)
+			expect(body.thinking).to.deep.equal(
+				apiFormat === ApiFormat.OPENAI_RESPONSES
+					? undefined
+					: budget !== undefined
+						? { type: "enabled", budget_tokens: budget }
+						: effort && apiFormat === ApiFormat.ANTHROPIC_CHAT
+							? { type: "adaptive" }
+							: undefined,
+			)
+			expect(body.reasoning_effort).to.equal(apiFormat === ApiFormat.OPENAI_CHAT ? effort : undefined)
+			expect(body.reasoning).to.deep.equal(
+				apiFormat === ApiFormat.OPENAI_RESPONSES && effort ? { effort, summary: "auto" } : undefined,
+			)
+			expect(body.output_config).to.deep.equal(apiFormat === ApiFormat.ANTHROPIC_CHAT && effort ? { effort } : undefined)
+		})
+	}
+
+	it.each([
+		ApiFormat.OPENAI_CHAT,
+		ApiFormat.OPENAI_RESPONSES,
+		ApiFormat.ANTHROPIC_CHAT,
+	])("sends the profile-carried identity and declaration on protocol %s", async (apiFormat) => {
+		const id = "oca-carried-deployment"
+		const handler = new OcaHandler({
+			profile: ApiProfile.create({
+				provider: "oca",
+				modelInfo: {
+					id,
+					apiFormats: [apiFormat],
+					capabilities: {
+						maxTokens: 101,
+						thinking: {
+							supported: true,
+							mode: "effort",
+							effortLevels: ["low"],
+							defaultEnabled: true,
+							defaultEffort: "low",
+						},
+					},
+				},
+			}),
+			mode: "act",
+		})
+		const create = vi.fn().mockResolvedValue(emptyStream)
+		const clientPorts = handler as unknown as { initializeOpenAIClient(): unknown; initializeAnthropicClient(): unknown }
+		vi.spyOn(clientPorts, "initializeOpenAIClient").mockReturnValue({
+			chat: { completions: { create } },
+			responses: { create },
+		})
+		vi.spyOn(clientPorts, "initializeAnthropicClient").mockReturnValue({ messages: { create } })
+
+		await collectChunks(handler.createMessage("system", messages))
+
+		const body = create.mock.calls[0][0]
+		expect(body.model).to.equal(id)
+		expect(body.reasoning_effort).to.equal(apiFormat === ApiFormat.OPENAI_CHAT ? "low" : undefined)
+		expect(body.reasoning).to.deep.equal(
+			apiFormat === ApiFormat.OPENAI_RESPONSES ? { effort: "low", summary: "auto" } : undefined,
+		)
+		expect(body.thinking).to.deep.equal(apiFormat === ApiFormat.ANTHROPIC_CHAT ? { type: "adaptive" } : undefined)
+		expect(body.output_config).to.deep.equal(apiFormat === ApiFormat.ANTHROPIC_CHAT ? { effort: "low" } : undefined)
 	})
 
 	it("routes OPENAI_RESPONSES models to createMessageResponsesApi", async () => {

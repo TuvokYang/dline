@@ -1,4 +1,5 @@
 import { ModelInfo, openRouterDefaultModelId, openRouterDefaultModelInfo } from "@shared/api"
+import { resolveProfileModelId, resolveRuntimeModel } from "@shared/providers/profile-model-info"
 import { shouldSkipReasoningForModel } from "@utils/model-utils"
 import OpenAI from "openai"
 import type { ChatCompletionTool as OpenAITool } from "openai/resources/chat/completions"
@@ -31,7 +32,7 @@ export class VercelAIGatewayHandler implements ApiHandler {
 		return this.ctx.profile.apiKey
 	}
 	private get modelId() {
-		return this.ctx.profile.modelId || ""
+		return resolveProfileModelId(this.ctx.profile)
 	}
 	private get modelInfo() {
 		return this.ctx.profile.modelInfo as ModelInfo | undefined
@@ -43,7 +44,7 @@ export class VercelAIGatewayHandler implements ApiHandler {
 		return this.config?.reasoning?.effort
 	}
 	private get thinkingBudgetTokens() {
-		return this.config?.reasoning?.thinkingBudget ?? 0
+		return this.config?.reasoning?.thinkingBudget
 	}
 
 	private ensureClient(): OpenAI {
@@ -82,6 +83,7 @@ export class VercelAIGatewayHandler implements ApiHandler {
 				this.reasoningEffort,
 				this.thinkingBudgetTokens,
 				tools,
+				this.config?.reasoning,
 			)
 			let didOutputUsage = false
 
@@ -154,16 +156,9 @@ export class VercelAIGatewayHandler implements ApiHandler {
 	}
 
 	getModel(): { id: string; info: ModelInfo } {
-		const modelId = this.modelId
-		const modelInfo = this.modelInfo
-		if (modelId && modelInfo) {
-			return { id: modelId, info: modelInfo }
-		}
-		// If we have a model ID but no model info, preserve the selected model ID
-		// and fall back only the metadata to defaults.
-		if (modelId) {
-			return { id: modelId, info: openRouterDefaultModelInfo }
-		}
-		return { id: openRouterDefaultModelId, info: openRouterDefaultModelInfo }
+		return resolveRuntimeModel(this.ctx.profile, {
+			models: { [openRouterDefaultModelId]: openRouterDefaultModelInfo },
+			defaultModelId: openRouterDefaultModelId,
+		})
 	}
 }

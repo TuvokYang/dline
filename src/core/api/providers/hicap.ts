@@ -1,4 +1,5 @@
-import { hicapModelInfoSaneDefaults, ModelInfo } from "@shared/api"
+import { ModelInfo } from "@shared/api"
+import { resolveRuntimeModel } from "@shared/providers/profile-model-info"
 import OpenAI from "openai"
 import type { ChatCompletionReasoningEffort } from "openai/resources/chat/completions"
 import { ClineStorageMessage } from "@/shared/messages/content"
@@ -41,7 +42,7 @@ export class HicapHandler implements ApiHandler {
 			if (!this.apiKey) {
 				throw new Error("Hicap API key is required")
 			}
-			if (!this.modelId) {
+			if (!this.getModel().id) {
 				throw new Error("Model ID is required")
 			}
 			try {
@@ -62,7 +63,7 @@ export class HicapHandler implements ApiHandler {
 	@withRetry()
 	async *createMessage(systemPrompt: string, messages: ClineStorageMessage[]): ApiStream {
 		const client = this.ensureClient()
-		const modelId = this.modelId
+		const modelId = this.getModel().id
 
 		const openAiMessages: OpenAI.Chat.ChatCompletionMessageParam[] = [
 			{ role: "system", content: systemPrompt },
@@ -114,9 +115,6 @@ export class HicapHandler implements ApiHandler {
 	}
 
 	getModel(): { id: string; info: ModelInfo } {
-		return {
-			id: this.modelId,
-			info: hicapModelInfoSaneDefaults,
-		}
+		return resolveRuntimeModel(this.ctx.profile)
 	}
 }

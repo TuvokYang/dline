@@ -319,9 +319,10 @@ export function formatTaskMetricsSeriesValue(descriptor: TaskMetricsSeriesDescri
 /**
  * Sum the same token facts the chart renders so Total Tokens can never fall below one of its parts.
  * `tokenCount` is a provider-active-second estimate that may lag the canonical per-round usage.
+ * Thoughts are a share of output, so they are not a separate term.
  */
 function readTotalTokens(point: TaskRateMetricPoint): number | undefined {
-	const values = [point.inputTokens, point.outputTokens, point.thoughtsTokens, point.cacheWriteTokens, point.cacheReadTokens]
+	const values = [point.inputTokens, point.outputTokens, point.cacheWriteTokens, point.cacheReadTokens]
 	if (values.every((value) => value === undefined)) return point.tokenCount
 	return values.reduce<number>((sum, value) => sum + (value ?? 0), 0)
 }

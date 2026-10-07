@@ -1,4 +1,5 @@
-import { HuggingFaceModelId, huggingFaceDefaultModelId, huggingFaceModels, ModelInfo } from "@shared/api"
+import { huggingFaceDefaultModelId, huggingFaceModels, ModelInfo } from "@shared/api"
+import { resolveRuntimeModel } from "@shared/providers/profile-model-info"
 import { calculateApiCostOpenAI } from "@utils/cost"
 import OpenAI from "openai"
 import type { ChatCompletionTool as OpenAITool } from "openai/resources/chat/completions"
@@ -12,7 +13,7 @@ import { getOpenAIToolParams, ToolCallProcessor } from "../transform/tool-call-p
 
 export class HuggingFaceHandler implements ApiHandler {
 	private client: OpenAI | undefined
-	private cachedModel: { id: HuggingFaceModelId; info: ModelInfo } | undefined
+	private cachedModel: { id: string; info: ModelInfo } | undefined
 
 	constructor(private ctx: ApiHandlerContext) {}
 
@@ -119,33 +120,11 @@ export class HuggingFaceHandler implements ApiHandler {
 		}
 	}
 
-	getModel(): { id: HuggingFaceModelId; info: ModelInfo } {
-		// Return cached model if available
-		if (this.cachedModel) {
-			return this.cachedModel
-		}
-
-		const mid = this.modelId
-
-		// List all available models for debugging
-		const _availableModels = Object.keys(huggingFaceModels)
-		let result: { id: HuggingFaceModelId; info: ModelInfo }
-
-		if (mid && mid in huggingFaceModels) {
-			const id = mid as HuggingFaceModelId
-			const modelInfo = huggingFaceModels[id]
-			result = { id, info: modelInfo }
-		} else {
-			const defaultInfo = huggingFaceModels[huggingFaceDefaultModelId]
-			result = {
-				id: huggingFaceDefaultModelId,
-				info: defaultInfo,
-			}
-		}
-
-		// Cache the result for future calls
-		this.cachedModel = result
-
-		return result
+	getModel(): { id: string; info: ModelInfo } {
+		this.cachedModel ??= resolveRuntimeModel(this.ctx.profile, {
+			models: huggingFaceModels,
+			defaultModelId: huggingFaceDefaultModelId,
+		})
+		return this.cachedModel
 	}
 }

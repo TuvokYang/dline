@@ -349,6 +349,16 @@ e2e(
 			await expect(dialog).toHaveCount(0)
 			await expect(taskHeaderToggle).toHaveAttribute("aria-label", initialHeaderLabel)
 
+			// Reopen the same persisted Task in this process without resuming Provider work.
+			await closeCurrentTask(sidebar)
+			await reopenTaskFromHistory(reopenedApp, sidebar)
+			await sidebar.getByTestId("task-rate-metrics").click()
+			const reopenedDialog = sidebar.getByRole("dialog")
+			await assertDefaultTokenCacheChart(reopenedDialog)
+			await waitForRateMetricsRpcCount(recorderPath, 5)
+			expect(server.getMockConsumptions("openai-compatible-responses")).toHaveLength(1)
+			await reopenedDialog.getByRole("button", { name: "Close", exact: true }).click()
+
 			const recorderEvidence = await readFile(recorderPath)
 			await testInfo.attach("task-statistics-grpc-recording.json", {
 				body: recorderEvidence,

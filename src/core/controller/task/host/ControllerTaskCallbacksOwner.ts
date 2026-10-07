@@ -27,6 +27,8 @@ import { sendPartialMessageEvent } from "../../ui/subscribeToPartialMessage"
 export interface ControllerTaskCallbacksOwnerOptions {
 	readonly controller: Controller
 	readonly taskId: string
+	/** The opening these callbacks serve; rows they publish are attributed to it. */
+	readonly taskInstanceId: string
 	readonly stateManager: StateManager
 	readonly messages: MessageStateHandler
 	readonly interactions: TaskInteractionOwner
@@ -181,11 +183,14 @@ export class ControllerTaskCallbacksOwner {
 
 	/** Deliver one in-memory row to the active surface without making delivery its durability boundary. */
 	private async publishRow(row: UiMessage, description: string): Promise<void> {
-		await sendPartialMessageEvent(this.options.controller, convertClineMessageToProto(row)).catch((error: unknown) => {
-			Logger.warn(
-				`[Task ${this.options.taskId}] Could not publish ${description}: ${error instanceof Error ? error.message : String(error)}`,
-			)
-		})
+		const opening = { taskId: this.options.taskId, taskInstanceId: this.options.taskInstanceId }
+		await sendPartialMessageEvent(this.options.controller, convertClineMessageToProto(row), opening).catch(
+			(error: unknown) => {
+				Logger.warn(
+					`[Task ${this.options.taskId}] Could not publish ${description}: ${error instanceof Error ? error.message : String(error)}`,
+				)
+			},
+		)
 	}
 
 	get browserSession(): BrowserSession {

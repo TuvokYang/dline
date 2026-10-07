@@ -3,6 +3,20 @@
  * Extracted from api.ts bedrockModels (lines 532-997).
  */
 import type { ModelInfo } from "@shared/api"
+import type { ThinkingConfig } from "@shared/proto/dline/models/metadata"
+import {
+	ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS,
+	ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS_WITHOUT_XHIGH,
+	adaptiveThinkingCapabilities,
+} from "./anthropic"
+
+const CLAUDE_BUDGET_THINKING: ThinkingConfig = {
+	supported: true,
+	mode: "budget",
+	minBudget: 1024,
+	defaultEnabled: false,
+	canDisable: true,
+}
 
 // Inlined from api.ts: CLAUDE_SONNET_1M_TIERS
 const CLAUDE_SONNET_1M_TIERS = [
@@ -44,6 +58,7 @@ export const bedrockModels: Record<string, ModelInfo> = {
 	"anthropic.claude-sonnet-4-6": {
 		id: "anthropic.claude-sonnet-4-6",
 		capabilities: {
+			...adaptiveThinkingCapabilities(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS_WITHOUT_XHIGH),
 			supportsTools: true,
 			maxTokens: 64_000,
 			contextWindow: 200_000,
@@ -61,6 +76,7 @@ export const bedrockModels: Record<string, ModelInfo> = {
 	"anthropic.claude-sonnet-4-6:1m": {
 		id: "anthropic.claude-sonnet-4-6:1m",
 		capabilities: {
+			...adaptiveThinkingCapabilities(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS_WITHOUT_XHIGH),
 			supportsTools: true,
 			maxTokens: 64_000,
 			contextWindow: 1_000_000,
@@ -79,6 +95,7 @@ export const bedrockModels: Record<string, ModelInfo> = {
 	"anthropic.claude-sonnet-4-5-20250929-v1:0": {
 		id: "anthropic.claude-sonnet-4-5-20250929-v1:0",
 		capabilities: {
+			thinking: { ...CLAUDE_BUDGET_THINKING },
 			supportsTools: true,
 			maxTokens: 64_000,
 			contextWindow: 200_000,
@@ -96,6 +113,7 @@ export const bedrockModels: Record<string, ModelInfo> = {
 	"anthropic.claude-sonnet-4-5-20250929-v1:0:1m": {
 		id: "anthropic.claude-sonnet-4-5-20250929-v1:0:1m",
 		capabilities: {
+			thinking: { ...CLAUDE_BUDGET_THINKING },
 			supportsTools: true,
 			maxTokens: 64_000,
 			contextWindow: 1_000_000,
@@ -114,6 +132,7 @@ export const bedrockModels: Record<string, ModelInfo> = {
 	"anthropic.claude-haiku-4-5-20251001-v1:0": {
 		id: "anthropic.claude-haiku-4-5-20251001-v1:0",
 		capabilities: {
+			thinking: { ...CLAUDE_BUDGET_THINKING },
 			supportsTools: true,
 			maxTokens: 64_000,
 			contextWindow: 200_000,
@@ -131,6 +150,7 @@ export const bedrockModels: Record<string, ModelInfo> = {
 	"anthropic.claude-sonnet-4-20250514-v1:0": {
 		id: "anthropic.claude-sonnet-4-20250514-v1:0",
 		capabilities: {
+			thinking: { ...CLAUDE_BUDGET_THINKING },
 			supportsTools: true,
 			maxTokens: 64_000,
 			contextWindow: 200_000,
@@ -148,6 +168,7 @@ export const bedrockModels: Record<string, ModelInfo> = {
 	"anthropic.claude-sonnet-4-20250514-v1:0:1m": {
 		id: "anthropic.claude-sonnet-4-20250514-v1:0:1m",
 		capabilities: {
+			thinking: { ...CLAUDE_BUDGET_THINKING },
 			supportsTools: true,
 			maxTokens: 64_000,
 			contextWindow: 1_000_000,
@@ -166,6 +187,7 @@ export const bedrockModels: Record<string, ModelInfo> = {
 	"anthropic.claude-opus-4-6-v1": {
 		id: "anthropic.claude-opus-4-6-v1",
 		capabilities: {
+			...adaptiveThinkingCapabilities(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS_WITHOUT_XHIGH),
 			supportsTools: true,
 			maxTokens: 128_000,
 			contextWindow: 200_000,
@@ -183,6 +205,7 @@ export const bedrockModels: Record<string, ModelInfo> = {
 	"anthropic.claude-opus-4-6-v1:1m": {
 		id: "anthropic.claude-opus-4-6-v1:1m",
 		capabilities: {
+			...adaptiveThinkingCapabilities(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS_WITHOUT_XHIGH),
 			supportsTools: true,
 			maxTokens: 128_000,
 			contextWindow: 1_000_000,
@@ -201,6 +224,7 @@ export const bedrockModels: Record<string, ModelInfo> = {
 	"anthropic.claude-opus-4-7": {
 		id: "anthropic.claude-opus-4-7",
 		capabilities: {
+			...adaptiveThinkingCapabilities(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS),
 			supportsTools: true,
 			maxTokens: 128_000,
 			contextWindow: 200_000,
@@ -219,6 +243,7 @@ export const bedrockModels: Record<string, ModelInfo> = {
 	"anthropic.claude-opus-4-7:1m": {
 		id: "anthropic.claude-opus-4-7:1m",
 		capabilities: {
+			...adaptiveThinkingCapabilities(ANTHROPIC_ADAPTIVE_REASONING_EFFORT_OPTIONS),
 			supportsTools: true,
 			maxTokens: 128_000,
 			contextWindow: 1_000_000,
@@ -238,6 +263,7 @@ export const bedrockModels: Record<string, ModelInfo> = {
 	"anthropic.claude-opus-4-5-20251101-v1:0": {
 		id: "anthropic.claude-opus-4-5-20251101-v1:0",
 		capabilities: {
+			thinking: { ...CLAUDE_BUDGET_THINKING },
 			supportsTools: true,
 			maxTokens: 64_000,
 			contextWindow: 200_000,
@@ -255,6 +281,7 @@ export const bedrockModels: Record<string, ModelInfo> = {
 	"anthropic.claude-opus-4-20250514-v1:0": {
 		id: "anthropic.claude-opus-4-20250514-v1:0",
 		capabilities: {
+			thinking: { ...CLAUDE_BUDGET_THINKING },
 			supportsTools: true,
 			maxTokens: 32_000,
 			contextWindow: 200_000,
@@ -272,6 +299,7 @@ export const bedrockModels: Record<string, ModelInfo> = {
 	"anthropic.claude-opus-4-1-20250805-v1:0": {
 		id: "anthropic.claude-opus-4-1-20250805-v1:0",
 		capabilities: {
+			thinking: { ...CLAUDE_BUDGET_THINKING },
 			supportsTools: true,
 			maxTokens: 32_000,
 			contextWindow: 200_000,
@@ -358,6 +386,7 @@ export const bedrockModels: Record<string, ModelInfo> = {
 	"anthropic.claude-3-7-sonnet-20250219-v1:0": {
 		id: "anthropic.claude-3-7-sonnet-20250219-v1:0",
 		capabilities: {
+			thinking: { ...CLAUDE_BUDGET_THINKING },
 			maxTokens: 128_000,
 			contextWindow: 200_000,
 			supportsImages: true,

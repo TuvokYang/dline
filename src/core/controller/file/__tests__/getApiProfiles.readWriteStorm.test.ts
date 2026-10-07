@@ -169,11 +169,20 @@ describe("getApiProfiles read/write storm", () => {
 		const filePath = await writeCatalog([
 			{ id: "profile-1", name: "openai:gpt-4o", provider: "openai", modelId: "gpt-4o", enabled: true },
 		])
+		const original = await fs.readFile(filePath, "utf8")
 		const module = await import("../getApiProfiles")
 		module.resetRegistryModelInfoRepairGateForTest()
 
 		module.readApiProfiles()
-		await new Promise((resolve) => setTimeout(resolve, 50))
+		// The first read repairs registry drift with one fire-and-forget atomic
+		// rewrite. Wait for that rewrite to land: a fixed delay is not long enough
+		// on a slow runner, and the late repair would then be sampled as a repeat.
+		await vi.waitFor(
+			async () => {
+				expect(await fs.readFile(filePath, "utf8")).not.toBe(original)
+			},
+			{ timeout: 5_000, interval: 20 },
+		)
 		const afterFirst = await fs.stat(filePath)
 
 		for (let index = 0; index < 10; index++) {

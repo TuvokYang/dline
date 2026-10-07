@@ -1,0 +1,8 @@
+{"ts":1790708947870,"type":"say","say":"task","text":"E2E_HISTORY_TASK_1790708947870","partial":false}
+{"ts":1790708947871,"type":"say","say":"user_feedback","text":"E2E_HISTORY_1790708947870_ORIGINAL_REQUEST","partial":false,"conversationHistoryIndex":0}
+{"ts":1790708947872,"type":"say","say":"api_req_started","text":"{\"requestId\":\"req_1790708947870_1\",\"modelId\":\"dline-e2e-model\",\"provider\":\"openai\",\"tokensIn\":83000,\"tokensOut\":7000,\"cacheWrites\":4000,\"cacheReads\":21000,\"cost\":0.91,\"mode\":\"act\"}","partial":false,"conversationHistoryIndex":0}
+{"ts":1790708947873,"type":"say","say":"text","text":"E2E_HISTORY_1790708947870_FIRST_ASSISTANT_TURN","partial":false,"conversationHistoryIndex":1}
+{"ts":1790708947874,"type":"say","say":"task_progress","text":"- [x] Preserve the original opening\n- [ ] Resume the same historical task","partial":false,"conversationHistoryIndex":2}
+{"ts":1790708947875,"type":"say","say":"user_feedback","text":"E2E_HISTORY_1790708947870_FOLLOWUP","partial":false,"conversationHistoryIndex":2}
+{"ts":1790708947876,"type":"say","say":"api_req_started","text":"{\"requestId\":\"req_1790708947870_2\",\"modelId\":\"dline-e2e-model\",\"provider\":\"openai\",\"tokensIn\":40000,\"tokensOut\":5000,\"cacheWrites\":0,\"cacheReads\":3000,\"cost\":0.42,\"mode\":\"act\"}","partial":false,"conversationHistoryIndex":2}
+{"ts":1790708947877,"type":"say","say":"text","text":"E2E_HISTORY_1790708947870_CURRENT_OPENING_BODY","partial":false,"conversationHistoryIndex":3}

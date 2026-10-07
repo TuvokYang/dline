@@ -180,4 +180,12 @@ describe("TaskApiRequestRoundRepository", () => {
 		expect(new Set(snapshot.map(({ roundId }) => roundId)).size).toBe(620)
 		expect(snapshot.find(({ roundId }) => roundId.endsWith(":0619"))?.revision).toBe(1)
 	})
+
+	it("does not repeat an initialization failure while closing", async () => {
+		const repository = new TaskApiRequestRoundRepository({ taskId: "task-a", location: root })
+		repositories.push(repository)
+
+		await expect(repository.readRecent()).rejects.toThrow()
+		await expect(repository.close()).resolves.toBeUndefined()
+	})
 })

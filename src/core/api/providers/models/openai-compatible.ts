@@ -12,7 +12,6 @@ export const openAiModelInfoSaneDefaults: ModelInfo = {
 	capabilities: {
 		supportsImages: true,
 		supportsPromptCache: false,
-		supportsReasoning: true,
 		supportsTools: true,
 		maxTokens: -1,
 		contextWindow: 128_000,

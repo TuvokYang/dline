@@ -126,23 +126,34 @@ Promotion may be proposed only when the release candidate's required checks pass
 
 ## 7. Promotion from dev to main
 
+`main` keeps one squash commit per release, not the `dev` history. Promotion squashes the verified `dev` candidate into a single `release: X.Y.Z` commit on `main`, then back-merges that commit into `dev` with the `ours` strategy. The back-merge records the squash commit as an ancestor of `dev` without changing `dev` content, so the next promotion's merge base is the previous release instead of the original fork point; skipping it makes every later squash reapply already-released changes and conflict on lines changed twice.
+
+History that reached `main` before this rule (fast-forward promotions up to `v0.9.4`) stays as it is. Never rewrite `main` to remove it.
+
 Perform release promotion in this order:
 
 1. Fetch and read explicit `refs/remotes/<remote>/dev` and `refs/remotes/<remote>/main` SHAs, then compute the merge base and diff from those refs; never treat bare local `dev` or `main` as remote facts.
 2. Confirm that integrated `dev` passed the complete release gate.
 3. Confirm version, lockfile, bilingual changelog, and VSIX contracts.
-4. Show the promotion method and resolved destination.
+4. Show the squash method, the verified `dev` SHA, the resolved destination, and the release commit message.
 5. Obtain authorization to write `main`.
-6. Promote `dev` to `main`.
-7. Verify the final `main` commit again.
-8. Obtain separate authorization to create and push the production tag.
-9. Create `vX.Y.Z` only from that verified `main` commit.
-10. Observe the automated Release, VSIX, and Marketplace gates.
+6. On `main`, run `git merge --squash <verified-dev-sha>` and commit `release: X.Y.Z` with a body summarizing the release from the bilingual changelog.
+7. Verify that the squash commit's tree equals the verified `dev` tree (`git diff --quiet <verified-dev-sha> <squash-sha>`); any difference blocks the push.
+8. Push `main` as a normal fast-forward of the remote `main`.
+9. Back-merge on `dev`: `git merge -s ours --no-edit <squash-sha>`, verify that the `dev` tree is unchanged, and push `dev` as a normal fast-forward. This is part of the same promotion and must complete before any later promotion.
+10. Obtain separate authorization to create and push the production tag.
+11. Create `vX.Y.Z` only on the verified squash commit at the `main` head.
+12. Observe the automated Release, VSIX, and Marketplace gates.
+
+The production workflows already accept this shape: `release.yml` requires the tag to point at the current `main` head, and `publish-vscode-marketplace.yml` requires the tag to be an ancestor of `main`. Neither requires `dev` commits in `main` history.
 
 Never:
 
 - merge a feature or bugfix branch directly to `main`;
+- fast-forward or `--no-ff` merge `dev` into `main`;
 - modify or push `main` before the integrated `dev` gate passes;
+- push a squash commit whose tree differs from the verified `dev` candidate;
+- start a new promotion while the previous release's back-merge into `dev` is missing;
 - create a production tag from a commit outside `main` history;
 - treat a release commit, main push, tag push, and external publication as one authorization.
 
@@ -151,7 +162,7 @@ Never:
 The default hotfix path remains on the mainline. The fix may be developed directly on `dev` or on a recommended independent bugfix branch. If a PR is used, its source must be independent and its base must be `dev`:
 
 ```text
-fix on dev, or independent bugfix branch -> optional PR to dev -> dev gate -> dev promotion to main -> production tag on main
+fix on dev, or independent bugfix branch -> optional PR to dev -> dev gate -> squash promotion to main and back-merge into dev -> production tag on main
 ```
 
 Do not build a production side branch from an old release tag when that commit would not belong to `main` history.
@@ -167,7 +178,7 @@ Until that strategy is approved, the hotfix workflow must stop instead of invent
 
 ## 9. Tag semantics
 
-- A development release tag must match `dev-vX.Y.Z`, point to the exact current `dev` head, and may be pushed only after tag creation is authorized. It triggers the `Publish Draft Release (Dev)` workflow, whose GitHub draft-release job consumes the tested VSIX only after the complete reusable Tests workflow, including full Vitest, one package job, and the three-platform work smoke plus four daily workflows against that same artifact.
+- A development release tag must match `dev-vX.Y.Z`, point to the exact current `dev` head, and may be pushed only after tag creation is authorized. It triggers the `Publish Pre-release` workflow, whose GitHub pre-release and registry jobs consume the tested VSIX only after the complete reusable Tests workflow, including full Vitest, one package job, and the three-platform work smoke plus four daily workflows against that same artifact.
 - A `dev-vX.Y.Z` tag is never a production baseline and must not trigger the Production Release or production Marketplace workflow.
 - A production tag must match `vX.Y.Z` and point to a verified `main` commit.
 - Creating a local tag, pushing it, and replacing a remote tag are separate operations.
@@ -177,18 +188,19 @@ Until that strategy is approved, the hotfix workflow must stop instead of invent
 
 `npm run vsix` derives the packaged identity from the current branch and the tag pointing at `HEAD`, so a single command produces the correct artifact for each channel. `scripts/package-vsix.mjs` owns this resolution; do not reintroduce a branch-only or tag-only heuristic.
 
-| HEAD | Extension name | Version | Channel |
-| --- | --- | --- | --- |
-| `main` + `vX.Y.Z` | `dline` | `X.Y.Z` from the tag | Production |
-| `dev` + `dev-vX.Y.Z` | `dline-preview` | `X.Y.Z` from the tag | Release candidate |
-| `dev` without a tag | `dline-insiders` | `major.minor.<unix-seconds>` | Rolling build |
+| HEAD | Extension name | Version | Channel | Marketplace track |
+| --- | --- | --- | --- | --- |
+| `main` + `vX.Y.Z` | `dline` | `X.Y.Z` from the tag | `production` | Release |
+| `dev` + `dev-vX.Y.Z` | `dline` | `X.Y.Z` from the tag | `pre-release` | Pre-release |
+| `dev` without a tag | `dline-insiders` | `major.minor.<unix-seconds>` | `insiders` | Release |
 
-The three names are independent Marketplace extensions with independent version sequences. A Marketplace `version` accepts only three numeric segments, so a semver pre-release suffix such as `0.9.4-rc.1` cannot be published; the preview channel therefore reuses the exact tag version and the insiders channel replaces the patch with a timestamp.
+`tuvokyang.dline` carries both the release and the pre-release track; `dline-insiders` is a separate extension with its own version sequence. A pre-release keeps the production manifest identity and differs only by the VSIX pre-release marker (`Microsoft.VisualStudio.Code.PreRelease`, set by vsce `preRelease`) and by the GitHub asset name `dline-X.Y.Z-pre-release.vsix`. Registry gates reject a pre-release VSIX without the marker and a production VSIX that carries it. A Marketplace `version` accepts only three numeric segments, so a semver pre-release suffix such as `0.9.4-rc.1` cannot be published; the pre-release channel reuses the exact tag version, and the insiders channel replaces the patch with a timestamp.
 
 Packaging rules:
 
 - A tagged channel is a release candidate, so the tag version, `package.json`, and every changelog language edition must already agree before packaging starts. A missing `## [X.Y.Z]` heading in either edition fails the run.
 - The untagged insiders channel is a rolling build and skips the changelog gate, because it does not represent a documented release.
+- An explicit `--channel insiders` (the dev push Tests run) ignores release tags at `HEAD`. A `dev-vX.Y.Z` tag must name the dev head, so the same commit is packaged both as the tagged pre-release and as a timestamped Insiders build; rejecting tagged commits would fail every pre-release's dev Tests run.
 - Reject rather than guess: `main` without a tag is the unfinished middle of a promotion, a `vX.Y.Z` tag outside `main` or a `dev-vX.Y.Z` tag outside `dev` means the tag was created on the wrong branch, and any other branch has no channel.
 - Tag formats must be matched exactly (`^v\d+\.\d+\.\d+$` and `^dev-v\d+\.\d+\.\d+$`). An exact-match tag lookup without format validation makes a development tag package a production identity.
 - `package.json` and `README.md` are mutated during packaging and must be restored even when the run aborts.
@@ -224,6 +236,6 @@ After changing a Git workflow or skill, verify at least:
 8. rejection of an ordinary PR from `dev`;
 9. rejection of ordinary development or PR creation from `main`;
 10. rejection of promotion when the `dev` gate fails;
-11. authorized promotion after the complete `dev` gate passes;
-12. `dev-vX.Y.Z` development release tags only from the exact `dev` head, with GitHub draft release creation blocked until full Vitest, one package job, and the three-platform work smoke plus four daily workflows pass against the same VSIX;
+11. authorized squash promotion after the complete `dev` gate passes, with a tree-equality check against the verified `dev` SHA and the `ours` back-merge into `dev`;
+12. `dev-vX.Y.Z` development release tags only from the exact `dev` head, with GitHub pre-release and Marketplace pre-release publication blocked until full Vitest, one package job, and the three-platform work smoke plus four daily workflows pass against the same VSIX;
 13. production tag creation only from the final verified `main` commit.

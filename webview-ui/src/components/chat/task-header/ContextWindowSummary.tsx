@@ -69,7 +69,10 @@ export const ContextWindowSummary: React.FC<TaskContextWindowButtonsProps> = ({
 			<span className="font-mono text-muted-foreground">{percentage.toFixed(1)}%</span>
 		</div>
 		<div className="grid grid-cols-3 gap-2 text-xs">
-			<div className="min-w-0 text-center" data-context-summary-metric="used">
+			<div
+				className="min-w-0 text-center"
+				data-context-summary-metric="used"
+				style={!indicatorViewModel ? { color: SEGMENT_COLORS.durable } : undefined}>
 				<div className="text-muted-foreground">Used</div>
 				<div className="font-mono">{formatSummaryTokenNumber(tokenUsed)}</div>
 			</div>
@@ -84,6 +87,9 @@ export const ContextWindowSummary: React.FC<TaskContextWindowButtonsProps> = ({
 				<div className="font-mono">{formatSummaryTokenNumber(contextWindow)}</div>
 			</div>
 		</div>
+		{!indicatorViewModel && (
+			<div className="text-xs text-muted-foreground">Segment details unavailable for this saved task.</div>
+		)}
 		{indicatorViewModel && (
 			<div
 				className="grid grid-cols-2 gap-1.5 border-t border-foreground/10 pt-2"

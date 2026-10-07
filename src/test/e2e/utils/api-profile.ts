@@ -329,6 +329,10 @@ function openAiProfile(
 							supportsImages: true,
 							supportsPromptCache: true,
 							supportsTools: true,
+							// A custom model grants no reasoning by default; the mock declares the
+							// effort capability its highReasoning() configuration relies on.
+							supportsReasoning: true,
+							thinking: { supported: true, mode: "effort", effortLevels: ["none", "low", "medium", "high"] },
 						},
 						pricing: {
 							inputPrice: 1,
@@ -397,7 +401,9 @@ function claudeCodeProfile(id: string, name: string, baseUrl: string): StoredApi
 		name,
 		provider: "claude-code",
 		baseUrl,
-		modelId: "claude-sonnet-4-5-20250929",
+		// Must stay in the Claude Code catalog: an unlisted model declares no native
+		// tool support, so the request would silently fall back to XML tools.
+		modelId: "claude-sonnet-4-6",
 		usedFor: ["act", "plan", "subagents"],
 		enabled: true,
 		claudeCode: {},

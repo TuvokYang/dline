@@ -16,6 +16,7 @@ import {
 } from "@shared/proto/dline/task"
 import { Logger } from "@shared/services/Logger"
 import type { Controller } from ".."
+import { currentOpening } from "./opened-task"
 
 /** Return task-local API rate history on demand without projecting it into ExtensionState. */
 export async function getTaskRateMetrics(
@@ -23,10 +24,11 @@ export async function getTaskRateMetrics(
 	request: GetTaskRateMetricsRequest,
 ): Promise<GetTaskRateMetricsResponse> {
 	const startedAt = performance.now()
+	const opening = currentOpening(controller, request)
 	// A task viewed from History answers from the metrics its last run recorded.
-	const queryRateMetrics = controller.resolveTaskRateMetricsQuery(request.taskId)
-	if (!queryRateMetrics) {
-		throw new Error("Task rate metrics query requires the matching active Task")
+	const queryRateMetrics = opening ? controller.resolveTaskRateMetricsQuery(request.taskId) : undefined
+	if (!opening || !queryRateMetrics) {
+		throw new Error("Task rate metrics query requires the matching opened Task instance")
 	}
 	if (!Number.isFinite(request.startMs) || !Number.isFinite(request.endMs) || request.endMs <= request.startMs) {
 		throw new Error("Task rate metrics query requires a valid time range")
@@ -38,7 +40,12 @@ export async function getTaskRateMetrics(
 		...(request.maxPoints > 0 && { maxPoints: request.maxPoints }),
 	})
 
+	if (controller.currentOpening() !== opening) {
+		throw new Error("Task rate metrics query no longer belongs to the opened Task instance")
+	}
 	const response = GetTaskRateMetricsResponse.create({
+		taskId: opening.taskId,
+		taskInstanceId: opening.taskInstanceId,
 		points: result.points.map((point) => ({
 			bucketStartMs: point.bucketStartMs,
 			bucketEndMs: point.bucketEndMs,

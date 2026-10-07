@@ -79,6 +79,17 @@ describe("awaitDispatchableDialog", () => {
 		expect(dialog?.interactionId).toBe("recovery-1")
 	})
 
+	it("stops waiting once no dialog that could accept the action is still being revealed", async () => {
+		const state = withPendingApproval(answerable())
+		const revealed = { ...state, dialog: { ...state.dialog, interrupted: undefined } } as TaskState
+		const started = Date.now()
+
+		const dialog = await awaitDispatchableDialog({ state: () => revealed }, { timeoutMs: LONG_WAIT_MS, actionId: "resume" })
+
+		expect(dialog).toBeUndefined()
+		expect(Date.now() - started).toBeLessThan(1_000)
+	})
+
 	it("stops waiting as soon as the task starts stopping", async () => {
 		const started = Date.now()
 

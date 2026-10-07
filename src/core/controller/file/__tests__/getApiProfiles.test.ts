@@ -150,6 +150,27 @@ describe("getApiProfiles", () => {
 		)
 	})
 
+	it("persists and restores a DeepSeek context override in provider-owned capabilities", async () => {
+		const settingsDir = path.join(process.env.DLINE_DIR!, "data", "settings")
+		const storedProfilesPath = path.join(settingsDir, "api_profiles.json")
+		await writeApiProfilesToFile(storedProfilesPath, [
+			ApiProfile.create({
+				id: "deepseek-context-profile",
+				name: "DeepSeek Context",
+				provider: "deepseek",
+				modelId: "deepseek-v4-pro",
+				modelInfo: { id: "deepseek-v4-pro", capabilities: { contextWindow: 1_000_000 } },
+				deepseek: { capabilities: { contextWindow: 262_144 } },
+			}),
+		])
+
+		const stored = JSON.parse(await fs.readFile(storedProfilesPath, "utf8"))
+		expect(stored[0].deepseek.capabilities.contextWindow).to.equal(262_144)
+
+		const restored = readApiProfiles()[0]
+		expect(restored.deepseek?.capabilities?.contextWindow).to.equal(262_144)
+	})
+
 	it("persists an explicitly disabled Profile as disabled", () => {
 		const stored = serializeApiProfilesForStorage([
 			ApiProfile.create({

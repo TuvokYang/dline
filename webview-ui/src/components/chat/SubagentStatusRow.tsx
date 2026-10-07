@@ -283,9 +283,10 @@ export default function SubagentStatusRow({ message }: SubagentStatusRowProps) {
 	const [expandedSections, setExpandedSections] = useState<Record<string, Partial<Record<SubagentWorkSectionKey, boolean>>>>({})
 	const [collapsed, setCollapsed] = useState(false)
 	const { isPending, runControl } = useActivityControlGuard()
-	const { currentTaskItem } = useExtensionState()
-	const taskId = currentTaskItem?.id
-	const { activities, getById } = useTaskActivities(taskId)
+	const { taskViewState } = useExtensionState()
+	const taskId = taskViewState?.taskId
+	const taskInstanceId = taskViewState?.taskInstanceId ?? ""
+	const { activities, getById } = useTaskActivities(taskId, taskInstanceId)
 	const parsedData = useMemo(() => parseSubagentRowData(message), [message])
 	const data = useMemo(() => {
 		if (!parsedData) return null
@@ -401,7 +402,7 @@ export default function SubagentStatusRow({ message }: SubagentStatusRowProps) {
 						className="ml-auto h-5 border px-2 py-0 text-[11px] leading-none"
 						onClick={(e) => {
 							e.stopPropagation()
-							if (taskId) void cancelTaskActivities(taskId, cancellableIds)
+							if (taskId) void cancelTaskActivities(taskId, cancellableIds, taskInstanceId)
 						}}
 						size="sm"
 						variant="danger">
@@ -489,7 +490,11 @@ export default function SubagentStatusRow({ message }: SubagentStatusRowProps) {
 												disabled={isPending(finishKey)}
 												onClick={() =>
 													void runControl(finishKey, () =>
-														finishTaskActivities(taskId as string, [entry.jobId as string]),
+														finishTaskActivities(
+															taskId as string,
+															[entry.jobId as string],
+															taskInstanceId,
+														),
 													)
 												}
 												size="sm">
@@ -502,7 +507,11 @@ export default function SubagentStatusRow({ message }: SubagentStatusRowProps) {
 												disabled={isPending(retryKey)}
 												onClick={() =>
 													void runControl(retryKey, () =>
-														retryTaskActivities(taskId as string, [entry.jobId as string]),
+														retryTaskActivities(
+															taskId as string,
+															[entry.jobId as string],
+															taskInstanceId,
+														),
 													)
 												}
 												size="sm">
@@ -513,7 +522,11 @@ export default function SubagentStatusRow({ message }: SubagentStatusRowProps) {
 											<Button
 												className="h-5 border px-2 py-0 text-[11px] leading-none"
 												onClick={() =>
-													void cancelTaskActivities(taskId as string, [entry.jobId as string])
+													void cancelTaskActivities(
+														taskId as string,
+														[entry.jobId as string],
+														taskInstanceId,
+													)
 												}
 												size="sm"
 												variant="danger">

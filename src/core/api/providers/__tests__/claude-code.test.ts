@@ -1,7 +1,6 @@
 import { ClaudeCodeHandler } from "@core/api/providers/claude-code"
-import { claudeCodeModels } from "@core/api/providers/models/claude-code"
 import type { ModelInfo } from "@shared/api"
-import { ServerTool } from "@shared/proto/dline/models/metadata"
+import { ApiFormat, ServerTool } from "@shared/proto/dline/models/metadata"
 import { ApiProfile } from "@shared/proto/dline/profile"
 import { describe, expect, it } from "vitest"
 
@@ -33,29 +32,27 @@ describe("ClaudeCodeHandler model resolution", () => {
 		expect(model.info).toBeTypeOf("object")
 	})
 
-	it.each([
-		["claude-opus-5-5", 1_000_000],
-		["claude-opus-5", 1_000_000],
-		["claude-fable-5-1", 1_000_000],
-		["claude-sonnet-5", 1_000_000],
-		["claude-sonnet-4-6", 1_000_000],
-	])("resolves %s to a %i token context window", (modelId, contextWindow) => {
-		const model = createHandler(modelId).getModel()
-
-		expect(model.id).toBe(modelId)
-		expect(model.info.capabilities?.contextWindow).toBe(contextWindow)
-	})
-
-	it("defaults to the current flagship model", () => {
-		expect(createHandler().getModel().id).toBe("claude-opus-5-5")
-	})
-
 	// The settings page can offer a remotely discovered model that the bundled
 	// catalog does not know. Substituting the default here would silently bill
 	// a different model than the one the user selected, so a configured ID has
 	// to survive even when it is absent from the catalog.
 	it("keeps a selected model the bundled catalog does not know", () => {
 		expect(createHandler("claude-opus-9-1-20991231").getModel().id).toBe("claude-opus-9-1-20991231")
+	})
+
+	it("preserves complete effective Profile metadata instead of treating declarations as overrides", () => {
+		const info = {
+			id: "opaque-model",
+			name: "Effective model",
+			apiFormats: [ApiFormat.ANTHROPIC_CHAT],
+			capabilities: {
+				supportsForcedToolUse: false,
+				tools: [ServerTool.WEB_SEARCH],
+				thinking: { supported: true, mode: "effort", canDisable: false, defaultEnabled: true, effortLevels: ["high"] },
+			},
+		}
+		const model = createHandlerWithModelInfo(info.id, info).getModel()
+		expect(model.info).toMatchObject(info)
 	})
 
 	it("keeps the Profile metadata of a remotely discovered model", () => {
@@ -69,97 +66,11 @@ describe("ClaudeCodeHandler model resolution", () => {
 		expect(model.info.capabilities?.maxTokens).toBe(64_000)
 	})
 
-	// The metered 1M window and the CLI's bare selectors are not part of a
-	// subscription, so offering either would let the user pick a model whose
-	// requests the plan cannot satisfy.
-	it("offers neither long-context variants nor CLI aliases", () => {
-		const offered = Object.keys(claudeCodeModels)
-
-		expect(offered.filter((id) => id.includes("[1m]"))).toEqual([])
-		expect(offered).not.toContain("sonnet")
-		expect(offered).not.toContain("opus")
-	})
-
-	// Anthropic retires a model outright: requests to it fail rather than
-	// degrade, so a retired entry in the picker is a guaranteed failed request
-	// dressed up as a choice.
-	it("offers no model Anthropic has already retired", () => {
-		const retired = [
-			"claude-opus-4-1-20250805",
-			"claude-opus-4-20250514",
-			"claude-sonnet-4-20250514",
-			"claude-3-7-sonnet-20250219",
-			"claude-3-5-haiku-20241022",
-			"claude-3-haiku-20240307",
-		]
-
-		expect(Object.keys(claudeCodeModels).filter((id) => retired.includes(id))).toEqual([])
-	})
-
-	// The catalog is the whole subscription offer; the remote listing only
-	// refreshes these entries and never adds others.
-	it("offers exactly the subscription model set", () => {
-		expect(Object.keys(claudeCodeModels)).toEqual([
-			"claude-opus-5-5",
-			"claude-fable-5-1",
-			"claude-sonnet-5",
-			"claude-fable-5",
-			"claude-opus-5",
-			"claude-opus-4-8",
-			"claude-opus-4-7",
-			"claude-opus-4-6",
-			"claude-sonnet-4-6",
-		])
-	})
-
-	// A subscription reaches the same Messages API, so an undeclared hosted tool
-	// would silently route every search or fetch through the local fallback instead.
-	it("declares hosted web search and web fetch for every offered model", () => {
-		const withoutHostedWebTools = Object.entries(claudeCodeModels)
-			.filter(
-				([, info]) =>
-					info.capabilities?.tools?.includes(ServerTool.WEB_SEARCH) !== true ||
-					info.capabilities?.tools?.includes(ServerTool.WEB_FETCH) !== true,
-			)
-			.map(([id]) => id)
-
-		expect(withoutHostedWebTools).toEqual([])
-	})
-
 	it("lets the handler carry hosted web search and web fetch", () => {
 		const handler = createHandler()
 
 		expect(handler.supportsServerTool(ServerTool.WEB_SEARCH)).toBe(true)
 		expect(handler.supportsServerTool(ServerTool.WEB_FETCH)).toBe(true)
 		expect(handler.supportsServerTool(ServerTool.CODE_EXECUTION)).toBe(false)
-	})
-})
-
-describe("ClaudeCodeHandler subscription capabilities", () => {
-	// The former CLI transport could not carry image blocks and disabled prompt
-	// caching. Direct Messages API access removes both limits, so a regression
-	// back to the CLI-era metadata would silently degrade the provider.
-	it("no longer declares the CLI-era image and prompt-cache restrictions", () => {
-		const capabilities = createHandler("claude-sonnet-5").getModel().info.capabilities
-
-		expect(capabilities?.supportsImages).toBe(true)
-		expect(capabilities?.supportsPromptCache).toBe(true)
-	})
-
-	// The CLI parsed tool calls itself, so the catalog never declared native tool
-	// support. Over HTTP an undeclared capability means no tools reach the
-	// request and the model can only answer in prose.
-	it("declares native tool support for every offered model", () => {
-		const withoutTools = Object.entries(claudeCodeModels)
-			.filter(([, info]) => info.capabilities?.supportsTools !== true)
-			.map(([id]) => id)
-
-		expect(withoutTools).toEqual([])
-	})
-
-	it("declares an output budget beyond the former CLI cap", () => {
-		const capabilities = createHandler("claude-sonnet-5").getModel().info.capabilities
-
-		expect(capabilities?.maxTokens ?? 0).toBeGreaterThan(8192)
 	})
 })

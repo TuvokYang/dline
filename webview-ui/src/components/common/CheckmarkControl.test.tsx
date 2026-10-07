@@ -31,6 +31,13 @@ describe("CheckmarkControl", () => {
 		vi.mocked(CheckpointsServiceClient.checkpointRestore).mockClear()
 	})
 
+	it("shows partial multi-root coverage without disabling available file restore", () => {
+		render(<CheckmarkControl messageTs={42} workspaceCheckpointCoverage={{ available: 1, total: 2 }} />)
+
+		expect(screen.getByText("Checkpoint (1/2 workspaces)", { exact: true })).toBeInTheDocument()
+		expect(screen.getByRole("button", { name: "Compare", exact: true, hidden: true })).toBeInTheDocument()
+	})
+
 	it("opens the restore confirmation and restores files and task", async () => {
 		render(<CheckmarkControl messageTs={42} />)
 
@@ -44,6 +51,13 @@ describe("CheckmarkControl", () => {
 		expect(CheckpointsServiceClient.checkpointRestore).toHaveBeenCalledWith(
 			expect.objectContaining({ number: 42, restoreType: "taskAndWorkspace" }),
 		)
+	})
+
+	it("keeps historical file checkpoint controls available when current backend health reports an error", () => {
+		checkpointManagerErrorMessage = "One workspace checkpoint backend is unhealthy."
+		render(<CheckmarkControl hasWorkspaceCheckpoint messageTs={42} />)
+
+		expect(screen.getByRole("button", { name: "Compare", exact: true, hidden: true })).toBeInTheDocument()
 	})
 
 	it("keeps chat restore available when the Git checkpoint backend is unavailable", async () => {

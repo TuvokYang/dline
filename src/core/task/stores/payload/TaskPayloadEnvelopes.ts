@@ -1,5 +1,5 @@
 import type { SemanticInputDocument } from "@shared/input-semantics/document"
-import type { ClineAssistantContent, ClineStorageMessage } from "@shared/messages/content"
+import type { ClineAssistantContent, ClineStorageMessage, ClineUserAttachedDocumentBlock } from "@shared/messages/content"
 import type { ClineMessageModelInfo } from "@shared/messages/metrics"
 import type { ExplicitInstructionDeclaration } from "../../explicit-instructions/types"
 import type {
@@ -198,6 +198,18 @@ export interface ToolResultEnvelope {
 	readonly blockId: string
 	readonly content: string
 	readonly failed?: boolean
+	/**
+	 * PDFs the user attached to this call's answer, one `attached_document`
+	 * payload each. A tool result carries only text and images, so the request
+	 * places them after the result instead of inside it.
+	 */
+	readonly documentPayloadRefs?: readonly string[]
+}
+
+/** One PDF the user attached, stored once and referenced by the result it belongs to. */
+export interface AttachedDocumentEnvelope {
+	readonly kind: "attached_document"
+	readonly document: ClineUserAttachedDocumentBlock
 }
 
 export interface ToolTerminalManifestEnvelope {
@@ -209,6 +221,8 @@ export interface ToolTerminalManifestEnvelope {
 		readonly content: string
 		readonly failed?: boolean
 		readonly feedbackRef?: string
+		/** Carried over from the raw result this entry replaces. */
+		readonly documentPayloadRefs?: readonly string[]
 	}[]
 	/** Raw result and approval-feedback payloads replaced by this ordered projection. */
 	readonly supersededPayloadRefs: readonly string[]

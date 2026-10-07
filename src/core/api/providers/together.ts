@@ -1,4 +1,5 @@
-import { ModelInfo, openAiModelInfoSaneDefaults } from "@shared/api"
+import { ModelInfo } from "@shared/api"
+import { resolveRuntimeModel } from "@shared/providers/profile-model-info"
 import OpenAI from "openai"
 import type { ChatCompletionTool as OpenAITool } from "openai/resources/chat/completions"
 import { ClineStorageMessage } from "@/shared/messages/content"
@@ -51,7 +52,7 @@ export class TogetherHandler implements ApiHandler {
 	@withRetry()
 	async *createMessage(systemPrompt: string, messages: ClineStorageMessage[], tools?: OpenAITool[]): ApiStream {
 		const client = this.ensureClient()
-		const modelId = this.modelId
+		const modelId = this.getModel().id
 		const isDeepseekReasoner = modelId.includes("deepseek-reasoner")
 
 		let openAiMessages: OpenAI.Chat.ChatCompletionMessageParam[] = [
@@ -103,9 +104,6 @@ export class TogetherHandler implements ApiHandler {
 	}
 
 	getModel(): { id: string; info: ModelInfo } {
-		return {
-			id: this.modelId,
-			info: openAiModelInfoSaneDefaults,
-		}
+		return resolveRuntimeModel(this.ctx.profile)
 	}
 }

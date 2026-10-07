@@ -1,6 +1,23 @@
+import type { ToolResultAttachments } from "@integrations/misc/extract-text"
 import type { ClineAskResponse } from "@shared/WebviewMessage"
 import type { InteractionOutcome } from "../../interaction/InteractionProtocol"
 import type { TaskConfig } from "../types/TaskConfig"
+
+/**
+ * Load files the user attached while answering a tool.
+ *
+ * The handler returns the documents with its result (see `withToolDocuments`), so the
+ * journal records them beside the result and the provider request places them after it
+ * as native documents within the request's document budget.
+ * @param files Attached file paths, if any.
+ * @returns `<file_content>` text for the tool result and the PDFs that follow it; both empty when nothing was attached.
+ */
+export async function attachToolFeedbackFiles(files: string[] | undefined): Promise<ToolResultAttachments> {
+	if (!files?.length) return { text: "", documents: [] }
+	// Loaded on demand: the extractor pulls in the PDF and spreadsheet parsers.
+	const { processFilesForToolResult } = await import("@integrations/misc/extract-text")
+	return processFilesForToolResult(files)
+}
 
 /**
  * Checks whether a received ask response has already been rendered as visible user feedback.

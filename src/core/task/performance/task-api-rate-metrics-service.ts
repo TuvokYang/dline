@@ -188,7 +188,8 @@ export class TaskApiRateMetricsService {
 			sanitizeTokenCount(usage.inputTokens) +
 			sanitizeTokenCount(usage.cacheWriteTokens ?? 0) +
 			sanitizeTokenCount(usage.cacheReadTokens ?? 0)
-		const streamedTokens = sanitizeTokenCount(usage.outputTokens) + sanitizeTokenCount(usage.thoughtsTokens ?? 0)
+		// Output already includes its reasoning share.
+		const streamedTokens = sanitizeTokenCount(usage.outputTokens)
 		const allocations = new Map<number, number>()
 		addAllocation(allocations, request.startSecond, inputTokens)
 		const weightedAllocations = allocateByLargestRemainder(streamedTokens, request.estimatedBySecond)

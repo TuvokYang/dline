@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto"
 import type { ContextWindowIndicatorSnapshot } from "@shared/context-window-indicator"
 import type { TaskViewState, UiMessage } from "@shared/ExtensionMessage"
 import type { HistoryItem } from "@shared/HistoryItem"
@@ -19,7 +20,7 @@ import type { TaskRateMetricsQuery, TaskRateMetricsQueryResult } from "@/core/ta
 import { FileTaskStateVault, openTaskPayloadStore } from "@/core/task/stores"
 import { TaskPhase } from "@/core/task/TaskPhase"
 import { projectCanonicalTaskView } from "@/core/task/view/canonical/projectCanonicalTaskView"
-import { projectHistoryDisplayState } from "@/core/task/view/canonical/projectHistoryDisplayState"
+import { type HistoryDisplayProjection, projectHistoryDisplayState } from "@/core/task/view/canonical/projectHistoryDisplayState"
 import { historyDisplayAnchorRow } from "@/core/task/view/historyDisplayAnchorRow"
 import { materializeCanonicalInputQueue } from "@/core/task/view/materializeCanonicalInputQueue"
 import { projectHistoryPreparingView } from "./history-task-readiness"
@@ -71,6 +72,14 @@ function isInterruptedCommandCard(message: UiMessage, activityIds: ReadonlySet<s
 }
 
 export class HistoryDisplaySession {
+	/**
+	 * The opening the Webview echoes as `task_instance_id`.
+	 *
+	 * A display is one opening; reopening the task, or promoting it into a
+	 * runtime, mints a different identity, so requests from the earlier surface
+	 * are recognised as stale.
+	 */
+	readonly taskInstanceId = randomUUID()
 	readonly activityStore: TaskActivityStore
 	/** The occupancy the task last showed, drawn by the header until the task runs again. */
 	private readonly contextWindowIndicator: ContextWindowIndicatorSnapshot | undefined
@@ -259,6 +268,9 @@ export class HistoryDisplaySession {
 		if (
 			!interaction ||
 			request.taskId !== interaction.taskId ||
+			// A reply rendered by an earlier opening of this task is stale even
+			// when its dialog identity still matches.
+			request.taskInstanceId !== this.taskInstanceId ||
 			request.turnId !== interaction.turnId ||
 			request.interactionId !== interaction.interactionId ||
 			request.stateRevision !== interaction.stateRevision
@@ -443,6 +455,10 @@ export class HistoryDisplaySession {
 	 * Render the stopped task from its durable state. A snapshot that never
 	 * reached an interaction still owes the user a way back in, so the display
 	 * projection synthesizes one and this method supplies its anchor row.
+	 *
+	 * A durable dialog whose ask row is missing, still partial, or duplicated
+	 * cannot be presented, so it falls back to the same recovery interaction
+	 * rather than leaving the task without a way to continue.
 	 */
 	private async projectSnapshot(
 		reader: UIMessageWindowReader,
@@ -452,12 +468,25 @@ export class HistoryDisplaySession {
 		const display = projectHistoryDisplayState(this.taskId, snapshot)
 		if (!display.synthetic) {
 			const view = projectCanonicalTaskView(display.state)
-			const anchor = await this.findAnchorOutsideWindow(reader, anchoredInteractionId(view), durableMessages)
+			const owningInteractionId = anchoredInteractionId(view)
+			const anchor = await this.findAnchorOutsideWindow(reader, owningInteractionId, durableMessages)
 			// The anchor only proves the dialog is answerable; the retained window
 			// stays the latest page, and the surface pages back to the row itself.
 			const evidence = anchor ? [...durableMessages, anchor] : durableMessages
-			return { messages: durableMessages, view: adaptCanonicalTaskView(view, evidence) }
+			const adapted = adaptCanonicalTaskView(view, evidence)
+			if (adapted.activeInteraction || owningInteractionId === undefined) {
+				return { messages: durableMessages, view: adapted }
+			}
+			return this.projectRecovery(projectHistoryDisplayState(this.taskId, snapshot, { unanchored: true }), durableMessages)
 		}
+		return this.projectRecovery(display, durableMessages)
+	}
+
+	private projectRecovery(
+		display: HistoryDisplayProjection,
+		durableMessages: UiMessage[],
+	): { messages: UiMessage[]; view: TaskViewState; syntheticMessage?: UiMessage } {
+		if (!display.synthetic) return { messages: durableMessages, view: this.projectView(display.state, durableMessages) }
 		const syntheticMessage = historyDisplayAnchorRow(display.synthetic, durableMessages)
 		const messages = [...durableMessages, syntheticMessage]
 		return { messages, view: this.projectView(display.state, messages), syntheticMessage }

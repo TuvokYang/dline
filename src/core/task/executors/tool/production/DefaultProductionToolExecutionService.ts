@@ -1,7 +1,7 @@
 import type { ToolUse } from "@core/assistant-message"
 import { formatResponse } from "@core/prompts/responses"
 import type { UiSayTool } from "@shared/ExtensionMessage"
-import type { ClineToolResponseContent } from "@shared/messages/content"
+import type { ClineToolResponseContent, ClineUserAttachedDocumentBlock } from "@shared/messages/content"
 import { WebToolsMode } from "@shared/proto/dline/provider/common"
 import { ClineDefaultTool } from "@shared/tools"
 import { serializeDurableToolResult, toolResultReplayOf } from "../../../DurableToolResult"
@@ -37,6 +37,8 @@ export interface DefaultProductionToolExecutionServiceOptions {
 export interface ProductionToolExecutionResult {
 	readonly content: string
 	readonly failed?: boolean
+	/** PDFs the user attached to the call's answer; they follow the result in the next request. */
+	readonly documents?: readonly ClineUserAttachedDocumentBlock[]
 	readonly postCommit?: ToolPostCommitDirective
 }
 
@@ -207,6 +209,7 @@ export class DefaultProductionToolExecutionService implements ProductionToolExec
 		const response = applyRepeatedCallGuard(config, block, result.response)
 		return {
 			...serializeResult(input.invocation, response, description),
+			...(result.documents?.length ? { documents: result.documents } : {}),
 			...(result.postCommit === undefined ? {} : { postCommit: result.postCommit }),
 		}
 	}

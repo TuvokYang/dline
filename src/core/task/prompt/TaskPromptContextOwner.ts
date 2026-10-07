@@ -208,7 +208,6 @@ export class TaskPromptContextOwner {
 		const localAgentsRulesFileInstructions = await getLocalAgentsRules(
 			this.options.identity.cwd,
 			taskCapabilityToggles.localAgentsRulesToggles,
-			this.options.workspace.ignoreController,
 		)
 		const localRulesLoadMs = Math.round(performance.now() - stageStartedAt)
 

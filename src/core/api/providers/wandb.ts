@@ -1,4 +1,5 @@
-import { type ModelInfo, openAiModelInfoSaneDefaults, type WandbModelId, wandbDefaultModelId, wandbModels } from "@shared/api"
+import { type ModelInfo, wandbDefaultModelId, wandbModels } from "@shared/api"
+import { resolveProfileModelId, resolveRuntimeModel } from "@shared/providers/profile-model-info"
 import OpenAI from "openai"
 import type { ChatCompletionTool as OpenAITool } from "openai/resources/chat/completions"
 import { ClineStorageMessage } from "@/shared/messages/content"
@@ -98,16 +99,11 @@ export class WandbHandler implements ApiHandler {
 	}
 
 	getModel(): { id: string; info: ModelInfo } {
-		const modelId = this.modelId?.trim()
-
-		if (modelId && modelId in wandbModels) {
-			return { id: modelId, info: wandbModels[modelId as WandbModelId] }
-		}
-
-		if (modelId) {
-			return { id: modelId, info: openAiModelInfoSaneDefaults }
-		}
-
-		return { id: wandbDefaultModelId, info: wandbModels[wandbDefaultModelId] }
+		const id = resolveProfileModelId(this.ctx.profile).trim() || wandbDefaultModelId
+		const modelInfo = this.ctx.profile.modelInfo
+		return resolveRuntimeModel(
+			{ ...this.ctx.profile, modelId: id, modelInfo: modelInfo?.id.trim() === id ? { ...modelInfo, id } : undefined },
+			{ models: wandbModels, defaultModelId: wandbDefaultModelId },
+		)
 	}
 }

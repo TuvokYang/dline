@@ -14,7 +14,10 @@ class TestResizeObserver implements ResizeObserver {
 globalThis.ResizeObserver = TestResizeObserver
 
 vi.mock("@/context/ExtensionStateContext", () => ({
-	useExtensionState: () => ({ currentTaskItem: { id: "task-1" } }),
+	useExtensionState: () => ({
+		currentTaskItem: { id: "task-1" },
+		taskViewState: { taskId: "task-1", taskInstanceId: "task-instance-1" },
+	}),
 }))
 
 const { cancelTaskActivities, finishTaskActivities, retryTaskActivities, taskActivities } = vi.hoisted(() => ({
@@ -209,7 +212,7 @@ describe("SubagentStatusRow", () => {
 		)
 		fireEvent.click(screen.getByRole("button", { name: "Cancel" }))
 
-		expect(cancelTaskActivities).toHaveBeenCalledWith("task-1", ["job-1"])
+		expect(cancelTaskActivities).toHaveBeenCalledWith("task-1", ["job-1"], "task-instance-1")
 	})
 
 	it("uses canonical Finish and Retry capabilities for exact subagent activities", async () => {
@@ -274,9 +277,9 @@ describe("SubagentStatusRow", () => {
 		fireEvent.click(retryButton)
 
 		expect(finishTaskActivities).toHaveBeenCalledTimes(1)
-		expect(finishTaskActivities).toHaveBeenCalledWith("task-1", ["job-finish"])
+		expect(finishTaskActivities).toHaveBeenCalledWith("task-1", ["job-finish"], "task-instance-1")
 		expect(retryTaskActivities).toHaveBeenCalledTimes(1)
-		expect(retryTaskActivities).toHaveBeenCalledWith("task-1", ["job-retry"])
+		expect(retryTaskActivities).toHaveBeenCalledWith("task-1", ["job-retry"], "task-instance-1")
 		expect(finishButton).toBeDisabled()
 		expect(retryButton).toBeDisabled()
 		resolveFinish()
@@ -411,7 +414,7 @@ describe("SubagentStatusRow", () => {
 		expect(cancel).toHaveClass("h-5")
 		expect(item).not.toHaveTextContent("Moving...")
 		fireEvent.click(cancel)
-		expect(cancelTaskActivities).toHaveBeenCalledWith("task-1", ["job-foreground"])
+		expect(cancelTaskActivities).toHaveBeenCalledWith("task-1", ["job-foreground"], "task-instance-1")
 	})
 
 	it("cancels only canonical cancellable activities in a batch", () => {
@@ -476,7 +479,7 @@ describe("SubagentStatusRow", () => {
 		const cancelButtons = screen.getAllByRole("button", { name: "Cancel" })
 		expect(cancelButtons).toHaveLength(2)
 		for (const button of cancelButtons) expect(button).toHaveClass("h-5")
-		expect(cancelTaskActivities).toHaveBeenCalledWith("task-1", ["job-1", "job-3"])
+		expect(cancelTaskActivities).toHaveBeenCalledWith("task-1", ["job-1", "job-3"], "task-instance-1")
 	})
 
 	it("shows structured context as a single-line trigger with the full text in an unmasked popover", () => {
@@ -1211,14 +1214,14 @@ describe("SubagentStatusRow", () => {
 		const finishButton = within(runner).getByRole("button", { name: "Finish" })
 		fireEvent.click(finishButton)
 		fireEvent.click(within(runner).getByRole("button", { name: "Cancel" }))
-		expect(finishTaskActivities).toHaveBeenCalledWith("task-1", ["job-runner"])
-		expect(cancelTaskActivities).toHaveBeenCalledWith("task-1", ["job-runner"])
+		expect(finishTaskActivities).toHaveBeenCalledWith("task-1", ["job-runner"], "task-instance-1")
+		expect(cancelTaskActivities).toHaveBeenCalledWith("task-1", ["job-runner"], "task-instance-1")
 		expect(within(runner).queryByTestId("subagent-item-body")).not.toBeInTheDocument()
 
 		fireEvent.click(within(retryer).getByRole("button", { name: "Collapse subagent retryer" }))
 		const retryButton = within(retryer).getByRole("button", { name: "Retry" })
 		fireEvent.click(retryButton)
-		expect(retryTaskActivities).toHaveBeenCalledWith("task-1", ["job-retryer"])
+		expect(retryTaskActivities).toHaveBeenCalledWith("task-1", ["job-retryer"], "task-instance-1")
 		expect(within(retryer).queryByTestId("subagent-item-body")).not.toBeInTheDocument()
 		fireEvent.click(within(retryer).getByRole("button", { name: "Expand subagent retryer" }))
 		expect(within(retryer).getByTestId("subagent-item-body")).toBeInTheDocument()

@@ -5,7 +5,12 @@ import { downloadAndUnzipVSCode, SilentReporter } from "@vscode/test-electron"
 import { _electron, type ElectronApplication, type Frame, type Page } from "playwright"
 import type { ClineApiServerMock } from "../fixtures/server"
 import { E2ETestHelper } from "./helpers"
-import { createLaunchIsolation, createVSCodeExtensionLaunchArguments, portableEnvironment } from "./vscode-launch-isolation"
+import {
+	createLaunchIsolation,
+	createVSCodeExtensionLaunchArguments,
+	FULL_RATE_RENDERING_ARGUMENTS,
+	portableEnvironment,
+} from "./vscode-launch-isolation"
 import { resolveVSCodeDownloadPlatform, resolveVSCodeDownloadVersion } from "./vscode-version-resolver"
 
 export interface MultiInstanceSurface {
@@ -146,6 +151,7 @@ export class MultiInstanceLauncher {
 				"--no-sandbox",
 				"--disable-updates",
 				"--disable-workspace-trust",
+				...FULL_RATE_RENDERING_ARGUMENTS,
 				"--skip-welcome",
 				"--skip-release-notes",
 				// User data comes from VSCODE_PORTABLE, which outranks --user-data-dir.

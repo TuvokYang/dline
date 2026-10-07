@@ -32,7 +32,12 @@ describe("matchSearchBlock", () => {
 		})
 
 		it("reports every candidate line when the block matches more than once", () => {
-			expect(match("a\nb\nc\nb\n", ["b"])).toEqual({ kind: "ambiguous", tier: "exact", candidateLines: [2, 4] })
+			expect(match("a\nb\nc\nb\n", ["b"])).toEqual({
+				kind: "ambiguous",
+				part: "block",
+				tier: "exact",
+				candidateLines: [2, 4],
+			})
 		})
 
 		it("prefers the stricter tier when it is unique even if looser tiers match more", () => {
@@ -52,6 +57,7 @@ describe("matchSearchBlock", () => {
 		it("reports ambiguity instead of falling through to the prefix tier", () => {
 			expect(match("  x = 1\n\tx = 1\nx = 10\n", ["x = 1"])).toEqual({
 				kind: "ambiguous",
+				part: "block",
 				tier: "line_trim",
 				candidateLines: [1, 2],
 			})
@@ -69,6 +75,7 @@ describe("matchSearchBlock", () => {
 		it("reports ambiguity when a prefix starts several lines", () => {
 			expect(match(TWO_FUNCTIONS, ["export function foo"])).toEqual({
 				kind: "ambiguous",
+				part: "block",
 				tier: "line_prefix",
 				candidateLines: [1, 4],
 			})
@@ -120,14 +127,24 @@ describe("matchSearchBlock", () => {
 			"",
 		].join("\n")
 
-		it("spans from the unique head to the nearest exact tail and counts skipped lines", () => {
-			const result = expectUnique(match(LEGACY, ["export function legacy() {"], ["}"]))
+		it("spans from a unique head to a unique multi-line tail and counts skipped lines", () => {
+			const result = expectUnique(match(LEGACY, ["export function legacy() {"], ["  return 2", "}"]))
 			expect(result.range.startLine).toBe(2)
 			expect(result.range.endLine).toBe(7)
-			expect(result.skippedLines).toBe(4)
+			expect(result.skippedLines).toBe(3)
 			expect(LEGACY.slice(result.range.startIndex, result.range.endIndex)).toBe(
 				"export function legacy() {\n  if (a) {\n    return 1\n  }\n  return 2\n}\n",
 			)
+		})
+
+		it("rejects a unique head when the SKIP tail matches multiple locations", () => {
+			expect(match(LEGACY, ["export function legacy() {"], ["}"])).toEqual({
+				kind: "ambiguous",
+				part: "skip_tail",
+				tier: "exact",
+				headLine: 2,
+				candidateLines: [7, 10],
+			})
 		})
 
 		it("falls back to a whitespace-tolerant tail when no exact tail follows the head", () => {
@@ -140,6 +157,7 @@ describe("matchSearchBlock", () => {
 		it("rejects an ambiguous head with its candidate lines", () => {
 			expect(match(LEGACY, ["export function"], ["}"])).toEqual({
 				kind: "ambiguous",
+				part: "block",
 				tier: "line_prefix",
 				candidateLines: [2, 9],
 			})

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import type { CheckpointCommitOptions } from "../CheckpointTracker"
 
 /**
  * Behavior guard for the checkpoint commit span and its lock outcome.
@@ -135,11 +136,13 @@ vi.mock("@/shared/services/Logger", () => ({
 const { default: CheckpointTracker } = await import("../CheckpointTracker")
 
 interface CommitCapableTracker {
-	commitForFiles(files: string[]): Promise<string | undefined>
+	commitForFiles(files: string[], options?: CheckpointCommitOptions): Promise<string | undefined>
 }
 
 /** Reaches commitForFiles with the Git work stubbed to the branch under test. */
-function createTracker(doCommitFiles: () => Promise<string | undefined>): CommitCapableTracker {
+function createTracker(
+	doCommitFiles: (files: string[], options: CheckpointCommitOptions) => Promise<string | undefined>,
+): CommitCapableTracker {
 	const tracker = Object.create(CheckpointTracker.prototype)
 	Object.assign(tracker, {
 		taskId: "task-1",
@@ -182,6 +185,15 @@ describe("checkpoint commit observability", () => {
 		expect(span?.ended).toBe(true)
 		expect(span?.outcome).toBe("success")
 		expect(span?.attributes).toMatchObject({ explicit_files: true, lock_outcome: "acquired" })
+	})
+
+	it("forwards a forced workspace scan to the Git work boundary", async () => {
+		const doCommitFiles = vi.fn(async () => "commit-hash")
+		const tracker = createTracker(doCommitFiles)
+
+		await tracker.commitForFiles([], { forceWorkspaceScan: true })
+
+		expect(doCommitFiles).toHaveBeenCalledWith([], { forceWorkspaceScan: true })
 	})
 
 	it("reports the lock wait as its own bounded outcome", async () => {

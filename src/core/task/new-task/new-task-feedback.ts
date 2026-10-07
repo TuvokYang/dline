@@ -1,5 +1,5 @@
 import { formatResponse } from "@core/prompts/responses"
-import { processFilesIntoText } from "@integrations/misc/extract-text"
+import { processFilesIntoContent } from "@integrations/misc/extract-text"
 import type { UiMessage } from "@shared/ExtensionMessage"
 import {
 	type ClineContent,
@@ -166,8 +166,7 @@ export async function buildNewTaskFeedbackContent(feedback: NewTaskFeedback): Pr
 		content.push(...formatResponse.imageBlocks([...feedback.images]))
 	}
 	if (feedback.files.length > 0) {
-		const fileContent = await processFilesIntoText([...feedback.files])
-		if (fileContent) content.push({ type: "text", text: fileContent })
+		content.push(...(await processFilesIntoContent([...feedback.files])))
 	}
 	return content
 }

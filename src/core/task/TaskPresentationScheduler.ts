@@ -120,11 +120,15 @@ export class TaskPresentationScheduler {
 			lane.scheduledPriority = undefined
 		}
 
-		if (lane.flushInProgress) {
-			await (lane.currentFlushCompletion ?? Promise.resolve())
-			while (lane.flushInProgress) {
-				await (lane.currentFlushCompletion ?? Promise.resolve())
+		while (lane.flushInProgress) {
+			// A flush in progress always owns a completion handle. Waiting on a
+			// substitute instead would spin on microtasks and starve the very
+			// I/O that flush needs to finish.
+			const inFlight = lane.currentFlushCompletion
+			if (!inFlight) {
+				throw new Error("Presentation flush is in progress without a completion handle")
 			}
+			await inFlight
 		}
 
 		if (this.disposed || !this.isCurrent(lane, generation)) {
@@ -208,7 +212,7 @@ export class TaskPresentationScheduler {
 				isCurrent: () => this.isCurrent(lane, generation),
 			}
 
-			lane.currentFlushCompletion = (async () => {
+			const completion = (async (): Promise<{ error?: unknown }> => {
 				try {
 					await this.flush(context)
 					return {}
@@ -222,8 +226,14 @@ export class TaskPresentationScheduler {
 				}
 			})()
 
-			const result = await lane.currentFlushCompletion
-			lane.currentFlushCompletion = undefined
+			lane.currentFlushCompletion = completion
+			const result = await completion
+			// `flushInProgress` is cleared inside the completion, before this
+			// continuation runs. An immediate request landing in that gap starts
+			// the next cycle and installs its own handle, which must survive.
+			if (lane.currentFlushCompletion === completion) {
+				lane.currentFlushCompletion = undefined
+			}
 			if (result.error && options.rethrowErrors && this.isCurrent(lane, generation)) {
 				throw result.error
 			}
@@ -242,10 +252,10 @@ export class TaskPresentationScheduler {
 				return
 			}
 
-			// Continue the loop synchronously for immediate follow-up work. Because
-			// there is no await between clearing currentFlushCompletion above and
-			// re-entering the loop here, no other caller can observe an interleaved
-			// "idle" state before the immediate flush is started.
+			// Continue the loop synchronously for immediate follow-up work queued
+			// while this flush ran. A request that arrived after the flush settled
+			// but before this continuation may already have started its own cycle;
+			// the guard at the top of the loop then waits for it instead.
 		}
 	}
 

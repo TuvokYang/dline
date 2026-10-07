@@ -180,12 +180,15 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
 	}
 
 	/**
-	 * Write the chat row a revealed dialog anchors to, if it has none yet.
+	 * Write the chat row a revealed dialog anchors to, unless exactly one
+	 * complete ask row already anchors it.
 	 *
 	 * A tool that opens its own dialog writes the row in `request`. An approval
 	 * comes from the turn plan and has no such moment, so the dialog executor
-	 * calls this at reveal. Writing once keeps the anchor unique, which is what
-	 * the surface requires before it will dispatch a response.
+	 * calls this at reveal. A row left partial or duplicated by a process that
+	 * stopped mid-reveal cannot anchor the dialog, so a re-reveal after restore
+	 * replaces those rows with one complete anchor, which is what the surface
+	 * requires before it will dispatch a response.
 	 *
 	 * `ask` overrides the kind's default when the body was built for another
 	 * row type: a command approval carries a plain command line, which a `tool`
@@ -197,7 +200,11 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
 		readonly body: string
 		readonly ask?: string
 	}): Promise<void> {
-		if (this.messages.clineMessages.some((message) => message.interactionId === request.interactionId)) return
+		const asks = this.messages.clineMessages.filter(
+			(message) => message.type === "ask" && message.interactionId === request.interactionId,
+		)
+		if (asks.length === 1 && !asks[0].partial) return
+		await this.messages.removeMessagesByTs(asks.map((message) => message.ts))
 		const definition = getInteraction(request.kind as OpenInteractionRequest["kind"])
 		// The row must sort after everything already written. Wall-clock time is
 		// not enough here: an approval is revealed in the same millisecond as the

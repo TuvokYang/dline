@@ -53,6 +53,10 @@ function inferSettledMotion(
 	current: ContextWindowIndicatorSnapshot,
 ): ContextWindowSegmentMotion {
 	if (!previous || current.phase !== "stable") return "none"
+	// Re-rendering the same snapshot, or refreshing a stable Staged estimate, settles nothing; inferring
+	// a commit there would keep Staged hidden for the whole stable phase and show the previous round.
+	if (previous.revision === current.revision) return "none"
+	if (previous.phase === "stable" && current.epoch === previous.epoch) return "none"
 	if (previous.pendingSendTokens + previous.receivingTokens + (previous.stagedTokens ?? 0) <= 0) return "none"
 	return current.epoch > previous.epoch ? "rollback" : "commit"
 }

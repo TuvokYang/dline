@@ -79,6 +79,16 @@ export class ActiveTaskSession {
 		this.contextTruncation = options.contextTruncation
 	}
 
+	/**
+	 * The opening the Webview echoes as `task_instance_id`.
+	 *
+	 * Every opening composes a new incarnation, so a request from a surface that
+	 * opened an earlier incarnation of the same task is recognised as stale.
+	 */
+	get taskInstanceId(): string {
+		return this.owners.identity.taskIncarnationId
+	}
+
 	state(): Readonly<TaskState> {
 		return this.options.readState()
 	}

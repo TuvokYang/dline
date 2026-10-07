@@ -44,7 +44,7 @@ function awaitingState(): TaskState {
  */
 function createPromotingController(continuation: Promise<void>): Controller {
 	const controller = Object.create(Controller.prototype) as Controller
-	const session = { taskId: "task-history", state: awaitingState }
+	const session = { taskId: "task-history", taskInstanceId: "opening-promoted", state: awaitingState }
 	dispatchInteraction.mockImplementation(async () => {
 		// The accepted reply starts a turn that runs through its executors; the
 		// dispatch itself must not wait for it.
@@ -74,6 +74,7 @@ function resumeRequest(): DispatchInteractionRequest {
 		taskId: "task-history",
 		turnId: "history-display:task-history",
 		interactionId: "history-display:task-history:resume",
+		taskInstanceId: "opening-display",
 		actionId: "resume",
 		stateRevision: 0,
 	})
@@ -94,11 +95,12 @@ describe("Controller history display interaction", () => {
 
 		expect(response).toMatchObject({ accepted: true, result: "accepted" })
 		expect(lifecycle).toBe("ran")
-		// The reply was rebased onto the promoted runtime's own interaction.
+		// The reply was rebased onto the promoted runtime's own opening and interaction.
 		expect(dispatchInteraction).toHaveBeenCalledWith(
 			controller,
 			expect.objectContaining({
 				taskId: "task-history",
+				taskInstanceId: "opening-promoted",
 				turnId: "turn-1",
 				interactionId: "interaction-1",
 				stateRevision: 7,

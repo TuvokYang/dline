@@ -54,6 +54,7 @@ import CodeExecutionRow from "./CodeExecutionRow"
 import { CommandOutputContent, CommandOutputRow } from "./CommandOutputRow"
 import { CompletionOutputRow } from "./CompletionOutputRow"
 import { resolveApiErrorMessage } from "./chat-view/utils/messageUtils"
+import { describeCompactionFailure } from "./compaction-failure-label"
 import { TOOL_RESPONSE_SCROLL_CLASS } from "./constants"
 import { DiffEditRow } from "./DiffEditRow"
 import { EditResultRow } from "./EditResultRow"
@@ -337,10 +338,11 @@ export const ChatRowContent = memo(
 		// The canonical task view names the running task; the history item can be
 		// absent while a task runs, which used to hide the row's Cancel.
 		const runningTaskId = taskViewState?.taskId
+		const runningTaskInstanceId = taskViewState?.taskInstanceId
 		const cancelCommand =
 			onCancelCommand ??
-			(message.activityId && runningTaskId
-				? () => void cancelTaskActivities(runningTaskId, [message.activityId as string])
+			(message.activityId && runningTaskId && runningTaskInstanceId
+				? () => void cancelTaskActivities(runningTaskId, [message.activityId as string], runningTaskInstanceId)
 				: undefined)
 
 		const isMcpServerResponding = isLast && lastModifiedMessage?.say === "mcp_server_request_started"
@@ -479,7 +481,12 @@ export const ChatRowContent = memo(
 
 		const tool = useMemo(() => {
 			if (message.ask === "tool" || message.say === "tool") {
-				return JSON.parse(message.text || "{}") as UiSayTool
+				// A malformed or plain-text tool payload must not take down the whole chat list.
+				try {
+					return JSON.parse(message.text || "{}") as UiSayTool
+				} catch {
+					return null
+				}
 			}
 			return null
 		}, [message.ask, message.say, message.text])
@@ -799,6 +806,7 @@ export const ChatRowContent = memo(
 					const content = typeof tool.content === "string" ? tool.content : ""
 					if (status === "running" && !content) return null
 					const isSummaryRefit = tool.compactionUnitKind === "summary_refit"
+					const failureReason = describeCompactionFailure(tool.compactionFailureKind)
 					// A failed compaction produced no summary, so it carries none of the card
 					// chrome that presents one. Rendering it as a standalone error keeps the
 					// compaction card a summary-only surface and lets the failure be removed
@@ -809,6 +817,7 @@ export const ChatRowContent = memo(
 								data-compaction-attempt-id={tool.compactionAttemptId}
 								data-compaction-attempt-index={tool.compactionAttemptIndex}
 								data-compaction-durable={tool.compactionDurable}
+								data-compaction-failure-kind={tool.compactionFailureKind}
 								data-compaction-operation-id={tool.compactionOperationId}
 								data-compaction-pass-index={tool.compactionPassIndex}
 								data-compaction-status={status}
@@ -816,7 +825,11 @@ export const ChatRowContent = memo(
 								data-compaction-unit-kind={tool.compactionUnitKind}
 								data-testid="compaction-failure">
 								<ApiErrorBox
-									error={tool.error ?? "Conversation compaction failed before completion."}
+									error={
+										failureReason
+											? `${failureReason}\n\n${tool.error ?? ""}`.trim()
+											: (tool.error ?? "Conversation compaction failed before completion.")
+									}
 									testId="compaction-error-box"
 									title="Conversation Compaction Failed"
 								/>
@@ -854,6 +867,7 @@ export const ChatRowContent = memo(
 							data-compaction-attempt-id={tool.compactionAttemptId}
 							data-compaction-attempt-index={tool.compactionAttemptIndex}
 							data-compaction-durable={tool.compactionDurable}
+							data-compaction-failure-kind={tool.compactionFailureKind}
 							data-compaction-operation-id={tool.compactionOperationId}
 							data-compaction-pass-index={tool.compactionPassIndex}
 							data-compaction-status={status}
@@ -872,6 +886,11 @@ export const ChatRowContent = memo(
 											Attempt {tool.retryAttempt} of {tool.maxRetryAttempts}
 										</div>
 									)}
+								{status === "retrying" && failureReason && (
+									<div className="px-2.5 pb-2 text-description" data-testid="compaction-retry-reason">
+										{failureReason}
+									</div>
+								)}
 								{content ? (
 									<div className="px-2.5 pb-2.5" data-testid="compaction-summary-content">
 										<button
@@ -1239,11 +1258,13 @@ export const ChatRowContent = memo(
 					case "checkpoint_created":
 						return (
 							<CheckmarkControl
-								hasWorkspaceCheckpoint={
-									message.lastCheckpointHash !== undefined && checkpointManagerErrorMessage === undefined
-								}
+								hasWorkspaceCheckpoint={message.lastCheckpointHash?.some(Boolean) === true}
 								isCheckpointCheckedOut={message.isCheckpointCheckedOut}
 								messageTs={message.ts}
+								workspaceCheckpointCoverage={{
+									available: message.lastCheckpointHash?.filter(Boolean).length ?? 0,
+									total: message.checkpointWorkspaceRoots?.length ?? message.lastCheckpointHash?.length ?? 0,
+								}}
 							/>
 						)
 					case "load_mcp_documentation":

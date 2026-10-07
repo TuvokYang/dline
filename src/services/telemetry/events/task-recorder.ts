@@ -8,6 +8,33 @@ import { MAX_ERROR_MESSAGE_LENGTH, TELEMETRY_EVENTS, TELEMETRY_METRICS } from ".
 import { DomainRecorder } from "./domain-recorder"
 import type { TaskAggregates } from "./task-aggregates"
 
+/** Content-free summary of a committed compaction operation. */
+export interface CompactionCommitTelemetry {
+	trigger: string
+	acceptedPassCount: number
+}
+
+/** Content-free diagnostics of one compaction Provider attempt. */
+export interface CompactionAttemptTelemetry {
+	trigger: string
+	modelId: string
+	provider: string
+	attemptIndex: number
+	outcome: "accepted" | "failed"
+	nextAction: "accept" | "retry" | "fail"
+	failureKind?: string
+	reminderKind?: string
+	stopReason?: string
+	textChars: number
+	reasoningChars: number
+	toolCallChunks: number
+	trailingChars?: number
+	outputTokens?: number
+	thoughtsTokens?: number
+	providerTtfbMs?: number
+	streamMs?: number
+}
+
 /**
  * Token usage data shared across telemetry capture methods.
  * Used by both `captureTokenUsage` and `captureConversationTurnEvent`.
@@ -287,21 +314,40 @@ export class TaskEventRecorder extends DomainRecorder {
 	}
 
 	/**
-	 * Records when context summarization is triggered due to context window pressure
+	 * Records one committed context compaction.
 	 * @param ulid Unique identifier for the task
-	 * @param modelId The model that triggered summarization
+	 * @param modelId The model that produced the summary
 	 * @param provider The API provider being used
-	 * @param currentTokens Total tokens in context window when summarization was triggered
+	 * @param currentTokens Total tokens in context window when compaction started
 	 * @param maxContextWindow Maximum context window size for the model
+	 * @param details Trigger and accepted Pass count of the committed operation
 	 */
-	captureSummarizeTask(ulid: string, modelId: string, provider: string, currentTokens: number, maxContextWindow: number): void {
+	captureSummarizeTask(
+		ulid: string,
+		modelId: string,
+		provider: string,
+		currentTokens: number,
+		maxContextWindow: number,
+		details?: CompactionCommitTelemetry,
+	): void {
 		this.sink.captureEvent(TELEMETRY_EVENTS.TASK.AUTO_COMPACT, {
 			ulid,
 			modelId,
 			provider,
 			currentTokens,
 			maxContextWindow,
+			...details,
 		})
+	}
+
+	/**
+	 * Records one compaction Provider attempt. Properties are counts and classifications only;
+	 * no prompt, summary, or reply text is ever attached.
+	 * @param ulid Unique identifier for the task
+	 * @param attempt Content-free attempt diagnostics
+	 */
+	captureCompactionAttempt(ulid: string, attempt: CompactionAttemptTelemetry): void {
+		this.sink.captureEvent(TELEMETRY_EVENTS.TASK.COMPACTION_ATTEMPT, { ulid, ...attempt })
 	}
 
 	/**

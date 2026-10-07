@@ -10,7 +10,6 @@
  * step so that this class stays a plain listing reader.
  */
 
-import { ANTHROPIC_MAX_THINKING_BUDGET } from "@shared/api"
 import type { ModelCapabilities, ModelPricing } from "@shared/providers/types"
 import type { ProviderModelReconciliationMode } from "../../provider-model-reconciliation"
 import { isRecord, ModelListingSource, readPerMillionPrice, readPositiveNumber, readString } from "../model-listing-source"
@@ -67,7 +66,10 @@ export class OpenRouterModelSource extends ModelListingSource {
 
 	protected override readCapabilities(raw: unknown): ModelCapabilities {
 		const parameters = readSupportedParameters(raw)
-		const supportsReasoning = parameters.includes("include_reasoning") || parameters.includes("reasoning")
+		const supportsReasoning =
+			isRecord(raw) && Array.isArray(raw.supported_parameters)
+				? parameters.includes("include_reasoning") || parameters.includes("reasoning")
+				: undefined
 
 		return {
 			maxTokens: this.readMaxTokens(raw) ?? 0,
@@ -75,9 +77,8 @@ export class OpenRouterModelSource extends ModelListingSource {
 			supportsImages: supportsImageModality(raw),
 			supportsPromptCache: false,
 			supportsTools: parameters.includes("tools"),
-			thinking: supportsReasoning
-				? { supported: true, mode: "budget" as const, maxBudget: ANTHROPIC_MAX_THINKING_BUDGET }
-				: undefined,
+			// Parameter support does not declare a thinking mode or its bounds.
+			supportsReasoning,
 			supportsGlobalEndpoint:
 				isRecord(raw) && typeof raw.supports_global_endpoint === "boolean" ? raw.supports_global_endpoint : undefined,
 		}

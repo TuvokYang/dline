@@ -34,6 +34,14 @@ function toolDescription(tool: ReturnType<typeof findTool>): string | undefined 
 	return "description" in tool ? tool.description : undefined
 }
 
+/** Reads the input schema from any supported provider projection. */
+function toolSchema(tool: ReturnType<typeof findTool>): any {
+	if (!tool) return undefined
+	if ("function" in tool) return tool.function.parameters
+	if ("input_schema" in tool) return tool.input_schema
+	return "parameters" in tool ? tool.parameters : undefined
+}
+
 describe("provider tool projector", () => {
 	it("projects canonical parameters to OpenAI schemas", () => {
 		const tools = new ToolPromptGenerator().generate(PromptProfile.Standard, BASE_CONTEXT)
@@ -46,6 +54,56 @@ describe("provider tool projector", () => {
 				parameters: { required: ["path"] },
 			},
 		})
+	})
+
+	it.each([
+		"openai",
+		"anthropic",
+		"gemini",
+	] as const)("projects write tools with canonical relative path schemas for %s", (providerId) => {
+		for (const profile of [PromptProfile.Standard, PromptProfile.Lite]) {
+			const context = {
+				...BASE_CONTEXT,
+				promptProfile: profile,
+				providerInfo: { ...BASE_CONTEXT.providerInfo, providerId },
+			} as SystemPromptContext
+			const tools = new ToolPromptGenerator().generate(profile, context)
+
+			for (const [toolId, payloadParam] of [
+				[ClineDefaultTool.FILE_NEW, "content"],
+				[ClineDefaultTool.FILE_EDIT, "diff"],
+			] as const) {
+				const schema = toolSchema(findTool(tools, toolId))
+				expect(schema).toMatchObject({
+					required: ["path", payloadParam],
+					properties: { path: expect.any(Object) },
+				})
+				expect(schema.properties).not.toHaveProperty("absolutePath")
+			}
+		}
+	})
+
+	it("shows workspace selectors only when multi-root is enabled", () => {
+		const generator = new ToolPromptGenerator()
+		const singleRoot = generator.generate(PromptProfile.Standard, BASE_CONTEXT)
+		const multiRoot = generator.generate(PromptProfile.Standard, {
+			...BASE_CONTEXT,
+			isMultiRootEnabled: true,
+			workspaceRoots: [
+				{ name: "primary", path: "/workspace/project" },
+				{ name: "backend", path: "/workspace/backend" },
+			],
+		} as SystemPromptContext)
+
+		const singleRename = toolSchema(findTool(singleRoot, ClineDefaultTool.RENAME)).properties.file_path.description
+		const multiRename = toolSchema(findTool(multiRoot, ClineDefaultTool.RENAME)).properties.file_path.description
+		const singlePatch = toolDescription(findTool(singleRoot, ClineDefaultTool.APPLY_PATCH))
+		const multiPatch = toolDescription(findTool(multiRoot, ClineDefaultTool.APPLY_PATCH))
+
+		expect(singleRename).not.toContain("@<workspace-name>:<relative-path>")
+		expect(singlePatch).not.toContain("@<workspace-name>:<relative-path>")
+		expect(multiRename).toContain("@<workspace-name>:<relative-path>")
+		expect(multiPatch).toContain("@<workspace-name>:<relative-path>")
 	})
 
 	it.each([

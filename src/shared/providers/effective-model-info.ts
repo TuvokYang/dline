@@ -31,7 +31,15 @@ export function mergeDefined<T extends object>(base: T | undefined, updates: Par
  * @returns Merged capability overrides.
  */
 export function mergeCapabilities(base: ModelCapabilities | undefined, updates: Partial<ModelCapabilities>): ModelCapabilities {
-	return mergeDefined(base, updates) as ModelCapabilities
+	const merged = mergeDefined(base, updates) as ModelCapabilities
+	if (base?.thinking || updates.thinking) {
+		const thinking = mergeDefined(base?.thinking, updates.thinking ?? {}) as NonNullable<ModelCapabilities["thinking"]>
+		merged.thinking = {
+			...thinking,
+			...(thinking.effortLevels !== undefined ? { effortLevels: [...thinking.effortLevels] } : {}),
+		}
+	}
+	return merged
 }
 
 /**
@@ -136,7 +144,7 @@ export function buildEffectiveModelInfo(
 	const base: ModelInfo = registryModel ?? ({ id: modelId ?? "" } as ModelInfo)
 	const capabilityOverrides = overrides.capabilities ? withoutServerToolDeclaration(overrides.capabilities) : undefined
 	const mergedCapabilitiesValue = capabilityOverrides
-		? (mergeDefined(base.capabilities, capabilityOverrides) as ModelCapabilities)
+		? mergeCapabilities(base.capabilities, capabilityOverrides)
 		: base.capabilities
 	const mergedCapabilities =
 		overrides.contextWindowTiersEnabled === false && mergedCapabilitiesValue

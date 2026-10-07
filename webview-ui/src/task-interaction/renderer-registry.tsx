@@ -36,6 +36,27 @@ export const PRESENTATION_KINDS = [
 
 export type PresentationKind = (typeof PRESENTATION_KINDS)[number]
 
+const APPROVAL_PRESENTATION_KINDS = new Set<PresentationKind>([
+	"tool_approval",
+	"command_approval",
+	"browser_approval",
+	"mcp_approval",
+	"subagent_approval",
+	"spawn_task_approval",
+	"focus_chain_change",
+])
+
+/** Keep action controls visible while long interaction bodies scroll independently. */
+function presentationContainerClassName(kind: PresentationKind): string | undefined {
+	if (APPROVAL_PRESENTATION_KINDS.has(kind)) {
+		return "max-h-[30vh] overflow-y-auto overscroll-x-contain"
+	}
+	if (kind === "make_plan") {
+		return "max-h-[80vh] overflow-y-auto overscroll-x-contain"
+	}
+	return undefined
+}
+
 const RENDERERS = {
 	tool_approval: ApprovalRenderer,
 	command_approval: CommandRenderer,
@@ -67,7 +88,7 @@ export function isPresentationKind(value: string): value is PresentationKind {
 export function renderPresentation(kind: PresentationKind, props: PresentationProps): ReactElement {
 	const Renderer = RENDERERS[kind]
 	return (
-		<div data-testid={`presentation-${kind}`}>
+		<div className={presentationContainerClassName(kind)} data-testid={`presentation-${kind}`}>
 			<Renderer {...props} />
 		</div>
 	)

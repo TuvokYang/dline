@@ -123,6 +123,22 @@ export class RuntimeTelemetryService {
 		this.record(RuntimeEventPriority.Info, name, attributes, undefined, context)
 	}
 
+	/**
+	 * Record an Info event and expose whether the bounded bus admitted it.
+	 *
+	 * This deliberately targets the same bus directly instead of the fire-and-forget
+	 * recorder projection. Producers that own durable replay state use the result to
+	 * commit only after their evidence is actually queued.
+	 */
+	recordInfoAdmitted(
+		name: string,
+		attributes?: Readonly<Record<string, unknown>>,
+		context?: Partial<RuntimeTelemetryContext>,
+	): boolean {
+		if (!this.isEnabled()) return false
+		return this.bus.record({ name, priority: RuntimeEventPriority.Info, attributes, context }) !== undefined
+	}
+
 	/** Record a failure the extension recovered from or surfaced to the user. */
 	recordFailure(
 		name: string,

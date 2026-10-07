@@ -1,0 +1,80 @@
+---
+title: Prompt Cache Freezing and Staleness
+description: How Dline freezes the task system prompt and each request, detects stale prompt inputs, and monitors provider prompt-cache health.
+---
+
+import { Aside } from "@astrojs/starlight/components"
+
+Provider prompt caches only pay off when the request prefix stays byte-identical. Dline therefore treats the system prompt and tool list as a task-owned snapshot, freezes each request before it is sent, and reports configuration drift instead of silently rebuilding. This page describes the four layers involved.
+
+## 1. The task-frozen prompt
+
+`SystemPromptCacheService` (`src/core/prompts/system-prompt-cache/`) owns the frozen prompt. It is persisted in the task's `context.json` (types in `src/core/storage/task-context-types.ts`) and records:
+
+- the system prompt text and native tool definitions;
+- a capability hash and a runtime snapshot (web routes and server tools, browser and viewport, subagents, Focus Chain, capability toggles, parallel tool calls);
+- a freshness baseline used for staleness detection;
+- the cache contract version.
+
+| Build reason | Trigger |
+|---|---|
+| `task_start` | `getOrCreate` finds no usable snapshot |
+| `capability_change` | Automatic rebuild when the contract version, provider, model, Profile, native tools, or API format changes |
+| `manual` | The user confirms **Refresh Prompt Cache** (`refreshPrompt` RPC → `Task.refreshPromptCache`) |
+| `mode_switch`, `post_compaction` | Pending reasons consumed by `buildProviderInput` on the next request |
+
+`FrozenPromptRuntime.resolveFrozenPromptRuntime` hands the frozen runtime to `ToolExecutor.setPromptRuntime`, so a settings change cannot alter a tool the model has already been shown.
+
+## 2. Per-request freezing
+
+- `RequestApiScope` freezes the handler, API format, Web Tools switch, and routing plans for one request.
+- `OrdinaryRequestInputReplay` freezes the prepared provider input, replays the same bytes when a retry happens before the first chunk, and acknowledges it once the request is accepted. One canonical rebuild is allowed after a tool-pairing error. `invalidatePreparedProviderInputs` runs on Profile change and compaction.
+- `CompactionRequestReplay` applies the same contract to compaction passes.
+- `src/core/api/transform/openai-prompt-cache.ts` derives `prompt_cache_key` as `dline_cache_` plus a hash of the model, system prompt, task namespace, and tools, and places the explicit cache breakpoint on the system message only. A prompt refresh therefore changes the key and costs exactly one cache miss.
+
+## 3. Staleness detection
+
+`PromptFreshnessBaseline` (`src/shared/PromptFreshness.ts`) is built by `buildPromptFreshnessBaseline` in `PromptFreshnessProjection.ts`. It records the provider, model, Profile, transport, image, browser and web routes, Focus Chain, a rules hash, and SHA-256 hashes for MCP tools, skills, workflows, and subagents. `comparePromptFreshness` returns `fresh`, `stale`, or `unknown` together with privacy-safe change summaries.
+
+`PromptFreshnessInvalidationCoordinator` debounces invalidations for 200 ms, runs single-flight with one queued rerun, and exposes `flush` for committed changes. Its sources are:
+
+| Source | Origin |
+|---|---|
+| `prompt_input_file` | `PromptInputFileWatcher` (chokidar), shared per workspace through `WorkspacePromptInputWatcherRegistry` |
+| `settings` | Keys listed in `PROMPT_FRESHNESS_SETTINGS_KEYS` |
+| `task_capability_toggle`, `capability_mutation` | Capability toggles and discovery changes |
+| `remote_config`, `profile_catalog`, `mcp_registry` | Remote configuration, Profile catalog, MCP server registry |
+
+`Task.reevaluatePromptFreshness` only compares; it never rebuilds or persists. `Controller.buildState` projects the result to `RefreshPromptButton`, which shows a warning icon and up to four change summaries.
+
+<Aside type="caution">
+Product rule: a stale prompt stays in use until the user confirms **Refresh Prompt Cache**. Do not add automatic rebuilds for freshness drift; they would break the cache without the user's consent.
+</Aside>
+
+Performance logs use the `[PromptFreshnessPerf]` and `[PromptInputWatcherPerf]` prefixes.
+
+## 4. Cache health monitoring
+
+`PromptCacheHealthMonitor` (`src/core/task/prompt-cache/`) classifies requests as `disabled`, `waiting`, `warming`, `healthy`, or `warning`. Only requests with at least 4,096 prompt tokens count.
+
+| Warning | Condition |
+|---|---|
+| `cache_not_improving` | Hit rate below 30 % for three consecutive counted requests while cache reads do not improve |
+| `near_context_low_hit_rate` | Context usage past the compaction trigger with a hit rate below 90 % |
+
+`PromptCacheHealthTracker` skips compaction requests, logs each counted request at debug level, warns once when entering the warning state, and resets on Profile change and after compaction. The Webview renders the state with `PromptCacheHealthBanner`.
+
+## Tests
+
+| Layer | Tests |
+|---|---|
+| Frozen prompt | `SystemPromptCacheService.test.ts`, `FrozenPromptRuntime.test.ts` |
+| Request freezing | `OrdinaryRequestInputReplay.test.ts`, `RequestApiScope.test.ts`, `openai-task-cache-key.test.ts` |
+| Staleness | `PromptFreshnessProjection.test.ts`, `PromptFreshnessInvalidationCoordinator.test.ts`, `PromptInputFileWatcher.test.ts`, `WorkspacePromptInputWatcherRegistry.test.ts` |
+| Health | `PromptCacheHealthMonitor` and `PromptCacheHealthTracker` tests |
+| Webview | `RefreshPromptButton.test.tsx`, `PromptCacheHealthBanner.test.tsx` |
+| E2E | `task-prompt-refresh`, `task-prompt-input-capability-freshness`, `openai-cache-prefix-compaction`, `openai-chat-cache-prefix` |
+
+When you add a new prompt input, add it to the freshness baseline, give it an invalidation source, and cover both the stale projection and the manual refresh path.
+
+See also [Prompt architecture](/developer-guide/prompt-architecture/) and [Storage](/developer-guide/storage/).

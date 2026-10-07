@@ -40,7 +40,12 @@ export class VscodeWebviewPanelProvider extends WebviewProvider {
 	 */
 	async createPanel(title: string): Promise<void> {
 		const extUri = vscode.Uri.file(HostProvider.get().extensionFsPath)
-		const iconPath = vscode.Uri.joinPath(vscode.Uri.file(HostProvider.get().extensionFsPath), "assets", "icons", "icon.png")
+		const iconsDir = vscode.Uri.joinPath(extUri, "assets", "icons")
+		// Tab icons are drawn as images and cannot inherit the theme color, so each theme has its own file.
+		const iconPath = {
+			light: vscode.Uri.joinPath(iconsDir, "panel-light.svg"),
+			dark: vscode.Uri.joinPath(iconsDir, "panel-dark.svg"),
+		}
 
 		const panel = vscode.window.createWebviewPanel(
 			"dlineTask",

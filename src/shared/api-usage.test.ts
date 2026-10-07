@@ -13,7 +13,8 @@ describe("calculateApiUsageStatistics", () => {
 			}),
 		).toEqual({
 			totalInputTokens: 200,
-			totalTokens: 300,
+			// Thoughts (20) are a share of output, not an additional term.
+			totalTokens: 280,
 			cacheHit: true,
 			cacheHitRatePercent: 15,
 		})

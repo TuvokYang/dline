@@ -269,7 +269,10 @@ describe("cross-model history on provider wires", () => {
 			provider: "anthropic",
 			apiKey: "test-api-key",
 			modelId: "claude-opus-4-7",
-			anthropic: { reasoning: { effort: "xhigh" } },
+			anthropic: {
+				reasoning: { effort: "xhigh" },
+				capabilities: { thinking: { supported: true, mode: "effort", effortLevels: ["xhigh"] } },
+			},
 		})
 		const handler = buildApiHandlerFromProfile({ actModeProfile: anthropicProfile.name }, "act", anthropicProfile)
 		const create = vi.fn().mockResolvedValue(emptyStream())

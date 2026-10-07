@@ -63,7 +63,7 @@ describe("history task readiness", () => {
 		await prepareHistoryTaskForDisplay({
 			taskId: "task-1",
 			displayHistory: async () => undefined,
-			prepareFromHistory: async (options) => options.onReadyToDisplay?.(),
+			prepareFromHistory: async () => undefined,
 			hasTaskLock: true,
 			isCurrent: () => true,
 			onReadyToDisplay: async () => undefined,
@@ -84,6 +84,11 @@ describe("history task readiness", () => {
 			stage("history_surface_ready", true),
 			stage("history_background_prepare", true),
 		])
+		// Metric dimensions stay low-cardinality: no task identity, no raw timing.
+		for (const attributes of recordedStages(recordHistogram)) {
+			expect(attributes).not.toHaveProperty("taskId")
+			expect(attributes).not.toHaveProperty("elapsedMs")
+		}
 	})
 
 	// The history-open liveness check reads these stages to tell the extension's
@@ -143,16 +148,13 @@ describe("history task readiness", () => {
 		await readiness
 	})
 
-	it("notifies readiness exactly once and stops when the callback replaces the current Task", async () => {
+	it("publishes the displayed surface once and stops before background preparation when it replaces the current Task", async () => {
 		let isCurrent = true
 		const displayHistory = vi.fn(async () => undefined)
 		const onReadyToDisplay = vi.fn(async () => {
 			isCurrent = false
 		})
-		const prepareFromHistory = vi.fn(async (options?: { onReadyToDisplay?: () => Promise<void> }) => {
-			await options?.onReadyToDisplay?.()
-			await options?.onReadyToDisplay?.()
-		})
+		const prepareFromHistory = vi.fn(async () => undefined)
 
 		await expect(
 			prepareHistoryTaskForDisplay({
@@ -166,7 +168,7 @@ describe("history task readiness", () => {
 		).resolves.toBe(false)
 
 		expect(displayHistory).toHaveBeenCalledOnce()
-		expect(prepareFromHistory).toHaveBeenCalledOnce()
+		expect(prepareFromHistory).not.toHaveBeenCalled()
 		expect(onReadyToDisplay).toHaveBeenCalledOnce()
 	})
 
@@ -191,6 +193,42 @@ describe("history task readiness", () => {
 
 		expect(prepareFromHistory).not.toHaveBeenCalled()
 		expect(onReadyToDisplay).not.toHaveBeenCalled()
+	})
+
+	it("treats a preparation aborted by Task detachment as superseded instead of failing", async () => {
+		let isCurrent = true
+		const prepareFromHistory = vi.fn(async () => {
+			isCurrent = false
+			throw new Error("task_detached")
+		})
+
+		await expect(
+			prepareHistoryTaskForDisplay({
+				taskId: "task-1",
+				displayHistory: async () => undefined,
+				prepareFromHistory,
+				hasTaskLock: true,
+				isCurrent: () => isCurrent,
+			}),
+		).resolves.toBe(false)
+
+		expect(prepareFromHistory).toHaveBeenCalledOnce()
+	})
+
+	it("still rejects when background preparation fails while the Task owns the surface", async () => {
+		const failure = new Error("history unreadable")
+
+		await expect(
+			prepareHistoryTaskForDisplay({
+				taskId: "task-1",
+				displayHistory: async () => undefined,
+				prepareFromHistory: async () => {
+					throw failure
+				},
+				hasTaskLock: true,
+				isCurrent: () => true,
+			}),
+		).rejects.toBe(failure)
 	})
 
 	it("reveals readonly history after display without running interactive preparation", async () => {

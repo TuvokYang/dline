@@ -1,0 +1,7 @@
+# Astro generated types and content-layer cache.
+.astro/
+
+# Static build output; published only as a GitHub Pages artifact.
+dist/
+
+node_modules/

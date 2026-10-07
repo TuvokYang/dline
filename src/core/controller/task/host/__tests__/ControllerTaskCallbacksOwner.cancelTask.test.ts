@@ -11,6 +11,7 @@ function owner(cancelTask: () => Promise<void>): ControllerTaskCallbacksOwner {
 	return new ControllerTaskCallbacksOwner({
 		controller: { cancelTask } as never,
 		taskId: "task-1",
+		taskInstanceId: "open-1",
 		stateManager: {
 			getGlobalSettingsKey: () => ({ enabled: false, remindClineInterval: 6 }),
 			getGlobalStateKey: () => undefined,

@@ -216,7 +216,8 @@ describe("TelemetryService metrics", () => {
 		assert.strictEqual(tokenEvent?.properties?.apiFormatName, "ANTHROPIC_CHAT")
 		assert.strictEqual(tokenEvent?.properties?.cacheWriteTokens, 50)
 		assert.strictEqual(tokenEvent?.properties?.cacheReadTokens, 30)
-		assert.strictEqual(tokenEvent?.properties?.totalTokens, 300)
+		// Thoughts are a share of output, not an additional term.
+		assert.strictEqual(tokenEvent?.properties?.totalTokens, 280)
 		assert.strictEqual(tokenEvent?.properties?.cacheHit, true)
 		assert.strictEqual(tokenEvent?.properties?.cacheHitRate, 15)
 		assert.strictEqual(tokenEvent?.properties?.requestsPerMinute, 6)

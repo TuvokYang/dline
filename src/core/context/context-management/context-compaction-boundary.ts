@@ -13,6 +13,12 @@ export interface ContextCompactionBoundary {
 	sourceHistory: ClineStorageMessage[]
 	sourceCanonicalRanges: Array<CanonicalMessageRange | undefined>
 	targetContinuationHistory: ClineStorageMessage[]
+	/**
+	 * Pending tool results whose real payload entered the hidden-Pass source.
+	 *
+	 * The accepted summary replaces them, so the ordinary continuation must not send them again.
+	 */
+	consumedPendingFunctionIds: ReadonlySet<string>
 }
 
 export interface ContextCompactionBoundaryOptions {
@@ -71,6 +77,12 @@ export function projectContextCompactionBoundary(
 			? activeIndex.protectedStartMessageIndex
 			: Math.min(boundaryIndex.protectedStartMessageIndex, boundaryHistory.length)
 	const sourceHistory = boundaryHistory.slice(0, sourceEndIndex)
+	// The pending message sits at the end of the boundary view, so the source consumes
+	// its real payload exactly when the selected source extends past active history.
+	const consumedPendingFunctionIds =
+		pendingMessage !== undefined && sourceEndIndex > activeBoundaryHistory.length
+			? pendingResultFunctionIds
+			: new Set<string>()
 	const boundaryCanonicalRanges = pendingMessage
 		? [...activeBoundary.canonicalRanges, undefined]
 		: activeBoundary.canonicalRanges
@@ -105,7 +117,25 @@ export function projectContextCompactionBoundary(
 		sourceHistory: completedSource.messages,
 		sourceCanonicalRanges: completedSource.canonicalRanges,
 		targetContinuationHistory: cloneDeep(targetContinuationHistory),
+		consumedPendingFunctionIds,
 	}
+}
+
+/**
+ * Remove pending tool results that an accepted hidden Pass already summarized.
+ *
+ * Their declaring tool uses left the active history with the summarized source, so
+ * re-sending the results would duplicate summarized payload as orphaned tool output.
+ * Non-result blocks stay because they still belong to the upcoming ordinary request.
+ */
+export function excludeConsumedPendingResults(
+	content: readonly ClineContent[],
+	consumedPendingFunctionIds: ReadonlySet<string>,
+): ClineContent[] {
+	if (consumedPendingFunctionIds.size === 0) return cloneDeep([...content])
+	return cloneDeep(
+		content.filter((block) => block.type !== "tool_result" || !consumedPendingFunctionIds.has(block.function_id)),
+	)
 }
 
 function collectCompletableUnpairedFunctionIds(

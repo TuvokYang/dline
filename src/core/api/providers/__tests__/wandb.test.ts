@@ -1,5 +1,5 @@
 import "should"
-import { openAiModelInfoSaneDefaults, wandbDefaultModelId, wandbModels } from "@shared/api"
+import { wandbDefaultModelId, wandbModels } from "@shared/api"
 import { ApiProfile } from "@shared/proto/dline/profile"
 import { WandbHandler } from "../wandb"
 
@@ -27,7 +27,19 @@ describe("WandbHandler", () => {
 		const model = handler.getModel()
 
 		model.id.should.equal(unknownModelId)
-		model.info.should.deepEqual(openAiModelInfoSaneDefaults)
+		model.info.should.deepEqual({ id: unknownModelId })
+	})
+
+	it("normalizes matching identities but does not relabel stale metadata", () => {
+		const profile = ApiProfile.create({
+			provider: "wandb",
+			modelId: "  opaque-test  ",
+			modelInfo: { id: " opaque-test ", name: "Effective", capabilities: { thinking: { supported: false } } },
+		})
+		const handler = new WandbHandler({ profile, mode: "act" })
+		handler.getModel().should.deepEqual({ id: "opaque-test", info: { ...profile.modelInfo, id: "opaque-test" } })
+		const stale = new WandbHandler({ profile: { ...profile, modelInfo: { id: "another-model" } }, mode: "act" })
+		stale.getModel().should.deepEqual({ id: "opaque-test", info: { id: "opaque-test" } })
 	})
 
 	it("uses the default W&B model when no model id is configured", () => {

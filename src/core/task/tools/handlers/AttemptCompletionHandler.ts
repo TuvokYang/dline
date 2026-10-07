@@ -5,7 +5,6 @@ import { getHooksEnabledSafe } from "@core/hooks/hooks-utils"
 import * as NotificationHook from "@core/hooks/notification-hook"
 import { getPrompt, renderPrompt } from "@core/prompts/i18n"
 import { formatResponse } from "@core/prompts/responses"
-import { processFilesIntoText } from "@integrations/misc/extract-text"
 import { showSystemNotification } from "@integrations/notifications"
 import { telemetryService } from "@services/telemetry"
 import { findLastIndex } from "@shared/array"
@@ -15,12 +14,13 @@ import { commitCompletion } from "../../completion/CompletionCommit"
 import { isAllItemsCompleted } from "../../focus-chain/file-utils"
 import type { InteractionOutcome } from "../../interaction/InteractionProtocol"
 import { buildUserFeedbackContent } from "../../utils/buildUserFeedbackContent"
+import { type ToolHandlerResult, withToolDocuments } from "../ToolExecutionResult"
 import type { IPartialBlockHandler, IToolHandler } from "../ToolExecutorCoordinator"
 import type { ToolResponse } from "../ToolResponse"
 import { interactionId, interactionTurnId, type TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
 import { getTaskCompletionTelemetry } from "../utils"
-import { sayFeedbackOnce } from "../utils/UserFeedbackUtils"
+import { attachToolFeedbackFiles, sayFeedbackOnce } from "../utils/UserFeedbackUtils"
 
 const TASK_PREVIEW_MAX_CHARS = 8000
 
@@ -63,7 +63,7 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
 		// Completion remains provisional until all commit prerequisites succeed.
 	}
 
-	async execute(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
+	async execute(config: TaskConfig, block: ToolUse): Promise<ToolHandlerResult> {
 		const result: string | undefined = block.params.result
 
 		// Validate required parameters
@@ -123,7 +123,7 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
 		return this.commitAndPresentCompletion(config, block)
 	}
 
-	private async commitAndPresentCompletion(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
+	private async commitAndPresentCompletion(config: TaskConfig, block: ToolUse): Promise<ToolHandlerResult> {
 		const result = block.params.result
 		if (!result) throw new Error("Invalid attempt_completion continuation result")
 		const completion = {
@@ -190,7 +190,7 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
 	}
 
 	/** Consume completion feedback without replaying the completion commit. */
-	async continueInteraction(config: TaskConfig, _block: ToolUse, outcome: InteractionOutcome): Promise<ToolResponse> {
+	async continueInteraction(config: TaskConfig, _block: ToolUse, outcome: InteractionOutcome): Promise<ToolHandlerResult> {
 		const text = outcome.draft?.text
 		const images = outcome.draft?.images
 		const completionFiles = outcome.draft?.files
@@ -238,11 +238,11 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
 			})
 		}
 
-		const fileContentString = completionFiles?.length ? await processFilesIntoText(completionFiles) : ""
-		if (fileContentString) {
+		const attachments = await attachToolFeedbackFiles(completionFiles)
+		if (attachments.text) {
 			toolResults.push({
 				type: "text" as const,
-				text: fileContentString,
+				text: attachments.text,
 			})
 		}
 
@@ -251,13 +251,14 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
 		}
 
 		// Return the tool results as a complex response
-		return [
+		const response: ToolResponse = [
 			{
 				type: "text" as const,
 				text: prefix,
 			},
 			...toolResults,
 		]
+		return withToolDocuments(response, attachments.documents)
 	}
 
 	/**

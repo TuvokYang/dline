@@ -202,7 +202,13 @@ function recoveryInteraction(state: TaskState, form: Exclude<HydrateForm, "new" 
 	}
 }
 
-function normalizeInteraction(interaction: DialogInteraction, generation: number): DialogInteraction {
+const NO_INTERACTION_IDS: ReadonlySet<string> = new Set()
+
+function normalizeInteraction(
+	interaction: DialogInteraction,
+	generation: number,
+	unanchored: ReadonlySet<string>,
+): DialogInteraction {
 	const normalized = {
 		...interaction,
 		receiverGeneration: generation,
@@ -216,14 +222,20 @@ function normalizeInteraction(interaction: DialogInteraction, generation: number
 		// the queue was already consumed and must not be claimed a second time.
 		return { ...normalized, status: "prepared" }
 	}
-	if (interaction.status !== "resolving") return normalized
-	return { ...normalized, status: "awaiting" }
+	const status = interaction.status === "resolving" ? "awaiting" : interaction.status
+	if (status === "awaiting" && unanchored.has(interaction.interactionId)) {
+		// Nobody can answer a dialog whose anchor row was lost, torn, or duplicated
+		// by the crash; revealing it again rewrites exactly one complete anchor.
+		return { ...normalized, status: interaction.journalRef ? "prepared" : "planned" }
+	}
+	return { ...normalized, status }
 }
 
 function normalizeState(
 	snapshot: TaskState,
 	form: Exclude<HydrateForm, "new">,
 	queueSettlements: HydrateInput["queueSettlements"] = [],
+	unanchored: ReadonlySet<string> = NO_INTERACTION_IDS,
 ): { readonly state: TaskState; readonly diagnostics: readonly Diagnostic[] } {
 	const generation = snapshot.generation + 1
 	const revision = snapshot.revision + 1
@@ -234,7 +246,7 @@ function normalizeState(
 	const approvalsByBlock = Object.fromEntries(
 		Object.entries(snapshot.dialog.approvalsByBlock).map(([blockId, interaction]) => [
 			blockId,
-			normalizeInteraction(interaction, generation),
+			normalizeInteraction(interaction, generation, unanchored),
 		]),
 	)
 	const settlementByDelivery = new Map(queueSettlements.map((settlement) => [settlement.deliveryId, settlement] as const))
@@ -297,8 +309,8 @@ function normalizeState(
 			manualApprovalBlockIds: snapshot.turn.manualApprovalBlockIds,
 		},
 		dialog: {
-			primary: dialog.primary ? normalizeInteraction(dialog.primary, generation) : undefined,
-			interrupted: dialog.interrupted ? normalizeInteraction(dialog.interrupted, generation) : undefined,
+			primary: dialog.primary ? normalizeInteraction(dialog.primary, generation, unanchored) : undefined,
+			interrupted: dialog.interrupted ? normalizeInteraction(dialog.interrupted, generation, unanchored) : undefined,
 			approvalsByBlock,
 		},
 		intake: {
@@ -526,7 +538,7 @@ export function hydrate(input: HydrateInput): HydrateResult {
 	const unusable = validateSnapshot(input, snapshot)
 	if (unusable) return hydrateWithoutSnapshot(input, unusable)
 	const form = classify(snapshot)
-	const normalized = normalizeState(snapshot, form, input.queueSettlements)
+	const normalized = normalizeState(snapshot, form, input.queueSettlements, input.unanchoredInteractionIds)
 	const commands = form === "consumed" ? [] : initialCommands(normalized.state)
 	return {
 		kind: "ready",

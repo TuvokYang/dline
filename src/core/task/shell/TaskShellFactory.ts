@@ -36,6 +36,13 @@ import {
  */
 const EXPECTED_REBUILD_CAUSES: ReadonlySet<string> = new Set(["snapshot_missing"])
 
+/** The chat row fields that decide whether a restored dialog can still be answered. */
+export interface DialogAnchorRow {
+	readonly type: string
+	readonly interactionId?: string
+	readonly partial?: boolean
+}
+
 export interface TaskExecutionFactoryContext {
 	readonly initialState: TaskState
 	readonly persistence: TaskPersistenceAssembly
@@ -55,6 +62,11 @@ export interface OpenTaskShellOptions {
 	 * own the task lock, so recovery cannot write the databases another window is writing.
 	 */
 	readonly deferRestoredCommands?: boolean
+	/**
+	 * The durable chat rows restored dialogs anchor to; absent in headless
+	 * assemblies, which have no chat to repair.
+	 */
+	readonly readAnchorRows?: () => readonly DialogAnchorRow[]
 }
 
 /** An opened task; opening an existing task always succeeds, see `hydrate`. */
@@ -136,6 +148,25 @@ async function unavailablePayloads(payloads: TaskPayloadStore, state: TaskState 
 		}
 	}
 	return unavailable
+}
+
+/**
+ * Waiting dialogs whose chat row the crash lost, tore, or duplicated.
+ *
+ * The interaction owner writes exactly one complete ask row per revealed
+ * dialog, and the user answers through that row. Any other shape leaves the
+ * dialog unanswerable, so hydrate has to reveal it again. Only the dialogs
+ * hydrate restores commands for are inspected; see `initialCommands`.
+ */
+function unanchoredInteractions(state: TaskState | undefined, rows: readonly DialogAnchorRow[] | undefined): ReadonlySet<string> {
+	const unanchored = new Set<string>()
+	if (!state || !rows) return unanchored
+	for (const interaction of [state.dialog.primary, ...Object.values(state.dialog.approvalsByBlock)]) {
+		if (!interaction || (interaction.status !== "awaiting" && interaction.status !== "resolving")) continue
+		const anchors = rows.filter((row) => row.type === "ask" && row.interactionId === interaction.interactionId)
+		if (anchors.length !== 1 || anchors[0].partial) unanchored.add(interaction.interactionId)
+	}
+	return unanchored
 }
 
 function recordQueueSettlementFailures(
@@ -228,6 +259,7 @@ export async function openTaskShell(options: OpenTaskShellOptions): Promise<Open
 		openReason: options.openReason,
 		unavailablePayloads: await unavailablePayloads(persistence.payloads, durable?.state),
 		queueSettlements,
+		unanchoredInteractionIds: unanchoredInteractions(durable?.state, options.readAnchorRows?.()),
 	})
 
 	const ports: TaskPersistencePorts = { ...persistence.ports, taskView: options.taskView }

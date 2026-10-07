@@ -1,5 +1,6 @@
-import { ApiFormat, ServerTool } from "@shared/proto/dline/models/metadata"
+import { ApiFormat, type ModelCapabilities, ServerTool } from "@shared/proto/dline/models/metadata"
 import { ApiProfile, ImageGenerationSource } from "@shared/proto/dline/profile"
+import type { ReasoningConfig } from "@shared/proto/dline/provider/common"
 import { OpenAiPromptCacheMode, OpenAiProviderConfig } from "@shared/proto/dline/provider/openai"
 import { OpenAiCodexProviderConfig } from "@shared/proto/dline/provider/openai_codex"
 import {
@@ -16,6 +17,7 @@ import type { ClineAssistantToolUseBlock, ClineStorageMessage, ClineUserToolResu
 import { mockFetchForTesting, providerFetch } from "@/shared/net"
 import { OutputLimitExceededError } from "../../stream/OutputLimitExceededError"
 import { StreamIdleTimeoutError } from "../../stream/openai-responses-stream-monitor"
+import { openAiModels } from "../models/openai"
 import { OpenAiHandler } from "../openai"
 import { OpenAiCodexHandler } from "../openai-codex"
 
@@ -101,6 +103,211 @@ describe("OpenAiHandler", () => {
 
 			expect(handler.supportsServerTool(ServerTool.WEB_SEARCH)).to.equal(false)
 		})
+	})
+
+	describe.each([ApiFormat.OPENAI_CHAT, ApiFormat.OPENAI_RESPONSES])("declared native reasoning %s", (apiFormat) => {
+		const cases: {
+			name: string
+			capabilities?: ModelCapabilities
+			reasoning?: ReasoningConfig
+			chat?: Record<string, unknown>
+			response?: Record<string, unknown>
+		}[] = [
+			{
+				name: "missing support",
+				capabilities: { supportsReasoning: true },
+				reasoning: { effort: "high", thinkingBudget: 1600 },
+			},
+			{
+				name: "nested false",
+				capabilities: { thinking: { supported: false, mode: "effort", effortLevels: ["high"] } },
+				reasoning: { effort: "high" },
+			},
+			{
+				name: "coarse false",
+				capabilities: { supportsReasoning: false, thinking: { supported: true, mode: "effort", effortLevels: ["high"] } },
+				reasoning: { effort: "high" },
+			},
+			{
+				name: "missing mode",
+				capabilities: { thinking: { supported: true, effortLevels: ["high"] } },
+				reasoning: { effort: "high" },
+			},
+			{ name: "unknown default", capabilities: { thinking: { supported: true, mode: "effort", effortLevels: ["low"] } } },
+			{
+				name: "declared default",
+				capabilities: {
+					thinking: {
+						supported: true,
+						mode: "effort",
+						defaultEnabled: true,
+						defaultEffort: "low",
+						effortLevels: ["low"],
+					},
+				},
+				chat: { reasoning_effort: "low" },
+				response: { effort: "low", summary: "auto" },
+			},
+			{
+				name: "empty list inherits level",
+				capabilities: { thinking: { supported: true, mode: "effort", defaultEnabled: true, effortLevels: [] } },
+				reasoning: { effort: "high" },
+				response: { summary: "auto" },
+			},
+			{
+				name: "invalid effort inherits level",
+				capabilities: { thinking: { supported: true, mode: "effort", defaultEnabled: true, effortLevels: ["low"] } },
+				reasoning: { effort: "high" },
+				response: { summary: "auto" },
+			},
+			{
+				name: "required stale disable",
+				capabilities: { thinking: { supported: true, mode: "effort", canDisable: false, effortLevels: ["low"] } },
+				reasoning: { enableThinking: false, effort: "none" },
+				response: { summary: "auto" },
+			},
+			{
+				name: "explicit disable with legal none",
+				capabilities: { thinking: { supported: true, mode: "effort", effortLevels: ["none", "high"] } },
+				reasoning: { enableThinking: false, effort: "high" },
+				chat: { reasoning_effort: "none" },
+				response: { effort: "none" },
+			},
+			{
+				name: "no fabricated none",
+				capabilities: { thinking: { supported: true, mode: "effort", effortLevels: ["high"] } },
+				reasoning: { enableThinking: false },
+			},
+			{
+				name: "legacy ultra alias",
+				capabilities: { thinking: { supported: true, mode: "effort", effortLevels: ["max"] } },
+				reasoning: { effort: "ultra" },
+				chat: { reasoning_effort: "max" },
+				response: { effort: "max", summary: "auto" },
+			},
+			{
+				name: "declared budget caps request",
+				capabilities: { thinking: { supported: true, mode: "budget", maxBudget: 1200 } },
+				reasoning: { thinkingBudget: 1600, effort: "high" },
+				chat: { enable_thinking: true, thinking_budget: 1200 },
+			},
+			{
+				name: "declared positive minimum",
+				capabilities: { thinking: { supported: true, mode: "budget", minBudget: 17, maxBudget: 101 } },
+				reasoning: { thinkingBudget: 3 },
+				chat: { enable_thinking: true, thinking_budget: 17 },
+			},
+			{
+				name: "invalid minimum range",
+				capabilities: { thinking: { supported: true, mode: "budget", minBudget: 17, maxBudget: 11 } },
+				reasoning: { thinkingBudget: 30 },
+			},
+			{
+				name: "budget mode has no invented maximum",
+				capabilities: { thinking: { supported: true, mode: "budget" } },
+				reasoning: { thinkingBudget: 40000 },
+				chat: { enable_thinking: true, thinking_budget: 40000 },
+			},
+			{
+				name: "budget zero disables",
+				capabilities: { thinking: { supported: true, mode: "budget" } },
+				reasoning: { thinkingBudget: 0 },
+				chat: { enable_thinking: false },
+			},
+			{
+				name: "negative budget",
+				capabilities: { thinking: { supported: true, mode: "budget" } },
+				reasoning: { thinkingBudget: -1 },
+			},
+			{
+				name: "fractional budget",
+				capabilities: { thinking: { supported: true, mode: "budget" } },
+				reasoning: { thinkingBudget: 2.5 },
+			},
+			{
+				name: "budget does not grant effort mode",
+				capabilities: { thinking: { supported: true, mode: "effort", effortLevels: ["high"] } },
+				reasoning: { thinkingBudget: 1600 },
+			},
+		]
+		it.each(cases)("encodes $name from effective metadata", async ({ capabilities, reasoning, chat, response }) => {
+			const modelId = "gpt-5-misleading-private-alias"
+			const handler = new OpenAiHandler({
+				profile: ApiProfile.create({
+					provider: "openai",
+					modelId,
+					modelInfo: { id: modelId, capabilities },
+					openai: { apiFormat, reasoning },
+				}),
+				mode: "act",
+			})
+			const create = vi.fn().mockResolvedValue(createAsyncIterable())
+			vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
+				chat: { completions: { create } },
+				responses: { create },
+			})
+			for await (const _chunk of handler.createMessage("system", [{ role: "user", content: "hi" }])) {
+			}
+			const body = create.mock.calls[0][0]
+			expect(body.model).to.equal(modelId)
+			expect(body.enable_thinking).to.equal(apiFormat === ApiFormat.OPENAI_CHAT ? chat?.enable_thinking : undefined)
+			expect(body.thinking_budget).to.equal(apiFormat === ApiFormat.OPENAI_CHAT ? chat?.thinking_budget : undefined)
+			expect(body.reasoning_effort).to.equal(apiFormat === ApiFormat.OPENAI_CHAT ? chat?.reasoning_effort : undefined)
+			expect(body.reasoning).to.deep.equal(apiFormat === ApiFormat.OPENAI_RESPONSES ? response : undefined)
+		})
+		it("does not relabel stale model metadata or infer reasoning from the compatible baseline", async () => {
+			const modelId = "gpt-private-alias"
+			const handler = new OpenAiHandler({
+				profile: ApiProfile.create({
+					provider: "openai",
+					modelId,
+					modelInfo: {
+						id: "other-model",
+						capabilities: { thinking: { supported: true, mode: "effort", effortLevels: ["high"] } },
+					},
+					openai: { apiFormat, reasoning: { effort: "high" } },
+				}),
+				mode: "act",
+			})
+			const create = vi.fn().mockResolvedValue(createAsyncIterable())
+			vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
+				chat: { completions: { create } },
+				responses: { create },
+			})
+			for await (const _chunk of handler.createMessage("system", [{ role: "user", content: "hi" }])) {
+			}
+			const body = create.mock.calls[0][0]
+			expect(body.model).to.equal(modelId)
+			expect(body.reasoning_effort).to.equal(undefined)
+			expect(body.reasoning).to.equal(undefined)
+			expect(handler.getModel().info.capabilities?.supportsReasoning).to.equal(undefined)
+		})
+	})
+
+	it.each([
+		{ modelId: "gpt-5.4", config: undefined, expected: { effort: "none" } },
+		{ modelId: "gpt-5.6-sol", config: { effort: "max" }, expected: { effort: "max", summary: "auto" } },
+		{ modelId: "gpt-6.1-sol", config: undefined, expected: { effort: "medium", summary: "auto" } },
+		{ modelId: "gpt-5.5-pro", config: { enableThinking: false }, expected: { summary: "auto" } },
+	])("encodes the bundled $modelId default or legal preference in a real Responses request", async ({
+		modelId,
+		config,
+		expected,
+	}) => {
+		const handler = new OpenAiHandler({
+			profile: ApiProfile.create({
+				provider: "openai",
+				modelId,
+				modelInfo: openAiModels[modelId],
+				openai: { apiFormat: ApiFormat.OPENAI_RESPONSES, reasoning: config },
+			}),
+			mode: "act",
+		})
+		const create = vi.fn().mockResolvedValue(createAsyncIterable())
+		vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({ responses: { create } })
+		for await (const _chunk of handler.createMessage("system", [{ role: "user", content: "hi" }])) {
+		}
+		expect(create.mock.calls[0][0].reasoning).to.deep.equal(expected)
 	})
 
 	describe("createMessage", () => {
@@ -340,6 +547,7 @@ describe("OpenAiHandler", () => {
 					openai: OpenAiProviderConfig.create({
 						serviceTier: "priority",
 						serviceTierEnabled: true,
+						capabilities: { thinking: { supported: true, mode: "effort", effortLevels: ["ultra"] } },
 						reasoning: { enableThinking: true, effort: "ultra" },
 					}),
 				}),
@@ -864,7 +1072,10 @@ describe("OpenAiHandler", () => {
 						serviceTier: "priority",
 						serviceTierEnabled: true,
 						reasoning: { enableThinking: true, effort: "high" },
-						capabilities: { maxTokens: 16_384 },
+						capabilities: {
+							maxTokens: 16_384,
+							thinking: { supported: true, mode: "effort", effortLevels: ["high"] },
+						},
 					}),
 				}),
 				mode: "act",
@@ -969,6 +1180,52 @@ describe("OpenAiHandler", () => {
 			])
 			expect(request?.include).to.deep.equal(["web_search_call.results", "web_search_call.action.sources"])
 			expect(handler.supportsServerTool(ServerTool.WEB_SEARCH)).to.equal(true)
+		})
+
+		it("replays a stored hosted web_search_call only while the request still declares hosted Web Search", async () => {
+			const createHandler = (apiFormat: ApiFormat) =>
+				new OpenAiHandler({
+					profile: ApiProfile.create({
+						provider: "openai",
+						apiKey: "test-api-key",
+						modelId: "gpt-compatible-responses",
+						openai: OpenAiProviderConfig.create({ apiFormat }),
+					}),
+					mode: "act",
+				})
+			const handler = createHandler(ApiFormat.OPENAI_RESPONSES)
+			const responsesCreate = vi.fn().mockImplementation(async () => createAsyncIterable())
+			vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
+				responses: { create: responsesCreate },
+			})
+			const webSearchCall = {
+				type: "web_search_call",
+				id: "ws_1",
+				status: "completed",
+				action: { type: "search", query: "Dline" },
+			}
+			const history: ClineStorageMessage[] = [
+				{ role: "user", content: "Search" },
+				{
+					role: "assistant",
+					content: [
+						{ type: "hosted_tool", protocol: "openai_responses", blocks: [webSearchCall] },
+						{ type: "text", text: "Found it." },
+					],
+				},
+				{ role: "user", content: "Continue" },
+			]
+
+			for (const serverTools of [[ServerTool.WEB_SEARCH], []]) {
+				for await (const _chunk of handler.createMessage("system prompt", history, [], { serverTools })) {
+				}
+			}
+
+			const [declared, undeclared] = responsesCreate.mock.calls.map((call) => call[0]?.input as any[])
+			expect(declared.filter((item) => item.type === "web_search_call")).to.deep.equal([webSearchCall])
+			expect(undeclared.some((item) => item.type === "web_search_call")).to.equal(false)
+			expect(handler.getHostedToolReplayProtocol()).to.equal("openai_responses")
+			expect(createHandler(ApiFormat.OPENAI_CHAT).getHostedToolReplayProtocol()).to.equal(undefined)
 		})
 
 		it("keeps generate_image local and does not project Hosted image options into the main Responses request", async () => {

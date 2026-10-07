@@ -1,8 +1,8 @@
-import { ModelInfo, XAIModelId, xaiDefaultModelId, xaiModels } from "@shared/api"
+import { ModelInfo, xaiDefaultModelId, xaiModels } from "@shared/api"
+import { resolveRuntimeModel } from "@shared/providers/profile-model-info"
 import { shouldSkipReasoningForModel } from "@utils/model-utils"
 import OpenAI from "openai"
 import type { ChatCompletionTool as OpenAITool } from "openai/resources/chat/completions"
-import { ChatCompletionReasoningEffort } from "openai/resources/chat/completions"
 import { ClineStorageMessage } from "@/shared/messages/content"
 import { createOpenAIClient } from "@/shared/net"
 import { ApiHandler, ApiHandlerContext } from "../"
@@ -57,14 +57,6 @@ export class XAIHandler implements ApiHandler {
 	async *createMessage(systemPrompt: string, messages: ClineStorageMessage[], tools?: OpenAITool[]): ApiStream {
 		const client = this.ensureClient()
 		const modelId = this.getModel().id
-		// ensure reasoning effort is either "low" or "high" for grok-3-mini
-		let reasoningEffort: ChatCompletionReasoningEffort | undefined
-		if (modelId.includes("3-mini")) {
-			let reasoningEffort = this.reasoningEffort
-			if (reasoningEffort && !["low", "high"].includes(reasoningEffort)) {
-				reasoningEffort = undefined
-			}
-		}
 		const stream = await client.chat.completions.create({
 			model: modelId,
 			max_completion_tokens: this.getModel().info.capabilities?.maxTokens,
@@ -72,7 +64,6 @@ export class XAIHandler implements ApiHandler {
 			messages: [{ role: "system", content: systemPrompt }, ...convertToOpenAiMessages(messages)],
 			stream: true,
 			stream_options: { include_usage: true },
-			reasoning_effort: reasoningEffort,
 			...getOpenAIToolParams(tools),
 		})
 
@@ -118,15 +109,7 @@ export class XAIHandler implements ApiHandler {
 		}
 	}
 
-	getModel(): { id: XAIModelId; info: ModelInfo } {
-		const modelId = this.modelId
-		if (modelId && modelId in xaiModels) {
-			const id = modelId as XAIModelId
-			return { id, info: xaiModels[id] }
-		}
-		return {
-			id: xaiDefaultModelId,
-			info: xaiModels[xaiDefaultModelId],
-		}
+	getModel(): { id: string; info: ModelInfo } {
+		return resolveRuntimeModel(this.ctx.profile, { models: xaiModels, defaultModelId: xaiDefaultModelId })
 	}
 }

@@ -1,0 +1,135 @@
+---
+title: Model configuration
+description: Configure a model provider API key or a local model runtime for Dline, create and manage several API Profiles, and choose them for Act, Plan, and subagents.
+---
+
+import { Aside, Steps } from "@astrojs/starlight/components"
+
+Dline connects to AI models through a **provider**. You can:
+
+- **Bring your own API key** for a cloud provider such as Anthropic, OpenAI, or OpenRouter.
+- **Run models locally** with Ollama or LM Studio on your own machine, with no API key.
+
+Connections are stored as **API Profiles**. A Profile is a complete model connection: provider, model, API key, an optional base URL, and provider-specific settings. You can create several Profiles and use different models in different modes or subagents.
+
+## Creating and managing Profiles
+
+<Steps>
+
+1. Click the **Settings** button in the Dline panel title bar to open **API Configuration**.
+
+2. Click **Add profile**. A new Profile named **New Model** is added and expanded. If you already have one, you can expand its card with the button on the left and edit it instead.
+
+3. Choose a provider from the **Provider** dropdown.
+
+4. Authenticate:
+   - **Cloud provider:** paste your key into the provider's key field, such as **OpenAI API Key**.
+   - **Local runtime (Ollama / LM Studio):** no key is needed; make sure the runtime is running.
+
+5. Choose an available model under **Model**. After you choose a provider and model, the Profile may be named automatically in the form `provider:model`; to rename it, edit **Profile name**, and the change is saved when you leave the field.
+
+</Steps>
+
+![Creating a Profile, filling in provider settings, and selecting it in the model picker](@docs-assets/ui/docs-profile-setup.gif)
+
+- **The available fields depend on the provider and model.** For example, OpenAI offers **Use custom base URL**, a model picker or **Use custom model ID**, and options such as **Thinking Mode**. The setup guides under "Choosing a provider" below cover each provider's settings.
+- **Changing the provider clears** the current API key, base URL, model selection, and provider-specific settings.
+- Drag the handle on the left of a card to reorder Profiles.
+- Click **Manage** to enter management mode, select the cards to delete, click **Delete selected (n)**, then click **Confirm delete (n)** within 5 seconds. Click **Done** to leave management mode.
+
+## Choosing a provider
+
+### Cloud providers
+
+| Provider | Best for | Setup guide |
+| --- | --- | --- |
+| **OpenRouter** | Many vendors' models with one key | [Setup](/provider-config/openrouter/) |
+| **Anthropic** | Direct Claude access | [Setup](/provider-config/anthropic/) |
+| **Claude Code** | Claude Max/Pro subscription | [Setup](/provider-config/anthropic/) |
+| **OpenAI** | GPT models | [Setup](/provider-config/openai/) |
+| **Google Gemini** | Gemini models | [Setup](/provider-config/google-gemini/) |
+| **AWS Bedrock** | Models billed through your AWS account | [Setup](/provider-config/aws-bedrock/api-key/) |
+| **DeepSeek** | Good value | [Setup](/provider-config/deepseek/) |
+
+### Local models
+
+Run models on your own hardware: data stays on your machine and there are no per-request charges.
+
+| Runtime | Best for | Setup guide |
+| --- | --- | --- |
+| **Ollama** | Command-line local runtime | [Setup](/running-models-locally/overview/#runtime-options) |
+| **LM Studio** | GUI local runtime | [Setup](/running-models-locally/overview/#runtime-options) |
+
+Local models need capable hardware, especially GPU memory. See [Running models locally](/running-models-locally/overview/) for requirements.
+
+## What a Profile is used for
+
+Each Profile has three **Profile usage** checkboxes, shown as badges on the card:
+
+| Usage | Badge | Effect |
+|---|---|---|
+| **Act** | ACT | Can be selected in Act mode |
+| **Plan** | PLAN | Can be selected in Plan mode |
+| **Subagents** | SUB | Can be selected explicitly by subagents |
+
+New Profiles have all three checked. **Unchecking all of them** means the Profile cannot be used for anything, not that it can be used everywhere.
+
+Image generation is not a usage option; it is a separate **Image source** setting on the Profile. See [Image generation](/features/image-generation/).
+
+## Choosing a Profile for a task
+
+Click the model selector in the input area to open the **Available Models** menu:
+
+- by default, the menu lists Profiles usable in Act or Plan, and the one you pick is used for both modes;
+- with **Split Model** on (tooltip "Use different models per mode"; off by default), **Act** and **Plan** tabs appear, each listing only Profiles with that usage checked, and your choice affects only that mode;
+- the gear button in the menu opens **API Configuration**; when there are no Profiles yet, the menu offers **Create profile**.
+
+What a selection affects:
+
+| When you choose | Effect |
+|---|---|
+| No task is running | Updates the global Plan/Act bindings, the defaults for new tasks |
+| A task is running | Changes only the current task's bindings; changing global settings does not replace a running task's bindings |
+
+Turning **Split Model** off during a task binds both modes to the Profile the current mode is using.
+
+### Switching to a model with a smaller context window
+
+Switching Profiles during a task usually takes effect immediately. If the context already in use is at least the target model's context window, a **Switch to a smaller context window?** dialog appears with **Cancel** and **Switch**. Confirming **does not compact right away**; it only switches the model, and ordinary context compaction may still happen later as the task continues.
+
+This differs from **Compact & Switch** when switching between Plan and Act; see [Plan and Act](/core-workflows/plan-and-act/).
+
+## Using Profiles with subagents
+
+A named subagent can name a Profile with `profile` in its YAML, or you can pick one in the **Profile** drop-down on the **Subagents** tab (only enabled Profiles with the **Subagents** usage are listed; **Default (act profile)** keeps the main task's Act Profile). For fallback rules, see [Subagents](/features/subagents/).
+
+## Where Profiles are stored
+
+| Content | Location |
+|---|---|
+| Profile configuration | `<data-root>/settings/api_profiles.json` |
+| API keys | `<data-root>/secrets/api_keys.json`, keyed by Profile ID and never written to the Profile configuration file |
+| Other provider credentials | `<data-root>/secrets/provider_secrets.json` |
+
+`<data-root>` defaults to `~/.dline/data`, or `<DLINE_DIR>/data` when `DLINE_DIR` is set. When several VS Code windows change Profiles at the same time, Dline merges the changes under a file lock and syncs them to the other windows.
+
+## Troubleshooting
+
+| Issue | Fix |
+| --- | --- |
+| Requests return 401 or the key is rejected | Paste the key into the Profile's key field again and make sure it belongs to the selected provider. |
+| The model list is empty or requests time out | Check your network and proxy settings. See [Networking and proxies](/troubleshooting/networking-and-proxies/). |
+| Dline cannot reach a local model | Make sure Ollama or LM Studio is running and the address in settings matches the address the runtime listens on. |
+
+### Messages in the interface
+
+| Message | Meaning |
+|---|---|
+| "No profiles configured. Add a profile to connect a provider and model." | No Profile exists yet |
+| "No profiles for this mode." | No Profile has the current mode's usage checked |
+| "Failed to load API profiles. Existing profiles have not been replaced." | Loading failed and existing configuration was left untouched; click **Retry** |
+| `Profile not valid: …` | The Profile bound to the task was deleted, disabled, is incomplete, or lacks credentials |
+
+<Aside type="caution">
+When a task's bound Profile becomes invalid, Dline reports an error and does **not** silently switch to another Profile. Fix the Profile, or choose again in the model selector.
+</Aside>

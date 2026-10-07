@@ -1,12 +1,11 @@
 import {
 	internationalZAiDefaultModelId,
-	internationalZAiModelId,
 	internationalZAiModels,
 	ModelInfo,
 	mainlandZAiDefaultModelId,
-	mainlandZAiModelId,
 	mainlandZAiModels,
 } from "@shared/api"
+import { resolveRuntimeModel } from "@shared/providers/profile-model-info"
 import OpenAI from "openai"
 import type { ChatCompletionTool as OpenAITool } from "openai/resources/chat/completions"
 import { ClineStorageMessage } from "@/shared/messages/content"
@@ -68,21 +67,13 @@ export class ZAiHandler implements ApiHandler {
 		return this.client
 	}
 
-	getModel(): { id: mainlandZAiModelId | internationalZAiModelId; info: ModelInfo } {
-		const modelId = this.modelId
-		if (this.useChinaApi()) {
-			const id = modelId && modelId in mainlandZAiModels ? (modelId as mainlandZAiModelId) : mainlandZAiDefaultModelId
-			return {
-				id,
-				info: mainlandZAiModels[id],
-			}
-		}
-		const id =
-			modelId && modelId in internationalZAiModels ? (modelId as internationalZAiModelId) : internationalZAiDefaultModelId
-		return {
-			id,
-			info: internationalZAiModels[id],
-		}
+	getModel(): { id: string; info: ModelInfo } {
+		return resolveRuntimeModel(
+			this.ctx.profile,
+			this.useChinaApi()
+				? { models: mainlandZAiModels, defaultModelId: mainlandZAiDefaultModelId }
+				: { models: internationalZAiModels, defaultModelId: internationalZAiDefaultModelId },
+		)
 	}
 
 	@withRetry()

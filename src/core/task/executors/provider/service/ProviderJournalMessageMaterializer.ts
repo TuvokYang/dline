@@ -2,6 +2,7 @@ import type { ClineContent, ClineStorageMessage, ClineUserContent } from "@share
 import { replayDurableToolResult } from "../../../DurableToolResult"
 import type { ExplicitInstructionDeclaration } from "../../../explicit-instructions/types"
 import type { TaskPayloadStore } from "../../../stores"
+import { readAttachedDocuments } from "../../../stores/payload/AttachedDocuments"
 import { decodeTaskPayload } from "../../../stores/payload/TaskPayloadCodec"
 import type {
 	BackgroundResultsEnvelope,
@@ -24,6 +25,7 @@ import {
 	buildTaskOpeningContent,
 	buildToolApprovalFeedbackContent,
 	buildUserFeedbackContent,
+	type ToolApprovalFeedbackContent,
 } from "../../../utils/buildUserFeedbackContent"
 
 type JournalPayload =
@@ -199,7 +201,8 @@ export class ProviderJournalMessageMaterializer {
 				const result = payload as ToolResultEnvelope
 				const content = replayDurableToolResult(result.content)
 				if (!content) throw new Error(`InvalidDurableToolResult:${result.blockId}`)
-				return { role: "user", content, ts: Date.now() }
+				const documents = await readAttachedDocuments(this.payloads, result.documentPayloadRefs)
+				return { role: "user", content: [...content, ...documents], ts: Date.now() }
 			}
 			case "tool_terminal_manifest":
 				return this.materializeToolTerminalManifest(payload as ToolTerminalManifestEnvelope)
@@ -233,16 +236,26 @@ export class ProviderJournalMessageMaterializer {
 		manifest: ToolTerminalManifestEnvelope,
 	): Promise<ClineStorageMessage | undefined> {
 		const content: ClineUserContent[] = []
+		const documentPayloadRefs: string[] = []
+		const feedbackDocuments: ClineUserContent[] = []
 		for (const result of manifest.results) {
 			const replay = replayDurableToolResult(result.content)
 			if (!replay) throw new Error(`InvalidDurableToolResult:${result.blockId}`)
-			content.push(...withApprovalFeedback(replay, await this.approvalFeedback(result)))
+			const feedback = await this.approvalFeedback(result)
+			content.push(...withApprovalFeedback(replay, feedback.blocks))
+			documentPayloadRefs.push(...(result.documentPayloadRefs ?? []))
+			feedbackDocuments.push(...feedback.documents)
 		}
+		// Every tool result answers a call of the previous assistant turn, so the results
+		// open the message together and the attached PDFs follow them.
+		content.push(...(await readAttachedDocuments(this.payloads, documentPayloadRefs)), ...feedbackDocuments)
 		return content.length === 0 ? undefined : { role: "user", content, ts: Date.now() }
 	}
 
-	private async approvalFeedback(result: ToolTerminalManifestEnvelope["results"][number]): Promise<ClineUserContent[]> {
-		if (!result.feedbackRef) return []
+	private async approvalFeedback(
+		result: ToolTerminalManifestEnvelope["results"][number],
+	): Promise<ToolApprovalFeedbackContent> {
+		if (!result.feedbackRef) return { blocks: [], documents: [] }
 		const feedback = decodeTaskPayload<DialogDraftEnvelope>(await this.payloads.read(result.feedbackRef))
 		if (feedback.kind !== "dialog_draft") throw new Error(`InvalidToolApprovalFeedback:${result.blockId}`)
 		return buildToolApprovalFeedbackContent(feedback.text, [...feedback.images], [...feedback.files])

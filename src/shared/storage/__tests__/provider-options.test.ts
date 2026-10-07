@@ -1,173 +1,155 @@
-import {
-	normalizeOpenAiServiceTier,
-	normalizeOpenaiReasoningEffort,
-	OPENAI_COMPATIBLE_REASONING_EFFORT_OPTIONS,
-	OPENAI_REASONING_EFFORT_OPTIONS,
-	OPENAI_SERVICE_TIER_OPTIONS,
-} from "@shared/storage/types"
+import { normalizeOpenAiServiceTier, normalizeOpenaiReasoningEffort } from "@shared/storage/types"
 import { resolveTaskThinkingConfig, validateTaskReasoningOverride } from "@shared/task-reasoning"
-import { DEEPSEEK_REASONING_EFFORT_OPTIONS, resolveDeepSeekAdaptiveThinking } from "@shared/utils/reasoning-support"
 import { expect } from "chai"
 import { describe, it } from "vitest"
 
 describe("provider reasoning and service-tier options", () => {
-	it("exposes current OpenAI SDK efforts and compatible ultra effort", () => {
-		expect(OPENAI_REASONING_EFFORT_OPTIONS).to.deep.equal(["none", "minimal", "low", "medium", "high", "xhigh", "max"])
-		expect(OPENAI_COMPATIBLE_REASONING_EFFORT_OPTIONS).to.deep.equal([...OPENAI_REASONING_EFFORT_OPTIONS, "ultra"])
-		expect(normalizeOpenaiReasoningEffort("ultra")).to.equal("ultra")
+	it("does not invent reasoning controls when metadata is unavailable", () => {
+		expect(resolveTaskThinkingConfig(undefined)).to.equal(undefined)
 	})
 
-	it("resolves OpenAI Profile reasoning capability for Task-local overrides", () => {
-		const thinking = resolveTaskThinkingConfig("openai", { supportsReasoning: true })
+	it("preserves a declared empty effort list rather than adding provider defaults", () => {
+		const declaration = { supported: true, mode: "effort", effortLevels: [], defaultEnabled: false }
+		expect(resolveTaskThinkingConfig({ supportsReasoning: true, thinking: declaration })).to.deep.equal(declaration)
+	})
 
-		expect(thinking?.effortLevels).to.deep.equal([...OPENAI_REASONING_EFFORT_OPTIONS])
-		expect(validateTaskReasoningOverride({ kind: "effort", effort: "high" }, thinking)).to.deep.equal({
+	it("does not infer a budget or effort mode from coarse reasoning support", () => {
+		expect(resolveTaskThinkingConfig({ supportsReasoning: true })).to.equal(undefined)
+	})
+
+	it("projects declared reasoning without a Profile switch or model identity input", () => {
+		const declaration = { supported: true, mode: "effort", canDisable: false, effortLevels: ["declared-effort"] }
+		expect(resolveTaskThinkingConfig({ thinking: declaration })).to.deep.equal(declaration)
+	})
+
+	it("preserves default and disable declarations without mutating the source", () => {
+		const declaration = {
+			supported: true,
+			mode: "effort",
+			defaultEnabled: true,
+			canDisable: false,
+			defaultEffort: "declared-effort",
+			effortLevels: ["declared-effort"],
+		}
+		const projected = resolveTaskThinkingConfig({ thinking: declaration })
+		expect(projected).to.deep.equal(declaration)
+		projected?.effortLevels?.push("another-effort")
+		expect(declaration.effortLevels).to.deep.equal(["declared-effort"])
+	})
+
+	it("does not revive an explicit unsupported declaration", () => {
+		expect(
+			resolveTaskThinkingConfig({ supportsReasoning: true, thinking: { supported: false, effortLevels: ["high"] } }),
+		).to.equal(undefined)
+		expect(resolveTaskThinkingConfig({ supportsReasoning: false, thinking: { supported: true } })).to.equal(undefined)
+	})
+
+	it("validates a Task effort against the declared list rather than a provider option list", () => {
+		const thinking = resolveTaskThinkingConfig({
+			thinking: { supported: true, mode: "effort", effortLevels: ["declared-effort"] },
+		})
+		expect(validateTaskReasoningOverride({ kind: "effort", effort: "declared-effort" }, thinking)).to.deep.equal({
 			valid: true,
-			override: { kind: "effort", effort: "high" },
+			override: { kind: "effort", effort: "declared-effort" },
 		})
-	})
-
-	it("resolves Anthropic budget capability when registry metadata only marks reasoning support", () => {
-		const thinking = resolveTaskThinkingConfig("anthropic", { supportsReasoning: true })
-
-		expect(thinking).to.deep.include({ supported: true, mode: "budget", maxBudget: 6_000 })
-		expect(thinking?.effortLevels).to.deep.equal([])
-		expect(validateTaskReasoningOverride({ kind: "budget", budgetTokens: 2_048 }, thinking)).to.deep.equal({
-			valid: true,
-			override: { kind: "budget", budgetTokens: 2_048 },
-		})
-	})
-
-	it("projects Anthropic adaptive-thinking metadata with max into Task-local overrides", () => {
-		const thinking = resolveTaskThinkingConfig("anthropic", {
-			supportsReasoning: true,
-			thinking: {
-				supported: true,
-				mode: "effort",
-				effortLevels: ["none", "low", "medium", "high", "max"],
-			},
-		})
-
-		expect(thinking).to.deep.include({ supported: true, mode: "effort" })
-		expect(thinking?.effortLevels).to.deep.equal(["none", "low", "medium", "high", "max"])
-		expect(validateTaskReasoningOverride({ kind: "effort", effort: "max" }, thinking)).to.deep.equal({
-			valid: true,
-			override: { kind: "effort", effort: "max" },
-		})
-	})
-
-	it("keeps required Fable 5 thinking available even when a stale Profile disables it", () => {
-		const thinking = resolveTaskThinkingConfig(
-			"anthropic",
-			{
-				supportsReasoning: true,
-				thinking: {
-					supported: true,
-					mode: "effort",
-					effortLevels: ["low", "medium", "high", "xhigh", "max"],
-				},
-			},
-			{ enableThinking: false, effort: "none" },
-			"claude-fable-5",
-		)
-
-		expect(thinking?.effortLevels).to.deep.equal(["low", "medium", "high", "xhigh", "max"])
-		expect(validateTaskReasoningOverride({ kind: "effort", effort: "none" }, thinking)).to.deep.include({
+		expect(validateTaskReasoningOverride({ kind: "effort", effort: "high" }, thinking)).to.deep.include({
 			valid: false,
 			error: "unsupported_effort",
 		})
 	})
 
-	it("allows Opus 5 to expose the explicit disabled effort", () => {
-		const thinking = resolveTaskThinkingConfig(
-			"anthropic",
-			{
-				supportsReasoning: true,
-				thinking: {
-					supported: true,
-					mode: "effort",
-					effortLevels: ["none", "low", "medium", "high", "xhigh", "max"],
-				},
-			},
-			undefined,
-			"claude-opus-5",
-		)
-
-		expect(validateTaskReasoningOverride({ kind: "effort", effort: "none" }, thinking)).to.deep.equal({
-			valid: true,
-			override: { kind: "effort", effort: "none" },
+	it("validates positive minimum independently from zero disabling and optional ceiling", () => {
+		const thinking = { supported: true, mode: "budget", minBudget: 17, canDisable: true }
+		expect(validateTaskReasoningOverride({ kind: "budget", budgetTokens: 3 }, thinking)).to.deep.include({
+			valid: false,
+			error: "budget_below_min",
+		})
+		for (const budgetTokens of [0, 17, 100000]) {
+			expect(validateTaskReasoningOverride({ kind: "budget", budgetTokens }, thinking)).to.deep.equal({
+				valid: true,
+				override: { kind: "budget", budgetTokens },
+			})
+		}
+		expect(
+			validateTaskReasoningOverride({ kind: "budget", budgetTokens: 0 }, { ...thinking, minBudget: 0, canDisable: false }),
+		).to.deep.include({
+			valid: false,
+			error: "unsupported_budget",
 		})
 	})
 
-	it("uses an enabled Provider reasoning config when model capability hydration is unavailable", () => {
-		const deepSeekThinking = resolveTaskThinkingConfig("deepseek", undefined, {
-			enableThinking: true,
-			effort: "high",
+	it.each([undefined, "effort"])("does not infer budget mode from a bound when mode is %s", (mode) => {
+		expect(
+			validateTaskReasoningOverride(
+				{ kind: "budget", budgetTokens: 20 },
+				{ supported: true, mode, minBudget: 17, maxBudget: 101 },
+			),
+		).to.deep.include({
+			valid: false,
+			error: "unsupported_budget",
 		})
-		const anthropicThinking = resolveTaskThinkingConfig("anthropic", undefined, {
-			enableThinking: true,
-			thinkingBudget: 2_048,
-		})
+	})
 
-		expect(deepSeekThinking).to.deep.include({ supported: true, mode: "effort" })
-		expect(deepSeekThinking?.effortLevels).to.deep.equal([...DEEPSEEK_REASONING_EFFORT_OPTIONS])
-		expect(anthropicThinking).to.deep.include({ supported: true, mode: "budget", maxBudget: 6_000 })
-		expect(validateTaskReasoningOverride({ kind: "budget", budgetTokens: 2_048 }, anthropicThinking)).to.deep.equal({
+	it.each([undefined, "budget"])("does not infer effort mode from a list when mode is %s", (mode) => {
+		expect(
+			validateTaskReasoningOverride({ kind: "effort", effort: "high" }, { supported: true, mode, effortLevels: ["high"] }),
+		).to.deep.include({
+			valid: false,
+			error: "unsupported_effort",
+		})
+	})
+
+	it.each([
+		-1,
+		1.5,
+		Number.NaN,
+		Number.POSITIVE_INFINITY,
+		102,
+	])("rejects malformed or contradictory minimum %s", (minBudget) => {
+		expect(
+			validateTaskReasoningOverride(
+				{ kind: "budget", budgetTokens: 30 },
+				{ supported: true, mode: "budget", minBudget, maxBudget: 101 },
+			),
+		).to.deep.include({
+			valid: false,
+			error: "unsupported_budget",
+		})
+	})
+
+	it("validates a Task budget against the declared bound", () => {
+		const thinking = resolveTaskThinkingConfig({ thinking: { supported: true, mode: "budget", maxBudget: 4_096 } })
+		expect(validateTaskReasoningOverride({ kind: "budget", budgetTokens: 2_048 }, thinking)).to.deep.equal({
 			valid: true,
 			override: { kind: "budget", budgetTokens: 2_048 },
 		})
-	})
-
-	it("honors an explicit Provider disable and does not invent unsupported reasoning", () => {
-		expect(resolveTaskThinkingConfig("deepseek", { supportsReasoning: true }, { enableThinking: false })).to.equal(undefined)
-		expect(resolveTaskThinkingConfig("anthropic", undefined, undefined)).to.equal(undefined)
-	})
-
-	it("projects DeepSeek low, high and max efforts into the shared Task override policy", () => {
-		const thinking = resolveTaskThinkingConfig("deepseek", { supportsReasoning: true })
-
-		expect(thinking).to.include({ supported: true, mode: "effort" })
-		expect(thinking?.effortLevels).to.deep.equal([...DEEPSEEK_REASONING_EFFORT_OPTIONS])
-		expect(validateTaskReasoningOverride({ kind: "effort", effort: "low" }, thinking)).to.deep.equal({
-			valid: true,
-			override: { kind: "effort", effort: "low" },
-		})
-		expect(validateTaskReasoningOverride({ kind: "effort", effort: "max" }, thinking)).to.deep.equal({
-			valid: true,
-			override: { kind: "effort", effort: "max" },
+		expect(validateTaskReasoningOverride({ kind: "budget", budgetTokens: 4_097 }, thinking)).to.deep.include({
+			valid: false,
+			error: "budget_exceeds_max",
 		})
 	})
 
-	it("resolves DeepSeek efforts from a compatible Provider model ID", () => {
-		const thinking = resolveTaskThinkingConfig(
-			"openrouter",
-			{ supportsReasoning: true },
-			{ enableThinking: true, effort: "high" },
-			"deepseek/deepseek-chat",
-		)
-
-		expect(thinking).to.include({ supported: true, mode: "effort" })
-		expect(thinking?.effortLevels).to.deep.equal([...DEEPSEEK_REASONING_EFFORT_OPTIONS])
-		for (const effort of DEEPSEEK_REASONING_EFFORT_OPTIONS) {
-			expect(validateTaskReasoningOverride({ kind: "effort", effort }, thinking)).to.deep.equal({
-				valid: true,
-				override: { kind: "effort", effort },
-			})
-		}
+	it("rejects disabled values when the declaration requires thinking even if a stale list includes none", () => {
+		const thinking = resolveTaskThinkingConfig({
+			thinking: { supported: true, mode: "effort", canDisable: false, effortLevels: ["none", "high"], maxBudget: 4_096 },
+		})
+		expect(validateTaskReasoningOverride({ kind: "effort", effort: "none" }, thinking)).to.deep.include({
+			valid: false,
+			error: "unsupported_effort",
+		})
+		expect(validateTaskReasoningOverride({ kind: "budget", budgetTokens: 0 }, thinking)).to.deep.include({
+			valid: false,
+			error: "unsupported_budget",
+		})
 	})
 
-	it("accepts only OpenAI service tiers supported by the SDK", () => {
-		expect(OPENAI_SERVICE_TIER_OPTIONS).to.deep.equal(["auto", "default", "flex", "scale", "priority", "ultrafast"])
+	it("preserves the compatible ultra preference during normalization", () => {
+		expect(normalizeOpenaiReasoningEffort("ultra")).to.equal("ultra")
+	})
+
+	it("keeps legal service tiers and rejects an unknown preference", () => {
 		expect(normalizeOpenAiServiceTier("priority")).to.equal("priority")
 		expect(normalizeOpenAiServiceTier("ultrafast")).to.equal("ultrafast")
 		expect(normalizeOpenAiServiceTier("unsupported")).to.equal(undefined)
-	})
-
-	it("supports native DeepSeek low, high and max efforts while migrating legacy xhigh", () => {
-		expect(DEEPSEEK_REASONING_EFFORT_OPTIONS).to.deep.equal(["low", "high", "max"])
-		expect(resolveDeepSeekAdaptiveThinking("low")).to.deep.equal({ enabled: true, effort: "low" })
-		expect(resolveDeepSeekAdaptiveThinking("high")).to.deep.equal({ enabled: true, effort: "high" })
-		expect(resolveDeepSeekAdaptiveThinking("max")).to.deep.equal({ enabled: true, effort: "max" })
-		expect(resolveDeepSeekAdaptiveThinking("xhigh")).to.deep.equal({ enabled: true, effort: "max" })
 	})
 })

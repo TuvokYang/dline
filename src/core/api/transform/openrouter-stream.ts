@@ -8,17 +8,12 @@ import {
 	openRouterClaudeSonnet451mModelId,
 	openRouterClaudeSonnet461mModelId,
 } from "@shared/api"
-import { normalizeOpenaiReasoningEffort } from "@shared/storage/types"
-import { isClaudeOpusAdaptiveThinkingModel, resolveClaudeOpusAdaptiveThinking } from "@shared/utils/reasoning-support"
-import {
-	GEMINI_FLASH_MAX_OUTPUT_TOKENS,
-	isGeminiFlashModel,
-	shouldSkipReasoningForModel,
-	supportsReasoningEffortForModel,
-} from "@utils/model-utils"
+import type { ReasoningConfig } from "@shared/proto/dline/provider/common"
+import { GEMINI_FLASH_MAX_OUTPUT_TOKENS, isGeminiFlashModel, shouldSkipReasoningForModel } from "@utils/model-utils"
 import OpenAI from "openai"
 import { ChatCompletionTool } from "openai/resources/chat/completions"
 import type { ClineStorageMessage } from "@/shared/messages/content"
+import { resolveOpenRouterReasoning } from "../providers/openrouter/reasoning"
 import { convertToOpenAiMessages, sanitizeGeminiMessages } from "./openai-format"
 import { convertToR1Format } from "./r1-format"
 import { getOpenAIToolParams } from "./tool-call-processor"
@@ -48,6 +43,7 @@ export async function createOpenRouterStream(
 	openRouterProviderSorting?: string,
 	tools?: Array<ChatCompletionTool>,
 	enableParallelToolCalling?: boolean,
+	reasoningConfig?: ReasoningConfig,
 ) {
 	// Convert Anthropic messages to OpenAI format
 	let openAiMessages: OpenAI.Chat.ChatCompletionMessageParam[] = [
@@ -125,54 +121,14 @@ export async function createOpenRouterStream(
 		temperature = 1.0
 	}
 
-	const supportsReasoningEffort = supportsReasoningEffortForModel(model.id)
-
-	// Claude Opus 4.5+ uses adaptive thinking instead of budgeted extended thinking.
-	const isAdaptiveThinkingModel = isClaudeOpusAdaptiveThinkingModel(model.id)
-	const adaptiveThinking = isAdaptiveThinkingModel
-		? resolveClaudeOpusAdaptiveThinking(reasoningEffort, thinkingBudgetTokens)
-		: undefined
-	if (isAdaptiveThinkingModel) {
+	const reasoning = resolveOpenRouterReasoning(
+		model.id,
+		model.info.capabilities,
+		reasoningConfig ?? { effort: reasoningEffort, thinkingBudget: thinkingBudgetTokens },
+	)
+	if (reasoning.omitSampling) {
 		temperature = undefined
 		topP = undefined
-	}
-
-	let reasoning: Record<string, unknown> | undefined
-	if (!isAdaptiveThinkingModel) {
-		switch (model.id) {
-			case "anthropic/claude-haiku-4.5":
-			case "anthropic/claude-4.5-haiku":
-			case "anthropic/claude-sonnet-4.6":
-			case "anthropic/claude-4.6-sonnet":
-			case "anthropic/claude-sonnet-4.5":
-			case "anthropic/claude-4.5-sonnet":
-			case "anthropic/claude-sonnet-4":
-			case "anthropic/claude-opus-4.1":
-			case "anthropic/claude-opus-4":
-			case "anthropic/claude-3.7-sonnet":
-			case "anthropic/claude-3.7-sonnet:beta":
-			case "anthropic/claude-3.7-sonnet:thinking":
-			case "anthropic/claude-3-7-sonnet":
-			case "anthropic/claude-3-7-sonnet:beta":
-				const budget_tokens = thinkingBudgetTokens || 0
-				const reasoningOn = budget_tokens !== 0
-				if (reasoningOn) {
-					temperature = undefined // extended thinking does not support non-1 temperature
-					reasoning = { max_tokens: budget_tokens }
-				}
-				break
-			default:
-				if (
-					thinkingBudgetTokens &&
-					model.info?.capabilities?.thinking &&
-					thinkingBudgetTokens > 0 &&
-					!supportsReasoningEffort
-				) {
-					temperature = undefined // extended thinking does not support non-1 temperature
-					reasoning = { max_tokens: thinkingBudgetTokens }
-					break
-				}
-		}
 	}
 
 	const providerPreferences = OPENROUTER_PROVIDER_PREFERENCES[model.id]
@@ -180,17 +136,7 @@ export async function createOpenRouterStream(
 		openRouterProviderSorting = undefined
 	}
 
-	const normalizedReasoningEffort = reasoningEffort !== undefined ? normalizeOpenaiReasoningEffort(reasoningEffort) : undefined
-	const reasoningEffortValue = supportsReasoningEffort ? normalizedReasoningEffort : undefined
-	// Skip reasoning for models that don't support it (e.g., devstral, grok-4), or when effort explicitly disables it.
-	const includeReasoning = isAdaptiveThinkingModel
-		? !!adaptiveThinking?.enabled
-		: !shouldSkipReasoningForModel(model.id) && reasoningEffortValue !== "none"
-	const reasoningPayload = isAdaptiveThinkingModel
-		? adaptiveThinking?.enabled
-			? { enabled: true }
-			: undefined
-		: (reasoning ?? (reasoningEffortValue && reasoningEffortValue !== "none" ? { effort: reasoningEffortValue } : undefined))
+	const includeReasoning = reasoning.enabled && !shouldSkipReasoningForModel(model.id)
 	const maxTokens = isGeminiFlashModel(model.id)
 		? Math.min(model.info.capabilities?.maxTokens || GEMINI_FLASH_MAX_OUTPUT_TOKENS, GEMINI_FLASH_MAX_OUTPUT_TOKENS)
 		: undefined
@@ -204,8 +150,8 @@ export async function createOpenRouterStream(
 		stream: true,
 		stream_options: { include_usage: true },
 		include_reasoning: includeReasoning,
-		...(reasoningPayload ? { reasoning: reasoningPayload } : {}),
-		...(isAdaptiveThinkingModel && adaptiveThinking?.effort ? { verbosity: adaptiveThinking.effort } : {}),
+		...(reasoning.reasoning ? { reasoning: reasoning.reasoning } : {}),
+		...(reasoning.verbosity ? { verbosity: reasoning.verbosity } : {}),
 		...(openRouterProviderSorting && !providerPreferences ? { provider: { sort: openRouterProviderSorting } } : {}),
 		...(providerPreferences ? { provider: providerPreferences } : {}),
 		...(isClaude1m ? { provider: { order: ["anthropic", "google-vertex/global"], allow_fallbacks: false } } : {}),

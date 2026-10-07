@@ -99,6 +99,28 @@ describe("CerebrasHandler", () => {
 		])
 	})
 
+	it("keeps free-alias metadata and pricing separate from the wire route", async () => {
+		const create = vi
+			.fn()
+			.mockResolvedValue(createAsyncIterable([{ choices: [], usage: { prompt_tokens: 10, completion_tokens: 4 } }]))
+		mocks.createOpenAIClient.mockReturnValue({ chat: { completions: { create } } })
+		const profile = ApiProfile.create({
+			provider: "cerebras",
+			apiKey: "test-api-key",
+			modelId: "qwen-3-coder-480b-free",
+			modelInfo: {
+				id: "qwen-3-coder-480b-free",
+				pricing: { inputPrice: 3, outputPrice: 5 },
+				capabilities: { maxTokens: 0, thinking: { supported: false } },
+			},
+		})
+		const handler = new CerebrasHandler({ profile, mode: "act" })
+		const chunks = await collectStream(handler.createMessage("system", [{ role: "user", content: "hi" }]))
+		expect(create.mock.calls[0][0]).toMatchObject({ model: "qwen-3-coder-480b", max_tokens: 16_384 })
+		expect(handler.getModel()).toEqual({ id: "qwen-3-coder-480b", info: profile.modelInfo })
+		expect(chunks).toEqual([expect.objectContaining({ type: "usage", totalCost: 0.00005 })])
+	})
+
 	it("preserves Qwen model mapping, history cleanup, and reasoning stream projection", async () => {
 		const create = vi
 			.fn()

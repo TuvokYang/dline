@@ -82,6 +82,7 @@ export class FocusChainManager {
 	private hasTrackedFirstProgress = false
 	private focusChainSettings: FocusChainSettings
 	private fileUpdateDebounceTimer?: NodeJS.Timeout
+	private disposed = false
 
 	constructor(dependencies: FocusChainDependencies) {
 		this.taskId = dependencies.taskId
@@ -100,6 +101,7 @@ export class FocusChainManager {
 	 * @returns Promise<void> - Resolves when watcher is set up, logs errors if setup fails
 	 */
 	public async setupFocusChainFileWatcher() {
+		if (this.disposed || this.focusChainFileWatcher) return
 		try {
 			const taskDir = await ensureTaskDirectoryExists(this.taskId)
 			const focusChainFilePath = getFocusChainFilePath(taskDir, this.taskId)
@@ -107,14 +109,17 @@ export class FocusChainManager {
 			// Ensure focus chain file exists (create empty file for new tasks)
 			// This prevents EPERM errors when user manually opens the file
 			// and ensures the file is available for watcher events
+			if (this.disposed) return
 			await ensureFocusChainFile(this.taskId, "")
 
 			// Load existing checklist from disk into taskState
 			// This is critical for task resumption: without this, taskState.currentFocusChainChecklist
 			// remains null even if the file exists, causing "no task plan exists" errors
 			const existingChecklist = await this.readFocusChainFromDisk()
+			if (this.disposed) return
 			// A reopened task also shows the checklists that earlier plans replaced.
 			const existingHistory = await this.readFocusChainHistory()
+			if (this.disposed) return
 			if (existingHistory) this.taskState.focusChainHistory = existingHistory
 			if (existingChecklist) {
 				this.taskState.currentFocusChainChecklist = existingChecklist
@@ -125,6 +130,7 @@ export class FocusChainManager {
 			}
 			if (existingChecklist || existingHistory) await this.postStateToWebview()
 
+			if (this.disposed) return
 			// Initialize chokidar watcher
 			this.focusChainFileWatcher = chokidar.watch(focusChainFilePath, {
 				persistent: true,
@@ -290,7 +296,7 @@ export class FocusChainManager {
 	 * @returns Promise<string | null> - focus chain list content as string, or null if file missing/invalid
 	 * @throws Returns null on file read errors (file not found, permission issues)
 	 */
-	private async readFocusChainFromDisk(): Promise<string | null> {
+	public async readFocusChainFromDisk(): Promise<string | null> {
 		try {
 			const taskDir = await ensureTaskDirectoryExists(this.taskId)
 			const todoFilePath = getFocusChainFilePath(taskDir, this.taskId)
@@ -731,6 +737,7 @@ export class FocusChainManager {
 	}
 
 	public dispose() {
+		this.disposed = true
 		if (this.fileUpdateDebounceTimer) {
 			clearTimeout(this.fileUpdateDebounceTimer)
 			this.fileUpdateDebounceTimer = undefined

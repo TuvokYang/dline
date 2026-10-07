@@ -4,9 +4,8 @@ const prompts: Record<string, string> = {
 		"Rename a symbol at the given file position using the IDE's LSP (semantic rename). This renames the symbol across all files, distinguishing between symbol references, comments, and string literals. Set dry_run=true to preview changes without applying them. Only available in VSCode; other environments return an error suggesting replace_text or replace_in_file as a fallback.",
 	standardDescription:
 		"Rename a symbol at the given file position using the IDE's LSP (semantic rename). Only renames symbol references (definitions, imports, calls); skips string literals, comments, and JSDoc. Set dry_run=true to preview changes without applying them. If LSP returns no edits, the rename could not be performed (language or project may not be supported). Only available in VSCode; for text-level renaming including strings and comments, use replace_text instead.",
-	filePathInstruction:
-		"Absolute path to the file containing the symbol. Use the exact path as shown in the workspace file listing.",
-	filePathUsage: "/path/to/file.ts",
+	filePathInstruction: "The workspace-relative path to the file containing the symbol. @WORKSPACE_PATH_RULE@@MULTI_ROOT_HINT@",
+	filePathUsage: "src/path/to/file.ts",
 	lineInstruction: "1-based line number where the symbol appears.",
 	characterInstruction: "1-based character offset on the line where the symbol starts.",
 	newNameInstruction: "The new name for the symbol. Use camelCase/PascalCase/snake_case as appropriate for the language.",

@@ -1,0 +1,46 @@
+---
+title: MiniMax
+description: 获取 MiniMax API Key，并在 Dline 中配置 MiniMax 模型。
+---
+
+import { Steps } from "@astrojs/starlight/components"
+
+MiniMax 提供大上下文窗口、价格有竞争力的模型，包括 MiniMax-M2 系列。
+
+**官网：** [minimax.io](https://www.minimax.io/)
+
+## 获取 API Key
+
+<Steps>
+
+1. 访问 [MiniMax 开放平台](https://www.minimax.io/platform)，注册或登录账号。
+
+2. 进入 API Key 管理页面。
+
+3. 创建新的 API Key。
+
+4. 立即复制并妥善保存 Key。
+
+</Steps>
+
+## 在 Dline 中配置
+
+通用步骤见[模型配置](/zh-cn/getting-started/authorizing-with-dline/)。
+
+<Steps>
+
+1. 点击 Dline 面板标题栏的 **Settings** 按钮。
+
+2. 在 **Provider** 中选择 **MiniMax**。
+
+3. 把 Key 粘贴到 **MiniMax API Key** 输入框。
+
+4. 在 **Model** 中选择模型。
+
+</Steps>
+
+## 提示
+
+- **大上下文：** 内置的 MiniMax-M2 系列模型都支持 192K tokens 上下文窗口。
+- **推理：** M2.7 与 M2.5 支持扩展思考，适合复杂任务。
+- **价格：** 最新价格见 [MiniMax 定价页](https://www.minimax.io/platform/document/pricing)。

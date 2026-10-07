@@ -30,10 +30,18 @@ function messageStore(): { handler: MessageStateHandler; written: UiMessage[] } 
 	return { handler, written }
 }
 
-function owner(messages: MessageStateHandler, controller: object = {}): ControllerTaskCallbacksOwner {
+const OPENING = { taskId: "task-1", taskInstanceId: "open-1" }
+
+/** A Controller that currently shows the opening these callbacks serve. */
+function showingOpening(opening: { taskId: string; taskInstanceId: string } = OPENING): object {
+	return { currentOpening: () => opening }
+}
+
+function owner(messages: MessageStateHandler, controller: object = showingOpening()): ControllerTaskCallbacksOwner {
 	return new ControllerTaskCallbacksOwner({
 		controller: controller as never,
 		taskId: "task-1",
+		taskInstanceId: "open-1",
 		stateManager: {
 			getGlobalSettingsKey: () => ({ enabled: false, remindClineInterval: 6 }),
 			getGlobalStateKey: () => undefined,
@@ -153,7 +161,7 @@ describe("ControllerTaskCallbacksOwner say", () => {
 	// for the view to take that row held the save back by seconds.
 	it("returns from a new complete row without waiting for the view to take it", async () => {
 		const { handler, written } = messageStore()
-		const controller = {}
+		const controller = showingOpening()
 		let offered = 0
 		await subscribeToPartialMessage(controller as never, {} as never, () => {
 			offered++
@@ -186,5 +194,24 @@ describe("ControllerTaskCallbacksOwner say", () => {
 
 		expect(written).toContainEqual(expect.objectContaining({ ts: 99, text: "preview", partial: true }))
 		expect(delivered).toEqual([{ ts: 99, text: "preview", partial: true }])
+	})
+
+	// A late row from a replaced opening must not land in the view that now shows another one.
+	it("keeps the row but does not publish it once the view shows a different opening", async () => {
+		const { handler, written } = messageStore()
+		const delivered: number[] = []
+		const unsubscribe = registerPartialMessageCallback((message) => {
+			delivered.push(Number(message.ts))
+		})
+		const replaced = showingOpening({ taskId: "task-1", taskInstanceId: "open-2" })
+
+		try {
+			await owner(handler, replaced).callbacks.say("tool", "late preview", undefined, undefined, true, 99)
+		} finally {
+			unsubscribe()
+		}
+
+		expect(written).toContainEqual(expect.objectContaining({ ts: 99, text: "late preview", partial: true }))
+		expect(delivered).toEqual([])
 	})
 })

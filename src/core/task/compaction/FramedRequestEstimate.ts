@@ -2,7 +2,7 @@ import { estimateContextWindowCandidate } from "@core/context/context-management
 import { getContextWindowInfo } from "@core/context/context-management/context-window-utils"
 import type { ClineStorageMessage } from "@shared/messages/content"
 import type { ProviderRequestFramePort } from "../executors/provider/service/ProviderRequest"
-import type { CompactionProviderInput } from "./CompactionRequestReplay"
+import type { CompactionProviderInput } from "./CompactionProviderInput"
 
 /** What one provider request would occupy, and the window it is measured against. */
 export interface FramedRequestEstimate {

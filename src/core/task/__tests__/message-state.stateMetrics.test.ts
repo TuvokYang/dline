@@ -1,5 +1,5 @@
 import type { UiMessage } from "@shared/ExtensionMessage"
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 import { MessageStateHandler } from "../message-state"
 
 /**
@@ -56,6 +56,21 @@ function bumpRevision(handler: MessageStateHandler): void {
 }
 
 describe("MessageStateHandler.readStateMetrics", () => {
+	it("includes subagent and deleted request usage in the complete aggregate", () => {
+		const messages: UiMessage[] = [
+			{ ts: 1, type: "say", say: "task", text: "Synthetic Task" },
+			apiRequest(2, 10, 20),
+			{ ts: 3, type: "say", say: "subagent_usage", text: JSON.stringify({ tokensIn: 5, tokensOut: 6, cost: 0.25 }) },
+			{ ts: 4, type: "say", say: "deleted_api_reqs", text: JSON.stringify({ tokensIn: 7, tokensOut: 9, cost: 0.5 }) },
+		]
+		const handler = createHandler(createStore(messages))
+		expect(handler.readStateMetrics()).toMatchObject({ totalTokensIn: 22, totalTokensOut: 35, totalCost: 0.75 })
+
+		messages[2] = { ...messages[2], text: JSON.stringify({ tokensIn: 8, tokensOut: 10, cost: 0.75 }) }
+		bumpRevision(handler)
+		expect(handler.readStateMetrics()).toMatchObject({ totalTokensIn: 25, totalTokensOut: 39, totalCost: 1.25 })
+	})
+
 	it("computes once while the message sequence is unchanged", () => {
 		const messages = [apiRequest(1, 10, 20), apiRequest(2, 30, 40)]
 		const store = createStore(messages)
@@ -73,6 +88,51 @@ describe("MessageStateHandler.readStateMetrics", () => {
 		expect(store.reads).toBe(readsAfterFirst)
 		expect(second).toBe(first)
 		expect(third).toBe(first)
+	})
+
+	it("reuses old request usage when unrelated streaming text changes", () => {
+		const requestText = JSON.stringify({ request: "synthetic request ".repeat(8_000), tokensIn: 10 })
+		const messages: UiMessage[] = [
+			{ ts: 1, type: "say", say: "api_req_started", text: requestText },
+			{ ts: 2, type: "say", say: "api_req_finished", text: JSON.stringify({ tokensOut: 20, cacheReads: 0, cost: 0.25 }) },
+			{ ts: 3, type: "say", say: "text", partial: true, text: "First chunk" },
+		]
+		const handler = createHandler(createStore(messages))
+		const parse = vi.spyOn(JSON, "parse")
+		try {
+			const first = handler.readStateMetrics()
+			expect(first).toMatchObject({ totalTokensIn: 10, totalTokensOut: 20, totalCacheReads: 0, totalCost: 0.25 })
+			for (let chunk = 0; chunk < 3; chunk++) {
+				messages[2] = { ...messages[2], text: `Stream chunk ${chunk}` }
+				bumpRevision(handler)
+				expect(handler.readStateMetrics()).toEqual(first)
+			}
+			expect(parse.mock.calls.filter(([text]) => text === requestText)).toHaveLength(1)
+		} finally {
+			parse.mockRestore()
+		}
+	})
+
+	it("does not serialize request bodies to aggregate paired usage", () => {
+		const messages: UiMessage[] = [
+			{
+				ts: 1,
+				type: "say",
+				say: "api_req_started",
+				text: JSON.stringify({ request: "synthetic request ".repeat(8_000), tokensIn: 10 }),
+			},
+			{ ts: 2, type: "say", say: "api_req_finished", text: JSON.stringify({ tokensOut: 20, cost: 0.25 }) },
+		]
+		const handler = createHandler(createStore(messages))
+		const stringify = vi.spyOn(JSON, "stringify")
+		try {
+			expect(handler.readStateMetrics()).toMatchObject({ totalTokensIn: 10, totalTokensOut: 20, totalCost: 0.25 })
+			expect(
+				stringify.mock.calls.some(([value]) => value !== null && typeof value === "object" && "request" in value),
+			).toBe(false)
+		} finally {
+			stringify.mockRestore()
+		}
 	})
 
 	it("recomputes after a mutation that leaves the message count unchanged", () => {

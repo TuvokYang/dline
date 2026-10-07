@@ -1,4 +1,5 @@
-import { type ModelInfo, openAiModelInfoSaneDefaults } from "@shared/api"
+import { type ModelInfo } from "@shared/api"
+import { resolveRuntimeModel } from "@shared/providers/profile-model-info"
 import OpenAI from "openai"
 import type { ChatCompletionTool as OpenAITool } from "openai/resources/chat/completions"
 import { ClineStorageMessage } from "@/shared/messages/content"
@@ -110,14 +111,9 @@ export class LmStudioHandler implements ApiHandler {
 	}
 
 	getModel(): { id: string; info: ModelInfo } {
-		const info = { ...openAiModelInfoSaneDefaults }
-		const maxTokens = Number(this.lmStudioMaxTokens)
-		if (!Number.isNaN(maxTokens)) {
-			info.capabilities!.contextWindow = maxTokens
-		}
-		return {
-			id: this.modelId,
-			info,
-		}
+		const model = resolveRuntimeModel(this.ctx.profile)
+		const contextWindow = Number(this.lmStudioMaxTokens)
+		if (Number.isNaN(contextWindow)) return model
+		return { ...model, info: { ...model.info, capabilities: { ...model.info.capabilities, contextWindow } } }
 	}
 }

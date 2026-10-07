@@ -1,4 +1,5 @@
 import { ZAiProviderConfig } from "@shared/proto/dline/provider/zai"
+import { resolveProfileModelInfo } from "@shared/providers/profile-model-info"
 // Mode import removed — no longer needed in profile-driven architecture
 import { VSCodeDropdown, VSCodeOption } from "@vscode/webview-ui-toolkit/react"
 import { ApiKeyField } from "../common/ApiKeyField"
@@ -19,13 +20,9 @@ export const ZAiProvider = ({ showModelOptions, isPopup, profile, onUpdate }: ZA
 	const pc = profile.zai ?? ZAiProviderConfig.create()
 	const zaiApiLine = pc.zaiApiLine || "international"
 
-	const {
-		models: zaiModels,
-		defaultModelId: zaiDefaultModelId,
-		modelInfoSaneDefaults: zaiModelInfoSaneDefaults,
-	} = useProviderModels("zai-intl")
-	const modelId = profile.modelId || zaiDefaultModelId
-	const modelInfo = profile.modelInfo ?? zaiModels[profile.modelId] ?? zaiModelInfoSaneDefaults
+	const { models: zaiModels, defaultModelId: zaiDefaultModelId } = useProviderModels("zai-intl")
+	const modelInfo = resolveProfileModelInfo(profile, { models: zaiModels, defaultModelId: zaiDefaultModelId })
+	const modelId = modelInfo.id
 
 	return (
 		<div>

@@ -31,8 +31,16 @@ const BACKUP_SUFFIX = ".bak"
 const DEFAULT_FILE_MODE = 0o666
 const DEFAULT_STALE_TEMP_AGE_MS = 60_000
 const TEMP_FILE_PATTERN = /^.+\.\d+\.[0-9a-f-]{36}\.tmp$/
-/** Temporary files left by the removed `disk.ts` implementation. */
-const LEGACY_TEMP_FILE_PATTERN = /^.+\.tmp\.\d{13}\.[0-9a-z-]+\.json$/
+/**
+ * Temporary files left by writers that released builds used before this module:
+ * `disk.ts` (`<file>.tmp.<ms>.<rand>.json`), `writeJsonl` (`<file>.tmp.<uuid>`),
+ * and the snapshot and activity writers (`<file>.tmp.<ms>`).
+ */
+const LEGACY_TEMP_FILE_PATTERNS = [
+	/^.+\.tmp\.\d{13}\.[0-9a-z-]+\.json$/,
+	/^.+\.tmp\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+	/^.+\.tmp\.\d{13}$/,
+] as const
 const SLEEP_CELL = new Int32Array(new SharedArrayBuffer(4))
 
 export interface AtomicWriteOptions {
@@ -184,7 +192,7 @@ export function temporaryPathOf(filePath: string): string {
 }
 
 function isAtomicTempFileName(name: string): boolean {
-	return TEMP_FILE_PATTERN.test(name) || LEGACY_TEMP_FILE_PATTERN.test(name)
+	return TEMP_FILE_PATTERN.test(name) || LEGACY_TEMP_FILE_PATTERNS.some((pattern) => pattern.test(name))
 }
 
 function errorCode(error: unknown): string | undefined {

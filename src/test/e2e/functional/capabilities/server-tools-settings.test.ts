@@ -7,6 +7,7 @@ import { ServerTool } from "@shared/proto/dline/models/metadata"
 import type { ElectronApplication } from "playwright"
 
 interface StoredCapabilities {
+	supportsTools?: boolean
 	supportsImages?: boolean
 	supportsBrowserAction?: boolean
 	tools?: Array<string | number>
@@ -60,7 +61,9 @@ async function expectBuiltInWebSearchCatalogs(dlineDir: string): Promise<void> {
 				return undefined
 			}
 		}, 15_000)
-		const models = Object.values(catalog.models ?? {})
+		// Unverified future placeholders ship without any capability declaration, so
+		// the hosted Web Search contract applies to the declared tool-capable models.
+		const models = Object.values(catalog.models ?? {}).filter((model) => model.capabilities?.supportsTools === true)
 		expect(models.length).toBeGreaterThan(0)
 		expect(models.every((model) => hasWebSearchCapability(model.capabilities))).toBe(true)
 	}

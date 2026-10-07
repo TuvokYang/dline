@@ -21,7 +21,13 @@
 // (e.g., an outer wrapper has already swapped), it no-ops instead of erroring
 // on the backup file. This lets nested callers (publish.yml wrapping the whole
 // step, plus the individual npm scripts swapping internally) coexist safely.
+//
+// README.marketplace.md links to repository files with relative paths. The
+// swap pins every such link to the exact packaged ref (see pinRepositoryLinks),
+// so the listing never falls back to vsce's default of the repository's
+// default branch.
 
+import { execFileSync } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -36,21 +42,15 @@ const MARKETPLACE_PATH = path.join(projectRoot, "README.marketplace.md")
 const BACKUP_PATH = path.join(projectRoot, ".README.github.bak")
 const PACKAGE_JSON_PATH = path.join(projectRoot, "package.json")
 
-/**
- * Branch the marketplace README links are authored against.
- *
- * The source document is written for readers browsing the repository default
- * branch, so every self-referencing link is committed as `/blob/main/...`.
- */
-const AUTHORED_REF = "main"
+const URL_SCHEME = /^[a-z][a-z\d+.-]*:/i
+const CODE_FENCE = /^\s*(?:```|~~~)/
+/** `[text](target "title")` and `![alt](target)`; the text may not contain brackets. */
+const MARKDOWN_LINK = /(!?)\[([^\]]*)\]\(([^)\s]+)((?:\s+"[^"]*")?)\)/g
+const HTML_MEDIA_SOURCE = /(<(?:img|source|video)\b[^>]*?\s(?:src|poster)=)(["'])(.*?)\2/gi
+const HTML_ANCHOR_TARGET = /(<a\b[^>]*?\shref=)(["'])(.*?)\2/gi
 
 function readFile(p) {
 	return fs.readFileSync(p, "utf-8")
-}
-
-/** @param {string} value */
-function escapeRegExp(value) {
-	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 }
 
 /**
@@ -69,34 +69,103 @@ function readRepositoryUrl() {
 }
 
 /**
- * Point this repository's own documentation links at the ref being packaged.
+ * Commit checked out in the project root: the revision a VSIX built now ships.
  *
- * A VSIX built from `dev` still carried `/blob/main/` links, so "变更日志" and
- * "English" resolved against the default branch rather than the code that was
- * actually shipped. Preview and Insiders readers then saw documentation for a
- * different revision, and a link to a file that only exists on the packaged
- * branch resolved to a 404.
+ * @returns {string} Full commit SHA.
+ */
+function currentCommit() {
+	try {
+		return execFileSync("git", ["rev-parse", "HEAD"], {
+			cwd: projectRoot,
+			encoding: "utf-8",
+			stdio: ["ignore", "pipe", "ignore"],
+		}).trim()
+	} catch {
+		throw new Error("Cannot resolve the packaged commit with `git rev-parse HEAD`. Pass an explicit ref to pin README links.")
+	}
+}
+
+/** @param {string} target */
+function isRepositoryPath(target) {
+	return target !== "" && !URL_SCHEME.test(target) && !target.startsWith("#") && !target.startsWith("//")
+}
+
+/**
+ * Absolute GitHub URL of a repository-relative path at `ref`.
  *
- * Only links whose prefix matches the manifest repository are rewritten, so
- * references to third-party repositories that legitimately contain `/blob/main/`
- * are left untouched.
+ * @param {string} repositoryUrl Repository web URL.
+ * @param {string} ref Branch, tag, or commit.
+ * @param {"blob"|"raw"} view `raw` serves the file itself (images); `blob` renders it.
+ * @param {string} target Path relative to the repository root, optionally with a fragment or query.
+ */
+function pinnedUrl(repositoryUrl, ref, view, target) {
+	const suffixStart = target.search(/[?#]/)
+	const filePath = suffixStart === -1 ? target : target.slice(0, suffixStart)
+	const suffix = suffixStart === -1 ? "" : target.slice(suffixStart)
+	const normalized = path.posix.normalize(filePath.replace(/^\/+/, ""))
+	if (normalized === ".." || normalized.startsWith("../")) {
+		throw new Error(`Marketplace README link '${target}' points outside the repository.`)
+	}
+	return `${repositoryUrl}/${view}/${ref}/${normalized}${suffix}`
+}
+
+/**
+ * Pin one line of Markdown/HTML: images to `raw`, links to `blob`.
+ *
+ * @param {string} line
+ * @param {(view: "blob"|"raw", target: string) => string} pin
+ */
+function pinLine(line, pin) {
+	return line
+		.replace(MARKDOWN_LINK, (match, bang, text, target, title) =>
+			isRepositoryPath(target) ? `${bang}[${text}](${pin(bang ? "raw" : "blob", target)}${title})` : match,
+		)
+		.replace(HTML_MEDIA_SOURCE, (match, prefix, quote, target) =>
+			isRepositoryPath(target) ? `${prefix}${quote}${pin("raw", target)}${quote}` : match,
+		)
+		.replace(HTML_ANCHOR_TARGET, (match, prefix, quote, target) =>
+			isRepositoryPath(target) ? `${prefix}${quote}${pin("blob", target)}${quote}` : match,
+		)
+}
+
+/**
+ * Pin every repository-relative link and image to the ref being packaged.
+ *
+ * The source README links to repository files with relative paths. The
+ * Marketplace and Open VSX render the listing outside the repository, and vsce
+ * would otherwise resolve those paths against `blob/HEAD`, the default branch:
+ * a Preview or Insiders VSIX built from `dev` then showed another revision's
+ * changelog, and a demo that exists only on `dev` rendered as a broken image.
+ *
+ * Absolute URLs, in-page anchors and fenced code blocks are left untouched.
  *
  * @param {string} content Marketplace README source.
- * @param {string|null} repositoryUrl Repository URL from the manifest.
- * @param {string|null} ref Branch, tag, or commit to link against.
- * @returns {string} Content with self-referencing links pinned to `ref`.
+ * @param {string} repositoryUrl Repository web URL from the manifest.
+ * @param {string} ref Branch, tag, or commit the VSIX is built from.
+ * @returns {string} Content whose repository links all point at `ref`.
  */
-export function rewriteRepositoryRefs(content, repositoryUrl, ref) {
-	if (!ref || !repositoryUrl || ref === AUTHORED_REF) return content
-	const pattern = new RegExp(`(${escapeRegExp(repositoryUrl)}/(?:blob|raw|tree)/)${AUTHORED_REF}(?=[/#?]|$)`, "g")
-	return content.replace(pattern, `$1${ref}`)
+export function pinRepositoryLinks(content, repositoryUrl, ref) {
+	if (!repositoryUrl) throw new Error("package.json declares no repository URL; README links cannot be pinned.")
+	if (!ref) throw new Error("No ref to pin README links to.")
+	const pin = (view, target) => pinnedUrl(repositoryUrl, ref, view, target)
+	let inFence = false
+	return content
+		.split("\n")
+		.map((line) => {
+			if (CODE_FENCE.test(line)) {
+				inFence = !inFence
+				return line
+			}
+			return inFence ? line : pinLine(line, pin)
+		})
+		.join("\n")
 }
 
 /**
  * Swap the marketplace README into place.
  *
- * @param {{ ref?: string|null }} [options] `ref` pins self-referencing links to
- *   the packaged branch, tag, or commit. Omit it to publish the authored links.
+ * @param {{ ref?: string|null }} [options] Branch, tag, or commit the repository
+ *   links are pinned to. Defaults to the checked-out commit.
  */
 export function swapIn(options = {}) {
 	if (!fs.existsSync(MARKETPLACE_PATH)) {
@@ -106,7 +175,8 @@ export function swapIn(options = {}) {
 		throw new Error(`Missing ${README_PATH}. Cannot swap in marketplace README.`)
 	}
 
-	const desiredContent = rewriteRepositoryRefs(readFile(MARKETPLACE_PATH), readRepositoryUrl(), options.ref ?? null)
+	const ref = options.ref || currentCommit()
+	const desiredContent = pinRepositoryLinks(readFile(MARKETPLACE_PATH), readRepositoryUrl(), ref)
 
 	// Compare against the content this call would write, so an outer wrapper that
 	// already swapped with the same ref is still detected as a no-op.

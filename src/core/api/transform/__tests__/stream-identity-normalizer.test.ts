@@ -103,4 +103,25 @@ describe("StreamIdentityNormalizer", () => {
 		expect(final.dline_tid).toBe(first.dline_tid)
 		expect(final.function_id).toBe("ws_1")
 	})
+
+	it("gives a hosted call carried from an earlier response its original identity", () => {
+		const factory = createIdentityFactory(createSource(["NEW_TRACE"]))
+		const normalizer = createStreamNormalizer(factory, {
+			carriedServerToolTraceId: (functionId) => (functionId === "srvtoolu_deferred" ? "dline_tid_CARRIED" : undefined),
+		})
+		const resumed: ApiRawStreamServerToolChunk = {
+			type: "server_tool",
+			function_id: "srvtoolu_deferred",
+			tool: ServerTool.WEB_SEARCH,
+			phase: "completed",
+			result: [{ url: "https://example.com" }],
+		}
+
+		const carried = normalizer.normalize(resumed)
+		const fresh = normalizer.normalize({ ...resumed, function_id: "srvtoolu_new", phase: "started" })
+
+		if (carried.type !== "server_tool" || fresh.type !== "server_tool") throw new Error("Expected server tool chunks")
+		expect(carried.dline_tid).toBe("dline_tid_CARRIED")
+		expect(fresh.dline_tid).toBe("dline_tid_NEW_TRACE")
+	})
 })

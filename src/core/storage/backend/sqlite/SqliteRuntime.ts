@@ -62,16 +62,20 @@ export function openSqliteDatabase(
 	location: string,
 	options: OpenSqliteDatabaseOptions = { readonly: false },
 ): SqliteDatabaseHandle {
+	let database: DatabaseSync | undefined
 	try {
-		const database = new DatabaseSync(location, {
+		database = new DatabaseSync(location, {
 			readOnly: options.readonly,
 		})
 		database.exec("PRAGMA foreign_keys = ON")
-		database.exec("PRAGMA journal_mode = WAL")
-		database.exec("PRAGMA synchronous = NORMAL")
+		if (!options.readonly) {
+			database.exec("PRAGMA journal_mode = WAL")
+			database.exec("PRAGMA synchronous = NORMAL")
+		}
 		database.exec("PRAGMA busy_timeout = 5000")
 		return new SqliteDatabaseHandle(database)
 	} catch (error) {
+		database?.close()
 		throw new SqliteRuntimeUnavailableError(
 			`Unable to open SQLite database with node:sqlite on Node ${process.versions.node}`,
 			{ cause: error },

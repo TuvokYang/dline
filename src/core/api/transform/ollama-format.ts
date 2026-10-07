@@ -5,8 +5,17 @@ import {
 	ClineStorageMessage,
 	ClineTextContentBlock,
 	ClineUserToolResultContentBlock,
-	imageSourceToUrl,
 } from "@/shared/messages/content"
+import { splitToolResultContent } from "./tool-result-content"
+
+/**
+ * Ollama `images` for image blocks: the raw base64 payloads, which is the form Ollama decodes.
+ * URL-sourced images have no inline data and are left out, because Ollama cannot fetch them.
+ */
+function ollamaImages(images: ClineImageContentBlock[]): string[] | undefined {
+	const data = images.flatMap((image) => (image.source.type === "base64" ? [image.source.data] : []))
+	return data.length > 0 ? data : undefined
+}
 
 export function convertToOllamaMessages(anthropicMessages: Omit<ClineStorageMessage, "modelInfo">[]): Message[] {
 	const ollamaMessages: Message[] = []
@@ -34,45 +43,21 @@ export function convertToOllamaMessages(anthropicMessages: Omit<ClineStorageMess
 					{ nonToolMessages: [], toolMessages: [] },
 				)
 
-				// Process tool result messages FIRST since they must follow the tool use messages
-				const toolResultImages: string[] = []
+				// Process tool result messages FIRST since they must follow the tool use messages.
+				// Ollama messages carry one text string, so each result's text goes there and its own
+				// images go in that message's `images` field rather than into the text as base64.
 				toolMessages.forEach((toolMessage) => {
-					// The Anthropic SDK allows tool results to be a string or an array of text and image blocks, enabling rich and structured content. In contrast, the Ollama SDK only supports tool results as a single string, so we map the Anthropic tool result parts into one concatenated string to maintain compatibility.
-					let content: string
-
-					if (typeof toolMessage.content === "string") {
-						content = toolMessage.content
-					} else {
-						content =
-							toolMessage.content
-								?.map((part) => {
-									if (part.type === "image") {
-										toolResultImages.push(imageSourceToUrl(part.source))
-										return "(see following user message for image)"
-									}
-									return part.text
-								})
-								.join("\n") ?? ""
-					}
-					ollamaMessages.push({
-						role: "user",
-						images: toolResultImages.length > 0 ? toolResultImages : undefined,
-						content: content,
-					})
+					const { text, images } = splitToolResultContent(toolMessage.content ?? "")
+					ollamaMessages.push({ role: "user", images: ollamaImages(images), content: text })
 				})
 
 				// Process non-tool messages
 				if (nonToolMessages.length > 0) {
+					const images = nonToolMessages.filter((part): part is ClineImageContentBlock => part.type === "image")
 					ollamaMessages.push({
 						role: "user",
-						content: nonToolMessages
-							.map((part) => {
-								if (part.type === "image") {
-									return imageSourceToUrl(part.source)
-								}
-								return part.text
-							})
-							.join("\n"),
+						images: ollamaImages(images),
+						content: nonToolMessages.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n"),
 					})
 				}
 			} else if (anthropicMessage.role === "assistant") {

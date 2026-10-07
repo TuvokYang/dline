@@ -1,6 +1,7 @@
 import { readJsonl } from "@core/storage/backend/jsonl/jsonl-utils"
 import { getTaskHeaderText } from "@core/storage/disk"
 import { createSessionFixture } from "@core/task/session/__fixtures__/active-task-session"
+import type { ContextWindowIndicatorSnapshot } from "@shared/context-window-indicator"
 import type { ExtensionState, UiMessage } from "@shared/ExtensionMessage"
 import { describe, expect, it, vi } from "vitest"
 import { Controller } from "../index"
@@ -51,7 +52,9 @@ function buildMessages(count: number): UiMessage[] {
  * The double is a plain object, so the method has to be taken from the
  * prototype for `buildState.call` to resolve it.
  */
-function controllerAccessor(name: "getCurrentTaskId" | "getCurrentTaskMessages" | "getCurrentTaskMessageCount"): unknown {
+function controllerAccessor(
+	name: "currentOpening" | "getCurrentTaskId" | "getCurrentTaskMessages" | "getCurrentTaskMessageCount",
+): unknown {
 	return (Controller.prototype as unknown as Record<string, unknown>)[name]
 }
 
@@ -102,6 +105,7 @@ function createFakeController(messages: UiMessage[]): Record<string, unknown> {
 		// reaching into `task` directly. Borrowing the real implementations keeps
 		// the double honest about where the identity and messages come from, and
 		// keeps it valid when the Controller changes how it resolves them.
+		currentOpening: controllerAccessor("currentOpening"),
 		getCurrentTaskId: controllerAccessor("getCurrentTaskId"),
 		getCurrentTaskMessages: controllerAccessor("getCurrentTaskMessages"),
 		getCurrentTaskMessageCount: controllerAccessor("getCurrentTaskMessageCount"),
@@ -137,6 +141,30 @@ describe("buildState header sourcing", () => {
 		expect(getTaskHeaderTextMock).not.toHaveBeenCalled()
 		expect(readJsonlMock).not.toHaveBeenCalled()
 		expect(oauthMocks.isAuthenticated).not.toHaveBeenCalled()
+	})
+
+	it("projects the session's context window indicator and its total", async () => {
+		const indicator: ContextWindowIndicatorSnapshot = {
+			taskId: "history-task",
+			revision: 7,
+			epoch: 2,
+			phase: "stable",
+			durableContextTokens: 40_000,
+			pendingSendTokens: 0,
+			receivingTokens: 0,
+			stagedTokens: 2_000,
+			environmentTokens: 1_000,
+			contextWindow: 128_000,
+			mode: "act",
+			updatedAt: 100,
+			lineage: { kind: "baseline" },
+		}
+		const fakeController = createFakeController([])
+		const owners = (fakeController.task as { owners: Record<string, Record<string, unknown>> }).owners
+		owners.toolState = { ...owners.toolState, contextWindowIndicator: indicator }
+		const state = await buildState.call(fakeController, 1)
+		expect(state.contextWindowIndicator).toEqual(indicator)
+		expect(state.lastApiReqTotalTokens).toBe(43_000)
 	})
 
 	it("keeps returning the in-memory header even when disk is unavailable", async () => {

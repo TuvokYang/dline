@@ -4,6 +4,7 @@ import { TaskRateMetricsDialog } from "./TaskRateMetricsDialog"
 
 interface TaskRateMetricsProps {
 	taskId?: string
+	taskInstanceId?: string
 	requestsPerMinute: number
 	tokensPerMinute: number
 	totalInputTokens: number
@@ -24,6 +25,7 @@ export function TaskRateMetrics({
 	currency,
 	isCostAvailable,
 	taskId,
+	taskInstanceId,
 	tokensOut,
 	totalCost,
 	totalInputTokens,
@@ -80,7 +82,7 @@ export function TaskRateMetrics({
 					{isCostAvailable && <span>{costLabel}</span>}
 				</span>
 			</button>
-			<TaskRateMetricsDialog onOpenChange={setOpen} open={open} taskId={taskId} />
+			<TaskRateMetricsDialog onOpenChange={setOpen} open={open} taskId={taskId} taskInstanceId={taskInstanceId} />
 		</>
 	)
 }

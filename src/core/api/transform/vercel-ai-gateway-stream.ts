@@ -7,12 +7,12 @@ import {
 	openRouterClaudeSonnet451mModelId,
 	openRouterClaudeSonnet461mModelId,
 } from "@shared/api"
-import { normalizeOpenaiReasoningEffort } from "@shared/storage/types"
-import { isClaudeOpusAdaptiveThinkingModel, resolveClaudeOpusAdaptiveThinking } from "@shared/utils/reasoning-support"
-import { shouldSkipReasoningForModel, supportsReasoningEffortForModel } from "@utils/model-utils"
+import type { ReasoningConfig } from "@shared/proto/dline/provider/common"
+import { shouldSkipReasoningForModel } from "@utils/model-utils"
 import OpenAI from "openai"
 import type { ChatCompletionTool as OpenAITool } from "openai/resources/chat/completions"
 import type { ClineStorageMessage } from "@/shared/messages/content"
+import { resolveVercelReasoning } from "../providers/vercel-ai-gateway/reasoning"
 import { convertToOpenAiMessages, sanitizeGeminiMessages } from "../transform/openai-format"
 import { convertToR1Format } from "./r1-format"
 import { getOpenAIToolParams } from "./tool-call-processor"
@@ -25,6 +25,7 @@ export async function createVercelAIGatewayStream(
 	reasoningEffort?: string,
 	thinkingBudgetTokens?: number,
 	tools?: OpenAITool[],
+	reasoningConfig?: ReasoningConfig,
 ) {
 	// Convert Anthropic messages to OpenAI format
 	let openAiMessages: OpenAI.Chat.ChatCompletionMessageParam[] = [
@@ -92,15 +93,11 @@ export async function createVercelAIGatewayStream(
 	let temperature: number | undefined = (model.info as any)?.temperature ?? 0
 	let topP: number | undefined
 
-	// Claude Opus 4.5+ uses adaptive thinking instead of budgeted extended thinking.
-	const isAdaptiveThinkingModel = isClaudeOpusAdaptiveThinkingModel(model.id)
-	const adaptiveThinking = isAdaptiveThinkingModel
-		? resolveClaudeOpusAdaptiveThinking(reasoningEffort, thinkingBudgetTokens)
-		: undefined
-	if (isAdaptiveThinkingModel) {
-		temperature = undefined
-		topP = undefined
-	}
+	const reasoning = resolveVercelReasoning(
+		model.id,
+		model.info.capabilities,
+		reasoningConfig ?? { effort: reasoningEffort, thinkingBudget: thinkingBudgetTokens },
+	)
 
 	// R1 format conversion for DeepSeek and similar reasoning models
 	const requiresR1Format =
@@ -118,44 +115,11 @@ export async function createVercelAIGatewayStream(
 		temperature = 1.0
 	}
 
-	const supportsReasoningEffort = supportsReasoningEffortForModel(model.id)
-
-	// Reasoning/thinking budget configuration
-	let reasoning: Record<string, unknown> | undefined
-
-	// Check if it's an Anthropic Claude model that supports thinking
-	const isClaudeThinkingModel =
-		!isAdaptiveThinkingModel && model.id.startsWith("anthropic/claude") && model.info?.capabilities?.thinking
-
-	if (isClaudeThinkingModel) {
-		// For Claude models, match OpenRouter behavior: check even if thinkingBudgetTokens is 0
-		const budgetTokens = thinkingBudgetTokens || 0
-		if (budgetTokens !== 0) {
-			temperature = undefined // extended thinking does not support non-1 temperature
-			reasoning = { max_tokens: budgetTokens }
-		}
-	} else if (
-		thinkingBudgetTokens &&
-		thinkingBudgetTokens > 0 &&
-		model.info?.capabilities?.thinking &&
-		!supportsReasoningEffort
-	) {
-		// For other models with thinkingConfig, use the standard check
-		temperature = undefined // extended thinking does not support non-1 temperature
-		reasoning = { max_tokens: thinkingBudgetTokens }
+	if (reasoning.omitSampling) {
+		temperature = undefined
+		topP = undefined
 	}
-
-	const normalizedReasoningEffort = reasoningEffort !== undefined ? normalizeOpenaiReasoningEffort(reasoningEffort) : undefined
-	const reasoningEffortValue = supportsReasoningEffort ? normalizedReasoningEffort : undefined
-	// Skip reasoning for models that don't support it (e.g., devstral, grok-4), or when effort explicitly disables it.
-	const includeReasoning = isAdaptiveThinkingModel
-		? !!adaptiveThinking?.enabled
-		: !shouldSkipReasoningForModel(model.id) && reasoningEffortValue !== "none"
-	const reasoningPayload = isAdaptiveThinkingModel
-		? adaptiveThinking?.enabled
-			? { enabled: true }
-			: undefined
-		: (reasoning ?? (reasoningEffortValue && reasoningEffortValue !== "none" ? { effort: reasoningEffortValue } : undefined))
+	const includeReasoning = reasoning.enabled && !shouldSkipReasoningForModel(model.id)
 
 	const requestPayload: Record<string, unknown> = {
 		model: model.id,
@@ -166,8 +130,7 @@ export async function createVercelAIGatewayStream(
 		stream: true,
 		stream_options: { include_usage: true },
 		include_reasoning: includeReasoning,
-		...(reasoningPayload ? { reasoning: reasoningPayload } : {}),
-		...(isAdaptiveThinkingModel && adaptiveThinking?.effort ? { verbosity: adaptiveThinking.effort } : {}),
+		...(reasoning.reasoning ? { reasoning: reasoning.reasoning } : {}),
 		...getOpenAIToolParams(tools),
 	}
 

@@ -1,5 +1,50 @@
 import { describe, expect, it } from "vitest"
-import { normalizeHostedWebSearchOperation, normalizeWebSearchItems } from "../web-tools"
+import { normalizeHostedWebFetchContent, normalizeHostedWebSearchOperation, normalizeWebSearchItems } from "../web-tools"
+
+describe("hosted Web Fetch content normalization", () => {
+	it("returns the full text of an Anthropic text document", () => {
+		const text = "# Current docs\n\nFirst paragraph.\n\nSecond paragraph."
+		expect(
+			normalizeHostedWebFetchContent({
+				type: "web_fetch_result",
+				url: "https://example.com/docs",
+				retrieved_at: "2026-10-06T10:00:00Z",
+				content: {
+					type: "document",
+					title: "Current docs",
+					source: { type: "text", media_type: "text/plain", data: text },
+				},
+			}),
+		).toBe(text)
+	})
+
+	it("does not surface binary documents such as base64 PDFs", () => {
+		expect(
+			normalizeHostedWebFetchContent({
+				type: "web_fetch_result",
+				url: "https://example.com/paper.pdf",
+				content: {
+					type: "document",
+					source: { type: "base64", media_type: "application/pdf", data: "JVBERi0xLjQK" },
+				},
+			}),
+		).toBeUndefined()
+	})
+
+	it("accepts a provider result whose content is already text", () => {
+		expect(normalizeHostedWebFetchContent({ url: "https://example.com", content: "plain page text" })).toBe("plain page text")
+	})
+
+	it("returns undefined when the result carries no readable text", () => {
+		expect(normalizeHostedWebFetchContent(undefined)).toBeUndefined()
+		expect(normalizeHostedWebFetchContent({ type: "web_fetch_result", url: "https://example.com" })).toBeUndefined()
+		expect(
+			normalizeHostedWebFetchContent({
+				content: { type: "document", source: { type: "text", media_type: "text/plain", data: "   " } },
+			}),
+		).toBeUndefined()
+	})
+})
 
 describe("hosted Web Search presentation normalization", () => {
 	it("normalizes current and deprecated search action query fields", () => {
