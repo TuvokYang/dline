@@ -7,11 +7,17 @@ import { ClineDefaultTool } from "@shared/tools"
 import { describe, expect, it } from "vitest"
 import { prepareRegisteredToolAdmission } from "../../executors/tool/ToolAdmissionRegistry"
 
-function decision(taskId: string, workspaceDirectory: string, toolName: ClineDefaultTool, target: string) {
+function decision(
+	taskId: string,
+	workspaceDirectory: string,
+	toolName: ClineDefaultTool,
+	target: string,
+	options: { actions?: Partial<typeof DEFAULT_AUTO_APPROVAL_SETTINGS.actions>; params?: Record<string, string> } = {},
+) {
 	const block: ToolUse = {
 		type: "tool_use",
 		name: toolName,
-		params: { path: target },
+		params: { path: target, ...options.params },
 		partial: false,
 		function_id: `function-${toolName}`,
 		dline_tid: `dline-${toolName}`,
@@ -27,7 +33,12 @@ function decision(taskId: string, workspaceDirectory: string, toolName: ClineDef
 			workspaceRoots: [workspaceDirectory],
 			settings: {
 				...DEFAULT_AUTO_APPROVAL_SETTINGS,
-				actions: { ...DEFAULT_AUTO_APPROVAL_SETTINGS.actions, readFiles: true, readFilesExternally: false },
+				actions: {
+					...DEFAULT_AUTO_APPROVAL_SETTINGS.actions,
+					readFiles: true,
+					readFilesExternally: false,
+					...options.actions,
+				},
 			},
 			blanket: {},
 		},
@@ -52,5 +63,33 @@ describe("canonical task read scope", () => {
 		expect(decision(taskId, workspaceDirectory, ClineDefaultTool.FILE_READ, taskHistoryPath).kind).toBe("manual")
 		expect(decision(taskId, workspaceDirectory, ClineDefaultTool.FILE_READ, otherTaskArtifactPath).kind).toBe("manual")
 		expect(decision(taskId, workspaceDirectory, ClineDefaultTool.LIST_FILES, artifactPath).kind).toBe("manual")
+	})
+
+	it("treats the current task temp directory as project files for every path tool", () => {
+		const taskId = "task-temp-scope"
+		// Write tools take workspace-relative paths, so the workspace sits beside the task root on the same drive.
+		const workspaceDirectory = path.resolve(getTaskArtifactDirectory(taskId), "..", "..", "..", "dline-project-temp-scope")
+		const tempDirectory = path.join(getTaskArtifactDirectory(taskId), "tmp")
+		const commandLog = path.relative(workspaceDirectory, path.join(tempDirectory, "command-logs", "command_1.log"))
+		const otherTaskTemp = path.join(getTaskArtifactDirectory("another-task"), "tmp", "command-logs")
+		const artifactPath = path.relative(
+			workspaceDirectory,
+			path.join(getTaskArtifactDirectory(taskId), "artifacts", "notes.md"),
+		)
+		const projectEdits = { actions: { editFiles: true, editFilesExternally: false }, params: { content: "log" } }
+
+		expect(decision(taskId, workspaceDirectory, ClineDefaultTool.LIST_FILES, tempDirectory)).toMatchObject({
+			kind: "automatic",
+			scope: "read_workspace",
+		})
+		expect(
+			decision(taskId, workspaceDirectory, ClineDefaultTool.SEARCH, tempDirectory, { params: { regex: "error" } }).kind,
+		).toBe("automatic")
+		expect(decision(taskId, workspaceDirectory, ClineDefaultTool.FILE_NEW, commandLog, projectEdits)).toMatchObject({
+			kind: "automatic",
+			scope: "edit_workspace",
+		})
+		expect(decision(taskId, workspaceDirectory, ClineDefaultTool.LIST_FILES, otherTaskTemp).kind).toBe("manual")
+		expect(decision(taskId, workspaceDirectory, ClineDefaultTool.FILE_NEW, artifactPath, projectEdits).kind).toBe("manual")
 	})
 })

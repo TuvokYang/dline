@@ -2,6 +2,7 @@ import fs from "node:fs/promises"
 import path from "node:path"
 import { isTaskReadScopePath } from "@core/artifacts/runtime"
 import type { ToolUse } from "@core/assistant-message"
+import { getTaskTempDirectory } from "@core/storage/task-temp"
 import type { AutoApprovalSettings } from "@shared/AutoApprovalSettings"
 import { type BrowserAction, browserActions, type ClineAsk, type ClineSayTool } from "@shared/ExtensionMessage"
 import { ClineDefaultTool } from "@shared/tools"
@@ -235,6 +236,27 @@ function resolveLexicalPath(candidate: string | undefined, snapshot: ToolAdmissi
 	return path.isAbsolute(normalizedInput) ? path.resolve(normalizedInput) : path.resolve(snapshot.cwd, normalizedInput)
 }
 
+/**
+ * Roots whose contents count as project files for permission scope.
+ *
+ * The current task's temp directory holds the task's own command logs and scratch files, so reading,
+ * searching, or writing there is project work rather than an external access.
+ */
+function projectRoots(snapshot: ToolAdmissionSnapshot): readonly string[] {
+	const workspaceRoots = snapshot.workspaceRoots.length > 0 ? snapshot.workspaceRoots : [snapshot.cwd]
+	const taskTempRoot = resolveTaskTempRoot(snapshot.taskId)
+	return taskTempRoot ? [...workspaceRoots, taskTempRoot] : workspaceRoots
+}
+
+function resolveTaskTempRoot(taskId: string): string | undefined {
+	try {
+		return getTaskTempDirectory(taskId)
+	} catch {
+		// A snapshot without a valid task identity has no task temp directory to trust.
+		return undefined
+	}
+}
+
 function isTrustedTaskRead(toolName: ClineDefaultTool, absolutePath: string, snapshot: ToolAdmissionSnapshot): boolean {
 	return (
 		toolName === ClineDefaultTool.FILE_READ &&
@@ -247,7 +269,7 @@ function resolveScopeContext(
 	toolName: ClineDefaultTool,
 	snapshot: ToolAdmissionSnapshot,
 ): PermissionScopeContext {
-	const roots = snapshot.workspaceRoots.length > 0 ? snapshot.workspaceRoots : [snapshot.cwd]
+	const roots = projectRoots(snapshot)
 	const absolutePaths = declaredPaths(block, toolName).map((candidate) => resolveLexicalPath(candidate, snapshot))
 	const requiresApproval = String(parameterValue(block, "requires_approval") ?? "").toLowerCase() === "true"
 	return {
@@ -338,7 +360,7 @@ async function confirmScopeContext(
 		return { scope: { ...lexical, isExternalPath: true }, canonicalPaths: [], confirmationFailed: true }
 	}
 	const resolvedPaths = canonicalPaths.filter((candidate): candidate is string => candidate !== undefined)
-	const roots = snapshot.workspaceRoots.length > 0 ? snapshot.workspaceRoots : [snapshot.cwd]
+	const roots = projectRoots(snapshot)
 	const canonicalRoots = await Promise.all(roots.map(async (root) => (await canonicalizePath(root)) ?? path.resolve(root)))
 	return {
 		scope: {
