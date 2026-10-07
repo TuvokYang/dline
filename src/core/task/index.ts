@@ -3534,17 +3534,17 @@ export class Task {
 	/**
 	 * Execute automatic fitting before ordinary admission without exposing a second Pass authority.
 	 *
-	 * The caller resends the ordinary input after an accepted Pass, so the outcome also names the
-	 * pending tool results the Pass summarized; those must not reach the next request again.
+	 * The caller resends the complete ordinary input after an accepted Pass so durable history keeps every
+	 * tool result; the compaction projection omits results whose tool use the summary already covers.
 	 */
 	private async runOrdinaryContextCompaction(
 		operationId: string,
 		requestScope: RequestApiScope,
 		ordinaryInput: ClineContent[],
 		includeFileDetails: boolean,
-	): Promise<{ result: ContextCompactionSessionResult; consumedPendingFunctionIds: ReadonlySet<string> }> {
+	): Promise<ContextCompactionSessionResult> {
 		if (this.contextCompactionSession.getActiveOperationId()) {
-			return { result: "failed", consumedPendingFunctionIds: new Set() }
+			return "failed"
 		}
 		const boundaryProjectionStartedAtMs = performance.now()
 		const { sourceHistory, sourceCanonicalRanges, targetContinuationHistory, consumedPendingFunctionIds } =
@@ -3569,7 +3569,7 @@ export class Task {
 				boundaryProjectionMs,
 				signal: this.taskState.operationSignal,
 			})
-			return { result, consumedPendingFunctionIds }
+			return result
 		} finally {
 			this.contextCompactionPresentation.clear(operationId)
 			this.taskState.isInternalContextCompactionRequest = false
@@ -9317,7 +9317,7 @@ export class Task {
 			this.ordinaryRequestInputReplay.clear()
 			requestScope.explicitInstructions.cancel()
 			const operationId = `auto-compaction:${this.taskId}:${apiIndex}:${this.genMessageTs()}`
-			const { result, consumedPendingFunctionIds } = await this.runOrdinaryContextCompaction(
+			const result = await this.runOrdinaryContextCompaction(
 				operationId,
 				requestScope,
 				ordinaryCompactionInput,
@@ -9330,16 +9330,12 @@ export class Task {
 			this.contextCompactionFailureReasons.delete(operationId)
 			if (result === "cancelled") return true
 			this.promptCacheHealth.recordCompactionResult(true)
-			return this.recursivelyMakeClineRequests(
-				excludeConsumedPendingResults(originalUserContent, consumedPendingFunctionIds),
-				includeFileDetails,
-				{
-					...transaction,
-					forceCompaction: false,
-					logicalApiIndex: apiIndex,
-					reuseRequestAccounting: true,
-				},
-			)
+			return this.recursivelyMakeClineRequests(originalUserContent, includeFileDetails, {
+				...transaction,
+				forceCompaction: false,
+				logicalApiIndex: apiIndex,
+				reuseRequestAccounting: true,
+			})
 		}
 		let manualCompactionContinuation: ClineContent[] = []
 		if (didCompleteSummarization) {
@@ -9522,7 +9518,7 @@ export class Task {
 				this.ordinaryRequestInputReplay.clear()
 				requestScope.explicitInstructions.cancel()
 				const operationId = `auto-compaction:${this.taskId}:${apiIndex}:${this.genMessageTs()}`
-				const { result, consumedPendingFunctionIds } = await this.runOrdinaryContextCompaction(
+				const result = await this.runOrdinaryContextCompaction(
 					operationId,
 					requestScope,
 					ordinaryCompactionInput,
@@ -9535,16 +9531,12 @@ export class Task {
 				this.contextCompactionFailureReasons.delete(operationId)
 				if (result === "cancelled") return true
 				this.promptCacheHealth.recordCompactionResult(true)
-				return this.recursivelyMakeClineRequests(
-					excludeConsumedPendingResults(originalUserContent, consumedPendingFunctionIds),
-					includeFileDetails,
-					{
-						...transaction,
-						forceCompaction: false,
-						logicalApiIndex: apiIndex,
-						reuseRequestAccounting: true,
-					},
-				)
+				return this.recursivelyMakeClineRequests(originalUserContent, includeFileDetails, {
+					...transaction,
+					forceCompaction: false,
+					logicalApiIndex: apiIndex,
+					reuseRequestAccounting: true,
+				})
 			}
 		}
 

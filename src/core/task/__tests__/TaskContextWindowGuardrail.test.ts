@@ -250,9 +250,11 @@ describe("Task context-window final admission guard", () => {
 		const completeIndex = sessionSource.indexOf('if (decision.status === "complete")', decisionIndex)
 		const commitIndex = sessionSource.indexOf("await this.ports.commit(input, state)", completeIndex)
 		const exhaustedIndex = sessionSource.indexOf('if (decision.status === "exhausted")', commitIndex)
-		const resumeIndex = requestMethod.indexOf(
-			"excludeConsumedPendingResults(originalUserContent, consumedPendingFunctionIds)",
+		// The resumed request persists the complete input; only the provider projection omits summarized results.
+		const resumeIndex = requestMethod.search(
+			/runOrdinaryContextCompaction\([\s\S]*?return this\.recursivelyMakeClineRequests\(\s*originalUserContent,/,
 		)
+		expect(requestMethod).not.toContain("excludeConsumedPendingResults(originalUserContent")
 
 		expect(decisionIndex).toBeGreaterThanOrEqual(0)
 		expect(completeIndex).toBeGreaterThan(decisionIndex)

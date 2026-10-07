@@ -196,7 +196,8 @@ function hasUserAuthoredContent(message: ClineStorageMessage): boolean {
 	})
 }
 
-function hasTaggedUserFeedback(block: ClineUserToolResultContentBlock): boolean {
+/** Whether a tool result carries user-authored feedback that starts a new protected round. */
+export function hasTaggedUserFeedback(block: ClineUserToolResultContentBlock): boolean {
 	return toolResultTexts(block).some((text) => USER_CONTENT_TAGS.some((tag) => text.toLowerCase().includes(tag.toLowerCase())))
 }
 

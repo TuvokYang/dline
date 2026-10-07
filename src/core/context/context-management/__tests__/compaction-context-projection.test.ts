@@ -38,6 +38,123 @@ describe("projectCompactionContext", () => {
 		expect(canonical[2].content).toBe("old question")
 	})
 
+	it("omits tool results whose tool use a completed card summarized while keeping the durable record", () => {
+		const history: ClineStorageMessage[] = [
+			{ role: "user", content: [{ type: "text", text: "task" }], ts: 1 },
+			{
+				role: "assistant",
+				content: [{ type: "tool_use", id: "a", name: "read_file", input: {}, function_id: "call-a" }],
+				ts: 2,
+			},
+			{
+				role: "user",
+				content: [{ type: "tool_result", tool_use_id: "a", function_id: "call-a", content: "RESULT_A" }],
+				ts: 3,
+			},
+			{
+				role: "assistant",
+				content: [{ type: "tool_use", id: "b", name: "read_file", input: {}, function_id: "call-b" }],
+				ts: 4,
+			},
+			{
+				role: "user",
+				content: [
+					{ type: "tool_result", tool_use_id: "b", function_id: "call-b", content: "RESULT_B" },
+					{ type: "text", text: "ENV_DETAILS" },
+				],
+				ts: 5,
+			},
+		] as ClineStorageMessage[]
+
+		const result = projectCompactionContext({
+			canonicalHistory: history,
+			completedCards: [card("summary through the protected reads", [0, 3], 3)],
+		})
+
+		const projected = JSON.stringify(result.messages)
+		expect(projected).toContain("summary through the protected reads")
+		expect(projected).toContain("ENV_DETAILS")
+		expect(projected).not.toContain("RESULT_B")
+		expect(result.canonicalMessageIndexes).toEqual([undefined, 4])
+		expect(JSON.stringify(history[4])).toContain("RESULT_B")
+	})
+
+	it("skips a message left empty after omitting summarized tool results", () => {
+		const history: ClineStorageMessage[] = [
+			{ role: "user", content: [{ type: "text", text: "task" }], ts: 1 },
+			{
+				role: "assistant",
+				content: [{ type: "tool_use", id: "a", name: "read_file", input: {}, function_id: "dline_function_a" }],
+				ts: 2,
+			},
+			{
+				role: "user",
+				content: [{ type: "tool_result", tool_use_id: "a", function_id: "dline_function_a", content: "RESULT_A" }],
+				ts: 3,
+			},
+			{ role: "assistant", content: "latest answer", ts: 4 },
+		] as ClineStorageMessage[]
+
+		const result = projectCompactionContext({
+			canonicalHistory: history,
+			completedCards: [card("summary of the read", [0, 1], 1)],
+		})
+
+		expect(JSON.stringify(result.messages)).not.toContain("RESULT_A")
+		expect(result.canonicalMessageIndexes).toEqual([undefined, 3])
+		expect(result.canonicalRanges).toEqual([[3, 3]])
+	})
+
+	it("keeps tagged user feedback answering a summarized conversational tool", () => {
+		const history: ClineStorageMessage[] = [
+			{ role: "user", content: [{ type: "text", text: "task" }], ts: 1 },
+			{
+				role: "assistant",
+				content: [{ type: "tool_use", id: "q", name: "qna_respond", input: {}, function_id: "call-q" }],
+				ts: 2,
+			},
+			{
+				role: "user",
+				content: [
+					{ type: "tool_result", tool_use_id: "q", function_id: "call-q", content: "<feedback>\nTRIGGER\n</feedback>" },
+				],
+				ts: 3,
+			},
+		] as ClineStorageMessage[]
+
+		const result = projectCompactionContext({
+			canonicalHistory: history,
+			completedCards: [card("summary of the answer", [0, 1], 1)],
+		})
+
+		expect(JSON.stringify(result.messages)).toContain("TRIGGER")
+		expect(result.canonicalMessageIndexes).toEqual([undefined, 2])
+	})
+
+	it("keeps results that were already durable when the summary was produced", () => {
+		const history: ClineStorageMessage[] = [
+			{ role: "user", content: [{ type: "text", text: "task" }], ts: 1 },
+			{
+				role: "assistant",
+				content: [{ type: "tool_use", id: "a", name: "read_file", input: {}, function_id: "call-a" }],
+				ts: 2,
+			},
+			{
+				role: "user",
+				content: [{ type: "tool_result", tool_use_id: "a", function_id: "call-a", content: "RESULT_A" }],
+				ts: 3,
+			},
+		] as ClineStorageMessage[]
+
+		const result = projectCompactionContext({
+			canonicalHistory: history,
+			completedCards: [card("summary of the request", [0, 1], 2)],
+		})
+
+		// Only results that were still pending at Pass time were part of the summarized source payload.
+		expect(JSON.stringify(result.messages)).toContain("RESULT_A")
+	})
+
 	it("accumulates surviving completed cards and ordinary deleted ranges", () => {
 		const result = projectCompactionContext({
 			canonicalHistory: canonical,
