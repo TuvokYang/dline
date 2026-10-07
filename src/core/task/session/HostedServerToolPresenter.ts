@@ -192,8 +192,12 @@ class HostedServerToolPresentationSession implements ProviderServerToolPresentat
 			return
 		}
 		// beginDurableClineMessage permits a late terminal enrichment to replace
-		// the durable row that the first terminal update already committed.
-		await this.messages.beginDurableClineMessage(row).persistence
+		// the durable row that the first terminal update already committed. That
+		// replacement keeps the message count, the only change the view refetches
+		// on, so the terminal row is pushed to it like a partial one.
+		const durable = this.messages.beginDurableClineMessage(row)
+		this.realtime?.publish(durable.message)
+		await durable.persistence
 	}
 
 	private rowId(dlineTid: string): number {

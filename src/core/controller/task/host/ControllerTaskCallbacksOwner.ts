@@ -239,7 +239,12 @@ export class ControllerTaskCallbacksOwner {
 		) {
 			await this.options.messages.finalizeClineMessage(message)
 			await this.publishRow(message, `finalized ${type} row ${ts}`)
-		} else await this.options.messages.addToClineMessages(message)
+		} else {
+			// The view refetches its window by index, so a complete row inserted
+			// behind one it already received can be skipped; dev pushed every new row.
+			await this.options.messages.addToClineMessages(message)
+			await this.publishRow(message, `added ${type} row ${ts}`)
+		}
 		return ts
 	}
 

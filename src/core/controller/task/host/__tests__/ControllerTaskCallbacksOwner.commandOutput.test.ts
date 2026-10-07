@@ -129,6 +129,26 @@ describe("ControllerTaskCallbacksOwner say", () => {
 		expect(delivered).toEqual([{ ts: 99, text: "rejected", partial: false }])
 	})
 
+	// The view refetches its window by index, so a complete row inserted behind
+	// one it already received was only ever drawn if a later refetch reached it.
+	it("publishes a new complete row once it was added", async () => {
+		const { handler, written } = messageStore()
+		const delivered: Array<{ ts: number; text: string; partial: boolean }> = []
+		const unsubscribe = registerPartialMessageCallback((message) => {
+			delivered.push({ ts: Number(message.ts), text: message.text, partial: message.partial })
+		})
+
+		let ts: number | undefined
+		try {
+			ts = await owner(handler).callbacks.say("tool", "hosted search failed", undefined, undefined, false)
+		} finally {
+			unsubscribe()
+		}
+
+		expect(written).toEqual([expect.objectContaining({ ts, text: "hosted search failed", partial: false })])
+		expect(delivered).toEqual([{ ts, text: "hosted search failed", partial: false }])
+	})
+
 	it("publishes a partial row after updating the in-memory message", async () => {
 		const { handler, written } = messageStore()
 		const delivered: Array<{ ts: number; text: string; partial: boolean }> = []
