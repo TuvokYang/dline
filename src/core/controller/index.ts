@@ -1247,7 +1247,7 @@ export class Controller {
 				ignoreController,
 				workspaceManager: this.workspaceManager,
 			}),
-			publishState: () => this.postStateToWebview(),
+			publishState: (publication) => this.postStateToWebview(publication),
 			restoredContextWindowIndicator: historyItem
 				? readHistoryContextWindowIndicator(historyItem.contextWindowIndicator, taskId)
 				: undefined,

@@ -60,12 +60,26 @@ export interface ContextUsageScope {
 	readonly contextWindow: number
 }
 
+/** How a context-usage redraw asks the view to publish: never through a delayed, coalesced build. */
+export interface ContextUsagePublication {
+	readonly immediate: true
+}
+
+const IMMEDIATE_PUBLICATION: ContextUsagePublication = { immediate: true }
+
 export interface TaskContextUsageProjectionOptions {
 	readonly taskId: string
 	readonly target: ContextUsageTarget
 	readonly scope: () => ContextUsageScope
-	/** Pushes the new snapshot to the view; the header only redraws on a published state. */
-	readonly publish: () => Promise<void>
+	/**
+	 * Pushes the new snapshot to the view; the header only redraws on a published state.
+	 *
+	 * Always asked for an immediate publication, which must resolve only once
+	 * the published state was read from the target. Each redraw waits for the
+	 * previous one, so a publisher that merely schedules a later read would let
+	 * a request's first delta overwrite its sending state before the view drew it.
+	 */
+	readonly publish: (request: ContextUsagePublication) => Promise<void>
 	/**
 	 * Runs after the figure settles as the resting context.
 	 *
@@ -182,7 +196,7 @@ export class TaskContextUsageProjection implements ContextUsageObserverPort {
 			.then(() => {
 				this.streamingRedrawQueued = false
 				if (this.inFlight(estimate.turnId)) this.show(indicator.getSnapshot())
-				return this.options.publish()
+				return this.options.publish(IMMEDIATE_PUBLICATION)
 			})
 			.catch((error) => {
 				Logger.warn(
@@ -323,7 +337,7 @@ export class TaskContextUsageProjection implements ContextUsageObserverPort {
 	 */
 	private publish(): void {
 		this.publication = this.publication
-			.then(() => this.options.publish())
+			.then(() => this.options.publish(IMMEDIATE_PUBLICATION))
 			.catch((error) => {
 				Logger.warn(
 					`[ContextUsage] failed to publish context usage: ${error instanceof Error ? error.message : String(error)}`,

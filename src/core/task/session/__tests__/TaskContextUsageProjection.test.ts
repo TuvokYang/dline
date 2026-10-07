@@ -3,6 +3,7 @@ import { type ContextWindowIndicatorSnapshot, getContextWindowIndicatorTotalToke
 import type { Mode } from "@shared/storage/types"
 import { describe, expect, it, vi } from "vitest"
 import {
+	type ContextUsagePublication,
 	type ContextUsageScope,
 	type ContextUsageTarget,
 	isRunAtRest,
@@ -14,7 +15,7 @@ const WINDOW = 1_000_000
 
 function createProjection(mode: Mode = "act", options: Pick<TaskContextUsageProjectionOptions, "settled" | "restored"> = {}) {
 	const target: ContextUsageTarget = {}
-	const publish = vi.fn(async () => {})
+	const publish = vi.fn(async (_publication: ContextUsagePublication) => {})
 	let scope: ContextUsageScope = { mode, profileId: "profile-source", profileName: "Source", contextWindow: WINDOW }
 	const projection = new TaskContextUsageProjection({ taskId: "task-1", target, scope: () => scope, publish, ...options })
 	const switchTo = (next: ContextUsageScope) => {
@@ -146,6 +147,36 @@ describe("TaskContextUsageProjection", () => {
 			environmentTokens: 200,
 		})
 		expect(total(harness)).toBe(7_000)
+	})
+
+	it("asks for an immediate publication, so the view draws a request's sending state before its first delta", async () => {
+		const harness = createProjection()
+		await request(harness, "turn-1", 6_100, 100)
+		const drawn: Array<string | undefined> = []
+		// Models the controller: an immediate publication reads the target now,
+		// any other one only once its coalescing delay elapsed.
+		harness.publish.mockImplementation(async (publication?: Partial<ContextUsagePublication>) => {
+			const read = () => drawn.push(harness.target.contextWindowIndicator?.phase)
+			if (publication?.immediate) read()
+			else setTimeout(read, 50)
+		})
+		vi.useFakeTimers()
+		try {
+			await harness.projection.started({ turnId: "turn-2", contextWindow: WINDOW })
+			// The stream starts at once, well inside a coalescing delay.
+			harness.projection.receiving({
+				turnId: "turn-2",
+				receivingTokens: 50,
+				authoritativeContextTokens: 0,
+				contextWindow: WINDOW,
+			})
+			await vi.advanceTimersByTimeAsync(60)
+		} finally {
+			vi.useRealTimers()
+		}
+
+		expect(drawn).toEqual(["sending", "receiving"])
+		expect(harness.publish).toHaveBeenLastCalledWith({ immediate: true })
 	})
 
 	it("shows a streaming response by the provider's figure before its final usage settles it", async () => {

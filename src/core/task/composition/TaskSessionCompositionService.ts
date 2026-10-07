@@ -157,7 +157,7 @@ export interface OpenTaskSessionCompositionOptions {
 	readonly messages: TaskSessionMessageHost
 	readonly prompt: TaskSessionPromptHost
 	readonly hostFactory: TaskSessionHostFactory
-	readonly publishState: () => Promise<void>
+	readonly publishState: (options?: { readonly immediate?: boolean }) => Promise<void>
 	/** The context-window figure the task showed when it last stopped. */
 	readonly restoredContextWindowIndicator?: ContextWindowIndicatorSnapshot
 }
