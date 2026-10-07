@@ -151,6 +151,10 @@ export async function updateTaskSettings(controller: Controller, request: Update
 			planModeReasoningEffort !== undefined || actModeReasoningEffort !== undefined || taskRuntimeOverrideUpdate.changed
 		const taskModeChanged = mode !== undefined
 		const shouldRebuild = taskProfileChanged || taskReasoningChanged || taskModeChanged
+		// A task-local runtime override applies to the next request; aborting the
+		// one in flight would turn it into an implicit retry that consumes the reply.
+		const abortCurrentRequest =
+			taskProfileChanged || taskModeChanged || planModeReasoningEffort !== undefined || actModeReasoningEffort !== undefined
 
 		if (browserSettings !== undefined) {
 			const currentSettings = controller.stateManager.getGlobalSettingsKey("browserSettings")
@@ -195,7 +199,7 @@ export async function updateTaskSettings(controller: Controller, request: Update
 				taskRuntimeOverrideChanged: taskRuntimeOverrideUpdate.changed,
 				mode: mode ?? "(unchanged)",
 			})
-			await controller.task.owners.api.rebuild({ abortPrevious: true })
+			await controller.task.owners.api.rebuild({ abortPrevious: abortCurrentRequest })
 			if (taskProfileChanged || taskModeChanged) {
 				controller.restartAccountUsagePolling()
 			}

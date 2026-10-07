@@ -137,7 +137,24 @@ describe("updateTaskSettings Task runtime overrides", () => {
 		expect(fixture.setTaskSettings).toHaveBeenCalledWith("task-1", "actModeServiceTierOverrideTier", "priority")
 		expect(fixture.flushPendingState).toHaveBeenCalledOnce()
 		expect(fixture.rebuildApiHandler).toHaveBeenCalledOnce()
+		expect(fixture.rebuildApiHandler).toHaveBeenCalledWith({ abortPrevious: false })
 		expect(fixture.order).toEqual(["flush", "rebuild", "post"])
+	})
+
+	it("aborts the in-flight request only when the Profile or mode changes", async () => {
+		const profileFixture = createController()
+		await updateTaskSettings(
+			profileFixture.controller,
+			UpdateTaskSettingsRequest.create({ taskId: "task-1", settings: { actModeProfile: "Other profile" } }),
+		)
+		expect(profileFixture.rebuildApiHandler).toHaveBeenCalledWith({ abortPrevious: true })
+
+		const legacyEffortFixture = createController()
+		await updateTaskSettings(
+			legacyEffortFixture.controller,
+			UpdateTaskSettingsRequest.create({ taskId: "task-1", settings: { actModeReasoningEffort: "high" } }),
+		)
+		expect(legacyEffortFixture.rebuildApiHandler).toHaveBeenCalledWith({ abortPrevious: true })
 	})
 
 	it("accepts an OpenAI effort from supportsReasoning Profile metadata", async () => {
@@ -254,6 +271,7 @@ describe("updateTaskSettings Task runtime overrides", () => {
 		expect(fixture.setTaskSettings).toHaveBeenCalledWith("task-1", "actModeServiceTierOverrideTier", "flex")
 		expect(fixture.flushPendingState).toHaveBeenCalledOnce()
 		expect(fixture.rebuildApiHandler).toHaveBeenCalledOnce()
+		expect(fixture.rebuildApiHandler).toHaveBeenCalledWith({ abortPrevious: false })
 		expect(fixture.postStateToWebview).toHaveBeenCalledOnce()
 	})
 
