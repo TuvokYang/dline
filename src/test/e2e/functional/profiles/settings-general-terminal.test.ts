@@ -227,8 +227,9 @@ e2e(
 			await startSettingControlStabilityObserver(firstSidebar, { selector: "#terminal-command-timeout input" }, "value")
 			await timeout.fill("0.5")
 			await expect(firstSidebar.getByText("Enter at least 1 minute", { exact: true })).toBeVisible()
-			await timeout.click()
-			await timeout.press("Control+A")
+			// Select through the DOM: VS Code also forwards a webview Ctrl+A to its own
+			// select-all a few milliseconds later, which would swallow the first typed digit.
+			await timeout.selectText()
 			await timeout.pressSequentially("42")
 			await expect(timeout).toHaveValue("42")
 			await timeout.press("Tab")
@@ -345,8 +346,7 @@ e2e(
 		})
 		const timeoutInput = timeoutField.locator("input")
 		await startSettingControlStabilityObserver(sidebar, { selector: "#e2e-shell-integration-timeout input" }, "value")
-		await timeoutInput.click()
-		await timeoutInput.press("Control+A")
+		await timeoutInput.selectText()
 		await timeoutInput.pressSequentially("15")
 		await expect(timeoutInput).toHaveValue("15")
 		await timeoutInput.press("Tab")
