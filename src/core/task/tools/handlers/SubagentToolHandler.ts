@@ -374,12 +374,13 @@ function applyRecipeProfile(
 	return applyProfileOverride(agentConfig ?? ({ name: subagentName } as AgentBaseConfig), profileName)
 }
 
-/** Rebind a persisted failed subagent activity to a fresh runner after Task reopen. */
+/** Rebind a persisted failed or cancelled subagent to a fresh runner after Task reopen. */
 export async function restoreSubagentActivityRetry(config: TaskConfig, activityId: string): Promise<boolean> {
 	const activityStore = config.activityStore
 	const activity = activityStore?.get(activityId)
 	const recipe = activity?.retryRecipe
-	if (!activity || activity.kind !== "subagent" || activity.status !== "failed" || !recipe) return false
+	if (!activity || activity.kind !== "subagent" || (activity.status !== "failed" && activity.status !== "cancelled") || !recipe)
+		return false
 	if (!recipe.retryable) return false
 
 	const requestedName = recipe.subagentName ?? DEFAULT_SUBAGENT_NAME
