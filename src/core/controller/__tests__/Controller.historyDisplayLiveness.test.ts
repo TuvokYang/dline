@@ -33,6 +33,8 @@ const profile = vi.hoisted(() => ({
 	/** Replaced per test; the Profile resolution waits for it. */
 	gate: Promise.resolve() as Promise<void>,
 	adopt: vi.fn(),
+	/** The user's own Profile pick written to the task. */
+	bind: vi.fn(),
 }))
 
 vi.mock("../task/HistoryDisplaySession", () => ({ HistoryDisplaySession: display.FakeHistoryDisplaySession }))
@@ -60,12 +62,22 @@ vi.mock("@/core/task/TaskStateManager", () => ({
 		adoptResolvedProfileIdentity(...args: unknown[]) {
 			profile.adopt(...args)
 		}
+		setProfileIdentityBindings(...args: unknown[]) {
+			profile.bind(...args)
+			return {}
+		}
+		restoreProfileState() {}
 	},
 }))
 
 type PrivateController = {
 	initHistoryDisplaySession(historyItem: HistoryItem, options?: unknown): Promise<string>
 	promoteHistoryDisplay(session: unknown): Promise<void>
+	commitHistoryDisplayProfile(
+		display: unknown,
+		resolution: { profileId: string; profileName: string },
+		modes: readonly string[],
+	): Promise<{ status: string }>
 }
 const controllerPrototype = Controller.prototype as unknown as PrivateController & Record<string, unknown>
 
@@ -95,6 +107,7 @@ function subject() {
 			events.push("initTask")
 		}),
 		adoptHistoryDisplayProfileIdentity: controllerPrototype.adoptHistoryDisplayProfileIdentity,
+		restartAccountUsagePolling: vi.fn(),
 	}
 	return { controller, events, flushPendingState }
 }
@@ -105,6 +118,7 @@ describe("opening a task from History", () => {
 	beforeEach(() => {
 		display.instances.length = 0
 		profile.adopt.mockClear()
+		profile.bind.mockClear()
 	})
 
 	it("publishes the first frame without waiting for the Profile binding or the maintenance", async () => {
@@ -161,5 +175,29 @@ describe("opening a task from History", () => {
 		await promoted
 		expect(events.indexOf("flush")).toBeLessThan(events.indexOf("initTask"))
 		expect(session?.dispose).toHaveBeenCalledTimes(1)
+	})
+
+	// The switcher is usable before the task's own binding lands; writing the
+	// pick first let the late adoption overwrite it with the old Profile.
+	it("writes a Profile picked while the binding is pending after that binding, so the pick wins", async () => {
+		const resolution = deferred<void>()
+		profile.gate = resolution.promise
+		const { controller } = subject()
+		await controllerPrototype.initHistoryDisplaySession.call(controller, historyItem)
+		const session = Object.assign(display.instances[0] ?? {}, { isLocked: () => false })
+
+		const switched = controllerPrototype.commitHistoryDisplayProfile.call(
+			controller,
+			session,
+			{ profileId: "profile-2", profileName: "Chosen" },
+			["act"],
+		)
+		await new Promise((resolve) => setTimeout(resolve, 0))
+		expect(profile.bind).not.toHaveBeenCalled()
+
+		resolution.resolve()
+		await expect(switched).resolves.toMatchObject({ status: "switched" })
+		expect(profile.adopt).toHaveBeenCalledTimes(1)
+		expect(profile.adopt.mock.invocationCallOrder[0]).toBeLessThan(profile.bind.mock.invocationCallOrder[0] ?? 0)
 	})
 })

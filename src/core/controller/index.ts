@@ -2126,6 +2126,11 @@ export class Controller {
 		modes: readonly Mode[],
 	): Promise<ProfileSwitchRequestResult> {
 		if (display.isLocked()) return { status: "rejected", error: "Task is read-only in this window." }
+		// The first frame no longer waits for the task's own Profile binding, so
+		// the switcher is usable while that binding is still being adopted. The
+		// user's choice is written after it lands; otherwise the late adoption
+		// would overwrite the choice and the task would promote on the old Profile.
+		await this.historyDisplayProfileBindings.get(display)
 		const taskSettings = new TaskStateManager(display.taskId, this.stateManager)
 		const binding = { profileId: resolution.profileId, profileName: resolution.profileName }
 		const bindings: Partial<Record<Mode, typeof binding>> = {}
