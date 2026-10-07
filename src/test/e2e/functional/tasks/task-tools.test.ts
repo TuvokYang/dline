@@ -6,6 +6,17 @@ import { readTaskActivities, readTaskConversationText } from "@e2e/utils/task-in
 import { startFooterActionStabilityObserver, stopFooterActionStabilityObserver } from "@e2e/utils/ui-stability"
 import { expect, type Frame, type Page } from "@playwright/test"
 
+/**
+ * How long an approved file edit may take to reach the disk.
+ *
+ * The write cannot land sooner than about four seconds after Approve:
+ * WriteToFileToolHandler waits 300 ms for the diff view and 3.5 s for
+ * diagnostics before saving, and a task's first edit also waits for the
+ * checkpoint baseline, which is often still initializing when Approve is
+ * clicked. The default 5 s poll left well under a second for all of that.
+ */
+const APPROVED_WRITE_TIMEOUT_MS = 15_000
+
 async function setAutoApproveAction(sidebar: Frame, label: string, enabled: boolean): Promise<void> {
 	await sidebar.getByLabel("Open auto-approve settings").click()
 	const checkbox = sidebar.locator("vscode-checkbox").filter({ hasText: label })
@@ -893,10 +904,12 @@ e2e(
 
 		const filePath = path.join(workspaceDir, "e2e-tool-file.txt")
 		await expect
-			.poll(async () =>
-				readFile(filePath, "utf8")
-					.then((text) => text.replaceAll("\r\n", "\n"))
-					.catch(() => ""),
+			.poll(
+				async () =>
+					readFile(filePath, "utf8")
+						.then((text) => text.replaceAll("\r\n", "\n"))
+						.catch(() => ""),
+				{ timeout: APPROVED_WRITE_TIMEOUT_MS },
 			)
 			.toBe("alpha\n")
 		const rejectButton = sidebar.getByText("Reject", { exact: true })
@@ -907,7 +920,9 @@ e2e(
 		await expect.poll(async () => (await readFile(filePath, "utf8")).replaceAll("\r\n", "\n")).toBe("alpha\n")
 		await expect(approveButton).toBeVisible({ timeout: 60_000 })
 		await approveButton.click()
-		await expect.poll(async () => (await readFile(filePath, "utf8")).replaceAll("\r\n", "\n")).toBe("beta\n")
+		await expect
+			.poll(async () => (await readFile(filePath, "utf8")).replaceAll("\r\n", "\n"), { timeout: APPROVED_WRITE_TIMEOUT_MS })
+			.toBe("beta\n")
 		await expect(sidebar.getByText("E2E_WRITE_REPLACE_OK", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
 
 		await expect.poll(() => server.openAiRequestCount).toBe(4)
@@ -1028,10 +1043,12 @@ e2e(
 		await expect(approveButton).toBeVisible({ timeout: 60_000 })
 		await approveButton.click()
 		await expect
-			.poll(async () =>
-				readFile(filePath, "utf8")
-					.then((text) => text.replaceAll("\r\n", "\n"))
-					.catch(() => ""),
+			.poll(
+				async () =>
+					readFile(filePath, "utf8")
+						.then((text) => text.replaceAll("\r\n", "\n"))
+						.catch(() => ""),
+				{ timeout: APPROVED_WRITE_TIMEOUT_MS },
 			)
 			.toBe("write survives cancellation\n")
 		await expect.poll(() => server.openAiRequestCount, { timeout: 60_000 }).toBe(2)
