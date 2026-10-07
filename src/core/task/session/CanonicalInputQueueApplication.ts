@@ -1,6 +1,7 @@
 import { Logger } from "@shared/services/Logger"
 import { renderRetainedInputs } from "../continuation/RetainedInputContent"
 import { retainedQueueDeliveryEntries } from "../kernel/machines/intake"
+import type { RejectReason } from "../kernel/types"
 import type { RuntimeFacade } from "../runtime"
 import type { TaskPayloadStore } from "../stores"
 import { decodeTaskPayload } from "../stores/payload/TaskPayloadCodec"
@@ -16,6 +17,18 @@ import type {
 	InputQueueApplicationPort,
 } from "./InputQueueApplicationPort"
 import type { TaskInputMaterializer } from "./TaskInputMaterializer"
+
+/**
+ * Why the kernel refused a queue change, as the diagnostic the Webview logs.
+ *
+ * Only a new entry can be held back by the task's phase: a compaction in
+ * progress keeps the send with the user until its summary has landed.
+ */
+function refusalOf(mutation: CanonicalInputQueueMutation, reason: RejectReason): string {
+	if (reason === "capacity_exceeded") return "queue_full"
+	if (mutation.kind === "enqueue" && reason === "phase_invalid") return "input_held"
+	return "missing_entry"
+}
 
 export class CanonicalInputQueueApplication implements InputQueueApplicationPort {
 	private readonly payloadCache = new Map<string, UserInputEnvelope>()
@@ -79,10 +92,7 @@ export class CanonicalInputQueueApplication implements InputQueueApplicationPort
 
 		const submitted = await this.runtime.submit(event)
 		if (submitted.kind === "rejected") {
-			return {
-				accepted: false,
-				result: submitted.reason === "capacity_exceeded" ? "queue_full" : "missing_entry",
-			}
+			return { accepted: false, result: refusalOf(mutation, submitted.reason) }
 		}
 		try {
 			await submitted.receipt.durable

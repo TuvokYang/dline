@@ -59,6 +59,40 @@ describe("canonical input queue mutations", () => {
 		expect(pendingIntakeEntryIds(result.state.intake)).toEqual([])
 	})
 
+	// A send while the compaction barrier runs can neither overtake it nor be
+	// lost: refusing it leaves the draft with the user, who sends it once the
+	// summary has landed, instead of the queue slipping it into the held round.
+	it.each(["scheduled", "running"] as const)("refuses to retain input while a compaction is %s", (status) => {
+		const state: TaskState = {
+			...running(),
+			flow: {
+				phase: "running",
+				compaction: { compactionId: "compaction-1", attempt: "attempt-1", contextRef: "context:1", status },
+			},
+		}
+
+		const result = transition(state, {
+			type: "input_queue.enqueued",
+			generation: 0,
+			entryId: "queue-1",
+			payloadRef: "payload:1",
+		})
+
+		expect(result).toMatchObject({ kind: "rejected", reason: "phase_invalid", state })
+	})
+
+	it("retains input again once the compaction has landed", () => {
+		const state: TaskState = {
+			...running(),
+			flow: {
+				phase: "running",
+				compaction: { compactionId: "compaction-1", attempt: "attempt-1", contextRef: "context:1", status: "completed" },
+			},
+		}
+
+		expect(enqueue(state, "queue-1").intake.queued.map((entry) => entry.entryId)).toEqual(["queue-1"])
+	})
+
 	it("applies toggle, reorder, edit, cancel and remove without changing authority", () => {
 		let state = enqueue(enqueue(enqueue(running(), "a"), "b"), "c")
 		state = accepted(transition(state, { type: "input_queue.mode_toggled", generation: 0, entryId: "b" })).state

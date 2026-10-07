@@ -88,6 +88,11 @@ function hasRequiredPayload(
 	return event.draftRef !== undefined && event.selectionRef !== undefined
 }
 
+function compactionHoldsInput(state: TaskState): boolean {
+	const status = state.flow.compaction?.status
+	return status === "scheduled" || status === "running"
+}
+
 function validateEvent(state: TaskState, event: TaskEvent): ValidationFailure | undefined {
 	if (
 		event.type === "user.submit" ||
@@ -105,6 +110,10 @@ function validateEvent(state: TaskState, event: TaskEvent): ValidationFailure | 
 			return { reason: "duplicate", message: `Entry ${event.entryId} already exists` }
 		if (!intakeHasCapacity(entries)) return { reason: "capacity_exceeded", message: "Intake box capacity exceeded" }
 	}
+	// The queue would deliver into the round the compaction holds, so a send
+	// during the barrier stays with the user until the summary has landed.
+	if (event.type === "input_queue.enqueued" && compactionHoldsInput(state))
+		return { reason: "phase_invalid", message: "A compaction in progress holds new input until it lands" }
 	if (
 		event.type === "input_queue.mode_toggled" ||
 		event.type === "input_queue.reordered" ||

@@ -576,8 +576,9 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 	const taskInputEnabled = Boolean(taskViewState?.input.enabled && taskViewState.input.enterAction && interactionSynchronized)
 	// The queue is drained at a turn end or a tool round, and only a task that
 	// is still working reaches either. Retaining a send after that would hide it
-	// in a queue nothing will come back for.
-	const queueCanDeliver = taskViewState ? taskPhaseStillDelivers(taskViewState.phase) : false
+	// in a queue nothing will come back for. A compaction in progress holds new
+	// input until its summary lands, so a send then stays in the composer too.
+	const queueCanDeliver = taskViewState && !contextCompactionActive ? taskPhaseStillDelivers(taskViewState.phase) : false
 	const canRenderCompactTask = Boolean(taskViewState?.taskId)
 	const canRenderForceTruncate = taskViewState?.forceTruncateAvailable === true
 	useEffect(() => {
