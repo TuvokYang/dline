@@ -19,19 +19,31 @@ afterEach(async () => {
 function setupTraceExporter(): {
 	readonly exporter: InMemorySpanExporter
 	readonly provider: OpenTelemetryTraceProvider
+	readonly recordHistogram: ReturnType<typeof vi.fn>
 } {
 	const exporter = new InMemorySpanExporter()
 	const provider = new OpenTelemetryTraceProvider("http://127.0.0.1:4318", {
 		processor: new SimpleSpanProcessor(exporter),
 	})
+	const recordHistogram = vi.fn()
 	configureSignalRecording({ enabled: () => true })
 	installObservabilityPipeline({
 		startSpan: (options) => provider.startSpan(options),
 		recordGauge: () => {},
-		recordHistogram: () => {},
+		recordHistogram,
 	})
 	cleanup.push(() => provider.dispose())
-	return { exporter, provider }
+	return { exporter, provider, recordHistogram }
+}
+
+function recordedStages(recordHistogram: ReturnType<typeof vi.fn>): unknown[] {
+	return recordHistogram.mock.calls
+		.filter(([name]) => name === "dline.runtime.operation.duration")
+		.map(([, , attributes]) => attributes)
+}
+
+function stage(name: string, hasTaskLock: boolean, outcome = "success") {
+	return { operation: "task_init.stage", stage: name, kind: "history", hasTaskLock, outcome }
 }
 
 describe("history task readiness", () => {
@@ -45,8 +57,8 @@ describe("history task readiness", () => {
 		])
 	})
 
-	it("records one bounded root span across display and interactive preparation", async () => {
-		const { exporter, provider } = setupTraceExporter()
+	it("records one bounded root span and low-cardinality stages across display and interactive preparation", async () => {
+		const { exporter, provider, recordHistogram } = setupTraceExporter()
 
 		await prepareHistoryTaskForDisplay({
 			taskId: "task-1",
@@ -65,6 +77,36 @@ describe("history task readiness", () => {
 			"task.history_prepare.displayed",
 			"task.history_prepare.ready",
 			"task.history_prepare.prepared",
+		])
+		expect(recordedStages(recordHistogram)).toEqual([
+			stage("history_surface_preparing", true),
+			stage("history_display", true),
+			stage("history_surface_ready", true),
+			stage("history_background_prepare", true),
+		])
+	})
+
+	// The history-open liveness check reads these stages to tell the extension's
+	// share of opening a task from the view's transport and rendering.
+	it("times the visible surface of a display that owns no task runtime", async () => {
+		const { recordHistogram } = setupTraceExporter()
+		let current = true
+
+		await prepareHistoryTaskForDisplay({
+			taskId: "task-1",
+			displayHistory: async () => undefined,
+			prepareFromHistory: async () => undefined,
+			hasTaskLock: false,
+			isCurrent: () => current,
+			onReadyToDisplay: async () => {
+				current = false
+			},
+		})
+
+		expect(recordedStages(recordHistogram)).toEqual([
+			stage("history_surface_preparing", false),
+			stage("history_display", false),
+			stage("history_surface_ready", false, "superseded"),
 		])
 	})
 

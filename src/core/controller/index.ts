@@ -144,6 +144,7 @@ import { composeBackgroundHandoffAvailability } from "./task/BackgroundHandoffAv
 import { describeDialogState, describeDispatch } from "./task/describeInteractionDispatch"
 import { dispatchInteraction } from "./task/dispatchInteraction"
 import { HistoryDisplaySession } from "./task/HistoryDisplaySession"
+import { measureHistoryReadinessStage } from "./task/history-readiness-telemetry"
 import { prepareHistoryTaskForDisplay } from "./task/history-task-readiness"
 import { ControllerTaskSessionHostFactory } from "./task/host/ControllerTaskSessionHostFactory"
 import { ControllerTaskSessionPorts } from "./task/host/ControllerTaskSessionPorts"
@@ -1435,9 +1436,15 @@ export class Controller {
 			this.isTaskLockedByAnotherInstance(session.taskId),
 		])
 
+		const isCurrent = () => this.historyDisplaySession === session
 		const publishReadyHistory = async () => {
-			if (this.historyDisplaySession !== session) return
-			await this.postStateToWebview({ immediate: true })
+			if (!isCurrent()) return
+			// The first frame that carries the task's messages; it must not wait for maintenance.
+			await measureHistoryReadinessStage(
+				"history_message_surface",
+				{ taskId: session.taskId, hasTaskLock: false, isCurrent },
+				() => this.postStateToWebview({ immediate: true }),
+			)
 			await options?.onHistoryTaskReadyToDisplay?.()
 			// Started only once the first frame is out: it blocks the host while
 			// it hydrates activities, and nothing that frame draws depends on it.
@@ -1479,7 +1486,7 @@ export class Controller {
 			// history preparation to run. It is unrelated to the task lock.
 			prepareFromHistory: async () => undefined,
 			hasTaskLock: false,
-			isCurrent: () => this.historyDisplaySession === session,
+			isCurrent,
 			onPreparingToDisplay: options?.onHistoryTaskPreparingToDisplay,
 			onReadyToDisplay: publishReadyHistory,
 		})
