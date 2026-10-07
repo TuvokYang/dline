@@ -102,6 +102,9 @@ function isCompleteExecutionTurnEnd(kind: InteractionKind): boolean {
 	}
 }
 
+/** Upper bound for holding a mode switch while its target interaction finishes presenting. */
+const MODE_SWITCH_PRESENTATION_WAIT_MS = 30_000
+
 /** Select conversational interactions that can continue after a committed mode switch. */
 function modeSwitchAction(kind: InteractionKind): InteractionResponse["actionId"] | undefined {
 	switch (kind) {
@@ -269,6 +272,42 @@ export class InteractionCoordinator {
 			}
 		}
 		return result
+	}
+
+	/**
+	 * Wait while a mode-switch-eligible interaction is still being presented.
+	 *
+	 * The Webview can attach a draft to an ask it has already rendered while the
+	 * runtime still holds that interaction in `opening` (a completion runs its
+	 * checkpoint and hooks before it is presented). Waiting lets the draft reach
+	 * that interaction instead of being dropped. Settles when the interaction is
+	 * awaiting, when it stops being the active interaction, or after `timeoutMs`.
+	 */
+	async settleModeSwitchInteraction(timeoutMs = MODE_SWITCH_PRESENTATION_WAIT_MS): Promise<void> {
+		const openingInteractionId = (): string | undefined => {
+			const interaction = this.runtime.getState().interaction
+			return interaction?.status === "opening" && modeSwitchAction(interaction.kind) !== undefined
+				? interaction.interactionId
+				: undefined
+		}
+		const interactionId = openingInteractionId()
+		if (!interactionId) return
+		await new Promise<void>((resolve) => {
+			let settled = false
+			const settle = () => {
+				if (settled) return
+				settled = true
+				clearTimeout(timer)
+				unsubscribe()
+				resolve()
+			}
+			const timer = setTimeout(settle, timeoutMs)
+			const unsubscribe = this.runtime.subscribe(() => {
+				if (openingInteractionId() !== interactionId) settle()
+			})
+			// A commit between the first read and subscribing would otherwise be missed.
+			if (openingInteractionId() !== interactionId) settle()
+		})
 	}
 
 	/** Return whether the current awaiting interaction can continue after a direct mode switch. */

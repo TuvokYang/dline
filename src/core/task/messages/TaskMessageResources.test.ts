@@ -2,7 +2,9 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { ClineStorageMessage } from "@shared/messages/content"
 import { describe, expect, it, vi } from "vitest"
+import { ApiConversation, type ApiConversationReadWindow } from "@/core/storage/ApiConversation"
 import { type TaskMessageResourcePorts, TaskMessageResources } from "./TaskMessageResources"
 
 function deferred<T>() {
@@ -255,5 +257,40 @@ describe("TaskMessageResources", () => {
 		expect(resources.hasExecutionStores).toBe(false)
 		expect(uiMessage.close).toHaveBeenCalledOnce()
 		expect(apiConversation.close).toHaveBeenCalledOnce()
+	})
+
+	it("releases a loaded recovery API window and keeps only the records still addressed after hydration", async () => {
+		const { resources } = fixture()
+		const history: ClineStorageMessage[] = Array.from({ length: 100 }, (_, index) => ({
+			role: index % 2 === 0 ? "user" : "assistant",
+			content: [{ type: "text", text: `api-${index}` }],
+		}))
+		const getAt = vi.fn((index: number) => history[index])
+		const recoveryWindow = {
+			historyLength: history.length,
+			tail: history,
+			tailStartIndex: 0,
+			getAt,
+			completeHistory: history,
+		} as unknown as ApiConversationReadWindow
+		const readWindow = vi.spyOn(ApiConversation, "readWindow").mockResolvedValue(recoveryWindow)
+		try {
+			await resources.readApiWindow({ tailStartIndex: 0 })
+			expect(resources.getApiMessageAt(50)).toBe(history[50])
+
+			resources.retainRecoveryApiMessages([3, 98, 400])
+			getAt.mockClear()
+
+			expect(resources.getApiMessageAt(3)).toBe(history[3])
+			expect(resources.getApiMessageAt(98)).toBe(history[98])
+			expect(resources.getApiMessageAt(50)).toBeUndefined()
+			expect(resources.getApiMessageAt(400)).toBeUndefined()
+			expect(getAt).not.toHaveBeenCalled()
+
+			await resources.close()
+			expect(resources.getApiMessageAt(3)).toBeUndefined()
+		} finally {
+			readWindow.mockRestore()
+		}
 	})
 })

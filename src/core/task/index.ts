@@ -1254,6 +1254,14 @@ export class Task {
 				if (this.controllerDetached || this.readOnly) throw new Error("History preparation was superseded")
 				this.taskRuntime.restore(hydrateSnapshot(result.snapshot))
 				this.syncRetainedMachines()
+				// The synthesized interaction read its turn-end block before hydration; afterwards only the
+				// request anchor and turn assistant record are still addressed by retry/continuation checks.
+				const { snapshot } = result
+				this.messageResources.retainRecoveryApiMessages([
+					snapshot.apiIndex,
+					...(snapshot.anchor ? [snapshot.anchor.apiIndex] : []),
+					...(snapshot.turn ? [snapshot.turn.assistantApiIndex] : []),
+				])
 			},
 			publishView: async () => {
 				await this.controller.postTaskViewPatchToWebview()
@@ -2559,6 +2567,8 @@ export class Task {
 		const hasModeSwitchInput = Boolean(
 			chatContent?.message?.trim() || chatContent?.images?.length || chatContent?.files?.length,
 		)
+		// The draft was attached to an ask the Webview already shows; let it finish presenting before deciding.
+		if (hasModeSwitchInput) await this.interactionCoordinator.settleModeSwitchInteraction()
 		const shouldContinueInteraction = hasModeSwitchInput && this.interactionCoordinator.canRespondForModeSwitch()
 		if (hasModeSwitchInput && this.taskState.isAwaitingPlanResponse && !shouldContinueInteraction) {
 			throw new Error("The active conversational interaction is no longer available for the mode switch.")
