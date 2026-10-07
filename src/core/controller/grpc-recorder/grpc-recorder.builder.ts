@@ -5,6 +5,15 @@ import { LogFileHandler, LogFileHandlerNoops } from "@/core/controller/grpc-reco
 import { testHooks } from "@/core/controller/grpc-recorder/test-hooks"
 
 /**
+ * The recorder records every gRPC request, so it needs an explicit opt-in. Local source builds and
+ * E2E runs of a packaged VSIX (which is not a "local" environment) may opt in; production never does.
+ */
+export function isGrpcRecorderRequested(env: NodeJS.ProcessEnv): boolean {
+	if (env.GRPC_RECORDER_ENABLED !== "true") return false
+	return env.DLINE_ENVIRONMENT === "local" || env.E2E_TEST === "true"
+}
+
+/**
  * A builder class for constructing a gRPC recorder instance.
  *
  * This class follows the Builder pattern, allowing consumers
@@ -46,7 +55,7 @@ export class GrpcRecorderBuilder {
 	static getRecorder(controller: Controller): IRecorder {
 		if (!GrpcRecorderBuilder.recorder) {
 			GrpcRecorderBuilder.recorder = GrpcRecorder.builder()
-				.enableIf(process.env.GRPC_RECORDER_ENABLED === "true" && process.env.DLINE_ENVIRONMENT === "local")
+				.enableIf(isGrpcRecorderRequested(process.env))
 				.withLogFileHandler(new LogFileHandler())
 				.build(controller)
 		}
