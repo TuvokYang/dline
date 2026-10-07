@@ -1,3 +1,4 @@
+import { Logger } from "@shared/services/Logger"
 import { describe, expect, it, vi } from "vitest"
 import type { HaltStopCommand, ParticipantId, TaskEvent } from "../../kernel"
 import { ALL_HALT_PARTICIPANTS } from "../../kernel/machines/halt"
@@ -138,5 +139,71 @@ describe("HaltCommandExecutor", () => {
 
 		expect(events).toEqual([expect.objectContaining({ type: "halt.halted", participantId: "provider" })])
 		expect(provider.rearm).toHaveBeenCalledWith("halt-1")
+	})
+
+	// Closing a task escalates a halt that missed its deadline into a forced
+	// close. A participant that settles afterwards finds the halt over; that is
+	// not a failure, and logging it as one broke every clean close.
+	it("treats a late receipt for a force-closed halt as superseded, not as a failure", async () => {
+		const logged = vi.spyOn(Logger, "error").mockImplementation(() => undefined)
+		let release!: () => void
+		const drained = new Promise<void>((resolve) => {
+			release = resolve
+		})
+		const tool = new CallbackHaltParticipant({
+			id: "tool",
+			fence: () => undefined,
+			stop: () => undefined,
+			drain: () => drained,
+		})
+		const events: TaskEvent[] = []
+		let haltEnded = false
+		const executor = new HaltCommandExecutor(
+			[tool],
+			{
+				submit: async (event) => (
+					events.push(event), haltEnded ? { kind: "rejected" as const } : { kind: "accepted" as const }
+				),
+			},
+			{ timeoutMs: 5 },
+		)
+
+		try {
+			await executor.execute(command(["tool"]))
+			haltEnded = true
+			executor.forceClose("halt-1")
+			release()
+			await new Promise((resolve) => setTimeout(resolve, 10))
+
+			expect(logged).not.toHaveBeenCalled()
+			expect(events.map((event) => event.type)).toEqual(["lifecycle.halt_timeout"])
+		} finally {
+			logged.mockRestore()
+		}
+	})
+
+	it("still reports a late settlement while the halt is open", async () => {
+		let release!: () => void
+		const drained = new Promise<void>((resolve) => {
+			release = resolve
+		})
+		const tool = new CallbackHaltParticipant({
+			id: "tool",
+			fence: () => undefined,
+			stop: () => undefined,
+			drain: () => drained,
+		})
+		const events: TaskEvent[] = []
+		const executor = new HaltCommandExecutor(
+			[tool],
+			{ submit: async (event) => (events.push(event), { kind: "accepted" as const }) },
+			{ timeoutMs: 5 },
+		)
+
+		await executor.execute(command(["tool"]))
+		release()
+		await new Promise((resolve) => setTimeout(resolve, 10))
+
+		expect(events.map((event) => event.type)).toEqual(["lifecycle.halt_timeout", "halt.halted"])
 	})
 })

@@ -1,3 +1,4 @@
+import { Logger } from "@shared/services/Logger"
 import type { Command, HaltStopCommand, ParticipantId } from "../../kernel"
 import type { CommandExecutor } from "../../runtime"
 import { executorFailure, type HaltOrder, type HaltParticipant, type TaskEventSink } from "../contracts"
@@ -186,10 +187,34 @@ export class HaltCommandExecutor implements CommandExecutor {
 		if (result.kind === "rejected") throw new Error(executorFailure(`halt.${participantId}`, new Error("TimeoutRejected")))
 	}
 
+	/**
+	 * Report a participant that settled after its deadline.
+	 *
+	 * By then a terminate may already have force-closed the halt, and the kernel
+	 * rejects the receipt because the halt is over, not because the participant
+	 * failed. That rejection is expected: it is neither reported as a failure
+	 * nor turned into a second `halt.failed` receipt.
+	 */
 	private observeLateSettlement(command: HaltStopCommand, participantId: ParticipantId, drain: Promise<void>): void {
 		void drain
-			.then(() => this.receipt(command, participantId, "halt.halted"))
-			.catch((error) => this.failed(command, participantId, error))
+			.then(
+				() => "halt.halted" as const,
+				(error: unknown) => {
+					this.onParticipantFailure(participantId, error)
+					return "halt.failed" as const
+				},
+			)
+			.then(async (type) => {
+				if (this.forcedClosedHaltIds.has(command.haltId)) return
+				const result = await this.events.submit({
+					type,
+					generation: command.generation,
+					haltId: command.haltId,
+					participantId,
+				})
+				if (result.kind === "rejected")
+					Logger.debug(`[Halt] Late ${type} from ${participantId} superseded; halt ${command.haltId} already ended`)
+			})
 			.catch((error) => this.onParticipantFailure(participantId, error))
 	}
 
