@@ -960,7 +960,11 @@ export class UseSubagentToolHandler implements IFullyManagedTool, IPreparableToo
 			...emptyStats(),
 		}
 		if (request.options.background) {
-			const runner = new SubagentRunner(config, effectiveSubagentName, resolvedSubagent?.config)
+			// A background job outlives the turn that started it; its own job
+			// cancellation, not the parent turn's abort, ends it.
+			const runner = new SubagentRunner(config, effectiveSubagentName, resolvedSubagent?.config, {
+				inheritTaskAbort: false,
+			})
 			const job = getSubagentJobManager(config).startJob({
 				subagentName: effectiveSubagentName,
 				task: request.task,
@@ -1327,8 +1331,9 @@ export class UseSubagentsToolHandler implements IFullyManagedTool, IPreparableTo
 		}))
 		// Runners are addressed by job id: rejected items make the executing set
 		// sparse, so array position is not a usable identity.
+		const runnerOptions = { inheritTaskAbort: !request.options.background }
 		const runnersByJobId = new Map<string, SubagentRunner>(
-			planned.map((item) => [item.jobId, new SubagentRunner(config, item.subagentName, item.agentConfig)]),
+			planned.map((item) => [item.jobId, new SubagentRunner(config, item.subagentName, item.agentConfig, runnerOptions)]),
 		)
 		const entriesByJobId = new Map<string, SubagentStatusItem>(entries.map((entry) => [entry.jobId as string, entry]))
 		const budget = getSubagentFanoutBudget(config)

@@ -1540,7 +1540,12 @@ describe("SubagentToolHandler", () => {
 			source: "project",
 			path: "/workspace/.agents/subagents/code-reviewer.md",
 		})
-		vi.spyOn(SubagentRunner.prototype, "run").mockResolvedValue({
+		const inheritedAbort: Array<boolean | undefined> = []
+		vi.spyOn(SubagentRunner.prototype, "run").mockImplementation(async function (this: SubagentRunner) {
+			inheritedAbort.push((this as unknown as { options: { inheritTaskAbort?: boolean } }).options.inheritTaskAbort)
+			return backgroundDone()
+		})
+		const backgroundDone = (): SubagentRunResult => ({
 			status: "completed",
 			result: "background done",
 			stats: {
@@ -1574,6 +1579,8 @@ describe("SubagentToolHandler", () => {
 		vitestExpect(createActivity).toHaveBeenCalledWith(
 			vitestExpect.objectContaining({ executionMode: "background", cancellationOwner: "explicit" }),
 		)
+		// The job outlives the turn, so the parent turn's abort must not end it.
+		vitestExpect(inheritedAbort).toEqual([false])
 	})
 
 	it("rejects a disabled batch before opening or replacing presentation", async () => {
