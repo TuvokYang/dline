@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
 import { createInitialTaskState, type TaskState } from "../../kernel"
+import type { EventSubmissionResult } from "../../runtime"
 import type { TaskInput } from "../../shell/TaskShell"
 import { decodeTaskPayload, encodeTaskPayload } from "../../stores/payload/TaskPayloadCodec"
 import type { ToolInvocationEnvelope, ToolResultEnvelope } from "../../stores/payload/TaskPayloadEnvelopes"
@@ -86,7 +87,10 @@ function harness(options: {
 		},
 	} as unknown as TaskState
 	const input: TaskInput = { entryId: "entry-1", payloadRef: "sha256:input" }
-	const resumption = { materialize: vi.fn(async () => input), submit: vi.fn(async () => undefined) }
+	const resumption = {
+		materialize: vi.fn(async () => input),
+		submit: vi.fn(async () => ({ kind: "accepted" }) as unknown as EventSubmissionResult),
+	}
 	const fallback: UnownedDialogContinuationPort & { readonly continue: ReturnType<typeof vi.fn> } = {
 		accepts: vi.fn(() => options.fallbackAccepts ?? false),
 		continue: vi.fn(async () => (options.fallbackAccepts ? ("continued" as const) : ("declined" as const))),

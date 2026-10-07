@@ -2,6 +2,7 @@ import type { UiMessage } from "@shared/ExtensionMessage"
 import { describe, expect, it, vi } from "vitest"
 import { createInitialTaskState, hydrate, type TaskEvent, type TaskState, transition } from "../../kernel"
 import type { MessageStateHandler } from "../../message-state"
+import type { EventSubmissionResult } from "../../runtime"
 import { InMemoryConversationJournal, InMemoryTaskPayloadStore } from "../../stores/InMemoryRuntimeStores"
 import { decodeTaskPayload, encodeTaskPayload } from "../../stores/payload/TaskPayloadCodec"
 import type { DialogDraftEnvelope, ToolInvocationEnvelope, ToolResultEnvelope } from "../../stores/payload/TaskPayloadEnvelopes"
@@ -127,7 +128,7 @@ async function harness(kind: string, toolName: string, actionId: string) {
 	let ts = 1
 	const resumption = {
 		materialize: vi.fn(async () => ({ entryId: "resume-empty", payloadRef: rawRef })),
-		submit: vi.fn(async () => undefined),
+		submit: vi.fn(async () => ({ kind: "accepted" }) as unknown as EventSubmissionResult),
 	}
 	const fallback = { accepts: vi.fn(() => false), continue: vi.fn(async () => "declined" as const) }
 	const continuation = new RestoredToolDialogContinuation(

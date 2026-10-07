@@ -4,6 +4,7 @@ import { Logger } from "@shared/services/Logger"
 import type { InteractionOutcome } from "../interaction/InteractionProtocol"
 import type { QueuedInputResponse } from "../kernel"
 import { createResumeSubmissionContext } from "../resume/ResumeProvenance"
+import type { EventSubmissionResult } from "../runtime"
 import type { TaskInput } from "../shell/TaskShell"
 
 /** One answered dialog that no receiver was waiting for. */
@@ -68,7 +69,12 @@ export interface TaskResumptionPort {
 		readonly context?: string
 		readonly semanticInput?: SemanticInputDocument
 	}): Promise<TaskInput>
-	submit(input: TaskInput): Promise<unknown>
+	/**
+	 * Resolves `rejected` when the runtime refuses the input, for example after a
+	 * phase change or with intake at capacity. That refusal is an expected answer,
+	 * not a thrown failure, so callers must inspect it.
+	 */
+	submit(input: TaskInput): Promise<EventSubmissionResult>
 }
 
 /**
@@ -149,7 +155,14 @@ export class ResumeDialogContinuation implements UnownedDialogContinuationPort {
 			if (resolution.isCurrent && !resolution.isCurrent()) return "declined"
 			if (processAnyway) this.resetMistakes?.()
 			if (manualRetry) this.providerRetry?.takeOver()
-			await this.resumption.submit(input)
+			const submitted = await this.resumption.submit(input)
+			if (submitted.kind === "rejected") {
+				// No round starts from a refused input, so the dialog must stay
+				// answerable and the next request keeps its automatic retries.
+				if (manualRetry) this.providerRetry?.releaseTakeover()
+				Logger.warn(`Runtime refused to resume unowned interaction ${resolution.interactionId}`)
+				return "failed"
+			}
 			return "continued"
 		} catch (error) {
 			if (manualRetry) this.providerRetry?.releaseTakeover()

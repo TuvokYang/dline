@@ -1,12 +1,16 @@
 import { describe, expect, it, vi } from "vitest"
+import type { EventSubmissionResult } from "../../runtime"
 import type { TaskInput } from "../../shell/TaskShell"
 import { ResumeDialogContinuation, type TaskResumptionPort } from "../UnownedDialogContinuation"
+
+const ACCEPTED = { kind: "accepted" } as unknown as EventSubmissionResult
+const REJECTED = { kind: "rejected", reason: "phase_mismatch" } as unknown as EventSubmissionResult
 
 function resumption(): TaskResumptionPort & { readonly materialize: ReturnType<typeof vi.fn> } {
 	const input: TaskInput = { entryId: "entry-1", payloadRef: "sha256:input" }
 	return {
 		materialize: vi.fn(async () => input),
-		submit: vi.fn(async () => undefined),
+		submit: vi.fn(async () => ACCEPTED),
 	}
 }
 
@@ -65,6 +69,25 @@ describe("ResumeDialogContinuation", () => {
 		})
 
 		expect(outcome).toBe("failed")
+		expect(providerRetry.releaseTakeover).toHaveBeenCalledTimes(1)
+	})
+
+	// The runtime refuses an input as an answer, not by throwing; a refused
+	// Retry opens no round, so the dialog must stay and the takeover must end.
+	it("reports a refused resumption as failed and releases the Retry takeover", async () => {
+		const ports = resumption()
+		;(ports.submit as ReturnType<typeof vi.fn>).mockResolvedValueOnce(REJECTED)
+		const providerRetry = { takeOver: vi.fn(), releaseTakeover: vi.fn() }
+		const continuation = new ResumeDialogContinuation(ports, undefined, providerRetry)
+
+		const outcome = await continuation.continue({
+			interactionId: "error:turn-1",
+			kind: "error_retry",
+			outcome: { actionId: "retry", draft: { text: "", images: [], files: [] } },
+		})
+
+		expect(outcome).toBe("failed")
+		expect(providerRetry.takeOver).toHaveBeenCalledTimes(1)
 		expect(providerRetry.releaseTakeover).toHaveBeenCalledTimes(1)
 	})
 
