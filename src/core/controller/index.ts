@@ -56,6 +56,7 @@ import type { ClineUserContent } from "@shared/messages/content"
 import type { ModeSwitchRequestResult } from "@shared/mode-switch"
 import type { ProfileSwitchRequestResult } from "@shared/profile-switch"
 import { DispatchInteractionRequest, DispatchInteractionResponse, type TaskLockStatus } from "@shared/proto/dline/task"
+import { convertClineMessageToProto } from "@shared/proto-conversions/cline-message"
 import { type Settings } from "@shared/storage/state-keys"
 import type { Mode } from "@shared/storage/types"
 import {
@@ -152,6 +153,7 @@ import { selectTaskRateMetricsQuery, type TaskRateMetricsQueryFn } from "./task/
 import { adaptCanonicalTaskView } from "./task/TaskViewMessageAdapter"
 import { startTaskLifecycle } from "./task/task-start-lifecycle"
 import { sendChatButtonClickedEvent } from "./ui/subscribeToChatButtonClicked"
+import { sendPartialMessageEvent } from "./ui/subscribeToPartialMessage"
 
 /**
  * Merge window for ordinary state publications.
@@ -1438,7 +1440,14 @@ export class Controller {
 				const profileBinding = ownerless.then((owned) =>
 					owned ? this.adoptHistoryDisplayProfileIdentity(session.taskId) : undefined,
 				)
-				const [owned] = await Promise.all([ownerless, session.load({ ownerless }), profileBinding])
+				// Orphan recovery runs after the surface is shown; the rows it
+				// settles are redrawn in place once it finishes.
+				const onMaintained = async (rows: readonly UiMessage[]) => {
+					if (this.historyDisplaySession !== session) return
+					await Promise.all(rows.map((row) => sendPartialMessageEvent(this, convertClineMessageToProto(row))))
+					await this.postStateToWebview()
+				}
+				const [owned] = await Promise.all([ownerless, session.load({ ownerless, onMaintained }), profileBinding])
 				if (this.historyDisplaySession !== session || owned) return
 				session.markLocked()
 				// The surface no longer owns the lock a previous task held, so an

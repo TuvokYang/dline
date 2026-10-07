@@ -344,6 +344,7 @@ describe("HistoryDisplaySession", () => {
 
 		try {
 			await session.load()
+			await session.whenMaintained()
 			expect(session.activityStore.list()).toEqual([
 				expect.objectContaining({
 					activityId: "history-subagent",
@@ -396,8 +397,17 @@ describe("HistoryDisplaySession", () => {
 			const session = new HistoryDisplaySession(createHistoryItem(taskId))
 
 			try {
-				await session.load({ ownerless: Promise.resolve(true) })
+				const redrawn: string[] = []
+				await session.load({
+					ownerless: Promise.resolve(true),
+					onMaintained: (rows) => {
+						redrawn.push(...rows.map((row) => row.commandStatus ?? ""))
+					},
+				})
+				await session.whenMaintained()
 				expect(session.activityStore.get("orphan")?.status).toBe("interrupted")
+				// The settled row reaches the chat after the surface was shown.
+				expect(redrawn).toEqual(["interrupted"])
 				expect(session.getMessages().find((message) => message.activityId === "orphan")?.commandStatus).toBe(
 					"interrupted",
 				)
@@ -414,6 +424,7 @@ describe("HistoryDisplaySession", () => {
 
 			try {
 				await session.load({ ownerless: Promise.resolve(false) })
+				await session.whenMaintained()
 				expect(session.activityStore.get("orphan")?.status).toBe("running")
 				expect(session.getMessages().find((message) => message.activityId === "orphan")?.commandStatus).toBe("running")
 			} finally {

@@ -46,6 +46,11 @@ export interface HistoryDisplayLoadOptions {
 	 * display existed. A task another instance holds keeps its running work.
 	 */
 	readonly ownerless?: Promise<boolean>
+	/**
+	 * Told which window rows the background maintenance settled, after the
+	 * surface was already shown, so the chat can redraw them.
+	 */
+	readonly onMaintained?: (rows: readonly UiMessage[]) => Promise<void> | void
 }
 
 /** A command row still showing work whose activity was found interrupted. */
@@ -81,6 +86,8 @@ export class HistoryDisplaySession {
 	private locked = false
 	private loaded = false
 	private disposed = false
+	/** Activity hydration and orphan recovery, which run after the surface is shown. */
+	private maintenance: Promise<void> = Promise.resolve()
 
 	constructor(readonly historyItem: HistoryItem) {
 		this.activityPersistence = new TaskActivityPersistence(historyItem.id)
@@ -107,27 +114,22 @@ export class HistoryDisplaySession {
 		}
 		this.messageReader = reader
 		try {
-			const [latestMessages, snapshot, taskTitlePage, interruptedActivityIds, performance, focusChainHistory] =
-				await Promise.all([
-					reader.getLatest(HISTORY_MESSAGE_WINDOW_SIZE),
-					this.readSnapshot(),
-					reader.getPage(0, 1),
-					this.hydrateActivities(options?.ownerless),
-					this.openMetrics(),
-					this.readFocusChainHistory(),
-				])
+			const [latestMessages, snapshot, taskTitlePage, performance, focusChainHistory] = await Promise.all([
+				reader.getLatest(HISTORY_MESSAGE_WINDOW_SIZE),
+				this.readSnapshot(),
+				reader.getPage(0, 1),
+				this.openMetrics(),
+				this.readFocusChainHistory(),
+			])
 			this.performance = performance
 			this.focusChainHistory = focusChainHistory
 			if (this.disposed) {
 				await this.releaseMetrics()
 				return
 			}
-			const durableMessages = await this.patchInterruptedCommandCards(latestMessages, interruptedActivityIds)
-			if (this.disposed) return
-
 			const inputQueue = await this.readInputQueue(snapshot)
 			if (this.disposed) return
-			const projected = await this.projectSnapshot(reader, snapshot, durableMessages)
+			const projected = await this.projectSnapshot(reader, snapshot, latestMessages)
 			if (this.disposed) return
 			this.durableMessageCount = reader.count
 			this.syntheticMessage = projected.syntheticMessage
@@ -136,12 +138,18 @@ export class HistoryDisplaySession {
 			this.inputQueue = [...inputQueue]
 			this.viewState = projected.view
 			this.loaded = true
+			this.maintenance = this.maintain(options)
 		} catch (error) {
 			if (this.messageReader === reader) this.messageReader = undefined
 			await reader.close().catch(() => undefined)
 			if (this.disposed) return
 			throw error
 		}
+	}
+
+	/** Resolves once the activity hydration and orphan recovery that follow `load` finished. */
+	whenMaintained(): Promise<void> {
+		return this.maintenance
 	}
 
 	/** The focusChain history the task recorded, or null when it never recorded one. */
@@ -244,6 +252,9 @@ export class HistoryDisplaySession {
 
 	async dispose(): Promise<void> {
 		this.disposed = true
+		// activities.db admits one writer; recovery hands it back before the
+		// store is torn down and the promoted Task opens it.
+		await this.maintenance
 		this.activityStore.dispose()
 		const reader = this.messageReader
 		this.messageReader = undefined
@@ -253,6 +264,33 @@ export class HistoryDisplaySession {
 		this.inputQueue = []
 		this.durableMessageCount = 0
 		await Promise.all([reader?.close(), this.releaseActivities(), this.releaseMetrics()])
+	}
+
+	/**
+	 * Hydrate activities and settle orphaned work once the surface is shown.
+	 *
+	 * Recovery waits on the lock check and rewrites the message store, which
+	 * held the first frame of a long task for seconds. Nothing the surface
+	 * draws first depends on it, so it runs afterwards and reports the rows it
+	 * settled so the chat can redraw them.
+	 */
+	private async maintain(options?: HistoryDisplayLoadOptions): Promise<void> {
+		try {
+			const interrupted = await this.hydrateActivities(options?.ownerless)
+			if (this.disposed || interrupted.size === 0) return
+			await this.settleInterruptedCommandCards(interrupted)
+			if (this.disposed) return
+			const settled: UiMessage[] = []
+			this.messages = this.messages.map((message) => {
+				if (!isInterruptedCommandCard(message, interrupted)) return message
+				const row: UiMessage = { ...message, commandStatus: "interrupted" }
+				settled.push(row)
+				return row
+			})
+			if (settled.length > 0) await options?.onMaintained?.(settled)
+		} catch (error) {
+			Logger.warn(`[HistoryDisplay] Background maintenance failed for task ${this.taskId}:`, error)
+		}
 	}
 
 	/**
@@ -281,14 +319,13 @@ export class HistoryDisplaySession {
 	}
 
 	/**
-	 * Settle the command rows of interrupted activities, durably and in the window.
+	 * Settle the command rows of interrupted activities durably.
 	 *
 	 * The row is what the chat draws, so a row left running would keep offering
 	 * Cancel for a process nobody owns. A failed write still shows the row as
-	 * interrupted here: its activity already is.
+	 * interrupted in the window: its activity already is.
 	 */
-	private async patchInterruptedCommandCards(window: UiMessage[], activityIds: ReadonlySet<string>): Promise<UiMessage[]> {
-		if (activityIds.size === 0) return window
+	private async settleInterruptedCommandCards(activityIds: ReadonlySet<string>): Promise<void> {
 		try {
 			const store = await UIMessage.open(this.taskId)
 			try {
@@ -303,9 +340,6 @@ export class HistoryDisplaySession {
 		} catch (error) {
 			Logger.warn(`[HistoryDisplay] Failed to settle interrupted command rows for task ${this.taskId}:`, error)
 		}
-		return window.map((message) =>
-			isInterruptedCommandCard(message, activityIds) ? { ...message, commandStatus: "interrupted" } : message,
-		)
 	}
 
 	private async openMetrics(): Promise<TaskPerformanceOwner | undefined> {
