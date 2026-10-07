@@ -777,6 +777,9 @@ export class TaskSessionCompositionService {
 					requests: providerRequests,
 					nextPresentationId,
 					retry: providerRetry,
+					// Each ordinary request is one logical round for the rate metrics,
+					// however many transport attempts it takes to be answered.
+					rounds: performance,
 					serverTools: new HostedServerToolPresenter(options.taskId, messages, nextPresentationId, realtimeMessages),
 					// With auto-compaction on, the window is managed before a request
 					// is sent; with it off, a refusal for length is the first sign

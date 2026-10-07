@@ -26,9 +26,14 @@ export interface TaskPerformanceOwnerOptions {
 /** Owns every task-local rate metric lifecycle and its durable repositories. */
 export class TaskPerformanceOwner {
 	readonly providerRequestRounds: ProviderRequestRoundPort
+	/** The same owner as `providerRequestRounds`, with the ordinary-round lifecycle only this class drives. */
+	private readonly rounds: TaskProviderRequestRoundOwner
 	private readonly activeMetrics: TaskApiRateMetricsService
 	private readonly roundLifecycle: ApiRequestRoundLifecycle
 	private readonly queryService: TaskRateMetricsQueryService
+	/** The logical round of each turn whose provider request is still open, keyed by turn. */
+	private readonly ordinaryRounds = new Map<string, number>()
+	private nextOrdinaryApiIndex = 0
 	private closed = false
 
 	private constructor(options: TaskPerformanceOwnerOptions) {
@@ -54,7 +59,7 @@ export class TaskPerformanceOwner {
 			new ApiRequestRoundTracker({ taskId: options.taskId, repository: roundRepository, onChanged: options.onChanged }),
 			executions,
 		)
-		this.providerRequestRounds = new TaskProviderRequestRoundOwner({
+		this.rounds = new TaskProviderRequestRoundOwner({
 			lifecycle: this.roundLifecycle,
 			readExecutionBlocks: (turnId) => {
 				const turn = options.readState().turn
@@ -62,6 +67,7 @@ export class TaskPerformanceOwner {
 			},
 			isExecutionCancelling: () => options.readState().halt.status === "stopping",
 		})
+		this.providerRequestRounds = this.rounds
 		this.queryService = new TaskRateMetricsQueryService({
 			activeMetrics: this.activeMetrics,
 			roundRepository,
@@ -102,16 +108,46 @@ export class TaskPerformanceOwner {
 	 * so a task waiting on the user or at rest stops adding to the rates.
 	 */
 	committed(state: Readonly<TaskState>): void {
-		this.activeMetrics.setTaskLoopActive(LOOP_ACTIVE_PHASES.has(state.flow.phase))
+		const loopActive = LOOP_ACTIVE_PHASES.has(state.flow.phase)
+		this.activeMetrics.setTaskLoopActive(loopActive)
+		this.completeSettledRounds(state.turn.turnId, loopActive)
+	}
+
+	/**
+	 * Bind one attempt of a turn's provider request to the turn's logical round.
+	 *
+	 * Retries of a turn share its round, so the rates count one request however
+	 * often it was sent, as dev's request rounds did.
+	 */
+	bindOrdinaryAttempt<T>(turnId: string, attempt: number, stream: AsyncIterable<T>): AsyncIterable<T> {
+		let apiIndex = this.ordinaryRounds.get(turnId)
+		if (apiIndex === undefined) {
+			apiIndex = this.nextOrdinaryApiIndex++
+			this.ordinaryRounds.set(turnId, apiIndex)
+		}
+		return this.rounds.admitOrdinary(apiIndex, attempt).bindAttempt(stream, attempt)
 	}
 
 	requestStarted(): void {
 		this.activeMetrics.recordRequestStarted()
 	}
 
-	requestSettled(usage?: Readonly<Record<string, number>>): void {
+	requestSettled(usage?: Readonly<Record<string, number>>, turnId?: string): void {
 		this.activeMetrics.recordProviderRequestFinished()
 		if (!usage) return
+		const apiIndex = turnId === undefined ? undefined : this.ordinaryRounds.get(turnId)
+		if (apiIndex !== undefined) {
+			this.rounds.attachOrdinaryExactUsage(apiIndex, {
+				inputTokens: finiteUsage(usage.inputTokens),
+				outputTokens: finiteUsage(usage.outputTokens),
+				thoughtsTokens: finiteUsage(usage.thoughtsTokenCount),
+				cacheWriteTokens: finiteUsage(usage.cacheWriteTokens),
+				cacheReadTokens: finiteUsage(usage.cacheReadTokens),
+				// A provider that says nothing about its cache must not read as a cold one.
+				cacheUsageReported: usage.cacheWriteTokens !== undefined || usage.cacheReadTokens !== undefined,
+				totalCost: Number.isFinite(usage.totalCost) ? usage.totalCost : undefined,
+			})
+		}
 		this.activeMetrics.recordExactUsage({
 			inputTokens: finiteUsage(usage.inputTokens),
 			outputTokens: finiteUsage(usage.outputTokens),
@@ -119,6 +155,15 @@ export class TaskPerformanceOwner {
 			cacheReadTokens: finiteUsage(usage.cacheReadTokens),
 			thoughtsTokens: finiteUsage(usage.thoughtsTokenCount),
 		})
+	}
+
+	/** A turn that stopped running ends its round; a cancelled one is dropped. */
+	private completeSettledRounds(currentTurnId: string | undefined, loopActive: boolean): void {
+		for (const [turnId, apiIndex] of this.ordinaryRounds) {
+			if (loopActive && turnId === currentTurnId) continue
+			this.rounds.completeTurn(this.rounds.getOrdinary(apiIndex))
+			this.ordinaryRounds.delete(turnId)
+		}
 	}
 
 	getSnapshot(): ApiRateSnapshot {
