@@ -14,7 +14,7 @@ import type {
 import type { ComposePort, ComposeRoundInput, ComposeRoundResult } from "./ComposeCommandExecutor"
 import { type RetainedBatchReceipt, RetainedInputJournalBatch } from "./RetainedInputJournalBatch"
 import type { RetainedInputPresentationCommit, RetainedInputPresentationPort } from "./RetainedInputPresentationPort"
-import { materializeToolTerminalManifest } from "./ToolTerminalManifestMaterializer"
+import { materializeToolTerminalManifest, type ToolDenialPort } from "./ToolTerminalManifestMaterializer"
 
 /**
  * Renders the dynamic environment block for one provider round.
@@ -119,6 +119,8 @@ export interface ProductionComposeAdapterOptions {
 	readonly retainedInputPresentation?: RetainedInputPresentationPort
 	/** Measures conversation growth between drafts; without it only tool results count as growth. */
 	readonly conversation?: ComposeConversationPort
+	/** Words a user's refusal as the refused tool does; absent, refusals keep the generic wording. */
+	readonly toolDenial?: ToolDenialPort
 }
 
 /** Materializes admitted intake entries into one immutable provider draft. */
@@ -164,6 +166,7 @@ export class ProductionComposeAdapter implements ComposePort {
 					manifest: input.toolTerminals,
 					payloads: this.options.payloads,
 					journal: this.options.journal,
+					denial: this.options.toolDenial,
 				})
 			: 0
 		const pendingContextTokens = (await this.growthSinceLastDraft()) ?? terminalTokens

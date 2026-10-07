@@ -123,10 +123,22 @@ export class TaskToolExecutionOwner implements ProductionToolConfigFactory {
 
 	/** Move a manually rejected tool's existing row into its handler-owned terminal presentation. */
 	async presentDenial(invocationRef: string): Promise<void> {
+		const block = await this.readInvocation(invocationRef)
+		const runtime = this.options.toolRuntime
+		await runtime.presentDenial(this.create({ coordinator: runtime.coordinator }), block)
+	}
+
+	/** The result a manually rejected tool reports to the model, in its handler's own words. */
+	async describeDenial(invocationRef: string): Promise<string> {
+		const block = await this.readInvocation(invocationRef)
+		const runtime = this.options.toolRuntime
+		return runtime.describeDenial(this.create({ coordinator: runtime.coordinator }), block)
+	}
+
+	private async readInvocation(invocationRef: string) {
 		const invocation = decodeTaskPayload<ToolInvocationEnvelope>(await this.options.payloads.read(invocationRef))
 		if (invocation.kind !== "tool_invocation") throw new Error("InvalidToolInvocationPayload")
-		const runtime = this.options.toolRuntime
-		await runtime.presentDenial(this.create({ coordinator: runtime.coordinator }), materializeToolInvocation(invocation))
+		return materializeToolInvocation(invocation)
 	}
 
 	/**

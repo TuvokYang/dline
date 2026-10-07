@@ -12,6 +12,14 @@ import {
 } from "./machines/intake"
 import { settleTerminatedTurn } from "./machines/terminate"
 import { reduceTurn, toolTerminalManifestPayload } from "./machines/turn"
+import {
+	allBlocksTerminal,
+	canOpenNextRound,
+	hasActiveRound,
+	hasRunningBlocks,
+	refusalContinuesTurn,
+	TERMINAL_BLOCK_PHASES,
+} from "./turn/turn-progress"
 import type {
 	Command,
 	Diagnostic,
@@ -447,20 +455,6 @@ function validateEvent(state: TaskState, event: TaskEvent): ValidationFailure | 
 	return undefined
 }
 
-const TERMINAL_BLOCK_PHASES = new Set(["completed", "failed", "rejected", "skipped", "cancelled"])
-
-function hasRunningBlocks(state: TaskState): boolean {
-	return state.turn.blocks.some((block) => !TERMINAL_BLOCK_PHASES.has(block.phase))
-}
-
-function allBlocksTerminal(state: TaskState): boolean {
-	return state.turn.blocks.length > 0 && state.turn.blocks.every((block) => TERMINAL_BLOCK_PHASES.has(block.phase))
-}
-
-function hasActiveRound(state: TaskState): boolean {
-	return state.flow.compose?.status === "running" || state.flow.provider?.status === "running"
-}
-
 /**
  * How many consecutive answers without a tool call end the automatic run.
  *
@@ -480,16 +474,6 @@ const MISTAKE_LIMIT_PRESENTATION =
 	"Dline answered several times without using a tool. This may indicate a failure in its thought process or an " +
 	'inability to use a tool properly, which can be mitigated with some user guidance (e.g. "Try breaking down the ' +
 	'task into smaller steps").'
-
-/** Whether the kernel is free to open the next round itself. */
-function canOpenNextRound(state: TaskState): boolean {
-	if (state.halt.status === "stopping") return false
-	if (["paused", "terminated", "completed", "error"].includes(state.flow.phase)) return false
-	// An awaiting question is the user's turn; continuing would answer over them.
-	if (state.dialog.primary) return false
-	// A round still in flight already owns the next request.
-	return !hasActiveRound(state)
-}
 
 /** Whether a turn that planned no tool may open the next round on its own. */
 function mistakeLimit(state: TaskState): number {
@@ -576,6 +560,28 @@ function applyCommandOwnership(state: TaskState, commands: readonly Command[]): 
 	return next
 }
 
+/** Retire a settled turn and compose the round that reports every block's outcome. */
+function settledTurnCommands(next: TaskState, turnId: string): readonly Command[] {
+	const retained = selectRetainedQueueEntryIds(next.intake, "tool_round")
+	const compose = composeRoundCommand(commandBase(next, 1), {
+		admittedEntryIds: [...pendingIntakeEntryIds(next.intake), ...retained],
+		...toolTerminalManifestPayload(next.turn),
+	})
+	const queueDelivery =
+		retained.length > 0
+			? {
+					deliveryId: `queue:tool_round:${compose.commandId}`,
+					point: "tool_round" as const,
+					ownerId: compose.commandId,
+					generation: next.generation,
+				}
+			: undefined
+	return [
+		{ ...commandBase(next, 0), type: "tool.retire", turnId },
+		queueDelivery === undefined ? compose : { ...compose, queueDelivery },
+	]
+}
+
 function deriveCommands(previous: TaskState, next: TaskState, event: TaskEvent): readonly Command[] {
 	if (event.type === "user.cancel" || event.type === "user.terminate") {
 		// A terminate received during an active halt is an escalation of that same
@@ -649,6 +655,9 @@ function deriveCommands(previous: TaskState, next: TaskState, event: TaskEvent):
 			]
 		}
 	}
+	if (refusalContinuesTurn(previous, next, event) && next.turn.turnId) {
+		return settledTurnCommands(next, next.turn.turnId)
+	}
 	if (
 		(event.type === "approval.evaluated" || event.type === "approval.responded") &&
 		event.approved === false &&
@@ -695,25 +704,7 @@ function deriveCommands(previous: TaskState, next: TaskState, event: TaskEvent):
 			return [{ ...commandBase(next, 0), type: "dialog.prepare", ...dialogCommandInput(next.dialog.primary) }]
 		}
 		const completedTurnId = next.turn.turnId
-		if (!completedTurnId) return []
-		const retained = selectRetainedQueueEntryIds(next.intake, "tool_round")
-		const compose = composeRoundCommand(commandBase(next, 1), {
-			admittedEntryIds: [...pendingIntakeEntryIds(next.intake), ...retained],
-			...toolTerminalManifestPayload(next.turn),
-		})
-		const queueDelivery =
-			retained.length > 0
-				? {
-						deliveryId: `queue:tool_round:${compose.commandId}`,
-						point: "tool_round" as const,
-						ownerId: compose.commandId,
-						generation: next.generation,
-					}
-				: undefined
-		return [
-			{ ...commandBase(next, 0), type: "tool.retire", turnId: completedTurnId },
-			queueDelivery === undefined ? compose : { ...compose, queueDelivery },
-		]
+		return completedTurnId ? settledTurnCommands(next, completedTurnId) : []
 	}
 	if (event.type === "compose.completed") {
 		return [{ ...commandBase(next, 0), type: "provider.start", draftRef: event.draftRef, turnId: event.turnId }]
@@ -957,11 +948,13 @@ export function transition(state: TaskState, event: TaskEvent): TransitionResult
 	// on the human event left a policy-refused turn with every block terminal and
 	// the flow still active: no command was ever derived again, and the task
 	// simply stopped with no error and no interaction to answer.
+	// A human refusal that settles a turn the kernel can continue is not a
+	// release: the next round carries the refusal to the model instead.
 	if (
 		(event.type === "approval.responded" || event.type === "approval.evaluated") &&
 		!event.approved &&
-		next.turn.blocks.length > 0 &&
-		next.turn.blocks.every((block) => ["completed", "failed", "rejected", "skipped", "cancelled"].includes(block.phase))
+		allBlocksTerminal(next) &&
+		!refusalContinuesTurn(state, next, event)
 	) {
 		next = { ...next, flow: { phase: "waiting" } }
 	}

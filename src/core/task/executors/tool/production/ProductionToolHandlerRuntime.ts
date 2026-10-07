@@ -4,7 +4,7 @@ import { ClineDefaultTool, getToolUseNames } from "@shared/tools"
 import { isTurnEndingToolUse } from "../../../assistant-message-order"
 import { type ProviderTurnApproval, resolveLaneContext, resolveToolLanes } from "../../../kernel"
 import type { ToolHandlerResult } from "../../../tools/ToolExecutionResult"
-import { presentToolDenial, ToolExecutorCoordinator } from "../../../tools/ToolExecutorCoordinator"
+import { describeToolDenial, presentToolDenial, ToolExecutorCoordinator } from "../../../tools/ToolExecutorCoordinator"
 import { ToolValidator } from "../../../tools/ToolValidator"
 import type { TaskConfig } from "../../../tools/types/TaskConfig"
 import type { ToolAdmissionSnapshot } from "../ToolAdmissionRegistry"
@@ -95,6 +95,11 @@ export class ProductionToolHandlerRuntime {
 
 	presentDenial(config: TaskConfig, block: ToolUse): Promise<void> {
 		return presentToolDenial(this.coordinator.getHandler(block.name), config, block)
+	}
+
+	/** The result a refused call reports to the model, in its handler's own words. */
+	describeDenial(config: TaskConfig, block: ToolUse): Promise<string> {
+		return describeToolDenial(this.coordinator.getHandler(block.name), config, block)
 	}
 
 	restoreSubagentRetry(config: TaskConfig, activityId: string): Promise<boolean> {

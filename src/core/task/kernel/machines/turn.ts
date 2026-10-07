@@ -19,6 +19,7 @@ export function toolTerminalManifestPayload(state: TurnSlice): { readonly toolTe
 					phase: block.phase as ToolTerminalManifest["blocks"][number]["phase"],
 					invocationRef: block.invocationRef,
 					...(block.approvalFeedbackRef === undefined ? {} : { approvalFeedbackRef: block.approvalFeedbackRef }),
+					...(block.deniedByUser && block.phase === "rejected" ? { deniedByUser: true } : {}),
 				})),
 		},
 	}
@@ -164,8 +165,12 @@ export function reduceTurn(state: TurnSlice, event: TaskEvent): TurnReduction {
 		const decidedBlocks = (
 			event.approved ? replaceBlock(state.blocks, event.blockId, "ready") : rejectAndSkipLater(state.blocks, event.blockId)
 		).map((block) =>
-			block.blockId === event.blockId && event.feedbackRef !== undefined
-				? { ...block, approvalFeedbackRef: event.feedbackRef }
+			block.blockId === event.blockId
+				? {
+						...block,
+						...(event.feedbackRef === undefined ? {} : { approvalFeedbackRef: event.feedbackRef }),
+						...(event.approved ? {} : { deniedByUser: true }),
+					}
 				: block,
 		)
 		const terminalized = new Set(

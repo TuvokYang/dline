@@ -143,6 +143,8 @@ export interface KernelBlock {
 	readonly turnEnding: boolean
 	readonly invocationRef: string
 	readonly approvalFeedbackRef?: string
+	/** The user, not the approval policy, refused this block. */
+	readonly deniedByUser?: boolean
 	readonly policy?: PolicyEvaluationState
 	/**
 	 * A turn-ending completion whose result is already on screen.
@@ -166,6 +168,8 @@ export interface ToolTerminalManifestEntry {
 	readonly phase: ToolTerminalPhase
 	readonly invocationRef: string
 	readonly approvalFeedbackRef?: string
+	/** The user refused the block, so its result is the tool's own denial wording. */
+	readonly deniedByUser?: boolean
 }
 
 export interface ToolTerminalManifest {

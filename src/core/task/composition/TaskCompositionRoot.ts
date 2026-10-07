@@ -23,6 +23,7 @@ import {
 	ProductionComposeAdapter,
 } from "../executors/compose/ProductionComposeAdapter"
 import type { RetainedInputPresentationPort } from "../executors/compose/RetainedInputPresentationPort"
+import type { ToolDenialPort } from "../executors/compose/ToolTerminalManifestMaterializer"
 import type { DialogAwaitingPort, DialogWaiterPort } from "../executors/dialog/DialogCommandExecutor"
 import { ProductionDialogAdapter, type ProductionDialogAdapterOptions } from "../executors/dialog/ProductionDialogAdapter"
 import {
@@ -76,6 +77,8 @@ export interface TaskCompositionOptions {
 	readonly persistence?: OpenTaskShellOptions["persistence"]
 	readonly inputPresentation?: OpenTaskShellOptions["inputPresentation"]
 	readonly retainedInputPresentation?: RetainedInputPresentationPort
+	/** Words a user's refusal the way the refused tool reports it. */
+	readonly toolDenial?: ToolDenialPort
 	readonly deferRestoredCommands?: OpenTaskShellOptions["deferRestoredCommands"]
 	/** Condenses the conversation before a round is drafted; see ComposeCompactionBarrierPort. */
 	readonly compactionBarrier?: ComposeCompactionBarrierPort
@@ -181,6 +184,7 @@ export async function composeTask(options: TaskCompositionOptions): Promise<Task
 					contextWindowGuard: options.contextWindowGuard,
 					retainedInputPresentation: options.retainedInputPresentation,
 					conversation: conversationView,
+					toolDenial: options.toolDenial,
 				}),
 				compaction: instrumentCompaction(
 					new ProductionCompactionAdapter({

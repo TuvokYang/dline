@@ -647,6 +647,8 @@ export class TaskSessionCompositionService {
 			lifecycleBarriers: compaction,
 			inputPresentation: new TaskInputPresenter(persistence.payloads, messages, nextPresentationId),
 			retainedInputPresentation: new RetainedInputPresenter(persistence.payloads, messages, nextPresentationId),
+			// A refused call reports what the refusal left behind, which only its handler knows.
+			toolDenial: { describe: (invocationRef) => toolExecution.describeDenial(invocationRef) },
 			// A round that would overflow the window waits for the summary first,
 			// so the request it sends is the one that fits. It guards compose
 			// rather than submission because the kernel also opens rounds on its

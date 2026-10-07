@@ -42,7 +42,21 @@ function terminalText(phase: ToolTerminalPhase): string {
 	}
 }
 
-function syntheticResult(block: ToolTerminalManifest["blocks"][number], invocation: ToolInvocationEnvelope): ToolResultEnvelope {
+/**
+ * Words a refusal the way the refused tool reports it.
+ *
+ * Only the tool's handler knows what the refusal left behind, for example that
+ * a file was not written, so the wording is resolved from its invocation.
+ */
+export interface ToolDenialPort {
+	describe(invocationRef: string): Promise<string>
+}
+
+function syntheticResult(
+	block: ToolTerminalManifest["blocks"][number],
+	invocation: ToolInvocationEnvelope,
+	text: string = terminalText(block.phase),
+): ToolResultEnvelope {
 	return {
 		kind: "tool_result",
 		blockId: block.blockId,
@@ -51,13 +65,25 @@ function syntheticResult(block: ToolTerminalManifest["blocks"][number], invocati
 				type: "tool_result",
 				function_id: invocation.functionId,
 				dline_tid: invocation.dlineTid,
-				content: [{ type: "text", text: terminalText(block.phase) }],
+				content: [{ type: "text", text }],
 				is_error: true,
 			},
 			toolResultReplayOf(invocation),
 		),
 		failed: true,
 	}
+}
+
+/** A user's refusal reads as the tool's denial; a policy refusal keeps the generic wording. */
+async function terminalResult(
+	block: ToolTerminalManifest["blocks"][number],
+	invocation: ToolInvocationEnvelope,
+	denial: ToolDenialPort | undefined,
+): Promise<ToolResultEnvelope> {
+	if (block.phase === "rejected" && block.deniedByUser && denial) {
+		return syntheticResult(block, invocation, await denial.describe(block.invocationRef))
+	}
+	return syntheticResult(block, invocation)
 }
 
 const TOKEN_ESTIMATE_BYTES = 4
@@ -73,6 +99,7 @@ export async function materializeToolTerminalManifest(input: {
 	readonly manifest: ToolTerminalManifest
 	readonly payloads: TaskPayloadStore
 	readonly journal: ConversationJournal
+	readonly denial?: ToolDenialPort
 }): Promise<number> {
 	const operationId = `tool.terminal_manifest:${input.manifest.turnId}`
 	const existing = await input.journal.findByOperation(operationId)
@@ -119,7 +146,7 @@ export async function materializeToolTerminalManifest(input: {
 			? restored.payload
 			: (block.phase === "completed" || block.phase === "failed") && raw
 				? raw.payload
-				: syntheticResult(block, invocation)
+				: await terminalResult(block, invocation, input.denial)
 		const feedbackRef = block.approvalFeedbackRef ?? recordedFeedback
 		results.push({
 			blockId: block.blockId,

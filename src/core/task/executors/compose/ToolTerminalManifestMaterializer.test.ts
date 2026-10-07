@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { serializeDurableToolResult } from "../../DurableToolResult"
+import { parseDurableToolResult, serializeDurableToolResult } from "../../DurableToolResult"
 import { createInitialTaskState, type ToolTerminalManifest } from "../../kernel"
 import { InMemoryConversationJournal, InMemoryTaskPayloadStore } from "../../stores"
 import { decodeTaskPayload, encodeTaskPayload } from "../../stores/payload/TaskPayloadCodec"
@@ -72,6 +72,43 @@ function resultText(block: MaterializedContent): string {
 	if (typeof block.content === "string") return block.content
 	return (block.content ?? []).flatMap((part) => (part.type === "text" && part.text ? [part.text] : [])).join("\n")
 }
+
+describe("ToolTerminalManifestMaterializer refusal wording", () => {
+	it("reports a user refusal in the tool's own words and keeps a policy refusal generic", async () => {
+		const payloads = new InMemoryTaskPayloadStore()
+		const journal = new InMemoryConversationJournal()
+		const userRef = await payloads.put(encodeTaskPayload(invocation("b0")))
+		const policyRef = await payloads.put(encodeTaskPayload(invocation("b1")))
+		const described: string[] = []
+
+		await materializeToolTerminalManifest({
+			manifest: {
+				turnId: TURN_ID,
+				blocks: [
+					{ blockId: "b0", phase: "rejected", invocationRef: userRef, deniedByUser: true },
+					{ blockId: "b1", phase: "rejected", invocationRef: policyRef },
+				],
+			},
+			payloads,
+			journal,
+			denial: {
+				describe: async (invocationRef) => {
+					described.push(invocationRef)
+					return "The user denied this operation. The file was not updated."
+				},
+			},
+		})
+
+		const entry = await journal.findByOperation(`tool.terminal_manifest:${TURN_ID}`)
+		const envelope = decodeTaskPayload<ToolTerminalManifestEnvelope>(await payloads.read(entry!.payloadRef!))
+		const texts = envelope.results.map((terminal) =>
+			resultText(parseDurableToolResult(terminal.content) as unknown as MaterializedContent),
+		)
+		expect(described).toEqual([userRef])
+		expect(texts[0]).toBe("The user denied this operation. The file was not updated.")
+		expect(texts[1]).toBe("Tool call rejected; it was not admitted or executed.")
+	})
+})
 
 describe("ToolTerminalManifestMaterializer", () => {
 	it("keeps raw arrival facts while projecting one ordered and idempotent terminal tool batch", async () => {
