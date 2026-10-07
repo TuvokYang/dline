@@ -99,7 +99,9 @@ describe("TaskContextUsageProjection", () => {
 		expect(total(harness)).toBe(6_600)
 	})
 
-	it("opens the first request on the admitted estimate, split into what was sent, what the round adds, and the environment", async () => {
+	// Nothing is durable before a round completes, so the whole estimate except
+	// the environment is the send in flight.
+	it("opens the first request on the admitted estimate with no durable context yet", async () => {
 		const harness = createProjection()
 
 		await harness.projection.started({
@@ -109,14 +111,13 @@ describe("TaskContextUsageProjection", () => {
 				estimatedTokens: 5_500,
 				projectedUsageTokens: 5_500,
 				segments: { durableContextTokens: 5_000, pendingSendTokens: 300, environmentTokens: 200, totalTokens: 5_500 },
-				unmeasured: true,
 			},
 		})
 
 		expect(harness.target.contextWindowIndicator).toMatchObject({
 			phase: "sending",
-			durableContextTokens: 5_000,
-			pendingSendTokens: 300,
+			durableContextTokens: 0,
+			pendingSendTokens: 5_300,
 			environmentTokens: 200,
 		})
 		expect(total(harness)).toBe(5_500)
@@ -135,7 +136,6 @@ describe("TaskContextUsageProjection", () => {
 				estimatedTokens: 90_000,
 				projectedUsageTokens: 7_000,
 				segments: { durableContextTokens: 89_000, pendingSendTokens: 800, environmentTokens: 200, totalTokens: 90_000 },
-				unmeasured: false,
 			},
 		})
 

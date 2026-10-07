@@ -23,8 +23,6 @@ export interface ContextWindowRequestOpening {
 	readonly projectedUsageTokens: number
 	/** The estimate split into the history the request carries, the round's own input, and the environment. */
 	readonly segments: ContextWindowIndicatorSegments
-	/** No earlier request reported usage, so the local estimate is the only figure there is. */
-	readonly unmeasured: boolean
 }
 
 export interface EstimateContextWindowIndicatorSegmentsInput extends ContextWindowCandidateEstimator {

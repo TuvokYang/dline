@@ -123,7 +123,6 @@ describe("FinalContextWindowGuard", () => {
 			estimatedTokens: 300,
 			projectedUsageTokens: 300,
 			segments: SPLIT,
-			unmeasured: true,
 		})
 		expect(splits).toHaveLength(1)
 		// Everything before the latest message was sent already; the environment follows the round's input.

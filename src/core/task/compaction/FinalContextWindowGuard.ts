@@ -155,7 +155,6 @@ export class FinalContextWindowGuard implements ComposeContextWindowGuardPort {
 				providerId: estimate.providerId,
 				modelId: estimate.modelId,
 			}),
-			unmeasured: this.options.requestPressures().length === 0,
 		}
 	}
 

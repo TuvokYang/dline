@@ -474,7 +474,8 @@ function openingSegments(
 	opening: ContextWindowRequestOpening | undefined,
 ): Pick<ContextWindowIndicatorSegments, "durableContextTokens" | "pendingSendTokens" | "environmentTokens"> {
 	if (!opening) return { durableContextTokens: current.durableContextTokens, pendingSendTokens: 0, environmentTokens: 0 }
-	if (opening.unmeasured && current.revision === 0) return opening.segments
+	// Durable context is only what completed rounds made durable; a first request
+	// starts from none, so its estimate shows as the send in flight.
 	return projectAuthoritativeContextWindowIndicatorSegments({
 		projectedTotalTokens: opening.projectedUsageTokens,
 		durableContextTokens: current.durableContextTokens,
