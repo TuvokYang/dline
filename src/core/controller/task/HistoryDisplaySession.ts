@@ -51,6 +51,14 @@ export interface HistoryDisplayLoadOptions {
 	 * surface was already shown, so the chat can redraw them.
 	 */
 	readonly onMaintained?: (rows: readonly UiMessage[]) => Promise<void> | void
+	/**
+	 * Hold the maintenance back until `startMaintenance` is called.
+	 *
+	 * Hydrating activities reads the whole activity store synchronously and
+	 * blocks the extension host while it does; a caller that still has to post
+	 * the first frame defers it so that frame is not queued behind it.
+	 */
+	readonly deferMaintenance?: boolean
 }
 
 /** A command row still showing work whose activity was found interrupted. */
@@ -88,6 +96,8 @@ export class HistoryDisplaySession {
 	private disposed = false
 	/** Activity hydration and orphan recovery, which run after the surface is shown. */
 	private maintenance: Promise<void> = Promise.resolve()
+	/** The options of a deferred load whose maintenance has not started yet. */
+	private deferredMaintenance?: HistoryDisplayLoadOptions
 
 	constructor(readonly historyItem: HistoryItem) {
 		this.activityPersistence = new TaskActivityPersistence(historyItem.id)
@@ -138,7 +148,8 @@ export class HistoryDisplaySession {
 			this.inputQueue = [...inputQueue]
 			this.viewState = projected.view
 			this.loaded = true
-			this.maintenance = this.maintain(options)
+			if (options?.deferMaintenance) this.deferredMaintenance = options
+			else this.maintenance = this.maintain(options)
 		} catch (error) {
 			if (this.messageReader === reader) this.messageReader = undefined
 			await reader.close().catch(() => undefined)
@@ -147,7 +158,18 @@ export class HistoryDisplaySession {
 		}
 	}
 
-	/** Resolves once the activity hydration and orphan recovery that follow `load` finished. */
+	/** Start the maintenance a deferred `load` held back. Calling it again, or after dispose, does nothing. */
+	startMaintenance(): void {
+		const options = this.deferredMaintenance
+		this.deferredMaintenance = undefined
+		if (!options || this.disposed) return
+		this.maintenance = this.maintain(options)
+	}
+
+	/**
+	 * Resolves once the activity hydration and orphan recovery that follow `load`
+	 * finished; immediately while a deferred maintenance has not been started.
+	 */
 	whenMaintained(): Promise<void> {
 		return this.maintenance
 	}

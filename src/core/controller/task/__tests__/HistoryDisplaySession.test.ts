@@ -432,6 +432,50 @@ describe("HistoryDisplaySession", () => {
 			}
 			expect(await readDurable(taskId)).toEqual({ activity: "running", row: "running" })
 		})
+
+		it("holds a deferred maintenance back until it is started, then settles the work once", async () => {
+			const taskId = "history-deferred-maintenance"
+			await seedRunningCommand(taskId)
+			const session = new HistoryDisplaySession(createHistoryItem(taskId))
+
+			try {
+				const redrawn: string[] = []
+				await session.load({
+					ownerless: Promise.resolve(true),
+					onMaintained: (rows) => {
+						redrawn.push(...rows.map((row) => row.commandStatus ?? ""))
+					},
+					deferMaintenance: true,
+				})
+				await session.whenMaintained()
+				// Nothing hydrated or settled yet: the caller still owes the first frame.
+				expect(session.activityStore.list()).toEqual([])
+				expect(redrawn).toEqual([])
+				expect(await readDurable(taskId)).toEqual({ activity: "running", row: "running" })
+
+				session.startMaintenance()
+				session.startMaintenance()
+				await session.whenMaintained()
+				expect(session.activityStore.get("orphan")?.status).toBe("interrupted")
+				expect(redrawn).toEqual(["interrupted"])
+			} finally {
+				await session.dispose()
+			}
+			expect(await readDurable(taskId)).toEqual({ activity: "interrupted", row: "interrupted" })
+		})
+
+		it("never starts a deferred maintenance after the display was disposed", async () => {
+			const taskId = "history-deferred-disposed"
+			await seedRunningCommand(taskId)
+			const session = new HistoryDisplaySession(createHistoryItem(taskId))
+
+			await session.load({ ownerless: Promise.resolve(true), deferMaintenance: true })
+			await session.dispose()
+			session.startMaintenance()
+			await session.whenMaintained()
+
+			expect(await readDurable(taskId)).toEqual({ activity: "running", row: "running" })
+		})
 	})
 
 	it("preserves canonical awaiting interaction identity when the durable anchor matches", async () => {

@@ -232,6 +232,12 @@ export class Controller {
 	task?: ActiveTaskSession
 	private historyDisplaySession?: HistoryDisplaySession
 	/**
+	 * The Profile binding each history display started, settled true once it
+	 * rewrote the task's settings. The first frame does not wait for it, but a
+	 * promotion does: the promoted runtime reloads those settings from disk.
+	 */
+	private readonly historyDisplayProfileBindings = new WeakMap<HistoryDisplaySession, Promise<boolean>>()
+	/**
 	 * Task text known when the task was constructed, keyed by task so a stale
 	 * entry can never title another task. A background start writes the `task`
 	 * row after the first title sync, so this text titles the tab until then.
@@ -1389,18 +1395,21 @@ export class Controller {
 	 * Bind a task opened from History to the Profile its stable ID resolves to,
 	 * as dev's Task constructor did, so a Profile renamed while the task was
 	 * closed resumes under its current name. Promotion reloads task settings
-	 * from disk, so the binding is flushed before the view relies on it.
+	 * from disk, so the binding is flushed before it settles. Settles true once
+	 * the binding was written; it never rejects.
 	 */
-	private async adoptHistoryDisplayProfileIdentity(taskId: string): Promise<void> {
+	private async adoptHistoryDisplayProfileIdentity(taskId: string): Promise<boolean> {
 		try {
 			const settings = new TaskStateManager(taskId, this.stateManager)
 			const mode = settings.mode
 			const resolution = await resolveTaskApiProfileFresh(this.stateManager.getApiConfigurationForTask(taskId), mode)
-			if (resolution.usedFallback || !resolution.resolvedProfileId || !resolution.resolvedProfile) return
+			if (resolution.usedFallback || !resolution.resolvedProfileId || !resolution.resolvedProfile) return false
 			settings.adoptResolvedProfileIdentity(mode, resolution.resolvedProfileId, resolution.resolvedProfile)
 			await this.stateManager.flushPendingState()
+			return true
 		} catch (error) {
 			Logger.warn(`[History] Failed to bind ${taskId} to its resolved Profile:`, error)
+			return false
 		}
 	}
 
@@ -1430,16 +1439,27 @@ export class Controller {
 			if (this.historyDisplaySession !== session) return
 			await this.postStateToWebview({ immediate: true })
 			await options?.onHistoryTaskReadyToDisplay?.()
+			// Started only once the first frame is out: it blocks the host while
+			// it hydrates activities, and nothing that frame draws depends on it.
+			session.startMaintenance()
 		}
 		const remainsCurrent = await prepareHistoryTaskForDisplay({
 			taskId: session.taskId,
 			displayHistory: async () => {
 				const ownerless = durableFacts.then(([, lockedByAnotherInstance]) => !lockedByAnotherInstance)
-				// Only the owning surface may rewrite task settings. The binding runs
-				// alongside the message window so it adds no latency to the first frame.
+				// Only the owning surface may rewrite task settings. Resolving the
+				// Profile and flushing the binding cost hundreds of milliseconds,
+				// so the first frame does not wait for them: the header is redrawn
+				// once the binding lands, and a promotion waits for it.
 				const profileBinding = ownerless.then((owned) =>
-					owned ? this.adoptHistoryDisplayProfileIdentity(session.taskId) : undefined,
+					owned ? this.adoptHistoryDisplayProfileIdentity(session.taskId) : false,
 				)
+				this.historyDisplayProfileBindings.set(session, profileBinding)
+				void profileBinding
+					.then((bound) => (bound && this.historyDisplaySession === session ? this.postStateToWebview() : undefined))
+					.catch((error: unknown) =>
+						Logger.warn(`[History] Failed to redraw ${session.taskId} after its Profile binding:`, error),
+					)
 				// Orphan recovery runs after the surface is shown; the rows it
 				// settles are redrawn in place once it finishes.
 				const onMaintained = async (rows: readonly UiMessage[]) => {
@@ -1447,7 +1467,7 @@ export class Controller {
 					await Promise.all(rows.map((row) => sendPartialMessageEvent(this, convertClineMessageToProto(row))))
 					await this.postStateToWebview()
 				}
-				const [owned] = await Promise.all([ownerless, session.load({ ownerless, onMaintained }), profileBinding])
+				const [owned] = await Promise.all([ownerless, session.load({ ownerless, onMaintained, deferMaintenance: true })])
 				if (this.historyDisplaySession !== session || owned) return
 				session.markLocked()
 				// The surface no longer owns the lock a previous task held, so an
@@ -1550,7 +1570,7 @@ export class Controller {
 		// itself, so leaving that round armed would let it take the same lock
 		// concurrently and then activate a surface this promotion replaced.
 		this.stopLockPoll()
-		await display.dispose()
+		await Promise.all([display.dispose(), this.historyDisplayProfileBindings.get(display)])
 		await this.initTask(undefined, undefined, undefined, display.historyItem, undefined, {
 			skipInitialClear: true,
 			activateHistory: true,
