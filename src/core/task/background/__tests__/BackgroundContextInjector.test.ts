@@ -95,6 +95,28 @@ describe("BackgroundContextInjector", () => {
 		assert.doesNotMatch(details, /npm test/)
 	})
 
+	it("keeps retryable cancelled subagents listed and drops non-retryable ones", async () => {
+		const subagentJobManager = new SubagentJobManager()
+		const retryableJob = subagentJobManager.startJob({
+			task: "review retryable cancel",
+			prompt: "<task>review retryable cancel</task><context>ctx</context>",
+			timeoutSeconds: 30,
+			runner: async () => ({ ...completedResult(""), status: "cancelled", retryable: true }),
+		})
+		const finalJob = subagentJobManager.startJob({
+			task: "review final cancel",
+			prompt: "<task>review final cancel</task><context>ctx</context>",
+			timeoutSeconds: 30,
+			runner: async () => ({ ...completedResult(""), status: "cancelled", retryable: false }),
+		})
+		await flushJobs()
+
+		const details = buildTaskBackgroundSection({ getSubagentJobManager: () => subagentJobManager }, undefined)
+
+		assert.match(details, new RegExp(`${retryableJob.jobId}: cancelled — review retryable cancel`))
+		assert.doesNotMatch(details, new RegExp(finalJob.jobId))
+	})
+
 	it("captures output baselines only for the running commands represented by the environment text", () => {
 		const subagentJobManager = new SubagentJobManager()
 		const runningCommand = createCommand("command_running", "npm run build", "running")

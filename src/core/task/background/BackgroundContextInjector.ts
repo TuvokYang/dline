@@ -104,11 +104,14 @@ export class BackgroundContextInjector {
 	}
 
 	/**
-	 * Build the running background subagent environment section.
+	 * Build the background subagent environment section.
+	 *
+	 * A cancelled job the user can still retry stays listed, as in dev, so the
+	 * model knows it was stopped rather than lost.
 	 * @returns Markdown section for visible subagent jobs.
 	 */
 	private buildSubagentSection(): string {
-		const jobs = this.subagentJobManager.listJobs().filter((job) => job.status === "running")
+		const jobs = this.subagentJobManager.listJobs().filter((job) => job.status === "running" || job.retryable === true)
 		if (jobs.length === 0) return ""
 		return ["# Background Subagents", ...jobs.map((job) => this.formatSubagent(job))].join("\n")
 	}
