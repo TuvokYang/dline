@@ -172,7 +172,8 @@ describe("Task startup blocking", () => {
 		const postExecutionAbort = source.indexOf("if (this.taskState.abort)", coordinatorExecute)
 		const resultCommit = source.indexOf("await this.commitToolResult(toolResult, block)", coordinatorExecute)
 		const postCommitAbort = source.indexOf("if (this.taskState.abort) return", resultCommit)
-		const loopTracking = source.indexOf("const loopCheck = recordToolCall", resultCommit)
+		// Loop tracking lives in checkRepeatedToolCall so hosted server tools share it.
+		const loopTracking = source.indexOf("this.checkRepeatedToolCall(block.name,", resultCommit)
 		expect(completeStart).toBeGreaterThan(-1)
 		expect(coordinatorExecute).toBeGreaterThan(completeStart)
 		expect(postExecutionAbort).toBeGreaterThan(coordinatorExecute)

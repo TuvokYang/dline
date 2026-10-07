@@ -98,6 +98,7 @@ describe("Task.attemptApiRequest first chunk state", () => {
 			setHostedImageGenerationContext: vi.fn(),
 			setPromptRuntime: vi.fn(),
 			setWebSearchRoutingPlan: vi.fn(),
+			carryDeferredServerToolCalls: vi.fn(async () => undefined),
 		}
 		const beginIndicator = vi.fn(async () => ({
 			kind: "ordinary" as const,
@@ -296,6 +297,7 @@ describe("Task.attemptApiRequest first chunk state", () => {
 				setHostedImageGenerationContext: vi.fn(),
 				setPromptRuntime: vi.fn(),
 				setWebSearchRoutingPlan: vi.fn(),
+				carryDeferredServerToolCalls: vi.fn(async () => undefined),
 			},
 			writePromptMetadataArtifacts: vi.fn(async () => undefined),
 			endAutoRetrySequence: vi.fn(),
@@ -417,6 +419,7 @@ describe("Task.attemptApiRequest first chunk state", () => {
 				setHostedImageGenerationContext: vi.fn(),
 				setPromptRuntime: vi.fn(),
 				setWebSearchRoutingPlan: vi.fn(),
+				carryDeferredServerToolCalls: vi.fn(async () => undefined),
 			},
 			writePromptMetadataArtifacts: vi.fn(async () => undefined),
 			endAutoRetrySequence: vi.fn(),
@@ -510,6 +513,7 @@ describe("Task.attemptApiRequest first chunk state", () => {
 				setHostedImageGenerationContext: vi.fn(),
 				setPromptRuntime: vi.fn(),
 				setWebSearchRoutingPlan: vi.fn(),
+				carryDeferredServerToolCalls: vi.fn(async () => undefined),
 			},
 			writePromptMetadataArtifacts: vi.fn(async () => undefined),
 		}) as Task
@@ -631,6 +635,7 @@ describe("Task.attemptApiRequest first chunk state", () => {
 				setHostedImageGenerationContext: vi.fn(),
 				setPromptRuntime: vi.fn(),
 				setWebSearchRoutingPlan: vi.fn(),
+				carryDeferredServerToolCalls: vi.fn(async () => undefined),
 			},
 			writePromptMetadataArtifacts: vi.fn(async () => undefined),
 		}) as Task
@@ -746,6 +751,7 @@ describe("Task.attemptApiRequest request ownership", () => {
 				setHostedImageGenerationContext: vi.fn(),
 				setPromptRuntime: vi.fn(),
 				setWebSearchRoutingPlan: vi.fn(),
+				carryDeferredServerToolCalls: vi.fn(async () => undefined),
 			},
 			writePromptMetadataArtifacts: vi.fn(async () => undefined),
 		}) as Task
