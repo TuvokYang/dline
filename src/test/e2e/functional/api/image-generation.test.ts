@@ -610,9 +610,9 @@ e2e(
 			expect(firstToolResult?.content).toContain(GENERATED_ARTIFACT_ID)
 			expect(firstToolResult?.content).not.toContain(PNG_1X1_BASE64)
 			expect(firstToolResult?.content).not.toContain("data:image/")
-			const firstToolResultBlocks = JSON.parse(firstToolResult?.content ?? "[]") as Array<{ type?: string; text?: string }>
-			const firstToolResultText = firstToolResultBlocks.find((block) => block.type === "text")?.text
-			const firstToolResultPayload = JSON.parse(firstToolResultText?.split(" Result:\n")[1] ?? "{}") as {
+			// A text-only tool result reaches the Responses API as plain text, not as serialized content blocks.
+			expect(firstToolResult?.content).toMatch(/^\[generate_image\b/)
+			const firstToolResultPayload = JSON.parse(firstToolResult?.content?.split(" Result:\n")[1] ?? "{}") as {
 				artifacts?: Array<{ id?: string; path?: string }>
 			}
 			expect(firstToolResultPayload.artifacts).toEqual([
