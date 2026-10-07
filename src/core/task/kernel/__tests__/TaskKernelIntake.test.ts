@@ -97,6 +97,43 @@ describe("task kernel intake", () => {
 		expect(result.commands).toEqual([expect.objectContaining({ type: "dialog.prepare", prepareKey: expect.any(String) })])
 	})
 
+	it("keeps a background arrival for the user's answer while a dialog is open", () => {
+		const opened = accepted(
+			transition(createInitialTaskState("task-1"), {
+				type: "background.ready",
+				generation: 0,
+				entryId: "background-1",
+				payloadRef: "result:1",
+			}),
+		).state
+		// The dialog waits for the user, so the arrival must not open a round
+		// that would consume the reply the user is about to send.
+		const waiting = { ...opened, flow: { phase: "waiting" as const } }
+		const result = accepted(
+			transition(waiting, { type: "background.ready", generation: 0, entryId: "background-2", payloadRef: "result:2" }),
+		)
+		expect(result.commands).toEqual([])
+		expect(result.state.intake.background.map((entry) => entry.state)).toEqual(["accepted", "accepted"])
+	})
+
+	it("lets running tools carry a background arrival into their own continuation", () => {
+		const base = createInitialTaskState("task-1")
+		const running = {
+			...base,
+			flow: { phase: "running" as const },
+			turn: {
+				...base.turn,
+				turnId: "turn-1",
+				blocks: [{ blockId: "kill-1", phase: "executing" }] as unknown as typeof base.turn.blocks,
+			},
+		}
+		const result = accepted(
+			transition(running, { type: "background.ready", generation: 0, entryId: "background-1", payloadRef: "result:1" }),
+		)
+		expect(result.commands).toEqual([])
+		expect(result.state.intake.background[0]).toMatchObject({ state: "accepted" })
+	})
+
 	it("lets a paused task complete the round its resumption opened", () => {
 		const paused = { ...createInitialTaskState("task-1"), flow: { phase: "paused" as const } }
 		const submitted = accepted(

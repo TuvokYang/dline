@@ -449,6 +449,10 @@ function validateEvent(state: TaskState, event: TaskEvent): ValidationFailure | 
 
 const TERMINAL_BLOCK_PHASES = new Set(["completed", "failed", "rejected", "skipped", "cancelled"])
 
+function hasRunningBlocks(state: TaskState): boolean {
+	return state.turn.blocks.some((block) => !TERMINAL_BLOCK_PHASES.has(block.phase))
+}
+
 function allBlocksTerminal(state: TaskState): boolean {
 	return state.turn.blocks.length > 0 && state.turn.blocks.every((block) => TERMINAL_BLOCK_PHASES.has(block.phase))
 }
@@ -659,9 +663,18 @@ function deriveCommands(previous: TaskState, next: TaskState, event: TaskEvent):
 		previous.flow.phase !== "terminated" &&
 		!hasActiveRound(previous)
 	) {
-		if (event.type !== "user.submit" && ["idle", "paused", "completed"].includes(previous.flow.phase)) {
-			const interaction = next.dialog.primary
-			return interaction ? [{ ...commandBase(next, 0), type: "dialog.prepare", ...dialogCommandInput(interaction) }] : []
+		if (event.type !== "user.submit") {
+			if (["idle", "paused", "completed"].includes(previous.flow.phase)) {
+				const interaction = next.dialog.primary
+				return interaction
+					? [{ ...commandBase(next, 0), type: "dialog.prepare", ...dialogCommandInput(interaction) }]
+					: []
+			}
+			// A background arrival never takes the next request from the user or
+			// from the turn in progress: an open dialog waits for the user's answer
+			// and running tools compose their own continuation, and both of those
+			// rounds carry the pending intake with them.
+			if (previous.dialog.primary || hasRunningBlocks(previous)) return []
 		}
 		return [
 			composeRoundCommand(commandBase(next, 0), {
