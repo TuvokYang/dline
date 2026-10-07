@@ -110,6 +110,8 @@ e2e(
 		// to act on rather than retried automatically.
 		await expect(sidebar.getByTestId("api-error-box")).toBeVisible({ timeout: 60_000 })
 		await expect(sidebar.getByTestId("error-retry-box")).toHaveCount(0)
+		// The user can still choose to retry, for example after raising the output limit.
+		await expect(sidebar.getByRole("button", { name: "Retry", exact: true }).last()).toBeVisible()
 		await expect
 			.poll(
 				() =>
