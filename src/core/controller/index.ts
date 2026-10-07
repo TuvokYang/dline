@@ -79,6 +79,7 @@ import {
 	TASK_COMPLETION_BACKFILL_GENERATION,
 	TaskCompletionBackfill,
 } from "@/core/storage/TaskCompletionBackfill"
+import { resolveTaskApiProfileFresh } from "@/core/task/ApiProfileRecovery"
 import { readHistoryContextWindowIndicator } from "@/core/task/HistoryContextWindow"
 import { resolveTaskPanelTitle } from "@/core/task/TaskPanelTitle"
 import { TaskStateManager } from "@/core/task/TaskStateManager"
@@ -1350,6 +1351,25 @@ export class Controller {
 		}
 	}
 
+	/**
+	 * Bind a task opened from History to the Profile its stable ID resolves to,
+	 * as dev's Task constructor did, so a Profile renamed while the task was
+	 * closed resumes under its current name. Promotion reloads task settings
+	 * from disk, so the binding is flushed before the view relies on it.
+	 */
+	private async adoptHistoryDisplayProfileIdentity(taskId: string): Promise<void> {
+		try {
+			const settings = new TaskStateManager(taskId, this.stateManager)
+			const mode = settings.mode
+			const resolution = await resolveTaskApiProfileFresh(this.stateManager.getApiConfigurationForTask(taskId), mode)
+			if (resolution.usedFallback || !resolution.resolvedProfileId || !resolution.resolvedProfile) return
+			settings.adoptResolvedProfileIdentity(mode, resolution.resolvedProfileId, resolution.resolvedProfile)
+			await this.stateManager.flushPendingState()
+		} catch (error) {
+			Logger.warn(`[History] Failed to bind ${taskId} to its resolved Profile:`, error)
+		}
+	}
+
 	private async initHistoryDisplaySession(historyItem: HistoryItem, options?: InitTaskOptions): Promise<string> {
 		const session = new HistoryDisplaySession(historyItem)
 		this.historyDisplaySession = session
@@ -1381,8 +1401,13 @@ export class Controller {
 			taskId: session.taskId,
 			displayHistory: async () => {
 				const ownerless = durableFacts.then(([, lockedByAnotherInstance]) => !lockedByAnotherInstance)
-				const [[, lockedByAnotherInstance]] = await Promise.all([durableFacts, session.load({ ownerless })])
-				if (this.historyDisplaySession !== session || !lockedByAnotherInstance) return
+				// Only the owning surface may rewrite task settings. The binding runs
+				// alongside the message window so it adds no latency to the first frame.
+				const profileBinding = ownerless.then((owned) =>
+					owned ? this.adoptHistoryDisplayProfileIdentity(session.taskId) : undefined,
+				)
+				const [owned] = await Promise.all([ownerless, session.load({ ownerless }), profileBinding])
+				if (this.historyDisplaySession !== session || owned) return
 				session.markLocked()
 				// The surface no longer owns the lock a previous task held, so an
 				// unlock must take the task over rather than find it already owned.
