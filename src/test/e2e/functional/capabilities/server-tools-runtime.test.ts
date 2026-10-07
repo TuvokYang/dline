@@ -313,11 +313,12 @@ async function setAutoApproveAction(sidebar: Frame, label: string, enabled: bool
 }
 
 /**
- * Assert the 40vh height budget of a tool card.
+ * Assert the 40vh height budget of a tool card region.
  *
- * Cards cap their own height but differ in who scrolls: the Web Fetch card
- * scrolls itself, while the Web Search card clips and lets its results region
- * scroll. Only the height budget is shared, so that is what this checks.
+ * The bounded element differs per card: the Web Fetch card keeps its toggle
+ * bar outside and bounds only the expanded results region, which scrolls,
+ * while the Web Search card caps itself and lets its results region scroll.
+ * Only the height budget is shared, so that is what this checks.
  */
 async function expect40VhCard(card: Locator, shouldScroll = false): Promise<void> {
 	await expect(card).toBeVisible({ timeout: 60_000 })
@@ -1620,7 +1621,7 @@ for (const testCase of webFetchCases) {
 				const fetchResults = fetchCard.getByTestId("web-fetch-results")
 				await expect(fetchResults).toContainText("E2E\\_WEB\\_FETCH\\_PAGE\\_CONTENT\\_00")
 				await expect(fetchResults).toContainText("E2E\\_WEB\\_FETCH\\_PAGE\\_CONTENT\\_31")
-				await expect40VhCard(fetchCard, true)
+				await expect40VhCard(fetchResults, true)
 				await expect(opened.sidebar.getByText(completion, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
 
 				const consumptions = server.getMockConsumptions(testCase.target)
