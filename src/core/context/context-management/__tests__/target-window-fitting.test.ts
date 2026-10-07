@@ -8,6 +8,7 @@ import {
 	applyCompactionPassPlan,
 	buildCompactionPassHistory,
 	buildTargetCandidateHistory,
+	isIterativeCompactionPass,
 	refitCompactionSummary,
 	startTargetWindowFitting,
 	type TargetWindowFittingState,
@@ -200,6 +201,18 @@ describe("target window rolling fitting", () => {
 		expect(refitted.summaryBaselineHash).not.toBe(afterFirst.summaryBaselineHash)
 		expect(refitted.sourceSnapshot).toBe(afterFirst.sourceSnapshot)
 		expect(refitted.turns).toBe(afterFirst.turns)
+	})
+
+	it("treats a later Pass or a first Pass that leaves turns uncovered as iterative", () => {
+		const initial = startFitting(createHistory(), "operation-iterative")
+		const lastTurnIndex = initial.turns.length - 1
+		expect(lastTurnIndex).toBeGreaterThan(0)
+
+		expect(isIterativeCompactionPass(planThrough(initial, lastTurnIndex))).toBe(false)
+		const partialFirstPass = planThrough(initial, 0)
+		expect(isIterativeCompactionPass(partialFirstPass)).toBe(true)
+		const afterFirst = acceptCompactionPass(partialFirstPass, "E2E_ITERATIVE_SUMMARY").state
+		expect(isIterativeCompactionPass(planThrough(afterFirst, lastTurnIndex))).toBe(true)
 	})
 
 	it("builds the ordinary target candidate by concatenating complete message ranges without rewriting content", () => {

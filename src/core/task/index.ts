@@ -67,6 +67,7 @@ import {
 	buildCompactionPassHistory,
 	buildTargetCandidateHistory,
 	getCompactionPassIdentity,
+	isIterativeCompactionPass,
 	type TargetWindowFittingState,
 } from "@core/context/context-management/target-window-fitting"
 import { EnvironmentContextTracker } from "@core/context/context-tracking/EnvironmentContextTracker"
@@ -2801,6 +2802,7 @@ export class Task {
 						state.nextPassSummaryCarryLimitTokens,
 						"send",
 						state.passIndex === 0 ? this.resolveCompactionProviderInputCalibrationRatio(input) : 1,
+						!isIterativeCompactionPass(state),
 					),
 				buildSummaryRefitRequest: (input, state, carryLimitTokens, refitAttempt) => {
 					if (!state.cumulativeSummary) throw new Error("Summary refit requires an existing cumulative summary")
@@ -2809,6 +2811,9 @@ export class Task {
 						[{ role: "user", content: [{ type: "text", text: state.cumulativeSummary }] }],
 						[{ type: "text", text: buildSummaryRefitGuidance(carryLimitTokens, refitAttempt) }],
 						carryLimitTokens,
+						"send",
+						1,
+						false,
 					)
 				},
 				reviewPass: (input, _state, passIdentity, attempt, summary) =>
@@ -2956,7 +2961,12 @@ export class Task {
 			: (this.taskSm.actModeProfile ?? configuration.actModeProfile)
 	}
 
-	/** Build one authorized hidden Pass request through the frozen target handler. */
+	/**
+	 * Build one authorized hidden Pass request through the frozen target handler.
+	 *
+	 * `requestTaskProgress` is false for iterative Passes and summary refits: they see only part of the
+	 * task, so the instruction omits task_progress instead of collecting a checklist that would be stale.
+	 */
 	private async buildContextCompactionPassRequest(
 		input: ContextCompactionSessionInput,
 		passHistory: readonly ClineStorageMessage[],
@@ -2964,6 +2974,7 @@ export class Task {
 		summaryOutputLimitTokens?: number,
 		purpose: "send" | "estimate" = "send",
 		inputCalibrationRatio = 1,
+		requestTaskProgress = true,
 	) {
 		const requestScope = createRequestApiScope(
 			input.compactionApi,
@@ -2979,6 +2990,7 @@ export class Task {
 			operationId: input.operationId,
 		})
 		const focusChainSettings =
+			requestTaskProgress &&
 			resolvePromptProfile({
 				modelId: requestScope.providerInfo.model.id,
 				contextWindow: requestScope.providerInfo.model.info.capabilities?.contextWindow,

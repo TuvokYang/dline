@@ -33,6 +33,7 @@ import {
 	acceptCompactionPass,
 	applyCompactionPassPlan,
 	getCompactionPassIdentity,
+	isIterativeCompactionPass,
 	refitCompactionSummary,
 	type TargetWindowFittingState,
 	tryStartTargetWindowFitting,
@@ -276,7 +277,7 @@ export interface ContextCompactionSessionPorts {
 
 /** Facts from the accepted Passes that the commit applies beside the compacted history. */
 export interface ContextCompactionCommitOutcome {
-	/** Ordered checklist from the most recent accepted Pass that reported one. */
+	/** Ordered checklist from a single Pass that covered every turn; iterative compaction never reports one. */
 	taskProgress?: string
 	/** Accepted Passes in this operation, excluding summary refits. */
 	acceptedPassCount: number
@@ -499,6 +500,8 @@ export class ContextCompactionSession {
 								continue
 							}
 
+							// An iterative Pass sees only part of the task; its checklist would overwrite newer progress.
+							const reportsTaskProgress = !isIterativeCompactionPass(state)
 							const nextState = acceptCompactionPass(state, result.summary).state
 							const reprojectionStartedAtMs = performance.now()
 							projection = await this.ports.reprojectTarget(input, snapshotFittingState(nextState))
@@ -509,7 +512,9 @@ export class ContextCompactionSession {
 							state = nextState
 							consecutiveSummaryRefitAttempts = 0
 							commitOutcome.acceptedPassCount += 1
-							if (result.taskProgress) commitOutcome.taskProgress = result.taskProgress
+							if (result.taskProgress && reportsTaskProgress) {
+								commitOutcome.taskProgress = result.taskProgress
+							}
 							if (this.active?.operationId === input.operationId) this.active.state = snapshotFittingState(state)
 							await this.ports.publish(input, {
 								kind: "pass_completed",

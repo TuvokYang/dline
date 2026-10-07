@@ -231,6 +231,15 @@ export function buildCompactionPassHistory(state: TargetWindowFittingState): Cli
 	return buildCompactionPassHistoryForRange(state, state.passStartTurnIndex, state.passEndTurnIndex)
 }
 
+/**
+ * Whether a planned Pass is part of an iterative compaction: a later Pass of the operation, or a first
+ * Pass that leaves turns for later Passes. Such a Pass sees only part of the task, so its checklist must
+ * not replace the task progress.
+ */
+export function isIterativeCompactionPass(state: TargetWindowFittingState): boolean {
+	return state.passIndex > 0 || state.passEndTurnIndex < state.turns.length - 1
+}
+
 /** Accept one valid cumulative summary and advance coverage to the next complete turn. */
 export function acceptCompactionPass(state: TargetWindowFittingState, summary: string): AcceptedCompactionPass {
 	if (!state.passPlanned) {

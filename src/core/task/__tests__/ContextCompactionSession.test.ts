@@ -742,6 +742,75 @@ describe("ContextCompactionSession", () => {
 		})
 	})
 
+	function streamSummaryWithProgress(summaries: readonly string[], progress: readonly string[]): ApiHandler {
+		let providerCall = 0
+		return {
+			createMessage: vi.fn(async function* () {
+				const call = providerCall++
+				yield {
+					type: "text",
+					text: `<summarize_task>\n<context>\n${summaries[call]}\n</context>\n<task_progress>\n${progress[call]}\n</task_progress>\n</summarize_task>`,
+				}
+				yield { type: "usage", inputTokens: 100, outputTokens: 50, cacheWriteTokens: 0, cacheReadTokens: 0 }
+			}),
+		} as unknown as ApiHandler
+	}
+
+	it("commits the task progress of a single Pass that covers every turn", async () => {
+		const ports = createPorts()
+		const api = streamSummaryWithProgress(["SINGLE_PASS_SUMMARY"], ["- [x] Single pass step"])
+		const session = new ContextCompactionSession(ports, { maxRetryAttempts: 1 })
+
+		const result = await session.run({
+			operationId: "operation-single-pass-progress",
+			trigger: "auto_compaction",
+			compactionApi: api,
+			targetApi: api,
+			targetMode: "act",
+			sourceHistory: HISTORY,
+		})
+
+		expect(result).toBe("completed")
+		expect(api.createMessage).toHaveBeenCalledOnce()
+		expect(ports.commit).toHaveBeenCalledWith(
+			expect.objectContaining({ operationId: "operation-single-pass-progress" }),
+			expect.objectContaining({ passIndex: 1, coveredTurnCount: 2 }),
+			{ acceptedPassCount: 1, taskProgress: "- [x] Single pass step" },
+		)
+	})
+
+	it("never commits task progress from the Passes of an iterative compaction", async () => {
+		const ports = createPorts()
+		ports.getPassInputCeiling = () => 5_000
+		ports.estimatePassInput = vi.fn(async (_input, history) => {
+			const serialized = JSON.stringify(history)
+			return serialized.includes("turn one") && serialized.includes("turn two") ? 6_000 : 1_000
+		})
+		ports.reprojectTarget = vi.fn().mockResolvedValueOnce(decision("continue")).mockResolvedValueOnce(decision("complete"))
+		const api = streamSummaryWithProgress(
+			["ITERATIVE_SUMMARY_ONE", "ITERATIVE_SUMMARY_TWO"],
+			["- [ ] Stale first pass step", "- [x] Partial second pass step"],
+		)
+		const session = new ContextCompactionSession(ports, { maxRetryAttempts: 1 })
+
+		const result = await session.run({
+			operationId: "operation-iterative-progress",
+			trigger: "auto_compaction",
+			compactionApi: api,
+			targetApi: api,
+			targetMode: "act",
+			sourceHistory: HISTORY,
+		})
+
+		expect(result).toBe("completed")
+		expect(api.createMessage).toHaveBeenCalledTimes(2)
+		expect(ports.commit).toHaveBeenCalledOnce()
+		const [, committedState, outcome] = vi.mocked(ports.commit).mock.calls[0]
+		expect(committedState).toMatchObject({ passIndex: 2, coveredTurnCount: 2, cumulativeSummary: "ITERATIVE_SUMMARY_TWO" })
+		expect(outcome).toEqual({ acceptedPassCount: 2 })
+		expect(outcome).not.toHaveProperty("taskProgress")
+	})
+
 	it("refits an oversized cumulative summary before replanning the same uncovered turn", async () => {
 		const ports = createPorts()
 		ports.getPassInputCeiling = () => 5_000
