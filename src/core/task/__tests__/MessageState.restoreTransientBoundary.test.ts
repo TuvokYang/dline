@@ -28,7 +28,7 @@ function createUiMessageStub(rows: DurableRow[]) {
 		},
 		getByTs: (ts: number) => durable.find((row) => row.ts === ts),
 		findIndexByTs: (ts: number) => durable.findIndex((row) => row.ts === ts),
-		appendDurable: async (message: UiMessage) => {
+		commitPendingAndAppendDurable: async (message: UiMessage) => {
 			durable.push(message as unknown as DurableRow)
 			return message
 		},

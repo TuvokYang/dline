@@ -89,6 +89,10 @@ export class UIMessage {
 	async appendDurable(msg: UiMessage): Promise<UiMessage> {
 		return await this.store.appendDurable(msg)
 	}
+	/** Commit any staged rewrite, then append one row durably, without another write in between. */
+	async commitPendingAndAppendDurable(msg: UiMessage): Promise<UiMessage> {
+		return await this.store.commitPendingAndAppendDurable(msg)
+	}
 	async truncate(beforeTs: number): Promise<void> {
 		await this.store.truncateBeforeTimestamp(beforeTs)
 	}

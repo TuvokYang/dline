@@ -96,7 +96,15 @@ export interface BufferedUnifyStore<TItem extends { ts: number }> {
 	getRange(fromTimestamp: number, toTimestamp: number): Promise<TItem[]>
 	reload(force?: boolean): Promise<void>
 	append(item: TItem): Promise<void>
+	/** Append one row and commit it; rejects when staged changes other than appends are pending. */
 	appendDurable(item: TItem): Promise<TItem>
+	/**
+	 * Commit whatever is staged, then append one row durably, under one lock.
+	 *
+	 * Unlike {@link appendDurable} a staged in-place rewrite does not reject the
+	 * row; it is committed first, at the cost of that rewrite.
+	 */
+	commitPendingAndAppendDurable(item: TItem): Promise<TItem>
 	stageInsertAt(index: number, item: TItem): Promise<void>
 	stageUpdateAt(index: number, item: TItem): Promise<void>
 	stagePatchAt(index: number, updates: Partial<TItem>): Promise<TItem>

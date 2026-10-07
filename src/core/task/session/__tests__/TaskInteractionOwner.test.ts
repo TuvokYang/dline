@@ -14,6 +14,7 @@ function createMessages(rows: UiMessage[] = []): MessageStateHandler {
 		clineMessages: rows,
 		addToClineMessages: vi.fn(async () => undefined),
 		finalizeClineMessage: vi.fn(async () => undefined),
+		flushUiMessages: vi.fn(async () => undefined),
 		removeMessagesByTs: vi.fn(async (timestamps: number[]) => {
 			for (const timestamp of timestamps) {
 				const index = rows.findIndex((row) => row.ts === timestamp)
@@ -165,6 +166,35 @@ describe("TaskInteractionOwner", () => {
 		expect(submitted).toEqual([])
 		expect(messages.removeMessagesByTs).not.toHaveBeenCalled()
 		expect(messages.clineMessages).toEqual(rows)
+	})
+
+	// The anchor replaces the completion row in place. A reply arriving before
+	// the store commits that rewrite on its own would find the buffer unclean,
+	// and the dialog would be open over an anchor that exists only in memory.
+	it("commits a completion anchor before the dialog is requested", async () => {
+		const order: string[] = []
+		const messages = createMessages([{ ts: 7, type: "say", say: "completion_result", text: "done" }])
+		vi.mocked(messages.finalizeClineMessage).mockImplementation(async () => {
+			order.push("anchor")
+			return undefined as never
+		})
+		vi.mocked(messages.flushUiMessages).mockImplementation(async () => {
+			order.push("flush")
+		})
+		const { owner, submitted, whenSubmitted } = createOwner({ messages })
+		const submittedNext = whenSubmitted()
+
+		void owner.complete({
+			turnId: "turn-1",
+			interactionId: "i-completion",
+			completionId: "c-1",
+			presentation: "done",
+			existingTs: 7,
+		})
+		await submittedNext
+		order.push(...submitted)
+
+		expect(order).toEqual(["anchor", "flush", "dialog.requested"])
 	})
 
 	it("stays usable after a stop, because a cancelled task may resume", async () => {

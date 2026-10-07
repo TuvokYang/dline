@@ -703,7 +703,10 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 			committed = await uiMessage.updateMessage(durableIndex, { ...message, partial: false })
 			await uiMessage.flush()
 		} else {
-			committed = await uiMessage.appendDurable({ ...message, partial: false })
+			// Rows elsewhere are patched in place and left staged (a request's
+			// cost, a dialog anchor) until the store's timer commits them. A new
+			// row must not depend on that timer having run first.
+			committed = await uiMessage.commitPendingAndAppendDurable({ ...message, partial: false })
 		}
 
 		this.transientClineMessages.delete(message.ts)

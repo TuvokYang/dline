@@ -207,19 +207,37 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
 			if (!tailAdditions) {
 				throw new Error("BufferedUnifyStore.appendDurable requires a clean or append-only buffer")
 			}
-			const admitted = this.ensureUniqueAppendTimestamp ? this.withLocallyUniqueTimestamp(item) : item
-			if (this.items.some((candidate) => candidate.ts === admitted.ts)) {
-				throw new Error(`BufferedUnifyStore.appendDurable: timestamp ${admitted.ts} already exists`)
-			}
-			const additions = [...tailAdditions, admitted]
-			await this.store.insert(
-				additions.map((addition, index) => this.mapping.toEntity(addition, this.persistedItems.length + index)),
-			)
-			this.setCommittedState([...this.persistedItems, ...additions])
-			this.dirty = false
-			this.publishCommittedChange()
-			return admitted
+			return await this.appendDurableLocked(item, tailAdditions)
 		})
+	}
+
+	async commitPendingAndAppendDurable(item: TItem): Promise<TItem> {
+		this.assertWritable()
+		return await this.mutex.withLock(async () => {
+			let tailAdditions = this.dirty ? this.getPureTailAdditions() : []
+			if (!tailAdditions) {
+				// Committed under the same lock, so no other write can slip in
+				// between the staged rewrite and the row that follows it.
+				await this.flushLocked()
+				tailAdditions = []
+			}
+			return await this.appendDurableLocked(item, tailAdditions)
+		})
+	}
+
+	private async appendDurableLocked(item: TItem, tailAdditions: readonly TItem[]): Promise<TItem> {
+		const admitted = this.ensureUniqueAppendTimestamp ? this.withLocallyUniqueTimestamp(item) : item
+		if (this.items.some((candidate) => candidate.ts === admitted.ts)) {
+			throw new Error(`BufferedUnifyStore.appendDurable: timestamp ${admitted.ts} already exists`)
+		}
+		const additions = [...tailAdditions, admitted]
+		await this.store.insert(
+			additions.map((addition, index) => this.mapping.toEntity(addition, this.persistedItems.length + index)),
+		)
+		this.setCommittedState([...this.persistedItems, ...additions])
+		this.dirty = false
+		this.publishCommittedChange()
+		return admitted
 	}
 
 	async stageInsertAt(index: number, item: TItem): Promise<void> {

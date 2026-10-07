@@ -159,6 +159,8 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
 			if (this.messages.clineMessages.some((message) => message.ts === anchorTs))
 				await this.messages.finalizeClineMessage(anchor)
 			else await this.messages.addToClineMessages(anchor)
+			// The same in-place rewrite as a requested dialog's anchor; see request().
+			await this.messages.flushUiMessages()
 		} catch (error) {
 			Logger.warn(
 				`[TaskInteractionOwner] Failed to anchor staged completion ${primary.interactionId}: ${error instanceof Error ? error.message : error}`,
@@ -596,6 +598,11 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
 		if (this.messages.clineMessages.some((message) => message.ts === anchorTs))
 			await this.messages.finalizeClineMessage(anchor)
 		else await this.messages.addToClineMessages(anchor)
+		// Replacing the completion row in place is a staged rewrite, not an
+		// append. Left in the buffer it would fail the next durable append (the
+		// reply to this very dialog) and leave the dialog requested over an
+		// anchor that only lives in memory, so it is flushed as an ask is.
+		await this.messages.flushUiMessages()
 		const session = this.requireSession()
 		const state = session.state()
 		const event: TaskEvent = {
