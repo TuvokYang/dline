@@ -5,7 +5,7 @@ import {
 	estimateContextWindowIndicatorSegments,
 	projectAuthoritativeContextWindowIndicatorSegments,
 } from "../ContextWindowIndicatorProjection"
-import type { CompactionProviderInput } from "../compaction/CompactionRequestReplay"
+import type { CompactionProviderInput } from "../compaction/CompactionProviderInput"
 
 function providerInput(messages: ClineStorageMessage[]): CompactionProviderInput {
 	return {

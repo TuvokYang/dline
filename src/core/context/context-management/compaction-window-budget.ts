@@ -153,5 +153,5 @@ function renderBudgetGuidance(budget: CompactionWindowBudget): string {
 The recommended range is guidance, not a quota or a minimum output requirement.
 Do not expand the analysis or summary merely to fill the available range.
 Preserve all information required to continue the task accurately and completely.
-The complete response, including reasoning and the compaction tool-call payload, must not exceed the hard limit above.`
+The complete response, including reasoning and the <summarize_task> block, must not exceed the hard limit above.`
 }

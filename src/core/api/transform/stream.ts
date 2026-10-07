@@ -46,8 +46,19 @@ export interface ApiStreamUsageChunk {
 		webSearchRequests?: number
 		webFetchRequests?: number
 	}
+	/** Normalized reason the Provider stopped generating, when the adapter observed one. */
+	stopReason?: ApiStopReason
 	provider_metadata?: ClineProviderMetadata
 }
+
+/**
+ * Provider-neutral stop reason.
+ *
+ * `output_limit` covers Anthropic `max_tokens`, OpenAI Chat `length`, and Responses
+ * `max_output_tokens`; `other` keeps an unrecognized native reason distinguishable from
+ * a stream that never reported one.
+ */
+export type ApiStopReason = "end_turn" | "tool_use" | "output_limit" | "stop_sequence" | "content_filter" | "other"
 
 /**
  * Lifecycle of one provider-hosted call.

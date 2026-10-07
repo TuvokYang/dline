@@ -341,6 +341,59 @@ describe("ChatRow summarizeTask rendering", () => {
 		expect(screen.queryByText("Dline is condensing the conversation:")).not.toBeInTheDocument()
 	})
 
+	it("names the rejected reply shape while a compaction retries", () => {
+		render(
+			<ChatRowContent
+				{...baseProps}
+				isExpanded={true}
+				message={{
+					ts: 12,
+					type: "say",
+					say: "tool",
+					partial: true,
+					text: JSON.stringify({
+						tool: "summarizeTask",
+						content: "",
+						compactionStatus: "retrying",
+						retryAttempt: 1,
+						maxRetryAttempts: 3,
+						compactionFailureKind: "unclosed_block",
+					}),
+				}}
+			/>,
+		)
+
+		expect(screen.getByTestId("compaction-pass")).toHaveAttribute("data-compaction-failure-kind", "unclosed_block")
+		expect(screen.getByTestId("compaction-retry-reason")).toHaveTextContent("The <summarize_task> block was not closed.")
+	})
+
+	it("prefixes a terminal failure with its classified reason", () => {
+		render(
+			<ChatRowContent
+				{...baseProps}
+				isExpanded={true}
+				message={{
+					ts: 13,
+					type: "say",
+					say: "tool",
+					partial: false,
+					text: JSON.stringify({
+						tool: "summarizeTask",
+						content: "",
+						compactionStatus: "failed",
+						compactionFailureKind: "output_limit",
+						error: "Retry budget exhausted after 3 attempts.",
+					}),
+				}}
+			/>,
+		)
+
+		expect(screen.getByTestId("compaction-failure")).toHaveAttribute("data-compaction-failure-kind", "output_limit")
+		const errorBox = screen.getByTestId("compaction-error-box")
+		expect(errorBox).toHaveTextContent("The reply reached the output token limit before the summary was closed.")
+		expect(errorBox).toHaveTextContent("Retry budget exhausted after 3 attempts.")
+	})
+
 	it("caps the expanded automatic summary at 60% of the viewport with internal scrolling", () => {
 		render(
 			<ChatRowContent

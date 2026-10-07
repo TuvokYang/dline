@@ -705,6 +705,7 @@ describe("messages_api_support", () => {
 					inputTokens: 0,
 					outputTokens: 5,
 					serverToolUsage: { webSearchRequests: 0, webFetchRequests: 1 },
+					stopReason: "end_turn",
 				},
 			])
 			expect(chunks.some((chunk) => chunk.type === "tool_calls")).to.equal(false)

@@ -1,4 +1,4 @@
-import type { CompactionProviderInput } from "@core/task/compaction/CompactionRequestReplay"
+import type { CompactionProviderInput } from "@core/task/compaction/CompactionProviderInput"
 import cloneDeep from "clone-deep"
 
 interface OrdinaryRequestInputState {

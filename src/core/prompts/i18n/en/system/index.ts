@@ -48,7 +48,6 @@ export const systemPromptModules = [
 			"SUMMARY_DECISION",
 			"COMPACTION_WINDOW_BUDGET",
 		),
-		continuationPrompt: createRuntimeContract("SUMMARY_TEXT"),
 	}),
 	defineLegacyModule("editingFiles", "system", editingFiles, { main: createRuntimeContract("AUTO_FORMATTING_SECTION") }),
 	defineLegacyModule("execution", "system", execution, {

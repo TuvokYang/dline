@@ -1,5 +1,6 @@
 import type { ClineMessage, ClineSayTool, CompactionConversationRange } from "@shared/ExtensionMessage"
 import type { ClineStorageMessage, ClineUserToolResultContentBlock } from "@shared/messages/content"
+import { compactionSummaryMessage } from "./compaction-summary-message"
 import { hasTaggedUserFeedback } from "./logical-turns"
 
 export type CanonicalMessageRange = readonly [startIndex: number, endIndex: number]
@@ -62,7 +63,7 @@ export function projectCompactionContext(input: CompactionContextProjectionInput
 		while (cards[cardIndex]?.range.apiConversationRange[0] === index) {
 			const card = cards[cardIndex]
 			if (card.summary.trim()) {
-				messages.push(summaryMessage(card.summary))
+				messages.push(compactionSummaryMessage(card.summary))
 				canonicalMessageIndexes.push(undefined)
 				sourceCanonicalRanges.push(card.range.apiConversationRange)
 			}
@@ -194,8 +195,4 @@ function withoutSummarizedToolResults(
 	)
 	if (content.length === message.content.length) return message
 	return content.length > 0 ? ({ ...message, content } as ClineStorageMessage) : undefined
-}
-
-function summaryMessage(summary: string): ClineStorageMessage {
-	return { role: "user", content: [{ type: "text", text: summary }] }
 }

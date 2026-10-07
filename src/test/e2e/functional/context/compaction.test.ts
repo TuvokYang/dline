@@ -66,6 +66,25 @@ function estimateTokens(value: unknown): number {
 
 const TRUNCATED_SUMMARY_MARKER = "E2E_CHAT_COMPACTION_TRUNCATED_RESPONSE_SHOULD_NOT_SURVIVE"
 const HIGH_CONTEXT_PRESSURE_MARKER = "# High Context Pressure"
+const RETRY_REMINDER_HEADING = "# Retry Reminder"
+
+/** A retry appends one reminder text block to the frozen compaction request; everything else must stay identical. */
+function withoutRetryReminder(body: Record<string, unknown>): Record<string, unknown> {
+	if (!Array.isArray(body.input)) return body
+	return {
+		...body,
+		input: body.input.map((item) => {
+			const content = (item as { content?: unknown }).content
+			if (!Array.isArray(content)) return item
+			return {
+				...(item as Record<string, unknown>),
+				content: content.filter(
+					(part) => !String((part as { text?: unknown }).text ?? "").includes(RETRY_REMINDER_HEADING),
+				),
+			}
+		}),
+	}
+}
 const OPENAI_E2E_MODEL_MAX_OUTPUT_TOKENS = 8_192
 const ONE_PIXEL_PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
 const ONE_PIXEL_PNG_BASE64_PREFIX = ONE_PIXEL_PNG_BASE64.slice(0, -4)
@@ -998,7 +1017,8 @@ e2e(
 			const retryRequestBody = requests[2].requestBody as Record<string, unknown>
 			expect(firstRequestBody).not.toHaveProperty("max_output_tokens")
 			expect(retryRequestBody).not.toHaveProperty("max_output_tokens")
-			expect(retryRequestBody).toEqual(firstRequestBody)
+			expect(JSON.stringify(retryRequestBody)).toContain(RETRY_REMINDER_HEADING)
+			expect(withoutRetryReminder(retryRequestBody)).toEqual(firstRequestBody)
 			expect(JSON.stringify(requests[2].requestBody)).not.toContain(damagedSummary)
 			expect(JSON.stringify(requests[2].requestBody)).not.toContain(interruptedThinking)
 			expect(JSON.stringify(requests[3].requestBody)).toContain(recoveredSummary)
@@ -1944,7 +1964,7 @@ e2e(
 			},
 			{
 				type: "message",
-				text: "<thinking>recovered summary</thinking><summarize_task><context>E2E_CHAT_COMPACTION_RETRY_SUMMARY is complete.</context></summarize_task>",
+				text: "<thinking>recovered summary</thinking><summarize_task><context>E2E_CHAT_COMPACTION_RETRY_SUMMARY is complete.</context></summarize_task>\nLet me know if anything else is needed.",
 				delayMs: 2_000,
 				usage: { inputTokens: 125_000, outputTokens: 100 },
 				expectedRequestIncludes: [
@@ -1993,6 +2013,66 @@ e2e(
 			expect(JSON.stringify(requests[3].requestBody)).not.toContain(TRUNCATED_SUMMARY_MARKER)
 			await expect(sidebar.getByText(TRUNCATED_SUMMARY_MARKER, { exact: false })).toHaveCount(0)
 			await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir, [/Connection error|ECONNRESET|fetch failed/])
+		} finally {
+			await app.close()
+		}
+	},
+)
+
+// Regression for task 1791122313218: the summary ended at </context> without </summarize_task>.
+e2e(
+	"OpenAI compaction - unclosed summarize_task retries with a reminder and accepts a closed call with trailing text",
+	async ({ dlineDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
+		e2e.setTimeout(180_000)
+		await configureChatAutoCompaction(dlineDir)
+		const unclosedMarker = "E2E_CHAT_UNCLOSED_SUMMARY_MARKER"
+		server.enqueueResponses(
+			"openai-compatible-chat",
+			{
+				type: "tool",
+				id: "call_chat_unclosed_ready",
+				name: "qna_respond",
+				arguments: { response: "E2E_CHAT_UNCLOSED_READY" },
+				usage: { inputTokens: 125_000, outputTokens: 100 },
+			},
+			{
+				type: "message",
+				text: `<summarize_task>\n<context>\n${unclosedMarker}\n</context>\n`,
+				usage: { inputTokens: 125_000, outputTokens: 100 },
+				expectedRequestIncludes: ["The current conversation is rapidly running out of context"],
+				expectedRequestExcludes: ["# Retry Reminder"],
+			},
+			{
+				type: "message",
+				text: "<summarize_task>\n<context>\nE2E_CHAT_UNCLOSED_RECOVERED_SUMMARY is complete.\n</context>\n</summarize_task>\nDone.",
+				usage: { inputTokens: 125_000, outputTokens: 100 },
+				expectedRequestIncludes: ["The current conversation is rapidly running out of context", "# Retry Reminder"],
+				expectedRequestExcludes: [unclosedMarker],
+			},
+			{
+				type: "tool",
+				id: "call_chat_unclosed_complete",
+				name: "attempt_completion",
+				arguments: { result: "E2E_CHAT_UNCLOSED_OK" },
+				expectedRequestIncludes: ["E2E_CHAT_UNCLOSED_RECOVERED_SUMMARY", "E2E_CHAT_UNCLOSED_CONTINUE"],
+				expectedRequestExcludes: [unclosedMarker, "# Retry Reminder"],
+			},
+		)
+
+		const app = await openVSCode(workspaceDir)
+		try {
+			const sidebar = await openSidebar(app, helper)
+			await sendTask(sidebar, "E2E_CHAT_UNCLOSED_TASK")
+			await expect(sidebar.getByText("E2E_CHAT_UNCLOSED_READY", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
+			await sendTask(sidebar, "E2E_CHAT_UNCLOSED_CONTINUE")
+			await expect(sidebar.getByText("E2E_CHAT_UNCLOSED_OK", { exact: false }).last()).toBeVisible({ timeout: 120_000 })
+
+			await expect.poll(() => server.getRequestCount("openai-compatible-chat")).toBe(4)
+			for (const request of server.getMockConsumptions("openai-compatible-chat")) {
+				expect(request.contractError).toBeUndefined()
+			}
+			await expect(sidebar.getByText(unclosedMarker, { exact: false })).toHaveCount(0)
+			await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir, [/did not return a usable <summarize_task>/i])
 		} finally {
 			await app.close()
 		}
@@ -2068,8 +2148,8 @@ e2e(
 			await expect(sidebar.getByTestId("compaction-failure")).toBeVisible({ timeout: 120_000 })
 			await sidebar.getByRole("button", { name: "Retry", exact: true }).last().click()
 
-			// The retried hidden Pass is request #5: attempt 0 (truncated) -> max-output replay ->
-			// normal retry after the replay -> successful summary. Assert ordering and immutable wire input there.
+			// Request #3 is truncated, #4 replays it with the output-limit reminder and fails at the Provider,
+			// and #5 is the fresh hidden Pass started by Retry. Assert ordering and immutable wire input there.
 			await expect
 				.poll(() => server.getRequestCount("openai-compatible-responses"), { timeout: 120_000 })
 				.toBeGreaterThanOrEqual(5)
@@ -2085,8 +2165,11 @@ e2e(
 			for (const requestBody of [maxOutputReplayBody, normalRetryBody, successfulRetryBody]) {
 				expect(requestBody).not.toHaveProperty("max_output_tokens")
 			}
-			expect(normalRetryBody).toEqual(maxOutputReplayBody)
-			expect(successfulRetryBody).toEqual(normalRetryBody)
+			expect(JSON.stringify(maxOutputReplayBody)).not.toContain(RETRY_REMINDER_HEADING)
+			expect(JSON.stringify(normalRetryBody)).toContain(RETRY_REMINDER_HEADING)
+			expect(JSON.stringify(successfulRetryBody)).not.toContain(RETRY_REMINDER_HEADING)
+			expect(withoutRetryReminder(normalRetryBody)).toEqual(maxOutputReplayBody)
+			expect(successfulRetryBody).toEqual(maxOutputReplayBody)
 			expect(JSON.stringify(requests[4].requestBody)).not.toContain(damagedSummary)
 		} finally {
 			await app.close()

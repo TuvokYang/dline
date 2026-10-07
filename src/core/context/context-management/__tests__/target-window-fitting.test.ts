@@ -1,6 +1,7 @@
 import type { ClineStorageMessage } from "@shared/messages/content"
 import { describe, expect, it } from "vitest"
 import { createCompactionSourceSnapshot, materializeCompactionSourceRange } from "../compaction-source-snapshot"
+import { compactionSummaryMessage } from "../compaction-summary-message"
 import { indexLogicalTurns } from "../logical-turns"
 import {
 	acceptCompactionPass,
@@ -219,7 +220,7 @@ describe("target window rolling fitting", () => {
 			...continuation,
 		]
 
-		expect(targetHistory[0]).toEqual(message("user", "E2E_ROLLING_SUMMARY_ONE"))
+		expect(targetHistory[0]).toEqual(compactionSummaryMessage("E2E_ROLLING_SUMMARY_ONE"))
 		expect(targetHistory.slice(1)).toEqual(expectedMessages)
 	})
 

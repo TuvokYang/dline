@@ -2,6 +2,7 @@ import type { ClineMessage } from "@shared/ExtensionMessage"
 import type { ClineStorageMessage } from "@shared/messages/content"
 import { describe, expect, it } from "vitest"
 import { projectCompactionContext, readCompletedCompactionCards } from "../compaction-context-projection"
+import { compactionSummaryMessage } from "../compaction-summary-message"
 
 const canonical: ClineStorageMessage[] = [
 	{ role: "user", content: "task", ts: 1 },
@@ -24,7 +25,7 @@ describe("projectCompactionContext", () => {
 		expect(result.messages).toEqual([
 			canonical[0],
 			canonical[1],
-			{ role: "user", content: [{ type: "text", text: "summary of the old question and answer" }] },
+			compactionSummaryMessage("summary of the old question and answer"),
 			canonical[4],
 			canonical[5],
 			canonical[6],
@@ -164,8 +165,8 @@ describe("projectCompactionContext", () => {
 
 		expect(result.messages).toEqual([
 			canonical[1],
-			{ role: "user", content: [{ type: "text", text: "first summary" }] },
-			{ role: "user", content: [{ type: "text", text: "second summary" }] },
+			compactionSummaryMessage("first summary"),
+			compactionSummaryMessage("second summary"),
 			canonical[6],
 			canonical[7],
 		])
@@ -181,7 +182,7 @@ describe("projectCompactionContext", () => {
 		expect(result.messages).toEqual([
 			canonical[0],
 			canonical[1],
-			{ role: "user", content: [{ type: "text", text: "cumulative summary" }] },
+			compactionSummaryMessage("cumulative summary"),
 			canonical[6],
 			canonical[7],
 		])
@@ -205,7 +206,7 @@ describe("projectCompactionContext", () => {
 			canonical[1],
 			canonical[2],
 			canonical[3],
-			{ role: "user", content: [{ type: "text", text: "latest summary" }] },
+			compactionSummaryMessage("latest summary"),
 			canonical[6],
 			canonical[7],
 		])

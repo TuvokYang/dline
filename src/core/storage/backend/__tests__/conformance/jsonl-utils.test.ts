@@ -194,6 +194,19 @@ describe("jsonl-utils", () => {
 			expect(attempts).toBe(2)
 			expect(await readJsonl(fp)).toEqual([{ ts: 1, text: "persisted" }])
 		})
+
+		it("keeps the previous file and removes its temp file when the rename fails", async () => {
+			tmpDir = path.join(os.tmpdir(), `jsonl-test-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+			await fs.mkdir(tmpDir, { recursive: true })
+			const fp = path.join(tmpDir, "failed-write.jsonl")
+			await writeJsonl(fp, [{ ts: 1, text: "previous" }])
+			fsMock.rename.mockRejectedValue(Object.assign(new Error("disk full"), { code: "ENOSPC", syscall: "rename" }))
+
+			await expect(writeJsonl(fp, [{ ts: 2, text: "lost" }])).rejects.toMatchObject({ code: "ENOSPC" })
+
+			expect(await readJsonl(fp)).toEqual([{ ts: 1, text: "previous" }])
+			expect(await fs.readdir(tmpDir)).toEqual(["failed-write.jsonl"])
+		})
 	})
 
 	describe("round-trip", () => {

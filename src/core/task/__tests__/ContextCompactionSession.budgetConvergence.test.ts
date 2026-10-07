@@ -1,7 +1,7 @@
 import type { ApiHandler } from "@core/api"
 import { CompactionPassBudgetError } from "@core/context/context-management/compaction-pass-budget-error"
 import type { TargetWindowFittingDecision } from "@core/context/context-management/TargetWindowFittingService"
-import type { CompactionProviderInput } from "@core/task/compaction/CompactionRequestReplay"
+import type { CompactionProviderInput } from "@core/task/compaction/CompactionProviderInput"
 import { ExplicitInstructionRegistry } from "@core/task/explicit-instructions/ExplicitInstructionRegistry"
 import { ExplicitInstructionRequestScope } from "@core/task/explicit-instructions/ExplicitInstructionRequestScope"
 import type { ClineStorageMessage } from "@shared/messages/content"
@@ -49,12 +49,7 @@ function sourceHistory(): ClineStorageMessage[] {
 function summarizingApi(): ApiHandler {
 	return {
 		createMessage: vi.fn(async function* () {
-			yield {
-				type: "tool_calls",
-				function_id: "f",
-				tool_index: 0,
-				tool_call: { function: { name: "summarize_task", arguments: JSON.stringify({ context: "summary" }) } },
-			}
+			yield { type: "text", text: "<summarize_task>\n<context>\nsummary\n</context>\n</summarize_task>" }
 			yield { type: "usage", inputTokens: 10, outputTokens: 5, cacheWriteTokens: 0, cacheReadTokens: 0 }
 		}),
 	} as unknown as ApiHandler

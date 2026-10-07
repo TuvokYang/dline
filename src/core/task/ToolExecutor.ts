@@ -93,12 +93,7 @@ import {
 } from "./tools/ToolExecutorCoordinator"
 import { ToolValidator } from "./tools/ToolValidator"
 import { ToolDurationScope } from "./tools/tool-duration-scope"
-import {
-	type CompactionAttemptGuard,
-	type TaskConfig,
-	type TaskInteractionPorts,
-	validateTaskConfig,
-} from "./tools/types/TaskConfig"
+import { type TaskConfig, type TaskInteractionPorts, validateTaskConfig } from "./tools/types/TaskConfig"
 import { createUIHelpers } from "./tools/types/UIHelpers"
 import { ToolDisplayUtils } from "./tools/utils/ToolDisplayUtils"
 import { NO_TOOL_RESULT, ToolResultUtils } from "./tools/utils/ToolResultUtils"
@@ -698,7 +693,6 @@ export class ToolExecutor {
 		private workspaceManager: WorkspaceRootManager | undefined,
 		private isMultiRootEnabled: boolean,
 		private interactions: TaskInteractionPorts,
-		private compactionAttemptGuard: CompactionAttemptGuard,
 
 		// Callbacks to the Task (Entity)
 		private say: (
@@ -816,7 +810,6 @@ export class ToolExecutor {
 			capabilityToggles: this.promptRuntime?.capabilityToggles ?? this.getTaskCapabilityToggles(),
 			interactions: this.scopedInteractions(),
 			admissionOutcomes: this.admissionOutcomes,
-			compactionAttemptGuard: this.compactionAttemptGuard,
 			services: {
 				mcpHub: this.mcpHub,
 				browserSession: this.browserSession,

@@ -338,6 +338,8 @@ export async function replaceJsonlTail<T>(filePath: string, replacement: JsonlTa
 /**
  * Write the full array as JSONL with atomic write-then-rename.
  * Prevents file truncation on crash compared to direct fs.writeFile.
+ * A write or rename that fails removes its temp file, so a full disk or a
+ * locked destination does not leave a partial copy next to the data file.
  *
  * @param filePath Absolute path to the JSONL file
  * @param entries Full array to write
@@ -346,17 +348,12 @@ export async function writeJsonl<T>(filePath: string, entries: T[]): Promise<voi
 	const lines = entries.map((item) => JSON.stringify(item)).join("\n")
 	const content = lines ? `${lines}\n` : ""
 	const tmpPath = `${filePath}.tmp.${crypto.randomUUID()}`
-	await fs.writeFile(tmpPath, content, "utf8")
 	try {
+		await fs.writeFile(tmpPath, content, "utf8")
 		await renameAtomicFile(tmpPath, filePath)
-	} catch (renameErr) {
-		// Best-effort cleanup: if rename fails, remove the orphaned temp file
-		try {
-			await fs.unlink(tmpPath)
-		} catch {
-			// ignore unlink errors
-		}
-		throw renameErr
+	} catch (error) {
+		await fs.rm(tmpPath, { force: true }).catch(() => undefined)
+		throw error
 	}
 }
 

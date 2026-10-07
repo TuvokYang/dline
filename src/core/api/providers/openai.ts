@@ -35,6 +35,7 @@ import {
 } from "../transform/openai-prompt-cache"
 import { convertToOpenAIResponsesInput, declaredResponsesHostedToolNames } from "../transform/openai-response-format"
 import { convertToR1Format } from "../transform/r1-format"
+import { normalizeOpenAIFinishReason } from "../transform/stop-reason"
 import { ApiStream } from "../transform/stream"
 import { getOpenAIToolParams, ToolCallProcessor } from "../transform/tool-call-processor"
 import { handleResponsesApiStreamResponse } from "../utils/responses_api_support"
@@ -344,6 +345,8 @@ export class OpenAiHandler implements ApiHandler {
 		const toolCallProcessor = new ToolCallProcessor()
 
 		let usageYielded = false
+		// The finish reason usually arrives on the chunk before the usage-only chunk.
+		let stopReason: ReturnType<typeof normalizeOpenAIFinishReason>
 
 		for await (const chunk of stream) {
 			const delta = chunk.choices?.[0]?.delta
@@ -367,6 +370,7 @@ export class OpenAiHandler implements ApiHandler {
 			if (options?.generation?.purpose === "compaction" && chunk.choices?.[0]?.finish_reason === "tool_calls") {
 				yield* toolCallProcessor.completeToolCalls()
 			}
+			stopReason = normalizeOpenAIFinishReason(chunk.choices?.[0]?.finish_reason) ?? stopReason
 
 			if (chunk.usage && !usageYielded) {
 				usageYielded = true
@@ -405,6 +409,7 @@ export class OpenAiHandler implements ApiHandler {
 					cacheReadTokens,
 					cacheWriteTokens,
 					totalCost,
+					...(stopReason ? { stopReason } : {}),
 				}
 			}
 

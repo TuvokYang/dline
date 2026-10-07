@@ -20,7 +20,7 @@ interface StoredProfile {
 type PersistedRecord = Record<string, unknown>
 
 const COMPACT_INSTRUCTION_MARKER = "The current conversation is rapidly running out of context"
-const COMPACTION_CORRECTION_MARKER = "The previous compaction attempt did not return a usable summarize_task call"
+const COMPACTION_CORRECTION_MARKER = "# Retry Reminder"
 
 const profilesPath = (dlineDir: string): string => path.join(dlineDir, "data", "settings", "api_profiles.json")
 const settingsPath = (dlineDir: string): string => path.join(dlineDir, "data", "settings", "settings.json")
@@ -768,10 +768,13 @@ e2e(
 		server.resetOpenAiMock()
 		const setupTask = "E2E_RESUME_MANUAL_EXHAUSTED_SETUP"
 		const summaryMarker = "E2E_RESUME_MANUAL_EXHAUSTED_SUMMARY"
+		// Every retry after the first failed attempt carries the reminder for the previous failure.
 		const unusableAttempt = (index: number) => ({
 			type: "message" as const,
 			text: `E2E_RESUME_MANUAL_EXHAUSTED_TEXT_${index}`,
-			expectedRequestIncludes: [COMPACT_INSTRUCTION_MARKER],
+			expectedRequestIncludes:
+				index === 1 ? [COMPACT_INSTRUCTION_MARKER] : [COMPACT_INSTRUCTION_MARKER, COMPACTION_CORRECTION_MARKER],
+			...(index === 1 ? { expectedRequestExcludes: [COMPACTION_CORRECTION_MARKER] } : {}),
 			usage: { inputTokens: 20_000, outputTokens: 50 },
 		})
 		server.enqueueResponses(
@@ -859,7 +862,7 @@ e2e(
 				expect(request.contractError).toBeUndefined()
 			}
 			expect(E2ETestHelper.readDlineOutputIfPresent(userDataDir) ?? "").not.toContain("hydrated_interaction_mismatch")
-			await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir, [/did not return a valid summarize_task/i])
+			await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir, [/did not return a usable <summarize_task>/i])
 		} finally {
 			await session?.app.close()
 		}

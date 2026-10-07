@@ -10,6 +10,7 @@ import type { ChatCompletionTool as OpenAITool } from "openai/resources/chat/com
 import type { ClineAssistantHostedToolBlock } from "@/shared/messages/content"
 import { ServerTool } from "@/shared/proto/dline/models/metadata"
 import { OutputLimitExceededError } from "../stream/OutputLimitExceededError"
+import { normalizeAnthropicStopReason } from "../transform/stop-reason"
 import type { ApiRawStreamServerToolChunk, ApiStream } from "../transform/stream"
 
 export type AnthropicMessagesStreamEvent = Anthropic.RawMessageStreamEvent | BetaRawMessageStreamEvent
@@ -309,12 +310,14 @@ export async function* handleAnthropicMessagesApiStreamResponse(
 			}
 			case "message_delta": {
 				const serverToolUsage = getServerToolUsage(chunk.usage)
+				const stopReason = normalizeAnthropicStopReason(chunk.delta?.stop_reason)
 				yield {
 					type: "usage",
 					inputTokens: 0,
 					outputTokens: chunk.usage.output_tokens || 0,
 					...getThinkingTokens(chunk.usage),
 					...(serverToolUsage === undefined ? {} : { serverToolUsage }),
+					...(stopReason ? { stopReason } : {}),
 				}
 				if (chunk.delta?.stop_reason === "max_tokens") {
 					throw new OutputLimitExceededError("anthropic_messages", "max_tokens")

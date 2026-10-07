@@ -3,6 +3,7 @@ import {
 	areCompactionPassIdentitiesEqual,
 	type CompactionPassIdentity,
 } from "@core/context/context-management/target-window-fitting"
+import type { CompactionFailureKind } from "@shared/context-compaction-failure"
 
 export type ContextCompactionAttemptIdentity = InternalCompactionAttemptIdentity
 export type ContextCompactionUnitKind = "pass" | "summary_refit" | "failure"
@@ -25,6 +26,8 @@ export interface ContextCompactionPresentationSnapshot {
 	content: string
 	status: ContextCompactionPresentationStatus
 	error?: string
+	/** Content-free classification of the latest failed attempt; cleared once the unit progresses again. */
+	failureKind?: CompactionFailureKind
 	retryAttempt?: number
 	maxRetryAttempts?: number
 	durable: boolean
@@ -76,6 +79,7 @@ export class ContextCompactionPresentation {
 		retryAttempt?: number,
 		maxRetryAttempts?: number,
 		error?: string,
+		failureKind?: CompactionFailureKind,
 	): ContextCompactionPresentationSnapshot | undefined {
 		return this.retryUnit(
 			"pass",
@@ -86,6 +90,7 @@ export class ContextCompactionPresentation {
 			retryAttempt,
 			maxRetryAttempts,
 			error,
+			failureKind,
 		)
 	}
 
@@ -147,6 +152,7 @@ export class ContextCompactionPresentation {
 		retryAttempt?: number,
 		maxRetryAttempts?: number,
 		error?: string,
+		failureKind?: CompactionFailureKind,
 	): ContextCompactionPresentationSnapshot | undefined {
 		const unit = this.findCurrentIdentityUnit("summary_refit", passIdentity, failedAttempt)
 		return unit
@@ -159,6 +165,7 @@ export class ContextCompactionPresentation {
 					retryAttempt,
 					maxRetryAttempts,
 					error,
+					failureKind,
 				)
 			: undefined
 	}
@@ -186,12 +193,17 @@ export class ContextCompactionPresentation {
 		return this.snapshot(unit)
 	}
 
-	fail(operationId: string, error: string): ContextCompactionPresentationSnapshot | undefined {
+	fail(
+		operationId: string,
+		error: string,
+		failureKind?: CompactionFailureKind,
+	): ContextCompactionPresentationSnapshot | undefined {
 		const active = this.getActiveUnit(operationId)
 		if (active && active.status !== "completed" && !active.durable) {
 			active.content = ""
 			active.status = "failed"
 			active.error = error
+			active.failureKind = failureKind
 			active.retryAttempt = undefined
 			active.maxRetryAttempts = undefined
 			return this.snapshot(active)
@@ -204,6 +216,7 @@ export class ContextCompactionPresentation {
 			content: "",
 			status: "failed",
 			error,
+			...(failureKind ? { failureKind } : {}),
 			durable: false,
 		}
 		this.storeUnit(failure)
@@ -314,6 +327,7 @@ export class ContextCompactionPresentation {
 		retryAttempt?: number,
 		maxRetryAttempts?: number,
 		error?: string,
+		failureKind?: CompactionFailureKind,
 	): ContextCompactionPresentationSnapshot | undefined {
 		const unit = this.getUnit(passIdentity.operationId, unitKind, unitIndex)
 		if (
@@ -326,6 +340,7 @@ export class ContextCompactionPresentation {
 		unit.attempt = { ...nextAttempt }
 		unit.status = "retrying"
 		unit.error = error
+		unit.failureKind = failureKind
 		unit.retryAttempt = retryAttempt
 		unit.maxRetryAttempts = maxRetryAttempts
 		return this.snapshot(unit)
@@ -383,6 +398,7 @@ export class ContextCompactionPresentation {
 
 	private clearTransientFailure(unit: ContextCompactionPresentationUnit): void {
 		unit.error = undefined
+		unit.failureKind = undefined
 		unit.retryAttempt = undefined
 		unit.maxRetryAttempts = undefined
 	}

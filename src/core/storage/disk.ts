@@ -84,30 +84,46 @@ async function atomicWriteFile(filePath: string, data: string): Promise<void> {
 }
 
 /**
- * Clean up stale .tmp.*.json files left behind by atomicWriteFile.
+ * Clean up stale temp files left behind by the atomic writers.
  * These can accumulate if the process crashes between writeFile and rename.
  * Only cleans files older than STALE_TMP_FILE_AGE_MS to avoid racing with active writes.
  */
 const STALE_TMP_FILE_AGE_MS = 60_000
+/**
+ * Temp names of the writers that stage files next to their target:
+ * atomicWriteFile (`<file>.tmp.<ms>.<rand>.json`), writeJsonl (`<file>.tmp.<uuid>`),
+ * and the snapshot and activity writers (`<file>.tmp.<ms>`).
+ */
+const ATOMIC_WRITE_TEMP_NAME_PATTERNS = [
+	/^.+\.tmp\.\d{13}\.[a-z0-9]+\.json$/,
+	/^.+\.tmp\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+	/^.+\.tmp\.\d{13}$/,
+]
 
 async function cleanupStaleTmpFiles(dir: string): Promise<void> {
 	try {
 		const entries = await fs.readdir(dir, { withFileTypes: true })
 		const now = Date.now()
 		for (const entry of entries) {
-			if (!entry.isFile()) continue
-			const match = entry.name.match(/^(.+)\.tmp\.(\d{13})\.([a-z0-9]+)\.json$/)
-			if (!match) continue
-			const ts = Number.parseInt(match[2], 10)
-			if (Number.isNaN(ts)) continue
-			if (now - ts > STALE_TMP_FILE_AGE_MS) {
-				const fp = path.join(dir, entry.name)
-				await fs.unlink(fp).catch(() => {})
+			if (!entry.isFile() || !ATOMIC_WRITE_TEMP_NAME_PATTERNS.some((pattern) => pattern.test(entry.name))) continue
+			const fp = path.join(dir, entry.name)
+			try {
+				if (now - (await fs.stat(fp)).mtimeMs > STALE_TMP_FILE_AGE_MS) await fs.unlink(fp)
+			} catch {
+				// Its writer already published or removed it.
 			}
 		}
 	} catch {
 		// Directory may not exist yet — ignore
 	}
+}
+
+/**
+ * Remove temp files a crashed writer left in a task directory.
+ * Call only while holding the task lock, so no other process is writing there.
+ */
+export async function cleanupStaleTaskTempFiles(taskId: string): Promise<void> {
+	await cleanupStaleTmpFiles(await ensureTaskDirectoryExists(taskId))
 }
 
 export const GlobalFileNames = {

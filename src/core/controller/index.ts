@@ -69,7 +69,7 @@ import open from "open"
 import Mutex from "p-mutex"
 import * as path from "path"
 import { ClineEnv } from "@/config"
-import { getDlineDocumentsPath, getDlineDocumentsPathSync } from "@/core/storage/disk"
+import { cleanupStaleTaskTempFiles, getDlineDocumentsPath, getDlineDocumentsPathSync } from "@/core/storage/disk"
 import {
 	readPersistedTaskCompletion,
 	TASK_COMPLETION_BACKFILL_DELAY_MS,
@@ -1038,6 +1038,10 @@ export class Controller {
 			this.taskLockAcquired = await this.lockService.acquireTaskLock(taskId)
 			if (this.taskLockAcquired) {
 				Logger.debug(`[Task ${taskId}] Task lock acquired`)
+				// Holding the lock means no other window writes here, so stale temp files are a crashed writer's.
+				void cleanupStaleTaskTempFiles(taskId).catch((error) =>
+					Logger.warn(`[Task ${taskId}] Stale temp file cleanup failed:`, error),
+				)
 			} else {
 				Logger.debug(`[Task ${taskId}] Task locked by another instance - read-only mode`)
 			}
@@ -2728,6 +2732,9 @@ export class Controller {
 		}
 		this.taskLockAcquired = true
 		this.stopLockPoll()
+		void cleanupStaleTaskTempFiles(owner.taskId).catch((error) =>
+			Logger.warn(`[Task ${owner.taskId}] Stale temp file cleanup failed:`, error),
+		)
 		owner.beginHistoryPreparation()
 		owner.grantWriteAccess()
 		this.startLockHeartbeat(owner.taskId)

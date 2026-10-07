@@ -5,6 +5,7 @@ import { Logger } from "@/shared/services/Logger"
 import { OutputLimitExceededError } from "../stream/OutputLimitExceededError"
 import { createResponsesWebSearchReplay } from "../transform/openai-response-format"
 import { createResponsesRegistry, createResponsesToolChunk } from "../transform/responses-identity-registry"
+import { normalizeResponsesStopReason } from "../transform/stop-reason"
 import type { ApiRawStreamServerToolChunk, ApiServerToolPhase } from "../transform/stream"
 
 interface ResponsesInputTokenDetails {
@@ -359,6 +360,7 @@ export async function* handleResponsesApiStreamResponse(
 				const totalCost = await calculateCost(modelInfo, inputTokens, outputTokens, cacheWriteTokens, cacheReadTokens)
 				Logger.log(`Total tokens from Responses API usage: ${totalTokens}`)
 				const nonCachedInputTokens = Math.max(0, inputTokens - cacheReadTokens - cacheWriteTokens)
+				const stopReason = normalizeResponsesStopReason(chunk.response.status)
 				yield {
 					type: "usage",
 					inputTokens: nonCachedInputTokens,
@@ -368,6 +370,7 @@ export async function* handleResponsesApiStreamResponse(
 					thoughtsTokenCount: reasoningTokens,
 					totalCost: totalCost,
 					provider_metadata: { response_id: chunk.response.id },
+					...(stopReason ? { stopReason } : {}),
 				} as const
 			}
 		}

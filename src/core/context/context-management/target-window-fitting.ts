@@ -6,6 +6,7 @@ import {
 	materializeCompactionSourceRange,
 	materializeCompactionSourceSuffix,
 } from "./compaction-source-snapshot"
+import { compactionSummaryMessage } from "./compaction-summary-message"
 import type { LogicalTurnIndex, LogicalTurnSpan } from "./logical-turns"
 
 export interface CompactionPassIdentity {
@@ -217,7 +218,7 @@ export function buildCompactionPassHistoryForRange(
 	passEndTurnIndex: number,
 ): ClineStorageMessage[] {
 	return [
-		...(state.cumulativeSummary ? [summaryMessage(state.cumulativeSummary)] : []),
+		...(state.cumulativeSummary ? [compactionSummaryMessage(state.cumulativeSummary)] : []),
 		...buildCompactionTurnHistoryForRange(state, passStartTurnIndex, passEndTurnIndex),
 	]
 }
@@ -375,7 +376,7 @@ export function buildTargetCandidateHistory(
 ): ClineStorageMessage[] {
 	const uncoveredStartMessageIndex = state.turns[state.coveredTurnCount]?.startMessageIndex ?? state.protectedStartMessageIndex
 	return [
-		...(state.cumulativeSummary ? [summaryMessage(state.cumulativeSummary)] : []),
+		...(state.cumulativeSummary ? [compactionSummaryMessage(state.cumulativeSummary)] : []),
 		...materializeCompactionSourceSuffix(state.sourceSnapshot, uncoveredStartMessageIndex),
 		...cloneDeep(continuation),
 	]
@@ -387,11 +388,4 @@ function hashSummaryBaseline(summary: string): string {
 
 function hashJsonValue(value: unknown): string {
 	return hashCompactionValue(value)
-}
-
-function summaryMessage(summary: string): ClineStorageMessage {
-	return {
-		role: "user",
-		content: [{ type: "text", text: summary }],
-	}
 }

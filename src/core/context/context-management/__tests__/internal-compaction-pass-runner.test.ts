@@ -5,8 +5,10 @@ import { ExplicitInstructionRegistry } from "@core/task/explicit-instructions/Ex
 import { ExplicitInstructionRequestScope } from "@core/task/explicit-instructions/ExplicitInstructionRequestScope"
 import { ClineDefaultTool } from "@shared/tools"
 import { describe, expect, it, vi } from "vitest"
+import type { CompactionAttemptDiagnostics } from "../compaction-attempt-diagnostics"
+import { isCorrectableCompactionFailure, renderCompactionRetryReminder } from "../compaction-attempt-failure"
 import { CompactionRetryPolicy } from "../compaction-retry-policy"
-import { isUnusableCompactionSummaryError, runInternalCompactionPassWithRetry } from "../internal-compaction-pass"
+import { runInternalCompactionPassWithRetry } from "../internal-compaction-pass"
 
 const passIdentity = {
 	operationId: "operation-hidden-pass",
@@ -42,20 +44,13 @@ function createInstructions(): ExplicitInstructionRequestScope {
 
 function successfulStream(summary: string): ApiStream {
 	return (async function* () {
-		yield {
-			type: "tool_calls" as const,
-			function_id: "call-summary",
-			phase: "completed" as const,
-			tool_index: 0,
-			tool_call: {
-				function: {
-					name: ClineDefaultTool.SUMMARIZE_TASK,
-					arguments: JSON.stringify({ context: summary }),
-				},
-			},
-		}
+		yield { type: "text" as const, text: summaryBlock(summary) }
 		yield { type: "usage" as const, inputTokens: 100, outputTokens: 20 }
 	})()
+}
+
+function summaryBlock(summary: string): string {
+	return `<summarize_task>\n<context>\n${summary}\n</context>\n</summarize_task>`
 }
 
 function failingStream(error: Error): ApiStream {
@@ -65,27 +60,22 @@ function failingStream(error: Error): ApiStream {
 	})()
 }
 
-function streamingSummaryStream(): ApiStream {
+/** A Pass whose block ends after `</context>`, the reply shape that stalled task 1791122313218. */
+function unclosedBlockStream(summary: string): ApiStream {
 	return (async function* () {
-		yield {
-			type: "tool_calls" as const,
-			function_id: "call-summary",
-			phase: "delta" as const,
-			tool_index: 0,
-			tool_call: { function: { name: ClineDefaultTool.SUMMARIZE_TASK, arguments: '{"context":"First' } },
-		}
-		yield {
-			type: "tool_calls" as const,
-			function_id: "call-summary",
-			phase: "completed" as const,
-			tool_index: 0,
-			tool_call: { function: { name: ClineDefaultTool.SUMMARIZE_TASK, arguments: ' partial"}' } },
-		}
+		yield { type: "text" as const, text: `<summarize_task>\n<context>\n${summary}\n</context>\n` }
 		yield { type: "usage" as const, inputTokens: 100, outputTokens: 20 }
 	})()
 }
 
-const CORRECTION_MARKER = "The previous compaction attempt did not return a usable summarize_task call"
+const REMINDER_HEADING = renderCompactionRetryReminder("missing_block").split("\n")[0]
+
+type InstructionMessages = Array<{ role: string; content: Array<{ type: string; text: string }> }>
+
+function reminderTexts(messages: unknown): string[] {
+	const instruction = (messages as InstructionMessages).at(-1)
+	return (instruction?.content ?? []).flatMap((block) => (block.text?.startsWith(REMINDER_HEADING) ? [block.text] : []))
+}
 
 /** A Pass that answers with plain text and another tool instead of summarize_task. */
 function wrongToolStream(residue: string): ApiStream {
@@ -129,18 +119,7 @@ describe("internal compaction Pass retry owner", () => {
 			createMessage: () =>
 				(async function* () {
 					providerReadCount += 1
-					yield {
-						type: "tool_calls" as const,
-						function_id: "call-summary-backpressure",
-						phase: "completed" as const,
-						tool_index: 0,
-						tool_call: {
-							function: {
-								name: ClineDefaultTool.SUMMARIZE_TASK,
-								arguments: JSON.stringify({ context: "summary" }),
-							},
-						},
-					}
+					yield { type: "text" as const, text: summaryBlock("summary") }
 					providerReadCount += 1
 					yield { type: "usage" as const, inputTokens: 100, outputTokens: 20 }
 				})(),
@@ -168,32 +147,6 @@ describe("internal compaction Pass retry owner", () => {
 		await vi.waitFor(() => expect(providerReadCount).toBe(2), { timeout: 100 })
 		releaseFirstCallback?.()
 		await runPromise
-	})
-
-	it("streams partial summary snapshots with the current attempt identity", async () => {
-		const api = {
-			createMessage: () => streamingSummaryStream(),
-			getModel: () => ({ id: "test-model", info: { id: "test-model" } }),
-		} satisfies ApiHandler
-		const updates: Array<{ content: string; attemptIndex: number; attemptId: string }> = []
-
-		await runInternalCompactionPassWithRetry({
-			api,
-			providerInput,
-			explicitInstructions: createInstructions(),
-			passIdentity,
-			retryPolicy: new CompactionRetryPolicy(0),
-			attemptIdFactory: (attemptIndex) => `attempt-${attemptIndex}`,
-			waitForRetry: async () => undefined,
-			onSummaryUpdate: (content, attempt) => {
-				updates.push({ content, attemptIndex: attempt.attemptIndex, attemptId: attempt.authorizationAttemptId })
-			},
-		})
-
-		expect(updates).toEqual([
-			{ content: "First", attemptIndex: 0, attemptId: "attempt-0" },
-			{ content: "First partial", attemptIndex: 0, attemptId: "attempt-0" },
-		])
 	})
 
 	it("streams XML summary snapshots with the current attempt identity", async () => {
@@ -271,19 +224,10 @@ describe("internal compaction Pass retry owner", () => {
 		const createMessage = vi.fn(() =>
 			(async function* (): ApiStream {
 				yield {
-					type: "tool_calls" as const,
-					function_id: "call-summary-tail-failure",
-					phase: "completed" as const,
-					tool_index: 0,
-					tool_call: {
-						function: {
-							name: ClineDefaultTool.SUMMARIZE_TASK,
-							arguments: JSON.stringify({
-								context:
-									"The completed summary preserves the confirmed architecture, the current implementation boundary, and the exact next verification step.",
-							}),
-						},
-					},
+					type: "text" as const,
+					text: summaryBlock(
+						"The completed summary preserves the confirmed architecture, the current implementation boundary, and the exact next verification step.",
+					),
 				}
 				throw tailError
 			})(),
@@ -389,7 +333,7 @@ describe("internal compaction Pass retry owner", () => {
 		expect(waitForRetry).toHaveBeenCalledOnce()
 	})
 
-	it("retries an unusable summary from the frozen input with the correction inside the instruction message", async () => {
+	it("retries an unusable reply from the frozen input with one reminder inside the instruction message", async () => {
 		const calls: unknown[] = []
 		const api = {
 			createMessage: (_systemPrompt, messages) => {
@@ -416,18 +360,99 @@ describe("internal compaction Pass retry owner", () => {
 		expect(calls).toHaveLength(3)
 		expect(calls[0]).toEqual(providerInput.messages)
 		for (const retryMessages of calls.slice(1)) {
-			const messages = retryMessages as Array<{ role: string; content: Array<{ type: string; text: string }> }>
+			const messages = retryMessages as InstructionMessages
 			expect(messages).toHaveLength(providerInput.messages.length)
 			const instructionMessage = messages.at(-1)
 			expect(instructionMessage?.content.slice(0, -1)).toEqual(providerInput.messages.at(-1)?.content)
-			expect(instructionMessage?.content.at(-1)?.text).toContain(CORRECTION_MARKER)
-			expect(JSON.stringify(messages).split(CORRECTION_MARKER)).toHaveLength(2)
+			expect(reminderTexts(messages)).toEqual([renderCompactionRetryReminder("foreign_tool_call")])
 			expect(JSON.stringify(messages)).not.toContain("RESIDUE_ATTEMPT_")
 		}
 		expect(providerInput).toEqual(frozenInput)
 	})
 
-	it("limits retries to unusable summaries when the caller scopes the retry policy", async () => {
+	it("replaces the previous reminder and reports each attempt's next action", async () => {
+		const calls: unknown[] = []
+		const api = {
+			createMessage: (_systemPrompt, messages) => {
+				calls.push(cloneDeepJson(messages))
+				if (calls.length === 1) return wrongToolStream("RESIDUE_ATTEMPT_1")
+				return calls.length === 2 ? unclosedBlockStream("Almost done") : successfulStream("Closed summary")
+			},
+			getModel: () => ({ id: "test-model", info: { id: "test-model" } }),
+		} satisfies ApiHandler
+		const settled: CompactionAttemptDiagnostics[] = []
+
+		const result = await runInternalCompactionPassWithRetry({
+			api,
+			providerInput,
+			explicitInstructions: createInstructions(),
+			passIdentity,
+			retryPolicy: new CompactionRetryPolicy(2),
+			attemptIdFactory: (attemptIndex) => `attempt-${attemptIndex}`,
+			waitForRetry: async () => undefined,
+			onAttemptSettled: (diagnostics) => settled.push(diagnostics),
+		})
+
+		expect(result).toMatchObject({ summary: "Closed summary", attemptIndex: 2 })
+		expect(reminderTexts(calls[0])).toEqual([])
+		expect(reminderTexts(calls[1])).toEqual([renderCompactionRetryReminder("foreign_tool_call")])
+		expect(reminderTexts(calls[2])).toEqual([renderCompactionRetryReminder("unclosed_block")])
+		expect(
+			settled.map(({ attemptIndex, outcome, failureKind, reminderKind, nextAction }) => ({
+				attemptIndex,
+				outcome,
+				failureKind,
+				reminderKind,
+				nextAction,
+			})),
+		).toEqual([
+			{
+				attemptIndex: 0,
+				outcome: "failed",
+				failureKind: "foreign_tool_call",
+				reminderKind: undefined,
+				nextAction: "retry",
+			},
+			{
+				attemptIndex: 1,
+				outcome: "failed",
+				failureKind: "unclosed_block",
+				reminderKind: "foreign_tool_call",
+				nextAction: "retry",
+			},
+			{
+				attemptIndex: 2,
+				outcome: "accepted",
+				failureKind: undefined,
+				reminderKind: "unclosed_block",
+				nextAction: "accept",
+			},
+		])
+	})
+
+	it("reports fail as the next action once the retry budget is exhausted", async () => {
+		const settled: CompactionAttemptDiagnostics[] = []
+		const api = {
+			createMessage: () => unclosedBlockStream("Never closed"),
+			getModel: () => ({ id: "test-model", info: { id: "test-model" } }),
+		} satisfies ApiHandler
+
+		await expect(
+			runInternalCompactionPassWithRetry({
+				api,
+				providerInput,
+				explicitInstructions: createInstructions(),
+				passIdentity,
+				retryPolicy: new CompactionRetryPolicy(1),
+				attemptIdFactory: (attemptIndex) => `attempt-${attemptIndex}`,
+				waitForRetry: async () => undefined,
+				onAttemptSettled: (diagnostics) => settled.push(diagnostics),
+			}),
+		).rejects.toMatchObject({ failureKind: "unclosed_block" })
+		expect(settled.map((diagnostics) => diagnostics.nextAction)).toEqual(["retry", "fail"])
+	})
+
+	it("limits retries to correctable failures when the caller scopes the retry policy", async () => {
 		let requestCount = 0
 		const api = {
 			createMessage: () => {
@@ -444,7 +469,7 @@ describe("internal compaction Pass retry owner", () => {
 				explicitInstructions: createInstructions(),
 				passIdentity,
 				retryPolicy: new CompactionRetryPolicy(2),
-				retryableFailure: isUnusableCompactionSummaryError,
+				retryableFailure: isCorrectableCompactionFailure,
 				attemptIdFactory: (attemptIndex) => `attempt-${attemptIndex}`,
 				waitForRetry: async () => undefined,
 			}),
@@ -454,10 +479,12 @@ describe("internal compaction Pass retry owner", () => {
 
 	it("owns the one OpenAI max-output replay and reduces only the frozen output cap", async () => {
 		const caps: Array<number | undefined> = []
+		const calls: unknown[] = []
 		let requestCount = 0
 		const api = {
-			createMessage: (_systemPrompt, _messages, _tools, options) => {
+			createMessage: (_systemPrompt, messages, _tools, options) => {
 				caps.push(options?.generation?.maxOutputTokens)
+				calls.push(cloneDeepJson(messages))
 				requestCount++
 				return requestCount === 1
 					? failingStream(new OutputLimitExceededError("openai_responses", "max_output_tokens"))
@@ -480,6 +507,8 @@ describe("internal compaction Pass retry owner", () => {
 
 		expect(result).toMatchObject({ summary: "Reduced-cap summary", attemptIndex: 1 })
 		expect(caps).toEqual([1_000, 900])
+		expect(reminderTexts(calls[0])).toEqual([])
+		expect(reminderTexts(calls[1])).toEqual([renderCompactionRetryReminder("output_limit")])
 		expect(onRetry).toHaveBeenCalledWith(
 			expect.objectContaining({
 				kind: "openai_max_output_replay",
@@ -521,92 +550,13 @@ describe("internal compaction Pass retry owner", () => {
 		expect(caps).toEqual([1_000, 900, 900])
 	})
 
-	it("reports every streamed summary snapshot to the rendering owner", async () => {
-		const updates: string[] = []
-		const first = "First snapshot"
-		const second = "Second snapshot"
+	it("retries a repeated OpenAI max-output failure within the ordinary budget at the reduced cap", async () => {
+		const caps: Array<number | undefined> = []
 		const api = {
-			createMessage: () =>
-				(async function* () {
-					for (const context of [first, second]) {
-						yield {
-							type: "tool_calls" as const,
-							function_id: "call-summary-updates",
-							tool_index: 0,
-							tool_call: {
-								function: {
-									name: ClineDefaultTool.SUMMARIZE_TASK,
-									arguments: JSON.stringify({ context }),
-								},
-							},
-						}
-					}
-					yield { type: "usage" as const, inputTokens: 100, outputTokens: 20 }
-				})(),
-			getModel: () => ({ id: "test-model", info: { id: "test-model" } }),
-		} satisfies ApiHandler
-
-		await runInternalCompactionPassWithRetry({
-			api,
-			providerInput,
-			explicitInstructions: createInstructions(),
-			passIdentity,
-			retryPolicy: new CompactionRetryPolicy(0),
-			attemptIdFactory: (attemptIndex) => `attempt-${attemptIndex}`,
-			waitForRetry: async () => undefined,
-			onSummaryUpdate: async (context) => {
-				updates.push(context)
+			createMessage: (_systemPrompt, _messages, _tools, options) => {
+				caps.push(options?.generation?.maxOutputTokens)
+				return failingStream(new OutputLimitExceededError("openai_chat", "length"))
 			},
-		})
-
-		expect(updates).toEqual([first, second])
-	})
-
-	it("resolves the summary when a Responses-family adapter emits the same complete arguments twice", async () => {
-		const summary = "Responses duplicate snapshot summary"
-		const completeArguments = JSON.stringify({ context: summary })
-		const api = {
-			createMessage: () =>
-				(async function* () {
-					// Responses adapters emit the complete arguments first as a delta
-					// and again on output_item.done without a "completed" phase marker.
-					yield {
-						type: "tool_calls" as const,
-						function_id: "call-responses-summary",
-						tool_index: 0,
-						tool_call: {
-							function: { name: ClineDefaultTool.SUMMARIZE_TASK, arguments: completeArguments },
-						},
-					}
-					yield {
-						type: "tool_calls" as const,
-						function_id: "call-responses-summary",
-						tool_index: 0,
-						tool_call: {
-							function: { name: ClineDefaultTool.SUMMARIZE_TASK, arguments: completeArguments },
-						},
-					}
-					yield { type: "usage" as const, inputTokens: 100, outputTokens: 20 }
-				})(),
-			getModel: () => ({ id: "test-model", info: { id: "test-model" } }),
-		} satisfies ApiHandler
-
-		const result = await runInternalCompactionPassWithRetry({
-			api,
-			providerInput,
-			explicitInstructions: createInstructions(),
-			passIdentity,
-			retryPolicy: new CompactionRetryPolicy(0),
-			attemptIdFactory: (attemptIndex) => `attempt-${attemptIndex}`,
-			waitForRetry: async () => undefined,
-		})
-
-		expect(result.summary).toBe(summary)
-	})
-
-	it("does not hand a repeated OpenAI max-output failure to the ordinary Pass retry budget", async () => {
-		const api = {
-			createMessage: () => failingStream(new OutputLimitExceededError("openai_chat", "length")),
 			getModel: () => ({ id: "test-model", info: { id: "test-model" } }),
 		} satisfies ApiHandler
 		const waitForRetry = vi.fn(async () => undefined)
@@ -617,11 +567,12 @@ describe("internal compaction Pass retry owner", () => {
 				providerInput,
 				explicitInstructions: createInstructions(),
 				passIdentity,
-				retryPolicy: new CompactionRetryPolicy(3),
+				retryPolicy: new CompactionRetryPolicy(1),
 				attemptIdFactory: (attemptIndex) => `attempt-${attemptIndex}`,
 				waitForRetry,
 			}),
 		).rejects.toBeInstanceOf(OutputLimitExceededError)
-		expect(waitForRetry).not.toHaveBeenCalled()
+		expect(caps).toEqual([1_000, 900, 900])
+		expect(waitForRetry).toHaveBeenCalledOnce()
 	})
 })
