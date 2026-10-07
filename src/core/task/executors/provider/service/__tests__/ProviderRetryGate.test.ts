@@ -57,6 +57,20 @@ describe("ProviderRetryGate", () => {
 		expect(gate.handBack()).toBe(false)
 	})
 
+	it("gives a manual Retry's takeover to exactly one request", () => {
+		const gate = new ProviderRetryGate()
+		expect(gate.claimManualTakeover()).toBe(false)
+
+		gate.takeOver()
+		expect(gate.claimManualTakeover()).toBe(true)
+		// The request that claimed it owns the takeover; the next one retries again.
+		expect(gate.claimManualTakeover()).toBe(false)
+
+		gate.takeOver()
+		gate.releaseTakeover()
+		expect(gate.claimManualTakeover()).toBe(false)
+	})
+
 	it("owns the footer from the first countdown until the request settles", async () => {
 		const changes: boolean[] = []
 		const gate = new ProviderRetryGate(() => changes.push(gate.active))

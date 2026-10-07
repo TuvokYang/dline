@@ -28,6 +28,46 @@ describe("ResumeDialogContinuation", () => {
 		expect(ports.submit).toHaveBeenCalledWith({ entryId: "entry-1", payloadRef: "sha256:input" })
 	})
 
+	it("hands the request a failed-round Retry opens to the user", async () => {
+		const ports = resumption()
+		const providerRetry = { takeOver: vi.fn(), releaseTakeover: vi.fn() }
+		const continuation = new ResumeDialogContinuation(ports, undefined, providerRetry)
+
+		await continuation.continue({
+			interactionId: "error:turn-1",
+			kind: "error_retry",
+			outcome: { actionId: "retry", draft: { text: "", images: [], files: [] } },
+		})
+		await continuation.continue({
+			interactionId: "interrupted:task-1:76",
+			kind: "resume",
+			outcome: { actionId: "resume", draft: { text: "", images: [], files: [] } },
+		})
+
+		// Only the Retry of a failed round takes the request over.
+		expect(providerRetry.takeOver).toHaveBeenCalledTimes(1)
+		expect(providerRetry.takeOver.mock.invocationCallOrder[0]).toBeLessThan(
+			(ports.submit as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0],
+		)
+		expect(providerRetry.releaseTakeover).not.toHaveBeenCalled()
+	})
+
+	it("returns the automatic sequence when the Retry never reached a request", async () => {
+		const ports = resumption()
+		;(ports.submit as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("intake closed"))
+		const providerRetry = { takeOver: vi.fn(), releaseTakeover: vi.fn() }
+		const continuation = new ResumeDialogContinuation(ports, undefined, providerRetry)
+
+		const outcome = await continuation.continue({
+			interactionId: "error:turn-1",
+			kind: "error_retry",
+			outcome: { actionId: "retry", draft: { text: "", images: [], files: [] } },
+		})
+
+		expect(outcome).toBe("failed")
+		expect(providerRetry.releaseTakeover).toHaveBeenCalledTimes(1)
+	})
+
 	it("tells the model the session was restored without putting it in the user's text", async () => {
 		const ports = resumption()
 		const continuation = new ResumeDialogContinuation(ports)

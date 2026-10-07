@@ -296,6 +296,20 @@ describe("TaskProviderRequestReporter", () => {
 		expect(requestInfo(harness.rows[0]).cancelReason).toBe("streaming_failed")
 	})
 
+	it("retires an exhausted request's card when the next request starts", async () => {
+		const harness = createReporter()
+		const exhausted = await harness.reporter.begin({ turnId: "turn-1" })
+		await exhausted.retrying?.({ attempt: 5, maxAttempts: 5, delayMs: 30_000, errorMessage: "still down" })
+		await exhausted.settle({ outcome: "failed" })
+		expect(harness.rows.filter((row) => row.say === "error_retry")).toHaveLength(1)
+
+		await harness.reporter.begin({ turnId: "turn-1" })
+
+		expect(harness.rows.filter((row) => row.say === "error_retry")).toHaveLength(0)
+		// The failed request keeps its own outcome; only the countdown card is superseded.
+		expect(requestInfo(harness.rows[0]).cancelReason).toBe("streaming_failed")
+	})
+
 	it("withdraws the retry card when the user cancels during the countdown", async () => {
 		const harness = createReporter()
 		const record = await harness.reporter.begin({ turnId: "turn-1" })

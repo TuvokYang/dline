@@ -16,6 +16,7 @@ export class ProviderRetryGate implements ProviderRetryPolicy {
 	readonly maxAttempts = MAX_AUTO_RETRY_ATTEMPTS
 	private sequence = false
 	private release: ((outcome: ProviderRetryWait) => void) | undefined
+	private takeover = false
 
 	/** @param onChange Publishes the footer when the sequence starts or ends. */
 	constructor(private readonly onChange?: () => void) {}
@@ -61,6 +62,27 @@ export class ProviderRetryGate implements ProviderRetryPolicy {
 	 */
 	handBack(): boolean {
 		return this.end("handed_back")
+	}
+
+	/**
+	 * The user answered a failed request with Retry, so the request that answer
+	 * opens is theirs: its failure goes straight back to them with Retry rather
+	 * than starting another automatic sequence they did not ask for.
+	 */
+	takeOver(): void {
+		this.takeover = true
+	}
+
+	/** The Retry never reached a request, so a later request keeps its automatic sequence. */
+	releaseTakeover(): void {
+		this.takeover = false
+	}
+
+	/** Whether the request starting now was opened by a manual Retry; consumed by that request. */
+	claimManualTakeover(): boolean {
+		const claimed = this.takeover
+		this.takeover = false
+		return claimed
 	}
 
 	/** The request produced its stream or failed for good, so the sequence is over. */

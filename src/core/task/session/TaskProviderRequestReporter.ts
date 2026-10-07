@@ -154,9 +154,18 @@ export interface CompactTriggerSettings {
  * once the stream ends, which also feeds the prompt cache sample.
  */
 export class TaskProviderRequestReporter implements ProviderRequestReportPort {
+	/** The card a request that ran out of retries left behind, until a newer request supersedes it. */
+	private failedCard?: RetryCard
+
 	constructor(private readonly options: TaskProviderRequestReporterOptions) {}
 
 	async begin(input: { readonly turnId: string }): Promise<ProviderRequestRecord> {
+		// The card of an exhausted request reports a failure the user has now
+		// acted on; keeping it beside the new request would stack two cards
+		// for one unresolved failure.
+		const superseded = this.failedCard
+		this.failedCard = undefined
+		await superseded?.withdraw()
 		const ts = this.options.nextPresentationId()
 		// The estimate the request was admitted on anchors its reported usage, so
 		// the next round's growth is measured estimate-to-estimate.
@@ -184,8 +193,10 @@ export class TaskProviderRequestReporter implements ProviderRequestReportPort {
 			settle: async (settlement) => {
 				// A request that failed after retrying keeps its card as the record of
 				// the attempts; any other ending makes the countdown obsolete.
-				if (settlement.outcome === "failed") await retryCard.markFailed()
-				else await retryCard.withdraw()
+				if (settlement.outcome === "failed") {
+					await retryCard.markFailed()
+					this.failedCard = retryCard
+				} else await retryCard.withdraw()
 				await this.settle(ts, input.turnId, settlement, profileId)
 			},
 		}

@@ -72,6 +72,19 @@ export interface TaskResumptionPort {
 }
 
 /**
+ * Hands the request a Retry opens to the user instead of an automatic sequence.
+ *
+ * Retry answers a request that already failed, so the request it opens belongs
+ * to the user: a further failure has to come back to them at once rather than
+ * start a new countdown beside the failure they just acted on.
+ */
+export interface ManualRetryTakeoverPort {
+	takeOver(): void
+	/** The Retry never opened a request, so the next one keeps its automatic sequence. */
+	releaseTakeover(): void
+}
+
+/**
  * Actions that end the task rather than carry it on.
  *
  * Expressed as the terminal set because that is the closed one: `start_new_task`
@@ -104,6 +117,7 @@ export class ResumeDialogContinuation implements UnownedDialogContinuationPort {
 	constructor(
 		private readonly resumption: TaskResumptionPort,
 		private readonly resetMistakes?: () => void,
+		private readonly providerRetry?: ManualRetryTakeoverPort,
 	) {}
 
 	accepts(resolution: UnownedDialogResolution): boolean {
@@ -122,6 +136,7 @@ export class ResumeDialogContinuation implements UnownedDialogContinuationPort {
 		// keep showing only what the user typed.
 		const context = createResumeSubmissionContext(resolution.kind)
 		const processAnyway = resolution.kind === "mistake_limit" && resolution.outcome.actionId === "process_anyway"
+		const manualRetry = resolution.kind === "error_retry" && resolution.outcome.actionId === "retry"
 		try {
 			const input = await this.resumption.materialize({
 				text: draft?.text,
@@ -133,9 +148,11 @@ export class ResumeDialogContinuation implements UnownedDialogContinuationPort {
 			})
 			if (resolution.isCurrent && !resolution.isCurrent()) return "declined"
 			if (processAnyway) this.resetMistakes?.()
+			if (manualRetry) this.providerRetry?.takeOver()
 			await this.resumption.submit(input)
 			return "continued"
 		} catch (error) {
+			if (manualRetry) this.providerRetry?.releaseTakeover()
 			// Reported rather than thrown: the caller has to know the answer was
 			// not acted on so it can leave the interaction answerable, and the
 			// user already gave an answer that must not surface as a crash.

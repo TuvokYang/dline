@@ -534,6 +534,7 @@ function scripted(
 				waits.push(delayMs)
 				return "send" as const
 			}),
+		...(retry.claimManualTakeover ? { claimManualTakeover: retry.claimManualTakeover } : {}),
 	}
 	let id = 0
 	const service = new DefaultProductionProviderService({
@@ -590,6 +591,15 @@ describe("DefaultProductionProviderService request retry", () => {
 
 		expect(await failureOf(harness.service)).toBe(failure)
 		expect(harness.api.createMessage).toHaveBeenCalledTimes(3)
+	})
+
+	it("returns a manual Retry's failure to the user without a second automatic sequence", async () => {
+		const failure = httpError(503, "Service Unavailable")
+		const harness = scripted([{ error: failure }], { maxAttempts: 5, claimManualTakeover: () => true })
+
+		expect(await failureOf(harness.service)).toBe(failure)
+		expect(harness.api.createMessage).toHaveBeenCalledTimes(1)
+		expect(harness.waits).toEqual([])
 	})
 
 	// As in dev, a request the Profile cannot admit goes straight to the error

@@ -66,6 +66,8 @@ export interface ProviderRetryPolicy {
 	wait(delayMs: number, signal: AbortSignal): Promise<ProviderRetryWait>
 	/** The request left its retry loop: it produced a stream, failed for good, or was cancelled. */
 	settled?(): void
+	/** Whether the request starting now was opened by a manual Retry, which owns its failure. */
+	claimManualTakeover?(): boolean
 }
 
 /** The automatic retry schedule the chat presents: five attempts, bounded at one minute. */
@@ -330,7 +332,9 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 		let reasoning = newReasoning()
 		const nativeTools = new Map<string, PendingNativeTool>()
 		// Shared by every send of this turn, before and after a first chunk.
-		const retryBudget: RetryBudget = { attempts: 0 }
+		// A manual Retry owns this request, so its failure returns to the user
+		// rather than opening a second automatic sequence.
+		const retryBudget: RetryBudget = { attempts: this.retry.claimManualTakeover?.() ? this.retry.maxAttempts : 0 }
 		// Set once the reply called a tool or ran a hosted one; from then on a
 		// failed stream is final, because replaying it could repeat that call.
 		let toolActivity = false

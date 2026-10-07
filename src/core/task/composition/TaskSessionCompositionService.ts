@@ -254,6 +254,10 @@ export class TaskSessionCompositionService {
 			materialize: (input) => this.requireSession(session).inputs.materialize(input),
 			submit: (input) => this.requireSession(session).task.submitInput(input),
 		}
+		// The footer shows Retry and Cancel only while a countdown owns the
+		// request, so every change of that ownership republishes the view. A
+		// Retry answered on a failed request hands that request to the user.
+		const providerRetry = new ProviderRetryGate(() => void options.publishState().catch(() => undefined))
 		const interactions = new TaskInteractionOwner(
 			messages,
 			persistence.payloads,
@@ -267,7 +271,7 @@ export class TaskSessionCompositionService {
 					publishRow: (row) => options.prompt.ports.presentation.publish(row),
 				},
 				resumption,
-				new ResumeDialogContinuation(resumption, () => toolState.resetMistakeLimitState()),
+				new ResumeDialogContinuation(resumption, () => toolState.resetMistakeLimitState(), providerRetry),
 			),
 			diagnostics,
 			(row) => options.prompt.ports.presentation.publish(row),
@@ -500,9 +504,6 @@ export class TaskSessionCompositionService {
 			},
 		}
 		const compactionScopes = new CompactionRequestScopes()
-		// The footer shows Retry and Cancel only while a countdown owns the
-		// request, so every change of that ownership republishes the view.
-		const providerRetry = new ProviderRetryGate(() => void options.publishState().catch(() => undefined))
 		// The whole auto-condense setting group defines the trigger and the window a
 		// compaction may use. Passing only the percent would silently ignore the
 		// reserve bounds and the absolute cap the user configured.
