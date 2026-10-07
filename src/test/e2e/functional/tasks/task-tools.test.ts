@@ -1228,11 +1228,19 @@ e2e(
 
 		const emittedPath = path.join(workspaceDir, "e2e-terminal-tail.emitted")
 		const parentScriptPath = path.join(workspaceDir, "e2e-terminal-tail-parent.cjs")
+		// Each emitted line is confirmed by appending its sequence. Windows cancels the
+		// command with a force kill, so a truncating rewrite could leave the marker empty
+		// even though every earlier line was emitted and drained.
 		await writeFile(
 			parentScriptPath,
-			`const fs = require("node:fs")\nconst emitted = ${JSON.stringify(emittedPath)}\nlet sequence = 0\nconsole.log("E2E_TERMINAL_CANCEL_DRAIN_STARTED")\nsetInterval(() => {\n  sequence += 1\n  fs.writeSync(1, \`E2E_TERMINAL_CANCEL_TAIL_\${sequence}\\n\`)\n  fs.writeFileSync(emitted, String(sequence))\n}, 1)\n`,
+			`const fs = require("node:fs")\nconst emitted = ${JSON.stringify(emittedPath)}\nlet sequence = 0\nconsole.log("E2E_TERMINAL_CANCEL_DRAIN_STARTED")\nsetInterval(() => {\n  sequence += 1\n  fs.writeSync(1, \`E2E_TERMINAL_CANCEL_TAIL_\${sequence}\\n\`)\n  fs.appendFileSync(emitted, \`\${sequence}\\n\`)\n}, 1)\n`,
 			"utf8",
 		)
+		/** The greatest sequence whose confirmation line was written completely. */
+		const readConfirmedSequence = async (): Promise<number> => {
+			const confirmations = (await readFile(emittedPath, "utf8").catch(() => "")).split("\n").slice(0, -1)
+			return confirmations.reduce((latest, line) => Math.max(latest, Number(line) || 0), 0)
+		}
 
 		server.resetOpenAiMock()
 		server.enqueueOpenAiResponses(
@@ -1277,9 +1285,9 @@ e2e(
 		await expect(commandCancelButton).toBeVisible({ timeout: 30_000 })
 		await commandCancelButton.click()
 		await expect(commandCancelButton).toHaveCount(0, { timeout: 30_000 })
-		await expect.poll(async () => Number(await readFile(emittedPath, "utf8")), { timeout: 10_000 }).toBeGreaterThan(0)
+		await expect.poll(readConfirmedSequence, { timeout: 10_000 }).toBeGreaterThan(0)
 		await page.waitForTimeout(500)
-		const emittedSequence = Number(await readFile(emittedPath, "utf8"))
+		const emittedSequence = await readConfirmedSequence()
 
 		const input = sidebar.getByTestId("chat-input")
 		await input.fill("E2E_TERMINAL_CANCEL_DRAIN_FEEDBACK")
