@@ -1,5 +1,6 @@
 import { Logger } from "@shared/services/Logger"
 import type { HaltStopCommand, ParticipantId, TaskEvent } from "../kernel"
+import { ProfileNotValidError } from "../profile-admission"
 
 export type TaskEventSubmission = { readonly kind: "accepted"; readonly durable?: Promise<void> } | { readonly kind: "rejected" }
 
@@ -42,6 +43,9 @@ export function executorFailure(domain: string, error: unknown): string {
 	const candidate = error instanceof Error ? error.name : "unknown"
 	const safeKind = /^[A-Za-z0-9_.-]{1,64}$/.test(candidate) ? candidate : "unknown"
 	const failure = `${domain} execution failed (${safeKind})`
-	Logger.error(failure, error)
+	// A Profile that cannot admit the request is the user's to fix and is shown
+	// to them as such; it is not a fault of the execution.
+	if (error instanceof ProfileNotValidError) Logger.warn(failure, error)
+	else Logger.error(failure, error)
 	return failure
 }
