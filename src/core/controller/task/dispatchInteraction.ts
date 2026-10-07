@@ -216,13 +216,17 @@ export async function dispatchInteraction(
 	// already accepted the reply, so its command and receiver settle first and
 	// a failed or slow write cannot strand either of them.
 	const replyConsumed = Boolean(reviewed && !reviewed.text && request.draft?.text)
-	const consumedRow = replyConsumed
-		? showConsumedReply(session.messages, session.owners.nextPresentationId, request).catch((error: unknown) => {
-				Logger.warn(
-					`dispatchInteraction: could not show the consumed reply for ${request.interactionId}: ${error instanceof Error ? error.message : String(error)}`,
-				)
-			})
-		: undefined
+	// An approval's note reaches the model only through the block's result, never
+	// as intake, so no other path shows the user the note they sent with it.
+	const approvalNote = Boolean(approvalEntry && hasDraftContent(request.draft))
+	const consumedRow =
+		replyConsumed || approvalNote
+			? showConsumedReply(session.messages, session.owners.nextPresentationId, request).catch((error: unknown) => {
+					Logger.warn(
+						`dispatchInteraction: could not show the reply for ${request.interactionId}: ${error instanceof Error ? error.message : String(error)}`,
+					)
+				})
+			: undefined
 	reviewed?.commit()
 	const outcome: InteractionOutcome = {
 		actionId: request.actionId as InteractionOutcome["actionId"],
@@ -248,4 +252,8 @@ export async function dispatchInteraction(
 	if (!approvalEntry) session.owners.interactions.resolve(request.interactionId, outcome)
 	await Promise.all([consumedRow, denialPresentation])
 	return response(true, "accepted")
+}
+
+function hasDraftContent(draft: DispatchInteractionRequest["draft"]): boolean {
+	return Boolean(draft && (draft.text.trim().length > 0 || draft.images.length > 0 || draft.files.length > 0))
 }
