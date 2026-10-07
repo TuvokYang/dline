@@ -79,6 +79,16 @@ export class TaskPerformanceOwner {
 		}
 	}
 
+	/**
+	 * Follow the task loop through committed states.
+	 *
+	 * Active seconds accrue only while the loop runs, as dev's loop flag did,
+	 * so a task waiting on the user or at rest stops adding to the rates.
+	 */
+	committed(state: Readonly<TaskState>): void {
+		this.activeMetrics.setTaskLoopActive(LOOP_ACTIVE_PHASES.has(state.flow.phase))
+	}
+
 	requestStarted(): void {
 		this.activeMetrics.recordRequestStarted()
 	}
@@ -125,6 +135,8 @@ export class TaskPerformanceOwner {
 		await Promise.allSettled([this.activeMetrics.dispose(), this.roundLifecycle.close()])
 	}
 }
+
+const LOOP_ACTIVE_PHASES: ReadonlySet<TaskState["flow"]["phase"]> = new Set(["initializing", "running"])
 
 function finiteUsage(value: number | undefined): number {
 	return Number.isFinite(value) && value !== undefined && value > 0 ? value : 0

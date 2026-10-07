@@ -605,6 +605,7 @@ export class TaskSessionCompositionService {
 					contextUsage.committed(state)
 					compaction.committed(state)
 					collaboration?.committed(state)
+					performance.committed(state)
 					await options.taskView.notifyCommitted(state)
 				},
 				notifyTransient: (taskId, projection) => options.taskView.notifyTransient(taskId, projection),
