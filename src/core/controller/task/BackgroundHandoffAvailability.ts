@@ -16,6 +16,35 @@ export interface BackgroundHandoffAvailabilityPort {
 	isRequested(activityId: string): boolean
 }
 
+/** Command executor facts that decide whether a foreground command can move. */
+export interface CommandHandoffSource {
+	getReadyBackgroundHandoffActivityId(): string | undefined
+	isBackgroundHandoffRequested(activityId: string): boolean
+}
+
+/** Activity store facts that decide whether a foreground subagent can move. */
+export interface SubagentHandoffSource {
+	getReadyBackgroundHandoffActivityId(kind: "subagent"): string | undefined
+}
+
+/**
+ * Compose the handoff facts of every foreground owner into one footer query.
+ *
+ * A foreground command wins because it blocks the turn directly; otherwise a
+ * running foreground subagent with a live mover is offered, as in dev. Moving a
+ * subagent removes it from the ready set, so no separate request latch is needed.
+ */
+export function composeBackgroundHandoffAvailability(
+	commands: CommandHandoffSource,
+	activities: SubagentHandoffSource,
+): BackgroundHandoffAvailabilityPort {
+	return {
+		readyActivityId: () =>
+			commands.getReadyBackgroundHandoffActivityId() ?? activities.getReadyBackgroundHandoffActivityId("subagent"),
+		isRequested: (activityId) => commands.isBackgroundHandoffRequested(activityId),
+	}
+}
+
 /** Project the optional background handoff affordance into footer actions. */
 export function projectBackgroundHandoffAction(
 	availability: BackgroundHandoffAvailabilityPort | undefined,

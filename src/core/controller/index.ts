@@ -138,6 +138,7 @@ import { projectFocusChainHistory } from "./state/focusChainHistoryProjection"
 import { cleanupStateSubscriptions, sendAccountUsageUpdate, sendStatePatch, sendStateUpdate } from "./state/subscribeToState"
 import { projectTaskHistory } from "./state/taskHistoryProjection"
 import { awaitDispatchableDialog } from "./task/awaitDispatchableDialog"
+import { composeBackgroundHandoffAvailability } from "./task/BackgroundHandoffAvailability"
 import { describeDialogState, describeDispatch } from "./task/describeInteractionDispatch"
 import { dispatchInteraction } from "./task/dispatchInteraction"
 import { HistoryDisplaySession } from "./task/HistoryDisplaySession"
@@ -2585,15 +2586,11 @@ export class Controller {
 		if (historyDisplay) return historyDisplay.getViewState()
 		const session = this.task
 		if (!session) return undefined
-		const commands = session.owners.commands
 		const rows = messages ?? this.getCurrentTaskMessages()
 		return adaptCanonicalTaskView(
 			session.projectView(),
 			rows,
-			{
-				readyActivityId: () => commands.getReadyBackgroundHandoffActivityId(),
-				isRequested: (activityId) => commands.isBackgroundHandoffRequested(activityId),
-			},
+			composeBackgroundHandoffAvailability(session.owners.commands, session.owners.activities),
 			session.owners.providerRetry?.active === true,
 			session.owners.compactionRecovery?.truncationOffered() === true,
 		)
