@@ -8,6 +8,7 @@ import type { StateManager } from "@core/storage/StateManager"
 import { FocusChainManager } from "@core/task/focus-chain"
 import type { InteractionKind } from "@core/task/interaction/Interaction"
 import type { MessageStateHandler } from "@core/task/message-state"
+import type { PresentationIdSequence } from "@core/task/session/PresentationIdSequence"
 import type { TaskApiHandlerOwner } from "@core/task/session/TaskApiHandlerOwner"
 import type { TaskInteractionOwner } from "@core/task/session/TaskInteractionOwner"
 import type { DefaultToolHandlerState } from "@core/task/tools/state/ToolHandlerState"
@@ -29,6 +30,8 @@ export interface ControllerTaskCallbacksOwnerOptions {
 	readonly stateManager: StateManager
 	readonly messages: MessageStateHandler
 	readonly interactions: TaskInteractionOwner
+	/** The session's chat-row id sequence; every new row a tool shows draws its id from it. */
+	readonly nextPresentationId: PresentationIdSequence
 	readonly api: TaskApiHandlerOwner
 	readonly toolState: DefaultToolHandlerState
 	readonly createBrowser: () => BrowserSession
@@ -217,7 +220,10 @@ export class ControllerTaskCallbacksOwner {
 		existingTs?: number,
 		commandTs?: number,
 	): Promise<number> {
-		const ts = existingTs ?? Date.now()
+		// A new row takes the next id of the session's sequence. A wall-clock id
+		// can equal the id another owner just gave its row in the same
+		// millisecond, and would then be taken for that row and overwrite it.
+		const ts = existingTs ?? this.options.nextPresentationId()
 		// commandTs is how a command_output row finds the command it belongs to;
 		// dropping it here leaves the output orphaned and never rendered.
 		const message: UiMessage = { ts, type: "say", say: type, text, images, files, partial, commandTs }
@@ -227,7 +233,10 @@ export class ControllerTaskCallbacksOwner {
 		if (partial) {
 			await this.options.messages.upsertClineMessageInMemory(message)
 			await this.publishRow(message, `partial ${type} row ${ts}`)
-		} else if (this.options.messages.clineMessages.some((candidate) => candidate.ts === ts)) {
+		} else if (
+			existingTs !== undefined &&
+			this.options.messages.clineMessages.some((candidate) => candidate.ts === existingTs)
+		) {
 			await this.options.messages.finalizeClineMessage(message)
 			await this.publishRow(message, `finalized ${type} row ${ts}`)
 		} else await this.options.messages.addToClineMessages(message)
@@ -245,7 +254,7 @@ export class ControllerTaskCallbacksOwner {
 		_partial?: boolean,
 		options?: { existingTs?: number; onTsCreated?: (ts: number) => void },
 	): Promise<{ response: ClineAskResponse; text?: string; images?: string[]; files?: string[] }> {
-		const ts = options?.existingTs ?? Date.now()
+		const ts = options?.existingTs ?? this.options.nextPresentationId()
 		options?.onTsCreated?.(ts)
 		const interactionId = `host:${randomUUID()}`
 		const outcome = await this.options.interactions.open({

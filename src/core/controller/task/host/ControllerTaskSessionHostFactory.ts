@@ -67,6 +67,7 @@ export class ControllerTaskSessionHostFactory implements TaskSessionHostFactory 
 			stateManager: this.options.stateManager,
 			messages: context.messages,
 			interactions: context.interactions,
+			nextPresentationId: context.nextPresentationId,
 			api: context.api,
 			toolState: context.toolState,
 			createBrowser: browserFactory,

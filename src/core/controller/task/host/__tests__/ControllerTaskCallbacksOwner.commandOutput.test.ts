@@ -1,7 +1,8 @@
 import { registerPartialMessageCallback } from "@core/controller/ui/subscribeToPartialMessage"
 import type { MessageStateHandler } from "@core/task/message-state"
+import { createPresentationIdSequence } from "@core/task/session/PresentationIdSequence"
 import type { UiMessage } from "@shared/ExtensionMessage"
-import { describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 import { ControllerTaskCallbacksOwner } from "../ControllerTaskCallbacksOwner"
 
 /**
@@ -39,6 +40,7 @@ function owner(messages: MessageStateHandler): ControllerTaskCallbacksOwner {
 		} as never,
 		messages,
 		interactions: {} as never,
+		nextPresentationId: createPresentationIdSequence(Date.now, () => messages.clineMessages.at(-1)?.ts),
 		api: {} as never,
 		toolState: {} as never,
 		createBrowser: () => ({}) as never,
@@ -46,6 +48,33 @@ function owner(messages: MessageStateHandler): ControllerTaskCallbacksOwner {
 }
 
 describe("ControllerTaskCallbacksOwner say", () => {
+	afterEach(() => {
+		vi.restoreAllMocks()
+	})
+
+	// A consumed `/compact` reply is shown by the dispatch path, and the dialog's
+	// own echo follows within the same millisecond. A clock-stamped echo took the
+	// reply's id and replaced the user's row with an empty one.
+	it("gives a new row its own id even when another row holds the current millisecond", async () => {
+		const { handler, written } = messageStore()
+		const now = 1_791_348_446_133
+		vi.spyOn(Date, "now").mockReturnValue(now)
+		const reply: UiMessage = {
+			ts: now,
+			type: "say",
+			say: "user_feedback",
+			text: "/compact keep the API notes",
+			interactionId: "reply:dialog-1",
+		}
+		const callbacks = owner(handler).callbacks
+		written.push(reply)
+
+		const ts = await callbacks.say("user_feedback", "")
+
+		expect(ts).toBeGreaterThan(now)
+		expect(written).toEqual([reply, expect.objectContaining({ ts, say: "user_feedback", text: "" })])
+	})
+
 	it("carries commandTs onto the persisted command_output row", async () => {
 		const { handler, written } = messageStore()
 

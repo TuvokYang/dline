@@ -308,10 +308,11 @@ describe("dispatchInteraction", () => {
 		// The row sorts after the dialog it answers, even under a skewed clock.
 		expect(feedback[0].ts).toBeGreaterThan(100)
 		expect(commit).toHaveBeenCalledOnce()
-		// The handler receives only what the command left: nothing.
+		// The handler receives only what the command left: nothing. The row above
+		// is the reply's feedback, so the handler adds no empty echo after it.
 		expect(host.resolve).toHaveBeenCalledWith(
 			"interaction-1",
-			expect.objectContaining({ draft: { text: "", images: [], files: [] } }),
+			expect.objectContaining({ draft: { text: "", images: [], files: [] }, feedbackPresented: true }),
 		)
 	})
 
@@ -372,6 +373,7 @@ describe("dispatchInteraction", () => {
 			"interaction-1",
 			expect.objectContaining({ draft: { text: "then continue", images: [], files: [] } }),
 		)
+		expect(host.resolve.mock.calls[0][1]).not.toHaveProperty("feedbackPresented")
 	})
 
 	it("shows nothing and runs no command when the runtime rejects the reply", async () => {

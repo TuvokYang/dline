@@ -17,6 +17,7 @@ function owner(cancelTask: () => Promise<void>): ControllerTaskCallbacksOwner {
 		} as never,
 		messages: { clineMessages: [] } as unknown as MessageStateHandler,
 		interactions: {} as never,
+		nextPresentationId: () => 1,
 		api: {} as never,
 		toolState: {} as never,
 		createBrowser: () => ({}) as never,

@@ -13,6 +13,7 @@ import type { TaskRateMetricsQuery, TaskRateMetricsQueryResult } from "../perfor
 import type { TaskPromptLifecycle } from "../prompt/TaskPromptLifecycle"
 import type { PromptCacheHealthTracker } from "../prompt-cache/PromptCacheHealthTracker"
 import type { CheckpointRestoreFence } from "../session/ActiveTaskSession"
+import type { PresentationIdSequence } from "../session/PresentationIdSequence"
 import type { TaskApiHandlerOwner } from "../session/TaskApiHandlerOwner"
 import type { TaskInteractionOwner } from "../session/TaskInteractionOwner"
 import type { CheckpointRestoreMode, CheckpointRestoreResult, WorkspaceRestoreResult } from "../shell/checkpoint-restore"
@@ -43,6 +44,8 @@ export interface TaskSessionHostContext {
 	readonly promptCache: PromptCacheHealthTracker
 	readonly toolState: DefaultToolHandlerState
 	readonly interactions: TaskInteractionOwner
+	/** The session's chat-row id sequence; a row the host adds draws from it so it cannot land on another row's id. */
+	readonly nextPresentationId: PresentationIdSequence
 	readonly readState: () => Readonly<TaskState>
 	readonly checkpoints: TaskSessionCheckpointPort
 	/** Rewinds this task's journal conversation, for a restore from a summary card. */

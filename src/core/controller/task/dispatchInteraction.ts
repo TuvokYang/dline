@@ -215,17 +215,20 @@ export async function dispatchInteraction(
 	// answered dialog goes on to produce, but it is presentation: the runtime
 	// already accepted the reply, so its command and receiver settle first and
 	// a failed or slow write cannot strand either of them.
-	const consumedRow =
-		reviewed && !reviewed.text
-			? showConsumedReply(session.messages, session.owners.nextPresentationId, request).catch((error: unknown) => {
-					Logger.warn(
-						`dispatchInteraction: could not show the consumed reply for ${request.interactionId}: ${error instanceof Error ? error.message : String(error)}`,
-					)
-				})
-			: undefined
+	const replyConsumed = Boolean(reviewed && !reviewed.text && request.draft?.text)
+	const consumedRow = replyConsumed
+		? showConsumedReply(session.messages, session.owners.nextPresentationId, request).catch((error: unknown) => {
+				Logger.warn(
+					`dispatchInteraction: could not show the consumed reply for ${request.interactionId}: ${error instanceof Error ? error.message : String(error)}`,
+				)
+			})
+		: undefined
 	reviewed?.commit()
 	const outcome: InteractionOutcome = {
 		actionId: request.actionId as InteractionOutcome["actionId"],
+		// That row is the reply's feedback; the handler's echo of the kept text
+		// would only add an empty row after it.
+		...(replyConsumed ? { feedbackPresented: true } : {}),
 		draft: request.draft
 			? {
 					text: draftText ?? request.draft.text,

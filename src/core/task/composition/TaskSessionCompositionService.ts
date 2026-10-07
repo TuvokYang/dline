@@ -326,6 +326,8 @@ export class TaskSessionCompositionService {
 		})
 		resources.add({ release: () => prompt.dispose() })
 		prompt.start()
+		// One sequence orders every chat row of the session, the host's included.
+		const nextPresentationId = createPresentationIdSequence(Date.now, () => messages.latestMessageTs())
 		const tool = await options.hostFactory.create({
 			taskId: options.taskId,
 			taskIncarnationId,
@@ -338,6 +340,7 @@ export class TaskSessionCompositionService {
 			promptCache,
 			toolState,
 			interactions,
+			nextPresentationId,
 			readState,
 			checkpoints: {
 				capture: async (input) => {
@@ -463,7 +466,6 @@ export class TaskSessionCompositionService {
 			tools: toolRuntime,
 			readAdmissionSnapshot: (block) => toolExecution.readAdmissionSnapshot(block),
 		})
-		const nextPresentationId = createPresentationIdSequence(Date.now, () => messages.latestMessageTs())
 		const realtimeMessages: RealtimeMessagePublisher = {
 			publish: (row) => {
 				void options.prompt.ports.presentation
