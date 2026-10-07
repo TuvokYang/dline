@@ -1,5 +1,6 @@
 import { readdir, readFile, writeFile } from "node:fs/promises"
 import * as path from "node:path"
+import { AUTO_RETRY_DELAYS_MS } from "@core/task/auto-retry"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { expect, type Frame } from "@playwright/test"
@@ -132,8 +133,13 @@ e2e(
 		await input.fill(taskText)
 		await sidebar.getByTestId("send-button").click()
 
+		// The footer projects Retry for the whole automatic sequence; manual recovery opens only once it is exhausted.
+		const autoRetrySequenceMs = AUTO_RETRY_DELAYS_MS.reduce((total, delay) => total + delay, 0)
+		await expect(sidebar.getByTestId("error-retry-countdown")).toContainText("automatic attempts were used", {
+			timeout: autoRetrySequenceMs + 60_000,
+		})
 		const retryButton = sidebar.locator('vscode-button[aria-label="Retry"]')
-		await expect(retryButton).toBeVisible({ timeout: 120_000 })
+		await expect(retryButton).toBeVisible()
 
 		const taskId = await onlyTaskId(dlineDocsDir)
 		// Confirm the exact state that breaks the Profile preflight: an awaiting

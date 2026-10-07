@@ -1,5 +1,6 @@
 import { readdir, readFile, writeFile } from "node:fs/promises"
 import * as path from "node:path"
+import { MAX_AUTO_RETRY_ATTEMPTS } from "@core/task/auto-retry"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { expect, type Frame } from "@playwright/test"
@@ -103,7 +104,8 @@ e2e(
 		const retryDraft = "E2E_PROFILE_SWITCH_429_RETRY_DRAFT"
 		const resumeDraft = "E2E_PROFILE_SWITCH_429_RESUME_DRAFT"
 		const completion = "E2E_PROFILE_SWITCH_429_TARGET_OK"
-		const expectedFailureRequestCount = 4
+		// The original request plus every automatic retry; only then does the draft-carrying recovery Retry open.
+		const expectedFailureRequestCount = MAX_AUTO_RETRY_ATTEMPTS + 1
 		server.enqueueResponses(
 			"openai-compatible-chat",
 			...Array.from({ length: 24 }, () => ({
@@ -131,6 +133,10 @@ e2e(
 				.poll(() => server.getRequestCount("openai-compatible-chat"), { timeout: 120_000 })
 				.toBe(expectedFailureRequestCount)
 			expect(server.getMockConsumptions("openai-compatible-chat").every((entry) => entry.status === 429)).toBe(true)
+			// The countdown's Retry override carries no draft; wait for the exhausted-retry recovery interaction.
+			await expect(sidebar.getByTestId("error-retry-countdown")).toContainText("automatic attempts were used", {
+				timeout: 60_000,
+			})
 
 			const taskId = await onlyTaskId(dlineDocsDir)
 			await selectProfile(sidebar, targetProfile.name)

@@ -97,7 +97,10 @@ e2e(
 			await page.getByRole("button", { name: "History", exact: true }).click()
 			await expect(sidebar.getByText(corpus.entries[0].title, { exact: true })).toBeVisible({ timeout: 120_000 })
 
-			const baseline = await readExtensionHostRuntimeHealth(controlDirectory)
+			// Retention is measured after a forced full GC on both sides. Opening a
+			// snapshot-less history parses every persisted row once, and that
+			// transient garbage dominates any peak sample without being retained.
+			const baseline = await readExtensionHostRuntimeHealth(controlDirectory, { collectGarbage: true })
 			const sampler = startHealthSampler(controlDirectory)
 			try {
 				for (const entry of corpus.entries) panels.push(await openHistoryInPanel(page, sidebar, entry.title))
@@ -105,6 +108,7 @@ e2e(
 				await sampler.stop()
 			}
 			const final = await readExtensionHostRuntimeHealth(controlDirectory)
+			const retained = await readExtensionHostRuntimeHealth(controlDirectory, { collectGarbage: true })
 			const samples = [baseline, ...sampler.samples, final]
 			const maxHeapUsedBytes = Math.max(...samples.map((sample) => sample.heapUsedBytes))
 			const maxRssBytes = Math.max(...samples.map((sample) => sample.rssBytes))
@@ -114,6 +118,7 @@ e2e(
 				persistedBytes: corpus.totalPersistedBytes,
 				baseline,
 				final,
+				retained,
 				maxHeapUsedBytes,
 				maxRssBytes,
 				maxRoundTripMs,
@@ -134,10 +139,10 @@ e2e(
 				MAX_EVENT_LOOP_DELAY_MS,
 			)
 			expect(
-				maxHeapUsedBytes - baseline.heapUsedBytes,
+				retained.heapUsedBytes - baseline.heapUsedBytes,
 				"Historical panels must not retain every full message body",
 			).toBeLessThan(corpus.totalPersistedBytes * MAX_HEAP_BYTES_PER_PERSISTED_BYTE)
-			expect(maxRssBytes - baseline.rssBytes, "Historical panels must keep RSS growth bounded").toBeLessThan(
+			expect(retained.rssBytes - baseline.rssBytes, "Historical panels must keep retained RSS growth bounded").toBeLessThan(
 				corpus.totalPersistedBytes * MAX_RSS_BYTES_PER_PERSISTED_BYTE,
 			)
 
