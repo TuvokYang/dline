@@ -119,6 +119,19 @@ describe("ChatRow hosted Web Search rendering", () => {
 		expect(screen.getByTestId("web-search-card")).toHaveClass("max-h-[40vh]", "overflow-hidden")
 		expect(screen.getByTestId("web-search-card")).not.toHaveClass("overflow-y-auto")
 		expect(screen.getByTestId("web-search-results")).toHaveClass("overflow-y-auto")
+
+		const header = screen.getByTestId("web-search-header")
+		expect(header).toHaveAttribute("aria-expanded", "true")
+		fireEvent.click(header)
+
+		expect(header).toHaveAttribute("aria-expanded", "false")
+		expect(toggle).toHaveAttribute("aria-expanded", "false")
+		expect(screen.queryByTestId("web-search-results")).not.toBeInTheDocument()
+
+		fireEvent.click(header)
+
+		expect(toggle).toHaveAttribute("aria-expanded", "true")
+		expect(screen.getByText("Dline result")).toBeInTheDocument()
 	})
 
 	it("renders all normalized search queries instead of the generic hosted placeholder", () => {
@@ -392,6 +405,25 @@ describe("ChatRow hosted Web Search rendering", () => {
 			expect(screen.queryByTestId("web-fetch-results")).not.toBeInTheDocument()
 			expect(screen.queryByText(/Fetched content marker/)).not.toBeInTheDocument()
 			expect(screen.getByTestId("web-fetch-card")).not.toHaveClass("max-h-[40vh]", "overflow-y-auto")
+		})
+
+		it("toggles the fetched page from the card title, keeping the toggle bar above the page", () => {
+			render(completedFetch(`# Long page\n\n${"Fetched paragraph. ".repeat(600)}`))
+			const header = screen.getByTestId("web-fetch-header")
+			const toggle = screen.getByTestId("web-fetch-details-toggle")
+			expect(header).toHaveAttribute("aria-expanded", "false")
+
+			fireEvent.click(header)
+
+			const results = screen.getByTestId("web-fetch-results")
+			expect(header).toHaveAttribute("aria-expanded", "true")
+			expect(toggle).toHaveAttribute("aria-expanded", "true")
+			expect(toggle.compareDocumentPosition(results) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+
+			fireEvent.click(header)
+
+			expect(toggle).toHaveAttribute("aria-expanded", "false")
+			expect(screen.queryByTestId("web-fetch-results")).not.toBeInTheDocument()
 		})
 
 		it("expands the page into a bounded scroll area with the toggle bar pinned outside it", () => {

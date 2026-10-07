@@ -2,9 +2,9 @@ import type { ClineSayTool } from "@shared/ExtensionMessage"
 import { StringRequest } from "@shared/proto/dline/common"
 import { ChevronDownIcon, ChevronRightIcon, Link2Icon, TriangleAlertIcon } from "lucide-react"
 import { useState } from "react"
-import { cn } from "@/lib/utils"
 import { UiServiceClient } from "@/services/grpc-client"
 import HostedCallDeferredNotice from "./HostedCallDeferredNotice"
+import ToolCardHeader from "./ToolCardHeader"
 
 interface WebFetchRowProps {
 	messageType: "ask" | "say"
@@ -19,57 +19,62 @@ function sourceLabel(webFetch: ClineSayTool["webFetch"]): string | undefined {
 	return `${source.label} (${suffix})`
 }
 
+interface FetchedContentProps {
+	content: string
+	expanded: boolean
+	onToggle: () => void
+}
+
 /**
  * The fetched page, collapsed by default so a long page never floods the chat.
  *
- * While collapsed the text is not rendered at all; expanded, it scrolls inside a bounded area and the
- * toggle bar stays outside that area, so it remains reachable however far the page is scrolled.
+ * While collapsed the text is not rendered at all; expanded, it scrolls inside a bounded area. The toggle
+ * bar sits above that area, next to the card title that toggles the same state, so collapsing never
+ * requires scrolling to the end of the page.
  */
-const FetchedContent = ({ content }: { content: string }) => {
-	const [expanded, setExpanded] = useState(false)
-
-	return (
-		<div className="border-t border-editor-widget-border/50 pt-1.5">
-			{expanded && (
-				<div className="max-h-[40vh] overflow-y-auto overscroll-contain pr-1" data-testid="web-fetch-results">
-					<div className="ph-no-capture break-words whitespace-pre-wrap text-xs">{content}</div>
-				</div>
+const FetchedContent = ({ content, expanded, onToggle }: FetchedContentProps) => (
+	<div className="border-t border-editor-widget-border/50 pt-1.5">
+		<button
+			aria-expanded={expanded}
+			aria-label={expanded ? "Collapse fetched web content" : "Expand fetched web content"}
+			className="flex w-full shrink-0 cursor-pointer items-center gap-1 border-0 bg-transparent text-left text-xs text-description"
+			data-testid="web-fetch-details-toggle"
+			onClick={onToggle}
+			type="button">
+			{expanded ? (
+				<ChevronDownIcon aria-hidden="true" className="size-3 shrink-0" />
+			) : (
+				<ChevronRightIcon aria-hidden="true" className="size-3 shrink-0" />
 			)}
-			<button
-				aria-expanded={expanded}
-				aria-label={expanded ? "Collapse fetched web content" : "Expand fetched web content"}
-				className={cn(
-					"flex w-full shrink-0 cursor-pointer items-center gap-1 border-0 bg-transparent text-left text-xs text-description",
-					expanded && "mt-1 border-t border-editor-widget-border/50 pt-1.5",
-				)}
-				data-testid="web-fetch-details-toggle"
-				onClick={() => setExpanded((value) => !value)}
-				type="button">
-				{expanded ? (
-					<ChevronDownIcon aria-hidden="true" className="size-3 shrink-0" />
-				) : (
-					<ChevronRightIcon aria-hidden="true" className="size-3 shrink-0" />
-				)}
-				<span>{expanded ? "Collapse fetched content" : "Show fetched content"}</span>
-			</button>
-		</div>
-	)
-}
+			<span>{expanded ? "Collapse fetched content" : "Show fetched content"}</span>
+		</button>
+		{expanded && (
+			<div
+				className="mt-1 max-h-[40vh] overflow-y-auto overscroll-contain border-t border-editor-widget-border/50 pt-1.5 pr-1"
+				data-testid="web-fetch-results">
+				<div className="ph-no-capture break-words whitespace-pre-wrap text-xs">{content}</div>
+			</div>
+		)}
+	</div>
+)
 
 const WebFetchRow = ({ messageType, url, webFetch }: WebFetchRowProps) => {
 	const resolvedUrl = webFetch?.url || url || ""
 	const label = sourceLabel(webFetch)
+	const content = webFetch?.content
+	const [contentExpanded, setContentExpanded] = useState(false)
+	const toggleContent = () => setContentExpanded((expanded) => !expanded)
 
 	return (
 		<div className="pr-1" data-testid="web-fetch-card">
-			<div className="mb-3 flex items-center gap-2.5">
-				<Link2Icon className="size-2" />
-				<span className="font-bold">
-					{messageType === "ask"
-						? "Dline wants to fetch content from this URL:"
-						: "Dline fetched content from this URL:"}
-				</span>
-			</div>
+			<ToolCardHeader
+				expansion={content ? { expanded: contentExpanded, onToggle: toggleContent } : undefined}
+				icon={<Link2Icon className="size-2" />}
+				testId="web-fetch-header"
+				title={
+					messageType === "ask" ? "Dline wants to fetch content from this URL:" : "Dline fetched content from this URL:"
+				}
+			/>
 			<div className="space-y-2 overflow-hidden rounded-xs border border-editor-group-border bg-code px-2.5 py-[9px] select-text">
 				{label && <div className="text-xs font-semibold text-description">{label}</div>}
 				<button
@@ -91,7 +96,7 @@ const WebFetchRow = ({ messageType, url, webFetch }: WebFetchRowProps) => {
 						<span className="ph-no-capture break-words text-xs">{webFetch.error}</span>
 					</div>
 				)}
-				{webFetch?.content && <FetchedContent content={webFetch.content} />}
+				{content && <FetchedContent content={content} expanded={contentExpanded} onToggle={toggleContent} />}
 			</div>
 		</div>
 	)

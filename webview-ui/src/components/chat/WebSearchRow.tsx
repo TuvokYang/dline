@@ -3,6 +3,7 @@ import type { HostedWebSearchOperation } from "@shared/web-tools"
 import { ChevronDownIcon, ChevronRightIcon, SearchIcon, TriangleAlertIcon } from "lucide-react"
 import { useState } from "react"
 import HostedCallDeferredNotice from "./HostedCallDeferredNotice"
+import ToolCardHeader from "./ToolCardHeader"
 
 interface WebSearchRowProps {
 	messageType: "ask" | "say"
@@ -51,13 +52,16 @@ const WebSearchRow = ({ messageType, query, webSearch }: WebSearchRowProps) => {
 	const operationDetails = operationLines(operation, webSearch?.query || query)
 	const items = webSearch?.items ?? []
 	const [detailsExpanded, setDetailsExpanded] = useState(false)
+	const toggleDetails = () => setDetailsExpanded((expanded) => !expanded)
 
 	return (
 		<div className="flex max-h-[40vh] flex-col overflow-hidden pr-1" data-testid="web-search-card">
-			<div className="mb-3 flex shrink-0 items-center gap-2.5">
-				<SearchIcon className="size-2 rotate-90" />
-				<span className="font-bold">{operationTitle(messageType, operation)}</span>
-			</div>
+			<ToolCardHeader
+				expansion={items.length > 0 ? { expanded: detailsExpanded, onToggle: toggleDetails } : undefined}
+				icon={<SearchIcon className="size-2 rotate-90" />}
+				testId="web-search-header"
+				title={operationTitle(messageType, operation)}
+			/>
 			<div className="flex min-h-0 flex-1 flex-col space-y-2 overflow-hidden rounded-xs border border-editor-group-border bg-code px-2.5 py-[9px] select-text">
 				{sourceLabel && <div className="text-xs font-semibold text-description">{sourceLabel}</div>}
 				{operationDetails.map((detail, index) => (
@@ -79,7 +83,7 @@ const WebSearchRow = ({ messageType, query, webSearch }: WebSearchRowProps) => {
 							aria-label={detailsExpanded ? "Collapse web search results" : "Expand web search results"}
 							className="flex w-full cursor-pointer items-center gap-1 border-0 border-t border-editor-widget-border/50 bg-transparent pt-2 text-left text-xs text-description"
 							data-testid="web-search-details-toggle"
-							onClick={() => setDetailsExpanded((expanded) => !expanded)}
+							onClick={toggleDetails}
 							type="button">
 							{detailsExpanded ? (
 								<ChevronDownIcon aria-hidden="true" className="size-3 shrink-0" />
