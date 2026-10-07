@@ -1,5 +1,7 @@
 import { promises as fs } from "node:fs"
 import * as path from "node:path"
+import v8 from "node:v8"
+import vm from "node:vm"
 import chokidar, { type FSWatcher } from "chokidar"
 import type { Controller } from "@/core/controller"
 import type { HistoryItem } from "@/shared/HistoryItem"
@@ -21,9 +23,11 @@ export interface RuntimeHealthSample {
 
 export type TaskHistoryControlRequest =
 	| { id: string; action: "update-and-flush"; item: HistoryItem }
-	| { id: string; action: "runtime-health" }
+	| { id: string; action: "runtime-health"; collectGarbage?: boolean }
 
-export type TaskHistoryControlRequestInput = { action: "update-and-flush"; item: HistoryItem } | { action: "runtime-health" }
+export type TaskHistoryControlRequestInput =
+	| { action: "update-and-flush"; item: HistoryItem }
+	| { action: "runtime-health"; collectGarbage?: boolean }
 
 export interface TaskHistoryControlResponse {
 	id: string
@@ -37,7 +41,39 @@ export interface TaskHistoryControlHandle {
 	dispose(): Promise<void>
 }
 
-async function captureRuntimeHealth(): Promise<RuntimeHealthSample> {
+let forceGc: (() => void) | undefined
+
+/**
+ * Resolves a full-GC trigger inside the Extension Host. VS Code does not start
+ * the host with --expose-gc, so the flag is enabled at runtime and `gc` is read
+ * from a fresh context, which is the only place V8 installs it after startup.
+ */
+function resolveForceGc(): () => void {
+	if (forceGc) return forceGc
+	const exposed = (globalThis as { gc?: () => void }).gc
+	if (exposed) {
+		forceGc = exposed
+		return forceGc
+	}
+	v8.setFlagsFromString("--expose-gc")
+	forceGc = vm.runInNewContext("gc") as () => void
+	return forceGc
+}
+
+/**
+ * Collects garbage twice around a macrotask so weak callbacks and finalizers
+ * scheduled by the first pass are released before the heap is sampled. This
+ * separates retained memory from transient allocation that a peak sample sees.
+ */
+async function collectGarbage(): Promise<void> {
+	const gc = resolveForceGc()
+	gc()
+	await new Promise<void>((resolve) => setImmediate(resolve))
+	gc()
+}
+
+async function captureRuntimeHealth(options: { collectGarbage?: boolean } = {}): Promise<RuntimeHealthSample> {
+	if (options.collectGarbage) await collectGarbage()
 	const scheduledAt = performance.now()
 	await new Promise<void>((resolve) => setImmediate(resolve))
 	const memory = process.memoryUsage()
@@ -89,7 +125,11 @@ export async function startTaskHistoryControl(
 					break
 				}
 				case "runtime-health":
-					response = { id: request.id, success: true, runtimeHealth: await captureRuntimeHealth() }
+					response = {
+						id: request.id,
+						success: true,
+						runtimeHealth: await captureRuntimeHealth({ collectGarbage: request.collectGarbage === true }),
+					}
 					break
 				default:
 					throw new Error("Invalid TaskHistory E2E control request")

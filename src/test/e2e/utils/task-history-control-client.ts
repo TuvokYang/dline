@@ -38,8 +38,18 @@ export async function updateTaskHistoryAndFlush(
 	return await requestTaskHistoryControl(controlDirectory, { action: "update-and-flush", item })
 }
 
-export async function readExtensionHostRuntimeHealth(controlDirectory: string): Promise<RuntimeHealthSample> {
-	const response = await requestTaskHistoryControl(controlDirectory, { action: "runtime-health" })
+/**
+ * Samples Extension Host health. `collectGarbage` forces a full GC first, so
+ * the heap figure reflects retained memory rather than transient garbage.
+ */
+export async function readExtensionHostRuntimeHealth(
+	controlDirectory: string,
+	options: { collectGarbage?: boolean } = {},
+): Promise<RuntimeHealthSample> {
+	const response = await requestTaskHistoryControl(controlDirectory, {
+		action: "runtime-health",
+		collectGarbage: options.collectGarbage === true,
+	})
 	if (!response.success || !response.runtimeHealth) {
 		throw new Error(response.error ?? "The E2E control channel did not return runtime health")
 	}
