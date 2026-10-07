@@ -9,6 +9,7 @@ import { UIMessage } from "@/core/storage/UIMessage"
 import type { UIMessageWindowPage, UIMessageWindowReader } from "@/core/storage/UIMessageWindowReader"
 import { TaskActivityPersistence } from "@/core/task/activity/TaskActivityPersistence"
 import { TaskActivityStore } from "@/core/task/activity/TaskActivityStore"
+import { readFocusChainHistoryFile } from "@/core/task/focus-chain/file-utils"
 import { readHistoryContextWindowIndicator } from "@/core/task/HistoryContextWindow"
 import { getInteraction } from "@/core/task/interaction/InteractionRegistry"
 import { createInitialTaskState, type TaskState } from "@/core/task/kernel"
@@ -70,6 +71,7 @@ export class HistoryDisplaySession {
 	private messageReader?: UIMessageWindowReader
 	/** The metrics a past run recorded, read so the header and chart show them before resume. */
 	private performance?: TaskPerformanceOwner
+	private focusChainHistory: string | null = null
 	private messages: UiMessage[] = []
 	private durableMessageCount = 0
 	private syntheticMessage?: UiMessage
@@ -105,14 +107,17 @@ export class HistoryDisplaySession {
 		}
 		this.messageReader = reader
 		try {
-			const [latestMessages, snapshot, taskTitlePage, interruptedActivityIds, performance] = await Promise.all([
-				reader.getLatest(HISTORY_MESSAGE_WINDOW_SIZE),
-				this.readSnapshot(),
-				reader.getPage(0, 1),
-				this.hydrateActivities(options?.ownerless),
-				this.openMetrics(),
-			])
+			const [latestMessages, snapshot, taskTitlePage, interruptedActivityIds, performance, focusChainHistory] =
+				await Promise.all([
+					reader.getLatest(HISTORY_MESSAGE_WINDOW_SIZE),
+					this.readSnapshot(),
+					reader.getPage(0, 1),
+					this.hydrateActivities(options?.ownerless),
+					this.openMetrics(),
+					this.readFocusChainHistory(),
+				])
 			this.performance = performance
+			this.focusChainHistory = focusChainHistory
 			if (this.disposed) {
 				await this.releaseMetrics()
 				return
@@ -137,6 +142,11 @@ export class HistoryDisplaySession {
 			if (this.disposed) return
 			throw error
 		}
+	}
+
+	/** The focusChain history the task recorded, or null when it never recorded one. */
+	getFocusChainHistory(): string | null {
+		return this.focusChainHistory
 	}
 
 	/** Rates the task last recorded, or undefined when it never recorded any. */
@@ -325,6 +335,18 @@ export class HistoryDisplaySession {
 			await this.activityPersistence.close()
 		} catch (error) {
 			Logger.warn(`[HistoryDisplay] Failed to release activities for task ${this.taskId}:`, error)
+		}
+	}
+
+	/** A history the view cannot read only loses its focusChain panel, never the task. */
+	private async readFocusChainHistory(): Promise<string | null> {
+		try {
+			return await readFocusChainHistoryFile(this.taskId)
+		} catch (error) {
+			Logger.warn(
+				`[HistoryDisplaySession] ${this.taskId}: focus chain history unreadable: ${error instanceof Error ? error.message : String(error)}`,
+			)
+			return null
 		}
 	}
 

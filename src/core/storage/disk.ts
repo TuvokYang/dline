@@ -89,10 +89,14 @@ export const GlobalFileNames = {
 }
 
 export async function ensureTaskDirectoryExists(taskId: string): Promise<string> {
-	const d = await getDlineDocumentsPath()
-	const dir = path.join(d, "tasks", taskId)
+	const dir = await resolveTaskDirectory(taskId)
 	await fs.mkdir(dir, { recursive: true })
 	return dir
+}
+
+/** Where a task's directory lives, without creating it; a task that is only viewed must not gain one. */
+export async function resolveTaskDirectory(taskId: string): Promise<string> {
+	return path.join(await getDlineDocumentsPath(), "tasks", taskId)
 }
 
 /** Compatibility source written by task runtimes before canonical `state.json` ownership. */

@@ -2827,7 +2827,9 @@ export class Controller {
 			// every push, which is what made a long-running task rebroadcast a
 			// multi-megabyte payload several times a second. The full file stays
 			// on disk and is still opened directly from the panel.
-			focusChainHistory: projectFocusChainHistory(this.task?.owners.toolState.focusChainHistory).text,
+			focusChainHistory: projectFocusChainHistory(
+				this.task?.owners.toolState.focusChainHistory ?? this.historyDisplaySession?.getFocusChainHistory() ?? undefined,
+			).text,
 			checkpointManagerErrorMessage,
 			autoApprovalSettings,
 			browserSettings,
