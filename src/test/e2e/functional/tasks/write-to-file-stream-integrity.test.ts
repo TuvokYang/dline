@@ -105,7 +105,11 @@ e2e(
 		)
 
 		await sendTask(sidebar, "Attempt a write whose Responses tool arguments are truncated by the provider.")
-		await expect(sidebar.getByTestId("error-retry-box")).toBeVisible({ timeout: 60_000 })
+		// An output limit the provider enforced is a final failure: replaying the
+		// same request would only be cut off again, so it is reported for the user
+		// to act on rather than retried automatically.
+		await expect(sidebar.getByTestId("api-error-box")).toBeVisible({ timeout: 60_000 })
+		await expect(sidebar.getByTestId("error-retry-box")).toHaveCount(0)
 		await expect
 			.poll(
 				() =>
@@ -116,7 +120,7 @@ e2e(
 			)
 			.toBe(true)
 		const consumptions = server.getMockConsumptions("openai-compatible-responses")
-		expect(consumptions.length).toBeGreaterThanOrEqual(1)
+		expect(consumptions).toHaveLength(1)
 		expect(consumptions.every((consumption) => consumption.requestToolResults.length === 0)).toBe(true)
 	},
 )
