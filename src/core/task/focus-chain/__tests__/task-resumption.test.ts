@@ -4,7 +4,7 @@ import path from "path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { ensureTaskDirectoryExists } from "../../../storage/disk"
 import { DefaultToolHandlerState } from "../../tools/state/ToolHandlerState"
-import { createFocusChainMarkdownContent, getFocusChainFilePath } from "../file-utils"
+import { createFocusChainMarkdownContent, getFocusChainFilePath, getFocusChainHistoryFilePath } from "../file-utils"
 import { FocusChainManager } from "../index"
 
 describe("FocusChainManager - Task Resumption", () => {
@@ -90,6 +90,27 @@ describe("FocusChainManager - Task Resumption", () => {
 		await manager.setupFocusChainFileWatcher()
 
 		expect(taskState.currentInProgressItemIndex).toBeNull()
+	})
+
+	it("restores the archived checklist history of a reopened task", async () => {
+		const history = "# Earlier Plan\n- [x] Replaced item"
+		await fs.writeFile(getFocusChainHistoryFilePath(taskDir, taskId), history, "utf8")
+		const taskState = new DefaultToolHandlerState()
+		const postStateToWebview = vi.fn().mockResolvedValue(undefined)
+		manager = new FocusChainManager({
+			taskId,
+			taskState,
+			getMode: () => "act",
+			stateManager: {} as any,
+			postStateToWebview,
+			say: vi.fn(),
+			focusChainSettings: { enabled: true, remindClineInterval: 10 },
+		})
+
+		await manager.setupFocusChainFileWatcher()
+
+		expect(taskState.focusChainHistory).toBe(history)
+		expect(postStateToWebview).toHaveBeenCalledOnce()
 	})
 
 	it("should create focus chain file for new tasks", async () => {

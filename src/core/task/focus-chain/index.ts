@@ -113,14 +113,17 @@ export class FocusChainManager {
 			// This is critical for task resumption: without this, taskState.currentFocusChainChecklist
 			// remains null even if the file exists, causing "no task plan exists" errors
 			const existingChecklist = await this.readFocusChainFromDisk()
+			// A reopened task also shows the checklists that earlier plans replaced.
+			const existingHistory = await this.readFocusChainHistory()
+			if (existingHistory) this.taskState.focusChainHistory = existingHistory
 			if (existingChecklist) {
 				this.taskState.currentFocusChainChecklist = existingChecklist
 				this.taskState.currentInProgressItemIndex =
 					getUncheckedFocusChainItemAtIndex(existingChecklist, this.taskState.currentInProgressItemIndex) !== null
 						? this.taskState.currentInProgressItemIndex
 						: null
-				await this.postStateToWebview()
 			}
+			if (existingChecklist || existingHistory) await this.postStateToWebview()
 
 			// Initialize chokidar watcher
 			this.focusChainFileWatcher = chokidar.watch(focusChainFilePath, {
