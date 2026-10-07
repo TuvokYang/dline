@@ -130,6 +130,19 @@ describe("TaskApiHandlerOwner", () => {
 		expect((failure as Error).message).toBe(AZURE_ERROR)
 	})
 
+	// Dev checked the Profile's credentials before every request, so a missing
+	// secret fails before any provider is built for it.
+	it("refuses requests when a credential-checked rebuild finds the Profile's secret unavailable", async () => {
+		const owner = createOwner()
+		built.length = 0
+
+		const next = await owner.rebuild({ validateCredentials: true })
+		const failure = await firstRequestFailure(next)
+
+		expect(built).toEqual([])
+		expect(failure).toBeInstanceOf(ProfileNotValidError)
+	})
+
 	it("admits requests again once a rebuild reads the fixed Profile from the latest Catalog", async () => {
 		resolutions.cached.mockReturnValue(invalid(AZURE_ERROR))
 		const owner = createOwner()

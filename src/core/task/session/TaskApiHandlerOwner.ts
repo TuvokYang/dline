@@ -8,6 +8,7 @@ import {
 	createUnavailableApiHandler,
 	resolveTaskApiProfile,
 	resolveTaskApiProfileFresh,
+	validateApiProfileCredentials,
 } from "../ApiProfileRecovery"
 import type { TaskStateManager } from "../TaskStateManager"
 
@@ -22,6 +23,18 @@ export interface TaskApiHandlerOwnerOptions {
 }
 
 const UNRESOLVED_PROFILE_MESSAGE = "Profile not valid: resolved Profile is unavailable."
+
+export interface TaskApiHandlerRebuildOptions {
+	/** Abort the request the replaced handler is serving. */
+	readonly abortPrevious?: boolean
+	/**
+	 * Also check the resolved Profile's credentials at the provider boundary.
+	 *
+	 * A request about to be sent asks for this, as dev did before every request,
+	 * so an expired sign-in fails before reaching the provider.
+	 */
+	readonly validateCredentials?: boolean
+}
 
 /** Owns the replaceable provider handler for one task incarnation. */
 export class TaskApiHandlerOwner {
@@ -61,7 +74,7 @@ export class TaskApiHandlerOwner {
 	 * Catalog fresh instead of trusting the process cache that change may not
 	 * have reached yet.
 	 */
-	rebuild(options: { readonly abortPrevious?: boolean } = {}): Promise<ApiHandler> {
+	rebuild(options: TaskApiHandlerRebuildOptions = {}): Promise<ApiHandler> {
 		const rebuilt = this.rebuilding.then(() => this.rebuildNow(options))
 		this.rebuilding = rebuilt.catch(() => undefined)
 		return rebuilt
@@ -84,11 +97,12 @@ export class TaskApiHandlerOwner {
 		}
 	}
 
-	private async rebuildNow(options: { readonly abortPrevious?: boolean }): Promise<ApiHandler> {
+	private async rebuildNow(options: TaskApiHandlerRebuildOptions): Promise<ApiHandler> {
 		const mode = this.options.settings.mode
 		const resolution = await resolveTaskApiProfileFresh(this.configuration(), mode)
+		const credentialsError = options.validateCredentials ? await this.credentialsError(resolution) : undefined
 		const previous = this.handler
-		const next = this.build(resolution, mode)
+		const next = credentialsError ? createUnavailableApiHandler(credentialsError) : this.build(resolution, mode)
 		this.handler = next
 		if (options.abortPrevious) previous.abort?.()
 		this.adoptResolvedIdentity(resolution, mode)
@@ -106,6 +120,12 @@ export class TaskApiHandlerOwner {
 	private adoptResolvedIdentity(resolution: ApiProfileRecoveryResult, mode: Mode): void {
 		if (resolution.usedFallback || !resolution.resolvedProfileId || !resolution.resolvedProfile) return
 		this.options.settings.adoptResolvedProfileIdentity(mode, resolution.resolvedProfileId, resolution.resolvedProfile)
+	}
+
+	private async credentialsError(resolution: ApiProfileRecoveryResult): Promise<string | undefined> {
+		if (resolution.error || !resolution.resolvedApiProfile) return undefined
+		const validity = await validateApiProfileCredentials(resolution.resolvedApiProfile)
+		return validity.status === "invalid" ? (validity.message ?? UNRESOLVED_PROFILE_MESSAGE) : undefined
 	}
 
 	private configuration(): ApiConfiguration {

@@ -46,6 +46,10 @@ export class TaskProviderRequestFactory implements ProviderRequestFactory, Provi
 	constructor(private readonly options: TaskProviderRequestFactoryOptions) {}
 
 	async prepare(draft: ProviderDraftEnvelope, signal: AbortSignal): Promise<PreparedProviderRequest> {
+		// A request serves the Profile as it is persisted now: the Catalog, its
+		// secret, or the model's window may have changed since the handler was built.
+		if (signal.aborted) throw signal.reason
+		await this.options.api.rebuild({ validateCredentials: true })
 		const frame = await this.buildFrame(signal, false)
 		const messages = await this.conversationOf(draft)
 		const turnId = draft.turnId ?? randomUUID()
