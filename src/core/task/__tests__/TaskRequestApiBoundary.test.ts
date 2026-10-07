@@ -99,9 +99,11 @@ describe("Task request API boundary", () => {
 			"private async persistApiRequestUserMessage(",
 		)
 
-		expect(method).toContain("candidate.function_id === block.function_id")
-		expect(method).toContain("candidate.dline_tid === block.dline_tid")
-		expect(method).toContain("CONVERSATIONAL_TOOL_NAMES.has")
+		// The pairing rule itself is covered behaviourally in conversationalFeedbackTrust.test.ts; the Task must
+		// consult both the live stream and the persisted assistant message the result answers.
+		expect(method).toContain("isConversationalFeedbackResult(")
+		expect(method).toContain("this.taskState.assistantMessageContent")
+		expect(method).toContain("this.messageStateHandler.apiConversationHistory")
 	})
 
 	it("resumes a durable Hosted request without repeating preprocessing, history append, or approval", async () => {

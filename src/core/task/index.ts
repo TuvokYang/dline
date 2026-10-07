@@ -366,6 +366,7 @@ import { ToolResultUtils } from "./tools/utils/ToolResultUtils"
 import { attachToolFeedbackFiles } from "./tools/utils/UserFeedbackUtils"
 import { updateApiReqMsg } from "./utils"
 import { buildUserFeedbackContent } from "./utils/buildUserFeedbackContent"
+import { isConversationalFeedbackResult } from "./utils/conversationalFeedbackTrust"
 import { processUserContentTags } from "./utils/processUserContentTags"
 
 export type ToolResponse = ClineToolResponseContent
@@ -8786,12 +8787,10 @@ export class Task {
 
 	/** Persist the request user message and finish any write-ahead transaction before API admission. */
 	private isTrustedUserFeedbackResult(block: ClineUserToolResultContentBlock): boolean {
-		return this.taskState.assistantMessageContent.some(
-			(candidate): candidate is ToolUse =>
-				candidate.type === "tool_use" &&
-				candidate.function_id === block.function_id &&
-				candidate.dline_tid === block.dline_tid &&
-				CONVERSATIONAL_TOOL_NAMES.has(candidate.name as ClineDefaultTool),
+		return isConversationalFeedbackResult(
+			block,
+			this.taskState.assistantMessageContent,
+			this.messageStateHandler.apiConversationHistory,
 		)
 	}
 
