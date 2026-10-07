@@ -314,6 +314,29 @@ describe("ResumeCoordinator", () => {
 		expect(order).toEqual(["load:task-1"])
 	})
 
+	it("reports a load aborted by the fence as superseded rather than a failed recovery", async () => {
+		const order: string[] = []
+		let rejectLoad!: (error: Error) => void
+		const load = vi.fn(
+			() =>
+				new Promise<never>((_resolve, reject) => {
+					rejectLoad = reject
+				}),
+		)
+		const reportRecovery = vi.fn()
+		const coordinatorPorts = ports(order, load)
+		coordinatorPorts.reportRecovery = reportRecovery
+		const coordinator = new ResumeCoordinator(coordinatorPorts)
+
+		const preparation = coordinator.prepare("task-1")
+		await vi.waitFor(() => expect(load).toHaveBeenCalledOnce())
+		coordinator.fence()
+		rejectLoad(new Error("task_detached"))
+
+		await expect(preparation).rejects.toThrow("History preparation was superseded")
+		expect(reportRecovery).not.toHaveBeenCalled()
+	})
+
 	it("drains admitted persistence before a fenced preparation settles", async () => {
 		const order: string[] = []
 		let releaseHydrate!: () => void

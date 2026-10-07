@@ -75,6 +75,8 @@ export async function prepareHistoryTaskForDisplay(options: HistoryTaskReadiness
 			span.addEvent?.("task.history_prepare.prepared")
 			return finish(options.isCurrent())
 		} catch (error) {
+			// A detached or replaced Task aborts its own preparation; that is a superseded load, not a failure.
+			if (!options.isCurrent()) return finish(false)
 			span.recordException(error)
 			span.end("failure")
 			throw error
@@ -89,7 +91,7 @@ export async function prepareHistoryTaskForDisplay(options: HistoryTaskReadiness
 			measurement.stop({ outcome })
 			return result
 		} catch (error) {
-			measurement.stop({ outcome: "failure" })
+			measurement.stop({ outcome: options.isCurrent() ? "failure" : "superseded" })
 			throw error
 		}
 	}
