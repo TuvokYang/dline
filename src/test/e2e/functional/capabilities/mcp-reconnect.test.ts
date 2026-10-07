@@ -13,8 +13,8 @@ import { expect, type Frame } from "@playwright/test"
  * the command is routed through a launcher fixture whose success is controlled
  * by a marker file:
  *   - marker missing  -> the gateway process exits immediately (connection fails)
- *   - marker present  -> the launcher forwards to the real `docker mcp gateway
- *                        run --profile dline` and connects like production
+ *   - marker present  -> the launcher serves a deterministic stdio MCP catalog,
+ *                        so the recovery path does not depend on a Docker gateway
  */
 
 const SERVER_NAME = "MCP_DOCKER"

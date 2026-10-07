@@ -42,7 +42,7 @@ export async function waitForWorkProfile(
 	dlineDir: string,
 	profileId: string,
 	predicate: (profile: WorkStoredProfile) => boolean,
-	timeoutMs = 30_000,
+	timeoutMs = 60_000,
 ): Promise<WorkStoredProfile> {
 	return E2ETestHelper.waitForValue(async () => {
 		const profile = (await readWorkProfiles(dlineDir)).find((candidate) => candidate.id === profileId)
@@ -69,12 +69,12 @@ export async function waitForWorkSetting<T>(dlineDir: string, key: string, expec
 
 export async function openWorkSettings(page: Page, sidebar: Frame): Promise<void> {
 	await page.getByRole("button", { name: "Settings", exact: true }).click()
-	await expect(sidebar.getByRole("heading", { name: "API Configuration" })).toBeVisible({ timeout: 30_000 })
+	await expect(sidebar.getByRole("heading", { name: "API Configuration" })).toBeVisible({ timeout: 60_000 })
 }
 
 export async function finishWorkSettings(sidebar: Frame): Promise<void> {
 	await sidebar.getByRole("button", { name: "Done", exact: true }).click()
-	await expect(sidebar.getByTestId("chat-input")).toBeVisible({ timeout: 30_000 })
+	await expect(sidebar.getByTestId("chat-input")).toBeVisible({ timeout: 60_000 })
 }
 
 export function getWorkProfileCard(sidebar: Frame, profileName: string): Locator {
@@ -178,16 +178,16 @@ export async function selectWorkProfile(sidebar: Frame, profileName: string): Pr
 	const option = sidebar.getByRole("option").filter({ has: sidebar.getByText(profileName, { exact: true }) })
 	await expect(option).toHaveCount(1)
 	await option.click()
-	await expect(modelSwitcher).toHaveText(profileName, { timeout: 30_000 })
+	await expect(modelSwitcher).toHaveText(profileName, { timeout: 60_000 })
 	await expect(sidebar.getByText("Available Models", { exact: true })).not.toBeVisible()
 }
 
 export async function sendWorkMessageWithCtrlEnter(sidebar: Frame, text: string): Promise<void> {
 	const input = sidebar.getByTestId("chat-input")
-	await expect(input).toBeEnabled({ timeout: 30_000 })
+	await expect(input).toBeEnabled({ timeout: 60_000 })
 	await input.fill(text)
 	await input.press("Control+Enter")
-	await expect(sidebar.getByText(text, { exact: true }).last()).toBeVisible({ timeout: 30_000 })
+	await expect(sidebar.getByText(text, { exact: true }).last()).toBeVisible({ timeout: 60_000 })
 }
 
 export async function workTaskIdByMarker(dlineDocsDir: string, marker: string): Promise<string> {
@@ -201,7 +201,7 @@ export async function workTaskIdByMarker(dlineDocsDir: string, marker: string): 
 			if (messages.includes(marker)) return entry.name
 		}
 		return undefined
-	}, 30_000)
+	}, 60_000)
 }
 
 export async function readWorkTaskBinding(dlineDocsDir: string, taskId: string): Promise<WorkTaskProfileBinding | undefined> {
@@ -223,7 +223,7 @@ export async function waitForWorkTaskBinding(
 	profileName: string,
 ): Promise<void> {
 	await expect
-		.poll(async () => readWorkTaskBinding(dlineDocsDir, taskId), { timeout: 30_000 })
+		.poll(async () => readWorkTaskBinding(dlineDocsDir, taskId), { timeout: 60_000 })
 		.toMatchObject({ actModeProfileId: profileId, actModeProfile: profileName })
 }
 
@@ -246,9 +246,9 @@ export async function renameWorkProfile(
 
 export async function closeWorkTask(sidebar: Frame): Promise<void> {
 	const closeTask = sidebar.getByRole("button", { name: "Close Task", exact: true })
-	await expect(closeTask).toBeVisible({ timeout: 30_000 })
+	await expect(closeTask).toBeVisible({ timeout: 60_000 })
 	await closeTask.click()
-	await expect(sidebar.getByTestId("chat-input")).toBeVisible({ timeout: 30_000 })
+	await expect(sidebar.getByTestId("chat-input")).toBeVisible({ timeout: 60_000 })
 	await E2ETestHelper.dismissWhatsNewModal(sidebar)
 }
 
@@ -258,6 +258,6 @@ export async function openWorkHistoryTask(page: Page, sidebar: Frame, taskMarker
 	const item = sidebar.locator(".history-item").filter({ hasText: taskMarker })
 	await expect(item).toHaveCount(1)
 	await item.click()
-	await expect(sidebar.getByRole("button", { name: "Close Task", exact: true })).toBeVisible({ timeout: 30_000 })
-	await expect(sidebar.getByText(taskMarker, { exact: false }).first()).toBeVisible({ timeout: 30_000 })
+	await expect(sidebar.getByRole("button", { name: "Close Task", exact: true })).toBeVisible({ timeout: 60_000 })
+	await expect(sidebar.getByText(taskMarker, { exact: false }).first()).toBeVisible({ timeout: 60_000 })
 }

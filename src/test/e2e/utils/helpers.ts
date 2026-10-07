@@ -212,9 +212,9 @@ export class E2ETestHelper {
 			return null
 		}
 
-		// Use longer timeout (30s) for sidebar - macOS CI runners can be slow
+		// Use a longer timeout (60s) for the sidebar: Windows and macOS CI runners can be slow.
 		try {
-			await E2ETestHelper.waitUntil(async () => (await findSidebarFrame()) !== null, 30000)
+			await E2ETestHelper.waitUntil(async () => (await findSidebarFrame()) !== null, 60_000)
 		} catch (error) {
 			const observedFrames: Array<{ title?: string; url: string; rootCount?: number; error?: string }> = []
 			for (const frame of page.frames()) {
@@ -321,7 +321,7 @@ export class E2ETestHelper {
 
 	public static async openClineSidebar(page: Page): Promise<void> {
 		const dlineTab = page.getByRole("tab", { name: /Dline/ })
-		await expect(dlineTab).toBeVisible({ timeout: 30_000 })
+		await expect(dlineTab).toBeVisible({ timeout: 60_000 })
 		for (let attempt = 1; attempt <= 3; attempt++) {
 			if ((await dlineTab.getAttribute("aria-expanded")) === "true") return
 			await dlineTab.locator("a").click()

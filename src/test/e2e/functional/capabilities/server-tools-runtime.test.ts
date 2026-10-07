@@ -1,4 +1,4 @@
-import { access, cp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises"
+import { access, chmod, cp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises"
 import * as path from "node:path"
 import type { MockApiConsumption, MockApiTarget } from "@e2e/fixtures/server"
 import { getE2EMockProviderBaseUrl } from "@e2e/fixtures/server/api"
@@ -250,12 +250,29 @@ async function configureCancelingPreToolUseHook(
 	const hooksDir = path.join(workspaceDir, ".agents", "hooks")
 	await mkdir(hooksDir, { recursive: true })
 	const output = JSON.stringify({ cancel: true, errorMessage })
-	const delay = delaySeconds > 0 ? `Start-Sleep -Seconds ${delaySeconds}\n` : ""
-	await writeFile(path.join(hooksDir, "PreToolUse.ps1"), `${delay}Write-Output '${output}'\n`, "utf8")
+	await writeCancelingPreToolUseHookScript(hooksDir, output, delaySeconds)
 
 	const settings = JSON.parse(await readFile(settingsPath(dlineDir), "utf8")) as Record<string, unknown>
 	settings.hooksEnabled = true
 	await writeFile(settingsPath(dlineDir), `${JSON.stringify(settings, null, 2)}\n`, "utf8")
+}
+
+/**
+ * Hook discovery is platform-specific: Windows runs `PreToolUse.ps1` through PowerShell, while Unix runs an
+ * extensionless executable `PreToolUse`. The Unix script drains stdin first so the host's input write never
+ * races the process exit.
+ */
+async function writeCancelingPreToolUseHookScript(hooksDir: string, output: string, delaySeconds: number): Promise<void> {
+	if (process.platform === "win32") {
+		const delay = delaySeconds > 0 ? `Start-Sleep -Seconds ${delaySeconds}\n` : ""
+		await writeFile(path.join(hooksDir, "PreToolUse.ps1"), `${delay}Write-Output '${output}'\n`, "utf8")
+		return
+	}
+	const quotedOutput = `'${output.replaceAll("'", `'\\''`)}'`
+	const delay = delaySeconds > 0 ? `sleep ${delaySeconds}\n` : ""
+	const hookPath = path.join(hooksDir, "PreToolUse")
+	await writeFile(hookPath, `#!/bin/sh\ncat > /dev/null\n${delay}printf '%s\\n' ${quotedOutput}\n`, "utf8")
+	await chmod(hookPath, 0o755)
 }
 
 async function sendTask(sidebar: Frame, text: string): Promise<void> {

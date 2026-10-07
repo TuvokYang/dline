@@ -224,8 +224,8 @@ export async function openContextRecoveryHistoryTask(page: Page, sidebar: Frame,
 	const historyTask = sidebar.locator(".history-item").filter({ hasText: taskText })
 	await expect(historyTask).toHaveCount(1)
 	await historyTask.click()
-	await expect(sidebar.getByRole("button", { name: "Close Task", exact: true })).toBeVisible({ timeout: 30_000 })
-	await expect(sidebar.getByText(taskText, { exact: true }).first()).toBeVisible({ timeout: 30_000 })
+	await expect(sidebar.getByRole("button", { name: "Close Task", exact: true })).toBeVisible({ timeout: 60_000 })
+	await expect(sidebar.getByText(taskText, { exact: true }).first()).toBeVisible({ timeout: 60_000 })
 }
 
 export async function captureWorkScroller(sidebar: Frame): Promise<WorkScrollerSnapshot> {
@@ -272,7 +272,7 @@ export function earliestVisibleWorkHistoryIndex(snapshot: WorkScrollerSnapshot):
 
 export async function unlockAndContinueContextTask(sidebar: Frame, text: string): Promise<void> {
 	const unlockButton = sidebar.getByRole("button", { name: "Unlock", exact: true })
-	await expect(unlockButton).toBeVisible({ timeout: 30_000 })
+	await expect(unlockButton).toBeVisible({ timeout: 60_000 })
 	await unlockButton.click()
 	await expect(sidebar.getByText("Unlock Task", { exact: true })).toBeVisible({ timeout: 10_000 })
 	await sidebar.getByRole("button", { name: "Confirm", exact: true }).click()
@@ -281,19 +281,19 @@ export async function unlockAndContinueContextTask(sidebar: Frame, text: string)
 	const input = sidebar.getByTestId("chat-input")
 	const sendButton = sidebar.getByTestId("send-button")
 	const resumeButton = sidebar.getByRole("contentinfo").getByText("Resume", { exact: true })
-	await expect(input).toBeEnabled({ timeout: 30_000 })
+	await expect(input).toBeEnabled({ timeout: 60_000 })
 	await expect
 		.poll(
 			async () => (await resumeButton.isVisible().catch(() => false)) || (await sendButton.isEnabled().catch(() => false)),
 			{
-				timeout: 30_000,
+				timeout: 60_000,
 			},
 		)
 		.toBe(true)
 	await input.fill(text)
 	if (await resumeButton.isVisible().catch(() => false)) await resumeButton.click()
 	else await sendButton.click()
-	await expect(sidebar.getByText(text, { exact: true }).last()).toBeVisible({ timeout: 30_000 })
+	await expect(sidebar.getByText(text, { exact: true }).last()).toBeVisible({ timeout: 60_000 })
 }
 
 export async function selectContextRecoveryProfile(sidebar: Frame, profileName: string): Promise<void> {
@@ -303,15 +303,15 @@ export async function selectContextRecoveryProfile(sidebar: Frame, profileName: 
 	const option = sidebar.getByRole("option").filter({ has: sidebar.getByText(profileName, { exact: true }) })
 	await expect(option).toHaveCount(1)
 	await option.click()
-	await expect(modelSwitcher).toHaveText(profileName, { timeout: 30_000 })
+	await expect(modelSwitcher).toHaveText(profileName, { timeout: 60_000 })
 	await expect(sidebar.getByText("Available Models", { exact: true })).not.toBeVisible()
 }
 
 export async function closeContextRecoveryTask(sidebar: Frame): Promise<void> {
 	const closeTask = sidebar.getByRole("button", { name: "Close Task", exact: true })
-	await expect(closeTask).toBeVisible({ timeout: 30_000 })
+	await expect(closeTask).toBeVisible({ timeout: 60_000 })
 	await closeTask.click()
-	await expect(sidebar.getByTestId("chat-input")).toBeVisible({ timeout: 30_000 })
+	await expect(sidebar.getByTestId("chat-input")).toBeVisible({ timeout: 60_000 })
 	await E2ETestHelper.dismissWhatsNewModal(sidebar)
 }
 

@@ -2,6 +2,7 @@ import { EmptyRequest, StringRequest } from "@shared/proto/dline/common"
 import { ShowMessageType } from "@shared/proto/dline/host/window"
 import { HostProvider } from "@/hosts/host-provider"
 import { Logger } from "@/shared/services/Logger"
+import { shouldVisitLoopbackUrlDirectly, visitLoopbackUrl } from "@/utils/e2e-loopback-visit"
 
 /**
  * Writes text to the system clipboard
@@ -51,6 +52,11 @@ export function redactExternalUrl(value: string): string {
  */
 export async function openExternal(url: string): Promise<void> {
 	Logger.log("Opening external URL:", redactExternalUrl(url))
+	if (shouldVisitLoopbackUrlDirectly(url, process.env)) {
+		// A browser opens asynchronously; callers such as OAuth flows must not wait for the page to load.
+		void visitLoopbackUrlForE2E(url)
+		return
+	}
 	try {
 		await HostProvider.env.openExternal(StringRequest.create({ value: url }))
 	} catch {
@@ -66,5 +72,16 @@ export async function openExternal(url: string): Promise<void> {
 				message: "Failed to open the external URL.",
 			})
 		}
+	}
+}
+
+/** Stands in for the browser of an E2E run; a failed visit behaves like a browser error page, not a thrown open. */
+async function visitLoopbackUrlForE2E(url: string): Promise<void> {
+	try {
+		const status = await visitLoopbackUrl(url)
+		Logger.log(`E2E loopback visit finished with HTTP ${status}:`, redactExternalUrl(url))
+	} catch (error) {
+		const reason = error instanceof Error ? error.name : "unknown"
+		Logger.warn(`E2E loopback visit failed (${reason}):`, redactExternalUrl(url))
 	}
 }
