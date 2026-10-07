@@ -20,6 +20,11 @@ test("Context Window summary has one visual surface on hover and focus", async (
 	await expect(surface).toBeVisible()
 	await expect(summary).toBeVisible()
 	await expect(page.locator('[data-slot="hover-card-content"]')).toHaveCount(1)
+	// The card opens with a zoom-in animation, so a rect read mid-animation is
+	// scaled down; measure the settled surface, not a frame of the transition.
+	await surface.evaluate((element) =>
+		Promise.all(element.getAnimations({ subtree: true }).map((animation) => animation.finished)),
+	)
 
 	const geometry = await surface.evaluate((element) => {
 		const surfaceStyle = getComputedStyle(element)

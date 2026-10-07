@@ -30,6 +30,13 @@ const meta: Meta<typeof TaskHeader> = {
 export default meta
 type Story = StoryObj<typeof TaskHeader>
 
+// Inline images keep the story renderable offline; a remote placeholder host
+// fails to resolve in sandboxed runs and surfaces as a console error.
+const screenshotPlaceholder = (label: string): string =>
+	`data:image/svg+xml,${encodeURIComponent(
+		`<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"><rect width="400" height="300" fill="#cccccc"/><text x="200" y="150" font-size="24" text-anchor="middle" fill="#555555">${label}</text></svg>`,
+	)}`
+
 // Helper to create mock task messages
 const createTask = (text: string, images?: string[], files?: string[]): UiMessage => ({
 	ts: Date.now(),
@@ -132,7 +139,7 @@ export const WithImages: Story = {
 	args: {
 		task: createTask(
 			"Analyze these screenshots and identify UI issues",
-			["https://via.placeholder.com/400x300?text=Screenshot1", "https://via.placeholder.com/400x300?text=Screenshot2"],
+			[screenshotPlaceholder("Screenshot1"), screenshotPlaceholder("Screenshot2")],
 			undefined,
 		),
 		tokensIn: 3200,
