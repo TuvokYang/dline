@@ -286,7 +286,7 @@ export class TaskPromptContextOwner {
 					? {
 							getServers: () =>
 								this.options.host
-									.getMcpServers()
+									.getTaskMcpServers()
 									.filter((server) => taskCapabilityToggles.mcpServers[server.name] === true),
 						}
 					: undefined,

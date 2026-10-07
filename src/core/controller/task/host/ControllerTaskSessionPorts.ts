@@ -33,6 +33,7 @@ export class ControllerTaskSessionPorts implements TaskSessionPorts {
 			refreshSkills: () => refreshSkills(controller),
 			refreshSubagents: () => refreshSubagents(controller),
 			getMcpServers: () => controller.getMcpServersForOwner(),
+			getTaskMcpServers: () => controller.mcpHub.getServersForOwner(controller.mcpOwnerId),
 		}
 		this.environment = {
 			getHostVersion: () => HostProvider.env.getHostVersion({}),

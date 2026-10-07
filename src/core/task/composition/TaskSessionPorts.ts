@@ -38,7 +38,15 @@ export interface TaskPromptContextHost {
 		readonly globalSubagents: readonly { readonly path: string; readonly enabled: boolean }[]
 		readonly localSubagents: readonly { readonly path: string; readonly enabled: boolean }[]
 	}>
+	/** Servers as the workspace on/off overlay shows them; seeds a task's default MCP toggles. */
 	getMcpServers: NonNullable<SystemPromptContext["mcpHub"]>["getServers"]
+	/**
+	 * Servers the task can reach, without the workspace overlay.
+	 *
+	 * The task's own toggles decide which of them enter its prompt, as the tool
+	 * handlers already decide which of them it may call.
+	 */
+	getTaskMcpServers: NonNullable<SystemPromptContext["mcpHub"]>["getServers"]
 }
 
 /** IDE facts rendered into the request-scoped environment block. */
