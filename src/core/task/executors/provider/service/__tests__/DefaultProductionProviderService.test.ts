@@ -373,6 +373,24 @@ describe("DefaultProductionProviderService", () => {
 		])
 	})
 
+	it("opens one contentless reasoning partial for encrypted-only reasoning and never forwards the ciphertext", async () => {
+		const encrypted = (data: string) =>
+			({
+				type: "reasoning",
+				reasoning: "",
+				redacted_data: data,
+				redacted_phase: "partial",
+				provider_metadata: { response_id: "rs_1" },
+			}) as ApiStreamChunk
+		const chunks = await run([encrypted("CIPHER_1"), encrypted("CIPHER_2"), text("Answer")], true)
+
+		const reasoningPartials = chunks.filter((chunk) => chunk.kind === "partial" && "reasoning" in chunk)
+		expect(reasoningPartials).toEqual([expect.objectContaining({ kind: "partial", reasoning: "", text: "" })])
+		const presented = chunks.filter((chunk) => chunk.kind === "partial" || chunk.kind === "final")
+		expect(JSON.stringify(presented.map((chunk) => ({ ...chunk, content: undefined })))).not.toContain("CIPHER")
+		expect(chunks.find((chunk) => chunk.kind === "final")).not.toHaveProperty("reasoning")
+	})
+
 	it("reports nothing for a reply stopped before it said anything", async () => {
 		const controller = new AbortController()
 		const api = {
@@ -814,13 +832,59 @@ describe("DefaultProductionProviderService request retry", () => {
 		expect(chunks.at(-1)).toMatchObject({ kind: "final", text: "same request" })
 	})
 
-	it("never replays once the stream produced its first chunk", async () => {
+	// dev retried a stream that failed mid-way (an idle timeout after reasoning);
+	// prose and reasoning are transient rows the resent stream rewrites.
+	it("replays a stream that failed after showing only prose, sharing the retry budget", async () => {
 		const failure = httpError(503, "Service Unavailable")
 		let call = 0
 		const harness = scripted([{ chunks: [] }])
 		;(harness.api as { createMessage: unknown }).createMessage = vi.fn(async function* () {
 			call++
+			yield text(call === 1 ? "partial answer" : "Recovered answer.")
+			if (call === 1) throw failure
+		})
+
+		const chunks = await collect(harness.service)
+
+		expect(call).toBe(2)
+		expect(harness.prepare).toHaveBeenCalledOnce()
+		expect(harness.waits).toEqual([1000])
+		expect(chunks.filter((chunk) => chunk.kind === "retry")).toEqual([
+			{ kind: "retry", notice: expect.objectContaining({ attempt: 1, maxAttempts: 5, delayMs: 1000 }) },
+		])
+		const final = chunks.at(-1)
+		expect(final).toMatchObject({ kind: "final", text: "Recovered answer." })
+		expect(JSON.stringify(final)).not.toContain("partial answer")
+	})
+
+	it("fails a mid-stream failure once the budget the first attempts spent is gone", async () => {
+		const failure = httpError(503, "Service Unavailable")
+		let call = 0
+		const harness = scripted([{ chunks: [] }], { maxAttempts: 1 })
+		;(harness.api as { createMessage: unknown }).createMessage = vi.fn(async function* () {
+			call++
+			if (call === 1) throw failure
 			yield text("partial answer")
+			throw failure
+		})
+
+		expect(await failureOf(harness.service)).toBe(failure)
+		expect(call).toBe(2)
+	})
+
+	it("never replays once the stream called a tool", async () => {
+		const failure = httpError(503, "Service Unavailable")
+		let call = 0
+		const harness = scripted([{ chunks: [] }])
+		;(harness.api as { createMessage: unknown }).createMessage = vi.fn(async function* () {
+			call++
+			yield {
+				type: "tool_calls",
+				phase: "delta",
+				function_id: "fn-1",
+				dline_tid: "tid-1",
+				tool_call: { function: { id: "fn-1", name: "read_file", arguments: "{" } },
+			} as unknown as ApiStreamChunk
 			throw failure
 		})
 

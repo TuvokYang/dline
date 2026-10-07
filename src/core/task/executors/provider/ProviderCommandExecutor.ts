@@ -62,7 +62,12 @@ export type ProviderExecutionChunk =
  * Declared as a port because a headless assembly has no chat to write to.
  */
 export interface ProviderTextPresentationPort {
-	/** Reveal the reasoning and prose streamed so far under the stream's own identity. */
+	/**
+	 * Reveal the reasoning and prose streamed so far under the stream's own identity.
+	 *
+	 * An empty `reasoning` still opens the reasoning row: the model is thinking,
+	 * but only in an encrypted form that must never be shown.
+	 */
 	showPartial(input: { readonly transientId: string; readonly text: string; readonly reasoning?: string }): void
 	/** Settle those rows once the turn is durable, or retract a row that received nothing. */
 	commit(input: { readonly transientId: string; readonly text: string; readonly reasoning?: string }): Promise<void>
@@ -310,8 +315,9 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
 					throw new Error("ChunkAfterFinal")
 				}
 				if (chunk.kind === "retry") {
-					// A retry is only legal before the stream produced anything.
-					if (transientId) throw new Error("RetryAfterStreamStarted")
+					// A stream that showed only prose or reasoning may be sent again;
+					// the resent stream keeps its transient identity and rewrites
+					// those rows, so nothing it showed is journaled twice.
 					retrying = true
 					await this.noteRetry(record, chunk.notice)
 					continue

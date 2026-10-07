@@ -33,6 +33,14 @@ import { ProviderFailure } from "../ProviderFailure"
 import { repairProviderPairing } from "./ProviderPairingRepair"
 import type { PreparedProviderRequest, ProviderRequestFactory, ProviderServerToolRequestContext } from "./ProviderRequest"
 
+/** The automatic retries one turn may still spend, shared by every send of it. */
+interface RetryBudget {
+	attempts: number
+}
+
+/** What a retry chunk tells the chat about the attempt being waited for. */
+type ProviderRetryNoticeInput = Extract<ProductionProviderChunk, { kind: "retry" }>["notice"]
+
 interface PendingNativeTool {
 	readonly functionId: string
 	readonly dlineTid: string
@@ -314,11 +322,18 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 		const transientId = `provider:${prepared.turnId}`
 		let text = ""
 		let reasoningText = ""
+		let encryptedReasoningShown = false
 		// Replay needs what the provider signed, not only what it said: Anthropic
 		// drops an unsigned thinking block and the Responses API replays summaries
 		// and encrypted items, so the same accumulator dev and subagents use folds them.
-		const { reasonsHandler: reasoning } = new StreamResponseHandler(() => Date.now()).getHandlers()
+		const newReasoning = () => new StreamResponseHandler(() => Date.now()).getHandlers().reasonsHandler
+		let reasoning = newReasoning()
 		const nativeTools = new Map<string, PendingNativeTool>()
+		// Shared by every send of this turn, before and after a first chunk.
+		const retryBudget: RetryBudget = { attempts: 0 }
+		// Set once the reply called a tool or ran a hosted one; from then on a
+		// failed stream is final, because replaying it could repeat that call.
+		let toolActivity = false
 		// A cancelled command cannot authorize a tool in a later turn.
 		const abort = () => turn.abandon()
 		input.signal.addEventListener("abort", abort, { once: true })
@@ -329,91 +344,133 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 		let serverTools: ProviderServerToolPresentationSession | undefined
 		let streamFailed = false
 		// What the response occupies while it streams; the final usage settles it.
-		const receiving = new ContextWindowReceivingTracker()
+		let receiving = new ContextWindowReceivingTracker()
 		let receivingTokens = 0
 		let authoritativeContextTokens = 0
 
 		try {
-			const stream = yield* this.openStream(turn, input.signal)
-			if (!stream) return
-			serverTools = this.options.serverTools?.begin(turn.request.serverToolContext)
-			for await (const chunk of stream) {
-				if (input.signal.aborted) break
-				if (turnEnded && chunk.type !== "usage") {
-					// Leaving the loop closes the iterator; aborting the handler also
-					// ends a transport that would otherwise stay open behind it.
-					turn.request.api.abort?.()
+			for (;;) {
+				const stream = yield* this.openStream(turn, input.signal, retryBudget)
+				if (!stream) return
+				serverTools ??= this.options.serverTools?.begin(turn.request.serverToolContext)
+				try {
+					for await (const chunk of stream) {
+						if (input.signal.aborted) break
+						if (turnEnded && chunk.type !== "usage") {
+							// Leaving the loop closes the iterator; aborting the handler also
+							// ends a transport that would otherwise stay open behind it.
+							turn.request.api.abort?.()
+							break
+						}
+						switch (chunk.type) {
+							case "usage":
+								yield { kind: "usage", usage: usageRecord(chunk) }
+								break
+							case "text":
+								text += chunk.text
+								yield { kind: "partial", transientId, text: visibleAssistantText(text) }
+								break
+							case "reasoning":
+								reasoning.processReasoningDelta({
+									provider_metadata: chunk.provider_metadata,
+									reasoning: chunk.reasoning,
+									signature: chunk.signature,
+									details:
+										chunk.details === undefined
+											? []
+											: Array.isArray(chunk.details)
+												? chunk.details
+												: [chunk.details],
+									redacted_data: chunk.redacted_data,
+									redacted_phase: chunk.redacted_phase,
+								})
+								if (!chunk.reasoning) {
+									// Encrypted-only reasoning has nothing to show, but the row must
+									// still open once so the chat reads it as thinking, not a stall.
+									if (chunk.redacted_data && !encryptedReasoningShown && reasoningText.length === 0) {
+										encryptedReasoningShown = true
+										yield { kind: "partial", transientId, text: visibleAssistantText(text), reasoning: "" }
+									}
+									break
+								}
+								reasoningText += chunk.reasoning
+								// Shown while it streams, as dev did: a long think is otherwise
+								// indistinguishable from a stalled request.
+								yield {
+									kind: "partial",
+									transientId,
+									text: visibleAssistantText(text),
+									reasoning: reasoningText,
+								}
+								break
+							case "tool_calls":
+								toolActivity = true
+								this.consumeNativeTool(nativeTools, chunk)
+								// The completed chunk may omit the name, so it is read from the call
+								// the earlier deltas accumulated.
+								if (chunk.phase === "completed" && isTurnEndingToolName(nativeTools.get(chunk.dline_tid)?.name))
+									turnEnded = true
+								yield {
+									kind: "partial",
+									transientId,
+									text: visibleAssistantText(text),
+									projection: {
+										kind: "provider.tool_partial",
+										dlineTid: chunk.dline_tid,
+										toolName: chunk.tool_call.function.name,
+									},
+								}
+								break
+							case "server_tool":
+								toolActivity = true
+								await serverTools?.consume(chunk)
+								yield {
+									kind: "partial",
+									transientId,
+									text: visibleAssistantText(text),
+									projection: {
+										kind: "provider.server_tool",
+										tool: chunk.tool,
+										phase: chunk.phase,
+										dlineTid: chunk.dline_tid,
+									},
+								}
+								break
+						}
+						const estimate = receiving.apply(chunk)
+						if (
+							estimate.receivingTokens !== receivingTokens ||
+							estimate.authoritativeContextTokens !== authoritativeContextTokens
+						) {
+							receivingTokens = estimate.receivingTokens
+							authoritativeContextTokens = estimate.authoritativeContextTokens
+							yield { kind: "receiving", receivingTokens, authoritativeContextTokens }
+						}
+					}
 					break
-				}
-				switch (chunk.type) {
-					case "usage":
-						yield { kind: "usage", usage: usageRecord(chunk) }
-						break
-					case "text":
-						text += chunk.text
-						yield { kind: "partial", transientId, text: visibleAssistantText(text) }
-						break
-					case "reasoning":
-						reasoning.processReasoningDelta({
-							provider_metadata: chunk.provider_metadata,
-							reasoning: chunk.reasoning,
-							signature: chunk.signature,
-							details:
-								chunk.details === undefined ? [] : Array.isArray(chunk.details) ? chunk.details : [chunk.details],
-							redacted_data: chunk.redacted_data,
-							redacted_phase: chunk.redacted_phase,
-						})
-						if (!chunk.reasoning) break
-						reasoningText += chunk.reasoning
-						// Shown while it streams, as dev did: a long think is otherwise
-						// indistinguishable from a stalled request.
-						yield {
-							kind: "partial",
-							transientId,
-							text: visibleAssistantText(text),
-							reasoning: reasoningText,
-						}
-						break
-					case "tool_calls":
-						this.consumeNativeTool(nativeTools, chunk)
-						// The completed chunk may omit the name, so it is read from the call
-						// the earlier deltas accumulated.
-						if (chunk.phase === "completed" && isTurnEndingToolName(nativeTools.get(chunk.dline_tid)?.name))
-							turnEnded = true
-						yield {
-							kind: "partial",
-							transientId,
-							text: visibleAssistantText(text),
-							projection: {
-								kind: "provider.tool_partial",
-								dlineTid: chunk.dline_tid,
-								toolName: chunk.tool_call.function.name,
-							},
-						}
-						break
-					case "server_tool":
-						await serverTools?.consume(chunk)
-						yield {
-							kind: "partial",
-							transientId,
-							text: visibleAssistantText(text),
-							projection: {
-								kind: "provider.server_tool",
-								tool: chunk.tool,
-								phase: chunk.phase,
-								dlineTid: chunk.dline_tid,
-							},
-						}
-						break
-				}
-				const estimate = receiving.apply(chunk)
-				if (
-					estimate.receivingTokens !== receivingTokens ||
-					estimate.authoritativeContextTokens !== authoritativeContextTokens
-				) {
-					receivingTokens = estimate.receivingTokens
-					authoritativeContextTokens = estimate.authoritativeContextTokens
-					yield { kind: "receiving", receivingTokens, authoritativeContextTokens }
+				} catch (error) {
+					const notice = input.signal.aborted
+						? undefined
+						: this.midStreamRetry(error, turn.request, retryBudget, toolActivity || turnEnded)
+					if (!notice) throw error
+					// The rows the failed stream showed are transient and keyed by this
+					// turn's stream, so the resent stream rewrites them from scratch.
+					text = ""
+					reasoningText = ""
+					encryptedReasoningShown = false
+					reasoning = newReasoning()
+					nativeTools.clear()
+					receiving = new ContextWindowReceivingTracker()
+					receivingTokens = 0
+					authoritativeContextTokens = 0
+					yield { kind: "retry", notice }
+					const waited = await this.retry.wait(notice.delayMs, input.signal)
+					if (waited !== "send" || input.signal.aborted) {
+						this.retry.settled?.()
+						if (waited === "handed_back") throw error
+						return
+					}
+					await turn.refreshIfStale()
 				}
 			}
 		} catch (error) {
@@ -501,24 +558,54 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 	private async *openStream(
 		turn: TurnRequest,
 		signal: AbortSignal,
+		budget: RetryBudget,
 	): AsyncGenerator<ProductionProviderChunk, AsyncIterable<ApiStreamChunk> | undefined> {
 		try {
-			return yield* this.sendUntilFirstChunk(turn, signal)
+			return yield* this.sendUntilFirstChunk(turn, signal, budget)
 		} finally {
 			// However the loop ends, no countdown remains for the chat to show.
 			this.retry.settled?.()
 		}
 	}
 
+	/**
+	 * Decide whether a stream that failed after its first chunk is sent again.
+	 *
+	 * Only a reply that so far streamed prose or reasoning is replayed: those rows
+	 * are transient and the resent stream rewrites them. A reply that called a
+	 * tool, ran a hosted one or ended its turn stands as it is, since a replay
+	 * could repeat that call. Returns the notice to show, or undefined when the
+	 * failure is final.
+	 */
+	private midStreamRetry(
+		error: unknown,
+		request: PreparedProviderRequest,
+		budget: RetryBudget,
+		replyActed: boolean,
+	): ProviderRetryNoticeInput | undefined {
+		if (replyActed || budget.attempts >= this.retry.maxAttempts) return undefined
+		const provider: ProviderIdentity = { providerId: request.api.getProviderId?.(), modelId: request.api.getModel().id }
+		if (!isRetryableProviderError(error, provider)) return undefined
+		budget.attempts++
+		const delayMs = this.retry.delayMs(budget.attempts)
+		Logger.warn(`[provider] stream failed after its first chunk; retry ${budget.attempts} in ${delayMs}ms`, error)
+		return {
+			attempt: budget.attempts,
+			maxAttempts: this.retry.maxAttempts,
+			delayMs,
+			errorMessage: describeProviderError(request, error, provider),
+		}
+	}
+
 	private async *sendUntilFirstChunk(
 		turn: TurnRequest,
 		signal: AbortSignal,
+		budget: RetryBudget,
 	): AsyncGenerator<ProductionProviderChunk, AsyncIterable<ApiStreamChunk> | undefined> {
 		let pairingRebuilt = false
 		const messagesOf = (request: PreparedProviderRequest): ClineStorageMessage[] =>
 			pairingRebuilt ? repairProviderPairing(request.messages) : request.messages
 		let messages = messagesOf(turn.request)
-		let retries = 0
 		// The first refusal for length is truncated and resent at once; each
 		// later one waits out a retry and truncates again, until the retry
 		// budget is spent or nothing settled is left to remove.
@@ -565,8 +652,10 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 				if (signal.aborted) return undefined
 				throw failure
 			}
-			if (retries >= this.retry.maxAttempts || !(truncates || isRetryableProviderError(failure, provider))) throw failure
-			retries++
+			if (budget.attempts >= this.retry.maxAttempts || !(truncates || isRetryableProviderError(failure, provider)))
+				throw failure
+			budget.attempts++
+			const retries = budget.attempts
 			const delayMs = this.retry.delayMs(retries)
 			Logger.warn(`[provider] request failed before its first chunk; retry ${retries} in ${delayMs}ms`, failure)
 			yield {

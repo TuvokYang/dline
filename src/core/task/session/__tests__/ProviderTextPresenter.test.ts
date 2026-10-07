@@ -72,6 +72,32 @@ describe("ProviderTextPresenter", () => {
 		])
 	})
 
+	// Encrypted-only reasoning has no text to show, yet the chat must still read
+	// it as thinking; the contentless row is withdrawn once the turn settles.
+	it("opens a contentless reasoning row for empty reasoning and withdraws it on commit", async () => {
+		const { presenter, rows, committed, removed, published } = createPresenter()
+
+		presenter.showPartial({ transientId: "provider:turn-1", text: "", reasoning: "" })
+
+		const [thinking] = [...rows.values()]
+		expect([thinking.say, thinking.text, thinking.partial]).toEqual(["reasoning", "", true])
+		expect(published).toEqual([expect.objectContaining({ say: "reasoning", text: "", partial: true })])
+
+		presenter.showPartial({ transientId: "provider:turn-1", text: "Answer" })
+		await presenter.commit({ transientId: "provider:turn-1", text: "Answer" })
+
+		expect(removed).toEqual([thinking.ts])
+		expect(committed.map((row) => [row.say, row.text])).toEqual([["text", "Answer"]])
+	})
+
+	it("opens no reasoning row when the partial carries no reasoning", () => {
+		const { presenter, rows } = createPresenter()
+
+		presenter.showPartial({ transientId: "provider:turn-1", text: "Answer" })
+
+		expect([...rows.values()].map((row) => row.say)).toEqual(["text"])
+	})
+
 	it("keeps the reasoning of a reply that said nothing else", async () => {
 		const { presenter, committed, removed } = createPresenter()
 
