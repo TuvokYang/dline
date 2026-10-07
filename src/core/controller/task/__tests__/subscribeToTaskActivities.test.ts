@@ -60,6 +60,7 @@ describe("subscribeToTaskActivities", () => {
 			{
 				task: undefined,
 				getCurrentTaskActivityStore: () => activityStore,
+				canPromoteHistoryDisplay: () => true,
 			} as never,
 			TaskActivitySubscriptionRequest.create({ taskId: "task-1" }),
 			responseStream,
@@ -73,6 +74,9 @@ describe("subscribeToTaskActivities", () => {
 					expect.objectContaining({
 						activityId: "history-subagent",
 						metrics: expect.objectContaining({ toolCalls: 4, inputTokens: 40, outputTokens: 8 }),
+						// No runtime backs a history surface, so nothing can be stopped from it.
+						cancellable: false,
+						finishable: false,
 					}),
 				],
 			}),

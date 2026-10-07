@@ -131,17 +131,21 @@ export async function subscribeToTaskActivities(
 		return
 	}
 
-	// A history surface shows its activities but owns no runtime to act on them.
-	const interactive = controller.task?.taskId === request.taskId
+	// A history surface owns no runtime, so it can cancel or finish nothing. Retry
+	// promotes the display into the task's runtime first, so it stays offered
+	// while that promotion is possible. Both are read per update because the
+	// surface can change under a live subscription.
+	const interactive = () => controller.task?.taskId === request.taskId
+	const canRetry = () => interactive() || controller.canPromoteHistoryDisplay(request.taskId)
 	const requestRegistry = getRequestRegistry()
 	let completed = false
 	const unsubscribe = activityStore.subscribe(
 		async (update) => {
 			await responseStream(
 				toProtoUpdate(update, (activityId) => ({
-					cancellable: interactive && activityStore.isCancellable(activityId),
-					finishable: interactive && activityStore.isFinishable(activityId),
-					retryable: interactive && activityStore.isRetryable(activityId),
+					cancellable: interactive() && activityStore.isCancellable(activityId),
+					finishable: interactive() && activityStore.isFinishable(activityId),
+					retryable: canRetry() && activityStore.isRetryable(activityId),
 				})),
 				false,
 				update.sequence,

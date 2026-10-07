@@ -35,6 +35,43 @@ describe("retryTaskActivities", () => {
 		expect(restoreSubagentActivityRetry.mock.invocationCallOrder[0]).toBeLessThan(retry.mock.invocationCallOrder[0])
 	})
 
+	it("promotes a history display into the task's runtime before retrying", async () => {
+		const retry = vi.fn(async (activityIds: string[]) => activityIds)
+		const session = createSessionFixture({
+			taskId: "task-1",
+			owners: {
+				activities: { hasLiveRetryControl: vi.fn(() => true), isRetryable: vi.fn(() => true), retry },
+				toolExecution: { restoreSubagentActivityRetry: vi.fn(async () => true) },
+			},
+		})
+		const controller: { task?: typeof session; promoteHistoryDisplayForActivityControl: ReturnType<typeof vi.fn> } = {
+			task: undefined,
+			promoteHistoryDisplayForActivityControl: vi.fn(async () => {
+				controller.task = session
+				return true
+			}),
+		}
+
+		const response = await retryTaskActivities(
+			controller as never,
+			RetryTaskActivitiesRequest.create({ taskId: "task-1", activityIds: ["subagent-history"] }),
+		)
+
+		expect(controller.promoteHistoryDisplayForActivityControl).toHaveBeenCalledWith("task-1")
+		expect(response.retriedActivityIds).toEqual(["subagent-history"])
+	})
+
+	it("retries nothing when the history display cannot become the runtime", async () => {
+		const controller = { task: undefined, promoteHistoryDisplayForActivityControl: vi.fn(async () => false) }
+
+		const response = await retryTaskActivities(
+			controller as never,
+			RetryTaskActivitiesRequest.create({ taskId: "task-1", activityIds: ["subagent-locked"] }),
+		)
+
+		expect(response.retriedActivityIds).toEqual([])
+	})
+
 	it("does not rebuild a retry control that is already live", async () => {
 		const restoreSubagentActivityRetry = vi.fn(async () => true)
 		const retry = vi.fn(async (activityIds: string[]) => activityIds)

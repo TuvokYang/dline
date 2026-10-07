@@ -849,6 +849,38 @@ export class Controller {
 		return undefined
 	}
 
+	/**
+	 * Whether the history display of `taskId` can become that task's runtime.
+	 *
+	 * A history surface owns no runtime, so a control that needs one (Retry on a
+	 * retained subagent) promotes the display first, as replying to it does. A
+	 * task another window holds stays read-only.
+	 */
+	canPromoteHistoryDisplay(taskId: string): boolean {
+		const display = this.historyDisplaySession
+		return display?.taskId === taskId && !display.isLocked()
+	}
+
+	/**
+	 * Make `taskId` this Controller's runtime so an activity control can act on
+	 * it; false when the surface changed or the task belongs to another window.
+	 */
+	async promoteHistoryDisplayForActivityControl(taskId: string): Promise<boolean> {
+		if (this.task?.taskId === taskId) return true
+		return this.runTaskLifecycleOperation(async () => {
+			if (this.task?.taskId === taskId) return true
+			const display = this.historyDisplaySession
+			if (!display || !this.canPromoteHistoryDisplay(taskId)) return false
+			try {
+				await this.promoteHistoryDisplay(display)
+			} catch (error) {
+				Logger.error(`[HistoryDisplay] Failed to promote task ${taskId} for an activity control:`, error)
+				return false
+			}
+			return this.task?.taskId === taskId
+		})
+	}
+
 	/** Return whether this Controller already owns a visible task surface. */
 	hasActiveTaskSurface(): boolean {
 		return this.getCurrentTaskId() !== undefined
@@ -1458,17 +1490,8 @@ export class Controller {
 				)
 				return DispatchInteractionResponse.create({ accepted: false, result: "stale_interaction" })
 			}
-			this.historyDisplaySession = undefined
-			// A read-only display may own a lock poll. initTask acquires the lock
-			// itself, so leaving that round armed would let it take the same lock
-			// concurrently and then activate a surface this promotion replaced.
-			this.stopLockPoll()
 			try {
-				await display.dispose()
-				await this.initTask(undefined, undefined, undefined, display.historyItem, undefined, {
-					skipInitialClear: true,
-					activateHistory: true,
-				})
+				await this.promoteHistoryDisplay(display)
 				const session = this.task
 				if (!session) {
 					Logger.error(`[HistoryDisplay] Promotion produced no task session for ${display.taskId}`)
@@ -1504,6 +1527,24 @@ export class Controller {
 				Logger.error(`[HistoryDisplay] Failed to promote task ${display.taskId}:`, error)
 				return DispatchInteractionResponse.create({ accepted: false, result: "invalid_runtime_event" })
 			}
+		})
+	}
+
+	/**
+	 * Replace the lightweight history display with the canonical runtime of the
+	 * same task. The caller holds the lifecycle lock and has checked that the
+	 * display is still current.
+	 */
+	private async promoteHistoryDisplay(display: HistoryDisplaySession): Promise<void> {
+		this.historyDisplaySession = undefined
+		// A read-only display may own a lock poll. initTask acquires the lock
+		// itself, so leaving that round armed would let it take the same lock
+		// concurrently and then activate a surface this promotion replaced.
+		this.stopLockPoll()
+		await display.dispose()
+		await this.initTask(undefined, undefined, undefined, display.historyItem, undefined, {
+			skipInitialClear: true,
+			activateHistory: true,
 		})
 	}
 

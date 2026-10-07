@@ -6,6 +6,13 @@ export async function retryTaskActivities(
 	controller: Controller,
 	request: RetryTaskActivitiesRequest,
 ): Promise<RetryTaskActivitiesResponse> {
+	// Retry offered on a history surface first makes that task the runtime.
+	if (
+		controller.task?.taskId !== request.taskId &&
+		!(await controller.promoteHistoryDisplayForActivityControl(request.taskId))
+	) {
+		return RetryTaskActivitiesResponse.create({ retriedActivityIds: [] })
+	}
 	const task = controller.task
 	if (!task || task.taskId !== request.taskId) {
 		return RetryTaskActivitiesResponse.create({ retriedActivityIds: [] })
