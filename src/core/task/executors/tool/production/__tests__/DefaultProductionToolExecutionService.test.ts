@@ -4,7 +4,7 @@ import { replayDurableToolResult } from "../../../../DurableToolResult"
 import type { ToolInvocationEnvelope } from "../../../../stores/payload/TaskPayloadEnvelopes"
 import type { TaskConfig } from "../../../../tools/types/TaskConfig"
 import { createDeniedSurface } from "../../ToolDomainSurface"
-import { DefaultProductionToolExecutionService } from "../DefaultProductionToolExecutionService"
+import { applyRepeatedCallGuard, DefaultProductionToolExecutionService } from "../DefaultProductionToolExecutionService"
 import type { ProductionToolHandlerRuntime } from "../ProductionToolHandlerRuntime"
 
 const REFUSAL = "Explicit-only tool 'summarize_task' was rejected: explicit_instruction_missing."
@@ -19,6 +19,15 @@ const INVOCATION: ToolInvocationEnvelope = {
 	isNativeToolCall: false,
 }
 
+/** The task facts the handler service reads around every call. */
+function toolConfig(extra: Partial<TaskConfig> = {}): TaskConfig {
+	return {
+		taskState: { consecutiveMistakeCount: 0, consecutiveIdenticalToolCount: 0, lastToolName: "", lastToolParams: "" },
+		services: { stateManager: { getGlobalSettingsKey: () => 4 } },
+		...extra,
+	} as unknown as TaskConfig
+}
+
 /** A handler runtime whose gate refuses every call, as the central explicit-only gate does. */
 function refusingRuntime(): ProductionToolHandlerRuntime {
 	return {
@@ -30,7 +39,7 @@ function refusingRuntime(): ProductionToolHandlerRuntime {
 
 async function execute(invocation: ToolInvocationEnvelope): Promise<string> {
 	const service = new DefaultProductionToolExecutionService({
-		config: { create: () => ({}) as TaskConfig },
+		config: { create: () => toolConfig() },
 		runtime: refusingRuntime(),
 	})
 	const result = await service.execute({
@@ -71,7 +80,7 @@ describe("DefaultProductionToolExecutionService", () => {
 	it("bounds an oversized handler result to the canonical tool result limit", async () => {
 		const reply = `<feedback>\n${"x".repeat(MAX_TOOL_RESULT_TEXT_BYTES * 2)}\n</feedback>`
 		const service = new DefaultProductionToolExecutionService({
-			config: { create: () => ({}) as TaskConfig },
+			config: { create: () => toolConfig() },
 			runtime: {
 				coordinator: { getHandler: () => undefined },
 				execute: async () => reply,
@@ -105,7 +114,7 @@ describe("DefaultProductionToolExecutionService", () => {
 		const service = new DefaultProductionToolExecutionService({
 			config: {
 				create: () =>
-					({
+					toolConfig({
 						messageState: {
 							clineMessages: [
 								{
@@ -116,7 +125,7 @@ describe("DefaultProductionToolExecutionService", () => {
 								},
 							],
 						},
-					}) as TaskConfig,
+					} as unknown as Partial<TaskConfig>),
 			},
 			runtime,
 		})
@@ -128,5 +137,44 @@ describe("DefaultProductionToolExecutionService", () => {
 		})
 
 		expect(receivedPresentationTs).toBe(99)
+	})
+})
+
+describe("applyRepeatedCallGuard", () => {
+	const read = { name: "read_file", params: { path: "README.md" } } as Parameters<typeof applyRepeatedCallGuard>[1]
+
+	it("latches the mistake limit on the fifth identical call after the handler reset it", () => {
+		const config = toolConfig()
+		const results: unknown[] = []
+		for (let call = 1; call <= 5; call++) {
+			config.taskState.consecutiveMistakeCount = 0
+			results.push(applyRepeatedCallGuard(config, read, "contents"))
+			expect(config.taskState.consecutiveMistakeCount).toBe(call === 5 ? 4 : 0)
+		}
+
+		expect(results[2]).toContain("3 times consecutively with identical arguments")
+		expect(results[3]).toBe("contents")
+	})
+
+	it("restarts the run when the arguments change", () => {
+		const config = toolConfig()
+		for (let call = 1; call <= 4; call++) applyRepeatedCallGuard(config, read, "contents")
+		applyRepeatedCallGuard(config, { ...read, params: { path: "other.md" } }, "contents")
+
+		expect(config.taskState.consecutiveMistakeCount).toBe(0)
+		expect(config.taskState.consecutiveIdenticalToolCount).toBe(1)
+	})
+
+	it("appends the soft warning as a text block to structured results", () => {
+		const config = toolConfig()
+		let response: unknown
+		for (let call = 1; call <= 3; call++) {
+			response = applyRepeatedCallGuard(config, read, [{ type: "text", text: "contents" }])
+		}
+
+		expect(response).toEqual([
+			{ type: "text", text: "contents" },
+			{ type: "text", text: expect.stringContaining("identical arguments") },
+		])
 	})
 })

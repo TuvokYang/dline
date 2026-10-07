@@ -5,6 +5,7 @@ import type { ClineToolResponseContent } from "@shared/messages/content"
 import { WebToolsMode } from "@shared/proto/dline/provider/common"
 import { ClineDefaultTool } from "@shared/tools"
 import { serializeDurableToolResult, toolResultReplayOf } from "../../../DurableToolResult"
+import { LOOP_DETECTION_SOFT_THRESHOLD, recordToolCall, toolCallSignature } from "../../../loop-detection"
 import type { ToolInvocationEnvelope } from "../../../stores/payload/TaskPayloadEnvelopes"
 import { normalizeToolExecutionResult, type ToolPostCommitDirective } from "../../../tools/ToolExecutionResult"
 import type { ToolExecutorCoordinator } from "../../../tools/ToolExecutorCoordinator"
@@ -148,6 +149,30 @@ export function materializeToolInvocation(invocation: ToolInvocationEnvelope): T
 	}
 }
 
+/**
+ * Record a finished call with the repeated-call detector and apply its verdict.
+ *
+ * It runs after the handler because a successful handler resets the mistake
+ * count; escalating afterwards keeps the limit latched for the next round, as in
+ * dev. The soft warning rides on this call's own result because the runtime has
+ * no separate user-content buffer to carry it. Detection is synchronous, so
+ * concurrent calls cannot interleave between comparing and recording.
+ */
+export function applyRepeatedCallGuard(
+	config: Pick<TaskConfig, "taskState" | "services">,
+	block: Pick<ToolUse, "name" | "params">,
+	response: ClineToolResponseContent,
+): ClineToolResponseContent {
+	const verdict = recordToolCall(config.taskState, block.name, toolCallSignature(block.params))
+	if (verdict.hardEscalation) {
+		config.taskState.consecutiveMistakeCount =
+			config.services.stateManager.getGlobalSettingsKey("maxConsecutiveMistakes") ?? 3
+	}
+	if (!verdict.softWarning) return response
+	const warning = formatResponse.repeatedToolCall(block.name, LOOP_DETECTION_SOFT_THRESHOLD)
+	return Array.isArray(response) ? [...response, { type: "text", text: warning }] : `${response}\n\n${warning}`
+}
+
 /** Task-scoped handler runtime with no dependency on the legacy ToolExecutor. */
 export class DefaultProductionToolExecutionService implements ProductionToolExecutionService {
 	constructor(private readonly options: DefaultProductionToolExecutionServiceOptions) {}
@@ -178,8 +203,9 @@ export class DefaultProductionToolExecutionService implements ProductionToolExec
 			config = createLocalWebSearchFallbackConfig(config)
 		}
 		const result = normalizeToolExecutionResult(await this.options.runtime.execute(config, block))
+		const response = applyRepeatedCallGuard(config, block, result.response)
 		return {
-			...serializeResult(input.invocation, result.response, description),
+			...serializeResult(input.invocation, response, description),
 			...(result.postCommit === undefined ? {} : { postCommit: result.postCommit }),
 		}
 	}
