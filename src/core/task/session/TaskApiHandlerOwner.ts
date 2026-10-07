@@ -32,7 +32,11 @@ export class TaskApiHandlerOwner {
 
 	constructor(private readonly options: TaskApiHandlerOwnerOptions) {
 		const mode = this.options.settings.mode
-		this.handler = this.build(resolveTaskApiProfile(this.configuration(), mode), mode)
+		const resolution = resolveTaskApiProfile(this.configuration(), mode)
+		this.handler = this.build(resolution, mode)
+		// A Profile renamed since the task last ran is resolved by its stable ID;
+		// binding the current name now keeps History Resume on that Profile.
+		this.adoptResolvedIdentity(resolution, mode)
 	}
 
 	current(): ApiHandler {

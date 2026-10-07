@@ -82,7 +82,7 @@ describe("TaskApiHandlerOwner", () => {
 	// and later rebuilds follow the Profile that now serves requests.
 	it("binds the task to the Profile a rebuild resolves, but never to a session fallback", async () => {
 		const owner = createOwner()
-		expect(adoptedIdentities).not.toHaveBeenCalled()
+		adoptedIdentities.mockClear()
 
 		resolutions.fresh.mockResolvedValueOnce(valid(profile("target")))
 		await owner.rebuild()
@@ -93,6 +93,21 @@ describe("TaskApiHandlerOwner", () => {
 		resolutions.fresh.mockResolvedValueOnce(invalid(AZURE_ERROR))
 		await owner.rebuild()
 		expect(adoptedIdentities).toHaveBeenCalledTimes(1)
+	})
+
+	// Dev bound the opening task to the Profile its stable ID resolved, so a
+	// Profile renamed while the task was closed resumes under its new name.
+	it("binds the opening task to the Profile its stable ID resolves, but never to a session fallback", () => {
+		resolutions.cached.mockReturnValue(valid(profile("renamed")))
+		createOwner()
+		expect(adoptedIdentities).toHaveBeenCalledExactlyOnceWith("act", "renamed-id", "renamed")
+
+		adoptedIdentities.mockClear()
+		resolutions.cached.mockReturnValue({ ...valid(profile("fallback")), usedFallback: true })
+		createOwner()
+		resolutions.cached.mockReturnValue(invalid(AZURE_ERROR))
+		createOwner()
+		expect(adoptedIdentities).not.toHaveBeenCalled()
 	})
 
 	it("serves the task through the Profile its binding resolves to", () => {
