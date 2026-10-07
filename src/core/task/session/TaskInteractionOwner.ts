@@ -1,5 +1,5 @@
 import { findLast } from "@shared/array"
-import type { UiAsk } from "@shared/ExtensionMessage"
+import type { UiAsk, UiMessage } from "@shared/ExtensionMessage"
 import { Logger } from "@shared/services/Logger"
 import { createCanonicalAskRow } from "../ask-row"
 import type { RetainedInputPresentationPort } from "../executors/compose/RetainedInputPresentationPort"
@@ -74,6 +74,8 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
 		private readonly unownedContinuation?: UnownedDialogContinuationPort,
 		/** Reports answers that reached nothing, which are otherwise invisible. */
 		private readonly diagnostics?: RuntimeDiagnosticSink,
+		/** Pushes a committed row to the chat as it is written, as host asks are. */
+		private readonly publishRow?: (row: UiMessage) => unknown,
 	) {}
 
 	bind(session: ActiveTaskSession): void {
@@ -156,17 +158,9 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
 		try {
 			const envelope = decodeTaskPayload<DialogPresentationEnvelope>(await this.payloads.read(primary.presentationRef))
 			const anchorTs = envelope.existingTs ?? this.nextRowTs()
-			const anchor = createCanonicalAskRow(
-				getInteraction("completion").taskAsk,
-				envelope.body,
-				anchorTs,
-				primary.interactionId,
+			await this.presentAnchor(
+				createCanonicalAskRow(getInteraction("completion").taskAsk, envelope.body, anchorTs, primary.interactionId),
 			)
-			if (this.messages.clineMessages.some((message) => message.ts === anchorTs))
-				await this.messages.finalizeClineMessage(anchor)
-			else await this.messages.addToClineMessages(anchor)
-			// The same in-place rewrite as a requested dialog's anchor; see request().
-			await this.messages.flushUiMessages()
 		} catch (error) {
 			Logger.warn(
 				`[TaskInteractionOwner] Failed to anchor staged completion ${primary.interactionId}: ${error instanceof Error ? error.message : error}`,
@@ -209,7 +203,7 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
 		// not enough here: an approval is revealed in the same millisecond as the
 		// rows around it, and a row that sorts before its own tool output makes
 		// the chat collapse the pair into two separate entries.
-		await this.messages.addToClineMessages(
+		await this.presentAnchor(
 			createCanonicalAskRow(
 				(request.ask ?? definition.taskAsk) as UiAsk,
 				request.body,
@@ -217,6 +211,31 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
 				request.interactionId,
 			),
 		)
+	}
+
+	/**
+	 * Write the row a dialog is answered from, commit it, and push it to the chat.
+	 *
+	 * A completion becomes its dialog's anchor by replacing its own row in
+	 * place, a staged rewrite the store would otherwise commit only on its
+	 * timer, so the row is committed before the dialog opens over it. It is
+	 * then pushed like any host ask: the reply surface must not depend on a
+	 * later state publication reaching the webview.
+	 */
+	private async presentAnchor(anchor: UiMessage): Promise<void> {
+		if (this.messages.clineMessages.some((message) => message.ts === anchor.ts))
+			await this.messages.finalizeClineMessage(anchor)
+		else await this.messages.addToClineMessages(anchor)
+		await this.messages.flushUiMessages()
+		if (!this.publishRow) return
+		const committed = this.messages.clineMessages.find((message) => message.ts === anchor.ts) ?? anchor
+		try {
+			await this.publishRow(committed)
+		} catch (error) {
+			Logger.warn(
+				`[TaskInteractionOwner] Failed to push anchor ${anchor.ts}: ${error instanceof Error ? error.message : error}`,
+			)
+		}
 	}
 
 	/**
@@ -599,15 +618,7 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
 		)
 		const definition = getInteraction(request.kind)
 		const anchorTs = request.existingTs ?? this.nextRowTs()
-		const anchor = createCanonicalAskRow(definition.taskAsk, request.presentation, anchorTs, request.interactionId)
-		if (this.messages.clineMessages.some((message) => message.ts === anchorTs))
-			await this.messages.finalizeClineMessage(anchor)
-		else await this.messages.addToClineMessages(anchor)
-		// Replacing the completion row in place is a staged rewrite, not an
-		// append. Left in the buffer it would fail the next durable append (the
-		// reply to this very dialog) and leave the dialog requested over an
-		// anchor that only lives in memory, so it is flushed as an ask is.
-		await this.messages.flushUiMessages()
+		await this.presentAnchor(createCanonicalAskRow(definition.taskAsk, request.presentation, anchorTs, request.interactionId))
 		const session = this.requireSession()
 		const state = session.state()
 		const event: TaskEvent = {

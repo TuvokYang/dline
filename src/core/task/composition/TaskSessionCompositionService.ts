@@ -255,6 +255,7 @@ export class TaskSessionCompositionService {
 				new ResumeDialogContinuation(resumption, () => toolState.resetMistakeLimitState()),
 			),
 			diagnostics,
+			(row) => options.prompt.ports.presentation.publish(row),
 		)
 		resources.add({ release: async () => interactions.dispose() })
 		const api = new TaskApiHandlerOwner({

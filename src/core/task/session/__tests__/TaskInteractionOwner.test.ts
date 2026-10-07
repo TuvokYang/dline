@@ -50,6 +50,7 @@ function createOwner(options?: {
 	readonly state?: () => TaskState
 	readonly messages?: MessageStateHandler
 	readonly nextPresentationId?: () => number
+	readonly publishRow?: (row: UiMessage) => unknown
 }): {
 	owner: TaskInteractionOwner
 	messages: MessageStateHandler
@@ -63,9 +64,13 @@ function createOwner(options?: {
 	let announce: (() => void) | undefined
 	const payloads = { put: vi.fn(async () => "sha256:payload"), read: vi.fn() } as unknown as TaskPayloadStore
 	const messages = options?.messages ?? createMessages()
-	const owner = new TaskInteractionOwner(messages, payloads, options?.continuation, {
-		record: (diagnostic) => recorded.push(diagnostic),
-	})
+	const owner = new TaskInteractionOwner(
+		messages,
+		payloads,
+		options?.continuation,
+		{ record: (diagnostic) => recorded.push(diagnostic) },
+		options?.publishRow,
+	)
 	const session = {
 		...(options?.nextPresentationId ? { owners: { nextPresentationId: options.nextPresentationId } } : {}),
 		state: options?.state ?? (() => createInitialTaskState("task-1")),
@@ -173,7 +178,7 @@ describe("TaskInteractionOwner", () => {
 	// The anchor replaces the completion row in place. A reply arriving before
 	// the store commits that rewrite on its own would find the buffer unclean,
 	// and the dialog would be open over an anchor that exists only in memory.
-	it("commits a completion anchor before the dialog is requested", async () => {
+	it("commits and pushes a completion anchor before the dialog is requested", async () => {
 		const order: string[] = []
 		const messages = createMessages([{ ts: 7, type: "say", say: "completion_result", text: "done" }])
 		vi.mocked(messages.finalizeClineMessage).mockImplementation(async () => {
@@ -183,7 +188,14 @@ describe("TaskInteractionOwner", () => {
 		vi.mocked(messages.flushUiMessages).mockImplementation(async () => {
 			order.push("flush")
 		})
-		const { owner, submitted, whenSubmitted } = createOwner({ messages })
+		const pushed: UiMessage[] = []
+		const { owner, submitted, whenSubmitted } = createOwner({
+			messages,
+			publishRow: (row) => {
+				order.push("push")
+				pushed.push(row)
+			},
+		})
 		const submittedNext = whenSubmitted()
 
 		void owner.complete({
@@ -196,7 +208,9 @@ describe("TaskInteractionOwner", () => {
 		await submittedNext
 		order.push(...submitted)
 
-		expect(order).toEqual(["anchor", "flush", "dialog.requested"])
+		// The webview must get the reply surface even if no later state reaches it.
+		expect(order).toEqual(["anchor", "flush", "push", "dialog.requested"])
+		expect(pushed).toEqual([expect.objectContaining({ ts: 7 })])
 	})
 
 	// Another producer may hold the current millisecond. Reusing it would turn
