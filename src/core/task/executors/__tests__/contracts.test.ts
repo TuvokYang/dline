@@ -30,4 +30,18 @@ describe("executorFailure", () => {
 		expect(warn).toHaveBeenCalledOnce()
 		expect(error).not.toHaveBeenCalled()
 	})
+
+	// The provider service wraps a failure to describe it for the chat, keeping
+	// the original as its cause; the wrapper is what reaches this report.
+	it("reports a Profile refusal a provider failure carries as its cause as a warning", () => {
+		const error = vi.spyOn(Logger, "error").mockImplementation(() => undefined)
+		const warn = vi.spyOn(Logger, "warn").mockImplementation(() => undefined)
+		const refusal = new ProfileNotValidError("Profile not valid: credentials are unavailable")
+		const described = Object.assign(new Error(refusal.message, { cause: refusal }), { name: refusal.name })
+
+		expect(executorFailure("provider", described)).toBe(`provider execution failed (${refusal.name})`)
+
+		expect(warn).toHaveBeenCalledOnce()
+		expect(error).not.toHaveBeenCalled()
+	})
 })

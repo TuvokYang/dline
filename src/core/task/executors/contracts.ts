@@ -45,7 +45,15 @@ export function executorFailure(domain: string, error: unknown): string {
 	const failure = `${domain} execution failed (${safeKind})`
 	// A Profile that cannot admit the request is the user's to fix and is shown
 	// to them as such; it is not a fault of the execution.
-	if (error instanceof ProfileNotValidError) Logger.warn(failure, error)
+	if (isProfileRefusal(error)) Logger.warn(failure, error)
 	else Logger.error(failure, error)
 	return failure
+}
+
+/** A Profile refusal, also when a provider failure carries it as its cause to describe it for the chat. */
+function isProfileRefusal(error: unknown): boolean {
+	for (let current = error, depth = 0; current instanceof Error && depth < 8; current = current.cause, depth++) {
+		if (current instanceof ProfileNotValidError) return true
+	}
+	return false
 }
