@@ -49,6 +49,7 @@ function createOwner(options?: {
 	readonly continuation?: UnownedDialogContinuationPort
 	readonly state?: () => TaskState
 	readonly messages?: MessageStateHandler
+	readonly nextPresentationId?: () => number
 }): {
 	owner: TaskInteractionOwner
 	messages: MessageStateHandler
@@ -66,6 +67,7 @@ function createOwner(options?: {
 		record: (diagnostic) => recorded.push(diagnostic),
 	})
 	const session = {
+		...(options?.nextPresentationId ? { owners: { nextPresentationId: options.nextPresentationId } } : {}),
 		state: options?.state ?? (() => createInitialTaskState("task-1")),
 		assembly: {
 			runtime: {
@@ -195,6 +197,27 @@ describe("TaskInteractionOwner", () => {
 		order.push(...submitted)
 
 		expect(order).toEqual(["anchor", "flush", "dialog.requested"])
+	})
+
+	// Another producer may hold the current millisecond. Reusing it would turn
+	// the anchor into an in-place replacement of that producer's row.
+	it("draws a new anchor's id from the session sequence, not the wall clock", async () => {
+		vi.spyOn(Date, "now").mockReturnValue(1000)
+		try {
+			const messages = createMessages([{ ts: 1000, type: "say", say: "user_feedback", text: "/compact" }])
+			const { owner, whenSubmitted } = createOwner({ messages, nextPresentationId: () => 1001 })
+			const submittedNext = whenSubmitted()
+
+			void owner.open({ turnId: "turn-1", interactionId: "i-followup", kind: "followup", presentation: "ask" })
+			await submittedNext
+
+			expect(messages.finalizeClineMessage).not.toHaveBeenCalled()
+			expect(messages.addToClineMessages).toHaveBeenCalledWith(
+				expect.objectContaining({ ts: 1001, interactionId: "i-followup" }),
+			)
+		} finally {
+			vi.restoreAllMocks()
+		}
 	})
 
 	it("stays usable after a stop, because a cancelled task may resume", async () => {

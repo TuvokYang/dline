@@ -79,11 +79,17 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
 	bind(session: ActiveTaskSession): void {
 		if (this.session) throw new Error("Task interaction owner is already bound")
 		this.session = session
-		this.retainedPresentation = new RetainedInputPresenter(
-			this.payloads,
-			this.messages,
-			session.owners?.nextPresentationId ?? (() => Math.max(Date.now(), (this.messages.clineMessages.at(-1)?.ts ?? 0) + 1)),
-		)
+		this.retainedPresentation = new RetainedInputPresenter(this.payloads, this.messages, () => this.nextRowTs())
+	}
+
+	/**
+	 * Id for a row this owner adds. Drawn from the session's sequence so it can
+	 * neither collide with nor sort before a row another producer wrote in the
+	 * same millisecond; a row that reused an id would replace the one holding it.
+	 */
+	private nextRowTs(): number {
+		const sequence = this.session?.owners?.nextPresentationId
+		return sequence ? sequence() : Math.max(Date.now(), (this.messages.clineMessages.at(-1)?.ts ?? 0) + 1)
 	}
 
 	open(request: OpenInteractionRequest): Promise<InteractionOutcome> {
@@ -149,7 +155,7 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
 		if (this.messages.clineMessages.some((message) => message.interactionId === primary.interactionId)) return
 		try {
 			const envelope = decodeTaskPayload<DialogPresentationEnvelope>(await this.payloads.read(primary.presentationRef))
-			const anchorTs = envelope.existingTs ?? Math.max(Date.now(), (this.messages.clineMessages.at(-1)?.ts ?? 0) + 1)
+			const anchorTs = envelope.existingTs ?? this.nextRowTs()
 			const anchor = createCanonicalAskRow(
 				getInteraction("completion").taskAsk,
 				envelope.body,
@@ -170,7 +176,7 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
 
 	async say(request: Parameters<TaskInteractionPorts["say"]>[0]): Promise<void> {
 		await this.messages.addToClineMessages({
-			ts: request.existingTs ?? Date.now(),
+			ts: request.existingTs ?? this.nextRowTs(),
 			type: "say",
 			say: request.taskSay,
 			text: request.presentation,
@@ -203,12 +209,11 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
 		// not enough here: an approval is revealed in the same millisecond as the
 		// rows around it, and a row that sorts before its own tool output makes
 		// the chat collapse the pair into two separate entries.
-		const latestTs = this.messages.clineMessages.at(-1)?.ts ?? 0
 		await this.messages.addToClineMessages(
 			createCanonicalAskRow(
 				(request.ask ?? definition.taskAsk) as UiAsk,
 				request.body,
-				Math.max(Date.now(), latestTs + 1),
+				this.nextRowTs(),
 				request.interactionId,
 			),
 		)
@@ -593,7 +598,7 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
 			}),
 		)
 		const definition = getInteraction(request.kind)
-		const anchorTs = request.existingTs ?? Date.now()
+		const anchorTs = request.existingTs ?? this.nextRowTs()
 		const anchor = createCanonicalAskRow(definition.taskAsk, request.presentation, anchorTs, request.interactionId)
 		if (this.messages.clineMessages.some((message) => message.ts === anchorTs))
 			await this.messages.finalizeClineMessage(anchor)
