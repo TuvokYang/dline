@@ -200,6 +200,99 @@ describe("dispatchInteraction", () => {
 		expect(result).toMatchObject({ accepted: true, result: "accepted" })
 	})
 
+	describe("Start New Task", () => {
+		const CLOSE_OPTIONS = { clearPanelState: true, preserveCompletedState: true, deferTeardown: true }
+
+		function startNewTask() {
+			return DispatchInteractionRequest.create({
+				taskId: "task-1",
+				turnId: "turn-1",
+				interactionId: "interaction-1",
+				actionId: "start_new_task",
+				stateRevision: 12,
+			})
+		}
+
+		/**
+		 * A controller whose lifecycle lock runs operations one at a time in
+		 * arrival order and is not reentrant, as the real mutex is. `held` keeps
+		 * the lock taken until it settles.
+		 */
+		function withLifecycle(host: ReturnType<typeof controller>, held: Promise<void> = Promise.resolve()) {
+			const clearTask = vi.fn(async (_options: unknown) => undefined)
+			let tail = held
+			const runTaskLifecycleOperation = vi.fn(
+				<T>(operation: (scope: { clearTask: typeof clearTask }) => Promise<T>): Promise<T> => {
+					const run = tail.then(() => operation({ clearTask }))
+					tail = run.then(
+						() => undefined,
+						() => undefined,
+					)
+					return run
+				},
+			)
+			const surface = { ...host.value, task: host.value.task as unknown, runTaskLifecycleOperation }
+			return { surface, clearTask }
+		}
+
+		it("closes the task instead of handing the answer to the completion", async () => {
+			const host = controller(state("completion", "start_new_task"))
+			const { surface, clearTask } = withLifecycle(host)
+
+			const result = await dispatchInteraction(surface as never, startNewTask())
+
+			expect(result).toMatchObject({ accepted: true, result: "accepted" })
+			await vi.waitFor(() => expect(clearTask).toHaveBeenCalledWith(CLOSE_OPTIONS))
+			expect(clearTask).toHaveBeenCalledTimes(1)
+			// Resolving would let the completion return a tool result and compose
+			// another round in the task the user just left.
+			expect(host.resolve).not.toHaveBeenCalled()
+		})
+
+		it("keeps the task when the runtime refuses the answer", async () => {
+			const host = controller(state("completion", "start_new_task"), { rejected: true })
+			const { surface } = withLifecycle(host)
+
+			const result = await dispatchInteraction(surface as never, startNewTask())
+
+			expect(result).toMatchObject({ accepted: false, result: "stale_interaction" })
+			expect(surface.runTaskLifecycleOperation).not.toHaveBeenCalled()
+		})
+
+		it("closes after a lifecycle operation that already holds the lock, as a history dispatch does", async () => {
+			const host = controller(state("completion", "start_new_task"))
+			const { surface, clearTask } = withLifecycle(host)
+
+			// The history-display path dispatches inside its own lifecycle
+			// operation; awaiting the close there would never return.
+			const result = await surface.runTaskLifecycleOperation(async () => {
+				const response = await dispatchInteraction(surface as never, startNewTask())
+				expect(clearTask).not.toHaveBeenCalled()
+				return response
+			})
+
+			expect(result).toMatchObject({ accepted: true, result: "accepted" })
+			await vi.waitFor(() => expect(clearTask).toHaveBeenCalledWith(CLOSE_OPTIONS))
+		})
+
+		it("leaves a task that an earlier lifecycle operation already replaced", async () => {
+			const host = controller(state("completion", "start_new_task"))
+			let release = () => {}
+			const held = new Promise<void>((resolve) => {
+				release = resolve
+			})
+			const { surface, clearTask } = withLifecycle(host, held)
+
+			await dispatchInteraction(surface as never, startNewTask())
+			surface.task = { taskId: "task-2" }
+			release()
+
+			await vi.waitFor(() => expect(surface.runTaskLifecycleOperation).toHaveBeenCalledTimes(1))
+			await surface.runTaskLifecycleOperation.mock.results[0]?.value
+			expect(clearTask).not.toHaveBeenCalled()
+		})
+	})
+
 	it("maps a block-scoped approval to approval.respond", async () => {
 		const taskState = state("tool_approval", "approve")
 		const approval = taskState.dialog.primary!

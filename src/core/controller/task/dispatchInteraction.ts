@@ -78,6 +78,33 @@ async function showConsumedReply(
 	await registered.persistence
 }
 
+/** The dialog action that abandons the task for a fresh one instead of answering it. */
+const START_NEW_TASK_ACTION = "start_new_task"
+
+/**
+ * Close the task after the user chose Start New Task on one of its dialogs.
+ *
+ * The action abandons this task, so the answer is not handed to the dialog's
+ * receiver: a completion would turn it into a tool result and compose another
+ * round in the task the user just left. The close is queued rather than
+ * awaited because a history-display dispatch already holds the lifecycle lock,
+ * which is not reentrant; queued behind it, the close still runs before any
+ * later lifecycle operation, such as the user's next task.
+ */
+function closeForNewTask(controller: Controller, session: NonNullable<Controller["task"]>): void {
+	void controller
+		.runTaskLifecycleOperation(async (scope) => {
+			// A lifecycle operation queued earlier may already have replaced the task.
+			if (controller.task !== session) return
+			await scope.clearTask({ clearPanelState: true, preserveCompletedState: true, deferTeardown: true })
+		})
+		.catch((error: unknown) => {
+			Logger.warn(
+				`dispatchInteraction: could not close task ${session.taskId} for a new task: ${error instanceof Error ? error.message : String(error)}`,
+			)
+		})
+}
+
 function normalizeResult(reason: string): DispatchInteractionResult {
 	if (reason === "identity_mismatch" || reason === "generation_mismatch" || reason === "stale_attempt")
 		return "stale_interaction"
@@ -248,8 +275,10 @@ export async function dispatchInteraction(
 	// only then is the next round composed. It has no receiver, so handing it to
 	// the interaction owner as well would treat it as an unowned dialog and
 	// submit the note as new input, composing a round before the tool result
-	// exists. Every other dialog still reaches its receiver or continuation.
-	if (!approvalEntry) session.owners.interactions.resolve(request.interactionId, outcome)
+	// exists. Start New Task ends the task instead of answering the dialog.
+	// Every other dialog still reaches its receiver or continuation.
+	if (!approvalEntry && request.actionId === START_NEW_TASK_ACTION) closeForNewTask(controller, session)
+	else if (!approvalEntry) session.owners.interactions.resolve(request.interactionId, outcome)
 	await Promise.all([consumedRow, denialPresentation])
 	return response(true, "accepted")
 }
