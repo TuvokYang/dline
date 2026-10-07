@@ -10,17 +10,26 @@ import {
 } from "@shared/proto/dline/task"
 import { describe, expect, it, vi } from "vitest"
 import { getTaskRateMetrics } from "../getTaskRateMetrics"
+import { type DisplayedRateMetricsSource, selectTaskRateMetricsQuery } from "../TaskRateMetricsSource"
 
 interface RateMetricsTask {
 	taskId: string
 	queryTaskRateMetrics(query: TaskRateMetricsQuery): Promise<TaskRateMetricsQueryResult>
 }
 
-/** Publish the query through `owners.queryRateMetrics`, the boundary the handler reads. */
-function controller(task?: RateMetricsTask) {
-	return task
-		? { task: createSessionFixture({ taskId: task.taskId, owners: { queryRateMetrics: task.queryTaskRateMetrics } }) }
-		: {}
+/** Resolve through the Controller's selector so the handler sees the production running/History precedence. */
+function controller(task?: RateMetricsTask, displayed?: DisplayedRateMetricsSource) {
+	const running = task
+		? createSessionFixture({ taskId: task.taskId, owners: { queryRateMetrics: task.queryTaskRateMetrics } })
+		: undefined
+	return {
+		task: running,
+		resolveTaskRateMetricsQuery: (taskId: string) => selectTaskRateMetricsQuery(taskId, running, displayed),
+	}
+}
+
+function emptyResult(): TaskRateMetricsQueryResult {
+	return { points: [], degraded: false, truncated: false }
 }
 
 function request(overrides: Partial<GetTaskRateMetricsRequest> = {}): GetTaskRateMetricsRequest {
@@ -223,6 +232,62 @@ describe("getTaskRateMetrics", () => {
 			getTaskRateMetrics(controller({ taskId: "task-1", queryTaskRateMetrics }) as never, request({ taskId: "task-2" })),
 		).rejects.toThrow("active Task")
 		expect(queryTaskRateMetrics).not.toHaveBeenCalled()
+	})
+
+	it("answers a task viewed from History with the metrics its last run recorded", async () => {
+		const queryRateMetrics = vi.fn(async (): Promise<TaskRateMetricsQueryResult> => emptyResult())
+
+		const response = await getTaskRateMetrics(
+			controller(undefined, { taskId: "task-1", queryRateMetrics }) as never,
+			request({ resolution: TaskRateMetricsResolution.TASK_RATE_METRICS_RESOLUTION_MINUTE }),
+		)
+
+		expect(queryRateMetrics).toHaveBeenCalledWith({ resolution: "minute", startMs: 1_500, endMs: 61_001, maxPoints: 24 })
+		expect(response.points).toEqual([])
+	})
+
+	it("rejects a running task whose metrics owner is not open yet", async () => {
+		const running = createSessionFixture({ taskId: "task-1", owners: { queryRateMetrics: undefined } })
+		const pending = {
+			task: running,
+			resolveTaskRateMetricsQuery: (taskId: string) => selectTaskRateMetricsQuery(taskId, running, undefined),
+		}
+
+		await expect(getTaskRateMetrics(pending as never, request())).rejects.toThrow("initialized metrics owner")
+	})
+
+	it("rejects a History view whose task never recorded metrics", async () => {
+		await expect(
+			getTaskRateMetrics(
+				controller(undefined, { taskId: "task-1", queryRateMetrics: () => undefined }) as never,
+				request(),
+			),
+		).rejects.toThrow("no recorded rate metrics")
+	})
+
+	it("prefers the running task over a History view of another task", async () => {
+		const runningQuery = vi.fn(async (): Promise<TaskRateMetricsQueryResult> => emptyResult())
+		const displayedQuery = vi.fn(async (): Promise<TaskRateMetricsQueryResult> => emptyResult())
+
+		await getTaskRateMetrics(
+			controller(
+				{ taskId: "task-1", queryTaskRateMetrics: runningQuery },
+				{ taskId: "task-2", queryRateMetrics: displayedQuery },
+			) as never,
+			request(),
+		)
+		await expect(
+			getTaskRateMetrics(
+				controller(
+					{ taskId: "task-1", queryTaskRateMetrics: runningQuery },
+					{ taskId: "task-2", queryRateMetrics: displayedQuery },
+				) as never,
+				request({ taskId: "task-3" }),
+			),
+		).rejects.toThrow("active Task")
+
+		expect(runningQuery).toHaveBeenCalledOnce()
+		expect(displayedQuery).not.toHaveBeenCalled()
 	})
 
 	it("rejects an unspecified resolution before querying persistence", async () => {

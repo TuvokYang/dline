@@ -147,6 +147,7 @@ import { ControllerTaskSessionHostFactory } from "./task/host/ControllerTaskSess
 import { ControllerTaskSessionPorts } from "./task/host/ControllerTaskSessionPorts"
 import { ControllerTransitionCompactionPort } from "./task/host/ControllerTransitionCompactionPort"
 import { replyWithTransitionDraft } from "./task/replyWithTransitionDraft"
+import { selectTaskRateMetricsQuery, type TaskRateMetricsQueryFn } from "./task/TaskRateMetricsSource"
 import { adaptCanonicalTaskView } from "./task/TaskViewMessageAdapter"
 import { startTaskLifecycle } from "./task/task-start-lifecycle"
 import { sendChatButtonClickedEvent } from "./ui/subscribeToChatButtonClicked"
@@ -2573,6 +2574,14 @@ export class Controller {
 	}
 
 	/**
+	 * The rate history query for the task shown in this panel, running or viewed from History.
+	 * @returns undefined when no shown task matches the requested id.
+	 */
+	resolveTaskRateMetricsQuery(taskId: string): TaskRateMetricsQueryFn | undefined {
+		return selectTaskRateMetricsQuery(taskId, this.task, this.historyDisplaySession)
+	}
+
+	/**
 	 * Project the active canonical Task state at the Controller presentation boundary.
 	 *
 	 * A dialog is only dispatchable once its anchor row is found, so a caller
@@ -2785,7 +2794,7 @@ export class Controller {
 			// remaining usage visible: reporting zero tokens for a long
 			// conversation is a worse answer than an approximate total.
 			...(aggregatedMetrics ?? getApiMetrics(rawMessages)),
-			...(this.task?.owners.apiRateSnapshot?.() ?? {}),
+			...(this.task?.owners.apiRateSnapshot?.() ?? this.historyDisplaySession?.getRateSnapshot() ?? {}),
 		}
 		const contextWindowIndicator = shownContextWindowIndicator(this.task, this.historyDisplaySession)
 		const lastApiReqTotalTokens = contextWindowIndicator

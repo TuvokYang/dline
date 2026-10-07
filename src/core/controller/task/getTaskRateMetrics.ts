@@ -23,17 +23,13 @@ export async function getTaskRateMetrics(
 	request: GetTaskRateMetricsRequest,
 ): Promise<GetTaskRateMetricsResponse> {
 	const startedAt = performance.now()
-	const task = controller.task
-	if (!task || task.taskId !== request.taskId) {
+	// A task viewed from History answers from the metrics its last run recorded.
+	const queryRateMetrics = controller.resolveTaskRateMetricsQuery(request.taskId)
+	if (!queryRateMetrics) {
 		throw new Error("Task rate metrics query requires the matching active Task")
 	}
 	if (!Number.isFinite(request.startMs) || !Number.isFinite(request.endMs) || request.endMs <= request.startMs) {
 		throw new Error("Task rate metrics query requires a valid time range")
-	}
-
-	const queryRateMetrics = task.owners.queryRateMetrics
-	if (!queryRateMetrics) {
-		throw new Error("Task rate metrics query requires an initialized metrics owner")
 	}
 	const result = await queryRateMetrics({
 		resolution: toDomainResolution(request.resolution),

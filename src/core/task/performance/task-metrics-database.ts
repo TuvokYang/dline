@@ -2,7 +2,7 @@ import { access, rename } from "node:fs/promises"
 import path from "node:path"
 import { GlobalFileNames } from "@core/storage/disk"
 import { InstanceDatabase } from "@core/storage/instance/InstanceLayout"
-import { ensureInstanceLayout } from "@core/storage/instance/InstanceStorage"
+import { ensureInstanceLayout, resolveInstanceLayout } from "@core/storage/instance/InstanceStorage"
 import { Logger } from "@shared/services/Logger"
 
 /** Files SQLite keeps beside a database; they belong to it and move with it. */
@@ -34,6 +34,21 @@ export async function resolveTaskMetricsDatabase(taskId: string, location?: stri
 		move.then(undefined, () => moves.delete(target))
 	}
 	return move
+}
+
+/**
+ * The task's existing metrics database, without creating or moving anything.
+ *
+ * A history view reads what a past run recorded; it must not lay out a task
+ * directory or migrate files for a task nobody is running. A task that never
+ * recorded metrics has no database, and the view simply shows none.
+ */
+export async function findExistingTaskMetricsDatabase(taskId: string): Promise<string | undefined> {
+	const layout = await resolveInstanceLayout({ taskId })
+	const target = layout.database(InstanceDatabase.Metrics)
+	if (await exists(target)) return target
+	const legacy = path.join(layout.root, GlobalFileNames.legacyTaskDatabase(taskId))
+	return (await exists(legacy)) ? legacy : undefined
 }
 
 async function moveLegacyDatabase(legacy: string, target: string): Promise<string> {

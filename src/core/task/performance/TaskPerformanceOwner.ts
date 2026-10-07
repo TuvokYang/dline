@@ -10,6 +10,7 @@ import type { ProviderRequestRoundPort } from "./provider-request-round-port"
 import { TaskProviderRequestRoundOwner } from "./TaskProviderRequestRoundOwner"
 import { TaskApiRateMetricsRepository } from "./task-api-rate-metrics-repository"
 import { TaskApiRateMetricsService } from "./task-api-rate-metrics-service"
+import { findExistingTaskMetricsDatabase } from "./task-metrics-database"
 import { TaskRateMetricsQueryService } from "./task-rate-metrics-query-service"
 import type { TaskRateMetricsQuery, TaskRateMetricsQueryResult } from "./task-rate-metrics-types"
 
@@ -18,6 +19,8 @@ export interface TaskPerformanceOwnerOptions {
 	readonly readState: () => Readonly<TaskState>
 	readonly legacyMessages: () => readonly UiMessage[]
 	readonly onChanged?: () => void
+	/** An explicit metrics database, used as is instead of the task's own layout. */
+	readonly location?: string
 }
 
 /** Owns every task-local rate metric lifecycle and its durable repositories. */
@@ -29,12 +32,14 @@ export class TaskPerformanceOwner {
 	private closed = false
 
 	private constructor(options: TaskPerformanceOwnerOptions) {
-		const activeRepository = new TaskApiRateMetricsRepository({ taskId: options.taskId })
+		const location = options.location
+		const activeRepository = new TaskApiRateMetricsRepository({ taskId: options.taskId, location })
 		const roundRepository = new TaskApiRequestRoundRepository({
 			taskId: options.taskId,
+			location,
 			legacySource: { getAll: () => options.legacyMessages() },
 		})
-		const executionRepository = new TaskApiResponseExecutionRepository({ taskId: options.taskId })
+		const executionRepository = new TaskApiResponseExecutionRepository({ taskId: options.taskId, location })
 		this.activeMetrics = new TaskApiRateMetricsService({
 			repository: activeRepository,
 			taskId: options.taskId,
@@ -77,6 +82,17 @@ export class TaskPerformanceOwner {
 			await owner.release().catch(() => undefined)
 			throw error
 		}
+	}
+
+	/**
+	 * Open the metrics a past run recorded, for a view that is not running the task.
+	 *
+	 * Resolves undefined when the task never recorded metrics, so viewing it
+	 * creates no task directory and no empty database.
+	 */
+	static async openExisting(options: Omit<TaskPerformanceOwnerOptions, "location">): Promise<TaskPerformanceOwner | undefined> {
+		const location = await findExistingTaskMetricsDatabase(options.taskId)
+		return location ? TaskPerformanceOwner.open({ ...options, location }) : undefined
 	}
 
 	/**

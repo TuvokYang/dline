@@ -11,7 +11,10 @@ import { TaskActivityPersistence } from "@/core/task/activity/TaskActivityPersis
 import { TaskActivityStore } from "@/core/task/activity/TaskActivityStore"
 import { readHistoryContextWindowIndicator } from "@/core/task/HistoryContextWindow"
 import { getInteraction } from "@/core/task/interaction/InteractionRegistry"
-import type { TaskState } from "@/core/task/kernel"
+import { createInitialTaskState, type TaskState } from "@/core/task/kernel"
+import type { ApiRateSnapshot } from "@/core/task/performance/api-rate-tracker"
+import { TaskPerformanceOwner } from "@/core/task/performance/TaskPerformanceOwner"
+import type { TaskRateMetricsQuery, TaskRateMetricsQueryResult } from "@/core/task/performance/task-rate-metrics-types"
 import { FileTaskStateVault, openTaskPayloadStore } from "@/core/task/stores"
 import { TaskPhase } from "@/core/task/TaskPhase"
 import { projectCanonicalTaskView } from "@/core/task/view/canonical/projectCanonicalTaskView"
@@ -65,6 +68,8 @@ export class HistoryDisplaySession {
 	 */
 	private readonly activityPersistence: TaskActivityPersistence
 	private messageReader?: UIMessageWindowReader
+	/** The metrics a past run recorded, read so the header and chart show them before resume. */
+	private performance?: TaskPerformanceOwner
 	private messages: UiMessage[] = []
 	private durableMessageCount = 0
 	private syntheticMessage?: UiMessage
@@ -100,13 +105,18 @@ export class HistoryDisplaySession {
 		}
 		this.messageReader = reader
 		try {
-			const [latestMessages, snapshot, taskTitlePage, interruptedActivityIds] = await Promise.all([
+			const [latestMessages, snapshot, taskTitlePage, interruptedActivityIds, performance] = await Promise.all([
 				reader.getLatest(HISTORY_MESSAGE_WINDOW_SIZE),
 				this.readSnapshot(),
 				reader.getPage(0, 1),
 				this.hydrateActivities(options?.ownerless),
+				this.openMetrics(),
 			])
-			if (this.disposed) return
+			this.performance = performance
+			if (this.disposed) {
+				await this.releaseMetrics()
+				return
+			}
 			const durableMessages = await this.patchInterruptedCommandCards(latestMessages, interruptedActivityIds)
 			if (this.disposed) return
 
@@ -127,6 +137,16 @@ export class HistoryDisplaySession {
 			if (this.disposed) return
 			throw error
 		}
+	}
+
+	/** Rates the task last recorded, or undefined when it never recorded any. */
+	getRateSnapshot(): ApiRateSnapshot | undefined {
+		return this.performance?.getSnapshot()
+	}
+
+	/** Query the recorded rate history, or undefined when the task never recorded any. */
+	queryRateMetrics(query: TaskRateMetricsQuery): Promise<TaskRateMetricsQueryResult> | undefined {
+		return this.performance?.query(query)
 	}
 
 	getMessages(): readonly UiMessage[] {
@@ -222,7 +242,7 @@ export class HistoryDisplaySession {
 		this.taskTitleMessage = undefined
 		this.inputQueue = []
 		this.durableMessageCount = 0
-		await Promise.all([reader?.close(), this.releaseActivities()])
+		await Promise.all([reader?.close(), this.releaseActivities(), this.releaseMetrics()])
 	}
 
 	/**
@@ -276,6 +296,28 @@ export class HistoryDisplaySession {
 		return window.map((message) =>
 			isInterruptedCommandCard(message, activityIds) ? { ...message, commandStatus: "interrupted" } : message,
 		)
+	}
+
+	private async openMetrics(): Promise<TaskPerformanceOwner | undefined> {
+		try {
+			return await TaskPerformanceOwner.openExisting({
+				taskId: this.taskId,
+				// A display never runs a provider round, so no live state is ever read.
+				readState: () => createInitialTaskState(this.taskId),
+				legacyMessages: () => this.messages,
+			})
+		} catch (error) {
+			Logger.warn(
+				`[HistoryDisplaySession] Could not read metrics for ${this.taskId}: ${error instanceof Error ? error.message : String(error)}`,
+			)
+			return undefined
+		}
+	}
+
+	private async releaseMetrics(): Promise<void> {
+		const performance = this.performance
+		this.performance = undefined
+		await performance?.release()
 	}
 
 	private async releaseActivities(): Promise<void> {

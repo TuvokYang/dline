@@ -1,8 +1,8 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { resolveTaskMetricsDatabase } from "../task-metrics-database"
+import { findExistingTaskMetricsDatabase, resolveTaskMetricsDatabase } from "../task-metrics-database"
 
 describe("resolveTaskMetricsDatabase", () => {
 	let documentsRoot: string
@@ -54,5 +54,31 @@ describe("resolveTaskMetricsDatabase", () => {
 
 	it("uses an explicit location as given", async () => {
 		expect(await resolveTaskMetricsDatabase("task-x", "/elsewhere/custom.db")).toBe("/elsewhere/custom.db")
+	})
+
+	// A History view reads what a past run recorded and must leave no trace on disk.
+	describe("findExistingTaskMetricsDatabase", () => {
+		it("returns undefined without creating the task directory when nothing was recorded", async () => {
+			expect(await findExistingTaskMetricsDatabase("task-none")).toBeUndefined()
+			await expect(access(taskRoot("task-none"))).rejects.toThrow()
+		})
+
+		it("prefers metrics.db over a legacy file", async () => {
+			const root = taskRoot("task-both")
+			await mkdir(root, { recursive: true })
+			await writeFile(path.join(root, "metrics.db"), "current")
+			await writeFile(path.join(root, "task-both.db"), "legacy")
+
+			expect(await findExistingTaskMetricsDatabase("task-both")).toBe(path.join(root, "metrics.db"))
+		})
+
+		it("reads a legacy <task-id>.db in place without moving it", async () => {
+			const root = taskRoot("task-old")
+			await mkdir(root, { recursive: true })
+			await writeFile(path.join(root, "task-old.db"), "legacy")
+
+			expect(await findExistingTaskMetricsDatabase("task-old")).toBe(path.join(root, "task-old.db"))
+			await expect(access(path.join(root, "metrics.db"))).rejects.toThrow()
+		})
 	})
 })
