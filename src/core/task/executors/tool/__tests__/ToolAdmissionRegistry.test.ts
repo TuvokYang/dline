@@ -506,6 +506,39 @@ describe("ToolAdmissionRegistry", () => {
 		expect(blanket).toMatchObject({ outcome: "admitted", decision: { kind: "automatic", scope: "mcp" } })
 	})
 
+	it("requires approval for spawn_task even when the subagent scope toggle is on", () => {
+		const settings = {
+			...snapshot().settings,
+			actions: { ...snapshot().settings.actions, readFiles: true },
+		}
+		const spawnBlock = () => block(ClineDefaultTool.SPAWN_TASK, { task: "Investigate", mode: "plan" })
+		const scoped = prepareRegisteredToolAdmission({
+			canonicalToolName: ClineDefaultTool.SPAWN_TASK,
+			block: spawnBlock(),
+			description: "spawn task",
+			snapshot: snapshot({ settings }),
+			run: async () => undefined,
+		})
+		const subagent = prepareRegisteredToolAdmission({
+			canonicalToolName: ClineDefaultTool.USE_SUBAGENT,
+			block: block(ClineDefaultTool.USE_SUBAGENT, { task: "Investigate", context: "Read only" }),
+			description: "use subagent",
+			snapshot: snapshot({ settings }),
+			run: async () => undefined,
+		})
+		const blanket = prepareRegisteredToolAdmission({
+			canonicalToolName: ClineDefaultTool.SPAWN_TASK,
+			block: spawnBlock(),
+			description: "spawn task",
+			snapshot: snapshot({ settings, blanket: { approveAll: true } }),
+			run: async () => undefined,
+		})
+
+		expect(scoped).toMatchObject({ outcome: "admitted", decision: { kind: "manual", scope: "subagent" } })
+		expect(subagent).toMatchObject({ outcome: "admitted", decision: { kind: "automatic", scope: "subagent" } })
+		expect(blanket).toMatchObject({ outcome: "admitted", decision: { kind: "automatic", scope: "subagent" } })
+	})
+
 	it("validates action-dependent browser parameters and corrected tool schemas", () => {
 		const invalidBrowser = prepareRegisteredToolAdmission({
 			canonicalToolName: ClineDefaultTool.BROWSER,
