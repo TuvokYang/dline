@@ -11,6 +11,7 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 - Anthropic and Claude Code can declare hosted Web Search and Web Fetch independently where supported; actual execution depends on the provider response, and Force Remote does not silently fall back to local tools
 - Claude Opus 5.5 is in the built-in model catalog and is the default for Anthropic and Claude Code; availability still depends on the provider account
 - New bilingual documentation and brand experience: English is served at the site root and Simplified Chinese under `/zh-cn/`, User Guide and Developer Guide have separate sections, and new pages cover model usage and balance, capability scopes, Prompt Cache, telemetry, and task controls; the editor, Marketplace, and docs now share the refreshed robot icon and raden mascot
+- Files of any type other than images, PDF, Word, and Excel can be pasted or dropped into the input box as text attachments, limited only by the 20 MB text input limit; files with binary content are rejected with a "Not a text file" message
 
 ### Changed
 - Subscription usage identifies provider quota windows and snapshot age, and counts daily input/output tokens from Dline's own requests locally; sources without periodic usage polling retain an initial snapshot and manual refresh
@@ -20,6 +21,9 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 - When switching models, readable reasoning from the previous model becomes ordinary context tagged `<prior_model_reasoning>`; opaque reasoning and response IDs are not replayed to the new model, and a model-switch notice is added to the following user turn
 - `dev-vX.Y.Z` pre-releases now use the Marketplace pre-release track of the production `tuvokyang.dline` extension and publish the same pre-release-marked VSIX to GitHub and Open VSX; Insiders remains a separate extension with timestamped versions, and the documentation site deploys continuously from `dev`
 - Revised the system prompt to strengthen the guidance for proactively invoking Skills and Workflows
+- `spawn_task` now always requires manual approval, even when Read project files auto-approves the subagent scope; YOLO and approve-all modes can still admit it
+- Reading, searching, and writing inside the current task's temporary directory, such as its command logs, no longer asks for approval; other tasks' temporary directories and task artifacts stay outside project scope
+- Web Fetch, Web Search, and code execution cards expand or collapse their details from the card title; a fetched Web Fetch page stays collapsed until expanded and is shown inside the card
 
 ### Fixed
 - Fixed request-level approval appearing merely because hosted Web capabilities were declared; `Use Web` still governs Dline-owned local Web tools, and legacy hosted-approval snapshots require an explicit Resume only for a matching persisted history tail
@@ -35,7 +39,7 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 - Fixed the current task view remaining open after Delete Task confirmation; confirmation now dismisses the view immediately while backend deletion continues to own lock release, task detachment, and storage cleanup
 - Webview render failures now show a recoverable fallback and report uncaught errors and Promise rejections to Dline logs with bounded, sanitized fields instead of leaving a blank gray panel
 - Optimized incremental UI/API message persistence: no-op commits avoid disk reads, persisted tails can be safely truncated and appended, and baseline drift or interrupted tail writes fall back to transactional merge while keeping the task recoverable
-- Fixed Anthropic and Claude Code hosted-tool turns stopping after `pause_turn`; continuation requests preserve hosted-tool identity and cumulative usage
+- Fixed Anthropic and Claude Code hosted-tool turns stopping after `pause_turn` or when hosted calls were deferred behind client tool calls; continuation requests preserve hosted-tool identity and cumulative usage
 - Fixed one failed Git tracker in a multi-root workspace removing all checkpoints; chat checkpoints remain available, with root-aligned references, legacy history migration, and partial-root diff, restore, completion, and command-file ownership
 - Fixed Marketplace README links and images following the default branch and drifting from the installed package; packaging now pins them to the release tag or exact commit and restores the Changelog entry
 - Fixed hosted Web Search and Web Fetch calls and results missing from later context; Anthropic, Claude Code, and OpenAI Responses now store hosted tool calls and replay them only to same-protocol requests that declare the same hosted tool, including in subagents; Anthropic and Claude Code share one Messages request-building and transport path
@@ -44,6 +48,15 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 - Fixed files such as PDFs dropped or pasted into the input box not being attached like images; dropping into the Webview requires holding Shift
 - Fixed long input text being cut off without a scrollbar; text of 100 KB and more can be entered in full and scrolled
 - Fixed images and PDFs attached to feedback entering context as base64 text; they are now sent as native image and document blocks, and tool-result images are projected natively for Responses, DeepSeek, Gemini, and Ollama
+- Fixed slash commands such as `/cmd:newtask` being sent as plain text when typed as a reply to `attempt_completion` or `ask_followup_question`
+- Fixed `new_task` handoffs skipping their approve-or-feedback card; rejecting a handoff now returns feedback instead of starting the next task
+- Fixed `/cmd:compact` manual compaction failing outright on resume or after an unusable summary; it now retries twice, offers Retry and Start New Task once retries are exhausted, and rolls back the context indicator when compaction fails or is cancelled
+- Improved compaction reliability: a `summarize_task` summary is accepted once the call closes, ignoring trailing text; correctable failures retry automatically and show the failure reason on the card; earlier summaries are no longer treated as user requests; and iterative passes no longer overwrite the task progress checklist
+- Fixed tool results produced just before an automatic compaction being resent as orphaned results or dropped from history
+- Fixed the newest reply not appearing when messages grow quickly, for example near the context limit or during compaction, and the reading position jumping in long histories with rows of mixed height, while older history loads, or while a reply streams
+- Fixed reopened history tasks showing stale Running and Cancel controls on interrupted commands, and Activity Retry failing to restart a failed subagent in a reopened task
+- Fixed a draft typed while switching between Plan and Act during a pending completion question not reaching that question
+- Fixed terminal warm-up moving keyboard focus to the editor and sending typed text into an open file
 
 ## [0.9.3]
 
