@@ -413,6 +413,8 @@ async function reopenTask(page: Page, sidebar: Frame, taskText: string): Promise
 	await historyTask.click()
 	await expect(sidebar.getByRole("button", { name: "Close Task", exact: true })).toBeVisible({ timeout: 30_000 })
 	await expect(sidebar.getByText(taskText, { exact: true }).first()).toBeVisible({ timeout: 30_000 })
+	// The message surface is published before resume preparation finishes, so wait until the task admits input.
+	await expect(sidebar.getByTestId("send-button")).toHaveAttribute("aria-disabled", "false", { timeout: 30_000 })
 }
 
 async function onlyTaskId(dlineDocsDir: string): Promise<string> {

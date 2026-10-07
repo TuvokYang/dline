@@ -21,6 +21,9 @@ const COMPACT_INSTRUCTION_MARKER = "The current conversation is rapidly running 
 const PROVIDER_TOOL_PAIRING_ERROR = "must have a corresponding tool_use block in the previous message"
 const WEBVIEW_ERROR_ALLOWLIST = [
 	/vscode\.mermaid-markdown-features.*legacyToolReferenceFullNames.*chatParticipantPrivate/is,
+	// VS Code workbench: API proposal enforcement for extensions whose proposals differ from this build's product.json.
+	/appears in product\.json but enables LESS API proposals/is,
+	/Proceeding with EXTRA proposals \(.*\) because extension is in development mode/is,
 	/\[DEP0040\].*punycode.*deprecated/is,
 	/\[DEP0169\].*url\.parse\(\).*not standardized/is,
 	/Unable to create workbench contribution 'chat\.contextContributions'.*chatSessionRoutingProviderService/is,
