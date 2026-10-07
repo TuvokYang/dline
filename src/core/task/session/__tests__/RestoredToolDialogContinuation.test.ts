@@ -198,6 +198,27 @@ describe("RestoredToolDialogContinuation", () => {
 		expect(h.resumption.submit).toHaveBeenCalledOnce()
 	})
 
+	// Stopping keeps a follow-up and a status acknowledgment open with their
+	// options and buttons, so the answer still settles the interrupted call.
+	it.each([
+		{ toolName: "ask_followup_question", kind: "followup", actionId: "reply" as const, text: "OPTION_B: DRAFT_NOTE" },
+		{ toolName: "status_update", kind: "status_acknowledgment", actionId: "stop" as const, text: "STOP_DRAFT" },
+	])("records the answer to an interrupted $kind as the call's result", async ({ toolName, kind, actionId, text }) => {
+		const h = harness({ toolName, interrupted: true, fallbackAccepts: true })
+		const resolution = { interactionId: TID, kind, outcome: { actionId, draft: { text, images: [], files: [] } } }
+
+		expect(h.continuation.accepts(resolution)).toBe(true)
+		await expect(h.continuation.continue(resolution)).resolves.toBe("continued")
+
+		expect(h.journaledResult()).toMatchObject({ kind: "tool_result", blockId: TID })
+		expect(h.journaledResult().content).toContain(text)
+		expect(h.journal.append).toHaveBeenCalledWith(
+			expect.objectContaining({ operationId: `tool.restored_result:turn-1:${TID}`, source: "tool" }),
+		)
+		expect(h.fallback.continue).not.toHaveBeenCalled()
+		expect(h.resumption.submit).toHaveBeenCalledOnce()
+	})
+
 	it("still resumes without new input when the generic path declines an interrupted tool's answer", async () => {
 		const h = harness({ toolName: "qna_respond", interrupted: true })
 		const resolution = {

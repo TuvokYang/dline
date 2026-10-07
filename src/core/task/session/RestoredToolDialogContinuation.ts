@@ -146,7 +146,8 @@ export class RestoredToolDialogContinuation implements UnownedDialogContinuation
 		if (!kind || kind !== resolution.kind || invocation.dlineTid !== block.blockId) return undefined
 		const turnId = this.ports.state().turn.turnId
 		const operationId = `tool.restored_result:${turnId ?? "none"}:${block.blockId}`
-		return { invocation, kind, turnId, operationId, recorded: await this.recordedResult(operationId, turnId, block) }
+		const recorded = await this.recordedResult(operationId, turnId, block, kind)
+		return { invocation, kind, turnId, operationId, recorded }
 	}
 
 	/**
@@ -158,12 +159,15 @@ export class RestoredToolDialogContinuation implements UnownedDialogContinuation
 	 * result; the call is then settled and a later answer cannot become its
 	 * result, so it has to reach the model as new input.
 	 *
-	 * A completion the user had already been shown is the exception: stopping
-	 * the task keeps it open as the task's dialog, so the failure written for
-	 * the stopped block does not settle it and the reply becomes its result,
-	 * as dev restores a presented completion and commits its feedback.
+	 * Dialogs the restored view keeps answerable are the exception: see
+	 * `answerReplacesInterruption`.
 	 */
-	private async recordedResult(operationId: string, turnId: string | undefined, block: KernelBlock): Promise<RecordedResult> {
+	private async recordedResult(
+		operationId: string,
+		turnId: string | undefined,
+		block: KernelBlock,
+		kind: RestoredToolTarget["kind"],
+	): Promise<RecordedResult> {
 		if (await this.ports.journal.findByOperation(operationId)) return "answered"
 		const state = this.ports.state()
 		const lowerBound = state.dialog.primary?.journalWatermark ?? state.journalWatermark
@@ -173,7 +177,7 @@ export class RestoredToolDialogContinuation implements UnownedDialogContinuation
 			const payload = decodeTaskPayload<ToolResultEnvelope>(await this.ports.payloads.read(entry.payloadRef))
 			if (payload.kind !== "tool_result" || payload.blockId !== block.blockId) continue
 			if (!payload.failed) return "answered"
-			if (!block.presentedCompletion) return "failed"
+			if (!answerReplacesInterruption(kind, block)) return "failed"
 		}
 		return "none"
 	}
@@ -222,6 +226,20 @@ export class RestoredToolDialogContinuation implements UnownedDialogContinuation
 			)
 		})
 	}
+}
+
+/**
+ * Whether the answer to a restored dialog replaces the interruption written
+ * for its stopped block.
+ *
+ * Stopping the task keeps a follow-up, a status acknowledgment and a completion
+ * the user had already been shown open as the task's dialog, with their
+ * options and buttons restored. The failure written for the stopped block
+ * therefore does not settle the call: the user's answer is still the tool's
+ * result, as dev restores these dialogs and commits the answer to the call.
+ */
+function answerReplacesInterruption(kind: RestoredToolTarget["kind"], block: KernelBlock): boolean {
+	return kind === "followup" || kind === "status_acknowledgment" || Boolean(block.presentedCompletion)
 }
 
 /** Whether a restored tool block already has its durable result, and what kind. */
