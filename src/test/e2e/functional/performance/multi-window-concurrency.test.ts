@@ -380,6 +380,37 @@ async function activateDlinePanel(tab: Locator, frame: Frame): Promise<void> {
 	const frameElement = await frame.frameElement()
 	await frameElement.waitForElementState("visible")
 	await expect(frame.locator("#root")).toBeVisible()
+	await waitForWebviewFocusHandoff(frame)
+}
+
+/**
+ * Wait until VS Code has handed keyboard focus to an activated webview.
+ *
+ * Activating an editor tab focuses its webview asynchronously: the workbench
+ * first focuses the webview's host iframe and only then restores focus inside
+ * the content frame. Text typed into the content frame before that handoff
+ * lands is dropped while the host iframe takes focus away, so the panel is
+ * ready for input only once every frame from the workbench down to the Dline
+ * content frame is the active element of the document that contains it.
+ */
+async function waitForWebviewFocusHandoff(frame: Frame): Promise<void> {
+	await expect
+		.poll(async () => {
+			for (let child = frame, parent = frame.parentFrame(); parent; child = parent, parent = parent.parentFrame()) {
+				if (!(await isActiveElementOfParent(child))) return false
+			}
+			return true
+		})
+		.toBe(true)
+}
+
+async function isActiveElementOfParent(frame: Frame): Promise<boolean> {
+	const element = await frame.frameElement()
+	try {
+		return await element.evaluate((node) => node.ownerDocument.activeElement === node)
+	} finally {
+		await element.dispose()
+	}
 }
 
 async function activateDlinePanelByFrame(group: Locator, frame: Frame): Promise<void> {
@@ -582,6 +613,9 @@ e2e("Dline task panels preserve independent editor groups across window reload",
 	await expect.poll(() => secondPanel.evaluate(() => document.hasFocus())).toBe(true)
 	await E2ETestHelper.runCommandPalette(page, "View: Move Editor into Next Group")
 	await expect(dlineEditorGroups(page, reloadTaskMarkers)).toHaveCount(2)
+	// The moved editor takes focus asynchronously again; a palette opened before that
+	// handoff lands loses its keystrokes and closes when the webview takes focus.
+	await waitForWebviewFocusHandoff(secondPanel)
 
 	await E2ETestHelper.runCommandPalette(page, "Developer: Reload Window")
 	await expect(dlineEditorGroups(page, reloadTaskMarkers)).toHaveCount(2, { timeout: 60_000 })
