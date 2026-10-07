@@ -1,4 +1,4 @@
-import { readdir } from "node:fs/promises"
+import { readdir, writeFile } from "node:fs/promises"
 import * as path from "node:path"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { rewriteTaskActivities } from "@e2e/utils/task-instance-store"

@@ -1520,7 +1520,8 @@ e2e(
 			})
 
 			const checkpointLabels = opened.sidebar.getByText("Checkpoint", { exact: true })
-			await expect.poll(() => checkpointLabels.count(), { timeout: 30_000 }).toBe(1)
+			// The task-start baseline checkpoint plus the checkpoint committed after the approved write.
+			await expect.poll(() => checkpointLabels.count(), { timeout: 30_000 }).toBe(2)
 			const input = opened.sidebar.getByTestId("chat-input")
 			await input.fill("E2E_WARM_WEB_FETCH")
 			await input.press("Enter")

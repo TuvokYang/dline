@@ -1,7 +1,8 @@
-import { readdir, readFile } from "node:fs/promises"
+import { readdir } from "node:fs/promises"
 import * as path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
+import { readTaskConversationText } from "@e2e/utils/task-instance-store"
 import { expect, type Frame } from "@playwright/test"
 
 /**
@@ -134,18 +135,19 @@ e2e(
 		await expect(taskFooter.getByText("Resume", { exact: true })).toBeVisible({ timeout: 60_000 })
 
 		const taskId = await onlyTaskId(dlineDocsDir)
-		const apiPath = path.join(dlineDocsDir, "tasks", taskId, "api_conversation_history.jsonl")
+		// The provider history lives in the task's instance journal; read it in the legacy line shape.
+		const readApiHistory = () => readTaskConversationText(dlineDocsDir, taskId)
 		await expect
-			.poll(async () => (await readFile(apiPath, "utf8")).includes("Response interrupted by user"), { timeout: 60_000 })
+			.poll(async () => (await readApiHistory()).includes("Response interrupted by user"), { timeout: 60_000 })
 			.toBe(true)
 		// Allow any trailing durable write to settle before measuring the persisted record.
 		await expect
-			.poll(async () => readAssistantBlockStats(await readFile(apiPath, "utf8"), expectedPayload).maxMessageBytes, {
+			.poll(async () => readAssistantBlockStats(await readApiHistory(), expectedPayload).maxMessageBytes, {
 				timeout: 15_000,
 			})
 			.toBeGreaterThan(0)
 
-		const stats = readAssistantBlockStats(await readFile(apiPath, "utf8"), expectedPayload)
+		const stats = readAssistantBlockStats(await readApiHistory(), expectedPayload)
 
 		// Each reasoning item must be persisted exactly once, with its authoritative payload.
 		expect(stats.duplicatedResponseIds).toBe(0)

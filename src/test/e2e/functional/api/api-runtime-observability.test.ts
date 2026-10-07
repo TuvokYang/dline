@@ -950,9 +950,9 @@ e2e(
 		const latestCheckpointControl = checkpointLabels.last().locator("..").locator("..")
 		await latestCheckpointControl.hover()
 		await latestCheckpointControl.getByRole("button", { name: "Restore", exact: true }).click()
-		const restoreTaskButton = sidebar.getByRole("button", { name: "Restore Task Only", exact: true })
-		await expect(restoreTaskButton).toBeVisible()
-		await restoreTaskButton.click()
+		const restoreAllButton = sidebar.getByRole("button", { name: "Restore Files & Task", exact: true })
+		await expect(restoreAllButton).toBeVisible()
+		await restoreAllButton.click()
 
 		const feedback =
 			"同时要带mcp server， 方便ai管理服务。 还带时间触发审查， 如错误时， ai开始审查错误来源， 账号异常则自动补充。"
