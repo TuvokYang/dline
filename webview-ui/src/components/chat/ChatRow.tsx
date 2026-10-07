@@ -482,7 +482,12 @@ export const ChatRowContent = memo(
 
 		const tool = useMemo(() => {
 			if (message.ask === "tool" || message.say === "tool") {
-				return JSON.parse(message.text || "{}") as ClineSayTool
+				// A malformed or plain-text tool payload must not take down the whole chat list.
+				try {
+					return JSON.parse(message.text || "{}") as ClineSayTool
+				} catch {
+					return null
+				}
 			}
 			return null
 		}, [message.ask, message.say, message.text])

@@ -84,10 +84,11 @@ export type ConfigurableCeilings = Partial<Record<PermissionScope, ApprovalCeili
  * approval would deadlock the turn: the approval being waited for is the
  * interaction the tool has not been allowed to present. `status_update` joins
  * the conversational set because it likewise owns whether to block, which is
- * the same rule the existing runtime applies.
+ * the same rule the existing runtime applies. `new_task` presents its own
+ * approve-or-feedback interaction before the successor task starts.
  */
 function ownsItsInteraction(tool: ClineDefaultTool): boolean {
-	return tool === ClineDefaultTool.STATUS_UPDATE || CONVERSATIONAL_TOOL_NAMES.has(tool)
+	return tool === ClineDefaultTool.STATUS_UPDATE || tool === ClineDefaultTool.NEW_TASK || CONVERSATIONAL_TOOL_NAMES.has(tool)
 }
 
 /**
@@ -199,7 +200,6 @@ const DIRECT_SCOPES: Partial<Record<ClineDefaultTool, PermissionScope>> = {
 	[ClineDefaultTool.GENERATE_IMAGE]: "generate_image",
 	[ClineDefaultTool.TODO]: "focus_chain",
 	[ClineDefaultTool.CHANGE_TODO_LIST]: "focus_chain",
-	[ClineDefaultTool.NEW_TASK]: "subagent",
 	[ClineDefaultTool.SPAWN_TASK]: "subagent",
 	[ClineDefaultTool.USE_SUBAGENT]: "subagent",
 	[ClineDefaultTool.USE_SUBAGENTS]: "subagent",

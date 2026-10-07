@@ -360,6 +360,20 @@ describe("approval kind", () => {
 			}
 		})
 
+		it("lets new_task present its own approve or feedback interaction", () => {
+			// new_task asks the user to confirm the successor task; a separate
+			// subagent-scope approval would either skip that choice or ask twice.
+			for (const settings of [allApproved(), noneApproved()]) {
+				const decision = resolveApprovalKind({
+					toolName: ClineDefaultTool.NEW_TASK,
+					settings,
+					ceilings: { subagent: "manual_only" },
+				})
+				expect(decision.kind).toBe("none")
+				expect(decision.scope).toBe("conversational")
+			}
+		})
+
 		it("cannot be given an unsatisfiable manual_only ceiling", () => {
 			// A conversational tool waiting for approval of the interaction it
 			// has not been allowed to present would deadlock, so its ceiling is
