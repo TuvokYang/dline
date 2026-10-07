@@ -258,8 +258,20 @@ function resolveScopeContext(
 				!roots.some((root) => isInsideRoot(absolutePath, root)),
 		),
 		isSafeCommand: toolName === ClineDefaultTool.BASH ? !requiresApproval : false,
-		isToolAutoApproveEnabled: toolName === ClineDefaultTool.MCP_USE ? snapshot.mcpToolAutoApprove === true : undefined,
+		isToolAutoApproveEnabled: resolveToolAutoApprove(toolName, snapshot),
 	}
+}
+
+/**
+ * Per-tool exceptions to a scope's auto-approval toggle. Blanket grants (YOLO,
+ * approve all) still apply. `spawn_task` shares the subagent scope, but its
+ * contract requires the user to approve every new peer task, so the "Read
+ * project files" toggle that admits read-only subagents never admits it.
+ */
+function resolveToolAutoApprove(toolName: ClineDefaultTool, snapshot: ToolAdmissionSnapshot): boolean | undefined {
+	if (toolName === ClineDefaultTool.MCP_USE) return snapshot.mcpToolAutoApprove === true
+	if (toolName === ClineDefaultTool.SPAWN_TASK) return false
+	return undefined
 }
 
 async function canonicalizePath(target: string): Promise<string | undefined> {
