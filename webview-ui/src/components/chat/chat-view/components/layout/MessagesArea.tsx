@@ -1029,7 +1029,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 				{showScrollToBottom && (
 					<div
 						className={cn(
-							"absolute bottom-4 right-4 z-20 transition-opacity duration-300 ease-out",
+							"absolute bottom-4 right-4 z-20 pointer-events-auto transition-opacity duration-300 ease-out",
 							// The wrapper exists only while the reader is away from the
 							// live bottom, so the affordance is warranted for as long as
 							// it is rendered and must remain clickable. The idle timer is
