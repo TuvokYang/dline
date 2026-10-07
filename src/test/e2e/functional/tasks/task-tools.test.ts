@@ -1883,10 +1883,14 @@ e2e("Tools - batch subagent Cancel keeps siblings active before Cancel all", asy
 			type: "tool",
 			id: "call_foreground_subagents",
 			name: "use_subagents",
+			// The batch tool takes one structured `subagents` array; the numbered
+			// prompt_N shape was removed and is rejected before approval.
 			arguments: {
-				prompt_1: "<task>E2E_BATCH_CANCEL_ONE</task><context>Remain active until cancelled.</context>",
-				prompt_2: "<task>E2E_BATCH_CANCEL_TWO</task><context>Remain active until cancelled.</context>",
-				prompt_3: "<task>E2E_BATCH_CANCEL_THREE</task><context>Remain active until cancelled.</context>",
+				subagents: ["ONE", "TWO", "THREE"].map((suffix) => ({
+					agent_name: "default",
+					task: `E2E_BATCH_CANCEL_${suffix}`,
+					context: "Remain active until cancelled.",
+				})),
 				timeout: 60,
 			},
 		},
