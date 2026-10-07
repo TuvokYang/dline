@@ -59,6 +59,7 @@ function createPromotingController(continuation: Promise<void>): Controller {
 			accepts: () => true,
 			dispose: async () => undefined,
 		},
+		historyDisplayProfileBindings: new WeakMap(),
 		stopLockPoll: () => undefined,
 	})
 	vi.spyOn(controller, "initTask").mockImplementation(async () => {
